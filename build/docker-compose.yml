@@ -21,7 +21,7 @@ services:
       - redis_data:/data
 
   ipfs:
-    image: ipfs/go-ipfs:latest
+    image: ipfs/kubo:latest
     ports:
       - "5001:5001" # API port
       - "8080:8080" # Gateway port
