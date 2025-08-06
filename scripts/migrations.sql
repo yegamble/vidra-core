@@ -34,3 +34,17 @@ CREATE TABLE IF NOT EXISTS video_renditions (
   created_at DATETIME NOT NULL,
   FOREIGN KEY (video_id) REFERENCES videos(id) ON DELETE CASCADE
 ) ENGINE=InnoDB;
+
+-- IPFS content references table stores CIDs associated with video files
+CREATE TABLE IF NOT EXISTS ipfs_content (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  video_id BIGINT NOT NULL,
+  cid VARCHAR(255) NOT NULL UNIQUE,
+  file_type VARCHAR(50),
+  resolution INTEGER,
+  file_size BIGINT,
+  pin_status VARCHAR(20) DEFAULT 'pinned',
+  gateway_url VARCHAR(1000),
+  created_at DATETIME NOT NULL,
+  FOREIGN KEY (video_id) REFERENCES videos(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
