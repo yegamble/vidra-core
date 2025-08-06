@@ -7,7 +7,7 @@ GoTube is a decentralized, self‑hostable video sharing platform written in Go.
 - **Transcoding pipeline**: Uploaded videos are asynchronously transcoded into multiple resolutions (240p–8K) using FFmpeg. Jobs are queued in Redis and processed by a background worker.
 - **Decentralized storage & ledger**: Video files are backed up on IPFS. A stubbed IOTA service demonstrates how metadata could be anchored to the Tangle.
 - **REST API**: Endpoints for authentication and video management are exposed via a chi router. Middleware enforces JWT authentication on protected routes.
-- **Docker & Compose**: The project includes a Dockerfile and `docker-compose.yml` to run MySQL, Redis, IPFS and the Go service together. A migration script sets up the database schema.
+- **Docker & Compose**: The project includes a Dockerfile and `docker-compose.yml` to run MySQL, Redis, IPFS and the Go service together. Database schema changes are managed with [Atlas](https://atlasgo.io) migrations applied automatically at startup.
 - **GitHub Actions**: Continuous integration runs tests, vetting and builds a Docker image on every push or pull request.
 
 ## Running locally
@@ -30,7 +30,7 @@ This will start MySQL, Redis, an IPFS node and the GoTube API on port 8080. Envi
 
 ### Manual setup
 
-1. Create a MySQL database and run the schema in `scripts/migrations.sql`.
+1. Create a MySQL database.
 2. Run a Redis instance and an IPFS daemon (local or remote).
 3. Export environment variables (`DB_DSN`, `REDIS_ADDR`, `JWT_SECRET`, etc.) as documented in `config/config.go`.
 4. Build and run the server:
