@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
+	"strings"
 
 	files "github.com/ipfs/boxo/files"
 	ipath "github.com/ipfs/boxo/path"
@@ -22,7 +24,7 @@ type IPFSService struct {
 // NewIPFSService creates a new IPFSService given the API URL (e.g.
 // "http://localhost:5001").
 func NewIPFSService(apiURL string) *IPFSService {
-	api, err := rpc.NewURL(apiURL)
+	api, err := rpc.NewURLApiWithClient(apiURL, http.DefaultClient)
 	if err != nil {
 		panic(fmt.Errorf("create IPFS client: %w", err))
 	}
@@ -44,14 +46,20 @@ func (s *IPFSService) AddFile(filePath string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("ipfs add: %w", err)
 	}
-	return p.Cid().String(), nil
+	// ImmutablePath does not expose the CID directly, but its string
+	// representation is of the form "/ipfs/<cid>". Extract the CID portion.
+	return strings.TrimPrefix(p.String(), "/ipfs/"), nil
 }
 
 // Cat retrieves the contents of an IPFS object by its CID. This can be
 // used to verify that uploaded files are retrievable. It returns the data
 // as a byte slice.
 func (s *IPFSService) Cat(cid string) ([]byte, error) {
-	node, err := s.api.Unixfs().Get(context.Background(), ipath.New("/ipfs/"+cid))
+	p, err := ipath.ParsePath("/ipfs/" + cid)
+	if err != nil {
+		return nil, fmt.Errorf("parse cid path: %w", err)
+	}
+	node, err := s.api.Unixfs().Get(context.Background(), p)
 	if err != nil {
 		return nil, fmt.Errorf("ipfs cat: %w", err)
 	}
