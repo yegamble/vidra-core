@@ -29,29 +29,35 @@ services:
     volumes:
       - ipfs_staging:/export
       - ipfs_data:/data/ipfs
-  api:
-    build: .
-    environment:
-      HTTP_PORT: 8080
-      POSTGRES_URL: postgres://peertube:peertube@postgres:5432/peertube?sslmode=disable
-      REDIS_ADDR: redis:6379
-      S3_ENDPOINT: minio:9000
-      IPFS_PATH: http://kubo:5001
-      WALLET_SVC_URL: http://wallet-svc:8090
-    ports:
-      - "8080:8080"
-    depends_on:
-      - postgres
-      - redis
-      - minio
-      - kubo
-      - wallet-svc
   wallet-svc:
     build: ./wallet-svc
     environment:
       PORT: 8090
     ports:
       - "8090:8090"
+  api:
+    build: .
+    depends_on:
+      - postgres
+      - redis
+      - minio
+      - kubo
+      - wallet-svc
+    environment:
+      POSTGRES_URL: postgres://peertube:peertube@postgres:5432/peertube?sslmode=disable
+      REDIS_ADDR: redis:6379
+      REDIS_PASSWORD: ""
+      S3_ENDPOINT: minio:9000
+      S3_REGION: us-east-1
+      S3_ACCESS_KEY: minioadmin
+      S3_SECRET_KEY: minioadmin
+      S3_BUCKET: gotube
+      S3_USE_SSL: "false"
+      IPFS_PATH: http://kubo:5001
+      WALLET_SVC_URL: http://wallet-svc:8090
+      HTTP_PORT: 8080
+    ports:
+      - "8080:8080"
 volumes:
   ipfs_staging:
   ipfs_data:

@@ -6,18 +6,21 @@ import (
     "testing"
     "time"
 
-    "github.com/yourname/gotube/internal/config"
-    "github.com/yourname/gotube/internal/storage"
+    "github.com/yegamble/athena/internal/config"
+    "github.com/yegamble/athena/internal/storage"
 )
 
+// TestS3Presign verifies that objects can be uploaded and presigned using the
+// S3 client.  It will be skipped if a local MinIO instance is not
+// available.
 func TestS3Presign(t *testing.T) {
     cfg := &config.Config{
         S3Endpoint: "localhost:9000",
-        S3Region: "us-east-1",
+        S3Region:   "us-east-1",
         S3AccessKey: "minioadmin",
         S3SecretKey: "minioadmin",
-        S3Bucket: "test-bucket",
-        S3UseSSL: false,
+        S3Bucket:   "test-bucket",
+        S3UseSSL:   false,
     }
     s3, err := storage.NewS3Client(cfg)
     if err != nil {

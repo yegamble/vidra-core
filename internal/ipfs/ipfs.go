@@ -1,16 +1,17 @@
 package ipfs
 
 import (
-	"github.com/ipfs/kubo/client/rpc"
-	"github.com/yourname/gotube/internal/config"
+    "github.com/ipfs/kubo/client/rpc"
+    "github.com/yegamble/athena/internal/config"
 )
 
-// Return the raw *rpc.HttpApi so callers don't have to deal with a wrapper.
+// NewClient returns a Kubo RPC client.  When IPFSPath is non-empty the client
+// connects to the given URL (e.g. http://kubo:5001).  Otherwise it attempts
+// to connect to a local Kubo daemon via the default socket.
 func NewClient(cfg *config.Config) (*rpc.HttpApi, error) {
-	if cfg.IPFSPath != "" {
-		// For a custom API endpoint (e.g., Docker service URL)
-		return rpc.NewURLApiWithClient(cfg.IPFSPath, nil)
-	}
-	// Default to local IPFS API for development
-	return rpc.NewLocalApi()
+    if cfg.IPFSPath != "" {
+        // For a custom API endpoint
+        return rpc.NewURLApiWithClient(cfg.IPFSPath, nil)
+    }
+    return rpc.NewLocalApi()
 }

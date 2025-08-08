@@ -5,9 +5,11 @@ const app = express();
 app.use(express.json());
 
 const PORT = process.env.PORT || 8090;
-// Basic in-memory registry (replace with DB + KMS/Stronghold in production)
+// Basic in‑memory registry (replace with DB + KMS/Stronghold in production)
 const wallets = new Map();
 
+// Create a wallet for a given user.  Returns the wallet identifier so that
+// future operations can be tied to the same wallet instance.
 app.post('/wallets', async (req, res) => {
   try {
     const userId = req.body.userId;
@@ -18,7 +20,7 @@ app.post('/wallets', async (req, res) => {
     const wallet = new Wallet({
       storagePath: `wallet-${userId}`,
       clientOptions: {
-        // TODO: point to your IOTA node; using public endpoints is rate-limited
+        // TODO: point to your IOTA node; using public endpoints is rate‑limited
         nodes: ['https://api.mainnet.iota.org']
       },
       coinType: CoinType.IOTA
@@ -31,6 +33,8 @@ app.post('/wallets', async (req, res) => {
   }
 });
 
+// Retrieve or create an address for a given wallet.  This should be backed
+// by stronghold or other secure key storage in production.
 app.get('/wallets/:id/address', async (req, res) => {
   try {
     const wallet = wallets.get(req.params.id);
@@ -44,7 +48,9 @@ app.get('/wallets/:id/address', async (req, res) => {
   }
 });
 
-// Very simplified "charge" endpoint
+// Very simplified "charge" endpoint.  Sends tokens from the wallet to a
+// destination address.  This implementation ignores confirmation and
+// settlement details and should not be used as‑is in production.
 app.post('/wallets/:id/charge', async (req, res) => {
   try {
     const { amount, to } = req.body;
