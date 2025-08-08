@@ -1,0 +1,12 @@
+{
+  "name": "wallet-svc",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "dependencies": {
+    "@iota/sdk": "^1.0.0"
+  },
+  "scripts": {
+    "start": "node server.mjs"
+  }
+}

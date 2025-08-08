@@ -1,57 +1,45 @@
-# GoTube
+# GoTube (PeerTube-inspired Go backend)
 
-GoTube is a decentralized, self‑hostable video sharing platform written in Go. It aims to provide a lightweight alternative to PeerTube with native IPFS and IOTA integration. This repository contains a monolithic backend API designed following clean architecture principles. Key features include:
+A production-grade starter that mirrors the core backend pieces of PeerTube, rebuilt in Go with:
+- Chi, SQLX, PostgreSQL, Redis
+- Atlas for migrations
+- S3-compatible storage via MinIO SDK (AWS, DigitalOcean Spaces, Backblaze B2)
+- IPFS (Kubo RPC) for IPFS-first video storage / retrieval
+- Optional IOTA wallet microservice (Node + official IOTA SDK) for premium/ad-free payments
 
-- **User management**: Full authentication with registration, email verification, login/logout using JWT and Redis sessions.
-- **Video uploads**: Users can upload videos via a REST API. Files are stored locally and pinned to IPFS on upload.
-- **Transcoding pipeline**: Uploaded videos are asynchronously transcoded into multiple resolutions (240p–8K) using FFmpeg. Jobs are queued in Redis and processed by a background worker.
-- **Decentralized storage & ledger**: Video files are backed up on IPFS. A stubbed IOTA service demonstrates how metadata could be anchored to the Tangle.
-- **REST API**: Endpoints for authentication and video management are exposed via a chi router. Middleware enforces JWT authentication on protected routes.
-- **Docker & Compose**: The project includes a Dockerfile and `docker-compose.yml` to run MySQL, Redis, IPFS and the Go service together. A migration script sets up the database schema.
-- **GitHub Actions**: Continuous integration runs tests, vetting and builds a Docker image on every push or pull request.
-
-## Running locally
-
-### Prerequisites
-
-- [Docker](https://www.docker.com/) and [Docker Compose](https://docs.docker.com/compose/)
-- [Go 1.20+](https://go.dev/dl/) if you intend to build outside Docker
-
-### Using Docker Compose
-
-Start all services:
+## Quickstart
 
 ```bash
-cd gotube
-docker-compose -f build/docker-compose.yml up --build
+cp .env.example .env
+docker compose up -d postgres redis minio kubo
+# create bucket 'gotube' via http://localhost:9001 (MinIO console) or let the app do it on first run
+
+# Apply schema
+export POSTGRES_URL=postgres://peertube:peertube@localhost:5432/peertube?sslmode=disable
+atlas schema apply -u "$POSTGRES_URL" -f migrations/schema.hcl --dev-url "docker://postgres/16/dev"
+
+go run ./cmd/server
 ```
 
-This will start MySQL, Redis, an IPFS node and the GoTube API on port 8080. Environment variables in the compose file configure database credentials, JWT secret, SMTP and IOTA settings. Adjust these as needed.
-
-### Manual setup
-
-1. Create a MySQL database and run the schema in `scripts/migrations.sql`.
-2. Run a Redis instance and an IPFS daemon (local or remote).
-3. Export environment variables (`DB_DSN`, `REDIS_ADDR`, `JWT_SECRET`, etc.) as documented in `config/config.go`.
-4. Build and run the server:
-
+Upload:
 ```bash
-cd gotube
-go build -o gotube ./cmd/server
-./gotube
+curl -F file=@/path/to/video.mp4 -F title="My Video" http://localhost:8080/api/v1/videos
 ```
 
-### API overview
+Fetch:
+```bash
+curl http://localhost:8080/api/v1/videos/<uuid>
+```
 
-- `GET /health` – health check
-- `POST /auth/signup` – register a user (JSON: `{ "email": "...", "password": "..." }`)
-- `POST /auth/login` – log in (JSON: `{ "email": "...", "password": "..." }`) → returns JWT token
-- `POST /videos` – upload a video (multipart/form-data: `title`, `description`, `file`) – requires `Authorization: Bearer <token>` header
-- `GET /videos/{id}` – get video metadata and renditions
+## IOTA Wallet Microservice
+
+Go currently lacks an up-to-date, fully supported IOTA wallet library. This starter uses the official **IOTA SDK (Node bindings)** behind a tiny HTTP service (see `wallet-svc/`). The Go API calls it for wallet creation, address retrieval, and payments.
+
+- Start it with Docker Compose: `docker compose up -d wallet-svc`
+- Configure `WALLET_SVC_URL=http://localhost:8090`
 
 ## Notes
 
-- This project is a prototype scaffold. The IOTA service is stubbed; integrate the official IOTA Go SDK to generate addresses and write transactions.
-- Email verification is not fully implemented. A production system should generate and store verification tokens and send real emails.
-- Error handling and input validation are basic; enhance these for robustness and security.
-- For production deployment, configure HTTPS, rate limiting, CORS, and monitoring.
+- IPFS: We use `github.com/ipfs/kubo/client/rpc` (official replacement for go-ipfs-api) to talk to a local Kubo daemon.
+- S3: We use `minio-go/v7` which is compatible with AWS S3, DigitalOcean Spaces, and Backblaze B2.
+- Extend `internal/httpapi` and add more domain-specific packages (federation, ActivityPub, transcoding queues, WebTorrent, etc.).
