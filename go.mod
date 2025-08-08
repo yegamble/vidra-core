@@ -7,6 +7,8 @@ toolchain go1.24.6
 require (
 	github.com/go-chi/chi/v5 v5.0.12
 	github.com/google/uuid v1.6.0
+	github.com/ipfs/boxo v0.33.0
+	github.com/ipfs/kubo v0.36.0
 	github.com/jmoiron/sqlx v1.4.0
 	github.com/joho/godotenv v1.5.1
 	github.com/lib/pq v1.10.9
@@ -53,7 +55,6 @@ require (
 	github.com/hashicorp/golang-lru/v2 v2.0.7 // indirect
 	github.com/huin/goupnp v1.3.0 // indirect
 	github.com/ipfs/bbloom v0.0.4 // indirect
-	github.com/ipfs/boxo v0.33.0 // indirect
 	github.com/ipfs/go-bitfield v1.1.0 // indirect
 	github.com/ipfs/go-block-format v0.2.2 // indirect
 	github.com/ipfs/go-cid v0.5.0 // indirect
@@ -67,7 +68,6 @@ require (
 	github.com/ipfs/go-log/v2 v2.6.0 // indirect
 	github.com/ipfs/go-metrics-interface v0.3.0 // indirect
 	github.com/ipfs/go-unixfsnode v1.10.1 // indirect
-	github.com/ipfs/kubo v0.36.0 // indirect
 	github.com/ipld/go-car/v2 v2.14.3 // indirect
 	github.com/ipld/go-codec-dagpb v1.7.0 // indirect
 	github.com/ipld/go-ipld-prime v0.21.0 // indirect

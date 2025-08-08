@@ -1,0 +1,21 @@
+# Git
+.git
+.gitignore
+
+# Documentation
+README.md
+LICENSE
+
+# Node modules (wallet-svc)
+wallet-svc/node_modules
+
+# IDE files
+.vscode
+.idea
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+*.log

@@ -52,7 +52,7 @@ func main() {
 	r.Use(middleware.Timeout(60 * time.Second))
 
 	// Health
-	r.Get("/healthz", func(w http.ResponseWriter, r *http.Request) {
+	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("ok"))
 	})
