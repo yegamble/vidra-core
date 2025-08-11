@@ -13,6 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
+    - l
     - name: Checkout code
       uses: actions/checkout@v4
 
@@ -31,7 +32,7 @@ jobs:
       run: swagger-cli bundle api/openapi.yaml --outfile api/openapi-bundle.yaml --type yaml
 
     - name: Upload bundled spec
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: openapi-spec
         path: api/openapi-bundle.yaml
@@ -137,7 +138,7 @@ jobs:
         PORT: 8080
 
     - name: Upload test results
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       if: always()
       with:
         name: test-results
@@ -166,7 +167,7 @@ jobs:
       run: redoc-cli build api/openapi.yaml --output docs/api-docs.html
 
     - name: Upload documentation
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: api-documentation
         path: docs/api-docs.html
