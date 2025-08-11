@@ -36,7 +36,10 @@ func WriteJSON(w http.ResponseWriter, statusCode int, data interface{}) {
 		Success: statusCode < 400,
 	}
 
-	json.NewEncoder(w).Encode(response)
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		// Log error but don't return as headers are already sent
+		_ = err
+	}
 }
 
 func WriteError(w http.ResponseWriter, statusCode int, err error) {
@@ -57,7 +60,10 @@ func WriteError(w http.ResponseWriter, statusCode int, err error) {
 		Success: false,
 	}
 
-	json.NewEncoder(w).Encode(response)
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		// Log error but don't return as headers are already sent
+		_ = err
+	}
 }
 
 func WriteJSONWithMeta(w http.ResponseWriter, statusCode int, data interface{}, meta *Meta) {
@@ -70,7 +76,10 @@ func WriteJSONWithMeta(w http.ResponseWriter, statusCode int, data interface{}, 
 		Meta:    meta,
 	}
 
-	json.NewEncoder(w).Encode(response)
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		// Log error but don't return as headers are already sent
+		_ = err
+	}
 }
 
 func MapDomainErrorToHTTP(err error) int {

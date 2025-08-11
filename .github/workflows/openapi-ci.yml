@@ -7,6 +7,13 @@ on:
     branches: [ main ]
   workflow_dispatch:
 
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+  pull-requests: write
+  issues: write
+
 jobs:
   validate-openapi:
     name: Validate OpenAPI Specification
@@ -162,22 +169,47 @@ jobs:
     - name: Install Redoc CLI
       run: npm install -g redoc-cli
 
+    - name: Create docs directory
+      run: mkdir -p docs
+
     - name: Generate HTML documentation
       run: redoc-cli build api/openapi.yaml --output docs/api-docs.html
+
+    - name: Create index.html for docs
+      run: |
+        cat > docs/index.html << 'EOF'
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <title>Athena API Documentation</title>
+          <meta http-equiv="refresh" content="0; url=api-docs.html">
+        </head>
+        <body>
+          <p>Redirecting to <a href="api-docs.html">API Documentation</a>...</p>
+        </body>
+        </html>
+        EOF
 
     - name: Upload documentation
       uses: actions/upload-artifact@v4
       with:
         name: api-documentation
-        path: docs/api-docs.html
+        path: docs/
 
-    - name: Deploy to GitHub Pages (on main branch)
+    - name: Setup Pages
       if: github.ref == 'refs/heads/main'
-      uses: peaceiris/actions-gh-pages@v3
+      uses: actions/configure-pages@v4
+
+    - name: Upload to GitHub Pages
+      if: github.ref == 'refs/heads/main'
+      uses: actions/upload-pages-artifact@v3
       with:
-        github_token: ${{ secrets.GITHUB_TOKEN }}
-        publish_dir: ./docs
-        destination_dir: api
+        path: ./docs
+
+    - name: Deploy to GitHub Pages
+      if: github.ref == 'refs/heads/main'
+      id: deployment
+      uses: actions/deploy-pages@v4
 
   comment-pr:
     name: Comment on PR

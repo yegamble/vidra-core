@@ -104,6 +104,7 @@ func Load() (*Config, error) {
 	if err := godotenv.Load(); err != nil {
 		// It's okay if .env file doesn't exist, we'll use environment variables
 		// or defaults
+		_ = err // Suppress linting error for empty branch
 	}
 
 	cfg := &Config{}

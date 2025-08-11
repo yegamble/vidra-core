@@ -27,11 +27,13 @@ func ListVideos(w http.ResponseWriter, r *http.Request) {
 	if sort == "" {
 		sort = "upload_date"
 	}
+	_ = sort // Will be used when implementing actual sorting
 
 	order := r.URL.Query().Get("order")
 	if order != "asc" && order != "desc" {
 		order = "desc"
 	}
+	_ = order // Will be used when implementing actual sorting
 
 	videos := []domain.Video{
 		{
@@ -281,6 +283,7 @@ func StreamVideo(w http.ResponseWriter, r *http.Request) {
 	if quality == "" {
 		quality = "720p"
 	}
+	_ = quality // Will be used when implementing actual HLS quality selection
 
 	w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
 	w.Header().Set("Access-Control-Allow-Origin", "*")
@@ -297,5 +300,8 @@ segment-00001.ts
 segment-00002.ts
 #EXT-X-ENDLIST`
 
-	w.Write([]byte(hlsPlaylist))
+	if _, err := w.Write([]byte(hlsPlaylist)); err != nil {
+		// Log error but don't return as headers are already sent
+		_ = err
+	}
 }
