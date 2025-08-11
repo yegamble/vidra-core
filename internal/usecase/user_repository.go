@@ -3,7 +3,7 @@ package usecase
 import (
 	"context"
 
-	"github.com/yosefgamble/athena/internal/domain"
+	"athena/internal/domain"
 )
 
 type UserRepository interface {

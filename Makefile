@@ -29,6 +29,34 @@ test: ## Run unit tests
 	go test -v -race -coverprofile=coverage.out ./...
 	go tool cover -html=coverage.out -o coverage.html
 
+test-setup: ## Start test environment
+	docker-compose -f docker-compose.test.yml up -d postgres-test redis-test
+	@echo "Waiting for services to be ready..."
+	@for i in $$(seq 1 30); do \
+		if pg_isready -h localhost -p 5433 -U test_user >/dev/null 2>&1; then \
+			echo "PostgreSQL is ready"; \
+			break; \
+		fi; \
+		echo "Waiting for PostgreSQL... ($$i/30)"; \
+		sleep 2; \
+	done
+	@for i in $$(seq 1 30); do \
+		if redis-cli -h localhost -p 6380 ping >/dev/null 2>&1; then \
+			echo "Redis is ready"; \
+			break; \
+		fi; \
+		echo "Waiting for Redis... ($$i/30)"; \
+		sleep 2; \
+	done
+
+test-integration: test-setup ## Run integration tests
+	go test -v -race -tags=integration ./internal/repository/...
+
+test-teardown: ## Stop test environment
+	docker-compose -f docker-compose.test.yml down -v
+
+test-all: test-setup test-integration test-teardown ## Run all tests with Docker services
+
 build: ## Build the server binary
 	go build -o bin/athena-server ./cmd/server
 

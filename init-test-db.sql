@@ -1,4 +1,4 @@
--- Enable required PostgreSQL extensions for Athena video platform
+-- Enable required PostgreSQL extensions for Athena test database
 -- As specified in CLAUDE.md
 
 -- UUID generation extension
@@ -84,4 +84,4 @@ CREATE INDEX IF NOT EXISTS idx_sessions_active ON sessions(user_id, expires_at)
     WHERE expires_at > NOW();
 
 -- Log successful initialization
-\echo 'PostgreSQL database initialized successfully for Athena platform with all tables and indexes';
+\echo 'PostgreSQL test database initialized successfully for Athena platform with all tables and indexes';
