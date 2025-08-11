@@ -65,6 +65,25 @@ make serve-docs
 make generate-docs
 ```
 
+## Running with Docker
+
+To start the application stack using Docker Compose:
+
+```bash
+docker-compose up --build
+```
+
+This launches the app along with Postgres and Redis. The Postgres container
+automatically creates tables using `init-db.sql`.
+
+For the test environment:
+
+```bash
+docker-compose -f docker-compose.test.yml up
+```
+
+The test Postgres instance initializes tables from `init-test-db.sql`.
+
 ## OpenAPI Integration
 
 ### OpenAPI-First Development
