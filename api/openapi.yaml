@@ -1,0 +1,486 @@
+openapi: 3.0.3
+info:
+  title: Athena PeerTube Backend API
+  description: Authentication endpoints for Athena PeerTube backend in Go
+  version: 1.0.0
+  contact:
+    name: Athena Team
+  license:
+    name: MIT
+
+servers:
+  - url: http://localhost:8080
+    description: Development server
+  - url: https://api.athena.example.com
+    description: Production server
+
+security:
+  - bearerAuth: []
+
+paths:
+  /auth/register:
+    post:
+      tags:
+        - Authentication
+      summary: Register a new user
+      description: Create a new user account with username, email, and password
+      operationId: register
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+            examples:
+              valid_registration:
+                summary: Valid registration request
+                value:
+                  username: "johndoe"
+                  email: "john@example.com"
+                  password: "securepassword123"
+                  display_name: "John Doe"
+      responses:
+        '201':
+          description: User registered successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+              examples:
+                successful_registration:
+                  summary: Successful registration response
+                  value:
+                    user:
+                      id: "user20240101120000"
+                      username: "johndoe"
+                      email: "john@example.com"
+                      display_name: "John Doe"
+                      role: "user"
+                      is_active: true
+                      created_at: "2024-01-01T12:00:00Z"
+                      updated_at: "2024-01-01T12:00:00Z"
+                    access_token: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+                    refresh_token: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+                    expires_in: 900
+        '400':
+          description: Invalid request data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                missing_fields:
+                  summary: Missing required fields
+                  value:
+                    error:
+                      code: "MISSING_FIELDS"
+                      message: "Username, email, and password are required"
+                      details: {}
+        '409':
+          description: User already exists
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /auth/login:
+    post:
+      tags:
+        - Authentication
+      summary: Authenticate user
+      description: Login with email and password to receive access and refresh tokens
+      operationId: login
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+            examples:
+              valid_login:
+                summary: Valid login request
+                value:
+                  email: "john@example.com"
+                  password: "securepassword123"
+      responses:
+        '200':
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        '400':
+          description: Invalid request data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /auth/refresh:
+    post:
+      tags:
+        - Authentication
+      summary: Refresh access token
+      description: Use refresh token to get a new access token
+      operationId: refreshToken
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefreshTokenRequest'
+            examples:
+              valid_refresh:
+                summary: Valid refresh token request
+                value:
+                  refresh_token: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+      responses:
+        '200':
+          description: Token refreshed successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenResponse'
+        '400':
+          description: Invalid request data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Invalid or expired refresh token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /auth/logout:
+    post:
+      tags:
+        - Authentication
+      summary: Logout user
+      description: Invalidate user session and tokens
+      operationId: logout
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Logout successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LogoutResponse'
+        '401':
+          description: Unauthorized - invalid or missing token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /health:
+    get:
+      tags:
+        - Health
+      summary: Health check
+      description: Check if the service is alive
+      operationId: healthCheck
+      security: []
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+
+  /ready:
+    get:
+      tags:
+        - Health
+      summary: Readiness check
+      description: Check if the service is ready to handle requests
+      operationId: readinessCheck
+      security: []
+      responses:
+        '200':
+          description: Service is ready
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReadinessResponse'
+        '503':
+          description: Service is not ready
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT token for authentication
+
+  schemas:
+    User:
+      type: object
+      properties:
+        id:
+          type: string
+          description: Unique user identifier
+          example: "user123"
+        username:
+          type: string
+          description: Username (unique)
+          example: "johndoe"
+        email:
+          type: string
+          format: email
+          description: User email address
+          example: "john@example.com"
+        display_name:
+          type: string
+          description: User's display name
+          example: "John Doe"
+        avatar:
+          type: string
+          description: URL to user's avatar image
+          example: "https://example.com/avatar.jpg"
+        bio:
+          type: string
+          description: User biography
+          example: "Software developer and video enthusiast"
+        role:
+          $ref: '#/components/schemas/UserRole'
+        is_active:
+          type: boolean
+          description: Whether the user account is active
+          example: true
+        created_at:
+          type: string
+          format: date-time
+          description: Account creation timestamp
+          example: "2024-01-01T12:00:00Z"
+        updated_at:
+          type: string
+          format: date-time
+          description: Last account update timestamp
+          example: "2024-01-01T12:00:00Z"
+      required:
+        - id
+        - username
+        - email
+        - role
+        - is_active
+        - created_at
+        - updated_at
+
+    UserRole:
+      type: string
+      enum:
+        - user
+        - admin
+        - moderator
+      description: User role determining permissions
+      example: "user"
+
+    LoginRequest:
+      type: object
+      properties:
+        email:
+          type: string
+          format: email
+          description: User's email address
+          example: "john@example.com"
+        password:
+          type: string
+          minLength: 8
+          description: User's password
+          example: "securepassword123"
+      required:
+        - email
+        - password
+
+    RegisterRequest:
+      type: object
+      properties:
+        username:
+          type: string
+          minLength: 3
+          maxLength: 50
+          pattern: '^[a-zA-Z0-9_-]+$'
+          description: Unique username
+          example: "johndoe"
+        email:
+          type: string
+          format: email
+          description: User's email address
+          example: "john@example.com"
+        password:
+          type: string
+          minLength: 8
+          description: User's password
+          example: "securepassword123"
+        display_name:
+          type: string
+          maxLength: 100
+          description: User's display name
+          example: "John Doe"
+      required:
+        - username
+        - email
+        - password
+
+    RefreshTokenRequest:
+      type: object
+      properties:
+        refresh_token:
+          type: string
+          description: JWT refresh token
+          example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+      required:
+        - refresh_token
+
+    AuthResponse:
+      type: object
+      properties:
+        user:
+          $ref: '#/components/schemas/User'
+        access_token:
+          type: string
+          description: JWT access token
+          example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+        refresh_token:
+          type: string
+          description: JWT refresh token
+          example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+        expires_in:
+          type: integer
+          description: Access token expiration time in seconds
+          example: 900
+      required:
+        - user
+        - access_token
+        - refresh_token
+        - expires_in
+
+    TokenResponse:
+      type: object
+      properties:
+        access_token:
+          type: string
+          description: New JWT access token
+          example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+        refresh_token:
+          type: string
+          description: New JWT refresh token
+          example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+        expires_in:
+          type: integer
+          description: Access token expiration time in seconds
+          example: 900
+      required:
+        - access_token
+        - refresh_token
+        - expires_in
+
+    LogoutResponse:
+      type: object
+      properties:
+        message:
+          type: string
+          description: Logout success message
+          example: "Logged out successfully"
+        user_id:
+          type: string
+          description: ID of the logged out user
+          example: "user123"
+      required:
+        - message
+
+    HealthResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: ["healthy"]
+          example: "healthy"
+        timestamp:
+          type: string
+          format: date-time
+          example: "2024-01-01T12:00:00Z"
+      required:
+        - status
+        - timestamp
+
+    ReadinessResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: ["ready", "not_ready"]
+          example: "ready"
+        checks:
+          type: object
+          properties:
+            database:
+              type: string
+              enum: ["healthy", "unhealthy"]
+              example: "healthy"
+            redis:
+              type: string
+              enum: ["healthy", "unhealthy"]
+              example: "healthy"
+            ipfs:
+              type: string
+              enum: ["healthy", "unhealthy"]
+              example: "healthy"
+        timestamp:
+          type: string
+          format: date-time
+          example: "2024-01-01T12:00:00Z"
+      required:
+        - status
+        - checks
+        - timestamp
+
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+              description: Error code identifier
+              example: "INVALID_CREDENTIALS"
+            message:
+              type: string
+              description: Human-readable error message
+              example: "Invalid email or password"
+            details:
+              type: object
+              additionalProperties: true
+              description: Additional error details
+              example: {}
+          required:
+            - code
+            - message
+            - details
+      required:
+        - error
