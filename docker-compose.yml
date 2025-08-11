@@ -75,8 +75,10 @@ services:
       DATABASE_URL: postgres://athena_user:athena_password@postgres:5432/athena?sslmode=disable
       REDIS_URL: redis://redis:6379/0
     volumes:
+      - ./scripts:/app/scripts
       - uploads:/app/uploads
       - processed:/app/processed
+    entrypoint: ["/app/scripts/entrypoint.sh"]
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
       interval: 30s
