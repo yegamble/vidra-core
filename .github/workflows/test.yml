@@ -60,6 +60,11 @@ jobs:
     - name: Install dependencies
       run: go mod download
 
+    - name: Install PostgreSQL client
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y postgresql-client
+
     - name: Wait for services
       run: |
         # Wait for PostgreSQL
@@ -81,6 +86,11 @@ jobs:
           echo "Waiting for Redis... ($i/30)"
           sleep 2
         done
+
+    - name: Initialize test database
+      run: psql -h localhost -p 5433 -U test_user -d athena_test -f init-test-db.sql
+      env:
+        PGPASSWORD: test_password
 
     - name: Run tests
       run: |
