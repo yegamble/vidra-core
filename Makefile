@@ -1,4 +1,4 @@
-.PHONY: help deps lint test build docker migrate generate clean
+.PHONY: help deps lint test build docker docker-up docker-down migrate generate clean
 
 # Default target
 help: ## Display this help message
@@ -62,6 +62,27 @@ build: ## Build the server binary
 
 docker: ## Build Docker image
 	docker build -t athena-server .
+
+docker-up: ## Start docker-compose services and wait for health checks
+	docker-compose up -d
+	@echo "Waiting for services to be healthy..."
+	@services=$$(docker-compose ps --services); \
+	for service in $$services; do \
+		echo "Waiting for $$service..."; \
+		container=$$(docker-compose ps -q $$service); \
+		for i in $$(seq 1 30); do \
+			status=$$(docker inspect --format='{{if .State.Health}}{{.State.Health.Status}}{{else}}healthy{{end}}' $$container); \
+			if [ "$$status" = "healthy" ]; then \
+				echo "$$service is healthy"; \
+				break; \
+			fi; \
+			echo "Waiting for $$service health check... ($$i/30)"; \
+			sleep 2; \
+		done; \
+	done
+
+docker-down: ## Stop docker-compose services
+	docker-compose down
 
 migrate: ## Run database migrations (requires atlas)
 	@if command -v atlas >/dev/null 2>&1; then \
