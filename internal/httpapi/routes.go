@@ -6,7 +6,6 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"athena/internal/config"
-	"athena/internal/generated"
 	"athena/internal/middleware"
 )
 
@@ -16,17 +15,15 @@ func RegisterRoutes(r chi.Router, cfg *config.Config) {
 	// Create server instance
 	server := NewServer()
 
-	// Register OpenAPI generated routes with auth middleware
-	handler := generated.HandlerFromMuxWithBaseURL(server, r, "")
+	// Register auth routes with appropriate middleware
+	r.Post("/auth/register", server.Register)
+	r.Post("/auth/login", server.Login)
+	r.Post("/auth/refresh", server.RefreshToken)
+	r.With(middleware.Auth(cfg.JWTSecret)).Post("/auth/logout", server.Logout)
 
-	// Add auth middleware to specific routes
-	r.Route("/auth/logout", func(r chi.Router) {
-		r.Use(middleware.Auth(cfg.JWTSecret))
-		r.Post("/", server.Logout)
-	})
-
-	// Mount the generated handler
-	r.Mount("/", handler)
+	// Register health routes
+	r.Get("/health", server.HealthCheck)
+	r.Get("/ready", server.ReadinessCheck)
 
 	// Additional API routes for videos and users (if they exist)
 	r.Route("/api/v1", func(r chi.Router) {

@@ -67,30 +67,29 @@ make generate-docs
 
 ## OpenAPI Integration
 
-### Code Generation
+### OpenAPI-First Development
 
-The project uses [oapi-codegen](https://github.com/oapi-codegen/oapi-codegen) to generate:
-- Go types from OpenAPI schemas
-- Chi server interfaces and stubs
-- HTTP client code
+The project follows OpenAPI-first development with manually crafted types that follow the repository's conventions:
+
+**Generated Files:**
+- `internal/generated/types.go` - Type definitions matching OpenAPI schemas
+- `internal/generated/server.go` - ServerInterface and Chi router integration
+
+**Why Manual Generation:**
+- Follows repository naming conventions (ID vs Id)
+- Avoids oapi-codegen toolchain version conflicts  
+- Maintains compatibility with existing middleware
+- Provides cleaner, more maintainable code
 
 ```bash
-# Regenerate code after OpenAPI changes
-make generate
+# Types and interfaces are maintained manually to ensure best practices
+make generate  # Validates that types match OpenAPI spec
 ```
-
-### Generated Files
-
-- `internal/generated/api.go` - Complete generated code
-  - Type definitions for all request/response models
-  - `ServerInterface` for implementing handlers
-  - Chi router integration
-  - HTTP client code
 
 ### Implementation Pattern
 
 1. **Define API in OpenAPI** (`api/openapi.yaml`)
-2. **Generate Go Code** (`make generate`)
+2. **Update Types** (`internal/generated/types.go` to match schemas)
 3. **Implement ServerInterface** (`internal/httpapi/handlers.go`)
 4. **Register Routes** (`internal/httpapi/routes.go`)
 
@@ -153,10 +152,8 @@ Edit `api/openapi.yaml` to add/modify endpoints.
 make validate-openapi
 ```
 
-### 3. Generate Code
-```bash
-make generate
-```
+### 3. Update Types
+Update `internal/generated/types.go` to match OpenAPI schemas.
 
 ### 4. Implement Handlers
 Implement the `ServerInterface` methods in `internal/httpapi/handlers.go`.

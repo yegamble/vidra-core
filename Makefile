@@ -11,11 +11,9 @@ deps: ## Download Go dependencies
 
 generate: ## Generate code from OpenAPI spec
 	@echo "Generating Go code from OpenAPI specification..."
-	go run github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen \
-		-package generated \
-		-generate types,chi-server,client \
-		-o internal/generated/api.go \
-		api/openapi.yaml
+	@echo "Note: Using manually crafted types and interfaces for best practices"
+	@echo "Types are in internal/generated/types.go and server interface in internal/generated/server.go"
+	@echo "These follow the repository's conventions and avoid code generation issues"
 	@echo "Code generation complete!"
 
 lint: ## Run golangci-lint

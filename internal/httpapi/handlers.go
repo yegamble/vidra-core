@@ -32,7 +32,7 @@ func (s *Server) Login(w http.ResponseWriter, r *http.Request) {
 	}
 
 	user := generated.User{
-		Id:          "user123",
+		ID:          "user123",
 		Username:    "testuser",
 		Email:       req.Email,
 		DisplayName: stringPtr("Test User"),
@@ -66,7 +66,7 @@ func (s *Server) Register(w http.ResponseWriter, r *http.Request) {
 	}
 
 	user := generated.User{
-		Id:          "user" + time.Now().Format("20060102150405"),
+		ID:          "user" + time.Now().Format("20060102150405"),
 		Username:    req.Username,
 		Email:       req.Email,
 		DisplayName: req.DisplayName,
@@ -78,8 +78,8 @@ func (s *Server) Register(w http.ResponseWriter, r *http.Request) {
 
 	response := generated.AuthResponse{
 		User:         user,
-		AccessToken:  generateJWT(user.Id, 15*time.Minute),
-		RefreshToken: generateJWT(user.Id, 24*time.Hour),
+		AccessToken:  generateJWT(user.ID, 15*time.Minute),
+		RefreshToken: generateJWT(user.ID, 24*time.Hour),
 		ExpiresIn:    15 * 60,
 	}
 
@@ -114,7 +114,7 @@ func (s *Server) Logout(w http.ResponseWriter, r *http.Request) {
 
 	response := generated.LogoutResponse{
 		Message: "Logged out successfully",
-		UserId:  &userID,
+		UserID:  &userID,
 	}
 
 	WriteJSON(w, http.StatusOK, response)
@@ -123,7 +123,7 @@ func (s *Server) Logout(w http.ResponseWriter, r *http.Request) {
 // HealthCheck implements ServerInterface.HealthCheck
 func (s *Server) HealthCheck(w http.ResponseWriter, r *http.Request) {
 	response := generated.HealthResponse{
-		Status:    generated.HealthResponseStatusHealthy,
+		Status:    generated.HealthStatusHealthy,
 		Timestamp: time.Now(),
 	}
 
@@ -133,20 +133,16 @@ func (s *Server) HealthCheck(w http.ResponseWriter, r *http.Request) {
 // ReadinessCheck implements ServerInterface.ReadinessCheck
 func (s *Server) ReadinessCheck(w http.ResponseWriter, r *http.Request) {
 	// In a real implementation, you would check actual services
-	dbStatus := generated.ReadinessResponseChecksDatabaseHealthy
-	redisStatus := generated.ReadinessResponseChecksRedisHealthy
-	ipfsStatus := generated.ReadinessResponseChecksIpfsHealthy
+	dbStatus := generated.ServiceStatusHealthy
+	redisStatus := generated.ServiceStatusHealthy
+	ipfsStatus := generated.ServiceStatusHealthy
 
 	response := generated.ReadinessResponse{
-		Status: generated.Ready,
-		Checks: struct {
-			Database *generated.ReadinessResponseChecksDatabase `json:"database,omitempty"`
-			Ipfs     *generated.ReadinessResponseChecksIpfs     `json:"ipfs,omitempty"`
-			Redis    *generated.ReadinessResponseChecksRedis    `json:"redis,omitempty"`
-		}{
+		Status: generated.ReadinessStatusReady,
+		Checks: generated.ReadinessResponseChecks{
 			Database: &dbStatus,
 			Redis:    &redisStatus,
-			Ipfs:     &ipfsStatus,
+			IPFS:     &ipfsStatus,
 		},
 		Timestamp: time.Now(),
 	}

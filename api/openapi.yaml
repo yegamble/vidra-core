@@ -176,6 +176,7 @@ paths:
           application/json:
             schema:
               type: object
+              properties: {}
       responses:
         '200':
           description: Logout successful
