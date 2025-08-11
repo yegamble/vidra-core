@@ -67,11 +67,11 @@ func TestLoginRequest(t *testing.T) {
 
 func TestAuthResponse(t *testing.T) {
 	user := User{
-		ID:       "user123",
-		Username: "testuser",
-		Email:    "test@example.com",
-		Role:     UserRoleUser,
-		IsActive: true,
+		ID:        "user123",
+		Username:  "testuser",
+		Email:     "test@example.com",
+		Role:      UserRoleUser,
+		IsActive:  true,
 		CreatedAt: time.Now(),
 		UpdatedAt: time.Now(),
 	}
