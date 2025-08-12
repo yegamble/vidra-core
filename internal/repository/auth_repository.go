@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/jmoiron/sqlx"
-	"github.com/yosefgamble/athena/internal/usecase"
+	"athena/internal/usecase"
 )
 
 type authRepository struct {

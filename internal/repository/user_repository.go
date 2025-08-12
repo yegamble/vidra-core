@@ -6,8 +6,8 @@ import (
 	"fmt"
 
 	"github.com/jmoiron/sqlx"
-	"github.com/yosefgamble/athena/internal/domain"
-	"github.com/yosefgamble/athena/internal/usecase"
+	"athena/internal/domain"
+	"athena/internal/usecase"
 )
 
 type userRepository struct {
