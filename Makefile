@@ -119,16 +119,17 @@ dev: ## Run development server with live reload
 		air; \
 	else \
 		echo "Air not installed. Installing..."; \
-		go install github.com/cosmtrek/air@latest; \
+		GOTOOLCHAIN=auto go install github.com/air-verse/air@latest; \
 		air; \
 	fi
 
 install-tools: ## Install development tools
-	go install github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@latest
-	go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
-	go install github.com/go-swagger/go-swagger/cmd/swagger@latest
-	go install github.com/cosmtrek/air@latest
-	@echo "Development tools installed!"
+	@echo "Installing development tools..."
+	@GOTOOLCHAIN=auto go install github.com/air-verse/air@latest || echo "Warning: Failed to install air"
+	@GOTOOLCHAIN=auto go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest || echo "Warning: Failed to install golangci-lint"
+	@GOTOOLCHAIN=auto go install github.com/go-swagger/go-swagger/cmd/swagger@latest || echo "Warning: Failed to install swagger"
+	@GOTOOLCHAIN=auto go install github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@latest || echo "Warning: Failed to install oapi-codegen"
+	@echo "Development tools installation completed!"
 
 # CI/CD targets
 ci-test: deps generate lint test ## Run CI test pipeline
