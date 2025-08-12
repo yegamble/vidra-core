@@ -8,6 +8,7 @@ import (
 	"athena/internal/domain"
 	"athena/internal/testutil"
 	"athena/internal/usecase"
+
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -307,7 +308,7 @@ func TestAuthRepository_SessionUpsert(t *testing.T) {
 	assert.Equal(t, user.ID, userID)
 }
 
-func createTestUserForAuth(t *testing.T, repo *userRepository, ctx context.Context) *domain.User {
+func createTestUserForAuth(t *testing.T, repo usecase.UserRepository, ctx context.Context) *domain.User {
 	t.Helper()
 
 	user := &domain.User{
@@ -326,7 +327,7 @@ func createTestUserForAuth(t *testing.T, repo *userRepository, ctx context.Conte
 	return user
 }
 
-func createTestRefreshToken(t *testing.T, repo *authRepository, ctx context.Context, userID, token string) *usecase.RefreshToken {
+func createTestRefreshToken(t *testing.T, repo usecase.AuthRepository, ctx context.Context, userID, token string) *usecase.RefreshToken {
 	t.Helper()
 
 	refreshToken := &usecase.RefreshToken{

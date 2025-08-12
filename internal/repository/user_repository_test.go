@@ -7,6 +7,7 @@ import (
 
 	"athena/internal/domain"
 	"athena/internal/testutil"
+	"athena/internal/usecase"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -233,7 +234,7 @@ func TestUserRepository_CreateDuplicateUsername(t *testing.T) {
 	assert.Contains(t, err.Error(), "duplicate")
 }
 
-func createTestUser(t *testing.T, repo *userRepository, ctx context.Context, username, email string) *domain.User {
+func createTestUser(t *testing.T, repo usecase.UserRepository, ctx context.Context, username, email string) *domain.User {
 	t.Helper()
 
 	user := &domain.User{

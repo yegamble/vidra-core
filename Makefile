@@ -117,10 +117,14 @@ clean: ## Clean build artifacts
 dev: ## Run development server with live reload
 	@if command -v air >/dev/null 2>&1; then \
 		air; \
+	elif [ -f "$(shell go env GOPATH)/bin/air" ]; then \
+		$(shell go env GOPATH)/bin/air; \
 	else \
 		echo "Air not installed. Installing..."; \
-		GOTOOLCHAIN=auto go install github.com/air-verse/air@latest; \
-		air; \
+		GOTOOLCHAIN=auto go install github.com/air-verse/air@latest && \
+		$(shell go env GOPATH)/bin/air || \
+		echo "Failed to install air. Running with 'go run' instead..." && \
+		go run ./cmd/server; \
 	fi
 
 install-tools: ## Install development tools
