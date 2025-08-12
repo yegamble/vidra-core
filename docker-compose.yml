@@ -3,40 +3,27 @@ version: '3.8'
 services:
   postgres:
     image: postgres:15-alpine
-    container_name: athena-postgres
     restart: unless-stopped
     environment:
       POSTGRES_DB: athena
       POSTGRES_USER: athena_user
       POSTGRES_PASSWORD: athena_password
-      POSTGRES_INITDB_ARGS: "--encoding=UTF-8"
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./init-db.sql:/docker-entrypoint-initdb.d/init-db.sql:ro
+      - ./init-shared-db.sql:/docker-entrypoint-initdb.d/init-shared-db.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U athena_user -d athena"]
       interval: 10s
       timeout: 5s
-      retries: 5
-      start_period: 30s
-    deploy:
-      resources:
-        limits:
-          memory: 2G
-          cpus: '1.0'
-        reservations:
-          memory: 512M
-          cpus: '0.5'
-    networks:
-      - athena-network
+      retries: 3
+      start_period: 20s
 
   redis:
     image: redis:7-alpine
-    container_name: athena-redis
     restart: unless-stopped
-    command: redis-server --appendonly yes --appendfsync everysec --maxmemory 1gb --maxmemory-policy allkeys-lru
+    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
     ports:
       - "6379:6379"
     volumes:
@@ -45,22 +32,10 @@ services:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
       timeout: 3s
-      retries: 5
-      start_period: 10s
-    deploy:
-      resources:
-        limits:
-          memory: 1G
-          cpus: '0.5'
-        reservations:
-          memory: 256M
-          cpus: '0.25'
-    networks:
-      - athena-network
+      retries: 3
 
   app:
     build: .
-    container_name: athena-app
     restart: unless-stopped
     depends_on:
       postgres:
@@ -69,32 +44,12 @@ services:
         condition: service_healthy
     ports:
       - "8080:8080"
-    env_file:
-      - .env
     environment:
       DATABASE_URL: postgres://athena_user:athena_password@postgres:5432/athena?sslmode=disable
       REDIS_URL: redis://redis:6379/0
     volumes:
-      - ./scripts:/app/scripts
       - uploads:/app/uploads
       - processed:/app/processed
-    entrypoint: ["/app/scripts/entrypoint.sh"]
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 60s
-    deploy:
-      resources:
-        limits:
-          memory: 4G
-          cpus: '2.0'
-        reservations:
-          memory: 1G
-          cpus: '1.0'
-    networks:
-      - athena-network
 
 volumes:
   postgres_data:

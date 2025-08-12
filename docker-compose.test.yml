@@ -3,44 +3,33 @@ version: '3.8'
 services:
   postgres-test:
     image: postgres:15-alpine
-    container_name: postgres-test
+    tmpfs:
+      - /var/lib/postgresql/data
     environment:
       POSTGRES_DB: athena_test
       POSTGRES_USER: test_user
       POSTGRES_PASSWORD: test_password
+      POSTGRES_HOST_AUTH_METHOD: trust
     ports:
       - "5433:5432"
     volumes:
-      - postgres_test_data:/var/lib/postgresql/data
-      - ./init-test-db.sql:/docker-entrypoint-initdb.d/init-test-db.sql:ro
+      - ./init-shared-db.sql:/docker-entrypoint-initdb.d/init-shared-db.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U test_user -d athena_test"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-    networks:
-      - test-network
+      interval: 3s
+      timeout: 2s
+      retries: 10
+      start_period: 10s
 
   redis-test:
     image: redis:7-alpine
-    container_name: redis-test
+    tmpfs:
+      - /data
     ports:
       - "6380:6379"
-    command: redis-server --appendonly yes
-    volumes:
-      - redis_test_data:/data
+    command: redis-server --save ""
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 3s
+      interval: 3s
+      timeout: 2s
       retries: 5
-    networks:
-      - test-network
-
-volumes:
-  postgres_test_data:
-  redis_test_data:
-
-networks:
-  test-network:
-    driver: bridge
