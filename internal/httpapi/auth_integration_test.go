@@ -10,6 +10,7 @@ import (
     "time"
 
     "golang.org/x/crypto/bcrypt"
+    "github.com/google/uuid"
 
     "athena/internal/domain"
     "athena/internal/middleware"
@@ -42,7 +43,7 @@ func TestLogin_Integration_PersistsRefreshToken(t *testing.T) {
     pw := "secret-password-1"
     hash, _ := bcrypt.GenerateFromPassword([]byte(pw), bcrypt.DefaultCost)
 
-    u := &domain.User{ID: "u_" + time.Now().Format("150405"), Username: uname, Email: email, Role: domain.RoleUser, IsActive: true, CreatedAt: time.Now(), UpdatedAt: time.Now()}
+    u := &domain.User{ID: uuid.NewString(), Username: uname, Email: email, Role: domain.RoleUser, IsActive: true, CreatedAt: time.Now(), UpdatedAt: time.Now()}
     if err := userRepo.Create(context.Background(), u, string(hash)); err != nil {
         t.Fatalf("seed create failed: %v", err)
     }
@@ -109,7 +110,7 @@ func TestLogin_Integration_InvalidCredentials_WrongPassword(t *testing.T) {
     email := "wrongpw_" + time.Now().Format("150405") + "@example.com"
     pw := "correct-password"
     hash, _ := bcrypt.GenerateFromPassword([]byte(pw), bcrypt.DefaultCost)
-    u := &domain.User{ID: "u_" + time.Now().Format("150405"), Username: "wrongpw", Email: email, Role: domain.RoleUser, IsActive: true, CreatedAt: time.Now(), UpdatedAt: time.Now()}
+    u := &domain.User{ID: uuid.NewString(), Username: "wrongpw", Email: email, Role: domain.RoleUser, IsActive: true, CreatedAt: time.Now(), UpdatedAt: time.Now()}
     if err := userRepo.Create(context.Background(), u, string(hash)); err != nil {
         t.Fatalf("seed create failed: %v", err)
     }
@@ -155,7 +156,7 @@ func TestRefresh_Integration_RotatesToken(t *testing.T) {
     email := "refresh_" + time.Now().Format("150405") + "@example.com"
     pw := "super-secret"
     hash, _ := bcrypt.GenerateFromPassword([]byte(pw), bcrypt.DefaultCost)
-    u := &domain.User{ID: "u_" + time.Now().Format("150405"), Username: "refresh_user", Email: email, Role: domain.RoleUser, IsActive: true, CreatedAt: time.Now(), UpdatedAt: time.Now()}
+    u := &domain.User{ID: uuid.NewString(), Username: "refresh_user", Email: email, Role: domain.RoleUser, IsActive: true, CreatedAt: time.Now(), UpdatedAt: time.Now()}
     if err := userRepo.Create(context.Background(), u, string(hash)); err != nil {
         t.Fatalf("seed create failed: %v", err)
     }
@@ -246,7 +247,7 @@ func TestLogout_Integration_RevokesTokens(t *testing.T) {
     s := NewServer(userRepo, authRepo)
 
     // Use the middleware stubbed userID = "user123"
-    uid := "user123"
+    uid := uuid.NewString()
     u := &domain.User{ID: uid, Username: "logout_user", Email: "logout@example.com", Role: domain.RoleUser, IsActive: true, CreatedAt: time.Now(), UpdatedAt: time.Now()}
     if err := userRepo.Create(context.Background(), u, "hash"); err != nil {
         t.Fatalf("seed create failed: %v", err)

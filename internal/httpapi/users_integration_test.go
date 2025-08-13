@@ -10,6 +10,7 @@ import (
     "time"
 
     "github.com/go-chi/chi/v5"
+    "github.com/google/uuid"
 
     "athena/internal/domain"
     "athena/internal/middleware"
@@ -122,7 +123,7 @@ func TestGetUserHandler_Integration_GetsFromDB(t *testing.T) {
 
     // Seed a user directly via repo
     u := &domain.User{
-        ID:          "u_" + time.Now().Format("20060102150405"),
+        ID:          uuid.NewString(),
         Username:    "get_integ",
         Email:       "get_integ@example.com",
         DisplayName: "Getter",
@@ -163,7 +164,7 @@ func TestGetCurrentUserHandler_Integration_ReturnsDBUser(t *testing.T) {
     repo := repository.NewUserRepository(td.DB)
 
     u := &domain.User{
-        ID:          "me_" + time.Now().Format("20060102150405"),
+        ID:          uuid.NewString(),
         Username:    "me_integ",
         Email:       "me_integ@example.com",
         DisplayName: "Me",
@@ -203,7 +204,7 @@ func TestUpdateCurrentUserHandler_Integration_UpdatesDBUser(t *testing.T) {
     repo := repository.NewUserRepository(td.DB)
 
     u := &domain.User{
-        ID:          "upd_" + time.Now().Format("20060102150405"),
+        ID:          uuid.NewString(),
         Username:    "upd_integ",
         Email:       "upd_integ@example.com",
         DisplayName: "Before",
@@ -274,7 +275,8 @@ func TestGetCurrentUserHandler_Integration_NotFound(t *testing.T) {
 
     repo := repository.NewUserRepository(td.DB)
     req := httptest.NewRequest(http.MethodGet, "/api/v1/users/me", nil)
-    req = req.WithContext(context.WithValue(req.Context(), middleware.UserIDKey, "does-not-exist"))
+    // Use a valid but non-existent UUID to ensure repository returns ErrUserNotFound
+    req = req.WithContext(context.WithValue(req.Context(), middleware.UserIDKey, uuid.NewString()))
     rr := httptest.NewRecorder()
     GetCurrentUserHandler(repo).ServeHTTP(rr, req)
 
@@ -289,7 +291,7 @@ func TestUpdateCurrentUserHandler_Integration_InvalidJSON(t *testing.T) {
 
     repo := repository.NewUserRepository(td.DB)
     // Seed a user so lookup works; invalid JSON should be caught before update
-    u := &domain.User{ID: "badjson_" + time.Now().Format("150405"), Username: "badjson", Email: "badjson@example.com", Role: domain.RoleUser, IsActive: true, CreatedAt: time.Now(), UpdatedAt: time.Now()}
+    u := &domain.User{ID: uuid.NewString(), Username: "badjson", Email: "badjson@example.com", Role: domain.RoleUser, IsActive: true, CreatedAt: time.Now(), UpdatedAt: time.Now()}
     if err := repo.Create(context.Background(), u, "hash"); err != nil {
         t.Fatalf("seed create failed: %v", err)
     }
