@@ -253,9 +253,9 @@ func TestLogout_Integration_RevokesTokens(t *testing.T) {
         t.Fatalf("seed create failed: %v", err)
     }
 
-    // Seed two refresh tokens
-    t1 := &usecase.RefreshToken{ID: "rt1", UserID: uid, Token: "tok1", ExpiresAt: time.Now().Add(24*time.Hour), CreatedAt: time.Now()}
-    t2 := &usecase.RefreshToken{ID: "rt2", UserID: uid, Token: "tok2", ExpiresAt: time.Now().Add(24*time.Hour), CreatedAt: time.Now()}
+    // Seed two refresh tokens (use valid UUIDs for IDs)
+    t1 := &usecase.RefreshToken{ID: uuid.NewString(), UserID: uid, Token: uuid.NewString(), ExpiresAt: time.Now().Add(24*time.Hour), CreatedAt: time.Now()}
+    t2 := &usecase.RefreshToken{ID: uuid.NewString(), UserID: uid, Token: uuid.NewString(), ExpiresAt: time.Now().Add(24*time.Hour), CreatedAt: time.Now()}
     if err := authRepo.CreateRefreshToken(context.Background(), t1); err != nil { t.Fatalf("seed rt1: %v", err) }
     if err := authRepo.CreateRefreshToken(context.Background(), t2); err != nil { t.Fatalf("seed rt2: %v", err) }
 
@@ -269,10 +269,10 @@ func TestLogout_Integration_RevokesTokens(t *testing.T) {
     }
 
     // Both tokens should now be revoked (GetRefreshToken should not return them)
-    if _, err := authRepo.GetRefreshToken(context.Background(), "tok1"); err == nil {
+    if _, err := authRepo.GetRefreshToken(context.Background(), t1.Token); err == nil {
         t.Fatalf("expected tok1 revoked")
     }
-    if _, err := authRepo.GetRefreshToken(context.Background(), "tok2"); err == nil {
+    if _, err := authRepo.GetRefreshToken(context.Background(), t2.Token); err == nil {
         t.Fatalf("expected tok2 revoked")
     }
 }
