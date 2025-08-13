@@ -1,19 +1,30 @@
 package httpapi
 
 import (
-	"time"
+    "fmt"
+    "time"
 
-	"github.com/go-chi/chi/v5"
+    "github.com/go-chi/chi/v5"
+    "github.com/jmoiron/sqlx"
+    _ "github.com/lib/pq"
 
-	"athena/internal/config"
-	"athena/internal/middleware"
+    "athena/internal/config"
+    "athena/internal/middleware"
+    "athena/internal/repository"
 )
 
 func RegisterRoutes(r chi.Router, cfg *config.Config) {
-	r.Use(middleware.RateLimit(time.Minute, 100))
+    r.Use(middleware.RateLimit(time.Minute, 100))
 
-	// Create server instance
-	server := NewServer()
+    // Create server instance
+    server := NewServer()
+
+    // Initialize database and repositories for handlers that need them
+    db, err := sqlx.Connect("postgres", cfg.DatabaseURL)
+    if err != nil {
+        panic(fmt.Errorf("failed to connect to database: %w", err))
+    }
+    userRepo := repository.NewUserRepository(db)
 
 	// Register auth routes with appropriate middleware
 	r.Post("/auth/register", server.Register)
@@ -40,11 +51,11 @@ func RegisterRoutes(r chi.Router, cfg *config.Config) {
 			r.With(middleware.Auth(cfg.JWTSecret)).Post("/{id}/complete", CompleteVideoUpload)
 		})
 
-		r.Route("/users", func(r chi.Router) {
-			r.With(middleware.Auth(cfg.JWTSecret)).Get("/me", GetCurrentUser)
-			r.With(middleware.Auth(cfg.JWTSecret)).Put("/me", UpdateCurrentUser)
-			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{id}", GetUser)
-			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{id}/videos", GetUserVideos)
-		})
-	})
+        r.Route("/users", func(r chi.Router) {
+            r.With(middleware.Auth(cfg.JWTSecret)).Get("/me", GetCurrentUserHandler(userRepo))
+            r.With(middleware.Auth(cfg.JWTSecret)).Put("/me", UpdateCurrentUserHandler(userRepo))
+            r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{id}", GetUserHandler(userRepo))
+            r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{id}/videos", GetUserVideos)
+        })
+    })
 }
