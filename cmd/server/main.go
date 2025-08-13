@@ -12,6 +12,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/jmoiron/sqlx"
+	_ "github.com/lib/pq"
 
 	"athena/internal/config"
 	"athena/internal/httpapi"
@@ -34,7 +36,13 @@ func main() {
 	router.Use(middleware.Compress(5))
 	router.Use(appMiddleware.CORS())
 
-	httpapi.RegisterRoutes(router, cfg)
+	db, err := sqlx.Connect("postgres", cfg.DatabaseURL)
+	if err != nil {
+		log.Fatalf("Failed to connect to database: %v", err)
+	}
+	defer db.Close()
+
+	httpapi.RegisterRoutes(router, cfg, db)
 
 	server := &http.Server{
 		Addr:         fmt.Sprintf(":%d", cfg.Port),

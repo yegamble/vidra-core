@@ -10,28 +10,34 @@ import (
 
 	"athena/internal/domain"
 	"athena/internal/middleware"
+	"athena/internal/usecase"
 )
 
-func GetCurrentUser(w http.ResponseWriter, r *http.Request) {
+// UserHandler handles user-related HTTP requests
+type UserHandler struct {
+	repo usecase.UserRepository
+}
+
+// NewUserHandler creates a new UserHandler
+func NewUserHandler(repo usecase.UserRepository) *UserHandler {
+	return &UserHandler{repo: repo}
+}
+
+// GetCurrentUser returns the authenticated user's profile
+func (h *UserHandler) GetCurrentUser(w http.ResponseWriter, r *http.Request) {
 	userID := r.Context().Value(middleware.UserIDKey).(string)
 
-	user := domain.User{
-		ID:          userID,
-		Username:    "testuser",
-		Email:       "test@example.com",
-		DisplayName: "Test User",
-		Avatar:      "https://example.com/avatar.jpg",
-		Bio:         "This is a test user bio",
-		Role:        domain.RoleUser,
-		IsActive:    true,
-		CreatedAt:   time.Now().AddDate(0, 0, -30),
-		UpdatedAt:   time.Now(),
+	user, err := h.repo.GetByID(r.Context(), userID)
+	if err != nil {
+		WriteError(w, MapDomainErrorToHTTP(err), err)
+		return
 	}
 
 	WriteJSON(w, http.StatusOK, user)
 }
 
-func UpdateCurrentUser(w http.ResponseWriter, r *http.Request) {
+// UpdateCurrentUser updates the authenticated user's profile
+func (h *UserHandler) UpdateCurrentUser(w http.ResponseWriter, r *http.Request) {
 	userID := r.Context().Value(middleware.UserIDKey).(string)
 
 	var req struct {
@@ -45,48 +51,53 @@ func UpdateCurrentUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user := domain.User{
-		ID:          userID,
-		Username:    "testuser",
-		Email:       "test@example.com",
-		DisplayName: req.DisplayName,
-		Avatar:      req.Avatar,
-		Bio:         req.Bio,
-		Role:        domain.RoleUser,
-		IsActive:    true,
-		CreatedAt:   time.Now().AddDate(0, 0, -30),
-		UpdatedAt:   time.Now(),
+	user, err := h.repo.GetByID(r.Context(), userID)
+	if err != nil {
+		WriteError(w, MapDomainErrorToHTTP(err), err)
+		return
+	}
+
+	user.DisplayName = req.DisplayName
+	user.Bio = req.Bio
+	user.Avatar = req.Avatar
+	user.UpdatedAt = time.Now()
+
+	if err := h.repo.Update(r.Context(), user); err != nil {
+		WriteError(w, MapDomainErrorToHTTP(err), err)
+		return
 	}
 
 	WriteJSON(w, http.StatusOK, user)
 }
 
-func GetUser(w http.ResponseWriter, r *http.Request) {
+// GetUser returns a public user profile by ID
+func (h *UserHandler) GetUser(w http.ResponseWriter, r *http.Request) {
 	userID := chi.URLParam(r, "id")
 	if userID == "" {
 		WriteError(w, http.StatusBadRequest, domain.NewDomainError("MISSING_USER_ID", "User ID is required"))
 		return
 	}
 
-	user := domain.User{
-		ID:          userID,
-		Username:    "publicuser",
-		DisplayName: "Public User",
-		Avatar:      "https://example.com/avatar.jpg",
-		Bio:         "This is a public user profile",
-		Role:        domain.RoleUser,
-		IsActive:    true,
-		CreatedAt:   time.Now().AddDate(0, 0, -60),
-		UpdatedAt:   time.Now().AddDate(0, 0, -1),
+	user, err := h.repo.GetByID(r.Context(), userID)
+	if err != nil {
+		WriteError(w, MapDomainErrorToHTTP(err), err)
+		return
 	}
 
 	WriteJSON(w, http.StatusOK, user)
 }
 
-func GetUserVideos(w http.ResponseWriter, r *http.Request) {
+// GetUserVideos returns videos for a specific user. The user existence is verified
+// using the repository before returning stubbed video data.
+func (h *UserHandler) GetUserVideos(w http.ResponseWriter, r *http.Request) {
 	userID := chi.URLParam(r, "id")
 	if userID == "" {
 		WriteError(w, http.StatusBadRequest, domain.NewDomainError("MISSING_USER_ID", "User ID is required"))
+		return
+	}
+
+	if _, err := h.repo.GetByID(r.Context(), userID); err != nil {
+		WriteError(w, MapDomainErrorToHTTP(err), err)
 		return
 	}
 

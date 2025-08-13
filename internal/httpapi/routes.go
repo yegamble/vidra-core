@@ -4,16 +4,22 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jmoiron/sqlx"
 
 	"athena/internal/config"
 	"athena/internal/middleware"
+	"athena/internal/repository"
 )
 
-func RegisterRoutes(r chi.Router, cfg *config.Config) {
+func RegisterRoutes(r chi.Router, cfg *config.Config, db *sqlx.DB) {
 	r.Use(middleware.RateLimit(time.Minute, 100))
 
 	// Create server instance
 	server := NewServer()
+
+	// Create user handler with repository
+	userRepo := repository.NewUserRepository(db)
+	userHandler := NewUserHandler(userRepo)
 
 	// Register auth routes with appropriate middleware
 	r.Post("/auth/register", server.Register)
@@ -41,10 +47,10 @@ func RegisterRoutes(r chi.Router, cfg *config.Config) {
 		})
 
 		r.Route("/users", func(r chi.Router) {
-			r.With(middleware.Auth(cfg.JWTSecret)).Get("/me", GetCurrentUser)
-			r.With(middleware.Auth(cfg.JWTSecret)).Put("/me", UpdateCurrentUser)
-			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{id}", GetUser)
-			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{id}/videos", GetUserVideos)
+			r.With(middleware.Auth(cfg.JWTSecret)).Get("/me", userHandler.GetCurrentUser)
+			r.With(middleware.Auth(cfg.JWTSecret)).Put("/me", userHandler.UpdateCurrentUser)
+			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{id}", userHandler.GetUser)
+			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{id}/videos", userHandler.GetUserVideos)
 		})
 	})
 }
