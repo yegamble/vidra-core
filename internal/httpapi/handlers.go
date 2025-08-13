@@ -279,9 +279,5 @@ func (s *Server) ReadinessCheck(w http.ResponseWriter, r *http.Request) {
 
 // Helper functions
 func generateJWT(userID string, duration time.Duration) string {
-	return "jwt-token-" + userID + "-" + time.Now().Format("20060102150405")
-}
-
-func stringPtr(s string) *string {
-	return &s
+    return "jwt-token-" + userID + "-" + time.Now().Format("20060102150405")
 }
