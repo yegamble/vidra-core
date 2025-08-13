@@ -68,6 +68,7 @@ jobs:
 
       - name: Run tests
         env:
+          TEST_DATABASE_URL: postgres://test_user:test_password@localhost:5432/athena_test?sslmode=disable
           DATABASE_URL: postgres://test_user:test_password@localhost:5432/athena_test?sslmode=disable
           REDIS_URL: redis://localhost:6379/0
           JWT_SECRET: test-jwt-secret-key
