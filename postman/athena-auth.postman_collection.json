@@ -1,0 +1,335 @@
+{
+  "info": {
+    "name": "Athena Auth API",
+    "_postman_id": "a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa",
+    "description": "Postman collection for Athena user auth API: register, login, refresh, logout with positive and negative tests.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8080",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "Register",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/register",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "register"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{username}}\",\n  \"email\": \"{{email}}\",\n  \"password\": \"{{password}}\",\n  \"display_name\": \"Test User\"\n}"
+            },
+            "description": "Creates a new user and returns access + refresh tokens."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "const ts = Date.now();",
+                  "if (!pm.environment.get('username')) pm.environment.set('username', `user_${ts}`);",
+                  "if (!pm.environment.get('email')) pm.environment.set('email', `user_${ts}@example.com`);",
+                  "if (!pm.environment.get('password')) pm.environment.set('password', 'Password123!');"
+                ],
+                "type": "text/javascript"
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 201', () => pm.response.to.have.status(201));",
+                  "pm.test('Returns JSON', () => pm.response.to.have.header('Content-Type'));",
+                  "const wrap = pm.response.json();",
+                  "pm.test('Response wrapped with data', () => pm.expect(wrap).to.have.property('data'));",
+                  "const json = wrap.data || {};",
+                  "pm.test('Has user + tokens', () => {",
+                  "  pm.expect(json).to.have.property('user');",
+                  "  pm.expect(json).to.have.property('access_token');",
+                  "  pm.expect(json).to.have.property('refresh_token');",
+                  "});",
+                  "pm.environment.set('user_id', json.user.id);",
+                  "pm.environment.set('access_token', json.access_token);",
+                  "pm.environment.set('refresh_token', json.refresh_token);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Login",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/login",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "login"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{email}}\",\n  \"password\": \"{{password}}\"\n}"
+            },
+            "description": "Authenticates an existing user and returns tokens."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const wrap = pm.response.json();",
+                  "pm.test('Response wrapped with data', () => pm.expect(wrap).to.have.property('data'));",
+                  "const json = wrap.data || {};",
+                  "pm.test('Has user + tokens', () => {",
+                  "  pm.expect(json).to.have.property('user');",
+                  "  pm.expect(json).to.have.property('access_token');",
+                  "  pm.expect(json).to.have.property('refresh_token');",
+                  "});",
+                  "pm.environment.set('user_id', json.user.id);",
+                  "pm.environment.set('access_token', json.access_token);",
+                  "pm.environment.set('refresh_token', json.refresh_token);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Login - Invalid Password (401)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/login",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "login"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{email}}\",\n  \"password\": \"WrongPassword123!\"\n}"
+            },
+            "description": "Expect 401 for invalid credentials."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 401', () => pm.response.to.have.status(401));",
+                  "pm.test('Has error body', () => { const j = pm.response.json(); pm.expect(j).to.have.property('error'); });"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Refresh",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/refresh",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "refresh"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refresh_token\": \"{{refresh_token}}\"\n}"
+            },
+            "description": "Rotate refresh token and return a new access token."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const wrap = pm.response.json();",
+                  "pm.test('Response wrapped with data', () => pm.expect(wrap).to.have.property('data'));",
+                  "const json = wrap.data || {};",
+                  "pm.test('Returns tokens', () => {",
+                  "  pm.expect(json).to.have.property('access_token');",
+                  "  pm.expect(json).to.have.property('refresh_token');",
+                  "});",
+                  "pm.environment.set('access_token', json.access_token);",
+                  "pm.environment.set('refresh_token', json.refresh_token);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Refresh - Missing Token (400)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/refresh",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "refresh"]
+            },
+            "body": { "mode": "raw", "raw": "{}" },
+            "description": "Expect 400 when refresh_token missing."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 400', () => pm.response.to.have.status(400));",
+                  "pm.test('Has error body', () => { const j = pm.response.json(); pm.expect(j).to.have.property('error'); });"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Refresh - Invalid Token (401)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/refresh",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "refresh"]
+            },
+            "body": { "mode": "raw", "raw": "{\n  \"refresh_token\": \"invalid\"\n}" },
+            "description": "Expect 401 for invalid/expired refresh token."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 401', () => pm.response.to.have.status(401));",
+                  "pm.test('Has error body', () => { const j = pm.response.json(); pm.expect(j).to.have.property('error'); });"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Logout",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{access_token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/logout",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "logout"]
+            },
+            "body": { "mode": "raw", "raw": "{}" },
+            "description": "Logs out the current user by revoking tokens and sessions."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const wrap = pm.response.json();",
+                  "pm.test('Response wrapped with data', () => pm.expect(wrap).to.have.property('data'));",
+                  "const json = wrap.data || {};",
+                  "pm.test('Logout success message', () => pm.expect(json.message).to.match(/logged out/i));",
+                  "if (pm.environment.get('user_id')) { pm.test('User ID matches', () => pm.expect(json.user_id).to.eql(pm.environment.get('user_id'))); }"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Refresh After Logout (401)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/refresh",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "refresh"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refresh_token\": \"{{refresh_token}}\"\n}"
+            },
+            "description": "After logout, the previous refresh token should be invalid."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 401', () => pm.response.to.have.status(401));",
+                  "pm.test('Has error body', () => { const j = pm.response.json(); pm.expect(j).to.have.property('error'); });"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Logout Without Token (401)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/logout",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "logout"]
+            },
+            "body": { "mode": "raw", "raw": "{}" },
+            "description": "Expect 401 when Authorization header is missing."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 401', () => pm.response.to.have.status(401));",
+                  "pm.test('Has error body or text', () => { try { const j = pm.response.json(); pm.expect(j).to.have.property('error'); } catch (e) { pm.response.to.have.body(/Missing authorization header|Invalid token|Unauthorized/i); } });"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

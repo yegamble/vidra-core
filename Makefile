@@ -1,4 +1,4 @@
-.PHONY: help deps lint test test-integration build docker docker-up docker-down migrate clean dev install-tools test-ci
+.PHONY: help deps lint test test-integration build docker docker-up docker-down migrate clean dev install-tools test-ci postman-newman postman-e2e
 
 # Default target
 help: ## Display this help message
@@ -120,6 +120,37 @@ install-tools: ## Install development tools
 	@echo "Installing Node.js tools..."
 	npm install -g @apidevtools/swagger-cli @redocly/cli
 	@echo "Development tools installation completed!"
+
+# Run Postman collection against a running server
+postman-newman: ## Run Postman auth tests via Newman (server must be running)
+	@echo "Running Postman collection with Newman..."
+	@BASE_URL?=http://localhost:8080; \
+	docker run --rm -t \
+	  -v "$(PWD)/postman:/etc/newman" \
+	  postman/newman:alpine \
+	  run /etc/newman/athena-auth.postman_collection.json \
+	  --env-var baseUrl=$$BASE_URL \
+	  --reporters cli,junit \
+	  --reporter-junit-export /etc/newman/newman-results.xml
+
+# Spin up test stack, app, then run Newman end-to-end
+postman-e2e: ## Start test services + app and run Newman end-to-end
+	@echo "Starting test stack (DB, Redis, App)..."
+	docker-compose -f docker-compose.test.yml up -d --build
+	@echo "Waiting for app-test to be healthy..."
+	@for i in $$(seq 1 40); do \
+	  status=$$(docker inspect --format='{{json .State.Health.Status}}' $$(docker-compose -f docker-compose.test.yml ps -q app-test) 2>/dev/null | tr -d '"'); \
+	  if [ "$$status" = "healthy" ]; then echo "app-test is healthy"; break; fi; \
+	  sleep 2; \
+	done
+	@echo "Running Newman inside compose network against http://app-test:8080 ..."
+	docker-compose -f docker-compose.test.yml run --rm newman || { \
+	  echo "Newman tests failed"; \
+	  docker-compose -f docker-compose.test.yml down -v; \
+	  exit 1; \
+	}
+	@echo "Shutting down test stack..."
+	docker-compose -f docker-compose.test.yml down -v
 
 setup: ## Initial project setup
 	@echo "Setting up Athena project..."
