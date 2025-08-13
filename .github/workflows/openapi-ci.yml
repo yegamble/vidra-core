@@ -1,4 +1,4 @@
-name: OpenAPI CI/CD Pipeline
+name: OpenAPI CI
 
 on:
   push:
@@ -12,42 +12,12 @@ permissions:
   pages: write
   id-token: write
   pull-requests: write
-  issues: write
 
 jobs:
-  validate-openapi:
-    name: Validate OpenAPI Specification
+  validate-and-test:
+    name: Validate OpenAPI and Test
     runs-on: ubuntu-latest
-    
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
 
-    - name: Set up Node.js
-      uses: actions/setup-node@v4
-      with:
-        node-version: '18'
-
-    - name: Install Swagger CLI
-      run: npm install -g @apidevtools/swagger-cli
-
-    - name: Validate OpenAPI spec
-      run: swagger-cli validate api/openapi.yaml
-
-    - name: Bundle OpenAPI spec
-      run: swagger-cli bundle api/openapi.yaml --outfile api/openapi-bundle.yaml --type yaml
-
-    - name: Upload bundled spec
-      uses: actions/upload-artifact@v4
-      with:
-        name: openapi-spec
-        path: api/openapi-bundle.yaml
-
-  generate-and-test:
-    name: Generate Code and Test
-    runs-on: ubuntu-latest
-    needs: validate-openapi
-    
     services:
       postgres:
         image: postgres:15
@@ -62,7 +32,7 @@ jobs:
           --health-retries 5
         ports:
           - 5432:5432
-          
+
       redis:
         image: redis:7-alpine
         options: >-
@@ -74,185 +44,85 @@ jobs:
           - 6379:6379
 
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-    - name: Set up Go
-      uses: actions/setup-go@v4
-      with:
-        go-version: '1.21'
-        cache: true
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.21'
+          cache: true
 
-    - name: Install dependencies
-      run: make deps
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
 
-    - name: Generate code from OpenAPI
-      run: make generate
+      - name: Install Swagger CLI
+        run: npm install -g @apidevtools/swagger-cli
 
-    - name: Verify generated code is up to date
-      run: |
-        # Check if there are any uncommitted changes after generation
-        if [ -n "$(git status --porcelain)" ]; then
-          echo "Generated code is not up to date. Please run 'make generate' and commit changes."
-          git status
-          git diff
-          exit 1
-        fi
+      - name: Validate OpenAPI spec
+        run: swagger-cli validate api/openapi.yaml
 
-    - name: Run linting
-      run: make lint
+      - name: Initialize database
+        env:
+          PGPASSWORD: testpass
+        run: |
+          psql -h localhost -U testuser -d athena_test -f init-test-db.sql
 
-    - name: Run tests
-      run: make test
-      env:
-        DATABASE_URL: postgres://testuser:testpass@localhost:5432/athena_test?sslmode=disable
-        REDIS_URL: redis://localhost:6379
-        JWT_SECRET: test-jwt-secret-key
+      - name: Install dependencies
+        run: go mod download
 
-    - name: Build application
-      run: make build
+      - name: Run tests
+        env:
+          DATABASE_URL: postgres://testuser:testpass@localhost:5432/athena_test?sslmode=disable
+          REDIS_URL: redis://localhost:6379
+          JWT_SECRET: test-jwt-secret-key
+          IPFS_API: http://localhost:5001
+        run: |
+          go test -v ./...
 
-    - name: Start server and run API tests
-      run: |
-        # Start the server in background
-        ./bin/athena-server &
-        SERVER_PID=$!
-        echo $SERVER_PID > server.pid
-        
-        # Wait for server to start
-        timeout 30 bash -c 'until curl -f http://localhost:8080/health; do sleep 1; done'
-        
-        # Run basic API tests
-        curl -f http://localhost:8080/health
-        curl -f http://localhost:8080/ready
-        
-        # Test auth endpoints
-        curl -X POST http://localhost:8080/auth/register \
-          -H "Content-Type: application/json" \
-          -d '{"username":"testuser","email":"test@example.com","password":"password123","display_name":"Test User"}'
-        
-        curl -X POST http://localhost:8080/auth/login \
-          -H "Content-Type: application/json" \
-          -d '{"email":"test@example.com","password":"password123"}'
-        
-        # Stop server
-        kill $SERVER_PID || true
-      env:
-        DATABASE_URL: postgres://testuser:testpass@localhost:5432/athena_test?sslmode=disable
-        REDIS_URL: redis://localhost:6379
-        JWT_SECRET: test-jwt-secret-key
-        PORT: 8080
-
-    - name: Upload test results
-      uses: actions/upload-artifact@v4
-      if: always()
-      with:
-        name: test-results
-        path: |
-          coverage.out
-          coverage.html
+      - name: Build application
+        run: go build -o bin/athena-server ./cmd/server
 
   generate-docs:
     name: Generate API Documentation
     runs-on: ubuntu-latest
-    needs: validate-openapi
-    
+    needs: validate-and-test
+    if: github.ref == 'refs/heads/main'
+
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-    - name: Set up Node.js
-      uses: actions/setup-node@v4
-      with:
-        node-version: '18'
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
 
-    - name: Install Redoc CLI
-      run: npm install -g redoc-cli
+      - name: Install Redoc CLI
+        run: npm install -g @redocly/cli
 
-    - name: Create docs directory
-      run: mkdir -p docs
+      - name: Create docs directory
+        run: mkdir -p docs
 
-    - name: Generate HTML documentation
-      run: redoc-cli build api/openapi.yaml --output docs/api-docs.html
+      - name: Generate HTML documentation
+        run: redocly build-docs api/openapi.yaml -o docs/api-docs.html
 
-    - name: Create index.html for docs
-      run: |
-        cat > docs/index.html << 'EOF'
-        <!DOCTYPE html>
-        <html>
-        <head>
-          <title>Athena API Documentation</title>
-          <meta http-equiv="refresh" content="0; url=api-docs.html">
-        </head>
-        <body>
-          <p>Redirecting to <a href="api-docs.html">API Documentation</a>...</p>
-        </body>
-        </html>
-        EOF
+      - name: Upload documentation
+        uses: actions/upload-artifact@v4
+        with:
+          name: api-documentation
+          path: docs/
 
-    - name: Upload documentation
-      uses: actions/upload-artifact@v4
-      with:
-        name: api-documentation
-        path: docs/
+      - name: Setup Pages
+        uses: actions/configure-pages@v4
 
-    - name: Setup Pages
-      if: github.ref == 'refs/heads/main'
-      uses: actions/configure-pages@v4
+      - name: Upload to GitHub Pages
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ./docs
 
-    - name: Upload to GitHub Pages
-      if: github.ref == 'refs/heads/main'
-      uses: actions/upload-pages-artifact@v3
-      with:
-        path: ./docs
-
-    - name: Deploy to GitHub Pages
-      if: github.ref == 'refs/heads/main'
-      id: deployment
-      uses: actions/deploy-pages@v4
-
-  comment-pr:
-    name: Comment on PR
-    runs-on: ubuntu-latest
-    needs: [validate-openapi, generate-and-test, generate-docs]
-    if: github.event_name == 'pull_request'
-    
-    steps:
-    - name: Download artifacts
-      uses: actions/download-artifact@v4
-      with:
-        path: artifacts
-
-    - name: Comment PR with results
-      uses: actions/github-script@v6
-      with:
-        script: |
-          const fs = require('fs');
-          
-          let comment = `## 🔧 OpenAPI CI/CD Results
-          
-          ### ✅ Validation
-          - OpenAPI specification is valid
-          - Code generation completed successfully
-          - All tests passed
-          
-          ### 📚 Documentation
-          - API documentation generated successfully
-          - Available in artifacts
-          
-          ### 🧪 Testing
-          - Unit tests: ✅ Passed
-          - Integration tests: ✅ Passed
-          - API endpoint tests: ✅ Passed
-          
-          ### 🔗 Links
-          - [OpenAPI Specification](${context.payload.pull_request.head.sha}/api/openapi.yaml)
-          - [Generated Documentation](https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})
-          `;
-          
-          github.rest.issues.createComment({
-            issue_number: context.issue.number,
-            owner: context.repo.owner,
-            repo: context.repo.repo,
-            body: comment
-          });
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

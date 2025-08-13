@@ -4,17 +4,13 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"os"
 	"testing"
 	"time"
 
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
 	"github.com/redis/go-redis/v9"
-)
-
-const (
-	defaultPostgresURL = "postgres://test_user:test_password@localhost:5433/athena_test?sslmode=disable"
-	defaultRedisURL    = "redis://localhost:6380/0"
 )
 
 type TestDB struct {
@@ -48,7 +44,13 @@ func SetupTestDB(t *testing.T) *TestDB {
 }
 
 func setupPostgres() (*sqlx.DB, error) {
-	db, err := sqlx.Connect("postgres", defaultPostgresURL)
+	// Use environment variable if set (for CI), otherwise use local test setup
+	dbURL := os.Getenv("DATABASE_URL")
+	if dbURL == "" {
+		dbURL = "postgres://test_user:test_password@localhost:5433/athena_test?sslmode=disable"
+	}
+
+	db, err := sqlx.Connect("postgres", dbURL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to test database: %w", err)
 	}
@@ -60,14 +62,22 @@ func setupPostgres() (*sqlx.DB, error) {
 		return nil, fmt.Errorf("failed to ping test database: %w", err)
 	}
 
-	// Migrations are now handled by Docker init script
-	// No need to run them manually
+	// Set connection pool settings
+	db.SetMaxOpenConns(10)
+	db.SetMaxIdleConns(5)
+	db.SetConnMaxLifetime(5 * time.Minute)
 
 	return db, nil
 }
 
 func setupRedis() (*redis.Client, error) {
-	opt, err := redis.ParseURL(defaultRedisURL)
+	// Use environment variable if set (for CI), otherwise use local test setup
+	redisURL := os.Getenv("REDIS_URL")
+	if redisURL == "" {
+		redisURL = "redis://localhost:6380/0"
+	}
+
+	opt, err := redis.ParseURL(redisURL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse redis URL: %w", err)
 	}
@@ -84,7 +94,6 @@ func setupRedis() (*redis.Client, error) {
 	return client, nil
 }
 
-
 func cleanupTestDB(t *testing.T, testDB *TestDB) {
 	t.Helper()
 
@@ -92,20 +101,26 @@ func cleanupTestDB(t *testing.T, testDB *TestDB) {
 	defer cancel()
 
 	// Clean Redis
-	if err := testDB.Redis.FlushDB(ctx).Err(); err != nil {
-		t.Logf("Failed to flush Redis: %v", err)
-	}
-	testDB.Redis.Close()
-
-	// Clean Postgres tables
-	tables := []string{"sessions", "refresh_tokens", "users"}
-	for _, table := range tables {
-		if _, err := testDB.DB.ExecContext(ctx, fmt.Sprintf("TRUNCATE TABLE %s CASCADE", table)); err != nil {
-			t.Logf("Failed to truncate table %s: %v", table, err)
+	if testDB.Redis != nil {
+		if err := testDB.Redis.FlushDB(ctx).Err(); err != nil {
+			t.Logf("Failed to flush Redis: %v", err)
+		}
+		err := testDB.Redis.Close()
+		if err != nil {
+			t.Logf("Failed to close Redis client: %v", err)
 		}
 	}
 
-	testDB.DB.Close()
+	// Clean Postgres tables
+	if testDB.DB != nil {
+		tables := []string{"sessions", "refresh_tokens", "users"}
+		for _, table := range tables {
+			if _, err := testDB.DB.ExecContext(ctx, fmt.Sprintf("TRUNCATE TABLE %s CASCADE", table)); err != nil {
+				t.Logf("Failed to truncate table %s: %v", table, err)
+			}
+		}
+		testDB.DB.Close()
+	}
 }
 
 func (tdb *TestDB) TruncateTables(t *testing.T, tables ...string) {

@@ -1,0 +1,94 @@
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+bin/
+dist/
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool
+*.out
+coverage.html
+coverage.txt
+
+# Dependency directories
+vendor/
+
+# Go workspace file
+go.work
+
+# IDE specific files
+.idea/
+*.iml
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Docker volumes
+uploads/
+processed/
+postgres_data/
+redis_data/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.temp
+*.log
+
+# Build artifacts
+athena-server
+athena
+
+# Documentation build
+docs/_build/
+docs/api-docs.html
+
+# Node modules (for documentation tools)
+node_modules/
+package-lock.json
+yarn.lock
+
+# Air for hot reload
+.air.toml
+tmp/
+
+# OS specific
+Thumbs.db
+.DS_Store
+
+# Test databases
+*.db
+*.sqlite
+*.sqlite3
+
+# Backup files
+*.bak
+*.backup
+
+# Archives
+*.tar
+*.tar.gz
+*.zip
+*.rar
+
+# Certificates and keys (never commit these!)
+*.pem
+*.key
+*.crt
+*.cert
+
+# Local configuration overrides
+docker-compose.override.yml

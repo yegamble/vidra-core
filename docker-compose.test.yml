@@ -13,13 +13,15 @@ services:
     ports:
       - "5433:5432"
     volumes:
-      - ./init-shared-db.sql:/docker-entrypoint-initdb.d/init-shared-db.sql:ro
+      - ./init-test-db.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U test_user -d athena_test"]
-      interval: 3s
-      timeout: 2s
+      interval: 5s
+      timeout: 3s
       retries: 10
-      start_period: 10s
+      start_period: 20s
+    networks:
+      - test-network
 
   redis-test:
     image: redis:7-alpine
@@ -30,6 +32,12 @@ services:
     command: redis-server --save ""
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
-      interval: 3s
-      timeout: 2s
-      retries: 5
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - test-network
+
+networks:
+  test-network:
+    driver: bridge

@@ -12,13 +12,15 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./init-shared-db.sql:/docker-entrypoint-initdb.d/init-shared-db.sql:ro
+      - ./init-shared-db.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U athena_user -d athena"]
       interval: 10s
       timeout: 5s
-      retries: 3
-      start_period: 20s
+      retries: 5
+      start_period: 30s
+    networks:
+      - athena-network
 
   redis:
     image: redis:7-alpine
@@ -32,7 +34,9 @@ services:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
       timeout: 3s
-      retries: 3
+      retries: 5
+    networks:
+      - athena-network
 
   app:
     build: .
@@ -47,9 +51,20 @@ services:
     environment:
       DATABASE_URL: postgres://athena_user:athena_password@postgres:5432/athena?sslmode=disable
       REDIS_URL: redis://redis:6379/0
+      JWT_SECRET: ${JWT_SECRET:-your-super-secret-jwt-key-change-in-production}
+      IPFS_API: ${IPFS_API:-http://ipfs:5001}
+      PORT: 8080
     volumes:
       - uploads:/app/uploads
       - processed:/app/processed
+    networks:
+      - athena-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
 
 volumes:
   postgres_data:

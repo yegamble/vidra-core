@@ -1,267 +1,308 @@
-# Athena PeerTube Backend
+# Athena - PeerTube Backend in Go
 
-A high-performance PeerTube backend implementation in Go with OpenAPI specification and code generation.
+[![Test](https://github.com/yegamble/athena/actions/workflows/test.yml/badge.svg)](https://github.com/yegamble/athena/actions/workflows/test.yml)
+[![OpenAPI CI](https://github.com/yegamble/athena/actions/workflows/openapi-ci.yml/badge.svg)](https://github.com/yegamble/athena/actions/workflows/openapi-ci.yml)
+
+A high-performance PeerTube backend implementation in Go with decentralized storage support.
 
 ## Features
 
-- **OpenAPI 3.0 Specification** - Complete API documentation with validation
-- **Code Generation** - Automatic Go code generation using oapi-codegen
-- **Authentication** - JWT-based auth with login, register, refresh, and logout
-- **Health Checks** - Comprehensive health and readiness endpoints
-- **CI/CD Pipeline** - Automated testing and documentation generation
-
-## Architecture
-
-```
-/api/                 # OpenAPI specifications
-/internal/generated/  # Generated Go code from OpenAPI
-/internal/httpapi/    # HTTP handlers implementing generated interfaces
-/internal/domain/     # Domain models and business logic
-/internal/config/     # Configuration management
-/.github/workflows/   # CI/CD pipelines
-```
+- 🚀 **High Performance** - Built with Go for maximum concurrency and speed
+- 📝 **OpenAPI 3.0** - Complete API specification with automatic validation
+- 🔐 **JWT Authentication** - Secure authentication with refresh tokens
+- 🗄️ **PostgreSQL** - Robust database with full-text search capabilities
+- ⚡ **Redis** - Fast caching and session management
+- 🌐 **IPFS** - Decentralized storage support
+- 🎥 **Video Processing** - FFmpeg integration for transcoding
+- 🐳 **Docker Ready** - Full containerization with Docker Compose
+- ✅ **CI/CD** - GitHub Actions with automated testing
 
 ## Quick Start
 
 ### Prerequisites
 
 - Go 1.21+
-- PostgreSQL 15+
-- Redis 7+
+- Docker & Docker Compose
+- PostgreSQL 15+ (optional, if not using Docker)
+- Redis 7+ (optional, if not using Docker)
+- Node.js 18+ (for API documentation tools)
 
-### Development Setup
+### One-Command Setup
 
 ```bash
-# Install development tools
-make install-tools
+# Clone the repository
+git clone https://github.com/yegamble/athena.git
+cd athena
 
-# Download dependencies
+# Run complete setup
+make setup
+```
+
+This will:
+1. Copy `.env.example` to `.env`
+2. Install dependencies
+3. Install development tools
+4. Start Docker services
+5. Run database migrations
+6. Set up the development environment
+
+### Manual Setup
+
+#### 1. Clone and Configure
+
+```bash
+# Clone the repository
+git clone https://github.com/yegamble/athena.git
+cd athena
+
+# Copy environment variables
+cp .env.example .env
+# Edit .env with your configuration
+```
+
+#### 2. Start Services with Docker
+
+```bash
+# Start all services (PostgreSQL, Redis, App)
+make docker-up
+
+# Or using docker-compose directly
+docker-compose up -d
+```
+
+#### 3. Run Development Server
+
+```bash
+# Install dependencies
 make deps
 
-# Generate code from OpenAPI spec
-make generate
+# Run development server with hot reload
+make dev
 
-# Run tests
+# Or without hot reload
+go run ./cmd/server
+```
+
+The API will be available at `http://localhost:8080`
+
+## Development
+
+### Available Make Commands
+
+```bash
+make help          # Show all available commands
+make deps          # Download dependencies
+make lint          # Run linting
+make test          # Run tests with coverage
+make test-local    # Run tests with local Docker services
+make build         # Build binary
+make docker        # Build Docker image
+make docker-up     # Start Docker services
+make docker-down   # Stop Docker services
+make docker-logs   # View Docker logs
+make docker-reset  # Reset Docker environment
+make dev           # Run development server
+make clean         # Clean build artifacts
+```
+
+### Running Tests
+
+```bash
+# Run all tests
 make test
 
-# Start development server with live reload
-make dev
+# Run tests with local Docker services
+make test-local
+
+# Run tests in CI environment
+make test-ci
+
+# View coverage report
+open coverage.html
 ```
 
 ### API Documentation
 
 The API is defined using OpenAPI 3.0 specification in `api/openapi.yaml`.
 
-**View Documentation:**
 ```bash
-# Serve interactive docs locally
+# Validate OpenAPI spec
+make validate-openapi
+
+# Serve API documentation
 make serve-docs
 # Opens at http://localhost:8081
 ```
 
-**Generate Static Documentation:**
+## API Endpoints
+
+### Authentication
+
+- `POST /auth/register` - Register new user
+- `POST /auth/login` - Login with email/password
+- `POST /auth/refresh` - Refresh access token
+- `POST /auth/logout` - Logout (requires auth)
+
+### Health Checks
+
+- `GET /health` - Basic health check
+- `GET /ready` - Readiness check (DB, Redis, IPFS)
+
+### Videos (Protected)
+
+- `GET /api/v1/videos` - List videos
+- `GET /api/v1/videos/search` - Search videos
+- `GET /api/v1/videos/{id}` - Get video details
+- `POST /api/v1/videos` - Create video
+- `PUT /api/v1/videos/{id}` - Update video
+- `DELETE /api/v1/videos/{id}` - Delete video
+- `POST /api/v1/videos/{id}/upload` - Upload video chunk
+- `GET /api/v1/videos/{id}/stream` - Stream video (HLS)
+
+### Users
+
+- `GET /api/v1/users/me` - Get current user (requires auth)
+- `PUT /api/v1/users/me` - Update current user (requires auth)
+- `GET /api/v1/users/{id}` - Get user profile
+- `GET /api/v1/users/{id}/videos` - Get user's videos
+
+## Architecture
+
+```
+/cmd/server            # Application entry point
+/internal/
+  ├── config/         # Configuration management
+  ├── domain/         # Domain models and errors
+  ├── generated/      # OpenAPI generated types
+  ├── httpapi/        # HTTP handlers and routes
+  ├── middleware/     # HTTP middleware (auth, CORS, rate limit)
+  ├── repository/     # Database repositories
+  ├── testutil/       # Test utilities
+  └── usecase/        # Business logic interfaces
+/api/                 # OpenAPI specifications
+/migrations/          # Database migrations
+```
+
+## Docker Deployment
+
+### Production Deployment
+
 ```bash
-# Generates HTML documentation
-make generate-docs
+# Build and run with Docker Compose
+docker-compose up -d
+
+# View logs
+docker-compose logs -f
+
+# Stop services
+docker-compose down
 ```
 
-## Running with Docker
+### Environment Variables
 
-To start the application stack using Docker Compose:
-
-```bash
-docker-compose up --build
-```
-
-This launches the app along with Postgres and Redis. The Postgres container
-automatically creates tables using `init-db.sql`.
-
-For the test environment:
-
-```bash
-docker-compose -f docker-compose.test.yml up
-```
-
-The test Postgres instance initializes tables from `init-test-db.sql`.
-
-## OpenAPI Integration
-
-### OpenAPI-First Development
-
-The project follows OpenAPI-first development with manually crafted types that follow the repository's conventions:
-
-**Generated Files:**
-- `internal/generated/types.go` - Type definitions matching OpenAPI schemas
-- `internal/generated/server.go` - ServerInterface and Chi router integration
-
-**Why Manual Generation:**
-- Follows repository naming conventions (ID vs Id)
-- Avoids oapi-codegen toolchain version conflicts  
-- Maintains compatibility with existing middleware
-- Provides cleaner, more maintainable code
-
-```bash
-# Types and interfaces are maintained manually to ensure best practices
-make generate  # Validates that types match OpenAPI spec
-```
-
-### Implementation Pattern
-
-1. **Define API in OpenAPI** (`api/openapi.yaml`)
-2. **Update Types** (`internal/generated/types.go` to match schemas)
-3. **Implement ServerInterface** (`internal/httpapi/handlers.go`)
-4. **Register Routes** (`internal/httpapi/routes.go`)
-
-## Authentication Endpoints
-
-### POST /auth/register
-Register a new user account.
-
-**Request:**
-```json
-{
-  "username": "johndoe",
-  "email": "john@example.com",
-  "password": "securepassword123",
-  "display_name": "John Doe"
-}
-```
-
-**Response:**
-```json
-{
-  "user": {
-    "id": "user123",
-    "username": "johndoe",
-    "email": "john@example.com",
-    "display_name": "John Doe",
-    "role": "user",
-    "is_active": true
-  },
-  "access_token": "eyJhbGciOiJIUzI1NiIs...",
-  "refresh_token": "eyJhbGciOiJIUzI1NiIs...",
-  "expires_in": 900
-}
-```
-
-### POST /auth/login
-Authenticate with email and password.
-
-### POST /auth/refresh
-Refresh access token using refresh token.
-
-### POST /auth/logout
-Logout and invalidate session (requires authentication).
-
-## Health Endpoints
-
-### GET /health
-Basic health check - returns 200 if service is alive.
-
-### GET /ready
-Readiness check - validates database, Redis, and IPFS connectivity.
-
-## Development Workflow
-
-### 1. Modify OpenAPI Specification
-Edit `api/openapi.yaml` to add/modify endpoints.
-
-### 2. Validate Changes
-```bash
-make validate-openapi
-```
-
-### 3. Update Types
-Update `internal/generated/types.go` to match OpenAPI schemas.
-
-### 4. Implement Handlers
-Implement the `ServerInterface` methods in `internal/httpapi/handlers.go`.
-
-### 5. Test Changes
-```bash
-make test
-```
-
-## CI/CD Pipeline
-
-The GitHub Actions workflow automatically:
-
-1. **Validates** OpenAPI specification
-2. **Generates** Go code and verifies it's up to date
-3. **Runs** linting and tests
-4. **Builds** the application
-5. **Tests** API endpoints
-6. **Generates** HTML documentation
-7. **Deploys** docs to GitHub Pages (main branch)
-8. **Comments** on PRs with results
-
-## Configuration
-
-Environment variables:
+Key environment variables (see `.env.example` for full list):
 
 ```bash
 DATABASE_URL=postgres://user:pass@localhost:5432/athena
-REDIS_URL=redis://localhost:6379
+REDIS_URL=redis://localhost:6379/0
 JWT_SECRET=your-secret-key
 PORT=8080
 ```
 
-## Make Commands
+## CI/CD
+
+GitHub Actions workflows run automatically on push/PR:
+
+1. **Test Workflow** - Runs tests, linting, and builds
+2. **OpenAPI CI** - Validates API spec and generates docs
+
+### Running CI Locally
 
 ```bash
-make help          # Show all available commands
-make deps          # Download dependencies
-make generate      # Generate code from OpenAPI
-make lint          # Run linting
-make test          # Run tests with coverage
-make build         # Build binary
-make dev           # Start development server
-make validate-openapi  # Validate OpenAPI spec
-make serve-docs    # Serve API documentation
-make install-tools # Install development tools
+# Run CI test pipeline
+make ci-test
+
+# Run CI build pipeline
+make ci-build
 ```
 
-## Project Structure
+## Database
 
+PostgreSQL with extensions:
+- `uuid-ossp` - UUID generation
+- `pg_trgm` - Trigram matching for full-text search
+- `unaccent` - Accent-insensitive search
+- `btree_gin` - GIN index support
+
+### Migrations
+
+```bash
+# Run migrations (requires DATABASE_URL)
+make migrate-up
+
+# Run test migrations
+make migrate-test
 ```
-athena/
-├── api/
-│   └── openapi.yaml              # OpenAPI 3.0 specification
-├── internal/
-│   ├── generated/
-│   │   └── api.go                # Generated code (DO NOT EDIT)
-│   ├── httpapi/
-│   │   ├── handlers.go           # Handler implementations
-│   │   ├── routes.go             # Route registration
-│   │   └── response.go           # Response utilities
-│   ├── domain/                   # Business logic
-│   ├── config/                   # Configuration
-│   └── middleware/               # HTTP middleware
-├── cmd/server/                   # Application entrypoint
-├── .github/workflows/
-│   └── openapi-ci.yml           # CI/CD pipeline
-├── Makefile                      # Development commands
-└── README.md
-```
-
-## Benefits of OpenAPI Approach
-
-1. **API-First Development** - Design API before implementation
-2. **Type Safety** - Generated types prevent runtime errors
-3. **Documentation** - Always up-to-date API docs
-4. **Code Generation** - Reduces boilerplate and inconsistencies
-5. **Validation** - Request/response validation built-in
-6. **Testing** - Clear contracts for testing
-7. **Client Generation** - Auto-generate clients in various languages
 
 ## Contributing
 
-1. Follow the API-first development approach
-2. Update OpenAPI spec before implementation
-3. Run `make generate` after spec changes
-4. Ensure tests pass with `make test`
-5. Validate spec with `make validate-openapi`
+1. Fork the repository
+2. Create your feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
+
+### Development Guidelines
+
+- Follow Go best practices and conventions
+- Update OpenAPI spec for API changes
+- Write tests for new features
+- Run `make lint` before committing
+- Update documentation as needed
+
+## Troubleshooting
+
+### Common Issues
+
+**Database connection errors:**
+```bash
+# Check if PostgreSQL is running
+docker-compose ps
+# Check logs
+docker-compose logs postgres
+```
+
+**Port already in use:**
+```bash
+# Change ports in docker-compose.yml or .env
+# Or stop conflicting services
+```
+
+**Tests failing:**
+```bash
+# Ensure test database is running
+docker-compose -f docker-compose.test.yml up -d
+# Check test database logs
+docker-compose -f docker-compose.test.yml logs
+```
 
 ## License
 
-MIT License
+MIT License - see [LICENSE](LICENSE) file for details
+
+## Acknowledgments
+
+- Inspired by [PeerTube](https://github.com/Chocobozzz/PeerTube)
+- Built with [Chi Router](https://github.com/go-chi/chi)
+- Uses [SQLX](https://github.com/jmoiron/sqlx) for database operations
+
+## Support
+
+For issues and questions:
+- Open an issue on [GitHub](https://github.com/yegamble/athena/issues)
+- Check existing issues before creating new ones
+- Provide detailed information for bug reports
+
+---
+
+**Ready to get started?** Run `make setup` and start building!

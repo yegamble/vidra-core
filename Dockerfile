@@ -1,5 +1,5 @@
 # Build stage
-FROM golang:1.24.6-alpine AS builder
+FROM golang:1.21-alpine AS builder
 
 RUN apk add --no-cache git ca-certificates tzdata
 
@@ -13,7 +13,9 @@ RUN go mod download
 COPY . .
 
 # Build the application
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-w -s" -o server ./cmd/server
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+    -ldflags="-w -s -X main.version=$(git describe --tags --always --dirty) -X main.buildTime=$(date -u +%Y%m%d.%H%M%S)" \
+    -o server ./cmd/server
 
 # Runtime stage
 FROM alpine:3.18
@@ -24,6 +26,9 @@ WORKDIR /app
 
 # Copy the binary from builder stage
 COPY --from=builder /app/server .
+
+# Copy SQL initialization files (for reference)
+COPY --from=builder /app/init-shared-db.sql .
 
 # Create necessary directories
 RUN mkdir -p uploads processed

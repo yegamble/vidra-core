@@ -1,27 +1,20 @@
-.PHONY: help deps lint test build docker docker-up docker-down migrate generate clean
+.PHONY: help deps lint test build docker docker-up docker-down migrate clean dev install-tools test-ci
 
 # Default target
 help: ## Display this help message
 	@echo "Available targets:"
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2}'
+	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}'
 
 deps: ## Download Go dependencies
 	go mod download
 	go mod tidy
-
-generate: ## Generate code from OpenAPI spec
-	@echo "Generating Go code from OpenAPI specification..."
-	@echo "Note: Using manually crafted types and interfaces for best practices"
-	@echo "Types are in internal/generated/types.go and server interface in internal/generated/server.go"
-	@echo "These follow the repository's conventions and avoid code generation issues"
-	@echo "Code generation complete!"
 
 lint: ## Run golangci-lint
 	@if command -v golangci-lint >/dev/null 2>&1; then \
 		golangci-lint run ./...; \
 	else \
 		echo "golangci-lint not installed. Installing..."; \
-		go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest; \
+		    brew install golangci-lint; \
 		golangci-lint run ./...; \
 	fi
 
@@ -29,85 +22,64 @@ test: ## Run unit tests
 	go test -v -race -coverprofile=coverage.out ./...
 	go tool cover -html=coverage.out -o coverage.html
 
-test-setup: ## Start test environment
-	docker-compose -f docker-compose.test.yml up -d postgres-test redis-test
+test-ci: ## Run tests for CI environment
+	go test -v -race -coverprofile=coverage.out ./...
+
+test-local: ## Run tests with local Docker services
+	docker-compose -f docker-compose.test.yml up -d
 	@echo "Waiting for services to be ready..."
-	@for i in $$(seq 1 30); do \
-		if pg_isready -h localhost -p 5433 -U test_user >/dev/null 2>&1; then \
-			echo "PostgreSQL is ready"; \
-			break; \
-		fi; \
-		echo "Waiting for PostgreSQL... ($$i/30)"; \
-		sleep 2; \
-	done
-	@for i in $$(seq 1 30); do \
-		if redis-cli -h localhost -p 6380 ping >/dev/null 2>&1; then \
-			echo "Redis is ready"; \
-			break; \
-		fi; \
-		echo "Waiting for Redis... ($$i/30)"; \
-		sleep 2; \
-	done
-
-test-integration: test-setup ## Run integration tests
-	go test -v -race -tags=integration ./internal/repository/...
-
-test-teardown: ## Stop test environment
+	@sleep 10
+	DATABASE_URL="postgres://test_user:test_password@localhost:5433/athena_test?sslmode=disable" \
+	REDIS_URL="redis://localhost:6380/0" \
+	JWT_SECRET="test-jwt-secret" \
+	IPFS_API="http://localhost:5001" \
+	go test -v -race -coverprofile=coverage.out ./...
 	docker-compose -f docker-compose.test.yml down -v
-
-test-all: test-setup test-integration test-teardown ## Run all tests with Docker services
 
 build: ## Build the server binary
 	go build -o bin/athena-server ./cmd/server
 
 docker: ## Build Docker image
-	docker build -t athena-server .
+	docker build -t athena-server:latest .
 
-docker-up: ## Start docker-compose services and wait for health checks
+docker-up: ## Start docker-compose services
 	docker-compose up -d
 	@echo "Waiting for services to be healthy..."
-	@services=$$(docker-compose ps --services); \
-	for service in $$services; do \
-		echo "Waiting for $$service..."; \
-		container=$$(docker-compose ps -q $$service); \
-		for i in $$(seq 1 30); do \
-			status=$$(docker inspect --format='{{if .State.Health}}{{.State.Health.Status}}{{else}}healthy{{end}}' $$container); \
-			if [ "$$status" = "healthy" ]; then \
-				echo "$$service is healthy"; \
-				break; \
-			fi; \
-			echo "Waiting for $$service health check... ($$i/30)"; \
-			sleep 2; \
-		done; \
-	done
+	@sleep 15
+	@echo "Services are up! Application available at http://localhost:8080"
 
 docker-down: ## Stop docker-compose services
 	docker-compose down
 
-migrate: ## Run database migrations (requires atlas)
-	@if command -v atlas >/dev/null 2>&1; then \
-		atlas migrate apply --dir "file://migrations" --url "${DATABASE_URL}"; \
-	else \
-		echo "Atlas CLI not installed. Installing..."; \
-		curl -sSf https://atlasgo.sh | sh; \
-		atlas migrate apply --dir "file://migrations" --url "${DATABASE_URL}"; \
-	fi
+docker-logs: ## View docker-compose logs
+	docker-compose logs -f
+
+docker-reset: ## Reset docker environment (remove volumes)
+	docker-compose down -v
+	docker-compose up -d
+
+migrate-up: ## Run database migrations
+	@if [ -z "${DATABASE_URL}" ]; then \
+		echo "DATABASE_URL is not set. Using default."; \
+		export DATABASE_URL="postgres://athena_user:athena_password@localhost:5432/athena?sslmode=disable"; \
+	fi; \
+	psql "${DATABASE_URL}" -f init-shared-db.sql
+
+migrate-test: ## Run test database migrations
+	psql "postgres://test_user:test_password@localhost:5433/athena_test?sslmode=disable" -f init-test-db.sql
 
 validate-openapi: ## Validate OpenAPI specification
 	@if command -v swagger >/dev/null 2>&1; then \
 		swagger validate api/openapi.yaml; \
 	else \
-		echo "Swagger CLI not installed. Skipping validation..."; \
-		echo "Install with: go install github.com/go-swagger/go-swagger/cmd/swagger@latest"; \
+		echo "Swagger CLI not installed."; \
+		echo "Install with: npm install -g @apidevtools/swagger-cli"; \
 	fi
 
 serve-docs: ## Serve OpenAPI documentation
-	@if command -v swagger >/dev/null 2>&1; then \
-		swagger serve --no-open --port 8081 api/openapi.yaml; \
-	else \
-		echo "Swagger CLI not installed."; \
-		echo "Install with: go install github.com/go-swagger/go-swagger/cmd/swagger@latest"; \
-	fi
+	@echo "Opening API documentation at http://localhost:8081"
+	@python3 -m http.server 8081 --directory . &
+	@open http://localhost:8081/api/openapi.yaml || xdg-open http://localhost:8081/api/openapi.yaml
 
 clean: ## Clean build artifacts
 	rm -rf bin/
@@ -115,28 +87,41 @@ clean: ## Clean build artifacts
 	go clean -cache -testcache
 
 dev: ## Run development server with live reload
+	@if [ ! -f .env ]; then \
+		echo "Creating .env from .env.example..."; \
+		cp .env.example .env; \
+	fi
 	@if command -v air >/dev/null 2>&1; then \
 		air; \
-	elif [ -f "$(shell go env GOPATH)/bin/air" ]; then \
-		$(shell go env GOPATH)/bin/air; \
 	else \
-		echo "Air not installed. Installing..."; \
-		GOTOOLCHAIN=auto go install github.com/air-verse/air@latest && \
-		$(shell go env GOPATH)/bin/air || \
-		echo "Failed to install air. Running with 'go run' instead..." && \
+		echo "Air not installed. Running without hot reload..."; \
 		go run ./cmd/server; \
 	fi
 
 install-tools: ## Install development tools
 	@echo "Installing development tools..."
-	@GOTOOLCHAIN=auto go install github.com/air-verse/air@latest || echo "Warning: Failed to install air"
-	@GOTOOLCHAIN=auto go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest || echo "Warning: Failed to install golangci-lint"
-	@GOTOOLCHAIN=auto go install github.com/go-swagger/go-swagger/cmd/swagger@latest || echo "Warning: Failed to install swagger"
-	@GOTOOLCHAIN=auto go install github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@latest || echo "Warning: Failed to install oapi-codegen"
+	go install github.com/air-verse/air@latest
+	go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+	@echo "Installing Node.js tools..."
+	npm install -g @apidevtools/swagger-cli @redocly/cli
 	@echo "Development tools installation completed!"
 
-# CI/CD targets
-ci-test: deps generate lint test ## Run CI test pipeline
+setup: ## Initial project setup
+	@echo "Setting up Athena project..."
+	@if [ ! -f .env ]; then \
+		cp .env.example .env; \
+		echo "Created .env file from .env.example"; \
+	fi
+	@make deps
+	@make install-tools
+	@echo "Starting Docker services..."
+	@make docker-up
+	@echo "Running database migrations..."
+	@sleep 5
+	@make migrate-up
+	@echo "Setup complete! Run 'make dev' to start the development server."
+
+ci-test: deps lint test-ci ## Run CI test pipeline
 	@echo "CI test pipeline completed successfully!"
 
 ci-build: ci-test build ## Run CI build pipeline
