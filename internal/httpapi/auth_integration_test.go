@@ -150,7 +150,7 @@ func TestRefresh_Integration_RotatesToken(t *testing.T) {
 
     userRepo := repository.NewUserRepository(td.DB)
     authRepo := repository.NewAuthRepository(td.DB)
-    s := NewServer(userRepo, authRepo, "test-secret")
+    s := NewServer(userRepo, authRepo, "test-secret", nil, 0)
 
     // Seed user
     email := "refresh_" + time.Now().Format("150405") + "@example.com"
@@ -226,7 +226,7 @@ func TestRefresh_Integration_InvalidToken(t *testing.T) {
     td := testutil.SetupTestDB(t)
     td.TruncateTables(t, "users", "refresh_tokens")
 
-    s := NewServer(repository.NewUserRepository(td.DB), repository.NewAuthRepository(td.DB), "test-secret")
+    s := NewServer(repository.NewUserRepository(td.DB), repository.NewAuthRepository(td.DB), "test-secret", nil, 0)
 
     b, _ := json.Marshal(map[string]any{"refresh_token": "does-not-exist"})
     req := httptest.NewRequest(http.MethodPost, "/auth/refresh", bytes.NewReader(b))
