@@ -20,11 +20,11 @@ func NewUserRepository(db *sqlx.DB) usecase.UserRepository {
 
 func (r *userRepository) Create(ctx context.Context, user *domain.User, passwordHash string) error {
 	query := `
-		INSERT INTO users (id, username, email, display_name, avatar, bio, role, password_hash, is_active, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`
+		INSERT INTO users (id, username, email, display_name, avatar, bio, bitcoin_wallet, role, password_hash, is_active, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`
 	
 	_, err := r.db.ExecContext(ctx, query,
-		user.ID, user.Username, user.Email, user.DisplayName, user.Avatar, user.Bio,
+		user.ID, user.Username, user.Email, user.DisplayName, user.Avatar, user.Bio, user.BitcoinWallet,
 		user.Role, passwordHash, user.IsActive, user.CreatedAt, user.UpdatedAt)
 	
 	if err != nil {
@@ -36,7 +36,7 @@ func (r *userRepository) Create(ctx context.Context, user *domain.User, password
 
 func (r *userRepository) GetByID(ctx context.Context, id string) (*domain.User, error) {
 	query := `
-		SELECT id, username, email, display_name, avatar, bio, role, is_active, created_at, updated_at
+		SELECT id, username, email, display_name, avatar, bio, bitcoin_wallet, role, is_active, created_at, updated_at
 		FROM users WHERE id = $1`
 	
 	var user domain.User
@@ -53,7 +53,7 @@ func (r *userRepository) GetByID(ctx context.Context, id string) (*domain.User, 
 
 func (r *userRepository) GetByEmail(ctx context.Context, email string) (*domain.User, error) {
 	query := `
-		SELECT id, username, email, display_name, avatar, bio, role, is_active, created_at, updated_at
+		SELECT id, username, email, display_name, avatar, bio, bitcoin_wallet, role, is_active, created_at, updated_at
 		FROM users WHERE email = $1`
 	
 	var user domain.User
@@ -70,7 +70,7 @@ func (r *userRepository) GetByEmail(ctx context.Context, email string) (*domain.
 
 func (r *userRepository) GetByUsername(ctx context.Context, username string) (*domain.User, error) {
 	query := `
-		SELECT id, username, email, display_name, avatar, bio, role, is_active, created_at, updated_at
+		SELECT id, username, email, display_name, avatar, bio, bitcoin_wallet, role, is_active, created_at, updated_at
 		FROM users WHERE username = $1`
 	
 	var user domain.User
@@ -89,11 +89,11 @@ func (r *userRepository) Update(ctx context.Context, user *domain.User) error {
 	query := `
 		UPDATE users 
 		SET username = $2, email = $3, display_name = $4, avatar = $5, bio = $6, 
-		    role = $7, is_active = $8, updated_at = $9
+		    bitcoin_wallet = $7, role = $8, is_active = $9, updated_at = $10
 		WHERE id = $1`
 	
 	result, err := r.db.ExecContext(ctx, query,
-		user.ID, user.Username, user.Email, user.DisplayName, user.Avatar, user.Bio,
+		user.ID, user.Username, user.Email, user.DisplayName, user.Avatar, user.Bio, user.BitcoinWallet,
 		user.Role, user.IsActive, user.UpdatedAt)
 	
 	if err != nil {
@@ -169,7 +169,7 @@ func (r *userRepository) UpdatePassword(ctx context.Context, userID, passwordHas
 
 func (r *userRepository) List(ctx context.Context, limit, offset int) ([]*domain.User, error) {
 	query := `
-		SELECT id, username, email, display_name, avatar, bio, role, is_active, created_at, updated_at
+		SELECT id, username, email, display_name, avatar, bio, bitcoin_wallet, role, is_active, created_at, updated_at
 		FROM users 
 		ORDER BY created_at DESC
 		LIMIT $1 OFFSET $2`
