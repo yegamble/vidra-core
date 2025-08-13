@@ -1,17 +1,17 @@
 package testutil
 
 import (
-	"context"
-	"database/sql"
-	"fmt"
-	"os"
-	"testing"
-	"time"
+    "context"
+    "database/sql"
+    "fmt"
+    "os"
+    "testing"
+    "time"
 
-	"github.com/jmoiron/sqlx"
-	"github.com/joho/godotenv"
-	_ "github.com/lib/pq"
-	"github.com/redis/go-redis/v9"
+    "github.com/jmoiron/sqlx"
+    "github.com/joho/godotenv"
+    _ "github.com/lib/pq"
+    "github.com/redis/go-redis/v9"
 )
 
 type TestDB struct {
@@ -74,16 +74,90 @@ func setupPostgres() (*sqlx.DB, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	if err := db.PingContext(ctx); err != nil {
-		return nil, fmt.Errorf("failed to ping test database: %w", err)
-	}
+    if err := db.PingContext(ctx); err != nil {
+        return nil, fmt.Errorf("failed to ping test database: %w", err)
+    }
 
-	// Set connection pool settings
-	db.SetMaxOpenConns(10)
-	db.SetMaxIdleConns(5)
-	db.SetConnMaxLifetime(5 * time.Minute)
+    // Set connection pool settings
+    db.SetMaxOpenConns(10)
+    db.SetMaxIdleConns(5)
+    db.SetConnMaxLifetime(5 * time.Minute)
 
-	return db, nil
+    // Ensure schema exists for tests (idempotent)
+    if err := ensureTestSchema(db); err != nil {
+        return nil, err
+    }
+
+    return db, nil
+}
+
+// ensureTestSchema creates required tables/extensions for integration tests if missing.
+// It is safe to run multiple times.
+func ensureTestSchema(db *sqlx.DB) error {
+    ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+    defer cancel()
+
+    stmts := []string{
+        `CREATE EXTENSION IF NOT EXISTS pgcrypto`,
+        `CREATE EXTENSION IF NOT EXISTS "uuid-ossp"`,
+        `CREATE EXTENSION IF NOT EXISTS pg_trgm`,
+        `CREATE EXTENSION IF NOT EXISTS unaccent`,
+        `CREATE EXTENSION IF NOT EXISTS btree_gin`,
+        `CREATE OR REPLACE FUNCTION update_updated_at_column() RETURNS TRIGGER AS $$
+        BEGIN NEW.updated_at = NOW(); RETURN NEW; END; $$ language 'plpgsql';`,
+        `CREATE TABLE IF NOT EXISTS users (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            username VARCHAR(50) UNIQUE NOT NULL,
+            email VARCHAR(255) UNIQUE NOT NULL,
+            display_name VARCHAR(100),
+            avatar TEXT,
+            bio TEXT,
+            bitcoin_wallet VARCHAR(62),
+            role VARCHAR(20) NOT NULL DEFAULT 'user' CHECK (role IN ('user', 'admin', 'moderator')),
+            password_hash TEXT NOT NULL,
+            is_active BOOLEAN NOT NULL DEFAULT true,
+            created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+        )`,
+        `CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)`,
+        `CREATE INDEX IF NOT EXISTS idx_users_username ON users(username)`,
+        `CREATE INDEX IF NOT EXISTS idx_users_role ON users(role)`,
+        `CREATE INDEX IF NOT EXISTS idx_users_is_active ON users(is_active)`,
+        `CREATE INDEX IF NOT EXISTS idx_users_created_at ON users(created_at)`,
+        `CREATE INDEX IF NOT EXISTS idx_users_bitcoin_wallet ON users(bitcoin_wallet)`,
+        `DROP TRIGGER IF EXISTS update_users_updated_at ON users`,
+        `CREATE TRIGGER update_users_updated_at BEFORE UPDATE ON users FOR EACH ROW EXECUTE FUNCTION update_updated_at_column()`,
+        `CREATE TABLE IF NOT EXISTS refresh_tokens (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            token TEXT UNIQUE NOT NULL,
+            expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+            created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+            revoked_at TIMESTAMP WITH TIME ZONE
+        )`,
+        `CREATE INDEX IF NOT EXISTS idx_refresh_tokens_token ON refresh_tokens(token)`,
+        `CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user_id ON refresh_tokens(user_id)`,
+        `CREATE INDEX IF NOT EXISTS idx_refresh_tokens_expires_at ON refresh_tokens(expires_at)`,
+        `CREATE INDEX IF NOT EXISTS idx_refresh_tokens_revoked_at ON refresh_tokens(revoked_at)`,
+        `CREATE INDEX IF NOT EXISTS idx_refresh_tokens_active ON refresh_tokens(user_id, expires_at) WHERE revoked_at IS NULL`,
+        `CREATE TABLE IF NOT EXISTS sessions (
+            id VARCHAR(255) PRIMARY KEY,
+            user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+            created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+        )`,
+        `CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id)`,
+        `CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions(expires_at)`,
+        `DROP INDEX IF EXISTS idx_sessions_active`,
+        `CREATE INDEX IF NOT EXISTS idx_sessions_active ON sessions(user_id, expires_at)`,
+    }
+
+    for _, s := range stmts {
+        if _, err := db.ExecContext(ctx, s); err != nil {
+            return fmt.Errorf("schema setup failed: %w (stmt: %s)", err, s)
+        }
+    }
+    return nil
 }
 
 func getEnvDefault(key, def string) string {

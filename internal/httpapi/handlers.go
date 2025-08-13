@@ -75,7 +75,7 @@ func (s *Server) Login(w http.ResponseWriter, r *http.Request) {
             CreatedAt: time.Now(),
         }
         if err := s.authRepo.CreateRefreshToken(r.Context(), rt); err != nil {
-            WriteError(w, http.StatusInternalServerError, domain.NewDomainError("TOKEN_ISSUE_FAILED", "Failed to create refresh token"))
+            WriteError(w, http.StatusInternalServerError, domain.NewDomainErrorWithDetails("TOKEN_ISSUE_FAILED", "Failed to create refresh token", err.Error()))
             return
         }
 
@@ -192,7 +192,7 @@ func (s *Server) Register(w http.ResponseWriter, r *http.Request) {
                 CreatedAt: time.Now(),
             }
             if err := s.authRepo.CreateRefreshToken(r.Context(), rt); err != nil {
-                WriteError(w, http.StatusInternalServerError, domain.NewDomainError("TOKEN_ISSUE_FAILED", "Failed to create refresh token"))
+                WriteError(w, http.StatusInternalServerError, domain.NewDomainErrorWithDetails("TOKEN_ISSUE_FAILED", "Failed to create refresh token", err.Error()))
                 return
             }
             if err := s.authRepo.CreateSession(r.Context(), refresh, dUser.ID, refreshExpires); err != nil {
@@ -254,7 +254,7 @@ func (s *Server) RefreshToken(w http.ResponseWriter, r *http.Request) {
         CreatedAt: time.Now(),
     }
     if err := s.authRepo.CreateRefreshToken(r.Context(), rt); err != nil {
-        WriteError(w, http.StatusInternalServerError, domain.NewDomainError("TOKEN_ISSUE_FAILED", "Failed to issue refresh token"))
+        WriteError(w, http.StatusInternalServerError, domain.NewDomainErrorWithDetails("TOKEN_ISSUE_FAILED", "Failed to issue refresh token", err.Error()))
         return
     }
 
