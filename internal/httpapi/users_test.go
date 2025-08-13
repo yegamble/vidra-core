@@ -28,7 +28,9 @@ func newMockUserRepo() *mockUserRepo {
     return &mockUserRepo{users: map[string]*domain.User{}}
 }
 
-func (m *mockUserRepo) Create(_ context.Context, _ *domain.User, _ string) error {
+func (m *mockUserRepo) Create(_ context.Context, user *domain.User, _ string) error {
+    c := *user
+    m.users[user.ID] = &c
     return nil
 }
 

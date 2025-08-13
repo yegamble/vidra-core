@@ -1,21 +1,27 @@
 package httpapi
 
 import (
-	"encoding/json"
-	"net/http"
-	"time"
+    "encoding/json"
+    "net/http"
+    "time"
 
-	"athena/internal/domain"
-	"athena/internal/generated"
-	"athena/internal/middleware"
+    "github.com/google/uuid"
+    "golang.org/x/crypto/bcrypt"
+
+    "athena/internal/domain"
+    "athena/internal/generated"
+    "athena/internal/middleware"
+    "athena/internal/usecase"
 )
 
 // Server implements the generated ServerInterface
-type Server struct{}
+type Server struct{
+    userRepo usecase.UserRepository
+}
 
 // NewServer creates a new server instance
-func NewServer() *Server {
-	return &Server{}
+func NewServer(userRepo usecase.UserRepository) *Server {
+    return &Server{userRepo: userRepo}
 }
 
 // Login implements ServerInterface.Login
@@ -54,36 +60,87 @@ func (s *Server) Login(w http.ResponseWriter, r *http.Request) {
 
 // Register implements ServerInterface.Register
 func (s *Server) Register(w http.ResponseWriter, r *http.Request) {
-	var req generated.RegisterRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_JSON", "Invalid JSON payload"))
-		return
-	}
+    var req generated.RegisterRequest
+    if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+        WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_JSON", "Invalid JSON payload"))
+        return
+    }
 
-	if req.Username == "" || req.Email == "" || req.Password == "" {
-		WriteError(w, http.StatusBadRequest, domain.NewDomainError("MISSING_FIELDS", "Username, email, and password are required"))
-		return
-	}
+    if req.Username == "" || req.Email == "" || req.Password == "" {
+        WriteError(w, http.StatusBadRequest, domain.NewDomainError("MISSING_FIELDS", "Username, email, and password are required"))
+        return
+    }
 
-	user := generated.User{
-		ID:          "user" + time.Now().Format("20060102150405"),
-		Username:    req.Username,
-		Email:       req.Email,
-		DisplayName: req.DisplayName,
-		Role:        generated.UserRoleUser,
-		IsActive:    true,
-		CreatedAt:   time.Now(),
-		UpdatedAt:   time.Now(),
-	}
+    // Optional pre-check for clearer 409s
+    if s.userRepo != nil {
+        if _, err := s.userRepo.GetByEmail(r.Context(), req.Email); err == nil {
+            WriteError(w, http.StatusConflict, domain.NewDomainError("USER_EXISTS", "Email already in use"))
+            return
+        }
+        if _, err := s.userRepo.GetByUsername(r.Context(), req.Username); err == nil {
+            WriteError(w, http.StatusConflict, domain.NewDomainError("USER_EXISTS", "Username already in use"))
+            return
+        }
 
-	response := generated.AuthResponse{
-		User:         user,
-		AccessToken:  generateJWT(user.ID, 15*time.Minute),
-		RefreshToken: generateJWT(user.ID, 24*time.Hour),
-		ExpiresIn:    15 * 60,
-	}
+        now := time.Now()
+        userID := uuid.NewString()
+        displayName := ""
+        if req.DisplayName != nil { displayName = *req.DisplayName }
 
-	WriteJSON(w, http.StatusCreated, response)
+        dUser := &domain.User{
+            ID:          userID,
+            Username:    req.Username,
+            Email:       req.Email,
+            DisplayName: displayName,
+            Role:        domain.RoleUser,
+            IsActive:    true,
+            CreatedAt:   now,
+            UpdatedAt:   now,
+        }
+
+        // Hash password
+        hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+        if err != nil {
+            WriteError(w, http.StatusInternalServerError, domain.NewDomainError("INTERNAL_ERROR", "Failed to process password"))
+            return
+        }
+
+        if err := s.userRepo.Create(r.Context(), dUser, string(hash)); err != nil {
+            status := MapDomainErrorToHTTP(domain.ErrConflict)
+            WriteError(w, status, domain.NewDomainError("CREATE_FAILED", "Failed to create user"))
+            return
+        }
+
+        // Map to generated.User
+        var dispPtr *string
+        if dUser.DisplayName != "" { disp := dUser.DisplayName; dispPtr = &disp }
+        gUser := generated.User{
+            ID:          dUser.ID,
+            Username:    dUser.Username,
+            Email:       dUser.Email,
+            DisplayName: dispPtr,
+            Role:        generated.UserRoleUser,
+            IsActive:    dUser.IsActive,
+            CreatedAt:   dUser.CreatedAt,
+            UpdatedAt:   dUser.UpdatedAt,
+        }
+
+        // Set Location header to new resource
+        w.Header().Set("Location", "/api/v1/users/"+gUser.ID)
+
+        response := generated.AuthResponse{
+            User:         gUser,
+            AccessToken:  generateJWT(gUser.ID, 15*time.Minute),
+            RefreshToken: generateJWT(gUser.ID, 24*time.Hour),
+            ExpiresIn:    15 * 60,
+        }
+
+        WriteJSON(w, http.StatusCreated, response)
+        return
+    }
+
+    // Fallback if repo not set (shouldn't happen in production wiring)
+    WriteError(w, http.StatusInternalServerError, domain.NewDomainError("INTERNAL_ERROR", "User repository not configured"))
 }
 
 // RefreshToken implements ServerInterface.RefreshToken

@@ -7,6 +7,8 @@ import (
     "time"
 
     "github.com/go-chi/chi/v5"
+    "github.com/google/uuid"
+    "golang.org/x/crypto/bcrypt"
 
     "athena/internal/domain"
     "athena/internal/middleware"
@@ -171,4 +173,82 @@ func GetUserVideos(w http.ResponseWriter, r *http.Request) {
     }
 
     WriteJSONWithMeta(w, http.StatusOK, videos, meta)
+}
+
+// CreateUserHandler creates a new user in the database
+func CreateUserHandler(repo usecase.UserRepository) http.HandlerFunc {
+    type createUserRequest struct {
+        Username    string `json:"username"`
+        Email       string `json:"email"`
+        Password    string `json:"password"`
+        DisplayName string `json:"display_name"`
+        Avatar      string `json:"avatar"`
+        Bio         string `json:"bio"`
+        Role        domain.UserRole `json:"role"`
+        IsActive    *bool            `json:"is_active"`
+    }
+
+    return func(w http.ResponseWriter, r *http.Request) {
+        var req createUserRequest
+        if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+            WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_JSON", "Invalid JSON payload"))
+            return
+        }
+
+        if req.Username == "" || req.Email == "" || req.Password == "" {
+            WriteError(w, http.StatusBadRequest, domain.NewDomainError("MISSING_FIELDS", "Username, email, and password are required"))
+            return
+        }
+
+        // Optional: check for duplicates for clearer 409s
+        if _, err := repo.GetByEmail(r.Context(), req.Email); err == nil {
+            WriteError(w, http.StatusConflict, domain.NewDomainError("USER_EXISTS", "Email already in use"))
+            return
+        }
+        if _, err := repo.GetByUsername(r.Context(), req.Username); err == nil {
+            WriteError(w, http.StatusConflict, domain.NewDomainError("USER_EXISTS", "Username already in use"))
+            return
+        }
+
+        now := time.Now()
+        id := uuid.NewString()
+        role := req.Role
+        if role == "" {
+            role = domain.RoleUser
+        }
+        isActive := true
+        if req.IsActive != nil {
+            isActive = *req.IsActive
+        }
+
+        user := &domain.User{
+            ID:          id,
+            Username:    req.Username,
+            Email:       req.Email,
+            DisplayName: req.DisplayName,
+            Avatar:      req.Avatar,
+            Bio:         req.Bio,
+            Role:        role,
+            IsActive:    isActive,
+            CreatedAt:   now,
+            UpdatedAt:   now,
+        }
+
+        // Hash password
+        pwHashBytes, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+        if err != nil {
+            WriteError(w, http.StatusInternalServerError, domain.NewDomainError("INTERNAL_ERROR", "Failed to process password"))
+            return
+        }
+
+        if err := repo.Create(r.Context(), user, string(pwHashBytes)); err != nil {
+            // Fallback conflict mapping if repo enforces uniqueness at DB level
+            WriteError(w, MapDomainErrorToHTTP(domain.ErrConflict), domain.NewDomainError("CREATE_FAILED", "Failed to create user"))
+            return
+        }
+
+        // Set Location header to new resource
+        w.Header().Set("Location", "/api/v1/users/"+user.ID)
+        WriteJSON(w, http.StatusCreated, user)
+    }
 }

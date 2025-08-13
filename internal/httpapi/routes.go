@@ -1,30 +1,30 @@
 package httpapi
 
 import (
-    "fmt"
-    "time"
+	"fmt"
+	"time"
 
-    "github.com/go-chi/chi/v5"
-    "github.com/jmoiron/sqlx"
-    _ "github.com/lib/pq"
+	"github.com/go-chi/chi/v5"
+	"github.com/jmoiron/sqlx"
+	_ "github.com/lib/pq"
 
-    "athena/internal/config"
-    "athena/internal/middleware"
-    "athena/internal/repository"
+	"athena/internal/config"
+	"athena/internal/middleware"
+	"athena/internal/repository"
 )
 
 func RegisterRoutes(r chi.Router, cfg *config.Config) {
-    r.Use(middleware.RateLimit(time.Minute, 100))
+	r.Use(middleware.RateLimit(time.Minute, 100))
 
-    // Create server instance
-    server := NewServer()
+	// Initialize database and repositories for handlers that need them
+	db, err := sqlx.Connect("postgres", cfg.DatabaseURL)
+	if err != nil {
+		panic(fmt.Errorf("failed to connect to database: %w", err))
+	}
+	userRepo := repository.NewUserRepository(db)
 
-    // Initialize database and repositories for handlers that need them
-    db, err := sqlx.Connect("postgres", cfg.DatabaseURL)
-    if err != nil {
-        panic(fmt.Errorf("failed to connect to database: %w", err))
-    }
-    userRepo := repository.NewUserRepository(db)
+	// Create server instance with dependencies
+	server := NewServer(userRepo)
 
 	// Register auth routes with appropriate middleware
 	r.Post("/auth/register", server.Register)
@@ -51,11 +51,13 @@ func RegisterRoutes(r chi.Router, cfg *config.Config) {
 			r.With(middleware.Auth(cfg.JWTSecret)).Post("/{id}/complete", CompleteVideoUpload)
 		})
 
-        r.Route("/users", func(r chi.Router) {
-            r.With(middleware.Auth(cfg.JWTSecret)).Get("/me", GetCurrentUserHandler(userRepo))
-            r.With(middleware.Auth(cfg.JWTSecret)).Put("/me", UpdateCurrentUserHandler(userRepo))
-            r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{id}", GetUserHandler(userRepo))
-            r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{id}/videos", GetUserVideos)
-        })
-    })
+		r.Route("/users", func(r chi.Router) {
+			// Admin-style create user; currently just requires auth (role checks TBD)
+			r.With(middleware.Auth(cfg.JWTSecret)).Post("/", CreateUserHandler(userRepo))
+			r.With(middleware.Auth(cfg.JWTSecret)).Get("/me", GetCurrentUserHandler(userRepo))
+			r.With(middleware.Auth(cfg.JWTSecret)).Put("/me", UpdateCurrentUserHandler(userRepo))
+			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{id}", GetUserHandler(userRepo))
+			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{id}/videos", GetUserVideos)
+		})
+	})
 }
