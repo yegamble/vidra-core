@@ -4,7 +4,11 @@ import (
     "context"
     "database/sql"
     "fmt"
+    "net/url"
     "os"
+    "path/filepath"
+    "runtime"
+    "strings"
     "testing"
     "time"
 
@@ -66,16 +70,46 @@ func setupPostgres() (*sqlx.DB, error) {
 		dbURL = fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=%s", user, pass, host, port, name, ssl)
 	}
 
-	db, err := sqlx.Connect("postgres", dbURL)
-	if err != nil {
-		return nil, fmt.Errorf("failed to connect to test database: %w", err)
-	}
+    // Derive an isolated schema per calling test package to avoid cross-package interference
+    schema := deriveTestSchema()
+
+    // First connect without custom search_path to create the schema if needed
+    db, err := sqlx.Connect("postgres", dbURL)
+    if err != nil {
+        return nil, fmt.Errorf("failed to connect to test database: %w", err)
+    }
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
     if err := db.PingContext(ctx); err != nil {
         return nil, fmt.Errorf("failed to ping test database: %w", err)
+    }
+
+    // Create schema if needed
+    if _, err := db.ExecContext(ctx, fmt.Sprintf("CREATE SCHEMA IF NOT EXISTS %s", pqQuoteIdent(schema))); err != nil {
+        return nil, fmt.Errorf("failed to create test schema: %w", err)
+    }
+    // Close and reconnect with search_path set to the schema for all pooled conns
+    _ = db.Close()
+
+    // Append search_path to the DSN (lib/pq honors search_path param in URL form)
+    if strings.Contains(dbURL, "://") {
+        u, parseErr := url.Parse(dbURL)
+        if parseErr == nil {
+            q := u.Query()
+            q.Set("search_path", fmt.Sprintf("%s,public", schema))
+            u.RawQuery = q.Encode()
+            dbURL = u.String()
+        }
+    } else {
+        // Fallback DSN key/value form
+        dbURL = dbURL + fmt.Sprintf(" search_path='%s,public'", schema)
+    }
+
+    db, err = sqlx.Connect("postgres", dbURL)
+    if err != nil {
+        return nil, fmt.Errorf("failed to reconnect to test database with schema: %w", err)
     }
 
     // Set connection pool settings
@@ -89,6 +123,55 @@ func setupPostgres() (*sqlx.DB, error) {
     }
 
     return db, nil
+}
+
+// deriveTestSchema attempts to create a stable, package-specific schema name
+func deriveTestSchema() string {
+    if v := os.Getenv("TEST_SCHEMA"); v != "" {
+        return sanitizeSchema(v)
+    }
+    // Walk up the call stack to find first test file outside testutil
+    for i := 1; i < 15; i++ {
+        if _, file, _, ok := runtime.Caller(i); ok {
+            base := filepath.Base(file)
+            if strings.HasSuffix(base, "_test.go") && !strings.Contains(file, string(filepath.Join("internal", "testutil"))) {
+                // Use directory name as package differentiator
+                dir := filepath.Dir(file)
+                // e.g., internal/repository or internal/httpapi
+                parts := strings.Split(dir, string(filepath.Separator))
+                if len(parts) >= 2 {
+                    pkg := strings.Join(parts[len(parts)-2:], "_")
+                    return sanitizeSchema("test_" + pkg)
+                }
+                return sanitizeSchema("test_unknown")
+            }
+        }
+    }
+    return sanitizeSchema("test_default")
+}
+
+func sanitizeSchema(s string) string {
+    s = strings.ToLower(s)
+    // Replace any non [a-z0-9_] with underscore
+    var b strings.Builder
+    for _, r := range s {
+        if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '_' {
+            b.WriteRune(r)
+        } else {
+            b.WriteRune('_')
+        }
+    }
+    // Ensure it starts with a letter
+    if b.Len() == 0 || (b.String()[0] < 'a' || b.String()[0] > 'z') {
+        return "t_" + b.String()
+    }
+    return b.String()
+}
+
+// pqQuoteIdent quotes an identifier minimally for CREATE SCHEMA
+func pqQuoteIdent(id string) string {
+    // Very simple quote for safety; our sanitize already removed bad chars
+    return `"` + strings.ReplaceAll(id, `"`, `""`) + `"`
 }
 
 // ensureTestSchema creates required tables/extensions for integration tests if missing.
