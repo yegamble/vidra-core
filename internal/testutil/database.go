@@ -119,7 +119,10 @@ func cleanupTestDB(t *testing.T, testDB *TestDB) {
 				t.Logf("Failed to truncate table %s: %v", table, err)
 			}
 		}
-		testDB.DB.Close()
+		err := testDB.DB.Close()
+		if err != nil {
+			t.Logf("Failed to close Postgres DB: %v", err)
+		}
 	}
 }
 

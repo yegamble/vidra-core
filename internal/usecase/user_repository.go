@@ -1,9 +1,8 @@
 package usecase
 
 import (
-	"context"
-
 	"athena/internal/domain"
+	"context"
 )
 
 type UserRepository interface {
