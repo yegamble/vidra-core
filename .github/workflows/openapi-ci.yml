@@ -9,8 +9,6 @@ on:
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
   pull-requests: write
 
 jobs:
@@ -116,14 +114,4 @@ jobs:
           name: api-documentation
           path: docs/
 
-      - name: Setup Pages
-        uses: actions/configure-pages@v4
-
-      - name: Upload to GitHub Pages
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: ./docs
-
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
+      # Skipping GitHub Pages setup and deployment as requested.
