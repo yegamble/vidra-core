@@ -79,6 +79,70 @@ func TestLogin_Integration_PersistsRefreshToken(t *testing.T) {
     }
 }
 
+func TestLogin_Integration_InvalidCredentials_NoUser(t *testing.T) {
+    td := testutil.SetupTestDB(t)
+    td.TruncateTables(t, "users", "refresh_tokens")
+
+    s := NewServer(repository.NewUserRepository(td.DB), repository.NewAuthRepository(td.DB))
+
+    body := map[string]any{"email": "nouser@example.com", "password": "some-password"}
+    b, _ := json.Marshal(body)
+    req := httptest.NewRequest(http.MethodPost, "/auth/login", bytes.NewReader(b))
+    req.Header.Set("Content-Type", "application/json")
+    rr := httptest.NewRecorder()
+
+    s.Login(rr, req)
+
+    if rr.Code != http.StatusUnauthorized {
+        t.Fatalf("expected 401, got %d, body=%s", rr.Code, rr.Body.String())
+    }
+}
+
+func TestLogin_Integration_InvalidCredentials_WrongPassword(t *testing.T) {
+    td := testutil.SetupTestDB(t)
+    td.TruncateTables(t, "users", "refresh_tokens")
+
+    userRepo := repository.NewUserRepository(td.DB)
+    s := NewServer(userRepo, repository.NewAuthRepository(td.DB))
+
+    // seed user with known password
+    email := "wrongpw_" + time.Now().Format("150405") + "@example.com"
+    pw := "correct-password"
+    hash, _ := bcrypt.GenerateFromPassword([]byte(pw), bcrypt.DefaultCost)
+    u := &domain.User{ID: "u_" + time.Now().Format("150405"), Username: "wrongpw", Email: email, Role: domain.RoleUser, IsActive: true, CreatedAt: time.Now(), UpdatedAt: time.Now()}
+    if err := userRepo.Create(context.Background(), u, string(hash)); err != nil {
+        t.Fatalf("seed create failed: %v", err)
+    }
+
+    body := map[string]any{"email": email, "password": "incorrect"}
+    b, _ := json.Marshal(body)
+    req := httptest.NewRequest(http.MethodPost, "/auth/login", bytes.NewReader(b))
+    req.Header.Set("Content-Type", "application/json")
+    rr := httptest.NewRecorder()
+    s.Login(rr, req)
+    if rr.Code != http.StatusUnauthorized {
+        t.Fatalf("expected 401, got %d, body=%s", rr.Code, rr.Body.String())
+    }
+}
+
+func TestLogin_Integration_MissingFields(t *testing.T) {
+    td := testutil.SetupTestDB(t)
+    td.TruncateTables(t, "users")
+
+    s := NewServer(repository.NewUserRepository(td.DB), repository.NewAuthRepository(td.DB))
+
+    // missing password
+    body := map[string]any{"email": "someone@example.com"}
+    b, _ := json.Marshal(body)
+    req := httptest.NewRequest(http.MethodPost, "/auth/login", bytes.NewReader(b))
+    req.Header.Set("Content-Type", "application/json")
+    rr := httptest.NewRecorder()
+    s.Login(rr, req)
+    if rr.Code != http.StatusBadRequest {
+        t.Fatalf("expected 400, got %d, body=%s", rr.Code, rr.Body.String())
+    }
+}
+
 func TestRefresh_Integration_RotatesToken(t *testing.T) {
     td := testutil.SetupTestDB(t)
     td.TruncateTables(t, "users", "refresh_tokens")
@@ -137,6 +201,39 @@ func TestRefresh_Integration_RotatesToken(t *testing.T) {
     // New token exists
     if _, err := authRepo.GetRefreshToken(context.Background(), rpayload.RefreshToken); err != nil {
         t.Fatalf("expected new refresh token in DB: %v", err)
+    }
+}
+
+func TestRefresh_Integration_MissingToken(t *testing.T) {
+    td := testutil.SetupTestDB(t)
+    td.TruncateTables(t, "users", "refresh_tokens")
+
+    s := NewServer(repository.NewUserRepository(td.DB), repository.NewAuthRepository(td.DB))
+
+    // missing refresh_token field
+    b, _ := json.Marshal(map[string]any{})
+    req := httptest.NewRequest(http.MethodPost, "/auth/refresh", bytes.NewReader(b))
+    req.Header.Set("Content-Type", "application/json")
+    rr := httptest.NewRecorder()
+    s.RefreshToken(rr, req)
+    if rr.Code != http.StatusBadRequest {
+        t.Fatalf("expected 400, got %d, body=%s", rr.Code, rr.Body.String())
+    }
+}
+
+func TestRefresh_Integration_InvalidToken(t *testing.T) {
+    td := testutil.SetupTestDB(t)
+    td.TruncateTables(t, "users", "refresh_tokens")
+
+    s := NewServer(repository.NewUserRepository(td.DB), repository.NewAuthRepository(td.DB))
+
+    b, _ := json.Marshal(map[string]any{"refresh_token": "does-not-exist"})
+    req := httptest.NewRequest(http.MethodPost, "/auth/refresh", bytes.NewReader(b))
+    req.Header.Set("Content-Type", "application/json")
+    rr := httptest.NewRecorder()
+    s.RefreshToken(rr, req)
+    if rr.Code != http.StatusUnauthorized {
+        t.Fatalf("expected 401, got %d, body=%s", rr.Code, rr.Body.String())
     }
 }
 
