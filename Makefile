@@ -1,4 +1,4 @@
-.PHONY: help deps lint test build docker docker-up docker-down migrate clean dev install-tools test-ci
+.PHONY: help deps lint test test-integration build docker docker-up docker-down migrate clean dev install-tools test-ci
 
 # Default target
 help: ## Display this help message
@@ -24,6 +24,9 @@ test: ## Run unit tests
 
 test-ci: ## Run tests for CI environment
 	go test -v -race -coverprofile=coverage.out ./...
+
+test-integration: ## Run only integration tests (loads .env.test if present)
+	@bash -lc 'set -a; [ -f .env.test ] && source .env.test || true; set +a; go test -v -race -run Integration ./...'
 
 test-local: ## Run tests with local Docker services
 	docker-compose -f docker-compose.test.yml up -d

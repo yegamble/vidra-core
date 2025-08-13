@@ -121,6 +121,45 @@ make test-ci
 open coverage.html
 ```
 
+### Integration Tests
+
+Integration tests use a real Postgres (and ping Redis) via the helpers in `internal/testutil`. You can configure the test database through environment variables. The loader checks in this order:
+
+- `TEST_DATABASE_URL`: Full Postgres URL used only for tests
+- `DATABASE_URL`: Fallback if `TEST_DATABASE_URL` is not set
+- Granular fallbacks (if neither URL is set):
+  - `TEST_DB_HOST` (default: `localhost`)
+  - `TEST_DB_PORT` (default: `5433`)
+  - `TEST_DB_NAME` (default: `athena_test`)
+  - `TEST_DB_USER` (default: `test_user`)
+  - `TEST_DB_PASSWORD` (default: `test_password`)
+  - `TEST_DB_SSLMODE` (default: `disable`)
+
+Additionally, the test bootstrap attempts to load `.env.test` first, then `.env` if present, so you can commit a dedicated test configuration.
+
+Examples:
+
+```bash
+# Use a single URL for test DB
+export TEST_DATABASE_URL=postgres://user:pass@localhost:5432/athena_test?sslmode=disable
+
+# Or use granular overrides
+export TEST_DB_HOST=localhost
+export TEST_DB_PORT=5432
+export TEST_DB_NAME=athena_test
+export TEST_DB_USER=postgres
+export TEST_DB_PASSWORD=postgres
+
+# If your Redis differs from the default test instance
+export REDIS_URL=redis://localhost:6379/0
+
+# Run only integration tests in httpapi package
+go test ./internal/httpapi -run Integration
+
+# Or run all tests
+go test ./...
+```
+
 ### API Documentation
 
 The API is defined using OpenAPI 3.0 specification in `api/openapi.yaml`.

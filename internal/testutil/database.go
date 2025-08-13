@@ -1,16 +1,17 @@
 package testutil
 
 import (
-	"context"
-	"database/sql"
-	"fmt"
-	"os"
-	"testing"
-	"time"
+    "context"
+    "database/sql"
+    "fmt"
+    "os"
+    "testing"
+    "time"
 
-	"github.com/jmoiron/sqlx"
-	_ "github.com/lib/pq"
-	"github.com/redis/go-redis/v9"
+    "github.com/jmoiron/sqlx"
+    _ "github.com/lib/pq"
+    "github.com/redis/go-redis/v9"
+    "github.com/joho/godotenv"
 )
 
 type TestDB struct {
@@ -44,11 +45,26 @@ func SetupTestDB(t *testing.T) *TestDB {
 }
 
 func setupPostgres() (*sqlx.DB, error) {
-	// Use environment variable if set (for CI), otherwise use local test setup
-	dbURL := os.Getenv("DATABASE_URL")
-	if dbURL == "" {
-		dbURL = "postgres://test_user:test_password@localhost:5433/athena_test?sslmode=disable"
-	}
+    // Try loading env files commonly used in tests
+    // Load .env.test first (overrides), then .env if present; ignore errors silently
+    _ = godotenv.Load(".env.test")
+    _ = godotenv.Load()
+
+    // Prefer an explicit test URL if provided
+    dbURL := os.Getenv("TEST_DATABASE_URL")
+    if dbURL == "" {
+        dbURL = os.Getenv("DATABASE_URL")
+    }
+    if dbURL == "" {
+        // Assemble from granular TEST_DB_* envs if provided
+        host := getEnvDefault("TEST_DB_HOST", "localhost")
+        port := getEnvDefault("TEST_DB_PORT", "5433")
+        name := getEnvDefault("TEST_DB_NAME", "athena_test")
+        user := getEnvDefault("TEST_DB_USER", "test_user")
+        pass := getEnvDefault("TEST_DB_PASSWORD", "test_password")
+        ssl := getEnvDefault("TEST_DB_SSLMODE", "disable")
+        dbURL = fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=%s", user, pass, host, port, name, ssl)
+    }
 
 	db, err := sqlx.Connect("postgres", dbURL)
 	if err != nil {
@@ -68,6 +84,13 @@ func setupPostgres() (*sqlx.DB, error) {
 	db.SetConnMaxLifetime(5 * time.Minute)
 
 	return db, nil
+}
+
+func getEnvDefault(key, def string) string {
+    if v := os.Getenv(key); v != "" {
+        return v
+    }
+    return def
 }
 
 func setupRedis() (*redis.Client, error) {
