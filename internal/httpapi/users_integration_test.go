@@ -252,3 +252,74 @@ func TestUpdateCurrentUserHandler_Integration_UpdatesDBUser(t *testing.T) {
         t.Fatalf("DB not updated: %+v", fromDB)
     }
 }
+
+func TestGetCurrentUserHandler_Integration_Unauthorized(t *testing.T) {
+    td := testutil.SetupTestDB(t)
+    td.TruncateTables(t, "users")
+
+    repo := repository.NewUserRepository(td.DB)
+
+    req := httptest.NewRequest(http.MethodGet, "/api/v1/users/me", nil)
+    rr := httptest.NewRecorder()
+    GetCurrentUserHandler(repo).ServeHTTP(rr, req)
+
+    if rr.Code != http.StatusUnauthorized {
+        t.Fatalf("expected 401, got %d, body=%s", rr.Code, rr.Body.String())
+    }
+}
+
+func TestGetCurrentUserHandler_Integration_NotFound(t *testing.T) {
+    td := testutil.SetupTestDB(t)
+    td.TruncateTables(t, "users")
+
+    repo := repository.NewUserRepository(td.DB)
+    req := httptest.NewRequest(http.MethodGet, "/api/v1/users/me", nil)
+    req = req.WithContext(context.WithValue(req.Context(), middleware.UserIDKey, "does-not-exist"))
+    rr := httptest.NewRecorder()
+    GetCurrentUserHandler(repo).ServeHTTP(rr, req)
+
+    if rr.Code != http.StatusNotFound {
+        t.Fatalf("expected 404, got %d, body=%s", rr.Code, rr.Body.String())
+    }
+}
+
+func TestUpdateCurrentUserHandler_Integration_InvalidJSON(t *testing.T) {
+    td := testutil.SetupTestDB(t)
+    td.TruncateTables(t, "users")
+
+    repo := repository.NewUserRepository(td.DB)
+    // Seed a user so lookup works; invalid JSON should be caught before update
+    u := &domain.User{ID: "badjson_" + time.Now().Format("150405"), Username: "badjson", Email: "badjson@example.com", Role: domain.RoleUser, IsActive: true, CreatedAt: time.Now(), UpdatedAt: time.Now()}
+    if err := repo.Create(context.Background(), u, "hash"); err != nil {
+        t.Fatalf("seed create failed: %v", err)
+    }
+
+    // Send invalid JSON (unterminated object)
+    req := httptest.NewRequest(http.MethodPut, "/api/v1/users/me", bytes.NewBufferString("{\"display_name\": \"x"))
+    req.Header.Set("Content-Type", "application/json")
+    req = req.WithContext(context.WithValue(req.Context(), middleware.UserIDKey, u.ID))
+    rr := httptest.NewRecorder()
+    UpdateCurrentUserHandler(repo).ServeHTTP(rr, req)
+
+    if rr.Code != http.StatusBadRequest {
+        t.Fatalf("expected 400, got %d, body=%s", rr.Code, rr.Body.String())
+    }
+}
+
+func TestUpdateCurrentUserHandler_Integration_Unauthorized(t *testing.T) {
+    td := testutil.SetupTestDB(t)
+    td.TruncateTables(t, "users")
+
+    repo := repository.NewUserRepository(td.DB)
+
+    body := map[string]any{"display_name": "After"}
+    b, _ := json.Marshal(body)
+    req := httptest.NewRequest(http.MethodPut, "/api/v1/users/me", bytes.NewReader(b))
+    req.Header.Set("Content-Type", "application/json")
+    rr := httptest.NewRecorder()
+    UpdateCurrentUserHandler(repo).ServeHTTP(rr, req)
+
+    if rr.Code != http.StatusUnauthorized {
+        t.Fatalf("expected 401, got %d, body=%s", rr.Code, rr.Body.String())
+    }
+}
