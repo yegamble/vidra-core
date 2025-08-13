@@ -36,7 +36,7 @@ func TestLogin_Integration_PersistsRefreshToken(t *testing.T) {
 
     userRepo := repository.NewUserRepository(td.DB)
     authRepo := repository.NewAuthRepository(td.DB)
-    s := NewServer(userRepo, authRepo, "test-secret")
+    s := NewServer(userRepo, authRepo, "test-secret", nil, 0)
 
     uname := "login_" + time.Now().Format("20060102150405")
     email := uname + "@example.com"
@@ -84,7 +84,7 @@ func TestLogin_Integration_InvalidCredentials_NoUser(t *testing.T) {
     td := testutil.SetupTestDB(t)
     td.TruncateTables(t, "users", "refresh_tokens")
 
-    s := NewServer(repository.NewUserRepository(td.DB), repository.NewAuthRepository(td.DB), "test-secret")
+    s := NewServer(repository.NewUserRepository(td.DB), repository.NewAuthRepository(td.DB), "test-secret", nil, 0)
 
     body := map[string]any{"email": "nouser@example.com", "password": "some-password"}
     b, _ := json.Marshal(body)
@@ -104,7 +104,7 @@ func TestLogin_Integration_InvalidCredentials_WrongPassword(t *testing.T) {
     td.TruncateTables(t, "users", "refresh_tokens")
 
     userRepo := repository.NewUserRepository(td.DB)
-    s := NewServer(userRepo, repository.NewAuthRepository(td.DB), "test-secret")
+    s := NewServer(userRepo, repository.NewAuthRepository(td.DB), "test-secret", nil, 0)
 
     // seed user with known password
     email := "wrongpw_" + time.Now().Format("150405") + "@example.com"
@@ -130,7 +130,7 @@ func TestLogin_Integration_MissingFields(t *testing.T) {
     td := testutil.SetupTestDB(t)
     td.TruncateTables(t, "users")
 
-    s := NewServer(repository.NewUserRepository(td.DB), repository.NewAuthRepository(td.DB), "test-secret")
+    s := NewServer(repository.NewUserRepository(td.DB), repository.NewAuthRepository(td.DB), "test-secret", nil, 0)
 
     // missing password
     body := map[string]any{"email": "someone@example.com"}
@@ -209,7 +209,7 @@ func TestRefresh_Integration_MissingToken(t *testing.T) {
     td := testutil.SetupTestDB(t)
     td.TruncateTables(t, "users", "refresh_tokens")
 
-    s := NewServer(repository.NewUserRepository(td.DB), repository.NewAuthRepository(td.DB), "test-secret")
+    s := NewServer(repository.NewUserRepository(td.DB), repository.NewAuthRepository(td.DB), "test-secret", nil, 0)
 
     // missing refresh_token field
     b, _ := json.Marshal(map[string]any{})
@@ -244,7 +244,7 @@ func TestLogout_Integration_RevokesTokens(t *testing.T) {
 
     userRepo := repository.NewUserRepository(td.DB)
     authRepo := repository.NewAuthRepository(td.DB)
-    s := NewServer(userRepo, authRepo, "test-secret")
+    s := NewServer(userRepo, authRepo, "test-secret", nil, 0)
 
     // Use the middleware stubbed userID = "user123"
     uid := uuid.NewString()

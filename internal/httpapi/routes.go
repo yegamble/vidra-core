@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+    "context"
     "fmt"
     "time"
 
@@ -31,10 +32,18 @@ func RegisterRoutes(r chi.Router, cfg *config.Config) {
         panic(fmt.Errorf("failed to parse redis url: %w", err))
     }
     rdb := redis.NewClient(redisOpts)
+    // Fail fast if Redis is unreachable
+    if err := func() error {
+        ctx, cancel := context.WithTimeout(context.Background(), time.Duration(cfg.RedisPingTimeout)*time.Second)
+        defer cancel()
+        return rdb.Ping(ctx).Err()
+    }(); err != nil {
+        panic(fmt.Errorf("failed to connect to redis: %w", err))
+    }
     sessionRepo := repository.NewCompositeAuthRepository(dbAuthRepo, repository.NewRedisSessionRepository(rdb))
 
     // Create server instance with dependencies
-    server := NewServer(userRepo, sessionRepo, cfg.JWTSecret)
+    server := NewServer(userRepo, sessionRepo, cfg.JWTSecret, rdb, time.Duration(cfg.RedisPingTimeout)*time.Second)
 
 	// Register auth routes with appropriate middleware
 	r.Post("/auth/register", server.Register)

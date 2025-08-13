@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+    "context"
     "encoding/json"
     "net/http"
     "os"
@@ -9,6 +10,7 @@ import (
 
     "github.com/golang-jwt/jwt/v5"
     "github.com/google/uuid"
+    "github.com/redis/go-redis/v9"
     "golang.org/x/crypto/bcrypt"
 
     "athena/internal/domain"
@@ -22,11 +24,13 @@ type Server struct{
     userRepo  usecase.UserRepository
     authRepo  usecase.AuthRepository
     jwtSecret string
+    redis     *redis.Client
+    redisPingTimeout time.Duration
 }
 
 // NewServer creates a new server instance
-func NewServer(userRepo usecase.UserRepository, authRepo usecase.AuthRepository, jwtSecret string) *Server {
-    return &Server{userRepo: userRepo, authRepo: authRepo, jwtSecret: jwtSecret}
+func NewServer(userRepo usecase.UserRepository, authRepo usecase.AuthRepository, jwtSecret string, redisClient *redis.Client, redisPingTimeout time.Duration) *Server {
+    return &Server{userRepo: userRepo, authRepo: authRepo, jwtSecret: jwtSecret, redis: redisClient, redisPingTimeout: redisPingTimeout}
 }
 
 // Login implements ServerInterface.Login
@@ -61,12 +65,13 @@ func (s *Server) Login(w http.ResponseWriter, r *http.Request) {
     // Issue tokens
     access := s.generateJWT(dUser.ID, 15*time.Minute)
     refresh := uuid.NewString()
+    refreshExpires := time.Now().Add(7 * 24 * time.Hour)
     if s.authRepo != nil {
         rt := &usecase.RefreshToken{
             ID:        uuid.NewString(),
             UserID:    dUser.ID,
             Token:     refresh,
-            ExpiresAt: time.Now().Add(7 * 24 * time.Hour),
+            ExpiresAt: refreshExpires,
             CreatedAt: time.Now(),
         }
         if err := s.authRepo.CreateRefreshToken(r.Context(), rt); err != nil {
@@ -75,7 +80,10 @@ func (s *Server) Login(w http.ResponseWriter, r *http.Request) {
         }
 
         // Create corresponding session in Redis (sessionID == refresh token)
-        _ = s.authRepo.CreateSession(r.Context(), refresh, dUser.ID, time.Now().Add(time.Duration(safeSeconds(cfgSessionTimeout()))*time.Second))
+        if err := s.authRepo.CreateSession(r.Context(), refresh, dUser.ID, refreshExpires); err != nil {
+            WriteError(w, http.StatusInternalServerError, domain.NewDomainError("SESSION_CREATE_FAILED", "Failed to create session"))
+            return
+        }
     }
 
     // Map to generated.User
@@ -174,19 +182,23 @@ func (s *Server) Register(w http.ResponseWriter, r *http.Request) {
 
         // Create refresh token + session for new user
         refresh := uuid.NewString()
+        refreshExpires := time.Now().Add(7 * 24 * time.Hour)
         if s.authRepo != nil {
             rt := &usecase.RefreshToken{
                 ID:        uuid.NewString(),
                 UserID:    dUser.ID,
                 Token:     refresh,
-                ExpiresAt: time.Now().Add(7 * 24 * time.Hour),
+                ExpiresAt: refreshExpires,
                 CreatedAt: time.Now(),
             }
             if err := s.authRepo.CreateRefreshToken(r.Context(), rt); err != nil {
                 WriteError(w, http.StatusInternalServerError, domain.NewDomainError("TOKEN_ISSUE_FAILED", "Failed to create refresh token"))
                 return
             }
-            _ = s.authRepo.CreateSession(r.Context(), refresh, dUser.ID, time.Now().Add(time.Duration(safeSeconds(cfgSessionTimeout()))*time.Second))
+            if err := s.authRepo.CreateSession(r.Context(), refresh, dUser.ID, refreshExpires); err != nil {
+                WriteError(w, http.StatusInternalServerError, domain.NewDomainError("SESSION_CREATE_FAILED", "Failed to create session"))
+                return
+            }
         }
 
         response := generated.AuthResponse{
@@ -233,11 +245,12 @@ func (s *Server) RefreshToken(w http.ResponseWriter, r *http.Request) {
     _ = s.authRepo.RevokeRefreshToken(r.Context(), req.RefreshToken)
 
     newRefresh := uuid.NewString()
+    refreshExpires := time.Now().Add(7 * 24 * time.Hour)
     rt := &usecase.RefreshToken{
         ID:        uuid.NewString(),
         UserID:    existing.UserID,
         Token:     newRefresh,
-        ExpiresAt: time.Now().Add(7 * 24 * time.Hour),
+        ExpiresAt: refreshExpires,
         CreatedAt: time.Now(),
     }
     if err := s.authRepo.CreateRefreshToken(r.Context(), rt); err != nil {
@@ -247,7 +260,10 @@ func (s *Server) RefreshToken(w http.ResponseWriter, r *http.Request) {
 
     // Rotate session in Redis (sessionID == refresh token)
     _ = s.authRepo.DeleteSession(r.Context(), req.RefreshToken)
-    _ = s.authRepo.CreateSession(r.Context(), newRefresh, existing.UserID, time.Now().Add(time.Duration(safeSeconds(cfgSessionTimeout()))*time.Second))
+    if err := s.authRepo.CreateSession(r.Context(), newRefresh, existing.UserID, refreshExpires); err != nil {
+        WriteError(w, http.StatusInternalServerError, domain.NewDomainError("SESSION_CREATE_FAILED", "Failed to create session"))
+        return
+    }
 
     response := generated.TokenResponse{
         AccessToken:  s.generateJWT(existing.UserID, 15*time.Minute),
@@ -287,10 +303,22 @@ func (s *Server) HealthCheck(w http.ResponseWriter, r *http.Request) {
 
 // ReadinessCheck implements ServerInterface.ReadinessCheck
 func (s *Server) ReadinessCheck(w http.ResponseWriter, r *http.Request) {
-	// In a real implementation, you would check actual services
-	dbStatus := generated.ServiceStatusHealthy
-	redisStatus := generated.ServiceStatusHealthy
-	ipfsStatus := generated.ServiceStatusHealthy
+    // Probe dependent services
+    dbStatus := generated.ServiceStatusHealthy // DB connectivity not probed here
+    ipfsStatus := generated.ServiceStatusHealthy // IPFS not probed here
+    // Redis ping
+    redisStatus := generated.ServiceStatusHealthy
+    if s.redis != nil {
+        to := s.redisPingTimeout
+        if to <= 0 {
+            to = 3 * time.Second
+        }
+        ctx, cancel := context.WithTimeout(r.Context(), to)
+        defer cancel()
+        if err := s.redis.Ping(ctx).Err(); err != nil {
+            redisStatus = generated.ServiceStatusUnhealthy
+        }
+    }
 
 	response := generated.ReadinessResponse{
 		Status: generated.ReadinessStatusReady,
