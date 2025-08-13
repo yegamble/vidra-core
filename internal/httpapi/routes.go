@@ -7,6 +7,7 @@ import (
     "github.com/go-chi/chi/v5"
     "github.com/jmoiron/sqlx"
     _ "github.com/lib/pq"
+    "github.com/redis/go-redis/v9"
 
     "athena/internal/config"
     "athena/internal/middleware"
@@ -22,10 +23,18 @@ func RegisterRoutes(r chi.Router, cfg *config.Config) {
 		panic(fmt.Errorf("failed to connect to database: %w", err))
 	}
     userRepo := repository.NewUserRepository(db)
-    authRepo := repository.NewAuthRepository(db)
+    dbAuthRepo := repository.NewAuthRepository(db)
+
+    // Initialize Redis session repo
+    redisOpts, err := redis.ParseURL(cfg.RedisURL)
+    if err != nil {
+        panic(fmt.Errorf("failed to parse redis url: %w", err))
+    }
+    rdb := redis.NewClient(redisOpts)
+    sessionRepo := repository.NewCompositeAuthRepository(dbAuthRepo, repository.NewRedisSessionRepository(rdb))
 
     // Create server instance with dependencies
-    server := NewServer(userRepo, authRepo)
+    server := NewServer(userRepo, sessionRepo, cfg.JWTSecret)
 
 	// Register auth routes with appropriate middleware
 	r.Post("/auth/register", server.Register)

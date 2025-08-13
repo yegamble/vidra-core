@@ -9,7 +9,7 @@ A high-performance PeerTube backend implementation in Go with decentralized stor
 
 - 🚀 **High Performance** - Built with Go for maximum concurrency and speed
 - 📝 **OpenAPI 3.0** - Complete API specification with automatic validation
-- 🔐 **JWT Authentication** - Secure authentication with refresh tokens
+- 🔐 **JWT Authentication** - HS256 access tokens with refresh rotation
 - 🗄️ **PostgreSQL** - Robust database with full-text search capabilities
 - ⚡ **Redis** - Fast caching and session management
 - 🌐 **IPFS** - Decentralized storage support
@@ -345,3 +345,9 @@ For issues and questions:
 ---
 
 **Ready to get started?** Run `make setup` and start building!
+### Auth & Sessions
+
+- Access tokens are signed JWTs (HS256) containing `sub` (user ID), `iat`, and `exp`. Default access token TTL is 15 minutes.
+- Refresh tokens are opaque UUIDs persisted in Postgres and rotated on each refresh. Old tokens are revoked.
+- Sessions are stored in Redis; each session is keyed by the refresh token (`sess:<refresh-token> -> <userID>`) and indexed per user (`user:sessions:<userID>`). On login and refresh, the Redis session is created/rotated; on logout, all user sessions and refresh tokens are revoked.
+- Required config: `JWT_SECRET`, `DATABASE_URL`, and `REDIS_URL`. Optional `SESSION_TIMEOUT` controls Redis session TTL (default 24h); refresh token TTL defaults to 7 days.

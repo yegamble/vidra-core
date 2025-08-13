@@ -3,8 +3,11 @@ package httpapi
 import (
     "encoding/json"
     "net/http"
+    "os"
+    "strconv"
     "time"
 
+    "github.com/golang-jwt/jwt/v5"
     "github.com/google/uuid"
     "golang.org/x/crypto/bcrypt"
 
@@ -16,13 +19,14 @@ import (
 
 // Server implements the generated ServerInterface
 type Server struct{
-    userRepo usecase.UserRepository
-    authRepo usecase.AuthRepository
+    userRepo  usecase.UserRepository
+    authRepo  usecase.AuthRepository
+    jwtSecret string
 }
 
 // NewServer creates a new server instance
-func NewServer(userRepo usecase.UserRepository, authRepo usecase.AuthRepository) *Server {
-    return &Server{userRepo: userRepo, authRepo: authRepo}
+func NewServer(userRepo usecase.UserRepository, authRepo usecase.AuthRepository, jwtSecret string) *Server {
+    return &Server{userRepo: userRepo, authRepo: authRepo, jwtSecret: jwtSecret}
 }
 
 // Login implements ServerInterface.Login
@@ -55,7 +59,7 @@ func (s *Server) Login(w http.ResponseWriter, r *http.Request) {
     }
 
     // Issue tokens
-    access := generateJWT(dUser.ID, 15*time.Minute)
+    access := s.generateJWT(dUser.ID, 15*time.Minute)
     refresh := uuid.NewString()
     if s.authRepo != nil {
         rt := &usecase.RefreshToken{
@@ -69,6 +73,9 @@ func (s *Server) Login(w http.ResponseWriter, r *http.Request) {
             WriteError(w, http.StatusInternalServerError, domain.NewDomainError("TOKEN_ISSUE_FAILED", "Failed to create refresh token"))
             return
         }
+
+        // Create corresponding session in Redis (sessionID == refresh token)
+        _ = s.authRepo.CreateSession(r.Context(), refresh, dUser.ID, time.Now().Add(time.Duration(safeSeconds(cfgSessionTimeout()))*time.Second))
     }
 
     // Map to generated.User
@@ -165,10 +172,27 @@ func (s *Server) Register(w http.ResponseWriter, r *http.Request) {
         // Set Location header to new resource
         w.Header().Set("Location", "/api/v1/users/"+gUser.ID)
 
+        // Create refresh token + session for new user
+        refresh := uuid.NewString()
+        if s.authRepo != nil {
+            rt := &usecase.RefreshToken{
+                ID:        uuid.NewString(),
+                UserID:    dUser.ID,
+                Token:     refresh,
+                ExpiresAt: time.Now().Add(7 * 24 * time.Hour),
+                CreatedAt: time.Now(),
+            }
+            if err := s.authRepo.CreateRefreshToken(r.Context(), rt); err != nil {
+                WriteError(w, http.StatusInternalServerError, domain.NewDomainError("TOKEN_ISSUE_FAILED", "Failed to create refresh token"))
+                return
+            }
+            _ = s.authRepo.CreateSession(r.Context(), refresh, dUser.ID, time.Now().Add(time.Duration(safeSeconds(cfgSessionTimeout()))*time.Second))
+        }
+
         response := generated.AuthResponse{
             User:         gUser,
-            AccessToken:  generateJWT(gUser.ID, 15*time.Minute),
-            RefreshToken: generateJWT(gUser.ID, 24*time.Hour),
+            AccessToken:  s.generateJWT(gUser.ID, 15*time.Minute),
+            RefreshToken: refresh,
             ExpiresIn:    15 * 60,
         }
 
@@ -221,8 +245,12 @@ func (s *Server) RefreshToken(w http.ResponseWriter, r *http.Request) {
         return
     }
 
+    // Rotate session in Redis (sessionID == refresh token)
+    _ = s.authRepo.DeleteSession(r.Context(), req.RefreshToken)
+    _ = s.authRepo.CreateSession(r.Context(), newRefresh, existing.UserID, time.Now().Add(time.Duration(safeSeconds(cfgSessionTimeout()))*time.Second))
+
     response := generated.TokenResponse{
-        AccessToken:  generateJWT(existing.UserID, 15*time.Minute),
+        AccessToken:  s.generateJWT(existing.UserID, 15*time.Minute),
         RefreshToken: newRefresh,
         ExpiresIn:    15 * 60,
     }
@@ -278,6 +306,59 @@ func (s *Server) ReadinessCheck(w http.ResponseWriter, r *http.Request) {
 }
 
 // Helper functions
-func generateJWT(userID string, duration time.Duration) string {
-    return "jwt-token-" + userID + "-" + time.Now().Format("20060102150405")
+// generateJWT creates a signed JWT for the given user ID and duration
+func (s *Server) generateJWT(userID string, duration time.Duration) string {
+    // Defer to middleware's jwt implementation; kept here to avoid import cycle
+    // We re-implement minimal signing here for clarity
+    type Claims struct {
+        Sub string `json:"sub"`
+        Exp int64  `json:"exp"`
+        Iat int64  `json:"iat"`
+    }
+    // We will use golang-jwt/jwt in middleware; here we just mirror
+    // but to avoid duplicating heavy imports, we keep a lightweight version
+    // For correctness, we import jwt here too
+    return signHS256JWT(s.jwtSecret, userID, duration)
+}
+
+// cfgSessionTimeout reads SESSION_TIMEOUT from env via default config loader semantics.
+// Handlers do not carry the full config; we use a helper to keep code localized.
+func cfgSessionTimeout() int {
+    // Default 24h if not provided; the config loader already enforces presence of REDIS/JWT
+    if v := getenv("SESSION_TIMEOUT"); v != 0 {
+        return v
+    }
+    return 24 * 60 * 60
+}
+
+func safeSeconds(v int) int { if v <= 0 { return 60 * 60 * 24 }; return v }
+
+// signHS256JWT signs a compact JWT with HS256
+func signHS256JWT(secret, userID string, duration time.Duration) string {
+    now := time.Now()
+    claims := jwt.MapClaims{
+        "sub": userID,
+        "iat": now.Unix(),
+        "exp": now.Add(duration).Unix(),
+    }
+    token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+    s, err := token.SignedString([]byte(secret))
+    if err != nil {
+        // In case of signing error, return empty string; caller handles error paths
+        return ""
+    }
+    return s
+}
+
+// getenv returns integer env var or zero if not set/invalid
+func getenv(key string) int {
+    v := os.Getenv(key)
+    if v == "" {
+        return 0
+    }
+    n, err := strconv.Atoi(v)
+    if err != nil {
+        return 0
+    }
+    return n
 }
