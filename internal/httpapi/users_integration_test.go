@@ -12,6 +12,7 @@ import (
     "github.com/go-chi/chi/v5"
 
     "athena/internal/domain"
+    "athena/internal/middleware"
     "athena/internal/repository"
     "athena/internal/testutil"
 )
@@ -152,5 +153,102 @@ func TestGetUserHandler_Integration_GetsFromDB(t *testing.T) {
     }
     if got.ID != u.ID || got.Username != u.Username {
         t.Fatalf("unexpected user: %+v", got)
+    }
+}
+
+func TestGetCurrentUserHandler_Integration_ReturnsDBUser(t *testing.T) {
+    td := testutil.SetupTestDB(t)
+    td.TruncateTables(t, "users")
+
+    repo := repository.NewUserRepository(td.DB)
+
+    u := &domain.User{
+        ID:          "me_" + time.Now().Format("20060102150405"),
+        Username:    "me_integ",
+        Email:       "me_integ@example.com",
+        DisplayName: "Me",
+        Role:        domain.RoleUser,
+        IsActive:    true,
+        CreatedAt:   time.Now(),
+        UpdatedAt:   time.Now(),
+    }
+    if err := repo.Create(context.Background(), u, "hash"); err != nil {
+        t.Fatalf("seed create failed: %v", err)
+    }
+
+    req := httptest.NewRequest(http.MethodGet, "/api/v1/users/me", nil)
+    req = req.WithContext(context.WithValue(req.Context(), middleware.UserIDKey, u.ID))
+    rr := httptest.NewRecorder()
+
+    GetCurrentUserHandler(repo).ServeHTTP(rr, req)
+
+    if rr.Code != http.StatusOK {
+        t.Fatalf("expected 200, got %d, body=%s", rr.Code, rr.Body.String())
+    }
+
+    resp := decodeInteg(rr, t)
+    var got domain.User
+    if err := json.Unmarshal(resp.Data, &got); err != nil {
+        t.Fatalf("unmarshal user: %v", err)
+    }
+    if got.ID != u.ID || got.Username != u.Username || got.Email != u.Email {
+        t.Fatalf("unexpected user: %+v", got)
+    }
+}
+
+func TestUpdateCurrentUserHandler_Integration_UpdatesDBUser(t *testing.T) {
+    td := testutil.SetupTestDB(t)
+    td.TruncateTables(t, "users")
+
+    repo := repository.NewUserRepository(td.DB)
+
+    u := &domain.User{
+        ID:          "upd_" + time.Now().Format("20060102150405"),
+        Username:    "upd_integ",
+        Email:       "upd_integ@example.com",
+        DisplayName: "Before",
+        Role:        domain.RoleUser,
+        IsActive:    true,
+        CreatedAt:   time.Now(),
+        UpdatedAt:   time.Now(),
+    }
+    if err := repo.Create(context.Background(), u, "hash"); err != nil {
+        t.Fatalf("seed create failed: %v", err)
+    }
+
+    body := map[string]any{
+        "display_name": "After",
+        "bio":          "New bio",
+        "avatar":       "https://example.com/after.png",
+    }
+    b, _ := json.Marshal(body)
+    req := httptest.NewRequest(http.MethodPut, "/api/v1/users/me", bytes.NewReader(b))
+    req.Header.Set("Content-Type", "application/json")
+    req = req.WithContext(context.WithValue(req.Context(), middleware.UserIDKey, u.ID))
+    rr := httptest.NewRecorder()
+
+    UpdateCurrentUserHandler(repo).ServeHTTP(rr, req)
+
+    if rr.Code != http.StatusOK {
+        t.Fatalf("expected 200, got %d, body=%s", rr.Code, rr.Body.String())
+    }
+
+    // Response asserts
+    resp := decodeInteg(rr, t)
+    var got domain.User
+    if err := json.Unmarshal(resp.Data, &got); err != nil {
+        t.Fatalf("unmarshal user: %v", err)
+    }
+    if got.DisplayName != "After" || got.Bio != "New bio" || got.Avatar != "https://example.com/after.png" {
+        t.Fatalf("unexpected updated fields: %+v", got)
+    }
+
+    // Verify persisted in DB
+    fromDB, err := repo.GetByID(context.Background(), u.ID)
+    if err != nil {
+        t.Fatalf("expected user in DB: %v", err)
+    }
+    if fromDB.DisplayName != "After" || fromDB.Bio != "New bio" || fromDB.Avatar != "https://example.com/after.png" {
+        t.Fatalf("DB not updated: %+v", fromDB)
     }
 }
