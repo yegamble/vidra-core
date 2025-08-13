@@ -10,9 +10,44 @@ env:
   GO_VERSION: "1.21"
 
 jobs:
-  test:
+  unit:
     runs-on: ubuntu-latest
-    
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Cache Go modules
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: Install dependencies
+        run: go mod download
+
+      - name: Run unit tests (exclude integration packages)
+        run: |
+          set -e
+          PKGS=$(go list ./... | grep -v "/internal/repository$")
+          for p in $PKGS; do
+            echo "Running unit tests in $p"
+            go test -v -race -run '^(?:(?!Integration).)*$' $p
+          done
+
+  integration:
+    runs-on: ubuntu-latest
+    needs: unit
+
     services:
       postgres:
         image: postgres:15-alpine
@@ -66,23 +101,23 @@ jobs:
         run: |
           psql -h localhost -U test_user -d athena_test -f init-test-db.sql
 
-      - name: Run tests
+      - name: Run repository integration tests
+        env:
+          TEST_DATABASE_URL: postgres://test_user:test_password@localhost:5432/athena_test?sslmode=disable
+          DATABASE_URL: postgres://test_user:test_password@localhost:5432/athena_test?sslmode=disable
+          REDIS_URL: redis://localhost:6379/0
+        run: |
+          go test -v -race ./internal/repository
+
+      - name: Run httpapi integration tests
         env:
           TEST_DATABASE_URL: postgres://test_user:test_password@localhost:5432/athena_test?sslmode=disable
           DATABASE_URL: postgres://test_user:test_password@localhost:5432/athena_test?sslmode=disable
           REDIS_URL: redis://localhost:6379/0
           JWT_SECRET: test-jwt-secret-key
           IPFS_API: http://localhost:5001
-          CGO_ENABLED: 1
         run: |
-          go test -v -race -coverprofile=coverage.out ./...
-
-      - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v4
-        with:
-          file: ./coverage.out
-          flags: unittests
-          name: codecov-umbrella
+          go test -v -race ./internal/httpapi -run Integration
 
   lint:
     runs-on: ubuntu-latest
@@ -104,7 +139,7 @@ jobs:
 
   build:
     runs-on: ubuntu-latest
-    needs: [test, lint]
+    needs: [unit, integration, lint]
 
     steps:
       - name: Checkout code

@@ -39,6 +39,18 @@ test-local: ## Run tests with local Docker services
 	go test -v -race -coverprofile=coverage.out ./...
 	docker-compose -f docker-compose.test.yml down -v
 
+test-integration-local: ## Run only integration tests with local Docker services
+	docker-compose -f docker-compose.test.yml up -d
+	@echo "Waiting for services to be ready..."
+	@sleep 10
+	TEST_DATABASE_URL="postgres://test_user:test_password@localhost:5433/athena_test?sslmode=disable" \
+	DATABASE_URL="postgres://test_user:test_password@localhost:5433/athena_test?sslmode=disable" \
+	REDIS_URL="redis://localhost:6380/0" \
+	JWT_SECRET="test-jwt-secret" \
+	IPFS_API="http://localhost:5001" \
+	sh -lc 'go test -v -race ./internal/repository && go test -v -race ./internal/httpapi -run Integration'
+	docker-compose -f docker-compose.test.yml down -v
+
 build: ## Build the server binary
 	go build -o bin/athena-server ./cmd/server
 
