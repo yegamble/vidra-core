@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS users (
     display_name VARCHAR(100),
     avatar TEXT,
     bio TEXT,
+    bitcoin_wallet VARCHAR(62),
     role VARCHAR(20) NOT NULL DEFAULT 'user' CHECK (role IN ('user', 'admin', 'moderator')),
     password_hash TEXT NOT NULL,
     is_active BOOLEAN NOT NULL DEFAULT true,
@@ -43,6 +44,7 @@ CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
 CREATE INDEX IF NOT EXISTS idx_users_role ON users(role);
 CREATE INDEX IF NOT EXISTS idx_users_is_active ON users(is_active);
 CREATE INDEX IF NOT EXISTS idx_users_created_at ON users(created_at);
+CREATE INDEX IF NOT EXISTS idx_users_bitcoin_wallet ON users(bitcoin_wallet);
 
 -- Create trigger for users
 DROP TRIGGER IF EXISTS update_users_updated_at ON users;
@@ -80,8 +82,9 @@ CREATE TABLE IF NOT EXISTS sessions (
 -- Create indexes for sessions
 CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions(expires_at);
-CREATE INDEX IF NOT EXISTS idx_sessions_active ON sessions(user_id, expires_at) 
-    WHERE expires_at > NOW();
+-- Active sessions index (avoid non-immutable NOW() in predicate)
+DROP INDEX IF EXISTS idx_sessions_active;
+CREATE INDEX IF NOT EXISTS idx_sessions_active ON sessions(user_id, expires_at);
 
 -- Log successful initialization
 \echo 'PostgreSQL database initialized successfully for Athena platform with all tables and indexes';

@@ -10,6 +10,5 @@ CREATE TABLE sessions (
 CREATE INDEX idx_sessions_user_id ON sessions(user_id);
 CREATE INDEX idx_sessions_expires_at ON sessions(expires_at);
 
--- Create partial index for active sessions
-CREATE INDEX idx_sessions_active ON sessions(user_id, expires_at) 
-    WHERE expires_at > NOW();
+-- Create index for sessions by user and expiration (avoid non-immutable predicates)
+CREATE INDEX idx_sessions_active ON sessions(user_id, expires_at);

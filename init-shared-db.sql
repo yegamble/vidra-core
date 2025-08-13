@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS users (
     display_name VARCHAR(100),
     avatar TEXT,
     bio TEXT,
+    bitcoin_wallet VARCHAR(62),
     role VARCHAR(20) NOT NULL DEFAULT 'user' CHECK (role IN ('user', 'admin', 'moderator')),
     password_hash TEXT NOT NULL,
     is_active BOOLEAN NOT NULL DEFAULT true,
@@ -43,6 +44,7 @@ CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
 CREATE INDEX IF NOT EXISTS idx_users_role ON users(role);
 CREATE INDEX IF NOT EXISTS idx_users_is_active ON users(is_active);
 CREATE INDEX IF NOT EXISTS idx_users_created_at ON users(created_at);
+CREATE INDEX IF NOT EXISTS idx_users_bitcoin_wallet ON users(bitcoin_wallet);
 
 -- Create trigger for users
 DROP TRIGGER IF EXISTS update_users_updated_at ON users;
