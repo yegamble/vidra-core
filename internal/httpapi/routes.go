@@ -1,16 +1,16 @@
 package httpapi
 
 import (
-	"fmt"
-	"time"
+    "fmt"
+    "time"
 
-	"github.com/go-chi/chi/v5"
-	"github.com/jmoiron/sqlx"
-	_ "github.com/lib/pq"
+    "github.com/go-chi/chi/v5"
+    "github.com/jmoiron/sqlx"
+    _ "github.com/lib/pq"
 
-	"athena/internal/config"
-	"athena/internal/middleware"
-	"athena/internal/repository"
+    "athena/internal/config"
+    "athena/internal/middleware"
+    "athena/internal/repository"
 )
 
 func RegisterRoutes(r chi.Router, cfg *config.Config) {
@@ -21,10 +21,11 @@ func RegisterRoutes(r chi.Router, cfg *config.Config) {
 	if err != nil {
 		panic(fmt.Errorf("failed to connect to database: %w", err))
 	}
-	userRepo := repository.NewUserRepository(db)
+    userRepo := repository.NewUserRepository(db)
+    authRepo := repository.NewAuthRepository(db)
 
-	// Create server instance with dependencies
-	server := NewServer(userRepo)
+    // Create server instance with dependencies
+    server := NewServer(userRepo, authRepo)
 
 	// Register auth routes with appropriate middleware
 	r.Post("/auth/register", server.Register)
