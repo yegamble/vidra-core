@@ -15,6 +15,11 @@ Usage
   5) Refresh After Logout (expects 401)
 - Negative cases are provided: Invalid Login (401), Refresh Missing Token (400), Refresh Invalid Token (401), Logout Without Token (401).
 
+Videos
+- Create Video: `POST {{baseUrl}}/api/v1/videos` with `Authorization: Bearer {{access_token}}`.
+  - Response contains `id` and `thumbnail_id` as UUIDs and sets `Location` header.
+- Create Video - Missing Token (401): verifies auth middleware rejection.
+
 Notes
 - Register pre-request script auto-generates a unique `username` and `email` if not set.
 - Tests capture `access_token`, `refresh_token`, and `user_id` into environment variables for reuse.

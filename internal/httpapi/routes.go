@@ -24,6 +24,7 @@ func RegisterRoutes(r chi.Router, cfg *config.Config) {
 		panic(fmt.Errorf("failed to connect to database: %w", err))
 	}
     userRepo := repository.NewUserRepository(db)
+    videoRepo := repository.NewVideoRepository(db)
     dbAuthRepo := repository.NewAuthRepository(db)
 
     // Initialize Redis session repo
@@ -57,13 +58,13 @@ func RegisterRoutes(r chi.Router, cfg *config.Config) {
 
 	// Additional API routes for videos and users (if they exist)
 	r.Route("/api/v1", func(r chi.Router) {
-		r.Route("/videos", func(r chi.Router) {
+        r.Route("/videos", func(r chi.Router) {
 			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/", ListVideos)
 			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/search", SearchVideos)
 			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{id}", GetVideo)
 			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{id}/stream", StreamVideo)
 
-			r.With(middleware.Auth(cfg.JWTSecret)).Post("/", CreateVideo)
+            r.With(middleware.Auth(cfg.JWTSecret)).Post("/", CreateVideoHandler(videoRepo))
 			r.With(middleware.Auth(cfg.JWTSecret)).Put("/{id}", UpdateVideo)
 			r.With(middleware.Auth(cfg.JWTSecret)).Delete("/{id}", DeleteVideo)
 			r.With(middleware.Auth(cfg.JWTSecret)).Post("/{id}/upload", UploadVideoChunk)

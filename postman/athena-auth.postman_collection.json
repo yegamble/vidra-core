@@ -331,5 +331,82 @@
         }
       ]
     }
+    ,
+    {
+      "name": "Videos",
+      "item": [
+        {
+          "name": "Create Video",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{access_token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/videos",
+              "host": ["{{baseUrl}}"],
+              "path": ["api","v1","videos"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"My Test Video\",\n  \"description\": \"Created via Postman test\",\n  \"privacy\": \"public\",\n  \"tags\": [\"test\", \"demo\"],\n  \"category\": \"education\",\n  \"language\": \"en\"\n}"
+            },
+            "description": "Creates a video with server-side generated UUID id and thumbnail_id."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 201', () => pm.response.to.have.status(201));",
+                  "pm.test('Has Location header', () => pm.response.to.have.header('Location'));",
+                  "const wrap = pm.response.json();",
+                  "pm.test('Response wrapped with data', () => pm.expect(wrap).to.have.property('data'));",
+                  "const json = wrap.data || {};",
+                  "pm.test('Has id and thumbnail_id', () => { pm.expect(json).to.have.property('id'); pm.expect(json).to.have.property('thumbnail_id'); });",
+                  "const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;",
+                  "pm.test('id is uuid', () => pm.expect(json.id).to.match(uuidRe));",
+                  "pm.test('thumbnail_id is uuid', () => pm.expect(json.thumbnail_id).to.match(uuidRe));",
+                  "pm.environment.set('video_id', json.id);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create Video - Missing Token (401)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/videos",
+              "host": ["{{baseUrl}}"],
+              "path": ["api","v1","videos"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"No Token Video\",\n  \"description\": \"Should fail\",\n  \"privacy\": \"public\"\n}"
+            },
+            "description": "Expect 401 due to missing Authorization header."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 401', () => pm.response.to.have.status(401));",
+                  "pm.test('Has error body or text', () => { try { const j = pm.response.json(); pm.expect(j).to.have.property('error'); } catch (e) { pm.response.to.have.body(/Missing authorization header|Invalid token|Unauthorized/i); } });"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        }
+      ]
+    }
   ]
 }

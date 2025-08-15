@@ -1,15 +1,17 @@
 package httpapi
 
 import (
-	"encoding/json"
-	"net/http"
-	"strconv"
-	"time"
+    "encoding/json"
+    "net/http"
+    "strconv"
+    "time"
 
-	"github.com/go-chi/chi/v5"
+    "github.com/go-chi/chi/v5"
+    "github.com/google/uuid"
 
-	"athena/internal/domain"
-	"athena/internal/middleware"
+    "athena/internal/domain"
+    "athena/internal/middleware"
+    "athena/internal/usecase"
 )
 
 func ListVideos(w http.ResponseWriter, r *http.Request) {
@@ -35,12 +37,13 @@ func ListVideos(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = order // Will be used when implementing actual sorting
 
-	videos := []domain.Video{
-		{
-			ID:          "1",
-			Title:       "Sample Video 1",
-			Description: "This is a sample video",
-			Duration:    300,
+    videos := []domain.Video{
+        {
+            ID:          "1",
+            ThumbnailID: "thumb-1",
+            Title:       "Sample Video 1",
+            Description: "This is a sample video",
+            Duration:    300,
 			Views:       1000,
 			Privacy:     domain.PrivacyPublic,
 			Status:      domain.StatusCompleted,
@@ -52,11 +55,12 @@ func ListVideos(w http.ResponseWriter, r *http.Request) {
 			FileSize:    1024000,
 			MimeType:    "video/mp4",
 		},
-		{
-			ID:          "2",
-			Title:       "Sample Video 2",
-			Description: "Another sample video",
-			Duration:    450,
+        {
+            ID:          "2",
+            ThumbnailID: "thumb-2",
+            Title:       "Sample Video 2",
+            Description: "Another sample video",
+            Duration:    450,
 			Views:       2500,
 			Privacy:     domain.PrivacyPublic,
 			Status:      domain.StatusCompleted,
@@ -123,11 +127,12 @@ func GetVideo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	video := domain.Video{
-		ID:          videoID,
-		Title:       "Sample Video",
-		Description: "This is a detailed sample video",
-		Duration:    300,
+    video := domain.Video{
+        ID:          videoID,
+        ThumbnailID: uuid.NewString(),
+        Title:       "Sample Video",
+        Description: "This is a detailed sample video",
+        Duration:    300,
 		Views:       1000,
 		Privacy:     domain.PrivacyPublic,
 		Status:      domain.StatusCompleted,
@@ -154,31 +159,47 @@ func GetVideo(w http.ResponseWriter, r *http.Request) {
 	WriteJSON(w, http.StatusOK, video)
 }
 
-func CreateVideo(w http.ResponseWriter, r *http.Request) {
-	var req domain.VideoUploadRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_JSON", "Invalid JSON payload"))
-		return
-	}
+func CreateVideoHandler(repo usecase.VideoRepository) http.HandlerFunc {
+    return func(w http.ResponseWriter, r *http.Request) {
+        var req domain.VideoUploadRequest
+        if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+            WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_JSON", "Invalid JSON payload"))
+            return
+        }
 
-	userID := r.Context().Value(middleware.UserIDKey).(string)
+        userID, _ := r.Context().Value(middleware.UserIDKey).(string)
+        if userID == "" {
+            WriteError(w, http.StatusUnauthorized, domain.NewDomainError("UNAUTHORIZED", "Missing or invalid authentication"))
+            return
+        }
 
-	video := domain.Video{
-		ID:          "new-video-" + strconv.FormatInt(time.Now().UnixNano(), 10),
-		Title:       req.Title,
-		Description: req.Description,
-		Privacy:     req.Privacy,
-		Status:      domain.StatusUploading,
-		UploadDate:  time.Now(),
-		UserID:      userID,
-		Tags:        req.Tags,
-		Category:    req.Category,
-		Language:    req.Language,
-		CreatedAt:   time.Now(),
-		UpdatedAt:   time.Now(),
-	}
+        now := time.Now()
+        video := &domain.Video{
+            ID:          uuid.NewString(),
+            ThumbnailID: uuid.NewString(),
+            Title:       req.Title,
+            Description: req.Description,
+            Privacy:     req.Privacy,
+            Status:      domain.StatusUploading,
+            UploadDate:  now,
+            UserID:      userID,
+            Tags:        req.Tags,
+            Category:    req.Category,
+            Language:    req.Language,
+            CreatedAt:   now,
+            UpdatedAt:   now,
+        }
 
-	WriteJSON(w, http.StatusCreated, video)
+        if repo != nil {
+            if err := repo.Create(r.Context(), video); err != nil {
+                WriteError(w, http.StatusInternalServerError, domain.NewDomainError("CREATE_FAILED", "Failed to create video"))
+                return
+            }
+        }
+
+        w.Header().Set("Location", "/api/v1/videos/"+video.ID)
+        WriteJSON(w, http.StatusCreated, video)
+    }
 }
 
 func UpdateVideo(w http.ResponseWriter, r *http.Request) {

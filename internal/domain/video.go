@@ -5,10 +5,11 @@ import (
 )
 
 type Video struct {
-	ID            string            `json:"id" db:"id"`
-	Title         string            `json:"title" db:"title"`
-	Description   string            `json:"description" db:"description"`
-	Duration      int               `json:"duration" db:"duration"`
+    ID            string            `json:"id" db:"id"`
+    ThumbnailID   string            `json:"thumbnail_id" db:"thumbnail_id"`
+    Title         string            `json:"title" db:"title"`
+    Description   string            `json:"description" db:"description"`
+    Duration      int               `json:"duration" db:"duration"`
 	Views         int64             `json:"views" db:"views"`
 	Privacy       Privacy           `json:"privacy" db:"privacy"`
 	Status        ProcessingStatus  `json:"status" db:"status"`
