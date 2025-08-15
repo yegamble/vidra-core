@@ -41,7 +41,7 @@ jobs:
           PKGS=$(go list ./... | grep -v "/internal/repository$")
           for p in $PKGS; do
             echo "Running unit tests in $p"
-            go test -v -race -run '^(?:(?!Integration).)*$' $p
+            go test -v -race -skip Integration $p
           done
 
   integration:
