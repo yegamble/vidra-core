@@ -74,26 +74,15 @@ jobs:
             sleep 2; 
           done
 
-      - name: Run Postman collection (Auth)
+      - name: Run Postman collection (Full E2E)
         run: |
           newman run postman/athena-auth.postman_collection.json \
             --env-var baseUrl=http://localhost:8080 \
-            --folder Auth \
             --reporters cli,junit \
-            --reporter-junit-export postman/newman-auth-results.xml
-
-      - name: Run Postman collection (Videos)
-        run: |
-          newman run postman/athena-auth.postman_collection.json \
-            --env-var baseUrl=http://localhost:8080 \
-            --folder Videos \
-            --reporters cli,junit \
-            --reporter-junit-export postman/newman-videos-results.xml
+            --reporter-junit-export postman/newman-results.xml
 
       - name: Upload Newman results
         uses: actions/upload-artifact@v4
         with:
-          name: newman-auth-videos-results
-          path: |
-            postman/newman-auth-results.xml
-            postman/newman-videos-results.xml
+          name: newman-results
+          path: postman/newman-results.xml
