@@ -167,7 +167,7 @@ jobs:
 
   docker:
     runs-on: ubuntu-latest
-    needs: [test, lint]
+    needs: [integration, lint]
 
     steps:
       - name: Checkout code

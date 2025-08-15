@@ -1,48 +1,48 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuites name="Athena Auth API" tests="11" time="0.376">
-  <testsuite name="Auth / Register" id="0721f7cc-2052-48f1-a789-e957ff96ff03" timestamp="2025-08-15T02:18:52.591Z" tests="4" failures="0" errors="0" time="0.136">
-    <testcase name="Status is 201" time="0.136" classname="AthenaAuthApi"/>
-    <testcase name="Returns JSON" time="0.136" classname="AthenaAuthApi"/>
-    <testcase name="Response wrapped with data" time="0.136" classname="AthenaAuthApi"/>
-    <testcase name="Has user + tokens" time="0.136" classname="AthenaAuthApi"/>
+<testsuites name="Athena Auth API" tests="11" time="0.424">
+  <testsuite name="Auth / Register" id="dacf2f54-6323-4d1b-b1b4-3de73ceb491d" timestamp="2025-08-15T02:19:57.313Z" tests="4" failures="0" errors="0" time="0.164">
+    <testcase name="Status is 201" time="0.164" classname="AthenaAuthApi"/>
+    <testcase name="Returns JSON" time="0.164" classname="AthenaAuthApi"/>
+    <testcase name="Response wrapped with data" time="0.164" classname="AthenaAuthApi"/>
+    <testcase name="Has user + tokens" time="0.164" classname="AthenaAuthApi"/>
   </testsuite>
-  <testsuite name="Auth / Login" id="e54b74a5-3d78-44df-ac67-b35e681aeb3f" timestamp="2025-08-15T02:18:52.591Z" tests="3" failures="0" errors="0" time="0.107">
-    <testcase name="Status is 200" time="0.107" classname="AthenaAuthApi"/>
-    <testcase name="Response wrapped with data" time="0.107" classname="AthenaAuthApi"/>
-    <testcase name="Has user + tokens" time="0.107" classname="AthenaAuthApi"/>
+  <testsuite name="Auth / Login" id="92a0ac27-1649-4b0e-8704-dc1f6e289418" timestamp="2025-08-15T02:19:57.313Z" tests="3" failures="0" errors="0" time="0.105">
+    <testcase name="Status is 200" time="0.105" classname="AthenaAuthApi"/>
+    <testcase name="Response wrapped with data" time="0.105" classname="AthenaAuthApi"/>
+    <testcase name="Has user + tokens" time="0.105" classname="AthenaAuthApi"/>
   </testsuite>
-  <testsuite name="Auth / Login - Invalid Password (401)" id="6358720f-2bd4-4b6a-9386-fe602a442c62" timestamp="2025-08-15T02:18:52.591Z" tests="2" failures="0" errors="0" time="0.102">
-    <testcase name="Status is 401" time="0.102" classname="AthenaAuthApi"/>
-    <testcase name="Has error body" time="0.102" classname="AthenaAuthApi"/>
+  <testsuite name="Auth / Login - Invalid Password (401)" id="1be84948-23ac-4489-83ca-2f0c4b6475ca" timestamp="2025-08-15T02:19:57.313Z" tests="2" failures="0" errors="0" time="0.117">
+    <testcase name="Status is 401" time="0.117" classname="AthenaAuthApi"/>
+    <testcase name="Has error body" time="0.117" classname="AthenaAuthApi"/>
   </testsuite>
-  <testsuite name="Auth / Refresh" id="af5f345a-4785-480d-a759-17464f1d3a36" timestamp="2025-08-15T02:18:52.591Z" tests="3" failures="0" errors="0" time="0.005">
-    <testcase name="Status is 200" time="0.005" classname="AthenaAuthApi"/>
-    <testcase name="Response wrapped with data" time="0.005" classname="AthenaAuthApi"/>
-    <testcase name="Returns tokens" time="0.005" classname="AthenaAuthApi"/>
+  <testsuite name="Auth / Refresh" id="b9068d0a-62d2-4796-9abc-e0b700b7d93f" timestamp="2025-08-15T02:19:57.313Z" tests="3" failures="0" errors="0" time="0.008">
+    <testcase name="Status is 200" time="0.008" classname="AthenaAuthApi"/>
+    <testcase name="Response wrapped with data" time="0.008" classname="AthenaAuthApi"/>
+    <testcase name="Returns tokens" time="0.008" classname="AthenaAuthApi"/>
   </testsuite>
-  <testsuite name="Auth / Refresh - Missing Token (400)" id="574a24e2-46b5-452a-97bb-ea6325f862dc" timestamp="2025-08-15T02:18:52.591Z" tests="2" failures="0" errors="0" time="0.004">
-    <testcase name="Status is 400" time="0.004" classname="AthenaAuthApi"/>
-    <testcase name="Has error body" time="0.004" classname="AthenaAuthApi"/>
-  </testsuite>
-  <testsuite name="Auth / Refresh - Invalid Token (401)" id="12b4e595-f44f-45b4-b6c1-2440d8637ac0" timestamp="2025-08-15T02:18:52.591Z" tests="2" failures="0" errors="0" time="0.003">
-    <testcase name="Status is 401" time="0.003" classname="AthenaAuthApi"/>
+  <testsuite name="Auth / Refresh - Missing Token (400)" id="7fe2fbaf-ddb3-4a15-ad30-3e463aaa19b3" timestamp="2025-08-15T02:19:57.313Z" tests="2" failures="0" errors="0" time="0.003">
+    <testcase name="Status is 400" time="0.003" classname="AthenaAuthApi"/>
     <testcase name="Has error body" time="0.003" classname="AthenaAuthApi"/>
   </testsuite>
-  <testsuite name="Auth / Logout" id="82863c61-dc4c-45c4-9d0e-8f7c1f734f69" timestamp="2025-08-15T02:18:52.591Z" tests="4" failures="0" errors="0" time="0.004">
-    <testcase name="Status is 200" time="0.004" classname="AthenaAuthApi"/>
-    <testcase name="Response wrapped with data" time="0.004" classname="AthenaAuthApi"/>
-    <testcase name="Logout success message" time="0.004" classname="AthenaAuthApi"/>
-    <testcase name="User ID matches" time="0.004" classname="AthenaAuthApi"/>
-  </testsuite>
-  <testsuite name="Auth / Refresh After Logout (401)" id="86435bcf-bf06-4a04-9923-6d8b60516b2d" timestamp="2025-08-15T02:18:52.591Z" tests="2" failures="0" errors="0" time="0.004">
+  <testsuite name="Auth / Refresh - Invalid Token (401)" id="320ae4c4-c47d-4df7-88e3-4e907f513c37" timestamp="2025-08-15T02:19:57.313Z" tests="2" failures="0" errors="0" time="0.004">
     <testcase name="Status is 401" time="0.004" classname="AthenaAuthApi"/>
     <testcase name="Has error body" time="0.004" classname="AthenaAuthApi"/>
   </testsuite>
-  <testsuite name="Auth / Logout Without Token (401)" id="2aacfc42-0156-444d-b2a7-509a20cf0e1e" timestamp="2025-08-15T02:18:52.591Z" tests="2" failures="0" errors="0" time="0.003">
-    <testcase name="Status is 401" time="0.003" classname="AthenaAuthApi"/>
-    <testcase name="Has error body or text" time="0.003" classname="AthenaAuthApi"/>
+  <testsuite name="Auth / Logout" id="76fa31ec-766a-4b45-88b0-bf29f44f977a" timestamp="2025-08-15T02:19:57.313Z" tests="4" failures="0" errors="0" time="0.006">
+    <testcase name="Status is 200" time="0.006" classname="AthenaAuthApi"/>
+    <testcase name="Response wrapped with data" time="0.006" classname="AthenaAuthApi"/>
+    <testcase name="Logout success message" time="0.006" classname="AthenaAuthApi"/>
+    <testcase name="User ID matches" time="0.006" classname="AthenaAuthApi"/>
   </testsuite>
-  <testsuite name="Videos / Create Video" id="c26a1440-70aa-435c-8ec6-7786adcb5ae6" timestamp="2025-08-15T02:18:52.591Z" tests="6" failures="0" errors="0" time="0.005">
+  <testsuite name="Auth / Refresh After Logout (401)" id="83470119-f085-403d-9629-263af7a5fcfe" timestamp="2025-08-15T02:19:57.313Z" tests="2" failures="0" errors="0" time="0.005">
+    <testcase name="Status is 401" time="0.005" classname="AthenaAuthApi"/>
+    <testcase name="Has error body" time="0.005" classname="AthenaAuthApi"/>
+  </testsuite>
+  <testsuite name="Auth / Logout Without Token (401)" id="c916c1fe-6fcd-4839-b09f-c7f3dc341683" timestamp="2025-08-15T02:19:57.313Z" tests="2" failures="0" errors="0" time="0.004">
+    <testcase name="Status is 401" time="0.004" classname="AthenaAuthApi"/>
+    <testcase name="Has error body or text" time="0.004" classname="AthenaAuthApi"/>
+  </testsuite>
+  <testsuite name="Videos / Create Video" id="ae650e5a-a76c-4362-a3c6-be44335f5028" timestamp="2025-08-15T02:19:57.313Z" tests="6" failures="0" errors="0" time="0.005">
     <testcase name="Status is 201" time="0.005" classname="AthenaAuthApi"/>
     <testcase name="Has Location header" time="0.005" classname="AthenaAuthApi"/>
     <testcase name="Response wrapped with data" time="0.005" classname="AthenaAuthApi"/>
@@ -50,7 +50,7 @@
     <testcase name="id is uuid" time="0.005" classname="AthenaAuthApi"/>
     <testcase name="thumbnail_id is uuid" time="0.005" classname="AthenaAuthApi"/>
   </testsuite>
-  <testsuite name="Videos / Create Video - Missing Token (401)" id="3393905b-41e3-48de-9620-05548d35b3be" timestamp="2025-08-15T02:18:52.591Z" tests="2" failures="0" errors="0" time="0.003">
+  <testsuite name="Videos / Create Video - Missing Token (401)" id="89cdae68-0cba-4797-bc33-83352284379c" timestamp="2025-08-15T02:19:57.313Z" tests="2" failures="0" errors="0" time="0.003">
     <testcase name="Status is 401" time="0.003" classname="AthenaAuthApi"/>
     <testcase name="Has error body or text" time="0.003" classname="AthenaAuthApi"/>
   </testsuite>
