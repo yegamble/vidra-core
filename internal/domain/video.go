@@ -77,6 +77,15 @@ type VideoUploadRequest struct {
 	Language    string   `json:"language"`
 }
 
+type VideoUpdateRequest struct {
+	Title       string   `json:"title" validate:"required,min=1,max=255"`
+	Description string   `json:"description" validate:"max=5000"`
+	Privacy     Privacy  `json:"privacy" validate:"required"`
+	Tags        []string `json:"tags" validate:"max=10"`
+	Category    string   `json:"category"`
+	Language    string   `json:"language"`
+}
+
 type ChunkUpload struct {
 	VideoID     string `json:"video_id"`
 	ChunkIndex  int    `json:"chunk_index"`

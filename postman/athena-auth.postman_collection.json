@@ -405,6 +405,156 @@
               }
             }
           ]
+        },
+        {
+          "name": "Update Video",
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{access_token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/videos/{{video_id}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api","v1","videos","{{video_id}}"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Updated Video Title\",\n  \"description\": \"This video has been updated via Postman\",\n  \"privacy\": \"private\",\n  \"tags\": [\"updated\", \"test\"],\n  \"category\": \"entertainment\",\n  \"language\": \"en\"\n}"
+            },
+            "description": "Updates an existing video owned by the authenticated user."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const wrap = pm.response.json();",
+                  "pm.test('Response wrapped with data', () => pm.expect(wrap).to.have.property('data'));",
+                  "const json = wrap.data || {};",
+                  "pm.test('Video updated correctly', () => {",
+                  "  pm.expect(json.title).to.eql('Updated Video Title');",
+                  "  pm.expect(json.privacy).to.eql('private');",
+                  "  pm.expect(json.category).to.eql('entertainment');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Update Video - Not Found (404)",
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{access_token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/videos/nonexistent-id",
+              "host": ["{{baseUrl}}"],
+              "path": ["api","v1","videos","nonexistent-id"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Updated Title\",\n  \"description\": \"Should fail\",\n  \"privacy\": \"public\"\n}"
+            },
+            "description": "Expect 404 for non-existent video."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 404', () => pm.response.to.have.status(404));",
+                  "pm.test('Has error body', () => { const j = pm.response.json(); pm.expect(j).to.have.property('error'); });"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Delete Video",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{access_token}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/videos/{{video_id}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api","v1","videos","{{video_id}}"]
+            },
+            "description": "Deletes a video owned by the authenticated user."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 204', () => pm.response.to.have.status(204));",
+                  "pm.test('No response body', () => pm.expect(pm.response.text()).to.be.empty);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Delete Video - Not Found (404)",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{access_token}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/videos/nonexistent-id",
+              "host": ["{{baseUrl}}"],
+              "path": ["api","v1","videos","nonexistent-id"]
+            },
+            "description": "Expect 404 for non-existent video."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 404', () => pm.response.to.have.status(404));",
+                  "pm.test('Has error body', () => { const j = pm.response.json(); pm.expect(j).to.have.property('error'); });"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Delete Video - Missing Token (401)",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/videos/some-id",
+              "host": ["{{baseUrl}}"],
+              "path": ["api","v1","videos","some-id"]
+            },
+            "description": "Expect 401 due to missing Authorization header."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 401', () => pm.response.to.have.status(401));",
+                  "pm.test('Has error body or text', () => { try { const j = pm.response.json(); pm.expect(j).to.have.property('error'); } catch (e) { pm.response.to.have.body(/Missing authorization header|Invalid token|Unauthorized/i); } });"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
         }
       ]
     }

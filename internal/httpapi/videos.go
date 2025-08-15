@@ -14,149 +14,116 @@ import (
     "athena/internal/usecase"
 )
 
-func ListVideos(w http.ResponseWriter, r *http.Request) {
-	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	if limit == 0 || limit > 100 {
-		limit = 20
-	}
+func ListVideosHandler(repo usecase.VideoRepository) http.HandlerFunc {
+    return func(w http.ResponseWriter, r *http.Request) {
+        limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+        if limit == 0 || limit > 100 {
+            limit = 20
+        }
 
-	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
-	if offset < 0 {
-		offset = 0
-	}
+        offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
+        if offset < 0 {
+            offset = 0
+        }
 
-	sort := r.URL.Query().Get("sort")
-	if sort == "" {
-		sort = "upload_date"
-	}
-	_ = sort // Will be used when implementing actual sorting
+        sort := r.URL.Query().Get("sort")
+        if sort == "" {
+            sort = "upload_date"
+        }
 
-	order := r.URL.Query().Get("order")
-	if order != "asc" && order != "desc" {
-		order = "desc"
-	}
-	_ = order // Will be used when implementing actual sorting
+        order := r.URL.Query().Get("order")
+        if order != "asc" && order != "desc" {
+            order = "desc"
+        }
 
-    videos := []domain.Video{
-        {
-            ID:          "1",
-            ThumbnailID: "thumb-1",
-            Title:       "Sample Video 1",
-            Description: "This is a sample video",
-            Duration:    300,
-			Views:       1000,
-			Privacy:     domain.PrivacyPublic,
-			Status:      domain.StatusCompleted,
-			UploadDate:  time.Now().AddDate(0, 0, -1),
-			UserID:      "user123",
-			Tags:        []string{"sample", "demo"},
-			Category:    "education",
-			Language:    "en",
-			FileSize:    1024000,
-			MimeType:    "video/mp4",
-		},
-        {
-            ID:          "2",
-            ThumbnailID: "thumb-2",
-            Title:       "Sample Video 2",
-            Description: "Another sample video",
-            Duration:    450,
-			Views:       2500,
-			Privacy:     domain.PrivacyPublic,
-			Status:      domain.StatusCompleted,
-			UploadDate:  time.Now().AddDate(0, 0, -2),
-			UserID:      "user456",
-			Tags:        []string{"tutorial", "example"},
-			Category:    "technology",
-			Language:    "en",
-			FileSize:    2048000,
-			MimeType:    "video/mp4",
-		},
-	}
+        req := &domain.VideoSearchRequest{
+            Category: r.URL.Query().Get("category"),
+            Language: r.URL.Query().Get("language"),
+            Sort:     sort,
+            Order:    order,
+            Limit:    limit,
+            Offset:   offset,
+        }
 
-	meta := &Meta{
-		Total:  int64(len(videos)),
-		Limit:  limit,
-		Offset: offset,
-	}
+        videos, total, err := repo.List(r.Context(), req)
+        if err != nil {
+            WriteError(w, http.StatusInternalServerError, domain.NewDomainError("LIST_FAILED", "Failed to list videos"))
+            return
+        }
 
-	WriteJSONWithMeta(w, http.StatusOK, videos, meta)
+        meta := &Meta{
+            Total:  total,
+            Limit:  limit,
+            Offset: offset,
+        }
+
+        WriteJSONWithMeta(w, http.StatusOK, videos, meta)
+    }
 }
 
-func SearchVideos(w http.ResponseWriter, r *http.Request) {
-	query := r.URL.Query().Get("q")
-	if query == "" {
-		WriteError(w, http.StatusBadRequest, domain.NewDomainError("MISSING_QUERY", "Search query is required"))
-		return
-	}
+func SearchVideosHandler(repo usecase.VideoRepository) http.HandlerFunc {
+    return func(w http.ResponseWriter, r *http.Request) {
+        query := r.URL.Query().Get("q")
+        if query == "" {
+            WriteError(w, http.StatusBadRequest, domain.NewDomainError("MISSING_QUERY", "Search query is required"))
+            return
+        }
 
-	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	if limit == 0 || limit > 100 {
-		limit = 20
-	}
+        limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+        if limit == 0 || limit > 100 {
+            limit = 20
+        }
 
-	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
+        offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
+        if offset < 0 {
+            offset = 0
+        }
 
-	videos := []domain.Video{
-		{
-			ID:          "1",
-			Title:       "Search Result 1",
-			Description: "This video matches your search query",
-			Duration:    300,
-			Views:       1000,
-			Privacy:     domain.PrivacyPublic,
-			Status:      domain.StatusCompleted,
-			UploadDate:  time.Now().AddDate(0, 0, -1),
-			UserID:      "user123",
-		},
-	}
+        tags := r.URL.Query()["tags"]
+        
+        req := &domain.VideoSearchRequest{
+            Query:    query,
+            Tags:     tags,
+            Category: r.URL.Query().Get("category"),
+            Language: r.URL.Query().Get("language"),
+            Sort:     r.URL.Query().Get("sort"),
+            Order:    r.URL.Query().Get("order"),
+            Limit:    limit,
+            Offset:   offset,
+        }
 
-	meta := &Meta{
-		Total:  1,
-		Limit:  limit,
-		Offset: offset,
-	}
+        videos, total, err := repo.Search(r.Context(), req)
+        if err != nil {
+            WriteError(w, http.StatusInternalServerError, domain.NewDomainError("SEARCH_FAILED", "Failed to search videos"))
+            return
+        }
 
-	WriteJSONWithMeta(w, http.StatusOK, videos, meta)
+        meta := &Meta{
+            Total:  total,
+            Limit:  limit,
+            Offset: offset,
+        }
+
+        WriteJSONWithMeta(w, http.StatusOK, videos, meta)
+    }
 }
 
-func GetVideo(w http.ResponseWriter, r *http.Request) {
-	videoID := chi.URLParam(r, "id")
-	if videoID == "" {
-		WriteError(w, http.StatusBadRequest, domain.NewDomainError("MISSING_VIDEO_ID", "Video ID is required"))
-		return
-	}
+func GetVideoHandler(repo usecase.VideoRepository) http.HandlerFunc {
+    return func(w http.ResponseWriter, r *http.Request) {
+        videoID := chi.URLParam(r, "id")
+        if videoID == "" {
+            WriteError(w, http.StatusBadRequest, domain.NewDomainError("MISSING_VIDEO_ID", "Video ID is required"))
+            return
+        }
 
-    video := domain.Video{
-        ID:          videoID,
-        ThumbnailID: uuid.NewString(),
-        Title:       "Sample Video",
-        Description: "This is a detailed sample video",
-        Duration:    300,
-		Views:       1000,
-		Privacy:     domain.PrivacyPublic,
-		Status:      domain.StatusCompleted,
-		UploadDate:  time.Now().AddDate(0, 0, -1),
-		UserID:      "user123",
-		Tags:        []string{"sample", "demo"},
-		Category:    "education",
-		Language:    "en",
-		FileSize:    1024000,
-		MimeType:    "video/mp4",
-		Metadata: domain.VideoMetadata{
-			Width:       1920,
-			Height:      1080,
-			Framerate:   30.0,
-			Bitrate:     5000000,
-			AudioCodec:  "aac",
-			VideoCodec:  "h264",
-			AspectRatio: "16:9",
-		},
-		CreatedAt: time.Now().AddDate(0, 0, -1),
-		UpdatedAt: time.Now().AddDate(0, 0, -1),
-	}
+        video, err := repo.GetByID(r.Context(), videoID)
+        if err != nil {
+            WriteError(w, http.StatusNotFound, domain.NewDomainError("VIDEO_NOT_FOUND", "Video not found"))
+            return
+        }
 
-	WriteJSON(w, http.StatusOK, video)
+        WriteJSON(w, http.StatusOK, video)
+    }
 }
 
 func CreateVideoHandler(repo usecase.VideoRepository) http.HandlerFunc {
@@ -202,44 +169,96 @@ func CreateVideoHandler(repo usecase.VideoRepository) http.HandlerFunc {
     }
 }
 
-func UpdateVideo(w http.ResponseWriter, r *http.Request) {
-	videoID := chi.URLParam(r, "id")
-	if videoID == "" {
-		WriteError(w, http.StatusBadRequest, domain.NewDomainError("MISSING_VIDEO_ID", "Video ID is required"))
-		return
-	}
+func UpdateVideoHandler(repo usecase.VideoRepository) http.HandlerFunc {
+    return func(w http.ResponseWriter, r *http.Request) {
+        videoID := chi.URLParam(r, "id")
+        if videoID == "" {
+            WriteError(w, http.StatusBadRequest, domain.NewDomainError("MISSING_VIDEO_ID", "Video ID is required"))
+            return
+        }
 
-	var req domain.VideoUploadRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_JSON", "Invalid JSON payload"))
-		return
-	}
+        var req domain.VideoUpdateRequest
+        if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+            WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_JSON", "Invalid JSON payload"))
+            return
+        }
 
-	userID := r.Context().Value(middleware.UserIDKey).(string)
+        userID, _ := r.Context().Value(middleware.UserIDKey).(string)
+        if userID == "" {
+            WriteError(w, http.StatusUnauthorized, domain.NewDomainError("UNAUTHORIZED", "Missing or invalid authentication"))
+            return
+        }
 
-	video := domain.Video{
-		ID:          videoID,
-		Title:       req.Title,
-		Description: req.Description,
-		Privacy:     req.Privacy,
-		UserID:      userID,
-		Tags:        req.Tags,
-		Category:    req.Category,
-		Language:    req.Language,
-		UpdatedAt:   time.Now(),
-	}
+        // First check if video exists and user owns it
+        existingVideo, err := repo.GetByID(r.Context(), videoID)
+        if err != nil {
+            WriteError(w, http.StatusNotFound, domain.NewDomainError("VIDEO_NOT_FOUND", "Video not found"))
+            return
+        }
 
-	WriteJSON(w, http.StatusOK, video)
+        if existingVideo.UserID != userID {
+            WriteError(w, http.StatusForbidden, domain.NewDomainError("UNAUTHORIZED", "You don't have permission to update this video"))
+            return
+        }
+
+        // Update the video
+        video := &domain.Video{
+            ID:          videoID,
+            Title:       req.Title,
+            Description: req.Description,
+            Privacy:     req.Privacy,
+            UserID:      userID,
+            Tags:        req.Tags,
+            Category:    req.Category,
+            Language:    req.Language,
+            UpdatedAt:   time.Now(),
+        }
+
+        if err := repo.Update(r.Context(), video); err != nil {
+            if domainErr, ok := err.(*domain.DomainError); ok {
+                WriteError(w, http.StatusNotFound, domainErr)
+                return
+            }
+            WriteError(w, http.StatusInternalServerError, domain.NewDomainError("UPDATE_FAILED", "Failed to update video"))
+            return
+        }
+
+        // Return updated video
+        updatedVideo, err := repo.GetByID(r.Context(), videoID)
+        if err != nil {
+            WriteError(w, http.StatusInternalServerError, domain.NewDomainError("GET_FAILED", "Failed to retrieve updated video"))
+            return
+        }
+
+        WriteJSON(w, http.StatusOK, updatedVideo)
+    }
 }
 
-func DeleteVideo(w http.ResponseWriter, r *http.Request) {
-	videoID := chi.URLParam(r, "id")
-	if videoID == "" {
-		WriteError(w, http.StatusBadRequest, domain.NewDomainError("MISSING_VIDEO_ID", "Video ID is required"))
-		return
-	}
+func DeleteVideoHandler(repo usecase.VideoRepository) http.HandlerFunc {
+    return func(w http.ResponseWriter, r *http.Request) {
+        videoID := chi.URLParam(r, "id")
+        if videoID == "" {
+            WriteError(w, http.StatusBadRequest, domain.NewDomainError("MISSING_VIDEO_ID", "Video ID is required"))
+            return
+        }
 
-	w.WriteHeader(http.StatusNoContent)
+        userID, _ := r.Context().Value(middleware.UserIDKey).(string)
+        if userID == "" {
+            WriteError(w, http.StatusUnauthorized, domain.NewDomainError("UNAUTHORIZED", "Missing or invalid authentication"))
+            return
+        }
+
+        if err := repo.Delete(r.Context(), videoID, userID); err != nil {
+            if domainErr, ok := err.(*domain.DomainError); ok {
+                WriteError(w, http.StatusNotFound, domainErr)
+                return
+            }
+            WriteError(w, http.StatusInternalServerError, domain.NewDomainError("DELETE_FAILED", "Failed to delete video"))
+            return
+        }
+
+        w.WriteHeader(http.StatusNoContent)
+    }
 }
 
 func UploadVideoChunk(w http.ResponseWriter, r *http.Request) {
@@ -291,6 +310,40 @@ func CompleteVideoUpload(w http.ResponseWriter, r *http.Request) {
 	}
 
 	WriteJSON(w, http.StatusOK, response)
+}
+
+func GetUserVideosHandler(repo usecase.VideoRepository) http.HandlerFunc {
+    return func(w http.ResponseWriter, r *http.Request) {
+        userID := chi.URLParam(r, "id")
+        if userID == "" {
+            WriteError(w, http.StatusBadRequest, domain.NewDomainError("MISSING_USER_ID", "User ID is required"))
+            return
+        }
+
+        limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+        if limit == 0 || limit > 100 {
+            limit = 20
+        }
+
+        offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
+        if offset < 0 {
+            offset = 0
+        }
+
+        videos, err := repo.GetByUserID(r.Context(), userID, limit, offset)
+        if err != nil {
+            WriteError(w, http.StatusInternalServerError, domain.NewDomainError("GET_FAILED", "Failed to get user videos"))
+            return
+        }
+
+        meta := &Meta{
+            Total:  int64(len(videos)),
+            Limit:  limit,
+            Offset: offset,
+        }
+
+        WriteJSONWithMeta(w, http.StatusOK, videos, meta)
+    }
 }
 
 func StreamVideo(w http.ResponseWriter, r *http.Request) {
