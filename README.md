@@ -193,7 +193,7 @@ make serve-docs
 - `GET /api/v1/videos` - List public videos (supports pagination, filtering, sorting)
 - `GET /api/v1/videos/search` - Search videos with full-text search and filters
 - `GET /api/v1/videos/{id}` - Get video details
-- `GET /api/v1/videos/{id}/stream` - Stream video (HLS playlist)
+- `GET /api/v1/videos/{id}/stream` - Stream video (HLS playlist, `quality` query param supports 240p-4320p, default 720p)
 
 **Protected Endpoints (Require Authentication):**
 - `POST /api/v1/videos` - Create video metadata

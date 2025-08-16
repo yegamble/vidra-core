@@ -58,7 +58,7 @@ The collection includes comprehensive tests for the video CRUD API:
 
 ## Video Streaming & Upload
 - **Video Streaming Endpoint**: `GET {{baseUrl}}/api/v1/videos/{{video_id}}/stream` - HLS streaming
-  - Query params: `quality` (optional, defaults to 720p)
+  - Query params: `quality` (optional, defaults to 720p). Supported values: 240p, 360p, 480p, 720p, 1080p, 1440p, 2160p, 4320p
   - Returns HLS playlist with proper Content-Type header
 - **Upload Video Chunk**: `POST {{baseUrl}}/api/v1/videos/{{video_id}}/upload` - Chunked video upload
   - Requires headers: `X-Chunk-Index`, `X-Total-Chunks`, `X-Chunk-Checksum`

@@ -4,12 +4,38 @@ import (
 	"time"
 )
 
+const DefaultResolution = "720p"
+
+var SupportedResolutions = []string{
+	"240p",
+	"360p",
+	"480p",
+	"720p",
+	"1080p",
+	"1440p",
+	"2160p",
+	"4320p",
+}
+
+var supportedResolutionSet = func() map[string]struct{} {
+	m := make(map[string]struct{}, len(SupportedResolutions))
+	for _, r := range SupportedResolutions {
+		m[r] = struct{}{}
+	}
+	return m
+}()
+
+func IsValidResolution(res string) bool {
+	_, ok := supportedResolutionSet[res]
+	return ok
+}
+
 type Video struct {
-    ID            string            `json:"id" db:"id"`
-    ThumbnailID   string            `json:"thumbnail_id" db:"thumbnail_id"`
-    Title         string            `json:"title" db:"title"`
-    Description   string            `json:"description" db:"description"`
-    Duration      int               `json:"duration" db:"duration"`
+	ID            string            `json:"id" db:"id"`
+	ThumbnailID   string            `json:"thumbnail_id" db:"thumbnail_id"`
+	Title         string            `json:"title" db:"title"`
+	Description   string            `json:"description" db:"description"`
+	Duration      int               `json:"duration" db:"duration"`
 	Views         int64             `json:"views" db:"views"`
 	Privacy       Privacy           `json:"privacy" db:"privacy"`
 	Status        ProcessingStatus  `json:"status" db:"status"`
