@@ -21,9 +21,9 @@ type ErrorInfo struct {
 }
 
 type Meta struct {
-	Total  int64 `json:"total,omitempty"`
-	Limit  int   `json:"limit,omitempty"`
-	Offset int   `json:"offset,omitempty"`
+	Total  int64 `json:"total"`
+	Limit  int   `json:"limit"`
+	Offset int   `json:"offset"`
 	Page   int   `json:"page,omitempty"`
 }
 

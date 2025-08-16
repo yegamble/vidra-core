@@ -2,6 +2,7 @@ package httpapi
 
 import (
     "encoding/json"
+    "errors"
     "net/http"
     "strconv"
     "time"
@@ -116,9 +117,19 @@ func GetVideoHandler(repo usecase.VideoRepository) http.HandlerFunc {
             return
         }
 
+        // Validate UUID format
+        if _, err := uuid.Parse(videoID); err != nil {
+            WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_VIDEO_ID", "Invalid video ID format"))
+            return
+        }
+
         video, err := repo.GetByID(r.Context(), videoID)
         if err != nil {
-            WriteError(w, http.StatusNotFound, domain.NewDomainError("VIDEO_NOT_FOUND", "Video not found"))
+            if domainErr, ok := err.(domain.DomainError); ok {
+                WriteError(w, http.StatusNotFound, domainErr)
+                return
+            }
+            WriteError(w, http.StatusInternalServerError, domain.NewDomainError("GET_FAILED", "Failed to get video"))
             return
         }
 
@@ -131,6 +142,21 @@ func CreateVideoHandler(repo usecase.VideoRepository) http.HandlerFunc {
         var req domain.VideoUploadRequest
         if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
             WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_JSON", "Invalid JSON payload"))
+            return
+        }
+
+        // Validate required fields
+        if req.Title == "" {
+            WriteError(w, http.StatusBadRequest, domain.NewDomainError("MISSING_TITLE", "Title is required"))
+            return
+        }
+        if req.Privacy == "" {
+            WriteError(w, http.StatusBadRequest, domain.NewDomainError("MISSING_PRIVACY", "Privacy setting is required"))
+            return
+        }
+        // Validate privacy value
+        if req.Privacy != domain.PrivacyPublic && req.Privacy != domain.PrivacyUnlisted && req.Privacy != domain.PrivacyPrivate {
+            WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_PRIVACY", "Privacy must be public, unlisted, or private"))
             return
         }
 
@@ -157,11 +183,9 @@ func CreateVideoHandler(repo usecase.VideoRepository) http.HandlerFunc {
             UpdatedAt:   now,
         }
 
-        if repo != nil {
-            if err := repo.Create(r.Context(), video); err != nil {
-                WriteError(w, http.StatusInternalServerError, domain.NewDomainError("CREATE_FAILED", "Failed to create video"))
-                return
-            }
+        if err := repo.Create(r.Context(), video); err != nil {
+            WriteError(w, http.StatusInternalServerError, domain.NewDomainError("CREATE_FAILED", "Failed to create video"))
+            return
         }
 
         w.Header().Set("Location", "/api/v1/videos/"+video.ID)
@@ -177,9 +201,30 @@ func UpdateVideoHandler(repo usecase.VideoRepository) http.HandlerFunc {
             return
         }
 
+        // Validate UUID format
+        if _, err := uuid.Parse(videoID); err != nil {
+            WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_VIDEO_ID", "Invalid video ID format"))
+            return
+        }
+
         var req domain.VideoUpdateRequest
         if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
             WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_JSON", "Invalid JSON payload"))
+            return
+        }
+
+        // Validate required fields
+        if req.Title == "" {
+            WriteError(w, http.StatusBadRequest, domain.NewDomainError("MISSING_TITLE", "Title is required"))
+            return
+        }
+        if req.Privacy == "" {
+            WriteError(w, http.StatusBadRequest, domain.NewDomainError("MISSING_PRIVACY", "Privacy setting is required"))
+            return
+        }
+        // Validate privacy value
+        if req.Privacy != domain.PrivacyPublic && req.Privacy != domain.PrivacyUnlisted && req.Privacy != domain.PrivacyPrivate {
+            WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_PRIVACY", "Privacy must be public, unlisted, or private"))
             return
         }
 
@@ -192,7 +237,12 @@ func UpdateVideoHandler(repo usecase.VideoRepository) http.HandlerFunc {
         // First check if video exists and user owns it
         existingVideo, err := repo.GetByID(r.Context(), videoID)
         if err != nil {
-            WriteError(w, http.StatusNotFound, domain.NewDomainError("VIDEO_NOT_FOUND", "Video not found"))
+            var domainErr domain.DomainError
+            if errors.As(err, &domainErr) {
+                WriteError(w, http.StatusNotFound, domainErr)
+                return
+            }
+            WriteError(w, http.StatusInternalServerError, domain.NewDomainError("GET_FAILED", "Failed to get video"))
             return
         }
 
@@ -215,7 +265,8 @@ func UpdateVideoHandler(repo usecase.VideoRepository) http.HandlerFunc {
         }
 
         if err := repo.Update(r.Context(), video); err != nil {
-            if domainErr, ok := err.(*domain.DomainError); ok {
+            var domainErr domain.DomainError
+            if errors.As(err, &domainErr) {
                 WriteError(w, http.StatusNotFound, domainErr)
                 return
             }
@@ -242,6 +293,12 @@ func DeleteVideoHandler(repo usecase.VideoRepository) http.HandlerFunc {
             return
         }
 
+        // Validate UUID format
+        if _, err := uuid.Parse(videoID); err != nil {
+            WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_VIDEO_ID", "Invalid video ID format"))
+            return
+        }
+
         userID, _ := r.Context().Value(middleware.UserIDKey).(string)
         if userID == "" {
             WriteError(w, http.StatusUnauthorized, domain.NewDomainError("UNAUTHORIZED", "Missing or invalid authentication"))
@@ -249,7 +306,8 @@ func DeleteVideoHandler(repo usecase.VideoRepository) http.HandlerFunc {
         }
 
         if err := repo.Delete(r.Context(), videoID, userID); err != nil {
-            if domainErr, ok := err.(*domain.DomainError); ok {
+            var domainErr domain.DomainError
+            if errors.As(err, &domainErr) {
                 WriteError(w, http.StatusNotFound, domainErr)
                 return
             }
@@ -320,6 +378,12 @@ func GetUserVideosHandler(repo usecase.VideoRepository) http.HandlerFunc {
             return
         }
 
+        // Validate UUID format
+        if _, err := uuid.Parse(userID); err != nil {
+            WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_USER_ID", "Invalid user ID format"))
+            return
+        }
+
         limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
         if limit == 0 || limit > 100 {
             limit = 20
@@ -330,14 +394,14 @@ func GetUserVideosHandler(repo usecase.VideoRepository) http.HandlerFunc {
             offset = 0
         }
 
-        videos, err := repo.GetByUserID(r.Context(), userID, limit, offset)
+        videos, total, err := repo.GetByUserID(r.Context(), userID, limit, offset)
         if err != nil {
             WriteError(w, http.StatusInternalServerError, domain.NewDomainError("GET_FAILED", "Failed to get user videos"))
             return
         }
 
         meta := &Meta{
-            Total:  int64(len(videos)),
+            Total:  total,
             Limit:  limit,
             Offset: offset,
         }

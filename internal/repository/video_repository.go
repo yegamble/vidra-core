@@ -4,6 +4,7 @@ import (
     "athena/internal/domain"
     "athena/internal/usecase"
     "context"
+    "database/sql"
     "fmt"
     "encoding/json"
 
@@ -73,22 +74,34 @@ func (r *videoRepository) GetByID(ctx context.Context, id string) (*domain.Video
         &v.CreatedAt, &v.UpdatedAt,
     )
     if err != nil {
+        if err == sql.ErrNoRows {
+            return nil, domain.NewDomainError("VIDEO_NOT_FOUND", "Video not found")
+        }
         return nil, fmt.Errorf("failed to get video by id: %w", err)
     }
 
     // Unmarshal JSON fields
     if len(processedCIDsJSON) > 0 {
-        json.Unmarshal(processedCIDsJSON, &v.ProcessedCIDs)
+        _ = json.Unmarshal(processedCIDsJSON, &v.ProcessedCIDs)
     }
     if len(metadataJSON) > 0 {
-        json.Unmarshal(metadataJSON, &v.Metadata)
+        _ = json.Unmarshal(metadataJSON, &v.Metadata)
     }
     v.Tags = []string(tags)
 
     return &v, nil
 }
 
-func (r *videoRepository) GetByUserID(ctx context.Context, userID string, limit, offset int) ([]*domain.Video, error) {
+func (r *videoRepository) GetByUserID(ctx context.Context, userID string, limit, offset int) ([]*domain.Video, int64, error) {
+    // Get total count
+    countQuery := `SELECT COUNT(*) FROM videos WHERE user_id = $1`
+    var total int64
+    err := r.db.QueryRowContext(ctx, countQuery, userID).Scan(&total)
+    if err != nil {
+        return nil, 0, fmt.Errorf("failed to count user videos: %w", err)
+    }
+
+    // Get videos
     query := `
         SELECT id, thumbnail_id, title, description, duration, views,
                privacy, status, upload_date, user_id,
@@ -102,9 +115,9 @@ func (r *videoRepository) GetByUserID(ctx context.Context, userID string, limit,
 
     rows, err := r.db.QueryContext(ctx, query, userID, limit, offset)
     if err != nil {
-        return nil, fmt.Errorf("failed to get videos by user id: %w", err)
+        return nil, 0, fmt.Errorf("failed to get videos by user id: %w", err)
     }
-    defer rows.Close()
+    defer func() { _ = rows.Close() }()
 
     var videos []*domain.Video
     for rows.Next() {
@@ -120,22 +133,22 @@ func (r *videoRepository) GetByUserID(ctx context.Context, userID string, limit,
             &v.CreatedAt, &v.UpdatedAt,
         )
         if err != nil {
-            return nil, fmt.Errorf("failed to scan video row: %w", err)
+            return nil, 0, fmt.Errorf("failed to scan video row: %w", err)
         }
 
         // Unmarshal JSON fields
         if len(processedCIDsJSON) > 0 {
-            json.Unmarshal(processedCIDsJSON, &v.ProcessedCIDs)
+            _ = json.Unmarshal(processedCIDsJSON, &v.ProcessedCIDs)
         }
         if len(metadataJSON) > 0 {
-            json.Unmarshal(metadataJSON, &v.Metadata)
+            _ = json.Unmarshal(metadataJSON, &v.Metadata)
         }
         v.Tags = []string(tags)
 
         videos = append(videos, &v)
     }
 
-    return videos, nil
+    return videos, total, nil
 }
 
 func (r *videoRepository) Update(ctx context.Context, v *domain.Video) error {
@@ -256,7 +269,7 @@ func (r *videoRepository) List(ctx context.Context, req *domain.VideoSearchReque
     if err != nil {
         return nil, 0, fmt.Errorf("failed to list videos: %w", err)
     }
-    defer rows.Close()
+    defer func() { _ = rows.Close() }()
 
     var videos []*domain.Video
     for rows.Next() {
@@ -277,10 +290,10 @@ func (r *videoRepository) List(ctx context.Context, req *domain.VideoSearchReque
 
         // Unmarshal JSON fields
         if len(processedCIDsJSON) > 0 {
-            json.Unmarshal(processedCIDsJSON, &v.ProcessedCIDs)
+            _ = json.Unmarshal(processedCIDsJSON, &v.ProcessedCIDs)
         }
         if len(metadataJSON) > 0 {
-            json.Unmarshal(metadataJSON, &v.Metadata)
+            _ = json.Unmarshal(metadataJSON, &v.Metadata)
         }
         v.Tags = []string(tags)
 
@@ -390,7 +403,7 @@ func (r *videoRepository) Search(ctx context.Context, req *domain.VideoSearchReq
     if err != nil {
         return nil, 0, fmt.Errorf("failed to search videos: %w", err)
     }
-    defer rows.Close()
+    defer func() { _ = rows.Close() }()
 
     var videos []*domain.Video
     for rows.Next() {
@@ -411,10 +424,10 @@ func (r *videoRepository) Search(ctx context.Context, req *domain.VideoSearchReq
 
         // Unmarshal JSON fields
         if len(processedCIDsJSON) > 0 {
-            json.Unmarshal(processedCIDsJSON, &v.ProcessedCIDs)
+            _ = json.Unmarshal(processedCIDsJSON, &v.ProcessedCIDs)
         }
         if len(metadataJSON) > 0 {
-            json.Unmarshal(metadataJSON, &v.Metadata)
+            _ = json.Unmarshal(metadataJSON, &v.Metadata)
         }
         v.Tags = []string(tags)
 

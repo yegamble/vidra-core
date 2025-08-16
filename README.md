@@ -187,16 +187,20 @@ make serve-docs
 - `GET /health` - Basic health check
 - `GET /ready` - Readiness check (DB, Redis, IPFS)
 
-### Videos (Protected)
+### Videos
 
-- `GET /api/v1/videos` - List videos
-- `GET /api/v1/videos/search` - Search videos
+**Public Endpoints:**
+- `GET /api/v1/videos` - List public videos (supports pagination, filtering, sorting)
+- `GET /api/v1/videos/search` - Search videos with full-text search and filters
 - `GET /api/v1/videos/{id}` - Get video details
-- `POST /api/v1/videos` - Create video
-- `PUT /api/v1/videos/{id}` - Update video
-- `DELETE /api/v1/videos/{id}` - Delete video
+- `GET /api/v1/videos/{id}/stream` - Stream video (HLS playlist)
+
+**Protected Endpoints (Require Authentication):**
+- `POST /api/v1/videos` - Create video metadata
+- `PUT /api/v1/videos/{id}` - Update video (owner only)
+- `DELETE /api/v1/videos/{id}` - Delete video (owner only)
 - `POST /api/v1/videos/{id}/upload` - Upload video chunk
-- `GET /api/v1/videos/{id}/stream` - Stream video (HLS)
+- `POST /api/v1/videos/{id}/complete` - Complete chunked upload
 
 ### Users
 

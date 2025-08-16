@@ -336,6 +336,272 @@
       "name": "Videos",
       "item": [
         {
+          "name": "List Videos",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/videos?limit=10&offset=0&sort=upload_date&order=desc",
+              "host": ["{{baseUrl}}"],
+              "path": ["api","v1","videos"],
+              "query": [
+                {"key": "limit", "value": "10"},
+                {"key": "offset", "value": "0"},
+                {"key": "sort", "value": "upload_date"},
+                {"key": "order", "value": "desc"}
+              ]
+            },
+            "description": "Lists public videos with pagination and sorting."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const wrap = pm.response.json();",
+                  "pm.test('Response wrapped with data', () => pm.expect(wrap).to.have.property('data'));",
+                  "pm.test('Has meta object', () => pm.expect(wrap).to.have.property('meta'));",
+                  "const videos = wrap.data || [];",
+                  "const meta = wrap.meta || {};",
+                  "pm.test('Meta has pagination fields', () => {",
+                  "  pm.expect(meta).to.have.property('total');",
+                  "  pm.expect(meta).to.have.property('limit');",
+                  "  pm.expect(meta).to.have.property('offset');",
+                  "});",
+                  "if (videos.length > 0) {",
+                  "  pm.test('Videos have required fields', () => {",
+                  "    const video = videos[0];",
+                  "    pm.expect(video).to.have.property('id');",
+                  "    pm.expect(video).to.have.property('title');",
+                  "    pm.expect(video).to.have.property('privacy');",
+                  "    pm.expect(video).to.have.property('status');",
+                  "  });",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "List Videos - With Filters",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/videos?category=education&language=en&sort=views&order=desc&limit=5",
+              "host": ["{{baseUrl}}"],
+              "path": ["api","v1","videos"],
+              "query": [
+                {"key": "category", "value": "education"},
+                {"key": "language", "value": "en"},
+                {"key": "sort", "value": "views"},
+                {"key": "order", "value": "desc"},
+                {"key": "limit", "value": "5"}
+              ]
+            },
+            "description": "Lists videos with category and language filters."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const wrap = pm.response.json();",
+                  "pm.test('Response wrapped with data', () => pm.expect(wrap).to.have.property('data'));",
+                  "const videos = wrap.data || [];",
+                  "if (videos.length > 0) {",
+                  "  pm.test('Videos match filters', () => {",
+                  "    videos.forEach(video => {",
+                  "      if (video.category) pm.expect(video.category).to.eql('education');",
+                  "      if (video.language) pm.expect(video.language).to.eql('en');",
+                  "    });",
+                  "  });",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Search Videos",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/videos/search?q=test&limit=10&sort=relevance",
+              "host": ["{{baseUrl}}"],
+              "path": ["api","v1","videos","search"],
+              "query": [
+                {"key": "q", "value": "test"},
+                {"key": "limit", "value": "10"},
+                {"key": "sort", "value": "relevance"}
+              ]
+            },
+            "description": "Searches videos by query string with relevance sorting."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const wrap = pm.response.json();",
+                  "pm.test('Response wrapped with data', () => pm.expect(wrap).to.have.property('data'));",
+                  "pm.test('Has meta object', () => pm.expect(wrap).to.have.property('meta'));",
+                  "const videos = wrap.data || [];",
+                  "if (videos.length > 0) {",
+                  "  pm.test('Search results contain query term', () => {",
+                  "    const hasMatch = videos.some(video => ",
+                  "      video.title.toLowerCase().includes('test') || ",
+                  "      video.description.toLowerCase().includes('test')",
+                  "    );",
+                  "    pm.expect(hasMatch).to.be.true;",
+                  "  });",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Search Videos - With Tags",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/videos/search?q=demo&tags=test&tags=sample&category=education",
+              "host": ["{{baseUrl}}"],
+              "path": ["api","v1","videos","search"],
+              "query": [
+                {"key": "q", "value": "demo"},
+                {"key": "tags", "value": "test"},
+                {"key": "tags", "value": "sample"},
+                {"key": "category", "value": "education"}
+              ]
+            },
+            "description": "Searches videos with multiple tags and filters."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const wrap = pm.response.json();",
+                  "pm.test('Response wrapped with data', () => pm.expect(wrap).to.have.property('data'));",
+                  "const videos = wrap.data || [];",
+                  "if (videos.length > 0) {",
+                  "  pm.test('Videos have expected tags or category', () => {",
+                  "    videos.forEach(video => {",
+                  "      const hasTag = video.tags && (video.tags.includes('test') || video.tags.includes('sample'));",
+                  "      const hasCategory = video.category === 'education';",
+                  "      pm.expect(hasTag || hasCategory).to.be.true;",
+                  "    });",
+                  "  });",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Search Videos - Missing Query (400)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/videos/search",
+              "host": ["{{baseUrl}}"],
+              "path": ["api","v1","videos","search"]
+            },
+            "description": "Expect 400 when search query is missing."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 400', () => pm.response.to.have.status(400));",
+                  "pm.test('Has error body', () => { const j = pm.response.json(); pm.expect(j).to.have.property('error'); });"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Video by ID",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/videos/{{video_id}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api","v1","videos","{{video_id}}"]
+            },
+            "description": "Gets a specific video by ID (uses video_id from create test)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const wrap = pm.response.json();",
+                  "pm.test('Response wrapped with data', () => pm.expect(wrap).to.have.property('data'));",
+                  "const video = wrap.data || {};",
+                  "pm.test('Video has all fields', () => {",
+                  "  pm.expect(video).to.have.property('id');",
+                  "  pm.expect(video).to.have.property('title');",
+                  "  pm.expect(video).to.have.property('description');",
+                  "  pm.expect(video).to.have.property('privacy');",
+                  "  pm.expect(video).to.have.property('status');",
+                  "  pm.expect(video).to.have.property('user_id');",
+                  "  pm.expect(video).to.have.property('upload_date');",
+                  "  pm.expect(video).to.have.property('created_at');",
+                  "  pm.expect(video).to.have.property('updated_at');",
+                  "});",
+                  "pm.test('Video ID matches requested', () => {",
+                  "  pm.expect(video.id).to.eql(pm.environment.get('video_id'));",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Video - Not Found (404)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/videos/nonexistent-video-id",
+              "host": ["{{baseUrl}}"],
+              "path": ["api","v1","videos","nonexistent-video-id"]
+            },
+            "description": "Expect 404 for non-existent video."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 404', () => pm.response.to.have.status(404));",
+                  "pm.test('Has error body', () => { const j = pm.response.json(); pm.expect(j).to.have.property('error'); });"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
           "name": "Create Video",
           "request": {
             "method": "POST",
@@ -550,6 +816,355 @@
                 "exec": [
                   "pm.test('Status is 401', () => pm.response.to.have.status(401));",
                   "pm.test('Has error body or text', () => { try { const j = pm.response.json(); pm.expect(j).to.have.property('error'); } catch (e) { pm.response.to.have.body(/Missing authorization header|Invalid token|Unauthorized/i); } });"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get User Videos",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/users/{{user_id}}/videos?limit=10&offset=0",
+              "host": ["{{baseUrl}}"],
+              "path": ["api","v1","users","{{user_id}}","videos"],
+              "query": [
+                {"key": "limit", "value": "10"},
+                {"key": "offset", "value": "0"}
+              ]
+            },
+            "description": "Gets all videos uploaded by a specific user."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const wrap = pm.response.json();",
+                  "pm.test('Response wrapped with data', () => pm.expect(wrap).to.have.property('data'));",
+                  "pm.test('Has meta object', () => pm.expect(wrap).to.have.property('meta'));",
+                  "const videos = wrap.data || [];",
+                  "const meta = wrap.meta || {};",
+                  "pm.test('Meta has pagination fields', () => {",
+                  "  pm.expect(meta).to.have.property('total');",
+                  "  pm.expect(meta).to.have.property('limit');",
+                  "  pm.expect(meta).to.have.property('offset');",
+                  "});",
+                  "if (videos.length > 0) {",
+                  "  pm.test('All videos belong to user', () => {",
+                  "    videos.forEach(video => {",
+                  "      pm.expect(video.user_id).to.eql(pm.environment.get('user_id'));",
+                  "    });",
+                  "  });",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get User Videos - Nonexistent User",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/users/nonexistent-user-id/videos",
+              "host": ["{{baseUrl}}"],
+              "path": ["api","v1","users","nonexistent-user-id","videos"]
+            },
+            "description": "Gets videos for non-existent user (should return empty list)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const wrap = pm.response.json();",
+                  "pm.test('Response wrapped with data', () => pm.expect(wrap).to.have.property('data'));",
+                  "const videos = wrap.data || [];",
+                  "pm.test('Returns empty array for nonexistent user', () => {",
+                  "  pm.expect(videos).to.be.an('array').that.is.empty;",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create Video - Invalid JSON (400)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{access_token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/videos",
+              "host": ["{{baseUrl}}"],
+              "path": ["api","v1","videos"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{ invalid json"
+            },
+            "description": "Expect 400 for malformed JSON."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 400', () => pm.response.to.have.status(400));",
+                  "pm.test('Has error body', () => { const j = pm.response.json(); pm.expect(j).to.have.property('error'); });"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create Video - Missing Required Fields (400)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{access_token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/videos",
+              "host": ["{{baseUrl}}"],
+              "path": ["api","v1","videos"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"description\": \"Missing title and privacy\"\n}"
+            },
+            "description": "Expect validation error for missing required fields."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 400', () => pm.response.to.have.status(400));",
+                  "pm.test('Has error body', () => { const j = pm.response.json(); pm.expect(j).to.have.property('error'); });"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Update Video - Invalid JSON (400)",
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{access_token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/videos/some-id",
+              "host": ["{{baseUrl}}"],
+              "path": ["api","v1","videos","some-id"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{ invalid json"
+            },
+            "description": "Expect 400 for malformed JSON in update request."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 400', () => pm.response.to.have.status(400));",
+                  "pm.test('Has error body', () => { const j = pm.response.json(); pm.expect(j).to.have.property('error'); });"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Update Video - Missing Token (401)",
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/videos/some-id",
+              "host": ["{{baseUrl}}"],
+              "path": ["api","v1","videos","some-id"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Updated Title\",\n  \"privacy\": \"public\"\n}"
+            },
+            "description": "Expect 401 due to missing Authorization header."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 401', () => pm.response.to.have.status(401));",
+                  "pm.test('Has error body or text', () => { try { const j = pm.response.json(); pm.expect(j).to.have.property('error'); } catch (e) { pm.response.to.have.body(/Missing authorization header|Invalid token|Unauthorized/i); } });"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Video Streaming Endpoint",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/videos/{{video_id}}/stream?quality=720p",
+              "host": ["{{baseUrl}}"],
+              "path": ["api","v1","videos","{{video_id}}","stream"],
+              "query": [
+                {"key": "quality", "value": "720p"}
+              ]
+            },
+            "description": "Tests video streaming endpoint (returns HLS playlist)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Content-Type is HLS', () => {",
+                  "  pm.expect(pm.response.headers.get('Content-Type')).to.include('application/vnd.apple.mpegurl');",
+                  "});",
+                  "pm.test('Response contains HLS playlist', () => {",
+                  "  pm.expect(pm.response.text()).to.include('#EXTM3U');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Upload Video Chunk",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{access_token}}" },
+              { "key": "Content-Type", "value": "application/octet-stream" },
+              { "key": "X-Chunk-Index", "value": "0" },
+              { "key": "X-Total-Chunks", "value": "2" },
+              { "key": "X-Chunk-Checksum", "value": "abc123" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/videos/{{video_id}}/upload",
+              "host": ["{{baseUrl}}"],
+              "path": ["api","v1","videos","{{video_id}}","upload"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "fake video chunk data"
+            },
+            "description": "Tests chunked video upload with required headers."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const wrap = pm.response.json();",
+                  "pm.test('Response wrapped with data', () => pm.expect(wrap).to.have.property('data'));",
+                  "const response = wrap.data || {};",
+                  "pm.test('Upload response has chunk info', () => {",
+                  "  pm.expect(response).to.have.property('video_id');",
+                  "  pm.expect(response).to.have.property('chunk_index');",
+                  "  pm.expect(response).to.have.property('uploaded');",
+                  "  pm.expect(response.uploaded).to.be.true;",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Upload Video Chunk - Missing Headers (400)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{access_token}}" },
+              { "key": "Content-Type", "value": "application/octet-stream" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/videos/{{video_id}}/upload",
+              "host": ["{{baseUrl}}"],
+              "path": ["api","v1","videos","{{video_id}}","upload"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "fake video chunk data"
+            },
+            "description": "Expects 400 when required chunk headers are missing."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 400', () => pm.response.to.have.status(400));",
+                  "pm.test('Has error body', () => { const j = pm.response.json(); pm.expect(j).to.have.property('error'); });"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Complete Video Upload",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{access_token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/videos/{{video_id}}/complete",
+              "host": ["{{baseUrl}}"],
+              "path": ["api","v1","videos","{{video_id}}","complete"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            },
+            "description": "Completes the chunked upload process and queues video for processing."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const wrap = pm.response.json();",
+                  "pm.test('Response wrapped with data', () => pm.expect(wrap).to.have.property('data'));",
+                  "const response = wrap.data || {};",
+                  "pm.test('Upload completion response', () => {",
+                  "  pm.expect(response).to.have.property('video_id');",
+                  "  pm.expect(response).to.have.property('status');",
+                  "  pm.expect(response).to.have.property('message');",
+                  "});"
                 ],
                 "type": "text/javascript"
               }

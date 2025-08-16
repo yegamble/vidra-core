@@ -338,11 +338,11 @@ func (s *Server) ReadinessCheck(w http.ResponseWriter, r *http.Request) {
 func (s *Server) generateJWT(userID string, duration time.Duration) string {
     // Defer to middleware's jwt implementation; kept here to avoid import cycle
     // We re-implement minimal signing here for clarity
-    type Claims struct {
-        Sub string `json:"sub"`
-        Exp int64  `json:"exp"`
-        Iat int64  `json:"iat"`
-    }
+    // type Claims struct {
+    //     Sub string `json:"sub"`
+    //     Exp int64  `json:"exp"`
+    //     Iat int64  `json:"iat"`
+    // }
     // We will use golang-jwt/jwt in middleware; here we just mirror
     // but to avoid duplicating heavy imports, we keep a lightweight version
     // For correctness, we import jwt here too
