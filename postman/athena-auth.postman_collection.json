@@ -582,9 +582,9 @@
             "method": "GET",
             "header": [],
             "url": {
-              "raw": "{{baseUrl}}/api/v1/videos/nonexistent-video-id",
+              "raw": "{{baseUrl}}/api/v1/videos/123e4567-e89b-12d3-a456-426614174000",
               "host": ["{{baseUrl}}"],
-              "path": ["api","v1","videos","nonexistent-video-id"]
+              "path": ["api","v1","videos","123e4567-e89b-12d3-a456-426614174000"]
             },
             "description": "Expect 404 for non-existent video."
           },
@@ -720,9 +720,9 @@
               { "key": "Content-Type", "value": "application/json" }
             ],
             "url": {
-              "raw": "{{baseUrl}}/api/v1/videos/nonexistent-id",
+              "raw": "{{baseUrl}}/api/v1/videos/123e4567-e89b-12d3-a456-426614174001",
               "host": ["{{baseUrl}}"],
-              "path": ["api","v1","videos","nonexistent-id"]
+              "path": ["api","v1","videos","123e4567-e89b-12d3-a456-426614174001"]
             },
             "body": {
               "mode": "raw",
@@ -778,9 +778,9 @@
               { "key": "Authorization", "value": "Bearer {{access_token}}" }
             ],
             "url": {
-              "raw": "{{baseUrl}}/api/v1/videos/nonexistent-id",
+              "raw": "{{baseUrl}}/api/v1/videos/123e4567-e89b-12d3-a456-426614174001",
               "host": ["{{baseUrl}}"],
-              "path": ["api","v1","videos","nonexistent-id"]
+              "path": ["api","v1","videos","123e4567-e89b-12d3-a456-426614174001"]
             },
             "description": "Expect 404 for non-existent video."
           },
@@ -873,9 +873,9 @@
             "method": "GET",
             "header": [],
             "url": {
-              "raw": "{{baseUrl}}/api/v1/users/nonexistent-user-id/videos",
+              "raw": "{{baseUrl}}/api/v1/users/123e4567-e89b-12d3-a456-426614174002/videos",
               "host": ["{{baseUrl}}"],
-              "path": ["api","v1","users","nonexistent-user-id","videos"]
+              "path": ["api","v1","users","123e4567-e89b-12d3-a456-426614174002","videos"]
             },
             "description": "Gets videos for non-existent user (should return empty list)."
           },
