@@ -1,190 +1,158 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuites name="Athena Auth API" tests="33" time="1.306">
-  <testsuite name="Auth / Register" id="e3e62199-0e01-41f2-8709-600c18cff670" timestamp="2025-08-16T10:16:51.390Z" tests="4" failures="0" errors="0" time="0.358">
-    <testcase name="Status is 201" time="0.358" classname="AthenaAuthApi"/>
-    <testcase name="Returns JSON" time="0.358" classname="AthenaAuthApi"/>
-    <testcase name="Response wrapped with data" time="0.358" classname="AthenaAuthApi"/>
-    <testcase name="Has user + tokens" time="0.358" classname="AthenaAuthApi"/>
+<testsuites name="Athena Auth API" tests="33" time="0.638">
+  <testsuite name="Auth / Register" id="c52b438a-58e9-45b0-a202-189bd59863a5" timestamp="2025-08-16T10:43:33.596Z" tests="4" failures="0" errors="0" time="0.219">
+    <testcase name="Status is 201" time="0.219" classname="AthenaAuthApi"/>
+    <testcase name="Returns JSON" time="0.219" classname="AthenaAuthApi"/>
+    <testcase name="Response wrapped with data" time="0.219" classname="AthenaAuthApi"/>
+    <testcase name="Has user + tokens" time="0.219" classname="AthenaAuthApi"/>
   </testsuite>
-  <testsuite name="Auth / Login" id="21d5a714-f9b9-429f-af03-ac903529d490" timestamp="2025-08-16T10:16:51.390Z" tests="3" failures="0" errors="0" time="0.247">
-    <testcase name="Status is 200" time="0.247" classname="AthenaAuthApi"/>
-    <testcase name="Response wrapped with data" time="0.247" classname="AthenaAuthApi"/>
-    <testcase name="Has user + tokens" time="0.247" classname="AthenaAuthApi"/>
+  <testsuite name="Auth / Login" id="e04f97de-41a0-4d2c-b78d-1108b83cbcc0" timestamp="2025-08-16T10:43:33.596Z" tests="3" failures="0" errors="0" time="0.119">
+    <testcase name="Status is 200" time="0.119" classname="AthenaAuthApi"/>
+    <testcase name="Response wrapped with data" time="0.119" classname="AthenaAuthApi"/>
+    <testcase name="Has user + tokens" time="0.119" classname="AthenaAuthApi"/>
   </testsuite>
-  <testsuite name="Auth / Login - Invalid Password (401)" id="749523c1-769c-4225-b9a2-fef8edda395e" timestamp="2025-08-16T10:16:51.390Z" tests="2" failures="0" errors="0" time="0.296">
-    <testcase name="Status is 401" time="0.296" classname="AthenaAuthApi"/>
-    <testcase name="Has error body" time="0.296" classname="AthenaAuthApi"/>
+  <testsuite name="Auth / Login - Invalid Password (401)" id="24034a31-5da3-4962-8dbf-276f17440cf2" timestamp="2025-08-16T10:43:33.596Z" tests="2" failures="0" errors="0" time="0.113">
+    <testcase name="Status is 401" time="0.113" classname="AthenaAuthApi"/>
+    <testcase name="Has error body" time="0.113" classname="AthenaAuthApi"/>
   </testsuite>
-  <testsuite name="Auth / Refresh" id="34321897-fc4e-45b7-973b-a7ed969a4f8d" timestamp="2025-08-16T10:16:51.390Z" tests="3" failures="0" errors="0" time="0.021">
-    <testcase name="Status is 200" time="0.021" classname="AthenaAuthApi"/>
-    <testcase name="Response wrapped with data" time="0.021" classname="AthenaAuthApi"/>
-    <testcase name="Returns tokens" time="0.021" classname="AthenaAuthApi"/>
-  </testsuite>
-  <testsuite name="Auth / Refresh - Missing Token (400)" id="8e2c2bc3-170d-460f-a313-5093aea863a1" timestamp="2025-08-16T10:16:51.390Z" tests="2" failures="0" errors="0" time="0.014">
-    <testcase name="Status is 400" time="0.014" classname="AthenaAuthApi"/>
-    <testcase name="Has error body" time="0.014" classname="AthenaAuthApi"/>
-  </testsuite>
-  <testsuite name="Auth / Refresh - Invalid Token (401)" id="fe3e1721-1933-4269-accc-15d5c4e6df5c" timestamp="2025-08-16T10:16:51.390Z" tests="2" failures="0" errors="0" time="0.014">
-    <testcase name="Status is 401" time="0.014" classname="AthenaAuthApi"/>
-    <testcase name="Has error body" time="0.014" classname="AthenaAuthApi"/>
-  </testsuite>
-  <testsuite name="Auth / Logout" id="4e17cc5e-9225-4979-879a-1749aa1854fe" timestamp="2025-08-16T10:16:51.390Z" tests="4" failures="0" errors="0" time="0.015">
-    <testcase name="Status is 200" time="0.015" classname="AthenaAuthApi"/>
-    <testcase name="Response wrapped with data" time="0.015" classname="AthenaAuthApi"/>
-    <testcase name="Logout success message" time="0.015" classname="AthenaAuthApi"/>
-    <testcase name="User ID matches" time="0.015" classname="AthenaAuthApi"/>
-  </testsuite>
-  <testsuite name="Auth / Refresh After Logout (401)" id="03b727f4-e60d-4c3b-825a-9e9485605657" timestamp="2025-08-16T10:16:51.390Z" tests="2" failures="0" errors="0" time="0.015">
-    <testcase name="Status is 401" time="0.015" classname="AthenaAuthApi"/>
-    <testcase name="Has error body" time="0.015" classname="AthenaAuthApi"/>
-  </testsuite>
-  <testsuite name="Auth / Logout Without Token (401)" id="b49a6689-cd3b-4fb0-92bc-7d2bb18f3439" timestamp="2025-08-16T10:16:51.390Z" tests="2" failures="0" errors="0" time="0.013">
-    <testcase name="Status is 401" time="0.013" classname="AthenaAuthApi"/>
-    <testcase name="Has error body or text" time="0.013" classname="AthenaAuthApi"/>
-  </testsuite>
-  <testsuite name="Videos / List Videos" id="191ff795-211a-4662-af8b-af2c1add08dd" timestamp="2025-08-16T10:16:51.390Z" tests="4" failures="0" errors="0" time="0.013">
-    <testcase name="Status is 200" time="0.013" classname="AthenaAuthApi"/>
-    <testcase name="Response wrapped with data" time="0.013" classname="AthenaAuthApi"/>
-    <testcase name="Has meta object" time="0.013" classname="AthenaAuthApi"/>
-    <testcase name="Meta has pagination fields" time="0.013" classname="AthenaAuthApi"/>
-  </testsuite>
-  <testsuite name="Videos / List Videos - With Filters" id="2f2bc788-5042-4446-bd6d-2ac64dce4850" timestamp="2025-08-16T10:16:51.390Z" tests="2" failures="0" errors="0" time="0.026">
-    <testcase name="Status is 200" time="0.026" classname="AthenaAuthApi"/>
-    <testcase name="Response wrapped with data" time="0.026" classname="AthenaAuthApi"/>
-  </testsuite>
-  <testsuite name="Videos / Search Videos" id="e8b4d258-cda2-4f6f-8bc4-12f402be5408" timestamp="2025-08-16T10:16:51.390Z" tests="3" failures="0" errors="0" time="0.017">
-    <testcase name="Status is 200" time="0.017" classname="AthenaAuthApi"/>
-    <testcase name="Response wrapped with data" time="0.017" classname="AthenaAuthApi"/>
-    <testcase name="Has meta object" time="0.017" classname="AthenaAuthApi"/>
-  </testsuite>
-  <testsuite name="Videos / Search Videos - With Tags" id="931c2642-b564-4b95-a7c5-042c29c68108" timestamp="2025-08-16T10:16:51.390Z" tests="2" failures="0" errors="0" time="0.026">
-    <testcase name="Status is 200" time="0.026" classname="AthenaAuthApi"/>
-    <testcase name="Response wrapped with data" time="0.026" classname="AthenaAuthApi"/>
-  </testsuite>
-  <testsuite name="Videos / Search Videos - Missing Query (400)" id="ffc1ae65-b434-4289-8c2a-70b18296d88e" timestamp="2025-08-16T10:16:51.390Z" tests="2" failures="0" errors="0" time="0.009">
-    <testcase name="Status is 400" time="0.009" classname="AthenaAuthApi"/>
-    <testcase name="Has error body" time="0.009" classname="AthenaAuthApi"/>
-  </testsuite>
-  <testsuite name="Videos / Get Video by ID" id="dfd14484-3250-48c0-b4b2-5a21795c5330" timestamp="2025-08-16T10:16:51.390Z" tests="4" failures="3" errors="0" time="0.012">
-    <testcase name="Status is 200" time="0.012" classname="AthenaAuthApi">
-      <failure type="AssertionFailure" message="expected response to have status code 200 but got 400">
-        <![CDATA[Failed 1 times.]]>
-        <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
-        <![CDATA[Collection name: Athena Auth API.]]>
-        <![CDATA[Request name: Videos / Get Video by ID.]]>
-        <![CDATA[Test description: Status is 200.]]>
-        <![CDATA[Error message: expected response to have status code 200 but got 400.]]>
-        <![CDATA[Stacktrace: AssertionError: expected response to have status code 200 but got 400
-   at Object.eval sandbox-script.js:1:15).]]>
-      </failure>
-    </testcase>
-    <testcase name="Response wrapped with data" time="0.012" classname="AthenaAuthApi">
-      <failure type="AssertionFailure" message="expected { error: { …(2) }, success: false } to have property 'data'">
-        <![CDATA[Failed 1 times.]]>
-        <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
-        <![CDATA[Collection name: Athena Auth API.]]>
-        <![CDATA[Request name: Videos / Get Video by ID.]]>
-        <![CDATA[Test description: Response wrapped with data.]]>
-        <![CDATA[Error message: expected { error: { …(2) }, success: false } to have property 'data'.]]>
-        <![CDATA[Stacktrace: AssertionError: expected { error: { …(2) }, success: false } to have property 'data'
-   at Object.eval sandbox-script.js:2:15).]]>
-      </failure>
-    </testcase>
-    <testcase name="Video has all fields" time="0.012" classname="AthenaAuthApi">
-      <failure type="AssertionFailure" message="expected {} to have property 'id'">
-        <![CDATA[Failed 1 times.]]>
-        <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
-        <![CDATA[Collection name: Athena Auth API.]]>
-        <![CDATA[Request name: Videos / Get Video by ID.]]>
-        <![CDATA[Test description: Video has all fields.]]>
-        <![CDATA[Error message: expected {} to have property 'id'.]]>
-        <![CDATA[Stacktrace: AssertionError: expected {} to have property 'id'
-   at Object.eval sandbox-script.js:3:15).]]>
-      </failure>
-    </testcase>
-    <testcase name="Video ID matches requested" time="0.012" classname="AthenaAuthApi"/>
-  </testsuite>
-  <testsuite name="Videos / Get Video - Not Found (404)" id="587ee09c-c018-480e-99d3-30a8038b39e6" timestamp="2025-08-16T10:16:51.390Z" tests="2" failures="0" errors="0" time="0.015">
-    <testcase name="Status is 404" time="0.015" classname="AthenaAuthApi"/>
-    <testcase name="Has error body" time="0.015" classname="AthenaAuthApi"/>
-  </testsuite>
-  <testsuite name="Videos / Create Video" id="d5388df0-3171-497c-a91e-a7fd8222d34d" timestamp="2025-08-16T10:16:51.390Z" tests="6" failures="0" errors="0" time="0.016">
-    <testcase name="Status is 201" time="0.016" classname="AthenaAuthApi"/>
-    <testcase name="Has Location header" time="0.016" classname="AthenaAuthApi"/>
-    <testcase name="Response wrapped with data" time="0.016" classname="AthenaAuthApi"/>
-    <testcase name="Has id and thumbnail_id" time="0.016" classname="AthenaAuthApi"/>
-    <testcase name="id is uuid" time="0.016" classname="AthenaAuthApi"/>
-    <testcase name="thumbnail_id is uuid" time="0.016" classname="AthenaAuthApi"/>
-  </testsuite>
-  <testsuite name="Videos / Create Video - Missing Token (401)" id="92d08beb-cfcc-48c1-967c-c2ce534739ec" timestamp="2025-08-16T10:16:51.390Z" tests="2" failures="0" errors="0" time="0.009">
-    <testcase name="Status is 401" time="0.009" classname="AthenaAuthApi"/>
-    <testcase name="Has error body or text" time="0.009" classname="AthenaAuthApi"/>
-  </testsuite>
-  <testsuite name="Videos / Update Video" id="44d9f2f8-a882-4dcd-b416-58f761b203b0" timestamp="2025-08-16T10:16:51.390Z" tests="3" failures="0" errors="0" time="0.016">
-    <testcase name="Status is 200" time="0.016" classname="AthenaAuthApi"/>
-    <testcase name="Response wrapped with data" time="0.016" classname="AthenaAuthApi"/>
-    <testcase name="Video updated correctly" time="0.016" classname="AthenaAuthApi"/>
-  </testsuite>
-  <testsuite name="Videos / Update Video - Not Found (404)" id="c93c94ef-913a-4e73-beec-90a42879fd45" timestamp="2025-08-16T10:16:51.390Z" tests="2" failures="0" errors="0" time="0.012">
-    <testcase name="Status is 404" time="0.012" classname="AthenaAuthApi"/>
-    <testcase name="Has error body" time="0.012" classname="AthenaAuthApi"/>
-  </testsuite>
-  <testsuite name="Videos / Delete Video" id="b21fb482-9014-4e8a-b01a-026913e21add" timestamp="2025-08-16T10:16:51.390Z" tests="2" failures="0" errors="0" time="0.010">
-    <testcase name="Status is 204" time="0.010" classname="AthenaAuthApi"/>
-    <testcase name="No response body" time="0.010" classname="AthenaAuthApi"/>
-  </testsuite>
-  <testsuite name="Videos / Delete Video - Not Found (404)" id="57ba91e0-63a3-4089-9038-7c68e87b7158" timestamp="2025-08-16T10:16:51.390Z" tests="2" failures="0" errors="0" time="0.013">
-    <testcase name="Status is 404" time="0.013" classname="AthenaAuthApi"/>
-    <testcase name="Has error body" time="0.013" classname="AthenaAuthApi"/>
-  </testsuite>
-  <testsuite name="Videos / Delete Video - Missing Token (401)" id="379ea002-40e1-4811-86ea-8d529edbb9cd" timestamp="2025-08-16T10:16:51.390Z" tests="2" failures="0" errors="0" time="0.013">
-    <testcase name="Status is 401" time="0.013" classname="AthenaAuthApi"/>
-    <testcase name="Has error body or text" time="0.013" classname="AthenaAuthApi"/>
-  </testsuite>
-  <testsuite name="Videos / Get User Videos" id="bed74ddd-80ed-4e9a-a340-32747c41a005" timestamp="2025-08-16T10:16:51.390Z" tests="4" failures="0" errors="0" time="0.014">
-    <testcase name="Status is 200" time="0.014" classname="AthenaAuthApi"/>
-    <testcase name="Response wrapped with data" time="0.014" classname="AthenaAuthApi"/>
-    <testcase name="Has meta object" time="0.014" classname="AthenaAuthApi"/>
-    <testcase name="Meta has pagination fields" time="0.014" classname="AthenaAuthApi"/>
-  </testsuite>
-  <testsuite name="Videos / Get User Videos - Nonexistent User" id="59ad9df6-7fe7-48b8-a5f9-ea45a82ad6d1" timestamp="2025-08-16T10:16:51.390Z" tests="3" failures="0" errors="0" time="0.014">
-    <testcase name="Status is 200" time="0.014" classname="AthenaAuthApi"/>
-    <testcase name="Response wrapped with data" time="0.014" classname="AthenaAuthApi"/>
-    <testcase name="Returns empty array for nonexistent user" time="0.014" classname="AthenaAuthApi"/>
-  </testsuite>
-  <testsuite name="Videos / Create Video - Invalid JSON (400)" id="24865209-173f-4eeb-aac6-8a939114e731" timestamp="2025-08-16T10:16:51.390Z" tests="2" failures="0" errors="0" time="0.011">
-    <testcase name="Status is 400" time="0.011" classname="AthenaAuthApi"/>
-    <testcase name="Has error body" time="0.011" classname="AthenaAuthApi"/>
-  </testsuite>
-  <testsuite name="Videos / Create Video - Missing Required Fields (400)" id="d13707c0-1fc9-4bb6-9a26-2f64e0eee2ef" timestamp="2025-08-16T10:16:51.390Z" tests="2" failures="0" errors="0" time="0.010">
-    <testcase name="Status is 400" time="0.010" classname="AthenaAuthApi"/>
-    <testcase name="Has error body" time="0.010" classname="AthenaAuthApi"/>
-  </testsuite>
-  <testsuite name="Videos / Update Video - Invalid JSON (400)" id="16adaece-ffd6-4ba9-a8f9-74f87fdfa667" timestamp="2025-08-16T10:16:51.390Z" tests="2" failures="0" errors="0" time="0.017">
-    <testcase name="Status is 400" time="0.017" classname="AthenaAuthApi"/>
-    <testcase name="Has error body" time="0.017" classname="AthenaAuthApi"/>
-  </testsuite>
-  <testsuite name="Videos / Update Video - Missing Token (401)" id="4fb61c45-4d09-4b47-a6b1-4acb9de08a28" timestamp="2025-08-16T10:16:51.390Z" tests="2" failures="0" errors="0" time="0.007">
-    <testcase name="Status is 401" time="0.007" classname="AthenaAuthApi"/>
-    <testcase name="Has error body or text" time="0.007" classname="AthenaAuthApi"/>
-  </testsuite>
-  <testsuite name="Videos / Video Streaming Endpoint" id="41eef9aa-b0fa-4e87-8ab7-9bd04fe8c426" timestamp="2025-08-16T10:16:51.390Z" tests="3" failures="0" errors="0" time="0.007">
-    <testcase name="Status is 200" time="0.007" classname="AthenaAuthApi"/>
-    <testcase name="Content-Type is HLS" time="0.007" classname="AthenaAuthApi"/>
-    <testcase name="Response contains HLS playlist" time="0.007" classname="AthenaAuthApi"/>
-  </testsuite>
-  <testsuite name="Videos / Upload Video Chunk" id="050b57f8-e0c4-4242-9689-118702b3b46f" timestamp="2025-08-16T10:16:51.390Z" tests="3" failures="0" errors="0" time="0.007">
-    <testcase name="Status is 200" time="0.007" classname="AthenaAuthApi"/>
-    <testcase name="Response wrapped with data" time="0.007" classname="AthenaAuthApi"/>
-    <testcase name="Upload response has chunk info" time="0.007" classname="AthenaAuthApi"/>
-  </testsuite>
-  <testsuite name="Videos / Upload Video Chunk - Missing Headers (400)" id="5d5cfcc5-72a1-4b64-a76c-775e33f83b47" timestamp="2025-08-16T10:16:51.390Z" tests="2" failures="0" errors="0" time="0.011">
-    <testcase name="Status is 400" time="0.011" classname="AthenaAuthApi"/>
-    <testcase name="Has error body" time="0.011" classname="AthenaAuthApi"/>
-  </testsuite>
-  <testsuite name="Videos / Complete Video Upload" id="d7ef7011-7ac1-491d-aedb-fd1dfa73e175" timestamp="2025-08-16T10:16:51.390Z" tests="3" failures="0" errors="0" time="0.008">
+  <testsuite name="Auth / Refresh" id="983ed81d-a390-4edc-a313-c65d93acd6cb" timestamp="2025-08-16T10:43:33.596Z" tests="3" failures="0" errors="0" time="0.008">
     <testcase name="Status is 200" time="0.008" classname="AthenaAuthApi"/>
     <testcase name="Response wrapped with data" time="0.008" classname="AthenaAuthApi"/>
-    <testcase name="Upload completion response" time="0.008" classname="AthenaAuthApi"/>
+    <testcase name="Returns tokens" time="0.008" classname="AthenaAuthApi"/>
+  </testsuite>
+  <testsuite name="Auth / Refresh - Missing Token (400)" id="a55e913c-710d-4ffb-b46a-2127839e9ac4" timestamp="2025-08-16T10:43:33.596Z" tests="2" failures="0" errors="0" time="0.004">
+    <testcase name="Status is 400" time="0.004" classname="AthenaAuthApi"/>
+    <testcase name="Has error body" time="0.004" classname="AthenaAuthApi"/>
+  </testsuite>
+  <testsuite name="Auth / Refresh - Invalid Token (401)" id="6e343648-e483-4ddf-86bf-1381f321952e" timestamp="2025-08-16T10:43:33.596Z" tests="2" failures="0" errors="0" time="0.006">
+    <testcase name="Status is 401" time="0.006" classname="AthenaAuthApi"/>
+    <testcase name="Has error body" time="0.006" classname="AthenaAuthApi"/>
+  </testsuite>
+  <testsuite name="Auth / Logout" id="0b360a29-3eac-49fb-97d7-d278b2f2a7e4" timestamp="2025-08-16T10:43:33.596Z" tests="4" failures="0" errors="0" time="0.006">
+    <testcase name="Status is 200" time="0.006" classname="AthenaAuthApi"/>
+    <testcase name="Response wrapped with data" time="0.006" classname="AthenaAuthApi"/>
+    <testcase name="Logout success message" time="0.006" classname="AthenaAuthApi"/>
+    <testcase name="User ID matches" time="0.006" classname="AthenaAuthApi"/>
+  </testsuite>
+  <testsuite name="Auth / Refresh After Logout (401)" id="be9ecb3f-b64c-4c47-895a-f1604201d19e" timestamp="2025-08-16T10:43:33.596Z" tests="2" failures="0" errors="0" time="0.004">
+    <testcase name="Status is 401" time="0.004" classname="AthenaAuthApi"/>
+    <testcase name="Has error body" time="0.004" classname="AthenaAuthApi"/>
+  </testsuite>
+  <testsuite name="Auth / Logout Without Token (401)" id="1a405a9c-dd24-41f6-bdd2-7981423c42b0" timestamp="2025-08-16T10:43:33.596Z" tests="2" failures="0" errors="0" time="0.004">
+    <testcase name="Status is 401" time="0.004" classname="AthenaAuthApi"/>
+    <testcase name="Has error body or text" time="0.004" classname="AthenaAuthApi"/>
+  </testsuite>
+  <testsuite name="Videos / List Videos" id="9333ea1e-089a-4588-b449-d439ce83f22d" timestamp="2025-08-16T10:43:33.596Z" tests="4" failures="0" errors="0" time="0.008">
+    <testcase name="Status is 200" time="0.008" classname="AthenaAuthApi"/>
+    <testcase name="Response wrapped with data" time="0.008" classname="AthenaAuthApi"/>
+    <testcase name="Has meta object" time="0.008" classname="AthenaAuthApi"/>
+    <testcase name="Meta has pagination fields" time="0.008" classname="AthenaAuthApi"/>
+  </testsuite>
+  <testsuite name="Videos / List Videos - With Filters" id="009e3527-b93f-48d2-a867-203dca7e8ab2" timestamp="2025-08-16T10:43:33.596Z" tests="2" failures="0" errors="0" time="0.006">
+    <testcase name="Status is 200" time="0.006" classname="AthenaAuthApi"/>
+    <testcase name="Response wrapped with data" time="0.006" classname="AthenaAuthApi"/>
+  </testsuite>
+  <testsuite name="Videos / Search Videos" id="8cbc48bf-3ee7-4588-8074-25517054f5d2" timestamp="2025-08-16T10:43:33.596Z" tests="3" failures="0" errors="0" time="0.011">
+    <testcase name="Status is 200" time="0.011" classname="AthenaAuthApi"/>
+    <testcase name="Response wrapped with data" time="0.011" classname="AthenaAuthApi"/>
+    <testcase name="Has meta object" time="0.011" classname="AthenaAuthApi"/>
+  </testsuite>
+  <testsuite name="Videos / Search Videos - With Tags" id="80b84200-4ee4-4dfe-a781-25680cfaed01" timestamp="2025-08-16T10:43:33.596Z" tests="2" failures="0" errors="0" time="0.015">
+    <testcase name="Status is 200" time="0.015" classname="AthenaAuthApi"/>
+    <testcase name="Response wrapped with data" time="0.015" classname="AthenaAuthApi"/>
+  </testsuite>
+  <testsuite name="Videos / Search Videos - Missing Query (400)" id="117081bc-b093-4353-af12-3553a88fdac3" timestamp="2025-08-16T10:43:33.596Z" tests="2" failures="0" errors="0" time="0.006">
+    <testcase name="Status is 400" time="0.006" classname="AthenaAuthApi"/>
+    <testcase name="Has error body" time="0.006" classname="AthenaAuthApi"/>
+  </testsuite>
+  <testsuite name="Videos / Get Video by ID" id="f5a1ff0a-9f24-4c2d-ab37-c7e006431e57" timestamp="2025-08-16T10:43:33.596Z" tests="4" failures="0" errors="0" time="0.007">
+    <testcase name="Status is 200" time="0.007" classname="AthenaAuthApi"/>
+    <testcase name="Response wrapped with data" time="0.007" classname="AthenaAuthApi"/>
+    <testcase name="Video has all fields" time="0.007" classname="AthenaAuthApi"/>
+    <testcase name="Video ID matches requested" time="0.007" classname="AthenaAuthApi"/>
+  </testsuite>
+  <testsuite name="Videos / Get Video - Not Found (404)" id="0206d998-2f0f-41de-bce6-0dbb5c9f7f9a" timestamp="2025-08-16T10:43:33.596Z" tests="2" failures="0" errors="0" time="0.006">
+    <testcase name="Status is 404" time="0.006" classname="AthenaAuthApi"/>
+    <testcase name="Has error body" time="0.006" classname="AthenaAuthApi"/>
+  </testsuite>
+  <testsuite name="Videos / Create Video" id="790423a0-66f6-4d08-b41f-e300a660c2ee" timestamp="2025-08-16T10:43:33.596Z" tests="6" failures="0" errors="0" time="0.007">
+    <testcase name="Status is 201" time="0.007" classname="AthenaAuthApi"/>
+    <testcase name="Has Location header" time="0.007" classname="AthenaAuthApi"/>
+    <testcase name="Response wrapped with data" time="0.007" classname="AthenaAuthApi"/>
+    <testcase name="Has id and thumbnail_id" time="0.007" classname="AthenaAuthApi"/>
+    <testcase name="id is uuid" time="0.007" classname="AthenaAuthApi"/>
+    <testcase name="thumbnail_id is uuid" time="0.007" classname="AthenaAuthApi"/>
+  </testsuite>
+  <testsuite name="Videos / Create Video - Missing Token (401)" id="1108cd71-5d61-407a-8a9a-5750ca7d2c1f" timestamp="2025-08-16T10:43:33.596Z" tests="2" failures="0" errors="0" time="0.003">
+    <testcase name="Status is 401" time="0.003" classname="AthenaAuthApi"/>
+    <testcase name="Has error body or text" time="0.003" classname="AthenaAuthApi"/>
+  </testsuite>
+  <testsuite name="Videos / Update Video" id="6c4bb96c-9c92-4d93-9649-5dd3f566f468" timestamp="2025-08-16T10:43:33.596Z" tests="3" failures="0" errors="0" time="0.008">
+    <testcase name="Status is 200" time="0.008" classname="AthenaAuthApi"/>
+    <testcase name="Response wrapped with data" time="0.008" classname="AthenaAuthApi"/>
+    <testcase name="Video updated correctly" time="0.008" classname="AthenaAuthApi"/>
+  </testsuite>
+  <testsuite name="Videos / Update Video - Not Found (404)" id="ac61c7e2-82e2-4bd6-b5ef-5fc080964fc6" timestamp="2025-08-16T10:43:33.596Z" tests="2" failures="0" errors="0" time="0.006">
+    <testcase name="Status is 404" time="0.006" classname="AthenaAuthApi"/>
+    <testcase name="Has error body" time="0.006" classname="AthenaAuthApi"/>
+  </testsuite>
+  <testsuite name="Videos / Delete Video" id="de0d9613-3a28-4a86-bd59-40165f144915" timestamp="2025-08-16T10:43:33.596Z" tests="2" failures="0" errors="0" time="0.007">
+    <testcase name="Status is 204" time="0.007" classname="AthenaAuthApi"/>
+    <testcase name="No response body" time="0.007" classname="AthenaAuthApi"/>
+  </testsuite>
+  <testsuite name="Videos / Delete Video - Not Found (404)" id="8dd2d261-7b01-479e-9874-63c194759123" timestamp="2025-08-16T10:43:33.596Z" tests="2" failures="0" errors="0" time="0.007">
+    <testcase name="Status is 404" time="0.007" classname="AthenaAuthApi"/>
+    <testcase name="Has error body" time="0.007" classname="AthenaAuthApi"/>
+  </testsuite>
+  <testsuite name="Videos / Delete Video - Missing Token (401)" id="731050c9-78a3-4ba5-8068-188c135fe16a" timestamp="2025-08-16T10:43:33.596Z" tests="2" failures="0" errors="0" time="0.006">
+    <testcase name="Status is 401" time="0.006" classname="AthenaAuthApi"/>
+    <testcase name="Has error body or text" time="0.006" classname="AthenaAuthApi"/>
+  </testsuite>
+  <testsuite name="Videos / Get User Videos" id="e1c94f4f-0456-4386-ad21-3156d09d32d0" timestamp="2025-08-16T10:43:33.596Z" tests="5" failures="0" errors="0" time="0.007">
+    <testcase name="Status is 200" time="0.007" classname="AthenaAuthApi"/>
+    <testcase name="Response wrapped with data" time="0.007" classname="AthenaAuthApi"/>
+    <testcase name="Has meta object" time="0.007" classname="AthenaAuthApi"/>
+    <testcase name="Meta has pagination fields" time="0.007" classname="AthenaAuthApi"/>
+    <testcase name="All videos belong to user" time="0.007" classname="AthenaAuthApi"/>
+  </testsuite>
+  <testsuite name="Videos / Get User Videos - Nonexistent User" id="b9f73a0b-aa57-4086-8ad1-8a0bc6dea78e" timestamp="2025-08-16T10:43:33.596Z" tests="3" failures="0" errors="0" time="0.011">
+    <testcase name="Status is 200" time="0.011" classname="AthenaAuthApi"/>
+    <testcase name="Response wrapped with data" time="0.011" classname="AthenaAuthApi"/>
+    <testcase name="Returns empty array for nonexistent user" time="0.011" classname="AthenaAuthApi"/>
+  </testsuite>
+  <testsuite name="Videos / Create Video - Invalid JSON (400)" id="c2a07c8d-1a84-4dbb-95f1-378c0b0f93eb" timestamp="2025-08-16T10:43:33.596Z" tests="2" failures="0" errors="0" time="0.003">
+    <testcase name="Status is 400" time="0.003" classname="AthenaAuthApi"/>
+    <testcase name="Has error body" time="0.003" classname="AthenaAuthApi"/>
+  </testsuite>
+  <testsuite name="Videos / Create Video - Missing Required Fields (400)" id="5c1f596e-de22-4beb-beff-2bcf686972bb" timestamp="2025-08-16T10:43:33.596Z" tests="2" failures="0" errors="0" time="0.004">
+    <testcase name="Status is 400" time="0.004" classname="AthenaAuthApi"/>
+    <testcase name="Has error body" time="0.004" classname="AthenaAuthApi"/>
+  </testsuite>
+  <testsuite name="Videos / Update Video - Invalid JSON (400)" id="5205c5b6-1595-41ab-bbe3-49a4a62d063b" timestamp="2025-08-16T10:43:33.596Z" tests="2" failures="0" errors="0" time="0.003">
+    <testcase name="Status is 400" time="0.003" classname="AthenaAuthApi"/>
+    <testcase name="Has error body" time="0.003" classname="AthenaAuthApi"/>
+  </testsuite>
+  <testsuite name="Videos / Update Video - Missing Token (401)" id="1a38f9df-32e5-44d5-9730-1da92e0ecfae" timestamp="2025-08-16T10:43:33.596Z" tests="2" failures="0" errors="0" time="0.003">
+    <testcase name="Status is 401" time="0.003" classname="AthenaAuthApi"/>
+    <testcase name="Has error body or text" time="0.003" classname="AthenaAuthApi"/>
+  </testsuite>
+  <testsuite name="Videos / Video Streaming Endpoint" id="412f9d5c-b1d2-40ea-9ea8-5792af2a9767" timestamp="2025-08-16T10:43:33.596Z" tests="3" failures="0" errors="0" time="0.003">
+    <testcase name="Status is 200" time="0.003" classname="AthenaAuthApi"/>
+    <testcase name="Content-Type is HLS" time="0.003" classname="AthenaAuthApi"/>
+    <testcase name="Response contains HLS playlist" time="0.003" classname="AthenaAuthApi"/>
+  </testsuite>
+  <testsuite name="Videos / Upload Video Chunk" id="bd954c01-4eff-44fa-86da-93737808f080" timestamp="2025-08-16T10:43:33.596Z" tests="3" failures="0" errors="0" time="0.005">
+    <testcase name="Status is 200" time="0.005" classname="AthenaAuthApi"/>
+    <testcase name="Response wrapped with data" time="0.005" classname="AthenaAuthApi"/>
+    <testcase name="Upload response has chunk info" time="0.005" classname="AthenaAuthApi"/>
+  </testsuite>
+  <testsuite name="Videos / Upload Video Chunk - Missing Headers (400)" id="aa37c344-9fcc-4f05-9091-6bbbe3d52e08" timestamp="2025-08-16T10:43:33.596Z" tests="2" failures="0" errors="0" time="0.003">
+    <testcase name="Status is 400" time="0.003" classname="AthenaAuthApi"/>
+    <testcase name="Has error body" time="0.003" classname="AthenaAuthApi"/>
+  </testsuite>
+  <testsuite name="Videos / Complete Video Upload" id="ca046c44-5b26-43c8-8b88-9fd8f99130a2" timestamp="2025-08-16T10:43:33.596Z" tests="3" failures="0" errors="0" time="0.003">
+    <testcase name="Status is 200" time="0.003" classname="AthenaAuthApi"/>
+    <testcase name="Response wrapped with data" time="0.003" classname="AthenaAuthApi"/>
+    <testcase name="Upload completion response" time="0.003" classname="AthenaAuthApi"/>
   </testsuite>
 </testsuites>
