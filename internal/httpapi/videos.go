@@ -8,8 +8,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strconv"
 	"time"
 
@@ -398,7 +396,7 @@ func UploadChunkHandler(uploadService usecase.UploadService) http.HandlerFunc {
 		hasher := sha256.New()
 		hasher.Write(data)
 		actualChecksum := hex.EncodeToString(hasher.Sum(nil))
-		
+
 		if actualChecksum != expectedChecksum {
 			WriteError(w, http.StatusBadRequest, domain.NewDomainError("CHECKSUM_MISMATCH", "Chunk checksum verification failed"))
 			return
@@ -531,13 +529,13 @@ func ResumeUploadHandler(uploadService usecase.UploadService) http.HandlerFunc {
 		}
 
 		resumeInfo := map[string]interface{}{
-			"session_id":         sessionID,
-			"total_chunks":       session.TotalChunks,
-			"uploaded_chunks":    session.UploadedChunks,
-			"remaining_chunks":   remainingChunks,
-			"progress_percent":   float64(len(session.UploadedChunks)) / float64(session.TotalChunks) * 100,
-			"status":             session.Status,
-			"expires_at":         session.ExpiresAt,
+			"session_id":       sessionID,
+			"total_chunks":     session.TotalChunks,
+			"uploaded_chunks":  session.UploadedChunks,
+			"remaining_chunks": remainingChunks,
+			"progress_percent": float64(len(session.UploadedChunks)) / float64(session.TotalChunks) * 100,
+			"status":           session.Status,
+			"expires_at":       session.ExpiresAt,
 		}
 
 		WriteJSON(w, http.StatusOK, resumeInfo)
