@@ -1,10 +1,15 @@
 package httpapi
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"time"
 
@@ -320,61 +325,223 @@ func DeleteVideoHandler(repo usecase.VideoRepository) http.HandlerFunc {
 	}
 }
 
-func UploadVideoChunk(w http.ResponseWriter, r *http.Request) {
-	videoID := chi.URLParam(r, "id")
-	if videoID == "" {
-		WriteError(w, http.StatusBadRequest, domain.NewDomainError("MISSING_VIDEO_ID", "Video ID is required"))
-		return
-	}
+// InitiateUploadHandler creates a new upload session for chunked uploads
+func InitiateUploadHandler(uploadService usecase.UploadService, videoRepo usecase.VideoRepository) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		userID, _ := r.Context().Value(middleware.UserIDKey).(string)
+		if userID == "" {
+			WriteError(w, http.StatusUnauthorized, domain.NewDomainError("UNAUTHORIZED", "Missing or invalid authentication"))
+			return
+		}
 
-	chunkIndex, err := strconv.Atoi(r.Header.Get("X-Chunk-Index"))
-	if err != nil {
-		WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_CHUNK_INDEX", "Invalid chunk index"))
-		return
-	}
+		var req domain.InitiateUploadRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_JSON", "Invalid JSON payload"))
+			return
+		}
 
-	totalChunks, err := strconv.Atoi(r.Header.Get("X-Total-Chunks"))
-	if err != nil {
-		WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_TOTAL_CHUNKS", "Invalid total chunks"))
-		return
-	}
+		// Set default chunk size if not provided
+		if req.ChunkSize == 0 {
+			req.ChunkSize = 10 * 1024 * 1024 // 10MB default
+		}
 
-	checksum := r.Header.Get("X-Chunk-Checksum")
-	if checksum == "" {
-		WriteError(w, http.StatusBadRequest, domain.NewDomainError("MISSING_CHECKSUM", "Chunk checksum is required"))
-		return
-	}
+		response, err := uploadService.InitiateUpload(r.Context(), userID, &req)
+		if err != nil {
+			var domainErr domain.DomainError
+			if errors.As(err, &domainErr) {
+				WriteError(w, http.StatusBadRequest, domainErr)
+				return
+			}
+			WriteError(w, http.StatusInternalServerError, domain.NewDomainError("INITIATE_FAILED", "Failed to initiate upload"))
+			return
+		}
 
-	response := map[string]interface{}{
-		"video_id":     videoID,
-		"chunk_index":  chunkIndex,
-		"total_chunks": totalChunks,
-		"uploaded":     true,
+		WriteJSON(w, http.StatusCreated, response)
 	}
-
-	WriteJSON(w, http.StatusOK, response)
 }
 
-func CompleteVideoUpload(w http.ResponseWriter, r *http.Request) {
-	videoID := chi.URLParam(r, "id")
-	if videoID == "" {
-		WriteError(w, http.StatusBadRequest, domain.NewDomainError("MISSING_VIDEO_ID", "Video ID is required"))
-		return
-	}
+// UploadChunkHandler handles individual chunk uploads
+func UploadChunkHandler(uploadService usecase.UploadService) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		sessionID := chi.URLParam(r, "sessionId")
+		if sessionID == "" {
+			WriteError(w, http.StatusBadRequest, domain.NewDomainError("MISSING_SESSION_ID", "Session ID is required"))
+			return
+		}
 
-	processed := make(map[string]string)
-	for _, res := range domain.SupportedResolutions {
-		processed[res] = fmt.Sprintf("cid_%s_%s", videoID, res)
-	}
+		// Validate UUID format
+		if _, err := uuid.Parse(sessionID); err != nil {
+			WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_SESSION_ID", "Invalid session ID format"))
+			return
+		}
 
-	response := map[string]interface{}{
-		"video_id":       videoID,
-		"status":         domain.StatusQueued,
-		"message":        "Upload completed, processing queued",
-		"processed_cids": processed,
-	}
+		chunkIndex, err := strconv.Atoi(r.Header.Get("X-Chunk-Index"))
+		if err != nil {
+			WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_CHUNK_INDEX", "Invalid chunk index"))
+			return
+		}
 
-	WriteJSON(w, http.StatusOK, response)
+		expectedChecksum := r.Header.Get("X-Chunk-Checksum")
+		if expectedChecksum == "" {
+			WriteError(w, http.StatusBadRequest, domain.NewDomainError("MISSING_CHECKSUM", "Chunk checksum is required"))
+			return
+		}
+
+		// Read chunk data
+		data, err := io.ReadAll(r.Body)
+		if err != nil {
+			WriteError(w, http.StatusBadRequest, domain.NewDomainError("READ_FAILED", "Failed to read chunk data"))
+			return
+		}
+
+		// Verify checksum
+		hasher := sha256.New()
+		hasher.Write(data)
+		actualChecksum := hex.EncodeToString(hasher.Sum(nil))
+		
+		if actualChecksum != expectedChecksum {
+			WriteError(w, http.StatusBadRequest, domain.NewDomainError("CHECKSUM_MISMATCH", "Chunk checksum verification failed"))
+			return
+		}
+
+		chunk := &domain.ChunkUpload{
+			SessionID:  sessionID,
+			ChunkIndex: chunkIndex,
+			Data:       data,
+			Checksum:   expectedChecksum,
+		}
+
+		response, err := uploadService.UploadChunk(r.Context(), sessionID, chunk)
+		if err != nil {
+			var domainErr domain.DomainError
+			if errors.As(err, &domainErr) {
+				WriteError(w, http.StatusBadRequest, domainErr)
+				return
+			}
+			WriteError(w, http.StatusInternalServerError, domain.NewDomainError("UPLOAD_FAILED", "Failed to upload chunk"))
+			return
+		}
+
+		WriteJSON(w, http.StatusOK, response)
+	}
+}
+
+// CompleteUploadHandler finalizes the upload and queues for encoding
+func CompleteUploadHandler(uploadService usecase.UploadService, encodingRepo usecase.EncodingRepository) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		sessionID := chi.URLParam(r, "sessionId")
+		if sessionID == "" {
+			WriteError(w, http.StatusBadRequest, domain.NewDomainError("MISSING_SESSION_ID", "Session ID is required"))
+			return
+		}
+
+		// Validate UUID format
+		if _, err := uuid.Parse(sessionID); err != nil {
+			WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_SESSION_ID", "Invalid session ID format"))
+			return
+		}
+
+		if err := uploadService.CompleteUpload(r.Context(), sessionID); err != nil {
+			var domainErr domain.DomainError
+			if errors.As(err, &domainErr) {
+				WriteError(w, http.StatusBadRequest, domainErr)
+				return
+			}
+			WriteError(w, http.StatusInternalServerError, domain.NewDomainError("COMPLETE_FAILED", "Failed to complete upload"))
+			return
+		}
+
+		response := map[string]interface{}{
+			"session_id": sessionID,
+			"status":     "completed",
+			"message":    "Upload completed, processing queued",
+		}
+
+		WriteJSON(w, http.StatusOK, response)
+	}
+}
+
+// GetUploadStatusHandler returns the current upload status
+func GetUploadStatusHandler(uploadService usecase.UploadService) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		sessionID := chi.URLParam(r, "sessionId")
+		if sessionID == "" {
+			WriteError(w, http.StatusBadRequest, domain.NewDomainError("MISSING_SESSION_ID", "Session ID is required"))
+			return
+		}
+
+		// Validate UUID format
+		if _, err := uuid.Parse(sessionID); err != nil {
+			WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_SESSION_ID", "Invalid session ID format"))
+			return
+		}
+
+		session, err := uploadService.GetUploadStatus(r.Context(), sessionID)
+		if err != nil {
+			var domainErr domain.DomainError
+			if errors.As(err, &domainErr) {
+				WriteError(w, http.StatusNotFound, domainErr)
+				return
+			}
+			WriteError(w, http.StatusInternalServerError, domain.NewDomainError("STATUS_FAILED", "Failed to get upload status"))
+			return
+		}
+
+		WriteJSON(w, http.StatusOK, session)
+	}
+}
+
+// ResumeUploadHandler provides information to resume an interrupted upload
+func ResumeUploadHandler(uploadService usecase.UploadService) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		sessionID := chi.URLParam(r, "sessionId")
+		if sessionID == "" {
+			WriteError(w, http.StatusBadRequest, domain.NewDomainError("MISSING_SESSION_ID", "Session ID is required"))
+			return
+		}
+
+		// Validate UUID format
+		if _, err := uuid.Parse(sessionID); err != nil {
+			WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_SESSION_ID", "Invalid session ID format"))
+			return
+		}
+
+		session, err := uploadService.GetUploadStatus(r.Context(), sessionID)
+		if err != nil {
+			var domainErr domain.DomainError
+			if errors.As(err, &domainErr) {
+				WriteError(w, http.StatusNotFound, domainErr)
+				return
+			}
+			WriteError(w, http.StatusInternalServerError, domain.NewDomainError("RESUME_FAILED", "Failed to get resume information"))
+			return
+		}
+
+		// Calculate remaining chunks
+		uploadedSet := make(map[int]bool)
+		for _, chunk := range session.UploadedChunks {
+			uploadedSet[chunk] = true
+		}
+
+		var remainingChunks []int
+		for i := 0; i < session.TotalChunks; i++ {
+			if !uploadedSet[i] {
+				remainingChunks = append(remainingChunks, i)
+			}
+		}
+
+		resumeInfo := map[string]interface{}{
+			"session_id":         sessionID,
+			"total_chunks":       session.TotalChunks,
+			"uploaded_chunks":    session.UploadedChunks,
+			"remaining_chunks":   remainingChunks,
+			"progress_percent":   float64(len(session.UploadedChunks)) / float64(session.TotalChunks) * 100,
+			"status":             session.Status,
+			"expires_at":         session.ExpiresAt,
+		}
+
+		WriteJSON(w, http.StatusOK, resumeInfo)
+	}
 }
 
 func GetUserVideosHandler(repo usecase.VideoRepository) http.HandlerFunc {

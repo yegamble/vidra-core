@@ -112,10 +112,139 @@ type VideoUpdateRequest struct {
 	Language    string   `json:"language"`
 }
 
+// Upload tracking models
+type UploadSession struct {
+	ID               string              `json:"id" db:"id"`
+	VideoID          string              `json:"video_id" db:"video_id"`
+	UserID           string              `json:"user_id" db:"user_id"`
+	FileName         string              `json:"filename" db:"filename"`
+	FileSize         int64               `json:"file_size" db:"file_size"`
+	ChunkSize        int64               `json:"chunk_size" db:"chunk_size"`
+	TotalChunks      int                 `json:"total_chunks" db:"total_chunks"`
+	UploadedChunks   []int               `json:"uploaded_chunks" db:"uploaded_chunks"`
+	Status           UploadStatus        `json:"status" db:"status"`
+	TempFilePath     string              `json:"temp_file_path" db:"temp_file_path"`
+	CreatedAt        time.Time           `json:"created_at" db:"created_at"`
+	UpdatedAt        time.Time           `json:"updated_at" db:"updated_at"`
+	ExpiresAt        time.Time           `json:"expires_at" db:"expires_at"`
+}
+
 type ChunkUpload struct {
-	VideoID     string `json:"video_id"`
+	SessionID   string `json:"session_id"`
 	ChunkIndex  int    `json:"chunk_index"`
-	TotalChunks int    `json:"total_chunks"`
 	Data        []byte `json:"data"`
 	Checksum    string `json:"checksum"`
+}
+
+type UploadStatus string
+
+const (
+	UploadStatusActive    UploadStatus = "active"
+	UploadStatusCompleted UploadStatus = "completed"
+	UploadStatusExpired   UploadStatus = "expired"
+	UploadStatusFailed    UploadStatus = "failed"
+)
+
+// Encoding queue models
+type EncodingJob struct {
+	ID               string                 `json:"id" db:"id"`
+	VideoID          string                 `json:"video_id" db:"video_id"`
+	SourceFilePath   string                 `json:"source_file_path" db:"source_file_path"`
+	SourceResolution string                 `json:"source_resolution" db:"source_resolution"`
+	TargetResolutions []string              `json:"target_resolutions" db:"target_resolutions"`
+	Status           EncodingStatus         `json:"status" db:"status"`
+	Progress         int                    `json:"progress" db:"progress"` // 0-100
+	ErrorMessage     string                 `json:"error_message" db:"error_message"`
+	StartedAt        *time.Time             `json:"started_at" db:"started_at"`
+	CompletedAt      *time.Time             `json:"completed_at" db:"completed_at"`
+	CreatedAt        time.Time              `json:"created_at" db:"created_at"`
+	UpdatedAt        time.Time              `json:"updated_at" db:"updated_at"`
+}
+
+type EncodingStatus string
+
+const (
+	EncodingStatusPending    EncodingStatus = "pending"
+	EncodingStatusProcessing EncodingStatus = "processing"
+	EncodingStatusCompleted  EncodingStatus = "completed"
+	EncodingStatusFailed     EncodingStatus = "failed"
+)
+
+// Resolution mapping for encoding decisions
+var ResolutionHeights = map[string]int{
+	"240p":  240,
+	"360p":  360,
+	"480p":  480,
+	"720p":  720,
+	"1080p": 1080,
+	"1440p": 1440,
+	"2160p": 2160,
+	"4320p": 4320,
+}
+
+// GetTargetResolutions returns which resolutions to encode based on source
+func GetTargetResolutions(sourceResolution string) []string {
+	sourceHeight, exists := ResolutionHeights[sourceResolution]
+	if !exists {
+		// Default fallback
+		return []string{"720p", "480p", "360p", "240p"}
+	}
+	
+	var targets []string
+	for _, resolution := range SupportedResolutions {
+		if height := ResolutionHeights[resolution]; height <= sourceHeight {
+			targets = append(targets, resolution)
+		}
+	}
+	
+	// Always include at least 240p
+	if len(targets) == 0 {
+		targets = []string{"240p"}
+	}
+	
+	return targets
+}
+
+// DetectResolutionFromHeight converts pixel height to resolution string
+func DetectResolutionFromHeight(height int) string {
+	// Find the closest standard resolution
+	bestMatch := "240p"
+	smallestDiff := abs(height - ResolutionHeights["240p"])
+	
+	for resolution, standardHeight := range ResolutionHeights {
+		diff := abs(height - standardHeight)
+		if diff < smallestDiff {
+			smallestDiff = diff
+			bestMatch = resolution
+		}
+	}
+	
+	return bestMatch
+}
+
+func abs(x int) int {
+	if x < 0 {
+		return -x
+	}
+	return x
+}
+
+// Upload request models
+type InitiateUploadRequest struct {
+	FileName  string `json:"filename" validate:"required"`
+	FileSize  int64  `json:"file_size" validate:"required,min=1"`
+	ChunkSize int64  `json:"chunk_size" validate:"min=1048576,max=104857600"` // 1MB to 100MB
+}
+
+type InitiateUploadResponse struct {
+	SessionID    string `json:"session_id"`
+	ChunkSize    int64  `json:"chunk_size"`
+	TotalChunks  int    `json:"total_chunks"`
+	UploadURL    string `json:"upload_url"`
+}
+
+type ChunkUploadResponse struct {
+	ChunkIndex      int   `json:"chunk_index"`
+	Uploaded        bool  `json:"uploaded"`
+	RemainingChunks []int `json:"remaining_chunks"`
 }

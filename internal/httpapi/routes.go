@@ -3,6 +3,8 @@ package httpapi
 import (
     "context"
     "fmt"
+    "os"
+    "path/filepath"
     "time"
 
     "github.com/go-chi/chi/v5"
@@ -13,6 +15,7 @@ import (
     "athena/internal/config"
     "athena/internal/middleware"
     "athena/internal/repository"
+    "athena/internal/usecase"
 )
 
 func RegisterRoutes(r chi.Router, cfg *config.Config) {
@@ -25,7 +28,21 @@ func RegisterRoutes(r chi.Router, cfg *config.Config) {
 	}
     userRepo := repository.NewUserRepository(db)
     videoRepo := repository.NewVideoRepository(db)
+    uploadRepo := repository.NewUploadRepository(db)
+    encodingRepo := repository.NewEncodingRepository(db)
     dbAuthRepo := repository.NewAuthRepository(db)
+
+    // Create uploads directory structure
+    uploadsDir := "./uploads"
+    if err := os.MkdirAll(filepath.Join(uploadsDir, "temp"), 0755); err != nil {
+        panic(fmt.Errorf("failed to create temp uploads directory: %w", err))
+    }
+    if err := os.MkdirAll(filepath.Join(uploadsDir, "completed"), 0755); err != nil {
+        panic(fmt.Errorf("failed to create completed uploads directory: %w", err))
+    }
+
+    // Initialize upload service
+    uploadService := usecase.NewUploadService(uploadRepo, encodingRepo, videoRepo, uploadsDir)
 
     // Initialize Redis session repo
     redisOpts, err := redis.ParseURL(cfg.RedisURL)
@@ -67,8 +84,18 @@ func RegisterRoutes(r chi.Router, cfg *config.Config) {
             r.With(middleware.Auth(cfg.JWTSecret)).Post("/", CreateVideoHandler(videoRepo))
 			r.With(middleware.Auth(cfg.JWTSecret)).Put("/{id}", UpdateVideoHandler(videoRepo))
 			r.With(middleware.Auth(cfg.JWTSecret)).Delete("/{id}", DeleteVideoHandler(videoRepo))
-			r.With(middleware.Auth(cfg.JWTSecret)).Post("/{id}/upload", UploadVideoChunk)
-			r.With(middleware.Auth(cfg.JWTSecret)).Post("/{id}/complete", CompleteVideoUpload)
+		})
+
+		// Chunked upload endpoints
+		r.Route("/uploads", func(r chi.Router) {
+			r.Use(middleware.Auth(cfg.JWTSecret))
+			r.Post("/initiate", InitiateUploadHandler(uploadService, videoRepo))
+			r.Route("/{sessionId}", func(r chi.Router) {
+				r.Post("/chunks", UploadChunkHandler(uploadService))
+				r.Post("/complete", CompleteUploadHandler(uploadService, encodingRepo))
+				r.Get("/status", GetUploadStatusHandler(uploadService))
+				r.Get("/resume", ResumeUploadHandler(uploadService))
+			})
 		})
 
 		r.Route("/users", func(r chi.Router) {
