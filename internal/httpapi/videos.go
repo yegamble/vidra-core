@@ -718,3 +718,12 @@ segment-00002.ts
 		_ = err
 	}
 }
+
+// GetSupportedQualities returns supported quality labels and the default
+func GetSupportedQualities(w http.ResponseWriter, r *http.Request) {
+    resp := map[string]interface{}{
+        "qualities": domain.SupportedResolutions,
+        "default":   domain.DefaultResolution,
+    }
+    WriteJSON(w, http.StatusOK, resp)
+}

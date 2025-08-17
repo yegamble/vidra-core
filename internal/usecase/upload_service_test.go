@@ -408,6 +408,63 @@ func TestUploadService_CompleteUpload_UsesMetadataHeight(t *testing.T) {
     }
 }
 
+func TestUploadService_CompleteUpload_UsesWidthAspectRatio(t *testing.T) {
+    testDB := testutil.SetupTestDB(t)
+    uploadRepo := repository.NewUploadRepository(testDB.DB)
+    encodingRepo := repository.NewEncodingRepository(testDB.DB)
+    videoRepo := repository.NewVideoRepository(testDB.DB)
+    userRepo := repository.NewUserRepository(testDB.DB)
+
+    tempDir := testTempDir(t)
+    uploadService := usecase.NewUploadService(uploadRepo, encodingRepo, videoRepo, tempDir, createTestConfig())
+
+    ctx := context.Background()
+
+    // Setup test data
+    user := createTestUser(t, userRepo, ctx, "testuser", "test@example.com")
+    response := initiateTestUpload(t, uploadService, ctx, user.ID)
+
+    // Upload all chunks
+    testData := make([]byte, 1000)
+    for i := range testData { testData[i] = byte('A' + (i % 26)) }
+    chunkSize := int(response.ChunkSize)
+    totalChunks := response.TotalChunks
+    for i := 0; i < totalChunks; i++ {
+        start := i * chunkSize
+        end := start + chunkSize
+        if end > len(testData) { end = len(testData) }
+
+        chunkData := testData[start:end]
+        hasher := sha256.New()
+        hasher.Write(chunkData)
+        checksum := hex.EncodeToString(hasher.Sum(nil))
+
+        chunk := &domain.ChunkUpload{
+            SessionID:  response.SessionID,
+            ChunkIndex: i,
+            Data:       chunkData,
+            Checksum:   checksum,
+        }
+        _, err := uploadService.UploadChunk(ctx, response.SessionID, chunk)
+        require.NoError(t, err)
+    }
+
+    // Set width and aspect ratio only; height missing
+    session, err := uploadRepo.GetSession(ctx, response.SessionID)
+    require.NoError(t, err)
+    // Example: 1280 width, 16:9 should infer ~720 height => 720p
+    _, err = testDB.DB.ExecContext(ctx, `UPDATE videos SET metadata = '{"width":1280, "aspect_ratio":"16:9"}' WHERE id = $1`, session.VideoID)
+    require.NoError(t, err)
+
+    // Complete upload
+    err = uploadService.CompleteUpload(ctx, response.SessionID)
+    require.NoError(t, err)
+
+    job, err := encodingRepo.GetJobByVideoID(ctx, session.VideoID)
+    require.NoError(t, err)
+    assert.Equal(t, "720p", job.SourceResolution)
+}
+
 func TestUploadService_CompleteUpload_IncompleteChunks(t *testing.T) {
 	testDB := testutil.SetupTestDB(t)
 	uploadRepo := repository.NewUploadRepository(testDB.DB)

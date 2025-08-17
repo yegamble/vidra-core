@@ -194,6 +194,13 @@ make serve-docs
 - `GET /api/v1/videos/search` - Search videos with full-text search and filters
 - `GET /api/v1/videos/{id}` - Get video details
 - `GET /api/v1/videos/{id}/stream` - Stream video (HLS playlist, `quality` query param supports 240p-4320p, default 720p)
+- `GET /api/v1/videos/qualities` - List supported quality labels and the default
+  - Response body (wrapped):
+    - `data.qualities`: array of strings (e.g., `["240p","360p","480p","720p","1080p","1440p","2160p","4320p"]`)
+    - `data.default`: default quality string (e.g., `"720p"`)
+  - Notes:
+    - The default is also used when `quality` is omitted in `/stream`.
+    - The set returned here reflects server-side support and validation.
 
 **Protected Endpoints (Require Authentication):**
 - `POST /api/v1/videos` - Create video metadata
