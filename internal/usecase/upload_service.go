@@ -20,27 +20,29 @@ import (
 )
 
 type uploadService struct {
-	uploadRepo    UploadRepository
-	encodingRepo  EncodingRepository
-	videoRepo     VideoRepository
-	uploadsDir    string
-	validator     *validation.ChecksumValidator
+    uploadRepo    UploadRepository
+    encodingRepo  EncodingRepository
+    videoRepo     VideoRepository
+    uploadsDir    string
+    validator     *validation.ChecksumValidator
+    cfg           *config.Config
 }
 
 func NewUploadService(
-	uploadRepo UploadRepository,
-	encodingRepo EncodingRepository,
-	videoRepo VideoRepository,
-	uploadsDir string,
-	cfg *config.Config,
+    uploadRepo UploadRepository,
+    encodingRepo EncodingRepository,
+    videoRepo VideoRepository,
+    uploadsDir string,
+    cfg *config.Config,
 ) UploadService {
-	return &uploadService{
-		uploadRepo:   uploadRepo,
-		encodingRepo: encodingRepo,
-		videoRepo:    videoRepo,
-		uploadsDir:   uploadsDir,
-		validator:    validation.NewChecksumValidator(cfg),
-	}
+    return &uploadService{
+        uploadRepo:   uploadRepo,
+        encodingRepo: encodingRepo,
+        videoRepo:    videoRepo,
+        uploadsDir:   uploadsDir,
+        validator:    validation.NewChecksumValidator(cfg),
+        cfg:          cfg,
+    }
 }
 
 func (s *uploadService) InitiateUpload(ctx context.Context, userID string, req *domain.InitiateUploadRequest) (*domain.InitiateUploadResponse, error) {
@@ -271,10 +273,15 @@ func (s *uploadService) CompleteUpload(ctx context.Context, sessionID string) er
         if estHeight > 0 {
             sourceResolution = domain.DetectResolutionFromHeight(estHeight)
             // Log estimation usage for observability (non-fatal)
-            if usedDefaultAR {
-                log.Printf("estimating source resolution using width=%d, default AR=16:9 -> estHeight=%d -> %s", video.Metadata.Width, estHeight, sourceResolution)
-            } else {
-                log.Printf("estimating source resolution using width=%d, AR=%q -> estHeight=%d -> %s", video.Metadata.Width, video.Metadata.AspectRatio, estHeight, sourceResolution)
+            if s != nil && s.cfg != nil {
+                lvl := strings.ToLower(s.cfg.LogLevel)
+                if lvl == "debug" || lvl == "trace" {
+                    if usedDefaultAR {
+                        log.Printf("estimating source resolution using width=%d, default AR=16:9 -> estHeight=%d -> %s", video.Metadata.Width, estHeight, sourceResolution)
+                    } else {
+                        log.Printf("estimating source resolution using width=%d, AR=%q -> estHeight=%d -> %s", video.Metadata.Width, video.Metadata.AspectRatio, estHeight, sourceResolution)
+                    }
+                }
             }
         }
     }

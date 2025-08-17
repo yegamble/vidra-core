@@ -1095,6 +1095,39 @@
           ]
         },
         {
+          "name": "Get Supported Qualities",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/videos/qualities",
+              "host": ["{{baseUrl}}"],
+              "path": ["api","v1","videos","qualities"]
+            },
+            "description": "Returns supported quality labels and default quality for streaming."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const wrap = pm.response.json();",
+                  "pm.test('Response wrapped with data', () => pm.expect(wrap).to.have.property('data'));",
+                  "const data = wrap.data || {};",
+                  "pm.test('Qualities array present', () => pm.expect(Array.isArray(data.qualities)).to.be.true);",
+                  "pm.test('Default quality present', () => pm.expect(data).to.have.property('default'));",
+                  "pm.test('Common qualities included', () => {",
+                  "  pm.expect(data.qualities).to.include('720p');",
+                  "  pm.expect(data.qualities).to.include('4320p');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
           "name": "Upload Video Chunk",
           "request": {
             "method": "POST",
