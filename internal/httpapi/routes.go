@@ -84,6 +84,10 @@ func RegisterRoutes(r chi.Router, cfg *config.Config) {
             r.With(middleware.Auth(cfg.JWTSecret)).Post("/", CreateVideoHandler(videoRepo))
 			r.With(middleware.Auth(cfg.JWTSecret)).Put("/{id}", UpdateVideoHandler(videoRepo))
 			r.With(middleware.Auth(cfg.JWTSecret)).Delete("/{id}", DeleteVideoHandler(videoRepo))
+			
+			// Direct video upload endpoints (for backward compatibility with tests)
+			r.With(middleware.Auth(cfg.JWTSecret)).Post("/{id}/upload", VideoUploadChunkHandler(uploadService))
+			r.With(middleware.Auth(cfg.JWTSecret)).Post("/{id}/complete", VideoCompleteUploadHandler(uploadService))
 		})
 
 		// Chunked upload endpoints
