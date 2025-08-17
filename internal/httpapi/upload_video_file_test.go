@@ -506,6 +506,23 @@ func TestUploadResumeAfterChecksumMismatch_WithVideoFile(t *testing.T) {
         if w.Code != http.StatusOK { t.Fatalf("re-upload mismatch chunk failed: %d %s", w.Code, w.Body.String()) }
     }
 
+    // Upload all remaining chunks to complete the file
+    for i := badIndex + 1; i < totalChunks; i++ {
+        start := i * int(chunkSize)
+        end := start + int(chunkSize)
+        if end > len(fileBytes) { end = len(fileBytes) }
+        chunk := fileBytes[start:end]
+        h := sha256.New(); h.Write(chunk); checksum := hex.EncodeToString(h.Sum(nil))
+        httpReq = httptest.NewRequest("POST", "/api/v1/uploads/"+initResp.SessionID+"/chunks", bytes.NewReader(chunk))
+        httpReq.Header.Set("X-Chunk-Index", strconv.Itoa(i))
+        httpReq.Header.Set("X-Chunk-Checksum", checksum)
+        rctx := chi.NewRouteContext(); rctx.URLParams.Add("sessionId", initResp.SessionID)
+        httpReq = httpReq.WithContext(context.WithValue(httpReq.Context(), chi.RouteCtxKey, rctx))
+        w = httptest.NewRecorder()
+        UploadChunkHandler(uploadService, cfg)(w, httpReq)
+        if w.Code != http.StatusOK { t.Fatalf("upload remaining i=%d failed: %d %s", i, w.Code, w.Body.String()) }
+    }
+
     // Complete and verify output equals original
     httpReq = httptest.NewRequest("POST", "/api/v1/uploads/"+initResp.SessionID+"/complete", nil)
     rctx = chi.NewRouteContext(); rctx.URLParams.Add("sessionId", initResp.SessionID)
