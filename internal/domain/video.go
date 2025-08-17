@@ -208,19 +208,29 @@ func GetTargetResolutions(sourceResolution string) []string {
 
 // DetectResolutionFromHeight converts pixel height to resolution string
 func DetectResolutionFromHeight(height int) string {
-	// Find the closest standard resolution
-	bestMatch := "240p"
-	smallestDiff := abs(height - ResolutionHeights["240p"])
-	
-	for resolution, standardHeight := range ResolutionHeights {
-		diff := abs(height - standardHeight)
-		if diff < smallestDiff {
-			smallestDiff = diff
-			bestMatch = resolution
-		}
-	}
-	
-	return bestMatch
+    // Find the closest standard resolution deterministically and
+    // prefer the lower resolution when distances tie.
+    bestMatch := "240p"
+    smallestDiff := abs(height - ResolutionHeights[bestMatch])
+
+    for _, resolution := range SupportedResolutions {
+        standardHeight := ResolutionHeights[resolution]
+        diff := abs(height - standardHeight)
+        if diff < smallestDiff {
+            smallestDiff = diff
+            bestMatch = resolution
+            continue
+        }
+        // On exact tie, prefer lower (smaller height)
+        if diff == smallestDiff {
+            currentBestHeight := ResolutionHeights[bestMatch]
+            if standardHeight < currentBestHeight {
+                bestMatch = resolution
+            }
+        }
+    }
+
+    return bestMatch
 }
 
 func abs(x int) int {
