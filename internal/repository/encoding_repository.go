@@ -284,6 +284,25 @@ func (r *encodingRepository) UpdateJobProgress(ctx context.Context, jobID string
 	return nil
 }
 
+// GetJobCounts returns counts of jobs by status
+func (r *encodingRepository) GetJobCounts(ctx context.Context) (map[string]int64, error) {
+    rows, err := r.db.QueryContext(ctx, `SELECT status, COUNT(*) FROM encoding_jobs GROUP BY status`)
+    if err != nil {
+        return nil, fmt.Errorf("failed to count jobs: %w", err)
+    }
+    defer rows.Close()
+    counts := map[string]int64{"pending":0, "processing":0, "completed":0, "failed":0}
+    for rows.Next() {
+        var status string
+        var c int64
+        if err := rows.Scan(&status, &c); err != nil {
+            return nil, fmt.Errorf("failed to scan count: %w", err)
+        }
+        counts[status] = c
+    }
+    return counts, nil
+}
+
 func (r *encodingRepository) SetJobError(ctx context.Context, jobID string, errorMsg string) error {
 	query := `
 		UPDATE encoding_jobs 

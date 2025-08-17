@@ -131,11 +131,16 @@ migrate-test-docker: ## Run test DB migrations inside the postgres-test containe
 	@$(DOCKER_COMPOSE) -f docker-compose.test.yml exec -T postgres-test psql -U test_user -d athena_test -f /tmp/init.sql
 
 validate-openapi: ## Validate OpenAPI specification
-	@if command -v swagger >/dev/null 2>&1; then \
-		swagger validate api/openapi.yaml; \
+	@if command -v swagger-cli >/dev/null 2>&1; then \
+		swagger-cli validate api/openapi.yaml; \
 	else \
-		echo "Swagger CLI not installed."; \
-		echo "Install with: npm install -g @apidevtools/swagger-cli"; \
+		if command -v swagger >/dev/null 2>&1; then \
+			swagger validate api/openapi.yaml; \
+		else \
+			echo "Swagger CLI not installed."; \
+			echo "Install with: npm install -g @apidevtools/swagger-cli"; \
+			exit 1; \
+		fi; \
 	fi
 
 serve-docs: ## Serve OpenAPI documentation

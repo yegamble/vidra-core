@@ -202,6 +202,26 @@ make serve-docs
     - The default is also used when `quality` is omitted in `/stream`.
     - The set returned here reflects server-side support and validation.
 
+#### Resolution Detection Logic (Encoding)
+When queuing an encoding job after upload completes, the service determines the source resolution using the following rules:
+
+- Prefer exact height from metadata when available: `source = DetectResolutionFromHeight(height)`.
+- If height is missing but width is available, estimate height using aspect ratio:
+  - Accepts aspect ratio formats: `16:9`, `9/16`, and numeric (e.g., `1.7778`).
+  - Defaults to `16:9` if aspect ratio is missing or invalid.
+  - Estimated height: `round(width / aspectRatio)` then `source = DetectResolutionFromHeight(estimatedHeight)`.
+- Out-of-range heights clamp to nearest supported (<= 240 → 240p, >= 4320 → 4320p).
+- Ties are resolved by preferring the lower resolution (e.g., exactly between 720p and 1080p picks 720p).
+
+Examples:
+- `{ height: 900 }` → closest to 720p vs 1080p; tie prefers lower → `720p`.
+- `{ width: 1280, aspect_ratio: "16:9" }` → estimated height `≈ 720` → `720p`.
+- `{ width: 1920, aspect_ratio: "16:9" }` → estimated height `≈ 1080` → `1080p`.
+- `{ width: 1024, aspect_ratio: "4:3" }` → estimated height `≈ 768` → `720p` (closer to 720p than 1080p).
+- `{ width: 1920 }` (no AR) → defaults to `16:9` → `1080p`.
+
+Operational note: Debug logs for width/aspect estimation emit only when `LOG_LEVEL` is `debug` or `trace`.
+
 **Protected Endpoints (Require Authentication):**
 - `POST /api/v1/videos` - Create video metadata
 - `PUT /api/v1/videos/{id}` - Update video (owner only)

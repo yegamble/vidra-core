@@ -59,8 +59,8 @@ jobs:
       - name: Install Swagger CLI
         run: npm install -g @apidevtools/swagger-cli
 
-      - name: Validate OpenAPI spec
-        run: swagger-cli validate api/openapi.yaml
+      - name: Validate OpenAPI spec (Makefile)
+        run: make validate-openapi
 
       - name: Initialize database
         env:

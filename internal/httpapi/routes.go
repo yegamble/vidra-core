@@ -103,6 +103,10 @@ func RegisterRoutes(r chi.Router, cfg *config.Config) {
 			})
 		})
 
+		r.Route("/encoding", func(r chi.Router) {
+			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/status", EncodingStatusHandler(encodingRepo))
+		})
+
 		r.Route("/users", func(r chi.Router) {
 			// Admin-style create user; currently just requires auth (role checks TBD)
 			r.With(middleware.Auth(cfg.JWTSecret)).Post("/", CreateUserHandler(userRepo))

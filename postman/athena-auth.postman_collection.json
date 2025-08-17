@@ -1095,6 +1095,35 @@
           ]
         },
         {
+          "name": "Stream Video - Invalid Quality (400)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/videos/{{video_id}}/stream?quality=999p",
+              "host": ["{{baseUrl}}"],
+              "path": ["api","v1","videos","{{video_id}}","stream"],
+              "query": [
+                {"key": "quality", "value": "999p"}
+              ]
+            },
+            "description": "Expects 400 for unsupported quality value."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 400', () => pm.response.to.have.status(400));",
+                  "const wrap = pm.response.json();",
+                  "pm.test('Response wrapped with error', () => pm.expect(wrap).to.have.property('error'));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
           "name": "Get Supported Qualities",
           "request": {
             "method": "GET",

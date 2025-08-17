@@ -37,7 +37,8 @@ type EncodingRepository interface {
 	// Job status tracking
 	UpdateJobStatus(ctx context.Context, jobID string, status domain.EncodingStatus) error
 	UpdateJobProgress(ctx context.Context, jobID string, progress int) error
-	SetJobError(ctx context.Context, jobID string, errorMsg string) error
+    SetJobError(ctx context.Context, jobID string, errorMsg string) error
+    GetJobCounts(ctx context.Context) (map[string]int64, error)
 }
 
 type UploadService interface {

@@ -38,27 +38,30 @@ func HeightForResolution(res string) (int, bool) {
 }
 
 type Video struct {
-	ID            string            `json:"id" db:"id"`
-	ThumbnailID   string            `json:"thumbnail_id" db:"thumbnail_id"`
-	Title         string            `json:"title" db:"title"`
-	Description   string            `json:"description" db:"description"`
-	Duration      int               `json:"duration" db:"duration"`
-	Views         int64             `json:"views" db:"views"`
-	Privacy       Privacy           `json:"privacy" db:"privacy"`
-	Status        ProcessingStatus  `json:"status" db:"status"`
-	UploadDate    time.Time         `json:"upload_date" db:"upload_date"`
-	UserID        string            `json:"user_id" db:"user_id"`
-	OriginalCID   string            `json:"original_cid" db:"original_cid"`
-	ProcessedCIDs map[string]string `json:"processed_cids" db:"processed_cids"`
-	ThumbnailCID  string            `json:"thumbnail_cid" db:"thumbnail_cid"`
-	Tags          []string          `json:"tags" db:"tags"`
-	Category      string            `json:"category" db:"category"`
-	Language      string            `json:"language" db:"language"`
-	FileSize      int64             `json:"file_size" db:"file_size"`
-	MimeType      string            `json:"mime_type" db:"mime_type"`
-	Metadata      VideoMetadata     `json:"metadata" db:"metadata"`
-	CreatedAt     time.Time         `json:"created_at" db:"created_at"`
-	UpdatedAt     time.Time         `json:"updated_at" db:"updated_at"`
+    ID            string            `json:"id" db:"id"`
+    ThumbnailID   string            `json:"thumbnail_id" db:"thumbnail_id"`
+    Title         string            `json:"title" db:"title"`
+    Description   string            `json:"description" db:"description"`
+    Duration      int               `json:"duration" db:"duration"`
+    Views         int64             `json:"views" db:"views"`
+    Privacy       Privacy           `json:"privacy" db:"privacy"`
+    Status        ProcessingStatus  `json:"status" db:"status"`
+    UploadDate    time.Time         `json:"upload_date" db:"upload_date"`
+    UserID        string            `json:"user_id" db:"user_id"`
+    OriginalCID   string            `json:"original_cid" db:"original_cid"`
+    ProcessedCIDs map[string]string `json:"processed_cids" db:"processed_cids"`
+    ThumbnailCID  string            `json:"thumbnail_cid" db:"thumbnail_cid"`
+    OutputPaths   map[string]string `json:"output_paths" db:"output_paths"`
+    ThumbnailPath string            `json:"thumbnail_path" db:"thumbnail_path"`
+    PreviewPath   string            `json:"preview_path" db:"preview_path"`
+    Tags          []string          `json:"tags" db:"tags"`
+    Category      string            `json:"category" db:"category"`
+    Language      string            `json:"language" db:"language"`
+    FileSize      int64             `json:"file_size" db:"file_size"`
+    MimeType      string            `json:"mime_type" db:"mime_type"`
+    Metadata      VideoMetadata     `json:"metadata" db:"metadata"`
+    CreatedAt     time.Time         `json:"created_at" db:"created_at"`
+    UpdatedAt     time.Time         `json:"updated_at" db:"updated_at"`
 }
 
 type VideoMetadata struct {

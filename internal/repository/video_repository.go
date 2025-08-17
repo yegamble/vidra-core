@@ -5,8 +5,8 @@ import (
     "athena/internal/usecase"
     "context"
     "database/sql"
-    "fmt"
     "encoding/json"
+    "fmt"
 
     "github.com/jmoiron/sqlx"
     "github.com/lib/pq"
@@ -27,18 +27,21 @@ func (r *videoRepository) Create(ctx context.Context, v *domain.Video) error {
             privacy, status, upload_date, user_id,
             original_cid, processed_cids, thumbnail_cid,
             tags, category, language, file_size, mime_type, metadata,
-            created_at, updated_at
+            created_at, updated_at,
+            output_paths, thumbnail_path, preview_path
         ) VALUES (
             $1, $2, $3, $4, $5, $6,
             $7, $8, $9, $10,
             $11, $12, $13,
             $14, $15, $16, $17, $18, $19,
-            $20, $21
+            $20, $21,
+            $22, $23, $24
         )`
 
     // Marshal JSON fields
     processedCIDsJSON, _ := json.Marshal(v.ProcessedCIDs)
     metadataJSON, _ := json.Marshal(v.Metadata)
+    outputPathsJSON, _ := json.Marshal(v.OutputPaths)
 
     _, err := r.db.ExecContext(ctx, query,
         v.ID, v.ThumbnailID, v.Title, v.Description, v.Duration, v.Views,
@@ -46,6 +49,7 @@ func (r *videoRepository) Create(ctx context.Context, v *domain.Video) error {
         v.OriginalCID, processedCIDsJSON, v.ThumbnailCID,
         pq.Array(v.Tags), v.Category, v.Language, v.FileSize, v.MimeType, metadataJSON,
         v.CreatedAt, v.UpdatedAt,
+        outputPathsJSON, v.ThumbnailPath, v.PreviewPath,
     )
     if err != nil {
         return fmt.Errorf("failed to create video: %w", err)
@@ -59,11 +63,11 @@ func (r *videoRepository) GetByID(ctx context.Context, id string) (*domain.Video
                privacy, status, upload_date, user_id,
                original_cid, processed_cids, thumbnail_cid,
                tags, category, language, file_size, mime_type, metadata,
-               created_at, updated_at
+               created_at, updated_at, output_paths, thumbnail_path, preview_path
         FROM videos WHERE id = $1`
 
     var v domain.Video
-    var processedCIDsJSON, metadataJSON []byte
+    var processedCIDsJSON, metadataJSON, outputPathsJSON []byte
     var tags pq.StringArray
 
     err := r.db.QueryRowContext(ctx, query, id).Scan(
@@ -71,7 +75,7 @@ func (r *videoRepository) GetByID(ctx context.Context, id string) (*domain.Video
         &v.Privacy, &v.Status, &v.UploadDate, &v.UserID,
         &v.OriginalCID, &processedCIDsJSON, &v.ThumbnailCID,
         &tags, &v.Category, &v.Language, &v.FileSize, &v.MimeType, &metadataJSON,
-        &v.CreatedAt, &v.UpdatedAt,
+        &v.CreatedAt, &v.UpdatedAt, &outputPathsJSON, &v.ThumbnailPath, &v.PreviewPath,
     )
     if err != nil {
         if err == sql.ErrNoRows {
@@ -86,6 +90,9 @@ func (r *videoRepository) GetByID(ctx context.Context, id string) (*domain.Video
     }
     if len(metadataJSON) > 0 {
         _ = json.Unmarshal(metadataJSON, &v.Metadata)
+    }
+    if len(outputPathsJSON) > 0 {
+        _ = json.Unmarshal(outputPathsJSON, &v.OutputPaths)
     }
     v.Tags = []string(tags)
 
@@ -195,6 +202,27 @@ func (r *videoRepository) Delete(ctx context.Context, id string, userID string) 
         return domain.NewDomainError("VIDEO_NOT_FOUND", "Video not found or unauthorized")
     }
 
+    return nil
+}
+
+func (r *videoRepository) UpdateProcessingInfo(ctx context.Context, videoID string, status domain.ProcessingStatus, outputPaths map[string]string, thumbnailPath, previewPath string) error {
+    query := `
+        UPDATE videos SET
+            status = $2,
+            output_paths = $3,
+            thumbnail_path = $4,
+            preview_path = $5,
+            updated_at = NOW()
+        WHERE id = $1`
+
+    outJSON, _ := json.Marshal(outputPaths)
+    result, err := r.db.ExecContext(ctx, query, videoID, status, outJSON, thumbnailPath, previewPath)
+    if err != nil {
+        return fmt.Errorf("failed to update processing info: %w", err)
+    }
+    if n, _ := result.RowsAffected(); n == 0 {
+        return domain.NewDomainError("VIDEO_NOT_FOUND", "Video not found")
+    }
     return nil
 }
 

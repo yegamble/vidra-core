@@ -13,5 +13,5 @@ type VideoRepository interface {
     Delete(ctx context.Context, id string, userID string) error
     List(ctx context.Context, req *domain.VideoSearchRequest) ([]*domain.Video, int64, error)
     Search(ctx context.Context, req *domain.VideoSearchRequest) ([]*domain.Video, int64, error)
+    UpdateProcessingInfo(ctx context.Context, videoID string, status domain.ProcessingStatus, outputPaths map[string]string, thumbnailPath, previewPath string) error
 }
-

@@ -259,6 +259,9 @@ func ensureTestSchema(db *sqlx.DB) error {
             created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
             updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
         )`,
+        `ALTER TABLE videos ADD COLUMN IF NOT EXISTS output_paths JSONB NOT NULL DEFAULT '{}'::jsonb`,
+        `ALTER TABLE videos ADD COLUMN IF NOT EXISTS thumbnail_path TEXT`,
+        `ALTER TABLE videos ADD COLUMN IF NOT EXISTS preview_path TEXT`,
         `CREATE INDEX IF NOT EXISTS idx_videos_user_id ON videos(user_id)`,
         `CREATE INDEX IF NOT EXISTS idx_videos_privacy ON videos(privacy)`,
         `CREATE INDEX IF NOT EXISTS idx_videos_status ON videos(status)`,
