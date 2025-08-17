@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"athena/internal/config"
 	"athena/internal/domain"
 	"athena/internal/repository"
 	"athena/internal/usecase"
@@ -18,6 +19,17 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// createTestConfig creates a config suitable for testing
+func createTestConfig() *config.Config {
+	return &config.Config{
+		ValidationStrictMode:          false, // Allow optional checksums in tests
+		ValidationAllowedAlgorithms:   []string{"sha256"},
+		ValidationTestMode:           true,  // Enable test mode for bypasses
+		ValidationEnableIntegrityJobs: false,
+		ValidationLogEvents:          false,
+	}
+}
 
 func TestUploadService_InitiateUpload(t *testing.T) {
 	testDB := testutil.SetupTestDB(t)
@@ -28,7 +40,7 @@ func TestUploadService_InitiateUpload(t *testing.T) {
 
     // Create temp directory for uploads within workspace (sandbox-safe)
     tempDir := testTempDir(t)
-	uploadService := usecase.NewUploadService(uploadRepo, encodingRepo, videoRepo, tempDir)
+	uploadService := usecase.NewUploadService(uploadRepo, encodingRepo, videoRepo, tempDir, createTestConfig())
 
 	ctx := context.Background()
 
@@ -79,7 +91,7 @@ func TestUploadService_InitiateUpload_FileTooLarge(t *testing.T) {
 	userRepo := repository.NewUserRepository(testDB.DB)
 
     tempDir := testTempDir(t)
-	uploadService := usecase.NewUploadService(uploadRepo, encodingRepo, videoRepo, tempDir)
+	uploadService := usecase.NewUploadService(uploadRepo, encodingRepo, videoRepo, tempDir, createTestConfig())
 
 	ctx := context.Background()
 	user := createTestUser(t, userRepo, ctx, "testuser", "test@example.com")
@@ -103,7 +115,7 @@ func TestUploadService_UploadChunk(t *testing.T) {
 	userRepo := repository.NewUserRepository(testDB.DB)
 
     tempDir := testTempDir(t)
-	uploadService := usecase.NewUploadService(uploadRepo, encodingRepo, videoRepo, tempDir)
+	uploadService := usecase.NewUploadService(uploadRepo, encodingRepo, videoRepo, tempDir, createTestConfig())
 
 	ctx := context.Background()
 
@@ -157,7 +169,7 @@ func TestUploadService_UploadChunk_InvalidChecksum(t *testing.T) {
 	userRepo := repository.NewUserRepository(testDB.DB)
 
     tempDir := testTempDir(t)
-	uploadService := usecase.NewUploadService(uploadRepo, encodingRepo, videoRepo, tempDir)
+	uploadService := usecase.NewUploadService(uploadRepo, encodingRepo, videoRepo, tempDir, createTestConfig())
 
 	ctx := context.Background()
 
@@ -186,7 +198,7 @@ func TestUploadService_UploadChunk_Resumable(t *testing.T) {
 	userRepo := repository.NewUserRepository(testDB.DB)
 
     tempDir := testTempDir(t)
-	uploadService := usecase.NewUploadService(uploadRepo, encodingRepo, videoRepo, tempDir)
+	uploadService := usecase.NewUploadService(uploadRepo, encodingRepo, videoRepo, tempDir, createTestConfig())
 
 	ctx := context.Background()
 
@@ -259,7 +271,7 @@ func TestUploadService_CompleteUpload(t *testing.T) {
 	userRepo := repository.NewUserRepository(testDB.DB)
 
     tempDir := testTempDir(t)
-	uploadService := usecase.NewUploadService(uploadRepo, encodingRepo, videoRepo, tempDir)
+	uploadService := usecase.NewUploadService(uploadRepo, encodingRepo, videoRepo, tempDir, createTestConfig())
 
 	ctx := context.Background()
 
@@ -338,7 +350,7 @@ func TestUploadService_CompleteUpload_IncompleteChunks(t *testing.T) {
 	userRepo := repository.NewUserRepository(testDB.DB)
 
     tempDir := testTempDir(t)
-	uploadService := usecase.NewUploadService(uploadRepo, encodingRepo, videoRepo, tempDir)
+	uploadService := usecase.NewUploadService(uploadRepo, encodingRepo, videoRepo, tempDir, createTestConfig())
 
 	ctx := context.Background()
 
@@ -376,7 +388,7 @@ func TestUploadService_ExpiredSession(t *testing.T) {
 	userRepo := repository.NewUserRepository(testDB.DB)
 
     tempDir := testTempDir(t)
-	uploadService := usecase.NewUploadService(uploadRepo, encodingRepo, videoRepo, tempDir)
+	uploadService := usecase.NewUploadService(uploadRepo, encodingRepo, videoRepo, tempDir, createTestConfig())
 
 	ctx := context.Background()
 
@@ -430,7 +442,7 @@ func TestUploadService_CleanupTempFiles(t *testing.T) {
 	userRepo := repository.NewUserRepository(testDB.DB)
 
 	tempDir := t.TempDir()
-	uploadService := usecase.NewUploadService(uploadRepo, encodingRepo, videoRepo, tempDir)
+	uploadService := usecase.NewUploadService(uploadRepo, encodingRepo, videoRepo, tempDir, createTestConfig())
 
 	ctx := context.Background()
 

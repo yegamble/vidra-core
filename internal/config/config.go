@@ -97,6 +97,13 @@ type Config struct {
 	APIMaxRequestSize       string
 	APIPaginationDefaultLimit int
 	APIPaginationMaxLimit    int
+
+	// Validation Configuration
+	ValidationStrictMode          bool
+	ValidationAllowedAlgorithms   []string
+	ValidationTestMode           bool
+	ValidationEnableIntegrityJobs bool
+	ValidationLogEvents          bool
 }
 
 func Load() (*Config, error) {
@@ -205,6 +212,13 @@ func Load() (*Config, error) {
 	cfg.APIMaxRequestSize = getEnvOrDefault("API_MAX_REQUEST_SIZE", "10MB")
 	cfg.APIPaginationDefaultLimit = getIntEnv("API_PAGINATION_DEFAULT_LIMIT", 20)
 	cfg.APIPaginationMaxLimit = getIntEnv("API_PAGINATION_MAX_LIMIT", 100)
+
+	// Validation Configuration
+	cfg.ValidationStrictMode = getBoolEnv("VALIDATION_STRICT_MODE", true)
+	cfg.ValidationAllowedAlgorithms = getStringSliceEnv("VALIDATION_ALLOWED_ALGORITHMS", []string{"sha256"})
+	cfg.ValidationTestMode = getBoolEnv("VALIDATION_TEST_MODE", false)
+	cfg.ValidationEnableIntegrityJobs = getBoolEnv("VALIDATION_ENABLE_INTEGRITY_JOBS", true)
+	cfg.ValidationLogEvents = getBoolEnv("VALIDATION_LOG_EVENTS", true)
 
 	return cfg, nil
 }

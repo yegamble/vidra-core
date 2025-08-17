@@ -1,8 +1,6 @@
 package httpapi
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,9 +12,11 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"athena/internal/config"
 	"athena/internal/domain"
 	"athena/internal/middleware"
 	"athena/internal/usecase"
+	"athena/internal/validation"
 )
 
 func ListVideosHandler(repo usecase.VideoRepository) http.HandlerFunc {
@@ -360,7 +360,7 @@ func InitiateUploadHandler(uploadService usecase.UploadService, videoRepo usecas
 }
 
 // UploadChunkHandler handles individual chunk uploads
-func UploadChunkHandler(uploadService usecase.UploadService) http.HandlerFunc {
+func UploadChunkHandler(uploadService usecase.UploadService, cfg *config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		sessionID := chi.URLParam(r, "sessionId")
 		if sessionID == "" {
@@ -381,8 +381,13 @@ func UploadChunkHandler(uploadService usecase.UploadService) http.HandlerFunc {
 		}
 
 		expectedChecksum := r.Header.Get("X-Chunk-Checksum")
-		if expectedChecksum == "" {
-			WriteError(w, http.StatusBadRequest, domain.NewDomainError("MISSING_CHECKSUM", "Chunk checksum is required"))
+		
+		// Create validator for pre-upload validation
+		validator := validation.NewChecksumValidator(cfg)
+		
+		// In strict mode, checksum is required
+		if cfg.ValidationStrictMode && expectedChecksum == "" {
+			WriteError(w, http.StatusBadRequest, domain.NewDomainError("MISSING_CHECKSUM", "Chunk checksum is required in strict mode"))
 			return
 		}
 
@@ -393,13 +398,9 @@ func UploadChunkHandler(uploadService usecase.UploadService) http.HandlerFunc {
 			return
 		}
 
-		// Verify checksum
-		hasher := sha256.New()
-		hasher.Write(data)
-		actualChecksum := hex.EncodeToString(hasher.Sum(nil))
-
-		if actualChecksum != expectedChecksum {
-			WriteError(w, http.StatusBadRequest, domain.NewDomainError("CHECKSUM_MISMATCH", "Chunk checksum verification failed"))
+		// Verify checksum using the validation service
+		if err := validator.ValidateChunkChecksum(data, expectedChecksum); err != nil {
+			WriteError(w, http.StatusBadRequest, err.(domain.DomainError))
 			return
 		}
 
@@ -584,7 +585,7 @@ func GetUserVideosHandler(repo usecase.VideoRepository) http.HandlerFunc {
 }
 
 // VideoUploadChunkHandler handles direct video chunk uploads (for test compatibility)
-func VideoUploadChunkHandler(uploadService usecase.UploadService) http.HandlerFunc {
+func VideoUploadChunkHandler(uploadService usecase.UploadService, cfg *config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		videoID := chi.URLParam(r, "id")
 		if videoID == "" {
@@ -629,13 +630,10 @@ func VideoUploadChunkHandler(uploadService usecase.UploadService) http.HandlerFu
 			return
 		}
 
-		// Verify checksum
-		hasher := sha256.New()
-		hasher.Write(data)
-		actualChecksum := hex.EncodeToString(hasher.Sum(nil))
-
-		if actualChecksum != expectedChecksum && expectedChecksum != "abc123" {
-			WriteError(w, http.StatusBadRequest, domain.NewDomainError("CHECKSUM_MISMATCH", "Chunk checksum verification failed"))
+		// Verify checksum using validation service
+		validator := validation.NewChecksumValidator(cfg)
+		if err := validator.ValidateChunkChecksum(data, expectedChecksum); err != nil {
+			WriteError(w, http.StatusBadRequest, err.(domain.DomainError))
 			return
 		}
 

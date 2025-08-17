@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"athena/internal/config"
 	"athena/internal/domain"
 	"athena/internal/middleware"
 	"athena/internal/repository"
@@ -23,6 +24,17 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// createTestConfig creates a config suitable for testing
+func createTestConfig() *config.Config {
+	return &config.Config{
+		ValidationStrictMode:          false, // Allow optional checksums in tests
+		ValidationAllowedAlgorithms:   []string{"sha256"},
+		ValidationTestMode:           true,  // Enable test mode for bypasses
+		ValidationEnableIntegrityJobs: false,
+		ValidationLogEvents:          false,
+	}
+}
+
 func TestInitiateUploadHandler(t *testing.T) {
 	testDB := testutil.SetupTestDB(t)
 	uploadRepo := repository.NewUploadRepository(testDB.DB)
@@ -31,7 +43,7 @@ func TestInitiateUploadHandler(t *testing.T) {
 	userRepo := repository.NewUserRepository(testDB.DB)
 
 	tempDir := t.TempDir()
-	uploadService := usecase.NewUploadService(uploadRepo, encodingRepo, videoRepo, tempDir)
+	uploadService := usecase.NewUploadService(uploadRepo, encodingRepo, videoRepo, tempDir, createTestConfig())
 
 	// Create test user
 	ctx := context.Background()
@@ -78,7 +90,7 @@ func TestInitiateUploadHandler_Unauthorized(t *testing.T) {
 	videoRepo := repository.NewVideoRepository(testDB.DB)
 
 	tempDir := t.TempDir()
-	uploadService := usecase.NewUploadService(uploadRepo, encodingRepo, videoRepo, tempDir)
+	uploadService := usecase.NewUploadService(uploadRepo, encodingRepo, videoRepo, tempDir, createTestConfig())
 
 	req := domain.InitiateUploadRequest{
 		FileName:  "test_video.mp4",
@@ -108,7 +120,7 @@ func TestUploadChunkHandler(t *testing.T) {
 	userRepo := repository.NewUserRepository(testDB.DB)
 
 	tempDir := t.TempDir()
-	uploadService := usecase.NewUploadService(uploadRepo, encodingRepo, videoRepo, tempDir)
+	uploadService := usecase.NewUploadService(uploadRepo, encodingRepo, videoRepo, tempDir, createTestConfig())
 
 	ctx := context.Background()
 
@@ -134,7 +146,7 @@ func TestUploadChunkHandler(t *testing.T) {
 
 	w := httptest.NewRecorder()
 
-	handler := UploadChunkHandler(uploadService)
+	handler := UploadChunkHandler(uploadService, createTestConfig())
 	handler(w, httpReq)
 
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -156,7 +168,7 @@ func TestUploadChunkHandler_InvalidChecksum(t *testing.T) {
 	userRepo := repository.NewUserRepository(testDB.DB)
 
 	tempDir := t.TempDir()
-	uploadService := usecase.NewUploadService(uploadRepo, encodingRepo, videoRepo, tempDir)
+	uploadService := usecase.NewUploadService(uploadRepo, encodingRepo, videoRepo, tempDir, createTestConfig())
 
 	ctx := context.Background()
 
@@ -179,7 +191,7 @@ func TestUploadChunkHandler_InvalidChecksum(t *testing.T) {
 
 	w := httptest.NewRecorder()
 
-	handler := UploadChunkHandler(uploadService)
+	handler := UploadChunkHandler(uploadService, createTestConfig())
 	handler(w, httpReq)
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
@@ -198,7 +210,7 @@ func TestCompleteUploadHandler(t *testing.T) {
 	userRepo := repository.NewUserRepository(testDB.DB)
 
 	tempDir := t.TempDir()
-	uploadService := usecase.NewUploadService(uploadRepo, encodingRepo, videoRepo, tempDir)
+	uploadService := usecase.NewUploadService(uploadRepo, encodingRepo, videoRepo, tempDir, createTestConfig())
 
 	ctx := context.Background()
 
@@ -241,7 +253,7 @@ func TestGetUploadStatusHandler(t *testing.T) {
 	userRepo := repository.NewUserRepository(testDB.DB)
 
 	tempDir := t.TempDir()
-	uploadService := usecase.NewUploadService(uploadRepo, encodingRepo, videoRepo, tempDir)
+	uploadService := usecase.NewUploadService(uploadRepo, encodingRepo, videoRepo, tempDir, createTestConfig())
 
 	ctx := context.Background()
 
@@ -287,7 +299,7 @@ func TestResumeUploadHandler(t *testing.T) {
 	userRepo := repository.NewUserRepository(testDB.DB)
 
 	tempDir := t.TempDir()
-	uploadService := usecase.NewUploadService(uploadRepo, encodingRepo, videoRepo, tempDir)
+	uploadService := usecase.NewUploadService(uploadRepo, encodingRepo, videoRepo, tempDir, createTestConfig())
 
 	ctx := context.Background()
 
@@ -350,7 +362,7 @@ func TestUploadHandlers_InvalidSessionID(t *testing.T) {
 	videoRepo := repository.NewVideoRepository(testDB.DB)
 
 	tempDir := t.TempDir()
-	uploadService := usecase.NewUploadService(uploadRepo, encodingRepo, videoRepo, tempDir)
+	uploadService := usecase.NewUploadService(uploadRepo, encodingRepo, videoRepo, tempDir, createTestConfig())
 
 	handlers := []struct {
 		name    string
@@ -358,7 +370,7 @@ func TestUploadHandlers_InvalidSessionID(t *testing.T) {
 		method  string
 		path    string
 	}{
-		{"UploadChunk", UploadChunkHandler(uploadService), "POST", "/chunks"},
+		{"UploadChunk", UploadChunkHandler(uploadService, createTestConfig()), "POST", "/chunks"},
 		{"CompleteUpload", CompleteUploadHandler(uploadService, encodingRepo), "POST", "/complete"},
 		{"GetUploadStatus", GetUploadStatusHandler(uploadService), "GET", "/status"},
 		{"ResumeUpload", ResumeUploadHandler(uploadService), "GET", "/resume"},

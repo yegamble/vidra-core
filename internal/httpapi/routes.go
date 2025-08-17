@@ -42,7 +42,7 @@ func RegisterRoutes(r chi.Router, cfg *config.Config) {
     }
 
     // Initialize upload service
-    uploadService := usecase.NewUploadService(uploadRepo, encodingRepo, videoRepo, uploadsDir)
+    uploadService := usecase.NewUploadService(uploadRepo, encodingRepo, videoRepo, uploadsDir, cfg)
 
     // Initialize Redis session repo
     redisOpts, err := redis.ParseURL(cfg.RedisURL)
@@ -86,7 +86,7 @@ func RegisterRoutes(r chi.Router, cfg *config.Config) {
 			r.With(middleware.Auth(cfg.JWTSecret)).Delete("/{id}", DeleteVideoHandler(videoRepo))
 			
 			// Direct video upload endpoints (for backward compatibility with tests)
-			r.With(middleware.Auth(cfg.JWTSecret)).Post("/{id}/upload", VideoUploadChunkHandler(uploadService))
+			r.With(middleware.Auth(cfg.JWTSecret)).Post("/{id}/upload", VideoUploadChunkHandler(uploadService, cfg))
 			r.With(middleware.Auth(cfg.JWTSecret)).Post("/{id}/complete", VideoCompleteUploadHandler(uploadService))
 		})
 
@@ -95,7 +95,7 @@ func RegisterRoutes(r chi.Router, cfg *config.Config) {
 			r.Use(middleware.Auth(cfg.JWTSecret))
 			r.Post("/initiate", InitiateUploadHandler(uploadService, videoRepo))
 			r.Route("/{sessionId}", func(r chi.Router) {
-				r.Post("/chunks", UploadChunkHandler(uploadService))
+				r.Post("/chunks", UploadChunkHandler(uploadService, cfg))
 				r.Post("/complete", CompleteUploadHandler(uploadService, encodingRepo))
 				r.Get("/status", GetUploadStatusHandler(uploadService))
 				r.Get("/resume", ResumeUploadHandler(uploadService))

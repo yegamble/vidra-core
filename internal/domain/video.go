@@ -124,6 +124,7 @@ type UploadSession struct {
 	UploadedChunks   []int               `json:"uploaded_chunks" db:"uploaded_chunks"`
 	Status           UploadStatus        `json:"status" db:"status"`
 	TempFilePath     string              `json:"temp_file_path" db:"temp_file_path"`
+	ExpectedChecksum string              `json:"expected_checksum" db:"expected_checksum"`
 	CreatedAt        time.Time           `json:"created_at" db:"created_at"`
 	UpdatedAt        time.Time           `json:"updated_at" db:"updated_at"`
 	ExpiresAt        time.Time           `json:"expires_at" db:"expires_at"`
@@ -231,9 +232,10 @@ func abs(x int) int {
 
 // Upload request models
 type InitiateUploadRequest struct {
-	FileName  string `json:"filename" validate:"required"`
-	FileSize  int64  `json:"file_size" validate:"required,min=1"`
-	ChunkSize int64  `json:"chunk_size" validate:"min=1048576,max=104857600"` // 1MB to 100MB
+	FileName         string `json:"filename" validate:"required"`
+	FileSize         int64  `json:"file_size" validate:"required,min=1"`
+	ChunkSize        int64  `json:"chunk_size" validate:"min=1048576,max=104857600"` // 1MB to 100MB
+	ExpectedChecksum string `json:"expected_checksum"`
 }
 
 type InitiateUploadResponse struct {

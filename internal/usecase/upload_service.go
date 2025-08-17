@@ -2,8 +2,6 @@ package usecase
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,7 +10,9 @@ import (
 
 	"github.com/google/uuid"
 
+	"athena/internal/config"
 	"athena/internal/domain"
+	"athena/internal/validation"
 )
 
 type uploadService struct {
@@ -20,6 +20,7 @@ type uploadService struct {
 	encodingRepo  EncodingRepository
 	videoRepo     VideoRepository
 	uploadsDir    string
+	validator     *validation.ChecksumValidator
 }
 
 func NewUploadService(
@@ -27,12 +28,14 @@ func NewUploadService(
 	encodingRepo EncodingRepository,
 	videoRepo VideoRepository,
 	uploadsDir string,
+	cfg *config.Config,
 ) UploadService {
 	return &uploadService{
 		uploadRepo:   uploadRepo,
 		encodingRepo: encodingRepo,
 		videoRepo:    videoRepo,
 		uploadsDir:   uploadsDir,
+		validator:    validation.NewChecksumValidator(cfg),
 	}
 }
 
@@ -77,19 +80,20 @@ func (s *uploadService) InitiateUpload(ctx context.Context, userID string, req *
 	}
 
 	session := &domain.UploadSession{
-		ID:             sessionID,
-		VideoID:        video.ID,
-		UserID:         userID,
-		FileName:       req.FileName,
-		FileSize:       req.FileSize,
-		ChunkSize:      req.ChunkSize,
-		TotalChunks:    totalChunks,
-		UploadedChunks: []int{},
-		Status:         domain.UploadStatusActive,
-		TempFilePath:   filepath.Join(tempDir, "chunks"),
-		CreatedAt:      now,
-		UpdatedAt:      now,
-		ExpiresAt:      now.Add(24 * time.Hour), // 24 hour expiry
+		ID:               sessionID,
+		VideoID:          video.ID,
+		UserID:           userID,
+		FileName:         req.FileName,
+		FileSize:         req.FileSize,
+		ChunkSize:        req.ChunkSize,
+		TotalChunks:      totalChunks,
+		UploadedChunks:   []int{},
+		Status:           domain.UploadStatusActive,
+		TempFilePath:     filepath.Join(tempDir, "chunks"),
+		ExpectedChecksum: req.ExpectedChecksum,
+		CreatedAt:        now,
+		UpdatedAt:        now,
+		ExpiresAt:        now.Add(24 * time.Hour), // 24 hour expiry
 	}
 
 	if err := s.uploadRepo.CreateSession(ctx, session); err != nil {
@@ -127,14 +131,9 @@ func (s *uploadService) UploadChunk(ctx context.Context, sessionID string, chunk
 		return nil, domain.NewDomainError("INVALID_CHUNK_INDEX", "Chunk index out of range")
 	}
 
-	// Validate checksum
-	if chunk.Checksum != "" {
-		hasher := sha256.New()
-		hasher.Write(chunk.Data)
-		expectedChecksum := hex.EncodeToString(hasher.Sum(nil))
-		if chunk.Checksum != expectedChecksum {
-			return nil, domain.NewDomainError("CHECKSUM_MISMATCH", "Chunk checksum does not match")
-		}
+	// Validate checksum using strict validation
+	if err := s.validator.ValidateChunkChecksum(chunk.Data, chunk.Checksum); err != nil {
+		return nil, err
 	}
 
 	// Check if chunk already uploaded
@@ -306,6 +305,18 @@ func (s *uploadService) AssembleChunks(ctx context.Context, session *domain.Uplo
 
 		if _, err := finalFile.Write(chunkData); err != nil {
 			return fmt.Errorf("failed to write chunk %d to final file: %w", chunkIndex, err)
+		}
+	}
+
+	// Close the file before checksum validation
+	finalFile.Close()
+
+	// Validate assembled file checksum if expected checksum is provided
+	if session.ExpectedChecksum != "" {
+		if err := s.validator.ValidateFileChecksum(finalPath, session.ExpectedChecksum); err != nil {
+			// Remove invalid file
+			os.Remove(finalPath)
+			return fmt.Errorf("assembled file checksum validation failed: %w", err)
 		}
 	}
 
