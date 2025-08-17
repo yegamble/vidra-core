@@ -214,7 +214,7 @@ func Load() (*Config, error) {
 	cfg.APIPaginationMaxLimit = getIntEnv("API_PAGINATION_MAX_LIMIT", 100)
 
 	// Validation Configuration
-	cfg.ValidationStrictMode = getBoolEnv("VALIDATION_STRICT_MODE", true)
+	cfg.ValidationStrictMode = getBoolEnv("VALIDATION_STRICT_MODE", false) // Default to permissive for backward compatibility
 	cfg.ValidationAllowedAlgorithms = getStringSliceEnv("VALIDATION_ALLOWED_ALGORITHMS", []string{"sha256"})
 	cfg.ValidationTestMode = getBoolEnv("VALIDATION_TEST_MODE", false)
 	cfg.ValidationEnableIntegrityJobs = getBoolEnv("VALIDATION_ENABLE_INTEGRITY_JOBS", true)
