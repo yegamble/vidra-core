@@ -23,8 +23,8 @@ A high-performance PeerTube backend implementation in Go with decentralized stor
 
 - Go 1.21+
 - Docker & Docker Compose
-- PostgreSQL 15+ (optional, if not using Docker)
-- Redis 7+ (optional, if not using Docker)
+- PostgreSQL 15+
+- Redis 7+
 - Node.js 18+ (for API documentation tools)
 
 ### One-Command Setup
