@@ -156,13 +156,13 @@ func (r *videoRepository) Update(ctx context.Context, v *domain.Video) error {
         UPDATE videos SET
             title = $2, description = $3, privacy = $4,
             tags = $5, category = $6, language = $7,
-            updated_at = $8
-        WHERE id = $1 AND user_id = $9`
+            status = $8, updated_at = $9
+        WHERE id = $1 AND user_id = $10`
 
     result, err := r.db.ExecContext(ctx, query,
         v.ID, v.Title, v.Description, v.Privacy,
         pq.Array(v.Tags), v.Category, v.Language,
-        v.UpdatedAt, v.UserID,
+        v.Status, v.UpdatedAt, v.UserID,
     )
     if err != nil {
         return fmt.Errorf("failed to update video: %w", err)

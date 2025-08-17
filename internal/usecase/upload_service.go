@@ -2,6 +2,8 @@ package usecase
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -47,17 +49,20 @@ func (s *uploadService) InitiateUpload(ctx context.Context, userID string, req *
 	// Create video record first
 	now := time.Now()
 	video := &domain.Video{
-		ID:          uuid.NewString(),
-		ThumbnailID: uuid.NewString(),
-		Title:       fmt.Sprintf("Uploading: %s", req.FileName),
-		Description: "Upload in progress",
-		Privacy:     domain.PrivacyPrivate, // Default to private until user sets metadata
-		Status:      domain.StatusUploading,
-		UploadDate:  now,
-		UserID:      userID,
-		FileSize:    req.FileSize,
-		CreatedAt:   now,
-		UpdatedAt:   now,
+		ID:            uuid.NewString(),
+		ThumbnailID:   uuid.NewString(),
+		Title:         fmt.Sprintf("Uploading: %s", req.FileName),
+		Description:   "Upload in progress",
+		Privacy:       domain.PrivacyPrivate, // Default to private until user sets metadata
+		Status:        domain.StatusUploading,
+		UploadDate:    now,
+		UserID:        userID,
+		FileSize:      req.FileSize,
+		ProcessedCIDs: make(map[string]string),
+		Tags:          []string{},
+		Metadata:      domain.VideoMetadata{},
+		CreatedAt:     now,
+		UpdatedAt:     now,
 	}
 
 	if err := s.videoRepo.Create(ctx, video); err != nil {
@@ -120,6 +125,16 @@ func (s *uploadService) UploadChunk(ctx context.Context, sessionID string, chunk
 	// Validate chunk index
 	if chunk.ChunkIndex < 0 || chunk.ChunkIndex >= session.TotalChunks {
 		return nil, domain.NewDomainError("INVALID_CHUNK_INDEX", "Chunk index out of range")
+	}
+
+	// Validate checksum
+	if chunk.Checksum != "" {
+		hasher := sha256.New()
+		hasher.Write(chunk.Data)
+		expectedChecksum := hex.EncodeToString(hasher.Sum(nil))
+		if chunk.Checksum != expectedChecksum {
+			return nil, domain.NewDomainError("CHECKSUM_MISMATCH", "Chunk checksum does not match")
+		}
 	}
 
 	// Check if chunk already uploaded

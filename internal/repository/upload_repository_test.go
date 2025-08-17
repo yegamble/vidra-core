@@ -1,15 +1,16 @@
 package repository
 
 import (
-	"context"
-	"testing"
-	"time"
+    "context"
+    "testing"
+    "time"
 
-	"athena/internal/domain"
-	"athena/internal/testutil"
-	"github.com/google/uuid"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
+    "athena/internal/domain"
+    "athena/internal/usecase"
+    "athena/internal/testutil"
+    "github.com/google/uuid"
+    "github.com/stretchr/testify/assert"
+    "github.com/stretchr/testify/require"
 )
 
 func TestUploadRepository_CreateSession(t *testing.T) {
@@ -277,7 +278,7 @@ func TestUploadRepository_GetExpiredSessions(t *testing.T) {
 }
 
 // Helper functions
-func createTestVideo(t *testing.T, repo VideoRepository, ctx context.Context, userID, title string) *domain.Video {
+func createTestVideo(t *testing.T, repo usecase.VideoRepository, ctx context.Context, userID, title string) *domain.Video {
 	t.Helper()
 
 	now := time.Now()
@@ -292,6 +293,7 @@ func createTestVideo(t *testing.T, repo VideoRepository, ctx context.Context, us
 		UserID:        userID,
 		ProcessedCIDs: make(map[string]string),
 		Tags:          []string{},
+		Metadata:      domain.VideoMetadata{},
 		CreatedAt:     now,
 		UpdatedAt:     now,
 	}
@@ -302,7 +304,7 @@ func createTestVideo(t *testing.T, repo VideoRepository, ctx context.Context, us
 	return video
 }
 
-func createTestUploadSession(t *testing.T, repo UploadRepository, ctx context.Context, videoID, userID string) *domain.UploadSession {
+func createTestUploadSession(t *testing.T, repo usecase.UploadRepository, ctx context.Context, videoID, userID string) *domain.UploadSession {
 	t.Helper()
 
 	now := time.Now()

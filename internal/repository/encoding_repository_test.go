@@ -1,15 +1,16 @@
 package repository
 
 import (
-	"context"
-	"testing"
-	"time"
+    "context"
+    "testing"
+    "time"
 
-	"athena/internal/domain"
-	"athena/internal/testutil"
-	"github.com/google/uuid"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
+    "athena/internal/domain"
+    "athena/internal/usecase"
+    "athena/internal/testutil"
+    "github.com/google/uuid"
+    "github.com/stretchr/testify/assert"
+    "github.com/stretchr/testify/require"
 )
 
 func TestEncodingRepository_CreateJob(t *testing.T) {
@@ -313,7 +314,7 @@ func TestEncodingRepository_ConcurrentGetNextJob(t *testing.T) {
 }
 
 // Helper function to create test encoding job
-func createTestEncodingJob(t *testing.T, repo EncodingRepository, ctx context.Context, videoID string) *domain.EncodingJob {
+func createTestEncodingJob(t *testing.T, repo usecase.EncodingRepository, ctx context.Context, videoID string) *domain.EncodingJob {
 	t.Helper()
 
 	job := &domain.EncodingJob{
