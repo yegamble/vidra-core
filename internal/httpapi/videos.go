@@ -1,13 +1,15 @@
 package httpapi
 
 import (
-	"encoding/json"
-	"errors"
-	"fmt"
-	"io"
-	"net/http"
-	"strconv"
-	"time"
+    "encoding/json"
+    "errors"
+    "fmt"
+    "io"
+    "net/http"
+    "os"
+    "path/filepath"
+    "strconv"
+    "time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -682,25 +684,42 @@ func VideoCompleteUploadHandler(uploadService usecase.UploadService) http.Handle
 }
 
 func StreamVideo(w http.ResponseWriter, r *http.Request) {
-	videoID := chi.URLParam(r, "id")
-	if videoID == "" {
-		WriteError(w, http.StatusBadRequest, domain.NewDomainError("MISSING_VIDEO_ID", "Video ID is required"))
-		return
-	}
+    videoID := chi.URLParam(r, "id")
+    if videoID == "" {
+        WriteError(w, http.StatusBadRequest, domain.NewDomainError("MISSING_VIDEO_ID", "Video ID is required"))
+        return
+    }
 
-	quality := r.URL.Query().Get("quality")
-	if quality == "" {
-		quality = domain.DefaultResolution
-	}
-	if !domain.IsValidResolution(quality) {
-		WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_QUALITY", "Unsupported quality"))
-		return
-	}
+    w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
+    w.Header().Set("Access-Control-Allow-Origin", "*")
 
-	w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
+    // If encoded HLS exists, serve master or variant dynamically
+    baseDir := filepath.Join("./uploads", "encoded", videoID)
+    quality := r.URL.Query().Get("quality")
+    var path string
+    if quality == "" {
+        path = filepath.Join(baseDir, "master.m3u8")
+    } else {
+        if !domain.IsValidResolution(quality) {
+            WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_QUALITY", "Unsupported quality"))
+            return
+        }
+        if h, ok := domain.HeightForResolution(quality); ok {
+            path = filepath.Join(baseDir, fmt.Sprintf("%dp", h), "stream.m3u8")
+        }
+    }
+    if path != "" {
+        if data, err := os.ReadFile(path); err == nil {
+            _, _ = w.Write(data)
+            return
+        }
+    }
 
-	hlsPlaylist := fmt.Sprintf(`#EXTM3U
+    // Fallback: return simple mocked playlist
+    if quality == "" {
+        quality = domain.DefaultResolution
+    }
+    hlsPlaylist := fmt.Sprintf(`#EXTM3U
 #EXT-X-VERSION:3
 # QUALITY:%s
 #EXT-X-TARGETDURATION:10
@@ -712,11 +731,7 @@ segment-00001.ts
 #EXTINF:10.0,
 segment-00002.ts
 #EXT-X-ENDLIST`, quality)
-
-	if _, err := w.Write([]byte(hlsPlaylist)); err != nil {
-		// Log error but don't return as headers are already sent
-		_ = err
-	}
+    _, _ = w.Write([]byte(hlsPlaylist))
 }
 
 // GetSupportedQualities returns supported quality labels and the default
