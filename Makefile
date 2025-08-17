@@ -1,4 +1,7 @@
-.PHONY: help deps lint test test-integration build docker docker-up docker-down migrate clean dev install-tools test-ci postman-newman postman-e2e
+.PHONY: help deps lint test test-integration build docker docker-up docker-down migrate clean dev install-tools test-ci postman-newman postman-e2e run logs migrate-up migrate-up-docker migrate-test migrate-test-docker
+
+# Use docker compose v2 if available; override with DOCKER_COMPOSE="docker-compose" if needed
+DOCKER_COMPOSE ?= docker compose
 
 # Default target
 help: ## Display this help message
@@ -43,6 +46,31 @@ test-integration-local: ## Run only integration tests with local Docker services
 	docker-compose -f docker-compose.test.yml up -d
 	@echo "Waiting for services to be ready..."
 	@sleep 10
+	DATABASE_URL="postgres://test_user:test_password@localhost:5433/athena_test?sslmode=disable" \
+	REDIS_URL="redis://localhost:6380/0" \
+	JWT_SECRET="test-jwt-secret" \
+	IPFS_API="http://localhost:5001" \
+	go test -v -race -run Integration ./...
+	docker-compose -f docker-compose.test.yml down -v
+
+docker-up: ## Start local dev stack (Postgres, Redis, IPFS, app)
+	docker compose up -d --build
+	@echo "Waiting for services to be ready..."
+	@sleep 10
+	@echo "Visit http://localhost:8080/health"
+
+docker-down: ## Stop and remove local dev stack
+	docker compose down -v
+
+dev: docker-up ## Rebuild and follow app logs
+	@echo "Following app logs. Ctrl+C to quit."
+	docker compose logs -f app
+
+run: ## Run server locally (requires local Postgres/Redis/IPFS env)
+	go run ./cmd/server
+
+logs: ## Tail app logs
+	docker compose logs -f app
 	TEST_DATABASE_URL="postgres://test_user:test_password@localhost:5433/athena_test?sslmode=disable" \
 	DATABASE_URL="postgres://test_user:test_password@localhost:5433/athena_test?sslmode=disable" \
 	REDIS_URL="redis://localhost:6380/0" \
@@ -73,15 +101,34 @@ docker-reset: ## Reset docker environment (remove volumes)
 	docker-compose down -v
 	docker-compose up -d
 
-migrate-up: ## Run database migrations
+migrate-up: ## Run database migrations against local DB (psql)
 	@if [ -z "${DATABASE_URL}" ]; then \
 		echo "DATABASE_URL is not set. Using default."; \
-		export DATABASE_URL="postgres://athena_user:athena_password@localhost:5432/athena?sslmode=disable"; \
+		export DATABASE_URL="postgres://athena_user:athena_password@127.0.0.1:5432/athena?sslmode=disable"; \
 	fi; \
-	psql "${DATABASE_URL}" -f init-shared-db.sql
+	psql "${DATABASE_URL}" -f init-shared-db.sql || { \
+		echo "\npsql migration failed. If you are using Docker, try:\n  make migrate-up-docker\n"; \
+		exit 2; \
+	}
 
-migrate-test: ## Run test database migrations
-	psql "postgres://test_user:test_password@localhost:5433/athena_test?sslmode=disable" -f init-test-db.sql
+migrate-up-docker: ## Run database migrations inside the postgres container
+	@echo "Applying migrations inside docker service 'postgres'..."
+	@$(DOCKER_COMPOSE) ps postgres >/dev/null 2>&1 || { echo "Postgres container not found. Run 'make docker-up' first."; exit 1; }
+	-@$(DOCKER_COMPOSE) cp init-shared-db.sql postgres:/tmp/init.sql
+	@$(DOCKER_COMPOSE) exec -T postgres psql -U athena_user -d athena -f /tmp/init.sql
+
+migrate-test: ## Run test database migrations against local test DB (psql)
+	psql "postgres://test_user:test_password@127.0.0.1:5433/athena_test?sslmode=disable" -f init-test-db.sql || { \
+		echo "\npsql test migration failed. If you are using Docker, try:\n  make migrate-test-docker\n"; \
+		exit 2; \
+	}
+
+migrate-test-docker: ## Run test DB migrations inside the postgres-test container
+	@echo "Applying test migrations inside docker service 'postgres-test'..."
+	@$(DOCKER_COMPOSE) -f docker-compose.test.yml up -d postgres-test >/dev/null
+	@echo "Waiting for postgres-test to be healthy..." && sleep 3
+	-@$(DOCKER_COMPOSE) -f docker-compose.test.yml cp init-test-db.sql postgres-test:/tmp/init.sql
+	@$(DOCKER_COMPOSE) -f docker-compose.test.yml exec -T postgres-test psql -U test_user -d athena_test -f /tmp/init.sql
 
 validate-openapi: ## Validate OpenAPI specification
 	@if command -v swagger >/dev/null 2>&1; then \

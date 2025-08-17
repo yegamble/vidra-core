@@ -120,5 +120,61 @@ CREATE TRIGGER update_videos_updated_at
     FOR EACH ROW 
     EXECUTE FUNCTION update_updated_at_column();
 
+-- Create upload_sessions table
+CREATE TABLE IF NOT EXISTS upload_sessions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    video_id UUID NOT NULL REFERENCES videos(id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    filename VARCHAR(255) NOT NULL,
+    file_size BIGINT NOT NULL CHECK (file_size > 0),
+    chunk_size BIGINT NOT NULL CHECK (chunk_size > 0),
+    total_chunks INTEGER NOT NULL CHECK (total_chunks > 0),
+    uploaded_chunks INTEGER[] NOT NULL DEFAULT '{}',
+    status VARCHAR(20) NOT NULL CHECK (status IN ('active','completed','expired','failed')) DEFAULT 'active',
+    temp_file_path TEXT,
+    expected_checksum TEXT,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    expires_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT (NOW() + INTERVAL '24 hours')
+);
+
+CREATE INDEX IF NOT EXISTS idx_upload_sessions_video_id ON upload_sessions(video_id);
+CREATE INDEX IF NOT EXISTS idx_upload_sessions_user_id ON upload_sessions(user_id);
+CREATE INDEX IF NOT EXISTS idx_upload_sessions_status ON upload_sessions(status);
+CREATE INDEX IF NOT EXISTS idx_upload_sessions_expires_at ON upload_sessions(expires_at);
+
+DROP TRIGGER IF EXISTS update_upload_sessions_updated_at ON upload_sessions;
+CREATE TRIGGER update_upload_sessions_updated_at 
+    BEFORE UPDATE ON upload_sessions 
+    FOR EACH ROW 
+    EXECUTE FUNCTION update_updated_at_column();
+
+-- Create encoding_jobs table
+CREATE TABLE IF NOT EXISTS encoding_jobs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    video_id UUID NOT NULL REFERENCES videos(id) ON DELETE CASCADE,
+    source_file_path TEXT NOT NULL,
+    source_resolution VARCHAR(10) NOT NULL,
+    target_resolutions TEXT[] NOT NULL DEFAULT '{}',
+    status VARCHAR(20) NOT NULL CHECK (status IN ('pending','processing','completed','failed')) DEFAULT 'pending',
+    progress INTEGER NOT NULL DEFAULT 0 CHECK (progress >= 0 AND progress <= 100),
+    error_message TEXT,
+    started_at TIMESTAMP WITH TIME ZONE,
+    completed_at TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_encoding_jobs_video_id ON encoding_jobs(video_id);
+CREATE INDEX IF NOT EXISTS idx_encoding_jobs_status ON encoding_jobs(status);
+CREATE INDEX IF NOT EXISTS idx_encoding_jobs_created_at ON encoding_jobs(created_at);
+CREATE INDEX IF NOT EXISTS idx_encoding_jobs_status_created ON encoding_jobs(status, created_at);
+
+DROP TRIGGER IF EXISTS update_encoding_jobs_updated_at ON encoding_jobs;
+CREATE TRIGGER update_encoding_jobs_updated_at 
+    BEFORE UPDATE ON encoding_jobs 
+    FOR EACH ROW 
+    EXECUTE FUNCTION update_updated_at_column();
+
 -- Log successful initialization
 \echo 'PostgreSQL database initialized successfully for Athena platform with all tables and indexes';

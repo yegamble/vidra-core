@@ -15,7 +15,13 @@ import (
 
 	"athena/internal/config"
 	"athena/internal/httpapi"
-	appMiddleware "athena/internal/middleware"
+    appMiddleware "athena/internal/middleware"
+)
+
+// Populated via -ldflags at build time in Dockerfile
+var (
+    version   = "dev"
+    buildTime = ""
 )
 
 func main() {
@@ -44,12 +50,16 @@ func main() {
 		IdleTimeout:  120 * time.Second,
 	}
 
-	go func() {
-		log.Printf("Server starting on port %d", cfg.Port)
-		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("Server failed to start: %v", err)
-		}
-	}()
+    go func() {
+        if buildTime != "" {
+            log.Printf("Server starting on port %d (version=%s, build=%s)", cfg.Port, version, buildTime)
+        } else {
+            log.Printf("Server starting on port %d (version=%s)", cfg.Port, version)
+        }
+        if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+            log.Fatalf("Server failed to start: %v", err)
+        }
+    }()
 
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)

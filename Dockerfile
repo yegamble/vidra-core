@@ -13,8 +13,12 @@ RUN go mod download
 COPY . .
 
 # Build the application
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
-    -ldflags="-w -s -X main.version=$(git describe --tags --always --dirty) -X main.buildTime=$(date -u +%Y%m%d.%H%M%S)" \
+# Allow injecting build metadata without requiring a .git directory in context
+ARG VERSION=dev
+ARG BUILD_TIME
+RUN : "${BUILD_TIME:=$(date -u +%Y%m%d.%H%M%S)}" && \
+    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+    -ldflags="-w -s -X main.version=${VERSION} -X main.buildTime=${BUILD_TIME}" \
     -o server ./cmd/server
 
 # Runtime stage
