@@ -148,16 +148,16 @@ func TestIsValidResolution(t *testing.T) {
 }
 
 func TestResolutionHeights(t *testing.T) {
-	expectedHeights := map[string]int{
-		"240p":  240,
-		"360p":  360,
-		"480p":  480,
-		"720p":  720,
-		"1080p": 1080,
-		"1440p": 1440,
-		"2160p": 2160,
-		"4320p": 4320,
-	}
+    expectedHeights := map[string]int{
+        "240p":  240,
+        "360p":  360,
+        "480p":  480,
+        "720p":  720,
+        "1080p": 1080,
+        "1440p": 1440,
+        "2160p": 2160,
+        "4320p": 4320,
+    }
 
 	for resolution, expectedHeight := range expectedHeights {
 		t.Run(resolution, func(t *testing.T) {
@@ -174,6 +174,30 @@ func TestResolutionHeights(t *testing.T) {
 			assert.True(t, exists, "Supported resolution %s should have height defined", resolution)
 		})
 	}
+}
+
+func TestHeightForResolution(t *testing.T) {
+    tests := []struct{
+        res string
+        height int
+        ok bool
+    }{
+        {"240p", 240, true},
+        {"720p", 720, true},
+        {"1080p", 1080, true},
+        {"999p", 0, false},
+        {"", 0, false},
+    }
+
+    for _, tt := range tests {
+        t.Run(tt.res, func(t *testing.T) {
+            h, ok := HeightForResolution(tt.res)
+            assert.Equal(t, tt.ok, ok)
+            if tt.ok {
+                assert.Equal(t, tt.height, h)
+            }
+        })
+    }
 }
 
 func TestSupportedResolutions(t *testing.T) {

@@ -26,8 +26,15 @@ var supportedResolutionSet = func() map[string]struct{} {
 }()
 
 func IsValidResolution(res string) bool {
-	_, ok := supportedResolutionSet[res]
-	return ok
+    _, ok := supportedResolutionSet[res]
+    return ok
+}
+
+// HeightForResolution returns the pixel height for a given resolution label
+// and a boolean indicating whether it exists.
+func HeightForResolution(res string) (int, bool) {
+    h, ok := ResolutionHeights[res]
+    return h, ok
 }
 
 type Video struct {

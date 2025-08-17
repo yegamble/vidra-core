@@ -310,8 +310,8 @@ func TestUploadService_CompleteUpload(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	// Complete upload
-	err := uploadService.CompleteUpload(ctx, response.SessionID)
+    // Complete upload
+    err := uploadService.CompleteUpload(ctx, response.SessionID)
 	require.NoError(t, err)
 
 	// Verify session status updated
@@ -340,6 +340,72 @@ func TestUploadService_CompleteUpload(t *testing.T) {
 	assert.Contains(t, job.TargetResolutions, "480p")
 	assert.Contains(t, job.TargetResolutions, "360p")
 	assert.Contains(t, job.TargetResolutions, "240p")
+}
+
+func TestUploadService_CompleteUpload_UsesMetadataHeight(t *testing.T) {
+    testDB := testutil.SetupTestDB(t)
+    uploadRepo := repository.NewUploadRepository(testDB.DB)
+    encodingRepo := repository.NewEncodingRepository(testDB.DB)
+    videoRepo := repository.NewVideoRepository(testDB.DB)
+    userRepo := repository.NewUserRepository(testDB.DB)
+
+    tempDir := testTempDir(t)
+    uploadService := usecase.NewUploadService(uploadRepo, encodingRepo, videoRepo, tempDir, createTestConfig())
+
+    ctx := context.Background()
+
+    // Setup test data
+    user := createTestUser(t, userRepo, ctx, "testuser", "test@example.com")
+    response := initiateTestUpload(t, uploadService, ctx, user.ID)
+
+    // Upload all chunks (match 1000 bytes / 100 byte chunks)
+    testData := make([]byte, 1000)
+    for i := range testData {
+        testData[i] = byte('A' + (i % 26))
+    }
+    chunkSize := int(response.ChunkSize)
+    totalChunks := response.TotalChunks
+    for i := 0; i < totalChunks; i++ {
+        start := i * chunkSize
+        end := start + chunkSize
+        if end > len(testData) { end = len(testData) }
+
+        chunkData := testData[start:end]
+        hasher := sha256.New()
+        hasher.Write(chunkData)
+        checksum := hex.EncodeToString(hasher.Sum(nil))
+
+        chunk := &domain.ChunkUpload{
+            SessionID:  response.SessionID,
+            ChunkIndex: i,
+            Data:       chunkData,
+            Checksum:   checksum,
+        }
+
+        _, err := uploadService.UploadChunk(ctx, response.SessionID, chunk)
+        require.NoError(t, err)
+    }
+
+    // Set video metadata height to a value between 720p and 1080p to test detection.
+    session, err := uploadRepo.GetSession(ctx, response.SessionID)
+    require.NoError(t, err)
+    // Update metadata JSON directly for test: {"height":900}
+    _, err = testDB.DB.ExecContext(ctx, `UPDATE videos SET metadata = '{"height":900}' WHERE id = $1`, session.VideoID)
+    require.NoError(t, err)
+
+    // Complete upload — should detect 900 -> 720p (lower on tie/closest)
+    err = uploadService.CompleteUpload(ctx, response.SessionID)
+    require.NoError(t, err)
+
+    job, err := encodingRepo.GetJobByVideoID(ctx, session.VideoID)
+    require.NoError(t, err)
+    assert.Equal(t, "720p", job.SourceResolution)
+    // Ensure no targets exceed 720p
+    for _, tr := range job.TargetResolutions {
+        if h, ok := domain.HeightForResolution(tr); ok {
+            assert.LessOrEqual(t, h, 720)
+        }
+    }
 }
 
 func TestUploadService_CompleteUpload_IncompleteChunks(t *testing.T) {

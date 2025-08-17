@@ -232,11 +232,14 @@ func (s *uploadService) CompleteUpload(ctx context.Context, sessionID string) er
 		return fmt.Errorf("failed to update video status: %w", err)
 	}
 
-	// Create encoding job
-	finalFilePath := filepath.Join(s.uploadsDir, "completed", session.VideoID+filepath.Ext(session.FileName))
-	
-	// TODO: Detect video resolution from file metadata
-	sourceResolution := "1080p" // Placeholder - should be detected from video metadata
+    // Create encoding job
+    finalFilePath := filepath.Join(s.uploadsDir, "completed", session.VideoID+filepath.Ext(session.FileName))
+
+    // Detect video resolution from metadata height if available, otherwise fallback.
+    sourceResolution := domain.DefaultResolution
+    if video.Metadata.Height > 0 {
+        sourceResolution = domain.DetectResolutionFromHeight(video.Metadata.Height)
+    }
 	
 	job := &domain.EncodingJob{
 		ID:                uuid.NewString(),
