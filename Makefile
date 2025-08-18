@@ -1,4 +1,4 @@
-.PHONY: help deps lint test test-integration build docker docker-up docker-down migrate clean dev install-tools test-ci postman-newman postman-e2e run logs migrate-up migrate-up-docker migrate-test migrate-test-docker
+.PHONY: help deps lint test test-integration build docker docker-up docker-down migrate clean dev install-tools test-ci postman-newman postman-e2e run logs migrate-up migrate-up-docker migrate-test migrate-test-docker run-encoder
 
 # Use docker compose v2 if available; override with DOCKER_COMPOSE="docker-compose" if needed
 DOCKER_COMPOSE ?= docker compose
@@ -237,3 +237,13 @@ ci-test: deps lint test-ci ## Run CI test pipeline
 
 ci-build: ci-test build ## Run CI build pipeline
 	@echo "CI build pipeline completed successfully!"
+
+ENCODER_WORKERS ?= 2
+METRICS_ADDR ?= :9090
+UPLOADS_DIR ?= ./uploads
+FFMPEG_PATH ?= ffmpeg
+
+run-encoder: ## Run encoding worker with metrics
+	@echo "Starting encoder (workers=$(ENCODER_WORKERS), metrics=$(METRICS_ADDR))..."
+	@ENCODER_WORKERS=$(ENCODER_WORKERS) METRICS_ADDR=$(METRICS_ADDR) UPLOADS_DIR=$(UPLOADS_DIR) FFMPEG_PATH=$(FFMPEG_PATH) \
+		go run ./cmd/encoder

@@ -1,21 +1,21 @@
 package httpapi
 
 import (
-    "context"
-    "fmt"
-    "os"
-    "path/filepath"
-    "time"
+	"context"
+	"fmt"
+	"os"
+	"path/filepath"
+	"time"
 
-    "github.com/go-chi/chi/v5"
-    "github.com/jmoiron/sqlx"
-    _ "github.com/lib/pq"
-    "github.com/redis/go-redis/v9"
+	"github.com/go-chi/chi/v5"
+	"github.com/jmoiron/sqlx"
+	_ "github.com/lib/pq"
+	"github.com/redis/go-redis/v9"
 
-    "athena/internal/config"
-    "athena/internal/middleware"
-    "athena/internal/repository"
-    "athena/internal/usecase"
+	"athena/internal/config"
+	"athena/internal/middleware"
+	"athena/internal/repository"
+	"athena/internal/usecase"
 )
 
 func RegisterRoutes(r chi.Router, cfg *config.Config) {
@@ -26,42 +26,42 @@ func RegisterRoutes(r chi.Router, cfg *config.Config) {
 	if err != nil {
 		panic(fmt.Errorf("failed to connect to database: %w", err))
 	}
-    userRepo := repository.NewUserRepository(db)
-    videoRepo := repository.NewVideoRepository(db)
-    uploadRepo := repository.NewUploadRepository(db)
-    encodingRepo := repository.NewEncodingRepository(db)
-    dbAuthRepo := repository.NewAuthRepository(db)
+	userRepo := repository.NewUserRepository(db)
+	videoRepo := repository.NewVideoRepository(db)
+	uploadRepo := repository.NewUploadRepository(db)
+	encodingRepo := repository.NewEncodingRepository(db)
+	dbAuthRepo := repository.NewAuthRepository(db)
 
-    // Create uploads directory structure
-    uploadsDir := "./uploads"
-    if err := os.MkdirAll(filepath.Join(uploadsDir, "temp"), 0755); err != nil {
-        panic(fmt.Errorf("failed to create temp uploads directory: %w", err))
-    }
-    if err := os.MkdirAll(filepath.Join(uploadsDir, "completed"), 0755); err != nil {
-        panic(fmt.Errorf("failed to create completed uploads directory: %w", err))
-    }
+	// Create uploads directory structure
+	uploadsDir := "./uploads"
+	if err := os.MkdirAll(filepath.Join(uploadsDir, "temp"), 0755); err != nil {
+		panic(fmt.Errorf("failed to create temp uploads directory: %w", err))
+	}
+	if err := os.MkdirAll(filepath.Join(uploadsDir, "completed"), 0755); err != nil {
+		panic(fmt.Errorf("failed to create completed uploads directory: %w", err))
+	}
 
-    // Initialize upload service
-    uploadService := usecase.NewUploadService(uploadRepo, encodingRepo, videoRepo, uploadsDir, cfg)
+	// Initialize upload service
+	uploadService := usecase.NewUploadService(uploadRepo, encodingRepo, videoRepo, uploadsDir, cfg)
 
-    // Initialize Redis session repo
-    redisOpts, err := redis.ParseURL(cfg.RedisURL)
-    if err != nil {
-        panic(fmt.Errorf("failed to parse redis url: %w", err))
-    }
-    rdb := redis.NewClient(redisOpts)
-    // Fail fast if Redis is unreachable
-    if err := func() error {
-        ctx, cancel := context.WithTimeout(context.Background(), time.Duration(cfg.RedisPingTimeout)*time.Second)
-        defer cancel()
-        return rdb.Ping(ctx).Err()
-    }(); err != nil {
-        panic(fmt.Errorf("failed to connect to redis: %w", err))
-    }
-    sessionRepo := repository.NewCompositeAuthRepository(dbAuthRepo, repository.NewRedisSessionRepository(rdb))
+	// Initialize Redis session repo
+	redisOpts, err := redis.ParseURL(cfg.RedisURL)
+	if err != nil {
+		panic(fmt.Errorf("failed to parse redis url: %w", err))
+	}
+	rdb := redis.NewClient(redisOpts)
+	// Fail fast if Redis is unreachable
+	if err := func() error {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Duration(cfg.RedisPingTimeout)*time.Second)
+		defer cancel()
+		return rdb.Ping(ctx).Err()
+	}(); err != nil {
+		panic(fmt.Errorf("failed to connect to redis: %w", err))
+	}
+	sessionRepo := repository.NewCompositeAuthRepository(dbAuthRepo, repository.NewRedisSessionRepository(rdb))
 
-    // Create server instance with dependencies
-    server := NewServer(userRepo, sessionRepo, cfg.JWTSecret, rdb, time.Duration(cfg.RedisPingTimeout)*time.Second)
+	// Create server instance with dependencies
+	server := NewServer(userRepo, sessionRepo, cfg.JWTSecret, rdb, time.Duration(cfg.RedisPingTimeout)*time.Second)
 
 	// Register auth routes with appropriate middleware
 	r.Post("/auth/register", server.Register)
@@ -75,21 +75,24 @@ func RegisterRoutes(r chi.Router, cfg *config.Config) {
 
 	// Additional API routes for videos and users (if they exist)
 	r.Route("/api/v1", func(r chi.Router) {
-        r.Route("/videos", func(r chi.Router) {
-            r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/", ListVideosHandler(videoRepo))
-            r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/search", SearchVideosHandler(videoRepo))
-            r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{id}", GetVideoHandler(videoRepo))
-            r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{id}/stream", StreamVideoHandler(videoRepo))
-            r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/qualities", GetSupportedQualities)
+		r.Route("/videos", func(r chi.Router) {
+			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/", ListVideosHandler(videoRepo))
+			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/search", SearchVideosHandler(videoRepo))
+			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{id}", GetVideoHandler(videoRepo))
+			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{id}/stream", StreamVideoHandler(videoRepo))
+			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/qualities", GetSupportedQualities)
 
-            r.With(middleware.Auth(cfg.JWTSecret)).Post("/", CreateVideoHandler(videoRepo))
+			r.With(middleware.Auth(cfg.JWTSecret)).Post("/", CreateVideoHandler(videoRepo))
 			r.With(middleware.Auth(cfg.JWTSecret)).Put("/{id}", UpdateVideoHandler(videoRepo))
 			r.With(middleware.Auth(cfg.JWTSecret)).Delete("/{id}", DeleteVideoHandler(videoRepo))
-			
+
 			// Direct video upload endpoints (for backward compatibility with tests)
 			r.With(middleware.Auth(cfg.JWTSecret)).Post("/{id}/upload", VideoUploadChunkHandler(uploadService, cfg))
 			r.With(middleware.Auth(cfg.JWTSecret)).Post("/{id}/complete", VideoCompleteUploadHandler(uploadService))
-        })
+		})
+
+		// Static HLS handler with privacy gating and cache headers
+		r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/hls/*", HLSHandler(videoRepo))
 
 		// Chunked upload endpoints
 		r.Route("/uploads", func(r chi.Router) {

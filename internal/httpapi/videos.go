@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -736,89 +737,105 @@ segment-00002.ts
 
 // GetSupportedQualities returns supported quality labels and the default
 func GetSupportedQualities(w http.ResponseWriter, r *http.Request) {
-    resp := map[string]interface{}{
-        "qualities": domain.SupportedResolutions,
-        "default":   domain.DefaultResolution,
-    }
-    WriteJSON(w, http.StatusOK, resp)
+	resp := map[string]interface{}{
+		"qualities": domain.SupportedResolutions,
+		"default":   domain.DefaultResolution,
+	}
+	WriteJSON(w, http.StatusOK, resp)
 }
 
 // StreamVideoHandler streams HLS from stored OutputPaths on the video record.
 // If OutputPaths are missing or files not found, it falls back to local encoded directory,
 // and finally to a mocked playlist to preserve tests.
 func StreamVideoHandler(videoRepo usecase.VideoRepository) http.HandlerFunc {
-    return func(w http.ResponseWriter, r *http.Request) {
-        videoID := chi.URLParam(r, "id")
-        if videoID == "" {
-            WriteError(w, http.StatusBadRequest, domain.NewDomainError("MISSING_VIDEO_ID", "Video ID is required"))
-            return
-        }
+	return func(w http.ResponseWriter, r *http.Request) {
+		videoID := chi.URLParam(r, "id")
+		if videoID == "" {
+			WriteError(w, http.StatusBadRequest, domain.NewDomainError("MISSING_VIDEO_ID", "Video ID is required"))
+			return
+		}
 
-        w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
-        w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
+		w.Header().Set("Access-Control-Allow-Origin", "*")
 
-        quality := r.URL.Query().Get("quality")
+		quality := r.URL.Query().Get("quality")
 
-        // Try OutputPaths from DB
-        if videoRepo != nil {
-            if v, err := videoRepo.GetByID(r.Context(), videoID); err == nil && v != nil {
-                // Master
-                if quality == "" {
-                    if p := v.OutputPaths["master"]; p != "" {
-                        if isRemoteURL(p) {
-                            http.Redirect(w, r, p, http.StatusTemporaryRedirect)
-                            return
-                        }
-                        if data, err := os.ReadFile(p); err == nil {
-                            _, _ = w.Write(data)
-                            return
-                        }
-                    }
-                } else {
-                    if !domain.IsValidResolution(quality) {
-                        WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_QUALITY", "Unsupported quality"))
-                        return
-                    }
-                    if p := v.OutputPaths[quality]; p != "" {
-                        if isRemoteURL(p) {
-                            http.Redirect(w, r, p, http.StatusTemporaryRedirect)
-                            return
-                        }
-                        if data, err := os.ReadFile(p); err == nil {
-                            _, _ = w.Write(data)
-                            return
-                        }
-                    }
-                }
-            }
-        }
+		// Try OutputPaths from DB
+		if videoRepo != nil {
+			if v, err := videoRepo.GetByID(r.Context(), videoID); err == nil && v != nil {
+				// Master
+				if quality == "" {
+					if p := v.OutputPaths["master"]; p != "" {
+						if isRemoteURL(p) {
+							http.Redirect(w, r, p, http.StatusTemporaryRedirect)
+							return
+						}
+						if data, err := os.ReadFile(p); err == nil {
+							// redirect to static hls path if possible
+							if rel, ok := hlsRelPath(p); ok {
+								http.Redirect(w, r, "/api/v1/hls/"+rel, http.StatusTemporaryRedirect)
+								return
+							}
+							_, _ = w.Write(data)
+							return
+						}
+					}
+				} else {
+					if !domain.IsValidResolution(quality) {
+						WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_QUALITY", "Unsupported quality"))
+						return
+					}
+					if p := v.OutputPaths[quality]; p != "" {
+						if isRemoteURL(p) {
+							http.Redirect(w, r, p, http.StatusTemporaryRedirect)
+							return
+						}
+						if data, err := os.ReadFile(p); err == nil {
+							// redirect to static hls path if possible
+							if rel, ok := hlsRelPath(p); ok {
+								http.Redirect(w, r, "/api/v1/hls/"+rel, http.StatusTemporaryRedirect)
+								return
+							}
+							_, _ = w.Write(data)
+							return
+						}
+					}
+				}
+			}
+		}
 
-        // Fallback to local encoded directory
-        baseDir := filepath.Join("./uploads", "encoded", videoID)
-        var path string
-        if quality == "" {
-            path = filepath.Join(baseDir, "master.m3u8")
-        } else {
-            if !domain.IsValidResolution(quality) {
-                WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_QUALITY", "Unsupported quality"))
-                return
-            }
-            if h, ok := domain.HeightForResolution(quality); ok {
-                path = filepath.Join(baseDir, fmt.Sprintf("%dp", h), "stream.m3u8")
-            }
-        }
-        if path != "" {
-            if data, err := os.ReadFile(path); err == nil {
-                _, _ = w.Write(data)
-                return
-            }
-        }
+		// Fallback to local encoded directory
+		baseDir := filepath.Join("./uploads", "encoded", videoID)
+		var path string
+		if quality == "" {
+			path = filepath.Join(baseDir, "master.m3u8")
+		} else {
+			if !domain.IsValidResolution(quality) {
+				WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_QUALITY", "Unsupported quality"))
+				return
+			}
+			if h, ok := domain.HeightForResolution(quality); ok {
+				path = filepath.Join(baseDir, fmt.Sprintf("%dp", h), "stream.m3u8")
+			}
+		}
+		if path != "" {
+			if _, err := os.Stat(path); err == nil {
+				if rel, ok := hlsRelPath(path); ok {
+					http.Redirect(w, r, "/api/v1/hls/"+rel, http.StatusTemporaryRedirect)
+					return
+				}
+				if data, err := os.ReadFile(path); err == nil {
+					_, _ = w.Write(data)
+					return
+				}
+			}
+		}
 
-        // Final fallback: mocked playlist
-        if quality == "" {
-            quality = domain.DefaultResolution
-        }
-        hlsPlaylist := fmt.Sprintf(`#EXTM3U
+		// Final fallback: mocked playlist
+		if quality == "" {
+			quality = domain.DefaultResolution
+		}
+		hlsPlaylist := fmt.Sprintf(`#EXTM3U
 #EXT-X-VERSION:3
 # QUALITY:%s
 #EXT-X-TARGETDURATION:10
@@ -830,10 +847,61 @@ segment-00001.ts
 #EXTINF:10.0,
 segment-00002.ts
 #EXT-X-ENDLIST`, quality)
-        _, _ = w.Write([]byte(hlsPlaylist))
-    }
+		_, _ = w.Write([]byte(hlsPlaylist))
+	}
 }
 
 func isRemoteURL(s string) bool {
-    return len(s) > 7 && (s[:7] == "http://" || (len(s) > 8 && s[:8] == "https://"))
+	return len(s) > 7 && (s[:7] == "http://" || (len(s) > 8 && s[:8] == "https://"))
+}
+
+func hlsRelPath(localPath string) (string, bool) {
+	base := filepath.Clean(filepath.Join(".", "uploads", "encoded"))
+	p := filepath.Clean(localPath)
+	rel, err := filepath.Rel(base, p)
+	if err == nil && rel != "" && !strings.HasPrefix(rel, "..") {
+		return filepath.ToSlash(rel), true
+	}
+	return "", false
+}
+
+// HLSHandler serves playlists and segments from the encoded directory with basic
+// privacy gating and appropriate cache headers.
+func HLSHandler(videoRepo usecase.VideoRepository) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// Path expected: /api/v1/hls/{videoId}/...
+		const prefix = "/api/v1/hls/"
+		if !strings.HasPrefix(r.URL.Path, prefix) {
+			http.NotFound(w, r)
+			return
+		}
+		rel := strings.TrimPrefix(r.URL.Path, prefix)
+		parts := strings.SplitN(rel, "/", 2)
+		if len(parts) < 1 || parts[0] == "" {
+			http.NotFound(w, r)
+			return
+		}
+		videoID := parts[0]
+		// Basic privacy gating: public = allow, private = require owner auth, unlisted = allow
+		if v, err := videoRepo.GetByID(r.Context(), videoID); err == nil && v != nil {
+			if v.Privacy == domain.PrivacyPrivate {
+				userID, _ := r.Context().Value(middleware.UserIDKey).(string)
+				if userID == "" || userID != v.UserID {
+					WriteError(w, http.StatusForbidden, domain.NewDomainError("FORBIDDEN", "Access denied"))
+					return
+				}
+			}
+		}
+		local := filepath.Clean(filepath.Join(".", "uploads", "encoded", rel))
+		if strings.HasSuffix(local, ".m3u8") {
+			w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
+			w.Header().Set("Cache-Control", "public, max-age=60")
+		} else if strings.HasSuffix(local, ".ts") {
+			w.Header().Set("Content-Type", "video/MP2T")
+			w.Header().Set("Cache-Control", "public, max-age=86400, immutable")
+		} else {
+			w.Header().Set("Cache-Control", "public, max-age=300")
+		}
+		http.ServeFile(w, r, local)
+	}
 }

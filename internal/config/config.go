@@ -193,6 +193,10 @@ func Load() (*Config, error) {
 	cfg.HLSSegmentDuration = getIntEnv("HLS_SEGMENT_DURATION", 4)
 	cfg.ThumbnailCount = getIntEnv("THUMBNAIL_COUNT", 3)
 
+    // HLS Signing
+    cfg.HLSSecret = getEnvOrDefault("HLS_SIGNING_SECRET", "")
+    cfg.HLSTokenTTL = getIntEnv("HLS_TOKEN_TTL", 600)
+
 	// Storage Tiers Configuration
 	cfg.HotStorageLimit = getEnvOrDefault("HOT_STORAGE_LIMIT", "100GB")
 	cfg.WarmStorageLimit = getEnvOrDefault("WARM_STORAGE_LIMIT", "1TB")
