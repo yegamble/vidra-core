@@ -77,6 +77,10 @@ type Config struct {
 	VideoQualities      []string
 	HLSSegmentDuration  int
 	ThumbnailCount      int
+	
+	// HLS Signing Configuration
+	HLSSecret    string
+	HLSTokenTTL  int
 
 	// Storage Tiers Configuration
 	HotStorageLimit   string
