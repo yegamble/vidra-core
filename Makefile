@@ -53,6 +53,19 @@ test-integration-local: ## Run only integration tests with local Docker services
 	go test -v -race -run Integration ./...
 	docker-compose -f docker-compose.test.yml down -v
 
+migrate-migrations: ## Apply all SQL migrations in migrations/ to DATABASE_URL
+	@if [ -z "${DATABASE_URL}" ]; then \
+		echo "DATABASE_URL is not set. Export it to run migrations."; \
+		exit 2; \
+	fi; \
+	set -e; \
+	shopt -s nullglob; \
+	for f in migrations/*.sql; do \
+		echo "Applying $$f"; \
+		psql "${DATABASE_URL}" -v ON_ERROR_STOP=1 -f "$$f"; \
+	done; \
+	echo "Migrations applied successfully."
+
 docker-up: ## Start local dev stack (Postgres, Redis, IPFS, app)
 	docker compose up -d --build
 	@echo "Waiting for services to be ready..."
