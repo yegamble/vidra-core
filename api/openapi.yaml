@@ -229,6 +229,95 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
+  /api/v1/videos/qualities:
+    get:
+      tags:
+        - Videos
+      summary: Get supported video qualities
+      description: Returns the list of supported quality labels and the default quality used for streaming.
+      operationId: getSupportedQualities
+      security: []
+      responses:
+        '200':
+          description: Supported qualities returned
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WrappedQualitiesResponse'
+              examples:
+                example:
+                  summary: Supported qualities
+                  value:
+                    success: true
+                    data:
+                      qualities: ["240p","360p","480p","720p","1080p","1440p","2160p","4320p"]
+                      default: "720p"
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/videos/{id}/stream:
+    get:
+      tags:
+        - Videos
+      summary: Stream video as HLS playlist
+      description: Returns an HLS playlist for the requested video ID at the desired quality. If no quality is provided, the default quality is used.
+      operationId: streamVideo
+      security: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          description: Video ID (UUID)
+          schema:
+            type: string
+            format: uuid
+        - in: query
+          name: quality
+          required: false
+          description: Desired stream quality label
+          schema:
+            type: string
+            enum: ["240p","360p","480p","720p","1080p","1440p","2160p","4320p"]
+      responses:
+        '200':
+          description: HLS playlist
+          content:
+            application/vnd.apple.mpegurl:
+              schema:
+                type: string
+              examples:
+                hls:
+                  summary: Sample HLS playlist
+                  value: |
+                    #EXTM3U
+                    #EXT-X-VERSION:3
+                    # QUALITY:720p
+                    #EXT-X-TARGETDURATION:10
+                    #EXT-X-MEDIA-SEQUENCE:0
+                    #EXTINF:10.0,
+                    segment-00000.ts
+                    #EXTINF:10.0,
+                    segment-00001.ts
+                    #EXTINF:10.0,
+                    segment-00002.ts
+                    #EXT-X-ENDLIST
+        '400':
+          description: Invalid quality parameter
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Video not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
 components:
   securitySchemes:
     bearerAuth:
@@ -485,35 +574,6 @@ components:
         - checks
         - timestamp
 
-  /api/v1/videos/qualities:
-    get:
-      tags:
-        - Videos
-      summary: Get supported video qualities
-      description: Returns the list of supported quality labels and the default quality used for streaming.
-      operationId: getSupportedQualities
-      security: []
-      responses:
-        '200':
-          description: Supported qualities returned
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/WrappedQualitiesResponse'
-              examples:
-                example:
-                  summary: Supported qualities
-                  value:
-                    success: true
-                    data:
-                      qualities: ["240p","360p","480p","720p","1080p","1440p","2160p","4320p"]
-                      default: "720p"
-        '500':
-          description: Server error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
     ErrorResponse:
       type: object
       properties:
@@ -537,63 +597,9 @@ components:
             - code
             - message
             - details
+        success:
+          type: boolean
+          example: false
       required:
         - error
-  /api/v1/videos/{id}/stream:
-    get:
-      tags:
-        - Videos
-      summary: Stream video as HLS playlist
-      description: Returns an HLS playlist for the requested video ID at the desired quality. If no quality is provided, the default quality is used.
-      operationId: streamVideo
-      security: []
-      parameters:
-        - in: path
-          name: id
-          required: true
-          description: Video ID (UUID)
-          schema:
-            type: string
-            format: uuid
-        - in: query
-          name: quality
-          required: false
-          description: Desired stream quality label
-          schema:
-            type: string
-            enum: ["240p","360p","480p","720p","1080p","1440p","2160p","4320p"]
-      responses:
-        '200':
-          description: HLS playlist
-          content:
-            application/vnd.apple.mpegurl:
-              schema:
-                type: string
-              examples:
-                hls:
-                  summary: Sample HLS playlist
-                  value: |
-                    #EXTM3U
-                    #EXT-X-VERSION:3
-                    # QUALITY:720p
-                    #EXT-X-TARGETDURATION:10
-                    #EXT-X-MEDIA-SEQUENCE:0
-                    #EXTINF:10.0,
-                    segment-00000.ts
-                    #EXTINF:10.0,
-                    segment-00001.ts
-                    #EXTINF:10.0,
-                    segment-00002.ts
-                    #EXT-X-ENDLIST
-        '400':
-          description: Invalid quality parameter
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-        '404':
-          description: Video not found
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
+        - success

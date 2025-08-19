@@ -66,18 +66,9 @@ migrate-migrations: ## Apply all SQL migrations in migrations/ to DATABASE_URL
 	done; \
 	echo "Migrations applied successfully."
 
-docker-up: ## Start local dev stack (Postgres, Redis, IPFS, app)
-	docker compose up -d --build
-	@echo "Waiting for services to be ready..."
-	@sleep 10
-	@echo "Visit http://localhost:8080/health"
-
-docker-down: ## Stop and remove local dev stack
-	docker compose down -v
-
-dev: docker-up ## Rebuild and follow app logs
-	@echo "Following app logs. Ctrl+C to quit."
-	docker compose logs -f app
+# docker-up moved to avoid duplicates - see line 101
+# docker-down moved to avoid duplicates - see line 107  
+# dev moved to avoid duplicates - see line 169
 
 run: ## Run server locally (requires local Postgres/Redis/IPFS env)
 	go run ./cmd/server
