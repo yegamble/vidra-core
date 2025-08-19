@@ -45,26 +45,26 @@ test-integration: ## Run only integration tests (loads .env.test if present)
 	@bash -lc 'set -a; [ -f .env.test ] && source .env.test || true; set +a; go test -v -race -run Integration ./...'
 
 test-local: ## Run tests with local Docker services
-	docker-compose -f docker-compose.test.yml up -d
+	COMPOSE_PROJECT_NAME=athena-test docker-compose -f docker-compose.test.yml up -d
 	@echo "Waiting for services to be ready..."
 	@sleep 10
 	DATABASE_URL="postgres://test_user:test_password@localhost:5433/athena_test?sslmode=disable" \
 	REDIS_URL="redis://localhost:6380/0" \
 	JWT_SECRET="test-jwt-secret" \
-	IPFS_API="http://localhost:5001" \
+	IPFS_API="http://localhost:15001" \
 	go test -v -race -coverprofile=coverage.out ./...
-	docker-compose -f docker-compose.test.yml down -v
+	COMPOSE_PROJECT_NAME=athena-test docker-compose -f docker-compose.test.yml down -v
 
 test-integration-local: ## Run only integration tests with local Docker services
-	docker-compose -f docker-compose.test.yml up -d
+	COMPOSE_PROJECT_NAME=athena-test docker-compose -f docker-compose.test.yml up -d
 	@echo "Waiting for services to be ready..."
 	@sleep 10
 	DATABASE_URL="postgres://test_user:test_password@localhost:5433/athena_test?sslmode=disable" \
 	REDIS_URL="redis://localhost:6380/0" \
 	JWT_SECRET="test-jwt-secret" \
-	IPFS_API="http://localhost:5001" \
+	IPFS_API="http://localhost:15001" \
 	go test -v -race -run Integration ./...
-	docker-compose -f docker-compose.test.yml down -v
+	COMPOSE_PROJECT_NAME=athena-test docker-compose -f docker-compose.test.yml down -v
 
 migrate-migrations: ## Apply all SQL migrations in migrations/ to DATABASE_URL
 	@if [ -z "${DATABASE_URL}" ]; then \
@@ -205,21 +205,21 @@ postman-newman: ## Run Postman auth tests via Newman (server must be running)
 # Spin up test stack, app, then run Newman end-to-end
 postman-e2e: ## Start test services + app and run Newman end-to-end
 	@echo "Starting test stack (DB, Redis, App)..."
-	docker-compose -f docker-compose.test.yml up -d --build
+	COMPOSE_PROJECT_NAME=athena-test docker-compose -f docker-compose.test.yml up -d --build
 	@echo "Waiting for app-test to be healthy..."
 	@for i in $$(seq 1 40); do \
-	  status=$$(docker inspect --format='{{json .State.Health.Status}}' $$(docker-compose -f docker-compose.test.yml ps -q app-test) 2>/dev/null | tr -d '"'); \
+	  status=$$(docker inspect --format='{{json .State.Health.Status}}' $$(COMPOSE_PROJECT_NAME=athena-test docker-compose -f docker-compose.test.yml ps -q app-test) 2>/dev/null | tr -d '"'); \
 	  if [ "$$status" = "healthy" ]; then echo "app-test is healthy"; break; fi; \
 	  sleep 2; \
 	done
 	@echo "Running Newman inside compose network against http://app-test:8080 ..."
-	docker-compose -f docker-compose.test.yml run --rm newman || { \
+	COMPOSE_PROJECT_NAME=athena-test docker-compose -f docker-compose.test.yml run --rm newman || { \
 	  echo "Newman tests failed"; \
-	  docker-compose -f docker-compose.test.yml down -v; \
+	  COMPOSE_PROJECT_NAME=athena-test docker-compose -f docker-compose.test.yml down -v; \
 	  exit 1; \
 	}
 	@echo "Shutting down test stack..."
-	docker-compose -f docker-compose.test.yml down -v
+	COMPOSE_PROJECT_NAME=athena-test docker-compose -f docker-compose.test.yml down -v
 
 setup: ## Initial project setup
 	@echo "Setting up Athena project..."

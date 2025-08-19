@@ -46,13 +46,13 @@ services:
     environment:
       - IPFS_PROFILE=server
     ports:
-      - "5001:5001" # API
+      - "15001:5001" # API (avoid host 5001 conflicts)
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:5001/api/v0/version"]
+      test: ["CMD-SHELL", "wget --spider -q -T 3 http://127.0.0.1:5001/api/v0/version || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 10
-      start_period: 20s
+      start_period: 45s
     networks:
       - test-network
 
@@ -64,12 +64,12 @@ services:
       redis-test:
         condition: service_healthy
       ipfs-test:
-        condition: service_healthy
+        condition: service_started
     environment:
       DATABASE_URL: postgres://test_user:test_password@postgres-test:5432/athena_test?sslmode=disable
       REDIS_URL: redis://redis-test:6379/0
       JWT_SECRET: test-jwt-secret
-      IPFS_API: http://ipfs:5001
+      IPFS_API: http://ipfs-test:5001
       REQUIRE_IPFS: "false"
       PORT: 8080
     ports:
