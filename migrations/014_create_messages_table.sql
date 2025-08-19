@@ -56,12 +56,15 @@ CREATE TRIGGER update_conversations_updated_at
 -- Function to ensure conversation participants are ordered consistently
 CREATE OR REPLACE FUNCTION ensure_conversation_order() 
 RETURNS TRIGGER AS $$
+DECLARE
+    temp_id UUID;
 BEGIN
     -- Ensure participant_one_id is always less than participant_two_id for consistency
     IF NEW.participant_one_id > NEW.participant_two_id THEN
         -- Swap the participants
-        NEW.participant_one_id := OLD.participant_two_id;
-        NEW.participant_two_id := OLD.participant_one_id;
+        temp_id := NEW.participant_one_id;
+        NEW.participant_one_id := NEW.participant_two_id;
+        NEW.participant_two_id := temp_id;
     END IF;
     RETURN NEW;
 END;
