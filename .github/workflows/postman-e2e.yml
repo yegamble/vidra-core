@@ -1,0 +1,59 @@
+name: Postman E2E (Compose)
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  postman-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Docker info
+        run: |
+          docker version
+          docker info
+
+      - name: Run Postman E2E via Makefile
+        env:
+          # Ensure compose v2 is used by Makefile
+          DOCKER_COMPOSE: docker compose
+        run: |
+          make postman-e2e
+
+      - name: Upload Newman results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: newman-results-e2e
+          path: postman/newman-results.xml
+
+      - name: Collect docker-compose logs
+        if: always()
+        run: |
+          set -e
+          mkdir -p artifacts
+          COMPOSE_PROJECT_NAME=athena-test docker compose -f docker-compose.test.yml logs --no-color > artifacts/compose-logs.txt || true
+          cat artifacts/compose-logs.txt | tail -n 200 || true
+
+      - name: Upload compose logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: compose-logs-e2e
+          path: artifacts/compose-logs.txt
+

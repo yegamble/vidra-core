@@ -45,7 +45,7 @@ test-integration: ## Run only integration tests (loads .env.test if present)
 	@bash -lc 'set -a; [ -f .env.test ] && source .env.test || true; set +a; go test -v -race -run Integration ./...'
 
 test-local: ## Run tests with local Docker services
-	COMPOSE_PROJECT_NAME=athena-test docker-compose -f docker-compose.test.yml up -d
+	COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) -f docker-compose.test.yml up -d
 	@echo "Waiting for services to be ready..."
 	@sleep 10
 	DATABASE_URL="postgres://test_user:test_password@localhost:5433/athena_test?sslmode=disable" \
@@ -53,10 +53,10 @@ test-local: ## Run tests with local Docker services
 	JWT_SECRET="test-jwt-secret" \
 	IPFS_API="http://localhost:15001" \
 	go test -v -race -coverprofile=coverage.out ./...
-	COMPOSE_PROJECT_NAME=athena-test docker-compose -f docker-compose.test.yml down -v
+	COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) -f docker-compose.test.yml down -v
 
 test-integration-local: ## Run only integration tests with local Docker services
-	COMPOSE_PROJECT_NAME=athena-test docker-compose -f docker-compose.test.yml up -d
+	COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) -f docker-compose.test.yml up -d
 	@echo "Waiting for services to be ready..."
 	@sleep 10
 	DATABASE_URL="postgres://test_user:test_password@localhost:5433/athena_test?sslmode=disable" \
@@ -64,7 +64,7 @@ test-integration-local: ## Run only integration tests with local Docker services
 	JWT_SECRET="test-jwt-secret" \
 	IPFS_API="http://localhost:15001" \
 	go test -v -race -run Integration ./...
-	COMPOSE_PROJECT_NAME=athena-test docker-compose -f docker-compose.test.yml down -v
+	COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) -f docker-compose.test.yml down -v
 
 migrate-migrations: ## Apply all SQL migrations in migrations/ to DATABASE_URL
 	@if [ -z "${DATABASE_URL}" ]; then \
@@ -103,20 +103,20 @@ docker: ## Build Docker image
 	docker build -t athena-server:latest .
 
 docker-up: ## Start docker-compose services
-	docker-compose up -d
+	$(DOCKER_COMPOSE) up -d
 	@echo "Waiting for services to be healthy..."
 	@sleep 15
 	@echo "Services are up! Application available at http://localhost:8080"
 
 docker-down: ## Stop docker-compose services
-	docker-compose down
+	$(DOCKER_COMPOSE) down
 
 docker-logs: ## View docker-compose logs
-	docker-compose logs -f
+	$(DOCKER_COMPOSE) logs -f
 
 docker-reset: ## Reset docker environment (remove volumes)
-	docker-compose down -v
-	docker-compose up -d
+	$(DOCKER_COMPOSE) down -v
+	$(DOCKER_COMPOSE) up -d
 
 migrate-up: ## Run database migrations against local DB (psql)
 	@if [ -z "${DATABASE_URL}" ]; then \
