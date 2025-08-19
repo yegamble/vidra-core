@@ -12,8 +12,9 @@ import (
 	"athena/internal/config"
 	"athena/internal/domain"
 	"athena/internal/repository"
-	"athena/internal/usecase"
 	"athena/internal/testutil"
+	"athena/internal/usecase"
+
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -24,9 +25,9 @@ func createTestConfig() *config.Config {
 	return &config.Config{
 		ValidationStrictMode:          false, // Allow optional checksums in tests
 		ValidationAllowedAlgorithms:   []string{"sha256"},
-		ValidationTestMode:           true,  // Enable test mode for bypasses
+		ValidationTestMode:            true, // Enable test mode for bypasses
 		ValidationEnableIntegrityJobs: false,
-		ValidationLogEvents:          false,
+		ValidationLogEvents:           false,
 	}
 }
 
@@ -37,8 +38,8 @@ func TestUploadService_InitiateUpload(t *testing.T) {
 	videoRepo := repository.NewVideoRepository(testDB.DB)
 	userRepo := repository.NewUserRepository(testDB.DB)
 
-    // Create temp directory for uploads within workspace (sandbox-safe)
-    tempDir := testTempDir(t)
+	// Create temp directory for uploads within workspace (sandbox-safe)
+	tempDir := testTempDir(t)
 	uploadService := usecase.NewUploadService(uploadRepo, encodingRepo, videoRepo, tempDir, createTestConfig())
 
 	ctx := context.Background()
@@ -89,7 +90,7 @@ func TestUploadService_InitiateUpload_FileTooLarge(t *testing.T) {
 	videoRepo := repository.NewVideoRepository(testDB.DB)
 	userRepo := repository.NewUserRepository(testDB.DB)
 
-    tempDir := testTempDir(t)
+	tempDir := testTempDir(t)
 	uploadService := usecase.NewUploadService(uploadRepo, encodingRepo, videoRepo, tempDir, createTestConfig())
 
 	ctx := context.Background()
@@ -113,7 +114,7 @@ func TestUploadService_UploadChunk(t *testing.T) {
 	videoRepo := repository.NewVideoRepository(testDB.DB)
 	userRepo := repository.NewUserRepository(testDB.DB)
 
-    tempDir := testTempDir(t)
+	tempDir := testTempDir(t)
 	uploadService := usecase.NewUploadService(uploadRepo, encodingRepo, videoRepo, tempDir, createTestConfig())
 
 	ctx := context.Background()
@@ -148,7 +149,7 @@ func TestUploadService_UploadChunk(t *testing.T) {
 	// Verify chunk was saved to disk
 	session, err := uploadRepo.GetSession(ctx, response.SessionID)
 	require.NoError(t, err)
-	
+
 	chunkPath := filepath.Join(session.TempFilePath, "chunk_0")
 	savedData, err := os.ReadFile(chunkPath)
 	require.NoError(t, err)
@@ -167,7 +168,7 @@ func TestUploadService_UploadChunk_InvalidChecksum(t *testing.T) {
 	videoRepo := repository.NewVideoRepository(testDB.DB)
 	userRepo := repository.NewUserRepository(testDB.DB)
 
-    tempDir := testTempDir(t)
+	tempDir := testTempDir(t)
 	uploadService := usecase.NewUploadService(uploadRepo, encodingRepo, videoRepo, tempDir, createTestConfig())
 
 	ctx := context.Background()
@@ -196,7 +197,7 @@ func TestUploadService_UploadChunk_Resumable(t *testing.T) {
 	videoRepo := repository.NewVideoRepository(testDB.DB)
 	userRepo := repository.NewUserRepository(testDB.DB)
 
-    tempDir := testTempDir(t)
+	tempDir := testTempDir(t)
 	uploadService := usecase.NewUploadService(uploadRepo, encodingRepo, videoRepo, tempDir, createTestConfig())
 
 	ctx := context.Background()
@@ -222,8 +223,8 @@ func TestUploadService_UploadChunk_Resumable(t *testing.T) {
 
 		chunkResponse, err := uploadService.UploadChunk(ctx, response.SessionID, chunk)
 		require.NoError(t, err)
-		assert.Contains(t, chunkResponse.RemainingChunks, 1) // Should still need chunk 1
-		assert.Contains(t, chunkResponse.RemainingChunks, 3) // Should still need chunk 3
+		assert.Contains(t, chunkResponse.RemainingChunks, 1)             // Should still need chunk 1
+		assert.Contains(t, chunkResponse.RemainingChunks, 3)             // Should still need chunk 3
 		assert.NotContains(t, chunkResponse.RemainingChunks, chunkIndex) // Should not need uploaded chunk
 	}
 
@@ -269,7 +270,7 @@ func TestUploadService_CompleteUpload(t *testing.T) {
 	videoRepo := repository.NewVideoRepository(testDB.DB)
 	userRepo := repository.NewUserRepository(testDB.DB)
 
-    tempDir := testTempDir(t)
+	tempDir := testTempDir(t)
 	uploadService := usecase.NewUploadService(uploadRepo, encodingRepo, videoRepo, tempDir, createTestConfig())
 
 	ctx := context.Background()
@@ -284,7 +285,7 @@ func TestUploadService_CompleteUpload(t *testing.T) {
 		testData[i] = byte('A' + (i % 26)) // Fill with repeating alphabet
 	}
 	chunkSize := int(response.ChunkSize) // Use the chunk size from the response (100 bytes)
-	totalChunks := response.TotalChunks   // Use the total chunks from the response
+	totalChunks := response.TotalChunks  // Use the total chunks from the response
 
 	for i := 0; i < totalChunks; i++ {
 		start := i * chunkSize
@@ -292,7 +293,7 @@ func TestUploadService_CompleteUpload(t *testing.T) {
 		if end > len(testData) {
 			end = len(testData)
 		}
-		
+
 		chunkData := testData[start:end]
 		hasher := sha256.New()
 		hasher.Write(chunkData)
@@ -309,8 +310,8 @@ func TestUploadService_CompleteUpload(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-    // Complete upload
-    err := uploadService.CompleteUpload(ctx, response.SessionID)
+	// Complete upload
+	err := uploadService.CompleteUpload(ctx, response.SessionID)
 	require.NoError(t, err)
 
 	// Verify session status updated
@@ -342,126 +343,132 @@ func TestUploadService_CompleteUpload(t *testing.T) {
 }
 
 func TestUploadService_CompleteUpload_UsesMetadataHeight(t *testing.T) {
-    testDB := testutil.SetupTestDB(t)
-    uploadRepo := repository.NewUploadRepository(testDB.DB)
-    encodingRepo := repository.NewEncodingRepository(testDB.DB)
-    videoRepo := repository.NewVideoRepository(testDB.DB)
-    userRepo := repository.NewUserRepository(testDB.DB)
+	testDB := testutil.SetupTestDB(t)
+	uploadRepo := repository.NewUploadRepository(testDB.DB)
+	encodingRepo := repository.NewEncodingRepository(testDB.DB)
+	videoRepo := repository.NewVideoRepository(testDB.DB)
+	userRepo := repository.NewUserRepository(testDB.DB)
 
-    tempDir := testTempDir(t)
-    uploadService := usecase.NewUploadService(uploadRepo, encodingRepo, videoRepo, tempDir, createTestConfig())
+	tempDir := testTempDir(t)
+	uploadService := usecase.NewUploadService(uploadRepo, encodingRepo, videoRepo, tempDir, createTestConfig())
 
-    ctx := context.Background()
+	ctx := context.Background()
 
-    // Setup test data
-    user := createTestUser(t, userRepo, ctx, "testuser", "test@example.com")
-    response := initiateTestUpload(t, uploadService, ctx, user.ID)
+	// Setup test data
+	user := createTestUser(t, userRepo, ctx, "testuser", "test@example.com")
+	response := initiateTestUpload(t, uploadService, ctx, user.ID)
 
-    // Upload all chunks (match 1000 bytes / 100 byte chunks)
-    testData := make([]byte, 1000)
-    for i := range testData {
-        testData[i] = byte('A' + (i % 26))
-    }
-    chunkSize := int(response.ChunkSize)
-    totalChunks := response.TotalChunks
-    for i := 0; i < totalChunks; i++ {
-        start := i * chunkSize
-        end := start + chunkSize
-        if end > len(testData) { end = len(testData) }
+	// Upload all chunks (match 1000 bytes / 100 byte chunks)
+	testData := make([]byte, 1000)
+	for i := range testData {
+		testData[i] = byte('A' + (i % 26))
+	}
+	chunkSize := int(response.ChunkSize)
+	totalChunks := response.TotalChunks
+	for i := 0; i < totalChunks; i++ {
+		start := i * chunkSize
+		end := start + chunkSize
+		if end > len(testData) {
+			end = len(testData)
+		}
 
-        chunkData := testData[start:end]
-        hasher := sha256.New()
-        hasher.Write(chunkData)
-        checksum := hex.EncodeToString(hasher.Sum(nil))
+		chunkData := testData[start:end]
+		hasher := sha256.New()
+		hasher.Write(chunkData)
+		checksum := hex.EncodeToString(hasher.Sum(nil))
 
-        chunk := &domain.ChunkUpload{
-            SessionID:  response.SessionID,
-            ChunkIndex: i,
-            Data:       chunkData,
-            Checksum:   checksum,
-        }
+		chunk := &domain.ChunkUpload{
+			SessionID:  response.SessionID,
+			ChunkIndex: i,
+			Data:       chunkData,
+			Checksum:   checksum,
+		}
 
-        _, err := uploadService.UploadChunk(ctx, response.SessionID, chunk)
-        require.NoError(t, err)
-    }
+		_, err := uploadService.UploadChunk(ctx, response.SessionID, chunk)
+		require.NoError(t, err)
+	}
 
-    // Set video metadata height to a value between 720p and 1080p to test detection.
-    session, err := uploadRepo.GetSession(ctx, response.SessionID)
-    require.NoError(t, err)
-    // Update metadata JSON directly for test: {"height":900}
-    _, err = testDB.DB.ExecContext(ctx, `UPDATE videos SET metadata = '{"height":900}' WHERE id = $1`, session.VideoID)
-    require.NoError(t, err)
+	// Set video metadata height to a value between 720p and 1080p to test detection.
+	session, err := uploadRepo.GetSession(ctx, response.SessionID)
+	require.NoError(t, err)
+	// Update metadata JSON directly for test: {"height":900}
+	_, err = testDB.DB.ExecContext(ctx, `UPDATE videos SET metadata = '{"height":900}' WHERE id = $1`, session.VideoID)
+	require.NoError(t, err)
 
-    // Complete upload — should detect 900 -> 720p (lower on tie/closest)
-    err = uploadService.CompleteUpload(ctx, response.SessionID)
-    require.NoError(t, err)
+	// Complete upload — should detect 900 -> 720p (lower on tie/closest)
+	err = uploadService.CompleteUpload(ctx, response.SessionID)
+	require.NoError(t, err)
 
-    job, err := encodingRepo.GetJobByVideoID(ctx, session.VideoID)
-    require.NoError(t, err)
-    assert.Equal(t, "720p", job.SourceResolution)
-    // Ensure no targets exceed 720p
-    for _, tr := range job.TargetResolutions {
-        if h, ok := domain.HeightForResolution(tr); ok {
-            assert.LessOrEqual(t, h, 720)
-        }
-    }
+	job, err := encodingRepo.GetJobByVideoID(ctx, session.VideoID)
+	require.NoError(t, err)
+	assert.Equal(t, "720p", job.SourceResolution)
+	// Ensure no targets exceed 720p
+	for _, tr := range job.TargetResolutions {
+		if h, ok := domain.HeightForResolution(tr); ok {
+			assert.LessOrEqual(t, h, 720)
+		}
+	}
 }
 
 func TestUploadService_CompleteUpload_UsesWidthAspectRatio(t *testing.T) {
-    testDB := testutil.SetupTestDB(t)
-    uploadRepo := repository.NewUploadRepository(testDB.DB)
-    encodingRepo := repository.NewEncodingRepository(testDB.DB)
-    videoRepo := repository.NewVideoRepository(testDB.DB)
-    userRepo := repository.NewUserRepository(testDB.DB)
+	testDB := testutil.SetupTestDB(t)
+	uploadRepo := repository.NewUploadRepository(testDB.DB)
+	encodingRepo := repository.NewEncodingRepository(testDB.DB)
+	videoRepo := repository.NewVideoRepository(testDB.DB)
+	userRepo := repository.NewUserRepository(testDB.DB)
 
-    tempDir := testTempDir(t)
-    uploadService := usecase.NewUploadService(uploadRepo, encodingRepo, videoRepo, tempDir, createTestConfig())
+	tempDir := testTempDir(t)
+	uploadService := usecase.NewUploadService(uploadRepo, encodingRepo, videoRepo, tempDir, createTestConfig())
 
-    ctx := context.Background()
+	ctx := context.Background()
 
-    // Setup test data
-    user := createTestUser(t, userRepo, ctx, "testuser", "test@example.com")
-    response := initiateTestUpload(t, uploadService, ctx, user.ID)
+	// Setup test data
+	user := createTestUser(t, userRepo, ctx, "testuser", "test@example.com")
+	response := initiateTestUpload(t, uploadService, ctx, user.ID)
 
-    // Upload all chunks
-    testData := make([]byte, 1000)
-    for i := range testData { testData[i] = byte('A' + (i % 26)) }
-    chunkSize := int(response.ChunkSize)
-    totalChunks := response.TotalChunks
-    for i := 0; i < totalChunks; i++ {
-        start := i * chunkSize
-        end := start + chunkSize
-        if end > len(testData) { end = len(testData) }
+	// Upload all chunks
+	testData := make([]byte, 1000)
+	for i := range testData {
+		testData[i] = byte('A' + (i % 26))
+	}
+	chunkSize := int(response.ChunkSize)
+	totalChunks := response.TotalChunks
+	for i := 0; i < totalChunks; i++ {
+		start := i * chunkSize
+		end := start + chunkSize
+		if end > len(testData) {
+			end = len(testData)
+		}
 
-        chunkData := testData[start:end]
-        hasher := sha256.New()
-        hasher.Write(chunkData)
-        checksum := hex.EncodeToString(hasher.Sum(nil))
+		chunkData := testData[start:end]
+		hasher := sha256.New()
+		hasher.Write(chunkData)
+		checksum := hex.EncodeToString(hasher.Sum(nil))
 
-        chunk := &domain.ChunkUpload{
-            SessionID:  response.SessionID,
-            ChunkIndex: i,
-            Data:       chunkData,
-            Checksum:   checksum,
-        }
-        _, err := uploadService.UploadChunk(ctx, response.SessionID, chunk)
-        require.NoError(t, err)
-    }
+		chunk := &domain.ChunkUpload{
+			SessionID:  response.SessionID,
+			ChunkIndex: i,
+			Data:       chunkData,
+			Checksum:   checksum,
+		}
+		_, err := uploadService.UploadChunk(ctx, response.SessionID, chunk)
+		require.NoError(t, err)
+	}
 
-    // Set width and aspect ratio only; height missing
-    session, err := uploadRepo.GetSession(ctx, response.SessionID)
-    require.NoError(t, err)
-    // Example: 1280 width, 16:9 should infer ~720 height => 720p
-    _, err = testDB.DB.ExecContext(ctx, `UPDATE videos SET metadata = '{"width":1280, "aspect_ratio":"16:9"}' WHERE id = $1`, session.VideoID)
-    require.NoError(t, err)
+	// Set width and aspect ratio only; height missing
+	session, err := uploadRepo.GetSession(ctx, response.SessionID)
+	require.NoError(t, err)
+	// Example: 1280 width, 16:9 should infer ~720 height => 720p
+	_, err = testDB.DB.ExecContext(ctx, `UPDATE videos SET metadata = '{"width":1280, "aspect_ratio":"16:9"}' WHERE id = $1`, session.VideoID)
+	require.NoError(t, err)
 
-    // Complete upload
-    err = uploadService.CompleteUpload(ctx, response.SessionID)
-    require.NoError(t, err)
+	// Complete upload
+	err = uploadService.CompleteUpload(ctx, response.SessionID)
+	require.NoError(t, err)
 
-    job, err := encodingRepo.GetJobByVideoID(ctx, session.VideoID)
-    require.NoError(t, err)
-    assert.Equal(t, "720p", job.SourceResolution)
+	job, err := encodingRepo.GetJobByVideoID(ctx, session.VideoID)
+	require.NoError(t, err)
+	assert.Equal(t, "720p", job.SourceResolution)
 }
 
 func TestUploadService_CompleteUpload_IncompleteChunks(t *testing.T) {
@@ -471,7 +478,7 @@ func TestUploadService_CompleteUpload_IncompleteChunks(t *testing.T) {
 	videoRepo := repository.NewVideoRepository(testDB.DB)
 	userRepo := repository.NewUserRepository(testDB.DB)
 
-    tempDir := testTempDir(t)
+	tempDir := testTempDir(t)
 	uploadService := usecase.NewUploadService(uploadRepo, encodingRepo, videoRepo, tempDir, createTestConfig())
 
 	ctx := context.Background()
@@ -509,7 +516,7 @@ func TestUploadService_ExpiredSession(t *testing.T) {
 	videoRepo := repository.NewVideoRepository(testDB.DB)
 	userRepo := repository.NewUserRepository(testDB.DB)
 
-    tempDir := testTempDir(t)
+	tempDir := testTempDir(t)
 	uploadService := usecase.NewUploadService(uploadRepo, encodingRepo, videoRepo, tempDir, createTestConfig())
 
 	ctx := context.Background()
@@ -575,7 +582,7 @@ func TestUploadService_CleanupTempFiles(t *testing.T) {
 	// Verify temp directory exists
 	session, err := uploadRepo.GetSession(ctx, response.SessionID)
 	require.NoError(t, err)
-	
+
 	tempSessionDir := filepath.Dir(session.TempFilePath)
 	_, err = os.Stat(tempSessionDir)
 	require.NoError(t, err)
@@ -653,15 +660,15 @@ func initiateTestUpload(t *testing.T, service usecase.UploadService, ctx context
 // testTempDir creates a temporary directory under the repository workspace
 // to satisfy sandbox write constraints.
 func testTempDir(t *testing.T) string {
-    t.Helper()
-    base := filepath.Join(".", "tmp", "usecase_tests")
-    if err := os.MkdirAll(base, 0o755); err != nil {
-        t.Fatalf("failed to create base temp dir: %v", err)
-    }
-    dir := filepath.Join(base, uuid.NewString())
-    if err := os.MkdirAll(dir, 0o755); err != nil {
-        t.Fatalf("failed to create temp dir: %v", err)
-    }
-    t.Cleanup(func() { _ = os.RemoveAll(dir) })
-    return dir
+	t.Helper()
+	base := filepath.Join(".", "tmp", "usecase_tests")
+	if err := os.MkdirAll(base, 0o755); err != nil {
+		t.Fatalf("failed to create base temp dir: %v", err)
+	}
+	dir := filepath.Join(base, uuid.NewString())
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	return dir
 }

@@ -173,6 +173,12 @@ func CreateVideoHandler(repo usecase.VideoRepository) http.HandlerFunc {
 			return
 		}
 
+		// Initialize tags to empty slice if nil to avoid database null constraint violation
+		tags := req.Tags
+		if tags == nil {
+			tags = []string{}
+		}
+
 		now := time.Now()
 		video := &domain.Video{
 			ID:          uuid.NewString(),
@@ -183,7 +189,7 @@ func CreateVideoHandler(repo usecase.VideoRepository) http.HandlerFunc {
 			Status:      domain.StatusUploading,
 			UploadDate:  now,
 			UserID:      userID,
-			Tags:        req.Tags,
+			Tags:        tags,
 			Category:    req.Category,
 			Language:    req.Language,
 			CreatedAt:   now,
@@ -258,6 +264,12 @@ func UpdateVideoHandler(repo usecase.VideoRepository) http.HandlerFunc {
 			return
 		}
 
+		// Initialize tags to empty slice if nil to avoid database null constraint violation
+		tags := req.Tags
+		if tags == nil {
+			tags = []string{}
+		}
+
 		// Update the video
 		video := &domain.Video{
 			ID:          videoID,
@@ -266,7 +278,7 @@ func UpdateVideoHandler(repo usecase.VideoRepository) http.HandlerFunc {
 			Privacy:     req.Privacy,
 			Status:      existingVideo.Status, // Keep existing status
 			UserID:      userID,
-			Tags:        req.Tags,
+			Tags:        tags,
 			Category:    req.Category,
 			Language:    req.Language,
 			UpdatedAt:   time.Now(),
