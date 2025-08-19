@@ -376,6 +376,14 @@ components:
           type: string
           description: URL to user's avatar image
           example: "https://example.com/avatar.jpg"
+        thumbnail_id:
+          type: string
+          description: UUID of the user's thumbnail file
+          example: "550e8400-e29b-41d4-a716-446655440000"
+        thumbnail_cid:
+          type: string
+          description: IPFS CID of the user's thumbnail image
+          example: "bafybeigdyrzt3e7b7h6u6wqz2b6yq4f7u7zq5t7jz4y5x6w7v8u9x0y1za"
         bio:
           type: string
           description: User biography
