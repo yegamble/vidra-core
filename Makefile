@@ -212,12 +212,6 @@ postman-e2e: ## Start test services + app and run Newman end-to-end
 	  if [ "$$status" = "healthy" ]; then echo "app-test is healthy"; break; fi; \
 	  sleep 2; \
 	done
-	@echo "Waiting for ipfs-test to be healthy..."
-	@for i in $$(seq 1 40); do \
-	  status=$$(docker inspect --format='{{json .State.Health.Status}}' $$(COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) -f docker-compose.test.yml ps -q ipfs-test) 2>/dev/null | tr -d '"'); \
-	  if [ "$$status" = "healthy" ]; then echo "ipfs-test is healthy"; break; fi; \
-	  sleep 2; \
-	done
 	@echo "Running Newman inside compose network against http://app-test:8080 ..."
 	COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) -f docker-compose.test.yml run --rm newman || { \
 	  echo "Newman tests failed"; \
