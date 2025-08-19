@@ -92,3 +92,5 @@ Thumbs.db
 
 # Local configuration overrides
 docker-compose.override.yml
+
+.gocache
