@@ -92,16 +92,18 @@ func (s *Server) Login(w http.ResponseWriter, r *http.Request) {
 		disp := dUser.DisplayName
 		dispPtr = &disp
 	}
-	gUser := generated.User{
-		ID:          dUser.ID,
-		Username:    dUser.Username,
-		Email:       dUser.Email,
-		DisplayName: dispPtr,
-		Role:        generated.UserRoleUser,
-		IsActive:    dUser.IsActive,
-		CreatedAt:   dUser.CreatedAt,
-		UpdatedAt:   dUser.UpdatedAt,
-	}
+    gUser := generated.User{
+        ID:          dUser.ID,
+        Username:    dUser.Username,
+        Email:       dUser.Email,
+        DisplayName: dispPtr,
+        AvatarFileID:  dUser.AvatarFileID,
+        AvatarIPFSCID: dUser.AvatarIPFSCID,
+        Role:        generated.UserRoleUser,
+        IsActive:    dUser.IsActive,
+        CreatedAt:   dUser.CreatedAt,
+        UpdatedAt:   dUser.UpdatedAt,
+    }
 
 	response := generated.AuthResponse{
 		User:         gUser,
@@ -174,16 +176,18 @@ func (s *Server) Register(w http.ResponseWriter, r *http.Request) {
 			disp := dUser.DisplayName
 			dispPtr = &disp
 		}
-		gUser := generated.User{
-			ID:          dUser.ID,
-			Username:    dUser.Username,
-			Email:       dUser.Email,
-			DisplayName: dispPtr,
-			Role:        generated.UserRoleUser,
-			IsActive:    dUser.IsActive,
-			CreatedAt:   dUser.CreatedAt,
-			UpdatedAt:   dUser.UpdatedAt,
-		}
+        gUser := generated.User{
+            ID:          dUser.ID,
+            Username:    dUser.Username,
+            Email:       dUser.Email,
+            DisplayName: dispPtr,
+            AvatarFileID:  dUser.AvatarFileID,
+            AvatarIPFSCID: dUser.AvatarIPFSCID,
+            Role:        generated.UserRoleUser,
+            IsActive:    dUser.IsActive,
+            CreatedAt:   dUser.CreatedAt,
+            UpdatedAt:   dUser.UpdatedAt,
+        }
 
 		// Set Location header to new resource
 		w.Header().Set("Location", "/api/v1/users/"+gUser.ID)

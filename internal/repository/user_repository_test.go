@@ -20,18 +20,17 @@ func TestUserRepository_Create(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now()
 
-	user := &domain.User{
-		ID:          uuid.New().String(),
-		Username:    "testuser",
-		Email:       "test@example.com",
-		DisplayName: "Test User",
-		Avatar:      "https://example.com/avatar.jpg",
-		Bio:         "Test bio",
-		Role:        domain.RoleUser,
-		IsActive:    true,
-		CreatedAt:   now,
-		UpdatedAt:   now,
-	}
+    user := &domain.User{
+        ID:          uuid.New().String(),
+        Username:    "testuser",
+        Email:       "test@example.com",
+        DisplayName: "Test User",
+        Bio:         "Test bio",
+        Role:        domain.RoleUser,
+        IsActive:    true,
+        CreatedAt:   now,
+        UpdatedAt:   now,
+    }
 
 	err := repo.Create(ctx, user, "hashed_password")
 	require.NoError(t, err)

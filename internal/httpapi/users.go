@@ -40,12 +40,11 @@ func GetCurrentUserHandler(repo usecase.UserRepository) http.HandlerFunc {
 
 // UpdateCurrentUserHandler updates the current user using the repository
 func UpdateCurrentUserHandler(repo usecase.UserRepository) http.HandlerFunc {
-	type updateRequest struct {
-		DisplayName   string `json:"display_name"`
-		Bio           string `json:"bio"`
-		Avatar        string `json:"avatar"`
-		BitcoinWallet string `json:"bitcoin_wallet"`
-	}
+    type updateRequest struct {
+        DisplayName   string `json:"display_name"`
+        Bio           string `json:"bio"`
+        BitcoinWallet string `json:"bitcoin_wallet"`
+    }
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		userID, _ := r.Context().Value(middleware.UserIDKey).(string)
@@ -74,16 +73,13 @@ func UpdateCurrentUserHandler(repo usecase.UserRepository) http.HandlerFunc {
 		if req.DisplayName != "" {
 			user.DisplayName = req.DisplayName
 		}
-		if req.Bio != "" {
-			user.Bio = req.Bio
-		}
-		if req.Avatar != "" {
-			user.Avatar = req.Avatar
-		}
-		if req.BitcoinWallet != "" {
-			user.BitcoinWallet = req.BitcoinWallet
-		}
-		user.UpdatedAt = time.Now()
+        if req.Bio != "" {
+            user.Bio = req.Bio
+        }
+        if req.BitcoinWallet != "" {
+            user.BitcoinWallet = req.BitcoinWallet
+        }
+        user.UpdatedAt = time.Now()
 
 		if err := repo.Update(r.Context(), user); err != nil {
 			if err == domain.ErrUserNotFound {
@@ -181,17 +177,16 @@ func GetUserVideos(w http.ResponseWriter, r *http.Request) {
 
 // CreateUserHandler creates a new user in the database
 func CreateUserHandler(repo usecase.UserRepository) http.HandlerFunc {
-	type createUserRequest struct {
-		Username      string          `json:"username"`
-		Email         string          `json:"email"`
-		Password      string          `json:"password"`
-		DisplayName   string          `json:"display_name"`
-		Avatar        string          `json:"avatar"`
-		Bio           string          `json:"bio"`
-		BitcoinWallet string          `json:"bitcoin_wallet"`
-		Role          domain.UserRole `json:"role"`
-		IsActive      *bool           `json:"is_active"`
-	}
+    type createUserRequest struct {
+        Username      string          `json:"username"`
+        Email         string          `json:"email"`
+        Password      string          `json:"password"`
+        DisplayName   string          `json:"display_name"`
+        Bio           string          `json:"bio"`
+        BitcoinWallet string          `json:"bitcoin_wallet"`
+        Role          domain.UserRole `json:"role"`
+        IsActive      *bool           `json:"is_active"`
+    }
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req createUserRequest
@@ -226,17 +221,16 @@ func CreateUserHandler(repo usecase.UserRepository) http.HandlerFunc {
 			isActive = *req.IsActive
 		}
 
-		user := &domain.User{
-			ID:            id,
-			Username:      req.Username,
-			Email:         req.Email,
-			DisplayName:   req.DisplayName,
-			Avatar:        req.Avatar,
-			Bio:           req.Bio,
-			BitcoinWallet: req.BitcoinWallet,
-			Role:          role,
-			IsActive:      isActive,
-			CreatedAt:     now,
+        user := &domain.User{
+            ID:            id,
+            Username:      req.Username,
+            Email:         req.Email,
+            DisplayName:   req.DisplayName,
+            Bio:           req.Bio,
+            BitcoinWallet: req.BitcoinWallet,
+            Role:          role,
+            IsActive:      isActive,
+            CreatedAt:     now,
 			UpdatedAt:     now,
 		}
 

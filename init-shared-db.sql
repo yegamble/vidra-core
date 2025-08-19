@@ -28,7 +28,6 @@ CREATE TABLE IF NOT EXISTS users (
     username VARCHAR(50) UNIQUE NOT NULL,
     email VARCHAR(255) UNIQUE NOT NULL,
     display_name VARCHAR(100),
-    avatar TEXT,
     bio TEXT,
     bitcoin_wallet VARCHAR(62),
     role VARCHAR(20) NOT NULL DEFAULT 'user' CHECK (role IN ('user', 'admin', 'moderator')),
@@ -50,6 +49,23 @@ CREATE INDEX IF NOT EXISTS idx_users_bitcoin_wallet ON users(bitcoin_wallet);
 DROP TRIGGER IF EXISTS update_users_updated_at ON users;
 CREATE TRIGGER update_users_updated_at 
     BEFORE UPDATE ON users 
+    FOR EACH ROW 
+    EXECUTE FUNCTION update_updated_at_column();
+
+-- Create user_avatars table
+CREATE TABLE IF NOT EXISTS user_avatars (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+    file_id UUID,
+    ipfs_cid TEXT,
+    url TEXT NOT NULL DEFAULT '',
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+);
+
+DROP TRIGGER IF EXISTS update_user_avatars_updated_at ON user_avatars;
+CREATE TRIGGER update_user_avatars_updated_at 
+    BEFORE UPDATE ON user_avatars 
     FOR EACH ROW 
     EXECUTE FUNCTION update_updated_at_column();
 

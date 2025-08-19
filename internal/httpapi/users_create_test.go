@@ -12,14 +12,13 @@ func TestCreateUserHandler_Success(t *testing.T) {
 	repo := newMockUserRepo()
 	handler := CreateUserHandler(repo)
 
-	body := map[string]any{
-		"username":     "alice",
-		"email":        "alice@example.com",
-		"password":     "password-12345",
-		"display_name": "Alice",
-		"avatar":       "",
-		"bio":          "hello",
-	}
+    body := map[string]any{
+        "username":     "alice",
+        "email":        "alice@example.com",
+        "password":     "password-12345",
+        "display_name": "Alice",
+        "bio":          "hello",
+    }
 	b, _ := json.Marshal(body)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/users", bytes.NewReader(b))
 	req.Header.Set("Content-Type", "application/json")

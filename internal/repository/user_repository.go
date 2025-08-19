@@ -19,97 +19,114 @@ func NewUserRepository(db *sqlx.DB) usecase.UserRepository {
 }
 
 func (r *userRepository) Create(ctx context.Context, user *domain.User, passwordHash string) error {
-	query := `
-		INSERT INTO users (id, username, email, display_name, avatar, bio, bitcoin_wallet, role, password_hash, is_active, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`
+    // Insert user record (avatar stored in user_avatars separately)
+    query := `
+        INSERT INTO users (id, username, email, display_name, bio, bitcoin_wallet, role, password_hash, is_active, created_at, updated_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`
 
-	_, err := r.db.ExecContext(ctx, query,
-		user.ID, user.Username, user.Email, user.DisplayName, user.Avatar, user.Bio, user.BitcoinWallet,
-		user.Role, passwordHash, user.IsActive, user.CreatedAt, user.UpdatedAt)
+    _, err := r.db.ExecContext(ctx, query,
+        user.ID, user.Username, user.Email, user.DisplayName, user.Bio, user.BitcoinWallet,
+        user.Role, passwordHash, user.IsActive, user.CreatedAt, user.UpdatedAt)
 
-	if err != nil {
-		return fmt.Errorf("failed to create user: %w", err)
-	}
+    if err != nil {
+        return fmt.Errorf("failed to create user: %w", err)
+    }
 
-	return nil
+    return nil
 }
 
 func (r *userRepository) GetByID(ctx context.Context, id string) (*domain.User, error) {
-	query := `
-		SELECT id, username, email, display_name, avatar, bio, bitcoin_wallet, role, is_active, created_at, updated_at
-		FROM users WHERE id = $1`
+    query := `
+        SELECT u.id, u.username, u.email, u.display_name,
+               a.file_id::text AS avatar_file_id,
+               a.ipfs_cid      AS avatar_ipfs_cid,
+               u.bio, u.bitcoin_wallet, u.role, u.is_active, u.created_at, u.updated_at
+        FROM users u
+        LEFT JOIN user_avatars a ON a.user_id = u.id
+        WHERE u.id = $1`
 
-	var user domain.User
-	err := r.db.GetContext(ctx, &user, query, id)
-	if err != nil {
-		if err == sql.ErrNoRows {
-			return nil, domain.ErrUserNotFound
-		}
-		return nil, fmt.Errorf("failed to get user by ID: %w", err)
-	}
+    var user domain.User
+    err := r.db.GetContext(ctx, &user, query, id)
+    if err != nil {
+        if err == sql.ErrNoRows {
+            return nil, domain.ErrUserNotFound
+        }
+        return nil, fmt.Errorf("failed to get user by ID: %w", err)
+    }
 
-	return &user, nil
+    return &user, nil
 }
 
 func (r *userRepository) GetByEmail(ctx context.Context, email string) (*domain.User, error) {
-	query := `
-		SELECT id, username, email, display_name, avatar, bio, bitcoin_wallet, role, is_active, created_at, updated_at
-		FROM users WHERE email = $1`
+    query := `
+        SELECT u.id, u.username, u.email, u.display_name,
+               a.file_id::text AS avatar_file_id,
+               a.ipfs_cid      AS avatar_ipfs_cid,
+               u.bio, u.bitcoin_wallet, u.role, u.is_active, u.created_at, u.updated_at
+        FROM users u
+        LEFT JOIN user_avatars a ON a.user_id = u.id
+        WHERE u.email = $1`
 
-	var user domain.User
-	err := r.db.GetContext(ctx, &user, query, email)
-	if err != nil {
-		if err == sql.ErrNoRows {
-			return nil, domain.ErrUserNotFound
-		}
-		return nil, fmt.Errorf("failed to get user by email: %w", err)
-	}
+    var user domain.User
+    err := r.db.GetContext(ctx, &user, query, email)
+    if err != nil {
+        if err == sql.ErrNoRows {
+            return nil, domain.ErrUserNotFound
+        }
+        return nil, fmt.Errorf("failed to get user by email: %w", err)
+    }
 
-	return &user, nil
+    return &user, nil
 }
 
 func (r *userRepository) GetByUsername(ctx context.Context, username string) (*domain.User, error) {
-	query := `
-		SELECT id, username, email, display_name, avatar, bio, bitcoin_wallet, role, is_active, created_at, updated_at
-		FROM users WHERE username = $1`
+    query := `
+        SELECT u.id, u.username, u.email, u.display_name,
+               a.file_id::text AS avatar_file_id,
+               a.ipfs_cid      AS avatar_ipfs_cid,
+               u.bio, u.bitcoin_wallet, u.role, u.is_active, u.created_at, u.updated_at
+        FROM users u
+        LEFT JOIN user_avatars a ON a.user_id = u.id
+        WHERE u.username = $1`
 
-	var user domain.User
-	err := r.db.GetContext(ctx, &user, query, username)
-	if err != nil {
-		if err == sql.ErrNoRows {
-			return nil, domain.ErrUserNotFound
-		}
-		return nil, fmt.Errorf("failed to get user by username: %w", err)
-	}
+    var user domain.User
+    err := r.db.GetContext(ctx, &user, query, username)
+    if err != nil {
+        if err == sql.ErrNoRows {
+            return nil, domain.ErrUserNotFound
+        }
+        return nil, fmt.Errorf("failed to get user by username: %w", err)
+    }
 
-	return &user, nil
+    return &user, nil
 }
 
 func (r *userRepository) Update(ctx context.Context, user *domain.User) error {
-	query := `
-		UPDATE users 
-		SET username = $2, email = $3, display_name = $4, avatar = $5, bio = $6, 
-		    bitcoin_wallet = $7, role = $8, is_active = $9, updated_at = $10
-		WHERE id = $1`
+    // Update base user fields (avatar handled in user_avatars separately)
+    query := `
+        UPDATE users 
+        SET username = $2, email = $3, display_name = $4, bio = $5, 
+            bitcoin_wallet = $6, role = $7, is_active = $8, updated_at = $9
+        WHERE id = $1`
 
-	result, err := r.db.ExecContext(ctx, query,
-		user.ID, user.Username, user.Email, user.DisplayName, user.Avatar, user.Bio, user.BitcoinWallet,
-		user.Role, user.IsActive, user.UpdatedAt)
+    result, err := r.db.ExecContext(ctx, query,
+        user.ID, user.Username, user.Email, user.DisplayName, user.Bio, user.BitcoinWallet,
+        user.Role, user.IsActive, user.UpdatedAt)
 
-	if err != nil {
-		return fmt.Errorf("failed to update user: %w", err)
-	}
+    if err != nil {
+        return fmt.Errorf("failed to update user: %w", err)
+    }
 
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("failed to get rows affected: %w", err)
-	}
+    rowsAffected, err := result.RowsAffected()
+    if err != nil {
+        return fmt.Errorf("failed to get rows affected: %w", err)
+    }
 
-	if rowsAffected == 0 {
-		return domain.ErrUserNotFound
-	}
+    if rowsAffected == 0 {
+        return domain.ErrUserNotFound
+    }
 
-	return nil
+    return nil
 }
 
 func (r *userRepository) Delete(ctx context.Context, id string) error {
@@ -168,23 +185,27 @@ func (r *userRepository) UpdatePassword(ctx context.Context, userID, passwordHas
 }
 
 func (r *userRepository) List(ctx context.Context, limit, offset int) ([]*domain.User, error) {
-	query := `
-		SELECT id, username, email, display_name, avatar, bio, bitcoin_wallet, role, is_active, created_at, updated_at
-		FROM users 
-		ORDER BY created_at DESC
-		LIMIT $1 OFFSET $2`
+    query := `
+        SELECT u.id, u.username, u.email, u.display_name,
+               a.file_id::text AS avatar_file_id,
+               a.ipfs_cid      AS avatar_ipfs_cid,
+               u.bio, u.bitcoin_wallet, u.role, u.is_active, u.created_at, u.updated_at
+        FROM users u
+        LEFT JOIN user_avatars a ON a.user_id = u.id
+        ORDER BY u.created_at DESC
+        LIMIT $1 OFFSET $2`
 
-	var users []*domain.User
-	err := r.db.SelectContext(ctx, &users, query, limit, offset)
-	if err != nil {
-		return nil, fmt.Errorf("failed to list users: %w", err)
-	}
+    var users []*domain.User
+    err := r.db.SelectContext(ctx, &users, query, limit, offset)
+    if err != nil {
+        return nil, fmt.Errorf("failed to list users: %w", err)
+    }
 
-	return users, nil
+    return users, nil
 }
 
 func (r *userRepository) Count(ctx context.Context) (int64, error) {
-	query := `SELECT COUNT(*) FROM users`
+    query := `SELECT COUNT(*) FROM users`
 
 	var count int64
 	err := r.db.GetContext(ctx, &count, query)
@@ -192,5 +213,38 @@ func (r *userRepository) Count(ctx context.Context) (int64, error) {
 		return 0, fmt.Errorf("failed to count users: %w", err)
 	}
 
-	return count, nil
+    return count, nil
+}
+
+// SetAvatarFields upserts the user's avatar file_id and ipfs_cid in user_avatars
+func (r *userRepository) SetAvatarFields(ctx context.Context, userID string, fileID *string, ipfsCID *string) error {
+    // Ensure user exists to return a meaningful error
+    var exists bool
+    if err := r.db.GetContext(ctx, &exists, `SELECT EXISTS(SELECT 1 FROM users WHERE id = $1)`, userID); err != nil {
+        return fmt.Errorf("failed to check user existence: %w", err)
+    }
+    if !exists {
+        return domain.ErrUserNotFound
+    }
+
+    // Upsert avatar fields
+    _, err := r.db.ExecContext(ctx, `
+        INSERT INTO user_avatars (user_id, file_id, ipfs_cid, created_at, updated_at)
+        VALUES ($1, NULLIF($2, '')::uuid, NULLIF($3, ''), NOW(), NOW())
+        ON CONFLICT (user_id) DO UPDATE SET
+            file_id  = COALESCE(NULLIF(EXCLUDED.file_id, user_avatars.file_id), user_avatars.file_id),
+            ipfs_cid = COALESCE(NULLIF(EXCLUDED.ipfs_cid, user_avatars.ipfs_cid), user_avatars.ipfs_cid),
+            updated_at = NOW()
+    `, userID, stringOrNil(fileID), stringOrNil(ipfsCID))
+    if err != nil {
+        return fmt.Errorf("failed to upsert user avatar fields: %w", err)
+    }
+    return nil
+}
+
+func stringOrNil(s *string) interface{} {
+    if s == nil {
+        return nil
+    }
+    return *s
 }

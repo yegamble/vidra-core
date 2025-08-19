@@ -217,11 +217,10 @@ func TestUpdateCurrentUserHandler_Integration_UpdatesDBUser(t *testing.T) {
 		t.Fatalf("seed create failed: %v", err)
 	}
 
-	body := map[string]any{
-		"display_name": "After",
-		"bio":          "New bio",
-		"avatar":       "https://example.com/after.png",
-	}
+    body := map[string]any{
+        "display_name": "After",
+        "bio":          "New bio",
+    }
 	b, _ := json.Marshal(body)
 	req := httptest.NewRequest(http.MethodPut, "/api/v1/users/me", bytes.NewReader(b))
 	req.Header.Set("Content-Type", "application/json")
@@ -240,18 +239,18 @@ func TestUpdateCurrentUserHandler_Integration_UpdatesDBUser(t *testing.T) {
 	if err := json.Unmarshal(resp.Data, &got); err != nil {
 		t.Fatalf("unmarshal user: %v", err)
 	}
-	if got.DisplayName != "After" || got.Bio != "New bio" || got.Avatar != "https://example.com/after.png" {
-		t.Fatalf("unexpected updated fields: %+v", got)
-	}
+    if got.DisplayName != "After" || got.Bio != "New bio" {
+        t.Fatalf("unexpected updated fields: %+v", got)
+    }
 
 	// Verify persisted in DB
 	fromDB, err := repo.GetByID(context.Background(), u.ID)
 	if err != nil {
 		t.Fatalf("expected user in DB: %v", err)
 	}
-	if fromDB.DisplayName != "After" || fromDB.Bio != "New bio" || fromDB.Avatar != "https://example.com/after.png" {
-		t.Fatalf("DB not updated: %+v", fromDB)
-	}
+    if fromDB.DisplayName != "After" || fromDB.Bio != "New bio" {
+        t.Fatalf("DB not updated: %+v", fromDB)
+    }
 }
 
 func TestGetCurrentUserHandler_Integration_Unauthorized(t *testing.T) {
