@@ -11,6 +11,7 @@ on:
     paths-ignore:
       - '**/*.md'
       - 'docs/**'
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -244,6 +245,36 @@ jobs:
     runs-on: ubuntu-latest
     needs: [integration, lint, changes]
     if: needs.changes.outputs.docker == 'true'
+
+  migrations:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_DB: athena_test
+          POSTGRES_USER: test_user
+          POSTGRES_PASSWORD: test_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Apply SQL migrations
+        env:
+          DATABASE_URL: postgres://test_user:test_password@localhost:5432/athena_test?sslmode=disable
+        run: |
+          make migrate-migrations
+      - name: Smoke check tables
+        env:
+          PGPASSWORD: test_password
+        run: |
+          psql -h localhost -U test_user -d athena_test -c '\dt'
 
     steps:
       - name: Checkout code
