@@ -101,7 +101,12 @@ CREATE TABLE IF NOT EXISTS videos (
     original_cid TEXT,
     processed_cids JSONB NOT NULL DEFAULT '{}'::jsonb,
     thumbnail_cid TEXT,
-    tags TEXT[] NOT NULL DEFAULT '{}',
+    -- New media pipeline columns
+    output_paths JSONB NOT NULL DEFAULT '{}'::jsonb,
+    thumbnail_path TEXT,
+    preview_path TEXT,
+    -- Tags are now nullable per migration 010
+    tags TEXT[] DEFAULT '{}',
     category VARCHAR(100),
     language VARCHAR(10),
     file_size BIGINT NOT NULL DEFAULT 0,
