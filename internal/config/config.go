@@ -106,8 +106,13 @@ type Config struct {
 	ValidationStrictMode          bool
 	ValidationAllowedAlgorithms   []string
 	ValidationTestMode           bool
-	ValidationEnableIntegrityJobs bool
-	ValidationLogEvents          bool
+    ValidationEnableIntegrityJobs bool
+    ValidationLogEvents          bool
+
+    // Encoding Scheduler
+    EnableEncodingScheduler          bool
+    EncodingSchedulerIntervalSeconds int
+    EncodingSchedulerBurst           int
 }
 
 func Load() (*Config, error) {
@@ -227,6 +232,13 @@ func Load() (*Config, error) {
 	cfg.ValidationTestMode = getBoolEnv("VALIDATION_TEST_MODE", false)
 	cfg.ValidationEnableIntegrityJobs = getBoolEnv("VALIDATION_ENABLE_INTEGRITY_JOBS", true)
 	cfg.ValidationLogEvents = getBoolEnv("VALIDATION_LOG_EVENTS", true)
+
+    // Encoding Scheduler (API-driven background processing)
+    // Defaults: enabled with 5s interval and burst=3 to ensure progress
+    // even without the standalone encoder worker.
+    cfg.EnableEncodingScheduler = getBoolEnv("ENABLE_ENCODING_SCHEDULER", true)
+    cfg.EncodingSchedulerIntervalSeconds = getIntEnv("ENCODING_SCHEDULER_INTERVAL_SECONDS", 5)
+    cfg.EncodingSchedulerBurst = getIntEnv("ENCODING_SCHEDULER_BURST", 3)
 
 	return cfg, nil
 }

@@ -181,5 +181,10 @@ CREATE TRIGGER update_encoding_jobs_updated_at
     FOR EACH ROW 
     EXECUTE FUNCTION update_updated_at_column();
 
+-- Ensure at most one active job per video
+CREATE UNIQUE INDEX IF NOT EXISTS uq_encoding_jobs_active_video
+ON encoding_jobs (video_id)
+WHERE status IN ('pending','processing');
+
 -- Log successful initialization
 \echo 'PostgreSQL database initialized successfully for Athena platform with all tables and indexes';

@@ -175,6 +175,11 @@ CREATE INDEX IF NOT EXISTS idx_encoding_jobs_status ON encoding_jobs(status);
 CREATE INDEX IF NOT EXISTS idx_encoding_jobs_created_at ON encoding_jobs(created_at);
 CREATE INDEX IF NOT EXISTS idx_encoding_jobs_status_created ON encoding_jobs(status, created_at);
 
+-- Ensure at most one active job per video
+CREATE UNIQUE INDEX IF NOT EXISTS uq_encoding_jobs_active_video
+ON encoding_jobs (video_id)
+WHERE status IN ('pending','processing');
+
 DROP TRIGGER IF EXISTS update_encoding_jobs_updated_at ON encoding_jobs;
 CREATE TRIGGER update_encoding_jobs_updated_at BEFORE UPDATE ON encoding_jobs FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
