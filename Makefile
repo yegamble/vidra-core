@@ -251,3 +251,123 @@ run-encoder: ## Run encoding worker with metrics
 	@echo "Starting encoder (workers=$(ENCODER_WORKERS), metrics=$(METRICS_ADDR))..."
 	@ENCODER_WORKERS=$(ENCODER_WORKERS) METRICS_ADDR=$(METRICS_ADDR) UPLOADS_DIR=$(UPLOADS_DIR) FFMPEG_PATH=$(FFMPEG_PATH) \
 		go run ./cmd/encoder
+
+# Production targets
+setup: ## Complete production setup
+	@echo "Setting up Athena for production..."
+	@if [ ! -f .env ]; then \
+		cp .env.example .env; \
+		echo "Created .env file from .env.example"; \
+		echo "Please edit .env with your production configuration"; \
+	else \
+		echo ".env file already exists"; \
+	fi
+	@echo "Installing dependencies..."
+	@make deps
+	@echo "Installing development tools..."
+	@make install-tools
+	@echo "Starting Docker services..."
+	@make docker-up
+	@echo "Running database migrations..."
+	@make migrate-up
+	@echo "Setup complete! Edit .env and run 'make docker-up' to start services."
+
+deploy-prod: ## Deploy to production
+	@echo "Deploying to production..."
+	@./scripts/deploy.sh
+
+deploy-staging: ## Deploy to staging
+	@echo "Deploying to staging..."
+	@./scripts/deploy.sh -e staging
+
+backup: ## Create backup
+	@echo "Creating backup..."
+	@./scripts/backup.sh
+
+backup-db: ## Create database backup only
+	@echo "Creating database backup..."
+	@./scripts/backup.sh -t db
+
+backup-s3: ## Create backup and upload to S3
+	@echo "Creating backup and uploading to S3..."
+	@./scripts/backup.sh -s
+
+monitor: ## Start monitoring stack
+	@echo "Starting monitoring stack..."
+	@docker compose -f docker-compose.prod.yml --profile monitoring up -d
+
+monitor-logs: ## View monitoring logs
+	@docker compose -f docker-compose.prod.yml --profile monitoring logs -f
+
+monitor-stop: ## Stop monitoring stack
+	@docker compose -f docker-compose.prod.yml --profile monitoring down
+
+proxy: ## Start Nginx reverse proxy
+	@echo "Starting Nginx reverse proxy..."
+	@docker compose -f docker-compose.prod.yml --profile proxy up -d
+
+proxy-logs: ## View Nginx logs
+	@docker compose -f docker-compose.prod.yml --profile proxy logs -f
+
+proxy-stop: ## Stop Nginx reverse proxy
+	@docker compose -f docker-compose.prod.yml --profile proxy down
+
+ssl-cert: ## Generate SSL certificate (requires domain)
+	@echo "Generating SSL certificate..."
+	@mkdir -p nginx/ssl
+	@openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+		-keyout nginx/ssl/key.pem \
+		-out nginx/ssl/cert.pem \
+		-subj "/C=US/ST=State/L=City/O=Organization/CN=localhost"
+
+health-check: ## Run health checks
+	@echo "Running health checks..."
+	@curl -f http://localhost:8080/health || (echo "Health check failed" && exit 1)
+	@curl -f http://localhost:8080/ready || (echo "Readiness check failed" && exit 1)
+	@echo "All health checks passed"
+
+logs-app: ## View application logs
+	@docker compose -f docker-compose.prod.yml logs -f app
+
+logs-db: ## View database logs
+	@docker compose -f docker-compose.prod.yml logs -f postgres
+
+logs-redis: ## View Redis logs
+	@docker compose -f docker-compose.prod.yml logs -f redis
+
+logs-ipfs: ## View IPFS logs
+	@docker compose -f docker-compose.prod.yml logs -f ipfs
+
+restart: ## Restart all services
+	@echo "Restarting all services..."
+	@docker compose -f docker-compose.prod.yml restart
+
+restart-app: ## Restart application only
+	@echo "Restarting application..."
+	@docker compose -f docker-compose.prod.yml restart app
+
+update: ## Update all images and restart
+	@echo "Updating Docker images..."
+	@docker compose -f docker-compose.prod.yml pull
+	@docker compose -f docker-compose.prod.yml up -d
+	@echo "Update complete"
+
+cleanup: ## Clean up old images and containers
+	@echo "Cleaning up Docker resources..."
+	@docker system prune -f
+	@docker image prune -f
+	@docker volume prune -f
+
+cleanup-backups: ## Clean up old backups
+	@echo "Cleaning up old backups..."
+	@find backups/ -name "backup_*" -mtime +30 -delete
+
+security-scan: ## Run security scan on Docker images
+	@echo "Running security scan..."
+	@docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+		-v $(PWD):/workspace \
+		aquasec/trivy image athena:latest
+
+performance-test: ## Run performance tests
+	@echo "Running performance tests..."
+	@ab -n 1000 -c 10 http://localhost:8080/health

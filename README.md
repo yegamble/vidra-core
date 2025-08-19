@@ -2,8 +2,19 @@
 
 [![Test](https://github.com/yegamble/athena/actions/workflows/test.yml/badge.svg)](https://github.com/yegamble/athena/actions/workflows/test.yml)
 [![OpenAPI CI](https://github.com/yegamble/athena/actions/workflows/openapi-ci.yml/badge.svg)](https://github.com/yegamble/athena/actions/workflows/openapi-ci.yml)
+[![Deploy](https://github.com/yegamble/athena/actions/workflows/deploy.yml/badge.svg)](https://github.com/yegamble/athena/actions/workflows/deploy.yml)
 
-A high-performance PeerTube backend implementation in Go with decentralized storage support.
+A high-performance PeerTube backend implementation in Go with decentralized storage support, **production-ready** with comprehensive monitoring, security, and deployment automation.
+
+## 🚀 Production Ready Features
+
+- **🔒 Security**: JWT authentication, rate limiting, SSL/TLS, security headers
+- **📊 Monitoring**: Prometheus metrics, Grafana dashboards, structured logging
+- **🔄 CI/CD**: Automated testing, building, and deployment pipelines
+- **💾 Backup**: Automated database and file backups with S3 support
+- **📈 Scaling**: Horizontal and vertical scaling capabilities
+- **🛡️ Health Checks**: Comprehensive health monitoring and alerting
+- **🔧 DevOps**: Production deployment scripts and documentation
 
 ## Features
 
@@ -15,7 +26,10 @@ A high-performance PeerTube backend implementation in Go with decentralized stor
 - 🌐 **IPFS** - Decentralized storage support
 - 🎥 **Video Processing** - FFmpeg integration for transcoding
 - 🐳 **Docker Ready** - Full containerization with Docker Compose
-- ✅ **CI/CD** - GitHub Actions with automated testing
+- ✅ **CI/CD** - GitHub Actions with automated testing and deployment
+- 📊 **Monitoring** - Prometheus metrics and Grafana dashboards
+- 🔒 **Security** - Production-grade security configurations
+- 💾 **Backup** - Automated backup and recovery systems
 
 ## Quick Start
 
@@ -27,7 +41,7 @@ A high-performance PeerTube backend implementation in Go with decentralized stor
 - Redis 7+
 - Node.js 18+ (for API documentation tools)
 
-### One-Command Setup
+### Development Setup
 
 ```bash
 # Clone the repository
@@ -46,44 +60,16 @@ This will:
 5. Run database migrations
 6. Set up the development environment
 
-### Manual Setup
+### Production Deployment
 
-#### 1. Clone and Configure
-
-```bash
-# Clone the repository
-git clone https://github.com/yegamble/athena.git
-cd athena
-
-# Copy environment variables
-cp .env.example .env
-# Edit .env with your configuration
-```
-
-#### 2. Start Services with Docker
+For production deployment, see the comprehensive [Production Guide](docs/PRODUCTION.md).
 
 ```bash
-# Start all services (PostgreSQL, Redis, App)
-make docker-up
-
-# Or using docker-compose directly
-docker-compose up -d
+# Quick production setup
+make setup
+# Edit .env with production values
+make deploy-prod
 ```
-
-#### 3. Run Development Server
-
-```bash
-# Install dependencies
-make deps
-
-# Run development server with hot reload
-make dev
-
-# Or without hot reload
-go run ./cmd/server
-```
-
-The API will be available at `http://localhost:8080`
 
 ## Development
 
@@ -103,6 +89,18 @@ make docker-logs   # View Docker logs
 make docker-reset  # Reset Docker environment
 make dev           # Run development server
 make clean         # Clean build artifacts
+
+# Production Commands
+make deploy-prod   # Deploy to production
+make deploy-staging # Deploy to staging
+make backup        # Create backup
+make backup-s3     # Backup with S3 upload
+make monitor       # Start monitoring stack
+make proxy         # Start Nginx reverse proxy
+make health-check  # Run health checks
+make update        # Update all images
+make cleanup       # Clean up Docker resources
+make security-scan # Run security scan
 ```
 
 ### Running Tests
@@ -186,6 +184,7 @@ make serve-docs
 
 - `GET /health` - Basic health check
 - `GET /ready` - Readiness check (DB, Redis, IPFS)
+- `GET /metrics` - Prometheus metrics
 
 ### Videos
 
@@ -251,11 +250,15 @@ Operational note: Debug logs for width/aspect estimation emit only when `LOG_LEV
   └── usecase/        # Business logic interfaces
 /api/                 # OpenAPI specifications
 /migrations/          # Database migrations
+/scripts/             # Deployment and maintenance scripts
+/monitoring/          # Prometheus and Grafana configurations
+/nginx/               # Nginx reverse proxy configuration
+/docs/                # Documentation
 ```
 
 ## Docker Deployment
 
-### Production Deployment
+### Development Deployment
 
 ```bash
 # Build and run with Docker Compose
@@ -266,6 +269,25 @@ docker-compose logs -f
 
 # Stop services
 docker-compose down
+```
+
+### Production Deployment
+
+```bash
+# Deploy with production configuration
+docker compose -f docker-compose.prod.yml up -d
+
+# With monitoring stack
+docker compose -f docker-compose.prod.yml --profile monitoring up -d
+
+# With Nginx reverse proxy
+docker compose -f docker-compose.prod.yml --profile proxy up -d
+
+# View logs
+docker compose -f docker-compose.prod.yml logs -f
+
+# Stop services
+docker compose -f docker-compose.prod.yml down
 ```
 
 ### Environment Variables
@@ -285,6 +307,7 @@ GitHub Actions workflows run automatically on push/PR:
 
 1. **Test Workflow** - Runs tests, linting, and builds
 2. **OpenAPI CI** - Validates API spec and generates docs
+3. **Deploy Workflow** - Automated deployment to production/staging
 
 ### Running CI Locally
 
@@ -312,6 +335,61 @@ make migrate-up
 
 # Run test migrations
 make migrate-test
+```
+
+## Monitoring & Observability
+
+### Prometheus Metrics
+
+The application exposes metrics at `/metrics` endpoint:
+
+```bash
+# View metrics
+curl http://localhost:8080/metrics
+```
+
+### Grafana Dashboards
+
+Access Grafana at `http://localhost:3000`:
+- Username: `admin`
+- Password: Set via `GRAFANA_PASSWORD` environment variable
+
+### Health Checks
+
+```bash
+# Application health
+curl http://localhost:8080/health
+
+# Readiness check
+curl http://localhost:8080/ready
+
+# Automated health checks
+make health-check
+```
+
+## Backup & Recovery
+
+### Automated Backups
+
+```bash
+# Create full backup
+make backup
+
+# Database only backup
+make backup-db
+
+# Backup with S3 upload
+make backup-s3
+```
+
+### Backup Schedule
+
+```bash
+# Daily database backup
+0 2 * * * make backup-db
+
+# Weekly full backup
+0 3 * * 0 make backup
 ```
 
 ## Contributing
@@ -356,6 +434,21 @@ docker-compose -f docker-compose.test.yml up -d
 docker-compose -f docker-compose.test.yml logs
 ```
 
+**Production issues:**
+```bash
+# Check health status
+make health-check
+
+# View application logs
+make logs-app
+
+# Restart services
+make restart
+
+# Check monitoring
+make monitor
+```
+
 ## License
 
 MIT License - see [LICENSE](LICENSE) file for details
@@ -372,10 +465,12 @@ For issues and questions:
 - Open an issue on [GitHub](https://github.com/yegamble/athena/issues)
 - Check existing issues before creating new ones
 - Provide detailed information for bug reports
+- For production support, see [Production Guide](docs/PRODUCTION.md)
 
 ---
 
 **Ready to get started?** Run `make setup` and start building!
+
 ### Auth & Sessions
 
 - Access tokens are signed JWTs (HS256) containing `sub` (user ID), `iat`, and `exp`. Default access token TTL is 15 minutes.

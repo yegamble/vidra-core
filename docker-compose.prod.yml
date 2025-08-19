@@ -1,0 +1,243 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-athena}
+      POSTGRES_USER: ${POSTGRES_USER:-athena_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-athena_password}
+      POSTGRES_INITDB_ARGS: "--encoding=UTF-8 --lc-collate=C --lc-ctype=C"
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-shared-db.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+      - ./migrations:/docker-entrypoint-initdb.d/migrations:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-athena_user} -d ${POSTGRES_DB:-athena}"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    networks:
+      - athena-network
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 1G
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: >
+      redis-server 
+      --appendonly yes 
+      --maxmemory 1gb 
+      --maxmemory-policy allkeys-lru
+      --requirepass ${REDIS_PASSWORD:-}
+      --bind 0.0.0.0
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    networks:
+      - athena-network
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+        reservations:
+          memory: 512M
+
+  ipfs:
+    image: ipfs/kubo:latest
+    restart: unless-stopped
+    environment:
+      - IPFS_PROFILE=server
+      - IPFS_PATH=/data/ipfs
+    ports:
+      - "${IPFS_API_PORT:-5001}:5001"
+      - "${IPFS_GATEWAY_PORT:-8080}:8080"
+    volumes:
+      - ipfs_staging:/export
+      - ipfs_data:/data/ipfs
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:5001/api/v0/version"]
+      interval: 60s
+      timeout: 30s
+      retries: 5
+      start_period: 120s
+    networks:
+      - athena-network
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 1G
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        VERSION: ${VERSION:-latest}
+        BUILD_TIME: ${BUILD_TIME:-}
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      ipfs:
+        condition: service_started
+    ports:
+      - "${APP_PORT:-8080}:8080"
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-athena_user}:${POSTGRES_PASSWORD:-athena_password}@postgres:5432/${POSTGRES_DB:-athena}?sslmode=disable
+      REDIS_URL: redis://:${REDIS_PASSWORD:-}@redis:6379/0
+      JWT_SECRET: ${JWT_SECRET}
+      IPFS_API: http://ipfs:5001
+      PORT: 8080
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      LOG_FORMAT: ${LOG_FORMAT:-json}
+      # Production-specific settings
+      RATE_LIMIT_REQUESTS: ${RATE_LIMIT_REQUESTS:-50}
+      RATE_LIMIT_WINDOW: ${RATE_LIMIT_WINDOW:-60}
+      MAX_UPLOAD_SIZE: ${MAX_UPLOAD_SIZE:-5368709120}
+      MAX_PROCESSING_WORKERS: ${MAX_PROCESSING_WORKERS:-2}
+      ENABLE_ENCODING_SCHEDULER: ${ENABLE_ENCODING_SCHEDULER:-true}
+    volumes:
+      - uploads:/app/uploads
+      - processed:/app/processed
+      - logs:/app/logs
+    networks:
+      - athena-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '2.0'
+        reservations:
+          memory: 512M
+          cpus: '0.5'
+
+  # Optional: Nginx reverse proxy for production
+  nginx:
+    image: nginx:alpine
+    restart: unless-stopped
+    ports:
+      - "${NGINX_PORT:-80}:80"
+      - "${NGINX_SSL_PORT:-443}:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+      - nginx_logs:/var/log/nginx
+    depends_on:
+      - app
+    networks:
+      - athena-network
+    profiles:
+      - proxy
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+        reservations:
+          memory: 128M
+
+  # Optional: Monitoring with Prometheus
+  prometheus:
+    image: prom/prometheus:latest
+    restart: unless-stopped
+    ports:
+      - "${PROMETHEUS_PORT:-9090}:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+    networks:
+      - athena-network
+    profiles:
+      - monitoring
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 256M
+
+  # Optional: Grafana for visualization
+  grafana:
+    image: grafana/grafana:latest
+    restart: unless-stopped
+    ports:
+      - "${GRAFANA_PORT:-3000}:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+    depends_on:
+      - prometheus
+    networks:
+      - athena-network
+    profiles:
+      - monitoring
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 256M
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  uploads:
+    driver: local
+  processed:
+    driver: local
+  logs:
+    driver: local
+  ipfs_staging:
+    driver: local
+  ipfs_data:
+    driver: local
+  nginx_logs:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local
+
+networks:
+  athena-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
