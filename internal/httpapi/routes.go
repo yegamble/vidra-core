@@ -48,13 +48,14 @@ func RegisterRoutes(r chi.Router, cfg *config.Config) {
 	// Start a lightweight encoding scheduler in the background to ensure
 	// pending jobs are processed even if the standalone encoder is not running.
 	// This uses a short interval with a small burst to avoid starvation.
+    var encSched *scheduler.EncodingScheduler
     if cfg.EnableEncodingScheduler {
         encSvc := usecase.NewEncodingService(encodingRepo, videoRepo, uploadsDir, cfg)
         interval := time.Duration(cfg.EncodingSchedulerIntervalSeconds) * time.Second
         burst := cfg.EncodingSchedulerBurst
-        sched := scheduler.NewEncodingScheduler(encSvc, interval, burst)
+        encSched = scheduler.NewEncodingScheduler(encSvc, interval, burst)
         ctx, _ := context.WithCancel(context.Background())
-        go sched.Start(ctx)
+        go encSched.Start(ctx)
     }
 
 	// Initialize Redis session repo
@@ -119,9 +120,9 @@ func RegisterRoutes(r chi.Router, cfg *config.Config) {
 			})
 		})
 
-		r.Route("/encoding", func(r chi.Router) {
-			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/status", EncodingStatusHandler(encodingRepo))
-		})
+        r.Route("/encoding", func(r chi.Router) {
+            r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/status", EncodingStatusHandlerEnhanced(encodingRepo, cfg, encSched))
+        })
 
 		r.Route("/users", func(r chi.Router) {
 			// Admin-style create user; currently just requires auth (role checks TBD)
