@@ -52,7 +52,7 @@ func (r *videoRepository) Create(ctx context.Context, v *domain.Video) error {
 		outputPathsJSON, v.ThumbnailPath, v.PreviewPath,
 	)
 	if err != nil {
-		return fmt.Errorf("failed to create video: %w", err)
+		return domain.NewDomainError("CREATE_FAILED", "Failed to create video")
 	}
 	return nil
 }
@@ -81,7 +81,7 @@ func (r *videoRepository) GetByID(ctx context.Context, id string) (*domain.Video
 		if err == sql.ErrNoRows {
 			return nil, domain.NewDomainError("VIDEO_NOT_FOUND", "Video not found")
 		}
-		return nil, fmt.Errorf("failed to get video by id: %w", err)
+		return nil, domain.NewDomainError("GET_FAILED", "Failed to get video")
 	}
 
 	// Unmarshal JSON fields
@@ -105,7 +105,7 @@ func (r *videoRepository) GetByUserID(ctx context.Context, userID string, limit,
 	var total int64
 	err := r.db.QueryRowContext(ctx, countQuery, userID).Scan(&total)
 	if err != nil {
-		return nil, 0, fmt.Errorf("failed to count user videos: %w", err)
+		return nil, 0, domain.NewDomainError("COUNT_FAILED", "Failed to count user videos")
 	}
 
 	// Get videos
@@ -122,7 +122,7 @@ func (r *videoRepository) GetByUserID(ctx context.Context, userID string, limit,
 
 	rows, err := r.db.QueryContext(ctx, query, userID, limit, offset)
 	if err != nil {
-		return nil, 0, fmt.Errorf("failed to get videos by user id: %w", err)
+		return nil, 0, domain.NewDomainError("QUERY_FAILED", "Failed to get videos by user id")
 	}
 	defer func() { _ = rows.Close() }()
 
@@ -140,7 +140,7 @@ func (r *videoRepository) GetByUserID(ctx context.Context, userID string, limit,
 			&v.CreatedAt, &v.UpdatedAt,
 		)
 		if err != nil {
-			return nil, 0, fmt.Errorf("failed to scan video row: %w", err)
+			return nil, 0, domain.NewDomainError("SCAN_FAILED", "Failed to scan video row")
 		}
 
 		// Unmarshal JSON fields
@@ -172,12 +172,12 @@ func (r *videoRepository) Update(ctx context.Context, v *domain.Video) error {
 		v.Status, v.UpdatedAt, v.UserID,
 	)
 	if err != nil {
-		return fmt.Errorf("failed to update video: %w", err)
+		return domain.NewDomainError("UPDATE_FAILED", "Failed to update video")
 	}
 
 	rowsAffected, err := result.RowsAffected()
 	if err != nil {
-		return fmt.Errorf("failed to get rows affected: %w", err)
+		return domain.NewDomainError("ROWS_AFFECTED_FAILED", "Failed to get rows affected")
 	}
 	if rowsAffected == 0 {
 		return domain.NewDomainError("VIDEO_NOT_FOUND", "Video not found or unauthorized")
@@ -191,12 +191,12 @@ func (r *videoRepository) Delete(ctx context.Context, id string, userID string) 
 
 	result, err := r.db.ExecContext(ctx, query, id, userID)
 	if err != nil {
-		return fmt.Errorf("failed to delete video: %w", err)
+		return domain.NewDomainError("DELETE_FAILED", "Failed to delete video")
 	}
 
 	rowsAffected, err := result.RowsAffected()
 	if err != nil {
-		return fmt.Errorf("failed to get rows affected: %w", err)
+		return domain.NewDomainError("ROWS_AFFECTED_FAILED", "Failed to get rows affected")
 	}
 	if rowsAffected == 0 {
 		return domain.NewDomainError("VIDEO_NOT_FOUND", "Video not found or unauthorized")
@@ -218,7 +218,7 @@ func (r *videoRepository) UpdateProcessingInfo(ctx context.Context, videoID stri
 	outJSON, _ := json.Marshal(outputPaths)
 	result, err := r.db.ExecContext(ctx, query, videoID, status, outJSON, thumbnailPath, previewPath)
 	if err != nil {
-		return fmt.Errorf("failed to update processing info: %w", err)
+		return domain.NewDomainError("UPDATE_PROCESSING_FAILED", "Failed to update processing info")
 	}
 	if n, _ := result.RowsAffected(); n == 0 {
 		return domain.NewDomainError("VIDEO_NOT_FOUND", "Video not found")
@@ -289,13 +289,13 @@ func (r *videoRepository) List(ctx context.Context, req *domain.VideoSearchReque
 	var total int64
 	err := r.db.QueryRowContext(ctx, countQuery, args[:len(args)-2]...).Scan(&total)
 	if err != nil {
-		return nil, 0, fmt.Errorf("failed to count videos: %w", err)
+		return nil, 0, domain.NewDomainError("COUNT_FAILED", "Failed to count videos")
 	}
 
 	// Get videos
 	rows, err := r.db.QueryContext(ctx, baseQuery, args...)
 	if err != nil {
-		return nil, 0, fmt.Errorf("failed to list videos: %w", err)
+		return nil, 0, domain.NewDomainError("QUERY_FAILED", "Failed to list videos")
 	}
 	defer func() { _ = rows.Close() }()
 
@@ -313,7 +313,7 @@ func (r *videoRepository) List(ctx context.Context, req *domain.VideoSearchReque
 			&v.CreatedAt, &v.UpdatedAt,
 		)
 		if err != nil {
-			return nil, 0, fmt.Errorf("failed to scan video row: %w", err)
+			return nil, 0, domain.NewDomainError("SCAN_FAILED", "Failed to scan video row")
 		}
 
 		// Unmarshal JSON fields
@@ -423,13 +423,13 @@ func (r *videoRepository) Search(ctx context.Context, req *domain.VideoSearchReq
 	var total int64
 	err := r.db.QueryRowContext(ctx, countQuery, args[:len(args)-2]...).Scan(&total)
 	if err != nil {
-		return nil, 0, fmt.Errorf("failed to count search results: %w", err)
+		return nil, 0, domain.NewDomainError("COUNT_FAILED", "Failed to count search results")
 	}
 
 	// Get videos
 	rows, err := r.db.QueryContext(ctx, baseQuery, args...)
 	if err != nil {
-		return nil, 0, fmt.Errorf("failed to search videos: %w", err)
+		return nil, 0, domain.NewDomainError("QUERY_FAILED", "Failed to search videos")
 	}
 	defer func() { _ = rows.Close() }()
 
@@ -447,7 +447,7 @@ func (r *videoRepository) Search(ctx context.Context, req *domain.VideoSearchReq
 			&v.CreatedAt, &v.UpdatedAt,
 		)
 		if err != nil {
-			return nil, 0, fmt.Errorf("failed to scan video row: %w", err)
+			return nil, 0, domain.NewDomainError("SCAN_FAILED", "Failed to scan video row")
 		}
 
 		// Unmarshal JSON fields

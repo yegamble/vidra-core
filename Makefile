@@ -180,8 +180,8 @@ install-tools: ## Install development tools
 # Run Postman collection against a running server
 postman-newman: ## Run Postman auth tests via Newman (server must be running)
 	@echo "Running Postman collection with Newman..."
-	@BASE_URL?=http://localhost:8080; \
-	docker run --rm -t \
+	@BASE_URL=http://localhost:8080; \
+	docker run --rm --network host \
 	  -v "$(PWD)/postman:/etc/newman" \
 	  postman/newman:alpine \
 	  run /etc/newman/athena-auth.postman_collection.json \

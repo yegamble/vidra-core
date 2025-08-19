@@ -2,11 +2,13 @@ package middleware
 
 import (
     "context"
+    "encoding/json"
     "net/http"
     "strings"
     "time"
 
     "github.com/golang-jwt/jwt/v5"
+    "athena/internal/domain"
 )
 
 type contextKey string
@@ -20,19 +22,19 @@ func Auth(jwtSecret string) func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			authHeader := r.Header.Get("Authorization")
 			if authHeader == "" {
-				http.Error(w, "Missing authorization header", http.StatusUnauthorized)
+				writeError(w, http.StatusUnauthorized, domain.NewDomainError("MISSING_AUTH", "Missing authorization header"))
 				return
 			}
 
 			tokenString := strings.TrimPrefix(authHeader, "Bearer ")
 			if tokenString == authHeader {
-				http.Error(w, "Invalid authorization header format", http.StatusUnauthorized)
+				writeError(w, http.StatusUnauthorized, domain.NewDomainError("INVALID_AUTH_FORMAT", "Invalid authorization header format"))
 				return
 			}
 
 			userID, err := validateJWT(tokenString, jwtSecret)
 			if err != nil {
-				http.Error(w, "Invalid token", http.StatusUnauthorized)
+				writeError(w, http.StatusUnauthorized, domain.NewDomainError("INVALID_TOKEN", "Invalid token"))
 				return
 			}
 
@@ -83,4 +85,37 @@ func validateJWT(tokenString, jwtSecret string) (string, error) {
         }
     }
     return "", jwt.ErrTokenMalformed
+}
+
+type Response struct {
+	Data    interface{} `json:"data,omitempty"`
+	Error   *ErrorInfo  `json:"error,omitempty"`
+	Success bool        `json:"success"`
+}
+
+type ErrorInfo struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+	Details string `json:"details,omitempty"`
+}
+
+func writeError(w http.ResponseWriter, statusCode int, err error) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(statusCode)
+
+	errorInfo := &ErrorInfo{
+		Message: err.Error(),
+	}
+
+	if domainErr, ok := err.(domain.DomainError); ok {
+		errorInfo.Code = domainErr.Code
+		errorInfo.Details = domainErr.Details
+	}
+
+	response := Response{
+		Error:   errorInfo,
+		Success: false,
+	}
+
+	_ = json.NewEncoder(w).Encode(response)
 }
