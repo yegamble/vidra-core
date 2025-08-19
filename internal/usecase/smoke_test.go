@@ -1,10 +1,9 @@
 package usecase_test
 
 import (
-    "testing"
+	"testing"
 )
 
 func Test_Smoke(t *testing.T) {
-    t.Log("smoke running")
+	t.Log("smoke running")
 }
-

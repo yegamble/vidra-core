@@ -1,16 +1,16 @@
 package usecase
 
 import (
-    "context"
-    "fmt"
-    "os"
-    "path/filepath"
-    "sort"
-    "strconv"
-    "strings"
-    "math"
-    "time"
-    "log"
+	"context"
+	"fmt"
+	"log"
+	"math"
+	"os"
+	"path/filepath"
+	"sort"
+	"strconv"
+	"strings"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -20,29 +20,29 @@ import (
 )
 
 type uploadService struct {
-    uploadRepo    UploadRepository
-    encodingRepo  EncodingRepository
-    videoRepo     VideoRepository
-    uploadsDir    string
-    validator     *validation.ChecksumValidator
-    cfg           *config.Config
+	uploadRepo   UploadRepository
+	encodingRepo EncodingRepository
+	videoRepo    VideoRepository
+	uploadsDir   string
+	validator    *validation.ChecksumValidator
+	cfg          *config.Config
 }
 
 func NewUploadService(
-    uploadRepo UploadRepository,
-    encodingRepo EncodingRepository,
-    videoRepo VideoRepository,
-    uploadsDir string,
-    cfg *config.Config,
+	uploadRepo UploadRepository,
+	encodingRepo EncodingRepository,
+	videoRepo VideoRepository,
+	uploadsDir string,
+	cfg *config.Config,
 ) UploadService {
-    return &uploadService{
-        uploadRepo:   uploadRepo,
-        encodingRepo: encodingRepo,
-        videoRepo:    videoRepo,
-        uploadsDir:   uploadsDir,
-        validator:    validation.NewChecksumValidator(cfg),
-        cfg:          cfg,
-    }
+	return &uploadService{
+		uploadRepo:   uploadRepo,
+		encodingRepo: encodingRepo,
+		videoRepo:    videoRepo,
+		uploadsDir:   uploadsDir,
+		validator:    validation.NewChecksumValidator(cfg),
+		cfg:          cfg,
+	}
 }
 
 func (s *uploadService) InitiateUpload(ctx context.Context, userID string, req *domain.InitiateUploadRequest) (*domain.InitiateUploadResponse, error) {
@@ -238,54 +238,56 @@ func (s *uploadService) CompleteUpload(ctx context.Context, sessionID string) er
 		return fmt.Errorf("failed to update video status: %w", err)
 	}
 
-    // Create encoding job
-    finalFilePath := filepath.Join(s.uploadsDir, "completed", session.VideoID+filepath.Ext(session.FileName))
+	// Create encoding job
+	finalFilePath := filepath.Join(s.uploadsDir, "completed", session.VideoID+filepath.Ext(session.FileName))
 
-    // Detect video resolution from metadata height if available, otherwise fallback.
-    sourceResolution := domain.DefaultResolution
-    if video.Metadata.Height > 0 {
-        sourceResolution = domain.DetectResolutionFromHeight(video.Metadata.Height)
-    } else if video.Metadata.Width > 0 { // derive from width and aspect ratio
-        // Default to 16:9 if aspect ratio is missing or invalid
-        aspectRatio := 16.0 / 9.0
-        usedDefaultAR := true
-        if ar := strings.TrimSpace(video.Metadata.AspectRatio); ar != "" {
-            if strings.Contains(ar, ":") || strings.Contains(ar, "/") {
-                sep := ":"
-                if strings.Contains(ar, "/") { sep = "/" }
-                parts := strings.SplitN(ar, sep, 2)
-                if len(parts) == 2 {
-                    if num, err1 := strconv.ParseFloat(strings.TrimSpace(parts[0]), 64); err1 == nil && num > 0 {
-                        if den, err2 := strconv.ParseFloat(strings.TrimSpace(parts[1]), 64); err2 == nil && den > 0 {
-                            aspectRatio = num / den
-                            usedDefaultAR = false
-                        }
-                    }
-                }
-            } else {
-                if v, err := strconv.ParseFloat(ar, 64); err == nil && v > 0 {
-                    aspectRatio = v
-                    usedDefaultAR = false
-                }
-            }
-        }
-        estHeight := int(math.Round(float64(video.Metadata.Width) / aspectRatio))
-        if estHeight > 0 {
-            sourceResolution = domain.DetectResolutionFromHeight(estHeight)
-            // Log estimation usage for observability (non-fatal)
-            if s != nil && s.cfg != nil {
-                lvl := strings.ToLower(s.cfg.LogLevel)
-                if lvl == "debug" || lvl == "trace" {
-                    if usedDefaultAR {
-                        log.Printf("estimating source resolution using width=%d, default AR=16:9 -> estHeight=%d -> %s", video.Metadata.Width, estHeight, sourceResolution)
-                    } else {
-                        log.Printf("estimating source resolution using width=%d, AR=%q -> estHeight=%d -> %s", video.Metadata.Width, video.Metadata.AspectRatio, estHeight, sourceResolution)
-                    }
-                }
-            }
-        }
-    }
-	
+	// Detect video resolution from metadata height if available, otherwise fallback.
+	sourceResolution := domain.DefaultResolution
+	if video.Metadata.Height > 0 {
+		sourceResolution = domain.DetectResolutionFromHeight(video.Metadata.Height)
+	} else if video.Metadata.Width > 0 { // derive from width and aspect ratio
+		// Default to 16:9 if aspect ratio is missing or invalid
+		aspectRatio := 16.0 / 9.0
+		usedDefaultAR := true
+		if ar := strings.TrimSpace(video.Metadata.AspectRatio); ar != "" {
+			if strings.Contains(ar, ":") || strings.Contains(ar, "/") {
+				sep := ":"
+				if strings.Contains(ar, "/") {
+					sep = "/"
+				}
+				parts := strings.SplitN(ar, sep, 2)
+				if len(parts) == 2 {
+					if num, err1 := strconv.ParseFloat(strings.TrimSpace(parts[0]), 64); err1 == nil && num > 0 {
+						if den, err2 := strconv.ParseFloat(strings.TrimSpace(parts[1]), 64); err2 == nil && den > 0 {
+							aspectRatio = num / den
+							usedDefaultAR = false
+						}
+					}
+				}
+			} else {
+				if v, err := strconv.ParseFloat(ar, 64); err == nil && v > 0 {
+					aspectRatio = v
+					usedDefaultAR = false
+				}
+			}
+		}
+		estHeight := int(math.Round(float64(video.Metadata.Width) / aspectRatio))
+		if estHeight > 0 {
+			sourceResolution = domain.DetectResolutionFromHeight(estHeight)
+			// Log estimation usage for observability (non-fatal)
+			if s != nil && s.cfg != nil {
+				lvl := strings.ToLower(s.cfg.LogLevel)
+				if lvl == "debug" || lvl == "trace" {
+					if usedDefaultAR {
+						log.Printf("estimating source resolution using width=%d, default AR=16:9 -> estHeight=%d -> %s", video.Metadata.Width, estHeight, sourceResolution)
+					} else {
+						log.Printf("estimating source resolution using width=%d, AR=%q -> estHeight=%d -> %s", video.Metadata.Width, video.Metadata.AspectRatio, estHeight, sourceResolution)
+					}
+				}
+			}
+		}
+	}
+
 	job := &domain.EncodingJob{
 		ID:                uuid.NewString(),
 		VideoID:           session.VideoID,

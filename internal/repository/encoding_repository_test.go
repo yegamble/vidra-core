@@ -1,16 +1,16 @@
 package repository
 
 import (
-    "context"
-    "testing"
-    "time"
+	"context"
+	"testing"
+	"time"
 
-    "athena/internal/domain"
-    "athena/internal/usecase"
-    "athena/internal/testutil"
-    "github.com/google/uuid"
-    "github.com/stretchr/testify/assert"
-    "github.com/stretchr/testify/require"
+	"athena/internal/domain"
+	"athena/internal/testutil"
+	"athena/internal/usecase"
+	"github.com/google/uuid"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestEncodingRepository_CreateJob(t *testing.T) {
@@ -249,34 +249,34 @@ func TestEncodingRepository_GetNextJob(t *testing.T) {
 }
 
 func TestEncodingRepository_UniqueActiveJobPerVideo(t *testing.T) {
-    testDB := testutil.SetupTestDB(t)
-    encodingRepo := NewEncodingRepository(testDB.DB)
-    videoRepo := NewVideoRepository(testDB.DB)
-    userRepo := NewUserRepository(testDB.DB)
+	testDB := testutil.SetupTestDB(t)
+	encodingRepo := NewEncodingRepository(testDB.DB)
+	videoRepo := NewVideoRepository(testDB.DB)
+	userRepo := NewUserRepository(testDB.DB)
 
-    ctx := context.Background()
+	ctx := context.Background()
 
-    user := createTestUser(t, userRepo, ctx, "user-unique", "unique@example.com")
-    video := createTestVideo(t, videoRepo, ctx, user.ID, "Unique Video")
+	user := createTestUser(t, userRepo, ctx, "user-unique", "unique@example.com")
+	video := createTestVideo(t, videoRepo, ctx, user.ID, "Unique Video")
 
-    // First pending job should succeed
-    job1 := createTestEncodingJob(t, encodingRepo, ctx, video.ID)
-    require.NotNil(t, job1)
+	// First pending job should succeed
+	job1 := createTestEncodingJob(t, encodingRepo, ctx, video.ID)
+	require.NotNil(t, job1)
 
-    // Second pending job for the same video should fail due to unique index
-    job2 := &domain.EncodingJob{
-        ID:                uuid.NewString(),
-        VideoID:           video.ID,
-        SourceFilePath:    "/path/to/source2.mp4",
-        SourceResolution:  "720p",
-        TargetResolutions: []string{"720p", "480p"},
-        Status:            domain.EncodingStatusPending,
-        Progress:          0,
-        CreatedAt:         time.Now(),
-        UpdatedAt:         time.Now(),
-    }
-    err := encodingRepo.CreateJob(ctx, job2)
-    require.Error(t, err, "expected error creating second active job for same video")
+	// Second pending job for the same video should fail due to unique index
+	job2 := &domain.EncodingJob{
+		ID:                uuid.NewString(),
+		VideoID:           video.ID,
+		SourceFilePath:    "/path/to/source2.mp4",
+		SourceResolution:  "720p",
+		TargetResolutions: []string{"720p", "480p"},
+		Status:            domain.EncodingStatusPending,
+		Progress:          0,
+		CreatedAt:         time.Now(),
+		UpdatedAt:         time.Now(),
+	}
+	err := encodingRepo.CreateJob(ctx, job2)
+	require.Error(t, err, "expected error creating second active job for same video")
 }
 
 func TestEncodingRepository_DeleteJob(t *testing.T) {
@@ -317,13 +317,13 @@ func TestEncodingRepository_ConcurrentGetNextJob(t *testing.T) {
 
 	// Test concurrent access to GetNextJob
 	done := make(chan *domain.EncodingJob, 2)
-	
+
 	go func() {
 		job, err := encodingRepo.GetNextJob(ctx)
 		require.NoError(t, err)
 		done <- job
 	}()
-	
+
 	go func() {
 		job, err := encodingRepo.GetNextJob(ctx)
 		require.NoError(t, err)

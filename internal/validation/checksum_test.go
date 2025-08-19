@@ -22,8 +22,8 @@ func TestChecksumValidator_ValidateChunkChecksum(t *testing.T) {
 			config: &config.Config{
 				ValidationStrictMode:        false,
 				ValidationAllowedAlgorithms: []string{"sha256"},
-				ValidationTestMode:         false,
-				ValidationLogEvents:        false,
+				ValidationTestMode:          false,
+				ValidationLogEvents:         false,
 			},
 			data:             []byte("test data"),
 			expectedChecksum: "916f0027a575074ce72a331777c3478d6513f786a591bd892da1a577bf2335f9",
@@ -34,8 +34,8 @@ func TestChecksumValidator_ValidateChunkChecksum(t *testing.T) {
 			config: &config.Config{
 				ValidationStrictMode:        false,
 				ValidationAllowedAlgorithms: []string{"sha256"},
-				ValidationTestMode:         false,
-				ValidationLogEvents:        false,
+				ValidationTestMode:          false,
+				ValidationLogEvents:         false,
 			},
 			data:             []byte("test data"),
 			expectedChecksum: "invalid_checksum",
@@ -47,8 +47,8 @@ func TestChecksumValidator_ValidateChunkChecksum(t *testing.T) {
 			config: &config.Config{
 				ValidationStrictMode:        true,
 				ValidationAllowedAlgorithms: []string{"sha256"},
-				ValidationTestMode:         false,
-				ValidationLogEvents:        false,
+				ValidationTestMode:          false,
+				ValidationLogEvents:         false,
 			},
 			data:             []byte("test data"),
 			expectedChecksum: "",
@@ -60,8 +60,8 @@ func TestChecksumValidator_ValidateChunkChecksum(t *testing.T) {
 			config: &config.Config{
 				ValidationStrictMode:        true,
 				ValidationAllowedAlgorithms: []string{"sha256"},
-				ValidationTestMode:         true,
-				ValidationLogEvents:        false,
+				ValidationTestMode:          true,
+				ValidationLogEvents:         false,
 			},
 			data:             []byte("test data"),
 			expectedChecksum: "abc123",
@@ -72,8 +72,8 @@ func TestChecksumValidator_ValidateChunkChecksum(t *testing.T) {
 			config: &config.Config{
 				ValidationStrictMode:        false,
 				ValidationAllowedAlgorithms: []string{"sha256"},
-				ValidationTestMode:         false,
-				ValidationLogEvents:        false,
+				ValidationTestMode:          false,
+				ValidationLogEvents:         false,
 			},
 			data:             []byte("test data"),
 			expectedChecksum: "",
@@ -102,10 +102,10 @@ func TestChecksumValidator_ValidateChunkChecksum(t *testing.T) {
 
 func TestChecksumValidator_CalculateChecksum(t *testing.T) {
 	validator := NewChecksumValidator(&config.Config{})
-	
+
 	data := []byte("test data")
 	expected := "916f0027a575074ce72a331777c3478d6513f786a591bd892da1a577bf2335f9"
-	
+
 	actual := validator.CalculateChecksum(data)
 	assert.Equal(t, expected, actual)
 }
@@ -120,7 +120,7 @@ func TestChecksumValidator_GetValidationMode(t *testing.T) {
 			name: "normal mode",
 			config: &config.Config{
 				ValidationStrictMode: false,
-				ValidationTestMode:  false,
+				ValidationTestMode:   false,
 			},
 			expected: "normal",
 		},
@@ -128,7 +128,7 @@ func TestChecksumValidator_GetValidationMode(t *testing.T) {
 			name: "strict mode",
 			config: &config.Config{
 				ValidationStrictMode: true,
-				ValidationTestMode:  false,
+				ValidationTestMode:   false,
 			},
 			expected: "strict",
 		},
@@ -136,7 +136,7 @@ func TestChecksumValidator_GetValidationMode(t *testing.T) {
 			name: "test mode",
 			config: &config.Config{
 				ValidationStrictMode: false,
-				ValidationTestMode:  true,
+				ValidationTestMode:   true,
 			},
 			expected: "normal (test)",
 		},
@@ -144,7 +144,7 @@ func TestChecksumValidator_GetValidationMode(t *testing.T) {
 			name: "strict test mode",
 			config: &config.Config{
 				ValidationStrictMode: true,
-				ValidationTestMode:  true,
+				ValidationTestMode:   true,
 			},
 			expected: "strict (test)",
 		},

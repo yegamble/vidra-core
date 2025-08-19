@@ -122,7 +122,7 @@ func TestFullUploadWorkflow_Integration(t *testing.T) {
 				assert.True(t, chunkResponse.Uploaded)
 
 				expectedRemaining := totalChunks - (i + 1)
-				assert.Len(t, chunkResponse.RemainingChunks, expectedRemaining, 
+				assert.Len(t, chunkResponse.RemainingChunks, expectedRemaining,
 					"After uploading chunk %d, should have %d remaining chunks", chunkIndex, expectedRemaining)
 			}
 
@@ -461,7 +461,7 @@ func TestConcurrentUpload_Integration(t *testing.T) {
 	// Verify chunk was recorded only once
 	uploadedChunks, err := uploadRepo.GetUploadedChunks(ctx, sessionID)
 	require.NoError(t, err)
-	
+
 	chunkCount := 0
 	for _, chunk := range uploadedChunks {
 		if chunk == 0 {

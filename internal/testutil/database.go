@@ -1,21 +1,21 @@
 package testutil
 
 import (
-    "context"
-    "database/sql"
-    "fmt"
-    "net/url"
-    "os"
-    "path/filepath"
-    "runtime"
-    "strings"
-    "testing"
-    "time"
+	"context"
+	"database/sql"
+	"fmt"
+	"net/url"
+	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"testing"
+	"time"
 
-    "github.com/jmoiron/sqlx"
-    "github.com/joho/godotenv"
-    _ "github.com/lib/pq"
-    "github.com/redis/go-redis/v9"
+	"github.com/jmoiron/sqlx"
+	"github.com/joho/godotenv"
+	_ "github.com/lib/pq"
+	"github.com/redis/go-redis/v9"
 )
 
 type TestDB struct {
@@ -24,19 +24,19 @@ type TestDB struct {
 }
 
 func SetupTestDB(t *testing.T) *TestDB {
-    t.Helper()
+	t.Helper()
 
-    db, err := setupPostgres()
-    if err != nil {
-        t.Skipf("Skipping test: Postgres not available (%v)", err)
-        return nil
-    }
+	db, err := setupPostgres()
+	if err != nil {
+		t.Skipf("Skipping test: Postgres not available (%v)", err)
+		return nil
+	}
 
-    redisClient, err := setupRedis()
-    if err != nil {
-        t.Skipf("Skipping test: Redis not available (%v)", err)
-        return nil
-    }
+	redisClient, err := setupRedis()
+	if err != nil {
+		t.Skipf("Skipping test: Redis not available (%v)", err)
+		return nil
+	}
 
 	testDB := &TestDB{
 		DB:    db,
@@ -72,125 +72,125 @@ func setupPostgres() (*sqlx.DB, error) {
 		dbURL = fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=%s", user, pass, host, port, name, ssl)
 	}
 
-    // Derive an isolated schema per calling test package to avoid cross-package interference
-    schema := deriveTestSchema()
+	// Derive an isolated schema per calling test package to avoid cross-package interference
+	schema := deriveTestSchema()
 
-    // First connect without custom search_path to create the schema if needed
-    db, err := sqlx.Connect("postgres", dbURL)
-    if err != nil {
-        return nil, fmt.Errorf("failed to connect to test database: %w", err)
-    }
+	// First connect without custom search_path to create the schema if needed
+	db, err := sqlx.Connect("postgres", dbURL)
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to test database: %w", err)
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-    if err := db.PingContext(ctx); err != nil {
-        return nil, fmt.Errorf("failed to ping test database: %w", err)
-    }
+	if err := db.PingContext(ctx); err != nil {
+		return nil, fmt.Errorf("failed to ping test database: %w", err)
+	}
 
-    // Create schema if needed
-    if _, err := db.ExecContext(ctx, fmt.Sprintf("CREATE SCHEMA IF NOT EXISTS %s", pqQuoteIdent(schema))); err != nil {
-        return nil, fmt.Errorf("failed to create test schema: %w", err)
-    }
-    // Close and reconnect with search_path set to the schema for all pooled conns
-    _ = db.Close()
+	// Create schema if needed
+	if _, err := db.ExecContext(ctx, fmt.Sprintf("CREATE SCHEMA IF NOT EXISTS %s", pqQuoteIdent(schema))); err != nil {
+		return nil, fmt.Errorf("failed to create test schema: %w", err)
+	}
+	// Close and reconnect with search_path set to the schema for all pooled conns
+	_ = db.Close()
 
-    // Append search_path to the DSN (lib/pq honors search_path param in URL form)
-    if strings.Contains(dbURL, "://") {
-        u, parseErr := url.Parse(dbURL)
-        if parseErr == nil {
-            q := u.Query()
-            q.Set("search_path", fmt.Sprintf("%s,public", schema))
-            u.RawQuery = q.Encode()
-            dbURL = u.String()
-        }
-    } else {
-        // Fallback DSN key/value form
-        dbURL = dbURL + fmt.Sprintf(" search_path='%s,public'", schema)
-    }
+	// Append search_path to the DSN (lib/pq honors search_path param in URL form)
+	if strings.Contains(dbURL, "://") {
+		u, parseErr := url.Parse(dbURL)
+		if parseErr == nil {
+			q := u.Query()
+			q.Set("search_path", fmt.Sprintf("%s,public", schema))
+			u.RawQuery = q.Encode()
+			dbURL = u.String()
+		}
+	} else {
+		// Fallback DSN key/value form
+		dbURL = dbURL + fmt.Sprintf(" search_path='%s,public'", schema)
+	}
 
-    db, err = sqlx.Connect("postgres", dbURL)
-    if err != nil {
-        return nil, fmt.Errorf("failed to reconnect to test database with schema: %w", err)
-    }
+	db, err = sqlx.Connect("postgres", dbURL)
+	if err != nil {
+		return nil, fmt.Errorf("failed to reconnect to test database with schema: %w", err)
+	}
 
-    // Set connection pool settings
-    db.SetMaxOpenConns(10)
-    db.SetMaxIdleConns(5)
-    db.SetConnMaxLifetime(5 * time.Minute)
+	// Set connection pool settings
+	db.SetMaxOpenConns(10)
+	db.SetMaxIdleConns(5)
+	db.SetConnMaxLifetime(5 * time.Minute)
 
-    // Ensure schema exists for tests (idempotent)
-    if err := ensureTestSchema(db); err != nil {
-        return nil, err
-    }
+	// Ensure schema exists for tests (idempotent)
+	if err := ensureTestSchema(db); err != nil {
+		return nil, err
+	}
 
-    return db, nil
+	return db, nil
 }
 
 // deriveTestSchema attempts to create a stable, package-specific schema name
 func deriveTestSchema() string {
-    if v := os.Getenv("TEST_SCHEMA"); v != "" {
-        return sanitizeSchema(v)
-    }
-    // Walk up the call stack to find first test file outside testutil
-    for i := 1; i < 15; i++ {
-        if _, file, _, ok := runtime.Caller(i); ok {
-            base := filepath.Base(file)
-            if strings.HasSuffix(base, "_test.go") && !strings.Contains(file, string(filepath.Join("internal", "testutil"))) {
-                // Use directory name as package differentiator
-                dir := filepath.Dir(file)
-                // e.g., internal/repository or internal/httpapi
-                parts := strings.Split(dir, string(filepath.Separator))
-                if len(parts) >= 2 {
-                    pkg := strings.Join(parts[len(parts)-2:], "_")
-                    return sanitizeSchema("test_" + pkg)
-                }
-                return sanitizeSchema("test_unknown")
-            }
-        }
-    }
-    return sanitizeSchema("test_default")
+	if v := os.Getenv("TEST_SCHEMA"); v != "" {
+		return sanitizeSchema(v)
+	}
+	// Walk up the call stack to find first test file outside testutil
+	for i := 1; i < 15; i++ {
+		if _, file, _, ok := runtime.Caller(i); ok {
+			base := filepath.Base(file)
+			if strings.HasSuffix(base, "_test.go") && !strings.Contains(file, string(filepath.Join("internal", "testutil"))) {
+				// Use directory name as package differentiator
+				dir := filepath.Dir(file)
+				// e.g., internal/repository or internal/httpapi
+				parts := strings.Split(dir, string(filepath.Separator))
+				if len(parts) >= 2 {
+					pkg := strings.Join(parts[len(parts)-2:], "_")
+					return sanitizeSchema("test_" + pkg)
+				}
+				return sanitizeSchema("test_unknown")
+			}
+		}
+	}
+	return sanitizeSchema("test_default")
 }
 
 func sanitizeSchema(s string) string {
-    s = strings.ToLower(s)
-    // Replace any non [a-z0-9_] with underscore
-    var b strings.Builder
-    for _, r := range s {
-        if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '_' {
-            b.WriteRune(r)
-        } else {
-            b.WriteRune('_')
-        }
-    }
-    // Ensure it starts with a letter
-    if b.Len() == 0 || (b.String()[0] < 'a' || b.String()[0] > 'z') {
-        return "t_" + b.String()
-    }
-    return b.String()
+	s = strings.ToLower(s)
+	// Replace any non [a-z0-9_] with underscore
+	var b strings.Builder
+	for _, r := range s {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '_' {
+			b.WriteRune(r)
+		} else {
+			b.WriteRune('_')
+		}
+	}
+	// Ensure it starts with a letter
+	if b.Len() == 0 || (b.String()[0] < 'a' || b.String()[0] > 'z') {
+		return "t_" + b.String()
+	}
+	return b.String()
 }
 
 // pqQuoteIdent quotes an identifier minimally for CREATE SCHEMA
 func pqQuoteIdent(id string) string {
-    // Very simple quote for safety; our sanitize already removed bad chars
-    return `"` + strings.ReplaceAll(id, `"`, `""`) + `"`
+	// Very simple quote for safety; our sanitize already removed bad chars
+	return `"` + strings.ReplaceAll(id, `"`, `""`) + `"`
 }
 
 // ensureTestSchema creates required tables/extensions for integration tests if missing.
 // It is safe to run multiple times.
 func ensureTestSchema(db *sqlx.DB) error {
-    ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-    defer cancel()
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
 
-    stmts := []string{
-        `CREATE EXTENSION IF NOT EXISTS pgcrypto`,
-        `CREATE EXTENSION IF NOT EXISTS "uuid-ossp"`,
-        `CREATE EXTENSION IF NOT EXISTS pg_trgm`,
-        `CREATE EXTENSION IF NOT EXISTS unaccent`,
-        `CREATE EXTENSION IF NOT EXISTS btree_gin`,
-        `CREATE OR REPLACE FUNCTION update_updated_at_column() RETURNS TRIGGER AS $$
+	stmts := []string{
+		`CREATE EXTENSION IF NOT EXISTS pgcrypto`,
+		`CREATE EXTENSION IF NOT EXISTS "uuid-ossp"`,
+		`CREATE EXTENSION IF NOT EXISTS pg_trgm`,
+		`CREATE EXTENSION IF NOT EXISTS unaccent`,
+		`CREATE EXTENSION IF NOT EXISTS btree_gin`,
+		`CREATE OR REPLACE FUNCTION update_updated_at_column() RETURNS TRIGGER AS $$
         BEGIN NEW.updated_at = NOW(); RETURN NEW; END; $$ language 'plpgsql';`,
-        `CREATE TABLE IF NOT EXISTS users (
+		`CREATE TABLE IF NOT EXISTS users (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
             username VARCHAR(50) UNIQUE NOT NULL,
             email VARCHAR(255) UNIQUE NOT NULL,
@@ -204,15 +204,15 @@ func ensureTestSchema(db *sqlx.DB) error {
             created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
             updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
         )`,
-        `CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)`,
-        `CREATE INDEX IF NOT EXISTS idx_users_username ON users(username)`,
-        `CREATE INDEX IF NOT EXISTS idx_users_role ON users(role)`,
-        `CREATE INDEX IF NOT EXISTS idx_users_is_active ON users(is_active)`,
-        `CREATE INDEX IF NOT EXISTS idx_users_created_at ON users(created_at)`,
-        `CREATE INDEX IF NOT EXISTS idx_users_bitcoin_wallet ON users(bitcoin_wallet)`,
-        `DROP TRIGGER IF EXISTS update_users_updated_at ON users`,
-        `CREATE TRIGGER update_users_updated_at BEFORE UPDATE ON users FOR EACH ROW EXECUTE FUNCTION update_updated_at_column()`,
-        `CREATE TABLE IF NOT EXISTS refresh_tokens (
+		`CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)`,
+		`CREATE INDEX IF NOT EXISTS idx_users_username ON users(username)`,
+		`CREATE INDEX IF NOT EXISTS idx_users_role ON users(role)`,
+		`CREATE INDEX IF NOT EXISTS idx_users_is_active ON users(is_active)`,
+		`CREATE INDEX IF NOT EXISTS idx_users_created_at ON users(created_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_users_bitcoin_wallet ON users(bitcoin_wallet)`,
+		`DROP TRIGGER IF EXISTS update_users_updated_at ON users`,
+		`CREATE TRIGGER update_users_updated_at BEFORE UPDATE ON users FOR EACH ROW EXECUTE FUNCTION update_updated_at_column()`,
+		`CREATE TABLE IF NOT EXISTS refresh_tokens (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
             user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
             token TEXT UNIQUE NOT NULL,
@@ -220,23 +220,23 @@ func ensureTestSchema(db *sqlx.DB) error {
             created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
             revoked_at TIMESTAMP WITH TIME ZONE
         )`,
-        `CREATE INDEX IF NOT EXISTS idx_refresh_tokens_token ON refresh_tokens(token)`,
-        `CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user_id ON refresh_tokens(user_id)`,
-        `CREATE INDEX IF NOT EXISTS idx_refresh_tokens_expires_at ON refresh_tokens(expires_at)`,
-        `CREATE INDEX IF NOT EXISTS idx_refresh_tokens_revoked_at ON refresh_tokens(revoked_at)`,
-        `CREATE INDEX IF NOT EXISTS idx_refresh_tokens_active ON refresh_tokens(user_id, expires_at) WHERE revoked_at IS NULL`,
-        `CREATE TABLE IF NOT EXISTS sessions (
+		`CREATE INDEX IF NOT EXISTS idx_refresh_tokens_token ON refresh_tokens(token)`,
+		`CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user_id ON refresh_tokens(user_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_refresh_tokens_expires_at ON refresh_tokens(expires_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_refresh_tokens_revoked_at ON refresh_tokens(revoked_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_refresh_tokens_active ON refresh_tokens(user_id, expires_at) WHERE revoked_at IS NULL`,
+		`CREATE TABLE IF NOT EXISTS sessions (
             id VARCHAR(255) PRIMARY KEY,
             user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
             expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
             created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
         )`,
-        `CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id)`,
-        `CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions(expires_at)`,
-        `DROP INDEX IF EXISTS idx_sessions_active`,
-        `CREATE INDEX IF NOT EXISTS idx_sessions_active ON sessions(user_id, expires_at)`,
-        // Videos table
-        `CREATE TABLE IF NOT EXISTS videos (
+		`CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions(expires_at)`,
+		`DROP INDEX IF EXISTS idx_sessions_active`,
+		`CREATE INDEX IF NOT EXISTS idx_sessions_active ON sessions(user_id, expires_at)`,
+		// Videos table
+		`CREATE TABLE IF NOT EXISTS videos (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
             thumbnail_id UUID NOT NULL,
             title VARCHAR(255) NOT NULL,
@@ -259,17 +259,17 @@ func ensureTestSchema(db *sqlx.DB) error {
             created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
             updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
         )`,
-        `ALTER TABLE videos ADD COLUMN IF NOT EXISTS output_paths JSONB NOT NULL DEFAULT '{}'::jsonb`,
-        `ALTER TABLE videos ADD COLUMN IF NOT EXISTS thumbnail_path TEXT`,
-        `ALTER TABLE videos ADD COLUMN IF NOT EXISTS preview_path TEXT`,
-        `CREATE INDEX IF NOT EXISTS idx_videos_user_id ON videos(user_id)`,
-        `CREATE INDEX IF NOT EXISTS idx_videos_privacy ON videos(privacy)`,
-        `CREATE INDEX IF NOT EXISTS idx_videos_status ON videos(status)`,
-        `CREATE INDEX IF NOT EXISTS idx_videos_upload_date ON videos(upload_date)`,
-        `DROP TRIGGER IF EXISTS update_videos_updated_at ON videos`,
-        `CREATE TRIGGER update_videos_updated_at BEFORE UPDATE ON videos FOR EACH ROW EXECUTE FUNCTION update_updated_at_column()`,
-        // Upload sessions table
-        `CREATE TABLE IF NOT EXISTS upload_sessions (
+		`ALTER TABLE videos ADD COLUMN IF NOT EXISTS output_paths JSONB NOT NULL DEFAULT '{}'::jsonb`,
+		`ALTER TABLE videos ADD COLUMN IF NOT EXISTS thumbnail_path TEXT`,
+		`ALTER TABLE videos ADD COLUMN IF NOT EXISTS preview_path TEXT`,
+		`CREATE INDEX IF NOT EXISTS idx_videos_user_id ON videos(user_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_videos_privacy ON videos(privacy)`,
+		`CREATE INDEX IF NOT EXISTS idx_videos_status ON videos(status)`,
+		`CREATE INDEX IF NOT EXISTS idx_videos_upload_date ON videos(upload_date)`,
+		`DROP TRIGGER IF EXISTS update_videos_updated_at ON videos`,
+		`CREATE TRIGGER update_videos_updated_at BEFORE UPDATE ON videos FOR EACH ROW EXECUTE FUNCTION update_updated_at_column()`,
+		// Upload sessions table
+		`CREATE TABLE IF NOT EXISTS upload_sessions (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
             video_id UUID NOT NULL REFERENCES videos(id) ON DELETE CASCADE,
             user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -284,14 +284,14 @@ func ensureTestSchema(db *sqlx.DB) error {
             updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
             expires_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT (NOW() + INTERVAL '24 hours')
         )`,
-        `CREATE INDEX IF NOT EXISTS idx_upload_sessions_video_id ON upload_sessions(video_id)`,
-        `CREATE INDEX IF NOT EXISTS idx_upload_sessions_user_id ON upload_sessions(user_id)`,
-        `CREATE INDEX IF NOT EXISTS idx_upload_sessions_status ON upload_sessions(status)`,
-        `CREATE INDEX IF NOT EXISTS idx_upload_sessions_expires_at ON upload_sessions(expires_at)`,
-        `DROP TRIGGER IF EXISTS update_upload_sessions_updated_at ON upload_sessions`,
-        `CREATE TRIGGER update_upload_sessions_updated_at BEFORE UPDATE ON upload_sessions FOR EACH ROW EXECUTE FUNCTION update_updated_at_column()`,
-        // Encoding jobs table
-        `CREATE TABLE IF NOT EXISTS encoding_jobs (
+		`CREATE INDEX IF NOT EXISTS idx_upload_sessions_video_id ON upload_sessions(video_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_upload_sessions_user_id ON upload_sessions(user_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_upload_sessions_status ON upload_sessions(status)`,
+		`CREATE INDEX IF NOT EXISTS idx_upload_sessions_expires_at ON upload_sessions(expires_at)`,
+		`DROP TRIGGER IF EXISTS update_upload_sessions_updated_at ON upload_sessions`,
+		`CREATE TRIGGER update_upload_sessions_updated_at BEFORE UPDATE ON upload_sessions FOR EACH ROW EXECUTE FUNCTION update_updated_at_column()`,
+		// Encoding jobs table
+		`CREATE TABLE IF NOT EXISTS encoding_jobs (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
             video_id UUID NOT NULL REFERENCES videos(id) ON DELETE CASCADE,
             source_file_path TEXT NOT NULL,
@@ -305,22 +305,22 @@ func ensureTestSchema(db *sqlx.DB) error {
             created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
             updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
         )`,
-        `CREATE INDEX IF NOT EXISTS idx_encoding_jobs_video_id ON encoding_jobs(video_id)`,
-        `CREATE INDEX IF NOT EXISTS idx_encoding_jobs_status ON encoding_jobs(status)`,
-        `CREATE INDEX IF NOT EXISTS idx_encoding_jobs_created_at ON encoding_jobs(created_at)`,
-        `CREATE INDEX IF NOT EXISTS idx_encoding_jobs_status_created ON encoding_jobs(status, created_at)`,
-        `DROP TRIGGER IF EXISTS update_encoding_jobs_updated_at ON encoding_jobs`,
-        `CREATE TRIGGER update_encoding_jobs_updated_at BEFORE UPDATE ON encoding_jobs FOR EACH ROW EXECUTE FUNCTION update_updated_at_column()`,
-        // Unique active job per video (avoid duplicate concurrent encodes)
-        `CREATE UNIQUE INDEX IF NOT EXISTS uq_encoding_jobs_active_video ON encoding_jobs (video_id) WHERE status IN ('pending','processing')`,
-    }
+		`CREATE INDEX IF NOT EXISTS idx_encoding_jobs_video_id ON encoding_jobs(video_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_encoding_jobs_status ON encoding_jobs(status)`,
+		`CREATE INDEX IF NOT EXISTS idx_encoding_jobs_created_at ON encoding_jobs(created_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_encoding_jobs_status_created ON encoding_jobs(status, created_at)`,
+		`DROP TRIGGER IF EXISTS update_encoding_jobs_updated_at ON encoding_jobs`,
+		`CREATE TRIGGER update_encoding_jobs_updated_at BEFORE UPDATE ON encoding_jobs FOR EACH ROW EXECUTE FUNCTION update_updated_at_column()`,
+		// Unique active job per video (avoid duplicate concurrent encodes)
+		`CREATE UNIQUE INDEX IF NOT EXISTS uq_encoding_jobs_active_video ON encoding_jobs (video_id) WHERE status IN ('pending','processing')`,
+	}
 
-    for _, s := range stmts {
-        if _, err := db.ExecContext(ctx, s); err != nil {
-            return fmt.Errorf("schema setup failed: %w (stmt: %s)", err, s)
-        }
-    }
-    return nil
+	for _, s := range stmts {
+		if _, err := db.ExecContext(ctx, s); err != nil {
+			return fmt.Errorf("schema setup failed: %w (stmt: %s)", err, s)
+		}
+	}
+	return nil
 }
 
 func getEnvDefault(key, def string) string {

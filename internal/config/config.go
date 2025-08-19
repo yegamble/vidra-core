@@ -74,17 +74,17 @@ type Config struct {
 	IPFSPingTimeout    int
 
 	// Video Processing Configuration
-	VideoQualities      []string
-	HLSSegmentDuration  int
-	ThumbnailCount      int
-	
+	VideoQualities     []string
+	HLSSegmentDuration int
+	ThumbnailCount     int
+
 	// HLS Signing Configuration
-	HLSSecret    string
-	HLSTokenTTL  int
+	HLSSecret   string
+	HLSTokenTTL int
 
 	// Storage Tiers Configuration
-	HotStorageLimit   string
-	WarmStorageLimit  string
+	HotStorageLimit    string
+	WarmStorageLimit   string
 	ColdStorageEnabled bool
 
 	// Pinning Strategy Configuration
@@ -97,22 +97,22 @@ type Config struct {
 	RefreshTokenTimeout int
 
 	// API Configuration
-	APITimeout              int
-	APIMaxRequestSize       string
+	APITimeout                int
+	APIMaxRequestSize         string
 	APIPaginationDefaultLimit int
-	APIPaginationMaxLimit    int
+	APIPaginationMaxLimit     int
 
 	// Validation Configuration
 	ValidationStrictMode          bool
 	ValidationAllowedAlgorithms   []string
-	ValidationTestMode           bool
-    ValidationEnableIntegrityJobs bool
-    ValidationLogEvents          bool
+	ValidationTestMode            bool
+	ValidationEnableIntegrityJobs bool
+	ValidationLogEvents           bool
 
-    // Encoding Scheduler
-    EnableEncodingScheduler          bool
-    EncodingSchedulerIntervalSeconds int
-    EncodingSchedulerBurst           int
+	// Encoding Scheduler
+	EnableEncodingScheduler          bool
+	EncodingSchedulerIntervalSeconds int
+	EncodingSchedulerBurst           int
 }
 
 func Load() (*Config, error) {
@@ -202,9 +202,9 @@ func Load() (*Config, error) {
 	cfg.HLSSegmentDuration = getIntEnv("HLS_SEGMENT_DURATION", 4)
 	cfg.ThumbnailCount = getIntEnv("THUMBNAIL_COUNT", 3)
 
-    // HLS Signing
-    cfg.HLSSecret = getEnvOrDefault("HLS_SIGNING_SECRET", "")
-    cfg.HLSTokenTTL = getIntEnv("HLS_TOKEN_TTL", 600)
+	// HLS Signing
+	cfg.HLSSecret = getEnvOrDefault("HLS_SIGNING_SECRET", "")
+	cfg.HLSTokenTTL = getIntEnv("HLS_TOKEN_TTL", 600)
 
 	// Storage Tiers Configuration
 	cfg.HotStorageLimit = getEnvOrDefault("HOT_STORAGE_LIMIT", "100GB")
@@ -217,7 +217,7 @@ func Load() (*Config, error) {
 	cfg.PinningBackupEnabled = getBoolEnv("PINNING_BACKUP_ENABLED", true)
 
 	// Session Configuration
-	cfg.SessionTimeout = getIntEnv("SESSION_TIMEOUT", 24*60*60)       // 24 hours
+	cfg.SessionTimeout = getIntEnv("SESSION_TIMEOUT", 24*60*60)              // 24 hours
 	cfg.RefreshTokenTimeout = getIntEnv("REFRESH_TOKEN_TIMEOUT", 7*24*60*60) // 7 days
 
 	// API Configuration
@@ -233,12 +233,12 @@ func Load() (*Config, error) {
 	cfg.ValidationEnableIntegrityJobs = getBoolEnv("VALIDATION_ENABLE_INTEGRITY_JOBS", true)
 	cfg.ValidationLogEvents = getBoolEnv("VALIDATION_LOG_EVENTS", true)
 
-    // Encoding Scheduler (API-driven background processing)
-    // Defaults: enabled with 5s interval and burst=3 to ensure progress
-    // even without the standalone encoder worker.
-    cfg.EnableEncodingScheduler = getBoolEnv("ENABLE_ENCODING_SCHEDULER", true)
-    cfg.EncodingSchedulerIntervalSeconds = getIntEnv("ENCODING_SCHEDULER_INTERVAL_SECONDS", 5)
-    cfg.EncodingSchedulerBurst = getIntEnv("ENCODING_SCHEDULER_BURST", 3)
+	// Encoding Scheduler (API-driven background processing)
+	// Defaults: enabled with 5s interval and burst=3 to ensure progress
+	// even without the standalone encoder worker.
+	cfg.EnableEncodingScheduler = getBoolEnv("ENABLE_ENCODING_SCHEDULER", true)
+	cfg.EncodingSchedulerIntervalSeconds = getIntEnv("ENCODING_SCHEDULER_INTERVAL_SECONDS", 5)
+	cfg.EncodingSchedulerBurst = getIntEnv("ENCODING_SCHEDULER_BURST", 3)
 
 	return cfg, nil
 }

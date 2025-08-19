@@ -5,9 +5,9 @@ import (
 	"database/sql"
 	"fmt"
 
-	"github.com/jmoiron/sqlx"
 	"athena/internal/domain"
 	"athena/internal/usecase"
+	"github.com/jmoiron/sqlx"
 )
 
 type userRepository struct {
@@ -22,15 +22,15 @@ func (r *userRepository) Create(ctx context.Context, user *domain.User, password
 	query := `
 		INSERT INTO users (id, username, email, display_name, avatar, bio, bitcoin_wallet, role, password_hash, is_active, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`
-	
+
 	_, err := r.db.ExecContext(ctx, query,
 		user.ID, user.Username, user.Email, user.DisplayName, user.Avatar, user.Bio, user.BitcoinWallet,
 		user.Role, passwordHash, user.IsActive, user.CreatedAt, user.UpdatedAt)
-	
+
 	if err != nil {
 		return fmt.Errorf("failed to create user: %w", err)
 	}
-	
+
 	return nil
 }
 
@@ -38,7 +38,7 @@ func (r *userRepository) GetByID(ctx context.Context, id string) (*domain.User, 
 	query := `
 		SELECT id, username, email, display_name, avatar, bio, bitcoin_wallet, role, is_active, created_at, updated_at
 		FROM users WHERE id = $1`
-	
+
 	var user domain.User
 	err := r.db.GetContext(ctx, &user, query, id)
 	if err != nil {
@@ -47,7 +47,7 @@ func (r *userRepository) GetByID(ctx context.Context, id string) (*domain.User, 
 		}
 		return nil, fmt.Errorf("failed to get user by ID: %w", err)
 	}
-	
+
 	return &user, nil
 }
 
@@ -55,7 +55,7 @@ func (r *userRepository) GetByEmail(ctx context.Context, email string) (*domain.
 	query := `
 		SELECT id, username, email, display_name, avatar, bio, bitcoin_wallet, role, is_active, created_at, updated_at
 		FROM users WHERE email = $1`
-	
+
 	var user domain.User
 	err := r.db.GetContext(ctx, &user, query, email)
 	if err != nil {
@@ -64,7 +64,7 @@ func (r *userRepository) GetByEmail(ctx context.Context, email string) (*domain.
 		}
 		return nil, fmt.Errorf("failed to get user by email: %w", err)
 	}
-	
+
 	return &user, nil
 }
 
@@ -72,7 +72,7 @@ func (r *userRepository) GetByUsername(ctx context.Context, username string) (*d
 	query := `
 		SELECT id, username, email, display_name, avatar, bio, bitcoin_wallet, role, is_active, created_at, updated_at
 		FROM users WHERE username = $1`
-	
+
 	var user domain.User
 	err := r.db.GetContext(ctx, &user, query, username)
 	if err != nil {
@@ -81,7 +81,7 @@ func (r *userRepository) GetByUsername(ctx context.Context, username string) (*d
 		}
 		return nil, fmt.Errorf("failed to get user by username: %w", err)
 	}
-	
+
 	return &user, nil
 }
 
@@ -91,50 +91,50 @@ func (r *userRepository) Update(ctx context.Context, user *domain.User) error {
 		SET username = $2, email = $3, display_name = $4, avatar = $5, bio = $6, 
 		    bitcoin_wallet = $7, role = $8, is_active = $9, updated_at = $10
 		WHERE id = $1`
-	
+
 	result, err := r.db.ExecContext(ctx, query,
 		user.ID, user.Username, user.Email, user.DisplayName, user.Avatar, user.Bio, user.BitcoinWallet,
 		user.Role, user.IsActive, user.UpdatedAt)
-	
+
 	if err != nil {
 		return fmt.Errorf("failed to update user: %w", err)
 	}
-	
+
 	rowsAffected, err := result.RowsAffected()
 	if err != nil {
 		return fmt.Errorf("failed to get rows affected: %w", err)
 	}
-	
+
 	if rowsAffected == 0 {
 		return domain.ErrUserNotFound
 	}
-	
+
 	return nil
 }
 
 func (r *userRepository) Delete(ctx context.Context, id string) error {
 	query := `DELETE FROM users WHERE id = $1`
-	
+
 	result, err := r.db.ExecContext(ctx, query, id)
 	if err != nil {
 		return fmt.Errorf("failed to delete user: %w", err)
 	}
-	
+
 	rowsAffected, err := result.RowsAffected()
 	if err != nil {
 		return fmt.Errorf("failed to get rows affected: %w", err)
 	}
-	
+
 	if rowsAffected == 0 {
 		return domain.ErrUserNotFound
 	}
-	
+
 	return nil
 }
 
 func (r *userRepository) GetPasswordHash(ctx context.Context, userID string) (string, error) {
 	query := `SELECT password_hash FROM users WHERE id = $1`
-	
+
 	var passwordHash string
 	err := r.db.GetContext(ctx, &passwordHash, query, userID)
 	if err != nil {
@@ -143,27 +143,27 @@ func (r *userRepository) GetPasswordHash(ctx context.Context, userID string) (st
 		}
 		return "", fmt.Errorf("failed to get password hash: %w", err)
 	}
-	
+
 	return passwordHash, nil
 }
 
 func (r *userRepository) UpdatePassword(ctx context.Context, userID, passwordHash string) error {
 	query := `UPDATE users SET password_hash = $2, updated_at = NOW() WHERE id = $1`
-	
+
 	result, err := r.db.ExecContext(ctx, query, userID, passwordHash)
 	if err != nil {
 		return fmt.Errorf("failed to update password: %w", err)
 	}
-	
+
 	rowsAffected, err := result.RowsAffected()
 	if err != nil {
 		return fmt.Errorf("failed to get rows affected: %w", err)
 	}
-	
+
 	if rowsAffected == 0 {
 		return domain.ErrUserNotFound
 	}
-	
+
 	return nil
 }
 
@@ -173,24 +173,24 @@ func (r *userRepository) List(ctx context.Context, limit, offset int) ([]*domain
 		FROM users 
 		ORDER BY created_at DESC
 		LIMIT $1 OFFSET $2`
-	
+
 	var users []*domain.User
 	err := r.db.SelectContext(ctx, &users, query, limit, offset)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list users: %w", err)
 	}
-	
+
 	return users, nil
 }
 
 func (r *userRepository) Count(ctx context.Context) (int64, error) {
 	query := `SELECT COUNT(*) FROM users`
-	
+
 	var count int64
 	err := r.db.GetContext(ctx, &count, query)
 	if err != nil {
 		return 0, fmt.Errorf("failed to count users: %w", err)
 	}
-	
+
 	return count, nil
 }

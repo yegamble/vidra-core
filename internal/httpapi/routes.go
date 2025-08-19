@@ -1,22 +1,22 @@
 package httpapi
 
 import (
-    "context"
-    "fmt"
-    "os"
-    "path/filepath"
-    "time"
+	"context"
+	"fmt"
+	"os"
+	"path/filepath"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
 	"github.com/redis/go-redis/v9"
 
-    "athena/internal/config"
-    "athena/internal/middleware"
-    "athena/internal/repository"
-    "athena/internal/scheduler"
-    "athena/internal/usecase"
+	"athena/internal/config"
+	"athena/internal/middleware"
+	"athena/internal/repository"
+	"athena/internal/scheduler"
+	"athena/internal/usecase"
 )
 
 func RegisterRoutes(r chi.Router, cfg *config.Config) {
@@ -48,15 +48,15 @@ func RegisterRoutes(r chi.Router, cfg *config.Config) {
 	// Start a lightweight encoding scheduler in the background to ensure
 	// pending jobs are processed even if the standalone encoder is not running.
 	// This uses a short interval with a small burst to avoid starvation.
-    var encSched *scheduler.EncodingScheduler
-    if cfg.EnableEncodingScheduler {
-        encSvc := usecase.NewEncodingService(encodingRepo, videoRepo, uploadsDir, cfg)
-        interval := time.Duration(cfg.EncodingSchedulerIntervalSeconds) * time.Second
-        burst := cfg.EncodingSchedulerBurst
-        encSched = scheduler.NewEncodingScheduler(encSvc, interval, burst)
-        ctx, _ := context.WithCancel(context.Background())
-        go encSched.Start(ctx)
-    }
+	var encSched *scheduler.EncodingScheduler
+	if cfg.EnableEncodingScheduler {
+		encSvc := usecase.NewEncodingService(encodingRepo, videoRepo, uploadsDir, cfg)
+		interval := time.Duration(cfg.EncodingSchedulerIntervalSeconds) * time.Second
+		burst := cfg.EncodingSchedulerBurst
+		encSched = scheduler.NewEncodingScheduler(encSvc, interval, burst)
+		ctx, _ := context.WithCancel(context.Background())
+		go encSched.Start(ctx)
+	}
 
 	// Initialize Redis session repo
 	redisOpts, err := redis.ParseURL(cfg.RedisURL)
@@ -120,9 +120,9 @@ func RegisterRoutes(r chi.Router, cfg *config.Config) {
 			})
 		})
 
-        r.Route("/encoding", func(r chi.Router) {
-            r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/status", EncodingStatusHandlerEnhanced(encodingRepo, cfg, encSched))
-        })
+		r.Route("/encoding", func(r chi.Router) {
+			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/status", EncodingStatusHandlerEnhanced(encodingRepo, cfg, encSched))
+		})
 
 		r.Route("/users", func(r chi.Router) {
 			// Admin-style create user; currently just requires auth (role checks TBD)

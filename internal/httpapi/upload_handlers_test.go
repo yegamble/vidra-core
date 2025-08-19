@@ -29,9 +29,9 @@ func createTestConfig() *config.Config {
 	return &config.Config{
 		ValidationStrictMode:          false, // Allow optional checksums in tests
 		ValidationAllowedAlgorithms:   []string{"sha256"},
-		ValidationTestMode:           true,  // Enable test mode for bypasses
+		ValidationTestMode:            true, // Enable test mode for bypasses
 		ValidationEnableIntegrityJobs: false,
-		ValidationLogEvents:          false,
+		ValidationLogEvents:           false,
 	}
 }
 
@@ -50,13 +50,13 @@ func TestInitiateUploadHandler(t *testing.T) {
 	user := createTestUser(t, userRepo, ctx, "testuser", "test@example.com")
 
 	// Prepare request
-    req := domain.InitiateUploadRequest{
-        FileName:  "test_video.mp4",
-        // Choose a file size that divides evenly into the chunk size
-        // to make expected TotalChunks deterministic for assertions.
-        FileSize:  10485 * 100, // 100 chunks of size 10,485 bytes
-        ChunkSize: 10485,       // ~10KB
-    }
+	req := domain.InitiateUploadRequest{
+		FileName: "test_video.mp4",
+		// Choose a file size that divides evenly into the chunk size
+		// to make expected TotalChunks deterministic for assertions.
+		FileSize:  10485 * 100, // 100 chunks of size 10,485 bytes
+		ChunkSize: 10485,       // ~10KB
+	}
 
 	reqBody, _ := json.Marshal(req)
 
@@ -75,20 +75,20 @@ func TestInitiateUploadHandler(t *testing.T) {
 	// Assert response
 	assert.Equal(t, http.StatusCreated, w.Code)
 
-    var envelope Response
-    err := json.Unmarshal(w.Body.Bytes(), &envelope)
-    require.NoError(t, err)
-    require.True(t, envelope.Success)
+	var envelope Response
+	err := json.Unmarshal(w.Body.Bytes(), &envelope)
+	require.NoError(t, err)
+	require.True(t, envelope.Success)
 
-    // Decode inner data payload into the expected type
-    var response domain.InitiateUploadResponse
-    dataBytes, _ := json.Marshal(envelope.Data)
-    err = json.Unmarshal(dataBytes, &response)
-    require.NoError(t, err)
+	// Decode inner data payload into the expected type
+	var response domain.InitiateUploadResponse
+	dataBytes, _ := json.Marshal(envelope.Data)
+	err = json.Unmarshal(dataBytes, &response)
+	require.NoError(t, err)
 
 	assert.NotEmpty(t, response.SessionID)
 	assert.Equal(t, req.ChunkSize, response.ChunkSize)
-    assert.Equal(t, 100, response.TotalChunks)
+	assert.Equal(t, 100, response.TotalChunks)
 	assert.Contains(t, response.UploadURL, response.SessionID)
 }
 
@@ -160,15 +160,15 @@ func TestUploadChunkHandler(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, w.Code)
 
-    var envelope Response
-    err := json.Unmarshal(w.Body.Bytes(), &envelope)
-    require.NoError(t, err)
-    require.True(t, envelope.Success)
+	var envelope Response
+	err := json.Unmarshal(w.Body.Bytes(), &envelope)
+	require.NoError(t, err)
+	require.True(t, envelope.Success)
 
-    var chunkResponse domain.ChunkUploadResponse
-    dataBytes, _ := json.Marshal(envelope.Data)
-    err = json.Unmarshal(dataBytes, &chunkResponse)
-    require.NoError(t, err)
+	var chunkResponse domain.ChunkUploadResponse
+	dataBytes, _ := json.Marshal(envelope.Data)
+	err = json.Unmarshal(dataBytes, &chunkResponse)
+	require.NoError(t, err)
 
 	assert.Equal(t, 0, chunkResponse.ChunkIndex)
 	assert.True(t, chunkResponse.Uploaded)
@@ -211,12 +211,12 @@ func TestUploadChunkHandler_InvalidChecksum(t *testing.T) {
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 
-    var envelope Response
-    err := json.Unmarshal(w.Body.Bytes(), &envelope)
-    require.NoError(t, err)
-    require.False(t, envelope.Success)
-    require.NotNil(t, envelope.Error)
-    assert.Contains(t, envelope.Error.Code, "CHECKSUM_MISMATCH")
+	var envelope Response
+	err := json.Unmarshal(w.Body.Bytes(), &envelope)
+	require.NoError(t, err)
+	require.False(t, envelope.Success)
+	require.NotNil(t, envelope.Error)
+	assert.Contains(t, envelope.Error.Code, "CHECKSUM_MISMATCH")
 }
 
 func TestCompleteUploadHandler(t *testing.T) {
@@ -253,20 +253,20 @@ func TestCompleteUploadHandler(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, w.Code)
 
-    var envelope Response
-    err := json.Unmarshal(w.Body.Bytes(), &envelope)
-    require.NoError(t, err)
-    require.True(t, envelope.Success)
+	var envelope Response
+	err := json.Unmarshal(w.Body.Bytes(), &envelope)
+	require.NoError(t, err)
+	require.True(t, envelope.Success)
 
-    // Response is a map payload
-    var completeResponse map[string]interface{}
-    dataBytes, _ := json.Marshal(envelope.Data)
-    err = json.Unmarshal(dataBytes, &completeResponse)
-    require.NoError(t, err)
+	// Response is a map payload
+	var completeResponse map[string]interface{}
+	dataBytes, _ := json.Marshal(envelope.Data)
+	err = json.Unmarshal(dataBytes, &completeResponse)
+	require.NoError(t, err)
 
-    assert.Equal(t, response.SessionID, completeResponse["session_id"])
-    assert.Equal(t, "completed", completeResponse["status"])
-    assert.Contains(t, completeResponse["message"], "processing queued")
+	assert.Equal(t, response.SessionID, completeResponse["session_id"])
+	assert.Equal(t, "completed", completeResponse["status"])
+	assert.Contains(t, completeResponse["message"], "processing queued")
 }
 
 func TestGetUploadStatusHandler(t *testing.T) {
@@ -304,15 +304,15 @@ func TestGetUploadStatusHandler(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, w.Code)
 
-    var envelope Response
-    err := json.Unmarshal(w.Body.Bytes(), &envelope)
-    require.NoError(t, err)
-    require.True(t, envelope.Success)
+	var envelope Response
+	err := json.Unmarshal(w.Body.Bytes(), &envelope)
+	require.NoError(t, err)
+	require.True(t, envelope.Success)
 
-    var session domain.UploadSession
-    dataBytes, _ := json.Marshal(envelope.Data)
-    err = json.Unmarshal(dataBytes, &session)
-    require.NoError(t, err)
+	var session domain.UploadSession
+	dataBytes, _ := json.Marshal(envelope.Data)
+	err = json.Unmarshal(dataBytes, &session)
+	require.NoError(t, err)
 
 	assert.Equal(t, response.SessionID, session.ID)
 	assert.Equal(t, domain.UploadStatusActive, session.Status)
@@ -357,28 +357,28 @@ func TestResumeUploadHandler(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, w.Code)
 
-    var envelope Response
-    err := json.Unmarshal(w.Body.Bytes(), &envelope)
-    require.NoError(t, err)
-    require.True(t, envelope.Success)
+	var envelope Response
+	err := json.Unmarshal(w.Body.Bytes(), &envelope)
+	require.NoError(t, err)
+	require.True(t, envelope.Success)
 
-    var resumeResponse map[string]interface{}
-    dataBytes, _ := json.Marshal(envelope.Data)
-    err = json.Unmarshal(dataBytes, &resumeResponse)
-    require.NoError(t, err)
+	var resumeResponse map[string]interface{}
+	dataBytes, _ := json.Marshal(envelope.Data)
+	err = json.Unmarshal(dataBytes, &resumeResponse)
+	require.NoError(t, err)
 
-    assert.Equal(t, response.SessionID, resumeResponse["session_id"])
-    assert.Equal(t, float64(response.TotalChunks), resumeResponse["total_chunks"])
-	
+	assert.Equal(t, response.SessionID, resumeResponse["session_id"])
+	assert.Equal(t, float64(response.TotalChunks), resumeResponse["total_chunks"])
+
 	// Check uploaded chunks
-    uploadedChunks := resumeResponse["uploaded_chunks"].([]interface{})
+	uploadedChunks := resumeResponse["uploaded_chunks"].([]interface{})
 	assert.Len(t, uploadedChunks, 3)
 
 	// Check remaining chunks
-    remainingChunks := resumeResponse["remaining_chunks"].([]interface{})
+	remainingChunks := resumeResponse["remaining_chunks"].([]interface{})
 	expectedRemaining := response.TotalChunks - 3
 	assert.Len(t, remainingChunks, expectedRemaining)
-	
+
 	// Should not contain uploaded chunks
 	for _, chunk := range remainingChunks {
 		chunkNum := int(chunk.(float64))
@@ -386,7 +386,7 @@ func TestResumeUploadHandler(t *testing.T) {
 	}
 
 	// Progress should be 30% (3 out of 10 chunks)
-    progressPercent := resumeResponse["progress_percent"].(float64)
+	progressPercent := resumeResponse["progress_percent"].(float64)
 	expectedProgress := float64(3) / float64(response.TotalChunks) * 100
 	assert.Equal(t, expectedProgress, progressPercent)
 }
@@ -426,12 +426,12 @@ func TestUploadHandlers_InvalidSessionID(t *testing.T) {
 
 			assert.Equal(t, http.StatusBadRequest, w.Code)
 
-            var envelope Response
-            err := json.Unmarshal(w.Body.Bytes(), &envelope)
-            require.NoError(t, err)
-            require.False(t, envelope.Success)
-            require.NotNil(t, envelope.Error)
-            assert.Contains(t, envelope.Error.Code, "INVALID_SESSION_ID")
+			var envelope Response
+			err := json.Unmarshal(w.Body.Bytes(), &envelope)
+			require.NoError(t, err)
+			require.False(t, envelope.Success)
+			require.NotNil(t, envelope.Error)
+			assert.Contains(t, envelope.Error.Code, "INVALID_SESSION_ID")
 		})
 
 		t.Run(tc.name+"_MissingSessionID", func(t *testing.T) {
@@ -447,12 +447,12 @@ func TestUploadHandlers_InvalidSessionID(t *testing.T) {
 
 			assert.Equal(t, http.StatusBadRequest, w.Code)
 
-            var envelope Response
-            err := json.Unmarshal(w.Body.Bytes(), &envelope)
-            require.NoError(t, err)
-            require.False(t, envelope.Success)
-            require.NotNil(t, envelope.Error)
-            assert.Contains(t, envelope.Error.Code, "MISSING_SESSION_ID")
+			var envelope Response
+			err := json.Unmarshal(w.Body.Bytes(), &envelope)
+			require.NoError(t, err)
+			require.False(t, envelope.Success)
+			require.NotNil(t, envelope.Error)
+			assert.Contains(t, envelope.Error.Code, "MISSING_SESSION_ID")
 		})
 	}
 }

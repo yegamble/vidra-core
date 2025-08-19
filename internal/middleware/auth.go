@@ -1,14 +1,14 @@
 package middleware
 
 import (
-    "context"
-    "encoding/json"
-    "net/http"
-    "strings"
-    "time"
+	"context"
+	"encoding/json"
+	"net/http"
+	"strings"
+	"time"
 
-    "github.com/golang-jwt/jwt/v5"
-    "athena/internal/domain"
+	"athena/internal/domain"
+	"github.com/golang-jwt/jwt/v5"
 )
 
 type contextKey string
@@ -67,24 +67,24 @@ func OptionalAuth(jwtSecret string) func(http.Handler) http.Handler {
 }
 
 func validateJWT(tokenString, jwtSecret string) (string, error) {
-    // Parse and validate token
-    token, err := jwt.Parse(tokenString, func(t *jwt.Token) (interface{}, error) {
-        if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
-            return nil, jwt.ErrTokenSignatureInvalid
-        }
-        return []byte(jwtSecret), nil
-    }, jwt.WithLeeway(2*time.Second))
-    if err != nil || !token.Valid {
-        return "", err
-    }
+	// Parse and validate token
+	token, err := jwt.Parse(tokenString, func(t *jwt.Token) (interface{}, error) {
+		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, jwt.ErrTokenSignatureInvalid
+		}
+		return []byte(jwtSecret), nil
+	}, jwt.WithLeeway(2*time.Second))
+	if err != nil || !token.Valid {
+		return "", err
+	}
 
-    // Extract subject
-    if claims, ok := token.Claims.(jwt.MapClaims); ok {
-        if sub, ok := claims["sub"].(string); ok {
-            return sub, nil
-        }
-    }
-    return "", jwt.ErrTokenMalformed
+	// Extract subject
+	if claims, ok := token.Claims.(jwt.MapClaims); ok {
+		if sub, ok := claims["sub"].(string); ok {
+			return sub, nil
+		}
+	}
+	return "", jwt.ErrTokenMalformed
 }
 
 type Response struct {

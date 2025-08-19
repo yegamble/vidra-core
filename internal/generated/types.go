@@ -77,9 +77,9 @@ type HealthResponse struct {
 
 // ReadinessResponse represents a readiness check response
 type ReadinessResponse struct {
-	Status    string                 `json:"status"`
+	Status    string                  `json:"status"`
 	Checks    ReadinessResponseChecks `json:"checks"`
-	Timestamp time.Time              `json:"timestamp"`
+	Timestamp time.Time               `json:"timestamp"`
 }
 
 // ReadinessResponseChecks represents the checks in a readiness response

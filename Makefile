@@ -21,6 +21,19 @@ lint: ## Run golangci-lint
 		golangci-lint run ./...; \
 	fi
 
+fmt: ## Format Go files
+	@gofmt -s -w $(shell git ls-files "*.go")
+
+fmt-check: ## Verify Go files are formatted
+	@diffs=$(shell gofmt -s -l $(shell git ls-files "*.go")); \
+	if [ -n "$$diffs" ]; then \
+		echo "The following files are not formatted:"; \
+		echo "$$diffs"; \
+		exit 1; \
+	else \
+		echo "All Go files are properly formatted."; \
+	fi
+
 test: ## Run unit tests
 	go test -v -race -coverprofile=coverage.out ./...
 	go tool cover -html=coverage.out -o coverage.html
