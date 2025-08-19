@@ -3,18 +3,16 @@ package domain
 import "time"
 
 type User struct {
-    ID            string    `json:"id" db:"id"`
-    Username      string    `json:"username" db:"username"`
-    Email         string    `json:"email" db:"email"`
-    DisplayName   string    `json:"display_name" db:"display_name"`
-    Avatar        string    `json:"avatar" db:"avatar"`
-    ThumbnailID   string    `json:"thumbnail_id,omitempty" db:"thumbnail_id"`
-    ThumbnailCID  string    `json:"thumbnail_cid,omitempty" db:"thumbnail_cid"`
-    Bio           string    `json:"bio" db:"bio"`
-    BitcoinWallet string    `json:"bitcoin_wallet" db:"bitcoin_wallet"`
-    Role          UserRole  `json:"role" db:"role"`
-    IsActive      bool      `json:"is_active" db:"is_active"`
-    CreatedAt     time.Time `json:"created_at" db:"created_at"`
+	ID            string    `json:"id" db:"id"`
+	Username      string    `json:"username" db:"username"`
+	Email         string    `json:"email" db:"email"`
+	DisplayName   string    `json:"display_name" db:"display_name"`
+	Avatar        string    `json:"avatar" db:"avatar"`
+	Bio           string    `json:"bio" db:"bio"`
+	BitcoinWallet string    `json:"bitcoin_wallet" db:"bitcoin_wallet"`
+	Role          UserRole  `json:"role" db:"role"`
+	IsActive      bool      `json:"is_active" db:"is_active"`
+	CreatedAt     time.Time `json:"created_at" db:"created_at"`
 	UpdatedAt     time.Time `json:"updated_at" db:"updated_at"`
 }
 

@@ -35,12 +35,9 @@ func (r *userRepository) Create(ctx context.Context, user *domain.User, password
 }
 
 func (r *userRepository) GetByID(ctx context.Context, id string) (*domain.User, error) {
-    query := `
-        SELECT u.id, u.username, u.email, u.display_name, u.avatar, u.bio, u.bitcoin_wallet, u.role, u.is_active, u.created_at, u.updated_at,
-               ut.thumbnail_id, ut.thumbnail_cid
-        FROM users u
-        LEFT JOIN user_thumbnails ut ON ut.user_id = u.id
-        WHERE u.id = $1`
+	query := `
+		SELECT id, username, email, display_name, avatar, bio, bitcoin_wallet, role, is_active, created_at, updated_at
+		FROM users WHERE id = $1`
 
 	var user domain.User
 	err := r.db.GetContext(ctx, &user, query, id)
@@ -55,12 +52,9 @@ func (r *userRepository) GetByID(ctx context.Context, id string) (*domain.User, 
 }
 
 func (r *userRepository) GetByEmail(ctx context.Context, email string) (*domain.User, error) {
-    query := `
-        SELECT u.id, u.username, u.email, u.display_name, u.avatar, u.bio, u.bitcoin_wallet, u.role, u.is_active, u.created_at, u.updated_at,
-               ut.thumbnail_id, ut.thumbnail_cid
-        FROM users u
-        LEFT JOIN user_thumbnails ut ON ut.user_id = u.id
-        WHERE u.email = $1`
+	query := `
+		SELECT id, username, email, display_name, avatar, bio, bitcoin_wallet, role, is_active, created_at, updated_at
+		FROM users WHERE email = $1`
 
 	var user domain.User
 	err := r.db.GetContext(ctx, &user, query, email)
@@ -75,12 +69,9 @@ func (r *userRepository) GetByEmail(ctx context.Context, email string) (*domain.
 }
 
 func (r *userRepository) GetByUsername(ctx context.Context, username string) (*domain.User, error) {
-    query := `
-        SELECT u.id, u.username, u.email, u.display_name, u.avatar, u.bio, u.bitcoin_wallet, u.role, u.is_active, u.created_at, u.updated_at,
-               ut.thumbnail_id, ut.thumbnail_cid
-        FROM users u
-        LEFT JOIN user_thumbnails ut ON ut.user_id = u.id
-        WHERE u.username = $1`
+	query := `
+		SELECT id, username, email, display_name, avatar, bio, bitcoin_wallet, role, is_active, created_at, updated_at
+		FROM users WHERE username = $1`
 
 	var user domain.User
 	err := r.db.GetContext(ctx, &user, query, username)
@@ -177,13 +168,11 @@ func (r *userRepository) UpdatePassword(ctx context.Context, userID, passwordHas
 }
 
 func (r *userRepository) List(ctx context.Context, limit, offset int) ([]*domain.User, error) {
-    query := `
-        SELECT u.id, u.username, u.email, u.display_name, u.avatar, u.bio, u.bitcoin_wallet, u.role, u.is_active, u.created_at, u.updated_at,
-               ut.thumbnail_id, ut.thumbnail_cid
-        FROM users u
-        LEFT JOIN user_thumbnails ut ON ut.user_id = u.id
-        ORDER BY u.created_at DESC
-        LIMIT $1 OFFSET $2`
+	query := `
+		SELECT id, username, email, display_name, avatar, bio, bitcoin_wallet, role, is_active, created_at, updated_at
+		FROM users 
+		ORDER BY created_at DESC
+		LIMIT $1 OFFSET $2`
 
 	var users []*domain.User
 	err := r.db.SelectContext(ctx, &users, query, limit, offset)

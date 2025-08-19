@@ -211,20 +211,7 @@ func ensureTestSchema(db *sqlx.DB) error {
 		`CREATE INDEX IF NOT EXISTS idx_users_created_at ON users(created_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_users_bitcoin_wallet ON users(bitcoin_wallet)`,
 		`DROP TRIGGER IF EXISTS update_users_updated_at ON users`,
-        `CREATE TRIGGER update_users_updated_at BEFORE UPDATE ON users FOR EACH ROW EXECUTE FUNCTION update_updated_at_column()`,
-        // user_thumbnails for per-user thumbnail UUID + IPFS CID
-        `CREATE TABLE IF NOT EXISTS user_thumbnails (
-            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-            user_id UUID NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
-            thumbnail_id UUID NOT NULL,
-            thumbnail_cid TEXT,
-            created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
-            updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
-        )`,
-        `CREATE INDEX IF NOT EXISTS idx_user_thumbnails_user_id ON user_thumbnails(user_id)`,
-        `CREATE INDEX IF NOT EXISTS idx_user_thumbnails_thumbnail_id ON user_thumbnails(thumbnail_id)`,
-        `DROP TRIGGER IF EXISTS update_user_thumbnails_updated_at ON user_thumbnails`,
-        `CREATE TRIGGER update_user_thumbnails_updated_at BEFORE UPDATE ON user_thumbnails FOR EACH ROW EXECUTE FUNCTION update_updated_at_column()`,
+		`CREATE TRIGGER update_users_updated_at BEFORE UPDATE ON users FOR EACH ROW EXECUTE FUNCTION update_updated_at_column()`,
 		`CREATE TABLE IF NOT EXISTS refresh_tokens (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
             user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -386,7 +373,7 @@ func cleanupTestDB(t *testing.T, testDB *TestDB) {
 
 	// Clean Postgres tables
 	if testDB.DB != nil {
-    tables := []string{"encoding_jobs", "upload_sessions", "videos", "user_thumbnails", "sessions", "refresh_tokens", "users"}
+		tables := []string{"encoding_jobs", "upload_sessions", "videos", "sessions", "refresh_tokens", "users"}
 		for _, table := range tables {
 			if _, err := testDB.DB.ExecContext(ctx, fmt.Sprintf("TRUNCATE TABLE %s CASCADE", table)); err != nil {
 				t.Logf("Failed to truncate table %s: %v", table, err)
