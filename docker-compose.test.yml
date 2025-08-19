@@ -38,7 +38,7 @@ services:
     networks:
       - test-network
 
-  ipfs:
+  ipfs-test:
     image: ipfs/kubo:latest
     tmpfs:
       - /export
@@ -63,13 +63,14 @@ services:
         condition: service_healthy
       redis-test:
         condition: service_healthy
-      ipfs:
-        condition: service_started
+      ipfs-test:
+        condition: service_healthy
     environment:
       DATABASE_URL: postgres://test_user:test_password@postgres-test:5432/athena_test?sslmode=disable
       REDIS_URL: redis://redis-test:6379/0
       JWT_SECRET: test-jwt-secret
       IPFS_API: http://ipfs:5001
+      REQUIRE_IPFS: "false"
       PORT: 8080
     ports:
       - "18080:8080"

@@ -125,20 +125,26 @@ func (s *Server) ipfsAdd(path string) (string, error) {
         return "", fmt.Errorf("ipfs add failed: %s", string(b))
     }
 
-    // Kubo returns newline-delimited JSON if multiple files; we expect single entry.
-    dec := json.NewDecoder(resp.Body)
+    // Kubo returns NDJSON (one JSON object per line). Read body and decode last object.
+    raw, err := io.ReadAll(resp.Body)
+    if err != nil {
+        return "", err
+    }
+
+    // Decode line by line to capture the final entry
     var last ipfsAddResponse
-    for dec.More() {
+    // Use a decoder on a bytes.Reader so we can decode multiple concatenated JSON objects too
+    dec := json.NewDecoder(bytes.NewReader(raw))
+    for {
         var cur ipfsAddResponse
         if err := dec.Decode(&cur); err != nil {
+            if err == io.EOF {
+                break
+            }
             return "", err
         }
-        last = cur
-    }
-    if last.Hash == "" {
-        // Handle case where it's a single object without dec.More() working
-        if _, err := resp.Body.Seek(0, io.SeekStart); err == nil {
-            _ = dec.Decode(&last)
+        if cur.Hash != "" {
+            last = cur
         }
     }
     if last.Hash == "" {
@@ -146,4 +152,3 @@ func (s *Server) ipfsAdd(path string) (string, error) {
     }
     return last.Hash, nil
 }
-
