@@ -3,6 +3,8 @@ package httpapi
 import (
 	"context"
 	"fmt"
+	"log"
+	"net/http"
 	"os"
 	"path/filepath"
 	"time"
@@ -74,8 +76,31 @@ func RegisterRoutes(r chi.Router, cfg *config.Config) {
 	}
 	sessionRepo := repository.NewCompositeAuthRepository(dbAuthRepo, repository.NewRedisSessionRepository(rdb))
 
+	// Fail fast if IPFS API is unreachable
+	{
+		client := &http.Client{Timeout: time.Duration(cfg.IPFSPingTimeout) * time.Second}
+		resp, err := client.Get(cfg.IPFSApi + "/api/v0/version")
+		if err != nil || resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			if cfg.RequireIPFS {
+				panic(fmt.Errorf("failed to connect to ipfs api at %s", cfg.IPFSApi))
+			}
+			log.Printf("warning: IPFS API not reachable at %s: %v (continuing as REQUIRE_IPFS=false)", cfg.IPFSApi, err)
+		}
+		if resp != nil && resp.Body != nil {
+			_ = resp.Body.Close()
+		}
+	}
+
 	// Create server instance with dependencies
-	server := NewServer(userRepo, sessionRepo, cfg.JWTSecret, rdb, time.Duration(cfg.RedisPingTimeout)*time.Second)
+	server := NewServer(
+		userRepo,
+		sessionRepo,
+		cfg.JWTSecret,
+		rdb,
+		time.Duration(cfg.RedisPingTimeout)*time.Second,
+		cfg.IPFSApi,
+		time.Duration(cfg.IPFSPingTimeout)*time.Second,
+	)
 
 	// Register auth routes with appropriate middleware
 	r.Post("/auth/register", server.Register)

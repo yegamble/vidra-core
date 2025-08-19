@@ -24,11 +24,13 @@ type Server struct {
 	jwtSecret        string
 	redis            *redis.Client
 	redisPingTimeout time.Duration
+	ipfsAPI          string
+	ipfsPingTimeout  time.Duration
 }
 
 // NewServer creates a new server instance
-func NewServer(userRepo usecase.UserRepository, authRepo usecase.AuthRepository, jwtSecret string, redisClient *redis.Client, redisPingTimeout time.Duration) *Server {
-	return &Server{userRepo: userRepo, authRepo: authRepo, jwtSecret: jwtSecret, redis: redisClient, redisPingTimeout: redisPingTimeout}
+func NewServer(userRepo usecase.UserRepository, authRepo usecase.AuthRepository, jwtSecret string, redisClient *redis.Client, redisPingTimeout time.Duration, ipfsAPI string, ipfsPingTimeout time.Duration) *Server {
+	return &Server{userRepo: userRepo, authRepo: authRepo, jwtSecret: jwtSecret, redis: redisClient, redisPingTimeout: redisPingTimeout, ipfsAPI: ipfsAPI, ipfsPingTimeout: ipfsPingTimeout}
 }
 
 // Login implements ServerInterface.Login
@@ -310,8 +312,8 @@ func (s *Server) HealthCheck(w http.ResponseWriter, r *http.Request) {
 // ReadinessCheck implements ServerInterface.ReadinessCheck
 func (s *Server) ReadinessCheck(w http.ResponseWriter, r *http.Request) {
 	// Probe dependent services
-	dbStatus := generated.ServiceStatusHealthy   // DB connectivity not probed here
-	ipfsStatus := generated.ServiceStatusHealthy // IPFS not probed here
+	dbStatus := generated.ServiceStatusHealthy // DB connectivity not probed here
+	ipfsStatus := generated.ServiceStatusHealthy
 	// Redis ping
 	redisStatus := generated.ServiceStatusHealthy
 	if s.redis != nil {
@@ -323,6 +325,23 @@ func (s *Server) ReadinessCheck(w http.ResponseWriter, r *http.Request) {
 		defer cancel()
 		if err := s.redis.Ping(ctx).Err(); err != nil {
 			redisStatus = generated.ServiceStatusUnhealthy
+		}
+	}
+
+	// IPFS ping if configured
+	if s.ipfsAPI != "" {
+		to := s.ipfsPingTimeout
+		if to <= 0 {
+			to = 5 * time.Second
+		}
+		client := &http.Client{Timeout: to}
+		req, _ := http.NewRequestWithContext(r.Context(), http.MethodGet, s.ipfsAPI+"/api/v0/version", nil)
+		resp, err := client.Do(req)
+		if err != nil || resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			ipfsStatus = generated.ServiceStatusUnhealthy
+		}
+		if resp != nil && resp.Body != nil {
+			_ = resp.Body.Close()
 		}
 	}
 

@@ -72,6 +72,7 @@ type Config struct {
 	DBPingTimeout      int
 	RedisPingTimeout   int
 	IPFSPingTimeout    int
+	RequireIPFS        bool
 
 	// Video Processing Configuration
 	VideoQualities     []string
@@ -196,6 +197,7 @@ func Load() (*Config, error) {
 	cfg.DBPingTimeout = getIntEnv("DB_PING_TIMEOUT", 5)
 	cfg.RedisPingTimeout = getIntEnv("REDIS_PING_TIMEOUT", 3)
 	cfg.IPFSPingTimeout = getIntEnv("IPFS_PING_TIMEOUT", 10)
+	cfg.RequireIPFS = getBoolEnv("REQUIRE_IPFS", true)
 
 	// Video Processing Configuration
 	cfg.VideoQualities = getStringSliceEnv("VIDEO_QUALITIES", []string{"360p", "480p", "720p", "1080p"})
