@@ -13,7 +13,6 @@ import (
 	"github.com/redis/go-redis/v9"
 
     "athena/internal/config"
-    "athena/internal/metrics"
     "athena/internal/middleware"
     "athena/internal/repository"
     "athena/internal/scheduler"
@@ -84,11 +83,9 @@ func RegisterRoutes(r chi.Router, cfg *config.Config) {
 	r.Post("/auth/refresh", server.RefreshToken)
 	r.With(middleware.Auth(cfg.JWTSecret)).Post("/auth/logout", server.Logout)
 
-    // Register health routes
-    r.Get("/health", server.HealthCheck)
-    r.Get("/ready", server.ReadinessCheck)
-    // Expose Prometheus metrics from the API server for admins only
-    r.With(middleware.Auth(cfg.JWTSecret)).Get("/metrics", MetricsHandlerAdmin(userRepo))
+	// Register health routes
+	r.Get("/health", server.HealthCheck)
+	r.Get("/ready", server.ReadinessCheck)
 
 	// Additional API routes for videos and users (if they exist)
 	r.Route("/api/v1", func(r chi.Router) {
