@@ -2,6 +2,7 @@ package domain
 
 import (
 	"fmt"
+	"math"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -79,8 +80,8 @@ func TestGetTargetResolutions(t *testing.T) {
 			if sourceHeight, exists := ResolutionHeights[tt.sourceResolution]; exists {
 				for _, target := range targets {
 					targetHeight := ResolutionHeights[target]
-					assert.LessOrEqual(t, targetHeight, sourceHeight, 
-						"Target resolution %s (%dp) should not be higher than source %s (%dp)", 
+					assert.LessOrEqual(t, targetHeight, sourceHeight,
+						"Target resolution %s (%dp) should not be higher than source %s (%dp)",
 						target, targetHeight, tt.sourceResolution, sourceHeight)
 				}
 			}
@@ -102,13 +103,13 @@ func TestDetectResolutionFromHeight(t *testing.T) {
 		{"1440p exact", 1440, "1440p"},
 		{"2160p exact", 2160, "2160p"},
 		{"4320p exact", 4320, "4320p"},
-		
+
 		// Close matches
 		{"Close to 240p", 245, "240p"},
 		{"Close to 360p", 355, "360p"},
 		{"Close to 720p", 715, "720p"},
 		{"Close to 1080p", 1085, "1080p"},
-		
+
 		// Edge cases
 		{"Very low", 100, "240p"},
 		{"Very high", 10000, "4320p"},
@@ -122,7 +123,7 @@ func TestDetectResolutionFromHeight(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			result := DetectResolutionFromHeight(tt.height)
 			assert.Equal(t, tt.expected, result)
-			
+
 			// Verify the result is a valid resolution
 			_, exists := ResolutionHeights[result]
 			assert.True(t, exists, "Detected resolution %s should be valid", result)
@@ -148,16 +149,16 @@ func TestIsValidResolution(t *testing.T) {
 }
 
 func TestResolutionHeights(t *testing.T) {
-    expectedHeights := map[string]int{
-        "240p":  240,
-        "360p":  360,
-        "480p":  480,
-        "720p":  720,
-        "1080p": 1080,
-        "1440p": 1440,
-        "2160p": 2160,
-        "4320p": 4320,
-    }
+	expectedHeights := map[string]int{
+		"240p":  240,
+		"360p":  360,
+		"480p":  480,
+		"720p":  720,
+		"1080p": 1080,
+		"1440p": 1440,
+		"2160p": 2160,
+		"4320p": 4320,
+	}
 
 	for resolution, expectedHeight := range expectedHeights {
 		t.Run(resolution, func(t *testing.T) {
@@ -177,34 +178,34 @@ func TestResolutionHeights(t *testing.T) {
 }
 
 func TestHeightForResolution(t *testing.T) {
-    tests := []struct{
-        res string
-        height int
-        ok bool
-    }{
-        {"240p", 240, true},
-        {"720p", 720, true},
-        {"1080p", 1080, true},
-        {"999p", 0, false},
-        {"", 0, false},
-    }
+	tests := []struct {
+		res    string
+		height int
+		ok     bool
+	}{
+		{"240p", 240, true},
+		{"720p", 720, true},
+		{"1080p", 1080, true},
+		{"999p", 0, false},
+		{"", 0, false},
+	}
 
-    for _, tt := range tests {
-        t.Run(tt.res, func(t *testing.T) {
-            h, ok := HeightForResolution(tt.res)
-            assert.Equal(t, tt.ok, ok)
-            if tt.ok {
-                assert.Equal(t, tt.height, h)
-            }
-        })
-    }
+	for _, tt := range tests {
+		t.Run(tt.res, func(t *testing.T) {
+			h, ok := HeightForResolution(tt.res)
+			assert.Equal(t, tt.ok, ok)
+			if tt.ok {
+				assert.Equal(t, tt.height, h)
+			}
+		})
+	}
 }
 
 func TestSupportedResolutions(t *testing.T) {
 	expectedResolutions := []string{"240p", "360p", "480p", "720p", "1080p", "1440p", "2160p", "4320p"}
-	
+
 	assert.Equal(t, len(expectedResolutions), len(SupportedResolutions), "Number of supported resolutions should match")
-	
+
 	for _, expected := range expectedResolutions {
 		assert.Contains(t, SupportedResolutions, expected, "Resolution %s should be in SupportedResolutions", expected)
 	}
@@ -216,29 +217,29 @@ func TestEncodingLogicConsistency(t *testing.T) {
 		t.Run("Source_"+sourceRes, func(t *testing.T) {
 			targets := GetTargetResolutions(sourceRes)
 			sourceHeight := ResolutionHeights[sourceRes]
-			
+
 			// Verify all targets are valid resolutions
 			for _, target := range targets {
 				assert.True(t, IsValidResolution(target), "Target %s should be valid", target)
 			}
-			
+
 			// Verify source resolution is included in targets
 			assert.Contains(t, targets, sourceRes, "Source resolution %s should be included in targets", sourceRes)
-			
+
 			// Verify all targets are <= source resolution
 			for _, target := range targets {
 				targetHeight := ResolutionHeights[target]
-				assert.LessOrEqual(t, targetHeight, sourceHeight, 
-					"Target %s (%dp) should not exceed source %s (%dp)", 
+				assert.LessOrEqual(t, targetHeight, sourceHeight,
+					"Target %s (%dp) should not exceed source %s (%dp)",
 					target, targetHeight, sourceRes, sourceHeight)
 			}
-			
+
 			// Verify targets are sorted by height (ascending)
 			for i := 1; i < len(targets); i++ {
 				prevHeight := ResolutionHeights[targets[i-1]]
 				currHeight := ResolutionHeights[targets[i]]
-				assert.LessOrEqual(t, prevHeight, currHeight, 
-					"Targets should be sorted by height: %s (%dp) should not come after %s (%dp)", 
+				assert.LessOrEqual(t, prevHeight, currHeight,
+					"Targets should be sorted by height: %s (%dp) should not come after %s (%dp)",
 					targets[i-1], prevHeight, targets[i], currHeight)
 			}
 		})
@@ -248,7 +249,7 @@ func TestEncodingLogicConsistency(t *testing.T) {
 func TestDefaultResolution(t *testing.T) {
 	assert.Equal(t, "720p", DefaultResolution)
 	assert.True(t, IsValidResolution(DefaultResolution), "Default resolution should be valid")
-	
+
 	// Verify default resolution exists in supported resolutions
 	assert.Contains(t, SupportedResolutions, DefaultResolution, "Default resolution should be supported")
 }
@@ -263,6 +264,7 @@ func TestAbsFunction(t *testing.T) {
 		{0, 0},
 		{100, 100},
 		{-100, 100},
+		{math.MinInt, math.MaxInt},
 	}
 
 	for _, tt := range tests {
