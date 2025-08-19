@@ -1143,12 +1143,12 @@
                   "pm.test('Status is 200', () => pm.response.to.have.status(200));",
                   "const wrap = pm.response.json();",
                   "pm.test('Response wrapped with data', () => pm.expect(wrap).to.have.property('data'));",
-                  "const data = wrap.data || {};",
-                  "pm.test('Qualities array present', () => pm.expect(Array.isArray(data.qualities)).to.be.true);",
-                  "pm.test('Default quality present', () => pm.expect(data).to.have.property('default'));",
+                  "const qualitiesData = wrap.data || {};",
+                  "pm.test('Qualities array present', () => pm.expect(Array.isArray(qualitiesData.qualities)).to.be.true);",
+                  "pm.test('Default quality present', () => pm.expect(qualitiesData).to.have.property('default'));",
                   "pm.test('Common qualities included', () => {",
-                  "  pm.expect(data.qualities).to.include('720p');",
-                  "  pm.expect(data.qualities).to.include('4320p');",
+                  "  pm.expect(qualitiesData.qualities).to.include('720p');",
+                  "  pm.expect(qualitiesData.qualities).to.include('4320p');",
                   "});"
                 ],
                 "type": "text/javascript"

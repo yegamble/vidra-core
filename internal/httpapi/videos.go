@@ -834,6 +834,12 @@ func StreamVideoHandler(videoRepo usecase.VideoRepository) http.HandlerFunc {
 		// Final fallback: mocked playlist
 		if quality == "" {
 			quality = domain.DefaultResolution
+		} else {
+			// Validate quality one more time for the final fallback
+			if !domain.IsValidResolution(quality) {
+				WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_QUALITY", "Unsupported quality"))
+				return
+			}
 		}
 		hlsPlaylist := fmt.Sprintf(`#EXTM3U
 #EXT-X-VERSION:3
