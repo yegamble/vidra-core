@@ -204,22 +204,28 @@ postman-newman: ## Run Postman auth tests via Newman (server must be running)
 
 # Spin up test stack, app, then run Newman end-to-end
 postman-e2e: ## Start test services + app and run Newman end-to-end
-	@echo "Starting test stack (DB, Redis, App)..."
-	COMPOSE_PROJECT_NAME=athena-test docker-compose -f docker-compose.test.yml up -d --build
+	@echo "Starting test stack (DB, Redis, App, IPFS)..."
+	COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) -f docker-compose.test.yml up -d --build
 	@echo "Waiting for app-test to be healthy..."
 	@for i in $$(seq 1 40); do \
-	  status=$$(docker inspect --format='{{json .State.Health.Status}}' $$(COMPOSE_PROJECT_NAME=athena-test docker-compose -f docker-compose.test.yml ps -q app-test) 2>/dev/null | tr -d '"'); \
+	  status=$$(docker inspect --format='{{json .State.Health.Status}}' $$(COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) -f docker-compose.test.yml ps -q app-test) 2>/dev/null | tr -d '"'); \
 	  if [ "$$status" = "healthy" ]; then echo "app-test is healthy"; break; fi; \
 	  sleep 2; \
 	done
+	@echo "Waiting for ipfs-test to be healthy..."
+	@for i in $$(seq 1 40); do \
+	  status=$$(docker inspect --format='{{json .State.Health.Status}}' $$(COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) -f docker-compose.test.yml ps -q ipfs-test) 2>/dev/null | tr -d '"'); \
+	  if [ "$$status" = "healthy" ]; then echo "ipfs-test is healthy"; break; fi; \
+	  sleep 2; \
+	done
 	@echo "Running Newman inside compose network against http://app-test:8080 ..."
-	COMPOSE_PROJECT_NAME=athena-test docker-compose -f docker-compose.test.yml run --rm newman || { \
+	COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) -f docker-compose.test.yml run --rm newman || { \
 	  echo "Newman tests failed"; \
-	  COMPOSE_PROJECT_NAME=athena-test docker-compose -f docker-compose.test.yml down -v; \
+	  COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) -f docker-compose.test.yml down -v; \
 	  exit 1; \
 	}
 	@echo "Shutting down test stack..."
-	COMPOSE_PROJECT_NAME=athena-test docker-compose -f docker-compose.test.yml down -v
+	COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) -f docker-compose.test.yml down -v
 
 setup: ## Initial project setup
 	@echo "Setting up Athena project..."

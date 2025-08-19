@@ -1,0 +1,4 @@
+PNG-PLACEHOLDER
+This is a tiny placeholder file used by Newman to upload
+as multipart form-data in the avatar upload request.
+Any bytes are acceptable for the API under test.
