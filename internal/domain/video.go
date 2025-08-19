@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"math"
 	"time"
 )
 
@@ -26,42 +27,42 @@ var supportedResolutionSet = func() map[string]struct{} {
 }()
 
 func IsValidResolution(res string) bool {
-    _, ok := supportedResolutionSet[res]
-    return ok
+	_, ok := supportedResolutionSet[res]
+	return ok
 }
 
 // HeightForResolution returns the pixel height for a given resolution label
 // and a boolean indicating whether it exists.
 func HeightForResolution(res string) (int, bool) {
-    h, ok := ResolutionHeights[res]
-    return h, ok
+	h, ok := ResolutionHeights[res]
+	return h, ok
 }
 
 type Video struct {
-    ID            string            `json:"id" db:"id"`
-    ThumbnailID   string            `json:"thumbnail_id" db:"thumbnail_id"`
-    Title         string            `json:"title" db:"title"`
-    Description   string            `json:"description" db:"description"`
-    Duration      int               `json:"duration" db:"duration"`
-    Views         int64             `json:"views" db:"views"`
-    Privacy       Privacy           `json:"privacy" db:"privacy"`
-    Status        ProcessingStatus  `json:"status" db:"status"`
-    UploadDate    time.Time         `json:"upload_date" db:"upload_date"`
-    UserID        string            `json:"user_id" db:"user_id"`
-    OriginalCID   string            `json:"original_cid" db:"original_cid"`
-    ProcessedCIDs map[string]string `json:"processed_cids" db:"processed_cids"`
-    ThumbnailCID  string            `json:"thumbnail_cid" db:"thumbnail_cid"`
-    OutputPaths   map[string]string `json:"output_paths" db:"output_paths"`
-    ThumbnailPath string            `json:"thumbnail_path" db:"thumbnail_path"`
-    PreviewPath   string            `json:"preview_path" db:"preview_path"`
-    Tags          []string          `json:"tags" db:"tags"`
-    Category      string            `json:"category" db:"category"`
-    Language      string            `json:"language" db:"language"`
-    FileSize      int64             `json:"file_size" db:"file_size"`
-    MimeType      string            `json:"mime_type" db:"mime_type"`
-    Metadata      VideoMetadata     `json:"metadata" db:"metadata"`
-    CreatedAt     time.Time         `json:"created_at" db:"created_at"`
-    UpdatedAt     time.Time         `json:"updated_at" db:"updated_at"`
+	ID            string            `json:"id" db:"id"`
+	ThumbnailID   string            `json:"thumbnail_id" db:"thumbnail_id"`
+	Title         string            `json:"title" db:"title"`
+	Description   string            `json:"description" db:"description"`
+	Duration      int               `json:"duration" db:"duration"`
+	Views         int64             `json:"views" db:"views"`
+	Privacy       Privacy           `json:"privacy" db:"privacy"`
+	Status        ProcessingStatus  `json:"status" db:"status"`
+	UploadDate    time.Time         `json:"upload_date" db:"upload_date"`
+	UserID        string            `json:"user_id" db:"user_id"`
+	OriginalCID   string            `json:"original_cid" db:"original_cid"`
+	ProcessedCIDs map[string]string `json:"processed_cids" db:"processed_cids"`
+	ThumbnailCID  string            `json:"thumbnail_cid" db:"thumbnail_cid"`
+	OutputPaths   map[string]string `json:"output_paths" db:"output_paths"`
+	ThumbnailPath string            `json:"thumbnail_path" db:"thumbnail_path"`
+	PreviewPath   string            `json:"preview_path" db:"preview_path"`
+	Tags          []string          `json:"tags" db:"tags"`
+	Category      string            `json:"category" db:"category"`
+	Language      string            `json:"language" db:"language"`
+	FileSize      int64             `json:"file_size" db:"file_size"`
+	MimeType      string            `json:"mime_type" db:"mime_type"`
+	Metadata      VideoMetadata     `json:"metadata" db:"metadata"`
+	CreatedAt     time.Time         `json:"created_at" db:"created_at"`
+	UpdatedAt     time.Time         `json:"updated_at" db:"updated_at"`
 }
 
 type VideoMetadata struct {
@@ -124,27 +125,27 @@ type VideoUpdateRequest struct {
 
 // Upload tracking models
 type UploadSession struct {
-	ID               string              `json:"id" db:"id"`
-	VideoID          string              `json:"video_id" db:"video_id"`
-	UserID           string              `json:"user_id" db:"user_id"`
-	FileName         string              `json:"filename" db:"filename"`
-	FileSize         int64               `json:"file_size" db:"file_size"`
-	ChunkSize        int64               `json:"chunk_size" db:"chunk_size"`
-	TotalChunks      int                 `json:"total_chunks" db:"total_chunks"`
-	UploadedChunks   []int               `json:"uploaded_chunks" db:"uploaded_chunks"`
-	Status           UploadStatus        `json:"status" db:"status"`
-	TempFilePath     string              `json:"temp_file_path" db:"temp_file_path"`
-	ExpectedChecksum string              `json:"expected_checksum" db:"expected_checksum"`
-	CreatedAt        time.Time           `json:"created_at" db:"created_at"`
-	UpdatedAt        time.Time           `json:"updated_at" db:"updated_at"`
-	ExpiresAt        time.Time           `json:"expires_at" db:"expires_at"`
+	ID               string       `json:"id" db:"id"`
+	VideoID          string       `json:"video_id" db:"video_id"`
+	UserID           string       `json:"user_id" db:"user_id"`
+	FileName         string       `json:"filename" db:"filename"`
+	FileSize         int64        `json:"file_size" db:"file_size"`
+	ChunkSize        int64        `json:"chunk_size" db:"chunk_size"`
+	TotalChunks      int          `json:"total_chunks" db:"total_chunks"`
+	UploadedChunks   []int        `json:"uploaded_chunks" db:"uploaded_chunks"`
+	Status           UploadStatus `json:"status" db:"status"`
+	TempFilePath     string       `json:"temp_file_path" db:"temp_file_path"`
+	ExpectedChecksum string       `json:"expected_checksum" db:"expected_checksum"`
+	CreatedAt        time.Time    `json:"created_at" db:"created_at"`
+	UpdatedAt        time.Time    `json:"updated_at" db:"updated_at"`
+	ExpiresAt        time.Time    `json:"expires_at" db:"expires_at"`
 }
 
 type ChunkUpload struct {
-	SessionID   string `json:"session_id"`
-	ChunkIndex  int    `json:"chunk_index"`
-	Data        []byte `json:"data"`
-	Checksum    string `json:"checksum"`
+	SessionID  string `json:"session_id"`
+	ChunkIndex int    `json:"chunk_index"`
+	Data       []byte `json:"data"`
+	Checksum   string `json:"checksum"`
 }
 
 type UploadStatus string
@@ -158,18 +159,18 @@ const (
 
 // Encoding queue models
 type EncodingJob struct {
-	ID               string                 `json:"id" db:"id"`
-	VideoID          string                 `json:"video_id" db:"video_id"`
-	SourceFilePath   string                 `json:"source_file_path" db:"source_file_path"`
-	SourceResolution string                 `json:"source_resolution" db:"source_resolution"`
-	TargetResolutions []string              `json:"target_resolutions" db:"target_resolutions"`
-	Status           EncodingStatus         `json:"status" db:"status"`
-	Progress         int                    `json:"progress" db:"progress"` // 0-100
-	ErrorMessage     string                 `json:"error_message" db:"error_message"`
-	StartedAt        *time.Time             `json:"started_at" db:"started_at"`
-	CompletedAt      *time.Time             `json:"completed_at" db:"completed_at"`
-	CreatedAt        time.Time              `json:"created_at" db:"created_at"`
-	UpdatedAt        time.Time              `json:"updated_at" db:"updated_at"`
+	ID                string         `json:"id" db:"id"`
+	VideoID           string         `json:"video_id" db:"video_id"`
+	SourceFilePath    string         `json:"source_file_path" db:"source_file_path"`
+	SourceResolution  string         `json:"source_resolution" db:"source_resolution"`
+	TargetResolutions []string       `json:"target_resolutions" db:"target_resolutions"`
+	Status            EncodingStatus `json:"status" db:"status"`
+	Progress          int            `json:"progress" db:"progress"` // 0-100
+	ErrorMessage      string         `json:"error_message" db:"error_message"`
+	StartedAt         *time.Time     `json:"started_at" db:"started_at"`
+	CompletedAt       *time.Time     `json:"completed_at" db:"completed_at"`
+	CreatedAt         time.Time      `json:"created_at" db:"created_at"`
+	UpdatedAt         time.Time      `json:"updated_at" db:"updated_at"`
 }
 
 type EncodingStatus string
@@ -200,50 +201,53 @@ func GetTargetResolutions(sourceResolution string) []string {
 		// Default fallback
 		return []string{"720p", "480p", "360p", "240p"}
 	}
-	
+
 	var targets []string
 	for _, resolution := range SupportedResolutions {
 		if height := ResolutionHeights[resolution]; height <= sourceHeight {
 			targets = append(targets, resolution)
 		}
 	}
-	
+
 	// Always include at least 240p
 	if len(targets) == 0 {
 		targets = []string{"240p"}
 	}
-	
+
 	return targets
 }
 
 // DetectResolutionFromHeight converts pixel height to resolution string
 func DetectResolutionFromHeight(height int) string {
-    // Find the closest standard resolution deterministically and
-    // prefer the lower resolution when distances tie.
-    bestMatch := "240p"
-    smallestDiff := abs(height - ResolutionHeights[bestMatch])
+	// Find the closest standard resolution deterministically and
+	// prefer the lower resolution when distances tie.
+	bestMatch := "240p"
+	smallestDiff := abs(height - ResolutionHeights[bestMatch])
 
-    for _, resolution := range SupportedResolutions {
-        standardHeight := ResolutionHeights[resolution]
-        diff := abs(height - standardHeight)
-        if diff < smallestDiff {
-            smallestDiff = diff
-            bestMatch = resolution
-            continue
-        }
-        // On exact tie, prefer lower (smaller height)
-        if diff == smallestDiff {
-            currentBestHeight := ResolutionHeights[bestMatch]
-            if standardHeight < currentBestHeight {
-                bestMatch = resolution
-            }
-        }
-    }
+	for _, resolution := range SupportedResolutions {
+		standardHeight := ResolutionHeights[resolution]
+		diff := abs(height - standardHeight)
+		if diff < smallestDiff {
+			smallestDiff = diff
+			bestMatch = resolution
+			continue
+		}
+		// On exact tie, prefer lower (smaller height)
+		if diff == smallestDiff {
+			currentBestHeight := ResolutionHeights[bestMatch]
+			if standardHeight < currentBestHeight {
+				bestMatch = resolution
+			}
+		}
+	}
 
-    return bestMatch
+	return bestMatch
 }
 
 func abs(x int) int {
+	if x == math.MinInt {
+		return math.MaxInt
+	}
 	if x < 0 {
 		return -x
 	}
@@ -259,10 +263,10 @@ type InitiateUploadRequest struct {
 }
 
 type InitiateUploadResponse struct {
-	SessionID    string `json:"session_id"`
-	ChunkSize    int64  `json:"chunk_size"`
-	TotalChunks  int    `json:"total_chunks"`
-	UploadURL    string `json:"upload_url"`
+	SessionID   string `json:"session_id"`
+	ChunkSize   int64  `json:"chunk_size"`
+	TotalChunks int    `json:"total_chunks"`
+	UploadURL   string `json:"upload_url"`
 }
 
 type ChunkUploadResponse struct {
