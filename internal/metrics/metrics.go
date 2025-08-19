@@ -20,11 +20,11 @@ func DecInFlight()  { atomic.AddInt64(&encoderJobsInFlight, -1) }
 // Handler exposes metrics in Prometheus text exposition format
 func Handler(w http.ResponseWriter, r *http.Request) {
     w.Header().Set("Content-Type", "text/plain; version=0.0.4")
-    fmt.Fprintf(w, "# TYPE athena_encoder_jobs_processed_total counter\n")
-    fmt.Fprintf(w, "athena_encoder_jobs_processed_total %d\n", atomic.LoadInt64(&encoderJobsProcessed))
-    fmt.Fprintf(w, "# TYPE athena_encoder_jobs_failed_total counter\n")
-    fmt.Fprintf(w, "athena_encoder_jobs_failed_total %d\n", atomic.LoadInt64(&encoderJobsFailed))
-    fmt.Fprintf(w, "# TYPE athena_encoder_jobs_in_progress gauge\n")
-    fmt.Fprintf(w, "athena_encoder_jobs_in_progress %d\n", atomic.LoadInt64(&encoderJobsInFlight))
+    _, _ = fmt.Fprintf(w, "# TYPE athena_encoder_jobs_processed_total counter\n")
+    _, _ = fmt.Fprintf(w, "athena_encoder_jobs_processed_total %d\n", atomic.LoadInt64(&encoderJobsProcessed))
+    _, _ = fmt.Fprintf(w, "# TYPE athena_encoder_jobs_failed_total counter\n")
+    _, _ = fmt.Fprintf(w, "athena_encoder_jobs_failed_total %d\n", atomic.LoadInt64(&encoderJobsFailed))
+    _, _ = fmt.Fprintf(w, "# TYPE athena_encoder_jobs_in_progress gauge\n")
+    _, _ = fmt.Fprintf(w, "athena_encoder_jobs_in_progress %d\n", atomic.LoadInt64(&encoderJobsInFlight))
 }
 

@@ -103,7 +103,7 @@ func (s *uploadService) InitiateUpload(ctx context.Context, userID string, req *
 	}
 
 	if err := s.uploadRepo.CreateSession(ctx, session); err != nil {
-		os.RemoveAll(tempDir) // Cleanup on failure
+		_ = os.RemoveAll(tempDir) // Cleanup on failure
 		return nil, fmt.Errorf("failed to create upload session: %w", err)
 	}
 
@@ -333,7 +333,7 @@ func (s *uploadService) AssembleChunks(ctx context.Context, session *domain.Uplo
 	if err != nil {
 		return fmt.Errorf("failed to create final file: %w", err)
 	}
-	defer finalFile.Close()
+	defer func() { _ = finalFile.Close() }()
 
 	// Get uploaded chunks and sort them
 	uploadedChunks, err := s.uploadRepo.GetUploadedChunks(ctx, session.ID)
@@ -357,13 +357,13 @@ func (s *uploadService) AssembleChunks(ctx context.Context, session *domain.Uplo
 	}
 
 	// Close the file before checksum validation
-	finalFile.Close()
+	_ = finalFile.Close()
 
 	// Validate assembled file checksum if expected checksum is provided
 	if session.ExpectedChecksum != "" {
 		if err := s.validator.ValidateFileChecksum(finalPath, session.ExpectedChecksum); err != nil {
 			// Remove invalid file
-			os.Remove(finalPath)
+			_ = os.Remove(finalPath)
 			return fmt.Errorf("assembled file checksum validation failed: %w", err)
 		}
 	}

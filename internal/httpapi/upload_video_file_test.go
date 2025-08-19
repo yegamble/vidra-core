@@ -60,7 +60,7 @@ func writeMinimalMP4(path string, totalSize int) error {
     if err != nil {
         return err
     }
-    defer f.Close()
+    defer func() { _ = f.Close() }()
 
     if _, err := f.Write(ftyp); err != nil { return err }
     if _, err := f.Write(mdat); err != nil { return err }
@@ -187,7 +187,7 @@ func TestUploadWithActualVideoFile(t *testing.T) {
     // Also stream back a bit of the file to ensure it's readable
     f, err := os.Open(assembledPath)
     if err != nil { t.Fatalf("open assembled: %v", err) }
-    defer f.Close()
+    defer func() { _ = f.Close() }()
     if _, err := io.CopyN(io.Discard, f, 64); err != nil && err != io.EOF {
         t.Fatalf("read assembled content: %v", err)
     }

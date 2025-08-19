@@ -213,7 +213,7 @@ func (r *uploadRepository) GetExpiredSessions(ctx context.Context) ([]*domain.Up
 	if err != nil {
 		return nil, fmt.Errorf("failed to get expired sessions: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var sessions []*domain.UploadSession
 	for rows.Next() {

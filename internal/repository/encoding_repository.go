@@ -160,7 +160,7 @@ func (r *encodingRepository) GetPendingJobs(ctx context.Context, limit int) ([]*
 	if err != nil {
 		return nil, fmt.Errorf("failed to get pending jobs: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var jobs []*domain.EncodingJob
 	for rows.Next() {
@@ -189,7 +189,7 @@ func (r *encodingRepository) GetNextJob(ctx context.Context) (*domain.EncodingJo
 	if err != nil {
 		return nil, fmt.Errorf("failed to begin transaction: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	query := `
 		SELECT id, video_id, source_file_path, source_resolution,
@@ -290,7 +290,7 @@ func (r *encodingRepository) GetJobCounts(ctx context.Context) (map[string]int64
     if err != nil {
         return nil, fmt.Errorf("failed to count jobs: %w", err)
     }
-    defer rows.Close()
+    defer func() { _ = rows.Close() }()
     counts := map[string]int64{"pending":0, "processing":0, "completed":0, "failed":0}
     for rows.Next() {
         var status string

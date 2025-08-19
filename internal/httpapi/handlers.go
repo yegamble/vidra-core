@@ -4,8 +4,6 @@ import (
     "context"
     "encoding/json"
     "net/http"
-    "os"
-    "strconv"
     "time"
 
     "github.com/golang-jwt/jwt/v5"
@@ -349,17 +347,6 @@ func (s *Server) generateJWT(userID string, duration time.Duration) string {
     return signHS256JWT(s.jwtSecret, userID, duration)
 }
 
-// cfgSessionTimeout reads SESSION_TIMEOUT from env via default config loader semantics.
-// Handlers do not carry the full config; we use a helper to keep code localized.
-func cfgSessionTimeout() int {
-    // Default 24h if not provided; the config loader already enforces presence of REDIS/JWT
-    if v := getenv("SESSION_TIMEOUT"); v != 0 {
-        return v
-    }
-    return 24 * 60 * 60
-}
-
-func safeSeconds(v int) int { if v <= 0 { return 60 * 60 * 24 }; return v }
 
 // signHS256JWT signs a compact JWT with HS256
 func signHS256JWT(secret, userID string, duration time.Duration) string {
@@ -378,15 +365,3 @@ func signHS256JWT(secret, userID string, duration time.Duration) string {
     return s
 }
 
-// getenv returns integer env var or zero if not set/invalid
-func getenv(key string) int {
-    v := os.Getenv(key)
-    if v == "" {
-        return 0
-    }
-    n, err := strconv.Atoi(v)
-    if err != nil {
-        return 0
-    }
-    return n
-}

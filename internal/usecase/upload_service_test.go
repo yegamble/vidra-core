@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -659,7 +658,7 @@ func testTempDir(t *testing.T) string {
     if err := os.MkdirAll(base, 0o755); err != nil {
         t.Fatalf("failed to create base temp dir: %v", err)
     }
-    dir := filepath.Join(base, fmt.Sprintf("%s", uuid.NewString()))
+    dir := filepath.Join(base, uuid.NewString())
     if err := os.MkdirAll(dir, 0o755); err != nil {
         t.Fatalf("failed to create temp dir: %v", err)
     }
