@@ -84,13 +84,13 @@ func WriteJSONWithMeta(w http.ResponseWriter, statusCode int, data interface{}, 
 
 func MapDomainErrorToHTTP(err error) int {
 	switch err {
-	case domain.ErrNotFound, domain.ErrUserNotFound, domain.ErrVideoNotFound:
+	case domain.ErrNotFound, domain.ErrUserNotFound, domain.ErrVideoNotFound, domain.ErrMessageNotFound, domain.ErrConversationNotFound:
 		return http.StatusNotFound
 	case domain.ErrUnauthorized, domain.ErrInvalidCredentials, domain.ErrInvalidToken, domain.ErrTokenExpired:
 		return http.StatusUnauthorized
 	case domain.ErrForbidden:
 		return http.StatusForbidden
-	case domain.ErrValidation, domain.ErrBadRequest, domain.ErrInvalidFormat, domain.ErrInvalidChunk:
+	case domain.ErrValidation, domain.ErrBadRequest, domain.ErrInvalidFormat, domain.ErrInvalidChunk, domain.ErrCannotMessageSelf, domain.ErrMessageTooLong, domain.ErrInvalidMessageType:
 		return http.StatusBadRequest
 	case domain.ErrConflict, domain.ErrUserAlreadyExists:
 		return http.StatusConflict

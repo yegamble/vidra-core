@@ -33,6 +33,7 @@ func RegisterRoutes(r chi.Router, cfg *config.Config) {
 	videoRepo := repository.NewVideoRepository(db)
 	uploadRepo := repository.NewUploadRepository(db)
 	encodingRepo := repository.NewEncodingRepository(db)
+	messageRepo := repository.NewMessageRepository(db)
 	dbAuthRepo := repository.NewAuthRepository(db)
 
 	// Create uploads directory structure
@@ -46,6 +47,7 @@ func RegisterRoutes(r chi.Router, cfg *config.Config) {
 
 	// Initialize services
 	uploadService := usecase.NewUploadService(uploadRepo, encodingRepo, videoRepo, uploadsDir, cfg)
+	messageService := usecase.NewMessageService(messageRepo, userRepo)
 
 	// Start a lightweight encoding scheduler in the background to ensure
 	// pending jobs are processed even if the standalone encoder is not running.
@@ -157,6 +159,20 @@ func RegisterRoutes(r chi.Router, cfg *config.Config) {
             r.With(middleware.Auth(cfg.JWTSecret)).Post("/me/avatar", server.UploadAvatar)
             r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{id}", GetUserHandler(userRepo))
             r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{id}/videos", GetUserVideosHandler(videoRepo))
+        })
+
+        r.Route("/messages", func(r chi.Router) {
+            r.Use(middleware.Auth(cfg.JWTSecret))
+            r.Post("/", SendMessageHandler(messageService))
+            r.Get("/", GetMessagesHandler(messageService))
+            r.Put("/{messageId}/read", MarkMessageReadHandler(messageService))
+            r.Delete("/{messageId}", DeleteMessageHandler(messageService))
+        })
+
+        r.Route("/conversations", func(r chi.Router) {
+            r.Use(middleware.Auth(cfg.JWTSecret))
+            r.Get("/", GetConversationsHandler(messageService))
+            r.Get("/unread-count", GetUnreadCountHandler(messageService))
         })
     })
 }

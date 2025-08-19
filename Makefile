@@ -204,7 +204,7 @@ postman-newman: ## Run Postman auth tests via Newman (server must be running)
 
 # Spin up test stack, app, then run Newman end-to-end
 postman-e2e: ## Start test services + app and run Newman end-to-end
-	@echo "Starting test stack (DB, Redis, App)..."
+	@echo "Starting test stack (DB, Redis, App, IPFS)..."
 	COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) -f docker-compose.test.yml up -d --build
 	@echo "Waiting for app-test to be healthy..."
 	@for i in $$(seq 1 40); do \
