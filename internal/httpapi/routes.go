@@ -54,8 +54,8 @@ func RegisterRoutes(r chi.Router, cfg *config.Config) {
 		interval := time.Duration(cfg.EncodingSchedulerIntervalSeconds) * time.Second
 		burst := cfg.EncodingSchedulerBurst
 		encSched = scheduler.NewEncodingScheduler(encSvc, interval, burst)
-		ctx, _ := context.WithCancel(context.Background())
-		go encSched.Start(ctx)
+		// Use Background context; lifecycle is tied to the server process.
+		go encSched.Start(context.Background())
 	}
 
 	// Initialize Redis session repo
