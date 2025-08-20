@@ -1,29 +1,31 @@
 package usecase
 
 import (
-	"context"
-	"fmt"
-	"log"
-	"math"
-	"os"
-	"path/filepath"
-	"sort"
-	"strconv"
-	"strings"
-	"time"
+    "context"
+    "fmt"
+    "log"
+    "math"
+    "os"
+    "path/filepath"
+    "sort"
+    "strconv"
+    "strings"
+    "time"
 
-	"github.com/google/uuid"
+    "github.com/google/uuid"
 
-	"athena/internal/config"
-	"athena/internal/domain"
-	"athena/internal/validation"
+    "athena/internal/config"
+    "athena/internal/domain"
+    "athena/internal/storage"
+    "athena/internal/validation"
 )
 
 type uploadService struct {
 	uploadRepo   UploadRepository
 	encodingRepo EncodingRepository
 	videoRepo    VideoRepository
-	uploadsDir   string
+    uploadsDir   string // storage root
+	paths        storage.Paths
 	validator    *validation.ChecksumValidator
 	cfg          *config.Config
 }
@@ -32,7 +34,7 @@ func NewUploadService(
 	uploadRepo UploadRepository,
 	encodingRepo EncodingRepository,
 	videoRepo VideoRepository,
-	uploadsDir string,
+    uploadsDir string,
 	cfg *config.Config,
 ) UploadService {
 	return &uploadService{
@@ -40,6 +42,7 @@ func NewUploadService(
 		encodingRepo: encodingRepo,
 		videoRepo:    videoRepo,
 		uploadsDir:   uploadsDir,
+		paths:        storage.NewPaths(uploadsDir),
 		validator:    validation.NewChecksumValidator(cfg),
 		cfg:          cfg,
 	}
@@ -80,7 +83,8 @@ func (s *uploadService) InitiateUpload(ctx context.Context, userID string, req *
 
 	// Create upload session
 	sessionID := uuid.NewString()
-	tempDir := filepath.Join(s.uploadsDir, "temp", sessionID)
+    sp := storage.NewPaths(s.uploadsDir)
+    tempDir := sp.UploadTempDir(sessionID)
 	if err := os.MkdirAll(tempDir, 0755); err != nil {
 		return nil, fmt.Errorf("failed to create temp directory: %w", err)
 	}
@@ -95,7 +99,7 @@ func (s *uploadService) InitiateUpload(ctx context.Context, userID string, req *
 		TotalChunks:      totalChunks,
 		UploadedChunks:   []int{},
 		Status:           domain.UploadStatusActive,
-		TempFilePath:     filepath.Join(tempDir, "chunks"),
+        TempFilePath:     sp.UploadTempChunksDir(sessionID),
 		ExpectedChecksum: req.ExpectedChecksum,
 		CreatedAt:        now,
 		UpdatedAt:        now,
@@ -239,7 +243,7 @@ func (s *uploadService) CompleteUpload(ctx context.Context, sessionID string) er
 	}
 
 	// Create encoding job
-	finalFilePath := filepath.Join(s.uploadsDir, "completed", session.VideoID+filepath.Ext(session.FileName))
+    finalFilePath := s.paths.WebVideoFilePath(session.VideoID, filepath.Ext(session.FileName))
 
 	// Detect video resolution from metadata height if available, otherwise fallback.
 	sourceResolution := domain.DefaultResolution
@@ -325,7 +329,8 @@ func (s *uploadService) GetUploadStatus(ctx context.Context, sessionID string) (
 
 func (s *uploadService) AssembleChunks(ctx context.Context, session *domain.UploadSession) error {
 	// Create final file path
-	finalDir := filepath.Join(s.uploadsDir, "completed")
+    sp := storage.NewPaths(s.uploadsDir)
+    finalDir := sp.WebVideosDir()
 	if err := os.MkdirAll(finalDir, 0755); err != nil {
 		return fmt.Errorf("failed to create completed directory: %w", err)
 	}

@@ -38,6 +38,9 @@ type Config struct {
 	EnableIPFS bool
 	EnableS3   bool
 
+	// Storage Configuration
+	StorageDir string
+
 	// S3-Compatible Storage Configuration
 	S3Endpoint  string
 	S3Bucket    string
@@ -163,6 +166,9 @@ func Load() (*Config, error) {
 	cfg.EnableIOTA = getBoolEnv("ENABLE_IOTA", false)
 	cfg.EnableIPFS = getBoolEnv("ENABLE_IPFS_CLUSTER", true)
 	cfg.EnableS3 = getBoolEnv("ENABLE_S3", false)
+
+	// Storage Configuration
+	cfg.StorageDir = getEnvOrDefault("STORAGE_DIR", "./storage")
 
 	cfg.S3Endpoint = getEnvOrDefault("S3_ENDPOINT", "")
 	cfg.S3Bucket = getEnvOrDefault("S3_BUCKET", "")

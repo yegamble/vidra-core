@@ -18,6 +18,7 @@ import (
 
     "athena/internal/domain"
     "athena/internal/middleware"
+    "athena/internal/storage"
 )
 
 type ipfsAddResponse struct {
@@ -46,9 +47,10 @@ func (s *Server) UploadAvatar(w http.ResponseWriter, r *http.Request) {
     }
     defer file.Close()
 
-    // Persist locally under uploads/avatars
-    if err := os.MkdirAll("./uploads/avatars", 0755); err != nil {
-        WriteError(w, http.StatusInternalServerError, domain.NewDomainError("STORAGE_ERROR", "Failed to prepare uploads directory"))
+    // Persist locally under storage/avatars via storage utility
+    paths := storage.NewPaths("./storage")
+    if err := os.MkdirAll(paths.AvatarsDir(), 0755); err != nil {
+        WriteError(w, http.StatusInternalServerError, domain.NewDomainError("STORAGE_ERROR", "Failed to prepare storage directory"))
         return
     }
     fileID := uuid.NewString()
@@ -56,7 +58,7 @@ func (s *Server) UploadAvatar(w http.ResponseWriter, r *http.Request) {
     if len(ext) > 10 { // guard against weird long extensions
         ext = ""
     }
-    localPath := filepath.Join("./uploads/avatars", fileID+ext)
+    localPath := paths.AvatarFilePath(fileID, ext)
     out, err := os.Create(localPath)
     if err != nil {
         WriteError(w, http.StatusInternalServerError, domain.NewDomainError("STORAGE_ERROR", "Failed to save file"))

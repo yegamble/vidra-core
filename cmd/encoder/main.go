@@ -36,12 +36,7 @@ func main() {
 	encRepo := repository.NewEncodingRepository(db)
 	videoRepo := repository.NewVideoRepository(db)
 
-	uploadsDir := "./uploads"
-	if v := os.Getenv("UPLOADS_DIR"); v != "" {
-		uploadsDir = v
-	}
-
-	svc := usecase.NewEncodingService(encRepo, videoRepo, uploadsDir, cfg)
+	svc := usecase.NewEncodingService(encRepo, videoRepo, cfg.StorageDir, cfg)
 
 	// worker count from env (ENCODER_WORKERS)
 	workers := 0

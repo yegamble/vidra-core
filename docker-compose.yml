@@ -76,7 +76,7 @@ services:
       IPFS_API: ${IPFS_API:-http://ipfs:5001}
       PORT: 8080
     volumes:
-      - uploads:/app/uploads
+      - storage:/app/storage
       - processed:/app/processed
     networks:
       - athena-network
@@ -92,7 +92,7 @@ volumes:
     driver: local
   redis_data:
     driver: local
-  uploads:
+  storage:
     driver: local
   processed:
     driver: local

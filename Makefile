@@ -244,10 +244,10 @@ ci-build: ci-test build ## Run CI build pipeline
 
 ENCODER_WORKERS ?= 2
 METRICS_ADDR ?= :9090
-UPLOADS_DIR ?= ./uploads
+STORAGE_DIR ?= ./storage
 FFMPEG_PATH ?= ffmpeg
 
 run-encoder: ## Run encoding worker with metrics
 	@echo "Starting encoder (workers=$(ENCODER_WORKERS), metrics=$(METRICS_ADDR))..."
-	@ENCODER_WORKERS=$(ENCODER_WORKERS) METRICS_ADDR=$(METRICS_ADDR) UPLOADS_DIR=$(UPLOADS_DIR) FFMPEG_PATH=$(FFMPEG_PATH) \
-		go run ./cmd/encoder
+    @ENCODER_WORKERS=$(ENCODER_WORKERS) METRICS_ADDR=$(METRICS_ADDR) STORAGE_DIR=$(STORAGE_DIR) FFMPEG_PATH=$(FFMPEG_PATH) \
+        go run ./cmd/encoder

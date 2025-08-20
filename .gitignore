@@ -37,6 +37,7 @@ go.work
 
 # Docker volumes
 uploads/
+storage/
 processed/
 postgres_data/
 redis_data/

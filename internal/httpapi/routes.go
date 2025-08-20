@@ -36,17 +36,28 @@ func RegisterRoutes(r chi.Router, cfg *config.Config) {
 	messageRepo := repository.NewMessageRepository(db)
 	dbAuthRepo := repository.NewAuthRepository(db)
 
-	// Create uploads directory structure
-	uploadsDir := "./uploads"
-	if err := os.MkdirAll(filepath.Join(uploadsDir, "temp"), 0755); err != nil {
-		panic(fmt.Errorf("failed to create temp uploads directory: %w", err))
-	}
-	if err := os.MkdirAll(filepath.Join(uploadsDir, "completed"), 0755); err != nil {
-		panic(fmt.Errorf("failed to create completed uploads directory: %w", err))
-	}
+    // Create storage directory structure
+    storageRoot := cfg.StorageDir
+    storageDirs := []string{
+        filepath.Join(storageRoot, "avatars"),
+        filepath.Join(storageRoot, "cache"),
+        filepath.Join(storageRoot, "captions"),
+        filepath.Join(storageRoot, "logs"),
+        filepath.Join(storageRoot, "previews"),
+        filepath.Join(storageRoot, "streaming-playlists", "hls"),
+        filepath.Join(storageRoot, "thumbnails"),
+        filepath.Join(storageRoot, "torrents"),
+        filepath.Join(storageRoot, "web-videos"),
+        filepath.Join(storageRoot, "storyboards"),
+    }
+    for _, d := range storageDirs {
+        if err := os.MkdirAll(d, 0755); err != nil {
+            panic(fmt.Errorf("failed to create storage dir %s: %w", d, err))
+        }
+    }
 
 	// Initialize services
-	uploadService := usecase.NewUploadService(uploadRepo, encodingRepo, videoRepo, uploadsDir, cfg)
+    uploadService := usecase.NewUploadService(uploadRepo, encodingRepo, videoRepo, storageRoot, cfg)
 	messageService := usecase.NewMessageService(messageRepo, userRepo)
 
 	// Start a lightweight encoding scheduler in the background to ensure
@@ -54,7 +65,7 @@ func RegisterRoutes(r chi.Router, cfg *config.Config) {
 	// This uses a short interval with a small burst to avoid starvation.
 	var encSched *scheduler.EncodingScheduler
 	if cfg.EnableEncodingScheduler {
-		encSvc := usecase.NewEncodingService(encodingRepo, videoRepo, uploadsDir, cfg)
+        encSvc := usecase.NewEncodingService(encodingRepo, videoRepo, storageRoot, cfg)
 		interval := time.Duration(cfg.EncodingSchedulerIntervalSeconds) * time.Second
 		burst := cfg.EncodingSchedulerBurst
 		encSched = scheduler.NewEncodingScheduler(encSvc, interval, burst)

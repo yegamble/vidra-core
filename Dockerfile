@@ -35,7 +35,7 @@ COPY --from=builder /app/server .
 COPY --from=builder /app/init-shared-db.sql .
 
 # Create necessary directories
-RUN mkdir -p uploads processed
+RUN mkdir -p storage/avatars storage/cache storage/captions storage/logs storage/previews storage/streaming-playlists/hls storage/thumbnails storage/torrents storage/web-videos storage/storyboards processed
 
 # Create non-root user
 RUN adduser -D -s /bin/sh athena

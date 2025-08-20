@@ -1,25 +1,26 @@
 package httpapi
 
 import (
-	"encoding/json"
-	"errors"
-	"fmt"
-	"io"
-	"net/http"
-	"os"
-	"path/filepath"
-	"strconv"
-	"strings"
-	"time"
+    "encoding/json"
+    "errors"
+    "fmt"
+    "io"
+    "net/http"
+    "os"
+    "path/filepath"
+    "strconv"
+    "strings"
+    "time"
 
-	"github.com/go-chi/chi/v5"
-	"github.com/google/uuid"
+    "github.com/go-chi/chi/v5"
+    "github.com/google/uuid"
 
-	"athena/internal/config"
-	"athena/internal/domain"
-	"athena/internal/middleware"
-	"athena/internal/usecase"
-	"athena/internal/validation"
+    "athena/internal/config"
+    "athena/internal/domain"
+    "athena/internal/middleware"
+    "athena/internal/usecase"
+    "athena/internal/validation"
+    "athena/internal/storage"
 )
 
 func ListVideosHandler(repo usecase.VideoRepository) http.HandlerFunc {
@@ -707,7 +708,7 @@ func StreamVideo(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 
 	// If encoded HLS exists, serve master or variant dynamically
-	baseDir := filepath.Join("./uploads", "encoded", videoID)
+    baseDir := filepath.Join("./storage", "streaming-playlists", "hls", videoID)
 	quality := r.URL.Query().Get("quality")
 	var path string
 	if quality == "" {
@@ -816,8 +817,8 @@ func StreamVideoHandler(videoRepo usecase.VideoRepository) http.HandlerFunc {
 			}
 		}
 
-		// Fallback to local encoded directory
-		baseDir := filepath.Join("./uploads", "encoded", videoID)
+        // Fallback to local encoded directory
+        baseDir := filepath.Join("./storage", "streaming-playlists", "hls", videoID)
 		var path string
 		if quality == "" {
 			path = filepath.Join(baseDir, "master.m3u8")
@@ -874,13 +875,8 @@ func isRemoteURL(s string) bool {
 }
 
 func hlsRelPath(localPath string) (string, bool) {
-	base := filepath.Clean(filepath.Join(".", "uploads", "encoded"))
-	p := filepath.Clean(localPath)
-	rel, err := filepath.Rel(base, p)
-	if err == nil && rel != "" && !strings.HasPrefix(rel, "..") {
-		return filepath.ToSlash(rel), true
-	}
-	return "", false
+    sp := storage.NewPaths("./storage")
+    return sp.HLSRelPath(localPath)
 }
 
 // HLSHandler serves playlists and segments from the encoded directory with basic
@@ -910,7 +906,8 @@ func HLSHandler(videoRepo usecase.VideoRepository) http.HandlerFunc {
 				}
 			}
 		}
-		local := filepath.Clean(filepath.Join(".", "uploads", "encoded", rel))
+        sp := storage.NewPaths("./storage")
+        local := filepath.Clean(filepath.Join(sp.HLSRootDir(), rel))
 		if strings.HasSuffix(local, ".m3u8") {
 			w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
 			w.Header().Set("Cache-Control", "public, max-age=60")
