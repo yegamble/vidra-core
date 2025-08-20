@@ -5,19 +5,29 @@ RUN apk add --no-cache git ca-certificates tzdata
 
 WORKDIR /app
 
+# Force Go modules mode and set module cache
+ENV GO111MODULE=on
+ENV GOPROXY=https://proxy.golang.org,direct
+ENV GOSUMDB=sum.golang.org
+
 # Copy go mod files
 COPY go.mod go.sum ./
-RUN go mod download
+RUN go mod download && go mod verify
 
 # Copy source code
 COPY . .
 
-# Build the application
-# Allow injecting build metadata without requiring a .git directory in context
+# Verify modules and build
 ARG VERSION=dev
 ARG BUILD_TIME
 RUN : "${BUILD_TIME:=$(date -u +%Y%m%d.%H%M%S)}" && \
-    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+    # Ensure we're in modules mode and verify the module \
+    export GO111MODULE=on && \
+    go env GO111MODULE && \
+    go env GOMOD && \
+    go mod verify && \
+    # Build with explicit modules mode \
+    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GO111MODULE=on go build \
     -ldflags="-w -s -X main.version=${VERSION} -X main.buildTime=${BUILD_TIME}" \
     -o server ./cmd/server
 

@@ -27,3 +27,11 @@ docker-compose.test.yml
 # Logs and tmp
 *.log
 *~
+
+# Build cache and modules (let Docker handle these)  
+.cache/
+vendor/
+
+# Documentation files (not needed in runtime image)
+README.md
+docs/

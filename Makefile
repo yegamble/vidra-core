@@ -226,6 +226,25 @@ postman-e2e: ## Start test services + app and run Newman end-to-end
 	@echo "Shutting down test stack..."
 	COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) -f docker-compose.test.yml down -v
 
+.PHONY: postman-e2e-nobuild
+postman-e2e-nobuild: ## Start test services without building the app image; run app from Go toolchain in container and then Newman
+	@echo "Starting test stack (DB, Redis, App via go run, IPFS) without building image..."
+	COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) -f docker-compose.test.yml -f docker-compose.test.override.yml up -d
+	@echo "Waiting for app-test to be healthy..."
+	@for i in $$(seq 1 40); do \
+	  status=$$(docker inspect --format='{{json .State.Health.Status}}' $$(COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) -f docker-compose.test.yml ps -q app-test) 2>/dev/null | tr -d '"'); \
+	  if [ "$$status" = "healthy" ]; then echo "app-test is healthy"; break; fi; \
+	  sleep 2; \
+	done
+	@echo "Running Newman inside compose network against http://app-test:8080 ..."
+	COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) -f docker-compose.test.yml run --rm newman || { \
+	  echo "Newman tests failed"; \
+	  COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) -f docker-compose.test.yml -f docker-compose.test.override.yml down -v; \
+	  exit 1; \
+	}
+	@echo "Shutting down test stack..."
+	COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) -f docker-compose.test.yml -f docker-compose.test.override.yml down -v
+
 setup: ## Initial project setup
 	@echo "Setting up Athena project..."
 	@if [ ! -f .env ]; then \
