@@ -1,6 +1,8 @@
 module athena
 
-go 1.24.6
+go 1.23.0
+
+toolchain go1.24.6
 
 require (
 	github.com/HugoSmits86/nativewebp v1.2.0

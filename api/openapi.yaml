@@ -417,11 +417,6 @@ components:
           type: string
           description: User's display name
           example: "John Doe"
-        avatar_file_id:
-          type: string
-          nullable: true
-          description: UUID of stored avatar file
-          example: "7f4d2b1a-0f5f-4e0c-8d9b-1b2a3c4d5e6f"
         avatar_ipfs_cid:
           type: string
           nullable: true

@@ -38,7 +38,6 @@ func (r *userRepository) Create(ctx context.Context, user *domain.User, password
 func (r *userRepository) GetByID(ctx context.Context, id string) (*domain.User, error) {
 	query := `
         SELECT u.id, u.username, u.email, u.display_name,
-               NULL::text      AS avatar_file_id,
                a.ipfs_cid      AS avatar_ipfs_cid,
                a.webp_ipfs_cid AS avatar_webp_ipfs_cid,
                u.bio, u.bitcoin_wallet, u.role, u.is_active, u.created_at, u.updated_at
@@ -61,7 +60,6 @@ func (r *userRepository) GetByID(ctx context.Context, id string) (*domain.User, 
 func (r *userRepository) GetByEmail(ctx context.Context, email string) (*domain.User, error) {
 	query := `
         SELECT u.id, u.username, u.email, u.display_name,
-               NULL::text      AS avatar_file_id,
                a.ipfs_cid      AS avatar_ipfs_cid,
                a.webp_ipfs_cid AS avatar_webp_ipfs_cid,
                u.bio, u.bitcoin_wallet, u.role, u.is_active, u.created_at, u.updated_at
@@ -84,7 +82,6 @@ func (r *userRepository) GetByEmail(ctx context.Context, email string) (*domain.
 func (r *userRepository) GetByUsername(ctx context.Context, username string) (*domain.User, error) {
 	query := `
         SELECT u.id, u.username, u.email, u.display_name,
-               NULL::text      AS avatar_file_id,
                a.ipfs_cid      AS avatar_ipfs_cid,
                a.webp_ipfs_cid AS avatar_webp_ipfs_cid,
                u.bio, u.bitcoin_wallet, u.role, u.is_active, u.created_at, u.updated_at
@@ -190,7 +187,6 @@ func (r *userRepository) UpdatePassword(ctx context.Context, userID, passwordHas
 func (r *userRepository) List(ctx context.Context, limit, offset int) ([]*domain.User, error) {
 	query := `
         SELECT u.id, u.username, u.email, u.display_name,
-               NULL::text      AS avatar_file_id,
                a.ipfs_cid      AS avatar_ipfs_cid,
                a.webp_ipfs_cid AS avatar_webp_ipfs_cid,
                u.bio, u.bitcoin_wallet, u.role, u.is_active, u.created_at, u.updated_at

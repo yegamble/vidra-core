@@ -22,7 +22,7 @@ func (p Paths) UploadTempDir(sessionID string) string { return filepath.Join(p.R
 func (p Paths) UploadTempChunksDir(sessionID string) string { return filepath.Join(p.UploadTempDir(sessionID), "chunks") }
 
 // WebVideosDir returns the directory that stores completed uploaded videos.
-func (p Paths) WebVideosDir() string { return filepath.Join(p.Root, "web-videos") }
+func (p Paths) WebVideosDir() string { return filepath.Join(p.Root, "completed") }
 
 // HLSRootDir returns the root directory for HLS encoded output.
 func (p Paths) HLSRootDir() string { return filepath.Join(p.Root, "streaming-playlists", "hls") }
@@ -41,7 +41,7 @@ func (p Paths) HLSRelPath(localPath string) (string, bool) {
 }
 
 // AvatarsDir returns the directory where avatar images are stored.
-func (p Paths) AvatarsDir() string { return filepath.Join(p.Root, "avatars") }
+func (p Paths) AvatarsDir() string { return filepath.Join(p.Root, "storage", "avatars") }
 
 // AvatarFilePath returns the path for an uploaded avatar file with the given extension.
 func (p Paths) AvatarFilePath(fileID, ext string) string { return filepath.Join(p.AvatarsDir(), fileID+ext) }

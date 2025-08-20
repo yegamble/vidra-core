@@ -20,6 +20,7 @@ import (
 	"athena/internal/domain"
 	"athena/internal/middleware"
 	"athena/internal/repository"
+	"athena/internal/storage"
 	"athena/internal/testutil"
 	"athena/internal/usecase"
 	"github.com/go-chi/chi/v5"
@@ -183,7 +184,8 @@ func TestFullUploadWorkflow_Integration(t *testing.T) {
 					assert.Equal(t, domain.UploadStatusCompleted, session.Status)
 
 					// Verify assembled file exists and content is correct
-					finalPath := filepath.Join(tempDir, "completed", session.VideoID+".mp4")
+					sp := storage.NewPaths(tempDir)
+					finalPath := sp.WebVideoFilePath(session.VideoID, ".mp4")
 					assembledData, err := os.ReadFile(finalPath)
 					require.NoError(t, err)
 					assert.Equal(t, originalData, assembledData, "Assembled file content should match original")
@@ -386,7 +388,8 @@ func TestResumeUploadWorkflow_Integration(t *testing.T) {
 	session, err := uploadRepo.GetSession(ctx, sessionID)
 	require.NoError(t, err)
 
-	finalPath := filepath.Join(tempDir, "completed", session.VideoID+".mp4")
+	sp := storage.NewPaths(tempDir)
+	finalPath := sp.WebVideoFilePath(session.VideoID, ".mp4")
 	assembledData, err := os.ReadFile(finalPath)
 	require.NoError(t, err)
 	assert.Equal(t, originalData, assembledData, "File should be correctly assembled despite out-of-order upload")
