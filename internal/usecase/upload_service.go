@@ -7,6 +7,7 @@ import (
     "math"
     "os"
     "path/filepath"
+    "regexp"
     "sort"
     "strconv"
     "strings"
@@ -49,6 +50,10 @@ func NewUploadService(
 }
 
 func (s *uploadService) InitiateUpload(ctx context.Context, userID string, req *domain.InitiateUploadRequest) (*domain.InitiateUploadResponse, error) {
+    // Validate file extension (defense-in-depth)
+    if ext := filepath.Ext(req.FileName); !validUploadExt(ext) {
+        return nil, domain.NewDomainError("INVALID_FILE_EXTENSION", "Invalid file extension")
+    }
 	// Validate file size (max 10GB)
 	const maxFileSize = 10 * 1024 * 1024 * 1024
 	if req.FileSize > maxFileSize {
@@ -119,6 +124,15 @@ func (s *uploadService) InitiateUpload(ctx context.Context, userID string, req *
 	}
 
 	return response, nil
+}
+
+var uploadExtRe = regexp.MustCompile(`^\.[A-Za-z0-9]{1,8}$`)
+
+func validUploadExt(ext string) bool {
+    if ext == "" { // permit no extension
+        return true
+    }
+    return uploadExtRe.MatchString(ext)
 }
 
 func (s *uploadService) UploadChunk(ctx context.Context, sessionID string, chunk *domain.ChunkUpload) (*domain.ChunkUploadResponse, error) {

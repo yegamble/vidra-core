@@ -38,8 +38,9 @@ func (r *userRepository) Create(ctx context.Context, user *domain.User, password
 func (r *userRepository) GetByID(ctx context.Context, id string) (*domain.User, error) {
     query := `
         SELECT u.id, u.username, u.email, u.display_name,
-               a.file_id::text AS avatar_file_id,
+               NULL::text      AS avatar_file_id,
                a.ipfs_cid      AS avatar_ipfs_cid,
+               a.webp_ipfs_cid AS avatar_webp_ipfs_cid,
                u.bio, u.bitcoin_wallet, u.role, u.is_active, u.created_at, u.updated_at
         FROM users u
         LEFT JOIN user_avatars a ON a.user_id = u.id
@@ -60,8 +61,9 @@ func (r *userRepository) GetByID(ctx context.Context, id string) (*domain.User, 
 func (r *userRepository) GetByEmail(ctx context.Context, email string) (*domain.User, error) {
     query := `
         SELECT u.id, u.username, u.email, u.display_name,
-               a.file_id::text AS avatar_file_id,
+               NULL::text      AS avatar_file_id,
                a.ipfs_cid      AS avatar_ipfs_cid,
+               a.webp_ipfs_cid AS avatar_webp_ipfs_cid,
                u.bio, u.bitcoin_wallet, u.role, u.is_active, u.created_at, u.updated_at
         FROM users u
         LEFT JOIN user_avatars a ON a.user_id = u.id
@@ -82,8 +84,9 @@ func (r *userRepository) GetByEmail(ctx context.Context, email string) (*domain.
 func (r *userRepository) GetByUsername(ctx context.Context, username string) (*domain.User, error) {
     query := `
         SELECT u.id, u.username, u.email, u.display_name,
-               a.file_id::text AS avatar_file_id,
+               NULL::text      AS avatar_file_id,
                a.ipfs_cid      AS avatar_ipfs_cid,
+               a.webp_ipfs_cid AS avatar_webp_ipfs_cid,
                u.bio, u.bitcoin_wallet, u.role, u.is_active, u.created_at, u.updated_at
         FROM users u
         LEFT JOIN user_avatars a ON a.user_id = u.id
@@ -187,8 +190,9 @@ func (r *userRepository) UpdatePassword(ctx context.Context, userID, passwordHas
 func (r *userRepository) List(ctx context.Context, limit, offset int) ([]*domain.User, error) {
     query := `
         SELECT u.id, u.username, u.email, u.display_name,
-               a.file_id::text AS avatar_file_id,
+               NULL::text      AS avatar_file_id,
                a.ipfs_cid      AS avatar_ipfs_cid,
+               a.webp_ipfs_cid AS avatar_webp_ipfs_cid,
                u.bio, u.bitcoin_wallet, u.role, u.is_active, u.created_at, u.updated_at
         FROM users u
         LEFT JOIN user_avatars a ON a.user_id = u.id
@@ -217,7 +221,7 @@ func (r *userRepository) Count(ctx context.Context) (int64, error) {
 }
 
 // SetAvatarFields upserts the user's avatar file_id and ipfs_cid in user_avatars
-func (r *userRepository) SetAvatarFields(ctx context.Context, userID string, fileID *string, ipfsCID *string) error {
+func (r *userRepository) SetAvatarFields(ctx context.Context, userID string, ipfsCID *string, webpCID *string) error {
     // Ensure user exists to return a meaningful error
     var exists bool
     if err := r.db.GetContext(ctx, &exists, `SELECT EXISTS(SELECT 1 FROM users WHERE id = $1)`, userID); err != nil {
@@ -229,13 +233,13 @@ func (r *userRepository) SetAvatarFields(ctx context.Context, userID string, fil
 
     // Upsert avatar fields
     _, err := r.db.ExecContext(ctx, `
-        INSERT INTO user_avatars (user_id, file_id, ipfs_cid, created_at, updated_at)
-        VALUES ($1, NULLIF($2, '')::uuid, NULLIF($3, ''), NOW(), NOW())
+        INSERT INTO user_avatars (user_id, ipfs_cid, webp_ipfs_cid, created_at, updated_at)
+        VALUES ($1, NULLIF($2, ''), NULLIF($3, ''), NOW(), NOW())
         ON CONFLICT (user_id) DO UPDATE SET
-            file_id  = COALESCE(NULLIF(EXCLUDED.file_id, user_avatars.file_id), user_avatars.file_id),
             ipfs_cid = COALESCE(NULLIF(EXCLUDED.ipfs_cid, user_avatars.ipfs_cid), user_avatars.ipfs_cid),
+            webp_ipfs_cid = COALESCE(NULLIF(EXCLUDED.webp_ipfs_cid, user_avatars.webp_ipfs_cid), user_avatars.webp_ipfs_cid),
             updated_at = NOW()
-    `, userID, stringOrNil(fileID), stringOrNil(ipfsCID))
+    `, userID, stringOrNil(ipfsCID), stringOrNil(webpCID))
     if err != nil {
         return fmt.Errorf("failed to upsert user avatar fields: %w", err)
     }

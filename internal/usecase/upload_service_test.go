@@ -6,8 +6,9 @@ import (
 	"encoding/hex"
 	"os"
 	"path/filepath"
-	"testing"
-	"time"
+    "testing"
+    "time"
+    "strings"
 
 	"athena/internal/config"
 	"athena/internal/domain"
@@ -81,6 +82,34 @@ func TestUploadService_InitiateUpload(t *testing.T) {
 	tempPath := filepath.Join(tempDir, "temp", response.SessionID)
 	_, err = os.Stat(tempPath)
 	assert.NoError(t, err)
+}
+
+func TestUploadService_InitiateUpload_InvalidFileExtension(t *testing.T) {
+    testDB := testutil.SetupTestDB(t)
+    uploadRepo := repository.NewUploadRepository(testDB.DB)
+    encodingRepo := repository.NewEncodingRepository(testDB.DB)
+    videoRepo := repository.NewVideoRepository(testDB.DB)
+    userRepo := repository.NewUserRepository(testDB.DB)
+
+    tempDir := testTempDir(t)
+    uploadService := usecase.NewUploadService(uploadRepo, encodingRepo, videoRepo, tempDir, createTestConfig())
+
+    ctx := context.Background()
+    user := createTestUser(t, userRepo, ctx, "testuser", "test@example.com")
+
+    req := &domain.InitiateUploadRequest{
+        FileName:  "video.mp4\\..\\evil", // invalid extension input
+        FileSize:  1024,
+        ChunkSize: 128,
+    }
+
+    _, err := uploadService.InitiateUpload(ctx, user.ID, req)
+    if err == nil {
+        t.Fatalf("expected error for invalid extension")
+    }
+    if err != nil && !strings.Contains(err.Error(), "INVALID_FILE_EXTENSION") {
+        t.Fatalf("unexpected error: %v", err)
+    }
 }
 
 func TestUploadService_InitiateUpload_FileTooLarge(t *testing.T) {

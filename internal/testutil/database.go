@@ -215,8 +215,8 @@ func ensureTestSchema(db *sqlx.DB) error {
         `CREATE TABLE IF NOT EXISTS user_avatars (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
             user_id UUID NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
-            file_id UUID,
             ipfs_cid TEXT,
+            webp_ipfs_cid TEXT,
             created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
             updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
         )`,

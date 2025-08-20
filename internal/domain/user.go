@@ -7,8 +7,8 @@ type User struct {
     Username      string    `json:"username" db:"username"`
     Email         string    `json:"email" db:"email"`
     DisplayName   string    `json:"display_name" db:"display_name"`
-    AvatarFileID  *string   `json:"avatar_file_id,omitempty" db:"avatar_file_id"`
     AvatarIPFSCID *string   `json:"avatar_ipfs_cid,omitempty" db:"avatar_ipfs_cid"`
+    AvatarWebPIPFSCID *string `json:"avatar_webp_ipfs_cid,omitempty" db:"avatar_webp_ipfs_cid"`
     Bio           string    `json:"bio" db:"bio"`
     BitcoinWallet string    `json:"bitcoin_wallet" db:"bitcoin_wallet"`
     Role          UserRole  `json:"role" db:"role"`

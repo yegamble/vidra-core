@@ -99,15 +99,15 @@ func (m *mockUserRepo) Count(_ context.Context) (int64, error) {
     return int64(len(m.users)), nil
 }
 
-func (m *mockUserRepo) SetAvatarFields(_ context.Context, userID string, fileID *string, ipfsCID *string) error {
+func (m *mockUserRepo) SetAvatarFields(_ context.Context, userID string, ipfsCID *string, webpCID *string) error {
     u, ok := m.users[userID]
     if !ok {
         return domain.ErrUserNotFound
     }
     // Copy to avoid external mutation
     c := *u
-    c.AvatarFileID = fileID
     c.AvatarIPFSCID = ipfsCID
+    c.AvatarWebPIPFSCID = webpCID
     m.users[userID] = &c
     return nil
 }

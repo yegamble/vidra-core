@@ -18,6 +18,7 @@ import (
     "github.com/google/uuid"
 
     "athena/internal/domain"
+    "athena/internal/imageutil"
     "athena/internal/middleware"
     "athena/internal/storage"
 )
@@ -33,6 +34,7 @@ var (
     testIPFSAdd        func(localPath string) (string, error)
     testIPFSPin        func(cid string) error
     testIPFSClusterPin func(cid string) error
+    testEncodeToWebP   func(srcPath, dstPath string) error
 )
 
 // UploadAvatar handles multipart upload of a user's avatar, uploads it to IPFS, pins it,
@@ -55,12 +57,22 @@ func (s *Server) UploadAvatar(w http.ResponseWriter, r *http.Request) {
     }
     defer file.Close()
 
+    // MIME type sniffing from first 512 bytes
+    var head [512]byte
+    n, _ := file.Read(head[:])
+    contentType := http.DetectContentType(head[:n])
+    if contentType != "image/png" && contentType != "image/jpeg" {
+        WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_MIME_TYPE", "Only PNG and JPEG images are allowed"))
+        return
+    }
+
     // Persist locally under storage/avatars via storage utility
     paths := storage.NewPaths("./storage")
     if err := os.MkdirAll(paths.AvatarsDir(), 0755); err != nil {
         WriteError(w, http.StatusInternalServerError, domain.NewDomainError("STORAGE_ERROR", "Failed to prepare storage directory"))
         return
     }
+    // Generate an avatar ID used for filenames; not stored as a DB field
     fileID := uuid.NewString()
     ext := filepath.Ext(header.Filename)
     if !validAvatarExt(ext) {
@@ -68,17 +80,32 @@ func (s *Server) UploadAvatar(w http.ResponseWriter, r *http.Request) {
         return
     }
     localPath := paths.AvatarFilePath(fileID, ext)
+    // Reconstruct full reader: prepend sniffed bytes back before the remainder
+    reader := io.MultiReader(bytes.NewReader(head[:n]), file)
     out, err := os.Create(localPath)
     if err != nil {
         WriteError(w, http.StatusInternalServerError, domain.NewDomainError("STORAGE_ERROR", "Failed to save file"))
         return
     }
-    if _, err := io.Copy(out, file); err != nil {
+    if _, err := io.Copy(out, reader); err != nil {
         _ = out.Close()
         WriteError(w, http.StatusInternalServerError, domain.NewDomainError("STORAGE_ERROR", "Failed to write file"))
         return
     }
     _ = out.Close()
+
+    // Best-effort WebP re-encode using nativewebp when available.
+    encErr := error(nil)
+    if testEncodeToWebP != nil {
+        encErr = testEncodeToWebP(localPath, paths.AvatarWebPPath(fileID))
+    } else {
+        encErr = imageutil.EncodeFileToWebP(localPath, paths.AvatarWebPPath(fileID))
+    }
+    if encErr != nil && encErr != imageutil.ErrWebPUnavailable {
+        // Non-fatal; continue with original avatar
+        // log is omitted for brevity to keep handler quiet in tests
+        _ = encErr
+    }
 
     // Upload to IPFS first (to ensure content is available), then pin
     var cid string
@@ -117,7 +144,28 @@ func (s *Server) UploadAvatar(w http.ResponseWriter, r *http.Request) {
     }
 
     // Persist identifiers
-    if err := s.userRepo.SetAvatarFields(r.Context(), userID, &fileID, &cid); err != nil {
+    // Try to upload WebP to IPFS if it was generated
+    var webpCID *string
+    webpPath := paths.AvatarWebPPath(fileID)
+    if _, err := os.Stat(webpPath); err == nil {
+        var wcid string
+        if testIPFSAdd != nil {
+            wcid, _ = testIPFSAdd(webpPath)
+        } else {
+            wcid, _ = s.ipfsAdd(webpPath)
+        }
+        if wcid != "" {
+            // Pin best-effort
+            if testIPFSPin != nil {
+                _ = testIPFSPin(wcid)
+            } else {
+                _ = s.ipfsPin(wcid)
+            }
+            webpCID = &wcid
+        }
+    }
+
+    if err := s.userRepo.SetAvatarFields(r.Context(), userID, &cid, webpCID); err != nil {
         WriteError(w, http.StatusInternalServerError, domain.NewDomainError("DB_ERROR", "Failed to store avatar identifiers"))
         return
     }

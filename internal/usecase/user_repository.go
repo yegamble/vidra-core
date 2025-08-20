@@ -17,5 +17,5 @@ type UserRepository interface {
     List(ctx context.Context, limit, offset int) ([]*domain.User, error)
     Count(ctx context.Context) (int64, error)
     // Upsert avatar identifiers for a user
-    SetAvatarFields(ctx context.Context, userID string, fileID *string, ipfsCID *string) error
+    SetAvatarFields(ctx context.Context, userID string, ipfsCID *string, webpCID *string) error
 }
