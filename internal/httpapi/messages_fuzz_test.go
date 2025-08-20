@@ -12,6 +12,7 @@ import (
     "github.com/go-chi/chi/v5"
     "github.com/google/uuid"
 
+    "athena/internal/domain"
     "athena/internal/middleware"
     "athena/internal/usecase"
 )
@@ -20,7 +21,8 @@ import (
 // malformed JSON and odd payloads never cause panics or 5xx responses.
 func FuzzSendMessageHandler_InvalidPayloads(f *testing.F) {
     // No DB or service needed; we only exercise pre-service validation paths
-    handler := SendMessageHandler(nil)
+    stubService := usecase.NewMessageService(&stubMessageRepo{}, &stubUserRepo{})
+    handler := SendMessageHandler(stubService)
 
     // Seed examples
     f.Add([]byte(""))
@@ -64,9 +66,9 @@ func FuzzSendMessageHandler_InvalidPayloads(f *testing.F) {
 // FuzzGetMessagesHandler_Query fuzz-tests the query parameters for GetMessages.
 func FuzzGetMessagesHandler_Query(f *testing.F) {
     // No DB or service needed; we only exercise query validation
-    // Create a mock service to avoid nil pointer dereference
-    mockService := &usecase.MessageService{}
-    handler := GetMessagesHandler(mockService)
+    // Create a minimal stub service to avoid nil pointer dereference
+    stubService := usecase.NewMessageService(&stubMessageRepo{}, &stubUserRepo{})
+    handler := GetMessagesHandler(stubService)
 
     f.Add("", 0, 0)
     f.Add("00000000-0000-0000-0000-000000000000", 0, 0)
@@ -88,7 +90,8 @@ func FuzzGetMessagesHandler_Query(f *testing.F) {
 // FuzzMarkMessageReadHandler_Path fuzz-tests the messageId path param handling.
 func FuzzMarkMessageReadHandler_Path(f *testing.F) {
     // No DB or service needed; we only exercise path parameter validation
-    handler := MarkMessageReadHandler(nil)
+    stubService := usecase.NewMessageService(&stubMessageRepo{}, &stubUserRepo{})
+    handler := MarkMessageReadHandler(stubService)
 
     f.Add("")
     f.Add("not-a-uuid")
@@ -109,7 +112,8 @@ func FuzzMarkMessageReadHandler_Path(f *testing.F) {
 // FuzzDeleteMessageHandler_Path fuzz-tests deletion path param handling to ensure
 // invalid IDs and missing params are handled without panics or 5xx.
 func FuzzDeleteMessageHandler_Path(f *testing.F) {
-    handler := DeleteMessageHandler(nil)
+    stubService := usecase.NewMessageService(&stubMessageRepo{}, &stubUserRepo{})
+    handler := DeleteMessageHandler(stubService)
 
     f.Add("")
     f.Add("not-a-uuid")
@@ -133,7 +137,8 @@ func FuzzDeleteMessageHandler_Path(f *testing.F) {
 
 // FuzzGetConversationsHandler_Query fuzz-tests limit/offset bounds to ensure validation catches issues.
 func FuzzGetConversationsHandler_Query(f *testing.F) {
-    handler := GetConversationsHandler(nil)
+    stubService := usecase.NewMessageService(&stubMessageRepo{}, &stubUserRepo{})
+    handler := GetConversationsHandler(stubService)
 
     f.Add(-1, -1)
     f.Add(0, 0)
@@ -171,4 +176,81 @@ func withChiURLParam(r *http.Request, key, value string) *http.Request {
     rctx := chi.NewRouteContext()
     rctx.URLParams.Add(key, value)
     return r.WithContext(context.WithValue(r.Context(), chi.RouteCtxKey, rctx))
+}
+
+// Minimal stub repositories for fuzz testing that only exercises validation
+type stubMessageRepo struct{}
+
+func (s *stubMessageRepo) CreateMessage(context.Context, *domain.Message) error {
+    return domain.ErrInternalServer
+}
+
+func (s *stubMessageRepo) GetMessage(context.Context, string, string) (*domain.Message, error) {
+    return nil, domain.ErrInternalServer
+}
+
+func (s *stubMessageRepo) GetMessages(context.Context, string, string, int, int) ([]*domain.Message, error) {
+    return nil, domain.ErrInternalServer
+}
+
+func (s *stubMessageRepo) MarkMessageAsRead(context.Context, string, string) error {
+    return domain.ErrMessageNotFound
+}
+
+func (s *stubMessageRepo) DeleteMessage(context.Context, string, string) error {
+    return domain.ErrMessageNotFound
+}
+
+func (s *stubMessageRepo) GetConversations(context.Context, string, int, int) ([]*domain.Conversation, error) {
+    return nil, domain.ErrConversationNotFound
+}
+
+func (s *stubMessageRepo) GetUnreadCount(context.Context, string) (int, error) {
+    return 0, domain.ErrUserNotFound
+}
+
+type stubUserRepo struct{}
+
+func (s *stubUserRepo) Create(context.Context, *domain.User, string) error {
+    return domain.ErrInternalServer
+}
+
+func (s *stubUserRepo) GetByID(context.Context, string) (*domain.User, error) {
+    return nil, domain.ErrUserNotFound
+}
+
+func (s *stubUserRepo) GetByEmail(context.Context, string) (*domain.User, error) {
+    return nil, domain.ErrInternalServer
+}
+
+func (s *stubUserRepo) GetByUsername(context.Context, string) (*domain.User, error) {
+    return nil, domain.ErrInternalServer
+}
+
+func (s *stubUserRepo) Update(context.Context, *domain.User) error {
+    return domain.ErrInternalServer
+}
+
+func (s *stubUserRepo) Delete(context.Context, string) error {
+    return domain.ErrInternalServer
+}
+
+func (s *stubUserRepo) GetPasswordHash(context.Context, string) (string, error) {
+    return "", domain.ErrInternalServer
+}
+
+func (s *stubUserRepo) UpdatePassword(context.Context, string, string) error {
+    return domain.ErrInternalServer
+}
+
+func (s *stubUserRepo) List(context.Context, int, int) ([]*domain.User, error) {
+    return nil, domain.ErrInternalServer
+}
+
+func (s *stubUserRepo) Count(context.Context) (int64, error) {
+    return 0, domain.ErrInternalServer
+}
+
+func (s *stubUserRepo) SetAvatarFields(context.Context, string, *string, *string) error {
+    return domain.ErrInternalServer
 }
