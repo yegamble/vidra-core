@@ -19,18 +19,28 @@ import (
 
 // Server implements the generated ServerInterface
 type Server struct {
-	userRepo         usecase.UserRepository
-	authRepo         usecase.AuthRepository
-	jwtSecret        string
-	redis            *redis.Client
-	redisPingTimeout time.Duration
-	ipfsAPI          string
-	ipfsPingTimeout  time.Duration
+    userRepo         usecase.UserRepository
+    authRepo         usecase.AuthRepository
+    jwtSecret        string
+    redis            *redis.Client
+    redisPingTimeout time.Duration
+    ipfsAPI          string
+    ipfsClusterAPI   string
+    ipfsPingTimeout  time.Duration
 }
 
 // NewServer creates a new server instance
-func NewServer(userRepo usecase.UserRepository, authRepo usecase.AuthRepository, jwtSecret string, redisClient *redis.Client, redisPingTimeout time.Duration, ipfsAPI string, ipfsPingTimeout time.Duration) *Server {
-	return &Server{userRepo: userRepo, authRepo: authRepo, jwtSecret: jwtSecret, redis: redisClient, redisPingTimeout: redisPingTimeout, ipfsAPI: ipfsAPI, ipfsPingTimeout: ipfsPingTimeout}
+func NewServer(userRepo usecase.UserRepository, authRepo usecase.AuthRepository, jwtSecret string, redisClient *redis.Client, redisPingTimeout time.Duration, ipfsAPI string, ipfsClusterAPI string, ipfsPingTimeout time.Duration) *Server {
+    return &Server{
+        userRepo:         userRepo,
+        authRepo:         authRepo,
+        jwtSecret:        jwtSecret,
+        redis:            redisClient,
+        redisPingTimeout: redisPingTimeout,
+        ipfsAPI:          ipfsAPI,
+        ipfsClusterAPI:   ipfsClusterAPI,
+        ipfsPingTimeout:  ipfsPingTimeout,
+    }
 }
 
 // Login implements ServerInterface.Login

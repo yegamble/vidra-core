@@ -94,15 +94,16 @@ func RegisterRoutes(r chi.Router, cfg *config.Config) {
 	}
 
 	// Create server instance with dependencies
-	server := NewServer(
-		userRepo,
-		sessionRepo,
-		cfg.JWTSecret,
-		rdb,
-		time.Duration(cfg.RedisPingTimeout)*time.Second,
-		cfg.IPFSApi,
-		time.Duration(cfg.IPFSPingTimeout)*time.Second,
-	)
+    server := NewServer(
+        userRepo,
+        sessionRepo,
+        cfg.JWTSecret,
+        rdb,
+        time.Duration(cfg.RedisPingTimeout)*time.Second,
+        cfg.IPFSApi,
+        cfg.IPFSCluster,
+        time.Duration(cfg.IPFSPingTimeout)*time.Second,
+    )
 
 	// Register auth routes with appropriate middleware
 	r.Post("/auth/register", server.Register)

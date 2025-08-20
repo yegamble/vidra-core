@@ -40,7 +40,7 @@ func TestRegister_Integration_CreatesUserInDB(t *testing.T) {
 	td.TruncateTables(t, "users", "refresh_tokens", "sessions")
 
 	repo := repository.NewUserRepository(td.DB)
-	s := NewServer(repo, repository.NewAuthRepository(td.DB), "test-secret", nil, 0, "", 0)
+    s := NewServer(repo, repository.NewAuthRepository(td.DB), "test-secret", nil, 0, "", "", 0)
 
 	// unique values
 	uname := "reg_" + time.Now().Format("20060102150405")

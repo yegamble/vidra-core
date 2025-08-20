@@ -11,7 +11,7 @@ import (
 )
 
 func TestRegister_Success(t *testing.T) {
-	s := NewServer(newMockUserRepo(), nil, "test-secret", nil, 0, "", 0)
+    s := NewServer(newMockUserRepo(), nil, "test-secret", nil, 0, "", "", 0)
 
 	body := map[string]any{
 		"username":     "reguser",
@@ -48,7 +48,7 @@ func TestRegister_Success(t *testing.T) {
 }
 
 func TestRegister_MissingFields(t *testing.T) {
-	s := NewServer(newMockUserRepo(), nil, "test-secret", nil, 0, "", 0)
+    s := NewServer(newMockUserRepo(), nil, "test-secret", nil, 0, "", "", 0)
 	body := map[string]any{"username": "u", "email": "e@example.com"} // no password
 	b, _ := json.Marshal(body)
 	req := httptest.NewRequest(http.MethodPost, "/auth/register", bytes.NewReader(b))
@@ -68,7 +68,7 @@ func TestRegister_Duplicate(t *testing.T) {
 	// existing username (different email)
 	repo.users["by-username"] = &domain.User{ID: "by-username", Email: "x@example.com", Username: "dupname"}
 
-	s := NewServer(repo, nil, "test-secret", nil, 0, "", 0)
+    s := NewServer(repo, nil, "test-secret", nil, 0, "", "", 0)
 
 	// duplicate email
 	b1, _ := json.Marshal(map[string]any{"username": "newname", "email": "dup@example.com", "password": "xpassword"})

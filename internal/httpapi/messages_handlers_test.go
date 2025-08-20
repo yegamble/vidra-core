@@ -365,3 +365,110 @@ func TestConversations_AndUnreadCount(t *testing.T) {
     }
 }
 
+func TestMessagesHandlers_ValidationAndMissingParam(t *testing.T) {
+    td := testutil.SetupTestDB(t)
+    if td == nil {
+        return
+    }
+    td.TruncateTables(t, "messages", "conversations", "users")
+
+    userRepo := repository.NewUserRepository(td.DB)
+    msgRepo := repository.NewMessageRepository(td.DB)
+    svc := usecase.NewMessageService(msgRepo, userRepo)
+
+    ctx := context.Background()
+    u := createTestUser(t, userRepo, ctx, "valuser", "valuser@example.com")
+
+    // GetMessages: unauthorized
+    {
+        req := httptest.NewRequest(http.MethodGet, "/messages?conversation_with="+uuid.NewString(), nil)
+        rr := httptest.NewRecorder()
+        GetMessagesHandler(svc).ServeHTTP(rr, req)
+        assert.Equal(t, http.StatusUnauthorized, rr.Code)
+    }
+
+    // GetMessages: invalid uuid
+    {
+        req := httptest.NewRequest(http.MethodGet, "/messages?conversation_with=not-a-uuid", nil)
+        req = req.WithContext(context.WithValue(req.Context(), middleware.UserIDKey, u.ID))
+        rr := httptest.NewRecorder()
+        GetMessagesHandler(svc).ServeHTTP(rr, req)
+        assert.Equal(t, http.StatusBadRequest, rr.Code)
+        env := decodeEnvelope(t, rr)
+        require.NotNil(t, env.Error)
+        assert.Contains(t, env.Error.Code, "VALIDATION_ERROR")
+    }
+
+    // MarkMessageRead: missing path param
+    {
+        req := httptest.NewRequest(http.MethodPut, "/messages//read", nil)
+        req = req.WithContext(context.WithValue(req.Context(), middleware.UserIDKey, u.ID))
+        rr := httptest.NewRecorder()
+        MarkMessageReadHandler(svc).ServeHTTP(rr, req)
+        assert.Equal(t, http.StatusBadRequest, rr.Code)
+        env := decodeEnvelope(t, rr)
+        require.NotNil(t, env.Error)
+        assert.Contains(t, env.Error.Code, "MISSING_PARAMETER")
+    }
+
+    // DeleteMessage: missing path param
+    {
+        req := httptest.NewRequest(http.MethodDelete, "/messages/", nil)
+        req = req.WithContext(context.WithValue(req.Context(), middleware.UserIDKey, u.ID))
+        rr := httptest.NewRecorder()
+        DeleteMessageHandler(svc).ServeHTTP(rr, req)
+        assert.Equal(t, http.StatusBadRequest, rr.Code)
+        env := decodeEnvelope(t, rr)
+        require.NotNil(t, env.Error)
+        assert.Contains(t, env.Error.Code, "MISSING_PARAMETER")
+    }
+}
+
+func TestSendMessage_WithInvalidParentReference_ReturnsNotFound(t *testing.T) {
+    td := testutil.SetupTestDB(t)
+    if td == nil {
+        return
+    }
+    td.TruncateTables(t, "messages", "conversations", "users")
+
+    userRepo := repository.NewUserRepository(td.DB)
+    msgRepo := repository.NewMessageRepository(td.DB)
+    svc := usecase.NewMessageService(msgRepo, userRepo)
+
+    ctx := context.Background()
+    alice := createTestUser(t, userRepo, ctx, "alice3", "alice3@example.com")
+    bob := createTestUser(t, userRepo, ctx, "bob3", "bob3@example.com")
+    carol := createTestUser(t, userRepo, ctx, "carol3", "carol3@example.com")
+
+    // Carol -> Bob creates a message
+    {
+        body := map[string]any{"recipient_id": bob.ID, "content": "hello from carol"}
+        b, _ := json.Marshal(body)
+        req := httptest.NewRequest(http.MethodPost, "/messages", bytes.NewReader(b))
+        req.Header.Set("Content-Type", "application/json")
+        req = req.WithContext(context.WithValue(req.Context(), middleware.UserIDKey, carol.ID))
+        rr := httptest.NewRecorder()
+        SendMessageHandler(svc).ServeHTTP(rr, req)
+        if rr.Code != http.StatusCreated {
+            t.Fatalf("seed send failed: %d %s", rr.Code, rr.Body.String())
+        }
+        env := decodeEnvelope(t, rr)
+        var mr domain.MessageResponse
+        dataBytes, _ := json.Marshal(env.Data)
+        _ = json.Unmarshal(dataBytes, &mr)
+
+        // Alice tries to reply to Carol's message using parent_message_id
+        body2 := map[string]any{"recipient_id": bob.ID, "content": "alice replies", "parent_message_id": mr.Message.ID}
+        b2, _ := json.Marshal(body2)
+        req2 := httptest.NewRequest(http.MethodPost, "/messages", bytes.NewReader(b2))
+        req2.Header.Set("Content-Type", "application/json")
+        req2 = req2.WithContext(context.WithValue(req2.Context(), middleware.UserIDKey, alice.ID))
+        rr2 := httptest.NewRecorder()
+        SendMessageHandler(svc).ServeHTTP(rr2, req2)
+        // Parent not in Alice's conversation should be treated as not found
+        assert.Equal(t, http.StatusNotFound, rr2.Code)
+        env2 := decodeEnvelope(t, rr2)
+        require.NotNil(t, env2.Error)
+        assert.Contains(t, env2.Error.Code, "SEND_MESSAGE_FAILED")
+    }
+}
