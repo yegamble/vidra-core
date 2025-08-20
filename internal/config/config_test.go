@@ -8,15 +8,15 @@ import (
 // Test that scheduler defaults are set and Load() succeeds with minimal env
 func TestLoad_SchedulerDefaults(t *testing.T) {
 	// Required envs for Load()
-	os.Setenv("DATABASE_URL", "postgres://user:pass@localhost:5432/db?sslmode=disable")
-	os.Setenv("REDIS_URL", "redis://localhost:6379/0")
-	os.Setenv("IPFS_API", "http://localhost:5001")
-	os.Setenv("JWT_SECRET", "test-secret")
+	_ = os.Setenv("DATABASE_URL", "postgres://user:pass@localhost:5432/db?sslmode=disable")
+	_ = os.Setenv("REDIS_URL", "redis://localhost:6379/0")
+	_ = os.Setenv("IPFS_API", "http://localhost:5001")
+	_ = os.Setenv("JWT_SECRET", "test-secret")
 	defer func() {
-		os.Unsetenv("DATABASE_URL")
-		os.Unsetenv("REDIS_URL")
-		os.Unsetenv("IPFS_API")
-		os.Unsetenv("JWT_SECRET")
+		_ = os.Unsetenv("DATABASE_URL")
+		_ = os.Unsetenv("REDIS_URL")
+		_ = os.Unsetenv("IPFS_API")
+		_ = os.Unsetenv("JWT_SECRET")
 	}()
 
 	cfg, err := Load()

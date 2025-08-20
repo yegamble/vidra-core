@@ -116,7 +116,10 @@ type Config struct {
 	// Encoding Scheduler
 	EnableEncodingScheduler          bool
 	EncodingSchedulerIntervalSeconds int
-	EncodingSchedulerBurst           int
+    EncodingSchedulerBurst           int
+
+    // Image/Avatar Encoding
+    WebPQuality int
 }
 
 func Load() (*Config, error) {
@@ -246,7 +249,10 @@ func Load() (*Config, error) {
 	// even without the standalone encoder worker.
 	cfg.EnableEncodingScheduler = getBoolEnv("ENABLE_ENCODING_SCHEDULER", true)
 	cfg.EncodingSchedulerIntervalSeconds = getIntEnv("ENCODING_SCHEDULER_INTERVAL_SECONDS", 5)
-	cfg.EncodingSchedulerBurst = getIntEnv("ENCODING_SCHEDULER_BURST", 3)
+    cfg.EncodingSchedulerBurst = getIntEnv("ENCODING_SCHEDULER_BURST", 3)
+
+    // Image/Avatar Encoding
+    cfg.WebPQuality = getIntEnv("WEBP_QUALITY", 0)
 
 	return cfg, nil
 }

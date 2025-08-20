@@ -16,7 +16,7 @@ import (
 
 // Test that filenames with backslash in extension are rejected (defense-in-depth)
 func TestUploadAvatar_InvalidExtensionRejected(t *testing.T) {
-    s := NewServer(nil, nil, "test", nil, 0, "", "", 0)
+    s := NewServer(nil, nil, "test", nil, 0, "", "", 0, nil)
 
     var body bytes.Buffer
     mw := multipart.NewWriter(&body)
@@ -45,7 +45,7 @@ func TestUploadAvatar_InvalidExtensionRejected(t *testing.T) {
 }
 
 func TestUploadAvatar_InvalidMIMETypeRejected(t *testing.T) {
-    s := NewServer(nil, nil, "test", nil, 0, "", "", 0)
+    s := NewServer(nil, nil, "test", nil, 0, "", "", 0, nil)
 
     var body bytes.Buffer
     mw := multipart.NewWriter(&body)
@@ -81,7 +81,7 @@ func TestUploadAvatar_ValidPNG_WithMockIPFS(t *testing.T) {
     u := &domain.User{ID: "u1", Username: "alice", Email: "a@e.com", Role: domain.RoleUser, IsActive: true, CreatedAt: time.Now(), UpdatedAt: time.Now()}
     repo.users[u.ID] = u
 
-    s := NewServer(repo, nil, "test", nil, 0, "", "", 0)
+    s := NewServer(repo, nil, "test", nil, 0, "", "", 0, nil)
     // Override test hooks to bypass network and create webp
     testIPFSAdd = func(localPath string) (string, error) {
         if strings.HasSuffix(localPath, ".webp") {

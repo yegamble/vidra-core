@@ -14,6 +14,7 @@ A high-performance PeerTube backend implementation in Go with decentralized stor
 - ⚡ **Redis** - Fast caching and session management
 - 🌐 **IPFS** - Decentralized storage support
 - 🎥 **Video Processing** - FFmpeg integration for transcoding
+- 🖼️ **Avatar WebP Optimization** - Optional WebP encoding for uploaded avatars (quality configurable), IPFS pinning of both original and WebP variants
 - 🐳 **Docker Ready** - Full containerization with Docker Compose
 - ✅ **CI/CD** - GitHub Actions with automated testing
 
@@ -382,3 +383,24 @@ For issues and questions:
 - Refresh tokens are opaque UUIDs persisted in Postgres and rotated on each refresh. Old tokens are revoked.
 - Sessions are stored in Redis; each session is keyed by the refresh token (`sess:<refresh-token> -> <userID>`) and indexed per user (`user:sessions:<userID>`). On login and refresh, the Redis session is created/rotated; on logout, all user sessions and refresh tokens are revoked.
 - Required config: `JWT_SECRET`, `DATABASE_URL`, and `REDIS_URL`. Optional `SESSION_TIMEOUT` controls Redis session TTL (default 24h); refresh token TTL defaults to 7 days.
+# Regenerating OpenAPI Types
+
+If you modify `api/openapi.yaml`, regenerate types and interfaces with:
+
+```
+scripts/gen-openapi.sh
+```
+
+Requires `oapi-codegen`:
+
+```
+go install github.com/deepmap/oapi-codegen/v2/cmd/oapi-codegen@latest
+```
+
+### Avatar WebP Optimization
+
+Avatars uploaded via `/api/v1/users/me/avatar` are validated (PNG/JPEG MIME sniffing), saved under `storage/avatars/`, uploaded to IPFS, and pinned. If WebP encoding is enabled, a WebP variant is generated and pinned as well.
+
+- Enable at build time: `go build -tags webp ./...`
+- Configure WebP quality via `WEBP_QUALITY` (1–100). `0` uses encoder defaults.
+- API exposes both `avatar_ipfs_cid` and `avatar_webp_ipfs_cid` for clients.

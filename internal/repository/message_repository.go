@@ -24,7 +24,7 @@ func (r *messageRepository) CreateMessage(ctx context.Context, message *domain.M
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	// Insert the message
 	query := `
@@ -69,7 +69,7 @@ func (r *messageRepository) GetMessage(ctx context.Context, messageID string, us
 	if err != nil {
 		return nil, fmt.Errorf("failed to query message: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	if !rows.Next() {
 		return nil, domain.ErrMessageNotFound
@@ -116,7 +116,7 @@ func (r *messageRepository) GetMessages(ctx context.Context, userID string, othe
 	if err != nil {
 		return nil, fmt.Errorf("failed to query messages: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var messages []*domain.Message
 	for rows.Next() {
@@ -227,7 +227,7 @@ func (r *messageRepository) GetConversations(ctx context.Context, userID string,
 	if err != nil {
 		return nil, fmt.Errorf("failed to query conversations: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var conversations []*domain.Conversation
 	for rows.Next() {

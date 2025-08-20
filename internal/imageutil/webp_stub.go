@@ -10,3 +10,7 @@ func EncodeFileToWebP(srcPath, dstPath string) error {
     return ErrWebPUnavailable
 }
 
+// EncodeFileToWebPWithQuality allows specifying a quality hint; stubbed here.
+func EncodeFileToWebPWithQuality(srcPath, dstPath string, quality int) error {
+    return ErrWebPUnavailable
+}

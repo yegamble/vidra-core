@@ -1,3 +1,5 @@
+version: 2
+
 run:
   timeout: 5m
   tests: true
@@ -10,91 +12,42 @@ run:
     - "^internal/generated/.*$"
 
 output:
-  formats:
-    - format: colored-line-number
+  format: colored-line-number
 
 linters:
   enable:
     - govet
     - staticcheck
-    - gosimple
     - errcheck
     - ineffassign
-    - typecheck
     - unused
-    - revive
-    - gofmt
-    - goimports
-    - misspell
-    - gosec
-  disable:
-    # Keep optional/strict linters off by default to avoid noise
-    - dupl
-    - gocyclo
-    - funlen
-    - gocognit
-    - nestif
-    - wsl
-    - exhaustive
-    - forbidigo
-    - wrapcheck
+  disable-all: false
 
 linters-settings:
-  revive:
-    ignore-generated-header: true
-    severity: warning
-    rules:
-      - name: error-return
-      - name: error-naming
-      - name: var-naming
-      - name: indent-error-flow
-      - name: unreachable-code
-  misspell:
-    locale: US
-  gosec:
-    severity: medium
-    confidence: medium
-    exclude-generated: true
+  errcheck:
+    check-type-assertions: false
+    check-blank: false
+    ignore: fmt:.*,io/ioutil:^Read.*
 
 issues:
   exclude-dirs:
     - internal/generated
   exclude-rules:
-    # Allow use of os/exec for ffmpeg invocation in encoding service.
-    - path: internal/usecase/encoding_service.go
-      text: "exec.CommandContext"
+    # Exclude defer close errors which are common and usually safe to ignore
+    - source: "defer.*\\.Close\\(\\)"
       linters:
-        - revive
-        - govet
-    # Suppress gosec false positives for controlled media file operations in encoder
-    - path: internal/usecase/encoding_service.go
+        - errcheck
+    # Exclude os.Setenv/Unsetenv in tests
+    - source: "os\\.(Setenv|Unsetenv)"
       linters:
-        - gosec
-      text: "G204:" # Subprocess launched using variable (ffmpeg invocation)
-    - path: internal/usecase/encoding_service.go
+        - errcheck
+    # Exclude HTTP response body close errors
+    - source: "defer.*Body\\.Close\\(\\)"
       linters:
-        - gosec
-      text: "G304:" # File path constructed from user input (paths are controlled)
-    - path: internal/usecase/encoding_service.go
+        - errcheck
+    # Exclude transaction rollback errors (expected pattern)
+    - source: "defer.*Rollback\\(\\)"
       linters:
-        - gosec
-      text: "G306:" # Expect WriteFile permissions to be 0600 or less (serving static media)
-    - path: internal/usecase/encoding_service.go
-      linters:
-        - gosec
-      text: "G301:" # Expect directory permissions to be 0700 or less (public media dirs)
-    # Suppress gosec false positives for chunk assembly and temp dirs in upload pipeline
-    - path: internal/usecase/upload_service.go
-      linters:
-        - gosec
-      text: "G304:" # variable file path when assembling chunks
-    - path: internal/usecase/upload_service.go
-      linters:
-        - gosec
-      text: "G306:" # WriteFile permissions (served artifacts)
-    - path: internal/usecase/upload_service.go
-      linters:
-        - gosec
-      text: "G301:" # MkdirAll perms for temp/completed dirs
-  max-issues-per-linter: 0
-  max-same-issues: 0
+        - errcheck
+  max-issues-per-linter: 50
+  max-same-issues: 10

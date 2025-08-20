@@ -1,20 +1,21 @@
 package httpapi
 
 import (
-	"context"
-	"encoding/json"
-	"net/http"
-	"time"
+    "context"
+    "encoding/json"
+    "net/http"
+    "time"
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 	"golang.org/x/crypto/bcrypt"
 
-	"athena/internal/domain"
-	"athena/internal/generated"
-	"athena/internal/middleware"
-	"athena/internal/usecase"
+    "athena/internal/domain"
+    "athena/internal/generated"
+    "athena/internal/middleware"
+    "athena/internal/usecase"
+    "athena/internal/config"
 )
 
 // Server implements the generated ServerInterface
@@ -27,10 +28,11 @@ type Server struct {
     ipfsAPI          string
     ipfsClusterAPI   string
     ipfsPingTimeout  time.Duration
+    cfg              *config.Config
 }
 
 // NewServer creates a new server instance
-func NewServer(userRepo usecase.UserRepository, authRepo usecase.AuthRepository, jwtSecret string, redisClient *redis.Client, redisPingTimeout time.Duration, ipfsAPI string, ipfsClusterAPI string, ipfsPingTimeout time.Duration) *Server {
+func NewServer(userRepo usecase.UserRepository, authRepo usecase.AuthRepository, jwtSecret string, redisClient *redis.Client, redisPingTimeout time.Duration, ipfsAPI string, ipfsClusterAPI string, ipfsPingTimeout time.Duration, cfg *config.Config) *Server {
     return &Server{
         userRepo:         userRepo,
         authRepo:         authRepo,
@@ -40,6 +42,7 @@ func NewServer(userRepo usecase.UserRepository, authRepo usecase.AuthRepository,
         ipfsAPI:          ipfsAPI,
         ipfsClusterAPI:   ipfsClusterAPI,
         ipfsPingTimeout:  ipfsPingTimeout,
+        cfg:              cfg,
     }
 }
 
@@ -109,6 +112,7 @@ func (s *Server) Login(w http.ResponseWriter, r *http.Request) {
         DisplayName: dispPtr,
         AvatarFileID:  nil,
         AvatarIPFSCID: dUser.AvatarIPFSCID,
+        AvatarWebPIPFSCID: dUser.AvatarWebPIPFSCID,
         Role:        generated.UserRoleUser,
         IsActive:    dUser.IsActive,
         CreatedAt:   dUser.CreatedAt,
@@ -193,6 +197,7 @@ func (s *Server) Register(w http.ResponseWriter, r *http.Request) {
             DisplayName: dispPtr,
             AvatarFileID:  nil,
             AvatarIPFSCID: dUser.AvatarIPFSCID,
+            AvatarWebPIPFSCID: dUser.AvatarWebPIPFSCID,
             Role:        generated.UserRoleUser,
             IsActive:    dUser.IsActive,
             CreatedAt:   dUser.CreatedAt,

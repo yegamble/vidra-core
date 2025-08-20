@@ -114,6 +114,7 @@ func RegisterRoutes(r chi.Router, cfg *config.Config) {
         cfg.IPFSApi,
         cfg.IPFSCluster,
         time.Duration(cfg.IPFSPingTimeout)*time.Second,
+        cfg,
     )
 
 	// Register auth routes with appropriate middleware

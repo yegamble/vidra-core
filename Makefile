@@ -41,6 +41,10 @@ test: ## Run unit tests
 test-ci: ## Run tests for CI environment
 	go test -v -race -coverprofile=coverage.out ./...
 
+.PHONY: generate-openapi
+generate-openapi: ## Regenerate OpenAPI types and server interfaces
+	@scripts/gen-openapi.sh
+
 test-integration: ## Run only integration tests (loads .env.test if present)
 	@bash -lc 'set -a; [ -f .env.test ] && source .env.test || true; set +a; go test -v -race -run Integration ./...'
 

@@ -55,7 +55,7 @@ func (s *Server) UploadAvatar(w http.ResponseWriter, r *http.Request) {
         WriteError(w, http.StatusBadRequest, domain.NewDomainError("MISSING_FILE", "Missing file field in form"))
         return
     }
-    defer file.Close()
+    defer func() { _ = file.Close() }()
 
     // MIME type sniffing from first 512 bytes
     var head [512]byte
@@ -99,7 +99,15 @@ func (s *Server) UploadAvatar(w http.ResponseWriter, r *http.Request) {
     if testEncodeToWebP != nil {
         encErr = testEncodeToWebP(localPath, paths.AvatarWebPPath(fileID))
     } else {
-        encErr = imageutil.EncodeFileToWebP(localPath, paths.AvatarWebPPath(fileID))
+        q := 0
+        if s.cfg != nil {
+            q = s.cfg.WebPQuality
+        }
+        if q > 0 {
+            encErr = imageutil.EncodeFileToWebPWithQuality(localPath, paths.AvatarWebPPath(fileID), q)
+        } else {
+            encErr = imageutil.EncodeFileToWebP(localPath, paths.AvatarWebPPath(fileID))
+        }
     }
     if encErr != nil && encErr != imageutil.ErrWebPUnavailable {
         // Non-fatal; continue with original avatar
@@ -161,6 +169,13 @@ func (s *Server) UploadAvatar(w http.ResponseWriter, r *http.Request) {
             } else {
                 _ = s.ipfsPin(wcid)
             }
+            if s.ipfsClusterAPI != "" {
+                if testIPFSClusterPin != nil {
+                    _ = testIPFSClusterPin(wcid)
+                } else {
+                    _ = s.ipfsClusterPin(wcid)
+                }
+            }
             webpCID = &wcid
         }
     }
@@ -199,7 +214,7 @@ func (s *Server) ipfsAdd(path string) (string, error) {
     if err != nil {
         return "", err
     }
-    defer f.Close()
+    defer func() { _ = f.Close() }()
     var body bytes.Buffer
     mw := multipart.NewWriter(&body)
     fw, err := mw.CreateFormFile("file", filepath.Base(path))
@@ -223,7 +238,7 @@ func (s *Server) ipfsAdd(path string) (string, error) {
     if err != nil {
         return "", err
     }
-    defer resp.Body.Close()
+    defer func() { _ = resp.Body.Close() }()
     if resp.StatusCode < 200 || resp.StatusCode >= 300 {
         b, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
         return "", fmt.Errorf("ipfs add failed: %s", string(b))
@@ -246,7 +261,7 @@ func (s *Server) ipfsClusterAdd(path string) (string, error) {
     if err != nil {
         return "", err
     }
-    defer f.Close()
+    defer func() { _ = f.Close() }()
     var body bytes.Buffer
     mw := multipart.NewWriter(&body)
     fw, err := mw.CreateFormFile("file", filepath.Base(path))
@@ -270,7 +285,7 @@ func (s *Server) ipfsClusterAdd(path string) (string, error) {
     if err != nil {
         return "", err
     }
-    defer resp.Body.Close()
+    defer func() { _ = resp.Body.Close() }()
     if resp.StatusCode < 200 || resp.StatusCode >= 300 {
         b, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
         return "", fmt.Errorf("ipfs cluster add failed: %s", string(b))
@@ -323,7 +338,7 @@ func (s *Server) ipfsPin(cid string) error {
     if err != nil {
         return err
     }
-    defer resp.Body.Close()
+    defer func() { _ = resp.Body.Close() }()
     if resp.StatusCode >= 200 && resp.StatusCode < 300 {
         return nil
     }
@@ -347,7 +362,7 @@ func (s *Server) ipfsClusterPin(cid string) error {
     if err != nil {
         return err
     }
-    defer resp.Body.Close()
+    defer func() { _ = resp.Body.Close() }()
     if resp.StatusCode >= 200 && resp.StatusCode < 300 {
         return nil
     }
@@ -365,7 +380,7 @@ func (s *Server) ipfsClusterPin(cid string) error {
         if err != nil {
             return err
         }
-        defer resp2.Body.Close()
+        defer func() { _ = resp2.Body.Close() }()
         if resp2.StatusCode >= 200 && resp2.StatusCode < 300 {
             return nil
         }

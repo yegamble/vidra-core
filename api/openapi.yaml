@@ -427,6 +427,11 @@ components:
           nullable: true
           description: IPFS CID of the avatar
           example: "bafybeigdyrzt5n3q4h7v6s6l4xgk7g6v7m3kz7l2o3q4r5s6t7u8v9w0x"
+        avatar_webp_ipfs_cid:
+          type: string
+          nullable: true
+          description: IPFS CID of the WebP-optimized avatar
+          example: "bafybeigdyrzt5n3q4h7v6s6l4xgk7g6v7m3kz7l2o3q4r5s6t7u8v9w0y"
         bio:
           type: string
           description: User biography
