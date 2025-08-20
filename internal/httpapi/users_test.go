@@ -129,6 +129,11 @@ func decodeResponse(t *testing.T, rr *httptest.ResponseRecorder) testResponse {
 	return resp
 }
 
+// withUserID helper for tests needing auth context injection
+func withUserID(ctx context.Context, id string) context.Context {
+    return context.WithValue(ctx, middleware.UserIDKey, id)
+}
+
 func TestGetCurrentUserHandler_Success(t *testing.T) {
 	repo := newMockUserRepo()
 	u := &domain.User{

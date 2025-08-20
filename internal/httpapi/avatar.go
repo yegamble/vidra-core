@@ -11,6 +11,7 @@ import (
     "net/url"
     "os"
     "path/filepath"
+    "regexp"
     "strings"
     "time"
 
@@ -26,6 +27,13 @@ type ipfsAddResponse struct {
     Hash string `json:"Hash"`
     Size string `json:"Size"`
 }
+
+// Test hooks (override in tests to avoid real network calls)
+var (
+    testIPFSAdd        func(localPath string) (string, error)
+    testIPFSPin        func(cid string) error
+    testIPFSClusterPin func(cid string) error
+)
 
 // UploadAvatar handles multipart upload of a user's avatar, uploads it to IPFS, pins it,
 // and persists file_id + ipfs_cid in user_avatars.
@@ -55,8 +63,9 @@ func (s *Server) UploadAvatar(w http.ResponseWriter, r *http.Request) {
     }
     fileID := uuid.NewString()
     ext := filepath.Ext(header.Filename)
-    if len(ext) > 10 { // guard against weird long extensions
-        ext = ""
+    if !validAvatarExt(ext) {
+        WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_FILE_EXTENSION", "Invalid file extension"))
+        return
     }
     localPath := paths.AvatarFilePath(fileID, ext)
     out, err := os.Create(localPath)
@@ -74,7 +83,9 @@ func (s *Server) UploadAvatar(w http.ResponseWriter, r *http.Request) {
     // Upload to IPFS first (to ensure content is available), then pin
     var cid string
     var addErr error
-    if s.ipfsClusterAPI != "" {
+    if testIPFSAdd != nil {
+        cid, addErr = testIPFSAdd(localPath)
+    } else if s.ipfsClusterAPI != "" {
         // Prefer Cluster add if configured to ensure cluster-aware ingestion
         cid, addErr = s.ipfsClusterAdd(localPath)
     } else {
@@ -86,13 +97,23 @@ func (s *Server) UploadAvatar(w http.ResponseWriter, r *http.Request) {
     }
 
     // Ensure pinned in Kubo and optionally in IPFS Cluster
-    if pinErr := s.ipfsPin(cid); pinErr != nil {
+    var pinErr error
+    if testIPFSPin != nil {
+        pinErr = testIPFSPin(cid)
+    } else {
+        pinErr = s.ipfsPin(cid)
+    }
+    if pinErr != nil {
         // If pinning fails after add, treat as service unavailable
         WriteError(w, http.StatusServiceUnavailable, domain.NewDomainError("IPFS_PIN_FAILED", "Failed to pin avatar in IPFS"))
         return
     }
     if s.ipfsClusterAPI != "" {
-        _ = s.ipfsClusterPin(cid) // Best-effort cluster pin (add already pinned on cluster)
+        if testIPFSClusterPin != nil {
+            _ = testIPFSClusterPin(cid)
+        } else {
+            _ = s.ipfsClusterPin(cid) // Best-effort cluster pin (add already pinned on cluster)
+        }
     }
 
     // Persist identifiers
@@ -108,6 +129,18 @@ func (s *Server) UploadAvatar(w http.ResponseWriter, r *http.Request) {
         return
     }
     WriteJSON(w, http.StatusOK, user)
+}
+
+// validAvatarExt rejects path separators and excessively long extensions.
+// Empty extension is allowed (saved without extension).
+var avatarExtRe = regexp.MustCompile(`^\.[A-Za-z0-9]{1,8}$`)
+
+func validAvatarExt(ext string) bool {
+    if ext == "" { // allow files without extension
+        return true
+    }
+    // Strictly allow only .[A-Za-z0-9]{1,8}
+    return avatarExtRe.MatchString(ext)
 }
 
 func (s *Server) ipfsAdd(path string) (string, error) {
