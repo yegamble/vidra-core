@@ -1,11 +1,11 @@
 package httpapi
 
 import (
-    "encoding/json"
-    "errors"
-    "net/http"
+	"encoding/json"
+	"errors"
+	"net/http"
 
-    "athena/internal/domain"
+	"athena/internal/domain"
 )
 
 type Response struct {
@@ -84,43 +84,43 @@ func WriteJSONWithMeta(w http.ResponseWriter, statusCode int, data interface{}, 
 }
 
 func MapDomainErrorToHTTP(err error) int {
-    // Use errors.Is to correctly handle wrapped errors
-    notFound := []error{domain.ErrNotFound, domain.ErrUserNotFound, domain.ErrVideoNotFound, domain.ErrMessageNotFound, domain.ErrConversationNotFound}
-    for _, e := range notFound {
-        if errors.Is(err, e) {
-            return http.StatusNotFound
-        }
-    }
+	// Use errors.Is to correctly handle wrapped errors
+	notFound := []error{domain.ErrNotFound, domain.ErrUserNotFound, domain.ErrVideoNotFound, domain.ErrMessageNotFound, domain.ErrConversationNotFound}
+	for _, e := range notFound {
+		if errors.Is(err, e) {
+			return http.StatusNotFound
+		}
+	}
 
-    unauthorized := []error{domain.ErrUnauthorized, domain.ErrInvalidCredentials, domain.ErrInvalidToken, domain.ErrTokenExpired}
-    for _, e := range unauthorized {
-        if errors.Is(err, e) {
-            return http.StatusUnauthorized
-        }
-    }
+	unauthorized := []error{domain.ErrUnauthorized, domain.ErrInvalidCredentials, domain.ErrInvalidToken, domain.ErrTokenExpired}
+	for _, e := range unauthorized {
+		if errors.Is(err, e) {
+			return http.StatusUnauthorized
+		}
+	}
 
-    if errors.Is(err, domain.ErrForbidden) {
-        return http.StatusForbidden
-    }
+	if errors.Is(err, domain.ErrForbidden) {
+		return http.StatusForbidden
+	}
 
-    badReq := []error{domain.ErrValidation, domain.ErrBadRequest, domain.ErrInvalidFormat, domain.ErrInvalidChunk, domain.ErrCannotMessageSelf, domain.ErrMessageTooLong, domain.ErrInvalidMessageType}
-    for _, e := range badReq {
-        if errors.Is(err, e) {
-            return http.StatusBadRequest
-        }
-    }
+	badReq := []error{domain.ErrValidation, domain.ErrBadRequest, domain.ErrInvalidFormat, domain.ErrInvalidChunk, domain.ErrCannotMessageSelf, domain.ErrMessageTooLong, domain.ErrInvalidMessageType}
+	for _, e := range badReq {
+		if errors.Is(err, e) {
+			return http.StatusBadRequest
+		}
+	}
 
-    if errors.Is(err, domain.ErrConflict) || errors.Is(err, domain.ErrUserAlreadyExists) {
-        return http.StatusConflict
-    }
-    if errors.Is(err, domain.ErrTooManyRequests) {
-        return http.StatusTooManyRequests
-    }
-    if errors.Is(err, domain.ErrServiceUnavailable) || errors.Is(err, domain.ErrIPFSUnavailable) {
-        return http.StatusServiceUnavailable
-    }
-    if errors.Is(err, domain.ErrFileTooLarge) {
-        return http.StatusRequestEntityTooLarge
-    }
-    return http.StatusInternalServerError
+	if errors.Is(err, domain.ErrConflict) || errors.Is(err, domain.ErrUserAlreadyExists) {
+		return http.StatusConflict
+	}
+	if errors.Is(err, domain.ErrTooManyRequests) {
+		return http.StatusTooManyRequests
+	}
+	if errors.Is(err, domain.ErrServiceUnavailable) || errors.Is(err, domain.ErrIPFSUnavailable) {
+		return http.StatusServiceUnavailable
+	}
+	if errors.Is(err, domain.ErrFileTooLarge) {
+		return http.StatusRequestEntityTooLarge
+	}
+	return http.StatusInternalServerError
 }

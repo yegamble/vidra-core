@@ -49,10 +49,10 @@ func (s *MessageService) SendMessage(ctx context.Context, senderID string, req *
 		if err != nil {
 			return nil, fmt.Errorf("failed to get parent message: %w", err)
 		}
-		
+
 		// Ensure parent message is part of the same conversation
 		if (parentMessage.SenderID != senderID && parentMessage.SenderID != req.RecipientID) ||
-		   (parentMessage.RecipientID != senderID && parentMessage.RecipientID != req.RecipientID) {
+			(parentMessage.RecipientID != senderID && parentMessage.RecipientID != req.RecipientID) {
 			return nil, domain.ErrMessageNotFound
 		}
 	}

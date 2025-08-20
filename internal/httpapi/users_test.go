@@ -18,7 +18,7 @@ import (
 
 // mockUserRepo is a simple in-memory implementation of usecase.UserRepository
 type mockUserRepo struct {
-    users map[string]*domain.User
+	users map[string]*domain.User
 }
 
 // ensure mockUserRepo implements usecase.UserRepository
@@ -96,20 +96,20 @@ func (m *mockUserRepo) List(_ context.Context, _, _ int) ([]*domain.User, error)
 }
 
 func (m *mockUserRepo) Count(_ context.Context) (int64, error) {
-    return int64(len(m.users)), nil
+	return int64(len(m.users)), nil
 }
 
 func (m *mockUserRepo) SetAvatarFields(_ context.Context, userID string, ipfsCID *string, webpCID *string) error {
-    u, ok := m.users[userID]
-    if !ok {
-        return domain.ErrUserNotFound
-    }
-    // Copy to avoid external mutation
-    c := *u
-    c.AvatarIPFSCID = ipfsCID
-    c.AvatarWebPIPFSCID = webpCID
-    m.users[userID] = &c
-    return nil
+	u, ok := m.users[userID]
+	if !ok {
+		return domain.ErrUserNotFound
+	}
+	// Copy to avoid external mutation
+	c := *u
+	c.AvatarIPFSCID = ipfsCID
+	c.AvatarWebPIPFSCID = webpCID
+	m.users[userID] = &c
+	return nil
 }
 
 // Response decoding helpers
@@ -131,7 +131,7 @@ func decodeResponse(t *testing.T, rr *httptest.ResponseRecorder) testResponse {
 
 // withUserID helper for tests needing auth context injection
 func withUserID(ctx context.Context, id string) context.Context {
-    return context.WithValue(ctx, middleware.UserIDKey, id)
+	return context.WithValue(ctx, middleware.UserIDKey, id)
 }
 
 func TestGetCurrentUserHandler_Success(t *testing.T) {
@@ -210,10 +210,10 @@ func TestUpdateCurrentUserHandler_Success(t *testing.T) {
 	}
 	repo.users[u.ID] = u
 
-    body := map[string]string{
-        "display_name": "After",
-        "bio":          "New bio",
-    }
+	body := map[string]string{
+		"display_name": "After",
+		"bio":          "New bio",
+	}
 	b, _ := json.Marshal(body)
 	req := httptest.NewRequest(http.MethodPut, "/api/v1/users/me", bytes.NewReader(b))
 	req.Header.Set("Content-Type", "application/json")
@@ -232,9 +232,9 @@ func TestUpdateCurrentUserHandler_Success(t *testing.T) {
 		t.Fatalf("failed to unmarshal user: %v", err)
 	}
 
-    if got.DisplayName != "After" || got.Bio != "New bio" {
-        t.Fatalf("user not updated correctly: %+v", got)
-    }
+	if got.DisplayName != "After" || got.Bio != "New bio" {
+		t.Fatalf("user not updated correctly: %+v", got)
+	}
 
 	// verify in repo
 	if repo.users[u.ID].DisplayName != "After" {

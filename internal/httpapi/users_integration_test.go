@@ -40,7 +40,7 @@ func TestRegister_Integration_CreatesUserInDB(t *testing.T) {
 	td.TruncateTables(t, "users", "refresh_tokens", "sessions")
 
 	repo := repository.NewUserRepository(td.DB)
-    s := NewServer(repo, repository.NewAuthRepository(td.DB), "test-secret", nil, 0, "", "", 0, nil)
+	s := NewServer(repo, repository.NewAuthRepository(td.DB), "test-secret", nil, 0, "", "", 0, nil)
 
 	// unique values
 	uname := "reg_" + time.Now().Format("20060102150405")
@@ -217,10 +217,10 @@ func TestUpdateCurrentUserHandler_Integration_UpdatesDBUser(t *testing.T) {
 		t.Fatalf("seed create failed: %v", err)
 	}
 
-    body := map[string]any{
-        "display_name": "After",
-        "bio":          "New bio",
-    }
+	body := map[string]any{
+		"display_name": "After",
+		"bio":          "New bio",
+	}
 	b, _ := json.Marshal(body)
 	req := httptest.NewRequest(http.MethodPut, "/api/v1/users/me", bytes.NewReader(b))
 	req.Header.Set("Content-Type", "application/json")
@@ -239,18 +239,18 @@ func TestUpdateCurrentUserHandler_Integration_UpdatesDBUser(t *testing.T) {
 	if err := json.Unmarshal(resp.Data, &got); err != nil {
 		t.Fatalf("unmarshal user: %v", err)
 	}
-    if got.DisplayName != "After" || got.Bio != "New bio" {
-        t.Fatalf("unexpected updated fields: %+v", got)
-    }
+	if got.DisplayName != "After" || got.Bio != "New bio" {
+		t.Fatalf("unexpected updated fields: %+v", got)
+	}
 
 	// Verify persisted in DB
 	fromDB, err := repo.GetByID(context.Background(), u.ID)
 	if err != nil {
 		t.Fatalf("expected user in DB: %v", err)
 	}
-    if fromDB.DisplayName != "After" || fromDB.Bio != "New bio" {
-        t.Fatalf("DB not updated: %+v", fromDB)
-    }
+	if fromDB.DisplayName != "After" || fromDB.Bio != "New bio" {
+		t.Fatalf("DB not updated: %+v", fromDB)
+	}
 }
 
 func TestGetCurrentUserHandler_Integration_Unauthorized(t *testing.T) {

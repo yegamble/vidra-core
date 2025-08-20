@@ -36,28 +36,28 @@ func RegisterRoutes(r chi.Router, cfg *config.Config) {
 	messageRepo := repository.NewMessageRepository(db)
 	dbAuthRepo := repository.NewAuthRepository(db)
 
-    // Create storage directory structure
-    storageRoot := cfg.StorageDir
-    storageDirs := []string{
-        filepath.Join(storageRoot, "avatars"),
-        filepath.Join(storageRoot, "cache"),
-        filepath.Join(storageRoot, "captions"),
-        filepath.Join(storageRoot, "logs"),
-        filepath.Join(storageRoot, "previews"),
-        filepath.Join(storageRoot, "streaming-playlists", "hls"),
-        filepath.Join(storageRoot, "thumbnails"),
-        filepath.Join(storageRoot, "torrents"),
-        filepath.Join(storageRoot, "web-videos"),
-        filepath.Join(storageRoot, "storyboards"),
-    }
-    for _, d := range storageDirs {
-        if err := os.MkdirAll(d, 0755); err != nil {
-            panic(fmt.Errorf("failed to create storage dir %s: %w", d, err))
-        }
-    }
+	// Create storage directory structure
+	storageRoot := cfg.StorageDir
+	storageDirs := []string{
+		filepath.Join(storageRoot, "avatars"),
+		filepath.Join(storageRoot, "cache"),
+		filepath.Join(storageRoot, "captions"),
+		filepath.Join(storageRoot, "logs"),
+		filepath.Join(storageRoot, "previews"),
+		filepath.Join(storageRoot, "streaming-playlists", "hls"),
+		filepath.Join(storageRoot, "thumbnails"),
+		filepath.Join(storageRoot, "torrents"),
+		filepath.Join(storageRoot, "web-videos"),
+		filepath.Join(storageRoot, "storyboards"),
+	}
+	for _, d := range storageDirs {
+		if err := os.MkdirAll(d, 0755); err != nil {
+			panic(fmt.Errorf("failed to create storage dir %s: %w", d, err))
+		}
+	}
 
 	// Initialize services
-    uploadService := usecase.NewUploadService(uploadRepo, encodingRepo, videoRepo, storageRoot, cfg)
+	uploadService := usecase.NewUploadService(uploadRepo, encodingRepo, videoRepo, storageRoot, cfg)
 	messageService := usecase.NewMessageService(messageRepo, userRepo)
 
 	// Start a lightweight encoding scheduler in the background to ensure
@@ -65,7 +65,7 @@ func RegisterRoutes(r chi.Router, cfg *config.Config) {
 	// This uses a short interval with a small burst to avoid starvation.
 	var encSched *scheduler.EncodingScheduler
 	if cfg.EnableEncodingScheduler {
-        encSvc := usecase.NewEncodingService(encodingRepo, videoRepo, storageRoot, cfg)
+		encSvc := usecase.NewEncodingService(encodingRepo, videoRepo, storageRoot, cfg)
 		interval := time.Duration(cfg.EncodingSchedulerIntervalSeconds) * time.Second
 		burst := cfg.EncodingSchedulerBurst
 		encSched = scheduler.NewEncodingScheduler(encSvc, interval, burst)
@@ -105,17 +105,17 @@ func RegisterRoutes(r chi.Router, cfg *config.Config) {
 	}
 
 	// Create server instance with dependencies
-    server := NewServer(
-        userRepo,
-        sessionRepo,
-        cfg.JWTSecret,
-        rdb,
-        time.Duration(cfg.RedisPingTimeout)*time.Second,
-        cfg.IPFSApi,
-        cfg.IPFSCluster,
-        time.Duration(cfg.IPFSPingTimeout)*time.Second,
-        cfg,
-    )
+	server := NewServer(
+		userRepo,
+		sessionRepo,
+		cfg.JWTSecret,
+		rdb,
+		time.Duration(cfg.RedisPingTimeout)*time.Second,
+		cfg.IPFSApi,
+		cfg.IPFSCluster,
+		time.Duration(cfg.IPFSPingTimeout)*time.Second,
+		cfg,
+	)
 
 	// Register auth routes with appropriate middleware
 	r.Post("/auth/register", server.Register)
@@ -164,28 +164,28 @@ func RegisterRoutes(r chi.Router, cfg *config.Config) {
 			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/status", EncodingStatusHandlerEnhanced(encodingRepo, cfg, encSched))
 		})
 
-        r.Route("/users", func(r chi.Router) {
-            // Admin-style create user; currently just requires auth (role checks TBD)
-            r.With(middleware.Auth(cfg.JWTSecret)).Post("/", CreateUserHandler(userRepo))
-            r.With(middleware.Auth(cfg.JWTSecret)).Get("/me", GetCurrentUserHandler(userRepo))
-            r.With(middleware.Auth(cfg.JWTSecret)).Put("/me", UpdateCurrentUserHandler(userRepo))
-            r.With(middleware.Auth(cfg.JWTSecret)).Post("/me/avatar", server.UploadAvatar)
-            r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{id}", GetUserHandler(userRepo))
-            r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{id}/videos", GetUserVideosHandler(videoRepo))
-        })
+		r.Route("/users", func(r chi.Router) {
+			// Admin-style create user; currently just requires auth (role checks TBD)
+			r.With(middleware.Auth(cfg.JWTSecret)).Post("/", CreateUserHandler(userRepo))
+			r.With(middleware.Auth(cfg.JWTSecret)).Get("/me", GetCurrentUserHandler(userRepo))
+			r.With(middleware.Auth(cfg.JWTSecret)).Put("/me", UpdateCurrentUserHandler(userRepo))
+			r.With(middleware.Auth(cfg.JWTSecret)).Post("/me/avatar", server.UploadAvatar)
+			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{id}", GetUserHandler(userRepo))
+			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{id}/videos", GetUserVideosHandler(videoRepo))
+		})
 
-        r.Route("/messages", func(r chi.Router) {
-            r.Use(middleware.Auth(cfg.JWTSecret))
-            r.Post("/", SendMessageHandler(messageService))
-            r.Get("/", GetMessagesHandler(messageService))
-            r.Put("/{messageId}/read", MarkMessageReadHandler(messageService))
-            r.Delete("/{messageId}", DeleteMessageHandler(messageService))
-        })
+		r.Route("/messages", func(r chi.Router) {
+			r.Use(middleware.Auth(cfg.JWTSecret))
+			r.Post("/", SendMessageHandler(messageService))
+			r.Get("/", GetMessagesHandler(messageService))
+			r.Put("/{messageId}/read", MarkMessageReadHandler(messageService))
+			r.Delete("/{messageId}", DeleteMessageHandler(messageService))
+		})
 
-        r.Route("/conversations", func(r chi.Router) {
-            r.Use(middleware.Auth(cfg.JWTSecret))
-            r.Get("/", GetConversationsHandler(messageService))
-            r.Get("/unread-count", GetUnreadCountHandler(messageService))
-        })
-    })
+		r.Route("/conversations", func(r chi.Router) {
+			r.Use(middleware.Auth(cfg.JWTSecret))
+			r.Get("/", GetConversationsHandler(messageService))
+			r.Get("/unread-count", GetUnreadCountHandler(messageService))
+		})
+	})
 }

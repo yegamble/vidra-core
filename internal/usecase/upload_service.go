@@ -1,31 +1,31 @@
 package usecase
 
 import (
-    "context"
-    "fmt"
-    "log"
-    "math"
-    "os"
-    "path/filepath"
-    "regexp"
-    "sort"
-    "strconv"
-    "strings"
-    "time"
+	"context"
+	"fmt"
+	"log"
+	"math"
+	"os"
+	"path/filepath"
+	"regexp"
+	"sort"
+	"strconv"
+	"strings"
+	"time"
 
-    "github.com/google/uuid"
+	"github.com/google/uuid"
 
-    "athena/internal/config"
-    "athena/internal/domain"
-    "athena/internal/storage"
-    "athena/internal/validation"
+	"athena/internal/config"
+	"athena/internal/domain"
+	"athena/internal/storage"
+	"athena/internal/validation"
 )
 
 type uploadService struct {
 	uploadRepo   UploadRepository
 	encodingRepo EncodingRepository
 	videoRepo    VideoRepository
-    uploadsDir   string // storage root
+	uploadsDir   string // storage root
 	paths        storage.Paths
 	validator    *validation.ChecksumValidator
 	cfg          *config.Config
@@ -35,7 +35,7 @@ func NewUploadService(
 	uploadRepo UploadRepository,
 	encodingRepo EncodingRepository,
 	videoRepo VideoRepository,
-    uploadsDir string,
+	uploadsDir string,
 	cfg *config.Config,
 ) UploadService {
 	return &uploadService{
@@ -50,10 +50,10 @@ func NewUploadService(
 }
 
 func (s *uploadService) InitiateUpload(ctx context.Context, userID string, req *domain.InitiateUploadRequest) (*domain.InitiateUploadResponse, error) {
-    // Validate file extension (defense-in-depth)
-    if ext := filepath.Ext(req.FileName); !validUploadExt(ext) {
-        return nil, domain.NewDomainError("INVALID_FILE_EXTENSION", "Invalid file extension")
-    }
+	// Validate file extension (defense-in-depth)
+	if ext := filepath.Ext(req.FileName); !validUploadExt(ext) {
+		return nil, domain.NewDomainError("INVALID_FILE_EXTENSION", "Invalid file extension")
+	}
 	// Validate file size (max 10GB)
 	const maxFileSize = 10 * 1024 * 1024 * 1024
 	if req.FileSize > maxFileSize {
@@ -88,8 +88,8 @@ func (s *uploadService) InitiateUpload(ctx context.Context, userID string, req *
 
 	// Create upload session
 	sessionID := uuid.NewString()
-    sp := storage.NewPaths(s.uploadsDir)
-    tempDir := sp.UploadTempDir(sessionID)
+	sp := storage.NewPaths(s.uploadsDir)
+	tempDir := sp.UploadTempDir(sessionID)
 	if err := os.MkdirAll(tempDir, 0755); err != nil {
 		return nil, fmt.Errorf("failed to create temp directory: %w", err)
 	}
@@ -104,7 +104,7 @@ func (s *uploadService) InitiateUpload(ctx context.Context, userID string, req *
 		TotalChunks:      totalChunks,
 		UploadedChunks:   []int{},
 		Status:           domain.UploadStatusActive,
-        TempFilePath:     sp.UploadTempChunksDir(sessionID),
+		TempFilePath:     sp.UploadTempChunksDir(sessionID),
 		ExpectedChecksum: req.ExpectedChecksum,
 		CreatedAt:        now,
 		UpdatedAt:        now,
@@ -129,10 +129,10 @@ func (s *uploadService) InitiateUpload(ctx context.Context, userID string, req *
 var uploadExtRe = regexp.MustCompile(`^\.[A-Za-z0-9]{1,8}$`)
 
 func validUploadExt(ext string) bool {
-    if ext == "" { // permit no extension
-        return true
-    }
-    return uploadExtRe.MatchString(ext)
+	if ext == "" { // permit no extension
+		return true
+	}
+	return uploadExtRe.MatchString(ext)
 }
 
 func (s *uploadService) UploadChunk(ctx context.Context, sessionID string, chunk *domain.ChunkUpload) (*domain.ChunkUploadResponse, error) {
@@ -257,7 +257,7 @@ func (s *uploadService) CompleteUpload(ctx context.Context, sessionID string) er
 	}
 
 	// Create encoding job
-    finalFilePath := s.paths.WebVideoFilePath(session.VideoID, filepath.Ext(session.FileName))
+	finalFilePath := s.paths.WebVideoFilePath(session.VideoID, filepath.Ext(session.FileName))
 
 	// Detect video resolution from metadata height if available, otherwise fallback.
 	sourceResolution := domain.DefaultResolution
@@ -343,8 +343,8 @@ func (s *uploadService) GetUploadStatus(ctx context.Context, sessionID string) (
 
 func (s *uploadService) AssembleChunks(ctx context.Context, session *domain.UploadSession) error {
 	// Create final file path
-    sp := storage.NewPaths(s.uploadsDir)
-    finalDir := sp.WebVideosDir()
+	sp := storage.NewPaths(s.uploadsDir)
+	finalDir := sp.WebVideosDir()
 	if err := os.MkdirAll(finalDir, 0755); err != nil {
 		return fmt.Errorf("failed to create completed directory: %w", err)
 	}

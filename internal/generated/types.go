@@ -8,18 +8,18 @@ import (
 
 // User represents a user in the system
 type User struct {
-    ID          string    `json:"id"`
-    Username    string    `json:"username"`
-    Email       string    `json:"email"`
-    DisplayName *string   `json:"display_name,omitempty"`
-    AvatarFileID  *string   `json:"avatar_file_id,omitempty"`
-    AvatarIPFSCID *string   `json:"avatar_ipfs_cid,omitempty"`
-    AvatarWebPIPFSCID *string `json:"avatar_webp_ipfs_cid,omitempty"`
-    Bio         *string   `json:"bio,omitempty"`
-    Role        UserRole  `json:"role"`
-    IsActive    bool      `json:"is_active"`
-    CreatedAt   time.Time `json:"created_at"`
-    UpdatedAt   time.Time `json:"updated_at"`
+	ID                string    `json:"id"`
+	Username          string    `json:"username"`
+	Email             string    `json:"email"`
+	DisplayName       *string   `json:"display_name,omitempty"`
+	AvatarFileID      *string   `json:"avatar_file_id,omitempty"`
+	AvatarIPFSCID     *string   `json:"avatar_ipfs_cid,omitempty"`
+	AvatarWebPIPFSCID *string   `json:"avatar_webp_ipfs_cid,omitempty"`
+	Bio               *string   `json:"bio,omitempty"`
+	Role              UserRole  `json:"role"`
+	IsActive          bool      `json:"is_active"`
+	CreatedAt         time.Time `json:"created_at"`
+	UpdatedAt         time.Time `json:"updated_at"`
 }
 
 // UserRole represents the role of a user

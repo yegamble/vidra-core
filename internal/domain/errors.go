@@ -42,11 +42,11 @@ var (
 )
 
 var (
-	ErrMessageNotFound       = errors.New("message not found")
-	ErrConversationNotFound  = errors.New("conversation not found")
-	ErrCannotMessageSelf     = errors.New("cannot send message to yourself")
-	ErrMessageTooLong        = errors.New("message content too long")
-	ErrInvalidMessageType    = errors.New("invalid message type")
+	ErrMessageNotFound      = errors.New("message not found")
+	ErrConversationNotFound = errors.New("conversation not found")
+	ErrCannotMessageSelf    = errors.New("cannot send message to yourself")
+	ErrMessageTooLong       = errors.New("message content too long")
+	ErrInvalidMessageType   = errors.New("invalid message type")
 )
 
 type DomainError struct {

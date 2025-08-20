@@ -110,8 +110,8 @@ func (m *MockUserRepository) Count(ctx context.Context) (int64, error) {
 }
 
 func (m *MockUserRepository) SetAvatarFields(ctx context.Context, userID string, ipfsCID *string, webpCID *string) error {
-    args := m.Called(ctx, userID, ipfsCID, webpCID)
-    return args.Error(0)
+	args := m.Called(ctx, userID, ipfsCID, webpCID)
+	return args.Error(0)
 }
 
 func TestMessageService_SendMessage(t *testing.T) {
@@ -193,7 +193,7 @@ func TestMessageService_SendMessage(t *testing.T) {
 		mockUserRepo = new(MockUserRepository)
 		mockMessageRepo = new(MockMessageRepository)
 		service = NewMessageService(mockMessageRepo, mockUserRepo)
-		
+
 		req := &domain.SendMessageRequest{
 			RecipientID: recipientID,
 			Content:     "Hello!",
@@ -214,7 +214,7 @@ func TestMessageService_SendMessage(t *testing.T) {
 		mockUserRepo = new(MockUserRepository)
 		mockMessageRepo = new(MockMessageRepository)
 		service = NewMessageService(mockMessageRepo, mockUserRepo)
-		
+
 		req := &domain.SendMessageRequest{
 			RecipientID: recipientID,
 			Content:     "Hello!",
@@ -284,7 +284,7 @@ func TestMessageService_GetMessages(t *testing.T) {
 		mockUserRepo = new(MockUserRepository)
 		mockMessageRepo = new(MockMessageRepository)
 		service = NewMessageService(mockMessageRepo, mockUserRepo)
-		
+
 		req := &domain.GetMessagesRequest{
 			ConversationWith: otherUserID,
 		}

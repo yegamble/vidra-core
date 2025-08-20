@@ -1,21 +1,21 @@
 package usecase
 
 import (
-    "context"
-    "errors"
-    "fmt"
-    "os"
-    "os/exec"
-    "path/filepath"
-    "runtime"
-    "strings"
-    "sync"
-    "time"
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"sync"
+	"time"
 
-    "athena/internal/config"
-    "athena/internal/domain"
-    "athena/internal/metrics"
-    "athena/internal/storage"
+	"athena/internal/config"
+	"athena/internal/domain"
+	"athena/internal/metrics"
+	"athena/internal/storage"
 )
 
 // EncodingService defines a background worker to process encoding jobs
@@ -27,14 +27,14 @@ type EncodingService interface {
 }
 
 type encodingService struct {
-    repo       EncodingRepository
-    videoRepo  VideoRepository
-    uploadsDir string // storage root
-    cfg        *config.Config
+	repo       EncodingRepository
+	videoRepo  VideoRepository
+	uploadsDir string // storage root
+	cfg        *config.Config
 }
 
 func NewEncodingService(repo EncodingRepository, videoRepo VideoRepository, uploadsDir string, cfg *config.Config) EncodingService {
-    return &encodingService{repo: repo, videoRepo: videoRepo, uploadsDir: uploadsDir, cfg: cfg}
+	return &encodingService{repo: repo, videoRepo: videoRepo, uploadsDir: uploadsDir, cfg: cfg}
 }
 
 func (s *encodingService) Run(ctx context.Context, workers int) error {
@@ -136,8 +136,8 @@ func (s *encodingService) processJob(ctx context.Context, job *domain.EncodingJo
 		return fmt.Errorf("source file not found: %w", err)
 	}
 
-    sp := storage.NewPaths(s.uploadsDir)
-    outBaseDir := sp.HLSVideoDir(job.VideoID)
+	sp := storage.NewPaths(s.uploadsDir)
+	outBaseDir := sp.HLSVideoDir(job.VideoID)
 	if err := os.MkdirAll(outBaseDir, 0o755); err != nil {
 		return fmt.Errorf("failed to create output dir: %w", err)
 	}
@@ -186,15 +186,15 @@ func (s *encodingService) processJob(ctx context.Context, job *domain.EncodingJo
 	}
 
 	// Thumbnail
-    // Place thumbnail and preview into dedicated storage folders
-    thumb := sp.ThumbnailPath(job.VideoID)
+	// Place thumbnail and preview into dedicated storage folders
+	thumb := sp.ThumbnailPath(job.VideoID)
 	if err := s.generateThumbnail(ctx, job.SourceFilePath, thumb); err != nil {
 		return fmt.Errorf("thumbnail: %w", err)
 	}
 	update()
 
 	// Preview (animated webp)
-    preview := sp.PreviewPath(job.VideoID)
+	preview := sp.PreviewPath(job.VideoID)
 	if err := s.generatePreviewWebP(ctx, job.SourceFilePath, preview); err != nil {
 		return fmt.Errorf("preview: %w", err)
 	}

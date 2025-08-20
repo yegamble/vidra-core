@@ -1,49 +1,49 @@
 package httpapi
 
 import (
-    "context"
-    "encoding/json"
-    "net/http"
-    "time"
+	"context"
+	"encoding/json"
+	"net/http"
+	"time"
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 	"golang.org/x/crypto/bcrypt"
 
-    "athena/internal/domain"
-    "athena/internal/generated"
-    "athena/internal/middleware"
-    "athena/internal/usecase"
-    "athena/internal/config"
+	"athena/internal/config"
+	"athena/internal/domain"
+	"athena/internal/generated"
+	"athena/internal/middleware"
+	"athena/internal/usecase"
 )
 
 // Server implements the generated ServerInterface
 type Server struct {
-    userRepo         usecase.UserRepository
-    authRepo         usecase.AuthRepository
-    jwtSecret        string
-    redis            *redis.Client
-    redisPingTimeout time.Duration
-    ipfsAPI          string
-    ipfsClusterAPI   string
-    ipfsPingTimeout  time.Duration
-    cfg              *config.Config
+	userRepo         usecase.UserRepository
+	authRepo         usecase.AuthRepository
+	jwtSecret        string
+	redis            *redis.Client
+	redisPingTimeout time.Duration
+	ipfsAPI          string
+	ipfsClusterAPI   string
+	ipfsPingTimeout  time.Duration
+	cfg              *config.Config
 }
 
 // NewServer creates a new server instance
 func NewServer(userRepo usecase.UserRepository, authRepo usecase.AuthRepository, jwtSecret string, redisClient *redis.Client, redisPingTimeout time.Duration, ipfsAPI string, ipfsClusterAPI string, ipfsPingTimeout time.Duration, cfg *config.Config) *Server {
-    return &Server{
-        userRepo:         userRepo,
-        authRepo:         authRepo,
-        jwtSecret:        jwtSecret,
-        redis:            redisClient,
-        redisPingTimeout: redisPingTimeout,
-        ipfsAPI:          ipfsAPI,
-        ipfsClusterAPI:   ipfsClusterAPI,
-        ipfsPingTimeout:  ipfsPingTimeout,
-        cfg:              cfg,
-    }
+	return &Server{
+		userRepo:         userRepo,
+		authRepo:         authRepo,
+		jwtSecret:        jwtSecret,
+		redis:            redisClient,
+		redisPingTimeout: redisPingTimeout,
+		ipfsAPI:          ipfsAPI,
+		ipfsClusterAPI:   ipfsClusterAPI,
+		ipfsPingTimeout:  ipfsPingTimeout,
+		cfg:              cfg,
+	}
 }
 
 // Login implements ServerInterface.Login
@@ -105,19 +105,19 @@ func (s *Server) Login(w http.ResponseWriter, r *http.Request) {
 		disp := dUser.DisplayName
 		dispPtr = &disp
 	}
-    gUser := generated.User{
-        ID:          dUser.ID,
-        Username:    dUser.Username,
-        Email:       dUser.Email,
-        DisplayName: dispPtr,
-        AvatarFileID:  nil,
-        AvatarIPFSCID: dUser.AvatarIPFSCID,
-        AvatarWebPIPFSCID: dUser.AvatarWebPIPFSCID,
-        Role:        generated.UserRoleUser,
-        IsActive:    dUser.IsActive,
-        CreatedAt:   dUser.CreatedAt,
-        UpdatedAt:   dUser.UpdatedAt,
-    }
+	gUser := generated.User{
+		ID:                dUser.ID,
+		Username:          dUser.Username,
+		Email:             dUser.Email,
+		DisplayName:       dispPtr,
+		AvatarFileID:      nil,
+		AvatarIPFSCID:     dUser.AvatarIPFSCID,
+		AvatarWebPIPFSCID: dUser.AvatarWebPIPFSCID,
+		Role:              generated.UserRoleUser,
+		IsActive:          dUser.IsActive,
+		CreatedAt:         dUser.CreatedAt,
+		UpdatedAt:         dUser.UpdatedAt,
+	}
 
 	response := generated.AuthResponse{
 		User:         gUser,
@@ -190,19 +190,19 @@ func (s *Server) Register(w http.ResponseWriter, r *http.Request) {
 			disp := dUser.DisplayName
 			dispPtr = &disp
 		}
-        gUser := generated.User{
-            ID:          dUser.ID,
-            Username:    dUser.Username,
-            Email:       dUser.Email,
-            DisplayName: dispPtr,
-            AvatarFileID:  nil,
-            AvatarIPFSCID: dUser.AvatarIPFSCID,
-            AvatarWebPIPFSCID: dUser.AvatarWebPIPFSCID,
-            Role:        generated.UserRoleUser,
-            IsActive:    dUser.IsActive,
-            CreatedAt:   dUser.CreatedAt,
-            UpdatedAt:   dUser.UpdatedAt,
-        }
+		gUser := generated.User{
+			ID:                dUser.ID,
+			Username:          dUser.Username,
+			Email:             dUser.Email,
+			DisplayName:       dispPtr,
+			AvatarFileID:      nil,
+			AvatarIPFSCID:     dUser.AvatarIPFSCID,
+			AvatarWebPIPFSCID: dUser.AvatarWebPIPFSCID,
+			Role:              generated.UserRoleUser,
+			IsActive:          dUser.IsActive,
+			CreatedAt:         dUser.CreatedAt,
+			UpdatedAt:         dUser.UpdatedAt,
+		}
 
 		// Set Location header to new resource
 		w.Header().Set("Location", "/api/v1/users/"+gUser.ID)
