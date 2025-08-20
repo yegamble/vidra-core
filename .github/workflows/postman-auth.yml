@@ -8,97 +8,23 @@ on:
 
 jobs:
   newman-auth:
-    name: Run Postman auth collection
+    name: Run Postman auth collection (Makefile)
     runs-on: ubuntu-latest
-
-    services:
-      postgres:
-        image: postgres:15-alpine
-        env:
-          POSTGRES_DB: athena_test
-          POSTGRES_USER: test_user
-          POSTGRES_PASSWORD: test_password
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 10
-
-      redis:
-        image: redis:7-alpine
-        ports:
-          - 6379:6379
-        options: >-
-          --health-cmd "redis-cli ping"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 10
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.24.6'
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '18'
-
-      - name: Install Newman
-        run: npm install -g newman
-
-      - name: Initialize database
+      - name: Run Postman E2E via Makefile
         env:
-          PGPASSWORD: test_password
-        run: psql -h localhost -U test_user -d athena_test -f init-test-db.sql
-
-      - name: Install dependencies
-        env:
-          GOPROXY: https://proxy.golang.org,direct
-          GOSUMDB: sum.golang.org
-          GOPROXY_TIMEOUT: 600s
-        run: |
-          # Configure Go timeouts and retries for network issues
-          for i in {1..5}; do
-            if timeout 600 go mod download; then
-              echo "Dependencies downloaded successfully on attempt $i"
-              break
-            else
-              echo "Download attempt $i failed, retrying in 30 seconds..."
-              if [ $i -lt 5 ]; then sleep 30; fi
-            fi
-          done
-
-      - name: Build server
-        run: go build -o bin/athena-server ./cmd/server
-
-      - name: Start server
-        env:
-          DATABASE_URL: postgres://test_user:test_password@localhost:5432/athena_test?sslmode=disable
-          REDIS_URL: redis://localhost:6379/0
-          JWT_SECRET: test-jwt-secret
-          PORT: 8080
-        run: |
-          nohup ./bin/athena-server > server.log 2>&1 &
-          for i in {1..60}; do
-            if curl -sf http://localhost:8080/health >/dev/null; then echo "Server healthy"; break; fi; 
-            sleep 2; 
-          done
-
-      - name: Run Postman collection (Full E2E)
-        run: |
-          newman run postman/athena-auth.postman_collection.json \
-            --env-var baseUrl=http://localhost:8080 \
-            --reporters cli,junit \
-            --reporter-junit-export postman/newman-results.xml
+          DOCKER_COMPOSE: docker compose
+        run: make postman-e2e
 
       - name: Upload Newman results
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: newman-results

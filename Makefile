@@ -1,4 +1,4 @@
-.PHONY: help deps lint test test-integration build docker docker-up docker-down migrate clean dev install-tools test-ci postman-newman postman-e2e run logs migrate-up migrate-up-docker migrate-test migrate-test-docker run-with-encoding
+.PHONY: help deps lint test test-unit test-integration test-integration-ci build docker docker-up docker-down migrate clean dev install-tools test-ci postman-newman postman-e2e postman-e2e-nobuild run logs migrate-up migrate-up-docker migrate-test migrate-test-docker run-with-encoding
 
 # Use docker compose v2 if available; override with DOCKER_COMPOSE="docker-compose" if needed
 DOCKER_COMPOSE ?= docker compose
@@ -39,6 +39,12 @@ test: ## Run unit tests
 	go test -v -race -coverprofile=coverage.out ./...
 	go tool cover -html=coverage.out -o coverage.html
 
+test-unit: ## Run unit tests (exclude DB-backed repository pkg)
+	@set -e; \
+	PKGS=$$(go list ./... | grep -v "/internal/repository$$"); \
+	echo "Running unit tests in: $$PKGS"; \
+	go test -v -race -parallel=8 $$PKGS
+
 test-ci: ## Run tests for CI environment
 	go test -v -race -coverprofile=coverage.out ./...
 
@@ -48,6 +54,12 @@ generate-openapi: ## Regenerate OpenAPI types and server interfaces
 
 test-integration: ## Run only integration tests (loads .env.test if present)
 	@bash -lc 'set -a; [ -f .env.test ] && source .env.test || true; set +a; go test -v -race -run Integration ./...'
+
+test-integration-ci: ## Run repository + httpapi Integration tests (CI services env)
+	@echo "Running repository integration tests..."
+	go test -v -race -parallel=8 ./internal/repository
+	@echo "Running httpapi integration tests..."
+	go test -v -race -parallel=8 ./internal/httpapi -run Integration
 
 test-local: ## Run tests with local Docker services
 	COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) -f docker-compose.test.yml up -d
@@ -208,9 +220,9 @@ postman-newman: ## Run Postman auth tests via Newman (server must be running)
 	  --reporter-junit-export /etc/newman/newman-results.xml
 
 # Spin up test stack, app, then run Newman end-to-end
-postman-e2e: ## Start test services + app and run Newman end-to-end
-	@echo "Starting test stack (DB, Redis, App, IPFS)..."
-	COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) -f docker-compose.test.yml up -d --build
+postman-e2e: ## Start test services + app (no image build) and run Newman end-to-end
+	@echo "Starting test stack (DB, Redis, App via go run, IPFS)..."
+	COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) -f docker-compose.test.yml -f docker-compose.test.override.yml up -d postgres-test redis-test ipfs-test app-test
 	@echo "Waiting for app-test to be healthy..."
 	@for i in $$(seq 1 40); do \
 	  status=$$(docker inspect --format='{{json .State.Health.Status}}' $$(COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) -f docker-compose.test.yml ps -q app-test) 2>/dev/null | tr -d '"'); \
@@ -220,11 +232,11 @@ postman-e2e: ## Start test services + app and run Newman end-to-end
 	@echo "Running Newman inside compose network against http://app-test:8080 ..."
 	COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) -f docker-compose.test.yml run --rm newman || { \
 	  echo "Newman tests failed"; \
-	  COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) -f docker-compose.test.yml down -v; \
+	  COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) -f docker-compose.test.yml -f docker-compose.test.override.yml down -v; \
 	  exit 1; \
 	}
 	@echo "Shutting down test stack..."
-	COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) -f docker-compose.test.yml down -v
+	COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) -f docker-compose.test.yml -f docker-compose.test.override.yml down -v
 
 .PHONY: postman-e2e-nobuild
 postman-e2e-nobuild: ## Start test services without building the app image; run app from Go toolchain in container and then Newman
