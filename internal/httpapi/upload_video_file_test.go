@@ -313,7 +313,7 @@ func TestUploadLargeVideo_VariousChunkSizes(t *testing.T) {
 			t.Fatalf("get session: %v", err)
 		}
 		sp := storage.NewPaths(tempDir)
-	assembledPath := sp.WebVideoFilePath(session.VideoID, filepath.Ext(req.FileName))
+		assembledPath := sp.WebVideoFilePath(session.VideoID, filepath.Ext(req.FileName))
 		out, err := os.ReadFile(assembledPath)
 		if err != nil {
 			t.Fatalf("read assembled: %v", err)
