@@ -37,7 +37,20 @@ go.work
 
 # Docker volumes
 /uploads/
-/storage/
+/storage/*
+!/storage/.gitignore
+!/storage/**/.gitkeep
+!/storage/avatars/
+!/storage/cache/
+!/storage/captions/
+!/storage/logs/
+!/storage/previews/
+!/storage/streaming-playlists/
+!/storage/streaming-playlists/hls/
+!/storage/thumbnails/
+!/storage/torrents/
+!/storage/web-videos/
+!/storage/storyboards/
 /processed/
 /postgres_data/
 /redis_data/
