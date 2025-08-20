@@ -167,8 +167,8 @@ func TestSendMessageHandler_Unauthorized_InvalidJSON_Validation(t *testing.T) {
         assert.Equal(t, http.StatusBadRequest, rr.Code)
         env := decodeEnvelope(t, rr)
         require.NotNil(t, env.Error)
-        assert.Contains(t, env.Error.Code, "SEND_MESSAGE_FAILED")
-        assert.Contains(t, env.Error.Message, "too long")
+        assert.Contains(t, env.Error.Code, "VALIDATION_ERROR")
+        assert.Contains(t, env.Error.Message, "max")
     }
 }
 

@@ -13,6 +13,7 @@ import (
     "github.com/google/uuid"
 
     "athena/internal/middleware"
+    "athena/internal/usecase"
 )
 
 // FuzzSendMessageHandler_InvalidPayloads fuzz-tests the SendMessage handler to ensure
@@ -63,7 +64,9 @@ func FuzzSendMessageHandler_InvalidPayloads(f *testing.F) {
 // FuzzGetMessagesHandler_Query fuzz-tests the query parameters for GetMessages.
 func FuzzGetMessagesHandler_Query(f *testing.F) {
     // No DB or service needed; we only exercise query validation
-    handler := GetMessagesHandler(nil)
+    // Create a mock service to avoid nil pointer dereference
+    mockService := &usecase.MessageService{}
+    handler := GetMessagesHandler(mockService)
 
     f.Add("", 0, 0)
     f.Add("00000000-0000-0000-0000-000000000000", 0, 0)
