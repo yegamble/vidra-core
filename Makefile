@@ -1,4 +1,4 @@
-.PHONY: help deps lint test test-integration build docker docker-up docker-down migrate clean dev install-tools test-ci postman-newman postman-e2e run logs migrate-up migrate-up-docker migrate-test migrate-test-docker run-encoder
+.PHONY: help deps lint test test-integration build docker docker-up docker-down migrate clean dev install-tools test-ci postman-newman postman-e2e run logs migrate-up migrate-up-docker migrate-test migrate-test-docker run-with-encoding
 
 # Use docker compose v2 if available; override with DOCKER_COMPOSE="docker-compose" if needed
 DOCKER_COMPOSE ?= docker compose
@@ -25,10 +25,11 @@ fmt: ## Format Go files
 	@gofmt -s -w $(shell git ls-files "*.go")
 
 fmt-check: ## Verify Go files are formatted
-	@diffs=$(shell gofmt -s -l $(shell git ls-files "*.go")); \
-	if [ -n "$$diffs" ]; then \
-		echo "The following files are not formatted:"; \
-		echo "$$diffs"; \
+	@# Use go fmt which respects modules instead of gofmt directly
+	@unformatted=$$(go fmt ./...); \
+	if [ -n "$$unformatted" ]; then \
+		echo "The following files need formatting:"; \
+		echo "$$unformatted"; \
 		exit 1; \
 	else \
 		echo "All Go files are properly formatted."; \
@@ -246,12 +247,6 @@ ci-test: deps lint test-ci ## Run CI test pipeline
 ci-build: ci-test build ## Run CI build pipeline
 	@echo "CI build pipeline completed successfully!"
 
-ENCODER_WORKERS ?= 2
-METRICS_ADDR ?= :9090
-STORAGE_DIR ?= ./storage
-FFMPEG_PATH ?= ffmpeg
-
-run-encoder: ## Run encoding worker with metrics
-	@echo "Starting encoder (workers=$(ENCODER_WORKERS), metrics=$(METRICS_ADDR))..."
-    @ENCODER_WORKERS=$(ENCODER_WORKERS) METRICS_ADDR=$(METRICS_ADDR) STORAGE_DIR=$(STORAGE_DIR) FFMPEG_PATH=$(FFMPEG_PATH) \
-        go run ./cmd/encoder
+run-with-encoding: ## Run server with encoding workers enabled
+	@echo "Starting server with encoding workers..."
+	@ENABLE_ENCODING=true ENCODING_WORKERS=2 METRICS_ADDR=:9090 go run ./cmd/server

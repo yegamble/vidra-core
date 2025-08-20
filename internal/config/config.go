@@ -120,6 +120,11 @@ type Config struct {
 
 	// Image/Avatar Encoding
 	WebPQuality int
+
+	// Encoding Worker Configuration
+	EnableEncoding  bool
+	EncodingWorkers int
+	MetricsAddr     string
 }
 
 func Load() (*Config, error) {
@@ -253,6 +258,11 @@ func Load() (*Config, error) {
 
 	// Image/Avatar Encoding
 	cfg.WebPQuality = getIntEnv("WEBP_QUALITY", 0)
+
+	// Encoding Worker Configuration
+	cfg.EnableEncoding = getBoolEnv("ENABLE_ENCODING", false)
+	cfg.EncodingWorkers = getIntEnv("ENCODING_WORKERS", 2)
+	cfg.MetricsAddr = getEnvOrDefault("METRICS_ADDR", ":9090")
 
 	return cfg, nil
 }

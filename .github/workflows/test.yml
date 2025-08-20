@@ -91,12 +91,19 @@ jobs:
 
       - name: Check formatting
         run: |
-          # Ensure Go is in modules mode and dependencies are available
+          # Force Go modules mode and disable GOPATH completely
+          unset GOPATH
           export GO111MODULE=on
-          export GOPATH=""
+          export GOPROXY=https://proxy.golang.org,direct
+          # Verify we're in modules mode
+          go env GO111MODULE
+          go env GOPATH
+          go env GOMOD
+          # Download and verify modules
           go mod download
           go mod verify
-          make fmt-check
+          # Check formatting with explicit modules mode
+          GO111MODULE=on make fmt-check
 
       - name: Run unit tests (exclude repository package)
         run: |
