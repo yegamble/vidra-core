@@ -36,11 +36,11 @@ go.work
 .env.*.local
 
 # Docker volumes
-uploads/
-storage/
-processed/
-postgres_data/
-redis_data/
+/uploads/
+/storage/
+/processed/
+/postgres_data/
+/redis_data/
 
 # Temporary files
 tmp/
