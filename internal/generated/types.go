@@ -12,9 +12,9 @@ type User struct {
 	Username          string    `json:"username"`
 	Email             string    `json:"email"`
 	DisplayName       *string   `json:"display_name,omitempty"`
-	AvatarFileID      *string   `json:"avatar_file_id,omitempty"`
-	AvatarIPFSCID     *string   `json:"avatar_ipfs_cid,omitempty"`
-	AvatarWebPIPFSCID *string   `json:"avatar_webp_ipfs_cid,omitempty"`
+	AvatarFileID      *string   `json:"avatar_file_id"`
+	AvatarIPFSCID     *string   `json:"avatar_ipfs_cid"`
+	AvatarWebPIPFSCID *string   `json:"avatar_webp_ipfs_cid"`
 	Bio               *string   `json:"bio,omitempty"`
 	Role              UserRole  `json:"role"`
 	IsActive          bool      `json:"is_active"`

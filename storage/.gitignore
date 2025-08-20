@@ -1,0 +1,16 @@
+# Ignore everything under storage by default
+*
+
+# But allow these placeholders and directories to keep structure tracked
+!.gitignore
+!.gitkeep
+!avatars/
+!cache/
+!captions/
+!logs/
+!previews/
+!streaming-playlists/
+!thumbnails/
+!torrents/
+!web-videos/
+!storyboards/

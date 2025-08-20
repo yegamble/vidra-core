@@ -19,6 +19,7 @@ import (
 	"athena/internal/domain"
 	"athena/internal/middleware"
 	"athena/internal/repository"
+	"athena/internal/storage"
 	"athena/internal/testutil"
 	"athena/internal/usecase"
 	"github.com/go-chi/chi/v5"
@@ -194,7 +195,8 @@ func TestUploadWithActualVideoFile(t *testing.T) {
 		t.Fatalf("get session: %v", err)
 	}
 
-	assembledPath := filepath.Join(tempDir, "completed", session.VideoID+filepath.Ext(req.FileName))
+	sp := storage.NewPaths(tempDir)
+	assembledPath := sp.WebVideoFilePath(session.VideoID, filepath.Ext(req.FileName))
 	assembledBytes, err := os.ReadFile(assembledPath)
 	if err != nil {
 		t.Fatalf("read assembled: %v", err)
@@ -310,7 +312,8 @@ func TestUploadLargeVideo_VariousChunkSizes(t *testing.T) {
 		if err != nil {
 			t.Fatalf("get session: %v", err)
 		}
-		assembledPath := filepath.Join(tempDir, "completed", session.VideoID+filepath.Ext(req.FileName))
+		sp := storage.NewPaths(tempDir)
+		assembledPath := sp.WebVideoFilePath(session.VideoID, filepath.Ext(req.FileName))
 		out, err := os.ReadFile(assembledPath)
 		if err != nil {
 			t.Fatalf("read assembled: %v", err)
@@ -471,7 +474,8 @@ func TestResumeUploadWithActualVideoFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get session: %v", err)
 	}
-	assembledPath := filepath.Join(tempDir, "completed", session.VideoID+filepath.Ext(req.FileName))
+	sp := storage.NewPaths(tempDir)
+	assembledPath := sp.WebVideoFilePath(session.VideoID, filepath.Ext(req.FileName))
 	out, err := os.ReadFile(assembledPath)
 	if err != nil {
 		t.Fatalf("read assembled: %v", err)
@@ -663,7 +667,8 @@ func TestUploadResumeAfterChecksumMismatch_WithVideoFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get session: %v", err)
 	}
-	assembledPath := filepath.Join(tempDir, "completed", session.VideoID+filepath.Ext(req.FileName))
+	sp := storage.NewPaths(tempDir)
+	assembledPath := sp.WebVideoFilePath(session.VideoID, filepath.Ext(req.FileName))
 	out, err := os.ReadFile(assembledPath)
 	if err != nil {
 		t.Fatalf("read assembled: %v", err)

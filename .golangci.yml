@@ -3,16 +3,16 @@ version: 2
 run:
   timeout: 5m
   tests: true
-  skip-dirs:
+  exclude-dirs:
     - vendor
     - bin
     - tmp
     - uploads
-  skip-files:
+  exclude-files:
     - "^internal/generated/.*$"
 
 output:
-  format: colored-line-number
+  formats: colored-line-number
 
 linters:
   enable:

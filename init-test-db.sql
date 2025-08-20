@@ -3,6 +3,8 @@
 
 -- UUID generation extension
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+-- Crypto functions for gen_random_uuid()
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
 -- Full-text search with trigram matching
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
@@ -58,6 +60,7 @@ CREATE TABLE IF NOT EXISTS user_avatars (
     user_id UUID NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
     file_id UUID,
     ipfs_cid TEXT,
+    webp_ipfs_cid TEXT,
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
 );

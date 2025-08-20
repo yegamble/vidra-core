@@ -13,6 +13,7 @@ import (
 	"athena/internal/config"
 	"athena/internal/domain"
 	"athena/internal/repository"
+	"athena/internal/storage"
 	"athena/internal/testutil"
 	"athena/internal/usecase"
 
@@ -79,7 +80,8 @@ func TestUploadService_InitiateUpload(t *testing.T) {
 	assert.Equal(t, req.FileSize, video.FileSize)
 
 	// Verify temp directory was created
-	tempPath := filepath.Join(tempDir, "temp", response.SessionID)
+	sp := storage.NewPaths(tempDir)
+	tempPath := sp.UploadTempDir(response.SessionID)
 	_, err = os.Stat(tempPath)
 	assert.NoError(t, err)
 }
@@ -354,7 +356,8 @@ func TestUploadService_CompleteUpload(t *testing.T) {
 	assert.Equal(t, domain.StatusQueued, video.Status)
 
 	// Verify final file was created and content is correct
-	finalPath := filepath.Join(tempDir, "completed", session.VideoID+".mp4")
+	sp := storage.NewPaths(tempDir)
+	finalPath := sp.WebVideoFilePath(session.VideoID, ".mp4")
 	assembledData, err := os.ReadFile(finalPath)
 	require.NoError(t, err)
 	assert.Equal(t, testData, assembledData)
