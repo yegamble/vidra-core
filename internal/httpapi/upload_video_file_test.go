@@ -22,7 +22,7 @@ import (
 	"athena/internal/storage"
 	"athena/internal/testutil"
 	"athena/internal/usecase"
-	"github.com/go-chi/chi/v5"
+	chi "github.com/go-chi/chi/v5"
 )
 
 // writeMinimalMP4 creates a tiny, valid-looking MP4 file with an ftyp and mdat box.

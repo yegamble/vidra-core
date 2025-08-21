@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/go-chi/chi/v5"
-	"github.com/go-playground/validator/v10"
+	chi "github.com/go-chi/chi/v5"
+	validator "github.com/go-playground/validator/v10"
 
 	"athena/internal/domain"
 	"athena/internal/middleware"

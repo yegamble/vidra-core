@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/go-chi/chi/v5"
+	chi "github.com/go-chi/chi/v5"
 
 	"athena/internal/domain"
 	"athena/internal/middleware"

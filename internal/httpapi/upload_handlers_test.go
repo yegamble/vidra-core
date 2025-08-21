@@ -18,7 +18,7 @@ import (
 	"athena/internal/repository"
 	"athena/internal/testutil"
 	"athena/internal/usecase"
-	"github.com/go-chi/chi/v5"
+	chi "github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
