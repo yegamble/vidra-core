@@ -136,7 +136,7 @@ func deriveTestSchema() string {
 	for i := 1; i < 15; i++ {
 		if _, file, _, ok := runtime.Caller(i); ok {
 			base := filepath.Base(file)
-			if strings.HasSuffix(base, "_test.go") && !strings.Contains(file, string(filepath.Join("internal", "testutil"))) {
+			if strings.HasSuffix(base, "_test.go") && !strings.Contains(file, filepath.Join("internal", "testutil")) {
 				// Use directory name as package differentiator
 				dir := filepath.Dir(file)
 				// e.g., internal/repository or internal/httpapi

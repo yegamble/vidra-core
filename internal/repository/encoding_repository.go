@@ -180,6 +180,10 @@ func (r *encodingRepository) GetPendingJobs(ctx context.Context, limit int) ([]*
 		jobs = append(jobs, &job)
 	}
 
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating over rows: %w", err)
+	}
+
 	return jobs, nil
 }
 
@@ -300,6 +304,11 @@ func (r *encodingRepository) GetJobCounts(ctx context.Context) (map[string]int64
 		}
 		counts[status] = c
 	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating over rows: %w", err)
+	}
+
 	return counts, nil
 }
 
