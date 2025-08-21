@@ -111,7 +111,7 @@ func (s *Server) parseAvatarFile(r *http.Request) (*avatarFileData, error) {
 	// Determine extension early and validate
 	ext := filepath.Ext(header.Filename)
 	if !validAvatarExt(ext) {
-		return nil, domain.NewDomainError("INVALID_FILE_EXTENSION", "Invalid file extension")
+		return nil, fmt.Errorf("invalid file extension: %w", domain.ErrBadRequest)
 	}
 
 	// MIME type sniffing from first 512 bytes
@@ -142,11 +142,11 @@ func (s *Server) validateFileType(ext, contentType string) error {
 	// Strict by default; allow extension-only fallback when ValidationTestMode is enabled
 	if s.cfg != nil && s.cfg.ValidationTestMode {
 		if !allowedByExt && !allowedByMime {
-			return domain.NewDomainError("INVALID_MIME_TYPE", "Only PNG and JPEG images are allowed")
+			return fmt.Errorf("only PNG and JPEG images are allowed: %w", domain.ErrBadRequest)
 		}
 	} else {
 		if !allowedByMime {
-			return domain.NewDomainError("INVALID_MIME_TYPE", "Only PNG and JPEG images are allowed")
+			return fmt.Errorf("only PNG and JPEG images are allowed: %w", domain.ErrBadRequest)
 		}
 	}
 	return nil
