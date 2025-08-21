@@ -269,6 +269,10 @@ func (r *messageRepository) GetConversations(ctx context.Context, userID string,
 		conversations = append(conversations, &conv)
 	}
 
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating over rows: %w", err)
+	}
+
 	return conversations, nil
 }
 

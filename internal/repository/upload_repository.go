@@ -239,5 +239,9 @@ func (r *uploadRepository) GetExpiredSessions(ctx context.Context) ([]*domain.Up
 		sessions = append(sessions, &session)
 	}
 
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating over rows: %w", err)
+	}
+
 	return sessions, nil
 }
