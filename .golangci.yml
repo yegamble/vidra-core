@@ -11,6 +11,7 @@ linters:
     - errcheck
     - ineffassign
     - unused
+    - typecheck
 
 issues:
   max-issues-per-linter: 50
