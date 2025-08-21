@@ -140,6 +140,10 @@ func (r *messageRepository) GetMessages(ctx context.Context, userID string, othe
 		messages = append(messages, &message)
 	}
 
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating over rows: %w", err)
+	}
+
 	return messages, nil
 }
 
