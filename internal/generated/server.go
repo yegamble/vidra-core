@@ -5,7 +5,7 @@ package generated
 import (
 	"net/http"
 
-	"github.com/go-chi/chi/v5"
+	chi "github.com/go-chi/chi/v5"
 )
 
 // ServerInterface represents all server handlers.
