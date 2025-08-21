@@ -8,12 +8,12 @@ import (
 	"athena/internal/domain"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/mock"
+	testifymock "github.com/stretchr/testify/mock"
 )
 
 // MockMessageRepository is a mock implementation of MessageRepository
 type MockMessageRepository struct {
-	mock.Mock
+	testifymock.Mock
 }
 
 func (m *MockMessageRepository) CreateMessage(ctx context.Context, message *domain.Message) error {
@@ -53,7 +53,7 @@ func (m *MockMessageRepository) GetUnreadCount(ctx context.Context, userID strin
 
 // MockUserRepository is a mock implementation of UserRepository for testing
 type MockUserRepository struct {
-	mock.Mock
+	testifymock.Mock
 }
 
 func (m *MockUserRepository) Create(ctx context.Context, user *domain.User, passwordHash string) error {
@@ -143,7 +143,7 @@ func TestMessageService_SendMessage(t *testing.T) {
 
 		mockUserRepo.On("GetByID", ctx, senderID).Return(sender, nil)
 		mockUserRepo.On("GetByID", ctx, recipientID).Return(recipient, nil)
-		mockMessageRepo.On("CreateMessage", ctx, mock.AnythingOfType("*domain.Message")).Return(nil)
+		mockMessageRepo.On("CreateMessage", ctx, testifymock.AnythingOfType("*domain.Message")).Return(nil)
 
 		message, err := service.SendMessage(ctx, senderID, req)
 
