@@ -67,8 +67,15 @@ func main() {
 		go func() {
 			metricsRouter := http.NewServeMux()
 			metricsRouter.HandleFunc("/metrics", metrics.Handler)
+			metricsServer := &http.Server{
+				Addr:         cfg.MetricsAddr,
+				Handler:      metricsRouter,
+				ReadTimeout:  10 * time.Second,
+				WriteTimeout: 10 * time.Second,
+				IdleTimeout:  30 * time.Second,
+			}
 			log.Printf("Starting metrics server on %s", cfg.MetricsAddr)
-			if err := http.ListenAndServe(cfg.MetricsAddr, metricsRouter); err != nil {
+			if err := metricsServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 				log.Printf("Metrics server error: %v", err)
 			}
 		}()

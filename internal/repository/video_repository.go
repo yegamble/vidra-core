@@ -20,6 +20,35 @@ func NewVideoRepository(db *sqlx.DB) usecase.VideoRepository {
 	return &videoRepository{db: db}
 }
 
+// scanVideoRow is a helper function to scan a video row and reduce duplication
+func scanVideoRow(rows *sql.Rows) (*domain.Video, error) {
+	var v domain.Video
+	var processedCIDsJSON, metadataJSON []byte
+	var tags pq.StringArray
+
+	err := rows.Scan(
+		&v.ID, &v.ThumbnailID, &v.Title, &v.Description, &v.Duration, &v.Views,
+		&v.Privacy, &v.Status, &v.UploadDate, &v.UserID,
+		&v.OriginalCID, &processedCIDsJSON, &v.ThumbnailCID,
+		&tags, &v.Category, &v.Language, &v.FileSize, &v.MimeType, &metadataJSON,
+		&v.CreatedAt, &v.UpdatedAt,
+	)
+	if err != nil {
+		return nil, domain.NewDomainError("SCAN_FAILED", "Failed to scan video row")
+	}
+
+	// Unmarshal JSON fields
+	if len(processedCIDsJSON) > 0 {
+		_ = json.Unmarshal(processedCIDsJSON, &v.ProcessedCIDs)
+	}
+	if len(metadataJSON) > 0 {
+		_ = json.Unmarshal(metadataJSON, &v.Metadata)
+	}
+	v.Tags = []string(tags)
+
+	return &v, nil
+}
+
 func (r *videoRepository) Create(ctx context.Context, v *domain.Video) error {
 	query := `
         INSERT INTO videos (
@@ -128,31 +157,11 @@ func (r *videoRepository) GetByUserID(ctx context.Context, userID string, limit,
 
 	var videos []*domain.Video
 	for rows.Next() {
-		var v domain.Video
-		var processedCIDsJSON, metadataJSON []byte
-		var tags pq.StringArray
-
-		err := rows.Scan(
-			&v.ID, &v.ThumbnailID, &v.Title, &v.Description, &v.Duration, &v.Views,
-			&v.Privacy, &v.Status, &v.UploadDate, &v.UserID,
-			&v.OriginalCID, &processedCIDsJSON, &v.ThumbnailCID,
-			&tags, &v.Category, &v.Language, &v.FileSize, &v.MimeType, &metadataJSON,
-			&v.CreatedAt, &v.UpdatedAt,
-		)
+		v, err := scanVideoRow(rows)
 		if err != nil {
-			return nil, 0, domain.NewDomainError("SCAN_FAILED", "Failed to scan video row")
+			return nil, 0, err
 		}
-
-		// Unmarshal JSON fields
-		if len(processedCIDsJSON) > 0 {
-			_ = json.Unmarshal(processedCIDsJSON, &v.ProcessedCIDs)
-		}
-		if len(metadataJSON) > 0 {
-			_ = json.Unmarshal(metadataJSON, &v.Metadata)
-		}
-		v.Tags = []string(tags)
-
-		videos = append(videos, &v)
+		videos = append(videos, v)
 	}
 
 	return videos, total, nil
@@ -301,31 +310,11 @@ func (r *videoRepository) List(ctx context.Context, req *domain.VideoSearchReque
 
 	var videos []*domain.Video
 	for rows.Next() {
-		var v domain.Video
-		var processedCIDsJSON, metadataJSON []byte
-		var tags pq.StringArray
-
-		err := rows.Scan(
-			&v.ID, &v.ThumbnailID, &v.Title, &v.Description, &v.Duration, &v.Views,
-			&v.Privacy, &v.Status, &v.UploadDate, &v.UserID,
-			&v.OriginalCID, &processedCIDsJSON, &v.ThumbnailCID,
-			&tags, &v.Category, &v.Language, &v.FileSize, &v.MimeType, &metadataJSON,
-			&v.CreatedAt, &v.UpdatedAt,
-		)
+		v, err := scanVideoRow(rows)
 		if err != nil {
-			return nil, 0, domain.NewDomainError("SCAN_FAILED", "Failed to scan video row")
+			return nil, 0, err
 		}
-
-		// Unmarshal JSON fields
-		if len(processedCIDsJSON) > 0 {
-			_ = json.Unmarshal(processedCIDsJSON, &v.ProcessedCIDs)
-		}
-		if len(metadataJSON) > 0 {
-			_ = json.Unmarshal(metadataJSON, &v.Metadata)
-		}
-		v.Tags = []string(tags)
-
-		videos = append(videos, &v)
+		videos = append(videos, v)
 	}
 
 	return videos, total, nil
@@ -435,31 +424,11 @@ func (r *videoRepository) Search(ctx context.Context, req *domain.VideoSearchReq
 
 	var videos []*domain.Video
 	for rows.Next() {
-		var v domain.Video
-		var processedCIDsJSON, metadataJSON []byte
-		var tags pq.StringArray
-
-		err := rows.Scan(
-			&v.ID, &v.ThumbnailID, &v.Title, &v.Description, &v.Duration, &v.Views,
-			&v.Privacy, &v.Status, &v.UploadDate, &v.UserID,
-			&v.OriginalCID, &processedCIDsJSON, &v.ThumbnailCID,
-			&tags, &v.Category, &v.Language, &v.FileSize, &v.MimeType, &metadataJSON,
-			&v.CreatedAt, &v.UpdatedAt,
-		)
+		v, err := scanVideoRow(rows)
 		if err != nil {
-			return nil, 0, domain.NewDomainError("SCAN_FAILED", "Failed to scan video row")
+			return nil, 0, err
 		}
-
-		// Unmarshal JSON fields
-		if len(processedCIDsJSON) > 0 {
-			_ = json.Unmarshal(processedCIDsJSON, &v.ProcessedCIDs)
-		}
-		if len(metadataJSON) > 0 {
-			_ = json.Unmarshal(metadataJSON, &v.Metadata)
-		}
-		v.Tags = []string(tags)
-
-		videos = append(videos, &v)
+		videos = append(videos, v)
 	}
 
 	return videos, total, nil

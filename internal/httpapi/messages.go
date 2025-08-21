@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strconv"
@@ -88,73 +89,53 @@ func GetMessagesHandler(messageService *usecase.MessageService) http.HandlerFunc
 	}
 }
 
+// messageActionHandler is a helper to reduce duplication in message handlers
+func messageActionHandler(w http.ResponseWriter, r *http.Request, action func(ctx context.Context, userID, messageID string) error, errorCode string) {
+	userID, _ := r.Context().Value(middleware.UserIDKey).(string)
+	if userID == "" {
+		WriteError(w, http.StatusUnauthorized, domain.NewDomainError("UNAUTHORIZED", "Missing or invalid authentication"))
+		return
+	}
+
+	messageID := chi.URLParam(r, "messageId")
+	if messageID == "" {
+		WriteError(w, http.StatusBadRequest, domain.NewDomainError("MISSING_PARAMETER", "messageId parameter is required"))
+		return
+	}
+
+	err := action(r.Context(), userID, messageID)
+	if err != nil {
+		status := MapDomainErrorToHTTP(err)
+		WriteError(w, status, domain.NewDomainError(errorCode, err.Error()))
+		return
+	}
+
+	WriteJSON(w, http.StatusOK, map[string]string{"status": "success"})
+}
+
 // MarkMessageReadHandler handles marking a message as read
 func MarkMessageReadHandler(messageService *usecase.MessageService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		userID, _ := r.Context().Value(middleware.UserIDKey).(string)
-		if userID == "" {
-			WriteError(w, http.StatusUnauthorized, domain.NewDomainError("UNAUTHORIZED", "Missing or invalid authentication"))
-			return
-		}
-
-		messageID := chi.URLParam(r, "messageId")
-		if messageID == "" {
-			WriteError(w, http.StatusBadRequest, domain.NewDomainError("MISSING_PARAMETER", "messageId parameter is required"))
-			return
-		}
-
-		req := &domain.MarkMessageReadRequest{
-			MessageID: messageID,
-		}
-
-		if err := validate.Struct(req); err != nil {
-			WriteError(w, http.StatusBadRequest, domain.NewDomainError("VALIDATION_ERROR", err.Error()))
-			return
-		}
-
-		err := messageService.MarkMessageAsRead(r.Context(), userID, req)
-		if err != nil {
-			status := MapDomainErrorToHTTP(err)
-			WriteError(w, status, domain.NewDomainError("MARK_READ_FAILED", err.Error()))
-			return
-		}
-
-		WriteJSON(w, http.StatusOK, map[string]string{"status": "success"})
+		messageActionHandler(w, r, func(ctx context.Context, userID, messageID string) error {
+			req := &domain.MarkMessageReadRequest{MessageID: messageID}
+			if err := validate.Struct(req); err != nil {
+				return domain.NewDomainError("VALIDATION_ERROR", err.Error())
+			}
+			return messageService.MarkMessageAsRead(ctx, userID, req)
+		}, "MARK_READ_FAILED")
 	}
 }
 
 // DeleteMessageHandler handles deleting a message
 func DeleteMessageHandler(messageService *usecase.MessageService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		userID, _ := r.Context().Value(middleware.UserIDKey).(string)
-		if userID == "" {
-			WriteError(w, http.StatusUnauthorized, domain.NewDomainError("UNAUTHORIZED", "Missing or invalid authentication"))
-			return
-		}
-
-		messageID := chi.URLParam(r, "messageId")
-		if messageID == "" {
-			WriteError(w, http.StatusBadRequest, domain.NewDomainError("MISSING_PARAMETER", "messageId parameter is required"))
-			return
-		}
-
-		req := &domain.DeleteMessageRequest{
-			MessageID: messageID,
-		}
-
-		if err := validate.Struct(req); err != nil {
-			WriteError(w, http.StatusBadRequest, domain.NewDomainError("VALIDATION_ERROR", err.Error()))
-			return
-		}
-
-		err := messageService.DeleteMessage(r.Context(), userID, req)
-		if err != nil {
-			status := MapDomainErrorToHTTP(err)
-			WriteError(w, status, domain.NewDomainError("DELETE_MESSAGE_FAILED", err.Error()))
-			return
-		}
-
-		WriteJSON(w, http.StatusOK, map[string]string{"status": "success"})
+		messageActionHandler(w, r, func(ctx context.Context, userID, messageID string) error {
+			req := &domain.DeleteMessageRequest{MessageID: messageID}
+			if err := validate.Struct(req); err != nil {
+				return domain.NewDomainError("VALIDATION_ERROR", err.Error())
+			}
+			return messageService.DeleteMessage(ctx, userID, req)
+		}, "DELETE_MESSAGE_FAILED")
 	}
 }
 
