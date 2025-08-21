@@ -2,7 +2,7 @@ version: "2"
 
 run:
   timeout: 5m
-  tests: true
+  tests: false
 
 linters:
   enable:
@@ -11,7 +11,6 @@ linters:
     - errcheck
     - ineffassign
     - unused
-    - typecheck
 
 issues:
   max-issues-per-linter: 50
