@@ -90,7 +90,7 @@ func (s *uploadService) InitiateUpload(ctx context.Context, userID string, req *
 	sessionID := uuid.NewString()
 	sp := storage.NewPaths(s.uploadsDir)
 	tempDir := sp.UploadTempDir(sessionID)
-	if err := os.MkdirAll(tempDir, 0755); err != nil {
+	if err := os.MkdirAll(tempDir, 0750); err != nil {
 		return nil, fmt.Errorf("failed to create temp directory: %w", err)
 	}
 
@@ -135,6 +135,33 @@ func validUploadExt(ext string) bool {
 	return uploadExtRe.MatchString(ext)
 }
 
+// validateFilePath ensures the file path is within expected boundaries and doesn't contain suspicious elements
+func validateFilePath(path, expectedRoot string) error {
+	// Clean the path to resolve any ../ or ./ elements
+	cleanPath := filepath.Clean(path)
+	
+	// Ensure the path is absolute or make it relative to expected root
+	if !filepath.IsAbs(cleanPath) {
+		cleanPath = filepath.Join(expectedRoot, cleanPath)
+	}
+	
+	// Check if the resolved path is within the expected root
+	if expectedRoot != "" {
+		expectedRoot = filepath.Clean(expectedRoot)
+		rel, err := filepath.Rel(expectedRoot, cleanPath)
+		if err != nil || strings.HasPrefix(rel, "..") {
+			return fmt.Errorf("path traversal detected: %s", path)
+		}
+	}
+	
+	// Additional security checks
+	if strings.Contains(cleanPath, "..") {
+		return fmt.Errorf("path contains directory traversal: %s", path)
+	}
+	
+	return nil
+}
+
 func (s *uploadService) UploadChunk(ctx context.Context, sessionID string, chunk *domain.ChunkUpload) (*domain.ChunkUploadResponse, error) {
 	// Get session
 	session, err := s.uploadRepo.GetSession(ctx, sessionID)
@@ -169,11 +196,11 @@ func (s *uploadService) UploadChunk(ctx context.Context, sessionID string, chunk
 	if !isUploaded {
 		// Save chunk to disk
 		chunkPath := filepath.Join(session.TempFilePath, fmt.Sprintf("chunk_%d", chunk.ChunkIndex))
-		if err := os.MkdirAll(filepath.Dir(chunkPath), 0755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(chunkPath), 0750); err != nil {
 			return nil, fmt.Errorf("failed to create chunk directory: %w", err)
 		}
 
-		if err := os.WriteFile(chunkPath, chunk.Data, 0644); err != nil {
+		if err := os.WriteFile(chunkPath, chunk.Data, 0600); err != nil {
 			return nil, fmt.Errorf("failed to save chunk: %w", err)
 		}
 
@@ -345,11 +372,14 @@ func (s *uploadService) AssembleChunks(ctx context.Context, session *domain.Uplo
 	// Create final file path
 	sp := storage.NewPaths(s.uploadsDir)
 	finalDir := sp.WebVideosDir()
-	if err := os.MkdirAll(finalDir, 0755); err != nil {
+	if err := os.MkdirAll(finalDir, 0750); err != nil {
 		return fmt.Errorf("failed to create completed directory: %w", err)
 	}
 
 	finalPath := filepath.Join(finalDir, session.VideoID+filepath.Ext(session.FileName))
+	if err := validateFilePath(finalPath, s.uploadsDir); err != nil {
+		return fmt.Errorf("invalid final file path: %w", err)
+	}
 	finalFile, err := os.Create(finalPath)
 	if err != nil {
 		return fmt.Errorf("failed to create final file: %w", err)
@@ -367,6 +397,9 @@ func (s *uploadService) AssembleChunks(ctx context.Context, session *domain.Uplo
 	// Assemble chunks in order
 	for _, chunkIndex := range uploadedChunks {
 		chunkPath := filepath.Join(session.TempFilePath, fmt.Sprintf("chunk_%d", chunkIndex))
+		if err := validateFilePath(chunkPath, s.uploadsDir); err != nil {
+			return fmt.Errorf("invalid chunk file path: %w", err)
+		}
 		chunkData, err := os.ReadFile(chunkPath)
 		if err != nil {
 			return fmt.Errorf("failed to read chunk %d: %w", chunkIndex, err)

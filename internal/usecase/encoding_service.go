@@ -138,7 +138,7 @@ func (s *encodingService) processJob(ctx context.Context, job *domain.EncodingJo
 
 	sp := storage.NewPaths(s.uploadsDir)
 	outBaseDir := sp.HLSVideoDir(job.VideoID)
-	if err := os.MkdirAll(outBaseDir, 0o755); err != nil {
+	if err := os.MkdirAll(outBaseDir, 0o750); err != nil {
 		return fmt.Errorf("failed to create output dir: %w", err)
 	}
 
@@ -159,7 +159,7 @@ func (s *encodingService) processJob(ctx context.Context, job *domain.EncodingJo
 		go func(h int, label string) {
 			defer wg.Done()
 			resDir := filepath.Join(outBaseDir, fmt.Sprintf("%dp", h))
-			if err := os.MkdirAll(resDir, 0o755); err != nil {
+			if err := os.MkdirAll(resDir, 0o750); err != nil {
 				errCh <- err
 				return
 			}
@@ -280,7 +280,7 @@ func (s *encodingService) generateMasterPlaylist(outBaseDir string, resolutions 
 			b.WriteString(fmt.Sprintf("%dp/stream.m3u8\n", h))
 		}
 	}
-	return os.WriteFile(filepath.Join(outBaseDir, "master.m3u8"), []byte(b.String()), 0o644)
+	return os.WriteFile(filepath.Join(outBaseDir, "master.m3u8"), []byte(b.String()), 0o600)
 }
 
 func (s *encodingService) execFFmpeg(ctx context.Context, args []string) error {
@@ -288,11 +288,39 @@ func (s *encodingService) execFFmpeg(ctx context.Context, args []string) error {
 	if bin == "" {
 		bin = "ffmpeg"
 	}
+	// Validate binary path to prevent command injection
+	if err := validateBinaryPath(bin); err != nil {
+		return fmt.Errorf("invalid ffmpeg binary path: %w", err)
+	}
 	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("ffmpeg failed: %w", err)
 	}
+	return nil
+}
+
+// validateBinaryPath validates that the binary path is safe to execute
+func validateBinaryPath(path string) error {
+	// For system binaries like "ffmpeg", allow simple names
+	if !strings.Contains(path, "/") && !strings.Contains(path, "\\") {
+		// Simple binary name, should be in PATH - this is safe
+		return nil
+	}
+	
+	// For full paths, ensure they don't contain suspicious elements
+	cleanPath := filepath.Clean(path)
+	
+	// Reject paths containing directory traversal
+	if strings.Contains(cleanPath, "..") {
+		return fmt.Errorf("path contains directory traversal: %s", path)
+	}
+	
+	// Reject paths with suspicious characters that could be used for injection
+	if strings.ContainsAny(cleanPath, ";|&$`") {
+		return fmt.Errorf("path contains suspicious characters: %s", path)
+	}
+	
 	return nil
 }

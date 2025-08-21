@@ -93,7 +93,7 @@ func TestUploadAvatar_ValidPNG_WithMockIPFS(t *testing.T) {
 	testIPFSPin = func(cid string) error { return nil }
 	defer func() { testIPFSPin = nil }()
 	testEncodeToWebP = func(src, dst string) error {
-		return os.WriteFile(dst, []byte("webp"), 0644)
+		return os.WriteFile(dst, []byte("webp"), 0600)
 	}
 	defer func() { testEncodeToWebP = nil }()
 

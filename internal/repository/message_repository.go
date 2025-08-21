@@ -93,6 +93,10 @@ func (r *messageRepository) GetMessage(ctx context.Context, messageID string, us
 	message.Sender = &sender
 	message.Recipient = &recipient
 
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating over rows: %w", err)
+	}
+
 	return &message, nil
 }
 

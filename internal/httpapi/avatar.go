@@ -168,6 +168,10 @@ func (s *Server) saveAvatarLocally(fileData *avatarFileData) (string, error) {
 	fileID := uuid.NewString()
 	localPath := paths.AvatarFilePath(fileID, fileData.ext)
 	
+	// Validate path to prevent directory traversal
+	if err := validateAvatarPath(localPath, root); err != nil {
+		return "", domain.NewDomainError("INVALID_PATH", "Invalid file path")
+	}
 	out, err := os.Create(localPath)
 	if err != nil {
 		return "", domain.NewDomainError("STORAGE_ERROR", "Failed to save file")
@@ -292,9 +296,44 @@ func validAvatarExt(ext string) bool {
 	return avatarExtRe.MatchString(ext)
 }
 
+// validateAvatarPath ensures the avatar path is within expected boundaries
+func validateAvatarPath(path, expectedRoot string) error {
+	// Clean the path to resolve any ../ or ./ elements
+	cleanPath := filepath.Clean(path)
+	
+	// Ensure the path is absolute or make it relative to expected root
+	if !filepath.IsAbs(cleanPath) {
+		cleanPath = filepath.Join(expectedRoot, cleanPath)
+	}
+	
+	// Check if the resolved path is within the expected root
+	if expectedRoot != "" {
+		expectedRoot = filepath.Clean(expectedRoot)
+		rel, err := filepath.Rel(expectedRoot, cleanPath)
+		if err != nil || strings.HasPrefix(rel, "..") {
+			return fmt.Errorf("path traversal detected: %s", path)
+		}
+	}
+	
+	// Additional security checks
+	if strings.Contains(cleanPath, "..") {
+		return fmt.Errorf("path contains directory traversal: %s", path)
+	}
+	
+	return nil
+}
+
 func (s *Server) ipfsAdd(path string) (string, error) {
 	if s.ipfsAPI == "" {
 		return "", fmt.Errorf("ipfs api not configured")
+	}
+	// Validate file path to prevent directory traversal
+	root := "./storage"
+	if s.cfg != nil && s.cfg.StorageDir != "" {
+		root = s.cfg.StorageDir
+	}
+	if err := validateAvatarPath(path, root); err != nil {
+		return "", fmt.Errorf("invalid file path: %w", err)
 	}
 	f, err := os.Open(path)
 	if err != nil {
@@ -342,6 +381,14 @@ func (s *Server) ipfsAdd(path string) (string, error) {
 func (s *Server) ipfsClusterAdd(path string) (string, error) {
 	if s.ipfsClusterAPI == "" {
 		return "", fmt.Errorf("ipfs cluster api not configured")
+	}
+	// Validate file path to prevent directory traversal
+	root := "./storage"
+	if s.cfg != nil && s.cfg.StorageDir != "" {
+		root = s.cfg.StorageDir
+	}
+	if err := validateAvatarPath(path, root); err != nil {
+		return "", fmt.Errorf("invalid file path: %w", err)
 	}
 	f, err := os.Open(path)
 	if err != nil {

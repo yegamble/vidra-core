@@ -51,7 +51,7 @@ func RegisterRoutes(r chi.Router, cfg *config.Config) {
 		filepath.Join(storageRoot, "storyboards"),
 	}
 	for _, d := range storageDirs {
-		if err := os.MkdirAll(d, 0755); err != nil {
+		if err := os.MkdirAll(d, 0750); err != nil {
 			panic(fmt.Errorf("failed to create storage dir %s: %w", d, err))
 		}
 	}
