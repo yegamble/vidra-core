@@ -139,12 +139,12 @@ func validUploadExt(ext string) bool {
 func validateFilePath(path, expectedRoot string) error {
 	// Clean the path to resolve any ../ or ./ elements
 	cleanPath := filepath.Clean(path)
-	
+
 	// Ensure the path is absolute or make it relative to expected root
 	if !filepath.IsAbs(cleanPath) {
 		cleanPath = filepath.Join(expectedRoot, cleanPath)
 	}
-	
+
 	// Check if the resolved path is within the expected root
 	if expectedRoot != "" {
 		expectedRoot = filepath.Clean(expectedRoot)
@@ -153,12 +153,12 @@ func validateFilePath(path, expectedRoot string) error {
 			return fmt.Errorf("path traversal detected: %s", path)
 		}
 	}
-	
+
 	// Additional security checks
 	if strings.Contains(cleanPath, "..") {
 		return fmt.Errorf("path contains directory traversal: %s", path)
 	}
-	
+
 	return nil
 }
 

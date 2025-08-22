@@ -247,7 +247,7 @@ func TestUploadAvatar_WebPExtensionAccepted(t *testing.T) {
 	if rr.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400 for invalid image data, got %d body=%s", rr.Code, rr.Body.String())
 	}
-	
+
 	// Check that the error message is about image corruption, not extension
 	if !strings.Contains(rr.Body.String(), "invalid or corrupted image file") {
 		t.Fatalf("expected 'invalid or corrupted image file' error, got %s", rr.Body.String())
@@ -284,7 +284,7 @@ func TestUploadAvatar_HEICExtensionAccepted(t *testing.T) {
 	if rr.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400 for invalid image data, got %d body=%s", rr.Code, rr.Body.String())
 	}
-	
+
 	// Check that the error message is about image corruption, not extension
 	if !strings.Contains(rr.Body.String(), "invalid or corrupted image file") {
 		t.Fatalf("expected 'invalid or corrupted image file' error, got %s", rr.Body.String())

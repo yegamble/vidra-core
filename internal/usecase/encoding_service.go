@@ -308,19 +308,19 @@ func validateBinaryPath(path string) error {
 		// Simple binary name, should be in PATH - this is safe
 		return nil
 	}
-	
+
 	// For full paths, ensure they don't contain suspicious elements
 	cleanPath := filepath.Clean(path)
-	
+
 	// Reject paths containing directory traversal
 	if strings.Contains(cleanPath, "..") {
 		return fmt.Errorf("path contains directory traversal: %s", path)
 	}
-	
+
 	// Reject paths with suspicious characters that could be used for injection
 	if strings.ContainsAny(cleanPath, ";|&$`") {
 		return fmt.Errorf("path contains suspicious characters: %s", path)
 	}
-	
+
 	return nil
 }

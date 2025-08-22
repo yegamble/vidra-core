@@ -12,7 +12,7 @@ import (
 func CreateTestPNG() []byte {
 	// Create a 16x16 image
 	img := image.NewRGBA(image.Rect(0, 0, 16, 16))
-	
+
 	// Fill with red color
 	red := color.RGBA{255, 0, 0, 255}
 	for y := 0; y < 16; y++ {
@@ -20,13 +20,13 @@ func CreateTestPNG() []byte {
 			img.Set(x, y, red)
 		}
 	}
-	
+
 	// Encode to PNG
 	var buf bytes.Buffer
 	if err := png.Encode(&buf, img); err != nil {
 		panic("failed to encode test PNG: " + err.Error())
 	}
-	
+
 	return buf.Bytes()
 }
 

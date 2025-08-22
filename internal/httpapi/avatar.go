@@ -106,7 +106,7 @@ func (s *Server) parseAvatarFile(r *http.Request) (*avatarFileData, error) {
 	if err := r.ParseMultipartForm(5 << 20); err != nil {
 		return nil, domain.NewDomainError("INVALID_MULTIPART", "Failed to parse form data")
 	}
-	
+
 	file, header, err := r.FormFile("file")
 	if err != nil {
 		return nil, domain.NewDomainError("MISSING_FILE", "Missing file field in form")
@@ -123,7 +123,7 @@ func (s *Server) parseAvatarFile(r *http.Request) (*avatarFileData, error) {
 	var head [512]byte
 	n, _ := file.Read(head[:])
 	contentType := http.DetectContentType(head[:n])
-	
+
 	if err := s.validateFileType(ext, contentType); err != nil {
 		return nil, err
 	}
@@ -145,7 +145,7 @@ func (s *Server) parseAvatarFile(r *http.Request) (*avatarFileData, error) {
 
 	// Reconstruct full reader
 	reader := io.MultiReader(bytes.NewReader(head[:n]), file)
-	
+
 	return &avatarFileData{
 		ext:        ext,
 		headBytes:  head[:n],
@@ -165,10 +165,10 @@ func (s *Server) validateFileType(ext, contentType string) error {
 			break
 		}
 	}
-	
+
 	// Check if content type indicates an image format
 	allowedByMime := strings.HasPrefix(contentType, "image/")
-	
+
 	// Strict by default; allow extension-only fallback when ValidationTestMode is enabled
 	if s.cfg != nil && s.cfg.ValidationTestMode {
 		if !allowedByExt && !allowedByMime {
@@ -202,11 +202,11 @@ func (s *Server) saveAvatarLocally(fileData *avatarFileData) (string, error) {
 	if err := os.MkdirAll(paths.AvatarsDir(), 0750); err != nil {
 		return "", domain.NewDomainError("STORAGE_ERROR", "Failed to prepare storage directory")
 	}
-	
+
 	// Generate an avatar ID used for filenames
 	fileID := uuid.NewString()
 	localPath := paths.AvatarFilePath(fileID, fileData.ext)
-	
+
 	// Validate path to prevent directory traversal
 	if err := validateAvatarPath(localPath, root); err != nil {
 		return "", domain.NewDomainError("INVALID_PATH", "Invalid file path")
@@ -216,14 +216,14 @@ func (s *Server) saveAvatarLocally(fileData *avatarFileData) (string, error) {
 		return "", domain.NewDomainError("STORAGE_ERROR", "Failed to save file")
 	}
 	defer func() { _ = out.Close() }()
-	
+
 	if _, err := io.Copy(out, fileData.fileReader); err != nil {
 		return "", domain.NewDomainError("STORAGE_ERROR", "Failed to write file")
 	}
 
 	// Generate WebP version
 	s.generateWebP(localPath, paths.AvatarWebPPath(fileID))
-	
+
 	return localPath, nil
 }
 
@@ -284,7 +284,7 @@ func (s *Server) pinToIPFS(cid string) error {
 	if pinErr != nil {
 		return domain.NewDomainError("IPFS_PIN_FAILED", "Failed to pin avatar in IPFS")
 	}
-	
+
 	// Best-effort cluster pin
 	if s.ipfsClusterAPI != "" {
 		if testIPFSClusterPin != nil {
@@ -302,7 +302,7 @@ func (s *Server) uploadWebPToIPFS(originalPath string) *string {
 	paths := storage.NewPaths(filepath.Dir(filepath.Dir(originalPath)))
 	fileID := strings.TrimSuffix(filepath.Base(originalPath), filepath.Ext(originalPath))
 	webpPath := paths.AvatarWebPPath(fileID)
-	
+
 	if _, err := os.Stat(webpPath); err != nil {
 		return nil // WebP doesn't exist
 	}
@@ -319,7 +319,7 @@ func (s *Server) uploadWebPToIPFS(originalPath string) *string {
 
 	// Pin best-effort
 	_ = s.pinToIPFS(wcid)
-	
+
 	return &wcid
 }
 
@@ -339,12 +339,12 @@ func validAvatarExt(ext string) bool {
 func validateAvatarPath(path, expectedRoot string) error {
 	// Clean the path to resolve any ../ or ./ elements
 	cleanPath := filepath.Clean(path)
-	
+
 	// Ensure the path is absolute or make it relative to expected root
 	if !filepath.IsAbs(cleanPath) {
 		cleanPath = filepath.Join(expectedRoot, cleanPath)
 	}
-	
+
 	// Check if the resolved path is within the expected root
 	if expectedRoot != "" {
 		expectedRoot = filepath.Clean(expectedRoot)
@@ -353,12 +353,12 @@ func validateAvatarPath(path, expectedRoot string) error {
 			return fmt.Errorf("path traversal detected: %s", path)
 		}
 	}
-	
+
 	// Additional security checks
 	if strings.Contains(cleanPath, "..") {
 		return fmt.Errorf("path contains directory traversal: %s", path)
 	}
-	
+
 	return nil
 }
 

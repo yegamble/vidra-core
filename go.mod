@@ -16,6 +16,7 @@ require (
 	github.com/redis/go-redis/v9 v9.12.1
 	github.com/stretchr/testify v1.10.0
 	golang.org/x/crypto v0.41.0
+	golang.org/x/image v0.24.0
 )
 
 require (
@@ -28,7 +29,6 @@ require (
 	github.com/leodido/go-urn v1.4.0 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/stretchr/objx v0.5.2 // indirect
-	golang.org/x/image v0.24.0 // indirect
 	golang.org/x/net v0.42.0 // indirect
 	golang.org/x/sys v0.35.0 // indirect
 	golang.org/x/text v0.28.0 // indirect
