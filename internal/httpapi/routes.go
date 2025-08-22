@@ -93,11 +93,14 @@ func RegisterRoutes(r chi.Router, cfg *config.Config) {
 	{
 		client := &http.Client{Timeout: time.Duration(cfg.IPFSPingTimeout) * time.Second}
 		resp, err := client.Get(cfg.IPFSApi + "/api/v0/version")
-		if err != nil || resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		if err != nil || (resp != nil && (resp.StatusCode < 200 || resp.StatusCode >= 300)) {
 			if cfg.RequireIPFS {
-				panic(fmt.Errorf("failed to connect to ipfs api at %s", cfg.IPFSApi))
+				log.Printf("ERROR: Failed to connect to IPFS API at %s: %v", cfg.IPFSApi, err)
+				panic(fmt.Errorf("failed to connect to ipfs api at %s: %w", cfg.IPFSApi, err))
 			}
-			log.Printf("warning: IPFS API not reachable at %s: %v (continuing as REQUIRE_IPFS=false)", cfg.IPFSApi, err)
+			log.Printf("WARNING: IPFS API not reachable at %s: %v (continuing as REQUIRE_IPFS=false)", cfg.IPFSApi, err)
+		} else {
+			log.Printf("INFO: Successfully connected to IPFS API at %s", cfg.IPFSApi)
 		}
 		if resp != nil && resp.Body != nil {
 			_ = resp.Body.Close()

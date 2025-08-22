@@ -49,9 +49,9 @@ services:
     healthcheck:
       test: ["CMD", "wget", "--post-data=''", "-qO-", "http://localhost:5001/api/v0/version"]
       interval: 10s
-      timeout: 5s
-      retries: 10
-      start_period: 30s
+      timeout: 10s
+      retries: 15
+      start_period: 60s
     networks:
       - athena-network
 
@@ -72,6 +72,7 @@ services:
       REDIS_URL: redis://redis:6379/0
       JWT_SECRET: ${JWT_SECRET:-your-super-secret-jwt-key-change-in-production}
       IPFS_API: ${IPFS_API:-http://ipfs:5001}
+      REQUIRE_IPFS: ${REQUIRE_IPFS:-false}
       PORT: 8080
     volumes:
       - storage:/app/storage
