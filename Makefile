@@ -1,3 +1,5 @@
+SHELL := /bin/bash
+
 .PHONY: help deps lint test test-unit test-integration test-integration-ci build docker docker-up docker-down clean dev install-tools test-ci postman-newman postman-e2e run logs run-with-encoding
 .PHONY: migrate-dev migrate-test migrate-custom migrate-dev-docker migrate-test-docker
 
