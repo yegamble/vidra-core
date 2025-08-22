@@ -169,15 +169,9 @@ func (s *Server) validateFileType(ext, contentType string) error {
 	// Check if content type indicates an image format
 	allowedByMime := strings.HasPrefix(contentType, "image/")
 
-	// Strict by default; allow extension-only fallback when ValidationTestMode is enabled
-	if s.cfg != nil && s.cfg.ValidationTestMode {
-		if !allowedByExt && !allowedByMime {
-			return fmt.Errorf("unsupported image format: %w", domain.ErrBadRequest)
-		}
-	} else {
-		if !allowedByMime {
-			return fmt.Errorf("unsupported image format: %w", domain.ErrBadRequest)
-		}
+	// Accept the file if either the extension or the MIME type suggests an image
+	if !allowedByExt && !allowedByMime {
+		return fmt.Errorf("unsupported image format: %w", domain.ErrBadRequest)
 	}
 	return nil
 }
