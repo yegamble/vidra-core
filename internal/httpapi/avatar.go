@@ -19,10 +19,10 @@ import (
 	"strings"
 	"time"
 
+	_ "github.com/HugoSmits86/nativewebp"
 	"github.com/google/uuid"
 	_ "golang.org/x/image/tiff"
 	_ "golang.org/x/image/webp"
-	_ "github.com/HugoSmits86/nativewebp"
 
 	"athena/internal/domain"
 	"athena/internal/imageutil"
@@ -183,7 +183,7 @@ func (s *Server) validateImageDecoding(r io.Reader) error {
 	// Read first 32 bytes to check for special formats like HEIC
 	var header [32]byte
 	n, _ := r.Read(header[:])
-	
+
 	// Check for HEIC/HEIF files (they have 'ftyp' box at offset 4 and brand at offset 8)
 	if n >= 12 && string(header[4:8]) == "ftyp" {
 		brand := string(header[8:12])
@@ -191,7 +191,7 @@ func (s *Server) validateImageDecoding(r io.Reader) error {
 			return nil // HEIC/HEIF files are valid
 		}
 	}
-	
+
 	// For other formats, create a new reader with the header and try to decode
 	fullReader := io.MultiReader(bytes.NewReader(header[:n]), r)
 	_, _, err := image.DecodeConfig(fullReader)

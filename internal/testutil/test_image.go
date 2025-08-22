@@ -8,8 +8,8 @@ import (
 	"image/jpeg"
 	"image/png"
 
-	"golang.org/x/image/tiff"
 	"github.com/HugoSmits86/nativewebp"
+	"golang.org/x/image/tiff"
 )
 
 // CreateTestPNG creates a small valid PNG image (16x16 red square)
@@ -133,6 +133,6 @@ func CreateTestHEIC() []byte {
 		0x68, 0x65, 0x69, 0x63, // 'heic'
 		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // padding
 	}
-	
+
 	return heicHeader
 }

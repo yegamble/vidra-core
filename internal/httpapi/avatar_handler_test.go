@@ -350,13 +350,17 @@ func TestUploadAvatar_ValidWebP_WithMockIPFS(t *testing.T) {
 	}
 	if got.AvatarIPFSCID == nil || *got.AvatarIPFSCID != "CIDWEBP3" {
 		t.Fatalf("expected CIDWEBP3, got avatar CID: %v", func() string {
-			if got.AvatarIPFSCID == nil { return "<nil>" }
+			if got.AvatarIPFSCID == nil {
+				return "<nil>"
+			}
 			return *got.AvatarIPFSCID
 		}())
 	}
 	if got.AvatarWebPIPFSCID == nil || *got.AvatarWebPIPFSCID != "CIDWEBP3" {
 		t.Fatalf("expected CIDWEBP3 for webp, got WebP CID: %v", func() string {
-			if got.AvatarWebPIPFSCID == nil { return "<nil>" }
+			if got.AvatarWebPIPFSCID == nil {
+				return "<nil>"
+			}
 			return *got.AvatarWebPIPFSCID
 		}())
 	}
@@ -557,7 +561,7 @@ func TestUploadAvatar_ValidHEIC_WithMockIPFS(t *testing.T) {
 	}
 }
 
-// Test that GIF extension is accepted  
+// Test that GIF extension is accepted
 func TestUploadAvatar_GIFExtensionAccepted(t *testing.T) {
 	s := NewServer(nil, nil, "test", nil, 0, "", "", 0, nil)
 

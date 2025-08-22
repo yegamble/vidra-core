@@ -1,16 +1,6 @@
-# Ignore everything under storage by default
+# Ignore all runtime artifacts under storage
 *
 
-# But allow these placeholders and directories to keep structure tracked
+# Keep only placeholders tracked
 !.gitignore
 !.gitkeep
-!avatars/
-!cache/
-!captions/
-!logs/
-!previews/
-!streaming-playlists/
-!thumbnails/
-!torrents/
-!web-videos/
-!storyboards/
