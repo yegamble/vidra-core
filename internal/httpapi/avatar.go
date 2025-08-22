@@ -5,6 +5,10 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"image"
+	_ "image/gif"
+	_ "image/jpeg"
+	_ "image/png"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -16,6 +20,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	_ "golang.org/x/image/webp"
 
 	"athena/internal/domain"
 	"athena/internal/imageutil"
@@ -123,7 +128,22 @@ func (s *Server) parseAvatarFile(r *http.Request) (*avatarFileData, error) {
 		return nil, err
 	}
 
-	// Reconstruct full reader: prepend sniffed bytes back before the remainder
+	// Additional validation: try to decode the image to ensure it's valid
+	testReader := io.MultiReader(bytes.NewReader(head[:n]), file)
+	if err := s.validateImageDecoding(testReader); err != nil {
+		return nil, err
+	}
+
+	// Seek back to beginning to reconstruct the reader
+	if seeker, ok := file.(io.Seeker); ok {
+		if _, err := seeker.Seek(0, io.SeekStart); err != nil {
+			return nil, domain.NewDomainError("FILE_ERROR", "Failed to reset file position")
+		}
+	} else {
+		return nil, domain.NewDomainError("FILE_ERROR", "File does not support seeking")
+	}
+
+	// Reconstruct full reader
 	reader := io.MultiReader(bytes.NewReader(head[:n]), file)
 	
 	return &avatarFileData{
@@ -134,20 +154,39 @@ func (s *Server) parseAvatarFile(r *http.Request) (*avatarFileData, error) {
 	}, nil
 }
 
-// validateFileType checks if the file type is allowed
+// validateFileType checks if the file type is allowed by attempting to decode it
 func (s *Server) validateFileType(ext, contentType string) error {
-	allowedByExt := strings.EqualFold(ext, ".png") || strings.EqualFold(ext, ".jpg") || strings.EqualFold(ext, ".jpeg")
-	allowedByMime := contentType == "image/png" || contentType == "image/jpeg"
+	// Common image extensions that should be supported
+	allowedExts := []string{".png", ".jpg", ".jpeg", ".gif", ".webp", ".heic", ".heif"}
+	allowedByExt := false
+	for _, allowedExt := range allowedExts {
+		if strings.EqualFold(ext, allowedExt) {
+			allowedByExt = true
+			break
+		}
+	}
+	
+	// Check if content type indicates an image format
+	allowedByMime := strings.HasPrefix(contentType, "image/")
 	
 	// Strict by default; allow extension-only fallback when ValidationTestMode is enabled
 	if s.cfg != nil && s.cfg.ValidationTestMode {
 		if !allowedByExt && !allowedByMime {
-			return fmt.Errorf("only PNG and JPEG images are allowed: %w", domain.ErrBadRequest)
+			return fmt.Errorf("unsupported image format: %w", domain.ErrBadRequest)
 		}
 	} else {
 		if !allowedByMime {
-			return fmt.Errorf("only PNG and JPEG images are allowed: %w", domain.ErrBadRequest)
+			return fmt.Errorf("unsupported image format: %w", domain.ErrBadRequest)
 		}
+	}
+	return nil
+}
+
+// validateImageDecoding attempts to decode the image to ensure it's a valid format
+func (s *Server) validateImageDecoding(r io.Reader) error {
+	_, _, err := image.DecodeConfig(r)
+	if err != nil {
+		return fmt.Errorf("invalid or corrupted image file: %w", domain.ErrBadRequest)
 	}
 	return nil
 }
