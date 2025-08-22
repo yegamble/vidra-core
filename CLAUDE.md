@@ -82,6 +82,22 @@ Rebuild PeerTube’s backend in Go using: **Chi**, **SQLX+PostgreSQL** (`pg_trgm
 - **Hot** local cache → **Warm** IPFS → **Cold** S3-compatible (Backblaze/DO/AWS).
 - Promotion/demotion by access metrics; async seeding between tiers.
 
+## User Messaging
+
+User messaging is implemented with a dedicated schema and functions to ensure conversations are ordered correctly. The system supports:
+
+| **Category**        | **Supported Formats**                                   | **Max File Size**                           | **Notes** |
+|----------------------|---------------------------------------------------------|---------------------------------------------|-----------|
+| **Images**          | JPEG, PNG, GIF, WebP, HEIC (auto-converted to JPEG)     | ~25 MB                                      | SVG not supported. Animated GIFs display inline. |
+| **Videos**          | MP4, MOV                                                | ~25 MB (mobile), up to 100–150 MB (desktop/web) | Messenger compresses video for playback. |
+| **Audio**           | MP3, M4A, WAV, AAC                                      | ~25 MB                                      | Also supports in-app recorded voice notes. |
+| **Documents/Files** | PDF, DOC, DOCX, XLS, XLSX, PPT, TXT, ZIP, RAR, others   | ~25 MB                                      | Wide support on web/desktop upload. |
+| **Links**           | Any URL                                                 | N/A                                         | Auto-generates preview (title, description, thumbnail). |
+| **Stickers & GIFs** | Giphy, Tenor                            | N/A                                         | Only via integrations, not as raw files. |
+| **Other**           | Contact cards, locations, payments (region-specific)    | N/A                                         | Context-specific in mobile app. |
+
+- Suppport for secure mode where a conversation is encrypted end-to-end, with user's PGP keys and is secure by a passphrase or 6 digit code.
+
 ---
 
 ## Linting & Code Quality
