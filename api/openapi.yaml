@@ -264,7 +264,32 @@ paths:
       tags:
         - Users
       summary: Upload user avatar
-      description: Uploads a user avatar image, stores it, uploads to IPFS and pins it. Returns the updated user with avatar identifiers.
+      description: |
+        Uploads a user avatar image with comprehensive format support and security validation.
+        
+        **Supported Formats:**
+        - PNG - Standard format with WebP conversion
+        - JPEG/JPG - Standard format with WebP conversion  
+        - WebP - Modern format (direct upload, no conversion needed)
+        - HEIC/HEIF - Apple format with special file signature validation
+        - GIF - Animation-capable format with WebP conversion
+        - TIFF/TIF - High-quality format with WebP conversion
+        
+        **Security Features:**
+        - Extension validation (only image extensions allowed)
+        - MIME type verification via Content-Type header
+        - File content validation through image decoding
+        - HEIC special handling via file signature detection
+        - Executable file detection and rejection
+        - 5MB file size limit
+        
+        **Processing:**
+        - Original image stored and uploaded to IPFS
+        - WebP optimization automatically generated (except for WebP uploads)
+        - Both original and WebP versions pinned in IPFS
+        - User record updated with IPFS content identifiers
+        
+        **Response includes both avatar_ipfs_cid (original) and avatar_webp_ipfs_cid (optimized)**
       operationId: uploadUserAvatar
       requestBody:
         required: true
@@ -276,33 +301,145 @@ paths:
                 file:
                   type: string
                   format: binary
-                  description: Avatar image file
+                  description: |
+                    Avatar image file. Must be a valid image in one of the supported formats:
+                    PNG, JPEG, WebP, HEIC, GIF, or TIFF. Maximum size: 5MB.
               required: [file]
+            examples:
+              png_upload:
+                summary: PNG image upload
+                value:
+                  file: "(binary PNG data)"
+              jpeg_upload:
+                summary: JPEG image upload  
+                value:
+                  file: "(binary JPEG data)"
+              webp_upload:
+                summary: WebP image upload
+                value:
+                  file: "(binary WebP data)"
+              heic_upload:
+                summary: HEIC image upload (Apple format)
+                value:
+                  file: "(binary HEIC data)"
+              gif_upload:
+                summary: GIF image upload
+                value:
+                  file: "(binary GIF data)"
+              tiff_upload:
+                summary: TIFF image upload
+                value:
+                  file: "(binary TIFF data)"
       responses:
         '200':
           description: Avatar uploaded successfully
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/User'
+                $ref: '#/components/schemas/WrappedUserResponse'
+              examples:
+                successful_upload:
+                  summary: Successful avatar upload
+                  value:
+                    success: true
+                    data:
+                      id: "user-123"
+                      username: "johndoe"
+                      email: "john@example.com"
+                      display_name: "John Doe"
+                      avatar_ipfs_cid: "bafybeigdyrzt5n3q4h7v6s6l4xgk7g6v7m3kz7l2o3q4r5s6t7u8v9w0x"
+                      avatar_webp_ipfs_cid: "bafybeigdyrzt5n3q4h7v6s6l4xgk7g6v7m3kz7l2o3q4r5s6t7u8v9w0y"
+                      bio: null
+                      bitcoin_wallet: null
+                      role: "user"
+                      is_active: true
+                      created_at: "2024-01-01T12:00:00Z"
+                      updated_at: "2024-01-01T12:00:00Z"
         '400':
-          description: Invalid request or missing file
+          description: Invalid request, unsupported format, or corrupted file
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                missing_file:
+                  summary: No file provided
+                  value:
+                    success: false
+                    error:
+                      code: "MISSING_FILE"
+                      message: "Missing file field in form"
+                      details: {}
+                invalid_extension:
+                  summary: Invalid file extension
+                  value:
+                    success: false
+                    error:
+                      code: "INVALID_FILE_EXTENSION" 
+                      message: "invalid file extension: bad request"
+                      details: {}
+                unsupported_format:
+                  summary: Unsupported image format
+                  value:
+                    success: false
+                    error:
+                      code: "UNSUPPORTED_FORMAT"
+                      message: "unsupported image format: bad request"
+                      details: {}
+                corrupted_image:
+                  summary: Invalid or corrupted image file
+                  value:
+                    success: false
+                    error:
+                      code: "INVALID_IMAGE"
+                      message: "invalid or corrupted image file: bad request"
+                      details: {}
+                malicious_file:
+                  summary: Executable file disguised as image
+                  value:
+                    success: false
+                    error:
+                      code: "INVALID_IMAGE"
+                      message: "invalid or corrupted image file: bad request"
+                      details: {}
+                file_too_large:
+                  summary: File exceeds size limit
+                  value:
+                    success: false
+                    error:
+                      code: "FILE_TOO_LARGE"
+                      message: "File size exceeds 5MB limit"
+                      details: {}
         '401':
-          description: Unauthorized
+          description: Unauthorized - missing or invalid authentication token
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                no_auth:
+                  summary: Missing Authorization header
+                  value:
+                    success: false
+                    error:
+                      code: "UNAUTHORIZED"
+                      message: "Missing or invalid authentication"
+                      details: {}
         '503':
-          description: IPFS upload failure
+          description: IPFS service unavailable
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                ipfs_unavailable:
+                  summary: IPFS upload failed
+                  value:
+                    success: false
+                    error:
+                      code: "IPFS_UPLOAD_FAILED"
+                      message: "Failed to upload to IPFS"
+                      details: {}
 
   /api/v1/videos/{id}/stream:
     get:
@@ -624,6 +761,18 @@ components:
         - status
         - checks
         - timestamp
+
+    WrappedUserResponse:
+      type: object
+      properties:
+        data:
+          $ref: '#/components/schemas/User'
+        success:
+          type: boolean
+          example: true
+      required:
+        - data
+        - success
 
     ErrorResponse:
       type: object
