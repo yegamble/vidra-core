@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 
@@ -119,7 +120,7 @@ func MarkMessageReadHandler(messageService *usecase.MessageService) http.Handler
 		messageActionHandler(w, r, func(ctx context.Context, userID, messageID string) error {
 			req := &domain.MarkMessageReadRequest{MessageID: messageID}
 			if err := validate.Struct(req); err != nil {
-				return domain.NewDomainError("VALIDATION_ERROR", err.Error())
+				return fmt.Errorf("%w: %s", domain.ErrValidation, err.Error())
 			}
 			return messageService.MarkMessageAsRead(ctx, userID, req)
 		}, "MARK_READ_FAILED")
@@ -132,7 +133,7 @@ func DeleteMessageHandler(messageService *usecase.MessageService) http.HandlerFu
 		messageActionHandler(w, r, func(ctx context.Context, userID, messageID string) error {
 			req := &domain.DeleteMessageRequest{MessageID: messageID}
 			if err := validate.Struct(req); err != nil {
-				return domain.NewDomainError("VALIDATION_ERROR", err.Error())
+				return fmt.Errorf("%w: %s", domain.ErrValidation, err.Error())
 			}
 			return messageService.DeleteMessage(ctx, userID, req)
 		}, "DELETE_MESSAGE_FAILED")
