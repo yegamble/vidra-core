@@ -19,4 +19,10 @@ type UserRepository interface {
 	Count(ctx context.Context) (int64, error)
 	// Upsert avatar identifiers for a user
 	SetAvatarFields(ctx context.Context, userID string, ipfsCID sql.NullString, webpCID sql.NullString) error
+	// PGP key management
+	SetPGPPublicKey(ctx context.Context, userID string, pgpPublicKey string) error
+	SetPGPPublicKeyWithFingerprint(ctx context.Context, userID string, pgpPublicKey string, fingerprint string) error
+	RemovePGPPublicKey(ctx context.Context, userID string) error
+	GetPGPPublicKey(ctx context.Context, userID string) (*string, error)
+	GetPGPFingerprint(ctx context.Context, userID string) (*string, error)
 }

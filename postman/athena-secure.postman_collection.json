@@ -1,0 +1,64 @@
+{
+  "info": {
+    "name": "Athena Secure Messaging (PGP)",
+    "_postman_id": "a5f5f3f0-1111-4222-9333-bbbbbbbbbbbb",
+    "description": "PGP key management and secure message flows (encrypted content + signature).",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:8080", "type": "string" }
+  ],
+  "item": [
+    {
+      "name": "Set PGP Key",
+      "request": {
+        "method": "POST",
+        "header": [ { "key": "Authorization", "value": "Bearer {{access_token}}" }, { "key": "Content-Type", "value": "application/json" } ],
+        "url": { "raw": "{{baseUrl}}/api/v1/users/me/pgp", "host": ["{{baseUrl}}"], "path": ["api","v1","users","me","pgp"] },
+        "body": { "mode": "raw", "raw": "{\n  \"pgp_public_key\": \"-----BEGIN PGP PUBLIC KEY BLOCK-----\\n...\\n-----END PGP PUBLIC KEY BLOCK-----\"\n}" }
+      },
+      "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [
+        "pm.test('Status is 200', () => pm.response.to.have.status(200));"
+      ] } } ]
+    },
+    {
+      "name": "Get User PGP Key",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": { "raw": "{{baseUrl}}/api/v1/users/{{user_id}}/pgp", "host": ["{{baseUrl}}"], "path": ["api","v1","users","{{user_id}}","pgp"] }
+      },
+      "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [
+        "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+        "const wrap = pm.response.json();",
+        "pm.test('Has has_pgp_key', () => pm.expect(wrap.data).to.have.property('has_pgp_key'));"
+      ] } } ]
+    },
+    {
+      "name": "Send Secure Message",
+      "request": {
+        "method": "POST",
+        "header": [ { "key": "Authorization", "value": "Bearer {{access_token}}" }, { "key": "Content-Type", "value": "application/json" } ],
+        "url": { "raw": "{{baseUrl}}/api/v1/messages/secure", "host": ["{{baseUrl}}"], "path": ["api","v1","messages","secure"] },
+        "body": { "mode": "raw", "raw": "{\n  \"recipient_id\": \"{{recipient_id}}\",\n  \"encrypted_content\": \"[Encrypted]hello\",\n  \"pgp_signature\": \"sig\"\n}" }
+      },
+      "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [
+        "pm.test('Status is 201', () => pm.response.to.have.status(201));",
+        "const wrap = pm.response.json();",
+        "pm.test('Has message', () => pm.expect(wrap).to.have.property('data'));"
+      ] } } ]
+    },
+    {
+      "name": "Remove PGP Key",
+      "request": {
+        "method": "DELETE",
+        "header": [ { "key": "Authorization", "value": "Bearer {{access_token}}" } ],
+        "url": { "raw": "{{baseUrl}}/api/v1/users/me/pgp", "host": ["{{baseUrl}}"], "path": ["api","v1","users","me","pgp"] }
+      },
+      "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [
+        "pm.test('Status is 200', () => pm.response.to.have.status(200));"
+      ] } } ]
+    }
+  ]
+}
+

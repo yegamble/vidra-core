@@ -1,0 +1,444 @@
+{
+  "info": {
+    "name": "Athena Messages",
+    "_postman_id": "a5f5f3f0-2222-4333-9444-cccccccccccc",
+    "description": "Message flows for fetching conversations, sending messages, and validating conversation_id consistency across secure and regular conversations.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:8080", "type": "string" }
+  ],
+  "item": [
+    {
+      "name": "Get Conversations",
+      "request": {
+        "method": "GET",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{access_token}}" }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/conversations?limit=10&offset=0",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "v1", "conversations"],
+          "query": [
+            { "key": "limit", "value": "10" },
+            { "key": "offset", "value": "0" }
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+              "const response = pm.response.json();",
+              "pm.test('Has conversations array', () => pm.expect(response).to.have.property('conversations'));",
+              "pm.test('Has total count', () => pm.expect(response).to.have.property('total'));",
+              "pm.test('Has has_more flag', () => pm.expect(response).to.have.property('has_more'));",
+              "",
+              "// Store first conversation ID for later use",
+              "if (response.conversations && response.conversations.length > 0) {",
+              "  pm.collectionVariables.set('first_conversation_id', response.conversations[0].id);",
+              "  pm.collectionVariables.set('first_conversation_participant', response.conversations[0].participant_one_id);",
+              "}"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Get Unread Count",
+      "request": {
+        "method": "GET",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{access_token}}" }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/conversations/unread-count",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "v1", "conversations", "unread-count"]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+              "const response = pm.response.json();",
+              "pm.test('Has unread_count', () => pm.expect(response).to.have.property('unread_count'));",
+              "pm.test('unread_count is a number', () => pm.expect(response.unread_count).to.be.a('number'));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Send Regular Message",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{access_token}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/messages",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "v1", "messages"]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"recipient_id\": \"{{recipient_id}}\",\n  \"content\": \"Hello! This is a regular message.\"\n}"
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status is 201', () => pm.response.to.have.status(201));",
+              "const response = pm.response.json();",
+              "pm.test('Has message object', () => pm.expect(response).to.have.property('message'));",
+              "pm.test('Message has conversation_id', () => pm.expect(response.message).to.have.property('conversation_id'));",
+              "pm.test('Message has content', () => pm.expect(response.message).to.have.property('content'));",
+              "pm.test('Message has sender_id', () => pm.expect(response.message).to.have.property('sender_id'));",
+              "pm.test('Message has recipient_id', () => pm.expect(response.message).to.have.property('recipient_id'));",
+              "",
+              "// Store message details for later use",
+              "if (response.message) {",
+              "  pm.collectionVariables.set('last_message_id', response.message.id);",
+              "  pm.collectionVariables.set('last_conversation_id', response.message.conversation_id);",
+              "}"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Get Messages for Conversation",
+      "request": {
+        "method": "GET",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{access_token}}" }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/messages?conversation_with={{recipient_id}}&limit=20&offset=0",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "v1", "messages"],
+          "query": [
+            { "key": "conversation_with", "value": "{{recipient_id}}" },
+            { "key": "limit", "value": "20" },
+            { "key": "offset", "value": "0" }
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+              "const response = pm.response.json();",
+              "pm.test('Has messages array', () => pm.expect(response).to.have.property('messages'));",
+              "pm.test('Has total count', () => pm.expect(response).to.have.property('total'));",
+              "pm.test('Has has_more flag', () => pm.expect(response).to.have.property('has_more'));",
+              "",
+              "// Validate conversation_id consistency across all messages",
+              "if (response.messages && response.messages.length > 0) {",
+              "  const conversationIds = [...new Set(response.messages.map(msg => msg.conversation_id).filter(id => id))];",
+              "  pm.test('All messages have conversation_id', () => {",
+              "    const messagesWithoutConversationId = response.messages.filter(msg => !msg.conversation_id);",
+              "    pm.expect(messagesWithoutConversationId.length).to.equal(0);",
+              "  });",
+              "  ",
+              "  pm.test('All messages in same conversation have same conversation_id', () => {",
+              "    pm.expect(conversationIds.length).to.be.at.most(1);",
+              "  });",
+              "  ",
+              "  // Store conversation ID for validation",
+              "  if (conversationIds.length > 0) {",
+              "    pm.collectionVariables.set('validated_conversation_id', conversationIds[0]);",
+              "  }",
+              "}"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Mark Message as Read",
+      "request": {
+        "method": "PUT",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{access_token}}" }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/messages/{{last_message_id}}/read",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "v1", "messages", "{{last_message_id}}", "read"]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+              "const response = pm.response.json();",
+              "pm.test('Has success flag', () => pm.expect(response).to.have.property('success'));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Start Secure Conversation",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{access_token}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/conversations/secure",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "v1", "conversations", "secure"]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"recipient_id\": \"{{secure_recipient_id}}\"\n}"
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status is 201', () => pm.response.to.have.status(201));",
+              "const response = pm.response.json();",
+              "pm.test('Has success flag', () => pm.expect(response).to.have.property('success'));",
+              "pm.test('Has data object', () => pm.expect(response).to.have.property('data'));",
+              "pm.test('Conversation is secure mode', () => pm.expect(response.data.is_secure_mode).to.be.true);",
+              "",
+              "// Store secure conversation details",
+              "if (response.data) {",
+              "  pm.collectionVariables.set('secure_conversation_id', response.data.id);",
+              "}"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Send Secure Message",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{access_token}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/messages/secure",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "v1", "messages", "secure"]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"recipient_id\": \"{{secure_recipient_id}}\",\n  \"encrypted_content\": \"-----BEGIN PGP MESSAGE-----\\nThis is a test encrypted message\\n-----END PGP MESSAGE-----\",\n  \"pgp_signature\": \"-----BEGIN PGP SIGNATURE-----\\nTest signature\\n-----END PGP SIGNATURE-----\"\n}"
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status is 201', () => pm.response.to.have.status(201));",
+              "const response = pm.response.json();",
+              "pm.test('Has success flag', () => pm.expect(response).to.have.property('success'));",
+              "pm.test('Has data object', () => pm.expect(response).to.have.property('data'));",
+              "pm.test('Message has conversation_id', () => pm.expect(response.data).to.have.property('conversation_id'));",
+              "pm.test('Message has encrypted_content', () => pm.expect(response.data).to.have.property('encrypted_content'));",
+              "pm.test('Message has pgp_signature', () => pm.expect(response.data).to.have.property('pgp_signature'));",
+              "",
+              "// Store secure message details",
+              "if (response.data) {",
+              "  pm.collectionVariables.set('secure_message_id', response.data.id);",
+              "  pm.collectionVariables.set('secure_message_conversation_id', response.data.conversation_id);",
+              "}"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Get Secure Conversation Messages",
+      "request": {
+        "method": "GET",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{access_token}}" }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/messages?conversation_with={{secure_recipient_id}}&limit=20&offset=0",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "v1", "messages"],
+          "query": [
+            { "key": "conversation_with", "value": "{{secure_recipient_id}}" },
+            { "key": "limit", "value": "20" },
+            { "key": "offset", "value": "0" }
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+              "const response = pm.response.json();",
+              "pm.test('Has messages array', () => pm.expect(response).to.have.property('messages'));",
+              "",
+              "// Validate secure conversation consistency",
+              "if (response.messages && response.messages.length > 0) {",
+              "  const secureMessages = response.messages.filter(msg => msg.encrypted_content && msg.pgp_signature);",
+              "  const conversationIds = [...new Set(response.messages.map(msg => msg.conversation_id).filter(id => id))];",
+              "  ",
+              "  pm.test('All secure messages have conversation_id', () => {",
+              "    const messagesWithoutConversationId = secureMessages.filter(msg => !msg.conversation_id);",
+              "    pm.expect(messagesWithoutConversationId.length).to.equal(0);",
+              "  });",
+              "  ",
+              "  pm.test('All secure messages in same conversation have same conversation_id', () => {",
+              "    const secureConversationIds = [...new Set(secureMessages.map(msg => msg.conversation_id).filter(id => id))];",
+              "    pm.expect(secureConversationIds.length).to.be.at.most(1);",
+              "  });",
+              "  ",
+              "  pm.test('Secure messages have encrypted_content', () => {",
+              "    secureMessages.forEach(msg => {",
+              "      pm.expect(msg).to.have.property('encrypted_content');",
+              "      pm.expect(msg.encrypted_content).to.not.be.null;",
+              "    });",
+              "  });",
+              "  ",
+              "  pm.test('Secure messages have pgp_signature', () => {",
+              "    secureMessages.forEach(msg => {",
+              "      pm.expect(msg).to.have.property('pgp_signature');",
+              "      pm.expect(msg.pgp_signature).to.not.be.null;",
+              "    });",
+              "  });",
+              "  ",
+              "  pm.test('Secure messages have is_secure flag', () => {",
+              "    secureMessages.forEach(msg => {",
+              "      pm.expect(msg).to.have.property('is_secure');",
+              "      pm.expect(msg.is_secure).to.be.true;",
+              "    });",
+              "  });",
+              "  ",
+              "  // Store secure conversation ID for final validation",
+              "  if (conversationIds.length > 0) {",
+              "    pm.collectionVariables.set('validated_secure_conversation_id', conversationIds[0]);",
+              "  }",
+              "}"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Validate Conversation ID Consistency",
+      "request": {
+        "method": "GET",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{access_token}}" }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/messages?conversation_with={{recipient_id}}&limit=50&offset=0",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "v1", "messages"],
+          "query": [
+            { "key": "conversation_with", "value": "{{recipient_id}}" },
+            { "key": "limit", "value": "50" },
+            { "key": "offset", "value": "0" }
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+              "const response = pm.response.json();",
+              "",
+              "// Comprehensive conversation_id validation",
+              "if (response.messages && response.messages.length > 0) {",
+              "  const messages = response.messages;",
+              "  const conversationIds = [...new Set(messages.map(msg => msg.conversation_id).filter(id => id))];",
+              "  ",
+              "  pm.test('All messages have conversation_id', () => {",
+              "    const messagesWithoutConversationId = messages.filter(msg => !msg.conversation_id);",
+              "    pm.expect(messagesWithoutConversationId.length).to.equal(0);",
+              "  });",
+              "  ",
+              "  pm.test('All messages in same conversation have same conversation_id', () => {",
+              "    pm.expect(conversationIds.length).to.be.at.most(1);",
+              "  });",
+              "  ",
+              "  pm.test('conversation_id is a valid UUID format', () => {",
+              "    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;",
+              "    messages.forEach(msg => {",
+              "      if (msg.conversation_id) {",
+              "        pm.expect(msg.conversation_id).to.match(uuidRegex);",
+              "      }",
+              "    });",
+              "  });",
+              "  ",
+              "  // Log conversation details for debugging",
+              "  console.log('Total messages:', messages.length);",
+              "  console.log('Unique conversation IDs:', conversationIds);",
+              "  console.log('First message conversation_id:', messages[0].conversation_id);",
+              "  console.log('Last message conversation_id:', messages[messages.length - 1].conversation_id);",
+              "}"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Delete Message",
+      "request": {
+        "method": "DELETE",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{access_token}}" }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/messages/{{last_message_id}}",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "v1", "messages", "{{last_message_id}}"]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+              "const response = pm.response.json();",
+              "pm.test('Has success flag', () => pm.expect(response).to.have.property('success'));"
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -49,6 +49,17 @@ var (
 	ErrInvalidMessageType   = errors.New("invalid message type")
 )
 
+var (
+	ErrInvalidPGPKey         = errors.New("invalid PGP public key")
+	ErrPGPKeyNotFound        = errors.New("user has no PGP public key configured")
+	ErrPGPEncryptionFailed   = errors.New("PGP encryption failed")
+	ErrPGPDecryptionFailed   = errors.New("PGP decryption failed")
+	ErrPGPSigningFailed      = errors.New("PGP signing failed")
+	ErrPGPVerificationFailed = errors.New("PGP signature verification failed")
+	ErrSecureModeRequired    = errors.New("secure mode required for this operation")
+	ErrSecureModeNotAllowed  = errors.New("secure mode not allowed - both users must have PGP keys")
+)
+
 type DomainError struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`

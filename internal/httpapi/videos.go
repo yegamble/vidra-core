@@ -140,10 +140,11 @@ func GetVideoHandler(repo usecase.VideoRepository) http.HandlerFunc {
 			WriteError(w, http.StatusInternalServerError, domain.NewDomainError("GET_FAILED", "Failed to get video"))
 			return
 		}
-		// Privacy gate: private videos are only visible to the owner; public/unlisted visible to all
+		// Privacy gate: private videos are only visible to the owner; public/unlisted visible to all.
+		// Return 404 for non-owner to avoid leaking existence.
 		requesterID, _ := r.Context().Value(middleware.UserIDKey).(string)
 		if video.Privacy == domain.PrivacyPrivate && requesterID != video.UserID {
-			WriteError(w, http.StatusForbidden, domain.NewDomainError("FORBIDDEN", "Access denied"))
+			WriteError(w, http.StatusNotFound, domain.NewDomainError("NOT_FOUND", "Video not found"))
 			return
 		}
 		WriteJSON(w, http.StatusOK, video)
@@ -912,7 +913,7 @@ func HLSHandler(videoRepo usecase.VideoRepository) http.HandlerFunc {
 			if v.Privacy == domain.PrivacyPrivate {
 				userID, _ := r.Context().Value(middleware.UserIDKey).(string)
 				if userID == "" || userID != v.UserID {
-					WriteError(w, http.StatusForbidden, domain.NewDomainError("FORBIDDEN", "Access denied"))
+					WriteError(w, http.StatusNotFound, domain.NewDomainError("NOT_FOUND", "Video not found"))
 					return
 				}
 			}

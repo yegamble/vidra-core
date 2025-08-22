@@ -1,13 +1,13 @@
+//go:build pgp
+// +build pgp
+
 package crypto
 
 import (
-	"bytes"
-	"crypto"
 	"fmt"
-	"io"
 	"strings"
 
-	"github.com/ProtonMail/gopenpgp/v2/pgp"
+	"github.com/ProtonMail/gopenpgp/v2/crypto"
 )
 
 // PGPService handles PGP encryption, decryption, and signature operations
@@ -24,7 +24,7 @@ func (p *PGPService) ValidatePGPPublicKey(publicKeyArmored string) error {
 	publicKeyArmored = strings.TrimSpace(publicKeyArmored)
 
 	// Try to parse the key
-	keyRing, err := pgp.NewKeyFromArmored(publicKeyArmored)
+	keyRing, err := crypto.NewKeyFromArmored(publicKeyArmored)
 	if err != nil {
 		return fmt.Errorf("invalid PGP public key format: %w", err)
 	}
@@ -50,20 +50,20 @@ func (p *PGPService) ValidatePGPPublicKey(publicKeyArmored string) error {
 // EncryptMessage encrypts a message using the recipient's PGP public key
 func (p *PGPService) EncryptMessage(message string, recipientPublicKey string) (string, error) {
 	// Parse recipient's public key
-	recipientKey, err := pgp.NewKeyFromArmored(recipientPublicKey)
+	recipientKey, err := crypto.NewKeyFromArmored(recipientPublicKey)
 	if err != nil {
 		return "", fmt.Errorf("failed to parse recipient public key: %w", err)
 	}
 
 	// Create a key ring with the recipient's key
-	recipientKeyRing, err := pgp.NewKeyRing(recipientKey)
+	recipientKeyRing, err := crypto.NewKeyRing(recipientKey)
 	if err != nil {
 		return "", fmt.Errorf("failed to create key ring: %w", err)
 	}
 
 	// Encrypt the message
 	encryptedMessage, err := recipientKeyRing.Encrypt(
-		pgp.NewPlainMessageFromString(message),
+		crypto.NewPlainMessageFromString(message),
 		nil, // No private key for signing in this basic version
 	)
 	if err != nil {
@@ -83,7 +83,7 @@ func (p *PGPService) EncryptMessage(message string, recipientPublicKey string) (
 // Note: This would typically be done client-side, but included for completeness
 func (p *PGPService) DecryptMessage(encryptedMessage string, privateKeyArmored string, passphrase string) (string, error) {
 	// Parse the private key
-	privateKey, err := pgp.NewKeyFromArmored(privateKeyArmored)
+	privateKey, err := crypto.NewKeyFromArmored(privateKeyArmored)
 	if err != nil {
 		return "", fmt.Errorf("failed to parse private key: %w", err)
 	}
@@ -95,13 +95,13 @@ func (p *PGPService) DecryptMessage(encryptedMessage string, privateKeyArmored s
 	}
 
 	// Create key ring
-	keyRing, err := pgp.NewKeyRing(unlockedKey)
+	keyRing, err := crypto.NewKeyRing(unlockedKey)
 	if err != nil {
 		return "", fmt.Errorf("failed to create key ring: %w", err)
 	}
 
 	// Parse the encrypted message
-	encryptedPGPMessage, err := pgp.NewPGPMessageFromArmored(encryptedMessage)
+	encryptedPGPMessage, err := crypto.NewPGPMessageFromArmored(encryptedMessage)
 	if err != nil {
 		return "", fmt.Errorf("failed to parse encrypted message: %w", err)
 	}
@@ -118,7 +118,7 @@ func (p *PGPService) DecryptMessage(encryptedMessage string, privateKeyArmored s
 // SignMessage creates a detached signature for a message using a private key
 func (p *PGPService) SignMessage(message string, privateKeyArmored string, passphrase string) (string, error) {
 	// Parse the private key
-	privateKey, err := pgp.NewKeyFromArmored(privateKeyArmored)
+	privateKey, err := crypto.NewKeyFromArmored(privateKeyArmored)
 	if err != nil {
 		return "", fmt.Errorf("failed to parse private key: %w", err)
 	}
@@ -130,13 +130,13 @@ func (p *PGPService) SignMessage(message string, privateKeyArmored string, passp
 	}
 
 	// Create key ring for signing
-	signingKeyRing, err := pgp.NewKeyRing(unlockedKey)
+	signingKeyRing, err := crypto.NewKeyRing(unlockedKey)
 	if err != nil {
 		return "", fmt.Errorf("failed to create signing key ring: %w", err)
 	}
 
 	// Create a plain message
-	plainMessage := pgp.NewPlainMessageFromString(message)
+	plainMessage := crypto.NewPlainMessageFromString(message)
 
 	// Create detached signature
 	signature, err := signingKeyRing.SignDetached(plainMessage)
@@ -156,25 +156,25 @@ func (p *PGPService) SignMessage(message string, privateKeyArmored string, passp
 // VerifySignature verifies a detached signature using the sender's public key
 func (p *PGPService) VerifySignature(message string, signature string, senderPublicKey string) error {
 	// Parse sender's public key
-	senderKey, err := pgp.NewKeyFromArmored(senderPublicKey)
+	senderKey, err := crypto.NewKeyFromArmored(senderPublicKey)
 	if err != nil {
 		return fmt.Errorf("failed to parse sender public key: %w", err)
 	}
 
 	// Create key ring for verification
-	verifyKeyRing, err := pgp.NewKeyRing(senderKey)
+	verifyKeyRing, err := crypto.NewKeyRing(senderKey)
 	if err != nil {
 		return fmt.Errorf("failed to create verification key ring: %w", err)
 	}
 
 	// Parse the signature
-	pgpSignature, err := pgp.NewPGPSignatureFromArmored(signature)
+	pgpSignature, err := crypto.NewPGPSignatureFromArmored(signature)
 	if err != nil {
 		return fmt.Errorf("failed to parse signature: %w", err)
 	}
 
 	// Create plain message
-	plainMessage := pgp.NewPlainMessageFromString(message)
+	plainMessage := crypto.NewPlainMessageFromString(message)
 
 	// Verify the signature
 	err = verifyKeyRing.VerifyDetached(plainMessage, pgpSignature, 0)
@@ -204,7 +204,7 @@ func (p *PGPService) EncryptAndSignMessage(message string, recipientPublicKey st
 
 // GetKeyFingerprint extracts the fingerprint from a PGP public key
 func (p *PGPService) GetKeyFingerprint(publicKeyArmored string) (string, error) {
-	key, err := pgp.NewKeyFromArmored(publicKeyArmored)
+	key, err := crypto.NewKeyFromArmored(publicKeyArmored)
 	if err != nil {
 		return "", fmt.Errorf("failed to parse public key: %w", err)
 	}
@@ -214,10 +214,35 @@ func (p *PGPService) GetKeyFingerprint(publicKeyArmored string) (string, error) 
 
 // GetKeyID extracts the key ID from a PGP public key
 func (p *PGPService) GetKeyID(publicKeyArmored string) (string, error) {
-	key, err := pgp.NewKeyFromArmored(publicKeyArmored)
+	key, err := crypto.NewKeyFromArmored(publicKeyArmored)
 	if err != nil {
 		return "", fmt.Errorf("failed to parse public key: %w", err)
 	}
 
-	return key.GetKeyID(), nil
+	return key.GetHexKeyID(), nil
+}
+
+// GenerateKeyPair generates a new PGP keypair and returns armored public, private, and fingerprint.
+func (p *PGPService) GenerateKeyPair(name, email string) (string, string, string, error) {
+	// Generate key pair
+	key, err := crypto.GenerateKey(name, email, "rsa", 4096)
+	if err != nil {
+		return "", "", "", fmt.Errorf("generate key: %w", err)
+	}
+
+	// Get public key
+	pub, err := key.GetArmoredPublicKey()
+	if err != nil {
+		return "", "", "", fmt.Errorf("armour public: %w", err)
+	}
+
+	// Get private key (armored)
+	priv, err := key.Armor()
+	if err != nil {
+		return "", "", "", fmt.Errorf("armour private: %w", err)
+	}
+
+	// Get fingerprint
+	fp := key.GetFingerprint()
+	return pub, priv, fp, nil
 }

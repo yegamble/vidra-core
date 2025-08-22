@@ -13,4 +13,6 @@ type MessageRepository interface {
 	DeleteMessage(ctx context.Context, messageID string, userID string) error
 	GetConversations(ctx context.Context, userID string, limit, offset int) ([]*domain.Conversation, error)
 	GetUnreadCount(ctx context.Context, userID string) (int, error)
+	CreateSecureConversation(ctx context.Context, userID1, userID2 string) error
+	GetConversation(ctx context.Context, userID1, userID2 string, isSecure bool) (*domain.Conversation, error)
 }

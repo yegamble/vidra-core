@@ -12,13 +12,15 @@ type User struct {
 	Email       string `json:"email" db:"email"`
 	DisplayName string `json:"display_name" db:"display_name"`
 	// Avatar is stored in a separate table and joined in repository queries
-	Avatar        *Avatar   `json:"-"`
-	Bio           string    `json:"bio" db:"bio"`
-	BitcoinWallet string    `json:"bitcoin_wallet" db:"bitcoin_wallet"`
-	Role          UserRole  `json:"role" db:"role"`
-	IsActive      bool      `json:"is_active" db:"is_active"`
-	CreatedAt     time.Time `json:"created_at" db:"created_at"`
-	UpdatedAt     time.Time `json:"updated_at" db:"updated_at"`
+	Avatar         *Avatar   `json:"-"`
+	Bio            string    `json:"bio" db:"bio"`
+	BitcoinWallet  string    `json:"bitcoin_wallet" db:"bitcoin_wallet"`
+	PGPPublicKey   *string   `json:"pgp_public_key,omitempty" db:"pgp_public_key"`
+	PGPFingerprint *string   `json:"pgp_fingerprint,omitempty" db:"pgp_fingerprint"`
+	Role           UserRole  `json:"role" db:"role"`
+	IsActive       bool      `json:"is_active" db:"is_active"`
+	CreatedAt      time.Time `json:"created_at" db:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at" db:"updated_at"`
 }
 
 // Avatar represents a user's avatar metadata
@@ -94,4 +96,19 @@ type AuthResponse struct {
 	AccessToken  string `json:"access_token"`
 	RefreshToken string `json:"refresh_token"`
 	ExpiresIn    int64  `json:"expires_in"`
+}
+
+// PGP related DTOs
+type SetPGPKeyRequest struct {
+	PGPPublicKey string `json:"pgp_public_key" validate:"required"`
+}
+
+type RemovePGPKeyRequest struct {
+	// No fields needed - just removes the current user's PGP key
+}
+
+type PGPKeyResponse struct {
+	HasPGPKey      bool    `json:"has_pgp_key"`
+	PGPPublicKey   *string `json:"pgp_public_key,omitempty"`
+	PGPFingerprint *string `json:"pgp_fingerprint,omitempty"`
 }

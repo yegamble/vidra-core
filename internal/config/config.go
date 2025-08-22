@@ -125,6 +125,9 @@ type Config struct {
 	EnableEncoding  bool
 	EncodingWorkers int
 	MetricsAddr     string
+
+	// Messaging / PGP
+	PGPVerifySignatures bool
 }
 
 func Load() (*Config, error) {
@@ -263,6 +266,9 @@ func Load() (*Config, error) {
 	cfg.EnableEncoding = getBoolEnv("ENABLE_ENCODING", false)
 	cfg.EncodingWorkers = getIntEnv("ENCODING_WORKERS", 2)
 	cfg.MetricsAddr = getEnvOrDefault("METRICS_ADDR", ":9090")
+
+	// Messaging / PGP
+	cfg.PGPVerifySignatures = getBoolEnv("PGP_VERIFY_SIGNATURES", true)
 
 	return cfg, nil
 }

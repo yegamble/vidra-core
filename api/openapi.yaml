@@ -658,6 +658,558 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
+  /api/v1/encoding/status:
+    get:
+      tags:
+        - Encoding
+      summary: Get encoding job status counts
+      description: Returns counts of encoding jobs by status and scheduler info if enabled.
+      operationId: getEncodingStatus
+      security: []
+      responses:
+        '200':
+          description: Status returned
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WrappedEncodingStatusResponse'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/uploads/initiate:
+    post:
+      tags:
+        - Uploads
+      summary: Initiate chunked upload
+      description: Creates an upload session for a new video and returns session parameters.
+      operationId: initiateUpload
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InitiateUploadRequest'
+      responses:
+        '201':
+          description: Upload session created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WrappedInitiateUploadResponse'
+        '400': { description: Invalid request, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+        '401': { description: Unauthorized, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+        '500': { description: Server error, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+
+  /api/v1/uploads/{sessionId}/chunks:
+    post:
+      tags:
+        - Uploads
+      summary: Upload a chunk
+      description: Uploads a single chunk for the given session. Supports checksum validation.
+      operationId: uploadChunk
+      parameters:
+        - in: path
+          name: sessionId
+          required: true
+          schema: { type: string, format: uuid }
+        - in: header
+          name: X-Chunk-Index
+          required: true
+          schema: { type: integer, minimum: 0 }
+        - in: header
+          name: X-Chunk-Checksum
+          required: false
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+      responses:
+        '200':
+          description: Chunk accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WrappedChunkUploadResponse'
+        '400': { description: Invalid request, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+        '500': { description: Server error, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+
+  /api/v1/uploads/{sessionId}/complete:
+    post:
+      tags:
+        - Uploads
+      summary: Complete upload
+      description: Marks the upload session as complete, assembles the file, and queues encoding.
+      operationId: completeUpload
+      parameters:
+        - in: path
+          name: sessionId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Upload completed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WrappedCompleteUploadResponse'
+        '400': { description: Invalid request, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+        '500': { description: Server error, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+
+  /api/v1/uploads/{sessionId}/status:
+    get:
+      tags:
+        - Uploads
+      summary: Get upload status
+      operationId: getUploadStatus
+      parameters:
+        - in: path
+          name: sessionId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Status returned
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WrappedUploadSessionResponse'
+        '400': { description: Invalid request, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+        '500': { description: Server error, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+
+  /api/v1/uploads/{sessionId}/resume:
+    get:
+      tags:
+        - Uploads
+      summary: Get resume info
+      operationId: getUploadResume
+      parameters:
+        - in: path
+          name: sessionId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Resume info
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WrappedUploadResumeResponse'
+        '400': { description: Invalid request, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+        '500': { description: Server error, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+
+  /api/v1/users/me/pgp:
+    post:
+      tags: [Users]
+      summary: Set current user's PGP public key
+      operationId: setPGPKey
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SetPGPKeyRequest' }
+      responses:
+        '200':
+          description: PGP key set
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WrappedStatusResponse' }
+              examples:
+                ok:
+                  value:
+                    success: true
+                    data:
+                      status: ok
+        '400': { description: Invalid key, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+        '401': { description: Unauthorized, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SetPGPKeyRequest' }
+            examples:
+              example:
+                summary: Example PGP public key
+                value:
+                  pgp_public_key: |
+                    -----BEGIN PGP PUBLIC KEY BLOCK-----
+                    ...
+                    -----END PGP PUBLIC KEY BLOCK-----
+    delete:
+      tags: [Users]
+      summary: Remove current user's PGP key
+      operationId: removePGPKey
+      responses:
+        '200': { description: Removed, content: { application/json: { schema: { $ref: '#/components/schemas/WrappedStatusResponse' } } } }
+        '401': { description: Unauthorized, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+
+  /api/v1/users/{id}/pgp:
+    get:
+      tags: [Users]
+      summary: Get user's PGP key status
+      operationId: getUserPGP
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Status
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WrappedPGPKeyResponse' }
+              examples:
+                has_key:
+                  summary: User has a PGP key
+                  value:
+                    success: true
+                    data:
+                      has_pgp_key: true
+                      pgp_public_key: "-----BEGIN PGP PUBLIC KEY BLOCK-----..."
+                      pgp_fingerprint: "ABCD 1234 EFGH 5678 ..."
+                no_key:
+                  summary: User has no PGP key
+                  value:
+                    success: true
+                    data:
+                      has_pgp_key: false
+        '404': { description: User not found, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+
+  /api/v1/messages:
+    get:
+      tags: [Messages]
+      summary: Get messages in a conversation
+      description: Retrieve messages between the authenticated user and another user
+      operationId: getMessages
+      parameters:
+        - in: query
+          name: conversation_with
+          required: true
+          schema: { type: string, format: uuid }
+          description: ID of the user to get conversation with
+        - in: query
+          name: limit
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+          description: Number of messages to return
+        - in: query
+          name: offset
+          required: false
+          schema: { type: integer, minimum: 0, default: 0 }
+          description: Number of messages to skip
+        - in: query
+          name: before
+          required: false
+          schema: { type: string, format: uuid }
+          description: Get messages before this message ID
+      responses:
+        '200':
+          description: Messages retrieved successfully
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MessagesResponse' }
+              examples:
+                regular_conversation:
+                  summary: Regular conversation messages
+                  value:
+                    messages: [
+                      {
+                        id: "msg-123e4567-e89b-12d3-a456-426614174000",
+                        sender_id: "user-123e4567-e89b-12d3-a456-426614174000",
+                        recipient_id: "user-123e4567-e89b-12d3-a456-426614174001",
+                        content: "Hello! How are you?",
+                        conversation_id: "conv-123e4567-e89b-12d3-a456-426614174000",
+                        message_type: "text",
+                        is_read: true,
+                        created_at: "2024-01-01T12:00:00Z",
+                        updated_at: "2024-01-01T12:00:00Z"
+                      },
+                      {
+                        id: "msg-123e4567-e89b-12d3-a456-426614174001",
+                        sender_id: "user-123e4567-e89b-12d3-a456-426614174001",
+                        recipient_id: "user-123e4567-e89b-12d3-a456-426614174000",
+                        content: "I'm doing great, thanks!",
+                        conversation_id: "conv-123e4567-e89b-12d3-a456-426614174000",
+                        message_type: "text",
+                        is_read: false,
+                        created_at: "2024-01-01T12:05:00Z",
+                        updated_at: "2024-01-01T12:05:00Z"
+                      }
+                    ],
+                    total: 2,
+                    has_more: false
+                secure_conversation:
+                  summary: Secure conversation messages
+                  value:
+                    messages: [
+                      {
+                        id: "msg-123e4567-e89b-12d3-a456-426614174002",
+                        sender_id: "user-123e4567-e89b-12d3-a456-426614174000",
+                        recipient_id: "user-123e4567-e89b-12d3-a456-426614174001",
+                        encrypted_content: "-----BEGIN PGP MESSAGE-----...",
+                        pgp_signature: "-----BEGIN PGP SIGNATURE-----...",
+                        conversation_id: "conv-123e4567-e89b-12d3-a456-426614174001",
+                        message_type: "text",
+                        is_read: true,
+                        is_secure: true,
+                        created_at: "2024-01-01T12:10:00Z",
+                        updated_at: "2024-01-01T12:10:00Z"
+                      },
+                      {
+                        id: "msg-123e4567-e89b-12d3-a456-426614174003",
+                        sender_id: "user-123e4567-e89b-12d3-a456-426614174001",
+                        recipient_id: "user-123e4567-e89b-12d3-a456-426614174000",
+                        encrypted_content: "-----BEGIN PGP MESSAGE-----...",
+                        pgp_signature: "-----BEGIN PGP SIGNATURE-----...",
+                        conversation_id: "conv-123e4567-e89b-12d3-a456-426614174001",
+                        message_type: "text",
+                        is_read: false,
+                        is_secure: true,
+                        created_at: "2024-01-01T12:15:00Z",
+                        updated_at: "2024-01-01T12:15:00Z"
+                      }
+                    ],
+                    total: 2,
+                    has_more: false
+        '400': { description: Invalid request parameters, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+        '401': { description: Unauthorized, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+        '404': { description: User not found, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+    post:
+      tags: [Messages]
+      summary: Send a message
+      description: Send a new message to another user
+      operationId: sendMessage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SendMessageRequest' }
+            examples:
+              example:
+                summary: Regular message
+                value:
+                  recipient_id: "123e4567-e89b-12d3-a456-426614174000"
+                  content: "Hello! How are you doing?"
+      responses:
+        '201':
+          description: Message sent successfully
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MessageResponse' }
+              examples:
+                example:
+                  value:
+                    message:
+                      id: "msg-123e4567-e89b-12d3-a456-426614174000",
+                      sender_id: "user-123e4567-e89b-12d3-a456-426614174000",
+                      recipient_id: "user-123e4567-e89b-12d3-a456-426614174001",
+                      content: "Hello! How are you doing?",
+                      conversation_id: "conv-123e4567-e89b-12d3-a456-426614174000",
+                      message_type: "text",
+                      is_read: false,
+                      created_at: "2024-01-01T12:00:00Z",
+                      updated_at: "2024-01-01T12:00:00Z"
+        '400': { description: Invalid request data, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+        '401': { description: Unauthorized, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+        '404': { description: Recipient not found, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+
+  /api/v1/messages/{messageId}:
+    put:
+      tags: [Messages]
+      summary: Mark message as read
+      description: Mark a specific message as read by the authenticated user
+      operationId: markMessageRead
+      parameters:
+        - in: path
+          name: messageId
+          required: true
+          schema: { type: string, format: uuid }
+          description: ID of the message to mark as read
+      responses:
+        '200': { description: Message marked as read, content: { application/json: { schema: { $ref: '#/components/schemas/WrappedStatusResponse' } } } }
+        '400': { description: Invalid message ID, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+        '401': { description: Unauthorized, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+        '404': { description: Message not found, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+    delete:
+      tags: [Messages]
+      summary: Delete a message
+      description: Delete a message (soft delete - only for the authenticated user)
+      operationId: deleteMessage
+      parameters:
+        - in: path
+          name: messageId
+          required: true
+          schema: { type: string, format: uuid }
+          description: ID of the message to delete
+      responses:
+        '200': { description: Message deleted, content: { application/json: { schema: { $ref: '#/components/schemas/WrappedStatusResponse' } } } }
+        '400': { description: Invalid message ID, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+        '401': { description: Unauthorized, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+        '404': { description: Message not found, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+
+  /api/v1/messages/secure:
+    post:
+      tags: [Messages]
+      summary: Send secure message (PGP encrypted)
+      operationId: sendSecureMessage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SendSecureMessageRequest' }
+            examples:
+              example:
+                summary: Secure message
+                value:
+                  recipient_id: "123e4567-e89b-12d3-a456-426614174000"
+                  encrypted_content: "-----BEGIN PGP MESSAGE-----..."
+                  pgp_signature: "-----BEGIN PGP SIGNATURE-----..."
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WrappedMessageResponse' }
+              examples:
+                example:
+                  value:
+                    success: true
+                    data:
+                      id: "msg-123e4567-e89b-12d3-a456-426614174000"
+                      sender_id: "123e4567-e89b-12d3-a456-426614174000"
+                      recipient_id: "123e4567-e89b-12d3-a456-426614174001"
+                      encrypted_content: "-----BEGIN PGP MESSAGE-----..."
+                      pgp_signature: "-----BEGIN PGP SIGNATURE-----..."
+                      conversation_id: "conv-123e4567-e89b-12d3-a456-426614174001"
+                      message_type: "text",
+                      is_read: false,
+                      is_secure: true,
+                      created_at: "2024-01-01T12:00:00Z"
+        '400': { description: Invalid request or secure mode not allowed, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+        '401': { description: Unauthorized, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+
+  /api/v1/conversations:
+    get:
+      tags: [Messages]
+      summary: Get user conversations
+      description: Retrieve all conversations for the authenticated user
+      operationId: getConversations
+      parameters:
+        - in: query
+          name: limit
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 50, default: 20 }
+          description: Number of conversations to return
+        - in: query
+          name: offset
+          required: false
+          schema: { type: integer, minimum: 0, default: 0 }
+          description: Number of conversations to skip
+      responses:
+        '200':
+          description: Conversations retrieved successfully
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ConversationsResponse' }
+              examples:
+                example:
+                  value:
+                    conversations: [
+                      {
+                        id: "conv-123e4567-e89b-12d3-a456-426614174000",
+                        participant_one_id: "user-123e4567-e89b-12d3-a456-426614174000",
+                        participant_two_id: "user-123e4567-e89b-12d3-a456-426614174001",
+                        is_secure_mode: false,
+                        last_message_id: "msg-123e4567-e89b-12d3-a456-426614174000",
+                        last_message_at: "2024-01-01T12:00:00Z",
+                        created_at: "2024-01-01T10:00:00Z",
+                        updated_at: "2024-01-01T12:00:00Z",
+                        unread_count: 2
+                      },
+                      {
+                        id: "conv-123e4567-e89b-12d3-a456-426614174001",
+                        participant_one_id: "user-123e4567-e89b-12d3-a456-426614174000",
+                        participant_two_id: "user-123e4567-e89b-12d3-a456-426614174002",
+                        is_secure_mode: true,
+                        last_message_id: "msg-123e4567-e89b-12d3-a456-426614174001",
+                        last_message_at: "2024-01-01T11:30:00Z",
+                        created_at: "2024-01-01T09:00:00Z",
+                        updated_at: "2024-01-01T11:30:00Z",
+                        unread_count: 0
+                      }
+                    ],
+                    total: 2,
+                    has_more: false
+        '401': { description: Unauthorized, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+
+  /api/v1/conversations/unread-count:
+    get:
+      tags: [Messages]
+      summary: Get unread message count
+      description: Get the total number of unread messages for the authenticated user
+      operationId: getUnreadCount
+      responses:
+        '200':
+          description: Unread count retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  unread_count:
+                    type: integer
+                    example: 5
+              examples:
+                example:
+                  value:
+                    unread_count: 5
+        '401': { description: Unauthorized, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+
+  /api/v1/conversations/secure:
+    post:
+      tags: [Messages]
+      summary: Start a secure conversation (requires PGP keys)
+      operationId: startSecureConversation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/StartSecureConversationRequest' }
+            examples:
+              example:
+                summary: Start secure conversation
+                value:
+                  recipient_id: "123e4567-e89b-12d3-a456-426614174000"
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WrappedConversationResponse' }
+              examples:
+                example:
+                  value:
+                    success: true
+                    data:
+                      id: "conv-123e4567-e89b-12d3-a456-426614174001"
+                      participant_one_id: "user-123e4567-e89b-12d3-a456-426614174000"
+                      participant_two_id: "user-123e4567-e89b-12d3-a456-426614174001"
+                      is_secure_mode: true
+                      last_message_id: null
+                      last_message_at: "2024-01-01T12:00:00Z",
+                      created_at: "2024-01-01T12:00:00Z",
+                      updated_at: "2024-01-01T12:00:00Z"
+        '400': { description: Secure mode not allowed, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+        '401': { description: Unauthorized, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+
 components:
   securitySchemes:
     bearerAuth:
@@ -667,6 +1219,256 @@ components:
       description: JWT token for authentication
 
   schemas:
+    EncodingStatusData:
+      type: object
+      properties:
+        pending: { type: integer, format: int64 }
+        processing: { type: integer, format: int64 }
+        completed: { type: integer, format: int64 }
+        failed: { type: integer, format: int64 }
+        scheduler_enabled: { type: boolean }
+        scheduler_interval_seconds: { type: integer }
+        scheduler_burst: { type: integer }
+        scheduler_last_tick: { type: string, format: date-time, nullable: true }
+        scheduler_last_processed: { type: string, format: date-time, nullable: true }
+
+    WrappedEncodingStatusResponse:
+      type: object
+      properties:
+        data:
+          $ref: '#/components/schemas/EncodingStatusData'
+        success:
+          type: boolean
+          example: true
+      required: [data, success]
+
+    InitiateUploadRequest:
+      type: object
+      properties:
+        filename: { type: string }
+        file_size: { type: integer, format: int64 }
+        chunk_size: { type: integer, format: int64 }
+        expected_checksum: { type: string }
+      required: [filename, file_size]
+
+    InitiateUploadResponse:
+      type: object
+      properties:
+        session_id: { type: string, format: uuid }
+        chunk_size: { type: integer, format: int64 }
+        total_chunks: { type: integer }
+        upload_url: { type: string }
+      required: [session_id, chunk_size, total_chunks, upload_url]
+
+    WrappedInitiateUploadResponse:
+      type: object
+      properties:
+        data: { $ref: '#/components/schemas/InitiateUploadResponse' }
+        success: { type: boolean, example: true }
+      required: [data, success]
+
+    ChunkUploadResponse:
+      type: object
+      properties:
+        chunk_index: { type: integer }
+        uploaded: { type: boolean }
+        remaining_chunks:
+          type: array
+          items: { type: integer }
+      required: [chunk_index, uploaded, remaining_chunks]
+
+    WrappedChunkUploadResponse:
+      type: object
+      properties:
+        data: { $ref: '#/components/schemas/ChunkUploadResponse' }
+        success: { type: boolean, example: true }
+      required: [data, success]
+
+    UploadSession:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        video_id: { type: string, format: uuid }
+        user_id: { type: string, format: uuid }
+        filename: { type: string }
+        file_size: { type: integer, format: int64 }
+        chunk_size: { type: integer, format: int64 }
+        total_chunks: { type: integer }
+        uploaded_chunks:
+          type: array
+          items: { type: integer }
+        status: { type: string, enum: [active, completed, expired, failed] }
+        temp_file_path: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+      required: [id, video_id, user_id, filename, file_size, chunk_size, total_chunks, uploaded_chunks, status, created_at, updated_at, expires_at]
+
+    WrappedUploadSessionResponse:
+      type: object
+      properties:
+        data: { $ref: '#/components/schemas/UploadSession' }
+        success: { type: boolean, example: true }
+      required: [data, success]
+
+    CompleteUploadResponse:
+      type: object
+      properties:
+        session_id: { type: string, format: uuid }
+        status: { type: string, example: "completed" }
+        message: { type: string }
+      required: [session_id, status]
+
+    WrappedCompleteUploadResponse:
+      type: object
+      properties:
+        data: { $ref: '#/components/schemas/CompleteUploadResponse' }
+        success: { type: boolean, example: true }
+      required: [data, success]
+
+    UploadResumeResponse:
+      type: object
+      properties:
+        session_id: { type: string, format: uuid }
+        total_chunks: { type: integer }
+        uploaded_chunks:
+          type: array
+          items: { type: integer }
+        remaining_chunks:
+          type: array
+          items: { type: integer }
+        progress_percent: { type: number, format: float }
+      required: [session_id, total_chunks, uploaded_chunks, remaining_chunks, progress_percent]
+
+    WrappedUploadResumeResponse:
+      type: object
+      properties:
+        data: { $ref: '#/components/schemas/UploadResumeResponse' }
+        success: { type: boolean, example: true }
+      required: [data, success]
+
+    SetPGPKeyRequest:
+      type: object
+      properties:
+        pgp_public_key: { type: string }
+      required: [pgp_public_key]
+
+    PGPKeyResponse:
+      type: object
+      properties:
+        has_pgp_key: { type: boolean }
+        pgp_public_key: { type: string, nullable: true }
+        pgp_fingerprint: { type: string, nullable: true }
+      required: [has_pgp_key]
+
+    WrappedPGPKeyResponse:
+      type: object
+      properties:
+        data: { $ref: '#/components/schemas/PGPKeyResponse' }
+        success: { type: boolean, example: true }
+      required: [data, success]
+
+    SendSecureMessageRequest:
+      type: object
+      properties:
+        recipient_id: { type: string, format: uuid }
+        encrypted_content: { type: string, description: "Armored PGP encrypted content" }
+        pgp_signature: { type: string, description: "Detached signature, verified against encrypted_content" }
+        parent_message_id: { type: string, format: uuid, nullable: true }
+      required: [recipient_id, encrypted_content, pgp_signature]
+
+    StartSecureConversationRequest:
+      type: object
+      properties:
+        recipient_id: { type: string, format: uuid }
+      required: [recipient_id]
+
+    SendMessageRequest:
+      type: object
+      properties:
+        recipient_id: { type: string, format: uuid }
+        content: { type: string, maxLength: 2000 }
+        parent_message_id: { type: string, format: uuid, nullable: true }
+      required: [recipient_id, content]
+
+    Message:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        sender_id: { type: string, format: uuid }
+        recipient_id: { type: string, format: uuid }
+        content: { type: string, nullable: true }
+        conversation_id: { type: string, format: uuid, nullable: true }
+        encrypted_content: { type: string, nullable: true }
+        pgp_signature: { type: string, nullable: true }
+        message_type: { type: string, enum: [text, system] }
+        is_read: { type: boolean }
+        is_deleted_by_sender: { type: boolean }
+        is_deleted_by_recipient: { type: boolean }
+        parent_message_id: { type: string, format: uuid, nullable: true }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        read_at: { type: string, format: date-time, nullable: true }
+        is_secure: { type: boolean, nullable: true }
+      required: [id, sender_id, recipient_id, created_at]
+
+    MessagesResponse:
+      type: object
+      properties:
+        messages:
+          type: array
+          items: { $ref: '#/components/schemas/Message' }
+        total: { type: integer }
+        has_more: { type: boolean }
+      required: [messages, total, has_more]
+
+    ConversationsResponse:
+      type: object
+      properties:
+        conversations:
+          type: array
+          items: { $ref: '#/components/schemas/Conversation' }
+        total: { type: integer }
+        has_more: { type: boolean }
+      required: [conversations, total, has_more]
+
+    Conversation:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        participant_one_id: { type: string, format: uuid }
+        participant_two_id: { type: string, format: uuid }
+        is_secure_mode: { type: boolean }
+        last_message_id: { type: string, format: uuid, nullable: true }
+        last_message_at: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        unread_count: { type: integer, nullable: true }
+      required: [id, participant_one_id, participant_two_id, is_secure_mode, last_message_at, created_at, updated_at]
+
+    WrappedMessageResponse:
+      type: object
+      properties:
+        data: { $ref: '#/components/schemas/Message' }
+        success: { type: boolean, example: true }
+      required: [data, success]
+
+    WrappedConversationResponse:
+      type: object
+      properties:
+        data: { $ref: '#/components/schemas/Conversation' }
+        success: { type: boolean, example: true }
+      required: [data, success]
+
+    WrappedStatusResponse:
+      type: object
+      properties:
+        data:
+          type: object
+          additionalProperties: true
+          example: { status: ok }
+        success: { type: boolean, example: true }
+      required: [data, success]
     ListMeta:
       type: object
       properties:

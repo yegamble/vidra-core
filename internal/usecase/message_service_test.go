@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"athena/internal/domain"
+
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	testifymock "github.com/stretchr/testify/mock"
@@ -50,6 +51,19 @@ func (m *MockMessageRepository) GetConversations(ctx context.Context, userID str
 func (m *MockMessageRepository) GetUnreadCount(ctx context.Context, userID string) (int, error) {
 	args := m.Called(ctx, userID)
 	return args.Int(0), args.Error(1)
+}
+
+func (m *MockMessageRepository) CreateSecureConversation(ctx context.Context, userID1, userID2 string) error {
+	args := m.Called(ctx, userID1, userID2)
+	return args.Error(0)
+}
+
+func (m *MockMessageRepository) GetConversation(ctx context.Context, userID1, userID2 string, isSecure bool) (*domain.Conversation, error) {
+	args := m.Called(ctx, userID1, userID2, isSecure)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*domain.Conversation), args.Error(1)
 }
 
 // MockUserRepository is a mock implementation of UserRepository for testing
@@ -112,6 +126,37 @@ func (m *MockUserRepository) Count(ctx context.Context) (int64, error) {
 
 func (m *MockUserRepository) SetAvatarFields(ctx context.Context, userID string, ipfsCID sql.NullString, webpCID sql.NullString) error {
 	args := m.Called(ctx, userID, ipfsCID, webpCID)
+	return args.Error(0)
+}
+
+func (m *MockUserRepository) SetPGPPublicKey(ctx context.Context, userID string, pgpPublicKey string) error {
+	args := m.Called(ctx, userID, pgpPublicKey)
+	return args.Error(0)
+}
+
+func (m *MockUserRepository) RemovePGPPublicKey(ctx context.Context, userID string) error {
+	args := m.Called(ctx, userID)
+	return args.Error(0)
+}
+
+func (m *MockUserRepository) GetPGPPublicKey(ctx context.Context, userID string) (*string, error) {
+	args := m.Called(ctx, userID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*string), args.Error(1)
+}
+
+func (m *MockUserRepository) GetPGPFingerprint(ctx context.Context, userID string) (*string, error) {
+	args := m.Called(ctx, userID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*string), args.Error(1)
+}
+
+func (m *MockUserRepository) SetPGPPublicKeyWithFingerprint(ctx context.Context, userID string, pgpPublicKey string, fingerprint string) error {
+	args := m.Called(ctx, userID, pgpPublicKey, fingerprint)
 	return args.Error(0)
 }
 

@@ -116,6 +116,59 @@ func (m *mockUserRepo) SetAvatarFields(_ context.Context, userID string, ipfsCID
 	return nil
 }
 
+// PGP key management (in-memory)
+func (m *mockUserRepo) SetPGPPublicKey(_ context.Context, userID string, key string) error {
+	u, ok := m.users[userID]
+	if !ok {
+		return domain.ErrUserNotFound
+	}
+	c := *u
+	c.PGPPublicKey = &key
+	m.users[userID] = &c
+	return nil
+}
+func (m *mockUserRepo) RemovePGPPublicKey(_ context.Context, userID string) error {
+	u, ok := m.users[userID]
+	if !ok {
+		return domain.ErrUserNotFound
+	}
+	c := *u
+	c.PGPPublicKey = nil
+	m.users[userID] = &c
+	return nil
+}
+func (m *mockUserRepo) GetPGPPublicKey(_ context.Context, userID string) (*string, error) {
+	u, ok := m.users[userID]
+	if !ok {
+		return nil, domain.ErrUserNotFound
+	}
+	return u.PGPPublicKey, nil
+}
+
+func (m *mockUserRepo) GetPGPFingerprint(_ context.Context, userID string) (*string, error) {
+	u, ok := m.users[userID]
+	if !ok {
+		return nil, domain.ErrUserNotFound
+	}
+	// Return a mock fingerprint if PGP key exists
+	if u.PGPPublicKey != nil {
+		fp := "ABCD 1234 EFGH 5678 IJKL 9012 MNOP 3456"
+		return &fp, nil
+	}
+	return nil, nil
+}
+
+func (m *mockUserRepo) SetPGPPublicKeyWithFingerprint(_ context.Context, userID string, pgpPublicKey string, fingerprint string) error {
+	u, ok := m.users[userID]
+	if !ok {
+		return domain.ErrUserNotFound
+	}
+	c := *u
+	c.PGPPublicKey = &pgpPublicKey
+	m.users[userID] = &c
+	return nil
+}
+
 // Response decoding helpers
 type testResponse struct {
 	Data    json.RawMessage `json:"data"`

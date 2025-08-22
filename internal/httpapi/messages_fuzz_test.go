@@ -210,6 +210,14 @@ func (s *stubMessageRepo) GetUnreadCount(context.Context, string) (int, error) {
 	return 0, domain.ErrUserNotFound
 }
 
+func (s *stubMessageRepo) CreateSecureConversation(context.Context, string, string) error {
+	return nil
+}
+
+func (s *stubMessageRepo) GetConversation(context.Context, string, string, bool) (*domain.Conversation, error) {
+	return &domain.Conversation{ID: "c", IsSecureMode: true}, nil
+}
+
 type stubUserRepo struct{}
 
 func (s *stubUserRepo) Create(context.Context, *domain.User, string) error {
@@ -254,4 +262,18 @@ func (s *stubUserRepo) Count(context.Context) (int64, error) {
 
 func (s *stubUserRepo) SetAvatarFields(context.Context, string, sql.NullString, sql.NullString) error {
 	return domain.ErrInternalServer
+}
+
+func (s *stubUserRepo) SetPGPPublicKey(context.Context, string, string) error { return nil }
+func (s *stubUserRepo) RemovePGPPublicKey(context.Context, string) error      { return nil }
+func (s *stubUserRepo) GetPGPPublicKey(context.Context, string) (*string, error) {
+	return nil, nil
+}
+
+func (s *stubUserRepo) GetPGPFingerprint(context.Context, string) (*string, error) {
+	return nil, nil
+}
+
+func (s *stubUserRepo) SetPGPPublicKeyWithFingerprint(context.Context, string, string, string) error {
+	return nil
 }

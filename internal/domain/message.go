@@ -7,6 +7,9 @@ type Message struct {
 	SenderID             string     `json:"sender_id" db:"sender_id"`
 	RecipientID          string     `json:"recipient_id" db:"recipient_id"`
 	Content              string     `json:"content" db:"content"`
+	EncryptedContent     *string    `json:"encrypted_content,omitempty" db:"encrypted_content"`
+	PGPSignature         *string    `json:"pgp_signature,omitempty" db:"pgp_signature"`
+	ConversationID       string     `json:"conversation_id,omitempty"`
 	MessageType          string     `json:"message_type" db:"message_type"`
 	IsRead               bool       `json:"is_read" db:"is_read"`
 	IsDeletedBySender    bool       `json:"is_deleted_by_sender" db:"is_deleted_by_sender"`
@@ -20,12 +23,14 @@ type Message struct {
 	Sender        *User    `json:"sender,omitempty"`
 	Recipient     *User    `json:"recipient,omitempty"`
 	ParentMessage *Message `json:"parent_message,omitempty"`
+	IsSecure      bool     `json:"is_secure,omitempty"` // Computed field indicating if message is PGP encrypted
 }
 
 type Conversation struct {
 	ID               string    `json:"id" db:"id"`
 	ParticipantOneID string    `json:"participant_one_id" db:"participant_one_id"`
 	ParticipantTwoID string    `json:"participant_two_id" db:"participant_two_id"`
+	IsSecureMode     bool      `json:"is_secure_mode" db:"is_secure_mode"`
 	LastMessageID    *string   `json:"last_message_id,omitempty" db:"last_message_id"`
 	LastMessageAt    time.Time `json:"last_message_at" db:"last_message_at"`
 	CreatedAt        time.Time `json:"created_at" db:"created_at"`
@@ -46,9 +51,23 @@ const (
 
 // Request/Response DTOs
 type SendMessageRequest struct {
-	RecipientID     string  `json:"recipient_id" validate:"required,uuid"`
-	Content         string  `json:"content" validate:"required,max=2000"`
-	ParentMessageID *string `json:"parent_message_id,omitempty" validate:"omitempty,uuid"`
+	RecipientID      string  `json:"recipient_id" validate:"required,uuid"`
+	Content          string  `json:"content" validate:"required,max=2000"`
+	EncryptedContent *string `json:"encrypted_content,omitempty"`
+	PGPSignature     *string `json:"pgp_signature,omitempty"`
+	ParentMessageID  *string `json:"parent_message_id,omitempty" validate:"omitempty,uuid"`
+	IsSecure         bool    `json:"is_secure,omitempty"` // Indicates if this should be a secure message
+}
+
+type SendSecureMessageRequest struct {
+	RecipientID      string  `json:"recipient_id" validate:"required,uuid"`
+	EncryptedContent string  `json:"encrypted_content" validate:"required"`
+	PGPSignature     string  `json:"pgp_signature" validate:"required"`
+	ParentMessageID  *string `json:"parent_message_id,omitempty" validate:"omitempty,uuid"`
+}
+
+type StartSecureConversationRequest struct {
+	RecipientID string `json:"recipient_id" validate:"required,uuid"`
 }
 
 type GetMessagesRequest struct {
@@ -85,4 +104,15 @@ type ConversationsResponse struct {
 	Conversations []Conversation `json:"conversations"`
 	Total         int            `json:"total"`
 	HasMore       bool           `json:"has_more"`
+}
+
+type GetMessageThreadRequest struct {
+	ThreadID string `json:"thread_id" validate:"required,uuid"`
+	Limit    int    `json:"limit,omitempty" validate:"omitempty,min=1,max=100"`
+	Offset   int    `json:"offset,omitempty" validate:"omitempty,min=0"`
+}
+
+type UpdateMessageRequest struct {
+	MessageID string `json:"message_id" validate:"required,uuid"`
+	Content   string `json:"content" validate:"required,max=2000"`
 }
