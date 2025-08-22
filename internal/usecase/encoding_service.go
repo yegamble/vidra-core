@@ -188,6 +188,9 @@ func (s *encodingService) processJob(ctx context.Context, job *domain.EncodingJo
 	// Thumbnail
 	// Place thumbnail and preview into dedicated storage folders
 	thumb := sp.ThumbnailPath(job.VideoID)
+	if err := os.MkdirAll(filepath.Dir(thumb), 0o750); err != nil {
+		return fmt.Errorf("failed to create thumbnail dir: %w", err)
+	}
 	if err := s.generateThumbnail(ctx, job.SourceFilePath, thumb); err != nil {
 		return fmt.Errorf("thumbnail: %w", err)
 	}
@@ -195,6 +198,9 @@ func (s *encodingService) processJob(ctx context.Context, job *domain.EncodingJo
 
 	// Preview (animated webp)
 	preview := sp.PreviewPath(job.VideoID)
+	if err := os.MkdirAll(filepath.Dir(preview), 0o750); err != nil {
+		return fmt.Errorf("failed to create preview dir: %w", err)
+	}
 	if err := s.generatePreviewWebP(ctx, job.SourceFilePath, preview); err != nil {
 		return fmt.Errorf("preview: %w", err)
 	}
