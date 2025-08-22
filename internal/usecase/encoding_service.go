@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"athena/internal/config"
@@ -144,8 +145,12 @@ func (s *encodingService) processJob(ctx context.Context, job *domain.EncodingJo
 
 	// Prepare tasks: one per resolution
 	total := len(job.TargetResolutions) + 2 // + thumbnail + preview
-	done := 0
-	update := func() { done++; _ = s.repo.UpdateJobProgress(ctx, job.ID, int(float64(done)/float64(total)*100)) }
+	var done int32
+	update := func() {
+		atomic.AddInt32(&done, 1)
+		progress := int(float64(atomic.LoadInt32(&done)) / float64(total) * 100)
+		_ = s.repo.UpdateJobProgress(ctx, job.ID, progress)
+	}
 
 	// Encode resolutions concurrently (HLS)
 	var wg sync.WaitGroup

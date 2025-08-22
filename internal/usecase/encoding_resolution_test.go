@@ -26,7 +26,6 @@ func TestEncodingService_ProcessMultipleResolutions(t *testing.T) {
 		t.Skip("FFmpeg not available, skipping encoding tests")
 	}
 
-	_ = testutil.SetupTestDB(t)
 	encodingRepo := NewMockEncodingRepository()
 	videoRepo := NewMockVideoRepository()
 
@@ -82,7 +81,7 @@ func TestEncodingService_ProcessMultipleResolutions(t *testing.T) {
 			require.NoError(t, err, "Encoding failed for %s", testVideo.Name)
 
 			// Verify outputs were created
-			outputDir := filepath.Join(tempDir, "hls", videoID)
+			outputDir := filepath.Join(tempDir, "streaming-playlists", "hls", videoID)
 			assert.DirExists(t, outputDir, "Output directory not created for %s", testVideo.Name)
 
 			// Verify master playlist
@@ -117,10 +116,10 @@ func TestEncodingService_ProcessMultipleResolutions(t *testing.T) {
 			}
 
 			// Verify thumbnail and preview were created
-			thumbnailPath := filepath.Join(tempDir, "thumbnails", videoID+".jpg")
+			thumbnailPath := filepath.Join(tempDir, "thumbnails", videoID+"_thumb.jpg")
 			assert.FileExists(t, thumbnailPath, "Thumbnail not created for %s", testVideo.Name)
 
-			previewPath := filepath.Join(tempDir, "previews", videoID+".webp")
+			previewPath := filepath.Join(tempDir, "previews", videoID+"_preview.webp")
 			assert.FileExists(t, previewPath, "Preview not created for %s", testVideo.Name)
 		})
 	}
