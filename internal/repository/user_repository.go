@@ -241,10 +241,3 @@ func (r *userRepository) SetAvatarFields(ctx context.Context, userID string, ipf
 	}
 	return nil
 }
-
-func stringOrNil(s *string) interface{} {
-	if s == nil {
-		return nil
-	}
-	return *s
-}
