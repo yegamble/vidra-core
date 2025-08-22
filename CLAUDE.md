@@ -96,7 +96,45 @@ User messaging is implemented with a dedicated schema and functions to ensure co
 | **Stickers & GIFs** | Giphy, Tenor                            | N/A                                         | Only via integrations, not as raw files. |
 | **Other**           | Contact cards, locations, payments (region-specific)    | N/A                                         | Context-specific in mobile app. |
 
-- Suppport for secure mode where a conversation is encrypted end-to-end, with user's PGP keys and is secure by a passphrase or 6 digit code.
+- Support for end-to-end encrypted conversations with user-managed keys; see E2EE notes below.
+
+### Security Best Practices
+
+- MIME sniff + extension match: detect type server-side; reject mismatches.
+- Antivirus scanning: route uploads through a ClamAV-compatible scanner; quarantine until clean; keep signatures updated.
+- Image/PDF sanitization: strip EXIF; convert HEIC→JPEG; remove PDF JavaScript/embedded files or convert to PDF/A.
+- Processing sandbox: run thumbnails/transcoding in isolated containers with seccomp/AppArmor, read-only fs, and CPU/mem/time limits.
+- Content limits: enforce caps on size, duration, resolution, and archive depth/file-count to prevent zip-bombs and resource exhaustion.
+- Output encoding: treat user text as plain or a safe Markdown subset; HTML is escaped and sanitized on render.
+- Safe delivery: serve attachments with `Content-Disposition: attachment`, correct `Content-Type`, `X-Content-Type-Options: nosniff`, and strict `Content-Security-Policy` on preview pages.
+- Privacy: avoid logging message bodies or attachment bytes; retain only minimal metadata for delivery/abuse prevention.
+
+### Blocked Files
+
+Reject the following outright regardless of size:
+
+- Executables: `.exe`, `.msi`, `.com`, `.scr`, `.dll`, `.bin`, `.elf`, `.dylib`, `.so`.
+- Scripts: `.bat`, `.cmd`, `.ps1`, `.psm1`, `.vbs`, `.js`, `.jar`, `.sh`, `.bash`, `.zsh`, `.py`, `.pl`, `.rb`, `.php`.
+- OS/App bundles & installers: `.apk`, `.aab`, `.ipa`, `.app`, `.pkg`, `.dmg`.
+- Disk/virtual images: `.iso`, `.img`, `.vhd`, `.vhdx`.
+- Macro-enabled Office: `.docm`, `.dotm`, `.xlsm`, `.xltm`, `.pptm`, `.ppam`.
+- Shortcuts/links/registry: `.lnk`, `.url`, `.webloc`, `.desktop`, `.reg`, `.cpl`, `.hta`, `.chm`, `.scf`.
+- Encrypted/password-protected archives: encrypted `.zip`, `.7z`, `.rar` (reject or allow only with explicit admin policy; never preview).
+- Active media: `.svg`, `.swf`.
+
+Also reject archives that exceed nesting depth, total file count, or uncompressed size thresholds (zip-bomb protection) or that contain any blocked type inside.
+
+### Link Previews (SSRF-Safe)
+
+- Only fetch `http`/`https` URLs; block `file:`, `data:`, and `ftp:`.
+- Deny private/link-local/loopback CIDRs (RFC1918/4193, link-local, loopback) and `.onion`.
+- Use dedicated egress; verify TLS; limit redirects (≤3), body size (≤512 KB), and content types (HTML only). No cookies/auth headers; do not execute JS.
+
+### E2EE Notes
+
+- In E2EE mode, messages and attachments are encrypted client-side; the server stores ciphertext only. Scanning and previews are disabled by design.
+- Display an “Unscanned (E2EE)” badge and require explicit user action to open attachments; integrity verified via client-side MAC.
+- Keys are per-conversation with periodic rotation; passphrase/6‑digit code gates local key unlock; per-message nonces prevent replay.
 
 ---
 
