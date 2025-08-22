@@ -182,7 +182,7 @@
           ]
         },
         {
-          "name": "Upload Avatar",
+          "name": "Upload Avatar - PNG",
           "request": {
             "method": "POST",
             "header": [
@@ -205,7 +205,7 @@
                 }
               ]
             },
-            "description": "Uploads a user avatar, stores it, uploads to IPFS and pins it. Returns updated user with avatar identifiers."
+            "description": "Uploads a PNG avatar image, stores it, uploads to IPFS and pins it. Returns updated user with avatar identifiers."
           },
           "event": [
             {
@@ -221,13 +221,435 @@
                   "  const user = wrap.data || {};",
                   "  pm.test('User has avatar identifiers (nullable)', () => {",
                   "    pm.expect(user).to.have.property('avatar_ipfs_cid');",
+                  "    pm.expect(user).to.have.property('avatar_webp_ipfs_cid');",
                   "  });",
-                  "  // No longer setting avatar_file_id as it was removed",
                   "  if (user.avatar_ipfs_cid) pm.environment.set('avatar_ipfs_cid', user.avatar_ipfs_cid);",
+                  "  if (user.avatar_webp_ipfs_cid) pm.environment.set('avatar_webp_ipfs_cid', user.avatar_webp_ipfs_cid);",
                   "} else {",
                   "  // 503 path: IPFS unavailable, treat as skipped",
                   "  console.warn('Avatar upload skipped: IPFS unavailable (503)');",
                   "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Upload Avatar - JPEG",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{access_token}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/users/me/avatar",
+              "host": ["{{baseUrl}}"],
+              "path": ["api","v1","users","me","avatar"]
+            },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": [
+                    "/etc/newman/avatar.jpg"
+                  ]
+                }
+              ]
+            },
+            "description": "Uploads a JPEG avatar image and verifies WebP conversion."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200 or 503', () => pm.expect([200,503]).to.include(pm.response.code));",
+                  "if (pm.response.code === 200) {",
+                  "  const wrap = pm.response.json();",
+                  "  pm.test('Response wrapped with data', () => pm.expect(wrap).to.have.property('data'));",
+                  "  const user = wrap.data || {};",
+                  "  pm.test('JPEG upload successful with WebP conversion', () => {",
+                  "    pm.expect(user).to.have.property('avatar_ipfs_cid');",
+                  "    pm.expect(user).to.have.property('avatar_webp_ipfs_cid');",
+                  "  });",
+                  "} else {",
+                  "  console.warn('JPEG avatar upload skipped: IPFS unavailable (503)');",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Upload Avatar - WebP",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{access_token}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/users/me/avatar",
+              "host": ["{{baseUrl}}"],
+              "path": ["api","v1","users","me","avatar"]
+            },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": [
+                    "/etc/newman/avatar.webp"
+                  ]
+                }
+              ]
+            },
+            "description": "Uploads a WebP avatar image (direct support)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200 or 503', () => pm.expect([200,503]).to.include(pm.response.code));",
+                  "if (pm.response.code === 200) {",
+                  "  const wrap = pm.response.json();",
+                  "  pm.test('Response wrapped with data', () => pm.expect(wrap).to.have.property('data'));",
+                  "  const user = wrap.data || {};",
+                  "  pm.test('WebP upload successful', () => {",
+                  "    pm.expect(user).to.have.property('avatar_ipfs_cid');",
+                  "  });",
+                  "} else {",
+                  "  console.warn('WebP avatar upload skipped: IPFS unavailable (503)');",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Upload Avatar - HEIC",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{access_token}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/users/me/avatar",
+              "host": ["{{baseUrl}}"],
+              "path": ["api","v1","users","me","avatar"]
+            },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": [
+                    "/etc/newman/avatar.heic"
+                  ]
+                }
+              ]
+            },
+            "description": "Uploads a HEIC avatar image (Apple format)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200 or 503', () => pm.expect([200,503]).to.include(pm.response.code));",
+                  "if (pm.response.code === 200) {",
+                  "  const wrap = pm.response.json();",
+                  "  pm.test('Response wrapped with data', () => pm.expect(wrap).to.have.property('data'));",
+                  "  const user = wrap.data || {};",
+                  "  pm.test('HEIC upload successful with WebP conversion', () => {",
+                  "    pm.expect(user).to.have.property('avatar_ipfs_cid');",
+                  "    pm.expect(user).to.have.property('avatar_webp_ipfs_cid');",
+                  "  });",
+                  "} else {",
+                  "  console.warn('HEIC avatar upload skipped: IPFS unavailable (503)');",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Upload Avatar - GIF",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{access_token}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/users/me/avatar",
+              "host": ["{{baseUrl}}"],
+              "path": ["api","v1","users","me","avatar"]
+            },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": [
+                    "/etc/newman/avatar.gif"
+                  ]
+                }
+              ]
+            },
+            "description": "Uploads a GIF avatar image with WebP conversion."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200 or 503', () => pm.expect([200,503]).to.include(pm.response.code));",
+                  "if (pm.response.code === 200) {",
+                  "  const wrap = pm.response.json();",
+                  "  pm.test('Response wrapped with data', () => pm.expect(wrap).to.have.property('data'));",
+                  "  const user = wrap.data || {};",
+                  "  pm.test('GIF upload successful with WebP conversion', () => {",
+                  "    pm.expect(user).to.have.property('avatar_ipfs_cid');",
+                  "    pm.expect(user).to.have.property('avatar_webp_ipfs_cid');",
+                  "  });",
+                  "} else {",
+                  "  console.warn('GIF avatar upload skipped: IPFS unavailable (503)');",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Upload Avatar - TIFF",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{access_token}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/users/me/avatar",
+              "host": ["{{baseUrl}}"],
+              "path": ["api","v1","users","me","avatar"]
+            },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": [
+                    "/etc/newman/avatar.tiff"
+                  ]
+                }
+              ]
+            },
+            "description": "Uploads a TIFF avatar image with WebP conversion."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200 or 503', () => pm.expect([200,503]).to.include(pm.response.code));",
+                  "if (pm.response.code === 200) {",
+                  "  const wrap = pm.response.json();",
+                  "  pm.test('Response wrapped with data', () => pm.expect(wrap).to.have.property('data'));",
+                  "  const user = wrap.data || {};",
+                  "  pm.test('TIFF upload successful with WebP conversion', () => {",
+                  "    pm.expect(user).to.have.property('avatar_ipfs_cid');",
+                  "    pm.expect(user).to.have.property('avatar_webp_ipfs_cid');",
+                  "  });",
+                  "} else {",
+                  "  console.warn('TIFF avatar upload skipped: IPFS unavailable (503)');",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Upload Avatar - Invalid Extension (400)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{access_token}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/users/me/avatar",
+              "host": ["{{baseUrl}}"],
+              "path": ["api","v1","users","me","avatar"]
+            },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": [
+                    "/etc/newman/document.pdf"
+                  ]
+                }
+              ]
+            },
+            "description": "Expects 400 error when uploading PDF file (invalid extension)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 400', () => pm.response.to.have.status(400));",
+                  "pm.test('Has error response', () => {",
+                  "  const wrap = pm.response.json();",
+                  "  pm.expect(wrap).to.have.property('error');",
+                  "  pm.expect(wrap.success).to.be.false;",
+                  "});",
+                  "pm.test('Error message indicates unsupported format', () => {",
+                  "  const wrap = pm.response.json();",
+                  "  pm.expect(wrap.error.message.toLowerCase()).to.include('unsupported');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Upload Avatar - Malicious File (400)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{access_token}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/users/me/avatar",
+              "host": ["{{baseUrl}}"],
+              "path": ["api","v1","users","me","avatar"]
+            },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": [
+                    "/etc/newman/malware.png"
+                  ]
+                }
+              ]
+            },
+            "description": "Expects 400 error when uploading executable file disguised as PNG."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 400', () => pm.response.to.have.status(400));",
+                  "pm.test('Has error response', () => {",
+                  "  const wrap = pm.response.json();",
+                  "  pm.expect(wrap).to.have.property('error');",
+                  "  pm.expect(wrap.success).to.be.false;",
+                  "});",
+                  "pm.test('Error message indicates invalid image', () => {",
+                  "  const wrap = pm.response.json();",
+                  "  pm.expect(wrap.error.message.toLowerCase()).to.include('invalid');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Upload Avatar - No File (400)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{access_token}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/users/me/avatar",
+              "host": ["{{baseUrl}}"],
+              "path": ["api","v1","users","me","avatar"]
+            },
+            "body": {
+              "mode": "formdata",
+              "formdata": []
+            },
+            "description": "Expects 400 error when no file is provided."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 400', () => pm.response.to.have.status(400));",
+                  "pm.test('Has error response', () => {",
+                  "  const wrap = pm.response.json();",
+                  "  pm.expect(wrap).to.have.property('error');",
+                  "  pm.expect(wrap.success).to.be.false;",
+                  "});",
+                  "pm.test('Error message indicates missing file', () => {",
+                  "  const wrap = pm.response.json();",
+                  "  pm.expect(wrap.error.message.toLowerCase()).to.include('missing');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Upload Avatar - No Auth (401)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/users/me/avatar",
+              "host": ["{{baseUrl}}"],
+              "path": ["api","v1","users","me","avatar"]
+            },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": [
+                    "/etc/newman/avatar.png"
+                  ]
+                }
+              ]
+            },
+            "description": "Expects 401 error when Authorization header is missing."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 401', () => pm.response.to.have.status(401));",
+                  "pm.test('Has error response', () => {",
+                  "  try {",
+                  "    const wrap = pm.response.json();",
+                  "    pm.expect(wrap).to.have.property('error');",
+                  "  } catch (e) {",
+                  "    pm.expect(pm.response.text()).to.match(/unauthorized|missing authorization/i);",
+                  "  }",
+                  "});"
                 ]
               }
             }
