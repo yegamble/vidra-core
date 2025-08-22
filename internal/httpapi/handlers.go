@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"time"
@@ -110,8 +111,8 @@ func (s *Server) Login(w http.ResponseWriter, r *http.Request) {
 		Username:          dUser.Username,
 		Email:             dUser.Email,
 		DisplayName:       dispPtr,
-		AvatarIPFSCID:     dUser.AvatarIPFSCID,
-		AvatarWebPIPFSCID: dUser.AvatarWebPIPFSCID,
+		AvatarIPFSCID:     nullStringToPtr(dUser.AvatarIPFSCID),
+		AvatarWebPIPFSCID: nullStringToPtr(dUser.AvatarWebPIPFSCID),
 		Role:              generated.UserRoleUser,
 		IsActive:          dUser.IsActive,
 		CreatedAt:         dUser.CreatedAt,
@@ -194,8 +195,8 @@ func (s *Server) Register(w http.ResponseWriter, r *http.Request) {
 			Username:          dUser.Username,
 			Email:             dUser.Email,
 			DisplayName:       dispPtr,
-			AvatarIPFSCID:     dUser.AvatarIPFSCID,
-			AvatarWebPIPFSCID: dUser.AvatarWebPIPFSCID,
+			AvatarIPFSCID:     nullStringToPtr(dUser.AvatarIPFSCID),
+			AvatarWebPIPFSCID: nullStringToPtr(dUser.AvatarWebPIPFSCID),
 			Role:              generated.UserRoleUser,
 			IsActive:          dUser.IsActive,
 			CreatedAt:         dUser.CreatedAt,
@@ -406,4 +407,12 @@ func signHS256JWT(secret, userID string, duration time.Duration) string {
 		return ""
 	}
 	return s
+}
+
+// nullStringToPtr converts sql.NullString to *string for JSON marshaling
+func nullStringToPtr(ns sql.NullString) *string {
+	if !ns.Valid {
+		return nil
+	}
+	return &ns.String
 }

@@ -217,7 +217,7 @@ func (r *userRepository) Count(ctx context.Context) (int64, error) {
 }
 
 // SetAvatarFields upserts the user's avatar file_id and ipfs_cid in user_avatars
-func (r *userRepository) SetAvatarFields(ctx context.Context, userID string, ipfsCID *string, webpCID *string) error {
+func (r *userRepository) SetAvatarFields(ctx context.Context, userID string, ipfsCID sql.NullString, webpCID sql.NullString) error {
 	// Ensure user exists to return a meaningful error
 	var exists bool
 	if err := r.db.GetContext(ctx, &exists, `SELECT EXISTS(SELECT 1 FROM users WHERE id = $1)`, userID); err != nil {
@@ -230,12 +230,12 @@ func (r *userRepository) SetAvatarFields(ctx context.Context, userID string, ipf
 	// Upsert avatar fields
 	_, err := r.db.ExecContext(ctx, `
         INSERT INTO user_avatars (user_id, ipfs_cid, webp_ipfs_cid, created_at, updated_at)
-        VALUES ($1, NULLIF($2, ''), NULLIF($3, ''), NOW(), NOW())
+        VALUES ($1, $2, $3, NOW(), NOW())
         ON CONFLICT (user_id) DO UPDATE SET
-            ipfs_cid = COALESCE(NULLIF(EXCLUDED.ipfs_cid, user_avatars.ipfs_cid), user_avatars.ipfs_cid),
-            webp_ipfs_cid = COALESCE(NULLIF(EXCLUDED.webp_ipfs_cid, user_avatars.webp_ipfs_cid), user_avatars.webp_ipfs_cid),
+            ipfs_cid = EXCLUDED.ipfs_cid,
+            webp_ipfs_cid = EXCLUDED.webp_ipfs_cid,
             updated_at = NOW()
-    `, userID, stringOrNil(ipfsCID), stringOrNil(webpCID))
+    `, userID, ipfsCID, webpCID)
 	if err != nil {
 		return fmt.Errorf("failed to upsert user avatar fields: %w", err)
 	}

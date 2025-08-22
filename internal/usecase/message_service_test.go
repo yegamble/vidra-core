@@ -2,6 +2,7 @@ package usecase
 
 import (
 	"context"
+	"database/sql"
 	"testing"
 	"time"
 
@@ -109,7 +110,7 @@ func (m *MockUserRepository) Count(ctx context.Context) (int64, error) {
 	return args.Get(0).(int64), args.Error(1)
 }
 
-func (m *MockUserRepository) SetAvatarFields(ctx context.Context, userID string, ipfsCID *string, webpCID *string) error {
+func (m *MockUserRepository) SetAvatarFields(ctx context.Context, userID string, ipfsCID sql.NullString, webpCID sql.NullString) error {
 	args := m.Called(ctx, userID, ipfsCID, webpCID)
 	return args.Error(0)
 }

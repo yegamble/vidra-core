@@ -3,6 +3,7 @@ package httpapi
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -99,7 +100,7 @@ func (m *mockUserRepo) Count(_ context.Context) (int64, error) {
 	return int64(len(m.users)), nil
 }
 
-func (m *mockUserRepo) SetAvatarFields(_ context.Context, userID string, ipfsCID *string, webpCID *string) error {
+func (m *mockUserRepo) SetAvatarFields(_ context.Context, userID string, ipfsCID sql.NullString, webpCID sql.NullString) error {
 	u, ok := m.users[userID]
 	if !ok {
 		return domain.ErrUserNotFound

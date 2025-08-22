@@ -3,6 +3,7 @@ package httpapi
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -251,6 +252,6 @@ func (s *stubUserRepo) Count(context.Context) (int64, error) {
 	return 0, domain.ErrInternalServer
 }
 
-func (s *stubUserRepo) SetAvatarFields(context.Context, string, *string, *string) error {
+func (s *stubUserRepo) SetAvatarFields(context.Context, string, sql.NullString, sql.NullString) error {
 	return domain.ErrInternalServer
 }

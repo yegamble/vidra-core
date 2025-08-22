@@ -3,6 +3,7 @@ package httpapi
 import (
 	"bufio"
 	"bytes"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"image"
@@ -80,7 +81,12 @@ func (s *Server) UploadAvatar(w http.ResponseWriter, r *http.Request) {
 	webpCID := s.uploadWebPToIPFS(localPath)
 
 	// Save to database
-	if err := s.userRepo.SetAvatarFields(r.Context(), userID, &cid, webpCID); err != nil {
+	ipfsNullString := sql.NullString{String: cid, Valid: true}
+	var webpNullString sql.NullString
+	if webpCID != nil {
+		webpNullString = sql.NullString{String: *webpCID, Valid: true}
+	}
+	if err := s.userRepo.SetAvatarFields(r.Context(), userID, ipfsNullString, webpNullString); err != nil {
 		WriteError(w, http.StatusInternalServerError, domain.NewDomainError("DB_ERROR", "Failed to store avatar identifiers"))
 		return
 	}
@@ -106,12 +112,12 @@ type avatarFileData struct {
 func (s *Server) parseAvatarFile(r *http.Request) (*avatarFileData, error) {
 	// Basic form limit to avoid abuse (5MB)
 	if err := r.ParseMultipartForm(5 << 20); err != nil {
-		return nil, domain.NewDomainError("INVALID_MULTIPART", "Failed to parse form data")
+		return nil, fmt.Errorf("missing file field in form: %w", domain.ErrBadRequest)
 	}
 
 	file, header, err := r.FormFile("file")
 	if err != nil {
-		return nil, domain.NewDomainError("MISSING_FILE", "Missing file field in form")
+		return nil, fmt.Errorf("missing file field in form: %w", domain.ErrBadRequest)
 	}
 	defer func() { _ = file.Close() }()
 
