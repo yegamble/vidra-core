@@ -1,4 +1,5 @@
-.PHONY: help deps lint test test-unit test-integration test-integration-ci build docker docker-up docker-down migrate clean dev install-tools test-ci postman-newman postman-e2e run logs migrate-up migrate-up-docker migrate-test migrate-test-docker run-with-encoding
+.PHONY: help deps lint test test-unit test-integration test-integration-ci build docker docker-up docker-down clean dev install-tools test-ci postman-newman postman-e2e run logs run-with-encoding
+.PHONY: migrate-dev migrate-test migrate-custom migrate-dev-docker migrate-test-docker
 
 # Use docker compose v2 if available; override with DOCKER_COMPOSE="docker-compose" if needed
 DOCKER_COMPOSE ?= docker compose
@@ -83,18 +84,52 @@ test-integration-local: ## Run only integration tests with local Docker services
 	go test -v -race -run Integration ./...
 	COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) -f docker-compose.test.yml down -v
 
-migrate-migrations: ## Apply all SQL migrations in migrations/ to DATABASE_URL
-	@if [ -z "${DATABASE_URL}" ]; then \
-		echo "DATABASE_URL is not set. Export it to run migrations."; \
+migrate-dev: ## Apply migrations to development database (uses .env)
+	@echo "Loading development environment from .env..."
+	@set -a; [ -f .env ] && source .env; set +a; \
+	if [ -z "$$DATABASE_URL" ]; then \
+		echo "DATABASE_URL not found in .env file. Please check your .env configuration."; \
 		exit 2; \
 	fi; \
+	echo "Applying migrations to development database: $$DATABASE_URL"; \
+	set -e; \
+	shopt -s nullglob; \
+	for f in migrations/*.sql; do \
+		echo "Applying $$f"; \
+		psql "$$DATABASE_URL" -v ON_ERROR_STOP=1 -f "$$f"; \
+	done; \
+	echo "Development migrations applied successfully."
+
+migrate-test: ## Apply migrations to test database (uses .env.test)
+	@echo "Loading test environment from .env.test..."
+	@set -a; [ -f .env.test ] && source .env.test; set +a; \
+	if [ -z "$$DATABASE_URL" ]; then \
+		echo "DATABASE_URL not found in .env.test file. Please check your .env.test configuration."; \
+		exit 2; \
+	fi; \
+	echo "Applying migrations to test database: $$DATABASE_URL"; \
+	set -e; \
+	shopt -s nullglob; \
+	for f in migrations/*.sql; do \
+		echo "Applying $$f"; \
+		psql "$$DATABASE_URL" -v ON_ERROR_STOP=1 -f "$$f"; \
+	done; \
+	echo "Test migrations applied successfully."
+
+migrate-custom: ## Apply migrations to custom DATABASE_URL (set via environment)
+	@if [ -z "${DATABASE_URL}" ]; then \
+		echo "DATABASE_URL is not set. Export it to run migrations."; \
+		echo "Example: DATABASE_URL=\"postgres://user:pass@host:port/db\" make migrate-custom"; \
+		exit 2; \
+	fi; \
+	echo "Applying migrations to custom database: ${DATABASE_URL}"; \
 	set -e; \
 	shopt -s nullglob; \
 	for f in migrations/*.sql; do \
 		echo "Applying $$f"; \
 		psql "${DATABASE_URL}" -v ON_ERROR_STOP=1 -f "$$f"; \
 	done; \
-	echo "Migrations applied successfully."
+	echo "Custom migrations applied successfully."
 
 # docker-up moved to avoid duplicates - see line 101
 # docker-down moved to avoid duplicates - see line 107  
@@ -135,34 +170,28 @@ docker-reset: ## Reset docker environment (remove volumes)
 	$(DOCKER_COMPOSE) down -v
 	$(DOCKER_COMPOSE) up -d
 
-migrate-up: ## Run database migrations against local DB (psql)
-	@if [ -z "${DATABASE_URL}" ]; then \
-		echo "DATABASE_URL is not set. Using default."; \
-		export DATABASE_URL="postgres://athena_user:athena_password@127.0.0.1:5432/athena?sslmode=disable"; \
-	fi; \
-	psql "${DATABASE_URL}" -f init-shared-db.sql || { \
-		echo "\npsql migration failed. If you are using Docker, try:\n  make migrate-up-docker\n"; \
-		exit 2; \
-	}
-
-migrate-up-docker: ## Run database migrations inside the postgres container
-	@echo "Applying migrations inside docker service 'postgres'..."
+migrate-dev-docker: ## Apply development migrations using Docker Postgres container
+	@echo "Applying development migrations inside docker service 'postgres'..."
 	@$(DOCKER_COMPOSE) ps postgres >/dev/null 2>&1 || { echo "Postgres container not found. Run 'make docker-up' first."; exit 1; }
-	-@$(DOCKER_COMPOSE) cp init-shared-db.sql postgres:/tmp/init.sql
-	@$(DOCKER_COMPOSE) exec -T postgres psql -U athena_user -d athena -f /tmp/init.sql
+	@set -e; \
+	shopt -s nullglob; \
+	for f in migrations/*.sql; do \
+		echo "Applying $$f via Docker"; \
+		$(DOCKER_COMPOSE) exec -T postgres psql -U athena_user -d athena -f /dev/stdin < "$$f"; \
+	done; \
+	echo "Development Docker migrations applied successfully."
 
-migrate-test: ## Run test database migrations against local test DB (psql)
-	psql "postgres://test_user:test_password@127.0.0.1:5433/athena_test?sslmode=disable" -f init-test-db.sql || { \
-		echo "\npsql test migration failed. If you are using Docker, try:\n  make migrate-test-docker\n"; \
-		exit 2; \
-	}
-
-migrate-test-docker: ## Run test DB migrations inside the postgres-test container
+migrate-test-docker: ## Apply test migrations using Docker test Postgres container
 	@echo "Applying test migrations inside docker service 'postgres-test'..."
-	@$(DOCKER_COMPOSE) -f docker-compose.test.yml up -d postgres-test >/dev/null
+	@COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) -f docker-compose.test.yml up -d postgres-test >/dev/null
 	@echo "Waiting for postgres-test to be healthy..." && sleep 3
-	-@$(DOCKER_COMPOSE) -f docker-compose.test.yml cp init-test-db.sql postgres-test:/tmp/init.sql
-	@$(DOCKER_COMPOSE) -f docker-compose.test.yml exec -T postgres-test psql -U test_user -d athena_test -f /tmp/init.sql
+	@set -e; \
+	shopt -s nullglob; \
+	for f in migrations/*.sql; do \
+		echo "Applying $$f via Docker test container"; \
+		COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) -f docker-compose.test.yml exec -T postgres-test psql -U test_user -d athena_test -f /dev/stdin < "$$f"; \
+	done; \
+	echo "Test Docker migrations applied successfully."
 
 validate-openapi: ## Validate OpenAPI specification
 	@if command -v swagger-cli >/dev/null 2>&1; then \

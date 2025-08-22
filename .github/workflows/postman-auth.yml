@@ -21,7 +21,9 @@ jobs:
       - name: Run Postman E2E via Makefile
         env:
           DOCKER_COMPOSE: docker compose
-        run: make postman-e2e
+        run: |
+          echo "Running Postman auth collection tests..."
+          make postman-e2e
 
       - name: Upload Newman results
         if: always()
