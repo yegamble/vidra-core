@@ -626,3 +626,111 @@ func TestUploadAvatar_TIFFExtensionAccepted(t *testing.T) {
 		t.Fatalf("expected 'invalid or corrupted image file' error, got %s", rr.Body.String())
 	}
 }
+
+// Test that non-image files are rejected (e.g., text file with image extension)
+func TestUploadAvatar_NonImageFileRejected(t *testing.T) {
+	s := NewServer(nil, nil, "test", nil, 0, "", "", 0, nil)
+
+	var body bytes.Buffer
+	mw := multipart.NewWriter(&body)
+	fw, err := mw.CreateFormFile("file", "document.jpg") // Image extension but not image content
+	if err != nil {
+		t.Fatalf("create form file: %v", err)
+	}
+	// Write plain text content that's not an image
+	textContent := "This is a plain text document, not an image file at all. It should be rejected."
+	if _, err := fw.Write([]byte(textContent)); err != nil {
+		t.Fatalf("write file bytes: %v", err)
+	}
+	if err := mw.Close(); err != nil {
+		t.Fatalf("close multipart: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/users/me/avatar", &body)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	req = req.WithContext(withUserID(req.Context(), "user-1"))
+	rr := httptest.NewRecorder()
+
+	s.UploadAvatar(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for non-image file, got %d body=%s", rr.Code, rr.Body.String())
+	}
+
+	// Should fail with image decoding error
+	if !strings.Contains(rr.Body.String(), "invalid or corrupted image file") {
+		t.Fatalf("expected 'invalid or corrupted image file' error, got %s", rr.Body.String())
+	}
+}
+
+// Test that executable files are rejected even with image extension
+func TestUploadAvatar_ExecutableFileRejected(t *testing.T) {
+	s := NewServer(nil, nil, "test", nil, 0, "", "", 0, nil)
+
+	var body bytes.Buffer
+	mw := multipart.NewWriter(&body)
+	fw, err := mw.CreateFormFile("file", "malware.png") // PNG extension but executable content
+	if err != nil {
+		t.Fatalf("create form file: %v", err)
+	}
+	// Write ELF executable header (Linux executable)
+	elfHeader := []byte{0x7f, 0x45, 0x4c, 0x46, 0x02, 0x01, 0x01, 0x00}
+	if _, err := fw.Write(elfHeader); err != nil {
+		t.Fatalf("write file bytes: %v", err)
+	}
+	if err := mw.Close(); err != nil {
+		t.Fatalf("close multipart: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/users/me/avatar", &body)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	req = req.WithContext(withUserID(req.Context(), "user-1"))
+	rr := httptest.NewRecorder()
+
+	s.UploadAvatar(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for executable file, got %d body=%s", rr.Code, rr.Body.String())
+	}
+
+	// Should fail with image decoding error since it's not a valid image
+	if !strings.Contains(rr.Body.String(), "invalid or corrupted image file") {
+		t.Fatalf("expected 'invalid or corrupted image file' error, got %s", rr.Body.String())
+	}
+}
+
+// Test that PDF files are rejected
+func TestUploadAvatar_PDFFileRejected(t *testing.T) {
+	s := NewServer(nil, nil, "test", nil, 0, "", "", 0, nil)
+
+	var body bytes.Buffer
+	mw := multipart.NewWriter(&body)
+	fw, err := mw.CreateFormFile("file", "document.pdf")
+	if err != nil {
+		t.Fatalf("create form file: %v", err)
+	}
+	// Write PDF header
+	pdfHeader := []byte("%PDF-1.4\n%âãÏÓ\n")
+	if _, err := fw.Write(pdfHeader); err != nil {
+		t.Fatalf("write file bytes: %v", err)
+	}
+	if err := mw.Close(); err != nil {
+		t.Fatalf("close multipart: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/users/me/avatar", &body)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	req = req.WithContext(withUserID(req.Context(), "user-1"))
+	rr := httptest.NewRecorder()
+
+	s.UploadAvatar(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for PDF file, got %d body=%s", rr.Code, rr.Body.String())
+	}
+
+	// Should fail with unsupported image format since .pdf is not in allowed extensions
+	if !strings.Contains(rr.Body.String(), "unsupported image format") {
+		t.Fatalf("expected 'unsupported image format' error, got %s", rr.Body.String())
+	}
+}
