@@ -101,19 +101,19 @@ func (m *mockUserRepo) Count(_ context.Context) (int64, error) {
 }
 
 func (m *mockUserRepo) SetAvatarFields(_ context.Context, userID string, ipfsCID sql.NullString, webpCID sql.NullString) error {
-    u, ok := m.users[userID]
-    if !ok {
-        return domain.ErrUserNotFound
-    }
-    // Copy to avoid external mutation
-    c := *u
-    if c.Avatar == nil {
-        c.Avatar = &domain.Avatar{}
-    }
-    c.Avatar.IPFSCID = ipfsCID
-    c.Avatar.WebPIPFSCID = webpCID
-    m.users[userID] = &c
-    return nil
+	u, ok := m.users[userID]
+	if !ok {
+		return domain.ErrUserNotFound
+	}
+	// Copy to avoid external mutation
+	c := *u
+	if c.Avatar == nil {
+		c.Avatar = &domain.Avatar{}
+	}
+	c.Avatar.IPFSCID = ipfsCID
+	c.Avatar.WebPIPFSCID = webpCID
+	m.users[userID] = &c
+	return nil
 }
 
 // Response decoding helpers

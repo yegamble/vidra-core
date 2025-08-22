@@ -139,12 +139,12 @@ func TestUploadAvatar_ValidPNG_WithMockIPFS(t *testing.T) {
 	if err := json.Unmarshal(b, &got); err != nil {
 		t.Fatalf("decode user: %v", err)
 	}
-    if got.Avatar == nil || got.Avatar.IPFSCID == nil || *got.Avatar.IPFSCID != "CID123" {
-        t.Fatalf("expected CID123, got %+v", got)
-    }
-    if got.Avatar == nil || got.Avatar.WebPIPFSCID == nil || *got.Avatar.WebPIPFSCID != "CIDWEBP" {
-        t.Fatalf("expected CIDWEBP for webp, got %+v", got)
-    }
+	if got.Avatar == nil || got.Avatar.IPFSCID == nil || *got.Avatar.IPFSCID != "CID123" {
+		t.Fatalf("expected CID123, got %+v", got)
+	}
+	if got.Avatar == nil || got.Avatar.WebPIPFSCID == nil || *got.Avatar.WebPIPFSCID != "CIDWEBP" {
+		t.Fatalf("expected CIDWEBP for webp, got %+v", got)
+	}
 }
 
 // Test a happy path upload with a valid JPEG image
@@ -210,12 +210,12 @@ func TestUploadAvatar_ValidJPEG_WithMockIPFS(t *testing.T) {
 	if err := json.Unmarshal(b, &got); err != nil {
 		t.Fatalf("decode user: %v", err)
 	}
-    if got.Avatar == nil || got.Avatar.IPFSCID == nil || *got.Avatar.IPFSCID != "CID456" {
-        t.Fatalf("expected CID456, got %+v", got)
-    }
-    if got.Avatar == nil || got.Avatar.WebPIPFSCID == nil || *got.Avatar.WebPIPFSCID != "CIDWEBP2" {
-        t.Fatalf("expected CIDWEBP2 for webp, got %+v", got)
-    }
+	if got.Avatar == nil || got.Avatar.IPFSCID == nil || *got.Avatar.IPFSCID != "CID456" {
+		t.Fatalf("expected CID456, got %+v", got)
+	}
+	if got.Avatar == nil || got.Avatar.WebPIPFSCID == nil || *got.Avatar.WebPIPFSCID != "CIDWEBP2" {
+		t.Fatalf("expected CIDWEBP2 for webp, got %+v", got)
+	}
 }
 
 // Test that WebP extension is now accepted (will fail with invalid image data in decoding, but passes extension check)
@@ -349,22 +349,22 @@ func TestUploadAvatar_ValidWebP_WithMockIPFS(t *testing.T) {
 	if err := json.Unmarshal(b, &got); err != nil {
 		t.Fatalf("decode user: %v", err)
 	}
-    if got.Avatar == nil || got.Avatar.IPFSCID == nil || *got.Avatar.IPFSCID != "CIDWEBP3" {
-        t.Fatalf("expected CIDWEBP3, got avatar CID: %v", func() string {
-            if got.Avatar == nil || got.Avatar.IPFSCID == nil {
-                return "<nil>"
-            }
-            return *got.Avatar.IPFSCID
-        }())
-    }
-    if got.Avatar == nil || got.Avatar.WebPIPFSCID == nil || *got.Avatar.WebPIPFSCID != "CIDWEBP3" {
-        t.Fatalf("expected CIDWEBP3 for webp, got WebP CID: %v", func() string {
-            if got.Avatar == nil || got.Avatar.WebPIPFSCID == nil {
-                return "<nil>"
-            }
-            return *got.Avatar.WebPIPFSCID
-        }())
-    }
+	if got.Avatar == nil || got.Avatar.IPFSCID == nil || *got.Avatar.IPFSCID != "CIDWEBP3" {
+		t.Fatalf("expected CIDWEBP3, got avatar CID: %v", func() string {
+			if got.Avatar == nil || got.Avatar.IPFSCID == nil {
+				return "<nil>"
+			}
+			return *got.Avatar.IPFSCID
+		}())
+	}
+	if got.Avatar == nil || got.Avatar.WebPIPFSCID == nil || *got.Avatar.WebPIPFSCID != "CIDWEBP3" {
+		t.Fatalf("expected CIDWEBP3 for webp, got WebP CID: %v", func() string {
+			if got.Avatar == nil || got.Avatar.WebPIPFSCID == nil {
+				return "<nil>"
+			}
+			return *got.Avatar.WebPIPFSCID
+		}())
+	}
 }
 
 // Test successful GIF upload with valid image data
@@ -424,12 +424,12 @@ func TestUploadAvatar_ValidGIF_WithMockIPFS(t *testing.T) {
 	if err := json.Unmarshal(b, &got); err != nil {
 		t.Fatalf("decode user: %v", err)
 	}
-    if got.Avatar == nil || got.Avatar.IPFSCID == nil || *got.Avatar.IPFSCID != "CIDGIF1" {
-        t.Fatalf("expected CIDGIF1, got %+v", got)
-    }
-    if got.Avatar == nil || got.Avatar.WebPIPFSCID == nil || *got.Avatar.WebPIPFSCID != "CIDWEBP4" {
-        t.Fatalf("expected CIDWEBP4 for webp, got %+v", got)
-    }
+	if got.Avatar == nil || got.Avatar.IPFSCID == nil || *got.Avatar.IPFSCID != "CIDGIF1" {
+		t.Fatalf("expected CIDGIF1, got %+v", got)
+	}
+	if got.Avatar == nil || got.Avatar.WebPIPFSCID == nil || *got.Avatar.WebPIPFSCID != "CIDWEBP4" {
+		t.Fatalf("expected CIDWEBP4 for webp, got %+v", got)
+	}
 }
 
 // Test successful TIFF upload with valid image data
@@ -489,12 +489,12 @@ func TestUploadAvatar_ValidTIFF_WithMockIPFS(t *testing.T) {
 	if err := json.Unmarshal(b, &got); err != nil {
 		t.Fatalf("decode user: %v", err)
 	}
-    if got.Avatar == nil || got.Avatar.IPFSCID == nil || *got.Avatar.IPFSCID != "CIDTIFF1" {
-        t.Fatalf("expected CIDTIFF1, got %+v", got)
-    }
-    if got.Avatar == nil || got.Avatar.WebPIPFSCID == nil || *got.Avatar.WebPIPFSCID != "CIDWEBP5" {
-        t.Fatalf("expected CIDWEBP5 for webp, got %+v", got)
-    }
+	if got.Avatar == nil || got.Avatar.IPFSCID == nil || *got.Avatar.IPFSCID != "CIDTIFF1" {
+		t.Fatalf("expected CIDTIFF1, got %+v", got)
+	}
+	if got.Avatar == nil || got.Avatar.WebPIPFSCID == nil || *got.Avatar.WebPIPFSCID != "CIDWEBP5" {
+		t.Fatalf("expected CIDWEBP5 for webp, got %+v", got)
+	}
 }
 
 // Test successful HEIC upload with valid image data
@@ -554,12 +554,12 @@ func TestUploadAvatar_ValidHEIC_WithMockIPFS(t *testing.T) {
 	if err := json.Unmarshal(b, &got); err != nil {
 		t.Fatalf("decode user: %v", err)
 	}
-    if got.Avatar == nil || got.Avatar.IPFSCID == nil || *got.Avatar.IPFSCID != "CIDHEIC1" {
-        t.Fatalf("expected CIDHEIC1, got %+v", got)
-    }
-    if got.Avatar == nil || got.Avatar.WebPIPFSCID == nil || *got.Avatar.WebPIPFSCID != "CIDWEBP6" {
-        t.Fatalf("expected CIDWEBP6 for webp, got %+v", got)
-    }
+	if got.Avatar == nil || got.Avatar.IPFSCID == nil || *got.Avatar.IPFSCID != "CIDHEIC1" {
+		t.Fatalf("expected CIDHEIC1, got %+v", got)
+	}
+	if got.Avatar == nil || got.Avatar.WebPIPFSCID == nil || *got.Avatar.WebPIPFSCID != "CIDWEBP6" {
+		t.Fatalf("expected CIDWEBP6 for webp, got %+v", got)
+	}
 }
 
 // Test that GIF extension is accepted
