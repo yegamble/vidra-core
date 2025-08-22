@@ -1,25 +1,20 @@
 package httpapi
 
 import (
-    "bytes"
-    "encoding/json"
-    "mime/multipart"
-    "net/http"
-    "net/http/httptest"
-    "os"
-    "strings"
-    "testing"
-    "time"
+	"bytes"
+	"encoding/json"
+	"mime/multipart"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"strings"
+	"testing"
+	"time"
 
-    "athena/internal/domain"
-    "athena/internal/testutil"
+	"athena/internal/domain"
+	"athena/internal/generated"
+	"athena/internal/testutil"
 )
-
-// apiUser mirrors the JSON shape returned by the API for avatar fields
-type apiUser struct {
-    AvatarIPFSCID     *string `json:"avatar_ipfs_cid"`
-    AvatarWebPIPFSCID *string `json:"avatar_webp_ipfs_cid"`
-}
 
 // Test that filenames with backslash in extension are rejected (defense-in-depth)
 func TestUploadAvatar_InvalidExtensionRejected(t *testing.T) {
@@ -139,17 +134,17 @@ func TestUploadAvatar_ValidPNG_WithMockIPFS(t *testing.T) {
 	if !resp.Success {
 		t.Fatalf("expected success=true")
 	}
-    var got apiUser
-    b, _ := json.Marshal(resp.Data)
-    if err := json.Unmarshal(b, &got); err != nil {
-        t.Fatalf("decode user: %v", err)
-    }
-    if got.AvatarIPFSCID == nil || *got.AvatarIPFSCID != "CID123" {
-        t.Fatalf("expected CID123, got %+v", got)
-    }
-    if got.AvatarWebPIPFSCID == nil || *got.AvatarWebPIPFSCID != "CIDWEBP" {
-        t.Fatalf("expected CIDWEBP for webp, got %+v", got)
-    }
+	var got generated.User
+	b, _ := json.Marshal(resp.Data)
+	if err := json.Unmarshal(b, &got); err != nil {
+		t.Fatalf("decode user: %v", err)
+	}
+	if got.AvatarIPFSCID == nil || *got.AvatarIPFSCID != "CID123" {
+		t.Fatalf("expected CID123, got %+v", got)
+	}
+	if got.AvatarWebPIPFSCID == nil || *got.AvatarWebPIPFSCID != "CIDWEBP" {
+		t.Fatalf("expected CIDWEBP for webp, got %+v", got)
+	}
 }
 
 // Test a happy path upload with a valid JPEG image
@@ -210,17 +205,17 @@ func TestUploadAvatar_ValidJPEG_WithMockIPFS(t *testing.T) {
 	if !resp.Success {
 		t.Fatalf("expected success=true")
 	}
-    var got apiUser
-    b, _ := json.Marshal(resp.Data)
-    if err := json.Unmarshal(b, &got); err != nil {
-        t.Fatalf("decode user: %v", err)
-    }
-    if got.AvatarIPFSCID == nil || *got.AvatarIPFSCID != "CID456" {
-        t.Fatalf("expected CID456, got %+v", got)
-    }
-    if got.AvatarWebPIPFSCID == nil || *got.AvatarWebPIPFSCID != "CIDWEBP2" {
-        t.Fatalf("expected CIDWEBP2 for webp, got %+v", got)
-    }
+	var got generated.User
+	b, _ := json.Marshal(resp.Data)
+	if err := json.Unmarshal(b, &got); err != nil {
+		t.Fatalf("decode user: %v", err)
+	}
+	if got.AvatarIPFSCID == nil || *got.AvatarIPFSCID != "CID456" {
+		t.Fatalf("expected CID456, got %+v", got)
+	}
+	if got.AvatarWebPIPFSCID == nil || *got.AvatarWebPIPFSCID != "CIDWEBP2" {
+		t.Fatalf("expected CIDWEBP2 for webp, got %+v", got)
+	}
 }
 
 // Test that WebP extension is now accepted (will fail with invalid image data in decoding, but passes extension check)
@@ -349,27 +344,27 @@ func TestUploadAvatar_ValidWebP_WithMockIPFS(t *testing.T) {
 	if !resp.Success {
 		t.Fatalf("expected success=true")
 	}
-    var got apiUser
-    b, _ := json.Marshal(resp.Data)
-    if err := json.Unmarshal(b, &got); err != nil {
-        t.Fatalf("decode user: %v", err)
-    }
-    if got.AvatarIPFSCID == nil || *got.AvatarIPFSCID != "CIDWEBP3" {
-        t.Fatalf("expected CIDWEBP3, got avatar CID: %v", func() string {
-            if got.AvatarIPFSCID == nil {
-                return "<nil>"
-            }
-            return *got.AvatarIPFSCID
-        }())
-    }
-    if got.AvatarWebPIPFSCID == nil || *got.AvatarWebPIPFSCID != "CIDWEBP3" {
-        t.Fatalf("expected CIDWEBP3 for webp, got WebP CID: %v", func() string {
-            if got.AvatarWebPIPFSCID == nil {
-                return "<nil>"
-            }
-            return *got.AvatarWebPIPFSCID
-        }())
-    }
+	var got generated.User
+	b, _ := json.Marshal(resp.Data)
+	if err := json.Unmarshal(b, &got); err != nil {
+		t.Fatalf("decode user: %v", err)
+	}
+	if got.AvatarIPFSCID == nil || *got.AvatarIPFSCID != "CIDWEBP3" {
+		t.Fatalf("expected CIDWEBP3, got avatar CID: %v", func() string {
+			if got.AvatarIPFSCID == nil {
+				return "<nil>"
+			}
+			return *got.AvatarIPFSCID
+		}())
+	}
+	if got.AvatarWebPIPFSCID == nil || *got.AvatarWebPIPFSCID != "CIDWEBP3" {
+		t.Fatalf("expected CIDWEBP3 for webp, got WebP CID: %v", func() string {
+			if got.AvatarWebPIPFSCID == nil {
+				return "<nil>"
+			}
+			return *got.AvatarWebPIPFSCID
+		}())
+	}
 }
 
 // Test successful GIF upload with valid image data
@@ -424,17 +419,17 @@ func TestUploadAvatar_ValidGIF_WithMockIPFS(t *testing.T) {
 	if !resp.Success {
 		t.Fatalf("expected success=true")
 	}
-    var got apiUser
-    b, _ := json.Marshal(resp.Data)
-    if err := json.Unmarshal(b, &got); err != nil {
-        t.Fatalf("decode user: %v", err)
-    }
-    if got.AvatarIPFSCID == nil || *got.AvatarIPFSCID != "CIDGIF1" {
-        t.Fatalf("expected CIDGIF1, got %+v", got)
-    }
-    if got.AvatarWebPIPFSCID == nil || *got.AvatarWebPIPFSCID != "CIDWEBP4" {
-        t.Fatalf("expected CIDWEBP4 for webp, got %+v", got)
-    }
+	var got generated.User
+	b, _ := json.Marshal(resp.Data)
+	if err := json.Unmarshal(b, &got); err != nil {
+		t.Fatalf("decode user: %v", err)
+	}
+	if got.AvatarIPFSCID == nil || *got.AvatarIPFSCID != "CIDGIF1" {
+		t.Fatalf("expected CIDGIF1, got %+v", got)
+	}
+	if got.AvatarWebPIPFSCID == nil || *got.AvatarWebPIPFSCID != "CIDWEBP4" {
+		t.Fatalf("expected CIDWEBP4 for webp, got %+v", got)
+	}
 }
 
 // Test successful TIFF upload with valid image data
@@ -489,17 +484,17 @@ func TestUploadAvatar_ValidTIFF_WithMockIPFS(t *testing.T) {
 	if !resp.Success {
 		t.Fatalf("expected success=true")
 	}
-    var got apiUser
-    b, _ := json.Marshal(resp.Data)
-    if err := json.Unmarshal(b, &got); err != nil {
-        t.Fatalf("decode user: %v", err)
-    }
-    if got.AvatarIPFSCID == nil || *got.AvatarIPFSCID != "CIDTIFF1" {
-        t.Fatalf("expected CIDTIFF1, got %+v", got)
-    }
-    if got.AvatarWebPIPFSCID == nil || *got.AvatarWebPIPFSCID != "CIDWEBP5" {
-        t.Fatalf("expected CIDWEBP5 for webp, got %+v", got)
-    }
+	var got generated.User
+	b, _ := json.Marshal(resp.Data)
+	if err := json.Unmarshal(b, &got); err != nil {
+		t.Fatalf("decode user: %v", err)
+	}
+	if got.AvatarIPFSCID == nil || *got.AvatarIPFSCID != "CIDTIFF1" {
+		t.Fatalf("expected CIDTIFF1, got %+v", got)
+	}
+	if got.AvatarWebPIPFSCID == nil || *got.AvatarWebPIPFSCID != "CIDWEBP5" {
+		t.Fatalf("expected CIDWEBP5 for webp, got %+v", got)
+	}
 }
 
 // Test successful HEIC upload with valid image data
@@ -554,17 +549,17 @@ func TestUploadAvatar_ValidHEIC_WithMockIPFS(t *testing.T) {
 	if !resp.Success {
 		t.Fatalf("expected success=true")
 	}
-    var got apiUser
-    b, _ := json.Marshal(resp.Data)
-    if err := json.Unmarshal(b, &got); err != nil {
-        t.Fatalf("decode user: %v", err)
-    }
-    if got.AvatarIPFSCID == nil || *got.AvatarIPFSCID != "CIDHEIC1" {
-        t.Fatalf("expected CIDHEIC1, got %+v", got)
-    }
-    if got.AvatarWebPIPFSCID == nil || *got.AvatarWebPIPFSCID != "CIDWEBP6" {
-        t.Fatalf("expected CIDWEBP6 for webp, got %+v", got)
-    }
+	var got generated.User
+	b, _ := json.Marshal(resp.Data)
+	if err := json.Unmarshal(b, &got); err != nil {
+		t.Fatalf("decode user: %v", err)
+	}
+	if got.AvatarIPFSCID == nil || *got.AvatarIPFSCID != "CIDHEIC1" {
+		t.Fatalf("expected CIDHEIC1, got %+v", got)
+	}
+	if got.AvatarWebPIPFSCID == nil || *got.AvatarWebPIPFSCID != "CIDWEBP6" {
+		t.Fatalf("expected CIDWEBP6 for webp, got %+v", got)
+	}
 }
 
 // Test that GIF extension is accepted
