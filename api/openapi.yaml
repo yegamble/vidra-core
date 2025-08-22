@@ -289,7 +289,10 @@ paths:
         - Both original and WebP versions pinned in IPFS
         - User record updated with IPFS content identifiers
         
-        **Response includes both avatar_ipfs_cid (original) and avatar_webp_ipfs_cid (optimized)**
+        Response includes an avatar object with fields:
+        - id (UUID)
+        - ipfs_cid (original)
+        - webp_ipfs_cid (optimized)
       operationId: uploadUserAvatar
       requestBody:
         required: true
@@ -347,8 +350,10 @@ paths:
                       username: "johndoe"
                       email: "john@example.com"
                       display_name: "John Doe"
-                      avatar_ipfs_cid: "bafybeigdyrzt5n3q4h7v6s6l4xgk7g6v7m3kz7l2o3q4r5s6t7u8v9w0x"
-                      avatar_webp_ipfs_cid: "bafybeigdyrzt5n3q4h7v6s6l4xgk7g6v7m3kz7l2o3q4r5s6t7u8v9w0y"
+                      avatar:
+                        id: "3b94528c-7a2f-4d9b-9b8d-2d90d3f5a111"
+                        ipfs_cid: "bafybeigdyrzt5n3q4h7v6s6l4xgk7g6v7m3kz7l2o3q4r5s6t7u8v9w0x"
+                        webp_ipfs_cid: "bafybeigdyrzt5n3q4h7v6s6l4xgk7g6v7m3kz7l2o3q4r5s6t7u8v9w0y"
                       bio: null
                       bitcoin_wallet: null
                       role: "user"
@@ -554,16 +559,8 @@ components:
           type: string
           description: User's display name
           example: "John Doe"
-        avatar_ipfs_cid:
-          type: string
-          nullable: true
-          description: IPFS CID of the avatar
-          example: "bafybeigdyrzt5n3q4h7v6s6l4xgk7g6v7m3kz7l2o3q4r5s6t7u8v9w0x"
-        avatar_webp_ipfs_cid:
-          type: string
-          nullable: true
-          description: IPFS CID of the WebP-optimized avatar
-          example: "bafybeigdyrzt5n3q4h7v6s6l4xgk7g6v7m3kz7l2o3q4r5s6t7u8v9w0y"
+        avatar:
+          $ref: '#/components/schemas/Avatar'
         bio:
           type: string
           description: User biography
@@ -592,6 +589,26 @@ components:
         - is_active
         - created_at
         - updated_at
+
+    Avatar:
+      type: object
+      description: User avatar metadata
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Avatar UUID
+          example: "3b94528c-7a2f-4d9b-9b8d-2d90d3f5a111"
+        ipfs_cid:
+          type: string
+          nullable: true
+          description: IPFS CID for the original avatar image
+          example: "bafybeigdyrzt5n3q4h7v6s6l4xgk7g6v7m3kz7l2o3q4r5s6t7u8v9w0x"
+        webp_ipfs_cid:
+          type: string
+          nullable: true
+          description: IPFS CID for the WebP-optimized avatar image
+          example: "bafybeigdyrzt5n3q4h7v6s6l4xgk7g6v7m3kz7l2o3q4r5s6t7u8v9w0y"
 
     UserRole:
       type: string

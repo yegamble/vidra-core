@@ -100,24 +100,29 @@ func (s *Server) Login(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Map to generated.User
-	var dispPtr *string
-	if dUser.DisplayName != "" {
-		disp := dUser.DisplayName
-		dispPtr = &disp
-	}
-	gUser := generated.User{
-		ID:                dUser.ID,
-		Username:          dUser.Username,
-		Email:             dUser.Email,
-		DisplayName:       dispPtr,
-		AvatarIPFSCID:     nullStringToPtr(dUser.AvatarIPFSCID),
-		AvatarWebPIPFSCID: nullStringToPtr(dUser.AvatarWebPIPFSCID),
-		Role:              generated.UserRoleUser,
-		IsActive:          dUser.IsActive,
-		CreatedAt:         dUser.CreatedAt,
-		UpdatedAt:         dUser.UpdatedAt,
-	}
+    // Map to generated.User
+    var dispPtr *string
+    if dUser.DisplayName != "" {
+        disp := dUser.DisplayName
+        dispPtr = &disp
+    }
+    gUser := generated.User{
+        ID:          dUser.ID,
+        Username:    dUser.Username,
+        Email:       dUser.Email,
+        DisplayName: dispPtr,
+        Role:        generated.UserRoleUser,
+        IsActive:    dUser.IsActive,
+        CreatedAt:   dUser.CreatedAt,
+        UpdatedAt:   dUser.UpdatedAt,
+    }
+    if dUser.Avatar != nil {
+        gUser.Avatar = &generated.Avatar{
+            ID:             dUser.Avatar.ID,
+            IPFSCID:        nullStringToPtr(dUser.Avatar.IPFSCID),
+            WebPIPFSCID:    nullStringToPtr(dUser.Avatar.WebPIPFSCID),
+        }
+    }
 
 	response := generated.AuthResponse{
 		User:         gUser,
@@ -184,24 +189,29 @@ func (s *Server) Register(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// Map to generated.User
-		var dispPtr *string
-		if dUser.DisplayName != "" {
-			disp := dUser.DisplayName
-			dispPtr = &disp
-		}
-		gUser := generated.User{
-			ID:                dUser.ID,
-			Username:          dUser.Username,
-			Email:             dUser.Email,
-			DisplayName:       dispPtr,
-			AvatarIPFSCID:     nullStringToPtr(dUser.AvatarIPFSCID),
-			AvatarWebPIPFSCID: nullStringToPtr(dUser.AvatarWebPIPFSCID),
-			Role:              generated.UserRoleUser,
-			IsActive:          dUser.IsActive,
-			CreatedAt:         dUser.CreatedAt,
-			UpdatedAt:         dUser.UpdatedAt,
-		}
+        // Map to generated.User
+        var dispPtr *string
+        if dUser.DisplayName != "" {
+            disp := dUser.DisplayName
+            dispPtr = &disp
+        }
+        gUser := generated.User{
+            ID:          dUser.ID,
+            Username:    dUser.Username,
+            Email:       dUser.Email,
+            DisplayName: dispPtr,
+            Role:        generated.UserRoleUser,
+            IsActive:    dUser.IsActive,
+            CreatedAt:   dUser.CreatedAt,
+            UpdatedAt:   dUser.UpdatedAt,
+        }
+        if dUser.Avatar != nil {
+            gUser.Avatar = &generated.Avatar{
+                ID:             dUser.Avatar.ID,
+                IPFSCID:        nullStringToPtr(dUser.Avatar.IPFSCID),
+                WebPIPFSCID:    nullStringToPtr(dUser.Avatar.WebPIPFSCID),
+            }
+        }
 
 		// Set Location header to new resource
 		w.Header().Set("Location", "/api/v1/users/"+gUser.ID)

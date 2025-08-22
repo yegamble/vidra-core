@@ -1,13 +1,14 @@
 package repository
 
 import (
-	"context"
-	"database/sql"
-	"fmt"
+    "context"
+    "database/sql"
+    "fmt"
+    "time"
 
-	"athena/internal/domain"
-	"athena/internal/usecase"
-	"github.com/jmoiron/sqlx"
+    "athena/internal/domain"
+    "athena/internal/usecase"
+    "github.com/jmoiron/sqlx"
 )
 
 type userRepository struct {
@@ -36,8 +37,9 @@ func (r *userRepository) Create(ctx context.Context, user *domain.User, password
 }
 
 func (r *userRepository) GetByID(ctx context.Context, id string) (*domain.User, error) {
-	query := `
+    query := `
         SELECT u.id, u.username, u.email, u.display_name,
+               a.id            AS avatar_id,
                a.ipfs_cid      AS avatar_ipfs_cid,
                a.webp_ipfs_cid AS avatar_webp_ipfs_cid,
                u.bio, u.bitcoin_wallet, u.role, u.is_active, u.created_at, u.updated_at
@@ -45,21 +47,58 @@ func (r *userRepository) GetByID(ctx context.Context, id string) (*domain.User, 
         LEFT JOIN user_avatars a ON a.user_id = u.id
         WHERE u.id = $1`
 
-	var user domain.User
-	err := r.db.GetContext(ctx, &user, query, id)
-	if err != nil {
-		if err == sql.ErrNoRows {
-			return nil, domain.ErrUserNotFound
-		}
-		return nil, fmt.Errorf("failed to get user by ID: %w", err)
-	}
+    type row struct {
+        ID                string         `db:"id"`
+        Username          string         `db:"username"`
+        Email             string         `db:"email"`
+        DisplayName       string         `db:"display_name"`
+        AvatarID          sql.NullString `db:"avatar_id"`
+        AvatarIPFSCID     sql.NullString `db:"avatar_ipfs_cid"`
+        AvatarWebPIPFSCID sql.NullString `db:"avatar_webp_ipfs_cid"`
+        Bio               string         `db:"bio"`
+        BitcoinWallet     string         `db:"bitcoin_wallet"`
+        Role              domain.UserRole `db:"role"`
+        IsActive          bool           `db:"is_active"`
+        CreatedAt         time.Time      `db:"created_at"`
+        UpdatedAt         time.Time      `db:"updated_at"`
+    }
 
-	return &user, nil
+    var rrow row
+    err := r.db.GetContext(ctx, &rrow, query, id)
+    if err != nil {
+        if err == sql.ErrNoRows {
+            return nil, domain.ErrUserNotFound
+        }
+        return nil, fmt.Errorf("failed to get user by ID: %w", err)
+    }
+
+    user := &domain.User{
+        ID:            rrow.ID,
+        Username:      rrow.Username,
+        Email:         rrow.Email,
+        DisplayName:   rrow.DisplayName,
+        Bio:           rrow.Bio,
+        BitcoinWallet: rrow.BitcoinWallet,
+        Role:          rrow.Role,
+        IsActive:      rrow.IsActive,
+        CreatedAt:     rrow.CreatedAt,
+        UpdatedAt:     rrow.UpdatedAt,
+    }
+    if rrow.AvatarID.Valid || rrow.AvatarIPFSCID.Valid || rrow.AvatarWebPIPFSCID.Valid {
+        user.Avatar = &domain.Avatar{
+            ID:             rrow.AvatarID.String,
+            IPFSCID:        rrow.AvatarIPFSCID,
+            WebPIPFSCID:    rrow.AvatarWebPIPFSCID,
+        }
+    }
+
+    return user, nil
 }
 
 func (r *userRepository) GetByEmail(ctx context.Context, email string) (*domain.User, error) {
-	query := `
+    query := `
         SELECT u.id, u.username, u.email, u.display_name,
+               a.id            AS avatar_id,
                a.ipfs_cid      AS avatar_ipfs_cid,
                a.webp_ipfs_cid AS avatar_webp_ipfs_cid,
                u.bio, u.bitcoin_wallet, u.role, u.is_active, u.created_at, u.updated_at
@@ -67,21 +106,58 @@ func (r *userRepository) GetByEmail(ctx context.Context, email string) (*domain.
         LEFT JOIN user_avatars a ON a.user_id = u.id
         WHERE u.email = $1`
 
-	var user domain.User
-	err := r.db.GetContext(ctx, &user, query, email)
-	if err != nil {
-		if err == sql.ErrNoRows {
-			return nil, domain.ErrUserNotFound
-		}
-		return nil, fmt.Errorf("failed to get user by email: %w", err)
-	}
+    type row struct {
+        ID                string         `db:"id"`
+        Username          string         `db:"username"`
+        Email             string         `db:"email"`
+        DisplayName       string         `db:"display_name"`
+        AvatarID          sql.NullString `db:"avatar_id"`
+        AvatarIPFSCID     sql.NullString `db:"avatar_ipfs_cid"`
+        AvatarWebPIPFSCID sql.NullString `db:"avatar_webp_ipfs_cid"`
+        Bio               string         `db:"bio"`
+        BitcoinWallet     string         `db:"bitcoin_wallet"`
+        Role              domain.UserRole `db:"role"`
+        IsActive          bool           `db:"is_active"`
+        CreatedAt         time.Time      `db:"created_at"`
+        UpdatedAt         time.Time      `db:"updated_at"`
+    }
 
-	return &user, nil
+    var rrow row
+    err := r.db.GetContext(ctx, &rrow, query, email)
+    if err != nil {
+        if err == sql.ErrNoRows {
+            return nil, domain.ErrUserNotFound
+        }
+        return nil, fmt.Errorf("failed to get user by email: %w", err)
+    }
+
+    user := &domain.User{
+        ID:            rrow.ID,
+        Username:      rrow.Username,
+        Email:         rrow.Email,
+        DisplayName:   rrow.DisplayName,
+        Bio:           rrow.Bio,
+        BitcoinWallet: rrow.BitcoinWallet,
+        Role:          rrow.Role,
+        IsActive:      rrow.IsActive,
+        CreatedAt:     rrow.CreatedAt,
+        UpdatedAt:     rrow.UpdatedAt,
+    }
+    if rrow.AvatarID.Valid || rrow.AvatarIPFSCID.Valid || rrow.AvatarWebPIPFSCID.Valid {
+        user.Avatar = &domain.Avatar{
+            ID:             rrow.AvatarID.String,
+            IPFSCID:        rrow.AvatarIPFSCID,
+            WebPIPFSCID:    rrow.AvatarWebPIPFSCID,
+        }
+    }
+
+    return user, nil
 }
 
 func (r *userRepository) GetByUsername(ctx context.Context, username string) (*domain.User, error) {
-	query := `
+    query := `
         SELECT u.id, u.username, u.email, u.display_name,
+               a.id            AS avatar_id,
                a.ipfs_cid      AS avatar_ipfs_cid,
                a.webp_ipfs_cid AS avatar_webp_ipfs_cid,
                u.bio, u.bitcoin_wallet, u.role, u.is_active, u.created_at, u.updated_at
@@ -89,16 +165,52 @@ func (r *userRepository) GetByUsername(ctx context.Context, username string) (*d
         LEFT JOIN user_avatars a ON a.user_id = u.id
         WHERE u.username = $1`
 
-	var user domain.User
-	err := r.db.GetContext(ctx, &user, query, username)
-	if err != nil {
-		if err == sql.ErrNoRows {
-			return nil, domain.ErrUserNotFound
-		}
-		return nil, fmt.Errorf("failed to get user by username: %w", err)
-	}
+    type row struct {
+        ID                string         `db:"id"`
+        Username          string         `db:"username"`
+        Email             string         `db:"email"`
+        DisplayName       string         `db:"display_name"`
+        AvatarID          sql.NullString `db:"avatar_id"`
+        AvatarIPFSCID     sql.NullString `db:"avatar_ipfs_cid"`
+        AvatarWebPIPFSCID sql.NullString `db:"avatar_webp_ipfs_cid"`
+        Bio               string         `db:"bio"`
+        BitcoinWallet     string         `db:"bitcoin_wallet"`
+        Role              domain.UserRole `db:"role"`
+        IsActive          bool           `db:"is_active"`
+        CreatedAt         time.Time      `db:"created_at"`
+        UpdatedAt         time.Time      `db:"updated_at"`
+    }
 
-	return &user, nil
+    var rrow row
+    err := r.db.GetContext(ctx, &rrow, query, username)
+    if err != nil {
+        if err == sql.ErrNoRows {
+            return nil, domain.ErrUserNotFound
+        }
+        return nil, fmt.Errorf("failed to get user by username: %w", err)
+    }
+
+    user := &domain.User{
+        ID:            rrow.ID,
+        Username:      rrow.Username,
+        Email:         rrow.Email,
+        DisplayName:   rrow.DisplayName,
+        Bio:           rrow.Bio,
+        BitcoinWallet: rrow.BitcoinWallet,
+        Role:          rrow.Role,
+        IsActive:      rrow.IsActive,
+        CreatedAt:     rrow.CreatedAt,
+        UpdatedAt:     rrow.UpdatedAt,
+    }
+    if rrow.AvatarID.Valid || rrow.AvatarIPFSCID.Valid || rrow.AvatarWebPIPFSCID.Valid {
+        user.Avatar = &domain.Avatar{
+            ID:             rrow.AvatarID.String,
+            IPFSCID:        rrow.AvatarIPFSCID,
+            WebPIPFSCID:    rrow.AvatarWebPIPFSCID,
+        }
+    }
+
+    return user, nil
 }
 
 func (r *userRepository) Update(ctx context.Context, user *domain.User) error {
@@ -185,8 +297,9 @@ func (r *userRepository) UpdatePassword(ctx context.Context, userID, passwordHas
 }
 
 func (r *userRepository) List(ctx context.Context, limit, offset int) ([]*domain.User, error) {
-	query := `
+    query := `
         SELECT u.id, u.username, u.email, u.display_name,
+               a.id            AS avatar_id,
                a.ipfs_cid      AS avatar_ipfs_cid,
                a.webp_ipfs_cid AS avatar_webp_ipfs_cid,
                u.bio, u.bitcoin_wallet, u.role, u.is_active, u.created_at, u.updated_at
@@ -195,13 +308,53 @@ func (r *userRepository) List(ctx context.Context, limit, offset int) ([]*domain
         ORDER BY u.created_at DESC
         LIMIT $1 OFFSET $2`
 
-	var users []*domain.User
-	err := r.db.SelectContext(ctx, &users, query, limit, offset)
-	if err != nil {
-		return nil, fmt.Errorf("failed to list users: %w", err)
-	}
+    type row struct {
+        ID                string         `db:"id"`
+        Username          string         `db:"username"`
+        Email             string         `db:"email"`
+        DisplayName       string         `db:"display_name"`
+        AvatarID          sql.NullString `db:"avatar_id"`
+        AvatarIPFSCID     sql.NullString `db:"avatar_ipfs_cid"`
+        AvatarWebPIPFSCID sql.NullString `db:"avatar_webp_ipfs_cid"`
+        Bio               string         `db:"bio"`
+        BitcoinWallet     string         `db:"bitcoin_wallet"`
+        Role              domain.UserRole `db:"role"`
+        IsActive          bool           `db:"is_active"`
+        CreatedAt         time.Time      `db:"created_at"`
+        UpdatedAt         time.Time      `db:"updated_at"`
+    }
 
-	return users, nil
+    var rows []row
+    err := r.db.SelectContext(ctx, &rows, query, limit, offset)
+    if err != nil {
+        return nil, fmt.Errorf("failed to list users: %w", err)
+    }
+
+    users := make([]*domain.User, 0, len(rows))
+    for _, rrow := range rows {
+        u := &domain.User{
+            ID:            rrow.ID,
+            Username:      rrow.Username,
+            Email:         rrow.Email,
+            DisplayName:   rrow.DisplayName,
+            Bio:           rrow.Bio,
+            BitcoinWallet: rrow.BitcoinWallet,
+            Role:          rrow.Role,
+            IsActive:      rrow.IsActive,
+            CreatedAt:     rrow.CreatedAt,
+            UpdatedAt:     rrow.UpdatedAt,
+        }
+        if rrow.AvatarID.Valid || rrow.AvatarIPFSCID.Valid || rrow.AvatarWebPIPFSCID.Valid {
+            u.Avatar = &domain.Avatar{
+                ID:             rrow.AvatarID.String,
+                IPFSCID:        rrow.AvatarIPFSCID,
+                WebPIPFSCID:    rrow.AvatarWebPIPFSCID,
+            }
+        }
+        users = append(users, u)
+    }
+
+    return users, nil
 }
 
 func (r *userRepository) Count(ctx context.Context) (int64, error) {
