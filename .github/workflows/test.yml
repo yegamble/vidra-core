@@ -229,7 +229,7 @@ jobs:
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v6
         with:
-          args: --timeout=10m --output.colored-line-number.path=stdout
+          args: --timeout=10m
           version: latest
 
   build:
