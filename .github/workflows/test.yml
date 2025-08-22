@@ -231,7 +231,6 @@ jobs:
         with:
           args: --timeout=10m --output.colored-line-number.path=stdout
           version: latest
-          args: --timeout=10m
 
   build:
     runs-on: ubuntu-latest
