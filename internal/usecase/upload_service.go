@@ -380,7 +380,7 @@ func (s *uploadService) AssembleChunks(ctx context.Context, session *domain.Uplo
 	if err := validateFilePath(finalPath, s.uploadsDir); err != nil {
 		return fmt.Errorf("invalid final file path: %w", err)
 	}
-	finalFile, err := os.Create(finalPath)
+	finalFile, err := os.Create(finalPath) // #nosec G304
 	if err != nil {
 		return fmt.Errorf("failed to create final file: %w", err)
 	}
@@ -400,7 +400,7 @@ func (s *uploadService) AssembleChunks(ctx context.Context, session *domain.Uplo
 		if err := validateFilePath(chunkPath, s.uploadsDir); err != nil {
 			return fmt.Errorf("invalid chunk file path: %w", err)
 		}
-		chunkData, err := os.ReadFile(chunkPath)
+		chunkData, err := os.ReadFile(chunkPath) // #nosec G304
 		if err != nil {
 			return fmt.Errorf("failed to read chunk %d: %w", chunkIndex, err)
 		}

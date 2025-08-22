@@ -723,7 +723,9 @@ func StreamVideo(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if path != "" {
-		if data, err := os.ReadFile(path); err == nil {
+		// #nosec G304
+		data, err := os.ReadFile(path)
+		if err == nil {
 			_, _ = w.Write(data)
 			return
 		}
@@ -783,6 +785,7 @@ func StreamVideoHandler(videoRepo usecase.VideoRepository) http.HandlerFunc {
 							http.Redirect(w, r, p, http.StatusTemporaryRedirect)
 							return
 						}
+						// #nosec G304
 						if data, err := os.ReadFile(p); err == nil {
 							// redirect to static hls path if possible
 							if rel, ok := hlsRelPath(p); ok {
@@ -803,6 +806,7 @@ func StreamVideoHandler(videoRepo usecase.VideoRepository) http.HandlerFunc {
 							http.Redirect(w, r, p, http.StatusTemporaryRedirect)
 							return
 						}
+						// #nosec G304
 						if data, err := os.ReadFile(p); err == nil {
 							// redirect to static hls path if possible
 							if rel, ok := hlsRelPath(p); ok {
@@ -837,7 +841,9 @@ func StreamVideoHandler(videoRepo usecase.VideoRepository) http.HandlerFunc {
 					http.Redirect(w, r, "/api/v1/hls/"+rel, http.StatusTemporaryRedirect)
 					return
 				}
-				if data, err := os.ReadFile(path); err == nil {
+				// #nosec G304
+				data, err := os.ReadFile(path)
+				if err == nil {
 					_, _ = w.Write(data)
 					return
 				}

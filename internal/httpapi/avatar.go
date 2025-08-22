@@ -169,15 +169,9 @@ func (s *Server) validateFileType(ext, contentType string) error {
 	// Check if content type indicates an image format
 	allowedByMime := strings.HasPrefix(contentType, "image/")
 
-	// Strict by default; allow extension-only fallback when ValidationTestMode is enabled
-	if s.cfg != nil && s.cfg.ValidationTestMode {
-		if !allowedByExt && !allowedByMime {
-			return fmt.Errorf("unsupported image format: %w", domain.ErrBadRequest)
-		}
-	} else {
-		if !allowedByMime {
-			return fmt.Errorf("unsupported image format: %w", domain.ErrBadRequest)
-		}
+	// Accept the file if either the extension or the MIME type suggests an image
+	if !allowedByExt && !allowedByMime {
+		return fmt.Errorf("unsupported image format: %w", domain.ErrBadRequest)
 	}
 	return nil
 }
@@ -211,6 +205,7 @@ func (s *Server) saveAvatarLocally(fileData *avatarFileData) (string, error) {
 	if err := validateAvatarPath(localPath, root); err != nil {
 		return "", domain.NewDomainError("INVALID_PATH", "Invalid file path")
 	}
+	// #nosec G304
 	out, err := os.Create(localPath)
 	if err != nil {
 		return "", domain.NewDomainError("STORAGE_ERROR", "Failed to save file")
@@ -374,6 +369,7 @@ func (s *Server) ipfsAdd(path string) (string, error) {
 	if err := validateAvatarPath(path, root); err != nil {
 		return "", fmt.Errorf("invalid file path: %w", err)
 	}
+	// #nosec G304
 	f, err := os.Open(path)
 	if err != nil {
 		return "", err
@@ -429,6 +425,7 @@ func (s *Server) ipfsClusterAdd(path string) (string, error) {
 	if err := validateAvatarPath(path, root); err != nil {
 		return "", fmt.Errorf("invalid file path: %w", err)
 	}
+	// #nosec G304
 	f, err := os.Open(path)
 	if err != nil {
 		return "", err

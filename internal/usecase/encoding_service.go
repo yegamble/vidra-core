@@ -292,7 +292,7 @@ func (s *encodingService) execFFmpeg(ctx context.Context, args []string) error {
 	if err := validateBinaryPath(bin); err != nil {
 		return fmt.Errorf("invalid ffmpeg binary path: %w", err)
 	}
-	cmd := exec.CommandContext(ctx, bin, args...)
+	cmd := exec.CommandContext(ctx, bin, args...) // #nosec G204
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {

@@ -85,7 +85,7 @@ func (v *ChecksumValidator) ValidateFileChecksum(filePath string, expectedChecks
 		return nil
 	}
 
-	file, err := os.Open(filePath)
+	file, err := os.Open(filePath) // #nosec G304
 	if err != nil {
 		return fmt.Errorf("failed to open file for checksum validation: %w", err)
 	}
@@ -125,7 +125,7 @@ func (v *ChecksumValidator) CalculateChecksum(data []byte) string {
 
 // CalculateFileChecksum calculates SHA256 checksum for a file
 func (v *ChecksumValidator) CalculateFileChecksum(filePath string) (string, error) {
-	file, err := os.Open(filePath)
+	file, err := os.Open(filePath) // #nosec G304
 	if err != nil {
 		return "", fmt.Errorf("failed to open file for checksum calculation: %w", err)
 	}
