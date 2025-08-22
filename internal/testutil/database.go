@@ -76,7 +76,7 @@ func setupPostgres() (*sqlx.DB, error) {
 	schema := deriveTestSchema()
 
 	// First connect without custom search_path to create the schema if needed
-	db, err := sqlx.Connect("postgres", dbURL)
+	db, err := connectWithRetry(dbURL, 30*time.Second)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to test database: %w", err)
 	}
@@ -109,7 +109,7 @@ func setupPostgres() (*sqlx.DB, error) {
 		dbURL = dbURL + fmt.Sprintf(" search_path='%s,public'", schema)
 	}
 
-	db, err = sqlx.Connect("postgres", dbURL)
+	db, err = connectWithRetry(dbURL, 30*time.Second)
 	if err != nil {
 		return nil, fmt.Errorf("failed to reconnect to test database with schema: %w", err)
 	}
@@ -381,6 +381,30 @@ func ensureTestSchema(db *sqlx.DB) error {
 		}
 	}
 	return nil
+}
+
+// connectWithRetry attempts to connect and ping the database until the deadline,
+// returning the first successful connection or the last error.
+func connectWithRetry(dsn string, deadline time.Duration) (*sqlx.DB, error) {
+	start := time.Now()
+	var last error
+	for time.Since(start) < deadline {
+		db, err := sqlx.Connect("postgres", dsn)
+		if err == nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			pingErr := db.PingContext(ctx)
+			cancel()
+			if pingErr == nil {
+				return db, nil
+			}
+			_ = db.Close()
+			last = pingErr
+		} else {
+			last = err
+		}
+		time.Sleep(1 * time.Second)
+	}
+	return nil, fmt.Errorf("database not ready after %s: %w", deadline, last)
 }
 
 func getEnvDefault(key, def string) string {

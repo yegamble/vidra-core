@@ -95,6 +95,30 @@ func TestHLSHandler_ServesPlaylist_WithContentType(t *testing.T) {
 	}
 }
 
+func TestHLSHandler_PathTraversalBlocked(t *testing.T) {
+	// Create a file outside of the HLS root that must never be served via traversal
+	outside := filepath.Join("./storage", "streaming-playlists", "secrets.m3u8")
+	if err := os.MkdirAll(filepath.Dir(outside), 0o750); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(outside, []byte("#EXTM3U\n# secret"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	// Repo returns nil video; privacy check bypasses to path handling
+	repo := &mockStreamRepo{vid: nil}
+	h := HLSHandler(repo)
+
+	// Attempt traversal to "../secrets.m3u8"
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/hls/../secrets.m3u8", nil)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 for traversal attempt, got %d", rr.Code)
+	}
+}
+
 func TestHLSHandler_ForbiddenForPrivate_NotOwner(t *testing.T) {
 	videoID := "vid-private-1"
 	repo := &mockStreamRepo{vid: &domain.Video{ID: videoID, Privacy: domain.PrivacyPrivate, UserID: "owner"}}

@@ -140,7 +140,12 @@ func GetVideoHandler(repo usecase.VideoRepository) http.HandlerFunc {
 			WriteError(w, http.StatusInternalServerError, domain.NewDomainError("GET_FAILED", "Failed to get video"))
 			return
 		}
-
+		// Privacy gate: private videos are only visible to the owner; public/unlisted visible to all
+		requesterID, _ := r.Context().Value(middleware.UserIDKey).(string)
+		if video.Privacy == domain.PrivacyPrivate && requesterID != video.UserID {
+			WriteError(w, http.StatusForbidden, domain.NewDomainError("FORBIDDEN", "Access denied"))
+			return
+		}
 		WriteJSON(w, http.StatusOK, video)
 	}
 }
@@ -589,13 +594,19 @@ func GetUserVideosHandler(repo usecase.VideoRepository) http.HandlerFunc {
 			WriteError(w, http.StatusInternalServerError, domain.NewDomainError("GET_FAILED", "Failed to get user videos"))
 			return
 		}
-
-		meta := &Meta{
-			Total:  total,
-			Limit:  limit,
-			Offset: offset,
+		// If requester is not the owner, filter out private videos
+		requesterID, _ := r.Context().Value(middleware.UserIDKey).(string)
+		if requesterID != userID {
+			filtered := make([]*domain.Video, 0, len(videos))
+			for _, v := range videos {
+				if v.Privacy != domain.PrivacyPrivate {
+					filtered = append(filtered, v)
+				}
+			}
+			videos = filtered
+			total = int64(len(videos))
 		}
-
+		meta := &Meta{Total: total, Limit: limit, Offset: offset}
 		WriteJSONWithMeta(w, http.StatusOK, videos, meta)
 	}
 }
@@ -907,7 +918,15 @@ func HLSHandler(videoRepo usecase.VideoRepository) http.HandlerFunc {
 			}
 		}
 		sp := storage.NewPaths("./storage")
-		local := filepath.Clean(filepath.Join(sp.HLSRootDir(), rel))
+		root := sp.HLSRootDir()
+		local := filepath.Clean(filepath.Join(root, rel))
+		// Prevent path traversal by ensuring local remains under root
+		absRoot, _ := filepath.Abs(root)
+		absLocal, _ := filepath.Abs(local)
+		if relToRoot, err := filepath.Rel(absRoot, absLocal); err != nil || strings.HasPrefix(relToRoot, "..") {
+			http.NotFound(w, r)
+			return
+		}
 		if strings.HasSuffix(local, ".m3u8") {
 			w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
 			w.Header().Set("Cache-Control", "public, max-age=60")

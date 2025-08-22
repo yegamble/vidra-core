@@ -66,9 +66,12 @@ test-integration-ci: ## Run repository + httpapi Integration tests (CI services 
 
 test-local: ## Run tests with local Docker services
 	COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) -f docker-compose.test.yml up -d
-	@echo "Waiting for services to be ready..."
-	@sleep 10
+	@echo "Waiting for Postgres on 5433..."
+	@bash -lc 'for i in $$(seq 1 60); do pg_isready -h 127.0.0.1 -p 5433 -d athena_test -U test_user >/dev/null 2>&1 && exit 0; sleep 1; done; echo "Postgres not ready"; exit 1'
+	@echo "Waiting for Redis on 6380..."
+	@bash -lc 'for i in $$(seq 1 60); do redis-cli -u redis://127.0.0.1:6380 ping >/dev/null 2>&1 && exit 0; sleep 1; done; echo "Redis not ready"; exit 1'
 	DATABASE_URL="postgres://test_user:test_password@localhost:5433/athena_test?sslmode=disable" \
+	TEST_DATABASE_URL="postgres://test_user:test_password@localhost:5433/athena_test?sslmode=disable" \
 	REDIS_URL="redis://localhost:6380/0" \
 	JWT_SECRET="test-jwt-secret" \
 	IPFS_API="http://localhost:15001" \
@@ -77,9 +80,12 @@ test-local: ## Run tests with local Docker services
 
 test-integration-local: ## Run only integration tests with local Docker services
 	COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) -f docker-compose.test.yml up -d
-	@echo "Waiting for services to be ready..."
-	@sleep 10
+	@echo "Waiting for Postgres on 5433..."
+	@bash -lc 'for i in $$(seq 1 60); do pg_isready -h 127.0.0.1 -p 5433 -d athena_test -U test_user >/dev/null 2>&1 && exit 0; sleep 1; done; echo "Postgres not ready"; exit 1'
+	@echo "Waiting for Redis on 6380..."
+	@bash -lc 'for i in $$(seq 1 60); do redis-cli -u redis://127.0.0.1:6380 ping >/dev/null 2>&1 && exit 0; sleep 1; done; echo "Redis not ready"; exit 1'
 	DATABASE_URL="postgres://test_user:test_password@localhost:5433/athena_test?sslmode=disable" \
+	TEST_DATABASE_URL="postgres://test_user:test_password@localhost:5433/athena_test?sslmode=disable" \
 	REDIS_URL="redis://localhost:6380/0" \
 	JWT_SECRET="test-jwt-secret" \
 	IPFS_API="http://localhost:15001" \
