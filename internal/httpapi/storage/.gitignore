@@ -1,0 +1,7 @@
+# Ignore everything under this test storage subtree
+*
+
+# Keep placeholders tracked
+!.gitignore
+!.gitkeep
+

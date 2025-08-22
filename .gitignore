@@ -62,6 +62,10 @@ temp/
 *.temp
 *.log
 
+# Internal HTTP API test artifacts
+internal/httpapi/storage/avatars/*
+!internal/httpapi/storage/avatars/.gitkeep
+
 # Build artifacts
 athena-server
 athena
