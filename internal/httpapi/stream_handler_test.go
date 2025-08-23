@@ -119,7 +119,7 @@ func TestHLSHandler_PathTraversalBlocked(t *testing.T) {
 	}
 }
 
-func TestHLSHandler_NotFoundForPrivate_NotOwner(t *testing.T) {
+func TestHLSHandler_ForbiddenForPrivate_NotOwner(t *testing.T) {
 	videoID := "vid-private-1"
 	repo := &mockStreamRepo{vid: &domain.Video{ID: videoID, Privacy: domain.PrivacyPrivate, UserID: "owner"}}
 	h := HLSHandler(repo)
@@ -128,8 +128,8 @@ func TestHLSHandler_NotFoundForPrivate_NotOwner(t *testing.T) {
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
 
-	if rr.Code != http.StatusNotFound {
-		t.Fatalf("expected 404, got %d body=%s", rr.Code, rr.Body.String())
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d body=%s", rr.Code, rr.Body.String())
 	}
 }
 

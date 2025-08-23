@@ -103,21 +103,7 @@ func MapDomainErrorToHTTP(err error) int {
 		return http.StatusForbidden
 	}
 
-	badReq := []error{
-		domain.ErrValidation,
-		domain.ErrBadRequest,
-		domain.ErrInvalidFormat,
-		domain.ErrInvalidChunk,
-		domain.ErrCannotMessageSelf,
-		domain.ErrMessageTooLong,
-		domain.ErrInvalidMessageType,
-		domain.ErrInvalidPGPKey,
-		domain.ErrSecureModeNotAllowed,
-		domain.ErrPGPEncryptionFailed,
-		domain.ErrPGPDecryptionFailed,
-		domain.ErrPGPSigningFailed,
-		domain.ErrPGPVerificationFailed,
-	}
+	badReq := []error{domain.ErrValidation, domain.ErrBadRequest, domain.ErrInvalidFormat, domain.ErrInvalidChunk, domain.ErrCannotMessageSelf, domain.ErrMessageTooLong, domain.ErrInvalidMessageType}
 	for _, e := range badReq {
 		if errors.Is(err, e) {
 			return http.StatusBadRequest

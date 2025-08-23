@@ -28,51 +28,42 @@ func (r *messageRepository) CreateMessage(ctx context.Context, message *domain.M
 
 	// Insert the message
 	query := `
-		INSERT INTO messages (id, sender_id, recipient_id, content, encrypted_content, 
-			pgp_signature, message_type, is_read, is_deleted_by_sender, is_deleted_by_recipient, 
-			parent_message_id, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`
+		INSERT INTO messages (id, sender_id, recipient_id, content, message_type, 
+			is_read, is_deleted_by_sender, is_deleted_by_recipient, parent_message_id, 
+			created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`
 
 	_, err = tx.ExecContext(ctx, query,
-		message.ID, message.SenderID, message.RecipientID, message.Content, message.EncryptedContent,
-		message.PGPSignature, message.MessageType, message.IsRead, message.IsDeletedBySender,
-		message.IsDeletedByRecipient, message.ParentMessageID, message.CreatedAt, message.UpdatedAt)
+		message.ID, message.SenderID, message.RecipientID, message.Content, message.MessageType,
+		message.IsRead, message.IsDeletedBySender, message.IsDeletedByRecipient, message.ParentMessageID,
+		message.CreatedAt, message.UpdatedAt)
 
 	if err != nil {
 		return fmt.Errorf("failed to create message: %w", err)
 	}
 
-	// Upsert conversation record (separate threads for secure vs non-secure)
-	isSecure := (message.EncryptedContent != nil && message.PGPSignature != nil) || message.IsSecure
-	convID, err := r.upsertConversation(ctx, tx, message.SenderID, message.RecipientID, message.ID, message.CreatedAt, isSecure)
+	// Upsert conversation record
+	err = r.upsertConversation(ctx, tx, message.SenderID, message.RecipientID, message.ID, message.CreatedAt)
 	if err != nil {
 		return fmt.Errorf("failed to upsert conversation: %w", err)
 	}
-	message.ConversationID = convID
 
 	return tx.Commit()
 }
 
 func (r *messageRepository) GetMessage(ctx context.Context, messageID string, userID string) (*domain.Message, error) {
 	query := `
-        SELECT m.id, m.sender_id, m.recipient_id, m.content, m.encrypted_content, 
-            m.pgp_signature, m.message_type, m.is_read, m.is_deleted_by_sender, 
-            m.is_deleted_by_recipient, m.parent_message_id, m.created_at, m.updated_at, m.read_at,
-            c.id as conversation_id,
-            s.id as "sender.id", s.username as "sender.username", s.display_name as "sender.display_name",
-            s.pgp_public_key as "sender.pgp_public_key",
-            r.id as "recipient.id", r.username as "recipient.username", r.display_name as "recipient.display_name",
-            r.pgp_public_key as "recipient.pgp_public_key"
-        FROM messages m
-        JOIN users s ON s.id = m.sender_id
-        JOIN users r ON r.id = m.recipient_id
-        JOIN conversations c ON 
-            c.participant_one_id = LEAST(m.sender_id, m.recipient_id)
-            AND c.participant_two_id = GREATEST(m.sender_id, m.recipient_id)
-            AND c.is_secure_mode = (m.encrypted_content IS NOT NULL AND m.pgp_signature IS NOT NULL)
-        WHERE m.id = $1 AND (m.sender_id = $2 OR m.recipient_id = $2)
-            AND ((m.sender_id = $2 AND m.is_deleted_by_sender = false) OR 
-                (m.recipient_id = $2 AND m.is_deleted_by_recipient = false))`
+		SELECT m.id, m.sender_id, m.recipient_id, m.content, m.message_type,
+			m.is_read, m.is_deleted_by_sender, m.is_deleted_by_recipient,
+			m.parent_message_id, m.created_at, m.updated_at, m.read_at,
+			s.id as "sender.id", s.username as "sender.username", s.display_name as "sender.display_name",
+			r.id as "recipient.id", r.username as "recipient.username", r.display_name as "recipient.display_name"
+		FROM messages m
+		JOIN users s ON s.id = m.sender_id
+		JOIN users r ON r.id = m.recipient_id
+		WHERE m.id = $1 AND (m.sender_id = $2 OR m.recipient_id = $2)
+			AND ((m.sender_id = $2 AND m.is_deleted_by_sender = false) OR 
+				 (m.recipient_id = $2 AND m.is_deleted_by_recipient = false))`
 
 	rows, err := r.db.QueryContext(ctx, query, messageID, userID)
 	if err != nil {
@@ -89,12 +80,11 @@ func (r *messageRepository) GetMessage(ctx context.Context, messageID string, us
 	var recipient domain.User
 
 	err = rows.Scan(
-		&message.ID, &message.SenderID, &message.RecipientID, &message.Content, &message.EncryptedContent,
-		&message.PGPSignature, &message.MessageType, &message.IsRead, &message.IsDeletedBySender,
-		&message.IsDeletedByRecipient, &message.ParentMessageID, &message.CreatedAt, &message.UpdatedAt, &message.ReadAt,
-		&message.ConversationID,
-		&sender.ID, &sender.Username, &sender.DisplayName, &sender.PGPPublicKey,
-		&recipient.ID, &recipient.Username, &recipient.DisplayName, &recipient.PGPPublicKey,
+		&message.ID, &message.SenderID, &message.RecipientID, &message.Content, &message.MessageType,
+		&message.IsRead, &message.IsDeletedBySender, &message.IsDeletedByRecipient,
+		&message.ParentMessageID, &message.CreatedAt, &message.UpdatedAt, &message.ReadAt,
+		&sender.ID, &sender.Username, &sender.DisplayName,
+		&recipient.ID, &recipient.Username, &recipient.DisplayName,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to scan message: %w", err)
@@ -102,7 +92,6 @@ func (r *messageRepository) GetMessage(ctx context.Context, messageID string, us
 
 	message.Sender = &sender
 	message.Recipient = &recipient
-	message.IsSecure = message.EncryptedContent != nil && message.PGPSignature != nil
 
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("error iterating over rows: %w", err)
@@ -112,34 +101,22 @@ func (r *messageRepository) GetMessage(ctx context.Context, messageID string, us
 }
 
 func (r *messageRepository) GetMessages(ctx context.Context, userID string, otherUserID string, limit, offset int) ([]*domain.Message, error) {
-	// Determine conversation participant order
-	p1, p2 := userID, otherUserID
-	if p1 > p2 {
-		p1, p2 = p2, p1
-	}
-
 	query := `
-        SELECT m.id, m.sender_id, m.recipient_id, m.content, m.encrypted_content,
-            m.pgp_signature, m.message_type, m.is_read, m.is_deleted_by_sender, 
-            m.is_deleted_by_recipient, m.parent_message_id, m.created_at, m.updated_at, m.read_at,
-            c.id as conversation_id,
-            s.id as "sender.id", s.username as "sender.username", s.display_name as "sender.display_name",
-            s.pgp_public_key as "sender.pgp_public_key",
-            r.id as "recipient.id", r.username as "recipient.username", r.display_name as "recipient.display_name",
-            r.pgp_public_key as "recipient.pgp_public_key"
-        FROM messages m
-        JOIN users s ON s.id = m.sender_id
-        JOIN users r ON r.id = m.recipient_id
-        JOIN conversations c ON 
-            c.participant_one_id = $5 AND c.participant_two_id = $6
-            AND c.is_secure_mode = (m.encrypted_content IS NOT NULL AND m.pgp_signature IS NOT NULL)
-        WHERE ((m.sender_id = $1 AND m.recipient_id = $2) OR (m.sender_id = $2 AND m.recipient_id = $1))
-            AND ((m.sender_id = $1 AND m.is_deleted_by_sender = false) OR 
-                 (m.recipient_id = $1 AND m.is_deleted_by_recipient = false))
-        ORDER BY m.created_at DESC
-        LIMIT $3 OFFSET $4`
+		SELECT m.id, m.sender_id, m.recipient_id, m.content, m.message_type,
+			m.is_read, m.is_deleted_by_sender, m.is_deleted_by_recipient,
+			m.parent_message_id, m.created_at, m.updated_at, m.read_at,
+			s.id as "sender.id", s.username as "sender.username", s.display_name as "sender.display_name",
+			r.id as "recipient.id", r.username as "recipient.username", r.display_name as "recipient.display_name"
+		FROM messages m
+		JOIN users s ON s.id = m.sender_id
+		JOIN users r ON r.id = m.recipient_id
+		WHERE ((m.sender_id = $1 AND m.recipient_id = $2) OR (m.sender_id = $2 AND m.recipient_id = $1))
+			AND ((m.sender_id = $1 AND m.is_deleted_by_sender = false) OR 
+				 (m.recipient_id = $1 AND m.is_deleted_by_recipient = false))
+		ORDER BY m.created_at DESC
+		LIMIT $3 OFFSET $4`
 
-	rows, err := r.db.QueryContext(ctx, query, userID, otherUserID, limit, offset, p1, p2)
+	rows, err := r.db.QueryContext(ctx, query, userID, otherUserID, limit, offset)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query messages: %w", err)
 	}
@@ -152,12 +129,11 @@ func (r *messageRepository) GetMessages(ctx context.Context, userID string, othe
 		var recipient domain.User
 
 		err = rows.Scan(
-			&message.ID, &message.SenderID, &message.RecipientID, &message.Content, &message.EncryptedContent,
-			&message.PGPSignature, &message.MessageType, &message.IsRead, &message.IsDeletedBySender,
-			&message.IsDeletedByRecipient, &message.ParentMessageID, &message.CreatedAt, &message.UpdatedAt, &message.ReadAt,
-			&message.ConversationID,
-			&sender.ID, &sender.Username, &sender.DisplayName, &sender.PGPPublicKey,
-			&recipient.ID, &recipient.Username, &recipient.DisplayName, &recipient.PGPPublicKey,
+			&message.ID, &message.SenderID, &message.RecipientID, &message.Content, &message.MessageType,
+			&message.IsRead, &message.IsDeletedBySender, &message.IsDeletedByRecipient,
+			&message.ParentMessageID, &message.CreatedAt, &message.UpdatedAt, &message.ReadAt,
+			&sender.ID, &sender.Username, &sender.DisplayName,
+			&recipient.ID, &recipient.Username, &recipient.DisplayName,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan message: %w", err)
@@ -165,7 +141,6 @@ func (r *messageRepository) GetMessages(ctx context.Context, userID string, othe
 
 		message.Sender = &sender
 		message.Recipient = &recipient
-		message.IsSecure = message.EncryptedContent != nil && message.PGPSignature != nil
 		messages = append(messages, &message)
 	}
 
@@ -227,8 +202,8 @@ func (r *messageRepository) DeleteMessage(ctx context.Context, messageID string,
 
 func (r *messageRepository) GetConversations(ctx context.Context, userID string, limit, offset int) ([]*domain.Conversation, error) {
 	query := `
-		SELECT c.id, c.participant_one_id, c.participant_two_id, c.is_secure_mode, 
-			c.last_message_id, c.last_message_at, c.created_at, c.updated_at,
+		SELECT c.id, c.participant_one_id, c.participant_two_id, c.last_message_id,
+			c.last_message_at, c.created_at, c.updated_at,
 			p1.id as "p1.id", p1.username as "p1.username", p1.display_name as "p1.display_name",
 			p2.id as "p2.id", p2.username as "p2.username", p2.display_name as "p2.display_name",
 			lm.id as "last_message.id", lm.content as "last_message.content", 
@@ -273,8 +248,8 @@ func (r *messageRepository) GetConversations(ctx context.Context, userID string,
 		var lastMessageCreatedAt sql.NullTime
 
 		err = rows.Scan(
-			&conv.ID, &conv.ParticipantOneID, &conv.ParticipantTwoID, &conv.IsSecureMode,
-			&conv.LastMessageID, &conv.LastMessageAt, &conv.CreatedAt, &conv.UpdatedAt,
+			&conv.ID, &conv.ParticipantOneID, &conv.ParticipantTwoID, &conv.LastMessageID,
+			&conv.LastMessageAt, &conv.CreatedAt, &conv.UpdatedAt,
 			&p1.ID, &p1.Username, &p1.DisplayName,
 			&p2.ID, &p2.Username, &p2.DisplayName,
 			&lastMessageID, &lastMessageContent, &lastMessageSenderID, &lastMessageCreatedAt,
@@ -320,7 +295,7 @@ func (r *messageRepository) GetUnreadCount(ctx context.Context, userID string) (
 	return count, nil
 }
 
-func (r *messageRepository) upsertConversation(ctx context.Context, tx *sqlx.Tx, userID1, userID2, lastMessageID string, lastMessageAt time.Time, isSecure bool) (string, error) {
+func (r *messageRepository) upsertConversation(ctx context.Context, tx *sqlx.Tx, userID1, userID2, lastMessageID string, lastMessageAt time.Time) error {
 	// Ensure consistent ordering of participant IDs
 	participantOne := userID1
 	participantTwo := userID2
@@ -330,87 +305,18 @@ func (r *messageRepository) upsertConversation(ctx context.Context, tx *sqlx.Tx,
 	}
 
 	query := `
-        INSERT INTO conversations (participant_one_id, participant_two_id, is_secure_mode, last_message_id, last_message_at, created_at, updated_at)
-        VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
-        ON CONFLICT (participant_one_id, participant_two_id, is_secure_mode) 
-        DO UPDATE SET 
-            last_message_id = $4,
-            last_message_at = $5,
-            updated_at = NOW()`
+		INSERT INTO conversations (participant_one_id, participant_two_id, last_message_id, last_message_at, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, NOW(), NOW())
+		ON CONFLICT (participant_one_id, participant_two_id) 
+		DO UPDATE SET 
+			last_message_id = $3,
+			last_message_at = $4,
+			updated_at = NOW()`
 
-	var id string
-	row := tx.QueryRowContext(ctx, query+" RETURNING id", participantOne, participantTwo, isSecure, lastMessageID, lastMessageAt)
-	if err := row.Scan(&id); err != nil {
-		return "", fmt.Errorf("failed to upsert conversation: %w", err)
-	}
-	return id, nil
-}
-
-// CreateSecureConversation creates or updates a conversation to enable secure mode
-func (r *messageRepository) CreateSecureConversation(ctx context.Context, userID1, userID2 string) error {
-	// Ensure consistent ordering of participant IDs
-	participantOne := userID1
-	participantTwo := userID2
-	if userID1 > userID2 {
-		participantOne = userID2
-		participantTwo = userID1
-	}
-
-	query := `
-        INSERT INTO conversations (participant_one_id, participant_two_id, is_secure_mode, created_at, updated_at)
-        VALUES ($1, $2, true, NOW(), NOW())
-        ON CONFLICT (participant_one_id, participant_two_id, is_secure_mode) 
-        DO UPDATE SET 
-            updated_at = NOW()`
-
-	_, err := r.db.ExecContext(ctx, query, participantOne, participantTwo)
+	_, err := tx.ExecContext(ctx, query, participantOne, participantTwo, lastMessageID, lastMessageAt)
 	if err != nil {
-		return fmt.Errorf("failed to create secure conversation: %w", err)
+		return fmt.Errorf("failed to upsert conversation: %w", err)
 	}
 
 	return nil
-}
-
-// GetConversation gets a specific conversation between two users
-func (r *messageRepository) GetConversation(ctx context.Context, userID1, userID2 string, isSecure bool) (*domain.Conversation, error) {
-	// Ensure consistent ordering of participant IDs
-	participantOne := userID1
-	participantTwo := userID2
-	if userID1 > userID2 {
-		participantOne = userID2
-		participantTwo = userID1
-	}
-
-	query := `
-        SELECT c.id, c.participant_one_id, c.participant_two_id, c.is_secure_mode,
-            c.last_message_id, c.last_message_at, c.created_at, c.updated_at,
-            p1.id as "p1.id", p1.username as "p1.username", p1.display_name as "p1.display_name",
-            p2.id as "p2.id", p2.username as "p2.username", p2.display_name as "p2.display_name"
-        FROM conversations c
-        JOIN users p1 ON p1.id = c.participant_one_id
-        JOIN users p2 ON p2.id = c.participant_two_id
-        WHERE c.participant_one_id = $1 AND c.participant_two_id = $2 AND c.is_secure_mode = $3`
-
-	row := r.db.QueryRowContext(ctx, query, participantOne, participantTwo, isSecure)
-
-	var conv domain.Conversation
-	var p1, p2 domain.User
-
-	err := row.Scan(
-		&conv.ID, &conv.ParticipantOneID, &conv.ParticipantTwoID, &conv.IsSecureMode,
-		&conv.LastMessageID, &conv.LastMessageAt, &conv.CreatedAt, &conv.UpdatedAt,
-		&p1.ID, &p1.Username, &p1.DisplayName,
-		&p2.ID, &p2.Username, &p2.DisplayName,
-	)
-	if err != nil {
-		if err == sql.ErrNoRows {
-			return nil, domain.ErrConversationNotFound
-		}
-		return nil, fmt.Errorf("failed to scan conversation: %w", err)
-	}
-
-	conv.ParticipantOne = &p1
-	conv.ParticipantTwo = &p2
-
-	return &conv, nil
 }

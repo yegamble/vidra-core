@@ -41,15 +41,15 @@ func TestGetVideo_PrivacyGate(t *testing.T) {
 	mv := &mockVideoRepoPrivacy{v: &domain.Video{ID: "v1", UserID: ownerID, Privacy: domain.PrivacyPrivate}}
 	h := GetVideoHandler(mv)
 
-	// Non-owner should get 404
+	// Non-owner should get 403
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/videos/v1", nil)
 	rr := httptest.NewRecorder()
 	// Valid UUID not enforced here; handler expects UUID but repo returns video. Simulate valid by bypassing ID check via router? Not needed for privacy path unit.
 	// Inject URL param and context
 	req = withChiURLParam(req, "id", "123e4567-e89b-12d3-a456-426614174000")
 	h.ServeHTTP(rr, req)
-	if rr.Code != http.StatusNotFound {
-		t.Fatalf("expected 404 for non-owner private video, got %d", rr.Code)
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 for non-owner private video, got %d", rr.Code)
 	}
 
 	// Owner should get 200

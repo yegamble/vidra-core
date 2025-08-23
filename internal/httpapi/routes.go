@@ -58,7 +58,7 @@ func RegisterRoutes(r chi.Router, cfg *config.Config) {
 
 	// Initialize services
 	uploadService := usecase.NewUploadService(uploadRepo, encodingRepo, videoRepo, storageRoot, cfg)
-	messageService := usecase.NewMessageServiceWithConfig(messageRepo, userRepo, cfg)
+	messageService := usecase.NewMessageService(messageRepo, userRepo)
 
 	// Start a lightweight encoding scheduler in the background to ensure
 	// pending jobs are processed even if the standalone encoder is not running.
@@ -173,36 +173,22 @@ func RegisterRoutes(r chi.Router, cfg *config.Config) {
 			r.With(middleware.Auth(cfg.JWTSecret)).Get("/me", GetCurrentUserHandler(userRepo))
 			r.With(middleware.Auth(cfg.JWTSecret)).Put("/me", UpdateCurrentUserHandler(userRepo))
 			r.With(middleware.Auth(cfg.JWTSecret)).Post("/me/avatar", server.UploadAvatar)
-			// PGP key management
-			r.With(middleware.Auth(cfg.JWTSecret)).Post("/me/pgp", SetPGPKeyHandler(messageService))
-			r.With(middleware.Auth(cfg.JWTSecret)).Delete("/me/pgp", RemovePGPKeyHandler(messageService))
-			r.With(middleware.Auth(cfg.JWTSecret)).Post("/me/pgp/generate", GeneratePGPKeyHandler(messageService))
 			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{id}", GetUserHandler(userRepo))
-			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{id}/pgp", GetUserPGPKeyHandler(messageService))
 			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{id}/videos", GetUserVideosHandler(videoRepo))
 		})
 
 		r.Route("/messages", func(r chi.Router) {
 			r.Use(middleware.Auth(cfg.JWTSecret))
-			// Main messages endpoint - grouped by thread, most recent first
-			r.Get("/", GetMessagesHandler(messageService))
 			r.Post("/", SendMessageHandler(messageService))
-
-			// Unread messages count from all threads
-			r.Get("/unread", GetUnreadCountHandler(messageService))
-
-			// Message thread operations
-			r.Route("/thread/{threadId}", func(r chi.Router) {
-				r.Get("/", GetMessageThreadHandler(messageService))
-			})
-
-			// Individual message operations
-			r.Route("/{messageId}", func(r chi.Router) {
-				r.Put("/read", MarkMessageReadHandler(messageService))
-				r.Delete("/", DeleteMessageHandler(messageService))
-				r.Put("/", UpdateMessageHandler(messageService)) // Edit within 5 minutes
-			})
+			r.Get("/", GetMessagesHandler(messageService))
+			r.Put("/{messageId}/read", MarkMessageReadHandler(messageService))
+			r.Delete("/{messageId}", DeleteMessageHandler(messageService))
 		})
 
+		r.Route("/conversations", func(r chi.Router) {
+			r.Use(middleware.Auth(cfg.JWTSecret))
+			r.Get("/", GetConversationsHandler(messageService))
+			r.Get("/unread-count", GetUnreadCountHandler(messageService))
+		})
 	})
 }

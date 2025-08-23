@@ -28,7 +28,6 @@ RUN : "${BUILD_TIME:=$(date -u +%Y%m%d.%H%M%S)}" && \
     go mod verify && \
     # Build with explicit modules mode \
     CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GO111MODULE=on go build \
-    -tags=pgp \
     -ldflags="-w -s -X main.version=${VERSION} -X main.buildTime=${BUILD_TIME}" \
     -o server ./cmd/server
 
