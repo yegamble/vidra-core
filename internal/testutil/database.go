@@ -64,7 +64,12 @@ func setupPostgres() (*sqlx.DB, error) {
 	if dbURL == "" {
 		// Assemble from granular TEST_DB_* envs if provided
 		host := getEnvDefault("TEST_DB_HOST", "localhost")
-		port := getEnvDefault("TEST_DB_PORT", "5433")
+		// Default port logic: use 5432 in CI environments, 5433 for local development
+		defaultPort := "5433"
+		if os.Getenv("CI") != "" || os.Getenv("GITHUB_ACTIONS") != "" {
+			defaultPort = "5432"
+		}
+		port := getEnvDefault("TEST_DB_PORT", defaultPort)
 		name := getEnvDefault("TEST_DB_NAME", "athena_test")
 		user := getEnvDefault("TEST_DB_USER", "test_user")
 		pass := getEnvDefault("TEST_DB_PASSWORD", "test_password")
@@ -418,7 +423,12 @@ func setupRedis() (*redis.Client, error) {
 	// Use environment variable if set (for CI), otherwise use local test setup
 	redisURL := os.Getenv("REDIS_URL")
 	if redisURL == "" {
-		redisURL = "redis://localhost:6380/0"
+		// Default Redis URL logic: use 6379 in CI environments, 6380 for local development
+		defaultRedisURL := "redis://localhost:6380/0"
+		if os.Getenv("CI") != "" || os.Getenv("GITHUB_ACTIONS") != "" {
+			defaultRedisURL = "redis://localhost:6379/0"
+		}
+		redisURL = defaultRedisURL
 	}
 
 	opt, err := redis.ParseURL(redisURL)
