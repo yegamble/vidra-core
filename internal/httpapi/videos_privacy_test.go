@@ -64,7 +64,7 @@ func TestGetVideo_PrivacyGate(t *testing.T) {
 }
 
 func TestGetUserVideos_PrivacyFilterForNonOwner(t *testing.T) {
-	ownerID := "owner-2"
+	ownerID := "123e4567-e89b-12d3-a456-426614174001" // Use valid UUID
 	vids := []*domain.Video{
 		{ID: "pub", UserID: ownerID, Privacy: domain.PrivacyPublic, Title: "public"},
 		{ID: "prv", UserID: ownerID, Privacy: domain.PrivacyPrivate, Title: "private"},
