@@ -46,7 +46,7 @@ test-unit: ## Run unit tests (exclude DB-backed repository pkg)
 	@set -e; \
 	PKGS=$$(go list ./... | grep -v "/internal/repository$$"); \
 	echo "Running unit tests in: $$PKGS"; \
-	go test -v -race -parallel=8 $$PKGS
+	go test -v -race -parallel=8 -short $$PKGS
 
 test-ci: ## Run tests for CI environment
 	go test -v -race -coverprofile=coverage.out ./...

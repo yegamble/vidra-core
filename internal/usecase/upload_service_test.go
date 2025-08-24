@@ -34,6 +34,10 @@ func createTestConfig() *config.Config {
 }
 
 func TestUploadService_InitiateUpload(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping database tests in short mode")
+	}
+
 	testDB := testutil.SetupTestDB(t)
 	uploadRepo := repository.NewUploadRepository(testDB.DB)
 	encodingRepo := repository.NewEncodingRepository(testDB.DB)
@@ -87,6 +91,10 @@ func TestUploadService_InitiateUpload(t *testing.T) {
 }
 
 func TestUploadService_InitiateUpload_InvalidFileExtension(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping database tests in short mode")
+	}
+
 	testDB := testutil.SetupTestDB(t)
 	uploadRepo := repository.NewUploadRepository(testDB.DB)
 	encodingRepo := repository.NewEncodingRepository(testDB.DB)
@@ -115,6 +123,10 @@ func TestUploadService_InitiateUpload_InvalidFileExtension(t *testing.T) {
 }
 
 func TestUploadService_InitiateUpload_FileTooLarge(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping database tests in short mode")
+	}
+
 	testDB := testutil.SetupTestDB(t)
 	uploadRepo := repository.NewUploadRepository(testDB.DB)
 	encodingRepo := repository.NewEncodingRepository(testDB.DB)
@@ -139,6 +151,10 @@ func TestUploadService_InitiateUpload_FileTooLarge(t *testing.T) {
 }
 
 func TestUploadService_UploadChunk(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping database tests in short mode")
+	}
+
 	testDB := testutil.SetupTestDB(t)
 	uploadRepo := repository.NewUploadRepository(testDB.DB)
 	encodingRepo := repository.NewEncodingRepository(testDB.DB)
@@ -193,6 +209,10 @@ func TestUploadService_UploadChunk(t *testing.T) {
 }
 
 func TestUploadService_UploadChunk_InvalidChecksum(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping database tests in short mode")
+	}
+
 	testDB := testutil.SetupTestDB(t)
 	uploadRepo := repository.NewUploadRepository(testDB.DB)
 	encodingRepo := repository.NewEncodingRepository(testDB.DB)
@@ -222,6 +242,10 @@ func TestUploadService_UploadChunk_InvalidChecksum(t *testing.T) {
 }
 
 func TestUploadService_UploadChunk_Resumable(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping database tests in short mode")
+	}
+
 	testDB := testutil.SetupTestDB(t)
 	uploadRepo := repository.NewUploadRepository(testDB.DB)
 	encodingRepo := repository.NewEncodingRepository(testDB.DB)
@@ -295,6 +319,10 @@ func TestUploadService_UploadChunk_Resumable(t *testing.T) {
 }
 
 func TestUploadService_CompleteUpload(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping database tests in short mode")
+	}
+
 	testDB := testutil.SetupTestDB(t)
 	uploadRepo := repository.NewUploadRepository(testDB.DB)
 	encodingRepo := repository.NewEncodingRepository(testDB.DB)
