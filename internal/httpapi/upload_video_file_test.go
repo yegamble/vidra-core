@@ -76,6 +76,9 @@ func writeMinimalMP4(path string, totalSize int) error {
 }
 
 func TestUploadWithActualVideoFile(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration tests in short mode")
+	}
 	testDB := testutil.SetupTestDB(t)
 	if testDB == nil { // skipped
 		return
@@ -218,6 +221,9 @@ func TestUploadWithActualVideoFile(t *testing.T) {
 }
 
 func TestUploadLargeVideo_VariousChunkSizes(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration tests in short mode")
+	}
 	testDB := testutil.SetupTestDB(t)
 	if testDB == nil { // skipped
 		return
@@ -325,6 +331,9 @@ func TestUploadLargeVideo_VariousChunkSizes(t *testing.T) {
 }
 
 func TestResumeUploadWithActualVideoFile(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration tests in short mode")
+	}
 	testDB := testutil.SetupTestDB(t)
 	if testDB == nil { // skipped
 		return
@@ -486,6 +495,9 @@ func TestResumeUploadWithActualVideoFile(t *testing.T) {
 }
 
 func TestUploadResumeAfterChecksumMismatch_WithVideoFile(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration tests in short mode")
+	}
 	testDB := testutil.SetupTestDB(t)
 	if testDB == nil { // skipped
 		return
@@ -679,6 +691,9 @@ func TestUploadResumeAfterChecksumMismatch_WithVideoFile(t *testing.T) {
 }
 
 func TestStrictModeRequiresChecksum(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration tests in short mode")
+	}
 	testDB := testutil.SetupTestDB(t)
 	if testDB == nil { // skipped
 		return

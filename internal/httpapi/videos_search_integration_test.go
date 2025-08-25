@@ -19,6 +19,9 @@ import (
 // This integration test ensures that search and user video endpoints
 // return videos that have gone through the upload pipeline.
 func TestSearchAndUserVideos_ReturnUploadedVideo(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration tests in short mode")
+	}
 	td := testutil.SetupTestDB(t)
 	if td == nil { // Skipped if DB/Redis unavailable
 		t.Skip("TestDB not available")

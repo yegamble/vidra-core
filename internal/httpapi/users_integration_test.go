@@ -36,6 +36,10 @@ func decodeInteg(rr *httptest.ResponseRecorder, t *testing.T) integResp {
 }
 
 func TestRegister_Integration_CreatesUserInDB(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration tests in short mode")
+	}
+
 	td := testutil.SetupTestDB(t)
 	td.TruncateTables(t, "users", "refresh_tokens", "sessions")
 
@@ -79,6 +83,10 @@ func TestRegister_Integration_CreatesUserInDB(t *testing.T) {
 }
 
 func TestCreateUserHandler_Integration_CreatesUserInDB(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration tests in short mode")
+	}
+
 	td := testutil.SetupTestDB(t)
 	td.TruncateTables(t, "users")
 
@@ -116,6 +124,10 @@ func TestCreateUserHandler_Integration_CreatesUserInDB(t *testing.T) {
 }
 
 func TestGetUserHandler_Integration_GetsFromDB(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration tests in short mode")
+	}
+
 	td := testutil.SetupTestDB(t)
 	td.TruncateTables(t, "users")
 
@@ -158,6 +170,10 @@ func TestGetUserHandler_Integration_GetsFromDB(t *testing.T) {
 }
 
 func TestGetCurrentUserHandler_Integration_ReturnsDBUser(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration tests in short mode")
+	}
+
 	td := testutil.SetupTestDB(t)
 	td.TruncateTables(t, "users")
 
@@ -198,6 +214,10 @@ func TestGetCurrentUserHandler_Integration_ReturnsDBUser(t *testing.T) {
 }
 
 func TestUpdateCurrentUserHandler_Integration_UpdatesDBUser(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration tests in short mode")
+	}
+
 	td := testutil.SetupTestDB(t)
 	td.TruncateTables(t, "users")
 
@@ -254,6 +274,10 @@ func TestUpdateCurrentUserHandler_Integration_UpdatesDBUser(t *testing.T) {
 }
 
 func TestGetCurrentUserHandler_Integration_Unauthorized(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration tests in short mode")
+	}
+
 	td := testutil.SetupTestDB(t)
 	td.TruncateTables(t, "users")
 
@@ -269,6 +293,10 @@ func TestGetCurrentUserHandler_Integration_Unauthorized(t *testing.T) {
 }
 
 func TestGetCurrentUserHandler_Integration_NotFound(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration tests in short mode")
+	}
+
 	td := testutil.SetupTestDB(t)
 	td.TruncateTables(t, "users")
 
@@ -285,6 +313,10 @@ func TestGetCurrentUserHandler_Integration_NotFound(t *testing.T) {
 }
 
 func TestUpdateCurrentUserHandler_Integration_InvalidJSON(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration tests in short mode")
+	}
+
 	td := testutil.SetupTestDB(t)
 	td.TruncateTables(t, "users")
 
@@ -308,6 +340,10 @@ func TestUpdateCurrentUserHandler_Integration_InvalidJSON(t *testing.T) {
 }
 
 func TestUpdateCurrentUserHandler_Integration_Unauthorized(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration tests in short mode")
+	}
+
 	td := testutil.SetupTestDB(t)
 	td.TruncateTables(t, "users")
 

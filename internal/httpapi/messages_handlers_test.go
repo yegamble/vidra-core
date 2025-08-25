@@ -33,6 +33,10 @@ func decodeEnvelope(t *testing.T, rr *httptest.ResponseRecorder) Response {
 }
 
 func TestSendMessageHandler_SuccessAndSafety(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration tests in short mode")
+	}
+
 	td := testutil.SetupTestDB(t)
 	if td == nil { // skipped due to unavailable services
 		return
@@ -86,6 +90,10 @@ func TestSendMessageHandler_SuccessAndSafety(t *testing.T) {
 }
 
 func TestSendMessageHandler_Unauthorized_InvalidJSON_Validation(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration tests in short mode")
+	}
+
 	td := testutil.SetupTestDB(t)
 	if td == nil {
 		return
@@ -173,6 +181,10 @@ func TestSendMessageHandler_Unauthorized_InvalidJSON_Validation(t *testing.T) {
 }
 
 func TestGetMessages_MarkRead_Delete(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration tests in short mode")
+	}
+
 	td := testutil.SetupTestDB(t)
 	if td == nil {
 		return
@@ -297,6 +309,10 @@ func TestGetMessages_MarkRead_Delete(t *testing.T) {
 }
 
 func TestConversations_AndUnreadCount(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration tests in short mode")
+	}
+
 	td := testutil.SetupTestDB(t)
 	if td == nil {
 		return
@@ -366,6 +382,10 @@ func TestConversations_AndUnreadCount(t *testing.T) {
 }
 
 func TestMessagesHandlers_ValidationAndMissingParam(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration tests in short mode")
+	}
+
 	td := testutil.SetupTestDB(t)
 	if td == nil {
 		return
@@ -425,6 +445,10 @@ func TestMessagesHandlers_ValidationAndMissingParam(t *testing.T) {
 }
 
 func TestSendMessage_WithInvalidParentReference_ReturnsNotFound(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration tests in short mode")
+	}
+
 	td := testutil.SetupTestDB(t)
 	if td == nil {
 		return

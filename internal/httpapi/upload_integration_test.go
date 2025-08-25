@@ -30,6 +30,9 @@ import (
 )
 
 func TestFullUploadWorkflow_Integration(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration tests in short mode")
+	}
 	testDB := testutil.SetupTestDB(t)
 	uploadRepo := repository.NewUploadRepository(testDB.DB)
 	encodingRepo := repository.NewEncodingRepository(testDB.DB)
@@ -260,6 +263,9 @@ func TestFullUploadWorkflow_Integration(t *testing.T) {
 }
 
 func TestResumeUploadWorkflow_Integration(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration tests in short mode")
+	}
 	testDB := testutil.SetupTestDB(t)
 	uploadRepo := repository.NewUploadRepository(testDB.DB)
 	encodingRepo := repository.NewEncodingRepository(testDB.DB)
@@ -396,6 +402,9 @@ func TestResumeUploadWorkflow_Integration(t *testing.T) {
 }
 
 func TestConcurrentUpload_Integration(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration tests in short mode")
+	}
 	testDB := testutil.SetupTestDB(t)
 	uploadRepo := repository.NewUploadRepository(testDB.DB)
 	encodingRepo := repository.NewEncodingRepository(testDB.DB)

@@ -36,6 +36,10 @@ func createTestConfig() *config.Config {
 }
 
 func TestInitiateUploadHandler(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration tests in short mode")
+	}
+
 	testDB := testutil.SetupTestDB(t)
 	uploadRepo := repository.NewUploadRepository(testDB.DB)
 	encodingRepo := repository.NewEncodingRepository(testDB.DB)
@@ -93,6 +97,10 @@ func TestInitiateUploadHandler(t *testing.T) {
 }
 
 func TestInitiateUploadHandler_Unauthorized(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration tests in short mode")
+	}
+
 	testDB := testutil.SetupTestDB(t)
 	uploadRepo := repository.NewUploadRepository(testDB.DB)
 	encodingRepo := repository.NewEncodingRepository(testDB.DB)
@@ -122,6 +130,10 @@ func TestInitiateUploadHandler_Unauthorized(t *testing.T) {
 }
 
 func TestUploadChunkHandler(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration tests in short mode")
+	}
+
 	testDB := testutil.SetupTestDB(t)
 	uploadRepo := repository.NewUploadRepository(testDB.DB)
 	encodingRepo := repository.NewEncodingRepository(testDB.DB)
@@ -176,6 +188,10 @@ func TestUploadChunkHandler(t *testing.T) {
 }
 
 func TestUploadChunkHandler_InvalidChecksum(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration tests in short mode")
+	}
+
 	testDB := testutil.SetupTestDB(t)
 	uploadRepo := repository.NewUploadRepository(testDB.DB)
 	encodingRepo := repository.NewEncodingRepository(testDB.DB)
@@ -220,6 +236,10 @@ func TestUploadChunkHandler_InvalidChecksum(t *testing.T) {
 }
 
 func TestCompleteUploadHandler(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration tests in short mode")
+	}
+
 	testDB := testutil.SetupTestDB(t)
 	uploadRepo := repository.NewUploadRepository(testDB.DB)
 	encodingRepo := repository.NewEncodingRepository(testDB.DB)
@@ -270,6 +290,10 @@ func TestCompleteUploadHandler(t *testing.T) {
 }
 
 func TestGetUploadStatusHandler(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration tests in short mode")
+	}
+
 	testDB := testutil.SetupTestDB(t)
 	uploadRepo := repository.NewUploadRepository(testDB.DB)
 	encodingRepo := repository.NewEncodingRepository(testDB.DB)
@@ -322,6 +346,10 @@ func TestGetUploadStatusHandler(t *testing.T) {
 }
 
 func TestResumeUploadHandler(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration tests in short mode")
+	}
+
 	testDB := testutil.SetupTestDB(t)
 	uploadRepo := repository.NewUploadRepository(testDB.DB)
 	encodingRepo := repository.NewEncodingRepository(testDB.DB)
@@ -392,6 +420,10 @@ func TestResumeUploadHandler(t *testing.T) {
 }
 
 func TestUploadHandlers_InvalidSessionID(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration tests in short mode")
+	}
+
 	testDB := testutil.SetupTestDB(t)
 	uploadRepo := repository.NewUploadRepository(testDB.DB)
 	encodingRepo := repository.NewEncodingRepository(testDB.DB)

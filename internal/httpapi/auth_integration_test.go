@@ -31,6 +31,10 @@ type authResp struct {
 }
 
 func TestLogin_Integration_PersistsRefreshToken(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration tests in short mode")
+	}
+
 	td := testutil.SetupTestDB(t)
 	td.TruncateTables(t, "users", "refresh_tokens", "sessions")
 
@@ -81,6 +85,10 @@ func TestLogin_Integration_PersistsRefreshToken(t *testing.T) {
 }
 
 func TestLogin_Integration_InvalidCredentials_NoUser(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration tests in short mode")
+	}
+
 	td := testutil.SetupTestDB(t)
 	td.TruncateTables(t, "users", "refresh_tokens")
 
@@ -100,6 +108,10 @@ func TestLogin_Integration_InvalidCredentials_NoUser(t *testing.T) {
 }
 
 func TestLogin_Integration_InvalidCredentials_WrongPassword(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration tests in short mode")
+	}
+
 	td := testutil.SetupTestDB(t)
 	td.TruncateTables(t, "users", "refresh_tokens")
 
@@ -127,6 +139,10 @@ func TestLogin_Integration_InvalidCredentials_WrongPassword(t *testing.T) {
 }
 
 func TestLogin_Integration_MissingFields(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration tests in short mode")
+	}
+
 	td := testutil.SetupTestDB(t)
 	td.TruncateTables(t, "users")
 
@@ -145,6 +161,10 @@ func TestLogin_Integration_MissingFields(t *testing.T) {
 }
 
 func TestRefresh_Integration_RotatesToken(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration tests in short mode")
+	}
+
 	td := testutil.SetupTestDB(t)
 	td.TruncateTables(t, "users", "refresh_tokens")
 
@@ -206,6 +226,10 @@ func TestRefresh_Integration_RotatesToken(t *testing.T) {
 }
 
 func TestRefresh_Integration_MissingToken(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration tests in short mode")
+	}
+
 	td := testutil.SetupTestDB(t)
 	td.TruncateTables(t, "users", "refresh_tokens")
 
@@ -223,6 +247,10 @@ func TestRefresh_Integration_MissingToken(t *testing.T) {
 }
 
 func TestRefresh_Integration_InvalidToken(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration tests in short mode")
+	}
+
 	td := testutil.SetupTestDB(t)
 	td.TruncateTables(t, "users", "refresh_tokens")
 
@@ -239,6 +267,10 @@ func TestRefresh_Integration_InvalidToken(t *testing.T) {
 }
 
 func TestLogout_Integration_RevokesTokens(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration tests in short mode")
+	}
+
 	td := testutil.SetupTestDB(t)
 	td.TruncateTables(t, "users", "refresh_tokens", "sessions")
 

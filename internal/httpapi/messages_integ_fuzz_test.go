@@ -27,6 +27,9 @@ func FuzzSendMessageHandler_WithService(f *testing.F) {
 	f.Add(int64(42), int64(10))
 
 	f.Fuzz(func(t *testing.T, seed, ops int64) {
+		if testing.Short() {
+			t.Skip("Skipping integration tests in short mode")
+		}
 		td := testutil.SetupTestDB(t)
 		if td == nil {
 			return
@@ -112,6 +115,9 @@ func FuzzMessageHandlers_ReadDeleteAndList(f *testing.F) {
 	f.Add(int64(99), int64(6))
 
 	f.Fuzz(func(t *testing.T, seed, ops int64) {
+		if testing.Short() {
+			t.Skip("Skipping integration tests in short mode")
+		}
 		td := testutil.SetupTestDB(t)
 		if td == nil {
 			return
