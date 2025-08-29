@@ -16,7 +16,7 @@ import (
 // E2EEService provides end-to-end encryption services for messaging
 type E2EEService struct {
 	cryptoRepo       CryptoRepository
-	messageRepo      MessageRepository
+	messageRepo      E2EEMessageRepository
 	conversationRepo ConversationRepository
 	cryptoService    *crypto.CryptoService
 	db               *sqlx.DB
@@ -49,8 +49,8 @@ type CryptoRepository interface {
 	WithTransaction(ctx context.Context, fn func(*sqlx.Tx) error) error
 }
 
-// MessageRepository interface for message operations
-type MessageRepository interface {
+// E2EEMessageRepository interface for E2EE message operations (separate from main MessageRepository)
+type E2EEMessageRepository interface {
 	Create(ctx context.Context, tx *sqlx.Tx, message *domain.Message) error
 	GetByID(ctx context.Context, messageID string) (*domain.Message, error)
 	Update(ctx context.Context, tx *sqlx.Tx, message *domain.Message) error
@@ -66,7 +66,7 @@ type ConversationRepository interface {
 // NewE2EEService creates a new E2EE service
 func NewE2EEService(
 	cryptoRepo CryptoRepository,
-	messageRepo MessageRepository,
+	messageRepo E2EEMessageRepository,
 	conversationRepo ConversationRepository,
 	db *sqlx.DB,
 ) *E2EEService {
@@ -282,7 +282,8 @@ func (s *E2EEService) InitiateKeyExchange(ctx context.Context, senderID, recipie
 		return nil, fmt.Errorf("conversation already has E2EE enabled")
 	}
 
-	return s.cryptoRepo.WithTransaction(ctx, func(tx *sqlx.Tx) error {
+	var keyExchange *domain.KeyExchangeMessage
+	err = s.cryptoRepo.WithTransaction(ctx, func(tx *sqlx.Tx) error {
 		// Generate key pair for this conversation
 		keyPair, err := s.cryptoService.GenerateX25519KeyPair()
 		if err != nil {
@@ -353,6 +354,9 @@ func (s *E2EEService) InitiateKeyExchange(ctx context.Context, senderID, recipie
 			return fmt.Errorf("failed to update conversation: %w", err)
 		}
 
+		// Set the key exchange for return
+		keyExchange = keyExchangeMsg
+
 		// Clear sensitive data
 		s.cryptoService.ZeroMemory(keyPair.PrivateKey)
 		s.cryptoService.ZeroMemory(signingKey)
@@ -360,6 +364,12 @@ func (s *E2EEService) InitiateKeyExchange(ctx context.Context, senderID, recipie
 		s.auditLog(ctx, senderID, conversation.ID, domain.CryptoOpKeyExchange, true, "", clientIP, userAgent)
 		return nil
 	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	return keyExchange, nil
 }
 
 // AcceptKeyExchange accepts an E2EE key exchange
@@ -714,9 +724,15 @@ func (s *E2EEService) getOrCreateConversation(ctx context.Context, participantOn
 		UpdatedAt:        time.Now(),
 	}
 
-	return s.cryptoRepo.WithTransaction(ctx, func(tx *sqlx.Tx) error {
+	err = s.cryptoRepo.WithTransaction(ctx, func(tx *sqlx.Tx) error {
 		return s.conversationRepo.Create(ctx, tx, newConversation)
 	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	return newConversation, nil
 }
 
 func (s *E2EEService) getUserSigningKey(ctx context.Context, userID string) (ed25519.PrivateKey, error) {
