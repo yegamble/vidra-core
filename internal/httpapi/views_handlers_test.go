@@ -13,6 +13,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/lib/pq"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -362,10 +363,13 @@ func TestViewsHandler_GetTrendingVideos(t *testing.T) {
 		err := json.Unmarshal(rr.Body.Bytes(), &response)
 		require.NoError(t, err)
 
-		videos := response["videos"].([]interface{})
+		// Extract data from wrapped response
+		data := response["data"].(map[string]interface{})
+
+		videos := data["videos"].([]interface{})
 		assert.Len(t, videos, 2)
-		assert.NotNil(t, response["limit"])
-		assert.NotNil(t, response["updated_at"])
+		assert.NotNil(t, data["limit"])
+		assert.NotNil(t, data["updated_at"])
 	})
 
 	t.Run("trending videos with details", func(t *testing.T) {
@@ -378,9 +382,17 @@ func TestViewsHandler_GetTrendingVideos(t *testing.T) {
 
 		assert.Equal(t, http.StatusOK, rr.Code)
 
-		var response domain.TrendingVideosResponse
-		err := json.Unmarshal(rr.Body.Bytes(), &response)
+		var wrapper map[string]interface{}
+		err = json.Unmarshal(rr.Body.Bytes(), &wrapper)
 		require.NoError(t, err)
+
+		// Re-marshal the data part to get the proper structure
+		dataBytes, err3 := json.Marshal(wrapper["data"])
+		require.NoError(t, err3)
+
+		var response domain.TrendingVideosResponse
+		err4 := json.Unmarshal(dataBytes, &response)
+		require.NoError(t, err4)
 
 		assert.Len(t, response.Videos, 2)
 		assert.NotEmpty(t, response.Videos[0].Video.Title)
@@ -401,7 +413,10 @@ func TestViewsHandler_GetTrendingVideos(t *testing.T) {
 		err := json.Unmarshal(rr.Body.Bytes(), &response)
 		require.NoError(t, err)
 
-		videos := response["videos"].([]interface{})
+		// Extract data from wrapped response
+		data := response["data"].(map[string]interface{})
+
+		videos := data["videos"].([]interface{})
 		assert.Len(t, videos, 1)
 	})
 }
@@ -744,15 +759,35 @@ func createTestViewsVideo(t *testing.T, testDB *testutil.TestDB, userID string) 
 		MimeType:    "video/mp4",
 		CreatedAt:   time.Now(),
 		UpdatedAt:   time.Now(),
+		// Add missing fields with defaults
+		OriginalCID:   "",
+		ThumbnailCID:  "",
+		Tags:          []string{},
+		Category:      "",
+		Language:      "en",
+		Metadata:      domain.VideoMetadata{},
+		ThumbnailPath: "",
+		PreviewPath:   "",
+		OutputPaths:   map[string]string{},
+		ProcessedCIDs: map[string]string{},
 	}
 
 	query := `INSERT INTO videos (id, thumbnail_id, title, description, duration, views, privacy, status, 
-		upload_date, user_id, file_size, mime_type, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`
+		upload_date, user_id, file_size, mime_type, created_at, updated_at,
+		original_cid, processed_cids, thumbnail_cid, tags, category, language, metadata,
+		output_paths, thumbnail_path, preview_path)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)`
+
+	processedCIDsJSON, _ := json.Marshal(video.ProcessedCIDs)
+	metadataJSON, _ := json.Marshal(video.Metadata)
+	outputPathsJSON, _ := json.Marshal(video.OutputPaths)
 
 	_, err := testDB.DB.Exec(query, video.ID, video.ThumbnailID, video.Title, video.Description,
 		video.Duration, video.Views, video.Privacy, video.Status, video.UploadDate, video.UserID,
-		video.FileSize, video.MimeType, video.CreatedAt, video.UpdatedAt)
+		video.FileSize, video.MimeType, video.CreatedAt, video.UpdatedAt,
+		video.OriginalCID, processedCIDsJSON, video.ThumbnailCID,
+		pq.Array(video.Tags), video.Category, video.Language, metadataJSON,
+		outputPathsJSON, video.ThumbnailPath, video.PreviewPath)
 	require.NoError(t, err)
 
 	return video

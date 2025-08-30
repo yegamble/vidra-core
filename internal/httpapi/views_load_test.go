@@ -35,7 +35,7 @@ func TestLoadScenarios(t *testing.T) {
 	videoRepo := repository.NewVideoRepository(db.DB)
 	viewsService := usecase.NewViewsService(viewsRepo, videoRepo)
 	viewsHandler := NewViewsHandler(viewsService)
-	
+
 	// Create HTTP mux for load testing
 	mux := http.NewServeMux()
 	mux.HandleFunc("/track", viewsHandler.TrackView)
@@ -46,28 +46,28 @@ func TestLoadScenarios(t *testing.T) {
 	videoIDs := createTestVideos(t, db, 10)
 
 	t.Run("SimulateRealWorldTrafficPattern", func(t *testing.T) {
-		testRealWorldTraffic(t, handler, videoIDs)
+		testRealWorldTraffic(t, mux, videoIDs)
 	})
 
 	t.Run("StressTestViewTracking", func(t *testing.T) {
-		testStressViewTracking(t, handler, videoIDs)
+		testStressViewTracking(t, mux, videoIDs)
 	})
 
 	t.Run("SustainedHighThroughput", func(t *testing.T) {
-		testSustainedThroughput(t, handler, videoIDs)
+		testSustainedThroughput(t, mux, videoIDs)
 	})
 
 	t.Run("ConcurrentAnalyticsQueries", func(t *testing.T) {
-		testConcurrentAnalytics(t, handler, videoIDs)
+		testConcurrentAnalytics(t, mux, videoIDs)
 	})
 
 	t.Run("PeakTrafficSimulation", func(t *testing.T) {
-		testPeakTraffic(t, handler, videoIDs)
+		testPeakTraffic(t, mux, videoIDs)
 	})
 }
 
 // testRealWorldTraffic simulates realistic user behavior patterns
-func testRealWorldTraffic(t *testing.T, handler http.Handler, videoIDs []uuid.UUID) {
+func testRealWorldTraffic(t *testing.T, mux http.Handler, videoIDs []uuid.UUID) {
 	const (
 		totalUsers     = 200
 		testDurationMs = 5000
@@ -94,7 +94,7 @@ func testRealWorldTraffic(t *testing.T, handler http.Handler, videoIDs []uuid.UU
 			defer wg.Done()
 
 			behavior := selectUserBehavior(userBehaviors, rand.Intn(100))
-			simulateUser(t, handler, videoIDs, userID, behavior, endTime, metrics)
+			simulateUser(t, mux, videoIDs, userID, behavior, endTime, metrics)
 		}(i)
 	}
 
@@ -115,7 +115,7 @@ func testRealWorldTraffic(t *testing.T, handler http.Handler, videoIDs []uuid.UU
 }
 
 // testStressViewTracking pushes the view tracking system to its limits
-func testStressViewTracking(t *testing.T, handler http.Handler, videoIDs []uuid.UUID) {
+func testStressViewTracking(t *testing.T, mux http.Handler, videoIDs []uuid.UUID) {
 	const (
 		concurrentUsers = 500
 		viewsPerUser    = 20
@@ -139,7 +139,7 @@ func testStressViewTracking(t *testing.T, handler http.Handler, videoIDs []uuid.
 				videoID := videoIDs[rand.Intn(len(videoIDs))]
 
 				requestStart := time.Now()
-				err := trackView(handler, videoID, fingerprint)
+				err := trackView(mux, videoID, fingerprint)
 				latency := time.Since(requestStart)
 
 				latencies <- latency
@@ -199,7 +199,7 @@ func testStressViewTracking(t *testing.T, handler http.Handler, videoIDs []uuid.
 }
 
 // testSustainedThroughput tests system behavior under sustained load
-func testSustainedThroughput(t *testing.T, handler http.Handler, videoIDs []uuid.UUID) {
+func testSustainedThroughput(t *testing.T, mux http.Handler, videoIDs []uuid.UUID) {
 	const (
 		testDurationSeconds = 30
 		targetThroughput    = 50 // requests per second
@@ -225,7 +225,7 @@ func testSustainedThroughput(t *testing.T, handler http.Handler, videoIDs []uuid
 			for time.Now().Before(endTime) {
 				videoID := videoIDs[rand.Intn(len(videoIDs))]
 
-				if err := trackView(handler, videoID, fingerprint); err != nil {
+				if err := trackView(mux, videoID, fingerprint); err != nil {
 					errorCount++
 				}
 				requestCount++
@@ -260,7 +260,7 @@ func testSustainedThroughput(t *testing.T, handler http.Handler, videoIDs []uuid
 }
 
 // testConcurrentAnalytics tests analytics queries under concurrent load
-func testConcurrentAnalytics(t *testing.T, handler http.Handler, videoIDs []uuid.UUID) {
+func testConcurrentAnalytics(t *testing.T, mux http.Handler, videoIDs []uuid.UUID) {
 	const concurrentQueries = 50
 
 	var wg sync.WaitGroup
@@ -282,7 +282,7 @@ func testConcurrentAnalytics(t *testing.T, handler http.Handler, videoIDs []uuid
 				start := time.Now()
 				req := httptest.NewRequest(http.MethodGet, endpoint, nil)
 				w := httptest.NewRecorder()
-				handler.ServeHTTP(w, req)
+				mux.ServeHTTP(w, req)
 				latency := time.Since(start)
 
 				latencies <- latency
@@ -323,7 +323,7 @@ func testConcurrentAnalytics(t *testing.T, handler http.Handler, videoIDs []uuid
 }
 
 // testPeakTraffic simulates traffic spikes (viral video scenario)
-func testPeakTraffic(t *testing.T, handler http.Handler, videoIDs []uuid.UUID) {
+func testPeakTraffic(t *testing.T, mux http.Handler, videoIDs []uuid.UUID) {
 	// Simulate a viral video getting sudden attention
 	viralVideoID := videoIDs[0]
 
@@ -341,7 +341,7 @@ func testPeakTraffic(t *testing.T, handler http.Handler, videoIDs []uuid.UUID) {
 		t.Logf("Starting phase: %s (concurrency: %d, duration: %v)",
 			phase.name, phase.concurrency, phase.duration)
 
-		requests, errors := runTrafficPhase(t, handler, viralVideoID, phase)
+		requests, errors := runTrafficPhase(t, mux, viralVideoID, phase)
 		totalRequests += requests
 		totalErrors += errors
 
@@ -391,7 +391,7 @@ func selectUserBehavior(behaviors []userBehaviorPattern, roll int) userBehaviorP
 	return behaviors[len(behaviors)-1] // fallback
 }
 
-func simulateUser(t *testing.T, handler http.Handler, videoIDs []uuid.UUID,
+func simulateUser(t *testing.T, mux http.Handler, videoIDs []uuid.UUID,
 	userID int, behavior userBehaviorPattern, endTime time.Time, metrics chan<- loadTestMetric) {
 
 	fingerprint := generateFingerprint(userID)
@@ -401,7 +401,7 @@ func simulateUser(t *testing.T, handler http.Handler, videoIDs []uuid.UUID,
 		videoID := videoIDs[rand.Intn(len(videoIDs))]
 
 		start := time.Now()
-		err := trackView(handler, videoID, fingerprint)
+		err := trackView(mux, videoID, fingerprint)
 		latency := time.Since(start)
 
 		metrics <- loadTestMetric{
@@ -422,7 +422,7 @@ func simulateUser(t *testing.T, handler http.Handler, videoIDs []uuid.UUID,
 	}
 }
 
-func runTrafficPhase(t *testing.T, handler http.Handler, videoID uuid.UUID, phase trafficPhase) (int64, int64) {
+func runTrafficPhase(t *testing.T, mux http.Handler, videoID uuid.UUID, phase trafficPhase) (int64, int64) {
 	var wg sync.WaitGroup
 	var requests int64
 	var errors int64
@@ -438,7 +438,7 @@ func runTrafficPhase(t *testing.T, handler http.Handler, videoID uuid.UUID, phas
 			fingerprint := generateFingerprint(workerID + int(time.Now().UnixNano()))
 
 			for time.Now().Before(endTime) {
-				err := trackView(handler, videoID, fingerprint)
+				err := trackView(mux, videoID, fingerprint)
 
 				mu.Lock()
 				requests++
@@ -495,7 +495,7 @@ func analyzeLoadTestResults(t *testing.T, metrics []loadTestMetric, duration tim
 	assert.Less(t, maxLatency, 2*time.Second, "Max latency should be under 2s")
 }
 
-func trackView(handler http.Handler, videoID uuid.UUID, fingerprint string) error {
+func trackView(mux http.Handler, videoID uuid.UUID, fingerprint string) error {
 	requestBody := map[string]interface{}{
 		"video_id":    videoID.String(),
 		"fingerprint": fingerprint,
@@ -507,7 +507,7 @@ func trackView(handler http.Handler, videoID uuid.UUID, fingerprint string) erro
 	req.Header.Set("Content-Type", "application/json")
 
 	w := httptest.NewRecorder()
-	handler.ServeHTTP(w, req)
+	mux.ServeHTTP(w, req)
 
 	if w.Code != http.StatusOK && w.Code != http.StatusCreated {
 		return fmt.Errorf("request failed with status %d", w.Code)
