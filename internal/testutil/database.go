@@ -81,7 +81,8 @@ func setupPostgres() (*sqlx.DB, error) {
 	schema := deriveTestSchema()
 
 	// First connect without custom search_path to create the schema if needed
-	db, err := connectWithRetry(dbURL, 30*time.Second)
+	// Use a short deadline so tests skip fast when DB isn't available locally
+	db, err := connectWithRetry(dbURL, 5*time.Second)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to test database: %w", err)
 	}
@@ -114,7 +115,7 @@ func setupPostgres() (*sqlx.DB, error) {
 		dbURL = dbURL + fmt.Sprintf(" search_path='%s,public'", schema)
 	}
 
-	db, err = connectWithRetry(dbURL, 30*time.Second)
+	db, err = connectWithRetry(dbURL, 5*time.Second)
 	if err != nil {
 		return nil, fmt.Errorf("failed to reconnect to test database with schema: %w", err)
 	}
