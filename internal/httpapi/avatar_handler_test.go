@@ -139,10 +139,10 @@ func TestUploadAvatar_ValidPNG_WithMockIPFS(t *testing.T) {
 	if err := json.Unmarshal(b, &got); err != nil {
 		t.Fatalf("decode user: %v", err)
 	}
-	if got.Avatar == nil || got.Avatar.IPFSCID == nil || *got.Avatar.IPFSCID != "CID123" {
+	if got.Avatar == nil || got.Avatar.IpfsCid == nil || *got.Avatar.IpfsCid != "CID123" {
 		t.Fatalf("expected CID123, got %+v", got)
 	}
-	if got.Avatar == nil || got.Avatar.WebPIPFSCID == nil || *got.Avatar.WebPIPFSCID != "CIDWEBP" {
+	if got.Avatar == nil || got.Avatar.WebpIpfsCid == nil || *got.Avatar.WebpIpfsCid != "CIDWEBP" {
 		t.Fatalf("expected CIDWEBP for webp, got %+v", got)
 	}
 }
@@ -210,10 +210,10 @@ func TestUploadAvatar_ValidJPEG_WithMockIPFS(t *testing.T) {
 	if err := json.Unmarshal(b, &got); err != nil {
 		t.Fatalf("decode user: %v", err)
 	}
-	if got.Avatar == nil || got.Avatar.IPFSCID == nil || *got.Avatar.IPFSCID != "CID456" {
+	if got.Avatar == nil || got.Avatar.IpfsCid == nil || *got.Avatar.IpfsCid != "CID456" {
 		t.Fatalf("expected CID456, got %+v", got)
 	}
-	if got.Avatar == nil || got.Avatar.WebPIPFSCID == nil || *got.Avatar.WebPIPFSCID != "CIDWEBP2" {
+	if got.Avatar == nil || got.Avatar.WebpIpfsCid == nil || *got.Avatar.WebpIpfsCid != "CIDWEBP2" {
 		t.Fatalf("expected CIDWEBP2 for webp, got %+v", got)
 	}
 }
@@ -349,20 +349,20 @@ func TestUploadAvatar_ValidWebP_WithMockIPFS(t *testing.T) {
 	if err := json.Unmarshal(b, &got); err != nil {
 		t.Fatalf("decode user: %v", err)
 	}
-	if got.Avatar == nil || got.Avatar.IPFSCID == nil || *got.Avatar.IPFSCID != "CIDWEBP3" {
+	if got.Avatar == nil || got.Avatar.IpfsCid == nil || *got.Avatar.IpfsCid != "CIDWEBP3" {
 		t.Fatalf("expected CIDWEBP3, got avatar CID: %v", func() string {
-			if got.Avatar == nil || got.Avatar.IPFSCID == nil {
+			if got.Avatar == nil || got.Avatar.IpfsCid == nil {
 				return "<nil>"
 			}
-			return *got.Avatar.IPFSCID
+			return *got.Avatar.IpfsCid
 		}())
 	}
-	if got.Avatar == nil || got.Avatar.WebPIPFSCID == nil || *got.Avatar.WebPIPFSCID != "CIDWEBP3" {
+	if got.Avatar == nil || got.Avatar.WebpIpfsCid == nil || *got.Avatar.WebpIpfsCid != "CIDWEBP3" {
 		t.Fatalf("expected CIDWEBP3 for webp, got WebP CID: %v", func() string {
-			if got.Avatar == nil || got.Avatar.WebPIPFSCID == nil {
+			if got.Avatar == nil || got.Avatar.WebpIpfsCid == nil {
 				return "<nil>"
 			}
-			return *got.Avatar.WebPIPFSCID
+			return *got.Avatar.WebpIpfsCid
 		}())
 	}
 }
@@ -424,10 +424,10 @@ func TestUploadAvatar_ValidGIF_WithMockIPFS(t *testing.T) {
 	if err := json.Unmarshal(b, &got); err != nil {
 		t.Fatalf("decode user: %v", err)
 	}
-	if got.Avatar == nil || got.Avatar.IPFSCID == nil || *got.Avatar.IPFSCID != "CIDGIF1" {
+	if got.Avatar == nil || got.Avatar.IpfsCid == nil || *got.Avatar.IpfsCid != "CIDGIF1" {
 		t.Fatalf("expected CIDGIF1, got %+v", got)
 	}
-	if got.Avatar == nil || got.Avatar.WebPIPFSCID == nil || *got.Avatar.WebPIPFSCID != "CIDWEBP4" {
+	if got.Avatar == nil || got.Avatar.WebpIpfsCid == nil || *got.Avatar.WebpIpfsCid != "CIDWEBP4" {
 		t.Fatalf("expected CIDWEBP4 for webp, got %+v", got)
 	}
 }
@@ -489,10 +489,10 @@ func TestUploadAvatar_ValidTIFF_WithMockIPFS(t *testing.T) {
 	if err := json.Unmarshal(b, &got); err != nil {
 		t.Fatalf("decode user: %v", err)
 	}
-	if got.Avatar == nil || got.Avatar.IPFSCID == nil || *got.Avatar.IPFSCID != "CIDTIFF1" {
+	if got.Avatar == nil || got.Avatar.IpfsCid == nil || *got.Avatar.IpfsCid != "CIDTIFF1" {
 		t.Fatalf("expected CIDTIFF1, got %+v", got)
 	}
-	if got.Avatar == nil || got.Avatar.WebPIPFSCID == nil || *got.Avatar.WebPIPFSCID != "CIDWEBP5" {
+	if got.Avatar == nil || got.Avatar.WebpIpfsCid == nil || *got.Avatar.WebpIpfsCid != "CIDWEBP5" {
 		t.Fatalf("expected CIDWEBP5 for webp, got %+v", got)
 	}
 }
@@ -554,10 +554,10 @@ func TestUploadAvatar_ValidHEIC_WithMockIPFS(t *testing.T) {
 	if err := json.Unmarshal(b, &got); err != nil {
 		t.Fatalf("decode user: %v", err)
 	}
-	if got.Avatar == nil || got.Avatar.IPFSCID == nil || *got.Avatar.IPFSCID != "CIDHEIC1" {
+	if got.Avatar == nil || got.Avatar.IpfsCid == nil || *got.Avatar.IpfsCid != "CIDHEIC1" {
 		t.Fatalf("expected CIDHEIC1, got %+v", got)
 	}
-	if got.Avatar == nil || got.Avatar.WebPIPFSCID == nil || *got.Avatar.WebPIPFSCID != "CIDWEBP6" {
+	if got.Avatar == nil || got.Avatar.WebpIpfsCid == nil || *got.Avatar.WebpIpfsCid != "CIDWEBP6" {
 		t.Fatalf("expected CIDWEBP6 for webp, got %+v", got)
 	}
 }
