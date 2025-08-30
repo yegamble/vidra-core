@@ -96,6 +96,8 @@ User messaging is implemented with a dedicated schema and functions to ensure co
 | **Stickers & GIFs** | Giphy, Tenor                            | N/A                                         | Only via integrations, not as raw files. |
 | **Other**           | Contact cards, locations, payments (region-specific)    | N/A                                         | Context-specific in mobile app. |
 
+
+- Tests should check multiple users sending and reciving messages, including edge cases like large attachments, network interruptions, and concurrent sends.
 - Support for end-to-end encrypted conversations with user-managed keys; see E2EE notes below.
 
 ### Security Best Practices

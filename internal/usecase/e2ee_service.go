@@ -129,10 +129,15 @@ func (s *E2EEService) SetupE2EE(ctx context.Context, userID, password string, cl
 			return fmt.Errorf("failed to encrypt master key: %w", err)
 		}
 
+		// Combine nonce + ciphertext for storage (nonce is 24 bytes, prepend to ciphertext)
+		combinedData := make([]byte, len(encryptedMasterKeyData.Nonce)+len(encryptedMasterKeyData.Ciphertext))
+		copy(combinedData[:len(encryptedMasterKeyData.Nonce)], encryptedMasterKeyData.Nonce)
+		copy(combinedData[len(encryptedMasterKeyData.Nonce):], encryptedMasterKeyData.Ciphertext)
+
 		// Create user master key record
 		userMasterKey := &domain.UserMasterKey{
 			UserID:             userID,
-			EncryptedMasterKey: s.cryptoService.Base64Encode(encryptedMasterKeyData.Ciphertext),
+			EncryptedMasterKey: s.cryptoService.Base64Encode(combinedData),
 			Argon2Salt:         s.cryptoService.Base64Encode(salt),
 			Argon2Memory:       crypto.Argon2Memory,
 			Argon2Time:         crypto.Argon2Time,
@@ -157,9 +162,14 @@ func (s *E2EEService) SetupE2EE(ctx context.Context, userID, password string, cl
 			return fmt.Errorf("failed to encrypt signing private key: %w", err)
 		}
 
+		// Combine nonce + ciphertext for signing key storage
+		signingKeyCombined := make([]byte, len(encryptedSigningKey.Nonce)+len(encryptedSigningKey.Ciphertext))
+		copy(signingKeyCombined[:len(encryptedSigningKey.Nonce)], encryptedSigningKey.Nonce)
+		copy(signingKeyCombined[len(encryptedSigningKey.Nonce):], encryptedSigningKey.Ciphertext)
+
 		userSigningKey := &domain.UserSigningKey{
 			UserID:              userID,
-			EncryptedPrivateKey: s.cryptoService.Base64Encode(encryptedSigningKey.Ciphertext),
+			EncryptedPrivateKey: s.cryptoService.Base64Encode(signingKeyCombined),
 			PublicKey:           s.cryptoService.Base64Encode(signingKeyPair.PublicKey),
 			KeyVersion:          1,
 		}
@@ -204,14 +214,24 @@ func (s *E2EEService) UnlockE2EE(ctx context.Context, userID, password string, c
 		return fmt.Errorf("failed to derive key from password: %w", err)
 	}
 
-	// Decrypt master key
-	encryptedMasterKey, err := s.cryptoService.Base64Decode(userMasterKey.EncryptedMasterKey)
+	// Decrypt master key - split nonce and ciphertext
+	combinedData, err := s.cryptoService.Base64Decode(userMasterKey.EncryptedMasterKey)
 	if err != nil {
 		return fmt.Errorf("failed to decode encrypted master key: %w", err)
 	}
 
+	// XChaCha20 nonce is 24 bytes
+	const nonceSize = 24
+	if len(combinedData) < nonceSize {
+		return fmt.Errorf("invalid encrypted master key: too short")
+	}
+
+	nonce := combinedData[:nonceSize]
+	ciphertext := combinedData[nonceSize:]
+
 	encryptedData := &crypto.EncryptedData{
-		Ciphertext: encryptedMasterKey,
+		Ciphertext: ciphertext,
+		Nonce:      nonce,
 		Version:    1,
 	}
 
@@ -297,12 +317,17 @@ func (s *E2EEService) InitiateKeyExchange(ctx context.Context, senderID, recipie
 			return fmt.Errorf("failed to encrypt private key: %w", err)
 		}
 
+		// Combine nonce + ciphertext for conversation key storage
+		conversationKeyCombined := make([]byte, len(encryptedPrivateKey.Nonce)+len(encryptedPrivateKey.Ciphertext))
+		copy(conversationKeyCombined[:len(encryptedPrivateKey.Nonce)], encryptedPrivateKey.Nonce)
+		copy(conversationKeyCombined[len(encryptedPrivateKey.Nonce):], encryptedPrivateKey.Ciphertext)
+
 		// Create conversation key record
 		conversationKey := &domain.ConversationKey{
 			ID:                  uuid.New().String(),
 			ConversationID:      conversation.ID,
 			UserID:              senderID,
-			EncryptedPrivateKey: s.cryptoService.Base64Encode(encryptedPrivateKey.Ciphertext),
+			EncryptedPrivateKey: s.cryptoService.Base64Encode(conversationKeyCombined),
 			PublicKey:           s.cryptoService.Base64Encode(keyPair.PublicKey),
 			KeyVersion:          1,
 			IsActive:            true,
@@ -449,14 +474,24 @@ func (s *E2EEService) AcceptKeyExchange(ctx context.Context, keyExchangeID, user
 			return fmt.Errorf("failed to encrypt shared secret: %w", err)
 		}
 
+		// Combine nonce + ciphertext for recipient conversation key storage
+		recipientKeyCombined := make([]byte, len(encryptedPrivateKey.Nonce)+len(encryptedPrivateKey.Ciphertext))
+		copy(recipientKeyCombined[:len(encryptedPrivateKey.Nonce)], encryptedPrivateKey.Nonce)
+		copy(recipientKeyCombined[len(encryptedPrivateKey.Nonce):], encryptedPrivateKey.Ciphertext)
+
+		// Combine nonce + ciphertext for shared secret storage
+		sharedSecretCombined := make([]byte, len(encryptedSharedSecret.Nonce)+len(encryptedSharedSecret.Ciphertext))
+		copy(sharedSecretCombined[:len(encryptedSharedSecret.Nonce)], encryptedSharedSecret.Nonce)
+		copy(sharedSecretCombined[len(encryptedSharedSecret.Nonce):], encryptedSharedSecret.Ciphertext)
+
 		// Create recipient's conversation key
 		recipientConversationKey := &domain.ConversationKey{
 			ID:                    uuid.New().String(),
 			ConversationID:        keyExchange.ConversationID,
 			UserID:                userID,
-			EncryptedPrivateKey:   s.cryptoService.Base64Encode(encryptedPrivateKey.Ciphertext),
+			EncryptedPrivateKey:   s.cryptoService.Base64Encode(recipientKeyCombined),
 			PublicKey:             s.cryptoService.Base64Encode(recipientKeyPair.PublicKey),
-			EncryptedSharedSecret: &[]string{s.cryptoService.Base64Encode(encryptedSharedSecret.Ciphertext)}[0],
+			EncryptedSharedSecret: &[]string{s.cryptoService.Base64Encode(sharedSecretCombined)}[0],
 			KeyVersion:            1,
 			IsActive:              true,
 		}
@@ -532,15 +567,25 @@ func (s *E2EEService) EncryptMessage(ctx context.Context, senderID, recipientID,
 		return nil, fmt.Errorf("no shared secret available")
 	}
 
-	// Decrypt shared secret
+	// Decrypt shared secret - split nonce and ciphertext
 	session := userSessions[senderID]
-	encryptedSharedSecret, err := s.cryptoService.Base64Decode(*senderKey.EncryptedSharedSecret)
+	combinedData, err := s.cryptoService.Base64Decode(*senderKey.EncryptedSharedSecret)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decode encrypted shared secret: %w", err)
 	}
 
+	// XChaCha20 nonce is 24 bytes
+	const nonceSize = 24
+	if len(combinedData) < nonceSize {
+		return nil, fmt.Errorf("invalid encrypted shared secret: too short")
+	}
+
+	decryptNonce := combinedData[:nonceSize]
+	decryptCiphertext := combinedData[nonceSize:]
+
 	encryptedData := &crypto.EncryptedData{
-		Ciphertext: encryptedSharedSecret,
+		Ciphertext: decryptCiphertext,
+		Nonce:      decryptNonce,
 		Version:    1,
 	}
 
@@ -632,15 +677,25 @@ func (s *E2EEService) DecryptMessage(ctx context.Context, message *domain.Messag
 		return "", fmt.Errorf("no shared secret available for decryption")
 	}
 
-	// Decrypt shared secret
+	// Decrypt shared secret - split nonce and ciphertext
 	session := userSessions[userID]
-	encryptedSharedSecret, err := s.cryptoService.Base64Decode(*userKey.EncryptedSharedSecret)
+	combinedData, err := s.cryptoService.Base64Decode(*userKey.EncryptedSharedSecret)
 	if err != nil {
 		return "", fmt.Errorf("failed to decode encrypted shared secret: %w", err)
 	}
 
+	// XChaCha20 nonce is 24 bytes
+	const nonceSize = 24
+	if len(combinedData) < nonceSize {
+		return "", fmt.Errorf("invalid encrypted shared secret: too short")
+	}
+
+	decryptNonce := combinedData[:nonceSize]
+	decryptCiphertext := combinedData[nonceSize:]
+
 	encryptedData := &crypto.EncryptedData{
-		Ciphertext: encryptedSharedSecret,
+		Ciphertext: decryptCiphertext,
+		Nonce:      decryptNonce,
 		Version:    1,
 	}
 
@@ -676,19 +731,19 @@ func (s *E2EEService) DecryptMessage(ctx context.Context, message *domain.Messag
 	}
 
 	// Decrypt message content
-	ciphertext, err := s.cryptoService.Base64Decode(*message.EncryptedContent)
+	messageCiphertext, err := s.cryptoService.Base64Decode(*message.EncryptedContent)
 	if err != nil {
 		s.cryptoService.ZeroMemory(sharedSecret)
 		return "", fmt.Errorf("failed to decode ciphertext: %w", err)
 	}
 
-	nonce, err := s.cryptoService.Base64Decode(*message.ContentNonce)
+	messageNonce, err := s.cryptoService.Base64Decode(*message.ContentNonce)
 	if err != nil {
 		s.cryptoService.ZeroMemory(sharedSecret)
 		return "", fmt.Errorf("failed to decode nonce: %w", err)
 	}
 
-	plaintext, err := s.cryptoService.Decrypt(ciphertext, sharedSecret, nonce)
+	plaintext, err := s.cryptoService.Decrypt(messageCiphertext, sharedSecret, messageNonce)
 	if err != nil {
 		s.cryptoService.ZeroMemory(sharedSecret)
 		s.auditLog(ctx, userID, conversation.ID, domain.CryptoOpDecryption, false, "Decryption failed", clientIP, userAgent)
@@ -750,13 +805,24 @@ func (s *E2EEService) getUserSigningKey(ctx context.Context, userID string) (ed2
 		return nil, fmt.Errorf("user signing key not found")
 	}
 
-	encryptedPrivateKey, err := s.cryptoService.Base64Decode(userSigningKey.EncryptedPrivateKey)
+	// Decrypt signing private key - split nonce and ciphertext
+	combinedData, err := s.cryptoService.Base64Decode(userSigningKey.EncryptedPrivateKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decode encrypted private key: %w", err)
 	}
 
+	// XChaCha20 nonce is 24 bytes
+	const nonceSize = 24
+	if len(combinedData) < nonceSize {
+		return nil, fmt.Errorf("invalid encrypted private key: too short")
+	}
+
+	nonce := combinedData[:nonceSize]
+	ciphertext := combinedData[nonceSize:]
+
 	encryptedData := &crypto.EncryptedData{
-		Ciphertext: encryptedPrivateKey,
+		Ciphertext: ciphertext,
+		Nonce:      nonce,
 		Version:    1,
 	}
 

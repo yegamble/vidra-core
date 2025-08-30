@@ -266,9 +266,14 @@ func TestE2EEService_UnlockE2EE(t *testing.T) {
 
 		encryptedMasterKey, _ := cryptoService.EncryptWithMasterKey(masterKey, passwordDerivedKey)
 
+		// Combine nonce + ciphertext for storage (same as in the actual service)
+		combinedData := make([]byte, len(encryptedMasterKey.Nonce)+len(encryptedMasterKey.Ciphertext))
+		copy(combinedData[:len(encryptedMasterKey.Nonce)], encryptedMasterKey.Nonce)
+		copy(combinedData[len(encryptedMasterKey.Nonce):], encryptedMasterKey.Ciphertext)
+
 		userMasterKey := &domain.UserMasterKey{
 			UserID:             userID,
-			EncryptedMasterKey: cryptoService.Base64Encode(encryptedMasterKey.Ciphertext),
+			EncryptedMasterKey: cryptoService.Base64Encode(combinedData),
 			Argon2Salt:         cryptoService.Base64Encode(salt),
 			Argon2Memory:       crypto.Argon2Memory,
 			Argon2Time:         crypto.Argon2Time,
@@ -313,9 +318,14 @@ func TestE2EEService_UnlockE2EE(t *testing.T) {
 		crypto.SecureRandom(masterKey)
 		encryptedMasterKey, _ := cryptoService.EncryptWithMasterKey(masterKey, passwordDerivedKey)
 
+		// Combine nonce + ciphertext for storage (same as in the actual service)
+		combinedData := make([]byte, len(encryptedMasterKey.Nonce)+len(encryptedMasterKey.Ciphertext))
+		copy(combinedData[:len(encryptedMasterKey.Nonce)], encryptedMasterKey.Nonce)
+		copy(combinedData[len(encryptedMasterKey.Nonce):], encryptedMasterKey.Ciphertext)
+
 		userMasterKey := &domain.UserMasterKey{
 			UserID:             userID,
-			EncryptedMasterKey: cryptoService.Base64Encode(encryptedMasterKey.Ciphertext),
+			EncryptedMasterKey: cryptoService.Base64Encode(combinedData),
 			Argon2Salt:         cryptoService.Base64Encode(salt),
 			KeyVersion:         1,
 		}
@@ -400,9 +410,14 @@ func TestE2EEService_InitiateKeyExchange(t *testing.T) {
 		signingKeyPair, _ := cryptoService.GenerateEd25519KeyPair()
 		encryptedSigningKey, _ := cryptoService.EncryptWithMasterKey(signingKeyPair.PrivateKey, masterKey)
 
+		// Combine nonce + ciphertext for signing key storage too
+		signingKeyCombined := make([]byte, len(encryptedSigningKey.Nonce)+len(encryptedSigningKey.Ciphertext))
+		copy(signingKeyCombined[:len(encryptedSigningKey.Nonce)], encryptedSigningKey.Nonce)
+		copy(signingKeyCombined[len(encryptedSigningKey.Nonce):], encryptedSigningKey.Ciphertext)
+
 		userSigningKey := &domain.UserSigningKey{
 			UserID:              senderID,
-			EncryptedPrivateKey: cryptoService.Base64Encode(encryptedSigningKey.Ciphertext),
+			EncryptedPrivateKey: cryptoService.Base64Encode(signingKeyCombined),
 			PublicKey:           cryptoService.Base64Encode(signingKeyPair.PublicKey),
 			KeyVersion:          1,
 		}
@@ -423,6 +438,9 @@ func TestE2EEService_InitiateKeyExchange(t *testing.T) {
 
 	t.Run("sender not unlocked", func(t *testing.T) {
 		service, _, _, _ := setupE2EEService()
+
+		// Clear any existing sessions from previous tests
+		userSessions = make(map[string]*UserE2EESession)
 
 		// No session setup - user not unlocked
 		keyExchange, err := service.InitiateKeyExchange(ctx, senderID, recipientID, clientIP, userAgent)
@@ -489,20 +507,30 @@ func TestE2EEService_EncryptDecryptMessage(t *testing.T) {
 		encryptedSharedSecretSender, _ := cryptoService.EncryptWithMasterKey(sharedSecret, senderMasterKey)
 		encryptedSharedSecretRecipient, _ := cryptoService.EncryptWithMasterKey(sharedSecret, recipientMasterKey)
 
+		// Combine nonce + ciphertext for sender shared secret
+		senderSecretCombined := make([]byte, len(encryptedSharedSecretSender.Nonce)+len(encryptedSharedSecretSender.Ciphertext))
+		copy(senderSecretCombined[:len(encryptedSharedSecretSender.Nonce)], encryptedSharedSecretSender.Nonce)
+		copy(senderSecretCombined[len(encryptedSharedSecretSender.Nonce):], encryptedSharedSecretSender.Ciphertext)
+
 		senderConversationKey := &domain.ConversationKey{
 			ID:                    uuid.New().String(),
 			ConversationID:        conversation.ID,
 			UserID:                senderID,
-			EncryptedSharedSecret: &[]string{cryptoService.Base64Encode(encryptedSharedSecretSender.Ciphertext)}[0],
+			EncryptedSharedSecret: &[]string{cryptoService.Base64Encode(senderSecretCombined)}[0],
 			KeyVersion:            1,
 			IsActive:              true,
 		}
+
+		// Combine nonce + ciphertext for recipient shared secret
+		recipientSecretCombined := make([]byte, len(encryptedSharedSecretRecipient.Nonce)+len(encryptedSharedSecretRecipient.Ciphertext))
+		copy(recipientSecretCombined[:len(encryptedSharedSecretRecipient.Nonce)], encryptedSharedSecretRecipient.Nonce)
+		copy(recipientSecretCombined[len(encryptedSharedSecretRecipient.Nonce):], encryptedSharedSecretRecipient.Ciphertext)
 
 		recipientConversationKey := &domain.ConversationKey{
 			ID:                    uuid.New().String(),
 			ConversationID:        conversation.ID,
 			UserID:                recipientID,
-			EncryptedSharedSecret: &[]string{cryptoService.Base64Encode(encryptedSharedSecretRecipient.Ciphertext)}[0],
+			EncryptedSharedSecret: &[]string{cryptoService.Base64Encode(recipientSecretCombined)}[0],
 			KeyVersion:            1,
 			IsActive:              true,
 		}
@@ -514,9 +542,14 @@ func TestE2EEService_EncryptDecryptMessage(t *testing.T) {
 		signingKeyPair, _ := cryptoService.GenerateEd25519KeyPair()
 		encryptedSigningKey, _ := cryptoService.EncryptWithMasterKey(signingKeyPair.PrivateKey, senderMasterKey)
 
+		// Combine nonce + ciphertext for signing key
+		signingKeyCombined := make([]byte, len(encryptedSigningKey.Nonce)+len(encryptedSigningKey.Ciphertext))
+		copy(signingKeyCombined[:len(encryptedSigningKey.Nonce)], encryptedSigningKey.Nonce)
+		copy(signingKeyCombined[len(encryptedSigningKey.Nonce):], encryptedSigningKey.Ciphertext)
+
 		senderSigningKey := &domain.UserSigningKey{
 			UserID:              senderID,
-			EncryptedPrivateKey: cryptoService.Base64Encode(encryptedSigningKey.Ciphertext),
+			EncryptedPrivateKey: cryptoService.Base64Encode(signingKeyCombined),
 			PublicKey:           cryptoService.Base64Encode(signingKeyPair.PublicKey),
 			KeyVersion:          1,
 		}
@@ -545,6 +578,9 @@ func TestE2EEService_EncryptDecryptMessage(t *testing.T) {
 
 	t.Run("encrypt with unlocked session", func(t *testing.T) {
 		service, _, _, _ := setupE2EEService()
+
+		// Clear any existing sessions from previous tests
+		userSessions = make(map[string]*UserE2EESession)
 
 		// No session setup - user not unlocked
 		encryptedMessage, err := service.EncryptMessage(ctx, senderID, recipientID, plaintext, clientIP, userAgent)
