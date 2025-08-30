@@ -47,13 +47,20 @@ func main() {
 
 	router := chi.NewRouter()
 
-	router.Use(middleware.RequestID)
+	// Security middleware - should be first
+	router.Use(appMiddleware.SecurityHeaders())
+	router.Use(appMiddleware.RequestID())
+
+	// Standard Chi middleware
 	router.Use(middleware.RealIP)
 	router.Use(middleware.Logger)
 	router.Use(middleware.Recoverer)
 	router.Use(middleware.Timeout(60 * time.Second))
 	router.Use(middleware.Compress(5))
+
+	// CORS and request size limiting
 	router.Use(appMiddleware.CORS())
+	router.Use(appMiddleware.SizeLimiter(100 * 1024 * 1024)) // 100MB default, override for upload endpoints
 
 	httpapi.RegisterRoutes(router, cfg)
 

@@ -36,6 +36,7 @@ func RegisterRoutes(r chi.Router, cfg *config.Config) {
 	messageRepo := repository.NewMessageRepository(db)
 	dbAuthRepo := repository.NewAuthRepository(db)
 	subRepo := repository.NewSubscriptionRepository(db)
+	viewsRepo := repository.NewViewsRepository(db)
 
 	// Create storage directory structure
 	storageRoot := cfg.StorageDir
@@ -60,6 +61,7 @@ func RegisterRoutes(r chi.Router, cfg *config.Config) {
 	// Initialize services
 	uploadService := usecase.NewUploadService(uploadRepo, encodingRepo, videoRepo, storageRoot, cfg)
 	messageService := usecase.NewMessageService(messageRepo, userRepo)
+	viewsService := usecase.NewViewsService(viewsRepo, videoRepo)
 
 	// Start a lightweight encoding scheduler in the background to ensure
 	// pending jobs are processed even if the standalone encoder is not running.
@@ -197,5 +199,22 @@ func RegisterRoutes(r chi.Router, cfg *config.Config) {
 			r.Get("/", GetConversationsHandler(messageService))
 			r.Get("/unread-count", GetUnreadCountHandler(messageService))
 		})
+
+		// Views and analytics endpoints
+		viewsHandler := NewViewsHandler(viewsService)
+		r.Route("/videos/{videoId}", func(r chi.Router) {
+			// View tracking - allow anonymous users
+			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Post("/views", viewsHandler.TrackView)
+			// Analytics - require authentication for detailed analytics
+			r.With(middleware.Auth(cfg.JWTSecret)).Get("/analytics", viewsHandler.GetVideoAnalytics)
+			r.With(middleware.Auth(cfg.JWTSecret)).Get("/stats/daily", viewsHandler.GetDailyStats)
+		})
+
+		// Trending and top videos - public endpoints
+		r.Get("/trending", viewsHandler.GetTrendingVideos)
+		r.Get("/videos/top", viewsHandler.GetTopVideos)
+
+		// Fingerprinting for view deduplication
+		r.Post("/views/fingerprint", viewsHandler.GenerateFingerprint)
 	})
 }
