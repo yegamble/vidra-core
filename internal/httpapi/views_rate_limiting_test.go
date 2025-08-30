@@ -105,7 +105,7 @@ func TestRateLimitingDoesNotBlockGenuineTraffic(t *testing.T) {
 					WatchDuration:        60 + userIndex, // Slight variation in watch time
 					VideoDuration:        300,
 					CompletionPercentage: float64(20 + userIndex%80), // Varied completion
-					DeviceType:           stringPtr("mobile"),
+					DeviceType:           "mobile",
 					TrackingConsent:      true,
 				}
 
@@ -167,7 +167,7 @@ func TestRateLimitingDoesNotBlockGenuineTraffic(t *testing.T) {
 				WatchDuration:        240 + i*10, // Varied watch duration
 				VideoDuration:        300,
 				CompletionPercentage: float64(80 + i%20), // High completion rate
-				DeviceType:           stringPtr("desktop"),
+				DeviceType:           "desktop",
 				TrackingConsent:      true,
 			}
 
@@ -321,7 +321,7 @@ func TestHighVolumeViewTracking(t *testing.T) {
 		assert.Less(t, duration, 10*time.Second, "High volume requests should complete within reasonable time")
 
 		// Verify all views were tracked in database
-		analytics, err := viewsService.GetVideoAnalytics(context.Background(), &domain.ViewAnalyticsFilter{VideoID: &video.ID})
+		analytics, err := viewsService.GetVideoAnalytics(context.Background(), &domain.ViewAnalyticsFilter{VideoID: video.ID})
 		require.NoError(t, err)
 		assert.Equal(t, int64(concurrency), analytics.TotalViews)
 		assert.Equal(t, int64(concurrency), analytics.UniqueViews) // All unique sessions
@@ -354,7 +354,7 @@ func TestHighVolumeViewTracking(t *testing.T) {
 						WatchDuration:        60 + index%180,
 						VideoDuration:        300,
 						CompletionPercentage: float64(20 + index%60),
-						DeviceType:           stringPtr("mobile"),
+						DeviceType:           "mobile",
 						TrackingConsent:      true,
 					}
 
@@ -415,7 +415,7 @@ func TestEdgeCaseScenarios(t *testing.T) {
 				WatchDuration:        30 + i*5,
 				VideoDuration:        300,
 				CompletionPercentage: float64(10 + i*5),
-				DeviceType:           stringPtr("desktop"),
+				DeviceType:           "desktop",
 				TrackingConsent:      true,
 			}
 
@@ -440,7 +440,7 @@ func TestEdgeCaseScenarios(t *testing.T) {
 		assert.Equal(t, numSessions, successCount, "Multiple sessions should not be rate limited")
 
 		// Verify each session created a separate view record
-		analytics, err := viewsService.GetVideoAnalytics(context.Background(), &domain.ViewAnalyticsFilter{VideoID: &video.ID})
+		analytics, err := viewsService.GetVideoAnalytics(context.Background(), &domain.ViewAnalyticsFilter{VideoID: video.ID})
 		require.NoError(t, err)
 		assert.Equal(t, int64(numSessions), analytics.UniqueViews)
 	})

@@ -247,7 +247,7 @@ func TestViewsHandler_GetVideoAnalytics(t *testing.T) {
 
 	// Create some test views
 	for i := 0; i < 5; i++ {
-		view := createTestUserView(t, testDB, user.ID, video.ID, i)
+		view := createTestViewsUserView(t, testDB, user.ID, video.ID, i)
 		_ = view
 	}
 
@@ -320,8 +320,8 @@ func TestViewsHandler_GetTrendingVideos(t *testing.T) {
 
 	// Create test data
 	user := createTestViewsUser(t, testDB)
-	video1 := createTestVideo(t, testDB, user.ID)
-	video2 := createTestVideo(t, testDB, user.ID)
+	video1 := createTestViewsVideo(t, testDB, user.ID)
+	video2 := createTestViewsVideo(t, testDB, user.ID)
 
 	// Create trending data
 	trending1 := &domain.TrendingVideo{
@@ -415,15 +415,15 @@ func TestViewsHandler_GetTopVideos(t *testing.T) {
 
 	// Create test data with different view counts
 	user := createTestViewsUser(t, testDB)
-	video1 := createTestVideo(t, testDB, user.ID)
-	video2 := createTestVideo(t, testDB, user.ID)
+	video1 := createTestViewsVideo(t, testDB, user.ID)
+	video2 := createTestViewsVideo(t, testDB, user.ID)
 
 	// Create more views for video1
 	for i := 0; i < 5; i++ {
-		createTestUserView(t, testDB, user.ID, video1.ID, i)
+		createTestViewsUserView(t, testDB, user.ID, video1.ID, i)
 	}
 	for i := 0; i < 3; i++ {
-		createTestUserView(t, testDB, user.ID, video2.ID, i)
+		createTestViewsUserView(t, testDB, user.ID, video2.ID, i)
 	}
 
 	t.Run("get top videos", func(t *testing.T) {
@@ -579,7 +579,7 @@ func TestViewsHandler_ConcurrentRequests(t *testing.T) {
 				WatchDuration:        60 + index, // Vary the data
 				VideoDuration:        300,
 				CompletionPercentage: float64(20 + index%80),
-				DeviceType:           stringPtr("mobile"),
+				DeviceType:           "mobile",
 				TrackingConsent:      true,
 			}
 
@@ -617,7 +617,7 @@ func TestViewsHandler_ConcurrentRequests(t *testing.T) {
 	}
 
 	// Verify all views were tracked
-	analytics, err := viewsService.GetVideoAnalytics(context.Background(), &domain.ViewAnalyticsFilter{VideoID: &video.ID})
+	analytics, err := viewsService.GetVideoAnalytics(context.Background(), &domain.ViewAnalyticsFilter{VideoID: video.ID})
 	require.NoError(t, err)
 	assert.Equal(t, int64(concurrency), analytics.TotalViews)
 	assert.Equal(t, int64(concurrency), analytics.UniqueViews) // All unique sessions
@@ -694,7 +694,7 @@ func TestViewsHandler_BulkViewTracking(t *testing.T) {
 	assert.Equal(t, 1, view.PauseCount)
 
 	// Total views for the video should only be 1 (despite multiple tracking calls)
-	analytics, err := viewsService.GetVideoAnalytics(context.Background(), &domain.ViewAnalyticsFilter{VideoID: &video.ID})
+	analytics, err := viewsService.GetVideoAnalytics(context.Background(), &domain.ViewAnalyticsFilter{VideoID: video.ID})
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), analytics.TotalViews)
 	assert.Equal(t, int64(1), analytics.UniqueViews)
@@ -774,8 +774,8 @@ func createTestViewsUserView(t *testing.T, testDB *testutil.TestDB, userID, vide
 		IsCompleted:          false,
 		SeekCount:            index % 3,
 		PauseCount:           index % 2,
-		DeviceType:           stringPtr("mobile"),
-		CountryCode:          stringPtr("US"),
+		DeviceType:           "mobile",
+		CountryCode:          "US",
 		ViewDate:             now.Truncate(24 * time.Hour),
 		ViewHour:             now.Hour(),
 		Weekday:              int(now.Weekday()),
@@ -795,8 +795,4 @@ func createTestViewsUserView(t *testing.T, testDB *testutil.TestDB, userID, vide
 	require.NoError(t, err)
 
 	return view
-}
-
-func stringPtr(s string) *string {
-	return &s
 }

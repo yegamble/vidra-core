@@ -1,8 +1,9 @@
 package httpapi
 
 import (
+	"athena/internal/repository"
+	"athena/internal/usecase"
 	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
 	"math/rand"
@@ -16,7 +17,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"athena/internal/domain"
 	"athena/internal/testutil"
 )
 
@@ -28,9 +28,19 @@ func TestLoadScenarios(t *testing.T) {
 	}
 
 	db := testutil.SetupTestDB(t)
-	defer db.Close()
+	defer db.DB.Close()
 
-	handler := setupViewsHandler(db)
+	// Setup repositories and services
+	viewsRepo := repository.NewViewsRepository(db.DB)
+	videoRepo := repository.NewVideoRepository(db.DB)
+	viewsService := usecase.NewViewsService(viewsRepo, videoRepo)
+	viewsHandler := NewViewsHandler(viewsService)
+	
+	// Create HTTP mux for load testing
+	mux := http.NewServeMux()
+	mux.HandleFunc("/track", viewsHandler.TrackView)
+	mux.HandleFunc("/analytics", viewsHandler.GetVideoAnalytics)
+	mux.HandleFunc("/trending", viewsHandler.GetTrendingVideos)
 
 	// Create test videos for load testing
 	videoIDs := createTestVideos(t, db, 10)
