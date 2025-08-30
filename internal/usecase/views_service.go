@@ -105,7 +105,7 @@ func (s *ViewsService) TrackView(ctx context.Context, userID *string, request *d
 		InitialLoadTime: request.InitialLoadTime,
 		BufferEvents:    request.BufferEvents,
 		ConnectionType:  request.ConnectionType,
-		VideoQuality:    request.VideoQuality,
+		VideoQuality:    stringPtrIfNotEmpty(request.VideoQuality),
 
 		// Context and attribution
 		ReferrerURL:  request.ReferrerURL,
@@ -441,4 +441,12 @@ func ValidateTrackingRequest(request *domain.ViewTrackingRequest) error {
 	}
 
 	return nil
+}
+
+// stringPtrIfNotEmpty returns a pointer to string if s is not empty, otherwise nil
+func stringPtrIfNotEmpty(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
 }

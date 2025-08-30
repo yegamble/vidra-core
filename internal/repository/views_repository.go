@@ -86,7 +86,30 @@ func (r *ViewsRepository) UpdateUserView(ctx context.Context, view *domain.UserV
 // GetUserViewBySessionAndVideo finds a view by session ID and video ID
 func (r *ViewsRepository) GetUserViewBySessionAndVideo(ctx context.Context, sessionID, videoID string) (*domain.UserView, error) {
 	query := `
-		SELECT * FROM user_views 
+		SELECT 
+			id, video_id, user_id, session_id, fingerprint_hash,
+			watch_duration, video_duration, completion_percentage, is_completed,
+			seek_count, pause_count, replay_count, quality_changes,
+			initial_load_time, buffer_events, 
+			connection_type, video_quality,
+			COALESCE(referrer_url, '') as referrer_url,
+			COALESCE(referrer_type, '') as referrer_type,
+			COALESCE(utm_source, '') as utm_source,
+			COALESCE(utm_medium, '') as utm_medium,
+			COALESCE(utm_campaign, '') as utm_campaign,
+			COALESCE(device_type, '') as device_type,
+			COALESCE(os_name, '') as os_name,
+			COALESCE(browser_name, '') as browser_name,
+			COALESCE(screen_resolution, '') as screen_resolution,
+			is_mobile,
+			COALESCE(country_code, '') as country_code,
+			COALESCE(region_code, '') as region_code,
+			COALESCE(city_name, '') as city_name,
+			COALESCE(timezone, '') as timezone,
+			is_anonymous, tracking_consent, gdpr_consent,
+			view_date, view_hour, weekday,
+			created_at, updated_at
+		FROM user_views 
 		WHERE session_id = $1 AND video_id = $2 
 		ORDER BY created_at DESC 
 		LIMIT 1`
@@ -156,14 +179,31 @@ func (r *ViewsRepository) GetVideoAnalytics(ctx context.Context, filter *domain.
 			COUNT(*) as total_views,
 			COUNT(DISTINCT session_id) as unique_views,
 			AVG(watch_duration) as avg_duration,
-			AVG(completion_percentage) as completion_rate
+			AVG(watch_duration) as avg_watch_duration,
+			AVG(completion_percentage) as completion,
+			AVG(completion_percentage) as avg_completion_rate,
+			SUM(CASE WHEN is_completed THEN 1 ELSE 0 END) as completed_views,
+			SUM(watch_duration) as total_watch_time
 		FROM (%s) views`, baseQuery)
 
+	row := r.db.QueryRowContext(ctx, statsQuery, args...)
 	var response domain.ViewAnalyticsResponse
-	err := r.db.GetContext(ctx, &response, statsQuery, args...)
+	err := row.Scan(
+		&response.TotalViews,
+		&response.UniqueViews,
+		&response.AvgDuration,
+		&response.AvgWatchDuration,
+		&response.Completion,
+		&response.AvgCompletionRate,
+		&response.CompletedViews,
+		&response.TotalWatchTime,
+	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get video analytics: %w", err)
 	}
+
+	// Initialize daily stats slice
+	response.DailyStats = make([]domain.DailyViewStats, 0)
 
 	// Get device stats
 	deviceQuery := fmt.Sprintf(`
@@ -185,6 +225,7 @@ func (r *ViewsRepository) GetVideoAnalytics(ctx context.Context, filter *domain.
 	}()
 
 	response.DeviceStats = make(map[string]int64)
+	response.DeviceBreakdown = make(map[string]int64)
 	for rows.Next() {
 		var device string
 		var count int64
@@ -192,6 +233,7 @@ func (r *ViewsRepository) GetVideoAnalytics(ctx context.Context, filter *domain.
 			return nil, fmt.Errorf("failed to scan device stats: %w", err)
 		}
 		response.DeviceStats[device] = count
+		response.DeviceBreakdown[device] = count // Same data for now
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("error iterating device stats: %w", err)
@@ -217,6 +259,7 @@ func (r *ViewsRepository) GetVideoAnalytics(ctx context.Context, filter *domain.
 	}()
 
 	response.GeoStats = make(map[string]int64)
+	response.CountryBreakdown = make(map[string]int64)
 	for rows.Next() {
 		var country string
 		var count int64
@@ -224,6 +267,7 @@ func (r *ViewsRepository) GetVideoAnalytics(ctx context.Context, filter *domain.
 			return nil, fmt.Errorf("failed to scan geo stats: %w", err)
 		}
 		response.GeoStats[country] = count
+		response.CountryBreakdown[country] = count // Same data for now
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("error iterating geo stats: %w", err)

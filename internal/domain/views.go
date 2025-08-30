@@ -29,10 +29,10 @@ type UserView struct {
 	QualityChanges int `json:"quality_changes" db:"quality_changes"` // Quality setting changes
 
 	// Technical metrics
-	InitialLoadTime *int   `json:"initial_load_time,omitempty" db:"initial_load_time"` // Milliseconds to first frame
-	BufferEvents    int    `json:"buffer_events" db:"buffer_events"`                   // Number of buffering events
-	ConnectionType  string `json:"connection_type,omitempty" db:"connection_type"`     // 'wifi', 'cellular', 'ethernet'
-	VideoQuality    string `json:"video_quality,omitempty" db:"video_quality"`         // '360p', '720p', '1080p'
+	InitialLoadTime *int    `json:"initial_load_time,omitempty" db:"initial_load_time"` // Milliseconds to first frame
+	BufferEvents    int     `json:"buffer_events" db:"buffer_events"`                   // Number of buffering events
+	ConnectionType  *string `json:"connection_type,omitempty" db:"connection_type"`     // 'wifi', 'cellular', 'ethernet'
+	VideoQuality    *string `json:"video_quality,omitempty" db:"video_quality"`         // '360p', '720p', '1080p'
 
 	// Context and attribution
 	ReferrerURL  string `json:"referrer_url,omitempty" db:"referrer_url"`   // Truncated for privacy
@@ -215,10 +215,10 @@ type CreateUserViewRequest struct {
 	Timestamp   int64   `json:"timestamp,omitempty"`
 
 	// Optional initial context
-	DeviceType     string `json:"device_type,omitempty"`
-	CountryCode    string `json:"country_code,omitempty"`
-	ReferrerType   string `json:"referrer_type,omitempty"`
-	ConnectionType string `json:"connection_type,omitempty"`
+	DeviceType     string  `json:"device_type,omitempty"`
+	CountryCode    string  `json:"country_code,omitempty"`
+	ReferrerType   string  `json:"referrer_type,omitempty"`
+	ConnectionType *string `json:"connection_type,omitempty"`
 }
 
 // UpdateViewSessionRequest represents updates to a view session
@@ -344,8 +344,8 @@ type ViewTrackingRequest struct {
 	TrackingConsent bool  `json:"tracking_consent,omitempty"`
 	GDPRConsent     *bool `json:"gdpr_consent,omitempty"`
 
-	ConnectionType string `json:"connection_type,omitempty"`
-	Timestamp      int64  `json:"timestamp,omitempty"`
+	ConnectionType *string `json:"connection_type,omitempty"`
+	Timestamp      int64   `json:"timestamp,omitempty"`
 }
 
 // TrendingVideosResponse represents the response for trending videos

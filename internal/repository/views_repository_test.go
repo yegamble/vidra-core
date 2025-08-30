@@ -40,8 +40,8 @@ func TestViewsRepository_CreateUserView(t *testing.T) {
 		QualityChanges:       1,
 		InitialLoadTime:      intPtr(1500),
 		BufferEvents:         0,
-		ConnectionType:       "wifi",
-		VideoQuality:         "720p",
+		ConnectionType:       stringPtr("wifi"),
+		VideoQuality:         stringPtr("720p"),
 		DeviceType:           "mobile",
 		OSName:               "iOS",
 		BrowserName:          "Safari",
@@ -96,8 +96,9 @@ func TestViewsRepository_UpdateUserView(t *testing.T) {
 
 	// Update view data
 	view.WatchDuration = 200
+	view.VideoDuration = 300 // Set the video duration for calculation
 	view.CompletionPercentage = 66.7
-	view.IsCompleted = true
+	view.IsCompleted = false // This will be recalculated
 	view.SeekCount = 3
 	view.PauseCount = 2
 
@@ -110,8 +111,10 @@ func TestViewsRepository_UpdateUserView(t *testing.T) {
 	require.NotNil(t, updatedView)
 
 	assert.Equal(t, 200, updatedView.WatchDuration)
-	assert.Equal(t, 66.7, updatedView.CompletionPercentage)
-	assert.True(t, updatedView.IsCompleted)
+	// The completion percentage is recalculated based on watch duration / video duration
+	expectedCompletion := (float64(200) / float64(300)) * 100.0
+	assert.InDelta(t, expectedCompletion, updatedView.CompletionPercentage, 0.01)
+	assert.False(t, updatedView.IsCompleted) // 66.67% is not completed (< 95%)
 	assert.Equal(t, 3, updatedView.SeekCount)
 	assert.Equal(t, 2, updatedView.PauseCount)
 }
@@ -582,6 +585,10 @@ func getVideoViewCount(t *testing.T, testDB *testutil.TestDB, videoID string) in
 
 func intPtr(i int) *int {
 	return &i
+}
+
+func stringPtr(s string) *string {
+	return &s
 }
 
 func boolPtr(b bool) *bool {
