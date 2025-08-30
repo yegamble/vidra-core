@@ -10,13 +10,16 @@ A high-performance PeerTube backend implementation in Go with decentralized stor
 - 🚀 **High Performance** - Built with Go for maximum concurrency and speed
 - 📝 **OpenAPI 3.0** - Complete API specification with automatic validation
 - 🔐 **JWT Authentication** - HS256 access tokens with refresh rotation
+- 🛡️ **Production Security** - Comprehensive security headers, rate limiting, CORS
 - 🗄️ **PostgreSQL** - Robust database with full-text search capabilities
 - ⚡ **Redis** - Fast caching and session management
 - 🌐 **IPFS** - Decentralized storage support
 - 🎥 **Video Processing** - FFmpeg integration for transcoding
 - 🖼️ **Avatar WebP Optimization** - Optional WebP encoding for uploaded avatars (quality configurable), IPFS pinning of both original and WebP variants
+- 📊 **Observability** - Prometheus metrics, structured logging, distributed tracing
 - 🐳 **Docker Ready** - Full containerization with Docker Compose
 - ✅ **CI/CD** - GitHub Actions with automated testing
+- 🔄 **Zero-Downtime Deployments** - Health checks and graceful shutdown
 
 ## Quick Start
 
@@ -363,20 +366,35 @@ See [SECURITY_E2EE.md](SECURITY_E2EE.md) for comprehensive security documentatio
 /SECURITY_E2EE.md     # E2EE security documentation
 ```
 
-## Docker Deployment
+## Production Deployment
 
-### Production Deployment
+For detailed production deployment instructions, see [PRODUCTION.md](./PRODUCTION.md).
+
+### Quick Production Setup
 
 ```bash
 # Build and run with Docker Compose
-docker-compose up -d
+docker-compose -f docker-compose.prod.yml up -d
 
 # View logs
 docker-compose logs -f
 
+# Health check
+curl http://localhost:8080/health
+
 # Stop services
 docker-compose down
 ```
+
+### Security Features
+
+- **Authentication**: JWT with refresh tokens, API key support
+- **Security Headers**: CSP, HSTS, X-Frame-Options, etc.
+- **Rate Limiting**: Configurable per-IP and per-user limits
+- **Input Validation**: Request size limits, file type validation
+- **CORS**: Configurable origin restrictions
+- **Encryption**: TLS support, encrypted storage for sensitive data
+- **Audit Logging**: Request ID tracking, structured logs
 
 ### Environment Variables
 
