@@ -162,7 +162,7 @@ var TestVideos = []TestVideoSpec{
 // GenerateTestVideo creates a short test video with the specified resolution
 // Returns the path to the generated video file
 func GenerateTestVideo(spec TestVideoSpec, outputDir string) (string, error) {
-	if err := os.MkdirAll(outputDir, 0755); err != nil {
+	if err := os.MkdirAll(outputDir, 0750); err != nil {
 		return "", fmt.Errorf("failed to create output dir: %w", err)
 	}
 
@@ -194,6 +194,7 @@ func GenerateTestVideo(spec TestVideoSpec, outputDir string) (string, error) {
 		outputPath,
 	}
 
+	// #nosec G204 - arguments are constructed from controlled test input
 	cmd := exec.CommandContext(ctx, "ffmpeg", args...)
 	if err := cmd.Run(); err != nil {
 		return "", fmt.Errorf("ffmpeg failed to generate test video: %w", err)

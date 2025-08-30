@@ -227,6 +227,7 @@ func (s *Server) saveAvatarLocally(fileData *avatarFileData) (string, error) {
 	if err := validateAvatarPath(localPath, root); err != nil {
 		return "", domain.NewDomainError("INVALID_PATH", "Invalid file path")
 	}
+	// #nosec G304 - localPath validated against configured storage root
 	out, err := os.Create(localPath)
 	if err != nil {
 		return "", domain.NewDomainError("STORAGE_ERROR", "Failed to save file")
@@ -390,6 +391,7 @@ func (s *Server) ipfsAdd(path string) (string, error) {
 	if err := validateAvatarPath(path, root); err != nil {
 		return "", fmt.Errorf("invalid file path: %w", err)
 	}
+	// #nosec G304 - path validated by validateAvatarPath prior to open
 	f, err := os.Open(path)
 	if err != nil {
 		return "", err
@@ -445,6 +447,7 @@ func (s *Server) ipfsClusterAdd(path string) (string, error) {
 	if err := validateAvatarPath(path, root); err != nil {
 		return "", fmt.Errorf("invalid file path: %w", err)
 	}
+	// #nosec G304 - path validated by validateAvatarPath prior to open
 	f, err := os.Open(path)
 	if err != nil {
 		return "", err

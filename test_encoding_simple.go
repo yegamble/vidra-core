@@ -11,6 +11,7 @@ import (
 	"athena/internal/domain"
 	"athena/internal/testutil"
 	"athena/internal/usecase"
+
 	"github.com/google/uuid"
 )
 
@@ -27,12 +28,12 @@ func main() {
 		log.Fatalf("Failed to generate test video: %v", err)
 	}
 
-	// Create temp directory for output
+	// Create a temp directory for output
 	tempDir := "/tmp/encoding_test_" + uuid.NewString()
-	if err := os.MkdirAll(tempDir, 0755); err != nil {
+	if err := os.MkdirAll(tempDir, 0750); err != nil {
 		log.Fatalf("Failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tempDir)
+	defer func() { _ = os.RemoveAll(tempDir) }()
 
 	// Setup mock repositories
 	encodingRepo := &mockEncodingRepository{jobs: make(map[string]*domain.EncodingJob)}

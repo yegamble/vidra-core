@@ -12,6 +12,24 @@ import (
 	"athena/internal/usecase"
 )
 
+// common helper to enforce auth and parse pagination
+func requireAuthAndPagination(w http.ResponseWriter, r *http.Request) (string, int, int, bool) {
+	me, _ := r.Context().Value(middleware.UserIDKey).(string)
+	if me == "" {
+		WriteError(w, http.StatusUnauthorized, domain.NewDomainError("UNAUTHORIZED", "Missing or invalid authentication"))
+		return "", 0, 0, false
+	}
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	if limit == 0 || limit > 100 {
+		limit = 20
+	}
+	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
+	if offset < 0 {
+		offset = 0
+	}
+	return me, limit, offset, true
+}
+
 // SubscribeToUserHandler subscribes the authenticated user to the target user
 func SubscribeToUserHandler(subRepo usecase.SubscriptionRepository, userRepo usecase.UserRepository) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -79,19 +97,9 @@ func UnsubscribeFromUserHandler(subRepo usecase.SubscriptionRepository) http.Han
 // ListMySubscriptionsHandler returns the list of channels the authenticated user is subscribed to
 func ListMySubscriptionsHandler(subRepo usecase.SubscriptionRepository) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		me, _ := r.Context().Value(middleware.UserIDKey).(string)
-		if me == "" {
-			WriteError(w, http.StatusUnauthorized, domain.NewDomainError("UNAUTHORIZED", "Missing or invalid authentication"))
+		me, limit, offset, ok := requireAuthAndPagination(w, r)
+		if !ok {
 			return
-		}
-
-		limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-		if limit == 0 || limit > 100 {
-			limit = 20
-		}
-		offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
-		if offset < 0 {
-			offset = 0
 		}
 
 		users, total, err := subRepo.ListSubscriptions(r.Context(), me, limit, offset)
@@ -107,19 +115,9 @@ func ListMySubscriptionsHandler(subRepo usecase.SubscriptionRepository) http.Han
 // ListSubscriptionVideosHandler returns public videos from channels the user subscribes to
 func ListSubscriptionVideosHandler(subRepo usecase.SubscriptionRepository) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		me, _ := r.Context().Value(middleware.UserIDKey).(string)
-		if me == "" {
-			WriteError(w, http.StatusUnauthorized, domain.NewDomainError("UNAUTHORIZED", "Missing or invalid authentication"))
+		me, limit, offset, ok := requireAuthAndPagination(w, r)
+		if !ok {
 			return
-		}
-
-		limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-		if limit == 0 || limit > 100 {
-			limit = 20
-		}
-		offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
-		if offset < 0 {
-			offset = 0
 		}
 
 		videos, total, err := subRepo.ListSubscriptionVideos(r.Context(), me, limit, offset)
