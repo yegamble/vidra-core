@@ -32,16 +32,12 @@ type ViewsRepository interface {
 	}, error)
 }
 
-type VideoRepositoryInterface interface {
-	GetVideoByID(ctx context.Context, id string) (*domain.Video, error)
-}
-
 type ViewsService struct {
 	viewsRepo ViewsRepository
-	videoRepo VideoRepositoryInterface
+	videoRepo VideoRepository
 }
 
-func NewViewsService(viewsRepo ViewsRepository, videoRepo VideoRepositoryInterface) *ViewsService {
+func NewViewsService(viewsRepo ViewsRepository, videoRepo VideoRepository) *ViewsService {
 	return &ViewsService{
 		viewsRepo: viewsRepo,
 		videoRepo: videoRepo,
@@ -51,7 +47,7 @@ func NewViewsService(viewsRepo ViewsRepository, videoRepo VideoRepositoryInterfa
 // TrackView tracks a user view with deduplication and session management
 func (s *ViewsService) TrackView(ctx context.Context, userID *string, request *domain.ViewTrackingRequest) error {
 	// Validate that the video exists
-	video, err := s.videoRepo.GetVideoByID(ctx, request.VideoID)
+	video, err := s.videoRepo.GetByID(ctx, request.VideoID)
 	if err != nil {
 		return fmt.Errorf("failed to verify video exists: %w", err)
 	}
@@ -205,7 +201,7 @@ func (s *ViewsService) GetTrendingVideosWithDetails(ctx context.Context, limit i
 	}
 
 	for _, trending := range trendingVideos {
-		video, err := s.videoRepo.GetVideoByID(ctx, trending.VideoID)
+		video, err := s.videoRepo.GetByID(ctx, trending.VideoID)
 		if err != nil {
 			// Log error but continue with other videos
 			continue
