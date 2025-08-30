@@ -630,6 +630,9 @@ func TestE2EEService_GetE2EEStatus(t *testing.T) {
 	t.Run("user without E2EE setup", func(t *testing.T) {
 		service, mockCryptoRepo, _, _ := setupE2EEService()
 
+		// Clear any existing sessions from previous tests
+		userSessions = make(map[string]*UserE2EESession)
+
 		mockCryptoRepo.On("GetUserMasterKey", ctx, userID).Return(nil, nil)
 
 		status, err := service.GetE2EEStatus(ctx, userID)
