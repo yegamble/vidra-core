@@ -75,8 +75,9 @@ func TestViewsHandler_TrackView(t *testing.T) {
 		require.NoError(t, err)
 
 		assert.True(t, response["success"].(bool))
-		assert.Equal(t, "View tracked successfully", response["message"])
-		assert.Equal(t, video.ID, response["video_id"])
+		data := response["data"].(map[string]interface{})
+		assert.Equal(t, "View tracked successfully", data["message"])
+		assert.Equal(t, video.ID, data["video_id"])
 
 		// Verify view was actually created in database
 		view, err := viewsRepo.GetUserViewBySessionAndVideo(context.Background(), request.SessionID, video.ID)
@@ -262,19 +263,21 @@ func TestViewsHandler_GetVideoAnalytics(t *testing.T) {
 
 		assert.Equal(t, http.StatusOK, rr.Code)
 
-		var analytics domain.ViewAnalyticsResponse
-		err := json.Unmarshal(rr.Body.Bytes(), &analytics)
+		var response map[string]interface{}
+		err := json.Unmarshal(rr.Body.Bytes(), &response)
 		require.NoError(t, err)
 
-		assert.Greater(t, analytics.TotalViews, int64(0))
-		assert.Greater(t, analytics.UniqueViews, int64(0))
-		assert.NotNil(t, analytics.DeviceBreakdown)
-		assert.NotNil(t, analytics.CountryBreakdown)
+		data := response["data"].(map[string]interface{})
+		assert.Greater(t, data["total_views"], float64(0))
+		assert.Greater(t, data["unique_views"], float64(0))
+		assert.NotNil(t, data["device_breakdown"])
+		assert.NotNil(t, data["country_breakdown"])
 	})
 
 	t.Run("analytics with date filters", func(t *testing.T) {
-		startDate := time.Now().AddDate(0, 0, -7).Format("2006-01-02")
-		endDate := time.Now().Format("2006-01-02")
+		// Use dates that will definitely include the test data
+		startDate := time.Now().AddDate(0, 0, -30).Format("2006-01-02")
+		endDate := time.Now().AddDate(0, 0, 1).Format("2006-01-02") // Tomorrow to be sure
 
 		req := httptest.NewRequest(http.MethodGet,
 			fmt.Sprintf("/api/v1/videos/%s/analytics?start_date=%s&end_date=%s", video.ID, startDate, endDate), nil)
@@ -284,6 +287,8 @@ func TestViewsHandler_GetVideoAnalytics(t *testing.T) {
 		router.Get("/api/v1/videos/{videoId}/analytics", handler.GetVideoAnalytics)
 		router.ServeHTTP(rr, req)
 
+		// For now, just check that the request is processed without error
+		// The date filtering logic is tested in the repository tests
 		assert.Equal(t, http.StatusOK, rr.Code)
 	})
 
@@ -455,7 +460,8 @@ func TestViewsHandler_GetTopVideos(t *testing.T) {
 		err := json.Unmarshal(rr.Body.Bytes(), &response)
 		require.NoError(t, err)
 
-		videos := response["videos"].([]interface{})
+		data := response["data"].(map[string]interface{})
+		videos := data["videos"].([]interface{})
 		assert.Len(t, videos, 2)
 
 		// Should be ordered by view count
@@ -478,10 +484,11 @@ func TestViewsHandler_GetTopVideos(t *testing.T) {
 		err := json.Unmarshal(rr.Body.Bytes(), &response)
 		require.NoError(t, err)
 
-		assert.Equal(t, float64(30), response["period_days"])
-		assert.Equal(t, float64(1), response["limit"])
+		data := response["data"].(map[string]interface{})
+		assert.Equal(t, float64(30), data["period_days"])
+		assert.Equal(t, float64(1), data["limit"])
 
-		videos := response["videos"].([]interface{})
+		videos := data["videos"].([]interface{})
 		assert.Len(t, videos, 1)
 	})
 
@@ -527,11 +534,12 @@ func TestViewsHandler_GenerateFingerprint(t *testing.T) {
 		err = json.Unmarshal(rr.Body.Bytes(), &response)
 		require.NoError(t, err)
 
-		assert.NotEmpty(t, response["fingerprint_hash"])
-		assert.NotNil(t, response["created_at"])
+		data := response["data"].(map[string]interface{})
+		assert.NotEmpty(t, data["fingerprint_hash"])
+		assert.NotNil(t, data["created_at"])
 
 		// Fingerprint should be consistent
-		fingerprint1 := response["fingerprint_hash"].(string)
+		fingerprint1 := data["fingerprint_hash"].(string)
 
 		// Make another request with same data
 		req2 := httptest.NewRequest(http.MethodPost, "/api/v1/views/fingerprint", bytes.NewReader(body))
@@ -544,7 +552,8 @@ func TestViewsHandler_GenerateFingerprint(t *testing.T) {
 		err = json.Unmarshal(rr2.Body.Bytes(), &response2)
 		require.NoError(t, err)
 
-		fingerprint2 := response2["fingerprint_hash"].(string)
+		data2 := response2["data"].(map[string]interface{})
+		fingerprint2 := data2["fingerprint_hash"].(string)
 		assert.Equal(t, fingerprint1, fingerprint2)
 	})
 
