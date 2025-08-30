@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jmoiron/sqlx"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -28,7 +29,12 @@ func TestLoadScenarios(t *testing.T) {
 	}
 
 	db := testutil.SetupTestDB(t)
-	defer db.DB.Close()
+	defer func(DB *sqlx.DB) {
+		err := DB.Close()
+		if err != nil {
+
+		}
+	}(db.DB)
 
 	// Setup repositories and services
 	viewsRepo := repository.NewViewsRepository(db.DB)
