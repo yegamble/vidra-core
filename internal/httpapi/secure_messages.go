@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -440,7 +441,8 @@ func WriteValidationErrorResponse(w http.ResponseWriter, err error) {
 
 	var validationErrors []map[string]interface{}
 
-	if validationErr, ok := err.(validator.ValidationErrors); ok {
+	var validationErr validator.ValidationErrors
+	if errors.As(err, &validationErr) {
 		for _, fieldError := range validationErr {
 			validationErrors = append(validationErrors, map[string]interface{}{
 				"field":   fieldError.Field(),
