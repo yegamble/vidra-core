@@ -230,6 +230,25 @@ Operational note: Debug logs for width/aspect estimation emit only when `LOG_LEV
 - `POST /api/v1/videos/{id}/upload` - Upload video chunk
 - `POST /api/v1/videos/{id}/complete` - Complete chunked upload
 
+### Subscriptions
+
+- `POST /api/v1/users/{id}/subscribe` - Subscribe to a user (requires auth)
+  - Idempotent; subscribing twice is a no-op.
+  - Increments the target user's `subscriber_count`.
+- `DELETE /api/v1/users/{id}/subscribe` - Unsubscribe from a user (requires auth)
+  - Idempotent; unsubscribing when not subscribed is a no-op.
+  - Decrements the target user's `subscriber_count` (not below zero).
+- `GET /api/v1/users/me/subscriptions` - List channels I’m subscribed to (requires auth)
+  - Supports `limit` and `offset` pagination.
+  - Returns a wrapped response with `data` (array of users) and `meta`.
+- `GET /api/v1/videos/subscriptions` - List videos from my subscriptions (requires auth)
+  - Shows only public, completed videos from subscribed channels.
+  - Supports `limit` and `offset` pagination.
+
+Notes:
+- Mutual subscriptions are allowed (users can subscribe to each other).
+- `User` payloads include `subscriber_count`.
+
 ### Messages
 
 **Standard Messages:**
@@ -250,6 +269,9 @@ Operational note: Debug logs for width/aspect estimation emit only when `LOG_LEV
 - `PUT /api/v1/users/me` - Update current user (requires auth)
 - `GET /api/v1/users/{id}` - Get user profile
 - `GET /api/v1/users/{id}/videos` - Get user's videos
+- `POST /api/v1/users/{id}/subscribe` - Subscribe to a user (requires auth)
+- `DELETE /api/v1/users/{id}/subscribe` - Unsubscribe from a user (requires auth)
+- `GET /api/v1/users/me/subscriptions` - List channels you’re subscribed to (requires auth)
 
 ## End-to-End Encrypted Messaging (E2EE)
 

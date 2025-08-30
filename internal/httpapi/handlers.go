@@ -17,6 +17,7 @@ import (
 	"athena/internal/generated"
 	"athena/internal/middleware"
 	"athena/internal/usecase"
+	openapi_types "github.com/oapi-codegen/runtime/types"
 )
 
 // Server implements the generated ServerInterface
@@ -61,7 +62,7 @@ func (s *Server) Login(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Lookup user and verify password
-	dUser, err := s.userRepo.GetByEmail(r.Context(), req.Email)
+	dUser, err := s.userRepo.GetByEmail(r.Context(), string(req.Email))
 	if err != nil {
 		WriteError(w, http.StatusUnauthorized, domain.ErrInvalidCredentials)
 		return
@@ -107,9 +108,9 @@ func (s *Server) Login(w http.ResponseWriter, r *http.Request) {
 		dispPtr = &disp
 	}
 	gUser := generated.User{
-		ID:          dUser.ID,
+		Id:          dUser.ID,
 		Username:    dUser.Username,
-		Email:       dUser.Email,
+		Email:       openapi_types.Email(dUser.Email),
 		DisplayName: dispPtr,
 		Role:        generated.UserRoleUser,
 		IsActive:    dUser.IsActive,
@@ -118,9 +119,8 @@ func (s *Server) Login(w http.ResponseWriter, r *http.Request) {
 	}
 	if dUser.Avatar != nil {
 		gUser.Avatar = &generated.Avatar{
-			ID:          dUser.Avatar.ID,
-			IPFSCID:     nullStringToPtr(dUser.Avatar.IPFSCID),
-			WebPIPFSCID: nullStringToPtr(dUser.Avatar.WebPIPFSCID),
+			IpfsCid:     nullStringToPtr(dUser.Avatar.IPFSCID),
+			WebpIpfsCid: nullStringToPtr(dUser.Avatar.WebPIPFSCID),
 		}
 	}
 
@@ -149,7 +149,7 @@ func (s *Server) Register(w http.ResponseWriter, r *http.Request) {
 
 	// Optional pre-check for clearer 409s
 	if s.userRepo != nil {
-		if _, err := s.userRepo.GetByEmail(r.Context(), req.Email); err == nil {
+		if _, err := s.userRepo.GetByEmail(r.Context(), string(req.Email)); err == nil {
 			WriteError(w, http.StatusConflict, domain.NewDomainError("USER_EXISTS", "Email already in use"))
 			return
 		}
@@ -168,7 +168,7 @@ func (s *Server) Register(w http.ResponseWriter, r *http.Request) {
 		dUser := &domain.User{
 			ID:          userID,
 			Username:    req.Username,
-			Email:       req.Email,
+			Email:       string(req.Email),
 			DisplayName: displayName,
 			Role:        domain.RoleUser,
 			IsActive:    true,
@@ -196,9 +196,9 @@ func (s *Server) Register(w http.ResponseWriter, r *http.Request) {
 			dispPtr = &disp
 		}
 		gUser := generated.User{
-			ID:          dUser.ID,
+			Id:          dUser.ID,
 			Username:    dUser.Username,
-			Email:       dUser.Email,
+			Email:       openapi_types.Email(dUser.Email),
 			DisplayName: dispPtr,
 			Role:        generated.UserRoleUser,
 			IsActive:    dUser.IsActive,
@@ -207,14 +207,13 @@ func (s *Server) Register(w http.ResponseWriter, r *http.Request) {
 		}
 		if dUser.Avatar != nil {
 			gUser.Avatar = &generated.Avatar{
-				ID:          dUser.Avatar.ID,
-				IPFSCID:     nullStringToPtr(dUser.Avatar.IPFSCID),
-				WebPIPFSCID: nullStringToPtr(dUser.Avatar.WebPIPFSCID),
+				IpfsCid:     nullStringToPtr(dUser.Avatar.IPFSCID),
+				WebpIpfsCid: nullStringToPtr(dUser.Avatar.WebPIPFSCID),
 			}
 		}
 
 		// Set Location header to new resource
-		w.Header().Set("Location", "/api/v1/users/"+gUser.ID)
+		w.Header().Set("Location", "/api/v1/users/"+gUser.Id)
 
 		// Create refresh token + session for new user
 		refresh := uuid.NewString()
@@ -239,7 +238,7 @@ func (s *Server) Register(w http.ResponseWriter, r *http.Request) {
 
 		response := generated.AuthResponse{
 			User:         gUser,
-			AccessToken:  s.generateJWT(gUser.ID, 15*time.Minute),
+			AccessToken:  s.generateJWT(gUser.Id, 15*time.Minute),
 			RefreshToken: refresh,
 			ExpiresIn:    15 * 60,
 		}
@@ -321,7 +320,7 @@ func (s *Server) Logout(w http.ResponseWriter, r *http.Request) {
 
 	response := generated.LogoutResponse{
 		Message: "Logged out successfully",
-		UserID:  &userID,
+		UserId:  &userID,
 	}
 
 	WriteJSON(w, http.StatusOK, response)
@@ -330,7 +329,7 @@ func (s *Server) Logout(w http.ResponseWriter, r *http.Request) {
 // HealthCheck implements ServerInterface.HealthCheck
 func (s *Server) HealthCheck(w http.ResponseWriter, r *http.Request) {
 	response := generated.HealthResponse{
-		Status:    generated.HealthStatusHealthy,
+		Status:    "healthy",
 		Timestamp: time.Now(),
 	}
 
@@ -340,10 +339,10 @@ func (s *Server) HealthCheck(w http.ResponseWriter, r *http.Request) {
 // ReadinessCheck implements ServerInterface.ReadinessCheck
 func (s *Server) ReadinessCheck(w http.ResponseWriter, r *http.Request) {
 	// Probe dependent services
-	dbStatus := generated.ServiceStatusHealthy // DB connectivity not probed here
-	ipfsStatus := generated.ServiceStatusHealthy
+	dbStatus := "healthy" // DB connectivity not probed here
+	ipfsStatus := "healthy"
 	// Redis ping
-	redisStatus := generated.ServiceStatusHealthy
+	redisStatus := "healthy"
 	if s.redis != nil {
 		to := s.redisPingTimeout
 		if to <= 0 {
@@ -352,7 +351,7 @@ func (s *Server) ReadinessCheck(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(r.Context(), to)
 		defer cancel()
 		if err := s.redis.Ping(ctx).Err(); err != nil {
-			redisStatus = generated.ServiceStatusUnhealthy
+			redisStatus = "unhealthy"
 		}
 	}
 
@@ -366,20 +365,26 @@ func (s *Server) ReadinessCheck(w http.ResponseWriter, r *http.Request) {
 		req, _ := http.NewRequestWithContext(r.Context(), http.MethodGet, s.ipfsAPI+"/api/v0/version", nil)
 		resp, err := client.Do(req)
 		if err != nil || resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			ipfsStatus = generated.ServiceStatusUnhealthy
+			ipfsStatus = "unhealthy"
 		}
 		if resp != nil && resp.Body != nil {
 			_ = resp.Body.Close()
 		}
 	}
 
+	// Build typed readiness checks values
+	dbStatusVal := generated.ReadinessResponseChecksDatabase(dbStatus)
+	ipfsStatusVal := generated.ReadinessResponseChecksIpfs(ipfsStatus)
+	redisStatusVal := generated.ReadinessResponseChecksRedis(redisStatus)
+	checks := struct {
+		Database *generated.ReadinessResponseChecksDatabase `json:"database,omitempty"`
+		Ipfs     *generated.ReadinessResponseChecksIpfs     `json:"ipfs,omitempty"`
+		Redis    *generated.ReadinessResponseChecksRedis    `json:"redis,omitempty"`
+	}{Database: &dbStatusVal, Ipfs: &ipfsStatusVal, Redis: &redisStatusVal}
+
 	response := generated.ReadinessResponse{
-		Status: generated.ReadinessStatusReady,
-		Checks: generated.ReadinessResponseChecks{
-			Database: &dbStatus,
-			Redis:    &redisStatus,
-			IPFS:     &ipfsStatus,
-		},
+		Status:    "ready",
+		Checks:    checks,
 		Timestamp: time.Now(),
 	}
 

@@ -41,7 +41,7 @@ const selectUserWithAvatar = `
                a.id            AS avatar_id,
                a.ipfs_cid      AS avatar_ipfs_cid,
                a.webp_ipfs_cid AS avatar_webp_ipfs_cid,
-               u.bio, u.bitcoin_wallet, u.role, u.is_active, u.created_at, u.updated_at
+               u.bio, u.bitcoin_wallet, u.role, u.is_active, u.subscriber_count, u.created_at, u.updated_at
         FROM users u
         LEFT JOIN user_avatars a ON a.user_id = u.id`
 
@@ -57,22 +57,24 @@ type userRow struct {
 	BitcoinWallet     string          `db:"bitcoin_wallet"`
 	Role              domain.UserRole `db:"role"`
 	IsActive          bool            `db:"is_active"`
+	SubscriberCount   int64           `db:"subscriber_count"`
 	CreatedAt         time.Time       `db:"created_at"`
 	UpdatedAt         time.Time       `db:"updated_at"`
 }
 
 func mapUserRow(rrow userRow) *domain.User {
 	u := &domain.User{
-		ID:            rrow.ID,
-		Username:      rrow.Username,
-		Email:         rrow.Email,
-		DisplayName:   rrow.DisplayName,
-		Bio:           rrow.Bio,
-		BitcoinWallet: rrow.BitcoinWallet,
-		Role:          rrow.Role,
-		IsActive:      rrow.IsActive,
-		CreatedAt:     rrow.CreatedAt,
-		UpdatedAt:     rrow.UpdatedAt,
+		ID:              rrow.ID,
+		Username:        rrow.Username,
+		Email:           rrow.Email,
+		DisplayName:     rrow.DisplayName,
+		Bio:             rrow.Bio,
+		BitcoinWallet:   rrow.BitcoinWallet,
+		Role:            rrow.Role,
+		IsActive:        rrow.IsActive,
+		SubscriberCount: rrow.SubscriberCount,
+		CreatedAt:       rrow.CreatedAt,
+		UpdatedAt:       rrow.UpdatedAt,
 	}
 	if rrow.AvatarID.Valid || rrow.AvatarIPFSCID.Valid || rrow.AvatarWebPIPFSCID.Valid {
 		u.Avatar = &domain.Avatar{

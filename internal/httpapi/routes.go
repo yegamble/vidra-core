@@ -35,6 +35,7 @@ func RegisterRoutes(r chi.Router, cfg *config.Config) {
 	encodingRepo := repository.NewEncodingRepository(db)
 	messageRepo := repository.NewMessageRepository(db)
 	dbAuthRepo := repository.NewAuthRepository(db)
+	subRepo := repository.NewSubscriptionRepository(db)
 
 	// Create storage directory structure
 	storageRoot := cfg.StorageDir
@@ -138,6 +139,8 @@ func RegisterRoutes(r chi.Router, cfg *config.Config) {
 			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{id}", GetVideoHandler(videoRepo))
 			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{id}/stream", StreamVideoHandler(videoRepo))
 			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/qualities", GetSupportedQualities)
+			// Subscription feed
+			r.With(middleware.Auth(cfg.JWTSecret)).Get("/subscriptions", ListSubscriptionVideosHandler(subRepo))
 
 			r.With(middleware.Auth(cfg.JWTSecret)).Post("/", CreateVideoHandler(videoRepo))
 			r.With(middleware.Auth(cfg.JWTSecret)).Put("/{id}", UpdateVideoHandler(videoRepo))
@@ -175,6 +178,10 @@ func RegisterRoutes(r chi.Router, cfg *config.Config) {
 			r.With(middleware.Auth(cfg.JWTSecret)).Post("/me/avatar", server.UploadAvatar)
 			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{id}", GetUserHandler(userRepo))
 			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{id}/videos", GetUserVideosHandler(videoRepo))
+			// Subscriptions
+			r.With(middleware.Auth(cfg.JWTSecret)).Post("/{id}/subscribe", SubscribeToUserHandler(subRepo, userRepo))
+			r.With(middleware.Auth(cfg.JWTSecret)).Delete("/{id}/subscribe", UnsubscribeFromUserHandler(subRepo))
+			r.With(middleware.Auth(cfg.JWTSecret)).Get("/me/subscriptions", ListMySubscriptionsHandler(subRepo))
 		})
 
 		r.Route("/messages", func(r chi.Router) {

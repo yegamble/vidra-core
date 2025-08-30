@@ -1,14 +1,21 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-CONFIG_FILE="oapi-codegen.yaml"
-SPEC_FILE="api/openapi.yaml"
+#!/usr/bin/env bash
+set -euo pipefail
 
-if ! command -v oapi-codegen >/dev/null 2>&1; then
-  echo "oapi-codegen not found. Install with: go install github.com/deepmap/oapi-codegen/v2/cmd/oapi-codegen@latest" >&2
-  exit 1
+SPEC_FILE="api/openapi.yaml"
+OUT_DIR="internal/generated"
+OUT_FILE="$OUT_DIR/types.go"
+PKG="generated"
+
+mkdir -p "$OUT_DIR"
+
+if command -v oapi-codegen >/dev/null 2>&1; then
+  oapi-codegen -generate types -o "$OUT_FILE" -package "$PKG" "$SPEC_FILE"
+else
+  echo "oapi-codegen not found in PATH; using go run to execute generator" >&2
+  go run github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@latest -generate types -o "$OUT_FILE" -package "$PKG" "$SPEC_FILE"
 fi
 
-oapi-codegen -config "$CONFIG_FILE" "$SPEC_FILE"
-echo "OpenAPI types regenerated into internal/generated"
-
+echo "OpenAPI types regenerated into $OUT_FILE"

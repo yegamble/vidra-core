@@ -12,13 +12,14 @@ type User struct {
 	Email       string `json:"email" db:"email"`
 	DisplayName string `json:"display_name" db:"display_name"`
 	// Avatar is stored in a separate table and joined in repository queries
-	Avatar        *Avatar   `json:"-"`
-	Bio           string    `json:"bio" db:"bio"`
-	BitcoinWallet string    `json:"bitcoin_wallet" db:"bitcoin_wallet"`
-	Role          UserRole  `json:"role" db:"role"`
-	IsActive      bool      `json:"is_active" db:"is_active"`
-	CreatedAt     time.Time `json:"created_at" db:"created_at"`
-	UpdatedAt     time.Time `json:"updated_at" db:"updated_at"`
+	Avatar          *Avatar   `json:"-"`
+	Bio             string    `json:"bio" db:"bio"`
+	BitcoinWallet   string    `json:"bitcoin_wallet" db:"bitcoin_wallet"`
+	Role            UserRole  `json:"role" db:"role"`
+	IsActive        bool      `json:"is_active" db:"is_active"`
+	SubscriberCount int64     `json:"subscriber_count" db:"subscriber_count"`
+	CreatedAt       time.Time `json:"created_at" db:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at" db:"updated_at"`
 }
 
 // Avatar represents a user's avatar metadata

@@ -229,6 +229,43 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
+  /api/v1/users/me/subscriptions:
+    get:
+      tags:
+        - Users
+        - Subscriptions
+      summary: List my subscriptions
+      description: Returns the channels the authenticated user is subscribed to.
+      operationId: listMySubscriptions
+      parameters:
+        - in: query
+          name: limit
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+        - in: query
+          name: offset
+          required: false
+          schema: { type: integer, minimum: 0, default: 0 }
+      responses:
+        '200':
+          description: List of subscribed channels
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WrappedUsersResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
   /api/v1/videos/qualities:
     get:
       tags:
@@ -305,6 +342,43 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/WrappedVideosResponse'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/videos/subscriptions:
+    get:
+      tags:
+        - Videos
+        - Subscriptions
+      summary: List videos from subscribed channels
+      description: Returns public, completed videos from channels the authenticated user is subscribed to.
+      operationId: listSubscriptionVideos
+      parameters:
+        - in: query
+          name: limit
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+        - in: query
+          name: offset
+          required: false
+          schema: { type: integer, minimum: 0, default: 0 }
+      responses:
+        '200':
+          description: List of subscription videos
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WrappedVideosResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         '500':
           description: Server error
           content:
@@ -407,6 +481,80 @@ paths:
                 $ref: '#/components/schemas/WrappedVideoResponse'
         '404':
           description: Video not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/users/{id}/subscribe:
+    post:
+      tags:
+        - Subscriptions
+        - Users
+      summary: Subscribe to a user
+      description: Subscribes the authenticated user to the given user ID.
+      operationId: subscribeUser
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '204':
+          description: Subscribed successfully
+        '400':
+          description: Invalid user ID
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Target user not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    delete:
+      tags:
+        - Subscriptions
+        - Users
+      summary: Unsubscribe from a user
+      description: Unsubscribes the authenticated user from the given user ID.
+      operationId: unsubscribeUser
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '204':
+          description: Unsubscribed successfully
+        '400':
+          description: Invalid user ID
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Server error
           content:
             application/json:
               schema:
@@ -1118,6 +1266,11 @@ components:
           type: boolean
           description: Whether the user account is active
           example: true
+        subscriber_count:
+          type: integer
+          format: int64
+          description: Number of subscribers to this user (channel)
+          example: 42
         created_at:
           type: string
           format: date-time
@@ -1134,6 +1287,7 @@ components:
         - email
         - role
         - is_active
+        - subscriber_count
         - created_at
         - updated_at
 
@@ -1337,6 +1491,20 @@ components:
       required:
         - data
         - success
+
+    WrappedUsersResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/User'
+        meta:
+          $ref: '#/components/schemas/ListMeta'
+        success:
+          type: boolean
+          example: true
+      required: [data, meta, success]
 
     ErrorResponse:
       type: object
