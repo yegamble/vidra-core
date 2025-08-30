@@ -412,19 +412,25 @@ func GetClientIP(r *http.Request) string {
 func WriteJSONResponse(w http.ResponseWriter, statusCode int, data interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)
-	json.NewEncoder(w).Encode(data)
+	err := json.NewEncoder(w).Encode(data)
+	if err != nil {
+		http.Error(w, `{"error": {"code": "internal_error", "message": "Failed to encode response"}}`, http.StatusInternalServerError)
+	}
 }
 
 // WriteErrorResponse writes an error response
 func WriteErrorResponse(w http.ResponseWriter, statusCode int, errorCode, message string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)
-	json.NewEncoder(w).Encode(map[string]interface{}{
+	err := json.NewEncoder(w).Encode(map[string]interface{}{
 		"error": map[string]interface{}{
 			"code":    errorCode,
 			"message": message,
 		},
 	})
+	if err != nil {
+		http.Error(w, `{"error": {"code": "internal_error", "message": "Failed to encode error response"}}`, http.StatusInternalServerError)
+	}
 }
 
 // WriteValidationErrorResponse writes a validation error response
@@ -444,13 +450,16 @@ func WriteValidationErrorResponse(w http.ResponseWriter, err error) {
 		}
 	}
 
-	json.NewEncoder(w).Encode(map[string]interface{}{
+	err = json.NewEncoder(w).Encode(map[string]interface{}{
 		"error": map[string]interface{}{
 			"code":    "validation_failed",
 			"message": "Validation failed",
 			"details": validationErrors,
 		},
 	})
+	if err != nil {
+		http.Error(w, `{"error": {"code": "internal_error", "message": "Failed to encode validation error response"}}`, http.StatusInternalServerError)
+	}
 }
 
 // getValidationErrorMessage returns user-friendly validation error messages
