@@ -26,6 +26,10 @@ import (
 // TestRateLimitingDoesNotBlockGenuineTraffic ensures that our view tracking system
 // doesn't accidentally rate limit legitimate user behavior patterns
 func TestRateLimitingDoesNotBlockGenuineTraffic(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping rate limiting tests in short mode")
+	}
+
 	testDB := testutil.SetupTestDB(t)
 	viewsRepo := repository.NewViewsRepository(testDB.DB)
 	videoRepo := repository.NewVideoRepository(testDB.DB)
@@ -241,6 +245,10 @@ func TestRateLimitingDoesNotBlockGenuineTraffic(t *testing.T) {
 }
 
 func TestHighVolumeViewTracking(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping high volume tests in short mode")
+	}
+
 	testDB := testutil.SetupTestDB(t)
 	viewsRepo := repository.NewViewsRepository(testDB.DB)
 	videoRepo := repository.NewVideoRepository(testDB.DB)
@@ -393,6 +401,10 @@ func TestHighVolumeViewTracking(t *testing.T) {
 }
 
 func TestEdgeCaseScenarios(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping edge case tests in short mode")
+	}
+
 	testDB := testutil.SetupTestDB(t)
 	viewsRepo := repository.NewViewsRepository(testDB.DB)
 	videoRepo := repository.NewVideoRepository(testDB.DB)

@@ -523,16 +523,25 @@ func trackView(mux http.Handler, videoID uuid.UUID, fingerprint string) error {
 }
 
 func createTestVideos(t *testing.T, db *testutil.TestDB, count int) []uuid.UUID {
+	// First create a test user
+	userID := uuid.New()
+	_, err := db.DB.Exec(`
+		INSERT INTO users (id, username, email, display_name, role, password_hash, is_active, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, 'user', 'test_hash', true, NOW(), NOW())
+	`, userID, "loadtest_user_"+uuid.New().String()[:8], "loadtest_"+uuid.New().String()[:8]+"@example.com", "Load Test User")
+	require.NoError(t, err)
+
 	var videoIDs []uuid.UUID
 
 	for i := 0; i < count; i++ {
 		videoID := uuid.New()
+		thumbnailID := uuid.New()
 
 		_, err := db.DB.Exec(`
-			INSERT INTO videos (id, title, description, duration, upload_date, privacy)
-			VALUES ($1, $2, $3, $4, NOW(), 'public')
-		`, videoID, fmt.Sprintf("Load Test Video %d", i+1),
-			fmt.Sprintf("Test video for load testing %d", i+1), 120)
+			INSERT INTO videos (id, thumbnail_id, title, description, duration, upload_date, privacy, status, user_id, views, file_size, mime_type, created_at, updated_at)
+			VALUES ($1, $2, $3, $4, $5, NOW(), 'public', 'completed', $6, 0, 1024000, 'video/mp4', NOW(), NOW())
+		`, videoID, thumbnailID, fmt.Sprintf("Load Test Video %d", i+1),
+			fmt.Sprintf("Test video for load testing %d", i+1), 120, userID)
 
 		require.NoError(t, err)
 		videoIDs = append(videoIDs, videoID)
