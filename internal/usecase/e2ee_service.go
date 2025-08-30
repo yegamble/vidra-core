@@ -862,7 +862,7 @@ func (s *E2EEService) auditLog(ctx context.Context, userID, conversationID, oper
 	// Fire and forget audit logging
 	go func() {
 		ctx := context.Background()
-		s.cryptoRepo.CreateAuditLog(ctx, auditLog)
+		_ = s.cryptoRepo.CreateAuditLog(ctx, auditLog)
 	}()
 }
 
