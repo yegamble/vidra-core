@@ -161,7 +161,7 @@ func TestViewsRepository_GetVideoAnalytics(t *testing.T) {
 
 	ctx := context.Background()
 	filter := &domain.ViewAnalyticsFilter{
-		VideoID: &video.ID,
+		VideoID: video.ID,
 	}
 
 	analytics, err := repo.GetVideoAnalytics(ctx, filter)
@@ -206,8 +206,8 @@ func TestViewsRepository_GetVideoAnalytics_WithFilters(t *testing.T) {
 
 	// Test device type filter
 	filter := &domain.ViewAnalyticsFilter{
-		VideoID:    &video.ID,
-		DeviceType: stringPtr("mobile"),
+		VideoID:    video.ID,
+		DeviceType: "mobile",
 	}
 
 	analytics, err := repo.GetVideoAnalytics(ctx, filter)
@@ -219,7 +219,7 @@ func TestViewsRepository_GetVideoAnalytics_WithFilters(t *testing.T) {
 
 	// Test country filter
 	filter.DeviceType = nil
-	filter.CountryCode = stringPtr("CA")
+	filter.CountryCode = "CA"
 
 	analytics, err = repo.GetVideoAnalytics(ctx, filter)
 	require.NoError(t, err)
@@ -423,7 +423,7 @@ func TestViewsRepository_RateLimitingConcurrency(t *testing.T) {
 				CompletionPercentage: float64(20 + index%80),
 				SeekCount:            index % 5,
 				PauseCount:           index % 3,
-				DeviceType:           stringPtr("mobile"),
+				DeviceType:           "mobile",
 				ViewDate:             time.Now().Truncate(24 * time.Hour),
 				ViewHour:             time.Now().Hour(),
 				Weekday:              int(time.Now().Weekday()),
@@ -578,10 +578,6 @@ func getVideoViewCount(t *testing.T, testDB *testutil.TestDB, videoID string) in
 	require.NoError(t, err)
 
 	return viewCount
-}
-
-func stringPtr(s string) *string {
-	return &s
 }
 
 func intPtr(i int) *int {
