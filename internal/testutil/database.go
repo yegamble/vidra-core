@@ -206,9 +206,11 @@ func ensureTestSchema(db *sqlx.DB) error {
             role VARCHAR(20) NOT NULL DEFAULT 'user' CHECK (role IN ('user', 'admin', 'moderator')),
             password_hash TEXT NOT NULL,
             is_active BOOLEAN NOT NULL DEFAULT true,
+            subscriber_count BIGINT NOT NULL DEFAULT 0,
             created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
             updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
         )`,
+		`ALTER TABLE users ADD COLUMN IF NOT EXISTS subscriber_count BIGINT NOT NULL DEFAULT 0`,
 		`CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)`,
 		`CREATE INDEX IF NOT EXISTS idx_users_username ON users(username)`,
 		`CREATE INDEX IF NOT EXISTS idx_users_role ON users(role)`,
