@@ -86,7 +86,7 @@ func (h *ViewsHandler) GetVideoAnalytics(w http.ResponseWriter, r *http.Request)
 
 	// Parse query parameters for filtering
 	filter := &domain.ViewAnalyticsFilter{
-		VideoID: &videoID,
+		VideoID: videoID,
 		Limit:   100, // Default limit
 		Offset:  0,
 	}
@@ -112,12 +112,12 @@ func (h *ViewsHandler) GetVideoAnalytics(w http.ResponseWriter, r *http.Request)
 
 	// Parse device type filter
 	if deviceType := r.URL.Query().Get("device_type"); deviceType != "" {
-		filter.DeviceType = &deviceType
+		filter.DeviceType = deviceType
 	}
 
 	// Parse country code filter
 	if countryCode := r.URL.Query().Get("country_code"); countryCode != "" {
-		filter.CountryCode = &countryCode
+		filter.CountryCode = countryCode
 	}
 
 	// Parse anonymous filter
@@ -311,7 +311,7 @@ func (h *ViewsHandler) GetViewHistory(w http.ResponseWriter, r *http.Request) {
 
 	// Parse video ID filter
 	if videoID := r.URL.Query().Get("video_id"); videoID != "" {
-		filter.VideoID = &videoID
+		filter.VideoID = videoID
 	}
 
 	// Parse user ID filter (with authorization check)
@@ -327,7 +327,7 @@ func (h *ViewsHandler) GetViewHistory(w http.ResponseWriter, r *http.Request) {
 			WriteError(w, http.StatusForbidden, domain.NewDomainError("FORBIDDEN", "Cannot access other user's view history"))
 			return
 		}
-		filter.UserID = &userIDFilter
+		filter.UserID = userIDFilter
 	}
 
 	// Parse date range

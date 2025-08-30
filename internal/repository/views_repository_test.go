@@ -218,7 +218,7 @@ func TestViewsRepository_GetVideoAnalytics_WithFilters(t *testing.T) {
 	assert.Equal(t, int64(120), analytics.TotalWatchTime)
 
 	// Test country filter
-	filter.DeviceType = nil
+	filter.DeviceType = ""
 	filter.CountryCode = "CA"
 
 	analytics, err = repo.GetVideoAnalytics(ctx, filter)
@@ -448,7 +448,7 @@ func TestViewsRepository_RateLimitingConcurrency(t *testing.T) {
 	assert.Empty(t, errors, "Concurrent view tracking should not produce errors")
 
 	// Verify all views were created
-	analytics, err := repo.GetVideoAnalytics(ctx, &domain.ViewAnalyticsFilter{VideoID: &video.ID})
+	analytics, err := repo.GetVideoAnalytics(ctx, &domain.ViewAnalyticsFilter{VideoID: video.ID})
 	require.NoError(t, err)
 	assert.Equal(t, int64(concurrency), analytics.TotalViews)
 	assert.Equal(t, int64(concurrency), analytics.UniqueViews) // All unique sessions
@@ -546,8 +546,8 @@ func createTestUserViewWithDetails(t *testing.T, testDB *testutil.TestDB, userID
 		IsCompleted:          completionPercentage >= 95.0,
 		SeekCount:            1,
 		PauseCount:           0,
-		DeviceType:           &deviceType,
-		CountryCode:          &countryCode,
+		DeviceType:           deviceType,
+		CountryCode:          countryCode,
 		ViewDate:             now.Truncate(24 * time.Hour),
 		ViewHour:             now.Hour(),
 		Weekday:              int(now.Weekday()),
