@@ -379,6 +379,198 @@ func ensureTestSchema(db *sqlx.DB) error {
 		    END IF; RETURN NEW; END; $$ language 'plpgsql'`,
 		`DROP TRIGGER IF EXISTS ensure_conversation_order_trigger ON conversations`,
 		`CREATE TRIGGER ensure_conversation_order_trigger BEFORE INSERT OR UPDATE ON conversations FOR EACH ROW EXECUTE FUNCTION ensure_conversation_order()`,
+		// User views tracking tables
+		`CREATE TABLE IF NOT EXISTS user_views (
+		    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+		    video_id UUID NOT NULL REFERENCES videos(id) ON DELETE CASCADE,
+		    user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+		    session_id UUID NOT NULL,
+		    fingerprint_hash TEXT NOT NULL,
+		    watch_duration INTEGER NOT NULL DEFAULT 0,
+		    video_duration INTEGER NOT NULL DEFAULT 0,
+		    completion_percentage DECIMAL(5,2) NOT NULL DEFAULT 0.0,
+		    is_completed BOOLEAN NOT NULL DEFAULT false,
+		    seek_count INTEGER NOT NULL DEFAULT 0,
+		    pause_count INTEGER NOT NULL DEFAULT 0,
+		    replay_count INTEGER NOT NULL DEFAULT 0,
+		    quality_changes INTEGER NOT NULL DEFAULT 0,
+		    initial_load_time INTEGER,
+		    buffer_events INTEGER NOT NULL DEFAULT 0,
+		    connection_type VARCHAR(20),
+		    video_quality VARCHAR(10),
+		    referrer_url TEXT,
+		    referrer_type VARCHAR(20),
+		    utm_source VARCHAR(50),
+		    utm_medium VARCHAR(50),
+		    utm_campaign VARCHAR(100),
+		    device_type VARCHAR(20),
+		    os_name VARCHAR(50),
+		    browser_name VARCHAR(50),
+		    screen_resolution VARCHAR(20),
+		    is_mobile BOOLEAN NOT NULL DEFAULT false,
+		    country_code CHAR(2),
+		    region_code VARCHAR(10),
+		    city_name VARCHAR(100),
+		    timezone VARCHAR(50),
+		    is_anonymous BOOLEAN NOT NULL DEFAULT false,
+		    tracking_consent BOOLEAN NOT NULL DEFAULT true,
+		    gdpr_consent BOOLEAN,
+		    view_date DATE NOT NULL DEFAULT CURRENT_DATE,
+		    view_hour INTEGER NOT NULL DEFAULT EXTRACT(HOUR FROM NOW()),
+		    weekday INTEGER NOT NULL DEFAULT EXTRACT(DOW FROM NOW()),
+		    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+		    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+		    CONSTRAINT check_completion_percentage CHECK (completion_percentage >= 0.0 AND completion_percentage <= 100.0),
+		    CONSTRAINT check_watch_duration CHECK (watch_duration >= 0),
+		    CONSTRAINT check_positive_counts CHECK (
+		        seek_count >= 0 AND pause_count >= 0 AND replay_count >= 0 AND 
+		        quality_changes >= 0 AND buffer_events >= 0
+		    )
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_user_views_video_id ON user_views(video_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_user_views_user_id ON user_views(user_id) WHERE user_id IS NOT NULL`,
+		`CREATE INDEX IF NOT EXISTS idx_user_views_session_fingerprint ON user_views(session_id, fingerprint_hash)`,
+		`CREATE INDEX IF NOT EXISTS idx_user_views_view_date ON user_views(view_date)`,
+		`CREATE INDEX IF NOT EXISTS idx_user_views_created_at ON user_views(created_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_user_views_analytics ON user_views(video_id, view_date, completion_percentage, watch_duration)`,
+		`DROP TRIGGER IF EXISTS update_user_views_updated_at ON user_views`,
+		`CREATE TRIGGER update_user_views_updated_at BEFORE UPDATE ON user_views FOR EACH ROW EXECUTE FUNCTION update_updated_at_column()`,
+		// Daily video stats aggregation table
+		`CREATE TABLE IF NOT EXISTS daily_video_stats (
+		    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+		    video_id UUID NOT NULL REFERENCES videos(id) ON DELETE CASCADE,
+		    stat_date DATE NOT NULL,
+		    total_views BIGINT NOT NULL DEFAULT 0,
+		    unique_views BIGINT NOT NULL DEFAULT 0,
+		    authenticated_views BIGINT NOT NULL DEFAULT 0,
+		    anonymous_views BIGINT NOT NULL DEFAULT 0,
+		    total_watch_time BIGINT NOT NULL DEFAULT 0,
+		    avg_watch_duration DECIMAL(10,2) NOT NULL DEFAULT 0.0,
+		    avg_completion_percentage DECIMAL(5,2) NOT NULL DEFAULT 0.0,
+		    completed_views BIGINT NOT NULL DEFAULT 0,
+		    avg_initial_load_time DECIMAL(10,2),
+		    total_buffer_events BIGINT NOT NULL DEFAULT 0,
+		    avg_seek_count DECIMAL(5,2) NOT NULL DEFAULT 0.0,
+		    desktop_views BIGINT NOT NULL DEFAULT 0,
+		    mobile_views BIGINT NOT NULL DEFAULT 0,
+		    tablet_views BIGINT NOT NULL DEFAULT 0,
+		    tv_views BIGINT NOT NULL DEFAULT 0,
+		    top_countries JSONB NOT NULL DEFAULT '[]'::jsonb,
+		    top_regions JSONB NOT NULL DEFAULT '[]'::jsonb,
+		    referrer_breakdown JSONB NOT NULL DEFAULT '{}'::jsonb,
+		    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+		    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+		    UNIQUE(video_id, stat_date)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_daily_video_stats_video_date ON daily_video_stats(video_id, stat_date)`,
+		`CREATE INDEX IF NOT EXISTS idx_daily_video_stats_date ON daily_video_stats(stat_date)`,
+		`DROP TRIGGER IF EXISTS update_daily_video_stats_updated_at ON daily_video_stats`,
+		`CREATE TRIGGER update_daily_video_stats_updated_at BEFORE UPDATE ON daily_video_stats FOR EACH ROW EXECUTE FUNCTION update_updated_at_column()`,
+		// User engagement stats table
+		`CREATE TABLE IF NOT EXISTS user_engagement_stats (
+		    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+		    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		    stat_date DATE NOT NULL,
+		    videos_watched BIGINT NOT NULL DEFAULT 0,
+		    total_watch_time BIGINT NOT NULL DEFAULT 0,
+		    avg_session_duration DECIMAL(10,2) NOT NULL DEFAULT 0.0,
+		    unique_videos_watched BIGINT NOT NULL DEFAULT 0,
+		    avg_completion_rate DECIMAL(5,2) NOT NULL DEFAULT 0.0,
+		    completed_videos BIGINT NOT NULL DEFAULT 0,
+		    sessions_count BIGINT NOT NULL DEFAULT 0,
+		    total_seeks BIGINT NOT NULL DEFAULT 0,
+		    total_pauses BIGINT NOT NULL DEFAULT 0,
+		    total_replays BIGINT NOT NULL DEFAULT 0,
+		    preferred_device VARCHAR(20),
+		    device_diversity INTEGER NOT NULL DEFAULT 0,
+		    top_categories JSONB NOT NULL DEFAULT '[]'::jsonb,
+		    avg_video_duration_preference DECIMAL(10,2),
+		    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+		    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+		    UNIQUE(user_id, stat_date)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_user_engagement_user_date ON user_engagement_stats(user_id, stat_date)`,
+		`DROP TRIGGER IF EXISTS update_user_engagement_stats_updated_at ON user_engagement_stats`,
+		`CREATE TRIGGER update_user_engagement_stats_updated_at BEFORE UPDATE ON user_engagement_stats FOR EACH ROW EXECUTE FUNCTION update_updated_at_column()`,
+		// Trending videos table
+		`CREATE TABLE IF NOT EXISTS trending_videos (
+		    video_id UUID PRIMARY KEY REFERENCES videos(id) ON DELETE CASCADE,
+		    views_last_hour BIGINT NOT NULL DEFAULT 0,
+		    views_last_24h BIGINT NOT NULL DEFAULT 0,
+		    views_last_7d BIGINT NOT NULL DEFAULT 0,
+		    engagement_score DECIMAL(10,4) NOT NULL DEFAULT 0.0,
+		    velocity_score DECIMAL(10,4) NOT NULL DEFAULT 0.0,
+		    hourly_rank INTEGER,
+		    daily_rank INTEGER,
+		    weekly_rank INTEGER,
+		    last_updated TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+		    is_trending BOOLEAN NOT NULL DEFAULT false
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_trending_videos_scores ON trending_videos(engagement_score DESC, velocity_score DESC)`,
+		// Utility functions for view tracking
+		`CREATE OR REPLACE FUNCTION increment_video_views(p_video_id UUID)
+		RETURNS void AS $$
+		BEGIN
+		    UPDATE videos 
+		    SET views = views + 1, updated_at = NOW()
+		    WHERE id = p_video_id;
+		END;
+		$$ LANGUAGE plpgsql`,
+		`CREATE OR REPLACE FUNCTION get_unique_views(
+		    p_video_id UUID,
+		    p_start_date TIMESTAMP WITH TIME ZONE DEFAULT NOW() - INTERVAL '30 days',
+		    p_end_date TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+		)
+		RETURNS BIGINT AS $$
+		DECLARE
+		    unique_count BIGINT;
+		BEGIN
+		    SELECT COUNT(DISTINCT session_id)
+		    INTO unique_count
+		    FROM user_views 
+		    WHERE video_id = p_video_id 
+		    AND created_at BETWEEN p_start_date AND p_end_date;
+		    
+		    RETURN COALESCE(unique_count, 0);
+		END;
+		$$ LANGUAGE plpgsql`,
+		`CREATE OR REPLACE FUNCTION calculate_engagement_score(
+		    p_video_id UUID,
+		    p_hours_back INTEGER DEFAULT 24
+		)
+		RETURNS DECIMAL(10,4) AS $$
+		DECLARE
+		    score DECIMAL(10,4) := 0.0;
+		    view_count BIGINT;
+		    avg_completion DECIMAL(5,2);
+		    unique_viewers BIGINT;
+		    recency_weight DECIMAL(4,2);
+		BEGIN
+		    SELECT 
+		        COUNT(*),
+		        AVG(completion_percentage),
+		        COUNT(DISTINCT session_id)
+		    INTO view_count, avg_completion, unique_viewers
+		    FROM user_views 
+		    WHERE video_id = p_video_id 
+		    AND created_at >= NOW() - (p_hours_back || ' hours')::INTERVAL;
+		    
+		    recency_weight := CASE 
+		        WHEN p_hours_back <= 1 THEN 2.0
+		        WHEN p_hours_back <= 6 THEN 1.5
+		        WHEN p_hours_back <= 24 THEN 1.2
+		        ELSE 1.0
+		    END;
+		    
+		    score := (
+		        (COALESCE(view_count, 0) * 1.0) +
+		        (COALESCE(unique_viewers, 0) * 1.5) +
+		        (COALESCE(avg_completion, 0) / 100.0 * view_count * 2.0)
+		    ) * recency_weight;
+		    
+		    RETURN score;
+		END;
+		$$ LANGUAGE plpgsql`,
 	}
 
 	for _, s := range stmts {
@@ -468,7 +660,7 @@ func cleanupTestDB(t *testing.T, testDB *TestDB) {
 
 	// Clean Postgres tables
 	if testDB.DB != nil {
-		tables := []string{"messages", "conversations", "encoding_jobs", "upload_sessions", "videos", "sessions", "refresh_tokens", "user_avatars", "users"}
+		tables := []string{"user_views", "daily_video_stats", "user_engagement_stats", "trending_videos", "messages", "conversations", "encoding_jobs", "upload_sessions", "videos", "sessions", "refresh_tokens", "user_avatars", "users"}
 		for _, table := range tables {
 			if _, err := testDB.DB.ExecContext(ctx, fmt.Sprintf("TRUNCATE TABLE %s CASCADE", table)); err != nil {
 				t.Logf("Failed to truncate table %s: %v", table, err)
