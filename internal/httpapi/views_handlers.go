@@ -9,9 +9,9 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/yosefgamble/athena/internal/domain"
-	"github.com/yosefgamble/athena/internal/middleware"
-	"github.com/yosefgamble/athena/internal/usecase"
+	"athena/internal/domain"
+	"athena/internal/middleware"
+	"athena/internal/usecase"
 )
 
 // ViewsHandler handles all views tracking and analytics endpoints

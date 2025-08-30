@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -9,8 +10,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/yosefgamble/athena/internal/domain"
-	"github.com/yosefgamble/athena/internal/testutil"
+	"athena/internal/domain"
+	"athena/internal/testutil"
 )
 
 func TestViewsRepository_CreateUserView(t *testing.T) {
@@ -18,8 +19,8 @@ func TestViewsRepository_CreateUserView(t *testing.T) {
 	repo := NewViewsRepository(testDB.DB)
 
 	// Create test user and video
-	user := createTestUser(t, testDB)
-	video := createTestVideo(t, testDB, user.ID)
+	user := createTestViewsUser(t, testDB)
+	video := createTestViewsVideo(t, testDB, user.ID)
 
 	ctx := context.Background()
 	now := time.Now()
@@ -37,24 +38,24 @@ func TestViewsRepository_CreateUserView(t *testing.T) {
 		PauseCount:           1,
 		ReplayCount:          0,
 		QualityChanges:       1,
-		InitialLoadTime:      int(1500),
+		InitialLoadTime:      intPtr(1500),
 		BufferEvents:         0,
-		ConnectionType:       stringPtr("wifi"),
-		VideoQuality:         stringPtr("720p"),
-		DeviceType:           stringPtr("mobile"),
-		OSName:               stringPtr("iOS"),
-		BrowserName:          stringPtr("Safari"),
-		ScreenResolution:     stringPtr("375x667"),
+		ConnectionType:       "wifi",
+		VideoQuality:         "720p",
+		DeviceType:           "mobile",
+		OSName:               "iOS",
+		BrowserName:          "Safari",
+		ScreenResolution:     "375x667",
 		IsMobile:             true,
-		CountryCode:          stringPtr("US"),
-		RegionCode:           stringPtr("CA"),
-		CityName:             stringPtr("San Francisco"),
-		Timezone:             stringPtr("America/Los_Angeles"),
-		ReferrerURL:          stringPtr("https://example.com"),
-		ReferrerType:         stringPtr("search"),
-		UTMSource:            stringPtr("google"),
-		UTMMedium:            stringPtr("cpc"),
-		UTMCampaign:          stringPtr("summer2024"),
+		CountryCode:          "US",
+		RegionCode:           "CA",
+		CityName:             "San Francisco",
+		Timezone:             "America/Los_Angeles",
+		ReferrerURL:          "https://example.com",
+		ReferrerType:         "search",
+		UTMSource:            "google",
+		UTMMedium:            "cpc",
+		UTMCampaign:          "summer2024",
 		IsAnonymous:          false,
 		TrackingConsent:      true,
 		GDPRConsent:          boolPtr(true),
@@ -87,8 +88,8 @@ func TestViewsRepository_UpdateUserView(t *testing.T) {
 	repo := NewViewsRepository(testDB.DB)
 
 	// Create test user, video, and view
-	user := createTestUser(t, testDB)
-	video := createTestVideo(t, testDB, user.ID)
+	user := createTestViewsUser(t, testDB)
+	video := createTestViewsVideo(t, testDB, user.ID)
 	view := createTestUserView(t, testDB, user.ID, video.ID)
 
 	ctx := context.Background()
@@ -120,8 +121,8 @@ func TestViewsRepository_GetUserViewBySessionAndVideo_Deduplication(t *testing.T
 	repo := NewViewsRepository(testDB.DB)
 
 	// Create test user and video
-	user := createTestUser(t, testDB)
-	video := createTestVideo(t, testDB, user.ID)
+	user := createTestViewsUser(t, testDB)
+	video := createTestViewsVideo(t, testDB, user.ID)
 
 	ctx := context.Background()
 	sessionID := uuid.New().String()
@@ -147,9 +148,9 @@ func TestViewsRepository_GetVideoAnalytics(t *testing.T) {
 	repo := NewViewsRepository(testDB.DB)
 
 	// Create test data
-	user1 := createTestUser(t, testDB)
-	user2 := createTestUser(t, testDB)
-	video := createTestVideo(t, testDB, user1.ID)
+	user1 := createTestViewsUser(t, testDB)
+	user2 := createTestViewsUser(t, testDB)
+	video := createTestViewsVideo(t, testDB, user1.ID)
 
 	// Create multiple views with different characteristics
 	views := []*domain.UserView{
@@ -194,8 +195,8 @@ func TestViewsRepository_GetVideoAnalytics_WithFilters(t *testing.T) {
 	repo := NewViewsRepository(testDB.DB)
 
 	// Create test data
-	user := createTestUser(t, testDB)
-	video := createTestVideo(t, testDB, user.ID)
+	user := createTestViewsUser(t, testDB)
+	video := createTestViewsVideo(t, testDB, user.ID)
 
 	// Create views with different device types
 	createTestUserViewWithDetails(t, testDB, user.ID, video.ID, 120, 40.0, "mobile", "US")
@@ -232,8 +233,8 @@ func TestViewsRepository_IncrementVideoViews(t *testing.T) {
 	repo := NewViewsRepository(testDB.DB)
 
 	// Create test user and video
-	user := createTestUser(t, testDB)
-	video := createTestVideo(t, testDB, user.ID)
+	user := createTestViewsUser(t, testDB)
+	video := createTestViewsVideo(t, testDB, user.ID)
 
 	ctx := context.Background()
 
@@ -261,8 +262,8 @@ func TestViewsRepository_GetUniqueViews(t *testing.T) {
 	repo := NewViewsRepository(testDB.DB)
 
 	// Create test data
-	user := createTestUser(t, testDB)
-	video := createTestVideo(t, testDB, user.ID)
+	user := createTestViewsUser(t, testDB)
+	video := createTestViewsVideo(t, testDB, user.ID)
 
 	// Create multiple views with same and different sessions
 	sessionID1 := uuid.New().String()
@@ -286,8 +287,8 @@ func TestViewsRepository_CalculateEngagementScore(t *testing.T) {
 	repo := NewViewsRepository(testDB.DB)
 
 	// Create test data
-	user := createTestUser(t, testDB)
-	video := createTestVideo(t, testDB, user.ID)
+	user := createTestViewsUser(t, testDB)
+	video := createTestViewsVideo(t, testDB, user.ID)
 
 	// Create views with high engagement (high completion percentage)
 	createTestUserViewWithDetails(t, testDB, user.ID, video.ID, 300, 100.0, "mobile", "US") // Completed
@@ -300,7 +301,7 @@ func TestViewsRepository_CalculateEngagementScore(t *testing.T) {
 	assert.Greater(t, score, 0.0)
 
 	// Test with no views (should return 0)
-	emptyVideo := createTestVideo(t, testDB, user.ID)
+	emptyVideo := createTestViewsVideo(t, testDB, user.ID)
 	emptyScore, err := repo.CalculateEngagementScore(ctx, emptyVideo.ID, 24)
 	require.NoError(t, err)
 	assert.Equal(t, 0.0, emptyScore)
@@ -311,8 +312,8 @@ func TestViewsRepository_UpdateTrendingVideo(t *testing.T) {
 	repo := NewViewsRepository(testDB.DB)
 
 	// Create test video
-	user := createTestUser(t, testDB)
-	video := createTestVideo(t, testDB, user.ID)
+	user := createTestViewsUser(t, testDB)
+	video := createTestViewsVideo(t, testDB, user.ID)
 
 	ctx := context.Background()
 
@@ -359,10 +360,10 @@ func TestViewsRepository_GetTopVideos(t *testing.T) {
 	repo := NewViewsRepository(testDB.DB)
 
 	// Create test data
-	user := createTestUser(t, testDB)
-	video1 := createTestVideo(t, testDB, user.ID)
-	video2 := createTestVideo(t, testDB, user.ID)
-	video3 := createTestVideo(t, testDB, user.ID)
+	user := createTestViewsUser(t, testDB)
+	video1 := createTestViewsVideo(t, testDB, user.ID)
+	video2 := createTestViewsVideo(t, testDB, user.ID)
+	video3 := createTestViewsVideo(t, testDB, user.ID)
 
 	// Create views for videos (video1 has most views)
 	for i := 0; i < 5; i++ {
@@ -400,8 +401,8 @@ func TestViewsRepository_RateLimitingConcurrency(t *testing.T) {
 	repo := NewViewsRepository(testDB.DB)
 
 	// Create test data
-	user := createTestUser(t, testDB)
-	video := createTestVideo(t, testDB, user.ID)
+	user := createTestViewsUser(t, testDB)
+	video := createTestViewsVideo(t, testDB, user.ID)
 
 	ctx := context.Background()
 	concurrency := 50 // Simulate 50 concurrent view tracking requests
@@ -455,7 +456,7 @@ func TestViewsRepository_RateLimitingConcurrency(t *testing.T) {
 
 // Helper functions
 
-func createTestUser(t *testing.T, testDB *testutil.TestDB) *domain.User {
+func createTestViewsUser(t *testing.T, testDB *testutil.TestDB) *domain.User {
 	t.Helper()
 
 	user := &domain.User{
@@ -479,7 +480,7 @@ func createTestUser(t *testing.T, testDB *testutil.TestDB) *domain.User {
 	return user
 }
 
-func createTestVideo(t *testing.T, testDB *testutil.TestDB, userID string) *domain.Video {
+func createTestViewsVideo(t *testing.T, testDB *testutil.TestDB, userID string) *domain.Video {
 	t.Helper()
 
 	video := &domain.Video{

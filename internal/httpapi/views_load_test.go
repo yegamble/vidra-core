@@ -16,8 +16,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/yosefgamble/athena/internal/domain"
-	"github.com/yosefgamble/athena/internal/testutil"
+	"athena/internal/domain"
+	"athena/internal/testutil"
 )
 
 // TestLoadScenarios tests various high-volume scenarios to ensure the system

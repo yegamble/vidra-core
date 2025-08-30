@@ -16,11 +16,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/yosefgamble/athena/internal/domain"
-	"github.com/yosefgamble/athena/internal/middleware"
-	"github.com/yosefgamble/athena/internal/repository"
-	"github.com/yosefgamble/athena/internal/testutil"
-	"github.com/yosefgamble/athena/internal/usecase"
+	"athena/internal/domain"
+	"athena/internal/middleware"
+	"athena/internal/repository"
+	"athena/internal/testutil"
+	"athena/internal/usecase"
 )
 
 // TestRateLimitingDoesNotBlockGenuineTraffic ensures that our view tracking system

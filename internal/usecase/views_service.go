@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/yosefgamble/athena/internal/domain"
+	"athena/internal/domain"
 )
 
 type ViewsRepository interface {
@@ -25,22 +25,23 @@ type ViewsRepository interface {
 	CleanupOldViews(ctx context.Context, daysToKeep int) error
 	GetViewsByDateRange(ctx context.Context, filter *domain.ViewAnalyticsFilter) ([]domain.UserView, error)
 	GetTopVideos(ctx context.Context, startDate, endDate time.Time, limit int) ([]struct {
-		VideoID     string `db:"video_id"`
-		TotalViews  int64  `db:"total_views"`
-		UniqueViews int64  `db:"unique_views"`
+		VideoID     string  `db:"video_id"`
+		TotalViews  int64   `db:"total_views"`
+		UniqueViews int64   `db:"unique_views"`
+		AvgDuration float64 `db:"avg_duration"`
 	}, error)
 }
 
-type VideoRepository interface {
+type VideoRepositoryInterface interface {
 	GetVideoByID(ctx context.Context, id string) (*domain.Video, error)
 }
 
 type ViewsService struct {
 	viewsRepo ViewsRepository
-	videoRepo VideoRepository
+	videoRepo VideoRepositoryInterface
 }
 
-func NewViewsService(viewsRepo ViewsRepository, videoRepo VideoRepository) *ViewsService {
+func NewViewsService(viewsRepo ViewsRepository, videoRepo VideoRepositoryInterface) *ViewsService {
 	return &ViewsService{
 		viewsRepo: viewsRepo,
 		videoRepo: videoRepo,
@@ -214,8 +215,8 @@ func (s *ViewsService) GetTrendingVideosWithDetails(ctx context.Context, limit i
 		}
 
 		response.Videos = append(response.Videos, domain.TrendingVideoWithDetails{
-			TrendingVideo: trending,
-			Video:         *video,
+			TrendingVideo: &trending,
+			Video:         video,
 		})
 	}
 
@@ -263,7 +264,7 @@ func (s *ViewsService) UpdateTrendingMetrics(ctx context.Context, videoIDs []str
 		velocityScore := calculateVelocityScore(viewsLastHour, viewsLast24h, viewsLast7d)
 
 		// Determine if trending (threshold-based)
-		isTrending := dailyScore > 100.0 || (hourlyScore > 50.0 && velocityScore > 10.0)
+		isTrending := dailyScore > 100.0 || (hourlyScore > 50.0 && velocityScore > 10.0) || weeklyScore > 200.0
 
 		trending := &domain.TrendingVideo{
 			VideoID:         videoID,
@@ -340,7 +341,31 @@ func (s *ViewsService) GetTopVideos(ctx context.Context, days, limit int) ([]str
 		limit = 20
 	}
 
-	return s.viewsRepo.GetTopVideos(ctx, startDate, endDate, limit)
+	dbResults, err := s.viewsRepo.GetTopVideos(ctx, startDate, endDate, limit)
+	if err != nil {
+		return nil, err
+	}
+
+	// Convert from db struct to json struct
+	results := make([]struct {
+		VideoID     string `json:"video_id"`
+		TotalViews  int64  `json:"total_views"`
+		UniqueViews int64  `json:"unique_views"`
+	}, len(dbResults))
+
+	for i, dbResult := range dbResults {
+		results[i] = struct {
+			VideoID     string `json:"video_id"`
+			TotalViews  int64  `json:"total_views"`
+			UniqueViews int64  `json:"unique_views"`
+		}{
+			VideoID:     dbResult.VideoID,
+			TotalViews:  dbResult.TotalViews,
+			UniqueViews: dbResult.UniqueViews,
+		}
+	}
+
+	return results, nil
 }
 
 // GetViewHistory gets view history for a user or video

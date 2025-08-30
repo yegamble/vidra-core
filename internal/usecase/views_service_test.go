@@ -2,6 +2,7 @@ package usecase
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -10,7 +11,7 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
-	"github.com/yosefgamble/athena/internal/domain"
+	"athena/internal/domain"
 )
 
 // Mock implementations
@@ -107,18 +108,20 @@ func (m *MockViewsRepository) GetViewsByDateRange(ctx context.Context, filter *d
 }
 
 func (m *MockViewsRepository) GetTopVideos(ctx context.Context, startDate, endDate time.Time, limit int) ([]struct {
-	VideoID     string `db:"video_id"`
-	TotalViews  int64  `db:"total_views"`
-	UniqueViews int64  `db:"unique_views"`
+	VideoID     string  `db:"video_id"`
+	TotalViews  int64   `db:"total_views"`
+	UniqueViews int64   `db:"unique_views"`
+	AvgDuration float64 `db:"avg_duration"`
 }, error) {
 	args := m.Called(ctx, startDate, endDate, limit)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
 	return args.Get(0).([]struct {
-		VideoID     string `db:"video_id"`
-		TotalViews  int64  `db:"total_views"`
-		UniqueViews int64  `db:"unique_views"`
+		VideoID     string  `db:"video_id"`
+		TotalViews  int64   `db:"total_views"`
+		UniqueViews int64   `db:"unique_views"`
+		AvgDuration float64 `db:"avg_duration"`
 	}), args.Error(1)
 }
 
@@ -169,8 +172,8 @@ func TestViewsService_TrackView_NewView(t *testing.T) {
 		VideoDuration:        300,
 		CompletionPercentage: 40.0,
 		IsCompleted:          false,
-		DeviceType:           stringPtr("mobile"),
-		CountryCode:          stringPtr("US"),
+		DeviceType:           "mobile",
+		CountryCode:          "US",
 		TrackingConsent:      true,
 	}
 
@@ -324,7 +327,7 @@ func TestViewsService_GetVideoAnalytics(t *testing.T) {
 	videoID := uuid.New().String()
 
 	filter := &domain.ViewAnalyticsFilter{
-		VideoID: &videoID,
+		VideoID: videoID,
 	}
 
 	expectedAnalytics := &domain.ViewAnalyticsResponse{
@@ -498,13 +501,25 @@ func TestViewsService_GetTopVideos(t *testing.T) {
 	days := 7
 	limit := 10
 
+	// Repository returns data with db tags
+	repoResults := []struct {
+		VideoID     string  `db:"video_id"`
+		TotalViews  int64   `db:"total_views"`
+		UniqueViews int64   `db:"unique_views"`
+		AvgDuration float64 `db:"avg_duration"`
+	}{
+		{VideoID: uuid.New().String(), TotalViews: 5000, UniqueViews: 4200, AvgDuration: 150.5},
+		{VideoID: uuid.New().String(), TotalViews: 3500, UniqueViews: 2800, AvgDuration: 180.2},
+	}
+
+	// Service returns data with json tags (what we expect back)
 	expectedTopVideos := []struct {
 		VideoID     string `json:"video_id"`
 		TotalViews  int64  `json:"total_views"`
 		UniqueViews int64  `json:"unique_views"`
 	}{
-		{VideoID: uuid.New().String(), TotalViews: 5000, UniqueViews: 4200},
-		{VideoID: uuid.New().String(), TotalViews: 3500, UniqueViews: 2800},
+		{VideoID: repoResults[0].VideoID, TotalViews: repoResults[0].TotalViews, UniqueViews: repoResults[0].UniqueViews},
+		{VideoID: repoResults[1].VideoID, TotalViews: repoResults[1].TotalViews, UniqueViews: repoResults[1].UniqueViews},
 	}
 
 	// Calculate expected date range
@@ -514,7 +529,7 @@ func TestViewsService_GetTopVideos(t *testing.T) {
 	mockViewsRepo.On("GetTopVideos", ctx,
 		mock.MatchedBy(func(t time.Time) bool { return t.Day() == startDate.Day() }),
 		mock.MatchedBy(func(t time.Time) bool { return t.Day() == endDate.Day() }),
-		limit).Return(expectedTopVideos, nil)
+		limit).Return(repoResults, nil)
 
 	result, err := service.GetTopVideos(ctx, days, limit)
 	require.NoError(t, err)
@@ -727,7 +742,7 @@ func TestViewsService_ConcurrentViewTracking(t *testing.T) {
 				WatchDuration:        60 + index, // Vary the data
 				VideoDuration:        300,
 				CompletionPercentage: float64(20 + index%80),
-				DeviceType:           stringPtr("mobile"),
+				DeviceType:           "mobile",
 				TrackingConsent:      true,
 			}
 
