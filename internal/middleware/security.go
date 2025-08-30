@@ -61,8 +61,11 @@ func RequestID() func(http.Handler) http.Handler {
 			requestID := r.Header.Get("X-Request-ID")
 			if requestID == "" {
 				b := make([]byte, 16)
-				rand.Read(b)
-				requestID = base64.URLEncoding.EncodeToString(b)
+				_, err := rand.Read(b)
+				if err != nil {
+					return
+				}
+				requestID = base64.RawURLEncoding.EncodeToString(b)
 			}
 
 			w.Header().Set("X-Request-ID", requestID)
