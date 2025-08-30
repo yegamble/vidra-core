@@ -230,6 +230,20 @@ Operational note: Debug logs for width/aspect estimation emit only when `LOG_LEV
 - `POST /api/v1/videos/{id}/upload` - Upload video chunk
 - `POST /api/v1/videos/{id}/complete` - Complete chunked upload
 
+### Messages
+
+**Standard Messages:**
+- `POST /api/v1/messages` - Send a message (requires auth)
+- `GET /api/v1/messages` - Get conversations (requires auth)
+- `GET /api/v1/messages/{user_id}` - Get messages with specific user (requires auth)
+- `PUT /api/v1/messages/{id}/read` - Mark message as read (requires auth)
+
+**End-to-End Encrypted Messages:**
+- `POST /api/v1/e2ee/setup` - Setup E2EE with master key (requires auth)
+- `POST /api/v1/e2ee/unlock` - Unlock E2EE session (requires auth)
+- `POST /api/v1/e2ee/key-exchange` - Exchange keys for conversation (requires auth)
+- `POST /api/v1/messages/secure` - Send encrypted message (requires auth)
+
 ### Users
 
 - `GET /api/v1/users/me` - Get current user (requires auth)
@@ -237,12 +251,84 @@ Operational note: Debug logs for width/aspect estimation emit only when `LOG_LEV
 - `GET /api/v1/users/{id}` - Get user profile
 - `GET /api/v1/users/{id}/videos` - Get user's videos
 
+## End-to-End Encrypted Messaging (E2EE)
+
+Athena provides military-grade end-to-end encryption for secure messaging with zero-knowledge architecture.
+
+### Security Features
+
+- **Zero-Knowledge Architecture**: Server cannot decrypt message content
+- **Perfect Forward Secrecy**: Compromised keys don't affect past/future messages  
+- **Post-Compromise Security**: Fresh key exchanges restore security after compromise
+- **Industry-Standard Cryptography**:
+  - X25519 ECDH for key exchange
+  - XChaCha20-Poly1305 AEAD for message encryption
+  - Ed25519 for digital signatures
+  - Argon2id for password-based key derivation
+- **Session Management**: Time-limited unlocked sessions with automatic lock
+- **Comprehensive Audit Logging**: Security events tracked for compliance
+
+### How It Works
+
+1. **Setup**: User creates master key encrypted with password using Argon2id
+2. **Unlock**: User unlocks E2EE session with password (15-minute timeout)
+3. **Key Exchange**: Users exchange public keys for secure conversation
+4. **Secure Messaging**: Messages encrypted with per-conversation keys
+5. **Message Authentication**: Ed25519 signatures prevent tampering
+
+### API Flow
+
+```bash
+# 1. Setup E2EE for user
+curl -X POST /api/v1/e2ee/setup \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{"password": "strong-password"}'
+
+# 2. Unlock E2EE session  
+curl -X POST /api/v1/e2ee/unlock \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{"password": "strong-password"}'
+
+# 3. Exchange keys with recipient
+curl -X POST /api/v1/e2ee/key-exchange \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{"recipient_id": "user-uuid"}'
+
+# 4. Send encrypted message
+curl -X POST /api/v1/messages/secure \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{
+    "recipient_id": "user-uuid",
+    "encrypted_content": "[Encrypted]Hello World",
+    "pgp_signature": "signature..."
+  }'
+```
+
+### Database Schema
+
+The E2EE system uses dedicated tables:
+- `user_master_keys` - Password-encrypted master keys
+- `conversation_keys` - Per-conversation encryption keys
+- `key_exchange_messages` - Key exchange handshakes
+- `user_signing_keys` - Ed25519 signing key pairs
+- `crypto_audit_log` - Security event audit trail
+
+### Security Documentation
+
+See [SECURITY_E2EE.md](SECURITY_E2EE.md) for comprehensive security documentation including:
+- Detailed cryptographic specifications
+- Threat model and security analysis
+- Penetration testing guidelines
+- Incident response procedures
+- Compliance standards (SOC 2, FIPS 140-2)
+
 ## Architecture
 
 ```
 /cmd/server            # Application entry point
 /internal/
   ├── config/         # Configuration management
+  ├── crypto/         # E2EE cryptographic operations
   ├── domain/         # Domain models and errors
   ├── generated/      # OpenAPI generated types
   ├── httpapi/        # HTTP handlers and routes
@@ -252,6 +338,7 @@ Operational note: Debug logs for width/aspect estimation emit only when `LOG_LEV
   └── usecase/        # Business logic interfaces
 /api/                 # OpenAPI specifications
 /migrations/          # Database migrations
+/SECURITY_E2EE.md     # E2EE security documentation
 ```
 
 ## Docker Deployment

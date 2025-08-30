@@ -658,6 +658,314 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
+  # End-to-End Encrypted Messages
+  /api/v1/messages:
+    post:
+      tags:
+        - Messages
+      summary: Send a standard message
+      description: Send a non-encrypted message to another user
+      operationId: sendMessage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SendMessageRequest'
+      responses:
+        '201':
+          description: Message sent successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+        '400':
+          description: Invalid request data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+    get:
+      tags:
+        - Messages
+      summary: Get conversations
+      description: Get user's conversations with pagination
+      operationId: getConversations
+      parameters:
+        - in: query
+          name: limit
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+        - in: query
+          name: offset
+          required: false
+          schema: { type: integer, minimum: 0, default: 0 }
+      responses:
+        '200':
+          description: Conversations retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConversationsResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/messages/{user_id}:
+    get:
+      tags:
+        - Messages
+      summary: Get messages with specific user
+      description: Get all messages in conversation with a specific user
+      operationId: getMessages
+      parameters:
+        - in: path
+          name: user_id
+          required: true
+          description: User ID (UUID)
+          schema:
+            type: string
+            format: uuid
+        - in: query
+          name: limit
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+        - in: query
+          name: offset
+          required: false
+          schema: { type: integer, minimum: 0, default: 0 }
+      responses:
+        '200':
+          description: Messages retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessagesResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/messages/{id}/read:
+    put:
+      tags:
+        - Messages
+      summary: Mark message as read
+      description: Mark a specific message as read
+      operationId: markMessageRead
+      parameters:
+        - in: path
+          name: id
+          required: true
+          description: Message ID (UUID)
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Message marked as read
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Message not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/e2ee/setup:
+    post:
+      tags:
+        - E2EE
+      summary: Setup E2EE for user
+      description: Initialize end-to-end encryption by creating a master key encrypted with user's password
+      operationId: setupE2EE
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/E2EESetupRequest'
+            examples:
+              setup:
+                summary: Setup E2EE
+                value:
+                  password: "strong-password-123"
+      responses:
+        '200':
+          description: E2EE setup successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/E2EESetupResponse'
+              examples:
+                success:
+                  summary: E2EE setup success
+                  value:
+                    message: "E2EE setup completed successfully"
+                    public_key: "base64-encoded-public-key"
+                    signing_public_key: "base64-encoded-signing-key"
+        '400':
+          description: Invalid request or E2EE already setup
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/e2ee/unlock:
+    post:
+      tags:
+        - E2EE
+      summary: Unlock E2EE session
+      description: Unlock E2EE session with password (15-minute timeout)
+      operationId: unlockE2EE
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/E2EEUnlockRequest'
+            examples:
+              unlock:
+                summary: Unlock E2EE session
+                value:
+                  password: "strong-password-123"
+      responses:
+        '200':
+          description: E2EE session unlocked
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/E2EEUnlockResponse'
+              examples:
+                success:
+                  summary: E2EE unlock success
+                  value:
+                    message: "E2EE session unlocked"
+                    expires_at: "2024-01-01T12:15:00Z"
+        '400':
+          description: Invalid password or E2EE not setup
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/e2ee/key-exchange:
+    post:
+      tags:
+        - E2EE
+      summary: Exchange keys for conversation
+      description: Initiate or complete key exchange with recipient for secure conversation
+      operationId: exchangeKeys
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/KeyExchangeRequest'
+            examples:
+              exchange:
+                summary: Initiate key exchange
+                value:
+                  recipient_id: "550e8400-e29b-41d4-a716-446655440000"
+      responses:
+        '200':
+          description: Key exchange successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KeyExchangeResponse'
+              examples:
+                success:
+                  summary: Key exchange success
+                  value:
+                    message: "Key exchange completed"
+                    conversation_id: "660f9500-f39c-52e5-b827-557766551111"
+        '400':
+          description: Invalid request or E2EE session locked
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/messages/secure:
+    post:
+      tags:
+        - E2EE
+      summary: Send encrypted message
+      description: Send an end-to-end encrypted message with digital signature
+      operationId: sendSecureMessage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SecureMessageRequest'
+            examples:
+              secure_message:
+                summary: Send encrypted message
+                value:
+                  recipient_id: "550e8400-e29b-41d4-a716-446655440000"
+                  encrypted_content: "[Encrypted]Hello, this is a secure message!"
+                  pgp_signature: "base64-encoded-ed25519-signature"
+      responses:
+        '201':
+          description: Encrypted message sent successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+        '400':
+          description: Invalid request, E2EE session locked, or no shared key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
 components:
   securitySchemes:
     bearerAuth:
@@ -1059,3 +1367,279 @@ components:
       required:
         - error
         - success
+
+    # Message Schemas
+    Message:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Message unique identifier
+        sender_id:
+          type: string
+          format: uuid
+          description: Sender user ID
+        recipient_id:
+          type: string
+          format: uuid
+          description: Recipient user ID
+        content:
+          type: string
+          description: Message content (null for encrypted messages)
+          nullable: true
+        encrypted_content:
+          type: string
+          description: Encrypted message content (null for standard messages)
+          nullable: true
+        content_nonce:
+          type: string
+          description: Encryption nonce (for encrypted messages)
+          nullable: true
+        pgp_signature:
+          type: string
+          description: Ed25519 signature (for encrypted messages)
+          nullable: true
+        is_encrypted:
+          type: boolean
+          description: Whether message is end-to-end encrypted
+        encryption_version:
+          type: integer
+          description: Encryption version used
+          minimum: 0
+        is_read:
+          type: boolean
+          description: Whether message has been read by recipient
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+      required:
+        - id
+        - sender_id
+        - recipient_id
+        - is_encrypted
+        - encryption_version
+        - is_read
+        - created_at
+        - updated_at
+
+    Conversation:
+      type: object
+      properties:
+        user_id:
+          type: string
+          format: uuid
+          description: Other user in conversation
+        user_username:
+          type: string
+          description: Other user's username
+        user_display_name:
+          type: string
+          description: Other user's display name
+        last_message:
+          $ref: '#/components/schemas/Message'
+        unread_count:
+          type: integer
+          description: Number of unread messages
+          minimum: 0
+        last_activity:
+          type: string
+          format: date-time
+      required:
+        - user_id
+        - user_username
+        - user_display_name
+        - last_message
+        - unread_count
+        - last_activity
+
+    SendMessageRequest:
+      type: object
+      properties:
+        recipient_id:
+          type: string
+          format: uuid
+          description: Recipient user ID
+        content:
+          type: string
+          description: Message content
+          minLength: 1
+          maxLength: 10000
+      required:
+        - recipient_id
+        - content
+
+    MessageResponse:
+      type: object
+      properties:
+        data:
+          $ref: '#/components/schemas/Message'
+        success:
+          type: boolean
+          example: true
+      required:
+        - data
+        - success
+
+    MessagesResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Message'
+        meta:
+          $ref: '#/components/schemas/ListMeta'
+        success:
+          type: boolean
+          example: true
+      required:
+        - data
+        - meta
+        - success
+
+    ConversationsResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Conversation'
+        meta:
+          $ref: '#/components/schemas/ListMeta'
+        success:
+          type: boolean
+          example: true
+      required:
+        - data
+        - meta
+        - success
+
+    SuccessResponse:
+      type: object
+      properties:
+        message:
+          type: string
+          description: Success message
+        success:
+          type: boolean
+          example: true
+      required:
+        - message
+        - success
+
+    # E2EE Schemas
+    E2EESetupRequest:
+      type: object
+      properties:
+        password:
+          type: string
+          description: Master password for E2EE key derivation
+          minLength: 8
+          maxLength: 128
+      required:
+        - password
+
+    E2EESetupResponse:
+      type: object
+      properties:
+        message:
+          type: string
+          description: Success message
+          example: "E2EE setup completed successfully"
+        public_key:
+          type: string
+          description: Base64-encoded X25519 public key for key exchange
+        signing_public_key:
+          type: string
+          description: Base64-encoded Ed25519 public key for signatures
+        success:
+          type: boolean
+          example: true
+      required:
+        - message
+        - public_key
+        - signing_public_key
+        - success
+
+    E2EEUnlockRequest:
+      type: object
+      properties:
+        password:
+          type: string
+          description: Master password to unlock E2EE session
+          minLength: 8
+          maxLength: 128
+      required:
+        - password
+
+    E2EEUnlockResponse:
+      type: object
+      properties:
+        message:
+          type: string
+          description: Success message
+          example: "E2EE session unlocked"
+        expires_at:
+          type: string
+          format: date-time
+          description: When the unlocked session expires
+        success:
+          type: boolean
+          example: true
+      required:
+        - message
+        - expires_at
+        - success
+
+    KeyExchangeRequest:
+      type: object
+      properties:
+        recipient_id:
+          type: string
+          format: uuid
+          description: Recipient user ID to exchange keys with
+      required:
+        - recipient_id
+
+    KeyExchangeResponse:
+      type: object
+      properties:
+        message:
+          type: string
+          description: Success message
+          example: "Key exchange completed"
+        conversation_id:
+          type: string
+          format: uuid
+          description: Conversation ID for the key exchange
+        success:
+          type: boolean
+          example: true
+      required:
+        - message
+        - conversation_id
+        - success
+
+    SecureMessageRequest:
+      type: object
+      properties:
+        recipient_id:
+          type: string
+          format: uuid
+          description: Recipient user ID
+        encrypted_content:
+          type: string
+          description: Client-side encrypted message content
+          minLength: 1
+        pgp_signature:
+          type: string
+          description: Base64-encoded Ed25519 signature of the message
+          minLength: 1
+      required:
+        - recipient_id
+        - encrypted_content
+        - pgp_signature
