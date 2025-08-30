@@ -33,8 +33,8 @@ func TestRateLimitingDoesNotBlockGenuineTraffic(t *testing.T) {
 	handler := NewViewsHandler(viewsService)
 
 	// Create test data
-	user := createTestUser(t, testDB)
-	video := createTestVideo(t, testDB, user.ID)
+	user := createTestViewsRateLimitUser(t, testDB)
+	video := createTestViewsRateLimitVideo(t, testDB, user.ID)
 
 	t.Run("rapid session updates should not be rate limited", func(t *testing.T) {
 		// Simulate a user watching a video and frequently updating their progress
@@ -155,7 +155,7 @@ func TestRateLimitingDoesNotBlockGenuineTraffic(t *testing.T) {
 
 		// Create multiple test videos
 		for i := 0; i < numVideos; i++ {
-			video := createTestVideo(t, testDB, user.ID)
+			video := createTestViewsRateLimitVideo(t, testDB, user.ID)
 			videos = append(videos, video)
 		}
 
@@ -248,8 +248,8 @@ func TestHighVolumeViewTracking(t *testing.T) {
 	handler := NewViewsHandler(viewsService)
 
 	// Create test data
-	user := createTestUser(t, testDB)
-	video := createTestVideo(t, testDB, user.ID)
+	user := createTestViewsRateLimitUser(t, testDB)
+	video := createTestViewsRateLimitVideo(t, testDB, user.ID)
 
 	t.Run("handle burst of legitimate view tracking requests", func(t *testing.T) {
 		// Simulate a popular video going viral - many users watching simultaneously
@@ -400,8 +400,8 @@ func TestEdgeCaseScenarios(t *testing.T) {
 	handler := NewViewsHandler(viewsService)
 
 	// Create test data
-	user := createTestUser(t, testDB)
-	video := createTestVideo(t, testDB, user.ID)
+	user := createTestViewsRateLimitUser(t, testDB)
+	video := createTestViewsRateLimitVideo(t, testDB, user.ID)
 
 	t.Run("rapid session switching should not be blocked", func(t *testing.T) {
 		// Simulate user with multiple tabs or devices switching between sessions
@@ -562,7 +562,7 @@ func TestEdgeCaseScenarios(t *testing.T) {
 
 // Helper functions (reuse from views_handlers_test.go)
 
-func createTestUser(t *testing.T, testDB *testutil.TestDB) *domain.User {
+func createTestViewsRateLimitUser(t *testing.T, testDB *testutil.TestDB) *domain.User {
 	t.Helper()
 
 	user := &domain.User{
@@ -586,7 +586,7 @@ func createTestUser(t *testing.T, testDB *testutil.TestDB) *domain.User {
 	return user
 }
 
-func createTestVideo(t *testing.T, testDB *testutil.TestDB, userID string) *domain.Video {
+func createTestViewsRateLimitVideo(t *testing.T, testDB *testutil.TestDB, userID string) *domain.Video {
 	t.Helper()
 
 	video := &domain.Video{
@@ -618,6 +618,6 @@ func createTestVideo(t *testing.T, testDB *testutil.TestDB, userID string) *doma
 	return video
 }
 
-func stringPtr(s string) *string {
+func stringPtrRL(s string) *string {
 	return &s
 }

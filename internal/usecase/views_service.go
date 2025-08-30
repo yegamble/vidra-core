@@ -211,8 +211,17 @@ func (s *ViewsService) GetTrendingVideosWithDetails(ctx context.Context, limit i
 		}
 
 		response.Videos = append(response.Videos, domain.TrendingVideoWithDetails{
-			TrendingVideo: &trending,
-			Video:         video,
+			VideoID:         video.ID,
+			Title:           video.Title,
+			Description:     video.Description,
+			ThumbnailURL:    video.ThumbnailPath,
+			Duration:        video.Duration,
+			Views:           video.Views,
+			EngagementScore: trending.EngagementScore,
+			VelocityScore:   trending.VelocityScore,
+			CreatedAt:       video.CreatedAt,
+			TrendingVideo:   &trending,
+			Video:           video,
 		})
 	}
 

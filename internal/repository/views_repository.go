@@ -148,7 +148,6 @@ func (r *ViewsRepository) GetVideoAnalytics(ctx context.Context, filter *domain.
 	if filter.IsAnonymous != nil {
 		baseQuery += fmt.Sprintf(" AND is_anonymous = $%d", argIndex)
 		args = append(args, *filter.IsAnonymous)
-		argIndex++
 	}
 
 	// Get aggregate stats
@@ -178,7 +177,12 @@ func (r *ViewsRepository) GetVideoAnalytics(ctx context.Context, filter *domain.
 	if err != nil {
 		return nil, fmt.Errorf("failed to get device stats: %w", err)
 	}
-	defer rows.Close()
+	defer func() {
+		if err := rows.Close(); err != nil {
+			// Log error but don't override return value
+			_ = err
+		}
+	}()
 
 	response.DeviceStats = make(map[string]int64)
 	for rows.Next() {
@@ -188,6 +192,9 @@ func (r *ViewsRepository) GetVideoAnalytics(ctx context.Context, filter *domain.
 			return nil, fmt.Errorf("failed to scan device stats: %w", err)
 		}
 		response.DeviceStats[device] = count
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating device stats: %w", err)
 	}
 
 	// Get geo stats
@@ -202,7 +209,12 @@ func (r *ViewsRepository) GetVideoAnalytics(ctx context.Context, filter *domain.
 	if err != nil {
 		return nil, fmt.Errorf("failed to get geo stats: %w", err)
 	}
-	defer rows.Close()
+	defer func() {
+		if err := rows.Close(); err != nil {
+			// Log error but don't override return value
+			_ = err
+		}
+	}()
 
 	response.GeoStats = make(map[string]int64)
 	for rows.Next() {
@@ -212,6 +224,9 @@ func (r *ViewsRepository) GetVideoAnalytics(ctx context.Context, filter *domain.
 			return nil, fmt.Errorf("failed to scan geo stats: %w", err)
 		}
 		response.GeoStats[country] = count
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating geo stats: %w", err)
 	}
 
 	// Get hourly stats
@@ -227,7 +242,12 @@ func (r *ViewsRepository) GetVideoAnalytics(ctx context.Context, filter *domain.
 	if err != nil {
 		return nil, fmt.Errorf("failed to get hourly stats: %w", err)
 	}
-	defer rows.Close()
+	defer func() {
+		if err := rows.Close(); err != nil {
+			// Log error but don't override return value
+			_ = err
+		}
+	}()
 
 	response.HourlyStats = make(map[int]int64)
 	for rows.Next() {
@@ -237,6 +257,9 @@ func (r *ViewsRepository) GetVideoAnalytics(ctx context.Context, filter *domain.
 			return nil, fmt.Errorf("failed to scan hourly stats: %w", err)
 		}
 		response.HourlyStats[hour] = count
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to iterate hourly stats rows: %w", err)
 	}
 
 	return &response, nil
@@ -468,7 +491,12 @@ func (r *ViewsRepository) GetViewCountsByVideo(ctx context.Context, videoIDs []s
 	if err != nil {
 		return nil, fmt.Errorf("failed to get view counts: %w", err)
 	}
-	defer rows.Close()
+	defer func() {
+		if err := rows.Close(); err != nil {
+			// Log error but don't override return value
+			_ = err
+		}
+	}()
 
 	counts := make(map[string]int64)
 	for rows.Next() {
@@ -478,6 +506,9 @@ func (r *ViewsRepository) GetViewCountsByVideo(ctx context.Context, videoIDs []s
 			return nil, fmt.Errorf("failed to scan view counts: %w", err)
 		}
 		counts[videoID] = count
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to iterate view counts rows: %w", err)
 	}
 
 	return counts, nil
@@ -510,7 +541,13 @@ func (r *ViewsRepository) BatchCreateUserViews(ctx context.Context, views []*dom
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() {
+		if rollbackErr := tx.Rollback(); rollbackErr != nil {
+			// Rollback errors are usually not critical since the transaction
+			// might have already been committed or rolled back
+			_ = rollbackErr
+		}
+	}()
 
 	query := `
 		INSERT INTO user_views (

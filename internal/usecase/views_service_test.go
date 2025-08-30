@@ -129,12 +129,56 @@ type MockVideoRepository struct {
 	mock.Mock
 }
 
-func (m *MockVideoRepository) GetVideoByID(ctx context.Context, id string) (*domain.Video, error) {
+func (m *MockVideoRepository) Create(ctx context.Context, video *domain.Video) error {
+	args := m.Called(ctx, video)
+	return args.Error(0)
+}
+
+func (m *MockVideoRepository) GetByID(ctx context.Context, id string) (*domain.Video, error) {
 	args := m.Called(ctx, id)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
 	return args.Get(0).(*domain.Video), args.Error(1)
+}
+
+func (m *MockVideoRepository) GetByUserID(ctx context.Context, userID string, limit, offset int) ([]*domain.Video, int64, error) {
+	args := m.Called(ctx, userID, limit, offset)
+	if args.Get(0) == nil {
+		return nil, args.Get(1).(int64), args.Error(2)
+	}
+	return args.Get(0).([]*domain.Video), args.Get(1).(int64), args.Error(2)
+}
+
+func (m *MockVideoRepository) Update(ctx context.Context, video *domain.Video) error {
+	args := m.Called(ctx, video)
+	return args.Error(0)
+}
+
+func (m *MockVideoRepository) Delete(ctx context.Context, id string, userID string) error {
+	args := m.Called(ctx, id, userID)
+	return args.Error(0)
+}
+
+func (m *MockVideoRepository) List(ctx context.Context, req *domain.VideoSearchRequest) ([]*domain.Video, int64, error) {
+	args := m.Called(ctx, req)
+	if args.Get(0) == nil {
+		return nil, args.Get(1).(int64), args.Error(2)
+	}
+	return args.Get(0).([]*domain.Video), args.Get(1).(int64), args.Error(2)
+}
+
+func (m *MockVideoRepository) Search(ctx context.Context, req *domain.VideoSearchRequest) ([]*domain.Video, int64, error) {
+	args := m.Called(ctx, req)
+	if args.Get(0) == nil {
+		return nil, args.Get(1).(int64), args.Error(2)
+	}
+	return args.Get(0).([]*domain.Video), args.Get(1).(int64), args.Error(2)
+}
+
+func (m *MockVideoRepository) UpdateProcessingInfo(ctx context.Context, videoID string, status domain.ProcessingStatus, outputPaths map[string]string, thumbnailPath, previewPath string) error {
+	args := m.Called(ctx, videoID, status, outputPaths, thumbnailPath, previewPath)
+	return args.Error(0)
 }
 
 func TestViewsService_TrackView_NewView(t *testing.T) {
@@ -153,7 +197,7 @@ func TestViewsService_TrackView_NewView(t *testing.T) {
 		Title:  "Test Video",
 		Status: domain.StatusCompleted,
 	}
-	mockVideoRepo.On("GetVideoByID", ctx, videoID).Return(video, nil)
+	mockVideoRepo.On("GetByID", ctx, videoID).Return(video, nil)
 
 	// Mock no existing view (new view)
 	mockViewsRepo.On("GetUserViewBySessionAndVideo", ctx, sessionID, videoID).Return(nil, nil)
@@ -211,7 +255,7 @@ func TestViewsService_TrackView_UpdateExistingView(t *testing.T) {
 		Title:  "Test Video",
 		Status: domain.StatusCompleted,
 	}
-	mockVideoRepo.On("GetVideoByID", ctx, videoID).Return(video, nil)
+	mockVideoRepo.On("GetByID", ctx, videoID).Return(video, nil)
 
 	// Mock existing view
 	existingView := &domain.UserView{
@@ -261,7 +305,7 @@ func TestViewsService_TrackView_VideoNotFound(t *testing.T) {
 	videoID := uuid.New().String()
 
 	// Mock video not found
-	mockVideoRepo.On("GetVideoByID", ctx, videoID).Return(nil, nil)
+	mockVideoRepo.On("GetByID", ctx, videoID).Return(nil, nil)
 
 	request := &domain.ViewTrackingRequest{
 		VideoID:         videoID,
@@ -289,7 +333,7 @@ func TestViewsService_TrackView_AnonymousUser(t *testing.T) {
 
 	// Mock video exists
 	video := &domain.Video{ID: videoID, Title: "Test Video"}
-	mockVideoRepo.On("GetVideoByID", ctx, videoID).Return(video, nil)
+	mockVideoRepo.On("GetByID", ctx, videoID).Return(video, nil)
 
 	// Mock no existing view
 	mockViewsRepo.On("GetUserViewBySessionAndVideo", ctx, sessionID, videoID).Return(nil, nil)
@@ -435,8 +479,8 @@ func TestViewsService_GetTrendingVideosWithDetails(t *testing.T) {
 	video2 := &domain.Video{ID: videoID2, Title: "Trending Video 2"}
 
 	mockViewsRepo.On("GetTrendingVideos", ctx, limit).Return(trendingVideos, nil)
-	mockVideoRepo.On("GetVideoByID", ctx, videoID1).Return(video1, nil)
-	mockVideoRepo.On("GetVideoByID", ctx, videoID2).Return(video2, nil)
+	mockVideoRepo.On("GetByID", ctx, videoID1).Return(video1, nil)
+	mockVideoRepo.On("GetByID", ctx, videoID2).Return(video2, nil)
 
 	result, err := service.GetTrendingVideosWithDetails(ctx, limit)
 	require.NoError(t, err)
@@ -718,7 +762,7 @@ func TestViewsService_ConcurrentViewTracking(t *testing.T) {
 
 	// Mock video exists
 	video := &domain.Video{ID: videoID, Title: "Test Video"}
-	mockVideoRepo.On("GetVideoByID", ctx, videoID).Return(video, nil).Times(50)
+	mockVideoRepo.On("GetByID", ctx, videoID).Return(video, nil).Times(50)
 
 	// Mock no existing views (all are new)
 	mockViewsRepo.On("GetUserViewBySessionAndVideo", ctx, mock.AnythingOfType("string"), videoID).Return(nil, nil).Times(50)

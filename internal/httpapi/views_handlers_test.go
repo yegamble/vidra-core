@@ -31,8 +31,8 @@ func TestViewsHandler_TrackView(t *testing.T) {
 	handler := NewViewsHandler(viewsService)
 
 	// Create test data
-	user := createTestUser(t, testDB)
-	video := createTestVideo(t, testDB, user.ID)
+	user := createTestViewsUser(t, testDB)
+	video := createTestViewsVideo(t, testDB, user.ID)
 
 	t.Run("successful view tracking - authenticated user", func(t *testing.T) {
 		request := domain.ViewTrackingRequest{
@@ -44,10 +44,10 @@ func TestViewsHandler_TrackView(t *testing.T) {
 			IsCompleted:          false,
 			SeekCount:            2,
 			PauseCount:           1,
-			DeviceType:           stringPtr("mobile"),
-			OSName:               stringPtr("iOS"),
-			BrowserName:          stringPtr("Safari"),
-			CountryCode:          stringPtr("US"),
+			DeviceType:           "mobile",
+			OSName:               "iOS",
+			BrowserName:          "Safari",
+			CountryCode:          "US",
 			TrackingConsent:      true,
 		}
 
@@ -242,8 +242,8 @@ func TestViewsHandler_GetVideoAnalytics(t *testing.T) {
 	handler := NewViewsHandler(viewsService)
 
 	// Create test data
-	user := createTestUser(t, testDB)
-	video := createTestVideo(t, testDB, user.ID)
+	user := createTestViewsUser(t, testDB)
+	video := createTestViewsVideo(t, testDB, user.ID)
 
 	// Create some test views
 	for i := 0; i < 5; i++ {
@@ -319,7 +319,7 @@ func TestViewsHandler_GetTrendingVideos(t *testing.T) {
 	handler := NewViewsHandler(viewsService)
 
 	// Create test data
-	user := createTestUser(t, testDB)
+	user := createTestViewsUser(t, testDB)
 	video1 := createTestVideo(t, testDB, user.ID)
 	video2 := createTestVideo(t, testDB, user.ID)
 
@@ -414,7 +414,7 @@ func TestViewsHandler_GetTopVideos(t *testing.T) {
 	handler := NewViewsHandler(viewsService)
 
 	// Create test data with different view counts
-	user := createTestUser(t, testDB)
+	user := createTestViewsUser(t, testDB)
 	video1 := createTestVideo(t, testDB, user.ID)
 	video2 := createTestVideo(t, testDB, user.ID)
 
@@ -564,8 +564,8 @@ func TestViewsHandler_ConcurrentRequests(t *testing.T) {
 	handler := NewViewsHandler(viewsService)
 
 	// Create test data
-	user := createTestUser(t, testDB)
-	video := createTestVideo(t, testDB, user.ID)
+	user := createTestViewsUser(t, testDB)
+	video := createTestViewsVideo(t, testDB, user.ID)
 
 	concurrency := 20
 	results := make(chan int, concurrency)
@@ -633,8 +633,8 @@ func TestViewsHandler_BulkViewTracking(t *testing.T) {
 	handler := NewViewsHandler(viewsService)
 
 	// Create test data
-	user := createTestUser(t, testDB)
-	video := createTestVideo(t, testDB, user.ID)
+	user := createTestViewsUser(t, testDB)
+	video := createTestViewsVideo(t, testDB, user.ID)
 
 	// Simulate a user watching a video and generating multiple tracking events
 	// (seeking, pausing, resuming, etc.) - this is normal user behavior that shouldn't be rate limited
@@ -702,7 +702,7 @@ func TestViewsHandler_BulkViewTracking(t *testing.T) {
 
 // Helper functions
 
-func createTestUser(t *testing.T, testDB *testutil.TestDB) *domain.User {
+func createTestViewsUser(t *testing.T, testDB *testutil.TestDB) *domain.User {
 	t.Helper()
 
 	user := &domain.User{
@@ -726,7 +726,7 @@ func createTestUser(t *testing.T, testDB *testutil.TestDB) *domain.User {
 	return user
 }
 
-func createTestVideo(t *testing.T, testDB *testutil.TestDB, userID string) *domain.Video {
+func createTestViewsVideo(t *testing.T, testDB *testutil.TestDB, userID string) *domain.Video {
 	t.Helper()
 
 	video := &domain.Video{
@@ -758,7 +758,7 @@ func createTestVideo(t *testing.T, testDB *testutil.TestDB, userID string) *doma
 	return video
 }
 
-func createTestUserView(t *testing.T, testDB *testutil.TestDB, userID, videoID string, index int) *domain.UserView {
+func createTestViewsUserView(t *testing.T, testDB *testutil.TestDB, userID, videoID string, index int) *domain.UserView {
 	t.Helper()
 
 	now := time.Now()
