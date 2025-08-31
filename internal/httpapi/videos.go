@@ -454,35 +454,8 @@ func UploadChunkHandler(uploadService usecase.UploadService, cfg *config.Config)
 // CompleteUploadHandler finalizes the upload and queues for encoding
 func CompleteUploadHandler(uploadService usecase.UploadService, encodingRepo usecase.EncodingRepository) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		sessionID := chi.URLParam(r, "sessionId")
-		if sessionID == "" {
-			WriteError(w, http.StatusBadRequest, domain.NewDomainError("MISSING_SESSION_ID", "Session ID is required"))
-			return
-		}
-
-		// Validate UUID format
-		if _, err := uuid.Parse(sessionID); err != nil {
-			WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_SESSION_ID", "Invalid session ID format"))
-			return
-		}
-
-		if err := uploadService.CompleteUpload(r.Context(), sessionID); err != nil {
-			var domainErr domain.DomainError
-			if errors.As(err, &domainErr) {
-				WriteError(w, http.StatusBadRequest, domainErr)
-				return
-			}
-			WriteError(w, http.StatusInternalServerError, domain.NewDomainError("COMPLETE_FAILED", "Failed to complete upload"))
-			return
-		}
-
-		response := map[string]interface{}{
-			"session_id": sessionID,
-			"status":     "completed",
-			"message":    "Upload completed, processing queued",
-		}
-
-		WriteJSON(w, http.StatusOK, response)
+		id := chi.URLParam(r, "sessionId")
+		completeUploadWithID(w, r, id, "MISSING_SESSION_ID", "INVALID_SESSION_ID", "Session ID is required", "Invalid session ID format", "session_id", uploadService)
 	}
 }
 
@@ -931,37 +904,35 @@ func VideoUploadChunkHandler(uploadService usecase.UploadService, cfg *config.Co
 // VideoCompleteUploadHandler handles direct video upload completion (for test compatibility)
 func VideoCompleteUploadHandler(uploadService usecase.UploadService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		videoID := chi.URLParam(r, "id")
-		if videoID == "" {
-			WriteError(w, http.StatusBadRequest, domain.NewDomainError("MISSING_VIDEO_ID", "Video ID is required"))
-			return
-		}
-
-		// Validate UUID format
-		if _, err := uuid.Parse(videoID); err != nil {
-			WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_VIDEO_ID", "Invalid video ID format"))
-			return
-		}
-
-		// Use the legacy session ID == videoID to finalize upload and enqueue encoding
-		if err := uploadService.CompleteUpload(r.Context(), videoID); err != nil {
-			var domainErr domain.DomainError
-			if errors.As(err, &domainErr) {
-				WriteError(w, http.StatusBadRequest, domainErr)
-				return
-			}
-			WriteError(w, http.StatusInternalServerError, domain.NewDomainError("COMPLETE_FAILED", "Failed to complete upload"))
-			return
-		}
-
-		response := map[string]interface{}{
-			"video_id": videoID,
-			"status":   "completed",
-			"message":  "Upload completed, processing queued",
-		}
-
-		WriteJSON(w, http.StatusOK, response)
+		id := chi.URLParam(r, "id")
+		completeUploadWithID(w, r, id, "MISSING_VIDEO_ID", "INVALID_VIDEO_ID", "Video ID is required", "Invalid video ID format", "video_id", uploadService)
 	}
+}
+
+func completeUploadWithID(w http.ResponseWriter, r *http.Request, id, missingCode, invalidCode, missingMsg, invalidMsg, respKey string, uploadService usecase.UploadService) {
+	if id == "" {
+		WriteError(w, http.StatusBadRequest, domain.NewDomainError(missingCode, missingMsg))
+		return
+	}
+	if _, err := uuid.Parse(id); err != nil {
+		WriteError(w, http.StatusBadRequest, domain.NewDomainError(invalidCode, invalidMsg))
+		return
+	}
+	if err := uploadService.CompleteUpload(r.Context(), id); err != nil {
+		var domainErr domain.DomainError
+		if errors.As(err, &domainErr) {
+			WriteError(w, http.StatusBadRequest, domainErr)
+			return
+		}
+		WriteError(w, http.StatusInternalServerError, domain.NewDomainError("COMPLETE_FAILED", "Failed to complete upload"))
+		return
+	}
+	resp := map[string]interface{}{
+		respKey:   id,
+		"status":  "completed",
+		"message": "Upload completed, processing queued",
+	}
+	WriteJSON(w, http.StatusOK, resp)
 }
 
 // ensureLegacyUploadSession creates an upload session with ID equal to videoID if it does not exist.
