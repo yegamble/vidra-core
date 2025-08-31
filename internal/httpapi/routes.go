@@ -20,6 +20,7 @@ import (
 	"athena/internal/repository"
 	"athena/internal/scheduler"
 	"athena/internal/usecase"
+	"strings"
 )
 
 func RegisterRoutes(r chi.Router, cfg *config.Config) {
@@ -149,18 +150,18 @@ func RegisterRoutes(r chi.Router, cfg *config.Config) {
 			// Legacy one-shot upload endpoint for Postman collection compatibility
 			r.With(middleware.Auth(cfg.JWTSecret)).Post("/upload", UploadVideoFileHandler(videoRepo, cfg))
 			// Parameterized routes come after static routes
-			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{id}", GetVideoHandler(videoRepo))
-			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{id}/stream", StreamVideoHandler(videoRepo))
+			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{id:[0-9a-fA-F-]{36}}", GetVideoHandler(videoRepo))
+			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{id:[0-9a-fA-F-]{36}}/stream", StreamVideoHandler(videoRepo))
 			// Subscription feed
 			r.With(middleware.Auth(cfg.JWTSecret)).Get("/subscriptions", ListSubscriptionVideosHandler(subRepo))
 
 			r.With(middleware.Auth(cfg.JWTSecret)).Post("/", CreateVideoHandler(videoRepo))
-			r.With(middleware.Auth(cfg.JWTSecret)).Put("/{id}", UpdateVideoHandler(videoRepo))
-			r.With(middleware.Auth(cfg.JWTSecret)).Delete("/{id}", DeleteVideoHandler(videoRepo))
+			r.With(middleware.Auth(cfg.JWTSecret)).Put("/{id:[0-9a-fA-F-]{36}}", UpdateVideoHandler(videoRepo))
+			r.With(middleware.Auth(cfg.JWTSecret)).Delete("/{id:[0-9a-fA-F-]{36}}", DeleteVideoHandler(videoRepo))
 
 			// Direct video upload endpoints (for backward compatibility with tests)
-			r.With(middleware.Auth(cfg.JWTSecret)).Post("/{id}/upload", VideoUploadChunkHandler(uploadService, cfg))
-			r.With(middleware.Auth(cfg.JWTSecret)).Post("/{id}/complete", VideoCompleteUploadHandler(uploadService))
+			r.With(middleware.Auth(cfg.JWTSecret)).Post("/{id:[0-9a-fA-F-]{36}}/upload", VideoUploadChunkHandler(uploadService, cfg))
+			r.With(middleware.Auth(cfg.JWTSecret)).Post("/{id:[0-9a-fA-F-]{36}}/complete", VideoCompleteUploadHandler(uploadService))
 		})
 
 		// Static HLS handler with privacy gating and cache headers
@@ -213,7 +214,7 @@ func RegisterRoutes(r chi.Router, cfg *config.Config) {
 		// Views and analytics endpoints
 		// These need to be before the parameterized /videos/{videoId} route
 		r.Get("/trending", viewsHandler.GetTrendingVideos)
-		r.Route("/videos/{videoId}", func(r chi.Router) {
+		r.Route("/videos/{videoId:[0-9a-fA-F-]{36}}", func(r chi.Router) {
 			// View tracking - allow anonymous users
 			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Post("/views", viewsHandler.TrackView)
 			// Analytics - require authentication for detailed analytics
@@ -227,6 +228,7 @@ func RegisterRoutes(r chi.Router, cfg *config.Config) {
 
 	// Custom 404 handler that returns JSON error response
 	r.NotFound(func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("NOT_FOUND %s %s", r.Method, r.URL.Path)
 		WriteError(w, http.StatusNotFound, domain.NewDomainError("NOT_FOUND", "The requested resource was not found"))
 	})
 
@@ -234,4 +236,12 @@ func RegisterRoutes(r chi.Router, cfg *config.Config) {
 	r.MethodNotAllowed(func(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, http.StatusMethodNotAllowed, domain.NewDomainError("METHOD_NOT_ALLOWED", "Method not allowed for this endpoint"))
 	})
+
+	// Debug: log all registered routes when log level is debug/trace
+	if lvl := strings.ToLower(cfg.LogLevel); lvl == "debug" || lvl == "trace" {
+		_ = chi.Walk(r, func(method string, route string, handler http.Handler, middlewares ...func(http.Handler) http.Handler) error {
+			log.Printf("ROUTE %s %s", method, route)
+			return nil
+		})
+	}
 }

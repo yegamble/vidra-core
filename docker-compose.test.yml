@@ -72,6 +72,7 @@ services:
       REQUIRE_IPFS: "false"
       PORT: 8080
       VALIDATION_TEST_MODE: "true"
+      LOG_LEVEL: debug
     ports:
       - "18080:8080"
     healthcheck:
@@ -92,6 +93,7 @@ services:
       - ./postman:/etc/newman
     entrypoint: [
       "newman", "run", "/etc/newman/athena-auth.postman_collection.json",
+      "-e", "/etc/newman/athena.local.postman_environment.json",
       "--env-var", "baseUrl=http://app-test:8080",
       "--reporters", "cli,junit",
       "--reporter-junit-export", "/etc/newman/newman-results.xml"
