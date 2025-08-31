@@ -27,6 +27,21 @@ import (
 	"athena/internal/validation"
 )
 
+// requireUUIDParam extracts a path parameter and validates it as a UUID.
+// On failure it writes an error response and returns ok=false.
+func requireUUIDParam(w http.ResponseWriter, r *http.Request, param, missingCode, invalidCode, missingMsg, invalidMsg string) (string, bool) {
+	id := chi.URLParam(r, param)
+	if id == "" {
+		WriteError(w, http.StatusBadRequest, domain.NewDomainError(missingCode, missingMsg))
+		return "", false
+	}
+	if _, err := uuid.Parse(id); err != nil {
+		WriteError(w, http.StatusBadRequest, domain.NewDomainError(invalidCode, invalidMsg))
+		return "", false
+	}
+	return id, true
+}
+
 func ListVideosHandler(repo usecase.VideoRepository) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
@@ -123,15 +138,8 @@ func SearchVideosHandler(repo usecase.VideoRepository) http.HandlerFunc {
 
 func GetVideoHandler(repo usecase.VideoRepository) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		videoID := chi.URLParam(r, "id")
-		if videoID == "" {
-			WriteError(w, http.StatusBadRequest, domain.NewDomainError("MISSING_VIDEO_ID", "Video ID is required"))
-			return
-		}
-
-		// Validate UUID format
-		if _, err := uuid.Parse(videoID); err != nil {
-			WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_VIDEO_ID", "Invalid video ID format"))
+		videoID, ok := requireUUIDParam(w, r, "id", "MISSING_VIDEO_ID", "INVALID_VIDEO_ID", "Video ID is required", "Invalid video ID format")
+		if !ok {
 			return
 		}
 
@@ -218,15 +226,8 @@ func CreateVideoHandler(repo usecase.VideoRepository) http.HandlerFunc {
 
 func UpdateVideoHandler(repo usecase.VideoRepository) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		videoID := chi.URLParam(r, "id")
-		if videoID == "" {
-			WriteError(w, http.StatusBadRequest, domain.NewDomainError("MISSING_VIDEO_ID", "Video ID is required"))
-			return
-		}
-
-		// Validate UUID format
-		if _, err := uuid.Parse(videoID); err != nil {
-			WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_VIDEO_ID", "Invalid video ID format"))
+		videoID, ok := requireUUIDParam(w, r, "id", "MISSING_VIDEO_ID", "INVALID_VIDEO_ID", "Video ID is required", "Invalid video ID format")
+		if !ok {
 			return
 		}
 
@@ -317,15 +318,8 @@ func UpdateVideoHandler(repo usecase.VideoRepository) http.HandlerFunc {
 
 func DeleteVideoHandler(repo usecase.VideoRepository) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		videoID := chi.URLParam(r, "id")
-		if videoID == "" {
-			WriteError(w, http.StatusBadRequest, domain.NewDomainError("MISSING_VIDEO_ID", "Video ID is required"))
-			return
-		}
-
-		// Validate UUID format
-		if _, err := uuid.Parse(videoID); err != nil {
-			WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_VIDEO_ID", "Invalid video ID format"))
+		videoID, ok := requireUUIDParam(w, r, "id", "MISSING_VIDEO_ID", "INVALID_VIDEO_ID", "Video ID is required", "Invalid video ID format")
+		if !ok {
 			return
 		}
 
@@ -462,15 +456,8 @@ func CompleteUploadHandler(uploadService usecase.UploadService, encodingRepo use
 // GetUploadStatusHandler returns the current upload status
 func GetUploadStatusHandler(uploadService usecase.UploadService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		sessionID := chi.URLParam(r, "sessionId")
-		if sessionID == "" {
-			WriteError(w, http.StatusBadRequest, domain.NewDomainError("MISSING_SESSION_ID", "Session ID is required"))
-			return
-		}
-
-		// Validate UUID format
-		if _, err := uuid.Parse(sessionID); err != nil {
-			WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_SESSION_ID", "Invalid session ID format"))
+		sessionID, ok := requireUUIDParam(w, r, "sessionId", "MISSING_SESSION_ID", "INVALID_SESSION_ID", "Session ID is required", "Invalid session ID format")
+		if !ok {
 			return
 		}
 
@@ -492,15 +479,8 @@ func GetUploadStatusHandler(uploadService usecase.UploadService) http.HandlerFun
 // ResumeUploadHandler provides information to resume an interrupted upload
 func ResumeUploadHandler(uploadService usecase.UploadService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		sessionID := chi.URLParam(r, "sessionId")
-		if sessionID == "" {
-			WriteError(w, http.StatusBadRequest, domain.NewDomainError("MISSING_SESSION_ID", "Session ID is required"))
-			return
-		}
-
-		// Validate UUID format
-		if _, err := uuid.Parse(sessionID); err != nil {
-			WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_SESSION_ID", "Invalid session ID format"))
+		sessionID, ok := requireUUIDParam(w, r, "sessionId", "MISSING_SESSION_ID", "INVALID_SESSION_ID", "Session ID is required", "Invalid session ID format")
+		if !ok {
 			return
 		}
 
@@ -544,15 +524,8 @@ func ResumeUploadHandler(uploadService usecase.UploadService) http.HandlerFunc {
 
 func GetUserVideosHandler(repo usecase.VideoRepository) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		userID := chi.URLParam(r, "id")
-		if userID == "" {
-			WriteError(w, http.StatusBadRequest, domain.NewDomainError("MISSING_USER_ID", "User ID is required"))
-			return
-		}
-
-		// Validate UUID format
-		if _, err := uuid.Parse(userID); err != nil {
-			WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_USER_ID", "Invalid user ID format"))
+		userID, ok := requireUUIDParam(w, r, "id", "MISSING_USER_ID", "INVALID_USER_ID", "User ID is required", "Invalid user ID format")
+		if !ok {
 			return
 		}
 
@@ -1030,9 +1003,8 @@ func persistLegacyChunk(ctx context.Context, sessionID string, chunkIndex int, d
 }
 
 func StreamVideo(w http.ResponseWriter, r *http.Request) {
-	videoID := chi.URLParam(r, "id")
-	if videoID == "" {
-		WriteError(w, http.StatusBadRequest, domain.NewDomainError("MISSING_VIDEO_ID", "Video ID is required"))
+	videoID, ok := requireUUIDParam(w, r, "id", "MISSING_VIDEO_ID", "INVALID_VIDEO_ID", "Video ID is required", "Invalid video ID format")
+	if !ok {
 		return
 	}
 
