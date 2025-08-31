@@ -347,7 +347,7 @@ jobs:
           DOCKER_COMPOSE: docker compose
         run: |
           echo "Running Postman E2E tests with test stack..."
-          make postman-e2e || true  # Allow failure for now until collection is fixed
+          make postman-e2e
 
       - name: Upload Newman results
         if: always()
