@@ -15,6 +15,7 @@ import (
 	redis "github.com/redis/go-redis/v9"
 
 	"athena/internal/config"
+	"athena/internal/domain"
 	"athena/internal/middleware"
 	"athena/internal/repository"
 	"athena/internal/scheduler"
@@ -216,5 +217,15 @@ func RegisterRoutes(r chi.Router, cfg *config.Config) {
 
 		// Fingerprinting for view deduplication
 		r.Post("/views/fingerprint", viewsHandler.GenerateFingerprint)
+	})
+
+	// Custom 404 handler that returns JSON error response
+	r.NotFound(func(w http.ResponseWriter, r *http.Request) {
+		WriteError(w, http.StatusNotFound, domain.NewDomainError("NOT_FOUND", "The requested resource was not found"))
+	})
+
+	// Custom 405 handler for method not allowed
+	r.MethodNotAllowed(func(w http.ResponseWriter, r *http.Request) {
+		WriteError(w, http.StatusMethodNotAllowed, domain.NewDomainError("METHOD_NOT_ALLOWED", "Method not allowed for this endpoint"))
 	})
 }
