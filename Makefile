@@ -212,10 +212,28 @@ validate-openapi: ## Validate OpenAPI specification
 		fi; \
 	fi
 
-serve-docs: ## Serve OpenAPI documentation
-	@echo "Opening API documentation at http://localhost:8081"
-	@python3 -m http.server 8081 --directory . &
-	@open http://localhost:8081/api/openapi.yaml || xdg-open http://localhost:8081/api/openapi.yaml
+generate-docs: ## Generate API documentation from OpenAPI spec
+	@echo "Generating API documentation..."
+	@if [ -f "openapi.yaml" ] || [ -f "api/openapi.yaml" ]; then \
+		if command -v redocly >/dev/null 2>&1; then \
+			redocly build-docs openapi.yaml -o docs/api/index.html 2>/dev/null || \
+			redocly build-docs api/openapi.yaml -o docs/api/index.html 2>/dev/null || \
+			echo "Failed to generate documentation"; \
+		else \
+			echo "Redocly CLI not installed."; \
+			echo "Install with: npm install -g @redocly/cli"; \
+		fi; \
+	else \
+		echo "No OpenAPI specification found"; \
+		mkdir -p docs/api; \
+		echo "<html><body><h1>API Documentation</h1><p>OpenAPI spec not found</p></body></html>" > docs/api/index.html; \
+	fi
+
+serve-docs: generate-docs ## Serve OpenAPI documentation
+	@echo "Serving API documentation at http://localhost:8081"
+	@cd docs/api && python3 -m http.server 8081 &
+	@sleep 1
+	@open http://localhost:8081 || xdg-open http://localhost:8081 || echo "Open http://localhost:8081 in your browser"
 
 clean: ## Clean build artifacts
 	rm -rf bin/

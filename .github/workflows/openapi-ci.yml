@@ -31,10 +31,10 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '18'
+          node-version: '20'  # Use Node 20 for consistency
 
       - name: Install Swagger CLI
-        run: npm install -g @apidevtools/swagger-cli
+        run: npm install -g @apidevtools/swagger-cli@latest
 
       - name: Validate OpenAPI spec
         run: |
@@ -60,18 +60,30 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '18'
+          node-version: '20'  # Use Node 20 for better compatibility
 
       - name: Install documentation tools
         run: |
-          npm install -g @redocly/cli
-          npm install -g spectacle-docs
-
+          # Only install modern, maintained tools
+          npm install -g @redocly/cli@latest
+          npm install -g @apidevtools/swagger-cli@latest
+          
       - name: Generate documentation
         run: |
           echo "Generating API documentation from OpenAPI spec..."
-          # Add actual doc generation commands here when OpenAPI spec exists
-          echo "Documentation generation placeholder"
+          # Check if OpenAPI spec exists
+          if [ -f "openapi.yaml" ]; then
+            echo "Found openapi.yaml, generating documentation..."
+            # Use Redocly to build documentation
+            npx @redocly/cli build-docs openapi.yaml -o docs/api/index.html || echo "Documentation generation failed"
+          elif [ -f "openapi.json" ]; then
+            echo "Found openapi.json, generating documentation..."
+            npx @redocly/cli build-docs openapi.json -o docs/api/index.html || echo "Documentation generation failed"
+          else
+            echo "No OpenAPI specification found, skipping documentation generation"
+            mkdir -p docs/api
+            echo "<html><body><h1>API Documentation</h1><p>OpenAPI specification not found</p></body></html>" > docs/api/index.html
+          fi
 
       - name: Upload documentation artifacts
         uses: actions/upload-artifact@v4

@@ -169,13 +169,22 @@ go test ./...
 The API is defined using OpenAPI 3.0 specification in `api/openapi.yaml`.
 
 ```bash
+# Install documentation tools (one-time setup)
+npm install -g @redocly/cli@latest
+npm install -g @apidevtools/swagger-cli@latest
+
 # Validate OpenAPI spec
 make validate-openapi
 
-# Serve API documentation
+# Generate HTML documentation
+make generate-docs
+
+# Serve API documentation locally
 make serve-docs
 # Opens at http://localhost:8081
 ```
+
+**Note**: The documentation generation uses modern tools that require Node.js 20+. The old `spectacle-docs` package is deprecated and should not be used.
 
 ## API Endpoints
 
