@@ -1342,6 +1342,23 @@
     },
     {
       "name": "Videos",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "exec": [
+              "// Ensure we have an access token for video operations",
+              "const accessToken = pm.environment.get('access_token');",
+              "if (!accessToken || accessToken === '' || accessToken === '{{access_token}}') {",
+              "  console.log('Warning: No valid access token found for video operations');",
+              "  console.log('Please run Register or Login test first to get authentication token');",
+              "  // For CI/CD, we could trigger auth here, but for now just warn",
+              "}"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
       "item": [
         {
           "name": "List Videos",

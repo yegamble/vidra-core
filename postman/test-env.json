@@ -1,0 +1,29 @@
+{
+  "id": "0ab28393-21bc-463e-aa4c-e09069f0cdf3",
+  "values": [
+    {
+      "type": "any",
+      "value": "http://app-test:8080",
+      "key": "baseUrl"
+    },
+    {
+      "type": "any",
+      "value": "user_1756653685426",
+      "key": "username"
+    },
+    {
+      "type": "any",
+      "value": "user_1756653685426@example.com",
+      "key": "email"
+    },
+    {
+      "type": "any",
+      "value": "Password123!",
+      "key": "password"
+    }
+  ],
+  "name": "environment",
+  "_postman_variable_scope": "environment",
+  "_postman_exported_at": "2025-08-31T15:21:26.242Z",
+  "_postman_exported_using": "Newman/6.1.3"
+}
