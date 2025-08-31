@@ -2,13 +2,11 @@ package httpapi
 
 import (
 	"encoding/json"
+	"github.com/google/uuid"
+	"golang.org/x/crypto/bcrypt"
 	"net/http"
 	"strconv"
 	"time"
-
-	chi "github.com/go-chi/chi/v5"
-	"github.com/google/uuid"
-	"golang.org/x/crypto/bcrypt"
 
 	"athena/internal/domain"
 	"athena/internal/middleware"
@@ -97,9 +95,8 @@ func UpdateCurrentUserHandler(repo usecase.UserRepository) http.HandlerFunc {
 // GetUserHandler returns a public user by ID using the repository
 func GetUserHandler(repo usecase.UserRepository) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		userID := chi.URLParam(r, "id")
-		if userID == "" {
-			WriteError(w, http.StatusBadRequest, domain.NewDomainError("MISSING_USER_ID", "User ID is required"))
+		userID, ok := requireUUIDParam(w, r, "id", "MISSING_USER_ID", "INVALID_USER_ID", "User ID is required", "Invalid user ID format")
+		if !ok {
 			return
 		}
 
@@ -119,9 +116,8 @@ func GetUserHandler(repo usecase.UserRepository) http.HandlerFunc {
 
 // GetUserVideos remains a stub until video repository is implemented
 func GetUserVideos(w http.ResponseWriter, r *http.Request) {
-	userID := chi.URLParam(r, "id")
-	if userID == "" {
-		WriteError(w, http.StatusBadRequest, domain.NewDomainError("MISSING_USER_ID", "User ID is required"))
+	userID, ok := requireUUIDParam(w, r, "id", "MISSING_USER_ID", "INVALID_USER_ID", "User ID is required", "Invalid user ID format")
+	if !ok {
 		return
 	}
 

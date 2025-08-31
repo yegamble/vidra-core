@@ -4,9 +4,6 @@ import (
 	"net/http"
 	"strconv"
 
-	chi "github.com/go-chi/chi/v5"
-	"github.com/google/uuid"
-
 	"athena/internal/domain"
 	"athena/internal/middleware"
 	"athena/internal/usecase"
@@ -39,13 +36,8 @@ func SubscribeToUserHandler(subRepo usecase.SubscriptionRepository, userRepo use
 			return
 		}
 
-		targetID := chi.URLParam(r, "id")
-		if targetID == "" {
-			WriteError(w, http.StatusBadRequest, domain.NewDomainError("MISSING_USER_ID", "User ID is required"))
-			return
-		}
-		if _, err := uuid.Parse(targetID); err != nil {
-			WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_USER_ID", "Invalid user ID format"))
+		targetID, ok := requireUUIDParam(w, r, "id", "MISSING_USER_ID", "INVALID_USER_ID", "User ID is required", "Invalid user ID format")
+		if !ok {
 			return
 		}
 
@@ -76,13 +68,8 @@ func UnsubscribeFromUserHandler(subRepo usecase.SubscriptionRepository) http.Han
 			return
 		}
 
-		targetID := chi.URLParam(r, "id")
-		if targetID == "" {
-			WriteError(w, http.StatusBadRequest, domain.NewDomainError("MISSING_USER_ID", "User ID is required"))
-			return
-		}
-		if _, err := uuid.Parse(targetID); err != nil {
-			WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_USER_ID", "Invalid user ID format"))
+		targetID, ok := requireUUIDParam(w, r, "id", "MISSING_USER_ID", "INVALID_USER_ID", "User ID is required", "Invalid user ID format")
+		if !ok {
 			return
 		}
 
