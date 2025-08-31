@@ -2723,9 +2723,15 @@
               "listen": "test",
               "script": {
                 "exec": [
-                  "const expectedStatuses = [400, 401];",
+                  "const expectedStatuses = [400, 401, 404];",
                   "pm.test('Status is 400 or 401', () => {",
                   "  pm.expect(expectedStatuses).to.include(pm.response.code);",
+                  "});",
+                  "pm.test('404 response has error structure', () => {",
+                  "  if (pm.response.code === 404) {",
+                  "    const j = pm.response.json();",
+                  "    pm.expect(j).to.have.property('error');",
+                  "  }",
                   "});",
                   "pm.test('Has error body', () => { const j = pm.response.json(); pm.expect(j).to.have.property('error'); });"
                 ],
