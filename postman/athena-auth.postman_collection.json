@@ -1417,7 +1417,7 @@
             "header": [
               {
                 "key": "Authorization",
-                "value": "Bearer {{accessToken}}"
+                "value": "Bearer {{access_token}}"
               }
             ],
             "body": {
@@ -1485,7 +1485,7 @@
             "header": [
               {
                 "key": "Authorization",
-                "value": "Bearer {{accessToken}}"
+                "value": "Bearer {{access_token}}"
               }
             ],
             "body": {
@@ -1552,7 +1552,7 @@
             "header": [
               {
                 "key": "Authorization",
-                "value": "Bearer {{accessToken}}"
+                "value": "Bearer {{access_token}}"
               }
             ],
             "body": {
@@ -1619,7 +1619,7 @@
             "header": [
               {
                 "key": "Authorization",
-                "value": "Bearer {{accessToken}}"
+                "value": "Bearer {{access_token}}"
               }
             ],
             "body": {
@@ -1686,7 +1686,7 @@
             "header": [
               {
                 "key": "Authorization",
-                "value": "Bearer {{accessToken}}"
+                "value": "Bearer {{access_token}}"
               }
             ],
             "body": {
@@ -1753,7 +1753,7 @@
             "header": [
               {
                 "key": "Authorization",
-                "value": "Bearer {{accessToken}}"
+                "value": "Bearer {{access_token}}"
               }
             ],
             "body": {
@@ -1815,7 +1815,7 @@
             "header": [
               {
                 "key": "Authorization",
-                "value": "Bearer {{accessToken}}"
+                "value": "Bearer {{access_token}}"
               }
             ],
             "body": {
@@ -1877,7 +1877,7 @@
             "header": [
               {
                 "key": "Authorization",
-                "value": "Bearer {{accessToken}}"
+                "value": "Bearer {{access_token}}"
               }
             ],
             "body": {
@@ -1939,7 +1939,7 @@
             "header": [
               {
                 "key": "Authorization",
-                "value": "Bearer {{accessToken}}"
+                "value": "Bearer {{access_token}}"
               }
             ],
             "body": {
@@ -2001,7 +2001,7 @@
             "header": [
               {
                 "key": "Authorization",
-                "value": "Bearer {{accessToken}}"
+                "value": "Bearer {{access_token}}"
               }
             ],
             "body": {
@@ -2063,7 +2063,7 @@
             "header": [
               {
                 "key": "Authorization",
-                "value": "Bearer {{accessToken}}"
+                "value": "Bearer {{access_token}}"
               }
             ],
             "body": {
@@ -2177,7 +2177,7 @@
             "header": [
               {
                 "key": "Authorization",
-                "value": "Bearer {{accessToken}}"
+                "value": "Bearer {{access_token}}"
               }
             ],
             "body": {
