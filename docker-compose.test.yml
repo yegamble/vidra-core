@@ -55,7 +55,7 @@ services:
       - test-network
 
   app-test:
-    image: athena
+    image: athena:latest
     build: .
     depends_on:
       postgres-test:

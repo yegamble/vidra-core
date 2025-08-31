@@ -1,95 +1,345 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuites name="Athena Auth API" tests="45" time="0.615">
-  <testsuite name="Auth / Register" id="7204f67d-ba04-4948-a517-25f6fb63edad" timestamp="2025-08-31T06:33:52.969Z" tests="4" failures="0" errors="0" time="0.169">
-    <testcase name="Status is 201" time="0.169" classname="AthenaAuthApi"/>
-    <testcase name="Returns JSON" time="0.169" classname="AthenaAuthApi"/>
-    <testcase name="Response wrapped with data" time="0.169" classname="AthenaAuthApi"/>
-    <testcase name="Has user + tokens" time="0.169" classname="AthenaAuthApi"/>
+<testsuites name="Athena Auth API" tests="58" time="1.019">
+  <testsuite name="Auth / Register" id="11eba058-0329-4604-af52-840b9d61a964" timestamp="2025-08-31T12:16:51.684Z" tests="4" failures="0" errors="0" time="0.129">
+    <testcase name="Status is 201" time="0.129" classname="AthenaAuthApi"/>
+    <testcase name="Returns JSON" time="0.129" classname="AthenaAuthApi"/>
+    <testcase name="Response wrapped with data" time="0.129" classname="AthenaAuthApi"/>
+    <testcase name="Has user + tokens" time="0.129" classname="AthenaAuthApi"/>
   </testsuite>
-  <testsuite name="Auth / Login" id="235e455b-19c1-4785-8c6d-73d4ebdb62d5" timestamp="2025-08-31T06:33:52.969Z" tests="2" failures="0" errors="0" time="0.004">
+  <testsuite name="Auth / Login" id="864c2527-3d90-4e74-a3b5-3ddee77fb60e" timestamp="2025-08-31T12:16:51.684Z" tests="2" failures="0" errors="0" time="0.004">
     <testcase name="Status is valid (200 or 401)" time="0.004" classname="AthenaAuthApi"/>
     <testcase name="401 response has error structure" time="0.004" classname="AthenaAuthApi"/>
   </testsuite>
-  <testsuite name="Auth / Login - Invalid Password (401)" id="ac5d235f-3363-4bd4-9c5b-8bfacdf18249" timestamp="2025-08-31T06:33:52.969Z" tests="2" failures="0" errors="0" time="0.003">
-    <testcase name="Status is 401" time="0.003" classname="AthenaAuthApi"/>
-    <testcase name="Has error body" time="0.003" classname="AthenaAuthApi"/>
+  <testsuite name="Auth / Login - Invalid Password (401)" id="07e6a01d-757a-43e8-8e98-331b93b5247f" timestamp="2025-08-31T12:16:51.684Z" tests="2" failures="0" errors="0" time="0.004">
+    <testcase name="Status is 401" time="0.004" classname="AthenaAuthApi"/>
+    <testcase name="Has error body" time="0.004" classname="AthenaAuthApi"/>
   </testsuite>
-  <testsuite name="Auth / Refresh" id="6c8d74ee-94b9-4aa6-a3ce-938f095eacbf" timestamp="2025-08-31T06:33:52.969Z" tests="2" failures="0" errors="0" time="0.004">
-    <testcase name="Status is valid (200, 400, or 401)" time="0.004" classname="AthenaAuthApi"/>
-    <testcase name="Error response has error structure" time="0.004" classname="AthenaAuthApi"/>
+  <testsuite name="Auth / Refresh" id="9c2f2314-9ba1-4258-b736-311f4333c4a0" timestamp="2025-08-31T12:16:51.684Z" tests="2" failures="0" errors="0" time="0.005">
+    <testcase name="Status is valid (200, 400, or 401)" time="0.005" classname="AthenaAuthApi"/>
+    <testcase name="Error response has error structure" time="0.005" classname="AthenaAuthApi"/>
   </testsuite>
-  <testsuite name="Auth / Upload Avatar - PNG" id="216754c5-eaea-475f-bd94-4dda7a1217b2" timestamp="2025-08-31T06:33:52.969Z" tests="2" failures="0" errors="0" time="0.046">
-    <testcase name="Status is valid (200, 401, or 503)" time="0.046" classname="AthenaAuthApi"/>
-    <testcase name="401 response has error structure" time="0.046" classname="AthenaAuthApi"/>
-  </testsuite>
-  <testsuite name="Auth / Upload Avatar - JPEG" id="d86ca6f7-7e87-4a22-a904-05c0cf2100a5" timestamp="2025-08-31T06:33:52.969Z" tests="2" failures="0" errors="0" time="0.046">
-    <testcase name="Status is valid (200, 401, or 503)" time="0.046" classname="AthenaAuthApi"/>
-    <testcase name="401 response has error structure" time="0.046" classname="AthenaAuthApi"/>
-  </testsuite>
-  <testsuite name="Auth / Upload Avatar - WebP" id="33bae815-85e5-4c67-bf4b-c6ec5490a585" timestamp="2025-08-31T06:33:52.969Z" tests="2" failures="0" errors="0" time="0.050">
-    <testcase name="Status is valid (200, 401, or 503)" time="0.050" classname="AthenaAuthApi"/>
-    <testcase name="401 response has error structure" time="0.050" classname="AthenaAuthApi"/>
-  </testsuite>
-  <testsuite name="Auth / Upload Avatar - HEIC" id="93169f74-66d7-4525-ad19-dcceb145581a" timestamp="2025-08-31T06:33:52.969Z" tests="2" failures="0" errors="0" time="0.045">
+  <testsuite name="Auth / Upload Avatar - PNG" id="72be7b50-6dc4-4421-8382-f70ea772abf8" timestamp="2025-08-31T12:16:51.684Z" tests="2" failures="0" errors="0" time="0.045">
     <testcase name="Status is valid (200, 401, or 503)" time="0.045" classname="AthenaAuthApi"/>
     <testcase name="401 response has error structure" time="0.045" classname="AthenaAuthApi"/>
   </testsuite>
-  <testsuite name="Auth / Upload Avatar - GIF" id="abb99b0f-ccf3-4b5b-9187-53a59069bf53" timestamp="2025-08-31T06:33:52.969Z" tests="2" failures="0" errors="0" time="0.047">
-    <testcase name="Status is valid (200, 401, or 503)" time="0.047" classname="AthenaAuthApi"/>
-    <testcase name="401 response has error structure" time="0.047" classname="AthenaAuthApi"/>
+  <testsuite name="Auth / Upload Avatar - JPEG" id="0ac9578c-fd31-4bac-b25d-8d7e72c5a5e1" timestamp="2025-08-31T12:16:51.684Z" tests="2" failures="0" errors="0" time="0.045">
+    <testcase name="Status is valid (200, 401, or 503)" time="0.045" classname="AthenaAuthApi"/>
+    <testcase name="401 response has error structure" time="0.045" classname="AthenaAuthApi"/>
   </testsuite>
-  <testsuite name="Auth / Upload Avatar - TIFF" id="6f9bfa58-eec2-4f2b-83f3-9f52e40c9386" timestamp="2025-08-31T06:33:52.969Z" tests="2" failures="0" errors="0" time="0.044">
-    <testcase name="Status is valid (200, 401, or 503)" time="0.044" classname="AthenaAuthApi"/>
-    <testcase name="401 response has error structure" time="0.044" classname="AthenaAuthApi"/>
+  <testsuite name="Auth / Upload Avatar - WebP" id="314c348c-78aa-4c82-93a7-95e6e554253d" timestamp="2025-08-31T12:16:51.684Z" tests="2" failures="0" errors="0" time="0.003">
+    <testcase name="Status is valid (200, 401, or 503)" time="0.003" classname="AthenaAuthApi"/>
+    <testcase name="401 response has error structure" time="0.003" classname="AthenaAuthApi"/>
   </testsuite>
-  <testsuite name="Auth / Upload Avatar - Invalid Extension (400)" id="59d9bb72-5e5c-43db-b317-ff7126f5d455" timestamp="2025-08-31T06:33:52.969Z" tests="2" failures="0" errors="0" time="0.046">
-    <testcase name="Status is valid (400 or 401)" time="0.046" classname="AthenaAuthApi"/>
-    <testcase name="401 response has error structure" time="0.046" classname="AthenaAuthApi"/>
+  <testsuite name="Auth / Upload Avatar - HEIC" id="e8fa3d96-d50c-4c5f-aedb-467b6d40de56" timestamp="2025-08-31T12:16:51.684Z" tests="2" failures="0" errors="0" time="0.004">
+    <testcase name="Status is valid (200, 401, or 503)" time="0.004" classname="AthenaAuthApi"/>
+    <testcase name="401 response has error structure" time="0.004" classname="AthenaAuthApi"/>
   </testsuite>
-  <testsuite name="Auth / Upload Avatar - Malicious File (400)" id="6168cef2-8a4d-4627-9fa0-f1200c84e6a3" timestamp="2025-08-31T06:33:52.969Z" tests="2" failures="0" errors="0" time="0.045">
+  <testsuite name="Auth / Upload Avatar - GIF" id="b666395e-bb33-4617-9355-a1752c7d6b61" timestamp="2025-08-31T12:16:51.684Z" tests="2" failures="0" errors="0" time="0.045">
+    <testcase name="Status is valid (200, 401, or 503)" time="0.045" classname="AthenaAuthApi"/>
+    <testcase name="401 response has error structure" time="0.045" classname="AthenaAuthApi"/>
+  </testsuite>
+  <testsuite name="Auth / Upload Avatar - TIFF" id="364ac718-60b8-4b5c-b5c3-c6332cf78b5f" timestamp="2025-08-31T12:16:51.684Z" tests="2" failures="0" errors="0" time="0.003">
+    <testcase name="Status is valid (200, 401, or 503)" time="0.003" classname="AthenaAuthApi"/>
+    <testcase name="401 response has error structure" time="0.003" classname="AthenaAuthApi"/>
+  </testsuite>
+  <testsuite name="Auth / Upload Avatar - Invalid Extension (400)" id="c7ae995d-5089-4dde-a592-c8e8e6572ec9" timestamp="2025-08-31T12:16:51.684Z" tests="2" failures="0" errors="0" time="0.045">
     <testcase name="Status is valid (400 or 401)" time="0.045" classname="AthenaAuthApi"/>
     <testcase name="401 response has error structure" time="0.045" classname="AthenaAuthApi"/>
   </testsuite>
-  <testsuite name="Auth / Upload Avatar - No File (400)" id="fa729969-2aef-48c6-b6be-9e4baf18e341" timestamp="2025-08-31T06:33:52.969Z" tests="2" failures="0" errors="0" time="0.003">
+  <testsuite name="Auth / Upload Avatar - Malicious File (400)" id="f087ca52-52dd-4ba0-b169-5d3daa879768" timestamp="2025-08-31T12:16:51.684Z" tests="2" failures="0" errors="0" time="0.045">
+    <testcase name="Status is valid (400 or 401)" time="0.045" classname="AthenaAuthApi"/>
+    <testcase name="401 response has error structure" time="0.045" classname="AthenaAuthApi"/>
+  </testsuite>
+  <testsuite name="Auth / Upload Avatar - No File (400)" id="b4c5700d-5423-443e-9471-fc7d3225539b" timestamp="2025-08-31T12:16:51.684Z" tests="2" failures="0" errors="0" time="0.003">
     <testcase name="Status is valid (400 or 401)" time="0.003" classname="AthenaAuthApi"/>
     <testcase name="401 response has error structure" time="0.003" classname="AthenaAuthApi"/>
   </testsuite>
-  <testsuite name="Auth / Upload Avatar - No Auth (401)" id="c063ba3c-968b-4bea-9017-4304d3bef387" timestamp="2025-08-31T06:33:52.969Z" tests="2" failures="0" errors="0" time="0.003">
+  <testsuite name="Auth / Upload Avatar - No Auth (401)" id="e92675bf-2e30-44f3-9689-34153b75604d" timestamp="2025-08-31T12:16:51.684Z" tests="2" failures="0" errors="0" time="0.045">
+    <testcase name="Status is 401" time="0.045" classname="AthenaAuthApi"/>
+    <testcase name="Has error response" time="0.045" classname="AthenaAuthApi"/>
+  </testsuite>
+  <testsuite name="Auth / Refresh - Missing Token (400)" id="588fd98a-1886-43ef-b4df-a38fe4b28d29" timestamp="2025-08-31T12:16:51.684Z" tests="2" failures="0" errors="0" time="0.003">
+    <testcase name="Status is 400" time="0.003" classname="AthenaAuthApi"/>
+    <testcase name="Has error body" time="0.003" classname="AthenaAuthApi"/>
+  </testsuite>
+  <testsuite name="Auth / Refresh - Invalid Token (401)" id="8614e57b-4c16-4c8a-83bb-9e8190f6f358" timestamp="2025-08-31T12:16:51.684Z" tests="2" failures="0" errors="0" time="0.004">
+    <testcase name="Status is 401" time="0.004" classname="AthenaAuthApi"/>
+    <testcase name="Has error body" time="0.004" classname="AthenaAuthApi"/>
+  </testsuite>
+  <testsuite name="Auth / Logout" id="221e8abf-6ff5-4eda-b6a3-8701890a23f5" timestamp="2025-08-31T12:16:51.684Z" tests="2" failures="0" errors="0" time="0.003">
+    <testcase name="Status is valid (200 or 401)" time="0.003" classname="AthenaAuthApi"/>
+    <testcase name="401 response has error structure" time="0.003" classname="AthenaAuthApi"/>
+  </testsuite>
+  <testsuite name="Auth / Refresh After Logout (401)" id="d973b20f-682a-4224-9767-b8b57dc1a6e1" timestamp="2025-08-31T12:16:51.684Z" tests="2" failures="0" errors="0" time="0.003">
     <testcase name="Status is 401" time="0.003" classname="AthenaAuthApi"/>
-    <testcase name="Has error response" time="0.003" classname="AthenaAuthApi"/>
+    <testcase name="Has error body" time="0.003" classname="AthenaAuthApi"/>
   </testsuite>
-  <testsuite name="Auth / Refresh - Missing Token (400)" id="b070b0a1-50f1-4272-8385-90e64545e05d" timestamp="2025-08-31T06:33:52.969Z" tests="2" failures="0" errors="0" time="0.002">
-    <testcase name="Status is 400" time="0.002" classname="AthenaAuthApi"/>
-    <testcase name="Has error body" time="0.002" classname="AthenaAuthApi"/>
+  <testsuite name="Auth / Logout Without Token (401)" id="25a6ead1-c927-4d91-b37b-08348be1715a" timestamp="2025-08-31T12:16:51.684Z" tests="2" failures="0" errors="0" time="0.003">
+    <testcase name="Status is 401" time="0.003" classname="AthenaAuthApi"/>
+    <testcase name="Has error body or text" time="0.003" classname="AthenaAuthApi"/>
   </testsuite>
-  <testsuite name="Auth / Refresh - Invalid Token (401)" id="4f50f4ca-25c6-4b9b-b6b6-a4f8edaae0ee" timestamp="2025-08-31T06:33:52.969Z" tests="2" failures="0" errors="0" time="0.002">
-    <testcase name="Status is 401" time="0.002" classname="AthenaAuthApi"/>
-    <testcase name="Has error body" time="0.002" classname="AthenaAuthApi"/>
+  <testsuite name="Videos / List Videos" id="1cfc28e4-0efe-4da4-8901-114baa1ce66e" timestamp="2025-08-31T12:16:51.684Z" tests="4" failures="0" errors="0" time="0.007">
+    <testcase name="Status is 200" time="0.007" classname="AthenaAuthApi"/>
+    <testcase name="Response wrapped with data" time="0.007" classname="AthenaAuthApi"/>
+    <testcase name="Has meta object" time="0.007" classname="AthenaAuthApi"/>
+    <testcase name="Meta has pagination fields" time="0.007" classname="AthenaAuthApi"/>
   </testsuite>
-  <testsuite name="Auth / Logout" id="94e3f6c9-baf6-497d-99a9-8f54c5dab902" timestamp="2025-08-31T06:33:52.969Z" tests="2" failures="0" errors="0" time="0.002">
-    <testcase name="Status is valid (200 or 401)" time="0.002" classname="AthenaAuthApi"/>
-    <testcase name="401 response has error structure" time="0.002" classname="AthenaAuthApi"/>
+  <testsuite name="Videos / Upload Video - MP4" id="e1fb3401-25c7-414b-8e09-971ebe02e5da" timestamp="2025-08-31T12:16:51.684Z" tests="2" failures="2" errors="0" time="0.004">
+    <testcase name="Status is 201" time="0.004" classname="AthenaAuthApi">
+      <failure type="AssertionFailure" message="expected response to have status code 201 but got 404">
+        <![CDATA[Failed 1 times.]]>
+        <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
+        <![CDATA[Collection name: Athena Auth API.]]>
+        <![CDATA[Request name: Videos / Upload Video - MP4.]]>
+        <![CDATA[Test description: Status is 201.]]>
+        <![CDATA[Error message: expected response to have status code 201 but got 404.]]>
+        <![CDATA[Stacktrace: AssertionError: expected response to have status code 201 but got 404
+   at Object.eval sandbox-script.js:1:21).]]>
+      </failure>
+    </testcase>
+    <testcase name="Response has video ID" time="0.004" classname="AthenaAuthApi">
+      <failure type="AssertionFailure" message="expected { …(2) } to have property 'id'">
+        <![CDATA[Failed 1 times.]]>
+        <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
+        <![CDATA[Collection name: Athena Auth API.]]>
+        <![CDATA[Request name: Videos / Upload Video - MP4.]]>
+        <![CDATA[Test description: Response has video ID.]]>
+        <![CDATA[Error message: expected { …(2) } to have property 'id'.]]>
+        <![CDATA[Stacktrace: AssertionError: expected { …(2) } to have property 'id'
+   at Object.eval sandbox-script.js:2:21).]]>
+      </failure>
+    </testcase>
   </testsuite>
-  <testsuite name="Auth / Refresh After Logout (401)" id="1898b5c9-ed76-44d1-a2f0-cbf4e78610fd" timestamp="2025-08-31T06:33:52.969Z" tests="2" failures="0" errors="0" time="0.002">
-    <testcase name="Status is 401" time="0.002" classname="AthenaAuthApi"/>
-    <testcase name="Has error body" time="0.002" classname="AthenaAuthApi"/>
+  <testsuite name="Videos / Upload Video - MOV" id="5db9af28-7a90-4953-96fd-e3d7fda77eff" timestamp="2025-08-31T12:16:51.684Z" tests="2" failures="2" errors="0" time="0.003">
+    <testcase name="Status is 201" time="0.003" classname="AthenaAuthApi">
+      <failure type="AssertionFailure" message="expected response to have status code 201 but got 404">
+        <![CDATA[Failed 1 times.]]>
+        <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
+        <![CDATA[Collection name: Athena Auth API.]]>
+        <![CDATA[Request name: Videos / Upload Video - MOV.]]>
+        <![CDATA[Test description: Status is 201.]]>
+        <![CDATA[Error message: expected response to have status code 201 but got 404.]]>
+        <![CDATA[Stacktrace: AssertionError: expected response to have status code 201 but got 404
+   at Object.eval sandbox-script.js:1:22).]]>
+      </failure>
+    </testcase>
+    <testcase name="Response has video ID" time="0.003" classname="AthenaAuthApi">
+      <failure type="AssertionFailure" message="expected { …(2) } to have property 'id'">
+        <![CDATA[Failed 1 times.]]>
+        <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
+        <![CDATA[Collection name: Athena Auth API.]]>
+        <![CDATA[Request name: Videos / Upload Video - MOV.]]>
+        <![CDATA[Test description: Response has video ID.]]>
+        <![CDATA[Error message: expected { …(2) } to have property 'id'.]]>
+        <![CDATA[Stacktrace: AssertionError: expected { …(2) } to have property 'id'
+   at Object.eval sandbox-script.js:2:22).]]>
+      </failure>
+    </testcase>
   </testsuite>
-  <testsuite name="Auth / Logout Without Token (401)" id="623900f2-980c-48b5-8b0e-51e45545035a" timestamp="2025-08-31T06:33:52.969Z" tests="2" failures="0" errors="0" time="0.002">
-    <testcase name="Status is 401" time="0.002" classname="AthenaAuthApi"/>
-    <testcase name="Has error body or text" time="0.002" classname="AthenaAuthApi"/>
+  <testsuite name="Videos / Upload Video - MKV" id="6efc14a7-ec8b-4e89-af3a-3d29e764c392" timestamp="2025-08-31T12:16:51.684Z" tests="2" failures="2" errors="0" time="0.048">
+    <testcase name="Status is 201" time="0.048" classname="AthenaAuthApi">
+      <failure type="AssertionFailure" message="expected response to have status code 201 but got 404">
+        <![CDATA[Failed 1 times.]]>
+        <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
+        <![CDATA[Collection name: Athena Auth API.]]>
+        <![CDATA[Request name: Videos / Upload Video - MKV.]]>
+        <![CDATA[Test description: Status is 201.]]>
+        <![CDATA[Error message: expected response to have status code 201 but got 404.]]>
+        <![CDATA[Stacktrace: AssertionError: expected response to have status code 201 but got 404
+   at Object.eval sandbox-script.js:1:23).]]>
+      </failure>
+    </testcase>
+    <testcase name="Response has video ID" time="0.048" classname="AthenaAuthApi">
+      <failure type="AssertionFailure" message="expected { …(2) } to have property 'id'">
+        <![CDATA[Failed 1 times.]]>
+        <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
+        <![CDATA[Collection name: Athena Auth API.]]>
+        <![CDATA[Request name: Videos / Upload Video - MKV.]]>
+        <![CDATA[Test description: Response has video ID.]]>
+        <![CDATA[Error message: expected { …(2) } to have property 'id'.]]>
+        <![CDATA[Stacktrace: AssertionError: expected { …(2) } to have property 'id'
+   at Object.eval sandbox-script.js:2:23).]]>
+      </failure>
+    </testcase>
   </testsuite>
-  <testsuite name="Videos / List Videos" id="0c0b0548-0dcc-4599-8649-610e8b2edb71" timestamp="2025-08-31T06:33:52.969Z" tests="4" failures="0" errors="0" time="0.006">
-    <testcase name="Status is 200" time="0.006" classname="AthenaAuthApi"/>
-    <testcase name="Response wrapped with data" time="0.006" classname="AthenaAuthApi"/>
-    <testcase name="Has meta object" time="0.006" classname="AthenaAuthApi"/>
-    <testcase name="Meta has pagination fields" time="0.006" classname="AthenaAuthApi"/>
+  <testsuite name="Videos / Upload Video - WebM" id="ad3e2081-6165-4abc-b385-f49c750d82a0" timestamp="2025-08-31T12:16:51.684Z" tests="2" failures="2" errors="0" time="0.045">
+    <testcase name="Status is 201" time="0.045" classname="AthenaAuthApi">
+      <failure type="AssertionFailure" message="expected response to have status code 201 but got 404">
+        <![CDATA[Failed 1 times.]]>
+        <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
+        <![CDATA[Collection name: Athena Auth API.]]>
+        <![CDATA[Request name: Videos / Upload Video - WebM.]]>
+        <![CDATA[Test description: Status is 201.]]>
+        <![CDATA[Error message: expected response to have status code 201 but got 404.]]>
+        <![CDATA[Stacktrace: AssertionError: expected response to have status code 201 but got 404
+   at Object.eval sandbox-script.js:1:24).]]>
+      </failure>
+    </testcase>
+    <testcase name="Response has video ID" time="0.045" classname="AthenaAuthApi">
+      <failure type="AssertionFailure" message="expected { …(2) } to have property 'id'">
+        <![CDATA[Failed 1 times.]]>
+        <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
+        <![CDATA[Collection name: Athena Auth API.]]>
+        <![CDATA[Request name: Videos / Upload Video - WebM.]]>
+        <![CDATA[Test description: Response has video ID.]]>
+        <![CDATA[Error message: expected { …(2) } to have property 'id'.]]>
+        <![CDATA[Stacktrace: AssertionError: expected { …(2) } to have property 'id'
+   at Object.eval sandbox-script.js:2:24).]]>
+      </failure>
+    </testcase>
   </testsuite>
-  <testsuite name="Videos / List Videos - With Filters" id="4f4cd94c-9767-473b-a0ff-4cd78edd90d7" timestamp="2025-08-31T06:33:52.969Z" tests="2" failures="0" errors="0" time="0.004">
-    <testcase name="Status is 200" time="0.004" classname="AthenaAuthApi"/>
-    <testcase name="Response wrapped with data" time="0.004" classname="AthenaAuthApi"/>
+  <testsuite name="Videos / Upload Video - AVI" id="8138ee07-ba33-4d4e-a1e8-4e2a5cb194ea" timestamp="2025-08-31T12:16:51.684Z" tests="2" failures="2" errors="0" time="0.044">
+    <testcase name="Status is 201" time="0.044" classname="AthenaAuthApi">
+      <failure type="AssertionFailure" message="expected response to have status code 201 but got 404">
+        <![CDATA[Failed 1 times.]]>
+        <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
+        <![CDATA[Collection name: Athena Auth API.]]>
+        <![CDATA[Request name: Videos / Upload Video - AVI.]]>
+        <![CDATA[Test description: Status is 201.]]>
+        <![CDATA[Error message: expected response to have status code 201 but got 404.]]>
+        <![CDATA[Stacktrace: AssertionError: expected response to have status code 201 but got 404
+   at Object.eval sandbox-script.js:1:25).]]>
+      </failure>
+    </testcase>
+    <testcase name="Response has video ID" time="0.044" classname="AthenaAuthApi">
+      <failure type="AssertionFailure" message="expected { …(2) } to have property 'id'">
+        <![CDATA[Failed 1 times.]]>
+        <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
+        <![CDATA[Collection name: Athena Auth API.]]>
+        <![CDATA[Request name: Videos / Upload Video - AVI.]]>
+        <![CDATA[Test description: Response has video ID.]]>
+        <![CDATA[Error message: expected { …(2) } to have property 'id'.]]>
+        <![CDATA[Stacktrace: AssertionError: expected { …(2) } to have property 'id'
+   at Object.eval sandbox-script.js:2:25).]]>
+      </failure>
+    </testcase>
   </testsuite>
-  <testsuite name="Videos / Search Videos" id="13518673-3a74-4e1a-8260-17cf74bb8cc8" timestamp="2025-08-31T06:33:52.969Z" tests="3" failures="3" errors="0" time="0.002">
-    <testcase name="Status is 200" time="0.002" classname="AthenaAuthApi">
+  <testsuite name="Videos / Upload Video - Invalid MP3 (400)" id="0048dc9b-cfbb-4c15-b2ef-2fe950965a06" timestamp="2025-08-31T12:16:51.684Z" tests="2" failures="1" errors="0" time="0.046">
+    <testcase name="Status is 400" time="0.046" classname="AthenaAuthApi">
+      <failure type="AssertionFailure" message="expected response to have status code 400 but got 404">
+        <![CDATA[Failed 1 times.]]>
+        <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
+        <![CDATA[Collection name: Athena Auth API.]]>
+        <![CDATA[Request name: Videos / Upload Video - Invalid MP3 (400).]]>
+        <![CDATA[Test description: Status is 400.]]>
+        <![CDATA[Error message: expected response to have status code 400 but got 404.]]>
+        <![CDATA[Stacktrace: AssertionError: expected response to have status code 400 but got 404
+   at Object.eval sandbox-script.js:1:26).]]>
+      </failure>
+    </testcase>
+    <testcase name="Has error message" time="0.046" classname="AthenaAuthApi"/>
+  </testsuite>
+  <testsuite name="Videos / Upload Video - Invalid PDF (400)" id="e44933a9-570e-40eb-94bd-ccf7ccb2962b" timestamp="2025-08-31T12:16:51.684Z" tests="2" failures="1" errors="0" time="0.045">
+    <testcase name="Status is 400" time="0.045" classname="AthenaAuthApi">
+      <failure type="AssertionFailure" message="expected response to have status code 400 but got 404">
+        <![CDATA[Failed 1 times.]]>
+        <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
+        <![CDATA[Collection name: Athena Auth API.]]>
+        <![CDATA[Request name: Videos / Upload Video - Invalid PDF (400).]]>
+        <![CDATA[Test description: Status is 400.]]>
+        <![CDATA[Error message: expected response to have status code 400 but got 404.]]>
+        <![CDATA[Stacktrace: AssertionError: expected response to have status code 400 but got 404
+   at Object.eval sandbox-script.js:1:27).]]>
+      </failure>
+    </testcase>
+    <testcase name="Has error message" time="0.045" classname="AthenaAuthApi"/>
+  </testsuite>
+  <testsuite name="Videos / Upload Video - Fake MP4 (400)" id="ababd5c2-f15b-416e-ae2f-f4cb719a3b11" timestamp="2025-08-31T12:16:51.684Z" tests="2" failures="1" errors="0" time="0.047">
+    <testcase name="Status is 400" time="0.047" classname="AthenaAuthApi">
+      <failure type="AssertionFailure" message="expected response to have status code 400 but got 404">
+        <![CDATA[Failed 1 times.]]>
+        <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
+        <![CDATA[Collection name: Athena Auth API.]]>
+        <![CDATA[Request name: Videos / Upload Video - Fake MP4 (400).]]>
+        <![CDATA[Test description: Status is 400.]]>
+        <![CDATA[Error message: expected response to have status code 400 but got 404.]]>
+        <![CDATA[Stacktrace: AssertionError: expected response to have status code 400 but got 404
+   at Object.eval sandbox-script.js:1:28).]]>
+      </failure>
+    </testcase>
+    <testcase name="Has error message" time="0.047" classname="AthenaAuthApi"/>
+  </testsuite>
+  <testsuite name="Videos / Upload Video - Corrupted File (400)" id="45023e1e-997e-4233-94c0-5d4e29bf152f" timestamp="2025-08-31T12:16:51.684Z" tests="2" failures="1" errors="0" time="0.045">
+    <testcase name="Status is 400" time="0.045" classname="AthenaAuthApi">
+      <failure type="AssertionFailure" message="expected response to have status code 400 but got 404">
+        <![CDATA[Failed 1 times.]]>
+        <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
+        <![CDATA[Collection name: Athena Auth API.]]>
+        <![CDATA[Request name: Videos / Upload Video - Corrupted File (400).]]>
+        <![CDATA[Test description: Status is 400.]]>
+        <![CDATA[Error message: expected response to have status code 400 but got 404.]]>
+        <![CDATA[Stacktrace: AssertionError: expected response to have status code 400 but got 404
+   at Object.eval sandbox-script.js:1:29).]]>
+      </failure>
+    </testcase>
+    <testcase name="Has error message" time="0.045" classname="AthenaAuthApi"/>
+  </testsuite>
+  <testsuite name="Videos / Upload Video - Malicious Script (400)" id="693f0c48-f7d6-44db-8e2f-d90b45db519a" timestamp="2025-08-31T12:16:51.684Z" tests="2" failures="1" errors="0" time="0.044">
+    <testcase name="Status is 400" time="0.044" classname="AthenaAuthApi">
+      <failure type="AssertionFailure" message="expected response to have status code 400 but got 404">
+        <![CDATA[Failed 1 times.]]>
+        <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
+        <![CDATA[Collection name: Athena Auth API.]]>
+        <![CDATA[Request name: Videos / Upload Video - Malicious Script (400).]]>
+        <![CDATA[Test description: Status is 400.]]>
+        <![CDATA[Error message: expected response to have status code 400 but got 404.]]>
+        <![CDATA[Stacktrace: AssertionError: expected response to have status code 400 but got 404
+   at Object.eval sandbox-script.js:1:30).]]>
+      </failure>
+    </testcase>
+    <testcase name="Has error message" time="0.044" classname="AthenaAuthApi"/>
+  </testsuite>
+  <testsuite name="Videos / Upload Video - HTML XSS (400)" id="baa957af-631a-450a-aa4b-cb2f3dc52904" timestamp="2025-08-31T12:16:51.684Z" tests="2" failures="1" errors="0" time="0.047">
+    <testcase name="Status is 400" time="0.047" classname="AthenaAuthApi">
+      <failure type="AssertionFailure" message="expected response to have status code 400 but got 404">
+        <![CDATA[Failed 1 times.]]>
+        <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
+        <![CDATA[Collection name: Athena Auth API.]]>
+        <![CDATA[Request name: Videos / Upload Video - HTML XSS (400).]]>
+        <![CDATA[Test description: Status is 400.]]>
+        <![CDATA[Error message: expected response to have status code 400 but got 404.]]>
+        <![CDATA[Stacktrace: AssertionError: expected response to have status code 400 but got 404
+   at Object.eval sandbox-script.js:1:31).]]>
+      </failure>
+    </testcase>
+    <testcase name="Has error message" time="0.047" classname="AthenaAuthApi"/>
+  </testsuite>
+  <testsuite name="Videos / Upload Video - No Auth (401)" id="52e8db1a-79e2-40fa-a559-0969274b66c2" timestamp="2025-08-31T12:16:51.684Z" tests="2" failures="1" errors="0" time="0.046">
+    <testcase name="Status is 401" time="0.046" classname="AthenaAuthApi">
+      <failure type="AssertionFailure" message="expected response to have status code 401 but got 404">
+        <![CDATA[Failed 1 times.]]>
+        <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
+        <![CDATA[Collection name: Athena Auth API.]]>
+        <![CDATA[Request name: Videos / Upload Video - No Auth (401).]]>
+        <![CDATA[Test description: Status is 401.]]>
+        <![CDATA[Error message: expected response to have status code 401 but got 404.]]>
+        <![CDATA[Stacktrace: AssertionError: expected response to have status code 401 but got 404
+   at Object.eval sandbox-script.js:1:32).]]>
+      </failure>
+    </testcase>
+    <testcase name="Has error message" time="0.046" classname="AthenaAuthApi"/>
+  </testsuite>
+  <testsuite name="Videos / Upload Video - Missing Title (400)" id="3b9d94cd-b23b-46a8-884b-5199ddb89da9" timestamp="2025-08-31T12:16:51.684Z" tests="2" failures="1" errors="0" time="0.044">
+    <testcase name="Status is 400" time="0.044" classname="AthenaAuthApi">
+      <failure type="AssertionFailure" message="expected response to have status code 400 but got 404">
+        <![CDATA[Failed 1 times.]]>
+        <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
+        <![CDATA[Collection name: Athena Auth API.]]>
+        <![CDATA[Request name: Videos / Upload Video - Missing Title (400).]]>
+        <![CDATA[Test description: Status is 400.]]>
+        <![CDATA[Error message: expected response to have status code 400 but got 404.]]>
+        <![CDATA[Stacktrace: AssertionError: expected response to have status code 400 but got 404
+   at Object.eval sandbox-script.js:1:33).]]>
+      </failure>
+    </testcase>
+    <testcase name="Has error message" time="0.044" classname="AthenaAuthApi"/>
+  </testsuite>
+  <testsuite name="Videos / List Videos - With Filters" id="0f16957f-a61b-484a-9b40-ea828db4893d" timestamp="2025-08-31T12:16:51.684Z" tests="2" failures="0" errors="0" time="0.005">
+    <testcase name="Status is 200" time="0.005" classname="AthenaAuthApi"/>
+    <testcase name="Response wrapped with data" time="0.005" classname="AthenaAuthApi"/>
+  </testsuite>
+  <testsuite name="Videos / Search Videos" id="ed522c90-abb0-4287-9da6-e4882b41eec8" timestamp="2025-08-31T12:16:51.684Z" tests="3" failures="3" errors="0" time="0.004">
+    <testcase name="Status is 200" time="0.004" classname="AthenaAuthApi">
       <failure type="AssertionFailure" message="expected response to have status code 200 but got 404">
         <![CDATA[Failed 1 times.]]>
         <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
@@ -98,10 +348,10 @@
         <![CDATA[Test description: Status is 200.]]>
         <![CDATA[Error message: expected response to have status code 200 but got 404.]]>
         <![CDATA[Stacktrace: AssertionError: expected response to have status code 200 but got 404
-   at Object.eval sandbox-script.js:1:22).]]>
+   at Object.eval sandbox-script.js:1:35).]]>
       </failure>
     </testcase>
-    <testcase name="Response wrapped with data" time="0.002" classname="AthenaAuthApi">
+    <testcase name="Response wrapped with data" time="0.004" classname="AthenaAuthApi">
       <failure type="AssertionFailure" message="expected { …(2) } to have property 'data'">
         <![CDATA[Failed 1 times.]]>
         <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
@@ -110,10 +360,10 @@
         <![CDATA[Test description: Response wrapped with data.]]>
         <![CDATA[Error message: expected { …(2) } to have property 'data'.]]>
         <![CDATA[Stacktrace: AssertionError: expected { …(2) } to have property 'data'
-   at Object.eval sandbox-script.js:2:22).]]>
+   at Object.eval sandbox-script.js:2:35).]]>
       </failure>
     </testcase>
-    <testcase name="Has meta object" time="0.002" classname="AthenaAuthApi">
+    <testcase name="Has meta object" time="0.004" classname="AthenaAuthApi">
       <failure type="AssertionFailure" message="expected { …(2) } to have property 'meta'">
         <![CDATA[Failed 1 times.]]>
         <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
@@ -122,11 +372,11 @@
         <![CDATA[Test description: Has meta object.]]>
         <![CDATA[Error message: expected { …(2) } to have property 'meta'.]]>
         <![CDATA[Stacktrace: AssertionError: expected { …(2) } to have property 'meta'
-   at Object.eval sandbox-script.js:3:22).]]>
+   at Object.eval sandbox-script.js:3:35).]]>
       </failure>
     </testcase>
   </testsuite>
-  <testsuite name="Videos / Search Videos - With Tags" id="8abb04b5-abd7-4d5d-a80b-0f919ae69577" timestamp="2025-08-31T06:33:52.969Z" tests="2" failures="2" errors="0" time="0.002">
+  <testsuite name="Videos / Search Videos - With Tags" id="9e1ffa2a-e668-432d-9d5a-8184a65eca04" timestamp="2025-08-31T12:16:51.684Z" tests="2" failures="2" errors="0" time="0.002">
     <testcase name="Status is 200" time="0.002" classname="AthenaAuthApi">
       <failure type="AssertionFailure" message="expected response to have status code 200 but got 404">
         <![CDATA[Failed 1 times.]]>
@@ -136,7 +386,7 @@
         <![CDATA[Test description: Status is 200.]]>
         <![CDATA[Error message: expected response to have status code 200 but got 404.]]>
         <![CDATA[Stacktrace: AssertionError: expected response to have status code 200 but got 404
-   at Object.eval sandbox-script.js:1:23).]]>
+   at Object.eval sandbox-script.js:1:36).]]>
       </failure>
     </testcase>
     <testcase name="Response wrapped with data" time="0.002" classname="AthenaAuthApi">
@@ -148,11 +398,11 @@
         <![CDATA[Test description: Response wrapped with data.]]>
         <![CDATA[Error message: expected { …(2) } to have property 'data'.]]>
         <![CDATA[Stacktrace: AssertionError: expected { …(2) } to have property 'data'
-   at Object.eval sandbox-script.js:2:23).]]>
+   at Object.eval sandbox-script.js:2:36).]]>
       </failure>
     </testcase>
   </testsuite>
-  <testsuite name="Videos / Search Videos - Missing Query (400)" id="ea680830-6b5b-4956-a1f8-7f4f94671523" timestamp="2025-08-31T06:33:52.969Z" tests="2" failures="1" errors="0" time="0.002">
+  <testsuite name="Videos / Search Videos - Missing Query (400)" id="448fd60c-25cd-42dc-9220-a7ab3126759a" timestamp="2025-08-31T12:16:51.684Z" tests="2" failures="1" errors="0" time="0.002">
     <testcase name="Status is 400 or 401" time="0.002" classname="AthenaAuthApi">
       <failure type="AssertionFailure" message="expected [ 400, 401 ] to include 404">
         <![CDATA[Failed 1 times.]]>
@@ -162,45 +412,45 @@
         <![CDATA[Test description: Status is 400 or 401.]]>
         <![CDATA[Error message: expected [ 400, 401 ] to include 404.]]>
         <![CDATA[Stacktrace: AssertionError: expected [ 400, 401 ] to include 404
-   at Object.eval sandbox-script.js:1:24).]]>
+   at Object.eval sandbox-script.js:1:37).]]>
       </failure>
     </testcase>
     <testcase name="Has error body" time="0.002" classname="AthenaAuthApi"/>
   </testsuite>
-  <testsuite name="Videos / Get Video by ID" id="ee14caca-cdd5-4c32-ac6a-906821beca2d" timestamp="2025-08-31T06:33:52.969Z" tests="2" failures="0" errors="0" time="0.002">
+  <testsuite name="Videos / Get Video by ID" id="c332526b-bb6d-4d87-a2e8-64ee0d952c32" timestamp="2025-08-31T12:16:51.684Z" tests="2" failures="0" errors="0" time="0.002">
     <testcase name="Status is valid (200 or 404, not 400)" time="0.002" classname="AthenaAuthApi"/>
     <testcase name="404 response has error structure" time="0.002" classname="AthenaAuthApi"/>
   </testsuite>
-  <testsuite name="Videos / Get Video - Not Found (404)" id="4f472382-f9b5-47cd-8e86-29c4f68ffc51" timestamp="2025-08-31T06:33:52.969Z" tests="2" failures="0" errors="0" time="0.001">
-    <testcase name="Status is 404 or 401" time="0.001" classname="AthenaAuthApi"/>
-    <testcase name="Has error body" time="0.001" classname="AthenaAuthApi"/>
+  <testsuite name="Videos / Get Video - Not Found (404)" id="2e678f67-0e94-498e-854a-df6f1b1b9b51" timestamp="2025-08-31T12:16:51.684Z" tests="2" failures="0" errors="0" time="0.003">
+    <testcase name="Status is 404 or 401" time="0.003" classname="AthenaAuthApi"/>
+    <testcase name="Has error body" time="0.003" classname="AthenaAuthApi"/>
   </testsuite>
-  <testsuite name="Videos / Create Video" id="5fe64754-8e57-4f71-9b41-760f15255f27" timestamp="2025-08-31T06:33:52.969Z" tests="2" failures="0" errors="0" time="0.001">
-    <testcase name="Status is valid (201 or 401)" time="0.001" classname="AthenaAuthApi"/>
-    <testcase name="401 response has error structure" time="0.001" classname="AthenaAuthApi"/>
+  <testsuite name="Videos / Create Video" id="967b67d1-2f60-4925-b0fe-6a1bdaf1aaf0" timestamp="2025-08-31T12:16:51.684Z" tests="2" failures="0" errors="0" time="0.003">
+    <testcase name="Status is valid (201 or 401)" time="0.003" classname="AthenaAuthApi"/>
+    <testcase name="401 response has error structure" time="0.003" classname="AthenaAuthApi"/>
   </testsuite>
-  <testsuite name="Videos / Create Video - Missing Token (401)" id="caa40256-66d3-49fd-867a-19abc07c16a0" timestamp="2025-08-31T06:33:52.969Z" tests="2" failures="0" errors="0" time="0.001">
-    <testcase name="Status is 401" time="0.001" classname="AthenaAuthApi"/>
-    <testcase name="Has error body or text" time="0.001" classname="AthenaAuthApi"/>
+  <testsuite name="Videos / Create Video - Missing Token (401)" id="8bd703ed-c8cc-4d2f-bc72-23bd14c0a12e" timestamp="2025-08-31T12:16:51.684Z" tests="2" failures="0" errors="0" time="0.002">
+    <testcase name="Status is 401" time="0.002" classname="AthenaAuthApi"/>
+    <testcase name="Has error body or text" time="0.002" classname="AthenaAuthApi"/>
   </testsuite>
-  <testsuite name="Videos / Update Video" id="312df053-9b38-47dc-a3ba-050ea3044070" timestamp="2025-08-31T06:33:52.969Z" tests="2" failures="0" errors="0" time="0.002">
+  <testsuite name="Videos / Update Video" id="092a9715-6585-4b84-81af-2913cf70e0aa" timestamp="2025-08-31T12:16:51.684Z" tests="2" failures="0" errors="0" time="0.002">
     <testcase name="Status is valid (200, 401, or 404)" time="0.002" classname="AthenaAuthApi"/>
     <testcase name="404 response has error structure" time="0.002" classname="AthenaAuthApi"/>
   </testsuite>
-  <testsuite name="Videos / Update Video - Not Found (404)" id="9973f392-ee79-41c5-b351-3e9992ed707e" timestamp="2025-08-31T06:33:52.969Z" tests="2" failures="0" errors="0" time="0.001">
-    <testcase name="Status is 404 or 401" time="0.001" classname="AthenaAuthApi"/>
-    <testcase name="Has error body" time="0.001" classname="AthenaAuthApi"/>
+  <testsuite name="Videos / Update Video - Not Found (404)" id="ae93eba8-05c2-49ff-9d87-0cd9e59457e7" timestamp="2025-08-31T12:16:51.684Z" tests="2" failures="0" errors="0" time="0.002">
+    <testcase name="Status is 404 or 401" time="0.002" classname="AthenaAuthApi"/>
+    <testcase name="Has error body" time="0.002" classname="AthenaAuthApi"/>
   </testsuite>
-  <testsuite name="Videos / Delete Video" id="b2c2dd02-b1c4-43b9-bed3-d42b35efe9ce" timestamp="2025-08-31T06:33:52.969Z" tests="2" failures="0" errors="0" time="0.001">
-    <testcase name="Status is valid (204, 401, or 404)" time="0.001" classname="AthenaAuthApi"/>
-    <testcase name="404 response has error structure" time="0.001" classname="AthenaAuthApi"/>
+  <testsuite name="Videos / Delete Video" id="1d5ce743-2640-454a-9169-cc062f8f3d88" timestamp="2025-08-31T12:16:51.684Z" tests="2" failures="0" errors="0" time="0.002">
+    <testcase name="Status is valid (204, 401, or 404)" time="0.002" classname="AthenaAuthApi"/>
+    <testcase name="404 response has error structure" time="0.002" classname="AthenaAuthApi"/>
   </testsuite>
-  <testsuite name="Videos / Delete Video - Not Found (404)" id="52c1a1fb-c96f-41cf-b12d-2062c901c086" timestamp="2025-08-31T06:33:52.969Z" tests="2" failures="0" errors="0" time="0.001">
-    <testcase name="Status is 404 or 401" time="0.001" classname="AthenaAuthApi"/>
-    <testcase name="Has error body" time="0.001" classname="AthenaAuthApi"/>
+  <testsuite name="Videos / Delete Video - Not Found (404)" id="6f5c6c02-cb56-449e-b695-d0c9d992e643" timestamp="2025-08-31T12:16:51.684Z" tests="2" failures="0" errors="0" time="0.002">
+    <testcase name="Status is 404 or 401" time="0.002" classname="AthenaAuthApi"/>
+    <testcase name="Has error body" time="0.002" classname="AthenaAuthApi"/>
   </testsuite>
-  <testsuite name="Videos / Delete Video - Missing Token (401)" id="fdc4f49a-bca6-43a2-adb5-cecd6c5f8ccd" timestamp="2025-08-31T06:33:52.969Z" tests="2" failures="1" errors="0" time="0.001">
-    <testcase name="Status is 401" time="0.001" classname="AthenaAuthApi">
+  <testsuite name="Videos / Delete Video - Missing Token (401)" id="4ced61f7-deb2-43f7-88ad-32952ef27eb3" timestamp="2025-08-31T12:16:51.684Z" tests="2" failures="1" errors="0" time="0.002">
+    <testcase name="Status is 401" time="0.002" classname="AthenaAuthApi">
       <failure type="AssertionFailure" message="expected response to have status code 401 but got 404">
         <![CDATA[Failed 1 times.]]>
         <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
@@ -209,32 +459,32 @@
         <![CDATA[Test description: Status is 401.]]>
         <![CDATA[Error message: expected response to have status code 401 but got 404.]]>
         <![CDATA[Stacktrace: AssertionError: expected response to have status code 401 but got 404
-   at Object.eval sandbox-script.js:1:33).]]>
+   at Object.eval sandbox-script.js:1:46).]]>
       </failure>
     </testcase>
-    <testcase name="Has error body or text" time="0.001" classname="AthenaAuthApi"/>
+    <testcase name="Has error body or text" time="0.002" classname="AthenaAuthApi"/>
   </testsuite>
-  <testsuite name="Videos / Get User Videos" id="89e77014-d005-4882-8e1a-2b44fab459f6" timestamp="2025-08-31T06:33:52.969Z" tests="5" failures="0" errors="0" time="0.002">
-    <testcase name="Status is 200" time="0.002" classname="AthenaAuthApi"/>
-    <testcase name="Response wrapped with data" time="0.002" classname="AthenaAuthApi"/>
-    <testcase name="Has meta object" time="0.002" classname="AthenaAuthApi"/>
-    <testcase name="Meta has pagination fields" time="0.002" classname="AthenaAuthApi"/>
-    <testcase name="All videos belong to user" time="0.002" classname="AthenaAuthApi"/>
+  <testsuite name="Videos / Get User Videos" id="6b930884-1fc8-47e9-a684-347c91f1cd19" timestamp="2025-08-31T12:16:51.684Z" tests="5" failures="0" errors="0" time="0.005">
+    <testcase name="Status is 200" time="0.005" classname="AthenaAuthApi"/>
+    <testcase name="Response wrapped with data" time="0.005" classname="AthenaAuthApi"/>
+    <testcase name="Has meta object" time="0.005" classname="AthenaAuthApi"/>
+    <testcase name="Meta has pagination fields" time="0.005" classname="AthenaAuthApi"/>
+    <testcase name="All videos belong to user" time="0.005" classname="AthenaAuthApi"/>
   </testsuite>
-  <testsuite name="Videos / Get User Videos - Nonexistent User" id="d2a2726c-7f40-4024-aa8d-789dd500dc3f" timestamp="2025-08-31T06:33:52.969Z" tests="3" failures="0" errors="0" time="0.002">
-    <testcase name="Status is 200" time="0.002" classname="AthenaAuthApi"/>
-    <testcase name="Response wrapped with data" time="0.002" classname="AthenaAuthApi"/>
-    <testcase name="Returns empty array for nonexistent user" time="0.002" classname="AthenaAuthApi"/>
+  <testsuite name="Videos / Get User Videos - Nonexistent User" id="2413d312-f7bf-4ada-a392-5971b12bb6b6" timestamp="2025-08-31T12:16:51.684Z" tests="3" failures="0" errors="0" time="0.003">
+    <testcase name="Status is 200" time="0.003" classname="AthenaAuthApi"/>
+    <testcase name="Response wrapped with data" time="0.003" classname="AthenaAuthApi"/>
+    <testcase name="Returns empty array for nonexistent user" time="0.003" classname="AthenaAuthApi"/>
   </testsuite>
-  <testsuite name="Videos / Create Video - Invalid JSON (400)" id="2da62125-2397-4945-99db-78b1b636f7a8" timestamp="2025-08-31T06:33:52.969Z" tests="2" failures="0" errors="0" time="0.001">
-    <testcase name="Status is 400 or 401" time="0.001" classname="AthenaAuthApi"/>
-    <testcase name="Has error body" time="0.001" classname="AthenaAuthApi"/>
-  </testsuite>
-  <testsuite name="Videos / Create Video - Missing Required Fields (400)" id="09f1e546-a4e0-414e-9a8d-4b02b147d7bb" timestamp="2025-08-31T06:33:52.969Z" tests="2" failures="0" errors="0" time="0.002">
+  <testsuite name="Videos / Create Video - Invalid JSON (400)" id="2c96e8ae-260a-42d9-89e2-1676259b6686" timestamp="2025-08-31T12:16:51.684Z" tests="2" failures="0" errors="0" time="0.002">
     <testcase name="Status is 400 or 401" time="0.002" classname="AthenaAuthApi"/>
     <testcase name="Has error body" time="0.002" classname="AthenaAuthApi"/>
   </testsuite>
-  <testsuite name="Videos / Update Video - Invalid JSON (400)" id="5d806b5a-d7ef-48ff-a9f3-a13b1247ad17" timestamp="2025-08-31T06:33:52.969Z" tests="2" failures="1" errors="0" time="0.002">
+  <testsuite name="Videos / Create Video - Missing Required Fields (400)" id="36c7c108-6f6e-4622-9663-fd062af3154d" timestamp="2025-08-31T12:16:51.684Z" tests="2" failures="0" errors="0" time="0.002">
+    <testcase name="Status is 400 or 401" time="0.002" classname="AthenaAuthApi"/>
+    <testcase name="Has error body" time="0.002" classname="AthenaAuthApi"/>
+  </testsuite>
+  <testsuite name="Videos / Update Video - Invalid JSON (400)" id="8ee96101-787f-42d0-9a9a-7792b9838dd1" timestamp="2025-08-31T12:16:51.684Z" tests="2" failures="1" errors="0" time="0.002">
     <testcase name="Status is 400 or 401" time="0.002" classname="AthenaAuthApi">
       <failure type="AssertionFailure" message="expected [ 400, 401 ] to include 404">
         <![CDATA[Failed 1 times.]]>
@@ -244,12 +494,12 @@
         <![CDATA[Test description: Status is 400 or 401.]]>
         <![CDATA[Error message: expected [ 400, 401 ] to include 404.]]>
         <![CDATA[Stacktrace: AssertionError: expected [ 400, 401 ] to include 404
-   at Object.eval sandbox-script.js:1:38).]]>
+   at Object.eval sandbox-script.js:1:51).]]>
       </failure>
     </testcase>
     <testcase name="Has error body" time="0.002" classname="AthenaAuthApi"/>
   </testsuite>
-  <testsuite name="Videos / Update Video - Missing Token (401)" id="9beb157a-6ba0-49ab-98b2-edf03d5d8485" timestamp="2025-08-31T06:33:52.969Z" tests="2" failures="1" errors="0" time="0.002">
+  <testsuite name="Videos / Update Video - Missing Token (401)" id="e146eca6-66fc-41cf-9020-0e1abcf56449" timestamp="2025-08-31T12:16:51.684Z" tests="2" failures="1" errors="0" time="0.002">
     <testcase name="Status is 401" time="0.002" classname="AthenaAuthApi">
       <failure type="AssertionFailure" message="expected response to have status code 401 but got 404">
         <![CDATA[Failed 1 times.]]>
@@ -259,13 +509,13 @@
         <![CDATA[Test description: Status is 401.]]>
         <![CDATA[Error message: expected response to have status code 401 but got 404.]]>
         <![CDATA[Stacktrace: AssertionError: expected response to have status code 401 but got 404
-   at Object.eval sandbox-script.js:1:39).]]>
+   at Object.eval sandbox-script.js:1:52).]]>
       </failure>
     </testcase>
     <testcase name="Has error body or text" time="0.002" classname="AthenaAuthApi"/>
   </testsuite>
-  <testsuite name="Videos / Video Streaming Endpoint" id="d4e2ff01-e2f2-453b-9241-98006ec730e5" timestamp="2025-08-31T06:33:52.969Z" tests="3" failures="3" errors="0" time="0.002">
-    <testcase name="Status is 200" time="0.002" classname="AthenaAuthApi">
+  <testsuite name="Videos / Video Streaming Endpoint" id="b029e9d1-f416-4a60-a5fc-a102c6b226c5" timestamp="2025-08-31T12:16:51.684Z" tests="3" failures="3" errors="0" time="0.003">
+    <testcase name="Status is 200" time="0.003" classname="AthenaAuthApi">
       <failure type="AssertionFailure" message="expected response to have status code 200 but got 404">
         <![CDATA[Failed 1 times.]]>
         <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
@@ -274,10 +524,10 @@
         <![CDATA[Test description: Status is 200.]]>
         <![CDATA[Error message: expected response to have status code 200 but got 404.]]>
         <![CDATA[Stacktrace: AssertionError: expected response to have status code 200 but got 404
-   at Object.eval sandbox-script.js:1:40).]]>
+   at Object.eval sandbox-script.js:1:53).]]>
       </failure>
     </testcase>
-    <testcase name="Content-Type is HLS" time="0.002" classname="AthenaAuthApi">
+    <testcase name="Content-Type is HLS" time="0.003" classname="AthenaAuthApi">
       <failure type="AssertionFailure" message="expected 'application/json' to include 'application/vnd.apple.mpegurl'">
         <![CDATA[Failed 1 times.]]>
         <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
@@ -286,10 +536,10 @@
         <![CDATA[Test description: Content-Type is HLS.]]>
         <![CDATA[Error message: expected 'application/json' to include 'application/vnd.apple.mpegurl'.]]>
         <![CDATA[Stacktrace: AssertionError: expected 'application/json' to include 'application/vnd.apple.mpegurl'
-   at Object.eval sandbox-script.js:2:40).]]>
+   at Object.eval sandbox-script.js:2:53).]]>
       </failure>
     </testcase>
-    <testcase name="Response contains HLS playlist" time="0.002" classname="AthenaAuthApi">
+    <testcase name="Response contains HLS playlist" time="0.003" classname="AthenaAuthApi">
       <failure type="AssertionFailure" message="expected '{&quot;error&quot;:{&quot;code&quot;:&quot;NOT_FOUND&quot;,&quot;message…' to include '#EXTM3U'">
         <![CDATA[Failed 1 times.]]>
         <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
@@ -298,11 +548,11 @@
         <![CDATA[Test description: Response contains HLS playlist.]]>
         <![CDATA[Error message: expected '{"error":{"code":"NOT_FOUND","message…' to include '#EXTM3U'.]]>
         <![CDATA[Stacktrace: AssertionError: expected '{"error":{"code":"NOT_FOUND","message…' to include '#EXTM3U'
-   at Object.eval sandbox-script.js:3:40).]]>
+   at Object.eval sandbox-script.js:3:53).]]>
       </failure>
     </testcase>
   </testsuite>
-  <testsuite name="Videos / Stream Video - Invalid Quality (400)" id="89eed505-eaf7-4794-83c2-137ed3491336" timestamp="2025-08-31T06:33:52.969Z" tests="2" failures="1" errors="0" time="0.002">
+  <testsuite name="Videos / Stream Video - Invalid Quality (400)" id="f95b3c23-4315-44bc-915c-343ac344617a" timestamp="2025-08-31T12:16:51.684Z" tests="2" failures="1" errors="0" time="0.002">
     <testcase name="Status is 400 or 401" time="0.002" classname="AthenaAuthApi">
       <failure type="AssertionFailure" message="expected [ 400, 401 ] to include 404">
         <![CDATA[Failed 1 times.]]>
@@ -312,12 +562,12 @@
         <![CDATA[Test description: Status is 400 or 401.]]>
         <![CDATA[Error message: expected [ 400, 401 ] to include 404.]]>
         <![CDATA[Stacktrace: AssertionError: expected [ 400, 401 ] to include 404
-   at Object.eval sandbox-script.js:1:41).]]>
+   at Object.eval sandbox-script.js:1:54).]]>
       </failure>
     </testcase>
     <testcase name="Response wrapped with error" time="0.002" classname="AthenaAuthApi"/>
   </testsuite>
-  <testsuite name="Videos / Get Supported Qualities" id="5564c540-904f-4d25-9869-f44e98535a55" timestamp="2025-08-31T06:33:52.969Z" tests="5" failures="5" errors="0" time="0.002">
+  <testsuite name="Videos / Get Supported Qualities" id="bacd5eee-b367-45e7-b124-3034c0137b3c" timestamp="2025-08-31T12:16:51.684Z" tests="5" failures="5" errors="0" time="0.002">
     <testcase name="Status is 200" time="0.002" classname="AthenaAuthApi">
       <failure type="AssertionFailure" message="expected response to have status code 200 but got 404">
         <![CDATA[Failed 1 times.]]>
@@ -327,7 +577,7 @@
         <![CDATA[Test description: Status is 200.]]>
         <![CDATA[Error message: expected response to have status code 200 but got 404.]]>
         <![CDATA[Stacktrace: AssertionError: expected response to have status code 200 but got 404
-   at Object.eval sandbox-script.js:1:42).]]>
+   at Object.eval sandbox-script.js:1:55).]]>
       </failure>
     </testcase>
     <testcase name="Response wrapped with data" time="0.002" classname="AthenaAuthApi">
@@ -339,7 +589,7 @@
         <![CDATA[Test description: Response wrapped with data.]]>
         <![CDATA[Error message: expected { …(2) } to have property 'data'.]]>
         <![CDATA[Stacktrace: AssertionError: expected { …(2) } to have property 'data'
-   at Object.eval sandbox-script.js:2:42).]]>
+   at Object.eval sandbox-script.js:2:55).]]>
       </failure>
     </testcase>
     <testcase name="Qualities array present" time="0.002" classname="AthenaAuthApi">
@@ -351,7 +601,7 @@
         <![CDATA[Test description: Qualities array present.]]>
         <![CDATA[Error message: expected false to be true.]]>
         <![CDATA[Stacktrace: AssertionError: expected false to be true
-   at Object.eval sandbox-script.js:3:42).]]>
+   at Object.eval sandbox-script.js:3:55).]]>
       </failure>
     </testcase>
     <testcase name="Default quality present" time="0.002" classname="AthenaAuthApi">
@@ -363,7 +613,7 @@
         <![CDATA[Test description: Default quality present.]]>
         <![CDATA[Error message: expected {} to have property 'default'.]]>
         <![CDATA[Stacktrace: AssertionError: expected {} to have property 'default'
-   at Object.eval sandbox-script.js:4:42).]]>
+   at Object.eval sandbox-script.js:4:55).]]>
       </failure>
     </testcase>
     <testcase name="Common qualities included" time="0.002" classname="AthenaAuthApi">
@@ -375,21 +625,21 @@
         <![CDATA[Test description: Common qualities included.]]>
         <![CDATA[Error message: the given combination of arguments (undefined and string) is invalid for this assertion. You can use an array, a map, an object, a set, a string, or a weakset instead of a string.]]>
         <![CDATA[Stacktrace: AssertionError: the given combination of arguments (undefined and string) is invalid for this assertion. You can use an array, a map, an object, a set, a string, or a weakset instead of a string
-   at Object.eval sandbox-script.js:5:42).]]>
+   at Object.eval sandbox-script.js:5:55).]]>
       </failure>
     </testcase>
   </testsuite>
-  <testsuite name="Videos / Upload Video Chunk" id="dbfb8f20-5b2b-4362-9e31-8b9d77628b33" timestamp="2025-08-31T06:33:52.969Z" tests="2" failures="0" errors="0" time="0.002">
+  <testsuite name="Videos / Upload Video Chunk" id="f4322db6-6ee9-4e58-b456-857f0b6c6b58" timestamp="2025-08-31T12:16:51.684Z" tests="2" failures="0" errors="0" time="0.002">
     <testcase name="Status is valid (200, 401, or 404)" time="0.002" classname="AthenaAuthApi"/>
     <testcase name="404 response has error structure" time="0.002" classname="AthenaAuthApi"/>
   </testsuite>
-  <testsuite name="Videos / Upload Video Chunk - Missing Headers (400)" id="92e987da-6806-4b96-a997-2c3850b952e2" timestamp="2025-08-31T06:33:52.969Z" tests="3" failures="0" errors="0" time="0.002">
+  <testsuite name="Videos / Upload Video Chunk - Missing Headers (400)" id="c61d1cee-1c17-4a13-858c-71c9cec4e7e1" timestamp="2025-08-31T12:16:51.684Z" tests="3" failures="0" errors="0" time="0.002">
     <testcase name="Status is 400 or 401" time="0.002" classname="AthenaAuthApi"/>
     <testcase name="404 response has error structure" time="0.002" classname="AthenaAuthApi"/>
     <testcase name="Has error body" time="0.002" classname="AthenaAuthApi"/>
   </testsuite>
-  <testsuite name="Videos / Complete Video Upload" id="4f361c23-1b0f-4c5e-ab02-1f8fb501a4ab" timestamp="2025-08-31T06:33:52.969Z" tests="2" failures="0" errors="0" time="0.002">
-    <testcase name="Status is valid (200, 401, or 404)" time="0.002" classname="AthenaAuthApi"/>
-    <testcase name="404 response has error structure" time="0.002" classname="AthenaAuthApi"/>
+  <testsuite name="Videos / Complete Video Upload" id="7bde745c-9ed7-446f-9384-349aae099d70" timestamp="2025-08-31T12:16:51.684Z" tests="2" failures="0" errors="0" time="0.003">
+    <testcase name="Status is valid (200, 401, or 404)" time="0.003" classname="AthenaAuthApi"/>
+    <testcase name="404 response has error structure" time="0.003" classname="AthenaAuthApi"/>
   </testsuite>
 </testsuites>

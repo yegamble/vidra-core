@@ -1,5 +1,5 @@
 # Build stage
-FROM golang:1.24.6-alpine AS builder
+FROM golang:1.23.4-alpine AS builder
 
 RUN apk add --no-cache git ca-certificates tzdata
 
@@ -14,7 +14,7 @@ ENV GOSUMDB=sum.golang.org
 COPY go.mod go.sum ./
 RUN go mod download && go mod verify
 
-# Copy source code
+# Copy source code (cache bust: 2025-08-31-11:50)
 COPY . .
 
 # Verify modules and build

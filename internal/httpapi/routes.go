@@ -136,12 +136,19 @@ func RegisterRoutes(r chi.Router, cfg *config.Config) {
 
 	// Additional API routes for videos and users (if they exist)
 	r.Route("/api/v1", func(r chi.Router) {
+		// Initialize views handler early for use in routes
+		viewsHandler := NewViewsHandler(viewsService)
+
 		r.Route("/videos", func(r chi.Router) {
+			log.Printf("Registering video routes...")
 			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/", ListVideosHandler(videoRepo))
+			// Static routes must come before parameterized routes
 			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/search", SearchVideosHandler(videoRepo))
+			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/qualities", GetSupportedQualities)
+			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/top", viewsHandler.GetTopVideos)
+			// Parameterized routes come after static routes
 			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{id}", GetVideoHandler(videoRepo))
 			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{id}/stream", StreamVideoHandler(videoRepo))
-			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/qualities", GetSupportedQualities)
 			// Subscription feed
 			r.With(middleware.Auth(cfg.JWTSecret)).Get("/subscriptions", ListSubscriptionVideosHandler(subRepo))
 
@@ -202,7 +209,8 @@ func RegisterRoutes(r chi.Router, cfg *config.Config) {
 		})
 
 		// Views and analytics endpoints
-		viewsHandler := NewViewsHandler(viewsService)
+		// These need to be before the parameterized /videos/{videoId} route
+		r.Get("/trending", viewsHandler.GetTrendingVideos)
 		r.Route("/videos/{videoId}", func(r chi.Router) {
 			// View tracking - allow anonymous users
 			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Post("/views", viewsHandler.TrackView)
@@ -210,10 +218,6 @@ func RegisterRoutes(r chi.Router, cfg *config.Config) {
 			r.With(middleware.Auth(cfg.JWTSecret)).Get("/analytics", viewsHandler.GetVideoAnalytics)
 			r.With(middleware.Auth(cfg.JWTSecret)).Get("/stats/daily", viewsHandler.GetDailyStats)
 		})
-
-		// Trending and top videos - public endpoints
-		r.Get("/trending", viewsHandler.GetTrendingVideos)
-		r.Get("/videos/top", viewsHandler.GetTopVideos)
 
 		// Fingerprinting for view deduplication
 		r.Post("/views/fingerprint", viewsHandler.GenerateFingerprint)

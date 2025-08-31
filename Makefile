@@ -274,6 +274,10 @@ postman-newman: ## Run Postman auth tests via Newman (server must be running)
 
 # Spin up test stack, app, then run Newman end-to-end
 postman-e2e: ## Start test services + app and run Newman end-to-end
+	@echo "Removing old Docker image..."
+	docker rmi athena:latest 2>/dev/null || true
+	@echo "Building fresh Docker image..."
+	docker build -t athena:latest . --no-cache
 	@echo "Starting test stack (DB, Redis, App, IPFS)..."
 	COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) -f docker-compose.test.yml up -d --build postgres-test redis-test ipfs-test app-test
 	@echo "Waiting for app-test to be healthy..."

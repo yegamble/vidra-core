@@ -8,7 +8,7 @@
   "variable": [
     {
       "key": "baseUrl",
-      "value": "http://localhost:8080",
+      "value": "http://app-test:8080",
       "type": "string"
     }
   ],
@@ -304,7 +304,7 @@
                   "key": "file",
                   "type": "file",
                   "src": [
-                    "/etc/newman/avatar.png"
+                    "/etc/newman/test-files/avatars/avatar.png"
                   ]
                 }
               ]
@@ -394,7 +394,7 @@
                   "key": "file",
                   "type": "file",
                   "src": [
-                    "/etc/newman/avatar.jpg"
+                    "/etc/newman/test-files/avatars/avatar.jpg"
                   ]
                 }
               ]
@@ -657,7 +657,7 @@
                   "key": "file",
                   "type": "file",
                   "src": [
-                    "/etc/newman/avatar.gif"
+                    "/etc/newman/test-files/avatars/avatar.gif"
                   ]
                 }
               ]
@@ -919,7 +919,7 @@
                   "key": "file",
                   "type": "file",
                   "src": [
-                    "/etc/newman/malware.png"
+                    "/etc/newman/test-files/malicious/malware.png"
                   ]
                 }
               ]
@@ -1078,7 +1078,7 @@
                   "key": "file",
                   "type": "file",
                   "src": [
-                    "/etc/newman/avatar.png"
+                    "/etc/newman/test-files/avatars/avatar.png"
                   ]
                 }
               ]
@@ -1404,6 +1404,823 @@
                   "    pm.expect(video).to.have.property('status');",
                   "  });",
                   "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Upload Video - MP4",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "video",
+                  "type": "file",
+                  "src": [
+                    "/etc/newman/test-files/videos/test-video.mp4"
+                  ]
+                },
+                {
+                  "key": "title",
+                  "value": "Test Video MP4",
+                  "type": "text"
+                },
+                {
+                  "key": "description",
+                  "value": "Test video upload in MP4 format",
+                  "type": "text"
+                },
+                {
+                  "key": "privacy",
+                  "value": "public",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/videos/upload",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "videos",
+                "upload"
+              ]
+            },
+            "description": "Upload a valid MP4 video file"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 201', () => pm.response.to.have.status(201));",
+                  "pm.test('Response has video ID', () => {",
+                  "  const j = pm.response.json();",
+                  "  pm.expect(j).to.have.property('id');",
+                  "  pm.environment.set('uploadedVideoId', j.id);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Upload Video - MOV",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "video",
+                  "type": "file",
+                  "src": [
+                    "/etc/newman/test-files/videos/test-video.mov"
+                  ]
+                },
+                {
+                  "key": "title",
+                  "value": "Test Video MOV",
+                  "type": "text"
+                },
+                {
+                  "key": "description",
+                  "value": "Test video upload in MOV format",
+                  "type": "text"
+                },
+                {
+                  "key": "privacy",
+                  "value": "public",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/videos/upload",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "videos",
+                "upload"
+              ]
+            },
+            "description": "Upload a valid MOV video file"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 201', () => pm.response.to.have.status(201));",
+                  "pm.test('Response has video ID', () => {",
+                  "  const j = pm.response.json();",
+                  "  pm.expect(j).to.have.property('id');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Upload Video - MKV",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "video",
+                  "type": "file",
+                  "src": [
+                    "/etc/newman/test-files/videos/test-video.mkv"
+                  ]
+                },
+                {
+                  "key": "title",
+                  "value": "Test Video MKV",
+                  "type": "text"
+                },
+                {
+                  "key": "description",
+                  "value": "Test video upload in MKV format",
+                  "type": "text"
+                },
+                {
+                  "key": "privacy",
+                  "value": "public",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/videos/upload",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "videos",
+                "upload"
+              ]
+            },
+            "description": "Upload a valid MKV video file"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 201', () => pm.response.to.have.status(201));",
+                  "pm.test('Response has video ID', () => {",
+                  "  const j = pm.response.json();",
+                  "  pm.expect(j).to.have.property('id');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Upload Video - WebM",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "video",
+                  "type": "file",
+                  "src": [
+                    "/etc/newman/test-files/videos/test-video.webm"
+                  ]
+                },
+                {
+                  "key": "title",
+                  "value": "Test Video WebM",
+                  "type": "text"
+                },
+                {
+                  "key": "description",
+                  "value": "Test video upload in WebM format",
+                  "type": "text"
+                },
+                {
+                  "key": "privacy",
+                  "value": "public",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/videos/upload",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "videos",
+                "upload"
+              ]
+            },
+            "description": "Upload a valid WebM video file"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 201', () => pm.response.to.have.status(201));",
+                  "pm.test('Response has video ID', () => {",
+                  "  const j = pm.response.json();",
+                  "  pm.expect(j).to.have.property('id');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Upload Video - AVI",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "video",
+                  "type": "file",
+                  "src": [
+                    "/etc/newman/test-files/videos/test-video.avi"
+                  ]
+                },
+                {
+                  "key": "title",
+                  "value": "Test Video AVI",
+                  "type": "text"
+                },
+                {
+                  "key": "description",
+                  "value": "Test video upload in AVI format",
+                  "type": "text"
+                },
+                {
+                  "key": "privacy",
+                  "value": "public",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/videos/upload",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "videos",
+                "upload"
+              ]
+            },
+            "description": "Upload a valid AVI video file"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 201', () => pm.response.to.have.status(201));",
+                  "pm.test('Response has video ID', () => {",
+                  "  const j = pm.response.json();",
+                  "  pm.expect(j).to.have.property('id');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Upload Video - Invalid MP3 (400)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "video",
+                  "type": "file",
+                  "src": [
+                    "/etc/newman/test-files/malicious/audio-file.mp3"
+                  ]
+                },
+                {
+                  "key": "title",
+                  "value": "Invalid Audio File",
+                  "type": "text"
+                },
+                {
+                  "key": "description",
+                  "value": "This should fail - audio file not video",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/videos/upload",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "videos",
+                "upload"
+              ]
+            },
+            "description": "Upload an MP3 audio file (should be rejected)"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 400', () => pm.response.to.have.status(400));",
+                  "pm.test('Has error message', () => {",
+                  "  const j = pm.response.json();",
+                  "  pm.expect(j).to.have.property('error');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Upload Video - Invalid PDF (400)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "video",
+                  "type": "file",
+                  "src": [
+                    "/etc/newman/test-files/malicious/document.pdf"
+                  ]
+                },
+                {
+                  "key": "title",
+                  "value": "Invalid PDF Document",
+                  "type": "text"
+                },
+                {
+                  "key": "description",
+                  "value": "This should fail - PDF not video",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/videos/upload",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "videos",
+                "upload"
+              ]
+            },
+            "description": "Upload a PDF document (should be rejected)"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 400', () => pm.response.to.have.status(400));",
+                  "pm.test('Has error message', () => {",
+                  "  const j = pm.response.json();",
+                  "  pm.expect(j).to.have.property('error');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Upload Video - Fake MP4 (400)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "video",
+                  "type": "file",
+                  "src": [
+                    "/etc/newman/test-files/malicious/fake-video.mp4"
+                  ]
+                },
+                {
+                  "key": "title",
+                  "value": "Fake MP4 File",
+                  "type": "text"
+                },
+                {
+                  "key": "description",
+                  "value": "This should fail - fake MP4 file",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/videos/upload",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "videos",
+                "upload"
+              ]
+            },
+            "description": "Upload a text file masquerading as MP4 (should be rejected)"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 400', () => pm.response.to.have.status(400));",
+                  "pm.test('Has error message', () => {",
+                  "  const j = pm.response.json();",
+                  "  pm.expect(j).to.have.property('error');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Upload Video - Corrupted File (400)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "video",
+                  "type": "file",
+                  "src": [
+                    "/etc/newman/test-files/malicious/corrupted-video.mp4"
+                  ]
+                },
+                {
+                  "key": "title",
+                  "value": "Corrupted Video",
+                  "type": "text"
+                },
+                {
+                  "key": "description",
+                  "value": "This should fail - corrupted video file",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/videos/upload",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "videos",
+                "upload"
+              ]
+            },
+            "description": "Upload a corrupted video file (should be rejected)"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 400', () => pm.response.to.have.status(400));",
+                  "pm.test('Has error message', () => {",
+                  "  const j = pm.response.json();",
+                  "  pm.expect(j).to.have.property('error');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Upload Video - Malicious Script (400)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "video",
+                  "type": "file",
+                  "src": [
+                    "/etc/newman/test-files/malicious/malware.sh"
+                  ]
+                },
+                {
+                  "key": "title",
+                  "value": "Malicious Script",
+                  "type": "text"
+                },
+                {
+                  "key": "description",
+                  "value": "This should fail - executable script",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/videos/upload",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "videos",
+                "upload"
+              ]
+            },
+            "description": "Upload a shell script (should be blocked)"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 400', () => pm.response.to.have.status(400));",
+                  "pm.test('Has error message', () => {",
+                  "  const j = pm.response.json();",
+                  "  pm.expect(j).to.have.property('error');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Upload Video - HTML XSS (400)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "video",
+                  "type": "file",
+                  "src": [
+                    "/etc/newman/test-files/malicious/xss.html"
+                  ]
+                },
+                {
+                  "key": "title",
+                  "value": "HTML with XSS",
+                  "type": "text"
+                },
+                {
+                  "key": "description",
+                  "value": "This should fail - HTML file not video",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/videos/upload",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "videos",
+                "upload"
+              ]
+            },
+            "description": "Upload an HTML file with script (should be rejected)"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 400', () => pm.response.to.have.status(400));",
+                  "pm.test('Has error message', () => {",
+                  "  const j = pm.response.json();",
+                  "  pm.expect(j).to.have.property('error');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Upload Video - No Auth (401)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "video",
+                  "type": "file",
+                  "src": [
+                    "/etc/newman/test-files/videos/test-video.mp4"
+                  ]
+                },
+                {
+                  "key": "title",
+                  "value": "Unauthorized Upload",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/videos/upload",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "videos",
+                "upload"
+              ]
+            },
+            "description": "Upload without authentication (should be rejected)"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 401', () => pm.response.to.have.status(401));",
+                  "pm.test('Has error message', () => {",
+                  "  const j = pm.response.json();",
+                  "  pm.expect(j).to.have.property('error');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Upload Video - Missing Title (400)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "video",
+                  "type": "file",
+                  "src": [
+                    "/etc/newman/test-files/videos/test-video.mp4"
+                  ]
+                },
+                {
+                  "key": "description",
+                  "value": "Video without title",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/videos/upload",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "videos",
+                "upload"
+              ]
+            },
+            "description": "Upload video without required title field"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 400', () => pm.response.to.have.status(400));",
+                  "pm.test('Has error message', () => {",
+                  "  const j = pm.response.json();",
+                  "  pm.expect(j).to.have.property('error');",
+                  "});"
                 ],
                 "type": "text/javascript"
               }
