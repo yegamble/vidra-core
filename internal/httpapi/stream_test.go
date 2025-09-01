@@ -11,9 +11,9 @@ import (
 )
 
 func TestStreamVideo_DefaultQuality(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "/videos/123/stream", nil)
+	req := httptest.NewRequest(http.MethodGet, "/videos/123e4567-e89b-12d3-a456-426614174000/stream", nil)
 	routeCtx := chi.NewRouteContext()
-	routeCtx.URLParams.Add("id", "123")
+	routeCtx.URLParams.Add("id", "123e4567-e89b-12d3-a456-426614174000")
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, routeCtx))
 
 	rr := httptest.NewRecorder()
@@ -28,9 +28,9 @@ func TestStreamVideo_DefaultQuality(t *testing.T) {
 }
 
 func TestStreamVideo_CustomQuality(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "/videos/123/stream?quality=1080p", nil)
+	req := httptest.NewRequest(http.MethodGet, "/videos/123e4567-e89b-12d3-a456-426614174000/stream?quality=1080p", nil)
 	routeCtx := chi.NewRouteContext()
-	routeCtx.URLParams.Add("id", "123")
+	routeCtx.URLParams.Add("id", "123e4567-e89b-12d3-a456-426614174000")
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, routeCtx))
 
 	rr := httptest.NewRecorder()
@@ -45,9 +45,9 @@ func TestStreamVideo_CustomQuality(t *testing.T) {
 }
 
 func TestStreamVideo_InvalidQuality(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "/videos/123/stream?quality=999p", nil)
+	req := httptest.NewRequest(http.MethodGet, "/videos/123e4567-e89b-12d3-a456-426614174000/stream?quality=999p", nil)
 	routeCtx := chi.NewRouteContext()
-	routeCtx.URLParams.Add("id", "123")
+	routeCtx.URLParams.Add("id", "123e4567-e89b-12d3-a456-426614174000")
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, routeCtx))
 
 	rr := httptest.NewRecorder()

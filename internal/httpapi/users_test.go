@@ -248,13 +248,13 @@ func TestUpdateCurrentUserHandler_Success(t *testing.T) {
 
 func TestGetUserHandler_Success(t *testing.T) {
 	repo := newMockUserRepo()
-	u := &domain.User{ID: "abc123", Username: "public", Email: "p@e.com", CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	u := &domain.User{ID: "123e4567-e89b-12d3-a456-426614174000", Username: "public", Email: "p@e.com", CreatedAt: time.Now(), UpdatedAt: time.Now()}
 	repo.users[u.ID] = u
 
 	r := chi.NewRouter()
 	r.Get("/{id}", GetUserHandler(repo))
 
-	req := httptest.NewRequest(http.MethodGet, "/abc123", nil)
+	req := httptest.NewRequest(http.MethodGet, "/123e4567-e89b-12d3-a456-426614174000", nil)
 	rr := httptest.NewRecorder()
 	r.ServeHTTP(rr, req)
 
@@ -276,7 +276,7 @@ func TestGetUserHandler_NotFound(t *testing.T) {
 	r := chi.NewRouter()
 	r.Get("/{id}", GetUserHandler(repo))
 
-	req := httptest.NewRequest(http.MethodGet, "/nope", nil)
+	req := httptest.NewRequest(http.MethodGet, "/123e4567-e89b-12d3-a456-426614174001", nil)
 	rr := httptest.NewRecorder()
 	r.ServeHTTP(rr, req)
 
