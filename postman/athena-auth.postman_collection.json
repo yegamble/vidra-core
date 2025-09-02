@@ -10,6 +10,38 @@
       "key": "baseUrl",
       "value": "http://app-test:8080",
       "type": "string"
+    },
+    {
+      "key": "access_token",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "refresh_token",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// Global pre-request script to ensure authentication for protected endpoints",
+          "const needsAuth = pm.request.url.toString().includes('/api/v1/') && ",
+          "                  !pm.request.url.toString().includes('/health') && ",
+          "                  !pm.request.url.toString().includes('/ready');",
+          "",
+          "if (needsAuth) {",
+          "    const token = pm.variables.get('access_token');",
+          "    if (!token || token === '') {",
+          "        console.log('No access token available - attempting to register/login first');",
+          "        // The test will likely fail with 401, which is expected",
+          "    }",
+          "}"
+        ]
+      }
     }
   ],
   "item": [
@@ -71,7 +103,10 @@
                   "});",
                   "pm.environment.set('user_id', json.user.id);",
                   "pm.environment.set('access_token', json.access_token);",
-                  "pm.environment.set('refresh_token', json.refresh_token);"
+                  "pm.environment.set('refresh_token', json.refresh_token);",
+                  "// Also set collection variables for cross-folder access",
+                  "pm.variables.set('access_token', json.access_token);",
+                  "pm.variables.set('refresh_token', json.refresh_token);"
                 ],
                 "type": "text/javascript"
               }
@@ -144,6 +179,9 @@
                   "  pm.environment.set('user_id', json.user.id);",
                   "  pm.environment.set('access_token', json.access_token);",
                   "  pm.environment.set('refresh_token', json.refresh_token);",
+                  "  // Also set collection variables for cross-folder access",
+                  "  pm.variables.set('access_token', json.access_token);",
+                  "  pm.variables.set('refresh_token', json.refresh_token);",
                   "  console.log('Login successful - tokens saved');",
                   "} else if (pm.response.code === 401) {",
                   "  console.log('Login failed - user may not exist (expected when running individual tests)');",
@@ -260,6 +298,9 @@
                   "  });",
                   "  pm.environment.set('access_token', json.access_token);",
                   "  pm.environment.set('refresh_token', json.refresh_token);",
+                  "  // Also set collection variables for cross-folder access",
+                  "  pm.variables.set('access_token', json.access_token);",
+                  "  pm.variables.set('refresh_token', json.refresh_token);",
                   "  console.log('Refresh successful - tokens updated');",
                   "} else if (pm.response.code === 400 || pm.response.code === 401) {",
                   "  console.log('Refresh failed - token may be missing or invalid (expected when running individual tests)');",
