@@ -523,7 +523,7 @@
                   "key": "file",
                   "type": "file",
                   "src": [
-                    "/etc/newman/avatar.webp"
+                    "/etc/newman/test-files/avatars/avatar.webp"
                   ]
                 }
               ]
@@ -610,7 +610,7 @@
                   "key": "file",
                   "type": "file",
                   "src": [
-                    "/etc/newman/avatar.heic"
+                    "/etc/newman/test-files/avatars/avatar.heic"
                   ]
                 }
               ]
@@ -786,7 +786,7 @@
                   "key": "file",
                   "type": "file",
                   "src": [
-                    "/etc/newman/avatar.tiff"
+                    "/etc/newman/test-files/avatars/avatar.tiff"
                   ]
                 }
               ]

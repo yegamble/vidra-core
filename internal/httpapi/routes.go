@@ -97,7 +97,7 @@ func RegisterRoutes(r chi.Router, cfg *config.Config) {
 	// Fail fast if IPFS API is unreachable
 	{
 		client := &http.Client{Timeout: time.Duration(cfg.IPFSPingTimeout) * time.Second}
-		resp, err := client.Get(cfg.IPFSApi + "/api/v0/version")
+		resp, err := client.Post(cfg.IPFSApi+"/api/v0/version", "", nil)
 		if err != nil || (resp != nil && (resp.StatusCode < 200 || resp.StatusCode >= 300)) {
 			if cfg.RequireIPFS {
 				log.Printf("ERROR: Failed to connect to IPFS API at %s: %v", cfg.IPFSApi, err)

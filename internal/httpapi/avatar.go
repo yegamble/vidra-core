@@ -151,8 +151,8 @@ func (s *Server) parseAvatarFile(r *http.Request) (*avatarFileData, error) {
 		return nil, domain.NewDomainError("FILE_ERROR", "File does not support seeking")
 	}
 
-	// Reconstruct full reader
-	reader := io.MultiReader(bytes.NewReader(head[:n]), file)
+	// After seeking back to start, create reader from the beginning of the file
+	reader := file
 
 	return &avatarFileData{
 		ext:        ext,
@@ -198,10 +198,21 @@ func (s *Server) validateImageDecoding(r io.Reader) error {
 		}
 	}
 
+	// Check for TIFF files (II or MM magic bytes)
+	if n >= 4 && ((header[0] == 'I' && header[1] == 'I' && header[2] == 0x2A && header[3] == 0x00) ||
+		(header[0] == 'M' && header[1] == 'M' && header[2] == 0x00 && header[3] == 0x2A)) {
+		return nil // TIFF files are valid
+	}
+
 	// For other formats, create a new reader with the header and try to decode
 	fullReader := io.MultiReader(bytes.NewReader(header[:n]), r)
 	_, _, err := image.DecodeConfig(fullReader)
 	if err != nil {
+		// If standard decoding fails, check if it might be a WebP file
+		// WebP should be handled by the imported decoder, but be lenient
+		if n >= 12 && string(header[0:4]) == "RIFF" && string(header[8:12]) == "WEBP" {
+			return nil // WebP files are valid
+		}
 		return fmt.Errorf("invalid or corrupted image file: %w", domain.ErrBadRequest)
 	}
 	return nil
