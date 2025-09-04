@@ -1176,29 +1176,44 @@ func StreamVideoHandler(videoRepo usecase.VideoRepository) http.HandlerFunc {
 			}
 		}
 
-		// Final fallback: mocked playlist
-		if quality == "" {
-			quality = domain.DefaultResolution
+		// Final fallback: mocked playlist for testing
+		// Since the video exists in DB but has no actual files, return a mock playlist
+		if quality == "" || quality == "master" {
+			// Return master playlist
+			hlsPlaylist := `#EXTM3U
+#EXT-X-VERSION:3
+#EXT-X-STREAM-INF:BANDWIDTH=5000000,RESOLUTION=1920x1080
+1080p.m3u8
+#EXT-X-STREAM-INF:BANDWIDTH=2800000,RESOLUTION=1280x720
+720p.m3u8
+#EXT-X-STREAM-INF:BANDWIDTH=1400000,RESOLUTION=854x480
+480p.m3u8
+#EXT-X-STREAM-INF:BANDWIDTH=800000,RESOLUTION=640x360
+360p.m3u8`
+			_, _ = w.Write([]byte(hlsPlaylist))
 		} else {
 			// Validate quality one more time for the final fallback
 			if !domain.IsValidResolution(quality) {
 				WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_QUALITY", "Unsupported quality"))
 				return
 			}
-		}
-		hlsPlaylist := fmt.Sprintf(`#EXTM3U
+			// Return quality-specific playlist
+			hlsPlaylist := fmt.Sprintf(`#EXTM3U
 #EXT-X-VERSION:3
-# QUALITY:%s
-#EXT-X-TARGETDURATION:10
+#EXT-X-TARGETDURATION:4
 #EXT-X-MEDIA-SEQUENCE:0
-#EXTINF:10.0,
-segment-00000.ts
-#EXTINF:10.0,
-segment-00001.ts
-#EXTINF:10.0,
-segment-00002.ts
-#EXT-X-ENDLIST`, quality)
-		_, _ = w.Write([]byte(hlsPlaylist))
+#EXT-X-PLAYLIST-TYPE:VOD
+#EXTINF:4.000,
+%s_segment_0.ts
+#EXTINF:4.000,
+%s_segment_1.ts
+#EXTINF:4.000,
+%s_segment_2.ts
+#EXTINF:2.000,
+%s_segment_3.ts
+#EXT-X-ENDLIST`, quality, quality, quality, quality)
+			_, _ = w.Write([]byte(hlsPlaylist))
+		}
 	}
 }
 
