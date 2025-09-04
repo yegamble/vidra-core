@@ -1073,52 +1073,76 @@ func StreamVideoHandler(videoRepo usecase.VideoRepository) http.HandlerFunc {
 			return
 		}
 
+		quality := r.URL.Query().Get("quality")
+
+		// Validate quality parameter if provided
+		if quality != "" && quality != "master" && !domain.IsValidResolution(quality) {
+			WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_QUALITY", "Unsupported quality"))
+			return
+		}
+
+		// Check if video exists first
+		var video *domain.Video
+		if videoRepo != nil {
+			v, err := videoRepo.GetByID(r.Context(), videoID)
+			if err != nil {
+				if err == domain.ErrVideoNotFound {
+					WriteError(w, http.StatusNotFound, err)
+				} else {
+					WriteError(w, http.StatusInternalServerError, domain.NewDomainError("DB_ERROR", "Failed to fetch video"))
+				}
+				return
+			}
+			video = v
+		} else {
+			// If no repo, video doesn't exist
+			WriteError(w, http.StatusNotFound, domain.ErrVideoNotFound)
+			return
+		}
+
+		// Set HLS headers
 		w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 
-		quality := r.URL.Query().Get("quality")
-
 		// Try OutputPaths from DB
-		if videoRepo != nil {
-			if v, err := videoRepo.GetByID(r.Context(), videoID); err == nil && v != nil {
-				// Master
-				if quality == "" {
-					if p := v.OutputPaths["master"]; p != "" {
-						if isRemoteURL(p) {
-							http.Redirect(w, r, p, http.StatusTemporaryRedirect)
-							return
-						}
-						// #nosec G304 - p resolved from DB OutputPaths under our control or validated elsewhere
-						if data, err := os.ReadFile(p); err == nil {
-							// redirect to static hls path if possible
-							if rel, ok := hlsRelPath(p); ok {
-								http.Redirect(w, r, "/api/v1/hls/"+rel, http.StatusTemporaryRedirect)
-								return
-							}
-							_, _ = w.Write(data)
-							return
-						}
-					}
-				} else {
-					if !domain.IsValidResolution(quality) {
-						WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_QUALITY", "Unsupported quality"))
+		if video != nil {
+			// Master
+			if quality == "" {
+				if p := video.OutputPaths["master"]; p != "" {
+					if isRemoteURL(p) {
+						http.Redirect(w, r, p, http.StatusTemporaryRedirect)
 						return
 					}
-					if p := v.OutputPaths[quality]; p != "" {
-						if isRemoteURL(p) {
-							http.Redirect(w, r, p, http.StatusTemporaryRedirect)
+					// #nosec G304 - p resolved from DB OutputPaths under our control or validated elsewhere
+					if data, err := os.ReadFile(p); err == nil {
+						// redirect to static hls path if possible
+						if rel, ok := hlsRelPath(p); ok {
+							http.Redirect(w, r, "/api/v1/hls/"+rel, http.StatusTemporaryRedirect)
 							return
 						}
-						// #nosec G304 - p resolved from DB OutputPaths under our control or validated elsewhere
-						if data, err := os.ReadFile(p); err == nil {
-							// redirect to static hls path if possible
-							if rel, ok := hlsRelPath(p); ok {
-								http.Redirect(w, r, "/api/v1/hls/"+rel, http.StatusTemporaryRedirect)
-								return
-							}
-							_, _ = w.Write(data)
+						_, _ = w.Write(data)
+						return
+					}
+				}
+			} else {
+				if !domain.IsValidResolution(quality) {
+					WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_QUALITY", "Unsupported quality"))
+					return
+				}
+				if p := video.OutputPaths[quality]; p != "" {
+					if isRemoteURL(p) {
+						http.Redirect(w, r, p, http.StatusTemporaryRedirect)
+						return
+					}
+					// #nosec G304 - p resolved from DB OutputPaths under our control or validated elsewhere
+					if data, err := os.ReadFile(p); err == nil {
+						// redirect to static hls path if possible
+						if rel, ok := hlsRelPath(p); ok {
+							http.Redirect(w, r, "/api/v1/hls/"+rel, http.StatusTemporaryRedirect)
 							return
 						}
+						_, _ = w.Write(data)
+						return
 					}
 				}
 			}
