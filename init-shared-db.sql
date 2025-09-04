@@ -58,6 +58,7 @@ CREATE TABLE IF NOT EXISTS user_avatars (
     user_id UUID NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
     file_id UUID,
     ipfs_cid TEXT,
+    webp_ipfs_cid TEXT,
     url TEXT NOT NULL DEFAULT '',
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
