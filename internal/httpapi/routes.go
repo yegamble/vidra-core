@@ -159,6 +159,14 @@ func RegisterRoutes(r chi.Router, cfg *config.Config) {
 			r.With(middleware.Auth(cfg.JWTSecret)).Put("/{id:[0-9a-fA-F-]{36}}", UpdateVideoHandler(videoRepo))
 			r.With(middleware.Auth(cfg.JWTSecret)).Delete("/{id:[0-9a-fA-F-]{36}}", DeleteVideoHandler(videoRepo))
 
+			// Catch-all routes for invalid IDs to return proper auth errors instead of 404
+			r.With(middleware.Auth(cfg.JWTSecret)).Put("/{id}", func(w http.ResponseWriter, r *http.Request) {
+				WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_ID", "Invalid video ID format"))
+			})
+			r.With(middleware.Auth(cfg.JWTSecret)).Delete("/{id}", func(w http.ResponseWriter, r *http.Request) {
+				WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_ID", "Invalid video ID format"))
+			})
+
 			// Direct video upload endpoints (for backward compatibility with tests)
 			r.With(middleware.Auth(cfg.JWTSecret)).Post("/{id:[0-9a-fA-F-]{36}}/upload", VideoUploadChunkHandler(uploadService, cfg))
 			r.With(middleware.Auth(cfg.JWTSecret)).Post("/{id:[0-9a-fA-F-]{36}}/complete", VideoCompleteUploadHandler(uploadService))
