@@ -150,26 +150,23 @@ func RegisterRoutes(r chi.Router, cfg *config.Config) {
 			// Legacy one-shot upload endpoint for Postman collection compatibility
 			r.With(middleware.Auth(cfg.JWTSecret)).Post("/upload", UploadVideoFileHandler(videoRepo, cfg))
 			// Parameterized routes come after static routes
-			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{id:[0-9a-fA-F-]{36}}", GetVideoHandler(videoRepo))
-			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{id:[0-9a-fA-F-]{36}}/stream", StreamVideoHandler(videoRepo))
+			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{id}", GetVideoHandler(videoRepo))
+			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{id}/stream", StreamVideoHandler(videoRepo))
 			// Subscription feed
 			r.With(middleware.Auth(cfg.JWTSecret)).Get("/subscriptions", ListSubscriptionVideosHandler(subRepo))
 
 			r.With(middleware.Auth(cfg.JWTSecret)).Post("/", CreateVideoHandler(videoRepo))
-			r.With(middleware.Auth(cfg.JWTSecret)).Put("/{id:[0-9a-fA-F-]{36}}", UpdateVideoHandler(videoRepo))
-			r.With(middleware.Auth(cfg.JWTSecret)).Delete("/{id:[0-9a-fA-F-]{36}}", DeleteVideoHandler(videoRepo))
-
-			// Catch-all routes for invalid IDs to return proper auth errors instead of 404
-			r.With(middleware.Auth(cfg.JWTSecret)).Put("/{id}", func(w http.ResponseWriter, r *http.Request) {
-				WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_ID", "Invalid video ID format"))
-			})
-			r.With(middleware.Auth(cfg.JWTSecret)).Delete("/{id}", func(w http.ResponseWriter, r *http.Request) {
-				WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_ID", "Invalid video ID format"))
-			})
+			r.With(middleware.Auth(cfg.JWTSecret)).Put("/{id}", UpdateVideoHandler(videoRepo))
+			r.With(middleware.Auth(cfg.JWTSecret)).Delete("/{id}", DeleteVideoHandler(videoRepo))
 
 			// Direct video upload endpoints (for backward compatibility with tests)
-			r.With(middleware.Auth(cfg.JWTSecret)).Post("/{id:[0-9a-fA-F-]{36}}/upload", VideoUploadChunkHandler(uploadService, cfg))
-			r.With(middleware.Auth(cfg.JWTSecret)).Post("/{id:[0-9a-fA-F-]{36}}/complete", VideoCompleteUploadHandler(uploadService))
+			r.With(middleware.Auth(cfg.JWTSecret)).Post("/{id}/upload", VideoUploadChunkHandler(uploadService, cfg))
+			r.With(middleware.Auth(cfg.JWTSecret)).Post("/{id}/complete", VideoCompleteUploadHandler(uploadService))
+
+			// Views and analytics endpoints for specific videos
+			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Post("/{id}/views", viewsHandler.TrackView)
+			r.With(middleware.Auth(cfg.JWTSecret)).Get("/{id}/analytics", viewsHandler.GetVideoAnalytics)
+			r.With(middleware.Auth(cfg.JWTSecret)).Get("/{id}/stats/daily", viewsHandler.GetDailyStats)
 		})
 
 		// Static HLS handler with privacy gating and cache headers
@@ -219,16 +216,8 @@ func RegisterRoutes(r chi.Router, cfg *config.Config) {
 			r.Get("/unread-count", GetUnreadCountHandler(messageService))
 		})
 
-		// Views and analytics endpoints
-		// These need to be before the parameterized /videos/{videoId} route
+		// Trending endpoint
 		r.Get("/trending", viewsHandler.GetTrendingVideos)
-		r.Route("/videos/{videoId:[0-9a-fA-F-]{36}}", func(r chi.Router) {
-			// View tracking - allow anonymous users
-			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Post("/views", viewsHandler.TrackView)
-			// Analytics - require authentication for detailed analytics
-			r.With(middleware.Auth(cfg.JWTSecret)).Get("/analytics", viewsHandler.GetVideoAnalytics)
-			r.With(middleware.Auth(cfg.JWTSecret)).Get("/stats/daily", viewsHandler.GetDailyStats)
-		})
 
 		// Fingerprinting for view deduplication
 		r.Post("/views/fingerprint", viewsHandler.GenerateFingerprint)
