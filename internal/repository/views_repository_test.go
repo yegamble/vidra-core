@@ -486,6 +486,7 @@ func createTestViewsUser(t *testing.T, testDB *testutil.TestDB) *domain.User {
 func createTestViewsVideo(t *testing.T, testDB *testutil.TestDB, userID string) *domain.Video {
 	t.Helper()
 
+	defaultCategoryID := uuid.New()
 	video := &domain.Video{
 		ID:          uuid.New().String(),
 		ThumbnailID: uuid.New().String(),
@@ -497,6 +498,7 @@ func createTestViewsVideo(t *testing.T, testDB *testutil.TestDB, userID string) 
 		Status:      domain.StatusCompleted,
 		UploadDate:  time.Now(),
 		UserID:      userID,
+		CategoryID:  &defaultCategoryID,
 		FileSize:    1024000,
 		MimeType:    "video/mp4",
 		CreatedAt:   time.Now(),
@@ -504,12 +506,12 @@ func createTestViewsVideo(t *testing.T, testDB *testutil.TestDB, userID string) 
 	}
 
 	query := `INSERT INTO videos (id, thumbnail_id, title, description, duration, views, privacy, status, 
-		upload_date, user_id, file_size, mime_type, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`
+		upload_date, user_id, category_id, file_size, mime_type, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`
 
 	_, err := testDB.DB.Exec(query, video.ID, video.ThumbnailID, video.Title, video.Description,
 		video.Duration, video.Views, video.Privacy, video.Status, video.UploadDate, video.UserID,
-		video.FileSize, video.MimeType, video.CreatedAt, video.UpdatedAt)
+		video.CategoryID, video.FileSize, video.MimeType, video.CreatedAt, video.UpdatedAt)
 	require.NoError(t, err)
 
 	return video

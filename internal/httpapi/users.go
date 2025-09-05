@@ -143,7 +143,7 @@ func GetUserVideos(w http.ResponseWriter, r *http.Request) {
 			UploadDate:  time.Now().AddDate(0, 0, -5),
 			UserID:      userID,
 			Tags:        []string{"user", "content"},
-			Category:    "personal",
+			CategoryID:  nil,
 			Language:    "en",
 		},
 		{
@@ -157,7 +157,7 @@ func GetUserVideos(w http.ResponseWriter, r *http.Request) {
 			UploadDate:  time.Now().AddDate(0, 0, -10),
 			UserID:      userID,
 			Tags:        []string{"tutorial"},
-			Category:    "education",
+			CategoryID:  nil,
 			Language:    "en",
 		},
 	}

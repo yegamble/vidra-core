@@ -30,7 +30,7 @@ func scanVideoRow(rows *sql.Rows) (*domain.Video, error) {
 		&v.ID, &v.ThumbnailID, &v.Title, &v.Description, &v.Duration, &v.Views,
 		&v.Privacy, &v.Status, &v.UploadDate, &v.UserID,
 		&v.OriginalCID, &processedCIDsJSON, &v.ThumbnailCID,
-		&tags, &v.Category, &v.Language, &v.FileSize, &v.MimeType, &metadataJSON,
+		&tags, &v.CategoryID, &v.Language, &v.FileSize, &v.MimeType, &metadataJSON,
 		&v.CreatedAt, &v.UpdatedAt,
 	)
 	if err != nil {
@@ -55,7 +55,7 @@ func (r *videoRepository) Create(ctx context.Context, v *domain.Video) error {
             id, thumbnail_id, title, description, duration, views,
             privacy, status, upload_date, user_id,
             original_cid, processed_cids, thumbnail_cid,
-            tags, category, language, file_size, mime_type, metadata,
+            tags, category_id, language, file_size, mime_type, metadata,
             created_at, updated_at,
             output_paths, thumbnail_path, preview_path
         ) VALUES (
@@ -76,7 +76,7 @@ func (r *videoRepository) Create(ctx context.Context, v *domain.Video) error {
 		v.ID, v.ThumbnailID, v.Title, v.Description, v.Duration, v.Views,
 		v.Privacy, v.Status, v.UploadDate, v.UserID,
 		v.OriginalCID, processedCIDsJSON, v.ThumbnailCID,
-		pq.Array(v.Tags), v.Category, v.Language, v.FileSize, v.MimeType, metadataJSON,
+		pq.Array(v.Tags), v.CategoryID, v.Language, v.FileSize, v.MimeType, metadataJSON,
 		v.CreatedAt, v.UpdatedAt,
 		outputPathsJSON, v.ThumbnailPath, v.PreviewPath,
 	)
@@ -91,7 +91,7 @@ func (r *videoRepository) GetByID(ctx context.Context, id string) (*domain.Video
         SELECT id, thumbnail_id, title, description, duration, views,
                privacy, status, upload_date, user_id,
                original_cid, processed_cids, thumbnail_cid,
-               tags, category, language, file_size, mime_type, metadata,
+               tags, category_id, language, file_size, mime_type, metadata,
                created_at, updated_at, output_paths, thumbnail_path, preview_path
         FROM videos WHERE id = $1`
 
@@ -103,7 +103,7 @@ func (r *videoRepository) GetByID(ctx context.Context, id string) (*domain.Video
 		&v.ID, &v.ThumbnailID, &v.Title, &v.Description, &v.Duration, &v.Views,
 		&v.Privacy, &v.Status, &v.UploadDate, &v.UserID,
 		&v.OriginalCID, &processedCIDsJSON, &v.ThumbnailCID,
-		&tags, &v.Category, &v.Language, &v.FileSize, &v.MimeType, &metadataJSON,
+		&tags, &v.CategoryID, &v.Language, &v.FileSize, &v.MimeType, &metadataJSON,
 		&v.CreatedAt, &v.UpdatedAt, &outputPathsJSON, &v.ThumbnailPath, &v.PreviewPath,
 	)
 	if err != nil {
@@ -142,7 +142,7 @@ func (r *videoRepository) GetByUserID(ctx context.Context, userID string, limit,
         SELECT id, thumbnail_id, title, description, duration, views,
                privacy, status, upload_date, user_id,
                original_cid, processed_cids, thumbnail_cid,
-               tags, category, language, file_size, mime_type, metadata,
+               tags, category_id, language, file_size, mime_type, metadata,
                created_at, updated_at
         FROM videos 
         WHERE user_id = $1 
@@ -171,13 +171,13 @@ func (r *videoRepository) Update(ctx context.Context, v *domain.Video) error {
 	query := `
         UPDATE videos SET
             title = $2, description = $3, privacy = $4,
-            tags = $5, category = $6, language = $7,
+            tags = $5, category_id = $6, language = $7,
             status = $8, updated_at = $9
         WHERE id = $1 AND user_id = $10`
 
 	result, err := r.db.ExecContext(ctx, query,
 		v.ID, v.Title, v.Description, v.Privacy,
-		pq.Array(v.Tags), v.Category, v.Language,
+		pq.Array(v.Tags), v.CategoryID, v.Language,
 		v.Status, v.UpdatedAt, v.UserID,
 	)
 	if err != nil {
@@ -240,7 +240,7 @@ func (r *videoRepository) List(ctx context.Context, req *domain.VideoSearchReque
         SELECT id, thumbnail_id, title, description, duration, views,
                privacy, status, upload_date, user_id,
                original_cid, processed_cids, thumbnail_cid,
-               tags, category, language, file_size, mime_type, metadata,
+               tags, category_id, language, file_size, mime_type, metadata,
                created_at, updated_at
         FROM videos 
         WHERE privacy = 'public' AND status = 'completed'`
@@ -251,10 +251,10 @@ func (r *videoRepository) List(ctx context.Context, req *domain.VideoSearchReque
 	argIndex := 1
 
 	// Add filters
-	if req.Category != "" {
-		baseQuery += fmt.Sprintf(" AND category = $%d", argIndex)
-		countQuery += fmt.Sprintf(" AND category = $%d", argIndex)
-		args = append(args, req.Category)
+	if req.CategoryID != nil {
+		baseQuery += fmt.Sprintf(" AND category_id = $%d", argIndex)
+		countQuery += fmt.Sprintf(" AND category_id = $%d", argIndex)
+		args = append(args, req.CategoryID)
 		argIndex++
 	}
 
@@ -325,7 +325,7 @@ func (r *videoRepository) Search(ctx context.Context, req *domain.VideoSearchReq
         SELECT id, thumbnail_id, title, description, duration, views,
                privacy, status, upload_date, user_id,
                original_cid, processed_cids, thumbnail_cid,
-               tags, category, language, file_size, mime_type, metadata,
+               tags, category_id, language, file_size, mime_type, metadata,
                created_at, updated_at
         FROM videos 
         WHERE privacy = 'public' AND status = 'completed'`
@@ -361,10 +361,10 @@ func (r *videoRepository) Search(ctx context.Context, req *domain.VideoSearchReq
 	}
 
 	// Add other filters
-	if req.Category != "" {
-		baseQuery += fmt.Sprintf(" AND category = $%d", argIndex)
-		countQuery += fmt.Sprintf(" AND category = $%d", argIndex)
-		args = append(args, req.Category)
+	if req.CategoryID != nil {
+		baseQuery += fmt.Sprintf(" AND category_id = $%d", argIndex)
+		countQuery += fmt.Sprintf(" AND category_id = $%d", argIndex)
+		args = append(args, req.CategoryID)
 		argIndex++
 	}
 

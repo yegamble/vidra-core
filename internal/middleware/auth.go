@@ -9,6 +9,7 @@ import (
 
 	"athena/internal/domain"
 	jwt "github.com/golang-jwt/jwt/v5"
+	"github.com/google/uuid"
 )
 
 type contextKey string
@@ -118,4 +119,44 @@ func writeError(w http.ResponseWriter, statusCode int, err error) {
 	}
 
 	_ = json.NewEncoder(w).Encode(response)
+}
+
+// GetUserIDFromContext retrieves the user ID from the request context
+func GetUserIDFromContext(ctx context.Context) (uuid.UUID, bool) {
+	userIDStr, ok := ctx.Value(UserIDKey).(string)
+	if !ok {
+		return uuid.UUID{}, false
+	}
+
+	userID, err := uuid.Parse(userIDStr)
+	if err != nil {
+		return uuid.UUID{}, false
+	}
+
+	return userID, true
+}
+
+// RequireAuth is a middleware that requires authentication
+func RequireAuth(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		userID := r.Context().Value(UserIDKey)
+		if userID == nil {
+			writeError(w, http.StatusUnauthorized, domain.NewDomainError("UNAUTHORIZED", "Authentication required"))
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// RequireRole returns a middleware that requires a specific user role
+func RequireRole(role string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// For now, we'll need to implement role checking
+			// This would typically involve fetching the user from the database
+			// and checking their role
+			// TODO: Implement actual role checking
+			next.ServeHTTP(w, r)
+		})
+	}
 }

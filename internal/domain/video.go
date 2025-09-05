@@ -3,6 +3,8 @@ package domain
 import (
 	"math"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 const DefaultResolution = "720p"
@@ -56,7 +58,8 @@ type Video struct {
 	ThumbnailPath string            `json:"thumbnail_path" db:"thumbnail_path"`
 	PreviewPath   string            `json:"preview_path" db:"preview_path"`
 	Tags          []string          `json:"tags" db:"tags"`
-	Category      string            `json:"category" db:"category"`
+	CategoryID    *uuid.UUID        `json:"category_id" db:"category_id"`
+	Category      *VideoCategory    `json:"category,omitempty" db:"-"`
 	Language      string            `json:"language" db:"language"`
 	FileSize      int64             `json:"file_size" db:"file_size"`
 	MimeType      string            `json:"mime_type" db:"mime_type"`
@@ -94,33 +97,33 @@ const (
 )
 
 type VideoSearchRequest struct {
-	Query    string   `json:"query"`
-	Tags     []string `json:"tags"`
-	Category string   `json:"category"`
-	Language string   `json:"language"`
-	Privacy  Privacy  `json:"privacy"`
-	Sort     string   `json:"sort"`
-	Order    string   `json:"order"`
-	Limit    int      `json:"limit"`
-	Offset   int      `json:"offset"`
+	Query      string     `json:"query"`
+	Tags       []string   `json:"tags"`
+	CategoryID *uuid.UUID `json:"category_id"`
+	Language   string     `json:"language"`
+	Privacy    Privacy    `json:"privacy"`
+	Sort       string     `json:"sort"`
+	Order      string     `json:"order"`
+	Limit      int        `json:"limit"`
+	Offset     int        `json:"offset"`
 }
 
 type VideoUploadRequest struct {
-	Title       string   `json:"title" validate:"required,min=1,max=255"`
-	Description string   `json:"description" validate:"max=5000"`
-	Privacy     Privacy  `json:"privacy" validate:"required"`
-	Tags        []string `json:"tags" validate:"max=10"`
-	Category    string   `json:"category"`
-	Language    string   `json:"language"`
+	Title       string     `json:"title" validate:"required,min=1,max=255"`
+	Description string     `json:"description" validate:"max=5000"`
+	Privacy     Privacy    `json:"privacy" validate:"required"`
+	Tags        []string   `json:"tags" validate:"max=10"`
+	CategoryID  *uuid.UUID `json:"category_id" validate:"omitempty"`
+	Language    string     `json:"language"`
 }
 
 type VideoUpdateRequest struct {
-	Title       string   `json:"title" validate:"required,min=1,max=255"`
-	Description string   `json:"description" validate:"max=5000"`
-	Privacy     Privacy  `json:"privacy" validate:"required"`
-	Tags        []string `json:"tags" validate:"max=10"`
-	Category    string   `json:"category"`
-	Language    string   `json:"language"`
+	Title       string     `json:"title" validate:"required,min=1,max=255"`
+	Description string     `json:"description" validate:"max=5000"`
+	Privacy     Privacy    `json:"privacy" validate:"required"`
+	Tags        []string   `json:"tags" validate:"max=10"`
+	CategoryID  *uuid.UUID `json:"category_id" validate:"omitempty"`
+	Language    string     `json:"language"`
 }
 
 // Upload tracking models

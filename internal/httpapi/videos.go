@@ -62,7 +62,6 @@ func ListVideosHandler(repo usecase.VideoRepository) http.HandlerFunc {
 		}
 
 		req := &domain.VideoSearchRequest{
-			Category: r.URL.Query().Get("category"),
 			Language: r.URL.Query().Get("language"),
 			Sort:     sort,
 			Order:    order,
@@ -109,7 +108,6 @@ func SearchVideosHandler(repo usecase.VideoRepository) http.HandlerFunc {
 		req := &domain.VideoSearchRequest{
 			Query:    query,
 			Tags:     tags,
-			Category: r.URL.Query().Get("category"),
 			Language: r.URL.Query().Get("language"),
 			Sort:     r.URL.Query().Get("sort"),
 			Order:    r.URL.Query().Get("order"),
@@ -205,7 +203,7 @@ func CreateVideoHandler(repo usecase.VideoRepository) http.HandlerFunc {
 			UploadDate:  now,
 			UserID:      userID,
 			Tags:        tags,
-			Category:    req.Category,
+			CategoryID:  req.CategoryID,
 			Language:    req.Language,
 			CreatedAt:   now,
 			UpdatedAt:   now,
@@ -287,7 +285,7 @@ func UpdateVideoHandler(repo usecase.VideoRepository) http.HandlerFunc {
 			Status:      existingVideo.Status, // Keep existing status
 			UserID:      userID,
 			Tags:        tags,
-			Category:    req.Category,
+			CategoryID:  req.CategoryID,
 			Language:    req.Language,
 			UpdatedAt:   time.Now(),
 		}
@@ -881,7 +879,7 @@ func VideoCompleteUploadHandler(uploadService usecase.UploadService) http.Handle
 		}
 
 		// For test compatibility, just return success
-		// In a real implementation, we would finalize the upload
+		// In a real implementation; we would finalize the upload
 		response := map[string]interface{}{
 			"video_id": videoID,
 			"status":   "completed",
