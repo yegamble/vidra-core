@@ -214,6 +214,10 @@ make serve-docs
   - Notes:
     - The default is also used when `quality` is omitted in `/stream`.
     - The set returned here reflects server-side support and validation.
+- `GET /api/v1/videos/top` - Get top/most viewed videos within a time period
+- `GET /api/v1/trending` - Get currently trending videos
+- `GET /api/v1/hls/*` - Serve HLS playlists and segments
+- `POST /api/v1/views/fingerprint` - Generate fingerprint for view deduplication
 
 #### Resolution Detection Logic (Encoding)
 When queuing an encoding job after upload completes, the service determines the source resolution using the following rules:
@@ -239,8 +243,27 @@ Operational note: Debug logs for width/aspect estimation emit only when `LOG_LEV
 - `POST /api/v1/videos` - Create video metadata
 - `PUT /api/v1/videos/{id}` - Update video (owner only)
 - `DELETE /api/v1/videos/{id}` - Delete video (owner only)
+- `POST /api/v1/videos/upload` - Legacy one-shot video upload (for Postman compatibility)
 - `POST /api/v1/videos/{id}/upload` - Upload video chunk
 - `POST /api/v1/videos/{id}/complete` - Complete chunked upload
+- `GET /api/v1/videos/subscriptions` - Get videos from subscribed channels
+- `POST /api/v1/videos/{videoId}/views` - Track video view
+- `GET /api/v1/videos/{videoId}/analytics` - Get video analytics (owner only)
+- `GET /api/v1/videos/{videoId}/stats/daily` - Get daily video statistics (owner only)
+
+### Uploads
+
+**Chunked Upload Endpoints (Require Authentication):**
+- `POST /api/v1/uploads/initiate` - Initiate a chunked upload session
+- `POST /api/v1/uploads/{sessionId}/chunks` - Upload a chunk
+- `POST /api/v1/uploads/{sessionId}/complete` - Complete upload and trigger processing
+- `GET /api/v1/uploads/{sessionId}/status` - Get upload session status
+- `GET /api/v1/uploads/{sessionId}/resume` - Get information to resume an interrupted upload
+
+### Encoding
+
+**Public Endpoints:**
+- `GET /api/v1/encoding/status` - Get encoding job status (optionally filter by videoId)
 
 ### Subscriptions
 
@@ -250,7 +273,7 @@ Operational note: Debug logs for width/aspect estimation emit only when `LOG_LEV
 - `DELETE /api/v1/users/{id}/subscribe` - Unsubscribe from a user (requires auth)
   - Idempotent; unsubscribing when not subscribed is a no-op.
   - Decrements the target user's `subscriber_count` (not below zero).
-- `GET /api/v1/users/me/subscriptions` - List channels I’m subscribed to (requires auth)
+- `GET /api/v1/users/me/subscriptions` - List channels I'm subscribed to (requires auth)
   - Supports `limit` and `offset` pagination.
   - Returns a wrapped response with `data` (array of users) and `meta`.
 - `GET /api/v1/videos/subscriptions` - List videos from my subscriptions (requires auth)
@@ -263,11 +286,17 @@ Notes:
 
 ### Messages
 
-**Standard Messages:**
-- `POST /api/v1/messages` - Send a message (requires auth)
-- `GET /api/v1/messages` - Get conversations (requires auth)
-- `GET /api/v1/messages/{user_id}` - Get messages with specific user (requires auth)
-- `PUT /api/v1/messages/{id}/read` - Mark message as read (requires auth)
+**Standard Messages (Require Authentication):**
+- `POST /api/v1/messages` - Send a message to another user
+- `GET /api/v1/messages` - Get messages (optionally filtered by conversationId)
+- `PUT /api/v1/messages/{messageId}/read` - Mark message as read
+- `DELETE /api/v1/messages/{messageId}` - Delete a message
+
+### Conversations
+
+**Conversation Management (Require Authentication):**
+- `GET /api/v1/conversations` - Get user's conversation list
+- `GET /api/v1/conversations/unread-count` - Get total count of unread messages
 
 **End-to-End Encrypted Messages:**
 - `POST /api/v1/e2ee/setup` - Setup E2EE with master key (requires auth)
@@ -277,13 +306,18 @@ Notes:
 
 ### Users
 
-- `GET /api/v1/users/me` - Get current user (requires auth)
-- `PUT /api/v1/users/me` - Update current user (requires auth)
+**Public Endpoints:**
 - `GET /api/v1/users/{id}` - Get user profile
-- `GET /api/v1/users/{id}/videos` - Get user's videos
-- `POST /api/v1/users/{id}/subscribe` - Subscribe to a user (requires auth)
-- `DELETE /api/v1/users/{id}/subscribe` - Unsubscribe from a user (requires auth)
-- `GET /api/v1/users/me/subscriptions` - List channels you’re subscribed to (requires auth)
+- `GET /api/v1/users/{id}/videos` - Get user's public videos
+
+**Protected Endpoints (Require Authentication):**
+- `POST /api/v1/users` - Create a new user (admin only)
+- `GET /api/v1/users/me` - Get current user profile
+- `PUT /api/v1/users/me` - Update current user profile
+- `POST /api/v1/users/me/avatar` - Upload avatar image (supports PNG, JPEG, WebP, GIF, HEIC, TIFF)
+- `GET /api/v1/users/me/subscriptions` - List channels you're subscribed to
+- `POST /api/v1/users/{id}/subscribe` - Subscribe to a user
+- `DELETE /api/v1/users/{id}/subscribe` - Unsubscribe from a user
 
 ## End-to-End Encrypted Messaging (E2EE)
 

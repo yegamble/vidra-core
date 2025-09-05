@@ -1114,6 +1114,1465 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
+  # Video endpoints
+  /api/v1/videos:
+    get:
+      tags:
+        - Videos
+      summary: List videos
+      description: Get a paginated list of public videos
+      operationId: listVideos
+      security: []
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+            maximum: 100
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+        - name: sort
+          in: query
+          schema:
+            type: string
+            enum: [title, views, upload_date, duration]
+            default: upload_date
+        - name: order
+          in: query
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: desc
+        - name: category
+          in: query
+          schema:
+            type: string
+        - name: language
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: List of videos
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  videos:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Video'
+                  total:
+                    type: integer
+                  limit:
+                    type: integer
+                  offset:
+                    type: integer
+    post:
+      tags:
+        - Videos
+      summary: Create a new video
+      description: Create a new video entry before uploading content
+      operationId: createVideo
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateVideoRequest'
+      responses:
+        '201':
+          description: Video created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Video'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/videos/search:
+    get:
+      tags:
+        - Videos
+      summary: Search videos
+      description: Search for videos by query, tags, and filters
+      operationId: searchVideos
+      security: []
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+            description: Search query
+        - name: tags
+          in: query
+          schema:
+            type: array
+            items:
+              type: string
+          style: form
+          explode: true
+        - name: category
+          in: query
+          schema:
+            type: string
+        - name: language
+          in: query
+          schema:
+            type: string
+        - name: sort
+          in: query
+          schema:
+            type: string
+            enum: [relevance, title, views, upload_date, duration]
+            default: relevance
+        - name: order
+          in: query
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: desc
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+            maximum: 100
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+      responses:
+        '200':
+          description: Search results
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  videos:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Video'
+                  total:
+                    type: integer
+                  limit:
+                    type: integer
+                  offset:
+                    type: integer
+
+  /api/v1/videos/qualities:
+    get:
+      tags:
+        - Videos
+      summary: Get supported video qualities
+      description: Returns list of supported video quality options
+      operationId: getSupportedQualities
+      security: []
+      responses:
+        '200':
+          description: List of supported qualities
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  qualities:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        resolution:
+                          type: string
+                        height:
+                          type: integer
+                        width:
+                          type: integer
+                        bitrate:
+                          type: string
+
+  /api/v1/videos/top:
+    get:
+      tags:
+        - Videos
+      summary: Get top videos
+      description: Get most viewed videos within a time period
+      operationId: getTopVideos
+      security: []
+      parameters:
+        - name: period
+          in: query
+          schema:
+            type: string
+            enum: [day, week, month, all]
+            default: week
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+            maximum: 100
+      responses:
+        '200':
+          description: Top videos list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  videos:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Video'
+
+  /api/v1/videos/subscriptions:
+    get:
+      tags:
+        - Videos
+      summary: Get subscription feed
+      description: Get videos from channels user is subscribed to
+      operationId: getSubscriptionVideos
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+            maximum: 100
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+      responses:
+        '200':
+          description: Subscription feed videos
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  videos:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Video'
+                  total:
+                    type: integer
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/videos/upload:
+    post:
+      tags:
+        - Videos
+      summary: Legacy one-shot video upload
+      description: Upload a video file in a single request (legacy endpoint for Postman compatibility)
+      operationId: uploadVideoFile
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+                title:
+                  type: string
+                description:
+                  type: string
+                privacy:
+                  type: string
+                  enum: [public, private, unlisted]
+              required:
+                - file
+                - title
+      responses:
+        '201':
+          description: Video uploaded successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Video'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/videos/{id}:
+    get:
+      tags:
+        - Videos
+      summary: Get video by ID
+      description: Get a specific video by its ID
+      operationId: getVideo
+      security: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Video details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Video'
+        '404':
+          description: Video not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    put:
+      tags:
+        - Videos
+      summary: Update video
+      description: Update video metadata
+      operationId: updateVideo
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateVideoRequest'
+      responses:
+        '200':
+          description: Video updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Video'
+        '400':
+          description: Invalid request or invalid ID format
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Video not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    delete:
+      tags:
+        - Videos
+      summary: Delete video
+      description: Delete a video
+      operationId: deleteVideo
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Video deleted successfully
+        '400':
+          description: Invalid ID format
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Video not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/videos/{id}/stream:
+    get:
+      tags:
+        - Videos
+      summary: Stream video
+      description: Get HLS stream playlist for video
+      operationId: streamVideo
+      security: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: quality
+          in: query
+          schema:
+            type: string
+            enum: [auto, 2160p, 1440p, 1080p, 720p, 480p, 360p, 240p]
+            default: auto
+      responses:
+        '200':
+          description: HLS playlist
+          content:
+            application/vnd.apple.mpegurl:
+              schema:
+                type: string
+        '404':
+          description: Video not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/videos/{id}/upload:
+    post:
+      tags:
+        - Videos
+      summary: Upload video chunk
+      description: Upload a chunk of video data (for backward compatibility)
+      operationId: uploadVideoChunk
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                chunk:
+                  type: string
+                  format: binary
+                chunkIndex:
+                  type: integer
+                totalChunks:
+                  type: integer
+              required:
+                - chunk
+                - chunkIndex
+                - totalChunks
+      responses:
+        '200':
+          description: Chunk uploaded successfully
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/videos/{id}/complete:
+    post:
+      tags:
+        - Videos
+      summary: Complete video upload
+      description: Mark video upload as complete and trigger processing
+      operationId: completeVideoUpload
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Upload completed and processing started
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/videos/{videoId}/views:
+    post:
+      tags:
+        - Videos
+      summary: Track video view
+      description: Record a view for the video
+      operationId: trackVideoView
+      security: []
+      parameters:
+        - name: videoId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                fingerprint:
+                  type: string
+                duration:
+                  type: integer
+                  description: Watch duration in seconds
+      responses:
+        '200':
+          description: View tracked successfully
+        '404':
+          description: Video not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/videos/{videoId}/analytics:
+    get:
+      tags:
+        - Videos
+      summary: Get video analytics
+      description: Get detailed analytics for a video
+      operationId: getVideoAnalytics
+      parameters:
+        - name: videoId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Video analytics data
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  views:
+                    type: integer
+                  unique_viewers:
+                    type: integer
+                  avg_watch_time:
+                    type: number
+                  engagement_rate:
+                    type: number
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Video not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/videos/{videoId}/stats/daily:
+    get:
+      tags:
+        - Videos
+      summary: Get daily video statistics
+      description: Get daily statistics for a video
+      operationId: getDailyVideoStats
+      parameters:
+        - name: videoId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: days
+          in: query
+          schema:
+            type: integer
+            default: 7
+            maximum: 30
+      responses:
+        '200':
+          description: Daily statistics
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  stats:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        date:
+                          type: string
+                          format: date
+                        views:
+                          type: integer
+                        unique_viewers:
+                          type: integer
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # HLS streaming endpoint
+  /api/v1/hls/*:
+    get:
+      tags:
+        - Streaming
+      summary: Serve HLS content
+      description: Serve HLS playlists and segments
+      operationId: serveHLS
+      security: []
+      parameters:
+        - name: path
+          in: path
+          required: true
+          schema:
+            type: string
+          description: HLS resource path
+      responses:
+        '200':
+          description: HLS content
+          content:
+            application/vnd.apple.mpegurl:
+              schema:
+                type: string
+            video/mp2t:
+              schema:
+                type: string
+                format: binary
+        '404':
+          description: Resource not found
+
+  # Upload endpoints
+  /api/v1/uploads/initiate:
+    post:
+      tags:
+        - Uploads
+      summary: Initiate chunked upload
+      description: Start a new chunked upload session
+      operationId: initiateUpload
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                filename:
+                  type: string
+                fileSize:
+                  type: integer
+                  format: int64
+                mimeType:
+                  type: string
+                videoId:
+                  type: string
+                  format: uuid
+              required:
+                - filename
+                - fileSize
+                - mimeType
+      responses:
+        '200':
+          description: Upload session created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sessionId:
+                    type: string
+                  chunkSize:
+                    type: integer
+                  totalChunks:
+                    type: integer
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/uploads/{sessionId}/chunks:
+    post:
+      tags:
+        - Uploads
+      summary: Upload chunk
+      description: Upload a chunk for an active session
+      operationId: uploadChunk
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                chunk:
+                  type: string
+                  format: binary
+                chunkIndex:
+                  type: integer
+              required:
+                - chunk
+                - chunkIndex
+      responses:
+        '200':
+          description: Chunk uploaded successfully
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/uploads/{sessionId}/complete:
+    post:
+      tags:
+        - Uploads
+      summary: Complete upload
+      description: Complete an upload session and trigger processing
+      operationId: completeUpload
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Upload completed and processing started
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/uploads/{sessionId}/status:
+    get:
+      tags:
+        - Uploads
+      summary: Get upload status
+      description: Get the status of an upload session
+      operationId: getUploadStatus
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Upload status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sessionId:
+                    type: string
+                  status:
+                    type: string
+                    enum: [active, completed, failed, expired]
+                  chunksReceived:
+                    type: array
+                    items:
+                      type: integer
+                  totalChunks:
+                    type: integer
+                  progress:
+                    type: number
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Session not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/uploads/{sessionId}/resume:
+    get:
+      tags:
+        - Uploads
+      summary: Resume upload
+      description: Get information to resume an interrupted upload
+      operationId: resumeUpload
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Resume information
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  chunksReceived:
+                    type: array
+                    items:
+                      type: integer
+                  missingChunks:
+                    type: array
+                    items:
+                      type: integer
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Session not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # Encoding status
+  /api/v1/encoding/status:
+    get:
+      tags:
+        - Encoding
+      summary: Get encoding status
+      description: Get the status of video encoding jobs
+      operationId: getEncodingStatus
+      security: []
+      parameters:
+        - name: videoId
+          in: query
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Encoding status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  jobs:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                        videoId:
+                          type: string
+                        status:
+                          type: string
+                          enum: [pending, processing, completed, failed]
+                        progress:
+                          type: number
+                        startedAt:
+                          type: string
+                          format: date-time
+                        completedAt:
+                          type: string
+                          format: date-time
+
+  # User endpoints
+  /api/v1/users:
+    post:
+      tags:
+        - Users
+      summary: Create user (admin)
+      description: Admin endpoint to create a new user
+      operationId: createUser
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateUserRequest'
+      responses:
+        '201':
+          description: User created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/users/me:
+    get:
+      tags:
+        - Users
+      summary: Get current user
+      description: Get the authenticated user's profile
+      operationId: getCurrentUser
+      responses:
+        '200':
+          description: User profile
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    put:
+      tags:
+        - Users
+      summary: Update current user
+      description: Update the authenticated user's profile
+      operationId: updateCurrentUser
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateUserRequest'
+      responses:
+        '200':
+          description: User updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/users/me/avatar:
+    post:
+      tags:
+        - Users
+      summary: Upload avatar
+      description: Upload a new avatar image for the current user
+      operationId: uploadAvatar
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: Avatar image file (PNG, JPEG, WebP, GIF, HEIC, TIFF)
+              required:
+                - file
+      responses:
+        '200':
+          description: Avatar uploaded successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  avatar_url:
+                    type: string
+                  ipfs_cid:
+                    type: string
+        '400':
+          description: Invalid file format or size
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/users/me/subscriptions:
+    get:
+      tags:
+        - Users
+      summary: Get my subscriptions
+      description: Get list of channels the user is subscribed to
+      operationId: getMySubscriptions
+      responses:
+        '200':
+          description: List of subscriptions
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  subscriptions:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        userId:
+                          type: string
+                          format: uuid
+                        username:
+                          type: string
+                        displayName:
+                          type: string
+                        subscribedAt:
+                          type: string
+                          format: date-time
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/users/{id}:
+    get:
+      tags:
+        - Users
+      summary: Get user by ID
+      description: Get a user's public profile
+      operationId: getUserById
+      security: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: User profile
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '404':
+          description: User not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/users/{id}/videos:
+    get:
+      tags:
+        - Users
+      summary: Get user's videos
+      description: Get public videos from a specific user
+      operationId: getUserVideos
+      security: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+            maximum: 100
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+      responses:
+        '200':
+          description: User's videos
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  videos:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Video'
+                  total:
+                    type: integer
+
+  /api/v1/users/{id}/subscribe:
+    post:
+      tags:
+        - Users
+      summary: Subscribe to user
+      description: Subscribe to a user's channel
+      operationId: subscribeToUser
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Subscribed successfully
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: User not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    delete:
+      tags:
+        - Users
+      summary: Unsubscribe from user
+      description: Unsubscribe from a user's channel
+      operationId: unsubscribeFromUser
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Unsubscribed successfully
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # Message endpoints
+  /api/v1/messages:
+    post:
+      tags:
+        - Messages
+      summary: Send message
+      description: Send a message to another user
+      operationId: sendMessage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SendMessageRequest'
+      responses:
+        '201':
+          description: Message sent successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Message'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    get:
+      tags:
+        - Messages
+      summary: Get messages
+      description: Get messages for the authenticated user
+      operationId: getMessages
+      parameters:
+        - name: conversationId
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+            maximum: 100
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+      responses:
+        '200':
+          description: List of messages
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  messages:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Message'
+                  total:
+                    type: integer
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/messages/{messageId}/read:
+    put:
+      tags:
+        - Messages
+      summary: Mark message as read
+      description: Mark a message as read
+      operationId: markMessageRead
+      parameters:
+        - name: messageId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Message marked as read
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Message not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/messages/{messageId}:
+    delete:
+      tags:
+        - Messages
+      summary: Delete message
+      description: Delete a message
+      operationId: deleteMessage
+      parameters:
+        - name: messageId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Message deleted successfully
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Message not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # Conversation endpoints
+  /api/v1/conversations:
+    get:
+      tags:
+        - Conversations
+      summary: Get conversations
+      description: Get user's conversation list
+      operationId: getConversations
+      responses:
+        '200':
+          description: List of conversations
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  conversations:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        conversationId:
+                          type: string
+                          format: uuid
+                        otherUser:
+                          $ref: '#/components/schemas/User'
+                        lastMessage:
+                          type: string
+                        lastMessageTime:
+                          type: string
+                          format: date-time
+                        unreadCount:
+                          type: integer
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/conversations/unread-count:
+    get:
+      tags:
+        - Conversations
+      summary: Get unread message count
+      description: Get total count of unread messages
+      operationId: getUnreadCount
+      responses:
+        '200':
+          description: Unread count
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  unread_count:
+                    type: integer
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # Trending endpoint
+  /api/v1/trending:
+    get:
+      tags:
+        - Videos
+      summary: Get trending videos
+      description: Get currently trending videos
+      operationId: getTrendingVideos
+      security: []
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+            maximum: 100
+      responses:
+        '200':
+          description: Trending videos
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  videos:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Video'
+
+  # Views fingerprint
+  /api/v1/views/fingerprint:
+    post:
+      tags:
+        - Views
+      summary: Generate fingerprint
+      description: Generate a fingerprint for view deduplication
+      operationId: generateFingerprint
+      security: []
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                userAgent:
+                  type: string
+                screenResolution:
+                  type: string
+                timezone:
+                  type: string
+      responses:
+        '200':
+          description: Fingerprint generated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  fingerprint:
+                    type: string
+
 components:
   securitySchemes:
     bearerAuth:
@@ -1698,6 +3157,95 @@ components:
       required:
         - message
         - success
+
+    # Request/Response Schemas for new endpoints
+    CreateVideoRequest:
+      type: object
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 200
+        description:
+          type: string
+          maxLength: 5000
+        privacy:
+          type: string
+          enum: [public, private, unlisted]
+          default: public
+        tags:
+          type: array
+          items:
+            type: string
+          maxItems: 10
+        category:
+          type: string
+        language:
+          type: string
+      required:
+        - title
+
+    UpdateVideoRequest:
+      type: object
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 200
+        description:
+          type: string
+          maxLength: 5000
+        privacy:
+          type: string
+          enum: [public, private, unlisted]
+        tags:
+          type: array
+          items:
+            type: string
+          maxItems: 10
+        category:
+          type: string
+        language:
+          type: string
+
+    CreateUserRequest:
+      type: object
+      properties:
+        username:
+          type: string
+          minLength: 3
+          maxLength: 50
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          minLength: 8
+        display_name:
+          type: string
+          maxLength: 100
+        role:
+          type: string
+          enum: [user, admin]
+          default: user
+      required:
+        - username
+        - email
+        - password
+
+    UpdateUserRequest:
+      type: object
+      properties:
+        display_name:
+          type: string
+          maxLength: 100
+        bio:
+          type: string
+          maxLength: 1000
+        website:
+          type: string
+          format: uri
+          maxLength: 200
 
     # E2EE Schemas
     E2EESetupRequest:
