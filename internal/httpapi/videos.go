@@ -2,7 +2,6 @@ package httpapi
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,12 +15,10 @@ import (
 
 	chi "github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
-	"github.com/jmoiron/sqlx"
 
 	"athena/internal/config"
 	"athena/internal/domain"
 	"athena/internal/middleware"
-	"athena/internal/repository"
 	"athena/internal/storage"
 	"athena/internal/usecase"
 	"athena/internal/validation"
@@ -856,11 +853,9 @@ func VideoUploadChunkHandler(uploadService usecase.UploadService, cfg *config.Co
 
 			// Initialize upload with video ID as session ID
 			// The service will generate a session ID, but we'll use the video ID for chunk uploads
-			_, err = uploadService.InitiateUpload(ctx, userID, req)
-			if err != nil {
-				// If session already exists or other error, continue anyway for compatibility
-				// The upload service should handle this gracefully
-			}
+			_, _ = uploadService.InitiateUpload(ctx, userID, req)
+			// Ignore errors here as the session might already exist or other issues
+			// The upload service will handle this gracefully during chunk upload
 		}
 
 		// Now upload the chunk
@@ -936,100 +931,6 @@ func completeUploadWithID(w http.ResponseWriter, r *http.Request, id, missingCod
 		"message": "Upload completed, processing queued",
 	}
 	WriteJSON(w, http.StatusOK, resp)
-}
-
-// ensureLegacyUploadSession creates an upload session with ID equal to videoID if it does not exist.
-// It avoids requiring a separate initiate call for legacy clients.
-func ensureLegacyUploadSession(ctx context.Context, videoID string, totalChunks int, chunkSize int, r *http.Request, cfg *config.Config) error {
-	// Acquire repositories from context created in RegisterRoutes via New repositories.
-	// We cannot grab them from here, so we reconstruct minimal access via DB handle embedded in current server.
-	// Simpler approach: reuse the repositories by re-opening connections (acceptable for this compatibility path).
-	db, err := sqlx.Connect("postgres", cfg.DatabaseURL)
-	if err != nil {
-		return domain.NewDomainError("DB_ERROR", "Failed to connect to database")
-	}
-	defer func() { _ = db.Close() }()
-
-	uploadRepo := repository.NewUploadRepository(db)
-	videoRepo := repository.NewVideoRepository(db)
-
-	// If session exists, nothing to do
-	if _, err := uploadRepo.GetSession(ctx, videoID); err == nil {
-		return nil
-	}
-
-	// Ensure video exists and belongs to requester (best effort)
-	v, err := videoRepo.GetByID(ctx, videoID)
-	if err != nil {
-		// If not found, surface error as not found
-		return err
-	}
-
-	// Guess filename and size
-	ext := filepath.Ext(strings.ToLower(v.Title))
-	if ext == "" || len(ext) > 8 || strings.ContainsAny(ext, "/\\ ") {
-		ext = ".mp4"
-	}
-	fileName := "upload" + ext
-	// Estimate file size with first chunk size * totalChunks
-	estSize := int64(chunkSize) * int64(totalChunks)
-
-	sp := storage.NewPaths(cfg.StorageDir)
-	tempDir := sp.UploadTempDir(videoID)
-	if err := os.MkdirAll(tempDir, 0750); err != nil {
-		return domain.NewDomainError("STORAGE_ERROR", "Failed to prepare upload directory")
-	}
-
-	session := &domain.UploadSession{
-		ID:             videoID,
-		VideoID:        videoID,
-		UserID:         v.UserID,
-		FileName:       fileName,
-		FileSize:       estSize,
-		ChunkSize:      int64(chunkSize),
-		TotalChunks:    totalChunks,
-		UploadedChunks: []int{},
-		Status:         domain.UploadStatusActive,
-		TempFilePath:   sp.UploadTempChunksDir(videoID),
-		CreatedAt:      time.Now(),
-		UpdatedAt:      time.Now(),
-		ExpiresAt:      time.Now().Add(24 * time.Hour),
-	}
-
-	if err := uploadRepo.CreateSession(ctx, session); err != nil {
-		return domain.NewDomainError("SESSION_CREATE_FAILED", "Failed to create upload session")
-	}
-
-	return nil
-}
-
-// persistLegacyChunk writes the chunk to disk and records its index in the session.
-func persistLegacyChunk(ctx context.Context, sessionID string, chunkIndex int, data []byte, cfg *config.Config) error {
-	db, err := sqlx.Connect("postgres", cfg.DatabaseURL)
-	if err != nil {
-		return domain.NewDomainError("DB_ERROR", "Failed to connect to database")
-	}
-	defer func() { _ = db.Close() }()
-
-	uploadRepo := repository.NewUploadRepository(db)
-	session, err := uploadRepo.GetSession(ctx, sessionID)
-	if err != nil {
-		return err
-	}
-
-	// Ensure path exists, then write chunk
-	if err := os.MkdirAll(session.TempFilePath, 0750); err != nil {
-		return domain.NewDomainError("STORAGE_ERROR", "Failed to prepare chunk directory")
-	}
-	chunkPath := filepath.Join(session.TempFilePath, fmt.Sprintf("chunk_%d", chunkIndex))
-	if err := os.WriteFile(chunkPath, data, 0600); err != nil {
-		return domain.NewDomainError("WRITE_FAILED", "Failed to save chunk")
-	}
-
-	if err := uploadRepo.RecordChunk(ctx, sessionID, chunkIndex); err != nil {
-		return err
-	}
-	return nil
 }
 
 func StreamVideo(w http.ResponseWriter, r *http.Request) {
