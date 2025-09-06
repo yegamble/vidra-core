@@ -782,10 +782,10 @@ func createTestViewsVideo(t *testing.T, testDB *testutil.TestDB, userID string) 
 	}
 
 	query := `INSERT INTO videos (id, thumbnail_id, title, description, duration, views, privacy, status, 
-		upload_date, user_id, file_size, mime_type, created_at, updated_at,
-		original_cid, processed_cids, thumbnail_cid, tags, category, language, metadata,
-		output_paths, thumbnail_path, preview_path)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)`
+        upload_date, user_id, file_size, mime_type, created_at, updated_at,
+        original_cid, processed_cids, thumbnail_cid, tags, category_id, language, metadata,
+        output_paths, thumbnail_path, preview_path)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)`
 
 	processedCIDsJSON, _ := json.Marshal(video.ProcessedCIDs)
 	metadataJSON, _ := json.Marshal(video.Metadata)
@@ -795,7 +795,7 @@ func createTestViewsVideo(t *testing.T, testDB *testutil.TestDB, userID string) 
 		video.Duration, video.Views, video.Privacy, video.Status, video.UploadDate, video.UserID,
 		video.FileSize, video.MimeType, video.CreatedAt, video.UpdatedAt,
 		video.OriginalCID, processedCIDsJSON, video.ThumbnailCID,
-		pq.Array(video.Tags), video.Category, video.Language, metadataJSON,
+		pq.Array(video.Tags), video.CategoryID, video.Language, metadataJSON,
 		outputPathsJSON, video.ThumbnailPath, video.PreviewPath)
 	require.NoError(t, err)
 

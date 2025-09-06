@@ -132,7 +132,7 @@ func (r *subscriptionRepository) ListSubscriptionVideos(ctx context.Context, sub
         SELECT id, thumbnail_id, title, description, duration, views,
                privacy, status, upload_date, user_id,
                original_cid, processed_cids, thumbnail_cid,
-               tags, category, language, file_size, mime_type, metadata,
+               tags, category_id, language, file_size, mime_type, metadata,
                created_at, updated_at
         FROM videos
         WHERE user_id IN (SELECT channel_id FROM subscriptions WHERE subscriber_id = $1)

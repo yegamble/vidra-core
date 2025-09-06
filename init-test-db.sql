@@ -125,7 +125,7 @@ CREATE TABLE IF NOT EXISTS videos (
     preview_path TEXT,
     -- Tags are now nullable per migration 010
     tags TEXT[] DEFAULT '{}',
-    category VARCHAR(100),
+    category_id UUID,
     language VARCHAR(10),
     file_size BIGINT NOT NULL DEFAULT 0,
     mime_type VARCHAR(120),
