@@ -1763,6 +1763,244 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
+  # Video Categories endpoints
+  /api/v1/categories:
+    get:
+      tags:
+        - Categories
+      summary: List video categories
+      description: Get a list of all video categories
+      operationId: listCategories
+      security: []
+      parameters:
+        - name: active_only
+          in: query
+          required: false
+          schema:
+            type: boolean
+            default: true
+          description: Filter to active categories only
+        - name: order_by
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [name, slug, display_order, created_at]
+            default: display_order
+          description: Field to sort by
+        - name: order_dir
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: asc
+          description: Sort direction
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 50
+          description: Maximum number of categories to return
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+          description: Number of categories to skip
+      responses:
+        '200':
+          description: List of categories
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/VideoCategory'
+        '400':
+          description: Invalid request parameters
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/categories/{id}:
+    get:
+      tags:
+        - Categories
+      summary: Get category by ID or slug
+      description: Get a specific video category by its ID or slug
+      operationId: getCategory
+      security: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Category ID (UUID) or slug
+      responses:
+        '200':
+          description: Category details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VideoCategory'
+        '404':
+          description: Category not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/admin/categories:
+    post:
+      tags:
+        - Categories
+        - Admin
+      summary: Create a new category
+      description: Create a new video category (admin only)
+      operationId: createCategory
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateCategoryRequest'
+      responses:
+        '201':
+          description: Category created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VideoCategory'
+        '400':
+          description: Invalid request data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden - admin role required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Category with slug already exists
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/admin/categories/{id}:
+    put:
+      tags:
+        - Categories
+        - Admin
+      summary: Update a category
+      description: Update an existing video category (admin only)
+      operationId: updateCategory
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Category ID
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateCategoryRequest'
+      responses:
+        '200':
+          description: Category updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VideoCategory'
+        '400':
+          description: Invalid request data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden - admin role required or cannot modify default category
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Category not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+    delete:
+      tags:
+        - Categories
+        - Admin
+      summary: Delete a category
+      description: Delete a video category (admin only)
+      operationId: deleteCategory
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Category ID
+      responses:
+        '204':
+          description: Category deleted successfully
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden - admin role required or cannot delete default category
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Category not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
   # HLS streaming endpoint
   /api/v1/hls/*:
     get:
@@ -2624,8 +2862,15 @@ components:
         tags:
           type: array
           items: { type: string }
-        category:
+        category_id:
           type: string
+          format: uuid
+          nullable: true
+          description: ID of the video category
+        category:
+          $ref: '#/components/schemas/VideoCategory'
+          nullable: true
+          description: Category details (when included)
         language:
           type: string
         created_at:
@@ -3178,8 +3423,11 @@ components:
           items:
             type: string
           maxItems: 10
-        category:
+        category_id:
           type: string
+          format: uuid
+          nullable: true
+          description: ID of the video category
         language:
           type: string
       required:
@@ -3203,8 +3451,11 @@ components:
           items:
             type: string
           maxItems: 10
-        category:
+        category_id:
           type: string
+          format: uuid
+          nullable: true
+          description: ID of the video category
         language:
           type: string
 
@@ -3359,3 +3610,161 @@ components:
         - recipient_id
         - encrypted_content
         - pgp_signature
+
+    # Video Category Schemas
+    VideoCategory:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Unique category identifier
+        name:
+          type: string
+          description: Display name of the category
+          example: "Music"
+        slug:
+          type: string
+          description: URL-friendly slug for the category
+          example: "music"
+        description:
+          type: string
+          nullable: true
+          description: Detailed description of the category
+          example: "Music videos, concerts, and audio content"
+        icon:
+          type: string
+          nullable: true
+          description: Icon emoji or class name for UI display
+          example: "🎵"
+        color:
+          type: string
+          nullable: true
+          description: Hex color code for UI theming
+          example: "#FF0000"
+        display_order:
+          type: integer
+          description: Sort order for display
+          example: 1
+        is_active:
+          type: boolean
+          description: Whether the category is active
+          example: true
+        created_at:
+          type: string
+          format: date-time
+          description: Creation timestamp
+        updated_at:
+          type: string
+          format: date-time
+          description: Last update timestamp
+        created_by:
+          type: string
+          format: uuid
+          nullable: true
+          description: ID of the admin who created this category
+      required:
+        - id
+        - name
+        - slug
+        - display_order
+        - is_active
+        - created_at
+        - updated_at
+
+    CreateCategoryRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+          description: Display name of the category
+          example: "Music"
+        slug:
+          type: string
+          minLength: 1
+          maxLength: 100
+          pattern: '^[a-z0-9-]+$'
+          description: URL-friendly slug (lowercase letters, numbers, hyphens)
+          example: "music"
+        description:
+          type: string
+          maxLength: 500
+          nullable: true
+          description: Detailed description of the category
+          example: "Music videos, concerts, and audio content"
+        icon:
+          type: string
+          maxLength: 50
+          nullable: true
+          description: Icon emoji or class name
+          example: "🎵"
+        color:
+          type: string
+          pattern: '^#([A-Fa-f0-9]{6}|[A-Fa-f0-9]{3})$'
+          nullable: true
+          description: Hex color code
+          example: "#FF0000"
+        display_order:
+          type: integer
+          minimum: 0
+          default: 0
+          description: Sort order for display
+          example: 1
+        is_active:
+          type: boolean
+          default: true
+          description: Whether the category is active
+          example: true
+      required:
+        - name
+        - slug
+
+    UpdateCategoryRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+          nullable: true
+          description: Display name of the category
+          example: "Music & Audio"
+        slug:
+          type: string
+          minLength: 1
+          maxLength: 100
+          pattern: '^[a-z0-9-]+$'
+          nullable: true
+          description: URL-friendly slug
+          example: "music-audio"
+        description:
+          type: string
+          maxLength: 500
+          nullable: true
+          description: Detailed description
+          example: "All music and audio content"
+        icon:
+          type: string
+          maxLength: 50
+          nullable: true
+          description: Icon emoji or class name
+          example: "🎶"
+        color:
+          type: string
+          pattern: '^#([A-Fa-f0-9]{6}|[A-Fa-f0-9]{3})$'
+          nullable: true
+          description: Hex color code
+          example: "#FF6600"
+        display_order:
+          type: integer
+          minimum: 0
+          nullable: true
+          description: Sort order for display
+          example: 2
+        is_active:
+          type: boolean
+          nullable: true
+          description: Whether the category is active
+          example: false

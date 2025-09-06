@@ -15,6 +15,7 @@ A high-performance PeerTube backend implementation in Go with decentralized stor
 - ⚡ **Redis** - Fast caching and session management
 - 🌐 **IPFS** - Decentralized storage support
 - 🎥 **Video Processing** - FFmpeg integration for transcoding
+- 📁 **Video Categories** - Comprehensive categorization system with 15 default categories
 - 🖼️ **Avatar WebP Optimization** - Optional WebP encoding for uploaded avatars (quality configurable), IPFS pinning of both original and WebP variants
 - 📊 **Observability** - Prometheus metrics, structured logging, distributed tracing
 - 🐳 **Docker Ready** - Full containerization with Docker Compose
@@ -168,6 +169,11 @@ go test ./...
 
 The API is defined using OpenAPI 3.0 specification in `api/openapi.yaml`.
 
+**Documentation Resources:**
+- 📄 **OpenAPI Specification**: [api/openapi.yaml](api/openapi.yaml)
+- 📚 **API Examples & Usage Guide**: [docs/API_EXAMPLES.md](docs/API_EXAMPLES.md)
+- 🎯 **Video Categories Guide**: Comprehensive examples for category management
+
 ```bash
 # Install documentation tools (one-time setup)
 npm install -g @redocly/cli@latest
@@ -250,6 +256,58 @@ Operational note: Debug logs for width/aspect estimation emit only when `LOG_LEV
 - `POST /api/v1/videos/{videoId}/views` - Track video view
 - `GET /api/v1/videos/{videoId}/analytics` - Get video analytics (owner only)
 - `GET /api/v1/videos/{videoId}/stats/daily` - Get daily video statistics (owner only)
+
+### Video Categories
+
+**Public Endpoints:**
+- `GET /api/v1/categories` - List all active categories
+  - Query Parameters:
+    - `active_only` (boolean): Filter to active categories only (default: true)
+    - `order_by` (string): Sort field - `name`, `slug`, `display_order`, `created_at` (default: `display_order`)
+    - `order_dir` (string): Sort direction - `asc`, `desc` (default: `asc`)
+    - `limit` (integer): Max results per page (1-100, default: 50)
+    - `offset` (integer): Pagination offset (default: 0)
+- `GET /api/v1/categories/{id}` - Get category by ID or slug
+  - Accepts either UUID or slug identifier
+
+**Admin Endpoints (Require Admin Role):**
+- `POST /api/v1/admin/categories` - Create new category
+  - Request Body:
+    ```json
+    {
+      "name": "Music",
+      "slug": "music",
+      "description": "Music videos and audio content",
+      "icon": "🎵",
+      "color": "#FF0000",
+      "display_order": 1,
+      "is_active": true
+    }
+    ```
+- `PUT /api/v1/admin/categories/{id}` - Update category
+  - All fields are optional in update request
+  - Cannot change slug of the default "other" category
+- `DELETE /api/v1/admin/categories/{id}` - Delete category
+  - Cannot delete the default "other" category
+  - Videos with deleted category will have category_id set to NULL
+
+**Default Categories:**
+The system comes with 15 pre-defined categories:
+- Music, Gaming, Education, Entertainment, News & Politics
+- Science & Technology, Sports, Travel & Events, Film & Animation
+- People & Blogs, Pets & Animals, How-to & Style, Autos & Vehicles
+- Nonprofits & Activism, Other (default fallback)
+
+**Video Category Assignment:**
+- Videos can have one category assigned via `category_id` field
+- Category is optional; videos without a category will use NULL
+- When creating/updating videos, include `category_id` in the request:
+  ```json
+  {
+    "title": "My Video",
+    "category_id": "a7808f7e-6762-4c9a-a42a-923d8a7fc770"
+  }
+  ```
 
 ### Uploads
 
