@@ -210,6 +210,16 @@ func ensureTestSchema(db *sqlx.DB) error {
             updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
         )`,
 		`ALTER TABLE users ADD COLUMN IF NOT EXISTS subscriber_count BIGINT NOT NULL DEFAULT 0`,
+		// Subscriptions table
+		`CREATE TABLE IF NOT EXISTS subscriptions (
+		    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+		    subscriber_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		    channel_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+		    UNIQUE(subscriber_id, channel_id)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_subscriptions_subscriber ON subscriptions(subscriber_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_subscriptions_channel ON subscriptions(channel_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)`,
 		`CREATE INDEX IF NOT EXISTS idx_users_username ON users(username)`,
 		`CREATE INDEX IF NOT EXISTS idx_users_role ON users(role)`,
@@ -252,6 +262,41 @@ func ensureTestSchema(db *sqlx.DB) error {
 		`CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions(expires_at)`,
 		`DROP INDEX IF EXISTS idx_sessions_active`,
 		`CREATE INDEX IF NOT EXISTS idx_sessions_active ON sessions(user_id, expires_at)`,
+		// Video categories table (must be created before videos table for foreign key)
+		`CREATE TABLE IF NOT EXISTS video_categories (
+		    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+		    name VARCHAR(100) NOT NULL UNIQUE,
+		    slug VARCHAR(100) NOT NULL UNIQUE,
+		    description TEXT,
+		    icon VARCHAR(50),
+		    color VARCHAR(7),
+		    display_order INTEGER DEFAULT 0,
+		    is_active BOOLEAN DEFAULT true,
+		    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+		    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+		    created_by UUID REFERENCES users(id) ON DELETE SET NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_video_categories_slug ON video_categories(slug)`,
+		`CREATE INDEX IF NOT EXISTS idx_video_categories_is_active ON video_categories(is_active)`,
+		`CREATE INDEX IF NOT EXISTS idx_video_categories_display_order ON video_categories(display_order)`,
+		// Insert default categories
+		`INSERT INTO video_categories (name, slug, description, icon, color, display_order, is_active) VALUES
+		    ('Music', 'music', 'Music videos, concerts, and audio content', '🎵', '#FF0000', 1, true),
+		    ('Gaming', 'gaming', 'Gaming videos, walkthroughs, and streams', '🎮', '#00FF00', 2, true),
+		    ('Education', 'education', 'Educational content and tutorials', '📚', '#0066CC', 3, true),
+		    ('Entertainment', 'entertainment', 'Entertainment and comedy content', '🎭', '#FF9900', 4, true),
+		    ('News & Politics', 'news-politics', 'News and political content', '📰', '#666666', 5, true),
+		    ('Science & Technology', 'science-technology', 'Science and technology content', '🔬', '#00CCFF', 6, true),
+		    ('Sports', 'sports', 'Sports and fitness content', '⚽', '#009900', 7, true),
+		    ('Travel & Events', 'travel-events', 'Travel vlogs and event coverage', '✈️', '#FF6600', 8, true),
+		    ('Film & Animation', 'film-animation', 'Movies, animations, and visual content', '🎬', '#CC00CC', 9, true),
+		    ('People & Blogs', 'people-blogs', 'Personal vlogs and lifestyle content', '👥', '#FF3366', 10, true),
+		    ('Pets & Animals', 'pets-animals', 'Animal and pet related content', '🐾', '#996633', 11, true),
+		    ('How-to & Style', 'howto-style', 'DIY, tutorials, and fashion content', '💄', '#FF66CC', 12, true),
+		    ('Autos & Vehicles', 'autos-vehicles', 'Automotive and vehicle content', '🚗', '#000099', 13, true),
+		    ('Nonprofits & Activism', 'nonprofits-activism', 'Charity and social cause content', '🤝', '#339966', 14, true),
+		    ('Other', 'other', 'Uncategorized content', '📁', '#999999', 999, true)
+		ON CONFLICT (slug) DO NOTHING`,
 		// Videos table
 		`CREATE TABLE IF NOT EXISTS videos (
 	            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -268,7 +313,7 @@ func ensureTestSchema(db *sqlx.DB) error {
 	            processed_cids JSONB NOT NULL DEFAULT '{}'::jsonb,
 	            thumbnail_cid TEXT,
 	            tags TEXT[] NOT NULL DEFAULT '{}',
-	            category_id UUID,
+	            category_id UUID REFERENCES video_categories(id) ON DELETE SET NULL,
 	            language VARCHAR(10),
 	            file_size BIGINT NOT NULL DEFAULT 0,
 	            mime_type VARCHAR(120),
@@ -276,6 +321,7 @@ func ensureTestSchema(db *sqlx.DB) error {
 	            created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
 	            updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
 	        )`,
+		`ALTER TABLE videos ADD COLUMN IF NOT EXISTS category_id UUID REFERENCES video_categories(id) ON DELETE SET NULL`,
 		`ALTER TABLE videos ADD COLUMN IF NOT EXISTS output_paths JSONB NOT NULL DEFAULT '{}'::jsonb`,
 		`ALTER TABLE videos ADD COLUMN IF NOT EXISTS thumbnail_path TEXT`,
 		`ALTER TABLE videos ADD COLUMN IF NOT EXISTS preview_path TEXT`,
@@ -283,6 +329,7 @@ func ensureTestSchema(db *sqlx.DB) error {
 		`CREATE INDEX IF NOT EXISTS idx_videos_privacy ON videos(privacy)`,
 		`CREATE INDEX IF NOT EXISTS idx_videos_status ON videos(status)`,
 		`CREATE INDEX IF NOT EXISTS idx_videos_upload_date ON videos(upload_date)`,
+		`CREATE INDEX IF NOT EXISTS idx_videos_category_id ON videos(category_id)`,
 		`DROP TRIGGER IF EXISTS update_videos_updated_at ON videos`,
 		`CREATE TRIGGER update_videos_updated_at BEFORE UPDATE ON videos FOR EACH ROW EXECUTE FUNCTION update_updated_at_column()`,
 		// Upload sessions table
@@ -660,7 +707,7 @@ func cleanupTestDB(t *testing.T, testDB *TestDB) {
 
 	// Clean Postgres tables
 	if testDB.DB != nil {
-		tables := []string{"user_views", "daily_video_stats", "user_engagement_stats", "trending_videos", "messages", "conversations", "encoding_jobs", "upload_sessions", "videos", "sessions", "refresh_tokens", "user_avatars", "users"}
+		tables := []string{"user_views", "daily_video_stats", "user_engagement_stats", "trending_videos", "messages", "conversations", "encoding_jobs", "upload_sessions", "videos", "video_categories", "subscriptions", "sessions", "refresh_tokens", "user_avatars", "users"}
 		for _, table := range tables {
 			if _, err := testDB.DB.ExecContext(ctx, fmt.Sprintf("TRUNCATE TABLE %s CASCADE", table)); err != nil {
 				t.Logf("Failed to truncate table %s: %v", table, err)
