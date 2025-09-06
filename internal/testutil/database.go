@@ -268,7 +268,7 @@ func ensureTestSchema(db *sqlx.DB) error {
             processed_cids JSONB NOT NULL DEFAULT '{}'::jsonb,
             thumbnail_cid TEXT,
             tags TEXT[] NOT NULL DEFAULT '{}',
-            category VARCHAR(100),
+            category UUID,
             language VARCHAR(10),
             file_size BIGINT NOT NULL DEFAULT 0,
             mime_type VARCHAR(120),
