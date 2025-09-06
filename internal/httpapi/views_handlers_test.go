@@ -772,7 +772,7 @@ func createTestViewsVideo(t *testing.T, testDB *testutil.TestDB, userID string) 
 		OriginalCID:   "",
 		ThumbnailCID:  "",
 		Tags:          []string{},
-		Category:      "",
+		Category:      nil,
 		Language:      "en",
 		Metadata:      domain.VideoMetadata{},
 		ThumbnailPath: "",
