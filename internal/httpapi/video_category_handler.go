@@ -211,7 +211,11 @@ func respondWithJSON(w http.ResponseWriter, code int, payload interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 	if payload != nil {
-		json.NewEncoder(w).Encode(payload)
+		if err := json.NewEncoder(w).Encode(payload); err != nil {
+			// Log encoding error but response is already committed
+			// In production, this should be logged properly
+			_ = err
+		}
 	}
 }
 

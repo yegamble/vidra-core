@@ -45,10 +45,16 @@ func NewVideoCategoryUseCase(
 	v := validator.New()
 
 	// Register custom validation for slug
-	v.RegisterValidation("slug", validateSlug)
+	if err := v.RegisterValidation("slug", validateSlug); err != nil {
+		// This should never fail with valid validator functions
+		panic(fmt.Sprintf("failed to register slug validator: %v", err))
+	}
 
 	// Register custom validation for hex color
-	v.RegisterValidation("hexcolor", validateHexColor)
+	if err := v.RegisterValidation("hexcolor", validateHexColor); err != nil {
+		// This should never fail with valid validator functions
+		panic(fmt.Sprintf("failed to register hexcolor validator: %v", err))
+	}
 
 	return &videoCategoryUseCase{
 		categoryRepo: categoryRepo,
