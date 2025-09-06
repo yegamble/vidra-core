@@ -23,7 +23,7 @@ func NewVideoRepository(db *sqlx.DB) usecase.VideoRepository {
 // scanVideoRow is a helper function to scan a video row and reduce duplication
 func scanVideoRow(rows *sql.Rows) (*domain.Video, error) {
 	var v domain.Video
-	var processedCIDsJSON, metadataJSON []byte
+	var processedCIDsJSON, metadataJSON, outputPathsJSON []byte
 	var tags pq.StringArray
 
 	err := rows.Scan(
@@ -31,7 +31,7 @@ func scanVideoRow(rows *sql.Rows) (*domain.Video, error) {
 		&v.Privacy, &v.Status, &v.UploadDate, &v.UserID,
 		&v.OriginalCID, &processedCIDsJSON, &v.ThumbnailCID,
 		&tags, &v.CategoryID, &v.Language, &v.FileSize, &v.MimeType, &metadataJSON,
-		&v.CreatedAt, &v.UpdatedAt,
+		&v.CreatedAt, &v.UpdatedAt, &outputPathsJSON, &v.ThumbnailPath, &v.PreviewPath,
 	)
 	if err != nil {
 		return nil, domain.NewDomainError("SCAN_FAILED", "Failed to scan video row")
@@ -43,6 +43,9 @@ func scanVideoRow(rows *sql.Rows) (*domain.Video, error) {
 	}
 	if len(metadataJSON) > 0 {
 		_ = json.Unmarshal(metadataJSON, &v.Metadata)
+	}
+	if len(outputPathsJSON) > 0 {
+		_ = json.Unmarshal(outputPathsJSON, &v.OutputPaths)
 	}
 	v.Tags = []string(tags)
 
@@ -143,7 +146,7 @@ func (r *videoRepository) GetByUserID(ctx context.Context, userID string, limit,
                privacy, status, upload_date, user_id,
                original_cid, processed_cids, thumbnail_cid,
                tags, category_id, language, file_size, mime_type, metadata,
-               created_at, updated_at
+               created_at, updated_at, output_paths, thumbnail_path, preview_path
         FROM videos 
         WHERE user_id = $1 
         ORDER BY upload_date DESC 
@@ -241,7 +244,7 @@ func (r *videoRepository) List(ctx context.Context, req *domain.VideoSearchReque
                privacy, status, upload_date, user_id,
                original_cid, processed_cids, thumbnail_cid,
                tags, category_id, language, file_size, mime_type, metadata,
-               created_at, updated_at
+               created_at, updated_at, output_paths, thumbnail_path, preview_path
         FROM videos 
         WHERE privacy = 'public' AND status = 'completed'`
 
@@ -326,7 +329,7 @@ func (r *videoRepository) Search(ctx context.Context, req *domain.VideoSearchReq
                privacy, status, upload_date, user_id,
                original_cid, processed_cids, thumbnail_cid,
                tags, category_id, language, file_size, mime_type, metadata,
-               created_at, updated_at
+               created_at, updated_at, output_paths, thumbnail_path, preview_path
         FROM videos 
         WHERE privacy = 'public' AND status = 'completed'`
 
