@@ -91,16 +91,24 @@ func (r *videoRepository) Create(ctx context.Context, v *domain.Video) error {
 
 func (r *videoRepository) GetByID(ctx context.Context, id string) (*domain.Video, error) {
 	query := `
-        SELECT id, thumbnail_id, title, description, duration, views,
-               privacy, status, upload_date, user_id,
-               original_cid, processed_cids, thumbnail_cid,
-               tags, category_id, language, file_size, mime_type, metadata,
-               created_at, updated_at, output_paths, thumbnail_path, preview_path
-        FROM videos WHERE id = $1`
+        SELECT v.id, v.thumbnail_id, v.title, v.description, v.duration, v.views,
+               v.privacy, v.status, v.upload_date, v.user_id,
+               v.original_cid, v.processed_cids, v.thumbnail_cid,
+               v.tags, v.category_id, v.language, v.file_size, v.mime_type, v.metadata,
+               v.created_at, v.updated_at, v.output_paths, v.thumbnail_path, v.preview_path,
+               c.id, c.name, c.slug, c.description, c.icon, c.color, c.display_order, c.is_active
+        FROM videos v
+        LEFT JOIN video_categories c ON v.category_id = c.id
+        WHERE v.id = $1`
 
 	var v domain.Video
 	var processedCIDsJSON, metadataJSON, outputPathsJSON []byte
 	var tags pq.StringArray
+	var category domain.VideoCategory
+	var categoryName, categorySlug sql.NullString
+	var categoryDesc, categoryIcon, categoryColor sql.NullString
+	var categoryOrder sql.NullInt64
+	var categoryActive sql.NullBool
 
 	err := r.db.QueryRowContext(ctx, query, id).Scan(
 		&v.ID, &v.ThumbnailID, &v.Title, &v.Description, &v.Duration, &v.Views,
@@ -108,6 +116,7 @@ func (r *videoRepository) GetByID(ctx context.Context, id string) (*domain.Video
 		&v.OriginalCID, &processedCIDsJSON, &v.ThumbnailCID,
 		&tags, &v.CategoryID, &v.Language, &v.FileSize, &v.MimeType, &metadataJSON,
 		&v.CreatedAt, &v.UpdatedAt, &outputPathsJSON, &v.ThumbnailPath, &v.PreviewPath,
+		&v.CategoryID, &categoryName, &categorySlug, &categoryDesc, &categoryIcon, &categoryColor, &categoryOrder, &categoryActive,
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -127,6 +136,25 @@ func (r *videoRepository) GetByID(ctx context.Context, id string) (*domain.Video
 		_ = json.Unmarshal(outputPathsJSON, &v.OutputPaths)
 	}
 	v.Tags = []string(tags)
+
+	// Populate category if it exists
+	if v.CategoryID != nil {
+		category.ID = *v.CategoryID
+		category.Name = categoryName.String
+		category.Slug = categorySlug.String
+		if categoryDesc.Valid {
+			category.Description = &categoryDesc.String
+		}
+		if categoryIcon.Valid {
+			category.Icon = &categoryIcon.String
+		}
+		if categoryColor.Valid {
+			category.Color = &categoryColor.String
+		}
+		category.DisplayOrder = int(categoryOrder.Int64)
+		category.IsActive = categoryActive.Bool
+		v.Category = &category
+	}
 
 	return &v, nil
 }
