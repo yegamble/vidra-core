@@ -282,7 +282,6 @@ func createTestVideo(t *testing.T, repo usecase.VideoRepository, ctx context.Con
 	t.Helper()
 
 	now := time.Now()
-	defaultCategoryID := uuid.New()
 	video := &domain.Video{
 		ID:            uuid.NewString(),
 		ThumbnailID:   uuid.NewString(),
@@ -294,7 +293,7 @@ func createTestVideo(t *testing.T, repo usecase.VideoRepository, ctx context.Con
 		UserID:        userID,
 		ProcessedCIDs: make(map[string]string),
 		Tags:          []string{},
-		CategoryID:    &defaultCategoryID,
+		CategoryID:    nil, // Set to nil to avoid foreign key constraint violation
 		Metadata:      domain.VideoMetadata{},
 		CreatedAt:     now,
 		UpdatedAt:     now,

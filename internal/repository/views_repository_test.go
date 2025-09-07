@@ -486,7 +486,6 @@ func createTestViewsUser(t *testing.T, testDB *testutil.TestDB) *domain.User {
 func createTestViewsVideo(t *testing.T, testDB *testutil.TestDB, userID string) *domain.Video {
 	t.Helper()
 
-	defaultCategoryID := uuid.New()
 	video := &domain.Video{
 		ID:          uuid.New().String(),
 		ThumbnailID: uuid.New().String(),
@@ -498,7 +497,7 @@ func createTestViewsVideo(t *testing.T, testDB *testutil.TestDB, userID string) 
 		Status:      domain.StatusCompleted,
 		UploadDate:  time.Now(),
 		UserID:      userID,
-		CategoryID:  &defaultCategoryID,
+		CategoryID:  nil, // Set to nil to avoid foreign key constraint violation
 		FileSize:    1024000,
 		MimeType:    "video/mp4",
 		CreatedAt:   time.Now(),
