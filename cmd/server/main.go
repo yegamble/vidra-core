@@ -90,7 +90,11 @@ func main() {
 		// Start encoding workers
 		encRepo := repository.NewEncodingRepository(db)
 		videoRepo := repository.NewVideoRepository(db)
-		encSvc := usecase.NewEncodingService(encRepo, videoRepo, cfg.StorageDir, cfg)
+		userRepo := repository.NewUserRepository(db)
+		subRepo := repository.NewSubscriptionRepository(db)
+		notificationRepo := repository.NewNotificationRepository(db)
+		notificationSvc := usecase.NewNotificationService(notificationRepo, subRepo, userRepo)
+		encSvc := usecase.NewEncodingService(encRepo, videoRepo, notificationSvc, cfg.StorageDir, cfg)
 
 		go func() {
 			log.Printf("Starting encoding workers (count=%d)...", cfg.EncodingWorkers)

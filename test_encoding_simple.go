@@ -45,8 +45,8 @@ func main() {
 		HLSSegmentDuration: 4,
 	}
 
-	// Create encoding service
-	service := usecase.NewEncodingService(encodingRepo, videoRepo, tempDir, cfg)
+	// Create encoding service (pass nil for notification service in test)
+	service := usecase.NewEncodingService(encodingRepo, videoRepo, nil, tempDir, cfg)
 
 	// Get video metadata
 	metadata, err := testutil.GetVideoMetadata(videoPath)
