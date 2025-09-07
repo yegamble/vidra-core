@@ -1,7 +1,6 @@
 package httpapi
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -12,6 +11,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	jwt "github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 	"github.com/stretchr/testify/assert"
@@ -24,6 +24,19 @@ import (
 	"athena/internal/usecase"
 )
 
+// generateTestJWT creates a JWT token for testing
+func generateTestJWT(secret string, userID string) string {
+	now := time.Now()
+	claims := jwt.MapClaims{
+		"sub": userID,
+		"iat": now.Unix(),
+		"exp": now.Add(time.Hour).Unix(),
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	tokenString, _ := token.SignedString([]byte(secret))
+	return tokenString
+}
+
 func setupTestNotificationEnvironment(t *testing.T) (*sqlx.DB, *chi.Mux, *config.Config) {
 	// Skip in short mode (CI load tests)
 	if testing.Short() {
@@ -33,7 +46,7 @@ func setupTestNotificationEnvironment(t *testing.T) (*sqlx.DB, *chi.Mux, *config
 	// Setup test database - use environment variable if available (for CI)
 	dbURL := os.Getenv("DATABASE_URL")
 	if dbURL == "" {
-		dbURL = "postgres://test_user:test_password@localhost:5432/athena_test?sslmode=disable"
+		dbURL = "postgres://test_user:test_password@localhost:5433/athena_test?sslmode=disable"
 	}
 
 	cfg := &config.Config{
@@ -86,37 +99,37 @@ func TestNotificationWorkflow(t *testing.T) {
 
 	// User 1: Channel owner who uploads videos
 	channel := &domain.User{
-		ID:             uuid.New().String(),
-		Username:       "channel_owner",
-		Email:          "channel@test.com",
-		HashedPassword: "hashed_password",
-		CreatedAt:      time.Now(),
-		UpdatedAt:      time.Now(),
+		ID:          uuid.New().String(),
+		Username:    "channel_owner",
+		Email:       "channel@test.com",
+		DisplayName: "Channel Owner",
+		Role:        domain.RoleUser,
+		IsActive:    true,
+		CreatedAt:   time.Now(),
+		UpdatedAt:   time.Now(),
 	}
-	err := userRepo.Create(ctx, channel)
+	passwordHash := "$2a$10$abcdefghijklmnopqrstuvwx" // bcrypt hash
+	err := userRepo.Create(ctx, channel, passwordHash)
 	require.NoError(t, err)
 
 	// User 2: Subscriber
 	subscriber := &domain.User{
-		ID:             uuid.New().String(),
-		Username:       "subscriber",
-		Email:          "subscriber@test.com",
-		HashedPassword: "hashed_password",
-		CreatedAt:      time.Now(),
-		UpdatedAt:      time.Now(),
+		ID:          uuid.New().String(),
+		Username:    "subscriber",
+		Email:       "subscriber@test.com",
+		DisplayName: "Subscriber User",
+		Role:        domain.RoleUser,
+		IsActive:    true,
+		CreatedAt:   time.Now(),
+		UpdatedAt:   time.Now(),
 	}
-	err = userRepo.Create(ctx, subscriber)
+	err = userRepo.Create(ctx, subscriber, passwordHash)
 	require.NoError(t, err)
 
 	// Create subscription
-	channelUUID, _ := uuid.Parse(channel.ID)
 	subscriberUUID, _ := uuid.Parse(subscriber.ID)
 
-	subscription := &domain.Subscription{
-		SubscriberID: subscriberUUID,
-		ChannelID:    channelUUID,
-	}
-	err = subRepo.Subscribe(ctx, subscription)
+	err = subRepo.Subscribe(ctx, subscriber.ID, channel.ID)
 	require.NoError(t, err)
 
 	t.Run("Upload video and notify subscriber", func(t *testing.T) {
@@ -167,8 +180,9 @@ func TestNotificationWorkflow(t *testing.T) {
 		assert.Equal(t, video.ThumbnailCID, notification.Data["thumbnail_cid"])
 
 		// Test API endpoint to get notifications
+		token := generateTestJWT(cfg.JWTSecret, subscriber.ID)
 		req := httptest.NewRequest("GET", "/api/v1/notifications", nil)
-		req = req.WithContext(context.WithValue(req.Context(), "user_id", subscriber.ID))
+		req.Header.Set("Authorization", "Bearer "+token)
 		w := httptest.NewRecorder()
 
 		r.ServeHTTP(w, req)
@@ -182,7 +196,7 @@ func TestNotificationWorkflow(t *testing.T) {
 
 		// Test unread count
 		req = httptest.NewRequest("GET", "/api/v1/notifications/unread-count", nil)
-		req = req.WithContext(context.WithValue(req.Context(), "user_id", subscriber.ID))
+		req.Header.Set("Authorization", "Bearer "+token)
 		w = httptest.NewRecorder()
 
 		r.ServeHTTP(w, req)
@@ -196,7 +210,7 @@ func TestNotificationWorkflow(t *testing.T) {
 
 		// Mark notification as read
 		req = httptest.NewRequest("PUT", fmt.Sprintf("/api/v1/notifications/%s/read", notification.ID), nil)
-		req = req.WithContext(context.WithValue(req.Context(), "user_id", subscriber.ID))
+		req.Header.Set("Authorization", "Bearer "+token)
 		w = httptest.NewRecorder()
 
 		r.ServeHTTP(w, req)
@@ -298,7 +312,7 @@ func TestNotificationWorkflow(t *testing.T) {
 }
 
 func TestMultipleSubscribersNotification(t *testing.T) {
-	db, _, cfg := setupTestNotificationEnvironment(t)
+	db, _, _ := setupTestNotificationEnvironment(t)
 
 	// Initialize repositories
 	userRepo := repository.NewUserRepository(db)
@@ -313,41 +327,40 @@ func TestMultipleSubscribersNotification(t *testing.T) {
 
 	// Create channel owner
 	channel := &domain.User{
-		ID:             uuid.New().String(),
-		Username:       "popular_channel",
-		Email:          "popular@test.com",
-		HashedPassword: "hashed_password",
-		CreatedAt:      time.Now(),
-		UpdatedAt:      time.Now(),
+		ID:          uuid.New().String(),
+		Username:    "popular_channel",
+		Email:       "popular@test.com",
+		DisplayName: "Popular Channel",
+		Role:        domain.RoleUser,
+		IsActive:    true,
+		CreatedAt:   time.Now(),
+		UpdatedAt:   time.Now(),
 	}
-	err := userRepo.Create(ctx, channel)
+	passwordHash := "$2a$10$abcdefghijklmnopqrstuvwx" // bcrypt hash
+	err := userRepo.Create(ctx, channel, passwordHash)
 	require.NoError(t, err)
-
-	channelUUID, _ := uuid.Parse(channel.ID)
 
 	// Create multiple subscribers
 	subscriberIDs := []uuid.UUID{}
 	for i := 0; i < 5; i++ {
 		subscriber := &domain.User{
-			ID:             uuid.New().String(),
-			Username:       fmt.Sprintf("subscriber_%d", i),
-			Email:          fmt.Sprintf("sub%d@test.com", i),
-			HashedPassword: "hashed_password",
-			CreatedAt:      time.Now(),
-			UpdatedAt:      time.Now(),
+			ID:          uuid.New().String(),
+			Username:    fmt.Sprintf("subscriber_%d", i),
+			Email:       fmt.Sprintf("sub%d@test.com", i),
+			DisplayName: fmt.Sprintf("Subscriber %d", i),
+			Role:        domain.RoleUser,
+			IsActive:    true,
+			CreatedAt:   time.Now(),
+			UpdatedAt:   time.Now(),
 		}
-		err := userRepo.Create(ctx, subscriber)
+		err := userRepo.Create(ctx, subscriber, passwordHash)
 		require.NoError(t, err)
 
 		subUUID, _ := uuid.Parse(subscriber.ID)
 		subscriberIDs = append(subscriberIDs, subUUID)
 
 		// Subscribe to channel
-		subscription := &domain.Subscription{
-			SubscriberID: subUUID,
-			ChannelID:    channelUUID,
-		}
-		err = subRepo.Subscribe(ctx, subscription)
+		err = subRepo.Subscribe(ctx, subscriber.ID, channel.ID)
 		require.NoError(t, err)
 	}
 

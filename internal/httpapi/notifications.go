@@ -5,6 +5,7 @@ import (
 	"strconv"
 
 	"athena/internal/domain"
+	"athena/internal/middleware"
 	"athena/internal/usecase"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -23,7 +24,7 @@ func NewNotificationHandlers(notificationService usecase.NotificationService) *N
 // GetNotifications retrieves notifications for the authenticated user
 func (h *NotificationHandlers) GetNotifications(w http.ResponseWriter, r *http.Request) {
 	// Get user ID from context (set by auth middleware)
-	userID, ok := r.Context().Value("user_id").(string)
+	userID, ok := r.Context().Value(middleware.UserIDKey).(string)
 	if !ok {
 		respondWithError(w, http.StatusUnauthorized, "Unauthorized", nil)
 		return
@@ -86,7 +87,7 @@ func (h *NotificationHandlers) GetNotifications(w http.ResponseWriter, r *http.R
 
 // GetUnreadCount returns the count of unread notifications
 func (h *NotificationHandlers) GetUnreadCount(w http.ResponseWriter, r *http.Request) {
-	userID, ok := r.Context().Value("user_id").(string)
+	userID, ok := r.Context().Value(middleware.UserIDKey).(string)
 	if !ok {
 		respondWithError(w, http.StatusUnauthorized, "Unauthorized", nil)
 		return
@@ -109,7 +110,7 @@ func (h *NotificationHandlers) GetUnreadCount(w http.ResponseWriter, r *http.Req
 
 // GetNotificationStats returns notification statistics
 func (h *NotificationHandlers) GetNotificationStats(w http.ResponseWriter, r *http.Request) {
-	userID, ok := r.Context().Value("user_id").(string)
+	userID, ok := r.Context().Value(middleware.UserIDKey).(string)
 	if !ok {
 		respondWithError(w, http.StatusUnauthorized, "Unauthorized", nil)
 		return
@@ -132,7 +133,7 @@ func (h *NotificationHandlers) GetNotificationStats(w http.ResponseWriter, r *ht
 
 // MarkAsRead marks a notification as read
 func (h *NotificationHandlers) MarkAsRead(w http.ResponseWriter, r *http.Request) {
-	userID, ok := r.Context().Value("user_id").(string)
+	userID, ok := r.Context().Value(middleware.UserIDKey).(string)
 	if !ok {
 		respondWithError(w, http.StatusUnauthorized, "Unauthorized", nil)
 		return
@@ -167,7 +168,7 @@ func (h *NotificationHandlers) MarkAsRead(w http.ResponseWriter, r *http.Request
 
 // MarkAllAsRead marks all notifications as read for the user
 func (h *NotificationHandlers) MarkAllAsRead(w http.ResponseWriter, r *http.Request) {
-	userID, ok := r.Context().Value("user_id").(string)
+	userID, ok := r.Context().Value(middleware.UserIDKey).(string)
 	if !ok {
 		respondWithError(w, http.StatusUnauthorized, "Unauthorized", nil)
 		return
@@ -190,7 +191,7 @@ func (h *NotificationHandlers) MarkAllAsRead(w http.ResponseWriter, r *http.Requ
 
 // DeleteNotification deletes a notification
 func (h *NotificationHandlers) DeleteNotification(w http.ResponseWriter, r *http.Request) {
-	userID, ok := r.Context().Value("user_id").(string)
+	userID, ok := r.Context().Value(middleware.UserIDKey).(string)
 	if !ok {
 		respondWithError(w, http.StatusUnauthorized, "Unauthorized", nil)
 		return
