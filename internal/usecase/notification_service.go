@@ -11,6 +11,10 @@ import (
 type NotificationService interface {
 	// CreateVideoNotificationForSubscribers creates notifications for all subscribers when a video is uploaded
 	CreateVideoNotificationForSubscribers(ctx context.Context, video *domain.Video, channelName string) error
+	// CreateMessageNotification creates a notification for a new message
+	CreateMessageNotification(ctx context.Context, message *domain.Message, senderName string) error
+	// CreateMessageReadNotification creates a notification when a message is read (optional)
+	CreateMessageReadNotification(ctx context.Context, messageID uuid.UUID, readerID uuid.UUID, readerName string) error
 	// GetUserNotifications retrieves notifications for a user
 	GetUserNotifications(ctx context.Context, userID uuid.UUID, filter domain.NotificationFilter) ([]domain.Notification, error)
 	// MarkAsRead marks a notification as read
@@ -118,4 +122,73 @@ func (s *notificationService) GetUnreadCount(ctx context.Context, userID uuid.UU
 
 func (s *notificationService) GetStats(ctx context.Context, userID uuid.UUID) (*domain.NotificationStats, error) {
 	return s.notificationRepo.GetStats(ctx, userID)
+}
+
+func (s *notificationService) CreateMessageNotification(ctx context.Context, message *domain.Message, senderName string) error {
+	// Don't create notification for system messages
+	if message.MessageType == "system" {
+		return nil
+	}
+
+	// Parse IDs
+	recipientID, err := uuid.Parse(message.RecipientID)
+	if err != nil {
+		return fmt.Errorf("invalid recipient ID: %w", err)
+	}
+
+	senderID, err := uuid.Parse(message.SenderID)
+	if err != nil {
+		return fmt.Errorf("invalid sender ID: %w", err)
+	}
+
+	messageID, err := uuid.Parse(message.ID)
+	if err != nil {
+		return fmt.Errorf("invalid message ID: %w", err)
+	}
+
+	// If sender name not provided, fetch it
+	if senderName == "" {
+		user, err := s.userRepo.GetByID(ctx, message.SenderID)
+		if err != nil {
+			// Don't fail if we can't get the sender name
+			senderName = "Unknown"
+		} else {
+			senderName = user.Username
+		}
+	}
+
+	// Create message preview (first 100 chars)
+	messagePreview := message.Content
+	if len(messagePreview) > 100 {
+		messagePreview = messagePreview[:97] + "..."
+	}
+
+	// Create notification
+	notification := domain.Notification{
+		UserID:  recipientID,
+		Type:    domain.NotificationNewMessage,
+		Title:   fmt.Sprintf("New message from %s", senderName),
+		Message: messagePreview,
+		Data: map[string]interface{}{
+			"message_id":      messageID.String(),
+			"sender_id":       senderID.String(),
+			"sender_name":     senderName,
+			"message_preview": messagePreview,
+		},
+		Read: false,
+	}
+
+	// Create the notification
+	if err := s.notificationRepo.Create(ctx, &notification); err != nil {
+		return fmt.Errorf("failed to create message notification: %w", err)
+	}
+
+	return nil
+}
+
+func (s *notificationService) CreateMessageReadNotification(ctx context.Context, messageID uuid.UUID, readerID uuid.UUID, readerName string) error {
+	// This is optional - implement if you want read receipts
+	// For now, we'll leave it as a no-op since read receipts can be annoying
+	// and the database trigger is commented out by default
+	return nil
 }

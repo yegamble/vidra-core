@@ -24,6 +24,10 @@ const (
 	NotificationMention NotificationType = "mention"
 	// NotificationSystem is for system-wide announcements
 	NotificationSystem NotificationType = "system"
+	// NotificationNewMessage is sent when user receives a new message
+	NotificationNewMessage NotificationType = "new_message"
+	// NotificationMessageRead is sent when a message is read (optional, for read receipts)
+	NotificationMessageRead NotificationType = "message_read"
 )
 
 // Notification represents a user notification
@@ -41,14 +45,19 @@ type Notification struct {
 
 // NotificationData represents structured data for notifications
 type NotificationData struct {
-	VideoID      *uuid.UUID `json:"video_id,omitempty"`
-	ChannelID    *uuid.UUID `json:"channel_id,omitempty"`
-	ChannelName  string     `json:"channel_name,omitempty"`
-	VideoTitle   string     `json:"video_title,omitempty"`
-	ThumbnailCID string     `json:"thumbnail_cid,omitempty"`
-	SubscriberID *uuid.UUID `json:"subscriber_id,omitempty"`
-	CommentID    *uuid.UUID `json:"comment_id,omitempty"`
-	CommentText  string     `json:"comment_text,omitempty"`
+	VideoID        *uuid.UUID `json:"video_id,omitempty"`
+	ChannelID      *uuid.UUID `json:"channel_id,omitempty"`
+	ChannelName    string     `json:"channel_name,omitempty"`
+	VideoTitle     string     `json:"video_title,omitempty"`
+	ThumbnailCID   string     `json:"thumbnail_cid,omitempty"`
+	SubscriberID   *uuid.UUID `json:"subscriber_id,omitempty"`
+	CommentID      *uuid.UUID `json:"comment_id,omitempty"`
+	CommentText    string     `json:"comment_text,omitempty"`
+	MessageID      *uuid.UUID `json:"message_id,omitempty"`
+	SenderID       *uuid.UUID `json:"sender_id,omitempty"`
+	SenderName     string     `json:"sender_name,omitempty"`
+	MessagePreview string     `json:"message_preview,omitempty"`
+	ConversationID *uuid.UUID `json:"conversation_id,omitempty"`
 }
 
 // NotificationFilter represents filter options for listing notifications
