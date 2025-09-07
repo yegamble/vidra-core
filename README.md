@@ -16,6 +16,8 @@ A high-performance PeerTube backend implementation in Go with decentralized stor
 - 🌐 **IPFS** - Decentralized storage support
 - 🎥 **Video Processing** - FFmpeg integration for transcoding
 - 📁 **Video Categories** - Comprehensive categorization system with 15 default categories
+- 🔔 **Real-time Notifications** - Automatic notifications for video uploads, messages, and user interactions
+- 💬 **Messaging System** - Direct messaging between users with notification support
 - 🖼️ **Avatar WebP Optimization** - Optional WebP encoding for uploaded avatars (quality configurable), IPFS pinning of both original and WebP variants
 - 📊 **Observability** - Prometheus metrics, structured logging, distributed tracing
 - 🐳 **Docker Ready** - Full containerization with Docker Compose
@@ -173,6 +175,7 @@ The API is defined using OpenAPI 3.0 specification in `api/openapi.yaml`.
 - 📄 **OpenAPI Specification**: [api/openapi.yaml](api/openapi.yaml)
 - 📚 **API Examples & Usage Guide**: [docs/API_EXAMPLES.md](docs/API_EXAMPLES.md)
 - 🎯 **Video Categories Guide**: Comprehensive examples for category management
+- 🔔 **Notifications API Guide**: [docs/NOTIFICATIONS_API.md](docs/NOTIFICATIONS_API.md) - Complete notification system documentation
 
 ```bash
 # Install documentation tools (one-time setup)
@@ -356,6 +359,32 @@ Notes:
 - `GET /api/v1/conversations` - Get user's conversation list
 - `GET /api/v1/conversations/unread-count` - Get total count of unread messages
 
+### Notifications
+
+**Notification Management (Require Authentication):**
+- `GET /api/v1/notifications` - Get user's notifications
+  - Query Parameters:
+    - `limit` (integer): Max results per page (1-100, default: 50)
+    - `offset` (integer): Pagination offset (default: 0)
+    - `unread` (boolean): Filter to unread notifications only
+- `GET /api/v1/notifications/unread-count` - Get count of unread notifications
+- `GET /api/v1/notifications/stats` - Get notification statistics
+  - Returns total count, unread count, and breakdown by notification type
+- `PUT /api/v1/notifications/{id}/read` - Mark notification as read
+- `PUT /api/v1/notifications/read-all` - Mark all notifications as read
+- `DELETE /api/v1/notifications/{id}` - Delete a notification
+
+**Notification Types:**
+- `new_video` - New video from subscribed channel
+- `video_processed` - Your video finished processing
+- `video_failed` - Your video failed processing
+- `new_subscriber` - Someone subscribed to your channel
+- `comment` - Comment on your video
+- `mention` - You were mentioned
+- `new_message` - New message received
+- `message_read` - Message read receipt (optional)
+- `system` - System announcement
+
 **End-to-End Encrypted Messages:**
 - `POST /api/v1/e2ee/setup` - Setup E2EE with master key (requires auth)
 - `POST /api/v1/e2ee/unlock` - Unlock E2EE session (requires auth)
@@ -467,6 +496,27 @@ See [SECURITY_E2EE.md](SECURITY_E2EE.md) for comprehensive security documentatio
 /SECURITY_E2EE.md     # E2EE security documentation
 ```
 
+### Notification System
+
+The notification system provides real-time updates to users about important events:
+
+**Automatic Notifications:**
+- **Video Uploads**: Subscribers are automatically notified when channels they follow upload new public videos
+- **Messages**: Users receive notifications when they get new direct messages
+- **User Interactions**: Notifications for new subscribers, comments, and mentions
+
+**Technical Implementation:**
+- PostgreSQL triggers automatically create notifications for events (videos, messages)
+- Notification service handles business logic and filtering
+- RESTful API for managing and retrieving notifications
+- Support for batch operations and pagination
+- Unread count tracking and statistics
+
+**Database Schema:**
+- `notifications` table with JSONB data field for flexible notification content
+- Indexes optimized for user queries and unread filtering
+- Automatic cleanup of old read notifications (configurable)
+
 ## Production Deployment
 
 For detailed production deployment instructions, see [PRODUCTION.md](./PRODUCTION.md).
@@ -542,6 +592,12 @@ make migrate-up
 # Run test migrations
 make migrate-test
 ```
+
+**Key Migrations:**
+- `014_create_messages_table.sql` - User messaging system
+- `015_add_e2ee_messaging.sql` - End-to-end encryption support
+- `020_create_notifications_table.sql` - Notification system with triggers
+- `021_add_message_notifications.sql` - Message notification triggers
 
 ## Contributing
 

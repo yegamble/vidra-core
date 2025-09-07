@@ -82,6 +82,20 @@ Rebuild PeerTube’s backend in Go using: **Chi**, **SQLX+PostgreSQL** (`pg_trgm
 - **Hot** local cache → **Warm** IPFS → **Cold** S3-compatible (Backblaze/DO/AWS).
 - Promotion/demotion by access metrics; async seeding between tiers.
 
+## Notifications
+
+Real-time notification system with automatic triggers and flexible delivery:
+
+- **Types**: `new_video`, `video_processed`, `video_failed`, `new_subscriber`, `comment`, `mention`, `new_message`, `message_read`, `system`
+- **Database**: `notifications` table with JSONB data field, optimized indexes for user queries
+- **Triggers**: PostgreSQL functions for automatic notification creation:
+  - `notify_subscribers_on_video_upload()` - Creates notifications when public videos are uploaded
+  - `notify_on_new_message()` - Creates notifications for new messages (excludes system messages)
+- **Service**: `NotificationService` handles business logic, batch operations, filtering
+- **API**: Full CRUD with pagination, filtering, statistics, bulk operations
+- **Performance**: Indexed on `user_id`, `read` status, `created_at`, composite for unread queries
+- **Testing**: Comprehensive integration and unit tests, CI/CD compatible
+
 ## User Messaging
 
 User messaging is implemented with a dedicated schema and functions to ensure conversations are ordered correctly. The system supports:
