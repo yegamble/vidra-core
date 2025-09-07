@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 )
 
@@ -166,4 +167,46 @@ func (r *subscriptionRepository) CountSubscribers(ctx context.Context, channelID
 		return 0, fmt.Errorf("failed to get subscriber count: %w", err)
 	}
 	return count, nil
+}
+
+func (r *subscriptionRepository) GetSubscribers(ctx context.Context, channelID string) ([]*domain.Subscription, error) {
+	query := `
+		SELECT id, subscriber_id, channel_id, created_at
+		FROM subscriptions
+		WHERE channel_id = $1
+		ORDER BY created_at DESC`
+
+	var subscriptions []*domain.Subscription
+	rows, err := r.db.QueryContext(ctx, query, channelID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get subscribers: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var sub domain.Subscription
+		var subscriberID, channelIDStr, idStr string
+		if err := rows.Scan(&idStr, &subscriberID, &channelIDStr, &sub.CreatedAt); err != nil {
+			return nil, fmt.Errorf("failed to scan subscription: %w", err)
+		}
+
+		// Parse UUIDs
+		if sub.ID, err = uuid.Parse(idStr); err != nil {
+			return nil, fmt.Errorf("invalid subscription ID: %w", err)
+		}
+		if sub.SubscriberID, err = uuid.Parse(subscriberID); err != nil {
+			return nil, fmt.Errorf("invalid subscriber ID: %w", err)
+		}
+		if sub.ChannelID, err = uuid.Parse(channelIDStr); err != nil {
+			return nil, fmt.Errorf("invalid channel ID: %w", err)
+		}
+
+		subscriptions = append(subscriptions, &sub)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating subscribers: %w", err)
+	}
+
+	return subscriptions, nil
 }

@@ -17,4 +17,6 @@ type SubscriptionRepository interface {
 	ListSubscriptionVideos(ctx context.Context, subscriberID string, limit, offset int) ([]*domain.Video, int64, error)
 	// CountSubscribers returns the subscriber count for a channel.
 	CountSubscribers(ctx context.Context, channelID string) (int64, error)
+	// GetSubscribers returns all subscribers for a channel.
+	GetSubscribers(ctx context.Context, channelID string) ([]*domain.Subscription, error)
 }

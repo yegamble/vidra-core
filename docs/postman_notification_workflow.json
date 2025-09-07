@@ -1,0 +1,761 @@
+{
+  "info": {
+    "name": "Athena Notification Workflow",
+    "description": "Complete workflow for testing notifications when a subscribed channel uploads a video",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8080/api/v1",
+      "type": "string"
+    },
+    {
+      "key": "channelToken",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "subscriberToken",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "channelId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "subscriberId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "videoId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "sessionId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "notificationId",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "1. Setup Users",
+      "item": [
+        {
+          "name": "Register Channel Owner",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Channel owner registered successfully\", function () {",
+                  "    pm.response.to.have.status(201);",
+                  "});",
+                  "",
+                  "const response = pm.response.json();",
+                  "pm.collectionVariables.set(\"channelId\", response.user.id);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"channel_owner_{{$timestamp}}\",\n  \"email\": \"channel_{{$timestamp}}@test.com\",\n  \"password\": \"SecurePassword123!\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/auth/register",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "register"]
+            }
+          }
+        },
+        {
+          "name": "Login Channel Owner",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Channel owner logged in successfully\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "const response = pm.response.json();",
+                  "pm.collectionVariables.set(\"channelToken\", response.token);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"channel_{{$timestamp}}@test.com\",\n  \"password\": \"SecurePassword123!\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/auth/login",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "login"]
+            }
+          }
+        },
+        {
+          "name": "Register Subscriber",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Subscriber registered successfully\", function () {",
+                  "    pm.response.to.have.status(201);",
+                  "});",
+                  "",
+                  "const response = pm.response.json();",
+                  "pm.collectionVariables.set(\"subscriberId\", response.user.id);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"subscriber_{{$timestamp}}\",\n  \"email\": \"subscriber_{{$timestamp}}@test.com\",\n  \"password\": \"SecurePassword123!\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/auth/register",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "register"]
+            }
+          }
+        },
+        {
+          "name": "Login Subscriber",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Subscriber logged in successfully\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "const response = pm.response.json();",
+                  "pm.collectionVariables.set(\"subscriberToken\", response.token);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"subscriber_{{$timestamp}}@test.com\",\n  \"password\": \"SecurePassword123!\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/auth/login",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "login"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "2. Create Subscription",
+      "item": [
+        {
+          "name": "Subscribe to Channel",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Subscribed to channel successfully\", function () {",
+                  "    pm.response.to.have.status(201);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{subscriberToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/users/{{channelId}}/subscribe",
+              "host": ["{{baseUrl}}"],
+              "path": ["users", "{{channelId}}", "subscribe"]
+            }
+          }
+        },
+        {
+          "name": "Verify Subscription",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Subscription exists\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "    const subscriptions = pm.response.json();",
+                  "    pm.expect(subscriptions).to.be.an('array');",
+                  "    pm.expect(subscriptions.length).to.be.greaterThan(0);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{subscriberToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/users/me/subscriptions",
+              "host": ["{{baseUrl}}"],
+              "path": ["users", "me", "subscriptions"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "3. Upload and Publish Video",
+      "item": [
+        {
+          "name": "Initiate Video Upload",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Upload initiated successfully\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "const response = pm.response.json();",
+                  "pm.collectionVariables.set(\"sessionId\", response.session_id);",
+                  "pm.collectionVariables.set(\"videoId\", response.video_id);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{channelToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"file_name\": \"test_video.mp4\",\n  \"file_size\": 10485760,\n  \"chunk_size\": 1048576,\n  \"expected_checksum\": \"sha256:test_checksum\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/uploads/initiate",
+              "host": ["{{baseUrl}}"],
+              "path": ["uploads", "initiate"]
+            }
+          }
+        },
+        {
+          "name": "Upload Video Chunks",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Chunk uploaded successfully\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{channelToken}}"
+              }
+            ],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "chunk",
+                  "type": "file",
+                  "src": "/path/to/test_video_chunk.bin"
+                },
+                {
+                  "key": "chunk_index",
+                  "value": "0",
+                  "type": "text"
+                },
+                {
+                  "key": "checksum",
+                  "value": "sha256:chunk_checksum",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/uploads/{{sessionId}}/chunks",
+              "host": ["{{baseUrl}}"],
+              "path": ["uploads", "{{sessionId}}", "chunks"]
+            }
+          }
+        },
+        {
+          "name": "Complete Upload",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Upload completed successfully\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{channelToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/uploads/{{sessionId}}/complete",
+              "host": ["{{baseUrl}}"],
+              "path": ["uploads", "{{sessionId}}", "complete"]
+            }
+          }
+        },
+        {
+          "name": "Update Video Metadata",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Video metadata updated\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{channelToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Amazing Tutorial Video\",\n  \"description\": \"Learn something new with this tutorial\",\n  \"privacy\": \"public\",\n  \"tags\": [\"tutorial\", \"education\"]\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/videos/{{videoId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["videos", "{{videoId}}"]
+            }
+          }
+        },
+        {
+          "name": "Wait for Processing",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "// This is a placeholder - in real scenario, you would poll",
+                  "// the video status until it becomes 'completed'",
+                  "pm.test(\"Check video processing status\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "    const video = pm.response.json();",
+                  "    console.log(\"Video status: \" + video.status);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{channelToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/videos/{{videoId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["videos", "{{videoId}}"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "4. Check Notifications",
+      "item": [
+        {
+          "name": "Get Unread Count",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Unread count retrieved\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "    const response = pm.response.json();",
+                  "    pm.expect(response).to.have.property('unread_count');",
+                  "    pm.expect(response.unread_count).to.be.at.least(1);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{subscriberToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/notifications/unread-count",
+              "host": ["{{baseUrl}}"],
+              "path": ["notifications", "unread-count"]
+            }
+          }
+        },
+        {
+          "name": "Get All Notifications",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Notifications retrieved\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "    const notifications = pm.response.json();",
+                  "    pm.expect(notifications).to.be.an('array');",
+                  "    pm.expect(notifications.length).to.be.at.least(1);",
+                  "    ",
+                  "    // Find the new video notification",
+                  "    const videoNotif = notifications.find(n => n.type === 'new_video');",
+                  "    pm.expect(videoNotif).to.not.be.undefined;",
+                  "    pm.expect(videoNotif.data.video_id).to.equal(pm.collectionVariables.get('videoId'));",
+                  "    ",
+                  "    if (videoNotif) {",
+                  "        pm.collectionVariables.set('notificationId', videoNotif.id);",
+                  "    }",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{subscriberToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/notifications",
+              "host": ["{{baseUrl}}"],
+              "path": ["notifications"]
+            }
+          }
+        },
+        {
+          "name": "Get Unread Notifications Only",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Unread notifications retrieved\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "    const notifications = pm.response.json();",
+                  "    pm.expect(notifications).to.be.an('array');",
+                  "    notifications.forEach(n => {",
+                  "        pm.expect(n.read).to.be.false;",
+                  "    });",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{subscriberToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/notifications?unread=true",
+              "host": ["{{baseUrl}}"],
+              "path": ["notifications"],
+              "query": [
+                {
+                  "key": "unread",
+                  "value": "true"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Notification Statistics",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Statistics retrieved\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "    const stats = pm.response.json();",
+                  "    pm.expect(stats).to.have.property('total_count');",
+                  "    pm.expect(stats).to.have.property('unread_count');",
+                  "    pm.expect(stats).to.have.property('by_type');",
+                  "    pm.expect(stats.by_type).to.have.property('new_video');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{subscriberToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/notifications/stats",
+              "host": ["{{baseUrl}}"],
+              "path": ["notifications", "stats"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "5. Manage Notifications",
+      "item": [
+        {
+          "name": "Mark Notification as Read",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Notification marked as read\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "    const response = pm.response.json();",
+                  "    pm.expect(response.success).to.be.true;",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{subscriberToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/notifications/{{notificationId}}/read",
+              "host": ["{{baseUrl}}"],
+              "path": ["notifications", "{{notificationId}}", "read"]
+            }
+          }
+        },
+        {
+          "name": "Verify Notification is Read",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Notification is marked as read\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "    const notifications = pm.response.json();",
+                  "    const notif = notifications.find(n => n.id === pm.collectionVariables.get('notificationId'));",
+                  "    pm.expect(notif).to.not.be.undefined;",
+                  "    pm.expect(notif.read).to.be.true;",
+                  "    pm.expect(notif.read_at).to.not.be.null;",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{subscriberToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/notifications",
+              "host": ["{{baseUrl}}"],
+              "path": ["notifications"]
+            }
+          }
+        },
+        {
+          "name": "Mark All as Read",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"All notifications marked as read\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "    const response = pm.response.json();",
+                  "    pm.expect(response.success).to.be.true;",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{subscriberToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/notifications/read-all",
+              "host": ["{{baseUrl}}"],
+              "path": ["notifications", "read-all"]
+            }
+          }
+        },
+        {
+          "name": "Delete Notification",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Notification deleted\", function () {",
+                  "    pm.response.to.have.status(204);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{subscriberToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/notifications/{{notificationId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["notifications", "{{notificationId}}"]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

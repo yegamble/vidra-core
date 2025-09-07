@@ -49,6 +49,10 @@ var (
 	ErrInvalidMessageType   = errors.New("invalid message type")
 )
 
+var (
+	ErrNotificationNotFound = errors.New("notification not found")
+)
+
 type DomainError struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`

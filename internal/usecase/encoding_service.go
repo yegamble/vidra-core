@@ -28,14 +28,15 @@ type EncodingService interface {
 }
 
 type encodingService struct {
-	repo       EncodingRepository
-	videoRepo  VideoRepository
-	uploadsDir string // storage root
-	cfg        *config.Config
+	repo            EncodingRepository
+	videoRepo       VideoRepository
+	notificationSvc NotificationService
+	uploadsDir      string // storage root
+	cfg             *config.Config
 }
 
-func NewEncodingService(repo EncodingRepository, videoRepo VideoRepository, uploadsDir string, cfg *config.Config) EncodingService {
-	return &encodingService{repo: repo, videoRepo: videoRepo, uploadsDir: uploadsDir, cfg: cfg}
+func NewEncodingService(repo EncodingRepository, videoRepo VideoRepository, notificationSvc NotificationService, uploadsDir string, cfg *config.Config) EncodingService {
+	return &encodingService{repo: repo, videoRepo: videoRepo, notificationSvc: notificationSvc, uploadsDir: uploadsDir, cfg: cfg}
 }
 
 func (s *encodingService) Run(ctx context.Context, workers int) error {
@@ -222,6 +223,16 @@ func (s *encodingService) processJob(ctx context.Context, job *domain.EncodingJo
 	if err := s.videoRepo.UpdateProcessingInfo(ctx, job.VideoID, domain.StatusCompleted, outputs, filepath.ToSlash(thumb), filepath.ToSlash(preview)); err != nil {
 		return err
 	}
+
+	// Trigger notifications for subscribers if video is public
+	if s.notificationSvc != nil {
+		video, err := s.videoRepo.GetByID(ctx, job.VideoID)
+		if err == nil && video != nil {
+			// Notifications will only be created if video is public and completed
+			_ = s.notificationSvc.CreateVideoNotificationForSubscribers(ctx, video, "")
+		}
+	}
+
 	return nil
 }
 

@@ -39,6 +39,7 @@ func RegisterRoutes(r chi.Router, cfg *config.Config) {
 	dbAuthRepo := repository.NewAuthRepository(db)
 	subRepo := repository.NewSubscriptionRepository(db)
 	viewsRepo := repository.NewViewsRepository(db)
+	notificationRepo := repository.NewNotificationRepository(db)
 
 	// Create storage directory structure
 	storageRoot := cfg.StorageDir
@@ -64,13 +65,14 @@ func RegisterRoutes(r chi.Router, cfg *config.Config) {
 	uploadService := usecase.NewUploadService(uploadRepo, encodingRepo, videoRepo, storageRoot, cfg)
 	messageService := usecase.NewMessageService(messageRepo, userRepo)
 	viewsService := usecase.NewViewsService(viewsRepo, videoRepo)
+	notificationService := usecase.NewNotificationService(notificationRepo, subRepo, userRepo)
 
 	// Start a lightweight encoding scheduler in the background to ensure
 	// pending jobs are processed even if the standalone encoder is not running.
 	// This uses a short interval with a small burst to avoid starvation.
 	var encSched *scheduler.EncodingScheduler
 	if cfg.EnableEncodingScheduler {
-		encSvc := usecase.NewEncodingService(encodingRepo, videoRepo, storageRoot, cfg)
+		encSvc := usecase.NewEncodingService(encodingRepo, videoRepo, notificationService, storageRoot, cfg)
 		interval := time.Duration(cfg.EncodingSchedulerIntervalSeconds) * time.Second
 		burst := cfg.EncodingSchedulerBurst
 		encSched = scheduler.NewEncodingScheduler(encSvc, interval, burst)
@@ -221,6 +223,18 @@ func RegisterRoutes(r chi.Router, cfg *config.Config) {
 
 		// Fingerprinting for view deduplication
 		r.Post("/views/fingerprint", viewsHandler.GenerateFingerprint)
+
+		// Notifications
+		r.Route("/notifications", func(r chi.Router) {
+			r.Use(middleware.Auth(cfg.JWTSecret))
+			notificationHandlers := NewNotificationHandlers(notificationService)
+			r.Get("/", notificationHandlers.GetNotifications)
+			r.Get("/unread-count", notificationHandlers.GetUnreadCount)
+			r.Get("/stats", notificationHandlers.GetNotificationStats)
+			r.Put("/{id}/read", notificationHandlers.MarkAsRead)
+			r.Put("/read-all", notificationHandlers.MarkAllAsRead)
+			r.Delete("/{id}", notificationHandlers.DeleteNotification)
+		})
 	})
 
 	// Custom 404 handler that returns JSON error response
