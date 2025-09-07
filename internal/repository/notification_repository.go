@@ -58,7 +58,7 @@ func (r *NotificationRepository) CreateBatch(ctx context.Context, notifications 
 	if err != nil {
 		return fmt.Errorf("beginning transaction: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	stmt, err := tx.PrepareContext(ctx, `
 		INSERT INTO notifications (user_id, type, title, message, data)
@@ -209,6 +209,10 @@ func (r *NotificationRepository) ListByUser(ctx context.Context, filter domain.N
 		notifications = append(notifications, notification)
 	}
 
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating notifications: %w", err)
+	}
+
 	return notifications, nil
 }
 
@@ -339,6 +343,10 @@ func (r *NotificationRepository) GetStats(ctx context.Context, userID uuid.UUID)
 			return nil, fmt.Errorf("scanning type count: %w", err)
 		}
 		stats.ByType[notifType] = count
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating type counts: %w", err)
 	}
 
 	return stats, nil

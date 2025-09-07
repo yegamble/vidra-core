@@ -63,10 +63,11 @@ func (h *NotificationHandlers) GetNotifications(w http.ResponseWriter, r *http.R
 	}
 
 	// Parse notification types
-	if typesStr := r.URL.Query().Get("types"); typesStr != "" {
-		// Parse comma-separated types
-		// e.g., "new_video,comment,mention"
-	}
+	// TODO: Implement filtering by notification types when needed
+	// if typesStr := r.URL.Query().Get("types"); typesStr != "" {
+	//     Parse comma-separated types
+	//     e.g., "new_video,comment,mention"
+	// }
 
 	// Get notifications
 	notifications, err := h.notificationService.GetUserNotifications(r.Context(), userUUID, filter)

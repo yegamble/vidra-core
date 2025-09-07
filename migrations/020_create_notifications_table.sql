@@ -52,9 +52,9 @@ $$ LANGUAGE plpgsql;
 -- Trigger to create notifications when video status changes to completed
 DROP TRIGGER IF EXISTS trg_notify_video_upload ON videos;
 CREATE TRIGGER trg_notify_video_upload
-AFTER INSERT OR UPDATE OF status ON videos
+AFTER UPDATE OF status ON videos
 FOR EACH ROW
-WHEN (NEW.status = 'completed' AND (OLD.status IS NULL OR OLD.status != 'completed'))
+WHEN (NEW.status = 'completed' AND OLD.status != 'completed')
 EXECUTE FUNCTION notify_subscribers_on_video_upload();
 
 -- Function to clean up old read notifications (optional, can be called periodically)
