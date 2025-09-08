@@ -179,7 +179,7 @@ func (s *Service) sendEmail(to, subject, plainBody, htmlBody string) error {
 	if s.config.SMTPPort == 587 {
 		return s.sendEmailSTARTTLS(addr, auth, s.config.FromAddress, []string{to}, msg)
 	}
-	
+
 	// For plain connections (port 25) - not recommended
 	return smtp.SendMail(addr, auth, s.config.FromAddress, []string{to}, msg)
 }
