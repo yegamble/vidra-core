@@ -206,10 +206,14 @@ func ensureTestSchema(db *sqlx.DB) error {
             password_hash TEXT NOT NULL,
             is_active BOOLEAN NOT NULL DEFAULT true,
             subscriber_count BIGINT NOT NULL DEFAULT 0,
+            email_verified BOOLEAN NOT NULL DEFAULT false,
+            email_verified_at TIMESTAMP WITH TIME ZONE,
             created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
             updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
         )`,
 		`ALTER TABLE users ADD COLUMN IF NOT EXISTS subscriber_count BIGINT NOT NULL DEFAULT 0`,
+		`ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified BOOLEAN NOT NULL DEFAULT false`,
+		`ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified_at TIMESTAMP WITH TIME ZONE`,
 		// Subscriptions table
 		`CREATE TABLE IF NOT EXISTS subscriptions (
 		    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -226,8 +230,23 @@ func ensureTestSchema(db *sqlx.DB) error {
 		`CREATE INDEX IF NOT EXISTS idx_users_is_active ON users(is_active)`,
 		`CREATE INDEX IF NOT EXISTS idx_users_created_at ON users(created_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_users_bitcoin_wallet ON users(bitcoin_wallet)`,
+		`CREATE INDEX IF NOT EXISTS idx_users_email_verified ON users(email_verified)`,
 		`DROP TRIGGER IF EXISTS update_users_updated_at ON users`,
 		`CREATE TRIGGER update_users_updated_at BEFORE UPDATE ON users FOR EACH ROW EXECUTE FUNCTION update_updated_at_column()`,
+		// Email verification tokens table
+		`CREATE TABLE IF NOT EXISTS email_verification_tokens (
+		    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+		    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		    token VARCHAR(255) NOT NULL UNIQUE,
+		    code VARCHAR(6) NOT NULL,
+		    expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+		    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+		    used_at TIMESTAMP WITH TIME ZONE
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_email_verification_tokens_user_id ON email_verification_tokens(user_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_email_verification_tokens_token ON email_verification_tokens(token)`,
+		`CREATE INDEX IF NOT EXISTS idx_email_verification_tokens_code_user ON email_verification_tokens(code, user_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_email_verification_tokens_expires_at ON email_verification_tokens(expires_at)`,
 		// User avatars table
 		`CREATE TABLE IF NOT EXISTS user_avatars (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -707,7 +726,7 @@ func cleanupTestDB(t *testing.T, testDB *TestDB) {
 
 	// Clean Postgres tables
 	if testDB.DB != nil {
-		tables := []string{"user_views", "daily_video_stats", "user_engagement_stats", "trending_videos", "messages", "conversations", "encoding_jobs", "upload_sessions", "videos", "video_categories", "subscriptions", "sessions", "refresh_tokens", "user_avatars", "users"}
+		tables := []string{"user_views", "daily_video_stats", "user_engagement_stats", "trending_videos", "messages", "conversations", "encoding_jobs", "upload_sessions", "videos", "video_categories", "subscriptions", "sessions", "refresh_tokens", "email_verification_tokens", "user_avatars", "users"}
 		for _, table := range tables {
 			if _, err := testDB.DB.ExecContext(ctx, fmt.Sprintf("TRUNCATE TABLE %s CASCADE", table)); err != nil {
 				t.Logf("Failed to truncate table %s: %v", table, err)

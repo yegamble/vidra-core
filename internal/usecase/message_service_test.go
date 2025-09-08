@@ -115,6 +115,11 @@ func (m *MockUserRepository) SetAvatarFields(ctx context.Context, userID string,
 	return args.Error(0)
 }
 
+func (m *MockUserRepository) MarkEmailAsVerified(ctx context.Context, userID string) error {
+	args := m.Called(ctx, userID)
+	return args.Error(0)
+}
+
 func TestMessageService_SendMessage(t *testing.T) {
 	mockMessageRepo := new(MockMessageRepository)
 	mockUserRepo := new(MockUserRepository)
