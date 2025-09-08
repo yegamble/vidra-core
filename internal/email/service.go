@@ -175,7 +175,12 @@ func (s *Service) sendEmail(to, subject, plainBody, htmlBody string) error {
 		return s.sendEmailTLS(addr, auth, s.config.FromAddress, []string{to}, msg)
 	}
 
-	// For STARTTLS connections (port 587) or plain (port 25)
+	// For STARTTLS connections (port 587)
+	if s.config.SMTPPort == 587 {
+		return s.sendEmailSTARTTLS(addr, auth, s.config.FromAddress, []string{to}, msg)
+	}
+	
+	// For plain connections (port 25) - not recommended
 	return smtp.SendMail(addr, auth, s.config.FromAddress, []string{to}, msg)
 }
 
@@ -226,6 +231,73 @@ func (s *Service) sendEmailTLS(addr string, auth smtp.Auth, from string, to []st
 	}
 
 	return client.Quit()
+}
+
+// sendEmailSTARTTLS sends email using STARTTLS (port 587)
+func (s *Service) sendEmailSTARTTLS(addr string, auth smtp.Auth, from string, to []string, msg []byte) error {
+	// Connect to the server
+	c, err := smtp.Dial(addr)
+	if err != nil {
+		return fmt.Errorf("failed to connect to SMTP server: %w", err)
+	}
+	defer c.Close()
+
+	// Send HELO/EHLO
+	if err = c.Hello("localhost"); err != nil {
+		return fmt.Errorf("failed to send HELO: %w", err)
+	}
+
+	// Check if STARTTLS is supported
+	if ok, _ := c.Extension("STARTTLS"); ok {
+		config := &tls.Config{
+			ServerName: s.config.SMTPHost,
+			MinVersion: tls.VersionTLS12,
+		}
+		if err = c.StartTLS(config); err != nil {
+			return fmt.Errorf("failed to start TLS: %w", err)
+		}
+	} else {
+		// If STARTTLS is not supported on port 587, fail for security
+		return fmt.Errorf("STARTTLS not supported by server on port 587 - refusing to send over insecure connection")
+	}
+
+	// Authenticate after TLS is established
+	if auth != nil {
+		if err = c.Auth(auth); err != nil {
+			return fmt.Errorf("failed to authenticate: %w", err)
+		}
+	}
+
+	// Set the sender
+	if err = c.Mail(from); err != nil {
+		return fmt.Errorf("failed to set sender: %w", err)
+	}
+
+	// Set recipients
+	for _, recipient := range to {
+		if err = c.Rcpt(recipient); err != nil {
+			return fmt.Errorf("failed to set recipient %s: %w", recipient, err)
+		}
+	}
+
+	// Send the email body
+	w, err := c.Data()
+	if err != nil {
+		return fmt.Errorf("failed to get data writer: %w", err)
+	}
+
+	_, err = w.Write(msg)
+	if err != nil {
+		return fmt.Errorf("failed to write message: %w", err)
+	}
+
+	err = w.Close()
+	if err != nil {
+		return fmt.Errorf("failed to close data writer: %w", err)
+	}
+
+	// Send QUIT
+	return c.Quit()
 }
 
 // SendResendVerificationEmail sends a new verification email
