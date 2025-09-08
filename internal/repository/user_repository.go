@@ -41,7 +41,7 @@ const selectUserWithAvatar = `
                a.id            AS avatar_id,
                a.ipfs_cid      AS avatar_ipfs_cid,
                a.webp_ipfs_cid AS avatar_webp_ipfs_cid,
-               u.bio, u.bitcoin_wallet, u.role, u.is_active, u.subscriber_count, u.created_at, u.updated_at
+               u.bio, u.bitcoin_wallet, u.role, u.is_active, u.email_verified, u.email_verified_at, u.subscriber_count, u.created_at, u.updated_at
         FROM users u
         LEFT JOIN user_avatars a ON a.user_id = u.id`
 
@@ -57,6 +57,8 @@ type userRow struct {
 	BitcoinWallet     string          `db:"bitcoin_wallet"`
 	Role              domain.UserRole `db:"role"`
 	IsActive          bool            `db:"is_active"`
+	EmailVerified     bool            `db:"email_verified"`
+	EmailVerifiedAt   sql.NullTime    `db:"email_verified_at"`
 	SubscriberCount   int64           `db:"subscriber_count"`
 	CreatedAt         time.Time       `db:"created_at"`
 	UpdatedAt         time.Time       `db:"updated_at"`
@@ -72,6 +74,8 @@ func mapUserRow(rrow userRow) *domain.User {
 		BitcoinWallet:   rrow.BitcoinWallet,
 		Role:            rrow.Role,
 		IsActive:        rrow.IsActive,
+		EmailVerified:   rrow.EmailVerified,
+		EmailVerifiedAt: rrow.EmailVerifiedAt,
 		SubscriberCount: rrow.SubscriberCount,
 		CreatedAt:       rrow.CreatedAt,
 		UpdatedAt:       rrow.UpdatedAt,
@@ -244,5 +248,30 @@ func (r *userRepository) SetAvatarFields(ctx context.Context, userID string, ipf
 	if err != nil {
 		return fmt.Errorf("failed to upsert user avatar fields: %w", err)
 	}
+	return nil
+}
+
+// MarkEmailAsVerified marks a user's email as verified
+func (r *userRepository) MarkEmailAsVerified(ctx context.Context, userID string) error {
+	query := `
+		UPDATE users 
+		SET email_verified = true, email_verified_at = NOW(), updated_at = NOW()
+		WHERE id = $1
+	`
+
+	result, err := r.db.ExecContext(ctx, query, userID)
+	if err != nil {
+		return fmt.Errorf("failed to mark email as verified: %w", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+
+	if rowsAffected == 0 {
+		return domain.ErrUserNotFound
+	}
+
 	return nil
 }

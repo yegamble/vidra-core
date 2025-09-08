@@ -116,6 +116,20 @@ func (m *mockUserRepo) SetAvatarFields(_ context.Context, userID string, ipfsCID
 	return nil
 }
 
+func (m *mockUserRepo) MarkEmailAsVerified(_ context.Context, userID string) error {
+	u, ok := m.users[userID]
+	if !ok {
+		return domain.ErrUserNotFound
+	}
+	// Copy to avoid external mutation
+	c := *u
+	c.EmailVerified = true
+	now := time.Now()
+	c.EmailVerifiedAt = sql.NullTime{Time: now, Valid: true}
+	m.users[userID] = &c
+	return nil
+}
+
 // Response decoding helpers
 type testResponse struct {
 	Data    json.RawMessage `json:"data"`

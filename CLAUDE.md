@@ -24,7 +24,7 @@ Rebuild PeerTube’s backend in Go using: **Chi**, **SQLX+PostgreSQL** (`pg_trgm
 /internal/storage      # Hybrid (local/IPFS/S3-compatible)
 /internal/worker       # async jobs (chunk merge, GC, pins)
 /internal/obs          # logging, metrics, tracing
-/migrations            # Go-Atlas SQL files
+/migrations            # SQL migration files
 /pkg                   # optional shared util packages
 ```
 

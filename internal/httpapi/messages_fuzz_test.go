@@ -255,3 +255,7 @@ func (s *stubUserRepo) Count(context.Context) (int64, error) {
 func (s *stubUserRepo) SetAvatarFields(context.Context, string, sql.NullString, sql.NullString) error {
 	return domain.ErrInternalServer
 }
+
+func (s *stubUserRepo) MarkEmailAsVerified(context.Context, string) error {
+	return domain.ErrInternalServer
+}

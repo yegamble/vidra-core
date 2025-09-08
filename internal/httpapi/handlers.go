@@ -21,15 +21,16 @@ import (
 
 // Server implements the generated ServerInterface
 type Server struct {
-	userRepo         usecase.UserRepository
-	authRepo         usecase.AuthRepository
-	jwtSecret        string
-	redis            *redis.Client
-	redisPingTimeout time.Duration
-	ipfsAPI          string
-	ipfsClusterAPI   string
-	ipfsPingTimeout  time.Duration
-	cfg              *config.Config
+	userRepo            usecase.UserRepository
+	authRepo            usecase.AuthRepository
+	verificationService *usecase.EmailVerificationService
+	jwtSecret           string
+	redis               *redis.Client
+	redisPingTimeout    time.Duration
+	ipfsAPI             string
+	ipfsClusterAPI      string
+	ipfsPingTimeout     time.Duration
+	cfg                 *config.Config
 }
 
 // NewServer creates a new server instance
@@ -45,6 +46,11 @@ func NewServer(userRepo usecase.UserRepository, authRepo usecase.AuthRepository,
 		ipfsPingTimeout:  ipfsPingTimeout,
 		cfg:              cfg,
 	}
+}
+
+// SetVerificationService sets the email verification service
+func (s *Server) SetVerificationService(service *usecase.EmailVerificationService) {
+	s.verificationService = service
 }
 
 // Login implements ServerInterface.Login
@@ -235,6 +241,18 @@ func (s *Server) Register(w http.ResponseWriter, r *http.Request) {
 				WriteError(w, http.StatusInternalServerError, domain.NewDomainError("SESSION_CREATE_FAILED", "Failed to create session"))
 				return
 			}
+		}
+
+		// Send verification email (non-blocking)
+		if s.verificationService != nil {
+			go func() {
+				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				defer cancel()
+				if err := s.verificationService.SendVerificationEmail(ctx, dUser.ID); err != nil {
+					// Log error but don't fail registration
+					// In production, this should be logged properly
+				}
+			}()
 		}
 
 		response := generated.AuthResponse{

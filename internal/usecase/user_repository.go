@@ -19,4 +19,6 @@ type UserRepository interface {
 	Count(ctx context.Context) (int64, error)
 	// Upsert avatar identifiers for a user
 	SetAvatarFields(ctx context.Context, userID string, ipfsCID sql.NullString, webpCID sql.NullString) error
+	// MarkEmailAsVerified marks a user's email as verified
+	MarkEmailAsVerified(ctx context.Context, userID string) error
 }
