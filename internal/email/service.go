@@ -183,6 +183,7 @@ func (s *Service) sendEmail(to, subject, plainBody, htmlBody string) error {
 func (s *Service) sendEmailTLS(addr string, auth smtp.Auth, from string, to []string, msg []byte) error {
 	conn, err := tls.Dial("tcp", addr, &tls.Config{
 		ServerName: s.config.SMTPHost,
+		MinVersion: tls.VersionTLS12,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to connect to SMTP server: %w", err)

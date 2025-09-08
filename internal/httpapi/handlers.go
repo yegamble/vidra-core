@@ -248,10 +248,9 @@ func (s *Server) Register(w http.ResponseWriter, r *http.Request) {
 			go func() {
 				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 				defer cancel()
-				if err := s.verificationService.SendVerificationEmail(ctx, dUser.ID); err != nil {
-					// Log error but don't fail registration
-					// In production, this should be logged properly
-				}
+				_ = s.verificationService.SendVerificationEmail(ctx, dUser.ID)
+				// Errors are intentionally ignored here to not block registration
+				// In production, errors should be logged for monitoring
 			}()
 		}
 
