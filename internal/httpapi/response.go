@@ -84,6 +84,28 @@ func WriteJSONWithMeta(w http.ResponseWriter, statusCode int, data interface{}, 
 }
 
 func MapDomainErrorToHTTP(err error) int {
+	// Check for specific error codes in domain errors (handle both value and pointer types)
+	if domainErr, ok := err.(domain.DomainError); ok {
+		switch domainErr.Code {
+		case "IPFS_UPLOAD_FAILED", "IPFS_PIN_FAILED", "IPFS_NOT_CONFIGURED":
+			return http.StatusServiceUnavailable
+		case "STORAGE_ERROR", "FILE_ERROR":
+			return http.StatusInternalServerError
+		case "INVALID_PATH":
+			return http.StatusBadRequest
+		}
+	}
+	if domainErr, ok := err.(*domain.DomainError); ok {
+		switch domainErr.Code {
+		case "IPFS_UPLOAD_FAILED", "IPFS_PIN_FAILED", "IPFS_NOT_CONFIGURED":
+			return http.StatusServiceUnavailable
+		case "STORAGE_ERROR", "FILE_ERROR":
+			return http.StatusInternalServerError
+		case "INVALID_PATH":
+			return http.StatusBadRequest
+		}
+	}
+
 	// Use errors.Is to correctly handle wrapped errors
 	notFound := []error{domain.ErrNotFound, domain.ErrUserNotFound, domain.ErrVideoNotFound, domain.ErrMessageNotFound, domain.ErrConversationNotFound}
 	for _, e := range notFound {

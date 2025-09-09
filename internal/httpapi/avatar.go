@@ -11,6 +11,7 @@ import (
 	_ "image/jpeg"
 	_ "image/png"
 	"io"
+	"log"
 	"mime/multipart"
 	"net/http"
 	"net/url"
@@ -48,6 +49,14 @@ var (
 // UploadAvatar handles multipart upload of a user's avatar, uploads it to IPFS, pins it,
 // and persists file_id + ipfs_cid in user_avatars.
 func (s *Server) UploadAvatar(w http.ResponseWriter, r *http.Request) {
+	// Add defer to catch any panics
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("PANIC in UploadAvatar: %v", r)
+			WriteError(w, http.StatusInternalServerError, domain.NewDomainError("INTERNAL_ERROR", "Internal server error"))
+		}
+	}()
+
 	userID, _ := r.Context().Value(middleware.UserIDKey).(string)
 	if userID == "" {
 		WriteError(w, http.StatusUnauthorized, domain.NewDomainError("UNAUTHORIZED", "Missing or invalid authentication"))
@@ -57,6 +66,7 @@ func (s *Server) UploadAvatar(w http.ResponseWriter, r *http.Request) {
 	// Parse and validate the uploaded file
 	fileData, err := s.parseAvatarFile(r)
 	if err != nil {
+		log.Printf("Avatar upload parse error for user %s: %v", userID, err)
 		status := MapDomainErrorToHTTP(err)
 		WriteError(w, status, err)
 		return
@@ -65,28 +75,49 @@ func (s *Server) UploadAvatar(w http.ResponseWriter, r *http.Request) {
 	// Save file locally and generate WebP
 	localPath, err := s.saveAvatarLocally(fileData)
 	if err != nil {
+		log.Printf("Avatar save error for user %s: %v", userID, err)
 		status := MapDomainErrorToHTTP(err)
 		WriteError(w, status, err)
 		return
 	}
 
-	// Upload to IPFS and pin
-	cid, err := s.uploadAvatarToIPFS(localPath)
-	if err != nil {
-		WriteError(w, http.StatusServiceUnavailable, err)
-		return
+	// Try to upload to IPFS if available
+	var cid string
+	var webpCID *string
+
+	// Check if IPFS is configured
+	if s.ipfsAPI != "" || s.ipfsClusterAPI != "" {
+		// Upload to IPFS and pin
+		cidResult, err := s.uploadAvatarToIPFS(localPath)
+		if err != nil {
+			// If IPFS is required, return error
+			if s.cfg != nil && s.cfg.RequireIPFS {
+				log.Printf("IPFS upload failed for user %s (required): %v (type: %T)", userID, err, err)
+				WriteError(w, http.StatusServiceUnavailable, err)
+				return
+			}
+			// Otherwise, log warning and continue without IPFS
+			log.Printf("IPFS upload failed for user %s (optional): %v (type: %T)", userID, err, err)
+			// The avatar will be stored locally only
+		} else {
+			cid = cidResult
+			// Upload WebP version if available
+			webpCID = s.uploadWebPToIPFS(localPath)
+		}
 	}
 
-	// Upload WebP version if available
-	webpCID := s.uploadWebPToIPFS(localPath)
-
-	// Save to database
-	ipfsNullString := sql.NullString{String: cid, Valid: true}
+	// Save to database - cid might be empty if IPFS is not available
+	var ipfsNullString sql.NullString
+	if cid != "" {
+		ipfsNullString = sql.NullString{String: cid, Valid: true}
+	}
 	var webpNullString sql.NullString
-	if webpCID != nil {
+	if webpCID != nil && *webpCID != "" {
 		webpNullString = sql.NullString{String: *webpCID, Valid: true}
 	}
+
 	if err := s.userRepo.SetAvatarFields(r.Context(), userID, ipfsNullString, webpNullString); err != nil {
+		log.Printf("Failed to store avatar identifiers for user %s: %v", userID, err)
 		WriteError(w, http.StatusInternalServerError, domain.NewDomainError("DB_ERROR", "Failed to store avatar identifiers"))
 		return
 	}
@@ -226,8 +257,11 @@ func (s *Server) saveAvatarLocally(fileData *avatarFileData) (string, error) {
 		root = s.cfg.StorageDir
 	}
 	paths := storage.NewPaths(root)
-	if err := os.MkdirAll(paths.AvatarsDir(), 0750); err != nil {
-		return "", domain.NewDomainError("STORAGE_ERROR", "Failed to prepare storage directory")
+	avatarsDir := paths.AvatarsDir()
+
+	// Ensure the avatars directory exists
+	if err := os.MkdirAll(avatarsDir, 0750); err != nil {
+		return "", domain.NewDomainError("STORAGE_ERROR", fmt.Sprintf("Failed to create avatars directory %s: %v", avatarsDir, err))
 	}
 
 	// Generate an avatar ID used for filenames
@@ -236,17 +270,17 @@ func (s *Server) saveAvatarLocally(fileData *avatarFileData) (string, error) {
 
 	// Validate path to prevent directory traversal
 	if err := validateAvatarPath(localPath, root); err != nil {
-		return "", domain.NewDomainError("INVALID_PATH", "Invalid file path")
+		return "", domain.NewDomainError("INVALID_PATH", fmt.Sprintf("Invalid file path: %v", err))
 	}
 	// #nosec G304 - localPath validated against configured storage root
 	out, err := os.Create(localPath)
 	if err != nil {
-		return "", domain.NewDomainError("STORAGE_ERROR", "Failed to save file")
+		return "", domain.NewDomainError("STORAGE_ERROR", fmt.Sprintf("Failed to create file %s: %v", localPath, err))
 	}
 	defer func() { _ = out.Close() }()
 
 	if _, err := io.Copy(out, fileData.fileReader); err != nil {
-		return "", domain.NewDomainError("STORAGE_ERROR", "Failed to write file")
+		return "", domain.NewDomainError("STORAGE_ERROR", fmt.Sprintf("Failed to write file data: %v", err))
 	}
 
 	// Generate WebP version
@@ -279,6 +313,11 @@ func (s *Server) generateWebP(srcPath, dstPath string) {
 
 // uploadAvatarToIPFS uploads and pins the avatar to IPFS
 func (s *Server) uploadAvatarToIPFS(localPath string) (string, error) {
+	// Check if IPFS is configured
+	if s.ipfsAPI == "" && s.ipfsClusterAPI == "" {
+		return "", domain.NewDomainError("IPFS_NOT_CONFIGURED", "IPFS is not configured")
+	}
+
 	// Upload to IPFS first
 	var cid string
 	var addErr error

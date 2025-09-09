@@ -73,6 +73,9 @@ services:
       PORT: 8080
       VALIDATION_TEST_MODE: "true"
       LOG_LEVEL: debug
+      STORAGE_DIR: /tmp/storage
+    tmpfs:
+      - /tmp/storage:uid=1000,gid=1000
     ports:
       - "18080:8080"
     healthcheck:
