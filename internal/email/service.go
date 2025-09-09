@@ -187,8 +187,9 @@ func (s *Service) sendEmail(to, subject, plainBody, htmlBody string) error {
 // sendEmailTLS sends email over TLS connection (port 465)
 func (s *Service) sendEmailTLS(addr string, auth smtp.Auth, from string, to []string, msg []byte) error {
 	conn, err := tls.Dial("tcp", addr, &tls.Config{
-		ServerName: s.config.SMTPHost,
-		MinVersion: tls.VersionTLS12,
+		ServerName:         s.config.SMTPHost,
+		MinVersion:         tls.VersionTLS12,
+		InsecureSkipVerify: false, // Explicitly set to false to verify certificates
 	})
 	if err != nil {
 		return fmt.Errorf("failed to connect to SMTP server: %w", err)
@@ -250,8 +251,9 @@ func (s *Service) sendEmailSTARTTLS(addr string, auth smtp.Auth, from string, to
 	// Check if STARTTLS is supported
 	if ok, _ := c.Extension("STARTTLS"); ok {
 		config := &tls.Config{
-			ServerName: s.config.SMTPHost,
-			MinVersion: tls.VersionTLS12,
+			ServerName:         s.config.SMTPHost,
+			MinVersion:         tls.VersionTLS12,
+			InsecureSkipVerify: false, // Explicitly set to false to verify certificates
 		}
 		if err = c.StartTLS(config); err != nil {
 			return fmt.Errorf("failed to start TLS: %w", err)
