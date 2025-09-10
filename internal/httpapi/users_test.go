@@ -39,6 +39,11 @@ func (m *mockUserRepo) GetByID(_ context.Context, id string) (*domain.User, erro
 	if u, ok := m.users[id]; ok {
 		// return a copy to avoid accidental external mutation
 		c := *u
+		// Deep copy the Avatar if present
+		if u.Avatar != nil {
+			avatarCopy := *u.Avatar
+			c.Avatar = &avatarCopy
+		}
 		return &c, nil
 	}
 	return nil, domain.ErrUserNotFound
@@ -48,6 +53,11 @@ func (m *mockUserRepo) GetByEmail(_ context.Context, email string) (*domain.User
 	for _, u := range m.users {
 		if u.Email == email {
 			c := *u
+			// Deep copy the Avatar if present
+			if u.Avatar != nil {
+				avatarCopy := *u.Avatar
+				c.Avatar = &avatarCopy
+			}
 			return &c, nil
 		}
 	}
@@ -58,6 +68,11 @@ func (m *mockUserRepo) GetByUsername(_ context.Context, username string) (*domai
 	for _, u := range m.users {
 		if u.Username == username {
 			c := *u
+			// Deep copy the Avatar if present
+			if u.Avatar != nil {
+				avatarCopy := *u.Avatar
+				c.Avatar = &avatarCopy
+			}
 			return &c, nil
 		}
 	}
@@ -105,14 +120,15 @@ func (m *mockUserRepo) SetAvatarFields(_ context.Context, userID string, ipfsCID
 	if !ok {
 		return domain.ErrUserNotFound
 	}
-	// Copy to avoid external mutation
-	c := *u
-	if c.Avatar == nil {
-		c.Avatar = &domain.Avatar{}
+	// Create a new user with avatar data
+	if u.Avatar == nil {
+		u.Avatar = &domain.Avatar{
+			ID: "avatar-" + userID,
+		}
 	}
-	c.Avatar.IPFSCID = ipfsCID
-	c.Avatar.WebPIPFSCID = webpCID
-	m.users[userID] = &c
+	u.Avatar.IPFSCID = ipfsCID
+	u.Avatar.WebPIPFSCID = webpCID
+	// Store back (u is already a pointer, so changes are in place)
 	return nil
 }
 

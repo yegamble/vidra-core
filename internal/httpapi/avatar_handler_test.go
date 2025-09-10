@@ -83,7 +83,7 @@ func TestUploadAvatar_ValidPNG_WithMockIPFS(t *testing.T) {
 	u := &domain.User{ID: "u1", Username: "alice", Email: "a@e.com", Role: domain.RoleUser, IsActive: true, CreatedAt: time.Now(), UpdatedAt: time.Now()}
 	repo.users[u.ID] = u
 
-	s := NewServer(repo, nil, "test", nil, 0, "", "", 0, nil)
+	s := NewServer(repo, nil, "test", nil, 0, "http://test-ipfs:5001", "", 0, nil)
 	// Override test hooks to bypass network and create webp
 	testIPFSAdd = func(localPath string) (string, error) {
 		if strings.HasSuffix(localPath, ".webp") {
@@ -154,7 +154,7 @@ func TestUploadAvatar_ValidJPEG_WithMockIPFS(t *testing.T) {
 	u := &domain.User{ID: "u2", Username: "bob", Email: "b@e.com", Role: domain.RoleUser, IsActive: true, CreatedAt: time.Now(), UpdatedAt: time.Now()}
 	repo.users[u.ID] = u
 
-	s := NewServer(repo, nil, "test", nil, 0, "", "", 0, nil)
+	s := NewServer(repo, nil, "test", nil, 0, "http://test-ipfs:5001", "", 0, nil)
 	// Override test hooks to bypass network and create webp
 	testIPFSAdd = func(localPath string) (string, error) {
 		if strings.HasSuffix(localPath, ".webp") {
@@ -298,7 +298,7 @@ func TestUploadAvatar_ValidWebP_WithMockIPFS(t *testing.T) {
 	u := &domain.User{ID: "u3", Username: "charlie", Email: "c@e.com", Role: domain.RoleUser, IsActive: true, CreatedAt: time.Now(), UpdatedAt: time.Now()}
 	repo.users[u.ID] = u
 
-	s := NewServer(repo, nil, "test", nil, 0, "", "", 0, nil)
+	s := NewServer(repo, nil, "test", nil, 0, "http://test-ipfs:5001", "", 0, nil)
 	testIPFSAdd = func(localPath string) (string, error) {
 		if strings.HasSuffix(localPath, ".webp") {
 			return "CIDWEBP3", nil
@@ -373,7 +373,7 @@ func TestUploadAvatar_ValidGIF_WithMockIPFS(t *testing.T) {
 	u := &domain.User{ID: "u4", Username: "dave", Email: "d@e.com", Role: domain.RoleUser, IsActive: true, CreatedAt: time.Now(), UpdatedAt: time.Now()}
 	repo.users[u.ID] = u
 
-	s := NewServer(repo, nil, "test", nil, 0, "", "", 0, nil)
+	s := NewServer(repo, nil, "test", nil, 0, "http://test-ipfs:5001", "", 0, nil)
 	testIPFSAdd = func(localPath string) (string, error) {
 		if strings.HasSuffix(localPath, ".webp") {
 			return "CIDWEBP4", nil
@@ -438,7 +438,7 @@ func TestUploadAvatar_ValidTIFF_WithMockIPFS(t *testing.T) {
 	u := &domain.User{ID: "u5", Username: "eve", Email: "e@e.com", Role: domain.RoleUser, IsActive: true, CreatedAt: time.Now(), UpdatedAt: time.Now()}
 	repo.users[u.ID] = u
 
-	s := NewServer(repo, nil, "test", nil, 0, "", "", 0, nil)
+	s := NewServer(repo, nil, "test", nil, 0, "http://test-ipfs:5001", "", 0, nil)
 	testIPFSAdd = func(localPath string) (string, error) {
 		if strings.HasSuffix(localPath, ".webp") {
 			return "CIDWEBP5", nil
@@ -503,7 +503,7 @@ func TestUploadAvatar_ValidHEIC_WithMockIPFS(t *testing.T) {
 	u := &domain.User{ID: "u6", Username: "frank", Email: "f@e.com", Role: domain.RoleUser, IsActive: true, CreatedAt: time.Now(), UpdatedAt: time.Now()}
 	repo.users[u.ID] = u
 
-	s := NewServer(repo, nil, "test", nil, 0, "", "", 0, nil)
+	s := NewServer(repo, nil, "test", nil, 0, "http://test-ipfs:5001", "", 0, nil)
 	testIPFSAdd = func(localPath string) (string, error) {
 		if strings.HasSuffix(localPath, ".webp") {
 			return "CIDWEBP6", nil
