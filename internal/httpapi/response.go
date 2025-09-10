@@ -89,20 +89,24 @@ func MapDomainErrorToHTTP(err error) int {
 		switch domainErr.Code {
 		case "IPFS_UPLOAD_FAILED", "IPFS_PIN_FAILED", "IPFS_NOT_CONFIGURED":
 			return http.StatusServiceUnavailable
-		case "STORAGE_ERROR", "FILE_ERROR":
+		case "STORAGE_ERROR", "FILE_ERROR", "INTERNAL_ERROR", "DB_ERROR":
 			return http.StatusInternalServerError
-		case "INVALID_PATH":
+		case "INVALID_PATH", "BAD_REQUEST":
 			return http.StatusBadRequest
+		case "UNAUTHORIZED":
+			return http.StatusUnauthorized
 		}
 	}
 	if domainErr, ok := err.(*domain.DomainError); ok {
 		switch domainErr.Code {
 		case "IPFS_UPLOAD_FAILED", "IPFS_PIN_FAILED", "IPFS_NOT_CONFIGURED":
 			return http.StatusServiceUnavailable
-		case "STORAGE_ERROR", "FILE_ERROR":
+		case "STORAGE_ERROR", "FILE_ERROR", "INTERNAL_ERROR", "DB_ERROR":
 			return http.StatusInternalServerError
-		case "INVALID_PATH":
+		case "INVALID_PATH", "BAD_REQUEST":
 			return http.StatusBadRequest
+		case "UNAUTHORIZED":
+			return http.StatusUnauthorized
 		}
 	}
 

@@ -143,19 +143,19 @@ type avatarFileData struct {
 func (s *Server) parseAvatarFile(r *http.Request) (*avatarFileData, error) {
 	// Basic form limit to avoid abuse (5MB)
 	if err := r.ParseMultipartForm(5 << 20); err != nil {
-		return nil, fmt.Errorf("missing file field in form: %w", domain.ErrBadRequest)
+		return nil, domain.NewDomainError("BAD_REQUEST", "Failed to parse multipart form")
 	}
 
 	file, header, err := r.FormFile("file")
 	if err != nil {
-		return nil, fmt.Errorf("missing file field in form: %w", domain.ErrBadRequest)
+		return nil, domain.NewDomainError("BAD_REQUEST", "Missing file field in form")
 	}
 	defer func() { _ = file.Close() }()
 
 	// Determine extension early and validate
 	ext := filepath.Ext(header.Filename)
 	if !validAvatarExt(ext) {
-		return nil, fmt.Errorf("invalid file extension: %w", domain.ErrBadRequest)
+		return nil, domain.NewDomainError("BAD_REQUEST", "Invalid file extension")
 	}
 
 	// MIME type sniffing from first 512 bytes
@@ -210,7 +210,7 @@ func (s *Server) validateFileType(ext, contentType string) error {
 
 	// Accept the file if either the extension or the MIME type suggests an image
 	if !allowedByExt && !allowedByMime {
-		return fmt.Errorf("unsupported image format: %w", domain.ErrBadRequest)
+		return domain.NewDomainError("BAD_REQUEST", "Unsupported image format")
 	}
 	return nil
 }
@@ -244,7 +244,7 @@ func (s *Server) validateImageDecoding(r io.Reader) error {
 		if n >= 12 && string(header[0:4]) == "RIFF" && string(header[8:12]) == "WEBP" {
 			return nil // WebP files are valid
 		}
-		return fmt.Errorf("invalid or corrupted image file: %w", domain.ErrBadRequest)
+		return domain.NewDomainError("BAD_REQUEST", "Invalid or corrupted image file")
 	}
 	return nil
 }
