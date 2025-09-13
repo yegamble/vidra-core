@@ -168,7 +168,10 @@ func (s *Server) parseAvatarFile(r *http.Request) (*avatarFileData, error) {
 	}
 
 	// Additional validation: try to decode the image to ensure it's valid
-	testReader := io.MultiReader(bytes.NewReader(head[:n]), file)
+	// Create a copy of the head bytes for validation
+	headCopy := make([]byte, n)
+	copy(headCopy, head[:n])
+	testReader := io.MultiReader(bytes.NewReader(headCopy), file)
 	if err := s.validateImageDecoding(testReader); err != nil {
 		return nil, err
 	}
@@ -182,8 +185,14 @@ func (s *Server) parseAvatarFile(r *http.Request) (*avatarFileData, error) {
 		return nil, domain.NewDomainError("FILE_ERROR", "File does not support seeking")
 	}
 
-	// After seeking back to start, create reader from the beginning of the file
-	reader := file
+	// After seeking back to start, read the complete file content
+	fullContent, err := io.ReadAll(file)
+	if err != nil {
+		return nil, domain.NewDomainError("FILE_ERROR", "Failed to read file content")
+	}
+
+	// Create a reader from the complete content
+	reader := bytes.NewReader(fullContent)
 
 	return &avatarFileData{
 		ext:        ext,
