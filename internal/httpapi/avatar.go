@@ -143,7 +143,7 @@ type avatarFileData struct {
 func (s *Server) parseAvatarFile(r *http.Request) (*avatarFileData, error) {
 	// Basic form limit to avoid abuse (5MB)
 	if err := r.ParseMultipartForm(5 << 20); err != nil {
-		return nil, domain.NewDomainError("BAD_REQUEST", "Failed to parse multipart form")
+		return nil, domain.NewDomainError("BAD_REQUEST", "Failed to parse multipart form - missing or invalid data")
 	}
 
 	file, header, err := r.FormFile("file")
