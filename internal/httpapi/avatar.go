@@ -49,19 +49,28 @@ var (
 // UploadAvatar handles multipart upload of a user's avatar, uploads it to IPFS, pins it,
 // and persists file_id + ipfs_cid in user_avatars.
 func (s *Server) UploadAvatar(w http.ResponseWriter, r *http.Request) {
+	log.Printf("UploadAvatar handler called")
+
 	// Add defer to catch any panics
 	defer func() {
-		if r := recover(); r != nil {
-			log.Printf("PANIC in UploadAvatar: %v", r)
+		if recovered := recover(); recovered != nil {
+			log.Printf("PANIC in UploadAvatar: %v (type: %T)", recovered, recovered)
+			// Try to get stack trace
+			if err, ok := recovered.(error); ok {
+				log.Printf("Error details: %+v", err)
+			}
 			WriteError(w, http.StatusInternalServerError, domain.NewDomainError("INTERNAL_ERROR", "Internal server error"))
 		}
 	}()
 
 	userID, _ := r.Context().Value(middleware.UserIDKey).(string)
 	if userID == "" {
+		log.Printf("Avatar upload: No user ID in context")
 		WriteError(w, http.StatusUnauthorized, domain.NewDomainError("UNAUTHORIZED", "Missing or invalid authentication"))
 		return
 	}
+
+	log.Printf("Avatar upload starting for user %s", userID)
 
 	// Parse and validate the uploaded file
 	fileData, err := s.parseAvatarFile(r)
@@ -71,6 +80,8 @@ func (s *Server) UploadAvatar(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, status, err)
 		return
 	}
+
+	log.Printf("Avatar file parsed successfully for user %s", userID)
 
 	// Save file locally and generate WebP
 	localPath, err := s.saveAvatarLocally(fileData)
@@ -160,46 +171,40 @@ func (s *Server) parseAvatarFile(r *http.Request) (*avatarFileData, error) {
 		return nil, domain.NewDomainError("BAD_REQUEST", "Invalid file extension")
 	}
 
+	// Read the complete file content first
+	fullContent, err := io.ReadAll(file)
+	if err != nil {
+		return nil, domain.NewDomainError("FILE_ERROR", "Failed to read file content")
+	}
+
 	// MIME type sniffing from first 512 bytes
-	var head [512]byte
-	n, _ := file.Read(head[:])
-	contentType := http.DetectContentType(head[:n])
+	contentType := http.DetectContentType(fullContent)
 
 	if err := s.validateFileType(ext, contentType); err != nil {
 		return nil, err
 	}
 
 	// Additional validation: try to decode the image to ensure it's valid
-	// Create a copy of the head bytes for validation
-	headCopy := make([]byte, n)
-	copy(headCopy, head[:n])
-	testReader := io.MultiReader(bytes.NewReader(headCopy), file)
+	testReader := bytes.NewReader(fullContent)
 	if err := s.validateImageDecoding(testReader); err != nil {
 		return nil, err
-	}
-
-	// Seek back to beginning to reconstruct the reader
-	if seeker, ok := file.(io.Seeker); ok {
-		if _, err := seeker.Seek(0, io.SeekStart); err != nil {
-			return nil, domain.NewDomainError("FILE_ERROR", "Failed to reset file position")
-		}
-	} else {
-		return nil, domain.NewDomainError("FILE_ERROR", "File does not support seeking")
-	}
-
-	// After seeking back to start, read the complete file content
-	fullContent, err := io.ReadAll(file)
-	if err != nil {
-		return nil, domain.NewDomainError("FILE_ERROR", "Failed to read file content")
 	}
 
 	// Create a reader from the complete content
 	reader := bytes.NewReader(fullContent)
 
+	// Get first 512 bytes for head data
+	headSize := 512
+	if len(fullContent) < headSize {
+		headSize = len(fullContent)
+	}
+	headBytes := make([]byte, headSize)
+	copy(headBytes, fullContent[:headSize])
+
 	return &avatarFileData{
 		ext:        ext,
-		headBytes:  head[:n],
-		headSize:   n,
+		headBytes:  headBytes,
+		headSize:   headSize,
 		fileReader: reader,
 	}, nil
 }
