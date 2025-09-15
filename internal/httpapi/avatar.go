@@ -118,14 +118,16 @@ func (s *Server) UploadAvatar(w http.ResponseWriter, r *http.Request) {
 
 	if err := s.userRepo.SetAvatarFields(r.Context(), userID, ipfsNullString, webpNullString); err != nil {
 		log.Printf("Failed to store avatar identifiers for user %s: %v", userID, err)
-		WriteError(w, http.StatusInternalServerError, domain.NewDomainError("DB_ERROR", "Failed to store avatar identifiers"))
+		status := MapDomainErrorToHTTP(err)
+		WriteError(w, status, domain.NewDomainError("DB_ERROR", "Failed to store avatar identifiers"))
 		return
 	}
 
 	// Return updated user
 	user, err := s.userRepo.GetByID(r.Context(), userID)
 	if err != nil {
-		WriteError(w, http.StatusInternalServerError, domain.NewDomainError("INTERNAL_ERROR", "Failed to load user"))
+		status := MapDomainErrorToHTTP(err)
+		WriteError(w, status, domain.NewDomainError("INTERNAL_ERROR", "Failed to load user"))
 		return
 	}
 	WriteJSON(w, http.StatusOK, user)
