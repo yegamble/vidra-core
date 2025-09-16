@@ -204,6 +204,9 @@ make serve-docs
 - `POST /auth/refresh` - Refresh access token
 - `POST /auth/logout` - Logout (requires auth)
 
+OAuth2 (Minimal):
+- `POST /oauth/token` - OAuth2 token endpoint (password, refresh_token grants). See docs/OAUTH2.md.
+
 ### Health Checks
 
 - `GET /health` - Basic health check

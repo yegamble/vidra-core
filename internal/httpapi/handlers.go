@@ -23,6 +23,7 @@ import (
 type Server struct {
 	userRepo            usecase.UserRepository
 	authRepo            usecase.AuthRepository
+	oauthRepo           usecase.OAuthRepository
 	verificationService *usecase.EmailVerificationService
 	jwtSecret           string
 	redis               *redis.Client
@@ -34,10 +35,12 @@ type Server struct {
 }
 
 // NewServer creates a new server instance
+// NewServer preserves the original signature for tests/backward compatibility.
 func NewServer(userRepo usecase.UserRepository, authRepo usecase.AuthRepository, jwtSecret string, redisClient *redis.Client, redisPingTimeout time.Duration, ipfsAPI string, ipfsClusterAPI string, ipfsPingTimeout time.Duration, cfg *config.Config) *Server {
 	return &Server{
 		userRepo:         userRepo,
 		authRepo:         authRepo,
+		oauthRepo:        nil,
 		jwtSecret:        jwtSecret,
 		redis:            redisClient,
 		redisPingTimeout: redisPingTimeout,
@@ -48,10 +51,20 @@ func NewServer(userRepo usecase.UserRepository, authRepo usecase.AuthRepository,
 	}
 }
 
+// NewServerWithOAuth sets an OAuth repository in addition to the usual deps.
+func NewServerWithOAuth(userRepo usecase.UserRepository, authRepo usecase.AuthRepository, oauthRepo usecase.OAuthRepository, jwtSecret string, redisClient *redis.Client, redisPingTimeout time.Duration, ipfsAPI string, ipfsClusterAPI string, ipfsPingTimeout time.Duration, cfg *config.Config) *Server {
+	s := NewServer(userRepo, authRepo, jwtSecret, redisClient, redisPingTimeout, ipfsAPI, ipfsClusterAPI, ipfsPingTimeout, cfg)
+	s.oauthRepo = oauthRepo
+	return s
+}
+
 // SetVerificationService sets the email verification service
 func (s *Server) SetVerificationService(service *usecase.EmailVerificationService) {
 	s.verificationService = service
 }
+
+// getOAuthRepo exposes the OAuth repo to local handlers
+func (s *Server) getOAuthRepo() usecase.OAuthRepository { return s.oauthRepo }
 
 // Login implements ServerInterface.Login
 func (s *Server) Login(w http.ResponseWriter, r *http.Request) {
@@ -82,8 +95,8 @@ func (s *Server) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Issue tokens
-	access := s.generateJWT(dUser.ID, 15*time.Minute)
+	// Issue tokens with role claim
+	access := s.generateJWTWithRole(dUser.ID, string(dUser.Role), 15*time.Minute)
 	refresh := uuid.NewString()
 	refreshExpires := time.Now().Add(7 * 24 * time.Hour)
 	if s.authRepo != nil {
@@ -256,7 +269,7 @@ func (s *Server) Register(w http.ResponseWriter, r *http.Request) {
 
 		response := generated.AuthResponse{
 			User:         gUser,
-			AccessToken:  s.generateJWT(gUser.ID, 15*time.Minute),
+			AccessToken:  s.generateJWTWithRole(gUser.ID, string(dUser.Role), 15*time.Minute),
 			RefreshToken: refresh,
 			ExpiresIn:    15 * 60,
 		}
@@ -318,8 +331,15 @@ func (s *Server) RefreshToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Fetch user to include role in token
+	var role string
+	if s.userRepo != nil {
+		if u, err := s.userRepo.GetByID(r.Context(), existing.UserID); err == nil {
+			role = string(u.Role)
+		}
+	}
 	response := generated.TokenResponse{
-		AccessToken:  s.generateJWT(existing.UserID, 15*time.Minute),
+		AccessToken:  s.generateJWTWithRole(existing.UserID, role, 15*time.Minute),
 		RefreshToken: newRefresh,
 		ExpiresIn:    15 * 60,
 	}
@@ -406,17 +426,26 @@ func (s *Server) ReadinessCheck(w http.ResponseWriter, r *http.Request) {
 // Helper functions
 // generateJWT creates a signed JWT for the given user ID and duration
 func (s *Server) generateJWT(userID string, duration time.Duration) string {
-	// Defer to middleware's jwt implementation; kept here to avoid import cycle
-	// We re-implement minimal signing here for clarity
-	// type Claims struct {
-	//     Sub string `json:"sub"`
-	//     Exp int64  `json:"exp"`
-	//     Iat int64  `json:"iat"`
-	// }
-	// We will use golang-jwt/jwt in middleware; here we just mirror
-	// but to avoid duplicating heavy imports, we keep a lightweight version
-	// For correctness, we import jwt here too
-	return signHS256JWT(s.jwtSecret, userID, duration)
+	return s.generateJWTWithRole(userID, "", duration)
+}
+
+// generateJWTWithRole creates a signed JWT including optional role claim
+func (s *Server) generateJWTWithRole(userID string, role string, duration time.Duration) string {
+	now := time.Now()
+	claims := jwt.MapClaims{
+		"sub": userID,
+		"iat": now.Unix(),
+		"exp": now.Add(duration).Unix(),
+	}
+	if role != "" {
+		claims["role"] = role
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	sgn, err := token.SignedString([]byte(s.jwtSecret))
+	if err != nil {
+		return ""
+	}
+	return sgn
 }
 
 // signHS256JWT signs a compact JWT with HS256

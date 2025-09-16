@@ -190,6 +190,174 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+  /api/v1/admin/oauth/clients:
+    get:
+      tags: [Admin, OAuth]
+      summary: List OAuth clients
+      description: Admin-only list of registered OAuth clients (secret hashes are not returned).
+      operationId: adminListOAuthClients
+      responses:
+        '200':
+          description: List of OAuth clients
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/OAuthClient'
+                  success:
+                    type: boolean
+                    example: true
+        '401': { description: Unauthorized }
+        '403': { description: Forbidden }
+    post:
+      tags: [Admin, OAuth]
+      summary: Create OAuth client
+      description: Admin-only endpoint to register a new OAuth client.
+      operationId: adminCreateOAuthClient
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateOAuthClientRequest'
+      responses:
+        '201':
+          description: Client created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/OAuthClient'
+                  success:
+                    type: boolean
+                    example: true
+        '400': { description: Bad request }
+        '401': { description: Unauthorized }
+        '403': { description: Forbidden }
+        '500': { description: Server error }
+  /api/v1/admin/oauth/clients/{clientId}:
+    delete:
+      tags: [Admin, OAuth]
+      summary: Delete OAuth client
+      description: Delete a client by its client_id.
+      operationId: adminDeleteOAuthClient
+      parameters:
+        - in: path
+          name: clientId
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: Client deleted }
+        '400': { description: Bad request }
+        '401': { description: Unauthorized }
+        '403': { description: Forbidden }
+        '500': { description: Server error }
+  /api/v1/admin/oauth/clients/{clientId}/secret:
+    put:
+      tags: [Admin, OAuth]
+      summary: Rotate OAuth client secret
+      description: Set or clear a client's secret (set is_confidential=false to clear).
+      operationId: adminRotateOAuthClientSecret
+      parameters:
+        - in: path
+          name: clientId
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RotateOAuthClientSecretRequest'
+      responses:
+        '200': { description: Secret updated }
+        '400': { description: Bad request }
+        '401': { description: Unauthorized }
+        '403': { description: Forbidden }
+        '500': { description: Server error }
+  /oauth/token:
+    post:
+      tags:
+        - OAuth
+      summary: OAuth2 token endpoint
+      description: Issue access tokens using password or refresh_token grants.
+      operationId: oauthToken
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                grant_type:
+                  type: string
+                  enum: [password, refresh_token]
+                username:
+                  type: string
+                  description: Username or email (for password grant)
+                password:
+                  type: string
+                  description: User password (for password grant)
+                refresh_token:
+                  type: string
+                  description: Refresh token (for refresh_token grant)
+                client_id:
+                  type: string
+                  description: Optional if using HTTP Basic auth
+                client_secret:
+                  type: string
+                  description: Optional if using HTTP Basic auth
+      responses:
+        '200':
+          description: Token issued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OAuthTokenResponse'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  error_description:
+                    type: string
+        '401':
+          description: Invalid client or credentials
+          headers:
+            WWW-Authenticate:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  error_description:
+                    type: string
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  error_description:
+                    type: string
 
   /health:
     get:
@@ -2820,6 +2988,34 @@ components:
       description: JWT token for authentication
 
   schemas:
+    OAuthClient:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        client_id: { type: string }
+        name: { type: string }
+        grant_types: { type: array, items: { type: string } }
+        scopes: { type: array, items: { type: string } }
+        redirect_uris: { type: array, items: { type: string } }
+        is_confidential: { type: boolean }
+      required: [id, client_id, name, grant_types, scopes, redirect_uris, is_confidential]
+
+    CreateOAuthClientRequest:
+      type: object
+      properties:
+        client_id: { type: string }
+        client_secret: { type: string, description: Required for confidential clients }
+        name: { type: string }
+        grant_types: { type: array, items: { type: string }, default: [password, refresh_token] }
+        scopes: { type: array, items: { type: string }, default: [basic] }
+        redirect_uris: { type: array, items: { type: string }, default: [] }
+        is_confidential: { type: boolean, default: true }
+      required: [client_id, name]
+    RotateOAuthClientSecretRequest:
+      type: object
+      properties:
+        client_secret: { type: string, description: Required if is_confidential=true }
+        is_confidential: { type: boolean, default: true }
     ListMeta:
       type: object
       properties:
@@ -3239,6 +3435,21 @@ components:
       required:
         - error
         - success
+    OAuthTokenResponse:
+      type: object
+      properties:
+        access_token:
+          type: string
+        token_type:
+          type: string
+          example: bearer
+        expires_in:
+          type: integer
+          example: 900
+        refresh_token:
+          type: string
+        scope:
+          type: string
 
     # Message Schemas
     Message:

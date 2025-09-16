@@ -37,6 +37,7 @@ func RegisterRoutes(r chi.Router, cfg *config.Config) {
 	encodingRepo := repository.NewEncodingRepository(db)
 	messageRepo := repository.NewMessageRepository(db)
 	dbAuthRepo := repository.NewAuthRepository(db)
+	oauthRepo := repository.NewOAuthRepository(db)
 	subRepo := repository.NewSubscriptionRepository(db)
 	viewsRepo := repository.NewViewsRepository(db)
 	notificationRepo := repository.NewNotificationRepository(db)
@@ -115,9 +116,10 @@ func RegisterRoutes(r chi.Router, cfg *config.Config) {
 	}
 
 	// Create server instance with dependencies
-	server := NewServer(
+	server := NewServerWithOAuth(
 		userRepo,
 		sessionRepo,
+		oauthRepo,
 		cfg.JWTSecret,
 		rdb,
 		time.Duration(cfg.RedisPingTimeout)*time.Second,
@@ -132,6 +134,9 @@ func RegisterRoutes(r chi.Router, cfg *config.Config) {
 	r.Post("/auth/login", server.Login)
 	r.Post("/auth/refresh", server.RefreshToken)
 	r.With(middleware.Auth(cfg.JWTSecret)).Post("/auth/logout", server.Logout)
+
+	// OAuth2 token endpoint
+	r.Post("/oauth/token", server.OAuthToken)
 
 	// Register health routes
 	r.Get("/health", server.HealthCheck)
@@ -234,6 +239,16 @@ func RegisterRoutes(r chi.Router, cfg *config.Config) {
 			r.Put("/{id}/read", notificationHandlers.MarkAsRead)
 			r.Put("/read-all", notificationHandlers.MarkAllAsRead)
 			r.Delete("/{id}", notificationHandlers.DeleteNotification)
+		})
+
+		// Admin: OAuth client management
+		r.Route("/admin/oauth/clients", func(r chi.Router) {
+			r.Use(middleware.Auth(cfg.JWTSecret))
+			r.Use(middleware.RequireRole("admin"))
+			r.Get("/", server.AdminListOAuthClients)
+			r.Post("/", server.AdminCreateOAuthClient)
+			r.Put("/{clientId}/secret", server.AdminRotateOAuthClientSecret)
+			r.Delete("/{clientId}", server.AdminDeleteOAuthClient)
 		})
 	})
 
