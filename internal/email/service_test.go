@@ -63,3 +63,31 @@ func TestBuildMIMEMessage_ContainsBothParts(t *testing.T) {
 	assert.True(t, bytes.Contains(msg, []byte(plain)))
 	assert.True(t, bytes.Contains(msg, []byte(html)))
 }
+
+func TestComposeVerificationEmail_Body(t *testing.T) {
+	cfg := testConfig()
+	subject, plain, html := composeVerificationEmail(cfg, "alice", "tok123", "654321")
+
+	assert.Contains(t, subject, "Verify Your Email Address")
+	link := "https://app.example.com/verify-email?token=tok123"
+	assert.Contains(t, plain, link)
+	assert.Contains(t, plain, "654321")
+	assert.Contains(t, plain, "Welcome to Athena, alice!")
+	assert.Contains(t, html, "href=\""+link+"\"")
+	assert.Contains(t, html, "Verify Email Address")
+	assert.Contains(t, html, "654321")
+	assert.Contains(t, html, "Welcome to Athena, alice!")
+}
+
+func TestComposePasswordResetEmail_Body(t *testing.T) {
+	cfg := testConfig()
+	subject, plain, html := composePasswordResetEmail(cfg, "bob", "resettok")
+
+	assert.Contains(t, subject, "Reset Your Password")
+	link := "https://app.example.com/reset-password?token=resettok"
+	assert.Contains(t, plain, link)
+	assert.Contains(t, plain, "Hi bob,")
+	assert.Contains(t, html, "href=\""+link+"\"")
+	assert.Contains(t, html, "Reset Password")
+	assert.Contains(t, html, "Hi bob,")
+}
