@@ -41,15 +41,39 @@ func requireUUIDParam(w http.ResponseWriter, r *http.Request, param, missingCode
 
 func ListVideosHandler(repo usecase.VideoRepository) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// Unified pagination: page + pageSize (fallback to limit/offset)
+		page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+		pageSize, _ := strconv.Atoi(r.URL.Query().Get("pageSize"))
+
+		// Fallbacks for backward compatibility
 		limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-		if limit == 0 || limit > 100 {
-			limit = 20
+		offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
+
+		if pageSize <= 0 || pageSize > 100 {
+			if limit > 0 {
+				pageSize = limit
+			} else {
+				pageSize = 20
+			}
+		}
+		if page <= 0 {
+			if pageSize > 0 {
+				// Derive from offset if provided
+				if offset < 0 {
+					offset = 0
+				}
+				page = (offset / pageSize) + 1
+				if page <= 0 {
+					page = 1
+				}
+			} else {
+				page = 1
+			}
 		}
 
-		offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
-		if offset < 0 {
-			offset = 0
-		}
+		// Compute limit/offset from page
+		limit = pageSize
+		offset = (page - 1) * pageSize
 
 		sort := r.URL.Query().Get("sort")
 		if sort == "" {
@@ -76,9 +100,11 @@ func ListVideosHandler(repo usecase.VideoRepository) http.HandlerFunc {
 		}
 
 		meta := &Meta{
-			Total:  total,
-			Limit:  limit,
-			Offset: offset,
+			Total:    total,
+			Limit:    limit,
+			Offset:   offset,
+			Page:     page,
+			PageSize: pageSize,
 		}
 
 		WriteJSONWithMeta(w, http.StatusOK, videos, meta)
@@ -93,15 +119,29 @@ func SearchVideosHandler(repo usecase.VideoRepository) http.HandlerFunc {
 			return
 		}
 
+		// Unified pagination: page + pageSize (fallback to limit/offset)
+		page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+		pageSize, _ := strconv.Atoi(r.URL.Query().Get("pageSize"))
 		limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-		if limit == 0 || limit > 100 {
-			limit = 20
-		}
-
 		offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
-		if offset < 0 {
-			offset = 0
+		if pageSize <= 0 || pageSize > 100 {
+			if limit > 0 {
+				pageSize = limit
+			} else {
+				pageSize = 20
+			}
 		}
+		if page <= 0 {
+			if offset < 0 {
+				offset = 0
+			}
+			page = (offset / pageSize) + 1
+			if page <= 0 {
+				page = 1
+			}
+		}
+		limit = pageSize
+		offset = (page - 1) * pageSize
 
 		tags := r.URL.Query()["tags"]
 
@@ -122,9 +162,11 @@ func SearchVideosHandler(repo usecase.VideoRepository) http.HandlerFunc {
 		}
 
 		meta := &Meta{
-			Total:  total,
-			Limit:  limit,
-			Offset: offset,
+			Total:    total,
+			Limit:    limit,
+			Offset:   offset,
+			Page:     page,
+			PageSize: pageSize,
 		}
 
 		WriteJSONWithMeta(w, http.StatusOK, videos, meta)
@@ -591,15 +633,29 @@ func GetUserVideosHandler(repo usecase.VideoRepository) http.HandlerFunc {
 			return
 		}
 
+		// Unified pagination
+		page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+		pageSize, _ := strconv.Atoi(r.URL.Query().Get("pageSize"))
 		limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-		if limit == 0 || limit > 100 {
-			limit = 20
-		}
-
 		offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
-		if offset < 0 {
-			offset = 0
+		if pageSize <= 0 || pageSize > 100 {
+			if limit > 0 {
+				pageSize = limit
+			} else {
+				pageSize = 20
+			}
 		}
+		if page <= 0 {
+			if offset < 0 {
+				offset = 0
+			}
+			page = (offset / pageSize) + 1
+			if page <= 0 {
+				page = 1
+			}
+		}
+		limit = pageSize
+		offset = (page - 1) * pageSize
 
 		videos, total, err := repo.GetByUserID(r.Context(), userID, limit, offset)
 		if err != nil {
@@ -618,7 +674,7 @@ func GetUserVideosHandler(repo usecase.VideoRepository) http.HandlerFunc {
 			videos = filtered
 			total = int64(len(videos))
 		}
-		meta := &Meta{Total: total, Limit: limit, Offset: offset}
+		meta := &Meta{Total: total, Limit: limit, Offset: offset, Page: page, PageSize: pageSize}
 		WriteJSONWithMeta(w, http.StatusOK, videos, meta)
 	}
 }

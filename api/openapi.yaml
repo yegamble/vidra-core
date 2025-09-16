@@ -496,13 +496,25 @@ paths:
             enum: [asc, desc]
           description: Sort order (defaults to desc)
         - in: query
-          name: limit
+          name: page
+          required: false
+          schema: { type: integer, minimum: 1 }
+          description: 1-based page index (preferred)
+        - in: query
+          name: pageSize
           required: false
           schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+          description: Page size (preferred)
+        - in: query
+          name: limit
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 100 }
+          description: Deprecated; use pageSize
         - in: query
           name: offset
           required: false
-          schema: { type: integer, minimum: 0, default: 0 }
+          schema: { type: integer, minimum: 0 }
+          description: Deprecated; use page
       responses:
         '200':
           description: List of videos
@@ -600,13 +612,25 @@ paths:
             enum: [asc, desc]
           description: Sort order (defaults to desc)
         - in: query
-          name: limit
+          name: page
+          required: false
+          schema: { type: integer, minimum: 1 }
+          description: 1-based page index (preferred)
+        - in: query
+          name: pageSize
           required: false
           schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+          description: Page size (preferred)
+        - in: query
+          name: limit
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 100 }
+          description: Deprecated; use pageSize
         - in: query
           name: offset
           required: false
-          schema: { type: integer, minimum: 0, default: 0 }
+          schema: { type: integer, minimum: 0 }
+          description: Deprecated; use page
       responses:
         '200':
           description: Search results
@@ -3023,6 +3047,7 @@ components:
         limit: { type: integer }
         offset: { type: integer }
         page: { type: integer, nullable: true }
+        pageSize: { type: integer, nullable: true }
       required: [total, limit, offset]
 
     Video:

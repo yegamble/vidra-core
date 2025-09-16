@@ -22,10 +22,11 @@ type ErrorInfo struct {
 }
 
 type Meta struct {
-	Total  int64 `json:"total"`
-	Limit  int   `json:"limit"`
-	Offset int   `json:"offset"`
-	Page   int   `json:"page,omitempty"`
+	Total    int64 `json:"total"`
+	Limit    int   `json:"limit"`
+	Offset   int   `json:"offset"`
+	Page     int   `json:"page,omitempty"`
+	PageSize int   `json:"pageSize,omitempty"`
 }
 
 func WriteJSON(w http.ResponseWriter, statusCode int, data interface{}) {

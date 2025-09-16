@@ -48,7 +48,7 @@ func TestSearchVideos_Success_WithMeta(t *testing.T) {
 	repo := &mockVideoRepo{videos: vids, total: 2}
 
 	handler := SearchVideosHandler(repo)
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/videos/search?q=test&limit=10", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/videos/search?q=test&pageSize=10&page=1", nil)
 	rr := httptest.NewRecorder()
 	handler.ServeHTTP(rr, req)
 
@@ -60,7 +60,7 @@ func TestSearchVideos_Success_WithMeta(t *testing.T) {
 	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if resp.Meta == nil || resp.Meta.Total != 2 || resp.Meta.Limit != 10 || resp.Meta.Offset != 0 {
+	if resp.Meta == nil || resp.Meta.Total != 2 || resp.Meta.PageSize != 10 || resp.Meta.Page != 1 {
 		t.Fatalf("unexpected meta: %+v", resp.Meta)
 	}
 	var got []*domain.Video
@@ -97,8 +97,8 @@ func TestListVideos_WithFilters_CapturesRequest(t *testing.T) {
 	q.Set("language", "en")
 	q.Set("sort", "views")
 	q.Set("order", "desc")
-	q.Set("limit", "5")
-	q.Set("offset", "2")
+	q.Set("pageSize", "5")
+	q.Set("page", "1")
 	u.RawQuery = q.Encode()
 
 	req := httptest.NewRequest(http.MethodGet, u.String(), nil)
@@ -115,7 +115,7 @@ func TestListVideos_WithFilters_CapturesRequest(t *testing.T) {
 	if repo.capturedList.CategoryID != nil || repo.capturedList.Language != "en" {
 		t.Fatalf("unexpected filters: %+v", repo.capturedList)
 	}
-	if repo.capturedList.Sort != "views" || repo.capturedList.Order != "desc" || repo.capturedList.Limit != 5 || repo.capturedList.Offset != 2 {
+	if repo.capturedList.Sort != "views" || repo.capturedList.Order != "desc" || repo.capturedList.Limit != 5 || repo.capturedList.Offset != 0 {
 		t.Fatalf("unexpected sort/paging: %+v", repo.capturedList)
 	}
 }
