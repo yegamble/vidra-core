@@ -22,11 +22,134 @@ type Config struct {
 // Service handles email sending
 type Service struct {
 	config *Config
+	sender EmailSender
 }
 
 // NewService creates a new email service
 func NewService(config *Config) *Service {
-	return &Service{config: config}
+	return NewServiceWithSender(config, &smtpSender{})
+}
+
+// NewServiceWithSender allows injecting a custom sender implementation
+func NewServiceWithSender(config *Config, sender EmailSender) *Service {
+	return &Service{config: config, sender: sender}
+}
+
+// EmailSender abstracts SMTP sending so it can be mocked in tests
+type EmailSender interface {
+	// SendPlain sends using a plain connection (e.g., port 25 or local dev servers)
+	SendPlain(addr string, auth smtp.Auth, from string, to []string, msg []byte) error
+	// SendTLS sends using implicit TLS (port 465)
+	SendTLS(addr string, auth smtp.Auth, from string, to []string, msg []byte, host string) error
+	// SendSTARTTLS sends using STARTTLS (port 587)
+	SendSTARTTLS(addr string, auth smtp.Auth, from string, to []string, msg []byte, host string) error
+}
+
+// smtpSender is the default EmailSender using net/smtp
+type smtpSender struct{}
+
+func (s *smtpSender) SendPlain(addr string, auth smtp.Auth, from string, to []string, msg []byte) error {
+	return smtp.SendMail(addr, auth, from, to, msg)
+}
+
+func (s *smtpSender) SendTLS(addr string, auth smtp.Auth, from string, to []string, msg []byte, host string) error {
+	conn, err := tls.Dial("tcp", addr, &tls.Config{
+		ServerName:         host,
+		MinVersion:         tls.VersionTLS12,
+		InsecureSkipVerify: false,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to connect to SMTP server: %w", err)
+	}
+	defer conn.Close()
+
+	client, err := smtp.NewClient(conn, host)
+	if err != nil {
+		return fmt.Errorf("failed to create SMTP client: %w", err)
+	}
+	defer client.Close()
+
+	if err = client.Auth(auth); err != nil {
+		return fmt.Errorf("failed to authenticate: %w", err)
+	}
+
+	if err = client.Mail(from); err != nil {
+		return fmt.Errorf("failed to set sender: %w", err)
+	}
+
+	for _, recipient := range to {
+		if err = client.Rcpt(recipient); err != nil {
+			return fmt.Errorf("failed to set recipient: %w", err)
+		}
+	}
+
+	w, err := client.Data()
+	if err != nil {
+		return fmt.Errorf("failed to get data writer: %w", err)
+	}
+
+	if _, err = w.Write(msg); err != nil {
+		return fmt.Errorf("failed to write message: %w", err)
+	}
+	if err = w.Close(); err != nil {
+		return fmt.Errorf("failed to close data writer: %w", err)
+	}
+
+	return client.Quit()
+}
+
+func (s *smtpSender) SendSTARTTLS(addr string, auth smtp.Auth, from string, to []string, msg []byte, host string) error {
+	c, err := smtp.Dial(addr)
+	if err != nil {
+		return fmt.Errorf("failed to connect to SMTP server: %w", err)
+	}
+	defer c.Close()
+
+	if err = c.Hello("localhost"); err != nil {
+		return fmt.Errorf("failed to send HELO: %w", err)
+	}
+
+	if ok, _ := c.Extension("STARTTLS"); ok {
+		config := &tls.Config{
+			ServerName:         host,
+			MinVersion:         tls.VersionTLS12,
+			InsecureSkipVerify: false,
+		}
+		if err = c.StartTLS(config); err != nil {
+			return fmt.Errorf("failed to start TLS: %w", err)
+		}
+	} else {
+		return fmt.Errorf("STARTTLS not supported by server on port 587 - refusing to send over insecure connection")
+	}
+
+	if auth != nil {
+		if err = c.Auth(auth); err != nil {
+			return fmt.Errorf("failed to authenticate: %w", err)
+		}
+	}
+
+	if err = c.Mail(from); err != nil {
+		return fmt.Errorf("failed to set sender: %w", err)
+	}
+
+	for _, recipient := range to {
+		if err = c.Rcpt(recipient); err != nil {
+			return fmt.Errorf("failed to set recipient %s: %w", recipient, err)
+		}
+	}
+
+	w, err := c.Data()
+	if err != nil {
+		return fmt.Errorf("failed to get data writer: %w", err)
+	}
+	if _, err = w.Write(msg); err != nil {
+		return fmt.Errorf("failed to write message: %w", err)
+	}
+	if err = w.Close(); err != nil {
+		return fmt.Errorf("failed to close data writer: %w", err)
+	}
+
+	return c.Quit()
 }
 
 // SendVerificationEmail sends an email with verification link and code
@@ -54,134 +177,16 @@ func (s *Service) sendEmail(to, subject, plainBody, htmlBody string) error {
 
 	// For TLS connections (port 465)
 	if s.config.SMTPPort == 465 {
-		return s.sendEmailTLS(addr, auth, s.config.FromAddress, []string{to}, msg)
+		return s.sender.SendTLS(addr, auth, s.config.FromAddress, []string{to}, msg, s.config.SMTPHost)
 	}
 
 	// For STARTTLS connections (port 587)
 	if s.config.SMTPPort == 587 {
-		return s.sendEmailSTARTTLS(addr, auth, s.config.FromAddress, []string{to}, msg)
+		return s.sender.SendSTARTTLS(addr, auth, s.config.FromAddress, []string{to}, msg, s.config.SMTPHost)
 	}
 
 	// For plain connections (port 25) - not recommended
-	return smtp.SendMail(addr, auth, s.config.FromAddress, []string{to}, msg)
-}
-
-// sendEmailTLS sends email over TLS connection (port 465)
-func (s *Service) sendEmailTLS(addr string, auth smtp.Auth, from string, to []string, msg []byte) error {
-	conn, err := tls.Dial("tcp", addr, &tls.Config{
-		ServerName:         s.config.SMTPHost,
-		MinVersion:         tls.VersionTLS12,
-		InsecureSkipVerify: false, // Explicitly set to false to verify certificates
-	})
-	if err != nil {
-		return fmt.Errorf("failed to connect to SMTP server: %w", err)
-	}
-	defer conn.Close()
-
-	client, err := smtp.NewClient(conn, s.config.SMTPHost)
-	if err != nil {
-		return fmt.Errorf("failed to create SMTP client: %w", err)
-	}
-	defer client.Close()
-
-	if err = client.Auth(auth); err != nil {
-		return fmt.Errorf("failed to authenticate: %w", err)
-	}
-
-	if err = client.Mail(from); err != nil {
-		return fmt.Errorf("failed to set sender: %w", err)
-	}
-
-	for _, recipient := range to {
-		if err = client.Rcpt(recipient); err != nil {
-			return fmt.Errorf("failed to set recipient: %w", err)
-		}
-	}
-
-	w, err := client.Data()
-	if err != nil {
-		return fmt.Errorf("failed to get data writer: %w", err)
-	}
-
-	_, err = w.Write(msg)
-	if err != nil {
-		return fmt.Errorf("failed to write message: %w", err)
-	}
-
-	err = w.Close()
-	if err != nil {
-		return fmt.Errorf("failed to close data writer: %w", err)
-	}
-
-	return client.Quit()
-}
-
-// sendEmailSTARTTLS sends email using STARTTLS (port 587)
-func (s *Service) sendEmailSTARTTLS(addr string, auth smtp.Auth, from string, to []string, msg []byte) error {
-	// Connect to the server
-	c, err := smtp.Dial(addr)
-	if err != nil {
-		return fmt.Errorf("failed to connect to SMTP server: %w", err)
-	}
-	defer c.Close()
-
-	// Send HELO/EHLO
-	if err = c.Hello("localhost"); err != nil {
-		return fmt.Errorf("failed to send HELO: %w", err)
-	}
-
-	// Check if STARTTLS is supported
-	if ok, _ := c.Extension("STARTTLS"); ok {
-		config := &tls.Config{
-			ServerName:         s.config.SMTPHost,
-			MinVersion:         tls.VersionTLS12,
-			InsecureSkipVerify: false, // Explicitly set to false to verify certificates
-		}
-		if err = c.StartTLS(config); err != nil {
-			return fmt.Errorf("failed to start TLS: %w", err)
-		}
-	} else {
-		// If STARTTLS is not supported on port 587, fail for security
-		return fmt.Errorf("STARTTLS not supported by server on port 587 - refusing to send over insecure connection")
-	}
-
-	// Authenticate after TLS is established
-	if auth != nil {
-		if err = c.Auth(auth); err != nil {
-			return fmt.Errorf("failed to authenticate: %w", err)
-		}
-	}
-
-	// Set the sender
-	if err = c.Mail(from); err != nil {
-		return fmt.Errorf("failed to set sender: %w", err)
-	}
-
-	// Set recipients
-	for _, recipient := range to {
-		if err = c.Rcpt(recipient); err != nil {
-			return fmt.Errorf("failed to set recipient %s: %w", recipient, err)
-		}
-	}
-
-	// Send the email body
-	w, err := c.Data()
-	if err != nil {
-		return fmt.Errorf("failed to get data writer: %w", err)
-	}
-
-	_, err = w.Write(msg)
-	if err != nil {
-		return fmt.Errorf("failed to write message: %w", err)
-	}
-
-	err = w.Close()
-	if err != nil {
-		return fmt.Errorf("failed to close data writer: %w", err)
-	}
-
-	// Send QUIT
-	return c.Quit()
+	return s.sender.SendPlain(addr, auth, s.config.FromAddress, []string{to}, msg)
 }
 
 // SendResendVerificationEmail sends a new verification email
