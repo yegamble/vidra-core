@@ -64,6 +64,8 @@ func (s *Server) SetVerificationService(service *usecase.EmailVerificationServic
 }
 
 // getOAuthRepo exposes the OAuth repo to local handlers
+//
+//nolint:unused // kept for potential handler helpers and out-of-tree tests
 func (s *Server) getOAuthRepo() usecase.OAuthRepository { return s.oauthRepo }
 
 // Login implements ServerInterface.Login
@@ -423,8 +425,9 @@ func (s *Server) ReadinessCheck(w http.ResponseWriter, r *http.Request) {
 	WriteJSON(w, http.StatusOK, response)
 }
 
-// Helper functions
 // generateJWT creates a signed JWT for the given user ID and duration
+//
+//nolint:unused // kept for clarity and potential reuse; wrappers are convenient in handlers
 func (s *Server) generateJWT(userID string, duration time.Duration) string {
 	return s.generateJWTWithRole(userID, "", duration)
 }
@@ -449,6 +452,8 @@ func (s *Server) generateJWTWithRole(userID string, role string, duration time.D
 }
 
 // signHS256JWT signs a compact JWT with HS256
+//
+//nolint:unused // kept for potential direct signing callsites and documentation
 func signHS256JWT(secret, userID string, duration time.Duration) string {
 	now := time.Now()
 	claims := jwt.MapClaims{
