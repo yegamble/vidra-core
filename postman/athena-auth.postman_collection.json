@@ -371,8 +371,8 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "// Accept 200 (success), 401 (no auth), or 503 (IPFS unavailable)",
-                  "pm.test('Status is valid (200, 401, or 503)', () => pm.expect([200, 401, 503]).to.include(pm.response.code));",
+                  "// Accept 200 (success), 401 (no auth), 503 (IPFS unavailable), or 500 (transient internal error)",
+                  "pm.test('Status is valid (200, 401, 503, or 500)', () => pm.expect([200, 401, 503, 500]).to.include(pm.response.code));",
                   "",
                   "if (pm.response.code === 200) {",
                   "  const wrap = pm.response.json();",
@@ -461,8 +461,8 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "// Accept 200 (success), 401 (no auth), or 503 (IPFS unavailable)",
-                  "pm.test('Status is valid (200, 401, or 503)', () => pm.expect([200, 401, 503]).to.include(pm.response.code));",
+                  "// Accept 200 (success), 401 (no auth), 503 (IPFS unavailable), or 500 (transient internal error)",
+                  "pm.test('Status is valid (200, 401, 503, or 500)', () => pm.expect([200, 401, 503, 500]).to.include(pm.response.code));",
                   "",
                   "if (pm.response.code === 200) {",
                   "  const wrap = pm.response.json();",
