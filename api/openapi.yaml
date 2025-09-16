@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
-  title: Athena PeerTube Backend API
-  description: Authentication endpoints for Athena PeerTube backend in Go
+  title: Athena Backend API (PeerTube‑Inspired)
+  description: Athena’s API designed with PeerTube’s patterns in mind — native resources and shapes without a compatibility facade.
   version: 1.0.0
   contact:
     name: Athena Team
@@ -16,56 +16,6 @@ servers:
 
 security:
   - bearerAuth: []
-
-# Tags metadata
-tags:
-  - name: Compat
-    description: PeerTube-compatible facade endpoints (documentation placeholders; mapped to Athena routes).
-
-# Vendor extension: compatibility placeholders (documentation-only; not part of generated server)
-x-compat-placeholders:
-  summary: PeerTube compatibility routes planned for mapping to existing Athena handlers
-  notes: |
-    These entries document intended facade routes to ease PeerTube client integration.
-    They are not implemented in this OpenAPI to avoid breaking generated server interfaces.
-    Implementations will be added incrementally under the "Compat" tag, mapping to existing handlers.
-  routes:
-    - path: /compat/api/v1/videos
-      method: GET
-      tag: Compat
-      mapsTo: /api/v1/videos
-      status: planned
-      summary: List public videos (PeerTube-shaped response)
-    - path: /compat/api/v1/videos/{id}
-      method: GET
-      tag: Compat
-      mapsTo: /api/v1/videos/{id}
-      status: planned
-      summary: Get video details (PeerTube-shaped response)
-    - path: /compat/api/v1/videos/{id}/streaming-playlists
-      method: GET
-      tag: Compat
-      mapsTo: /api/v1/videos/{id}/stream
-      status: planned
-      summary: Get streaming playlists (maps Athena stream to PeerTube shape)
-    - path: /compat/api/v1/users/{id}
-      method: GET
-      tag: Compat
-      mapsTo: /api/v1/users/{id}
-      status: planned
-      summary: Get user/channel (compat view)
-    - path: /compat/api/v1/users/{id}/videos
-      method: GET
-      tag: Compat
-      mapsTo: /api/v1/users/{id}/videos
-      status: planned
-      summary: List videos for a user/channel
-    - path: /compat/api/v1/videos/upload
-      method: POST
-      tag: Compat
-      mapsTo: /api/v1/videos/upload
-      status: planned
-      summary: One-shot upload (compat form fields)
 
 paths:
   /auth/register:

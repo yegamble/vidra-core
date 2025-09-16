@@ -1,10 +1,10 @@
-# PeerTube REST Compatibility Plan (Athena)
+# PeerTube‑Inspired API Roadmap (Athena)
 
-This document maps Athena’s current API to the PeerTube REST API surface, identifies gaps, and proposes shims and refactors to reach practical compatibility.
+This roadmap uses PeerTube’s resource model and API patterns as guidance to finish Athena’s API natively (no compatibility facade). We’ll adopt the spirit of PeerTube’s shapes and flows while keeping Athena’s strengths (encoding, IPFS, notifications) and minimizing breaking changes.
 
 Notes:
-- Network access to the official PeerTube REST docs is disabled in this environment, so endpoint names below for “PeerTube side” are based on common/typical PeerTube groupings. We’ll refine exact paths and payloads once the spec is synced locally.
-- Status legend: Covered = Athena provides equivalent capability; Partial = feature exists but path/payload differ; Missing = not implemented.
+- We will converge toward consistent shapes, pagination, and naming inline with common PeerTube clients, prioritizing clarity and maintainability.
+- Status legend: Done = shipped; Planned = upcoming; Future = longer‑term.
 
 ## 1) Current Coverage (by area)
 
@@ -58,10 +58,21 @@ Views & Analytics
 ### Health/Infra
 - Athena: `/health`, `/ready` (Covered)
 
-## 2) Gaps vs PeerTube (high-level)
+## 2) Design Principles
 
-Authentication / OAuth2
-- Partial: Minimal OAuth2 is implemented (password + refresh grants, admin client CRUD). Remaining for fuller PeerTube parity: authorization code grant, token revocation endpoint, token introspection, scope enforcement, and standardized errors across all protected routes.
+- Resources: introduce Channels separate from Accounts (users); videos belong to channels.
+- Shapes: consistent JSON naming; pagination (`page`, `pageSize`, `total`); standard sorting/filtering.
+- Auth: OAuth2 bearer tokens; refine toward authorization code grant + scopes.
+- Errors: standardized codes/messages; consistent 401/403/404/409 behavior.
+- Privacy/streaming: keep current privacy gating and HLS; expose shapes akin to PeerTube.
+
+## 3) Roadmap (Phases)
+
+Phase 1 — Core Videos + Users (Planned)
+- Videos: align list/get/search shapes, unify pagination/meta, standard filters.
+- Uploads: converge one‑shot + chunked flows to stable paths and forms.
+- OpenAPI: update schemas/paths to target shapes; deprecate legacy fields where needed.
+- Tests: table‑driven handler tests for list/get/search; keep current coverage.
 
 Accounts / Channels Model
 - Missing: Distinct Channel and Account resources (Athena equates User as channel). Requires DB and ownership model changes.
@@ -110,21 +121,21 @@ Categories
 OpenAPI
 - Add a `compat` tag set and corresponding routes in `api/openapi.yaml` that reflect PeerTube method/paths while documenting Athena’s native routes. Keep both during transition.
 
-## 4) OAuth2 Integration Status
+Phase 2 — Channels Model (Planned)
+- DB: add `channels` table; backfill default channel per user; add `videos.channel_id`.
+- API: list/get channels; update create/update video to accept `channel_id`.
+- Subscriptions: migrate to channels (keep user subscribe aliases temporarily).
 
-What’s implemented
-- Token endpoint: `POST /oauth/token` with `grant_type=password|refresh_token`.
-- Admin client management: `GET/POST/PUT/DELETE /api/v1/admin/oauth/clients*` (create, list, rotate secret, delete).
-- Storage: `oauth_clients` table, plus reuse of DB + Redis for refresh tokens and sessions.
-- Backward compatibility: legacy `/auth/*` endpoints remain supported.
+Phase 3 — OAuth2 Refinement (Planned)
+- Authorization Code (+PKCE), token revocation, basic introspection.
+- Enforce scopes and improve standardized OAuth error responses.
 
-Remaining to reach fuller PeerTube parity
-- Authorization Code grant (+ PKCE) and redirect URI validation.
-- Token revocation endpoint and optional introspection.
-- Scope design/enforcement and standardized OAuth error responses across routes.
+Phase 4 — Community Features (Future)
+- Comments (threaded), Ratings (like/dislike), Playlists, Captions.
+- Instance info/config endpoints; oEmbed; moderation endpoints.
 
-References
-- See `docs/OAUTH2.md` for usage details and examples.
+Phase 5 — Advanced (Future)
+- Live streams; import by URL/magnet; redundancy/mirroring.
 
 ## 5) Channels Model Refactor
 
@@ -148,15 +159,14 @@ Migration Plan
 3) Update repositories/services to prefer `channel_id` but keep `user_id` fallback during transition.
 4) Update subscriptions to be against channels; keep compatibility routes for user-subscribe until all consumers migrate.
 
-## 6) Endpoint Checklist (initial)
+## 4) Endpoint Checklist (Initial)
 
 Core (Phase 1)
 - [x] OAuth2 token endpoint (password + refresh)
 - [x] Minimal OAuth client registration (admin endpoints)
-- [ ] Shim: videos list/search/get payload mapping
-- [ ] Shim: upload endpoints to PeerTube forms/contracts
-- [ ] Shim: user/channel payloads for listings
-- [ ] OpenAPI: add `compat` routes matching PeerTube spec
+- [ ] Videos list/search/get shape and pagination alignment
+- [ ] Uploads form/contracts convergence
+- [ ] Users payload alignment and pagination
 
 Community (Phase 2)
 - [ ] Comments: list/create/delete, thread model, moderation hooks
@@ -176,11 +186,10 @@ Advanced (Phase 4)
 - [ ] Redundancy/mirroring endpoints
 - [ ] Plugins API exposure (list/config)
 
-## 7) Next Steps
+## 5) Next Steps
 
-1) Confirm exact PeerTube endpoint paths/payloads (sync docs locally or provide a copy).
-2) Add `compat` OpenAPI paths for videos/users/uploads first (low risk, high value).
-3) Expand OAuth2 support: authorization code grant (+PKCE), token revocation/introspection, scope enforcement.
-4) Begin channels table/migration scaffolding (default channel per user) and ship read-only channel endpoints.
+1) Confirm target shapes and pagination for videos/users; update OpenAPI and handlers accordingly.
+2) Expand OAuth2 support: authorization code grant (+PKCE), token revocation/introspection, scope enforcement.
+3) Begin channels table/migration scaffolding (default channel per user) and ship read‑only channel endpoints.
 
 Once the above lands, most PeerTube clients should be able to browse, authenticate (OAuth2), and upload/watch via familiar contracts while we layer on community and admin features.

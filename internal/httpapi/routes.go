@@ -60,214 +60,214 @@ func RegisterRoutes(r chi.Router, cfg *config.Config) {
 		if err := os.MkdirAll(d, 0750); err != nil {
 			panic(fmt.Errorf("failed to create storage dir %s: %w", d, err))
 		}
-	}
 
-	// Initialize services
-	uploadService := usecase.NewUploadService(uploadRepo, encodingRepo, videoRepo, storageRoot, cfg)
-	messageService := usecase.NewMessageService(messageRepo, userRepo)
-	viewsService := usecase.NewViewsService(viewsRepo, videoRepo)
-	notificationService := usecase.NewNotificationService(notificationRepo, subRepo, userRepo)
+		// Initialize services
+		uploadService := usecase.NewUploadService(uploadRepo, encodingRepo, videoRepo, storageRoot, cfg)
+		messageService := usecase.NewMessageService(messageRepo, userRepo)
+		viewsService := usecase.NewViewsService(viewsRepo, videoRepo)
+		notificationService := usecase.NewNotificationService(notificationRepo, subRepo, userRepo)
 
-	// Start a lightweight encoding scheduler in the background to ensure
-	// pending jobs are processed even if the standalone encoder is not running.
-	// This uses a short interval with a small burst to avoid starvation.
-	var encSched *scheduler.EncodingScheduler
-	if cfg.EnableEncodingScheduler {
-		encSvc := usecase.NewEncodingService(encodingRepo, videoRepo, notificationService, storageRoot, cfg)
-		interval := time.Duration(cfg.EncodingSchedulerIntervalSeconds) * time.Second
-		burst := cfg.EncodingSchedulerBurst
-		encSched = scheduler.NewEncodingScheduler(encSvc, interval, burst)
-		// Use Background context; lifecycle is tied to the server process.
-		go encSched.Start(context.Background())
-	}
+		// Start a lightweight encoding scheduler in the background to ensure
+		// pending jobs are processed even if the standalone encoder is not running.
+		// This uses a short interval with a small burst to avoid starvation.
+		var encSched *scheduler.EncodingScheduler
+		if cfg.EnableEncodingScheduler {
+			encSvc := usecase.NewEncodingService(encodingRepo, videoRepo, notificationService, storageRoot, cfg)
+			interval := time.Duration(cfg.EncodingSchedulerIntervalSeconds) * time.Second
+			burst := cfg.EncodingSchedulerBurst
+			encSched = scheduler.NewEncodingScheduler(encSvc, interval, burst)
+			// Use Background context; lifecycle is tied to the server process.
+			go encSched.Start(context.Background())
+		}
 
-	// Initialize Redis session repo
-	redisOpts, err := redis.ParseURL(cfg.RedisURL)
-	if err != nil {
-		panic(fmt.Errorf("failed to parse redis url: %w", err))
-	}
-	rdb := redis.NewClient(redisOpts)
-	// Fail fast if Redis is unreachable
-	if err := func() error {
-		ctx, cancel := context.WithTimeout(context.Background(), time.Duration(cfg.RedisPingTimeout)*time.Second)
-		defer cancel()
-		return rdb.Ping(ctx).Err()
-	}(); err != nil {
-		panic(fmt.Errorf("failed to connect to redis: %w", err))
-	}
-	sessionRepo := repository.NewCompositeAuthRepository(dbAuthRepo, repository.NewRedisSessionRepository(rdb))
+		// Initialize Redis session repo
+		redisOpts, err := redis.ParseURL(cfg.RedisURL)
+		if err != nil {
+			panic(fmt.Errorf("failed to parse redis url: %w", err))
+		}
+		rdb := redis.NewClient(redisOpts)
+		// Fail fast if Redis is unreachable
+		if err := func() error {
+			ctx, cancel := context.WithTimeout(context.Background(), time.Duration(cfg.RedisPingTimeout)*time.Second)
+			defer cancel()
+			return rdb.Ping(ctx).Err()
+		}(); err != nil {
+			panic(fmt.Errorf("failed to connect to redis: %w", err))
+		}
+		sessionRepo := repository.NewCompositeAuthRepository(dbAuthRepo, repository.NewRedisSessionRepository(rdb))
 
-	// Fail fast if IPFS API is unreachable
-	{
-		client := &http.Client{Timeout: time.Duration(cfg.IPFSPingTimeout) * time.Second}
-		resp, err := client.Post(cfg.IPFSApi+"/api/v0/version", "", nil)
-		if err != nil || (resp != nil && (resp.StatusCode < 200 || resp.StatusCode >= 300)) {
-			if cfg.RequireIPFS {
-				log.Printf("ERROR: Failed to connect to IPFS API at %s: %v", cfg.IPFSApi, err)
-				panic(fmt.Errorf("failed to connect to ipfs api at %s: %w", cfg.IPFSApi, err))
+		// Fail fast if IPFS API is unreachable
+		{
+			client := &http.Client{Timeout: time.Duration(cfg.IPFSPingTimeout) * time.Second}
+			resp, err := client.Post(cfg.IPFSApi+"/api/v0/version", "", nil)
+			if err != nil || (resp != nil && (resp.StatusCode < 200 || resp.StatusCode >= 300)) {
+				if cfg.RequireIPFS {
+					log.Printf("ERROR: Failed to connect to IPFS API at %s: %v", cfg.IPFSApi, err)
+					panic(fmt.Errorf("failed to connect to ipfs api at %s: %w", cfg.IPFSApi, err))
+				}
+				log.Printf("WARNING: IPFS API not reachable at %s: %v (continuing as REQUIRE_IPFS=false)", cfg.IPFSApi, err)
+			} else {
+				log.Printf("INFO: Successfully connected to IPFS API at %s", cfg.IPFSApi)
+				if resp != nil && resp.Body != nil {
+					_ = resp.Body.Close()
+				}
 			}
-			log.Printf("WARNING: IPFS API not reachable at %s: %v (continuing as REQUIRE_IPFS=false)", cfg.IPFSApi, err)
-		} else {
-			log.Printf("INFO: Successfully connected to IPFS API at %s", cfg.IPFSApi)
-		}
-		if resp != nil && resp.Body != nil {
-			_ = resp.Body.Close()
-		}
-	}
 
-	// Create server instance with dependencies
-	server := NewServerWithOAuth(
-		userRepo,
-		sessionRepo,
-		oauthRepo,
-		cfg.JWTSecret,
-		rdb,
-		time.Duration(cfg.RedisPingTimeout)*time.Second,
-		cfg.IPFSApi,
-		cfg.IPFSCluster,
-		time.Duration(cfg.IPFSPingTimeout)*time.Second,
-		cfg,
-	)
+			// Create server instance with dependencies
+			server := NewServerWithOAuth(
+				userRepo,
+				sessionRepo,
+				oauthRepo,
+				cfg.JWTSecret,
+				rdb,
+				time.Duration(cfg.RedisPingTimeout)*time.Second,
+				cfg.IPFSApi,
+				cfg.IPFSCluster,
+				time.Duration(cfg.IPFSPingTimeout)*time.Second,
+				cfg,
+			)
 
-	// Register auth routes with appropriate middleware
-	r.Post("/auth/register", server.Register)
-	r.Post("/auth/login", server.Login)
-	r.Post("/auth/refresh", server.RefreshToken)
-	r.With(middleware.Auth(cfg.JWTSecret)).Post("/auth/logout", server.Logout)
+			// Register auth routes with appropriate middleware
+			r.Post("/auth/register", server.Register)
+			r.Post("/auth/login", server.Login)
+			r.Post("/auth/refresh", server.RefreshToken)
+			r.With(middleware.Auth(cfg.JWTSecret)).Post("/auth/logout", server.Logout)
 
-	// OAuth2 token endpoint
-	r.Post("/oauth/token", server.OAuthToken)
+			// OAuth2 token endpoint
+			r.Post("/oauth/token", server.OAuthToken)
 
-	// Register health routes
-	r.Get("/health", server.HealthCheck)
-	r.Get("/ready", server.ReadinessCheck)
+			// Register health routes
+			r.Get("/health", server.HealthCheck)
+			r.Get("/ready", server.ReadinessCheck)
 
-	// Additional API routes for videos and users (if they exist)
-	r.Route("/api/v1", func(r chi.Router) {
-		// Initialize views handler early for use in routes
-		viewsHandler := NewViewsHandler(viewsService)
+			// Additional API routes for videos and users (if they exist)
+			r.Route("/api/v1", func(r chi.Router) {
+				// Initialize views handler early for use in routes
+				viewsHandler := NewViewsHandler(viewsService)
 
-		r.Route("/videos", func(r chi.Router) {
-			log.Printf("Registering video routes...")
-			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/", ListVideosHandler(videoRepo))
-			// Static routes must come before parameterized routes
-			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/search", SearchVideosHandler(videoRepo))
-			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/qualities", GetSupportedQualities)
-			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/top", viewsHandler.GetTopVideos)
-			// Legacy one-shot upload endpoint for Postman collection compatibility
-			r.With(middleware.Auth(cfg.JWTSecret)).Post("/upload", UploadVideoFileHandler(videoRepo, cfg))
-			// Parameterized routes come after static routes
-			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{id}", GetVideoHandler(videoRepo))
-			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{id}/stream", StreamVideoHandler(videoRepo))
-			// Subscription feed
-			r.With(middleware.Auth(cfg.JWTSecret)).Get("/subscriptions", ListSubscriptionVideosHandler(subRepo))
+				r.Route("/videos", func(r chi.Router) {
+					log.Printf("Registering video routes...")
+					r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/", ListVideosHandler(videoRepo))
+					// Static routes must come before parameterized routes
+					r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/search", SearchVideosHandler(videoRepo))
+					r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/qualities", GetSupportedQualities)
+					r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/top", viewsHandler.GetTopVideos)
+					// Legacy one-shot upload endpoint for Postman collection compatibility
+					r.With(middleware.Auth(cfg.JWTSecret)).Post("/upload", UploadVideoFileHandler(videoRepo, cfg))
+					// Parameterized routes come after static routes
+					r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{id}", GetVideoHandler(videoRepo))
+					r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{id}/stream", StreamVideoHandler(videoRepo))
+					// Subscription feed
+					r.With(middleware.Auth(cfg.JWTSecret)).Get("/subscriptions", ListSubscriptionVideosHandler(subRepo))
 
-			r.With(middleware.Auth(cfg.JWTSecret)).Post("/", CreateVideoHandler(videoRepo))
-			r.With(middleware.Auth(cfg.JWTSecret)).Put("/{id}", UpdateVideoHandler(videoRepo))
-			r.With(middleware.Auth(cfg.JWTSecret)).Delete("/{id}", DeleteVideoHandler(videoRepo))
+					r.With(middleware.Auth(cfg.JWTSecret)).Post("/", CreateVideoHandler(videoRepo))
+					r.With(middleware.Auth(cfg.JWTSecret)).Put("/{id}", UpdateVideoHandler(videoRepo))
+					r.With(middleware.Auth(cfg.JWTSecret)).Delete("/{id}", DeleteVideoHandler(videoRepo))
 
-			// Direct video upload endpoints (for backward compatibility with tests)
-			r.With(middleware.Auth(cfg.JWTSecret)).Post("/{id}/upload", VideoUploadChunkHandler(uploadService, cfg))
-			r.With(middleware.Auth(cfg.JWTSecret)).Post("/{id}/complete", VideoCompleteUploadHandler(uploadService))
+					// Direct video upload endpoints (for backward compatibility with tests)
+					r.With(middleware.Auth(cfg.JWTSecret)).Post("/{id}/upload", VideoUploadChunkHandler(uploadService, cfg))
+					r.With(middleware.Auth(cfg.JWTSecret)).Post("/{id}/complete", VideoCompleteUploadHandler(uploadService))
 
-			// Views and analytics endpoints for specific videos
-			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Post("/{id}/views", viewsHandler.TrackView)
-			r.With(middleware.Auth(cfg.JWTSecret)).Get("/{id}/analytics", viewsHandler.GetVideoAnalytics)
-			r.With(middleware.Auth(cfg.JWTSecret)).Get("/{id}/stats/daily", viewsHandler.GetDailyStats)
-		})
+					// Views and analytics endpoints for specific videos
+					r.With(middleware.OptionalAuth(cfg.JWTSecret)).Post("/{id}/views", viewsHandler.TrackView)
+					r.With(middleware.Auth(cfg.JWTSecret)).Get("/{id}/analytics", viewsHandler.GetVideoAnalytics)
+					r.With(middleware.Auth(cfg.JWTSecret)).Get("/{id}/stats/daily", viewsHandler.GetDailyStats)
+				})
 
-		// Static HLS handler with privacy gating and cache headers
-		r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/hls/*", HLSHandler(videoRepo))
+				// Static HLS handler with privacy gating and cache headers
+				r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/hls/*", HLSHandler(videoRepo))
 
-		// Chunked upload endpoints
-		r.Route("/uploads", func(r chi.Router) {
-			r.Use(middleware.Auth(cfg.JWTSecret))
-			r.Post("/initiate", InitiateUploadHandler(uploadService, videoRepo))
-			r.Route("/{sessionId}", func(r chi.Router) {
-				r.Post("/chunks", UploadChunkHandler(uploadService, cfg))
-				r.Post("/complete", CompleteUploadHandler(uploadService, encodingRepo))
-				r.Get("/status", GetUploadStatusHandler(uploadService))
-				r.Get("/resume", ResumeUploadHandler(uploadService))
+				// Chunked upload endpoints
+				r.Route("/uploads", func(r chi.Router) {
+					r.Use(middleware.Auth(cfg.JWTSecret))
+					r.Post("/initiate", InitiateUploadHandler(uploadService, videoRepo))
+					r.Route("/{sessionId}", func(r chi.Router) {
+						r.Post("/chunks", UploadChunkHandler(uploadService, cfg))
+						r.Post("/complete", CompleteUploadHandler(uploadService, encodingRepo))
+						r.Get("/status", GetUploadStatusHandler(uploadService))
+						r.Get("/resume", ResumeUploadHandler(uploadService))
+					})
+				})
+
+				r.Route("/encoding", func(r chi.Router) {
+					r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/status", EncodingStatusHandlerEnhanced(encodingRepo, cfg, encSched))
+				})
+
+				r.Route("/users", func(r chi.Router) {
+					// Admin-style create user; currently just requires auth (role checks TBD)
+					r.With(middleware.Auth(cfg.JWTSecret)).Post("/", CreateUserHandler(userRepo))
+					r.With(middleware.Auth(cfg.JWTSecret)).Get("/me", GetCurrentUserHandler(userRepo))
+					r.With(middleware.Auth(cfg.JWTSecret)).Put("/me", UpdateCurrentUserHandler(userRepo))
+					r.With(middleware.Auth(cfg.JWTSecret)).Post("/me/avatar", server.UploadAvatar)
+					r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{id}", GetUserHandler(userRepo))
+					r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{id}/videos", GetUserVideosHandler(videoRepo))
+					// Subscriptions
+					r.With(middleware.Auth(cfg.JWTSecret)).Post("/{id}/subscribe", SubscribeToUserHandler(subRepo, userRepo))
+					r.With(middleware.Auth(cfg.JWTSecret)).Delete("/{id}/subscribe", UnsubscribeFromUserHandler(subRepo))
+					r.With(middleware.Auth(cfg.JWTSecret)).Get("/me/subscriptions", ListMySubscriptionsHandler(subRepo))
+				})
+
+				r.Route("/messages", func(r chi.Router) {
+					r.Use(middleware.Auth(cfg.JWTSecret))
+					r.Post("/", SendMessageHandler(messageService))
+					r.Get("/", GetMessagesHandler(messageService))
+					r.Put("/{messageId}/read", MarkMessageReadHandler(messageService))
+					r.Delete("/{messageId}", DeleteMessageHandler(messageService))
+				})
+
+				r.Route("/conversations", func(r chi.Router) {
+					r.Use(middleware.Auth(cfg.JWTSecret))
+					r.Get("/", GetConversationsHandler(messageService))
+					r.Get("/unread-count", GetUnreadCountHandler(messageService))
+				})
+
+				// Trending endpoint
+				r.Get("/trending", viewsHandler.GetTrendingVideos)
+
+				// Fingerprinting for view deduplication
+				r.Post("/views/fingerprint", viewsHandler.GenerateFingerprint)
+
+				// Notifications
+				r.Route("/notifications", func(r chi.Router) {
+					r.Use(middleware.Auth(cfg.JWTSecret))
+					notificationHandlers := NewNotificationHandlers(notificationService)
+					r.Get("/", notificationHandlers.GetNotifications)
+					r.Get("/unread-count", notificationHandlers.GetUnreadCount)
+					r.Get("/stats", notificationHandlers.GetNotificationStats)
+					r.Put("/{id}/read", notificationHandlers.MarkAsRead)
+					r.Put("/read-all", notificationHandlers.MarkAllAsRead)
+					r.Delete("/{id}", notificationHandlers.DeleteNotification)
+				})
+
+				// Admin: OAuth client management
+				r.Route("/admin/oauth/clients", func(r chi.Router) {
+					r.Use(middleware.Auth(cfg.JWTSecret))
+					r.Use(middleware.RequireRole("admin"))
+					r.Get("/", server.AdminListOAuthClients)
+					r.Post("/", server.AdminCreateOAuthClient)
+					r.Put("/{clientId}/secret", server.AdminRotateOAuthClientSecret)
+					r.Delete("/{clientId}", server.AdminDeleteOAuthClient)
+				})
 			})
-		})
 
-		r.Route("/encoding", func(r chi.Router) {
-			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/status", EncodingStatusHandlerEnhanced(encodingRepo, cfg, encSched))
-		})
+			// Custom 404 handler that returns JSON error response
+			r.NotFound(func(w http.ResponseWriter, r *http.Request) {
+				log.Printf("NOT_FOUND %s %s", r.Method, r.URL.Path)
+				WriteError(w, http.StatusNotFound, domain.NewDomainError("NOT_FOUND", "The requested resource was not found"))
+			})
 
-		r.Route("/users", func(r chi.Router) {
-			// Admin-style create user; currently just requires auth (role checks TBD)
-			r.With(middleware.Auth(cfg.JWTSecret)).Post("/", CreateUserHandler(userRepo))
-			r.With(middleware.Auth(cfg.JWTSecret)).Get("/me", GetCurrentUserHandler(userRepo))
-			r.With(middleware.Auth(cfg.JWTSecret)).Put("/me", UpdateCurrentUserHandler(userRepo))
-			r.With(middleware.Auth(cfg.JWTSecret)).Post("/me/avatar", server.UploadAvatar)
-			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{id}", GetUserHandler(userRepo))
-			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{id}/videos", GetUserVideosHandler(videoRepo))
-			// Subscriptions
-			r.With(middleware.Auth(cfg.JWTSecret)).Post("/{id}/subscribe", SubscribeToUserHandler(subRepo, userRepo))
-			r.With(middleware.Auth(cfg.JWTSecret)).Delete("/{id}/subscribe", UnsubscribeFromUserHandler(subRepo))
-			r.With(middleware.Auth(cfg.JWTSecret)).Get("/me/subscriptions", ListMySubscriptionsHandler(subRepo))
-		})
+			// Custom 405 handler for method not allowed
+			r.MethodNotAllowed(func(w http.ResponseWriter, r *http.Request) {
+				WriteError(w, http.StatusMethodNotAllowed, domain.NewDomainError("METHOD_NOT_ALLOWED", "Method not allowed for this endpoint"))
+			})
 
-		r.Route("/messages", func(r chi.Router) {
-			r.Use(middleware.Auth(cfg.JWTSecret))
-			r.Post("/", SendMessageHandler(messageService))
-			r.Get("/", GetMessagesHandler(messageService))
-			r.Put("/{messageId}/read", MarkMessageReadHandler(messageService))
-			r.Delete("/{messageId}", DeleteMessageHandler(messageService))
-		})
-
-		r.Route("/conversations", func(r chi.Router) {
-			r.Use(middleware.Auth(cfg.JWTSecret))
-			r.Get("/", GetConversationsHandler(messageService))
-			r.Get("/unread-count", GetUnreadCountHandler(messageService))
-		})
-
-		// Trending endpoint
-		r.Get("/trending", viewsHandler.GetTrendingVideos)
-
-		// Fingerprinting for view deduplication
-		r.Post("/views/fingerprint", viewsHandler.GenerateFingerprint)
-
-		// Notifications
-		r.Route("/notifications", func(r chi.Router) {
-			r.Use(middleware.Auth(cfg.JWTSecret))
-			notificationHandlers := NewNotificationHandlers(notificationService)
-			r.Get("/", notificationHandlers.GetNotifications)
-			r.Get("/unread-count", notificationHandlers.GetUnreadCount)
-			r.Get("/stats", notificationHandlers.GetNotificationStats)
-			r.Put("/{id}/read", notificationHandlers.MarkAsRead)
-			r.Put("/read-all", notificationHandlers.MarkAllAsRead)
-			r.Delete("/{id}", notificationHandlers.DeleteNotification)
-		})
-
-		// Admin: OAuth client management
-		r.Route("/admin/oauth/clients", func(r chi.Router) {
-			r.Use(middleware.Auth(cfg.JWTSecret))
-			r.Use(middleware.RequireRole("admin"))
-			r.Get("/", server.AdminListOAuthClients)
-			r.Post("/", server.AdminCreateOAuthClient)
-			r.Put("/{clientId}/secret", server.AdminRotateOAuthClientSecret)
-			r.Delete("/{clientId}", server.AdminDeleteOAuthClient)
-		})
-	})
-
-	// Custom 404 handler that returns JSON error response
-	r.NotFound(func(w http.ResponseWriter, r *http.Request) {
-		log.Printf("NOT_FOUND %s %s", r.Method, r.URL.Path)
-		WriteError(w, http.StatusNotFound, domain.NewDomainError("NOT_FOUND", "The requested resource was not found"))
-	})
-
-	// Custom 405 handler for method not allowed
-	r.MethodNotAllowed(func(w http.ResponseWriter, r *http.Request) {
-		WriteError(w, http.StatusMethodNotAllowed, domain.NewDomainError("METHOD_NOT_ALLOWED", "Method not allowed for this endpoint"))
-	})
-
-	// Debug: log all registered routes when log level is debug/trace
-	if lvl := strings.ToLower(cfg.LogLevel); lvl == "debug" || lvl == "trace" {
-		_ = chi.Walk(r, func(method string, route string, handler http.Handler, middlewares ...func(http.Handler) http.Handler) error {
-			log.Printf("ROUTE %s %s", method, route)
-			return nil
-		})
+			// Debug: log all registered routes when log level is debug/trace
+			if lvl := strings.ToLower(cfg.LogLevel); lvl == "debug" || lvl == "trace" {
+				_ = chi.Walk(r, func(method string, route string, handler http.Handler, middlewares ...func(http.Handler) http.Handler) error {
+					log.Printf("ROUTE %s %s", method, route)
+					return nil
+				})
+			}
+		}
 	}
 }
