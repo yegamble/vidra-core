@@ -703,3 +703,27 @@ Pagination (preferred)
 Notes
 
 - Trending: `GET /api/v1/trending` also accepts `page` and `pageSize` for consistency and returns these fields in `meta`; however, paging beyond the first page may be constrained by the current trending repository (no offset support).
+### Notifications
+
+**Protected Endpoints (Require Authentication):**
+
+- `GET /api/v1/notifications` — List my notifications
+  - Query: `page`, `pageSize` (preferred) or `limit`, `offset` (deprecated), `unread` (bool)
+  - Response (wrapped): `{ success, data: Notification[], meta: { total, limit, offset, page, pageSize } }`
+  - Example:
+    - `GET /api/v1/notifications?page=1&pageSize=20`
+
+- `GET /api/v1/notifications/unread-count` — Get my unread count
+  - Response: `{ unread_count: number }`
+
+- `GET /api/v1/notifications/stats` — Get my notification statistics
+  - Response: `{ total_count, unread_count, by_type: { <type>: count } }`
+
+- `PUT /api/v1/notifications/{id}/read` — Mark a notification as read
+  - Response: `{ success: true }`
+
+- `PUT /api/v1/notifications/read-all` — Mark all notifications as read
+  - Response: `{ success: true }`
+
+- `DELETE /api/v1/notifications/{id}` — Delete a notification
+  - Response: 204 No Content

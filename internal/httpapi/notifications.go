@@ -86,7 +86,14 @@ func (h *NotificationHandlers) GetNotifications(w http.ResponseWriter, r *http.R
 		notifications = []domain.Notification{}
 	}
 
-	respondWithJSON(w, http.StatusOK, notifications)
+	// Get total count for meta via stats
+	stats, err := h.notificationService.GetStats(r.Context(), userUUID)
+	if err != nil {
+		// Fallback if stats fail
+		stats = &domain.NotificationStats{TotalCount: len(notifications)}
+	}
+	meta := &Meta{Total: int64(stats.TotalCount), Limit: filter.Limit, Offset: filter.Offset, Page: page, PageSize: pageSize}
+	WriteJSONWithMeta(w, http.StatusOK, notifications, meta)
 }
 
 // GetUnreadCount returns the count of unread notifications

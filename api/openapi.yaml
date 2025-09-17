@@ -1580,14 +1580,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  videos:
-                    type: array
-                    items:
-                      $ref: '#/components/schemas/Video'
-                  total:
-                    type: integer
+                $ref: '#/components/schemas/WrappedVideosResponse'
         '401':
           description: Unauthorized
           content:
@@ -3015,12 +3008,211 @@ paths:
           content:
             application/json:
               schema:
+                $ref: '#/components/schemas/WrappedTrendingResponse'
+
+  /api/v1/notifications:
+    get:
+      tags:
+        - Notifications
+      summary: List my notifications
+      description: Returns notifications for the authenticated user
+      operationId: listNotifications
+      parameters:
+        - in: query
+          name: page
+          required: false
+          schema: { type: integer, minimum: 1 }
+          description: 1-based page index (preferred)
+        - in: query
+          name: pageSize
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+          description: Page size (preferred)
+        - in: query
+          name: limit
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 100 }
+          description: Deprecated; use pageSize
+        - in: query
+          name: offset
+          required: false
+          schema: { type: integer, minimum: 0 }
+          description: Deprecated; use page
+        - in: query
+          name: unread
+          required: false
+          schema: { type: boolean }
+          description: Filter to unread only
+      responses:
+        '200':
+          description: List of notifications
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WrappedNotificationsResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/v1/notifications/unread-count:
+    get:
+      tags:
+        - Notifications
+      summary: Get unread notifications count
+      operationId: getUnreadNotificationsCount
+      responses:
+        '200':
+          description: Unread count
+          content:
+            application/json:
+              schema:
                 type: object
                 properties:
-                  videos:
-                    type: array
-                    items:
-                      $ref: '#/components/schemas/Video'
+                  unread_count:
+                    type: integer
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/v1/notifications/stats:
+    get:
+      tags:
+        - Notifications
+      summary: Get notification statistics
+      operationId: getNotificationStats
+      responses:
+        '200':
+          description: Notification statistics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotificationStats'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/notifications/{id}/read:
+    put:
+      tags:
+        - Notifications
+      summary: Mark a notification as read
+      operationId: markNotificationRead
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Marked as read
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+        '400':
+          description: Invalid ID
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Notification not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/notifications/read-all:
+    put:
+      tags:
+        - Notifications
+      summary: Mark all notifications as read
+      operationId: markAllNotificationsRead
+      responses:
+        '200':
+          description: All notifications marked as read
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/notifications/{id}:
+    delete:
+      tags:
+        - Notifications
+      summary: Delete a notification
+      operationId: deleteNotification
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '204':
+          description: Deleted successfully
+        '400':
+          description: Invalid ID
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Notification not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 
   # Views fingerprint
   /api/v1/views/fingerprint:
@@ -3063,6 +3255,75 @@ components:
       description: JWT token for authentication
 
   schemas:
+    Notification:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        user_id: { type: string, format: uuid }
+        type:
+          type: string
+          enum: [new_video, video_processed, video_failed, new_subscriber, comment, mention, system, new_message, message_read]
+        title: { type: string }
+        message: { type: string }
+        data:
+          type: object
+          additionalProperties: true
+        read: { type: boolean }
+        created_at: { type: string, format: date-time }
+        read_at: { type: string, format: date-time, nullable: true }
+      required: [id, user_id, type, title, message, read, created_at]
+
+    NotificationStats:
+      type: object
+      properties:
+        total_count: { type: integer }
+        unread_count: { type: integer }
+        by_type:
+          type: object
+          additionalProperties:
+            type: integer
+      required: [total_count, unread_count]
+
+    TrendingData:
+      type: object
+      properties:
+        videos:
+          type: array
+          items:
+            $ref: '#/components/schemas/Video'
+        updated_at:
+          type: string
+          format: date-time
+        limit:
+          type: integer
+          description: Included for backward compatibility
+      required: [videos, updated_at]
+
+    WrappedTrendingResponse:
+      type: object
+      properties:
+        data:
+          $ref: '#/components/schemas/TrendingData'
+        meta:
+          $ref: '#/components/schemas/ListMeta'
+        success:
+          type: boolean
+          example: true
+      required: [data, meta, success]
+
+    WrappedNotificationsResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Notification'
+        meta:
+          $ref: '#/components/schemas/ListMeta'
+        success:
+          type: boolean
+          example: true
+      required: [data, meta, success]
     OAuthClient:
       type: object
       properties:
