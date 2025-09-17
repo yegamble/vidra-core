@@ -215,8 +215,8 @@ OAuth2 (Minimal):
 ### Videos
 
 **Public Endpoints:**
-- `GET /api/v1/videos` - List public videos (supports pagination, filtering, sorting)
-- `GET /api/v1/videos/search` - Search videos with full-text search and filters
+ - `GET /api/v1/videos` - List public videos (supports pagination, filtering, sorting)
+ - `GET /api/v1/videos/search` - Search videos with full-text search and filters
 - `GET /api/v1/videos/{id}` - Get video details
 - `GET /api/v1/videos/{id}/stream` - Stream video (HLS playlist, `quality` query param supports 240p-4320p, default 720p)
 - `GET /api/v1/videos/qualities` - List supported quality labels and the default
@@ -691,3 +691,15 @@ Avatars uploaded via `/api/v1/users/me/avatar` are validated (PNG/JPEG MIME snif
 - Enable at build time: `go build -tags webp ./...`
 - Configure WebP quality via `WEBP_QUALITY` (1–100). `0` uses encoder defaults.
 - API exposes both `avatar_ipfs_cid` and `avatar_webp_ipfs_cid` for clients.
+Pagination (preferred)
+
+- Use `page` (1-based) and `pageSize` across list endpoints. Responses include a `meta` object with `total`, `limit`, `offset`, `page`, and `pageSize`.
+- `limit`/`offset` are still accepted for backward compatibility but are deprecated. When provided, they are converted to `page`/`pageSize`.
+- Examples:
+  - `GET /api/v1/videos?page=2&pageSize=24`
+  - `GET /api/v1/videos/search?q=go&page=1&pageSize=10`
+  - `GET /api/v1/videos/subscriptions?page=1&pageSize=20`
+
+Notes
+
+- Trending: `GET /api/v1/trending` also accepts `page` and `pageSize` for consistency and returns these fields in `meta`; however, paging beyond the first page may be constrained by the current trending repository (no offset support).

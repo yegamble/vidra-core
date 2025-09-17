@@ -10,21 +10,36 @@ import (
 )
 
 // common helper to enforce auth and parse pagination
-func requireAuthAndPagination(w http.ResponseWriter, r *http.Request) (string, int, int, bool) {
+func requireAuthAndPagination(w http.ResponseWriter, r *http.Request) (string, int, int, int, int, bool) {
 	me, _ := r.Context().Value(middleware.UserIDKey).(string)
 	if me == "" {
 		WriteError(w, http.StatusUnauthorized, domain.NewDomainError("UNAUTHORIZED", "Missing or invalid authentication"))
-		return "", 0, 0, false
+		return "", 0, 0, 0, 0, false
 	}
+	// Unified pagination: page/pageSize preferred, fallback to limit/offset
+	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+	pageSize, _ := strconv.Atoi(r.URL.Query().Get("pageSize"))
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	if limit == 0 || limit > 100 {
-		limit = 20
-	}
 	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
-	if offset < 0 {
-		offset = 0
+	if pageSize <= 0 || pageSize > 100 {
+		if limit > 0 {
+			pageSize = limit
+		} else {
+			pageSize = 20
+		}
 	}
-	return me, limit, offset, true
+	if page <= 0 {
+		if offset < 0 {
+			offset = 0
+		}
+		page = (offset / pageSize) + 1
+		if page <= 0 {
+			page = 1
+		}
+	}
+	limit = pageSize
+	offset = (page - 1) * pageSize
+	return me, limit, offset, page, pageSize, true
 }
 
 // SubscribeToUserHandler subscribes the authenticated user to the target user
@@ -84,7 +99,7 @@ func UnsubscribeFromUserHandler(subRepo usecase.SubscriptionRepository) http.Han
 // ListMySubscriptionsHandler returns the list of channels the authenticated user is subscribed to
 func ListMySubscriptionsHandler(subRepo usecase.SubscriptionRepository) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		me, limit, offset, ok := requireAuthAndPagination(w, r)
+		me, limit, offset, page, pageSize, ok := requireAuthAndPagination(w, r)
 		if !ok {
 			return
 		}
@@ -94,7 +109,7 @@ func ListMySubscriptionsHandler(subRepo usecase.SubscriptionRepository) http.Han
 			WriteError(w, http.StatusInternalServerError, domain.NewDomainError("LIST_FAILED", "Failed to list subscriptions"))
 			return
 		}
-		meta := &Meta{Total: total, Limit: limit, Offset: offset}
+		meta := &Meta{Total: total, Limit: limit, Offset: offset, Page: page, PageSize: pageSize}
 		WriteJSONWithMeta(w, http.StatusOK, users, meta)
 	}
 }
@@ -102,7 +117,7 @@ func ListMySubscriptionsHandler(subRepo usecase.SubscriptionRepository) http.Han
 // ListSubscriptionVideosHandler returns public videos from channels the user subscribes to
 func ListSubscriptionVideosHandler(subRepo usecase.SubscriptionRepository) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		me, limit, offset, ok := requireAuthAndPagination(w, r)
+		me, limit, offset, page, pageSize, ok := requireAuthAndPagination(w, r)
 		if !ok {
 			return
 		}
@@ -112,7 +127,7 @@ func ListSubscriptionVideosHandler(subRepo usecase.SubscriptionRepository) http.
 			WriteError(w, http.StatusInternalServerError, domain.NewDomainError("LIST_FAILED", "Failed to list subscription videos"))
 			return
 		}
-		meta := &Meta{Total: total, Limit: limit, Offset: offset}
+		meta := &Meta{Total: total, Limit: limit, Offset: offset, Page: page, PageSize: pageSize}
 		WriteJSONWithMeta(w, http.StatusOK, videos, meta)
 	}
 }

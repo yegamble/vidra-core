@@ -119,3 +119,23 @@ func TestListVideos_WithFilters_CapturesRequest(t *testing.T) {
 		t.Fatalf("unexpected sort/paging: %+v", repo.capturedList)
 	}
 }
+
+func TestListVideos_WithPagePagination_ReturnsMeta(t *testing.T) {
+	repo := &mockVideoRepo{videos: []*domain.Video{}, total: 0}
+	handler := ListVideosHandler(repo)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/videos?page=2&pageSize=5", nil)
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	var resp Response
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.Meta == nil || resp.Meta.Page != 2 || resp.Meta.PageSize != 5 || resp.Meta.Limit != 5 || resp.Meta.Offset != 5 {
+		t.Fatalf("unexpected meta: %+v", resp.Meta)
+	}
+}

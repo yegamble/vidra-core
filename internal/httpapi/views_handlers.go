@@ -215,19 +215,30 @@ func (h *ViewsHandler) GetUserEngagement(w http.ResponseWriter, r *http.Request)
 // GetTrendingVideos handles GET /api/v1/trending
 // Returns currently trending videos
 func (h *ViewsHandler) GetTrendingVideos(w http.ResponseWriter, r *http.Request) {
-	// Parse limit parameter (default to 50, max 100)
-	limit := 50
-	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
-		parsedLimit, err := strconv.Atoi(limitStr)
-		if err != nil || parsedLimit <= 0 {
-			WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_LIMIT", "Limit must be a positive integer"))
-			return
+	// Unified page/pageSize while keeping limit for backward compatibility.
+	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+	pageSize, _ := strconv.Atoi(r.URL.Query().Get("pageSize"))
+	limit := 0
+	if pageSize <= 0 || pageSize > 100 {
+		// fallback to limit
+		if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
+			parsedLimit, err := strconv.Atoi(limitStr)
+			if err != nil || parsedLimit <= 0 {
+				WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_LIMIT", "Limit must be a positive integer"))
+				return
+			}
+			if parsedLimit > 100 {
+				parsedLimit = 100
+			}
+			pageSize = parsedLimit
+		} else {
+			pageSize = 50
 		}
-		if parsedLimit > 100 {
-			parsedLimit = 100
-		}
-		limit = parsedLimit
 	}
+	if page <= 0 {
+		page = 1 // trending repository currently does not support offset
+	}
+	limit = pageSize
 
 	// Check if detailed response is requested
 	includeDetails := r.URL.Query().Get("include_details") == "true"
@@ -238,18 +249,22 @@ func (h *ViewsHandler) GetTrendingVideos(w http.ResponseWriter, r *http.Request)
 			WriteError(w, http.StatusInternalServerError, domain.NewDomainError("TRENDING_FAILED", "Failed to get trending videos"))
 			return
 		}
-		WriteJSON(w, http.StatusOK, trendingWithDetails)
+		// Attach meta with page/pageSize for consistency (total unknown)
+		meta := &Meta{Total: 0, Limit: limit, Offset: 0, Page: page, PageSize: pageSize}
+		WriteJSONWithMeta(w, http.StatusOK, trendingWithDetails, meta)
 	} else {
 		trending, err := h.viewsService.GetTrendingVideos(r.Context(), limit)
 		if err != nil {
 			WriteError(w, http.StatusInternalServerError, domain.NewDomainError("TRENDING_FAILED", "Failed to get trending videos"))
 			return
 		}
-		WriteJSON(w, http.StatusOK, map[string]interface{}{
+		data := map[string]interface{}{
 			"videos":     trending,
 			"limit":      limit,
 			"updated_at": time.Now(),
-		})
+		}
+		meta := &Meta{Total: 0, Limit: limit, Offset: 0, Page: page, PageSize: pageSize}
+		WriteJSONWithMeta(w, http.StatusOK, data, meta)
 	}
 }
 
