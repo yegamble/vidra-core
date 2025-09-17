@@ -98,7 +98,7 @@ func (r *subscriptionRepository) ListUserSubscriptions(ctx context.Context, subs
             c.display_name as "channel.display_name",
             c.description as "channel.description",
             c.is_local as "channel.is_local",
-            c.subscriber_count as "channel.subscriber_count",
+            c.followers_count as "channel.followers_count",
             c.videos_count as "channel.videos_count",
             c.created_at as "channel.created_at",
             c.updated_at as "channel.updated_at"
@@ -216,7 +216,7 @@ func (r *subscriptionRepository) GetSubscriptionVideos(ctx context.Context, subs
         JOIN subscriptions s ON s.channel_id = c.id
         WHERE s.subscriber_id = $1
             AND v.privacy = 'public'
-            AND v.status = 'ready'`
+            AND v.status = 'completed'`
 
 	if err := r.db.GetContext(ctx, &total, countQuery, subscriberID); err != nil {
 		return nil, 0, fmt.Errorf("failed to count subscription videos: %w", err)
@@ -236,7 +236,7 @@ func (r *subscriptionRepository) GetSubscriptionVideos(ctx context.Context, subs
         JOIN subscriptions s ON s.channel_id = c.id
         WHERE s.subscriber_id = $1
             AND v.privacy = 'public'
-            AND v.status = 'ready'
+            AND v.status = 'completed'
         ORDER BY v.upload_date DESC
         LIMIT $2 OFFSET $3`
 
