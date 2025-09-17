@@ -211,7 +211,7 @@ func RegisterRoutes(r chi.Router, cfg *config.Config) {
 			r.With(middleware.Auth(cfg.JWTSecret)).Get("/me/subscriptions", ListMySubscriptionsHandler(subRepo))
 
 			// User's channels
-			channelHandlers := NewChannelHandlers(channelService)
+			channelHandlers := NewChannelHandlers(channelService, subRepo)
 			r.With(middleware.Auth(cfg.JWTSecret)).Get("/me/channels", channelHandlers.GetMyChannels)
 		})
 
@@ -237,12 +237,13 @@ func RegisterRoutes(r chi.Router, cfg *config.Config) {
 
 		// Channels
 		r.Route("/channels", func(r chi.Router) {
-			channelHandlers := NewChannelHandlers(channelService)
+			channelHandlers := NewChannelHandlers(channelService, subRepo)
 
 			// Public routes
 			r.Get("/", channelHandlers.ListChannels)
 			r.Get("/{id}", channelHandlers.GetChannel)
 			r.Get("/{id}/videos", channelHandlers.GetChannelVideos)
+			r.Get("/{id}/subscribers", channelHandlers.GetChannelSubscribers)
 
 			// Authenticated routes
 			r.Group(func(r chi.Router) {

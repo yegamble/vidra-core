@@ -16,12 +16,14 @@ import (
 // ChannelHandlers handles channel-related HTTP requests
 type ChannelHandlers struct {
 	channelService *usecase.ChannelService
+	subRepo        usecase.SubscriptionRepository
 }
 
 // NewChannelHandlers creates new channel handlers
-func NewChannelHandlers(channelService *usecase.ChannelService) *ChannelHandlers {
+func NewChannelHandlers(channelService *usecase.ChannelService, subRepo usecase.SubscriptionRepository) *ChannelHandlers {
 	return &ChannelHandlers{
 		channelService: channelService,
+		subRepo:        subRepo,
 	}
 }
 
@@ -280,14 +282,120 @@ func (h *ChannelHandlers) GetMyChannels(w http.ResponseWriter, r *http.Request) 
 
 // SubscribeToChannel handles POST /api/v1/channels/{id}/subscribe
 func (h *ChannelHandlers) SubscribeToChannel(w http.ResponseWriter, r *http.Request) {
-	// This will be implemented when we update subscriptions to be channel-based
-	// For now, return not implemented
-	WriteError(w, http.StatusNotImplemented, errors.New("Channel subscriptions not yet implemented"))
+	// Get user ID from context
+	userID, ok := middleware.GetUserIDFromContext(r.Context())
+	if !ok {
+		WriteError(w, http.StatusUnauthorized, domain.ErrUnauthorized)
+		return
+	}
+
+	// Get channel ID from URL
+	channelIDStr := chi.URLParam(r, "id")
+	channelID, err := uuid.Parse(channelIDStr)
+	if err != nil {
+		WriteError(w, http.StatusBadRequest, errors.New("Invalid channel ID"))
+		return
+	}
+
+	// Subscribe to channel
+	err = h.subRepo.SubscribeToChannel(r.Context(), userID, channelID)
+	if err != nil {
+		if err == domain.ErrNotFound {
+			WriteError(w, http.StatusNotFound, errors.New("Channel not found"))
+			return
+		}
+		if err.Error() == "cannot subscribe to your own channel" {
+			WriteError(w, http.StatusBadRequest, errors.New("Cannot subscribe to your own channel"))
+			return
+		}
+		WriteError(w, http.StatusInternalServerError, errors.New("Failed to subscribe to channel"))
+		return
+	}
+
+	// Return success response
+	WriteJSON(w, http.StatusOK, map[string]interface{}{
+		"message":    "Successfully subscribed to channel",
+		"channel_id": channelID,
+	})
 }
 
 // UnsubscribeFromChannel handles DELETE /api/v1/channels/{id}/subscribe
 func (h *ChannelHandlers) UnsubscribeFromChannel(w http.ResponseWriter, r *http.Request) {
-	// This will be implemented when we update subscriptions to be channel-based
-	// For now, return not implemented
-	WriteError(w, http.StatusNotImplemented, errors.New("Channel subscriptions not yet implemented"))
+	// Get user ID from context
+	userID, ok := middleware.GetUserIDFromContext(r.Context())
+	if !ok {
+		WriteError(w, http.StatusUnauthorized, domain.ErrUnauthorized)
+		return
+	}
+
+	// Get channel ID from URL
+	channelIDStr := chi.URLParam(r, "id")
+	channelID, err := uuid.Parse(channelIDStr)
+	if err != nil {
+		WriteError(w, http.StatusBadRequest, errors.New("Invalid channel ID"))
+		return
+	}
+
+	// Unsubscribe from channel
+	err = h.subRepo.UnsubscribeFromChannel(r.Context(), userID, channelID)
+	if err != nil {
+		if err == domain.ErrNotFound {
+			// Already unsubscribed or channel doesn't exist
+			WriteJSON(w, http.StatusOK, map[string]interface{}{
+				"message":    "Not subscribed to channel",
+				"channel_id": channelID,
+			})
+			return
+		}
+		WriteError(w, http.StatusInternalServerError, errors.New("Failed to unsubscribe from channel"))
+		return
+	}
+
+	// Return success response
+	WriteJSON(w, http.StatusOK, map[string]interface{}{
+		"message":    "Successfully unsubscribed from channel",
+		"channel_id": channelID,
+	})
+}
+
+// GetChannelSubscribers handles GET /api/v1/channels/{id}/subscribers
+func (h *ChannelHandlers) GetChannelSubscribers(w http.ResponseWriter, r *http.Request) {
+	// Get channel ID from URL
+	channelIDStr := chi.URLParam(r, "id")
+	channelID, err := uuid.Parse(channelIDStr)
+	if err != nil {
+		WriteError(w, http.StatusBadRequest, errors.New("Invalid channel ID"))
+		return
+	}
+
+	// Parse pagination
+	page := 1
+	pageSize := 20
+	if pageStr := r.URL.Query().Get("page"); pageStr != "" {
+		if p, err := strconv.Atoi(pageStr); err == nil && p > 0 {
+			page = p
+		}
+	}
+	if pageSizeStr := r.URL.Query().Get("pageSize"); pageSizeStr != "" {
+		if ps, err := strconv.Atoi(pageSizeStr); err == nil && ps > 0 && ps <= 100 {
+			pageSize = ps
+		}
+	}
+
+	offset := (page - 1) * pageSize
+
+	// Get subscribers
+	response, err := h.subRepo.ListChannelSubscribers(r.Context(), channelID, pageSize, offset)
+	if err != nil {
+		WriteError(w, http.StatusInternalServerError, errors.New("Failed to get channel subscribers"))
+		return
+	}
+
+	// Format response
+	WriteJSON(w, http.StatusOK, map[string]interface{}{
+		"total":    response.Total,
+		"page":     page,
+		"pageSize": pageSize,
+		"data":     response.Data,
+	})
 }

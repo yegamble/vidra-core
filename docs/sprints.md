@@ -23,19 +23,33 @@
     - ✅ Added `/api/v1/users/me/channels` endpoint
     - ✅ Updated Video domain model to include channel_id
     - ✅ Build successful - all compilation errors resolved
+    - ✅ Migrations applied successfully
+    - ✅ API fully tested and working:
+        - List channels (with pagination)
+        - Get channel by ID or handle
+        - Create channel
+        - Update channel
+        - Delete channel
+        - Get user's channels
 
-## Sprint B: Subscriptions → Channels 🚀 **READY TO START**
+## Sprint B: Subscriptions → Channels ⚠️ **IN PROGRESS**
 
 - Scope: Move subscriptions from users to channels (with compatibility).
 - Deliverables:
-    - DB: subscriptions to reference channel_id; migrate old rows; dual‑write/dual‑read if needed.
-    - HTTP: Switch GET /api/v1/videos/subscriptions to channel‑based; add POST/DELETE /api/v1/channels/{id}/subscribe.
-    - Compatibility: Keep user subscribe endpoints as thin shims for 1 version with deprecation notice.
-    - Notifications: Update to use channel_id origin.
-    - OpenAPI: new channel subscription endpoints; update docs + examples.
-    - Tests: feed correctness; backward compatibility.
+    - DB: subscriptions to reference channel_id; migrate old rows; dual‑write/dual‑read if needed. ✅
+    - HTTP: Switch GET /api/v1/videos/subscriptions to channel‑based; add POST/DELETE /api/v1/channels/{id}/subscribe. ✅
+    - Compatibility: Keep user subscribe endpoints as thin shims for 1 version with deprecation notice. ✅
+    - Notifications: Update to use channel_id origin. ✅
+    - OpenAPI: new channel subscription endpoints; update docs + examples. ❌
+    - Tests: feed correctness; backward compatibility. ⚠️
 - Success: Feed shows channel videos; old user subscribe endpoints still function via shims.
-- **Status**: User-based subscriptions exist at `/api/v1/users/{id}/subscribe`. Cannot migrate to channels until Sprint A completes.
+- **Status**: **IN PROGRESS**
+    - ✅ Migration 026: Complete channel-based subscription table
+    - ✅ Repository implementation with all channel subscription methods
+    - ✅ HTTP handlers and routes at `/api/v1/channels/{id}/subscribe`
+    - ✅ Backward compatibility via deprecated user methods
+    - ⚠️ Runtime errors (500) in subscription endpoints need debugging
+    - ❌ Integration tests failing due to runtime issues
 
 ## Sprint C: Comments (Threads) + Moderation Basics ❌ **NOT STARTED**
 
