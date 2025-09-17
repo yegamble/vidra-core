@@ -15,6 +15,8 @@ var (
 	ErrConflict           = errors.New("resource already exists")
 	ErrTooManyRequests    = errors.New("too many requests")
 	ErrServiceUnavailable = errors.New("service unavailable")
+	ErrInvalidInput       = errors.New("invalid input")
+	ErrDuplicateEntry     = errors.New("duplicate entry")
 )
 
 var (

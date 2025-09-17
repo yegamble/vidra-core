@@ -51,6 +51,7 @@ type Video struct {
 	Status        ProcessingStatus  `json:"status" db:"status"`
 	UploadDate    time.Time         `json:"upload_date" db:"upload_date"`
 	UserID        string            `json:"user_id" db:"user_id"`
+	ChannelID     uuid.UUID         `json:"channel_id" db:"channel_id"`
 	OriginalCID   string            `json:"original_cid" db:"original_cid"`
 	ProcessedCIDs map[string]string `json:"processed_cids" db:"processed_cids"`
 	ThumbnailCID  string            `json:"thumbnail_cid" db:"thumbnail_cid"`
@@ -60,6 +61,7 @@ type Video struct {
 	Tags          []string          `json:"tags" db:"tags"`
 	CategoryID    *uuid.UUID        `json:"category_id" db:"category_id"`
 	Category      *VideoCategory    `json:"category,omitempty" db:"-"`
+	Channel       *Channel          `json:"channel,omitempty" db:"-"`
 	Language      string            `json:"language" db:"language"`
 	FileSize      int64             `json:"file_size" db:"file_size"`
 	MimeType      string            `json:"mime_type" db:"mime_type"`
@@ -159,6 +161,14 @@ const (
 	UploadStatusExpired   UploadStatus = "expired"
 	UploadStatusFailed    UploadStatus = "failed"
 )
+
+// VideoListResponse represents a paginated list of videos
+type VideoListResponse struct {
+	Total    int     `json:"total"`
+	Page     int     `json:"page"`
+	PageSize int     `json:"pageSize"`
+	Data     []Video `json:"data"`
+}
 
 // Encoding queue models
 type EncodingJob struct {

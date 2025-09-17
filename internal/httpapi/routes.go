@@ -41,6 +41,7 @@ func RegisterRoutes(r chi.Router, cfg *config.Config) {
 	subRepo := repository.NewSubscriptionRepository(db)
 	viewsRepo := repository.NewViewsRepository(db)
 	notificationRepo := repository.NewNotificationRepository(db)
+	channelRepo := repository.NewChannelRepository(db)
 
 	// Create storage directory structure
 	storageRoot := cfg.StorageDir
@@ -66,6 +67,7 @@ func RegisterRoutes(r chi.Router, cfg *config.Config) {
 		messageService := usecase.NewMessageService(messageRepo, userRepo)
 		viewsService := usecase.NewViewsService(viewsRepo, videoRepo)
 		notificationService := usecase.NewNotificationService(notificationRepo, subRepo, userRepo)
+		channelService := usecase.NewChannelService(channelRepo, userRepo)
 
 		// Start a lightweight encoding scheduler in the background to ensure
 		// pending jobs are processed even if the standalone encoder is not running.
@@ -205,6 +207,10 @@ func RegisterRoutes(r chi.Router, cfg *config.Config) {
 					r.With(middleware.Auth(cfg.JWTSecret)).Post("/{id}/subscribe", SubscribeToUserHandler(subRepo, userRepo))
 					r.With(middleware.Auth(cfg.JWTSecret)).Delete("/{id}/subscribe", UnsubscribeFromUserHandler(subRepo))
 					r.With(middleware.Auth(cfg.JWTSecret)).Get("/me/subscriptions", ListMySubscriptionsHandler(subRepo))
+
+					// User's channels
+					channelHandlers := NewChannelHandlers(channelService)
+					r.With(middleware.Auth(cfg.JWTSecret)).Get("/me/channels", channelHandlers.GetMyChannels)
 				})
 
 				r.Route("/messages", func(r chi.Router) {
@@ -226,6 +232,26 @@ func RegisterRoutes(r chi.Router, cfg *config.Config) {
 
 				// Fingerprinting for view deduplication
 				r.Post("/views/fingerprint", viewsHandler.GenerateFingerprint)
+
+				// Channels
+				r.Route("/channels", func(r chi.Router) {
+					channelHandlers := NewChannelHandlers(channelService)
+
+					// Public routes
+					r.Get("/", channelHandlers.ListChannels)
+					r.Get("/{id}", channelHandlers.GetChannel)
+					r.Get("/{id}/videos", channelHandlers.GetChannelVideos)
+
+					// Authenticated routes
+					r.Group(func(r chi.Router) {
+						r.Use(middleware.Auth(cfg.JWTSecret))
+						r.Post("/", channelHandlers.CreateChannel)
+						r.Put("/{id}", channelHandlers.UpdateChannel)
+						r.Delete("/{id}", channelHandlers.DeleteChannel)
+						r.Post("/{id}/subscribe", channelHandlers.SubscribeToChannel)
+						r.Delete("/{id}/subscribe", channelHandlers.UnsubscribeFromChannel)
+					})
+				})
 
 				// Notifications
 				r.Route("/notifications", func(r chi.Router) {
