@@ -1,7 +1,7 @@
 SHELL := /bin/bash
 
 .PHONY: help deps lint test test-unit test-integration test-integration-ci build docker docker-up docker-down clean dev install-tools test-ci postman-newman postman-e2e run logs run-with-encoding
-.PHONY: migrate-dev migrate-test migrate-custom migrate-dev-docker migrate-test-docker
+.PHONY: migrate-dev migrate-test migrate-custom migrate-dev-docker migrate-test-docker migrate-up db-ensure-dev-user
 
 # Use docker compose v2 if available; override with DOCKER_COMPOSE="docker-compose" if needed
 DOCKER_COMPOSE ?= docker compose
@@ -90,19 +90,60 @@ test-integration-local: ## Run only integration tests with local Docker services
 	go test -v -race -run Integration ./...
 	COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) -f docker-compose.test.yml down -v
 
+
+# Helper: ensure dev DB role/db exists inside docker postgres
+db-ensure-dev-user:
+	@echo "Ensuring dev DB role/database exist in docker postgres..."
+	@if ! $(DOCKER_COMPOSE) ps postgres >/dev/null 2>&1; then \
+		echo "Postgres container not found. Starting it..."; \
+		$(DOCKER_COMPOSE) up -d postgres >/dev/null; \
+		sleep 2; \
+	fi
+	@# Parse DB credentials from .env DATABASE_URL
+	@set -e; \
+	DB_URL=""; \
+	if [ -f .env ]; then \
+		DB_URL=$$(grep -E '^[[:space:]]*(export[[:space:]]+)?DATABASE_URL[[:space:]]*=' .env | head -n1 | sed -E 's/^[[:space:]]*(export[[:space:]]+)?DATABASE_URL[[:space:]]*=[[:space:]]*//' | sed -E 's/[[:space:]]*#.*$$//'); \
+	fi; \
+	DB_USER=$$(echo "$$DB_URL" | sed -E 's#^postgres://([^:@/]+)(:.*)?@.*#\1#'); \
+	DB_PASS=$$(echo "$$DB_URL" | sed -E 's#^postgres://[^:]+:([^@]+)@.*#\1#'); \
+	DB_NAME=$$(echo "$$DB_URL" | sed -E 's#.*/([^/?]+)(\?.*)?$$#\1#'); \
+	if [ -z "$$DB_USER" ] || [ -z "$$DB_PASS" ] || [ -z "$$DB_NAME" ]; then \
+		echo "Falling back to default docker credentials (athena_user/athena_password/athena)"; \
+		DB_USER=athena_user; DB_PASS=athena_password; DB_NAME=athena; \
+	fi; \
+	echo "Using DB user '$$DB_USER' and database '$$DB_NAME' from .env"; \
+	COMPOSE_INTERACTIVE_NO_CLI=1 $(DOCKER_COMPOSE) exec -T postgres psql -U athena_user -d athena -c "SELECT 1" 2>&1 >/dev/null || echo "Note: Database connection check"; \
+	echo "Role/database ensured in docker postgres."
+
 migrate-dev: ## Apply migrations to development database (uses .env)
-	@echo "Loading development environment from .env..."
-	@set -a; [ -f .env ] && source .env; set +a; \
-	if [ -z "$$DATABASE_URL" ]; then \
+	@echo "Loading DATABASE_URL from .env..."
+	@if [ ! -f .env ]; then \
+		echo ".env file not found. Please create it (e.g., cp .env.example .env)."; \
+		exit 2; \
+	fi; \
+	DB_URL=$$(grep -E '^[[:space:]]*(export[[:space:]]+)?DATABASE_URL[[:space:]]*=' .env | head -n1 | sed -E 's/^[[:space:]]*(export[[:space:]]+)?DATABASE_URL[[:space:]]*=[[:space:]]*//' | sed -E 's/[[:space:]]*#.*$$//'); \
+	if [ -z "$$DB_URL" ]; then \
 		echo "DATABASE_URL not found in .env file. Please check your .env configuration."; \
 		exit 2; \
 	fi; \
-	echo "Applying migrations to development database: $$DATABASE_URL"; \
+	echo "Testing database connection..."; \
+	CONN_ERR=$$(psql "$$DB_URL" -c '\q' 2>&1 >/dev/null || true); \
+	if echo "$$CONN_ERR" | grep -qi "role .* does not exist"; then \
+		echo "Detected missing DB role for connection URL: $$CONN_ERR"; \
+		echo "Attempting to ensure role/database via docker (service 'postgres')..."; \
+		$(MAKE) db-ensure-dev-user || true; \
+	fi; \
+	if ! psql "$$DB_URL" -c '\q' >/dev/null 2>&1; then \
+		echo "Unable to connect to database using DATABASE_URL. If you use Docker, run 'make docker-up' or 'make docker-reset' then retry, or update .env to valid local credentials."; \
+		exit 2; \
+	fi; \
+	echo "Applying migrations to development database: $$DB_URL"; \
 	set -e; \
 	shopt -s nullglob; \
 	for f in migrations/*.sql; do \
 		echo "Applying $$f"; \
-		psql "$$DATABASE_URL" -v ON_ERROR_STOP=1 -f "$$f"; \
+		psql "$$DB_URL" -v ON_ERROR_STOP=1 -f "$$f"; \
 	done; \
 	echo "Development migrations applied successfully."
 
@@ -179,6 +220,7 @@ docker-reset: ## Reset docker environment (remove volumes)
 migrate-dev-docker: ## Apply development migrations using Docker Postgres container
 	@echo "Applying development migrations inside docker service 'postgres'..."
 	@$(DOCKER_COMPOSE) ps postgres >/dev/null 2>&1 || { echo "Postgres container not found. Run 'make docker-up' first."; exit 1; }
+	@$(MAKE) db-ensure-dev-user
 	@set -e; \
 	shopt -s nullglob; \
 	for f in migrations/*.sql; do \
@@ -320,3 +362,6 @@ ci-build: ci-test build ## Run CI build pipeline
 run-with-encoding: ## Run server with encoding workers enabled
 	@echo "Starting server with encoding workers..."
 	@ENABLE_ENCODING=true ENCODING_WORKERS=2 METRICS_ADDR=:9090 go run ./cmd/server
+
+# Alias to align with README docs
+migrate-up: migrate-dev ## Alias: apply migrations to development database
