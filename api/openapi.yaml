@@ -2009,6 +2009,22 @@ paths:
             enum: [asc, desc]
             default: asc
           description: Sort direction
+        - in: query
+          name: page
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+          description: 1-based page index (preferred)
+        - in: query
+          name: pageSize
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 50
+          description: Page size (preferred)
         - name: limit
           in: query
           required: false
@@ -2016,16 +2032,14 @@ paths:
             type: integer
             minimum: 1
             maximum: 100
-            default: 50
-          description: Maximum number of categories to return
+          description: Deprecated; use pageSize
         - name: offset
           in: query
           required: false
           schema:
             type: integer
             minimum: 0
-            default: 0
-          description: Number of categories to skip
+          description: Deprecated; use page
       responses:
         '200':
           description: List of categories
@@ -2973,12 +2987,28 @@ paths:
       operationId: getTrendingVideos
       security: []
       parameters:
+        - in: query
+          name: page
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+          description: 1-based page index (preferred)
+        - in: query
+          name: pageSize
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 50
+          description: Page size (preferred)
         - name: limit
           in: query
           schema:
             type: integer
-            default: 20
             maximum: 100
+          description: Deprecated; use pageSize
       responses:
         '200':
           description: Trending videos

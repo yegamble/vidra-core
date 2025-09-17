@@ -61,17 +61,35 @@ func (h *VideoCategoryHandler) ListCategories(w http.ResponseWriter, r *http.Req
 		opts.OrderDir = orderDir
 	}
 
-	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
-		if limit, err := strconv.Atoi(limitStr); err == nil {
-			opts.Limit = limit
-		}
-	}
+	// Preferred pagination: page/pageSize with fallback to limit/offset
+	pageStr := r.URL.Query().Get("page")
+	pageSizeStr := r.URL.Query().Get("pageSize")
+	limitStr := r.URL.Query().Get("limit")
+	offsetStr := r.URL.Query().Get("offset")
 
-	if offsetStr := r.URL.Query().Get("offset"); offsetStr != "" {
-		if offset, err := strconv.Atoi(offsetStr); err == nil {
-			opts.Offset = offset
+	page, _ := strconv.Atoi(pageStr)
+	pageSize, _ := strconv.Atoi(pageSizeStr)
+	limit, _ := strconv.Atoi(limitStr)
+	offset, _ := strconv.Atoi(offsetStr)
+
+	if pageSize <= 0 || pageSize > 100 {
+		if limit > 0 {
+			pageSize = limit
+		} else {
+			pageSize = 50
 		}
 	}
+	if page <= 0 {
+		if offset < 0 {
+			offset = 0
+		}
+		page = (offset / pageSize) + 1
+		if page <= 0 {
+			page = 1
+		}
+	}
+	opts.Limit = pageSize
+	opts.Offset = (page - 1) * pageSize
 
 	categories, err := h.categoryUseCase.ListCategories(ctx, opts)
 	if err != nil {

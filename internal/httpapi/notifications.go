@@ -36,26 +36,30 @@ func (h *NotificationHandlers) GetNotifications(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	// Parse query parameters
-	filter := domain.NotificationFilter{
-		UserID: userUUID,
-		Limit:  50, // Default limit
-		Offset: 0,
-	}
-
-	// Parse limit
-	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
-		if limit, err := strconv.Atoi(limitStr); err == nil && limit > 0 && limit <= 100 {
-			filter.Limit = limit
+	// Parse pagination (preferred page/pageSize; fallback to limit/offset)
+	filter := domain.NotificationFilter{UserID: userUUID}
+	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+	pageSize, _ := strconv.Atoi(r.URL.Query().Get("pageSize"))
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
+	if pageSize <= 0 || pageSize > 100 {
+		if limit > 0 && limit <= 100 {
+			pageSize = limit
+		} else {
+			pageSize = 50
 		}
 	}
-
-	// Parse offset
-	if offsetStr := r.URL.Query().Get("offset"); offsetStr != "" {
-		if offset, err := strconv.Atoi(offsetStr); err == nil && offset >= 0 {
-			filter.Offset = offset
+	if page <= 0 {
+		if offset < 0 {
+			offset = 0
+		}
+		page = (offset / pageSize) + 1
+		if page <= 0 {
+			page = 1
 		}
 	}
+	filter.Limit = pageSize
+	filter.Offset = (page - 1) * pageSize
 
 	// Parse unread filter
 	if unreadStr := r.URL.Query().Get("unread"); unreadStr != "" {
