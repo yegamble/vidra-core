@@ -50,7 +50,10 @@
     - ✅ Backward compatibility via deprecated user methods
     - ✅ Fixed all runtime errors - subscription endpoints working
     - ✅ Fixed linting issues (removed unused functions)
-    - ⚠️ Integration tests need to be written
+    - ✅ Integration tests written and compiling successfully:
+        - channel_subscriptions_integration_test.go - Tests channel-based subscriptions
+        - subscriptions_backward_compat_test.go - Tests backward compatibility with user-based endpoints
+        - channel_notifications_integration_test.go - Tests notifications with channel_id
 
 ## Sprint C: Comments (Threads) + Moderation Basics ❌ **NOT STARTED**
 
