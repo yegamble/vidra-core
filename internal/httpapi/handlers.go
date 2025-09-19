@@ -63,9 +63,6 @@ func (s *Server) SetVerificationService(service *usecase.EmailVerificationServic
 	s.verificationService = service
 }
 
-// getOAuthRepo exposes the OAuth repo to local handlers
-func (s *Server) getOAuthRepo() usecase.OAuthRepository { return s.oauthRepo }
-
 // Login implements ServerInterface.Login
 func (s *Server) Login(w http.ResponseWriter, r *http.Request) {
 	var req generated.LoginRequest
@@ -423,11 +420,6 @@ func (s *Server) ReadinessCheck(w http.ResponseWriter, r *http.Request) {
 	WriteJSON(w, http.StatusOK, response)
 }
 
-// generateJWT creates a signed JWT for the given user ID and duration
-func (s *Server) generateJWT(userID string, duration time.Duration) string {
-	return s.generateJWTWithRole(userID, "", duration)
-}
-
 // generateJWTWithRole creates a signed JWT including optional role claim
 func (s *Server) generateJWTWithRole(userID string, role string, duration time.Duration) string {
 	now := time.Now()
@@ -445,23 +437,6 @@ func (s *Server) generateJWTWithRole(userID string, role string, duration time.D
 		return ""
 	}
 	return sgn
-}
-
-// signHS256JWT signs a compact JWT with HS256
-func signHS256JWT(secret, userID string, duration time.Duration) string {
-	now := time.Now()
-	claims := jwt.MapClaims{
-		"sub": userID,
-		"iat": now.Unix(),
-		"exp": now.Add(duration).Unix(),
-	}
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	s, err := token.SignedString([]byte(secret))
-	if err != nil {
-		// In case of signing error, return empty string; caller handles error paths
-		return ""
-	}
-	return s
 }
 
 // nullStringToPtr converts sql.NullString to *string for JSON marshaling
