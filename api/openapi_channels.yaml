@@ -1,0 +1,828 @@
+# Channel Subscription Endpoints for OpenAPI
+# This should be inserted into the main openapi.yaml file
+
+  # ===== CHANNEL ENDPOINTS =====
+
+  /api/v1/channels:
+    get:
+      tags:
+        - Channels
+      summary: List channels
+      description: Returns a paginated list of channels with optional filtering
+      operationId: listChannels
+      security: []
+      parameters:
+        - in: query
+          name: search
+          required: false
+          schema:
+            type: string
+          description: Search channels by name or handle
+        - in: query
+          name: accountId
+          required: false
+          schema:
+            type: string
+            format: uuid
+          description: Filter channels by account/user ID
+        - in: query
+          name: isLocal
+          required: false
+          schema:
+            type: boolean
+          description: Filter for local channels only
+        - in: query
+          name: sort
+          required: false
+          schema:
+            type: string
+            enum: [name, created_at, followers_count, videos_count]
+            default: created_at
+          description: Sort field
+        - in: query
+          name: order
+          required: false
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: desc
+          description: Sort order
+        - in: query
+          name: page
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+          description: Page number (1-based)
+        - in: query
+          name: pageSize
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+          description: Items per page
+      responses:
+        '200':
+          description: List of channels
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChannelListResponse'
+              examples:
+                success:
+                  value:
+                    total: 42
+                    page: 1
+                    pageSize: 20
+                    data:
+                      - id: "123e4567-e89b-12d3-a456-426614174000"
+                        accountId: "987fcdeb-51a2-43d1-b89c-426614174111"
+                        handle: "awesome-channel"
+                        displayName: "Awesome Channel"
+                        description: "My awesome video channel"
+                        isLocal: true
+                        followersCount: 1250
+                        videosCount: 45
+                        createdAt: "2024-01-01T00:00:00Z"
+                        updatedAt: "2024-01-15T10:30:00Z"
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+    post:
+      tags:
+        - Channels
+      summary: Create a channel
+      description: Creates a new channel for the authenticated user
+      operationId: createChannel
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChannelCreateRequest'
+            examples:
+              create:
+                value:
+                  handle: "my-new-channel"
+                  displayName: "My New Channel"
+                  description: "This is my brand new channel for tech videos"
+                  support: "Support me at patreon.com/mynewchannel"
+      responses:
+        '201':
+          description: Channel created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Channel'
+              examples:
+                created:
+                  value:
+                    id: "123e4567-e89b-12d3-a456-426614174000"
+                    accountId: "987fcdeb-51a2-43d1-b89c-426614174111"
+                    handle: "my-new-channel"
+                    displayName: "My New Channel"
+                    description: "This is my brand new channel for tech videos"
+                    support: "Support me at patreon.com/mynewchannel"
+                    isLocal: true
+                    followersCount: 0
+                    videosCount: 0
+                    createdAt: "2024-01-20T14:30:00Z"
+                    updatedAt: "2024-01-20T14:30:00Z"
+        '400':
+          description: Invalid request data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Channel handle already exists
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/channels/{id}:
+    get:
+      tags:
+        - Channels
+      summary: Get channel by ID or handle
+      description: Returns a single channel by its UUID or handle
+      operationId: getChannel
+      security: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+          description: Channel UUID or handle
+          examples:
+            uuid:
+              value: "123e4567-e89b-12d3-a456-426614174000"
+            handle:
+              value: "awesome-channel"
+      responses:
+        '200':
+          description: Channel found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Channel'
+        '404':
+          description: Channel not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+    put:
+      tags:
+        - Channels
+      summary: Update channel
+      description: Updates channel details (only channel owner can update)
+      operationId: updateChannel
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Channel ID
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChannelUpdateRequest'
+            examples:
+              update:
+                value:
+                  displayName: "Updated Channel Name"
+                  description: "Updated description for my channel"
+                  support: "New support information"
+      responses:
+        '200':
+          description: Channel updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Channel'
+        '400':
+          description: Invalid request data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden - not channel owner
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Channel not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+    delete:
+      tags:
+        - Channels
+      summary: Delete channel
+      description: Deletes a channel (only channel owner can delete)
+      operationId: deleteChannel
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Channel ID
+      responses:
+        '204':
+          description: Channel deleted successfully
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden - not channel owner
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Channel not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/channels/{id}/videos:
+    get:
+      tags:
+        - Channels
+        - Videos
+      summary: Get channel videos
+      description: Returns paginated list of videos from a channel
+      operationId: getChannelVideos
+      security: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+          description: Channel UUID or handle
+        - in: query
+          name: page
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - in: query
+          name: pageSize
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+      responses:
+        '200':
+          description: List of channel videos
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VideoListResponse'
+        '404':
+          description: Channel not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/channels/{id}/subscribe:
+    post:
+      tags:
+        - Channels
+        - Subscriptions
+      summary: Subscribe to channel
+      description: Subscribe the authenticated user to a channel
+      operationId: subscribeToChannel
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Channel ID
+      responses:
+        '200':
+          description: Subscribed successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "Successfully subscribed to channel"
+                  channel_id:
+                    type: string
+                    format: uuid
+              examples:
+                success:
+                  value:
+                    message: "Successfully subscribed to channel"
+                    channel_id: "123e4567-e89b-12d3-a456-426614174000"
+        '400':
+          description: Cannot subscribe to own channel
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                own_channel:
+                  value:
+                    error:
+                      code: "INVALID_REQUEST"
+                      message: "Cannot subscribe to your own channel"
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Channel not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+    delete:
+      tags:
+        - Channels
+        - Subscriptions
+      summary: Unsubscribe from channel
+      description: Unsubscribe the authenticated user from a channel
+      operationId: unsubscribeFromChannel
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Channel ID
+      responses:
+        '200':
+          description: Unsubscribed successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  channel_id:
+                    type: string
+                    format: uuid
+              examples:
+                success:
+                  value:
+                    message: "Successfully unsubscribed from channel"
+                    channel_id: "123e4567-e89b-12d3-a456-426614174000"
+                not_subscribed:
+                  value:
+                    message: "Not subscribed to channel"
+                    channel_id: "123e4567-e89b-12d3-a456-426614174000"
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/channels/{id}/subscribers:
+    get:
+      tags:
+        - Channels
+        - Subscriptions
+      summary: List channel subscribers
+      description: Returns paginated list of users subscribed to a channel
+      operationId: listChannelSubscribers
+      security: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Channel ID
+        - in: query
+          name: page
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - in: query
+          name: pageSize
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+      responses:
+        '200':
+          description: List of subscribers
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SubscriberListResponse'
+              examples:
+                success:
+                  value:
+                    total: 1250
+                    page: 1
+                    pageSize: 20
+                    data:
+                      - id: "sub-123"
+                        subscriber_id: "user-456"
+                        channel_id: "chan-789"
+                        created_at: "2024-01-15T10:00:00Z"
+                        subscriber:
+                          id: "user-456"
+                          username: "johndoe"
+                          display_name: "John Doe"
+                          email: "john@example.com"
+        '404':
+          description: Channel not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/users/me/channels:
+    get:
+      tags:
+        - Channels
+        - Users
+      summary: Get my channels
+      description: Returns all channels owned by the authenticated user
+      operationId: getMyChannels
+      responses:
+        '200':
+          description: List of user's channels
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  total:
+                    type: integer
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Channel'
+              examples:
+                success:
+                  value:
+                    total: 2
+                    data:
+                      - id: "123e4567-e89b-12d3-a456-426614174000"
+                        accountId: "987fcdeb-51a2-43d1-b89c-426614174111"
+                        handle: "main-channel"
+                        displayName: "Main Channel"
+                        description: "My main channel"
+                        isLocal: true
+                        followersCount: 500
+                        videosCount: 25
+                        createdAt: "2023-01-01T00:00:00Z"
+                        updatedAt: "2024-01-15T10:30:00Z"
+                      - id: "456e7890-e89b-12d3-a456-426614174222"
+                        accountId: "987fcdeb-51a2-43d1-b89c-426614174111"
+                        handle: "secondary-channel"
+                        displayName: "Secondary Channel"
+                        description: "My second channel"
+                        isLocal: true
+                        followersCount: 150
+                        videosCount: 10
+                        createdAt: "2023-06-01T00:00:00Z"
+                        updatedAt: "2024-01-10T15:45:00Z"
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+# ===== SCHEMAS FOR CHANNELS =====
+
+  schemas:
+    Channel:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Channel unique identifier
+        accountId:
+          type: string
+          format: uuid
+          description: ID of the user account that owns this channel
+        handle:
+          type: string
+          pattern: '^[a-zA-Z0-9][a-zA-Z0-9-_]*$'
+          minLength: 3
+          maxLength: 50
+          description: Unique channel handle/username
+        displayName:
+          type: string
+          minLength: 1
+          maxLength: 120
+          description: Channel display name
+        description:
+          type: string
+          maxLength: 1000
+          description: Channel description
+          nullable: true
+        support:
+          type: string
+          maxLength: 1000
+          description: Support/donation information
+          nullable: true
+        isLocal:
+          type: boolean
+          description: Whether this is a local channel (not federated)
+        actorId:
+          type: string
+          description: ActivityPub actor ID for federation
+          nullable: true
+        avatarUrl:
+          type: string
+          format: uri
+          description: Channel avatar URL
+          nullable: true
+        bannerUrl:
+          type: string
+          format: uri
+          description: Channel banner URL
+          nullable: true
+        followersCount:
+          type: integer
+          minimum: 0
+          description: Number of subscribers/followers
+        followingCount:
+          type: integer
+          minimum: 0
+          description: Number of channels this channel follows (federation)
+        videosCount:
+          type: integer
+          minimum: 0
+          description: Number of videos in this channel
+        createdAt:
+          type: string
+          format: date-time
+          description: Channel creation timestamp
+        updatedAt:
+          type: string
+          format: date-time
+          description: Last update timestamp
+        account:
+          $ref: '#/components/schemas/User'
+          description: Owner account information (optional in responses)
+      required:
+        - id
+        - accountId
+        - handle
+        - displayName
+        - isLocal
+        - followersCount
+        - videosCount
+        - createdAt
+        - updatedAt
+
+    ChannelCreateRequest:
+      type: object
+      properties:
+        handle:
+          type: string
+          pattern: '^[a-zA-Z0-9][a-zA-Z0-9-_]*$'
+          minLength: 3
+          maxLength: 50
+          description: Unique channel handle
+        displayName:
+          type: string
+          minLength: 1
+          maxLength: 120
+          description: Channel display name
+        description:
+          type: string
+          maxLength: 1000
+          description: Channel description
+        support:
+          type: string
+          maxLength: 1000
+          description: Support/donation information
+      required:
+        - handle
+        - displayName
+
+    ChannelUpdateRequest:
+      type: object
+      properties:
+        displayName:
+          type: string
+          minLength: 1
+          maxLength: 120
+          description: Updated display name
+        description:
+          type: string
+          maxLength: 1000
+          description: Updated description
+        support:
+          type: string
+          maxLength: 1000
+          description: Updated support information
+
+    ChannelListResponse:
+      type: object
+      properties:
+        total:
+          type: integer
+          description: Total number of channels
+        page:
+          type: integer
+          description: Current page number
+        pageSize:
+          type: integer
+          description: Items per page
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Channel'
+      required:
+        - total
+        - data
+
+    Subscription:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Subscription ID
+        subscriber_id:
+          type: string
+          format: uuid
+          description: ID of the subscribing user
+        channel_id:
+          type: string
+          format: uuid
+          description: ID of the subscribed channel
+        created_at:
+          type: string
+          format: date-time
+          description: Subscription timestamp
+        channel:
+          $ref: '#/components/schemas/Channel'
+          description: Channel details (when listing user subscriptions)
+        subscriber:
+          $ref: '#/components/schemas/User'
+          description: Subscriber details (when listing channel subscribers)
+      required:
+        - id
+        - subscriber_id
+        - channel_id
+        - created_at
+
+    SubscriberListResponse:
+      type: object
+      properties:
+        total:
+          type: integer
+          description: Total number of subscribers
+        page:
+          type: integer
+          description: Current page number
+        pageSize:
+          type: integer
+          description: Items per page
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Subscription'
+      required:
+        - total
+        - data
+
+    VideoListResponse:
+      type: object
+      properties:
+        total:
+          type: integer
+          description: Total number of videos
+        page:
+          type: integer
+          description: Current page number
+        pageSize:
+          type: integer
+          description: Items per page
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Video'
+      required:
+        - total
+        - data
+
+# ===== DEPRECATED USER-BASED SUBSCRIPTION ENDPOINTS =====
+# These should be marked as deprecated in the main openapi.yaml
+
+  /api/v1/users/{id}/subscribe:
+    post:
+      deprecated: true
+      x-deprecation-message: "Use /api/v1/channels/{id}/subscribe instead. This endpoint subscribes to the user's default channel."
+      tags:
+        - Subscriptions
+        - Users
+      summary: Subscribe to user's default channel (DEPRECATED)
+      description: |
+        **DEPRECATED**: This endpoint is maintained for backward compatibility.
+        It subscribes to the user's default channel. New integrations should use
+        the channel subscription endpoints at /api/v1/channels/{id}/subscribe.
+      operationId: subscribeToUser
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: User ID (will subscribe to their default channel)
+      responses:
+        '204':
+          description: Subscribed successfully
+        '401':
+          description: Unauthorized
+        '404':
+          description: User not found or has no default channel
+        '500':
+          description: Server error
+
+    delete:
+      deprecated: true
+      x-deprecation-message: "Use /api/v1/channels/{id}/subscribe instead"
+      tags:
+        - Subscriptions
+        - Users
+      summary: Unsubscribe from user's default channel (DEPRECATED)
+      description: |
+        **DEPRECATED**: Use channel unsubscribe endpoint instead.
+        This unsubscribes from the user's default channel.
+      operationId: unsubscribeFromUser
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Unsubscribed successfully
+        '401':
+          description: Unauthorized
+        '500':
+          description: Server error

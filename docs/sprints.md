@@ -40,8 +40,8 @@
     - HTTP: Switch GET /api/v1/videos/subscriptions to channel‑based; add POST/DELETE /api/v1/channels/{id}/subscribe. ✅
     - Compatibility: Keep user subscribe endpoints as thin shims for 1 version with deprecation notice. ✅
     - Notifications: Update to use channel_id origin. ✅
-    - OpenAPI: new channel subscription endpoints; update docs + examples. ❌
-    - Tests: feed correctness; backward compatibility. ⚠️
+    - OpenAPI: new channel subscription endpoints; update docs + examples. ✅
+    - Tests: feed correctness; backward compatibility. ✅
 - Success: Feed shows channel videos; old user subscribe endpoints still function via shims.
 - **Status**: **COMPLETED**
     - ✅ Migration 026: Complete channel-based subscription table
@@ -54,6 +54,13 @@
         - channel_subscriptions_integration_test.go - Tests channel-based subscriptions
         - subscriptions_backward_compat_test.go - Tests backward compatibility with user-based endpoints
         - channel_notifications_integration_test.go - Tests notifications with channel_id
+    - ✅ OpenAPI documentation completed:
+        - Created comprehensive OpenAPI spec in api/openapi_channels.yaml
+        - Documented all channel endpoints (/api/v1/channels/*)
+        - Documented subscription endpoints (/api/v1/channels/{id}/subscribe)
+        - Added request/response schemas for Channel, Subscription, etc.
+        - Included examples for all endpoints
+        - Marked user-based subscription endpoints as deprecated
 
 ## Sprint C: Comments (Threads) + Moderation Basics ❌ **NOT STARTED**
 
