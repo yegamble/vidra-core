@@ -23,9 +23,7 @@ CREATE TABLE subscriptions (
     subscriber_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     channel_id UUID NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
-    UNIQUE(subscriber_id, channel_id),
-    -- Prevent self-subscription
-    CHECK (subscriber_id != (SELECT account_id FROM channels WHERE id = channel_id))
+    UNIQUE(subscriber_id, channel_id)
 );
 
 -- Step 6: Create indexes for performance
@@ -33,7 +31,24 @@ CREATE INDEX idx_subscriptions_subscriber ON subscriptions(subscriber_id);
 CREATE INDEX idx_subscriptions_channel ON subscriptions(channel_id);
 CREATE INDEX idx_subscriptions_created_at ON subscriptions(created_at DESC);
 
--- Step 7: Create trigger functions to maintain channels.subscriber_count
+-- Step 7: Create function to prevent self-subscription
+CREATE OR REPLACE FUNCTION prevent_self_subscription()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF NEW.subscriber_id = (SELECT account_id FROM channels WHERE id = NEW.channel_id) THEN
+        RAISE EXCEPTION 'Cannot subscribe to your own channel';
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Step 8: Create trigger to enforce no self-subscription
+CREATE TRIGGER trg_prevent_self_subscription
+BEFORE INSERT ON subscriptions
+FOR EACH ROW
+EXECUTE FUNCTION prevent_self_subscription();
+
+-- Step 9: Create trigger functions to maintain channels.subscriber_count
 CREATE OR REPLACE FUNCTION increment_channel_subscriber_count()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -71,7 +86,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- Step 8: Create triggers
+-- Step 10: Create triggers
 CREATE TRIGGER trg_subscriptions_inc
 AFTER INSERT ON subscriptions
 FOR EACH ROW EXECUTE FUNCTION increment_channel_subscriber_count();
@@ -80,7 +95,7 @@ CREATE TRIGGER trg_subscriptions_dec
 AFTER DELETE ON subscriptions
 FOR EACH ROW EXECUTE FUNCTION decrement_channel_subscriber_count();
 
--- Step 9: Create function to get subscription feed
+-- Step 11: Create function to get subscription feed
 CREATE OR REPLACE FUNCTION get_subscription_feed(
     p_user_id UUID,
     p_limit INTEGER DEFAULT 20,
