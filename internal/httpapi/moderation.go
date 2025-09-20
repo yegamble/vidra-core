@@ -25,8 +25,8 @@ func NewModerationHandlers(repo *repository.ModerationRepository) *ModerationHan
 
 // CreateAbuseReport handles POST /api/v1/abuse-reports
 func (h *ModerationHandlers) CreateAbuseReport(w http.ResponseWriter, r *http.Request) {
-	userID := middleware.GetUserIDFromContext(r.Context())
-	if userID == "" {
+	userID, ok := middleware.GetUserIDFromContext(r.Context())
+	if !ok {
 		WriteError(w, http.StatusUnauthorized, domain.NewDomainError("UNAUTHORIZED", "Authentication required"))
 		return
 	}
@@ -39,7 +39,7 @@ func (h *ModerationHandlers) CreateAbuseReport(w http.ResponseWriter, r *http.Re
 
 	// Create the report
 	report := &domain.AbuseReport{
-		ReporterID: userID,
+		ReporterID: userID.String(),
 		Reason:     req.Reason,
 		Details:    sql.NullString{String: req.Details, Valid: req.Details != ""},
 		Status:     domain.AbuseReportStatusPending,
@@ -135,8 +135,8 @@ func (h *ModerationHandlers) UpdateAbuseReport(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	moderatorID := middleware.GetUserIDFromContext(r.Context())
-	if moderatorID == "" {
+	moderatorID, ok := middleware.GetUserIDFromContext(r.Context())
+	if !ok {
 		WriteError(w, http.StatusUnauthorized, domain.NewDomainError("UNAUTHORIZED", "Authentication required"))
 		return
 	}
