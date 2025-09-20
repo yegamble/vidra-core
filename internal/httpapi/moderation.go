@@ -147,7 +147,7 @@ func (h *ModerationHandlers) UpdateAbuseReport(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	if err := h.repo.UpdateAbuseReport(r.Context(), reportID, moderatorID, req.Status, req.ModeratorNotes); err != nil {
+	if err := h.repo.UpdateAbuseReport(r.Context(), reportID, moderatorID.String(), req.Status, req.ModeratorNotes); err != nil {
 		if domainErr, ok := err.(*domain.DomainError); ok && domainErr.Code == "NOT_FOUND" {
 			WriteError(w, http.StatusNotFound, err)
 		} else {
@@ -187,8 +187,8 @@ func (h *ModerationHandlers) DeleteAbuseReport(w http.ResponseWriter, r *http.Re
 
 // CreateBlocklistEntry handles POST /api/v1/admin/blocklist (admin only)
 func (h *ModerationHandlers) CreateBlocklistEntry(w http.ResponseWriter, r *http.Request) {
-	blockedBy := middleware.GetUserIDFromContext(r.Context())
-	if blockedBy == "" {
+	blockedBy, ok := middleware.GetUserIDFromContext(r.Context())
+	if !ok {
 		WriteError(w, http.StatusUnauthorized, domain.NewDomainError("UNAUTHORIZED", "Authentication required"))
 		return
 	}
@@ -203,7 +203,7 @@ func (h *ModerationHandlers) CreateBlocklistEntry(w http.ResponseWriter, r *http
 		BlockType:    req.BlockType,
 		BlockedValue: req.BlockedValue,
 		Reason:       sql.NullString{String: req.Reason, Valid: req.Reason != ""},
-		BlockedBy:    blockedBy,
+		BlockedBy:    blockedBy.String(),
 		IsActive:     true,
 	}
 

@@ -9,7 +9,6 @@ import (
 	"testing"
 
 	"athena/internal/domain"
-	"athena/internal/middleware"
 	"athena/internal/repository"
 	"athena/internal/testutil"
 	"github.com/go-chi/chi/v5"
@@ -21,7 +20,6 @@ func TestModerationHandlers(t *testing.T) {
 	// Setup test database
 	db := testutil.SetupTestDBWithMigration(t)
 	moderationRepo := repository.NewModerationRepository(db)
-	userRepo := repository.NewUserRepository(db)
 
 	// Create test users
 	adminUser := testutil.CreateTestUser(t, db, "admin@test.com", string(domain.RoleAdmin))
@@ -41,7 +39,7 @@ func TestModerationHandlers(t *testing.T) {
 
 		body, _ := json.Marshal(req)
 		r := httptest.NewRequest("POST", "/api/v1/abuse-reports", bytes.NewReader(body))
-		r = r.WithContext(middleware.WithUserID(r.Context(), regularUser.ID))
+		r = r.WithContext(withUserID(r.Context(), regularUser.ID))
 		w := httptest.NewRecorder()
 
 		handlers.CreateAbuseReport(w, r)
@@ -72,7 +70,7 @@ func TestModerationHandlers(t *testing.T) {
 		require.NoError(t, err)
 
 		r := httptest.NewRequest("GET", "/api/v1/admin/abuse-reports", nil)
-		r = r.WithContext(middleware.WithUserID(r.Context(), adminUser.ID))
+		r = r.WithContext(withUserID(r.Context(), adminUser.ID))
 		w := httptest.NewRecorder()
 
 		handlers.ListAbuseReports(w, r)
@@ -108,7 +106,7 @@ func TestModerationHandlers(t *testing.T) {
 
 		body, _ := json.Marshal(updateReq)
 		r := httptest.NewRequest("PUT", "/api/v1/admin/abuse-reports/"+report.ID, bytes.NewReader(body))
-		r = r.WithContext(middleware.WithUserID(r.Context(), adminUser.ID))
+		r = r.WithContext(withUserID(r.Context(), adminUser.ID))
 		r = r.WithContext(context.WithValue(r.Context(), chi.RouteCtxKey, chi.NewRouteContext()))
 		rctx := chi.RouteContext(r.Context())
 		rctx.URLParams.Add("id", report.ID)
@@ -135,7 +133,7 @@ func TestModerationHandlers(t *testing.T) {
 
 		body, _ := json.Marshal(req)
 		r := httptest.NewRequest("POST", "/api/v1/admin/blocklist", bytes.NewReader(body))
-		r = r.WithContext(middleware.WithUserID(r.Context(), adminUser.ID))
+		r = r.WithContext(withUserID(r.Context(), adminUser.ID))
 		w := httptest.NewRecorder()
 
 		handlers.CreateBlocklistEntry(w, r)
@@ -215,7 +213,7 @@ func TestInstanceHandlers(t *testing.T) {
 
 		body, _ := json.Marshal(req)
 		r := httptest.NewRequest("PUT", "/api/v1/admin/instance/config/instance_name", bytes.NewReader(body))
-		r = r.WithContext(middleware.WithUserID(r.Context(), adminUser.ID))
+		r = r.WithContext(withUserID(r.Context(), adminUser.ID))
 		r = r.WithContext(context.WithValue(r.Context(), chi.RouteCtxKey, chi.NewRouteContext()))
 		rctx := chi.RouteContext(r.Context())
 		rctx.URLParams.Add("key", "instance_name")

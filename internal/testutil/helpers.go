@@ -197,7 +197,7 @@ func CreateTestVideo(t *testing.T, db *sqlx.DB, userID, title string) *domain.Vi
 		UserID:      userID,
 		Title:       title,
 		Description: "Test video description",
-		Privacy:     domain.VideoPrivacyPublic,
+		Privacy:     domain.PrivacyPublic,
 		Duration:    120,
 		Views:       0,
 	}

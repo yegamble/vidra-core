@@ -8,18 +8,19 @@ import (
 
 	"athena/internal/domain"
 	"athena/internal/repository"
+	"athena/internal/usecase"
 	"github.com/go-chi/chi/v5"
 )
 
 // InstanceHandlers handles instance-related HTTP requests
 type InstanceHandlers struct {
 	moderationRepo *repository.ModerationRepository
-	userRepo       *repository.UserRepository
-	videoRepo      *repository.VideoRepository
+	userRepo       usecase.UserRepository
+	videoRepo      usecase.VideoRepository
 }
 
 // NewInstanceHandlers creates a new instance of InstanceHandlers
-func NewInstanceHandlers(moderationRepo *repository.ModerationRepository, userRepo *repository.UserRepository, videoRepo *repository.VideoRepository) *InstanceHandlers {
+func NewInstanceHandlers(moderationRepo *repository.ModerationRepository, userRepo usecase.UserRepository, videoRepo usecase.VideoRepository) *InstanceHandlers {
 	return &InstanceHandlers{
 		moderationRepo: moderationRepo,
 		userRepo:       userRepo,
@@ -187,7 +188,7 @@ func (h *InstanceHandlers) OEmbed(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get video details
-	video, err := h.videoRepo.GetVideoByID(r.Context(), videoID)
+	video, err := h.videoRepo.GetByID(r.Context(), videoID)
 	if err != nil {
 		if domainErr, ok := err.(*domain.DomainError); ok && domainErr.Code == "NOT_FOUND" {
 			WriteError(w, http.StatusNotFound, domain.NewDomainError("NOT_FOUND", "Video not found"))
@@ -198,7 +199,7 @@ func (h *InstanceHandlers) OEmbed(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get uploader info
-	uploader, err := h.userRepo.GetUserByID(r.Context(), video.UserID)
+	uploader, err := h.userRepo.GetByID(r.Context(), video.UserID)
 	if err != nil {
 		uploader = &domain.User{
 			Username:    "Unknown",

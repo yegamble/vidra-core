@@ -358,7 +358,7 @@ func RegisterRoutes(r chi.Router, cfg *config.Config) {
 		// Admin moderation endpoints
 		r.Route("/admin", func(r chi.Router) {
 			r.Use(middleware.Auth(cfg.JWTSecret))
-			r.Use(middleware.RequireRole("admin", "moderator"))
+			r.Use(middleware.RequireRole("admin")) // TODO: Add moderator role support
 
 			// Abuse reports management
 			r.Route("/abuse-reports", func(r chi.Router) {
