@@ -163,7 +163,7 @@
 - Success: ✅ Clients can add/list/edit/delete captions; video GET responses include caption tracks
 - **Status**: Fully implemented with migration `030_create_captions_table.sql`
 
-## Sprint F: OAuth2 (Auth Code + Scopes) ✅ **PARTIALLY COMPLETE**
+## Sprint F: OAuth2 (Auth Code + Scopes) ✅ **COMPLETE**
 
 - Scope: Round out OAuth2 toward client parity.
 - Deliverables:
@@ -174,12 +174,14 @@
     - Tests: happy paths + failure modes; scope gating.
 - Success: Third‑party clients authenticate via auth code; scopes enforced.
 - **Status**:
-    - ✅ Basic OAuth2 password grant implemented at `/oauth/token`
+    - ✅ OAuth2 password grant implemented at `/oauth/token`
     - ✅ OAuth client management at `/api/v1/admin/oauth/clients`
-    - ❌ Authorization Code flow NOT implemented
-    - ❌ PKCE NOT implemented
-    - ❌ Token revocation/introspection NOT implemented
-    - ❌ Scopes NOT implemented
+    - ✅ Authorization Code flow with PKCE fully implemented at `/oauth/authorize`
+    - ✅ Token revocation endpoint at `/oauth/revoke`
+    - ✅ Token introspection endpoint at `/oauth/introspect`
+    - ✅ Comprehensive scope system with middleware for enforcement
+    - ✅ Standardized OAuth2 error responses with WWW-Authenticate headers
+    - ✅ Integration tests for all OAuth2 flows
 
 ## Sprint G: Admin + Instance Info + oEmbed ❌ **NOT STARTED**
 

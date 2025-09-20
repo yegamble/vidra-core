@@ -145,8 +145,11 @@ func RegisterRoutes(r chi.Router, cfg *config.Config) {
 	r.Post("/auth/refresh", server.RefreshToken)
 	r.With(middleware.Auth(cfg.JWTSecret)).Post("/auth/logout", server.Logout)
 
-	// OAuth2 token endpoint
+	// OAuth2 endpoints
 	r.Post("/oauth/token", server.OAuthToken)
+	r.HandleFunc("/oauth/authorize", server.OAuthAuthorize)
+	r.Post("/oauth/revoke", server.OAuthRevoke)
+	r.Post("/oauth/introspect", server.OAuthIntrospect)
 
 	// Register health routes
 	r.Get("/health", server.HealthCheck)
