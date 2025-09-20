@@ -18,13 +18,16 @@ import (
 
 func TestModerationHandlers(t *testing.T) {
 	// Setup test database
-	db := testutil.SetupTestDBWithMigration(t)
-	moderationRepo := repository.NewModerationRepository(db)
+	testDB := testutil.SetupTestDB(t)
+	if testDB == nil {
+		return // Test was skipped
+	}
+	moderationRepo := repository.NewModerationRepository(testDB.DB)
 
 	// Create test users
-	adminUser := testutil.CreateTestUser(t, db, "admin@test.com", string(domain.RoleAdmin))
-	regularUser := testutil.CreateTestUser(t, db, "user@test.com", string(domain.RoleUser))
-	targetUser := testutil.CreateTestUser(t, db, "target@test.com", string(domain.RoleUser))
+	adminUser := testutil.CreateTestUser(t, testDB.DB, "admin@test.com", string(domain.RoleAdmin))
+	regularUser := testutil.CreateTestUser(t, testDB.DB, "user@test.com", string(domain.RoleUser))
+	targetUser := testutil.CreateTestUser(t, testDB.DB, "target@test.com", string(domain.RoleUser))
 
 	// Create handlers
 	handlers := NewModerationHandlers(moderationRepo)
@@ -176,10 +179,13 @@ func TestModerationHandlers(t *testing.T) {
 
 func TestInstanceHandlers(t *testing.T) {
 	// Setup test database
-	db := testutil.SetupTestDBWithMigration(t)
-	moderationRepo := repository.NewModerationRepository(db)
-	userRepo := repository.NewUserRepository(db)
-	videoRepo := repository.NewVideoRepository(db)
+	testDB := testutil.SetupTestDB(t)
+	if testDB == nil {
+		return // Test was skipped
+	}
+	moderationRepo := repository.NewModerationRepository(testDB.DB)
+	userRepo := repository.NewUserRepository(testDB.DB)
+	videoRepo := repository.NewVideoRepository(testDB.DB)
 
 	// Create handlers
 	handlers := NewInstanceHandlers(moderationRepo, userRepo, videoRepo)
@@ -203,7 +209,7 @@ func TestInstanceHandlers(t *testing.T) {
 	})
 
 	t.Run("UpdateInstanceConfig", func(t *testing.T) {
-		adminUser := testutil.CreateTestUser(t, db, "admin@test.com", string(domain.RoleAdmin))
+		adminUser := testutil.CreateTestUser(t, testDB.DB, "admin@test.com", string(domain.RoleAdmin))
 
 		configValue := json.RawMessage(`"Updated Instance Name"`)
 		req := domain.UpdateInstanceConfigRequest{
@@ -233,14 +239,17 @@ func TestInstanceHandlers(t *testing.T) {
 
 func TestOEmbed(t *testing.T) {
 	// Setup test database
-	db := testutil.SetupTestDBWithMigration(t)
-	moderationRepo := repository.NewModerationRepository(db)
-	userRepo := repository.NewUserRepository(db)
-	videoRepo := repository.NewVideoRepository(db)
+	testDB := testutil.SetupTestDB(t)
+	if testDB == nil {
+		return // Test was skipped
+	}
+	moderationRepo := repository.NewModerationRepository(testDB.DB)
+	userRepo := repository.NewUserRepository(testDB.DB)
+	videoRepo := repository.NewVideoRepository(testDB.DB)
 
 	// Create test data
-	user := testutil.CreateTestUser(t, db, "video@test.com", string(domain.RoleUser))
-	video := testutil.CreateTestVideo(t, db, user.ID, "Test Video for oEmbed")
+	user := testutil.CreateTestUser(t, testDB.DB, "video@test.com", string(domain.RoleUser))
+	video := testutil.CreateTestVideo(t, testDB.DB, user.ID, "Test Video for oEmbed")
 
 	// Create handlers
 	handlers := NewInstanceHandlers(moderationRepo, userRepo, videoRepo)
