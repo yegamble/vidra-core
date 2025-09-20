@@ -1,5 +1,13 @@
+# Version 1 configuration format
 run:
   tests: false
+linters-settings:
+  gocyclo:
+    min-complexity: 15
+  dupl:
+    threshold: 150
+  gosec:
+    severity: medium
 linters:
   enable:
     - bodyclose
