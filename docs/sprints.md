@@ -148,7 +148,8 @@
     - Storage: store/pin caption files.
     - HTTP: POST/GET/DELETE /api/v1/videos/{id}/captions, include in video GET.
     - OpenAPI: caption endpoints and schema.
-    - Tests: upload validation (lang, type), list/remove, GET payload updated.
+    - Make Subtitles Editable
+    - Tests: upload validation (lang, type), list/remove, GET payload updated, Edit testable.
 - Success: Clients can add/list captions; video responses include caption tracks.
 - **Status**: No captions table or implementation found.
 

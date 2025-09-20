@@ -45,6 +45,7 @@ func RegisterRoutes(r chi.Router, cfg *config.Config) {
 	commentRepo := repository.NewCommentRepository(db)
 	ratingRepo := repository.NewRatingRepository(db)
 	playlistRepo := repository.NewPlaylistRepository(db)
+	captionRepo := repository.NewCaptionRepository(db)
 
 	// Create storage directory structure
 	storageRoot := cfg.StorageDir
@@ -75,6 +76,7 @@ func RegisterRoutes(r chi.Router, cfg *config.Config) {
 	commentService := usecase.NewCommentService(commentRepo, videoRepo, userRepo, channelRepo)
 	ratingService := usecase.NewRatingService(ratingRepo, videoRepo)
 	playlistService := usecase.NewPlaylistService(playlistRepo, videoRepo)
+	captionService := usecase.NewCaptionService(captionRepo, videoRepo, cfg)
 
 	// Start a lightweight encoding scheduler in the background to ensure
 	// pending jobs are processed even if the standalone encoder is not running.
@@ -165,7 +167,7 @@ func RegisterRoutes(r chi.Router, cfg *config.Config) {
 			// Legacy one-shot upload endpoint for Postman collection compatibility
 			r.With(middleware.Auth(cfg.JWTSecret)).Post("/upload", UploadVideoFileHandler(videoRepo, cfg))
 			// Parameterized routes come after static routes
-			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{id}", GetVideoHandler(videoRepo))
+			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{id}", GetVideoHandler(videoRepo, captionService))
 			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{id}/stream", StreamVideoHandler(videoRepo))
 			// Subscription feed
 			r.With(middleware.Auth(cfg.JWTSecret)).Get("/subscriptions", ListSubscriptionVideosHandler(subRepo))
@@ -199,6 +201,18 @@ func RegisterRoutes(r chi.Router, cfg *config.Config) {
 			// Watch Later shortcut
 			playlistHandlers := NewPlaylistHandlers(playlistService)
 			r.With(middleware.Auth(cfg.JWTSecret)).Post("/{id}/watch-later", playlistHandlers.AddToWatchLater)
+
+			// Caption endpoints
+			captionHandlers := NewCaptionHandlers(captionService, videoRepo)
+			r.Route("/{id}/captions", func(r chi.Router) {
+				r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/", captionHandlers.GetCaptions)
+				r.With(middleware.Auth(cfg.JWTSecret)).Post("/", captionHandlers.CreateCaption)
+				r.Route("/{captionId}", func(r chi.Router) {
+					r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/content", captionHandlers.GetCaptionContent)
+					r.With(middleware.Auth(cfg.JWTSecret)).Put("/", captionHandlers.UpdateCaption)
+					r.With(middleware.Auth(cfg.JWTSecret)).Delete("/", captionHandlers.DeleteCaption)
+				})
+			})
 		})
 
 		// Static HLS handler with privacy gating and cache headers

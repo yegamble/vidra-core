@@ -39,7 +39,7 @@ func (m *mockVideoRepoPrivacy) UpdateProcessingInfo(context.Context, string, dom
 func TestGetVideo_PrivacyGate(t *testing.T) {
 	ownerID := "owner-1"
 	mv := &mockVideoRepoPrivacy{v: &domain.Video{ID: "v1", UserID: ownerID, Privacy: domain.PrivacyPrivate}}
-	h := GetVideoHandler(mv)
+	h := GetVideoHandler(mv, nil)
 
 	// Non-owner should get 403
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/videos/v1", nil)

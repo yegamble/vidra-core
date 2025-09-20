@@ -77,3 +77,16 @@ func (p Paths) PreviewPath(videoID string) string {
 func (p Paths) WebVideoFilePath(videoID, ext string) string {
 	return filepath.Join(p.WebVideosDir(), videoID+ext)
 }
+
+// CaptionsRootDir returns the root directory for caption files.
+func (p Paths) CaptionsRootDir() string { return filepath.Join(p.Root, "captions") }
+
+// VideoCaptionsDir returns the directory for a given video's caption files.
+func (p Paths) VideoCaptionsDir(videoID string) string {
+	return filepath.Join(p.CaptionsRootDir(), videoID)
+}
+
+// CaptionFilePath returns the path for a caption file.
+func (p Paths) CaptionFilePath(videoID, languageCode, format string) string {
+	return filepath.Join(p.VideoCaptionsDir(videoID), languageCode+"."+format)
+}

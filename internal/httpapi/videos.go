@@ -173,7 +173,7 @@ func SearchVideosHandler(repo usecase.VideoRepository) http.HandlerFunc {
 	}
 }
 
-func GetVideoHandler(repo usecase.VideoRepository) http.HandlerFunc {
+func GetVideoHandler(repo usecase.VideoRepository, captionService *usecase.CaptionService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		videoID, ok := requireUUIDParam(w, r, "id", "MISSING_VIDEO_ID", "INVALID_VIDEO_ID", "Video ID is required", "Invalid video ID format")
 		if !ok {
@@ -195,7 +195,28 @@ func GetVideoHandler(repo usecase.VideoRepository) http.HandlerFunc {
 			WriteError(w, http.StatusForbidden, domain.NewDomainError("FORBIDDEN", "Access denied"))
 			return
 		}
-		WriteJSON(w, http.StatusOK, video)
+
+		// Include captions if service is available
+		var captions []domain.Caption
+		if captionService != nil {
+			videoUUID, _ := uuid.Parse(videoID)
+			if captionList, err := captionService.GetCaptionsByVideoID(r.Context(), videoUUID); err == nil {
+				captions = captionList.Captions
+			}
+		}
+
+		// Create extended response that includes video data plus captions
+		type VideoWithCaptions struct {
+			*domain.Video
+			Captions []domain.Caption `json:"captions"`
+		}
+
+		response := VideoWithCaptions{
+			Video:    video,
+			Captions: captions,
+		}
+
+		WriteJSON(w, http.StatusOK, response)
 	}
 }
 
