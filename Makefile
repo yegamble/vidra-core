@@ -42,9 +42,9 @@ test: ## Run unit tests
 	go test -v -race -coverprofile=coverage.out ./...
 	go tool cover -html=coverage.out -o coverage.html
 
-test-unit: ## Run unit tests (exclude DB-backed repository pkg)
+test-unit: ## Run unit tests (exclude DB-backed repository pkg and integration tests)
 	@set -e; \
-	PKGS=$$(go list ./... | grep -v "/internal/repository$$"); \
+	PKGS=$$(go list ./... | grep -v "/internal/repository$$" | grep -v '^athena/tests/integration$$'); \
 	echo "Running unit tests in: $$PKGS"; \
 	go test -v -race -parallel=8 -short $$PKGS
 
@@ -56,7 +56,7 @@ generate-openapi: ## Regenerate OpenAPI types and server interfaces
 	@scripts/gen-openapi.sh
 
 test-integration: ## Run only integration tests (loads .env.test if present)
-	@bash -lc 'set -a; [ -f .env.test ] && source .env.test || true; set +a; go test -v -race -run Integration ./...'
+	@bash -lc 'set -a; [ -f .env.test ] && source .env.test || true; set +a; go test -v -race -tags=integration ./tests/integration'
 
 test-integration-ci: ## Run repository + httpapi Integration tests (CI services env)
 	@echo "Running integration tests with short flag to skip load/stress tests..."
@@ -87,7 +87,7 @@ test-integration-local: ## Run only integration tests with local Docker services
 	REDIS_URL="redis://localhost:6380/0" \
 	JWT_SECRET="test-jwt-secret" \
 	IPFS_API="http://localhost:15001" \
-	go test -v -race -run Integration ./...
+	go test -v -race -tags=integration ./tests/integration
 	COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) -f docker-compose.test.yml down -v
 
 
