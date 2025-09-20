@@ -142,7 +142,8 @@ func TestRatingsPlaylists_Integration(t *testing.T) {
 			assert.Equal(t, domain.RatingLike, rating)
 
 			// Verify stats
-			stats, err := ratingService.GetVideoRatingStats(context.Background(), uuid.MustParse(video1.ID), &uuid.MustParse(user1.ID))
+			userID := uuid.MustParse(user1.ID)
+			stats, err := ratingService.GetVideoRatingStats(context.Background(), uuid.MustParse(video1.ID), &userID)
 			require.NoError(t, err)
 			assert.Equal(t, 1, stats.LikesCount)
 			assert.Equal(t, 0, stats.DislikesCount)
@@ -244,7 +245,8 @@ func TestRatingsPlaylists_Integration(t *testing.T) {
 
 		t.Run("GetPlaylist_Public", func(t *testing.T) {
 			// User2 can access public playlist
-			playlist, err := playlistService.GetPlaylist(context.Background(), playlist1.ID, &uuid.MustParse(user2.ID))
+			user2ID := uuid.MustParse(user2.ID)
+			playlist, err := playlistService.GetPlaylist(context.Background(), playlist1.ID, &user2ID)
 			require.NoError(t, err)
 			assert.Equal(t, playlist1.ID, playlist.ID)
 		})
@@ -259,11 +261,13 @@ func TestRatingsPlaylists_Integration(t *testing.T) {
 			require.NoError(t, err)
 
 			// User2 cannot access private playlist
-			_, err = playlistService.GetPlaylist(context.Background(), playlist.ID, &uuid.MustParse(user2.ID))
+			user2ID := uuid.MustParse(user2.ID)
+			_, err = playlistService.GetPlaylist(context.Background(), playlist.ID, &user2ID)
 			assert.Equal(t, domain.ErrUnauthorized, err)
 
 			// Owner can access
-			_, err = playlistService.GetPlaylist(context.Background(), playlist.ID, &uuid.MustParse(user1.ID))
+			user1ID := uuid.MustParse(user1.ID)
+			_, err = playlistService.GetPlaylist(context.Background(), playlist.ID, &user1ID)
 			assert.NoError(t, err)
 		})
 
@@ -277,7 +281,8 @@ func TestRatingsPlaylists_Integration(t *testing.T) {
 			require.NoError(t, err)
 
 			// Verify update
-			playlist, err := playlistService.GetPlaylist(context.Background(), playlist1.ID, &uuid.MustParse(user1.ID))
+			user1ID := uuid.MustParse(user1.ID)
+			playlist, err := playlistService.GetPlaylist(context.Background(), playlist1.ID, &user1ID)
 			require.NoError(t, err)
 			assert.Equal(t, newName, playlist.Name)
 
@@ -295,7 +300,8 @@ func TestRatingsPlaylists_Integration(t *testing.T) {
 			require.NoError(t, err)
 
 			// Get playlist items
-			items, err := playlistService.GetPlaylistItems(context.Background(), playlist1.ID, &uuid.MustParse(user1.ID), 10, 0)
+			user1ID := uuid.MustParse(user1.ID)
+			items, err := playlistService.GetPlaylistItems(context.Background(), playlist1.ID, &user1ID, 10, 0)
 			require.NoError(t, err)
 			assert.Equal(t, 2, len(items))
 
@@ -312,14 +318,16 @@ func TestRatingsPlaylists_Integration(t *testing.T) {
 			}
 
 			// Should still have 2 items
-			items, err := playlistService.GetPlaylistItems(context.Background(), playlist1.ID, &uuid.MustParse(user1.ID), 10, 0)
+			user1ID := uuid.MustParse(user1.ID)
+			items, err := playlistService.GetPlaylistItems(context.Background(), playlist1.ID, &user1ID, 10, 0)
 			require.NoError(t, err)
 			assert.Equal(t, 2, len(items))
 		})
 
 		t.Run("RemoveVideoFromPlaylist", func(t *testing.T) {
 			// Get items first to get item ID
-			items, err := playlistService.GetPlaylistItems(context.Background(), playlist1.ID, &uuid.MustParse(user1.ID), 10, 0)
+			user1ID := uuid.MustParse(user1.ID)
+			items, err := playlistService.GetPlaylistItems(context.Background(), playlist1.ID, &user1ID, 10, 0)
 			require.NoError(t, err)
 			require.Greater(t, len(items), 0)
 
@@ -330,7 +338,7 @@ func TestRatingsPlaylists_Integration(t *testing.T) {
 			require.NoError(t, err)
 
 			// Verify removal
-			items, err = playlistService.GetPlaylistItems(context.Background(), playlist1.ID, &uuid.MustParse(user1.ID), 10, 0)
+			items, err = playlistService.GetPlaylistItems(context.Background(), playlist1.ID, &user1ID, 10, 0)
 			require.NoError(t, err)
 			assert.Equal(t, 1, len(items))
 		})
@@ -344,7 +352,8 @@ func TestRatingsPlaylists_Integration(t *testing.T) {
 			err = playlistService.AddVideoToPlaylist(context.Background(), uuid.MustParse(user1.ID), playlist1.ID, uuid.MustParse(video2.ID), &pos1)
 			require.NoError(t, err)
 
-			items, err := playlistService.GetPlaylistItems(context.Background(), playlist1.ID, &uuid.MustParse(user1.ID), 10, 0)
+			user1ID := uuid.MustParse(user1.ID)
+			items, err := playlistService.GetPlaylistItems(context.Background(), playlist1.ID, &user1ID, 10, 0)
 			require.NoError(t, err)
 
 			// Find the item to reorder
@@ -362,14 +371,15 @@ func TestRatingsPlaylists_Integration(t *testing.T) {
 			require.NoError(t, err)
 
 			// Verify new order
-			items, err = playlistService.GetPlaylistItems(context.Background(), playlist1.ID, &uuid.MustParse(user1.ID), 10, 0)
+			items, err = playlistService.GetPlaylistItems(context.Background(), playlist1.ID, &user1ID, 10, 0)
 			require.NoError(t, err)
 			assert.Equal(t, uuid.MustParse(video2.ID), items[0].VideoID)
 		})
 
 		t.Run("ListPlaylists", func(t *testing.T) {
+			user1ID := uuid.MustParse(user1.ID)
 			opts := domain.PlaylistListOptions{
-				UserID: &uuid.MustParse(user1.ID),
+				UserID: &user1ID,
 				Limit:  10,
 				Offset: 0,
 			}
@@ -392,7 +402,8 @@ func TestRatingsPlaylists_Integration(t *testing.T) {
 			require.NoError(t, err)
 
 			// Verify video was added
-			items, err := playlistService.GetPlaylistItems(context.Background(), watchLater.ID, &uuid.MustParse(user1.ID), 10, 0)
+			user1ID := uuid.MustParse(user1.ID)
+			items, err := playlistService.GetPlaylistItems(context.Background(), watchLater.ID, &user1ID, 10, 0)
 			require.NoError(t, err)
 			assert.GreaterOrEqual(t, len(items), 1)
 
@@ -422,7 +433,8 @@ func TestRatingsPlaylists_Integration(t *testing.T) {
 			require.NoError(t, err)
 
 			// Verify deletion
-			_, err = playlistService.GetPlaylist(context.Background(), playlist.ID, &uuid.MustParse(user1.ID))
+			user1ID := uuid.MustParse(user1.ID)
+			_, err = playlistService.GetPlaylist(context.Background(), playlist.ID, &user1ID)
 			assert.Equal(t, domain.ErrNotFound, err)
 
 			// Non-owner cannot delete
