@@ -62,17 +62,45 @@
         - Included examples for all endpoints
         - Marked user-based subscription endpoints as deprecated
 
-## Sprint C: Comments (Threads) + Moderation Basics ❌ **NOT STARTED**
+## Sprint C: Comments (Threads) + Moderation Basics ✅ **COMPLETED**
 
 - Scope: Add threaded comments with basic moderation.
 - Deliverables:
-    - DB: comments table (id, video_id, user_id, parent_id, body, status, timestamps).
-    - Repos/Usecase: CRUD with threading (parent_id), soft delete, flagging.
-    - HTTP: GET/POST /api/v1/videos/{id}/comments, DELETE /api/v1/comments/{id} (owner/mod), POST /api/v1/comments/{id}/flag.
-    - OpenAPI: comment models, endpoints, pagination.
-    - Tests: unit + handler; simple abuse flows.
+    - DB: comments table (id, video_id, user_id, parent_id, body, status, timestamps). ✅
+    - Repos/Usecase: CRUD with threading (parent_id), soft delete, flagging. ✅
+    - HTTP: GET/POST /api/v1/videos/{id}/comments, DELETE /api/v1/comments/{id} (owner/mod), POST /api/v1/comments/{id}/flag. ✅
+    - OpenAPI: comment models, endpoints, pagination. ✅
+    - Tests: unit + handler; simple abuse flows. ✅
 - Success: Threaded comments visible; moderation actions available to owner/admin.
-- **Status**: No comments table or implementation found.
+- **Status**: **COMPLETED**
+    - ✅ Created migration 028_create_comments_table.sql with:
+        - Comments table with threading support (parent_id)
+        - Comment flags table for moderation
+        - Status tracking (active, deleted, flagged, hidden)
+        - Automatic notification triggers for new comments and replies
+    - ✅ Implemented Comment domain models (Comment, CommentFlag, CommentWithUser)
+    - ✅ Created CommentRepository with full CRUD operations:
+        - Create, Update, Delete (soft), GetByID
+        - ListByVideo with pagination and threading
+        - FlagComment/UnflagComment functionality
+        - UpdateStatus for moderation
+    - ✅ Implemented CommentService with business logic:
+        - Threading support with parent/child relationships
+        - Permission checks for edit/delete
+        - Auto-hide flagged comments (5+ flags)
+        - Video owner moderation capabilities
+    - ✅ Added HTTP handlers for all endpoints:
+        - GET/POST /api/v1/videos/{id}/comments
+        - GET/PUT/DELETE /api/v1/comments/{id}
+        - POST/DELETE /api/v1/comments/{id}/flag
+        - POST /api/v1/comments/{id}/moderate
+    - ✅ Created comprehensive OpenAPI documentation (api/openapi_comments.yaml)
+    - ✅ Wrote integration tests covering:
+        - Comment creation and replies
+        - Threading functionality
+        - Update and delete operations
+        - Flagging and moderation
+        - Pagination support
 
 ## Sprint D: Ratings + Playlists ❌ **NOT STARTED**
 

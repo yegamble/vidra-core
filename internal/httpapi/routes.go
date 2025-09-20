@@ -42,6 +42,7 @@ func RegisterRoutes(r chi.Router, cfg *config.Config) {
 	viewsRepo := repository.NewViewsRepository(db)
 	notificationRepo := repository.NewNotificationRepository(db)
 	channelRepo := repository.NewChannelRepository(db)
+	commentRepo := repository.NewCommentRepository(db)
 
 	// Create storage directory structure
 	storageRoot := cfg.StorageDir
@@ -69,6 +70,7 @@ func RegisterRoutes(r chi.Router, cfg *config.Config) {
 	viewsService := usecase.NewViewsService(viewsRepo, videoRepo)
 	notificationService := usecase.NewNotificationService(notificationRepo, subRepo, userRepo)
 	channelService := usecase.NewChannelService(channelRepo, userRepo)
+	commentService := usecase.NewCommentService(commentRepo, videoRepo, userRepo, channelRepo)
 
 	// Start a lightweight encoding scheduler in the background to ensure
 	// pending jobs are processed even if the standalone encoder is not running.
@@ -176,6 +178,13 @@ func RegisterRoutes(r chi.Router, cfg *config.Config) {
 			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Post("/{id}/views", viewsHandler.TrackView)
 			r.With(middleware.Auth(cfg.JWTSecret)).Get("/{id}/analytics", viewsHandler.GetVideoAnalytics)
 			r.With(middleware.Auth(cfg.JWTSecret)).Get("/{id}/stats/daily", viewsHandler.GetDailyStats)
+
+			// Comment endpoints
+			commentHandlers := NewCommentHandlers(commentService)
+			r.Route("/{videoId}/comments", func(r chi.Router) {
+				r.Get("/", commentHandlers.GetComments)
+				r.With(middleware.Auth(cfg.JWTSecret)).Post("/", commentHandlers.CreateComment)
+			})
 		})
 
 		// Static HLS handler with privacy gating and cache headers
@@ -254,6 +263,17 @@ func RegisterRoutes(r chi.Router, cfg *config.Config) {
 				r.Post("/{id}/subscribe", channelHandlers.SubscribeToChannel)
 				r.Delete("/{id}/subscribe", channelHandlers.UnsubscribeFromChannel)
 			})
+		})
+
+		// Comments (standalone endpoints)
+		r.Route("/comments", func(r chi.Router) {
+			commentHandlers := NewCommentHandlers(commentService)
+			r.Get("/{commentId}", commentHandlers.GetComment)
+			r.With(middleware.Auth(cfg.JWTSecret)).Put("/{commentId}", commentHandlers.UpdateComment)
+			r.With(middleware.Auth(cfg.JWTSecret)).Delete("/{commentId}", commentHandlers.DeleteComment)
+			r.With(middleware.Auth(cfg.JWTSecret)).Post("/{commentId}/flag", commentHandlers.FlagComment)
+			r.With(middleware.Auth(cfg.JWTSecret)).Delete("/{commentId}/flag", commentHandlers.UnflagComment)
+			r.With(middleware.Auth(cfg.JWTSecret)).Post("/{commentId}/moderate", commentHandlers.ModerateComment)
 		})
 
 		// Notifications
