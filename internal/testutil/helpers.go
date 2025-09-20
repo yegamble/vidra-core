@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"athena/internal/domain"
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
 )
@@ -145,4 +146,81 @@ func NullString(s string) sql.NullString {
 		String: s,
 		Valid:  s != "",
 	}
+}
+
+// CreateTestUser creates a test user in the database
+func CreateTestUser(t *testing.T, db *sqlx.DB, email string, role string) *domain.User {
+	t.Helper()
+
+	// Import required packages at the top of the file
+	user := &domain.User{
+		ID:            fmt.Sprintf("user_%d", time.Now().UnixNano()),
+		Username:      fmt.Sprintf("user_%d", time.Now().UnixNano()),
+		Email:         email,
+		DisplayName:   "Test User",
+		Bio:           "Test bio",
+		Role:          domain.UserRole(role),
+		IsActive:      true,
+		EmailVerified: true,
+	}
+
+	query := `
+		INSERT INTO users (id, username, email, password_hash, display_name, bio, role, is_active, email_verified)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		RETURNING created_at, updated_at`
+
+	err := db.QueryRow(
+		query,
+		user.ID,
+		user.Username,
+		user.Email,
+		"$2a$10$abcdefghijklmnopqrstuvwxyz", // dummy hash
+		user.DisplayName,
+		user.Bio,
+		user.Role,
+		user.IsActive,
+		user.EmailVerified,
+	).Scan(&user.CreatedAt, &user.UpdatedAt)
+
+	if err != nil {
+		t.Fatalf("Failed to create test user: %v", err)
+	}
+	return user
+}
+
+// CreateTestVideo creates a test video in the database
+func CreateTestVideo(t *testing.T, db *sqlx.DB, userID, title string) *domain.Video {
+	t.Helper()
+
+	video := &domain.Video{
+		ID:          fmt.Sprintf("video_%d", time.Now().UnixNano()),
+		UserID:      userID,
+		Title:       title,
+		Description: "Test video description",
+		Privacy:     "public",
+		Duration:    120,
+		Views:       0,
+		Likes:       0,
+		Dislikes:    0,
+	}
+
+	query := `
+		INSERT INTO videos (id, user_id, title, description, privacy, duration)
+		VALUES ($1, $2, $3, $4, $5, $6)
+		RETURNING created_at, updated_at`
+
+	err := db.QueryRow(
+		query,
+		video.ID,
+		video.UserID,
+		video.Title,
+		video.Description,
+		video.Privacy,
+		video.Duration,
+	).Scan(&video.CreatedAt, &video.UpdatedAt)
+
+	if err != nil {
+		t.Fatalf("Failed to create test video: %v", err)
+	}
+	return video
 }

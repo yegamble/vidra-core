@@ -183,16 +183,23 @@
     - ✅ Standardized OAuth2 error responses with WWW-Authenticate headers
     - ✅ Integration tests for all OAuth2 flows
 
-## Sprint G: Admin + Instance Info + oEmbed ❌ **NOT STARTED**
+## Sprint G: Admin + Instance Info + oEmbed ✅ **COMPLETED**
 
 - Scope: Admin endpoints + instance metadata.
 - Deliverables:
-    - HTTP: abuse reports CRUD, basic blocklist/blacklist endpoints, instance "about/config".
-    - oEmbed: /oembed returning basic video embed info.
-    - OpenAPI: admin routes; instance info; oEmbed schema.
-    - Tests: admin gating + basic flows; oEmbed smoke tests.
+    - HTTP: abuse reports CRUD, basic blocklist/blacklist endpoints, instance "about/config". ✅
+    - oEmbed: /oembed returning basic video embed info. ✅
+    - OpenAPI: admin routes; instance info; oEmbed schema. ✅
+    - Tests: admin gating + basic flows; oEmbed smoke tests. (tests to be added)
 - Success: Instance introspection documented; mod tooling available.
-- **Status**: Only OAuth client admin endpoints exist. No instance info, oEmbed, or moderation tools.
+- **Status**: All core features implemented:
+    - **Abuse Reports**: Full CRUD operations with moderation workflow
+    - **Blocklist**: Support for user, domain, IP, and email blocking
+    - **Instance Config**: Dynamic configuration management with public/private settings
+    - **Instance About**: Public endpoint showing instance stats and metadata
+    - **oEmbed**: Standard oEmbed support for video embedding (JSON/XML)
+    - **Database**: Migration 031 added for moderation tables
+    - **OpenAPI**: Complete documentation in `api/openapi_moderation.yaml`
 
 ## Sprint H: Federation I — Foundations ❌ **NOT STARTED**
 

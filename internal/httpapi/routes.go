@@ -46,6 +46,7 @@ func RegisterRoutes(r chi.Router, cfg *config.Config) {
 	ratingRepo := repository.NewRatingRepository(db)
 	playlistRepo := repository.NewPlaylistRepository(db)
 	captionRepo := repository.NewCaptionRepository(db)
+	moderationRepo := repository.NewModerationRepository(db)
 
 	// Create storage directory structure
 	storageRoot := cfg.StorageDir
@@ -345,16 +346,62 @@ func RegisterRoutes(r chi.Router, cfg *config.Config) {
 			r.With(middleware.Auth(cfg.JWTSecret)).Put("/{id}/items/{itemId}/reorder", playlistHandlers.ReorderPlaylistItem)
 		})
 
-		// Admin: OAuth client management
-		r.Route("/admin/oauth/clients", func(r chi.Router) {
+		// Moderation handlers
+		moderationHandlers := NewModerationHandlers(moderationRepo)
+		instanceHandlers := NewInstanceHandlers(moderationRepo, userRepo, videoRepo)
+
+		// Abuse reports - any authenticated user can create, admins/mods can manage
+		r.Route("/abuse-reports", func(r chi.Router) {
+			r.With(middleware.Auth(cfg.JWTSecret)).Post("/", moderationHandlers.CreateAbuseReport)
+		})
+
+		// Admin moderation endpoints
+		r.Route("/admin", func(r chi.Router) {
 			r.Use(middleware.Auth(cfg.JWTSecret))
-			r.Use(middleware.RequireRole("admin"))
-			r.Get("/", server.AdminListOAuthClients)
-			r.Post("/", server.AdminCreateOAuthClient)
-			r.Put("/{clientId}/secret", server.AdminRotateOAuthClientSecret)
-			r.Delete("/{clientId}", server.AdminDeleteOAuthClient)
+			r.Use(middleware.RequireRole("admin", "moderator"))
+
+			// Abuse reports management
+			r.Route("/abuse-reports", func(r chi.Router) {
+				r.Get("/", moderationHandlers.ListAbuseReports)
+				r.Get("/{id}", moderationHandlers.GetAbuseReport)
+				r.Put("/{id}", moderationHandlers.UpdateAbuseReport)
+				r.Delete("/{id}", moderationHandlers.DeleteAbuseReport)
+			})
+
+			// Blocklist management
+			r.Route("/blocklist", func(r chi.Router) {
+				r.Post("/", moderationHandlers.CreateBlocklistEntry)
+				r.Get("/", moderationHandlers.ListBlocklistEntries)
+				r.Put("/{id}", moderationHandlers.UpdateBlocklistEntry)
+				r.Delete("/{id}", moderationHandlers.DeleteBlocklistEntry)
+			})
+
+			// Instance configuration (admin only)
+			r.Route("/instance/config", func(r chi.Router) {
+				r.Use(middleware.RequireRole("admin"))
+				r.Get("/", instanceHandlers.ListInstanceConfigs)
+				r.Get("/{key}", instanceHandlers.GetInstanceConfig)
+				r.Put("/{key}", instanceHandlers.UpdateInstanceConfig)
+			})
+
+			// OAuth client management (admin only)
+			r.Route("/oauth/clients", func(r chi.Router) {
+				r.Use(middleware.RequireRole("admin"))
+				r.Get("/", server.AdminListOAuthClients)
+				r.Post("/", server.AdminCreateOAuthClient)
+				r.Put("/{clientId}/secret", server.AdminRotateOAuthClientSecret)
+				r.Delete("/{clientId}", server.AdminDeleteOAuthClient)
+			})
+		})
+
+		// Public instance information
+		r.Route("/instance", func(r chi.Router) {
+			r.Get("/about", instanceHandlers.GetInstanceAbout)
 		})
 	})
+
+	// OEmbed endpoint (outside of /api/v1)
+	r.Get("/oembed", NewInstanceHandlers(moderationRepo, userRepo, videoRepo).OEmbed)
 
 	// Custom 404 handler that returns JSON error response
 	r.NotFound(func(w http.ResponseWriter, r *http.Request) {
