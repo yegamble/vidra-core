@@ -1,13 +1,11 @@
 package integration
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -227,7 +225,8 @@ func TestOAuth2TokenRevocation(t *testing.T) {
 	// Create OAuth client
 	clientID := "test-client"
 	clientSecret := "test-secret"
-	clientSecretHash, _ := bcrypt.GenerateFromPassword([]byte(clientSecret), bcrypt.DefaultCost)
+	clientSecretHashBytes, _ := bcrypt.GenerateFromPassword([]byte(clientSecret), bcrypt.DefaultCost)
+	clientSecretHash := string(clientSecretHashBytes)
 	err := oauthRepo.CreateClient(context.Background(), &usecase.OAuthClient{
 		ID:               uuid.NewString(),
 		ClientID:         clientID,
@@ -285,7 +284,8 @@ func TestOAuth2TokenIntrospection(t *testing.T) {
 	// Create OAuth client
 	clientID := "test-client"
 	clientSecret := "test-secret"
-	clientSecretHash, _ := bcrypt.GenerateFromPassword([]byte(clientSecret), bcrypt.DefaultCost)
+	clientSecretHashBytes, _ := bcrypt.GenerateFromPassword([]byte(clientSecret), bcrypt.DefaultCost)
+	clientSecretHash := string(clientSecretHashBytes)
 	err := oauthRepo.CreateClient(context.Background(), &usecase.OAuthClient{
 		ID:               uuid.NewString(),
 		ClientID:         clientID,
@@ -342,7 +342,7 @@ func TestOAuth2ScopeEnforcement(t *testing.T) {
 	db, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	r := setupTestRouter(db)
+	_ = setupTestRouter(db)
 
 	// Create test user with limited scope token
 	userID := uuid.NewString()
