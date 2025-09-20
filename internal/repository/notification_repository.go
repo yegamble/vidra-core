@@ -67,7 +67,7 @@ func (r *NotificationRepository) CreateBatch(ctx context.Context, notifications 
 	if err != nil {
 		return fmt.Errorf("preparing statement: %w", err)
 	}
-	defer stmt.Close()
+	defer func() { _ = stmt.Close() }()
 
 	for i := range notifications {
 		dataJSON, err := json.Marshal(notifications[i].Data)
@@ -180,7 +180,7 @@ func (r *NotificationRepository) ListByUser(ctx context.Context, filter domain.N
 	if err != nil {
 		return nil, fmt.Errorf("querying notifications: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var notifications []domain.Notification
 	for rows.Next() {
@@ -334,7 +334,7 @@ func (r *NotificationRepository) GetStats(ctx context.Context, userID uuid.UUID)
 	if err != nil {
 		return nil, fmt.Errorf("getting type counts: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	for rows.Next() {
 		var notifType domain.NotificationType

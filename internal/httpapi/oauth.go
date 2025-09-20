@@ -418,7 +418,7 @@ func (s *Server) showAuthorizationForm(w http.ResponseWriter, r *http.Request) {
 	)
 
 	w.Header().Set("Content-Type", "text/html")
-	w.Write([]byte(html))
+	_, _ = w.Write([]byte(html))
 }
 
 // handleAuthorizationCodeGrant exchanges auth code for tokens
@@ -659,7 +659,7 @@ func (s *Server) OAuthIntrospect(w http.ResponseWriter, r *http.Request) {
 
 func generateSecureToken(length int) string {
 	b := make([]byte, length)
-	rand.Read(b)
+	_, _ = rand.Read(b)
 	return base64.URLEncoding.WithPadding(base64.NoPadding).EncodeToString(b)
 }
 

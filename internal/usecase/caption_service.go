@@ -236,11 +236,11 @@ func (s *CaptionService) GetCaptionContent(ctx context.Context, captionID uuid.U
 // saveCaption saves caption content to a file
 func (s *CaptionService) saveCaption(reader io.Reader, filePath string) (int64, error) {
 	// Create or truncate file
-	file, err := os.Create(filePath)
+	file, err := os.Create(filePath) // #nosec G304: filePath is constructed within storage dir
 	if err != nil {
 		return 0, fmt.Errorf("failed to create caption file: %w", err)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	// Copy content and count bytes
 	written, err := io.Copy(file, reader)
@@ -267,11 +267,11 @@ func (s *CaptionService) saveCaption(reader io.Reader, filePath string) (int64, 
 
 // validateCaptionFormat performs basic validation of caption format
 func (s *CaptionService) validateCaptionFormat(filePath string) error {
-	file, err := os.Open(filePath)
+	file, err := os.Open(filePath) // #nosec G304: filePath is constructed within storage dir
 	if err != nil {
 		return fmt.Errorf("failed to open file for validation: %w", err)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	// Read first few bytes to check format
 	header := make([]byte, 100)

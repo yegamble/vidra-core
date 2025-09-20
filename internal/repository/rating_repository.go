@@ -162,7 +162,7 @@ func (r *ratingRepository) BatchGetVideoStats(ctx context.Context, videoIDs []uu
 	if err != nil {
 		return nil, fmt.Errorf("failed to get batch video stats: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	for rows.Next() {
 		var videoID uuid.UUID
@@ -193,7 +193,7 @@ func (r *ratingRepository) BatchGetVideoStats(ctx context.Context, videoIDs []uu
 			// Log error but don't fail the whole request
 			fmt.Printf("failed to get user ratings batch: %v\n", err)
 		} else {
-			defer userRows.Close()
+			defer func() { _ = userRows.Close() }()
 
 			for userRows.Next() {
 				var videoID uuid.UUID

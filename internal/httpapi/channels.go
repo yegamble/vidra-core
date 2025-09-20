@@ -59,7 +59,7 @@ func (h *ChannelHandlers) ListChannels(w http.ResponseWriter, r *http.Request) {
 
 	response, err := h.channelService.ListChannels(r.Context(), params)
 	if err != nil {
-		WriteError(w, http.StatusInternalServerError, errors.New("Failed to list channels"))
+		WriteError(w, http.StatusInternalServerError, errors.New("failed to list channels"))
 		return
 	}
 
@@ -78,7 +78,7 @@ func (h *ChannelHandlers) GetChannel(w http.ResponseWriter, r *http.Request) {
 				WriteError(w, http.StatusNotFound, domain.ErrNotFound)
 				return
 			}
-			WriteError(w, http.StatusInternalServerError, errors.New("Failed to get channel"))
+			WriteError(w, http.StatusInternalServerError, errors.New("failed to get channel"))
 			return
 		}
 		WriteJSON(w, http.StatusOK, channel)
@@ -92,7 +92,7 @@ func (h *ChannelHandlers) GetChannel(w http.ResponseWriter, r *http.Request) {
 			WriteError(w, http.StatusNotFound, domain.ErrNotFound)
 			return
 		}
-		WriteError(w, http.StatusInternalServerError, errors.New("Failed to get channel"))
+		WriteError(w, http.StatusInternalServerError, errors.New("failed to get channel"))
 		return
 	}
 
@@ -110,7 +110,7 @@ func (h *ChannelHandlers) CreateChannel(w http.ResponseWriter, r *http.Request) 
 
 	var req domain.ChannelCreateRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		WriteError(w, http.StatusBadRequest, errors.New("Invalid request body"))
+		WriteError(w, http.StatusBadRequest, errors.New("invalid request body"))
 		return
 	}
 
@@ -124,7 +124,7 @@ func (h *ChannelHandlers) CreateChannel(w http.ResponseWriter, r *http.Request) 
 			WriteError(w, http.StatusBadRequest, domain.ErrInvalidInput)
 			return
 		}
-		WriteError(w, http.StatusInternalServerError, errors.New("Failed to create channel"))
+		WriteError(w, http.StatusInternalServerError, errors.New("failed to create channel"))
 		return
 	}
 
@@ -144,13 +144,13 @@ func (h *ChannelHandlers) UpdateChannel(w http.ResponseWriter, r *http.Request) 
 	channelIDStr := chi.URLParam(r, "id")
 	channelID, err := uuid.Parse(channelIDStr)
 	if err != nil {
-		WriteError(w, http.StatusBadRequest, errors.New("Invalid channel ID"))
+		WriteError(w, http.StatusBadRequest, errors.New("invalid channel ID"))
 		return
 	}
 
 	var req domain.ChannelUpdateRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		WriteError(w, http.StatusBadRequest, errors.New("Invalid request body"))
+		WriteError(w, http.StatusBadRequest, errors.New("invalid request body"))
 		return
 	}
 
@@ -168,7 +168,7 @@ func (h *ChannelHandlers) UpdateChannel(w http.ResponseWriter, r *http.Request) 
 			WriteError(w, http.StatusBadRequest, domain.ErrInvalidInput)
 			return
 		}
-		WriteError(w, http.StatusInternalServerError, errors.New("Failed to update channel"))
+		WriteError(w, http.StatusInternalServerError, errors.New("failed to update channel"))
 		return
 	}
 
@@ -188,7 +188,7 @@ func (h *ChannelHandlers) DeleteChannel(w http.ResponseWriter, r *http.Request) 
 	channelIDStr := chi.URLParam(r, "id")
 	channelID, err := uuid.Parse(channelIDStr)
 	if err != nil {
-		WriteError(w, http.StatusBadRequest, errors.New("Invalid channel ID"))
+		WriteError(w, http.StatusBadRequest, errors.New("invalid channel ID"))
 		return
 	}
 
@@ -202,7 +202,7 @@ func (h *ChannelHandlers) DeleteChannel(w http.ResponseWriter, r *http.Request) 
 			WriteError(w, http.StatusNotFound, domain.ErrNotFound)
 			return
 		}
-		WriteError(w, http.StatusInternalServerError, errors.New("Failed to delete channel"))
+		WriteError(w, http.StatusInternalServerError, errors.New("failed to delete channel"))
 		return
 	}
 
@@ -227,7 +227,7 @@ func (h *ChannelHandlers) GetChannelVideos(w http.ResponseWriter, r *http.Reques
 				WriteError(w, http.StatusNotFound, domain.ErrNotFound)
 				return
 			}
-			WriteError(w, http.StatusInternalServerError, errors.New("Failed to get channel"))
+			WriteError(w, http.StatusInternalServerError, errors.New("failed to get channel"))
 			return
 		}
 		channelID = channel.ID
@@ -249,7 +249,7 @@ func (h *ChannelHandlers) GetChannelVideos(w http.ResponseWriter, r *http.Reques
 
 	response, err := h.channelService.GetChannelVideos(r.Context(), channelID, page, pageSize)
 	if err != nil {
-		WriteError(w, http.StatusInternalServerError, errors.New("Failed to get channel videos"))
+		WriteError(w, http.StatusInternalServerError, errors.New("failed to get channel videos"))
 		return
 	}
 
@@ -267,7 +267,7 @@ func (h *ChannelHandlers) GetMyChannels(w http.ResponseWriter, r *http.Request) 
 
 	channels, err := h.channelService.GetUserChannels(r.Context(), userID)
 	if err != nil {
-		WriteError(w, http.StatusInternalServerError, errors.New("Failed to get channels"))
+		WriteError(w, http.StatusInternalServerError, errors.New("failed to get channels"))
 		return
 	}
 
@@ -293,7 +293,7 @@ func (h *ChannelHandlers) SubscribeToChannel(w http.ResponseWriter, r *http.Requ
 	channelIDStr := chi.URLParam(r, "id")
 	channelID, err := uuid.Parse(channelIDStr)
 	if err != nil {
-		WriteError(w, http.StatusBadRequest, errors.New("Invalid channel ID"))
+		WriteError(w, http.StatusBadRequest, errors.New("invalid channel ID"))
 		return
 	}
 
@@ -301,14 +301,14 @@ func (h *ChannelHandlers) SubscribeToChannel(w http.ResponseWriter, r *http.Requ
 	err = h.subRepo.SubscribeToChannel(r.Context(), userID, channelID)
 	if err != nil {
 		if err == domain.ErrNotFound {
-			WriteError(w, http.StatusNotFound, errors.New("Channel not found"))
+			WriteError(w, http.StatusNotFound, errors.New("channel not found"))
 			return
 		}
 		if err.Error() == "cannot subscribe to your own channel" {
-			WriteError(w, http.StatusBadRequest, errors.New("Cannot subscribe to your own channel"))
+			WriteError(w, http.StatusBadRequest, errors.New("cannot subscribe to your own channel"))
 			return
 		}
-		WriteError(w, http.StatusInternalServerError, errors.New("Failed to subscribe to channel"))
+		WriteError(w, http.StatusInternalServerError, errors.New("failed to subscribe to channel"))
 		return
 	}
 
@@ -332,7 +332,7 @@ func (h *ChannelHandlers) UnsubscribeFromChannel(w http.ResponseWriter, r *http.
 	channelIDStr := chi.URLParam(r, "id")
 	channelID, err := uuid.Parse(channelIDStr)
 	if err != nil {
-		WriteError(w, http.StatusBadRequest, errors.New("Invalid channel ID"))
+		WriteError(w, http.StatusBadRequest, errors.New("invalid channel ID"))
 		return
 	}
 
@@ -347,7 +347,7 @@ func (h *ChannelHandlers) UnsubscribeFromChannel(w http.ResponseWriter, r *http.
 			})
 			return
 		}
-		WriteError(w, http.StatusInternalServerError, errors.New("Failed to unsubscribe from channel"))
+		WriteError(w, http.StatusInternalServerError, errors.New("failed to unsubscribe from channel"))
 		return
 	}
 
@@ -364,7 +364,7 @@ func (h *ChannelHandlers) GetChannelSubscribers(w http.ResponseWriter, r *http.R
 	channelIDStr := chi.URLParam(r, "id")
 	channelID, err := uuid.Parse(channelIDStr)
 	if err != nil {
-		WriteError(w, http.StatusBadRequest, errors.New("Invalid channel ID"))
+		WriteError(w, http.StatusBadRequest, errors.New("invalid channel ID"))
 		return
 	}
 
@@ -387,7 +387,7 @@ func (h *ChannelHandlers) GetChannelSubscribers(w http.ResponseWriter, r *http.R
 	// Get subscribers
 	response, err := h.subRepo.ListChannelSubscribers(r.Context(), channelID, pageSize, offset)
 	if err != nil {
-		WriteError(w, http.StatusInternalServerError, errors.New("Failed to get channel subscribers"))
+		WriteError(w, http.StatusInternalServerError, errors.New("failed to get channel subscribers"))
 		return
 	}
 

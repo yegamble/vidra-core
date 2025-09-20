@@ -81,7 +81,7 @@ func (h *CaptionHandlers) CreateCaption(w http.ResponseWriter, r *http.Request) 
 		WriteError(w, http.StatusBadRequest, fmt.Errorf("caption_file is required"))
 		return
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	// Auto-detect format from filename if not provided
 	if fileFormat == "" {
@@ -218,7 +218,7 @@ func (h *CaptionHandlers) GetCaptionContent(w http.ResponseWriter, r *http.Reque
 		WriteError(w, http.StatusInternalServerError, err)
 		return
 	}
-	defer content.Close()
+	defer func() { _ = content.Close() }()
 
 	// Set headers
 	w.Header().Set("Content-Type", contentType)

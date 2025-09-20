@@ -290,7 +290,7 @@ func (r *playlistRepository) GetItems(ctx context.Context, playlistID uuid.UUID,
 	if err != nil {
 		return nil, fmt.Errorf("failed to get playlist items: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	for rows.Next() {
 		item := &domain.PlaylistItem{}

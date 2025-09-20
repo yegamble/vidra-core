@@ -80,7 +80,7 @@ func (r *oauthRepository) ListClients(ctx context.Context) ([]*usecase.OAuthClie
 	if err != nil {
 		return nil, fmt.Errorf("list oauth clients: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var res []*usecase.OAuthClient
 	for rows.Next() {
 		var rw struct {

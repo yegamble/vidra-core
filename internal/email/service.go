@@ -61,13 +61,13 @@ func (s *smtpSender) SendTLS(addr string, auth smtp.Auth, from string, to []stri
 	if err != nil {
 		return fmt.Errorf("failed to connect to SMTP server: %w", err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	client, err := smtp.NewClient(conn, host)
 	if err != nil {
 		return fmt.Errorf("failed to create SMTP client: %w", err)
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	if err = client.Auth(auth); err != nil {
 		return fmt.Errorf("failed to authenticate: %w", err)
@@ -103,7 +103,7 @@ func (s *smtpSender) SendSTARTTLS(addr string, auth smtp.Auth, from string, to [
 	if err != nil {
 		return fmt.Errorf("failed to connect to SMTP server: %w", err)
 	}
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 
 	if err = c.Hello("localhost"); err != nil {
 		return fmt.Errorf("failed to send HELO: %w", err)

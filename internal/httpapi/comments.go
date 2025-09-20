@@ -28,14 +28,14 @@ func (h *CommentHandlers) CreateComment(w http.ResponseWriter, r *http.Request) 
 	videoIDStr := chi.URLParam(r, "videoId")
 	videoID, err := uuid.Parse(videoIDStr)
 	if err != nil {
-		WriteError(w, http.StatusBadRequest, fmt.Errorf("Invalid video ID"))
+		WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid video ID"))
 		return
 	}
 
 	// Get user ID from context
 	userID, ok := middleware.GetUserIDFromContext(r.Context())
 	if !ok {
-		WriteError(w, http.StatusUnauthorized, fmt.Errorf("Unauthorized"))
+		WriteError(w, http.StatusUnauthorized, fmt.Errorf("unauthorized"))
 		return
 	}
 
@@ -72,7 +72,7 @@ func (h *CommentHandlers) GetComments(w http.ResponseWriter, r *http.Request) {
 	videoIDStr := chi.URLParam(r, "videoId")
 	videoID, err := uuid.Parse(videoIDStr)
 	if err != nil {
-		WriteError(w, http.StatusBadRequest, fmt.Errorf("Invalid video ID"))
+		WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid video ID"))
 		return
 	}
 
@@ -165,7 +165,7 @@ func (h *CommentHandlers) UpdateComment(w http.ResponseWriter, r *http.Request) 
 	// Get user ID from context
 	userID, ok := middleware.GetUserIDFromContext(r.Context())
 	if !ok {
-		WriteError(w, http.StatusUnauthorized, fmt.Errorf("Unauthorized"))
+		WriteError(w, http.StatusUnauthorized, fmt.Errorf("unauthorized"))
 		return
 	}
 
@@ -210,7 +210,7 @@ func (h *CommentHandlers) DeleteComment(w http.ResponseWriter, r *http.Request) 
 	// Get user ID from context
 	userID, ok := middleware.GetUserIDFromContext(r.Context())
 	if !ok {
-		WriteError(w, http.StatusUnauthorized, fmt.Errorf("Unauthorized"))
+		WriteError(w, http.StatusUnauthorized, fmt.Errorf("unauthorized"))
 		return
 	}
 
@@ -246,7 +246,7 @@ func (h *CommentHandlers) FlagComment(w http.ResponseWriter, r *http.Request) {
 	// Get user ID from context
 	userID, ok := middleware.GetUserIDFromContext(r.Context())
 	if !ok {
-		WriteError(w, http.StatusUnauthorized, fmt.Errorf("Unauthorized"))
+		WriteError(w, http.StatusUnauthorized, fmt.Errorf("unauthorized"))
 		return
 	}
 
@@ -298,7 +298,7 @@ func (h *CommentHandlers) UnflagComment(w http.ResponseWriter, r *http.Request) 
 	// Get user ID from context
 	userID, ok := middleware.GetUserIDFromContext(r.Context())
 	if !ok {
-		WriteError(w, http.StatusUnauthorized, fmt.Errorf("Unauthorized"))
+		WriteError(w, http.StatusUnauthorized, fmt.Errorf("unauthorized"))
 		return
 	}
 

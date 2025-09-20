@@ -112,7 +112,7 @@ func (r *subscriptionRepository) ListUserSubscriptions(ctx context.Context, subs
 	if err != nil {
 		return nil, fmt.Errorf("failed to list subscriptions: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var subscriptions []domain.Subscription
 	for rows.Next() {
@@ -175,7 +175,7 @@ func (r *subscriptionRepository) ListChannelSubscribers(ctx context.Context, cha
 	if err != nil {
 		return nil, fmt.Errorf("failed to list subscribers: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var subscriptions []domain.Subscription
 	for rows.Next() {

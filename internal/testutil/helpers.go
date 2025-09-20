@@ -33,7 +33,7 @@ func SetupTestDBWithMigration(t *testing.T) *sqlx.DB {
 	// Clean up on test completion
 	t.Cleanup(func() {
 		CleanupTestDB(t, db)
-		db.Close()
+		_ = db.Close()
 	})
 
 	return db

@@ -20,7 +20,7 @@ func EncodeFileToWebP(srcPath, dstPath string) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	img, _, err := image.Decode(f)
 	if err != nil {
 		return err
@@ -29,7 +29,7 @@ func EncodeFileToWebP(srcPath, dstPath string) error {
 	if err != nil {
 		return err
 	}
-	defer out.Close()
+	defer func() { _ = out.Close() }()
 
 	// Use default options; callers can adjust quality later if needed.
 	enc := nativewebp.NewEncoder()
@@ -46,7 +46,7 @@ func EncodeFileToWebPWithQuality(srcPath, dstPath string, quality int) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	img, _, err := image.Decode(f)
 	if err != nil {
 		return err
@@ -55,7 +55,7 @@ func EncodeFileToWebPWithQuality(srcPath, dstPath string, quality int) error {
 	if err != nil {
 		return err
 	}
-	defer out.Close()
+	defer func() { _ = out.Close() }()
 
 	enc := nativewebp.NewEncoder()
 	// Best-effort: set quality via reflection if method exists
