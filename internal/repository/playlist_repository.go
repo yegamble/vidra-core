@@ -309,6 +309,10 @@ func (r *playlistRepository) GetItems(ctx context.Context, playlistID uuid.UUID,
 		items = append(items, item)
 	}
 
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating playlist items: %w", err)
+	}
+
 	return items, nil
 }
 
@@ -318,7 +322,7 @@ func (r *playlistRepository) ReorderItem(ctx context.Context, playlistID, itemID
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	// Get current position
 	var currentPosition int

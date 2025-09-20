@@ -177,6 +177,10 @@ func (r *ratingRepository) BatchGetVideoStats(ctx context.Context, videoIDs []uu
 		statsMap[videoID] = stats
 	}
 
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating video stats: %w", err)
+	}
+
 	// Get user ratings if userID is provided
 	if userID != nil && len(videoIDs) > 0 {
 		userRatingsQuery := `
@@ -202,6 +206,10 @@ func (r *ratingRepository) BatchGetVideoStats(ctx context.Context, videoIDs []uu
 				if stats, exists := statsMap[videoID]; exists {
 					stats.UserRating = rating
 				}
+			}
+
+			if err := userRows.Err(); err != nil {
+				fmt.Printf("error iterating user ratings: %v\n", err)
 			}
 		}
 	}
