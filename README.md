@@ -26,6 +26,9 @@ A high-performance PeerTube backend implementation in Go with decentralized stor
 - 🐳 **Docker Ready** - Full containerization with Docker Compose
 - ✅ **CI/CD** - GitHub Actions with automated testing
 - 🔄 **Zero-Downtime Deployments** - Health checks and graceful shutdown
+- 🛡️ **Moderation Tools** - Comprehensive abuse reporting and blocklist management
+- ⚙️ **Instance Configuration** - Dynamic instance settings with admin API
+- 🔗 **oEmbed Support** - Standard video embedding protocol for external sites
 
 ## Quick Start
 
@@ -419,6 +422,63 @@ Notes:
 - `GET /api/v1/users/me/subscriptions` - List channels you're subscribed to
 - `POST /api/v1/users/{id}/subscribe` - Subscribe to a user
 - `DELETE /api/v1/users/{id}/subscribe` - Unsubscribe from a user
+
+### Moderation & Admin
+
+**Abuse Reports (Require Authentication):**
+- `POST /api/v1/abuse-reports` - Create an abuse report for content or users
+  - Report types: video, comment, user, channel
+  - Statuses: pending, accepted, rejected, investigating
+
+**Admin-Only Endpoints:**
+- `GET /api/v1/admin/abuse-reports` - List all abuse reports
+  - Supports filtering by status, entity type, reporter, and date range
+  - Pagination with limit/offset
+- `GET /api/v1/admin/abuse-reports/{id}` - Get specific abuse report details
+- `PUT /api/v1/admin/abuse-reports/{id}` - Update abuse report status
+  - Add moderator notes, change status to investigating/accepted/rejected
+- `DELETE /api/v1/admin/abuse-reports/{id}` - Delete an abuse report
+
+**Blocklist Management (Admin Only):**
+- `POST /api/v1/admin/blocklist` - Add entry to blocklist
+  - Block types: email, domain, IP, user
+  - Supports expiration dates and reason tracking
+- `GET /api/v1/admin/blocklist` - List all blocklist entries
+  - Filter by type, active status, expiration
+- `PUT /api/v1/admin/blocklist/{id}` - Update blocklist entry
+  - Activate/deactivate, modify expiration
+- `DELETE /api/v1/admin/blocklist/{id}` - Remove blocklist entry
+
+### Instance Management
+
+**Public Instance Information:**
+- `GET /api/v1/instance/about` - Get instance information
+  - Returns: name, description, version, statistics
+  - Total users, videos, storage usage
+  - Contact information, rules, supported languages
+- `GET /oembed` - oEmbed endpoint for video embedding
+  - Supports JSON and XML formats
+  - Query params: url (required), format, maxwidth, maxheight
+  - Returns standardized oEmbed response for video players
+
+**Instance Configuration (Admin Only):**
+- `GET /api/v1/admin/instance/config` - List all instance configurations
+- `GET /api/v1/admin/instance/config/{key}` - Get specific configuration
+- `PUT /api/v1/admin/instance/config/{key}` - Update configuration value
+  - Supports public/private settings
+  - JSON values for complex configuration
+  - Examples: instance_name, upload_limits, signup_enabled
+- `DELETE /api/v1/admin/instance/config/{key}` - Remove configuration
+
+**Instance Statistics:**
+The instance about endpoint provides real-time statistics including:
+- Total registered users
+- Total videos (local and federated)
+- Total views across all videos
+- Storage usage metrics
+- Active moderation reports
+- Default NSFW policy
+- Signup status
 
 ## End-to-End Encrypted Messaging (E2EE)
 
