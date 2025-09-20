@@ -16,8 +16,11 @@ A high-performance PeerTube backend implementation in Go with decentralized stor
 - 🌐 **IPFS** - Decentralized storage support
 - 🎥 **Video Processing** - FFmpeg integration for transcoding
 - 📁 **Video Categories** - Comprehensive categorization system with 15 default categories
-- 🔔 **Real-time Notifications** - Automatic notifications for video uploads, messages, and user interactions
+- 🔔 **Real-time Notifications** - Automatic notifications for video uploads, messages, comments, and user interactions
 - 💬 **Messaging System** - Direct messaging between users with notification support
+- 💭 **Comments System** - Threaded comments with moderation, flagging, and automatic notifications
+- 👍 **Ratings System** - Video like/dislike functionality with real-time aggregated statistics
+- 📚 **Playlists** - User playlists with privacy controls, Watch Later support, and reordering
 - 🖼️ **Avatar WebP Optimization** - Optional WebP encoding for uploaded avatars (quality configurable), IPFS pinning of both original and WebP variants
 - 📊 **Observability** - Prometheus metrics, structured logging, distributed tracing
 - 🐳 **Docker Ready** - Full containerization with Docker Compose
@@ -172,10 +175,18 @@ go test ./...
 The API is defined using OpenAPI 3.0 specification in `api/openapi.yaml`.
 
 **Documentation Resources:**
-- 📄 **OpenAPI Specification**: [api/openapi.yaml](api/openapi.yaml)
+- 📄 **OpenAPI Specifications**:
+  - Main API: [api/openapi.yaml](api/openapi.yaml)
+  - Comments: [api/openapi_comments.yaml](api/openapi_comments.yaml)
+  - Ratings & Playlists: [api/openapi_ratings_playlists.yaml](api/openapi_ratings_playlists.yaml)
+  - Channels: [api/openapi_channels.yaml](api/openapi_channels.yaml)
+  - Notifications: [docs/openapi_notifications.yaml](docs/openapi_notifications.yaml)
 - 📚 **API Examples & Usage Guide**: [docs/API_EXAMPLES.md](docs/API_EXAMPLES.md)
 - 🎯 **Video Categories Guide**: Comprehensive examples for category management
 - 🔔 **Notifications API Guide**: [docs/NOTIFICATIONS_API.md](docs/NOTIFICATIONS_API.md) - Complete notification system documentation
+- 💭 **Comments API**: Threaded comments with moderation support
+- 👍 **Ratings API**: Like/dislike system with aggregated statistics
+- 📚 **Playlists API**: Full playlist management with privacy controls
 
 ```bash
 # Install documentation tools (one-time setup)

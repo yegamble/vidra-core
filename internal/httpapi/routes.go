@@ -43,6 +43,8 @@ func RegisterRoutes(r chi.Router, cfg *config.Config) {
 	notificationRepo := repository.NewNotificationRepository(db)
 	channelRepo := repository.NewChannelRepository(db)
 	commentRepo := repository.NewCommentRepository(db)
+	ratingRepo := repository.NewRatingRepository(db)
+	playlistRepo := repository.NewPlaylistRepository(db)
 
 	// Create storage directory structure
 	storageRoot := cfg.StorageDir
@@ -71,6 +73,8 @@ func RegisterRoutes(r chi.Router, cfg *config.Config) {
 	notificationService := usecase.NewNotificationService(notificationRepo, subRepo, userRepo)
 	channelService := usecase.NewChannelService(channelRepo, userRepo)
 	commentService := usecase.NewCommentService(commentRepo, videoRepo, userRepo, channelRepo)
+	ratingService := usecase.NewRatingService(ratingRepo, videoRepo)
+	playlistService := usecase.NewPlaylistService(playlistRepo, videoRepo)
 
 	// Start a lightweight encoding scheduler in the background to ensure
 	// pending jobs are processed even if the standalone encoder is not running.
@@ -185,6 +189,16 @@ func RegisterRoutes(r chi.Router, cfg *config.Config) {
 				r.Get("/", commentHandlers.GetComments)
 				r.With(middleware.Auth(cfg.JWTSecret)).Post("/", commentHandlers.CreateComment)
 			})
+
+			// Rating endpoints
+			ratingHandlers := NewRatingHandlers(ratingService)
+			r.With(middleware.Auth(cfg.JWTSecret)).Put("/{id}/rating", ratingHandlers.SetRating)
+			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{id}/rating", ratingHandlers.GetRating)
+			r.With(middleware.Auth(cfg.JWTSecret)).Delete("/{id}/rating", ratingHandlers.RemoveRating)
+
+			// Watch Later shortcut
+			playlistHandlers := NewPlaylistHandlers(playlistService)
+			r.With(middleware.Auth(cfg.JWTSecret)).Post("/{id}/watch-later", playlistHandlers.AddToWatchLater)
 		})
 
 		// Static HLS handler with privacy gating and cache headers
@@ -222,6 +236,14 @@ func RegisterRoutes(r chi.Router, cfg *config.Config) {
 			// User's channels
 			channelHandlers := NewChannelHandlers(channelService, subRepo)
 			r.With(middleware.Auth(cfg.JWTSecret)).Get("/me/channels", channelHandlers.GetMyChannels)
+
+			// User's ratings
+			ratingHandlers := NewRatingHandlers(ratingService)
+			r.With(middleware.Auth(cfg.JWTSecret)).Get("/me/ratings", ratingHandlers.GetUserRatings)
+
+			// User's Watch Later playlist
+			playlistHandlers := NewPlaylistHandlers(playlistService)
+			r.With(middleware.Auth(cfg.JWTSecret)).Get("/me/watch-later", playlistHandlers.GetWatchLater)
 		})
 
 		r.Route("/messages", func(r chi.Router) {
@@ -286,6 +308,24 @@ func RegisterRoutes(r chi.Router, cfg *config.Config) {
 			r.Put("/{id}/read", notificationHandlers.MarkAsRead)
 			r.Put("/read-all", notificationHandlers.MarkAllAsRead)
 			r.Delete("/{id}", notificationHandlers.DeleteNotification)
+		})
+
+		// Playlists
+		r.Route("/playlists", func(r chi.Router) {
+			playlistHandlers := NewPlaylistHandlers(playlistService)
+
+			// Public routes
+			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/", playlistHandlers.ListPlaylists)
+			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{id}", playlistHandlers.GetPlaylist)
+			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{id}/items", playlistHandlers.GetPlaylistItems)
+
+			// Authenticated routes
+			r.With(middleware.Auth(cfg.JWTSecret)).Post("/", playlistHandlers.CreatePlaylist)
+			r.With(middleware.Auth(cfg.JWTSecret)).Put("/{id}", playlistHandlers.UpdatePlaylist)
+			r.With(middleware.Auth(cfg.JWTSecret)).Delete("/{id}", playlistHandlers.DeletePlaylist)
+			r.With(middleware.Auth(cfg.JWTSecret)).Post("/{id}/items", playlistHandlers.AddVideoToPlaylist)
+			r.With(middleware.Auth(cfg.JWTSecret)).Delete("/{id}/items/{itemId}", playlistHandlers.RemoveVideoFromPlaylist)
+			r.With(middleware.Auth(cfg.JWTSecret)).Put("/{id}/items/{itemId}/reorder", playlistHandlers.ReorderPlaylistItem)
 		})
 
 		// Admin: OAuth client management

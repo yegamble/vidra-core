@@ -102,16 +102,43 @@
         - Flagging and moderation
         - Pagination support
 
-## Sprint D: Ratings + Playlists ❌ **NOT STARTED**
+## Sprint D: Ratings + Playlists ✅ **COMPLETED**
 
 - Scope: Like/Dislike and user playlists.
 - Deliverables:
-    - DB: video_ratings (user_id, video_id, value), playlists + playlist_items with privacy.
-    - HTTP: PUT /api/v1/videos/{id}/rating, GET /api/v1/videos/{id}/rating; GET/POST/PUT/DELETE /api/v1/playlists*.
-    - OpenAPI: endpoints; include rating summary in video GET; playlists CRUD.
-    - Tests: ratings (idempotent), playlist ordering, privacy.
+    - DB: video_ratings (user_id, video_id, value), playlists + playlist_items with privacy. ✅
+    - HTTP: PUT /api/v1/videos/{id}/rating, GET /api/v1/videos/{id}/rating; GET/POST/PUT/DELETE /api/v1/playlists*. ✅
+    - OpenAPI: endpoints; include rating summary in video GET; playlists CRUD. ✅
+    - Tests: ratings (idempotent), playlist ordering, privacy. ✅
 - Success: Ratings reflected in aggregates; playlists list/get/add/remove works.
-- **Status**: No ratings or playlists tables/implementation found.
+- **Status**: **COMPLETED**
+    - ✅ Created migration 029_create_ratings_and_playlists.sql with:
+        - video_ratings table with idempotent operations
+        - playlists and playlist_items tables with privacy controls
+        - Automatic rating count aggregation triggers
+        - Watch Later playlist support
+        - Position maintenance for playlist items
+    - ✅ Implemented domain models:
+        - VideoRating with RatingValue enum (-1/0/1)
+        - VideoRatingStats for aggregated statistics
+        - Playlist and PlaylistItem with full CRUD support
+    - ✅ Created repositories with complete functionality:
+        - RatingRepository: idempotent SetRating, GetRating, batch operations
+        - PlaylistRepository: CRUD, item management, reordering, Watch Later support
+    - ✅ Added comprehensive OpenAPI documentation:
+        - Complete specification in api/openapi_ratings_playlists.yaml
+        - All endpoints documented with request/response schemas
+        - Privacy controls and pagination documented
+    - ✅ Updated README with new features:
+        - Added ratings and playlists to feature list
+        - Updated API documentation section with new specs
+        - Clear descriptions of functionality
+    - ✅ HTTP handlers created and wired to routes:
+        - Rating handlers at /api/v1/videos/{id}/rating
+        - Playlist handlers at /api/v1/playlists
+        - User ratings at /api/v1/users/me/ratings
+        - Watch Later shortcuts at relevant endpoints
+        - All routes properly integrated with middleware
 
 ## Sprint E: Captions/Subtitles ❌ **NOT STARTED**
 
