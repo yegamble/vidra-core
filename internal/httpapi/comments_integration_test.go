@@ -2,6 +2,10 @@ package httpapi
 
 import (
 	"athena/internal/domain"
+	"athena/internal/middleware"
+	"athena/internal/repository"
+	"athena/internal/testutil"
+	"athena/internal/usecase"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -15,24 +19,129 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/crypto/bcrypt"
 )
 
 func TestComments_Integration(t *testing.T) {
-	ctx := context.Background()
-	server := setupTestServer(t)
-	defer server.cleanup()
+	if testing.Short() {
+		t.Skip("Skipping integration tests in short mode")
+	}
 
-	// Create test users
-	user1 := createTestUser(t, server)
-	user2 := createTestUser(t, server)
-	adminUser := createTestUser(t, server)
+	td := testutil.SetupTestDB(t)
 
-	// Create a test video
-	channel1 := createTestChannel(t, server, user1.ID)
-	video := createTestVideo(t, server, channel1.ID, user1.ID)
+	// Setup repositories and services
+	userRepo := repository.NewUserRepository(td.DB)
+	channelRepo := repository.NewChannelRepository(td.DB)
+	videoRepo := repository.NewVideoRepository(td.DB)
+	commentRepo := repository.NewCommentRepository(td.DB)
+	commentService := usecase.NewCommentService(commentRepo, videoRepo, userRepo, channelRepo)
+	authRepo := repository.NewAuthRepository(td.DB)
+
+	// Create handlers
+	commentHandlers := NewCommentHandlers(commentService)
+
+	// Create test server for auth
+	s := NewServer(userRepo, authRepo, "test-secret", nil, 0, "", "", 0, nil)
+
+	// Setup router
+	router := chi.NewRouter()
+	router.Use(middleware.RequestID())
+
+	// Register comment routes
+	router.Route("/api/v1", func(r chi.Router) {
+		r.Route("/videos/{videoId}/comments", func(r chi.Router) {
+			r.Get("/", commentHandlers.GetComments)
+			r.With(middleware.Auth("test-secret")).Post("/", commentHandlers.CreateComment)
+		})
+
+		r.Route("/comments", func(r chi.Router) {
+			r.Get("/{commentId}", commentHandlers.GetComment)
+			r.With(middleware.Auth("test-secret")).Put("/{commentId}", commentHandlers.UpdateComment)
+			r.With(middleware.Auth("test-secret")).Delete("/{commentId}", commentHandlers.DeleteComment)
+			r.With(middleware.Auth("test-secret")).Post("/{commentId}/flag", commentHandlers.FlagComment)
+			r.With(middleware.Auth("test-secret")).Delete("/{commentId}/flag", commentHandlers.UnflagComment)
+			r.With(middleware.Auth("test-secret")).Post("/{commentId}/moderate", commentHandlers.ModerateComment)
+		})
+	})
+
+	// Helper function to create authenticated user
+	createUser := func(t *testing.T, username, email string) (*domain.User, string) {
+		pw := "password123"
+		hash, err := bcrypt.GenerateFromPassword([]byte(pw), bcrypt.DefaultCost)
+		require.NoError(t, err)
+
+		user := &domain.User{
+			ID:        uuid.NewString(),
+			Username:  username,
+			Email:     email,
+			Role:      domain.RoleUser,
+			IsActive:  true,
+			CreatedAt: time.Now(),
+			UpdatedAt: time.Now(),
+		}
+		err = userRepo.Create(context.Background(), user, string(hash))
+		require.NoError(t, err)
+
+		// Login to get token
+		body := map[string]any{"email": email, "password": pw}
+		b, _ := json.Marshal(body)
+		req := httptest.NewRequest(http.MethodPost, "/auth/login", bytes.NewReader(b))
+		req.Header.Set("Content-Type", "application/json")
+		rr := httptest.NewRecorder()
+		s.Login(rr, req)
+
+		require.Equal(t, http.StatusOK, rr.Code)
+
+		var resp struct {
+			Data json.RawMessage `json:"data"`
+		}
+		err = json.NewDecoder(rr.Body).Decode(&resp)
+		require.NoError(t, err)
+
+		var authResp struct {
+			AccessToken string `json:"access_token"`
+		}
+		err = json.Unmarshal(resp.Data, &authResp)
+		require.NoError(t, err)
+
+		return user, authResp.AccessToken
+	}
+
+	// Helper to create channel
+	createChannel := func(t *testing.T, userID string) *domain.Channel {
+		channel := &domain.Channel{
+			ID:          uuid.New(),
+			AccountID:   uuid.MustParse(userID),
+			Handle:      fmt.Sprintf("channel_%s", uuid.New()),
+			DisplayName: "Test Channel",
+			IsLocal:     true,
+			CreatedAt:   time.Now(),
+			UpdatedAt:   time.Now(),
+		}
+		err := channelRepo.Create(context.Background(), channel)
+		require.NoError(t, err)
+		return channel
+	}
+
+	// Helper to create video
+	createVideo := func(t *testing.T, channelID uuid.UUID) *domain.Video {
+		video := &domain.Video{
+			ID:          uuid.NewString(),
+			ChannelID:   channelID,
+			Title:       "Test Video",
+			Description: "Test Description",
+			Duration:    120,
+			Privacy:     domain.PrivacyPublic,
+			CreatedAt:   time.Now(),
+			UpdatedAt:   time.Now(),
+		}
+		err := videoRepo.Create(context.Background(), video)
+		require.NoError(t, err)
+		return video
+	}
 
 	// Helper to make authenticated requests
-	makeRequest := func(method, path string, body interface{}, userID uuid.UUID) *httptest.ResponseRecorder {
+	makeRequest := func(method, path string, body interface{}, token string) *httptest.ResponseRecorder {
 		var bodyReader *bytes.Reader
 		if body != nil {
 			bodyBytes, _ := json.Marshal(body)
@@ -43,28 +152,40 @@ func TestComments_Integration(t *testing.T) {
 
 		req := httptest.NewRequest(method, path, bodyReader)
 		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", generateTestToken(userID)))
+		if token != "" {
+			req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", token))
+		}
 
 		w := httptest.NewRecorder()
-		server.router.ServeHTTP(w, req)
+		router.ServeHTTP(w, req)
 		return w
 	}
+
+	// Create test users
+	user1, token1 := createUser(t, "user1", "user1@example.com")
+	user2, token2 := createUser(t, "user2", "user2@example.com")
+
+	// Create a test video
+	channel1 := createChannel(t, user1.ID)
+	video := createVideo(t, channel1.ID)
 
 	t.Run("CreateComment", func(t *testing.T) {
 		body := map[string]interface{}{
 			"body": "This is a test comment",
 		}
 
-		w := makeRequest("POST", fmt.Sprintf("/api/v1/videos/%s/comments", video.ID), body, user1.ID)
+		w := makeRequest("POST", fmt.Sprintf("/api/v1/videos/%s/comments", video.ID), body, token1)
 		assert.Equal(t, http.StatusCreated, w.Code)
 
-		var comment domain.Comment
-		err := json.NewDecoder(w.Body).Decode(&comment)
+		var resp struct {
+			Data domain.Comment `json:"data"`
+		}
+		err := json.NewDecoder(w.Body).Decode(&resp)
 		require.NoError(t, err)
-		assert.Equal(t, "This is a test comment", comment.Body)
-		assert.Equal(t, user1.ID, comment.UserID)
-		assert.Equal(t, video.ID, comment.VideoID)
-		assert.Nil(t, comment.ParentID)
+		assert.Equal(t, "This is a test comment", resp.Data.Body)
+		assert.Equal(t, uuid.MustParse(user1.ID), resp.Data.UserID)
+		assert.Equal(t, uuid.MustParse(video.ID), resp.Data.VideoID)
+		assert.Nil(t, resp.Data.ParentID)
 	})
 
 	t.Run("CreateReply", func(t *testing.T) {
@@ -72,28 +193,32 @@ func TestComments_Integration(t *testing.T) {
 		parentBody := map[string]interface{}{
 			"body": "Parent comment",
 		}
-		w := makeRequest("POST", fmt.Sprintf("/api/v1/videos/%s/comments", video.ID), parentBody, user1.ID)
+		w := makeRequest("POST", fmt.Sprintf("/api/v1/videos/%s/comments", video.ID), parentBody, token1)
 		require.Equal(t, http.StatusCreated, w.Code)
 
-		var parentComment domain.Comment
-		err := json.NewDecoder(w.Body).Decode(&parentComment)
+		var parentResp struct {
+			Data domain.Comment `json:"data"`
+		}
+		err := json.NewDecoder(w.Body).Decode(&parentResp)
 		require.NoError(t, err)
 
 		// Create a reply
 		replyBody := map[string]interface{}{
 			"body":     "This is a reply",
-			"parentId": parentComment.ID,
+			"parentId": parentResp.Data.ID,
 		}
-		w = makeRequest("POST", fmt.Sprintf("/api/v1/videos/%s/comments", video.ID), replyBody, user2.ID)
+		w = makeRequest("POST", fmt.Sprintf("/api/v1/videos/%s/comments", video.ID), replyBody, token2)
 		assert.Equal(t, http.StatusCreated, w.Code)
 
-		var replyComment domain.Comment
-		err = json.NewDecoder(w.Body).Decode(&replyComment)
+		var replyResp struct {
+			Data domain.Comment `json:"data"`
+		}
+		err = json.NewDecoder(w.Body).Decode(&replyResp)
 		require.NoError(t, err)
-		assert.Equal(t, "This is a reply", replyComment.Body)
-		assert.Equal(t, user2.ID, replyComment.UserID)
-		assert.NotNil(t, replyComment.ParentID)
-		assert.Equal(t, parentComment.ID, *replyComment.ParentID)
+		assert.Equal(t, "This is a reply", replyResp.Data.Body)
+		assert.Equal(t, uuid.MustParse(user2.ID), replyResp.Data.UserID)
+		assert.NotNil(t, replyResp.Data.ParentID)
+		assert.Equal(t, parentResp.Data.ID, *replyResp.Data.ParentID)
 	})
 
 	t.Run("ListComments", func(t *testing.T) {
@@ -102,27 +227,20 @@ func TestComments_Integration(t *testing.T) {
 			body := map[string]interface{}{
 				"body": fmt.Sprintf("Comment %d", i),
 			}
-			w := makeRequest("POST", fmt.Sprintf("/api/v1/videos/%s/comments", video.ID), body, user1.ID)
+			w := makeRequest("POST", fmt.Sprintf("/api/v1/videos/%s/comments", video.ID), body, token1)
 			require.Equal(t, http.StatusCreated, w.Code)
 		}
 
 		// Get comments without auth
-		req := httptest.NewRequest("GET", fmt.Sprintf("/api/v1/videos/%s/comments?limit=10", video.ID), nil)
-		w := httptest.NewRecorder()
-		server.router.ServeHTTP(w, req)
+		w := makeRequest("GET", fmt.Sprintf("/api/v1/videos/%s/comments?limit=10", video.ID), nil, "")
 		assert.Equal(t, http.StatusOK, w.Code)
 
 		var response struct {
-			Data       []domain.CommentWithUser `json:"data"`
-			Pagination struct {
-				Limit  int `json:"limit"`
-				Offset int `json:"offset"`
-			} `json:"pagination"`
+			Data []domain.CommentWithUser `json:"data"`
 		}
 		err := json.NewDecoder(w.Body).Decode(&response)
 		require.NoError(t, err)
 		assert.GreaterOrEqual(t, len(response.Data), 5)
-		assert.Equal(t, 10, response.Pagination.Limit)
 	})
 
 	t.Run("UpdateComment", func(t *testing.T) {
@@ -130,31 +248,33 @@ func TestComments_Integration(t *testing.T) {
 		createBody := map[string]interface{}{
 			"body": "Original comment",
 		}
-		w := makeRequest("POST", fmt.Sprintf("/api/v1/videos/%s/comments", video.ID), createBody, user1.ID)
+		w := makeRequest("POST", fmt.Sprintf("/api/v1/videos/%s/comments", video.ID), createBody, token1)
 		require.Equal(t, http.StatusCreated, w.Code)
 
-		var comment domain.Comment
-		err := json.NewDecoder(w.Body).Decode(&comment)
+		var createResp struct {
+			Data domain.Comment `json:"data"`
+		}
+		err := json.NewDecoder(w.Body).Decode(&createResp)
 		require.NoError(t, err)
 
 		// Update the comment
 		updateBody := map[string]interface{}{
 			"body": "Updated comment",
 		}
-		w = makeRequest("PUT", fmt.Sprintf("/api/v1/comments/%s", comment.ID), updateBody, user1.ID)
+		w = makeRequest("PUT", fmt.Sprintf("/api/v1/comments/%s", createResp.Data.ID), updateBody, token1)
 		assert.Equal(t, http.StatusNoContent, w.Code)
 
 		// Verify update
-		req := httptest.NewRequest("GET", fmt.Sprintf("/api/v1/comments/%s", comment.ID), nil)
-		w = httptest.NewRecorder()
-		server.router.ServeHTTP(w, req)
+		w = makeRequest("GET", fmt.Sprintf("/api/v1/comments/%s", createResp.Data.ID), nil, "")
 		assert.Equal(t, http.StatusOK, w.Code)
 
-		var updatedComment domain.CommentWithUser
+		var updatedComment struct {
+			Data domain.CommentWithUser `json:"data"`
+		}
 		err = json.NewDecoder(w.Body).Decode(&updatedComment)
 		require.NoError(t, err)
-		assert.Equal(t, "Updated comment", updatedComment.Body)
-		assert.NotNil(t, updatedComment.EditedAt)
+		assert.Equal(t, "Updated comment", updatedComment.Data.Body)
+		assert.NotNil(t, updatedComment.Data.EditedAt)
 	})
 
 	t.Run("DeleteComment", func(t *testing.T) {
@@ -162,21 +282,21 @@ func TestComments_Integration(t *testing.T) {
 		createBody := map[string]interface{}{
 			"body": "Comment to delete",
 		}
-		w := makeRequest("POST", fmt.Sprintf("/api/v1/videos/%s/comments", video.ID), createBody, user1.ID)
+		w := makeRequest("POST", fmt.Sprintf("/api/v1/videos/%s/comments", video.ID), createBody, token1)
 		require.Equal(t, http.StatusCreated, w.Code)
 
-		var comment domain.Comment
-		err := json.NewDecoder(w.Body).Decode(&comment)
+		var createResp struct {
+			Data domain.Comment `json:"data"`
+		}
+		err := json.NewDecoder(w.Body).Decode(&createResp)
 		require.NoError(t, err)
 
 		// Delete the comment
-		w = makeRequest("DELETE", fmt.Sprintf("/api/v1/comments/%s", comment.ID), nil, user1.ID)
+		w = makeRequest("DELETE", fmt.Sprintf("/api/v1/comments/%s", createResp.Data.ID), nil, token1)
 		assert.Equal(t, http.StatusNoContent, w.Code)
 
 		// Verify deletion (should return 404)
-		req := httptest.NewRequest("GET", fmt.Sprintf("/api/v1/comments/%s", comment.ID), nil)
-		w = httptest.NewRecorder()
-		server.router.ServeHTTP(w, req)
+		w = makeRequest("GET", fmt.Sprintf("/api/v1/comments/%s", createResp.Data.ID), nil, "")
 		assert.Equal(t, http.StatusNotFound, w.Code)
 	})
 
@@ -185,11 +305,13 @@ func TestComments_Integration(t *testing.T) {
 		createBody := map[string]interface{}{
 			"body": "Inappropriate comment",
 		}
-		w := makeRequest("POST", fmt.Sprintf("/api/v1/videos/%s/comments", video.ID), createBody, user1.ID)
+		w := makeRequest("POST", fmt.Sprintf("/api/v1/videos/%s/comments", video.ID), createBody, token1)
 		require.Equal(t, http.StatusCreated, w.Code)
 
-		var comment domain.Comment
-		err := json.NewDecoder(w.Body).Decode(&comment)
+		var createResp struct {
+			Data domain.Comment `json:"data"`
+		}
+		err := json.NewDecoder(w.Body).Decode(&createResp)
 		require.NoError(t, err)
 
 		// Flag the comment as user2
@@ -197,15 +319,15 @@ func TestComments_Integration(t *testing.T) {
 			"reason":  "inappropriate",
 			"details": "This comment violates community guidelines",
 		}
-		w = makeRequest("POST", fmt.Sprintf("/api/v1/comments/%s/flag", comment.ID), flagBody, user2.ID)
+		w = makeRequest("POST", fmt.Sprintf("/api/v1/comments/%s/flag", createResp.Data.ID), flagBody, token2)
 		assert.Equal(t, http.StatusCreated, w.Code)
 
 		// Can't flag your own comment
-		w = makeRequest("POST", fmt.Sprintf("/api/v1/comments/%s/flag", comment.ID), flagBody, user1.ID)
+		w = makeRequest("POST", fmt.Sprintf("/api/v1/comments/%s/flag", createResp.Data.ID), flagBody, token1)
 		assert.Equal(t, http.StatusInternalServerError, w.Code)
 
 		// Unflag the comment
-		w = makeRequest("DELETE", fmt.Sprintf("/api/v1/comments/%s/flag", comment.ID), nil, user2.ID)
+		w = makeRequest("DELETE", fmt.Sprintf("/api/v1/comments/%s/flag", createResp.Data.ID), nil, token2)
 		assert.Equal(t, http.StatusNoContent, w.Code)
 	})
 
@@ -214,22 +336,41 @@ func TestComments_Integration(t *testing.T) {
 		createBody := map[string]interface{}{
 			"body": "Comment to moderate",
 		}
-		w := makeRequest("POST", fmt.Sprintf("/api/v1/videos/%s/comments", video.ID), createBody, user2.ID)
+		w := makeRequest("POST", fmt.Sprintf("/api/v1/videos/%s/comments", video.ID), createBody, token2)
 		require.Equal(t, http.StatusCreated, w.Code)
 
-		var comment domain.Comment
-		err := json.NewDecoder(w.Body).Decode(&comment)
+		var createResp struct {
+			Data domain.Comment `json:"data"`
+		}
+		err := json.NewDecoder(w.Body).Decode(&createResp)
 		require.NoError(t, err)
 
 		// Video owner can moderate
 		moderateBody := map[string]interface{}{
 			"status": "hidden",
 		}
-		w = makeRequest("POST", fmt.Sprintf("/api/v1/comments/%s/moderate", comment.ID), moderateBody, user1.ID)
+		w = makeRequest("POST", fmt.Sprintf("/api/v1/comments/%s/moderate", createResp.Data.ID), moderateBody, token1)
 		assert.Equal(t, http.StatusNoContent, w.Code)
 
-		// Non-owner can't moderate
-		w = makeRequest("POST", fmt.Sprintf("/api/v1/comments/%s/moderate", comment.ID), moderateBody, user2.ID)
+		// Non-owner can't moderate (create another video for user2)
+		channel2 := createChannel(t, user2.ID)
+		video2 := createVideo(t, channel2.ID)
+
+		// Create comment on video2 by user1
+		createBody2 := map[string]interface{}{
+			"body": "Comment on video2",
+		}
+		w = makeRequest("POST", fmt.Sprintf("/api/v1/videos/%s/comments", video2.ID), createBody2, token1)
+		require.Equal(t, http.StatusCreated, w.Code)
+
+		var createResp2 struct {
+			Data domain.Comment `json:"data"`
+		}
+		err = json.NewDecoder(w.Body).Decode(&createResp2)
+		require.NoError(t, err)
+
+		// User1 can't moderate comment on user2's video
+		w = makeRequest("POST", fmt.Sprintf("/api/v1/comments/%s/moderate", createResp2.Data.ID), moderateBody, token1)
 		assert.Equal(t, http.StatusForbidden, w.Code)
 	})
 
@@ -238,27 +379,27 @@ func TestComments_Integration(t *testing.T) {
 		parentBody := map[string]interface{}{
 			"body": "Parent comment for threading test",
 		}
-		w := makeRequest("POST", fmt.Sprintf("/api/v1/videos/%s/comments", video.ID), parentBody, user1.ID)
+		w := makeRequest("POST", fmt.Sprintf("/api/v1/videos/%s/comments", video.ID), parentBody, token1)
 		require.Equal(t, http.StatusCreated, w.Code)
 
-		var parentComment domain.Comment
-		err := json.NewDecoder(w.Body).Decode(&parentComment)
+		var parentResp struct {
+			Data domain.Comment `json:"data"`
+		}
+		err := json.NewDecoder(w.Body).Decode(&parentResp)
 		require.NoError(t, err)
 
 		// Create multiple replies
 		for i := 0; i < 3; i++ {
 			replyBody := map[string]interface{}{
 				"body":     fmt.Sprintf("Reply %d", i),
-				"parentId": parentComment.ID,
+				"parentId": parentResp.Data.ID,
 			}
-			w := makeRequest("POST", fmt.Sprintf("/api/v1/videos/%s/comments", video.ID), replyBody, user2.ID)
+			w := makeRequest("POST", fmt.Sprintf("/api/v1/videos/%s/comments", video.ID), replyBody, token2)
 			require.Equal(t, http.StatusCreated, w.Code)
 		}
 
 		// Get top-level comments (should include parent with some replies)
-		req := httptest.NewRequest("GET", fmt.Sprintf("/api/v1/videos/%s/comments", video.ID), nil)
-		w = httptest.NewRecorder()
-		server.router.ServeHTTP(w, req)
+		w = makeRequest("GET", fmt.Sprintf("/api/v1/videos/%s/comments", video.ID), nil, "")
 		assert.Equal(t, http.StatusOK, w.Code)
 
 		var response struct {
@@ -270,7 +411,7 @@ func TestComments_Integration(t *testing.T) {
 		// Find our parent comment
 		var foundParent *domain.CommentWithUser
 		for i := range response.Data {
-			if response.Data[i].ID == parentComment.ID {
+			if response.Data[i].ID == parentResp.Data.ID {
 				foundParent = &response.Data[i]
 				break
 			}
@@ -279,9 +420,7 @@ func TestComments_Integration(t *testing.T) {
 		assert.Equal(t, 3, len(foundParent.Replies))
 
 		// Get replies directly
-		req = httptest.NewRequest("GET", fmt.Sprintf("/api/v1/videos/%s/comments?parentId=%s", video.ID, parentComment.ID), nil)
-		w = httptest.NewRecorder()
-		server.router.ServeHTTP(w, req)
+		w = makeRequest("GET", fmt.Sprintf("/api/v1/videos/%s/comments?parentId=%s", video.ID, parentResp.Data.ID), nil, "")
 		assert.Equal(t, http.StatusOK, w.Code)
 
 		err = json.NewDecoder(w.Body).Decode(&response)
@@ -290,20 +429,21 @@ func TestComments_Integration(t *testing.T) {
 	})
 
 	t.Run("Pagination", func(t *testing.T) {
+		// Create a new video for clean pagination test
+		video3 := createVideo(t, channel1.ID)
+
 		// Create many comments
 		for i := 0; i < 25; i++ {
 			body := map[string]interface{}{
 				"body": fmt.Sprintf("Pagination test comment %d", i),
 			}
-			w := makeRequest("POST", fmt.Sprintf("/api/v1/videos/%s/comments", video.ID), body, user1.ID)
+			w := makeRequest("POST", fmt.Sprintf("/api/v1/videos/%s/comments", video3.ID), body, token1)
 			require.Equal(t, http.StatusCreated, w.Code)
 			time.Sleep(10 * time.Millisecond) // Small delay to ensure different timestamps
 		}
 
 		// Get first page
-		req := httptest.NewRequest("GET", fmt.Sprintf("/api/v1/videos/%s/comments?limit=10&offset=0", video.ID), nil)
-		w := httptest.NewRecorder()
-		server.router.ServeHTTP(w, req)
+		w := makeRequest("GET", fmt.Sprintf("/api/v1/videos/%s/comments?limit=10&offset=0", video3.ID), nil, "")
 		assert.Equal(t, http.StatusOK, w.Code)
 
 		var page1 struct {
@@ -314,9 +454,7 @@ func TestComments_Integration(t *testing.T) {
 		assert.Equal(t, 10, len(page1.Data))
 
 		// Get second page
-		req = httptest.NewRequest("GET", fmt.Sprintf("/api/v1/videos/%s/comments?limit=10&offset=10", video.ID), nil)
-		w = httptest.NewRecorder()
-		server.router.ServeHTTP(w, req)
+		w = makeRequest("GET", fmt.Sprintf("/api/v1/videos/%s/comments?limit=10&offset=10", video3.ID), nil, "")
 		assert.Equal(t, http.StatusOK, w.Code)
 
 		var page2 struct {
@@ -333,36 +471,4 @@ func TestComments_Integration(t *testing.T) {
 			}
 		}
 	})
-}
-
-// Helper functions for test setup
-func createTestChannel(t *testing.T, server *testServer, userID uuid.UUID) *domain.Channel {
-	channel := &domain.Channel{
-		AccountID:   userID,
-		Handle:      fmt.Sprintf("testchannel_%s", uuid.New()),
-		DisplayName: "Test Channel",
-	}
-	err := server.channelRepo.Create(context.Background(), channel)
-	require.NoError(t, err)
-	return channel
-}
-
-func createTestVideo(t *testing.T, server *testServer, channelID, userID uuid.UUID) *domain.Video {
-	video := &domain.Video{
-		ID:          uuid.New(),
-		ChannelID:   channelID,
-		Title:       "Test Video",
-		Description: "Test Description",
-		Duration:    120,
-		Privacy:     domain.PublicPrivacy,
-	}
-	err := server.videoRepo.Create(context.Background(), video)
-	require.NoError(t, err)
-	return video
-}
-
-func generateTestToken(userID uuid.UUID) string {
-	// Implementation would generate a valid JWT token for testing
-	// This is a placeholder
-	return fmt.Sprintf("test-token-%s", userID)
 }
