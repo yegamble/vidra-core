@@ -1,5 +1,5 @@
 # Config for golangci-lint v2
-version: 2
+version: "2"
 run:
   tests: false
 linters-settings:
