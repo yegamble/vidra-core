@@ -3,10 +3,14 @@ run:
   tests: false
 linters:
   enable:
-    - gocyclo
     - errcheck
-    - gosimple
     - govet
     - ineffassign
     - staticcheck
     - unused
+    - bodyclose
+    - gocyclo
+    - dupl
+    - misspell
+    - unconvert
+    - whitespace
