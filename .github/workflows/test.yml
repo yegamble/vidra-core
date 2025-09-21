@@ -229,9 +229,9 @@ jobs:
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v7
         with:
-          args: --timeout=10m --no-config
-          # Use specific version to avoid cache issues
-          version: v1.62.2
+          args: --timeout=10m
+          # Use latest v2 version supported by action v7
+          version: latest
           skip-cache: true
           skip-build-cache: true
           skip-pkg-cache: true
