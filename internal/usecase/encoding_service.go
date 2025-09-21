@@ -217,8 +217,7 @@ func (s *encodingService) processJob(ctx context.Context, job *domain.EncodingJo
 	}
 
 	// Generate media assets (thumbnail and preview)
-	sp := storage.NewPaths(s.uploadsDir)
-	thumb, preview, err := s.generateMediaAssets(ctx, job, sp, update)
+	thumb, preview, err := s.generateMediaAssets(ctx, job, &sp, update)
 	if err != nil {
 		return err
 	}
