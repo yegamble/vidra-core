@@ -18,58 +18,21 @@ import (
 )
 
 func TestModerationHandlers(t *testing.T) {
+	// Force use of public schema to avoid foreign key issues
+	t.Setenv("TEST_SCHEMA", "public")
+
 	// Setup test database
 	testDB := testutil.SetupTestDB(t)
 	if testDB == nil {
 		return // Test was skipped
 	}
 
-	// Clean up any existing test data (but not users since we'll create them)
-	ctx := context.Background()
-	cleanupQueries := []string{
-		"TRUNCATE TABLE abuse_reports CASCADE",
-		"TRUNCATE TABLE blocklist CASCADE",
-	}
-	for _, q := range cleanupQueries {
-		if _, err := testDB.DB.ExecContext(ctx, q); err != nil {
-			t.Logf("Cleanup warning: %v", err)
-		}
-	}
-
 	moderationRepo := repository.NewModerationRepository(testDB.DB)
 
 	// Create test users
 	adminUser := testutil.CreateTestUser(t, testDB.DB, "admin@test.com", string(domain.RoleAdmin))
-	require.NotNil(t, adminUser, "Failed to create admin user")
-	t.Logf("Created admin user with ID: %s", adminUser.ID)
-
 	regularUser := testutil.CreateTestUser(t, testDB.DB, "user@test.com", string(domain.RoleUser))
-	require.NotNil(t, regularUser, "Failed to create regular user")
-	t.Logf("Created regular user with ID: %s", regularUser.ID)
-
 	targetUser := testutil.CreateTestUser(t, testDB.DB, "target@test.com", string(domain.RoleUser))
-	require.NotNil(t, targetUser, "Failed to create target user")
-	t.Logf("Created target user with ID: %s", targetUser.ID)
-
-	// Verify users exist in database
-	var count int
-	err := testDB.DB.Get(&count, "SELECT COUNT(*) FROM users WHERE id = $1", regularUser.ID)
-	require.NoError(t, err)
-	require.Equal(t, 1, count, "Regular user not found in database")
-	t.Logf("Verified regular user exists in database")
-
-	// Try to insert a test abuse report directly
-	_, err = testDB.DB.Exec(`
-		INSERT INTO abuse_reports (
-			reporter_id, reason, status, reported_entity_type, reported_user_id
-		) VALUES ($1, $2, $3, $4, $5)
-		RETURNING id
-	`, regularUser.ID, "Test reason", "pending", "user", targetUser.ID)
-	if err != nil {
-		t.Logf("Direct insert test failed: %v", err)
-	} else {
-		t.Logf("Direct insert test succeeded")
-	}
 
 	// Create handlers
 	handlers := NewModerationHandlers(moderationRepo)
@@ -84,14 +47,13 @@ func TestModerationHandlers(t *testing.T) {
 
 		body, _ := json.Marshal(req)
 		r := httptest.NewRequest("POST", "/api/v1/abuse-reports", bytes.NewReader(body))
-		t.Logf("Setting context with regularUser.ID: %s", regularUser.ID)
 		r = r.WithContext(withUserID(r.Context(), regularUser.ID))
 		w := httptest.NewRecorder()
 
 		handlers.CreateAbuseReport(w, r)
 
 		if w.Code != http.StatusCreated {
-			t.Logf("CreateAbuseReport failed with status %d, body: %s", w.Code, w.Body.String())
+			t.Logf("CreateAbuseReport response: %s", w.Body.String())
 		}
 		assert.Equal(t, http.StatusCreated, w.Code)
 		var resp struct {
@@ -224,16 +186,13 @@ func TestModerationHandlers(t *testing.T) {
 }
 
 func TestInstanceHandlers(t *testing.T) {
+	// Force use of public schema to avoid foreign key issues
+	t.Setenv("TEST_SCHEMA", "public")
+
 	// Setup test database
 	testDB := testutil.SetupTestDB(t)
 	if testDB == nil {
 		return // Test was skipped
-	}
-
-	// Clean up any existing test data
-	ctx := context.Background()
-	if _, err := testDB.DB.ExecContext(ctx, "TRUNCATE TABLE instance_config CASCADE"); err != nil {
-		t.Logf("Cleanup warning: %v", err)
 	}
 
 	moderationRepo := repository.NewModerationRepository(testDB.DB)
@@ -297,22 +256,13 @@ func TestInstanceHandlers(t *testing.T) {
 }
 
 func TestOEmbed(t *testing.T) {
+	// Force use of public schema to avoid foreign key issues
+	t.Setenv("TEST_SCHEMA", "public")
+
 	// Setup test database
 	testDB := testutil.SetupTestDB(t)
 	if testDB == nil {
 		return // Test was skipped
-	}
-
-	// Clean up any existing test data
-	ctx := context.Background()
-	cleanupQueries := []string{
-		"TRUNCATE TABLE videos CASCADE",
-		"TRUNCATE TABLE users CASCADE",
-	}
-	for _, q := range cleanupQueries {
-		if _, err := testDB.DB.ExecContext(ctx, q); err != nil {
-			t.Logf("Cleanup warning: %v", err)
-		}
 	}
 
 	moderationRepo := repository.NewModerationRepository(testDB.DB)

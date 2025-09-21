@@ -21,6 +21,9 @@ import (
 )
 
 func TestAbuseReportsIntegration(t *testing.T) {
+	// Force use of public schema to avoid foreign key issues
+	t.Setenv("TEST_SCHEMA", "public")
+
 	testDB := testutil.SetupTestDB(t)
 	if testDB == nil {
 		return
@@ -220,6 +223,9 @@ func TestAbuseReportsIntegration(t *testing.T) {
 }
 
 func TestBlocklistIntegration(t *testing.T) {
+	// Force use of public schema to avoid foreign key issues
+	t.Setenv("TEST_SCHEMA", "public")
+
 	testDB := testutil.SetupTestDB(t)
 	if testDB == nil {
 		return
@@ -398,6 +404,9 @@ func TestBlocklistIntegration(t *testing.T) {
 }
 
 func TestInstanceConfigIntegration(t *testing.T) {
+	// Force use of public schema to avoid foreign key issues
+	t.Setenv("TEST_SCHEMA", "public")
+
 	testDB := testutil.SetupTestDB(t)
 	if testDB == nil {
 		return
@@ -554,6 +563,9 @@ func TestInstanceConfigIntegration(t *testing.T) {
 }
 
 func TestInstanceAboutIntegration(t *testing.T) {
+	// Force use of public schema to avoid foreign key issues
+	t.Setenv("TEST_SCHEMA", "public")
+
 	testDB := testutil.SetupTestDB(t)
 	if testDB == nil {
 		return
@@ -621,6 +633,9 @@ func TestInstanceAboutIntegration(t *testing.T) {
 }
 
 func TestOEmbedIntegration(t *testing.T) {
+	// Force use of public schema to avoid foreign key issues
+	t.Setenv("TEST_SCHEMA", "public")
+
 	testDB := testutil.SetupTestDB(t)
 	if testDB == nil {
 		return
@@ -796,6 +811,9 @@ func TestOEmbedIntegration(t *testing.T) {
 }
 
 func TestModerationAuthorization(t *testing.T) {
+	// Force use of public schema to avoid foreign key issues
+	t.Setenv("TEST_SCHEMA", "public")
+
 	testDB := testutil.SetupTestDB(t)
 	if testDB == nil {
 		return

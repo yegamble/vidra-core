@@ -63,10 +63,7 @@ func (h *ModerationHandlers) CreateAbuseReport(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	WriteJSON(w, http.StatusCreated, map[string]interface{}{
-		"data":    report,
-		"success": true,
-	})
+	WriteJSON(w, http.StatusCreated, report)
 }
 
 // ListAbuseReports handles GET /api/v1/admin/abuse-reports (admin only)
@@ -121,10 +118,7 @@ func (h *ModerationHandlers) GetAbuseReport(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, map[string]interface{}{
-		"data":    report,
-		"success": true,
-	})
+	WriteJSON(w, http.StatusOK, report)
 }
 
 // UpdateAbuseReport handles PUT /api/v1/admin/abuse-reports/{id} (admin only)
