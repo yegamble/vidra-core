@@ -1,4 +1,5 @@
-version: 2
+# golangci-lint v1.50+ uses schema version v1
+# Config Reference: https://golangci-lint.run/usage/configuration/
 run:
   tests: false
 linters-settings:
