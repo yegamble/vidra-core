@@ -84,70 +84,99 @@ func WriteJSONWithMeta(w http.ResponseWriter, statusCode int, data interface{}, 
 	}
 }
 
+var (
+	// domainErrorCodeToStatus maps domain error codes to HTTP status codes
+	domainErrorCodeToStatus = map[string]int{
+		"IPFS_UPLOAD_FAILED":  http.StatusServiceUnavailable,
+		"IPFS_PIN_FAILED":     http.StatusServiceUnavailable,
+		"IPFS_NOT_CONFIGURED": http.StatusServiceUnavailable,
+		"STORAGE_ERROR":       http.StatusInternalServerError,
+		"FILE_ERROR":          http.StatusInternalServerError,
+		"INTERNAL_ERROR":      http.StatusInternalServerError,
+		"DB_ERROR":            http.StatusInternalServerError,
+		"INVALID_PATH":        http.StatusBadRequest,
+		"BAD_REQUEST":         http.StatusBadRequest,
+		"UNAUTHORIZED":        http.StatusUnauthorized,
+	}
+
+	// errorToStatusMappings groups errors by their HTTP status code
+	errorToStatusMappings = []struct {
+		status int
+		errors []error
+	}{
+		{
+			status: http.StatusNotFound,
+			errors: []error{domain.ErrNotFound, domain.ErrUserNotFound, domain.ErrVideoNotFound, domain.ErrMessageNotFound, domain.ErrConversationNotFound},
+		},
+		{
+			status: http.StatusUnauthorized,
+			errors: []error{domain.ErrUnauthorized, domain.ErrInvalidCredentials, domain.ErrInvalidToken, domain.ErrTokenExpired},
+		},
+		{
+			status: http.StatusBadRequest,
+			errors: []error{domain.ErrValidation, domain.ErrBadRequest, domain.ErrInvalidFormat, domain.ErrInvalidChunk, domain.ErrCannotMessageSelf, domain.ErrMessageTooLong, domain.ErrInvalidMessageType},
+		},
+		{
+			status: http.StatusConflict,
+			errors: []error{domain.ErrConflict, domain.ErrUserAlreadyExists},
+		},
+		{
+			status: http.StatusTooManyRequests,
+			errors: []error{domain.ErrTooManyRequests},
+		},
+		{
+			status: http.StatusServiceUnavailable,
+			errors: []error{domain.ErrServiceUnavailable, domain.ErrIPFSUnavailable},
+		},
+		{
+			status: http.StatusForbidden,
+			errors: []error{domain.ErrForbidden},
+		},
+		{
+			status: http.StatusRequestEntityTooLarge,
+			errors: []error{domain.ErrFileTooLarge},
+		},
+	}
+)
+
+// mapDomainErrorCode maps a domain error code to HTTP status
+func mapDomainErrorCode(code string) (int, bool) {
+	status, ok := domainErrorCodeToStatus[code]
+	return status, ok
+}
+
+// checkErrorMapping checks if the error matches any in the mapping list
+func checkErrorMapping(err error, mapping struct {
+	status int
+	errors []error
+}) (int, bool) {
+	for _, e := range mapping.errors {
+		if errors.Is(err, e) {
+			return mapping.status, true
+		}
+	}
+	return 0, false
+}
+
 func MapDomainErrorToHTTP(err error) int {
-	// Check for specific error codes in domain errors (handle both value and pointer types)
+	// Check for domain error with code (handle both value and pointer types)
 	if domainErr, ok := err.(domain.DomainError); ok {
-		switch domainErr.Code {
-		case "IPFS_UPLOAD_FAILED", "IPFS_PIN_FAILED", "IPFS_NOT_CONFIGURED":
-			return http.StatusServiceUnavailable
-		case "STORAGE_ERROR", "FILE_ERROR", "INTERNAL_ERROR", "DB_ERROR":
-			return http.StatusInternalServerError
-		case "INVALID_PATH", "BAD_REQUEST":
-			return http.StatusBadRequest
-		case "UNAUTHORIZED":
-			return http.StatusUnauthorized
+		if status, ok := mapDomainErrorCode(domainErr.Code); ok {
+			return status
 		}
 	}
 	if domainErr, ok := err.(*domain.DomainError); ok {
-		switch domainErr.Code {
-		case "IPFS_UPLOAD_FAILED", "IPFS_PIN_FAILED", "IPFS_NOT_CONFIGURED":
-			return http.StatusServiceUnavailable
-		case "STORAGE_ERROR", "FILE_ERROR", "INTERNAL_ERROR", "DB_ERROR":
-			return http.StatusInternalServerError
-		case "INVALID_PATH", "BAD_REQUEST":
-			return http.StatusBadRequest
-		case "UNAUTHORIZED":
-			return http.StatusUnauthorized
+		if status, ok := mapDomainErrorCode(domainErr.Code); ok {
+			return status
 		}
 	}
 
-	// Use errors.Is to correctly handle wrapped errors
-	notFound := []error{domain.ErrNotFound, domain.ErrUserNotFound, domain.ErrVideoNotFound, domain.ErrMessageNotFound, domain.ErrConversationNotFound}
-	for _, e := range notFound {
-		if errors.Is(err, e) {
-			return http.StatusNotFound
+	// Check error mappings
+	for _, mapping := range errorToStatusMappings {
+		if status, ok := checkErrorMapping(err, mapping); ok {
+			return status
 		}
 	}
 
-	unauthorized := []error{domain.ErrUnauthorized, domain.ErrInvalidCredentials, domain.ErrInvalidToken, domain.ErrTokenExpired}
-	for _, e := range unauthorized {
-		if errors.Is(err, e) {
-			return http.StatusUnauthorized
-		}
-	}
-
-	if errors.Is(err, domain.ErrForbidden) {
-		return http.StatusForbidden
-	}
-
-	badReq := []error{domain.ErrValidation, domain.ErrBadRequest, domain.ErrInvalidFormat, domain.ErrInvalidChunk, domain.ErrCannotMessageSelf, domain.ErrMessageTooLong, domain.ErrInvalidMessageType}
-	for _, e := range badReq {
-		if errors.Is(err, e) {
-			return http.StatusBadRequest
-		}
-	}
-
-	if errors.Is(err, domain.ErrConflict) || errors.Is(err, domain.ErrUserAlreadyExists) {
-		return http.StatusConflict
-	}
-	if errors.Is(err, domain.ErrTooManyRequests) {
-		return http.StatusTooManyRequests
-	}
-	if errors.Is(err, domain.ErrServiceUnavailable) || errors.Is(err, domain.ErrIPFSUnavailable) {
-		return http.StatusServiceUnavailable
-	}
-	if errors.Is(err, domain.ErrFileTooLarge) {
-		return http.StatusRequestEntityTooLarge
-	}
 	return http.StatusInternalServerError
 }

@@ -1069,131 +1069,150 @@ func GetSupportedQualities(w http.ResponseWriter, r *http.Request) {
 	WriteJSON(w, http.StatusOK, resp)
 }
 
-// StreamVideoHandler streams HLS from stored OutputPaths on the video record.
-// If OutputPaths are missing or files not found, it falls back to local encoded directory,
-// and finally to a mocked playlist to preserve tests.
-func StreamVideoHandler(videoRepo usecase.VideoRepository) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		videoID := chi.URLParam(r, "id")
-		if videoID == "" {
-			WriteError(w, http.StatusBadRequest, domain.NewDomainError("MISSING_VIDEO_ID", "Video ID is required"))
-			return
-		}
+// streamHandlerContext holds the context for processing stream requests
+type streamHandlerContext struct {
+	videoID string
+	quality string
+	video   *domain.Video
+}
 
-		quality := r.URL.Query().Get("quality")
+// validateStreamRequest validates the initial request parameters
+func validateStreamRequest(w http.ResponseWriter, r *http.Request) (*streamHandlerContext, bool) {
+	ctx := &streamHandlerContext{
+		videoID: chi.URLParam(r, "id"),
+		quality: r.URL.Query().Get("quality"),
+	}
 
-		// Validate quality parameter if provided
-		if quality != "" && quality != "master" && !domain.IsValidResolution(quality) {
-			WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_QUALITY", "Unsupported quality"))
-			return
-		}
+	if ctx.videoID == "" {
+		WriteError(w, http.StatusBadRequest, domain.NewDomainError("MISSING_VIDEO_ID", "Video ID is required"))
+		return nil, false
+	}
 
-		// Check if video exists first
-		var video *domain.Video
-		if videoRepo != nil {
-			v, err := videoRepo.GetByID(r.Context(), videoID)
-			if err != nil {
-				// Check if error is a DomainError
-				if domainErr, ok := err.(domain.DomainError); ok {
-					if domainErr.Code == "VIDEO_NOT_FOUND" {
-						WriteError(w, http.StatusNotFound, domainErr)
-					} else {
-						WriteError(w, http.StatusInternalServerError, domainErr)
-					}
-				} else {
-					// For non-domain errors, wrap them with more context
-					WriteError(w, http.StatusInternalServerError, domain.NewDomainError("DB_ERROR", fmt.Sprintf("Failed to fetch video: %v", err)))
-				}
-				return
-			}
-			video = v
-		} else {
-			// If no repo, video doesn't exist
-			WriteError(w, http.StatusNotFound, domain.NewDomainError("VIDEO_NOT_FOUND", "Video repository not available"))
-			return
-		}
+	// Validate quality parameter if provided
+	if ctx.quality != "" && ctx.quality != "master" && !domain.IsValidResolution(ctx.quality) {
+		WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_QUALITY", "Unsupported quality"))
+		return nil, false
+	}
 
-		// Set HLS headers
-		w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
-		w.Header().Set("Access-Control-Allow-Origin", "*")
+	return ctx, true
+}
 
-		// Try OutputPaths from DB
-		if video != nil {
-			// Master
-			if quality == "" {
-				if p := video.OutputPaths["master"]; p != "" {
-					if isRemoteURL(p) {
-						http.Redirect(w, r, p, http.StatusTemporaryRedirect)
-						return
-					}
-					// #nosec G304 - p resolved from DB OutputPaths under our control or validated elsewhere
-					if data, err := os.ReadFile(p); err == nil {
-						// redirect to static hls path if possible
-						if rel, ok := hlsRelPath(p); ok {
-							http.Redirect(w, r, "/api/v1/hls/"+rel, http.StatusTemporaryRedirect)
-							return
-						}
-						_, _ = w.Write(data)
-						return
-					}
-				}
+// fetchVideo retrieves the video from the repository
+func fetchVideo(w http.ResponseWriter, r *http.Request, videoRepo usecase.VideoRepository, videoID string) (*domain.Video, bool) {
+	if videoRepo == nil {
+		WriteError(w, http.StatusNotFound, domain.NewDomainError("VIDEO_NOT_FOUND", "Video repository not available"))
+		return nil, false
+	}
+
+	video, err := videoRepo.GetByID(r.Context(), videoID)
+	if err != nil {
+		// Check if error is a DomainError
+		if domainErr, ok := err.(domain.DomainError); ok {
+			if domainErr.Code == "VIDEO_NOT_FOUND" {
+				WriteError(w, http.StatusNotFound, domainErr)
 			} else {
-				if !domain.IsValidResolution(quality) {
-					WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_QUALITY", "Unsupported quality"))
-					return
-				}
-				if p := video.OutputPaths[quality]; p != "" {
-					if isRemoteURL(p) {
-						http.Redirect(w, r, p, http.StatusTemporaryRedirect)
-						return
-					}
-					// #nosec G304 - p resolved from DB OutputPaths under our control or validated elsewhere
-					if data, err := os.ReadFile(p); err == nil {
-						// redirect to static hls path if possible
-						if rel, ok := hlsRelPath(p); ok {
-							http.Redirect(w, r, "/api/v1/hls/"+rel, http.StatusTemporaryRedirect)
-							return
-						}
-						_, _ = w.Write(data)
-						return
-					}
-				}
+				WriteError(w, http.StatusInternalServerError, domainErr)
 			}
-		}
-
-		// Fallback to local encoded directory
-		baseDir := filepath.Join("./storage", "streaming-playlists", "hls", videoID)
-		var path string
-		if quality == "" {
-			path = filepath.Join(baseDir, "master.m3u8")
 		} else {
-			if !domain.IsValidResolution(quality) {
-				WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_QUALITY", "Unsupported quality"))
-				return
-			}
-			if h, ok := domain.HeightForResolution(quality); ok {
-				path = filepath.Join(baseDir, fmt.Sprintf("%dp", h), "stream.m3u8")
-			}
+			// For non-domain errors, wrap them with more context
+			WriteError(w, http.StatusInternalServerError, domain.NewDomainError("DB_ERROR", fmt.Sprintf("Failed to fetch video: %v", err)))
 		}
-		if path != "" {
-			if _, err := os.Stat(path); err == nil {
-				if rel, ok := hlsRelPath(path); ok {
-					http.Redirect(w, r, "/api/v1/hls/"+rel, http.StatusTemporaryRedirect)
-					return
-				}
-				// #nosec G304 - path constructed from server-side baseDir and validated resolution
-				if data, err := os.ReadFile(path); err == nil {
-					_, _ = w.Write(data)
-					return
-				}
-			}
-		}
+		return nil, false
+	}
 
-		// Final fallback: mocked playlist for testing
-		// Since the video exists in DB but has no actual files, return a mock playlist
-		if quality == "" || quality == "master" {
-			// Return master playlist
-			hlsPlaylist := `#EXTM3U
+	return video, true
+}
+
+// tryServeFromOutputPaths attempts to serve the playlist from stored OutputPaths
+func tryServeFromOutputPaths(w http.ResponseWriter, r *http.Request, ctx *streamHandlerContext) bool {
+	if ctx.video == nil {
+		return false
+	}
+
+	var outputPath string
+	if ctx.quality == "" {
+		outputPath = ctx.video.OutputPaths["master"]
+	} else {
+		if !domain.IsValidResolution(ctx.quality) {
+			WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_QUALITY", "Unsupported quality"))
+			return true // Return true to indicate we handled the response
+		}
+		outputPath = ctx.video.OutputPaths[ctx.quality]
+	}
+
+	if outputPath == "" {
+		return false
+	}
+
+	// Handle remote URLs
+	if isRemoteURL(outputPath) {
+		http.Redirect(w, r, outputPath, http.StatusTemporaryRedirect)
+		return true
+	}
+
+	// Try to read local file
+	// #nosec G304 - outputPath resolved from DB OutputPaths under our control
+	data, err := os.ReadFile(outputPath)
+	if err != nil {
+		return false
+	}
+
+	// Try to redirect to static HLS path if possible
+	if rel, ok := hlsRelPath(outputPath); ok {
+		http.Redirect(w, r, "/api/v1/hls/"+rel, http.StatusTemporaryRedirect)
+		return true
+	}
+
+	_, _ = w.Write(data)
+	return true
+}
+
+// tryServeFromLocalDirectory attempts to serve from the local encoded directory
+func tryServeFromLocalDirectory(w http.ResponseWriter, r *http.Request, ctx *streamHandlerContext) bool {
+	baseDir := filepath.Join("./storage", "streaming-playlists", "hls", ctx.videoID)
+	var path string
+
+	if ctx.quality == "" {
+		path = filepath.Join(baseDir, "master.m3u8")
+	} else {
+		if !domain.IsValidResolution(ctx.quality) {
+			WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_QUALITY", "Unsupported quality"))
+			return true
+		}
+		if h, ok := domain.HeightForResolution(ctx.quality); ok {
+			path = filepath.Join(baseDir, fmt.Sprintf("%dp", h), "stream.m3u8")
+		}
+	}
+
+	if path == "" {
+		return false
+	}
+
+	if _, err := os.Stat(path); err != nil {
+		return false
+	}
+
+	// Try to redirect to static HLS path if possible
+	if rel, ok := hlsRelPath(path); ok {
+		http.Redirect(w, r, "/api/v1/hls/"+rel, http.StatusTemporaryRedirect)
+		return true
+	}
+
+	// #nosec G304 - path constructed from server-side baseDir and validated resolution
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+
+	_, _ = w.Write(data)
+	return true
+}
+
+// serveMockPlaylist serves a mock playlist for testing
+func serveMockPlaylist(w http.ResponseWriter, quality string) {
+	if quality == "" || quality == "master" {
+		// Return master playlist
+		hlsPlaylist := `#EXTM3U
 #EXT-X-VERSION:3
 #EXT-X-STREAM-INF:BANDWIDTH=5000000,RESOLUTION=1920x1080
 1080p.m3u8
@@ -1203,15 +1222,15 @@ func StreamVideoHandler(videoRepo usecase.VideoRepository) http.HandlerFunc {
 480p.m3u8
 #EXT-X-STREAM-INF:BANDWIDTH=800000,RESOLUTION=640x360
 360p.m3u8`
-			_, _ = w.Write([]byte(hlsPlaylist))
-		} else {
-			// Validate quality one more time for the final fallback
-			if !domain.IsValidResolution(quality) {
-				WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_QUALITY", "Unsupported quality"))
-				return
-			}
-			// Return quality-specific playlist
-			hlsPlaylist := fmt.Sprintf(`#EXTM3U
+		_, _ = w.Write([]byte(hlsPlaylist))
+	} else {
+		// Validate quality one more time
+		if !domain.IsValidResolution(quality) {
+			WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_QUALITY", "Unsupported quality"))
+			return
+		}
+		// Return quality-specific playlist
+		hlsPlaylist := fmt.Sprintf(`#EXTM3U
 #EXT-X-VERSION:3
 #EXT-X-TARGETDURATION:4
 #EXT-X-MEDIA-SEQUENCE:0
@@ -1225,8 +1244,44 @@ func StreamVideoHandler(videoRepo usecase.VideoRepository) http.HandlerFunc {
 #EXTINF:2.000,
 %s_segment_3.ts
 #EXT-X-ENDLIST`, quality, quality, quality, quality)
-			_, _ = w.Write([]byte(hlsPlaylist))
+		_, _ = w.Write([]byte(hlsPlaylist))
+	}
+}
+
+// StreamVideoHandler streams HLS from stored OutputPaths on the video record.
+// If OutputPaths are missing or files not found, it falls back to local encoded directory,
+// and finally to a mocked playlist to preserve tests.
+func StreamVideoHandler(videoRepo usecase.VideoRepository) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// Validate request parameters
+		ctx, ok := validateStreamRequest(w, r)
+		if !ok {
+			return
 		}
+
+		// Fetch video from repository
+		video, ok := fetchVideo(w, r, videoRepo, ctx.videoID)
+		if !ok {
+			return
+		}
+		ctx.video = video
+
+		// Set HLS headers
+		w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+
+		// Try to serve from OutputPaths
+		if tryServeFromOutputPaths(w, r, ctx) {
+			return
+		}
+
+		// Try to serve from local directory
+		if tryServeFromLocalDirectory(w, r, ctx) {
+			return
+		}
+
+		// Final fallback: serve mock playlist
+		serveMockPlaylist(w, ctx.quality)
 	}
 }
 
