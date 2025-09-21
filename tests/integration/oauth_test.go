@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -440,8 +441,14 @@ func TestOAuth2ErrorResponses(t *testing.T) {
 // Helper functions
 
 func setupTestDB(t *testing.T) (*sqlx.DB, func()) {
-	// Use test database
-	db, err := sqlx.Connect("postgres", "postgres://postgres:postgres@localhost:5432/athena_test?sslmode=disable")
+	// Use test database - get connection string from environment or use default
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		// Default for local testing with docker-compose.test.yml
+		dsn = "postgres://test_user:test_password@localhost:5433/athena_test?sslmode=disable"
+	}
+
+	db, err := sqlx.Connect("postgres", dsn)
 	require.NoError(t, err)
 
 	// Run migrations or setup test schema
