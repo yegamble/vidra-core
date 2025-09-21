@@ -230,8 +230,8 @@ jobs:
         uses: golangci/golangci-lint-action@v7
         with:
           args: --timeout=10m
-          # Use latest v2 version supported by action v7
-          version: latest
+          # Explicitly use v2.4.0 which the runner seems to have
+          version: v2.4.0
           skip-cache: true
           skip-build-cache: true
           skip-pkg-cache: true

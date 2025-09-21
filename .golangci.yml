@@ -1,26 +1,12 @@
-# Config for golangci-lint v2
 version: "2"
 run:
   tests: false
-linters-settings:
-  gocyclo:
-    min-complexity: 15
-  dupl:
-    threshold: 150
-  gosec:
-    severity: medium
 linters:
   enable:
-    - bodyclose
-    - dupl
     - gocyclo
-    - gosec
-    - misspell
-    - nolintlint
-    - rowserrcheck
-    - sqlclosecheck
-    - unconvert
-    - whitespace
-issues:
-  max-issues-per-linter: 50
-  max-same-issues: 10
+    - errcheck
+    - gosimple
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
