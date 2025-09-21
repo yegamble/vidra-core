@@ -155,6 +155,12 @@ func CreateTestUser(t *testing.T, db *sqlx.DB, email string, role string) *domai
 
 	userID := uuid.New().String()
 	timestamp := time.Now().UnixNano()
+
+	// Make email unique if it's a common test email
+	if email == "admin@test.com" || email == "user@test.com" || email == "mod@test.com" || email == "target@test.com" {
+		email = fmt.Sprintf("%s_%d@test.com", email[:len(email)-9], timestamp)
+	}
+
 	user := &domain.User{
 		ID:            userID,
 		Username:      fmt.Sprintf("user_%d", timestamp),

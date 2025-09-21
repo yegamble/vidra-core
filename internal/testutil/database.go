@@ -724,9 +724,41 @@ func cleanupTestDB(t *testing.T, testDB *TestDB) {
 		}
 	}
 
-	// Clean Postgres tables
+	// Clean Postgres tables (in reverse dependency order)
 	if testDB.DB != nil {
-		tables := []string{"user_views", "daily_video_stats", "user_engagement_stats", "trending_videos", "messages", "conversations", "encoding_jobs", "upload_sessions", "videos", "video_categories", "subscriptions", "sessions", "refresh_tokens", "email_verification_tokens", "user_avatars", "users"}
+		tables := []string{
+			"abuse_reports",
+			"blocklist",
+			"instance_config",
+			"comment_flags",
+			"video_comments",
+			"video_ratings",
+			"playlist_items",
+			"playlists",
+			"captions",
+			"channel_subscriptions",
+			"channels",
+			"oauth_access_tokens",
+			"oauth_authorization_codes",
+			"oauth_clients",
+			"notifications",
+			"user_views",
+			"daily_video_stats",
+			"user_engagement_stats",
+			"trending_videos",
+			"messages",
+			"conversations",
+			"encoding_jobs",
+			"upload_sessions",
+			"videos",
+			"video_categories",
+			"subscriptions",
+			"sessions",
+			"refresh_tokens",
+			"email_verification_tokens",
+			"user_avatars",
+			"users",
+		}
 		for _, table := range tables {
 			if _, err := testDB.DB.ExecContext(ctx, fmt.Sprintf("TRUNCATE TABLE %s CASCADE", table)); err != nil {
 				t.Logf("Failed to truncate table %s: %v", table, err)
