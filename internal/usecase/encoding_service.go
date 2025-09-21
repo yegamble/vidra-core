@@ -130,32 +130,32 @@ func (s *encodingService) ProcessNext(ctx context.Context) (bool, error) {
 	return true, nil
 }
 
-func (s *encodingService) processJob(ctx context.Context, job *domain.EncodingJob) error {
+// validateJob validates the encoding job parameters
+func (s *encodingService) validateJob(job *domain.EncodingJob) error {
 	if job.SourceFilePath == "" {
 		return errors.New("missing source file path")
 	}
 	if _, err := os.Stat(job.SourceFilePath); err != nil {
 		return fmt.Errorf("source file not found: %w", err)
 	}
+	return nil
+}
 
-	sp := storage.NewPaths(s.uploadsDir)
-	outBaseDir := sp.HLSVideoDir(job.VideoID)
-	if err := os.MkdirAll(outBaseDir, 0o750); err != nil {
-		return fmt.Errorf("failed to create output dir: %w", err)
-	}
-
-	// Prepare tasks: one per resolution
-	total := len(job.TargetResolutions) + 2 // + thumbnail + preview
+// createProgressUpdater creates a function to update job progress
+func (s *encodingService) createProgressUpdater(ctx context.Context, jobID string, totalTasks int) func() {
 	var done int32
-	update := func() {
+	return func() {
 		atomic.AddInt32(&done, 1)
-		progress := int(float64(atomic.LoadInt32(&done)) / float64(total) * 100)
-		_ = s.repo.UpdateJobProgress(ctx, job.ID, progress)
+		progress := int(float64(atomic.LoadInt32(&done)) / float64(totalTasks) * 100)
+		_ = s.repo.UpdateJobProgress(ctx, jobID, progress)
 	}
+}
 
-	// Encode resolutions concurrently (HLS)
+// encodeResolutions encodes all target resolutions concurrently
+func (s *encodingService) encodeResolutions(ctx context.Context, job *domain.EncodingJob, outBaseDir string, update func()) error {
 	var wg sync.WaitGroup
 	errCh := make(chan error, len(job.TargetResolutions))
+
 	for _, res := range job.TargetResolutions {
 		height, ok := domain.HeightForResolution(res)
 		if !ok {
@@ -178,6 +178,7 @@ func (s *encodingService) processJob(ctx context.Context, job *domain.EncodingJo
 			update()
 		}(height, res)
 	}
+
 	wg.Wait()
 	close(errCh)
 	for e := range errCh {
@@ -185,34 +186,81 @@ func (s *encodingService) processJob(ctx context.Context, job *domain.EncodingJo
 			return e
 		}
 	}
+	return nil
+}
+
+func (s *encodingService) processJob(ctx context.Context, job *domain.EncodingJob) error {
+	// Validate job
+	if err := s.validateJob(job); err != nil {
+		return err
+	}
+
+	// Setup directories
+	sp := storage.NewPaths(s.uploadsDir)
+	outBaseDir := sp.HLSVideoDir(job.VideoID)
+	if err := os.MkdirAll(outBaseDir, 0o750); err != nil {
+		return fmt.Errorf("failed to create output dir: %w", err)
+	}
+
+	// Create progress updater
+	totalTasks := len(job.TargetResolutions) + 2 // + thumbnail + preview
+	update := s.createProgressUpdater(ctx, job.ID, totalTasks)
+
+	// Encode all resolutions
+	if err := s.encodeResolutions(ctx, job, outBaseDir, update); err != nil {
+		return err
+	}
 
 	// Generate master playlist
 	if err := s.generateMasterPlaylist(outBaseDir, job.TargetResolutions); err != nil {
 		return fmt.Errorf("master playlist: %w", err)
 	}
 
+	// Generate media assets (thumbnail and preview)
+	sp := storage.NewPaths(s.uploadsDir)
+	thumb, preview, err := s.generateMediaAssets(ctx, job, sp, update)
+	if err != nil {
+		return err
+	}
+
+	// Update video processing info
+	if err := s.updateVideoInfo(ctx, job, outBaseDir, thumb, preview); err != nil {
+		return err
+	}
+
+	// Trigger notifications
+	s.triggerNotifications(ctx, job.VideoID)
+
+	return nil
+}
+
+// generateMediaAssets generates thumbnail and preview for the video
+func (s *encodingService) generateMediaAssets(ctx context.Context, job *domain.EncodingJob, sp *storage.Paths, update func()) (string, string, error) {
 	// Thumbnail
-	// Place thumbnail and preview into dedicated storage folders
 	thumb := sp.ThumbnailPath(job.VideoID)
 	if err := os.MkdirAll(filepath.Dir(thumb), 0o750); err != nil {
-		return fmt.Errorf("failed to create thumbnail dir: %w", err)
+		return "", "", fmt.Errorf("failed to create thumbnail dir: %w", err)
 	}
 	if err := s.generateThumbnail(ctx, job.SourceFilePath, thumb); err != nil {
-		return fmt.Errorf("thumbnail: %w", err)
+		return "", "", fmt.Errorf("thumbnail: %w", err)
 	}
 	update()
 
 	// Preview (animated webp)
 	preview := sp.PreviewPath(job.VideoID)
 	if err := os.MkdirAll(filepath.Dir(preview), 0o750); err != nil {
-		return fmt.Errorf("failed to create preview dir: %w", err)
+		return "", "", fmt.Errorf("failed to create preview dir: %w", err)
 	}
 	if err := s.generatePreviewWebP(ctx, job.SourceFilePath, preview); err != nil {
-		return fmt.Errorf("preview: %w", err)
+		return "", "", fmt.Errorf("preview: %w", err)
 	}
 	update()
 
-	// Update video processing info (paths)
+	return thumb, preview, nil
+}
+
+// updateVideoInfo updates the video processing info in the repository
+func (s *encodingService) updateVideoInfo(ctx context.Context, job *domain.EncodingJob, outBaseDir, thumb, preview string) error {
 	outputs := make(map[string]string)
 	outputs["master"] = filepath.ToSlash(filepath.Join(outBaseDir, "master.m3u8"))
 	for _, res := range job.TargetResolutions {
@@ -220,20 +268,18 @@ func (s *encodingService) processJob(ctx context.Context, job *domain.EncodingJo
 			outputs[res] = filepath.ToSlash(filepath.Join(outBaseDir, fmt.Sprintf("%dp/stream.m3u8", h)))
 		}
 	}
-	if err := s.videoRepo.UpdateProcessingInfo(ctx, job.VideoID, domain.StatusCompleted, outputs, filepath.ToSlash(thumb), filepath.ToSlash(preview)); err != nil {
-		return err
-	}
+	return s.videoRepo.UpdateProcessingInfo(ctx, job.VideoID, domain.StatusCompleted, outputs, filepath.ToSlash(thumb), filepath.ToSlash(preview))
+}
 
-	// Trigger notifications for subscribers if video is public
+// triggerNotifications triggers notifications for video processing completion
+func (s *encodingService) triggerNotifications(ctx context.Context, videoID string) {
 	if s.notificationSvc != nil {
-		video, err := s.videoRepo.GetByID(ctx, job.VideoID)
+		video, err := s.videoRepo.GetByID(ctx, videoID)
 		if err == nil && video != nil {
 			// Notifications will only be created if video is public and completed
 			_ = s.notificationSvc.CreateVideoNotificationForSubscribers(ctx, video, "")
 		}
 	}
-
-	return nil
 }
 
 func (s *encodingService) transcodeHLS(ctx context.Context, input string, height int, outPlaylist string, segPattern string) error {

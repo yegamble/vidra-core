@@ -126,22 +126,25 @@ func (r *ViewsRepository) GetUserViewBySessionAndVideo(ctx context.Context, sess
 	return &view, nil
 }
 
-// GetVideoAnalytics retrieves analytics for a video with filters
-func (r *ViewsRepository) GetVideoAnalytics(ctx context.Context, filter *domain.ViewAnalyticsFilter) (*domain.ViewAnalyticsResponse, error) {
+// buildAnalyticsQuery builds the base query with filters
+func (r *ViewsRepository) buildAnalyticsQuery(filter *domain.ViewAnalyticsFilter) (string, []interface{}) {
 	baseQuery := `SELECT * FROM user_views WHERE 1=1`
 	args := []interface{}{}
 	argIndex := 1
 
-	if filter.VideoID != "" {
-		baseQuery += fmt.Sprintf(" AND video_id = $%d", argIndex)
-		args = append(args, filter.VideoID)
-		argIndex++
+	filterMap := map[string]interface{}{
+		"video_id":     filter.VideoID,
+		"user_id":      filter.UserID,
+		"country_code": filter.CountryCode,
+		"device_type":  filter.DeviceType,
 	}
 
-	if filter.UserID != "" {
-		baseQuery += fmt.Sprintf(" AND user_id = $%d", argIndex)
-		args = append(args, filter.UserID)
-		argIndex++
+	for field, value := range filterMap {
+		if str, ok := value.(string); ok && str != "" {
+			baseQuery += fmt.Sprintf(" AND %s = $%d", field, argIndex)
+			args = append(args, str)
+			argIndex++
+		}
 	}
 
 	if filter.StartDate != nil {
@@ -156,26 +159,54 @@ func (r *ViewsRepository) GetVideoAnalytics(ctx context.Context, filter *domain.
 		argIndex++
 	}
 
-	if filter.CountryCode != "" {
-		baseQuery += fmt.Sprintf(" AND country_code = $%d", argIndex)
-		args = append(args, filter.CountryCode)
-		argIndex++
-	}
-
-	if filter.DeviceType != "" {
-		baseQuery += fmt.Sprintf(" AND device_type = $%d", argIndex)
-		args = append(args, filter.DeviceType)
-		argIndex++
-	}
-
 	if filter.IsAnonymous != nil {
 		baseQuery += fmt.Sprintf(" AND is_anonymous = $%d", argIndex)
 		args = append(args, *filter.IsAnonymous)
 	}
 
+	return baseQuery, args
+}
+
+// GetVideoAnalytics retrieves analytics for a video with filters
+func (r *ViewsRepository) GetVideoAnalytics(ctx context.Context, filter *domain.ViewAnalyticsFilter) (*domain.ViewAnalyticsResponse, error) {
+	baseQuery, args := r.buildAnalyticsQuery(filter)
+
 	// Get aggregate stats
+	response, err := r.getAggregateStats(ctx, baseQuery, args)
+	if err != nil {
+		return nil, err
+	}
+
+	// Get device stats
+	deviceStats, err := r.getGroupedStats(ctx, baseQuery, args, "device_type")
+	if err != nil {
+		return nil, err
+	}
+	response.DeviceStats = deviceStats
+	response.DeviceBreakdown = deviceStats // Same data for now
+
+	// Get geo stats
+	geoStats, err := r.getGroupedStats(ctx, baseQuery, args, "country_code")
+	if err != nil {
+		return nil, err
+	}
+	response.GeoStats = geoStats
+	response.CountryBreakdown = geoStats // Same data for now
+
+	// Get hourly stats
+	hourlyStats, err := r.getHourlyStats(ctx, baseQuery, args)
+	if err != nil {
+		return nil, err
+	}
+	response.HourlyStats = hourlyStats
+
+	return response, nil
+}
+
+// getAggregateStats retrieves aggregate statistics
+func (r *ViewsRepository) getAggregateStats(ctx context.Context, baseQuery string, args []interface{}) (*domain.ViewAnalyticsResponse, error) {
 	statsQuery := fmt.Sprintf(`
-		SELECT 
+		SELECT
 			COUNT(*) as total_views,
 			COUNT(DISTINCT session_id) as unique_views,
 			AVG(watch_duration) as avg_duration,
@@ -204,109 +235,78 @@ func (r *ViewsRepository) GetVideoAnalytics(ctx context.Context, filter *domain.
 
 	// Initialize daily stats slice
 	response.DailyStats = make([]domain.DailyViewStats, 0)
+	return &response, nil
+}
 
-	// Get device stats
-	deviceQuery := fmt.Sprintf(`
-		SELECT 
-			COALESCE(device_type, 'unknown') as device,
+// getGroupedStats retrieves stats grouped by a field
+func (r *ViewsRepository) getGroupedStats(ctx context.Context, baseQuery string, args []interface{}, groupField string) (map[string]int64, error) {
+	query := fmt.Sprintf(`
+		SELECT
+			COALESCE(%s, 'unknown') as field,
 			COUNT(*) as count
 		FROM (%s) views
-		GROUP BY device_type`, baseQuery)
+		GROUP BY %s`, groupField, baseQuery, groupField)
 
-	rows, err := r.db.QueryContext(ctx, deviceQuery, args...)
+	rows, err := r.db.QueryContext(ctx, query, args...)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get device stats: %w", err)
+		return nil, fmt.Errorf("failed to get %s stats: %w", groupField, err)
 	}
 	defer func() {
 		if err := rows.Close(); err != nil {
-			// Log error but don't override return value
 			_ = err
 		}
 	}()
 
-	response.DeviceStats = make(map[string]int64)
-	response.DeviceBreakdown = make(map[string]int64)
+	stats := make(map[string]int64)
 	for rows.Next() {
-		var device string
+		var field string
 		var count int64
-		if err := rows.Scan(&device, &count); err != nil {
-			return nil, fmt.Errorf("failed to scan device stats: %w", err)
+		if err := rows.Scan(&field, &count); err != nil {
+			return nil, fmt.Errorf("failed to scan %s stats: %w", groupField, err)
 		}
-		response.DeviceStats[device] = count
-		response.DeviceBreakdown[device] = count // Same data for now
+		stats[field] = count
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("error iterating device stats: %w", err)
+		return nil, fmt.Errorf("error iterating %s stats: %w", groupField, err)
 	}
 
-	// Get geo stats
-	geoQuery := fmt.Sprintf(`
-		SELECT 
-			COALESCE(country_code, 'unknown') as country,
-			COUNT(*) as count
-		FROM (%s) views
-		GROUP BY country_code`, baseQuery)
+	return stats, nil
+}
 
-	rows, err = r.db.QueryContext(ctx, geoQuery, args...)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get geo stats: %w", err)
-	}
-	defer func() {
-		if err := rows.Close(); err != nil {
-			// Log error but don't override return value
-			_ = err
-		}
-	}()
-
-	response.GeoStats = make(map[string]int64)
-	response.CountryBreakdown = make(map[string]int64)
-	for rows.Next() {
-		var country string
-		var count int64
-		if err := rows.Scan(&country, &count); err != nil {
-			return nil, fmt.Errorf("failed to scan geo stats: %w", err)
-		}
-		response.GeoStats[country] = count
-		response.CountryBreakdown[country] = count // Same data for now
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("error iterating geo stats: %w", err)
-	}
-
-	// Get hourly stats
+// getHourlyStats retrieves hourly statistics
+func (r *ViewsRepository) getHourlyStats(ctx context.Context, baseQuery string, args []interface{}) (map[int]int64, error) {
 	hourlyQuery := fmt.Sprintf(`
-		SELECT 
+		SELECT
 			view_hour,
 			COUNT(*) as count
 		FROM (%s) views
 		GROUP BY view_hour
 		ORDER BY view_hour`, baseQuery)
 
-	rows, err = r.db.QueryContext(ctx, hourlyQuery, args...)
+	rows, err := r.db.QueryContext(ctx, hourlyQuery, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get hourly stats: %w", err)
 	}
 	defer func() {
 		if err := rows.Close(); err != nil {
-			// Log error but don't override return value
 			_ = err
 		}
 	}()
 
-	response.HourlyStats = make(map[int]int64)
+	stats := make(map[int]int64)
 	for rows.Next() {
 		var hour int
 		var count int64
 		if err := rows.Scan(&hour, &count); err != nil {
 			return nil, fmt.Errorf("failed to scan hourly stats: %w", err)
 		}
-		response.HourlyStats[hour] = count
+		stats[hour] = count
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("failed to iterate hourly stats rows: %w", err)
 	}
 
-	return &response, nil
+	return stats, nil
 }
 
 // GetDailyVideoStats retrieves daily stats for a video
