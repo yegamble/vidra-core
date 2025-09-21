@@ -59,27 +59,27 @@ func (h *InstanceHandlers) GetInstanceAbout(w http.ResponseWriter, r *http.Reque
 	for _, config := range configs {
 		switch config.Key {
 		case "instance_name":
-			json.Unmarshal(config.Value, &info.Name)
+			_ = json.Unmarshal(config.Value, &info.Name)
 		case "instance_description":
-			json.Unmarshal(config.Value, &info.Description)
+			_ = json.Unmarshal(config.Value, &info.Description)
 		case "instance_version":
-			json.Unmarshal(config.Value, &info.Version)
+			_ = json.Unmarshal(config.Value, &info.Version)
 		case "instance_contact_email":
-			json.Unmarshal(config.Value, &info.ContactEmail)
+			_ = json.Unmarshal(config.Value, &info.ContactEmail)
 		case "instance_terms_url":
-			json.Unmarshal(config.Value, &info.TermsURL)
+			_ = json.Unmarshal(config.Value, &info.TermsURL)
 		case "instance_privacy_url":
-			json.Unmarshal(config.Value, &info.PrivacyURL)
+			_ = json.Unmarshal(config.Value, &info.PrivacyURL)
 		case "instance_rules":
-			json.Unmarshal(config.Value, &info.Rules)
+			_ = json.Unmarshal(config.Value, &info.Rules)
 		case "instance_languages":
-			json.Unmarshal(config.Value, &info.Languages)
+			_ = json.Unmarshal(config.Value, &info.Languages)
 		case "instance_categories":
-			json.Unmarshal(config.Value, &info.Categories)
+			_ = json.Unmarshal(config.Value, &info.Categories)
 		case "instance_default_nsfw_policy":
-			json.Unmarshal(config.Value, &info.DefaultNSFWPolicy)
+			_ = json.Unmarshal(config.Value, &info.DefaultNSFWPolicy)
 		case "signup_enabled":
-			json.Unmarshal(config.Value, &info.SignupEnabled)
+			_ = json.Unmarshal(config.Value, &info.SignupEnabled)
 		}
 	}
 
@@ -252,7 +252,7 @@ func (h *InstanceHandlers) OEmbed(w http.ResponseWriter, r *http.Request) {
 			xmlResponse += fmt.Sprintf("<%s>%v</%s>", k, v, k)
 		}
 		xmlResponse += "</oembed>"
-		w.Write([]byte(xmlResponse))
+		_, _ = w.Write([]byte(xmlResponse))
 	} else {
 		WriteJSON(w, http.StatusOK, oembedResponse)
 	}
