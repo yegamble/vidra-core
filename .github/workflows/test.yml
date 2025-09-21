@@ -230,7 +230,8 @@ jobs:
         uses: golangci/golangci-lint-action@v6
         with:
           args: --timeout=10m
-          version: latest
+          # Use v2.x to support versioned config schemas
+          version: v2.4.0
 
   build:
     runs-on: ubuntu-latest
