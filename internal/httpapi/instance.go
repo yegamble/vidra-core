@@ -44,8 +44,10 @@ func (h *InstanceHandlers) GetInstanceAbout(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// Build instance info from configs
+	// Build instance info from configs with default values
 	info := domain.InstanceInfo{
+		Name:               "Athena Instance",
+		Version:            "1.0.0",
 		TotalUsers:         totalUsers,
 		TotalVideos:        totalVideos,
 		TotalLocalVideos:   totalLocalVideos,
@@ -55,15 +57,24 @@ func (h *InstanceHandlers) GetInstanceAbout(w http.ResponseWriter, r *http.Reque
 		Categories:         []string{},
 	}
 
-	// Parse config values
+	// Parse config values (overriding defaults only if config exists and is valid)
 	for _, config := range configs {
 		switch config.Key {
 		case "instance_name":
-			_ = json.Unmarshal(config.Value, &info.Name)
+			var name string
+			if err := json.Unmarshal(config.Value, &name); err == nil && name != "" {
+				info.Name = name
+			}
 		case "instance_description":
-			_ = json.Unmarshal(config.Value, &info.Description)
+			var desc string
+			if err := json.Unmarshal(config.Value, &desc); err == nil {
+				info.Description = desc
+			}
 		case "instance_version":
-			_ = json.Unmarshal(config.Value, &info.Version)
+			var version string
+			if err := json.Unmarshal(config.Value, &version); err == nil && version != "" {
+				info.Version = version
+			}
 		case "instance_contact_email":
 			_ = json.Unmarshal(config.Value, &info.ContactEmail)
 		case "instance_terms_url":
@@ -83,10 +94,15 @@ func (h *InstanceHandlers) GetInstanceAbout(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
-	WriteJSON(w, http.StatusOK, map[string]interface{}{
-		"data":    info,
-		"success": true,
-	})
+	// Ensure defaults are set if still empty after config parsing
+	if info.Name == "" {
+		info.Name = "Athena Instance"
+	}
+	if info.Version == "" {
+		info.Version = "1.0.0"
+	}
+
+	WriteJSON(w, http.StatusOK, info)
 }
 
 // ListInstanceConfigs handles GET /api/v1/admin/instance/config (admin only)

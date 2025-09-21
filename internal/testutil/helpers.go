@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"athena/internal/domain"
+	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
 )
@@ -152,10 +153,11 @@ func NullString(s string) sql.NullString {
 func CreateTestUser(t *testing.T, db *sqlx.DB, email string, role string) *domain.User {
 	t.Helper()
 
-	// Import required packages at the top of the file
+	userID := uuid.New().String()
+	timestamp := time.Now().UnixNano()
 	user := &domain.User{
-		ID:            fmt.Sprintf("user_%d", time.Now().UnixNano()),
-		Username:      fmt.Sprintf("user_%d", time.Now().UnixNano()),
+		ID:            userID,
+		Username:      fmt.Sprintf("user_%d", timestamp),
 		Email:         email,
 		DisplayName:   "Test User",
 		Bio:           "Test bio",
@@ -192,19 +194,22 @@ func CreateTestUser(t *testing.T, db *sqlx.DB, email string, role string) *domai
 func CreateTestVideo(t *testing.T, db *sqlx.DB, userID, title string) *domain.Video {
 	t.Helper()
 
+	thumbnailID := uuid.New().String()
 	video := &domain.Video{
-		ID:          fmt.Sprintf("video_%d", time.Now().UnixNano()),
+		ID:          uuid.New().String(),
 		UserID:      userID,
 		Title:       title,
 		Description: "Test video description",
 		Privacy:     domain.PrivacyPublic,
 		Duration:    120,
 		Views:       0,
+		ThumbnailID: thumbnailID,
+		Status:      "published",
 	}
 
 	query := `
-		INSERT INTO videos (id, user_id, title, description, privacy, duration)
-		VALUES ($1, $2, $3, $4, $5, $6)
+		INSERT INTO videos (id, user_id, title, description, privacy, duration, thumbnail_id, status)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		RETURNING created_at, updated_at`
 
 	err := db.QueryRow(
@@ -215,6 +220,8 @@ func CreateTestVideo(t *testing.T, db *sqlx.DB, userID, title string) *domain.Vi
 		video.Description,
 		video.Privacy,
 		video.Duration,
+		video.ThumbnailID,
+		video.Status,
 	).Scan(&video.CreatedAt, &video.UpdatedAt)
 
 	if err != nil {

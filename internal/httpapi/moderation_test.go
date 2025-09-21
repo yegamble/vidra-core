@@ -11,6 +11,7 @@ import (
 	"athena/internal/domain"
 	"athena/internal/repository"
 	"athena/internal/testutil"
+
 	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -203,7 +204,13 @@ func TestInstanceHandlers(t *testing.T) {
 		}
 		err := json.NewDecoder(w.Body).Decode(&resp)
 		require.NoError(t, err)
+		if w.Code != http.StatusOK {
+			t.Logf("Response body: %s", w.Body.String())
+		}
+		t.Logf("Response: %+v", resp)
+		t.Logf("Instance data - Name: %s, Version: %s", resp.Data.Name, resp.Data.Version)
 		assert.True(t, resp.Success)
+		// Check that name and version are not empty (either defaults or from config)
 		assert.NotEmpty(t, resp.Data.Name)
 		assert.NotEmpty(t, resp.Data.Version)
 	})

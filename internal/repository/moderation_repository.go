@@ -340,7 +340,7 @@ func (r *ModerationRepository) GetInstanceStats(ctx context.Context) (totalUsers
 	// For now, all videos are local
 	totalLocalVideos = totalVideos
 
-	// Get total views
-	err = r.db.GetContext(ctx, &totalViews, "SELECT COALESCE(SUM(view_count), 0) FROM user_views")
+	// Get total views (count all view records)
+	err = r.db.GetContext(ctx, &totalViews, "SELECT COUNT(*) FROM user_views")
 	return
 }
