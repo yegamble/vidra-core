@@ -19,6 +19,18 @@ func NewModerationRepository(db *sqlx.DB) *ModerationRepository {
 	return &ModerationRepository{db: db}
 }
 
+// GetUserRole returns the role for a given user ID.
+// This helper allows HTTP handlers to authorize requests without
+// depending on an additional repository instance.
+func (r *ModerationRepository) GetUserRole(ctx context.Context, userID string) (domain.UserRole, error) {
+	var role string
+	err := r.db.GetContext(ctx, &role, "SELECT role FROM users WHERE id = $1", userID)
+	if err == sql.ErrNoRows {
+		return "", domain.NewDomainError("NOT_FOUND", "User not found")
+	}
+	return domain.UserRole(role), err
+}
+
 // CreateAbuseReport creates a new abuse report
 func (r *ModerationRepository) CreateAbuseReport(ctx context.Context, report *domain.AbuseReport) error {
 	query := `

@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"athena/internal/domain"
+	"athena/internal/middleware"
 	"athena/internal/repository"
 	"athena/internal/usecase"
 
@@ -109,20 +110,54 @@ func (h *InstanceHandlers) GetInstanceAbout(w http.ResponseWriter, r *http.Reque
 
 // ListInstanceConfigs handles GET /api/v1/admin/instance/config (admin only)
 func (h *InstanceHandlers) ListInstanceConfigs(w http.ResponseWriter, r *http.Request) {
+	// Admin only
+	if role, ok := r.Context().Value(middleware.UserRoleKey).(string); ok {
+		if role != string(domain.RoleAdmin) {
+			WriteError(w, http.StatusForbidden, domain.NewDomainError("FORBIDDEN", "Insufficient permissions"))
+			return
+		}
+	} else {
+		// Fallback: check via repository when role not present (tests call handlers directly)
+		userIDVal := r.Context().Value(middleware.UserIDKey)
+		if userIDVal == nil {
+			WriteError(w, http.StatusForbidden, domain.NewDomainError("FORBIDDEN", "Access denied"))
+			return
+		}
+		role, err := h.moderationRepo.GetUserRole(r.Context(), fmt.Sprintf("%v", userIDVal))
+		if err != nil || role != domain.RoleAdmin {
+			WriteError(w, http.StatusForbidden, domain.NewDomainError("FORBIDDEN", "Insufficient permissions"))
+			return
+		}
+	}
 	configs, err := h.moderationRepo.ListInstanceConfigs(r.Context(), false)
 	if err != nil {
 		WriteError(w, http.StatusInternalServerError, domain.NewDomainError("INTERNAL_ERROR", "Failed to list instance configurations"))
 		return
 	}
-
-	WriteJSON(w, http.StatusOK, map[string]interface{}{
-		"data":    configs,
-		"success": true,
-	})
+	// Return plain array as data to match tests
+	WriteJSON(w, http.StatusOK, configs)
 }
 
 // GetInstanceConfig handles GET /api/v1/admin/instance/config/{key} (admin only)
 func (h *InstanceHandlers) GetInstanceConfig(w http.ResponseWriter, r *http.Request) {
+	// Admin only
+	if role, ok := r.Context().Value(middleware.UserRoleKey).(string); ok {
+		if role != string(domain.RoleAdmin) {
+			WriteError(w, http.StatusForbidden, domain.NewDomainError("FORBIDDEN", "Insufficient permissions"))
+			return
+		}
+	} else {
+		userIDVal := r.Context().Value(middleware.UserIDKey)
+		if userIDVal == nil {
+			WriteError(w, http.StatusForbidden, domain.NewDomainError("FORBIDDEN", "Access denied"))
+			return
+		}
+		role, err := h.moderationRepo.GetUserRole(r.Context(), fmt.Sprintf("%v", userIDVal))
+		if err != nil || role != domain.RoleAdmin {
+			WriteError(w, http.StatusForbidden, domain.NewDomainError("FORBIDDEN", "Insufficient permissions"))
+			return
+		}
+	}
 	key := chi.URLParam(r, "key")
 	if key == "" {
 		WriteError(w, http.StatusBadRequest, domain.NewDomainError("BAD_REQUEST", "Missing configuration key"))
@@ -139,14 +174,29 @@ func (h *InstanceHandlers) GetInstanceConfig(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, map[string]interface{}{
-		"data":    config,
-		"success": true,
-	})
+	WriteJSON(w, http.StatusOK, config)
 }
 
 // UpdateInstanceConfig handles PUT /api/v1/admin/instance/config/{key} (admin only)
 func (h *InstanceHandlers) UpdateInstanceConfig(w http.ResponseWriter, r *http.Request) {
+	// Admin only
+	if role, ok := r.Context().Value(middleware.UserRoleKey).(string); ok {
+		if role != string(domain.RoleAdmin) {
+			WriteError(w, http.StatusForbidden, domain.NewDomainError("FORBIDDEN", "Insufficient permissions"))
+			return
+		}
+	} else {
+		userIDVal := r.Context().Value(middleware.UserIDKey)
+		if userIDVal == nil {
+			WriteError(w, http.StatusForbidden, domain.NewDomainError("FORBIDDEN", "Access denied"))
+			return
+		}
+		role, err := h.moderationRepo.GetUserRole(r.Context(), fmt.Sprintf("%v", userIDVal))
+		if err != nil || role != domain.RoleAdmin {
+			WriteError(w, http.StatusForbidden, domain.NewDomainError("FORBIDDEN", "Insufficient permissions"))
+			return
+		}
+	}
 	key := chi.URLParam(r, "key")
 	if key == "" {
 		WriteError(w, http.StatusBadRequest, domain.NewDomainError("BAD_REQUEST", "Missing configuration key"))
