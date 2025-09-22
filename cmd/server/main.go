@@ -94,7 +94,9 @@ func main() {
 		subRepo := repository.NewSubscriptionRepository(db)
 		notificationRepo := repository.NewNotificationRepository(db)
 		notificationSvc := usecase.NewNotificationService(notificationRepo, subRepo, userRepo)
-		encSvc := usecase.NewEncodingService(encRepo, videoRepo, notificationSvc, cfg.StorageDir, cfg)
+		// Optional ATProto publisher
+		atproto := usecase.NewAtprotoService(nil, cfg, nil, nil)
+		encSvc := usecase.NewEncodingService(encRepo, videoRepo, notificationSvc, cfg.StorageDir, cfg, atproto, nil)
 
 		go func() {
 			log.Printf("Starting encoding workers (count=%d)...", cfg.EncodingWorkers)

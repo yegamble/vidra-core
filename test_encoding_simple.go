@@ -46,7 +46,7 @@ func main() {
 	}
 
 	// Create encoding service (pass nil for notification service in test)
-	service := usecase.NewEncodingService(encodingRepo, videoRepo, nil, tempDir, cfg)
+	service := usecase.NewEncodingService(encodingRepo, videoRepo, nil, tempDir, cfg, nil, nil)
 
 	// Get video metadata
 	metadata, err := testutil.GetVideoMetadata(videoPath)

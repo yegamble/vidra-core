@@ -35,7 +35,7 @@ func TestEncodingService_ProcessMultipleResolutions(t *testing.T) {
 		HLSSegmentDuration: 4,
 	}
 
-	service := NewEncodingService(encodingRepo, videoRepo, nil, tempDir, cfg)
+	service := NewEncodingService(encodingRepo, videoRepo, nil, tempDir, cfg, nil, nil)
 
 	for _, testVideo := range testutil.TestVideos {
 		t.Run(testVideo.Name, func(t *testing.T) {

@@ -53,14 +53,14 @@ func (r *ChannelRepository) Create(ctx context.Context, channel *domain.Channel)
 // GetByID retrieves a channel by ID
 func (r *ChannelRepository) GetByID(ctx context.Context, id uuid.UUID) (*domain.Channel, error) {
 	query := `
-		SELECT
-			c.id, c.account_id, c.handle, c.display_name, c.description, c.support,
-			c.is_local, c.actor_id, c.inbox_url, c.outbox_url, c.followers_url, c.following_url,
-			c.avatar_filename, c.avatar_ipfs_cid, c.banner_filename, c.banner_ipfs_cid,
-			c.followers_count, c.following_count, c.videos_count,
-			c.created_at, c.updated_at
-		FROM channels c
-		WHERE c.id = $1`
+        SELECT
+            c.id, c.account_id, c.handle, c.display_name, c.description, c.support,
+            c.is_local, c.atproto_did, c.atproto_pds_url,
+            c.avatar_filename, c.avatar_ipfs_cid, c.banner_filename, c.banner_ipfs_cid,
+            c.followers_count, c.following_count, c.videos_count,
+            c.created_at, c.updated_at
+        FROM channels c
+        WHERE c.id = $1`
 
 	var channel domain.Channel
 	err := r.db.GetContext(ctx, &channel, query, id)
@@ -82,14 +82,14 @@ func (r *ChannelRepository) GetByID(ctx context.Context, id uuid.UUID) (*domain.
 // GetByHandle retrieves a channel by handle
 func (r *ChannelRepository) GetByHandle(ctx context.Context, handle string) (*domain.Channel, error) {
 	query := `
-		SELECT
-			c.id, c.account_id, c.handle, c.display_name, c.description, c.support,
-			c.is_local, c.actor_id, c.inbox_url, c.outbox_url, c.followers_url, c.following_url,
-			c.avatar_filename, c.avatar_ipfs_cid, c.banner_filename, c.banner_ipfs_cid,
-			c.followers_count, c.following_count, c.videos_count,
-			c.created_at, c.updated_at
-		FROM channels c
-		WHERE c.handle = $1`
+        SELECT
+            c.id, c.account_id, c.handle, c.display_name, c.description, c.support,
+            c.is_local, c.atproto_did, c.atproto_pds_url,
+            c.avatar_filename, c.avatar_ipfs_cid, c.banner_filename, c.banner_ipfs_cid,
+            c.followers_count, c.following_count, c.videos_count,
+            c.created_at, c.updated_at
+        FROM channels c
+        WHERE c.handle = $1`
 
 	var channel domain.Channel
 	err := r.db.GetContext(ctx, &channel, query, handle)
@@ -181,16 +181,16 @@ func (r *ChannelRepository) List(ctx context.Context, params domain.ChannelListP
 	args = append(args, offset)
 
 	query := fmt.Sprintf(`
-		SELECT
-			c.id, c.account_id, c.handle, c.display_name, c.description, c.support,
-			c.is_local, c.actor_id, c.inbox_url, c.outbox_url, c.followers_url, c.following_url,
-			c.avatar_filename, c.avatar_ipfs_cid, c.banner_filename, c.banner_ipfs_cid,
-			c.followers_count, c.following_count, c.videos_count,
-			c.created_at, c.updated_at
-		FROM channels c
-		WHERE %s
-		ORDER BY %s
-		LIMIT $%d OFFSET $%d`, whereClause, orderBy, argCount-1, argCount)
+        SELECT
+            c.id, c.account_id, c.handle, c.display_name, c.description, c.support,
+            c.is_local, c.atproto_did, c.atproto_pds_url,
+            c.avatar_filename, c.avatar_ipfs_cid, c.banner_filename, c.banner_ipfs_cid,
+            c.followers_count, c.following_count, c.videos_count,
+            c.created_at, c.updated_at
+        FROM channels c
+        WHERE %s
+        ORDER BY %s
+        LIMIT $%d OFFSET $%d`, whereClause, orderBy, argCount-1, argCount)
 
 	var channels []domain.Channel
 	err = r.db.SelectContext(ctx, &channels, query, args...)
@@ -251,7 +251,7 @@ func (r *ChannelRepository) Update(ctx context.Context, id uuid.UUID, updates do
 		SET %s
 		WHERE id = $%d
 		RETURNING id, account_id, handle, display_name, description, support,
-			is_local, actor_id, inbox_url, outbox_url, followers_url, following_url,
+			is_local, atproto_did, atproto_pds_url,
 			avatar_filename, avatar_ipfs_cid, banner_filename, banner_ipfs_cid,
 			followers_count, following_count, videos_count,
 			created_at, updated_at`,
@@ -298,15 +298,15 @@ func (r *ChannelRepository) Delete(ctx context.Context, id uuid.UUID) error {
 // GetChannelsByAccountID retrieves all channels for a given account
 func (r *ChannelRepository) GetChannelsByAccountID(ctx context.Context, accountID uuid.UUID) ([]domain.Channel, error) {
 	query := `
-		SELECT
-			c.id, c.account_id, c.handle, c.display_name, c.description, c.support,
-			c.is_local, c.actor_id, c.inbox_url, c.outbox_url, c.followers_url, c.following_url,
-			c.avatar_filename, c.avatar_ipfs_cid, c.banner_filename, c.banner_ipfs_cid,
-			c.followers_count, c.following_count, c.videos_count,
-			c.created_at, c.updated_at
-		FROM channels c
-		WHERE c.account_id = $1
-		ORDER BY c.created_at ASC`
+        SELECT
+            c.id, c.account_id, c.handle, c.display_name, c.description, c.support,
+            c.is_local, c.atproto_did, c.atproto_pds_url,
+            c.avatar_filename, c.avatar_ipfs_cid, c.banner_filename, c.banner_ipfs_cid,
+            c.followers_count, c.following_count, c.videos_count,
+            c.created_at, c.updated_at
+        FROM channels c
+        WHERE c.account_id = $1
+        ORDER BY c.created_at ASC`
 
 	var channels []domain.Channel
 	err := r.db.SelectContext(ctx, &channels, query, accountID)
@@ -320,16 +320,16 @@ func (r *ChannelRepository) GetChannelsByAccountID(ctx context.Context, accountI
 // GetDefaultChannelForAccount retrieves the default (first) channel for an account
 func (r *ChannelRepository) GetDefaultChannelForAccount(ctx context.Context, accountID uuid.UUID) (*domain.Channel, error) {
 	query := `
-		SELECT
-			c.id, c.account_id, c.handle, c.display_name, c.description, c.support,
-			c.is_local, c.actor_id, c.inbox_url, c.outbox_url, c.followers_url, c.following_url,
-			c.avatar_filename, c.avatar_ipfs_cid, c.banner_filename, c.banner_ipfs_cid,
-			c.followers_count, c.following_count, c.videos_count,
-			c.created_at, c.updated_at
-		FROM channels c
-		WHERE c.account_id = $1
-		ORDER BY c.created_at ASC
-		LIMIT 1`
+        SELECT
+            c.id, c.account_id, c.handle, c.display_name, c.description, c.support,
+            c.is_local, c.atproto_did, c.atproto_pds_url,
+            c.avatar_filename, c.avatar_ipfs_cid, c.banner_filename, c.banner_ipfs_cid,
+            c.followers_count, c.following_count, c.videos_count,
+            c.created_at, c.updated_at
+        FROM channels c
+        WHERE c.account_id = $1
+        ORDER BY c.created_at ASC
+        LIMIT 1`
 
 	var channel domain.Channel
 	err := r.db.GetContext(ctx, &channel, query, accountID)

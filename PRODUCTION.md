@@ -76,6 +76,26 @@ ENABLE_METRICS=true
 METRICS_PORT=9090
 ENABLE_TRACING=true
 OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+
+# ATProto Federation (Optional)
+FEDERATION_ENABLED=false  # Set to true to enable federation
+ATPROTO_ENABLED=false     # Set to true to enable ATProto
+ATPROTO_HANDLE=your-instance.com
+ATPROTO_DID=did:web:your-instance.com
+
+# Bluesky Integration (Optional)
+BLUESKY_ENABLED=false  # Set to true to enable Bluesky integration
+BLUESKY_PDS_URL=https://bsky.social
+BLUESKY_HANDLE=your-account.bsky.social
+BLUESKY_APP_PASSWORD=<app-specific-password>  # Generate from Bluesky settings
+BLUESKY_FIREHOSE_URL=wss://bsky.network
+BLUESKY_FIREHOSE_RECONNECT_DELAY=5s
+BLUESKY_FIREHOSE_MAX_RETRIES=10
+
+# Federation Performance
+FEDERATION_SYNC_INTERVAL=300  # Sync every 5 minutes
+FEDERATION_MAX_CONCURRENT_SYNCS=5
+FEDERATION_TIMEOUT=30s
 ```
 
 ### 2. Security Middleware
@@ -305,6 +325,124 @@ Key metrics to monitor:
 
 - `/health` - Liveness probe
 - `/ready` - Readiness probe (checks DB, Redis, IPFS)
+
+## 🌐 ATProto Federation Setup (Optional)
+
+ATProto federation enables cross-platform content syndication with Bluesky and other AT Protocol services.
+
+### Federation Configuration Methods
+
+#### 1. Environment Variables (Recommended for Production)
+
+Configure federation through environment variables in your `.env` file:
+
+```bash
+# Enable federation features
+FEDERATION_ENABLED=true
+ATPROTO_ENABLED=true
+
+# Instance identity
+ATPROTO_HANDLE=your-instance.com
+ATPROTO_DID=did:web:your-instance.com
+PUBLIC_BASE_URL=https://your-instance.com
+
+# Bluesky integration
+BLUESKY_ENABLED=true
+BLUESKY_PDS_URL=https://bsky.social
+BLUESKY_HANDLE=your-account.bsky.social
+BLUESKY_APP_PASSWORD=xxxx-xxxx-xxxx-xxxx  # Generate from Bluesky settings
+BLUESKY_FIREHOSE_URL=wss://bsky.network
+
+# Federation scheduler
+ENABLE_FEDERATION_SCHEDULER=true
+FEDERATION_SCHEDULER_INTERVAL_SECONDS=15
+FEDERATION_SCHEDULER_BURST=1
+FEDERATION_INGEST_INTERVAL_SECONDS=60
+```
+
+#### 2. Admin API Configuration
+
+Configure federation settings via the admin API:
+
+```bash
+# Set instance DID
+curl -X PUT \
+  -H "Authorization: Bearer <ADMIN_TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{"enabled": true, "instanceDid": "did:web:your-instance.com", "instanceHandle": "your-instance.com"}' \
+  https://your-instance.com/api/v1/admin/federation/config
+
+# Configure Bluesky integration
+curl -X PUT \
+  -H "Authorization: Bearer <ADMIN_TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "blueskyEnabled": true,
+    "blueskyHandle": "your-account.bsky.social",
+    "blueskyAppPassword": "xxxx-xxxx-xxxx-xxxx",
+    "autoPublish": true
+  }' \
+  https://your-instance.com/api/v1/admin/federation/config
+```
+
+### Federation Features
+
+1. **DID Document**: Served at `/.well-known/atproto-did` for instance identification
+2. **Automatic Post Creation**: Public videos are automatically posted to Bluesky
+3. **Firehose Subscription**: Real-time updates from the Bluesky network
+4. **Federated Timeline**: Aggregated content at `/api/v1/federation/timeline`
+5. **Peer Management**: Add and manage federation peers through the admin API
+
+### Managing Federation Peers
+
+```bash
+# Add a federation peer
+curl -X POST \
+  -H "Authorization: Bearer <ADMIN_TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "did": "did:plc:peer-instance",
+    "handle": "peer.example.com",
+    "serviceUrl": "https://peer.example.com"
+  }' \
+  https://your-instance.com/api/v1/admin/federation/peers
+
+# List active peers
+curl -H "Authorization: Bearer <ADMIN_TOKEN>" \
+  https://your-instance.com/api/v1/admin/federation/peers?status=active
+```
+
+### Content Filtering
+
+Configure content filtering for ingested posts:
+
+```bash
+# Set actors to follow
+curl -X PUT \
+  -H "Authorization: Bearer <ADMIN_TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{"value": ["did:plc:abcd1234", "alice.bsky.social"], "is_public": false}' \
+  https://your-instance.com/api/v1/admin/instance/config/atproto_ingest_actors
+
+# Block content with specific labels
+curl -X PUT \
+  -H "Authorization: Bearer <ADMIN_TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{"value": ["porn", "sexual", "violence"], "is_public": false}' \
+  https://your-instance.com/api/v1/admin/instance/config/atproto_block_labels
+```
+
+### Monitoring Federation
+
+Check federation health and statistics:
+
+```bash
+# Get federation status
+curl https://your-instance.com/api/v1/federation/status
+
+# View federated timeline
+curl https://your-instance.com/api/v1/federation/timeline?limit=20
+```
 
 ### 3. Logging
 

@@ -125,6 +125,28 @@ type Config struct {
 	EnableEncoding  bool
 	EncodingWorkers int
 	MetricsAddr     string
+
+	// ATProto Integration
+	EnableATProto                 bool
+	ATProtoPDSURL                 string
+	ATProtoAuthToken              string
+	ATProtoHandle                 string
+	ATProtoAppPassword            string
+	ATProtoTokenKey               string
+	ATProtoRefreshIntervalSeconds int
+	ATProtoUseImageEmbed          bool
+	ATProtoImageAltField          string
+
+	// Public URL for embeds/links
+	PublicBaseURL string
+
+	// Federation Scheduler
+	EnableFederationScheduler          bool
+	FederationSchedulerIntervalSeconds int
+	FederationSchedulerBurst           int
+	FederationIngestIntervalSeconds    int
+	FederationIngestMaxItems           int
+	FederationIngestMaxPages           int
 }
 
 func Load() (*Config, error) {
@@ -263,6 +285,28 @@ func Load() (*Config, error) {
 	cfg.EnableEncoding = getBoolEnv("ENABLE_ENCODING", false)
 	cfg.EncodingWorkers = getIntEnv("ENCODING_WORKERS", 2)
 	cfg.MetricsAddr = getEnvOrDefault("METRICS_ADDR", ":9090")
+
+	// ATProto Integration
+	cfg.EnableATProto = getBoolEnv("ENABLE_ATPROTO", false)
+	cfg.ATProtoPDSURL = getEnvOrDefault("ATPROTO_PDS_URL", "")
+	cfg.ATProtoAuthToken = getEnvOrDefault("ATPROTO_AUTH_TOKEN", "")
+	cfg.ATProtoHandle = getEnvOrDefault("ATPROTO_HANDLE", "")
+	cfg.ATProtoAppPassword = getEnvOrDefault("ATPROTO_APP_PASSWORD", "")
+	cfg.ATProtoTokenKey = getEnvOrDefault("ATPROTO_TOKEN_KEY", "")
+	cfg.ATProtoRefreshIntervalSeconds = getIntEnv("ATPROTO_REFRESH_INTERVAL_SECONDS", 2700) // 45 minutes
+	cfg.ATProtoUseImageEmbed = getBoolEnv("ATPROTO_USE_IMAGE_EMBED", false)
+	cfg.ATProtoImageAltField = getEnvOrDefault("ATPROTO_IMAGE_ALT_FIELD", "description") // or "title"
+
+	// Public URL
+	cfg.PublicBaseURL = getEnvOrDefault("PUBLIC_BASE_URL", "")
+
+	// Federation Scheduler
+	cfg.EnableFederationScheduler = getBoolEnv("ENABLE_FEDERATION_SCHEDULER", true)
+	cfg.FederationSchedulerIntervalSeconds = getIntEnv("FEDERATION_SCHEDULER_INTERVAL_SECONDS", 15)
+	cfg.FederationSchedulerBurst = getIntEnv("FEDERATION_SCHEDULER_BURST", 1)
+	cfg.FederationIngestIntervalSeconds = getIntEnv("FEDERATION_INGEST_INTERVAL_SECONDS", 60)
+	cfg.FederationIngestMaxItems = getIntEnv("FEDERATION_INGEST_MAX_ITEMS", 40)
+	cfg.FederationIngestMaxPages = getIntEnv("FEDERATION_INGEST_MAX_PAGES", 2)
 
 	return cfg, nil
 }

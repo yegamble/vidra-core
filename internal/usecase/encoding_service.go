@@ -33,10 +33,23 @@ type encodingService struct {
 	notificationSvc NotificationService
 	uploadsDir      string // storage root
 	cfg             *config.Config
+	atproto         AtprotoPublisher
+	fedEnq          FederationJobEnqueuer
 }
 
-func NewEncodingService(repo EncodingRepository, videoRepo VideoRepository, notificationSvc NotificationService, uploadsDir string, cfg *config.Config) EncodingService {
-	return &encodingService{repo: repo, videoRepo: videoRepo, notificationSvc: notificationSvc, uploadsDir: uploadsDir, cfg: cfg}
+func NewEncodingService(repo EncodingRepository, videoRepo VideoRepository, notificationSvc NotificationService, uploadsDir string, cfg *config.Config, atproto AtprotoPublisher, enq FederationJobEnqueuer) EncodingService {
+	return &encodingService{repo: repo, videoRepo: videoRepo, notificationSvc: notificationSvc, uploadsDir: uploadsDir, cfg: cfg, atproto: atproto, fedEnq: enq}
+}
+
+// FederationJobEnqueuer enqueues federation jobs for retry/out-of-band processing.
+type FederationJobEnqueuer interface {
+	EnqueueJob(ctx context.Context, jobType string, payload any, runAt time.Time) (string, error)
+}
+
+// WithFederationEnqueuer optionally attaches a federation job enqueuer to the encoding service.
+func (s *encodingService) WithFederationEnqueuer(enq FederationJobEnqueuer) *encodingService {
+	s.fedEnq = enq
+	return s
 }
 
 func (s *encodingService) Run(ctx context.Context, workers int) error {
@@ -227,10 +240,30 @@ func (s *encodingService) processJob(ctx context.Context, job *domain.EncodingJo
 		return err
 	}
 
+	// Publish to ATProto (best-effort) if enabled and video is public
+	if s.atproto != nil {
+		if v, err := s.videoRepo.GetByID(ctx, job.VideoID); err == nil && v != nil {
+			if err := s.atproto.PublishVideo(ctx, v); err != nil && s.fedEnq != nil {
+				// Enqueue retry with small delay
+				_ = s.enqueuePublishRetry(ctx, v.ID, 30*time.Second)
+			}
+		}
+	}
+
 	// Trigger notifications
 	s.triggerNotifications(ctx, job.VideoID)
 
 	return nil
+}
+
+func (s *encodingService) enqueuePublishRetry(ctx context.Context, videoID string, delay time.Duration) error {
+	if s.fedEnq == nil {
+		return nil
+	}
+	payload := map[string]any{"videoId": videoID}
+	when := time.Now().Add(delay)
+	_, err := s.fedEnq.EnqueueJob(ctx, "publish_post", payload, when)
+	return err
 }
 
 // generateMediaAssets generates thumbnail and preview for the video

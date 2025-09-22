@@ -585,9 +585,14 @@
         isLocal:
           type: boolean
           description: Whether this is a local channel (not federated)
-        actorId:
+        atprotoDid:
           type: string
-          description: ActivityPub actor ID for federation
+          description: ATProto DID for federation (e.g., did:plc:...)
+          nullable: true
+        atprotoPdsUrl:
+          type: string
+          format: uri
+          description: Optional ATProto PDS base URL associated with the DID
           nullable: true
         avatarUrl:
           type: string

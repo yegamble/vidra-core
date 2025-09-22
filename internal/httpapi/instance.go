@@ -31,6 +31,25 @@ func NewInstanceHandlers(moderationRepo *repository.ModerationRepository, userRe
 	}
 }
 
+// WellKnownAtprotoDID serves the instance DID for ATProto handle verification.
+// Path: /.well-known/atproto-did
+func (h *InstanceHandlers) WellKnownAtprotoDID(w http.ResponseWriter, r *http.Request) {
+	cfg, err := h.moderationRepo.GetInstanceConfig(r.Context(), "atproto_did")
+	if err != nil {
+		// If not configured, return 404 per ATProto expectations
+		WriteError(w, http.StatusNotFound, domain.NewDomainError("NOT_FOUND", "ATProto DID not configured"))
+		return
+	}
+	var did string
+	if err := json.Unmarshal(cfg.Value, &did); err != nil || strings.TrimSpace(did) == "" {
+		WriteError(w, http.StatusNotFound, domain.NewDomainError("NOT_FOUND", "ATProto DID not configured"))
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(did))
+}
+
 // GetInstanceAbout handles GET /api/v1/instance/about
 func (h *InstanceHandlers) GetInstanceAbout(w http.ResponseWriter, r *http.Request) {
 	// Get public configuration values

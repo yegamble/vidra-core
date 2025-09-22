@@ -47,6 +47,7 @@ func RegisterRoutes(r chi.Router, cfg *config.Config) {
 	playlistRepo := repository.NewPlaylistRepository(db)
 	captionRepo := repository.NewCaptionRepository(db)
 	moderationRepo := repository.NewModerationRepository(db)
+	federationRepo := repository.NewFederationRepository(db)
 
 	// Create storage directory structure
 	storageRoot := cfg.StorageDir
@@ -79,17 +80,39 @@ func RegisterRoutes(r chi.Router, cfg *config.Config) {
 	playlistService := usecase.NewPlaylistService(playlistRepo, videoRepo)
 	captionService := usecase.NewCaptionService(captionRepo, videoRepo, cfg)
 
+	// Initialize shared ATProto publisher (with session persistence + background refresh)
+	var atprotoSvc usecase.AtprotoPublisher
+	if cfg.EnableATProto {
+		var encKey []byte
+		if cfg.ATProtoTokenKey != "" {
+			if k, err := repository.DecodeTokenKey(cfg.ATProtoTokenKey); err == nil {
+				encKey = k
+			}
+		}
+		atprotoSvc = usecase.NewAtprotoService(moderationRepo, cfg, repository.NewAtprotoRepository(db), encKey)
+		// Start background refresh based on configuration
+		atprotoSvc.StartBackgroundRefresh(context.Background(), time.Duration(cfg.ATProtoRefreshIntervalSeconds)*time.Second)
+	}
+
 	// Start a lightweight encoding scheduler in the background to ensure
 	// pending jobs are processed even if the standalone encoder is not running.
 	// This uses a short interval with a small burst to avoid starvation.
 	var encSched *scheduler.EncodingScheduler
 	if cfg.EnableEncodingScheduler {
-		encSvc := usecase.NewEncodingService(encodingRepo, videoRepo, notificationService, storageRoot, cfg)
+		encSvc := usecase.NewEncodingService(encodingRepo, videoRepo, notificationService, storageRoot, cfg, atprotoSvc, federationRepo)
 		interval := time.Duration(cfg.EncodingSchedulerIntervalSeconds) * time.Second
 		burst := cfg.EncodingSchedulerBurst
 		encSched = scheduler.NewEncodingScheduler(encSvc, interval, burst)
 		// Use Background context; lifecycle is tied to the server process.
 		go encSched.Start(context.Background())
+	}
+
+	// Start federation scheduler (ingestion + publish retries)
+	if cfg.EnableFederationScheduler && cfg.EnableATProto {
+		fedSvc := usecase.NewFederationService(federationRepo, moderationRepo, atprotoSvc, cfg)
+		fInterval := time.Duration(cfg.FederationSchedulerIntervalSeconds) * time.Second
+		fBurst := cfg.FederationSchedulerBurst
+		go scheduler.NewFederationScheduler(fedSvc, fInterval, fBurst).Start(context.Background())
 	}
 
 	// Initialize Redis session repo
@@ -328,6 +351,12 @@ func RegisterRoutes(r chi.Router, cfg *config.Config) {
 			r.Delete("/{id}", notificationHandlers.DeleteNotification)
 		})
 
+		// Federation endpoints
+		r.Route("/federation", func(r chi.Router) {
+			fedHandlers := NewFederationHandlers(federationRepo)
+			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/timeline", fedHandlers.GetTimeline)
+		})
+
 		// Playlists
 		r.Route("/playlists", func(r chi.Router) {
 			playlistHandlers := NewPlaylistHandlers(playlistService)
@@ -392,6 +421,24 @@ func RegisterRoutes(r chi.Router, cfg *config.Config) {
 				r.Put("/{clientId}/secret", server.AdminRotateOAuthClientSecret)
 				r.Delete("/{clientId}", server.AdminDeleteOAuthClient)
 			})
+
+			// Federation jobs (admin)
+			fedAdminHandlers := NewAdminFederationHandlers(federationRepo)
+			r.Route("/federation/jobs", func(r chi.Router) {
+				r.Get("/", fedAdminHandlers.ListJobs)
+				r.Get("/{id}", fedAdminHandlers.GetJob)
+				r.Post("/{id}/retry", fedAdminHandlers.RetryJob)
+				r.Delete("/{id}", fedAdminHandlers.DeleteJob)
+			})
+
+			// Federation actors (admin)
+			fedActorsHandlers := NewAdminFederationActorsHandlers(federationRepo)
+			r.Route("/federation/actors", func(r chi.Router) {
+				r.Get("/", fedActorsHandlers.ListActors)
+				r.Post("/", fedActorsHandlers.UpsertActor)
+				r.Put("/{actor}", fedActorsHandlers.UpdateActor)
+				r.Delete("/{actor}", fedActorsHandlers.DeleteActor)
+			})
 		})
 
 		// Public instance information
@@ -402,6 +449,9 @@ func RegisterRoutes(r chi.Router, cfg *config.Config) {
 
 	// OEmbed endpoint (outside of /api/v1)
 	r.Get("/oembed", NewInstanceHandlers(moderationRepo, userRepo, videoRepo).OEmbed)
+
+	// ATProto well-known DID endpoint for handle verification
+	r.Get("/.well-known/atproto-did", NewInstanceHandlers(moderationRepo, userRepo, videoRepo).WellKnownAtprotoDID)
 
 	// Custom 404 handler that returns JSON error response
 	r.NotFound(func(w http.ResponseWriter, r *http.Request) {

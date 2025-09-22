@@ -30,6 +30,7 @@ A high-performance PeerTube backend implementation in Go with decentralized stor
 - 🔔 **Real-time Notifications** - Automatic notifications for video uploads, messages, comments, and user interactions
 - 💬 **Messaging System** - Direct messaging between users with E2EE support
 - 🖼️ **Avatar WebP Optimization** - Optional WebP encoding for uploaded avatars (quality configurable), IPFS pinning of both original and WebP variants
+- 🌐 **ATProto Federation** - Cross-platform content federation via AT Protocol with Bluesky integration
 - 📊 **Observability** - Prometheus metrics, structured logging, distributed tracing
 - 🐳 **Docker Ready** - Full containerization with Docker Compose
 - ✅ **CI/CD** - GitHub Actions with automated testing
@@ -46,11 +47,30 @@ A high-performance PeerTube backend implementation in Go with decentralized stor
 - **Sprint F: OAuth2** - Full OAuth2 implementation with Authorization Code + PKCE
 - **Sprint G: Admin & Instance** - Admin tools, instance config, oEmbed
 
-### ❌ Not Started (Federation Sprints H-K)
-- **Sprint H: Federation Foundations** - ActivityPub, WebFinger, NodeInfo
-- **Sprint I: Federation Videos** - Publish/consume federated videos
-- **Sprint J: Federation Social** - Federated follows, likes, comments
-- **Sprint K: Federation Hardening** - Reliability and moderation
+### 🚧 In Progress (Federation Sprints H-K)
+- **Sprint H: Federation Foundations** ✅ - ATProto integration complete
+  - Instance DID document with handle verification
+  - XRPC endpoints for federation communication
+  - Bluesky firehose subscription and timeline aggregation
+  - Post creation when videos are published
+- **Sprint I: Federation Videos** 🚧 - Video federation via ATProto
+- **Sprint J: Federation Social** - Follows, likes, comments over ATProto
+- **Sprint K: Federation Hardening** - Reliability and moderation for ATProto
+
+### 🔗 ATProto Federation Features (Active)
+- **Instance Identity**: Serves DID document at `/.well-known/atproto-did`
+- **Bluesky Integration**:
+  - Automatic post creation when public videos are published
+  - Subscribe to Bluesky firehose for real-time updates
+  - Federated timeline aggregation from configured actors
+- **Admin Controls**:
+  - Enable/disable federation per instance
+  - Manage federation peers and subscriptions
+  - Monitor federation health and metrics
+- **API Endpoints**:
+  - `GET /api/v1/federation/timeline` - Federated content timeline
+  - `GET /api/v1/federation/status` - Federation health status
+  - Admin endpoints for federation management
 
 See [docs/sprints.md](docs/sprints.md) for detailed sprint information.
 
@@ -217,6 +237,7 @@ The API is defined using OpenAPI 3.0 specification in `api/openapi.yaml`.
   - Comments: [api/openapi_comments.yaml](api/openapi_comments.yaml)
   - Ratings & Playlists: [api/openapi_ratings_playlists.yaml](api/openapi_ratings_playlists.yaml)
   - Moderation & Admin: [api/openapi_moderation.yaml](api/openapi_moderation.yaml)
+  - Federation & ATProto: [api/openapi_federation.yaml](api/openapi_federation.yaml)
   - Notifications: [docs/openapi_notifications.yaml](docs/openapi_notifications.yaml)
 - 📚 **Implementation Guides**:
   - API Examples: [docs/API_EXAMPLES.md](docs/API_EXAMPLES.md)
@@ -749,10 +770,21 @@ docker-compose down
 Key environment variables (see `.env.example` for full list):
 
 ```bash
+# Core Services
 DATABASE_URL=postgres://user:pass@localhost:5432/athena
 REDIS_URL=redis://localhost:6379/0
 JWT_SECRET=your-secret-key
 PORT=8080
+
+# ATProto Federation (Optional)
+ATPROTO_ENABLED=true
+ATPROTO_HANDLE=your-instance.com
+ATPROTO_DID=did:web:your-instance.com
+BLUESKY_PDS_URL=https://bsky.social
+BLUESKY_HANDLE=your-account.bsky.social
+BLUESKY_APP_PASSWORD=your-app-password
+BLUESKY_FIREHOSE_URL=wss://bsky.network
+FEDERATION_ENABLED=true
 ```
 
 ## CI/CD

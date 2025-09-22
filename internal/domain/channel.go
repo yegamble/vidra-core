@@ -16,11 +16,8 @@ type Channel struct {
 	Description    *string   `json:"description,omitempty" db:"description"`
 	Support        *string   `json:"support,omitempty" db:"support"` // Support/donation text
 	IsLocal        bool      `json:"isLocal" db:"is_local"`
-	ActorID        *string   `json:"actorId,omitempty" db:"actor_id"` // ActivityPub actor ID
-	InboxURL       *string   `json:"inboxUrl,omitempty" db:"inbox_url"`
-	OutboxURL      *string   `json:"outboxUrl,omitempty" db:"outbox_url"`
-	FollowersURL   *string   `json:"followersUrl,omitempty" db:"followers_url"`
-	FollowingURL   *string   `json:"followingUrl,omitempty" db:"following_url"`
+	AtprotoDID     *string   `json:"atprotoDid,omitempty" db:"atproto_did"`        // ATProto DID for federation
+	AtprotoPDSURL  *string   `json:"atprotoPdsUrl,omitempty" db:"atproto_pds_url"` // Optional PDS base URL for the DID
 	AvatarFilename *string   `json:"avatarFilename,omitempty" db:"avatar_filename"`
 	AvatarIPFSCID  *string   `json:"avatarIpfsCid,omitempty" db:"avatar_ipfs_cid"`
 	BannerFilename *string   `json:"bannerFilename,omitempty" db:"banner_filename"`

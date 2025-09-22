@@ -96,7 +96,7 @@ Instance / Config / oEmbed / Plugins / Moderation
 - Missing: Public server config & info endpoints, oEmbed, plugin management, abuse reports and moderation actions.
 
 Federation (non-REST, but essential)
-- Missing: ActivityPub, WebFinger, NodeInfo endpoints.
+- Missing: ATProto integration (PDS/XRPC); `.well-known/atproto-did` now available but disabled by default until configured.
 
 ## 3) Shim Route Proposals (Phase 1 scope)
 

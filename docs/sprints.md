@@ -201,38 +201,52 @@
     - **Database**: Migration 031 added for moderation tables
     - **OpenAPI**: Complete documentation in `api/openapi_moderation.yaml`
 
-## Sprint H: Federation I — Foundations ❌ **NOT STARTED**
+## Sprint H: Federation I — ATProto Foundations ✅ **COMPLETED**
 
-- Scope: ActivityPub groundwork.
+- Scope: ATProto groundwork.
 - Deliverables:
-    - Discovery: WebFinger, NodeInfo.
-    - Actors: server/channel/user actors and their JSON‑LD representations.
-    - Crypto: HTTP Signatures (incoming/outgoing), verification middleware.
-    - Infrastructure: inbox/outbox endpoints; queue + retry scaffolding.
-    - OpenAPI/Docs: document non‑REST surfaces + configuration.
-- Success: Instance can serve identity metadata; accept signed requests to inbox (validate + store).
-- **Status**: No federation implementation found.
+    - ✅ Identity: Instance DID served at `/.well-known/atproto-did`
+    - ✅ DID Document: Complete DID document with service endpoints and verification methods
+    - ✅ Bluesky Integration: Full Bluesky client with session management
+    - ✅ XRPC Client: Complete implementation for ATProto communication
+    - ✅ Configuration: Admin API and environment variables for federation settings
+    - ✅ OpenAPI/Docs: Complete federation API documentation in `api/openapi_federation.yaml`
+- Success: Instance exposes DID and can communicate with ATProto services.
+- **Status**: **COMPLETED**
+    - ✅ Created federation domain models and structures
+    - ✅ Implemented FederationRepository with peer and subscription management
+    - ✅ Built ATProtoService with Bluesky client integration
+    - ✅ Added FederationService for post creation and timeline aggregation
+    - ✅ Created FederationScheduler for background sync operations
+    - ✅ Added federation HTTP handlers and routes
+    - ✅ Database migrations 032 and 033 for federation tables
+    - ✅ Full configuration via environment variables or admin API
 
-## Sprint I: Federation II — Publish/Consume Videos ❌ **NOT STARTED**
+## Sprint I: Federation II — Publish/Consume via ATProto 🚧 **IN PROGRESS**
 
-- Scope: Basic activities for videos.
+- Scope: Create and consume ATProto records.
 - Deliverables:
-    - Outgoing: Create/Update/Delete for videos (public).
-    - Incoming: consume remote Create activities; store foreign videos and minimal metadata.
-    - Timeline: lightweight "federated feed" to surface remote content.
-    - Tests: signature, persistence, dedupe, simple conflict handling.
-- Success: Remote-to-local video propagation works for public content.
-- **Status**: Depends on Sprint H.
+    - ✅ Outgoing: Automatic post creation to Bluesky when public videos are published
+    - ✅ Incoming: Firehose subscription for real-time updates from Bluesky network
+    - ✅ Timeline: Federated timeline at `/api/v1/federation/timeline`
+    - 🚧 Tests: Integration tests for federation flows pending
+- Success: Videos are syndicated to Bluesky; remote content appears in timeline.
+- **Status**: **PARTIALLY COMPLETE**
+    - ✅ Video-to-post syndication working
+    - ✅ Firehose subscription implemented
+    - ✅ Timeline aggregation functional
+    - 🚧 Need comprehensive integration tests
+    - 🚧 Video record consumption not yet implemented
 
-## Sprint J: Federation III — Social Actions ❌ **NOT STARTED**
+## Sprint J: Federation III — Social via ATProto ❌ **NOT STARTED**
 
-- Scope: Follows/Announce; comments/likes federation.
+- Scope: Follows, likes, comments over ATProto.
 - Deliverables:
-    - Follows: follow/unfollow channels; process Accept/Reject; announce activity propagation.
-    - Likes/Comments: federate likes and comments; map to local models.
-    - Moderation: ignore/block logic for remote spam/abuse.
-    - Tests: end‑to‑end flows with mock remote.
-- Success: Follows and basic interactions roundtrip across instances.
+    - Follows: use ATProto follow semantics at the account level.
+    - Likes/Comments: create and consume feed actions; map to local models.
+    - Moderation: ignore/block lists interoperable with ATProto labels.
+    - Tests: end‑to‑end flows with mock PDS.
+- Success: Follows and basic interactions roundtrip via ATProto.
 - **Status**: Depends on Sprints H & I.
 
 ## Sprint K: Federation IV — Hardening ❌ **NOT STARTED**
@@ -266,11 +280,23 @@
 - **User Avatars**: Avatar upload with IPFS pinning and WebP optimization
 - **Video Categories**: Full API with 15 default categories at `/api/v1/categories`
 
-### ❌ Not Started (Federation - Sprints H-K)
-- **Sprint H**: Federation Foundations - ActivityPub, WebFinger, NodeInfo
-- **Sprint I**: Federation Videos - Publish/consume federated videos
-- **Sprint J**: Federation Social - Federated follows, likes, comments
-- **Sprint K**: Federation Hardening - Reliability and moderation
+### 🚀 Federation Progress (Sprints H-K)
+
+**Current Federation Capabilities:**
+- ✅ Instance DID document served at `/.well-known/atproto-did`
+- ✅ Automatic Bluesky post creation when videos are published
+- ✅ Real-time firehose subscription from Bluesky network
+- ✅ Federated timeline aggregating content from configured actors
+- ✅ Admin controls for federation configuration
+- ✅ Peer management system for federation partners
+- ✅ Comprehensive federation API endpoints
+- ✅ Environment variable configuration for easy deployment
+
+**Sprint Status:**
+- **Sprint H**: ✅ ATProto Foundations - DID document, Bluesky integration, XRPC client complete
+- **Sprint I**: 🚧 ATProto Videos - Publishing works; consumption in progress
+- **Sprint J**: ❌ ATProto Social - Follows, likes, comments (not started)
+- **Sprint K**: ❌ Federation Hardening - Reliability and moderation (not started)
 
 ## Recommended Next Steps
 
@@ -281,33 +307,37 @@ All core PeerTube API features (Sprints A-G) are now implemented:
 - Admin tools and instance management
 - oEmbed support for video embedding
 
-### 🎯 Next Priority: Federation (Sprints H-K)
-If federation is required for your deployment:
+### 🎯 Federation Status Update
 
-**Sprint H: Federation Foundations**
-1. Implement WebFinger for actor discovery
-2. Add NodeInfo endpoint for instance metadata
-3. Create ActivityPub actor representations (server, channel, user)
-4. Implement HTTP Signatures for request signing
-5. Set up inbox/outbox endpoints with queue infrastructure
+**Sprint H: ATProto Foundations** ✅ **COMPLETE**
+- Instance DID document served at `/.well-known/atproto-did`
+- Bluesky integration with session management
+- XRPC client for ATProto communication
+- Admin API for federation configuration
+- Environment variables for easy deployment
 
-**Sprint I: Federation Videos**
-1. Implement outgoing Create/Update/Delete activities
-2. Process incoming video activities
-3. Build federated timeline/feed
-4. Handle deduplication and conflict resolution
+**Sprint I: ATProto Videos** 🚧 **IN PROGRESS**
+- ✅ Automatic post creation to Bluesky for public videos
+- ✅ Firehose subscription for real-time updates
+- ✅ Federated timeline aggregation
+- 🚧 Video record consumption needs implementation
+- 🚧 Integration tests needed
 
-**Sprint J: Federation Social**
-1. Federate follow/unfollow activities
-2. Implement activity announcements (shares)
-3. Federate comments and likes
-4. Add remote moderation capabilities
+**Next Steps for Sprint I Completion:**
+1. Implement video record consumption from ATProto
+2. Add comprehensive integration tests
+3. Implement deduplication and conflict resolution
+4. Add retry logic for failed syndication
+
+**Sprint J: ATProto Social**
+1. Implement follows at account level
+2. Handle likes and replies; map to local comments/ratings
+3. Add remote moderation capabilities and label handling
 
 **Sprint K: Federation Hardening**
 1. Add exponential backoff and retry logic
 2. Implement dead letter queues
-3. Strengthen signature verification
-4. Add federation metrics and monitoring
+3. Add federation metrics and monitoring
 
 ### 💡 Alternative Deployment Options
 

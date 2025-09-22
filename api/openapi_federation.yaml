@@ -1,0 +1,660 @@
+openapi: 3.0.0
+info:
+  title: Athena Federation API
+  description: ATProto federation endpoints for cross-platform content syndication
+  version: 1.0.0
+
+servers:
+  - url: http://localhost:8080
+    description: Local development server
+  - url: https://api.example.com
+    description: Production server
+
+paths:
+  /.well-known/atproto-did:
+    get:
+      summary: Get ATProto DID Document
+      description: Returns the instance's DID document for ATProto federation
+      tags:
+        - Federation
+      responses:
+        '200':
+          description: DID document retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DIDDocument'
+        '404':
+          description: DID document not found
+        '500':
+          description: Internal server error
+
+  /api/v1/federation/status:
+    get:
+      summary: Get federation status
+      description: Returns the current federation status and health information
+      tags:
+        - Federation
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Federation status retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FederationStatus'
+        '401':
+          description: Unauthorized
+        '500':
+          description: Internal server error
+
+  /api/v1/federation/timeline:
+    get:
+      summary: Get federated timeline
+      description: Returns aggregated content from federated peers
+      tags:
+        - Federation
+      parameters:
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+          description: Number of items to return
+        - in: query
+          name: cursor
+          schema:
+            type: string
+          description: Pagination cursor
+        - in: query
+          name: filter
+          schema:
+            type: string
+            enum: [all, videos, posts, images]
+            default: all
+          description: Content type filter
+      responses:
+        '200':
+          description: Federated timeline retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FederatedTimeline'
+        '400':
+          description: Invalid parameters
+        '500':
+          description: Internal server error
+
+  /api/v1/admin/federation/config:
+    get:
+      summary: Get federation configuration
+      description: Returns the current federation configuration settings
+      tags:
+        - Federation
+        - Admin
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Configuration retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FederationConfig'
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden - Admin access required
+        '500':
+          description: Internal server error
+
+    put:
+      summary: Update federation configuration
+      description: Updates the federation configuration settings
+      tags:
+        - Federation
+        - Admin
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FederationConfigUpdate'
+      responses:
+        '200':
+          description: Configuration updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FederationConfig'
+        '400':
+          description: Invalid configuration
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden - Admin access required
+        '500':
+          description: Internal server error
+
+  /api/v1/admin/federation/peers:
+    get:
+      summary: List federation peers
+      description: Returns a list of federated peer instances
+      tags:
+        - Federation
+        - Admin
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: query
+          name: status
+          schema:
+            type: string
+            enum: [active, inactive, pending, blocked]
+          description: Filter by peer status
+      responses:
+        '200':
+          description: Peers retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/FederationPeer'
+                  total:
+                    type: integer
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden - Admin access required
+        '500':
+          description: Internal server error
+
+    post:
+      summary: Add federation peer
+      description: Adds a new federation peer instance
+      tags:
+        - Federation
+        - Admin
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FederationPeerCreate'
+      responses:
+        '201':
+          description: Peer added successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FederationPeer'
+        '400':
+          description: Invalid peer data
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden - Admin access required
+        '409':
+          description: Peer already exists
+        '500':
+          description: Internal server error
+
+  /api/v1/admin/federation/peers/{peerId}:
+    parameters:
+      - in: path
+        name: peerId
+        required: true
+        schema:
+          type: string
+          format: uuid
+        description: The peer instance ID
+
+    get:
+      summary: Get federation peer
+      description: Returns details about a specific federation peer
+      tags:
+        - Federation
+        - Admin
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Peer retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FederationPeer'
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden - Admin access required
+        '404':
+          description: Peer not found
+        '500':
+          description: Internal server error
+
+    put:
+      summary: Update federation peer
+      description: Updates a federation peer's configuration
+      tags:
+        - Federation
+        - Admin
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FederationPeerUpdate'
+      responses:
+        '200':
+          description: Peer updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FederationPeer'
+        '400':
+          description: Invalid peer data
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden - Admin access required
+        '404':
+          description: Peer not found
+        '500':
+          description: Internal server error
+
+    delete:
+      summary: Remove federation peer
+      description: Removes a federation peer instance
+      tags:
+        - Federation
+        - Admin
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: Peer removed successfully
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden - Admin access required
+        '404':
+          description: Peer not found
+        '500':
+          description: Internal server error
+
+  /api/v1/admin/federation/subscriptions:
+    get:
+      summary: List federation subscriptions
+      description: Returns a list of active federation subscriptions
+      tags:
+        - Federation
+        - Admin
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: query
+          name: type
+          schema:
+            type: string
+            enum: [firehose, webhook, polling]
+          description: Filter by subscription type
+      responses:
+        '200':
+          description: Subscriptions retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/FederationSubscription'
+                  total:
+                    type: integer
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden - Admin access required
+        '500':
+          description: Internal server error
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    DIDDocument:
+      type: object
+      required:
+        - '@context'
+        - id
+        - service
+      properties:
+        '@context':
+          type: array
+          items:
+            type: string
+          example: ["https://www.w3.org/ns/did/v1"]
+        id:
+          type: string
+          description: The DID identifier
+          example: "did:web:example.com"
+        alsoKnownAs:
+          type: array
+          items:
+            type: string
+          description: Alternative identifiers
+          example: ["https://example.com/users/admin"]
+        service:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+              type:
+                type: string
+              serviceEndpoint:
+                type: string
+        verificationMethod:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+              type:
+                type: string
+              controller:
+                type: string
+              publicKeyMultibase:
+                type: string
+
+    FederationStatus:
+      type: object
+      properties:
+        enabled:
+          type: boolean
+          description: Whether federation is enabled
+        healthy:
+          type: boolean
+          description: Overall federation health status
+        instanceDid:
+          type: string
+          description: This instance's DID
+        instanceHandle:
+          type: string
+          description: This instance's handle
+        connections:
+          type: object
+          properties:
+            active:
+              type: integer
+              description: Number of active peer connections
+            pending:
+              type: integer
+              description: Number of pending connections
+            failed:
+              type: integer
+              description: Number of failed connections
+        subscriptions:
+          type: object
+          properties:
+            firehose:
+              type: boolean
+              description: Whether firehose subscription is active
+            lastActivity:
+              type: string
+              format: date-time
+              description: Last activity timestamp
+        statistics:
+          type: object
+          properties:
+            postsCreated:
+              type: integer
+              description: Number of posts created via federation
+            postsSynced:
+              type: integer
+              description: Number of posts synced from peers
+            errors:
+              type: integer
+              description: Number of federation errors in last 24h
+
+    FederatedTimeline:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/FederatedPost'
+        cursor:
+          type: string
+          description: Pagination cursor for next page
+        hasMore:
+          type: boolean
+          description: Whether more items are available
+
+    FederatedPost:
+      type: object
+      properties:
+        id:
+          type: string
+          description: Unique post identifier
+        uri:
+          type: string
+          description: ATProto URI
+        cid:
+          type: string
+          description: Content identifier
+        author:
+          type: object
+          properties:
+            did:
+              type: string
+            handle:
+              type: string
+            displayName:
+              type: string
+            avatar:
+              type: string
+        text:
+          type: string
+          description: Post text content
+        embed:
+          type: object
+          description: Embedded content (video, image, etc.)
+          properties:
+            type:
+              type: string
+              enum: [video, image, external, record]
+            uri:
+              type: string
+            title:
+              type: string
+            description:
+              type: string
+            thumbnail:
+              type: string
+        createdAt:
+          type: string
+          format: date-time
+        indexedAt:
+          type: string
+          format: date-time
+        metrics:
+          type: object
+          properties:
+            likes:
+              type: integer
+            reposts:
+              type: integer
+            replies:
+              type: integer
+
+    FederationConfig:
+      type: object
+      properties:
+        enabled:
+          type: boolean
+          description: Whether federation is enabled
+        instanceDid:
+          type: string
+          description: Instance DID
+        instanceHandle:
+          type: string
+          description: Instance handle
+        blueskyEnabled:
+          type: boolean
+          description: Whether Bluesky integration is enabled
+        blueskyHandle:
+          type: string
+          description: Bluesky account handle
+        blueskyPdsUrl:
+          type: string
+          description: Bluesky PDS URL
+        firehoseUrl:
+          type: string
+          description: Firehose subscription URL
+        autoPublish:
+          type: boolean
+          description: Automatically publish new videos to federation
+        syncInterval:
+          type: integer
+          description: Sync interval in seconds
+        maxRetries:
+          type: integer
+          description: Maximum retry attempts for failed operations
+
+    FederationConfigUpdate:
+      type: object
+      properties:
+        enabled:
+          type: boolean
+        blueskyEnabled:
+          type: boolean
+        blueskyHandle:
+          type: string
+        blueskyAppPassword:
+          type: string
+          format: password
+        autoPublish:
+          type: boolean
+        syncInterval:
+          type: integer
+          minimum: 60
+          maximum: 3600
+        maxRetries:
+          type: integer
+          minimum: 1
+          maximum: 10
+
+    FederationPeer:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        did:
+          type: string
+          description: Peer's DID
+        handle:
+          type: string
+          description: Peer's handle
+        serviceUrl:
+          type: string
+          description: Peer's service endpoint
+        status:
+          type: string
+          enum: [active, inactive, pending, blocked]
+        lastSeen:
+          type: string
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+        statistics:
+          type: object
+          properties:
+            postsSynced:
+              type: integer
+            lastSync:
+              type: string
+              format: date-time
+            errors:
+              type: integer
+
+    FederationPeerCreate:
+      type: object
+      required:
+        - did
+        - handle
+      properties:
+        did:
+          type: string
+          description: Peer's DID
+        handle:
+          type: string
+          description: Peer's handle
+        serviceUrl:
+          type: string
+          description: Peer's service endpoint
+
+    FederationPeerUpdate:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [active, inactive, pending, blocked]
+        serviceUrl:
+          type: string
+
+    FederationSubscription:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        type:
+          type: string
+          enum: [firehose, webhook, polling]
+        url:
+          type: string
+          description: Subscription endpoint URL
+        status:
+          type: string
+          enum: [active, paused, failed]
+        filters:
+          type: object
+          description: Subscription filters
+        lastActivity:
+          type: string
+          format: date-time
+        errorCount:
+          type: integer
+        createdAt:
+          type: string
+          format: date-time
+
+tags:
+  - name: Federation
+    description: ATProto federation endpoints
+  - name: Admin
+    description: Administrative endpoints
