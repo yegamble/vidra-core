@@ -90,8 +90,8 @@ func (r *FederationRepository) RescheduleJob(ctx context.Context, id string, las
 
 // Posts
 func (r *FederationRepository) UpsertPost(ctx context.Context, p *domain.FederatedPost) error {
-	q := `INSERT INTO federated_posts (actor_did, actor_handle, uri, cid, text, created_at, indexed_at, embed_url, embed_title, embed_description, labels, raw)
-          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+	q := `INSERT INTO federated_posts (actor_did, actor_handle, uri, cid, text, created_at, indexed_at, embed_type, embed_url, embed_title, embed_description, labels, raw)
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
           ON CONFLICT (uri) DO UPDATE SET
             actor_did=EXCLUDED.actor_did,
             actor_handle=EXCLUDED.actor_handle,
@@ -99,6 +99,7 @@ func (r *FederationRepository) UpsertPost(ctx context.Context, p *domain.Federat
             text=EXCLUDED.text,
             created_at=EXCLUDED.created_at,
             indexed_at=EXCLUDED.indexed_at,
+            embed_type=EXCLUDED.embed_type,
             embed_url=EXCLUDED.embed_url,
             embed_title=EXCLUDED.embed_title,
             embed_description=EXCLUDED.embed_description,
@@ -106,7 +107,7 @@ func (r *FederationRepository) UpsertPost(ctx context.Context, p *domain.Federat
             raw=EXCLUDED.raw,
             updated_at=CURRENT_TIMESTAMP`
 	_, err := r.db.ExecContext(ctx, q,
-		p.ActorDID, p.ActorHandle, p.URI, p.CID, p.Text, p.CreatedAt, p.IndexedAt, p.EmbedURL, p.EmbedTitle, p.EmbedDescription, p.Labels, p.Raw,
+		p.ActorDID, p.ActorHandle, p.URI, p.CID, p.Text, p.CreatedAt, p.IndexedAt, p.EmbedType, p.EmbedURL, p.EmbedTitle, p.EmbedDescription, p.Labels, p.Raw,
 	)
 	return err
 }
@@ -122,7 +123,7 @@ func (r *FederationRepository) ListTimeline(ctx context.Context, limit, offset i
 	if err := r.db.GetContext(ctx, &total, `SELECT COUNT(*) FROM federated_posts`); err != nil {
 		return nil, 0, err
 	}
-	rows, err := r.db.QueryxContext(ctx, `SELECT id, actor_did, actor_handle, uri, cid, text, created_at, indexed_at, embed_url, embed_title, embed_description, labels, raw, inserted_at, updated_at
+	rows, err := r.db.QueryxContext(ctx, `SELECT id, actor_did, actor_handle, uri, cid, text, created_at, indexed_at, embed_type, embed_url, embed_title, embed_description, labels, raw, inserted_at, updated_at
                                           FROM federated_posts
                                           ORDER BY COALESCE(indexed_at, inserted_at) DESC
                                           LIMIT $1 OFFSET $2`, limit, offset)

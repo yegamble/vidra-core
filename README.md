@@ -47,17 +47,18 @@ A high-performance PeerTube backend implementation in Go with decentralized stor
 - **Sprint F: OAuth2** - Full OAuth2 implementation with Authorization Code + PKCE
 - **Sprint G: Admin & Instance** - Admin tools, instance config, oEmbed
 
-### ✅ Completed Federation Features (Sprints H-J)
-- **Sprint H: Federation Foundations** ✅ - ATProto integration complete
+### Federation Sprints (H–K)
+- **Sprint H: Federation Foundations** ✅ Complete
   - Instance DID document with handle verification
   - XRPC endpoints for federation communication
   - Bluesky firehose subscription and timeline aggregation
   - Post creation when videos are published
-- **Sprint I: Federation Videos** ✅ - Video federation via ATProto complete
+- **Sprint I: ATProto Videos** 🚧 In Progress
   - Automatic video posting to Bluesky with thumbnails
   - Federated timeline ingestion from multiple actors
-  - Configurable image embeds with alt text support
-- **Sprint J: Federation Social** ✅ - Social interactions via ATProto complete
+  - Video record consumption implemented with embed-type parsing (video/images/external)
+  - Integration tests added for ingestion and timeline
+- **Sprint J: Federation Social** ✅ Complete
   - Follow/unfollow functionality with ATProto records
   - Like/unlike posts and videos
   - Threaded comments as ATProto replies

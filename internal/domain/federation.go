@@ -36,6 +36,7 @@ type FederatedPost struct {
 	Text             *string         `json:"text,omitempty" db:"text"`
 	CreatedAt        *time.Time      `json:"created_at,omitempty" db:"created_at"`
 	IndexedAt        *time.Time      `json:"indexed_at,omitempty" db:"indexed_at"`
+	EmbedType        *string         `json:"embed_type,omitempty" db:"embed_type"`
 	EmbedURL         *string         `json:"embed_url,omitempty" db:"embed_url"`
 	EmbedTitle       *string         `json:"embed_title,omitempty" db:"embed_title"`
 	EmbedDescription *string         `json:"embed_description,omitempty" db:"embed_description"`

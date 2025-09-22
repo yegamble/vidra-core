@@ -222,23 +222,24 @@
     - ✅ Database migrations 032 and 033 for federation tables
     - ✅ Full configuration via environment variables or admin API
 
-## Sprint I: Federation II — Publish/Consume via ATProto ✅ **COMPLETE**
+## Sprint I: Federation II — Publish/Consume via ATProto 🚧 **IN PROGRESS**
 
 - Scope: Create and consume ATProto records.
 - Deliverables:
     - ✅ Outgoing: Automatic post creation to Bluesky when public videos are published
     - ✅ Incoming: Firehose subscription for real-time updates from Bluesky network
     - ✅ Timeline: Federated timeline at `/api/v1/federation/timeline`
-    - ✅ Tests: Comprehensive integration tests for federation flows
+    - ✅ Consumption: Video record consumption with embed-type parsing and persistence
+    - ✅ Tests: Integration tests for ingestion and timeline
 - Success: Videos are syndicated to Bluesky; remote content appears in timeline.
-- **Status**: **COMPLETE**
+- **Status**: **IN PROGRESS**
     - ✅ Video-to-post syndication working with configurable image/external embeds
     - ✅ Firehose subscription implemented with pagination and cursor support
     - ✅ Timeline aggregation functional with proper pagination
-    - ✅ Integration tests for all federation flows
-    - ✅ Per-actor max items and paging with cursor support
-    - ✅ Background refresh interval configurable via environment
-    - ✅ Support for app.bsky.embed.images with alt text
+    - ✅ Video record consumption implemented (external/images/video embeds)
+    - ✅ Integration tests added for consumption persistence and timeline
+    - 🔜 Deduplication/conflict resolution for repeated records
+    - 🔜 Retry logic for failed syndication
 
 ## Sprint J: Federation III — Social via ATProto ✅ **COMPLETED**
 
@@ -359,8 +360,8 @@ All core PeerTube API features (Sprints A-G) are now implemented:
 - ✅ Automatic post creation to Bluesky for public videos
 - ✅ Firehose subscription for real-time updates
 - ✅ Federated timeline aggregation
-- 🚧 Video record consumption needs implementation
-- 🚧 Integration tests needed
+- ✅ Video record consumption implemented (embed-type parsing)
+- ✅ Integration tests added
 
 **Next Steps for Sprint I Completion:**
 1. Implement video record consumption from ATProto

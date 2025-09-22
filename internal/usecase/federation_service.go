@@ -347,7 +347,7 @@ func (s *federationService) buildFederatedPost(m, post, rec map[string]any) *dom
 	handle, _ := author["handle"].(string)
 
 	// Extract embed
-	embedURL, embedTitle, embedDesc := s.extractEmbedInfo(rec)
+	embedType, embedURL, embedTitle, embedDesc := s.extractEmbedInfo(rec)
 
 	// Labels
 	var labelsRaw json.RawMessage
@@ -366,6 +366,7 @@ func (s *federationService) buildFederatedPost(m, post, rec map[string]any) *dom
 		CID:              strPtrIf(cid != "", cid),
 		ActorHandle:      strPtrIf(handle != "", handle),
 		CreatedAt:        createdAt,
+		EmbedType:        embedType,
 		EmbedURL:         embedURL,
 		EmbedTitle:       embedTitle,
 		EmbedDescription: embedDesc,
@@ -374,34 +375,80 @@ func (s *federationService) buildFederatedPost(m, post, rec map[string]any) *dom
 	}
 }
 
-func (s *federationService) extractEmbedInfo(rec map[string]any) (*string, *string, *string) {
+func (s *federationService) extractEmbedInfo(rec map[string]any) (*string, *string, *string, *string) {
 	emb, ok := rec["embed"].(map[string]any)
 	if !ok {
-		return nil, nil, nil
+		return nil, nil, nil, nil
 	}
 
-	embType, _ := emb["$type"].(string)
-	if embType != "app.bsky.embed.external" {
-		return nil, nil, nil
+	t, _ := emb["$type"].(string)
+	// Normalize common embed types into a simple string we can persist
+	// - external: app.bsky.embed.external
+	// - images:   app.bsky.embed.images
+	// - video:    app.bsky.embed.video, or recordWithMedia with media=video
+	// - record:   app.bsky.embed.record
+	var embedType *string
+	switch t {
+	case "app.bsky.embed.external":
+		et := "external"
+		embedType = &et
+		// extract external details
+		if ext, ok := emb["external"].(map[string]any); ok {
+			var embedURL, embedTitle, embedDesc *string
+			if u, ok := ext["uri"].(string); ok {
+				embedURL = &u
+			}
+			if ti, ok := ext["title"].(string); ok {
+				embedTitle = &ti
+			}
+			if d, ok := ext["description"].(string); ok {
+				embedDesc = &d
+			}
+			return embedType, embedURL, embedTitle, embedDesc
+		}
+		return embedType, nil, nil, nil
+	case "app.bsky.embed.images":
+		et := "images"
+		embedType = &et
+		return embedType, nil, nil, nil
+	case "app.bsky.embed.video":
+		et := "video"
+		embedType = &et
+		return embedType, nil, nil, nil
+	case "app.bsky.embed.recordWithMedia":
+		// Inspect nested media type
+		if media, ok := emb["media"].(map[string]any); ok {
+			if mt, _ := media["$type"].(string); mt != "" {
+				switch mt {
+				case "app.bsky.embed.video":
+					et := "video"
+					embedType = &et
+				case "app.bsky.embed.images":
+					et := "images"
+					embedType = &et
+				default:
+					// unknown media; leave unset
+				}
+			} else {
+				// Heuristic: presence of 'video' key may imply a video embed
+				if _, hasVideo := media["video"]; hasVideo {
+					et := "video"
+					embedType = &et
+				} else if _, hasImages := media["images"]; hasImages {
+					et := "images"
+					embedType = &et
+				}
+			}
+		}
+		return embedType, nil, nil, nil
+	case "app.bsky.embed.record":
+		et := "record"
+		embedType = &et
+		return embedType, nil, nil, nil
+	default:
+		// Unknown embed type
+		return nil, nil, nil, nil
 	}
-
-	ext, ok := emb["external"].(map[string]any)
-	if !ok {
-		return nil, nil, nil
-	}
-
-	var embedURL, embedTitle, embedDesc *string
-	if u, ok := ext["uri"].(string); ok {
-		embedURL = &u
-	}
-	if t, ok := ext["title"].(string); ok {
-		embedTitle = &t
-	}
-	if d, ok := ext["description"].(string); ok {
-		embedDesc = &d
-	}
-
-	return embedURL, embedTitle, embedDesc
 }
 
 func strPtrIf(ok bool, v string) *string {

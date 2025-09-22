@@ -349,6 +349,41 @@ func TestFederationWorkflow_EndToEnd(t *testing.T) {
 			t.Errorf("Expected exactly 1 post with URI, found %d", count)
 		}
 	})
+
+	// Test persisting embed_type for video embeds
+	t.Run("VideoEmbedPersistence", func(t *testing.T) {
+		post := &domain.FederatedPost{
+			ActorDID:    "did:plc:vid",
+			URI:         "at://did:plc:vid/app.bsky.feed.post/v1",
+			Text:        stringPtr("Video post"),
+			ActorHandle: stringPtr("vid.bsky.social"),
+			EmbedType:   stringPtr("video"),
+		}
+
+		err := fedRepo.UpsertPost(ctx, post)
+		if err != nil {
+			t.Fatalf("Failed to upsert video post: %v", err)
+		}
+
+		posts, _, err := fedRepo.ListTimeline(ctx, 50, 0)
+		if err != nil {
+			t.Fatalf("Failed to list timeline: %v", err)
+		}
+
+		found := false
+		for _, p := range posts {
+			if p.URI == post.URI {
+				found = true
+				if p.EmbedType == nil || *p.EmbedType != "video" {
+					t.Errorf("Expected embed_type=video, got %v", p.EmbedType)
+				}
+				break
+			}
+		}
+		if !found {
+			t.Error("Video post not found in timeline")
+		}
+	})
 }
 
 // Helper functions (removed stringPtr - already defined in video_category_handler_test.go)
