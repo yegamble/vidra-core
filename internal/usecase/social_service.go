@@ -515,7 +515,7 @@ func (s *SocialService) resolveActorFromNetwork(ctx context.Context, handle stri
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("resolve handle failed: %d", resp.StatusCode)
@@ -545,7 +545,7 @@ func (s *SocialService) getProfile(ctx context.Context, did string) (*domain.ATP
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("get profile failed: %d", resp.StatusCode)
@@ -613,7 +613,7 @@ func (s *SocialService) createRecord(ctx context.Context, repoDID, collection st
 	if err != nil {
 		return "", "", err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -668,7 +668,7 @@ func (s *SocialService) deleteRecord(ctx context.Context, uri string) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -695,7 +695,7 @@ func (s *SocialService) getActorFeed(ctx context.Context, did string, limit int)
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("get feed failed: %d", resp.StatusCode)

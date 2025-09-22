@@ -393,7 +393,7 @@ func (r *SocialRepository) BatchUpsertActors(ctx context.Context, actors []domai
 	if err != nil {
 		return err
 	}
-	defer stmt.Close()
+	defer func() { _ = stmt.Close() }()
 
 	for _, actor := range actors {
 		_, err = stmt.ExecContext(ctx,
