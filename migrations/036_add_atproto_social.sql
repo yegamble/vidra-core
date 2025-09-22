@@ -109,8 +109,8 @@ CREATE TABLE IF NOT EXISTS atproto_moderation_labels (
 CREATE INDEX idx_mod_labels_actor ON atproto_moderation_labels(actor_did);
 CREATE INDEX idx_mod_labels_type ON atproto_moderation_labels(label_type);
 CREATE INDEX idx_mod_labels_uri ON atproto_moderation_labels(uri) WHERE uri IS NOT NULL;
-CREATE INDEX idx_mod_labels_active ON atproto_moderation_labels(actor_did, label_type)
-    WHERE expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP;
+CREATE INDEX idx_mod_labels_actor_type ON atproto_moderation_labels(actor_did, label_type);
+CREATE INDEX idx_mod_labels_expires ON atproto_moderation_labels(expires_at) WHERE expires_at IS NOT NULL;
 
 -- Social stats materialized view for performance
 CREATE MATERIALIZED VIEW IF NOT EXISTS social_stats AS
