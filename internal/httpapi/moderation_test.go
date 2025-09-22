@@ -89,13 +89,17 @@ func TestModerationHandlers(t *testing.T) {
 		assert.Equal(t, http.StatusOK, w.Code)
 		var resp struct {
 			Data    []domain.AbuseReport `json:"data"`
-			Total   int64                `json:"total"`
 			Success bool                 `json:"success"`
+			Meta    struct {
+				Total  int64 `json:"total"`
+				Limit  int   `json:"limit"`
+				Offset int   `json:"offset"`
+			} `json:"meta"`
 		}
 		err = json.NewDecoder(w.Body).Decode(&resp)
 		require.NoError(t, err)
 		assert.True(t, resp.Success)
-		assert.GreaterOrEqual(t, resp.Total, int64(1))
+		assert.GreaterOrEqual(t, resp.Meta.Total, int64(1))
 	})
 
 	t.Run("UpdateAbuseReport", func(t *testing.T) {
@@ -282,6 +286,9 @@ func TestOEmbed(t *testing.T) {
 
 		handlers.OEmbed(w, r)
 
+		if w.Code != http.StatusOK {
+			t.Logf("Response body: %s", w.Body.String())
+		}
 		assert.Equal(t, http.StatusOK, w.Code)
 		assert.Contains(t, w.Header().Get("Content-Type"), "application/json")
 

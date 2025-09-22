@@ -91,13 +91,12 @@ func (h *ModerationHandlers) ListAbuseReports(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, map[string]interface{}{
-		"data":    reports,
-		"total":   total,
-		"limit":   limit,
-		"offset":  offset,
-		"success": true,
-	})
+	meta := &Meta{
+		Total:  total,
+		Limit:  limit,
+		Offset: offset,
+	}
+	WriteJSONWithMeta(w, http.StatusOK, reports, meta)
 }
 
 // GetAbuseReport handles GET /api/v1/admin/abuse-reports/{id} (admin only)
@@ -152,7 +151,6 @@ func (h *ModerationHandlers) UpdateAbuseReport(w http.ResponseWriter, r *http.Re
 
 	WriteJSON(w, http.StatusOK, map[string]interface{}{
 		"message": "Abuse report updated successfully",
-		"success": true,
 	})
 }
 
@@ -175,7 +173,6 @@ func (h *ModerationHandlers) DeleteAbuseReport(w http.ResponseWriter, r *http.Re
 
 	WriteJSON(w, http.StatusOK, map[string]interface{}{
 		"message": "Abuse report deleted successfully",
-		"success": true,
 	})
 }
 
@@ -210,10 +207,7 @@ func (h *ModerationHandlers) CreateBlocklistEntry(w http.ResponseWriter, r *http
 		return
 	}
 
-	WriteJSON(w, http.StatusCreated, map[string]interface{}{
-		"data":    entry,
-		"success": true,
-	})
+	WriteJSON(w, http.StatusCreated, entry)
 }
 
 // ListBlocklistEntries handles GET /api/v1/admin/blocklist (admin only)
@@ -241,13 +235,12 @@ func (h *ModerationHandlers) ListBlocklistEntries(w http.ResponseWriter, r *http
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, map[string]interface{}{
-		"data":    entries,
-		"total":   total,
-		"limit":   limit,
-		"offset":  offset,
-		"success": true,
-	})
+	meta := &Meta{
+		Total:  total,
+		Limit:  limit,
+		Offset: offset,
+	}
+	WriteJSONWithMeta(w, http.StatusOK, entries, meta)
 }
 
 // UpdateBlocklistEntry handles PUT /api/v1/admin/blocklist/{id} (admin only)
@@ -284,7 +277,6 @@ func (h *ModerationHandlers) UpdateBlocklistEntry(w http.ResponseWriter, r *http
 
 	WriteJSON(w, http.StatusOK, map[string]interface{}{
 		"message": "Blocklist entry updated successfully",
-		"success": true,
 	})
 }
 
@@ -307,6 +299,5 @@ func (h *ModerationHandlers) DeleteBlocklistEntry(w http.ResponseWriter, r *http
 
 	WriteJSON(w, http.StatusOK, map[string]interface{}{
 		"message": "Blocklist entry deleted successfully",
-		"success": true,
 	})
 }

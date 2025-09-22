@@ -10,7 +10,7 @@ import (
 	"athena/internal/domain"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
-	_ "github.com/lib/pq"
+	"github.com/lib/pq"
 )
 
 // SetupTestDBWithMigration creates a test database connection
@@ -196,39 +196,87 @@ func CreateTestUser(t *testing.T, db *sqlx.DB, email string, role string) *domai
 	return user
 }
 
+// CreateTestChannel creates a test channel in the database
+func CreateTestChannel(t *testing.T, db *sqlx.DB, userID string, handle string) uuid.UUID {
+	t.Helper()
+
+	channelID := uuid.New()
+	timestamp := time.Now().UnixNano()
+
+	// Make handle unique if it's a common test handle
+	if handle == "" {
+		handle = fmt.Sprintf("channel_%d", timestamp)
+	}
+
+	query := `
+		INSERT INTO channels (id, account_id, handle, display_name, description, is_local)
+		VALUES ($1, $2, $3, $4, $5, $6)
+		ON CONFLICT (handle) DO UPDATE SET handle = $3 || '_' || $7
+		RETURNING id`
+
+	var returnedID string
+	err := db.QueryRow(
+		query,
+		channelID.String(),
+		userID,
+		handle,
+		"Test Channel",
+		"Test channel description",
+		true,
+		timestamp,
+	).Scan(&returnedID)
+
+	if err != nil {
+		t.Fatalf("Failed to create test channel: %v", err)
+	}
+	return channelID
+}
+
 // CreateTestVideo creates a test video in the database
 func CreateTestVideo(t *testing.T, db *sqlx.DB, userID, title string) *domain.Video {
 	t.Helper()
+
+	// Create a channel for the video if not exists
+	channelID := CreateTestChannel(t, db, userID, "")
 
 	thumbnailID := uuid.New().String()
 	video := &domain.Video{
 		ID:          uuid.New().String(),
 		UserID:      userID,
+		ChannelID:   channelID,
 		Title:       title,
 		Description: "Test video description",
 		Privacy:     domain.PrivacyPublic,
 		Duration:    120,
 		Views:       0,
 		ThumbnailID: thumbnailID,
-		Status:      "published",
+		Status:      "completed",
 	}
 
 	query := `
-		INSERT INTO videos (id, user_id, title, description, privacy, duration, thumbnail_id, status)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-		RETURNING created_at, updated_at`
+		INSERT INTO videos (id, user_id, channel_id, title, description, privacy, duration, thumbnail_id, status,
+		                   tags, language, file_size, mime_type, original_cid, thumbnail_cid)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+		RETURNING created_at, updated_at, upload_date`
 
 	err := db.QueryRow(
 		query,
 		video.ID,
 		video.UserID,
+		video.ChannelID,
 		video.Title,
 		video.Description,
 		video.Privacy,
 		video.Duration,
 		video.ThumbnailID,
 		video.Status,
-	).Scan(&video.CreatedAt, &video.UpdatedAt)
+		pq.Array([]string{}), // tags
+		"en",                 // language
+		1024*1024,            // file_size (1MB)
+		"video/mp4",          // mime_type
+		"",                   // original_cid
+		"",                   // thumbnail_cid
+	).Scan(&video.CreatedAt, &video.UpdatedAt, &video.UploadDate)
 
 	if err != nil {
 		t.Fatalf("Failed to create test video: %v", err)
