@@ -134,6 +134,7 @@ func (h *ModerationHandlers) ListAbuseReports(w http.ResponseWriter, r *http.Req
 
 	// Parse query parameters
 	status := r.URL.Query().Get("status")
+	entityType := r.URL.Query().Get("entity_type")
 	limit := 20
 	offset := 0
 
@@ -149,7 +150,7 @@ func (h *ModerationHandlers) ListAbuseReports(w http.ResponseWriter, r *http.Req
 		}
 	}
 
-	reports, total, err := h.repo.ListAbuseReports(r.Context(), status, limit, offset)
+	reports, total, err := h.repo.ListAbuseReports(r.Context(), status, entityType, limit, offset)
 	if err != nil {
 		WriteError(w, http.StatusInternalServerError, domain.NewDomainError("INTERNAL_ERROR", "Failed to list abuse reports"))
 		return

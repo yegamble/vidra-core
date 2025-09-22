@@ -75,18 +75,24 @@ func (r *ModerationRepository) GetAbuseReport(ctx context.Context, reportID stri
 }
 
 // ListAbuseReports lists abuse reports with pagination
-func (r *ModerationRepository) ListAbuseReports(ctx context.Context, status string, limit, offset int) ([]*domain.AbuseReport, int64, error) {
+func (r *ModerationRepository) ListAbuseReports(ctx context.Context, status string, entityType string, limit, offset int) ([]*domain.AbuseReport, int64, error) {
 	var reports []*domain.AbuseReport
 	var total int64
 
 	// Build query with optional status filter
-	whereClause := ""
+	whereClause := " WHERE 1=1"
 	args := []interface{}{}
 	argCount := 1
 
 	if status != "" {
-		whereClause = fmt.Sprintf(" WHERE status = $%d", argCount)
+		whereClause += fmt.Sprintf(" AND status = $%d", argCount)
 		args = append(args, status)
+		argCount++
+	}
+
+	if entityType != "" {
+		whereClause += fmt.Sprintf(" AND reported_entity_type = $%d", argCount)
+		args = append(args, entityType)
 		argCount++
 	}
 
@@ -100,14 +106,14 @@ func (r *ModerationRepository) ListAbuseReports(ctx context.Context, status stri
 	// Get paginated results
 	args = append(args, limit, offset)
 	query := fmt.Sprintf(`
-		SELECT id, reporter_id, reason, details, status, moderator_notes,
-		       moderated_by, moderated_at, reported_entity_type,
-		       reported_video_id, reported_comment_id, reported_user_id,
-		       reported_channel_id, created_at, updated_at
-		FROM abuse_reports
-		%s
-		ORDER BY created_at DESC
-		LIMIT $%d OFFSET $%d`, whereClause, argCount, argCount+1)
+        SELECT id, reporter_id, reason, details, status, moderator_notes,
+               moderated_by, moderated_at, reported_entity_type,
+               reported_video_id, reported_comment_id, reported_user_id,
+               reported_channel_id, created_at, updated_at
+        FROM abuse_reports
+        %s
+        ORDER BY created_at DESC
+        LIMIT $%d OFFSET $%d`, whereClause, argCount, argCount+1)
 
 	err = r.db.SelectContext(ctx, &reports, query, args...)
 	return reports, total, err
