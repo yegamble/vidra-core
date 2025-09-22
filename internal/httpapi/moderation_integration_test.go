@@ -649,6 +649,10 @@ func TestOEmbedIntegration(t *testing.T) {
 	video := testutil.CreateTestVideo(t, testDB.DB, user.ID, "oEmbed Test Video")
 	privateVideo := testutil.CreateTestVideo(t, testDB.DB, user.ID, "Private Video")
 
+	// Set the video to private
+	_, err := testDB.DB.Exec("UPDATE videos SET privacy = $1 WHERE id = $2", domain.PrivacyPrivate, privateVideo.ID)
+	require.NoError(t, err)
+
 	handlers := NewInstanceHandlers(moderationRepo, userRepo, videoRepo)
 	baseURL := "https://example.com"
 
@@ -772,6 +776,9 @@ func TestOEmbedIntegration(t *testing.T) {
 
 		handlers.OEmbed(w, r)
 
+		if w.Code != http.StatusNotFound {
+			t.Logf("Response body: %s", w.Body.String())
+		}
 		assert.Equal(t, http.StatusNotFound, w.Code)
 	})
 

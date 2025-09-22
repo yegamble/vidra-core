@@ -123,7 +123,7 @@ func (r *videoRepository) GetByID(ctx context.Context, id string) (*domain.Video
 		if err == sql.ErrNoRows {
 			return nil, domain.NewDomainError("VIDEO_NOT_FOUND", "Video not found")
 		}
-		return nil, domain.NewDomainError("GET_FAILED", "Failed to get video: "+err.Error())
+		return nil, domain.NewDomainError("GET_FAILED", "Failed to get video")
 	}
 
 	// Unmarshal JSON fields

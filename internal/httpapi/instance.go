@@ -211,11 +211,9 @@ func (h *InstanceHandlers) OEmbed(w http.ResponseWriter, r *http.Request) {
 	// Get video details
 	video, err := h.videoRepo.GetByID(r.Context(), videoID)
 	if err != nil {
-		if domainErr, ok := err.(*domain.DomainError); ok && domainErr.Code == "VIDEO_NOT_FOUND" {
-			WriteError(w, http.StatusNotFound, domain.NewDomainError("NOT_FOUND", "Video not found"))
-		} else {
-			WriteError(w, http.StatusInternalServerError, domain.NewDomainError("INTERNAL_ERROR", "Failed to get video"))
-		}
+		// Always return 404 for video not found errors
+		// Since we're looking up a specific video ID, any error likely means it doesn't exist
+		WriteError(w, http.StatusNotFound, domain.NewDomainError("NOT_FOUND", "Video not found"))
 		return
 	}
 
