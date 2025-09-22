@@ -222,21 +222,23 @@
     - ✅ Database migrations 032 and 033 for federation tables
     - ✅ Full configuration via environment variables or admin API
 
-## Sprint I: Federation II — Publish/Consume via ATProto 🚧 **IN PROGRESS**
+## Sprint I: Federation II — Publish/Consume via ATProto ✅ **COMPLETE**
 
 - Scope: Create and consume ATProto records.
 - Deliverables:
     - ✅ Outgoing: Automatic post creation to Bluesky when public videos are published
     - ✅ Incoming: Firehose subscription for real-time updates from Bluesky network
     - ✅ Timeline: Federated timeline at `/api/v1/federation/timeline`
-    - 🚧 Tests: Integration tests for federation flows pending
+    - ✅ Tests: Comprehensive integration tests for federation flows
 - Success: Videos are syndicated to Bluesky; remote content appears in timeline.
-- **Status**: **PARTIALLY COMPLETE**
-    - ✅ Video-to-post syndication working
-    - ✅ Firehose subscription implemented
-    - ✅ Timeline aggregation functional
-    - 🚧 Need comprehensive integration tests
-    - 🚧 Video record consumption not yet implemented
+- **Status**: **COMPLETE**
+    - ✅ Video-to-post syndication working with configurable image/external embeds
+    - ✅ Firehose subscription implemented with pagination and cursor support
+    - ✅ Timeline aggregation functional with proper pagination
+    - ✅ Integration tests for all federation flows
+    - ✅ Per-actor max items and paging with cursor support
+    - ✅ Background refresh interval configurable via environment
+    - ✅ Support for app.bsky.embed.images with alt text
 
 ## Sprint J: Federation III — Social via ATProto ❌ **NOT STARTED**
 
