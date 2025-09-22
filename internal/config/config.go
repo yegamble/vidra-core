@@ -147,6 +147,9 @@ type Config struct {
 	FederationIngestIntervalSeconds    int
 	FederationIngestMaxItems           int
 	FederationIngestMaxPages           int
+
+	// ATProto Social Features
+	EnableATProtoLabeler bool
 }
 
 func Load() (*Config, error) {

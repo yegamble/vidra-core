@@ -47,14 +47,24 @@ A high-performance PeerTube backend implementation in Go with decentralized stor
 - **Sprint F: OAuth2** - Full OAuth2 implementation with Authorization Code + PKCE
 - **Sprint G: Admin & Instance** - Admin tools, instance config, oEmbed
 
-### 🚧 In Progress (Federation Sprints H-K)
+### ✅ Completed Federation Features (Sprints H-J)
 - **Sprint H: Federation Foundations** ✅ - ATProto integration complete
   - Instance DID document with handle verification
   - XRPC endpoints for federation communication
   - Bluesky firehose subscription and timeline aggregation
   - Post creation when videos are published
-- **Sprint I: Federation Videos** 🚧 - Video federation via ATProto
-- **Sprint J: Federation Social** - Follows, likes, comments over ATProto
+- **Sprint I: Federation Videos** ✅ - Video federation via ATProto complete
+  - Automatic video posting to Bluesky with thumbnails
+  - Federated timeline ingestion from multiple actors
+  - Configurable image embeds with alt text support
+- **Sprint J: Federation Social** ✅ - Social interactions via ATProto complete
+  - Follow/unfollow functionality with ATProto records
+  - Like/unlike posts and videos
+  - Threaded comments as ATProto replies
+  - Moderation via ATProto labels with configurable blocking
+  - Social statistics tracking (followers, likes, comments)
+
+### 🚧 In Progress
 - **Sprint K: Federation Hardening** - Reliability and moderation for ATProto
 
 ### 🔗 ATProto Federation Features (Active)
@@ -63,13 +73,24 @@ A high-performance PeerTube backend implementation in Go with decentralized stor
   - Automatic post creation when public videos are published
   - Subscribe to Bluesky firehose for real-time updates
   - Federated timeline aggregation from configured actors
+- **Social Features**:
+  - Follow/unfollow actors across the ATProto network
+  - Like and comment on posts with full threading support
+  - Import follows and interactions from Bluesky
+  - Social statistics tracking and aggregation
+- **Moderation**:
+  - ATProto label support for content filtering
+  - Configurable block lists for spam/harassment
+  - Expiring moderation labels with automatic cleanup
 - **Admin Controls**:
   - Enable/disable federation per instance
   - Manage federation peers and subscriptions
+  - Configure moderation labels and policies
   - Monitor federation health and metrics
 - **API Endpoints**:
   - `GET /api/v1/federation/timeline` - Federated content timeline
   - `GET /api/v1/federation/status` - Federation health status
+  - `GET /api/v1/social/*` - Social interaction endpoints
   - Admin endpoints for federation management
 
 See [docs/sprints.md](docs/sprints.md) for detailed sprint information.

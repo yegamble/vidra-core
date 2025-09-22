@@ -240,16 +240,53 @@
     - ✅ Background refresh interval configurable via environment
     - ✅ Support for app.bsky.embed.images with alt text
 
-## Sprint J: Federation III — Social via ATProto ❌ **NOT STARTED**
+## Sprint J: Federation III — Social via ATProto ✅ **COMPLETED**
 
 - Scope: Follows, likes, comments over ATProto.
 - Deliverables:
-    - Follows: use ATProto follow semantics at the account level.
-    - Likes/Comments: create and consume feed actions; map to local models.
-    - Moderation: ignore/block lists interoperable with ATProto labels.
-    - Tests: end‑to‑end flows with mock PDS.
+    - Follows: use ATProto follow semantics at the account level. ✅
+    - Likes/Comments: create and consume feed actions; map to local models. ✅
+    - Moderation: ignore/block lists interoperable with ATProto labels. ✅
+    - Tests: end‑to‑end flows with mock PDS. ✅
 - Success: Follows and basic interactions roundtrip via ATProto.
-- **Status**: Depends on Sprints H & I.
+- **Status**: ✅ **COMPLETED**
+    - ✅ Created domain models for social interactions (Follow, Like, Comment, ModerationLabel, ATProtoActor)
+    - ✅ Database migration 036_add_atproto_social.sql with full social schema:
+        - atproto_actors table for network actors
+        - atproto_follows with revocation support
+        - atproto_likes linked to videos/posts
+        - atproto_comments with threading support
+        - atproto_moderation_labels with expiration
+        - Social stats materialized view for performance
+    - ✅ Implemented SocialRepository with comprehensive data access:
+        - Actor management (upsert, lookup by DID/handle)
+        - Follow relationships (create, revoke, check status)
+        - Likes (create, delete, check if liked)
+        - Comments with threading (create, delete, get thread)
+        - Moderation labels (apply, remove, check blocked)
+        - Social statistics aggregation
+        - Batch operations for efficiency
+    - ✅ Created SocialService with ATProto integration:
+        - Follow/unfollow with ATProto record creation
+        - Like/unlike with proper subject references
+        - Comment creation as ATProto posts with reply field
+        - Moderation label management
+        - Actor resolution from network
+        - Feed ingestion with label filtering
+    - ✅ Added HTTP API endpoints at /api/v1/social:
+        - Actor endpoints (profile, stats)
+        - Follow endpoints (follow, unfollow, list followers/following)
+        - Like endpoints (create, remove, list)
+        - Comment endpoints (create, delete, get thread)
+        - Moderation endpoints (apply/remove labels)
+        - Feed ingestion endpoint
+    - ✅ Comprehensive test suite with MockPDSServer:
+        - Follow/unfollow operations
+        - Like/unlike functionality
+        - Comment creation with threading
+        - Moderation label application
+        - Social statistics calculation
+    - ✅ Configuration support for ATProto labeler service
 
 ## Sprint K: Federation IV — Hardening ❌ **NOT STARTED**
 
@@ -296,8 +333,8 @@
 
 **Sprint Status:**
 - **Sprint H**: ✅ ATProto Foundations - DID document, Bluesky integration, XRPC client complete
-- **Sprint I**: 🚧 ATProto Videos - Publishing works; consumption in progress
-- **Sprint J**: ❌ ATProto Social - Follows, likes, comments (not started)
+- **Sprint I**: ✅ ATProto Videos - Publishing and consumption fully implemented
+- **Sprint J**: ✅ ATProto Social - Follows, likes, comments complete with full ATProto integration
 - **Sprint K**: ❌ Federation Hardening - Reliability and moderation (not started)
 
 ## Recommended Next Steps
@@ -331,10 +368,11 @@ All core PeerTube API features (Sprints A-G) are now implemented:
 3. Implement deduplication and conflict resolution
 4. Add retry logic for failed syndication
 
-**Sprint J: ATProto Social**
-1. Implement follows at account level
-2. Handle likes and replies; map to local comments/ratings
-3. Add remote moderation capabilities and label handling
+**Sprint J: ATProto Social** ✅ **COMPLETED**
+- ✅ Follows implemented at account level with ATProto record creation
+- ✅ Likes and comments integrated with proper subject references
+- ✅ Remote moderation via ATProto labels with configurable blocking
+- ✅ Full test coverage with mock PDS server
 
 **Sprint K: Federation Hardening**
 1. Add exponential backoff and retry logic
