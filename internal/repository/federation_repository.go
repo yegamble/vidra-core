@@ -1,12 +1,12 @@
 package repository
 
 import (
-    "context"
-    "database/sql"
-    "encoding/json"
-    "fmt"
-    "strings"
-    "time"
+	"context"
+	"database/sql"
+	"encoding/json"
+	"fmt"
+	"strings"
+	"time"
 
 	"athena/internal/domain"
 	"github.com/google/uuid"
@@ -14,7 +14,7 @@ import (
 )
 
 type FederationRepository struct {
-    db *sqlx.DB
+	db *sqlx.DB
 }
 
 func NewFederationRepository(db *sqlx.DB) *FederationRepository {
@@ -207,115 +207,167 @@ func (r *FederationRepository) DeleteJob(ctx context.Context, id string) error {
 // ---- Actors (ingestion sources) ----
 
 type FederationActor struct {
-    Actor string `db:"actor"`
-    Enabled bool `db:"enabled"`
-    Cursor sql.NullString `db:"cursor"`
-    NextAt sql.NullTime `db:"next_at"`
-    Attempts int `db:"attempts"`
-    RateLimitSeconds int `db:"rate_limit_seconds"`
-    LastError sql.NullString `db:"last_error"`
-    CreatedAt time.Time `db:"created_at"`
-    UpdatedAt time.Time `db:"updated_at"`
+	Actor            string         `db:"actor"`
+	Enabled          bool           `db:"enabled"`
+	Cursor           sql.NullString `db:"cursor"`
+	NextAt           sql.NullTime   `db:"next_at"`
+	Attempts         int            `db:"attempts"`
+	RateLimitSeconds int            `db:"rate_limit_seconds"`
+	LastError        sql.NullString `db:"last_error"`
+	CreatedAt        time.Time      `db:"created_at"`
+	UpdatedAt        time.Time      `db:"updated_at"`
 }
 
 func (r *FederationRepository) UpsertActor(ctx context.Context, actor string, enabled bool, rateLimitSeconds int) error {
-    q := `INSERT INTO federation_actors (actor, enabled, rate_limit_seconds)
+	q := `INSERT INTO federation_actors (actor, enabled, rate_limit_seconds)
           VALUES ($1, $2, $3)
           ON CONFLICT (actor) DO UPDATE SET enabled=EXCLUDED.enabled, rate_limit_seconds=EXCLUDED.rate_limit_seconds`
-    _, err := r.db.ExecContext(ctx, q, actor, enabled, rateLimitSeconds)
-    return err
+	_, err := r.db.ExecContext(ctx, q, actor, enabled, rateLimitSeconds)
+	return err
 }
 
 func (r *FederationRepository) ListActors(ctx context.Context, limit, offset int) ([]FederationActor, int, error) {
-    if limit <= 0 || limit > 200 { limit = 50 }
-    if offset < 0 { offset = 0 }
-    var total int
-    if err := r.db.GetContext(ctx, &total, `SELECT COUNT(*) FROM federation_actors`); err != nil { return nil, 0, err }
-    rows, err := r.db.QueryxContext(ctx, `SELECT actor, enabled, cursor, next_at, attempts, rate_limit_seconds, last_error, created_at, updated_at
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	var total int
+	if err := r.db.GetContext(ctx, &total, `SELECT COUNT(*) FROM federation_actors`); err != nil {
+		return nil, 0, err
+	}
+	rows, err := r.db.QueryxContext(ctx, `SELECT actor, enabled, cursor, next_at, attempts, rate_limit_seconds, last_error, created_at, updated_at
                                            FROM federation_actors ORDER BY actor ASC LIMIT $1 OFFSET $2`, limit, offset)
-    if err != nil { return nil, 0, err }
-    defer func(){ _ = rows.Close() }()
-    var out []FederationActor
-    for rows.Next() {
-        var a FederationActor
-        if err := rows.StructScan(&a); err != nil { return nil, 0, err }
-        out = append(out, a)
-    }
-    return out, total, nil
+	if err != nil {
+		return nil, 0, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []FederationActor
+	for rows.Next() {
+		var a FederationActor
+		if err := rows.StructScan(&a); err != nil {
+			return nil, 0, err
+		}
+		out = append(out, a)
+	}
+	return out, total, nil
 }
 
 func (r *FederationRepository) GetActor(ctx context.Context, actor string) (*FederationActor, error) {
-    var a FederationActor
-    err := r.db.GetContext(ctx, &a, `SELECT actor, enabled, cursor, next_at, attempts, rate_limit_seconds, last_error, created_at, updated_at FROM federation_actors WHERE actor=$1`, actor)
-    if err == sql.ErrNoRows { return nil, domain.NewDomainError("NOT_FOUND", "Actor not found") }
-    return &a, err
+	var a FederationActor
+	err := r.db.GetContext(ctx, &a, `SELECT actor, enabled, cursor, next_at, attempts, rate_limit_seconds, last_error, created_at, updated_at FROM federation_actors WHERE actor=$1`, actor)
+	if err == sql.ErrNoRows {
+		return nil, domain.NewDomainError("NOT_FOUND", "Actor not found")
+	}
+	return &a, err
 }
 
 func (r *FederationRepository) UpdateActor(ctx context.Context, actor string, enabled *bool, rateLimitSeconds *int, cursor *string, nextAt *time.Time, attempts *int) error {
-    set := []string{}
-    args := []any{}
-    idx := 1
-    if enabled != nil { set = append(set, fmt.Sprintf("enabled=$%d", idx)); args = append(args, *enabled); idx++ }
-    if rateLimitSeconds != nil { set = append(set, fmt.Sprintf("rate_limit_seconds=$%d", idx)); args = append(args, *rateLimitSeconds); idx++ }
-    if cursor != nil { set = append(set, fmt.Sprintf("cursor=$%d", idx)); args = append(args, sql.NullString{String:*cursor, Valid:*cursor!=""}); idx++ }
-    if nextAt != nil { set = append(set, fmt.Sprintf("next_at=$%d", idx)); args = append(args, sql.NullTime{Time:*nextAt, Valid:true}); idx++ }
-    if attempts != nil { set = append(set, fmt.Sprintf("attempts=$%d", idx)); args = append(args, *attempts); idx++ }
-    if len(set) == 0 { return nil }
-    q := fmt.Sprintf("UPDATE federation_actors SET %s WHERE actor=$%d", strings.Join(set, ","), idx)
-    args = append(args, actor)
-    _, err := r.db.ExecContext(ctx, q, args...)
-    return err
+	set := []string{}
+	args := []any{}
+	idx := 1
+	if enabled != nil {
+		set = append(set, fmt.Sprintf("enabled=$%d", idx))
+		args = append(args, *enabled)
+		idx++
+	}
+	if rateLimitSeconds != nil {
+		set = append(set, fmt.Sprintf("rate_limit_seconds=$%d", idx))
+		args = append(args, *rateLimitSeconds)
+		idx++
+	}
+	if cursor != nil {
+		set = append(set, fmt.Sprintf("cursor=$%d", idx))
+		args = append(args, sql.NullString{String: *cursor, Valid: *cursor != ""})
+		idx++
+	}
+	if nextAt != nil {
+		set = append(set, fmt.Sprintf("next_at=$%d", idx))
+		args = append(args, sql.NullTime{Time: *nextAt, Valid: true})
+		idx++
+	}
+	if attempts != nil {
+		set = append(set, fmt.Sprintf("attempts=$%d", idx))
+		args = append(args, *attempts)
+		idx++
+	}
+	if len(set) == 0 {
+		return nil
+	}
+	q := fmt.Sprintf("UPDATE federation_actors SET %s WHERE actor=$%d", strings.Join(set, ","), idx)
+	args = append(args, actor)
+	_, err := r.db.ExecContext(ctx, q, args...)
+	return err
 }
 
 func (r *FederationRepository) DeleteActor(ctx context.Context, actor string) error {
-    res, err := r.db.ExecContext(ctx, `DELETE FROM federation_actors WHERE actor=$1`, actor)
-    if err != nil { return err }
-    if n, _ := res.RowsAffected(); n == 0 { return domain.NewDomainError("NOT_FOUND", "Actor not found") }
-    return nil
+	res, err := r.db.ExecContext(ctx, `DELETE FROM federation_actors WHERE actor=$1`, actor)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return domain.NewDomainError("NOT_FOUND", "Actor not found")
+	}
+	return nil
 }
 
 // Simplified helpers for use by services without exposing DB structs
 func (r *FederationRepository) ListEnabledActors(ctx context.Context) ([]string, error) {
-    rows, err := r.db.QueryxContext(ctx, `SELECT actor FROM federation_actors WHERE enabled = true ORDER BY actor ASC`)
-    if err != nil { return nil, err }
-    defer func(){ _ = rows.Close() }()
-    var out []string
-    for rows.Next() {
-        var a string
-        if err := rows.Scan(&a); err != nil { return nil, err }
-        out = append(out, a)
-    }
-    return out, nil
+	rows, err := r.db.QueryxContext(ctx, `SELECT actor FROM federation_actors WHERE enabled = true ORDER BY actor ASC`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []string
+	for rows.Next() {
+		var a string
+		if err := rows.Scan(&a); err != nil {
+			return nil, err
+		}
+		out = append(out, a)
+	}
+	return out, nil
 }
 
 func (r *FederationRepository) GetActorState(ctx context.Context, actor string) (cursor string, nextAt sql.NullTime, attempts int, rateLimitSeconds int, err error) {
-    var c sql.NullString
-    err = r.db.QueryRowxContext(ctx, `SELECT cursor, next_at, attempts, rate_limit_seconds FROM federation_actors WHERE actor=$1`, actor).Scan(&c, &nextAt, &attempts, &rateLimitSeconds)
-    if err == sql.ErrNoRows { return "", sql.NullTime{}, 0, 60, nil }
-    if err != nil { return "", sql.NullTime{}, 0, 60, err }
-    if c.Valid { cursor = c.String }
-    return
+	var c sql.NullString
+	err = r.db.QueryRowxContext(ctx, `SELECT cursor, next_at, attempts, rate_limit_seconds FROM federation_actors WHERE actor=$1`, actor).Scan(&c, &nextAt, &attempts, &rateLimitSeconds)
+	if err == sql.ErrNoRows {
+		return "", sql.NullTime{}, 0, 60, nil
+	}
+	if err != nil {
+		return "", sql.NullTime{}, 0, 60, err
+	}
+	if c.Valid {
+		cursor = c.String
+	}
+	return
 }
 
 func (r *FederationRepository) GetActorStateSimple(ctx context.Context, actor string) (cursor string, nextAt *time.Time, attempts int, rateLimitSeconds int, err error) {
-    c, n, a, rl, err := r.GetActorState(ctx, actor)
-    if err != nil { return "", nil, 0, 0, err }
-    var t *time.Time
-    if n.Valid { t = &n.Time }
-    return c, t, a, rl, nil
+	c, n, a, rl, err := r.GetActorState(ctx, actor)
+	if err != nil {
+		return "", nil, 0, 0, err
+	}
+	var t *time.Time
+	if n.Valid {
+		t = &n.Time
+	}
+	return c, t, a, rl, nil
 }
 
 func (r *FederationRepository) SetActorCursor(ctx context.Context, actor string, cursor string) error {
-    _, err := r.db.ExecContext(ctx, `UPDATE federation_actors SET cursor=$2 WHERE actor=$1`, actor, sql.NullString{String:cursor, Valid:cursor!=""})
-    return err
+	_, err := r.db.ExecContext(ctx, `UPDATE federation_actors SET cursor=$2 WHERE actor=$1`, actor, sql.NullString{String: cursor, Valid: cursor != ""})
+	return err
 }
 
 func (r *FederationRepository) SetActorNextAt(ctx context.Context, actor string, t time.Time) error {
-    _, err := r.db.ExecContext(ctx, `UPDATE federation_actors SET next_at=$2 WHERE actor=$1`, actor, sql.NullTime{Time:t, Valid:true})
-    return err
+	_, err := r.db.ExecContext(ctx, `UPDATE federation_actors SET next_at=$2 WHERE actor=$1`, actor, sql.NullTime{Time: t, Valid: true})
+	return err
 }
 
 func (r *FederationRepository) SetActorAttempts(ctx context.Context, actor string, n int) error {
-    _, err := r.db.ExecContext(ctx, `UPDATE federation_actors SET attempts=$2 WHERE actor=$1`, actor, n)
-    return err
+	_, err := r.db.ExecContext(ctx, `UPDATE federation_actors SET attempts=$2 WHERE actor=$1`, actor, n)
+	return err
 }

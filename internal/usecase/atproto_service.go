@@ -18,14 +18,14 @@ import (
 // AtprotoPublisher publishes activity to ATProto (optional).
 // Implementations should be best-effort and never block critical paths.
 type AtprotoPublisher interface {
-    PublishVideo(ctx context.Context, v *domain.Video) error
-    StartBackgroundRefresh(ctx context.Context, interval time.Duration)
+	PublishVideo(ctx context.Context, v *domain.Video) error
+	StartBackgroundRefresh(ctx context.Context, interval time.Duration)
 }
 
 // AtprotoSessionStore persists/retrieves ATProto session tokens (encrypted outside of this layer)
 type AtprotoSessionStore interface {
-    SaveSession(ctx context.Context, key []byte, access, refresh, did string) error
-    LoadSessionStrings(ctx context.Context, key []byte) (access string, refresh string, did string, err error)
+	SaveSession(ctx context.Context, key []byte, access, refresh, did string) error
+	LoadSessionStrings(ctx context.Context, key []byte) (access string, refresh string, did string, err error)
 }
 
 // InstanceConfigReader abstracts reading instance configuration.
@@ -35,34 +35,34 @@ type InstanceConfigReader interface {
 }
 
 type atprotoService struct {
-    enabled bool
-    cfg     *config.Config
-    modRepo InstanceConfigReader
-    client  *http.Client
+	enabled bool
+	cfg     *config.Config
+	modRepo InstanceConfigReader
+	client  *http.Client
 
 	// session cache
 	sessMu     chan struct{}
 	accessJwt  string
 	refreshJwt string
 	repoDID    string
-    fetchedAt  time.Time
+	fetchedAt  time.Time
 
-    // persistence
-    store  AtprotoSessionStore
-    encKey []byte
+	// persistence
+	store  AtprotoSessionStore
+	encKey []byte
 }
 
 func NewAtprotoService(modRepo InstanceConfigReader, cfg *config.Config, store AtprotoSessionStore, encKey []byte) AtprotoPublisher {
-    httpClient := &http.Client{Timeout: 5 * time.Second}
-    return &atprotoService{
-        enabled: cfg.EnableATProto,
-        cfg:     cfg,
-        modRepo: modRepo,
-        client:  httpClient,
-        sessMu:  make(chan struct{}, 1),
-        store:   store,
-        encKey:  encKey,
-    }
+	httpClient := &http.Client{Timeout: 5 * time.Second}
+	return &atprotoService{
+		enabled: cfg.EnableATProto,
+		cfg:     cfg,
+		modRepo: modRepo,
+		client:  httpClient,
+		sessMu:  make(chan struct{}, 1),
+		store:   store,
+		encKey:  encKey,
+	}
 }
 
 // resolvePDSURL returns PDS base URL from instance config, falling back to cfg.
@@ -103,52 +103,67 @@ func (s *atprotoService) PublishVideo(ctx context.Context, v *domain.Video) erro
 	if err != nil {
 		return err
 	}
-    // Optionally upload thumbnail to PDS
-    var thumb any
-    if strings.TrimSpace(v.ThumbnailPath) != "" {
-        if tb, err := s.uploadBlob(ctx, access, v.ThumbnailPath); err == nil { thumb = tb }
-    }
-    if thumb == nil && strings.TrimSpace(v.PreviewPath) != "" {
-        if tb, err := s.uploadBlob(ctx, access, v.PreviewPath); err == nil { thumb = tb }
-    }
-    if thumb == nil && strings.TrimSpace(v.ThumbnailPath) != "" {
-        for _, ext := range []string{".png", ".webp"} {
-            alt := swapExt(v.ThumbnailPath, ext)
-            if _, err := os.Stat(alt); err == nil {
-                if tb, err := s.uploadBlob(ctx, access, alt); err == nil { thumb = tb; break }
-            }
-        }
-    }
-    // Choose embed type
-    text := v.Title
-    if text == "" { text = "New video" }
-    if s.cfg.ATProtoUseImageEmbed && thumb != nil {
-        // app.bsky.embed.images with alt text
-        alt := v.Description
-        if s.cfg.ATProtoImageAltField == "title" || (alt == "" && s.cfg.ATProtoImageAltField != "description") {
-            alt = v.Title
-        }
-        if alt == "" { alt = "Video thumbnail" }
-        embed := map[string]any{
-            "$type": "app.bsky.embed.images",
-            "images": []any{ map[string]any{ "image": thumb, "alt": alt } },
-        }
-        return s.createPost(ctx, access, repoDID, text, embed)
-    }
-    // Default: external embed
-    url := s.publicVideoURL(v)
-    desc := v.Description
-    if desc == "" { desc = v.Title }
-    embed := map[string]any{
-        "$type": "app.bsky.embed.external",
-        "external": map[string]any{
-            "uri": url,
-            "title": v.Title,
-            "description": desc,
-        },
-    }
-    if thumb != nil { embed["external"].(map[string]any)["thumb"] = thumb }
-    return s.createPost(ctx, access, repoDID, text, embed)
+	// Optionally upload thumbnail to PDS
+	var thumb any
+	if strings.TrimSpace(v.ThumbnailPath) != "" {
+		if tb, err := s.uploadBlob(ctx, access, v.ThumbnailPath); err == nil {
+			thumb = tb
+		}
+	}
+	if thumb == nil && strings.TrimSpace(v.PreviewPath) != "" {
+		if tb, err := s.uploadBlob(ctx, access, v.PreviewPath); err == nil {
+			thumb = tb
+		}
+	}
+	if thumb == nil && strings.TrimSpace(v.ThumbnailPath) != "" {
+		for _, ext := range []string{".png", ".webp"} {
+			alt := swapExt(v.ThumbnailPath, ext)
+			if _, err := os.Stat(alt); err == nil {
+				if tb, err := s.uploadBlob(ctx, access, alt); err == nil {
+					thumb = tb
+					break
+				}
+			}
+		}
+	}
+	// Choose embed type
+	text := v.Title
+	if text == "" {
+		text = "New video"
+	}
+	if s.cfg.ATProtoUseImageEmbed && thumb != nil {
+		// app.bsky.embed.images with alt text
+		alt := v.Description
+		if s.cfg.ATProtoImageAltField == "title" || (alt == "" && s.cfg.ATProtoImageAltField != "description") {
+			alt = v.Title
+		}
+		if alt == "" {
+			alt = "Video thumbnail"
+		}
+		embed := map[string]any{
+			"$type":  "app.bsky.embed.images",
+			"images": []any{map[string]any{"image": thumb, "alt": alt}},
+		}
+		return s.createPost(ctx, access, repoDID, text, embed)
+	}
+	// Default: external embed
+	url := s.publicVideoURL(v)
+	desc := v.Description
+	if desc == "" {
+		desc = v.Title
+	}
+	embed := map[string]any{
+		"$type": "app.bsky.embed.external",
+		"external": map[string]any{
+			"uri":         url,
+			"title":       v.Title,
+			"description": desc,
+		},
+	}
+	if thumb != nil {
+		embed["external"].(map[string]any)["thumb"] = thumb
+	}
+	return s.createPost(ctx, access, repoDID, text, embed)
 }
 
 // publicVideoURL constructs a public link for the video for external embed.
@@ -417,24 +432,24 @@ func (s *atprotoService) uploadBlob(ctx context.Context, accessJwt string, fileP
 
 // StartBackgroundRefresh periodically ensures a valid session token is available.
 func (s *atprotoService) StartBackgroundRefresh(ctx context.Context, interval time.Duration) {
-    // Use configured interval from environment if available
-    if interval <= 0 {
-        if s.cfg.ATProtoRefreshIntervalSeconds > 0 {
-            interval = time.Duration(s.cfg.ATProtoRefreshIntervalSeconds) * time.Second
-        } else {
-            interval = 45 * time.Minute // fallback default
-        }
-    }
-    ticker := time.NewTicker(interval)
-    go func() {
-        defer ticker.Stop()
-        for {
-            select {
-            case <-ctx.Done():
-                return
-            case <-ticker.C:
-                _, _, _ = s.ensureSession(ctx)
-            }
-        }
-    }()
+	// Use configured interval from environment if available
+	if interval <= 0 {
+		if s.cfg.ATProtoRefreshIntervalSeconds > 0 {
+			interval = time.Duration(s.cfg.ATProtoRefreshIntervalSeconds) * time.Second
+		} else {
+			interval = 45 * time.Minute // fallback default
+		}
+	}
+	ticker := time.NewTicker(interval)
+	go func() {
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				_, _, _ = s.ensureSession(ctx)
+			}
+		}
+	}()
 }

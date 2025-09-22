@@ -27,17 +27,17 @@ type federationService struct {
 
 // FederationRepository abstracts job queue and post storage used by the federation service.
 type FederationRepository interface {
-    EnqueueJob(ctx context.Context, jobType string, payload any, runAt time.Time) (string, error)
-    GetNextJob(ctx context.Context) (*domain.FederationJob, error)
-    CompleteJob(ctx context.Context, id string) error
-    RescheduleJob(ctx context.Context, id string, lastErr string, backoff time.Duration) error
-    UpsertPost(ctx context.Context, p *domain.FederatedPost) error
-    // Actors
-    ListEnabledActors(ctx context.Context) ([]string, error)
-    GetActorStateSimple(ctx context.Context, actor string) (cursor string, nextAt *time.Time, attempts int, rateLimitSeconds int, err error)
-    SetActorCursor(ctx context.Context, actor string, cursor string) error
-    SetActorNextAt(ctx context.Context, actor string, t time.Time) error
-    SetActorAttempts(ctx context.Context, actor string, n int) error
+	EnqueueJob(ctx context.Context, jobType string, payload any, runAt time.Time) (string, error)
+	GetNextJob(ctx context.Context) (*domain.FederationJob, error)
+	CompleteJob(ctx context.Context, id string) error
+	RescheduleJob(ctx context.Context, id string, lastErr string, backoff time.Duration) error
+	UpsertPost(ctx context.Context, p *domain.FederatedPost) error
+	// Actors
+	ListEnabledActors(ctx context.Context) ([]string, error)
+	GetActorStateSimple(ctx context.Context, actor string) (cursor string, nextAt *time.Time, attempts int, rateLimitSeconds int, err error)
+	SetActorCursor(ctx context.Context, actor string, cursor string) error
+	SetActorNextAt(ctx context.Context, actor string, t time.Time) error
+	SetActorAttempts(ctx context.Context, actor string, n int) error
 }
 
 func NewFederationService(repo FederationRepository, modRepo InstanceConfigReader, atproto AtprotoPublisher, cfg *config.Config) FederationService {
@@ -98,14 +98,14 @@ func (s *federationService) ProcessNext(ctx context.Context) (bool, error) {
 		s.bumpActorBackoff(ctx, actor)
 		return false, nil
 	}
-    // Success: reset backoff and schedule next run after ingest interval
-    s.resetActorBackoff(ctx, actor)
-    if s.repo != nil {
-        _ = s.repo.SetActorNextAt(ctx, actor, now.Add(time.Duration(s.cfg.FederationIngestIntervalSeconds)*time.Second))
-    } else {
-        s.setActorNextAt(ctx, actor, now.Add(time.Duration(s.cfg.FederationIngestIntervalSeconds)*time.Second))
-    }
-    return true, nil
+	// Success: reset backoff and schedule next run after ingest interval
+	s.resetActorBackoff(ctx, actor)
+	if s.repo != nil {
+		_ = s.repo.SetActorNextAt(ctx, actor, now.Add(time.Duration(s.cfg.FederationIngestIntervalSeconds)*time.Second))
+	} else {
+		s.setActorNextAt(ctx, actor, now.Add(time.Duration(s.cfg.FederationIngestIntervalSeconds)*time.Second))
+	}
+	return true, nil
 }
 
 func (s *federationService) processJob(ctx context.Context, job *domain.FederationJob) error {
@@ -130,20 +130,28 @@ func (s *federationService) processJob(ctx context.Context, job *domain.Federati
 }
 
 func (s *federationService) getIngestActors(ctx context.Context) []string {
-    // Prefer dedicated table when available
-    if s.repo != nil {
-        if names, err := s.repo.ListEnabledActors(ctx); err == nil && len(names) > 0 {
-            return names
-        }
-    }
-    if s.modRepo == nil { return nil }
-    c, err := s.modRepo.GetInstanceConfig(ctx, "atproto_ingest_actors")
-    if err != nil { return nil }
-    var arr []string
-    _ = json.Unmarshal(c.Value, &arr)
-    out := make([]string, 0, len(arr))
-    for _, a := range arr { if aa := strings.TrimSpace(a); aa != "" { out = append(out, aa) } }
-    return out
+	// Prefer dedicated table when available
+	if s.repo != nil {
+		if names, err := s.repo.ListEnabledActors(ctx); err == nil && len(names) > 0 {
+			return names
+		}
+	}
+	if s.modRepo == nil {
+		return nil
+	}
+	c, err := s.modRepo.GetInstanceConfig(ctx, "atproto_ingest_actors")
+	if err != nil {
+		return nil
+	}
+	var arr []string
+	_ = json.Unmarshal(c.Value, &arr)
+	out := make([]string, 0, len(arr))
+	for _, a := range arr {
+		if aa := strings.TrimSpace(a); aa != "" {
+			out = append(out, aa)
+		}
+	}
+	return out
 }
 
 func (s *federationService) ingestActor(ctx context.Context, actor string) error {
@@ -151,168 +159,42 @@ func (s *federationService) ingestActor(ctx context.Context, actor string) error
 		return fmt.Errorf("atproto not configured")
 	}
 
-	// Get configured max items per actor per tick
-	maxItems := s.cfg.FederationIngestMaxItems
-	if maxItems <= 0 {
-		maxItems = 40
-	}
-
-	// Get configured max pages to fetch in one tick
-	maxPages := s.cfg.FederationIngestMaxPages
-	if maxPages <= 0 {
-		maxPages = 2
-	}
-
-	// Start with stored cursor
+	maxItems := s.getMaxItems()
+	maxPages := s.getMaxPages()
 	cursor := s.getActorCursorTableAware(ctx, actor)
+
+	blockedSet := s.loadBlockedLabels(ctx)
 	totalIngested := 0
 	pagesProcessed := 0
 
-	// Process multiple pages up to configured limits
 	for pagesProcessed < maxPages && totalIngested < maxItems {
-		// Calculate limit for this page
-		pageLimit := 20
-		remaining := maxItems - totalIngested
-		if remaining < pageLimit {
-			pageLimit = remaining
-		}
+		pageLimit := s.calculatePageLimit(maxItems, totalIngested)
 
 		feed, err := s.atproto.getAuthorFeed(ctx, actor, pageLimit, cursor)
 		if err != nil {
-			// On first page error, return error
 			if pagesProcessed == 0 {
 				return err
 			}
-			// On subsequent pages, break the loop but save progress
 			break
 		}
 
 		items, _ := feed["feed"].([]any)
 		if len(items) == 0 {
-			// No more items, we're done
 			break
 		}
 
-		// Get next cursor for potential next page
-		nextCursor, hasNext := feed["cursor"].(string)
-		hasNext = hasNext && strings.TrimSpace(nextCursor) != ""
-
-		// Process items from this page (code continues below...)
-		// Load blocked labels once (outside loop for efficiency)
-		var blockedSet map[string]struct{}
-		if pagesProcessed == 0 {
-			var blocked []string
-			if s.modRepo != nil {
-				if c, err := s.modRepo.GetInstanceConfig(ctx, "atproto_block_labels"); err == nil {
-					_ = json.Unmarshal(c.Value, &blocked)
-				}
-			}
-			blockedSet = make(map[string]struct{})
-			for _, b := range blocked {
-				blockedSet[strings.ToLower(strings.TrimSpace(b))] = struct{}{}
-			}
-		}
-
-		// Process each item in this page
-		processedCount := 0
-		for _, it := range items {
-			m, _ := it.(map[string]any)
-			post, _ := m["post"].(map[string]any)
-			if post == nil {
-				continue
-			}
-			uri, _ := post["uri"].(string)
-			cid, _ := post["cid"].(string)
-			rec, _ := post["record"].(map[string]any)
-			if rec == nil {
-				continue
-			}
-			text, _ := rec["text"].(string)
-			createdAtStr, _ := rec["createdAt"].(string)
-			var createdAt *time.Time
-			if createdAtStr != "" {
-				if t, err := time.Parse(time.RFC3339, createdAtStr); err == nil {
-					createdAt = &t
-				}
-			}
-			// Actor info
-			author, _ := post["author"].(map[string]any)
-			did, _ := author["did"].(string)
-			handle, _ := author["handle"].(string)
-			// Optional embed external
-			var embedURL, embedTitle, embedDesc *string
-			if emb, ok := rec["embed"].(map[string]any); ok {
-				if embType, _ := emb["$type"].(string); embType == "app.bsky.embed.external" {
-					if ext, ok := emb["external"].(map[string]any); ok {
-						if u, ok := ext["uri"].(string); ok {
-							embedURL = &u
-						}
-						if t, ok := ext["title"].(string); ok {
-							embedTitle = &t
-						}
-						if d, ok := ext["description"].(string); ok {
-							embedDesc = &d
-						}
-					}
-				}
-			}
-			// Labels filtering (basic)
-			var labelsRaw json.RawMessage
-			if lab, ok := post["labels"].(map[string]any); ok {
-				if bts, err := json.Marshal(lab); err == nil {
-					labelsRaw = bts
-				}
-				// Attempt to read values array
-				if vals, ok := lab["values"].([]any); ok {
-					skip := false
-					for _, vv := range vals {
-						if mm, ok := vv.(map[string]any); ok {
-							if val, _ := mm["val"].(string); val != "" {
-								if _, bad := blockedSet[strings.ToLower(val)]; bad {
-									skip = true
-									break
-								}
-							}
-						}
-					}
-					if skip {
-						continue
-					}
-				}
-			}
-			rawBytes, _ := json.Marshal(m)
-			// Build record
-			p := &domain.FederatedPost{
-				ActorDID:         did,
-				URI:              uri,
-				Text:             strPtrIf(text != "", text),
-				CID:              strPtrIf(cid != "", cid),
-				ActorHandle:      strPtrIf(handle != "", handle),
-				CreatedAt:        createdAt,
-				EmbedURL:         embedURL,
-				EmbedTitle:       embedTitle,
-				EmbedDescription: embedDesc,
-				Labels:           labelsRaw,
-				Raw:              rawBytes,
-			}
-			_ = s.repo.UpsertPost(ctx, p)
-			processedCount++
-		}
-
+		processedCount := s.processPageItems(ctx, items, blockedSet)
 		totalIngested += processedCount
 		pagesProcessed++
 
-		// Update cursor for next iteration
-		if hasNext {
+		// Update cursor
+		if nextCursor, ok := feed["cursor"].(string); ok && strings.TrimSpace(nextCursor) != "" {
 			cursor = nextCursor
-			// Save cursor after each page so we can resume
 			_ = s.setActorCursorTableAware(ctx, actor, cursor)
 		} else {
-			// No more pages available
 			break
 		}
 
-		// Check if we've hit our limits
 		if totalIngested >= maxItems {
 			break
 		}
@@ -321,8 +203,188 @@ func (s *federationService) ingestActor(ctx context.Context, actor string) error
 	if totalIngested > 0 {
 		metrics.AddFedPostsIngested(totalIngested)
 	}
-
 	return nil
+}
+
+func (s *federationService) getMaxItems() int {
+	if s.cfg.FederationIngestMaxItems > 0 {
+		return s.cfg.FederationIngestMaxItems
+	}
+	return 40
+}
+
+func (s *federationService) getMaxPages() int {
+	if s.cfg.FederationIngestMaxPages > 0 {
+		return s.cfg.FederationIngestMaxPages
+	}
+	return 2
+}
+
+func (s *federationService) calculatePageLimit(maxItems, totalIngested int) int {
+	pageLimit := 20
+	remaining := maxItems - totalIngested
+	if remaining < pageLimit {
+		return remaining
+	}
+	return pageLimit
+}
+
+func (s *federationService) loadBlockedLabels(ctx context.Context) map[string]struct{} {
+	blockedSet := make(map[string]struct{})
+	if s.modRepo == nil {
+		return blockedSet
+	}
+
+	c, err := s.modRepo.GetInstanceConfig(ctx, "atproto_block_labels")
+	if err != nil {
+		return blockedSet
+	}
+
+	var blocked []string
+	_ = json.Unmarshal(c.Value, &blocked)
+
+	for _, b := range blocked {
+		blockedSet[strings.ToLower(strings.TrimSpace(b))] = struct{}{}
+	}
+	return blockedSet
+}
+
+func (s *federationService) processPageItems(ctx context.Context, items []any, blockedSet map[string]struct{}) int {
+	processedCount := 0
+	for _, it := range items {
+		if s.processItem(ctx, it, blockedSet) {
+			processedCount++
+		}
+	}
+	return processedCount
+}
+
+func (s *federationService) processItem(ctx context.Context, item any, blockedSet map[string]struct{}) bool {
+	m, _ := item.(map[string]any)
+	post, _ := m["post"].(map[string]any)
+	if post == nil {
+		return false
+	}
+
+	rec, _ := post["record"].(map[string]any)
+	if rec == nil {
+		return false
+	}
+
+	// Check blocked labels
+	if s.hasBlockedLabel(post, blockedSet) {
+		return false
+	}
+
+	p := s.buildFederatedPost(m, post, rec)
+	if p == nil {
+		return false
+	}
+
+	_ = s.repo.UpsertPost(ctx, p)
+	return true
+}
+
+func (s *federationService) hasBlockedLabel(post map[string]any, blockedSet map[string]struct{}) bool {
+	lab, ok := post["labels"].(map[string]any)
+	if !ok {
+		return false
+	}
+
+	vals, ok := lab["values"].([]any)
+	if !ok {
+		return false
+	}
+
+	for _, vv := range vals {
+		mm, ok := vv.(map[string]any)
+		if !ok {
+			continue
+		}
+		val, _ := mm["val"].(string)
+		if val != "" {
+			if _, bad := blockedSet[strings.ToLower(val)]; bad {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (s *federationService) buildFederatedPost(m, post, rec map[string]any) *domain.FederatedPost {
+	uri, _ := post["uri"].(string)
+	cid, _ := post["cid"].(string)
+	text, _ := rec["text"].(string)
+
+	// Parse timestamp
+	var createdAt *time.Time
+	if createdAtStr, _ := rec["createdAt"].(string); createdAtStr != "" {
+		if t, err := time.Parse(time.RFC3339, createdAtStr); err == nil {
+			createdAt = &t
+		}
+	}
+
+	// Actor info
+	author, _ := post["author"].(map[string]any)
+	did, _ := author["did"].(string)
+	handle, _ := author["handle"].(string)
+
+	// Extract embed
+	embedURL, embedTitle, embedDesc := s.extractEmbedInfo(rec)
+
+	// Labels
+	var labelsRaw json.RawMessage
+	if lab, ok := post["labels"].(map[string]any); ok {
+		if bts, err := json.Marshal(lab); err == nil {
+			labelsRaw = bts
+		}
+	}
+
+	rawBytes, _ := json.Marshal(m)
+
+	return &domain.FederatedPost{
+		ActorDID:         did,
+		URI:              uri,
+		Text:             strPtrIf(text != "", text),
+		CID:              strPtrIf(cid != "", cid),
+		ActorHandle:      strPtrIf(handle != "", handle),
+		CreatedAt:        createdAt,
+		EmbedURL:         embedURL,
+		EmbedTitle:       embedTitle,
+		EmbedDescription: embedDesc,
+		Labels:           labelsRaw,
+		Raw:              rawBytes,
+	}
+}
+
+func (s *federationService) extractEmbedInfo(rec map[string]any) (*string, *string, *string) {
+	emb, ok := rec["embed"].(map[string]any)
+	if !ok {
+		return nil, nil, nil
+	}
+
+	embType, _ := emb["$type"].(string)
+	if embType != "app.bsky.embed.external" {
+		return nil, nil, nil
+	}
+
+	ext, ok := emb["external"].(map[string]any)
+	if !ok {
+		return nil, nil, nil
+	}
+
+	var embedURL, embedTitle, embedDesc *string
+	if u, ok := ext["uri"].(string); ok {
+		embedURL = &u
+	}
+	if t, ok := ext["title"].(string); ok {
+		embedTitle = &t
+	}
+	if d, ok := ext["description"].(string); ok {
+		embedDesc = &d
+	}
+
+	return embedURL, embedTitle, embedDesc
 }
 
 func strPtrIf(ok bool, v string) *string {
@@ -364,15 +426,19 @@ func (s *federationService) setActorCursor(ctx context.Context, actor string, cu
 
 // Table-aware helpers for cursor/nextAt
 func (s *federationService) getActorCursorTableAware(ctx context.Context, actor string) string {
-    if s.repo != nil {
-        if c, _, _, _, err := s.repo.GetActorStateSimple(ctx, actor); err == nil { return c }
-    }
-    return s.getActorCursor(ctx, actor)
+	if s.repo != nil {
+		if c, _, _, _, err := s.repo.GetActorStateSimple(ctx, actor); err == nil {
+			return c
+		}
+	}
+	return s.getActorCursor(ctx, actor)
 }
 
 func (s *federationService) setActorCursorTableAware(ctx context.Context, actor string, cursor string) error {
-    if s.repo != nil { _ = s.repo.SetActorCursor(ctx, actor, cursor) }
-    return s.setActorCursor(ctx, actor, cursor)
+	if s.repo != nil {
+		_ = s.repo.SetActorCursor(ctx, actor, cursor)
+	}
+	return s.setActorCursor(ctx, actor, cursor)
 }
 
 // backoff helpers stored in instance_config keys
