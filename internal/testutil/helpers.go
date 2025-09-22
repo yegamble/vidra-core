@@ -50,7 +50,7 @@ func CleanupTestDB(t *testing.T, db *sqlx.DB) {
 		"messages",
 		"subscriptions",
 		"video_views",
-		"video_comments",
+		"comments",
 		"videos",
 		"user_avatars",
 		"users",
