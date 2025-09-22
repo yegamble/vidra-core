@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"athena/internal/domain"
+	"athena/internal/middleware"
 	"athena/internal/repository"
 	"athena/internal/testutil"
 	"github.com/go-chi/chi/v5"
@@ -907,5 +908,6 @@ func TestModerationAuthorization(t *testing.T) {
 
 // Helper function to add user ID to context
 func withUserIDCtx(ctx context.Context, userID string) context.Context {
-	return context.WithValue(ctx, "user_id", userID)
+	// Use the actual middleware.UserIDKey
+	return context.WithValue(ctx, middleware.UserIDKey, userID)
 }

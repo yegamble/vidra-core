@@ -59,6 +59,7 @@ func TestCaptionsIntegration(t *testing.T) {
 		ID:       userID.String(),
 		Email:    "test@example.com",
 		Username: "testuser",
+		Role:     domain.RoleUser,
 	}
 	err := userRepo.Create(context.Background(), user, "hashedpassword")
 	require.NoError(t, err)
