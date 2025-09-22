@@ -108,11 +108,20 @@ func RegisterRoutes(r chi.Router, cfg *config.Config) {
 	}
 
 	// Start federation scheduler (ingestion + publish retries)
-	if cfg.EnableFederationScheduler && cfg.EnableATProto {
-		fedSvc := usecase.NewFederationService(federationRepo, moderationRepo, atprotoSvc, cfg)
-		fInterval := time.Duration(cfg.FederationSchedulerIntervalSeconds) * time.Second
-		fBurst := cfg.FederationSchedulerBurst
-		go scheduler.NewFederationScheduler(fedSvc, fInterval, fBurst).Start(context.Background())
+	var fedSvc usecase.FederationService
+	if cfg.EnableATProto {
+		fedSvc = usecase.NewFederationService(federationRepo, moderationRepo, atprotoSvc, cfg)
+		if cfg.EnableFederationScheduler {
+			fInterval := time.Duration(cfg.FederationSchedulerIntervalSeconds) * time.Second
+			fBurst := cfg.FederationSchedulerBurst
+			go scheduler.NewFederationScheduler(fedSvc, fInterval, fBurst).Start(context.Background())
+		}
+		// Optional near real-time firehose-style poller using the same ingestion path
+		if cfg.EnableATProtoFirehose {
+			fhInterval := time.Duration(cfg.ATProtoFirehosePollIntervalSeconds) * time.Second
+			// Use a modest burst to pull several pages quickly
+			go scheduler.NewFirehosePoller(fedSvc, fhInterval, 3).Start(context.Background())
+		}
 	}
 
 	// Initialize Redis session repo

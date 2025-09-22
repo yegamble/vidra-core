@@ -150,6 +150,10 @@ type Config struct {
 
 	// ATProto Social Features
 	EnableATProtoLabeler bool
+
+	// ATProto Firehose (polling) — near real-time ingestion using author feeds
+	EnableATProtoFirehose              bool
+	ATProtoFirehosePollIntervalSeconds int
 }
 
 func Load() (*Config, error) {
@@ -310,6 +314,10 @@ func Load() (*Config, error) {
 	cfg.FederationIngestIntervalSeconds = getIntEnv("FEDERATION_INGEST_INTERVAL_SECONDS", 60)
 	cfg.FederationIngestMaxItems = getIntEnv("FEDERATION_INGEST_MAX_ITEMS", 40)
 	cfg.FederationIngestMaxPages = getIntEnv("FEDERATION_INGEST_MAX_PAGES", 2)
+
+	// ATProto Firehose (polling)
+	cfg.EnableATProtoFirehose = getBoolEnv("ENABLE_ATPROTO_FIREHOSE", false)
+	cfg.ATProtoFirehosePollIntervalSeconds = getIntEnv("ATPROTO_FIREHOSE_POLL_INTERVAL_SECONDS", 5)
 
 	return cfg, nil
 }

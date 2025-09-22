@@ -805,8 +805,11 @@ ATPROTO_DID=did:web:your-instance.com
 BLUESKY_PDS_URL=https://bsky.social
 BLUESKY_HANDLE=your-account.bsky.social
 BLUESKY_APP_PASSWORD=your-app-password
-BLUESKY_FIREHOSE_URL=wss://bsky.network
 FEDERATION_ENABLED=true
+
+# Near real-time ingestion (polling-based firehose)
+ENABLE_ATPROTO_FIREHOSE=true
+ATPROTO_FIREHOSE_POLL_INTERVAL_SECONDS=5
 ```
 
 ## CI/CD
