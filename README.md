@@ -34,7 +34,7 @@ A high-performance PeerTube backend implementation in Go with decentralized stor
 
 ### Prerequisites
 
-- Go 1.21+
+- Go 1.23.4+
 - Docker & Docker Compose
 - PostgreSQL 15+
 - Redis 7+
@@ -133,6 +133,15 @@ make test-ci
 # View coverage report
 open coverage.html
 ```
+
+#### Offline/toolchain note
+
+This repo uses the Go toolchain directive in `go.mod` (>= 1.23.4). By default, newer Go versions may auto-download the requested toolchain. In locked-down environments where network is blocked, you have two options:
+
+- Install Go 1.23.4 (or newer) locally and run with the offline toggle: `GO_OFFLINE=1 make test-integration-ci` (equivalent to `GOTOOLCHAIN=local`).
+- Or export `GOTOOLCHAIN=local` directly: `GOTOOLCHAIN=local make test-integration-ci`.
+
+Note: The offline toggle disables auto-download. Your locally installed Go must still satisfy the version in `go.mod`, otherwise the build will fail.
 
 ### Integration Tests
 

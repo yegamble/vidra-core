@@ -6,10 +6,22 @@ SHELL := /bin/bash
 # Use docker compose v2 if available; override with DOCKER_COMPOSE="docker-compose" if needed
 DOCKER_COMPOSE ?= docker compose
 
+# Offline toolchain toggle:
+# - Set GO_OFFLINE=1 to force Go to use the locally installed toolchain
+#   (equivalent to GOTOOLCHAIN=local). Use this when your environment blocks
+#   network access for automatic toolchain downloads.
+# - Note: Your locally installed Go must satisfy go.mod (>= 1.23.4).
+ifeq ($(GO_OFFLINE),1)
+GO_ENV := GOTOOLCHAIN=local
+else
+GO_ENV :=
+endif
+
 # Default target
 help: ## Display this help message
 	@echo "Available targets:"
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}'
+
 
 deps: ## Download Go dependencies
 	go mod download
@@ -39,28 +51,28 @@ fmt-check: ## Verify Go files are formatted
 	fi
 
 test: ## Run unit tests
-	go test -v -race -coverprofile=coverage.out ./...
-	go tool cover -html=coverage.out -o coverage.html
+	$(GO_ENV) go test -v -race -coverprofile=coverage.out ./...
+	$(GO_ENV) go tool cover -html=coverage.out -o coverage.html
 
 test-unit: ## Run unit tests (exclude DB-backed repository pkg and integration tests)
 	@set -e; \
 	PKGS=$$(go list ./... | grep -v "/internal/repository$$" | grep -v '^athena/tests/integration$$'); \
 	echo "Running unit tests in: $$PKGS"; \
-	go test -v -race -parallel=8 -short $$PKGS
+	$(GO_ENV) go test -v -race -parallel=8 -short $$PKGS
 
 test-ci: ## Run tests for CI environment
-	go test -v -race -coverprofile=coverage.out ./...
+	$(GO_ENV) go test -v -race -coverprofile=coverage.out ./...
 
 .PHONY: generate-openapi
 generate-openapi: ## Regenerate OpenAPI types and server interfaces
 	@scripts/gen-openapi.sh
 
 test-integration: ## Run only integration tests (loads .env.test if present)
-	@bash -lc 'set -a; [ -f .env.test ] && source .env.test || true; set +a; go test -v -race -tags=integration ./tests/integration'
+	@bash -lc 'set -a; [ -f .env.test ] && source .env.test || true; set +a; $(GO_ENV) go test -v -race -tags=integration ./tests/integration'
 
 test-integration-ci: ## Run repository + httpapi Integration tests (CI services env)
 	@echo "Running integration tests with short flag to skip load/stress tests..."
-	@go test -v -short -race -parallel=8 ./...
+	@$(GO_ENV) go test -v -short -race -parallel=8 ./...
 
 test-local: ## Run tests with local Docker services
 	COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) -f docker-compose.test.yml up -d
@@ -73,7 +85,7 @@ test-local: ## Run tests with local Docker services
 	REDIS_URL="redis://localhost:6380/0" \
 	JWT_SECRET="test-jwt-secret" \
 	IPFS_API="http://localhost:15001" \
-	go test -v -race -coverprofile=coverage.out ./...
+	$(GO_ENV) go test -v -race -coverprofile=coverage.out ./...
 	COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) -f docker-compose.test.yml down -v
 
 test-integration-local: ## Run only integration tests with local Docker services
@@ -87,7 +99,7 @@ test-integration-local: ## Run only integration tests with local Docker services
 	REDIS_URL="redis://localhost:6380/0" \
 	JWT_SECRET="test-jwt-secret" \
 	IPFS_API="http://localhost:15001" \
-	go test -v -race -tags=integration ./tests/integration
+	$(GO_ENV) go test -v -race -tags=integration ./tests/integration
 	COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) -f docker-compose.test.yml down -v
 
 
