@@ -372,15 +372,16 @@ func TestAtprotoService_BackgroundRefresh(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
-	// Start background refresh
-	service.StartBackgroundRefresh(ctx, 0) // Will use config interval
+	// Start background refresh with explicit 1 second interval
+	service.StartBackgroundRefresh(ctx, 1*time.Second)
 
-	// Wait for a few refresh cycles
-	time.Sleep(2500 * time.Millisecond)
+	// Wait for enough time to ensure at least one refresh
+	// Adding a bit of buffer for goroutine scheduling
+	time.Sleep(2 * time.Second)
 
 	// Verify refresh happened
 	if refreshCount < 1 {
-		t.Error("Expected at least 1 background refresh")
+		t.Errorf("Expected at least 1 background refresh, got %d", refreshCount)
 	}
 }
 
