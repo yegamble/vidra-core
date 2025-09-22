@@ -3,10 +3,21 @@
 [![Test](https://github.com/yegamble/athena/actions/workflows/test.yml/badge.svg)](https://github.com/yegamble/athena/actions/workflows/test.yml)
 [![OpenAPI CI](https://github.com/yegamble/athena/actions/workflows/openapi-ci.yml/badge.svg)](https://github.com/yegamble/athena/actions/workflows/openapi-ci.yml)
 
-A high-performance PeerTube backend implementation in Go with decentralized storage support.
+A high-performance PeerTube backend implementation in Go with decentralized storage support. This project implements core PeerTube API compatibility with additional features for a modern video platform.
 
 ## Features
 
+### Core PeerTube Compatibility (Completed Sprints A-G) ✅
+- 📺 **Channels** - Full channel system where videos belong to channels, not users directly
+- 🔄 **Channel Subscriptions** - Subscribe to channels with backward compatibility for user subscriptions
+- 💭 **Threaded Comments** - Nested comments with moderation, flagging, and auto-hide functionality
+- 👍 **Ratings & Playlists** - Like/dislike videos, create playlists with privacy controls
+- 📝 **Captions/Subtitles** - VTT/SRT subtitle support with multi-language capabilities
+- 🔑 **OAuth2 Complete** - Authorization Code flow with PKCE, scopes, token introspection
+- 🛡️ **Admin & Moderation** - Abuse reports, blocklist management, instance configuration
+- 🔗 **oEmbed Support** - Standard video embedding protocol (JSON/XML)
+
+### Video Platform Features
 - 🚀 **High Performance** - Built with Go for maximum concurrency and speed
 - 📝 **OpenAPI 3.0** - Complete API specification with automatic validation
 - 🔐 **JWT Authentication** - HS256 access tokens with refresh rotation
@@ -17,18 +28,31 @@ A high-performance PeerTube backend implementation in Go with decentralized stor
 - 🎥 **Video Processing** - FFmpeg integration for transcoding
 - 📁 **Video Categories** - Comprehensive categorization system with 15 default categories
 - 🔔 **Real-time Notifications** - Automatic notifications for video uploads, messages, comments, and user interactions
-- 💬 **Messaging System** - Direct messaging between users with notification support
-- 💭 **Comments System** - Threaded comments with moderation, flagging, and automatic notifications
-- 👍 **Ratings System** - Video like/dislike functionality with real-time aggregated statistics
-- 📚 **Playlists** - User playlists with privacy controls, Watch Later support, and reordering
+- 💬 **Messaging System** - Direct messaging between users with E2EE support
 - 🖼️ **Avatar WebP Optimization** - Optional WebP encoding for uploaded avatars (quality configurable), IPFS pinning of both original and WebP variants
 - 📊 **Observability** - Prometheus metrics, structured logging, distributed tracing
 - 🐳 **Docker Ready** - Full containerization with Docker Compose
 - ✅ **CI/CD** - GitHub Actions with automated testing
 - 🔄 **Zero-Downtime Deployments** - Health checks and graceful shutdown
-- 🛡️ **Moderation Tools** - Comprehensive abuse reporting and blocklist management
-- ⚙️ **Instance Configuration** - Dynamic instance settings with admin API
-- 🔗 **oEmbed Support** - Standard video embedding protocol for external sites
+
+## Project Status
+
+### ✅ Completed PeerTube Sprints (A-G)
+- **Sprint A: Channels** - Complete channel system implementation
+- **Sprint B: Channel Subscriptions** - Channel-based subscriptions with backward compatibility
+- **Sprint C: Comments** - Threaded comments with moderation
+- **Sprint D: Ratings & Playlists** - Video ratings and playlist management
+- **Sprint E: Captions** - Multi-language subtitle support
+- **Sprint F: OAuth2** - Full OAuth2 implementation with Authorization Code + PKCE
+- **Sprint G: Admin & Instance** - Admin tools, instance config, oEmbed
+
+### ❌ Not Started (Federation Sprints H-K)
+- **Sprint H: Federation Foundations** - ActivityPub, WebFinger, NodeInfo
+- **Sprint I: Federation Videos** - Publish/consume federated videos
+- **Sprint J: Federation Social** - Federated follows, likes, comments
+- **Sprint K: Federation Hardening** - Reliability and moderation
+
+See [docs/sprints.md](docs/sprints.md) for detailed sprint information.
 
 ## Quick Start
 
@@ -189,16 +213,23 @@ The API is defined using OpenAPI 3.0 specification in `api/openapi.yaml`.
 **Documentation Resources:**
 - 📄 **OpenAPI Specifications**:
   - Main API: [api/openapi.yaml](api/openapi.yaml)
+  - Channels & Subscriptions: [api/openapi_channels.yaml](api/openapi_channels.yaml)
   - Comments: [api/openapi_comments.yaml](api/openapi_comments.yaml)
   - Ratings & Playlists: [api/openapi_ratings_playlists.yaml](api/openapi_ratings_playlists.yaml)
-  - Channels: [api/openapi_channels.yaml](api/openapi_channels.yaml)
+  - Moderation & Admin: [api/openapi_moderation.yaml](api/openapi_moderation.yaml)
   - Notifications: [docs/openapi_notifications.yaml](docs/openapi_notifications.yaml)
-- 📚 **API Examples & Usage Guide**: [docs/API_EXAMPLES.md](docs/API_EXAMPLES.md)
-- 🎯 **Video Categories Guide**: Comprehensive examples for category management
-- 🔔 **Notifications API Guide**: [docs/NOTIFICATIONS_API.md](docs/NOTIFICATIONS_API.md) - Complete notification system documentation
-- 💭 **Comments API**: Threaded comments with moderation support
-- 👍 **Ratings API**: Like/dislike system with aggregated statistics
-- 📚 **Playlists API**: Full playlist management with privacy controls
+- 📚 **Implementation Guides**:
+  - API Examples: [docs/API_EXAMPLES.md](docs/API_EXAMPLES.md)
+  - OAuth2 Guide: [docs/OAUTH2.md](docs/OAUTH2.md)
+  - Notifications: [docs/NOTIFICATIONS_API.md](docs/NOTIFICATIONS_API.md)
+  - Sprint Planning: [docs/sprints.md](docs/sprints.md)
+- 🔔 **Feature Documentation**:
+  - Channels system with PeerTube compatibility
+  - Threaded comments with moderation
+  - Video ratings and playlists
+  - Multi-language captions support
+  - Complete OAuth2 implementation
+  - Instance configuration management
 
 ```bash
 # Install documentation tools (one-time setup)
@@ -227,8 +258,31 @@ make serve-docs
 - `POST /auth/refresh` - Refresh access token
 - `POST /auth/logout` - Logout (requires auth)
 
-OAuth2 (Minimal):
-- `POST /oauth/token` - OAuth2 token endpoint (password, refresh_token grants). See docs/OAUTH2.md.
+### OAuth2 (Full Implementation)
+
+**Authorization Endpoints:**
+- `GET /oauth/authorize` - Authorization endpoint (Authorization Code flow with PKCE)
+- `POST /oauth/token` - Token endpoint (supports authorization_code, password, refresh_token, client_credentials grants)
+- `POST /oauth/revoke` - Revoke access or refresh tokens
+- `POST /oauth/introspect` - Token introspection endpoint
+
+**Client Management (Admin Only):**
+- `GET /api/v1/admin/oauth/clients` - List OAuth clients
+- `POST /api/v1/admin/oauth/clients` - Create new OAuth client
+- `PUT /api/v1/admin/oauth/clients/{id}` - Update OAuth client
+- `DELETE /api/v1/admin/oauth/clients/{id}` - Delete OAuth client
+
+**Supported OAuth2 Features:**
+- Authorization Code flow with PKCE (recommended)
+- Password grant (for first-party apps)
+- Client credentials grant
+- Refresh token rotation
+- Token revocation (RFC 7009)
+- Token introspection (RFC 7662)
+- Comprehensive scope system
+- WWW-Authenticate headers on 401 responses
+
+See [docs/OAUTH2.md](docs/OAUTH2.md) for detailed OAuth2 documentation.
 
 ### Health Checks
 
@@ -352,24 +406,84 @@ The system comes with 15 pre-defined categories:
 **Public Endpoints:**
 - `GET /api/v1/encoding/status` - Get encoding job status (optionally filter by videoId)
 
-### Subscriptions
+### Channels
 
-- `POST /api/v1/users/{id}/subscribe` - Subscribe to a user (requires auth)
-  - Idempotent; subscribing twice is a no-op.
-  - Increments the target user's `subscriber_count`.
-- `DELETE /api/v1/users/{id}/subscribe` - Unsubscribe from a user (requires auth)
-  - Idempotent; unsubscribing when not subscribed is a no-op.
-  - Decrements the target user's `subscriber_count` (not below zero).
-- `GET /api/v1/users/me/subscriptions` - List channels I'm subscribed to (requires auth)
-  - Supports `limit` and `offset` pagination.
-  - Returns a wrapped response with `data` (array of users) and `meta`.
-- `GET /api/v1/videos/subscriptions` - List videos from my subscriptions (requires auth)
-  - Shows only public, completed videos from subscribed channels.
-  - Supports `limit` and `offset` pagination.
+**Public Endpoints:**
+- `GET /api/v1/channels` - List all channels (with pagination)
+- `GET /api/v1/channels/{id}` - Get channel by ID or handle
+- `GET /api/v1/channels/{id}/videos` - Get videos from a channel
+
+**Protected Endpoints (Require Authentication):**
+- `POST /api/v1/channels` - Create a new channel
+- `PUT /api/v1/channels/{id}` - Update channel (owner only)
+- `DELETE /api/v1/channels/{id}` - Delete channel (owner only)
+- `GET /api/v1/users/me/channels` - List channels owned by current user
+
+### Subscriptions (Channel-based)
+
+**Channel Subscriptions (Require Authentication):**
+- `POST /api/v1/channels/{id}/subscribe` - Subscribe to a channel
+- `DELETE /api/v1/channels/{id}/subscribe` - Unsubscribe from a channel
+- `GET /api/v1/users/me/subscriptions` - List channels I'm subscribed to
+- `GET /api/v1/videos/subscriptions` - List videos from subscribed channels
+
+**Legacy User Subscriptions (Deprecated):**
+- `POST /api/v1/users/{id}/subscribe` - Subscribe to user's default channel
+- `DELETE /api/v1/users/{id}/subscribe` - Unsubscribe from user's default channel
 
 Notes:
-- Mutual subscriptions are allowed (users can subscribe to each other).
-- `User` payloads include `subscriber_count`.
+- Subscriptions are now channel-based for PeerTube compatibility
+- User subscription endpoints maintained for backward compatibility
+- Channel payloads include `subscriber_count`
+
+### Comments
+
+**Public Endpoints:**
+- `GET /api/v1/videos/{id}/comments` - List comments for a video (threaded, paginated)
+
+**Protected Endpoints (Require Authentication):**
+- `POST /api/v1/videos/{id}/comments` - Add a comment to a video
+- `GET /api/v1/comments/{id}` - Get a specific comment
+- `PUT /api/v1/comments/{id}` - Update comment (owner only)
+- `DELETE /api/v1/comments/{id}` - Delete comment (owner/moderator)
+- `POST /api/v1/comments/{id}/flag` - Flag comment for moderation
+- `DELETE /api/v1/comments/{id}/flag` - Remove flag from comment
+- `POST /api/v1/comments/{id}/moderate` - Moderate comment (video owner/admin)
+
+### Ratings
+
+**Protected Endpoints (Require Authentication):**
+- `PUT /api/v1/videos/{id}/rating` - Set video rating (like/dislike/none)
+- `GET /api/v1/videos/{id}/rating` - Get user's rating for a video
+- `GET /api/v1/users/me/ratings` - List all user's video ratings
+
+### Playlists
+
+**Public Endpoints:**
+- `GET /api/v1/playlists/{id}` - Get playlist details (if public)
+- `GET /api/v1/playlists/{id}/items` - List playlist items (if public)
+
+**Protected Endpoints (Require Authentication):**
+- `GET /api/v1/playlists` - List user's playlists
+- `POST /api/v1/playlists` - Create new playlist
+- `PUT /api/v1/playlists/{id}` - Update playlist (owner only)
+- `DELETE /api/v1/playlists/{id}` - Delete playlist (owner only)
+- `POST /api/v1/playlists/{id}/items` - Add video to playlist
+- `DELETE /api/v1/playlists/{id}/items/{itemId}` - Remove video from playlist
+- `PUT /api/v1/playlists/{id}/items/{itemId}/position` - Reorder playlist items
+- `GET /api/v1/users/me/playlists/watch-later` - Get Watch Later playlist
+- `POST /api/v1/users/me/playlists/watch-later` - Add to Watch Later
+
+### Captions/Subtitles
+
+**Public Endpoints:**
+- `GET /api/v1/videos/{id}/captions` - List available captions for a video
+- `GET /api/v1/videos/{id}/captions/{captionId}/content` - Download caption file
+
+**Protected Endpoints (Require Authentication):**
+- `POST /api/v1/videos/{id}/captions` - Upload caption file (owner only)
+- `PUT /api/v1/videos/{id}/captions/{captionId}` - Update caption metadata
+- `DELETE /api/v1/videos/{id}/captions/{captionId}` - Delete caption
 
 ### Messages
 
