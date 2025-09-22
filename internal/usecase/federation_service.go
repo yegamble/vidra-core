@@ -18,11 +18,12 @@ type FederationService interface {
 }
 
 type federationService struct {
-	repo    FederationRepository
-	modRepo InstanceConfigReader
-	atproto *atprotoService
-	cfg     *config.Config
-	rrIndex int // round-robin index for actors
+	repo             FederationRepository
+	modRepo          InstanceConfigReader
+	atproto          *atprotoService
+	atprotoPublisher AtprotoPublisher // Original publisher interface (for tests)
+	cfg              *config.Config
+	rrIndex          int // round-robin index for actors
 }
 
 // FederationRepository abstracts job queue and post storage used by the federation service.
@@ -41,9 +42,19 @@ type FederationRepository interface {
 }
 
 func NewFederationService(repo FederationRepository, modRepo InstanceConfigReader, atproto AtprotoPublisher, cfg *config.Config) FederationService {
-	// Use concrete atprotoService if available to access helpers; otherwise wrap nil
-	svc, _ := atproto.(*atprotoService)
-	return &federationService{repo: repo, modRepo: modRepo, atproto: svc, cfg: cfg}
+	// Use concrete atprotoService if available to access helpers
+	svc, ok := atproto.(*atprotoService)
+	if !ok && atproto != nil {
+		// If we have a non-nil AtprotoPublisher that's not *atprotoService (e.g., mock in tests),
+		// wrap it in a minimal adapter
+		svc = &atprotoService{
+			enabled: cfg != nil && cfg.EnableATProto,
+			cfg:     cfg,
+		}
+		// Store the original publisher for delegation
+		// Note: For tests, we'll check if atproto is non-nil to indicate it's configured
+	}
+	return &federationService{repo: repo, modRepo: modRepo, atproto: svc, cfg: cfg, atprotoPublisher: atproto}
 }
 
 func (s *federationService) ProcessNext(ctx context.Context) (bool, error) {
@@ -111,7 +122,8 @@ func (s *federationService) ProcessNext(ctx context.Context) (bool, error) {
 func (s *federationService) processJob(ctx context.Context, job *domain.FederationJob) error {
 	switch job.JobType {
 	case "publish_post":
-		if s.atproto == nil {
+		// Check if we have an ATProto publisher (either concrete or mock)
+		if s.atprotoPublisher == nil && s.atproto == nil {
 			return fmt.Errorf("atproto not configured")
 		}
 		var payload struct {
@@ -123,6 +135,11 @@ func (s *federationService) processJob(ctx context.Context, job *domain.Federati
 		// For publishing, we need a video instance; pull a minimal proxy video
 		// FederationService doesn't have direct access to video repo; rely on inline publish path to embed URL only
 		v := &domain.Video{ID: payload.VideoID, Title: "", Description: "", Privacy: domain.PrivacyPublic, Status: domain.StatusCompleted}
+
+		// Use the original publisher if available (for tests), otherwise use atproto
+		if s.atprotoPublisher != nil {
+			return s.atprotoPublisher.PublishVideo(ctx, v)
+		}
 		return s.atproto.PublishVideo(ctx, v)
 	default:
 		return fmt.Errorf("unknown federation job type: %s", job.JobType)
