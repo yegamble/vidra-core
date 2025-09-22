@@ -11,7 +11,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -19,20 +18,20 @@ import (
 	"athena/internal/config"
 	"athena/internal/httpapi"
 	"athena/internal/repository"
+	"athena/internal/testutil"
 	"athena/internal/usecase"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
+	redis "github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/crypto/bcrypt"
 )
 
 func TestOAuth2PasswordGrant(t *testing.T) {
-	db, cleanup := setupTestDB(t)
-	defer cleanup()
-
-	r := setupTestRouter(db)
+	db, redisClient := setupTestDB(t)
+	r := setupTestRouter(t, db, redisClient)
 
 	// Create test user
 	userID := uuid.NewString()
@@ -83,10 +82,8 @@ func TestOAuth2PasswordGrant(t *testing.T) {
 }
 
 func TestOAuth2AuthorizationCodeFlow(t *testing.T) {
-	db, cleanup := setupTestDB(t)
-	defer cleanup()
-
-	r := setupTestRouter(db)
+	db, redisClient := setupTestDB(t)
+	r := setupTestRouter(t, db, redisClient)
 
 	// Create test user
 	userID := uuid.NewString()
@@ -154,10 +151,8 @@ func TestOAuth2AuthorizationCodeFlow(t *testing.T) {
 }
 
 func TestOAuth2PKCE(t *testing.T) {
-	db, cleanup := setupTestDB(t)
-	defer cleanup()
-
-	r := setupTestRouter(db)
+	db, redisClient := setupTestDB(t)
+	r := setupTestRouter(t, db, redisClient)
 
 	// Create test user
 	userID := uuid.NewString()
@@ -219,10 +214,8 @@ func TestOAuth2PKCE(t *testing.T) {
 }
 
 func TestOAuth2TokenRevocation(t *testing.T) {
-	db, cleanup := setupTestDB(t)
-	defer cleanup()
-
-	r := setupTestRouter(db)
+	db, redisClient := setupTestDB(t)
+	r := setupTestRouter(t, db, redisClient)
 	oauthRepo := repository.NewOAuthRepository(db)
 
 	// Create OAuth client
@@ -278,10 +271,8 @@ func TestOAuth2TokenRevocation(t *testing.T) {
 }
 
 func TestOAuth2TokenIntrospection(t *testing.T) {
-	db, cleanup := setupTestDB(t)
-	defer cleanup()
-
-	r := setupTestRouter(db)
+	db, redisClient := setupTestDB(t)
+	r := setupTestRouter(t, db, redisClient)
 	oauthRepo := repository.NewOAuthRepository(db)
 
 	// Create OAuth client
@@ -342,10 +333,8 @@ func TestOAuth2TokenIntrospection(t *testing.T) {
 }
 
 func TestOAuth2ScopeEnforcement(t *testing.T) {
-	db, cleanup := setupTestDB(t)
-	defer cleanup()
-
-	_ = setupTestRouter(db)
+	db, redisClient := setupTestDB(t)
+	_ = setupTestRouter(t, db, redisClient)
 
 	// Create test user with limited scope token
 	userID := uuid.NewString()
@@ -374,10 +363,8 @@ func TestOAuth2ScopeEnforcement(t *testing.T) {
 }
 
 func TestOAuth2ErrorResponses(t *testing.T) {
-	db, cleanup := setupTestDB(t)
-	defer cleanup()
-
-	r := setupTestRouter(db)
+	db, redisClient := setupTestDB(t)
+	r := setupTestRouter(t, db, redisClient)
 
 	tests := []struct {
 		name           string
@@ -440,27 +427,16 @@ func TestOAuth2ErrorResponses(t *testing.T) {
 
 // Helper functions
 
-func setupTestDB(t *testing.T) (*sqlx.DB, func()) {
-	// Use test database - get connection string from environment or use default
-	dsn := os.Getenv("TEST_DATABASE_URL")
-	if dsn == "" {
-		// Default for local testing with docker-compose.test.yml
-		dsn = "postgres://test_user:test_password@localhost:5433/athena_test?sslmode=disable"
+func setupTestDB(t *testing.T) (*sqlx.DB, *redis.Client) {
+	testDB := testutil.SetupTestDB(t)
+	if testDB == nil {
+		t.Skip("test database not available")
+		return nil, nil
 	}
 
-	db, err := sqlx.Connect("postgres", dsn)
-	require.NoError(t, err)
+	setupTestSchema(t, testDB.DB)
 
-	// Run migrations or setup test schema
-	setupTestSchema(t, db)
-
-	cleanup := func() {
-		// Clean up test data
-		db.Exec("TRUNCATE users, oauth_clients, oauth_authorization_codes, oauth_access_tokens CASCADE")
-		db.Close()
-	}
-
-	return db, cleanup
+	return testDB.DB, testDB.Redis
 }
 
 func setupTestSchema(t *testing.T, db *sqlx.DB) {
@@ -526,16 +502,53 @@ func setupTestSchema(t *testing.T, db *sqlx.DB) {
 	}
 }
 
-func setupTestRouter(db *sqlx.DB) *chi.Mux {
-	r := chi.NewRouter()
-
-	cfg := &config.Config{
-		DatabaseURL: "postgres://test",
-		JWTSecret:   "test-secret",
-		RedisURL:    "redis://localhost:6379",
+func setupTestRouter(t *testing.T, db *sqlx.DB, redisClient *redis.Client) *chi.Mux {
+	if db == nil || redisClient == nil {
+		t.Skip("database or redis not available")
+		return nil
 	}
 
-	httpapi.RegisterRoutes(r, cfg)
+	cfg := &config.Config{
+		JWTSecret:               "test-secret",
+		RedisPingTimeout:        1,
+		IPFSPingTimeout:         1,
+		RequireIPFS:             false,
+		StorageDir:              t.TempDir(),
+		EnableEncoding:          false,
+		EnableEncodingScheduler: false,
+	}
+
+	ipfsMock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("{\"Version\":\"0.1.0\"}"))
+	}))
+	t.Cleanup(ipfsMock.Close)
+	cfg.IPFSApi = ipfsMock.URL
+	cfg.IPFSCluster = ipfsMock.URL
+
+	userRepo := repository.NewUserRepository(db)
+	authRepo := repository.NewAuthRepository(db)
+	sessionRepo := repository.NewRedisSessionRepository(redisClient)
+	compositeAuth := repository.NewCompositeAuthRepository(authRepo, sessionRepo)
+	oauthRepo := repository.NewOAuthRepository(db)
+
+	server := httpapi.NewServerWithOAuth(
+		userRepo,
+		compositeAuth,
+		oauthRepo,
+		cfg.JWTSecret,
+		redisClient,
+		time.Duration(cfg.RedisPingTimeout)*time.Second,
+		cfg.IPFSApi,
+		cfg.IPFSCluster,
+		time.Duration(cfg.IPFSPingTimeout)*time.Second,
+		cfg,
+	)
+
+	r := chi.NewRouter()
+	r.Post("/oauth/token", server.OAuthToken)
+	r.Post("/oauth/revoke", server.OAuthRevoke)
+	r.Post("/oauth/introspect", server.OAuthIntrospect)
 
 	return r
 }
