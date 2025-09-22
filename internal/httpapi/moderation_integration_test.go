@@ -526,7 +526,14 @@ func TestInstanceConfigIntegration(t *testing.T) {
 		err = json.NewDecoder(w.Body).Decode(&getResp)
 		require.NoError(t, err)
 		assert.Equal(t, "instance_name", getResp.Data.Key)
-		assert.Equal(t, nameValue, getResp.Data.Value)
+
+		// Compare JSON values as strings after unmarshaling
+		var expectedName, actualName string
+		err = json.Unmarshal(nameValue, &expectedName)
+		require.NoError(t, err)
+		err = json.Unmarshal(getResp.Data.Value, &actualName)
+		require.NoError(t, err)
+		assert.Equal(t, expectedName, actualName)
 		assert.True(t, getResp.Data.IsPublic)
 
 		// 7. Delete config
@@ -541,7 +548,14 @@ func TestInstanceConfigIntegration(t *testing.T) {
 		config, err := moderationRepo.GetInstanceConfig(context.Background(), "upload_limits")
 		require.NoError(t, err)
 		assert.Equal(t, "upload_limits", config.Key)
-		assert.Equal(t, limitsValue, config.Value)
+
+		// Compare JSON values by unmarshaling both to ensure order doesn't matter
+		var expectedLimits, actualLimits map[string]interface{}
+		err = json.Unmarshal(limitsValue, &expectedLimits)
+		require.NoError(t, err)
+		err = json.Unmarshal(config.Value, &actualLimits)
+		require.NoError(t, err)
+		assert.Equal(t, expectedLimits, actualLimits)
 	})
 
 	t.Run("NonAdminCannotModifyConfig", func(t *testing.T) {
