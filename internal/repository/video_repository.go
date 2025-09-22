@@ -109,20 +109,21 @@ func (r *videoRepository) GetByID(ctx context.Context, id string) (*domain.Video
 	var categoryDesc, categoryIcon, categoryColor sql.NullString
 	var categoryOrder sql.NullInt64
 	var categoryActive sql.NullBool
+	var thumbnailPath, previewPath sql.NullString
 
 	err := r.db.QueryRowContext(ctx, query, id).Scan(
 		&v.ID, &v.ThumbnailID, &v.Title, &v.Description, &v.Duration, &v.Views,
 		&v.Privacy, &v.Status, &v.UploadDate, &v.UserID,
 		&v.OriginalCID, &processedCIDsJSON, &v.ThumbnailCID,
 		&tags, &v.CategoryID, &v.Language, &v.FileSize, &v.MimeType, &metadataJSON,
-		&v.CreatedAt, &v.UpdatedAt, &outputPathsJSON, &v.ThumbnailPath, &v.PreviewPath,
+		&v.CreatedAt, &v.UpdatedAt, &outputPathsJSON, &thumbnailPath, &previewPath,
 		&v.CategoryID, &categoryName, &categorySlug, &categoryDesc, &categoryIcon, &categoryColor, &categoryOrder, &categoryActive,
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, domain.NewDomainError("VIDEO_NOT_FOUND", "Video not found")
 		}
-		return nil, domain.NewDomainError("GET_FAILED", "Failed to get video")
+		return nil, domain.NewDomainError("GET_FAILED", "Failed to get video: "+err.Error())
 	}
 
 	// Unmarshal JSON fields
@@ -136,6 +137,14 @@ func (r *videoRepository) GetByID(ctx context.Context, id string) (*domain.Video
 		_ = json.Unmarshal(outputPathsJSON, &v.OutputPaths)
 	}
 	v.Tags = []string(tags)
+
+	// Assign nullable string fields
+	if thumbnailPath.Valid {
+		v.ThumbnailPath = thumbnailPath.String
+	}
+	if previewPath.Valid {
+		v.PreviewPath = previewPath.String
+	}
 
 	// Populate category if it exists
 	if v.CategoryID != nil {

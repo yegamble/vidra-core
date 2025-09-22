@@ -277,6 +277,16 @@ func TestOEmbed(t *testing.T) {
 	user := testutil.CreateTestUser(t, testDB.DB, "video@test.com", string(domain.RoleUser))
 	video := testutil.CreateTestVideo(t, testDB.DB, user.ID, "Test Video for oEmbed")
 
+	t.Logf("Created test video with ID: %s", video.ID)
+
+	// Verify video can be retrieved
+	retrievedVideo, err := videoRepo.GetByID(context.Background(), video.ID)
+	if err != nil {
+		t.Logf("Failed to retrieve video: %v", err)
+	} else {
+		t.Logf("Successfully retrieved video: %s", retrievedVideo.Title)
+	}
+
 	// Create handlers
 	handlers := NewInstanceHandlers(moderationRepo, userRepo, videoRepo)
 
@@ -286,9 +296,9 @@ func TestOEmbed(t *testing.T) {
 
 		handlers.OEmbed(w, r)
 
-		if w.Code != http.StatusOK {
-			t.Logf("Response body: %s", w.Body.String())
-		}
+		t.Logf("Response status: %d", w.Code)
+		t.Logf("Response body: %s", w.Body.String())
+
 		assert.Equal(t, http.StatusOK, w.Code)
 		assert.Contains(t, w.Header().Get("Content-Type"), "application/json")
 

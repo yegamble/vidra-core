@@ -805,8 +805,8 @@ func TestOEmbedIntegration(t *testing.T) {
 		require.NoError(t, err)
 
 		// Check default dimensions
-		assert.Equal(t, float64(560), resp["width"])
-		assert.Equal(t, float64(315), resp["height"])
+		assert.Equal(t, float64(640), resp["width"])
+		assert.Equal(t, float64(360), resp["height"])
 	})
 }
 

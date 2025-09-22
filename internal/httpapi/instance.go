@@ -4,11 +4,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"athena/internal/domain"
 	"athena/internal/repository"
 	"athena/internal/usecase"
+
 	"github.com/go-chi/chi/v5"
 )
 
@@ -179,6 +181,9 @@ func (h *InstanceHandlers) OEmbed(w http.ResponseWriter, r *http.Request) {
 	format := r.URL.Query().Get("format")
 	if format == "" {
 		format = "json"
+	} else if format != "json" && format != "xml" {
+		WriteError(w, http.StatusBadRequest, domain.NewDomainError("BAD_REQUEST", "Invalid format parameter"))
+		return
 	}
 
 	maxWidth := r.URL.Query().Get("maxwidth")
@@ -206,7 +211,7 @@ func (h *InstanceHandlers) OEmbed(w http.ResponseWriter, r *http.Request) {
 	// Get video details
 	video, err := h.videoRepo.GetByID(r.Context(), videoID)
 	if err != nil {
-		if domainErr, ok := err.(*domain.DomainError); ok && domainErr.Code == "NOT_FOUND" {
+		if domainErr, ok := err.(*domain.DomainError); ok && domainErr.Code == "VIDEO_NOT_FOUND" {
 			WriteError(w, http.StatusNotFound, domain.NewDomainError("NOT_FOUND", "Video not found"))
 		} else {
 			WriteError(w, http.StatusInternalServerError, domain.NewDomainError("INTERNAL_ERROR", "Failed to get video"))
@@ -214,23 +219,34 @@ func (h *InstanceHandlers) OEmbed(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Check if video is private
+	if video.Privacy != domain.PrivacyPublic {
+		WriteError(w, http.StatusNotFound, domain.NewDomainError("NOT_FOUND", "Video not found"))
+		return
+	}
+
 	// Get uploader info
 	uploader, err := h.userRepo.GetByID(r.Context(), video.UserID)
 	if err != nil {
 		uploader = &domain.User{
+			ID:          video.UserID, // Keep the original user ID
 			Username:    "Unknown",
 			DisplayName: "Unknown User",
 		}
 	}
 
 	// Build oEmbed response
-	width := "640"
-	height := "360"
+	width := 640
+	height := 360
 	if maxWidth != "" {
-		width = maxWidth
+		if w, err := strconv.Atoi(maxWidth); err == nil && w > 0 {
+			width = w
+		}
 	}
 	if maxHeight != "" {
-		height = maxHeight
+		if h, err := strconv.Atoi(maxHeight); err == nil && h > 0 {
+			height = h
+		}
 	}
 
 	oembedResponse := map[string]interface{}{
@@ -239,11 +255,11 @@ func (h *InstanceHandlers) OEmbed(w http.ResponseWriter, r *http.Request) {
 		"title":         video.Title,
 		"author_name":   uploader.DisplayName,
 		"author_url":    fmt.Sprintf("%s/users/%s", r.Host, uploader.ID),
-		"provider_name": "Athena",
+		"provider_name": "Athena Video Platform",
 		"provider_url":  fmt.Sprintf("https://%s", r.Host),
 		"width":         width,
 		"height":        height,
-		"html": fmt.Sprintf(`<iframe width="%s" height="%s" src="%s/embed/%s" frameborder="0" allowfullscreen></iframe>`,
+		"html": fmt.Sprintf(`<iframe width="%d" height="%d" src="%s/embed/%s" frameborder="0" allowfullscreen></iframe>`,
 			width, height, r.Host, video.ID),
 	}
 
@@ -262,14 +278,25 @@ func (h *InstanceHandlers) OEmbed(w http.ResponseWriter, r *http.Request) {
 	// Handle format
 	if format == "xml" {
 		w.Header().Set("Content-Type", "application/xml")
-		// Simple XML encoding
+		// Simple XML encoding - need to escape HTML content
 		xmlResponse := `<?xml version="1.0" encoding="UTF-8"?><oembed>`
 		for k, v := range oembedResponse {
-			xmlResponse += fmt.Sprintf("<%s>%v</%s>", k, v, k)
+			// HTML needs to be escaped in XML
+			valueStr := fmt.Sprintf("%v", v)
+			if k == "html" {
+				// Escape HTML for XML
+				valueStr = strings.ReplaceAll(valueStr, "&", "&amp;")
+				valueStr = strings.ReplaceAll(valueStr, "<", "&lt;")
+				valueStr = strings.ReplaceAll(valueStr, ">", "&gt;")
+				valueStr = strings.ReplaceAll(valueStr, "\"", "&quot;")
+			}
+			xmlResponse += fmt.Sprintf("<%s>%s</%s>", k, valueStr, k)
 		}
 		xmlResponse += "</oembed>"
 		_, _ = w.Write([]byte(xmlResponse))
 	} else {
-		WriteJSON(w, http.StatusOK, oembedResponse)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(oembedResponse)
 	}
 }
