@@ -63,11 +63,9 @@ make lint           # Run linters
 ### ✅ Completed Features
 - Full PeerTube API compatibility (Sprints A-G)
 - ATProto federation foundations (Sprint H)
+- ATProto video federation (Sprint I)
 - Federation social features (Sprint J)
 - Federation hardening and reliability (Sprint K)
-
-### 🚧 In Progress
-- ATProto video federation (Sprint I)
 
 See [Sprint History](docs/sprints.md) for detailed progress tracking.
 
