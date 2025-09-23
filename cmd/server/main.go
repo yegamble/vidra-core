@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	chi "github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
@@ -45,24 +46,29 @@ func main() {
 		}
 	}()
 
-	// Get the router with all routes already registered
-	router := application.GetRouter()
+	// Get the application router with all routes registered,
+	// then mount it under a parent router where we apply global middleware.
+	appRouter := application.GetRouter()
+	root := chi.NewRouter()
 
-	// Apply global middleware
+	// Apply global middleware on the root BEFORE mounting routes, per chi requirements
 	// Security middleware - should be first
-	router.Use(appMiddleware.SecurityHeaders())
-	router.Use(appMiddleware.RequestID())
+	root.Use(appMiddleware.SecurityHeaders())
+	root.Use(appMiddleware.RequestID())
 
 	// Standard Chi middleware
-	router.Use(middleware.RealIP)
-	router.Use(middleware.Logger)
-	router.Use(middleware.Recoverer)
-	router.Use(middleware.Timeout(60 * time.Second))
-	router.Use(middleware.Compress(5))
+	root.Use(middleware.RealIP)
+	root.Use(middleware.Logger)
+	root.Use(middleware.Recoverer)
+	root.Use(middleware.Timeout(60 * time.Second))
+	root.Use(middleware.Compress(5))
 
 	// CORS and request size limiting
-	router.Use(appMiddleware.CORS())
-	router.Use(appMiddleware.SizeLimiter(100 * 1024 * 1024)) // 100MB default, override for upload endpoints
+	root.Use(appMiddleware.CORS())
+	root.Use(appMiddleware.SizeLimiter(100 * 1024 * 1024)) // 100MB default, override for upload endpoints
+
+	// Mount the pre-registered application routes
+	root.Mount("/", appRouter)
 
 	// Start background schedulers and workers
 	backgroundCtx, backgroundCancel := context.WithCancel(context.Background())
@@ -137,7 +143,7 @@ func main() {
 
 	server := &http.Server{
 		Addr:         fmt.Sprintf(":%d", cfg.Port),
-		Handler:      router,
+		Handler:      root,
 		ReadTimeout:  30 * time.Second,
 		WriteTimeout: 30 * time.Second,
 		IdleTimeout:  120 * time.Second,
