@@ -7,25 +7,20 @@ Athena is a PeerTube backend implementation in Go following clean architecture p
 ## Project Layout
 
 ```
-/cmd/server            # main entry (wire up deps, flags)
+/cmd/server            # main entry (flags, middleware, lifecycle)
+/internal/app          # DI + bootstrap + lifecycle (DB, Redis, schedulers)
 /internal/config       # env, .env, flags, defaults, validation
-/internal/httpapi      # Chi routes, handlers, request/response DTOs
+/internal/httpapi      # Chi routes, handlers, request/response DTOs (registration-only)
 /internal/middleware   # auth, rate-limit, cors, tracing, recovery
-/internal/auth         # JWT/OAuth, sessions
 /internal/domain       # core models & errors (no infra deps)
-/internal/usecase      # business logic (interfaces over repos/gateways)
+/internal/port         # repository/service contracts (interfaces)
+/internal/usecase      # business logic by feature (+ aliases during migration)
 /internal/repository   # SQLX repos (Postgres)
-/internal/stream       # HLS, range streaming
-/internal/processing   # FFmpeg workers, queue, progress
-/internal/ipfs         # IPFS/Cluster clients, pinning
-/internal/payments     # IOTA wallet/tx
+/internal/scheduler    # background schedulers (encoding, federation, firehose)
 /internal/storage      # Hybrid (local/IPFS/S3-compatible)
-/internal/worker       # async jobs (chunk merge, GC, pins)
-/internal/obs          # logging, metrics, tracing
-/internal/federation   # ATProto federation handlers
-/internal/social       # Social features (follows, likes, comments)
+/internal/metrics      # Prometheus metrics exposition
 /migrations            # SQL migration files
-/pkg                   # optional shared util packages
+/pkg                   # shared utility packages (e.g., imageutil)
 ```
 
 ## Architecture Principles

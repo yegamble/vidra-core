@@ -8,6 +8,7 @@ import (
 
 	"athena/internal/domain"
 	"athena/internal/testutil"
+
 	"github.com/google/uuid"
 )
 

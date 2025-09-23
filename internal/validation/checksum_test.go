@@ -5,6 +5,7 @@ import (
 
 	"athena/internal/config"
 	"athena/internal/domain"
+
 	"github.com/stretchr/testify/assert"
 )
 

@@ -13,10 +13,13 @@ Athena follows clean architecture principles with clear separation of concerns a
 - Contains domain-specific errors
 
 ### 2. Use Case Layer (`/internal/usecase`)
-- Business logic orchestration
-- Defines interfaces for repositories and external services
-- Transaction coordination
-- Input validation and business rule enforcement
+- Business logic orchestration by feature (e.g., `usecase/channel`, `usecase/comment`, `usecase/views`)
+- Backward-compatible aliases are kept under `internal/usecase` during migration
+- Transaction coordination, validation, and rule enforcement
+
+### Ports (`/internal/port`)
+- Repository contracts and inbound/outbound interfaces shared across features
+- Decouples services from concrete implementations in `internal/repository`
 
 ### 3. Interface Layer (`/internal/httpapi`)
 - HTTP handlers and routing (Chi framework)
@@ -25,17 +28,22 @@ Athena follows clean architecture principles with clear separation of concerns a
 - OpenAPI specification compliance
 
 ### 4. Bootstrap Layer (`/internal/app`)
-- Application initialization and dependency wiring
-- Resource lifecycle management (database, Redis, IPFS connections)
-- Background scheduler orchestration
-- Centralized configuration management
+- Application initialization and dependency wiring (central DI)
+- Lifecycle management (DB, Redis, IPFS), graceful start/stop
+- Background schedulers and workers (encoding, federation, firehose)
+- Exposes a `Router` with routes pre-registered; `httpapi` is registration-only
 
 ### 5. Infrastructure Layer
 - **Repository** (`/internal/repository`) - Database access with SQLX
+- **Ports** (`/internal/port`) - Interfaces implemented by repositories/services
 - **Storage** (`/internal/storage`) - Hybrid file storage (local/IPFS/S3)
 - **Processing** (`/internal/processing`) - Video transcoding with FFmpeg
 - **Federation** (`/internal/federation`) - ATProto integration
 - **Worker** (`/internal/worker`) - Background job processing
+
+### 6. Shared Packages (`/pkg`)
+- Utilities intended for reuse (e.g., `pkg/imageutil`) that have no `internal` dependencies
+- Keeps external imports possible without exposing app internals
 
 ## Key Design Patterns
 
@@ -82,7 +90,7 @@ func RegisterRoutesWithDependencies(
     cfg *config.Config,
     deps *HandlerDependencies,
 ) {
-    // Pure route registration, no resource initialization
+    // Pure route registration: no connections or goroutines here
 }
 ```
 

@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"athena/internal/domain"
+
 	"github.com/go-playground/validator/v10"
 	"github.com/google/uuid"
 )

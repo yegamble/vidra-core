@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"athena/internal/domain"
+
 	"github.com/jmoiron/sqlx"
 )
 

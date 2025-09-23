@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"athena/internal/domain"
+
 	"github.com/stretchr/testify/mock"
 )
 

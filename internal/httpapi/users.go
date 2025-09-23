@@ -2,11 +2,12 @@ package httpapi
 
 import (
 	"encoding/json"
-	"github.com/google/uuid"
-	"golang.org/x/crypto/bcrypt"
 	"net/http"
 	"strconv"
 	"time"
+
+	"github.com/google/uuid"
+	"golang.org/x/crypto/bcrypt"
 
 	"athena/internal/domain"
 	"athena/internal/middleware"

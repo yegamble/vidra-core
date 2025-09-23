@@ -13,7 +13,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -23,6 +22,7 @@ import (
 	"athena/internal/storage"
 	"athena/internal/testutil"
 	"athena/internal/usecase"
+
 	chi "github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"

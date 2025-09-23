@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"athena/internal/domain"
+
 	"github.com/jmoiron/sqlx"
 )
 

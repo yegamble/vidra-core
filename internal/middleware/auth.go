@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"athena/internal/domain"
+
 	jwt "github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 )

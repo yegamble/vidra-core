@@ -14,3 +14,7 @@ linters:
     - misspell
     - unconvert
     - whitespace
+formatters:
+  enable:
+    - goimports
+    - gofmt

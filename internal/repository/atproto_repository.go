@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"athena/internal/crypto"
+
 	"github.com/jmoiron/sqlx"
 )
 

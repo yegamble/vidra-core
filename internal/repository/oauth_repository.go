@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"athena/internal/usecase"
+
 	"github.com/jmoiron/sqlx"
 	"github.com/lib/pq"
 )

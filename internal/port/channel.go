@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"athena/internal/domain"
+
 	"github.com/google/uuid"
 )
 

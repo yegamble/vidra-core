@@ -27,27 +27,42 @@ deps: ## Download Go dependencies
 	go mod download
 	go mod tidy
 
-lint: ## Run golangci-lint
+lint: ## Run golangci-lint (auto-fixes incl. import sorting)
 	@if command -v golangci-lint >/dev/null 2>&1; then \
-		golangci-lint run ./...; \
+		golangci-lint run --fix ./...; \
 	else \
 		echo "golangci-lint not installed. Installing..."; \
-		    brew install golangci-lint; \
-		golangci-lint run ./...; \
+		brew install golangci-lint; \
+		golangci-lint run --fix ./...; \
 	fi
 
-fmt: ## Format Go files
+fmt: ## Format Go files (incl. import sorting)
+	@# Sort and group imports, then run gofmt simplify
+	@if command -v goimports >/dev/null 2>&1; then \
+		goimports -w $(shell git ls-files "*.go"); \
+	else \
+		echo "goimports not installed. Installing (requires internet)..."; \
+		$(GO_ENV) go install golang.org/x/tools/cmd/goimports@latest || echo "Install goimports manually to enable import sorting"; \
+		command -v goimports >/dev/null 2>&1 && goimports -w $(shell git ls-files "*.go") || true; \
+	fi
 	@gofmt -s -w $(shell git ls-files "*.go")
 
-fmt-check: ## Verify Go files are formatted
-	@# Use go fmt which respects modules instead of gofmt directly
-	@unformatted=$$(go fmt ./...); \
-	if [ -n "$$unformatted" ]; then \
-		echo "The following files need formatting:"; \
-		echo "$$unformatted"; \
+fmt-check: ## Verify Go files are formatted and imports sorted
+	@set -e; \
+	unformatted=$$(go fmt ./...); \
+	unsorted=""; \
+	if command -v goimports >/dev/null 2>&1; then \
+		unsorted=$$(goimports -l $(shell git ls-files "*.go")); \
+	else \
+		echo "Note: goimports not found; skipping import sort check. Run 'make install-tools' to install."; \
+	fi; \
+	if [ -n "$$unformatted" ] || [ -n "$$unsorted" ]; then \
+		[ -n "$$unformatted" ] && { echo "The following files need gofmt:"; echo "$$unformatted"; }; \
+		[ -n "$$unsorted" ] && { echo "The following files need import sorting (goimports):"; echo "$$unsorted"; }; \
+		echo "Run: make fmt"; \
 		exit 1; \
 	else \
-		echo "All Go files are properly formatted."; \
+		echo "All Go files are formatted and imports are sorted."; \
 	fi
 
 test: ## Run unit tests
@@ -292,6 +307,7 @@ install-tools: ## Install development tools
 	@echo "Installing development tools..."
 	go install github.com/air-verse/air@latest
 	go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+	go install golang.org/x/tools/cmd/goimports@latest
 	@echo "Installing Node.js tools..."
 	npm install -g @apidevtools/swagger-cli @redocly/cli
 	@echo "Development tools installation completed!"

@@ -13,6 +13,7 @@ import (
 	"athena/internal/domain"
 	"athena/internal/repository"
 	"athena/internal/usecase"
+
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
 	"github.com/stretchr/testify/assert"
