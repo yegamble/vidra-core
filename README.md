@@ -101,6 +101,15 @@ A high-performance PeerTube backend implementation in Go with decentralized stor
 
 See [docs/sprints.md](docs/sprints.md) for detailed sprint information.
 
+## Security Testing
+
+The most recent penetration test highlighted two outstanding issues that require remediation. Full details and reproduction steps are documented in [docs/pentest.md](docs/pentest.md).
+
+- 🔴 **Authenticated privilege escalation:** Any logged-in user can call `POST /api/v1/users` and create a new account with the `admin` role because the route lacks an administrative guard and trusts the caller-provided `role` value.【F:internal/httpapi/routes.go†L282-L305】【F:internal/httpapi/users.go†L174-L249】
+- 🟠 **Public exposure of private profile data:** The public `GET /api/v1/users/{id}` endpoint returns sensitive attributes (email, bitcoin wallet, account status, etc.) without requiring authentication, leaking personally identifiable information.【F:internal/httpapi/routes.go†L282-L305】【F:internal/httpapi/users.go†L95-L114】【F:internal/domain/user.go†L9-L24】【F:internal/repository/user_repository.go†L40-L115】
+
+Please address these issues before treating the service as production-ready.
+
 ## Quick Start
 
 ### Prerequisites
