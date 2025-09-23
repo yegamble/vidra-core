@@ -2,6 +2,7 @@ package usecase
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math"
 	"sync"
@@ -261,15 +262,16 @@ func (s *circuitBreakerService) checkStateTransition(ctx context.Context, cb *ci
 
 			// Record metric
 			if s.hardening != nil {
+				metadata, _ := json.Marshal(map[string]interface{}{
+					"consecutive_failures": cb.consecutiveFailures,
+					"error_rate":           errorRate,
+				})
 				_ = s.hardening.RecordMetric(ctx, &domain.FederationMetric{
 					MetricType:     "circuit_breaker_opened",
 					MetricValue:    1,
 					InstanceDomain: &cb.endpoint,
-					Metadata: map[string]interface{}{
-						"consecutive_failures": cb.consecutiveFailures,
-						"error_rate":           errorRate,
-					},
-					Timestamp: now,
+					Metadata:       metadata,
+					Timestamp:      now,
 				})
 			}
 		}

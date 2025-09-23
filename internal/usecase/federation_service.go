@@ -439,10 +439,8 @@ func (s *federationService) processItem(ctx context.Context, item any, blockedSe
 		if err == nil && isDuplicate {
 			// Resolve duplicate based on configured strategy
 			strategy := s.getDeduplicationStrategy(ctx)
-			if err := s.dedup.ResolveDuplicate(ctx, existing, p, strategy); err != nil {
-				// Log error but continue
-				metrics.IncFedPostsFailed()
-			}
+			_ = s.dedup.ResolveDuplicate(ctx, existing, p, strategy)
+			// Ignore resolution errors - we'll still count it as processed since we detected it
 			return true // Count as processed even if duplicate
 		}
 	}

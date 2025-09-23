@@ -2,7 +2,7 @@ package usecase
 
 import (
 	"context"
-	"fmt"
+	"encoding/json"
 	"sync"
 	"time"
 
@@ -242,16 +242,17 @@ func (s *backpressureService) RecordMetrics(ctx context.Context, instance string
 
 		// Record metric
 		if s.hardening != nil {
+			metadata, _ := json.Marshal(map[string]interface{}{
+				"queue_depth":        bp.queueDepth,
+				"error_rate":         bp.errorRate,
+				"consecutive_errors": bp.consecutiveErrors,
+			})
 			_ = s.hardening.RecordMetric(ctx, &domain.FederationMetric{
 				MetricType:     "backpressure_throttled",
 				MetricValue:    throttleFactor,
 				InstanceDomain: &instance,
-				Metadata: map[string]interface{}{
-					"queue_depth":        bp.queueDepth,
-					"error_rate":         bp.errorRate,
-					"consecutive_errors": bp.consecutiveErrors,
-				},
-				Timestamp: now,
+				Metadata:       metadata,
+				Timestamp:      now,
 			})
 		}
 	} else if !shouldThrottle && bp.isThrottled && bp.recoverAt != nil && now.After(*bp.recoverAt) {

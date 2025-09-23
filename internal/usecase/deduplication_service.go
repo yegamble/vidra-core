@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -35,12 +36,12 @@ type DeduplicationService interface {
 }
 
 type deduplicationService struct {
-	fedRepo   FederationRepository
+	fedRepo   FederationRepositoryExt
 	hardening HardeningRepository
 }
 
 // NewDeduplicationService creates a new deduplication service
-func NewDeduplicationService(fedRepo FederationRepository, hardening HardeningRepository) DeduplicationService {
+func NewDeduplicationService(fedRepo FederationRepositoryExt, hardening HardeningRepository) DeduplicationService {
 	return &deduplicationService{
 		fedRepo:   fedRepo,
 		hardening: hardening,
@@ -202,13 +203,10 @@ func (s *deduplicationService) resolveMerge(ctx context.Context, original, dupli
 	}
 
 	// Merge labels
-	if duplicate.Labels != nil {
-		if merged.Labels == nil {
-			merged.Labels = duplicate.Labels
-		} else {
-			// TODO: Merge JSON labels properly
-		}
+	if duplicate.Labels != nil && merged.Labels == nil {
+		merged.Labels = duplicate.Labels
 	}
+	// TODO: Implement proper JSON label merging when both posts have labels
 
 	// Update the original with merged content
 	if err := s.fedRepo.UpsertPost(ctx, &merged); err != nil {
@@ -230,16 +228,18 @@ func (s *deduplicationService) resolveMerge(ctx context.Context, original, dupli
 func (s *deduplicationService) markForManualReview(ctx context.Context, original, duplicate *domain.FederatedPost) error {
 	// Create an abuse report for manual review
 	if s.hardening != nil {
+		reporterDID := "system"
+		description := fmt.Sprintf("Duplicate content detected. Original: %s, Duplicate: %s",
+			original.URI, duplicate.URI)
 		report := &domain.FederationAbuseReport{
-			ReporterDID:        "system",
+			ReporterDID:        &reporterDID,
 			ReportedContentURI: &duplicate.URI,
 			ReportedActorDID:   &duplicate.ActorDID,
 			ReportType:         "duplicate_content",
-			Description: fmt.Sprintf("Duplicate content detected. Original: %s, Duplicate: %s",
-				original.URI, duplicate.URI),
-			Status:    "pending",
-			CreatedAt: time.Now(),
-			UpdatedAt: time.Now(),
+			Description:        &description,
+			Status:             "pending",
+			CreatedAt:          time.Now(),
+			UpdatedAt:          time.Now(),
 		}
 		if err := s.hardening.CreateAbuseReport(ctx, report); err != nil {
 			return err
@@ -253,15 +253,16 @@ func (s *deduplicationService) markForManualReview(ctx context.Context, original
 func (s *deduplicationService) recordResolution(ctx context.Context, originalID, duplicateID string, resolutionType string) error {
 	if s.hardening != nil {
 		// Record resolution metric
+		metadata, _ := json.Marshal(map[string]interface{}{
+			"resolution_type": resolutionType,
+			"original_id":     originalID,
+			"duplicate_id":    duplicateID,
+		})
 		_ = s.hardening.RecordMetric(ctx, &domain.FederationMetric{
 			MetricType:  "duplicate_resolved",
 			MetricValue: 1,
-			Metadata: map[string]interface{}{
-				"resolution_type": resolutionType,
-				"original_id":     originalID,
-				"duplicate_id":    duplicateID,
-			},
-			Timestamp: time.Now(),
+			Metadata:    metadata,
+			Timestamp:   time.Now(),
 		})
 	}
 	return nil
