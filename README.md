@@ -57,6 +57,7 @@ A high-performance PeerTube backend implementation in Go with decentralized stor
   - Automatic video posting to Bluesky with thumbnails
   - Federated timeline ingestion from multiple actors
   - Video record consumption implemented with embed-type parsing (video/images/external)
+  - Near real‑time (polling-based) firehose listener reusing ingestion path
   - Integration tests added for ingestion and timeline
 - **Sprint J: Federation Social** ✅ Complete
   - Follow/unfollow functionality with ATProto records
@@ -65,14 +66,18 @@ A high-performance PeerTube backend implementation in Go with decentralized stor
   - Moderation via ATProto labels with configurable blocking
   - Social statistics tracking (followers, likes, comments)
 
-### 🚧 In Progress
-- **Sprint K: Federation Hardening** - Reliability and moderation for ATProto
+### ✅ Completed
+- **Sprint K: Federation Hardening** - Reliability, moderation, and operator controls for ATProto
+  - Queue hardening: exponential backoff, DLQ, idempotency
+  - Security: signature window validation, request size limits, replay prevention
+  - Moderation: instance/actor blocklists, abuse workflows
+  - Observability: metrics persisted with dashboard endpoints
 
 ### 🔗 ATProto Federation Features (Active)
 - **Instance Identity**: Serves DID document at `/.well-known/atproto-did`
 - **Bluesky Integration**:
   - Automatic post creation when public videos are published
-  - Subscribe to Bluesky firehose for real-time updates
+  - Subscribe to Bluesky updates (polling-based firehose) for near real-time ingestion
   - Federated timeline aggregation from configured actors
 - **Social Features**:
   - Follow/unfollow actors across the ATProto network
@@ -247,6 +252,18 @@ go test ./internal/httpapi -run Integration
 # Or run all tests
 go test ./...
 ```
+
+### Migrations (Idempotent)
+
+Migrations are applied in order from `migrations/*.sql`. The Makefile targets now use an idempotent runner that skips harmless "already exists" errors, so you can re-run safely:
+
+- Dev DB: `make migrate-dev`
+- Test DB: `make migrate-test`
+- Custom DB: `DATABASE_URL=postgres://... make migrate-custom`
+
+Recent changes:
+- `037_federation_hardening.sql`: adjusted indexes to avoid non-immutable predicates (no `CURRENT_TIMESTAMP` in partial index WHERE clauses)
+- `038_add_embed_type_to_federated_posts.sql`: adds `embed_type` column for video embed detection
 
 ### API Documentation
 
@@ -852,6 +869,11 @@ make migrate-test
 - `015_add_e2ee_messaging.sql` - End-to-end encryption support
 - `020_create_notifications_table.sql` - Notification system with triggers
 - `021_add_message_notifications.sql` - Message notification triggers
+- `033_add_atproto_federation.sql` - Federation jobs and timeline storage
+- `034_create_federation_actors.sql` - Actor ingestion state
+- `036_add_atproto_social.sql` - ATProto social schema (follows/likes/comments)
+- `037_federation_hardening.sql` - DLQ, blocklists, metrics, idempotency (immutable-safe indexes)
+- `038_add_embed_type_to_federated_posts.sql` - Embed type column for video detection
 
 ## Contributing
 

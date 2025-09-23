@@ -178,7 +178,7 @@ func TestFederationService_ProcessNext_Job(t *testing.T) {
 		FederationIngestMaxPages:        2,
 	}
 
-	service := NewFederationService(repo, modRepo, atproto, cfg)
+	service := NewFederationService(repo, modRepo, atproto, cfg, nil)
 	ctx := context.Background()
 
 	// Process the job
@@ -202,7 +202,7 @@ func TestFederationService_ProcessNext_NoJobs(t *testing.T) {
 	atproto := &mockAtprotoPublisher{}
 	cfg := &config.Config{}
 
-	service := NewFederationService(repo, modRepo, atproto, cfg)
+	service := NewFederationService(repo, modRepo, atproto, cfg, nil)
 	ctx := context.Background()
 
 	processed, err := service.ProcessNext(ctx)
@@ -252,7 +252,7 @@ func TestFederationService_ProcessNext_JobError(t *testing.T) {
 	atproto := &mockAtprotoPublisher{}
 	cfg := &config.Config{}
 
-	service := NewFederationService(repo, modRepo, atproto, cfg)
+	service := NewFederationService(repo, modRepo, atproto, cfg, nil)
 	ctx := context.Background()
 
 	processed, err := service.ProcessNext(ctx)
@@ -295,7 +295,7 @@ func TestFederationService_IngestActor_WithPaging(t *testing.T) {
 		FederationIngestMaxPages:        3,
 	}
 
-	_ = NewFederationService(repo, modRepo, atproto, cfg)
+	_ = NewFederationService(repo, modRepo, atproto, cfg, nil)
 	ctx := context.Background()
 
 	// Simulate adding posts through the repo

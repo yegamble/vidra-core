@@ -48,6 +48,7 @@ func RegisterRoutes(r chi.Router, cfg *config.Config) {
 	captionRepo := repository.NewCaptionRepository(db)
 	moderationRepo := repository.NewModerationRepository(db)
 	federationRepo := repository.NewFederationRepository(db)
+	hardeningRepo := repository.NewFederationHardeningRepository(db)
 
 	// Create storage directory structure
 	storageRoot := cfg.StorageDir
@@ -110,7 +111,7 @@ func RegisterRoutes(r chi.Router, cfg *config.Config) {
 	// Start federation scheduler (ingestion + publish retries)
 	var fedSvc usecase.FederationService
 	if cfg.EnableATProto {
-		fedSvc = usecase.NewFederationService(federationRepo, moderationRepo, atprotoSvc, cfg)
+		fedSvc = usecase.NewFederationService(federationRepo, moderationRepo, atprotoSvc, cfg, hardeningRepo)
 		if cfg.EnableFederationScheduler {
 			fInterval := time.Duration(cfg.FederationSchedulerIntervalSeconds) * time.Second
 			fBurst := cfg.FederationSchedulerBurst
@@ -122,6 +123,14 @@ func RegisterRoutes(r chi.Router, cfg *config.Config) {
 			// Use a modest burst to pull several pages quickly
 			go scheduler.NewFirehosePoller(fedSvc, fhInterval, 3).Start(context.Background())
 		}
+	}
+
+	// Federation hardening service and admin routes
+	var hardeningSvc *usecase.FederationHardeningService
+	{
+		// Always create; internal handlers will enforce auth/role where needed
+		hardeningSvc = usecase.NewFederationHardeningService(hardeningRepo, fedSvc, cfg)
+		_ = hardeningSvc.Initialize(context.Background())
 	}
 
 	// Initialize Redis session repo
@@ -447,6 +456,32 @@ func RegisterRoutes(r chi.Router, cfg *config.Config) {
 				r.Post("/", fedActorsHandlers.UpsertActor)
 				r.Put("/{actor}", fedActorsHandlers.UpdateActor)
 				r.Delete("/{actor}", fedActorsHandlers.DeleteActor)
+			})
+
+			// Federation hardening (admin)
+			fh := NewFederationHardeningHandler(hardeningSvc)
+			r.Route("/federation/hardening", func(r chi.Router) {
+				// Dashboard and health
+				r.Get("/dashboard", fh.GetDashboard)
+				r.Get("/health", fh.GetHealthMetrics)
+				// DLQ
+				r.Get("/dlq", fh.GetDLQJobs)
+				r.Post("/dlq/{id}/retry", fh.RetryDLQJob)
+				// Blocklists
+				r.Route("/blocklist", func(r chi.Router) {
+					r.Get("/instances", fh.GetInstanceBlocks)
+					r.Post("/instances", fh.BlockInstance)
+					r.Delete("/instances/{domain}", fh.UnblockInstance)
+					r.Post("/actors", fh.BlockActor)
+					r.Get("/check", fh.CheckBlocked)
+				})
+				// Abuse workflows
+				r.Route("/abuse", func(r chi.Router) {
+					r.Get("/reports", fh.GetAbuseReports)
+					r.Post("/reports/{id}/resolve", fh.ResolveAbuseReport)
+				})
+				// Cleanup
+				r.Post("/cleanup", fh.RunCleanup)
 			})
 		})
 

@@ -230,6 +230,7 @@
     - ✅ Incoming: Firehose subscription for real-time updates from Bluesky network
     - ✅ Timeline: Federated timeline at `/api/v1/federation/timeline`
     - ✅ Consumption: Video record consumption with embed-type parsing and persistence
+    - ✅ Near real‑time ingestion: polling-based firehose listener using author feeds
     - ✅ Tests: Integration tests for ingestion and timeline
 - Success: Videos are syndicated to Bluesky; remote content appears in timeline.
 - **Status**: **IN PROGRESS**
@@ -237,7 +238,9 @@
     - ✅ Firehose subscription implemented with pagination and cursor support
     - ✅ Timeline aggregation functional with proper pagination
     - ✅ Video record consumption implemented (external/images/video embeds)
+    - ✅ Near real‑time poller wired into server startup (optional)
     - ✅ Integration tests added for consumption persistence and timeline
+    - ✅ Migrations stabilized (idempotent runner; immutable-safe indexes in 037)
     - 🔜 Deduplication/conflict resolution for repeated records
     - 🔜 Retry logic for failed syndication
 

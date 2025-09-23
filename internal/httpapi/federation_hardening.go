@@ -352,16 +352,22 @@ func FederationMiddleware(service *usecase.FederationHardeningService) func(next
 
 			// Get signature
 			signature := r.Header.Get("X-Federation-Signature")
+			// Optional timestamp header (unix seconds or RFC3339)
+			ts := r.Header.Get("X-Federation-Timestamp")
 
 			// Read body for validation (limited to prevent memory issues)
-			body, err := io.ReadAll(io.LimitReader(r.Body, 10485760)) // 10MB limit
+			maxSize := int64(10485760)
+			if service != nil && service.Config() != nil && service.Config().MaxRequestSize > 0 {
+				maxSize = service.Config().MaxRequestSize
+			}
+			body, err := io.ReadAll(io.LimitReader(r.Body, maxSize))
 			if err != nil {
 				WriteError(w, http.StatusBadRequest, errors.New("failed to read request body"))
 				return
 			}
 
 			// Validate the request
-			if err := service.ValidateFederationRequest(r.Context(), instanceDomain, signature, r.URL.Path, body); err != nil {
+			if err := service.ValidateFederationRequest(r.Context(), instanceDomain, signature, r.URL.Path, body, ts); err != nil {
 				WriteError(w, http.StatusForbidden, err)
 				return
 			}

@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
 	"athena/internal/config"
@@ -87,6 +89,11 @@ func (s *FederationHardeningService) Initialize(ctx context.Context) error {
 	}
 	s.config = config
 	return nil
+}
+
+// Config returns the loaded federation security config (may be nil before Initialize).
+func (s *FederationHardeningService) Config() *domain.FederationSecurityConfig {
+	return s.config
 }
 
 // ProcessJobWithRetry processes a job with exponential backoff and DLQ
@@ -185,6 +192,7 @@ func (s *FederationHardeningService) ValidateRequestSignature(
 	instanceDomain string,
 	requestPath string,
 	body []byte,
+	ts string,
 ) error {
 	// Check signature format
 	if signature == "" {
@@ -204,9 +212,31 @@ func (s *FederationHardeningService) ValidateRequestSignature(
 		return errors.New("duplicate request signature")
 	}
 
-	// Validate time window
-	// Extract timestamp from signature (implementation specific)
-	// For now, we'll accept all valid signatures within window
+	// Validate time window from provided header value
+	if s.config != nil && s.config.SignatureWindowSeconds > 0 {
+		if strings.TrimSpace(ts) == "" {
+			return errors.New("missing signature timestamp")
+		}
+		var t time.Time
+		// Accept unix seconds or RFC3339
+		if unix, err := strconv.ParseInt(ts, 10, 64); err == nil {
+			t = time.Unix(unix, 0)
+		} else {
+			tt, err := time.Parse(time.RFC3339, ts)
+			if err != nil {
+				return errors.New("invalid signature timestamp")
+			}
+			t = tt
+		}
+		// Enforce absolute skew window
+		if d := time.Since(t); d < 0 {
+			if -d > time.Duration(s.config.SignatureWindowSeconds)*time.Second {
+				return errors.New("signature timestamp too far in future")
+			}
+		} else if d > time.Duration(s.config.SignatureWindowSeconds)*time.Second {
+			return errors.New("signature timestamp expired")
+		}
+	}
 
 	// Record signature to prevent replay
 	sig := &domain.RequestSignature{
@@ -519,6 +549,7 @@ func (s *FederationHardeningService) ValidateFederationRequest(
 	signature string,
 	requestPath string,
 	body []byte,
+	ts string,
 ) error {
 	// Check instance blocklist
 	blocked, err := s.IsInstanceBlocked(ctx, instanceDomain)
@@ -541,7 +572,7 @@ func (s *FederationHardeningService) ValidateFederationRequest(
 	}
 
 	// Validate signature
-	if err := s.ValidateRequestSignature(ctx, signature, instanceDomain, requestPath, body); err != nil {
+	if err := s.ValidateRequestSignature(ctx, signature, instanceDomain, requestPath, body, ts); err != nil {
 		return err
 	}
 

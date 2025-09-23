@@ -24,6 +24,7 @@ type federationService struct {
 	atprotoPublisher AtprotoPublisher // Original publisher interface (for tests)
 	cfg              *config.Config
 	rrIndex          int // round-robin index for actors
+	hardening        HardeningRepository
 }
 
 // FederationRepository abstracts job queue and post storage used by the federation service.
@@ -41,7 +42,7 @@ type FederationRepository interface {
 	SetActorAttempts(ctx context.Context, actor string, n int) error
 }
 
-func NewFederationService(repo FederationRepository, modRepo InstanceConfigReader, atproto AtprotoPublisher, cfg *config.Config) FederationService {
+func NewFederationService(repo FederationRepository, modRepo InstanceConfigReader, atproto AtprotoPublisher, cfg *config.Config, hardening HardeningRepository) FederationService {
 	// Use concrete atprotoService if available to access helpers
 	svc, ok := atproto.(*atprotoService)
 	if !ok && atproto != nil {
@@ -54,7 +55,7 @@ func NewFederationService(repo FederationRepository, modRepo InstanceConfigReade
 		// Store the original publisher for delegation
 		// Note: For tests, we'll check if atproto is non-nil to indicate it's configured
 	}
-	return &federationService{repo: repo, modRepo: modRepo, atproto: svc, cfg: cfg, atprotoPublisher: atproto}
+	return &federationService{repo: repo, modRepo: modRepo, atproto: svc, cfg: cfg, atprotoPublisher: atproto, hardening: hardening}
 }
 
 func (s *federationService) ProcessNext(ctx context.Context) (bool, error) {
@@ -71,9 +72,17 @@ func (s *federationService) ProcessNext(ctx context.Context) (bool, error) {
 			}
 			_ = s.repo.RescheduleJob(ctx, job.ID, err.Error(), backoff)
 			metrics.IncFedJobsFailed()
+			// Move to DLQ if we've exhausted attempts
+			if s.hardening != nil && job.Attempts >= job.MaxAttempts {
+				_ = s.hardening.MoveToDLQ(ctx, job, err.Error())
+				// record failure metric
+				_ = s.recordHardeningMetric(ctx, domain.MetricTypeJobFailure, 1, nil, nil, &job.JobType)
+			}
 		} else {
 			_ = s.repo.CompleteJob(ctx, job.ID)
 			metrics.IncFedJobsProcessed()
+			// record success metric
+			_ = s.recordHardeningMetric(ctx, domain.MetricTypeJobSuccess, 1, nil, nil, &job.JobType)
 		}
 		return true, err
 	}
@@ -132,15 +141,59 @@ func (s *federationService) processJob(ctx context.Context, job *domain.Federati
 		if err := json.Unmarshal(job.Payload, &payload); err != nil {
 			return err
 		}
+		// Idempotency for publish_post by video ID
+		var idempKey string
+		if s.hardening != nil && strings.TrimSpace(payload.VideoID) != "" {
+			idempKey = "publish_post:" + payload.VideoID
+			if rec, _ := s.hardening.CheckIdempotency(ctx, idempKey); rec != nil && rec.Status == domain.IdempotencyStatusSuccess {
+				return nil
+			} else if rec == nil {
+				_ = s.hardening.RecordIdempotency(ctx, &domain.IdempotencyRecord{
+					IdempotencyKey: idempKey,
+					OperationType:  "publish_post",
+					Status:         domain.IdempotencyStatusPending,
+					CreatedAt:      time.Now(),
+					ExpiresAt:      time.Now().Add(24 * time.Hour),
+				})
+			}
+		}
 		// For publishing, we need a video instance; pull a minimal proxy video
 		// FederationService doesn't have direct access to video repo; rely on inline publish path to embed URL only
 		v := &domain.Video{ID: payload.VideoID, Title: "", Description: "", Privacy: domain.PrivacyPublic, Status: domain.StatusCompleted}
 
 		// Use the original publisher if available (for tests), otherwise use atproto
+		var err error
 		if s.atprotoPublisher != nil {
-			return s.atprotoPublisher.PublishVideo(ctx, v)
+			err = s.atprotoPublisher.PublishVideo(ctx, v)
+		} else {
+			err = s.atproto.PublishVideo(ctx, v)
 		}
-		return s.atproto.PublishVideo(ctx, v)
+		if err != nil {
+			// mark idempotency failure
+			if s.hardening != nil && idempKey != "" {
+				_ = s.hardening.RecordIdempotency(ctx, &domain.IdempotencyRecord{
+					IdempotencyKey: idempKey,
+					OperationType:  "publish_post",
+					Status:         domain.IdempotencyStatusFailed,
+					Result:         json.RawMessage(fmt.Sprintf("{\"error\":%q}", err.Error())),
+					CreatedAt:      time.Now(),
+					ExpiresAt:      time.Now().Add(24 * time.Hour),
+				})
+			}
+			return err
+		}
+		// success: mark idempotency success
+		if s.hardening != nil && idempKey != "" {
+			_ = s.hardening.RecordIdempotency(ctx, &domain.IdempotencyRecord{
+				IdempotencyKey: idempKey,
+				OperationType:  "publish_post",
+				Status:         domain.IdempotencyStatusSuccess,
+				Result:         json.RawMessage("{\"ok\":true}"),
+				CreatedAt:      time.Now(),
+				ExpiresAt:      time.Now().Add(24 * time.Hour),
+			})
+		}
+		return nil
 	default:
 		return fmt.Errorf("unknown federation job type: %s", job.JobType)
 	}
@@ -174,6 +227,12 @@ func (s *federationService) getIngestActors(ctx context.Context) []string {
 func (s *federationService) ingestActor(ctx context.Context, actor string) error {
 	if s.atproto == nil {
 		return fmt.Errorf("atproto not configured")
+	}
+	// Skip blocked actors if hardening repository is available
+	if s.hardening != nil {
+		if blocked, _ := s.hardening.IsActorBlocked(ctx, actor, actor); blocked {
+			return fmt.Errorf("actor blocked: %s", actor)
+		}
 	}
 
 	maxItems := s.getMaxItems()
@@ -219,6 +278,8 @@ func (s *federationService) ingestActor(ctx context.Context, actor string) error
 
 	if totalIngested > 0 {
 		metrics.AddFedPostsIngested(totalIngested)
+		// Record ingest metric
+		_ = s.recordHardeningMetric(ctx, domain.MetricTypeIngestRate, float64(totalIngested), nil, nil, nil)
 	}
 	return nil
 }
@@ -580,4 +641,20 @@ func (s *federationService) setActorAttempts(ctx context.Context, actor string, 
 	if u, ok := s.modRepo.(updater); ok {
 		_ = u.UpdateInstanceConfig(ctx, key, b, false)
 	}
+}
+
+// recordHardeningMetric is a small helper to record a metric via the hardening repository if available.
+func (s *federationService) recordHardeningMetric(ctx context.Context, metricType string, value float64, instance *string, actor *string, jobType *string) error {
+	if s.hardening == nil {
+		return nil
+	}
+	m := &domain.FederationMetric{
+		MetricType:     metricType,
+		MetricValue:    value,
+		InstanceDomain: instance,
+		ActorDID:       actor,
+		JobType:        jobType,
+		Timestamp:      time.Now(),
+	}
+	return s.hardening.RecordMetric(ctx, m)
 }
