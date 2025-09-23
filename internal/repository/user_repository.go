@@ -33,6 +33,14 @@ func (r *userRepository) Create(ctx context.Context, user *domain.User, password
 		return fmt.Errorf("failed to create user: %w", err)
 	}
 
+	// Ensure a default channel exists for the user to satisfy NOT NULL channel_id on videos
+	// Use username as handle and display_name (or fallback to username)
+	_, _ = r.db.ExecContext(ctx, `
+        INSERT INTO channels (account_id, handle, display_name, description)
+        SELECT $1::uuid, $2, COALESCE(NULLIF($3, ''), $2), $4
+        WHERE NOT EXISTS (SELECT 1 FROM channels WHERE account_id = $1::uuid)
+    `, user.ID, user.Username, user.DisplayName, user.Bio)
+
 	return nil
 }
 

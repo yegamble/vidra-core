@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 	"github.com/lib/pq"
 )
@@ -53,10 +54,14 @@ func scanVideoRow(rows *sql.Rows) (*domain.Video, error) {
 }
 
 func (r *videoRepository) Create(ctx context.Context, v *domain.Video) error {
+	// Allow caller to optionally set ChannelID; otherwise, fallback to the user's default channel
+	// determined by the earliest channel for the account. This keeps backward compatibility
+	// with code paths that don't explicitly assign a channel.
 	query := `
         INSERT INTO videos (
             id, thumbnail_id, title, description, duration, views,
             privacy, status, upload_date, user_id,
+            channel_id,
             original_cid, processed_cids, thumbnail_cid,
             tags, category_id, language, file_size, mime_type, metadata,
             created_at, updated_at,
@@ -64,10 +69,13 @@ func (r *videoRepository) Create(ctx context.Context, v *domain.Video) error {
         ) VALUES (
             $1, $2, $3, $4, $5, $6,
             $7, $8, $9, $10,
-            $11, $12, $13,
-            $14, $15, $16, $17, $18, $19,
-            $20, $21,
-            $22, $23, $24
+            COALESCE($11::uuid, (
+                SELECT c.id FROM channels c WHERE c.account_id = $10::uuid ORDER BY c.created_at ASC LIMIT 1
+            )),
+            $12, $13, $14,
+            $15, $16, $17, $18, $19, $20,
+            $21, $22,
+            $23, $24, $25
         )`
 
 	// Marshal JSON fields
@@ -75,9 +83,18 @@ func (r *videoRepository) Create(ctx context.Context, v *domain.Video) error {
 	metadataJSON, _ := json.Marshal(v.Metadata)
 	outputPathsJSON, _ := json.Marshal(v.OutputPaths)
 
+	// If ChannelID is unset (zero UUID), pass NULL so COALESCE uses default channel
+	var channelIDParam interface{}
+	if v.ChannelID == uuid.Nil {
+		channelIDParam = nil
+	} else {
+		channelIDParam = v.ChannelID
+	}
+
 	_, err := r.db.ExecContext(ctx, query,
 		v.ID, v.ThumbnailID, v.Title, v.Description, v.Duration, v.Views,
 		v.Privacy, v.Status, v.UploadDate, v.UserID,
+		channelIDParam,
 		v.OriginalCID, processedCIDsJSON, v.ThumbnailCID,
 		pq.Array(v.Tags), v.CategoryID, v.Language, v.FileSize, v.MimeType, metadataJSON,
 		v.CreatedAt, v.UpdatedAt,
