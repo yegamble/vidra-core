@@ -114,7 +114,7 @@ func (s *circuitBreakerService) Call(ctx context.Context, endpoint string, fn fu
 	cb := s.getOrCreateBreaker(endpoint)
 
 	// Check if we can proceed
-	if err := cb.canProceed(); err != nil {
+	if err := cb.canProceed(s.config); err != nil {
 		// Record blocked call metric
 		if s.hardening != nil {
 			_ = s.hardening.RecordMetric(ctx, &domain.FederationMetric{
@@ -173,23 +173,31 @@ func (s *circuitBreakerService) getOrCreateBreaker(endpoint string) *circuitBrea
 }
 
 // canProceed checks if a call can proceed through the circuit
-func (cb *circuitBreaker) canProceed() error {
-	cb.mu.RLock()
-	defer cb.mu.RUnlock()
+func (cb *circuitBreaker) canProceed(config CircuitBreakerConfig) error {
+	cb.mu.Lock()
+	defer cb.mu.Unlock()
+
+	now := time.Now()
+
+	// Check for state transition from Open to Half-Open
+	if cb.state == CircuitOpen && cb.halfOpenAt != nil && now.After(*cb.halfOpenAt) {
+		// Transition to half-open
+		cb.state = CircuitHalfOpen
+		cb.halfOpenCalls = 0
+		cb.consecutiveSuccess = 0
+		cb.consecutiveFailures = 0
+	}
 
 	switch cb.state {
 	case CircuitOpen:
-		// Check if it's time to transition to half-open
-		if cb.halfOpenAt != nil && time.Now().After(*cb.halfOpenAt) {
-			return nil // Allow one call to test
-		}
 		return fmt.Errorf("circuit breaker is open for endpoint: %s", cb.endpoint)
 
 	case CircuitHalfOpen:
 		// Limit calls in half-open state
-		if cb.halfOpenCalls >= 3 { // Hardcoded limit for half-open
+		if cb.halfOpenCalls >= config.HalfOpenMaxCalls {
 			return fmt.Errorf("circuit breaker half-open limit reached for endpoint: %s", cb.endpoint)
 		}
+		cb.halfOpenCalls++
 		return nil
 
 	case CircuitClosed:
@@ -221,20 +229,12 @@ func (cb *circuitBreaker) recordResult(success bool) {
 		cb.consecutiveSuccess++
 		cb.consecutiveFailures = 0
 		cb.lastSuccess = &now
-
-		if cb.state == CircuitHalfOpen {
-			cb.halfOpenCalls++
-		}
 	} else {
 		cb.failures++
 		cb.errorCount++
 		cb.consecutiveFailures++
 		cb.consecutiveSuccess = 0
 		cb.lastFailure = &now
-
-		if cb.state == CircuitHalfOpen {
-			cb.halfOpenCalls++
-		}
 	}
 }
 
@@ -277,13 +277,7 @@ func (s *circuitBreakerService) checkStateTransition(ctx context.Context, cb *ci
 		}
 
 	case CircuitOpen:
-		// Check if it's time to try half-open
-		if cb.halfOpenAt != nil && now.After(*cb.halfOpenAt) {
-			cb.state = CircuitHalfOpen
-			cb.halfOpenCalls = 0
-			cb.consecutiveSuccess = 0
-			cb.consecutiveFailures = 0
-		}
+		// State transition to half-open is now handled in canProceed
 
 	case CircuitHalfOpen:
 		// Check if we should close or re-open

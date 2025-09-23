@@ -2,7 +2,6 @@ package usecase
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"testing"
 	"time"
@@ -10,7 +9,6 @@ import (
 	"athena/internal/domain"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
-	"github.com/stretchr/testify/require"
 )
 
 func TestDeduplicationService_CalculateContentHash(t *testing.T) {
@@ -431,9 +429,4 @@ func TestDeduplicationService_GetDuplicates(t *testing.T) {
 	assert.Equal(t, expectedDuplicates, duplicates)
 
 	mockRepo.AssertExpectations(t)
-}
-
-// Helper function
-func strPtr(s string) *string {
-	return &s
 }

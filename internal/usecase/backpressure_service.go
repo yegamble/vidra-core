@@ -124,12 +124,7 @@ func (s *backpressureService) ShouldThrottle(ctx context.Context, instance strin
 	bp.mu.RLock()
 	defer bp.mu.RUnlock()
 
-	// Check if already throttled and still in cooldown
-	if bp.isThrottled && bp.recoverAt != nil && time.Now().Before(*bp.recoverAt) {
-		return true, bp.throttleFactor, nil
-	}
-
-	// Check for emergency stop
+	// Check for emergency stop first (highest priority)
 	if s.config.EmergencyStopEnabled && bp.queueDepth > s.config.MaxQueueDepth {
 		// Complete stop - queue is critically full
 		if s.hardening != nil {
@@ -141,6 +136,11 @@ func (s *backpressureService) ShouldThrottle(ctx context.Context, instance strin
 			})
 		}
 		return true, 0.0, nil // Complete stop
+	}
+
+	// Check if already throttled and still in cooldown
+	if bp.isThrottled && bp.recoverAt != nil && time.Now().Before(*bp.recoverAt) {
+		return true, bp.throttleFactor, nil
 	}
 
 	// Calculate if throttling is needed

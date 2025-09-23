@@ -99,6 +99,9 @@ func TestCircuitBreakerService_StateTransitions(t *testing.T) {
 	err = service.Call(ctx, endpoint, successFunc)
 	assert.NoError(t, err)
 
+	// Small delay to let state transition complete
+	time.Sleep(10 * time.Millisecond)
+
 	// Circuit should be closed after success threshold
 	state, err = service.GetState(ctx, endpoint)
 	assert.NoError(t, err)
@@ -335,6 +338,11 @@ func TestCircuitBreakerService_HalfOpenMaxCalls(t *testing.T) {
 
 	// Wait for timeout to transition to half-open
 	time.Sleep(60 * time.Millisecond)
+
+	// Expect blocked metric for the third call
+	mockHardening.On("RecordMetric", ctx, mock.MatchedBy(func(m *domain.FederationMetric) bool {
+		return m.MetricType == "circuit_breaker_blocked"
+	})).Return(nil).Once()
 
 	// Make max allowed calls in half-open state
 	callCount := 0
