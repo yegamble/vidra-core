@@ -128,7 +128,7 @@ db-ensure-dev-user:
 	COMPOSE_INTERACTIVE_NO_CLI=1 $(DOCKER_COMPOSE) exec -T postgres psql -U athena_user -d athena -c "SELECT 1" 2>&1 >/dev/null || echo "Note: Database connection check"; \
 	echo "Role/database ensured in docker postgres."
 
-migrate-dev: ## Apply migrations to development database (uses .env)
+migrate-dev: ## Apply migrations to development database (uses .env) [idempotent]
 	@echo "Loading DATABASE_URL from .env..."
 	@if [ ! -f .env ]; then \
 		echo ".env file not found. Please create it (e.g., cp .env.example .env)."; \
@@ -150,45 +150,27 @@ migrate-dev: ## Apply migrations to development database (uses .env)
 		echo "Unable to connect to database using DATABASE_URL. If you use Docker, run 'make docker-up' or 'make docker-reset' then retry, or update .env to valid local credentials."; \
 		exit 2; \
 	fi; \
-	echo "Applying migrations to development database: $$DB_URL"; \
-	set -e; \
-	shopt -s nullglob; \
-	for f in migrations/*.sql; do \
-		echo "Applying $$f"; \
-		psql "$$DB_URL" -v ON_ERROR_STOP=1 -f "$$f"; \
-	done; \
-	echo "Development migrations applied successfully."
+	echo "Applying migrations (idempotent) to development database: $$DB_URL"; \
+	DATABASE_URL="$$DB_URL" bash ./scripts/migrate_idempotent.sh
 
-migrate-test: ## Apply migrations to test database (uses .env.test)
+migrate-test: ## Apply migrations to test database (uses .env.test) [idempotent]
 	@echo "Loading test environment from .env.test..."
 	@set -a; [ -f .env.test ] && source .env.test; set +a; \
 	if [ -z "$$DATABASE_URL" ]; then \
 		echo "DATABASE_URL not found in .env.test file. Please check your .env.test configuration."; \
 		exit 2; \
 	fi; \
-	echo "Applying migrations to test database: $$DATABASE_URL"; \
-	set -e; \
-	shopt -s nullglob; \
-	for f in migrations/*.sql; do \
-		echo "Applying $$f"; \
-		psql "$$DATABASE_URL" -v ON_ERROR_STOP=1 -f "$$f"; \
-	done; \
-	echo "Test migrations applied successfully."
+	echo "Applying migrations (idempotent) to test database: $$DATABASE_URL"; \
+	DATABASE_URL="$$DATABASE_URL" bash ./scripts/migrate_idempotent.sh
 
-migrate-custom: ## Apply migrations to custom DATABASE_URL (set via environment)
+migrate-custom: ## Apply migrations to custom DATABASE_URL (set via environment) [idempotent]
 	@if [ -z "${DATABASE_URL}" ]; then \
 		echo "DATABASE_URL is not set. Export it to run migrations."; \
 		echo "Example: DATABASE_URL=\"postgres://user:pass@host:port/db\" make migrate-custom"; \
 		exit 2; \
 	fi; \
-	echo "Applying migrations to custom database: ${DATABASE_URL}"; \
-	set -e; \
-	shopt -s nullglob; \
-	for f in migrations/*.sql; do \
-		echo "Applying $$f"; \
-		psql "${DATABASE_URL}" -v ON_ERROR_STOP=1 -f "$$f"; \
-	done; \
-	echo "Custom migrations applied successfully."
+	echo "Applying migrations (idempotent) to custom database: ${DATABASE_URL}"; \
+	DATABASE_URL="${DATABASE_URL}" bash ./scripts/migrate_idempotent.sh
 
 # docker-up moved to avoid duplicates - see line 101
 # docker-down moved to avoid duplicates - see line 107  
