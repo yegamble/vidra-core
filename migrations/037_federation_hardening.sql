@@ -31,8 +31,12 @@ CREATE TABLE IF NOT EXISTS federation_instance_blocks (
 );
 
 CREATE INDEX idx_instance_blocks_domain ON federation_instance_blocks(instance_domain);
-CREATE INDEX idx_instance_blocks_active ON federation_instance_blocks(instance_domain)
-    WHERE expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP;
+-- Avoid non-immutable CURRENT_TIMESTAMP in predicates; split into two indexes
+CREATE INDEX IF NOT EXISTS idx_instance_blocks_active_null ON federation_instance_blocks(instance_domain)
+    WHERE expires_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_instance_blocks_expires ON federation_instance_blocks(expires_at);
+-- Composite index to aid queries filtering by domain and expiration
+CREATE INDEX IF NOT EXISTS idx_instance_blocks_domain_expires ON federation_instance_blocks(instance_domain, expires_at);
 
 -- Actor blocklist for federation
 CREATE TABLE IF NOT EXISTS federation_actor_blocks (
@@ -51,8 +55,13 @@ CREATE TABLE IF NOT EXISTS federation_actor_blocks (
 
 CREATE INDEX idx_actor_blocks_did ON federation_actor_blocks(actor_did);
 CREATE INDEX idx_actor_blocks_handle ON federation_actor_blocks(actor_handle);
-CREATE INDEX idx_actor_blocks_active ON federation_actor_blocks(actor_did, actor_handle)
-    WHERE expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP;
+-- Avoid non-immutable CURRENT_TIMESTAMP in predicates; split into two indexes
+CREATE INDEX IF NOT EXISTS idx_actor_blocks_active_null ON federation_actor_blocks(actor_did, actor_handle)
+    WHERE expires_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_actor_blocks_expires ON federation_actor_blocks(expires_at);
+-- Composite indexes to aid queries filtering by actor and expiration
+CREATE INDEX IF NOT EXISTS idx_actor_blocks_did_expires ON federation_actor_blocks(actor_did, expires_at);
+CREATE INDEX IF NOT EXISTS idx_actor_blocks_handle_expires ON federation_actor_blocks(actor_handle, expires_at);
 
 -- Federation health metrics table
 CREATE TABLE IF NOT EXISTS federation_metrics (
