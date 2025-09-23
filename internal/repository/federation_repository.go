@@ -372,3 +372,79 @@ func (r *FederationRepository) SetActorAttempts(ctx context.Context, actor strin
 	_, err := r.db.ExecContext(ctx, `UPDATE federation_actors SET attempts=$2 WHERE actor=$1`, actor, n)
 	return err
 }
+
+// Deduplication methods
+
+// GetPostByContentHash retrieves a post by its content hash
+func (r *FederationRepository) GetPostByContentHash(ctx context.Context, hash string) (*domain.FederatedPost, error) {
+	var post domain.FederatedPost
+	err := r.db.GetContext(ctx, &post, `
+		SELECT id, actor_did, actor_handle, uri, cid, text, created_at, indexed_at,
+		       embed_type, embed_url, embed_title, embed_description, labels, raw,
+		       inserted_at, updated_at, content_hash, duplicate_of, is_canonical, version_number
+		FROM federated_posts
+		WHERE content_hash = $1 AND is_canonical = true
+		LIMIT 1`, hash)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	return &post, err
+}
+
+// UpdatePostCanonical updates the canonical status of a post
+func (r *FederationRepository) UpdatePostCanonical(ctx context.Context, id string, canonical bool) error {
+	_, err := r.db.ExecContext(ctx, `
+		UPDATE federated_posts
+		SET is_canonical = $2, updated_at = CURRENT_TIMESTAMP
+		WHERE id = $1`, id, canonical)
+	return err
+}
+
+// UpdatePostDuplicateOf marks a post as duplicate of another
+func (r *FederationRepository) UpdatePostDuplicateOf(ctx context.Context, id string, duplicateOf *string) error {
+	_, err := r.db.ExecContext(ctx, `
+		UPDATE federated_posts
+		SET duplicate_of = $2, updated_at = CURRENT_TIMESTAMP
+		WHERE id = $1`, id, duplicateOf)
+	return err
+}
+
+// GetPostDuplicates retrieves all duplicates of a post
+func (r *FederationRepository) GetPostDuplicates(ctx context.Context, postID string) ([]domain.FederatedPost, error) {
+	rows, err := r.db.QueryxContext(ctx, `
+		SELECT id, actor_did, actor_handle, uri, cid, text, created_at, indexed_at,
+		       embed_type, embed_url, embed_title, embed_description, labels, raw,
+		       inserted_at, updated_at, content_hash, duplicate_of, is_canonical, version_number
+		FROM federated_posts
+		WHERE duplicate_of = $1
+		ORDER BY version_number DESC`, postID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var posts []domain.FederatedPost
+	for rows.Next() {
+		var p domain.FederatedPost
+		if err := rows.StructScan(&p); err != nil {
+			return nil, err
+		}
+		posts = append(posts, p)
+	}
+	return posts, nil
+}
+
+// GetPost retrieves a single federated post by ID
+func (r *FederationRepository) GetPost(ctx context.Context, id string) (*domain.FederatedPost, error) {
+	var post domain.FederatedPost
+	err := r.db.GetContext(ctx, &post, `
+		SELECT id, actor_did, actor_handle, uri, cid, text, created_at, indexed_at,
+		       embed_type, embed_url, embed_title, embed_description, labels, raw,
+		       inserted_at, updated_at, content_hash, duplicate_of, is_canonical, version_number
+		FROM federated_posts
+		WHERE id = $1`, id)
+	if err == sql.ErrNoRows {
+		return nil, domain.NewDomainError("NOT_FOUND", "Post not found")
+	}
+	return &post, err
+}

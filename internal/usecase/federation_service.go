@@ -25,6 +25,9 @@ type federationService struct {
 	cfg              *config.Config
 	rrIndex          int // round-robin index for actors
 	hardening        HardeningRepository
+	dedup            DeduplicationService
+	circuitBreaker   CircuitBreaker
+	backpressure     BackpressureService
 }
 
 // FederationRepository abstracts job queue and post storage used by the federation service.
@@ -43,6 +46,42 @@ type FederationRepository interface {
 }
 
 func NewFederationService(repo FederationRepository, modRepo InstanceConfigReader, atproto AtprotoPublisher, cfg *config.Config, hardening HardeningRepository) FederationService {
+	// Create enhanced services for robustness
+	var dedup DeduplicationService
+	var circuitBreaker CircuitBreaker
+	var backpressure BackpressureService
+
+	if hardening != nil {
+		// Initialize deduplication service
+		if extRepo, ok := repo.(FederationRepositoryExt); ok {
+			dedup = NewDeduplicationService(extRepo, hardening)
+		}
+
+		// Initialize circuit breaker with default config
+		cbConfig := CircuitBreakerConfig{
+			FailureThreshold:   5,
+			SuccessThreshold:   2,
+			Timeout:            60 * time.Second,
+			HalfOpenMaxCalls:   3,
+			ErrorRateThreshold: 0.5,
+			WindowSize:         5 * time.Minute,
+		}
+		circuitBreaker = NewCircuitBreakerService(hardening, cbConfig)
+
+		// Initialize backpressure service
+		bpConfig := BackpressureConfig{
+			QueueThreshold:       1000,
+			ErrorRateThreshold:   0.1,
+			ThrottleFactor:       0.5,
+			RecoveryFactor:       1.2,
+			MeasurementWindow:    5 * time.Minute,
+			CooldownPeriod:       2 * time.Minute,
+			MaxQueueDepth:        10000,
+			EmergencyStopEnabled: true,
+		}
+		backpressure = NewBackpressureService(hardening, bpConfig)
+	}
+
 	// Use concrete atprotoService if available to access helpers
 	svc, ok := atproto.(*atprotoService)
 	if !ok && atproto != nil {
@@ -55,7 +94,17 @@ func NewFederationService(repo FederationRepository, modRepo InstanceConfigReade
 		// Store the original publisher for delegation
 		// Note: For tests, we'll check if atproto is non-nil to indicate it's configured
 	}
-	return &federationService{repo: repo, modRepo: modRepo, atproto: svc, cfg: cfg, atprotoPublisher: atproto, hardening: hardening}
+	return &federationService{
+		repo:             repo,
+		modRepo:          modRepo,
+		atproto:          svc,
+		cfg:              cfg,
+		atprotoPublisher: atproto,
+		hardening:        hardening,
+		dedup:            dedup,
+		circuitBreaker:   circuitBreaker,
+		backpressure:     backpressure,
+	}
 }
 
 func (s *federationService) ProcessNext(ctx context.Context) (bool, error) {
@@ -228,6 +277,20 @@ func (s *federationService) ingestActor(ctx context.Context, actor string) error
 	if s.atproto == nil {
 		return fmt.Errorf("atproto not configured")
 	}
+
+	// Check backpressure before processing
+	if s.backpressure != nil {
+		shouldThrottle, throttleFactor, _ := s.backpressure.ShouldThrottle(ctx, actor)
+		if shouldThrottle {
+			if throttleFactor <= 0 {
+				// Complete stop
+				return fmt.Errorf("backpressure emergency stop for actor: %s", actor)
+			}
+			// Apply throttling by reducing max items
+			// This is a simplified approach; could also add delays
+		}
+	}
+
 	// Skip blocked actors if hardening repository is available
 	if s.hardening != nil {
 		if blocked, _ := s.hardening.IsActorBlocked(ctx, actor, actor); blocked {
@@ -246,7 +309,18 @@ func (s *federationService) ingestActor(ctx context.Context, actor string) error
 	for pagesProcessed < maxPages && totalIngested < maxItems {
 		pageLimit := s.calculatePageLimit(maxItems, totalIngested)
 
-		feed, err := s.atproto.getAuthorFeed(ctx, actor, pageLimit, cursor)
+		var feed map[string]any
+		var err error
+
+		// Use circuit breaker for external calls
+		if s.circuitBreaker != nil {
+			err = s.circuitBreaker.Call(ctx, fmt.Sprintf("atproto:%s", actor), func() error {
+				feed, err = s.atproto.getAuthorFeed(ctx, actor, pageLimit, cursor)
+				return err
+			})
+		} else {
+			feed, err = s.atproto.getAuthorFeed(ctx, actor, pageLimit, cursor)
+		}
 		if err != nil {
 			if pagesProcessed == 0 {
 				return err
@@ -357,6 +431,20 @@ func (s *federationService) processItem(ctx context.Context, item any, blockedSe
 	p := s.buildFederatedPost(m, post, rec)
 	if p == nil {
 		return false
+	}
+
+	// Check for duplicates if deduplication is enabled
+	if s.dedup != nil {
+		existing, isDuplicate, err := s.dedup.DetectDuplicate(ctx, p)
+		if err == nil && isDuplicate {
+			// Resolve duplicate based on configured strategy
+			strategy := s.getDeduplicationStrategy(ctx)
+			if err := s.dedup.ResolveDuplicate(ctx, existing, p, strategy); err != nil {
+				// Log error but continue
+				metrics.IncFedPostsFailed()
+			}
+			return true // Count as processed even if duplicate
+		}
 	}
 
 	_ = s.repo.UpsertPost(ctx, p)
@@ -657,4 +745,27 @@ func (s *federationService) recordHardeningMetric(ctx context.Context, metricTyp
 		Timestamp:      time.Now(),
 	}
 	return s.hardening.RecordMetric(ctx, m)
+}
+
+// getDeduplicationStrategy retrieves the configured deduplication strategy
+func (s *federationService) getDeduplicationStrategy(ctx context.Context) DeduplicationStrategy {
+	if s.modRepo == nil {
+		return StrategyKeepLatest
+	}
+	c, err := s.modRepo.GetInstanceConfig(ctx, "federation_conflict_strategy")
+	if err != nil {
+		return StrategyKeepLatest
+	}
+	var strategy string
+	_ = json.Unmarshal(c.Value, &strategy)
+	switch strategy {
+	case "original":
+		return StrategyKeepOriginal
+	case "merge":
+		return StrategyMerge
+	case "manual":
+		return StrategyManual
+	default:
+		return StrategyKeepLatest
+	}
 }
