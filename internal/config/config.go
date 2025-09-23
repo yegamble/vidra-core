@@ -6,6 +6,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/joho/godotenv"
 )
@@ -60,6 +61,7 @@ type Config struct {
 	// Rate Limiting Configuration
 	RateLimitRequests int
 	RateLimitWindow   int
+	RateLimitDuration time.Duration
 
 	// CORS Configuration
 	CORSAllowedOrigins string
@@ -225,6 +227,7 @@ func Load() (*Config, error) {
 	// Rate Limiting Configuration
 	cfg.RateLimitRequests = getIntEnv("RATE_LIMIT_REQUESTS", 100)
 	cfg.RateLimitWindow = getIntEnv("RATE_LIMIT_WINDOW", 60) // 1 minute
+	cfg.RateLimitDuration = time.Duration(cfg.RateLimitWindow) * time.Second
 
 	// CORS Configuration
 	cfg.CORSAllowedOrigins = getEnvOrDefault("CORS_ALLOWED_ORIGINS", "*")

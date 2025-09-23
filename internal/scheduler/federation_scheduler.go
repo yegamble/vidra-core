@@ -17,6 +17,7 @@ type FederationScheduler struct {
 
 	mu     sync.RWMutex
 	status Status
+	cancel context.CancelFunc
 }
 
 func NewFederationScheduler(svc usecase.FederationService, interval time.Duration, burst int) *FederationScheduler {
@@ -39,16 +40,21 @@ func (s *FederationScheduler) Snapshot() Status {
 }
 
 func (s *FederationScheduler) Start(ctx context.Context) {
+	localCtx, cancel := context.WithCancel(ctx)
+	s.mu.Lock()
+	s.cancel = cancel
+	s.mu.Unlock()
+
 	ticker := time.NewTicker(s.interval)
 	defer ticker.Stop()
 	for {
 		select {
-		case <-ctx.Done():
+		case <-localCtx.Done():
 			return
 		case <-ticker.C:
 			processed := 0
 			for i := 0; i < s.burst; i++ {
-				ok, _ := s.svc.ProcessNext(ctx)
+				ok, _ := s.svc.ProcessNext(localCtx)
 				if !ok {
 					break
 				}
@@ -61,4 +67,12 @@ func (s *FederationScheduler) Start(ctx context.Context) {
 			metrics.SetSchedulerTick(s.status.LastTick)
 		}
 	}
+}
+
+func (s *FederationScheduler) Stop() {
+	s.mu.Lock()
+	if s.cancel != nil {
+		s.cancel()
+	}
+	s.mu.Unlock()
 }

@@ -15,22 +15,22 @@ import (
 	redis "github.com/redis/go-redis/v9"
 
 	"athena/internal/config"
-	"athena/internal/domain"
-	"athena/internal/middleware"
 	"athena/internal/repository"
 	"athena/internal/scheduler"
 	"athena/internal/usecase"
-	"strings"
 )
 
+// RegisterRoutes maintains backward compatibility by creating all dependencies internally
+// and delegating to RegisterRoutesWithDependencies.
+// DEPRECATED: This creates dependencies internally. Use app.New() for better separation of concerns.
 func RegisterRoutes(r chi.Router, cfg *config.Config) {
-	r.Use(middleware.RateLimit(time.Minute, 100))
-
-	// Initialize database and repositories for handlers that need them
+	// Initialize database
 	db, err := sqlx.Connect("postgres", cfg.DatabaseURL)
 	if err != nil {
 		panic(fmt.Errorf("failed to connect to database: %w", err))
 	}
+
+	// Initialize repositories
 	userRepo := repository.NewUserRepository(db)
 	videoRepo := repository.NewVideoRepository(db)
 	uploadRepo := repository.NewUploadRepository(db)
@@ -167,352 +167,52 @@ func RegisterRoutes(r chi.Router, cfg *config.Config) {
 		}
 	}
 
-	// Create server instance with dependencies
-	server := NewServerWithOAuth(
-		userRepo,
-		sessionRepo,
-		oauthRepo,
-		cfg.JWTSecret,
-		rdb,
-		time.Duration(cfg.RedisPingTimeout)*time.Second,
-		cfg.IPFSApi,
-		cfg.IPFSCluster,
-		time.Duration(cfg.IPFSPingTimeout)*time.Second,
-		cfg,
-	)
+	// Create dependencies structure
+	deps := &HandlerDependencies{
+		UserRepo:         userRepo,
+		VideoRepo:        videoRepo,
+		UploadRepo:       uploadRepo,
+		EncodingRepo:     encodingRepo,
+		MessageRepo:      messageRepo,
+		AuthRepo:         dbAuthRepo,
+		OAuthRepo:        oauthRepo,
+		SubRepo:          subRepo,
+		ViewsRepo:        viewsRepo,
+		NotificationRepo: notificationRepo,
+		ChannelRepo:      channelRepo,
+		CommentRepo:      commentRepo,
+		RatingRepo:       ratingRepo,
+		PlaylistRepo:     playlistRepo,
+		CaptionRepo:      captionRepo,
+		ModerationRepo:   moderationRepo,
+		FederationRepo:   federationRepo,
+		HardeningRepo:    hardeningRepo,
+		SessionRepo:      sessionRepo,
 
-	// Register auth routes with appropriate middleware
-	r.Post("/auth/register", server.Register)
-	r.Post("/auth/login", server.Login)
-	r.Post("/auth/refresh", server.RefreshToken)
-	r.With(middleware.Auth(cfg.JWTSecret)).Post("/auth/logout", server.Logout)
+		UploadService:       uploadService,
+		MessageService:      messageService,
+		ViewsService:        viewsService,
+		NotificationService: notificationService,
+		ChannelService:      channelService,
+		CommentService:      commentService,
+		RatingService:       ratingService,
+		PlaylistService:     playlistService,
+		CaptionService:      captionService,
+		AtprotoService:      atprotoSvc,
+		FederationService:   fedSvc,
+		HardeningService:    hardeningSvc,
+		EncodingService:     nil, // Will be set if needed
 
-	// OAuth2 endpoints
-	r.Post("/oauth/token", server.OAuthToken)
-	r.HandleFunc("/oauth/authorize", server.OAuthAuthorize)
-	r.Post("/oauth/revoke", server.OAuthRevoke)
-	r.Post("/oauth/introspect", server.OAuthIntrospect)
+		EncodingScheduler: encSched,
 
-	// Register health routes
-	r.Get("/health", server.HealthCheck)
-	r.Get("/ready", server.ReadinessCheck)
-
-	// Additional API routes for videos and users (if they exist)
-	r.Route("/api/v1", func(r chi.Router) {
-		// Initialize views handler early for use in routes
-		viewsHandler := NewViewsHandler(viewsService)
-
-		r.Route("/videos", func(r chi.Router) {
-			log.Printf("Registering video routes...")
-			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/", ListVideosHandler(videoRepo))
-			// Static routes must come before parameterized routes
-			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/search", SearchVideosHandler(videoRepo))
-			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/qualities", GetSupportedQualities)
-			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/top", viewsHandler.GetTopVideos)
-			// Legacy one-shot upload endpoint for Postman collection compatibility
-			r.With(middleware.Auth(cfg.JWTSecret)).Post("/upload", UploadVideoFileHandler(videoRepo, cfg))
-			// Parameterized routes come after static routes
-			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{id}", GetVideoHandler(videoRepo, captionService))
-			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{id}/stream", StreamVideoHandler(videoRepo))
-			// Subscription feed
-			r.With(middleware.Auth(cfg.JWTSecret)).Get("/subscriptions", ListSubscriptionVideosHandler(subRepo))
-
-			r.With(middleware.Auth(cfg.JWTSecret)).Post("/", CreateVideoHandler(videoRepo))
-			r.With(middleware.Auth(cfg.JWTSecret)).Put("/{id}", UpdateVideoHandler(videoRepo))
-			r.With(middleware.Auth(cfg.JWTSecret)).Delete("/{id}", DeleteVideoHandler(videoRepo))
-
-			// Direct video upload endpoints (for backward compatibility with tests)
-			r.With(middleware.Auth(cfg.JWTSecret)).Post("/{id}/upload", VideoUploadChunkHandler(uploadService, cfg))
-			r.With(middleware.Auth(cfg.JWTSecret)).Post("/{id}/complete", VideoCompleteUploadHandler(uploadService))
-
-			// Views and analytics endpoints for specific videos
-			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Post("/{id}/views", viewsHandler.TrackView)
-			r.With(middleware.Auth(cfg.JWTSecret)).Get("/{id}/analytics", viewsHandler.GetVideoAnalytics)
-			r.With(middleware.Auth(cfg.JWTSecret)).Get("/{id}/stats/daily", viewsHandler.GetDailyStats)
-
-			// Comment endpoints
-			commentHandlers := NewCommentHandlers(commentService)
-			r.Route("/{videoId}/comments", func(r chi.Router) {
-				r.Get("/", commentHandlers.GetComments)
-				r.With(middleware.Auth(cfg.JWTSecret)).Post("/", commentHandlers.CreateComment)
-			})
-
-			// Rating endpoints
-			ratingHandlers := NewRatingHandlers(ratingService)
-			r.With(middleware.Auth(cfg.JWTSecret)).Put("/{id}/rating", ratingHandlers.SetRating)
-			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{id}/rating", ratingHandlers.GetRating)
-			r.With(middleware.Auth(cfg.JWTSecret)).Delete("/{id}/rating", ratingHandlers.RemoveRating)
-
-			// Watch Later shortcut
-			playlistHandlers := NewPlaylistHandlers(playlistService)
-			r.With(middleware.Auth(cfg.JWTSecret)).Post("/{id}/watch-later", playlistHandlers.AddToWatchLater)
-
-			// Caption endpoints
-			captionHandlers := NewCaptionHandlers(captionService, videoRepo)
-			r.Route("/{id}/captions", func(r chi.Router) {
-				r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/", captionHandlers.GetCaptions)
-				r.With(middleware.Auth(cfg.JWTSecret)).Post("/", captionHandlers.CreateCaption)
-				r.Route("/{captionId}", func(r chi.Router) {
-					r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/content", captionHandlers.GetCaptionContent)
-					r.With(middleware.Auth(cfg.JWTSecret)).Put("/", captionHandlers.UpdateCaption)
-					r.With(middleware.Auth(cfg.JWTSecret)).Delete("/", captionHandlers.DeleteCaption)
-				})
-			})
-		})
-
-		// Static HLS handler with privacy gating and cache headers
-		r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/hls/*", HLSHandler(videoRepo))
-
-		// Chunked upload endpoints
-		r.Route("/uploads", func(r chi.Router) {
-			r.Use(middleware.Auth(cfg.JWTSecret))
-			r.Post("/initiate", InitiateUploadHandler(uploadService, videoRepo))
-			r.Route("/{sessionId}", func(r chi.Router) {
-				r.Post("/chunks", UploadChunkHandler(uploadService, cfg))
-				r.Post("/complete", CompleteUploadHandler(uploadService, encodingRepo))
-				r.Get("/status", GetUploadStatusHandler(uploadService))
-				r.Get("/resume", ResumeUploadHandler(uploadService))
-			})
-		})
-
-		r.Route("/encoding", func(r chi.Router) {
-			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/status", EncodingStatusHandlerEnhanced(encodingRepo, cfg, encSched))
-		})
-
-		r.Route("/users", func(r chi.Router) {
-			// Admin-style create user; currently just requires auth (role checks TBD)
-			r.With(middleware.Auth(cfg.JWTSecret)).Post("/", CreateUserHandler(userRepo))
-			r.With(middleware.Auth(cfg.JWTSecret)).Get("/me", GetCurrentUserHandler(userRepo))
-			r.With(middleware.Auth(cfg.JWTSecret)).Put("/me", UpdateCurrentUserHandler(userRepo))
-			r.With(middleware.Auth(cfg.JWTSecret)).Post("/me/avatar", server.UploadAvatar)
-			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{id}", GetUserHandler(userRepo))
-			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{id}/videos", GetUserVideosHandler(videoRepo))
-			// Subscriptions
-			r.With(middleware.Auth(cfg.JWTSecret)).Post("/{id}/subscribe", SubscribeToUserHandler(subRepo, userRepo))
-			r.With(middleware.Auth(cfg.JWTSecret)).Delete("/{id}/subscribe", UnsubscribeFromUserHandler(subRepo))
-			r.With(middleware.Auth(cfg.JWTSecret)).Get("/me/subscriptions", ListMySubscriptionsHandler(subRepo))
-
-			// User's channels
-			channelHandlers := NewChannelHandlers(channelService, subRepo)
-			r.With(middleware.Auth(cfg.JWTSecret)).Get("/me/channels", channelHandlers.GetMyChannels)
-
-			// User's ratings
-			ratingHandlers := NewRatingHandlers(ratingService)
-			r.With(middleware.Auth(cfg.JWTSecret)).Get("/me/ratings", ratingHandlers.GetUserRatings)
-
-			// User's Watch Later playlist
-			playlistHandlers := NewPlaylistHandlers(playlistService)
-			r.With(middleware.Auth(cfg.JWTSecret)).Get("/me/watch-later", playlistHandlers.GetWatchLater)
-		})
-
-		r.Route("/messages", func(r chi.Router) {
-			r.Use(middleware.Auth(cfg.JWTSecret))
-			r.Post("/", SendMessageHandler(messageService))
-			r.Get("/", GetMessagesHandler(messageService))
-			r.Put("/{messageId}/read", MarkMessageReadHandler(messageService))
-			r.Delete("/{messageId}", DeleteMessageHandler(messageService))
-		})
-
-		r.Route("/conversations", func(r chi.Router) {
-			r.Use(middleware.Auth(cfg.JWTSecret))
-			r.Get("/", GetConversationsHandler(messageService))
-			r.Get("/unread-count", GetUnreadCountHandler(messageService))
-		})
-
-		// Trending endpoint
-		r.Get("/trending", viewsHandler.GetTrendingVideos)
-
-		// Fingerprinting for view deduplication
-		r.Post("/views/fingerprint", viewsHandler.GenerateFingerprint)
-
-		// Channels
-		r.Route("/channels", func(r chi.Router) {
-			channelHandlers := NewChannelHandlers(channelService, subRepo)
-
-			// Public routes
-			r.Get("/", channelHandlers.ListChannels)
-			r.Get("/{id}", channelHandlers.GetChannel)
-			r.Get("/{id}/videos", channelHandlers.GetChannelVideos)
-			r.Get("/{id}/subscribers", channelHandlers.GetChannelSubscribers)
-
-			// Authenticated routes
-			r.Group(func(r chi.Router) {
-				r.Use(middleware.Auth(cfg.JWTSecret))
-				r.Post("/", channelHandlers.CreateChannel)
-				r.Put("/{id}", channelHandlers.UpdateChannel)
-				r.Delete("/{id}", channelHandlers.DeleteChannel)
-				r.Post("/{id}/subscribe", channelHandlers.SubscribeToChannel)
-				r.Delete("/{id}/subscribe", channelHandlers.UnsubscribeFromChannel)
-			})
-		})
-
-		// Comments (standalone endpoints)
-		r.Route("/comments", func(r chi.Router) {
-			commentHandlers := NewCommentHandlers(commentService)
-			r.Get("/{commentId}", commentHandlers.GetComment)
-			r.With(middleware.Auth(cfg.JWTSecret)).Put("/{commentId}", commentHandlers.UpdateComment)
-			r.With(middleware.Auth(cfg.JWTSecret)).Delete("/{commentId}", commentHandlers.DeleteComment)
-			r.With(middleware.Auth(cfg.JWTSecret)).Post("/{commentId}/flag", commentHandlers.FlagComment)
-			r.With(middleware.Auth(cfg.JWTSecret)).Delete("/{commentId}/flag", commentHandlers.UnflagComment)
-			r.With(middleware.Auth(cfg.JWTSecret)).Post("/{commentId}/moderate", commentHandlers.ModerateComment)
-		})
-
-		// Notifications
-		r.Route("/notifications", func(r chi.Router) {
-			r.Use(middleware.Auth(cfg.JWTSecret))
-			notificationHandlers := NewNotificationHandlers(notificationService)
-			r.Get("/", notificationHandlers.GetNotifications)
-			r.Get("/unread-count", notificationHandlers.GetUnreadCount)
-			r.Get("/stats", notificationHandlers.GetNotificationStats)
-			r.Put("/{id}/read", notificationHandlers.MarkAsRead)
-			r.Put("/read-all", notificationHandlers.MarkAllAsRead)
-			r.Delete("/{id}", notificationHandlers.DeleteNotification)
-		})
-
-		// Federation endpoints
-		r.Route("/federation", func(r chi.Router) {
-			fedHandlers := NewFederationHandlers(federationRepo)
-			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/timeline", fedHandlers.GetTimeline)
-		})
-
-		// Playlists
-		r.Route("/playlists", func(r chi.Router) {
-			playlistHandlers := NewPlaylistHandlers(playlistService)
-
-			// Public routes
-			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/", playlistHandlers.ListPlaylists)
-			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{id}", playlistHandlers.GetPlaylist)
-			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{id}/items", playlistHandlers.GetPlaylistItems)
-
-			// Authenticated routes
-			r.With(middleware.Auth(cfg.JWTSecret)).Post("/", playlistHandlers.CreatePlaylist)
-			r.With(middleware.Auth(cfg.JWTSecret)).Put("/{id}", playlistHandlers.UpdatePlaylist)
-			r.With(middleware.Auth(cfg.JWTSecret)).Delete("/{id}", playlistHandlers.DeletePlaylist)
-			r.With(middleware.Auth(cfg.JWTSecret)).Post("/{id}/items", playlistHandlers.AddVideoToPlaylist)
-			r.With(middleware.Auth(cfg.JWTSecret)).Delete("/{id}/items/{itemId}", playlistHandlers.RemoveVideoFromPlaylist)
-			r.With(middleware.Auth(cfg.JWTSecret)).Put("/{id}/items/{itemId}/reorder", playlistHandlers.ReorderPlaylistItem)
-		})
-
-		// Moderation handlers
-		moderationHandlers := NewModerationHandlers(moderationRepo)
-		instanceHandlers := NewInstanceHandlers(moderationRepo, userRepo, videoRepo)
-
-		// Abuse reports - any authenticated user can create, admins/mods can manage
-		r.Route("/abuse-reports", func(r chi.Router) {
-			r.With(middleware.Auth(cfg.JWTSecret)).Post("/", moderationHandlers.CreateAbuseReport)
-		})
-
-		// Admin moderation endpoints
-		r.Route("/admin", func(r chi.Router) {
-			r.Use(middleware.Auth(cfg.JWTSecret))
-			r.Use(middleware.RequireRole("admin")) // TODO: Add moderator role support
-
-			// Abuse reports management
-			r.Route("/abuse-reports", func(r chi.Router) {
-				r.Get("/", moderationHandlers.ListAbuseReports)
-				r.Get("/{id}", moderationHandlers.GetAbuseReport)
-				r.Put("/{id}", moderationHandlers.UpdateAbuseReport)
-				r.Delete("/{id}", moderationHandlers.DeleteAbuseReport)
-			})
-
-			// Blocklist management
-			r.Route("/blocklist", func(r chi.Router) {
-				r.Post("/", moderationHandlers.CreateBlocklistEntry)
-				r.Get("/", moderationHandlers.ListBlocklistEntries)
-				r.Put("/{id}", moderationHandlers.UpdateBlocklistEntry)
-				r.Delete("/{id}", moderationHandlers.DeleteBlocklistEntry)
-			})
-
-			// Instance configuration (admin only)
-			r.Route("/instance/config", func(r chi.Router) {
-				r.Use(middleware.RequireRole("admin"))
-				r.Get("/", instanceHandlers.ListInstanceConfigs)
-				r.Get("/{key}", instanceHandlers.GetInstanceConfig)
-				r.Put("/{key}", instanceHandlers.UpdateInstanceConfig)
-			})
-
-			// OAuth client management (admin only)
-			r.Route("/oauth/clients", func(r chi.Router) {
-				r.Use(middleware.RequireRole("admin"))
-				r.Get("/", server.AdminListOAuthClients)
-				r.Post("/", server.AdminCreateOAuthClient)
-				r.Put("/{clientId}/secret", server.AdminRotateOAuthClientSecret)
-				r.Delete("/{clientId}", server.AdminDeleteOAuthClient)
-			})
-
-			// Federation jobs (admin)
-			fedAdminHandlers := NewAdminFederationHandlers(federationRepo)
-			r.Route("/federation/jobs", func(r chi.Router) {
-				r.Get("/", fedAdminHandlers.ListJobs)
-				r.Get("/{id}", fedAdminHandlers.GetJob)
-				r.Post("/{id}/retry", fedAdminHandlers.RetryJob)
-				r.Delete("/{id}", fedAdminHandlers.DeleteJob)
-			})
-
-			// Federation actors (admin)
-			fedActorsHandlers := NewAdminFederationActorsHandlers(federationRepo)
-			r.Route("/federation/actors", func(r chi.Router) {
-				r.Get("/", fedActorsHandlers.ListActors)
-				r.Post("/", fedActorsHandlers.UpsertActor)
-				r.Put("/{actor}", fedActorsHandlers.UpdateActor)
-				r.Delete("/{actor}", fedActorsHandlers.DeleteActor)
-			})
-
-			// Federation hardening (admin)
-			fh := NewFederationHardeningHandler(hardeningSvc)
-			r.Route("/federation/hardening", func(r chi.Router) {
-				// Dashboard and health
-				r.Get("/dashboard", fh.GetDashboard)
-				r.Get("/health", fh.GetHealthMetrics)
-				// DLQ
-				r.Get("/dlq", fh.GetDLQJobs)
-				r.Post("/dlq/{id}/retry", fh.RetryDLQJob)
-				// Blocklists
-				r.Route("/blocklist", func(r chi.Router) {
-					r.Get("/instances", fh.GetInstanceBlocks)
-					r.Post("/instances", fh.BlockInstance)
-					r.Delete("/instances/{domain}", fh.UnblockInstance)
-					r.Post("/actors", fh.BlockActor)
-					r.Get("/check", fh.CheckBlocked)
-				})
-				// Abuse workflows
-				r.Route("/abuse", func(r chi.Router) {
-					r.Get("/reports", fh.GetAbuseReports)
-					r.Post("/reports/{id}/resolve", fh.ResolveAbuseReport)
-				})
-				// Cleanup
-				r.Post("/cleanup", fh.RunCleanup)
-			})
-		})
-
-		// Public instance information
-		r.Route("/instance", func(r chi.Router) {
-			r.Get("/about", instanceHandlers.GetInstanceAbout)
-		})
-	})
-
-	// OEmbed endpoint (outside of /api/v1)
-	r.Get("/oembed", NewInstanceHandlers(moderationRepo, userRepo, videoRepo).OEmbed)
-
-	// ATProto well-known DID endpoint for handle verification
-	r.Get("/.well-known/atproto-did", NewInstanceHandlers(moderationRepo, userRepo, videoRepo).WellKnownAtprotoDID)
-
-	// Custom 404 handler that returns JSON error response
-	r.NotFound(func(w http.ResponseWriter, r *http.Request) {
-		log.Printf("NOT_FOUND %s %s", r.Method, r.URL.Path)
-		WriteError(w, http.StatusNotFound, domain.NewDomainError("NOT_FOUND", "The requested resource was not found"))
-	})
-
-	// Custom 405 handler for method not allowed
-	r.MethodNotAllowed(func(w http.ResponseWriter, r *http.Request) {
-		WriteError(w, http.StatusMethodNotAllowed, domain.NewDomainError("METHOD_NOT_ALLOWED", "Method not allowed for this endpoint"))
-	})
-
-	// Debug: log all registered routes when log level is debug/trace
-	if lvl := strings.ToLower(cfg.LogLevel); lvl == "debug" || lvl == "trace" {
-		_ = chi.Walk(r, func(method string, route string, handler http.Handler, middlewares ...func(http.Handler) http.Handler) error {
-			log.Printf("ROUTE %s %s", method, route)
-			return nil
-		})
+		Redis:            rdb,
+		JWTSecret:        cfg.JWTSecret,
+		RedisPingTimeout: time.Duration(cfg.RedisPingTimeout) * time.Second,
+		IPFSApi:          cfg.IPFSApi,
+		IPFSCluster:      cfg.IPFSCluster,
+		IPFSPingTimeout:  time.Duration(cfg.IPFSPingTimeout) * time.Second,
 	}
+
+	// Register routes with the dependencies
+	RegisterRoutesWithDependencies(r, cfg, deps)
 }

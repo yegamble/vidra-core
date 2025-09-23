@@ -24,7 +24,13 @@ Athena follows clean architecture principles with clear separation of concerns a
 - Input validation and error mapping
 - OpenAPI specification compliance
 
-### 4. Infrastructure Layer
+### 4. Bootstrap Layer (`/internal/app`)
+- Application initialization and dependency wiring
+- Resource lifecycle management (database, Redis, IPFS connections)
+- Background scheduler orchestration
+- Centralized configuration management
+
+### 5. Infrastructure Layer
 - **Repository** (`/internal/repository`) - Database access with SQLX
 - **Storage** (`/internal/storage`) - Hybrid file storage (local/IPFS/S3)
 - **Processing** (`/internal/processing`) - Video transcoding with FFmpeg
@@ -45,18 +51,38 @@ type VideoRepository interface {
 ```
 
 ### Dependency Injection
-Constructor-based DI without frameworks:
+Constructor-based DI with centralized bootstrap:
+
+**Bootstrap Package (`internal/app`):**
 ```go
-func NewVideoUseCase(
-    repo VideoRepository,
-    storage StorageService,
-    processor ProcessingService,
-) *VideoUseCase {
-    return &VideoUseCase{
-        repo:      repo,
-        storage:   storage,
-        processor: processor,
-    }
+// Application holds all dependencies and manages lifecycle
+type Application struct {
+    Config       *config.Config
+    DB           *sqlx.DB
+    Redis        *redis.Client
+    Router       chi.Router
+    Dependencies *Dependencies
+}
+
+// New creates and wires all dependencies
+func New(cfg *config.Config) (*Application, error) {
+    // Initialize database, Redis, storage dirs
+    // Wire repositories and services
+    // Configure schedulers and background tasks
+    // Register HTTP routes
+    return app, nil
+}
+```
+
+**Clean Separation:**
+```go
+// Routes only handle HTTP concerns
+func RegisterRoutesWithDependencies(
+    r chi.Router,
+    cfg *config.Config,
+    deps *HandlerDependencies,
+) {
+    // Pure route registration, no resource initialization
 }
 ```
 

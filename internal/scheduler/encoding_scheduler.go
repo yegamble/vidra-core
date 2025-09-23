@@ -27,6 +27,7 @@ type EncodingScheduler struct {
 
 	mu     sync.RWMutex
 	status Status
+	cancel context.CancelFunc
 }
 
 // NewEncodingScheduler creates a new scheduler.
@@ -53,20 +54,25 @@ func (s *EncodingScheduler) Snapshot() Status {
 	return s.status
 }
 
-// Start runs the scheduler until ctx is canceled.
+// Start runs the scheduler until ctx is canceled or Stop is called.
 func (s *EncodingScheduler) Start(ctx context.Context) {
+	localCtx, cancel := context.WithCancel(ctx)
+	s.mu.Lock()
+	s.cancel = cancel
+	s.mu.Unlock()
+
 	ticker := time.NewTicker(s.interval)
 	defer ticker.Stop()
 
 	for {
 		select {
-		case <-ctx.Done():
+		case <-localCtx.Done():
 			return
 		case <-ticker.C:
 			processedCount := 0
 			// Drain up to burst jobs per tick
 			for i := 0; i < s.burst; i++ {
-				processed, _ := s.svc.ProcessNext(ctx)
+				processed, _ := s.svc.ProcessNext(localCtx)
 				if !processed {
 					break
 				}
@@ -79,4 +85,13 @@ func (s *EncodingScheduler) Start(ctx context.Context) {
 			metrics.SetSchedulerTick(s.status.LastTick)
 		}
 	}
+}
+
+// Stop cancels the scheduler's context, causing Start to return.
+func (s *EncodingScheduler) Stop() {
+	s.mu.Lock()
+	if s.cancel != nil {
+		s.cancel()
+	}
+	s.mu.Unlock()
 }

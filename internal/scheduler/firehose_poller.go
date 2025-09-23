@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"athena/internal/metrics"
@@ -16,6 +17,8 @@ type FirehosePoller struct {
 	svc      usecase.FederationService
 	interval time.Duration
 	burst    int
+	mu       sync.Mutex
+	cancel   context.CancelFunc
 }
 
 func NewFirehosePoller(svc usecase.FederationService, interval time.Duration, burst int) *FirehosePoller {
@@ -29,16 +32,21 @@ func NewFirehosePoller(svc usecase.FederationService, interval time.Duration, bu
 }
 
 func (p *FirehosePoller) Start(ctx context.Context) {
+	localCtx, cancel := context.WithCancel(ctx)
+	p.mu.Lock()
+	p.cancel = cancel
+	p.mu.Unlock()
+
 	ticker := time.NewTicker(p.interval)
 	defer ticker.Stop()
 	for {
 		select {
-		case <-ctx.Done():
+		case <-localCtx.Done():
 			return
 		case <-ticker.C:
 			processed := 0
 			for i := 0; i < p.burst; i++ {
-				ok, _ := p.svc.ProcessNext(ctx)
+				ok, _ := p.svc.ProcessNext(localCtx)
 				if !ok {
 					break
 				}
@@ -49,4 +57,12 @@ func (p *FirehosePoller) Start(ctx context.Context) {
 			_ = processed
 		}
 	}
+}
+
+func (p *FirehosePoller) Stop() {
+	p.mu.Lock()
+	if p.cancel != nil {
+		p.cancel()
+	}
+	p.mu.Unlock()
 }

@@ -10,13 +10,12 @@ import (
 	"syscall"
 	"time"
 
-	chi "github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
 
+	"athena/internal/app"
 	"athena/internal/config"
-	"athena/internal/httpapi"
 	"athena/internal/metrics"
 	appMiddleware "athena/internal/middleware"
 	"athena/internal/repository"
@@ -35,18 +34,21 @@ func main() {
 		log.Fatalf("Failed to load config: %v", err)
 	}
 
-	// Initialize database connection for encoding workers if enabled
-	var db *sqlx.DB
-	if cfg.EnableEncoding {
-		db, err = sqlx.Connect("postgres", cfg.DatabaseURL)
-		if err != nil {
-			log.Fatalf("Failed to connect to database for encoding: %v", err)
-		}
-		defer func() { _ = db.Close() }()
+	// Initialize the application with all dependencies
+	application, err := app.New(cfg)
+	if err != nil {
+		log.Fatalf("Failed to initialize application: %v", err)
 	}
+	defer func() {
+		if err := application.Shutdown(context.Background()); err != nil {
+			log.Printf("Failed to shutdown application cleanly: %v", err)
+		}
+	}()
 
-	router := chi.NewRouter()
+	// Get the router with all routes already registered
+	router := application.GetRouter()
 
+	// Apply global middleware
 	// Security middleware - should be first
 	router.Use(appMiddleware.SecurityHeaders())
 	router.Use(appMiddleware.RequestID())
@@ -62,13 +64,26 @@ func main() {
 	router.Use(appMiddleware.CORS())
 	router.Use(appMiddleware.SizeLimiter(100 * 1024 * 1024)) // 100MB default, override for upload endpoints
 
-	httpapi.RegisterRoutes(router, cfg)
+	// Start background schedulers and workers
+	backgroundCtx, backgroundCancel := context.WithCancel(context.Background())
+	defer backgroundCancel()
 
-	// Start encoding workers if enabled
+	if err := application.Start(backgroundCtx); err != nil {
+		log.Fatalf("Failed to start background services: %v", err)
+	}
+
+	// Start encoding workers if enabled (standalone encoding service)
 	var encodingCtx context.Context
 	var encodingCancel context.CancelFunc
 	if cfg.EnableEncoding {
 		encodingCtx, encodingCancel = context.WithCancel(context.Background())
+
+		// Connect to database for encoding workers
+		db, err := sqlx.Connect("postgres", cfg.DatabaseURL)
+		if err != nil {
+			log.Fatalf("Failed to connect to database for encoding: %v", err)
+		}
+		defer func() { _ = db.Close() }()
 
 		// Start metrics server for encoding workers on separate mux
 		go func() {
@@ -158,6 +173,9 @@ func main() {
 		log.Println("Stopping encoding workers...")
 		encodingCancel()
 	}
+
+	// Cancel background services
+	backgroundCancel()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
