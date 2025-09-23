@@ -242,7 +242,7 @@
     - ✅ Integration tests added for consumption persistence and timeline
     - ✅ Migrations stabilized (idempotent runner; immutable-safe indexes in 037)
     - 🔜 Deduplication/conflict resolution for repeated records
-    - 🔜 Retry logic for failed syndication
+    - 🔜 Robust retry logic and backpressure for syndication errors
 
 ## Sprint J: Federation III — Social via ATProto ✅ **COMPLETED**
 
@@ -292,16 +292,16 @@
         - Social statistics calculation
     - ✅ Configuration support for ATProto labeler service
 
-## Sprint K: Federation IV — Hardening ❌ **NOT STARTED**
+## Sprint K: Federation IV — Hardening ✅ **COMPLETED**
 
 - Scope: Reliability, moderation, operator UX.
-- Deliverables:
-    - Queue: exponential backoff, DLQ, idempotency.
-    - Security: stricter signature/time window checks; request size limits.
-    - Moderation: instance and actor blocklists, abuse workflows across federation.
-    - Observability: metrics + dashboards for federation health.
+- Deliverables (implemented):
+    - Queue: Exponential backoff on failures, Dead Letter Queue (DLQ), and idempotency keys for federation jobs (e.g., publish_post by video ID).
+    - Security: Signature time window validation via `X-Federation-Timestamp`, request size limits from instance config, and replay prevention with cached request signatures.
+    - Moderation: Instance and actor blocklists with severity and expiration; ingestion respects actor blocks; abuse reporting endpoints and resolution workflow.
+    - Observability: Persisted federation metrics and a materialized health summary; admin dashboard and health endpoints for federation.
 - Success: Robust, observable federation with operational controls.
-- **Status**: No federation implementation to harden.
+- **Status**: ✅ Completed (migrations 037 applied; services and routes wired)
 
 ---
 
@@ -337,9 +337,9 @@
 
 **Sprint Status:**
 - **Sprint H**: ✅ ATProto Foundations - DID document, Bluesky integration, XRPC client complete
-- **Sprint I**: ✅ ATProto Videos - Publishing and consumption fully implemented
+- **Sprint I**: 🚧 ATProto Videos - Publishing/consumption implemented; dedupe/retry polish pending
 - **Sprint J**: ✅ ATProto Social - Follows, likes, comments complete with full ATProto integration
-- **Sprint K**: ❌ Federation Hardening - Reliability and moderation (not started)
+- **Sprint K**: ✅ Federation Hardening - Reliability, security, moderation, observability
 
 ## Recommended Next Steps
 
@@ -378,10 +378,10 @@ All core PeerTube API features (Sprints A-G) are now implemented:
 - ✅ Remote moderation via ATProto labels with configurable blocking
 - ✅ Full test coverage with mock PDS server
 
-**Sprint K: Federation Hardening**
-1. Add exponential backoff and retry logic
-2. Implement dead letter queues
-3. Add federation metrics and monitoring
+**Sprint K: Federation Hardening** ✅
+- Exponential backoff and retry logic implemented
+- Dead letter queue (DLQ) with retry workflow implemented
+- Federation metrics + dashboard/health endpoints implemented
 
 ### 💡 Alternative Deployment Options
 
