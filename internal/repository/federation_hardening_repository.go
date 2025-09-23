@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"fmt"
 	"time"
 
 	"athena/internal/domain"
@@ -375,7 +374,7 @@ func (r *FederationHardeningRepository) CheckRateLimit(ctx context.Context, id s
 // Abuse Reporting Operations
 
 // CreateAbuseReport creates a new abuse report
-func (r *FederationHardeningRepository) CreateAbuseReport(ctx context.Context, report *domain.AbuseReport) error {
+func (r *FederationHardeningRepository) CreateAbuseReport(ctx context.Context, report *domain.FederationAbuseReport) error {
 	query := `
 		INSERT INTO federation_abuse_reports (
 			reporter_did, reported_content_uri, reported_actor_did,
@@ -391,14 +390,14 @@ func (r *FederationHardeningRepository) CreateAbuseReport(ctx context.Context, r
 }
 
 // GetAbuseReports retrieves abuse reports by status
-func (r *FederationHardeningRepository) GetAbuseReports(ctx context.Context, status string, limit int) ([]domain.AbuseReport, error) {
+func (r *FederationHardeningRepository) GetAbuseReports(ctx context.Context, status string, limit int) ([]domain.FederationAbuseReport, error) {
 	query := `
 		SELECT * FROM federation_abuse_reports
 		WHERE status = $1
 		ORDER BY created_at DESC
 		LIMIT $2`
 
-	var reports []domain.AbuseReport
+	var reports []domain.FederationAbuseReport
 	err := r.db.SelectContext(ctx, &reports, query, status, limit)
 	return reports, err
 }

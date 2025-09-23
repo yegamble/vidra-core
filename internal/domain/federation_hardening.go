@@ -108,8 +108,8 @@ type RequestSignature struct {
 	ExpiresAt      time.Time `json:"expires_at" db:"expires_at"`
 }
 
-// AbuseReport represents an abuse report for federated content
-type AbuseReport struct {
+// FederationAbuseReport represents an abuse report for federated content
+type FederationAbuseReport struct {
 	ID                 string          `json:"id" db:"id"`
 	ReporterDID        *string         `json:"reporter_did,omitempty" db:"reporter_did"`
 	ReportedContentURI *string         `json:"reported_content_uri,omitempty" db:"reported_content_uri"`
@@ -125,23 +125,23 @@ type AbuseReport struct {
 	UpdatedAt          time.Time       `json:"updated_at" db:"updated_at"`
 }
 
-// AbuseReportType constants
+// FederationAbuseReportType constants
 const (
-	AbuseReportTypeSpam          = "spam"
-	AbuseReportTypeHarassment    = "harassment"
-	AbuseReportTypeIllegal       = "illegal"
-	AbuseReportTypeImpersonation = "impersonation"
-	AbuseReportTypeViolence      = "violence"
-	AbuseReportTypeNSFW          = "nsfw"
-	AbuseReportTypeOther         = "other"
+	FederationAbuseReportTypeSpam          = "spam"
+	FederationAbuseReportTypeHarassment    = "harassment"
+	FederationAbuseReportTypeIllegal       = "illegal"
+	FederationAbuseReportTypeImpersonation = "impersonation"
+	FederationAbuseReportTypeViolence      = "violence"
+	FederationAbuseReportTypeNSFW          = "nsfw"
+	FederationAbuseReportTypeOther         = "other"
 )
 
-// AbuseReportStatus constants
+// FederationAbuseReportStatus constants
 const (
-	AbuseReportStatusPending   = "pending"
-	AbuseReportStatusReviewing = "reviewing"
-	AbuseReportStatusResolved  = "resolved"
-	AbuseReportStatusRejected  = "rejected"
+	FederationAbuseReportStatusPending   = "pending"
+	FederationAbuseReportStatusReviewing = "reviewing"
+	FederationAbuseReportStatusResolved  = "resolved"
+	FederationAbuseReportStatusRejected  = "rejected"
 )
 
 // RateLimitEntry represents rate limiting state for an instance or actor

@@ -12,12 +12,55 @@ import (
 
 	"athena/internal/config"
 	"athena/internal/domain"
-	"athena/internal/repository"
 )
 
 // FederationHardeningService handles federation reliability and security
+// HardeningRepository abstracts persistence for federation hardening features.
+// Implemented by repository.FederationHardeningRepository.
+type HardeningRepository interface {
+	// Config
+	GetFederationConfig(ctx context.Context) (*domain.FederationSecurityConfig, error)
+
+	// Idempotency
+	CheckIdempotency(ctx context.Context, key string) (*domain.IdempotencyRecord, error)
+	RecordIdempotency(ctx context.Context, record *domain.IdempotencyRecord) error
+
+	// Jobs / backoff / DLQ
+	UpdateJobWithBackoff(ctx context.Context, jobID string, attempts int, lastError string) error
+	MoveToDLQ(ctx context.Context, job *domain.FederationJob, errorMsg string) error
+	GetDLQJobs(ctx context.Context, limit int, canRetryOnly bool) ([]domain.DeadLetterJob, error)
+	RetryDLQJob(ctx context.Context, dlqID string) error
+
+	// Signatures / rate limiting
+	CheckRequestSignature(ctx context.Context, signatureHash string) (bool, error)
+	RecordRequestSignature(ctx context.Context, sig *domain.RequestSignature) error
+	CheckRateLimit(ctx context.Context, id string, limit int, window time.Duration) (bool, error)
+
+	// Blocklists
+	AddInstanceBlock(ctx context.Context, block *domain.InstanceBlock) error
+	RemoveInstanceBlock(ctx context.Context, domain string) error
+	IsInstanceBlocked(ctx context.Context, domain string) (bool, error)
+	GetInstanceBlocks(ctx context.Context) ([]domain.InstanceBlock, error)
+	AddActorBlock(ctx context.Context, block *domain.ActorBlock) error
+	IsActorBlocked(ctx context.Context, did, handle string) (bool, error)
+
+	// Abuse reports
+	CreateAbuseReport(ctx context.Context, report *domain.FederationAbuseReport) error
+	GetAbuseReports(ctx context.Context, status string, limit int) ([]domain.FederationAbuseReport, error)
+	UpdateAbuseReport(ctx context.Context, id, status, resolution, resolvedBy string) error
+
+	// Health / metrics
+	RefreshHealthSummary(ctx context.Context) error
+	GetHealthSummary(ctx context.Context) ([]domain.FederationHealthSummary, error)
+	GetMetrics(ctx context.Context, metricType string, since time.Time, limit int) ([]domain.FederationMetric, error)
+	RecordMetric(ctx context.Context, metric *domain.FederationMetric) error
+
+	// Cleanup
+	CleanupExpired(ctx context.Context) error
+}
+
 type FederationHardeningService struct {
-	repo   *repository.FederationHardeningRepository
+	repo   HardeningRepository
 	fedSvc FederationService
 	cfg    *config.Config
 	config *domain.FederationSecurityConfig
@@ -25,7 +68,7 @@ type FederationHardeningService struct {
 
 // NewFederationHardeningService creates a new hardening service
 func NewFederationHardeningService(
-	repo *repository.FederationHardeningRepository,
+	repo HardeningRepository,
 	fedSvc FederationService,
 	cfg *config.Config,
 ) *FederationHardeningService {
@@ -330,14 +373,14 @@ func (s *FederationHardeningService) ReportAbuse(
 		return errors.New("abuse reporting is disabled")
 	}
 
-	report := &domain.AbuseReport{
+	report := &domain.FederationAbuseReport{
 		ReporterDID:        &reporterDID,
 		ReportedContentURI: &contentURI,
 		ReportedActorDID:   &actorDID,
 		ReportType:         reportType,
 		Description:        &description,
 		Evidence:           evidence,
-		Status:             domain.AbuseReportStatusPending,
+		Status:             domain.FederationAbuseReportStatusPending,
 		CreatedAt:          time.Now(),
 		UpdatedAt:          time.Now(),
 	}
@@ -354,8 +397,8 @@ func (s *FederationHardeningService) ReportAbuse(
 }
 
 // GetPendingAbuseReports retrieves pending abuse reports
-func (s *FederationHardeningService) GetPendingAbuseReports(ctx context.Context, limit int) ([]domain.AbuseReport, error) {
-	return s.repo.GetAbuseReports(ctx, domain.AbuseReportStatusPending, limit)
+func (s *FederationHardeningService) GetPendingAbuseReports(ctx context.Context, limit int) ([]domain.FederationAbuseReport, error) {
+	return s.repo.GetAbuseReports(ctx, domain.FederationAbuseReportStatusPending, limit)
 }
 
 // ResolveAbuseReport resolves an abuse report
@@ -366,9 +409,9 @@ func (s *FederationHardeningService) ResolveAbuseReport(
 	resolvedBy string,
 	takeAction bool,
 ) error {
-	status := domain.AbuseReportStatusResolved
+	status := domain.FederationAbuseReportStatusResolved
 	if !takeAction {
-		status = domain.AbuseReportStatusRejected
+		status = domain.FederationAbuseReportStatusRejected
 	}
 
 	return s.repo.UpdateAbuseReport(ctx, reportID, status, resolution, resolvedBy)
@@ -389,7 +432,7 @@ func (s *FederationHardeningService) GetDashboardData(ctx context.Context) (map[
 	health, _ := s.repo.GetHealthSummary(ctx)
 	dlqJobs, _ := s.repo.GetDLQJobs(ctx, 10, false)
 	instanceBlocks, _ := s.repo.GetInstanceBlocks(ctx)
-	pendingReports, _ := s.repo.GetAbuseReports(ctx, domain.AbuseReportStatusPending, 10)
+	pendingReports, _ := s.repo.GetAbuseReports(ctx, domain.FederationAbuseReportStatusPending, 10)
 
 	// Get recent metrics
 	since := time.Now().Add(-24 * time.Hour)
