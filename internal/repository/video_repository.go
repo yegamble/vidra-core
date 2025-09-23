@@ -14,11 +14,33 @@ import (
 )
 
 type videoRepository struct {
-	db *sqlx.DB
+	db            *sqlx.DB
+	hasChannelID  bool
+	checkedSchema bool
 }
 
 func NewVideoRepository(db *sqlx.DB) usecase.VideoRepository {
 	return &videoRepository{db: db}
+}
+
+// ensureSchemaChecked detects whether the current schema has a channel_id column
+// on the videos table. It runs once per repository instance and caches the result
+// for subsequent calls to avoid repeated information_schema lookups.
+func (r *videoRepository) ensureSchemaChecked(ctx context.Context) {
+	if r.checkedSchema {
+		return
+	}
+	var has bool
+	const q = `SELECT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = current_schema()
+          AND table_name = 'videos'
+          AND column_name = 'channel_id'
+    )`
+	// If query fails for any reason, default to false (legacy schema)
+	_ = r.db.QueryRowContext(ctx, q).Scan(&has)
+	r.hasChannelID = has
+	r.checkedSchema = true
 }
 
 // scanVideoRow is a helper function to scan a video row and reduce duplication
@@ -54,10 +76,13 @@ func scanVideoRow(rows *sql.Rows) (*domain.Video, error) {
 }
 
 func (r *videoRepository) Create(ctx context.Context, v *domain.Video) error {
-	// Allow caller to optionally set ChannelID; otherwise, fallback to the user's default channel
-	// determined by the earliest channel for the account. This keeps backward compatibility
-	// with code paths that don't explicitly assign a channel.
-	query := `
+	// Detect schema and choose compatible insert
+	r.ensureSchemaChecked(ctx)
+
+	var query string
+	if r.hasChannelID {
+		// New schema: channel_id is NOT NULL; populate from provided value or default channel
+		query = `
         INSERT INTO videos (
             id, thumbnail_id, title, description, duration, views,
             privacy, status, upload_date, user_id,
@@ -77,6 +102,25 @@ func (r *videoRepository) Create(ctx context.Context, v *domain.Video) error {
             $21, $22,
             $23, $24, $25
         )`
+	} else {
+		// Legacy schema: no channel_id column yet
+		query = `
+        INSERT INTO videos (
+            id, thumbnail_id, title, description, duration, views,
+            privacy, status, upload_date, user_id,
+            original_cid, processed_cids, thumbnail_cid,
+            tags, category_id, language, file_size, mime_type, metadata,
+            created_at, updated_at,
+            output_paths, thumbnail_path, preview_path
+        ) VALUES (
+            $1, $2, $3, $4, $5, $6,
+            $7, $8, $9, $10,
+            $11, $12, $13,
+            $14, $15, $16, $17, $18, $19,
+            $20, $21,
+            $22, $23, $24
+        )`
+	}
 
 	// Marshal JSON fields
 	processedCIDsJSON, _ := json.Marshal(v.ProcessedCIDs)
@@ -91,15 +135,27 @@ func (r *videoRepository) Create(ctx context.Context, v *domain.Video) error {
 		channelIDParam = v.ChannelID
 	}
 
-	_, err := r.db.ExecContext(ctx, query,
-		v.ID, v.ThumbnailID, v.Title, v.Description, v.Duration, v.Views,
-		v.Privacy, v.Status, v.UploadDate, v.UserID,
-		channelIDParam,
-		v.OriginalCID, processedCIDsJSON, v.ThumbnailCID,
-		pq.Array(v.Tags), v.CategoryID, v.Language, v.FileSize, v.MimeType, metadataJSON,
-		v.CreatedAt, v.UpdatedAt,
-		outputPathsJSON, v.ThumbnailPath, v.PreviewPath,
-	)
+	var err error
+	if r.hasChannelID {
+		_, err = r.db.ExecContext(ctx, query,
+			v.ID, v.ThumbnailID, v.Title, v.Description, v.Duration, v.Views,
+			v.Privacy, v.Status, v.UploadDate, v.UserID,
+			channelIDParam,
+			v.OriginalCID, processedCIDsJSON, v.ThumbnailCID,
+			pq.Array(v.Tags), v.CategoryID, v.Language, v.FileSize, v.MimeType, metadataJSON,
+			v.CreatedAt, v.UpdatedAt,
+			outputPathsJSON, v.ThumbnailPath, v.PreviewPath,
+		)
+	} else {
+		_, err = r.db.ExecContext(ctx, query,
+			v.ID, v.ThumbnailID, v.Title, v.Description, v.Duration, v.Views,
+			v.Privacy, v.Status, v.UploadDate, v.UserID,
+			v.OriginalCID, processedCIDsJSON, v.ThumbnailCID,
+			pq.Array(v.Tags), v.CategoryID, v.Language, v.FileSize, v.MimeType, metadataJSON,
+			v.CreatedAt, v.UpdatedAt,
+			outputPathsJSON, v.ThumbnailPath, v.PreviewPath,
+		)
+	}
 	if err != nil {
 		return domain.NewDomainError("CREATE_FAILED", "Failed to create video")
 	}
