@@ -27,9 +27,9 @@ import (
 	_ "golang.org/x/image/webp"
 
 	"athena/internal/domain"
-	"athena/internal/imageutil"
 	"athena/internal/middleware"
 	"athena/internal/storage"
+	"athena/pkg/imageutil"
 )
 
 type ipfsAddResponse struct {

@@ -16,6 +16,7 @@ import (
 
 	"athena/internal/config"
 	"athena/internal/httpapi"
+	"athena/internal/metrics"
 	"athena/internal/repository"
 	"athena/internal/scheduler"
 	"athena/internal/usecase"
@@ -32,6 +33,9 @@ type Application struct {
 	encodingScheduler   *scheduler.EncodingScheduler
 	federationScheduler *scheduler.FederationScheduler
 	firehosePoller      *scheduler.FirehosePoller
+
+	// lifecycle-managed components
+	metricsServer *http.Server
 }
 
 type Dependencies struct {
@@ -312,12 +316,51 @@ func (app *Application) Start(ctx context.Context) error {
 	for _, s := range app.schedulers {
 		go s.Start(ctx)
 	}
+
+	// Optionally start encoding workers within the app lifecycle
+	if app.Config.EnableEncoding && app.Dependencies != nil && app.Dependencies.EncodingService != nil {
+		workers := app.Config.EncodingWorkers
+		encSvc := app.Dependencies.EncodingService
+		go func() {
+			log.Printf("Starting encoding workers (count=%d)...", workers)
+			if err := encSvc.Run(ctx, workers); err != nil {
+				log.Printf("Encoding workers stopped with error: %v", err)
+			}
+		}()
+
+		// Start a lightweight metrics server if configured
+		if app.Config.MetricsAddr != "" {
+			mux := http.NewServeMux()
+			mux.HandleFunc("/metrics", metrics.Handler)
+			app.metricsServer = &http.Server{
+				Addr:         app.Config.MetricsAddr,
+				Handler:      mux,
+				ReadTimeout:  10 * time.Second,
+				WriteTimeout: 10 * time.Second,
+				IdleTimeout:  30 * time.Second,
+			}
+			go func() {
+				log.Printf("Starting metrics server on %s", app.Config.MetricsAddr)
+				if err := app.metricsServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+					log.Printf("Metrics server error: %v", err)
+				}
+			}()
+		}
+	}
+
 	return nil
 }
 
 func (app *Application) Shutdown(ctx context.Context) error {
 	for _, s := range app.schedulers {
 		s.Stop()
+	}
+
+	// Stop metrics server if running
+	if app.metricsServer != nil {
+		if err := app.metricsServer.Shutdown(ctx); err != nil {
+			log.Printf("Failed to shutdown metrics server: %v", err)
+		}
 	}
 
 	if app.DB != nil {

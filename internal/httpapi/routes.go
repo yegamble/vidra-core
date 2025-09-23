@@ -95,34 +95,19 @@ func RegisterRoutes(r chi.Router, cfg *config.Config) {
 		atprotoSvc.StartBackgroundRefresh(context.Background(), time.Duration(cfg.ATProtoRefreshIntervalSeconds)*time.Second)
 	}
 
-	// Start a lightweight encoding scheduler in the background to ensure
-	// pending jobs are processed even if the standalone encoder is not running.
-	// This uses a short interval with a small burst to avoid starvation.
+	// Prepare a lightweight encoding scheduler; lifecycle should be owned by bootstrap layer.
 	var encSched *scheduler.EncodingScheduler
 	if cfg.EnableEncodingScheduler {
 		encSvc := usecase.NewEncodingService(encodingRepo, videoRepo, notificationService, storageRoot, cfg, atprotoSvc, federationRepo)
 		interval := time.Duration(cfg.EncodingSchedulerIntervalSeconds) * time.Second
 		burst := cfg.EncodingSchedulerBurst
 		encSched = scheduler.NewEncodingScheduler(encSvc, interval, burst)
-		// Use Background context; lifecycle is tied to the server process.
-		go encSched.Start(context.Background())
 	}
 
-	// Start federation scheduler (ingestion + publish retries)
+	// Build federation service; lifecycle should be owned by bootstrap layer.
 	var fedSvc usecase.FederationService
 	if cfg.EnableATProto {
 		fedSvc = usecase.NewFederationService(federationRepo, moderationRepo, atprotoSvc, cfg, hardeningRepo)
-		if cfg.EnableFederationScheduler {
-			fInterval := time.Duration(cfg.FederationSchedulerIntervalSeconds) * time.Second
-			fBurst := cfg.FederationSchedulerBurst
-			go scheduler.NewFederationScheduler(fedSvc, fInterval, fBurst).Start(context.Background())
-		}
-		// Optional near real-time firehose-style poller using the same ingestion path
-		if cfg.EnableATProtoFirehose {
-			fhInterval := time.Duration(cfg.ATProtoFirehosePollIntervalSeconds) * time.Second
-			// Use a modest burst to pull several pages quickly
-			go scheduler.NewFirehosePoller(fedSvc, fhInterval, 3).Start(context.Background())
-		}
 	}
 
 	// Federation hardening service and admin routes

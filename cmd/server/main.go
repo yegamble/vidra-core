@@ -12,15 +12,10 @@ import (
 
 	chi "github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
-	"github.com/jmoiron/sqlx"
-	_ "github.com/lib/pq"
 
 	"athena/internal/app"
 	"athena/internal/config"
-	"athena/internal/metrics"
 	appMiddleware "athena/internal/middleware"
-	"athena/internal/repository"
-	"athena/internal/usecase"
 )
 
 // Populated via -ldflags at build time in Dockerfile
@@ -70,75 +65,12 @@ func main() {
 	// Mount the pre-registered application routes
 	root.Mount("/", appRouter)
 
-	// Start background schedulers and workers
+	// Start background schedulers and workers managed by the app
 	backgroundCtx, backgroundCancel := context.WithCancel(context.Background())
 	defer backgroundCancel()
 
 	if err := application.Start(backgroundCtx); err != nil {
 		log.Fatalf("Failed to start background services: %v", err)
-	}
-
-	// Start encoding workers if enabled (standalone encoding service)
-	var encodingCtx context.Context
-	var encodingCancel context.CancelFunc
-	if cfg.EnableEncoding {
-		encodingCtx, encodingCancel = context.WithCancel(context.Background())
-
-		// Connect to database for encoding workers
-		db, err := sqlx.Connect("postgres", cfg.DatabaseURL)
-		if err != nil {
-			log.Fatalf("Failed to connect to database for encoding: %v", err)
-		}
-		defer func() { _ = db.Close() }()
-
-		// Start metrics server for encoding workers on separate mux
-		go func() {
-			metricsRouter := http.NewServeMux()
-			metricsRouter.HandleFunc("/metrics", metrics.Handler)
-			metricsServer := &http.Server{
-				Addr:         cfg.MetricsAddr,
-				Handler:      metricsRouter,
-				ReadTimeout:  10 * time.Second,
-				WriteTimeout: 10 * time.Second,
-				IdleTimeout:  30 * time.Second,
-			}
-			log.Printf("Starting metrics server on %s", cfg.MetricsAddr)
-			if err := metricsServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-				log.Printf("Metrics server error: %v", err)
-			}
-		}()
-
-		// Start encoding workers
-		encRepo := repository.NewEncodingRepository(db)
-		videoRepo := repository.NewVideoRepository(db)
-		userRepo := repository.NewUserRepository(db)
-		subRepo := repository.NewSubscriptionRepository(db)
-		notificationRepo := repository.NewNotificationRepository(db)
-		notificationSvc := usecase.NewNotificationService(notificationRepo, subRepo, userRepo)
-		// Optional ATProto publisher
-		atproto := usecase.NewAtprotoService(nil, cfg, nil, nil)
-		encSvc := usecase.NewEncodingService(encRepo, videoRepo, notificationSvc, cfg.StorageDir, cfg, atproto, nil)
-
-		go func() {
-			log.Printf("Starting encoding workers (count=%d)...", cfg.EncodingWorkers)
-			if err := encSvc.Run(encodingCtx, cfg.EncodingWorkers); err != nil {
-				log.Printf("Encoding workers stopped with error: %v", err)
-			}
-		}()
-
-		// Optional: Start encoding job polling ticker
-		go func() {
-			ticker := time.NewTicker(2 * time.Second)
-			defer ticker.Stop()
-			for {
-				select {
-				case <-encodingCtx.Done():
-					return
-				case <-ticker.C:
-					// Workers will poll via ProcessNext
-				}
-			}
-		}()
 	}
 
 	server := &http.Server{
@@ -173,12 +105,6 @@ func main() {
 	<-quit
 
 	log.Println("Shutting down server...")
-
-	// Cancel encoding workers first if they're running
-	if cfg.EnableEncoding && encodingCancel != nil {
-		log.Println("Stopping encoding workers...")
-		encodingCancel()
-	}
 
 	// Cancel background services
 	backgroundCancel()
