@@ -1,4 +1,4 @@
-package usecase
+package encoding
 
 import (
 	"context"
@@ -16,43 +16,52 @@ import (
 	"athena/internal/config"
 	"athena/internal/domain"
 	"athena/internal/metrics"
+	"athena/internal/port"
 	"athena/internal/storage"
+
+	ucn "athena/internal/usecase/notification"
 )
 
-// EncodingService defines a background worker to process encoding jobs
-type EncodingService interface {
+// Service defines a background worker to process encoding jobs
+type Service interface {
 	// Run starts N workers that consume jobs until the context is canceled
 	Run(ctx context.Context, workers int) error
 	// ProcessNext fetches the next pending job and processes it
 	ProcessNext(ctx context.Context) (processed bool, err error)
 }
 
-type encodingService struct {
-	repo            EncodingRepository
-	videoRepo       VideoRepository
-	notificationSvc NotificationService
-	uploadsDir      string // storage root
-	cfg             *config.Config
-	atproto         AtprotoPublisher
-	fedEnq          FederationJobEnqueuer
+// Publisher publishes activity (best-effort) when encoding completes.
+// Only the PublishVideo method is required by this package.
+type Publisher interface {
+	PublishVideo(ctx context.Context, v *domain.Video) error
 }
 
-func NewEncodingService(repo EncodingRepository, videoRepo VideoRepository, notificationSvc NotificationService, uploadsDir string, cfg *config.Config, atproto AtprotoPublisher, enq FederationJobEnqueuer) EncodingService {
-	return &encodingService{repo: repo, videoRepo: videoRepo, notificationSvc: notificationSvc, uploadsDir: uploadsDir, cfg: cfg, atproto: atproto, fedEnq: enq}
-}
-
-// FederationJobEnqueuer enqueues federation jobs for retry/out-of-band processing.
-type FederationJobEnqueuer interface {
+// JobEnqueuer enqueues federation jobs for retry/out-of-band processing.
+type JobEnqueuer interface {
 	EnqueueJob(ctx context.Context, jobType string, payload any, runAt time.Time) (string, error)
 }
 
+type service struct {
+	repo            port.EncodingRepository
+	videoRepo       port.VideoRepository
+	notificationSvc ucn.Service
+	uploadsDir      string // storage root
+	cfg             *config.Config
+	atproto         Publisher
+	fedEnq          JobEnqueuer
+}
+
+func NewService(repo port.EncodingRepository, videoRepo port.VideoRepository, notificationSvc ucn.Service, uploadsDir string, cfg *config.Config, atproto Publisher, enq JobEnqueuer) Service {
+	return &service{repo: repo, videoRepo: videoRepo, notificationSvc: notificationSvc, uploadsDir: uploadsDir, cfg: cfg, atproto: atproto, fedEnq: enq}
+}
+
 // WithFederationEnqueuer optionally attaches a federation job enqueuer to the encoding service.
-func (s *encodingService) WithFederationEnqueuer(enq FederationJobEnqueuer) *encodingService {
+func (s *service) WithFederationEnqueuer(enq JobEnqueuer) *service {
 	s.fedEnq = enq
 	return s
 }
 
-func (s *encodingService) Run(ctx context.Context, workers int) error {
+func (s *service) Run(ctx context.Context, workers int) error {
 	if workers <= 0 {
 		workers = runtime.NumCPU()
 		if workers < 2 {
@@ -109,7 +118,7 @@ func (s *encodingService) Run(ctx context.Context, workers int) error {
 	return nil
 }
 
-func (s *encodingService) ProcessNext(ctx context.Context) (bool, error) {
+func (s *service) ProcessNext(ctx context.Context) (bool, error) {
 	job, err := s.repo.GetNextJob(ctx)
 	if err != nil {
 		return false, err
@@ -144,7 +153,7 @@ func (s *encodingService) ProcessNext(ctx context.Context) (bool, error) {
 }
 
 // validateJob validates the encoding job parameters
-func (s *encodingService) validateJob(job *domain.EncodingJob) error {
+func (s *service) validateJob(job *domain.EncodingJob) error {
 	if job.SourceFilePath == "" {
 		return errors.New("missing source file path")
 	}
@@ -155,7 +164,7 @@ func (s *encodingService) validateJob(job *domain.EncodingJob) error {
 }
 
 // createProgressUpdater creates a function to update job progress
-func (s *encodingService) createProgressUpdater(ctx context.Context, jobID string, totalTasks int) func() {
+func (s *service) createProgressUpdater(ctx context.Context, jobID string, totalTasks int) func() {
 	var done int32
 	return func() {
 		atomic.AddInt32(&done, 1)
@@ -165,7 +174,7 @@ func (s *encodingService) createProgressUpdater(ctx context.Context, jobID strin
 }
 
 // encodeResolutions encodes all target resolutions concurrently
-func (s *encodingService) encodeResolutions(ctx context.Context, job *domain.EncodingJob, outBaseDir string, update func()) error {
+func (s *service) encodeResolutions(ctx context.Context, job *domain.EncodingJob, outBaseDir string, update func()) error {
 	var wg sync.WaitGroup
 	errCh := make(chan error, len(job.TargetResolutions))
 
@@ -202,7 +211,7 @@ func (s *encodingService) encodeResolutions(ctx context.Context, job *domain.Enc
 	return nil
 }
 
-func (s *encodingService) processJob(ctx context.Context, job *domain.EncodingJob) error {
+func (s *service) processJob(ctx context.Context, job *domain.EncodingJob) error {
 	// Validate job
 	if err := s.validateJob(job); err != nil {
 		return err
@@ -256,7 +265,7 @@ func (s *encodingService) processJob(ctx context.Context, job *domain.EncodingJo
 	return nil
 }
 
-func (s *encodingService) enqueuePublishRetry(ctx context.Context, videoID string, delay time.Duration) error {
+func (s *service) enqueuePublishRetry(ctx context.Context, videoID string, delay time.Duration) error {
 	if s.fedEnq == nil {
 		return nil
 	}
@@ -267,7 +276,7 @@ func (s *encodingService) enqueuePublishRetry(ctx context.Context, videoID strin
 }
 
 // generateMediaAssets generates thumbnail and preview for the video
-func (s *encodingService) generateMediaAssets(ctx context.Context, job *domain.EncodingJob, sp *storage.Paths, update func()) (string, string, error) {
+func (s *service) generateMediaAssets(ctx context.Context, job *domain.EncodingJob, sp *storage.Paths, update func()) (string, string, error) {
 	// Thumbnail
 	thumb := sp.ThumbnailPath(job.VideoID)
 	if err := os.MkdirAll(filepath.Dir(thumb), 0o750); err != nil {
@@ -292,7 +301,7 @@ func (s *encodingService) generateMediaAssets(ctx context.Context, job *domain.E
 }
 
 // updateVideoInfo updates the video processing info in the repository
-func (s *encodingService) updateVideoInfo(ctx context.Context, job *domain.EncodingJob, outBaseDir, thumb, preview string) error {
+func (s *service) updateVideoInfo(ctx context.Context, job *domain.EncodingJob, outBaseDir, thumb, preview string) error {
 	outputs := make(map[string]string)
 	outputs["master"] = filepath.ToSlash(filepath.Join(outBaseDir, "master.m3u8"))
 	for _, res := range job.TargetResolutions {
@@ -304,7 +313,7 @@ func (s *encodingService) updateVideoInfo(ctx context.Context, job *domain.Encod
 }
 
 // triggerNotifications triggers notifications for video processing completion
-func (s *encodingService) triggerNotifications(ctx context.Context, videoID string) {
+func (s *service) triggerNotifications(ctx context.Context, videoID string) {
 	if s.notificationSvc != nil {
 		video, err := s.videoRepo.GetByID(ctx, videoID)
 		if err == nil && video != nil {
@@ -314,7 +323,7 @@ func (s *encodingService) triggerNotifications(ctx context.Context, videoID stri
 	}
 }
 
-func (s *encodingService) transcodeHLS(ctx context.Context, input string, height int, outPlaylist string, segPattern string) error {
+func (s *service) transcodeHLS(ctx context.Context, input string, height int, outPlaylist string, segPattern string) error {
 	args := []string{
 		"-y",
 		"-i", input,
@@ -333,7 +342,7 @@ func (s *encodingService) transcodeHLS(ctx context.Context, input string, height
 	return s.execFFmpeg(ctx, args)
 }
 
-func (s *encodingService) generateThumbnail(ctx context.Context, input string, output string) error {
+func (s *service) generateThumbnail(ctx context.Context, input string, output string) error {
 	args := []string{
 		"-y",
 		"-ss", "00:00:01",
@@ -345,7 +354,7 @@ func (s *encodingService) generateThumbnail(ctx context.Context, input string, o
 	return s.execFFmpeg(ctx, args)
 }
 
-func (s *encodingService) generatePreviewWebP(ctx context.Context, input string, output string) error {
+func (s *service) generatePreviewWebP(ctx context.Context, input string, output string) error {
 	args := []string{
 		"-y",
 		"-ss", "00:00:01",
@@ -362,7 +371,7 @@ func (s *encodingService) generatePreviewWebP(ctx context.Context, input string,
 	return s.execFFmpeg(ctx, args)
 }
 
-func (s *encodingService) generateMasterPlaylist(outBaseDir string, resolutions []string) error {
+func (s *service) generateMasterPlaylist(outBaseDir string, resolutions []string) error {
 	// Simple bandwidth estimates (in bits per second)
 	bw := map[string]int{
 		"240p": 400000, "360p": 800000, "480p": 1400000, "720p": 2800000,
@@ -383,7 +392,7 @@ func (s *encodingService) generateMasterPlaylist(outBaseDir string, resolutions 
 	return os.WriteFile(filepath.Join(outBaseDir, "master.m3u8"), []byte(b.String()), 0o600)
 }
 
-func (s *encodingService) execFFmpeg(ctx context.Context, args []string) error {
+func (s *service) execFFmpeg(ctx context.Context, args []string) error {
 	bin := s.cfg.FFMPEGPath
 	if bin == "" {
 		bin = "ffmpeg"

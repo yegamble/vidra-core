@@ -8,6 +8,13 @@ import (
 	"athena/internal/repository"
 	"athena/internal/scheduler"
 	"athena/internal/usecase"
+	ucchannel "athena/internal/usecase/channel"
+	uccmt "athena/internal/usecase/comment"
+	"athena/internal/usecase/encoding"
+	ucn "athena/internal/usecase/notification"
+	ucrt "athena/internal/usecase/rating"
+	ucup "athena/internal/usecase/upload"
+	ucviews "athena/internal/usecase/views"
 )
 
 type HandlerDependencies struct {
@@ -33,19 +40,19 @@ type HandlerDependencies struct {
 	SessionRepo      usecase.AuthRepository
 
 	// Services
-	UploadService       usecase.UploadService
+	UploadService       ucup.Service
 	MessageService      *usecase.MessageService
-	ViewsService        *usecase.ViewsService
-	NotificationService usecase.NotificationService
-	ChannelService      *usecase.ChannelService
-	CommentService      *usecase.CommentService
-	RatingService       *usecase.RatingService
+	ViewsService        *ucviews.Service
+	NotificationService ucn.Service
+	ChannelService      *ucchannel.Service
+	CommentService      *uccmt.Service
+	RatingService       *ucrt.Service
 	PlaylistService     *usecase.PlaylistService
 	CaptionService      *usecase.CaptionService
 	AtprotoService      usecase.AtprotoPublisher
 	FederationService   usecase.FederationService
 	HardeningService    *usecase.FederationHardeningService
-	EncodingService     usecase.EncodingService
+	EncodingService     encoding.Service
 
 	// Schedulers
 	EncodingScheduler *scheduler.EncodingScheduler

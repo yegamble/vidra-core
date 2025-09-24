@@ -20,6 +20,13 @@ import (
 	"athena/internal/repository"
 	"athena/internal/scheduler"
 	"athena/internal/usecase"
+	ucchannel "athena/internal/usecase/channel"
+	uccmt "athena/internal/usecase/comment"
+	ucenc "athena/internal/usecase/encoding"
+	ucn "athena/internal/usecase/notification"
+	ucrt "athena/internal/usecase/rating"
+	ucup "athena/internal/usecase/upload"
+	ucviews "athena/internal/usecase/views"
 )
 
 type Application struct {
@@ -59,19 +66,19 @@ type Dependencies struct {
 	HardeningRepo    *repository.FederationHardeningRepository
 	SessionRepo      usecase.AuthRepository
 
-	UploadService       usecase.UploadService
+	UploadService       ucup.Service
 	MessageService      *usecase.MessageService
-	ViewsService        *usecase.ViewsService
-	NotificationService usecase.NotificationService
-	ChannelService      *usecase.ChannelService
-	CommentService      *usecase.CommentService
-	RatingService       *usecase.RatingService
+	ViewsService        *ucviews.Service
+	NotificationService ucn.Service
+	ChannelService      *ucchannel.Service
+	CommentService      *uccmt.Service
+	RatingService       *ucrt.Service
 	PlaylistService     *usecase.PlaylistService
 	CaptionService      *usecase.CaptionService
 	AtprotoService      usecase.AtprotoPublisher
 	FederationService   usecase.FederationService
 	HardeningService    *usecase.FederationHardeningService
-	EncodingService     usecase.EncodingService
+	EncodingService     ucenc.Service
 }
 
 func New(cfg *config.Config) (*Application, error) {
@@ -197,13 +204,13 @@ func (app *Application) initializeDependencies() *Dependencies {
 	redisSessionRepo := repository.NewRedisSessionRepository(app.Redis)
 	deps.SessionRepo = repository.NewCompositeAuthRepository(deps.AuthRepo, redisSessionRepo)
 
-	deps.UploadService = usecase.NewUploadService(deps.UploadRepo, deps.EncodingRepo, deps.VideoRepo, app.Config.StorageDir, app.Config)
+	deps.UploadService = ucup.NewService(deps.UploadRepo, deps.EncodingRepo, deps.VideoRepo, app.Config.StorageDir, app.Config)
 	deps.MessageService = usecase.NewMessageService(deps.MessageRepo, deps.UserRepo)
-	deps.ViewsService = usecase.NewViewsService(deps.ViewsRepo, deps.VideoRepo)
-	deps.NotificationService = usecase.NewNotificationService(deps.NotificationRepo, deps.SubRepo, deps.UserRepo)
-	deps.ChannelService = usecase.NewChannelService(deps.ChannelRepo, deps.UserRepo)
-	deps.CommentService = usecase.NewCommentService(deps.CommentRepo, deps.VideoRepo, deps.UserRepo, deps.ChannelRepo)
-	deps.RatingService = usecase.NewRatingService(deps.RatingRepo, deps.VideoRepo)
+	deps.ViewsService = ucviews.NewService(deps.ViewsRepo, deps.VideoRepo)
+	deps.NotificationService = ucn.NewService(deps.NotificationRepo, deps.SubRepo, deps.UserRepo)
+	deps.ChannelService = ucchannel.NewService(deps.ChannelRepo, deps.UserRepo)
+	deps.CommentService = uccmt.NewService(deps.CommentRepo, deps.VideoRepo, deps.UserRepo, deps.ChannelRepo)
+	deps.RatingService = ucrt.NewService(deps.RatingRepo, deps.VideoRepo)
 	deps.PlaylistService = usecase.NewPlaylistService(deps.PlaylistRepo, deps.VideoRepo)
 	deps.CaptionService = usecase.NewCaptionService(deps.CaptionRepo, deps.VideoRepo, app.Config)
 
@@ -220,7 +227,7 @@ func (app *Application) initializeDependencies() *Dependencies {
 		app.atprotoService = deps.AtprotoService
 	}
 
-	deps.EncodingService = usecase.NewEncodingService(
+	deps.EncodingService = ucenc.NewService(
 		deps.EncodingRepo,
 		deps.VideoRepo,
 		deps.NotificationService,

@@ -1,4 +1,4 @@
-package usecase
+package encoding
 
 import (
 	"context"
@@ -38,7 +38,7 @@ func TestEncodingQuality_VerifyOutputFormats(t *testing.T) {
 		HLSSegmentDuration: 4,
 	}
 
-	service := NewEncodingService(encodingRepo, videoRepo, nil, tempDir, cfg, nil, nil)
+	svc := NewService(encodingRepo, videoRepo, nil, tempDir, cfg, nil, nil)
 
 	// Test with 1080p video
 	testVideo := testutil.TestVideos[3] // 1080p video
@@ -62,7 +62,7 @@ func TestEncodingQuality_VerifyOutputFormats(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 
-	err = service.(*encodingService).processJob(ctx, job)
+	err = svc.(*service).processJob(ctx, job)
 	require.NoError(t, err, "Encoding failed")
 
 	outputDir := filepath.Join(tempDir, "streaming-playlists", "hls", videoID)
@@ -218,7 +218,7 @@ func TestEncodingPerformance_SegmentDuration(t *testing.T) {
 
 			encodingRepo := NewMockEncodingRepository()
 			videoRepo := NewMockVideoRepository()
-			service := NewEncodingService(encodingRepo, videoRepo, nil, tempDir, cfg, nil, nil)
+			svc := NewService(encodingRepo, videoRepo, nil, tempDir, cfg, nil, nil)
 
 			videoID := uuid.NewString()
 			job := &domain.EncodingJob{
@@ -237,7 +237,7 @@ func TestEncodingPerformance_SegmentDuration(t *testing.T) {
 			defer cancel()
 
 			start := time.Now()
-			err = service.(*encodingService).processJob(ctx, job)
+			err = svc.(*service).processJob(ctx, job)
 			elapsed := time.Since(start)
 
 			require.NoError(t, err, "Encoding failed for %d second segments", duration)
@@ -280,7 +280,7 @@ func TestEncodingEdgeCases(t *testing.T) {
 
 	encodingRepo := NewMockEncodingRepository()
 	videoRepo := NewMockVideoRepository()
-	service := NewEncodingService(encodingRepo, videoRepo, nil, tempDir, cfg, nil, nil)
+	svc := NewService(encodingRepo, videoRepo, nil, tempDir, cfg, nil, nil)
 
 	t.Run("NonExistentSourceFile", func(t *testing.T) {
 		job := &domain.EncodingJob{
@@ -298,7 +298,7 @@ func TestEncodingEdgeCases(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
-		err := service.(*encodingService).processJob(ctx, job)
+		err := svc.(*service).processJob(ctx, job)
 		assert.Error(t, err, "Should fail for non-existent file")
 		assert.Contains(t, err.Error(), "source file not found")
 	})
@@ -343,7 +343,7 @@ func TestEncodingEdgeCases(t *testing.T) {
 		ctx2, cancel2 := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel2()
 
-		err = service.(*encodingService).processJob(ctx2, job)
+		err = svc.(*service).processJob(ctx2, job)
 		// Should not fail even with empty target resolutions - it will just create thumbnails
 		assert.NoError(t, err, "Should handle empty target resolutions gracefully")
 	})

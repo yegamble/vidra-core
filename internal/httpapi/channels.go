@@ -9,6 +9,7 @@ import (
 	"athena/internal/domain"
 	"athena/internal/middleware"
 	"athena/internal/usecase"
+	ucchannel "athena/internal/usecase/channel"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -16,12 +17,12 @@ import (
 
 // ChannelHandlers handles channel-related HTTP requests
 type ChannelHandlers struct {
-	channelService *usecase.ChannelService
+	channelService *ucchannel.Service
 	subRepo        usecase.SubscriptionRepository
 }
 
 // NewChannelHandlers creates new channel handlers
-func NewChannelHandlers(channelService *usecase.ChannelService, subRepo usecase.SubscriptionRepository) *ChannelHandlers {
+func NewChannelHandlers(channelService *ucchannel.Service, subRepo usecase.SubscriptionRepository) *ChannelHandlers {
 	return &ChannelHandlers{
 		channelService: channelService,
 		subRepo:        subRepo,

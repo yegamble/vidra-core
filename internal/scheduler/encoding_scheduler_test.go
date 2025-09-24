@@ -6,10 +6,10 @@ import (
 	"testing"
 	"time"
 
-	"athena/internal/usecase"
+	"athena/internal/usecase/encoding"
 )
 
-// fakeEncodingService implements usecase.EncodingService for testing.
+// fakeEncodingService implements encoding.Service for testing.
 type fakeEncodingService struct {
 	calls int32
 }
@@ -24,7 +24,7 @@ func (f *fakeEncodingService) ProcessNext(ctx context.Context) (bool, error) {
 	return false, nil
 }
 
-var _ usecase.EncodingService = (*fakeEncodingService)(nil)
+var _ encoding.Service = (*fakeEncodingService)(nil)
 
 func TestEncodingSchedulerProcessesJobs(t *testing.T) {
 	f := &fakeEncodingService{}

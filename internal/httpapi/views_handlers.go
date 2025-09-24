@@ -9,16 +9,16 @@ import (
 
 	"athena/internal/domain"
 	"athena/internal/middleware"
-	"athena/internal/usecase"
+	ucviews "athena/internal/usecase/views"
 )
 
 // ViewsHandler handles all views tracking and analytics endpoints
 type ViewsHandler struct {
-	viewsService *usecase.ViewsService
+	viewsService *ucviews.Service
 }
 
 // NewViewsHandler creates a new views handler
-func NewViewsHandler(viewsService *usecase.ViewsService) *ViewsHandler {
+func NewViewsHandler(viewsService *ucviews.Service) *ViewsHandler {
 	return &ViewsHandler{
 		viewsService: viewsService,
 	}
@@ -42,7 +42,7 @@ func (h *ViewsHandler) TrackView(w http.ResponseWriter, r *http.Request) {
 	request.VideoID = videoID
 
 	// Validate the request
-	if err := usecase.ValidateTrackingRequest(&request); err != nil {
+	if err := ucviews.ValidateTrackingRequest(&request); err != nil {
 		WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_REQUEST", err.Error()))
 		return
 	}
@@ -411,7 +411,7 @@ func (h *ViewsHandler) GenerateFingerprint(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	fingerprint := usecase.GenerateFingerprint(request.IP, request.UserAgent)
+	fingerprint := ucviews.GenerateFingerprint(request.IP, request.UserAgent)
 
 	response := map[string]interface{}{
 		"fingerprint_hash": fingerprint,

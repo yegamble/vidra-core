@@ -3,7 +3,7 @@ package httpapi
 import (
 	"athena/internal/domain"
 	"athena/internal/middleware"
-	"athena/internal/usecase"
+	uccmt "athena/internal/usecase/comment"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -14,10 +14,10 @@ import (
 )
 
 type CommentHandlers struct {
-	commentService *usecase.CommentService
+	commentService *uccmt.Service
 }
 
-func NewCommentHandlers(commentService *usecase.CommentService) *CommentHandlers {
+func NewCommentHandlers(commentService *uccmt.Service) *CommentHandlers {
 	return &CommentHandlers{
 		commentService: commentService,
 	}

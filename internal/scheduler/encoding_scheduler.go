@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"athena/internal/metrics"
-	"athena/internal/usecase"
+	"athena/internal/usecase/encoding"
 )
 
 // Status captures recent scheduler activity for observability.
@@ -21,7 +21,7 @@ type Status struct {
 // EncodingService.ProcessNext at a fixed interval. It loops within a tick
 // to process multiple jobs up to a burst limit.
 type EncodingScheduler struct {
-	svc      usecase.EncodingService
+	svc      encoding.Service
 	interval time.Duration
 	burst    int
 
@@ -33,7 +33,7 @@ type EncodingScheduler struct {
 // NewEncodingScheduler creates a new scheduler.
 // interval: how often to poll the queue
 // burst: maximum number of jobs to process per tick (>=1)
-func NewEncodingScheduler(svc usecase.EncodingService, interval time.Duration, burst int) *EncodingScheduler {
+func NewEncodingScheduler(svc encoding.Service, interval time.Duration, burst int) *EncodingScheduler {
 	if burst <= 0 {
 		burst = 1
 	}

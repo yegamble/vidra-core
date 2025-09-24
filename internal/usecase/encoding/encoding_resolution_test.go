@@ -1,4 +1,4 @@
-package usecase
+package encoding
 
 import (
 	"context"
@@ -36,7 +36,7 @@ func TestEncodingService_ProcessMultipleResolutions(t *testing.T) {
 		HLSSegmentDuration: 4,
 	}
 
-	service := NewEncodingService(encodingRepo, videoRepo, nil, tempDir, cfg, nil, nil)
+	svc := NewService(encodingRepo, videoRepo, nil, tempDir, cfg, nil, nil)
 
 	for _, testVideo := range testutil.TestVideos {
 		t.Run(testVideo.Name, func(t *testing.T) {
@@ -78,7 +78,7 @@ func TestEncodingService_ProcessMultipleResolutions(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 			defer cancel()
 
-			err = service.(*encodingService).processJob(ctx, job)
+			err = svc.(*service).processJob(ctx, job)
 			require.NoError(t, err, "Encoding failed for %s", testVideo.Name)
 
 			// Verify outputs were created

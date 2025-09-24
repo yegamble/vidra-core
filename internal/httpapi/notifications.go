@@ -6,17 +6,17 @@ import (
 
 	"athena/internal/domain"
 	"athena/internal/middleware"
-	"athena/internal/usecase"
+	ucn "athena/internal/usecase/notification"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 )
 
 type NotificationHandlers struct {
-	notificationService usecase.NotificationService
+	notificationService ucn.Service
 }
 
-func NewNotificationHandlers(notificationService usecase.NotificationService) *NotificationHandlers {
+func NewNotificationHandlers(notificationService ucn.Service) *NotificationHandlers {
 	return &NotificationHandlers{
 		notificationService: notificationService,
 	}

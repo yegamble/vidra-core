@@ -10,7 +10,7 @@ import (
 	"athena/internal/config"
 	"athena/internal/domain"
 	"athena/internal/testutil"
-	"athena/internal/usecase"
+	ucenc "athena/internal/usecase/encoding"
 
 	"github.com/google/uuid"
 )
@@ -46,7 +46,7 @@ func main() {
 	}
 
 	// Create encoding service (pass nil for notification service in test)
-	service := usecase.NewEncodingService(encodingRepo, videoRepo, nil, tempDir, cfg, nil, nil)
+	service := ucenc.NewService(encodingRepo, videoRepo, nil, tempDir, cfg, nil, nil)
 
 	// Get video metadata
 	metadata, err := testutil.GetVideoMetadata(videoPath)

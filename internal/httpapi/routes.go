@@ -18,6 +18,13 @@ import (
 	"athena/internal/repository"
 	"athena/internal/scheduler"
 	"athena/internal/usecase"
+	ucchannel "athena/internal/usecase/channel"
+	uccmt "athena/internal/usecase/comment"
+	ucenc "athena/internal/usecase/encoding"
+	ucn "athena/internal/usecase/notification"
+	ucrt "athena/internal/usecase/rating"
+	ucup "athena/internal/usecase/upload"
+	ucviews "athena/internal/usecase/views"
 )
 
 // RegisterRoutes maintains backward compatibility by creating all dependencies internally
@@ -71,13 +78,13 @@ func RegisterRoutes(r chi.Router, cfg *config.Config) {
 	}
 
 	// Initialize services
-	uploadService := usecase.NewUploadService(uploadRepo, encodingRepo, videoRepo, storageRoot, cfg)
+	uploadService := ucup.NewService(uploadRepo, encodingRepo, videoRepo, storageRoot, cfg)
 	messageService := usecase.NewMessageService(messageRepo, userRepo)
-	viewsService := usecase.NewViewsService(viewsRepo, videoRepo)
-	notificationService := usecase.NewNotificationService(notificationRepo, subRepo, userRepo)
-	channelService := usecase.NewChannelService(channelRepo, userRepo)
-	commentService := usecase.NewCommentService(commentRepo, videoRepo, userRepo, channelRepo)
-	ratingService := usecase.NewRatingService(ratingRepo, videoRepo)
+	viewsService := ucviews.NewService(viewsRepo, videoRepo)
+	notificationService := ucn.NewService(notificationRepo, subRepo, userRepo)
+	channelService := ucchannel.NewService(channelRepo, userRepo)
+	commentService := uccmt.NewService(commentRepo, videoRepo, userRepo, channelRepo)
+	ratingService := ucrt.NewService(ratingRepo, videoRepo)
 	playlistService := usecase.NewPlaylistService(playlistRepo, videoRepo)
 	captionService := usecase.NewCaptionService(captionRepo, videoRepo, cfg)
 
@@ -98,7 +105,7 @@ func RegisterRoutes(r chi.Router, cfg *config.Config) {
 	// Prepare a lightweight encoding scheduler; lifecycle should be owned by bootstrap layer.
 	var encSched *scheduler.EncodingScheduler
 	if cfg.EnableEncodingScheduler {
-		encSvc := usecase.NewEncodingService(encodingRepo, videoRepo, notificationService, storageRoot, cfg, atprotoSvc, federationRepo)
+		encSvc := ucenc.NewService(encodingRepo, videoRepo, notificationService, storageRoot, cfg, atprotoSvc, federationRepo)
 		interval := time.Duration(cfg.EncodingSchedulerIntervalSeconds) * time.Second
 		burst := cfg.EncodingSchedulerBurst
 		encSched = scheduler.NewEncodingScheduler(encSvc, interval, burst)

@@ -3,7 +3,7 @@ package httpapi
 import (
 	"athena/internal/domain"
 	"athena/internal/middleware"
-	"athena/internal/usecase"
+	ucrt "athena/internal/usecase/rating"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -13,10 +13,10 @@ import (
 )
 
 type RatingHandlers struct {
-	ratingService *usecase.RatingService
+	ratingService *ucrt.Service
 }
 
-func NewRatingHandlers(ratingService *usecase.RatingService) *RatingHandlers {
+func NewRatingHandlers(ratingService *ucrt.Service) *RatingHandlers {
 	return &RatingHandlers{
 		ratingService: ratingService,
 	}
