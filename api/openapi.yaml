@@ -298,7 +298,7 @@ paths:
               properties:
                 grant_type:
                   type: string
-                  enum: [password, refresh_token]
+                  enum: [password, refresh_token, authorization_code]
                 username:
                   type: string
                   description: Username or email (for password grant)
@@ -308,6 +308,16 @@ paths:
                 refresh_token:
                   type: string
                   description: Refresh token (for refresh_token grant)
+                code:
+                  type: string
+                  description: Authorization code (for authorization_code grant)
+                redirect_uri:
+                  type: string
+                  format: uri
+                  description: Redirect URI (for authorization_code grant, must match the one used in /oauth/authorize)
+                code_verifier:
+                  type: string
+                  description: PKCE code verifier (for authorization_code grant with PKCE)
                 client_id:
                   type: string
                   description: Optional if using HTTP Basic auth
@@ -349,6 +359,290 @@ paths:
                     type: string
         '500':
           description: Server error
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  error_description:
+                    type: string
+
+  /oauth/authorize:
+    get:
+      tags:
+        - OAuth
+      summary: OAuth2 authorization endpoint (display form)
+      description: Display authorization form for user to approve or deny client access
+      operationId: oauthAuthorizeGet
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: client_id
+          in: query
+          required: true
+          schema:
+            type: string
+          description: OAuth client identifier
+        - name: redirect_uri
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uri
+          description: URI to redirect back to after authorization
+        - name: response_type
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [code]
+          description: Must be 'code' for authorization code flow
+        - name: scope
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Space-separated list of requested scopes
+          example: "basic profile email"
+        - name: state
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Opaque value used to maintain state between request and callback
+        - name: code_challenge
+          in: query
+          required: false
+          schema:
+            type: string
+          description: PKCE code challenge (base64url-encoded)
+        - name: code_challenge_method
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [plain, S256]
+          description: PKCE code challenge method
+      responses:
+        '200':
+          description: Authorization form displayed
+          content:
+            text/html:
+              schema:
+                type: string
+        '302':
+          description: Redirect to login if user not authenticated
+        '400':
+          description: Invalid request parameters
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  error_description:
+                    type: string
+
+    post:
+      tags:
+        - OAuth
+      summary: OAuth2 authorization endpoint (grant access)
+      description: Process user approval/denial and issue authorization code
+      operationId: oauthAuthorizePost
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required:
+                - client_id
+                - redirect_uri
+                - response_type
+                - approve
+              properties:
+                client_id:
+                  type: string
+                redirect_uri:
+                  type: string
+                  format: uri
+                response_type:
+                  type: string
+                  enum: [code]
+                scope:
+                  type: string
+                state:
+                  type: string
+                code_challenge:
+                  type: string
+                code_challenge_method:
+                  type: string
+                  enum: [plain, S256]
+                approve:
+                  type: string
+                  enum: ["true", "false"]
+                  description: User approval decision
+      responses:
+        '302':
+          description: Redirect to client redirect_uri with code or error
+          headers:
+            Location:
+              schema:
+                type: string
+                example: "https://client.example.com/callback?code=AUTH_CODE&state=STATE"
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  error_description:
+                    type: string
+
+  /oauth/revoke:
+    post:
+      tags:
+        - OAuth
+      summary: OAuth2 token revocation
+      description: Revoke an access or refresh token (RFC 7009)
+      operationId: oauthRevoke
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required:
+                - token
+              properties:
+                token:
+                  type: string
+                  description: The token to revoke (access or refresh)
+                token_type_hint:
+                  type: string
+                  enum: [access_token, refresh_token]
+                  description: Hint about the type of token being revoked
+                client_id:
+                  type: string
+                  description: Client ID (if not using HTTP Basic auth)
+                client_secret:
+                  type: string
+                  description: Client secret (if not using HTTP Basic auth)
+      responses:
+        '200':
+          description: Token revoked successfully (or already invalid)
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  error_description:
+                    type: string
+        '401':
+          description: Invalid client credentials
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  error_description:
+                    type: string
+
+  /oauth/introspect:
+    post:
+      tags:
+        - OAuth
+      summary: OAuth2 token introspection
+      description: Query token metadata and validity (RFC 7662)
+      operationId: oauthIntrospect
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required:
+                - token
+              properties:
+                token:
+                  type: string
+                  description: The token to introspect
+                token_type_hint:
+                  type: string
+                  enum: [access_token, refresh_token]
+                  description: Hint about the type of token
+                client_id:
+                  type: string
+                  description: Client ID (if not using HTTP Basic auth)
+                client_secret:
+                  type: string
+                  description: Client secret (if not using HTTP Basic auth)
+      responses:
+        '200':
+          description: Token introspection response
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - active
+                properties:
+                  active:
+                    type: boolean
+                    description: Whether the token is currently active
+                  scope:
+                    type: string
+                    description: Space-separated list of scopes
+                  client_id:
+                    type: string
+                    description: Client identifier
+                  username:
+                    type: string
+                    description: User identifier
+                  token_type:
+                    type: string
+                    example: "Bearer"
+                  exp:
+                    type: integer
+                    format: int64
+                    description: Expiration time (Unix timestamp)
+                  iat:
+                    type: integer
+                    format: int64
+                    description: Issued at time (Unix timestamp)
+              examples:
+                active_token:
+                  summary: Active token
+                  value:
+                    active: true
+                    scope: "basic profile email"
+                    client_id: "my-client"
+                    username: "user123"
+                    token_type: "Bearer"
+                    exp: 1704106800
+                    iat: 1704105900
+                inactive_token:
+                  summary: Inactive or invalid token
+                  value:
+                    active: false
+        '401':
+          description: Invalid client credentials
           content:
             application/json:
               schema:
@@ -3009,6 +3303,84 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/WrappedTrendingResponse'
+
+  /api/v1/views/fingerprint:
+    post:
+      tags:
+        - Videos
+        - Views
+      summary: Generate view deduplication fingerprint
+      description: Generate a privacy-compliant fingerprint hash for view deduplication based on IP and user agent
+      operationId: generateViewFingerprint
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - ip
+                - user_agent
+              properties:
+                ip:
+                  type: string
+                  description: Client IP address
+                  example: "192.168.1.1"
+                user_agent:
+                  type: string
+                  description: Client user agent string
+                  example: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+            examples:
+              desktop:
+                summary: Desktop browser
+                value:
+                  ip: "203.0.113.42"
+                  user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+              mobile:
+                summary: Mobile browser
+                value:
+                  ip: "198.51.100.15"
+                  user_agent: "Mozilla/5.0 (iPhone; CPU iPhone OS 14_6 like Mac OS X)"
+      responses:
+        '200':
+          description: Fingerprint generated successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - fingerprint_hash
+                  - created_at
+                properties:
+                  fingerprint_hash:
+                    type: string
+                    description: SHA-256 hash of IP + user agent for deduplication
+                    example: "a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6"
+                  created_at:
+                    type: string
+                    format: date-time
+                    example: "2024-01-15T14:30:00Z"
+              examples:
+                success:
+                  summary: Successful fingerprint generation
+                  value:
+                    fingerprint_hash: "7d9f8b6e5c4a3f2e1d0c9b8a7f6e5d4c3b2a1f0e9d8c7b6a5f4e3d2c1b0a9f8"
+                    created_at: "2024-01-15T14:30:00Z"
+        '400':
+          description: Invalid request - missing required fields
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                missing_fields:
+                  summary: Missing IP or user_agent
+                  value:
+                    error:
+                      code: "MISSING_FIELDS"
+                      message: "IP and user_agent are required"
+                      details: {}
 
   /api/v1/notifications:
     get:

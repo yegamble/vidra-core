@@ -463,6 +463,25 @@ paths:
         '401':
           description: Unauthorized
 
+  /api/v1/users/me/watch-later:
+    get:
+      summary: Get my watch later playlist
+      description: Get the authenticated user's watch later playlist (alias for convenience)
+      tags:
+        - Playlists
+        - Users
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Watch later playlist retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlaylistWithItems'
+        '401':
+          description: Unauthorized
+
 components:
   schemas:
     VideoRating:
