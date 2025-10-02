@@ -45,7 +45,7 @@ make lint           # Run linters
 
 ## Documentation
 
-- [Architecture Overview](docs/architecture/README.md) - System design and package structure
+- [Architecture Overview](docs/architecture.md) - Clean architecture layers, data flow, and design patterns
 - [API Documentation](docs/api/README.md) - OpenAPI spec and endpoint reference
 - [Deployment Guide](docs/deployment/README.md) - Production deployment instructions
 - [Development Guide](docs/DEVELOPMENT.md) - Contributing and local setup
