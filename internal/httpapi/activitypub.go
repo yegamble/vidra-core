@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -83,7 +84,7 @@ func (h *ActivityPubHandlers) WebFinger(w http.ResponseWriter, r *http.Request) 
 	}
 
 	w.Header().Set("Content-Type", "application/jrd+json; charset=utf-8")
-	json.NewEncoder(w).Encode(response)
+	_ = json.NewEncoder(w).Encode(response)
 }
 
 // NodeInfo handles /.well-known/nodeinfo requests
@@ -98,7 +99,7 @@ func (h *ActivityPubHandlers) NodeInfo(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	json.NewEncoder(w).Encode(response)
+	_ = json.NewEncoder(w).Encode(response)
 }
 
 // NodeInfo20 handles /nodeinfo/2.0 requests
@@ -126,7 +127,7 @@ func (h *ActivityPubHandlers) NodeInfo20(w http.ResponseWriter, r *http.Request)
 	}
 
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	json.NewEncoder(w).Encode(nodeInfo)
+	_ = json.NewEncoder(w).Encode(nodeInfo)
 }
 
 // GetActor handles GET /users/:username (ActivityPub actor)
@@ -144,34 +145,37 @@ func (h *ActivityPubHandlers) GetActor(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/activity+json; charset=utf-8")
-	json.NewEncoder(w).Encode(actor)
+	_ = json.NewEncoder(w).Encode(actor)
 }
 
-// GetOutbox handles GET /users/:username/outbox
-func (h *ActivityPubHandlers) GetOutbox(w http.ResponseWriter, r *http.Request) {
+// getOrderedCollectionHandler is a helper to handle ordered collection endpoints (outbox, followers, following)
+func (h *ActivityPubHandlers) getOrderedCollectionHandler(
+	w http.ResponseWriter, r *http.Request,
+	collectionType string,
+	fetchPage func(ctx context.Context, username string, page, limit int) (*domain.OrderedCollectionPage, error),
+) {
 	username := chi.URLParam(r, "username")
 	if username == "" {
 		http.Error(w, "missing username", http.StatusBadRequest)
 		return
 	}
 
-	// Check if paginated request
 	pageStr := r.URL.Query().Get("page")
 	if pageStr == "" {
 		// Return collection overview
 		actorURL := fmt.Sprintf("%s/users/%s", h.cfg.PublicBaseURL, username)
-		outboxURL := actorURL + "/outbox"
+		collectionURL := actorURL + "/" + collectionType
 
 		collection := domain.OrderedCollection{
 			Context:    domain.ActivityStreamsContext,
 			Type:       domain.ObjectTypeOrderedCollection,
-			ID:         outboxURL,
+			ID:         collectionURL,
 			TotalItems: 0, // TODO: Get actual count
-			First:      outboxURL + "?page=0",
+			First:      collectionURL + "?page=0",
 		}
 
 		w.Header().Set("Content-Type", "application/activity+json; charset=utf-8")
-		json.NewEncoder(w).Encode(collection)
+		_ = json.NewEncoder(w).Encode(collection)
 		return
 	}
 
@@ -179,14 +183,19 @@ func (h *ActivityPubHandlers) GetOutbox(w http.ResponseWriter, r *http.Request) 
 	page, _ := strconv.Atoi(pageStr)
 	limit := h.cfg.ActivityPubMaxActivitiesPerPage
 
-	collectionPage, err := h.service.GetOutbox(r.Context(), username, page, limit)
+	collectionPage, err := fetchPage(r.Context(), username, page, limit)
 	if err != nil {
-		http.Error(w, "failed to get outbox", http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("failed to get %s", collectionType), http.StatusInternalServerError)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/activity+json; charset=utf-8")
-	json.NewEncoder(w).Encode(collectionPage)
+	_ = json.NewEncoder(w).Encode(collectionPage)
+}
+
+// GetOutbox handles GET /users/:username/outbox
+func (h *ActivityPubHandlers) GetOutbox(w http.ResponseWriter, r *http.Request) {
+	h.getOrderedCollectionHandler(w, r, "outbox", h.service.GetOutbox)
 }
 
 // GetInbox handles GET /users/:username/inbox
@@ -209,7 +218,7 @@ func (h *ActivityPubHandlers) PostInbox(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "failed to read body", http.StatusBadRequest)
 		return
 	}
-	defer r.Body.Close()
+	defer func() { _ = r.Body.Close() }()
 
 	// Parse activity
 	var activity map[string]interface{}
@@ -235,7 +244,7 @@ func (h *ActivityPubHandlers) PostSharedInbox(w http.ResponseWriter, r *http.Req
 		http.Error(w, "failed to read body", http.StatusBadRequest)
 		return
 	}
-	defer r.Body.Close()
+	defer func() { _ = r.Body.Close() }()
 
 	// Parse activity
 	var activity map[string]interface{}
@@ -255,86 +264,12 @@ func (h *ActivityPubHandlers) PostSharedInbox(w http.ResponseWriter, r *http.Req
 
 // GetFollowers handles GET /users/:username/followers
 func (h *ActivityPubHandlers) GetFollowers(w http.ResponseWriter, r *http.Request) {
-	username := chi.URLParam(r, "username")
-	if username == "" {
-		http.Error(w, "missing username", http.StatusBadRequest)
-		return
-	}
-
-	// Check if paginated request
-	pageStr := r.URL.Query().Get("page")
-	if pageStr == "" {
-		// Return collection overview
-		actorURL := fmt.Sprintf("%s/users/%s", h.cfg.PublicBaseURL, username)
-		followersURL := actorURL + "/followers"
-
-		collection := domain.OrderedCollection{
-			Context:    domain.ActivityStreamsContext,
-			Type:       domain.ObjectTypeOrderedCollection,
-			ID:         followersURL,
-			TotalItems: 0, // TODO: Get actual count
-			First:      followersURL + "?page=0",
-		}
-
-		w.Header().Set("Content-Type", "application/activity+json; charset=utf-8")
-		json.NewEncoder(w).Encode(collection)
-		return
-	}
-
-	// Return paginated collection
-	page, _ := strconv.Atoi(pageStr)
-	limit := h.cfg.ActivityPubMaxActivitiesPerPage
-
-	collectionPage, err := h.service.GetFollowers(r.Context(), username, page, limit)
-	if err != nil {
-		http.Error(w, "failed to get followers", http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/activity+json; charset=utf-8")
-	json.NewEncoder(w).Encode(collectionPage)
+	h.getOrderedCollectionHandler(w, r, "followers", h.service.GetFollowers)
 }
 
 // GetFollowing handles GET /users/:username/following
 func (h *ActivityPubHandlers) GetFollowing(w http.ResponseWriter, r *http.Request) {
-	username := chi.URLParam(r, "username")
-	if username == "" {
-		http.Error(w, "missing username", http.StatusBadRequest)
-		return
-	}
-
-	// Check if paginated request
-	pageStr := r.URL.Query().Get("page")
-	if pageStr == "" {
-		// Return collection overview
-		actorURL := fmt.Sprintf("%s/users/%s", h.cfg.PublicBaseURL, username)
-		followingURL := actorURL + "/following"
-
-		collection := domain.OrderedCollection{
-			Context:    domain.ActivityStreamsContext,
-			Type:       domain.ObjectTypeOrderedCollection,
-			ID:         followingURL,
-			TotalItems: 0, // TODO: Get actual count
-			First:      followingURL + "?page=0",
-		}
-
-		w.Header().Set("Content-Type", "application/activity+json; charset=utf-8")
-		json.NewEncoder(w).Encode(collection)
-		return
-	}
-
-	// Return paginated collection
-	page, _ := strconv.Atoi(pageStr)
-	limit := h.cfg.ActivityPubMaxActivitiesPerPage
-
-	collectionPage, err := h.service.GetFollowing(r.Context(), username, page, limit)
-	if err != nil {
-		http.Error(w, "failed to get following", http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/activity+json; charset=utf-8")
-	json.NewEncoder(w).Encode(collectionPage)
+	h.getOrderedCollectionHandler(w, r, "following", h.service.GetFollowing)
 }
 
 // HostMeta handles /.well-known/host-meta requests
@@ -345,5 +280,5 @@ func (h *ActivityPubHandlers) HostMeta(w http.ResponseWriter, r *http.Request) {
 </XRD>`, h.cfg.PublicBaseURL)
 
 	w.Header().Set("Content-Type", "application/xrd+xml; charset=utf-8")
-	w.Write([]byte(xml))
+	_, _ = w.Write([]byte(xml))
 }

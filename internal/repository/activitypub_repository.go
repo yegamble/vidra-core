@@ -3,7 +3,6 @@ package repository
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"fmt"
 	"time"
 
@@ -437,13 +436,4 @@ func (r *ActivityPubRepository) GetVideoShareCount(ctx context.Context, videoID 
 		return 0, fmt.Errorf("failed to get video share count: %w", err)
 	}
 	return count, nil
-}
-
-// Helper method to serialize activity to JSON
-func serializeActivity(activity interface{}) (json.RawMessage, error) {
-	data, err := json.Marshal(activity)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal activity: %w", err)
-	}
-	return data, nil
 }

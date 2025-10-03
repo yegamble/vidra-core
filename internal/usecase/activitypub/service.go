@@ -117,7 +117,7 @@ func (s *Service) FetchRemoteActor(ctx context.Context, actorURI string) (*domai
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch actor: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
@@ -573,7 +573,7 @@ func (s *Service) DeliverActivity(ctx context.Context, actorID, inboxURL string,
 	if err != nil {
 		return fmt.Errorf("failed to deliver activity: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(resp.Body)
@@ -684,6 +684,36 @@ func (s *Service) GetOutbox(ctx context.Context, username string, page int, limi
 	return collectionPage, nil
 }
 
+// buildFollowCollectionPage is a helper to build followers/following collection pages
+func (s *Service) buildFollowCollectionPage(
+	username, collectionType string,
+	page, limit, total int,
+	items []interface{},
+) *domain.OrderedCollectionPage {
+	actorID := s.buildActorID(username)
+	collectionID := actorID + "/" + collectionType
+	offset := page * limit
+
+	collectionPage := &domain.OrderedCollectionPage{
+		Context:      domain.ActivityStreamsContext,
+		Type:         domain.ObjectTypeOrderedCollectionPage,
+		ID:           fmt.Sprintf("%s?page=%d", collectionID, page),
+		TotalItems:   total,
+		PartOf:       collectionID,
+		OrderedItems: items,
+	}
+
+	if page > 0 {
+		collectionPage.Prev = fmt.Sprintf("%s?page=%d", collectionID, page-1)
+	}
+
+	if offset+limit < total {
+		collectionPage.Next = fmt.Sprintf("%s?page=%d", collectionID, page+1)
+	}
+
+	return collectionPage
+}
+
 // GetFollowers retrieves the followers collection for an actor
 func (s *Service) GetFollowers(ctx context.Context, username string, page int, limit int) (*domain.OrderedCollectionPage, error) {
 	user, err := s.userRepo.GetByUsername(ctx, username)
@@ -697,33 +727,13 @@ func (s *Service) GetFollowers(ctx context.Context, username string, page int, l
 		return nil, fmt.Errorf("failed to get followers: %w", err)
 	}
 
-	actorID := s.buildActorID(username)
-	followersID := actorID + "/followers"
-
 	// Build ordered items (just URIs)
 	items := make([]interface{}, len(followers))
 	for i, follower := range followers {
 		items[i] = follower.FollowerID
 	}
 
-	collectionPage := &domain.OrderedCollectionPage{
-		Context:      domain.ActivityStreamsContext,
-		Type:         domain.ObjectTypeOrderedCollectionPage,
-		ID:           fmt.Sprintf("%s?page=%d", followersID, page),
-		TotalItems:   total,
-		PartOf:       followersID,
-		OrderedItems: items,
-	}
-
-	if page > 0 {
-		collectionPage.Prev = fmt.Sprintf("%s?page=%d", followersID, page-1)
-	}
-
-	if offset+limit < total {
-		collectionPage.Next = fmt.Sprintf("%s?page=%d", followersID, page+1)
-	}
-
-	return collectionPage, nil
+	return s.buildFollowCollectionPage(username, "followers", page, limit, total, items), nil
 }
 
 // GetFollowing retrieves the following collection for an actor
@@ -739,31 +749,11 @@ func (s *Service) GetFollowing(ctx context.Context, username string, page int, l
 		return nil, fmt.Errorf("failed to get following: %w", err)
 	}
 
-	actorID := s.buildActorID(username)
-	followingID := actorID + "/following"
-
 	// Build ordered items (just URIs)
 	items := make([]interface{}, len(following))
 	for i, follow := range following {
 		items[i] = follow.ActorID
 	}
 
-	collectionPage := &domain.OrderedCollectionPage{
-		Context:      domain.ActivityStreamsContext,
-		Type:         domain.ObjectTypeOrderedCollectionPage,
-		ID:           fmt.Sprintf("%s?page=%d", followingID, page),
-		TotalItems:   total,
-		PartOf:       followingID,
-		OrderedItems: items,
-	}
-
-	if page > 0 {
-		collectionPage.Prev = fmt.Sprintf("%s?page=%d", followingID, page-1)
-	}
-
-	if offset+limit < total {
-		collectionPage.Next = fmt.Sprintf("%s?page=%d", followingID, page+1)
-	}
-
-	return collectionPage, nil
+	return s.buildFollowCollectionPage(username, "following", page, limit, total, items), nil
 }
