@@ -47,6 +47,30 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, deps *Hand
 	r.Get("/health", server.HealthCheck)
 	r.Get("/ready", server.ReadinessCheck)
 
+	// ActivityPub well-known endpoints (must be at root level, not under /api/v1)
+	if cfg.EnableActivityPub && deps.ActivityPubService != nil {
+		apHandlers := NewActivityPubHandlers(deps.ActivityPubService, cfg)
+
+		// WebFinger and NodeInfo discovery
+		r.Get("/.well-known/webfinger", apHandlers.WebFinger)
+		r.Get("/.well-known/nodeinfo", apHandlers.NodeInfo)
+		r.Get("/.well-known/host-meta", apHandlers.HostMeta)
+		r.Get("/nodeinfo/2.0", apHandlers.NodeInfo20)
+
+		// Shared inbox
+		r.Post("/inbox", apHandlers.PostSharedInbox)
+
+		// User/Actor endpoints
+		r.Route("/users/{username}", func(r chi.Router) {
+			r.Get("/", apHandlers.GetActor)
+			r.Get("/outbox", apHandlers.GetOutbox)
+			r.Get("/inbox", apHandlers.GetInbox)
+			r.Post("/inbox", apHandlers.PostInbox)
+			r.Get("/followers", apHandlers.GetFollowers)
+			r.Get("/following", apHandlers.GetFollowing)
+		})
+	}
+
 	// Additional API routes for videos and users (if they exist)
 	r.Route("/api/v1", func(r chi.Router) {
 		// Initialize views handler early for use in routes
@@ -219,7 +243,7 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, deps *Hand
 			r.Delete("/{id}", notificationHandlers.DeleteNotification)
 		})
 
-		// Federation endpoints
+		// Federation endpoints (ATProto)
 		r.Route("/federation", func(r chi.Router) {
 			fedHandlers := NewFederationHandlers(deps.FederationRepo)
 			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/timeline", fedHandlers.GetTimeline)

@@ -8,6 +8,7 @@ import (
 	"athena/internal/repository"
 	"athena/internal/scheduler"
 	"athena/internal/usecase"
+	ucap "athena/internal/usecase/activitypub"
 	ucchannel "athena/internal/usecase/channel"
 	uccmt "athena/internal/usecase/comment"
 	"athena/internal/usecase/encoding"
@@ -37,6 +38,7 @@ type HandlerDependencies struct {
 	ModerationRepo   *repository.ModerationRepository
 	FederationRepo   *repository.FederationRepository
 	HardeningRepo    *repository.FederationHardeningRepository
+	ActivityPubRepo  *repository.ActivityPubRepository
 	SessionRepo      usecase.AuthRepository
 
 	// Services
@@ -53,6 +55,7 @@ type HandlerDependencies struct {
 	FederationService   usecase.FederationService
 	HardeningService    *usecase.FederationHardeningService
 	EncodingService     encoding.Service
+	ActivityPubService  *ucap.Service
 
 	// Schedulers
 	EncodingScheduler *scheduler.EncodingScheduler

@@ -149,8 +149,165 @@ Also reject archives that exceed nesting depth, total file count, or uncompresse
 ### E2EE Notes
 
 - In E2EE mode, messages and attachments are encrypted client-side; the server stores ciphertext only. Scanning and previews are disabled by design.
-- Display an “Unscanned (E2EE)” badge and require explicit user action to open attachments; integrity verified via client-side MAC.
+- Display an "Unscanned (E2EE)" badge and require explicit user action to open attachments; integrity verified via client-side MAC.
 - Keys are per-conversation with periodic rotation; passphrase/6‑digit code gates local key unlock; per-message nonces prevent replay.
+
+---
+
+## ActivityPub Federation
+
+Full ActivityPub implementation for federated video sharing, compatible with Mastodon, PeerTube, and other ActivityPub platforms.
+
+### Architecture
+
+```
+/internal/activitypub           # HTTP signature verification, key management
+/internal/domain/activitypub.go # ActivityPub domain models (Actor, Activity, VideoObject)
+/internal/repository/activitypub_repository.go # Data persistence layer
+/internal/usecase/activitypub/service.go       # Federation business logic
+/internal/httpapi/activitypub.go               # HTTP handlers for AP endpoints
+/internal/worker/activitypub_delivery.go       # Background delivery worker
+```
+
+### Key Features
+
+- **WebFinger Discovery**: RFC 7033 compliant actor discovery via `/.well-known/webfinger`
+- **NodeInfo**: Instance metadata and statistics via `/.well-known/nodeinfo` and `/nodeinfo/2.0`
+- **Actor Endpoints**: Per-user ActivityPub actors at `/users/{username}` with inbox, outbox, followers, following
+- **HTTP Signatures**: RSA-SHA256 signed requests using the draft HTTP Signatures spec
+- **Activity Types Supported**:
+  - Follow/Accept/Reject (follower management)
+  - Create/Update/Delete (content lifecycle)
+  - Like/Undo (reactions)
+  - Announce/Undo (shares/boosts)
+  - View (analytics)
+- **Shared Inbox**: Optimized delivery via `/inbox` for multiple users on same instance
+- **Delivery Worker**: Background job processor with exponential backoff and retry logic
+
+### Database Schema
+
+Tables added via migration `041_add_activitypub_support.sql`:
+
+- `ap_actor_keys`: RSA key pairs for local actors (2048-bit, auto-generated)
+- `ap_remote_actors`: Cached remote actor profiles (display name, avatar, public key, endpoints)
+- `ap_activities`: Activity storage (local and remote, full JSON + indexed fields)
+- `ap_followers`: Follower relationships with state machine (pending/accepted/rejected)
+- `ap_delivery_queue`: Outbound activity delivery queue with retry tracking
+- `ap_received_activities`: Deduplication table for incoming activities
+- `ap_video_reactions`: Federated likes/dislikes on videos
+- `ap_video_shares`: Federated announces/boosts of videos
+
+### Configuration
+
+Enable via environment variables:
+
+```bash
+ENABLE_ACTIVITYPUB=true
+ACTIVITYPUB_DOMAIN=video.example.com
+ACTIVITYPUB_DELIVERY_WORKERS=5
+ACTIVITYPUB_DELIVERY_RETRIES=10
+ACTIVITYPUB_DELIVERY_RETRY_DELAY=60  # seconds
+ACTIVITYPUB_ACCEPT_FOLLOW_AUTOMATIC=true
+ACTIVITYPUB_INSTANCE_DESCRIPTION="A PeerTube-compatible video platform"
+ACTIVITYPUB_INSTANCE_CONTACT_EMAIL=admin@example.com
+ACTIVITYPUB_MAX_ACTIVITIES_PER_PAGE=20
+PUBLIC_BASE_URL=https://video.example.com
+```
+
+### API Endpoints
+
+**Discovery:**
+- `GET /.well-known/webfinger?resource={uri}` - WebFinger actor lookup
+- `GET /.well-known/nodeinfo` - NodeInfo discovery document
+- `GET /.well-known/host-meta` - XRD host metadata
+- `GET /nodeinfo/2.0` - NodeInfo 2.0 instance metadata
+
+**Actor:**
+- `GET /users/{username}` - ActivityPub actor profile (requires Accept: application/activity+json)
+- `GET /users/{username}/outbox` - Actor's public activities (paginated)
+- `GET /users/{username}/followers` - Follower collection (paginated)
+- `GET /users/{username}/following` - Following collection (paginated)
+
+**Inbox:**
+- `POST /inbox` - Shared inbox for all users (optimized)
+- `POST /users/{username}/inbox` - Per-user inbox
+
+### Federation Flow
+
+**Outbound (Publishing):**
+1. Local activity (e.g., new video) triggers activity creation in service layer
+2. Activity stored in `ap_activities` table with `local=true`
+3. Followers fetched from `ap_followers` where `state='accepted'`
+4. Delivery jobs enqueued to `ap_delivery_queue` for each follower's inbox
+5. Background worker processes queue with exponential backoff (60s → 32m → 24h)
+6. Activities signed with actor's private key using HTTP Signatures
+
+**Inbound (Receiving):**
+1. Activity arrives at inbox endpoint
+2. HTTP Signature verified using sender's public key (fetched and cached)
+3. Activity checked against `ap_received_activities` for deduplication
+4. Activity routed to appropriate handler based on type
+5. State changes (follows, likes, shares) persisted to database
+6. Accept/Reject responses sent for follow requests (if configured)
+
+### Security & Verification
+
+- **HTTP Signatures**: All outbound activities signed; all inbound activities verified
+- **Public Key Caching**: Remote actor public keys cached in `ap_remote_actors` with 24h TTL
+- **Deduplication**: Activity URIs tracked in `ap_received_activities` to prevent replay
+- **Actor Validation**: Remote actors fetched on first encounter and validated against JSON-LD schemas
+- **Rate Limiting**: Standard rate limits apply to inbox endpoints
+- **Domain Blocking**: Admin can block problematic instances (future enhancement)
+
+### Interoperability
+
+Compatible with:
+- **Mastodon**: Full bidirectional federation (follow, like, boost)
+- **PeerTube**: Video federation, comments, follows
+- **Pleroma**: Activity interchange
+- **Pixelfed**: Media federation
+- **Any ActivityPub platform** following W3C recommendation
+
+### Testing
+
+Comprehensive test coverage in:
+- `internal/activitypub/httpsig_test.go`: HTTP signature generation/verification
+- `internal/httpapi/activitypub_test.go`: Handler unit tests (WebFinger, NodeInfo, etc.)
+- `internal/repository/activitypub_repository_test.go`: Database operations
+
+Run tests:
+```bash
+go test ./internal/activitypub/...
+go test ./internal/httpapi -run TestActivityPub
+go test ./internal/repository -run TestActivityPub
+```
+
+### Performance Considerations
+
+- **Shared Inbox**: Use `/inbox` instead of per-user inboxes when available (reduces N×M to N+M deliveries)
+- **Delivery Workers**: Scale `ACTIVITYPUB_DELIVERY_WORKERS` based on federation volume
+- **Actor Caching**: Remote actors cached for 24h to reduce lookup overhead
+- **Batch Delivery**: Future enhancement to batch multiple activities in single request
+- **Indexes**: All foreign keys and query patterns indexed for fast lookups
+
+### Debugging
+
+Enable detailed logging:
+```bash
+LOG_LEVEL=debug
+```
+
+Monitor delivery queue:
+```sql
+SELECT status, COUNT(*) FROM ap_delivery_queue GROUP BY status;
+SELECT * FROM ap_delivery_queue WHERE status = 'failed' ORDER BY updated_at DESC LIMIT 10;
+```
+
+Check federation health:
+```sql
+SELECT domain, COUNT(*) FROM ap_remote_actors GROUP BY domain ORDER BY COUNT(*) DESC;
+SELECT type, COUNT(*) FROM ap_activities WHERE local = false GROUP BY type;
+```
 
 ---
 

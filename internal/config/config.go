@@ -156,6 +156,17 @@ type Config struct {
 	// ATProto Firehose (polling) — near real-time ingestion using author feeds
 	EnableATProtoFirehose              bool
 	ATProtoFirehosePollIntervalSeconds int
+
+	// ActivityPub Configuration
+	EnableActivityPub                bool
+	ActivityPubDomain                string
+	ActivityPubDeliveryWorkers       int
+	ActivityPubDeliveryRetries       int
+	ActivityPubDeliveryRetryDelay    int // seconds
+	ActivityPubAcceptFollowAutomatic bool
+	ActivityPubInstanceDescription   string
+	ActivityPubInstanceContactEmail  string
+	ActivityPubMaxActivitiesPerPage  int
 }
 
 func Load() (*Config, error) {
@@ -321,6 +332,17 @@ func Load() (*Config, error) {
 	// ATProto Firehose (polling)
 	cfg.EnableATProtoFirehose = getBoolEnv("ENABLE_ATPROTO_FIREHOSE", false)
 	cfg.ATProtoFirehosePollIntervalSeconds = getIntEnv("ATPROTO_FIREHOSE_POLL_INTERVAL_SECONDS", 5)
+
+	// ActivityPub Configuration
+	cfg.EnableActivityPub = getBoolEnv("ENABLE_ACTIVITYPUB", false)
+	cfg.ActivityPubDomain = getEnvOrDefault("ACTIVITYPUB_DOMAIN", "")
+	cfg.ActivityPubDeliveryWorkers = getIntEnv("ACTIVITYPUB_DELIVERY_WORKERS", 5)
+	cfg.ActivityPubDeliveryRetries = getIntEnv("ACTIVITYPUB_DELIVERY_RETRIES", 10)
+	cfg.ActivityPubDeliveryRetryDelay = getIntEnv("ACTIVITYPUB_DELIVERY_RETRY_DELAY", 60)
+	cfg.ActivityPubAcceptFollowAutomatic = getBoolEnv("ACTIVITYPUB_ACCEPT_FOLLOW_AUTOMATIC", true)
+	cfg.ActivityPubInstanceDescription = getEnvOrDefault("ACTIVITYPUB_INSTANCE_DESCRIPTION", "A PeerTube-compatible video platform")
+	cfg.ActivityPubInstanceContactEmail = getEnvOrDefault("ACTIVITYPUB_INSTANCE_CONTACT_EMAIL", "")
+	cfg.ActivityPubMaxActivitiesPerPage = getIntEnv("ACTIVITYPUB_MAX_ACTIVITIES_PER_PAGE", 20)
 
 	return cfg, nil
 }

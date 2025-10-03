@@ -1,0 +1,313 @@
+package httpapi
+
+import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"athena/internal/config"
+	"athena/internal/domain"
+)
+
+// TestWebFingerWithAcctResource tests WebFinger with acct: resource
+func TestWebFingerWithAcctResource(t *testing.T) {
+	// This is a unit test that only tests the handler logic
+	// It doesn't require a full service setup
+
+	cfg := &config.Config{
+		PublicBaseURL:     "https://video.example",
+		ActivityPubDomain: "video.example",
+	}
+
+	handlers := &ActivityPubHandlers{
+		service: nil, // We're not testing the service layer here
+		cfg:     cfg,
+	}
+
+	req := httptest.NewRequest("GET", "/.well-known/webfinger?resource=acct:alice@video.example", nil)
+	w := httptest.NewRecorder()
+
+	handlers.WebFinger(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "application/jrd+json; charset=utf-8", w.Header().Get("Content-Type"))
+
+	var response domain.WebFingerResponse
+	err := json.Unmarshal(w.Body.Bytes(), &response)
+	require.NoError(t, err)
+
+	assert.Equal(t, "acct:alice@video.example", response.Subject)
+	assert.NotEmpty(t, response.Links)
+
+	// Check for self link
+	var selfLink *domain.WebFingerLink
+	for _, link := range response.Links {
+		if link.Rel == "self" {
+			selfLink = &link
+			break
+		}
+	}
+	require.NotNil(t, selfLink, "Expected self link in response")
+	assert.Equal(t, "application/activity+json", selfLink.Type)
+	assert.Equal(t, "https://video.example/users/alice", selfLink.Href)
+}
+
+// TestWebFingerWithHTTPSResource tests WebFinger with https:// resource
+func TestWebFingerWithHTTPSResource(t *testing.T) {
+	cfg := &config.Config{
+		PublicBaseURL:     "https://video.example",
+		ActivityPubDomain: "video.example",
+	}
+
+	handlers := &ActivityPubHandlers{
+		service: nil,
+		cfg:     cfg,
+	}
+
+	req := httptest.NewRequest("GET", "/.well-known/webfinger?resource=https://video.example/users/bob", nil)
+	w := httptest.NewRecorder()
+
+	handlers.WebFinger(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var response domain.WebFingerResponse
+	err := json.Unmarshal(w.Body.Bytes(), &response)
+	require.NoError(t, err)
+
+	assert.Equal(t, "acct:bob@video.example", response.Subject)
+}
+
+// TestWebFingerMissingResource tests WebFinger without resource parameter
+func TestWebFingerMissingResource(t *testing.T) {
+	cfg := &config.Config{}
+	handlers := &ActivityPubHandlers{cfg: cfg}
+
+	req := httptest.NewRequest("GET", "/.well-known/webfinger", nil)
+	w := httptest.NewRecorder()
+
+	handlers.WebFinger(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+// TestWebFingerInvalidResource tests WebFinger with invalid resource format
+func TestWebFingerInvalidResource(t *testing.T) {
+	cfg := &config.Config{}
+	handlers := &ActivityPubHandlers{cfg: cfg}
+
+	req := httptest.NewRequest("GET", "/.well-known/webfinger?resource=invalid", nil)
+	w := httptest.NewRecorder()
+
+	handlers.WebFinger(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+// TestNodeInfo tests the NodeInfo discovery endpoint
+func TestNodeInfo(t *testing.T) {
+	cfg := &config.Config{
+		PublicBaseURL: "https://video.example",
+	}
+
+	handlers := &ActivityPubHandlers{cfg: cfg}
+
+	req := httptest.NewRequest("GET", "/.well-known/nodeinfo", nil)
+	w := httptest.NewRecorder()
+
+	handlers.NodeInfo(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "application/json; charset=utf-8", w.Header().Get("Content-Type"))
+
+	var response map[string]interface{}
+	err := json.Unmarshal(w.Body.Bytes(), &response)
+	require.NoError(t, err)
+
+	links, ok := response["links"].([]interface{})
+	require.True(t, ok, "Expected links array in response")
+	require.NotEmpty(t, links)
+
+	firstLink := links[0].(map[string]interface{})
+	assert.Equal(t, "http://nodeinfo.diaspora.software/ns/schema/2.0", firstLink["rel"])
+	assert.Equal(t, "https://video.example/nodeinfo/2.0", firstLink["href"])
+}
+
+// TestNodeInfo20 tests the NodeInfo 2.0 endpoint
+func TestNodeInfo20(t *testing.T) {
+	cfg := &config.Config{
+		PublicBaseURL:                  "https://video.example",
+		ActivityPubInstanceDescription: "A test instance",
+	}
+
+	handlers := &ActivityPubHandlers{cfg: cfg}
+
+	req := httptest.NewRequest("GET", "/nodeinfo/2.0", nil)
+	w := httptest.NewRecorder()
+
+	handlers.NodeInfo20(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "application/json; charset=utf-8", w.Header().Get("Content-Type"))
+
+	var nodeInfo domain.NodeInfo
+	err := json.Unmarshal(w.Body.Bytes(), &nodeInfo)
+	require.NoError(t, err)
+
+	assert.Equal(t, "2.0", nodeInfo.Version)
+	assert.Equal(t, "athena", nodeInfo.Software.Name)
+	assert.Contains(t, nodeInfo.Protocols, "activitypub")
+	assert.Equal(t, "A test instance", nodeInfo.Metadata["nodeDescription"])
+}
+
+// TestHostMeta tests the host-meta endpoint
+func TestHostMeta(t *testing.T) {
+	cfg := &config.Config{
+		PublicBaseURL: "https://video.example",
+	}
+
+	handlers := &ActivityPubHandlers{cfg: cfg}
+
+	req := httptest.NewRequest("GET", "/.well-known/host-meta", nil)
+	w := httptest.NewRecorder()
+
+	handlers.HostMeta(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "application/xrd+xml; charset=utf-8", w.Header().Get("Content-Type"))
+
+	body := w.Body.String()
+	assert.Contains(t, body, `<?xml version="1.0"`)
+	assert.Contains(t, body, `<XRD xmlns="http://docs.oasis-open.org/ns/xri/xrd-1.0">`)
+	assert.Contains(t, body, `https://video.example/.well-known/webfinger?resource={uri}`)
+}
+
+// TestGetOutboxCollection tests getting the outbox collection (non-paginated)
+func TestGetOutboxCollection(t *testing.T) {
+	cfg := &config.Config{
+		PublicBaseURL: "https://video.example",
+	}
+
+	handlers := &ActivityPubHandlers{
+		service: nil, // Mock service would be needed for full test
+		cfg:     cfg,
+	}
+
+	req := httptest.NewRequest("GET", "/users/alice/outbox", nil)
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("username", "alice")
+	req = req.WithContext(chi.NewRouteContext().WithValue(req.Context(), chi.RouteCtxKey, rctx))
+
+	w := httptest.NewRecorder()
+
+	// This will fail without a proper service, but we're testing the handler structure
+	handlers.GetOutbox(w, req)
+
+	// For a full test, we'd need to mock the service
+	// For now, just verify it tries to create the collection structure
+	assert.Equal(t, "application/activity+json; charset=utf-8", w.Header().Get("Content-Type"))
+}
+
+// TestGetInboxNotImplemented tests that inbox GET returns not implemented
+func TestGetInboxNotImplemented(t *testing.T) {
+	handlers := &ActivityPubHandlers{}
+
+	req := httptest.NewRequest("GET", "/users/alice/inbox", nil)
+	w := httptest.NewRecorder()
+
+	handlers.GetInbox(w, req)
+
+	assert.Equal(t, http.StatusNotImplemented, w.Code)
+}
+
+// TestPostInboxMissingUsername tests posting to inbox without username
+func TestPostInboxMissingUsername(t *testing.T) {
+	handlers := &ActivityPubHandlers{}
+
+	req := httptest.NewRequest("POST", "/users//inbox", nil)
+	w := httptest.NewRecorder()
+
+	handlers.PostInbox(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+// TestPostInboxInvalidJSON tests posting invalid JSON to inbox
+func TestPostInboxInvalidJSON(t *testing.T) {
+	handlers := &ActivityPubHandlers{}
+
+	req := httptest.NewRequest("POST", "/users/alice/inbox", nil)
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("username", "alice")
+	req = req.WithContext(chi.NewRouteContext().WithValue(req.Context(), chi.RouteCtxKey, rctx))
+
+	w := httptest.NewRecorder()
+
+	handlers.PostInbox(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+// TestContentTypeNegotiation tests that handlers set correct content type
+func TestContentTypeNegotiation(t *testing.T) {
+	tests := []struct {
+		name         string
+		endpoint     string
+		expectedType string
+	}{
+		{
+			name:         "WebFinger",
+			endpoint:     "/.well-known/webfinger?resource=acct:alice@example.com",
+			expectedType: "application/jrd+json",
+		},
+		{
+			name:         "NodeInfo Discovery",
+			endpoint:     "/.well-known/nodeinfo",
+			expectedType: "application/json",
+		},
+		{
+			name:         "NodeInfo 2.0",
+			endpoint:     "/nodeinfo/2.0",
+			expectedType: "application/json",
+		},
+		{
+			name:         "Host Meta",
+			endpoint:     "/.well-known/host-meta",
+			expectedType: "application/xrd+xml",
+		},
+	}
+
+	cfg := &config.Config{
+		PublicBaseURL:     "https://video.example",
+		ActivityPubDomain: "video.example",
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			handlers := &ActivityPubHandlers{cfg: cfg}
+
+			req := httptest.NewRequest("GET", tt.endpoint, nil)
+			w := httptest.NewRecorder()
+
+			switch tt.name {
+			case "WebFinger":
+				handlers.WebFinger(w, req)
+			case "NodeInfo Discovery":
+				handlers.NodeInfo(w, req)
+			case "NodeInfo 2.0":
+				handlers.NodeInfo20(w, req)
+			case "Host Meta":
+				handlers.HostMeta(w, req)
+			}
+
+			contentType := w.Header().Get("Content-Type")
+			assert.Contains(t, contentType, tt.expectedType,
+				"Expected content type to contain %s, got %s", tt.expectedType, contentType)
+		})
+	}
+}

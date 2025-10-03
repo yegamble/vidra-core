@@ -1,0 +1,349 @@
+package httpapi
+
+import (
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"strconv"
+	"strings"
+
+	"github.com/go-chi/chi/v5"
+
+	"athena/internal/config"
+	"athena/internal/domain"
+	ucap "athena/internal/usecase/activitypub"
+)
+
+// ActivityPubHandlers handles ActivityPub protocol endpoints
+type ActivityPubHandlers struct {
+	service *ucap.Service
+	cfg     *config.Config
+}
+
+// NewActivityPubHandlers creates a new ActivityPub handlers instance
+func NewActivityPubHandlers(service *ucap.Service, cfg *config.Config) *ActivityPubHandlers {
+	return &ActivityPubHandlers{
+		service: service,
+		cfg:     cfg,
+	}
+}
+
+// WebFinger handles /.well-known/webfinger requests
+func (h *ActivityPubHandlers) WebFinger(w http.ResponseWriter, r *http.Request) {
+	resource := r.URL.Query().Get("resource")
+	if resource == "" {
+		http.Error(w, "missing resource parameter", http.StatusBadRequest)
+		return
+	}
+
+	// Parse resource (acct:username@domain or https://domain/users/username)
+	var username string
+	if strings.HasPrefix(resource, "acct:") {
+		// acct:username@domain
+		acct := strings.TrimPrefix(resource, "acct:")
+		parts := strings.Split(acct, "@")
+		if len(parts) != 2 {
+			http.Error(w, "invalid resource format", http.StatusBadRequest)
+			return
+		}
+		username = parts[0]
+	} else if strings.HasPrefix(resource, "http://") || strings.HasPrefix(resource, "https://") {
+		// Extract username from URL
+		parts := strings.Split(strings.TrimSuffix(resource, "/"), "/")
+		if len(parts) >= 2 && parts[len(parts)-2] == "users" {
+			username = parts[len(parts)-1]
+		} else {
+			http.Error(w, "invalid resource format", http.StatusBadRequest)
+			return
+		}
+	} else {
+		http.Error(w, "unsupported resource format", http.StatusBadRequest)
+		return
+	}
+
+	// Build WebFinger response
+	actorURL := fmt.Sprintf("%s/users/%s", h.cfg.PublicBaseURL, username)
+
+	response := domain.WebFingerResponse{
+		Subject: fmt.Sprintf("acct:%s@%s", username, h.cfg.ActivityPubDomain),
+		Aliases: []string{actorURL},
+		Links: []domain.WebFingerLink{
+			{
+				Rel:  "self",
+				Type: "application/activity+json",
+				Href: actorURL,
+			},
+			{
+				Rel:  "http://webfinger.net/rel/profile-page",
+				Type: "text/html",
+				Href: actorURL,
+			},
+		},
+	}
+
+	w.Header().Set("Content-Type", "application/jrd+json; charset=utf-8")
+	json.NewEncoder(w).Encode(response)
+}
+
+// NodeInfo handles /.well-known/nodeinfo requests
+func (h *ActivityPubHandlers) NodeInfo(w http.ResponseWriter, r *http.Request) {
+	response := map[string]interface{}{
+		"links": []map[string]string{
+			{
+				"rel":  "http://nodeinfo.diaspora.software/ns/schema/2.0",
+				"href": h.cfg.PublicBaseURL + "/nodeinfo/2.0",
+			},
+		},
+	}
+
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	json.NewEncoder(w).Encode(response)
+}
+
+// NodeInfo20 handles /nodeinfo/2.0 requests
+func (h *ActivityPubHandlers) NodeInfo20(w http.ResponseWriter, r *http.Request) {
+	// TODO: Fetch real statistics from the database
+	nodeInfo := domain.NodeInfo{
+		Version: "2.0",
+		Software: domain.NodeInfoSoftware{
+			Name:       "athena",
+			Version:    "1.0.0",
+			Repository: "https://github.com/yourusername/athena",
+		},
+		Protocols:         []string{"activitypub"},
+		Services:          domain.NodeInfoServices{Inbound: []string{}, Outbound: []string{}},
+		OpenRegistrations: true,
+		Usage: domain.NodeInfoUsage{
+			Users: domain.NodeInfoUsers{
+				Total: 0, // TODO: Fetch from database
+			},
+		},
+		Metadata: map[string]interface{}{
+			"nodeName":        "Athena",
+			"nodeDescription": h.cfg.ActivityPubInstanceDescription,
+		},
+	}
+
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	json.NewEncoder(w).Encode(nodeInfo)
+}
+
+// GetActor handles GET /users/:username (ActivityPub actor)
+func (h *ActivityPubHandlers) GetActor(w http.ResponseWriter, r *http.Request) {
+	username := chi.URLParam(r, "username")
+	if username == "" {
+		http.Error(w, "missing username", http.StatusBadRequest)
+		return
+	}
+
+	actor, err := h.service.GetLocalActor(r.Context(), username)
+	if err != nil {
+		http.Error(w, "actor not found", http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/activity+json; charset=utf-8")
+	json.NewEncoder(w).Encode(actor)
+}
+
+// GetOutbox handles GET /users/:username/outbox
+func (h *ActivityPubHandlers) GetOutbox(w http.ResponseWriter, r *http.Request) {
+	username := chi.URLParam(r, "username")
+	if username == "" {
+		http.Error(w, "missing username", http.StatusBadRequest)
+		return
+	}
+
+	// Check if paginated request
+	pageStr := r.URL.Query().Get("page")
+	if pageStr == "" {
+		// Return collection overview
+		actorURL := fmt.Sprintf("%s/users/%s", h.cfg.PublicBaseURL, username)
+		outboxURL := actorURL + "/outbox"
+
+		collection := domain.OrderedCollection{
+			Context:    domain.ActivityStreamsContext,
+			Type:       domain.ObjectTypeOrderedCollection,
+			ID:         outboxURL,
+			TotalItems: 0, // TODO: Get actual count
+			First:      outboxURL + "?page=0",
+		}
+
+		w.Header().Set("Content-Type", "application/activity+json; charset=utf-8")
+		json.NewEncoder(w).Encode(collection)
+		return
+	}
+
+	// Return paginated collection
+	page, _ := strconv.Atoi(pageStr)
+	limit := h.cfg.ActivityPubMaxActivitiesPerPage
+
+	collectionPage, err := h.service.GetOutbox(r.Context(), username, page, limit)
+	if err != nil {
+		http.Error(w, "failed to get outbox", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/activity+json; charset=utf-8")
+	json.NewEncoder(w).Encode(collectionPage)
+}
+
+// GetInbox handles GET /users/:username/inbox
+func (h *ActivityPubHandlers) GetInbox(w http.ResponseWriter, r *http.Request) {
+	// Inbox GET is typically not implemented or returns empty for privacy
+	http.Error(w, "not implemented", http.StatusNotImplemented)
+}
+
+// PostInbox handles POST /users/:username/inbox
+func (h *ActivityPubHandlers) PostInbox(w http.ResponseWriter, r *http.Request) {
+	username := chi.URLParam(r, "username")
+	if username == "" {
+		http.Error(w, "missing username", http.StatusBadRequest)
+		return
+	}
+
+	// Read body
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "failed to read body", http.StatusBadRequest)
+		return
+	}
+	defer r.Body.Close()
+
+	// Parse activity
+	var activity map[string]interface{}
+	if err := json.Unmarshal(body, &activity); err != nil {
+		http.Error(w, "invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	// Handle the activity
+	if err := h.service.HandleInboxActivity(r.Context(), activity, r); err != nil {
+		http.Error(w, fmt.Sprintf("failed to process activity: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusAccepted)
+}
+
+// PostSharedInbox handles POST /inbox (shared inbox)
+func (h *ActivityPubHandlers) PostSharedInbox(w http.ResponseWriter, r *http.Request) {
+	// Read body
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "failed to read body", http.StatusBadRequest)
+		return
+	}
+	defer r.Body.Close()
+
+	// Parse activity
+	var activity map[string]interface{}
+	if err := json.Unmarshal(body, &activity); err != nil {
+		http.Error(w, "invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	// Handle the activity (same as PostInbox but for shared inbox)
+	if err := h.service.HandleInboxActivity(r.Context(), activity, r); err != nil {
+		http.Error(w, fmt.Sprintf("failed to process activity: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusAccepted)
+}
+
+// GetFollowers handles GET /users/:username/followers
+func (h *ActivityPubHandlers) GetFollowers(w http.ResponseWriter, r *http.Request) {
+	username := chi.URLParam(r, "username")
+	if username == "" {
+		http.Error(w, "missing username", http.StatusBadRequest)
+		return
+	}
+
+	// Check if paginated request
+	pageStr := r.URL.Query().Get("page")
+	if pageStr == "" {
+		// Return collection overview
+		actorURL := fmt.Sprintf("%s/users/%s", h.cfg.PublicBaseURL, username)
+		followersURL := actorURL + "/followers"
+
+		collection := domain.OrderedCollection{
+			Context:    domain.ActivityStreamsContext,
+			Type:       domain.ObjectTypeOrderedCollection,
+			ID:         followersURL,
+			TotalItems: 0, // TODO: Get actual count
+			First:      followersURL + "?page=0",
+		}
+
+		w.Header().Set("Content-Type", "application/activity+json; charset=utf-8")
+		json.NewEncoder(w).Encode(collection)
+		return
+	}
+
+	// Return paginated collection
+	page, _ := strconv.Atoi(pageStr)
+	limit := h.cfg.ActivityPubMaxActivitiesPerPage
+
+	collectionPage, err := h.service.GetFollowers(r.Context(), username, page, limit)
+	if err != nil {
+		http.Error(w, "failed to get followers", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/activity+json; charset=utf-8")
+	json.NewEncoder(w).Encode(collectionPage)
+}
+
+// GetFollowing handles GET /users/:username/following
+func (h *ActivityPubHandlers) GetFollowing(w http.ResponseWriter, r *http.Request) {
+	username := chi.URLParam(r, "username")
+	if username == "" {
+		http.Error(w, "missing username", http.StatusBadRequest)
+		return
+	}
+
+	// Check if paginated request
+	pageStr := r.URL.Query().Get("page")
+	if pageStr == "" {
+		// Return collection overview
+		actorURL := fmt.Sprintf("%s/users/%s", h.cfg.PublicBaseURL, username)
+		followingURL := actorURL + "/following"
+
+		collection := domain.OrderedCollection{
+			Context:    domain.ActivityStreamsContext,
+			Type:       domain.ObjectTypeOrderedCollection,
+			ID:         followingURL,
+			TotalItems: 0, // TODO: Get actual count
+			First:      followingURL + "?page=0",
+		}
+
+		w.Header().Set("Content-Type", "application/activity+json; charset=utf-8")
+		json.NewEncoder(w).Encode(collection)
+		return
+	}
+
+	// Return paginated collection
+	page, _ := strconv.Atoi(pageStr)
+	limit := h.cfg.ActivityPubMaxActivitiesPerPage
+
+	collectionPage, err := h.service.GetFollowing(r.Context(), username, page, limit)
+	if err != nil {
+		http.Error(w, "failed to get following", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/activity+json; charset=utf-8")
+	json.NewEncoder(w).Encode(collectionPage)
+}
+
+// HostMeta handles /.well-known/host-meta requests
+func (h *ActivityPubHandlers) HostMeta(w http.ResponseWriter, r *http.Request) {
+	xml := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
+<XRD xmlns="http://docs.oasis-open.org/ns/xri/xrd-1.0">
+  <Link rel="lrdd" template="%s/.well-known/webfinger?resource={uri}"/>
+</XRD>`, h.cfg.PublicBaseURL)
+
+	w.Header().Set("Content-Type", "application/xrd+xml; charset=utf-8")
+	w.Write([]byte(xml))
+}
