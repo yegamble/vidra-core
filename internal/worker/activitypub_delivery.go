@@ -152,12 +152,17 @@ func (w *ActivityPubDeliveryWorker) attemptDelivery(ctx context.Context, deliver
 func (w *ActivityPubDeliveryWorker) calculateNextAttempt(attempts int) time.Time {
 	// Base delay from config (in seconds)
 	baseDelay := time.Duration(w.cfg.ActivityPubDeliveryRetryDelay) * time.Second
+	maxDelay := 24 * time.Hour
 
 	// Exponential backoff: baseDelay * 2^attempts
+	// Cap attempts to prevent overflow (2^30 seconds is already > 24 hours with 60s base)
+	if attempts > 30 {
+		attempts = 30
+	}
+
 	delay := baseDelay * time.Duration(1<<uint(attempts))
 
 	// Cap at 24 hours
-	maxDelay := 24 * time.Hour
 	if delay > maxDelay {
 		delay = maxDelay
 	}
