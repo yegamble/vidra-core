@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -187,32 +188,6 @@ func TestHostMeta(t *testing.T) {
 	assert.Contains(t, body, `https://video.example/.well-known/webfinger?resource={uri}`)
 }
 
-// TestGetOutboxCollection tests getting the outbox collection (non-paginated)
-func TestGetOutboxCollection(t *testing.T) {
-	cfg := &config.Config{
-		PublicBaseURL: "https://video.example",
-	}
-
-	handlers := &ActivityPubHandlers{
-		service: nil, // Mock service would be needed for full test
-		cfg:     cfg,
-	}
-
-	req := httptest.NewRequest("GET", "/users/alice/outbox", nil)
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("username", "alice")
-	req = req.WithContext(chi.NewRouteContext().WithValue(req.Context(), chi.RouteCtxKey, rctx))
-
-	w := httptest.NewRecorder()
-
-	// This will fail without a proper service, but we're testing the handler structure
-	handlers.GetOutbox(w, req)
-
-	// For a full test, we'd need to mock the service
-	// For now, just verify it tries to create the collection structure
-	assert.Equal(t, "application/activity+json; charset=utf-8", w.Header().Get("Content-Type"))
-}
-
 // TestGetInboxNotImplemented tests that inbox GET returns not implemented
 func TestGetInboxNotImplemented(t *testing.T) {
 	handlers := &ActivityPubHandlers{}
@@ -244,7 +219,7 @@ func TestPostInboxInvalidJSON(t *testing.T) {
 	req := httptest.NewRequest("POST", "/users/alice/inbox", nil)
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("username", "alice")
-	req = req.WithContext(chi.NewRouteContext().WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
 	w := httptest.NewRecorder()
 

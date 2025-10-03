@@ -26,6 +26,11 @@ type TestDB struct {
 func SetupTestDB(t *testing.T) *TestDB {
 	t.Helper()
 
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+		return nil
+	}
+
 	db, err := setupPostgres()
 	if err != nil {
 		t.Skipf("Skipping test: Postgres not available (%v)", err)
