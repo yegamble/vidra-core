@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"testing"
 	"time"
 
@@ -41,6 +42,62 @@ func (m *MockAPRepository) UpdateDeliveryStatus(ctx context.Context, deliveryID,
 	return args.Error(0)
 }
 
+// Stub methods to satisfy port.ActivityPubRepository interface
+func (m *MockAPRepository) GetActorKeys(ctx context.Context, actorID string) (publicKey, privateKey string, err error) {
+	return "", "", nil
+}
+func (m *MockAPRepository) StoreActorKeys(ctx context.Context, actorID, publicKey, privateKey string) error {
+	return nil
+}
+func (m *MockAPRepository) GetRemoteActor(ctx context.Context, actorURI string) (*domain.APRemoteActor, error) {
+	return nil, nil
+}
+func (m *MockAPRepository) UpsertRemoteActor(ctx context.Context, actor *domain.APRemoteActor) error {
+	return nil
+}
+func (m *MockAPRepository) StoreActivity(ctx context.Context, activity *domain.APActivity) error {
+	return nil
+}
+func (m *MockAPRepository) GetActivitiesByActor(ctx context.Context, actorID string, limit, offset int) ([]*domain.APActivity, int, error) {
+	return nil, 0, nil
+}
+func (m *MockAPRepository) GetFollower(ctx context.Context, actorID, followerID string) (*domain.APFollower, error) {
+	return nil, nil
+}
+func (m *MockAPRepository) UpsertFollower(ctx context.Context, follower *domain.APFollower) error {
+	return nil
+}
+func (m *MockAPRepository) DeleteFollower(ctx context.Context, actorID, followerID string) error {
+	return nil
+}
+func (m *MockAPRepository) GetFollowers(ctx context.Context, actorID string, state string, limit, offset int) ([]*domain.APFollower, int, error) {
+	return nil, 0, nil
+}
+func (m *MockAPRepository) GetFollowing(ctx context.Context, followerID string, state string, limit, offset int) ([]*domain.APFollower, int, error) {
+	return nil, 0, nil
+}
+func (m *MockAPRepository) IsActivityReceived(ctx context.Context, activityURI string) (bool, error) {
+	return false, nil
+}
+func (m *MockAPRepository) MarkActivityReceived(ctx context.Context, activityURI string) error {
+	return nil
+}
+func (m *MockAPRepository) UpsertVideoReaction(ctx context.Context, videoID, actorURI, reactionType, activityURI string) error {
+	return nil
+}
+func (m *MockAPRepository) DeleteVideoReaction(ctx context.Context, activityURI string) error {
+	return nil
+}
+func (m *MockAPRepository) UpsertVideoShare(ctx context.Context, videoID, actorURI, activityURI string) error {
+	return nil
+}
+func (m *MockAPRepository) DeleteVideoShare(ctx context.Context, activityURI string) error {
+	return nil
+}
+func (m *MockAPRepository) EnqueueDelivery(ctx context.Context, delivery *domain.APDeliveryQueue) error {
+	return nil
+}
+
 // MockAPService mocks the ActivityPub service
 type MockAPService struct {
 	mock.Mock
@@ -49,6 +106,26 @@ type MockAPService struct {
 func (m *MockAPService) DeliverActivity(ctx context.Context, actorID, inboxURL string, activity interface{}) error {
 	args := m.Called(ctx, actorID, inboxURL, activity)
 	return args.Error(0)
+}
+
+// Stub methods to satisfy port.ActivityPubService interface
+func (m *MockAPService) GetLocalActor(ctx context.Context, username string) (*domain.Actor, error) {
+	return nil, nil
+}
+func (m *MockAPService) FetchRemoteActor(ctx context.Context, actorURI string) (*domain.APRemoteActor, error) {
+	return nil, nil
+}
+func (m *MockAPService) HandleInboxActivity(ctx context.Context, activity map[string]interface{}, r *http.Request) error {
+	return nil
+}
+func (m *MockAPService) GetOutbox(ctx context.Context, username string, page int, limit int) (*domain.OrderedCollectionPage, error) {
+	return nil, nil
+}
+func (m *MockAPService) GetFollowers(ctx context.Context, username string, page int, limit int) (*domain.OrderedCollectionPage, error) {
+	return nil, nil
+}
+func (m *MockAPService) GetFollowing(ctx context.Context, username string, page int, limit int) (*domain.OrderedCollectionPage, error) {
+	return nil, nil
 }
 
 func TestNewActivityPubDeliveryWorker(t *testing.T) {
@@ -254,8 +331,8 @@ func TestCalculateNextAttempt(t *testing.T) {
 		{
 			name:            "Very long delay should be capped",
 			attempts:        20,
-			expectedMinWait: 23 * time.Hour,
-			expectedMaxWait: 24 * time.Hour,
+			expectedMinWait: 24*time.Hour - time.Second,
+			expectedMaxWait: 24*time.Hour + time.Second,
 		},
 	}
 
@@ -487,9 +564,12 @@ func TestExponentialBackoff(t *testing.T) {
 		now := time.Now()
 
 		// Very high attempt number should still cap at 24h
-		delay := worker.calculateNextAttempt(100).Sub(now)
+		nextAttempt := worker.calculateNextAttempt(100)
+		delay := nextAttempt.Sub(now)
 
-		assert.True(t, delay <= 24*time.Hour)
-		assert.True(t, delay >= 23*time.Hour) // Allow some tolerance
+		// Should be very close to 24 hours (within 10 seconds for timing tolerance)
+		// Note: There's a small gap between when we capture 'now' and when calculateNextAttempt calls time.Now()
+		assert.True(t, delay <= 24*time.Hour+10*time.Second, "delay should be <= 24h+10s, got %v", delay)
+		assert.True(t, delay >= 24*time.Hour-10*time.Second, "delay should be >= 24h-10s, got %v", delay)
 	})
 }

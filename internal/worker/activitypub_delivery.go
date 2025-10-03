@@ -9,22 +9,21 @@ import (
 
 	"athena/internal/config"
 	"athena/internal/domain"
-	"athena/internal/repository"
-	ucap "athena/internal/usecase/activitypub"
+	"athena/internal/port"
 )
 
 // ActivityPubDeliveryWorker handles background delivery of ActivityPub activities
 type ActivityPubDeliveryWorker struct {
-	apRepo  *repository.ActivityPubRepository
-	service *ucap.Service
+	apRepo  port.ActivityPubRepository
+	service port.ActivityPubService
 	cfg     *config.Config
 	stopCh  chan struct{}
 }
 
 // NewActivityPubDeliveryWorker creates a new delivery worker
 func NewActivityPubDeliveryWorker(
-	apRepo *repository.ActivityPubRepository,
-	service *ucap.Service,
+	apRepo port.ActivityPubRepository,
+	service port.ActivityPubService,
 	cfg *config.Config,
 ) *ActivityPubDeliveryWorker {
 	return &ActivityPubDeliveryWorker{
