@@ -5,10 +5,10 @@ import (
 
 	redis "github.com/redis/go-redis/v9"
 
+	"athena/internal/port"
 	"athena/internal/repository"
 	"athena/internal/scheduler"
 	"athena/internal/usecase"
-	ucap "athena/internal/usecase/activitypub"
 	ucchannel "athena/internal/usecase/channel"
 	uccmt "athena/internal/usecase/comment"
 	"athena/internal/usecase/encoding"
@@ -55,7 +55,7 @@ type HandlerDependencies struct {
 	FederationService   usecase.FederationService
 	HardeningService    *usecase.FederationHardeningService
 	EncodingService     encoding.Service
-	ActivityPubService  *ucap.Service
+	ActivityPubService  port.ActivityPubService
 
 	// Schedulers
 	EncodingScheduler *scheduler.EncodingScheduler

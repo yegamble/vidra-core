@@ -13,14 +13,14 @@ import (
 	"athena/internal/activitypub"
 	"athena/internal/config"
 	"athena/internal/domain"
-	"athena/internal/repository"
+	"athena/internal/port"
 )
 
 // Service handles ActivityPub federation logic
 type Service struct {
-	repo        *repository.ActivityPubRepository
-	userRepo    *repository.UserRepository
-	videoRepo   *repository.VideoRepository
+	repo        port.ActivityPubRepository
+	userRepo    port.UserRepository
+	videoRepo   port.VideoRepository
 	cfg         *config.Config
 	httpClient  *http.Client
 	sigVerifier *activitypub.HTTPSignatureVerifier
@@ -28,9 +28,9 @@ type Service struct {
 
 // NewService creates a new ActivityPub service
 func NewService(
-	repo *repository.ActivityPubRepository,
-	userRepo *repository.UserRepository,
-	videoRepo *repository.VideoRepository,
+	repo port.ActivityPubRepository,
+	userRepo port.UserRepository,
+	videoRepo port.VideoRepository,
 	cfg *config.Config,
 ) *Service {
 	return &Service{
@@ -47,7 +47,7 @@ func NewService(
 
 // GetLocalActor builds an Actor object for a local user
 func (s *Service) GetLocalActor(ctx context.Context, username string) (*domain.Actor, error) {
-	user, err := s.userRepo.GetUserByUsername(ctx, username)
+	user, err := s.userRepo.GetByUsername(ctx, username)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get user: %w", err)
 	}
@@ -84,8 +84,8 @@ func (s *Service) GetLocalActor(ctx context.Context, username string) (*domain.A
 		},
 	}
 
-	if user.CreatedAt != nil {
-		actor.Published = user.CreatedAt
+	if !user.CreatedAt.IsZero() {
+		actor.Published = &user.CreatedAt
 	}
 
 	return actor, nil
@@ -264,7 +264,7 @@ func (s *Service) handleFollow(ctx context.Context, activity map[string]interfac
 	}
 
 	// Get local user
-	localUser, err := s.userRepo.GetUserByUsername(ctx, localUsername)
+	localUser, err := s.userRepo.GetByUsername(ctx, localUsername)
 	if err != nil || localUser == nil {
 		return fmt.Errorf("local user not found")
 	}
@@ -325,7 +325,7 @@ func (s *Service) handleUndo(ctx context.Context, activity map[string]interface{
 			return err
 		}
 
-		localUser, err := s.userRepo.GetUserByUsername(ctx, localUsername)
+		localUser, err := s.userRepo.GetByUsername(ctx, localUsername)
 		if err != nil || localUser == nil {
 			return fmt.Errorf("local user not found")
 		}
@@ -377,7 +377,7 @@ func (s *Service) handleAccept(ctx context.Context, activity map[string]interfac
 		return err
 	}
 
-	localUser, err := s.userRepo.GetUserByUsername(ctx, localUsername)
+	localUser, err := s.userRepo.GetByUsername(ctx, localUsername)
 	if err != nil || localUser == nil {
 		return fmt.Errorf("local user not found")
 	}
@@ -418,7 +418,7 @@ func (s *Service) handleReject(ctx context.Context, activity map[string]interfac
 		return err
 	}
 
-	localUser, err := s.userRepo.GetUserByUsername(ctx, localUsername)
+	localUser, err := s.userRepo.GetByUsername(ctx, localUsername)
 	if err != nil || localUser == nil {
 		return fmt.Errorf("local user not found")
 	}
@@ -474,8 +474,8 @@ func (s *Service) handleCreate(ctx context.Context, activity map[string]interfac
 		return fmt.Errorf("failed to marshal activity: %w", err)
 	}
 
-	activityID, ok := activity["id"].(string)
-	if !ok {
+	// Validate activity has an ID
+	if _, ok := activity["id"].(string); !ok {
 		return fmt.Errorf("missing activity id")
 	}
 
@@ -556,7 +556,7 @@ func (s *Service) DeliverActivity(ctx context.Context, actorID, inboxURL string,
 	req.Header.Set("User-Agent", "Athena/1.0")
 
 	// Get local actor to build key ID
-	user, err := s.userRepo.GetUserByID(ctx, actorID)
+	user, err := s.userRepo.GetByID(ctx, actorID)
 	if err != nil {
 		return fmt.Errorf("failed to get user: %w", err)
 	}
@@ -640,7 +640,7 @@ func (s *Service) getOrCreateActorKeys(ctx context.Context, actorID string) (pub
 
 // GetOutbox retrieves the outbox for an actor
 func (s *Service) GetOutbox(ctx context.Context, username string, page int, limit int) (*domain.OrderedCollectionPage, error) {
-	user, err := s.userRepo.GetUserByUsername(ctx, username)
+	user, err := s.userRepo.GetByUsername(ctx, username)
 	if err != nil || user == nil {
 		return nil, fmt.Errorf("user not found")
 	}
@@ -686,7 +686,7 @@ func (s *Service) GetOutbox(ctx context.Context, username string, page int, limi
 
 // GetFollowers retrieves the followers collection for an actor
 func (s *Service) GetFollowers(ctx context.Context, username string, page int, limit int) (*domain.OrderedCollectionPage, error) {
-	user, err := s.userRepo.GetUserByUsername(ctx, username)
+	user, err := s.userRepo.GetByUsername(ctx, username)
 	if err != nil || user == nil {
 		return nil, fmt.Errorf("user not found")
 	}
@@ -728,7 +728,7 @@ func (s *Service) GetFollowers(ctx context.Context, username string, page int, l
 
 // GetFollowing retrieves the following collection for an actor
 func (s *Service) GetFollowing(ctx context.Context, username string, page int, limit int) (*domain.OrderedCollectionPage, error) {
-	user, err := s.userRepo.GetUserByUsername(ctx, username)
+	user, err := s.userRepo.GetByUsername(ctx, username)
 	if err != nil || user == nil {
 		return nil, fmt.Errorf("user not found")
 	}

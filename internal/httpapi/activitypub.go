@@ -12,17 +12,17 @@ import (
 
 	"athena/internal/config"
 	"athena/internal/domain"
-	ucap "athena/internal/usecase/activitypub"
+	"athena/internal/port"
 )
 
 // ActivityPubHandlers handles ActivityPub protocol endpoints
 type ActivityPubHandlers struct {
-	service *ucap.Service
+	service port.ActivityPubService
 	cfg     *config.Config
 }
 
 // NewActivityPubHandlers creates a new ActivityPub handlers instance
-func NewActivityPubHandlers(service *ucap.Service, cfg *config.Config) *ActivityPubHandlers {
+func NewActivityPubHandlers(service port.ActivityPubService, cfg *config.Config) *ActivityPubHandlers {
 	return &ActivityPubHandlers{
 		service: service,
 		cfg:     cfg,
