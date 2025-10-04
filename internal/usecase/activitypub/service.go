@@ -554,6 +554,8 @@ func (s *Service) DeliverActivity(ctx context.Context, actorID, inboxURL string,
 
 	req.Header.Set("Content-Type", "application/activity+json")
 	req.Header.Set("User-Agent", "Athena/1.0")
+	// Set Host header explicitly for HTTP signature verification
+	req.Header.Set("Host", req.URL.Host)
 
 	// Get local actor to build key ID
 	user, err := s.userRepo.GetByID(ctx, actorID)

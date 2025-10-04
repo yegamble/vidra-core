@@ -434,6 +434,13 @@ func TestHandleFollow(t *testing.T) {
 	mockUserRepo := new(MockUserRepository)
 	mockVideoRepo := new(MockVideoRepository)
 
+	// Create a mock HTTP server to receive the Accept activity
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Accept the delivery
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer mockServer.Close()
+
 	cfg := &config.Config{
 		PublicBaseURL:                    "https://video.example",
 		ActivityPubAcceptFollowAutomatic: true,
@@ -453,7 +460,7 @@ func TestHandleFollow(t *testing.T) {
 		ActorURI: "https://mastodon.example/users/alice",
 		Username: "alice",
 		Domain:   "mastodon.example",
-		InboxURL: "https://mastodon.example/users/alice/inbox",
+		InboxURL: mockServer.URL + "/inbox", // Use mock server URL
 	}
 
 	localUser := &domain.User{
@@ -461,11 +468,24 @@ func TestHandleFollow(t *testing.T) {
 		Username: "bob",
 	}
 
+	// Generate valid keys for testing
+	publicKey, privateKey, err := activitypub.GenerateKeyPair()
+	require.NoError(t, err)
+
 	t.Run("Auto-accept follow request", func(t *testing.T) {
+		// Mock getting local user by username
 		mockUserRepo.On("GetByUsername", ctx, "bob").Return(localUser, nil).Once()
+
+		// Mock upserting follower
 		mockAPRepo.On("UpsertFollower", ctx, mock.MatchedBy(func(f *domain.APFollower) bool {
 			return f.ActorID == localUser.ID && f.FollowerID == remoteActor.ActorURI && f.State == "accepted"
 		})).Return(nil).Once()
+
+		// Mock getting actor keys for signing the Accept activity
+		mockAPRepo.On("GetActorKeys", ctx, localUser.ID).Return(publicKey, privateKey, nil).Once()
+
+		// Mock getting user by ID for building the key ID
+		mockUserRepo.On("GetByID", ctx, localUser.ID).Return(localUser, nil).Once()
 
 		err := service.handleFollow(ctx, activity, remoteActor)
 		require.NoError(t, err)
