@@ -46,11 +46,12 @@ make lint           # Run linters
 ## Documentation
 
 - [Architecture Overview](docs/architecture.md) - Clean architecture layers, data flow, and design patterns
-- [API Documentation](docs/api/README.md) - OpenAPI spec and endpoint reference
+- [API Examples](docs/API_EXAMPLES.md) - API usage examples and patterns
 - [Deployment Guide](docs/deployment/README.md) - Production deployment instructions
-- [Development Guide](docs/DEVELOPMENT.md) - Contributing and local setup
 - [PeerTube Compatibility](docs/PEERTUBE_COMPAT.md) - API compatibility matrix
-- [Federation Guide](docs/federation/README.md) - ATProto federation setup
+- [OAuth2 Guide](docs/OAUTH2.md) - Authentication and authorization setup
+- [Notifications API](docs/NOTIFICATIONS_API.md) - Real-time notification system
+- [Email Verification](docs/EMAIL_VERIFICATION_API.md) - Email verification flow
 
 ### For Claude AI Contributors
 
@@ -82,11 +83,11 @@ Key configuration areas:
 
 ## Contributing
 
-We welcome contributions! Please see our [Development Guide](docs/DEVELOPMENT.md) for:
-- Code style and standards
-- Testing requirements
-- Pull request process
-- Architecture guidelines
+We welcome contributions! Please see our documentation for:
+- [Architecture Guidelines](docs/architecture.md) - System design and patterns
+- [Claude Contributing Guide](docs/claude/contributing.md) - AI-assisted development workflow
+- Code style enforced via `golangci-lint`
+- Testing requirements and CI/CD in [test workflow](.github/workflows/test.yml)
 
 ## License
 
