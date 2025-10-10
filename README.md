@@ -30,6 +30,7 @@ docker compose up --build
 
 # Or run locally
 make deps
+# Apply DB migrations
 make migrate
 make run
 ```

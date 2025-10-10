@@ -375,3 +375,6 @@ run-with-encoding: ## Run server with encoding workers enabled
 
 # Alias to align with README docs
 migrate-up: migrate-dev ## Alias: apply migrations to development database
+
+# Common alias used in README and scripts
+migrate: migrate-dev ## Alias: apply migrations to development database

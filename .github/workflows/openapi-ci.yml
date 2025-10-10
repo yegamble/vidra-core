@@ -4,13 +4,15 @@ on:
   push:
     branches: [ main, develop ]
     paths:
-      - 'openapi.yaml'
+      - 'api/openapi.yaml'
+      - 'api/*.yaml'
       - 'docs/openapi/**'
       - '.github/workflows/openapi-ci.yml'
   pull_request:
     branches: [ main ]
     paths:
-      - 'openapi.yaml'
+      - 'api/openapi.yaml'
+      - 'api/*.yaml'
       - 'docs/openapi/**'
       - '.github/workflows/openapi-ci.yml'
   workflow_dispatch:
