@@ -1,0 +1,1400 @@
+# Athena PeerTube Feature Parity - Sprint Plan
+
+## Sprint Overview
+
+**Total Duration:** 14 sprints (28 weeks / ~7 months)
+**Sprint Length:** 2 weeks
+**Team Size:** Assuming 1-2 developers
+**Testing:** Every sprint includes comprehensive testing phase (30-40% of sprint time)
+
+---
+
+## Sprint 1-2: Video Import System (4 weeks)
+
+### Sprint 1: Core Import Infrastructure
+
+#### Development Tasks
+
+**Day 1-2: Database Schema & Migration**
+- [ ] Create migration `043_create_video_imports_table.sql`
+- [ ] Add import status enum type
+- [ ] Create indexes for user_id, status, created_at
+- [ ] Add foreign keys with CASCADE rules
+- [ ] Run migration on test database
+
+```sql
+CREATE TYPE import_status AS ENUM ('pending', 'downloading', 'processing', 'completed', 'failed');
+
+CREATE TABLE video_imports (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    channel_id UUID REFERENCES channels(id) ON DELETE SET NULL,
+    source_url TEXT NOT NULL,
+    status import_status NOT NULL DEFAULT 'pending',
+    video_id UUID REFERENCES videos(id) ON DELETE SET NULL,
+    error_message TEXT,
+    progress INTEGER DEFAULT 0 CHECK (progress >= 0 AND progress <= 100),
+    metadata JSONB, -- Store yt-dlp metadata
+    file_size_bytes BIGINT,
+    downloaded_bytes BIGINT DEFAULT 0,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    started_at TIMESTAMP,
+    completed_at TIMESTAMP,
+    CONSTRAINT valid_completion CHECK (
+        (status = 'completed' AND completed_at IS NOT NULL) OR
+        (status != 'completed' AND completed_at IS NULL)
+    )
+);
+
+CREATE INDEX idx_video_imports_user_id ON video_imports(user_id);
+CREATE INDEX idx_video_imports_status ON video_imports(status);
+CREATE INDEX idx_video_imports_created_at ON video_imports(created_at DESC);
+CREATE INDEX idx_video_imports_channel_id ON video_imports(channel_id);
+```
+
+**Day 3-4: Domain Models**
+- [ ] Create `internal/domain/import.go` with VideoImport struct
+- [ ] Add validation methods (ValidateURL, ValidateStatus)
+- [ ] Add domain errors (ErrInvalidURL, ErrImportFailed, etc.)
+- [ ] Create status transition methods (Start, Fail, Complete)
+
+**Day 5-7: Repository Layer**
+- [ ] Create `internal/repository/import_repository.go`
+- [ ] Implement Create, GetByID, GetByUserID, Update methods
+- [ ] Implement UpdateProgress with atomic operations
+- [ ] Add pagination support for list queries
+- [ ] Write unit tests with sqlmock
+
+**Day 8-10: yt-dlp Integration**
+- [ ] Create `internal/importer/ytdlp.go` wrapper
+- [ ] Implement URL validation using yt-dlp --get-title (dry run)
+- [ ] Implement metadata extraction (title, description, duration, thumbnail)
+- [ ] Implement download with progress tracking
+- [ ] Add context-based cancellation support
+- [ ] Handle common errors (geo-restrictions, age-gates, etc.)
+
+#### Testing Tasks
+
+**Unit Tests (Day 8-10, parallel with development)**
+- [ ] Test repository CRUD operations
+- [ ] Test progress update atomicity
+- [ ] Test status transition validation
+- [ ] Test URL validation edge cases
+- [ ] Test yt-dlp error handling
+- [ ] Mock yt-dlp subprocess execution
+- [ ] Test cancellation via context
+- [ ] Achieve >80% code coverage
+
+**Integration Tests**
+- [ ] Test import creation flow (DB + Redis)
+- [ ] Test progress tracking across components
+- [ ] Test concurrent imports by same user
+- [ ] Test import cancellation cleanup
+
+#### Acceptance Criteria
+- ✓ Migration runs without errors
+- ✓ Can create import record in database
+- ✓ yt-dlp successfully downloads test video
+- ✓ Progress updates visible in database
+- ✓ All unit tests passing
+- ✓ Integration tests passing
+
+---
+
+### Sprint 2: Import Service & API
+
+#### Development Tasks
+
+**Day 1-3: Import Service (Usecase Layer)**
+- [ ] Create `internal/usecase/import_service.go`
+- [ ] Implement ImportVideo method (orchestrate download → create video → enqueue encoding)
+- [ ] Implement CancelImport method (cleanup files, update status)
+- [ ] Implement GetImportStatus method
+- [ ] Add rate limiting (max 5 concurrent imports per user)
+- [ ] Add quota checking (max 100 imports per day per user)
+- [ ] Implement background worker to process import queue
+
+**Day 4-5: API Handlers**
+- [ ] Create `internal/httpapi/import_handlers.go`
+- [ ] POST `/api/v1/videos/imports` - Start import
+- [ ] GET `/api/v1/videos/imports/:id` - Get import status
+- [ ] GET `/api/v1/videos/imports` - List user imports (paginated)
+- [ ] DELETE `/api/v1/videos/imports/:id` - Cancel import
+- [ ] Add request validation (URL format, privacy settings, etc.)
+- [ ] Add authentication middleware
+
+**Day 6-7: Storage & Cleanup**
+- [ ] Create temp download directory structure
+- [ ] Implement cleanup job for failed/cancelled imports
+- [ ] Add disk space checking before download
+- [ ] Move completed files to upload directory
+
+**Day 8-10: End-to-End Testing**
+- [ ] Test full import flow: YouTube → Download → Encode → Publish
+- [ ] Test import with various sources (YouTube, Vimeo, Dailymotion)
+- [ ] Test import cancellation at each stage
+- [ ] Test error recovery (network interruption, disk full)
+- [ ] Test concurrent imports (10 users, 50 imports)
+- [ ] Load test: 100 imports queued, verify no deadlocks
+- [ ] Test import with large files (>2GB)
+- [ ] Test import with long videos (>2 hours)
+
+#### Testing Tasks
+
+**Unit Tests**
+- [ ] Test ImportVideo with mock repository and yt-dlp
+- [ ] Test CancelImport cleanup logic
+- [ ] Test rate limiting enforcement
+- [ ] Test quota enforcement
+- [ ] Test API request validation
+- [ ] Test authentication on all endpoints
+
+**Integration Tests**
+- [ ] Test import → encoding pipeline integration
+- [ ] Test notification creation on import completion
+- [ ] Test ActivityPub federation after import
+- [ ] Test AT Proto posting after import
+- [ ] Test storage cleanup after failure
+
+**E2E Tests**
+- [ ] Selenium/Playwright: Full import flow in UI (if frontend exists)
+- [ ] API E2E: Import via API, verify video playback
+- [ ] Test import of age-restricted content (should fail gracefully)
+- [ ] Test import of private/unlisted videos
+
+**Performance Tests**
+- [ ] Benchmark import processing time (target: <5min for 10min 1080p video)
+- [ ] Test memory usage during concurrent imports (should stay <500MB per import)
+- [ ] Test database query performance under load
+
+#### Acceptance Criteria
+- ✓ Can import YouTube video via API
+- ✓ Can import Vimeo video via API
+- ✓ Progress updates in real-time (via polling or WebSocket)
+- ✓ Video playback works after import
+- ✓ Failed imports show clear error messages
+- ✓ Can cancel in-progress import
+- ✓ Cleanup job removes orphaned files
+- ✓ Rate limiting prevents abuse
+- ✓ All tests passing (unit, integration, E2E)
+
+---
+
+## Sprint 3-4: Advanced Transcoding (VP9, AV1) (4 weeks)
+
+### Sprint 3: VP9 Support
+
+#### Development Tasks
+
+**Day 1-2: Configuration Extensions**
+- [ ] Add codec configuration to `internal/config/config.go`
+- [ ] Add environment variables: ENABLE_VP9, VP9_QUALITY, VP9_SPEED
+- [ ] Add validation for codec settings
+- [ ] Update config loading tests
+
+```go
+// In config.go
+VideoCodecs          []string // e.g., ["h264", "vp9"]
+EnableVP9            bool
+VP9Quality           int      // CRF value 23-40
+VP9Speed             int      // 0-4 (0=slowest/best, 4=fastest)
+EnableAV1            bool
+AV1Preset            int      // 0-13 (for SVT-AV1)
+AV1CRF               int      // 23-55
+```
+
+**Day 3-5: Encoding Service Updates**
+- [ ] Modify `internal/usecase/encoding/service.go` to support multiple codecs
+- [ ] Create `transcodeHLSWithCodec(codec string)` method
+- [ ] Implement VP9 encoding with two-pass for better quality
+- [ ] Add codec-specific parameters (CRF, speed presets)
+- [ ] Update output directory structure: `{videoId}/{codec}/{resolution}/`
+- [ ] Generate separate playlists per codec
+
+**Day 6-7: Master Playlist Generation**
+- [ ] Create multi-codec master playlist (DASH or HLS with codecs parameter)
+- [ ] Implement codec detection and fallback logic
+- [ ] Add `CODECS` attribute to HLS `#EXT-X-STREAM-INF` tags
+- [ ] Example: `CODECS="vp09.00.31.08,opus"` for VP9
+
+**Day 8-10: Database & Storage Updates**
+- [ ] Add `encoding_profile` column to `encoding_jobs` table
+- [ ] Update `videos.outputs` JSONB to store codec variants
+- [ ] Example structure: `{"h264": {"720p": "path"}, "vp9": {"720p": "path"}}`
+- [ ] Update video repository to handle multi-codec outputs
+
+#### Testing Tasks
+
+**Unit Tests**
+- [ ] Test VP9 FFmpeg command generation
+- [ ] Test codec parameter validation
+- [ ] Test master playlist generation with multiple codecs
+- [ ] Test output path generation for different codecs
+- [ ] Mock FFmpeg execution and verify arguments
+
+**Integration Tests**
+- [ ] Test VP9 encoding end-to-end with sample video
+- [ ] Verify VP9 output file playback (VLC, FFprobe validation)
+- [ ] Test encoding job with both H.264 and VP9
+- [ ] Test database updates with multi-codec outputs
+- [ ] Test storage space calculation for multi-codec
+
+**Quality Tests**
+- [ ] Visual quality comparison (H.264 vs VP9 at same bitrate)
+- [ ] File size comparison (VP9 should be 20-30% smaller)
+- [ ] Encoding time benchmark (VP9 is 5-10x slower than H.264)
+- [ ] Test playback compatibility across browsers (Chrome, Firefox, Safari)
+
+#### Acceptance Criteria
+- ✓ VP9 encoding produces valid video files
+- ✓ VP9 files are 20-30% smaller than H.264 at similar quality
+- ✓ Master playlist correctly advertises VP9 streams
+- ✓ Browser can play VP9 streams
+- ✓ Fallback to H.264 works when VP9 unsupported
+- ✓ All tests passing
+
+---
+
+### Sprint 4: AV1 Support & Optimization
+
+#### Development Tasks
+
+**Day 1-3: AV1 Encoder Integration**
+- [ ] Install SVT-AV1 encoder (or libaom)
+- [ ] Implement AV1 encoding in service (slower, for archival quality)
+- [ ] Add AV1-specific presets (recommended: preset 6-8 for balance)
+- [ ] Implement two-pass encoding for AV1
+- [ ] Add encoding timeout (AV1 is very slow, 20x H.264)
+
+**Day 4-5: Adaptive Codec Selection**
+- [ ] Implement logic: always H.264, optionally VP9, rarely AV1
+- [ ] Add admin setting to enable codecs per instance
+- [ ] Add per-video codec override (e.g., "encode AV1 for featured videos")
+- [ ] Update encoding scheduler to prioritize H.264 first
+
+**Day 6-7: Client-Side Codec Detection**
+- [ ] Update HLS serving logic to detect client capabilities
+- [ ] Serve best codec based on Accept header or User-Agent
+- [ ] Add `/api/v1/videos/:id/playlist.m3u8?codec=vp9` parameter
+- [ ] Implement bandwidth-based codec selection
+
+**Day 8-10: Performance Optimization & Testing**
+- [ ] Optimize FFmpeg parameters for speed (threads, preset tuning)
+- [ ] Implement parallel encoding (H.264 and VP9 simultaneously)
+- [ ] Add encoding queue prioritization (H.264 first, then VP9, then AV1)
+- [ ] Benchmark encoding times for all codecs
+- [ ] Test with 4K video (ensure no crashes, monitor memory)
+
+#### Testing Tasks
+
+**Unit Tests**
+- [ ] Test AV1 command generation
+- [ ] Test codec selection logic
+- [ ] Test parallel encoding job creation
+- [ ] Test encoding timeout handling
+
+**Integration Tests**
+- [ ] Test AV1 encoding end-to-end
+- [ ] Test multi-codec encoding (H.264 + VP9 + AV1)
+- [ ] Test encoding failure recovery (if AV1 fails, H.264 still succeeds)
+- [ ] Test codec priority in queue
+
+**Performance Tests**
+- [ ] Benchmark 1080p 10-minute video encoding times:
+  - H.264 (baseline): ~5 minutes
+  - VP9 (target): ~25-50 minutes
+  - AV1 (target): ~60-120 minutes
+- [ ] Test concurrent encoding (2 H.264 + 1 VP9)
+- [ ] Monitor CPU usage (should not exceed 90% sustained)
+- [ ] Monitor disk I/O during encoding
+
+**Compatibility Tests**
+- [ ] Test playback on Chrome (supports all)
+- [ ] Test playback on Firefox (supports all)
+- [ ] Test playback on Safari (H.264 only, maybe VP9)
+- [ ] Test playback on Edge (supports all)
+- [ ] Test playback on mobile (iOS, Android)
+- [ ] Test fallback when codec unsupported
+
+#### Acceptance Criteria
+- ✓ AV1 encoding works but flagged as experimental
+- ✓ Multi-codec encoding completes successfully
+- ✓ Client automatically selects best available codec
+- ✓ Encoding times are acceptable (<2 hours for 10min 1080p VP9)
+- ✓ No encoding job blocks others (parallel processing)
+- ✓ All tests passing
+
+---
+
+## Sprint 5-7: Live Streaming (6 weeks)
+
+### Sprint 5: RTMP Server & Stream Ingestion
+
+#### Development Tasks
+
+**Day 1-2: RTMP Server Setup**
+- [ ] Add dependency: `github.com/nareix/joy4` or `github.com/gwuhaolin/livego`
+- [ ] Create `internal/livestream/rtmp_server.go`
+- [ ] Implement RTMP listener on configurable port (default 1935)
+- [ ] Implement connection handler
+- [ ] Add graceful shutdown
+
+**Day 3-4: Database Schema**
+- [ ] Create migration `044_create_live_streams_table.sql`
+- [ ] Create stream_keys table with rotation
+- [ ] Add indexes for active stream queries
+- [ ] Create viewer_sessions table for tracking
+
+```sql
+CREATE TABLE live_streams (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    channel_id UUID NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    title TEXT NOT NULL,
+    description TEXT,
+    stream_key TEXT NOT NULL UNIQUE,
+    status TEXT NOT NULL DEFAULT 'waiting', -- waiting, live, ended
+    privacy TEXT NOT NULL DEFAULT 'public',
+    rtmp_url TEXT,
+    hls_playlist_url TEXT,
+    viewer_count INTEGER DEFAULT 0,
+    peak_viewer_count INTEGER DEFAULT 0,
+    started_at TIMESTAMP,
+    ended_at TIMESTAMP,
+    save_replay BOOLEAN DEFAULT true,
+    replay_video_id UUID REFERENCES videos(id),
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE stream_keys (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    channel_id UUID NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+    key_hash TEXT NOT NULL UNIQUE,
+    last_used_at TIMESTAMP,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    expires_at TIMESTAMP
+);
+
+CREATE TABLE viewer_sessions (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    live_stream_id UUID NOT NULL REFERENCES live_streams(id) ON DELETE CASCADE,
+    session_id TEXT NOT NULL,
+    ip_address INET,
+    user_agent TEXT,
+    joined_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    left_at TIMESTAMP
+);
+
+CREATE INDEX idx_live_streams_channel_id ON live_streams(channel_id);
+CREATE INDEX idx_live_streams_status ON live_streams(status);
+CREATE INDEX idx_stream_keys_channel_id ON stream_keys(channel_id);
+CREATE INDEX idx_viewer_sessions_live_stream_id ON viewer_sessions(live_stream_id);
+```
+
+**Day 5-7: Stream Authentication**
+- [ ] Implement stream key validation
+- [ ] Hash stream keys (bcrypt) before storage
+- [ ] Create API endpoint to generate/rotate stream keys
+- [ ] Implement RTMP auth callback
+- [ ] Add rate limiting (prevent brute force key guessing)
+
+**Day 8-10: Stream State Management**
+- [ ] Create `internal/livestream/stream_manager.go`
+- [ ] Track active streams in Redis (for fast lookups)
+- [ ] Implement stream start/stop events
+- [ ] Update database on stream status changes
+- [ ] Handle unexpected disconnections (auto-end stream after 30s timeout)
+
+#### Testing Tasks
+
+**Unit Tests**
+- [ ] Test stream key generation and validation
+- [ ] Test stream key hashing (bcrypt)
+- [ ] Test stream state transitions
+- [ ] Test authentication logic
+- [ ] Mock RTMP connections
+
+**Integration Tests**
+- [ ] Test RTMP server starts and accepts connections
+- [ ] Test stream key authentication (valid and invalid keys)
+- [ ] Test stream state updates in database
+- [ ] Test Redis cache synchronization
+- [ ] Test concurrent stream ingestion (10 streams)
+
+**Manual Tests**
+- [ ] Use OBS to connect via RTMP
+- [ ] Verify stream appears as "live" in database
+- [ ] Test disconnect/reconnect behavior
+- [ ] Test invalid stream key rejection
+
+#### Acceptance Criteria
+- ✓ RTMP server accepts connections on port 1935
+- ✓ Stream key authentication works
+- ✓ OBS can connect and stream
+- ✓ Stream status updates in real-time
+- ✓ All tests passing
+
+---
+
+### Sprint 6: HLS Transcoding & Playback
+
+#### Development Tasks
+
+**Day 1-3: Live HLS Transcoding**
+- [ ] Create FFmpeg live transcoding pipeline
+- [ ] Implement multi-resolution adaptive streaming (360p, 720p, 1080p)
+- [ ] Use shorter segment duration (2-4 seconds for low latency)
+- [ ] Write HLS segments to disk and serve via HTTP
+- [ ] Implement segment cleanup (delete old segments after 60s)
+
+```go
+// FFmpeg command for live HLS
+ffmpegArgs := []string{
+    "-i", rtmpInputURL,
+    "-c:v", "libx264", "-preset", "veryfast", "-tune", "zerolatency",
+    "-c:a", "aac", "-b:a", "128k",
+    "-f", "hls",
+    "-hls_time", "2",
+    "-hls_list_size", "10",
+    "-hls_flags", "delete_segments+append_list",
+    "-hls_segment_filename", segmentPattern,
+    playlistPath,
+}
+```
+
+**Day 4-5: Multi-Resolution Ladder**
+- [ ] Implement adaptive bitrate ladder (similar to VOD)
+- [ ] Generate master playlist with all resolutions
+- [ ] Auto-detect source resolution and only create lower resolutions
+- [ ] Handle resolution changes mid-stream (rare but possible)
+
+**Day 6-7: HLS Serving**
+- [ ] Create HTTP handler for HLS playlists
+- [ ] Serve master and variant playlists
+- [ ] Serve .ts segments with proper MIME types
+- [ ] Add CORS headers for cross-origin playback
+- [ ] Implement segment caching (CDN-friendly)
+
+**Day 8-10: Viewer Tracking & Chat (Basic)**
+- [ ] Track viewer count in Redis (sorted set with timestamps)
+- [ ] Update live stream viewer count every 10s
+- [ ] Create WebSocket endpoint for viewer presence
+- [ ] Implement basic chat system (messages stored in Redis, expire after stream ends)
+- [ ] Broadcast chat messages to all viewers
+
+#### Testing Tasks
+
+**Unit Tests**
+- [ ] Test FFmpeg command generation for live streams
+- [ ] Test segment cleanup logic
+- [ ] Test viewer count calculation
+- [ ] Test chat message validation
+
+**Integration Tests**
+- [ ] Test RTMP → HLS transcoding pipeline
+- [ ] Test master playlist generation
+- [ ] Test segment serving
+- [ ] Test viewer tracking accuracy
+- [ ] Test chat message delivery
+
+**E2E Tests**
+- [ ] Stream from OBS, play in browser (HLS.js)
+- [ ] Test latency (target: 6-10 seconds glass-to-glass)
+- [ ] Test playback on multiple clients simultaneously (10 viewers)
+- [ ] Test adaptive bitrate switching during playback
+- [ ] Test stream with varying network conditions (throttle bandwidth)
+
+**Load Tests**
+- [ ] Test 100 concurrent viewers per stream
+- [ ] Test 10 concurrent streams (1000 total viewers)
+- [ ] Monitor CPU/memory usage
+- [ ] Test HLS segment serving performance
+
+#### Acceptance Criteria
+- ✓ Can stream from OBS to Athena
+- ✓ Can play live stream in browser with HLS.js
+- ✓ Latency is <15 seconds
+- ✓ Adaptive bitrate works
+- ✓ Viewer count updates in real-time
+- ✓ Basic chat works
+- ✓ All tests passing
+
+---
+
+### Sprint 7: Live Stream Recording & VOD
+
+#### Development Tasks
+
+**Day 1-3: Stream Recording**
+- [ ] Implement concurrent recording while streaming
+- [ ] Use FFmpeg to copy stream to MP4 file
+- [ ] Handle recording interruption (network issues)
+- [ ] Implement recording resume (append to existing file)
+
+**Day 4-5: VOD Conversion**
+- [ ] Automatically create video record when stream ends (if save_replay=true)
+- [ ] Link live_stream to created video via replay_video_id
+- [ ] Enqueue encoding job for recorded stream (full quality re-encode)
+- [ ] Copy stream metadata (title, description) to video
+- [ ] Generate thumbnail from recording
+
+**Day 6-7: Live Stream Management API**
+- [ ] POST `/api/v1/live-streams` - Create live stream
+- [ ] GET `/api/v1/live-streams/:id` - Get stream details
+- [ ] PUT `/api/v1/live-streams/:id` - Update stream info (title, description)
+- [ ] DELETE `/api/v1/live-streams/:id` - End stream and delete
+- [ ] GET `/api/v1/live-streams/:id/viewers` - Get viewer list/count
+- [ ] POST `/api/v1/live-streams/:id/stream-key/rotate` - Rotate stream key
+
+**Day 8-10: Notifications & Federation**
+- [ ] Send notification to subscribers when stream goes live
+- [ ] Post to AT Proto when stream starts (external link)
+- [ ] Post to ActivityPub when stream starts (Note with link)
+- [ ] Update post when stream ends (with replay link if available)
+
+#### Testing Tasks
+
+**Unit Tests**
+- [ ] Test recording start/stop logic
+- [ ] Test VOD conversion workflow
+- [ ] Test API request validation
+- [ ] Test notification creation
+
+**Integration Tests**
+- [ ] Test full stream lifecycle: create → start → record → end → VOD
+- [ ] Test recording with interruption (stop FFmpeg mid-stream)
+- [ ] Test stream without recording (save_replay=false)
+- [ ] Test notification delivery to subscribers
+- [ ] Test federation posting
+
+**E2E Tests**
+- [ ] Stream 5 minutes, verify recording file exists
+- [ ] Verify VOD is playable after encoding
+- [ ] Verify subscribers receive notification
+- [ ] Test stream with 50+ viewers, ensure all receive notifications
+
+**Stress Tests**
+- [ ] Test 24-hour continuous stream
+- [ ] Test recording file size limits (>10GB)
+- [ ] Test disk space handling when low
+
+#### Acceptance Criteria
+- ✓ Stream is automatically recorded
+- ✓ Recording converts to VOD after stream ends
+- ✓ Subscribers notified when stream goes live
+- ✓ Stream posted to AT Proto and ActivityPub
+- ✓ All API endpoints functional
+- ✓ All tests passing
+
+---
+
+## Sprint 8-9: Torrent Support (4 weeks)
+
+### Sprint 8: Torrent Generation
+
+#### Development Tasks
+
+**Day 1-2: Dependency Setup**
+- [ ] Add `github.com/anacrolix/torrent` dependency
+- [ ] Add `github.com/anacrolix/torrent/metainfo` for .torrent creation
+- [ ] Create `internal/torrent/generator.go`
+
+**Day 3-5: Torrent File Generation**
+- [ ] Implement torrent creation for completed videos
+- [ ] Include all HLS segments + master playlist + thumbnails in torrent
+- [ ] Add WebTorrent-compatible tracker URLs
+- [ ] Generate magnet URI from torrent
+- [ ] Store torrent file in `/storage/torrents/{videoId}.torrent`
+
+```go
+func (g *Generator) GenerateTorrent(videoID string, files []string) (*metainfo.MetaInfo, error) {
+    mi := metainfo.MetaInfo{
+        AnnounceList: metainfo.AnnounceList{
+            {g.cfg.TorrentTrackerURL},
+            {"wss://tracker.openwebtorrent.com"},
+        },
+    }
+
+    info := metainfo.Info{
+        Name: fmt.Sprintf("athena-video-%s", videoID),
+        PieceLength: 256 * 1024, // 256KB pieces
+    }
+
+    for _, f := range files {
+        info.BuildFromFilePath(f)
+    }
+
+    mi.InfoBytes, _ = bencode.Marshal(info)
+    return &mi, nil
+}
+```
+
+**Day 6-7: Database Updates**
+- [ ] Add columns to videos table: `torrent_file_path`, `torrent_magnet_uri`, `webtorrent_enabled`
+- [ ] Update video repository to store torrent metadata
+- [ ] Create API endpoint to get torrent: GET `/api/v1/videos/:id/torrent`
+
+**Day 8-10: Integration with Encoding Pipeline**
+- [ ] Add torrent generation step to encoding service (after HLS creation)
+- [ ] Generate torrent file for each completed encoding job
+- [ ] Update video record with torrent info
+- [ ] Add retry logic for torrent generation failures
+
+#### Testing Tasks
+
+**Unit Tests**
+- [ ] Test torrent file creation (verify bencode structure)
+- [ ] Test magnet URI generation (parse and validate)
+- [ ] Test file list aggregation for torrent
+- [ ] Test tracker URL configuration
+
+**Integration Tests**
+- [ ] Test torrent generation after video encoding
+- [ ] Test torrent file download via API
+- [ ] Test torrent metadata in database
+- [ ] Verify .torrent file is valid (can be opened by torrent client)
+
+**Manual Tests**
+- [ ] Download .torrent file
+- [ ] Open in qBittorrent/Transmission
+- [ ] Verify file structure matches video files
+- [ ] Test magnet URI in torrent client
+
+#### Acceptance Criteria
+- ✓ Torrent files generated for all encoded videos
+- ✓ .torrent files are valid and openable
+- ✓ Magnet URIs work in torrent clients
+- ✓ API serves torrent files
+- ✓ All tests passing
+
+---
+
+### Sprint 9: Torrent Seeding & WebTorrent
+
+#### Development Tasks
+
+**Day 1-3: Backend Seeding Service**
+- [ ] Create `internal/torrent/seeder.go`
+- [ ] Implement torrent client (anacrolix/torrent)
+- [ ] Seed all videos with `webtorrent_enabled=true`
+- [ ] Configure upload/download limits (to avoid saturating bandwidth)
+- [ ] Add Redis cache for active torrents
+
+**Day 4-5: Tracker Server**
+- [ ] Create `internal/torrent/tracker.go`
+- [ ] Implement minimal BitTorrent tracker (HTTP tracker protocol)
+- [ ] Support WebTorrent (WebSocket tracker extension)
+- [ ] Track peers and respond to announce requests
+
+**Day 6-7: WebTorrent Frontend Integration**
+- [ ] Add WebTorrent.js integration example (documentation)
+- [ ] Create hybrid player (HTTP primary, WebTorrent fallback)
+- [ ] Add peer count display
+- [ ] Add upload/download stats
+
+**Day 8-10: Optimization & Testing**
+- [ ] Implement peer exchange (PEX) for better discovery
+- [ ] Add seeding prioritization (seed popular videos more)
+- [ ] Implement automatic unseeding for old/unpopular videos
+- [ ] Monitor bandwidth usage and throttle if needed
+
+#### Testing Tasks
+
+**Unit Tests**
+- [ ] Test seeder start/stop
+- [ ] Test tracker announce handling
+- [ ] Test peer list management
+- [ ] Test seeding prioritization logic
+
+**Integration Tests**
+- [ ] Test torrent seeding on video upload
+- [ ] Test tracker responds to announces
+- [ ] Test WebTorrent connection from browser
+- [ ] Test hybrid HTTP/P2P download
+
+**E2E Tests**
+- [ ] Seed video from backend
+- [ ] Download via WebTorrent.js in browser
+- [ ] Verify downloaded chunks match HTTP-served chunks
+- [ ] Test peer-to-peer transfer between two browser clients
+- [ ] Test bandwidth savings (measure HTTP vs P2P ratio)
+
+**Load Tests**
+- [ ] Test seeding 100 videos simultaneously
+- [ ] Test tracker handling 1000 peers
+- [ ] Test bandwidth usage under load
+- [ ] Monitor memory usage of torrent client
+
+#### Acceptance Criteria
+- ✓ Backend seeds torrents automatically
+- ✓ Tracker responds to announces
+- ✓ WebTorrent.js can download from backend
+- ✓ Hybrid player works (HTTP + P2P)
+- ✓ Bandwidth usage is acceptable
+- ✓ All tests passing
+
+---
+
+## Sprint 10-11: Analytics System (4 weeks)
+
+### Sprint 10: Analytics Foundation
+
+#### Development Tasks
+
+**Day 1-2: Database Schema**
+- [ ] Create migration `045_create_analytics_tables.sql`
+- [ ] Create video_analytics_daily table
+- [ ] Create video_analytics_retention table
+- [ ] Create video_analytics_events table (raw events)
+- [ ] Add indexes for time-based queries
+
+```sql
+CREATE TABLE video_analytics_events (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    video_id UUID NOT NULL REFERENCES videos(id) ON DELETE CASCADE,
+    event_type TEXT NOT NULL, -- view, play, pause, seek, complete
+    user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    session_id TEXT NOT NULL,
+    timestamp_seconds INTEGER, -- Position in video
+    watch_duration_seconds INTEGER,
+    ip_address INET,
+    user_agent TEXT,
+    country_code TEXT,
+    region TEXT,
+    device_type TEXT, -- desktop, mobile, tablet, tv
+    browser TEXT,
+    os TEXT,
+    referrer TEXT,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE video_analytics_daily (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    video_id UUID NOT NULL REFERENCES videos(id) ON DELETE CASCADE,
+    date DATE NOT NULL,
+    views INTEGER DEFAULT 0,
+    unique_viewers INTEGER DEFAULT 0,
+    watch_time_seconds BIGINT DEFAULT 0,
+    avg_watch_percentage DECIMAL(5,2),
+    completion_rate DECIMAL(5,2),
+    likes INTEGER DEFAULT 0,
+    dislikes INTEGER DEFAULT 0,
+    comments INTEGER DEFAULT 0,
+    shares INTEGER DEFAULT 0,
+    countries JSONB DEFAULT '{}',
+    devices JSONB DEFAULT '{}',
+    traffic_sources JSONB DEFAULT '{}',
+    UNIQUE(video_id, date)
+);
+
+CREATE TABLE video_analytics_retention (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    video_id UUID NOT NULL REFERENCES videos(id) ON DELETE CASCADE,
+    timestamp_seconds INTEGER NOT NULL,
+    viewer_count INTEGER DEFAULT 0,
+    date DATE NOT NULL,
+    UNIQUE(video_id, date, timestamp_seconds)
+);
+
+CREATE INDEX idx_analytics_events_video_id ON video_analytics_events(video_id);
+CREATE INDEX idx_analytics_events_created_at ON video_analytics_events(created_at);
+CREATE INDEX idx_analytics_events_session_id ON video_analytics_events(session_id);
+CREATE INDEX idx_analytics_daily_video_id_date ON video_analytics_daily(video_id, date DESC);
+CREATE INDEX idx_analytics_retention_video_id_date ON video_analytics_retention(video_id, date);
+```
+
+**Day 3-5: Event Collection**
+- [ ] Create `internal/analytics/collector.go`
+- [ ] Implement event ingestion API: POST `/api/v1/analytics/events`
+- [ ] Accept batch events (up to 100 events per request)
+- [ ] Validate and sanitize events
+- [ ] Write events to Redis queue (for buffering)
+- [ ] Background worker to flush Redis → PostgreSQL every 30s
+
+**Day 6-7: GeoIP & User-Agent Parsing**
+- [ ] Integrate MaxMind GeoIP2 database (or IP2Location)
+- [ ] Parse User-Agent to extract browser, OS, device type
+- [ ] Enrich events with geographic and device data before storage
+
+**Day 8-10: Aggregation Service**
+- [ ] Create `internal/analytics/aggregator.go`
+- [ ] Implement daily aggregation job (runs at midnight)
+- [ ] Aggregate raw events into video_analytics_daily
+- [ ] Calculate retention curve (viewer count at each timestamp)
+- [ ] Calculate completion rate, average watch percentage
+
+#### Testing Tasks
+
+**Unit Tests**
+- [ ] Test event validation (required fields, ranges)
+- [ ] Test event batching
+- [ ] Test GeoIP lookup
+- [ ] Test User-Agent parsing
+- [ ] Test aggregation calculations
+
+**Integration Tests**
+- [ ] Test event ingestion → Redis → PostgreSQL
+- [ ] Test aggregation job with sample data
+- [ ] Test retention curve calculation
+- [ ] Test concurrent event ingestion (1000 events/s)
+
+**Data Validation Tests**
+- [ ] Send 1000 view events, verify count in daily table
+- [ ] Test watch time calculation accuracy
+- [ ] Test unique viewer counting (deduplicate by session_id)
+- [ ] Test completion rate calculation
+
+#### Acceptance Criteria
+- ✓ Events are collected and stored
+- ✓ Geographic data is enriched
+- ✓ Daily aggregation runs successfully
+- ✓ Retention curve is calculated
+- ✓ All tests passing
+
+---
+
+### Sprint 11: Analytics API & Dashboard
+
+#### Development Tasks
+
+**Day 1-3: Analytics API**
+- [ ] Create `internal/httpapi/analytics_handlers.go`
+- [ ] GET `/api/v1/videos/:id/analytics` - Get video analytics summary
+- [ ] GET `/api/v1/videos/:id/analytics/retention` - Get retention curve
+- [ ] GET `/api/v1/videos/:id/analytics/geography` - Get geographic breakdown
+- [ ] GET `/api/v1/videos/:id/analytics/devices` - Get device breakdown
+- [ ] GET `/api/v1/videos/:id/analytics/traffic-sources` - Get referrer breakdown
+- [ ] Support date range filtering (?start_date=2024-01-01&end_date=2024-01-31)
+- [ ] Implement authorization (only video owner or admin can view)
+
+**Day 4-5: Real-Time Analytics**
+- [ ] Create WebSocket endpoint for real-time viewer count
+- [ ] Track active viewers in Redis (sorted set with TTL)
+- [ ] Broadcast viewer count updates every 5s
+- [ ] Implement real-time event streaming (for live dashboards)
+
+**Day 6-7: Analytics Visualizations (Backend Support)**
+- [ ] Return data in chart-friendly format (JSON arrays)
+- [ ] Implement data downsampling for large date ranges
+- [ ] Add export functionality (CSV, JSON)
+- [ ] Generate PDF reports (optional, using wkhtmltopdf)
+
+**Day 8-10: Performance Optimization**
+- [ ] Add Redis caching for analytics queries (5min TTL)
+- [ ] Create materialized view for channel-level analytics
+- [ ] Implement query pagination for large datasets
+- [ ] Optimize slow queries (add indexes, query tuning)
+
+#### Testing Tasks
+
+**Unit Tests**
+- [ ] Test API response formatting
+- [ ] Test date range validation
+- [ ] Test authorization logic
+- [ ] Test data downsampling
+
+**Integration Tests**
+- [ ] Test analytics API with real data
+- [ ] Test real-time viewer count updates
+- [ ] Test export functionality (CSV, JSON)
+- [ ] Test caching behavior (verify cache hits)
+
+**Performance Tests**
+- [ ] Benchmark analytics API response time (target: <200ms)
+- [ ] Test query performance with 1M+ events
+- [ ] Test real-time updates with 1000 concurrent connections
+- [ ] Load test: 100 concurrent analytics queries
+
+**UI Tests (if frontend exists)**
+- [ ] Test analytics dashboard rendering
+- [ ] Test chart interactions (zoom, filter)
+- [ ] Test real-time updates in UI
+- [ ] Test export button functionality
+
+#### Acceptance Criteria
+- ✓ Analytics API returns accurate data
+- ✓ Real-time viewer count works
+- ✓ Charts render correctly (if frontend)
+- ✓ Export to CSV works
+- ✓ Performance is acceptable (<200ms response)
+- ✓ All tests passing
+
+---
+
+## Sprint 12-13: Plugin System (4 weeks)
+
+### Sprint 12: Plugin Architecture
+
+#### Development Tasks
+
+**Day 1-3: Plugin Interface Design**
+- [ ] Create `internal/plugin/interface.go`
+- [ ] Define base Plugin interface (Name, Version, Initialize, Shutdown)
+- [ ] Define specialized interfaces: VideoPlugin, UserPlugin, APIPlugin
+- [ ] Create hook event system (events: video_uploaded, video_processed, etc.)
+
+```go
+// Plugin interface
+type Plugin interface {
+    Name() string
+    Version() string
+    Author() string
+    Initialize(ctx context.Context, config map[string]any) error
+    Shutdown(ctx context.Context) error
+}
+
+// Hook function signature
+type HookFunc func(ctx context.Context, data any) error
+
+// Specialized plugin interfaces
+type VideoPlugin interface {
+    Plugin
+    OnVideoUploaded(ctx context.Context, video *domain.Video) error
+    OnVideoProcessed(ctx context.Context, video *domain.Video) error
+    OnVideoDeleted(ctx context.Context, videoID string) error
+}
+
+type APIPlugin interface {
+    Plugin
+    RegisterRoutes(router chi.Router)
+}
+```
+
+**Day 4-6: Plugin Manager**
+- [ ] Create `internal/plugin/manager.go`
+- [ ] Implement plugin discovery (scan `/plugins` directory)
+- [ ] Implement plugin loading using `plugin` package (Go 1.8+)
+- [ ] Implement plugin lifecycle (load → initialize → run → shutdown)
+- [ ] Add plugin dependency resolution
+- [ ] Create plugin registry (map of loaded plugins)
+
+**Day 7-10: Hook System**
+- [ ] Create `internal/plugin/hooks.go`
+- [ ] Implement global hook manager
+- [ ] Add hook registration: `RegisterHook(event, pluginName, hookFunc)`
+- [ ] Add hook trigger: `TriggerHook(event, data)` (calls all registered hooks)
+- [ ] Implement hook middleware for HTTP endpoints
+- [ ] Add error handling (plugin failures don't crash app)
+
+#### Testing Tasks
+
+**Unit Tests**
+- [ ] Test plugin interface compliance (mock plugins)
+- [ ] Test plugin manager initialization
+- [ ] Test hook registration
+- [ ] Test hook triggering with multiple plugins
+- [ ] Test plugin failure handling (isolated failures)
+
+**Integration Tests**
+- [ ] Create sample plugin (.so file)
+- [ ] Test plugin loading from disk
+- [ ] Test plugin initialization with config
+- [ ] Test hook execution on real events
+- [ ] Test plugin shutdown on app shutdown
+
+**Sample Plugins**
+- [ ] Create "Watermark" plugin (adds watermark to videos)
+- [ ] Create "Analytics Export" plugin (exports to external service)
+- [ ] Create "Webhook" plugin (sends webhooks on events)
+
+#### Acceptance Criteria
+- ✓ Plugin manager loads plugins from directory
+- ✓ Plugins can register hooks
+- ✓ Hooks execute on events
+- ✓ Plugin failures are isolated
+- ✓ All tests passing
+
+---
+
+### Sprint 13: Plugin Security & Marketplace
+
+#### Development Tasks
+
+**Day 1-3: Plugin Sandboxing**
+- [ ] Migrate to hashicorp/go-plugin (RPC-based sandboxing)
+- [ ] Run plugins as separate processes
+- [ ] Implement plugin resource limits (CPU, memory, timeout)
+- [ ] Add plugin permission system (scopes: read_videos, write_videos, etc.)
+- [ ] Implement plugin capability declaration (plugin.json manifest)
+
+```json
+// plugin.json
+{
+  "name": "watermark-plugin",
+  "version": "1.0.0",
+  "author": "Athena Team",
+  "permissions": ["read_videos", "write_videos"],
+  "hooks": ["video_processed"],
+  "config_schema": {
+    "watermark_text": "string",
+    "position": "string"
+  }
+}
+```
+
+**Day 4-5: Plugin API**
+- [ ] POST `/api/v1/admin/plugins` - Upload plugin
+- [ ] GET `/api/v1/admin/plugins` - List installed plugins
+- [ ] PUT `/api/v1/admin/plugins/:name/enable` - Enable plugin
+- [ ] PUT `/api/v1/admin/plugins/:name/disable` - Disable plugin
+- [ ] DELETE `/api/v1/admin/plugins/:name` - Uninstall plugin
+- [ ] PUT `/api/v1/admin/plugins/:name/config` - Update plugin config
+
+**Day 6-7: Plugin Signature Verification**
+- [ ] Implement plugin signing (GPG or Ed25519)
+- [ ] Verify plugin signatures on upload
+- [ ] Maintain trusted plugin registry
+- [ ] Warn on unsigned plugins
+
+**Day 8-10: Documentation & Examples**
+- [ ] Write plugin development guide
+- [ ] Create plugin template repository
+- [ ] Document plugin API
+- [ ] Create example plugins (5+ examples)
+- [ ] Setup CI for plugin testing
+
+#### Testing Tasks
+
+**Security Tests**
+- [ ] Test plugin sandbox (attempt to access filesystem)
+- [ ] Test plugin resource limits (CPU, memory)
+- [ ] Test permission enforcement (deny unauthorized actions)
+- [ ] Test signature verification (reject unsigned/invalid plugins)
+
+**Integration Tests**
+- [ ] Test plugin upload via API
+- [ ] Test plugin enable/disable
+- [ ] Test plugin config updates
+- [ ] Test plugin uninstall (cleanup)
+
+**E2E Tests**
+- [ ] Upload plugin via API
+- [ ] Enable plugin
+- [ ] Trigger event that executes plugin hook
+- [ ] Verify plugin executed correctly
+- [ ] Disable plugin and verify hooks no longer execute
+
+**Load Tests**
+- [ ] Test 10 plugins executing concurrently
+- [ ] Test plugin performance impact (baseline vs with plugins)
+- [ ] Monitor memory usage with 20+ plugins loaded
+
+#### Acceptance Criteria
+- ✓ Plugins run in isolated processes
+- ✓ Plugin permissions are enforced
+- ✓ Plugin signatures are verified
+- ✓ Admin can manage plugins via API
+- ✓ Plugin development guide is complete
+- ✓ All tests passing
+
+---
+
+## Sprint 14: Video Redundancy (2 weeks)
+
+### Development Tasks
+
+**Day 1-2: Database Schema**
+- [ ] Create migration `046_create_video_redundancy_table.sql`
+- [ ] Add redundancy strategy configuration table
+- [ ] Add instance_peers table for known instances
+
+```sql
+CREATE TABLE video_redundancy (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    video_id UUID NOT NULL REFERENCES videos(id) ON DELETE CASCADE,
+    target_instance_url TEXT NOT NULL,
+    target_video_url TEXT,
+    status TEXT NOT NULL DEFAULT 'pending', -- pending, syncing, synced, failed
+    strategy TEXT NOT NULL, -- recent, most_viewed, trending, manual
+    last_sync_at TIMESTAMP,
+    sync_error TEXT,
+    file_size_bytes BIGINT,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(video_id, target_instance_url)
+);
+
+CREATE TABLE instance_peers (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    instance_url TEXT NOT NULL UNIQUE,
+    instance_name TEXT,
+    software TEXT, -- peertube, athena
+    version TEXT,
+    auto_accept_redundancy BOOLEAN DEFAULT false,
+    last_contacted_at TIMESTAMP,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_video_redundancy_video_id ON video_redundancy(video_id);
+CREATE INDEX idx_video_redundancy_status ON video_redundancy(status);
+```
+
+**Day 3-5: Redundancy Service**
+- [ ] Create `internal/redundancy/service.go`
+- [ ] Implement strategy evaluator (which videos to replicate)
+- [ ] Implement HTTP range request-based file transfer
+- [ ] Add checksum verification (SHA256)
+- [ ] Implement resumable transfers (if interrupted)
+
+**Day 6-7: Instance Discovery**
+- [ ] Use ActivityPub for instance discovery
+- [ ] Fetch instance metadata (software, version, capabilities)
+- [ ] Negotiate redundancy agreements (mutual consent)
+- [ ] Implement redundancy request/accept flow
+
+**Day 8-10: Sync & Monitoring**
+- [ ] Implement background sync job (runs hourly)
+- [ ] Monitor sync status and retry failures
+- [ ] Implement periodic re-sync (weekly checksum verification)
+- [ ] Add metrics: redundancy_success_total, redundancy_failed_total
+
+### Testing Tasks
+
+**Unit Tests**
+- [ ] Test strategy evaluation logic
+- [ ] Test checksum calculation and verification
+- [ ] Test resumable transfer logic
+- [ ] Test instance discovery
+
+**Integration Tests**
+- [ ] Test redundancy creation and sync
+- [ ] Test file transfer with checksums
+- [ ] Test sync failure and retry
+- [ ] Test instance negotiation
+
+**E2E Tests**
+- [ ] Setup two Athena instances
+- [ ] Configure redundancy between them
+- [ ] Upload video on instance A
+- [ ] Verify video syncs to instance B
+- [ ] Verify playback from both instances
+
+**Performance Tests**
+- [ ] Test large file transfer (10GB video)
+- [ ] Test concurrent redundancy syncs (10 videos)
+- [ ] Monitor bandwidth usage
+
+### Acceptance Criteria
+- ✓ Redundancy strategy selects appropriate videos
+- ✓ Videos sync to peer instances
+- ✓ Checksums match after sync
+- ✓ Failed syncs retry automatically
+- ✓ All tests passing
+
+---
+
+## Testing Infrastructure
+
+### Continuous Integration (CI/CD)
+
+**GitHub Actions Workflow**
+
+```yaml
+name: Athena CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+      redis:
+        image: redis:7
+        options: >-
+          --health-cmd "redis-cli ping"
+      ipfs:
+        image: ipfs/kubo:latest
+
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-go@v4
+        with:
+          go-version: '1.21'
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+          go mod download
+
+      - name: Run migrations
+        run: make migrate-test
+
+      - name: Run unit tests
+        run: go test -v -race -coverprofile=coverage.out ./...
+
+      - name: Run integration tests
+        run: go test -v -tags=integration ./tests/integration/...
+
+      - name: Run linters
+        run: golangci-lint run
+
+      - name: Upload coverage
+        uses: codecov/codecov-action@v3
+        with:
+          file: ./coverage.out
+
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Setup Docker Compose
+        run: docker-compose -f docker-compose.test.yml up -d
+
+      - name: Wait for services
+        run: ./scripts/wait-for-services.sh
+
+      - name: Run E2E tests
+        run: go test -v -tags=e2e ./tests/e2e/...
+
+      - name: Collect logs
+        if: failure()
+        run: docker-compose logs > logs.txt
+
+      - name: Upload logs
+        if: failure()
+        uses: actions/upload-artifact@v3
+        with:
+          name: docker-logs
+          path: logs.txt
+```
+
+### Test Categories
+
+1. **Unit Tests** (Fast, no external dependencies)
+   - Run on every commit
+   - Target: >80% code coverage
+   - Use mocks for all external services
+
+2. **Integration Tests** (Medium speed, real DB/Redis)
+   - Run on every PR
+   - Test interactions between components
+   - Use Docker containers for services
+
+3. **E2E Tests** (Slow, full system)
+   - Run on nightly builds and before releases
+   - Test complete user workflows
+   - Use real external services
+
+4. **Performance Tests** (Benchmark)
+   - Run weekly
+   - Monitor for regressions
+   - Store results for trend analysis
+
+5. **Security Tests**
+   - Run on every PR
+   - Static analysis (gosec, semgrep)
+   - Dependency scanning (Snyk, Dependabot)
+
+### Test Data Management
+
+```go
+// testutil/fixtures.go
+package testutil
+
+func CreateTestVideo(t *testing.T, db *sqlx.DB) *domain.Video {
+    video := &domain.Video{
+        ID:       uuid.New(),
+        Title:    "Test Video",
+        UserID:   CreateTestUser(t, db).ID,
+        Status:   domain.StatusCompleted,
+        Privacy:  domain.PrivacyPublic,
+    }
+    err := db.Get(video, `INSERT INTO videos (...) VALUES (...) RETURNING *`)
+    require.NoError(t, err)
+    return video
+}
+```
+
+### Manual Testing Checklist
+
+**Before Each Sprint Demo:**
+- [ ] Fresh deployment on staging environment
+- [ ] Smoke test: upload video, play video, view analytics
+- [ ] Cross-browser testing (Chrome, Firefox, Safari)
+- [ ] Mobile testing (iOS Safari, Android Chrome)
+- [ ] Performance check (lighthouse score >90)
+
+**Before Production Release:**
+- [ ] Full regression test suite
+- [ ] Load testing (1000 concurrent users)
+- [ ] Security audit (OWASP top 10)
+- [ ] Backup/restore test
+- [ ] Rollback procedure test
+
+---
+
+## Success Metrics
+
+### Sprint-Level Metrics
+- **Code Coverage:** Maintain >80% for all new code
+- **Test Pass Rate:** 100% (all tests must pass)
+- **Build Time:** <10 minutes for full CI pipeline
+- **Bug Escape Rate:** <5% (bugs found in prod vs found in testing)
+
+### Feature-Level Metrics
+- **Import Success Rate:** >95% for supported platforms
+- **Encoding Success Rate:** >99%
+- **Live Stream Uptime:** >99.5%
+- **Torrent Seed Ratio:** >1.0 (upload/download)
+- **Analytics Accuracy:** ±2% of actual values
+- **Plugin Crash Rate:** <0.1% of executions
+
+### Performance Targets
+- **API Response Time:** p95 <200ms, p99 <500ms
+- **Video Upload:** Support 5GB files in <10 minutes (1Gbps connection)
+- **Transcoding:** 1080p 10min video in <15 minutes
+- **Live Stream Latency:** <15 seconds glass-to-glass
+- **Concurrent Users:** Support 10,000 concurrent viewers
+
+---
+
+## Risk Mitigation
+
+### Technical Risks
+
+| Risk | Likelihood | Impact | Mitigation |
+|------|-----------|--------|------------|
+| FFmpeg crashes during encoding | Medium | High | Implement retry logic, isolate in container, monitor resource usage |
+| RTMP server DDoS | Medium | High | Rate limiting, authentication, use CDN for HLS delivery |
+| Torrent bandwidth abuse | High | Medium | Bandwidth limits, auto-throttling, prioritization |
+| Plugin security vulnerabilities | Medium | High | Sandboxing, code review, signature verification |
+| Database performance degradation | Medium | High | Query optimization, read replicas, caching layer |
+
+### Resource Risks
+
+| Risk | Likelihood | Impact | Mitigation |
+|------|-----------|--------|------------|
+| Disk space exhaustion | High | High | Auto-cleanup, storage quotas, monitoring alerts |
+| CPU overload during peak | Medium | Medium | Auto-scaling, queue management, rate limiting |
+| Memory leaks in long-running services | Low | Medium | Regular restarts, memory profiling, monitoring |
+
+---
+
+## Conclusion
+
+This sprint plan provides a comprehensive roadmap for implementing PeerTube feature parity in Athena. Each sprint includes:
+
+- Clear development tasks with time estimates
+- Extensive testing at multiple levels (unit, integration, E2E, performance)
+- Acceptance criteria for sprint completion
+- Risk mitigation strategies
+
+**Total Timeline:** 14 sprints (28 weeks)
+**Total Features:** 7 major feature sets
+**Estimated Test Count:** 500+ automated tests
+**Code Coverage Target:** >80%
+
+The plan is designed to be iterative and allows for adjustment based on feedback and changing priorities. Each sprint delivers working, tested features that can be demoed to stakeholders.
