@@ -56,6 +56,7 @@ type HandlerDependencies struct {
 	HardeningService    *usecase.FederationHardeningService
 	EncodingService     encoding.Service
 	ActivityPubService  port.ActivityPubService
+	ImportService       any // Import service for video imports
 
 	// Schedulers
 	EncodingScheduler *scheduler.EncodingScheduler

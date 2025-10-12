@@ -10,6 +10,7 @@ import (
 	"athena/internal/config"
 	"athena/internal/domain"
 	"athena/internal/middleware"
+	importuc "athena/internal/usecase/import"
 )
 
 // RegisterRoutesWithDependencies sets up all HTTP routes using pre-initialized dependencies.
@@ -136,6 +137,23 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, deps *Hand
 
 		// Static HLS handler with privacy gating and cache headers
 		r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/hls/*", HLSHandler(deps.VideoRepo))
+
+		// Video import endpoints
+		if deps.ImportService != nil {
+			log.Printf("Registering video import routes...")
+			// Type assert deps.ImportService to importuc.Service
+			importService, ok := deps.ImportService.(importuc.Service)
+			if ok {
+				r.Route("/videos/imports", func(r chi.Router) {
+					r.Use(middleware.Auth(cfg.JWTSecret))
+					importHandlers := NewImportHandlers(importService)
+					r.Post("/", importHandlers.CreateImport)
+					r.Get("/", importHandlers.ListImports)
+					r.Get("/{id}", importHandlers.GetImport)
+					r.Delete("/{id}", importHandlers.CancelImport)
+				})
+			}
+		}
 
 		// Chunked upload endpoints
 		r.Route("/uploads", func(r chi.Router) {

@@ -64,6 +64,7 @@ type Dependencies struct {
 	ModerationRepo   *repository.ModerationRepository
 	FederationRepo   *repository.FederationRepository
 	HardeningRepo    *repository.FederationHardeningRepository
+	ImportRepo       *repository.ImportRepository
 	SessionRepo      usecase.AuthRepository
 
 	UploadService       ucup.Service
@@ -79,6 +80,7 @@ type Dependencies struct {
 	FederationService   usecase.FederationService
 	HardeningService    *usecase.FederationHardeningService
 	EncodingService     ucenc.Service
+	ImportService       any // ucimport.Service
 }
 
 func New(cfg *config.Config) (*Application, error) {
@@ -144,6 +146,7 @@ func (app *Application) initializeStorageDirectories() error {
 		filepath.Join(storageRoot, "avatars"),
 		filepath.Join(storageRoot, "cache"),
 		filepath.Join(storageRoot, "captions"),
+		filepath.Join(storageRoot, "imports"),
 		filepath.Join(storageRoot, "logs"),
 		filepath.Join(storageRoot, "previews"),
 		filepath.Join(storageRoot, "streaming-playlists", "hls"),
@@ -250,6 +253,9 @@ func (app *Application) initializeDependencies() *Dependencies {
 	deps.HardeningService = usecase.NewFederationHardeningService(deps.HardeningRepo, deps.FederationService, app.Config)
 	_ = deps.HardeningService.Initialize(context.Background())
 
+	// Wire up import service dependencies
+	app.WireImportDependencies(deps)
+
 	return deps
 }
 
@@ -309,6 +315,7 @@ func (app *Application) registerRoutes(deps *Dependencies) {
 		FederationService:   deps.FederationService,
 		HardeningService:    deps.HardeningService,
 		EncodingService:     deps.EncodingService,
+		ImportService:       deps.ImportService,
 		EncodingScheduler:   app.encodingScheduler,
 		Redis:               app.Redis,
 		JWTSecret:           app.Config.JWTSecret,
