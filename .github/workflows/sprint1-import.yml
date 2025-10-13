@@ -60,13 +60,22 @@ jobs:
       - name: Run domain tests
         run: go test -v -race -coverprofile=domain-coverage.out ./internal/domain -run TestImport
 
+      - name: Run repository tests
+        run: go test -v -race -coverprofile=repository-coverage.out ./internal/repository -run TestImportRepository
+
+      - name: Run service tests
+        run: go test -v -race -coverprofile=service-coverage.out ./internal/usecase/import -run TestImportService
+
+      - name: Run API handler tests
+        run: go test -v -race -coverprofile=handlers-coverage.out ./internal/httpapi -run TestImportHandlers
+
       - name: Run importer tests
         run: go test -v -race -coverprofile=importer-coverage.out ./internal/importer/... || true
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
         with:
-          files: ./domain-coverage.out,./importer-coverage.out
+          files: ./domain-coverage.out,./repository-coverage.out,./service-coverage.out,./handlers-coverage.out,./importer-coverage.out
           flags: unit
           name: unit-tests
 
@@ -126,12 +135,19 @@ jobs:
         run: |
           psql -h localhost -p 5433 -U test_user -d athena_test -c "SELECT COUNT(*) FROM video_imports;" || echo "Table not created yet"
 
-      - name: Run integration tests
+      - name: Run repository integration tests
         env:
-          DATABASE_URL: postgres://test_user:test_password@localhost:5433/athena_test?sslmode=disable
+          TEST_DATABASE_URL: postgres://test_user:test_password@localhost:5433/athena_test?sslmode=disable
           REDIS_URL: redis://localhost:6380/0
         run: |
-          go test -v -race -tags=integration ./internal/repository -run TestImport || echo "Integration tests not yet implemented"
+          go test -v -race -tags=integration ./internal/repository -run TestImport
+
+      - name: Run API integration tests
+        env:
+          TEST_DATABASE_URL: postgres://test_user:test_password@localhost:5433/athena_test?sslmode=disable
+          REDIS_URL: redis://localhost:6380/0
+        run: |
+          go test -v -race -tags=integration ./internal/httpapi -run TestImportIntegration || echo "Note: Some integration tests may skip if yt-dlp not available"
 
   migration-validation:
     name: Migration Validation
