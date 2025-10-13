@@ -73,7 +73,7 @@ jobs:
         run: go test -v -race -coverprofile=importer-coverage.out ./internal/importer/... || true
 
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@v5
         with:
           files: ./domain-coverage.out,./repository-coverage.out,./service-coverage.out,./handlers-coverage.out,./importer-coverage.out
           flags: unit
