@@ -66,7 +66,6 @@ type service struct {
 
 type importContext struct {
 	cancel context.CancelFunc
-	mu     sync.Mutex
 }
 
 // NewService creates a new import service
@@ -474,13 +473,17 @@ func copyFile(src, dst string) error {
 	if err != nil {
 		return err
 	}
-	defer sourceFile.Close()
+	defer func() {
+		_ = sourceFile.Close()
+	}()
 
 	destFile, err := os.Create(dst)
 	if err != nil {
 		return err
 	}
-	defer destFile.Close()
+	defer func() {
+		_ = destFile.Close()
+	}()
 
 	if _, err := destFile.ReadFrom(sourceFile); err != nil {
 		return err

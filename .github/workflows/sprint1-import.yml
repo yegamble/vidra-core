@@ -36,10 +36,10 @@ jobs:
           cache: true
 
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v4
+        uses: golangci/golangci-lint-action@v6
         with:
-          version: latest
-          args: --timeout=5m ./internal/domain/import*.go ./internal/repository/import*.go ./internal/usecase/import/... ./internal/importer/... ./internal/httpapi/import*.go
+          version: v1.62.2
+          args: --timeout=5m ./internal/domain/... ./internal/repository/... ./internal/usecase/import/... ./internal/importer/... ./internal/httpapi/...
 
   unit-tests:
     name: Unit Tests
