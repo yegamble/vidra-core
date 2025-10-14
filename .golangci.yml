@@ -1,4 +1,3 @@
-version: "2"
 run:
   tests: false
 linters:
@@ -14,7 +13,5 @@ linters:
     - misspell
     - unconvert
     - whitespace
-formatters:
-  enable:
     - goimports
     - gofmt
