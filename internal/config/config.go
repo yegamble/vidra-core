@@ -84,6 +84,16 @@ type Config struct {
 	HLSSegmentDuration int
 	ThumbnailCount     int
 
+	// Multi-Codec Configuration
+	VideoCodecs   []string // e.g., ["h264", "vp9", "av1"]
+	EnableVP9     bool
+	VP9Quality    int // CRF value 23-40
+	VP9Speed      int // 0-4 (0=slowest/best, 4=fastest)
+	EnableAV1     bool
+	AV1Preset     int    // 0-13 (for SVT-AV1)
+	AV1CRF        int    // 23-55
+	CodecPriority string // "quality" or "speed"
+
 	// HLS Signing Configuration
 	HLSSecret   string
 	HLSTokenTTL int
@@ -260,6 +270,16 @@ func Load() (*Config, error) {
 	cfg.VideoQualities = getStringSliceEnv("VIDEO_QUALITIES", []string{"360p", "480p", "720p", "1080p"})
 	cfg.HLSSegmentDuration = getIntEnv("HLS_SEGMENT_DURATION", 4)
 	cfg.ThumbnailCount = getIntEnv("THUMBNAIL_COUNT", 3)
+
+	// Multi-Codec Configuration
+	cfg.VideoCodecs = getStringSliceEnv("VIDEO_CODECS", []string{"h264"}) // Default to H.264 only
+	cfg.EnableVP9 = getBoolEnv("ENABLE_VP9", false)
+	cfg.VP9Quality = getIntEnv("VP9_QUALITY", 31) // CRF 31 is a good balance
+	cfg.VP9Speed = getIntEnv("VP9_SPEED", 2)      // Speed 2 is reasonable
+	cfg.EnableAV1 = getBoolEnv("ENABLE_AV1", false)
+	cfg.AV1Preset = getIntEnv("AV1_PRESET", 6)                     // Preset 6-8 for balance
+	cfg.AV1CRF = getIntEnv("AV1_CRF", 30)                          // CRF 30 for AV1
+	cfg.CodecPriority = getEnvOrDefault("CODEC_PRIORITY", "speed") // "quality" or "speed"
 
 	// HLS Signing
 	cfg.HLSSecret = getEnvOrDefault("HLS_SIGNING_SECRET", "")
