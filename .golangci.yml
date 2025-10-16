@@ -1,5 +1,9 @@
+version: 2
+
 run:
   tests: false
+  timeout: 10m
+
 linters:
   enable:
     - errcheck
@@ -13,5 +17,14 @@ linters:
     - misspell
     - unconvert
     - whitespace
+
+formatters:
+  enable:
     - goimports
     - gofmt
+
+issues:
+  exclude-dirs:
+    - vendor
+  max-issues-per-linter: 0
+  max-same-issues: 0
