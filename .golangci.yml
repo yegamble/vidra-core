@@ -1,8 +1,10 @@
-version: 2
+version: "2.4.0"
 
 run:
   tests: false
   timeout: 10m
+  skip-dirs:
+    - vendor
 
 linters:
   enable:
@@ -24,7 +26,5 @@ formatters:
     - gofmt
 
 issues:
-  exclude-dirs:
-    - vendor
   max-issues-per-linter: 0
   max-same-issues: 0
