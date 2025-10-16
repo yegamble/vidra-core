@@ -8,9 +8,9 @@ ADD COLUMN IF NOT EXISTS encoding_profile TEXT DEFAULT 'h264';
 COMMENT ON COLUMN encoding_jobs.encoding_profile IS 'Codec profile: h264, vp9, or av1';
 
 -- Update videos table to support multi-codec outputs
--- The outputs JSONB field will now store codec variants:
+-- The output_paths JSONB field will now store codec variants:
 -- Example structure: {"h264": {"720p": "path/to/720p.m3u8", "1080p": "..."}, "vp9": {"720p": "..."}}
-COMMENT ON COLUMN videos.outputs IS 'Multi-codec output paths stored as {"codec": {"resolution": "path"}}';
+COMMENT ON COLUMN videos.output_paths IS 'Multi-codec output paths stored as {"codec": {"resolution": "path"}}';
 
 -- Add index on encoding_profile for faster queries
 CREATE INDEX IF NOT EXISTS idx_encoding_jobs_profile
@@ -66,15 +66,15 @@ SELECT
     id,
     'h264' as codec,
     CASE
-        WHEN processing_status = 'completed' THEN 'completed'
-        WHEN processing_status = 'processing' THEN 'encoding'
-        WHEN processing_status = 'failed' THEN 'failed'
+        WHEN status = 'completed' THEN 'completed'
+        WHEN status = 'processing' THEN 'encoding'
+        WHEN status = 'failed' THEN 'failed'
         ELSE 'pending'
     END as status,
-    COALESCE(outputs, '{}'::jsonb) as output_paths,
+    COALESCE(output_paths, '{}'::jsonb) as output_paths,
     updated_at as completed_at
 FROM videos
-WHERE processing_status IS NOT NULL
+WHERE status IS NOT NULL
 ON CONFLICT (video_id, codec) DO NOTHING;
 
 -- Add helper function to get available codecs for a video
