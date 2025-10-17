@@ -3,8 +3,6 @@ version: "2"
 run:
   tests: false
   timeout: 10m
-  skip-dirs:
-    - vendor
 
 linters:
   enable:
