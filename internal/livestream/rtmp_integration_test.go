@@ -77,8 +77,8 @@ func TestRTMPServerIntegration(t *testing.T) {
 		MaxStreamDuration:  0,
 	}
 
-	// Create and start RTMP server
-	rtmpServer := NewRTMPServer(cfg, streamRepo, streamKeyRepo, streamManager, logger)
+	// Create and start RTMP server (without HLS transcoding or VOD conversion for this test)
+	rtmpServer := NewRTMPServer(cfg, streamRepo, streamKeyRepo, streamManager, nil, nil, logger)
 	err = rtmpServer.Start(ctx)
 	require.NoError(t, err)
 	defer func() {

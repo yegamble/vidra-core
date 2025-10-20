@@ -173,8 +173,14 @@ func (v *VODConverter) processJob(job *VODConversionJob) {
 	job.Status = "processing"
 	v.mu.Unlock()
 
+	// Use job context if available, otherwise use background context
+	parentCtx := job.Ctx
+	if parentCtx == nil {
+		parentCtx = context.Background()
+	}
+
 	// Process with timeout
-	ctx, cancel := context.WithTimeout(job.Ctx, 30*time.Minute)
+	ctx, cancel := context.WithTimeout(parentCtx, 30*time.Minute)
 	defer cancel()
 
 	// Step 1: Find the best variant (highest quality available)
@@ -198,13 +204,17 @@ func (v *VODConverter) processJob(job *VODConversionJob) {
 
 	// Step 3: Optimize for web streaming (+faststart)
 	if err := v.optimizeVideo(ctx, tempFile, job.OutputPath); err != nil {
-		os.Remove(tempFile)
+		if removeErr := os.Remove(tempFile); removeErr != nil {
+			v.logger.WithError(removeErr).Warn("Failed to remove temp file after optimization failure")
+		}
 		v.failJob(job, fmt.Errorf("failed to optimize video: %w", err))
 		return
 	}
 
 	// Clean up temp file
-	os.Remove(tempFile)
+	if err := os.Remove(tempFile); err != nil {
+		v.logger.WithError(err).Warn("Failed to remove temp file")
+	}
 
 	// Step 4: Upload to IPFS (if enabled)
 	if v.cfg.ReplayUploadToIPFS {
@@ -434,7 +444,9 @@ func (v *VODConverter) Shutdown(ctx context.Context) error {
 	v.mu.Unlock()
 
 	for _, job := range jobs {
-		job.Cancel()
+		if job.Cancel != nil {
+			job.Cancel()
+		}
 	}
 
 	// Wait for workers to finish
