@@ -5,6 +5,7 @@ import (
 
 	redis "github.com/redis/go-redis/v9"
 
+	"athena/internal/livestream"
 	"athena/internal/port"
 	"athena/internal/repository"
 	"athena/internal/scheduler"
@@ -20,26 +21,29 @@ import (
 
 type HandlerDependencies struct {
 	// Repositories
-	UserRepo         usecase.UserRepository
-	VideoRepo        usecase.VideoRepository
-	UploadRepo       usecase.UploadRepository
-	EncodingRepo     usecase.EncodingRepository
-	MessageRepo      usecase.MessageRepository
-	AuthRepo         usecase.AuthRepository
-	OAuthRepo        usecase.OAuthRepository
-	SubRepo          usecase.SubscriptionRepository
-	ViewsRepo        *repository.ViewsRepository
-	NotificationRepo *repository.NotificationRepository
-	ChannelRepo      *repository.ChannelRepository
-	CommentRepo      usecase.CommentRepository
-	RatingRepo       usecase.RatingRepository
-	PlaylistRepo     usecase.PlaylistRepository
-	CaptionRepo      usecase.CaptionRepository
-	ModerationRepo   *repository.ModerationRepository
-	FederationRepo   *repository.FederationRepository
-	HardeningRepo    *repository.FederationHardeningRepository
-	ActivityPubRepo  *repository.ActivityPubRepository
-	SessionRepo      usecase.AuthRepository
+	UserRepo          usecase.UserRepository
+	VideoRepo         usecase.VideoRepository
+	UploadRepo        usecase.UploadRepository
+	EncodingRepo      usecase.EncodingRepository
+	MessageRepo       usecase.MessageRepository
+	AuthRepo          usecase.AuthRepository
+	OAuthRepo         usecase.OAuthRepository
+	SubRepo           usecase.SubscriptionRepository
+	ViewsRepo         *repository.ViewsRepository
+	NotificationRepo  *repository.NotificationRepository
+	ChannelRepo       *repository.ChannelRepository
+	CommentRepo       usecase.CommentRepository
+	RatingRepo        usecase.RatingRepository
+	PlaylistRepo      usecase.PlaylistRepository
+	CaptionRepo       usecase.CaptionRepository
+	ModerationRepo    *repository.ModerationRepository
+	FederationRepo    *repository.FederationRepository
+	HardeningRepo     *repository.FederationHardeningRepository
+	ActivityPubRepo   *repository.ActivityPubRepository
+	SessionRepo       usecase.AuthRepository
+	LiveStreamRepo    repository.LiveStreamRepository
+	StreamKeyRepo     repository.StreamKeyRepository
+	ViewerSessionRepo repository.ViewerSessionRepository
 
 	// Services
 	UploadService       ucup.Service
@@ -57,6 +61,7 @@ type HandlerDependencies struct {
 	EncodingService     encoding.Service
 	ActivityPubService  port.ActivityPubService
 	ImportService       any // Import service for video imports
+	StreamManager       *livestream.StreamManager
 
 	// Schedulers
 	EncodingScheduler *scheduler.EncodingScheduler

@@ -162,7 +162,7 @@ CREATE OR REPLACE VIEW active_live_streams AS
 SELECT
     ls.*,
     get_live_viewer_count(ls.id) as current_viewers,
-    c.name as channel_name,
+    c.display_name as channel_name,
     u.username as streamer_username
 FROM live_streams ls
 JOIN channels c ON ls.channel_id = c.id

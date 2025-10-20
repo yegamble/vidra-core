@@ -238,6 +238,40 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, deps *Hand
 			})
 		})
 
+		// Live streams
+		if deps.LiveStreamRepo != nil && deps.StreamKeyRepo != nil && deps.ViewerSessionRepo != nil {
+			log.Printf("Registering live stream routes...")
+			r.Route("/streams", func(r chi.Router) {
+				liveStreamHandlers := NewLiveStreamHandlers(
+					deps.LiveStreamRepo,
+					deps.StreamKeyRepo,
+					deps.ViewerSessionRepo,
+					deps.StreamManager,
+				)
+
+				// Authenticated routes
+				r.Group(func(r chi.Router) {
+					r.Use(middleware.Auth(cfg.JWTSecret))
+					r.Post("/", liveStreamHandlers.CreateStream)
+					r.Get("/active", liveStreamHandlers.GetActiveStreams)
+				})
+
+				// Channel-specific routes
+				r.Route("/channels/{channelId}", func(r chi.Router) {
+					r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/", liveStreamHandlers.ListChannelStreams)
+				})
+
+				// Stream-specific routes
+				r.Route("/{id}", func(r chi.Router) {
+					r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/", liveStreamHandlers.GetStream)
+					r.With(middleware.Auth(cfg.JWTSecret)).Put("/", liveStreamHandlers.UpdateStream)
+					r.With(middleware.Auth(cfg.JWTSecret)).Post("/end", liveStreamHandlers.EndStream)
+					r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/stats", liveStreamHandlers.GetStreamStats)
+					r.With(middleware.Auth(cfg.JWTSecret)).Post("/rotate-key", liveStreamHandlers.RotateStreamKey)
+				})
+			})
+		}
+
 		// Comments (standalone endpoints)
 		r.Route("/comments", func(r chi.Router) {
 			commentHandlers := NewCommentHandlers(deps.CommentService)

@@ -13,9 +13,11 @@ import (
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
 	redis "github.com/redis/go-redis/v9"
+	"github.com/sirupsen/logrus"
 
 	"athena/internal/config"
 	"athena/internal/httpapi"
+	"athena/internal/livestream"
 	"athena/internal/metrics"
 	"athena/internal/repository"
 	"athena/internal/scheduler"
@@ -46,26 +48,29 @@ type Application struct {
 }
 
 type Dependencies struct {
-	UserRepo         usecase.UserRepository
-	VideoRepo        usecase.VideoRepository
-	UploadRepo       usecase.UploadRepository
-	EncodingRepo     usecase.EncodingRepository
-	MessageRepo      usecase.MessageRepository
-	AuthRepo         usecase.AuthRepository
-	OAuthRepo        usecase.OAuthRepository
-	SubRepo          usecase.SubscriptionRepository
-	ViewsRepo        *repository.ViewsRepository
-	NotificationRepo *repository.NotificationRepository
-	ChannelRepo      *repository.ChannelRepository
-	CommentRepo      usecase.CommentRepository
-	RatingRepo       usecase.RatingRepository
-	PlaylistRepo     usecase.PlaylistRepository
-	CaptionRepo      usecase.CaptionRepository
-	ModerationRepo   *repository.ModerationRepository
-	FederationRepo   *repository.FederationRepository
-	HardeningRepo    *repository.FederationHardeningRepository
-	ImportRepo       *repository.ImportRepository
-	SessionRepo      usecase.AuthRepository
+	UserRepo          usecase.UserRepository
+	VideoRepo         usecase.VideoRepository
+	UploadRepo        usecase.UploadRepository
+	EncodingRepo      usecase.EncodingRepository
+	MessageRepo       usecase.MessageRepository
+	AuthRepo          usecase.AuthRepository
+	OAuthRepo         usecase.OAuthRepository
+	SubRepo           usecase.SubscriptionRepository
+	ViewsRepo         *repository.ViewsRepository
+	NotificationRepo  *repository.NotificationRepository
+	ChannelRepo       *repository.ChannelRepository
+	CommentRepo       usecase.CommentRepository
+	RatingRepo        usecase.RatingRepository
+	PlaylistRepo      usecase.PlaylistRepository
+	CaptionRepo       usecase.CaptionRepository
+	ModerationRepo    *repository.ModerationRepository
+	FederationRepo    *repository.FederationRepository
+	HardeningRepo     *repository.FederationHardeningRepository
+	ImportRepo        *repository.ImportRepository
+	SessionRepo       usecase.AuthRepository
+	LiveStreamRepo    repository.LiveStreamRepository
+	StreamKeyRepo     repository.StreamKeyRepository
+	ViewerSessionRepo repository.ViewerSessionRepository
 
 	UploadService       ucup.Service
 	MessageService      *usecase.MessageService
@@ -81,6 +86,7 @@ type Dependencies struct {
 	HardeningService    *usecase.FederationHardeningService
 	EncodingService     ucenc.Service
 	ImportService       any // ucimport.Service
+	StreamManager       *livestream.StreamManager
 }
 
 func New(cfg *config.Config) (*Application, error) {
@@ -184,24 +190,27 @@ func (app *Application) verifyIPFSConnection() error {
 
 func (app *Application) initializeDependencies() *Dependencies {
 	deps := &Dependencies{
-		UserRepo:         repository.NewUserRepository(app.DB),
-		VideoRepo:        repository.NewVideoRepository(app.DB),
-		UploadRepo:       repository.NewUploadRepository(app.DB),
-		EncodingRepo:     repository.NewEncodingRepository(app.DB),
-		MessageRepo:      repository.NewMessageRepository(app.DB),
-		AuthRepo:         repository.NewAuthRepository(app.DB),
-		OAuthRepo:        repository.NewOAuthRepository(app.DB),
-		SubRepo:          repository.NewSubscriptionRepository(app.DB),
-		ViewsRepo:        repository.NewViewsRepository(app.DB),
-		NotificationRepo: repository.NewNotificationRepository(app.DB),
-		ChannelRepo:      repository.NewChannelRepository(app.DB),
-		CommentRepo:      repository.NewCommentRepository(app.DB),
-		RatingRepo:       repository.NewRatingRepository(app.DB),
-		PlaylistRepo:     repository.NewPlaylistRepository(app.DB),
-		CaptionRepo:      repository.NewCaptionRepository(app.DB),
-		ModerationRepo:   repository.NewModerationRepository(app.DB),
-		FederationRepo:   repository.NewFederationRepository(app.DB),
-		HardeningRepo:    repository.NewFederationHardeningRepository(app.DB),
+		UserRepo:          repository.NewUserRepository(app.DB),
+		VideoRepo:         repository.NewVideoRepository(app.DB),
+		UploadRepo:        repository.NewUploadRepository(app.DB),
+		EncodingRepo:      repository.NewEncodingRepository(app.DB),
+		MessageRepo:       repository.NewMessageRepository(app.DB),
+		AuthRepo:          repository.NewAuthRepository(app.DB),
+		OAuthRepo:         repository.NewOAuthRepository(app.DB),
+		SubRepo:           repository.NewSubscriptionRepository(app.DB),
+		ViewsRepo:         repository.NewViewsRepository(app.DB),
+		NotificationRepo:  repository.NewNotificationRepository(app.DB),
+		ChannelRepo:       repository.NewChannelRepository(app.DB),
+		CommentRepo:       repository.NewCommentRepository(app.DB),
+		RatingRepo:        repository.NewRatingRepository(app.DB),
+		PlaylistRepo:      repository.NewPlaylistRepository(app.DB),
+		CaptionRepo:       repository.NewCaptionRepository(app.DB),
+		ModerationRepo:    repository.NewModerationRepository(app.DB),
+		FederationRepo:    repository.NewFederationRepository(app.DB),
+		HardeningRepo:     repository.NewFederationHardeningRepository(app.DB),
+		LiveStreamRepo:    repository.NewLiveStreamRepository(app.DB),
+		StreamKeyRepo:     repository.NewStreamKeyRepository(app.DB),
+		ViewerSessionRepo: repository.NewViewerSessionRepository(app.DB),
 	}
 
 	redisSessionRepo := repository.NewRedisSessionRepository(app.Redis)
@@ -253,6 +262,16 @@ func (app *Application) initializeDependencies() *Dependencies {
 	deps.HardeningService = usecase.NewFederationHardeningService(deps.HardeningRepo, deps.FederationService, app.Config)
 	_ = deps.HardeningService.Initialize(context.Background())
 
+	// Initialize livestream manager
+	logger := logrus.New()
+	logger.SetLevel(logrus.InfoLevel)
+	deps.StreamManager = livestream.NewStreamManager(
+		deps.LiveStreamRepo,
+		deps.ViewerSessionRepo,
+		app.Redis,
+		logger,
+	)
+
 	// Wire up import service dependencies
 	app.WireImportDependencies(deps)
 
@@ -302,6 +321,9 @@ func (app *Application) registerRoutes(deps *Dependencies) {
 		FederationRepo:      deps.FederationRepo,
 		HardeningRepo:       deps.HardeningRepo,
 		SessionRepo:         deps.SessionRepo,
+		LiveStreamRepo:      deps.LiveStreamRepo,
+		StreamKeyRepo:       deps.StreamKeyRepo,
+		ViewerSessionRepo:   deps.ViewerSessionRepo,
 		UploadService:       deps.UploadService,
 		MessageService:      deps.MessageService,
 		ViewsService:        deps.ViewsService,
@@ -316,6 +338,7 @@ func (app *Application) registerRoutes(deps *Dependencies) {
 		HardeningService:    deps.HardeningService,
 		EncodingService:     deps.EncodingService,
 		ImportService:       deps.ImportService,
+		StreamManager:       deps.StreamManager,
 		EncodingScheduler:   app.encodingScheduler,
 		Redis:               app.Redis,
 		JWTSecret:           app.Config.JWTSecret,
