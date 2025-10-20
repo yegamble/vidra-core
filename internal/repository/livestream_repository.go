@@ -21,6 +21,7 @@ type LiveStreamRepository interface {
 	GetByChannelID(ctx context.Context, channelID uuid.UUID, limit, offset int) ([]*domain.LiveStream, error)
 	GetByUserID(ctx context.Context, userID uuid.UUID, limit, offset int) ([]*domain.LiveStream, error)
 	GetActiveStreams(ctx context.Context, limit, offset int) ([]*domain.LiveStream, error)
+	CountByChannelID(ctx context.Context, channelID uuid.UUID) (int, error)
 	Update(ctx context.Context, stream *domain.LiveStream) error
 	UpdateStatus(ctx context.Context, id uuid.UUID, status string) error
 	UpdateViewerCount(ctx context.Context, id uuid.UUID, count int) error
@@ -144,6 +145,17 @@ func (r *liveStreamRepository) GetActiveStreams(ctx context.Context, limit, offs
 	return streams, nil
 }
 
+func (r *liveStreamRepository) CountByChannelID(ctx context.Context, channelID uuid.UUID) (int, error) {
+	var count int
+	query := `SELECT COUNT(*) FROM live_streams WHERE channel_id = $1`
+
+	if err := r.db.GetContext(ctx, &count, query, channelID); err != nil {
+		return 0, fmt.Errorf("failed to count streams by channel: %w", err)
+	}
+
+	return count, nil
+}
+
 func (r *liveStreamRepository) Update(ctx context.Context, stream *domain.LiveStream) error {
 	query := `
 		UPDATE live_streams SET
@@ -265,6 +277,7 @@ type StreamKeyRepository interface {
 	ValidateKey(ctx context.Context, channelID uuid.UUID, keyPlaintext string) (*domain.StreamKey, error)
 	MarkUsed(ctx context.Context, id uuid.UUID) error
 	Deactivate(ctx context.Context, id uuid.UUID) error
+	DeactivateAllForChannel(ctx context.Context, channelID uuid.UUID) error
 	DeleteExpired(ctx context.Context) (int, error)
 }
 
@@ -393,6 +406,19 @@ func (r *streamKeyRepository) Deactivate(ctx context.Context, id uuid.UUID) erro
 
 	if rows == 0 {
 		return domain.ErrStreamKeyInvalid
+	}
+
+	return nil
+}
+
+func (r *streamKeyRepository) DeactivateAllForChannel(ctx context.Context, channelID uuid.UUID) error {
+	query := `
+		UPDATE stream_keys SET is_active = false
+		WHERE channel_id = $1
+	`
+
+	if _, err := r.db.ExecContext(ctx, query, channelID); err != nil {
+		return fmt.Errorf("failed to deactivate channel stream keys: %w", err)
 	}
 
 	return nil
