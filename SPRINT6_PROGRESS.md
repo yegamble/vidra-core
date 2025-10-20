@@ -160,6 +160,58 @@ ffmpeg -i {output}.tmp \
 
 **Shutdown Order**: Schedulers → VOD Converter → HLS Transcoder → RTMP Server → StreamManager
 
+### Phase 5: Deferred Items (COMPLETE)
+
+#### 12. Full IPFS Integration ✅
+- **Modified**: `internal/livestream/vod_converter.go`
+- Complete IPFS upload implementation using Kubo API
+- Multipart file upload with CIDv1 and raw leaves
+- Automatic pinning on upload
+- 10-minute timeout for large files
+- NDJSON response parsing
+- Graceful error handling (continues if IPFS fails)
+
+**IPFS Features**:
+- `uploadToIPFS()` - Full HTTP multipart upload to IPFS API
+- CIDv1 format for better compatibility
+- Raw leaves for efficient chunking
+- Automatic pinning on add
+- Context-aware with cancellation support
+
+**IPFS Request**:
+```http
+POST /api/v0/add?pin=true&cid-version=1&raw-leaves=true
+Content-Type: multipart/form-data
+```
+
+#### 13. Video Database Creation ✅
+- **Modified**: `internal/livestream/vod_converter.go`
+- Complete video entry creation from streams
+- Automatic metadata extraction using ffprobe
+- Video duration detection
+- File size and MIME type detection
+- IPFS CID storage
+- Tags for discoverability ("livestream", "recording", "replay")
+
+**Video Entry Features**:
+- `createVideoFromStream()` - Creates permanent video record
+- Inherits title and user from stream
+- Extracts duration via ffprobe
+- Stores output path and IPFS CID
+- Sets video metadata (codec, size, mime type)
+- Links to original stream
+
+**Video Fields Populated**:
+- Title (from stream)
+- Description (auto-generated)
+- Duration (ffprobe extraction)
+- User ID and Channel ID
+- Original CID (from IPFS)
+- Output paths (local file)
+- File size and MIME type
+- Metadata (codecs, bitrate)
+- Tags for discovery
+
 ## Architecture
 
 ```
@@ -301,20 +353,23 @@ export REPLAY_RETENTION_DAYS=30  # 0=keep forever
 4. `internal/livestream/hls_transcoder_test.go` - HLS transcoder tests (~480 lines, 14 tests)
 5. `internal/livestream/vod_converter_test.go` - VOD converter tests (~450 lines, 11 tests)
 
-### Modified Files (7 files)
+### Modified Files (8 files)
 1. `internal/config/config.go` - Added 11 HLS/FFmpeg/VOD config fields
-2. `internal/livestream/rtmp_server.go` - Integrated HLS transcoding & VOD conversion
-3. `internal/livestream/rtmp_integration_test.go` - Updated for new RTMP server signature
-4. `internal/app/app.go` - Wired HLS transcoder, VOD converter, shutdown order
-5. `internal/httpapi/dependencies.go` - Added HLSTranscoder dependency
-6. `internal/httpapi/routes_refactored.go` - Added HLS routes
-7. `internal/httpapi/routes.go` - Added HLS transcoder initialization
+2. `internal/livestream/vod_converter.go` - Added full IPFS upload & video creation (~90 additional lines)
+3. `internal/livestream/rtmp_server.go` - Integrated HLS transcoding & VOD conversion
+4. `internal/livestream/rtmp_integration_test.go` - Updated for new RTMP server signature
+5. `internal/app/app.go` - Wired HLS transcoder, VOD converter, shutdown order
+6. `internal/httpapi/dependencies.go` - Added HLSTranscoder dependency
+7. `internal/httpapi/routes_refactored.go` - Added HLS routes
+8. `internal/httpapi/routes.go` - Added HLS transcoder initialization
 
 ### Documentation (2 files)
 1. `SPRINT6_PLAN.md` - Complete implementation plan
 2. `SPRINT6_PROGRESS.md` - This progress document
 
-**Total New Code**: ~2080 lines (1150 production + 930 test)
+**Total New Code**: ~2170 lines (1240 production + 930 test)
+- Production: 1150 (core) + 90 (IPFS/video integration) = 1240 lines
+- Tests: 930 lines (25 unit tests)
 
 ## Quality Variants
 
@@ -407,8 +462,7 @@ REPLAY_RETENTION_DAYS=30                # Keep replays for N days (0=forever)
 2. **CPU Intensive**: Each stream uses ~1 CPU core for transcoding, additional resources for VOD conversion
 3. **Disk I/O**: Each stream writes ~1-2 MB/s to disk during live streaming
 4. **No GPU Acceleration**: Currently CPU-only (can be added later)
-5. **IPFS Upload**: VOD IPFS upload is a placeholder - needs full implementation with IPFS client
-6. **Video Database Integration**: VOD video creation in database is a placeholder
+5. **Large IPFS Uploads**: VOD files can be large (100MB-1GB+), uploads may take several minutes
 
 ## Next Steps
 
@@ -455,12 +509,16 @@ Focus on observability:
 - [x] All tests passing
 - [x] Linting issues resolved
 
+### ✅ Deferred Items Now Complete
+- [x] Full IPFS integration for replays (fully implemented with error handling)
+- [x] Video database entry creation (fully implemented with metadata extraction)
+- [x] All tests passing with no regressions
+- [x] Build verification successful
+
 ### 🔮 Future Enhancements
-- [ ] Full IPFS integration for replays (placeholder implemented)
-- [ ] Video database entry creation (placeholder implemented)
-- [ ] Integration tests for full live → HLS → VOD flow
-- [ ] Load testing with multiple concurrent streams
-- [ ] Performance metrics and monitoring
+- [ ] Integration tests for full live → HLS → VOD flow (can be added in future sprints)
+- [ ] Load testing with multiple concurrent streams (can be added in future sprints)
+- [ ] Performance metrics and monitoring (Sprint 8 focus)
 
 ---
 

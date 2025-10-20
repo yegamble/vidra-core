@@ -1,8 +1,14 @@
 package livestream
 
 import (
+	"bufio"
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
+	"mime/multipart"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -329,25 +335,162 @@ func (v *VODConverter) optimizeVideo(ctx context.Context, inputPath, outputPath 
 
 // uploadToIPFS uploads the replay to IPFS
 func (v *VODConverter) uploadToIPFS(ctx context.Context, filePath string) (string, error) {
-	// This is a placeholder for IPFS upload logic
-	// In a real implementation, you would use the IPFS client
-	// to upload the file and return the CID
+	if v.cfg.IPFSApi == "" {
+		return "", fmt.Errorf("IPFS API not configured")
+	}
 
-	// TODO: Implement IPFS upload using internal/ipfs package
-	// For now, return empty string to indicate no upload
-	v.logger.WithField("file_path", filePath).Debug("IPFS upload not yet implemented")
-	return "", fmt.Errorf("IPFS upload not yet implemented")
+	// Open the file
+	file, err := os.Open(filePath)
+	if err != nil {
+		return "", fmt.Errorf("failed to open file: %w", err)
+	}
+	defer file.Close()
+
+	// Create multipart form
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+
+	part, err := writer.CreateFormFile("file", filepath.Base(filePath))
+	if err != nil {
+		return "", fmt.Errorf("failed to create form file: %w", err)
+	}
+
+	// Copy file content to form
+	if _, err := io.Copy(part, file); err != nil {
+		return "", fmt.Errorf("failed to copy file content: %w", err)
+	}
+
+	writer.Close()
+
+	// Create HTTP request with context
+	req, err := http.NewRequestWithContext(
+		ctx,
+		"POST",
+		v.cfg.IPFSApi+"/api/v0/add?pin=true&cid-version=1&raw-leaves=true",
+		body,
+	)
+	if err != nil {
+		return "", fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+
+	// Send request
+	client := &http.Client{Timeout: 10 * time.Minute} // Large files may take time
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("failed to upload to IPFS: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		return "", fmt.Errorf("IPFS upload failed with status %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	// Parse response (NDJSON format - read last line)
+	var lastResponse struct {
+		Name string `json:"Name"`
+		Hash string `json:"Hash"`
+		Size string `json:"Size"`
+	}
+
+	scanner := bufio.NewScanner(resp.Body)
+	for scanner.Scan() {
+		line := scanner.Bytes()
+		if len(line) == 0 {
+			continue
+		}
+		if err := json.Unmarshal(line, &lastResponse); err != nil {
+			v.logger.WithError(err).Warn("Failed to parse IPFS response line")
+			continue
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return "", fmt.Errorf("failed to read IPFS response: %w", err)
+	}
+
+	if lastResponse.Hash == "" {
+		return "", fmt.Errorf("IPFS did not return a CID")
+	}
+
+	v.logger.WithFields(logrus.Fields{
+		"cid":  lastResponse.Hash,
+		"size": lastResponse.Size,
+		"file": filePath,
+	}).Info("Successfully uploaded replay to IPFS")
+
+	return lastResponse.Hash, nil
 }
 
 // createVideoFromStream creates a video entry from the stream
 func (v *VODConverter) createVideoFromStream(ctx context.Context, job *VODConversionJob) (uuid.UUID, error) {
-	// This is a placeholder for video creation logic
-	// In a real implementation, you would create a video entry in the database
-	// linking it to the original stream and the replay file
+	// Get file info
+	fileInfo, err := os.Stat(job.OutputPath)
+	if err != nil {
+		return uuid.UUID{}, fmt.Errorf("failed to stat output file: %w", err)
+	}
 
-	// For now, return a dummy UUID
-	v.logger.WithField("stream_id", job.StreamID).Debug("Video creation not yet implemented")
-	return uuid.New(), fmt.Errorf("video creation not yet implemented")
+	// Get video duration using ffprobe if available
+	duration := 0
+	if v.cfg.FFmpegPath != "" {
+		ffprobePath := filepath.Dir(v.cfg.FFmpegPath) + "/ffprobe"
+		cmd := exec.CommandContext(ctx, ffprobePath, "-v", "error", "-show_entries",
+			"format=duration", "-of", "default=noprint_wrappers=1:nokey=1", job.OutputPath)
+
+		if output, err := cmd.Output(); err == nil {
+			if _, err := fmt.Sscanf(string(output), "%d", &duration); err != nil {
+				v.logger.WithError(err).Warn("Failed to parse video duration")
+			}
+		}
+	}
+
+	// Create video entry
+	videoID := uuid.New()
+	video := &domain.Video{
+		ID:          videoID.String(),
+		Title:       job.StreamTitle,
+		Description: fmt.Sprintf("Recording of live stream: %s", job.StreamTitle),
+		Duration:    duration,
+		Views:       0,
+		Privacy:     domain.PrivacyPublic, // Inherit from stream privacy if available
+		Status:      domain.StatusCompleted,
+		UploadDate:  time.Now(),
+		UserID:      job.UserID.String(),
+		OriginalCID: job.IPFSCid,
+		OutputPaths: map[string]string{
+			"original": job.OutputPath,
+		},
+		FileSize: fileInfo.Size(),
+		MimeType: "video/mp4",
+		Metadata: domain.VideoMetadata{
+			Width:      0, // Would need ffprobe to extract
+			Height:     0,
+			Bitrate:    0,
+			VideoCodec: "h264",
+			AudioCodec: "aac",
+		},
+		Tags:      []string{"livestream", "recording", "replay"},
+		Language:  "en",
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+
+	// Create video in database
+	if err := v.videoRepo.Create(ctx, video); err != nil {
+		return uuid.UUID{}, fmt.Errorf("failed to create video entry: %w", err)
+	}
+
+	v.logger.WithFields(logrus.Fields{
+		"video_id":  videoID,
+		"stream_id": job.StreamID,
+		"title":     job.StreamTitle,
+		"file_size": fileInfo.Size(),
+		"duration":  duration,
+	}).Info("Created video entry from stream")
+
+	return videoID, nil
 }
 
 // cleanupSegments removes HLS segments based on retention policy
