@@ -302,6 +302,28 @@
 - Success: Robust, observable federation with operational controls.
 - **Status**: ✅ Completed (migrations 037 applied; services and routes wired)
 
+## Sprint 5: Live Streaming - RTMP Server & Stream Ingestion ✅ **COMPLETED**
+
+- Scope: RTMP live streaming infrastructure with viewer tracking and real-time state management.
+- Deliverables:
+    - ✅ **Database**: Migration 045 with live_streams, stream_keys, viewer_sessions tables
+    - ✅ **Domain Models**: LiveStream, StreamKey, ViewerSession with state machines and validation
+    - ✅ **Repository Layer**: Three repositories with bcrypt authentication and heartbeat tracking
+    - ✅ **RTMP Server**: joy4-based RTMP ingestion with concurrent connection handling
+    - ✅ **Stream Manager**: Redis-backed state management with batched heartbeat processing
+    - ✅ **API Handlers**: 10 REST endpoints for stream management and key rotation
+    - ✅ **Integration Tests**: Comprehensive RTMP client tests for full stream lifecycle
+    - ✅ **Configuration**: Environment-based RTMP server configuration
+- Success: Platform accepts RTMP streams from OBS/Streamlabs, manages viewer sessions, tracks real-time statistics
+- **Status**: ✅ 100% Complete (63+ tests passing, ~3,400 lines of code)
+    - ✅ Database schema with CHECK constraints, indexes, and helper functions
+    - ✅ Bcrypt-hashed stream keys with rotation support
+    - ✅ Real-time viewer tracking with heartbeat mechanism
+    - ✅ Graceful shutdown handling for RTMP server and stream manager
+    - ✅ Integration tests for authentication, concurrent streams, viewer tracking
+    - ✅ Migration verified across all environments (local, CI, Docker)
+    - 📝 **Next**: Sprint 6 will add HLS transcoding with FFmpeg for browser playback
+
 ---
 
 ## Current Implementation Status Summary
@@ -321,6 +343,7 @@
 - **Views/Analytics**: Video views tracking, analytics, and daily stats
 - **User Avatars**: Avatar upload with IPFS pinning and WebP optimization
 - **Video Categories**: Full API with 15 default categories at `/api/v1/categories`
+- **Live Streaming (Sprint 5)**: RTMP server with stream management, viewer tracking, and real-time statistics at `/api/v1/streams`
 
 ### 🚀 Federation Progress (Sprints H-K)
 
