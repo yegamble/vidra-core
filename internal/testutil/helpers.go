@@ -284,3 +284,12 @@ func CreateTestVideo(t *testing.T, db *sqlx.DB, userID, title string) *domain.Vi
 	}
 	return video
 }
+
+// RedisTestURL returns the Redis URL for testing
+func RedisTestURL() string {
+	redisURL := os.Getenv("REDIS_URL")
+	if redisURL == "" {
+		redisURL = "redis://localhost:6379/0"
+	}
+	return redisURL
+}
