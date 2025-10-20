@@ -7,14 +7,17 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	chi "github.com/go-chi/chi/v5"
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
 	redis "github.com/redis/go-redis/v9"
+	"github.com/sirupsen/logrus"
 
 	"athena/internal/config"
+	"athena/internal/livestream"
 	"athena/internal/repository"
 	"athena/internal/scheduler"
 	"athena/internal/usecase"
@@ -56,6 +59,9 @@ func RegisterRoutes(r chi.Router, cfg *config.Config) {
 	moderationRepo := repository.NewModerationRepository(db)
 	federationRepo := repository.NewFederationRepository(db)
 	hardeningRepo := repository.NewFederationHardeningRepository(db)
+	liveStreamRepo := repository.NewLiveStreamRepository(db)
+	streamKeyRepo := repository.NewStreamKeyRepository(db)
+	viewerSessionRepo := repository.NewViewerSessionRepository(db)
 
 	// Create storage directory structure
 	storageRoot := cfg.StorageDir
@@ -141,6 +147,19 @@ func RegisterRoutes(r chi.Router, cfg *config.Config) {
 	}
 	sessionRepo := repository.NewCompositeAuthRepository(dbAuthRepo, repository.NewRedisSessionRepository(rdb))
 
+	// Initialize StreamManager for live streaming (optional based on config)
+	var streamManager *livestream.StreamManager
+	if cfg.EnableLiveStreaming {
+		log.Printf("INFO: Initializing StreamManager for live streaming...")
+		// Create a logger for the StreamManager
+		logger := logrus.New()
+		logger.SetLevel(logrus.InfoLevel)
+		if lvl := strings.ToLower(cfg.LogLevel); lvl == "debug" || lvl == "trace" {
+			logger.SetLevel(logrus.DebugLevel)
+		}
+		streamManager = livestream.NewStreamManager(liveStreamRepo, viewerSessionRepo, rdb, logger)
+	}
+
 	// Fail fast if IPFS API is unreachable
 	{
 		client := &http.Client{Timeout: time.Duration(cfg.IPFSPingTimeout) * time.Second}
@@ -161,25 +180,28 @@ func RegisterRoutes(r chi.Router, cfg *config.Config) {
 
 	// Create dependencies structure
 	deps := &HandlerDependencies{
-		UserRepo:         userRepo,
-		VideoRepo:        videoRepo,
-		UploadRepo:       uploadRepo,
-		EncodingRepo:     encodingRepo,
-		MessageRepo:      messageRepo,
-		AuthRepo:         dbAuthRepo,
-		OAuthRepo:        oauthRepo,
-		SubRepo:          subRepo,
-		ViewsRepo:        viewsRepo,
-		NotificationRepo: notificationRepo,
-		ChannelRepo:      channelRepo,
-		CommentRepo:      commentRepo,
-		RatingRepo:       ratingRepo,
-		PlaylistRepo:     playlistRepo,
-		CaptionRepo:      captionRepo,
-		ModerationRepo:   moderationRepo,
-		FederationRepo:   federationRepo,
-		HardeningRepo:    hardeningRepo,
-		SessionRepo:      sessionRepo,
+		UserRepo:          userRepo,
+		VideoRepo:         videoRepo,
+		UploadRepo:        uploadRepo,
+		EncodingRepo:      encodingRepo,
+		MessageRepo:       messageRepo,
+		AuthRepo:          dbAuthRepo,
+		OAuthRepo:         oauthRepo,
+		SubRepo:           subRepo,
+		ViewsRepo:         viewsRepo,
+		NotificationRepo:  notificationRepo,
+		ChannelRepo:       channelRepo,
+		CommentRepo:       commentRepo,
+		RatingRepo:        ratingRepo,
+		PlaylistRepo:      playlistRepo,
+		CaptionRepo:       captionRepo,
+		ModerationRepo:    moderationRepo,
+		FederationRepo:    federationRepo,
+		HardeningRepo:     hardeningRepo,
+		SessionRepo:       sessionRepo,
+		LiveStreamRepo:    liveStreamRepo,
+		StreamKeyRepo:     streamKeyRepo,
+		ViewerSessionRepo: viewerSessionRepo,
 
 		UploadService:       uploadService,
 		MessageService:      messageService,
@@ -194,6 +216,7 @@ func RegisterRoutes(r chi.Router, cfg *config.Config) {
 		FederationService:   fedSvc,
 		HardeningService:    hardeningSvc,
 		EncodingService:     nil, // Will be set if needed
+		StreamManager:       streamManager,
 
 		EncodingScheduler: encSched,
 

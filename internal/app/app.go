@@ -45,6 +45,7 @@ type Application struct {
 
 	// lifecycle-managed components
 	metricsServer *http.Server
+	rtmpServer    *livestream.RTMPServer
 }
 
 type Dependencies struct {
@@ -272,6 +273,18 @@ func (app *Application) initializeDependencies() *Dependencies {
 		logger,
 	)
 
+	// Initialize RTMP server for live streaming (if enabled)
+	if app.Config.EnableLiveStreaming {
+		log.Println("Initializing RTMP server for live streaming...")
+		app.rtmpServer = livestream.NewRTMPServer(
+			app.Config,
+			deps.LiveStreamRepo,
+			deps.StreamKeyRepo,
+			deps.StreamManager,
+			logger,
+		)
+	}
+
 	// Wire up import service dependencies
 	app.WireImportDependencies(deps)
 
@@ -354,6 +367,16 @@ func (app *Application) Start(ctx context.Context) error {
 		go s.Start(ctx)
 	}
 
+	// Start RTMP server if enabled
+	if app.Config.EnableLiveStreaming && app.rtmpServer != nil {
+		go func() {
+			log.Printf("Starting RTMP server on %s:%d...", app.Config.RTMPHost, app.Config.RTMPPort)
+			if err := app.rtmpServer.Start(ctx); err != nil {
+				log.Printf("RTMP server stopped: %v", err)
+			}
+		}()
+	}
+
 	// Optionally start encoding workers within the app lifecycle
 	if app.Config.EnableEncoding && app.Dependencies != nil && app.Dependencies.EncodingService != nil {
 		workers := app.Config.EncodingWorkers
@@ -391,6 +414,22 @@ func (app *Application) Start(ctx context.Context) error {
 func (app *Application) Shutdown(ctx context.Context) error {
 	for _, s := range app.schedulers {
 		s.Stop()
+	}
+
+	// Stop RTMP server if running
+	if app.rtmpServer != nil {
+		log.Println("Stopping RTMP server...")
+		if err := app.rtmpServer.Shutdown(ctx); err != nil {
+			log.Printf("Failed to shutdown RTMP server: %v", err)
+		}
+	}
+
+	// Stop StreamManager if running
+	if app.Dependencies != nil && app.Dependencies.StreamManager != nil {
+		log.Println("Stopping StreamManager...")
+		if err := app.Dependencies.StreamManager.Shutdown(ctx); err != nil {
+			log.Printf("Failed to shutdown StreamManager: %v", err)
+		}
 	}
 
 	// Stop metrics server if running
