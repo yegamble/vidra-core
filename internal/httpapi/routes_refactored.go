@@ -249,6 +249,12 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, deps *Hand
 					deps.StreamManager,
 				)
 
+				// HLS handlers (if transcoder is available)
+				var hlsHandlers *HLSHandlers
+				if deps.HLSTranscoder != nil {
+					hlsHandlers = NewHLSHandlers(cfg, deps.LiveStreamRepo, deps.HLSTranscoder)
+				}
+
 				// Authenticated routes
 				r.Group(func(r chi.Router) {
 					r.Use(middleware.Auth(cfg.JWTSecret))
@@ -268,6 +274,17 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, deps *Hand
 					r.With(middleware.Auth(cfg.JWTSecret)).Post("/end", liveStreamHandlers.EndStream)
 					r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/stats", liveStreamHandlers.GetStreamStats)
 					r.With(middleware.Auth(cfg.JWTSecret)).Post("/rotate-key", liveStreamHandlers.RotateStreamKey)
+
+					// HLS endpoints (if transcoder is available)
+					if hlsHandlers != nil {
+						r.Route("/hls", func(r chi.Router) {
+							r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/master.m3u8", hlsHandlers.GetMasterPlaylist)
+							r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{variant}/index.m3u8", hlsHandlers.GetVariantPlaylist)
+							r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{variant}/{segment}", hlsHandlers.GetSegment)
+						})
+						// HLS info endpoint
+						r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/hls-info", hlsHandlers.GetStreamHLSInfo)
+					}
 				})
 			})
 		}

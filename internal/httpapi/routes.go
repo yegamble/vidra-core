@@ -147,8 +147,9 @@ func RegisterRoutes(r chi.Router, cfg *config.Config) {
 	}
 	sessionRepo := repository.NewCompositeAuthRepository(dbAuthRepo, repository.NewRedisSessionRepository(rdb))
 
-	// Initialize StreamManager for live streaming (optional based on config)
+	// Initialize StreamManager and HLS transcoder for live streaming (optional based on config)
 	var streamManager *livestream.StreamManager
+	var hlsTranscoder *livestream.HLSTranscoder
 	if cfg.EnableLiveStreaming {
 		log.Printf("INFO: Initializing StreamManager for live streaming...")
 		// Create a logger for the StreamManager
@@ -158,6 +159,12 @@ func RegisterRoutes(r chi.Router, cfg *config.Config) {
 			logger.SetLevel(logrus.DebugLevel)
 		}
 		streamManager = livestream.NewStreamManager(liveStreamRepo, viewerSessionRepo, rdb, logger)
+
+		// Initialize HLS transcoder
+		log.Printf("INFO: Initializing HLS transcoder...")
+		hlsTranscoder = livestream.NewHLSTranscoder(cfg, liveStreamRepo, logger)
+
+		// Note: VOD converter is initialized in app.go where RTMP server is managed
 	}
 
 	// Fail fast if IPFS API is unreachable
@@ -217,6 +224,7 @@ func RegisterRoutes(r chi.Router, cfg *config.Config) {
 		HardeningService:    hardeningSvc,
 		EncodingService:     nil, // Will be set if needed
 		StreamManager:       streamManager,
+		HLSTranscoder:       hlsTranscoder,
 
 		EncodingScheduler: encSched,
 

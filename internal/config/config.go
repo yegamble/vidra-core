@@ -179,17 +179,33 @@ type Config struct {
 	ActivityPubMaxActivitiesPerPage  int
 
 	// Live Streaming (RTMP) Configuration
-	EnableLiveStreaming  bool
-	RTMPHost             string
-	RTMPPort             int
-	RTMPMaxConnections   int
-	RTMPChunkSize        int
-	RTMPReadTimeout      time.Duration
-	RTMPWriteTimeout     time.Duration
-	MaxStreamDuration    time.Duration
+	EnableLiveStreaming bool
+	RTMPHost            string
+	RTMPPort            int
+	RTMPMaxConnections  int
+	RTMPChunkSize       int
+	RTMPReadTimeout     time.Duration
+	RTMPWriteTimeout    time.Duration
+	MaxStreamDuration   time.Duration
+
+	// HLS Transcoding Configuration
 	HLSOutputDir         string
-	LiveHLSSegmentLength int // seconds
-	LiveHLSWindowSize    int // number of segments
+	LiveHLSSegmentLength int           // seconds
+	LiveHLSWindowSize    int           // number of segments
+	HLSCleanupInterval   time.Duration // cleanup interval
+	HLSVariants          string        // comma-separated: "1080p,720p,480p,360p"
+
+	// FFmpeg Configuration
+	FFmpegPath              string
+	FFmpegPreset            string // encoding preset (veryfast, fast, medium, etc.)
+	FFmpegTune              string // tuning (zerolatency, film, animation, etc.)
+	MaxConcurrentTranscodes int    // max simultaneous transcodes
+
+	// VOD Replay Configuration
+	EnableReplayConversion bool
+	ReplayStorageDir       string
+	ReplayUploadToIPFS     bool
+	ReplayRetentionDays    int // 0 = forever
 }
 
 func Load() (*Config, error) {
@@ -386,9 +402,25 @@ func Load() (*Config, error) {
 	cfg.RTMPReadTimeout = time.Duration(getIntEnv("RTMP_READ_TIMEOUT", 30)) * time.Second
 	cfg.RTMPWriteTimeout = time.Duration(getIntEnv("RTMP_WRITE_TIMEOUT", 30)) * time.Second
 	cfg.MaxStreamDuration = time.Duration(getIntEnv("MAX_STREAM_DURATION", 0)) * time.Second // 0 = unlimited
+
+	// HLS Transcoding Configuration
 	cfg.HLSOutputDir = getEnvOrDefault("HLS_OUTPUT_DIR", "./storage/live")
 	cfg.LiveHLSSegmentLength = getIntEnv("LIVE_HLS_SEGMENT_LENGTH", 2)
 	cfg.LiveHLSWindowSize = getIntEnv("LIVE_HLS_WINDOW_SIZE", 10)
+	cfg.HLSCleanupInterval = time.Duration(getIntEnv("HLS_CLEANUP_INTERVAL", 10)) * time.Second
+	cfg.HLSVariants = getEnvOrDefault("HLS_VARIANTS", "1080p,720p,480p,360p")
+
+	// FFmpeg Configuration
+	cfg.FFmpegPath = getEnvOrDefault("FFMPEG_PATH", "ffmpeg")
+	cfg.FFmpegPreset = getEnvOrDefault("FFMPEG_PRESET", "veryfast")
+	cfg.FFmpegTune = getEnvOrDefault("FFMPEG_TUNE", "zerolatency")
+	cfg.MaxConcurrentTranscodes = getIntEnv("MAX_CONCURRENT_TRANSCODES", 10)
+
+	// VOD Replay Configuration
+	cfg.EnableReplayConversion = getBoolEnv("ENABLE_REPLAY_CONVERSION", true)
+	cfg.ReplayStorageDir = getEnvOrDefault("REPLAY_STORAGE_DIR", "./storage/replays")
+	cfg.ReplayUploadToIPFS = getBoolEnv("REPLAY_UPLOAD_TO_IPFS", true)
+	cfg.ReplayRetentionDays = getIntEnv("REPLAY_RETENTION_DAYS", 30)
 
 	return cfg, nil
 }

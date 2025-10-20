@@ -62,6 +62,7 @@ type HandlerDependencies struct {
 	ActivityPubService  port.ActivityPubService
 	ImportService       any // Import service for video imports
 	StreamManager       *livestream.StreamManager
+	HLSTranscoder       *livestream.HLSTranscoder
 
 	// Schedulers
 	EncodingScheduler *scheduler.EncodingScheduler

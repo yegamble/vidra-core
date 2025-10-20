@@ -46,6 +46,8 @@ type Application struct {
 	// lifecycle-managed components
 	metricsServer *http.Server
 	rtmpServer    *livestream.RTMPServer
+	hlsTranscoder *livestream.HLSTranscoder
+	vodConverter  *livestream.VODConverter
 }
 
 type Dependencies struct {
@@ -273,16 +275,39 @@ func (app *Application) initializeDependencies() *Dependencies {
 		logger,
 	)
 
-	// Initialize RTMP server for live streaming (if enabled)
+	// Initialize HLS transcoder and RTMP server for live streaming (if enabled)
 	if app.Config.EnableLiveStreaming {
+		log.Println("Initializing HLS transcoder...")
+		hlsTranscoder := livestream.NewHLSTranscoder(
+			app.Config,
+			deps.LiveStreamRepo,
+			logger,
+		)
+
+		// Initialize VOD converter (2 workers by default)
+		log.Println("Initializing VOD converter...")
+		vodConverter := livestream.NewVODConverter(
+			app.Config,
+			deps.LiveStreamRepo,
+			deps.VideoRepo,
+			logger,
+			2, // 2 concurrent VOD conversion workers
+		)
+
 		log.Println("Initializing RTMP server for live streaming...")
 		app.rtmpServer = livestream.NewRTMPServer(
 			app.Config,
 			deps.LiveStreamRepo,
 			deps.StreamKeyRepo,
 			deps.StreamManager,
+			hlsTranscoder,
+			vodConverter,
 			logger,
 		)
+
+		// Store transcoder and converter in app for later use (e.g., handlers, shutdown)
+		app.hlsTranscoder = hlsTranscoder
+		app.vodConverter = vodConverter
 	}
 
 	// Wire up import service dependencies
@@ -352,6 +377,7 @@ func (app *Application) registerRoutes(deps *Dependencies) {
 		EncodingService:     deps.EncodingService,
 		ImportService:       deps.ImportService,
 		StreamManager:       deps.StreamManager,
+		HLSTranscoder:       app.hlsTranscoder,
 		EncodingScheduler:   app.encodingScheduler,
 		Redis:               app.Redis,
 		JWTSecret:           app.Config.JWTSecret,
@@ -414,6 +440,22 @@ func (app *Application) Start(ctx context.Context) error {
 func (app *Application) Shutdown(ctx context.Context) error {
 	for _, s := range app.schedulers {
 		s.Stop()
+	}
+
+	// Stop VOD converter if running (before stopping RTMP/HLS to allow queue processing)
+	if app.vodConverter != nil {
+		log.Println("Stopping VOD converter...")
+		if err := app.vodConverter.Shutdown(ctx); err != nil {
+			log.Printf("Failed to shutdown VOD converter: %v", err)
+		}
+	}
+
+	// Stop HLS transcoder if running
+	if app.hlsTranscoder != nil {
+		log.Println("Stopping HLS transcoder...")
+		if err := app.hlsTranscoder.Shutdown(ctx); err != nil {
+			log.Printf("Failed to shutdown HLS transcoder: %v", err)
+		}
 	}
 
 	// Stop RTMP server if running

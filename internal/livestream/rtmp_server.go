@@ -24,6 +24,8 @@ type RTMPServer struct {
 	streamRepo      repository.LiveStreamRepository
 	streamKeyRepo   repository.StreamKeyRepository
 	streamManager   *StreamManager
+	hlsTranscoder   *HLSTranscoder
+	vodConverter    *VODConverter
 	logger          *logrus.Logger
 	activeStreams   map[string]*StreamSession // streamKey -> session
 	activeStreamsMu sync.RWMutex
@@ -59,6 +61,8 @@ func NewRTMPServer(
 	streamRepo repository.LiveStreamRepository,
 	streamKeyRepo repository.StreamKeyRepository,
 	streamManager *StreamManager,
+	hlsTranscoder *HLSTranscoder,
+	vodConverter *VODConverter,
 	logger *logrus.Logger,
 ) *RTMPServer {
 	s := &RTMPServer{
@@ -66,6 +70,8 @@ func NewRTMPServer(
 		streamRepo:    streamRepo,
 		streamKeyRepo: streamKeyRepo,
 		streamManager: streamManager,
+		hlsTranscoder: hlsTranscoder,
+		vodConverter:  vodConverter,
 		logger:        logger,
 		activeStreams: make(map[string]*StreamSession),
 		shutdownChan:  make(chan struct{}),
@@ -244,6 +250,17 @@ func (s *RTMPServer) handlePublish(conn *rtmp.Conn) {
 
 	s.logger.WithField("stream_id", stream.ID).Info("Stream started successfully")
 
+	// Start HLS transcoding if transcoder is available
+	if s.hlsTranscoder != nil {
+		rtmpURL := fmt.Sprintf("rtmp://localhost:%d/%s", s.cfg.RTMPPort, streamKey)
+		if err := s.hlsTranscoder.StartTranscoding(sessionCtx, stream, rtmpURL); err != nil {
+			s.logger.WithError(err).Error("Failed to start HLS transcoding")
+			// Don't fail the stream if transcoding fails, continue with RTMP only
+		} else {
+			s.logger.WithField("stream_id", stream.ID).Info("HLS transcoding started")
+		}
+	}
+
 	// Handle stream until it ends
 	s.handleStreamSession(sessionCtx, session)
 
@@ -251,6 +268,24 @@ func (s *RTMPServer) handlePublish(conn *rtmp.Conn) {
 	s.activeStreamsMu.Lock()
 	delete(s.activeStreams, streamKey)
 	s.activeStreamsMu.Unlock()
+
+	// Stop HLS transcoding if it was running
+	if s.hlsTranscoder != nil && s.hlsTranscoder.IsTranscoding(stream.ID) {
+		if err := s.hlsTranscoder.StopTranscoding(stream.ID); err != nil {
+			s.logger.WithError(err).Error("Failed to stop HLS transcoding")
+		} else {
+			s.logger.WithField("stream_id", stream.ID).Info("HLS transcoding stopped")
+		}
+	}
+
+	// Start VOD conversion if converter is available
+	if s.vodConverter != nil {
+		if err := s.vodConverter.ConvertStreamToVOD(ctx, stream); err != nil {
+			s.logger.WithError(err).WithField("stream_id", stream.ID).Warn("Failed to queue VOD conversion")
+		} else {
+			s.logger.WithField("stream_id", stream.ID).Info("VOD conversion queued")
+		}
+	}
 
 	// End the stream
 	if err := s.streamManager.EndStream(ctx, stream.ID); err != nil {
