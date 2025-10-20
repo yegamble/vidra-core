@@ -54,7 +54,9 @@ func (r *liveStreamRepository) Create(ctx context.Context, stream *domain.LiveSt
 	if err != nil {
 		return fmt.Errorf("failed to create live stream: %w", err)
 	}
-	defer rows.Close()
+	defer func() {
+		_ = rows.Close()
+	}()
 
 	if rows.Next() {
 		if err := rows.Scan(&stream.CreatedAt, &stream.UpdatedAt); err != nil {
@@ -179,7 +181,9 @@ func (r *liveStreamRepository) Update(ctx context.Context, stream *domain.LiveSt
 	if err != nil {
 		return fmt.Errorf("failed to update live stream: %w", err)
 	}
-	defer rows.Close()
+	defer func() {
+		_ = rows.Close()
+	}()
 
 	if rows.Next() {
 		if err := rows.Scan(&stream.UpdatedAt); err != nil {
@@ -480,7 +484,9 @@ func (r *viewerSessionRepository) Create(ctx context.Context, session *domain.Vi
 	if err != nil {
 		return fmt.Errorf("failed to create viewer session: %w", err)
 	}
-	defer rows.Close()
+	defer func() {
+		_ = rows.Close()
+	}()
 
 	if rows.Next() {
 		if err := rows.Scan(&session.JoinedAt, &session.LastHeartbeatAt); err != nil {

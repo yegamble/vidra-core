@@ -181,7 +181,11 @@ func (s *RTMPServer) acceptConnections(ctx context.Context) {
 
 func (s *RTMPServer) handleConnection(ctx context.Context, conn net.Conn) {
 	defer s.wg.Done()
-	defer conn.Close()
+	defer func() {
+		if err := conn.Close(); err != nil {
+			s.logger.WithError(err).Error("Failed to close RTMP connection")
+		}
+	}()
 
 	// Wrap connection with RTMP protocol
 	rtmpConn := rtmp.NewConn(conn)
