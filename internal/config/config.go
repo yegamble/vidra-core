@@ -177,6 +177,19 @@ type Config struct {
 	ActivityPubInstanceDescription   string
 	ActivityPubInstanceContactEmail  string
 	ActivityPubMaxActivitiesPerPage  int
+
+	// Live Streaming (RTMP) Configuration
+	EnableLiveStreaming  bool
+	RTMPHost             string
+	RTMPPort             int
+	RTMPMaxConnections   int
+	RTMPChunkSize        int
+	RTMPReadTimeout      time.Duration
+	RTMPWriteTimeout     time.Duration
+	MaxStreamDuration    time.Duration
+	HLSOutputDir         string
+	LiveHLSSegmentLength int // seconds
+	LiveHLSWindowSize    int // number of segments
 }
 
 func Load() (*Config, error) {
@@ -363,6 +376,19 @@ func Load() (*Config, error) {
 	cfg.ActivityPubInstanceDescription = getEnvOrDefault("ACTIVITYPUB_INSTANCE_DESCRIPTION", "A PeerTube-compatible video platform")
 	cfg.ActivityPubInstanceContactEmail = getEnvOrDefault("ACTIVITYPUB_INSTANCE_CONTACT_EMAIL", "")
 	cfg.ActivityPubMaxActivitiesPerPage = getIntEnv("ACTIVITYPUB_MAX_ACTIVITIES_PER_PAGE", 20)
+
+	// Live Streaming (RTMP) Configuration
+	cfg.EnableLiveStreaming = getBoolEnv("ENABLE_LIVE_STREAMING", false)
+	cfg.RTMPHost = getEnvOrDefault("RTMP_HOST", "0.0.0.0")
+	cfg.RTMPPort = getIntEnv("RTMP_PORT", 1935)
+	cfg.RTMPMaxConnections = getIntEnv("RTMP_MAX_CONNECTIONS", 100)
+	cfg.RTMPChunkSize = getIntEnv("RTMP_CHUNK_SIZE", 4096)
+	cfg.RTMPReadTimeout = time.Duration(getIntEnv("RTMP_READ_TIMEOUT", 30)) * time.Second
+	cfg.RTMPWriteTimeout = time.Duration(getIntEnv("RTMP_WRITE_TIMEOUT", 30)) * time.Second
+	cfg.MaxStreamDuration = time.Duration(getIntEnv("MAX_STREAM_DURATION", 0)) * time.Second // 0 = unlimited
+	cfg.HLSOutputDir = getEnvOrDefault("HLS_OUTPUT_DIR", "./storage/live")
+	cfg.LiveHLSSegmentLength = getIntEnv("LIVE_HLS_SEGMENT_LENGTH", 2)
+	cfg.LiveHLSWindowSize = getIntEnv("LIVE_HLS_WINDOW_SIZE", 10)
 
 	return cfg, nil
 }
