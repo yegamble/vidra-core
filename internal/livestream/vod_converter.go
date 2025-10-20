@@ -344,7 +344,11 @@ func (v *VODConverter) uploadToIPFS(ctx context.Context, filePath string) (strin
 	if err != nil {
 		return "", fmt.Errorf("failed to open file: %w", err)
 	}
-	defer file.Close()
+	defer func() {
+		if closeErr := file.Close(); closeErr != nil {
+			v.logger.WithError(closeErr).Warn("Failed to close file after IPFS upload")
+		}
+	}()
 
 	// Create multipart form
 	body := &bytes.Buffer{}
@@ -360,7 +364,9 @@ func (v *VODConverter) uploadToIPFS(ctx context.Context, filePath string) (strin
 		return "", fmt.Errorf("failed to copy file content: %w", err)
 	}
 
-	writer.Close()
+	if err := writer.Close(); err != nil {
+		return "", fmt.Errorf("failed to close multipart writer: %w", err)
+	}
 
 	// Create HTTP request with context
 	req, err := http.NewRequestWithContext(
@@ -381,7 +387,11 @@ func (v *VODConverter) uploadToIPFS(ctx context.Context, filePath string) (strin
 	if err != nil {
 		return "", fmt.Errorf("failed to upload to IPFS: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			v.logger.WithError(closeErr).Warn("Failed to close response body after IPFS upload")
+		}
+	}()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
