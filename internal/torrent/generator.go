@@ -12,10 +12,11 @@ import (
 	"strings"
 	"time"
 
+	"athena/internal/domain"
+
 	"github.com/anacrolix/torrent/bencode"
 	"github.com/anacrolix/torrent/metainfo"
 	"github.com/google/uuid"
-	"athena/internal/domain"
 )
 
 // Generator creates torrent files for video content
@@ -379,19 +380,19 @@ func ValidateTorrent(torrentData []byte) (*domain.VideoTorrent, error) {
 	magnetURI := strings.Join(magnetParts, "")
 
 	return &domain.VideoTorrent{
-		ID:               uuid.New(),
-		VideoID:          uuid.New(), // Will be set by caller
-		InfoHash:         infoHash.HexString(),
-		TorrentFilePath:  "", // Will be set by caller
-		MagnetURI:        magnetURI,
-		PieceLength:      int(info.PieceLength),
-		TotalSizeBytes:   totalSize,
-		Seeders:          0,
-		Leechers:         0,
+		ID:                 uuid.New(),
+		VideoID:            uuid.New(), // Will be set by caller
+		InfoHash:           infoHash.HexString(),
+		TorrentFilePath:    "", // Will be set by caller
+		MagnetURI:          magnetURI,
+		PieceLength:        int(info.PieceLength),
+		TotalSizeBytes:     totalSize,
+		Seeders:            0,
+		Leechers:           0,
 		CompletedDownloads: 0,
-		IsSeeding:        false,
-		CreatedAt:        time.Now(),
-		UpdatedAt:        time.Now(),
+		IsSeeding:          false,
+		CreatedAt:          time.Now(),
+		UpdatedAt:          time.Now(),
 	}, nil
 }
 

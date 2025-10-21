@@ -6,12 +6,13 @@ import (
 	"testing"
 	"time"
 
+	"athena/internal/domain"
+
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"athena/internal/domain"
 )
 
 // TestTorrentRepository tests torrent repository operations
@@ -307,17 +308,17 @@ func TestTorrentPeerRepository(t *testing.T) {
 		repo := NewTorrentPeerRepository(sqlxDB)
 
 		peer := &domain.TorrentPeer{
-			ID:               uuid.New(),
-			InfoHash:         "1234567890abcdef1234567890abcdef12345678",
-			PeerID:           "peer123456789012345678",
-			IPAddress:        "192.168.1.100",
-			Port:             6881,
-			UploadedBytes:    1024000,
-			DownloadedBytes:  512000,
-			LeftBytes:        512000,
-			Event:            "started",
-			UserAgent:        "WebTorrent/1.0",
-			LastAnnounceAt:   time.Now(),
+			ID:              uuid.New(),
+			InfoHash:        "1234567890abcdef1234567890abcdef12345678",
+			PeerID:          "peer123456789012345678",
+			IPAddress:       "192.168.1.100",
+			Port:            6881,
+			UploadedBytes:   1024000,
+			DownloadedBytes: 512000,
+			LeftBytes:       512000,
+			Event:           "started",
+			UserAgent:       "WebTorrent/1.0",
+			LastAnnounceAt:  time.Now(),
 		}
 
 		mock.ExpectExec("INSERT INTO torrent_peers").
@@ -600,8 +601,8 @@ func TestTorrentStatsRepository(t *testing.T) {
 				stats.ID,
 				stats.VideoTorrentID,
 				stats.Hour,
-				stats.TotalSeeds,              // seeders_avg
-				stats.TotalPeers - stats.TotalSeeds, // leechers_avg
+				stats.TotalSeeds,                  // seeders_avg
+				stats.TotalPeers-stats.TotalSeeds, // leechers_avg
 				stats.BytesDownloaded,
 				stats.BytesUploaded,
 				stats.CompletedDownloads,

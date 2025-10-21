@@ -6,9 +6,10 @@ import (
 	"fmt"
 	"time"
 
+	"athena/internal/domain"
+
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
-	"athena/internal/domain"
 )
 
 // TorrentRepository handles database operations for torrents
@@ -491,8 +492,8 @@ func (r *TorrentStatsRepository) RecordStats(ctx context.Context, stats *domain.
 		stats.ID,
 		stats.VideoTorrentID,
 		stats.Hour,
-		stats.TotalSeeds,      // Using TotalSeeds as seeders_avg
-		stats.TotalPeers - stats.TotalSeeds, // Calculate leechers
+		stats.TotalSeeds,                  // Using TotalSeeds as seeders_avg
+		stats.TotalPeers-stats.TotalSeeds, // Calculate leechers
 		stats.BytesDownloaded,
 		stats.BytesUploaded,
 		stats.CompletedDownloads,
@@ -547,13 +548,13 @@ func (r *TorrentStatsRepository) GetGlobalStats(ctx context.Context) (map[string
 			AND tp.last_announce_at > NOW() - INTERVAL '30 minutes'`
 
 	var stats struct {
-		TotalTorrents    int64 `db:"total_torrents"`
-		ActiveTorrents   int64 `db:"active_torrents"`
-		TotalSeeders     sql.NullInt64 `db:"total_seeders"`
-		TotalLeechers    sql.NullInt64 `db:"total_leechers"`
-		TotalDownloads   sql.NullInt64 `db:"total_downloads"`
-		TotalSizeBytes   sql.NullInt64 `db:"total_size_bytes"`
-		UniquePeers      int64 `db:"unique_peers"`
+		TotalTorrents  int64         `db:"total_torrents"`
+		ActiveTorrents int64         `db:"active_torrents"`
+		TotalSeeders   sql.NullInt64 `db:"total_seeders"`
+		TotalLeechers  sql.NullInt64 `db:"total_leechers"`
+		TotalDownloads sql.NullInt64 `db:"total_downloads"`
+		TotalSizeBytes sql.NullInt64 `db:"total_size_bytes"`
+		UniquePeers    int64         `db:"unique_peers"`
 	}
 
 	err := r.db.GetContext(ctx, &stats, query)

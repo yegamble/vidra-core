@@ -243,8 +243,8 @@ func TestParseMagnetURI(t *testing.T) {
 		testCases := []string{
 			"not-a-magnet-uri",
 			"magnet:xt=urn:btih:123", // missing ?
-			"magnet:?xt=urn:btih:",    // no info hash
-			"magnet:?dn=test.mp4",     // no info hash field
+			"magnet:?xt=urn:btih:",   // no info hash
+			"magnet:?dn=test.mp4",    // no info hash field
 		}
 
 		for _, tc := range testCases {
