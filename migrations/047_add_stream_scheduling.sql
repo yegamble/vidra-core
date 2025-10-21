@@ -110,14 +110,14 @@ $$ LANGUAGE plpgsql;
 CREATE OR REPLACE FUNCTION mark_reminder_sent(p_stream_id UUID)
 RETURNS BOOLEAN AS $$
 DECLARE
-    v_updated BOOLEAN;
+    v_row_count INTEGER;
 BEGIN
     UPDATE live_streams
     SET reminder_sent = true
     WHERE id = p_stream_id;
 
-    GET DIAGNOSTICS v_updated = ROW_COUNT > 0;
-    RETURN v_updated;
+    GET DIAGNOSTICS v_row_count = ROW_COUNT;
+    RETURN v_row_count > 0;
 END;
 $$ LANGUAGE plpgsql;
 
@@ -125,7 +125,7 @@ $$ LANGUAGE plpgsql;
 CREATE OR REPLACE FUNCTION transition_to_waiting_room(p_stream_id UUID)
 RETURNS BOOLEAN AS $$
 DECLARE
-    v_updated BOOLEAN;
+    v_row_count INTEGER;
 BEGIN
     UPDATE live_streams
     SET status = 'waiting_room'
@@ -134,8 +134,8 @@ BEGIN
     AND waiting_room_enabled = true
     AND scheduled_start <= NOW();
 
-    GET DIAGNOSTICS v_updated = ROW_COUNT > 0;
-    RETURN v_updated;
+    GET DIAGNOSTICS v_row_count = ROW_COUNT;
+    RETURN v_row_count > 0;
 END;
 $$ LANGUAGE plpgsql;
 
