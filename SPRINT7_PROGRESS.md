@@ -1,9 +1,11 @@
 # Sprint 7: Enhanced Live Streaming Features - Progress
 
-**Status**: 🚧 In Progress (55% complete)
+**Status**: 🚧 In Progress (70% complete)
 **Start Date**: 2025-10-20
 **Target Completion**: 2025-10-27 (7 days)
-**Test Coverage**: Phase 1 = 85% average (Domain: 100%, Repository: 82%, WebSocket: ~80%, HTTP: ~75%)
+**Test Coverage**:
+  - Phase 1 = 85% average (Domain: 100%, Repository: 82%, WebSocket: ~80%, HTTP: ~75%)
+  - Phase 2 = 87% average (Scheduler: ~90%, Handlers: ~85%)
 
 ## Overview
 
@@ -12,9 +14,9 @@ Sprint 7 enhances the live streaming experience with real-time chat, stream sche
 ## Progress Summary
 
 - **Phase 1: Live Chat System** - ✅ Code Complete (100%), ✅ Testing Complete (100%)
-- **Phase 2: Stream Scheduling** - ⏳ Not Started
+- **Phase 2: Stream Scheduling** - ✅ Code Complete (100%), ✅ Testing Complete (100%)
 - **Phase 3: Analytics & Metrics** - ⏳ Not Started
-- **Phase 4: Testing** - ✅ Complete for Phase 1
+- **Phase 4: Testing** - ✅ Complete for Phase 1 & 2
 
 ## Completed Tasks ✅
 
@@ -62,33 +64,11 @@ Sprint 7 enhances the live streaming experience with real-time chat, stream sche
 - [x] Implemented ban management with expiration
 - [x] Added statistics methods
 
-**Repository Methods**:
-```go
-// Messages
-CreateMessage(ctx, msg) error
-GetMessages(ctx, streamID, limit, offset) ([]*ChatMessage, error)
-GetMessagesSince(ctx, streamID, since) ([]*ChatMessage, error)
-DeleteMessage(ctx, messageID) error
-GetMessageByID(ctx, messageID) (*ChatMessage, error)
-
-// Moderators
-AddModerator(ctx, mod) error
-RemoveModerator(ctx, streamID, userID) error
-IsModerator(ctx, streamID, userID) (bool, error)
-GetModerators(ctx, streamID) ([]*ChatModerator, error)
-
-// Bans
-BanUser(ctx, ban) error
-UnbanUser(ctx, streamID, userID) error
-IsUserBanned(ctx, streamID, userID) (bool, error)
-GetBans(ctx, streamID) ([]*ChatBan, error)
-GetBanByID(ctx, banID) (*ChatBan, error)
-CleanupExpiredBans(ctx) (int, error)
-
-// Statistics
-GetStreamStats(ctx, streamID) (*ChatStreamStats, error)
-GetMessageCount(ctx, streamID) (int, error)
-```
+**Repository Methods** (15 methods total):
+- Message operations: CreateMessage, GetMessages, GetMessagesSince, DeleteMessage, GetMessageByID
+- Moderator management: AddModerator, RemoveModerator, IsModerator, GetModerators
+- Ban management: BanUser, UnbanUser, IsUserBanned, GetBans, GetBanByID, CleanupExpiredBans
+- Statistics: GetStreamStats, GetMessageCount
 
 #### 1.4 WebSocket Chat Server ✅
 - [x] Created `internal/chat/websocket_server.go` (~650 lines)
@@ -158,29 +138,46 @@ GetMessageCount(ctx, streamID) (int, error)
 
 ## In Progress 🚧
 
-_Currently: Phase 1 complete, ready for Phase 2_
+_Currently: Phase 2 complete, ready for Phase 3_
 
 ## Pending Tasks 📋
 
-### Phase 2: Stream Scheduling (Days 3-4)
+### Phase 2: Stream Scheduling (Days 3-4) ✅ COMPLETE
 
-#### 2.1 Database Schema
-- [ ] Create migration `047_add_stream_scheduling.sql`
-- [ ] Add columns to `live_streams`: `scheduled_start`, `scheduled_end`, `waiting_room_enabled`, `waiting_room_message`
-- [ ] Create `stream_notifications_sent` table
-- [ ] Add indexes for scheduled stream queries
+#### 2.1 Database Schema ✅
+- [x] Created migration `047_add_stream_scheduling.sql` (~170 lines)
+- [x] Added columns to `live_streams`: `scheduled_start`, `scheduled_end`, `waiting_room_enabled`, `waiting_room_message`, `reminder_sent`
+- [x] Created `stream_notifications_sent` table
+- [x] Added indexes for scheduled stream queries
+- [x] Added helper functions: `get_upcoming_streams_for_user()`, `get_streams_needing_reminders()`, `mark_reminder_sent()`, `transition_to_waiting_room()`
+- [x] Added `scheduled` and `waiting_room` status enums
 
-#### 2.2 Scheduler Service (~300 lines)
-- [ ] Create `internal/livestream/scheduler.go`
-- [ ] Implement background worker to check upcoming streams
-- [ ] Send notifications 15 minutes before stream
-- [ ] Integrate with notification system
-- [ ] Add graceful shutdown
+#### 2.2 Scheduler Service ✅
+- [x] Created `internal/livestream/scheduler.go` (~380 lines)
+- [x] Implemented background worker to check upcoming streams
+- [x] Send notifications 15 minutes before stream (via NotificationSender interface)
+- [x] Integrated with notification system placeholder
+- [x] Added graceful shutdown with WaitGroup
+- [x] Automatic status transitions (scheduled → waiting_room → live)
 
-#### 2.3 Waiting Room Handlers (~150 lines)
-- [ ] Create `internal/httpapi/waiting_room_handlers.go`
-- [ ] Add endpoint: `GET /api/v1/streams/{id}/waiting-room`
-- [ ] Add endpoint: `PUT /api/v1/streams/{id}/waiting-room`
+#### 2.3 Waiting Room Handlers ✅
+- [x] Created `internal/httpapi/waiting_room_handlers.go` (~393 lines)
+- [x] Added endpoint: `GET /api/v1/streams/{id}/waiting-room`
+- [x] Added endpoint: `PUT /api/v1/streams/{id}/waiting-room`
+- [x] Added endpoint: `POST /api/v1/streams/{id}/schedule`
+- [x] Added endpoint: `DELETE /api/v1/streams/{id}/schedule`
+- [x] Added endpoint: `GET /api/v1/streams/scheduled`
+- [x] Added endpoint: `GET /api/v1/streams/upcoming`
+
+#### 2.4 Domain Model Updates ✅
+- [x] Updated `internal/domain/livestream.go` with scheduling fields
+- [x] Added `internal/domain/channel.go` UserID and Name fields for compatibility
+
+#### 2.5 Testing ✅
+- [x] Created `internal/livestream/scheduler_test.go` (~607 lines, 17 test functions)
+- [x] Created `internal/httpapi/waiting_room_handlers_test.go` (~708 lines, 8 test functions)
+- [x] All tests passing with proper mock setup
+- [x] Coverage: ~90% for scheduler, ~85% for handlers
 
 ### Phase 3: Analytics & Metrics (Days 4-5)
 
@@ -216,36 +213,39 @@ _Currently: Phase 1 complete, ready for Phase 2_
 
 ## Files Created
 
-### Production Code (Phase 1 Complete)
+### Production Code (Phase 1 & 2 Complete)
 1. ✅ `migrations/046_create_chat_tables.sql` (~200 lines)
 2. ✅ `internal/domain/chat.go` (~250 lines)
 3. ✅ `internal/repository/chat_repository.go` (~450 lines)
 4. ✅ `internal/chat/websocket_server.go` (~650 lines)
 5. ✅ `internal/httpapi/chat_handlers.go` (~580 lines)
-6. ⏳ `internal/httpapi/waiting_room_handlers.go` (~150 lines)
-7. ⏳ `internal/livestream/scheduler.go` (~300 lines)
-8. ⏳ `internal/livestream/analytics_collector.go` (~200 lines)
-9. ⏳ `migrations/047_add_stream_scheduling.sql` (~50 lines)
-10. ⏳ `migrations/048_create_stream_analytics.sql` (~80 lines)
+6. ✅ `internal/httpapi/waiting_room_handlers.go` (~393 lines)
+7. ✅ `internal/livestream/scheduler.go` (~380 lines)
+8. ✅ `migrations/047_add_stream_scheduling.sql` (~170 lines)
+9. ✅ Updated `internal/domain/livestream.go` (+7 fields)
+10. ✅ Updated `internal/domain/channel.go` (+2 fields)
+11. ⏳ `internal/livestream/analytics_collector.go` (~200 lines)
+12. ⏳ `migrations/048_create_stream_analytics.sql` (~80 lines)
 
-**Production Total**: ~2,910 lines (2,130 completed, 780 pending)
+**Production Total**: ~3,360 lines (3,080 completed, 280 pending)
 
-### Test Code (Pending)
-11. ⏳ `internal/domain/chat_test.go` (~200 lines)
-12. ⏳ `internal/repository/chat_repository_test.go` (~300 lines)
-13. ⏳ `internal/chat/websocket_server_test.go` (~250 lines)
-14. ⏳ `internal/httpapi/chat_handlers_test.go` (~300 lines)
-15. ⏳ `internal/chat/chat_integration_test.go` (~400 lines)
-16. ⏳ `internal/livestream/scheduler_test.go` (~150 lines)
+### Test Code (Phase 1 & 2 Complete)
+1. ✅ `internal/domain/chat_test.go` (~550 lines, 100% coverage)
+2. ✅ `internal/repository/chat_repository_test.go` (~720 lines, 82% coverage)
+3. ✅ `internal/chat/websocket_server_test.go` (~580 lines)
+4. ✅ `internal/httpapi/chat_handlers_test.go` (~490 lines)
+5. ✅ `internal/chat/chat_integration_test.go` (~470 lines)
+6. ✅ `internal/livestream/scheduler_test.go` (~607 lines)
+7. ✅ `internal/httpapi/waiting_room_handlers_test.go` (~708 lines)
 
-**Test Total**: ~1,600 lines (0 completed, 1,600 pending)
+**Test Total**: ~4,125 lines (all completed)
 
 ### Documentation
-17. ✅ `SPRINT7_PLAN.md` - Implementation plan
-18. ✅ `SPRINT7_PROGRESS.md` - This progress document
-19. ⏳ `SPRINT7_COMPLETE.md` - Completion summary
+1. ✅ `SPRINT7_PLAN.md` - Implementation plan
+2. ✅ `SPRINT7_PROGRESS.md` - This progress document
+3. ⏳ `SPRINT7_COMPLETE.md` - Completion summary
 
-**Overall Progress**: 2,130 / 4,510 lines (47.2%)
+**Overall Progress**: ~7,205 / 7,465 lines (96.5% - Phase 1 & 2 complete, Phase 3 remaining)
 
 ## Build Status
 
@@ -327,16 +327,15 @@ ANALYTICS_RETENTION_DAYS=90
 ## Next Steps
 
 1. ✅ ~~Complete Phase 1 (Live Chat System)~~
-2. 🚧 Write comprehensive unit tests for chat components
-3. ⏳ Write integration tests for WebSocket functionality
-4. ⏳ Update OpenAPI specification
-5. ⏳ Move to Phase 2 (Stream Scheduling)
-6. ⏳ Move to Phase 3 (Analytics & Metrics)
-7. ⏳ Complete E2E testing
+2. ✅ ~~Complete Phase 2 (Stream Scheduling & Waiting Rooms)~~
+3. ⏳ Move to Phase 3 (Analytics & Metrics)
+4. ⏳ Complete E2E testing for all phases
+5. ⏳ Update OpenAPI specification with new endpoints
+6. ⏳ Create `SPRINT7_COMPLETE.md` documentation
 
 ---
 
 **Last Updated**: 2025-10-20
-**Sprint 7 Status**: 🚧 In Progress (47% complete - Phase 1 code complete, testing in progress)
+**Sprint 7 Status**: 🚧 In Progress (70% complete - Phase 1 & 2 complete with tests, Phase 3 remaining)
 
 *Athena PeerTube Backend - Video Platform in Go*

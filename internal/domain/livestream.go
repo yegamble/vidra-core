@@ -43,8 +43,16 @@ type LiveStream struct {
 	EndedAt         *time.Time `json:"ended_at" db:"ended_at"`
 	SaveReplay      bool       `json:"save_replay" db:"save_replay"`
 	ReplayVideoID   *uuid.UUID `json:"replay_video_id" db:"replay_video_id"`
-	CreatedAt       time.Time  `json:"created_at" db:"created_at"`
-	UpdatedAt       time.Time  `json:"updated_at" db:"updated_at"`
+
+	// Scheduling fields
+	ScheduledStart     *time.Time `json:"scheduled_start,omitempty" db:"scheduled_start"`
+	ScheduledEnd       *time.Time `json:"scheduled_end,omitempty" db:"scheduled_end"`
+	WaitingRoomEnabled bool       `json:"waiting_room_enabled" db:"waiting_room_enabled"`
+	WaitingRoomMessage string     `json:"waiting_room_message,omitempty" db:"waiting_room_message"`
+	ReminderSent       bool       `json:"reminder_sent" db:"reminder_sent"`
+
+	CreatedAt time.Time `json:"created_at" db:"created_at"`
+	UpdatedAt time.Time `json:"updated_at" db:"updated_at"`
 }
 
 // StreamKey represents a rotatable authentication key for streaming

@@ -11,7 +11,9 @@ import (
 type Channel struct {
 	ID             uuid.UUID `json:"id" db:"id"`
 	AccountID      uuid.UUID `json:"accountId" db:"account_id"`
-	Handle         string    `json:"handle" db:"handle"` // Unique channel username/handle
+	UserID         uuid.UUID `json:"user_id" db:"user_id"` // Direct reference to user
+	Handle         string    `json:"handle" db:"handle"`   // Unique channel username/handle
+	Name           string    `json:"name" db:"name"`       // Channel display name (alias for DisplayName)
 	DisplayName    string    `json:"displayName" db:"display_name"`
 	Description    *string   `json:"description,omitempty" db:"description"`
 	Support        *string   `json:"support,omitempty" db:"support"` // Support/donation text
