@@ -1,0 +1,646 @@
+package chat
+
+import (
+	"context"
+	"testing"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/redis/go-redis/v9"
+	"github.com/sirupsen/logrus"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
+
+	"athena/internal/config"
+	"athena/internal/domain"
+)
+
+// Mock repositories
+type MockChatRepository struct {
+	mock.Mock
+}
+
+func (m *MockChatRepository) CreateMessage(ctx context.Context, msg *domain.ChatMessage) error {
+	args := m.Called(ctx, msg)
+	return args.Error(0)
+}
+
+func (m *MockChatRepository) GetMessages(ctx context.Context, streamID uuid.UUID, limit, offset int) ([]*domain.ChatMessage, error) {
+	args := m.Called(ctx, streamID, limit, offset)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*domain.ChatMessage), args.Error(1)
+}
+
+func (m *MockChatRepository) GetMessagesSince(ctx context.Context, streamID uuid.UUID, since time.Time) ([]*domain.ChatMessage, error) {
+	args := m.Called(ctx, streamID, since)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*domain.ChatMessage), args.Error(1)
+}
+
+func (m *MockChatRepository) DeleteMessage(ctx context.Context, messageID uuid.UUID) error {
+	args := m.Called(ctx, messageID)
+	return args.Error(0)
+}
+
+func (m *MockChatRepository) GetMessageByID(ctx context.Context, messageID uuid.UUID) (*domain.ChatMessage, error) {
+	args := m.Called(ctx, messageID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*domain.ChatMessage), args.Error(1)
+}
+
+func (m *MockChatRepository) AddModerator(ctx context.Context, mod *domain.ChatModerator) error {
+	args := m.Called(ctx, mod)
+	return args.Error(0)
+}
+
+func (m *MockChatRepository) RemoveModerator(ctx context.Context, streamID, userID uuid.UUID) error {
+	args := m.Called(ctx, streamID, userID)
+	return args.Error(0)
+}
+
+func (m *MockChatRepository) IsModerator(ctx context.Context, streamID, userID uuid.UUID) (bool, error) {
+	args := m.Called(ctx, streamID, userID)
+	return args.Bool(0), args.Error(1)
+}
+
+func (m *MockChatRepository) GetModerators(ctx context.Context, streamID uuid.UUID) ([]*domain.ChatModerator, error) {
+	args := m.Called(ctx, streamID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*domain.ChatModerator), args.Error(1)
+}
+
+func (m *MockChatRepository) BanUser(ctx context.Context, ban *domain.ChatBan) error {
+	args := m.Called(ctx, ban)
+	return args.Error(0)
+}
+
+func (m *MockChatRepository) UnbanUser(ctx context.Context, streamID, userID uuid.UUID) error {
+	args := m.Called(ctx, streamID, userID)
+	return args.Error(0)
+}
+
+func (m *MockChatRepository) IsUserBanned(ctx context.Context, streamID, userID uuid.UUID) (bool, error) {
+	args := m.Called(ctx, streamID, userID)
+	return args.Bool(0), args.Error(1)
+}
+
+func (m *MockChatRepository) GetBans(ctx context.Context, streamID uuid.UUID) ([]*domain.ChatBan, error) {
+	args := m.Called(ctx, streamID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*domain.ChatBan), args.Error(1)
+}
+
+func (m *MockChatRepository) GetBanByID(ctx context.Context, banID uuid.UUID) (*domain.ChatBan, error) {
+	args := m.Called(ctx, banID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*domain.ChatBan), args.Error(1)
+}
+
+func (m *MockChatRepository) CleanupExpiredBans(ctx context.Context) (int, error) {
+	args := m.Called(ctx)
+	return args.Int(0), args.Error(1)
+}
+
+func (m *MockChatRepository) GetStreamStats(ctx context.Context, streamID uuid.UUID) (*domain.ChatStreamStats, error) {
+	args := m.Called(ctx, streamID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*domain.ChatStreamStats), args.Error(1)
+}
+
+func (m *MockChatRepository) GetMessageCount(ctx context.Context, streamID uuid.UUID) (int, error) {
+	args := m.Called(ctx, streamID)
+	return args.Int(0), args.Error(1)
+}
+
+type MockStreamRepository struct {
+	mock.Mock
+}
+
+func (m *MockStreamRepository) Create(ctx context.Context, stream *domain.LiveStream) error {
+	args := m.Called(ctx, stream)
+	return args.Error(0)
+}
+
+func (m *MockStreamRepository) GetByID(ctx context.Context, id uuid.UUID) (*domain.LiveStream, error) {
+	args := m.Called(ctx, id)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*domain.LiveStream), args.Error(1)
+}
+
+func (m *MockStreamRepository) GetByStreamKey(ctx context.Context, streamKey string) (*domain.LiveStream, error) {
+	args := m.Called(ctx, streamKey)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*domain.LiveStream), args.Error(1)
+}
+
+func (m *MockStreamRepository) GetByChannelID(ctx context.Context, channelID uuid.UUID, limit, offset int) ([]*domain.LiveStream, error) {
+	args := m.Called(ctx, channelID, limit, offset)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*domain.LiveStream), args.Error(1)
+}
+
+func (m *MockStreamRepository) GetByUserID(ctx context.Context, userID uuid.UUID, limit, offset int) ([]*domain.LiveStream, error) {
+	args := m.Called(ctx, userID, limit, offset)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*domain.LiveStream), args.Error(1)
+}
+
+func (m *MockStreamRepository) GetActiveStreams(ctx context.Context, limit, offset int) ([]*domain.LiveStream, error) {
+	args := m.Called(ctx, limit, offset)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*domain.LiveStream), args.Error(1)
+}
+
+func (m *MockStreamRepository) CountByChannelID(ctx context.Context, channelID uuid.UUID) (int, error) {
+	args := m.Called(ctx, channelID)
+	return args.Int(0), args.Error(1)
+}
+
+func (m *MockStreamRepository) Update(ctx context.Context, stream *domain.LiveStream) error {
+	args := m.Called(ctx, stream)
+	return args.Error(0)
+}
+
+func (m *MockStreamRepository) UpdateStatus(ctx context.Context, id uuid.UUID, status string) error {
+	args := m.Called(ctx, id, status)
+	return args.Error(0)
+}
+
+func (m *MockStreamRepository) UpdateViewerCount(ctx context.Context, id uuid.UUID, count int) error {
+	args := m.Called(ctx, id, count)
+	return args.Error(0)
+}
+
+func (m *MockStreamRepository) Delete(ctx context.Context, id uuid.UUID) error {
+	args := m.Called(ctx, id)
+	return args.Error(0)
+}
+
+func (m *MockStreamRepository) EndStream(ctx context.Context, id uuid.UUID) error {
+	args := m.Called(ctx, id)
+	return args.Error(0)
+}
+
+// Setup helper
+func setupChatServerTest(t *testing.T) (*ChatServer, *MockChatRepository, *MockStreamRepository) {
+	mockChatRepo := new(MockChatRepository)
+	mockStreamRepo := new(MockStreamRepository)
+
+	cfg := &config.Config{}
+
+	// Use a mock Redis client (nil for unit tests, but we'll skip rate limit tests)
+	var redisClient *redis.Client
+
+	logger := logrus.New()
+	logger.SetLevel(logrus.ErrorLevel)
+
+	server := NewChatServer(cfg, mockChatRepo, mockStreamRepo, redisClient, logger)
+
+	return server, mockChatRepo, mockStreamRepo
+}
+
+// Test NewChatServer
+func TestNewChatServer(t *testing.T) {
+	cfg := &config.Config{}
+	mockChatRepo := new(MockChatRepository)
+	mockStreamRepo := new(MockStreamRepository)
+	redisClient := &redis.Client{}
+	logger := logrus.New()
+
+	server := NewChatServer(cfg, mockChatRepo, mockStreamRepo, redisClient, logger)
+
+	assert.NotNil(t, server)
+	assert.NotNil(t, server.Upgrader)
+	assert.NotNil(t, server.connections)
+}
+
+// Test registerClient and unregisterClient
+func TestChatServer_RegisterUnregisterClient(t *testing.T) {
+	server, _, _ := setupChatServerTest(t)
+
+	streamID := uuid.New()
+	client := &ChatClient{
+		server:   server,
+		send:     make(chan *ChatMessage, clientSendBuffer),
+		StreamID: streamID,
+		UserID:   uuid.New(),
+		Username: "testuser",
+	}
+
+	// Register client
+	server.registerClient(client)
+
+	server.mu.RLock()
+	clients := server.connections[streamID]
+	server.mu.RUnlock()
+
+	assert.NotNil(t, clients)
+	assert.True(t, clients[client])
+
+	// Unregister client
+	server.unregisterClient(client)
+
+	server.mu.RLock()
+	clients = server.connections[streamID]
+	server.mu.RUnlock()
+
+	assert.False(t, clients[client])
+}
+
+// Test broadcast
+func TestChatServer_Broadcast(t *testing.T) {
+	server, _, _ := setupChatServerTest(t)
+
+	streamID := uuid.New()
+
+	// Create two clients
+	client1 := &ChatClient{
+		server:   server,
+		send:     make(chan *ChatMessage, clientSendBuffer),
+		StreamID: streamID,
+		UserID:   uuid.New(),
+		Username: "user1",
+	}
+
+	client2 := &ChatClient{
+		server:   server,
+		send:     make(chan *ChatMessage, clientSendBuffer),
+		StreamID: streamID,
+		UserID:   uuid.New(),
+		Username: "user2",
+	}
+
+	server.registerClient(client1)
+	server.registerClient(client2)
+
+	msg := &ChatMessage{
+		Type:      "message",
+		StreamID:  streamID,
+		UserID:    client1.UserID,
+		Username:  client1.Username,
+		Message:   "Hello!",
+		Timestamp: time.Now(),
+	}
+
+	// Broadcast message
+	server.broadcast(streamID, msg)
+
+	// Both clients should receive the message
+	select {
+	case received := <-client1.send:
+		assert.Equal(t, "Hello!", received.Message)
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("client1 did not receive message")
+	}
+
+	select {
+	case received := <-client2.send:
+		assert.Equal(t, "Hello!", received.Message)
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("client2 did not receive message")
+	}
+}
+
+// Test broadcast to non-existent stream
+func TestChatServer_Broadcast_NoClients(t *testing.T) {
+	server, _, _ := setupChatServerTest(t)
+
+	streamID := uuid.New()
+	msg := &ChatMessage{
+		Type:      "message",
+		StreamID:  streamID,
+		Message:   "Hello!",
+		Timestamp: time.Now(),
+	}
+
+	// Should not panic
+	server.broadcast(streamID, msg)
+}
+
+// Test broadcastSystemMessage
+func TestChatServer_BroadcastSystemMessage(t *testing.T) {
+	server, _, _ := setupChatServerTest(t)
+
+	streamID := uuid.New()
+	client := &ChatClient{
+		server:   server,
+		send:     make(chan *ChatMessage, clientSendBuffer),
+		StreamID: streamID,
+		UserID:   uuid.New(),
+		Username: "user1",
+	}
+
+	server.registerClient(client)
+
+	server.broadcastSystemMessage(streamID, "Test system message")
+
+	select {
+	case received := <-client.send:
+		assert.Equal(t, "system", received.Type)
+		assert.Equal(t, "Test system message", received.Message)
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("client did not receive system message")
+	}
+}
+
+// Test sendToClient
+func TestChatServer_SendToClient(t *testing.T) {
+	server, _, _ := setupChatServerTest(t)
+
+	client := &ChatClient{
+		server:   server,
+		send:     make(chan *ChatMessage, clientSendBuffer),
+		StreamID: uuid.New(),
+		UserID:   uuid.New(),
+		Username: "user1",
+	}
+
+	msg := &ChatMessage{
+		Type:      "message",
+		Message:   "Direct message",
+		Timestamp: time.Now(),
+	}
+
+	server.sendToClient(client, msg)
+
+	select {
+	case received := <-client.send:
+		assert.Equal(t, "Direct message", received.Message)
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("client did not receive message")
+	}
+}
+
+// Test sendToClient with full buffer
+func TestChatServer_SendToClient_FullBuffer(t *testing.T) {
+	server, _, _ := setupChatServerTest(t)
+
+	client := &ChatClient{
+		server:   server,
+		send:     make(chan *ChatMessage, 1), // Small buffer
+		StreamID: uuid.New(),
+		UserID:   uuid.New(),
+		Username: "user1",
+	}
+
+	msg := &ChatMessage{
+		Type:      "message",
+		Message:   "Test",
+		Timestamp: time.Now(),
+	}
+
+	// Fill the buffer
+	client.send <- msg
+
+	// This should not block
+	server.sendToClient(client, msg)
+}
+
+// Test DeleteMessage
+func TestChatServer_DeleteMessage(t *testing.T) {
+	server, mockChatRepo, mockStreamRepo := setupChatServerTest(t)
+
+	ctx := context.Background()
+	streamID := uuid.New()
+	messageID := uuid.New()
+	ownerID := uuid.New()
+
+	// Mock stream owner check
+	mockStreamRepo.On("GetByID", ctx, streamID).Return(&domain.LiveStream{
+		ID:     streamID,
+		UserID: ownerID,
+	}, nil)
+
+	// Mock message lookup
+	mockChatRepo.On("GetMessageByID", ctx, messageID).Return(&domain.ChatMessage{
+		ID:       messageID,
+		StreamID: streamID,
+	}, nil)
+
+	// Mock delete
+	mockChatRepo.On("DeleteMessage", ctx, messageID).Return(nil)
+
+	// Test as stream owner
+	err := server.DeleteMessage(ctx, streamID, messageID, ownerID)
+	assert.NoError(t, err)
+
+	mockChatRepo.AssertExpectations(t)
+	mockStreamRepo.AssertExpectations(t)
+}
+
+// Test DeleteMessage as moderator
+func TestChatServer_DeleteMessage_AsModerator(t *testing.T) {
+	server, mockChatRepo, mockStreamRepo := setupChatServerTest(t)
+
+	ctx := context.Background()
+	streamID := uuid.New()
+	messageID := uuid.New()
+	userID := uuid.New()
+	ownerID := uuid.New()
+
+	// Mock stream owner check
+	mockStreamRepo.On("GetByID", ctx, streamID).Return(&domain.LiveStream{
+		ID:     streamID,
+		UserID: ownerID,
+	}, nil)
+
+	// Mock moderator check
+	mockChatRepo.On("IsModerator", ctx, streamID, userID).Return(true, nil)
+
+	// Mock message lookup
+	mockChatRepo.On("GetMessageByID", ctx, messageID).Return(&domain.ChatMessage{
+		ID:       messageID,
+		StreamID: streamID,
+	}, nil)
+
+	// Mock delete
+	mockChatRepo.On("DeleteMessage", ctx, messageID).Return(nil)
+
+	err := server.DeleteMessage(ctx, streamID, messageID, userID)
+	assert.NoError(t, err)
+
+	mockChatRepo.AssertExpectations(t)
+	mockStreamRepo.AssertExpectations(t)
+}
+
+// Test DeleteMessage unauthorized
+func TestChatServer_DeleteMessage_Unauthorized(t *testing.T) {
+	server, mockChatRepo, mockStreamRepo := setupChatServerTest(t)
+
+	ctx := context.Background()
+	streamID := uuid.New()
+	messageID := uuid.New()
+	userID := uuid.New()
+	ownerID := uuid.New()
+
+	// Mock stream owner check
+	mockStreamRepo.On("GetByID", ctx, streamID).Return(&domain.LiveStream{
+		ID:     streamID,
+		UserID: ownerID,
+	}, nil)
+
+	// Mock moderator check (not a moderator)
+	mockChatRepo.On("IsModerator", ctx, streamID, userID).Return(false, nil)
+
+	err := server.DeleteMessage(ctx, streamID, messageID, userID)
+	assert.ErrorIs(t, err, domain.ErrNotModerator)
+
+	mockChatRepo.AssertExpectations(t)
+	mockStreamRepo.AssertExpectations(t)
+}
+
+// Test BanUser
+func TestChatServer_BanUser(t *testing.T) {
+	server, mockChatRepo, mockStreamRepo := setupChatServerTest(t)
+
+	ctx := context.Background()
+	streamID := uuid.New()
+	userID := uuid.New()
+	ownerID := uuid.New()
+	reason := "spam"
+	duration := 10 * time.Minute
+
+	// Mock stream owner check
+	mockStreamRepo.On("GetByID", ctx, streamID).Return(&domain.LiveStream{
+		ID:     streamID,
+		UserID: ownerID,
+	}, nil)
+
+	// Test as owner
+	mockChatRepo.On("BanUser", ctx, mock.MatchedBy(func(ban *domain.ChatBan) bool {
+		return ban.StreamID == streamID &&
+			ban.UserID == userID &&
+			ban.BannedBy == ownerID &&
+			ban.Reason == reason
+	})).Return(nil)
+
+	err := server.BanUser(ctx, streamID, userID, ownerID, reason, duration)
+	assert.NoError(t, err)
+
+	mockChatRepo.AssertExpectations(t)
+	mockStreamRepo.AssertExpectations(t)
+}
+
+// Test BanUser as moderator
+func TestChatServer_BanUser_AsModerator(t *testing.T) {
+	server, mockChatRepo, mockStreamRepo := setupChatServerTest(t)
+
+	ctx := context.Background()
+	streamID := uuid.New()
+	userID := uuid.New()
+	moderatorID := uuid.New()
+	ownerID := uuid.New()
+
+	// Mock stream owner check
+	mockStreamRepo.On("GetByID", ctx, streamID).Return(&domain.LiveStream{
+		ID:     streamID,
+		UserID: ownerID,
+	}, nil)
+
+	// Mock moderator check
+	mockChatRepo.On("IsModerator", ctx, streamID, moderatorID).Return(true, nil)
+
+	// Mock ban
+	mockChatRepo.On("BanUser", ctx, mock.AnythingOfType("*domain.ChatBan")).Return(nil)
+
+	err := server.BanUser(ctx, streamID, userID, moderatorID, "spam", 10*time.Minute)
+	assert.NoError(t, err)
+
+	mockChatRepo.AssertExpectations(t)
+	mockStreamRepo.AssertExpectations(t)
+}
+
+// Test BanUser unauthorized
+func TestChatServer_BanUser_Unauthorized(t *testing.T) {
+	server, mockChatRepo, mockStreamRepo := setupChatServerTest(t)
+
+	ctx := context.Background()
+	streamID := uuid.New()
+	userID := uuid.New()
+	moderatorID := uuid.New()
+	ownerID := uuid.New()
+
+	// Mock stream owner check
+	mockStreamRepo.On("GetByID", ctx, streamID).Return(&domain.LiveStream{
+		ID:     streamID,
+		UserID: ownerID,
+	}, nil)
+
+	// Mock moderator check (not a moderator)
+	mockChatRepo.On("IsModerator", ctx, streamID, moderatorID).Return(false, nil)
+
+	err := server.BanUser(ctx, streamID, userID, moderatorID, "spam", 10*time.Minute)
+	assert.ErrorIs(t, err, domain.ErrNotModerator)
+
+	mockChatRepo.AssertExpectations(t)
+	mockStreamRepo.AssertExpectations(t)
+}
+
+// Test GetConnectedUsers
+func TestChatServer_GetConnectedUsers(t *testing.T) {
+	server, _, _ := setupChatServerTest(t)
+
+	streamID := uuid.New()
+
+	// No clients initially
+	count := server.GetConnectedUsers(streamID)
+	assert.Equal(t, 0, count)
+
+	// Add two clients
+	client1 := &ChatClient{
+		server:   server,
+		send:     make(chan *ChatMessage, clientSendBuffer),
+		StreamID: streamID,
+		UserID:   uuid.New(),
+		Username: "user1",
+	}
+
+	client2 := &ChatClient{
+		server:   server,
+		send:     make(chan *ChatMessage, clientSendBuffer),
+		StreamID: streamID,
+		UserID:   uuid.New(),
+		Username: "user2",
+	}
+
+	server.registerClient(client1)
+	server.registerClient(client2)
+
+	count = server.GetConnectedUsers(streamID)
+	assert.Equal(t, 2, count)
+}
+
+// Test Shutdown
+func TestChatServer_Shutdown(t *testing.T) {
+	server, _, _ := setupChatServerTest(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+	defer cancel()
+
+	err := server.Shutdown(ctx)
+	assert.NoError(t, err)
+}
