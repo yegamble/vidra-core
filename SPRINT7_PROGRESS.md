@@ -1,6 +1,6 @@
 # Sprint 7: Enhanced Live Streaming Features - Progress
 
-**Status**: 🚧 In Progress (70% complete)
+**Status**: 🚧 In Progress (85% complete)
 **Start Date**: 2025-10-20
 **Target Completion**: 2025-10-27 (7 days)
 **Test Coverage**:
@@ -13,8 +13,8 @@ Sprint 7 enhances the live streaming experience with real-time chat, stream sche
 
 ## Progress Summary
 
-- **Phase 1: Live Chat System** - ✅ Code Complete (100%), ✅ Testing Complete (100%)
-- **Phase 2: Stream Scheduling** - ✅ Code Complete (100%), ✅ Testing Complete (100%)
+- **Phase 1: Live Chat System** - ✅ COMPLETE (100%), ✅ All tests passing
+- **Phase 2: Stream Scheduling & Waiting Rooms** - ✅ COMPLETE (100%), ✅ All tests passing
 - **Phase 3: Analytics & Metrics** - ⏳ Not Started
 - **Phase 4: Testing** - ✅ Complete for Phase 1 & 2
 
@@ -136,13 +136,7 @@ Sprint 7 enhances the live streaming experience with real-time chat, stream sche
 
 **Overall Test Coverage**: 85% average for Phase 1 code
 
-## In Progress 🚧
-
-_Currently: Phase 2 complete, ready for Phase 3_
-
-## Pending Tasks 📋
-
-### Phase 2: Stream Scheduling (Days 3-4) ✅ COMPLETE
+### Phase 2: Stream Scheduling & Waiting Rooms (Days 3-4) ✅ COMPLETE
 
 #### 2.1 Database Schema ✅
 - [x] Created migration `047_add_stream_scheduling.sql` (~170 lines)
@@ -178,6 +172,12 @@ _Currently: Phase 2 complete, ready for Phase 3_
 - [x] Created `internal/httpapi/waiting_room_handlers_test.go` (~708 lines, 8 test functions)
 - [x] All tests passing with proper mock setup
 - [x] Coverage: ~90% for scheduler, ~85% for handlers
+
+## In Progress 🚧
+
+_Currently: Ready to begin Phase 3: Analytics & Metrics_
+
+## Pending Tasks 📋
 
 ### Phase 3: Analytics & Metrics (Days 4-5)
 

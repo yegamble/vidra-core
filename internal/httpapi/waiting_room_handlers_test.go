@@ -256,11 +256,25 @@ func TestWaitingRoomHandler_UpdateWaitingRoom(t *testing.T) {
 			expectedStatus: http.StatusForbidden,
 		},
 		{
-			name:           "invalid request body",
-			streamID:       "550e8400-e29b-41d4-a716-446655440000",
-			userID:         uuid.New(),
-			requestBody:    "invalid json",
-			setupMock:      func(m *MockStreamRepository, userID uuid.UUID) {},
+			name:        "invalid request body",
+			streamID:    "550e8400-e29b-41d4-a716-446655440000",
+			userID:      uuid.New(),
+			requestBody: "invalid json",
+			setupMock: func(m *MockStreamRepository, userID uuid.UUID) {
+				streamID := uuid.MustParse("550e8400-e29b-41d4-a716-446655440000")
+				channelID := uuid.New()
+
+				m.On("GetByID", mock.Anything, streamID.String()).Return(&domain.LiveStream{
+					ID:        streamID,
+					ChannelID: channelID,
+				}, nil)
+
+				m.On("GetChannelByID", mock.Anything, channelID).Return(&domain.Channel{
+					ID:     channelID,
+					UserID: userID,
+				}, nil)
+				// No call to UpdateWaitingRoom since JSON parsing fails
+			},
 			expectedStatus: http.StatusBadRequest,
 		},
 	}
@@ -352,7 +366,7 @@ func TestWaitingRoomHandler_ScheduleStream(t *testing.T) {
 		},
 		{
 			name:     "schedule with end time",
-			streamID: uuid.New().String(),
+			streamID: "550e8400-e29b-41d4-a716-446655440000",
 			userID:   uuid.New(),
 			requestBody: ScheduleStreamRequest{
 				ScheduledStart:     time.Now().Add(2 * time.Hour),
@@ -446,10 +460,14 @@ func TestWaitingRoomHandler_ScheduleStream(t *testing.T) {
 			assert.Equal(t, tt.expectedStatus, w.Code)
 
 			if w.Code == http.StatusOK {
-				var response map[string]interface{}
+				var response Response
 				err := json.NewDecoder(w.Body).Decode(&response)
 				assert.NoError(t, err)
-				assert.Equal(t, "scheduled", response["status"])
+				assert.True(t, response.Success)
+
+				data, ok := response.Data.(map[string]interface{})
+				assert.True(t, ok, "response.Data should be a map")
+				assert.Equal(t, "scheduled", data["status"])
 			}
 
 			mockStreamRepo.AssertExpectations(t)
@@ -468,7 +486,7 @@ func TestWaitingRoomHandler_CancelSchedule(t *testing.T) {
 	}{
 		{
 			name:     "successful cancel",
-			streamID: uuid.New().String(),
+			streamID: "550e8400-e29b-41d4-a716-446655440000",
 			userID:   uuid.New(),
 			setupMock: func(m *MockStreamRepository, userID uuid.UUID) {
 				streamID := uuid.MustParse("550e8400-e29b-41d4-a716-446655440000")
@@ -497,16 +515,16 @@ func TestWaitingRoomHandler_CancelSchedule(t *testing.T) {
 		},
 		{
 			name:     "stream not found",
-			streamID: uuid.New().String(),
+			streamID: "550e8400-e29b-41d4-a716-446655440001",
 			userID:   uuid.New(),
 			setupMock: func(m *MockStreamRepository, userID uuid.UUID) {
-				m.On("GetByID", mock.Anything, mock.Anything).Return(nil, sql.ErrNoRows)
+				m.On("GetByID", mock.Anything, "550e8400-e29b-41d4-a716-446655440001").Return(nil, sql.ErrNoRows)
 			},
 			expectedStatus: http.StatusNotFound,
 		},
 		{
 			name:     "database error on cancel",
-			streamID: uuid.New().String(),
+			streamID: "550e8400-e29b-41d4-a716-446655440000",
 			userID:   uuid.New(),
 			setupMock: func(m *MockStreamRepository, userID uuid.UUID) {
 				streamID := uuid.MustParse("550e8400-e29b-41d4-a716-446655440000")
@@ -567,7 +585,7 @@ func TestWaitingRoomHandler_CancelSchedule(t *testing.T) {
 
 func TestWaitingRoomHandler_GetScheduledStreams(t *testing.T) {
 	mockStreamRepo := new(MockStreamRepository)
-	mockUserRepo := new(MockUserRepository)
+	mockUserRepo := new(MockWaitingRoomUserRepository)
 
 	scheduledStart := time.Now().Add(2 * time.Hour)
 	streams := []*domain.LiveStream{
@@ -596,10 +614,15 @@ func TestWaitingRoomHandler_GetScheduledStreams(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, w.Code)
 
-	var response []*domain.LiveStream
+	var response Response
 	err := json.NewDecoder(w.Body).Decode(&response)
 	assert.NoError(t, err)
-	assert.Len(t, response, 2)
+	assert.True(t, response.Success)
+
+	// The data should be a slice of streams, but it comes as []interface{} from JSON unmarshaling
+	dataSlice, ok := response.Data.([]interface{})
+	assert.True(t, ok, "response.Data should be a slice")
+	assert.Len(t, dataSlice, 2)
 
 	mockStreamRepo.AssertExpectations(t)
 }
@@ -656,9 +679,10 @@ func TestWaitingRoomHandler_GetUpcomingStreams(t *testing.T) {
 
 			assert.Equal(t, http.StatusOK, w.Code)
 
-			var response []*domain.LiveStream
+			var response Response
 			err := json.NewDecoder(w.Body).Decode(&response)
 			assert.NoError(t, err)
+			assert.True(t, response.Success)
 
 			mockStreamRepo.AssertExpectations(t)
 		})
