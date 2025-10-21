@@ -35,6 +35,7 @@ var (
 	ErrFileTooLarge    = errors.New("file too large")
 	ErrChunkMissing    = errors.New("chunk missing")
 	ErrInvalidChunk    = errors.New("invalid chunk")
+	ErrInvalidVideoID  = errors.New("invalid video ID")
 )
 
 var (
