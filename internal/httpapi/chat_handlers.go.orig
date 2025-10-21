@@ -1,0 +1,594 @@
+package httpapi
+
+import (
+	"encoding/json"
+	"net/http"
+	"strconv"
+	"time"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
+
+	"athena/internal/chat"
+	"athena/internal/domain"
+	"athena/internal/repository"
+)
+
+// ChatHandlers handles chat-related HTTP requests
+type ChatHandlers struct {
+	chatServer *chat.ChatServer
+	chatRepo   repository.ChatRepository
+	streamRepo repository.LiveStreamRepository
+	userRepo   repository.UserRepository
+}
+
+// NewChatHandlers creates new chat handlers
+func NewChatHandlers(
+	chatServer *chat.ChatServer,
+	chatRepo repository.ChatRepository,
+	streamRepo repository.LiveStreamRepository,
+	userRepo repository.UserRepository,
+) *ChatHandlers {
+	return &ChatHandlers{
+		chatServer: chatServer,
+		chatRepo:   chatRepo,
+		streamRepo: streamRepo,
+		userRepo:   userRepo,
+	}
+}
+
+// RegisterRoutes registers chat routes
+func (h *ChatHandlers) RegisterRoutes(r chi.Router) {
+	r.Route("/streams/{streamId}/chat", func(r chi.Router) {
+		// WebSocket endpoint (requires authentication)
+		r.With(RequireAuth).Get("/ws", h.HandleWebSocketConnection)
+
+		// Chat history (public for public streams, auth for private)
+		r.Get("/messages", h.GetChatMessages)
+
+		// Moderation endpoints (require authentication and moderator role)
+		r.Group(func(r chi.Router) {
+			r.Use(RequireAuth)
+
+			// Delete message
+			r.Delete("/messages/{messageId}", h.DeleteMessage)
+
+			// Moderator management
+			r.Post("/moderators", h.AddModerator)
+			r.Delete("/moderators/{userId}", h.RemoveModerator)
+			r.Get("/moderators", h.GetModerators)
+
+			// Ban management
+			r.Post("/bans", h.BanUser)
+			r.Delete("/bans/{userId}", h.UnbanUser)
+			r.Get("/bans", h.GetBans)
+
+			// Statistics
+			r.Get("/stats", h.GetChatStats)
+		})
+	})
+}
+
+// HandleWebSocketConnection upgrades HTTP to WebSocket for chat
+func (h *ChatHandlers) HandleWebSocketConnection(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	// Get stream ID from URL
+	streamIDStr := chi.URLParam(r, "streamId")
+	streamID, err := uuid.Parse(streamIDStr)
+	if err != nil {
+		RespondError(w, http.StatusBadRequest, "Invalid stream ID")
+		return
+	}
+
+	// Get authenticated user
+	userID, ok := GetUserIDFromContext(ctx)
+	if !ok {
+		RespondError(w, http.StatusUnauthorized, "Authentication required")
+		return
+	}
+
+	// Get user details
+	user, err := h.userRepo.GetByID(ctx, userID)
+	if err != nil {
+		RespondError(w, http.StatusInternalServerError, "Failed to get user details")
+		return
+	}
+
+	// Verify stream exists and is live
+	stream, err := h.streamRepo.GetByID(ctx, streamID)
+	if err != nil {
+		if err == domain.ErrNotFound {
+			RespondError(w, http.StatusNotFound, "Stream not found")
+			return
+		}
+		RespondError(w, http.StatusInternalServerError, "Failed to get stream")
+		return
+	}
+
+	if stream.Status != "live" {
+		RespondError(w, http.StatusBadRequest, "Stream is not live")
+		return
+	}
+
+	// Check if chat is enabled for this stream
+	// TODO: Add chat_enabled field to live_streams table
+
+	// Upgrade to WebSocket
+	conn, err := h.chatServer.upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		// Upgrade already writes response
+		return
+	}
+
+	// Handle the WebSocket connection
+	if err := h.chatServer.HandleWebSocket(ctx, conn, streamID, userID, user.Username); err != nil {
+		// Connection already closed by HandleWebSocket
+		return
+	}
+}
+
+// GetChatMessages retrieves chat message history
+func (h *ChatHandlers) GetChatMessages(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	// Get stream ID
+	streamIDStr := chi.URLParam(r, "streamId")
+	streamID, err := uuid.Parse(streamIDStr)
+	if err != nil {
+		RespondError(w, http.StatusBadRequest, "Invalid stream ID")
+		return
+	}
+
+	// Verify stream exists
+	stream, err := h.streamRepo.GetByID(ctx, streamID)
+	if err != nil {
+		if err == domain.ErrNotFound {
+			RespondError(w, http.StatusNotFound, "Stream not found")
+			return
+		}
+		RespondError(w, http.StatusInternalServerError, "Failed to get stream")
+		return
+	}
+
+	// Check privacy (if private, require authentication and authorization)
+	if stream.Privacy == "private" {
+		userID, authenticated := GetUserIDFromContext(ctx)
+		if !authenticated {
+			RespondError(w, http.StatusUnauthorized, "Authentication required")
+			return
+		}
+
+		// Check if user is owner or has access
+		if stream.UserID != userID {
+			// TODO: Check if user is subscriber or has been granted access
+			RespondError(w, http.StatusForbidden, "Access denied")
+			return
+		}
+	}
+
+	// Parse pagination parameters
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	if limit <= 0 || limit > 100 {
+		limit = 50
+	}
+
+	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
+	if offset < 0 {
+		offset = 0
+	}
+
+	// Get messages
+	messages, err := h.chatRepo.GetMessages(ctx, streamID, limit, offset)
+	if err != nil {
+		RespondError(w, http.StatusInternalServerError, "Failed to get messages")
+		return
+	}
+
+	// Get total count
+	totalCount, err := h.chatRepo.GetMessageCount(ctx, streamID)
+	if err != nil {
+		RespondError(w, http.StatusInternalServerError, "Failed to get message count")
+		return
+	}
+
+	RespondJSON(w, http.StatusOK, map[string]interface{}{
+		"success": true,
+		"data": map[string]interface{}{
+			"messages": messages,
+			"pagination": map[string]interface{}{
+				"limit":  limit,
+				"offset": offset,
+				"total":  totalCount,
+			},
+		},
+	})
+}
+
+// DeleteMessage deletes a chat message (moderator action)
+func (h *ChatHandlers) DeleteMessage(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	// Get stream ID and message ID
+	streamIDStr := chi.URLParam(r, "streamId")
+	streamID, err := uuid.Parse(streamIDStr)
+	if err != nil {
+		RespondError(w, http.StatusBadRequest, "Invalid stream ID")
+		return
+	}
+
+	messageIDStr := chi.URLParam(r, "messageId")
+	messageID, err := uuid.Parse(messageIDStr)
+	if err != nil {
+		RespondError(w, http.StatusBadRequest, "Invalid message ID")
+		return
+	}
+
+	// Get authenticated user
+	userID, ok := GetUserIDFromContext(ctx)
+	if !ok {
+		RespondError(w, http.StatusUnauthorized, "Authentication required")
+		return
+	}
+
+	// Delete the message (this checks permissions internally)
+	if err := h.chatServer.DeleteMessage(ctx, streamID, messageID, userID); err != nil {
+		if err == domain.ErrNotModerator {
+			RespondError(w, http.StatusForbidden, "Moderator privileges required")
+			return
+		}
+		if err == domain.ErrNotFound {
+			RespondError(w, http.StatusNotFound, "Message not found")
+			return
+		}
+		RespondError(w, http.StatusInternalServerError, "Failed to delete message")
+		return
+	}
+
+	RespondJSON(w, http.StatusOK, map[string]interface{}{
+		"success": true,
+		"message": "Message deleted successfully",
+	})
+}
+
+// AddModeratorRequest is the request body for adding a moderator
+type AddModeratorRequest struct {
+	UserID string `json:"user_id"`
+}
+
+// AddModerator adds a moderator to a stream chat
+func (h *ChatHandlers) AddModerator(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	// Get stream ID
+	streamIDStr := chi.URLParam(r, "streamId")
+	streamID, err := uuid.Parse(streamIDStr)
+	if err != nil {
+		RespondError(w, http.StatusBadRequest, "Invalid stream ID")
+		return
+	}
+
+	// Get authenticated user (must be stream owner)
+	ownerID, ok := GetUserIDFromContext(ctx)
+	if !ok {
+		RespondError(w, http.StatusUnauthorized, "Authentication required")
+		return
+	}
+
+	// Verify stream ownership
+	stream, err := h.streamRepo.GetByID(ctx, streamID)
+	if err != nil {
+		RespondError(w, http.StatusNotFound, "Stream not found")
+		return
+	}
+
+	if stream.UserID != ownerID {
+		RespondError(w, http.StatusForbidden, "Only stream owner can add moderators")
+		return
+	}
+
+	// Parse request
+	var req AddModeratorRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		RespondError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+
+	modUserID, err := uuid.Parse(req.UserID)
+	if err != nil {
+		RespondError(w, http.StatusBadRequest, "Invalid user ID")
+		return
+	}
+
+	// Verify user exists
+	_, err = h.userRepo.GetByID(ctx, modUserID)
+	if err != nil {
+		RespondError(w, http.StatusNotFound, "User not found")
+		return
+	}
+
+	// Add moderator
+	moderator := domain.NewChatModerator(streamID, modUserID, ownerID)
+	if err := h.chatRepo.AddModerator(ctx, moderator); err != nil {
+		RespondError(w, http.StatusInternalServerError, "Failed to add moderator")
+		return
+	}
+
+	RespondJSON(w, http.StatusOK, map[string]interface{}{
+		"success": true,
+		"data":    moderator,
+	})
+}
+
+// RemoveModerator removes a moderator from a stream chat
+func (h *ChatHandlers) RemoveModerator(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	// Get stream ID
+	streamIDStr := chi.URLParam(r, "streamId")
+	streamID, err := uuid.Parse(streamIDStr)
+	if err != nil {
+		RespondError(w, http.StatusBadRequest, "Invalid stream ID")
+		return
+	}
+
+	// Get user ID to remove
+	userIDStr := chi.URLParam(r, "userId")
+	userID, err := uuid.Parse(userIDStr)
+	if err != nil {
+		RespondError(w, http.StatusBadRequest, "Invalid user ID")
+		return
+	}
+
+	// Get authenticated user (must be stream owner)
+	ownerID, ok := GetUserIDFromContext(ctx)
+	if !ok {
+		RespondError(w, http.StatusUnauthorized, "Authentication required")
+		return
+	}
+
+	// Verify stream ownership
+	stream, err := h.streamRepo.GetByID(ctx, streamID)
+	if err != nil {
+		RespondError(w, http.StatusNotFound, "Stream not found")
+		return
+	}
+
+	if stream.UserID != ownerID {
+		RespondError(w, http.StatusForbidden, "Only stream owner can remove moderators")
+		return
+	}
+
+	// Remove moderator
+	if err := h.chatRepo.RemoveModerator(ctx, streamID, userID); err != nil {
+		if err == domain.ErrNotFound {
+			RespondError(w, http.StatusNotFound, "Moderator not found")
+			return
+		}
+		RespondError(w, http.StatusInternalServerError, "Failed to remove moderator")
+		return
+	}
+
+	RespondJSON(w, http.StatusOK, map[string]interface{}{
+		"success": true,
+		"message": "Moderator removed successfully",
+	})
+}
+
+// GetModerators gets all moderators for a stream
+func (h *ChatHandlers) GetModerators(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	// Get stream ID
+	streamIDStr := chi.URLParam(r, "streamId")
+	streamID, err := uuid.Parse(streamIDStr)
+	if err != nil {
+		RespondError(w, http.StatusBadRequest, "Invalid stream ID")
+		return
+	}
+
+	// Get moderators
+	moderators, err := h.chatRepo.GetModerators(ctx, streamID)
+	if err != nil {
+		RespondError(w, http.StatusInternalServerError, "Failed to get moderators")
+		return
+	}
+
+	RespondJSON(w, http.StatusOK, map[string]interface{}{
+		"success": true,
+		"data":    moderators,
+	})
+}
+
+// BanUserRequest is the request body for banning a user
+type BanUserRequest struct {
+	UserID   string `json:"user_id"`
+	Reason   string `json:"reason"`
+	Duration int    `json:"duration"` // Duration in seconds, 0 for permanent
+}
+
+// BanUser bans a user from chat
+func (h *ChatHandlers) BanUser(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	// Get stream ID
+	streamIDStr := chi.URLParam(r, "streamId")
+	streamID, err := uuid.Parse(streamIDStr)
+	if err != nil {
+		RespondError(w, http.StatusBadRequest, "Invalid stream ID")
+		return
+	}
+
+	// Get authenticated user (moderator)
+	moderatorID, ok := GetUserIDFromContext(ctx)
+	if !ok {
+		RespondError(w, http.StatusUnauthorized, "Authentication required")
+		return
+	}
+
+	// Parse request
+	var req BanUserRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		RespondError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+
+	userID, err := uuid.Parse(req.UserID)
+	if err != nil {
+		RespondError(w, http.StatusBadRequest, "Invalid user ID")
+		return
+	}
+
+	// Convert duration to time.Duration
+	var duration time.Duration
+	if req.Duration > 0 {
+		duration = time.Duration(req.Duration) * time.Second
+	}
+
+	// Ban the user (this checks permissions internally)
+	if err := h.chatServer.BanUser(ctx, streamID, userID, moderatorID, req.Reason, duration); err != nil {
+		if err == domain.ErrNotModerator {
+			RespondError(w, http.StatusForbidden, "Moderator privileges required")
+			return
+		}
+		RespondError(w, http.StatusInternalServerError, "Failed to ban user")
+		return
+	}
+
+	RespondJSON(w, http.StatusOK, map[string]interface{}{
+		"success": true,
+		"message": "User banned successfully",
+	})
+}
+
+// UnbanUser unbans a user from chat
+func (h *ChatHandlers) UnbanUser(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	// Get stream ID
+	streamIDStr := chi.URLParam(r, "streamId")
+	streamID, err := uuid.Parse(streamIDStr)
+	if err != nil {
+		RespondError(w, http.StatusBadRequest, "Invalid stream ID")
+		return
+	}
+
+	// Get user ID to unban
+	userIDStr := chi.URLParam(r, "userId")
+	userID, err := uuid.Parse(userIDStr)
+	if err != nil {
+		RespondError(w, http.StatusBadRequest, "Invalid user ID")
+		return
+	}
+
+	// Get authenticated user (moderator)
+	moderatorID, ok := GetUserIDFromContext(ctx)
+	if !ok {
+		RespondError(w, http.StatusUnauthorized, "Authentication required")
+		return
+	}
+
+	// Check if user is moderator or stream owner
+	isMod, err := h.chatRepo.IsModerator(ctx, streamID, moderatorID)
+	if err != nil {
+		RespondError(w, http.StatusInternalServerError, "Failed to check moderator status")
+		return
+	}
+
+	// TODO: Also check if moderatorID is stream owner
+	if !isMod {
+		RespondError(w, http.StatusForbidden, "Moderator privileges required")
+		return
+	}
+
+	// Unban the user
+	if err := h.chatRepo.UnbanUser(ctx, streamID, userID); err != nil {
+		if err == domain.ErrNotFound {
+			RespondError(w, http.StatusNotFound, "Ban not found")
+			return
+		}
+		RespondError(w, http.StatusInternalServerError, "Failed to unban user")
+		return
+	}
+
+	RespondJSON(w, http.StatusOK, map[string]interface{}{
+		"success": true,
+		"message": "User unbanned successfully",
+	})
+}
+
+// GetBans gets all bans for a stream
+func (h *ChatHandlers) GetBans(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	// Get stream ID
+	streamIDStr := chi.URLParam(r, "streamId")
+	streamID, err := uuid.Parse(streamIDStr)
+	if err != nil {
+		RespondError(w, http.StatusBadRequest, "Invalid stream ID")
+		return
+	}
+
+	// Get authenticated user (moderator)
+	moderatorID, ok := GetUserIDFromContext(ctx)
+	if !ok {
+		RespondError(w, http.StatusUnauthorized, "Authentication required")
+		return
+	}
+
+	// Check if user is moderator or stream owner
+	isMod, err := h.chatRepo.IsModerator(ctx, streamID, moderatorID)
+	if err != nil {
+		RespondError(w, http.StatusInternalServerError, "Failed to check moderator status")
+		return
+	}
+
+	// TODO: Also check if moderatorID is stream owner
+	if !isMod {
+		RespondError(w, http.StatusForbidden, "Moderator privileges required")
+		return
+	}
+
+	// Get bans
+	bans, err := h.chatRepo.GetBans(ctx, streamID)
+	if err != nil {
+		RespondError(w, http.StatusInternalServerError, "Failed to get bans")
+		return
+	}
+
+	RespondJSON(w, http.StatusOK, map[string]interface{}{
+		"success": true,
+		"data":    bans,
+	})
+}
+
+// GetChatStats gets chat statistics for a stream
+func (h *ChatHandlers) GetChatStats(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	// Get stream ID
+	streamIDStr := chi.URLParam(r, "streamId")
+	streamID, err := uuid.Parse(streamIDStr)
+	if err != nil {
+		RespondError(w, http.StatusBadRequest, "Invalid stream ID")
+		return
+	}
+
+	// Get chat statistics
+	stats, err := h.chatRepo.GetStreamStats(ctx, streamID)
+	if err != nil {
+		RespondError(w, http.StatusInternalServerError, "Failed to get chat stats")
+		return
+	}
+
+	// Get connected users count
+	connectedUsers := h.chatServer.GetConnectedUsers(streamID)
+
+	RespondJSON(w, http.StatusOK, map[string]interface{}{
+		"success": true,
+		"data": map[string]interface{}{
+			"stats":           stats,
+			"connected_users": connectedUsers,
+		},
+	})
+}

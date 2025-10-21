@@ -3,7 +3,7 @@
 **Status**: ✅ All Phases Complete (Core + Serving + VOD + Tests)
 **Start Date**: 2025-10-20
 **Completion Date**: 2025-10-20
-**Test Coverage**: 25 unit tests passing, build verified successfully
+**Test Coverage**: 25 unit tests passing, build verified successfully, all linting issues resolved
 
 ## Overview
 
@@ -212,6 +212,28 @@ Content-Type: multipart/form-data
 - Metadata (codecs, bitrate)
 - Tags for discovery
 
+#### 14. Linting & Error Handling ✅
+- **Modified**: `internal/livestream/vod_converter.go`
+- Fixed all `errcheck` linting errors for Close() calls
+- Proper error handling for file.Close() (deferred with logging)
+- Proper error handling for writer.Close() (returns error)
+- Proper error handling for resp.Body.Close() (deferred with logging)
+
+**Error Handling Pattern**:
+```go
+// Deferred close with error logging
+defer func() {
+    if closeErr := file.Close(); closeErr != nil {
+        v.logger.WithError(closeErr).Warn("Failed to close file")
+    }
+}()
+
+// Critical close with error return
+if err := writer.Close(); err != nil {
+    return "", fmt.Errorf("failed to close multipart writer: %w", err)
+}
+```
+
 ## Architecture
 
 ```
@@ -355,7 +377,7 @@ export REPLAY_RETENTION_DAYS=30  # 0=keep forever
 
 ### Modified Files (8 files)
 1. `internal/config/config.go` - Added 11 HLS/FFmpeg/VOD config fields
-2. `internal/livestream/vod_converter.go` - Added full IPFS upload & video creation (~90 additional lines)
+2. `internal/livestream/vod_converter.go` - Added full IPFS upload & video creation (~100 additional lines with error handling)
 3. `internal/livestream/rtmp_server.go` - Integrated HLS transcoding & VOD conversion
 4. `internal/livestream/rtmp_integration_test.go` - Updated for new RTMP server signature
 5. `internal/app/app.go` - Wired HLS transcoder, VOD converter, shutdown order
@@ -367,8 +389,8 @@ export REPLAY_RETENTION_DAYS=30  # 0=keep forever
 1. `SPRINT6_PLAN.md` - Complete implementation plan
 2. `SPRINT6_PROGRESS.md` - This progress document
 
-**Total New Code**: ~2170 lines (1240 production + 930 test)
-- Production: 1150 (core) + 90 (IPFS/video integration) = 1240 lines
+**Total New Code**: ~2180 lines (1250 production + 930 test)
+- Production: 1150 (core) + 100 (IPFS/video integration with error handling) = 1250 lines
 - Tests: 930 lines (25 unit tests)
 
 ## Quality Variants
@@ -514,6 +536,7 @@ Focus on observability:
 - [x] Video database entry creation (fully implemented with metadata extraction)
 - [x] All tests passing with no regressions
 - [x] Build verification successful
+- [x] All linting issues resolved (errcheck for Close() calls)
 
 ### 🔮 Future Enhancements
 - [ ] Integration tests for full live → HLS → VOD flow (can be added in future sprints)
@@ -527,6 +550,7 @@ Focus on observability:
 - Phase 2: HLS Serving ✅
 - Phase 3: VOD Conversion ✅
 - Phase 4: Testing & Polish ✅
+- Phase 5: Deferred Items ✅
 
 **Overall Sprint 6 Status**: ✅ 100% Complete!
 
