@@ -435,6 +435,9 @@ func TestChatServer_DeleteMessage(t *testing.T) {
 		UserID: ownerID,
 	}, nil)
 
+	// Mock moderator check (called even for owner)
+	mockChatRepo.On("IsModerator", ctx, streamID, ownerID).Return(false, nil)
+
 	// Mock message lookup
 	mockChatRepo.On("GetMessageByID", ctx, messageID).Return(&domain.ChatMessage{
 		ID:       messageID,
@@ -529,6 +532,9 @@ func TestChatServer_BanUser(t *testing.T) {
 		ID:     streamID,
 		UserID: ownerID,
 	}, nil)
+
+	// Mock moderator check (called even for owner)
+	mockChatRepo.On("IsModerator", ctx, streamID, ownerID).Return(false, nil)
 
 	// Test as owner
 	mockChatRepo.On("BanUser", ctx, mock.MatchedBy(func(ban *domain.ChatBan) bool {

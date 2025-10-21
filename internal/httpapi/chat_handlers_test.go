@@ -298,14 +298,29 @@ func TestChatHandlers_GetChatMessages_PrivateStreamUnauthorized(t *testing.T) {
 }
 
 func TestChatHandlers_DeleteMessage_AsModerator(t *testing.T) {
-	handlers, mockChatRepo, _, _, _ := setupChatHandlerTest(t)
+	handlers, mockChatRepo, mockStreamRepo, _, _ := setupChatHandlerTest(t)
 
 	streamID := uuid.New()
 	messageID := uuid.New()
 	moderatorID := uuid.New()
+	ownerID := uuid.New()
 
-	// ChatServer.DeleteMessage only calls IsModerator and DeleteMessage
+	// Mock stream owner check (called by ChatServer.DeleteMessage)
+	mockStreamRepo.On("GetByID", mock.Anything, streamID).Return(&domain.LiveStream{
+		ID:     streamID,
+		UserID: ownerID,
+	}, nil)
+
+	// Mock moderator check
 	mockChatRepo.On("IsModerator", mock.Anything, streamID, moderatorID).Return(true, nil)
+
+	// Mock message lookup (now required)
+	mockChatRepo.On("GetMessageByID", mock.Anything, messageID).Return(&domain.ChatMessage{
+		ID:       messageID,
+		StreamID: streamID,
+	}, nil)
+
+	// Mock delete
 	mockChatRepo.On("DeleteMessage", mock.Anything, messageID).Return(nil)
 
 	req := httptest.NewRequest("DELETE", "/api/v1/streams/"+streamID.String()+"/chat/messages/"+messageID.String(), nil)
@@ -322,6 +337,7 @@ func TestChatHandlers_DeleteMessage_AsModerator(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 
 	mockChatRepo.AssertExpectations(t)
+	mockStreamRepo.AssertExpectations(t)
 }
 
 func TestChatHandlers_AddModerator_AsOwner(t *testing.T) {
@@ -397,11 +413,18 @@ func TestChatHandlers_AddModerator_NotOwner(t *testing.T) {
 }
 
 func TestChatHandlers_BanUser_AsModerator(t *testing.T) {
-	handlers, mockChatRepo, _, _, _ := setupChatHandlerTest(t)
+	handlers, mockChatRepo, mockStreamRepo, _, _ := setupChatHandlerTest(t)
 
 	streamID := uuid.New()
 	moderatorID := uuid.New()
 	bannedUserID := uuid.New()
+	ownerID := uuid.New()
+
+	// Mock stream owner check (called by ChatServer.BanUser)
+	mockStreamRepo.On("GetByID", mock.Anything, streamID).Return(&domain.LiveStream{
+		ID:     streamID,
+		UserID: ownerID,
+	}, nil)
 
 	// ChatServer.BanUser calls IsModerator and BanUser
 	mockChatRepo.On("IsModerator", mock.Anything, streamID, moderatorID).Return(true, nil)
@@ -429,6 +452,7 @@ func TestChatHandlers_BanUser_AsModerator(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 
 	mockChatRepo.AssertExpectations(t)
+	mockStreamRepo.AssertExpectations(t)
 }
 
 func TestChatHandlers_GetChatStats(t *testing.T) {

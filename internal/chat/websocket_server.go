@@ -164,9 +164,12 @@ func (s *ChatServer) registerClient(client *ChatClient) {
 
 // unregisterClient removes a client from the connections map
 func (s *ChatServer) unregisterClient(client *ChatClient) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	// We need to release the lock before calling broadcast to avoid deadlock
+	var shouldSendLeaveMessage bool
+	var username string
+	var streamID uuid.UUID
 
+	s.mu.Lock()
 	if clients, ok := s.connections[client.StreamID]; ok {
 		if _, exists := clients[client]; exists {
 			delete(clients, client)
@@ -183,9 +186,16 @@ func (s *ChatServer) unregisterClient(client *ChatClient) {
 				"username":  client.Username,
 			}).Info("Client disconnected from chat")
 
-			// Send leave message
-			s.broadcastSystemMessage(client.StreamID, fmt.Sprintf("%s left the chat", client.Username))
+			shouldSendLeaveMessage = true
+			username = client.Username
+			streamID = client.StreamID
 		}
+	}
+	s.mu.Unlock()
+
+	// Send leave message after releasing the lock
+	if shouldSendLeaveMessage {
+		s.broadcastSystemMessage(streamID, fmt.Sprintf("%s left the chat", username))
 	}
 }
 
@@ -452,9 +462,26 @@ func (s *ChatServer) DeleteMessage(ctx context.Context, streamID, messageID uuid
 		return fmt.Errorf("failed to check moderator status: %w", err)
 	}
 
-	// TODO: Also check if moderatorID is stream owner
-	if !isMod {
+	// Check if moderatorID is stream owner
+	isOwner := false
+	if s.streamRepo != nil {
+		stream, err := s.streamRepo.GetByID(ctx, streamID)
+		if err == nil && stream != nil {
+			isOwner = stream.UserID == moderatorID
+		}
+	}
+
+	if !isMod && !isOwner {
 		return domain.ErrNotModerator
+	}
+
+	// Verify message exists and belongs to this stream
+	msg, err := s.chatRepo.GetMessageByID(ctx, messageID)
+	if err != nil {
+		return fmt.Errorf("failed to get message: %w", err)
+	}
+	if msg.StreamID != streamID {
+		return fmt.Errorf("message does not belong to this stream")
 	}
 
 	// Delete the message
@@ -488,8 +515,16 @@ func (s *ChatServer) BanUser(ctx context.Context, streamID, userID, moderatorID 
 		return fmt.Errorf("failed to check moderator status: %w", err)
 	}
 
-	// TODO: Also check if moderatorID is stream owner
-	if !isMod {
+	// Check if moderatorID is stream owner
+	isOwner := false
+	if s.streamRepo != nil {
+		stream, err := s.streamRepo.GetByID(ctx, streamID)
+		if err == nil && stream != nil {
+			isOwner = stream.UserID == moderatorID
+		}
+	}
+
+	if !isMod && !isOwner {
 		return domain.ErrNotModerator
 	}
 
