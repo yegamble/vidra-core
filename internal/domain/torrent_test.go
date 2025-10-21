@@ -28,7 +28,7 @@ func TestNewVideoTorrent(t *testing.T) {
 			infoHash:    "1234567890abcdef1234567890abcdef12345678",
 			torrentPath: "/torrents/video.torrent",
 			magnetURI:   "magnet:?xt=urn:btih:1234567890abcdef1234567890abcdef12345678&dn=video.mp4",
-			pieceLength: 262144, // 256KB
+			pieceLength: 262144,            // 256KB
 			totalSize:   1024 * 1024 * 100, // 100MB
 			wantErr:     false,
 		},
