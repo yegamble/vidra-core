@@ -113,10 +113,7 @@ func (r *chatRepository) GetMessages(ctx context.Context, streamID uuid.UUID, li
 		return nil, fmt.Errorf("failed to get chat messages: %w", err)
 	}
 	defer func() {
-		if closeErr := rows.Close(); closeErr != nil {
-			// Log the error but don't override the function's error return
-			// This is a common pattern for deferred Close() calls
-		}
+		_ = rows.Close()
 	}()
 
 	return r.scanMessages(rows)
@@ -139,9 +136,7 @@ func (r *chatRepository) GetMessagesSince(ctx context.Context, streamID uuid.UUI
 		return nil, fmt.Errorf("failed to get messages since: %w", err)
 	}
 	defer func() {
-		if closeErr := rows.Close(); closeErr != nil {
-			// Log the error but don't override the function's error return
-		}
+		_ = rows.Close()
 	}()
 
 	return r.scanMessages(rows)
@@ -326,9 +321,7 @@ func (r *chatRepository) GetModerators(ctx context.Context, streamID uuid.UUID) 
 		return nil, fmt.Errorf("failed to get moderators: %w", err)
 	}
 	defer func() {
-		if closeErr := rows.Close(); closeErr != nil {
-			// Log the error but don't override the function's error return
-		}
+		_ = rows.Close()
 	}()
 
 	var moderators []*domain.ChatModerator
@@ -442,9 +435,7 @@ func (r *chatRepository) GetBans(ctx context.Context, streamID uuid.UUID) ([]*do
 		return nil, fmt.Errorf("failed to get bans: %w", err)
 	}
 	defer func() {
-		if closeErr := rows.Close(); closeErr != nil {
-			// Log the error but don't override the function's error return
-		}
+		_ = rows.Close()
 	}()
 
 	return r.scanBans(rows)
