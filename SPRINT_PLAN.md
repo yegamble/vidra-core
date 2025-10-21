@@ -29,6 +29,41 @@
 **Team Size:** Assuming 1-2 developers
 **Testing:** Every sprint includes comprehensive testing phase (30-40% of sprint time)
 
+### Federation & Storage Strategy
+
+**Default Federation:** ActivityPub (always enabled, PeerTube compatible)
+**Optional Integrations:**
+- ATProto (Bluesky) - Toggle via `ENABLE_ATPROTO=true`
+- IPFS (Decentralized storage) - Toggle via `ENABLE_IPFS=true`
+
+All sprints will implement ActivityPub by default, with ATProto and IPFS as configurable add-ons that can be enabled/disabled per instance.
+
+#### Configuration Flags
+
+```bash
+# Federation Settings (ActivityPub always on)
+ENABLE_ACTIVITYPUB=true          # Cannot be disabled
+ACTIVITYPUB_DOMAIN=video.example.com
+ACTIVITYPUB_DELIVERY_WORKERS=5
+
+# ATProto Integration (Optional)
+ENABLE_ATPROTO=false             # Toggle Bluesky integration
+ATPROTO_HANDLE=video.bsky.social
+ATPROTO_APP_PASSWORD=xrpc-app-password
+ATPROTO_PDS_URL=https://bsky.social
+ATPROTO_AUTO_POST=true           # Auto-post new videos
+ATPROTO_POST_FORMAT=link         # link|embed|thread
+
+# IPFS Integration (Optional)
+ENABLE_IPFS=false                # Toggle IPFS storage
+IPFS_API_URL=http://localhost:5001
+IPFS_GATEWAY_URL=http://localhost:8080
+IPFS_CLUSTER_API=http://localhost:9094
+IPFS_AUTO_PIN=true               # Auto-pin all videos
+IPFS_PIN_THRESHOLD_MB=100        # Only pin videos under this size
+IPFS_REPLICATION_FACTOR=3        # Cluster replication
+```
+
 ---
 
 ## Sprint 1-2: Video Import System (4 weeks) 🔄 **NOT STARTED**
@@ -151,15 +186,22 @@ CREATE INDEX idx_video_imports_channel_id ON video_imports(channel_id);
 - [ ] Add disk space checking before download
 - [ ] Move completed files to upload directory
 
-**Day 8-10: End-to-End Testing**
-- [ ] Test full import flow: YouTube → Download → Encode → Publish
+**Day 8-9: Federation Integration**
+- [ ] After import completion, post to ActivityPub (always)
+- [ ] If `ENABLE_ATPROTO=true`, create ATProto post with video link
+- [ ] If `ENABLE_IPFS=true`, pin video to IPFS and include CID in federation posts
+- [ ] Test federation posts include proper metadata (title, description, thumbnail)
+- [ ] Implement retry logic for failed federation posts
+
+**Day 10: End-to-End Testing**
+- [ ] Test full import flow: YouTube → Download → Encode → Publish → Federate
 - [ ] Test import with various sources (YouTube, Vimeo, Dailymotion)
 - [ ] Test import cancellation at each stage
 - [ ] Test error recovery (network interruption, disk full)
 - [ ] Test concurrent imports (10 users, 50 imports)
-- [ ] Load test: 100 imports queued, verify no deadlocks
-- [ ] Test import with large files (>2GB)
-- [ ] Test import with long videos (>2 hours)
+- [ ] Verify ActivityPub post created for each import
+- [ ] If ATProto enabled, verify Bluesky post created
+- [ ] If IPFS enabled, verify video pinned and CID in posts
 
 #### Testing Tasks
 
@@ -242,8 +284,11 @@ AV1CRF               int      // 23-55
 **Day 8-10: Database & Storage Updates**
 - [ ] Add `encoding_profile` column to `encoding_jobs` table
 - [ ] Update `videos.outputs` JSONB to store codec variants
-- [ ] Example structure: `{"h264": {"720p": "path"}, "vp9": {"720p": "path"}}`
+- [ ] Example structure: `{"h264": {"720p": "path", "ipfs_cid": "..."}, "vp9": {"720p": "path", "ipfs_cid": "..."}}`
 - [ ] Update video repository to handle multi-codec outputs
+- [ ] If `ENABLE_IPFS=true`, pin each codec variant to IPFS
+- [ ] Store IPFS CIDs alongside local paths in outputs JSONB
+- [ ] Implement hybrid retrieval (try IPFS first, fallback to local)
 
 #### Testing Tasks
 
@@ -512,13 +557,15 @@ ffmpegArgs := []string{
 - [x] Add CORS headers for cross-origin playback
 - [x] Implement privacy-aware access control
 
-**Day 8-10: VOD Conversion (Moved from Sprint 7)**
+**Day 8-10: VOD Conversion & Federation**
 - [x] Automatic VOD conversion when stream ends
 - [x] Worker pool with configurable concurrency
 - [x] Segment concatenation via FFmpeg
 - [x] Video optimization with +faststart for web
-- [x] Full IPFS integration with CIDv1 and auto-pinning
+- [x] Full IPFS integration with CIDv1 and auto-pinning (when `ENABLE_IPFS=true`)
 - [x] Video database entry creation with metadata extraction
+- [x] ActivityPub federation of VOD (always enabled)
+- [ ] ATProto post creation for VOD (when `ENABLE_ATPROTO=true`)
 
 #### Testing Tasks
 
@@ -583,7 +630,9 @@ ffmpegArgs := []string{
 - [x] Stream scheduling with future dates
 - [x] Waiting room functionality
 - [x] Automatic status transitions (scheduled → waiting → live)
-- [x] 15-minute advance notifications
+- [x] 15-minute advance notifications (local subscribers)
+- [x] ActivityPub notifications for scheduled streams (always)
+- [ ] ATProto notifications when `ENABLE_ATPROTO=true`
 - [x] 6 API endpoints for scheduling
 - [x] 87% test coverage
 
@@ -626,9 +675,11 @@ ffmpegArgs := []string{
 
 ---
 
-## Sprint 8-9: Torrent Support (4 weeks) 🔄 **NOT STARTED**
+## Sprint 8-9: Torrent Support with IPFS (4 weeks) 🔄 **NOT STARTED**
 
-### Sprint 8: Torrent Generation
+**Note:** This sprint focuses on WebTorrent for P2P browser streaming. IPFS serves as an optional parallel distribution method when `ENABLE_IPFS=true`.
+
+### Sprint 8: Torrent Generation & IPFS Hybrid
 
 #### Development Tasks
 
@@ -672,11 +723,17 @@ func (g *Generator) GenerateTorrent(videoID string, files []string) (*metainfo.M
 - [ ] Update video repository to store torrent metadata
 - [ ] Create API endpoint to get torrent: GET `/api/v1/videos/:id/torrent`
 
-**Day 8-10: Integration with Encoding Pipeline**
+**Day 8-10: Integration with Encoding Pipeline & Hybrid Distribution**
 - [ ] Add torrent generation step to encoding service (after HLS creation)
 - [ ] Generate torrent file for each completed encoding job
 - [ ] Update video record with torrent info
 - [ ] Add retry logic for torrent generation failures
+- [ ] If `ENABLE_IPFS=true`:
+  - [ ] Pin video files to IPFS in parallel with torrent creation
+  - [ ] Store both torrent magnet URI and IPFS CID in database
+  - [ ] Implement hybrid player that can use WebTorrent, IPFS, or HTTP
+- [ ] Federation: Include torrent magnet and IPFS CID in ActivityPub objects
+- [ ] If `ENABLE_ATPROTO=true`, include alternative distribution links in posts
 
 #### Testing Tasks
 
@@ -1440,6 +1497,9 @@ This sprint plan provides a comprehensive roadmap for implementing PeerTube feat
 - **Real-time chat** supporting 10,000+ concurrent connections
 - **Stream scheduling** with waiting rooms
 - **Analytics collection** with time-series data
+- **ActivityPub federation** fully implemented (PeerTube compatible)
+- **IPFS integration** for VOD storage (configurable)
+- **ATProto foundation** ready for Bluesky integration
 
 **Remaining Work:**
 - 🔄 Sprint 1-2: Video Import System (yt-dlp integration)
