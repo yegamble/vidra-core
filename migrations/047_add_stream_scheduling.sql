@@ -37,20 +37,18 @@ WHERE scheduled_start IS NOT NULL AND reminder_sent = false AND status = 'schedu
 CREATE INDEX IF NOT EXISTS idx_stream_notifications_sent_stream_user
 ON stream_notifications_sent(stream_id, user_id);
 
--- Add 'scheduled' status to live_streams status enum if not exists
-DO $$
-BEGIN
-    IF NOT EXISTS (
-        SELECT 1 FROM pg_enum
-        WHERE enumlabel = 'scheduled'
-        AND enumtypid = (
-            SELECT oid FROM pg_type
-            WHERE typname = 'stream_status'
-        )
-    ) THEN
-        ALTER TYPE stream_status ADD VALUE 'scheduled';
-    END IF;
-END $$;
+-- Update the CHECK constraint to include 'scheduled' and 'waiting_room' status
+ALTER TABLE live_streams DROP CONSTRAINT IF EXISTS live_streams_status_check;
+ALTER TABLE live_streams ADD CONSTRAINT live_streams_status_check
+    CHECK (status IN ('waiting', 'live', 'ended', 'error', 'scheduled', 'waiting_room'));
+
+-- Update the valid_status_times constraint to handle new statuses
+ALTER TABLE live_streams DROP CONSTRAINT IF EXISTS valid_status_times;
+ALTER TABLE live_streams ADD CONSTRAINT valid_status_times CHECK (
+    (status = 'live' AND started_at IS NOT NULL) OR
+    (status = 'ended' AND started_at IS NOT NULL AND ended_at IS NOT NULL) OR
+    (status IN ('waiting', 'error', 'scheduled', 'waiting_room'))
+);
 
 -- Function to get upcoming scheduled streams for a user
 CREATE OR REPLACE FUNCTION get_upcoming_streams_for_user(p_user_id UUID)
@@ -141,20 +139,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- Add waiting_room status if not exists
-DO $$
-BEGIN
-    IF NOT EXISTS (
-        SELECT 1 FROM pg_enum
-        WHERE enumlabel = 'waiting_room'
-        AND enumtypid = (
-            SELECT oid FROM pg_type
-            WHERE typname = 'stream_status'
-        )
-    ) THEN
-        ALTER TYPE stream_status ADD VALUE 'waiting_room';
-    END IF;
-END $$;
+-- The status constraint is already updated above to include 'waiting_room'
 
 -- Add comment explaining the new columns
 COMMENT ON COLUMN live_streams.scheduled_start IS 'When the stream is scheduled to start';

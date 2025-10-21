@@ -218,7 +218,11 @@ func (s *StreamScheduler) transitionToWaitingRoom(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("failed to transition streams to waiting room: %w", err)
 	}
-	defer rows.Close()
+	defer func() {
+		if err := rows.Close(); err != nil {
+			log.Printf("Failed to close rows in transitionToWaitingRoom: %v", err)
+		}
+	}()
 
 	for rows.Next() {
 		var id uuid.UUID
@@ -249,7 +253,11 @@ func (s *StreamScheduler) transitionToLive(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("failed to transition scheduled streams to live: %w", err)
 	}
-	defer rows.Close()
+	defer func() {
+		if err := rows.Close(); err != nil {
+			log.Printf("Failed to close rows in transitionToLive: %v", err)
+		}
+	}()
 
 	for rows.Next() {
 		var id uuid.UUID

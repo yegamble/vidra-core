@@ -3,6 +3,7 @@ package chat
 import (
 	"context"
 	"fmt"
+	"log"
 	"net/http"
 	"sync"
 	"time"
@@ -110,8 +111,12 @@ func (s *ChatServer) HandleWebSocket(ctx context.Context, conn *websocket.Conn, 
 		return fmt.Errorf("failed to check ban status: %w", err)
 	}
 	if banned {
-		conn.WriteJSON(map[string]string{"error": "You are banned from this chat"})
-		conn.Close()
+		if err := conn.WriteJSON(map[string]string{"error": "You are banned from this chat"}); err != nil {
+			log.Printf("Failed to write ban message: %v", err)
+		}
+		if err := conn.Close(); err != nil {
+			log.Printf("Failed to close banned connection: %v", err)
+		}
 		return domain.ErrUserBanned
 	}
 
@@ -189,13 +194,19 @@ func (s *ChatServer) readPump(client *ChatClient) {
 	defer func() {
 		s.wg.Done()
 		s.unregisterClient(client)
-		client.conn.Close()
+		if err := client.conn.Close(); err != nil {
+			s.logger.WithError(err).Debug("Error closing connection in readPump")
+		}
 	}()
 
 	client.conn.SetReadLimit(maxMessageSize)
-	client.conn.SetReadDeadline(time.Now().Add(pongWait))
+	if err := client.conn.SetReadDeadline(time.Now().Add(pongWait)); err != nil {
+		s.logger.WithError(err).Warn("Failed to set read deadline")
+	}
 	client.conn.SetPongHandler(func(string) error {
-		client.conn.SetReadDeadline(time.Now().Add(pongWait))
+		if err := client.conn.SetReadDeadline(time.Now().Add(pongWait)); err != nil {
+			s.logger.WithError(err).Warn("Failed to set read deadline in pong handler")
+		}
 		return nil
 	})
 
@@ -226,16 +237,23 @@ func (s *ChatServer) writePump(client *ChatClient) {
 	defer func() {
 		s.wg.Done()
 		ticker.Stop()
-		client.conn.Close()
+		if err := client.conn.Close(); err != nil {
+			s.logger.WithError(err).Debug("Error closing connection in writePump")
+		}
 	}()
 
 	for {
 		select {
 		case message, ok := <-client.send:
-			client.conn.SetWriteDeadline(time.Now().Add(writeWait))
+			if err := client.conn.SetWriteDeadline(time.Now().Add(writeWait)); err != nil {
+				s.logger.WithError(err).Warn("Failed to set write deadline")
+				return
+			}
 			if !ok {
 				// Channel closed
-				client.conn.WriteMessage(websocket.CloseMessage, []byte{})
+				if err := client.conn.WriteMessage(websocket.CloseMessage, []byte{}); err != nil {
+					s.logger.WithError(err).Debug("Failed to write close message")
+				}
 				return
 			}
 
@@ -245,7 +263,10 @@ func (s *ChatServer) writePump(client *ChatClient) {
 			}
 
 		case <-ticker.C:
-			client.conn.SetWriteDeadline(time.Now().Add(writeWait))
+			if err := client.conn.SetWriteDeadline(time.Now().Add(writeWait)); err != nil {
+				s.logger.WithError(err).Warn("Failed to set write deadline for ping")
+				return
+			}
 			if err := client.conn.WriteMessage(websocket.PingMessage, nil); err != nil {
 				return
 			}
@@ -531,7 +552,9 @@ func (s *ChatServer) disconnectUser(streamID, userID uuid.UUID) {
 			}
 
 			// Close connection
-			client.conn.Close()
+			if err := client.conn.Close(); err != nil {
+				s.logger.WithError(err).Debug("Failed to close connection when disconnecting user")
+			}
 			delete(clients, client)
 			close(client.send)
 
@@ -568,11 +591,15 @@ func (s *ChatServer) Shutdown(ctx context.Context) error {
 	s.mu.Lock()
 	for streamID, clients := range s.connections {
 		for client := range clients {
-			client.conn.WriteMessage(
+			if err := client.conn.WriteMessage(
 				websocket.CloseMessage,
 				websocket.FormatCloseMessage(websocket.CloseGoingAway, "Server shutting down"),
-			)
-			client.conn.Close()
+			); err != nil {
+				s.logger.WithError(err).Debug("Failed to write shutdown message")
+			}
+			if err := client.conn.Close(); err != nil {
+				s.logger.WithError(err).Debug("Failed to close connection during shutdown")
+			}
 		}
 		delete(s.connections, streamID)
 	}
