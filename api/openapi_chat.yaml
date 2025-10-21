@@ -1,0 +1,619 @@
+openapi: 3.0.0
+info:
+  title: Live Chat API
+  version: 1.0.0
+  description: WebSocket-based real-time chat system for live streams with moderation, bans, and rate limiting
+
+paths:
+  /api/v1/streams/{streamId}/chat/ws:
+    get:
+      summary: WebSocket connection for live chat
+      description: Upgrades HTTP connection to WebSocket for real-time chat communication
+      tags:
+        - Chat
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: streamId
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: ID of the live stream
+      responses:
+        '101':
+          description: Switching Protocols - WebSocket connection established
+        '401':
+          description: Unauthorized - authentication required
+        '403':
+          description: Forbidden - user is banned from chat
+        '404':
+          description: Stream not found
+        '400':
+          description: Stream is not live or invalid parameters
+
+  /api/v1/streams/{streamId}/chat/messages:
+    get:
+      summary: Get chat message history
+      description: Retrieve historical chat messages for a stream (public streams or authenticated users)
+      tags:
+        - Chat
+      parameters:
+        - in: path
+          name: streamId
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: ID of the live stream
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 50
+          description: Number of messages to return
+        - in: query
+          name: offset
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+          description: Number of messages to skip
+        - in: query
+          name: since
+          schema:
+            type: string
+            format: date-time
+          description: Only return messages after this timestamp
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: object
+                    properties:
+                      messages:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/ChatMessage'
+                      pagination:
+                        $ref: '#/components/schemas/Pagination'
+        '401':
+          description: Unauthorized - authentication required for private streams
+        '404':
+          description: Stream not found
+
+  /api/v1/streams/{streamId}/chat/messages/{messageId}:
+    delete:
+      summary: Delete a chat message
+      description: Delete a message (moderator or stream owner only)
+      tags:
+        - Chat Moderation
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: streamId
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: ID of the live stream
+        - in: path
+          name: messageId
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: ID of the message to delete
+      responses:
+        '200':
+          description: Message deleted successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: object
+                    properties:
+                      message:
+                        type: string
+                        example: Message deleted successfully
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden - moderator privileges required
+        '404':
+          description: Message not found
+
+  /api/v1/streams/{streamId}/chat/moderators:
+    get:
+      summary: List chat moderators
+      description: Get all moderators for a stream chat
+      tags:
+        - Chat Moderation
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: streamId
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: ID of the live stream
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ChatModerator'
+        '401':
+          description: Unauthorized
+        '404':
+          description: Stream not found
+
+    post:
+      summary: Add a chat moderator
+      description: Grant moderator privileges to a user (stream owner only)
+      tags:
+        - Chat Moderation
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: streamId
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: ID of the live stream
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - user_id
+              properties:
+                user_id:
+                  type: string
+                  format: uuid
+                  description: ID of the user to add as moderator
+      responses:
+        '200':
+          description: Moderator added successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    $ref: '#/components/schemas/ChatModerator'
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden - only stream owner can add moderators
+        '404':
+          description: User or stream not found
+
+  /api/v1/streams/{streamId}/chat/moderators/{userId}:
+    delete:
+      summary: Remove a chat moderator
+      description: Revoke moderator privileges from a user (stream owner only)
+      tags:
+        - Chat Moderation
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: streamId
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: ID of the live stream
+        - in: path
+          name: userId
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: ID of the moderator to remove
+      responses:
+        '200':
+          description: Moderator removed successfully
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden - only stream owner can remove moderators
+        '404':
+          description: Moderator not found
+
+  /api/v1/streams/{streamId}/chat/bans:
+    get:
+      summary: List banned users
+      description: Get all banned users for a stream chat (moderators only)
+      tags:
+        - Chat Moderation
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: streamId
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: ID of the live stream
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ChatBan'
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden - moderator privileges required
+        '404':
+          description: Stream not found
+
+    post:
+      summary: Ban a user from chat
+      description: Ban a user from participating in stream chat (moderators only)
+      tags:
+        - Chat Moderation
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: streamId
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: ID of the live stream
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - user_id
+                - reason
+              properties:
+                user_id:
+                  type: string
+                  format: uuid
+                  description: ID of the user to ban
+                reason:
+                  type: string
+                  minLength: 1
+                  maxLength: 500
+                  description: Reason for the ban
+                duration:
+                  type: integer
+                  description: Ban duration in seconds (0 or omit for permanent ban)
+                  minimum: 0
+      responses:
+        '200':
+          description: User banned successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: object
+                    properties:
+                      message:
+                        type: string
+                        example: User banned successfully
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden - moderator privileges required
+        '404':
+          description: User or stream not found
+
+  /api/v1/streams/{streamId}/chat/bans/{userId}:
+    delete:
+      summary: Unban a user from chat
+      description: Remove a ban from a user (moderators only)
+      tags:
+        - Chat Moderation
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: streamId
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: ID of the live stream
+        - in: path
+          name: userId
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: ID of the user to unban
+      responses:
+        '200':
+          description: User unbanned successfully
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden - moderator privileges required
+        '404':
+          description: Ban not found
+
+  /api/v1/streams/{streamId}/chat/stats:
+    get:
+      summary: Get chat statistics
+      description: Get aggregate statistics for a stream's chat
+      tags:
+        - Chat
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: streamId
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: ID of the live stream
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: object
+                    properties:
+                      stats:
+                        $ref: '#/components/schemas/ChatStreamStats'
+                      connected_users:
+                        type: integer
+                        description: Current number of connected users
+        '401':
+          description: Unauthorized
+        '404':
+          description: Stream not found
+
+components:
+  schemas:
+    ChatMessage:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Unique message ID
+        stream_id:
+          type: string
+          format: uuid
+          description: ID of the live stream
+        user_id:
+          type: string
+          format: uuid
+          description: ID of the user who sent the message
+        username:
+          type: string
+          description: Username (denormalized for performance)
+        message:
+          type: string
+          minLength: 1
+          maxLength: 500
+          description: Message content
+        type:
+          type: string
+          enum: [message, system, moderation]
+          description: Message type
+        metadata:
+          type: object
+          description: Additional message metadata (JSONB)
+        deleted:
+          type: boolean
+          description: Whether the message has been deleted by moderators
+        created_at:
+          type: string
+          format: date-time
+          description: Message creation timestamp
+
+    ChatModerator:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Unique moderator record ID
+        stream_id:
+          type: string
+          format: uuid
+          description: ID of the live stream
+        user_id:
+          type: string
+          format: uuid
+          description: ID of the moderator user
+        granted_by:
+          type: string
+          format: uuid
+          description: ID of the user who granted moderator privileges
+        created_at:
+          type: string
+          format: date-time
+          description: When moderator privileges were granted
+
+    ChatBan:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Unique ban record ID
+        stream_id:
+          type: string
+          format: uuid
+          description: ID of the live stream
+        user_id:
+          type: string
+          format: uuid
+          description: ID of the banned user
+        banned_by:
+          type: string
+          format: uuid
+          description: ID of the moderator who issued the ban
+        reason:
+          type: string
+          description: Reason for the ban
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: Ban expiration time (null for permanent bans)
+        created_at:
+          type: string
+          format: date-time
+          description: When the ban was issued
+
+    ChatStreamStats:
+      type: object
+      properties:
+        stream_id:
+          type: string
+          format: uuid
+          description: ID of the live stream
+        unique_chatters:
+          type: integer
+          description: Number of unique users who sent messages
+        message_count:
+          type: integer
+          description: Total number of messages
+        moderation_actions:
+          type: integer
+          description: Number of moderation actions (deletes + bans)
+        last_message_at:
+          type: string
+          format: date-time
+          description: Timestamp of the most recent message
+        moderator_count:
+          type: integer
+          description: Number of active moderators
+        active_ban_count:
+          type: integer
+          description: Number of active (non-expired) bans
+
+    Pagination:
+      type: object
+      properties:
+        limit:
+          type: integer
+          description: Number of items per page
+        offset:
+          type: integer
+          description: Number of items skipped
+        total:
+          type: integer
+          description: Total number of items available
+
+    WebSocketMessage:
+      oneOf:
+        - $ref: '#/components/schemas/WebSocketChatMessage'
+        - $ref: '#/components/schemas/WebSocketSystemMessage'
+        - $ref: '#/components/schemas/WebSocketErrorMessage'
+
+    WebSocketChatMessage:
+      type: object
+      description: Regular chat message sent by a user
+      required:
+        - type
+        - message
+      properties:
+        type:
+          type: string
+          enum: [message]
+        message:
+          type: string
+          minLength: 1
+          maxLength: 500
+
+    WebSocketSystemMessage:
+      type: object
+      description: System message broadcast to all users
+      properties:
+        type:
+          type: string
+          enum: [system, join, leave, delete, ban]
+        message:
+          type: string
+        user_id:
+          type: string
+          format: uuid
+        username:
+          type: string
+
+    WebSocketErrorMessage:
+      type: object
+      description: Error message sent to a specific user
+      properties:
+        type:
+          type: string
+          enum: [error]
+        error:
+          type: string
+          description: Error message
+
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+tags:
+  - name: Chat
+    description: Real-time chat operations
+  - name: Chat Moderation
+    description: Moderation and administration of chat
