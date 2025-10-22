@@ -236,9 +236,3 @@ func RespondJSON(w http.ResponseWriter, status int, data interface{}) {
 		return
 	}
 }
-
-// ErrorResponse represents an error response
-type ErrorResponse struct {
-	Error   string `json:"error"`
-	Message string `json:"message"`
-}

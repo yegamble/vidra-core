@@ -8,6 +8,7 @@ A high-performance PeerTube backend implementation in Go with decentralized stor
 ## Features
 
 - **PeerTube API Compatibility** - Core PeerTube features including channels, subscriptions, comments, ratings, playlists, and captions
+- **WebTorrent P2P Distribution** - Browser-compatible P2P video delivery with automatic torrent generation and seeding
 - **ATProto Federation** - Cross-platform content federation via AT Protocol with Bluesky integration
 - **High Performance** - Built with Go for maximum concurrency and efficient resource usage
 - **Decentralized Storage** - IPFS integration with hybrid storage tiers (hot/warm/cold)
@@ -68,6 +69,10 @@ make lint           # Run linters
 - ATProto video federation (Sprint I)
 - Federation social features (Sprint J)
 - Federation hardening and reliability (Sprint K)
+- **WebTorrent P2P Distribution (Sprint 8)** - Complete torrent infrastructure with browser P2P support
+
+### 🔄 In Progress
+- Advanced P2P features and IPFS integration (Sprint 9)
 
 See [Sprint History](docs/sprints.md) for detailed progress tracking.
 
