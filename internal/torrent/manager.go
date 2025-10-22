@@ -372,6 +372,11 @@ func (m *Manager) RemoveVideoTorrent(ctx context.Context, videoID uuid.UUID) err
 	return nil
 }
 
+// GetVideoTorrent returns the torrent record for a video
+func (m *Manager) GetVideoTorrent(ctx context.Context, videoID uuid.UUID) (*domain.VideoTorrent, error) {
+	return m.torrentRepo.GetTorrentByVideoID(ctx, videoID)
+}
+
 // GetVideoTorrentStatus returns the status of a video's torrent
 func (m *Manager) GetVideoTorrentStatus(ctx context.Context, videoID uuid.UUID) (*TorrentStatus, error) {
 	// Get torrent from database
