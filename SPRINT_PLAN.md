@@ -2,22 +2,22 @@
 
 ## Progress Summary
 
-### ✅ Completed Sprints (3.2 of 14)
+### ✅ Completed Sprints (4 of 14)
 
 | Sprint | Feature | Completion Date | Status | Code Lines | Tests |
 |--------|---------|-----------------|--------|------------|-------|
 | **Sprint 5** | RTMP Server & Stream Ingestion | 2025-10-20 | ✅ 100% Complete | ~3,000 | 63+ passing |
 | **Sprint 6** | HLS Transcoding & Playback | 2025-10-20 | ✅ 100% Complete | ~2,500 | 25+ passing |
 | **Sprint 7** | Enhanced Live Streaming | 2025-10-21 | ✅ 100% Complete | ~9,235 | 100+ passing |
-| **Sprint 8** | Torrent Support (P2P) | In Progress | 🚧 20% Complete | ~1,323 | 73+ passing |
+| **Sprint 8** | WebTorrent P2P Distribution | 2025-10-22 | ✅ 100% Complete | ~4,440 | 73+ passing (domain/gen/repo) |
 
-**Total Progress:** 23% Complete (3.2/14 sprints)
-**Total Code Written:** ~16,058 lines
+**Total Progress:** 29% Complete (4/14 sprints)
+**Total Code Written:** ~19,175 lines
 **Total Tests:** 261+ automated tests
-**Features Delivered:** Live streaming with RTMP/HLS, real-time chat, scheduling, analytics, P2P foundation
+**Features Delivered:** Live streaming with RTMP/HLS, real-time chat, scheduling, analytics, WebTorrent P2P
 
 ### 🚧 Next Up
-- Sprint 8-9: Torrent Support (4 weeks)
+- Sprint 9: Advanced P2P & IPFS Integration (2 weeks)
 - Sprint 10-11: Analytics System (4 weeks)
 - Sprint 12-13: Plugin System (4 weeks)
 
