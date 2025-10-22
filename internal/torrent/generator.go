@@ -194,50 +194,61 @@ func (g *Generator) generatePieces(ctx context.Context, files []VideoFile) ([]by
 		if err != nil {
 			return nil, fmt.Errorf("failed to open file %s: %w", file.Path, err)
 		}
-		defer f.Close()
 
 		buf := make([]byte, 32*1024) // 32KB buffer for reading
-		for {
-			select {
-			case <-ctx.Done():
-				return nil, ctx.Err()
-			default:
-			}
-
-			n, err := f.Read(buf)
-			if err == io.EOF {
-				break
-			}
-			if err != nil {
-				return nil, fmt.Errorf("failed to read file %s: %w", file.Path, err)
-			}
-
-			data := buf[:n]
-			dataOffset := 0
-
-			for dataOffset < len(data) {
-				// Calculate how much data to add to current piece
-				remainingInPiece := g.config.PieceLength - currentPieceSize
-				remainingInData := int64(len(data) - dataOffset)
-
-				toAdd := remainingInPiece
-				if remainingInData < remainingInPiece {
-					toAdd = remainingInData
+		readErr := func() error {
+			for {
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				default:
 				}
 
-				// Add data to current piece
-				currentPiece = append(currentPiece, data[dataOffset:dataOffset+int(toAdd)]...)
-				currentPieceSize += toAdd
-				dataOffset += int(toAdd)
+				n, err := f.Read(buf)
+				if err == io.EOF {
+					break
+				}
+				if err != nil {
+					return fmt.Errorf("failed to read file %s: %w", file.Path, err)
+				}
 
-				// If piece is complete, hash it and start new piece
-				if currentPieceSize == g.config.PieceLength {
-					hash := sha1.Sum(currentPiece)
-					pieces = append(pieces, hash[:]...)
-					currentPiece = nil
-					currentPieceSize = 0
+				data := buf[:n]
+				dataOffset := 0
+
+				for dataOffset < len(data) {
+					// Calculate how much data to add to current piece
+					remainingInPiece := g.config.PieceLength - currentPieceSize
+					remainingInData := int64(len(data) - dataOffset)
+
+					toAdd := remainingInPiece
+					if remainingInData < remainingInPiece {
+						toAdd = remainingInData
+					}
+
+					// Add data to current piece
+					currentPiece = append(currentPiece, data[dataOffset:dataOffset+int(toAdd)]...)
+					currentPieceSize += toAdd
+					dataOffset += int(toAdd)
+
+					// If piece is complete, hash it and start new piece
+					if currentPieceSize == g.config.PieceLength {
+						hash := sha1.Sum(currentPiece)
+						pieces = append(pieces, hash[:]...)
+						currentPiece = nil
+						currentPieceSize = 0
+					}
 				}
 			}
+			return nil
+		}()
+
+		// Close file and check both close error and read error
+		closeErr := f.Close()
+		if readErr != nil {
+			return nil, readErr
+		}
+		if closeErr != nil {
+			return nil, fmt.Errorf("failed to close file %s: %w", file.Path, closeErr)
 		}
 	}
 

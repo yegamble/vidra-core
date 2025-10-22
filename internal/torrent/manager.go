@@ -606,5 +606,13 @@ func (m *Manager) recordStats() {
 func (m *Manager) GetMetrics() ManagerMetrics {
 	m.metrics.mu.RLock()
 	defer m.metrics.mu.RUnlock()
-	return *m.metrics
+	return ManagerMetrics{
+		TorrentsAdded:   m.metrics.TorrentsAdded,
+		TorrentsRemoved: m.metrics.TorrentsRemoved,
+		TorrentsActive:  m.metrics.TorrentsActive,
+		BytesUploaded:   m.metrics.BytesUploaded,
+		BytesDownloaded: m.metrics.BytesDownloaded,
+		PeersConnected:  m.metrics.PeersConnected,
+		ErrorCount:      m.metrics.ErrorCount,
+	}
 }

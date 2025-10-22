@@ -25,7 +25,6 @@ type Seeder struct {
 	ctx         context.Context
 	cancel      context.CancelFunc
 	logger      *logrus.Logger
-	storage     storage.ClientImpl
 	stats       *SeederStats
 	prioritizer PrioritizationStrategy
 }
@@ -401,7 +400,13 @@ func (s *Seeder) updateStats() {
 func (s *Seeder) GetStats() SeederStats {
 	s.stats.mu.RLock()
 	defer s.stats.mu.RUnlock()
-	return *s.stats
+	return SeederStats{
+		TotalUploaded:    s.stats.TotalUploaded,
+		TotalDownloaded:  s.stats.TotalDownloaded,
+		ActiveTorrents:   s.stats.ActiveTorrents,
+		TotalConnections: s.stats.TotalConnections,
+		StartTime:        s.stats.StartTime,
+	}
 }
 
 // Start begins seeding all torrents
@@ -564,12 +569,13 @@ func NewRateLimiter(bytesPerSecond int64) *RateLimiter {
 func (rl *RateLimiter) refill() {
 	for range rl.ticker.C {
 		// Try to fill the bucket
+	fillLoop:
 		for i := int64(0); i < rl.rate; i++ {
 			select {
 			case rl.bucket <- struct{}{}:
 			default:
 				// Bucket is full
-				break
+				break fillLoop
 			}
 		}
 	}
