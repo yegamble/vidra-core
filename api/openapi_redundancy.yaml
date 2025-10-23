@@ -1,0 +1,1079 @@
+openapi: 3.0.3
+info:
+  title: Athena Video Redundancy API
+  description: |
+    Video Redundancy API for distributing videos across peer instances for reliability and availability.
+
+    ## Features
+    - Instance peer management
+    - Automatic redundancy policies
+    - Manual redundancy creation
+    - Health monitoring
+    - ActivityPub-based instance discovery
+
+  version: 1.0.0
+  contact:
+    name: Athena API Support
+    url: https://github.com/athena/athena
+
+servers:
+  - url: https://api.athena.example.com
+    description: Production server
+  - url: http://localhost:8080
+    description: Local development server
+
+tags:
+  - name: Instance Peers
+    description: Manage peer instances for redundancy
+  - name: Redundancy
+    description: Video redundancy operations
+  - name: Policies
+    description: Automatic redundancy policies
+  - name: Statistics
+    description: Redundancy statistics and health
+
+paths:
+  # ==================== Instance Peer Endpoints ====================
+
+  /api/v1/admin/redundancy/instances:
+    get:
+      tags:
+        - Instance Peers
+      summary: List instance peers
+      description: Retrieve a list of all registered peer instances
+      operationId: listInstancePeers
+      parameters:
+        - name: limit
+          in: query
+          description: Maximum number of instances to return
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 50
+        - name: offset
+          in: query
+          description: Number of instances to skip
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+        - name: active_only
+          in: query
+          description: Return only active instances
+          schema:
+            type: boolean
+            default: false
+      responses:
+        '200':
+          description: List of instance peers
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  instances:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/InstancePeer'
+                  limit:
+                    type: integer
+                  offset:
+                    type: integer
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+    post:
+      tags:
+        - Instance Peers
+      summary: Register instance peer
+      description: Register a new peer instance for redundancy
+      operationId: registerInstancePeer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - instance_url
+              properties:
+                instance_url:
+                  type: string
+                  format: uri
+                  example: "https://peertube.example.com"
+                auto_accept_redundancy:
+                  type: boolean
+                  default: false
+                max_redundancy_size_gb:
+                  type: integer
+                  minimum: 0
+                  default: 0
+                  description: "0 means unlimited"
+      responses:
+        '201':
+          description: Instance peer registered successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InstancePeer'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          description: Instance peer already exists
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/admin/redundancy/instances/{id}:
+    parameters:
+      - $ref: '#/components/parameters/InstanceID'
+
+    get:
+      tags:
+        - Instance Peers
+      summary: Get instance peer
+      description: Retrieve details of a specific instance peer
+      operationId: getInstancePeer
+      responses:
+        '200':
+          description: Instance peer details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InstancePeer'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+    put:
+      tags:
+        - Instance Peers
+      summary: Update instance peer
+      description: Update instance peer configuration
+      operationId: updateInstancePeer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                auto_accept_redundancy:
+                  type: boolean
+                max_redundancy_size_gb:
+                  type: integer
+                  minimum: 0
+                accepts_new_redundancy:
+                  type: boolean
+                is_active:
+                  type: boolean
+      responses:
+        '200':
+          description: Instance peer updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InstancePeer'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+    delete:
+      tags:
+        - Instance Peers
+      summary: Delete instance peer
+      description: Remove an instance peer and cancel all active redundancies
+      operationId: deleteInstancePeer
+      responses:
+        '200':
+          description: Instance peer deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "Instance peer deleted successfully"
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/admin/redundancy/instances/discover:
+    post:
+      tags:
+        - Instance Peers
+      summary: Discover and register instance
+      description: Discover instance metadata via ActivityPub and register it
+      operationId: discoverInstance
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - instance_url
+              properties:
+                instance_url:
+                  type: string
+                  format: uri
+                  example: "https://peertube.example.com"
+      responses:
+        '201':
+          description: Instance discovered and registered
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InstancePeer'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          description: Instance peer already exists
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  # ==================== Redundancy Endpoints ====================
+
+  /api/v1/admin/redundancy/create:
+    post:
+      tags:
+        - Redundancy
+      summary: Create video redundancy
+      description: Manually create a redundancy for a specific video on a target instance
+      operationId: createRedundancy
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - video_id
+                - instance_id
+              properties:
+                video_id:
+                  type: string
+                  format: uuid
+                instance_id:
+                  type: string
+                  format: uuid
+                strategy:
+                  $ref: '#/components/schemas/RedundancyStrategy'
+                priority:
+                  type: integer
+                  minimum: 0
+                  default: 0
+      responses:
+        '201':
+          description: Redundancy created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VideoRedundancy'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          description: Redundancy already exists
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/admin/redundancy/redundancies/{id}:
+    parameters:
+      - $ref: '#/components/parameters/RedundancyID'
+
+    get:
+      tags:
+        - Redundancy
+      summary: Get redundancy
+      description: Retrieve details of a specific redundancy
+      operationId: getRedundancy
+      responses:
+        '200':
+          description: Redundancy details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VideoRedundancy'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+    delete:
+      tags:
+        - Redundancy
+      summary: Delete redundancy
+      description: Remove a redundancy
+      operationId: deleteRedundancy
+      responses:
+        '200':
+          description: Redundancy deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "Redundancy deleted successfully"
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/admin/redundancy/redundancies/{id}/cancel:
+    post:
+      tags:
+        - Redundancy
+      summary: Cancel redundancy
+      description: Cancel a pending or syncing redundancy
+      operationId: cancelRedundancy
+      parameters:
+        - $ref: '#/components/parameters/RedundancyID'
+      responses:
+        '200':
+          description: Redundancy cancelled
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "Redundancy cancelled successfully"
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/admin/redundancy/redundancies/{id}/sync:
+    post:
+      tags:
+        - Redundancy
+      summary: Sync redundancy
+      description: Manually trigger a redundancy sync
+      operationId: syncRedundancy
+      parameters:
+        - $ref: '#/components/parameters/RedundancyID'
+      responses:
+        '200':
+          description: Redundancy sync completed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "Redundancy sync completed successfully"
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Redundancy sync already in progress or max attempts exceeded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/redundancy/videos/{id}/redundancies:
+    get:
+      tags:
+        - Redundancy
+      summary: List video redundancies
+      description: List all redundancies for a specific video (public endpoint)
+      operationId: listVideoRedundancies
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Video ID
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: List of video redundancies
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  video_id:
+                    type: string
+                    format: uuid
+                  redundancies:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/VideoRedundancy'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/redundancy/videos/{id}/health:
+    get:
+      tags:
+        - Statistics
+      summary: Get video redundancy health
+      description: Get the redundancy health score for a video
+      operationId: getVideoHealth
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Video ID
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Video redundancy health
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  video_id:
+                    type: string
+                    format: uuid
+                  health_score:
+                    type: number
+                    format: float
+                    minimum: 0.0
+                    maximum: 1.0
+                    description: "Health score from 0.0 (unhealthy) to 1.0 (healthy)"
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  # ==================== Policy Endpoints ====================
+
+  /api/v1/admin/redundancy/policies:
+    get:
+      tags:
+        - Policies
+      summary: List redundancy policies
+      description: List all redundancy policies
+      operationId: listPolicies
+      parameters:
+        - name: enabled_only
+          in: query
+          description: Return only enabled policies
+          schema:
+            type: boolean
+            default: false
+      responses:
+        '200':
+          description: List of policies
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  policies:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/RedundancyPolicy'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+    post:
+      tags:
+        - Policies
+      summary: Create redundancy policy
+      description: Create a new automatic redundancy policy
+      operationId: createPolicy
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RedundancyPolicyInput'
+      responses:
+        '201':
+          description: Policy created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RedundancyPolicy'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          description: Policy already exists
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/admin/redundancy/policies/{id}:
+    parameters:
+      - $ref: '#/components/parameters/PolicyID'
+
+    get:
+      tags:
+        - Policies
+      summary: Get policy
+      description: Retrieve details of a specific policy
+      operationId: getPolicy
+      responses:
+        '200':
+          description: Policy details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RedundancyPolicy'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+    put:
+      tags:
+        - Policies
+      summary: Update policy
+      description: Update an existing policy
+      operationId: updatePolicy
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RedundancyPolicyInput'
+      responses:
+        '200':
+          description: Policy updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RedundancyPolicy'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+    delete:
+      tags:
+        - Policies
+      summary: Delete policy
+      description: Delete a redundancy policy
+      operationId: deletePolicy
+      responses:
+        '200':
+          description: Policy deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "Policy deleted successfully"
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/admin/redundancy/policies/evaluate:
+    post:
+      tags:
+        - Policies
+      summary: Evaluate policies
+      description: Manually trigger policy evaluation and create redundancies
+      operationId: evaluatePolicies
+      responses:
+        '200':
+          description: Policies evaluated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "Policies evaluated successfully"
+                  redundancies_created:
+                    type: integer
+                    example: 15
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  # ==================== Statistics Endpoints ====================
+
+  /api/v1/admin/redundancy/stats:
+    get:
+      tags:
+        - Statistics
+      summary: Get redundancy statistics
+      description: Retrieve overall redundancy statistics
+      operationId: getStats
+      responses:
+        '200':
+          description: Redundancy statistics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RedundancyStats'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+# ==================== Component Schemas ====================
+
+components:
+  parameters:
+    InstanceID:
+      name: id
+      in: path
+      required: true
+      description: Instance peer ID
+      schema:
+        type: string
+        format: uuid
+
+    RedundancyID:
+      name: id
+      in: path
+      required: true
+      description: Redundancy ID
+      schema:
+        type: string
+        format: uuid
+
+    PolicyID:
+      name: id
+      in: path
+      required: true
+      description: Policy ID
+      schema:
+        type: string
+        format: uuid
+
+  schemas:
+    InstancePeer:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        instance_url:
+          type: string
+          format: uri
+        instance_name:
+          type: string
+        instance_host:
+          type: string
+        software:
+          type: string
+          example: "peertube"
+        version:
+          type: string
+          example: "5.2.0"
+        auto_accept_redundancy:
+          type: boolean
+        max_redundancy_size_gb:
+          type: integer
+          minimum: 0
+        accepts_new_redundancy:
+          type: boolean
+        last_contacted_at:
+          type: string
+          format: date-time
+          nullable: true
+        last_sync_success_at:
+          type: string
+          format: date-time
+          nullable: true
+        last_sync_error:
+          type: string
+          nullable: true
+        failed_sync_count:
+          type: integer
+          minimum: 0
+        is_active:
+          type: boolean
+        actor_url:
+          type: string
+          format: uri
+          nullable: true
+        inbox_url:
+          type: string
+          format: uri
+          nullable: true
+        shared_inbox_url:
+          type: string
+          format: uri
+          nullable: true
+        public_key:
+          type: string
+          nullable: true
+        total_videos_stored:
+          type: integer
+          minimum: 0
+        total_storage_bytes:
+          type: integer
+          format: int64
+          minimum: 0
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    VideoRedundancy:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        video_id:
+          type: string
+          format: uuid
+        target_instance_id:
+          type: string
+          format: uuid
+        target_video_url:
+          type: string
+          format: uri
+          nullable: true
+        target_video_id:
+          type: string
+          nullable: true
+        status:
+          $ref: '#/components/schemas/RedundancyStatus'
+        strategy:
+          $ref: '#/components/schemas/RedundancyStrategy'
+        file_size_bytes:
+          type: integer
+          format: int64
+          minimum: 0
+        checksum_sha256:
+          type: string
+          nullable: true
+        checksum_verified_at:
+          type: string
+          format: date-time
+          nullable: true
+        bytes_transferred:
+          type: integer
+          format: int64
+          minimum: 0
+        transfer_speed_bps:
+          type: integer
+          format: int64
+          minimum: 0
+        estimated_completion_at:
+          type: string
+          format: date-time
+          nullable: true
+        sync_started_at:
+          type: string
+          format: date-time
+          nullable: true
+        last_sync_at:
+          type: string
+          format: date-time
+          nullable: true
+        next_sync_at:
+          type: string
+          format: date-time
+          nullable: true
+        sync_attempt_count:
+          type: integer
+          minimum: 0
+        max_sync_attempts:
+          type: integer
+          minimum: 1
+        sync_error:
+          type: string
+          nullable: true
+        priority:
+          type: integer
+          minimum: 0
+        auto_resync:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    RedundancyPolicy:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        description:
+          type: string
+        strategy:
+          $ref: '#/components/schemas/RedundancyStrategy'
+        enabled:
+          type: boolean
+        min_views:
+          type: integer
+          minimum: 0
+        min_age_days:
+          type: integer
+          minimum: 0
+        max_age_days:
+          type: integer
+          minimum: 0
+          nullable: true
+        privacy_types:
+          type: array
+          items:
+            type: string
+            enum: [public, unlisted, private]
+        target_instance_count:
+          type: integer
+          minimum: 1
+        min_instance_count:
+          type: integer
+          minimum: 1
+        max_video_size_gb:
+          type: integer
+          minimum: 0
+          nullable: true
+        max_total_size_gb:
+          type: integer
+          minimum: 0
+          nullable: true
+        evaluation_interval_hours:
+          type: integer
+          minimum: 1
+        last_evaluated_at:
+          type: string
+          format: date-time
+          nullable: true
+        next_evaluation_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    RedundancyPolicyInput:
+      type: object
+      required:
+        - name
+        - strategy
+        - target_instance_count
+        - min_instance_count
+        - evaluation_interval_hours
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        strategy:
+          $ref: '#/components/schemas/RedundancyStrategy'
+        enabled:
+          type: boolean
+          default: true
+        min_views:
+          type: integer
+          minimum: 0
+          default: 0
+        min_age_days:
+          type: integer
+          minimum: 0
+          default: 0
+        max_age_days:
+          type: integer
+          minimum: 0
+          nullable: true
+        privacy_types:
+          type: array
+          items:
+            type: string
+            enum: [public, unlisted, private]
+          default: ["public"]
+        target_instance_count:
+          type: integer
+          minimum: 1
+        min_instance_count:
+          type: integer
+          minimum: 1
+        max_video_size_gb:
+          type: integer
+          minimum: 0
+          nullable: true
+        max_total_size_gb:
+          type: integer
+          minimum: 0
+          nullable: true
+        evaluation_interval_hours:
+          type: integer
+          minimum: 1
+
+    RedundancyStatus:
+      type: string
+      enum:
+        - pending
+        - syncing
+        - synced
+        - failed
+        - cancelled
+      description: |
+        * `pending` - Redundancy created, waiting to sync
+        * `syncing` - File transfer in progress
+        * `synced` - Successfully synced and verified
+        * `failed` - Sync failed (will retry)
+        * `cancelled` - Sync was cancelled
+
+    RedundancyStrategy:
+      type: string
+      enum:
+        - recent
+        - most_viewed
+        - trending
+        - manual
+        - all
+      description: |
+        * `recent` - Recently uploaded videos
+        * `most_viewed` - Videos with most views
+        * `trending` - Currently trending videos
+        * `manual` - Manually selected videos
+        * `all` - All eligible videos
+
+    RedundancyStats:
+      type: object
+      properties:
+        redundancies:
+          type: object
+          properties:
+            total:
+              type: integer
+            pending:
+              type: integer
+            syncing:
+              type: integer
+            synced:
+              type: integer
+            failed:
+              type: integer
+        instances:
+          type: object
+          properties:
+            total:
+              type: integer
+            active:
+              type: integer
+        policies:
+          type: object
+          properties:
+            total:
+              type: integer
+            enabled:
+              type: integer
+
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+        details:
+          type: string
+          nullable: true
+
+  responses:
+    BadRequest:
+      description: Bad request
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+    Unauthorized:
+      description: Unauthorized - Authentication required
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+    InternalError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+security:
+  - BearerAuth: []
