@@ -338,7 +338,7 @@ func ValidatePluginName(name string) error {
 
 	// Check for valid characters (alphanumeric, dash, underscore)
 	for _, c := range name {
-		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_') {
+		if (c < 'a' || c > 'z') && (c < 'A' || c > 'Z') && (c < '0' || c > '9') && c != '-' && c != '_' {
 			return fmt.Errorf("plugin name contains invalid character: %c", c)
 		}
 	}
