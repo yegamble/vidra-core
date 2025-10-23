@@ -60,7 +60,9 @@ func (r *VideoAnalyticsRepository) CreateEventsBatch(ctx context.Context, events
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() {
+		_ = tx.Rollback() // Rollback is safe to call even after commit
+	}()
 
 	query := `
 		INSERT INTO video_analytics_events (
@@ -75,7 +77,9 @@ func (r *VideoAnalyticsRepository) CreateEventsBatch(ctx context.Context, events
 	if err != nil {
 		return err
 	}
-	defer stmt.Close()
+	defer func() {
+		_ = stmt.Close()
+	}()
 
 	for _, event := range events {
 		event.ID = uuid.New()

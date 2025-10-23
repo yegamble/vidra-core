@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 	"time"
@@ -199,30 +200,11 @@ func (h *VideoAnalyticsHandler) GetVideoAnalytics(w http.ResponseWriter, r *http
 		return
 	}
 
-	// Parse date range from query params
-	startDateStr := r.URL.Query().Get("start_date")
-	endDateStr := r.URL.Query().Get("end_date")
-
-	var startDate, endDate time.Time
-	if startDateStr != "" {
-		startDate, err = time.Parse("2006-01-02", startDateStr)
-		if err != nil {
-			respondWithError(w, http.StatusBadRequest, "Invalid start_date format (use YYYY-MM-DD)", nil)
-			return
-		}
-	} else {
-		// Default to last 30 days
-		startDate = time.Now().AddDate(0, 0, -30)
-	}
-
-	if endDateStr != "" {
-		endDate, err = time.Parse("2006-01-02", endDateStr)
-		if err != nil {
-			respondWithError(w, http.StatusBadRequest, "Invalid end_date format (use YYYY-MM-DD)", nil)
-			return
-		}
-	} else {
-		endDate = time.Now()
+	// Parse date range
+	startDate, endDate, err := parseDateRange(r)
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, err.Error(), nil)
+		return
 	}
 
 	// Get analytics summary
@@ -245,28 +227,10 @@ func (h *VideoAnalyticsHandler) GetDailyAnalytics(w http.ResponseWriter, r *http
 	}
 
 	// Parse date range
-	startDateStr := r.URL.Query().Get("start_date")
-	endDateStr := r.URL.Query().Get("end_date")
-
-	var startDate, endDate time.Time
-	if startDateStr != "" {
-		startDate, err = time.Parse("2006-01-02", startDateStr)
-		if err != nil {
-			respondWithError(w, http.StatusBadRequest, "Invalid start_date format (use YYYY-MM-DD)", nil)
-			return
-		}
-	} else {
-		startDate = time.Now().AddDate(0, 0, -30)
-	}
-
-	if endDateStr != "" {
-		endDate, err = time.Parse("2006-01-02", endDateStr)
-		if err != nil {
-			respondWithError(w, http.StatusBadRequest, "Invalid end_date format (use YYYY-MM-DD)", nil)
-			return
-		}
-	} else {
-		endDate = time.Now()
+	startDate, endDate, err := parseDateRange(r)
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, err.Error(), nil)
+		return
 	}
 
 	// Get daily analytics
@@ -352,28 +316,10 @@ func (h *VideoAnalyticsHandler) GetChannelAnalytics(w http.ResponseWriter, r *ht
 	}
 
 	// Parse date range
-	startDateStr := r.URL.Query().Get("start_date")
-	endDateStr := r.URL.Query().Get("end_date")
-
-	var startDate, endDate time.Time
-	if startDateStr != "" {
-		startDate, err = time.Parse("2006-01-02", startDateStr)
-		if err != nil {
-			respondWithError(w, http.StatusBadRequest, "Invalid start_date format (use YYYY-MM-DD)", nil)
-			return
-		}
-	} else {
-		startDate = time.Now().AddDate(0, 0, -30)
-	}
-
-	if endDateStr != "" {
-		endDate, err = time.Parse("2006-01-02", endDateStr)
-		if err != nil {
-			respondWithError(w, http.StatusBadRequest, "Invalid end_date format (use YYYY-MM-DD)", nil)
-			return
-		}
-	} else {
-		endDate = time.Now()
+	startDate, endDate, err := parseDateRange(r)
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, err.Error(), nil)
+		return
 	}
 
 	// Get channel analytics
@@ -401,4 +347,32 @@ func getUserIDFromContext(ctx context.Context) *uuid.UUID {
 	// TODO: Implement actual user context extraction
 	// This would typically come from an authentication middleware
 	return nil
+}
+
+// parseDateRange parses start and end dates from query parameters
+// Returns default range of last 30 days if not specified
+func parseDateRange(r *http.Request) (startDate, endDate time.Time, err error) {
+	startDateStr := r.URL.Query().Get("start_date")
+	endDateStr := r.URL.Query().Get("end_date")
+
+	if startDateStr != "" {
+		startDate, err = time.Parse("2006-01-02", startDateStr)
+		if err != nil {
+			return time.Time{}, time.Time{}, fmt.Errorf("invalid start_date format (use YYYY-MM-DD)")
+		}
+	} else {
+		// Default to last 30 days
+		startDate = time.Now().AddDate(0, 0, -30)
+	}
+
+	if endDateStr != "" {
+		endDate, err = time.Parse("2006-01-02", endDateStr)
+		if err != nil {
+			return time.Time{}, time.Time{}, fmt.Errorf("invalid end_date format (use YYYY-MM-DD)")
+		}
+	} else {
+		endDate = time.Now()
+	}
+
+	return startDate, endDate, nil
 }
