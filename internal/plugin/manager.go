@@ -557,3 +557,8 @@ func (m *Manager) detectHooks(plugin Plugin) []EventType {
 
 	return hooks
 }
+
+// GetPluginDir returns the plugin directory path
+func (m *Manager) GetPluginDir() string {
+	return m.pluginDir
+}

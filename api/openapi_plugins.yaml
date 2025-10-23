@@ -1,0 +1,673 @@
+openapi: 3.0.3
+info:
+  title: Athena Plugin System API
+  description: API endpoints for managing plugins in Athena
+  version: 1.0.0
+
+servers:
+  - url: http://localhost:8080
+    description: Development server
+  - url: https://api.athena.example.com
+    description: Production server
+
+security:
+  - bearerAuth: []
+
+paths:
+  /api/v1/admin/plugins:
+    get:
+      tags:
+        - Plugins
+      summary: List all plugins
+      description: Retrieve list of installed plugins with optional status filter
+      operationId: listPlugins
+      parameters:
+        - name: status
+          in: query
+          description: Filter by plugin status
+          required: false
+          schema:
+            type: string
+            enum: [installed, enabled, disabled, error]
+      responses:
+        '200':
+          description: List of plugins
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PluginInfo'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+    post:
+      tags:
+        - Plugins
+      summary: Upload and install a plugin
+      description: Upload a plugin ZIP package with optional signature for installation
+      operationId: uploadPlugin
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - plugin
+              properties:
+                plugin:
+                  type: string
+                  format: binary
+                  description: Plugin ZIP package containing plugin.json manifest
+                signature:
+                  type: string
+                  format: binary
+                  description: Ed25519 signature file for plugin verification (optional but recommended)
+      responses:
+        '201':
+          description: Plugin installed successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PluginInstallResponse'
+        '400':
+          description: Invalid plugin package or manifest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                invalidZip:
+                  summary: Not a ZIP file
+                  value:
+                    error:
+                      code: "INVALID_FILE_TYPE"
+                      message: "Plugin must be a ZIP file"
+                missingManifest:
+                  summary: Missing plugin.json
+                  value:
+                    error:
+                      code: "INVALID_MANIFEST"
+                      message: "Invalid plugin manifest: plugin.json not found in ZIP"
+                invalidPermissions:
+                  summary: Invalid permissions
+                  value:
+                    error:
+                      code: "INVALID_PERMISSIONS"
+                      message: "Invalid permissions: invalid_permission"
+        '401':
+          description: Signature verification failed or untrusted author
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                untrustedAuthor:
+                  summary: Untrusted author
+                  value:
+                    error:
+                      code: "UNTRUSTED_AUTHOR"
+                      message: "Author test-author is not trusted. Please provide a valid signature or add author to trusted list."
+                invalidSignature:
+                  summary: Invalid signature
+                  value:
+                    error:
+                      code: "INVALID_SIGNATURE"
+                      message: "Invalid signature: signature verification failed"
+        '409':
+          description: Plugin already installed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/admin/plugins/{id}:
+    get:
+      tags:
+        - Plugins
+      summary: Get plugin details
+      description: Retrieve detailed information about a specific plugin
+      operationId: getPlugin
+      parameters:
+        - $ref: '#/components/parameters/PluginId'
+      responses:
+        '200':
+          description: Plugin details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PluginDetails'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+    delete:
+      tags:
+        - Plugins
+      summary: Uninstall plugin
+      description: Remove a plugin from the system
+      operationId: uninstallPlugin
+      parameters:
+        - $ref: '#/components/parameters/PluginId'
+      responses:
+        '200':
+          description: Plugin uninstalled successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: success
+                  message:
+                    type: string
+                    example: "Plugin test-plugin uninstalled successfully"
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /api/v1/admin/plugins/{id}/enable:
+    put:
+      tags:
+        - Plugins
+      summary: Enable plugin
+      description: Enable a previously disabled plugin
+      operationId: enablePlugin
+      parameters:
+        - $ref: '#/components/parameters/PluginId'
+      responses:
+        '200':
+          description: Plugin enabled successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: success
+                  message:
+                    type: string
+                    example: "Plugin test-plugin enabled successfully"
+        '400':
+          description: Plugin already enabled
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /api/v1/admin/plugins/{id}/disable:
+    put:
+      tags:
+        - Plugins
+      summary: Disable plugin
+      description: Disable an enabled plugin
+      operationId: disablePlugin
+      parameters:
+        - $ref: '#/components/parameters/PluginId'
+      responses:
+        '200':
+          description: Plugin disabled successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: success
+                  message:
+                    type: string
+                    example: "Plugin test-plugin disabled successfully"
+        '400':
+          description: Plugin already disabled
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /api/v1/admin/plugins/{id}/config:
+    put:
+      tags:
+        - Plugins
+      summary: Update plugin configuration
+      description: Update configuration for a plugin (will reinitialize if enabled)
+      operationId: updatePluginConfig
+      parameters:
+        - $ref: '#/components/parameters/PluginId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                config:
+                  type: object
+                  additionalProperties: true
+                  description: Plugin-specific configuration object
+              example:
+                config:
+                  webhook_url: "https://example.com/webhook"
+                  timeout_seconds: 30
+      responses:
+        '200':
+          description: Configuration updated successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: success
+                  message:
+                    type: string
+                    example: "Plugin configuration updated successfully"
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /api/v1/admin/plugins/{id}/statistics:
+    get:
+      tags:
+        - Plugins
+      summary: Get plugin statistics
+      description: Retrieve execution statistics for a plugin
+      operationId: getPluginStatistics
+      parameters:
+        - $ref: '#/components/parameters/PluginId'
+      responses:
+        '200':
+          description: Plugin statistics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PluginStatistics'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /api/v1/admin/plugins/statistics:
+    get:
+      tags:
+        - Plugins
+      summary: Get statistics for all plugins
+      description: Retrieve execution statistics for all installed plugins
+      operationId: getAllPluginStatistics
+      responses:
+        '200':
+          description: Statistics for all plugins
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PluginStatistics'
+
+  /api/v1/admin/plugins/{id}/executions:
+    get:
+      tags:
+        - Plugins
+      summary: Get plugin execution history
+      description: Retrieve recent execution history for a plugin (last 100 executions)
+      operationId: getPluginExecutionHistory
+      parameters:
+        - $ref: '#/components/parameters/PluginId'
+      responses:
+        '200':
+          description: Execution history
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PluginExecution'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /api/v1/admin/plugins/{id}/health:
+    get:
+      tags:
+        - Plugins
+      summary: Get plugin health status
+      description: Retrieve health and reliability metrics for a plugin
+      operationId: getPluginHealth
+      parameters:
+        - $ref: '#/components/parameters/PluginId'
+      responses:
+        '200':
+          description: Plugin health metrics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PluginHealth'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /api/v1/admin/plugins/hooks:
+    get:
+      tags:
+        - Plugins
+      summary: List all registered hooks
+      description: Get list of all event types and their registered plugins
+      operationId: getHooks
+      responses:
+        '200':
+          description: List of hooks
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    event_type:
+                      type: string
+                      example: "video.uploaded"
+                    plugin_count:
+                      type: integer
+                      example: 3
+                    plugins:
+                      type: array
+                      items:
+                        type: string
+                      example: ["webhook-plugin", "analytics-export", "logger"]
+
+  /api/v1/admin/plugins/hooks/trigger:
+    post:
+      tags:
+        - Plugins
+      summary: Manually trigger a hook (testing only)
+      description: Manually trigger an event hook for testing purposes
+      operationId: triggerHook
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - event_type
+              properties:
+                event_type:
+                  type: string
+                  example: "video.uploaded"
+                data:
+                  type: object
+                  description: Event-specific data
+                  example:
+                    video_id: "123e4567-e89b-12d3-a456-426614174000"
+                    title: "Test Video"
+      responses:
+        '200':
+          description: Hook triggered successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: success
+                  message:
+                    type: string
+                    example: "Hook video.uploaded triggered successfully"
+
+  /api/v1/admin/plugins/cleanup:
+    post:
+      tags:
+        - Plugins
+      summary: Cleanup old execution records
+      description: Remove old plugin execution records from database (keeps last 30 days)
+      operationId: cleanupExecutions
+      responses:
+        '200':
+          description: Cleanup completed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: success
+                  message:
+                    type: string
+                    example: "Cleaned up 1523 old execution records"
+                  count:
+                    type: integer
+                    example: 1523
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    PluginId:
+      name: id
+      in: path
+      description: Plugin UUID
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+  schemas:
+    PluginInfo:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          example: "webhook-plugin"
+        version:
+          type: string
+          example: "1.0.0"
+        author:
+          type: string
+          example: "Athena Team"
+        description:
+          type: string
+          example: "Sends webhooks on various events"
+        status:
+          type: string
+          enum: [installed, enabled, disabled, error]
+        permissions:
+          type: array
+          items:
+            type: string
+          example: ["read_videos", "read_users"]
+        hooks:
+          type: array
+          items:
+            type: string
+          example: ["video.uploaded", "video.processed"]
+        enabled_at:
+          type: string
+          format: date-time
+          nullable: true
+        disabled_at:
+          type: string
+          format: date-time
+          nullable: true
+        installed_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        last_error:
+          type: string
+          nullable: true
+        statistics:
+          $ref: '#/components/schemas/PluginStatistics'
+
+    PluginDetails:
+      allOf:
+        - $ref: '#/components/schemas/PluginInfo'
+        - type: object
+          properties:
+            config:
+              type: object
+              additionalProperties: true
+            install_path:
+              type: string
+              example: "/plugins/webhook-plugin"
+            health:
+              $ref: '#/components/schemas/PluginHealth'
+
+    PluginInstallResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        version:
+          type: string
+        status:
+          type: string
+          example: "installed"
+        message:
+          type: string
+          example: "Plugin webhook-plugin installed successfully"
+        permissions:
+          type: array
+          items:
+            type: string
+        hooks:
+          type: array
+          items:
+            type: string
+
+    PluginStatistics:
+      type: object
+      properties:
+        plugin_id:
+          type: string
+          format: uuid
+        plugin_name:
+          type: string
+        total_executions:
+          type: integer
+          example: 1523
+        success_count:
+          type: integer
+          example: 1498
+        failure_count:
+          type: integer
+          example: 25
+        success_rate:
+          type: number
+          format: float
+          example: 98.36
+        failure_rate:
+          type: number
+          format: float
+          example: 1.64
+        avg_duration_ms:
+          type: number
+          format: float
+          example: 45.2
+        last_executed_at:
+          type: string
+          format: date-time
+
+    PluginExecution:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        plugin_id:
+          type: string
+          format: uuid
+        hook_name:
+          type: string
+          example: "video.uploaded"
+        status:
+          type: string
+          enum: [success, failure]
+        duration_ms:
+          type: integer
+          example: 42
+        error_message:
+          type: string
+          nullable: true
+        executed_at:
+          type: string
+          format: date-time
+
+    PluginHealth:
+      type: object
+      properties:
+        plugin_id:
+          type: string
+          format: uuid
+        plugin_name:
+          type: string
+        is_healthy:
+          type: boolean
+        reliability_score:
+          type: number
+          format: float
+          example: 98.5
+          description: "Overall reliability score (0-100)"
+        recent_failure_rate:
+          type: number
+          format: float
+          example: 1.5
+          description: "Failure rate in last 24 hours (%)"
+        avg_response_time_ms:
+          type: number
+          format: float
+          example: 45.2
+        last_success_at:
+          type: string
+          format: date-time
+        last_failure_at:
+          type: string
+          format: date-time
+          nullable: true
+        consecutive_failures:
+          type: integer
+          example: 0
+
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+            details:
+              type: object
+              additionalProperties: true
+
+  responses:
+    UnauthorizedError:
+      description: Authentication required
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+    ForbiddenError:
+      description: Insufficient permissions
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+    NotFoundError:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'

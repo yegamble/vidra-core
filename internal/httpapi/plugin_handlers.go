@@ -1,10 +1,16 @@
 package httpapi
 
 import (
+	"archive/zip"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
 
 	"athena/internal/domain"
 	"athena/internal/plugin"
@@ -16,15 +22,19 @@ import (
 
 // PluginHandler handles plugin-related HTTP requests
 type PluginHandler struct {
-	pluginRepo    *repository.PluginRepository
-	pluginManager *plugin.Manager
+	pluginRepo        *repository.PluginRepository
+	pluginManager     *plugin.Manager
+	signatureVerifier *plugin.SignatureVerifier
+	requireSignatures bool // Whether to require signatures for all plugins
 }
 
 // NewPluginHandler creates a new plugin handler
-func NewPluginHandler(pluginRepo *repository.PluginRepository, pluginManager *plugin.Manager) *PluginHandler {
+func NewPluginHandler(pluginRepo *repository.PluginRepository, pluginManager *plugin.Manager, signatureVerifier *plugin.SignatureVerifier, requireSignatures bool) *PluginHandler {
 	return &PluginHandler{
-		pluginRepo:    pluginRepo,
-		pluginManager: pluginManager,
+		pluginRepo:        pluginRepo,
+		pluginManager:     pluginManager,
+		signatureVerifier: signatureVerifier,
+		requireSignatures: requireSignatures,
 	}
 }
 
@@ -479,6 +489,253 @@ func (h *PluginHandler) TriggerHook(w http.ResponseWriter, r *http.Request) {
 		"status":  "success",
 		"message": fmt.Sprintf("Hook %s triggered successfully", req.EventType),
 	})
+}
+
+// ======================================================================
+// Plugin Upload & Installation
+// ======================================================================
+
+// UploadPlugin handles POST /api/v1/admin/plugins
+func (h *PluginHandler) UploadPlugin(w http.ResponseWriter, r *http.Request) {
+	// Parse multipart form (max 50MB)
+	if err := r.ParseMultipartForm(50 << 20); err != nil {
+		respondWithError(w, http.StatusBadRequest, "Failed to parse multipart form", err)
+		return
+	}
+
+	// Get file from form
+	file, header, err := r.FormFile("plugin")
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, "Plugin file is required", err)
+		return
+	}
+	defer file.Close()
+
+	// Validate file extension
+	if !strings.HasSuffix(header.Filename, ".zip") {
+		respondWithError(w, http.StatusBadRequest, "Plugin must be a ZIP file", nil)
+		return
+	}
+
+	// Read file content
+	fileBytes, err := io.ReadAll(file)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Failed to read plugin file", err)
+		return
+	}
+
+	// Extract and validate manifest
+	manifest, err := h.extractManifest(fileBytes)
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, fmt.Sprintf("Invalid plugin manifest: %v", err), err)
+		return
+	}
+
+	// Verify signature if provided or required
+	signatureFile, _, err := r.FormFile("signature")
+	var signatureBytes []byte
+	if err == nil {
+		defer signatureFile.Close()
+		signatureBytes, err = io.ReadAll(signatureFile)
+		if err != nil {
+			respondWithError(w, http.StatusBadRequest, "Failed to read signature file", err)
+			return
+		}
+	}
+
+	// Check signature verification
+	if h.signatureVerifier != nil {
+		if len(signatureBytes) > 0 {
+			// Signature provided - verify it
+			if err := h.signatureVerifier.VerifySignature(fileBytes, signatureBytes, manifest.Author); err != nil {
+				respondWithError(w, http.StatusUnauthorized, fmt.Sprintf("Invalid signature: %v", err), err)
+				return
+			}
+		} else if h.requireSignatures {
+			// No signature but signatures are required
+			respondWithError(w, http.StatusBadRequest, "Plugin signature is required", nil)
+			return
+		} else if !h.signatureVerifier.IsAuthorTrusted(manifest.Author) {
+			// Author not trusted and no signature
+			respondWithError(w, http.StatusUnauthorized, fmt.Sprintf("Author %s is not trusted. Please provide a valid signature or add author to trusted list.", manifest.Author), nil)
+			return
+		}
+	}
+
+	// Validate permissions
+	if err := plugin.ValidatePermissions(manifest.Permissions); err != nil {
+		respondWithError(w, http.StatusBadRequest, fmt.Sprintf("Invalid permissions: %v", err), err)
+		return
+	}
+
+	// Check if plugin already exists
+	existing, err := h.pluginRepo.GetByName(r.Context(), manifest.Name)
+	if err == nil && existing != nil {
+		respondWithError(w, http.StatusConflict, fmt.Sprintf("Plugin %s is already installed", manifest.Name), nil)
+		return
+	}
+
+	// Create temp directory for extraction
+	tempDir, err := os.MkdirTemp("", "plugin-install-*")
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Failed to create temp directory", err)
+		return
+	}
+	defer os.RemoveAll(tempDir)
+
+	// Extract plugin files
+	pluginDir, err := h.extractPlugin(fileBytes, tempDir, manifest.Name)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to extract plugin: %v", err), err)
+		return
+	}
+
+	// Move to plugins directory
+	finalPath := filepath.Join(h.pluginManager.GetPluginDir(), manifest.Name)
+	if err := os.RemoveAll(finalPath); err != nil && !os.IsNotExist(err) {
+		respondWithError(w, http.StatusInternalServerError, "Failed to prepare installation path", err)
+		return
+	}
+	if err := os.Rename(pluginDir, finalPath); err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Failed to install plugin", err)
+		return
+	}
+
+	// Create plugin record in database
+	pluginRecord := &domain.PluginRecord{
+		ID:          uuid.New(),
+		Name:        manifest.Name,
+		Version:     manifest.Version,
+		Author:      manifest.Author,
+		Description: manifest.Description,
+		Status:      domain.PluginStatusInstalled,
+		Config:      manifest.Config,
+		Permissions: manifest.Permissions,
+		Hooks:       convertEventTypesToStrings(manifest.Hooks),
+		InstallPath: finalPath,
+	}
+
+	if err := h.pluginRepo.Create(r.Context(), pluginRecord); err != nil {
+		// Rollback: remove installed files
+		os.RemoveAll(finalPath)
+		respondWithError(w, http.StatusInternalServerError, "Failed to register plugin", err)
+		return
+	}
+
+	respondWithJSON(w, http.StatusCreated, map[string]any{
+		"id":          pluginRecord.ID,
+		"name":        pluginRecord.Name,
+		"version":     pluginRecord.Version,
+		"status":      pluginRecord.Status,
+		"message":     fmt.Sprintf("Plugin %s installed successfully", pluginRecord.Name),
+		"permissions": pluginRecord.Permissions,
+		"hooks":       pluginRecord.Hooks,
+	})
+}
+
+// extractManifest extracts and parses plugin.json from the ZIP file
+func (h *PluginHandler) extractManifest(zipData []byte) (*plugin.PluginInfo, error) {
+	zipReader, err := zip.NewReader(bytes.NewReader(zipData), int64(len(zipData)))
+	if err != nil {
+		return nil, fmt.Errorf("failed to read ZIP: %w", err)
+	}
+
+	// Find plugin.json
+	for _, f := range zipReader.File {
+		if f.Name == "plugin.json" || strings.HasSuffix(f.Name, "/plugin.json") {
+			rc, err := f.Open()
+			if err != nil {
+				return nil, fmt.Errorf("failed to open plugin.json: %w", err)
+			}
+			defer rc.Close()
+
+			var manifest plugin.PluginInfo
+			if err := json.NewDecoder(rc).Decode(&manifest); err != nil {
+				return nil, fmt.Errorf("failed to parse plugin.json: %w", err)
+			}
+
+			// Validate required fields
+			if manifest.Name == "" {
+				return nil, fmt.Errorf("plugin name is required")
+			}
+			if manifest.Version == "" {
+				return nil, fmt.Errorf("plugin version is required")
+			}
+			if manifest.Author == "" {
+				return nil, fmt.Errorf("plugin author is required")
+			}
+
+			return &manifest, nil
+		}
+	}
+
+	return nil, fmt.Errorf("plugin.json not found in ZIP")
+}
+
+// extractPlugin extracts all files from the ZIP to the specified directory
+func (h *PluginHandler) extractPlugin(zipData []byte, destDir, pluginName string) (string, error) {
+	zipReader, err := zip.NewReader(bytes.NewReader(zipData), int64(len(zipData)))
+	if err != nil {
+		return "", fmt.Errorf("failed to read ZIP: %w", err)
+	}
+
+	pluginDir := filepath.Join(destDir, pluginName)
+	if err := os.MkdirAll(pluginDir, 0755); err != nil {
+		return "", fmt.Errorf("failed to create plugin directory: %w", err)
+	}
+
+	for _, f := range zipReader.File {
+		// Security: prevent path traversal
+		if strings.Contains(f.Name, "..") {
+			return "", fmt.Errorf("invalid file path: %s", f.Name)
+		}
+
+		destPath := filepath.Join(pluginDir, f.Name)
+
+		if f.FileInfo().IsDir() {
+			if err := os.MkdirAll(destPath, f.Mode()); err != nil {
+				return "", fmt.Errorf("failed to create directory: %w", err)
+			}
+			continue
+		}
+
+		// Create parent directory if needed
+		if err := os.MkdirAll(filepath.Dir(destPath), 0755); err != nil {
+			return "", fmt.Errorf("failed to create parent directory: %w", err)
+		}
+
+		// Extract file
+		rc, err := f.Open()
+		if err != nil {
+			return "", fmt.Errorf("failed to open file in ZIP: %w", err)
+		}
+
+		destFile, err := os.OpenFile(destPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, f.Mode())
+		if err != nil {
+			rc.Close()
+			return "", fmt.Errorf("failed to create file: %w", err)
+		}
+
+		if _, err := io.Copy(destFile, rc); err != nil {
+			destFile.Close()
+			rc.Close()
+			return "", fmt.Errorf("failed to write file: %w", err)
+		}
+
+		destFile.Close()
+		rc.Close()
+	}
+
+	return pluginDir, nil
+}
+
+// convertEventTypesToStrings converts EventType slice to string slice
+func convertEventTypesToStrings(events []plugin.EventType) []string {
+	result := make([]string, len(events))
+	for i, e := range events {
+		result[i] = string(e)
+	}
+	return result
 }
 
 // ======================================================================
