@@ -274,16 +274,17 @@ func (d *InstanceDiscovery) NegotiateRedundancy(ctx context.Context, peer *domai
 	// Read response
 	body, _ := io.ReadAll(resp.Body)
 
-	if resp.StatusCode == http.StatusAccepted || resp.StatusCode == http.StatusOK {
+	switch resp.StatusCode {
+	case http.StatusAccepted, http.StatusOK:
 		// Request accepted
 		return true, nil
-	} else if resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusUnauthorized {
+	case http.StatusForbidden, http.StatusUnauthorized:
 		return false, domain.ErrInstanceRefusedRedundancy
-	} else if resp.StatusCode == http.StatusInsufficientStorage || resp.StatusCode == http.StatusConflict {
+	case http.StatusInsufficientStorage, http.StatusConflict:
 		return false, domain.ErrInsufficientStorage
+	default:
+		return false, fmt.Errorf("unexpected response: %d - %s", resp.StatusCode, string(body))
 	}
-
-	return false, fmt.Errorf("unexpected response: %d - %s", resp.StatusCode, string(body))
 }
 
 // CheckInstanceHealth performs a health check on a peer instance
