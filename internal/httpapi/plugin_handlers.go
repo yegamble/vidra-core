@@ -149,55 +149,16 @@ func (h *PluginHandler) GetPlugin(w http.ResponseWriter, r *http.Request) {
 
 // EnablePlugin handles PUT /api/v1/admin/plugins/:id/enable
 func (h *PluginHandler) EnablePlugin(w http.ResponseWriter, r *http.Request) {
-	pluginIDStr := chi.URLParam(r, "id")
-	pluginID, err := uuid.Parse(pluginIDStr)
-	if err != nil {
-		respondWithError(w, http.StatusBadRequest, "Invalid plugin ID", nil)
-		return
-	}
-
-	// Get plugin from database
-	plugin, err := h.pluginRepo.GetByID(r.Context(), pluginID)
-	if err == domain.ErrPluginNotFound {
-		respondWithError(w, http.StatusNotFound, "Plugin not found", nil)
-		return
-	}
-	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Failed to get plugin", err)
-		return
-	}
-
-	// Check if already enabled
-	if plugin.IsEnabled() {
-		respondWithError(w, http.StatusBadRequest, "Plugin already enabled", nil)
-		return
-	}
-
-	// Enable plugin in manager
-	if err := h.pluginManager.EnablePlugin(r.Context(), plugin.Name); err != nil {
-		respondWithError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to enable plugin: %v", err), err)
-		return
-	}
-
-	// Update status in database
-	if err := plugin.Enable(); err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Failed to update plugin status", err)
-		return
-	}
-
-	if err := h.pluginRepo.Update(r.Context(), plugin); err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Failed to save plugin status", err)
-		return
-	}
-
-	respondWithJSON(w, http.StatusOK, map[string]string{
-		"status":  "success",
-		"message": fmt.Sprintf("Plugin %s enabled successfully", plugin.Name),
-	})
+	h.togglePluginStatus(w, r, true)
 }
 
 // DisablePlugin handles PUT /api/v1/admin/plugins/:id/disable
 func (h *PluginHandler) DisablePlugin(w http.ResponseWriter, r *http.Request) {
+	h.togglePluginStatus(w, r, false)
+}
+
+// togglePluginStatus is a helper function to enable or disable a plugin
+func (h *PluginHandler) togglePluginStatus(w http.ResponseWriter, r *http.Request, enable bool) {
 	pluginIDStr := chi.URLParam(r, "id")
 	pluginID, err := uuid.Parse(pluginIDStr)
 	if err != nil {
@@ -216,21 +177,44 @@ func (h *PluginHandler) DisablePlugin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check if already disabled
-	if plugin.IsDisabled() {
-		respondWithError(w, http.StatusBadRequest, "Plugin already disabled", nil)
-		return
+	// Check current state
+	if enable {
+		if plugin.IsEnabled() {
+			respondWithError(w, http.StatusBadRequest, "Plugin already enabled", nil)
+			return
+		}
+	} else {
+		if plugin.IsDisabled() {
+			respondWithError(w, http.StatusBadRequest, "Plugin already disabled", nil)
+			return
+		}
 	}
 
-	// Disable plugin in manager
-	if err := h.pluginManager.DisablePlugin(r.Context(), plugin.Name); err != nil {
-		respondWithError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to disable plugin: %v", err), err)
+	// Toggle plugin in manager
+	var managerErr error
+	if enable {
+		managerErr = h.pluginManager.EnablePlugin(r.Context(), plugin.Name)
+	} else {
+		managerErr = h.pluginManager.DisablePlugin(r.Context(), plugin.Name)
+	}
+	if managerErr != nil {
+		action := "enable"
+		if !enable {
+			action = "disable"
+		}
+		respondWithError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to %s plugin: %v", action, managerErr), managerErr)
 		return
 	}
 
 	// Update status in database
-	if err := plugin.Disable(); err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Failed to update plugin status", err)
+	var statusErr error
+	if enable {
+		statusErr = plugin.Enable()
+	} else {
+		statusErr = plugin.Disable()
+	}
+	if statusErr != nil {
+		respondWithError(w, http.StatusInternalServerError, "Failed to update plugin status", statusErr)
 		return
 	}
 
@@ -239,9 +223,13 @@ func (h *PluginHandler) DisablePlugin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	action := "enabled"
+	if !enable {
+		action = "disabled"
+	}
 	respondWithJSON(w, http.StatusOK, map[string]string{
 		"status":  "success",
-		"message": fmt.Sprintf("Plugin %s disabled successfully", plugin.Name),
+		"message": fmt.Sprintf("Plugin %s %s successfully", plugin.Name, action),
 	})
 }
 
