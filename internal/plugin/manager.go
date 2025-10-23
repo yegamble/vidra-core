@@ -394,27 +394,27 @@ func (m *Manager) initializePlugin(ctx context.Context, plugin Plugin, info *Plu
 	return nil
 }
 
-// registerEntityHook is a helper to register hooks that handle domain entities
-func (m *Manager) registerEntityHook[T any](eventType EventType, pluginName, eventName string, handler func(context.Context, *T) error) {
+// registerVideoHook registers a hook for video domain entities
+func (m *Manager) registerVideoHook(eventType EventType, pluginName string, handler func(context.Context, *domain.Video) error) {
 	m.hooks.Register(eventType, pluginName, func(ctx context.Context, data any) error {
 		if ed, ok := data.(*EventData); ok {
-			if entity, ok := ed.Data.(*T); ok {
-				return handler(ctx, entity)
+			if video, ok := ed.Data.(*domain.Video); ok {
+				return handler(ctx, video)
 			}
 		}
-		return fmt.Errorf("invalid data type for %s event", eventName)
+		return fmt.Errorf("invalid data type for video event")
 	})
 }
 
-// registerStringHook is a helper to register hooks that handle string IDs
-func (m *Manager) registerStringHook(eventType EventType, pluginName, eventName string, handler func(context.Context, string) error) {
+// registerUserHook registers a hook for user domain entities
+func (m *Manager) registerUserHook(eventType EventType, pluginName string, handler func(context.Context, *domain.User) error) {
 	m.hooks.Register(eventType, pluginName, func(ctx context.Context, data any) error {
 		if ed, ok := data.(*EventData); ok {
-			if id, ok := ed.Data.(string); ok {
-				return handler(ctx, id)
+			if user, ok := ed.Data.(*domain.User); ok {
+				return handler(ctx, user)
 			}
 		}
-		return fmt.Errorf("invalid data type for %s event", eventName)
+		return fmt.Errorf("invalid data type for user event")
 	})
 }
 
@@ -424,33 +424,33 @@ func (m *Manager) registerPluginHooks(plugin Plugin) error {
 
 	// Video hooks
 	if vp, ok := plugin.(VideoPlugin); ok {
-		m.registerEntityHook(EventVideoUploaded, name, "video.uploaded", func(ctx context.Context, v *domain.Video) error {
-			return vp.OnVideoUploaded(ctx, v)
-		})
-		m.registerEntityHook(EventVideoProcessed, name, "video.processed", func(ctx context.Context, v *domain.Video) error {
-			return vp.OnVideoProcessed(ctx, v)
-		})
-		m.registerStringHook(EventVideoDeleted, name, "video.deleted", func(ctx context.Context, id string) error {
-			return vp.OnVideoDeleted(ctx, id)
-		})
-		m.registerEntityHook(EventVideoUpdated, name, "video.updated", func(ctx context.Context, v *domain.Video) error {
-			return vp.OnVideoUpdated(ctx, v)
+		m.registerVideoHook(EventVideoUploaded, name, vp.OnVideoUploaded)
+		m.registerVideoHook(EventVideoProcessed, name, vp.OnVideoProcessed)
+		m.registerVideoHook(EventVideoUpdated, name, vp.OnVideoUpdated)
+
+		m.hooks.Register(EventVideoDeleted, name, func(ctx context.Context, data any) error {
+			if ed, ok := data.(*EventData); ok {
+				if videoID, ok := ed.Data.(string); ok {
+					return vp.OnVideoDeleted(ctx, videoID)
+				}
+			}
+			return fmt.Errorf("invalid data type for video.deleted event")
 		})
 	}
 
 	// User hooks
 	if up, ok := plugin.(UserPlugin); ok {
-		m.registerEntityHook(EventUserRegistered, name, "user.registered", func(ctx context.Context, u *domain.User) error {
-			return up.OnUserRegistered(ctx, u)
-		})
-		m.registerEntityHook(EventUserLogin, name, "user.login", func(ctx context.Context, u *domain.User) error {
-			return up.OnUserLogin(ctx, u)
-		})
-		m.registerStringHook(EventUserDeleted, name, "user.deleted", func(ctx context.Context, id string) error {
-			return up.OnUserDeleted(ctx, id)
-		})
-		m.registerEntityHook(EventUserUpdated, name, "user.updated", func(ctx context.Context, u *domain.User) error {
-			return up.OnUserUpdated(ctx, u)
+		m.registerUserHook(EventUserRegistered, name, up.OnUserRegistered)
+		m.registerUserHook(EventUserLogin, name, up.OnUserLogin)
+		m.registerUserHook(EventUserUpdated, name, up.OnUserUpdated)
+
+		m.hooks.Register(EventUserDeleted, name, func(ctx context.Context, data any) error {
+			if ed, ok := data.(*EventData); ok {
+				if userID, ok := ed.Data.(string); ok {
+					return up.OnUserDeleted(ctx, userID)
+				}
+			}
+			return fmt.Errorf("invalid data type for user.deleted event")
 		})
 	}
 
