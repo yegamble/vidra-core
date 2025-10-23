@@ -1,6 +1,7 @@
 package torrent
 
 import (
+	"athena/internal/config"
 	"bytes"
 	"context"
 	"fmt"
@@ -146,6 +147,105 @@ func NewClient(config *ClientConfig, logger *logrus.Logger) (*Client, error) {
 			config.DownloadRateLimit,
 		)
 	}
+
+	return client, nil
+}
+
+// NewClientFromAppConfig creates a new torrent client from application config
+func NewClientFromAppConfig(cfg *config.Config, logger *logrus.Logger) (*Client, error) {
+	if logger == nil {
+		logger = logrus.New()
+	}
+
+	// Create torrent client config
+	clientConfig := torrent.NewDefaultClientConfig()
+	clientConfig.ListenHost = func(string) string {
+		return fmt.Sprintf("0.0.0.0:%d", cfg.TorrentListenPort)
+	}
+	clientConfig.DisableTCP = false
+	clientConfig.DisableUTP = false
+	clientConfig.DisableIPv6 = false
+	clientConfig.NoDHT = !cfg.EnableDHT
+	clientConfig.NoUpload = false
+	clientConfig.Seed = true
+	clientConfig.DisablePEX = !cfg.EnablePEX
+	clientConfig.DisableWebtorrent = !cfg.EnableWebTorrent
+	clientConfig.DisableTrackers = false
+	clientConfig.Debug = cfg.LogLevel == "debug"
+
+	// DHT will use the library's default bootstrap nodes if enabled
+	// The library includes:
+	// - router.bittorrent.com:6881
+	// - dht.transmissionbt.com:6881
+	// - router.utorrent.com:6881
+	// Custom bootstrap nodes can be added via future enhancement if needed
+	if cfg.EnableDHT {
+		logger.WithFields(logrus.Fields{
+			"default_nodes": []string{
+				"router.bittorrent.com:6881",
+				"dht.transmissionbt.com:6881",
+				"router.utorrent.com:6881",
+			},
+		}).Info("DHT enabled with default bootstrap nodes")
+	}
+
+	// Set storage
+	clientConfig.DefaultStorage = storage.NewFileByInfoHash(cfg.TorrentDataDir)
+
+	// Set connection limits
+	if cfg.TorrentMaxConnections > 0 {
+		clientConfig.EstablishedConnsPerTorrent = cfg.TorrentMaxConnections / 10 // per torrent
+	}
+
+	// Create the client
+	torrentClient, err := torrent.NewClient(clientConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create torrent client: %w", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	clientCfg := &ClientConfig{
+		ListenAddr:        fmt.Sprintf(":%d", cfg.TorrentListenPort),
+		NoDHT:             !cfg.EnableDHT,
+		DisablePEX:        !cfg.EnablePEX,
+		DisableWebtorrent: !cfg.EnableWebTorrent,
+		DataDir:           cfg.TorrentDataDir,
+		CacheSize:         cfg.TorrentCacheSize,
+		MaxConnections:    cfg.TorrentMaxConnections,
+		UploadRateLimit:   cfg.TorrentUploadRateLimit,
+		DownloadRateLimit: cfg.TorrentDownloadRateLimit,
+		Seed:              true,
+		HandshakeTimeout:  3 * time.Second,
+		RequestTimeout:    5 * time.Second,
+		Debug:             cfg.LogLevel == "debug",
+	}
+
+	client := &Client{
+		client:    torrentClient,
+		config:    clientCfg,
+		downloads: make(map[string]*Download),
+		ctx:       ctx,
+		cancel:    cancel,
+		logger:    logger,
+	}
+
+	// Initialize bandwidth manager if rate limits are set
+	if cfg.TorrentUploadRateLimit > 0 || cfg.TorrentDownloadRateLimit > 0 {
+		client.rateLimiter = NewBandwidthManager(
+			cfg.TorrentUploadRateLimit,
+			cfg.TorrentDownloadRateLimit,
+		)
+	}
+
+	logger.WithFields(logrus.Fields{
+		"dht_enabled":     cfg.EnableDHT,
+		"pex_enabled":     cfg.EnablePEX,
+		"webtorrent":      cfg.EnableWebTorrent,
+		"listen_port":     cfg.TorrentListenPort,
+		"max_connections": cfg.TorrentMaxConnections,
+		"bootstrap_nodes": len(cfg.DHTBootstrapNodes),
+	}).Info("Torrent client created with advanced P2P features")
 
 	return client, nil
 }

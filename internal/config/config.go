@@ -206,6 +206,42 @@ type Config struct {
 	ReplayStorageDir       string
 	ReplayUploadToIPFS     bool
 	ReplayRetentionDays    int // 0 = forever
+
+	// Torrent/WebTorrent Configuration
+	EnableTorrents             bool
+	TorrentListenPort          int
+	TorrentMaxConnections      int
+	TorrentUploadRateLimit     int64 // bytes per second, 0 = unlimited
+	TorrentDownloadRateLimit   int64 // bytes per second, 0 = unlimited
+	TorrentSeedRatio           float64
+	TorrentDataDir             string
+	TorrentCacheSize           int64
+	TorrentTrackerURL          string
+	TorrentWebSocketTrackerURL string
+
+	// DHT Configuration
+	EnableDHT           bool
+	DHTBootstrapNodes   []string
+	DHTAnnounceInterval time.Duration
+	DHTMaxPeers         int
+
+	// Peer Exchange (PEX) Configuration
+	EnablePEX bool
+
+	// WebTorrent Configuration
+	EnableWebTorrent      bool
+	WebTorrentTrackerPort int
+
+	// Smart Seeding Configuration
+	SmartSeedingEnabled         bool
+	SmartSeedingMinSeeders      int
+	SmartSeedingMaxTorrents     int
+	SmartSeedingPrioritizeViews bool
+
+	// Hybrid IPFS+Torrent Configuration
+	HybridDistributionEnabled bool
+	HybridPreferIPFS          bool
+	HybridFallbackTimeout     time.Duration
 }
 
 func Load() (*Config, error) {
@@ -421,6 +457,47 @@ func Load() (*Config, error) {
 	cfg.ReplayStorageDir = getEnvOrDefault("REPLAY_STORAGE_DIR", "./storage/replays")
 	cfg.ReplayUploadToIPFS = getBoolEnv("REPLAY_UPLOAD_TO_IPFS", true)
 	cfg.ReplayRetentionDays = getIntEnv("REPLAY_RETENTION_DAYS", 30)
+
+	// Torrent/WebTorrent Configuration
+	cfg.EnableTorrents = getBoolEnv("ENABLE_TORRENTS", true)
+	cfg.TorrentListenPort = getIntEnv("TORRENT_LISTEN_PORT", 6881)
+	cfg.TorrentMaxConnections = getIntEnv("TORRENT_MAX_CONNECTIONS", 200)
+	cfg.TorrentUploadRateLimit = getInt64Env("TORRENT_UPLOAD_RATE_LIMIT", 0)     // 0 = unlimited
+	cfg.TorrentDownloadRateLimit = getInt64Env("TORRENT_DOWNLOAD_RATE_LIMIT", 0) // 0 = unlimited
+	cfg.TorrentSeedRatio = getFloat64Env("TORRENT_SEED_RATIO", 2.0)
+	cfg.TorrentDataDir = getEnvOrDefault("TORRENT_DATA_DIR", "./storage/torrents")
+	cfg.TorrentCacheSize = getInt64Env("TORRENT_CACHE_SIZE", 64*1024*1024) // 64MB
+	cfg.TorrentTrackerURL = getEnvOrDefault("TORRENT_TRACKER_URL", "")
+	cfg.TorrentWebSocketTrackerURL = getEnvOrDefault("TORRENT_WEBSOCKET_TRACKER_URL", "")
+
+	// DHT Configuration
+	cfg.EnableDHT = getBoolEnv("ENABLE_DHT", true)
+	cfg.DHTBootstrapNodes = getStringSliceEnv("DHT_BOOTSTRAP_NODES", []string{
+		"router.bittorrent.com:6881",
+		"dht.transmissionbt.com:6881",
+		"router.utorrent.com:6881",
+		"dht.aelitis.com:6881",
+	})
+	cfg.DHTAnnounceInterval = time.Duration(getIntEnv("DHT_ANNOUNCE_INTERVAL", 1800)) * time.Second // 30 minutes
+	cfg.DHTMaxPeers = getIntEnv("DHT_MAX_PEERS", 500)
+
+	// Peer Exchange (PEX) Configuration
+	cfg.EnablePEX = getBoolEnv("ENABLE_PEX", true)
+
+	// WebTorrent Configuration
+	cfg.EnableWebTorrent = getBoolEnv("ENABLE_WEBTORRENT", true)
+	cfg.WebTorrentTrackerPort = getIntEnv("WEBTORRENT_TRACKER_PORT", 8000)
+
+	// Smart Seeding Configuration
+	cfg.SmartSeedingEnabled = getBoolEnv("SMART_SEEDING_ENABLED", true)
+	cfg.SmartSeedingMinSeeders = getIntEnv("SMART_SEEDING_MIN_SEEDERS", 3)
+	cfg.SmartSeedingMaxTorrents = getIntEnv("SMART_SEEDING_MAX_TORRENTS", 100)
+	cfg.SmartSeedingPrioritizeViews = getBoolEnv("SMART_SEEDING_PRIORITIZE_VIEWS", true)
+
+	// Hybrid IPFS+Torrent Configuration
+	cfg.HybridDistributionEnabled = getBoolEnv("HYBRID_DISTRIBUTION_ENABLED", true)
+	cfg.HybridPreferIPFS = getBoolEnv("HYBRID_PREFER_IPFS", false) // Prefer torrent by default
+	cfg.HybridFallbackTimeout = time.Duration(getIntEnv("HYBRID_FALLBACK_TIMEOUT", 10)) * time.Second
 
 	return cfg, nil
 }
