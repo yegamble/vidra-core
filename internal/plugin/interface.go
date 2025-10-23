@@ -2,6 +2,7 @@ package plugin
 
 import (
 	"context"
+	"fmt"
 
 	"athena/internal/domain"
 
@@ -313,8 +314,54 @@ const (
 	PermissionAdminAccess Permission = "admin_access"
 
 	// API permissions
-	PermissionRegisterRoutes Permission = "register_routes"
-
-	// Federation permissions
-	PermissionFederation Permission = "federation"
+	PermissionRegisterAPIRoutes Permission = "register_api_routes"
 )
+
+// ValidPermissions is a map of all valid permissions
+var ValidPermissions = map[Permission]bool{
+	PermissionReadVideos:        true,
+	PermissionWriteVideos:       true,
+	PermissionDeleteVideos:      true,
+	PermissionReadUsers:         true,
+	PermissionWriteUsers:        true,
+	PermissionDeleteUsers:       true,
+	PermissionReadChannels:      true,
+	PermissionWriteChannels:     true,
+	PermissionDeleteChannels:    true,
+	PermissionReadStorage:       true,
+	PermissionWriteStorage:      true,
+	PermissionDeleteStorage:     true,
+	PermissionReadAnalytics:     true,
+	PermissionWriteAnalytics:    true,
+	PermissionModerateContent:   true,
+	PermissionAdminAccess:       true,
+	PermissionRegisterAPIRoutes: true,
+}
+
+// ValidatePermissions validates a list of permission strings
+func ValidatePermissions(permissions []string) error {
+	for _, perm := range permissions {
+		if !ValidPermissions[Permission(perm)] {
+			return fmt.Errorf("invalid permission: %s", perm)
+		}
+	}
+	return nil
+}
+
+// HasPermission checks if a plugin has a specific permission
+func (pi *PluginInfo) HasPermission(permission Permission) bool {
+	for _, perm := range pi.Permissions {
+		if perm == string(permission) {
+			return true
+		}
+	}
+	return false
+}
+
+// RequirePermission returns an error if the plugin doesn't have the required permission
+func (pi *PluginInfo) RequirePermission(permission Permission) error {
+	if !pi.HasPermission(permission) {
+		return fmt.Errorf("plugin %s does not have required permission: %s", pi.Name, permission)
+	}
+	return nil
+}
