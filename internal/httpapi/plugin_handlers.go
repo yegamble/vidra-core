@@ -509,7 +509,7 @@ func (h *PluginHandler) UploadPlugin(w http.ResponseWriter, r *http.Request) {
 		respondWithError(w, http.StatusBadRequest, "Plugin file is required", err)
 		return
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	// Validate file extension
 	if !strings.HasSuffix(header.Filename, ".zip") {
@@ -535,7 +535,7 @@ func (h *PluginHandler) UploadPlugin(w http.ResponseWriter, r *http.Request) {
 	signatureFile, _, err := r.FormFile("signature")
 	var signatureBytes []byte
 	if err == nil {
-		defer signatureFile.Close()
+		defer func() { _ = signatureFile.Close() }()
 		signatureBytes, err = io.ReadAll(signatureFile)
 		if err != nil {
 			respondWithError(w, http.StatusBadRequest, "Failed to read signature file", err)
@@ -581,7 +581,7 @@ func (h *PluginHandler) UploadPlugin(w http.ResponseWriter, r *http.Request) {
 		respondWithError(w, http.StatusInternalServerError, "Failed to create temp directory", err)
 		return
 	}
-	defer os.RemoveAll(tempDir)
+	defer func() { _ = os.RemoveAll(tempDir) }()
 
 	// Extract plugin files
 	pluginDir, err := h.extractPlugin(fileBytes, tempDir, manifest.Name)
@@ -617,7 +617,7 @@ func (h *PluginHandler) UploadPlugin(w http.ResponseWriter, r *http.Request) {
 
 	if err := h.pluginRepo.Create(r.Context(), pluginRecord); err != nil {
 		// Rollback: remove installed files
-		os.RemoveAll(finalPath)
+		_ = os.RemoveAll(finalPath)
 		respondWithError(w, http.StatusInternalServerError, "Failed to register plugin", err)
 		return
 	}
@@ -647,7 +647,7 @@ func (h *PluginHandler) extractManifest(zipData []byte) (*plugin.PluginInfo, err
 			if err != nil {
 				return nil, fmt.Errorf("failed to open plugin.json: %w", err)
 			}
-			defer rc.Close()
+			defer func() { _ = rc.Close() }()
 
 			var manifest plugin.PluginInfo
 			if err := json.NewDecoder(rc).Decode(&manifest); err != nil {
@@ -712,18 +712,18 @@ func (h *PluginHandler) extractPlugin(zipData []byte, destDir, pluginName string
 
 		destFile, err := os.OpenFile(destPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, f.Mode())
 		if err != nil {
-			rc.Close()
+			_ = rc.Close()
 			return "", fmt.Errorf("failed to create file: %w", err)
 		}
 
 		if _, err := io.Copy(destFile, rc); err != nil {
-			destFile.Close()
-			rc.Close()
+			_ = destFile.Close()
+			_ = rc.Close()
 			return "", fmt.Errorf("failed to write file: %w", err)
 		}
 
-		destFile.Close()
-		rc.Close()
+		_ = destFile.Close()
+		_ = rc.Close()
 	}
 
 	return pluginDir, nil

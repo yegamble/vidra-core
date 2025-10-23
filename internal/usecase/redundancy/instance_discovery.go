@@ -126,7 +126,7 @@ func (d *InstanceDiscovery) fetchNodeInfo(ctx context.Context, instanceURL strin
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch NodeInfo well-known: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
@@ -167,7 +167,7 @@ func (d *InstanceDiscovery) fetchNodeInfo(ctx context.Context, instanceURL strin
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch NodeInfo: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
@@ -215,7 +215,7 @@ func (d *InstanceDiscovery) fetchActor(ctx context.Context, actorURL string) (*A
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
@@ -269,7 +269,7 @@ func (d *InstanceDiscovery) NegotiateRedundancy(ctx context.Context, peer *domai
 	if err != nil {
 		return false, fmt.Errorf("failed to send request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	// Read response
 	body, _ := io.ReadAll(resp.Body)
@@ -305,7 +305,7 @@ func (d *InstanceDiscovery) CheckInstanceHealth(ctx context.Context, instanceURL
 		if err != nil {
 			continue
 		}
-		resp.Body.Close()
+		_ = resp.Body.Close()
 
 		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 			return true, nil
@@ -329,7 +329,7 @@ func (d *InstanceDiscovery) FetchRedundancyCapabilities(ctx context.Context, ins
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch capabilities: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
@@ -374,7 +374,7 @@ func (d *InstanceDiscovery) DiscoverInstancesFromKnownPeers(ctx context.Context,
 		}
 
 		if resp.StatusCode != http.StatusOK {
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			continue
 		}
 
@@ -383,10 +383,10 @@ func (d *InstanceDiscovery) DiscoverInstancesFromKnownPeers(ctx context.Context,
 		}
 
 		if err := json.NewDecoder(resp.Body).Decode(&peerList); err != nil {
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			continue
 		}
-		resp.Body.Close()
+		_ = resp.Body.Close()
 
 		// Discover each peer
 		for _, p := range peerList {

@@ -643,7 +643,7 @@ func (s *Service) TransferVideoHTTP(ctx context.Context, sourceURL, targetURL st
 	if err != nil {
 		return fmt.Errorf("failed to fetch video: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
 		return fmt.Errorf("unexpected status code: %d", resp.StatusCode)
