@@ -159,13 +159,14 @@ func TestAPIKeyAuth(t *testing.T) {
 		assert.Equal(t, http.StatusOK, rr.Code)
 	})
 
-	t.Run("accepts valid API key in query params", func(t *testing.T) {
+	t.Run("rejects API key in query params (security improvement)", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/?api_key="+validKey, nil)
 		rr := httptest.NewRecorder()
 
 		handler.ServeHTTP(rr, req)
 
-		assert.Equal(t, http.StatusOK, rr.Code)
+		// API keys in query params are no longer accepted for security reasons
+		assert.Equal(t, http.StatusUnauthorized, rr.Code)
 	})
 
 	t.Run("rejects invalid API key", func(t *testing.T) {

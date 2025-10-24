@@ -137,7 +137,13 @@ func ValidateURL(rawURL string) error {
 
 // isPrivateOrReservedIP checks if an IP is in a private or reserved range (SSRF protection)
 func isPrivateOrReservedIP(ip net.IP) bool {
-	privateRanges := []string{
+	// Normalize to IPv4 if applicable
+	if ipv4 := ip.To4(); ipv4 != nil {
+		ip = ipv4
+	}
+
+	// Separate IPv4 and IPv6 ranges to avoid false positives
+	privateRangesV4 := []string{
 		"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", // RFC1918
 		"127.0.0.0/8",        // Loopback
 		"169.254.0.0/16",     // Link-local (AWS/GCP metadata)
@@ -151,24 +157,51 @@ func isPrivateOrReservedIP(ip net.IP) bool {
 		"198.51.100.0/24",    // TEST-NET-2
 		"203.0.113.0/24",     // TEST-NET-3
 		"255.255.255.255/32", // Broadcast
-		"::1/128",            // IPv6 loopback
-		"fc00::/7",           // IPv6 unique local
-		"fe80::/10",          // IPv6 link-local
-		"ff00::/8",           // IPv6 multicast
-		"::/128",             // IPv6 unspecified
-		"::ffff:0:0/96",      // IPv4-mapped IPv6
-		"2001:db8::/32",      // IPv6 documentation
 	}
 
-	for _, cidr := range privateRanges {
-		_, network, err := net.ParseCIDR(cidr)
-		if err != nil {
-			continue
+	privateRangesV6 := []string{
+		"::1/128",       // IPv6 loopback
+		"fc00::/7",      // IPv6 unique local
+		"fe80::/10",     // IPv6 link-local
+		"ff00::/8",      // IPv6 multicast
+		"::/128",        // IPv6 unspecified
+		"2001:db8::/32", // IPv6 documentation
+	}
+
+	// Check IPv4 ranges
+	if ip.To4() != nil {
+		for _, cidr := range privateRangesV4 {
+			_, network, err := net.ParseCIDR(cidr)
+			if err != nil {
+				continue
+			}
+			if network.Contains(ip) {
+				return true
+			}
 		}
-		if network.Contains(ip) {
-			return true
+	} else {
+		// Check IPv6 ranges
+		for _, cidr := range privateRangesV6 {
+			_, network, err := net.ParseCIDR(cidr)
+			if err != nil {
+				continue
+			}
+			if network.Contains(ip) {
+				return true
+			}
+		}
+
+		// Special check for IPv4-mapped IPv6 addresses (::ffff:x.x.x.x)
+		// Extract the IPv4 part and check if it's private
+		if strings.HasPrefix(ip.String(), "::ffff:") {
+			// Get the last 4 bytes which represent the IPv4 address
+			if len(ip) == 16 {
+				ipv4 := net.IPv4(ip[12], ip[13], ip[14], ip[15])
+				return isPrivateOrReservedIP(ipv4)
+			}
 		}
 	}
+
 	return false
 }
 
