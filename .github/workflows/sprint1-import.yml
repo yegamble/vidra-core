@@ -32,13 +32,13 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.21'
+          go-version: '1.24'
           cache: true
 
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v6
+        uses: golangci/golangci-lint-action@v7
         with:
-          version: v1.62.2
+          version: latest
           args: --timeout=5m ./internal/domain/... ./internal/repository/... ./internal/usecase/import/... ./internal/importer/... ./internal/httpapi/...
 
   unit-tests:
@@ -51,7 +51,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.21'
+          go-version: '1.24'
           cache: true
 
       - name: Download dependencies
@@ -114,7 +114,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.21'
+          go-version: '1.24'
           cache: true
 
       - name: Download dependencies
@@ -228,7 +228,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.21'
+          go-version: '1.24'
           cache: true
 
       - name: Build

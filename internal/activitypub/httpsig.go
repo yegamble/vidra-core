@@ -1,6 +1,7 @@
 package activitypub
 
 import (
+	"bytes"
 	"crypto"
 	"crypto/rand"
 	"crypto/rsa"
@@ -9,6 +10,7 @@ import (
 	"encoding/base64"
 	"encoding/pem"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -104,11 +106,22 @@ func SignRequest(r *http.Request, privateKeyPEM string, keyID string) error {
 	}
 
 	// Set Digest header for POST/PUT requests
+	// SECURITY FIX: Calculate real SHA-256 digest instead of placeholder
 	if r.Method == "POST" || r.Method == "PUT" {
 		if r.Body != nil && r.Header.Get("Digest") == "" {
-			// Note: In a real implementation, we'd need to read and buffer the body
-			// For now, this is a placeholder
-			r.Header.Set("Digest", "SHA-256=placeholder")
+			// Read the request body
+			bodyBytes, err := io.ReadAll(r.Body)
+			if err != nil {
+				return fmt.Errorf("failed to read request body for digest: %w", err)
+			}
+
+			// Calculate SHA-256 digest
+			hash := sha256.Sum256(bodyBytes)
+			digest := "SHA-256=" + base64.StdEncoding.EncodeToString(hash[:])
+			r.Header.Set("Digest", digest)
+
+			// Restore the body for subsequent reads
+			r.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
 		}
 	}
 

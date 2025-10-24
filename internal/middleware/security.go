@@ -4,8 +4,11 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"log"
 	"net/http"
 	"strings"
+
+	"github.com/google/uuid"
 )
 
 // SecurityHeaders adds comprehensive security headers for production
@@ -65,9 +68,13 @@ func RequestID() func(http.Handler) http.Handler {
 				b := make([]byte, 16)
 				_, err := rand.Read(b)
 				if err != nil {
-					return
+					// SECURITY FIX: Fallback to UUID instead of hanging the request
+					// crypto/rand failure is extremely rare but must be handled
+					requestID = uuid.New().String()
+					log.Printf("WARNING: crypto/rand failed in RequestID generation, falling back to UUID: %v", err)
+				} else {
+					requestID = base64.RawURLEncoding.EncodeToString(b)
 				}
-				requestID = base64.RawURLEncoding.EncodeToString(b)
 			}
 
 			w.Header().Set("X-Request-ID", requestID)
