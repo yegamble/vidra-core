@@ -523,21 +523,168 @@ hey -n 10000 -c 100 -m POST \
 pprof -http=:8080 http://localhost:6060/debug/pprof/heap
 ```
 
+## Platform-Wide Security Vulnerabilities (2025-10-24 Penetration Test)
+
+### Critical Issues Found
+
+The following vulnerabilities were discovered during the comprehensive penetration test and must be addressed:
+
+#### 1. WebSocket CORS Bypass (CRITICAL)
+**File:** `internal/chat/websocket_server.go:96-99`
+**Issue:** CheckOrigin always returns true, allowing any website to connect
+**Fix:** Implement origin whitelist validation
+
+#### 2. Server-Side Request Forgery (SSRF) (HIGH)
+**Files:**
+- `internal/domain/import.go:98-118` (URL validation)
+- `internal/usecase/redundancy/instance_discovery.go`
+
+**Issue:** No validation against private IPs, localhost, or cloud metadata endpoints
+**Impact:** Attackers can access internal services and cloud metadata APIs
+**Fix:** Implement private IP range blocking:
+```go
+func isPrivateIP(ip net.IP) bool {
+    private := []string{
+        "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16",
+        "127.0.0.0/8", "169.254.0.0/16",  // AWS metadata
+        "::1/128", "fc00::/7", "fe80::/10",
+    }
+    // Check if IP is in private ranges
+}
+```
+
+#### 3. API Key in Query Parameters (HIGH)
+**File:** `internal/middleware/security.go:92-93`
+**Issue:** API keys logged in access logs and browser history
+**Fix:** Remove query parameter support, require X-API-Key header only
+
+#### 4. Content Security Policy Too Permissive (HIGH)
+**File:** `internal/middleware/security.go:33`
+**Issue:** unsafe-inline and unsafe-eval enabled
+**Fix:** Use nonces for inline scripts/styles
+
+#### 5. HTTP Signature Digest Placeholder (HIGH)
+**File:** `internal/activitypub/httpsig.go:111`
+**Issue:** ActivityPub signatures don't validate body integrity
+**Fix:** Calculate real SHA-256 digests of request bodies
+
+See **SECURITY_PENTEST_REPORT.md** for complete findings and remediation guide.
+
+---
+
+## Enhanced Security Testing Guidelines
+
+### SSRF Prevention Testing
+
+```bash
+# Test private IP blocking
+curl -X POST http://localhost:8080/api/v1/videos/imports \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{"source_url": "http://169.254.169.254/latest/meta-data/"}'
+# Expected: 400 Bad Request - "Access to private IPs not allowed"
+
+# Test localhost blocking
+curl -X POST http://localhost:8080/api/v1/videos/imports \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{"source_url": "http://localhost:6379/"}'
+# Expected: 400 Bad Request
+
+# Test RFC1918 blocking
+for ip in "http://10.0.0.1" "http://192.168.1.1" "http://172.16.0.1"; do
+  curl -X POST http://localhost:8080/api/v1/videos/imports \
+    -H "Authorization: Bearer $TOKEN" \
+    -d "{\"source_url\": \"$ip\"}"
+done
+# Expected: All should be blocked
+```
+
+### WebSocket CORS Testing
+
+```javascript
+// Run from different origin (e.g., http://evil.com)
+const ws = new WebSocket('wss://athena.example.com/api/v1/streams/STREAM_ID/chat');
+ws.onopen = () => console.log('VULNERABLE: Connection allowed from wrong origin');
+ws.onerror = () => console.log('SECURE: Origin validation working');
+```
+
+### API Key Security Testing
+
+```bash
+# Test query parameter (should be rejected in production)
+curl "http://localhost:8080/api/v1/videos?api_key=test123"
+# Expected: 401 Unauthorized (query params not accepted)
+
+# Test header (should work)
+curl -H "X-API-Key: test123" "http://localhost:8080/api/v1/videos"
+# Expected: 200 OK or 403 Forbidden (if key invalid)
+```
+
+### CSP Validation Testing
+
+```bash
+# Check CSP header
+curl -I http://localhost:8080/ | grep -i content-security-policy
+# Expected: No 'unsafe-inline' or 'unsafe-eval' in production
+
+# Test CSP bypass
+curl http://localhost:8080/test-page \
+  -H "Content-Type: text/html" \
+  -d '<script>alert(1)</script>'
+# Expected: Script blocked by CSP
+```
+
+---
+
+## Security Checklist for Production Deployment
+
+### Pre-Deployment Security Audit
+
+- [ ] **SSRF Protection**: All HTTP clients validate against private IPs
+- [ ] **WebSocket CORS**: Origin validation implemented with whitelist
+- [ ] **API Keys**: Only accepted via headers, never query parameters
+- [ ] **CSP Headers**: No unsafe-inline or unsafe-eval in production
+- [ ] **Rate Limiting**: Applied to all authentication and import endpoints
+- [ ] **HTTP Signatures**: Real digest calculation for ActivityPub
+- [ ] **Input Validation**: All user inputs validated and sanitized
+- [ ] **Error Handling**: No sensitive information in error messages
+- [ ] **TLS Configuration**: Strong ciphers only, HSTS enabled
+- [ ] **Dependency Audit**: All dependencies scanned for vulnerabilities
+
+### Runtime Security Monitoring
+
+- [ ] **Intrusion Detection**: Monitor for SSRF attempts (private IP requests)
+- [ ] **Rate Limit Violations**: Alert on repeated 429 responses
+- [ ] **Failed Authentication**: Track and alert on brute force attempts
+- [ ] **WebSocket Abuse**: Monitor connection counts per IP
+- [ ] **File Upload Abuse**: Track unusual file types or sizes
+- [ ] **Database Performance**: Monitor for SQL injection attempts (slow queries)
+
+---
+
 ## Conclusion
 
 This E2EE implementation provides military-grade security for private messaging through:
 
 - **Strong Cryptography**: Modern algorithms with adequate key sizes
-- **Secure Implementation**: Constant-time operations and memory protection  
+- **Secure Implementation**: Constant-time operations and memory protection
 - **Robust Protocol**: Authenticated key exchange and forward secrecy
 - **Defense in Depth**: Multiple security layers and comprehensive validation
 - **Extensive Testing**: Cryptographic, protocol, and security testing
 
-The comprehensive penetration testing guidelines ensure continuous security validation and help identify potential vulnerabilities before deployment to production.
+**However, the platform-wide security audit revealed critical vulnerabilities that must be addressed before production deployment.** See SECURITY_PENTEST_REPORT.md for complete findings.
 
-**Security Level**: Military-grade (equivalent to NSA Suite B recommendations)
+**Current Security Status:**
+- **E2EE Messaging**: 9.5/10 (Military-grade)
+- **Platform Overall**: 6.5/10 (Requires fixes before production)
+- **Target Rating**: 8.5/10 (After implementing critical fixes)
+
+**Security Level**: Military-grade for E2EE features, requires hardening for platform security
 **Estimated Security Strength**: 128-bit security against classical attacks, quantum-resistant key sizes ready for post-quantum migration.
 
 ---
 
-*This document should be reviewed quarterly and updated following any cryptographic library updates or security research developments.*
+**Last Security Audit:** 2025-10-24
+**Next Review:** After implementing critical fixes from penetration test
+**Penetration Test Report:** See SECURITY_PENTEST_REPORT.md
+
+*This document should be reviewed quarterly and updated following any cryptographic library updates, security research developments, or penetration test findings.*
