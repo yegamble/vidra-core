@@ -79,7 +79,7 @@ func ValidateMagicBytes(content []byte, ext string) error {
 	found := false
 	for _, sig := range imageSignatures {
 		// Only check signatures for the claimed extension
-		if sig.Ext != ext && !(ext == ".jpeg" && sig.Ext == ".jpg") {
+		if sig.Ext != ext && (ext != ".jpeg" || sig.Ext != ".jpg") {
 			continue
 		}
 

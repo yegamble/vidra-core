@@ -73,7 +73,7 @@ func (h *RedundancyHandler) ListInstancePeers(w http.ResponseWriter, r *http.Req
 
 	peers, err := h.service.ListInstancePeers(r.Context(), limit, offset, activeOnly)
 	if err != nil {
-		WriteError(w, http.StatusInternalServerError, fmt.Errorf("Failed to list instance peers: %w", err))
+		WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to list instance peers: %w", err))
 		return
 	}
 
@@ -94,7 +94,7 @@ func (h *RedundancyHandler) RegisterInstancePeer(w http.ResponseWriter, r *http.
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		WriteError(w, http.StatusBadRequest, fmt.Errorf("Invalid request body: %w", err))
+		WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid request body: %w", err))
 		return
 	}
 
@@ -113,9 +113,9 @@ func (h *RedundancyHandler) RegisterInstancePeer(w http.ResponseWriter, r *http.
 
 	if err := h.service.RegisterInstancePeer(r.Context(), peer); err != nil {
 		if err == domain.ErrInstancePeerAlreadyExists {
-			WriteError(w, http.StatusConflict, fmt.Errorf("Instance peer already exists: %w", err))
+			WriteError(w, http.StatusConflict, fmt.Errorf("instance peer already exists: %w", err))
 		} else {
-			WriteError(w, http.StatusInternalServerError, fmt.Errorf("Failed to register instance peer: %w", err))
+			WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to register instance peer: %w", err))
 		}
 		return
 	}
@@ -131,9 +131,9 @@ func (h *RedundancyHandler) GetInstancePeer(w http.ResponseWriter, r *http.Reque
 	peer, err := h.service.GetInstancePeer(r.Context(), id)
 	if err != nil {
 		if err == domain.ErrInstancePeerNotFound {
-			WriteError(w, http.StatusNotFound, fmt.Errorf("Instance peer not found: %w", err))
+			WriteError(w, http.StatusNotFound, fmt.Errorf("instance peer not found: %w", err))
 		} else {
-			WriteError(w, http.StatusInternalServerError, fmt.Errorf("Failed to get instance peer: %w", err))
+			WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to get instance peer: %w", err))
 		}
 		return
 	}
@@ -154,16 +154,16 @@ func (h *RedundancyHandler) UpdateInstancePeer(w http.ResponseWriter, r *http.Re
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		WriteError(w, http.StatusBadRequest, fmt.Errorf("Invalid request body: %w", err))
+		WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid request body: %w", err))
 		return
 	}
 
 	peer, err := h.service.GetInstancePeer(r.Context(), id)
 	if err != nil {
 		if err == domain.ErrInstancePeerNotFound {
-			WriteError(w, http.StatusNotFound, fmt.Errorf("Instance peer not found: %w", err))
+			WriteError(w, http.StatusNotFound, fmt.Errorf("instance peer not found: %w", err))
 		} else {
-			WriteError(w, http.StatusInternalServerError, fmt.Errorf("Failed to get instance peer: %w", err))
+			WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to get instance peer: %w", err))
 		}
 		return
 	}
@@ -175,7 +175,7 @@ func (h *RedundancyHandler) UpdateInstancePeer(w http.ResponseWriter, r *http.Re
 	peer.IsActive = req.IsActive
 
 	if err := h.service.UpdateInstancePeer(r.Context(), peer); err != nil {
-		WriteError(w, http.StatusInternalServerError, fmt.Errorf("Failed to update instance peer: %w", err))
+		WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to update instance peer: %w", err))
 		return
 	}
 
@@ -189,9 +189,9 @@ func (h *RedundancyHandler) DeleteInstancePeer(w http.ResponseWriter, r *http.Re
 
 	if err := h.service.DeleteInstancePeer(r.Context(), id); err != nil {
 		if err == domain.ErrInstancePeerNotFound {
-			WriteError(w, http.StatusNotFound, fmt.Errorf("Instance peer not found: %w", err))
+			WriteError(w, http.StatusNotFound, fmt.Errorf("instance peer not found: %w", err))
 		} else {
-			WriteError(w, http.StatusInternalServerError, fmt.Errorf("Failed to delete instance peer: %w", err))
+			WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to delete instance peer: %w", err))
 		}
 		return
 	}
@@ -209,7 +209,7 @@ func (h *RedundancyHandler) DiscoverInstance(w http.ResponseWriter, r *http.Requ
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		WriteError(w, http.StatusBadRequest, fmt.Errorf("Invalid request body: %w", err))
+		WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid request body: %w", err))
 		return
 	}
 
@@ -220,16 +220,16 @@ func (h *RedundancyHandler) DiscoverInstance(w http.ResponseWriter, r *http.Requ
 
 	peer, err := h.discovery.DiscoverInstance(r.Context(), req.InstanceURL)
 	if err != nil {
-		WriteError(w, http.StatusInternalServerError, fmt.Errorf("Failed to discover instance: %w", err))
+		WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to discover instance: %w", err))
 		return
 	}
 
 	// Register the discovered instance
 	if err := h.service.RegisterInstancePeer(r.Context(), peer); err != nil {
 		if err == domain.ErrInstancePeerAlreadyExists {
-			WriteError(w, http.StatusConflict, fmt.Errorf("Instance peer already exists: %w", err))
+			WriteError(w, http.StatusConflict, fmt.Errorf("instance peer already exists: %w", err))
 		} else {
-			WriteError(w, http.StatusInternalServerError, fmt.Errorf("Failed to register instance peer: %w", err))
+			WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to register instance peer: %w", err))
 		}
 		return
 	}
@@ -250,7 +250,7 @@ func (h *RedundancyHandler) CreateRedundancy(w http.ResponseWriter, r *http.Requ
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		WriteError(w, http.StatusBadRequest, fmt.Errorf("Invalid request body: %w", err))
+		WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid request body: %w", err))
 		return
 	}
 
@@ -268,13 +268,13 @@ func (h *RedundancyHandler) CreateRedundancy(w http.ResponseWriter, r *http.Requ
 	if err != nil {
 		switch err {
 		case domain.ErrRedundancyAlreadyExists:
-			WriteError(w, http.StatusConflict, fmt.Errorf("Redundancy already exists: %w", err))
+			WriteError(w, http.StatusConflict, fmt.Errorf("redundancy already exists: %w", err))
 		case domain.ErrInstancePeerInactive:
-			WriteError(w, http.StatusBadRequest, fmt.Errorf("Instance peer is inactive: %w", err))
+			WriteError(w, http.StatusBadRequest, fmt.Errorf("instance peer is inactive: %w", err))
 		case domain.ErrInsufficientStorage:
-			WriteError(w, http.StatusBadRequest, fmt.Errorf("Insufficient storage on target instance: %w", err))
+			WriteError(w, http.StatusBadRequest, fmt.Errorf("insufficient storage on target instance: %w", err))
 		default:
-			WriteError(w, http.StatusInternalServerError, fmt.Errorf("Failed to create redundancy: %w", err))
+			WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to create redundancy: %w", err))
 		}
 		return
 	}
@@ -290,9 +290,9 @@ func (h *RedundancyHandler) GetRedundancy(w http.ResponseWriter, r *http.Request
 	redundancy, err := h.service.GetRedundancy(r.Context(), id)
 	if err != nil {
 		if err == domain.ErrRedundancyNotFound {
-			WriteError(w, http.StatusNotFound, fmt.Errorf("Redundancy not found: %w", err))
+			WriteError(w, http.StatusNotFound, fmt.Errorf("redundancy not found: %w", err))
 		} else {
-			WriteError(w, http.StatusInternalServerError, fmt.Errorf("Failed to get redundancy: %w", err))
+			WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to get redundancy: %w", err))
 		}
 		return
 	}
@@ -307,7 +307,7 @@ func (h *RedundancyHandler) ListVideoRedundancies(w http.ResponseWriter, r *http
 
 	redundancies, err := h.service.ListVideoRedundancies(r.Context(), videoID)
 	if err != nil {
-		WriteError(w, http.StatusInternalServerError, fmt.Errorf("Failed to list video redundancies: %w", err))
+		WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to list video redundancies: %w", err))
 		return
 	}
 
@@ -324,9 +324,9 @@ func (h *RedundancyHandler) CancelRedundancy(w http.ResponseWriter, r *http.Requ
 
 	if err := h.service.CancelRedundancy(r.Context(), id); err != nil {
 		if err == domain.ErrRedundancyNotFound {
-			WriteError(w, http.StatusNotFound, fmt.Errorf("Redundancy not found: %w", err))
+			WriteError(w, http.StatusNotFound, fmt.Errorf("redundancy not found: %w", err))
 		} else {
-			WriteError(w, http.StatusInternalServerError, fmt.Errorf("Failed to cancel redundancy: %w", err))
+			WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to cancel redundancy: %w", err))
 		}
 		return
 	}
@@ -344,13 +344,13 @@ func (h *RedundancyHandler) SyncRedundancy(w http.ResponseWriter, r *http.Reques
 	if err := h.service.SyncRedundancy(r.Context(), id); err != nil {
 		switch err {
 		case domain.ErrRedundancyNotFound:
-			WriteError(w, http.StatusNotFound, fmt.Errorf("Redundancy not found: %w", err))
+			WriteError(w, http.StatusNotFound, fmt.Errorf("redundancy not found: %w", err))
 		case domain.ErrRedundancyInProgress:
-			WriteError(w, http.StatusConflict, fmt.Errorf("Redundancy sync already in progress: %w", err))
+			WriteError(w, http.StatusConflict, fmt.Errorf("redundancy sync already in progress: %w", err))
 		case domain.ErrRedundancyMaxAttempts:
-			WriteError(w, http.StatusBadRequest, fmt.Errorf("Maximum sync attempts exceeded: %w", err))
+			WriteError(w, http.StatusBadRequest, fmt.Errorf("maximum sync attempts exceeded: %w", err))
 		default:
-			WriteError(w, http.StatusInternalServerError, fmt.Errorf("Failed to sync redundancy: %w", err))
+			WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to sync redundancy: %w", err))
 		}
 		return
 	}
@@ -367,9 +367,9 @@ func (h *RedundancyHandler) DeleteRedundancy(w http.ResponseWriter, r *http.Requ
 
 	if err := h.service.DeleteRedundancy(r.Context(), id); err != nil {
 		if err == domain.ErrRedundancyNotFound {
-			WriteError(w, http.StatusNotFound, fmt.Errorf("Redundancy not found: %w", err))
+			WriteError(w, http.StatusNotFound, fmt.Errorf("redundancy not found: %w", err))
 		} else {
-			WriteError(w, http.StatusInternalServerError, fmt.Errorf("Failed to delete redundancy: %w", err))
+			WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to delete redundancy: %w", err))
 		}
 		return
 	}
@@ -388,7 +388,7 @@ func (h *RedundancyHandler) ListPolicies(w http.ResponseWriter, r *http.Request)
 
 	policies, err := h.service.ListPolicies(r.Context(), enabledOnly)
 	if err != nil {
-		WriteError(w, http.StatusInternalServerError, fmt.Errorf("Failed to list policies: %w", err))
+		WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to list policies: %w", err))
 		return
 	}
 
@@ -403,15 +403,15 @@ func (h *RedundancyHandler) CreatePolicy(w http.ResponseWriter, r *http.Request)
 	var policy domain.RedundancyPolicy
 
 	if err := json.NewDecoder(r.Body).Decode(&policy); err != nil {
-		WriteError(w, http.StatusBadRequest, fmt.Errorf("Invalid request body: %w", err))
+		WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid request body: %w", err))
 		return
 	}
 
 	if err := h.service.CreatePolicy(r.Context(), &policy); err != nil {
 		if err == domain.ErrPolicyAlreadyExists {
-			WriteError(w, http.StatusConflict, fmt.Errorf("Policy already exists: %w", err))
+			WriteError(w, http.StatusConflict, fmt.Errorf("policy already exists: %w", err))
 		} else {
-			WriteError(w, http.StatusBadRequest, fmt.Errorf("Failed to create policy: %w", err))
+			WriteError(w, http.StatusBadRequest, fmt.Errorf("failed to create policy: %w", err))
 		}
 		return
 	}
@@ -427,9 +427,9 @@ func (h *RedundancyHandler) GetPolicy(w http.ResponseWriter, r *http.Request) {
 	policy, err := h.service.GetPolicy(r.Context(), id)
 	if err != nil {
 		if err == domain.ErrPolicyNotFound {
-			WriteError(w, http.StatusNotFound, fmt.Errorf("Policy not found: %w", err))
+			WriteError(w, http.StatusNotFound, fmt.Errorf("policy not found: %w", err))
 		} else {
-			WriteError(w, http.StatusInternalServerError, fmt.Errorf("Failed to get policy: %w", err))
+			WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to get policy: %w", err))
 		}
 		return
 	}
@@ -444,7 +444,7 @@ func (h *RedundancyHandler) UpdatePolicy(w http.ResponseWriter, r *http.Request)
 
 	var policy domain.RedundancyPolicy
 	if err := json.NewDecoder(r.Body).Decode(&policy); err != nil {
-		WriteError(w, http.StatusBadRequest, fmt.Errorf("Invalid request body: %w", err))
+		WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid request body: %w", err))
 		return
 	}
 
@@ -452,9 +452,9 @@ func (h *RedundancyHandler) UpdatePolicy(w http.ResponseWriter, r *http.Request)
 
 	if err := h.service.UpdatePolicy(r.Context(), &policy); err != nil {
 		if err == domain.ErrPolicyNotFound {
-			WriteError(w, http.StatusNotFound, fmt.Errorf("Policy not found: %w", err))
+			WriteError(w, http.StatusNotFound, fmt.Errorf("policy not found: %w", err))
 		} else {
-			WriteError(w, http.StatusBadRequest, fmt.Errorf("Failed to update policy: %w", err))
+			WriteError(w, http.StatusBadRequest, fmt.Errorf("failed to update policy: %w", err))
 		}
 		return
 	}
@@ -469,9 +469,9 @@ func (h *RedundancyHandler) DeletePolicy(w http.ResponseWriter, r *http.Request)
 
 	if err := h.service.DeletePolicy(r.Context(), id); err != nil {
 		if err == domain.ErrPolicyNotFound {
-			WriteError(w, http.StatusNotFound, fmt.Errorf("Policy not found: %w", err))
+			WriteError(w, http.StatusNotFound, fmt.Errorf("policy not found: %w", err))
 		} else {
-			WriteError(w, http.StatusInternalServerError, fmt.Errorf("Failed to delete policy: %w", err))
+			WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to delete policy: %w", err))
 		}
 		return
 	}
@@ -486,7 +486,7 @@ func (h *RedundancyHandler) DeletePolicy(w http.ResponseWriter, r *http.Request)
 func (h *RedundancyHandler) EvaluatePolicies(w http.ResponseWriter, r *http.Request) {
 	count, err := h.service.EvaluatePolicies(r.Context())
 	if err != nil {
-		WriteError(w, http.StatusInternalServerError, fmt.Errorf("Failed to evaluate policies: %w", err))
+		WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to evaluate policies: %w", err))
 		return
 	}
 
@@ -503,7 +503,7 @@ func (h *RedundancyHandler) EvaluatePolicies(w http.ResponseWriter, r *http.Requ
 func (h *RedundancyHandler) GetStats(w http.ResponseWriter, r *http.Request) {
 	stats, err := h.service.GetStats(r.Context())
 	if err != nil {
-		WriteError(w, http.StatusInternalServerError, fmt.Errorf("Failed to get statistics: %w", err))
+		WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to get statistics: %w", err))
 		return
 	}
 
@@ -517,7 +517,7 @@ func (h *RedundancyHandler) GetVideoHealth(w http.ResponseWriter, r *http.Reques
 
 	health, err := h.service.GetVideoHealth(r.Context(), videoID)
 	if err != nil {
-		WriteError(w, http.StatusInternalServerError, fmt.Errorf("Failed to get video health: %w", err))
+		WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to get video health: %w", err))
 		return
 	}
 
