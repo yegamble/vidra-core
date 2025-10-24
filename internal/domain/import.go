@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/url"
 	"strings"
 	"time"
@@ -95,7 +96,7 @@ func (vi *VideoImport) Validate() error {
 	return nil
 }
 
-// ValidateURL validates that a URL is well-formed and uses http/https
+// ValidateURL validates that a URL is well-formed, uses http/https, and doesn't target private IPs (SSRF protection)
 func ValidateURL(rawURL string) error {
 	if rawURL == "" {
 		return errors.New("URL cannot be empty")
@@ -114,7 +115,61 @@ func ValidateURL(rawURL string) error {
 		return errors.New("URL must have a host")
 	}
 
+	// SSRF Protection: Resolve and check for private IP addresses
+	host, _, err := net.SplitHostPort(u.Host)
+	if err != nil {
+		host = u.Host
+	}
+
+	ips, err := net.LookupIP(host)
+	if err != nil {
+		return fmt.Errorf("failed to resolve host %s: %w", host, err)
+	}
+
+	for _, ip := range ips {
+		if isPrivateOrReservedIP(ip) {
+			return fmt.Errorf("access to private/internal IP addresses is not allowed: %s resolves to %s", host, ip)
+		}
+	}
+
 	return nil
+}
+
+// isPrivateOrReservedIP checks if an IP is in a private or reserved range (SSRF protection)
+func isPrivateOrReservedIP(ip net.IP) bool {
+	privateRanges := []string{
+		"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", // RFC1918
+		"127.0.0.0/8",        // Loopback
+		"169.254.0.0/16",     // Link-local (AWS/GCP metadata)
+		"0.0.0.0/8",          // Current network
+		"224.0.0.0/4",        // Multicast
+		"240.0.0.0/4",        // Reserved
+		"100.64.0.0/10",      // Carrier-grade NAT
+		"192.0.0.0/24",       // IETF Protocol Assignments
+		"192.0.2.0/24",       // TEST-NET-1
+		"198.18.0.0/15",      // Benchmarking
+		"198.51.100.0/24",    // TEST-NET-2
+		"203.0.113.0/24",     // TEST-NET-3
+		"255.255.255.255/32", // Broadcast
+		"::1/128",            // IPv6 loopback
+		"fc00::/7",           // IPv6 unique local
+		"fe80::/10",          // IPv6 link-local
+		"ff00::/8",           // IPv6 multicast
+		"::/128",             // IPv6 unspecified
+		"::ffff:0:0/96",      // IPv4-mapped IPv6
+		"2001:db8::/32",      // IPv6 documentation
+	}
+
+	for _, cidr := range privateRanges {
+		_, network, err := net.ParseCIDR(cidr)
+		if err != nil {
+			continue
+		}
+		if network.Contains(ip) {
+			return true
+		}
+	}
+	return false
 }
 
 // ValidatePrivacy validates a privacy value

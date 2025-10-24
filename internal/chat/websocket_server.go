@@ -83,7 +83,7 @@ func NewChatServer(
 	redis *redis.Client,
 	logger *logrus.Logger,
 ) *ChatServer {
-	return &ChatServer{
+	server := &ChatServer{
 		cfg:         cfg,
 		chatRepo:    chatRepo,
 		streamRepo:  streamRepo,
@@ -93,13 +93,50 @@ func NewChatServer(
 		Upgrader: websocket.Upgrader{
 			ReadBufferSize:  1024,
 			WriteBufferSize: 1024,
-			CheckOrigin: func(r *http.Request) bool {
-				// TODO: Implement proper CORS checking
-				return true
-			},
+			CheckOrigin:     server.checkWebSocketOrigin,
 		},
 		shutdownChan: make(chan struct{}),
 	}
+	return server
+}
+
+// checkWebSocketOrigin validates the WebSocket origin to prevent CSRF attacks
+func (s *ChatServer) checkWebSocketOrigin(r *http.Request) bool {
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		// No origin header - allow (some clients don't send it)
+		return true
+	}
+
+	// Build list of allowed origins
+	allowedOrigins := make(map[string]bool)
+
+	// Add public base URL from config
+	if s.cfg.PublicBaseURL != "" {
+		allowedOrigins[s.cfg.PublicBaseURL] = true
+	}
+
+	// Add localhost for development
+	if s.cfg.Environment == "development" || s.cfg.Environment == "test" {
+		allowedOrigins["http://localhost:3000"] = true
+		allowedOrigins["http://localhost:8080"] = true
+		allowedOrigins["http://127.0.0.1:3000"] = true
+		allowedOrigins["http://127.0.0.1:8080"] = true
+	}
+
+	// Check if origin is allowed
+	if allowedOrigins[origin] {
+		return true
+	}
+
+	// Log rejected origin for security monitoring
+	s.logger.WithFields(logrus.Fields{
+		"origin":     origin,
+		"remote_ip":  r.RemoteAddr,
+		"user_agent": r.UserAgent(),
+	}).Warn("WebSocket connection rejected: invalid origin")
+
+	return false
 }
 
 // HandleWebSocket handles a new WebSocket connection

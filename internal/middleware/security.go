@@ -27,11 +27,13 @@ func SecurityHeaders() func(http.Handler) http.Handler {
 			// Permissions Policy (formerly Feature Policy)
 			w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), interest-cohort=()")
 
-			// Content Security Policy - adjust based on your needs
+			// Content Security Policy - tightened for production security
+			// NOTE: Removed unsafe-inline and unsafe-eval to prevent XSS attacks
+			// Use nonces or external script files for any dynamic content
 			csp := []string{
 				"default-src 'self'",
-				"script-src 'self' 'unsafe-inline' 'unsafe-eval'", // Tighten in production
-				"style-src 'self' 'unsafe-inline'",
+				"script-src 'self'", // Removed unsafe-inline and unsafe-eval for XSS protection
+				"style-src 'self'",  // Removed unsafe-inline - use external stylesheets
 				"img-src 'self' data: https:",
 				"font-src 'self' data:",
 				"connect-src 'self'",
@@ -85,16 +87,16 @@ func SizeLimiter(maxBytes int64) func(http.Handler) http.Handler {
 }
 
 // APIKeyAuth provides API key authentication as an alternative to JWT
+// SECURITY: API keys must be provided via X-API-Key header only (not query parameters)
+// to prevent logging in access logs, browser history, and referrer headers
 func APIKeyAuth(validateKey func(string) (string, error)) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Only accept API keys from headers for security
 			apiKey := r.Header.Get("X-API-Key")
-			if apiKey == "" {
-				apiKey = r.URL.Query().Get("api_key")
-			}
 
 			if apiKey == "" {
-				http.Error(w, "Missing API key", http.StatusUnauthorized)
+				http.Error(w, "Missing API key in X-API-Key header", http.StatusUnauthorized)
 				return
 			}
 
