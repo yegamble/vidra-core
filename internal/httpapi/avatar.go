@@ -28,6 +28,7 @@ import (
 
 	"athena/internal/domain"
 	"athena/internal/middleware"
+	"athena/internal/security"
 	"athena/internal/storage"
 	"athena/pkg/imageutil"
 )
@@ -175,6 +176,12 @@ func (s *Server) parseAvatarFile(r *http.Request) (*avatarFileData, error) {
 	fullContent, err := io.ReadAll(file)
 	if err != nil {
 		return nil, domain.NewDomainError("FILE_ERROR", "Failed to read file content")
+	}
+
+	// SECURITY FIX: Validate magic bytes to ensure file content matches extension
+	// This prevents attackers from renaming malicious files to bypass extension checks
+	if err := security.ValidateMagicBytes(fullContent, ext); err != nil {
+		return nil, domain.NewDomainError("BAD_REQUEST", fmt.Sprintf("File validation failed: %v", err))
 	}
 
 	// MIME type sniffing from first 512 bytes

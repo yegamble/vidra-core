@@ -4,6 +4,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"time"
 
 	chi "github.com/go-chi/chi/v5"
 
@@ -17,6 +18,12 @@ import (
 // This function only handles route registration - all resources are already wired.
 func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, deps *HandlerDependencies) {
 	r.Use(middleware.RateLimit(cfg.RateLimitDuration, cfg.RateLimitRequests))
+
+	// SECURITY: Create stricter rate limiters for critical endpoints
+	// These prevent abuse of authentication and resource-intensive operations
+	strictAuthLimiter := middleware.RateLimit(60*time.Second, 5)    // 5 per minute for registration
+	strictLoginLimiter := middleware.RateLimit(60*time.Second, 10)  // 10 per minute for login
+	strictImportLimiter := middleware.RateLimit(60*time.Second, 10) // 10 per minute for imports
 
 	// Create server instance with dependencies
 	server := NewServerWithOAuth(
@@ -33,8 +40,9 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, deps *Hand
 	)
 
 	// Register auth routes with appropriate middleware
-	r.Post("/auth/register", server.Register)
-	r.Post("/auth/login", server.Login)
+	// SECURITY FIX: Apply stricter rate limiting to prevent account spam and brute force attacks
+	r.With(strictAuthLimiter).Post("/auth/register", server.Register)
+	r.With(strictLoginLimiter).Post("/auth/login", server.Login)
 	r.Post("/auth/refresh", server.RefreshToken)
 	r.With(middleware.Auth(cfg.JWTSecret)).Post("/auth/logout", server.Logout)
 
@@ -147,7 +155,8 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, deps *Hand
 				r.Route("/videos/imports", func(r chi.Router) {
 					r.Use(middleware.Auth(cfg.JWTSecret))
 					importHandlers := NewImportHandlers(importService)
-					r.Post("/", importHandlers.CreateImport)
+					// SECURITY FIX: Apply stricter rate limiting to prevent SSRF abuse at scale
+					r.With(strictImportLimiter).Post("/", importHandlers.CreateImport)
 					r.Get("/", importHandlers.ListImports)
 					r.Get("/{id}", importHandlers.GetImport)
 					r.Delete("/{id}", importHandlers.CancelImport)
