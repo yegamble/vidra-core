@@ -83,21 +83,24 @@ func NewChatServer(
 	redis *redis.Client,
 	logger *logrus.Logger,
 ) *ChatServer {
-	server := &ChatServer{
-		cfg:         cfg,
-		chatRepo:    chatRepo,
-		streamRepo:  streamRepo,
-		redis:       redis,
-		logger:      logger,
-		connections: make(map[uuid.UUID]map[*ChatClient]bool),
-		Upgrader: websocket.Upgrader{
-			ReadBufferSize:  1024,
-			WriteBufferSize: 1024,
-			CheckOrigin:     server.checkWebSocketOrigin,
-		},
+	s := &ChatServer{
+		cfg:          cfg,
+		chatRepo:     chatRepo,
+		streamRepo:   streamRepo,
+		redis:        redis,
+		logger:       logger,
+		connections:  make(map[uuid.UUID]map[*ChatClient]bool),
 		shutdownChan: make(chan struct{}),
 	}
-	return server
+
+	// Initialize upgrader with checkOrigin that references the server
+	s.Upgrader = websocket.Upgrader{
+		ReadBufferSize:  1024,
+		WriteBufferSize: 1024,
+		CheckOrigin:     s.checkWebSocketOrigin,
+	}
+
+	return s
 }
 
 // checkWebSocketOrigin validates the WebSocket origin to prevent CSRF attacks
@@ -116,8 +119,15 @@ func (s *ChatServer) checkWebSocketOrigin(r *http.Request) bool {
 		allowedOrigins[s.cfg.PublicBaseURL] = true
 	}
 
+	// Check if we're in development/test mode by looking at config indicators
+	isDevelopment := s.cfg.ValidationTestMode ||
+		s.cfg.LogLevel == "debug" ||
+		(s.cfg.PublicBaseURL != "" &&
+			((len(s.cfg.PublicBaseURL) >= 16 && s.cfg.PublicBaseURL[:16] == "http://localhost") ||
+				(len(s.cfg.PublicBaseURL) >= 14 && s.cfg.PublicBaseURL[:14] == "http://127.0.0")))
+
 	// Add localhost for development
-	if s.cfg.Environment == "development" || s.cfg.Environment == "test" {
+	if isDevelopment {
 		allowedOrigins["http://localhost:3000"] = true
 		allowedOrigins["http://localhost:8080"] = true
 		allowedOrigins["http://127.0.0.1:3000"] = true
