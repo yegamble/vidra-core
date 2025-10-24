@@ -43,7 +43,9 @@ func (y *YtDlp) ValidateURL(ctx context.Context, url string) error {
 
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("yt-dlp validation failed: %w (output: %s)", err, string(output))
+		// SECURITY FIX: Log detailed error server-side, return generic error to client
+		fmt.Fprintf(os.Stderr, "ERROR: yt-dlp validation failed: %v, output: %s\n", err, string(output))
+		return fmt.Errorf("video URL validation failed: unable to access or parse the video")
 	}
 
 	if len(output) == 0 {
@@ -190,7 +192,9 @@ func (y *YtDlp) Download(ctx context.Context, url, importID string, progressCall
 	// Wait for completion
 	<-progressDone
 	if err := cmd.Wait(); err != nil {
-		return "", fmt.Errorf("yt-dlp failed: %w (stderr: %s)", err, stderrBuf.String())
+		// SECURITY FIX: Log detailed error server-side, return generic error to client
+		fmt.Fprintf(os.Stderr, "ERROR: yt-dlp download failed: %v, stderr: %s\n", err, stderrBuf.String())
+		return "", fmt.Errorf("video download failed: unable to complete the download")
 	}
 
 	// Find the downloaded file

@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"log"
 	"net/http"
 	"time"
 
@@ -33,8 +34,10 @@ func ReadinessCheck(w http.ResponseWriter, r *http.Request) {
 	overallStatus := "ok"
 	statusCode := http.StatusOK
 
+	// SECURITY FIX: Log detailed errors server-side, return generic status to client
 	if err := checkDatabase(); err != nil {
-		checks["database"] = "fail: " + err.Error()
+		log.Printf("ERROR: Database health check failed: %v", err)
+		checks["database"] = "fail"
 		overallStatus = "fail"
 		statusCode = http.StatusServiceUnavailable
 	} else {
@@ -42,7 +45,8 @@ func ReadinessCheck(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := checkRedis(); err != nil {
-		checks["redis"] = "fail: " + err.Error()
+		log.Printf("ERROR: Redis health check failed: %v", err)
+		checks["redis"] = "fail"
 		overallStatus = "fail"
 		statusCode = http.StatusServiceUnavailable
 	} else {
@@ -50,7 +54,8 @@ func ReadinessCheck(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := checkIPFS(); err != nil {
-		checks["ipfs"] = "fail: " + err.Error()
+		log.Printf("ERROR: IPFS health check failed: %v", err)
+		checks["ipfs"] = "fail"
 		overallStatus = "fail"
 		statusCode = http.StatusServiceUnavailable
 	} else {
@@ -58,7 +63,8 @@ func ReadinessCheck(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := checkQueueDepth(); err != nil {
-		checks["queue"] = "fail: " + err.Error()
+		log.Printf("ERROR: Queue health check failed: %v", err)
+		checks["queue"] = "fail"
 		overallStatus = "fail"
 		statusCode = http.StatusServiceUnavailable
 	} else {

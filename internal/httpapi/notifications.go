@@ -2,7 +2,6 @@ package httpapi
 
 import (
 	"net/http"
-	"strconv"
 
 	"athena/internal/domain"
 	"athena/internal/middleware"
@@ -39,28 +38,9 @@ func (h *NotificationHandlers) GetNotifications(w http.ResponseWriter, r *http.R
 
 	// Parse pagination (preferred page/pageSize; fallback to limit/offset)
 	filter := domain.NotificationFilter{UserID: userUUID}
-	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
-	pageSize, _ := strconv.Atoi(r.URL.Query().Get("pageSize"))
-	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
-	if pageSize <= 0 || pageSize > 100 {
-		if limit > 0 && limit <= 100 {
-			pageSize = limit
-		} else {
-			pageSize = 50
-		}
-	}
-	if page <= 0 {
-		if offset < 0 {
-			offset = 0
-		}
-		page = (offset / pageSize) + 1
-		if page <= 0 {
-			page = 1
-		}
-	}
-	filter.Limit = pageSize
-	filter.Offset = (page - 1) * pageSize
+	page, limit, offset, pageSize := ParsePagination(r, 50)
+	filter.Limit = limit
+	filter.Offset = offset
 
 	// Parse unread filter
 	if unreadStr := r.URL.Query().Get("unread"); unreadStr != "" {

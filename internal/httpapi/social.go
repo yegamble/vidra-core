@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strconv"
 	"time"
 
 	"athena/internal/usecase"
@@ -365,19 +364,4 @@ func (h *SocialHandler) IngestFeed(w http.ResponseWriter, r *http.Request) {
 	}
 
 	WriteJSON(w, http.StatusOK, map[string]string{"status": "ingested"})
-}
-
-// Helper function to get integer parameter
-func getIntParam(r *http.Request, key string, defaultValue int) int {
-	val := r.URL.Query().Get(key)
-	if val == "" {
-		return defaultValue
-	}
-
-	n, err := strconv.Atoi(val)
-	if err != nil {
-		return defaultValue
-	}
-
-	return n
 }

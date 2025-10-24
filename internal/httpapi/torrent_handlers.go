@@ -1,7 +1,6 @@
 package httpapi
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
@@ -79,7 +78,7 @@ func (h *TorrentHandlers) GetVideoMagnetURI(w http.ResponseWriter, r *http.Reque
 	videoIDStr := chi.URLParam(r, "id")
 	videoID, err := uuid.Parse(videoIDStr)
 	if err != nil {
-		RespondJSON(w, http.StatusBadRequest, ErrorResponse{
+		WriteJSON(w, http.StatusBadRequest, ErrorResponse{
 			Error:   "invalid_video_id",
 			Message: "Invalid video ID format",
 		})
@@ -89,7 +88,7 @@ func (h *TorrentHandlers) GetVideoMagnetURI(w http.ResponseWriter, r *http.Reque
 	// Get torrent from database
 	torrentData, err := h.manager.GetVideoTorrent(r.Context(), videoID)
 	if err != nil {
-		RespondJSON(w, http.StatusNotFound, ErrorResponse{
+		WriteJSON(w, http.StatusNotFound, ErrorResponse{
 			Error:   "torrent_not_found",
 			Message: "Torrent not found for this video",
 		})
@@ -97,7 +96,7 @@ func (h *TorrentHandlers) GetVideoMagnetURI(w http.ResponseWriter, r *http.Reque
 	}
 
 	// Return magnet URI
-	RespondJSON(w, http.StatusOK, map[string]interface{}{
+	WriteJSON(w, http.StatusOK, map[string]interface{}{
 		"video_id":   videoID,
 		"info_hash":  torrentData.InfoHash,
 		"magnet_uri": torrentData.MagnetURI,
@@ -110,7 +109,7 @@ func (h *TorrentHandlers) GetTorrentStats(w http.ResponseWriter, r *http.Request
 	// Get manager stats
 	stats, err := h.manager.GetGlobalStats(r.Context())
 	if err != nil {
-		RespondJSON(w, http.StatusInternalServerError, ErrorResponse{
+		WriteJSON(w, http.StatusInternalServerError, ErrorResponse{
 			Error:   "stats_error",
 			Message: "Failed to retrieve torrent statistics",
 		})
@@ -139,7 +138,7 @@ func (h *TorrentHandlers) GetTorrentStats(w http.ResponseWriter, r *http.Request
 		"tracker": trackerStats,
 	}
 
-	RespondJSON(w, http.StatusOK, response)
+	WriteJSON(w, http.StatusOK, response)
 }
 
 // GetSwarmInfo returns information about a specific torrent swarm
@@ -148,7 +147,7 @@ func (h *TorrentHandlers) GetSwarmInfo(w http.ResponseWriter, r *http.Request) {
 	// Get info hash from URL
 	infoHash := chi.URLParam(r, "infoHash")
 	if infoHash == "" {
-		RespondJSON(w, http.StatusBadRequest, ErrorResponse{
+		WriteJSON(w, http.StatusBadRequest, ErrorResponse{
 			Error:   "invalid_info_hash",
 			Message: "Info hash is required",
 		})
@@ -157,7 +156,7 @@ func (h *TorrentHandlers) GetSwarmInfo(w http.ResponseWriter, r *http.Request) {
 
 	// Get swarm info from tracker
 	if h.tracker == nil {
-		RespondJSON(w, http.StatusServiceUnavailable, ErrorResponse{
+		WriteJSON(w, http.StatusServiceUnavailable, ErrorResponse{
 			Error:   "tracker_unavailable",
 			Message: "Tracker is not enabled",
 		})
@@ -166,14 +165,14 @@ func (h *TorrentHandlers) GetSwarmInfo(w http.ResponseWriter, r *http.Request) {
 
 	info := h.tracker.GetSwarmInfo(infoHash)
 	if info == nil {
-		RespondJSON(w, http.StatusNotFound, ErrorResponse{
+		WriteJSON(w, http.StatusNotFound, ErrorResponse{
 			Error:   "swarm_not_found",
 			Message: "No active swarm found for this info hash",
 		})
 		return
 	}
 
-	RespondJSON(w, http.StatusOK, info)
+	WriteJSON(w, http.StatusOK, info)
 }
 
 // HandleTrackerWebSocket handles WebSocket connections for WebTorrent tracker
@@ -191,7 +190,7 @@ func (h *TorrentHandlers) HandleTrackerWebSocket(w http.ResponseWriter, r *http.
 // GET /api/v1/tracker/stats
 func (h *TorrentHandlers) GetTrackerStats(w http.ResponseWriter, r *http.Request) {
 	if h.tracker == nil {
-		RespondJSON(w, http.StatusServiceUnavailable, ErrorResponse{
+		WriteJSON(w, http.StatusServiceUnavailable, ErrorResponse{
 			Error:   "tracker_unavailable",
 			Message: "Tracker is not enabled",
 		})
@@ -200,7 +199,7 @@ func (h *TorrentHandlers) GetTrackerStats(w http.ResponseWriter, r *http.Request
 
 	stats := h.tracker.GetStats()
 
-	RespondJSON(w, http.StatusOK, map[string]interface{}{
+	WriteJSON(w, http.StatusOK, map[string]interface{}{
 		"total_announces":    stats.TotalAnnounces,
 		"total_scrapes":      stats.TotalScrapes,
 		"active_connections": stats.ActiveConnections,
@@ -225,14 +224,4 @@ type VideoTorrentResponse struct {
 	CompletedDownloads int       `json:"completed_downloads"`
 	IsSeeding          bool      `json:"is_seeding"`
 	CreatedAt          string    `json:"created_at"`
-}
-
-// RespondJSON writes a JSON response
-func RespondJSON(w http.ResponseWriter, status int, data interface{}) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	if err := json.NewEncoder(w).Encode(data); err != nil {
-		// Log error but can't change response at this point
-		return
-	}
 }

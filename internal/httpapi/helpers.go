@@ -1,8 +1,6 @@
 package httpapi
 
 import (
-	"encoding/json"
-	"log"
 	"net/http"
 	"strconv"
 )
@@ -22,27 +20,54 @@ func getBoolParam(r *http.Request, key string, defaultValue bool) bool {
 	return b
 }
 
-// respondError writes an error response in JSON format
-func respondError(w http.ResponseWriter, statusCode int, message string, err error) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(statusCode)
-
-	errMsg := message
-	if err != nil {
-		errMsg = message + ": " + err.Error()
+// getIntParam extracts an integer query parameter with a default value
+func getIntParam(r *http.Request, key string, defaultValue int) int {
+	val := r.URL.Query().Get(key)
+	if val == "" {
+		return defaultValue
 	}
 
-	_ = json.NewEncoder(w).Encode(map[string]string{
-		"error": errMsg,
-	})
+	n, err := strconv.Atoi(val)
+	if err != nil {
+		return defaultValue
+	}
+
+	return n
 }
 
-// respondJSON writes a JSON response with the given status code and data
-func respondJSON(w http.ResponseWriter, statusCode int, data interface{}) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(statusCode)
+// ParsePagination extracts pagination parameters from the request with backward compatibility
+// Supports both page/pageSize (modern) and limit/offset (legacy) parameters
+// Returns: page, limit, offset, pageSize
+func ParsePagination(r *http.Request, defaultPageSize int) (page, limit, offset, pageSize int) {
+	// Parse all parameters
+	page, _ = strconv.Atoi(r.URL.Query().Get("page"))
+	pageSize, _ = strconv.Atoi(r.URL.Query().Get("pageSize"))
+	limit, _ = strconv.Atoi(r.URL.Query().Get("limit"))
+	offset, _ = strconv.Atoi(r.URL.Query().Get("offset"))
 
-	if err := json.NewEncoder(w).Encode(data); err != nil {
-		log.Printf("Failed to encode JSON response: %v", err)
+	// Set pageSize with fallbacks
+	if pageSize <= 0 || pageSize > 100 {
+		if limit > 0 {
+			pageSize = limit
+		} else {
+			pageSize = defaultPageSize
+		}
 	}
+
+	// Calculate page from offset if not provided
+	if page <= 0 {
+		if offset < 0 {
+			offset = 0
+		}
+		page = (offset / pageSize) + 1
+		if page <= 0 {
+			page = 1
+		}
+	}
+
+	// Compute final limit/offset from page
+	limit = pageSize
+	offset = (page - 1) * pageSize
+
+	return page, limit, offset, pageSize
 }
