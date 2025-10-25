@@ -54,7 +54,6 @@ var imageSignatures = []FileSignature{
 // ValidateMagicBytes checks if the file content matches expected magic bytes for the given extension
 // SECURITY: This provides defense-in-depth against file upload attacks where attackers
 // rename malicious files to bypass extension-only validation
-// For supported image formats, this validation is lenient and will defer to image decoding validation
 func ValidateMagicBytes(content []byte, ext string) error {
 	if len(content) == 0 {
 		return fmt.Errorf("empty file content")
@@ -66,31 +65,12 @@ func ValidateMagicBytes(content []byte, ext string) error {
 		ext = "." + ext
 	}
 
-	// For supported image formats, we'll be lenient here and let image decoding catch issues
-	supportedImageExts := map[string]bool{
-		".jpg":  true,
-		".jpeg": true,
-		".png":  true,
-		".gif":  true,
-		".webp": true,
-		".heic": true,
-		".heif": true,
-		".tiff": true,
-		".tif":  true,
-		".bmp":  true,
-	}
-
-	if supportedImageExts[ext] {
-		// For supported formats, just do a basic sanity check
-		// The image decoding step will validate the actual content
-		return nil
-	}
-
-	// For unsupported formats, check magic bytes strictly
+	// Check magic bytes strictly for all formats
 	found := false
 	for _, sig := range imageSignatures {
 		// Only check signatures for the claimed extension
-		if sig.Ext != ext && (ext != ".jpeg" || sig.Ext != ".jpg") {
+		// Handle .jpg and .jpeg equivalence
+		if sig.Ext != ext && !(ext == ".jpeg" && sig.Ext == ".jpg") && !(ext == ".jpg" && sig.Ext == ".jpeg") {
 			continue
 		}
 
@@ -110,7 +90,7 @@ func ValidateMagicBytes(content []byte, ext string) error {
 	}
 
 	if !found {
-		return fmt.Errorf("unsupported image format")
+		return fmt.Errorf("file content does not match extension %s", ext)
 	}
 
 	return nil

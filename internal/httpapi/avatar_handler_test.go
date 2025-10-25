@@ -249,9 +249,9 @@ func TestUploadAvatar_WebPExtensionAccepted(t *testing.T) {
 		t.Fatalf("expected 400 for invalid image data, got %d body=%s", rr.Code, rr.Body.String())
 	}
 
-	// Check that the error message is about image validation (either magic bytes or decoding)
+	// Check that the error message is about image validation (magic bytes or decoding)
 	bodyStr := strings.ToLower(rr.Body.String())
-	if !strings.Contains(bodyStr, "invalid or corrupted image file") && !strings.Contains(bodyStr, "file validation failed") {
+	if !strings.Contains(bodyStr, "invalid or corrupted image file") && !strings.Contains(bodyStr, "file validation failed") && !strings.Contains(bodyStr, "file content does not match") {
 		t.Fatalf("expected image validation error, got %s", rr.Body.String())
 	}
 }
@@ -287,9 +287,9 @@ func TestUploadAvatar_HEICExtensionAccepted(t *testing.T) {
 		t.Fatalf("expected 400 for invalid image data, got %d body=%s", rr.Code, rr.Body.String())
 	}
 
-	// Check that the error message is about image corruption, not extension
+	// Check that the error message is about image validation (magic bytes or corruption)
 	bodyStr := strings.ToLower(rr.Body.String())
-	if !strings.Contains(bodyStr, "invalid or corrupted image file") && !strings.Contains(bodyStr, "file validation failed") {
+	if !strings.Contains(bodyStr, "invalid or corrupted image file") && !strings.Contains(bodyStr, "file validation failed") && !strings.Contains(bodyStr, "file content does not match") {
 		t.Fatalf("expected image validation error, got %s", rr.Body.String())
 	}
 }
@@ -593,7 +593,7 @@ func TestUploadAvatar_GIFExtensionAccepted(t *testing.T) {
 	}
 
 	bodyStr := strings.ToLower(rr.Body.String())
-	if !strings.Contains(bodyStr, "invalid or corrupted image file") && !strings.Contains(bodyStr, "file validation failed") {
+	if !strings.Contains(bodyStr, "invalid or corrupted image file") && !strings.Contains(bodyStr, "file validation failed") && !strings.Contains(bodyStr, "file content does not match") {
 		t.Fatalf("expected image validation error, got %s", rr.Body.String())
 	}
 }
@@ -627,7 +627,7 @@ func TestUploadAvatar_TIFFExtensionAccepted(t *testing.T) {
 	}
 
 	bodyStr := strings.ToLower(rr.Body.String())
-	if !strings.Contains(bodyStr, "invalid or corrupted image file") && !strings.Contains(bodyStr, "file validation failed") {
+	if !strings.Contains(bodyStr, "invalid or corrupted image file") && !strings.Contains(bodyStr, "file validation failed") && !strings.Contains(bodyStr, "file content does not match") {
 		t.Fatalf("expected image validation error, got %s", rr.Body.String())
 	}
 }
@@ -664,7 +664,7 @@ func TestUploadAvatar_NonImageFileRejected(t *testing.T) {
 
 	// Should fail with image decoding error
 	bodyStr := strings.ToLower(rr.Body.String())
-	if !strings.Contains(bodyStr, "invalid or corrupted image file") && !strings.Contains(bodyStr, "file validation failed") {
+	if !strings.Contains(bodyStr, "invalid or corrupted image file") && !strings.Contains(bodyStr, "file validation failed") && !strings.Contains(bodyStr, "file content does not match") {
 		t.Fatalf("expected image validation error, got %s", rr.Body.String())
 	}
 }
@@ -701,7 +701,7 @@ func TestUploadAvatar_ExecutableFileRejected(t *testing.T) {
 
 	// Should fail with image decoding error since it's not a valid image
 	bodyStr := strings.ToLower(rr.Body.String())
-	if !strings.Contains(bodyStr, "invalid or corrupted image file") && !strings.Contains(bodyStr, "file validation failed") {
+	if !strings.Contains(bodyStr, "invalid or corrupted image file") && !strings.Contains(bodyStr, "file validation failed") && !strings.Contains(bodyStr, "file content does not match") {
 		t.Fatalf("expected image validation error, got %s", rr.Body.String())
 	}
 }
@@ -736,9 +736,9 @@ func TestUploadAvatar_PDFFileRejected(t *testing.T) {
 		t.Fatalf("expected 400 for PDF file, got %d body=%s", rr.Code, rr.Body.String())
 	}
 
-	// Should fail with unsupported image format since .pdf is not in allowed extensions
+	// Should fail with unsupported image format or file validation error
 	bodyStr := strings.ToLower(rr.Body.String())
-	if !strings.Contains(bodyStr, "unsupported image format") && !strings.Contains(bodyStr, "file validation failed") {
+	if !strings.Contains(bodyStr, "unsupported image format") && !strings.Contains(bodyStr, "file validation failed") && !strings.Contains(bodyStr, "file content does not match") {
 		t.Fatalf("expected 'unsupported image format' error, got %s", rr.Body.String())
 	}
 }
