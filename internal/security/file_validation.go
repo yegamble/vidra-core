@@ -68,9 +68,11 @@ func ValidateMagicBytes(content []byte, ext string) error {
 	// Check magic bytes strictly for all formats
 	found := false
 	for _, sig := range imageSignatures {
-		// Only check signatures for the claimed extension
-		// Handle .jpg and .jpeg equivalence
-		if sig.Ext != ext && !(ext == ".jpeg" && sig.Ext == ".jpg") && !(ext == ".jpg" && sig.Ext == ".jpeg") {
+		// Check if this is a jpg/jpeg equivalence case
+		isJpegMatch := (ext == ".jpeg" && sig.Ext == ".jpg") || (ext == ".jpg" && sig.Ext == ".jpeg")
+
+		// Only check signatures for the claimed extension (allowing jpg/jpeg equivalence)
+		if sig.Ext != ext && !isJpegMatch {
 			continue
 		}
 

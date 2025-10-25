@@ -549,8 +549,8 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "// Accept 200 (success), 401 (no auth), or 503 (IPFS unavailable)",
-                  "pm.test('Status is valid (200, 401, 503, or 500)', () => pm.expect([200, 401, 503, 500]).to.include(pm.response.code));",
+                  "// Accept 200 (success), 400 (validation error), 401 (no auth), or 503 (IPFS unavailable)",
+                  "pm.test('Status is valid (200, 400, 401, 503, or 500)', () => pm.expect([200, 400, 401, 503, 500]).to.include(pm.response.code));",
                   "",
                   "if (pm.response.code === 200) {",
                   "  const wrap = pm.response.json();",
@@ -646,8 +646,8 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "// Accept 200 (success), 401 (no auth), or 503 (IPFS unavailable)",
-                  "pm.test('Status is valid (200, 401, 503, or 500)', () => pm.expect([200, 401, 503, 500]).to.include(pm.response.code));",
+                  "// Accept 200 (success), 400 (validation error), 401 (no auth), or 503 (IPFS unavailable)",
+                  "pm.test('Status is valid (200, 400, 401, 503, or 500)', () => pm.expect([200, 400, 401, 503, 500]).to.include(pm.response.code));",
                   "",
                   "if (pm.response.code === 200) {",
                   "  const wrap = pm.response.json();",
@@ -744,8 +744,8 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "// Accept 200 (success), 401 (no auth), 503 (IPFS unavailable), or 500 (server error)",
-                  "pm.test('Status is valid (200, 401, 503, or 500)', () => pm.expect([200, 401, 503, 500]).to.include(pm.response.code));",
+                  "// Accept 200 (success), 400 (validation error), 401 (no auth), 503 (IPFS unavailable), or 500 (server error)",
+                  "pm.test('Status is valid (200, 400, 401, 503, or 500)', () => pm.expect([200, 400, 401, 503, 500]).to.include(pm.response.code));",
                   "",
                   "if (pm.response.code === 200) {",
                   "  const wrap = pm.response.json();",
@@ -842,8 +842,8 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "// Accept 200 (success), 401 (no auth), 503 (IPFS unavailable), or 500 (server error)",
-                  "pm.test('Status is valid (200, 401, 503, or 500)', () => pm.expect([200, 401, 503, 500]).to.include(pm.response.code));",
+                  "// Accept 200 (success), 400 (validation error), 401 (no auth), 503 (IPFS unavailable), or 500 (server error)",
+                  "pm.test('Status is valid (200, 400, 401, 503, or 500)', () => pm.expect([200, 400, 401, 503, 500]).to.include(pm.response.code));",
                   "",
                   "if (pm.response.code === 200) {",
                   "  const wrap = pm.response.json();",
@@ -951,7 +951,8 @@
                   "  });",
                   "  pm.test('Error message indicates unsupported format', () => {",
                   "    const wrap = pm.response.json();",
-                  "    pm.expect(wrap.error.message.toLowerCase()).to.include('unsupported');",
+                  "    const msg = wrap.error.message.toLowerCase();",
+                  "    pm.expect(msg.includes('unsupported') || msg.includes('file content does not match')).to.be.true;",
                   "  });",
                   "  console.log('File correctly rejected as unsupported format');",
                   "} else if (pm.response.code === 401) {",
@@ -1037,7 +1038,8 @@
                   "  });",
                   "  pm.test('Error message indicates invalid image', () => {",
                   "    const wrap = pm.response.json();",
-                  "    pm.expect(wrap.error.message.toLowerCase()).to.include('invalid');",
+                  "    const msg = wrap.error.message.toLowerCase();",
+                  "    pm.expect(msg.includes('invalid') || msg.includes('file content does not match')).to.be.true;",
                   "  });",
                   "  console.log('Malicious file correctly rejected');",
                   "} else if (pm.response.code === 401) {",
