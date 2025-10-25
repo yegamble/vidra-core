@@ -169,7 +169,7 @@ func (s *Server) parseAvatarFile(r *http.Request) (*avatarFileData, error) {
 	// Determine extension early and validate
 	ext := filepath.Ext(header.Filename)
 	if !validAvatarExt(ext) {
-		return nil, domain.NewDomainError("BAD_REQUEST", "Invalid file extension")
+		return nil, domain.NewDomainError("BAD_REQUEST", "unsupported file extension")
 	}
 
 	// Read the complete file content first
@@ -181,7 +181,7 @@ func (s *Server) parseAvatarFile(r *http.Request) (*avatarFileData, error) {
 	// SECURITY FIX: Validate magic bytes to ensure file content matches extension
 	// This prevents attackers from renaming malicious files to bypass extension checks
 	if err := security.ValidateMagicBytes(fullContent, ext); err != nil {
-		return nil, domain.NewDomainError("BAD_REQUEST", fmt.Sprintf("File validation failed: %v", err))
+		return nil, domain.NewDomainError("BAD_REQUEST", err.Error())
 	}
 
 	// MIME type sniffing from first 512 bytes
