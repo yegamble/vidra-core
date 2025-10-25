@@ -1,0 +1,865 @@
+openapi: 3.0.3
+info:
+  title: Athena API - Video Analytics & Views
+  description: |
+    Endpoints for tracking video views, analytics, and discovering trending content.
+
+    ## View Tracking
+
+    View tracking uses fingerprinting to prevent duplicate counts:
+    1. POST /api/v1/views/fingerprint - Generate unique viewer fingerprint
+    2. POST /api/v1/videos/{id}/views - Track view with fingerprint
+
+    ## Analytics Access
+    - Video owners can view detailed analytics for their videos
+    - Public users can see view counts and basic statistics
+    - Admin users have access to platform-wide analytics
+
+    ## Trending Algorithm
+    Trending videos are calculated based on:
+    - View velocity (views per hour)
+    - Engagement metrics (likes, comments)
+    - Recency weight (newer videos prioritized)
+    - Quality score (watch time, completion rate)
+  version: 1.0.0
+
+paths:
+  /api/v1/videos/{id}/views:
+    post:
+      tags:
+        - Views
+      summary: Track a video view
+      description: |
+        Record a view for a video. Uses fingerprinting to prevent duplicate counting
+        from the same viewer within a time window (typically 30 minutes).
+
+        Fingerprint should be generated client-side using /api/v1/views/fingerprint.
+      operationId: trackView
+      parameters:
+        - name: id
+          in: path
+          description: Video UUID
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TrackViewRequest'
+            examples:
+              with_fingerprint:
+                summary: Track view with fingerprint
+                value:
+                  fingerprint: "fp_a1b2c3d4e5f6g7h8"
+                  watch_time_seconds: 120
+                  referrer: "https://example.com"
+              without_fingerprint:
+                summary: Track view without fingerprint (will be generated)
+                value:
+                  watch_time_seconds: 45
+      responses:
+        '200':
+          description: View tracked successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrackViewResponse'
+              examples:
+                view_counted:
+                  value:
+                    data:
+                      counted: true
+                      total_views: 1523
+                      message: "View recorded"
+                    success: true
+                duplicate:
+                  value:
+                    data:
+                      counted: false
+                      total_views: 1523
+                      message: "Duplicate view within time window"
+                    success: true
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Video not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+      security:
+        - {} # Public endpoint
+        - bearerAuth: []
+
+  /api/v1/videos/{id}/analytics:
+    get:
+      tags:
+        - Analytics
+      summary: Get detailed video analytics
+      description: |
+        Get detailed analytics for a video. Only accessible by video owner or admin.
+
+        Includes:
+        - View counts and trends
+        - Geographic distribution
+        - Device/platform breakdown
+        - Engagement metrics (likes, comments, shares)
+        - Traffic sources
+        - Watch time statistics
+      operationId: getVideoAnalytics
+      parameters:
+        - name: id
+          in: path
+          description: Video UUID
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: period
+          in: query
+          description: Time period for analytics
+          schema:
+            type: string
+            enum: [day, week, month, year, all_time]
+            default: month
+        - name: start_date
+          in: query
+          description: Start date for custom period (ISO 8601)
+          schema:
+            type: string
+            format: date
+            example: "2024-01-01"
+        - name: end_date
+          in: query
+          description: End date for custom period (ISO 8601)
+          schema:
+            type: string
+            format: date
+            example: "2024-01-31"
+      responses:
+        '200':
+          description: Video analytics data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VideoAnalyticsResponse'
+              examples:
+                monthly_analytics:
+                  value:
+                    data:
+                      video_id: "550e8400-e29b-41d4-a716-446655440000"
+                      period: "month"
+                      start_date: "2024-01-01"
+                      end_date: "2024-01-31"
+                      views:
+                        total: 15234
+                        unique: 12456
+                        trend:
+                          percent_change: 25.5
+                          direction: "up"
+                      engagement:
+                        likes: 1234
+                        dislikes: 56
+                        comments: 234
+                        shares: 123
+                        like_ratio: 0.957
+                      watch_time:
+                        total_seconds: 456789
+                        average_seconds: 120
+                        average_completion_rate: 0.75
+                      traffic_sources:
+                        - source: "direct"
+                          views: 5000
+                          percent: 32.8
+                        - source: "search"
+                          views: 4500
+                          percent: 29.5
+                        - source: "external"
+                          views: 3234
+                          percent: 21.2
+                        - source: "suggested"
+                          views: 2500
+                          percent: 16.4
+                      geography:
+                        - country_code: "US"
+                          country_name: "United States"
+                          views: 7500
+                          percent: 49.2
+                        - country_code: "GB"
+                          country_name: "United Kingdom"
+                          views: 2000
+                          percent: 13.1
+                      devices:
+                        - device_type: "desktop"
+                          views: 8000
+                          percent: 52.5
+                        - device_type: "mobile"
+                          views: 6000
+                          percent: 39.4
+                        - device_type: "tablet"
+                          views: 1234
+                          percent: 8.1
+                    success: true
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden - not video owner
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Video not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+      security:
+        - bearerAuth: []
+
+  /api/v1/videos/{id}/stats/daily:
+    get:
+      tags:
+        - Analytics
+      summary: Get daily statistics for a video
+      description: |
+        Get day-by-day view statistics for a video over a specified period.
+        Useful for creating time-series charts.
+      operationId: getDailyStats
+      parameters:
+        - name: id
+          in: path
+          description: Video UUID
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: days
+          in: query
+          description: Number of days to retrieve (default 30, max 365)
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 365
+            default: 30
+        - name: start_date
+          in: query
+          description: Start date (ISO 8601)
+          schema:
+            type: string
+            format: date
+      responses:
+        '200':
+          description: Daily statistics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DailyStatsResponse'
+              examples:
+                daily_stats:
+                  value:
+                    data:
+                      video_id: "550e8400-e29b-41d4-a716-446655440000"
+                      days_requested: 7
+                      stats:
+                        - date: "2024-01-15"
+                          views: 523
+                          unique_views: 412
+                          watch_time_seconds: 12456
+                          likes: 45
+                          comments: 12
+                        - date: "2024-01-14"
+                          views: 612
+                          unique_views: 498
+                          watch_time_seconds: 14523
+                          likes: 52
+                          comments: 15
+                    success: true
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden - not video owner
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Video not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+      security:
+        - bearerAuth: []
+
+  /api/v1/videos/top:
+    get:
+      tags:
+        - Discovery
+      summary: Get top videos by views
+      description: |
+        Get the most-viewed videos on the platform.
+        Results can be filtered by time period and category.
+      operationId: getTopVideos
+      parameters:
+        - name: period
+          in: query
+          description: Time period for top videos
+          schema:
+            type: string
+            enum: [day, week, month, year, all_time]
+            default: week
+        - name: category
+          in: query
+          description: Filter by category
+          schema:
+            type: string
+        - name: limit
+          in: query
+          description: Number of videos to return
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: offset
+          in: query
+          description: Pagination offset
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+      responses:
+        '200':
+          description: List of top videos
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TopVideosResponse'
+              examples:
+                top_videos:
+                  value:
+                    data:
+                      videos:
+                        - id: "550e8400-e29b-41d4-a716-446655440000"
+                          title: "Amazing Tutorial"
+                          description: "Learn something new"
+                          views: 15234
+                          likes: 1234
+                          created_at: "2024-01-01T12:00:00Z"
+                          owner:
+                            id: "user-123"
+                            username: "creator1"
+                            display_name: "Creator One"
+                      total: 245
+                      limit: 20
+                      offset: 0
+                    success: true
+        '400':
+          description: Invalid parameters
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+      security:
+        - {} # Public endpoint
+        - bearerAuth: []
+
+  /api/v1/trending:
+    get:
+      tags:
+        - Discovery
+      summary: Get trending videos
+      description: |
+        Get currently trending videos based on view velocity, engagement, and recency.
+
+        Trending algorithm considers:
+        - Views per hour (weighted by recency)
+        - Like/dislike ratio
+        - Comment activity
+        - Share count
+        - Watch time completion rate
+      operationId: getTrendingVideos
+      parameters:
+        - name: category
+          in: query
+          description: Filter by category
+          schema:
+            type: string
+        - name: limit
+          in: query
+          description: Number of videos to return
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: offset
+          in: query
+          description: Pagination offset
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+      responses:
+        '200':
+          description: List of trending videos
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrendingVideosResponse'
+              examples:
+                trending_videos:
+                  value:
+                    data:
+                      videos:
+                        - id: "550e8400-e29b-41d4-a716-446655440000"
+                          title: "Viral Video"
+                          description: "This is trending now"
+                          views: 52340
+                          views_per_hour: 1250
+                          likes: 4523
+                          created_at: "2024-01-14T18:00:00Z"
+                          trending_score: 0.94
+                          owner:
+                            id: "user-456"
+                            username: "creator2"
+                            display_name: "Popular Creator"
+                      total: 50
+                      limit: 20
+                      offset: 0
+                    success: true
+        '400':
+          description: Invalid parameters
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+      security:
+        - {} # Public endpoint
+        - bearerAuth: []
+
+  /api/v1/views/fingerprint:
+    post:
+      tags:
+        - Views
+      summary: Generate viewer fingerprint
+      description: |
+        Generate a unique fingerprint for view deduplication.
+
+        The fingerprint is based on:
+        - User agent
+        - IP address (hashed)
+        - Browser features
+        - Timestamp bucket (30-minute window)
+
+        Fingerprints are used to prevent counting multiple views from
+        the same viewer within a short time period.
+      operationId: generateFingerprint
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                client_info:
+                  type: object
+                  description: Optional client information for better fingerprinting
+                  properties:
+                    screen_resolution:
+                      type: string
+                      example: "1920x1080"
+                    timezone:
+                      type: string
+                      example: "America/New_York"
+                    language:
+                      type: string
+                      example: "en-US"
+      responses:
+        '200':
+          description: Fingerprint generated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FingerprintResponse'
+              examples:
+                fingerprint:
+                  value:
+                    data:
+                      fingerprint: "fp_a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6"
+                      expires_at: "2024-01-15T11:00:00Z"
+                      valid_for_seconds: 1800
+                    success: true
+        '429':
+          description: Rate limit exceeded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+      security:
+        - {} # Public endpoint
+        - bearerAuth: []
+
+components:
+  schemas:
+    TrackViewRequest:
+      type: object
+      properties:
+        fingerprint:
+          type: string
+          description: Viewer fingerprint from /api/v1/views/fingerprint
+          example: "fp_a1b2c3d4e5f6g7h8"
+        watch_time_seconds:
+          type: integer
+          description: Seconds watched (for completion rate tracking)
+          minimum: 0
+          example: 120
+        referrer:
+          type: string
+          format: uri
+          description: Referring URL
+          example: "https://example.com/page"
+
+    TrackViewResponse:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            counted:
+              type: boolean
+              description: Whether this view was counted
+            total_views:
+              type: integer
+              description: Total views for the video
+            message:
+              type: string
+        success:
+          type: boolean
+
+    VideoAnalyticsResponse:
+      type: object
+      properties:
+        data:
+          $ref: '#/components/schemas/VideoAnalytics'
+        success:
+          type: boolean
+
+    VideoAnalytics:
+      type: object
+      properties:
+        video_id:
+          type: string
+          format: uuid
+        period:
+          type: string
+          enum: [day, week, month, year, all_time]
+        start_date:
+          type: string
+          format: date
+        end_date:
+          type: string
+          format: date
+        views:
+          $ref: '#/components/schemas/ViewsMetrics'
+        engagement:
+          $ref: '#/components/schemas/EngagementMetrics'
+        watch_time:
+          $ref: '#/components/schemas/WatchTimeMetrics'
+        traffic_sources:
+          type: array
+          items:
+            $ref: '#/components/schemas/TrafficSource'
+        geography:
+          type: array
+          items:
+            $ref: '#/components/schemas/GeographyMetric'
+        devices:
+          type: array
+          items:
+            $ref: '#/components/schemas/DeviceMetric'
+
+    ViewsMetrics:
+      type: object
+      properties:
+        total:
+          type: integer
+          description: Total view count
+        unique:
+          type: integer
+          description: Unique viewer count
+        trend:
+          type: object
+          properties:
+            percent_change:
+              type: number
+              format: float
+            direction:
+              type: string
+              enum: [up, down, stable]
+
+    EngagementMetrics:
+      type: object
+      properties:
+        likes:
+          type: integer
+        dislikes:
+          type: integer
+        comments:
+          type: integer
+        shares:
+          type: integer
+        like_ratio:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 1
+
+    WatchTimeMetrics:
+      type: object
+      properties:
+        total_seconds:
+          type: integer
+          description: Total watch time across all views
+        average_seconds:
+          type: integer
+          description: Average watch time per view
+        average_completion_rate:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 1
+          description: Percentage of video watched on average
+
+    TrafficSource:
+      type: object
+      properties:
+        source:
+          type: string
+          enum: [direct, search, external, suggested, embedded]
+        views:
+          type: integer
+        percent:
+          type: number
+          format: float
+
+    GeographyMetric:
+      type: object
+      properties:
+        country_code:
+          type: string
+          minLength: 2
+          maxLength: 2
+          example: "US"
+        country_name:
+          type: string
+          example: "United States"
+        views:
+          type: integer
+        percent:
+          type: number
+          format: float
+
+    DeviceMetric:
+      type: object
+      properties:
+        device_type:
+          type: string
+          enum: [desktop, mobile, tablet, tv, other]
+        views:
+          type: integer
+        percent:
+          type: number
+          format: float
+
+    DailyStatsResponse:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            video_id:
+              type: string
+              format: uuid
+            days_requested:
+              type: integer
+            stats:
+              type: array
+              items:
+                $ref: '#/components/schemas/DailyStat'
+        success:
+          type: boolean
+
+    DailyStat:
+      type: object
+      properties:
+        date:
+          type: string
+          format: date
+        views:
+          type: integer
+        unique_views:
+          type: integer
+        watch_time_seconds:
+          type: integer
+        likes:
+          type: integer
+        comments:
+          type: integer
+
+    TopVideosResponse:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            videos:
+              type: array
+              items:
+                $ref: '#/components/schemas/VideoSummary'
+            total:
+              type: integer
+            limit:
+              type: integer
+            offset:
+              type: integer
+        success:
+          type: boolean
+
+    TrendingVideosResponse:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            videos:
+              type: array
+              items:
+                $ref: '#/components/schemas/TrendingVideo'
+            total:
+              type: integer
+            limit:
+              type: integer
+            offset:
+              type: integer
+        success:
+          type: boolean
+
+    TrendingVideo:
+      allOf:
+        - $ref: '#/components/schemas/VideoSummary'
+        - type: object
+          properties:
+            views_per_hour:
+              type: number
+              format: float
+              description: View velocity
+            trending_score:
+              type: number
+              format: float
+              minimum: 0
+              maximum: 1
+              description: Trending algorithm score
+
+    VideoSummary:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        description:
+          type: string
+        thumbnail_url:
+          type: string
+          format: uri
+        duration_seconds:
+          type: integer
+        views:
+          type: integer
+        likes:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+        owner:
+          $ref: '#/components/schemas/UserSummary'
+
+    UserSummary:
+      type: object
+      properties:
+        id:
+          type: string
+        username:
+          type: string
+        display_name:
+          type: string
+        avatar_url:
+          type: string
+          format: uri
+
+    FingerprintResponse:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            fingerprint:
+              type: string
+              description: Unique viewer fingerprint
+            expires_at:
+              type: string
+              format: date-time
+            valid_for_seconds:
+              type: integer
+              description: Validity duration in seconds
+        success:
+          type: boolean
+
+    ErrorResponse:
+      type: object
+      required:
+        - error
+        - success
+      properties:
+        error:
+          type: object
+          required:
+            - code
+            - message
+          properties:
+            code:
+              type: string
+              example: "NOT_FOUND"
+            message:
+              type: string
+              example: "Video not found"
+            details:
+              type: object
+              additionalProperties: true
+        success:
+          type: boolean
+          example: false
+
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT

@@ -1,0 +1,489 @@
+openapi: 3.0.3
+info:
+  title: Athena API - Video Imports
+  description: |
+    Endpoints for importing videos from external URLs.
+
+    ## Import Workflow
+
+    1. POST /api/v1/videos/imports/ - Create import job
+    2. GET /api/v1/videos/imports/{id} - Poll import status
+    3. Video becomes available when status is "completed"
+
+    ## Supported Sources
+
+    - Direct video URLs (MP4, WebM, etc.)
+    - YouTube (if configured)
+    - Vimeo (if configured)
+    - PeerTube instances
+
+    ## Security & Rate Limiting
+
+    - Strict rate limiting: 10 imports per minute
+    - SSRF protection: Private IPs blocked
+    - File size limits apply (same as direct uploads)
+    - Content validation and scanning
+
+    ## Privacy
+
+    Imported videos inherit privacy settings from import request.
+    Always respect source content licenses and permissions.
+  version: 1.0.0
+
+paths:
+  /api/v1/videos/imports/:
+    post:
+      tags:
+        - Imports
+      summary: Create video import job
+      description: |
+        Import a video from an external URL. The import runs asynchronously.
+
+        **SECURITY NOTE**: Rate limited to prevent SSRF abuse at scale.
+      operationId: createImport
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateImportRequest'
+            examples:
+              direct_url:
+                summary: Import from direct video URL
+                value:
+                  url: "https://example.com/videos/sample.mp4"
+                  title: "Imported Video"
+                  description: "A video imported from external source"
+                  privacy: "public"
+                  category: "education"
+              youtube:
+                summary: Import from YouTube (if enabled)
+                value:
+                  url: "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+                  title: "Imported from YouTube"
+                  privacy: "unlisted"
+      responses:
+        '201':
+          description: Import job created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImportResponse'
+              examples:
+                import_created:
+                  value:
+                    data:
+                      id: "import_550e8400-e29b-41d4-a716-446655440000"
+                      url: "https://example.com/videos/sample.mp4"
+                      status: "pending"
+                      video_id: null
+                      created_at: "2024-01-15T10:30:00Z"
+                      title: "Imported Video"
+                      privacy: "public"
+                    success: true
+        '400':
+          description: Invalid URL or request parameters
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                invalid_url:
+                  value:
+                    error:
+                      code: "INVALID_URL"
+                      message: "URL is not accessible or invalid"
+                    success: false
+                blocked_domain:
+                  value:
+                    error:
+                      code: "BLOCKED_DOMAIN"
+                      message: "Cannot import from private IP addresses (SSRF protection)"
+                    success: false
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '429':
+          description: Rate limit exceeded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                rate_limited:
+                  value:
+                    error:
+                      code: "RATE_LIMIT_EXCEEDED"
+                      message: "Too many import requests. Maximum 10 per minute."
+                    success: false
+      security:
+        - bearerAuth: []
+
+    get:
+      tags:
+        - Imports
+      summary: List user's import jobs
+      description: Get all import jobs created by the authenticated user
+      operationId: listImports
+      parameters:
+        - name: status
+          in: query
+          description: Filter by status
+          schema:
+            type: string
+            enum: [pending, downloading, processing, completed, failed, cancelled]
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+      responses:
+        '200':
+          description: List of import jobs
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImportListResponse'
+              examples:
+                imports_list:
+                  value:
+                    data:
+                      imports:
+                        - id: "import_550e8400-e29b-41d4-a716-446655440000"
+                          url: "https://example.com/video1.mp4"
+                          status: "completed"
+                          video_id: "video_660e8400-e29b-41d4-a716-446655440001"
+                          created_at: "2024-01-15T10:00:00Z"
+                          completed_at: "2024-01-15T10:05:30Z"
+                          title: "Imported Video 1"
+                        - id: "import_550e8400-e29b-41d4-a716-446655440002"
+                          url: "https://example.com/video2.mp4"
+                          status: "downloading"
+                          progress_percent: 45.5
+                          video_id: null
+                          created_at: "2024-01-15T10:15:00Z"
+                          title: "Importing Video 2"
+                      total: 12
+                      limit: 20
+                      offset: 0
+                    success: true
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+      security:
+        - bearerAuth: []
+
+  /api/v1/videos/imports/{id}:
+    get:
+      tags:
+        - Imports
+      summary: Get import job status
+      description: Get detailed status of a specific import job
+      operationId: getImport
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Import job ID
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Import job details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImportResponse'
+              examples:
+                import_downloading:
+                  value:
+                    data:
+                      id: "import_550e8400-e29b-41d4-a716-446655440000"
+                      url: "https://example.com/sample.mp4"
+                      status: "downloading"
+                      progress_percent: 67.5
+                      video_id: null
+                      created_at: "2024-01-15T10:30:00Z"
+                      title: "Downloading Video"
+                      bytes_downloaded: 350000000
+                      total_bytes: 518400000
+                    success: true
+                import_completed:
+                  value:
+                    data:
+                      id: "import_550e8400-e29b-41d4-a716-446655440000"
+                      url: "https://example.com/sample.mp4"
+                      status: "completed"
+                      progress_percent: 100.0
+                      video_id: "video_660e8400-e29b-41d4-a716-446655440001"
+                      created_at: "2024-01-15T10:30:00Z"
+                      completed_at: "2024-01-15T10:35:22Z"
+                      title: "Completed Import"
+                    success: true
+                import_failed:
+                  value:
+                    data:
+                      id: "import_550e8400-e29b-41d4-a716-446655440000"
+                      url: "https://example.com/bad-video.mp4"
+                      status: "failed"
+                      error_message: "Failed to download: HTTP 404 Not Found"
+                      video_id: null
+                      created_at: "2024-01-15T10:30:00Z"
+                      failed_at: "2024-01-15T10:31:05Z"
+                      title: "Failed Import"
+                    success: true
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden - not import owner
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Import job not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+      security:
+        - bearerAuth: []
+
+    delete:
+      tags:
+        - Imports
+      summary: Cancel import job
+      description: |
+        Cancel a pending or in-progress import job.
+        Completed imports cannot be cancelled.
+      operationId: cancelImport
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Import job ID
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Import cancelled successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      id:
+                        type: string
+                      status:
+                        type: string
+                        example: "cancelled"
+                      cancelled_at:
+                        type: string
+                        format: date-time
+                  success:
+                    type: boolean
+        '400':
+          description: Cannot cancel completed or already cancelled import
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden - not import owner
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Import job not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+      security:
+        - bearerAuth: []
+
+components:
+  schemas:
+    CreateImportRequest:
+      type: object
+      required:
+        - url
+        - title
+      properties:
+        url:
+          type: string
+          format: uri
+          description: URL of the video to import
+          example: "https://example.com/videos/sample.mp4"
+        title:
+          type: string
+          minLength: 1
+          maxLength: 255
+          description: Title for the imported video
+        description:
+          type: string
+          maxLength: 5000
+          description: Description for the imported video
+        privacy:
+          type: string
+          enum: [public, unlisted, private]
+          default: public
+          description: Privacy setting for imported video
+        category:
+          type: string
+          description: Video category
+        tags:
+          type: array
+          items:
+            type: string
+          description: Tags for the video
+          maxItems: 20
+        channel_id:
+          type: string
+          format: uuid
+          description: Optional channel to import to
+
+    ImportResponse:
+      type: object
+      properties:
+        data:
+          $ref: '#/components/schemas/Import'
+        success:
+          type: boolean
+
+    Import:
+      type: object
+      properties:
+        id:
+          type: string
+          description: Import job ID
+        url:
+          type: string
+          format: uri
+          description: Source URL
+        status:
+          type: string
+          enum: [pending, downloading, processing, completed, failed, cancelled]
+          description: Current import status
+        progress_percent:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 100
+          description: Download/processing progress
+        video_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: Created video ID (available when completed)
+        error_message:
+          type: string
+          description: Error message if status is failed
+        created_at:
+          type: string
+          format: date-time
+        started_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          format: date-time
+        failed_at:
+          type: string
+          format: date-time
+        cancelled_at:
+          type: string
+          format: date-time
+        title:
+          type: string
+          description: Title for the imported video
+        privacy:
+          type: string
+          enum: [public, unlisted, private]
+        bytes_downloaded:
+          type: integer
+          format: int64
+          description: Bytes downloaded so far
+        total_bytes:
+          type: integer
+          format: int64
+          description: Total file size (if known)
+
+    ImportListResponse:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            imports:
+              type: array
+              items:
+                $ref: '#/components/schemas/Import'
+            total:
+              type: integer
+              description: Total number of imports
+            limit:
+              type: integer
+            offset:
+              type: integer
+        success:
+          type: boolean
+
+    ErrorResponse:
+      type: object
+      required:
+        - error
+        - success
+      properties:
+        error:
+          type: object
+          required:
+            - code
+            - message
+          properties:
+            code:
+              type: string
+              example: "INVALID_URL"
+            message:
+              type: string
+              example: "The provided URL is invalid or inaccessible"
+            details:
+              type: object
+              additionalProperties: true
+        success:
+          type: boolean
+          example: false
+
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT

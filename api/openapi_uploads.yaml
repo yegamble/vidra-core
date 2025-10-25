@@ -1,0 +1,919 @@
+openapi: 3.0.3
+info:
+  title: Athena API - Video Uploads & Encoding
+  description: |
+    Endpoints for uploading videos and tracking encoding status.
+
+    ## Upload Workflow
+
+    **Chunked Upload (Recommended for large files):**
+    1. POST /api/v1/uploads/initiate - Create upload session
+    2. POST /api/v1/uploads/{sessionId}/chunks - Upload file chunks (repeat for each chunk)
+    3. POST /api/v1/uploads/{sessionId}/complete - Finalize upload and start encoding
+    4. GET /api/v1/encoding/status - Poll encoding status
+
+    **Resume Support:**
+    - GET /api/v1/uploads/{sessionId}/resume - Get uploaded chunks to resume interrupted upload
+
+    **Legacy Upload (Simple):**
+    - POST /api/v1/videos/upload - One-shot upload (deprecated, use chunked for files >100MB)
+
+    ## Security & Rate Limiting
+    - All upload endpoints require authentication
+    - Rate limiting applies (10 requests/minute for imports)
+    - File validation includes magic byte verification
+    - Maximum file size: 10GB (chunked), 500MB (legacy)
+  version: 1.0.0
+
+paths:
+  /api/v1/uploads/initiate:
+    post:
+      tags:
+        - Uploads
+      summary: Initiate chunked upload session
+      description: |
+        Create a new upload session for chunked file upload. Returns a session ID
+        that must be used for subsequent chunk uploads.
+
+        The session expires after 24 hours of inactivity.
+      operationId: initiateUpload
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InitiateUploadRequest'
+            examples:
+              basic:
+                summary: Basic video upload
+                value:
+                  filename: "my-video.mp4"
+                  file_size: 524288000
+                  chunk_size: 5242880
+                  video_metadata:
+                    title: "My Video"
+                    description: "A sample video"
+                    privacy: "public"
+      responses:
+        '201':
+          description: Upload session created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UploadSessionResponse'
+              examples:
+                session_created:
+                  value:
+                    data:
+                      session_id: "upload_sess_1234567890abcdef"
+                      video_id: "550e8400-e29b-41d4-a716-446655440000"
+                      expires_at: "2024-01-16T12:00:00Z"
+                      chunk_size: 5242880
+                      total_chunks: 100
+                    success: true
+        '400':
+          description: Invalid request parameters
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized - authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '413':
+          description: File too large (exceeds 10GB limit)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+      security:
+        - bearerAuth: []
+
+  /api/v1/uploads/{sessionId}/chunks:
+    post:
+      tags:
+        - Uploads
+      summary: Upload a file chunk
+      description: |
+        Upload a single chunk of the file. Chunks must be uploaded in order.
+        Each chunk must match the chunk_size specified during initiation (except the last chunk).
+
+        Supports resumable uploads - if a chunk fails, you can retry it.
+      operationId: uploadChunk
+      parameters:
+        - name: sessionId
+          in: path
+          description: Upload session ID from initiation
+          required: true
+          schema:
+            type: string
+            example: "upload_sess_1234567890abcdef"
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - chunk
+                - chunk_index
+              properties:
+                chunk:
+                  type: string
+                  format: binary
+                  description: Binary chunk data
+                chunk_index:
+                  type: integer
+                  description: Zero-based chunk index
+                  example: 0
+                checksum:
+                  type: string
+                  description: Optional MD5 checksum for verification
+                  example: "5d41402abc4b2a76b9719d911017c592"
+      responses:
+        '200':
+          description: Chunk uploaded successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChunkUploadResponse'
+              examples:
+                chunk_uploaded:
+                  value:
+                    data:
+                      session_id: "upload_sess_1234567890abcdef"
+                      chunk_index: 0
+                      received: true
+                      total_received: 1
+                      total_expected: 100
+                      progress_percent: 1.0
+                    success: true
+        '400':
+          description: Invalid chunk or index
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Upload session not found or expired
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Chunk already uploaded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '413':
+          description: Chunk size exceeds limit
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+      security:
+        - bearerAuth: []
+
+  /api/v1/uploads/{sessionId}/complete:
+    post:
+      tags:
+        - Uploads
+      summary: Complete chunked upload
+      description: |
+        Finalize the upload session after all chunks have been uploaded.
+        The server will merge chunks, validate the file, and enqueue for encoding.
+
+        This triggers async video processing (transcoding, thumbnail generation, etc.).
+      operationId: completeUpload
+      parameters:
+        - name: sessionId
+          in: path
+          description: Upload session ID
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                final_checksum:
+                  type: string
+                  description: Optional MD5 checksum of complete file for verification
+                  example: "d41d8cd98f00b204e9800998ecf8427e"
+      responses:
+        '200':
+          description: Upload completed, encoding started
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CompleteUploadResponse'
+              examples:
+                upload_completed:
+                  value:
+                    data:
+                      video_id: "550e8400-e29b-41d4-a716-446655440000"
+                      encoding_job_id: "enc_job_1234567890"
+                      status: "processing"
+                      message: "Upload complete. Video is being processed."
+                    success: true
+        '400':
+          description: Upload incomplete or invalid (missing chunks)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                missing_chunks:
+                  value:
+                    error:
+                      code: "INCOMPLETE_UPLOAD"
+                      message: "Missing chunks: [45, 67, 89]"
+                      details:
+                        missing_chunks: [45, 67, 89]
+                    success: false
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Upload session not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+      security:
+        - bearerAuth: []
+
+  /api/v1/uploads/{sessionId}/status:
+    get:
+      tags:
+        - Uploads
+      summary: Get upload session status
+      description: Check the current status of an upload session, including which chunks have been received.
+      operationId: getUploadStatus
+      parameters:
+        - name: sessionId
+          in: path
+          description: Upload session ID
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Upload session status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UploadStatusResponse'
+              examples:
+                in_progress:
+                  value:
+                    data:
+                      session_id: "upload_sess_1234567890abcdef"
+                      video_id: "550e8400-e29b-41d4-a716-446655440000"
+                      total_chunks: 100
+                      received_chunks: 45
+                      progress_percent: 45.0
+                      expires_at: "2024-01-16T12:00:00Z"
+                      status: "uploading"
+                    success: true
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Upload session not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+      security:
+        - bearerAuth: []
+
+  /api/v1/uploads/{sessionId}/resume:
+    get:
+      tags:
+        - Uploads
+      summary: Get resume information
+      description: |
+        Get information needed to resume an interrupted upload.
+        Returns list of successfully uploaded chunk indexes.
+      operationId: resumeUpload
+      parameters:
+        - name: sessionId
+          in: path
+          description: Upload session ID
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Resume information
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResumeUploadResponse'
+              examples:
+                resume_info:
+                  value:
+                    data:
+                      session_id: "upload_sess_1234567890abcdef"
+                      total_chunks: 100
+                      uploaded_chunks: [0, 1, 2, 3, 5, 6, 7]
+                      missing_chunks: [4, 8, 9, 10]
+                      next_chunk_index: 4
+                      progress_percent: 7.0
+                    success: true
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Upload session not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+      security:
+        - bearerAuth: []
+
+  /api/v1/videos/upload:
+    post:
+      tags:
+        - Uploads
+      summary: Legacy one-shot video upload
+      description: |
+        **DEPRECATED:** Use chunked upload for better reliability and resume support.
+
+        Upload a complete video file in a single request.
+        Recommended only for files under 100MB.
+
+        This endpoint is maintained for backward compatibility with older clients.
+      operationId: legacyVideoUpload
+      deprecated: true
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - file
+                - title
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: Video file (max 500MB)
+                title:
+                  type: string
+                  minLength: 1
+                  maxLength: 255
+                  description: Video title
+                  example: "My Video"
+                description:
+                  type: string
+                  maxLength: 5000
+                  description: Video description
+                  example: "A sample video description"
+                privacy:
+                  type: string
+                  enum: [public, unlisted, private]
+                  default: public
+                  description: Video privacy setting
+                category:
+                  type: string
+                  description: Video category
+                  example: "education"
+                tags:
+                  type: array
+                  items:
+                    type: string
+                  description: Comma-separated tags
+                  example: ["tutorial", "programming"]
+      responses:
+        '201':
+          description: Video uploaded successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/VideoUploadResponse'
+                  success:
+                    type: boolean
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '413':
+          description: File too large
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+      security:
+        - bearerAuth: []
+
+  /api/v1/videos/{id}/upload:
+    post:
+      tags:
+        - Uploads
+      summary: Legacy direct video file upload to existing video
+      description: |
+        Upload video file to a previously created video entity.
+        Used for backward compatibility with tests.
+      operationId: videoUploadChunk
+      deprecated: true
+      parameters:
+        - name: id
+          in: path
+          description: Video UUID
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - file
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: Video file chunk or complete file
+      responses:
+        '200':
+          description: Upload successful
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Video not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+      security:
+        - bearerAuth: []
+
+  /api/v1/videos/{id}/complete:
+    post:
+      tags:
+        - Uploads
+      summary: Legacy complete upload for existing video
+      description: Finalize upload for a video entity (backward compatibility)
+      operationId: videoCompleteUpload
+      deprecated: true
+      parameters:
+        - name: id
+          in: path
+          description: Video UUID
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Upload completed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Video not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+      security:
+        - bearerAuth: []
+
+  /api/v1/encoding/status:
+    get:
+      tags:
+        - Encoding
+      summary: Get encoding job status
+      description: |
+        Check the status of video encoding/transcoding jobs.
+
+        Supports filtering by video_id, user_id, or job_id.
+        Status is cached in Redis for performance.
+      operationId: getEncodingStatus
+      parameters:
+        - name: video_id
+          in: query
+          description: Filter by video UUID
+          schema:
+            type: string
+            format: uuid
+        - name: user_id
+          in: query
+          description: Filter by user ID (admin only)
+          schema:
+            type: string
+        - name: job_id
+          in: query
+          description: Specific encoding job ID
+          schema:
+            type: string
+        - name: status
+          in: query
+          description: Filter by status
+          schema:
+            type: string
+            enum: [pending, processing, completed, failed]
+      responses:
+        '200':
+          description: Encoding status information
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EncodingStatusResponse'
+              examples:
+                processing:
+                  value:
+                    data:
+                      jobs:
+                        - job_id: "enc_job_1234567890"
+                          video_id: "550e8400-e29b-41d4-a716-446655440000"
+                          status: "processing"
+                          progress_percent: 45.5
+                          current_variant: "720p"
+                          variants_completed: ["360p", "480p"]
+                          variants_remaining: ["720p", "1080p"]
+                          started_at: "2024-01-15T10:00:00Z"
+                          estimated_completion: "2024-01-15T10:15:00Z"
+                      count: 1
+                    success: true
+                completed:
+                  value:
+                    data:
+                      jobs:
+                        - job_id: "enc_job_1234567890"
+                          video_id: "550e8400-e29b-41d4-a716-446655440000"
+                          status: "completed"
+                          progress_percent: 100.0
+                          variants_completed: ["360p", "480p", "720p", "1080p"]
+                          started_at: "2024-01-15T10:00:00Z"
+                          completed_at: "2024-01-15T10:12:34Z"
+                          duration_seconds: 754
+                      count: 1
+                    success: true
+        '400':
+          description: Invalid query parameters
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+      security:
+        - {} # Public for video owners
+        - bearerAuth: []
+
+components:
+  schemas:
+    InitiateUploadRequest:
+      type: object
+      required:
+        - filename
+        - file_size
+      properties:
+        filename:
+          type: string
+          description: Original filename
+          example: "my-video.mp4"
+        file_size:
+          type: integer
+          format: int64
+          description: Total file size in bytes
+          example: 524288000
+          minimum: 1
+          maximum: 10737418240
+        chunk_size:
+          type: integer
+          format: int32
+          description: Size of each chunk in bytes (default 5MB)
+          example: 5242880
+          default: 5242880
+        video_metadata:
+          type: object
+          description: Optional video metadata
+          properties:
+            title:
+              type: string
+              maxLength: 255
+            description:
+              type: string
+              maxLength: 5000
+            privacy:
+              type: string
+              enum: [public, unlisted, private]
+            category:
+              type: string
+
+    UploadSessionResponse:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            session_id:
+              type: string
+              description: Unique upload session identifier
+            video_id:
+              type: string
+              format: uuid
+              description: Created video UUID
+            expires_at:
+              type: string
+              format: date-time
+              description: Session expiration time
+            chunk_size:
+              type: integer
+              description: Chunk size in bytes
+            total_chunks:
+              type: integer
+              description: Total number of chunks expected
+        success:
+          type: boolean
+
+    ChunkUploadResponse:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            session_id:
+              type: string
+            chunk_index:
+              type: integer
+            received:
+              type: boolean
+            total_received:
+              type: integer
+              description: Number of chunks received so far
+            total_expected:
+              type: integer
+              description: Total chunks expected
+            progress_percent:
+              type: number
+              format: float
+              description: Upload progress percentage
+        success:
+          type: boolean
+
+    CompleteUploadResponse:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            video_id:
+              type: string
+              format: uuid
+            encoding_job_id:
+              type: string
+              description: Encoding job identifier
+            status:
+              type: string
+              enum: [processing, queued]
+            message:
+              type: string
+        success:
+          type: boolean
+
+    UploadStatusResponse:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            session_id:
+              type: string
+            video_id:
+              type: string
+              format: uuid
+            total_chunks:
+              type: integer
+            received_chunks:
+              type: integer
+            progress_percent:
+              type: number
+              format: float
+            expires_at:
+              type: string
+              format: date-time
+            status:
+              type: string
+              enum: [uploading, merging, completed, expired]
+        success:
+          type: boolean
+
+    ResumeUploadResponse:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            session_id:
+              type: string
+            total_chunks:
+              type: integer
+            uploaded_chunks:
+              type: array
+              items:
+                type: integer
+              description: List of successfully uploaded chunk indexes
+            missing_chunks:
+              type: array
+              items:
+                type: integer
+              description: List of missing chunk indexes
+            next_chunk_index:
+              type: integer
+              description: Next chunk index to upload
+            progress_percent:
+              type: number
+              format: float
+        success:
+          type: boolean
+
+    VideoUploadResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        description:
+          type: string
+        privacy:
+          type: string
+        status:
+          type: string
+          enum: [processing, queued]
+        created_at:
+          type: string
+          format: date-time
+
+    EncodingStatusResponse:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            jobs:
+              type: array
+              items:
+                $ref: '#/components/schemas/EncodingJob'
+            count:
+              type: integer
+        success:
+          type: boolean
+
+    EncodingJob:
+      type: object
+      properties:
+        job_id:
+          type: string
+        video_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [pending, processing, completed, failed]
+        progress_percent:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 100
+        current_variant:
+          type: string
+          description: Currently encoding variant
+          example: "720p"
+        variants_completed:
+          type: array
+          items:
+            type: string
+          description: List of completed variants
+        variants_remaining:
+          type: array
+          items:
+            type: string
+          description: List of pending variants
+        error_message:
+          type: string
+          description: Error message if status is failed
+        started_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          format: date-time
+        estimated_completion:
+          type: string
+          format: date-time
+        duration_seconds:
+          type: integer
+          description: Processing duration in seconds
+
+    ErrorResponse:
+      type: object
+      required:
+        - error
+        - success
+      properties:
+        error:
+          type: object
+          required:
+            - code
+            - message
+          properties:
+            code:
+              type: string
+              example: "INVALID_REQUEST"
+            message:
+              type: string
+              example: "Invalid upload session"
+            details:
+              type: object
+              additionalProperties: true
+        success:
+          type: boolean
+          example: false
+
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
