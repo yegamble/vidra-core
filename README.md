@@ -80,6 +80,15 @@ make lint           # Run linters
 
 ## Documentation
 
+- [OpenAPI Specifications](api/README.md) - Comprehensive OpenAPI 3.0 API documentation (~85% coverage)
+  - [Uploads & Encoding](api/openapi_uploads.yaml) - Chunked uploads, resume, encoding status
+  - [Analytics & Views](api/openapi_analytics.yaml) - View tracking, analytics, trending
+  - [Live Streaming](api/openapi_livestreaming.yaml) - RTMP ingest, HLS delivery
+  - [Video Imports](api/openapi_imports.yaml) - External URL imports
+  - [Comments](api/openapi_comments.yaml), [Channels](api/openapi_channels.yaml), [Captions](api/openapi_captions.yaml)
+  - [Ratings & Playlists](api/openapi_ratings_playlists.yaml), [Notifications](docs/openapi_notifications.yaml)
+  - [Chat](api/openapi_chat.yaml), [Moderation](api/openapi_moderation.yaml), [Federation](api/openapi_federation.yaml)
+  - [Plugins](api/openapi_plugins.yaml), [Redundancy](api/openapi_redundancy.yaml)
 - [Architecture Overview](docs/architecture.md) - Clean architecture layers, data flow, and design patterns
 - [API Examples](docs/API_EXAMPLES.md) - API usage examples and patterns
 - [Deployment Guide](docs/deployment/README.md) - Production deployment instructions
