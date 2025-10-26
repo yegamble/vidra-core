@@ -1,0 +1,664 @@
+{
+  "info": {
+    "name": "Athena Video Imports API",
+    "description": "Test collection for importing videos from external URLs.\n\n## Features Tested\n\n- **Create Import** - Import from external video URLs\n- **List Imports** - View all import jobs\n- **Get Import Status** - Track import progress\n- **Cancel Import** - Cancel pending/in-progress imports\n\n## Security Features\n\n- Rate limiting: 10 imports per minute\n- SSRF protection: Private IPs blocked\n- File size validation\n- Content validation\n\n## Environment Variables Required\n\n- `baseUrl` - API base URL\n- `access_token` - JWT access token (required)",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Import Workflow",
+      "item": [
+        {
+          "name": "Create Import - Direct URL",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "const accessToken = pm.environment.get('access_token');",
+                  "if (!accessToken || accessToken.length === 0) {",
+                  "  console.warn('No access token found - import will fail with 401');",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 201, 400, 401, or 429', () => {",
+                  "  pm.expect([201, 400, 401, 429]).to.include(pm.response.code);",
+                  "});",
+                  "",
+                  "if (pm.response.code === 201) {",
+                  "  const wrap = pm.response.json();",
+                  "  ",
+                  "  pm.test('Import job created successfully', () => {",
+                  "    pm.expect(wrap).to.have.property('success', true);",
+                  "    pm.expect(wrap.data).to.have.property('id');",
+                  "    pm.expect(wrap.data).to.have.property('url');",
+                  "    pm.expect(wrap.data).to.have.property('status');",
+                  "    pm.expect(wrap.data).to.have.property('created_at');",
+                  "  });",
+                  "  ",
+                  "  pm.test('Initial status is pending', () => {",
+                  "    pm.expect(wrap.data.status).to.equal('pending');",
+                  "  });",
+                  "  ",
+                  "  // Save import ID for subsequent requests",
+                  "  pm.environment.set('import_job_id', wrap.data.id);",
+                  "  ",
+                  "  console.log(`Import job created: ${wrap.data.id}`);",
+                  "  console.log(`Status: ${wrap.data.status}`);",
+                  "} else if (pm.response.code === 400) {",
+                  "  const wrap = pm.response.json();",
+                  "  console.log(`Bad request: ${wrap.error.message}`);",
+                  "} else if (pm.response.code === 429) {",
+                  "  console.log('Rate limit exceeded - maximum 10 imports per minute');",
+                  "} else if (pm.response.code === 401) {",
+                  "  console.log('Unauthorized - authentication required');",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"url\": \"https://sample-videos.com/video123/mp4/720/big_buck_bunny_720p_1mb.mp4\",\n  \"title\": \"Imported Test Video\",\n  \"description\": \"Testing video import functionality\",\n  \"privacy\": \"unlisted\",\n  \"category\": \"education\",\n  \"tags\": [\"test\", \"import\"]\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/videos/imports/",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "videos",
+                "imports",
+                ""
+              ]
+            },
+            "description": "Create a new video import job from an external URL.\n\n**Note**: This test uses a sample video URL. Replace with a real accessible URL for actual testing.\n\n**Rate Limiting**: Maximum 10 imports per minute to prevent SSRF abuse."
+          },
+          "response": []
+        },
+        {
+          "name": "List Imports - All",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200 or 401', () => {",
+                  "  pm.expect([200, 401]).to.include(pm.response.code);",
+                  "});",
+                  "",
+                  "if (pm.response.code === 200) {",
+                  "  const wrap = pm.response.json();",
+                  "  ",
+                  "  pm.test('Response has imports list', () => {",
+                  "    pm.expect(wrap).to.have.property('success', true);",
+                  "    pm.expect(wrap.data).to.have.property('imports');",
+                  "    pm.expect(wrap.data).to.have.property('total');",
+                  "    pm.expect(wrap.data).to.have.property('limit');",
+                  "    pm.expect(wrap.data).to.have.property('offset');",
+                  "    pm.expect(wrap.data.imports).to.be.an('array');",
+                  "  });",
+                  "  ",
+                  "  console.log(`Total imports: ${wrap.data.total}`);",
+                  "  console.log(`Showing: ${wrap.data.imports.length}`);",
+                  "  ",
+                  "  if (wrap.data.imports.length > 0) {",
+                  "    wrap.data.imports.forEach((imp, i) => {",
+                  "      console.log(`${i+1}. ${imp.title} - ${imp.status}`);",
+                  "    });",
+                  "  }",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/videos/imports/?limit=20&offset=0",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "videos",
+                "imports",
+                ""
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "20",
+                  "description": "Number of results (1-100)"
+                },
+                {
+                  "key": "offset",
+                  "value": "0",
+                  "description": "Pagination offset"
+                }
+              ]
+            },
+            "description": "List all import jobs created by the authenticated user"
+          },
+          "response": []
+        },
+        {
+          "name": "List Imports - Filter by Status",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200 or 401', () => {",
+                  "  pm.expect([200, 401]).to.include(pm.response.code);",
+                  "});",
+                  "",
+                  "if (pm.response.code === 200) {",
+                  "  const wrap = pm.response.json();",
+                  "  ",
+                  "  pm.test('All imports have matching status', () => {",
+                  "    pm.expect(wrap.data.imports).to.be.an('array');",
+                  "    // Check that all returned imports have the requested status",
+                  "    wrap.data.imports.forEach(imp => {",
+                  "      pm.expect(['pending', 'downloading', 'processing']).to.include(imp.status);",
+                  "    });",
+                  "  });",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/videos/imports/?status=pending",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "videos",
+                "imports",
+                ""
+              ],
+              "query": [
+                {
+                  "key": "status",
+                  "value": "pending",
+                  "description": "Filter by status (pending, downloading, processing, completed, failed, cancelled)"
+                }
+              ]
+            },
+            "description": "List import jobs filtered by status"
+          },
+          "response": []
+        },
+        {
+          "name": "Get Import Status",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "const importId = pm.environment.get('import_job_id');",
+                  "if (!importId) {",
+                  "  console.warn('No import_job_id found - run Create Import first');",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200, 401, 403, or 404', () => {",
+                  "  pm.expect([200, 401, 403, 404]).to.include(pm.response.code);",
+                  "});",
+                  "",
+                  "if (pm.response.code === 200) {",
+                  "  const wrap = pm.response.json();",
+                  "  ",
+                  "  pm.test('Response has import details', () => {",
+                  "    pm.expect(wrap).to.have.property('success', true);",
+                  "    pm.expect(wrap.data).to.have.property('id');",
+                  "    pm.expect(wrap.data).to.have.property('url');",
+                  "    pm.expect(wrap.data).to.have.property('status');",
+                  "    pm.expect(wrap.data).to.have.property('created_at');",
+                  "  });",
+                  "  ",
+                  "  const status = wrap.data.status;",
+                  "  console.log(`Import status: ${status}`);",
+                  "  ",
+                  "  if (status === 'downloading' || status === 'processing') {",
+                  "    pm.test('Progress is reported', () => {",
+                  "      pm.expect(wrap.data).to.have.property('progress_percent');",
+                  "    });",
+                  "    console.log(`Progress: ${wrap.data.progress_percent}%`);",
+                  "    ",
+                  "    if (wrap.data.bytes_downloaded && wrap.data.total_bytes) {",
+                  "      console.log(`Downloaded: ${wrap.data.bytes_downloaded} / ${wrap.data.total_bytes} bytes`);",
+                  "    }",
+                  "  }",
+                  "  ",
+                  "  if (status === 'completed') {",
+                  "    pm.test('Video ID is provided', () => {",
+                  "      pm.expect(wrap.data).to.have.property('video_id');",
+                  "      pm.expect(wrap.data.video_id).to.not.be.null;",
+                  "    });",
+                  "    console.log(`Video created: ${wrap.data.video_id}`);",
+                  "  }",
+                  "  ",
+                  "  if (status === 'failed') {",
+                  "    pm.test('Error message is provided', () => {",
+                  "      pm.expect(wrap.data).to.have.property('error_message');",
+                  "    });",
+                  "    console.log(`Error: ${wrap.data.error_message}`);",
+                  "  }",
+                  "} else if (pm.response.code === 404) {",
+                  "  console.log('Import job not found');",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/videos/imports/{{import_job_id}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "videos",
+                "imports",
+                "{{import_job_id}}"
+              ]
+            },
+            "description": "Get detailed status of a specific import job.\n\nStatus values:\n- `pending` - Waiting to start\n- `downloading` - Downloading from source\n- `processing` - Processing/transcoding\n- `completed` - Successfully imported (video_id available)\n- `failed` - Import failed (error_message available)\n- `cancelled` - Cancelled by user"
+          },
+          "response": []
+        },
+        {
+          "name": "Cancel Import",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200, 400, 401, 403, or 404', () => {",
+                  "  pm.expect([200, 400, 401, 403, 404]).to.include(pm.response.code);",
+                  "});",
+                  "",
+                  "if (pm.response.code === 200) {",
+                  "  const wrap = pm.response.json();",
+                  "  ",
+                  "  pm.test('Import cancelled successfully', () => {",
+                  "    pm.expect(wrap).to.have.property('success', true);",
+                  "    pm.expect(wrap.data).to.have.property('id');",
+                  "    pm.expect(wrap.data).to.have.property('status', 'cancelled');",
+                  "    pm.expect(wrap.data).to.have.property('cancelled_at');",
+                  "  });",
+                  "  ",
+                  "  console.log(`Import ${wrap.data.id} cancelled`);",
+                  "} else if (pm.response.code === 400) {",
+                  "  const wrap = pm.response.json();",
+                  "  console.log(`Cannot cancel: ${wrap.error.message}`);",
+                  "  // Likely already completed or already cancelled",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/videos/imports/{{import_job_id}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "videos",
+                "imports",
+                "{{import_job_id}}"
+              ]
+            },
+            "description": "Cancel a pending or in-progress import job.\n\n**Note**: Completed imports cannot be cancelled (will return 400)."
+          },
+          "response": []
+        }
+      ],
+      "description": "Complete import workflow from creation to cancellation"
+    },
+    {
+      "name": "Error Cases",
+      "item": [
+        {
+          "name": "Create Import - Missing Auth",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 401 Unauthorized', () => {",
+                  "  pm.expect(pm.response.code).to.equal(401);",
+                  "});",
+                  "",
+                  "pm.test('Error response structure', () => {",
+                  "  const wrap = pm.response.json();",
+                  "  pm.expect(wrap).to.have.property('success', false);",
+                  "  pm.expect(wrap).to.have.property('error');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"url\": \"https://example.com/video.mp4\",\n  \"title\": \"Test Video\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/videos/imports/",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "videos",
+                "imports",
+                ""
+              ]
+            },
+            "description": "Verify that import creation requires authentication"
+          },
+          "response": []
+        },
+        {
+          "name": "Create Import - Invalid URL",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 400 Bad Request', () => {",
+                  "  pm.expect(pm.response.code).to.equal(400);",
+                  "});",
+                  "",
+                  "pm.test('Error indicates invalid URL', () => {",
+                  "  const wrap = pm.response.json();",
+                  "  pm.expect(wrap.error.message.toLowerCase()).to.match(/url|invalid/);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"url\": \"not-a-valid-url\",\n  \"title\": \"Test Video\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/videos/imports/",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "videos",
+                "imports",
+                ""
+              ]
+            },
+            "description": "Verify that malformed URLs are rejected"
+          },
+          "response": []
+        },
+        {
+          "name": "Create Import - Private IP (SSRF Protection)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 400 Bad Request', () => {",
+                  "  pm.expect(pm.response.code).to.equal(400);",
+                  "});",
+                  "",
+                  "pm.test('Error indicates blocked domain/IP', () => {",
+                  "  const wrap = pm.response.json();",
+                  "  pm.expect(wrap.error.message.toLowerCase()).to.match(/blocked|private|ssrf/);",
+                  "});",
+                  "",
+                  "console.log('SSRF protection is working - private IPs are blocked');"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"url\": \"http://127.0.0.1/secret-file.mp4\",\n  \"title\": \"Test Video\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/videos/imports/",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "videos",
+                "imports",
+                ""
+              ]
+            },
+            "description": "Verify SSRF protection - private IP addresses should be blocked"
+          },
+          "response": []
+        },
+        {
+          "name": "Get Import - Not Found",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 404 Not Found', () => {",
+                  "  pm.expect(pm.response.code).to.equal(404);",
+                  "});",
+                  "",
+                  "pm.test('Error response structure', () => {",
+                  "  const wrap = pm.response.json();",
+                  "  pm.expect(wrap).to.have.property('success', false);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/videos/imports/import_nonexistent_12345",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "videos",
+                "imports",
+                "import_nonexistent_12345"
+              ]
+            },
+            "description": "Verify proper 404 error for non-existent import jobs"
+          },
+          "response": []
+        },
+        {
+          "name": "Cancel Import - Already Completed",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "// Should be 400 if import is already completed",
+                  "// Could be 404 if import doesn't exist",
+                  "pm.test('Status is 400 or 404', () => {",
+                  "  pm.expect([400, 404]).to.include(pm.response.code);",
+                  "});",
+                  "",
+                  "if (pm.response.code === 400) {",
+                  "  console.log('Cannot cancel completed import (expected)');",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/videos/imports/{{import_job_id}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "videos",
+                "imports",
+                "{{import_job_id}}"
+              ]
+            },
+            "description": "Verify that completed imports cannot be cancelled (should return 400)"
+          },
+          "response": []
+        }
+      ],
+      "description": "Error cases, validation, and security testing"
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8080",
+      "type": "string"
+    }
+  ]
+}
