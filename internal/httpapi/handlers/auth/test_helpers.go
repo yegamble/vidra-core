@@ -10,6 +10,7 @@ import (
 	"athena/internal/domain"
 	"athena/internal/httpapi/shared"
 	"athena/internal/middleware"
+	"athena/internal/usecase"
 )
 
 // Response is an alias for shared.Response for tests
@@ -35,11 +36,23 @@ func NewServer(
 ) *AuthHandlers {
 	// This is a stub for test compatibility
 	// Tests should be refactored to use NewAuthHandlers directly
-	return &AuthHandlers{
+	h := &AuthHandlers{
 		jwtSecret:      jwtSecret,
 		ipfsAPI:        ipfsAPI,
 		ipfsClusterAPI: ipfsClusterAPI,
 	}
+
+	// Set the userRepo if provided
+	if ur, ok := userRepo.(usecase.UserRepository); ok && ur != nil {
+		h.userRepo = ur
+	}
+
+	// Set the authRepo if provided
+	if ar, ok := authRepo.(usecase.AuthRepository); ok && ar != nil {
+		h.authRepo = ar
+	}
+
+	return h
 }
 
 // authResp is a common response type for auth endpoints
