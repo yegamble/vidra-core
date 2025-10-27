@@ -34,7 +34,7 @@ func (h *NotificationHandlers) GetNotifications(w http.ResponseWriter, r *http.R
 
 	userUUID, err := uuid.Parse(userID)
 	if err != nil {
-		shared.WriteError(w, http.StatusBadRequest, fmt.Errorf("Invalid user ID: %w", err))
+		shared.WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid user ID: %w", err))
 		return
 	}
 
@@ -60,7 +60,7 @@ func (h *NotificationHandlers) GetNotifications(w http.ResponseWriter, r *http.R
 	// Get notifications
 	notifications, err := h.notificationService.GetUserNotifications(r.Context(), userUUID, filter)
 	if err != nil {
-		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("Failed to retrieve notifications: %w", err))
+		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to retrieve notifications: %w", err))
 		return
 	}
 
@@ -89,7 +89,7 @@ func (h *NotificationHandlers) GetUnreadCount(w http.ResponseWriter, r *http.Req
 
 	userUUID, err := uuid.Parse(userID)
 	if err != nil {
-		shared.WriteError(w, http.StatusBadRequest, fmt.Errorf("Invalid user ID: %w", err))
+		shared.WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid user ID: %w", err))
 		return
 	}
 
@@ -112,7 +112,7 @@ func (h *NotificationHandlers) GetNotificationStats(w http.ResponseWriter, r *ht
 
 	userUUID, err := uuid.Parse(userID)
 	if err != nil {
-		shared.WriteError(w, http.StatusBadRequest, fmt.Errorf("Invalid user ID: %w", err))
+		shared.WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid user ID: %w", err))
 		return
 	}
 
@@ -135,7 +135,7 @@ func (h *NotificationHandlers) MarkAsRead(w http.ResponseWriter, r *http.Request
 
 	userUUID, err := uuid.Parse(userID)
 	if err != nil {
-		shared.WriteError(w, http.StatusBadRequest, fmt.Errorf("Invalid user ID: %w", err))
+		shared.WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid user ID: %w", err))
 		return
 	}
 
@@ -152,7 +152,7 @@ func (h *NotificationHandlers) MarkAsRead(w http.ResponseWriter, r *http.Request
 		if err == domain.ErrNotificationNotFound {
 			shared.WriteError(w, http.StatusNotFound, fmt.Errorf("Notification not found: %w", err))
 		} else {
-			shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("Failed to mark notification as read: %w", err))
+			shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to mark notification as read: %w", err))
 		}
 		return
 	}
@@ -170,7 +170,7 @@ func (h *NotificationHandlers) MarkAllAsRead(w http.ResponseWriter, r *http.Requ
 
 	userUUID, err := uuid.Parse(userID)
 	if err != nil {
-		shared.WriteError(w, http.StatusBadRequest, fmt.Errorf("Invalid user ID: %w", err))
+		shared.WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid user ID: %w", err))
 		return
 	}
 
@@ -193,7 +193,7 @@ func (h *NotificationHandlers) DeleteNotification(w http.ResponseWriter, r *http
 
 	userUUID, err := uuid.Parse(userID)
 	if err != nil {
-		shared.WriteError(w, http.StatusBadRequest, fmt.Errorf("Invalid user ID: %w", err))
+		shared.WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid user ID: %w", err))
 		return
 	}
 

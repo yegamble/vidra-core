@@ -441,26 +441,26 @@ func (s *Server) generateJWTWithRole(userID string, role string, duration time.D
 }
 
 // generateJWTWithRoleAndScope creates a signed JWT including role and scope claims
-func (s *Server) generateJWTWithRoleAndScope(userID, role, scope string, duration time.Duration) string {
-	now := time.Now()
-	claims := jwt.MapClaims{
-		"sub": userID,
-		"iat": now.Unix(),
-		"exp": now.Add(duration).Unix(),
-	}
-	if role != "" {
-		claims["role"] = role
-	}
-	if scope != "" {
-		claims["scope"] = scope
-	}
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	sgn, err := token.SignedString([]byte(s.jwtSecret))
-	if err != nil {
-		return ""
-	}
-	return sgn
-}
+// func (s *Server) generateJWTWithRoleAndScope(userID, role, scope string, duration time.Duration) string {
+// 	now := time.Now()
+// 	claims := jwt.MapClaims{
+// 		"sub": userID,
+// 		"iat": now.Unix(),
+// 		"exp": now.Add(duration).Unix(),
+// 	}
+// 	if role != "" {
+// 		claims["role"] = role
+// 	}
+// 	if scope != "" {
+// 		claims["scope"] = scope
+// 	}
+// 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+// 	sgn, err := token.SignedString([]byte(s.jwtSecret))
+// 	if err != nil {
+// 		return ""
+// 	}
+// 	return sgn
+// }
 
 // nullStringToPtr converts sql.NullString to *string for JSON marshaling
 func nullStringToPtr(ns sql.NullString) *string {

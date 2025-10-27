@@ -528,7 +528,7 @@ func (h *PluginHandler) UploadPlugin(w http.ResponseWriter, r *http.Request) {
 	// Extract and validate manifest
 	manifest, err := h.extractManifest(fileBytes)
 	if err != nil {
-		shared.WriteError(w, http.StatusBadRequest, fmt.Errorf("Invalid plugin manifest: %v", err))
+		shared.WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid plugin manifest: %v", err))
 		return
 	}
 
@@ -539,7 +539,7 @@ func (h *PluginHandler) UploadPlugin(w http.ResponseWriter, r *http.Request) {
 		defer func() { _ = signatureFile.Close() }()
 		signatureBytes, err = io.ReadAll(signatureFile)
 		if err != nil {
-			shared.WriteError(w, http.StatusBadRequest, fmt.Errorf("Failed to read signature file: %w", err))
+			shared.WriteError(w, http.StatusBadRequest, fmt.Errorf("failed to read signature file: %w", err))
 			return
 		}
 	}
@@ -549,7 +549,7 @@ func (h *PluginHandler) UploadPlugin(w http.ResponseWriter, r *http.Request) {
 		if len(signatureBytes) > 0 {
 			// Signature provided - verify it
 			if err := h.signatureVerifier.VerifySignature(fileBytes, signatureBytes, manifest.Author); err != nil {
-				shared.WriteError(w, http.StatusUnauthorized, fmt.Errorf("Invalid signature: %v", err))
+				shared.WriteError(w, http.StatusUnauthorized, fmt.Errorf("invalid signature: %v", err))
 				return
 			}
 		} else if h.requireSignatures {
@@ -558,28 +558,28 @@ func (h *PluginHandler) UploadPlugin(w http.ResponseWriter, r *http.Request) {
 			return
 		} else if !h.signatureVerifier.IsAuthorTrusted(manifest.Author) {
 			// Author not trusted and no signature
-			shared.WriteError(w, http.StatusUnauthorized, fmt.Errorf("Author %s is not trusted. Please provide a valid signature or add author to trusted list.", manifest.Author))
+			shared.WriteError(w, http.StatusUnauthorized, fmt.Errorf("author %s is not trusted; please provide a valid signature or add author to trusted list", manifest.Author))
 			return
 		}
 	}
 
 	// Validate permissions
 	if err := plugin.ValidatePermissions(manifest.Permissions); err != nil {
-		shared.WriteError(w, http.StatusBadRequest, fmt.Errorf("Invalid permissions: %v", err))
+		shared.WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid permissions: %v", err))
 		return
 	}
 
 	// Check if plugin already exists
 	existing, err := h.pluginRepo.GetByName(r.Context(), manifest.Name)
 	if err == nil && existing != nil {
-		shared.WriteError(w, http.StatusConflict, fmt.Errorf("Plugin %s is already installed", manifest.Name))
+		shared.WriteError(w, http.StatusConflict, fmt.Errorf("plugin %s is already installed", manifest.Name))
 		return
 	}
 
 	// Create temp directory for extraction
 	tempDir, err := os.MkdirTemp("", "plugin-install-*")
 	if err != nil {
-		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("Failed to create temp directory: %w", err))
+		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to create temp directory: %w", err))
 		return
 	}
 	defer func() { _ = os.RemoveAll(tempDir) }()
@@ -587,18 +587,18 @@ func (h *PluginHandler) UploadPlugin(w http.ResponseWriter, r *http.Request) {
 	// Extract plugin files
 	pluginDir, err := h.extractPlugin(fileBytes, tempDir, manifest.Name)
 	if err != nil {
-		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("Failed to extract plugin: %v", err))
+		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to extract plugin: %v", err))
 		return
 	}
 
 	// Move to plugins directory
 	finalPath := filepath.Join(h.pluginManager.GetPluginDir(), manifest.Name)
 	if err := os.RemoveAll(finalPath); err != nil && !os.IsNotExist(err) {
-		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("Failed to prepare installation path: %w", err))
+		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to prepare installation path: %w", err))
 		return
 	}
 	if err := os.Rename(pluginDir, finalPath); err != nil {
-		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("Failed to install plugin: %w", err))
+		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to install plugin: %w", err))
 		return
 	}
 
@@ -619,7 +619,7 @@ func (h *PluginHandler) UploadPlugin(w http.ResponseWriter, r *http.Request) {
 	if err := h.pluginRepo.Create(r.Context(), pluginRecord); err != nil {
 		// Rollback: remove installed files
 		_ = os.RemoveAll(finalPath)
-		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("Failed to register plugin: %w", err))
+		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to register plugin: %w", err))
 		return
 	}
 
@@ -747,7 +747,7 @@ func convertEventTypesToStrings(events []plugin.EventType) []string {
 func (h *PluginHandler) CleanupExecutions(w http.ResponseWriter, r *http.Request) {
 	count, err := h.pluginRepo.CleanupOldExecutions(r.Context())
 	if err != nil {
-		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("Failed to cleanup executions: %w", err))
+		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to cleanup executions: %w", err))
 		return
 	}
 
