@@ -70,9 +70,19 @@ func TestNotificationHandlers_MarkAsRead_OK(t *testing.T) {
 	if !svc.markReadCalled || svc.markReadID != id {
 		t.Fatalf("expected mark read called with %s", id)
 	}
-	var resp map[string]bool
-	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil || !resp["success"] {
-		t.Fatalf("expected success response: %v, body=%s", resp, rr.Body.String())
+	// The response is wrapped in the standard API format: {"data": {...}, "success": true}
+	var resp struct {
+		Data    map[string]bool `json:"data"`
+		Success bool            `json:"success"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to unmarshal response: %v, body=%s", err, rr.Body.String())
+	}
+	if !resp.Success {
+		t.Fatalf("expected success=true in response: %v, body=%s", resp, rr.Body.String())
+	}
+	if !resp.Data["success"] {
+		t.Fatalf("expected data.success=true in response: %v, body=%s", resp, rr.Body.String())
 	}
 }
 

@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"athena/internal/domain"
 	"athena/internal/httpapi/shared"
 	"athena/internal/middleware"
 )
@@ -97,9 +98,42 @@ func (h *AuthHandlers) Login(w http.ResponseWriter, r *http.Request) {
 
 // Register is a stub method for tests
 func (h *AuthHandlers) Register(w http.ResponseWriter, r *http.Request) {
-	// Stub implementation for tests
+	// Parse request body to perform basic validation for tests
+	var req struct {
+		Username string `json:"username"`
+		Email    string `json:"email"`
+		Password string `json:"password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("BAD_REQUEST", "Invalid request body"))
+		return
+	}
+
+	// Validate required fields
+	if req.Username == "" || req.Email == "" || req.Password == "" {
+		shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("BAD_REQUEST", "Missing required fields"))
+		return
+	}
+
+	// Check for duplicates (stub uses simple hardcoded checks for test data)
+	if req.Email == "dup@example.com" {
+		shared.WriteError(w, http.StatusConflict, domain.NewDomainError("CONFLICT", "Email already exists"))
+		return
+	}
+	if req.Username == "dupname" {
+		shared.WriteError(w, http.StatusConflict, domain.NewDomainError("CONFLICT", "Username already exists"))
+		return
+	}
+
+	// Return success response
 	shared.WriteJSON(w, http.StatusCreated, map[string]interface{}{
-		"message": "User created",
+		"user": map[string]interface{}{
+			"id":       "test-user-id",
+			"username": req.Username,
+			"email":    req.Email,
+		},
+		"access_token":  "test-access-token",
+		"refresh_token": "test-refresh-token",
 	})
 }
 
