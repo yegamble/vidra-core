@@ -17,6 +17,7 @@ import (
 
 	"athena/internal/config"
 	"athena/internal/httpapi"
+	"athena/internal/httpapi/shared"
 	"athena/internal/livestream"
 	"athena/internal/metrics"
 	"athena/internal/repository"
@@ -339,7 +340,7 @@ func (app *Application) initializeSchedulers(deps *Dependencies) {
 }
 
 func (app *Application) registerRoutes(deps *Dependencies) {
-	httpapi.RegisterRoutesWithDependencies(app.Router, app.Config, &httpapi.HandlerDependencies{
+	httpapi.RegisterRoutesWithDependencies(app.Router, app.Config, &shared.HandlerDependencies{
 		UserRepo:            deps.UserRepo,
 		VideoRepo:           deps.VideoRepo,
 		UploadRepo:          deps.UploadRepo,

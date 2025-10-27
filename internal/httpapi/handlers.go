@@ -201,7 +201,7 @@ func (s *Server) Register(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if err := s.userRepo.Create(r.Context(), dUser, string(hash)); err != nil {
-			status := MapDomainErrorToHTTP(domain.ErrConflict)
+			status := shared.MapDomainErrorToHTTP(domain.ErrConflict)
 			shared.WriteError(w, status, domain.NewDomainError("CREATE_FAILED", "Failed to create user"))
 			return
 		}

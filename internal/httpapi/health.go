@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"athena/internal/httpapi/shared"
 	"log"
 	"net/http"
 	"time"
@@ -26,7 +27,7 @@ func HealthCheck(w http.ResponseWriter, r *http.Request) {
 		Uptime:    time.Since(startTime).String(),
 	}
 
-	WriteJSON(w, http.StatusOK, health)
+	shared.WriteJSON(w, http.StatusOK, health)
 }
 
 func ReadinessCheck(w http.ResponseWriter, r *http.Request) {
@@ -79,7 +80,7 @@ func ReadinessCheck(w http.ResponseWriter, r *http.Request) {
 		Checks:    checks,
 	}
 
-	WriteJSON(w, statusCode, readiness)
+	shared.WriteJSON(w, statusCode, readiness)
 }
 
 func checkDatabase() error {
