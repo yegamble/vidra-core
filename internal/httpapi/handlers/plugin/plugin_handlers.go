@@ -57,7 +57,7 @@ func (h *PluginHandler) ListPlugins(w http.ResponseWriter, r *http.Request) {
 	// Get plugins from database
 	plugins, err := h.pluginRepo.List(r.Context(), status)
 	if err != nil {
-		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("Failed to list plugins: %w", err))
+		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to list plugins: %w", err))
 		return
 	}
 
@@ -112,7 +112,7 @@ func (h *PluginHandler) GetPlugin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("Failed to get plugin: %w", err))
+		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to get plugin: %w", err))
 		return
 	}
 
@@ -184,7 +184,7 @@ func (h *PluginHandler) togglePluginStatus(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if err != nil {
-		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("Failed to get plugin: %w", err))
+		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to get plugin: %w", err))
 		return
 	}
 
@@ -213,7 +213,7 @@ func (h *PluginHandler) togglePluginStatus(w http.ResponseWriter, r *http.Reques
 		if !enable {
 			action = "disable"
 		}
-		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("Failed to %s plugin: %v", action, managerErr))
+		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to %s plugin: %v", action, managerErr))
 		return
 	}
 
@@ -225,12 +225,12 @@ func (h *PluginHandler) togglePluginStatus(w http.ResponseWriter, r *http.Reques
 		statusErr = plugin.Disable()
 	}
 	if statusErr != nil {
-		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("Failed to update plugin status: %w", statusErr))
+		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to update plugin status: %w", statusErr))
 		return
 	}
 
 	if err := h.pluginRepo.Update(r.Context(), plugin); err != nil {
-		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("Failed to save plugin status: %w", err))
+		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to save plugin status: %w", err))
 		return
 	}
 
@@ -274,24 +274,24 @@ func (h *PluginHandler) UpdatePluginConfig(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if err != nil {
-		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("Failed to get plugin: %w", err))
+		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to get plugin: %w", err))
 		return
 	}
 
 	// Update config in manager (will reinitialize if enabled)
 	if err := h.pluginManager.UpdatePluginConfig(r.Context(), plugin.Name, req.Config); err != nil {
-		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("Failed to update plugin config: %w", err))
+		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to update plugin config: %w", err))
 		return
 	}
 
 	// Update config in database
 	if err := plugin.UpdateConfig(req.Config); err != nil {
-		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("Failed to update config: %w", err))
+		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to update config: %w", err))
 		return
 	}
 
 	if err := h.pluginRepo.Update(r.Context(), plugin); err != nil {
-		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("Failed to save config: %w", err))
+		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to save config: %w", err))
 		return
 	}
 
@@ -317,21 +317,21 @@ func (h *PluginHandler) UninstallPlugin(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if err != nil {
-		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("Failed to get plugin: %w", err))
+		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to get plugin: %w", err))
 		return
 	}
 
 	// Disable plugin first if enabled
 	if plugin.IsEnabled() {
 		if err := h.pluginManager.DisablePlugin(r.Context(), plugin.Name); err != nil {
-			shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("Failed to disable plugin before uninstall: %w", err))
+			shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to disable plugin before uninstall: %w", err))
 			return
 		}
 	}
 
 	// Delete from database
 	if err := h.pluginRepo.Delete(r.Context(), pluginID); err != nil {
-		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("Failed to uninstall plugin: %w", err))
+		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to uninstall plugin: %w", err))
 		return
 	}
 
@@ -356,7 +356,7 @@ func (h *PluginHandler) GetPluginStatistics(w http.ResponseWriter, r *http.Reque
 
 	stats, err := h.pluginRepo.GetStatistics(r.Context(), pluginID)
 	if err != nil {
-		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("Failed to get statistics: %w", err))
+		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to get statistics: %w", err))
 		return
 	}
 
@@ -379,7 +379,7 @@ func (h *PluginHandler) GetPluginStatistics(w http.ResponseWriter, r *http.Reque
 func (h *PluginHandler) GetAllStatistics(w http.ResponseWriter, r *http.Request) {
 	statistics, err := h.pluginRepo.GetAllStatistics(r.Context())
 	if err != nil {
-		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("Failed to get statistics: %w", err))
+		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to get statistics: %w", err))
 		return
 	}
 
@@ -415,7 +415,7 @@ func (h *PluginHandler) GetExecutionHistory(w http.ResponseWriter, r *http.Reque
 
 	executions, err := h.pluginRepo.GetExecutionHistory(r.Context(), pluginID, limit)
 	if err != nil {
-		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("Failed to get execution history: %w", err))
+		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to get execution history: %w", err))
 		return
 	}
 
@@ -433,7 +433,7 @@ func (h *PluginHandler) GetPluginHealth(w http.ResponseWriter, r *http.Request) 
 
 	health, err := h.pluginRepo.GetPluginHealth(r.Context(), pluginID)
 	if err != nil {
-		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("Failed to get plugin health: %w", err))
+		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to get plugin health: %w", err))
 		return
 	}
 
@@ -482,7 +482,7 @@ func (h *PluginHandler) TriggerHook(w http.ResponseWriter, r *http.Request) {
 
 	// Trigger the hook
 	if err := h.pluginManager.TriggerEvent(context.Background(), req.EventType, req.Data); err != nil {
-		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("Failed to trigger hook: %w", err))
+		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to trigger hook: %w", err))
 		return
 	}
 
@@ -500,14 +500,14 @@ func (h *PluginHandler) TriggerHook(w http.ResponseWriter, r *http.Request) {
 func (h *PluginHandler) UploadPlugin(w http.ResponseWriter, r *http.Request) {
 	// Parse multipart form (max 50MB)
 	if err := r.ParseMultipartForm(50 << 20); err != nil {
-		shared.WriteError(w, http.StatusBadRequest, fmt.Errorf("Failed to parse multipart form: %w", err))
+		shared.WriteError(w, http.StatusBadRequest, fmt.Errorf("failed to parse multipart form: %w", err))
 		return
 	}
 
 	// Get file from form
 	file, header, err := r.FormFile("plugin")
 	if err != nil {
-		shared.WriteError(w, http.StatusBadRequest, fmt.Errorf("Plugin file is required: %w", err))
+		shared.WriteError(w, http.StatusBadRequest, fmt.Errorf("plugin file is required: %w", err))
 		return
 	}
 	defer func() { _ = file.Close() }()
@@ -521,7 +521,7 @@ func (h *PluginHandler) UploadPlugin(w http.ResponseWriter, r *http.Request) {
 	// Read file content
 	fileBytes, err := io.ReadAll(file)
 	if err != nil {
-		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("Failed to read plugin file: %w", err))
+		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to read plugin file: %w", err))
 		return
 	}
 
