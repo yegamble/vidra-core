@@ -146,27 +146,7 @@ func (m *mockUserRepo) MarkEmailAsVerified(_ context.Context, userID string) err
 	return nil
 }
 
-// Response decoding helpers
-type testResponse struct {
-	Data    json.RawMessage `json:"data"`
-	Error   *ErrorInfo      `json:"error"`
-	Success bool            `json:"success"`
-	Meta    *Meta           `json:"meta"`
-}
-
-func decodeResponse(t *testing.T, rr *httptest.ResponseRecorder) testResponse {
-	t.Helper()
-	var resp testResponse
-	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
-		t.Fatalf("failed to decode response: %v", err)
-	}
-	return resp
-}
-
-// withUserID helper for tests needing auth context injection
-func withUserID(ctx context.Context, id string) context.Context {
-	return context.WithValue(ctx, middleware.UserIDKey, id)
-}
+// Response decoding functions are now in test_helpers.go
 
 func TestGetCurrentUserHandler_Success(t *testing.T) {
 	repo := newMockUserRepo()

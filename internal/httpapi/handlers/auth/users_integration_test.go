@@ -18,14 +18,7 @@ import (
 	"athena/internal/testutil"
 )
 
-// decode helper for API response wrapper
-type integResp struct {
-	Data    json.RawMessage `json:"data"`
-	Error   *ErrorInfo      `json:"error"`
-	Success bool            `json:"success"`
-	Meta    *Meta           `json:"meta"`
-}
-
+// integResp and decodeInteg are now in test_helpers.go
 func decodeInteg(rr *httptest.ResponseRecorder, t *testing.T) integResp {
 	t.Helper()
 	var resp integResp

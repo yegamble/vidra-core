@@ -13,11 +13,26 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"athena/internal/domain"
+	"athena/internal/httpapi/handlers/auth"
+	"athena/internal/httpapi/shared"
 	"athena/internal/middleware"
 	"athena/internal/repository"
 	"athena/internal/testutil"
 	"athena/internal/usecase"
 )
+
+// integResp is a wrapper for API responses
+type integResp struct {
+	Data    json.RawMessage   `json:"data"`
+	Error   *shared.ErrorInfo `json:"error"`
+	Success bool              `json:"success"`
+	Meta    *shared.Meta      `json:"meta"`
+}
+
+// NewServer creates a test server (wrapper for auth.NewServer)
+func NewServer(userRepo usecase.UserRepository, authRepo usecase.AuthRepository, jwtSecret string, emailService interface{}, pingTimeout int, ipfsAPI string, ipfsClusterAPI string, redisTimeout int, redisClient interface{}) *auth.AuthHandlers {
+	return auth.NewServer(userRepo, authRepo, jwtSecret, emailService, pingTimeout, ipfsAPI, ipfsClusterAPI, redisTimeout, redisClient)
+}
 
 type authResp struct {
 	User struct {
