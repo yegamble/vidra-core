@@ -1,6 +1,7 @@
 package federation
 
 import (
+	"athena/internal/httpapi/shared"
 	"encoding/json"
 	"net/http"
 	"strconv"
@@ -38,10 +39,10 @@ func (h *AdminFederationHandlers) ListJobs(w http.ResponseWriter, r *http.Reques
 	offset := (page - 1) * pageSize
 	jobs, total, err := h.repo.ListJobs(r.Context(), status, limit, offset)
 	if err != nil {
-		WriteError(w, http.StatusInternalServerError, domain.NewDomainError("INTERNAL_ERROR", "Failed to list jobs"))
+		shared.WriteError(w, http.StatusInternalServerError, domain.NewDomainError("INTERNAL_ERROR", "Failed to list jobs"))
 		return
 	}
-	WriteJSON(w, http.StatusOK, map[string]any{"total": total, "page": page, "pageSize": pageSize, "data": jobs})
+	shared.WriteJSON(w, http.StatusOK, map[string]any{"total": total, "page": page, "pageSize": pageSize, "data": jobs})
 }
 
 func (h *AdminFederationHandlers) GetJob(w http.ResponseWriter, r *http.Request) {
@@ -52,13 +53,13 @@ func (h *AdminFederationHandlers) GetJob(w http.ResponseWriter, r *http.Request)
 	job, err := h.repo.GetJob(r.Context(), id)
 	if err != nil {
 		if de, ok := err.(*domain.DomainError); ok && de.Code == "NOT_FOUND" {
-			WriteError(w, http.StatusNotFound, de)
+			shared.WriteError(w, http.StatusNotFound, de)
 			return
 		}
-		WriteError(w, http.StatusInternalServerError, domain.NewDomainError("INTERNAL_ERROR", "Failed to get job"))
+		shared.WriteError(w, http.StatusInternalServerError, domain.NewDomainError("INTERNAL_ERROR", "Failed to get job"))
 		return
 	}
-	WriteJSON(w, http.StatusOK, job)
+	shared.WriteJSON(w, http.StatusOK, job)
 }
 
 func (h *AdminFederationHandlers) RetryJob(w http.ResponseWriter, r *http.Request) {
@@ -76,13 +77,13 @@ func (h *AdminFederationHandlers) RetryJob(w http.ResponseWriter, r *http.Reques
 	when := time.Now().Add(time.Duration(req.DelaySeconds) * time.Second)
 	if err := h.repo.RetryJob(r.Context(), id, when); err != nil {
 		if de, ok := err.(*domain.DomainError); ok && de.Code == "NOT_FOUND" {
-			WriteError(w, http.StatusNotFound, de)
+			shared.WriteError(w, http.StatusNotFound, de)
 			return
 		}
-		WriteError(w, http.StatusInternalServerError, domain.NewDomainError("INTERNAL_ERROR", "Failed to retry job"))
+		shared.WriteError(w, http.StatusInternalServerError, domain.NewDomainError("INTERNAL_ERROR", "Failed to retry job"))
 		return
 	}
-	WriteJSON(w, http.StatusOK, map[string]any{"success": true})
+	shared.WriteJSON(w, http.StatusOK, map[string]any{"success": true})
 }
 
 func (h *AdminFederationHandlers) DeleteJob(w http.ResponseWriter, r *http.Request) {
@@ -92,13 +93,13 @@ func (h *AdminFederationHandlers) DeleteJob(w http.ResponseWriter, r *http.Reque
 	id := chi.URLParam(r, "id")
 	if err := h.repo.DeleteJob(r.Context(), id); err != nil {
 		if de, ok := err.(*domain.DomainError); ok && de.Code == "NOT_FOUND" {
-			WriteError(w, http.StatusNotFound, de)
+			shared.WriteError(w, http.StatusNotFound, de)
 			return
 		}
-		WriteError(w, http.StatusInternalServerError, domain.NewDomainError("INTERNAL_ERROR", "Failed to delete job"))
+		shared.WriteError(w, http.StatusInternalServerError, domain.NewDomainError("INTERNAL_ERROR", "Failed to delete job"))
 		return
 	}
-	WriteJSON(w, http.StatusOK, map[string]any{"success": true})
+	shared.WriteJSON(w, http.StatusOK, map[string]any{"success": true})
 }
 
 func requireAdmin(w http.ResponseWriter, r *http.Request) bool {
@@ -107,6 +108,6 @@ func requireAdmin(w http.ResponseWriter, r *http.Request) bool {
 			return true
 		}
 	}
-	WriteError(w, http.StatusForbidden, domain.NewDomainError("FORBIDDEN", "Insufficient permissions"))
+	shared.WriteError(w, http.StatusForbidden, domain.NewDomainError("FORBIDDEN", "Insufficient permissions"))
 	return false
 }

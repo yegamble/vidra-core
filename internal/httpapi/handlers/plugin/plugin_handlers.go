@@ -2,6 +2,7 @@ package plugin
 
 import (
 	"archive/zip"
+	"athena/internal/httpapi/shared"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -56,7 +57,7 @@ func (h *PluginHandler) ListPlugins(w http.ResponseWriter, r *http.Request) {
 	// Get plugins from database
 	plugins, err := h.pluginRepo.List(r.Context(), status)
 	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Failed to list plugins", err)
+		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("Failed to list plugins: %w", err))
 		return
 	}
 
@@ -93,7 +94,7 @@ func (h *PluginHandler) ListPlugins(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	respondWithJSON(w, http.StatusOK, result)
+	shared.WriteJSON(w, http.StatusOK, result)
 }
 
 // GetPlugin handles GET /api/v1/admin/plugins/:id
@@ -101,17 +102,17 @@ func (h *PluginHandler) GetPlugin(w http.ResponseWriter, r *http.Request) {
 	pluginIDStr := chi.URLParam(r, "id")
 	pluginID, err := uuid.Parse(pluginIDStr)
 	if err != nil {
-		respondWithError(w, http.StatusBadRequest, "Invalid plugin ID", nil)
+		shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_ID", "Invalid plugin ID"))
 		return
 	}
 
 	plugin, err := h.pluginRepo.GetByID(r.Context(), pluginID)
 	if err == domain.ErrPluginNotFound {
-		respondWithError(w, http.StatusNotFound, "Plugin not found", nil)
+		shared.WriteError(w, http.StatusNotFound, domain.NewDomainError("NOT_FOUND", "Plugin not found"))
 		return
 	}
 	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Failed to get plugin", err)
+		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("Failed to get plugin: %w", err))
 		return
 	}
 
@@ -154,7 +155,7 @@ func (h *PluginHandler) GetPlugin(w http.ResponseWriter, r *http.Request) {
 		result["health"] = health
 	}
 
-	respondWithJSON(w, http.StatusOK, result)
+	shared.WriteJSON(w, http.StatusOK, result)
 }
 
 // EnablePlugin handles PUT /api/v1/admin/plugins/:id/enable
@@ -172,30 +173,30 @@ func (h *PluginHandler) togglePluginStatus(w http.ResponseWriter, r *http.Reques
 	pluginIDStr := chi.URLParam(r, "id")
 	pluginID, err := uuid.Parse(pluginIDStr)
 	if err != nil {
-		respondWithError(w, http.StatusBadRequest, "Invalid plugin ID", nil)
+		shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_ID", "Invalid plugin ID"))
 		return
 	}
 
 	// Get plugin from database
 	plugin, err := h.pluginRepo.GetByID(r.Context(), pluginID)
 	if err == domain.ErrPluginNotFound {
-		respondWithError(w, http.StatusNotFound, "Plugin not found", nil)
+		shared.WriteError(w, http.StatusNotFound, domain.NewDomainError("NOT_FOUND", "Plugin not found"))
 		return
 	}
 	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Failed to get plugin", err)
+		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("Failed to get plugin: %w", err))
 		return
 	}
 
 	// Check current state
 	if enable {
 		if plugin.IsEnabled() {
-			respondWithError(w, http.StatusBadRequest, "Plugin already enabled", nil)
+			shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("ALREADY_ENABLED", "Plugin already enabled"))
 			return
 		}
 	} else {
 		if plugin.IsDisabled() {
-			respondWithError(w, http.StatusBadRequest, "Plugin already disabled", nil)
+			shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("ALREADY_DISABLED", "Plugin already disabled"))
 			return
 		}
 	}
@@ -212,7 +213,7 @@ func (h *PluginHandler) togglePluginStatus(w http.ResponseWriter, r *http.Reques
 		if !enable {
 			action = "disable"
 		}
-		respondWithError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to %s plugin: %v", action, managerErr), managerErr)
+		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("Failed to %s plugin: %v", action, managerErr))
 		return
 	}
 
@@ -224,12 +225,12 @@ func (h *PluginHandler) togglePluginStatus(w http.ResponseWriter, r *http.Reques
 		statusErr = plugin.Disable()
 	}
 	if statusErr != nil {
-		respondWithError(w, http.StatusInternalServerError, "Failed to update plugin status", statusErr)
+		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("Failed to update plugin status: %w", statusErr))
 		return
 	}
 
 	if err := h.pluginRepo.Update(r.Context(), plugin); err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Failed to save plugin status", err)
+		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("Failed to save plugin status: %w", err))
 		return
 	}
 
@@ -237,7 +238,7 @@ func (h *PluginHandler) togglePluginStatus(w http.ResponseWriter, r *http.Reques
 	if !enable {
 		action = "disabled"
 	}
-	respondWithJSON(w, http.StatusOK, map[string]string{
+	shared.WriteJSON(w, http.StatusOK, map[string]string{
 		"status":  "success",
 		"message": fmt.Sprintf("Plugin %s %s successfully", plugin.Name, action),
 	})
@@ -248,7 +249,7 @@ func (h *PluginHandler) UpdatePluginConfig(w http.ResponseWriter, r *http.Reques
 	pluginIDStr := chi.URLParam(r, "id")
 	pluginID, err := uuid.Parse(pluginIDStr)
 	if err != nil {
-		respondWithError(w, http.StatusBadRequest, "Invalid plugin ID", nil)
+		shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_ID", "Invalid plugin ID"))
 		return
 	}
 
@@ -257,44 +258,44 @@ func (h *PluginHandler) UpdatePluginConfig(w http.ResponseWriter, r *http.Reques
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		respondWithError(w, http.StatusBadRequest, "Invalid request body", nil)
+		shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("ERROR", "Invalid request body"))
 		return
 	}
 
 	if req.Config == nil {
-		respondWithError(w, http.StatusBadRequest, "Config is required", nil)
+		shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("ERROR", "Config is required"))
 		return
 	}
 
 	// Get plugin from database
 	plugin, err := h.pluginRepo.GetByID(r.Context(), pluginID)
 	if err == domain.ErrPluginNotFound {
-		respondWithError(w, http.StatusNotFound, "Plugin not found", nil)
+		shared.WriteError(w, http.StatusNotFound, domain.NewDomainError("NOT_FOUND", "Plugin not found"))
 		return
 	}
 	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Failed to get plugin", err)
+		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("Failed to get plugin: %w", err))
 		return
 	}
 
 	// Update config in manager (will reinitialize if enabled)
 	if err := h.pluginManager.UpdatePluginConfig(r.Context(), plugin.Name, req.Config); err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Failed to update plugin config", err)
+		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("Failed to update plugin config: %w", err))
 		return
 	}
 
 	// Update config in database
 	if err := plugin.UpdateConfig(req.Config); err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Failed to update config", err)
+		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("Failed to update config: %w", err))
 		return
 	}
 
 	if err := h.pluginRepo.Update(r.Context(), plugin); err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Failed to save config", err)
+		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("Failed to save config: %w", err))
 		return
 	}
 
-	respondWithJSON(w, http.StatusOK, map[string]string{
+	shared.WriteJSON(w, http.StatusOK, map[string]string{
 		"status":  "success",
 		"message": "Plugin configuration updated successfully",
 	})
@@ -305,36 +306,36 @@ func (h *PluginHandler) UninstallPlugin(w http.ResponseWriter, r *http.Request) 
 	pluginIDStr := chi.URLParam(r, "id")
 	pluginID, err := uuid.Parse(pluginIDStr)
 	if err != nil {
-		respondWithError(w, http.StatusBadRequest, "Invalid plugin ID", nil)
+		shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_ID", "Invalid plugin ID"))
 		return
 	}
 
 	// Get plugin from database
 	plugin, err := h.pluginRepo.GetByID(r.Context(), pluginID)
 	if err == domain.ErrPluginNotFound {
-		respondWithError(w, http.StatusNotFound, "Plugin not found", nil)
+		shared.WriteError(w, http.StatusNotFound, domain.NewDomainError("NOT_FOUND", "Plugin not found"))
 		return
 	}
 	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Failed to get plugin", err)
+		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("Failed to get plugin: %w", err))
 		return
 	}
 
 	// Disable plugin first if enabled
 	if plugin.IsEnabled() {
 		if err := h.pluginManager.DisablePlugin(r.Context(), plugin.Name); err != nil {
-			respondWithError(w, http.StatusInternalServerError, "Failed to disable plugin before uninstall", err)
+			shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("Failed to disable plugin before uninstall: %w", err))
 			return
 		}
 	}
 
 	// Delete from database
 	if err := h.pluginRepo.Delete(r.Context(), pluginID); err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Failed to uninstall plugin", err)
+		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("Failed to uninstall plugin: %w", err))
 		return
 	}
 
-	respondWithJSON(w, http.StatusOK, map[string]string{
+	shared.WriteJSON(w, http.StatusOK, map[string]string{
 		"status":  "success",
 		"message": fmt.Sprintf("Plugin %s uninstalled successfully", plugin.Name),
 	})
@@ -349,13 +350,13 @@ func (h *PluginHandler) GetPluginStatistics(w http.ResponseWriter, r *http.Reque
 	pluginIDStr := chi.URLParam(r, "id")
 	pluginID, err := uuid.Parse(pluginIDStr)
 	if err != nil {
-		respondWithError(w, http.StatusBadRequest, "Invalid plugin ID", nil)
+		shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_ID", "Invalid plugin ID"))
 		return
 	}
 
 	stats, err := h.pluginRepo.GetStatistics(r.Context(), pluginID)
 	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Failed to get statistics", err)
+		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("Failed to get statistics: %w", err))
 		return
 	}
 
@@ -371,14 +372,14 @@ func (h *PluginHandler) GetPluginStatistics(w http.ResponseWriter, r *http.Reque
 		"last_executed_at": stats.LastExecutedAt,
 	}
 
-	respondWithJSON(w, http.StatusOK, result)
+	shared.WriteJSON(w, http.StatusOK, result)
 }
 
 // GetAllStatistics handles GET /api/v1/admin/plugins/statistics
 func (h *PluginHandler) GetAllStatistics(w http.ResponseWriter, r *http.Request) {
 	statistics, err := h.pluginRepo.GetAllStatistics(r.Context())
 	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Failed to get statistics", err)
+		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("Failed to get statistics: %w", err))
 		return
 	}
 
@@ -397,7 +398,7 @@ func (h *PluginHandler) GetAllStatistics(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
-	respondWithJSON(w, http.StatusOK, result)
+	shared.WriteJSON(w, http.StatusOK, result)
 }
 
 // GetExecutionHistory handles GET /api/v1/admin/plugins/:id/executions
@@ -405,7 +406,7 @@ func (h *PluginHandler) GetExecutionHistory(w http.ResponseWriter, r *http.Reque
 	pluginIDStr := chi.URLParam(r, "id")
 	pluginID, err := uuid.Parse(pluginIDStr)
 	if err != nil {
-		respondWithError(w, http.StatusBadRequest, "Invalid plugin ID", nil)
+		shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_ID", "Invalid plugin ID"))
 		return
 	}
 
@@ -414,11 +415,11 @@ func (h *PluginHandler) GetExecutionHistory(w http.ResponseWriter, r *http.Reque
 
 	executions, err := h.pluginRepo.GetExecutionHistory(r.Context(), pluginID, limit)
 	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Failed to get execution history", err)
+		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("Failed to get execution history: %w", err))
 		return
 	}
 
-	respondWithJSON(w, http.StatusOK, executions)
+	shared.WriteJSON(w, http.StatusOK, executions)
 }
 
 // GetPluginHealth handles GET /api/v1/admin/plugins/:id/health
@@ -426,17 +427,17 @@ func (h *PluginHandler) GetPluginHealth(w http.ResponseWriter, r *http.Request) 
 	pluginIDStr := chi.URLParam(r, "id")
 	pluginID, err := uuid.Parse(pluginIDStr)
 	if err != nil {
-		respondWithError(w, http.StatusBadRequest, "Invalid plugin ID", nil)
+		shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_ID", "Invalid plugin ID"))
 		return
 	}
 
 	health, err := h.pluginRepo.GetPluginHealth(r.Context(), pluginID)
 	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Failed to get plugin health", err)
+		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("Failed to get plugin health: %w", err))
 		return
 	}
 
-	respondWithJSON(w, http.StatusOK, health)
+	shared.WriteJSON(w, http.StatusOK, health)
 }
 
 // ======================================================================
@@ -459,7 +460,7 @@ func (h *PluginHandler) GetHooks(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	respondWithJSON(w, http.StatusOK, result)
+	shared.WriteJSON(w, http.StatusOK, result)
 }
 
 // TriggerHook handles POST /api/v1/admin/plugins/hooks/trigger
@@ -470,22 +471,22 @@ func (h *PluginHandler) TriggerHook(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		respondWithError(w, http.StatusBadRequest, "Invalid request body", nil)
+		shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("ERROR", "Invalid request body"))
 		return
 	}
 
 	if req.EventType == "" {
-		respondWithError(w, http.StatusBadRequest, "Event type is required", nil)
+		shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("ERROR", "Event type is required"))
 		return
 	}
 
 	// Trigger the hook
 	if err := h.pluginManager.TriggerEvent(context.Background(), req.EventType, req.Data); err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Failed to trigger hook", err)
+		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("Failed to trigger hook: %w", err))
 		return
 	}
 
-	respondWithJSON(w, http.StatusOK, map[string]string{
+	shared.WriteJSON(w, http.StatusOK, map[string]string{
 		"status":  "success",
 		"message": fmt.Sprintf("Hook %s triggered successfully", req.EventType),
 	})
@@ -499,35 +500,35 @@ func (h *PluginHandler) TriggerHook(w http.ResponseWriter, r *http.Request) {
 func (h *PluginHandler) UploadPlugin(w http.ResponseWriter, r *http.Request) {
 	// Parse multipart form (max 50MB)
 	if err := r.ParseMultipartForm(50 << 20); err != nil {
-		respondWithError(w, http.StatusBadRequest, "Failed to parse multipart form", err)
+		shared.WriteError(w, http.StatusBadRequest, fmt.Errorf("Failed to parse multipart form: %w", err))
 		return
 	}
 
 	// Get file from form
 	file, header, err := r.FormFile("plugin")
 	if err != nil {
-		respondWithError(w, http.StatusBadRequest, "Plugin file is required", err)
+		shared.WriteError(w, http.StatusBadRequest, fmt.Errorf("Plugin file is required: %w", err))
 		return
 	}
 	defer func() { _ = file.Close() }()
 
 	// Validate file extension
 	if !strings.HasSuffix(header.Filename, ".zip") {
-		respondWithError(w, http.StatusBadRequest, "Plugin must be a ZIP file", nil)
+		shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("ERROR", "Plugin must be a ZIP file"))
 		return
 	}
 
 	// Read file content
 	fileBytes, err := io.ReadAll(file)
 	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Failed to read plugin file", err)
+		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("Failed to read plugin file: %w", err))
 		return
 	}
 
 	// Extract and validate manifest
 	manifest, err := h.extractManifest(fileBytes)
 	if err != nil {
-		respondWithError(w, http.StatusBadRequest, fmt.Sprintf("Invalid plugin manifest: %v", err), err)
+		shared.WriteError(w, http.StatusBadRequest, fmt.Errorf("Invalid plugin manifest: %v", err))
 		return
 	}
 
@@ -538,7 +539,7 @@ func (h *PluginHandler) UploadPlugin(w http.ResponseWriter, r *http.Request) {
 		defer func() { _ = signatureFile.Close() }()
 		signatureBytes, err = io.ReadAll(signatureFile)
 		if err != nil {
-			respondWithError(w, http.StatusBadRequest, "Failed to read signature file", err)
+			shared.WriteError(w, http.StatusBadRequest, fmt.Errorf("Failed to read signature file: %w", err))
 			return
 		}
 	}
@@ -548,37 +549,37 @@ func (h *PluginHandler) UploadPlugin(w http.ResponseWriter, r *http.Request) {
 		if len(signatureBytes) > 0 {
 			// Signature provided - verify it
 			if err := h.signatureVerifier.VerifySignature(fileBytes, signatureBytes, manifest.Author); err != nil {
-				respondWithError(w, http.StatusUnauthorized, fmt.Sprintf("Invalid signature: %v", err), err)
+				shared.WriteError(w, http.StatusUnauthorized, fmt.Errorf("Invalid signature: %v", err))
 				return
 			}
 		} else if h.requireSignatures {
 			// No signature but signatures are required
-			respondWithError(w, http.StatusBadRequest, "Plugin signature is required", nil)
+			shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("ERROR", "Plugin signature is required"))
 			return
 		} else if !h.signatureVerifier.IsAuthorTrusted(manifest.Author) {
 			// Author not trusted and no signature
-			respondWithError(w, http.StatusUnauthorized, fmt.Sprintf("Author %s is not trusted. Please provide a valid signature or add author to trusted list.", manifest.Author), nil)
+			shared.WriteError(w, http.StatusUnauthorized, fmt.Errorf("Author %s is not trusted. Please provide a valid signature or add author to trusted list.", manifest.Author))
 			return
 		}
 	}
 
 	// Validate permissions
 	if err := plugin.ValidatePermissions(manifest.Permissions); err != nil {
-		respondWithError(w, http.StatusBadRequest, fmt.Sprintf("Invalid permissions: %v", err), err)
+		shared.WriteError(w, http.StatusBadRequest, fmt.Errorf("Invalid permissions: %v", err))
 		return
 	}
 
 	// Check if plugin already exists
 	existing, err := h.pluginRepo.GetByName(r.Context(), manifest.Name)
 	if err == nil && existing != nil {
-		respondWithError(w, http.StatusConflict, fmt.Sprintf("Plugin %s is already installed", manifest.Name), nil)
+		shared.WriteError(w, http.StatusConflict, fmt.Errorf("Plugin %s is already installed", manifest.Name))
 		return
 	}
 
 	// Create temp directory for extraction
 	tempDir, err := os.MkdirTemp("", "plugin-install-*")
 	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Failed to create temp directory", err)
+		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("Failed to create temp directory: %w", err))
 		return
 	}
 	defer func() { _ = os.RemoveAll(tempDir) }()
@@ -586,18 +587,18 @@ func (h *PluginHandler) UploadPlugin(w http.ResponseWriter, r *http.Request) {
 	// Extract plugin files
 	pluginDir, err := h.extractPlugin(fileBytes, tempDir, manifest.Name)
 	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to extract plugin: %v", err), err)
+		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("Failed to extract plugin: %v", err))
 		return
 	}
 
 	// Move to plugins directory
 	finalPath := filepath.Join(h.pluginManager.GetPluginDir(), manifest.Name)
 	if err := os.RemoveAll(finalPath); err != nil && !os.IsNotExist(err) {
-		respondWithError(w, http.StatusInternalServerError, "Failed to prepare installation path", err)
+		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("Failed to prepare installation path: %w", err))
 		return
 	}
 	if err := os.Rename(pluginDir, finalPath); err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Failed to install plugin", err)
+		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("Failed to install plugin: %w", err))
 		return
 	}
 
@@ -618,11 +619,11 @@ func (h *PluginHandler) UploadPlugin(w http.ResponseWriter, r *http.Request) {
 	if err := h.pluginRepo.Create(r.Context(), pluginRecord); err != nil {
 		// Rollback: remove installed files
 		_ = os.RemoveAll(finalPath)
-		respondWithError(w, http.StatusInternalServerError, "Failed to register plugin", err)
+		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("Failed to register plugin: %w", err))
 		return
 	}
 
-	respondWithJSON(w, http.StatusCreated, map[string]any{
+	shared.WriteJSON(w, http.StatusCreated, map[string]any{
 		"id":          pluginRecord.ID,
 		"name":        pluginRecord.Name,
 		"version":     pluginRecord.Version,
@@ -746,11 +747,11 @@ func convertEventTypesToStrings(events []plugin.EventType) []string {
 func (h *PluginHandler) CleanupExecutions(w http.ResponseWriter, r *http.Request) {
 	count, err := h.pluginRepo.CleanupOldExecutions(r.Context())
 	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Failed to cleanup executions", err)
+		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("Failed to cleanup executions: %w", err))
 		return
 	}
 
-	respondWithJSON(w, http.StatusOK, map[string]any{
+	shared.WriteJSON(w, http.StatusOK, map[string]any{
 		"status":  "success",
 		"message": fmt.Sprintf("Cleaned up %d old execution records", count),
 		"count":   count,

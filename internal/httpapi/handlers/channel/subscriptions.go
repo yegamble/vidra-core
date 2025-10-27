@@ -1,6 +1,7 @@
 package channel
 
 import (
+	"athena/internal/httpapi/shared"
 	"net/http"
 
 	"athena/internal/domain"
@@ -12,11 +13,11 @@ import (
 func requireAuthAndPagination(w http.ResponseWriter, r *http.Request) (string, int, int, int, int, bool) {
 	me, _ := r.Context().Value(middleware.UserIDKey).(string)
 	if me == "" {
-		WriteError(w, http.StatusUnauthorized, domain.NewDomainError("UNAUTHORIZED", "Missing or invalid authentication"))
+		shared.WriteError(w, http.StatusUnauthorized, domain.NewDomainError("UNAUTHORIZED", "Missing or invalid authentication"))
 		return "", 0, 0, 0, 0, false
 	}
 	// Parse pagination parameters with backward compatibility
-	page, limit, offset, pageSize := ParsePagination(r, 20)
+	page, limit, offset, pageSize := shared.ParsePagination(r, 20)
 	return me, limit, offset, page, pageSize, true
 }
 
@@ -25,11 +26,11 @@ func SubscribeToUserHandler(subRepo usecase.SubscriptionRepository, userRepo use
 	return func(w http.ResponseWriter, r *http.Request) {
 		me, _ := r.Context().Value(middleware.UserIDKey).(string)
 		if me == "" {
-			WriteError(w, http.StatusUnauthorized, domain.NewDomainError("UNAUTHORIZED", "Missing or invalid authentication"))
+			shared.WriteError(w, http.StatusUnauthorized, domain.NewDomainError("UNAUTHORIZED", "Missing or invalid authentication"))
 			return
 		}
 
-		targetID, ok := requireUUIDParam(w, r, "id", "MISSING_USER_ID", "INVALID_USER_ID", "User ID is required", "Invalid user ID format")
+		targetID, ok := shared.RequireUUIDParam(w, r, "id", "MISSING_USER_ID", "INVALID_USER_ID", "User ID is required", "Invalid user ID format")
 		if !ok {
 			return
 		}
@@ -37,15 +38,15 @@ func SubscribeToUserHandler(subRepo usecase.SubscriptionRepository, userRepo use
 		// Validate that target user exists for clearer errors
 		if _, err := userRepo.GetByID(r.Context(), targetID); err != nil {
 			if err == domain.ErrUserNotFound {
-				WriteError(w, http.StatusNotFound, domain.NewDomainError("USER_NOT_FOUND", "Target user not found"))
+				shared.WriteError(w, http.StatusNotFound, domain.NewDomainError("USER_NOT_FOUND", "Target user not found"))
 				return
 			}
-			WriteError(w, http.StatusInternalServerError, domain.NewDomainError("INTERNAL_ERROR", "Failed to verify target user"))
+			shared.WriteError(w, http.StatusInternalServerError, domain.NewDomainError("INTERNAL_ERROR", "Failed to verify target user"))
 			return
 		}
 
 		if err := subRepo.Subscribe(r.Context(), me, targetID); err != nil {
-			WriteError(w, http.StatusInternalServerError, domain.NewDomainError("SUBSCRIBE_FAILED", "Failed to subscribe"))
+			shared.WriteError(w, http.StatusInternalServerError, domain.NewDomainError("SUBSCRIBE_FAILED", "Failed to subscribe"))
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
@@ -57,17 +58,17 @@ func UnsubscribeFromUserHandler(subRepo usecase.SubscriptionRepository) http.Han
 	return func(w http.ResponseWriter, r *http.Request) {
 		me, _ := r.Context().Value(middleware.UserIDKey).(string)
 		if me == "" {
-			WriteError(w, http.StatusUnauthorized, domain.NewDomainError("UNAUTHORIZED", "Missing or invalid authentication"))
+			shared.WriteError(w, http.StatusUnauthorized, domain.NewDomainError("UNAUTHORIZED", "Missing or invalid authentication"))
 			return
 		}
 
-		targetID, ok := requireUUIDParam(w, r, "id", "MISSING_USER_ID", "INVALID_USER_ID", "User ID is required", "Invalid user ID format")
+		targetID, ok := shared.RequireUUIDParam(w, r, "id", "MISSING_USER_ID", "INVALID_USER_ID", "User ID is required", "Invalid user ID format")
 		if !ok {
 			return
 		}
 
 		if err := subRepo.Unsubscribe(r.Context(), me, targetID); err != nil {
-			WriteError(w, http.StatusInternalServerError, domain.NewDomainError("UNSUBSCRIBE_FAILED", "Failed to unsubscribe"))
+			shared.WriteError(w, http.StatusInternalServerError, domain.NewDomainError("UNSUBSCRIBE_FAILED", "Failed to unsubscribe"))
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
@@ -84,11 +85,11 @@ func ListMySubscriptionsHandler(subRepo usecase.SubscriptionRepository) http.Han
 
 		users, total, err := subRepo.ListSubscriptions(r.Context(), me, limit, offset)
 		if err != nil {
-			WriteError(w, http.StatusInternalServerError, domain.NewDomainError("LIST_FAILED", "Failed to list subscriptions"))
+			shared.WriteError(w, http.StatusInternalServerError, domain.NewDomainError("LIST_FAILED", "Failed to list subscriptions"))
 			return
 		}
-		meta := &Meta{Total: total, Limit: limit, Offset: offset, Page: page, PageSize: pageSize}
-		WriteJSONWithMeta(w, http.StatusOK, users, meta)
+		meta := &shared.Meta{Total: total, Limit: limit, Offset: offset, Page: page, PageSize: pageSize}
+		shared.WriteJSONWithMeta(w, http.StatusOK, users, meta)
 	}
 }
 
@@ -102,10 +103,10 @@ func ListSubscriptionVideosHandler(subRepo usecase.SubscriptionRepository) http.
 
 		videos, total, err := subRepo.ListSubscriptionVideos(r.Context(), me, limit, offset)
 		if err != nil {
-			WriteError(w, http.StatusInternalServerError, domain.NewDomainError("LIST_FAILED", "Failed to list subscription videos"))
+			shared.WriteError(w, http.StatusInternalServerError, domain.NewDomainError("LIST_FAILED", "Failed to list subscription videos"))
 			return
 		}
-		meta := &Meta{Total: total, Limit: limit, Offset: offset, Page: page, PageSize: pageSize}
-		WriteJSONWithMeta(w, http.StatusOK, videos, meta)
+		meta := &shared.Meta{Total: total, Limit: limit, Offset: offset, Page: page, PageSize: pageSize}
+		shared.WriteJSONWithMeta(w, http.StatusOK, videos, meta)
 	}
 }

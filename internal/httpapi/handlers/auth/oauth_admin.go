@@ -30,11 +30,11 @@ type rotateOAuthClientSecretRequest struct {
 
 // AdminListOAuthClients lists all OAuth clients (admin only)
 func (h *AuthHandlers) AdminListOAuthClients(w http.ResponseWriter, r *http.Request) {
-	if s.oauthRepo == nil {
+	if h.oauthRepo == nil {
 		shared.WriteError(w, http.StatusNotImplemented, domain.NewDomainError("NOT_IMPLEMENTED", "OAuth repository not configured"))
 		return
 	}
-	clients, err := s.oauthRepo.ListClients(r.Context())
+	clients, err := h.oauthRepo.ListClients(r.Context())
 	if err != nil {
 		shared.WriteError(w, http.StatusInternalServerError, domain.NewDomainError("INTERNAL_ERROR", "Failed to list clients"))
 		return
@@ -71,7 +71,7 @@ func (h *AuthHandlers) AdminListOAuthClients(w http.ResponseWriter, r *http.Requ
 
 // AdminCreateOAuthClient registers a new OAuth client (admin only)
 func (h *AuthHandlers) AdminCreateOAuthClient(w http.ResponseWriter, r *http.Request) {
-	if s.oauthRepo == nil {
+	if h.oauthRepo == nil {
 		shared.WriteError(w, http.StatusNotImplemented, domain.NewDomainError("NOT_IMPLEMENTED", "OAuth repository not configured"))
 		return
 	}
@@ -121,7 +121,7 @@ func (h *AuthHandlers) AdminCreateOAuthClient(w http.ResponseWriter, r *http.Req
 		RedirectURIs:     req.RedirectURIs,
 		IsConfidential:   isConf,
 	}
-	if err := s.oauthRepo.CreateClient(r.Context(), c); err != nil {
+	if err := h.oauthRepo.CreateClient(r.Context(), c); err != nil {
 		shared.WriteError(w, http.StatusBadRequest, domain.NewDomainErrorWithDetails("BAD_REQUEST", "failed to create client", err.Error()))
 		return
 	}
@@ -143,7 +143,7 @@ func (h *AuthHandlers) AdminCreateOAuthClient(w http.ResponseWriter, r *http.Req
 // AdminRotateOAuthClientSecret rotates or clears a client's secret (admin only)
 // Path param: {clientId}
 func (h *AuthHandlers) AdminRotateOAuthClientSecret(w http.ResponseWriter, r *http.Request) {
-	if s.oauthRepo == nil {
+	if h.oauthRepo == nil {
 		shared.WriteError(w, http.StatusNotImplemented, domain.NewDomainError("NOT_IMPLEMENTED", "OAuth repository not configured"))
 		return
 	}
@@ -178,7 +178,7 @@ func (h *AuthHandlers) AdminRotateOAuthClientSecret(w http.ResponseWriter, r *ht
 		// public client: clear secret
 		hashPtr = nil
 	}
-	if err := s.oauthRepo.UpdateClientSecret(r.Context(), clientID, hashPtr, isConf); err != nil {
+	if err := h.oauthRepo.UpdateClientSecret(r.Context(), clientID, hashPtr, isConf); err != nil {
 		shared.WriteError(w, http.StatusBadRequest, domain.NewDomainErrorWithDetails("BAD_REQUEST", "failed to update client", err.Error()))
 		return
 	}
@@ -187,7 +187,7 @@ func (h *AuthHandlers) AdminRotateOAuthClientSecret(w http.ResponseWriter, r *ht
 
 // AdminDeleteOAuthClient deletes a client by client_id (admin only)
 func (h *AuthHandlers) AdminDeleteOAuthClient(w http.ResponseWriter, r *http.Request) {
-	if s.oauthRepo == nil {
+	if h.oauthRepo == nil {
 		shared.WriteError(w, http.StatusNotImplemented, domain.NewDomainError("NOT_IMPLEMENTED", "OAuth repository not configured"))
 		return
 	}
@@ -196,7 +196,7 @@ func (h *AuthHandlers) AdminDeleteOAuthClient(w http.ResponseWriter, r *http.Req
 		shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("BAD_REQUEST", "Missing clientId"))
 		return
 	}
-	if err := s.oauthRepo.DeleteClient(r.Context(), clientID); err != nil {
+	if err := h.oauthRepo.DeleteClient(r.Context(), clientID); err != nil {
 		shared.WriteError(w, http.StatusBadRequest, domain.NewDomainErrorWithDetails("BAD_REQUEST", "failed to delete client", err.Error()))
 		return
 	}

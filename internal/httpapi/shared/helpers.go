@@ -3,10 +3,15 @@ package shared
 import (
 	"net/http"
 	"strconv"
+
+	"athena/internal/domain"
+
+	chi "github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 )
 
-// getBoolParam extracts a boolean query parameter with a default value
-func getBoolParam(r *http.Request, key string, defaultValue bool) bool {
+// GetBoolParam extracts a boolean query parameter with a default value
+func GetBoolParam(r *http.Request, key string, defaultValue bool) bool {
 	val := r.URL.Query().Get(key)
 	if val == "" {
 		return defaultValue
@@ -20,8 +25,8 @@ func getBoolParam(r *http.Request, key string, defaultValue bool) bool {
 	return b
 }
 
-// getIntParam extracts an integer query parameter with a default value
-func getIntParam(r *http.Request, key string, defaultValue int) int {
+// GetIntParam extracts an integer query parameter with a default value
+func GetIntParam(r *http.Request, key string, defaultValue int) int {
 	val := r.URL.Query().Get(key)
 	if val == "" {
 		return defaultValue
@@ -70,4 +75,19 @@ func ParsePagination(r *http.Request, defaultPageSize int) (page, limit, offset,
 	offset = (page - 1) * pageSize
 
 	return page, limit, offset, pageSize
+}
+
+// RequireUUIDParam extracts a path parameter and validates it as a UUID.
+// On failure it writes an error response and returns ok=false.
+func RequireUUIDParam(w http.ResponseWriter, r *http.Request, param, missingCode, invalidCode, missingMsg, invalidMsg string) (string, bool) {
+	id := chi.URLParam(r, param)
+	if id == "" {
+		WriteError(w, http.StatusBadRequest, domain.NewDomainError(missingCode, missingMsg))
+		return "", false
+	}
+	if _, err := uuid.Parse(id); err != nil {
+		WriteError(w, http.StatusBadRequest, domain.NewDomainError(invalidCode, invalidMsg))
+		return "", false
+	}
+	return id, true
 }

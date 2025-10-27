@@ -1,6 +1,7 @@
 package federation
 
 import (
+	"athena/internal/httpapi/shared"
 	"net/http"
 	"strconv"
 
@@ -30,9 +31,9 @@ func (h *FederationHandlers) GetTimeline(w http.ResponseWriter, r *http.Request)
 	offset := (page - 1) * pageSize
 	posts, total, err := h.repo.ListTimeline(r.Context(), limit, offset)
 	if err != nil {
-		WriteError(w, http.StatusInternalServerError, domain.NewDomainError("INTERNAL_ERROR", "Failed to load timeline"))
+		shared.WriteError(w, http.StatusInternalServerError, domain.NewDomainError("INTERNAL_ERROR", "Failed to load timeline"))
 		return
 	}
 	resp := domain.FederatedTimeline{Total: total, Page: page, PageSize: pageSize, Data: posts}
-	WriteJSON(w, http.StatusOK, resp)
+	shared.WriteJSON(w, http.StatusOK, resp)
 }

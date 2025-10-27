@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"athena/internal/httpapi/shared"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -67,28 +68,28 @@ func (s *Server) SetVerificationService(service *usecase.EmailVerificationServic
 func (s *Server) Login(w http.ResponseWriter, r *http.Request) {
 	var req generated.LoginRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_JSON", "Invalid JSON payload"))
+		shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_JSON", "Invalid JSON payload"))
 		return
 	}
 
 	if req.Email == "" || req.Password == "" {
-		WriteError(w, http.StatusBadRequest, domain.NewDomainError("MISSING_CREDENTIALS", "Email and password are required"))
+		shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("MISSING_CREDENTIALS", "Email and password are required"))
 		return
 	}
 
 	// Lookup user and verify password
 	dUser, err := s.userRepo.GetByEmail(r.Context(), req.Email)
 	if err != nil {
-		WriteError(w, http.StatusUnauthorized, domain.ErrInvalidCredentials)
+		shared.WriteError(w, http.StatusUnauthorized, domain.ErrInvalidCredentials)
 		return
 	}
 	hash, err := s.userRepo.GetPasswordHash(r.Context(), dUser.ID)
 	if err != nil {
-		WriteError(w, http.StatusUnauthorized, domain.ErrInvalidCredentials)
+		shared.WriteError(w, http.StatusUnauthorized, domain.ErrInvalidCredentials)
 		return
 	}
 	if bcrypt.CompareHashAndPassword([]byte(hash), []byte(req.Password)) != nil {
-		WriteError(w, http.StatusUnauthorized, domain.ErrInvalidCredentials)
+		shared.WriteError(w, http.StatusUnauthorized, domain.ErrInvalidCredentials)
 		return
 	}
 
@@ -105,13 +106,13 @@ func (s *Server) Login(w http.ResponseWriter, r *http.Request) {
 			CreatedAt: time.Now(),
 		}
 		if err := s.authRepo.CreateRefreshToken(r.Context(), rt); err != nil {
-			WriteError(w, http.StatusInternalServerError, domain.NewDomainErrorWithDetails("TOKEN_ISSUE_FAILED", "Failed to create refresh token", err.Error()))
+			shared.WriteError(w, http.StatusInternalServerError, domain.NewDomainErrorWithDetails("TOKEN_ISSUE_FAILED", "Failed to create refresh token", err.Error()))
 			return
 		}
 
 		// Create corresponding session in Redis (sessionID == refresh token)
 		if err := s.authRepo.CreateSession(r.Context(), refresh, dUser.ID, refreshExpires); err != nil {
-			WriteError(w, http.StatusInternalServerError, domain.NewDomainError("SESSION_CREATE_FAILED", "Failed to create session"))
+			shared.WriteError(w, http.StatusInternalServerError, domain.NewDomainError("SESSION_CREATE_FAILED", "Failed to create session"))
 			return
 		}
 	}
@@ -147,30 +148,30 @@ func (s *Server) Login(w http.ResponseWriter, r *http.Request) {
 		ExpiresIn:    15 * 60,
 	}
 
-	WriteJSON(w, http.StatusOK, response)
+	shared.WriteJSON(w, http.StatusOK, response)
 }
 
 // Register implements ServerInterface.Register
 func (s *Server) Register(w http.ResponseWriter, r *http.Request) {
 	var req generated.RegisterRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_JSON", "Invalid JSON payload"))
+		shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_JSON", "Invalid JSON payload"))
 		return
 	}
 
 	if req.Username == "" || req.Email == "" || req.Password == "" {
-		WriteError(w, http.StatusBadRequest, domain.NewDomainError("MISSING_FIELDS", "Username, email, and password are required"))
+		shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("MISSING_FIELDS", "Username, email, and password are required"))
 		return
 	}
 
 	// Optional pre-check for clearer 409s
 	if s.userRepo != nil {
 		if _, err := s.userRepo.GetByEmail(r.Context(), req.Email); err == nil {
-			WriteError(w, http.StatusConflict, domain.NewDomainError("USER_EXISTS", "Email already in use"))
+			shared.WriteError(w, http.StatusConflict, domain.NewDomainError("USER_EXISTS", "Email already in use"))
 			return
 		}
 		if _, err := s.userRepo.GetByUsername(r.Context(), req.Username); err == nil {
-			WriteError(w, http.StatusConflict, domain.NewDomainError("USER_EXISTS", "Username already in use"))
+			shared.WriteError(w, http.StatusConflict, domain.NewDomainError("USER_EXISTS", "Username already in use"))
 			return
 		}
 
@@ -195,13 +196,13 @@ func (s *Server) Register(w http.ResponseWriter, r *http.Request) {
 		// Hash password
 		hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
 		if err != nil {
-			WriteError(w, http.StatusInternalServerError, domain.NewDomainError("INTERNAL_ERROR", "Failed to process password"))
+			shared.WriteError(w, http.StatusInternalServerError, domain.NewDomainError("INTERNAL_ERROR", "Failed to process password"))
 			return
 		}
 
 		if err := s.userRepo.Create(r.Context(), dUser, string(hash)); err != nil {
 			status := MapDomainErrorToHTTP(domain.ErrConflict)
-			WriteError(w, status, domain.NewDomainError("CREATE_FAILED", "Failed to create user"))
+			shared.WriteError(w, status, domain.NewDomainError("CREATE_FAILED", "Failed to create user"))
 			return
 		}
 
@@ -244,11 +245,11 @@ func (s *Server) Register(w http.ResponseWriter, r *http.Request) {
 				CreatedAt: time.Now(),
 			}
 			if err := s.authRepo.CreateRefreshToken(r.Context(), rt); err != nil {
-				WriteError(w, http.StatusInternalServerError, domain.NewDomainErrorWithDetails("TOKEN_ISSUE_FAILED", "Failed to create refresh token", err.Error()))
+				shared.WriteError(w, http.StatusInternalServerError, domain.NewDomainErrorWithDetails("TOKEN_ISSUE_FAILED", "Failed to create refresh token", err.Error()))
 				return
 			}
 			if err := s.authRepo.CreateSession(r.Context(), refresh, dUser.ID, refreshExpires); err != nil {
-				WriteError(w, http.StatusInternalServerError, domain.NewDomainError("SESSION_CREATE_FAILED", "Failed to create session"))
+				shared.WriteError(w, http.StatusInternalServerError, domain.NewDomainError("SESSION_CREATE_FAILED", "Failed to create session"))
 				return
 			}
 		}
@@ -271,36 +272,36 @@ func (s *Server) Register(w http.ResponseWriter, r *http.Request) {
 			ExpiresIn:    15 * 60,
 		}
 
-		WriteJSON(w, http.StatusCreated, response)
+		shared.WriteJSON(w, http.StatusCreated, response)
 		return
 	}
 
 	// Fallback if repo not set (shouldn't happen in production wiring)
-	WriteError(w, http.StatusInternalServerError, domain.NewDomainError("INTERNAL_ERROR", "User repository not configured"))
+	shared.WriteError(w, http.StatusInternalServerError, domain.NewDomainError("INTERNAL_ERROR", "User repository not configured"))
 }
 
 // RefreshToken implements ServerInterface.RefreshToken
 func (s *Server) RefreshToken(w http.ResponseWriter, r *http.Request) {
 	var req generated.RefreshTokenRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_JSON", "Invalid JSON payload"))
+		shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_JSON", "Invalid JSON payload"))
 		return
 	}
 
 	if req.RefreshToken == "" {
-		WriteError(w, http.StatusBadRequest, domain.NewDomainError("MISSING_TOKEN", "Refresh token is required"))
+		shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("MISSING_TOKEN", "Refresh token is required"))
 		return
 	}
 
 	if s.authRepo == nil {
-		WriteError(w, http.StatusInternalServerError, domain.NewDomainError("INTERNAL_ERROR", "Auth repository not configured"))
+		shared.WriteError(w, http.StatusInternalServerError, domain.NewDomainError("INTERNAL_ERROR", "Auth repository not configured"))
 		return
 	}
 
 	// Validate existing token
 	existing, err := s.authRepo.GetRefreshToken(r.Context(), req.RefreshToken)
 	if err != nil {
-		WriteError(w, http.StatusUnauthorized, domain.ErrInvalidToken)
+		shared.WriteError(w, http.StatusUnauthorized, domain.ErrInvalidToken)
 		return
 	}
 
@@ -317,14 +318,14 @@ func (s *Server) RefreshToken(w http.ResponseWriter, r *http.Request) {
 		CreatedAt: time.Now(),
 	}
 	if err := s.authRepo.CreateRefreshToken(r.Context(), rt); err != nil {
-		WriteError(w, http.StatusInternalServerError, domain.NewDomainErrorWithDetails("TOKEN_ISSUE_FAILED", "Failed to issue refresh token", err.Error()))
+		shared.WriteError(w, http.StatusInternalServerError, domain.NewDomainErrorWithDetails("TOKEN_ISSUE_FAILED", "Failed to issue refresh token", err.Error()))
 		return
 	}
 
 	// Rotate session in Redis (sessionID == refresh token)
 	_ = s.authRepo.DeleteSession(r.Context(), req.RefreshToken)
 	if err := s.authRepo.CreateSession(r.Context(), newRefresh, existing.UserID, refreshExpires); err != nil {
-		WriteError(w, http.StatusInternalServerError, domain.NewDomainError("SESSION_CREATE_FAILED", "Failed to create session"))
+		shared.WriteError(w, http.StatusInternalServerError, domain.NewDomainError("SESSION_CREATE_FAILED", "Failed to create session"))
 		return
 	}
 
@@ -341,7 +342,7 @@ func (s *Server) RefreshToken(w http.ResponseWriter, r *http.Request) {
 		ExpiresIn:    15 * 60,
 	}
 
-	WriteJSON(w, http.StatusOK, response)
+	shared.WriteJSON(w, http.StatusOK, response)
 }
 
 // Logout implements ServerInterface.Logout
@@ -358,7 +359,7 @@ func (s *Server) Logout(w http.ResponseWriter, r *http.Request) {
 		UserID:  &userID,
 	}
 
-	WriteJSON(w, http.StatusOK, response)
+	shared.WriteJSON(w, http.StatusOK, response)
 }
 
 // HealthCheck implements ServerInterface.HealthCheck
@@ -368,7 +369,7 @@ func (s *Server) HealthCheck(w http.ResponseWriter, r *http.Request) {
 		Timestamp: time.Now(),
 	}
 
-	WriteJSON(w, http.StatusOK, response)
+	shared.WriteJSON(w, http.StatusOK, response)
 }
 
 // ReadinessCheck implements ServerInterface.ReadinessCheck
@@ -417,7 +418,7 @@ func (s *Server) ReadinessCheck(w http.ResponseWriter, r *http.Request) {
 		Timestamp: time.Now(),
 	}
 
-	WriteJSON(w, http.StatusOK, response)
+	shared.WriteJSON(w, http.StatusOK, response)
 }
 
 // generateJWTWithRole creates a signed JWT including optional role claim

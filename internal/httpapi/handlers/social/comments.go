@@ -2,6 +2,7 @@ package social
 
 import (
 	"athena/internal/domain"
+	"athena/internal/httpapi/shared"
 	"athena/internal/middleware"
 	uccmt "athena/internal/usecase/comment"
 	"encoding/json"
@@ -28,20 +29,20 @@ func (h *CommentHandlers) CreateComment(w http.ResponseWriter, r *http.Request) 
 	videoIDStr := chi.URLParam(r, "videoId")
 	videoID, err := uuid.Parse(videoIDStr)
 	if err != nil {
-		WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid video ID"))
+		shared.WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid video ID"))
 		return
 	}
 
 	// Get user ID from context
 	userID, ok := middleware.GetUserIDFromContext(r.Context())
 	if !ok {
-		WriteError(w, http.StatusUnauthorized, fmt.Errorf("unauthorized"))
+		shared.WriteError(w, http.StatusUnauthorized, fmt.Errorf("unauthorized"))
 		return
 	}
 
 	var req domain.CreateCommentRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid request"))
+		shared.WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid request"))
 		return
 	}
 
@@ -50,21 +51,21 @@ func (h *CommentHandlers) CreateComment(w http.ResponseWriter, r *http.Request) 
 
 	// Validate request
 	if len(req.Body) == 0 || len(req.Body) > 10000 {
-		WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid request"))
+		shared.WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid request"))
 		return
 	}
 
 	comment, err := h.commentService.CreateComment(r.Context(), userID, &req)
 	if err != nil {
 		if err == domain.ErrNotFound {
-			WriteError(w, http.StatusNotFound, fmt.Errorf("not found"))
+			shared.WriteError(w, http.StatusNotFound, fmt.Errorf("not found"))
 			return
 		}
-		WriteError(w, http.StatusInternalServerError, fmt.Errorf("internal server error"))
+		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("internal server error"))
 		return
 	}
 
-	WriteJSON(w, http.StatusCreated, comment)
+	shared.WriteJSON(w, http.StatusCreated, comment)
 }
 
 // GetComments handles GET /api/v1/videos/{videoId}/comments
@@ -72,7 +73,7 @@ func (h *CommentHandlers) GetComments(w http.ResponseWriter, r *http.Request) {
 	videoIDStr := chi.URLParam(r, "videoId")
 	videoID, err := uuid.Parse(videoIDStr)
 	if err != nil {
-		WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid video ID"))
+		shared.WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid video ID"))
 		return
 	}
 
@@ -100,7 +101,7 @@ func (h *CommentHandlers) GetComments(w http.ResponseWriter, r *http.Request) {
 	if parentIDStr != "" {
 		pid, err := uuid.Parse(parentIDStr)
 		if err != nil {
-			WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid request"))
+			shared.WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid request"))
 			return
 		}
 		parentID = &pid
@@ -113,10 +114,10 @@ func (h *CommentHandlers) GetComments(w http.ResponseWriter, r *http.Request) {
 	comments, err := h.commentService.ListComments(r.Context(), videoID, parentID, limit, offset, orderBy)
 	if err != nil {
 		if err == domain.ErrNotFound {
-			WriteError(w, http.StatusNotFound, fmt.Errorf("not found"))
+			shared.WriteError(w, http.StatusNotFound, fmt.Errorf("not found"))
 			return
 		}
-		WriteError(w, http.StatusInternalServerError, fmt.Errorf("internal server error"))
+		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("internal server error"))
 		return
 	}
 
@@ -128,7 +129,7 @@ func (h *CommentHandlers) GetComments(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 
-	WriteJSON(w, http.StatusOK, response)
+	shared.WriteJSON(w, http.StatusOK, response)
 }
 
 // GetComment handles GET /api/v1/comments/{commentId}
@@ -136,21 +137,21 @@ func (h *CommentHandlers) GetComment(w http.ResponseWriter, r *http.Request) {
 	commentIDStr := chi.URLParam(r, "commentId")
 	commentID, err := uuid.Parse(commentIDStr)
 	if err != nil {
-		WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid request"))
+		shared.WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid request"))
 		return
 	}
 
 	comment, err := h.commentService.GetComment(r.Context(), commentID)
 	if err != nil {
 		if err == domain.ErrNotFound {
-			WriteError(w, http.StatusNotFound, fmt.Errorf("not found"))
+			shared.WriteError(w, http.StatusNotFound, fmt.Errorf("not found"))
 			return
 		}
-		WriteError(w, http.StatusInternalServerError, fmt.Errorf("internal server error"))
+		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("internal server error"))
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, comment)
+	shared.WriteJSON(w, http.StatusOK, comment)
 }
 
 // UpdateComment handles PUT /api/v1/comments/{commentId}
@@ -158,40 +159,40 @@ func (h *CommentHandlers) UpdateComment(w http.ResponseWriter, r *http.Request) 
 	commentIDStr := chi.URLParam(r, "commentId")
 	commentID, err := uuid.Parse(commentIDStr)
 	if err != nil {
-		WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid request"))
+		shared.WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid request"))
 		return
 	}
 
 	// Get user ID from context
 	userID, ok := middleware.GetUserIDFromContext(r.Context())
 	if !ok {
-		WriteError(w, http.StatusUnauthorized, fmt.Errorf("unauthorized"))
+		shared.WriteError(w, http.StatusUnauthorized, fmt.Errorf("unauthorized"))
 		return
 	}
 
 	var req domain.UpdateCommentRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid request"))
+		shared.WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid request"))
 		return
 	}
 
 	// Validate request
 	if len(req.Body) == 0 || len(req.Body) > 10000 {
-		WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid request"))
+		shared.WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid request"))
 		return
 	}
 
 	err = h.commentService.UpdateComment(r.Context(), userID, commentID, &req)
 	if err != nil {
 		if err == domain.ErrNotFound {
-			WriteError(w, http.StatusNotFound, fmt.Errorf("not found"))
+			shared.WriteError(w, http.StatusNotFound, fmt.Errorf("not found"))
 			return
 		}
 		if err == domain.ErrUnauthorized {
-			WriteError(w, http.StatusForbidden, fmt.Errorf("forbidden"))
+			shared.WriteError(w, http.StatusForbidden, fmt.Errorf("forbidden"))
 			return
 		}
-		WriteError(w, http.StatusInternalServerError, fmt.Errorf("internal server error"))
+		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("internal server error"))
 		return
 	}
 
@@ -203,14 +204,14 @@ func (h *CommentHandlers) DeleteComment(w http.ResponseWriter, r *http.Request) 
 	commentIDStr := chi.URLParam(r, "commentId")
 	commentID, err := uuid.Parse(commentIDStr)
 	if err != nil {
-		WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid request"))
+		shared.WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid request"))
 		return
 	}
 
 	// Get user ID from context
 	userID, ok := middleware.GetUserIDFromContext(r.Context())
 	if !ok {
-		WriteError(w, http.StatusUnauthorized, fmt.Errorf("unauthorized"))
+		shared.WriteError(w, http.StatusUnauthorized, fmt.Errorf("unauthorized"))
 		return
 	}
 
@@ -220,14 +221,14 @@ func (h *CommentHandlers) DeleteComment(w http.ResponseWriter, r *http.Request) 
 	err = h.commentService.DeleteComment(r.Context(), userID, commentID, isAdmin)
 	if err != nil {
 		if err == domain.ErrNotFound {
-			WriteError(w, http.StatusNotFound, fmt.Errorf("not found"))
+			shared.WriteError(w, http.StatusNotFound, fmt.Errorf("not found"))
 			return
 		}
 		if err == domain.ErrUnauthorized {
-			WriteError(w, http.StatusForbidden, fmt.Errorf("forbidden"))
+			shared.WriteError(w, http.StatusForbidden, fmt.Errorf("forbidden"))
 			return
 		}
-		WriteError(w, http.StatusInternalServerError, fmt.Errorf("internal server error"))
+		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("internal server error"))
 		return
 	}
 
@@ -239,20 +240,20 @@ func (h *CommentHandlers) FlagComment(w http.ResponseWriter, r *http.Request) {
 	commentIDStr := chi.URLParam(r, "commentId")
 	commentID, err := uuid.Parse(commentIDStr)
 	if err != nil {
-		WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid request"))
+		shared.WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid request"))
 		return
 	}
 
 	// Get user ID from context
 	userID, ok := middleware.GetUserIDFromContext(r.Context())
 	if !ok {
-		WriteError(w, http.StatusUnauthorized, fmt.Errorf("unauthorized"))
+		shared.WriteError(w, http.StatusUnauthorized, fmt.Errorf("unauthorized"))
 		return
 	}
 
 	var req domain.FlagCommentRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid request"))
+		shared.WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid request"))
 		return
 	}
 
@@ -267,21 +268,21 @@ func (h *CommentHandlers) FlagComment(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !validReasons[string(req.Reason)] {
-		WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid request"))
+		shared.WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid request"))
 		return
 	}
 
 	err = h.commentService.FlagComment(r.Context(), userID, commentID, &req)
 	if err != nil {
 		if err == domain.ErrNotFound {
-			WriteError(w, http.StatusNotFound, fmt.Errorf("not found"))
+			shared.WriteError(w, http.StatusNotFound, fmt.Errorf("not found"))
 			return
 		}
-		WriteError(w, http.StatusInternalServerError, fmt.Errorf("internal server error"))
+		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("internal server error"))
 		return
 	}
 
-	WriteJSON(w, http.StatusCreated, map[string]string{
+	shared.WriteJSON(w, http.StatusCreated, map[string]string{
 		"message": "Comment flagged successfully",
 	})
 }
@@ -291,24 +292,24 @@ func (h *CommentHandlers) UnflagComment(w http.ResponseWriter, r *http.Request) 
 	commentIDStr := chi.URLParam(r, "commentId")
 	commentID, err := uuid.Parse(commentIDStr)
 	if err != nil {
-		WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid request"))
+		shared.WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid request"))
 		return
 	}
 
 	// Get user ID from context
 	userID, ok := middleware.GetUserIDFromContext(r.Context())
 	if !ok {
-		WriteError(w, http.StatusUnauthorized, fmt.Errorf("unauthorized"))
+		shared.WriteError(w, http.StatusUnauthorized, fmt.Errorf("unauthorized"))
 		return
 	}
 
 	err = h.commentService.UnflagComment(r.Context(), userID, commentID)
 	if err != nil {
 		if err == domain.ErrNotFound {
-			WriteError(w, http.StatusNotFound, fmt.Errorf("not found"))
+			shared.WriteError(w, http.StatusNotFound, fmt.Errorf("not found"))
 			return
 		}
-		WriteError(w, http.StatusInternalServerError, fmt.Errorf("internal server error"))
+		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("internal server error"))
 		return
 	}
 
@@ -320,14 +321,14 @@ func (h *CommentHandlers) ModerateComment(w http.ResponseWriter, r *http.Request
 	commentIDStr := chi.URLParam(r, "commentId")
 	commentID, err := uuid.Parse(commentIDStr)
 	if err != nil {
-		WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid request"))
+		shared.WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid request"))
 		return
 	}
 
 	// Get user ID from context
 	userID, ok := middleware.GetUserIDFromContext(r.Context())
 	if !ok {
-		WriteError(w, http.StatusUnauthorized, fmt.Errorf("Unauthorized"))
+		shared.WriteError(w, http.StatusUnauthorized, fmt.Errorf("Unauthorized"))
 		return
 	}
 
@@ -336,7 +337,7 @@ func (h *CommentHandlers) ModerateComment(w http.ResponseWriter, r *http.Request
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid request"))
+		shared.WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid request"))
 		return
 	}
 
@@ -350,7 +351,7 @@ func (h *CommentHandlers) ModerateComment(w http.ResponseWriter, r *http.Request
 	case "flagged":
 		status = domain.CommentStatusFlagged
 	default:
-		WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid request"))
+		shared.WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid request"))
 		return
 	}
 
@@ -360,14 +361,14 @@ func (h *CommentHandlers) ModerateComment(w http.ResponseWriter, r *http.Request
 	err = h.commentService.ModerateComment(r.Context(), userID, commentID, status, isAdmin)
 	if err != nil {
 		if err == domain.ErrNotFound {
-			WriteError(w, http.StatusNotFound, fmt.Errorf("not found"))
+			shared.WriteError(w, http.StatusNotFound, fmt.Errorf("not found"))
 			return
 		}
 		if err == domain.ErrUnauthorized {
-			WriteError(w, http.StatusForbidden, fmt.Errorf("forbidden"))
+			shared.WriteError(w, http.StatusForbidden, fmt.Errorf("forbidden"))
 			return
 		}
-		WriteError(w, http.StatusInternalServerError, fmt.Errorf("internal server error"))
+		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("internal server error"))
 		return
 	}
 

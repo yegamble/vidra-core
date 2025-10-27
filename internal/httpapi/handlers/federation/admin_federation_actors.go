@@ -1,6 +1,7 @@
 package federation
 
 import (
+	"athena/internal/httpapi/shared"
 	"encoding/json"
 	"net/http"
 	"strconv"
@@ -34,10 +35,10 @@ func (h *AdminFederationActorsHandlers) ListActors(w http.ResponseWriter, r *htt
 	}
 	actors, total, err := h.repo.ListActors(r.Context(), pageSize, (page-1)*pageSize)
 	if err != nil {
-		WriteError(w, http.StatusInternalServerError, domain.NewDomainError("INTERNAL_ERROR", "Failed to list actors"))
+		shared.WriteError(w, http.StatusInternalServerError, domain.NewDomainError("INTERNAL_ERROR", "Failed to list actors"))
 		return
 	}
-	WriteJSON(w, http.StatusOK, map[string]any{"total": total, "page": page, "pageSize": pageSize, "data": actors})
+	shared.WriteJSON(w, http.StatusOK, map[string]any{"total": total, "page": page, "pageSize": pageSize, "data": actors})
 }
 
 func (h *AdminFederationActorsHandlers) UpsertActor(w http.ResponseWriter, r *http.Request) {
@@ -50,17 +51,17 @@ func (h *AdminFederationActorsHandlers) UpsertActor(w http.ResponseWriter, r *ht
 		RateLimitSeconds int    `json:"rate_limit_seconds"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Actor == "" {
-		WriteError(w, http.StatusBadRequest, domain.NewDomainError("BAD_REQUEST", "Invalid body"))
+		shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("BAD_REQUEST", "Invalid body"))
 		return
 	}
 	if body.RateLimitSeconds <= 0 {
 		body.RateLimitSeconds = 60
 	}
 	if err := h.repo.UpsertActor(r.Context(), body.Actor, body.Enabled, body.RateLimitSeconds); err != nil {
-		WriteError(w, http.StatusInternalServerError, domain.NewDomainError("INTERNAL_ERROR", "Failed to upsert actor"))
+		shared.WriteError(w, http.StatusInternalServerError, domain.NewDomainError("INTERNAL_ERROR", "Failed to upsert actor"))
 		return
 	}
-	WriteJSON(w, http.StatusOK, map[string]any{"success": true})
+	shared.WriteJSON(w, http.StatusOK, map[string]any{"success": true})
 }
 
 func (h *AdminFederationActorsHandlers) UpdateActor(w http.ResponseWriter, r *http.Request) {
@@ -76,7 +77,7 @@ func (h *AdminFederationActorsHandlers) UpdateActor(w http.ResponseWriter, r *ht
 		Attempts         *int    `json:"attempts"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		WriteError(w, http.StatusBadRequest, domain.NewDomainError("BAD_REQUEST", "Invalid body"))
+		shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("BAD_REQUEST", "Invalid body"))
 		return
 	}
 	var nextAtPtr *time.Time
@@ -86,10 +87,10 @@ func (h *AdminFederationActorsHandlers) UpdateActor(w http.ResponseWriter, r *ht
 		}
 	}
 	if err := h.repo.UpdateActor(r.Context(), actor, body.Enabled, body.RateLimitSeconds, body.Cursor, nextAtPtr, body.Attempts); err != nil {
-		WriteError(w, http.StatusInternalServerError, domain.NewDomainError("INTERNAL_ERROR", "Failed to update actor"))
+		shared.WriteError(w, http.StatusInternalServerError, domain.NewDomainError("INTERNAL_ERROR", "Failed to update actor"))
 		return
 	}
-	WriteJSON(w, http.StatusOK, map[string]any{"success": true})
+	shared.WriteJSON(w, http.StatusOK, map[string]any{"success": true})
 }
 
 func (h *AdminFederationActorsHandlers) DeleteActor(w http.ResponseWriter, r *http.Request) {
@@ -99,11 +100,11 @@ func (h *AdminFederationActorsHandlers) DeleteActor(w http.ResponseWriter, r *ht
 	actor := chi.URLParam(r, "actor")
 	if err := h.repo.DeleteActor(r.Context(), actor); err != nil {
 		if de, ok := err.(*domain.DomainError); ok && de.Code == "NOT_FOUND" {
-			WriteError(w, http.StatusNotFound, de)
+			shared.WriteError(w, http.StatusNotFound, de)
 			return
 		}
-		WriteError(w, http.StatusInternalServerError, domain.NewDomainError("INTERNAL_ERROR", "Failed to delete actor"))
+		shared.WriteError(w, http.StatusInternalServerError, domain.NewDomainError("INTERNAL_ERROR", "Failed to delete actor"))
 		return
 	}
-	WriteJSON(w, http.StatusOK, map[string]any{"success": true})
+	shared.WriteJSON(w, http.StatusOK, map[string]any{"success": true})
 }

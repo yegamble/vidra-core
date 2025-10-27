@@ -4,7 +4,6 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
-	jwt "github.com/golang-jwt/jwt/v5"
 	redis "github.com/redis/go-redis/v9"
 
 	"athena/internal/config"
@@ -20,6 +19,8 @@ type AuthHandlers struct {
 	jwtSecret           string
 	redis               *redis.Client
 	redisPingTimeout    time.Duration
+	ipfsAPI             string
+	ipfsClusterAPI      string
 	cfg                 *config.Config
 }
 
@@ -32,6 +33,8 @@ func NewAuthHandlers(
 	jwtSecret string,
 	redisClient *redis.Client,
 	redisPingTimeout time.Duration,
+	ipfsAPI string,
+	ipfsClusterAPI string,
 	cfg *config.Config,
 ) *AuthHandlers {
 	return &AuthHandlers{
@@ -42,6 +45,8 @@ func NewAuthHandlers(
 		jwtSecret:           jwtSecret,
 		redis:               redisClient,
 		redisPingTimeout:    redisPingTimeout,
+		ipfsAPI:             ipfsAPI,
+		ipfsClusterAPI:      ipfsClusterAPI,
 		cfg:                 cfg,
 	}
 }

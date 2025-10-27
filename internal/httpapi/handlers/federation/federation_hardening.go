@@ -1,6 +1,7 @@
 package federation
 
 import (
+	"athena/internal/httpapi/shared"
 	"bytes"
 	"encoding/json"
 	"errors"
@@ -66,11 +67,11 @@ func (h *FederationHardeningHandler) GetDashboard(w http.ResponseWriter, r *http
 
 	data, err := h.service.GetDashboardData(ctx)
 	if err != nil {
-		WriteError(w, http.StatusInternalServerError, err)
+		shared.WriteError(w, http.StatusInternalServerError, err)
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, data)
+	shared.WriteJSON(w, http.StatusOK, data)
 }
 
 // GetHealthMetrics returns federation health metrics
@@ -79,11 +80,11 @@ func (h *FederationHardeningHandler) GetHealthMetrics(w http.ResponseWriter, r *
 
 	metrics, err := h.service.GetHealthMetrics(ctx)
 	if err != nil {
-		WriteError(w, http.StatusInternalServerError, err)
+		shared.WriteError(w, http.StatusInternalServerError, err)
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, metrics)
+	shared.WriteJSON(w, http.StatusOK, metrics)
 }
 
 // DLQ Operations
@@ -103,11 +104,11 @@ func (h *FederationHardeningHandler) GetDLQJobs(w http.ResponseWriter, r *http.R
 
 	jobs, err := h.service.GetDLQJobs(ctx, limit, canRetryOnly)
 	if err != nil {
-		WriteError(w, http.StatusInternalServerError, err)
+		shared.WriteError(w, http.StatusInternalServerError, err)
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, jobs)
+	shared.WriteJSON(w, http.StatusOK, jobs)
 }
 
 // RetryDLQJob retries a job from the DLQ
@@ -116,11 +117,11 @@ func (h *FederationHardeningHandler) RetryDLQJob(w http.ResponseWriter, r *http.
 	dlqID := chi.URLParam(r, "id")
 
 	if err := h.service.RetryDLQJob(ctx, dlqID); err != nil {
-		WriteError(w, http.StatusInternalServerError, err)
+		shared.WriteError(w, http.StatusInternalServerError, err)
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, map[string]string{"status": "retry_queued"})
+	shared.WriteJSON(w, http.StatusOK, map[string]string{"status": "retry_queued"})
 }
 
 // Blocklist Operations
@@ -140,7 +141,7 @@ func (h *FederationHardeningHandler) BlockInstance(w http.ResponseWriter, r *htt
 
 	var req BlockInstanceRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		WriteError(w, http.StatusBadRequest, errors.New("invalid request"))
+		shared.WriteError(w, http.StatusBadRequest, errors.New("invalid request"))
 		return
 	}
 
@@ -148,18 +149,18 @@ func (h *FederationHardeningHandler) BlockInstance(w http.ResponseWriter, r *htt
 	if req.Duration != "" {
 		d, err := time.ParseDuration(req.Duration)
 		if err != nil {
-			WriteError(w, http.StatusBadRequest, errors.New("invalid duration format"))
+			shared.WriteError(w, http.StatusBadRequest, errors.New("invalid duration format"))
 			return
 		}
 		duration = d
 	}
 
 	if err := h.service.BlockInstance(ctx, req.InstanceDomain, req.Reason, req.Severity, req.BlockedBy, duration); err != nil {
-		WriteError(w, http.StatusInternalServerError, err)
+		shared.WriteError(w, http.StatusInternalServerError, err)
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, map[string]string{"status": "blocked"})
+	shared.WriteJSON(w, http.StatusOK, map[string]string{"status": "blocked"})
 }
 
 // UnblockInstance unblocks an instance
@@ -168,11 +169,11 @@ func (h *FederationHardeningHandler) UnblockInstance(w http.ResponseWriter, r *h
 	domain := chi.URLParam(r, "domain")
 
 	if err := h.service.UnblockInstance(ctx, domain); err != nil {
-		WriteError(w, http.StatusInternalServerError, err)
+		shared.WriteError(w, http.StatusInternalServerError, err)
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, map[string]string{"status": "unblocked"})
+	shared.WriteJSON(w, http.StatusOK, map[string]string{"status": "unblocked"})
 }
 
 // GetInstanceBlocks retrieves instance blocks
@@ -181,11 +182,11 @@ func (h *FederationHardeningHandler) GetInstanceBlocks(w http.ResponseWriter, r 
 
 	blocks, err := h.service.GetInstanceBlocks(ctx)
 	if err != nil {
-		WriteError(w, http.StatusInternalServerError, err)
+		shared.WriteError(w, http.StatusInternalServerError, err)
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, blocks)
+	shared.WriteJSON(w, http.StatusOK, blocks)
 }
 
 // BlockActorRequest represents an actor block request
@@ -204,7 +205,7 @@ func (h *FederationHardeningHandler) BlockActor(w http.ResponseWriter, r *http.R
 
 	var req BlockActorRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		WriteError(w, http.StatusBadRequest, errors.New("invalid request"))
+		shared.WriteError(w, http.StatusBadRequest, errors.New("invalid request"))
 		return
 	}
 
@@ -212,18 +213,18 @@ func (h *FederationHardeningHandler) BlockActor(w http.ResponseWriter, r *http.R
 	if req.Duration != "" {
 		d, err := time.ParseDuration(req.Duration)
 		if err != nil {
-			WriteError(w, http.StatusBadRequest, errors.New("invalid duration format"))
+			shared.WriteError(w, http.StatusBadRequest, errors.New("invalid duration format"))
 			return
 		}
 		duration = d
 	}
 
 	if err := h.service.BlockActor(ctx, req.ActorDID, req.ActorHandle, req.Reason, req.Severity, req.BlockedBy, duration); err != nil {
-		WriteError(w, http.StatusInternalServerError, err)
+		shared.WriteError(w, http.StatusInternalServerError, err)
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, map[string]string{"status": "blocked"})
+	shared.WriteJSON(w, http.StatusOK, map[string]string{"status": "blocked"})
 }
 
 // CheckBlocked checks if an instance or actor is blocked
@@ -249,7 +250,7 @@ func (h *FederationHardeningHandler) CheckBlocked(w http.ResponseWriter, r *http
 		result["actor_blocked"] = blocked
 	}
 
-	WriteJSON(w, http.StatusOK, result)
+	shared.WriteJSON(w, http.StatusOK, result)
 }
 
 // Abuse Reporting
@@ -270,16 +271,16 @@ func (h *FederationHardeningHandler) ReportAbuse(w http.ResponseWriter, r *http.
 
 	var req ReportAbuseRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		WriteError(w, http.StatusBadRequest, errors.New("invalid request"))
+		shared.WriteError(w, http.StatusBadRequest, errors.New("invalid request"))
 		return
 	}
 
 	if err := h.service.ReportAbuse(ctx, req.ReporterDID, req.ReportType, req.ContentURI, req.ActorDID, req.Description, req.Evidence); err != nil {
-		WriteError(w, http.StatusInternalServerError, err)
+		shared.WriteError(w, http.StatusInternalServerError, err)
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, map[string]string{"status": "reported"})
+	shared.WriteJSON(w, http.StatusOK, map[string]string{"status": "reported"})
 }
 
 // GetAbuseReports retrieves pending abuse reports
@@ -295,11 +296,11 @@ func (h *FederationHardeningHandler) GetAbuseReports(w http.ResponseWriter, r *h
 
 	reports, err := h.service.GetPendingAbuseReports(ctx, limit)
 	if err != nil {
-		WriteError(w, http.StatusInternalServerError, err)
+		shared.WriteError(w, http.StatusInternalServerError, err)
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, reports)
+	shared.WriteJSON(w, http.StatusOK, reports)
 }
 
 // ResolveAbuseReportRequest represents a resolution request
@@ -316,16 +317,16 @@ func (h *FederationHardeningHandler) ResolveAbuseReport(w http.ResponseWriter, r
 
 	var req ResolveAbuseReportRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		WriteError(w, http.StatusBadRequest, errors.New("invalid request"))
+		shared.WriteError(w, http.StatusBadRequest, errors.New("invalid request"))
 		return
 	}
 
 	if err := h.service.ResolveAbuseReport(ctx, reportID, req.Resolution, req.ResolvedBy, req.TakeAction); err != nil {
-		WriteError(w, http.StatusInternalServerError, err)
+		shared.WriteError(w, http.StatusInternalServerError, err)
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, map[string]string{"status": "resolved"})
+	shared.WriteJSON(w, http.StatusOK, map[string]string{"status": "resolved"})
 }
 
 // RunCleanup runs cleanup tasks
@@ -333,11 +334,11 @@ func (h *FederationHardeningHandler) RunCleanup(w http.ResponseWriter, r *http.R
 	ctx := r.Context()
 
 	if err := h.service.RunCleanup(ctx); err != nil {
-		WriteError(w, http.StatusInternalServerError, err)
+		shared.WriteError(w, http.StatusInternalServerError, err)
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, map[string]string{"status": "cleanup_completed"})
+	shared.WriteJSON(w, http.StatusOK, map[string]string{"status": "cleanup_completed"})
 }
 
 // FederationMiddleware validates incoming federation requests
@@ -363,13 +364,13 @@ func FederationMiddleware(service *usecase.FederationHardeningService) func(next
 			}
 			body, err := io.ReadAll(io.LimitReader(r.Body, maxSize))
 			if err != nil {
-				WriteError(w, http.StatusBadRequest, errors.New("failed to read request body"))
+				shared.WriteError(w, http.StatusBadRequest, errors.New("failed to read request body"))
 				return
 			}
 
 			// Validate the request
 			if err := service.ValidateFederationRequest(r.Context(), instanceDomain, signature, r.URL.Path, body, ts); err != nil {
-				WriteError(w, http.StatusForbidden, err)
+				shared.WriteError(w, http.StatusForbidden, err)
 				return
 			}
 

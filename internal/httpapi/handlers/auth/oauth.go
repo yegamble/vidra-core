@@ -45,7 +45,7 @@ func (h *AuthHandlers) OAuthToken(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Lookup client via configured repository
-	oauthRepo := s.oauthRepo
+	oauthRepo := h.oauthRepo
 	if oauthRepo == nil {
 		writeOAuthError(w, http.StatusNotImplemented, "server_error", "OAuth client repository not configured")
 		return
@@ -82,13 +82,13 @@ func (h *AuthHandlers) OAuthToken(w http.ResponseWriter, r *http.Request) {
 
 	switch grantType {
 	case "password":
-		s.handlePasswordGrant(w, r)
+		h.handlePasswordGrant(w, r)
 		return
 	case "refresh_token":
-		s.handleRefreshTokenGrant(w, r)
+		h.handleRefreshTokenGrant(w, r)
 		return
 	case "authorization_code":
-		s.handleAuthorizationCodeGrant(w, r)
+		h.handleAuthorizationCodeGrant(w, r)
 		return
 	default:
 		writeOAuthError(w, http.StatusBadRequest, "unsupported_grant_type", "Unsupported grant_type")
@@ -109,19 +109,19 @@ func (h *AuthHandlers) handlePasswordGrant(w http.ResponseWriter, r *http.Reques
 	var dUser *domain.User
 	var err error
 	if strings.Contains(username, "@") {
-		dUser, err = s.userRepo.GetByEmail(r.Context(), username)
+		dUser, err = h.userRepo.GetByEmail(r.Context(), username)
 	} else {
-		dUser, err = s.userRepo.GetByUsername(r.Context(), username)
+		dUser, err = h.userRepo.GetByUsername(r.Context(), username)
 		if err != nil {
 			// Fallback to email if not found
-			dUser, err = s.userRepo.GetByEmail(r.Context(), username)
+			dUser, err = h.userRepo.GetByEmail(r.Context(), username)
 		}
 	}
 	if err != nil || dUser == nil {
 		writeOAuthError(w, http.StatusUnauthorized, "invalid_grant", "Invalid credentials")
 		return
 	}
-	hash, err := s.userRepo.GetPasswordHash(r.Context(), dUser.ID)
+	hash, err := h.userRepo.GetPasswordHash(r.Context(), dUser.ID)
 	if err != nil || bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)) != nil {
 		writeOAuthError(w, http.StatusUnauthorized, "invalid_grant", "Invalid credentials")
 		return
@@ -129,20 +129,20 @@ func (h *AuthHandlers) handlePasswordGrant(w http.ResponseWriter, r *http.Reques
 
 	// Issue tokens with default scopes for password grant
 	defaultScope := "basic profile email"
-	access := s.generateJWTWithRoleAndScope(dUser.ID, string(dUser.Role), defaultScope, 15*time.Minute)
+	access := h.generateJWTWithRoleAndScope(dUser.ID, string(dUser.Role), defaultScope, 15*time.Minute)
 	refresh := uuid.NewString()
 	if refresh == "" {
 		writeOAuthError(w, http.StatusInternalServerError, "server_error", "Failed to issue token")
 		return
 	}
 	refreshExpires := time.Now().Add(7 * 24 * time.Hour)
-	if s.authRepo != nil {
+	if h.authRepo != nil {
 		rt := &usecase.RefreshToken{ID: uuid.NewString(), UserID: dUser.ID, Token: refresh, ExpiresAt: refreshExpires, CreatedAt: time.Now()}
-		if err := s.authRepo.CreateRefreshToken(r.Context(), rt); err != nil {
+		if err := h.authRepo.CreateRefreshToken(r.Context(), rt); err != nil {
 			writeOAuthError(w, http.StatusInternalServerError, "server_error", "Failed to persist refresh token")
 			return
 		}
-		if err := s.authRepo.CreateSession(r.Context(), refresh, dUser.ID, refreshExpires); err != nil {
+		if err := h.authRepo.CreateSession(r.Context(), refresh, dUser.ID, refreshExpires); err != nil {
 			writeOAuthError(w, http.StatusInternalServerError, "server_error", "Failed to persist session")
 			return
 		}
@@ -168,25 +168,25 @@ func (h *AuthHandlers) handleRefreshTokenGrant(w http.ResponseWriter, r *http.Re
 		writeOAuthError(w, http.StatusBadRequest, "invalid_request", "Missing refresh_token")
 		return
 	}
-	if s.authRepo == nil {
+	if h.authRepo == nil {
 		writeOAuthError(w, http.StatusInternalServerError, "server_error", "Auth repository not configured")
 		return
 	}
-	existing, err := s.authRepo.GetRefreshToken(r.Context(), rt)
+	existing, err := h.authRepo.GetRefreshToken(r.Context(), rt)
 	if err != nil {
 		writeOAuthError(w, http.StatusUnauthorized, "invalid_grant", "Invalid or expired refresh_token")
 		return
 	}
-	_ = s.authRepo.RevokeRefreshToken(r.Context(), rt)
+	_ = h.authRepo.RevokeRefreshToken(r.Context(), rt)
 
 	newRefresh := uuid.NewString()
 	refreshExpires := time.Now().Add(7 * 24 * time.Hour)
-	if err := s.authRepo.CreateRefreshToken(r.Context(), &usecase.RefreshToken{ID: uuid.NewString(), UserID: existing.UserID, Token: newRefresh, ExpiresAt: refreshExpires, CreatedAt: time.Now()}); err != nil {
+	if err := h.authRepo.CreateRefreshToken(r.Context(), &usecase.RefreshToken{ID: uuid.NewString(), UserID: existing.UserID, Token: newRefresh, ExpiresAt: refreshExpires, CreatedAt: time.Now()}); err != nil {
 		writeOAuthError(w, http.StatusInternalServerError, "server_error", "Failed to issue refresh token")
 		return
 	}
-	_ = s.authRepo.DeleteSession(r.Context(), rt)
-	if err := s.authRepo.CreateSession(r.Context(), newRefresh, existing.UserID, refreshExpires); err != nil {
+	_ = h.authRepo.DeleteSession(r.Context(), rt)
+	if err := h.authRepo.CreateSession(r.Context(), newRefresh, existing.UserID, refreshExpires); err != nil {
 		writeOAuthError(w, http.StatusInternalServerError, "server_error", "Failed to create session")
 		return
 	}
@@ -195,13 +195,13 @@ func (h *AuthHandlers) handleRefreshTokenGrant(w http.ResponseWriter, r *http.Re
 	w.Header().Set("Pragma", "no-cache")
 	// Fetch user role for token
 	var role string
-	if s.userRepo != nil {
-		if u, err := s.userRepo.GetByID(r.Context(), existing.UserID); err == nil {
+	if h.userRepo != nil {
+		if u, err := h.userRepo.GetByID(r.Context(), existing.UserID); err == nil {
 			role = string(u.Role)
 		}
 	}
 	resp := map[string]interface{}{
-		"access_token":  s.generateJWTWithRole(existing.UserID, role, 15*time.Minute),
+		"access_token":  h.generateJWTWithRole(existing.UserID, role, 15*time.Minute),
 		"token_type":    "bearer",
 		"expires_in":    15 * 60,
 		"refresh_token": newRefresh,
@@ -257,7 +257,7 @@ func GetUserFromContext(ctx context.Context) *domain.User {
 // OAuthAuthorize handles GET/POST /oauth/authorize for Authorization Code flow
 func (h *AuthHandlers) OAuthAuthorize(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
-		s.showAuthorizationForm(w, r)
+		h.showAuthorizationForm(w, r)
 		return
 	}
 
@@ -295,7 +295,7 @@ func (h *AuthHandlers) OAuthAuthorize(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Validate client
-	oauthRepo := s.oauthRepo
+	oauthRepo := h.oauthRepo
 	if oauthRepo == nil {
 		writeOAuthError(w, http.StatusNotImplemented, "server_error", "OAuth not configured")
 		return
@@ -379,7 +379,7 @@ func (h *AuthHandlers) showAuthorizationForm(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	client, err := s.oauthRepo.GetClientByClientID(r.Context(), clientID)
+	client, err := h.oauthRepo.GetClientByClientID(r.Context(), clientID)
 	if err != nil {
 		http.Error(w, "Invalid client", http.StatusBadRequest)
 		return
@@ -434,7 +434,7 @@ func (h *AuthHandlers) handleAuthorizationCodeGrant(w http.ResponseWriter, r *ht
 		return
 	}
 
-	oauthRepo := s.oauthRepo
+	oauthRepo := h.oauthRepo
 	if oauthRepo == nil {
 		writeOAuthError(w, http.StatusNotImplemented, "server_error", "OAuth not configured")
 		return
@@ -492,19 +492,19 @@ func (h *AuthHandlers) handleAuthorizationCodeGrant(w http.ResponseWriter, r *ht
 
 	// Get user role
 	var role string
-	if s.userRepo != nil {
-		if u, err := s.userRepo.GetByID(r.Context(), codeRecord.UserID); err == nil {
+	if h.userRepo != nil {
+		if u, err := h.userRepo.GetByID(r.Context(), codeRecord.UserID); err == nil {
 			role = string(u.Role)
 		}
 	}
 
 	// Issue tokens
-	access := s.generateJWTWithRoleAndScope(codeRecord.UserID, role, codeRecord.Scope, 15*time.Minute)
+	access := h.generateJWTWithRoleAndScope(codeRecord.UserID, role, codeRecord.Scope, 15*time.Minute)
 	refresh := uuid.NewString()
 
 	// Store refresh token
 	refreshExpires := time.Now().Add(7 * 24 * time.Hour)
-	if s.authRepo != nil {
+	if h.authRepo != nil {
 		rt := &usecase.RefreshToken{
 			ID:        uuid.NewString(),
 			UserID:    codeRecord.UserID,
@@ -512,7 +512,7 @@ func (h *AuthHandlers) handleAuthorizationCodeGrant(w http.ResponseWriter, r *ht
 			ExpiresAt: refreshExpires,
 			CreatedAt: time.Now(),
 		}
-		if err := s.authRepo.CreateRefreshToken(r.Context(), rt); err != nil {
+		if err := h.authRepo.CreateRefreshToken(r.Context(), rt); err != nil {
 			writeOAuthError(w, http.StatusInternalServerError, "server_error", "Failed to persist refresh token")
 			return
 		}
@@ -568,7 +568,7 @@ func (h *AuthHandlers) OAuthRevoke(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	oauthRepo := s.oauthRepo
+	oauthRepo := h.oauthRepo
 	if oauthRepo == nil {
 		writeOAuthError(w, http.StatusNotImplemented, "server_error", "OAuth not configured")
 		return
@@ -592,8 +592,8 @@ func (h *AuthHandlers) OAuthRevoke(w http.ResponseWriter, r *http.Request) {
 
 	// Try to revoke as refresh token
 	if tokenTypeHint == "" || tokenTypeHint == "refresh_token" {
-		if s.authRepo != nil {
-			if err := s.authRepo.RevokeRefreshToken(r.Context(), token); err == nil {
+		if h.authRepo != nil {
+			if err := h.authRepo.RevokeRefreshToken(r.Context(), token); err == nil {
 				w.WriteHeader(http.StatusOK)
 				return
 			}
@@ -626,7 +626,7 @@ func (h *AuthHandlers) OAuthIntrospect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	oauthRepo := s.oauthRepo
+	oauthRepo := h.oauthRepo
 	if oauthRepo == nil {
 		writeOAuthError(w, http.StatusNotImplemented, "server_error", "OAuth not configured")
 		return

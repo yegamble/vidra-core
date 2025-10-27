@@ -1,6 +1,7 @@
 package messaging
 
 import (
+	"athena/internal/httpapi/shared"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -22,29 +23,29 @@ func SendMessageHandler(messageService *usecase.MessageService) http.HandlerFunc
 	return func(w http.ResponseWriter, r *http.Request) {
 		userID, _ := r.Context().Value(middleware.UserIDKey).(string)
 		if userID == "" {
-			WriteError(w, http.StatusUnauthorized, domain.NewDomainError("UNAUTHORIZED", "Missing or invalid authentication"))
+			shared.WriteError(w, http.StatusUnauthorized, domain.NewDomainError("UNAUTHORIZED", "Missing or invalid authentication"))
 			return
 		}
 
 		var req domain.SendMessageRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_JSON", "Invalid JSON payload"))
+			shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_JSON", "Invalid JSON payload"))
 			return
 		}
 
 		if err := validate.Struct(&req); err != nil {
-			WriteError(w, http.StatusBadRequest, domain.NewDomainError("VALIDATION_ERROR", err.Error()))
+			shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("VALIDATION_ERROR", err.Error()))
 			return
 		}
 
 		message, err := messageService.SendMessage(r.Context(), userID, &req)
 		if err != nil {
-			status := MapDomainErrorToHTTP(err)
-			WriteError(w, status, domain.NewDomainError("SEND_MESSAGE_FAILED", err.Error()))
+			status := shared.MapDomainErrorToHTTP(err)
+			shared.WriteError(w, status, domain.NewDomainError("SEND_MESSAGE_FAILED", err.Error()))
 			return
 		}
 
-		WriteJSON(w, http.StatusCreated, domain.MessageResponse{Message: *message})
+		shared.WriteJSON(w, http.StatusCreated, domain.MessageResponse{Message: *message})
 	}
 }
 
@@ -53,13 +54,13 @@ func GetMessagesHandler(messageService *usecase.MessageService) http.HandlerFunc
 	return func(w http.ResponseWriter, r *http.Request) {
 		userID, _ := r.Context().Value(middleware.UserIDKey).(string)
 		if userID == "" {
-			WriteError(w, http.StatusUnauthorized, domain.NewDomainError("UNAUTHORIZED", "Missing or invalid authentication"))
+			shared.WriteError(w, http.StatusUnauthorized, domain.NewDomainError("UNAUTHORIZED", "Missing or invalid authentication"))
 			return
 		}
 
 		conversationWith := r.URL.Query().Get("conversation_with")
 		if conversationWith == "" {
-			WriteError(w, http.StatusBadRequest, domain.NewDomainError("MISSING_PARAMETER", "conversation_with parameter is required"))
+			shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("MISSING_PARAMETER", "conversation_with parameter is required"))
 			return
 		}
 
@@ -75,18 +76,18 @@ func GetMessagesHandler(messageService *usecase.MessageService) http.HandlerFunc
 		}
 
 		if err := validate.Struct(req); err != nil {
-			WriteError(w, http.StatusBadRequest, domain.NewDomainError("VALIDATION_ERROR", err.Error()))
+			shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("VALIDATION_ERROR", err.Error()))
 			return
 		}
 
 		response, err := messageService.GetMessages(r.Context(), userID, req)
 		if err != nil {
-			status := MapDomainErrorToHTTP(err)
-			WriteError(w, status, domain.NewDomainError("GET_MESSAGES_FAILED", err.Error()))
+			status := shared.MapDomainErrorToHTTP(err)
+			shared.WriteError(w, status, domain.NewDomainError("GET_MESSAGES_FAILED", err.Error()))
 			return
 		}
 
-		WriteJSON(w, http.StatusOK, response)
+		shared.WriteJSON(w, http.StatusOK, response)
 	}
 }
 
@@ -94,24 +95,24 @@ func GetMessagesHandler(messageService *usecase.MessageService) http.HandlerFunc
 func messageActionHandler(w http.ResponseWriter, r *http.Request, action func(ctx context.Context, userID, messageID string) error, errorCode string) {
 	userID, _ := r.Context().Value(middleware.UserIDKey).(string)
 	if userID == "" {
-		WriteError(w, http.StatusUnauthorized, domain.NewDomainError("UNAUTHORIZED", "Missing or invalid authentication"))
+		shared.WriteError(w, http.StatusUnauthorized, domain.NewDomainError("UNAUTHORIZED", "Missing or invalid authentication"))
 		return
 	}
 
 	messageID := chi.URLParam(r, "messageId")
 	if messageID == "" {
-		WriteError(w, http.StatusBadRequest, domain.NewDomainError("MISSING_PARAMETER", "messageId parameter is required"))
+		shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("MISSING_PARAMETER", "messageId parameter is required"))
 		return
 	}
 
 	err := action(r.Context(), userID, messageID)
 	if err != nil {
-		status := MapDomainErrorToHTTP(err)
-		WriteError(w, status, domain.NewDomainError(errorCode, err.Error()))
+		status := shared.MapDomainErrorToHTTP(err)
+		shared.WriteError(w, status, domain.NewDomainError(errorCode, err.Error()))
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, map[string]string{"status": "success"})
+	shared.WriteJSON(w, http.StatusOK, map[string]string{"status": "success"})
 }
 
 // MarkMessageReadHandler handles marking a message as read
@@ -145,7 +146,7 @@ func GetConversationsHandler(messageService *usecase.MessageService) http.Handle
 	return func(w http.ResponseWriter, r *http.Request) {
 		userID, _ := r.Context().Value(middleware.UserIDKey).(string)
 		if userID == "" {
-			WriteError(w, http.StatusUnauthorized, domain.NewDomainError("UNAUTHORIZED", "Missing or invalid authentication"))
+			shared.WriteError(w, http.StatusUnauthorized, domain.NewDomainError("UNAUTHORIZED", "Missing or invalid authentication"))
 			return
 		}
 
@@ -158,18 +159,18 @@ func GetConversationsHandler(messageService *usecase.MessageService) http.Handle
 		}
 
 		if err := validate.Struct(req); err != nil {
-			WriteError(w, http.StatusBadRequest, domain.NewDomainError("VALIDATION_ERROR", err.Error()))
+			shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("VALIDATION_ERROR", err.Error()))
 			return
 		}
 
 		response, err := messageService.GetConversations(r.Context(), userID, req)
 		if err != nil {
-			status := MapDomainErrorToHTTP(err)
-			WriteError(w, status, domain.NewDomainError("GET_CONVERSATIONS_FAILED", err.Error()))
+			status := shared.MapDomainErrorToHTTP(err)
+			shared.WriteError(w, status, domain.NewDomainError("GET_CONVERSATIONS_FAILED", err.Error()))
 			return
 		}
 
-		WriteJSON(w, http.StatusOK, response)
+		shared.WriteJSON(w, http.StatusOK, response)
 	}
 }
 
@@ -178,17 +179,17 @@ func GetUnreadCountHandler(messageService *usecase.MessageService) http.HandlerF
 	return func(w http.ResponseWriter, r *http.Request) {
 		userID, _ := r.Context().Value(middleware.UserIDKey).(string)
 		if userID == "" {
-			WriteError(w, http.StatusUnauthorized, domain.NewDomainError("UNAUTHORIZED", "Missing or invalid authentication"))
+			shared.WriteError(w, http.StatusUnauthorized, domain.NewDomainError("UNAUTHORIZED", "Missing or invalid authentication"))
 			return
 		}
 
 		count, err := messageService.GetUnreadCount(r.Context(), userID)
 		if err != nil {
-			status := MapDomainErrorToHTTP(err)
-			WriteError(w, status, domain.NewDomainError("GET_UNREAD_COUNT_FAILED", err.Error()))
+			status := shared.MapDomainErrorToHTTP(err)
+			shared.WriteError(w, status, domain.NewDomainError("GET_UNREAD_COUNT_FAILED", err.Error()))
 			return
 		}
 
-		WriteJSON(w, http.StatusOK, map[string]int{"unread_count": count})
+		shared.WriteJSON(w, http.StatusOK, map[string]int{"unread_count": count})
 	}
 }

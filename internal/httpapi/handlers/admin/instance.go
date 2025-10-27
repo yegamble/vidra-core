@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"athena/internal/httpapi/shared"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -37,12 +38,12 @@ func (h *InstanceHandlers) WellKnownAtprotoDID(w http.ResponseWriter, r *http.Re
 	cfg, err := h.moderationRepo.GetInstanceConfig(r.Context(), "atproto_did")
 	if err != nil {
 		// If not configured, return 404 per ATProto expectations
-		WriteError(w, http.StatusNotFound, domain.NewDomainError("NOT_FOUND", "ATProto DID not configured"))
+		shared.WriteError(w, http.StatusNotFound, domain.NewDomainError("NOT_FOUND", "ATProto DID not configured"))
 		return
 	}
 	var did string
 	if err := json.Unmarshal(cfg.Value, &did); err != nil || strings.TrimSpace(did) == "" {
-		WriteError(w, http.StatusNotFound, domain.NewDomainError("NOT_FOUND", "ATProto DID not configured"))
+		shared.WriteError(w, http.StatusNotFound, domain.NewDomainError("NOT_FOUND", "ATProto DID not configured"))
 		return
 	}
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
@@ -55,14 +56,14 @@ func (h *InstanceHandlers) GetInstanceAbout(w http.ResponseWriter, r *http.Reque
 	// Get public configuration values
 	configs, err := h.moderationRepo.ListInstanceConfigs(r.Context(), true)
 	if err != nil {
-		WriteError(w, http.StatusInternalServerError, domain.NewDomainError("INTERNAL_ERROR", "Failed to get instance configuration"))
+		shared.WriteError(w, http.StatusInternalServerError, domain.NewDomainError("INTERNAL_ERROR", "Failed to get instance configuration"))
 		return
 	}
 
 	// Get instance statistics
 	totalUsers, totalVideos, totalLocalVideos, totalViews, err := h.moderationRepo.GetInstanceStats(r.Context())
 	if err != nil {
-		WriteError(w, http.StatusInternalServerError, domain.NewDomainError("INTERNAL_ERROR", "Failed to get instance statistics"))
+		shared.WriteError(w, http.StatusInternalServerError, domain.NewDomainError("INTERNAL_ERROR", "Failed to get instance statistics"))
 		return
 	}
 
@@ -124,7 +125,7 @@ func (h *InstanceHandlers) GetInstanceAbout(w http.ResponseWriter, r *http.Reque
 		info.Version = "1.0.0"
 	}
 
-	WriteJSON(w, http.StatusOK, info)
+	shared.WriteJSON(w, http.StatusOK, info)
 }
 
 // ListInstanceConfigs handles GET /api/v1/admin/instance/config (admin only)
@@ -132,29 +133,29 @@ func (h *InstanceHandlers) ListInstanceConfigs(w http.ResponseWriter, r *http.Re
 	// Admin only
 	if role, ok := r.Context().Value(middleware.UserRoleKey).(string); ok {
 		if role != string(domain.RoleAdmin) {
-			WriteError(w, http.StatusForbidden, domain.NewDomainError("FORBIDDEN", "Insufficient permissions"))
+			shared.WriteError(w, http.StatusForbidden, domain.NewDomainError("FORBIDDEN", "Insufficient permissions"))
 			return
 		}
 	} else {
 		// Fallback: check via repository when role not present (tests call handlers directly)
 		userIDVal := r.Context().Value(middleware.UserIDKey)
 		if userIDVal == nil {
-			WriteError(w, http.StatusForbidden, domain.NewDomainError("FORBIDDEN", "Access denied"))
+			shared.WriteError(w, http.StatusForbidden, domain.NewDomainError("FORBIDDEN", "Access denied"))
 			return
 		}
 		role, err := h.moderationRepo.GetUserRole(r.Context(), fmt.Sprintf("%v", userIDVal))
 		if err != nil || role != domain.RoleAdmin {
-			WriteError(w, http.StatusForbidden, domain.NewDomainError("FORBIDDEN", "Insufficient permissions"))
+			shared.WriteError(w, http.StatusForbidden, domain.NewDomainError("FORBIDDEN", "Insufficient permissions"))
 			return
 		}
 	}
 	configs, err := h.moderationRepo.ListInstanceConfigs(r.Context(), false)
 	if err != nil {
-		WriteError(w, http.StatusInternalServerError, domain.NewDomainError("INTERNAL_ERROR", "Failed to list instance configurations"))
+		shared.WriteError(w, http.StatusInternalServerError, domain.NewDomainError("INTERNAL_ERROR", "Failed to list instance configurations"))
 		return
 	}
 	// Return plain array as data to match tests
-	WriteJSON(w, http.StatusOK, configs)
+	shared.WriteJSON(w, http.StatusOK, configs)
 }
 
 // GetInstanceConfig handles GET /api/v1/admin/instance/config/{key} (admin only)
@@ -162,38 +163,38 @@ func (h *InstanceHandlers) GetInstanceConfig(w http.ResponseWriter, r *http.Requ
 	// Admin only
 	if role, ok := r.Context().Value(middleware.UserRoleKey).(string); ok {
 		if role != string(domain.RoleAdmin) {
-			WriteError(w, http.StatusForbidden, domain.NewDomainError("FORBIDDEN", "Insufficient permissions"))
+			shared.WriteError(w, http.StatusForbidden, domain.NewDomainError("FORBIDDEN", "Insufficient permissions"))
 			return
 		}
 	} else {
 		userIDVal := r.Context().Value(middleware.UserIDKey)
 		if userIDVal == nil {
-			WriteError(w, http.StatusForbidden, domain.NewDomainError("FORBIDDEN", "Access denied"))
+			shared.WriteError(w, http.StatusForbidden, domain.NewDomainError("FORBIDDEN", "Access denied"))
 			return
 		}
 		role, err := h.moderationRepo.GetUserRole(r.Context(), fmt.Sprintf("%v", userIDVal))
 		if err != nil || role != domain.RoleAdmin {
-			WriteError(w, http.StatusForbidden, domain.NewDomainError("FORBIDDEN", "Insufficient permissions"))
+			shared.WriteError(w, http.StatusForbidden, domain.NewDomainError("FORBIDDEN", "Insufficient permissions"))
 			return
 		}
 	}
 	key := chi.URLParam(r, "key")
 	if key == "" {
-		WriteError(w, http.StatusBadRequest, domain.NewDomainError("BAD_REQUEST", "Missing configuration key"))
+		shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("BAD_REQUEST", "Missing configuration key"))
 		return
 	}
 
 	config, err := h.moderationRepo.GetInstanceConfig(r.Context(), key)
 	if err != nil {
 		if domainErr, ok := err.(*domain.DomainError); ok && domainErr.Code == "NOT_FOUND" {
-			WriteError(w, http.StatusNotFound, err)
+			shared.WriteError(w, http.StatusNotFound, err)
 		} else {
-			WriteError(w, http.StatusInternalServerError, domain.NewDomainError("INTERNAL_ERROR", "Failed to get configuration"))
+			shared.WriteError(w, http.StatusInternalServerError, domain.NewDomainError("INTERNAL_ERROR", "Failed to get configuration"))
 		}
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, config)
+	shared.WriteJSON(w, http.StatusOK, config)
 }
 
 // UpdateInstanceConfig handles PUT /api/v1/admin/instance/config/{key} (admin only)
@@ -201,39 +202,39 @@ func (h *InstanceHandlers) UpdateInstanceConfig(w http.ResponseWriter, r *http.R
 	// Admin only
 	if role, ok := r.Context().Value(middleware.UserRoleKey).(string); ok {
 		if role != string(domain.RoleAdmin) {
-			WriteError(w, http.StatusForbidden, domain.NewDomainError("FORBIDDEN", "Insufficient permissions"))
+			shared.WriteError(w, http.StatusForbidden, domain.NewDomainError("FORBIDDEN", "Insufficient permissions"))
 			return
 		}
 	} else {
 		userIDVal := r.Context().Value(middleware.UserIDKey)
 		if userIDVal == nil {
-			WriteError(w, http.StatusForbidden, domain.NewDomainError("FORBIDDEN", "Access denied"))
+			shared.WriteError(w, http.StatusForbidden, domain.NewDomainError("FORBIDDEN", "Access denied"))
 			return
 		}
 		role, err := h.moderationRepo.GetUserRole(r.Context(), fmt.Sprintf("%v", userIDVal))
 		if err != nil || role != domain.RoleAdmin {
-			WriteError(w, http.StatusForbidden, domain.NewDomainError("FORBIDDEN", "Insufficient permissions"))
+			shared.WriteError(w, http.StatusForbidden, domain.NewDomainError("FORBIDDEN", "Insufficient permissions"))
 			return
 		}
 	}
 	key := chi.URLParam(r, "key")
 	if key == "" {
-		WriteError(w, http.StatusBadRequest, domain.NewDomainError("BAD_REQUEST", "Missing configuration key"))
+		shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("BAD_REQUEST", "Missing configuration key"))
 		return
 	}
 
 	var req domain.UpdateInstanceConfigRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		WriteError(w, http.StatusBadRequest, domain.NewDomainError("BAD_REQUEST", "Invalid request body"))
+		shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("BAD_REQUEST", "Invalid request body"))
 		return
 	}
 
 	if err := h.moderationRepo.UpdateInstanceConfig(r.Context(), key, req.Value, req.IsPublic); err != nil {
-		WriteError(w, http.StatusInternalServerError, domain.NewDomainError("INTERNAL_ERROR", "Failed to update configuration"))
+		shared.WriteError(w, http.StatusInternalServerError, domain.NewDomainError("INTERNAL_ERROR", "Failed to update configuration"))
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, map[string]interface{}{
+	shared.WriteJSON(w, http.StatusOK, map[string]interface{}{
 		"message": "Configuration updated successfully",
 		"success": true,
 	})
@@ -243,7 +244,7 @@ func (h *InstanceHandlers) UpdateInstanceConfig(w http.ResponseWriter, r *http.R
 func (h *InstanceHandlers) OEmbed(w http.ResponseWriter, r *http.Request) {
 	url := r.URL.Query().Get("url")
 	if url == "" {
-		WriteError(w, http.StatusBadRequest, domain.NewDomainError("BAD_REQUEST", "URL parameter is required"))
+		shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("BAD_REQUEST", "URL parameter is required"))
 		return
 	}
 
@@ -251,7 +252,7 @@ func (h *InstanceHandlers) OEmbed(w http.ResponseWriter, r *http.Request) {
 	if format == "" {
 		format = "json"
 	} else if format != "json" && format != "xml" {
-		WriteError(w, http.StatusBadRequest, domain.NewDomainError("BAD_REQUEST", "Invalid format parameter"))
+		shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("BAD_REQUEST", "Invalid format parameter"))
 		return
 	}
 
@@ -273,7 +274,7 @@ func (h *InstanceHandlers) OEmbed(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if videoID == "" {
-		WriteError(w, http.StatusBadRequest, domain.NewDomainError("BAD_REQUEST", "Invalid video URL"))
+		shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("BAD_REQUEST", "Invalid video URL"))
 		return
 	}
 
@@ -282,13 +283,13 @@ func (h *InstanceHandlers) OEmbed(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		// Always return 404 for video not found errors
 		// Since we're looking up a specific video ID, any error likely means it doesn't exist
-		WriteError(w, http.StatusNotFound, domain.NewDomainError("NOT_FOUND", "Video not found"))
+		shared.WriteError(w, http.StatusNotFound, domain.NewDomainError("NOT_FOUND", "Video not found"))
 		return
 	}
 
 	// Check if video is private
 	if video.Privacy != domain.PrivacyPublic {
-		WriteError(w, http.StatusNotFound, domain.NewDomainError("NOT_FOUND", "Video not found"))
+		shared.WriteError(w, http.StatusNotFound, domain.NewDomainError("NOT_FOUND", "Video not found"))
 		return
 	}
 

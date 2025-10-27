@@ -1,6 +1,7 @@
 package social
 
 import (
+	"athena/internal/httpapi/shared"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -64,11 +65,11 @@ func (h *SocialHandler) GetActor(w http.ResponseWriter, r *http.Request) {
 
 	actor, err := h.socialService.ResolveActor(r.Context(), handle)
 	if err != nil {
-		WriteError(w, http.StatusNotFound, err)
+		shared.WriteError(w, http.StatusNotFound, err)
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, actor)
+	shared.WriteJSON(w, http.StatusOK, actor)
 }
 
 // GetActorStats retrieves social statistics for an actor
@@ -77,11 +78,11 @@ func (h *SocialHandler) GetActorStats(w http.ResponseWriter, r *http.Request) {
 
 	stats, err := h.socialService.GetSocialStats(r.Context(), handle)
 	if err != nil {
-		WriteError(w, http.StatusInternalServerError, err)
+		shared.WriteError(w, http.StatusInternalServerError, err)
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, stats)
+	shared.WriteJSON(w, http.StatusOK, stats)
 }
 
 // FollowRequest represents a follow request
@@ -94,16 +95,16 @@ type FollowRequest struct {
 func (h *SocialHandler) Follow(w http.ResponseWriter, r *http.Request) {
 	var req FollowRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		WriteError(w, http.StatusBadRequest, errors.New("invalid request"))
+		shared.WriteError(w, http.StatusBadRequest, errors.New("invalid request"))
 		return
 	}
 
 	if err := h.socialService.Follow(r.Context(), req.FollowerDID, req.Target); err != nil {
-		WriteError(w, http.StatusInternalServerError, err)
+		shared.WriteError(w, http.StatusInternalServerError, err)
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, map[string]string{"status": "followed"})
+	shared.WriteJSON(w, http.StatusOK, map[string]string{"status": "followed"})
 }
 
 // Unfollow removes a follow relationship
@@ -112,46 +113,46 @@ func (h *SocialHandler) Unfollow(w http.ResponseWriter, r *http.Request) {
 	followerDID := r.URL.Query().Get("follower_did")
 
 	if followerDID == "" {
-		WriteError(w, http.StatusBadRequest, errors.New("follower_did required"))
+		shared.WriteError(w, http.StatusBadRequest, errors.New("follower_did required"))
 		return
 	}
 
 	if err := h.socialService.Unfollow(r.Context(), followerDID, handle); err != nil {
-		WriteError(w, http.StatusInternalServerError, err)
+		shared.WriteError(w, http.StatusInternalServerError, err)
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, map[string]string{"status": "unfollowed"})
+	shared.WriteJSON(w, http.StatusOK, map[string]string{"status": "unfollowed"})
 }
 
 // GetFollowers retrieves followers list
 func (h *SocialHandler) GetFollowers(w http.ResponseWriter, r *http.Request) {
 	handle := chi.URLParam(r, "handle")
-	limit := getIntParam(r, "limit", 50)
-	offset := getIntParam(r, "offset", 0)
+	limit := shared.GetIntParam(r, "limit", 50)
+	offset := shared.GetIntParam(r, "offset", 0)
 
 	followers, err := h.socialService.GetFollowers(r.Context(), handle, limit, offset)
 	if err != nil {
-		WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to get followers: %w", err))
+		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to get followers: %w", err))
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, followers)
+	shared.WriteJSON(w, http.StatusOK, followers)
 }
 
 // GetFollowing retrieves following list
 func (h *SocialHandler) GetFollowing(w http.ResponseWriter, r *http.Request) {
 	handle := chi.URLParam(r, "handle")
-	limit := getIntParam(r, "limit", 50)
-	offset := getIntParam(r, "offset", 0)
+	limit := shared.GetIntParam(r, "limit", 50)
+	offset := shared.GetIntParam(r, "offset", 0)
 
 	following, err := h.socialService.GetFollowing(r.Context(), handle, limit, offset)
 	if err != nil {
-		WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to get following: %w", err))
+		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to get following: %w", err))
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, following)
+	shared.WriteJSON(w, http.StatusOK, following)
 }
 
 // LikeRequest represents a like request
@@ -165,16 +166,16 @@ type LikeRequest struct {
 func (h *SocialHandler) Like(w http.ResponseWriter, r *http.Request) {
 	var req LikeRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		WriteError(w, http.StatusBadRequest, errors.New("invalid request"))
+		shared.WriteError(w, http.StatusBadRequest, errors.New("invalid request"))
 		return
 	}
 
 	if err := h.socialService.Like(r.Context(), req.ActorDID, req.SubjectURI, req.SubjectCID); err != nil {
-		WriteError(w, http.StatusInternalServerError, err)
+		shared.WriteError(w, http.StatusInternalServerError, err)
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, map[string]string{"status": "liked"})
+	shared.WriteJSON(w, http.StatusOK, map[string]string{"status": "liked"})
 }
 
 // Unlike removes a like
@@ -184,31 +185,31 @@ func (h *SocialHandler) Unlike(w http.ResponseWriter, r *http.Request) {
 		SubjectURI string `json:"subject_uri"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		WriteError(w, http.StatusBadRequest, errors.New("invalid request"))
+		shared.WriteError(w, http.StatusBadRequest, errors.New("invalid request"))
 		return
 	}
 
 	if err := h.socialService.Unlike(r.Context(), req.ActorDID, req.SubjectURI); err != nil {
-		WriteError(w, http.StatusInternalServerError, err)
+		shared.WriteError(w, http.StatusInternalServerError, err)
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, map[string]string{"status": "unliked"})
+	shared.WriteJSON(w, http.StatusOK, map[string]string{"status": "unliked"})
 }
 
 // GetLikes retrieves likes for a subject
 func (h *SocialHandler) GetLikes(w http.ResponseWriter, r *http.Request) {
 	uri := chi.URLParam(r, "uri")
-	limit := getIntParam(r, "limit", 50)
-	offset := getIntParam(r, "offset", 0)
+	limit := shared.GetIntParam(r, "limit", 50)
+	offset := shared.GetIntParam(r, "offset", 0)
 
 	likes, err := h.socialService.GetLikes(r.Context(), uri, limit, offset)
 	if err != nil {
-		WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to get likes: %w", err))
+		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to get likes: %w", err))
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, likes)
+	shared.WriteJSON(w, http.StatusOK, likes)
 }
 
 // CommentRequest represents a comment request
@@ -225,7 +226,7 @@ type CommentRequest struct {
 func (h *SocialHandler) CreateComment(w http.ResponseWriter, r *http.Request) {
 	var req CommentRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		WriteError(w, http.StatusBadRequest, errors.New("invalid request"))
+		shared.WriteError(w, http.StatusBadRequest, errors.New("invalid request"))
 		return
 	}
 
@@ -239,11 +240,11 @@ func (h *SocialHandler) CreateComment(w http.ResponseWriter, r *http.Request) {
 		req.ParentCID,
 	)
 	if err != nil {
-		WriteError(w, http.StatusInternalServerError, err)
+		shared.WriteError(w, http.StatusInternalServerError, err)
 		return
 	}
 
-	WriteJSON(w, http.StatusCreated, comment)
+	shared.WriteJSON(w, http.StatusCreated, comment)
 }
 
 // DeleteComment removes a comment
@@ -251,41 +252,41 @@ func (h *SocialHandler) DeleteComment(w http.ResponseWriter, r *http.Request) {
 	uri := chi.URLParam(r, "uri")
 
 	if err := h.socialService.DeleteComment(r.Context(), uri); err != nil {
-		WriteError(w, http.StatusInternalServerError, err)
+		shared.WriteError(w, http.StatusInternalServerError, err)
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+	shared.WriteJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
 
 // GetComments retrieves comments for a subject
 func (h *SocialHandler) GetComments(w http.ResponseWriter, r *http.Request) {
 	uri := chi.URLParam(r, "uri")
-	limit := getIntParam(r, "limit", 50)
-	offset := getIntParam(r, "offset", 0)
+	limit := shared.GetIntParam(r, "limit", 50)
+	offset := shared.GetIntParam(r, "offset", 0)
 
 	comments, err := h.socialService.GetComments(r.Context(), uri, limit, offset)
 	if err != nil {
-		WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to get comments: %w", err))
+		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to get comments: %w", err))
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, comments)
+	shared.WriteJSON(w, http.StatusOK, comments)
 }
 
 // GetCommentThread retrieves a comment thread
 func (h *SocialHandler) GetCommentThread(w http.ResponseWriter, r *http.Request) {
 	uri := chi.URLParam(r, "uri")
-	limit := getIntParam(r, "limit", 50)
-	offset := getIntParam(r, "offset", 0)
+	limit := shared.GetIntParam(r, "limit", 50)
+	offset := shared.GetIntParam(r, "offset", 0)
 
 	thread, err := h.socialService.GetCommentThread(r.Context(), uri, limit, offset)
 	if err != nil {
-		WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to get thread: %w", err))
+		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to get thread: %w", err))
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, thread)
+	shared.WriteJSON(w, http.StatusOK, thread)
 }
 
 // LabelRequest represents a moderation label request
@@ -302,7 +303,7 @@ type LabelRequest struct {
 func (h *SocialHandler) ApplyLabel(w http.ResponseWriter, r *http.Request) {
 	var req LabelRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		WriteError(w, http.StatusBadRequest, errors.New("invalid request"))
+		shared.WriteError(w, http.StatusBadRequest, errors.New("invalid request"))
 		return
 	}
 
@@ -321,11 +322,11 @@ func (h *SocialHandler) ApplyLabel(w http.ResponseWriter, r *http.Request) {
 		expiration,
 	)
 	if err != nil {
-		WriteError(w, http.StatusInternalServerError, err)
+		shared.WriteError(w, http.StatusInternalServerError, err)
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, map[string]string{"status": "label_applied"})
+	shared.WriteJSON(w, http.StatusOK, map[string]string{"status": "label_applied"})
 }
 
 // RemoveLabel removes a moderation label
@@ -333,11 +334,11 @@ func (h *SocialHandler) RemoveLabel(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 
 	if err := h.socialService.RemoveModerationLabel(r.Context(), id); err != nil {
-		WriteError(w, http.StatusInternalServerError, err)
+		shared.WriteError(w, http.StatusInternalServerError, err)
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, map[string]string{"status": "label_removed"})
+	shared.WriteJSON(w, http.StatusOK, map[string]string{"status": "label_removed"})
 }
 
 // GetLabels retrieves moderation labels for an actor
@@ -346,22 +347,22 @@ func (h *SocialHandler) GetLabels(w http.ResponseWriter, r *http.Request) {
 
 	labels, err := h.socialService.GetModerationLabels(r.Context(), did)
 	if err != nil {
-		WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to get labels: %w", err))
+		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to get labels: %w", err))
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, labels)
+	shared.WriteJSON(w, http.StatusOK, labels)
 }
 
 // IngestFeed ingests an actor's feed
 func (h *SocialHandler) IngestFeed(w http.ResponseWriter, r *http.Request) {
 	handle := chi.URLParam(r, "handle")
-	limit := getIntParam(r, "limit", 50)
+	limit := shared.GetIntParam(r, "limit", 50)
 
 	if err := h.socialService.IngestActorFeed(r.Context(), handle, limit); err != nil {
-		WriteError(w, http.StatusInternalServerError, err)
+		shared.WriteError(w, http.StatusInternalServerError, err)
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, map[string]string{"status": "ingested"})
+	shared.WriteJSON(w, http.StatusOK, map[string]string{"status": "ingested"})
 }

@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"athena/internal/httpapi/shared"
 	"bufio"
 	"bytes"
 	"database/sql"
@@ -60,36 +61,36 @@ func (h *AuthHandlers) UploadAvatar(w http.ResponseWriter, r *http.Request) {
 			if err, ok := recovered.(error); ok {
 				log.Printf("Error details: %+v", err)
 			}
-			WriteError(w, http.StatusInternalServerError, domain.NewDomainError("INTERNAL_ERROR", "Internal server error"))
+			shared.WriteError(w, http.StatusInternalServerError, domain.NewDomainError("INTERNAL_ERROR", "Internal server error"))
 		}
 	}()
 
 	userID, _ := r.Context().Value(middleware.UserIDKey).(string)
 	if userID == "" {
 		log.Printf("Avatar upload: No user ID in context")
-		WriteError(w, http.StatusUnauthorized, domain.NewDomainError("UNAUTHORIZED", "Missing or invalid authentication"))
+		shared.WriteError(w, http.StatusUnauthorized, domain.NewDomainError("UNAUTHORIZED", "Missing or invalid authentication"))
 		return
 	}
 
 	log.Printf("Avatar upload starting for user %s", userID)
 
 	// Parse and validate the uploaded file
-	fileData, err := s.parseAvatarFile(r)
+	fileData, err := h.parseAvatarFile(r)
 	if err != nil {
 		log.Printf("Avatar upload parse error for user %s: %v", userID, err)
-		status := MapDomainErrorToHTTP(err)
-		WriteError(w, status, err)
+		status := shared.MapDomainErrorToHTTP(err)
+		shared.WriteError(w, status, err)
 		return
 	}
 
 	log.Printf("Avatar file parsed successfully for user %s", userID)
 
 	// Save file locally and generate WebP
-	localPath, err := s.saveAvatarLocally(fileData)
+	localPath, err := h.saveAvatarLocally(fileData)
 	if err != nil {
 		log.Printf("Avatar save error for user %s: %v", userID, err)
-		status := MapDomainErrorToHTTP(err)
-		WriteError(w, status, err)
+		status := shared.MapDomainErrorToHTTP(err)
+		shared.WriteError(w, status, err)
 		return
 	}
 
@@ -98,14 +99,14 @@ func (h *AuthHandlers) UploadAvatar(w http.ResponseWriter, r *http.Request) {
 	var webpCID *string
 
 	// Check if IPFS is configured
-	if s.ipfsAPI != "" || s.ipfsClusterAPI != "" {
+	if h.ipfsAPI != "" || h.ipfsClusterAPI != "" {
 		// Upload to IPFS and pin
-		cidResult, err := s.uploadAvatarToIPFS(localPath)
+		cidResult, err := h.uploadAvatarToIPFS(localPath)
 		if err != nil {
 			// If IPFS is required, return error
-			if s.cfg != nil && s.cfg.RequireIPFS {
+			if h.cfg != nil && h.cfg.RequireIPFS {
 				log.Printf("IPFS upload failed for user %s (required): %v (type: %T)", userID, err, err)
-				WriteError(w, http.StatusServiceUnavailable, err)
+				shared.WriteError(w, http.StatusServiceUnavailable, err)
 				return
 			}
 			// Otherwise, log warning and continue without IPFS
@@ -114,7 +115,7 @@ func (h *AuthHandlers) UploadAvatar(w http.ResponseWriter, r *http.Request) {
 		} else {
 			cid = cidResult
 			// Upload WebP version if available
-			webpCID = s.uploadWebPToIPFS(localPath)
+			webpCID = h.uploadWebPToIPFS(localPath)
 		}
 	}
 
@@ -128,21 +129,21 @@ func (h *AuthHandlers) UploadAvatar(w http.ResponseWriter, r *http.Request) {
 		webpNullString = sql.NullString{String: *webpCID, Valid: true}
 	}
 
-	if err := s.userRepo.SetAvatarFields(r.Context(), userID, ipfsNullString, webpNullString); err != nil {
+	if err := h.userRepo.SetAvatarFields(r.Context(), userID, ipfsNullString, webpNullString); err != nil {
 		log.Printf("Failed to store avatar identifiers for user %s: %v", userID, err)
-		status := MapDomainErrorToHTTP(err)
-		WriteError(w, status, err)
+		status := shared.MapDomainErrorToHTTP(err)
+		shared.WriteError(w, status, err)
 		return
 	}
 
 	// Return updated user
-	user, err := s.userRepo.GetByID(r.Context(), userID)
+	user, err := h.userRepo.GetByID(r.Context(), userID)
 	if err != nil {
-		status := MapDomainErrorToHTTP(err)
-		WriteError(w, status, err)
+		status := shared.MapDomainErrorToHTTP(err)
+		shared.WriteError(w, status, err)
 		return
 	}
-	WriteJSON(w, http.StatusOK, user)
+	shared.WriteJSON(w, http.StatusOK, user)
 }
 
 // avatarFileData holds parsed file information
@@ -187,13 +188,13 @@ func (h *AuthHandlers) parseAvatarFile(r *http.Request) (*avatarFileData, error)
 	// MIME type sniffing from first 512 bytes
 	contentType := http.DetectContentType(fullContent)
 
-	if err := s.validateFileType(ext, contentType); err != nil {
+	if err := h.validateFileType(ext, contentType); err != nil {
 		return nil, err
 	}
 
 	// Additional validation: try to decode the image to ensure it's valid
 	testReader := bytes.NewReader(fullContent)
-	if err := s.validateImageDecoding(testReader); err != nil {
+	if err := h.validateImageDecoding(testReader); err != nil {
 		return nil, err
 	}
 
@@ -276,8 +277,8 @@ func (h *AuthHandlers) validateImageDecoding(r io.Reader) error {
 func (h *AuthHandlers) saveAvatarLocally(fileData *avatarFileData) (string, error) {
 	// Persist locally under storage/avatars via storage utility
 	root := "./storage"
-	if s.cfg != nil && s.cfg.StorageDir != "" {
-		root = s.cfg.StorageDir
+	if h.cfg != nil && h.cfg.StorageDir != "" {
+		root = h.cfg.StorageDir
 	}
 	paths := storage.NewPaths(root)
 	avatarsDir := paths.AvatarsDir()
@@ -307,7 +308,7 @@ func (h *AuthHandlers) saveAvatarLocally(fileData *avatarFileData) (string, erro
 	}
 
 	// Generate WebP version
-	s.generateWebP(localPath, paths.AvatarWebPPath(fileID))
+	h.generateWebP(localPath, paths.AvatarWebPPath(fileID))
 
 	return localPath, nil
 }
@@ -319,8 +320,8 @@ func (h *AuthHandlers) generateWebP(srcPath, dstPath string) {
 		encErr = testEncodeToWebP(srcPath, dstPath)
 	} else {
 		q := 0
-		if s.cfg != nil {
-			q = s.cfg.WebPQuality
+		if h.cfg != nil {
+			q = h.cfg.WebPQuality
 		}
 		if q > 0 {
 			encErr = imageutil.EncodeFileToWebPWithQuality(srcPath, dstPath, q)
@@ -337,7 +338,7 @@ func (h *AuthHandlers) generateWebP(srcPath, dstPath string) {
 // uploadAvatarToIPFS uploads and pins the avatar to IPFS
 func (h *AuthHandlers) uploadAvatarToIPFS(localPath string) (string, error) {
 	// Check if IPFS is configured
-	if s.ipfsAPI == "" && s.ipfsClusterAPI == "" {
+	if h.ipfsAPI == "" && h.ipfsClusterAPI == "" {
 		return "", domain.NewDomainError("IPFS_NOT_CONFIGURED", "IPFS is not configured")
 	}
 
@@ -346,17 +347,17 @@ func (h *AuthHandlers) uploadAvatarToIPFS(localPath string) (string, error) {
 	var addErr error
 	if testIPFSAdd != nil {
 		cid, addErr = testIPFSAdd(localPath)
-	} else if s.ipfsClusterAPI != "" {
-		cid, addErr = s.ipfsClusterAdd(localPath)
+	} else if h.ipfsClusterAPI != "" {
+		cid, addErr = h.ipfsClusterAdd(localPath)
 	} else {
-		cid, addErr = s.ipfsAdd(localPath)
+		cid, addErr = h.ipfsAdd(localPath)
 	}
 	if addErr != nil {
 		return "", domain.NewDomainError("IPFS_UPLOAD_FAILED", "Failed to upload to IPFS")
 	}
 
 	// Pin the content
-	if err := s.pinToIPFS(cid); err != nil {
+	if err := h.pinToIPFS(cid); err != nil {
 		return "", err
 	}
 
@@ -369,18 +370,18 @@ func (h *AuthHandlers) pinToIPFS(cid string) error {
 	if testIPFSPin != nil {
 		pinErr = testIPFSPin(cid)
 	} else {
-		pinErr = s.ipfsPin(cid)
+		pinErr = h.ipfsPin(cid)
 	}
 	if pinErr != nil {
 		return domain.NewDomainError("IPFS_PIN_FAILED", "Failed to pin avatar in IPFS")
 	}
 
 	// Best-effort cluster pin
-	if s.ipfsClusterAPI != "" {
+	if h.ipfsClusterAPI != "" {
 		if testIPFSClusterPin != nil {
 			_ = testIPFSClusterPin(cid)
 		} else {
-			_ = s.ipfsClusterPin(cid)
+			_ = h.ipfsClusterPin(cid)
 		}
 	}
 	return nil
@@ -401,14 +402,14 @@ func (h *AuthHandlers) uploadWebPToIPFS(originalPath string) *string {
 	if testIPFSAdd != nil {
 		wcid, _ = testIPFSAdd(webpPath)
 	} else {
-		wcid, _ = s.ipfsAdd(webpPath)
+		wcid, _ = h.ipfsAdd(webpPath)
 	}
 	if wcid == "" {
 		return nil
 	}
 
 	// Pin best-effort
-	_ = s.pinToIPFS(wcid)
+	_ = h.pinToIPFS(wcid)
 
 	return &wcid
 }
@@ -453,13 +454,13 @@ func validateAvatarPath(path, expectedRoot string) error {
 }
 
 func (h *AuthHandlers) ipfsAdd(path string) (string, error) {
-	if s.ipfsAPI == "" {
+	if h.ipfsAPI == "" {
 		return "", fmt.Errorf("ipfs api not configured")
 	}
 	// Validate file path to prevent directory traversal
 	root := "./storage"
-	if s.cfg != nil && s.cfg.StorageDir != "" {
-		root = s.cfg.StorageDir
+	if h.cfg != nil && h.cfg.StorageDir != "" {
+		root = h.cfg.StorageDir
 	}
 	if err := validateAvatarPath(path, root); err != nil {
 		return "", fmt.Errorf("invalid file path: %w", err)
@@ -483,7 +484,7 @@ func (h *AuthHandlers) ipfsAdd(path string) (string, error) {
 
 	client := &http.Client{Timeout: 60 * time.Second}
 	// Request pin on add and use CIDv1 for consistency
-	req, err := http.NewRequest(http.MethodPost, s.ipfsAPI+"/api/v0/add?pin=true&cid-version=1&raw-leaves=true", &body)
+	req, err := http.NewRequest(http.MethodPost, h.ipfsAPI+"/api/v0/add?pin=true&cid-version=1&raw-leaves=true", &body)
 	if err != nil {
 		return "", err
 	}
@@ -509,13 +510,13 @@ func (h *AuthHandlers) ipfsAdd(path string) (string, error) {
 
 // ipfsClusterAdd uploads a file via IPFS Cluster's /add endpoint (streaming NDJSON), returning the final CID.
 func (h *AuthHandlers) ipfsClusterAdd(path string) (string, error) {
-	if s.ipfsClusterAPI == "" {
+	if h.ipfsClusterAPI == "" {
 		return "", fmt.Errorf("ipfs cluster api not configured")
 	}
 	// Validate file path to prevent directory traversal
 	root := "./storage"
-	if s.cfg != nil && s.cfg.StorageDir != "" {
-		root = s.cfg.StorageDir
+	if h.cfg != nil && h.cfg.StorageDir != "" {
+		root = h.cfg.StorageDir
 	}
 	if err := validateAvatarPath(path, root); err != nil {
 		return "", fmt.Errorf("invalid file path: %w", err)
@@ -539,7 +540,7 @@ func (h *AuthHandlers) ipfsClusterAdd(path string) (string, error) {
 
 	client := &http.Client{Timeout: 120 * time.Second}
 	// Cluster add typically mirrors Kubo's add query params
-	req, err := http.NewRequest(http.MethodPost, s.ipfsClusterAPI+"/add?cid-version=1&raw-leaves=true&pin=true", &body)
+	req, err := http.NewRequest(http.MethodPost, h.ipfsClusterAPI+"/add?cid-version=1&raw-leaves=true&pin=true", &body)
 	if err != nil {
 		return "", err
 	}
@@ -589,10 +590,10 @@ func parseIPFSAddResponse(r io.Reader) (string, error) {
 
 // ipfsPin ensures the CID is pinned on the local Kubo node (idempotent).
 func (h *AuthHandlers) ipfsPin(cid string) error {
-	if s.ipfsAPI == "" {
+	if h.ipfsAPI == "" {
 		return fmt.Errorf("ipfs api not configured")
 	}
-	u := s.ipfsAPI + "/api/v0/pin/add?arg=" + url.QueryEscape(cid)
+	u := h.ipfsAPI + "/api/v0/pin/add?arg=" + url.QueryEscape(cid)
 	client := &http.Client{Timeout: 60 * time.Second}
 	req, err := http.NewRequest(http.MethodPost, u, nil)
 	if err != nil {
@@ -612,13 +613,13 @@ func (h *AuthHandlers) ipfsPin(cid string) error {
 
 // ipfsClusterPin best-effort pin to IPFS Cluster if configured.
 func (h *AuthHandlers) ipfsClusterPin(cid string) error {
-	if s.ipfsClusterAPI == "" {
+	if h.ipfsClusterAPI == "" {
 		return nil
 	}
 	client := &http.Client{Timeout: 60 * time.Second}
 
 	// Try Cluster v1 API: POST /pins/{cid}
-	req, err := http.NewRequest(http.MethodPost, s.ipfsClusterAPI+"/pins/"+cid, nil)
+	req, err := http.NewRequest(http.MethodPost, h.ipfsClusterAPI+"/pins/"+cid, nil)
 	if err != nil {
 		return err
 	}
@@ -636,7 +637,7 @@ func (h *AuthHandlers) ipfsClusterPin(cid string) error {
 
 	// Fallback to older Cluster API: POST /pins/add?arg=cid
 	if resp.StatusCode == http.StatusNotFound {
-		req2, err := http.NewRequest(http.MethodPost, s.ipfsClusterAPI+"/pins/add?arg="+url.QueryEscape(cid), nil)
+		req2, err := http.NewRequest(http.MethodPost, h.ipfsClusterAPI+"/pins/add?arg="+url.QueryEscape(cid), nil)
 		if err != nil {
 			return err
 		}

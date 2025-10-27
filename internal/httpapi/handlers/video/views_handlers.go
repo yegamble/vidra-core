@@ -28,7 +28,7 @@ func NewViewsHandler(viewsService *ucviews.Service) *ViewsHandler {
 // TrackView handles POST /api/v1/videos/{videoId}/views
 // Tracks a user view with comprehensive metrics and deduplication
 func (h *ViewsHandler) TrackView(w http.ResponseWriter, r *http.Request) {
-	videoID, ok := requireUUIDParam(w, r, "videoId", "MISSING_VIDEO_ID", "INVALID_VIDEO_ID", "Video ID is required", "Invalid video ID format")
+	videoID, ok := shared.RequireUUIDParam(w, r, "videoId", "MISSING_VIDEO_ID", "INVALID_VIDEO_ID", "Video ID is required", "Invalid video ID format")
 	if !ok {
 		return
 	}
@@ -76,7 +76,7 @@ func (h *ViewsHandler) TrackView(w http.ResponseWriter, r *http.Request) {
 // GetVideoAnalytics handles GET /api/v1/videos/{videoId}/analytics
 // Returns comprehensive analytics for a specific video
 func (h *ViewsHandler) GetVideoAnalytics(w http.ResponseWriter, r *http.Request) {
-	videoID, ok := requireUUIDParam(w, r, "videoId", "MISSING_VIDEO_ID", "INVALID_VIDEO_ID", "Video ID is required", "Invalid video ID format")
+	videoID, ok := shared.RequireUUIDParam(w, r, "videoId", "MISSING_VIDEO_ID", "INVALID_VIDEO_ID", "Video ID is required", "Invalid video ID format")
 	if !ok {
 		return
 	}
@@ -139,7 +139,7 @@ func (h *ViewsHandler) GetVideoAnalytics(w http.ResponseWriter, r *http.Request)
 // GetDailyStats handles GET /api/v1/videos/{videoId}/stats/daily
 // Returns pre-aggregated daily statistics for a video
 func (h *ViewsHandler) GetDailyStats(w http.ResponseWriter, r *http.Request) {
-	videoID, ok := requireUUIDParam(w, r, "videoId", "MISSING_VIDEO_ID", "INVALID_VIDEO_ID", "Video ID is required", "Invalid video ID format")
+	videoID, ok := shared.RequireUUIDParam(w, r, "videoId", "MISSING_VIDEO_ID", "INVALID_VIDEO_ID", "Video ID is required", "Invalid video ID format")
 	if !ok {
 		return
 	}
@@ -171,7 +171,7 @@ func (h *ViewsHandler) GetDailyStats(w http.ResponseWriter, r *http.Request) {
 // GetUserEngagement handles GET /api/v1/users/{userId}/engagement
 // Returns user-level engagement statistics (requires authentication)
 func (h *ViewsHandler) GetUserEngagement(w http.ResponseWriter, r *http.Request) {
-	userID, ok := requireUUIDParam(w, r, "userId", "MISSING_USER_ID", "INVALID_USER_ID", "User ID is required", "Invalid user ID format")
+	userID, ok := shared.RequireUUIDParam(w, r, "userId", "MISSING_USER_ID", "INVALID_USER_ID", "User ID is required", "Invalid user ID format")
 	if !ok {
 		return
 	}
@@ -251,7 +251,7 @@ func (h *ViewsHandler) GetTrendingVideos(w http.ResponseWriter, r *http.Request)
 			return
 		}
 		// Attach meta with page/pageSize for consistency (total unknown)
-		meta := &Meta{Total: 0, Limit: limit, Offset: 0, Page: page, PageSize: pageSize}
+		meta := &shared.Meta{Total: 0, Limit: limit, Offset: 0, Page: page, PageSize: pageSize}
 		shared.WriteJSONWithMeta(w, http.StatusOK, trendingWithDetails, meta)
 	} else {
 		trending, err := h.viewsService.GetTrendingVideos(r.Context(), limit)
@@ -264,7 +264,7 @@ func (h *ViewsHandler) GetTrendingVideos(w http.ResponseWriter, r *http.Request)
 			"limit":      limit,
 			"updated_at": time.Now(),
 		}
-		meta := &Meta{Total: 0, Limit: limit, Offset: 0, Page: page, PageSize: pageSize}
+		meta := &shared.Meta{Total: 0, Limit: limit, Offset: 0, Page: page, PageSize: pageSize}
 		shared.WriteJSONWithMeta(w, http.StatusOK, data, meta)
 	}
 }

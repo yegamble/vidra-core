@@ -1,6 +1,7 @@
 package moderation
 
 import (
+	"athena/internal/httpapi/shared"
 	"database/sql"
 	"encoding/json"
 	"net"
@@ -20,12 +21,12 @@ import (
 
 // ModerationHandlers handles moderation-related HTTP requests
 type ModerationHandlers struct {
-	repo *repository.ModerationRepository
+	moderationRepo *repository.ModerationRepository
 }
 
 // NewModerationHandlers creates a new instance of ModerationHandlers
-func NewModerationHandlers(repo *repository.ModerationRepository) *ModerationHandlers {
-	return &ModerationHandlers{repo: repo}
+func NewModerationHandlers(moderationRepo *repository.ModerationRepository) *ModerationHandlers {
+	return &ModerationHandlers{moderationRepo: moderationRepo}
 }
 
 // helper: get the caller's role from DB (fallback when middleware role is not present)
@@ -34,7 +35,7 @@ func (h *ModerationHandlers) getUserRole(r *http.Request) (domain.UserRole, bool
 	if !ok {
 		return "", false
 	}
-	role, err := h.repo.GetUserRole(r.Context(), userID.String())
+	role, err := h.moderationRepo.GetUserRole(r.Context(), userID.String())
 	if err != nil {
 		return "", false
 	}
@@ -52,7 +53,7 @@ func (h *ModerationHandlers) ensureRole(w http.ResponseWriter, r *http.Request, 
 		var ok bool
 		role, ok = h.getUserRole(r)
 		if !ok {
-			WriteError(w, http.StatusForbidden, domain.NewDomainError("FORBIDDEN", "Access denied"))
+			shared.WriteError(w, http.StatusForbidden, domain.NewDomainError("FORBIDDEN", "Access denied"))
 			return false
 		}
 	}
@@ -62,7 +63,7 @@ func (h *ModerationHandlers) ensureRole(w http.ResponseWriter, r *http.Request, 
 			return true
 		}
 	}
-	WriteError(w, http.StatusForbidden, domain.NewDomainError("FORBIDDEN", "Insufficient permissions"))
+	shared.WriteError(w, http.StatusForbidden, domain.NewDomainError("FORBIDDEN", "Insufficient permissions"))
 	return false
 }
 
@@ -70,13 +71,13 @@ func (h *ModerationHandlers) ensureRole(w http.ResponseWriter, r *http.Request, 
 func (h *ModerationHandlers) CreateAbuseReport(w http.ResponseWriter, r *http.Request) {
 	userID, ok := middleware.GetUserIDFromContext(r.Context())
 	if !ok {
-		WriteError(w, http.StatusUnauthorized, domain.NewDomainError("UNAUTHORIZED", "Authentication required"))
+		shared.WriteError(w, http.StatusUnauthorized, domain.NewDomainError("UNAUTHORIZED", "Authentication required"))
 		return
 	}
 
 	var req domain.CreateAbuseReportRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		WriteError(w, http.StatusBadRequest, domain.NewDomainError("BAD_REQUEST", "Invalid request body"))
+		shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("BAD_REQUEST", "Invalid request body"))
 		return
 	}
 
@@ -118,12 +119,12 @@ func (h *ModerationHandlers) CreateAbuseReport(w http.ResponseWriter, r *http.Re
 		report.ChannelID = sql.NullString{String: req.EntityID, Valid: true}
 	}
 
-	if err := h.repo.CreateAbuseReport(r.Context(), report); err != nil {
-		WriteError(w, http.StatusInternalServerError, domain.NewDomainError("INTERNAL_ERROR", "Failed to create abuse report"))
+	if err := h.moderationRepo.CreateAbuseReport(r.Context(), report); err != nil {
+		shared.WriteError(w, http.StatusInternalServerError, domain.NewDomainError("INTERNAL_ERROR", "Failed to create abuse report"))
 		return
 	}
 
-	WriteJSON(w, http.StatusCreated, report)
+	shared.WriteJSON(w, http.StatusCreated, report)
 }
 
 // ListAbuseReports handles GET /api/v1/admin/abuse-reports (admin only)
@@ -151,9 +152,9 @@ func (h *ModerationHandlers) ListAbuseReports(w http.ResponseWriter, r *http.Req
 		}
 	}
 
-	reports, total, err := h.repo.ListAbuseReports(r.Context(), status, entityType, limit, offset)
+	reports, total, err := h.moderationRepo.ListAbuseReports(r.Context(), status, entityType, limit, offset)
 	if err != nil {
-		WriteError(w, http.StatusInternalServerError, domain.NewDomainError("INTERNAL_ERROR", "Failed to list abuse reports"))
+		shared.WriteError(w, http.StatusInternalServerError, domain.NewDomainError("INTERNAL_ERROR", "Failed to list abuse reports"))
 		return
 	}
 
@@ -161,11 +162,11 @@ func (h *ModerationHandlers) ListAbuseReports(w http.ResponseWriter, r *http.Req
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(struct {
-		Data    interface{} `json:"data"`
-		Success bool        `json:"success"`
-		Meta    *Meta       `json:"meta"`
-		Total   int64       `json:"total"`
-	}{Data: reports, Success: true, Meta: &Meta{Total: total, Limit: limit, Offset: offset}, Total: total})
+		Data    interface{}  `json:"data"`
+		Success bool         `json:"success"`
+		Meta    *shared.Meta `json:"meta"`
+		Total   int64        `json:"total"`
+	}{Data: reports, Success: true, Meta: &shared.Meta{Total: total, Limit: limit, Offset: offset}, Total: total})
 }
 
 // GetAbuseReport handles GET /api/v1/admin/abuse-reports/{id} (admin only)
@@ -176,34 +177,34 @@ func (h *ModerationHandlers) GetAbuseReport(w http.ResponseWriter, r *http.Reque
 	}
 	reportID := chi.URLParam(r, "id")
 	if reportID == "" {
-		WriteError(w, http.StatusBadRequest, domain.NewDomainError("BAD_REQUEST", "Missing report ID"))
+		shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("BAD_REQUEST", "Missing report ID"))
 		return
 	}
 
-	report, err := h.repo.GetAbuseReport(r.Context(), reportID)
+	report, err := h.moderationRepo.GetAbuseReport(r.Context(), reportID)
 	if err != nil {
 		if domainErr, ok := err.(*domain.DomainError); ok && domainErr.Code == "NOT_FOUND" {
-			WriteError(w, http.StatusNotFound, err)
+			shared.WriteError(w, http.StatusNotFound, err)
 		} else {
-			WriteError(w, http.StatusInternalServerError, domain.NewDomainError("INTERNAL_ERROR", "Failed to get abuse report"))
+			shared.WriteError(w, http.StatusInternalServerError, domain.NewDomainError("INTERNAL_ERROR", "Failed to get abuse report"))
 		}
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, report)
+	shared.WriteJSON(w, http.StatusOK, report)
 }
 
 // UpdateAbuseReport handles PUT /api/v1/admin/abuse-reports/{id} (admin only)
 func (h *ModerationHandlers) UpdateAbuseReport(w http.ResponseWriter, r *http.Request) {
 	reportID := chi.URLParam(r, "id")
 	if reportID == "" {
-		WriteError(w, http.StatusBadRequest, domain.NewDomainError("BAD_REQUEST", "Missing report ID"))
+		shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("BAD_REQUEST", "Missing report ID"))
 		return
 	}
 
 	moderatorID, ok := middleware.GetUserIDFromContext(r.Context())
 	if !ok {
-		WriteError(w, http.StatusUnauthorized, domain.NewDomainError("UNAUTHORIZED", "Authentication required"))
+		shared.WriteError(w, http.StatusUnauthorized, domain.NewDomainError("UNAUTHORIZED", "Authentication required"))
 		return
 	}
 
@@ -214,20 +215,20 @@ func (h *ModerationHandlers) UpdateAbuseReport(w http.ResponseWriter, r *http.Re
 
 	var req domain.UpdateAbuseReportRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		WriteError(w, http.StatusBadRequest, domain.NewDomainError("BAD_REQUEST", "Invalid request body"))
+		shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("BAD_REQUEST", "Invalid request body"))
 		return
 	}
 
-	if err := h.repo.UpdateAbuseReport(r.Context(), reportID, moderatorID.String(), req.Status, req.ModeratorNotes); err != nil {
+	if err := h.moderationRepo.UpdateAbuseReport(r.Context(), reportID, moderatorID.String(), req.Status, req.ModeratorNotes); err != nil {
 		if domainErr, ok := err.(*domain.DomainError); ok && domainErr.Code == "NOT_FOUND" {
-			WriteError(w, http.StatusNotFound, err)
+			shared.WriteError(w, http.StatusNotFound, err)
 		} else {
-			WriteError(w, http.StatusInternalServerError, domain.NewDomainError("INTERNAL_ERROR", "Failed to update abuse report"))
+			shared.WriteError(w, http.StatusInternalServerError, domain.NewDomainError("INTERNAL_ERROR", "Failed to update abuse report"))
 		}
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, map[string]interface{}{
+	shared.WriteJSON(w, http.StatusOK, map[string]interface{}{
 		"message": "Abuse report updated successfully",
 	})
 }
@@ -240,15 +241,15 @@ func (h *ModerationHandlers) DeleteAbuseReport(w http.ResponseWriter, r *http.Re
 	}
 	reportID := chi.URLParam(r, "id")
 	if reportID == "" {
-		WriteError(w, http.StatusBadRequest, domain.NewDomainError("BAD_REQUEST", "Missing report ID"))
+		shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("BAD_REQUEST", "Missing report ID"))
 		return
 	}
 
-	if err := h.repo.DeleteAbuseReport(r.Context(), reportID); err != nil {
+	if err := h.moderationRepo.DeleteAbuseReport(r.Context(), reportID); err != nil {
 		if domainErr, ok := err.(*domain.DomainError); ok && domainErr.Code == "NOT_FOUND" {
-			WriteError(w, http.StatusNotFound, err)
+			shared.WriteError(w, http.StatusNotFound, err)
 		} else {
-			WriteError(w, http.StatusInternalServerError, domain.NewDomainError("INTERNAL_ERROR", "Failed to delete abuse report"))
+			shared.WriteError(w, http.StatusInternalServerError, domain.NewDomainError("INTERNAL_ERROR", "Failed to delete abuse report"))
 		}
 		return
 	}
@@ -261,7 +262,7 @@ func (h *ModerationHandlers) DeleteAbuseReport(w http.ResponseWriter, r *http.Re
 func (h *ModerationHandlers) CreateBlocklistEntry(w http.ResponseWriter, r *http.Request) {
 	blockedBy, ok := middleware.GetUserIDFromContext(r.Context())
 	if !ok {
-		WriteError(w, http.StatusUnauthorized, domain.NewDomainError("UNAUTHORIZED", "Authentication required"))
+		shared.WriteError(w, http.StatusUnauthorized, domain.NewDomainError("UNAUTHORIZED", "Authentication required"))
 		return
 	}
 
@@ -272,7 +273,7 @@ func (h *ModerationHandlers) CreateBlocklistEntry(w http.ResponseWriter, r *http
 
 	var req domain.CreateBlocklistEntryRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		WriteError(w, http.StatusBadRequest, domain.NewDomainError("BAD_REQUEST", "Invalid request body"))
+		shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("BAD_REQUEST", "Invalid request body"))
 		return
 	}
 
@@ -292,34 +293,34 @@ func (h *ModerationHandlers) CreateBlocklistEntry(w http.ResponseWriter, r *http
 	switch req.BlockType {
 	case domain.BlockTypeEmail:
 		if _, err := mail.ParseAddress(req.BlockedValue); err != nil {
-			WriteError(w, http.StatusBadRequest, domain.NewDomainError("BAD_REQUEST", "Invalid email address"))
+			shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("BAD_REQUEST", "Invalid email address"))
 			return
 		}
 	case domain.BlockTypeIP:
 		if ip := net.ParseIP(req.BlockedValue); ip == nil {
-			WriteError(w, http.StatusBadRequest, domain.NewDomainError("BAD_REQUEST", "Invalid IP address"))
+			shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("BAD_REQUEST", "Invalid IP address"))
 			return
 		}
 	case domain.BlockTypeDomain:
 		// Basic domain validation: must contain a dot, no spaces, and not start/end with dot
 		v := req.BlockedValue
 		if strings.ContainsAny(v, " /") || !strings.Contains(v, ".") || strings.HasPrefix(v, ".") || strings.HasSuffix(v, ".") {
-			WriteError(w, http.StatusBadRequest, domain.NewDomainError("BAD_REQUEST", "Invalid domain"))
+			shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("BAD_REQUEST", "Invalid domain"))
 			return
 		}
 	case domain.BlockTypeUser:
 		if _, err := uuid.Parse(req.BlockedValue); err != nil {
-			WriteError(w, http.StatusBadRequest, domain.NewDomainError("BAD_REQUEST", "Invalid user ID"))
+			shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("BAD_REQUEST", "Invalid user ID"))
 			return
 		}
 	}
 
-	if err := h.repo.CreateBlocklistEntry(r.Context(), entry); err != nil {
-		WriteError(w, http.StatusInternalServerError, domain.NewDomainError("INTERNAL_ERROR", "Failed to create blocklist entry"))
+	if err := h.moderationRepo.CreateBlocklistEntry(r.Context(), entry); err != nil {
+		shared.WriteError(w, http.StatusInternalServerError, domain.NewDomainError("INTERNAL_ERROR", "Failed to create blocklist entry"))
 		return
 	}
 
-	WriteJSON(w, http.StatusCreated, entry)
+	shared.WriteJSON(w, http.StatusCreated, entry)
 }
 
 // ListBlocklistEntries handles GET /api/v1/admin/blocklist (admin only)
@@ -345,9 +346,9 @@ func (h *ModerationHandlers) ListBlocklistEntries(w http.ResponseWriter, r *http
 		}
 	}
 
-	entries, total, err := h.repo.ListBlocklistEntries(r.Context(), blockType, activeOnly, limit, offset)
+	entries, total, err := h.moderationRepo.ListBlocklistEntries(r.Context(), blockType, activeOnly, limit, offset)
 	if err != nil {
-		WriteError(w, http.StatusInternalServerError, domain.NewDomainError("INTERNAL_ERROR", "Failed to list blocklist entries"))
+		shared.WriteError(w, http.StatusInternalServerError, domain.NewDomainError("INTERNAL_ERROR", "Failed to list blocklist entries"))
 		return
 	}
 
@@ -355,11 +356,11 @@ func (h *ModerationHandlers) ListBlocklistEntries(w http.ResponseWriter, r *http
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(struct {
-		Data    interface{} `json:"data"`
-		Success bool        `json:"success"`
-		Meta    *Meta       `json:"meta"`
-		Total   int64       `json:"total"`
-	}{Data: entries, Success: true, Meta: &Meta{Total: total, Limit: limit, Offset: offset}, Total: total})
+		Data    interface{}  `json:"data"`
+		Success bool         `json:"success"`
+		Meta    *shared.Meta `json:"meta"`
+		Total   int64        `json:"total"`
+	}{Data: entries, Success: true, Meta: &shared.Meta{Total: total, Limit: limit, Offset: offset}, Total: total})
 }
 
 // UpdateBlocklistEntry handles PUT /api/v1/admin/blocklist/{id} (admin only)
@@ -370,7 +371,7 @@ func (h *ModerationHandlers) UpdateBlocklistEntry(w http.ResponseWriter, r *http
 	}
 	entryID := chi.URLParam(r, "id")
 	if entryID == "" {
-		WriteError(w, http.StatusBadRequest, domain.NewDomainError("BAD_REQUEST", "Missing entry ID"))
+		shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("BAD_REQUEST", "Missing entry ID"))
 		return
 	}
 
@@ -380,7 +381,7 @@ func (h *ModerationHandlers) UpdateBlocklistEntry(w http.ResponseWriter, r *http
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		WriteError(w, http.StatusBadRequest, domain.NewDomainError("BAD_REQUEST", "Invalid request body"))
+		shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("BAD_REQUEST", "Invalid request body"))
 		return
 	}
 
@@ -389,16 +390,16 @@ func (h *ModerationHandlers) UpdateBlocklistEntry(w http.ResponseWriter, r *http
 		expiresAt = sql.NullTime{Time: *req.ExpiresAt, Valid: true}
 	}
 
-	if err := h.repo.UpdateBlocklistEntry(r.Context(), entryID, req.IsActive, expiresAt); err != nil {
+	if err := h.moderationRepo.UpdateBlocklistEntry(r.Context(), entryID, req.IsActive, expiresAt); err != nil {
 		if domainErr, ok := err.(*domain.DomainError); ok && domainErr.Code == "NOT_FOUND" {
-			WriteError(w, http.StatusNotFound, err)
+			shared.WriteError(w, http.StatusNotFound, err)
 		} else {
-			WriteError(w, http.StatusInternalServerError, domain.NewDomainError("INTERNAL_ERROR", "Failed to update blocklist entry"))
+			shared.WriteError(w, http.StatusInternalServerError, domain.NewDomainError("INTERNAL_ERROR", "Failed to update blocklist entry"))
 		}
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, map[string]interface{}{
+	shared.WriteJSON(w, http.StatusOK, map[string]interface{}{
 		"message": "Blocklist entry updated successfully",
 	})
 }
@@ -411,15 +412,15 @@ func (h *ModerationHandlers) DeleteBlocklistEntry(w http.ResponseWriter, r *http
 	}
 	entryID := chi.URLParam(r, "id")
 	if entryID == "" {
-		WriteError(w, http.StatusBadRequest, domain.NewDomainError("BAD_REQUEST", "Missing entry ID"))
+		shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("BAD_REQUEST", "Missing entry ID"))
 		return
 	}
 
-	if err := h.repo.DeleteBlocklistEntry(r.Context(), entryID); err != nil {
+	if err := h.moderationRepo.DeleteBlocklistEntry(r.Context(), entryID); err != nil {
 		if domainErr, ok := err.(*domain.DomainError); ok && domainErr.Code == "NOT_FOUND" {
-			WriteError(w, http.StatusNotFound, err)
+			shared.WriteError(w, http.StatusNotFound, err)
 		} else {
-			WriteError(w, http.StatusInternalServerError, domain.NewDomainError("INTERNAL_ERROR", "Failed to delete blocklist entry"))
+			shared.WriteError(w, http.StatusInternalServerError, domain.NewDomainError("INTERNAL_ERROR", "Failed to delete blocklist entry"))
 		}
 		return
 	}

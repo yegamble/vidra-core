@@ -2,6 +2,7 @@ package social
 
 import (
 	"athena/internal/domain"
+	"athena/internal/httpapi/shared"
 	"athena/internal/middleware"
 	"athena/internal/usecase"
 	"encoding/json"
@@ -27,23 +28,23 @@ func NewPlaylistHandlers(playlistService *usecase.PlaylistService) *PlaylistHand
 func (h *PlaylistHandlers) CreatePlaylist(w http.ResponseWriter, r *http.Request) {
 	userID, ok := middleware.GetUserIDFromContext(r.Context())
 	if !ok {
-		WriteError(w, http.StatusUnauthorized, fmt.Errorf("unauthorized"))
+		shared.WriteError(w, http.StatusUnauthorized, fmt.Errorf("unauthorized"))
 		return
 	}
 
 	var req domain.CreatePlaylistRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid request body"))
+		shared.WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid request body"))
 		return
 	}
 
 	playlist, err := h.playlistService.CreatePlaylist(r.Context(), userID, &req)
 	if err != nil {
-		WriteError(w, http.StatusInternalServerError, err)
+		shared.WriteError(w, http.StatusInternalServerError, err)
 		return
 	}
 
-	WriteJSON(w, http.StatusCreated, playlist)
+	shared.WriteJSON(w, http.StatusCreated, playlist)
 }
 
 // GetPlaylist handles GET /api/v1/playlists/{id}
@@ -51,7 +52,7 @@ func (h *PlaylistHandlers) GetPlaylist(w http.ResponseWriter, r *http.Request) {
 	playlistIDStr := chi.URLParam(r, "id")
 	playlistID, err := uuid.Parse(playlistIDStr)
 	if err != nil {
-		WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid playlist ID"))
+		shared.WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid playlist ID"))
 		return
 	}
 
@@ -64,55 +65,55 @@ func (h *PlaylistHandlers) GetPlaylist(w http.ResponseWriter, r *http.Request) {
 	playlist, err := h.playlistService.GetPlaylist(r.Context(), playlistID, userID)
 	if err != nil {
 		if err == domain.ErrNotFound {
-			WriteError(w, http.StatusNotFound, err)
+			shared.WriteError(w, http.StatusNotFound, err)
 			return
 		}
 		if err == domain.ErrUnauthorized {
-			WriteError(w, http.StatusForbidden, err)
+			shared.WriteError(w, http.StatusForbidden, err)
 			return
 		}
-		WriteError(w, http.StatusInternalServerError, err)
+		shared.WriteError(w, http.StatusInternalServerError, err)
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, playlist)
+	shared.WriteJSON(w, http.StatusOK, playlist)
 }
 
 // UpdatePlaylist handles PUT /api/v1/playlists/{id}
 func (h *PlaylistHandlers) UpdatePlaylist(w http.ResponseWriter, r *http.Request) {
 	userID, ok := middleware.GetUserIDFromContext(r.Context())
 	if !ok {
-		WriteError(w, http.StatusUnauthorized, fmt.Errorf("unauthorized"))
+		shared.WriteError(w, http.StatusUnauthorized, fmt.Errorf("unauthorized"))
 		return
 	}
 
 	playlistIDStr := chi.URLParam(r, "id")
 	playlistID, err := uuid.Parse(playlistIDStr)
 	if err != nil {
-		WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid playlist ID"))
+		shared.WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid playlist ID"))
 		return
 	}
 
 	var req domain.UpdatePlaylistRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid request body"))
+		shared.WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid request body"))
 		return
 	}
 
 	if err := h.playlistService.UpdatePlaylist(r.Context(), userID, playlistID, req); err != nil {
 		if err == domain.ErrNotFound {
-			WriteError(w, http.StatusNotFound, err)
+			shared.WriteError(w, http.StatusNotFound, err)
 			return
 		}
 		if err == domain.ErrUnauthorized {
-			WriteError(w, http.StatusForbidden, err)
+			shared.WriteError(w, http.StatusForbidden, err)
 			return
 		}
-		WriteError(w, http.StatusInternalServerError, err)
+		shared.WriteError(w, http.StatusInternalServerError, err)
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, map[string]string{
+	shared.WriteJSON(w, http.StatusOK, map[string]string{
 		"status": "ok",
 	})
 }
@@ -121,31 +122,31 @@ func (h *PlaylistHandlers) UpdatePlaylist(w http.ResponseWriter, r *http.Request
 func (h *PlaylistHandlers) DeletePlaylist(w http.ResponseWriter, r *http.Request) {
 	userID, ok := middleware.GetUserIDFromContext(r.Context())
 	if !ok {
-		WriteError(w, http.StatusUnauthorized, fmt.Errorf("unauthorized"))
+		shared.WriteError(w, http.StatusUnauthorized, fmt.Errorf("unauthorized"))
 		return
 	}
 
 	playlistIDStr := chi.URLParam(r, "id")
 	playlistID, err := uuid.Parse(playlistIDStr)
 	if err != nil {
-		WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid playlist ID"))
+		shared.WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid playlist ID"))
 		return
 	}
 
 	if err := h.playlistService.DeletePlaylist(r.Context(), userID, playlistID); err != nil {
 		if err == domain.ErrNotFound {
-			WriteError(w, http.StatusNotFound, err)
+			shared.WriteError(w, http.StatusNotFound, err)
 			return
 		}
 		if err == domain.ErrUnauthorized {
-			WriteError(w, http.StatusForbidden, err)
+			shared.WriteError(w, http.StatusForbidden, err)
 			return
 		}
-		WriteError(w, http.StatusInternalServerError, err)
+		shared.WriteError(w, http.StatusInternalServerError, err)
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, map[string]string{
+	shared.WriteJSON(w, http.StatusOK, map[string]string{
 		"status": "ok",
 	})
 }
@@ -189,48 +190,48 @@ func (h *PlaylistHandlers) ListPlaylists(w http.ResponseWriter, r *http.Request)
 
 	response, err := h.playlistService.ListPlaylists(r.Context(), opts)
 	if err != nil {
-		WriteError(w, http.StatusInternalServerError, err)
+		shared.WriteError(w, http.StatusInternalServerError, err)
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, response)
+	shared.WriteJSON(w, http.StatusOK, response)
 }
 
 // AddVideoToPlaylist handles POST /api/v1/playlists/{id}/items
 func (h *PlaylistHandlers) AddVideoToPlaylist(w http.ResponseWriter, r *http.Request) {
 	userID, ok := middleware.GetUserIDFromContext(r.Context())
 	if !ok {
-		WriteError(w, http.StatusUnauthorized, fmt.Errorf("unauthorized"))
+		shared.WriteError(w, http.StatusUnauthorized, fmt.Errorf("unauthorized"))
 		return
 	}
 
 	playlistIDStr := chi.URLParam(r, "id")
 	playlistID, err := uuid.Parse(playlistIDStr)
 	if err != nil {
-		WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid playlist ID"))
+		shared.WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid playlist ID"))
 		return
 	}
 
 	var req domain.AddToPlaylistRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid request body"))
+		shared.WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid request body"))
 		return
 	}
 
 	if err := h.playlistService.AddVideoToPlaylist(r.Context(), userID, playlistID, req.VideoID, req.Position); err != nil {
 		if err == domain.ErrNotFound {
-			WriteError(w, http.StatusNotFound, err)
+			shared.WriteError(w, http.StatusNotFound, err)
 			return
 		}
 		if err == domain.ErrUnauthorized {
-			WriteError(w, http.StatusForbidden, err)
+			shared.WriteError(w, http.StatusForbidden, err)
 			return
 		}
-		WriteError(w, http.StatusInternalServerError, err)
+		shared.WriteError(w, http.StatusInternalServerError, err)
 		return
 	}
 
-	WriteJSON(w, http.StatusCreated, map[string]string{
+	shared.WriteJSON(w, http.StatusCreated, map[string]string{
 		"status": "ok",
 	})
 }
@@ -239,38 +240,38 @@ func (h *PlaylistHandlers) AddVideoToPlaylist(w http.ResponseWriter, r *http.Req
 func (h *PlaylistHandlers) RemoveVideoFromPlaylist(w http.ResponseWriter, r *http.Request) {
 	userID, ok := middleware.GetUserIDFromContext(r.Context())
 	if !ok {
-		WriteError(w, http.StatusUnauthorized, fmt.Errorf("unauthorized"))
+		shared.WriteError(w, http.StatusUnauthorized, fmt.Errorf("unauthorized"))
 		return
 	}
 
 	playlistIDStr := chi.URLParam(r, "id")
 	playlistID, err := uuid.Parse(playlistIDStr)
 	if err != nil {
-		WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid playlist ID"))
+		shared.WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid playlist ID"))
 		return
 	}
 
 	itemIDStr := chi.URLParam(r, "itemId")
 	itemID, err := uuid.Parse(itemIDStr)
 	if err != nil {
-		WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid item ID"))
+		shared.WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid item ID"))
 		return
 	}
 
 	if err := h.playlistService.RemoveVideoFromPlaylist(r.Context(), userID, playlistID, itemID); err != nil {
 		if err == domain.ErrNotFound {
-			WriteError(w, http.StatusNotFound, err)
+			shared.WriteError(w, http.StatusNotFound, err)
 			return
 		}
 		if err == domain.ErrUnauthorized {
-			WriteError(w, http.StatusForbidden, err)
+			shared.WriteError(w, http.StatusForbidden, err)
 			return
 		}
-		WriteError(w, http.StatusInternalServerError, err)
+		shared.WriteError(w, http.StatusInternalServerError, err)
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, map[string]string{
+	shared.WriteJSON(w, http.StatusOK, map[string]string{
 		"status": "ok",
 	})
 }
@@ -280,7 +281,7 @@ func (h *PlaylistHandlers) GetPlaylistItems(w http.ResponseWriter, r *http.Reque
 	playlistIDStr := chi.URLParam(r, "id")
 	playlistID, err := uuid.Parse(playlistIDStr)
 	if err != nil {
-		WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid playlist ID"))
+		shared.WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid playlist ID"))
 		return
 	}
 
@@ -306,18 +307,18 @@ func (h *PlaylistHandlers) GetPlaylistItems(w http.ResponseWriter, r *http.Reque
 	items, err := h.playlistService.GetPlaylistItems(r.Context(), playlistID, userID, limit, offset)
 	if err != nil {
 		if err == domain.ErrNotFound {
-			WriteError(w, http.StatusNotFound, err)
+			shared.WriteError(w, http.StatusNotFound, err)
 			return
 		}
 		if err == domain.ErrUnauthorized {
-			WriteError(w, http.StatusForbidden, err)
+			shared.WriteError(w, http.StatusForbidden, err)
 			return
 		}
-		WriteError(w, http.StatusInternalServerError, err)
+		shared.WriteError(w, http.StatusInternalServerError, err)
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, map[string]interface{}{
+	shared.WriteJSON(w, http.StatusOK, map[string]interface{}{
 		"items":  items,
 		"limit":  limit,
 		"offset": offset,
@@ -328,21 +329,21 @@ func (h *PlaylistHandlers) GetPlaylistItems(w http.ResponseWriter, r *http.Reque
 func (h *PlaylistHandlers) ReorderPlaylistItem(w http.ResponseWriter, r *http.Request) {
 	userID, ok := middleware.GetUserIDFromContext(r.Context())
 	if !ok {
-		WriteError(w, http.StatusUnauthorized, fmt.Errorf("unauthorized"))
+		shared.WriteError(w, http.StatusUnauthorized, fmt.Errorf("unauthorized"))
 		return
 	}
 
 	playlistIDStr := chi.URLParam(r, "id")
 	playlistID, err := uuid.Parse(playlistIDStr)
 	if err != nil {
-		WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid playlist ID"))
+		shared.WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid playlist ID"))
 		return
 	}
 
 	itemIDStr := chi.URLParam(r, "itemId")
 	itemID, err := uuid.Parse(itemIDStr)
 	if err != nil {
-		WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid item ID"))
+		shared.WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid item ID"))
 		return
 	}
 
@@ -350,24 +351,24 @@ func (h *PlaylistHandlers) ReorderPlaylistItem(w http.ResponseWriter, r *http.Re
 		NewPosition int `json:"new_position"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid request body"))
+		shared.WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid request body"))
 		return
 	}
 
 	if err := h.playlistService.ReorderPlaylistItem(r.Context(), userID, playlistID, itemID, req.NewPosition); err != nil {
 		if err == domain.ErrNotFound {
-			WriteError(w, http.StatusNotFound, err)
+			shared.WriteError(w, http.StatusNotFound, err)
 			return
 		}
 		if err == domain.ErrUnauthorized {
-			WriteError(w, http.StatusForbidden, err)
+			shared.WriteError(w, http.StatusForbidden, err)
 			return
 		}
-		WriteError(w, http.StatusInternalServerError, err)
+		shared.WriteError(w, http.StatusInternalServerError, err)
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, map[string]string{
+	shared.WriteJSON(w, http.StatusOK, map[string]string{
 		"status": "ok",
 	})
 }
@@ -376,40 +377,40 @@ func (h *PlaylistHandlers) ReorderPlaylistItem(w http.ResponseWriter, r *http.Re
 func (h *PlaylistHandlers) GetWatchLater(w http.ResponseWriter, r *http.Request) {
 	userID, ok := middleware.GetUserIDFromContext(r.Context())
 	if !ok {
-		WriteError(w, http.StatusUnauthorized, fmt.Errorf("unauthorized"))
+		shared.WriteError(w, http.StatusUnauthorized, fmt.Errorf("unauthorized"))
 		return
 	}
 
 	playlist, err := h.playlistService.GetOrCreateWatchLater(r.Context(), userID)
 	if err != nil {
-		WriteError(w, http.StatusInternalServerError, err)
+		shared.WriteError(w, http.StatusInternalServerError, err)
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, playlist)
+	shared.WriteJSON(w, http.StatusOK, playlist)
 }
 
 // AddToWatchLater handles POST /api/v1/videos/{id}/watch-later
 func (h *PlaylistHandlers) AddToWatchLater(w http.ResponseWriter, r *http.Request) {
 	userID, ok := middleware.GetUserIDFromContext(r.Context())
 	if !ok {
-		WriteError(w, http.StatusUnauthorized, fmt.Errorf("unauthorized"))
+		shared.WriteError(w, http.StatusUnauthorized, fmt.Errorf("unauthorized"))
 		return
 	}
 
 	videoIDStr := chi.URLParam(r, "id")
 	videoID, err := uuid.Parse(videoIDStr)
 	if err != nil {
-		WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid video ID"))
+		shared.WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid video ID"))
 		return
 	}
 
 	if err := h.playlistService.AddToWatchLater(r.Context(), userID, videoID); err != nil {
-		WriteError(w, http.StatusInternalServerError, err)
+		shared.WriteError(w, http.StatusInternalServerError, err)
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, map[string]string{
+	shared.WriteJSON(w, http.StatusOK, map[string]string{
 		"status": "ok",
 	})
 }

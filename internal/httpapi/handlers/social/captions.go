@@ -2,6 +2,7 @@ package social
 
 import (
 	"athena/internal/domain"
+	"athena/internal/httpapi/shared"
 	"athena/internal/middleware"
 	"athena/internal/usecase"
 	"encoding/json"
@@ -30,14 +31,14 @@ func NewCaptionHandlers(captionService *usecase.CaptionService, videoRepo usecas
 func (h *CaptionHandlers) CreateCaption(w http.ResponseWriter, r *http.Request) {
 	userID, ok := middleware.GetUserIDFromContext(r.Context())
 	if !ok {
-		WriteError(w, http.StatusUnauthorized, fmt.Errorf("Unauthorized"))
+		shared.WriteError(w, http.StatusUnauthorized, fmt.Errorf("Unauthorized"))
 		return
 	}
 
 	videoIDStr := chi.URLParam(r, "id")
 	videoID, err := uuid.Parse(videoIDStr)
 	if err != nil {
-		WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid video ID"))
+		shared.WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid video ID"))
 		return
 	}
 
@@ -45,21 +46,21 @@ func (h *CaptionHandlers) CreateCaption(w http.ResponseWriter, r *http.Request) 
 	video, err := h.videoRepo.GetByID(r.Context(), videoIDStr)
 	if err != nil {
 		if err == domain.ErrNotFound {
-			WriteError(w, http.StatusNotFound, fmt.Errorf("video not found"))
+			shared.WriteError(w, http.StatusNotFound, fmt.Errorf("video not found"))
 			return
 		}
-		WriteError(w, http.StatusInternalServerError, err)
+		shared.WriteError(w, http.StatusInternalServerError, err)
 		return
 	}
 
 	if video.UserID != userID.String() {
-		WriteError(w, http.StatusForbidden, fmt.Errorf("you don't have permission to add captions to this video"))
+		shared.WriteError(w, http.StatusForbidden, fmt.Errorf("you don't have permission to add captions to this video"))
 		return
 	}
 
 	// Parse multipart form (max 10MB for caption files)
 	if err := r.ParseMultipartForm(10 << 20); err != nil {
-		WriteError(w, http.StatusBadRequest, fmt.Errorf("failed to parse form data"))
+		shared.WriteError(w, http.StatusBadRequest, fmt.Errorf("failed to parse form data"))
 		return
 	}
 
@@ -71,14 +72,14 @@ func (h *CaptionHandlers) CreateCaption(w http.ResponseWriter, r *http.Request) 
 
 	// Validate required fields
 	if languageCode == "" || label == "" {
-		WriteError(w, http.StatusBadRequest, fmt.Errorf("language_code and label are required"))
+		shared.WriteError(w, http.StatusBadRequest, fmt.Errorf("language_code and label are required"))
 		return
 	}
 
 	// Get uploaded file
 	file, header, err := r.FormFile("caption_file")
 	if err != nil {
-		WriteError(w, http.StatusBadRequest, fmt.Errorf("caption_file is required"))
+		shared.WriteError(w, http.StatusBadRequest, fmt.Errorf("caption_file is required"))
 		return
 	}
 	defer func() { _ = file.Close() }()
@@ -89,7 +90,7 @@ func (h *CaptionHandlers) CreateCaption(w http.ResponseWriter, r *http.Request) 
 		if ext == "vtt" || ext == "srt" {
 			fileFormat = ext
 		} else {
-			WriteError(w, http.StatusBadRequest, fmt.Errorf("unsupported file format, must be vtt or srt"))
+			shared.WriteError(w, http.StatusBadRequest, fmt.Errorf("unsupported file format, must be vtt or srt"))
 			return
 		}
 	}
@@ -104,14 +105,14 @@ func (h *CaptionHandlers) CreateCaption(w http.ResponseWriter, r *http.Request) 
 	caption, err := h.captionService.CreateCaption(r.Context(), videoID, req, file)
 	if err != nil {
 		if domainErr, ok := err.(*domain.DomainError); ok {
-			WriteError(w, http.StatusBadRequest, domainErr)
+			shared.WriteError(w, http.StatusBadRequest, domainErr)
 			return
 		}
-		WriteError(w, http.StatusInternalServerError, err)
+		shared.WriteError(w, http.StatusInternalServerError, err)
 		return
 	}
 
-	WriteJSON(w, http.StatusCreated, caption)
+	shared.WriteJSON(w, http.StatusCreated, caption)
 }
 
 // GetCaptions handles GET /api/v1/videos/{id}/captions
@@ -119,7 +120,7 @@ func (h *CaptionHandlers) GetCaptions(w http.ResponseWriter, r *http.Request) {
 	videoIDStr := chi.URLParam(r, "id")
 	videoID, err := uuid.Parse(videoIDStr)
 	if err != nil {
-		WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid video ID"))
+		shared.WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid video ID"))
 		return
 	}
 
@@ -127,10 +128,10 @@ func (h *CaptionHandlers) GetCaptions(w http.ResponseWriter, r *http.Request) {
 	video, err := h.videoRepo.GetByID(r.Context(), videoIDStr)
 	if err != nil {
 		if err == domain.ErrNotFound {
-			WriteError(w, http.StatusNotFound, fmt.Errorf("video not found"))
+			shared.WriteError(w, http.StatusNotFound, fmt.Errorf("video not found"))
 			return
 		}
-		WriteError(w, http.StatusInternalServerError, err)
+		shared.WriteError(w, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -138,7 +139,7 @@ func (h *CaptionHandlers) GetCaptions(w http.ResponseWriter, r *http.Request) {
 	if video.Privacy == domain.PrivacyPrivate {
 		userID, authenticated := middleware.GetUserIDFromContext(r.Context())
 		if !authenticated || video.UserID != userID.String() {
-			WriteError(w, http.StatusForbidden, fmt.Errorf("video is private"))
+			shared.WriteError(w, http.StatusForbidden, fmt.Errorf("video is private"))
 			return
 		}
 	}
@@ -146,14 +147,14 @@ func (h *CaptionHandlers) GetCaptions(w http.ResponseWriter, r *http.Request) {
 	response, err := h.captionService.GetCaptionsByVideoID(r.Context(), videoID)
 	if err != nil {
 		if err == domain.ErrNotFound {
-			WriteError(w, http.StatusNotFound, fmt.Errorf("video not found"))
+			shared.WriteError(w, http.StatusNotFound, fmt.Errorf("video not found"))
 			return
 		}
-		WriteError(w, http.StatusInternalServerError, err)
+		shared.WriteError(w, http.StatusInternalServerError, err)
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, response)
+	shared.WriteJSON(w, http.StatusOK, response)
 }
 
 // GetCaptionContent handles GET /api/v1/videos/{id}/captions/{captionId}/content
@@ -161,14 +162,14 @@ func (h *CaptionHandlers) GetCaptionContent(w http.ResponseWriter, r *http.Reque
 	videoIDStr := chi.URLParam(r, "id")
 	videoID, err := uuid.Parse(videoIDStr)
 	if err != nil {
-		WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid video ID"))
+		shared.WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid video ID"))
 		return
 	}
 
 	captionIDStr := chi.URLParam(r, "captionId")
 	captionID, err := uuid.Parse(captionIDStr)
 	if err != nil {
-		WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid caption ID"))
+		shared.WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid caption ID"))
 		return
 	}
 
@@ -176,10 +177,10 @@ func (h *CaptionHandlers) GetCaptionContent(w http.ResponseWriter, r *http.Reque
 	video, err := h.videoRepo.GetByID(r.Context(), videoIDStr)
 	if err != nil {
 		if err == domain.ErrNotFound {
-			WriteError(w, http.StatusNotFound, fmt.Errorf("video not found"))
+			shared.WriteError(w, http.StatusNotFound, fmt.Errorf("video not found"))
 			return
 		}
-		WriteError(w, http.StatusInternalServerError, err)
+		shared.WriteError(w, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -187,7 +188,7 @@ func (h *CaptionHandlers) GetCaptionContent(w http.ResponseWriter, r *http.Reque
 	if video.Privacy == domain.PrivacyPrivate {
 		userID, authenticated := middleware.GetUserIDFromContext(r.Context())
 		if !authenticated || video.UserID != userID.String() {
-			WriteError(w, http.StatusForbidden, fmt.Errorf("video is private"))
+			shared.WriteError(w, http.StatusForbidden, fmt.Errorf("video is private"))
 			return
 		}
 	}
@@ -196,15 +197,15 @@ func (h *CaptionHandlers) GetCaptionContent(w http.ResponseWriter, r *http.Reque
 	caption, err := h.captionService.GetCaptionByID(r.Context(), captionID)
 	if err != nil {
 		if err == domain.ErrNotFound {
-			WriteError(w, http.StatusNotFound, fmt.Errorf("caption not found"))
+			shared.WriteError(w, http.StatusNotFound, fmt.Errorf("caption not found"))
 			return
 		}
-		WriteError(w, http.StatusInternalServerError, err)
+		shared.WriteError(w, http.StatusInternalServerError, err)
 		return
 	}
 
 	if caption.VideoID != videoID {
-		WriteError(w, http.StatusNotFound, fmt.Errorf("caption not found for this video"))
+		shared.WriteError(w, http.StatusNotFound, fmt.Errorf("caption not found for this video"))
 		return
 	}
 
@@ -212,10 +213,10 @@ func (h *CaptionHandlers) GetCaptionContent(w http.ResponseWriter, r *http.Reque
 	content, contentType, err := h.captionService.GetCaptionContent(r.Context(), captionID)
 	if err != nil {
 		if domainErr, ok := err.(*domain.DomainError); ok {
-			WriteError(w, http.StatusNotFound, domainErr)
+			shared.WriteError(w, http.StatusNotFound, domainErr)
 			return
 		}
-		WriteError(w, http.StatusInternalServerError, err)
+		shared.WriteError(w, http.StatusInternalServerError, err)
 		return
 	}
 	defer func() { _ = content.Close() }()
@@ -235,21 +236,21 @@ func (h *CaptionHandlers) GetCaptionContent(w http.ResponseWriter, r *http.Reque
 func (h *CaptionHandlers) UpdateCaption(w http.ResponseWriter, r *http.Request) {
 	userID, ok := middleware.GetUserIDFromContext(r.Context())
 	if !ok {
-		WriteError(w, http.StatusUnauthorized, fmt.Errorf("Unauthorized"))
+		shared.WriteError(w, http.StatusUnauthorized, fmt.Errorf("Unauthorized"))
 		return
 	}
 
 	videoIDStr := chi.URLParam(r, "id")
 	videoID, err := uuid.Parse(videoIDStr)
 	if err != nil {
-		WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid video ID"))
+		shared.WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid video ID"))
 		return
 	}
 
 	captionIDStr := chi.URLParam(r, "captionId")
 	captionID, err := uuid.Parse(captionIDStr)
 	if err != nil {
-		WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid caption ID"))
+		shared.WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid caption ID"))
 		return
 	}
 
@@ -257,15 +258,15 @@ func (h *CaptionHandlers) UpdateCaption(w http.ResponseWriter, r *http.Request) 
 	video, err := h.videoRepo.GetByID(r.Context(), videoIDStr)
 	if err != nil {
 		if err == domain.ErrNotFound {
-			WriteError(w, http.StatusNotFound, fmt.Errorf("video not found"))
+			shared.WriteError(w, http.StatusNotFound, fmt.Errorf("video not found"))
 			return
 		}
-		WriteError(w, http.StatusInternalServerError, err)
+		shared.WriteError(w, http.StatusInternalServerError, err)
 		return
 	}
 
 	if video.UserID != userID.String() {
-		WriteError(w, http.StatusForbidden, fmt.Errorf("you don't have permission to edit captions for this video"))
+		shared.WriteError(w, http.StatusForbidden, fmt.Errorf("you don't have permission to edit captions for this video"))
 		return
 	}
 
@@ -273,60 +274,60 @@ func (h *CaptionHandlers) UpdateCaption(w http.ResponseWriter, r *http.Request) 
 	existingCaption, err := h.captionService.GetCaptionByID(r.Context(), captionID)
 	if err != nil {
 		if err == domain.ErrNotFound {
-			WriteError(w, http.StatusNotFound, fmt.Errorf("caption not found"))
+			shared.WriteError(w, http.StatusNotFound, fmt.Errorf("caption not found"))
 			return
 		}
-		WriteError(w, http.StatusInternalServerError, err)
+		shared.WriteError(w, http.StatusInternalServerError, err)
 		return
 	}
 
 	if existingCaption.VideoID != videoID {
-		WriteError(w, http.StatusNotFound, fmt.Errorf("caption not found for this video"))
+		shared.WriteError(w, http.StatusNotFound, fmt.Errorf("caption not found for this video"))
 		return
 	}
 
 	var req domain.UpdateCaptionRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid request body"))
+		shared.WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid request body"))
 		return
 	}
 
 	caption, err := h.captionService.UpdateCaption(r.Context(), captionID, &req)
 	if err != nil {
 		if domainErr, ok := err.(*domain.DomainError); ok {
-			WriteError(w, http.StatusBadRequest, domainErr)
+			shared.WriteError(w, http.StatusBadRequest, domainErr)
 			return
 		}
 		if err == domain.ErrNotFound {
-			WriteError(w, http.StatusNotFound, fmt.Errorf("caption not found"))
+			shared.WriteError(w, http.StatusNotFound, fmt.Errorf("caption not found"))
 			return
 		}
-		WriteError(w, http.StatusInternalServerError, err)
+		shared.WriteError(w, http.StatusInternalServerError, err)
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, caption)
+	shared.WriteJSON(w, http.StatusOK, caption)
 }
 
 // DeleteCaption handles DELETE /api/v1/videos/{id}/captions/{captionId}
 func (h *CaptionHandlers) DeleteCaption(w http.ResponseWriter, r *http.Request) {
 	userID, ok := middleware.GetUserIDFromContext(r.Context())
 	if !ok {
-		WriteError(w, http.StatusUnauthorized, fmt.Errorf("Unauthorized"))
+		shared.WriteError(w, http.StatusUnauthorized, fmt.Errorf("Unauthorized"))
 		return
 	}
 
 	videoIDStr := chi.URLParam(r, "id")
 	videoID, err := uuid.Parse(videoIDStr)
 	if err != nil {
-		WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid video ID"))
+		shared.WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid video ID"))
 		return
 	}
 
 	captionIDStr := chi.URLParam(r, "captionId")
 	captionID, err := uuid.Parse(captionIDStr)
 	if err != nil {
-		WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid caption ID"))
+		shared.WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid caption ID"))
 		return
 	}
 
@@ -334,15 +335,15 @@ func (h *CaptionHandlers) DeleteCaption(w http.ResponseWriter, r *http.Request) 
 	video, err := h.videoRepo.GetByID(r.Context(), videoIDStr)
 	if err != nil {
 		if err == domain.ErrNotFound {
-			WriteError(w, http.StatusNotFound, fmt.Errorf("video not found"))
+			shared.WriteError(w, http.StatusNotFound, fmt.Errorf("video not found"))
 			return
 		}
-		WriteError(w, http.StatusInternalServerError, err)
+		shared.WriteError(w, http.StatusInternalServerError, err)
 		return
 	}
 
 	if video.UserID != userID.String() {
-		WriteError(w, http.StatusForbidden, fmt.Errorf("you don't have permission to delete captions for this video"))
+		shared.WriteError(w, http.StatusForbidden, fmt.Errorf("you don't have permission to delete captions for this video"))
 		return
 	}
 
@@ -350,28 +351,28 @@ func (h *CaptionHandlers) DeleteCaption(w http.ResponseWriter, r *http.Request) 
 	caption, err := h.captionService.GetCaptionByID(r.Context(), captionID)
 	if err != nil {
 		if err == domain.ErrNotFound {
-			WriteError(w, http.StatusNotFound, fmt.Errorf("caption not found"))
+			shared.WriteError(w, http.StatusNotFound, fmt.Errorf("caption not found"))
 			return
 		}
-		WriteError(w, http.StatusInternalServerError, err)
+		shared.WriteError(w, http.StatusInternalServerError, err)
 		return
 	}
 
 	if caption.VideoID != videoID {
-		WriteError(w, http.StatusNotFound, fmt.Errorf("caption not found for this video"))
+		shared.WriteError(w, http.StatusNotFound, fmt.Errorf("caption not found for this video"))
 		return
 	}
 
 	if err := h.captionService.DeleteCaption(r.Context(), captionID); err != nil {
 		if err == domain.ErrNotFound {
-			WriteError(w, http.StatusNotFound, fmt.Errorf("caption not found"))
+			shared.WriteError(w, http.StatusNotFound, fmt.Errorf("caption not found"))
 			return
 		}
-		WriteError(w, http.StatusInternalServerError, err)
+		shared.WriteError(w, http.StatusInternalServerError, err)
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, map[string]string{
+	shared.WriteJSON(w, http.StatusOK, map[string]string{
 		"status": "deleted",
 	})
 }

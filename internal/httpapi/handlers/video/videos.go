@@ -27,23 +27,11 @@ import (
 
 // requireUUIDParam extracts a path parameter and validates it as a UUID.
 // On failure it writes an error response and returns ok=false.
-func requireUUIDParam(w http.ResponseWriter, r *http.Request, param, missingCode, invalidCode, missingMsg, invalidMsg string) (string, bool) {
-	id := chi.URLParam(r, param)
-	if id == "" {
-		shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError(missingCode, missingMsg))
-		return "", false
-	}
-	if _, err := uuid.Parse(id); err != nil {
-		shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError(invalidCode, invalidMsg))
-		return "", false
-	}
-	return id, true
-}
 
 func ListVideosHandler(repo usecase.VideoRepository) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// Parse pagination parameters with backward compatibility
-		page, limit, offset, pageSize := ParsePagination(r, 20)
+		page, limit, offset, pageSize := shared.ParsePagination(r, 20)
 
 		sort := r.URL.Query().Get("sort")
 		if sort == "" {
@@ -69,7 +57,7 @@ func ListVideosHandler(repo usecase.VideoRepository) http.HandlerFunc {
 			return
 		}
 
-		meta := &Meta{
+		meta := &shared.Meta{
 			Total:    total,
 			Limit:    limit,
 			Offset:   offset,
@@ -90,7 +78,7 @@ func SearchVideosHandler(repo usecase.VideoRepository) http.HandlerFunc {
 		}
 
 		// Parse pagination parameters with backward compatibility
-		page, limit, offset, pageSize := ParsePagination(r, 20)
+		page, limit, offset, pageSize := shared.ParsePagination(r, 20)
 
 		tags := r.URL.Query()["tags"]
 
@@ -110,7 +98,7 @@ func SearchVideosHandler(repo usecase.VideoRepository) http.HandlerFunc {
 			return
 		}
 
-		meta := &Meta{
+		meta := &shared.Meta{
 			Total:    total,
 			Limit:    limit,
 			Offset:   offset,
@@ -124,7 +112,7 @@ func SearchVideosHandler(repo usecase.VideoRepository) http.HandlerFunc {
 
 func GetVideoHandler(repo usecase.VideoRepository, captionService *usecase.CaptionService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		videoID, ok := requireUUIDParam(w, r, "id", "MISSING_VIDEO_ID", "INVALID_VIDEO_ID", "Video ID is required", "Invalid video ID format")
+		videoID, ok := shared.RequireUUIDParam(w, r, "id", "MISSING_VIDEO_ID", "INVALID_VIDEO_ID", "Video ID is required", "Invalid video ID format")
 		if !ok {
 			return
 		}
@@ -244,7 +232,7 @@ func UpdateVideoHandler(repo usecase.VideoRepository) http.HandlerFunc {
 	}
 
 	return func(w http.ResponseWriter, r *http.Request) {
-		videoID, ok := requireUUIDParam(w, r, "id", "MISSING_VIDEO_ID", "INVALID_VIDEO_ID", "Video ID is required", "Invalid video ID format")
+		videoID, ok := shared.RequireUUIDParam(w, r, "id", "MISSING_VIDEO_ID", "INVALID_VIDEO_ID", "Video ID is required", "Invalid video ID format")
 		if !ok {
 			return
 		}
@@ -367,7 +355,7 @@ func UpdateVideoHandler(repo usecase.VideoRepository) http.HandlerFunc {
 
 func DeleteVideoHandler(repo usecase.VideoRepository) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		videoID, ok := requireUUIDParam(w, r, "id", "MISSING_VIDEO_ID", "INVALID_VIDEO_ID", "Video ID is required", "Invalid video ID format")
+		videoID, ok := shared.RequireUUIDParam(w, r, "id", "MISSING_VIDEO_ID", "INVALID_VIDEO_ID", "Video ID is required", "Invalid video ID format")
 		if !ok {
 			return
 		}
@@ -530,7 +518,7 @@ func CompleteUploadHandler(uploadService usecase.UploadService, encodingRepo use
 // GetUploadStatusHandler returns the current upload status
 func GetUploadStatusHandler(uploadService usecase.UploadService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		sessionID, ok := requireUUIDParam(w, r, "sessionId", "MISSING_SESSION_ID", "INVALID_SESSION_ID", "Session ID is required", "Invalid session ID format")
+		sessionID, ok := shared.RequireUUIDParam(w, r, "sessionId", "MISSING_SESSION_ID", "INVALID_SESSION_ID", "Session ID is required", "Invalid session ID format")
 		if !ok {
 			return
 		}
@@ -553,7 +541,7 @@ func GetUploadStatusHandler(uploadService usecase.UploadService) http.HandlerFun
 // ResumeUploadHandler provides information to resume an interrupted upload
 func ResumeUploadHandler(uploadService usecase.UploadService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		sessionID, ok := requireUUIDParam(w, r, "sessionId", "MISSING_SESSION_ID", "INVALID_SESSION_ID", "Session ID is required", "Invalid session ID format")
+		sessionID, ok := shared.RequireUUIDParam(w, r, "sessionId", "MISSING_SESSION_ID", "INVALID_SESSION_ID", "Session ID is required", "Invalid session ID format")
 		if !ok {
 			return
 		}
@@ -598,7 +586,7 @@ func ResumeUploadHandler(uploadService usecase.UploadService) http.HandlerFunc {
 
 func GetUserVideosHandler(repo usecase.VideoRepository) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		userID, ok := requireUUIDParam(w, r, "id", "MISSING_USER_ID", "INVALID_USER_ID", "User ID is required", "Invalid user ID format")
+		userID, ok := shared.RequireUUIDParam(w, r, "id", "MISSING_USER_ID", "INVALID_USER_ID", "User ID is required", "Invalid user ID format")
 		if !ok {
 			return
 		}
@@ -644,7 +632,7 @@ func GetUserVideosHandler(repo usecase.VideoRepository) http.HandlerFunc {
 			videos = filtered
 			total = int64(len(videos))
 		}
-		meta := &Meta{Total: total, Limit: limit, Offset: offset, Page: page, PageSize: pageSize}
+		meta := &shared.Meta{Total: total, Limit: limit, Offset: offset, Page: page, PageSize: pageSize}
 		shared.WriteJSONWithMeta(w, http.StatusOK, videos, meta)
 	}
 }
@@ -959,7 +947,7 @@ func VideoCompleteUploadHandler(uploadService usecase.UploadService) http.Handle
 }
 
 func StreamVideo(w http.ResponseWriter, r *http.Request) {
-	videoID, ok := requireUUIDParam(w, r, "id", "MISSING_VIDEO_ID", "INVALID_VIDEO_ID", "Video ID is required", "Invalid video ID format")
+	videoID, ok := shared.RequireUUIDParam(w, r, "id", "MISSING_VIDEO_ID", "INVALID_VIDEO_ID", "Video ID is required", "Invalid video ID format")
 	if !ok {
 		return
 	}

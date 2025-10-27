@@ -1,6 +1,7 @@
 package video
 
 import (
+	"athena/internal/middleware"
 	"fmt"
 	"net/http"
 	"os"
@@ -208,13 +209,9 @@ func (h *HLSHandlers) checkStreamAccess(r *http.Request, stream *domain.LiveStre
 
 	case "private":
 		// Only authenticated owner can access
-		userIDStr := GetUserIDFromContext(r.Context())
-		if userIDStr == "" {
+		userID, ok := middleware.GetUserIDFromContext(r.Context())
+		if !ok {
 			return domain.NewDomainError("UNAUTHORIZED", "Authentication required for private streams")
-		}
-		userID, err := uuid.Parse(userIDStr)
-		if err != nil {
-			return domain.NewDomainError("UNAUTHORIZED", "Invalid user ID")
 		}
 		if userID != stream.UserID {
 			return domain.NewDomainError("FORBIDDEN", "You don't have access to this private stream")
