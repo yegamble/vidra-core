@@ -114,10 +114,10 @@ Expected errors:
 - Undefined methods/functions
 - Type mismatches
 
-### Phase 2: Integration Tests (Not Started)
+### Phase 2: Integration Tests (Partially Complete)
 
 - Move 16 integration test files to `/tests/integration/`
-- Move test fixtures from `internal/httpapi/storage/` to `/tests/fixtures/`
+- ✅ ~~Move test fixtures from `internal/httpapi/storage/` to `/tests/fixtures/`~~ - Removed `/internal/httpapi/storage/`; tests now use `/storage/` at project root
 - Update test package declarations
 - Update imports in test files
 

@@ -262,24 +262,11 @@ Move subdirectory services to root level for consistency.
 **Effort:** Low-Medium (1-2 hours)
 **Risk:** Low (import path updates only)
 
-#### Issue #5: Misplaced Storage Directory
+#### Issue #5: Misplaced Storage Directory ✅ RESOLVED
 
-**Problem:** `/internal/httpapi/storage/` exists but should be in `/internal/storage/` or `/tests/fixtures/`.
+**Problem:** `/internal/httpapi/storage/` existed but should have been at the root `/storage/`.
 
-**Current Content:**
-```
-/internal/httpapi/storage/
-├── streaming-playlists/
-├── avatars/
-└── ... (test fixtures)
-```
-
-**Impact:** Storage logic incorrectly coupled to HTTP layer.
-
-**Solution:** Move to `/tests/fixtures/storage/` since these appear to be test artifacts.
-
-**Effort:** Low (30 minutes)
-**Risk:** Low
+**Resolution:** Directory removed. Tests now correctly use `/storage/` at project root, which is managed by `/storage/.gitignore` and properly configured via `config.StorageDir`.
 
 #### Issue #6: Temporary/Experimental Directories
 

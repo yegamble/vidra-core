@@ -48,8 +48,6 @@ temp/
 *.temp
 *.log
 
-# Internal HTTP API test artifacts handled by internal/httpapi/storage/.gitignore
-
 # Build artifacts
 athena-server
 athena

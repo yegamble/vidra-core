@@ -37,24 +37,10 @@ git commit -m "chore: clean up temporary and misplaced files"
 
 ---
 
-### 3. Move Test Fixtures to Proper Location 📁
+### 3. Move Test Fixtures to Proper Location 📁 ✅ COMPLETED
 **Time:** 30 minutes | **Risk:** Low | **Impact:** Medium
 
-```bash
-# Create fixtures directory
-mkdir -p tests/fixtures/storage
-
-# Move misplaced storage fixtures
-mv internal/httpapi/storage/* tests/fixtures/storage/
-
-# Update any test references to new path
-# (grep for references first)
-grep -r "internal/httpapi/storage" internal/
-
-# Commit
-git add -A
-git commit -m "refactor: move test fixtures to tests/fixtures/"
-```
+**Status:** Resolved - `/internal/httpapi/storage/` has been removed. Tests now correctly use `/storage/` at the project root, which is properly managed via `.gitignore` and `config.StorageDir`.
 
 ---
 
