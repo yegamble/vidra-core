@@ -270,7 +270,7 @@ jobs:
           ./bin/athena --help || true
 
       - name: Upload binary as artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: athena-binary
           path: bin/athena
@@ -352,7 +352,7 @@ jobs:
 
       - name: Upload Newman results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: newman-results-e2e
           path: postman/newman-results.xml
@@ -366,7 +366,7 @@ jobs:
 
       - name: Upload compose logs
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: compose-logs-e2e
           path: artifacts/compose-logs.txt
