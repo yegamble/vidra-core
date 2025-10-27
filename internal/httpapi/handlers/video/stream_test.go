@@ -1,4 +1,4 @@
-package video_test
+package video
 
 import (
 	"context"
