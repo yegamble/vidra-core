@@ -52,6 +52,8 @@ func NewInstanceHandlers(deps ...interface{}) *InstanceHandlersStub {
 }
 
 // withUserID adds a user ID to the context (test helper)
+//
+//nolint:unused // used in test files
 func withUserID(ctx context.Context, id string) context.Context {
 	return context.WithValue(ctx, middleware.UserIDKey, id)
 }

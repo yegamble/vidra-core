@@ -24,6 +24,8 @@ type ErrorInfo = shared.ErrorInfo
 type Meta = shared.Meta
 
 // ipfsAddResponse represents a single line in IPFS add NDJSON output
+//
+//nolint:unused // used in test files
 type ipfsAddResponse struct {
 	Name string `json:"Name"`
 	Hash string `json:"Hash"`
@@ -31,6 +33,8 @@ type ipfsAddResponse struct {
 }
 
 // parseIPFSAddResponse parses the final CID from an ipfs add NDJSON stream.
+//
+//nolint:unused // used in test files
 func parseIPFSAddResponse(r io.Reader) (string, error) {
 	var last ipfsAddResponse
 	// Use a scanner to read line-delimited JSON objects
@@ -61,6 +65,8 @@ func parseIPFSAddResponse(r io.Reader) (string, error) {
 }
 
 // withChiURLParam adds a URL parameter to the request context for testing
+//
+//nolint:unused // used in test files
 func withChiURLParam(r *http.Request, key, value string) *http.Request {
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add(key, value)

@@ -46,6 +46,8 @@ func NewNotificationHandlers(notificationService ucn.Service) *messaging.Notific
 }
 
 // integResp is a wrapper for API responses
+//
+//nolint:unused // used in test files
 type integResp struct {
 	Data    json.RawMessage   `json:"data"`
 	Error   *shared.ErrorInfo `json:"error"`
@@ -54,12 +56,16 @@ type integResp struct {
 }
 
 // authResp is a common response type for auth endpoints
+//
+//nolint:unused // used in test files
 type authResp struct {
 	AccessToken  string `json:"access_token"`
 	RefreshToken string `json:"refresh_token"`
 }
 
 // testResponse is the standard response structure for tests
+//
+//nolint:unused // used in test files
 type testResponse struct {
 	Data    json.RawMessage   `json:"data"`
 	Error   *shared.ErrorInfo `json:"error"`
@@ -68,11 +74,15 @@ type testResponse struct {
 }
 
 // withUserID adds a user ID to the context (test helper)
+//
+//nolint:unused // used in test files
 func withUserID(ctx context.Context, id string) context.Context {
 	return context.WithValue(ctx, middleware.UserIDKey, id)
 }
 
 // decodeResponse decodes a response for tests
+//
+//nolint:unused // used in test files
 func decodeResponse(t *testing.T, rr *httptest.ResponseRecorder) testResponse {
 	t.Helper()
 	var resp testResponse
