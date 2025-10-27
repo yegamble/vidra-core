@@ -49,6 +49,20 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, deps *shar
 		cfg,
 	)
 
+	// Create auth handlers instance for avatar and other auth-related routes
+	authHandlers := auth.NewAuthHandlers(
+		deps.UserRepo,
+		deps.SessionRepo,
+		deps.OAuthRepo,
+		nil, // verificationService (can be set later if needed)
+		deps.JWTSecret,
+		deps.Redis,
+		deps.RedisPingTimeout,
+		deps.IPFSApi,
+		deps.IPFSCluster,
+		cfg,
+	)
+
 	// Register auth routes with appropriate middleware
 	// SECURITY FIX: Apply stricter rate limiting to prevent account spam and brute force attacks
 	r.With(strictAuthLimiter).Post("/auth/register", server.Register)
@@ -115,8 +129,8 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, deps *shar
 			r.With(middleware.Auth(cfg.JWTSecret)).Delete("/{id}", video.DeleteVideoHandler(deps.VideoRepo))
 
 			// Direct video upload endpoints (for backward compatibility with tests)
-			r.With(middleware.Auth(cfg.JWTSecret)).Post("/{id}/upload", video.UploadChunkHandler(deps.UploadService, cfg))
-			r.With(middleware.Auth(cfg.JWTSecret)).Post("/{id}/complete", video.CompleteUploadHandler(deps.UploadService, deps.EncodingRepo))
+			r.With(middleware.Auth(cfg.JWTSecret)).Post("/{id}/upload", video.VideoUploadChunkHandler(deps.UploadService, cfg))
+			r.With(middleware.Auth(cfg.JWTSecret)).Post("/{id}/complete", video.VideoCompleteUploadHandler(deps.UploadService))
 
 			// Views and analytics endpoints for specific videos
 			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Post("/{id}/views", viewsHandler.TrackView)
@@ -195,8 +209,7 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, deps *shar
 			r.With(middleware.Auth(cfg.JWTSecret)).Post("/", auth.CreateUserHandler(deps.UserRepo))
 			r.With(middleware.Auth(cfg.JWTSecret)).Get("/me", auth.GetCurrentUserHandler(deps.UserRepo))
 			r.With(middleware.Auth(cfg.JWTSecret)).Put("/me", auth.UpdateCurrentUserHandler(deps.UserRepo))
-			// TODO: Wire UploadAvatar through auth handlers
-			// r.With(middleware.Auth(cfg.JWTSecret)).Post("/me/avatar", server.UploadAvatar)
+			r.With(middleware.Auth(cfg.JWTSecret)).Post("/me/avatar", authHandlers.UploadAvatar)
 			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{id}/videos", video.GetUserVideosHandler(deps.VideoRepo))
 			// Subscriptions
 			r.With(middleware.Auth(cfg.JWTSecret)).Post("/{id}/subscribe", channel.SubscribeToUserHandler(deps.SubRepo, deps.UserRepo))

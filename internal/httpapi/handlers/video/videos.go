@@ -855,9 +855,9 @@ func VideoUploadChunkHandler(uploadService usecase.UploadService, cfg *config.Co
 			return
 		}
 
-		// Validate UUID format
+		// Validate UUID format - return 404 since invalid UUID means video doesn't exist
 		if _, err := uuid.Parse(videoID); err != nil {
-			shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_VIDEO_ID", "Invalid video ID format"))
+			shared.WriteError(w, http.StatusNotFound, domain.NewDomainError("VIDEO_NOT_FOUND", "Video not found"))
 			return
 		}
 
@@ -928,9 +928,9 @@ func VideoCompleteUploadHandler(uploadService usecase.UploadService) http.Handle
 			return
 		}
 
-		// Validate UUID format
+		// Validate UUID format - return 404 since invalid UUID means video doesn't exist
 		if _, err := uuid.Parse(videoID); err != nil {
-			shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_VIDEO_ID", "Invalid video ID format"))
+			shared.WriteError(w, http.StatusNotFound, domain.NewDomainError("VIDEO_NOT_FOUND", "Video not found"))
 			return
 		}
 
