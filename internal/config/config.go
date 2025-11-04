@@ -25,6 +25,16 @@ type Config struct {
 	IPFSApi     string
 	IPFSCluster string
 
+	// IPFS Streaming Configuration
+	EnableIPFSStreaming             bool
+	IPFSGatewayURLs                 []string
+	IPFSStreamingTimeout            time.Duration
+	IPFSStreamingPreferLocal        bool
+	IPFSGatewayHealthCheckInterval  time.Duration
+	IPFSStreamingMaxRetries         int
+	IPFSStreamingFallbackToLocal    bool
+	IPFSStreamingBufferSize         int
+
 	// IOTA Configuration
 	IOTANodeURL string
 
@@ -280,6 +290,21 @@ func Load() (*Config, error) {
 	}
 
 	cfg.IPFSCluster = getEnvOrDefault("IPFS_CLUSTER_API", "")
+
+	// IPFS Streaming Configuration
+	cfg.EnableIPFSStreaming = getBoolEnv("ENABLE_IPFS_STREAMING", false)
+	defaultGateways := []string{
+		"https://ipfs.io",
+		"https://dweb.link",
+		"https://cloudflare-ipfs.com",
+	}
+	cfg.IPFSGatewayURLs = getStringSliceEnv("IPFS_GATEWAY_URLS", defaultGateways)
+	cfg.IPFSStreamingTimeout = time.Duration(getIntEnv("IPFS_STREAMING_TIMEOUT", 30)) * time.Second
+	cfg.IPFSStreamingPreferLocal = getBoolEnv("IPFS_STREAMING_PREFER_LOCAL", true)
+	cfg.IPFSGatewayHealthCheckInterval = time.Duration(getIntEnv("IPFS_GATEWAY_HEALTH_CHECK_INTERVAL", 60)) * time.Second
+	cfg.IPFSStreamingMaxRetries = getIntEnv("IPFS_STREAMING_MAX_RETRIES", 3)
+	cfg.IPFSStreamingFallbackToLocal = getBoolEnv("IPFS_STREAMING_FALLBACK_TO_LOCAL", true)
+	cfg.IPFSStreamingBufferSize = getIntEnv("IPFS_STREAMING_BUFFER_SIZE", 32768)
 	cfg.IOTANodeURL = getEnvOrDefault("IOTA_NODE_URL", "")
 	cfg.FFMPEGPath = getEnvOrDefault("FFMPEG_PATH", "ffmpeg")
 
