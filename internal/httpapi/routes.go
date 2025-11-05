@@ -284,7 +284,7 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, deps *shar
 				// HLS handlers (if transcoder is available)
 				var hlsHandlers *video.HLSHandlers
 				if deps.HLSTranscoder != nil {
-					hlsHandlers = video.NewHLSHandlers(cfg, deps.LiveStreamRepo, deps.HLSTranscoder)
+					hlsHandlers = video.NewHLSHandlers(cfg, deps.LiveStreamRepo, deps.HLSTranscoder, deps.IPFSStreamingService)
 				}
 
 				// Authenticated routes
@@ -343,6 +343,15 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, deps *shar
 			r.Put("/read-all", notificationHandlers.MarkAllAsRead)
 			r.Delete("/{id}", notificationHandlers.DeleteNotification)
 		})
+
+		// IPFS Streaming Metrics
+		if deps.IPFSStreamingService != nil {
+			r.Route("/ipfs", func(r chi.Router) {
+				ipfsMetricsHandlers := video.NewIPFSMetricsHandlers(deps.IPFSStreamingService)
+				r.Get("/metrics", ipfsMetricsHandlers.GetMetrics)
+				r.Get("/gateways", ipfsMetricsHandlers.GetGatewayHealth)
+			})
+		}
 
 		// Federation endpoints (ATProto)
 		r.Route("/federation", func(r chi.Router) {

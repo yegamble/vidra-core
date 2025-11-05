@@ -13,6 +13,7 @@ import (
 	ucchannel "athena/internal/usecase/channel"
 	uccmt "athena/internal/usecase/comment"
 	"athena/internal/usecase/encoding"
+	ucipfs "athena/internal/usecase/ipfs_streaming"
 	ucn "athena/internal/usecase/notification"
 	ucrt "athena/internal/usecase/rating"
 	ucup "athena/internal/usecase/upload"
@@ -46,23 +47,24 @@ type HandlerDependencies struct {
 	ViewerSessionRepo repository.ViewerSessionRepository
 
 	// Services
-	UploadService       ucup.Service
-	MessageService      *usecase.MessageService
-	ViewsService        *ucviews.Service
-	NotificationService ucn.Service
-	ChannelService      *ucchannel.Service
-	CommentService      *uccmt.Service
-	RatingService       *ucrt.Service
-	PlaylistService     *usecase.PlaylistService
-	CaptionService      *usecase.CaptionService
-	AtprotoService      usecase.AtprotoPublisher
-	FederationService   usecase.FederationService
-	HardeningService    *usecase.FederationHardeningService
-	EncodingService     encoding.Service
-	ActivityPubService  port.ActivityPubService
-	ImportService       any // Import service for video imports
-	StreamManager       *livestream.StreamManager
-	HLSTranscoder       *livestream.HLSTranscoder
+	UploadService        ucup.Service
+	MessageService       *usecase.MessageService
+	ViewsService         *ucviews.Service
+	NotificationService  ucn.Service
+	ChannelService       *ucchannel.Service
+	CommentService       *uccmt.Service
+	RatingService        *ucrt.Service
+	PlaylistService      *usecase.PlaylistService
+	CaptionService       *usecase.CaptionService
+	AtprotoService       usecase.AtprotoPublisher
+	FederationService    usecase.FederationService
+	HardeningService     *usecase.FederationHardeningService
+	EncodingService      encoding.Service
+	ActivityPubService   port.ActivityPubService
+	ImportService        any // Import service for video imports
+	StreamManager        *livestream.StreamManager
+	HLSTranscoder        *livestream.HLSTranscoder
+	IPFSStreamingService *ucipfs.Service
 
 	// Schedulers
 	EncodingScheduler *scheduler.EncodingScheduler

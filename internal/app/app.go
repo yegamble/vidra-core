@@ -18,6 +18,7 @@ import (
 	"athena/internal/config"
 	"athena/internal/httpapi"
 	"athena/internal/httpapi/shared"
+	"athena/internal/ipfs"
 	"athena/internal/livestream"
 	"athena/internal/metrics"
 	"athena/internal/repository"
@@ -26,6 +27,7 @@ import (
 	ucchannel "athena/internal/usecase/channel"
 	uccmt "athena/internal/usecase/comment"
 	ucenc "athena/internal/usecase/encoding"
+	ucipfs "athena/internal/usecase/ipfs_streaming"
 	ucn "athena/internal/usecase/notification"
 	ucrt "athena/internal/usecase/rating"
 	ucup "athena/internal/usecase/upload"
@@ -76,21 +78,23 @@ type Dependencies struct {
 	StreamKeyRepo     repository.StreamKeyRepository
 	ViewerSessionRepo repository.ViewerSessionRepository
 
-	UploadService       ucup.Service
-	MessageService      *usecase.MessageService
-	ViewsService        *ucviews.Service
-	NotificationService ucn.Service
-	ChannelService      *ucchannel.Service
-	CommentService      *uccmt.Service
-	RatingService       *ucrt.Service
-	PlaylistService     *usecase.PlaylistService
-	CaptionService      *usecase.CaptionService
-	AtprotoService      usecase.AtprotoPublisher
-	FederationService   usecase.FederationService
-	HardeningService    *usecase.FederationHardeningService
-	EncodingService     ucenc.Service
-	ImportService       any // ucimport.Service
-	StreamManager       *livestream.StreamManager
+	UploadService        ucup.Service
+	MessageService       *usecase.MessageService
+	ViewsService         *ucviews.Service
+	NotificationService  ucn.Service
+	ChannelService       *ucchannel.Service
+	CommentService       *uccmt.Service
+	RatingService        *ucrt.Service
+	PlaylistService      *usecase.PlaylistService
+	CaptionService       *usecase.CaptionService
+	AtprotoService       usecase.AtprotoPublisher
+	FederationService    usecase.FederationService
+	HardeningService     *usecase.FederationHardeningService
+	EncodingService      ucenc.Service
+	ImportService        any // ucimport.Service
+	StreamManager        *livestream.StreamManager
+	IPFSStreamingService *ucipfs.Service
+	IPFSClient           *ipfs.Client
 }
 
 func New(cfg *config.Config) (*Application, error) {
@@ -243,6 +247,13 @@ func (app *Application) initializeDependencies() *Dependencies {
 		app.atprotoService = deps.AtprotoService
 	}
 
+	// Create IPFS client for video uploads and pinning
+	deps.IPFSClient = ipfs.NewClient(
+		app.Config.IPFSApi,
+		app.Config.IPFSCluster,
+		120*time.Second, // Timeout for IPFS operations (longer for large files)
+	)
+
 	deps.EncodingService = ucenc.NewService(
 		deps.EncodingRepo,
 		deps.VideoRepo,
@@ -251,6 +262,7 @@ func (app *Application) initializeDependencies() *Dependencies {
 		app.Config,
 		deps.AtprotoService,
 		deps.FederationRepo,
+		deps.IPFSClient,
 	)
 
 	if app.Config.EnableATProto {
@@ -265,6 +277,9 @@ func (app *Application) initializeDependencies() *Dependencies {
 
 	deps.HardeningService = usecase.NewFederationHardeningService(deps.HardeningRepo, deps.FederationService, app.Config)
 	_ = deps.HardeningService.Initialize(context.Background())
+
+	// Initialize IPFS streaming service
+	deps.IPFSStreamingService = ucipfs.NewService(app.Config)
 
 	// Initialize livestream manager
 	logger := logrus.New()
@@ -363,29 +378,30 @@ func (app *Application) registerRoutes(deps *Dependencies) {
 		LiveStreamRepo:      deps.LiveStreamRepo,
 		StreamKeyRepo:       deps.StreamKeyRepo,
 		ViewerSessionRepo:   deps.ViewerSessionRepo,
-		UploadService:       deps.UploadService,
-		MessageService:      deps.MessageService,
-		ViewsService:        deps.ViewsService,
-		NotificationService: deps.NotificationService,
-		ChannelService:      deps.ChannelService,
-		CommentService:      deps.CommentService,
-		RatingService:       deps.RatingService,
-		PlaylistService:     deps.PlaylistService,
-		CaptionService:      deps.CaptionService,
-		AtprotoService:      deps.AtprotoService,
-		FederationService:   deps.FederationService,
-		HardeningService:    deps.HardeningService,
-		EncodingService:     deps.EncodingService,
-		ImportService:       deps.ImportService,
-		StreamManager:       deps.StreamManager,
-		HLSTranscoder:       app.hlsTranscoder,
-		EncodingScheduler:   app.encodingScheduler,
-		Redis:               app.Redis,
-		JWTSecret:           app.Config.JWTSecret,
-		RedisPingTimeout:    time.Duration(app.Config.RedisPingTimeout) * time.Second,
-		IPFSApi:             app.Config.IPFSApi,
-		IPFSCluster:         app.Config.IPFSCluster,
-		IPFSPingTimeout:     time.Duration(app.Config.IPFSPingTimeout) * time.Second,
+		UploadService:        deps.UploadService,
+		MessageService:       deps.MessageService,
+		ViewsService:         deps.ViewsService,
+		NotificationService:  deps.NotificationService,
+		ChannelService:       deps.ChannelService,
+		CommentService:       deps.CommentService,
+		RatingService:        deps.RatingService,
+		PlaylistService:      deps.PlaylistService,
+		CaptionService:       deps.CaptionService,
+		AtprotoService:       deps.AtprotoService,
+		FederationService:    deps.FederationService,
+		HardeningService:     deps.HardeningService,
+		EncodingService:      deps.EncodingService,
+		ImportService:        deps.ImportService,
+		StreamManager:        deps.StreamManager,
+		HLSTranscoder:        app.hlsTranscoder,
+		IPFSStreamingService: deps.IPFSStreamingService,
+		EncodingScheduler:    app.encodingScheduler,
+		Redis:                app.Redis,
+		JWTSecret:            app.Config.JWTSecret,
+		RedisPingTimeout:     time.Duration(app.Config.RedisPingTimeout) * time.Second,
+		IPFSApi:              app.Config.IPFSApi,
+		IPFSCluster:          app.Config.IPFSCluster,
+		IPFSPingTimeout:      time.Duration(app.Config.IPFSPingTimeout) * time.Second,
 	})
 }
 

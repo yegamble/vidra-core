@@ -38,7 +38,7 @@ func TestEncodingQuality_VerifyOutputFormats(t *testing.T) {
 		HLSSegmentDuration: 4,
 	}
 
-	svc := NewService(encodingRepo, videoRepo, nil, tempDir, cfg, nil, nil)
+	svc := NewService(encodingRepo, videoRepo, nil, tempDir, cfg, nil, nil, nil)
 
 	// Test with 1080p video
 	testVideo := testutil.TestVideos[3] // 1080p video
@@ -218,7 +218,7 @@ func TestEncodingPerformance_SegmentDuration(t *testing.T) {
 
 			encodingRepo := NewMockEncodingRepository()
 			videoRepo := NewMockVideoRepository()
-			svc := NewService(encodingRepo, videoRepo, nil, tempDir, cfg, nil, nil)
+			svc := NewService(encodingRepo, videoRepo, nil, tempDir, cfg, nil, nil, nil)
 
 			videoID := uuid.NewString()
 			job := &domain.EncodingJob{
@@ -280,7 +280,7 @@ func TestEncodingEdgeCases(t *testing.T) {
 
 	encodingRepo := NewMockEncodingRepository()
 	videoRepo := NewMockVideoRepository()
-	svc := NewService(encodingRepo, videoRepo, nil, tempDir, cfg, nil, nil)
+	svc := NewService(encodingRepo, videoRepo, nil, tempDir, cfg, nil, nil, nil)
 
 	t.Run("NonExistentSourceFile", func(t *testing.T) {
 		job := &domain.EncodingJob{

@@ -24,6 +24,7 @@ A high-performance, feature-complete PeerTube backend implementation in Go with 
 - **DHT & PEX Support** - Trackerless operation with distributed hash table and peer exchange
 - **Smart Seeding** - Multi-factor prioritization with automatic bandwidth management
 - **Hybrid Distribution** - Configurable IPFS + Torrent hybrid distribution for maximum resilience
+- **IPFS Streaming** - Optional IPFS gateway streaming for HLS content with automatic fallback to local delivery
 
 ### Federation
 - **ActivityPub** - Full PeerTube-compatible federation with WebFinger, NodeInfo, and HTTP Signatures

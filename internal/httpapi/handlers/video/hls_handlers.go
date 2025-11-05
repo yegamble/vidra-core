@@ -16,13 +16,15 @@ import (
 	"athena/internal/httpapi/shared"
 	"athena/internal/livestream"
 	"athena/internal/repository"
+	"athena/internal/usecase/ipfs_streaming"
 )
 
 // HLSHandlers handles HLS streaming endpoints
 type HLSHandlers struct {
-	cfg        *config.Config
-	streamRepo repository.LiveStreamRepository
-	transcoder *livestream.HLSTranscoder
+	cfg           *config.Config
+	streamRepo    repository.LiveStreamRepository
+	transcoder    *livestream.HLSTranscoder
+	ipfsStreaming *ipfs_streaming.Service
 }
 
 // NewHLSHandlers creates a new HLS handlers instance
@@ -30,11 +32,13 @@ func NewHLSHandlers(
 	cfg *config.Config,
 	streamRepo repository.LiveStreamRepository,
 	transcoder *livestream.HLSTranscoder,
+	ipfsStreaming *ipfs_streaming.Service,
 ) *HLSHandlers {
 	return &HLSHandlers{
-		cfg:        cfg,
-		streamRepo: streamRepo,
-		transcoder: transcoder,
+		cfg:           cfg,
+		streamRepo:    streamRepo,
+		transcoder:    transcoder,
+		ipfsStreaming: ipfsStreaming,
 	}
 }
 

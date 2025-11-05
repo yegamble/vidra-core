@@ -42,6 +42,9 @@ func (m *mockVideoRepo) Search(_ context.Context, req *domain.VideoSearchRequest
 func (m *mockVideoRepo) UpdateProcessingInfo(_ context.Context, _ string, _ domain.ProcessingStatus, _ map[string]string, _ string, _ string) error {
 	return nil
 }
+func (m *mockVideoRepo) UpdateProcessingInfoWithCIDs(_ context.Context, _ string, _ domain.ProcessingStatus, _ map[string]string, _ string, _ string, _ map[string]string, _ string, _ string) error {
+	return nil
+}
 
 func TestSearchVideos_Success_WithMeta(t *testing.T) {
 	vids := []*domain.Video{{ID: "v1", Title: "test one"}, {ID: "v2", Title: "another test"}}

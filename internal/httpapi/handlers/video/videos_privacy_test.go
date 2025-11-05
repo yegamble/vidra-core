@@ -35,6 +35,9 @@ func (m *mockVideoRepoPrivacy) Search(context.Context, *domain.VideoSearchReques
 func (m *mockVideoRepoPrivacy) UpdateProcessingInfo(context.Context, string, domain.ProcessingStatus, map[string]string, string, string) error {
 	return nil
 }
+func (m *mockVideoRepoPrivacy) UpdateProcessingInfoWithCIDs(_ context.Context, _ string, _ domain.ProcessingStatus, _ map[string]string, _ string, _ string, _ map[string]string, _ string, _ string) error {
+	return nil
+}
 
 func TestGetVideo_PrivacyGate(t *testing.T) {
 	ownerID := "owner-1"
