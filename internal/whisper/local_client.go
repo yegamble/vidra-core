@@ -36,7 +36,7 @@ func (c *localClient) Transcribe(ctx context.Context, audioPath string, targetLa
 
 	// Create a temporary file for JSON output
 	outputFile := filepath.Join(c.config.TempDir, fmt.Sprintf("whisper_%d.json", time.Now().Unix()))
-	defer os.Remove(outputFile)
+	defer func() { _ = os.Remove(outputFile) }()
 
 	// Build whisper.cpp command
 	args := []string{
@@ -109,9 +109,9 @@ func (c *localClient) ExtractAudioFromVideo(ctx context.Context, videoPath strin
 		"-i", videoPath,
 		"-vn",                  // No video
 		"-acodec", "pcm_s16le", // PCM 16-bit
-		"-ar", "16000",         // 16kHz sample rate
-		"-ac", "1",             // Mono
-		"-y",                   // Overwrite output
+		"-ar", "16000", // 16kHz sample rate
+		"-ac", "1", // Mono
+		"-y", // Overwrite output
 		outputPath,
 	}
 
@@ -209,10 +209,10 @@ type WhisperSegment struct {
 }
 
 type WhisperToken struct {
-	Text       string  `json:"text"`
-	ID         int     `json:"id"`
+	Text        string  `json:"text"`
+	ID          int     `json:"id"`
 	Probability float64 `json:"p"`
-	Timestamp  struct {
+	Timestamp   struct {
 		From int `json:"from"`
 		To   int `json:"to"`
 	} `json:"t"`
