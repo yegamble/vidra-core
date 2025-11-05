@@ -24,7 +24,7 @@ type LiveStreamHandlers struct {
 	streamRepo    repository.LiveStreamRepository
 	streamKeyRepo repository.StreamKeyRepository
 	viewerRepo    repository.ViewerSessionRepository
-	channelRepo   repository.ChannelRepository
+	channelRepo   *repository.ChannelRepository
 	streamManager *livestream.StreamManager
 	config        *config.Config
 }
@@ -34,7 +34,7 @@ func NewLiveStreamHandlers(
 	streamRepo repository.LiveStreamRepository,
 	streamKeyRepo repository.StreamKeyRepository,
 	viewerRepo repository.ViewerSessionRepository,
-	channelRepo repository.ChannelRepository,
+	channelRepo *repository.ChannelRepository,
 	streamManager *livestream.StreamManager,
 	config *config.Config,
 ) *LiveStreamHandlers {

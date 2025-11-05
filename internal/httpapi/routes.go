@@ -280,7 +280,7 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, deps *shar
 					deps.ViewerSessionRepo,
 					deps.ChannelRepo,
 					deps.StreamManager,
-					deps.Config,
+					cfg,
 				)
 
 				// HLS handlers (if transcoder is available)

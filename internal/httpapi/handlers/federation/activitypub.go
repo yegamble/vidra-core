@@ -18,18 +18,18 @@ import (
 
 // ActivityPubHandlers handles ActivityPub protocol endpoints
 type ActivityPubHandlers struct {
-	service port.ActivityPubService
-	cfg     *config.Config
-	userRepo port.UserRepository
+	service   port.ActivityPubService
+	cfg       *config.Config
+	userRepo  port.UserRepository
 	videoRepo port.VideoRepository
 }
 
 // NewActivityPubHandlers creates a new ActivityPub handlers instance
 func NewActivityPubHandlers(service port.ActivityPubService, cfg *config.Config, userRepo port.UserRepository, videoRepo port.VideoRepository) *ActivityPubHandlers {
 	return &ActivityPubHandlers{
-		service: service,
-		cfg:     cfg,
-		userRepo: userRepo,
+		service:   service,
+		cfg:       cfg,
+		userRepo:  userRepo,
 		videoRepo: videoRepo,
 	}
 }
