@@ -137,7 +137,7 @@ func (h *LiveStreamHandlers) CreateStream(w http.ResponseWriter, r *http.Request
 	}
 
 	// Check if user owns the channel
-	if channel.AccountID.String() != userID {
+	if channel.AccountID != userID {
 		shared.WriteError(w, http.StatusForbidden, errors.New("you do not own this channel"))
 		return
 	}
@@ -592,7 +592,7 @@ func (h *LiveStreamHandlers) RotateStreamKey(w http.ResponseWriter, r *http.Requ
 	}
 
 	// Check if user owns the channel
-	if channel.AccountID.String() != userID {
+	if channel.AccountID != userID {
 		shared.WriteError(w, http.StatusForbidden, errors.New("you do not own this channel"))
 		return
 	}
