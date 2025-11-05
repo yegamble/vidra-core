@@ -6,7 +6,7 @@ import (
 )
 
 // Count returns the total number of videos
-func (r *VideoRepository) Count(ctx context.Context) (int64, error) {
+func (r *videoRepository) Count(ctx context.Context) (int64, error) {
 	query := `SELECT COUNT(*) FROM videos WHERE deleted_at IS NULL`
 
 	var count int64
