@@ -281,17 +281,26 @@ func (r *videoRepository) GetByUserID(ctx context.Context, userID string, limit,
 }
 
 func (r *videoRepository) Update(ctx context.Context, v *domain.Video) error {
+	// Marshal S3 URLs if present
+	s3URLsJSON, err := json.Marshal(v.S3URLs)
+	if err != nil {
+		return domain.NewDomainError("JSON_MARSHAL_FAILED", "Failed to marshal S3 URLs")
+	}
+
 	query := `
         UPDATE videos SET
             title = $2, description = $3, privacy = $4,
             tags = $5, category_id = $6, language = $7,
-            status = $8, updated_at = $9
+            status = $8, updated_at = $9,
+            s3_urls = $11, storage_tier = $12,
+            s3_migrated_at = $13, local_deleted = $14
         WHERE id = $1 AND user_id = $10`
 
 	result, err := r.db.ExecContext(ctx, query,
 		v.ID, v.Title, v.Description, v.Privacy,
 		pq.Array(v.Tags), v.CategoryID, v.Language,
 		v.Status, v.UpdatedAt, v.UserID,
+		s3URLsJSON, v.StorageTier, v.S3MigratedAt, v.LocalDeleted,
 	)
 	if err != nil {
 		return domain.NewDomainError("UPDATE_FAILED", "Failed to update video")
@@ -570,4 +579,67 @@ func (r *videoRepository) Search(ctx context.Context, req *domain.VideoSearchReq
 	}
 
 	return videos, total, nil
+}
+
+// GetVideosForMigration returns videos that need to be migrated to S3
+func (r *videoRepository) GetVideosForMigration(ctx context.Context, limit int) ([]*domain.Video, error) {
+	query := `
+        SELECT id, thumbnail_id, title, description, duration, views,
+               privacy, status, upload_date, user_id,
+               original_cid, processed_cids, thumbnail_cid,
+               tags, category_id, language, file_size, mime_type, metadata,
+               created_at, updated_at, output_paths, thumbnail_path, preview_path,
+               COALESCE(s3_urls, '{}'::jsonb) as s3_urls,
+               COALESCE(storage_tier, 'hot') as storage_tier,
+               s3_migrated_at, COALESCE(local_deleted, false) as local_deleted
+        FROM videos
+        WHERE status = 'completed'
+          AND (storage_tier = 'hot' OR storage_tier IS NULL)
+          AND (s3_migrated_at IS NULL)
+        ORDER BY upload_date DESC
+        LIMIT $1`
+
+	rows, err := r.db.QueryContext(ctx, query, limit)
+	if err != nil {
+		return nil, domain.NewDomainError("QUERY_FAILED", "Failed to get videos for migration")
+	}
+	defer func() { _ = rows.Close() }()
+
+	var videos []*domain.Video
+	for rows.Next() {
+		var v domain.Video
+		var processedCIDsJSON, metadataJSON, outputPathsJSON, s3URLsJSON []byte
+		var tags pq.StringArray
+
+		err := rows.Scan(
+			&v.ID, &v.ThumbnailID, &v.Title, &v.Description, &v.Duration, &v.Views,
+			&v.Privacy, &v.Status, &v.UploadDate, &v.UserID,
+			&v.OriginalCID, &processedCIDsJSON, &v.ThumbnailCID,
+			&tags, &v.CategoryID, &v.Language, &v.FileSize, &v.MimeType, &metadataJSON,
+			&v.CreatedAt, &v.UpdatedAt, &outputPathsJSON, &v.ThumbnailPath, &v.PreviewPath,
+			&s3URLsJSON, &v.StorageTier, &v.S3MigratedAt, &v.LocalDeleted,
+		)
+		if err != nil {
+			return nil, domain.NewDomainError("SCAN_FAILED", "Failed to scan video row")
+		}
+
+		// Unmarshal JSON fields
+		if len(processedCIDsJSON) > 0 {
+			_ = json.Unmarshal(processedCIDsJSON, &v.ProcessedCIDs)
+		}
+		if len(metadataJSON) > 0 {
+			_ = json.Unmarshal(metadataJSON, &v.Metadata)
+		}
+		if len(outputPathsJSON) > 0 {
+			_ = json.Unmarshal(outputPathsJSON, &v.OutputPaths)
+		}
+		if len(s3URLsJSON) > 0 {
+			_ = json.Unmarshal(s3URLsJSON, &v.S3URLs)
+		}
+		v.Tags = []string(tags)
+
+		videos = append(videos, &v)
+	}
+
+	return videos, nil
 }

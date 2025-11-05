@@ -56,6 +56,10 @@ type Video struct {
 	ProcessedCIDs map[string]string `json:"processed_cids" db:"processed_cids"`
 	ThumbnailCID  string            `json:"thumbnail_cid" db:"thumbnail_cid"`
 	OutputPaths   map[string]string `json:"output_paths" db:"output_paths"`
+	S3URLs        map[string]string `json:"s3_urls" db:"s3_urls"`
+	StorageTier   string            `json:"storage_tier" db:"storage_tier"`
+	S3MigratedAt  *time.Time        `json:"s3_migrated_at" db:"s3_migrated_at"`
+	LocalDeleted  bool              `json:"local_deleted" db:"local_deleted"`
 	ThumbnailPath string            `json:"thumbnail_path" db:"thumbnail_path"`
 	PreviewPath   string            `json:"preview_path" db:"preview_path"`
 	Tags          []string          `json:"tags" db:"tags"`
