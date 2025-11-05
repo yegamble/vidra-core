@@ -14,14 +14,14 @@ import (
 
 // StreamMetrics tracks streaming metrics
 type StreamMetrics struct {
-	IPFSRequests      int64
-	IPFSSuccesses     int64
-	IPFSFailures      int64
-	LocalRequests     int64
-	LocalSuccesses    int64
-	LocalFailures     int64
-	CacheHits         int64
-	CacheMisses       int64
+	IPFSRequests   int64
+	IPFSSuccesses  int64
+	IPFSFailures   int64
+	LocalRequests  int64
+	LocalSuccesses int64
+	LocalFailures  int64
+	CacheHits      int64
+	CacheMisses    int64
 }
 
 // Service provides IPFS streaming functionality with fallback
@@ -96,7 +96,7 @@ func (s *Service) serveFromIPFS(ctx context.Context, w http.ResponseWriter, r *h
 	atomic.AddInt64(&s.metrics.IPFSRequests, 1)
 
 	rangeHeader := r.Header.Get("Range")
-	
+
 	var reader io.ReadCloser
 	var statusCode int
 	var err error
@@ -128,7 +128,7 @@ func (s *Service) serveFromIPFS(ctx context.Context, w http.ResponseWriter, r *h
 	// Stream content
 	buffer := make([]byte, s.cfg.IPFSStreamingBufferSize)
 	_, copyErr := io.CopyBuffer(w, reader, buffer)
-	
+
 	if copyErr != nil {
 		atomic.AddInt64(&s.metrics.IPFSFailures, 1)
 		return fmt.Errorf("failed to stream from IPFS: %w", copyErr)

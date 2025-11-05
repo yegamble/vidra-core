@@ -34,7 +34,7 @@ type GatewayClient struct {
 // NewGatewayClient creates a new IPFS gateway client
 func NewGatewayClient(gateways []string, timeout time.Duration, maxRetries int, healthCheckInterval time.Duration) *GatewayClient {
 	ctx, cancel := context.WithCancel(context.Background())
-	
+
 	client := &GatewayClient{
 		gateways:      gateways,
 		currentIndex:  0,
@@ -73,7 +73,7 @@ func NewGatewayClient(gateways []string, timeout time.Duration, maxRetries int, 
 // FetchCID fetches content from IPFS by CID
 func (c *GatewayClient) FetchCID(ctx context.Context, cid string) (io.ReadCloser, error) {
 	var lastErr error
-	
+
 	for attempt := 0; attempt < c.maxRetries; attempt++ {
 		gateway := c.selectHealthyGateway()
 		if gateway == "" {
@@ -81,7 +81,7 @@ func (c *GatewayClient) FetchCID(ctx context.Context, cid string) (io.ReadCloser
 		}
 
 		url := fmt.Sprintf("%s/ipfs/%s", gateway, cid)
-		
+
 		req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 		if err != nil {
 			lastErr = err
@@ -117,7 +117,7 @@ func (c *GatewayClient) FetchCID(ctx context.Context, cid string) (io.ReadCloser
 // FetchCIDWithRange fetches content from IPFS by CID with range support
 func (c *GatewayClient) FetchCIDWithRange(ctx context.Context, cid string, rangeHeader string) (io.ReadCloser, int, error) {
 	var lastErr error
-	
+
 	for attempt := 0; attempt < c.maxRetries; attempt++ {
 		gateway := c.selectHealthyGateway()
 		if gateway == "" {
@@ -125,7 +125,7 @@ func (c *GatewayClient) FetchCIDWithRange(ctx context.Context, cid string, range
 		}
 
 		url := fmt.Sprintf("%s/ipfs/%s", gateway, cid)
-		
+
 		req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 		if err != nil {
 			lastErr = err
@@ -173,7 +173,7 @@ func (c *GatewayClient) selectHealthyGateway() string {
 	for i := 0; i < len(c.gateways); i++ {
 		index := (startIndex + i) % len(c.gateways)
 		gateway := c.gateways[index]
-		
+
 		if status, ok := c.gatewayStatus[gateway]; ok && status.Healthy {
 			c.currentIndex = (index + 1) % len(c.gateways)
 			return gateway

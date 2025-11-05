@@ -18,10 +18,10 @@ import (
 
 // Client provides IPFS operations for uploading and pinning content
 type Client struct {
-	apiURL        string
-	clusterAPIURL string
-	httpClient    *http.Client
-	enabled       bool
+	apiURL         string
+	clusterAPIURL  string
+	httpClient     *http.Client
+	enabled        bool
 	clusterEnabled bool
 }
 

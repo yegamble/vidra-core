@@ -124,8 +124,8 @@ func TestClient_AddDirectory_Integration(t *testing.T) {
 
 	// Create some test files
 	files := map[string]string{
-		"file1.txt": "Content 1",
-		"file2.txt": "Content 2",
+		"file1.txt":        "Content 1",
+		"file2.txt":        "Content 2",
 		"subdir/file3.txt": "Content 3",
 	}
 
