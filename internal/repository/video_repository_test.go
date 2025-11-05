@@ -18,8 +18,11 @@ func TestVideoRepository_Create(t *testing.T) {
 		t.Skip("Skipping integration test")
 	}
 
-	db, cleanup := testutil.SetupTestDB(t)
-	defer cleanup()
+	testDB := testutil.SetupTestDB(t)
+	if testDB == nil {
+		return
+	}
+	db := testDB.DB
 
 	repo := NewVideoRepository(db)
 	ctx := context.Background()
@@ -47,8 +50,8 @@ func TestVideoRepository_Create(t *testing.T) {
 				Title:       "Test Video",
 				Description: "Test Description",
 				UserID:      user.ID,
-				Privacy:     string(domain.VideoPrivacyPublic),
-				Status:      domain.VideoProcessingStatusPending,
+				Privacy:     domain.PrivacyPublic,
+				Status:      domain.StatusQueued,
 			},
 			wantErr: false,
 		},
@@ -80,8 +83,11 @@ func TestVideoRepository_GetByID(t *testing.T) {
 		t.Skip("Skipping integration test")
 	}
 
-	db, cleanup := testutil.SetupTestDB(t)
-	defer cleanup()
+	testDB := testutil.SetupTestDB(t)
+	if testDB == nil {
+		return
+	}
+	db := testDB.DB
 
 	repo := NewVideoRepository(db)
 	ctx := context.Background()
@@ -103,8 +109,8 @@ func TestVideoRepository_GetByID(t *testing.T) {
 		Title:       "Test Video",
 		Description: "Test Description",
 		UserID:      user.ID,
-		Privacy:     string(domain.VideoPrivacyPublic),
-		Status:      domain.VideoProcessingStatusCompleted,
+		Privacy:     domain.PrivacyPublic,
+		Status:      domain.StatusCompleted,
 	}
 	err = repo.Create(ctx, video)
 	require.NoError(t, err)
@@ -128,8 +134,11 @@ func TestVideoRepository_Update(t *testing.T) {
 		t.Skip("Skipping integration test")
 	}
 
-	db, cleanup := testutil.SetupTestDB(t)
-	defer cleanup()
+	testDB := testutil.SetupTestDB(t)
+	if testDB == nil {
+		return
+	}
+	db := testDB.DB
 
 	repo := NewVideoRepository(db)
 	ctx := context.Background()
@@ -151,8 +160,8 @@ func TestVideoRepository_Update(t *testing.T) {
 		Title:       "Original Title",
 		Description: "Original Description",
 		UserID:      user.ID,
-		Privacy:     string(domain.VideoPrivacyPublic),
-		Status:      domain.VideoProcessingStatusPending,
+		Privacy:     domain.PrivacyPublic,
+		Status:      domain.StatusQueued,
 	}
 	err = repo.Create(ctx, video)
 	require.NoError(t, err)
@@ -175,8 +184,11 @@ func TestVideoRepository_Delete(t *testing.T) {
 		t.Skip("Skipping integration test")
 	}
 
-	db, cleanup := testutil.SetupTestDB(t)
-	defer cleanup()
+	testDB := testutil.SetupTestDB(t)
+	if testDB == nil {
+		return
+	}
+	db := testDB.DB
 
 	repo := NewVideoRepository(db)
 	ctx := context.Background()
@@ -198,8 +210,8 @@ func TestVideoRepository_Delete(t *testing.T) {
 		Title:       "Test Video",
 		Description: "Test Description",
 		UserID:      user.ID,
-		Privacy:     string(domain.VideoPrivacyPublic),
-		Status:      domain.VideoProcessingStatusCompleted,
+		Privacy:     domain.PrivacyPublic,
+		Status:      domain.StatusCompleted,
 	}
 	err = repo.Create(ctx, video)
 	require.NoError(t, err)
@@ -218,8 +230,11 @@ func TestVideoRepository_Count(t *testing.T) {
 		t.Skip("Skipping integration test")
 	}
 
-	db, cleanup := testutil.SetupTestDB(t)
-	defer cleanup()
+	testDB := testutil.SetupTestDB(t)
+	if testDB == nil {
+		return
+	}
+	db := testDB.DB
 
 	repo := NewVideoRepository(db)
 	ctx := context.Background()
@@ -246,8 +261,8 @@ func TestVideoRepository_Count(t *testing.T) {
 			Title:       "Test Video " + string(rune(i)),
 			Description: "Test Description",
 			UserID:      user.ID,
-			Privacy:     string(domain.VideoPrivacyPublic),
-			Status:      domain.VideoProcessingStatusCompleted,
+			Privacy:     domain.PrivacyPublic,
+			Status:      domain.StatusCompleted,
 		}
 		err = repo.Create(ctx, video)
 		require.NoError(t, err)
@@ -264,8 +279,11 @@ func TestVideoRepository_List(t *testing.T) {
 		t.Skip("Skipping integration test")
 	}
 
-	db, cleanup := testutil.SetupTestDB(t)
-	defer cleanup()
+	testDB := testutil.SetupTestDB(t)
+	if testDB == nil {
+		return
+	}
+	db := testDB.DB
 
 	repo := NewVideoRepository(db)
 	ctx := context.Background()
@@ -288,8 +306,8 @@ func TestVideoRepository_List(t *testing.T) {
 			Title:       "Test Video " + string(rune(i)),
 			Description: "Test Description",
 			UserID:      user.ID,
-			Privacy:     string(domain.VideoPrivacyPublic),
-			Status:      domain.VideoProcessingStatusCompleted,
+			Privacy:     domain.PrivacyPublic,
+			Status:      domain.StatusCompleted,
 		}
 		err = repo.Create(ctx, video)
 		require.NoError(t, err)
