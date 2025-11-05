@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"athena/internal/domain"
-	"athena/tests/testutil"
+	"athena/internal/testutil"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
