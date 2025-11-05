@@ -73,3 +73,97 @@ func (f CaptionFormat) GetContentType() string {
 		return "text/plain"
 	}
 }
+
+// CaptionGenerationStatus represents the status of a caption generation job
+type CaptionGenerationStatus string
+
+const (
+	CaptionGenStatusPending    CaptionGenerationStatus = "pending"
+	CaptionGenStatusProcessing CaptionGenerationStatus = "processing"
+	CaptionGenStatusCompleted  CaptionGenerationStatus = "completed"
+	CaptionGenStatusFailed     CaptionGenerationStatus = "failed"
+)
+
+// WhisperModelSize represents available Whisper model sizes
+type WhisperModelSize string
+
+const (
+	WhisperModelTiny   WhisperModelSize = "tiny"   // Fastest, least accurate (~75MB)
+	WhisperModelBase   WhisperModelSize = "base"   // Good balance (~145MB)
+	WhisperModelSmall  WhisperModelSize = "small"  // Better accuracy (~490MB)
+	WhisperModelMedium WhisperModelSize = "medium" // High accuracy (~1.5GB)
+	WhisperModelLarge  WhisperModelSize = "large"  // Best accuracy (~3GB)
+)
+
+// WhisperProvider represents the transcription service provider
+type WhisperProvider string
+
+const (
+	WhisperProviderLocal    WhisperProvider = "local"      // Local whisper.cpp installation
+	WhisperProviderOpenAI   WhisperProvider = "openai-api" // OpenAI Whisper API
+)
+
+// CaptionGenerationJob represents a job to automatically generate captions for a video
+type CaptionGenerationJob struct {
+	ID                    uuid.UUID               `json:"id" db:"id"`
+	VideoID               uuid.UUID               `json:"video_id" db:"video_id"`
+	UserID                uuid.UUID               `json:"user_id" db:"user_id"`
+	SourceAudioPath       string                  `json:"source_audio_path" db:"source_audio_path"`
+	TargetLanguage        *string                 `json:"target_language,omitempty" db:"target_language"` // NULL = auto-detect
+	DetectedLanguage      *string                 `json:"detected_language,omitempty" db:"detected_language"`
+	Status                CaptionGenerationStatus `json:"status" db:"status"`
+	Progress              int                     `json:"progress" db:"progress"`
+	ErrorMessage          *string                 `json:"error_message,omitempty" db:"error_message"`
+	ModelSize             WhisperModelSize        `json:"model_size" db:"model_size"`
+	Provider              WhisperProvider         `json:"provider" db:"provider"`
+	GeneratedCaptionID    *uuid.UUID              `json:"generated_caption_id,omitempty" db:"generated_caption_id"`
+	OutputFormat          CaptionFormat           `json:"output_format" db:"output_format"`
+	TranscriptionTimeSecs *int                    `json:"transcription_time_seconds,omitempty" db:"transcription_time_seconds"`
+	IsAutomatic           bool                    `json:"is_automatic" db:"is_automatic"`
+	RetryCount            int                     `json:"retry_count" db:"retry_count"`
+	MaxRetries            int                     `json:"max_retries" db:"max_retries"`
+	StartedAt             *time.Time              `json:"started_at,omitempty" db:"started_at"`
+	CompletedAt           *time.Time              `json:"completed_at,omitempty" db:"completed_at"`
+	CreatedAt             time.Time               `json:"created_at" db:"created_at"`
+	UpdatedAt             time.Time               `json:"updated_at" db:"updated_at"`
+}
+
+// CreateCaptionGenerationJobRequest represents a request to generate captions
+type CreateCaptionGenerationJobRequest struct {
+	VideoID        uuid.UUID        `json:"video_id" validate:"required"`
+	TargetLanguage *string          `json:"target_language,omitempty" validate:"omitempty,len=2"`
+	ModelSize      WhisperModelSize `json:"model_size,omitempty" validate:"omitempty,oneof=tiny base small medium large"`
+	OutputFormat   CaptionFormat    `json:"output_format,omitempty" validate:"omitempty,oneof=vtt srt"`
+	Provider       WhisperProvider  `json:"provider,omitempty" validate:"omitempty,oneof=local openai-api"`
+}
+
+// IsTerminal returns true if the job is in a terminal state (completed or failed)
+func (s CaptionGenerationStatus) IsTerminal() bool {
+	return s == CaptionGenStatusCompleted || s == CaptionGenStatusFailed
+}
+
+// String returns the string representation of the status
+func (s CaptionGenerationStatus) String() string {
+	return string(s)
+}
+
+// IsValid checks if the model size is valid
+func (m WhisperModelSize) IsValid() bool {
+	return m == WhisperModelTiny || m == WhisperModelBase || m == WhisperModelSmall ||
+		m == WhisperModelMedium || m == WhisperModelLarge
+}
+
+// String returns the string representation of the model size
+func (m WhisperModelSize) String() string {
+	return string(m)
+}
+
+// IsValid checks if the provider is valid
+func (p WhisperProvider) IsValid() bool {
+	return p == WhisperProviderLocal || p == WhisperProviderOpenAI
+}
+
+// String returns the string representation of the provider
+func (p WhisperProvider) String() string {
+	return string(p)
+}

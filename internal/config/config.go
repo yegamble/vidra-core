@@ -148,6 +148,18 @@ type Config struct {
 	EncodingWorkers int
 	MetricsAddr     string
 
+	// Caption Generation Configuration
+	EnableCaptionGeneration     bool   // Enable automatic caption generation after encoding
+	WhisperProvider             string // 'local' or 'openai-api'
+	WhisperModelSize            string // 'tiny', 'base', 'small', 'medium', 'large'
+	WhisperCppPath              string // Path to whisper.cpp binary (for local provider)
+	WhisperModelsDir            string // Directory containing Whisper models (for local provider)
+	WhisperOpenAIAPIKey         string // OpenAI API key (for openai-api provider)
+	WhisperTempDir              string // Temporary directory for audio extraction
+	CaptionGenerationWorkers    int    // Number of concurrent caption generation workers
+	AutoCaptionFormat           string // Default caption format: 'vtt' or 'srt'
+	AutoCaptionLanguage         string // Default language hint (empty = auto-detect)
+
 	// ATProto Integration
 	EnableATProto                 bool
 	ATProtoPDSURL                 string
@@ -416,6 +428,18 @@ func Load() (*Config, error) {
 	cfg.EnableEncoding = getBoolEnv("ENABLE_ENCODING", false)
 	cfg.EncodingWorkers = getIntEnv("ENCODING_WORKERS", 2)
 	cfg.MetricsAddr = getEnvOrDefault("METRICS_ADDR", ":9090")
+
+	// Caption Generation Configuration
+	cfg.EnableCaptionGeneration = getBoolEnv("ENABLE_CAPTION_GENERATION", false)
+	cfg.WhisperProvider = getEnvOrDefault("WHISPER_PROVIDER", "local")
+	cfg.WhisperModelSize = getEnvOrDefault("WHISPER_MODEL_SIZE", "base")
+	cfg.WhisperCppPath = getEnvOrDefault("WHISPER_CPP_PATH", "/usr/local/bin/whisper")
+	cfg.WhisperModelsDir = getEnvOrDefault("WHISPER_MODELS_DIR", "/var/lib/whisper/models")
+	cfg.WhisperOpenAIAPIKey = getEnvOrDefault("WHISPER_OPENAI_API_KEY", "")
+	cfg.WhisperTempDir = getEnvOrDefault("WHISPER_TEMP_DIR", "/tmp/whisper")
+	cfg.CaptionGenerationWorkers = getIntEnv("CAPTION_GENERATION_WORKERS", 2)
+	cfg.AutoCaptionFormat = getEnvOrDefault("AUTO_CAPTION_FORMAT", "vtt")
+	cfg.AutoCaptionLanguage = getEnvOrDefault("AUTO_CAPTION_LANGUAGE", "") // empty = auto-detect
 
 	// ATProto Integration
 	cfg.EnableATProto = getBoolEnv("ENABLE_ATPROTO", false)

@@ -21,6 +21,8 @@ import (
 	"athena/internal/storage"
 
 	ucn "athena/internal/usecase/notification"
+
+	"github.com/google/uuid"
 )
 
 // Service defines a background worker to process encoding jobs
@@ -42,6 +44,11 @@ type JobEnqueuer interface {
 	EnqueueJob(ctx context.Context, jobType string, payload any, runAt time.Time) (string, error)
 }
 
+// CaptionGenerator enqueues caption generation jobs after encoding completes.
+type CaptionGenerator interface {
+	CreateJob(ctx context.Context, videoID uuid.UUID, userID uuid.UUID, req *domain.CreateCaptionGenerationJobRequest) (*domain.CaptionGenerationJob, error)
+}
+
 type service struct {
 	repo            port.EncodingRepository
 	videoRepo       port.VideoRepository
@@ -51,6 +58,7 @@ type service struct {
 	atproto         Publisher
 	fedEnq          JobEnqueuer
 	ipfsClient      *ipfs.Client
+	captionGen      CaptionGenerator // Optional caption generation service
 }
 
 func NewService(repo port.EncodingRepository, videoRepo port.VideoRepository, notificationSvc ucn.Service, uploadsDir string, cfg *config.Config, atproto Publisher, enq JobEnqueuer, ipfsClient *ipfs.Client) Service {
@@ -60,6 +68,12 @@ func NewService(repo port.EncodingRepository, videoRepo port.VideoRepository, no
 // WithFederationEnqueuer optionally attaches a federation job enqueuer to the encoding service.
 func (s *service) WithFederationEnqueuer(enq JobEnqueuer) *service {
 	s.fedEnq = enq
+	return s
+}
+
+// WithCaptionGenerator optionally attaches a caption generator to the encoding service.
+func (s *service) WithCaptionGenerator(gen CaptionGenerator) *service {
+	s.captionGen = gen
 	return s
 }
 
@@ -276,6 +290,9 @@ func (s *service) processJob(ctx context.Context, job *domain.EncodingJob) error
 	// Trigger notifications
 	s.triggerNotifications(ctx, job.VideoID)
 
+	// Trigger automatic caption generation (if enabled)
+	s.triggerCaptionGeneration(ctx, job.VideoID)
+
 	return nil
 }
 
@@ -437,6 +454,44 @@ func (s *service) triggerNotifications(ctx context.Context, videoID string) {
 			_ = s.notificationSvc.CreateVideoNotificationForSubscribers(ctx, video, "")
 		}
 	}
+}
+
+// triggerCaptionGeneration triggers automatic caption generation after video encoding completes
+func (s *service) triggerCaptionGeneration(ctx context.Context, videoID string) {
+	if s.captionGen == nil {
+		return
+	}
+
+	// Check if automatic caption generation is enabled in config
+	if s.cfg != nil && !s.cfg.EnableCaptionGeneration {
+		return
+	}
+
+	video, err := s.videoRepo.GetByID(ctx, videoID)
+	if err != nil || video == nil {
+		return
+	}
+
+	// Create caption generation job (automatic, no target language = auto-detect)
+	vidUUID, err := uuid.Parse(videoID)
+	if err != nil {
+		return
+	}
+
+	userUUID, err := uuid.Parse(video.UserID)
+	if err != nil {
+		return
+	}
+
+	req := &domain.CreateCaptionGenerationJobRequest{
+		VideoID:        vidUUID,
+		TargetLanguage: nil, // Auto-detect language
+		ModelSize:      domain.WhisperModelBase,
+		OutputFormat:   domain.CaptionFormatVTT,
+	}
+
+	// Best-effort: don't fail encoding if caption generation enqueue fails
+	_, _ = s.captionGen.CreateJob(ctx, vidUUID, userUUID, req)
 }
 
 func (s *service) transcodeHLS(ctx context.Context, input string, height int, outPlaylist string, segPattern string) error {
