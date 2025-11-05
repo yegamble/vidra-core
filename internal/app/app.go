@@ -18,6 +18,7 @@ import (
 	"athena/internal/config"
 	"athena/internal/httpapi"
 	"athena/internal/httpapi/shared"
+	"athena/internal/ipfs"
 	"athena/internal/livestream"
 	"athena/internal/metrics"
 	"athena/internal/repository"
@@ -93,6 +94,7 @@ type Dependencies struct {
 	ImportService        any // ucimport.Service
 	StreamManager        *livestream.StreamManager
 	IPFSStreamingService *ucipfs.Service
+	IPFSClient           *ipfs.Client
 }
 
 func New(cfg *config.Config) (*Application, error) {
@@ -245,6 +247,13 @@ func (app *Application) initializeDependencies() *Dependencies {
 		app.atprotoService = deps.AtprotoService
 	}
 
+	// Create IPFS client for video uploads and pinning
+	deps.IPFSClient = ipfs.NewClient(
+		app.Config.IPFSApi,
+		app.Config.IPFSCluster,
+		120*time.Second, // Timeout for IPFS operations (longer for large files)
+	)
+
 	deps.EncodingService = ucenc.NewService(
 		deps.EncodingRepo,
 		deps.VideoRepo,
@@ -253,6 +262,7 @@ func (app *Application) initializeDependencies() *Dependencies {
 		app.Config,
 		deps.AtprotoService,
 		deps.FederationRepo,
+		deps.IPFSClient,
 	)
 
 	if app.Config.EnableATProto {

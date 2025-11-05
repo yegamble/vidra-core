@@ -348,6 +348,31 @@ func (r *videoRepository) UpdateProcessingInfo(ctx context.Context, videoID stri
 	return nil
 }
 
+func (r *videoRepository) UpdateProcessingInfoWithCIDs(ctx context.Context, videoID string, status domain.ProcessingStatus, outputPaths map[string]string, thumbnailPath, previewPath string, processedCIDs map[string]string, thumbnailCID, previewCID string) error {
+	query := `
+        UPDATE videos SET
+            status = $2,
+            output_paths = $3,
+            thumbnail_path = $4,
+            preview_path = $5,
+            processed_cids = $6,
+            thumbnail_cid = $7,
+            updated_at = NOW()
+        WHERE id = $1`
+
+	outJSON, _ := json.Marshal(outputPaths)
+	cidsJSON, _ := json.Marshal(processedCIDs)
+
+	result, err := r.db.ExecContext(ctx, query, videoID, status, outJSON, thumbnailPath, previewPath, cidsJSON, thumbnailCID)
+	if err != nil {
+		return domain.NewDomainError("UPDATE_PROCESSING_FAILED", "Failed to update processing info with CIDs")
+	}
+	if n, _ := result.RowsAffected(); n == 0 {
+		return domain.NewDomainError("VIDEO_NOT_FOUND", "Video not found")
+	}
+	return nil
+}
+
 func (r *videoRepository) List(ctx context.Context, req *domain.VideoSearchRequest) ([]*domain.Video, int64, error) {
 	baseQuery := `
         SELECT id, thumbnail_id, title, description, duration, views,

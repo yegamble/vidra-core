@@ -51,6 +51,10 @@ func (m *MockVideoRepository) UpdateProcessingInfo(ctx context.Context, videoID 
 	return nil
 }
 
+func (m *MockVideoRepository) UpdateProcessingInfoWithCIDs(ctx context.Context, videoID string, status domain.ProcessingStatus, outputPaths map[string]string, thumbnailPath, previewPath string, processedCIDs map[string]string, thumbnailCID, previewCID string) error {
+	return nil
+}
+
 func TestNewVODConverter(t *testing.T) {
 	cfg := &config.Config{
 		HLSOutputDir:           "/tmp/test-vod",
