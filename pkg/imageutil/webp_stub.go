@@ -1,3 +1,5 @@
+//go:build !webp
+
 package imageutil
 
 import "errors"
