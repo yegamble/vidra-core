@@ -215,6 +215,8 @@ func (s *service) CreateJob(
 }
 
 // RegenerateCaption creates a new caption generation job, handling existing captions
+// If targetLanguage is specified, deletes existing caption for that language before regenerating
+// If targetLanguage is nil (auto-detect), the old caption will be replaced after detection
 func (s *service) RegenerateCaption(
 	ctx context.Context,
 	videoID uuid.UUID,
@@ -226,7 +228,8 @@ func (s *service) RegenerateCaption(
 		TargetLanguage: targetLanguage,
 	}
 
-	// If regenerating with same language, delete old caption
+	// If regenerating with a specific language, delete old caption for THAT language only
+	// This ensures other language captions remain untouched
 	if targetLanguage != nil && *targetLanguage != "" {
 		existingCaption, err := s.captionRepo.GetByVideoAndLanguage(ctx, videoID, *targetLanguage)
 		if err == nil && existingCaption != nil {
@@ -234,10 +237,12 @@ func (s *service) RegenerateCaption(
 			if existingCaption.FilePath != nil {
 				_ = os.Remove(*existingCaption.FilePath)
 			}
-			// Delete caption record
+			// Delete caption record for this language only
 			_ = s.captionRepo.Delete(ctx, existingCaption.ID)
 		}
 	}
+	// Note: If targetLanguage is nil (auto-detect), we'll delete the detected language
+	// after transcription completes, handled in processJob()
 
 	return s.CreateJob(ctx, videoID, userID, req)
 }
@@ -317,7 +322,21 @@ func (s *service) processJob(ctx context.Context, job *domain.CaptionGenerationJ
 	// Update progress: 90%
 	_ = s.jobRepo.UpdateProgress(ctx, job.ID, 90)
 
-	// Step 6: Create caption record
+	// Step 6: Delete existing caption for the detected language (if regenerating with auto-detect)
+	// This ensures we replace the caption for the detected language without affecting other languages
+	if job.TargetLanguage == nil || *job.TargetLanguage == "" {
+		existingCaption, err := s.captionRepo.GetByVideoAndLanguage(ctx, job.VideoID, result.DetectedLanguage)
+		if err == nil && existingCaption != nil {
+			// Delete old caption file
+			if existingCaption.FilePath != nil {
+				_ = os.Remove(*existingCaption.FilePath)
+			}
+			// Delete caption record for detected language only
+			_ = s.captionRepo.Delete(ctx, existingCaption.ID)
+		}
+	}
+
+	// Step 7: Create caption record
 	caption := &domain.Caption{
 		ID:              uuid.New(),
 		VideoID:         job.VideoID,
@@ -333,7 +352,7 @@ func (s *service) processJob(ctx context.Context, job *domain.CaptionGenerationJ
 		return fmt.Errorf("failed to create caption record: %w", err)
 	}
 
-	// Step 7: Update video language if not set
+	// Step 8: Update video language if not set
 	if video.Language == nil || *video.Language == "" {
 		video.Language = &result.DetectedLanguage
 		if err := s.videoRepo.Update(ctx, video); err != nil {
@@ -342,7 +361,7 @@ func (s *service) processJob(ctx context.Context, job *domain.CaptionGenerationJ
 		}
 	}
 
-	// Step 8: Mark job as completed
+	// Step 9: Mark job as completed
 	transcriptionTime := int(time.Since(startTime).Seconds())
 	if err := s.jobRepo.MarkCompleted(ctx, job.ID, caption.ID, result.DetectedLanguage, transcriptionTime); err != nil {
 		return fmt.Errorf("failed to mark job as completed: %w", err)

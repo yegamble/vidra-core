@@ -55,6 +55,31 @@ services:
     networks:
       - athena-network
 
+  whisper:
+    image: onerahmet/openai-whisper-asr-webservice:latest-gpu
+    restart: unless-stopped
+    environment:
+      - ASR_MODEL=base
+      - ASR_ENGINE=openai_whisper
+    ports:
+      - "9000:9000"
+    volumes:
+      - whisper_models:/root/.cache/whisper
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    networks:
+      - athena-network
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+        reservations:
+          memory: 2G
+
   app:
     build: .
     restart: unless-stopped
@@ -65,6 +90,8 @@ services:
         condition: service_healthy
       ipfs:
         condition: service_healthy
+      whisper:
+        condition: service_healthy
     ports:
       - "8080:8080"
     environment:
@@ -74,6 +101,12 @@ services:
       IPFS_API: http://ipfs:5001
       REQUIRE_IPFS: ${REQUIRE_IPFS:-false}
       PORT: 8080
+      # Whisper Configuration
+      ENABLE_CAPTION_GENERATION: ${ENABLE_CAPTION_GENERATION:-true}
+      WHISPER_PROVIDER: ${WHISPER_PROVIDER:-local}
+      WHISPER_API_URL: ${WHISPER_API_URL:-http://whisper:9000}
+      WHISPER_MODEL_SIZE: ${WHISPER_MODEL_SIZE:-base}
+      CAPTION_GENERATION_WORKERS: ${CAPTION_GENERATION_WORKERS:-2}
     volumes:
       - storage:/app/storage
       - processed:/app/processed
@@ -98,6 +131,8 @@ volumes:
   ipfs_staging:
     driver: local
   ipfs_data:
+    driver: local
+  whisper_models:
     driver: local
 
 networks:
