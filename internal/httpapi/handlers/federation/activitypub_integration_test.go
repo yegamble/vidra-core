@@ -79,7 +79,7 @@ func TestGetActorIntegration(t *testing.T) {
 		PublicBaseURL: "https://video.example",
 	}
 
-	handlers := NewActivityPubHandlers(mockService, cfg)
+	handlers := NewActivityPubHandlers(mockService, cfg, nil, nil)
 
 	publicKey, _, _ := activitypub.GenerateKeyPair()
 
@@ -154,7 +154,7 @@ func TestPostInboxIntegration(t *testing.T) {
 		PublicBaseURL: "https://video.example",
 	}
 
-	handlers := NewActivityPubHandlers(mockService, cfg)
+	handlers := NewActivityPubHandlers(mockService, cfg, nil, nil)
 
 	t.Run("Post valid follow activity to inbox", func(t *testing.T) {
 		activity := map[string]interface{}{
@@ -232,7 +232,7 @@ func TestPostSharedInboxIntegration(t *testing.T) {
 		PublicBaseURL: "https://video.example",
 	}
 
-	handlers := NewActivityPubHandlers(mockService, cfg)
+	handlers := NewActivityPubHandlers(mockService, cfg, nil, nil)
 
 	t.Run("Post to shared inbox", func(t *testing.T) {
 		activity := map[string]interface{}{
@@ -271,7 +271,7 @@ func TestGetOutboxIntegration(t *testing.T) {
 		ActivityPubMaxActivitiesPerPage: 20,
 	}
 
-	handlers := NewActivityPubHandlers(mockService, cfg)
+	handlers := NewActivityPubHandlers(mockService, cfg, nil, nil)
 
 	t.Run("Get outbox collection (non-paginated)", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/users/alice/outbox", nil)
@@ -337,7 +337,7 @@ func TestGetFollowersIntegration(t *testing.T) {
 		ActivityPubMaxActivitiesPerPage: 20,
 	}
 
-	handlers := NewActivityPubHandlers(mockService, cfg)
+	handlers := NewActivityPubHandlers(mockService, cfg, nil, nil)
 
 	t.Run("Get followers collection page", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/users/alice/followers?page=0", nil)
@@ -447,7 +447,7 @@ func TestActivityTypesIntegration(t *testing.T) {
 		PublicBaseURL: "https://video.example",
 	}
 
-	handlers := NewActivityPubHandlers(mockService, cfg)
+	handlers := NewActivityPubHandlers(mockService, cfg, nil, nil)
 
 	activityTypes := []struct {
 		name     string
@@ -545,7 +545,7 @@ func TestPaginationIntegration(t *testing.T) {
 		ActivityPubMaxActivitiesPerPage: 10,
 	}
 
-	handlers := NewActivityPubHandlers(mockService, cfg)
+	handlers := NewActivityPubHandlers(mockService, cfg, nil, nil)
 
 	t.Run("Outbox pagination with next and prev", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/users/alice/outbox?page=1", nil)
@@ -590,7 +590,7 @@ func TestErrorHandlingIntegration(t *testing.T) {
 		PublicBaseURL: "https://video.example",
 	}
 
-	handlers := NewActivityPubHandlers(mockService, cfg)
+	handlers := NewActivityPubHandlers(mockService, cfg, nil, nil)
 
 	t.Run("Missing username parameter", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/users//outbox", nil)

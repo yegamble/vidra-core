@@ -109,16 +109,24 @@ func (h *ActivityPubHandlers) NodeInfo(w http.ResponseWriter, r *http.Request) {
 // NodeInfo20 handles /nodeinfo/2.0 requests
 func (h *ActivityPubHandlers) NodeInfo20(w http.ResponseWriter, r *http.Request) {
 	// Fetch real statistics from the database
-	userCount, err := h.userRepo.Count(r.Context())
-	if err != nil {
-		// Log error but don't fail the request, use 0 as fallback
-		userCount = 0
+	var userCount int64
+	if h.userRepo != nil {
+		var err error
+		userCount, err = h.userRepo.Count(r.Context())
+		if err != nil {
+			// Log error but don't fail the request, use 0 as fallback
+			userCount = 0
+		}
 	}
 
 	// Count local videos as posts
-	videoCount, err := h.videoRepo.Count(r.Context())
-	if err != nil {
-		videoCount = 0
+	var videoCount int64
+	if h.videoRepo != nil {
+		var err error
+		videoCount, err = h.videoRepo.Count(r.Context())
+		if err != nil {
+			videoCount = 0
+		}
 	}
 
 	nodeInfo := domain.NodeInfo{

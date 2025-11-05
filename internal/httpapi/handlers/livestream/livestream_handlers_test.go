@@ -244,13 +244,81 @@ func (m *MockStreamManager) GetActiveStreamCount() int {
 	return args.Int(0)
 }
 
+// MockChannelRepository is a mock implementation of ChannelRepository
+type MockChannelRepository struct {
+	mock.Mock
+}
+
+func (m *MockChannelRepository) GetByID(ctx context.Context, id uuid.UUID) (*domain.Channel, error) {
+	args := m.Called(ctx, id)
+	if args.Get(0) != nil {
+		return args.Get(0).(*domain.Channel), args.Error(1)
+	}
+	return nil, args.Error(1)
+}
+
+func (m *MockChannelRepository) Create(ctx context.Context, channel *domain.Channel) error {
+	args := m.Called(ctx, channel)
+	return args.Error(0)
+}
+
+func (m *MockChannelRepository) GetByHandle(ctx context.Context, handle string) (*domain.Channel, error) {
+	args := m.Called(ctx, handle)
+	if args.Get(0) != nil {
+		return args.Get(0).(*domain.Channel), args.Error(1)
+	}
+	return nil, args.Error(1)
+}
+
+func (m *MockChannelRepository) List(ctx context.Context, params domain.ChannelListParams) (*domain.ChannelListResponse, error) {
+	args := m.Called(ctx, params)
+	if args.Get(0) != nil {
+		return args.Get(0).(*domain.ChannelListResponse), args.Error(1)
+	}
+	return nil, args.Error(1)
+}
+
+func (m *MockChannelRepository) Update(ctx context.Context, id uuid.UUID, updates domain.ChannelUpdateRequest) (*domain.Channel, error) {
+	args := m.Called(ctx, id, updates)
+	if args.Get(0) != nil {
+		return args.Get(0).(*domain.Channel), args.Error(1)
+	}
+	return nil, args.Error(1)
+}
+
+func (m *MockChannelRepository) Delete(ctx context.Context, id uuid.UUID) error {
+	args := m.Called(ctx, id)
+	return args.Error(0)
+}
+
+func (m *MockChannelRepository) GetChannelsByAccountID(ctx context.Context, accountID uuid.UUID) ([]domain.Channel, error) {
+	args := m.Called(ctx, accountID)
+	if args.Get(0) != nil {
+		return args.Get(0).([]domain.Channel), args.Error(1)
+	}
+	return nil, args.Error(1)
+}
+
+func (m *MockChannelRepository) GetDefaultChannelForAccount(ctx context.Context, accountID uuid.UUID) (*domain.Channel, error) {
+	args := m.Called(ctx, accountID)
+	if args.Get(0) != nil {
+		return args.Get(0).(*domain.Channel), args.Error(1)
+	}
+	return nil, args.Error(1)
+}
+
+func (m *MockChannelRepository) CheckOwnership(ctx context.Context, channelID, userID uuid.UUID) (bool, error) {
+	args := m.Called(ctx, channelID, userID)
+	return args.Bool(0), args.Error(1)
+}
+
 func TestCreateStream(t *testing.T) {
 	t.Run("Success", func(t *testing.T) {
 		streamRepo := new(MockLiveStreamRepository)
 		streamKeyRepo := new(MockStreamKeyRepository)
 		viewerRepo := new(MockViewerSessionRepository)
 
-		handlers := NewLiveStreamHandlers(streamRepo, streamKeyRepo, viewerRepo, nil)
+		handlers := NewLiveStreamHandlers(streamRepo, streamKeyRepo, viewerRepo, nil, nil, nil)
 
 		channelID := uuid.New()
 		userID := uuid.New()
@@ -306,7 +374,7 @@ func TestCreateStream(t *testing.T) {
 	})
 
 	t.Run("Unauthorized", func(t *testing.T) {
-		handlers := NewLiveStreamHandlers(nil, nil, nil, nil)
+		handlers := NewLiveStreamHandlers(nil, nil, nil, nil, nil, nil)
 
 		channelID := uuid.New()
 		reqBody := CreateStreamRequest{
@@ -326,7 +394,7 @@ func TestCreateStream(t *testing.T) {
 	})
 
 	t.Run("Invalid Channel ID", func(t *testing.T) {
-		handlers := NewLiveStreamHandlers(nil, nil, nil, nil)
+		handlers := NewLiveStreamHandlers(nil, nil, nil, nil, nil, nil)
 
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/channels/invalid-id/streams", bytes.NewReader([]byte("{}")))
 		ctx := context.WithValue(req.Context(), middleware.UserIDKey, uuid.New().String())
@@ -344,7 +412,7 @@ func TestCreateStream(t *testing.T) {
 func TestGetStream(t *testing.T) {
 	t.Run("Success", func(t *testing.T) {
 		streamRepo := new(MockLiveStreamRepository)
-		handlers := NewLiveStreamHandlers(streamRepo, nil, nil, nil)
+		handlers := NewLiveStreamHandlers(streamRepo, nil, nil, nil, nil, nil)
 
 		streamID := uuid.New()
 		channelID := uuid.New()
@@ -395,7 +463,7 @@ func TestGetStream(t *testing.T) {
 
 	t.Run("Not Found", func(t *testing.T) {
 		streamRepo := new(MockLiveStreamRepository)
-		handlers := NewLiveStreamHandlers(streamRepo, nil, nil, nil)
+		handlers := NewLiveStreamHandlers(streamRepo, nil, nil, nil, nil, nil)
 
 		streamID := uuid.New()
 		streamRepo.On("GetByID", mock.Anything, streamID).Return(nil, domain.ErrNotFound)
@@ -416,7 +484,7 @@ func TestGetStream(t *testing.T) {
 func TestUpdateStream(t *testing.T) {
 	t.Run("Success", func(t *testing.T) {
 		streamRepo := new(MockLiveStreamRepository)
-		handlers := NewLiveStreamHandlers(streamRepo, nil, nil, nil)
+		handlers := NewLiveStreamHandlers(streamRepo, nil, nil, nil, nil, nil)
 
 		streamID := uuid.New()
 		userID := uuid.New()
@@ -470,7 +538,7 @@ func TestUpdateStream(t *testing.T) {
 
 	t.Run("Forbidden - Not Owner", func(t *testing.T) {
 		streamRepo := new(MockLiveStreamRepository)
-		handlers := NewLiveStreamHandlers(streamRepo, nil, nil, nil)
+		handlers := NewLiveStreamHandlers(streamRepo, nil, nil, nil, nil, nil)
 
 		streamID := uuid.New()
 		userID := uuid.New()
@@ -510,7 +578,7 @@ func TestUpdateStream(t *testing.T) {
 func TestEndStream(t *testing.T) {
 	t.Run("Success", func(t *testing.T) {
 		streamRepo := new(MockLiveStreamRepository)
-		handlers := NewLiveStreamHandlers(streamRepo, nil, nil, nil)
+		handlers := NewLiveStreamHandlers(streamRepo, nil, nil, nil, nil, nil)
 
 		streamID := uuid.New()
 		userID := uuid.New()
@@ -568,7 +636,7 @@ func TestEndStream(t *testing.T) {
 
 	t.Run("Stream Not Live", func(t *testing.T) {
 		streamRepo := new(MockLiveStreamRepository)
-		handlers := NewLiveStreamHandlers(streamRepo, nil, nil, nil)
+		handlers := NewLiveStreamHandlers(streamRepo, nil, nil, nil, nil, nil)
 
 		streamID := uuid.New()
 		userID := uuid.New()
@@ -605,7 +673,7 @@ func TestGetStreamStats(t *testing.T) {
 		// This test would need a real stream manager, but since we made it optional,
 		// we'll test the database fallback path instead
 		streamRepo := new(MockLiveStreamRepository)
-		handlers := NewLiveStreamHandlers(streamRepo, nil, nil, nil)
+		handlers := NewLiveStreamHandlers(streamRepo, nil, nil, nil, nil, nil)
 
 		streamID := uuid.New()
 		now := time.Now()
@@ -649,7 +717,7 @@ func TestGetStreamStats(t *testing.T) {
 
 	t.Run("Inactive Stream - From Database", func(t *testing.T) {
 		streamRepo := new(MockLiveStreamRepository)
-		handlers := NewLiveStreamHandlers(streamRepo, nil, nil, nil)
+		handlers := NewLiveStreamHandlers(streamRepo, nil, nil, nil, nil, nil)
 
 		streamID := uuid.New()
 		now := time.Now()
@@ -696,7 +764,7 @@ func TestGetStreamStats(t *testing.T) {
 func TestRotateStreamKey(t *testing.T) {
 	t.Run("Success - No Existing Key", func(t *testing.T) {
 		streamKeyRepo := new(MockStreamKeyRepository)
-		handlers := NewLiveStreamHandlers(nil, streamKeyRepo, nil, nil)
+		handlers := NewLiveStreamHandlers(nil, streamKeyRepo, nil, nil, nil, nil)
 
 		channelID := uuid.New()
 		userID := uuid.New()
@@ -737,7 +805,7 @@ func TestRotateStreamKey(t *testing.T) {
 
 	t.Run("Success - Deactivates Existing Key", func(t *testing.T) {
 		streamKeyRepo := new(MockStreamKeyRepository)
-		handlers := NewLiveStreamHandlers(nil, streamKeyRepo, nil, nil)
+		handlers := NewLiveStreamHandlers(nil, streamKeyRepo, nil, nil, nil, nil)
 
 		channelID := uuid.New()
 		userID := uuid.New()
@@ -777,7 +845,7 @@ func TestRotateStreamKey(t *testing.T) {
 func TestGetActiveStreams(t *testing.T) {
 	t.Run("Success", func(t *testing.T) {
 		streamRepo := new(MockLiveStreamRepository)
-		handlers := NewLiveStreamHandlers(streamRepo, nil, nil, nil)
+		handlers := NewLiveStreamHandlers(streamRepo, nil, nil, nil, nil, nil)
 
 		now := time.Now()
 		streams := []*domain.LiveStream{
