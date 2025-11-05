@@ -95,3 +95,6 @@ docker-compose.override.yml
 .gocache
 
 server
+
+# Test artifacts from avatar upload tests
+internal/httpapi/handlers/auth/storage/

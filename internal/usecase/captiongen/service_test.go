@@ -2,11 +2,11 @@ package captiongen
 
 import (
 	"athena/internal/domain"
+	"athena/internal/whisper"
 	"context"
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -66,6 +66,36 @@ func (m *MockJobRepository) MarkFailed(ctx context.Context, jobID uuid.UUID, err
 	return args.Error(0)
 }
 
+func (m *MockJobRepository) GetPendingJobs(ctx context.Context, limit int) ([]domain.CaptionGenerationJob, error) {
+	args := m.Called(ctx, limit)
+	return args.Get(0).([]domain.CaptionGenerationJob), args.Error(1)
+}
+
+func (m *MockJobRepository) CountByStatus(ctx context.Context, status domain.CaptionGenerationStatus) (int, error) {
+	args := m.Called(ctx, status)
+	return args.Int(0), args.Error(1)
+}
+
+func (m *MockJobRepository) GetByUserID(ctx context.Context, userID uuid.UUID, limit int, offset int) ([]domain.CaptionGenerationJob, error) {
+	args := m.Called(ctx, userID, limit, offset)
+	return args.Get(0).([]domain.CaptionGenerationJob), args.Error(1)
+}
+
+func (m *MockJobRepository) Update(ctx context.Context, job *domain.CaptionGenerationJob) error {
+	args := m.Called(ctx, job)
+	return args.Error(0)
+}
+
+func (m *MockJobRepository) Delete(ctx context.Context, jobID uuid.UUID) error {
+	args := m.Called(ctx, jobID)
+	return args.Error(0)
+}
+
+func (m *MockJobRepository) DeleteOldCompletedJobs(ctx context.Context, daysOld int) (int64, error) {
+	args := m.Called(ctx, daysOld)
+	return args.Get(0).(int64), args.Error(1)
+}
+
 type MockCaptionRepository struct {
 	mock.Mock
 }
@@ -120,7 +150,7 @@ type MockVideoRepository struct {
 	mock.Mock
 }
 
-func (m *MockVideoRepository) GetByID(ctx context.Context, videoID uuid.UUID) (*domain.Video, error) {
+func (m *MockVideoRepository) GetByID(ctx context.Context, videoID string) (*domain.Video, error) {
 	args := m.Called(ctx, videoID)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -133,16 +163,51 @@ func (m *MockVideoRepository) Update(ctx context.Context, video *domain.Video) e
 	return args.Error(0)
 }
 
+func (m *MockVideoRepository) Create(ctx context.Context, video *domain.Video) error {
+	args := m.Called(ctx, video)
+	return args.Error(0)
+}
+
+func (m *MockVideoRepository) GetByUserID(ctx context.Context, userID string, limit, offset int) ([]*domain.Video, int64, error) {
+	args := m.Called(ctx, userID, limit, offset)
+	return args.Get(0).([]*domain.Video), args.Get(1).(int64), args.Error(2)
+}
+
+func (m *MockVideoRepository) Delete(ctx context.Context, id string, userID string) error {
+	args := m.Called(ctx, id, userID)
+	return args.Error(0)
+}
+
+func (m *MockVideoRepository) List(ctx context.Context, req *domain.VideoSearchRequest) ([]*domain.Video, int64, error) {
+	args := m.Called(ctx, req)
+	return args.Get(0).([]*domain.Video), args.Get(1).(int64), args.Error(2)
+}
+
+func (m *MockVideoRepository) Search(ctx context.Context, req *domain.VideoSearchRequest) ([]*domain.Video, int64, error) {
+	args := m.Called(ctx, req)
+	return args.Get(0).([]*domain.Video), args.Get(1).(int64), args.Error(2)
+}
+
+func (m *MockVideoRepository) UpdateProcessingInfo(ctx context.Context, videoID string, status domain.ProcessingStatus, outputPaths map[string]string, thumbnailPath, previewPath string) error {
+	args := m.Called(ctx, videoID, status, outputPaths, thumbnailPath, previewPath)
+	return args.Error(0)
+}
+
+func (m *MockVideoRepository) UpdateProcessingInfoWithCIDs(ctx context.Context, videoID string, status domain.ProcessingStatus, outputPaths map[string]string, thumbnailPath, previewPath string, processedCIDs map[string]string, thumbnailCID, previewCID string) error {
+	args := m.Called(ctx, videoID, status, outputPaths, thumbnailPath, previewPath, processedCIDs, thumbnailCID, previewCID)
+	return args.Error(0)
+}
+
 type MockWhisperClient struct {
 	mock.Mock
 }
 
-func (m *MockWhisperClient) Transcribe(ctx context.Context, audioPath string, targetLanguage *string) (*TranscriptionResult, error) {
+func (m *MockWhisperClient) Transcribe(ctx context.Context, audioPath string, targetLanguage *string) (*whisper.TranscriptionResult, error) {
 	args := m.Called(ctx, audioPath, targetLanguage)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
-	return args.Get(0).(*TranscriptionResult), args.Error(1)
+	return args.Get(0).(*whisper.TranscriptionResult), args.Error(1)
 }
 
 func (m *MockWhisperClient) ExtractAudioFromVideo(ctx context.Context, videoPath string, outputPath string) error {
@@ -150,12 +215,12 @@ func (m *MockWhisperClient) ExtractAudioFromVideo(ctx context.Context, videoPath
 	return args.Error(0)
 }
 
-func (m *MockWhisperClient) FormatToVTT(result *TranscriptionResult) (string, error) {
+func (m *MockWhisperClient) FormatToVTT(result *whisper.TranscriptionResult) (string, error) {
 	args := m.Called(result)
 	return args.String(0), args.Error(1)
 }
 
-func (m *MockWhisperClient) FormatToSRT(result *TranscriptionResult) (string, error) {
+func (m *MockWhisperClient) FormatToSRT(result *whisper.TranscriptionResult) (string, error) {
 	args := m.Called(result)
 	return args.String(0), args.Error(1)
 }
@@ -163,23 +228,6 @@ func (m *MockWhisperClient) FormatToSRT(result *TranscriptionResult) (string, er
 func (m *MockWhisperClient) GetProvider() domain.WhisperProvider {
 	args := m.Called()
 	return args.Get(0).(domain.WhisperProvider)
-}
-
-// Helper to create TranscriptionResult
-type TranscriptionResult struct {
-	Text             string
-	DetectedLanguage string
-	Confidence       float64
-	Duration         float64
-	Segments         []TranscriptionSegment
-}
-
-type TranscriptionSegment struct {
-	Index      int
-	Start      float64
-	End        float64
-	Text       string
-	Confidence float64
 }
 
 // Tests
@@ -200,15 +248,23 @@ func TestRegenerateCaptionWithSpecificLanguage(t *testing.T) {
 	englishLang := "en"
 	captionPath := filepath.Join(tempDir, "caption_en.vtt")
 
+	// Create a fake video file in web-videos directory (required for validation)
+	webVideosDir := filepath.Join(tempDir, "web-videos")
+	err := os.MkdirAll(webVideosDir, 0755)
+	require.NoError(t, err)
+	videoPath := filepath.Join(webVideosDir, videoID.String()+".mp4")
+	err = os.WriteFile(videoPath, []byte("fake video content"), 0644)
+	require.NoError(t, err)
+
 	// Create a temporary caption file
-	err := os.WriteFile(captionPath, []byte("WEBVTT\n\n00:00:00.000 --> 00:00:02.000\nOld English caption"), 0644)
+	err = os.WriteFile(captionPath, []byte("WEBVTT\n\n00:00:00.000 --> 00:00:02.000\nOld English caption"), 0644)
 	require.NoError(t, err)
 
 	// Setup: video exists with English caption
 	mockVideo := &domain.Video{
-		ID:                videoID.String(),
-		ProcessingStatus:  domain.ProcessingStatusCompleted,
-		OriginalFilename:  "test.mp4",
+		ID:       videoID.String(),
+		Status:   domain.StatusCompleted,
+		MimeType: "video/mp4",
 	}
 
 	existingEnglishCaption := &domain.Caption{
@@ -219,10 +275,11 @@ func TestRegenerateCaptionWithSpecificLanguage(t *testing.T) {
 		FilePath:     &captionPath,
 	}
 
-	mockVideoRepo.On("GetByID", ctx, videoID).Return(mockVideo, nil)
+	mockVideoRepo.On("GetByID", ctx, videoID.String()).Return(mockVideo, nil)
 	mockCaptionRepo.On("GetByVideoAndLanguage", ctx, videoID, "en").Return(existingEnglishCaption, nil)
 	mockCaptionRepo.On("Delete", ctx, existingEnglishCaption.ID).Return(nil)
 	mockJobRepo.On("Create", ctx, mock.AnythingOfType("*domain.CaptionGenerationJob")).Return(nil)
+	mockWhisper.On("GetProvider").Return(domain.WhisperProviderLocal)
 
 	// Execute
 	job, err := service.RegenerateCaption(ctx, videoID, userID, &englishLang)
@@ -258,20 +315,28 @@ func TestRegenerateCaptionMultiLanguagePreservation(t *testing.T) {
 	userID := uuid.New()
 	englishLang := "en"
 
+	// Create a fake video file in web-videos directory (required for validation)
+	webVideosDir := filepath.Join(tempDir, "web-videos")
+	err := os.MkdirAll(webVideosDir, 0755)
+	require.NoError(t, err)
+	videoPath := filepath.Join(webVideosDir, videoID.String()+".mp4")
+	err = os.WriteFile(videoPath, []byte("fake video content"), 0644)
+	require.NoError(t, err)
+
 	// Create caption files
 	captionPathEN := filepath.Join(tempDir, "caption_en.vtt")
 	captionPathES := filepath.Join(tempDir, "caption_es.vtt")
 
-	err := os.WriteFile(captionPathEN, []byte("WEBVTT\n\n00:00:00.000 --> 00:00:02.000\nOld English"), 0644)
+	err = os.WriteFile(captionPathEN, []byte("WEBVTT\n\n00:00:00.000 --> 00:00:02.000\nOld English"), 0644)
 	require.NoError(t, err)
 	err = os.WriteFile(captionPathES, []byte("WEBVTT\n\n00:00:00.000 --> 00:00:02.000\nEspañol antiguo"), 0644)
 	require.NoError(t, err)
 
 	// Setup: video has both English and Spanish captions
 	mockVideo := &domain.Video{
-		ID:                videoID.String(),
-		ProcessingStatus:  domain.ProcessingStatusCompleted,
-		OriginalFilename:  "test.mp4",
+		ID:       videoID.String(),
+		Status:   domain.StatusCompleted,
+		MimeType: "video/mp4",
 	}
 
 	existingEnglishCaption := &domain.Caption{
@@ -282,11 +347,12 @@ func TestRegenerateCaptionMultiLanguagePreservation(t *testing.T) {
 		FilePath:     &captionPathEN,
 	}
 
-	mockVideoRepo.On("GetByID", ctx, videoID).Return(mockVideo, nil)
+	mockVideoRepo.On("GetByID", ctx, videoID.String()).Return(mockVideo, nil)
 	mockCaptionRepo.On("GetByVideoAndLanguage", ctx, videoID, "en").Return(existingEnglishCaption, nil)
 	mockCaptionRepo.On("Delete", ctx, existingEnglishCaption.ID).Return(nil)
 	// Spanish caption should NOT be queried or deleted
 	mockJobRepo.On("Create", ctx, mock.AnythingOfType("*domain.CaptionGenerationJob")).Return(nil)
+	mockWhisper.On("GetProvider").Return(domain.WhisperProviderLocal)
 
 	// Execute: regenerate English caption
 	job, err := service.RegenerateCaption(ctx, videoID, userID, &englishLang)
@@ -324,16 +390,25 @@ func TestRegenerateCaptionAutoDetect(t *testing.T) {
 	videoID := uuid.New()
 	userID := uuid.New()
 
+	// Create a fake video file in web-videos directory (required for validation)
+	webVideosDir := filepath.Join(tempDir, "web-videos")
+	err := os.MkdirAll(webVideosDir, 0755)
+	require.NoError(t, err)
+	videoPath := filepath.Join(webVideosDir, videoID.String()+".mp4")
+	err = os.WriteFile(videoPath, []byte("fake video content"), 0644)
+	require.NoError(t, err)
+
 	// Setup: video exists
 	mockVideo := &domain.Video{
-		ID:                videoID.String(),
-		ProcessingStatus:  domain.ProcessingStatusCompleted,
-		OriginalFilename:  "test.mp4",
+		ID:       videoID.String(),
+		Status:   domain.StatusCompleted,
+		MimeType: "video/mp4",
 	}
 
-	mockVideoRepo.On("GetByID", ctx, videoID).Return(mockVideo, nil)
+	mockVideoRepo.On("GetByID", ctx, videoID.String()).Return(mockVideo, nil)
 	// When auto-detecting, no caption should be deleted before transcription
 	mockJobRepo.On("Create", ctx, mock.AnythingOfType("*domain.CaptionGenerationJob")).Return(nil)
+	mockWhisper.On("GetProvider").Return(domain.WhisperProviderLocal)
 
 	// Execute: regenerate with auto-detect (nil targetLanguage)
 	job, err := service.RegenerateCaption(ctx, videoID, userID, nil)
@@ -357,27 +432,28 @@ func TestCreateJob(t *testing.T) {
 
 	tempDir := t.TempDir()
 
-	// Create a fake video file
-	videoPath := filepath.Join(tempDir, "test-video-id", "original", "test.mp4")
-	err := os.MkdirAll(filepath.Dir(videoPath), 0755)
-	require.NoError(t, err)
-	err = os.WriteFile(videoPath, []byte("fake video content"), 0644)
-	require.NoError(t, err)
-
-	service := NewService(mockJobRepo, mockCaptionRepo, mockVideoRepo, mockWhisper, tempDir)
-
 	ctx := context.Background()
 	videoID := uuid.New()
 	userID := uuid.New()
 	targetLang := "en"
 
+	// Create a fake video file in web-videos directory (actual location)
+	webVideosDir := filepath.Join(tempDir, "web-videos")
+	err := os.MkdirAll(webVideosDir, 0755)
+	require.NoError(t, err)
+	videoPath := filepath.Join(webVideosDir, videoID.String()+".mp4")
+	err = os.WriteFile(videoPath, []byte("fake video content"), 0644)
+	require.NoError(t, err)
+
+	service := NewService(mockJobRepo, mockCaptionRepo, mockVideoRepo, mockWhisper, tempDir)
+
 	mockVideo := &domain.Video{
-		ID:                videoID.String(),
-		ProcessingStatus:  domain.ProcessingStatusCompleted,
-		OriginalFilename:  "test.mp4",
+		ID:       videoID.String(),
+		Status:   domain.StatusCompleted,
+		MimeType: "video/mp4",
 	}
 
-	mockVideoRepo.On("GetByID", ctx, videoID).Return(mockVideo, nil)
+	mockVideoRepo.On("GetByID", ctx, videoID.String()).Return(mockVideo, nil)
 	mockJobRepo.On("Create", ctx, mock.AnythingOfType("*domain.CaptionGenerationJob")).Return(nil)
 	mockWhisper.On("GetProvider").Return(domain.WhisperProviderLocal)
 
@@ -402,7 +478,7 @@ func TestCreateJob(t *testing.T) {
 	assert.Equal(t, domain.WhisperModelBase, job.ModelSize)
 	assert.Equal(t, domain.CaptionFormatVTT, job.OutputFormat)
 
-	mockVideoRepo.AssertCalled(t, "GetByID", ctx, videoID)
+	mockVideoRepo.AssertCalled(t, "GetByID", ctx, videoID.String())
 	mockJobRepo.AssertCalled(t, "Create", ctx, mock.AnythingOfType("*domain.CaptionGenerationJob"))
 }
 
@@ -422,12 +498,12 @@ func TestCreateJobVideoNotProcessed(t *testing.T) {
 
 	// Video is still processing
 	mockVideo := &domain.Video{
-		ID:                videoID.String(),
-		ProcessingStatus:  domain.ProcessingStatusProcessing,
-		OriginalFilename:  "test.mp4",
+		ID:       videoID.String(),
+		Status:   domain.StatusProcessing,
+		MimeType: "video/mp4",
 	}
 
-	mockVideoRepo.On("GetByID", ctx, videoID).Return(mockVideo, nil)
+	mockVideoRepo.On("GetByID", ctx, videoID.String()).Return(mockVideo, nil)
 
 	req := &domain.CreateCaptionGenerationJobRequest{
 		VideoID:        videoID,
@@ -442,7 +518,7 @@ func TestCreateJobVideoNotProcessed(t *testing.T) {
 	assert.Nil(t, job)
 	assert.Contains(t, err.Error(), "must be fully processed")
 
-	mockVideoRepo.AssertCalled(t, "GetByID", ctx, videoID)
+	mockVideoRepo.AssertCalled(t, "GetByID", ctx, videoID.String())
 	mockJobRepo.AssertNotCalled(t, "Create", mock.Anything, mock.Anything)
 }
 

@@ -64,7 +64,7 @@ func (h *CaptionGenerationHandlers) GenerateCaptions(w http.ResponseWriter, r *h
 	}
 
 	// Check if video is fully processed
-	if video.ProcessingStatus != domain.ProcessingStatusCompleted {
+	if video.Status != domain.StatusCompleted {
 		shared.WriteError(w, http.StatusBadRequest, fmt.Errorf("video must be fully processed before generating captions"))
 		return
 	}
