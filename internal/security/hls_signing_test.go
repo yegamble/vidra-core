@@ -155,9 +155,16 @@ func TestVerifyHLSToken_TamperedToken(t *testing.T) {
 
 	token := GenerateHLSToken(secret, path, exp)
 
-	// Tamper with the token (change last character)
+	// Tamper with the token (flip last character to ensure it's different)
 	if len(token) > 0 {
-		tamperedToken := token[:len(token)-1] + "f"
+		lastChar := token[len(token)-1]
+		var newChar byte
+		if lastChar == 'f' {
+			newChar = '0' // If it's 'f', change to '0'
+		} else {
+			newChar = 'f' // Otherwise, change to 'f'
+		}
+		tamperedToken := token[:len(token)-1] + string(newChar)
 		if VerifyHLSToken(secret, path, exp, tamperedToken, now) {
 			t.Error("Tampered token should not verify")
 		}
