@@ -1,5 +1,4 @@
 //go:build webp
-// +build webp
 
 package imageutil
 

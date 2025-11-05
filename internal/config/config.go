@@ -26,14 +26,14 @@ type Config struct {
 	IPFSCluster string
 
 	// IPFS Streaming Configuration
-	EnableIPFSStreaming             bool
-	IPFSGatewayURLs                 []string
-	IPFSStreamingTimeout            time.Duration
-	IPFSStreamingPreferLocal        bool
-	IPFSGatewayHealthCheckInterval  time.Duration
-	IPFSStreamingMaxRetries         int
-	IPFSStreamingFallbackToLocal    bool
-	IPFSStreamingBufferSize         int
+	EnableIPFSStreaming            bool
+	IPFSGatewayURLs                []string
+	IPFSStreamingTimeout           time.Duration
+	IPFSStreamingPreferLocal       bool
+	IPFSGatewayHealthCheckInterval time.Duration
+	IPFSStreamingMaxRetries        int
+	IPFSStreamingFallbackToLocal   bool
+	IPFSStreamingBufferSize        int
 
 	// IOTA Configuration
 	IOTANodeURL string
