@@ -1,1554 +1,254 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuites name="Athena Auth API" tests="58" time="0.000">
-  <testsuite name="Auth / Register" id="f9ccb6f3-85cb-4970-97d6-cb6b291a77d0" timestamp="2025-09-23T16:39:57.963Z" tests="2" failures="2" errors="2" time="0.000">
-    <system-err><![CDATA[Iteration: 0
-RequestError: Error: connect ECONNREFUSED 127.0.0.1:8080
-    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1278:16)
-
----
-testScriptError: Unexpected token u in JSON at position 0
----
-]]></system-err>
-    <testcase name="Status is 201" time="0.000" classname="AthenaAuthApi">
-      <failure type="AssertionFailure" message="expected PostmanResponse{ …(5) } to have property 'code'">
-        <![CDATA[Failed 1 times.]]>
-        <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
-        <![CDATA[Collection name: Athena Auth API.]]>
-        <![CDATA[Request name: Auth / Register.]]>
-        <![CDATA[Test description: Status is 201.]]>
-        <![CDATA[Error message: expected PostmanResponse{ …(5) } to have property 'code'.]]>
-        <![CDATA[Stacktrace: AssertionError: expected PostmanResponse{ …(5) } to have property 'code'
-   at Object.eval sandbox-script.js:1:1).]]>
-      </failure>
-    </testcase>
-    <testcase name="Returns JSON" time="0.000" classname="AthenaAuthApi">
-      <failure type="AssertionFailure" message="expected response to have header with key 'Content-Type'">
-        <![CDATA[Failed 1 times.]]>
-        <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
-        <![CDATA[Collection name: Athena Auth API.]]>
-        <![CDATA[Request name: Auth / Register.]]>
-        <![CDATA[Test description: Returns JSON.]]>
-        <![CDATA[Error message: expected response to have header with key 'Content-Type'.]]>
-        <![CDATA[Stacktrace: AssertionError: expected response to have header with key 'Content-Type'
-   at Object.eval sandbox-script.js:2:1).]]>
-      </failure>
-    </testcase>
+<testsuites name="Athena Auth API" tests="58" time="1.102">
+  <testsuite name="Auth / Register" id="5d05fafe-eb39-4083-ada4-802c6fdbc402" timestamp="2025-11-05T18:23:07.024Z" tests="4" failures="0" errors="0" time="0.132">
+    <testcase name="Status is 201" time="0.132" classname="AthenaAuthApi"/>
+    <testcase name="Returns JSON" time="0.132" classname="AthenaAuthApi"/>
+    <testcase name="Response wrapped with data" time="0.132" classname="AthenaAuthApi"/>
+    <testcase name="Has user + tokens" time="0.132" classname="AthenaAuthApi"/>
   </testsuite>
-  <testsuite name="Auth / Login" id="84f1a504-7049-4931-ad20-2ab83f411445" timestamp="2025-09-23T16:39:57.963Z" tests="1" failures="1" errors="1" time="0.000">
-    <system-err><![CDATA[Iteration: 0
-RequestError: Error: connect ECONNREFUSED 127.0.0.1:8080
-    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1278:16)
-
----
-]]></system-err>
-    <testcase name="Status is valid (200 or 401)" time="0.000" classname="AthenaAuthApi">
-      <failure type="AssertionFailure" message="expected [ 200, 401 ] to include undefined">
-        <![CDATA[Failed 1 times.]]>
-        <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
-        <![CDATA[Collection name: Athena Auth API.]]>
-        <![CDATA[Request name: Auth / Login.]]>
-        <![CDATA[Test description: Status is valid (200 or 401).]]>
-        <![CDATA[Error message: expected [ 200, 401 ] to include undefined.]]>
-        <![CDATA[Stacktrace: AssertionError: expected [ 200, 401 ] to include undefined
-   at Object.eval sandbox-script.js:1:2).]]>
-      </failure>
-    </testcase>
+  <testsuite name="Auth / Login" id="cbc03dad-1962-4d6e-8abc-fec1aff519b6" timestamp="2025-11-05T18:23:07.024Z" tests="2" failures="0" errors="0" time="0.003">
+    <testcase name="Status is valid (200 or 401)" time="0.003" classname="AthenaAuthApi"/>
+    <testcase name="401 response has error structure" time="0.003" classname="AthenaAuthApi"/>
   </testsuite>
-  <testsuite name="Auth / Login - Invalid Password (401)" id="fb997639-ac9b-45a3-b990-a1fab5cbd94b" timestamp="2025-09-23T16:39:57.963Z" tests="2" failures="2" errors="1" time="0.000">
-    <system-err><![CDATA[Iteration: 0
-RequestError: Error: connect ECONNREFUSED 127.0.0.1:8080
-    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1278:16)
-
----
-]]></system-err>
-    <testcase name="Status is 401" time="0.000" classname="AthenaAuthApi">
-      <failure type="AssertionFailure" message="expected PostmanResponse{ …(5) } to have property 'code'">
-        <![CDATA[Failed 1 times.]]>
-        <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
-        <![CDATA[Collection name: Athena Auth API.]]>
-        <![CDATA[Request name: Auth / Login - Invalid Password (401).]]>
-        <![CDATA[Test description: Status is 401.]]>
-        <![CDATA[Error message: expected PostmanResponse{ …(5) } to have property 'code'.]]>
-        <![CDATA[Stacktrace: AssertionError: expected PostmanResponse{ …(5) } to have property 'code'
-   at Object.eval sandbox-script.js:1:3).]]>
-      </failure>
-    </testcase>
-    <testcase name="Has error body" time="0.000" classname="AthenaAuthApi">
-      <failure type="AssertionFailure" message="Unexpected token u in JSON at position 0">
-        <![CDATA[Failed 1 times.]]>
-        <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
-        <![CDATA[Collection name: Athena Auth API.]]>
-        <![CDATA[Request name: Auth / Login - Invalid Password (401).]]>
-        <![CDATA[Test description: Has error body.]]>
-        <![CDATA[Error message: Unexpected token u in JSON at position 0.]]>
-        <![CDATA[Stacktrace: JSONError: Unexpected token u in JSON at position 0
-   at Object.eval sandbox-script.js:2:3).]]>
-      </failure>
-    </testcase>
+  <testsuite name="Auth / Login - Invalid Password (401)" id="5cf26c98-a159-4796-b5b3-db76298b8462" timestamp="2025-11-05T18:23:07.024Z" tests="2" failures="0" errors="0" time="0.004">
+    <testcase name="Status is 401" time="0.004" classname="AthenaAuthApi"/>
+    <testcase name="Has error body" time="0.004" classname="AthenaAuthApi"/>
   </testsuite>
-  <testsuite name="Auth / Refresh" id="b9cf7395-fc5e-409b-afe9-d920928695c7" timestamp="2025-09-23T16:39:57.963Z" tests="1" failures="1" errors="1" time="0.000">
-    <system-err><![CDATA[Iteration: 0
-RequestError: Error: connect ECONNREFUSED 127.0.0.1:8080
-    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1278:16)
-
----
-]]></system-err>
-    <testcase name="Status is valid (200, 400, or 401)" time="0.000" classname="AthenaAuthApi">
-      <failure type="AssertionFailure" message="expected [ 200, 400, 401 ] to include undefined">
-        <![CDATA[Failed 1 times.]]>
-        <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
-        <![CDATA[Collection name: Athena Auth API.]]>
-        <![CDATA[Request name: Auth / Refresh.]]>
-        <![CDATA[Test description: Status is valid (200, 400, or 401).]]>
-        <![CDATA[Error message: expected [ 200, 400, 401 ] to include undefined.]]>
-        <![CDATA[Stacktrace: AssertionError: expected [ 200, 400, 401 ] to include undefined
-   at Object.eval sandbox-script.js:1:4).]]>
-      </failure>
-    </testcase>
+  <testsuite name="Auth / Refresh" id="0547804a-d305-46e2-b6f1-a6c37272ddc6" timestamp="2025-11-05T18:23:07.024Z" tests="3" failures="0" errors="0" time="0.006">
+    <testcase name="Status is valid (200, 400, or 401)" time="0.006" classname="AthenaAuthApi"/>
+    <testcase name="Response wrapped with data" time="0.006" classname="AthenaAuthApi"/>
+    <testcase name="Returns tokens" time="0.006" classname="AthenaAuthApi"/>
   </testsuite>
-  <testsuite name="Auth / Upload Avatar - PNG" id="1739cb06-f83a-4bd4-8ad9-e310ee969464" timestamp="2025-09-23T16:39:57.963Z" tests="1" failures="1" errors="1" time="0.000">
-    <system-err><![CDATA[Iteration: 0
-RequestError: Error: connect ECONNREFUSED 127.0.0.1:8080
-    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1278:16)
-
----
-]]></system-err>
-    <testcase name="Status is valid (200, 401, 503, or 500)" time="0.000" classname="AthenaAuthApi">
-      <failure type="AssertionFailure" message="expected [ 200, 401, 503, 500 ] to include undefined">
-        <![CDATA[Failed 1 times.]]>
-        <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
-        <![CDATA[Collection name: Athena Auth API.]]>
-        <![CDATA[Request name: Auth / Upload Avatar - PNG.]]>
-        <![CDATA[Test description: Status is valid (200, 401, 503, or 500).]]>
-        <![CDATA[Error message: expected [ 200, 401, 503, 500 ] to include undefined.]]>
-        <![CDATA[Stacktrace: AssertionError: expected [ 200, 401, 503, 500 ] to include undefined
-   at Object.eval sandbox-script.js:1:5).]]>
-      </failure>
-    </testcase>
+  <testsuite name="Auth / Upload Avatar - PNG" id="978151a1-48d0-4671-8cd6-fec71f637ce4" timestamp="2025-11-05T18:23:07.024Z" tests="1" failures="0" errors="0" time="0.054">
+    <testcase name="Status is valid (200, 401, 503, or 500)" time="0.054" classname="AthenaAuthApi"/>
   </testsuite>
-  <testsuite name="Auth / Upload Avatar - JPEG" id="000c6664-b398-4c61-9bd2-9e4616f53a94" timestamp="2025-09-23T16:39:57.963Z" tests="1" failures="1" errors="1" time="0.000">
-    <system-err><![CDATA[Iteration: 0
-RequestError: Error: connect ECONNREFUSED 127.0.0.1:8080
-    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1278:16)
-
----
-]]></system-err>
-    <testcase name="Status is valid (200, 401, 503, or 500)" time="0.000" classname="AthenaAuthApi">
-      <failure type="AssertionFailure" message="expected [ 200, 401, 503, 500 ] to include undefined">
-        <![CDATA[Failed 1 times.]]>
-        <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
-        <![CDATA[Collection name: Athena Auth API.]]>
-        <![CDATA[Request name: Auth / Upload Avatar - JPEG.]]>
-        <![CDATA[Test description: Status is valid (200, 401, 503, or 500).]]>
-        <![CDATA[Error message: expected [ 200, 401, 503, 500 ] to include undefined.]]>
-        <![CDATA[Stacktrace: AssertionError: expected [ 200, 401, 503, 500 ] to include undefined
-   at Object.eval sandbox-script.js:1:6).]]>
-      </failure>
-    </testcase>
+  <testsuite name="Auth / Upload Avatar - JPEG" id="84a606d0-6d86-440b-a373-251ee7e6cfbf" timestamp="2025-11-05T18:23:07.024Z" tests="1" failures="0" errors="0" time="0.049">
+    <testcase name="Status is valid (200, 401, 503, or 500)" time="0.049" classname="AthenaAuthApi"/>
   </testsuite>
-  <testsuite name="Auth / Upload Avatar - WebP" id="8c5825eb-c308-4230-a760-6be3f299f4ac" timestamp="2025-09-23T16:39:57.963Z" tests="1" failures="1" errors="1" time="0.000">
-    <system-err><![CDATA[Iteration: 0
-RequestError: Error: connect ECONNREFUSED 127.0.0.1:8080
-    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1278:16)
-
----
-]]></system-err>
-    <testcase name="Status is valid (200, 401, 503, or 500)" time="0.000" classname="AthenaAuthApi">
-      <failure type="AssertionFailure" message="expected [ 200, 401, 503, 500 ] to include undefined">
-        <![CDATA[Failed 1 times.]]>
-        <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
-        <![CDATA[Collection name: Athena Auth API.]]>
-        <![CDATA[Request name: Auth / Upload Avatar - WebP.]]>
-        <![CDATA[Test description: Status is valid (200, 401, 503, or 500).]]>
-        <![CDATA[Error message: expected [ 200, 401, 503, 500 ] to include undefined.]]>
-        <![CDATA[Stacktrace: AssertionError: expected [ 200, 401, 503, 500 ] to include undefined
-   at Object.eval sandbox-script.js:1:7).]]>
-      </failure>
-    </testcase>
+  <testsuite name="Auth / Upload Avatar - WebP" id="79d55bdb-b38c-4c3d-aa10-19484dd60da6" timestamp="2025-11-05T18:23:07.024Z" tests="1" failures="0" errors="0" time="0.043">
+    <testcase name="Status is valid (200, 400, 401, 503, or 500)" time="0.043" classname="AthenaAuthApi"/>
   </testsuite>
-  <testsuite name="Auth / Upload Avatar - HEIC" id="de697064-8507-411b-be47-47ae26e31648" timestamp="2025-09-23T16:39:57.963Z" tests="1" failures="1" errors="1" time="0.000">
-    <system-err><![CDATA[Iteration: 0
-RequestError: Error: connect ECONNREFUSED 127.0.0.1:8080
-    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1278:16)
-
----
-]]></system-err>
-    <testcase name="Status is valid (200, 401, 503, or 500)" time="0.000" classname="AthenaAuthApi">
-      <failure type="AssertionFailure" message="expected [ 200, 401, 503, 500 ] to include undefined">
-        <![CDATA[Failed 1 times.]]>
-        <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
-        <![CDATA[Collection name: Athena Auth API.]]>
-        <![CDATA[Request name: Auth / Upload Avatar - HEIC.]]>
-        <![CDATA[Test description: Status is valid (200, 401, 503, or 500).]]>
-        <![CDATA[Error message: expected [ 200, 401, 503, 500 ] to include undefined.]]>
-        <![CDATA[Stacktrace: AssertionError: expected [ 200, 401, 503, 500 ] to include undefined
-   at Object.eval sandbox-script.js:1:8).]]>
-      </failure>
-    </testcase>
+  <testsuite name="Auth / Upload Avatar - HEIC" id="177e4d72-8b04-411f-a742-1cc82ff3cf7f" timestamp="2025-11-05T18:23:07.024Z" tests="1" failures="0" errors="0" time="0.043">
+    <testcase name="Status is valid (200, 400, 401, 503, or 500)" time="0.043" classname="AthenaAuthApi"/>
   </testsuite>
-  <testsuite name="Auth / Upload Avatar - GIF" id="0e23d965-906b-48e8-a7b9-db58384d3bbd" timestamp="2025-09-23T16:39:57.963Z" tests="1" failures="1" errors="1" time="0.000">
-    <system-err><![CDATA[Iteration: 0
-RequestError: Error: connect ECONNREFUSED 127.0.0.1:8080
-    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1278:16)
-
----
-]]></system-err>
-    <testcase name="Status is valid (200, 401, 503, or 500)" time="0.000" classname="AthenaAuthApi">
-      <failure type="AssertionFailure" message="expected [ 200, 401, 503, 500 ] to include undefined">
-        <![CDATA[Failed 1 times.]]>
-        <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
-        <![CDATA[Collection name: Athena Auth API.]]>
-        <![CDATA[Request name: Auth / Upload Avatar - GIF.]]>
-        <![CDATA[Test description: Status is valid (200, 401, 503, or 500).]]>
-        <![CDATA[Error message: expected [ 200, 401, 503, 500 ] to include undefined.]]>
-        <![CDATA[Stacktrace: AssertionError: expected [ 200, 401, 503, 500 ] to include undefined
-   at Object.eval sandbox-script.js:1:9).]]>
-      </failure>
-    </testcase>
+  <testsuite name="Auth / Upload Avatar - GIF" id="6503a145-daad-4a91-9962-5215923fc028" timestamp="2025-11-05T18:23:07.024Z" tests="1" failures="0" errors="0" time="0.045">
+    <testcase name="Status is valid (200, 400, 401, 503, or 500)" time="0.045" classname="AthenaAuthApi"/>
   </testsuite>
-  <testsuite name="Auth / Upload Avatar - TIFF" id="1ee2a14e-fdb7-400a-9603-e723e713aebd" timestamp="2025-09-23T16:39:57.963Z" tests="1" failures="1" errors="1" time="0.000">
-    <system-err><![CDATA[Iteration: 0
-RequestError: Error: connect ECONNREFUSED 127.0.0.1:8080
-    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1278:16)
-
----
-]]></system-err>
-    <testcase name="Status is valid (200, 401, 503, or 500)" time="0.000" classname="AthenaAuthApi">
-      <failure type="AssertionFailure" message="expected [ 200, 401, 503, 500 ] to include undefined">
-        <![CDATA[Failed 1 times.]]>
-        <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
-        <![CDATA[Collection name: Athena Auth API.]]>
-        <![CDATA[Request name: Auth / Upload Avatar - TIFF.]]>
-        <![CDATA[Test description: Status is valid (200, 401, 503, or 500).]]>
-        <![CDATA[Error message: expected [ 200, 401, 503, 500 ] to include undefined.]]>
-        <![CDATA[Stacktrace: AssertionError: expected [ 200, 401, 503, 500 ] to include undefined
-   at Object.eval sandbox-script.js:1:10).]]>
-      </failure>
-    </testcase>
+  <testsuite name="Auth / Upload Avatar - TIFF" id="51f33bab-dd32-4347-9536-76f57bdc248b" timestamp="2025-11-05T18:23:07.024Z" tests="1" failures="0" errors="0" time="0.044">
+    <testcase name="Status is valid (200, 400, 401, 503, or 500)" time="0.044" classname="AthenaAuthApi"/>
   </testsuite>
-  <testsuite name="Auth / Upload Avatar - Invalid Extension (400)" id="936961a5-b1e4-4fc7-9b06-e09a3d6f8f5d" timestamp="2025-09-23T16:39:57.963Z" tests="1" failures="1" errors="1" time="0.000">
-    <system-err><![CDATA[Iteration: 0
-RequestError: Error: connect ECONNREFUSED 127.0.0.1:8080
-    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1278:16)
-
----
-]]></system-err>
-    <testcase name="Status is valid (400 or 401)" time="0.000" classname="AthenaAuthApi">
-      <failure type="AssertionFailure" message="expected [ 400, 401 ] to include undefined">
-        <![CDATA[Failed 1 times.]]>
-        <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
-        <![CDATA[Collection name: Athena Auth API.]]>
-        <![CDATA[Request name: Auth / Upload Avatar - Invalid Extension (400).]]>
-        <![CDATA[Test description: Status is valid (400 or 401).]]>
-        <![CDATA[Error message: expected [ 400, 401 ] to include undefined.]]>
-        <![CDATA[Stacktrace: AssertionError: expected [ 400, 401 ] to include undefined
-   at Object.eval sandbox-script.js:1:11).]]>
-      </failure>
-    </testcase>
+  <testsuite name="Auth / Upload Avatar - Invalid Extension (400)" id="71e80536-5d08-4ec3-8795-57eca20bae1c" timestamp="2025-11-05T18:23:07.024Z" tests="3" failures="0" errors="0" time="0.043">
+    <testcase name="Status is valid (400 or 401)" time="0.043" classname="AthenaAuthApi"/>
+    <testcase name="Has error response" time="0.043" classname="AthenaAuthApi"/>
+    <testcase name="Error message indicates unsupported format" time="0.043" classname="AthenaAuthApi"/>
   </testsuite>
-  <testsuite name="Auth / Upload Avatar - Malicious File (400)" id="97d127a6-da2f-48e3-ac3d-5ca994efb7e7" timestamp="2025-09-23T16:39:57.963Z" tests="1" failures="1" errors="1" time="0.000">
-    <system-err><![CDATA[Iteration: 0
-RequestError: Error: connect ECONNREFUSED 127.0.0.1:8080
-    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1278:16)
-
----
-]]></system-err>
-    <testcase name="Status is valid (400 or 401)" time="0.000" classname="AthenaAuthApi">
-      <failure type="AssertionFailure" message="expected [ 400, 401 ] to include undefined">
-        <![CDATA[Failed 1 times.]]>
-        <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
-        <![CDATA[Collection name: Athena Auth API.]]>
-        <![CDATA[Request name: Auth / Upload Avatar - Malicious File (400).]]>
-        <![CDATA[Test description: Status is valid (400 or 401).]]>
-        <![CDATA[Error message: expected [ 400, 401 ] to include undefined.]]>
-        <![CDATA[Stacktrace: AssertionError: expected [ 400, 401 ] to include undefined
-   at Object.eval sandbox-script.js:1:12).]]>
-      </failure>
-    </testcase>
+  <testsuite name="Auth / Upload Avatar - Malicious File (400)" id="72517932-4b39-4543-acc8-cce62f06e95c" timestamp="2025-11-05T18:23:07.024Z" tests="3" failures="0" errors="0" time="0.043">
+    <testcase name="Status is valid (400 or 401)" time="0.043" classname="AthenaAuthApi"/>
+    <testcase name="Has error response" time="0.043" classname="AthenaAuthApi"/>
+    <testcase name="Error message indicates invalid image" time="0.043" classname="AthenaAuthApi"/>
   </testsuite>
-  <testsuite name="Auth / Upload Avatar - No File (400)" id="df2cbb5d-4ba2-4d0c-a660-e87b3158288f" timestamp="2025-09-23T16:39:57.963Z" tests="1" failures="1" errors="1" time="0.000">
-    <system-err><![CDATA[Iteration: 0
-RequestError: Error: connect ECONNREFUSED 127.0.0.1:8080
-    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1278:16)
-
----
-]]></system-err>
-    <testcase name="Status is valid (400 or 401)" time="0.000" classname="AthenaAuthApi">
-      <failure type="AssertionFailure" message="expected [ 400, 401 ] to include undefined">
-        <![CDATA[Failed 1 times.]]>
-        <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
-        <![CDATA[Collection name: Athena Auth API.]]>
-        <![CDATA[Request name: Auth / Upload Avatar - No File (400).]]>
-        <![CDATA[Test description: Status is valid (400 or 401).]]>
-        <![CDATA[Error message: expected [ 400, 401 ] to include undefined.]]>
-        <![CDATA[Stacktrace: AssertionError: expected [ 400, 401 ] to include undefined
-   at Object.eval sandbox-script.js:1:13).]]>
-      </failure>
-    </testcase>
+  <testsuite name="Auth / Upload Avatar - No File (400)" id="9aeaeb7b-f4d6-431f-9ad9-b47b3cff7f11" timestamp="2025-11-05T18:23:07.024Z" tests="3" failures="0" errors="0" time="0.003">
+    <testcase name="Status is valid (400 or 401)" time="0.003" classname="AthenaAuthApi"/>
+    <testcase name="Has error response" time="0.003" classname="AthenaAuthApi"/>
+    <testcase name="Error message indicates missing file" time="0.003" classname="AthenaAuthApi"/>
   </testsuite>
-  <testsuite name="Auth / Upload Avatar - No Auth (401)" id="aabc0aa3-41b2-4f44-81f1-913ed795d00f" timestamp="2025-09-23T16:39:57.963Z" tests="2" failures="2" errors="1" time="0.000">
-    <system-err><![CDATA[Iteration: 0
-RequestError: Error: connect ECONNREFUSED 127.0.0.1:8080
-    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1278:16)
-
----
-]]></system-err>
-    <testcase name="Status is 401" time="0.000" classname="AthenaAuthApi">
-      <failure type="AssertionFailure" message="expected PostmanResponse{ …(5) } to have property 'code'">
-        <![CDATA[Failed 1 times.]]>
-        <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
-        <![CDATA[Collection name: Athena Auth API.]]>
-        <![CDATA[Request name: Auth / Upload Avatar - No Auth (401).]]>
-        <![CDATA[Test description: Status is 401.]]>
-        <![CDATA[Error message: expected PostmanResponse{ …(5) } to have property 'code'.]]>
-        <![CDATA[Stacktrace: AssertionError: expected PostmanResponse{ …(5) } to have property 'code'
-   at Object.eval sandbox-script.js:1:14).]]>
-      </failure>
-    </testcase>
-    <testcase name="Has error response" time="0.000" classname="AthenaAuthApi">
-      <failure type="AssertionFailure" message="expected undefined to match /unauthorized|missing authorization/i">
-        <![CDATA[Failed 1 times.]]>
-        <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
-        <![CDATA[Collection name: Athena Auth API.]]>
-        <![CDATA[Request name: Auth / Upload Avatar - No Auth (401).]]>
-        <![CDATA[Test description: Has error response.]]>
-        <![CDATA[Error message: expected undefined to match /unauthorized|missing authorization/i.]]>
-        <![CDATA[Stacktrace: AssertionError: expected undefined to match /unauthorized|missing authorization/i
-   at Object.eval sandbox-script.js:2:14).]]>
-      </failure>
-    </testcase>
+  <testsuite name="Auth / Upload Avatar - No Auth (401)" id="d2a2aad0-2bff-49c2-bbe7-d8c56bc5e2ff" timestamp="2025-11-05T18:23:07.024Z" tests="2" failures="0" errors="0" time="0.043">
+    <testcase name="Status is 401" time="0.043" classname="AthenaAuthApi"/>
+    <testcase name="Has error response" time="0.043" classname="AthenaAuthApi"/>
   </testsuite>
-  <testsuite name="Auth / Refresh - Missing Token (400)" id="537fcae7-88d8-476d-a8e9-51ad8be72c85" timestamp="2025-09-23T16:39:57.963Z" tests="2" failures="2" errors="1" time="0.000">
-    <system-err><![CDATA[Iteration: 0
-RequestError: Error: connect ECONNREFUSED 127.0.0.1:8080
-    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1278:16)
-
----
-]]></system-err>
-    <testcase name="Status is 400" time="0.000" classname="AthenaAuthApi">
-      <failure type="AssertionFailure" message="expected PostmanResponse{ …(5) } to have property 'code'">
-        <![CDATA[Failed 1 times.]]>
-        <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
-        <![CDATA[Collection name: Athena Auth API.]]>
-        <![CDATA[Request name: Auth / Refresh - Missing Token (400).]]>
-        <![CDATA[Test description: Status is 400.]]>
-        <![CDATA[Error message: expected PostmanResponse{ …(5) } to have property 'code'.]]>
-        <![CDATA[Stacktrace: AssertionError: expected PostmanResponse{ …(5) } to have property 'code'
-   at Object.eval sandbox-script.js:1:15).]]>
-      </failure>
-    </testcase>
-    <testcase name="Has error body" time="0.000" classname="AthenaAuthApi">
-      <failure type="AssertionFailure" message="Unexpected token u in JSON at position 0">
-        <![CDATA[Failed 1 times.]]>
-        <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
-        <![CDATA[Collection name: Athena Auth API.]]>
-        <![CDATA[Request name: Auth / Refresh - Missing Token (400).]]>
-        <![CDATA[Test description: Has error body.]]>
-        <![CDATA[Error message: Unexpected token u in JSON at position 0.]]>
-        <![CDATA[Stacktrace: JSONError: Unexpected token u in JSON at position 0
-   at Object.eval sandbox-script.js:2:15).]]>
-      </failure>
-    </testcase>
+  <testsuite name="Auth / Refresh - Missing Token (400)" id="799a808b-0b1f-41a3-8ae1-eb929ca67e7d" timestamp="2025-11-05T18:23:07.024Z" tests="2" failures="0" errors="0" time="0.003">
+    <testcase name="Status is 400" time="0.003" classname="AthenaAuthApi"/>
+    <testcase name="Has error body" time="0.003" classname="AthenaAuthApi"/>
   </testsuite>
-  <testsuite name="Auth / Refresh - Invalid Token (401)" id="b89483e6-e7ff-4f30-89b8-f47320aad600" timestamp="2025-09-23T16:39:57.963Z" tests="2" failures="2" errors="1" time="0.000">
-    <system-err><![CDATA[Iteration: 0
-RequestError: Error: connect ECONNREFUSED 127.0.0.1:8080
-    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1278:16)
-
----
-]]></system-err>
-    <testcase name="Status is 401" time="0.000" classname="AthenaAuthApi">
-      <failure type="AssertionFailure" message="expected PostmanResponse{ …(5) } to have property 'code'">
-        <![CDATA[Failed 1 times.]]>
-        <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
-        <![CDATA[Collection name: Athena Auth API.]]>
-        <![CDATA[Request name: Auth / Refresh - Invalid Token (401).]]>
-        <![CDATA[Test description: Status is 401.]]>
-        <![CDATA[Error message: expected PostmanResponse{ …(5) } to have property 'code'.]]>
-        <![CDATA[Stacktrace: AssertionError: expected PostmanResponse{ …(5) } to have property 'code'
-   at Object.eval sandbox-script.js:1:16).]]>
-      </failure>
-    </testcase>
-    <testcase name="Has error body" time="0.000" classname="AthenaAuthApi">
-      <failure type="AssertionFailure" message="Unexpected token u in JSON at position 0">
-        <![CDATA[Failed 1 times.]]>
-        <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
-        <![CDATA[Collection name: Athena Auth API.]]>
-        <![CDATA[Request name: Auth / Refresh - Invalid Token (401).]]>
-        <![CDATA[Test description: Has error body.]]>
-        <![CDATA[Error message: Unexpected token u in JSON at position 0.]]>
-        <![CDATA[Stacktrace: JSONError: Unexpected token u in JSON at position 0
-   at Object.eval sandbox-script.js:2:16).]]>
-      </failure>
-    </testcase>
+  <testsuite name="Auth / Refresh - Invalid Token (401)" id="275ea530-82eb-4002-a6d6-6d58e8f87944" timestamp="2025-11-05T18:23:07.024Z" tests="2" failures="0" errors="0" time="0.003">
+    <testcase name="Status is 401" time="0.003" classname="AthenaAuthApi"/>
+    <testcase name="Has error body" time="0.003" classname="AthenaAuthApi"/>
   </testsuite>
-  <testsuite name="Auth / Logout" id="77043be2-a1fc-4ed3-80d6-2489bc3725c1" timestamp="2025-09-23T16:39:57.963Z" tests="1" failures="1" errors="1" time="0.000">
-    <system-err><![CDATA[Iteration: 0
-RequestError: Error: connect ECONNREFUSED 127.0.0.1:8080
-    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1278:16)
-
----
-]]></system-err>
-    <testcase name="Status is valid (200 or 401)" time="0.000" classname="AthenaAuthApi">
-      <failure type="AssertionFailure" message="expected [ 200, 401 ] to include undefined">
-        <![CDATA[Failed 1 times.]]>
-        <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
-        <![CDATA[Collection name: Athena Auth API.]]>
-        <![CDATA[Request name: Auth / Logout.]]>
-        <![CDATA[Test description: Status is valid (200 or 401).]]>
-        <![CDATA[Error message: expected [ 200, 401 ] to include undefined.]]>
-        <![CDATA[Stacktrace: AssertionError: expected [ 200, 401 ] to include undefined
-   at Object.eval sandbox-script.js:1:17).]]>
-      </failure>
-    </testcase>
+  <testsuite name="Auth / Logout" id="ae666f26-9cb5-4fc1-a492-2428ce3f1825" timestamp="2025-11-05T18:23:07.024Z" tests="3" failures="0" errors="0" time="0.002">
+    <testcase name="Status is valid (200 or 401)" time="0.002" classname="AthenaAuthApi"/>
+    <testcase name="Response wrapped with data" time="0.002" classname="AthenaAuthApi"/>
+    <testcase name="Logout success message" time="0.002" classname="AthenaAuthApi"/>
   </testsuite>
-  <testsuite name="Auth / Refresh After Logout (401)" id="28815e3e-59bc-4acb-ad09-2f1991ac32b0" timestamp="2025-09-23T16:39:57.963Z" tests="2" failures="2" errors="1" time="0.000">
-    <system-err><![CDATA[Iteration: 0
-RequestError: Error: connect ECONNREFUSED 127.0.0.1:8080
-    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1278:16)
-
----
-]]></system-err>
-    <testcase name="Status is 401" time="0.000" classname="AthenaAuthApi">
-      <failure type="AssertionFailure" message="expected PostmanResponse{ …(5) } to have property 'code'">
-        <![CDATA[Failed 1 times.]]>
-        <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
-        <![CDATA[Collection name: Athena Auth API.]]>
-        <![CDATA[Request name: Auth / Refresh After Logout (401).]]>
-        <![CDATA[Test description: Status is 401.]]>
-        <![CDATA[Error message: expected PostmanResponse{ …(5) } to have property 'code'.]]>
-        <![CDATA[Stacktrace: AssertionError: expected PostmanResponse{ …(5) } to have property 'code'
-   at Object.eval sandbox-script.js:1:18).]]>
-      </failure>
-    </testcase>
-    <testcase name="Has error body" time="0.000" classname="AthenaAuthApi">
-      <failure type="AssertionFailure" message="Unexpected token u in JSON at position 0">
-        <![CDATA[Failed 1 times.]]>
-        <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
-        <![CDATA[Collection name: Athena Auth API.]]>
-        <![CDATA[Request name: Auth / Refresh After Logout (401).]]>
-        <![CDATA[Test description: Has error body.]]>
-        <![CDATA[Error message: Unexpected token u in JSON at position 0.]]>
-        <![CDATA[Stacktrace: JSONError: Unexpected token u in JSON at position 0
-   at Object.eval sandbox-script.js:2:18).]]>
-      </failure>
-    </testcase>
+  <testsuite name="Auth / Refresh After Logout (401)" id="af49adaa-b064-4538-a3de-dcc20fa00e2f" timestamp="2025-11-05T18:23:07.024Z" tests="2" failures="0" errors="0" time="0.003">
+    <testcase name="Status is 401" time="0.003" classname="AthenaAuthApi"/>
+    <testcase name="Has error body" time="0.003" classname="AthenaAuthApi"/>
   </testsuite>
-  <testsuite name="Auth / Logout Without Token (401)" id="27549138-97f3-4a78-9765-ce0fbf2c17c1" timestamp="2025-09-23T16:39:57.963Z" tests="2" failures="2" errors="1" time="0.000">
-    <system-err><![CDATA[Iteration: 0
-RequestError: Error: connect ECONNREFUSED 127.0.0.1:8080
-    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1278:16)
-
----
-]]></system-err>
-    <testcase name="Status is 401" time="0.000" classname="AthenaAuthApi">
-      <failure type="AssertionFailure" message="expected PostmanResponse{ …(5) } to have property 'code'">
-        <![CDATA[Failed 1 times.]]>
-        <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
-        <![CDATA[Collection name: Athena Auth API.]]>
-        <![CDATA[Request name: Auth / Logout Without Token (401).]]>
-        <![CDATA[Test description: Status is 401.]]>
-        <![CDATA[Error message: expected PostmanResponse{ …(5) } to have property 'code'.]]>
-        <![CDATA[Stacktrace: AssertionError: expected PostmanResponse{ …(5) } to have property 'code'
-   at Object.eval sandbox-script.js:1:19).]]>
-      </failure>
-    </testcase>
-    <testcase name="Has error body or text" time="0.000" classname="AthenaAuthApi">
-      <failure type="AssertionFailure" message="expected response body text to match /Missing authorization header|Invalid…/i but got undefined">
-        <![CDATA[Failed 1 times.]]>
-        <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
-        <![CDATA[Collection name: Athena Auth API.]]>
-        <![CDATA[Request name: Auth / Logout Without Token (401).]]>
-        <![CDATA[Test description: Has error body or text.]]>
-        <![CDATA[Error message: expected response body text to match /Missing authorization header|Invalid…/i but got undefined.]]>
-        <![CDATA[Stacktrace: AssertionError: expected response body text to match /Missing authorization header|Invalid…/i but got undefined
-   at Object.eval sandbox-script.js:2:19).]]>
-      </failure>
-    </testcase>
+  <testsuite name="Auth / Logout Without Token (401)" id="614f5a85-8be2-4323-b42a-dcd7996a629a" timestamp="2025-11-05T18:23:07.024Z" tests="2" failures="0" errors="0" time="0.002">
+    <testcase name="Status is 401" time="0.002" classname="AthenaAuthApi"/>
+    <testcase name="Has error body or text" time="0.002" classname="AthenaAuthApi"/>
   </testsuite>
-  <testsuite name="Videos / List Videos" id="4e4824a6-f1de-4307-acae-072b156c4599" timestamp="2025-09-23T16:39:57.963Z" tests="1" failures="1" errors="2" time="0.000">
-    <system-err><![CDATA[Iteration: 0
-RequestError: Error: connect ECONNREFUSED 127.0.0.1:8080
-    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1278:16)
-
----
-testScriptError: Unexpected token u in JSON at position 0
----
-]]></system-err>
-    <testcase name="Status is 200" time="0.000" classname="AthenaAuthApi">
-      <failure type="AssertionFailure" message="expected PostmanResponse{ …(5) } to have property 'code'">
-        <![CDATA[Failed 1 times.]]>
-        <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
-        <![CDATA[Collection name: Athena Auth API.]]>
-        <![CDATA[Request name: Videos / List Videos.]]>
-        <![CDATA[Test description: Status is 200.]]>
-        <![CDATA[Error message: expected PostmanResponse{ …(5) } to have property 'code'.]]>
-        <![CDATA[Stacktrace: AssertionError: expected PostmanResponse{ …(5) } to have property 'code'
-   at Object.eval sandbox-script.js:1:20).]]>
-      </failure>
-    </testcase>
+  <testsuite name="Videos / List Videos" id="51f9bd00-2d1d-4cfc-8e8e-2aedfe6f8a83" timestamp="2025-11-05T18:23:07.024Z" tests="4" failures="0" errors="0" time="0.004">
+    <testcase name="Status is 200" time="0.004" classname="AthenaAuthApi"/>
+    <testcase name="Response wrapped with data" time="0.004" classname="AthenaAuthApi"/>
+    <testcase name="Has meta object" time="0.004" classname="AthenaAuthApi"/>
+    <testcase name="Meta has pagination fields" time="0.004" classname="AthenaAuthApi"/>
   </testsuite>
-  <testsuite name="Videos / Upload Video - MP4" id="0acb9624-3f4d-4885-8767-f0174b0089f1" timestamp="2025-09-23T16:39:57.963Z" tests="2" failures="2" errors="1" time="0.000">
-    <system-err><![CDATA[Iteration: 0
-RequestError: Error: connect ECONNREFUSED 127.0.0.1:8080
-    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1278:16)
-
----
-]]></system-err>
-    <testcase name="Status is 201" time="0.000" classname="AthenaAuthApi">
-      <failure type="AssertionFailure" message="expected PostmanResponse{ …(5) } to have property 'code'">
-        <![CDATA[Failed 1 times.]]>
-        <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
-        <![CDATA[Collection name: Athena Auth API.]]>
-        <![CDATA[Request name: Videos / Upload Video - MP4.]]>
-        <![CDATA[Test description: Status is 201.]]>
-        <![CDATA[Error message: expected PostmanResponse{ …(5) } to have property 'code'.]]>
-        <![CDATA[Stacktrace: AssertionError: expected PostmanResponse{ …(5) } to have property 'code'
-   at Object.eval sandbox-script.js:1:21).]]>
-      </failure>
-    </testcase>
-    <testcase name="Response has video ID" time="0.000" classname="AthenaAuthApi">
-      <failure type="AssertionFailure" message="Unexpected token u in JSON at position 0">
-        <![CDATA[Failed 1 times.]]>
-        <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
-        <![CDATA[Collection name: Athena Auth API.]]>
-        <![CDATA[Request name: Videos / Upload Video - MP4.]]>
-        <![CDATA[Test description: Response has video ID.]]>
-        <![CDATA[Error message: Unexpected token u in JSON at position 0.]]>
-        <![CDATA[Stacktrace: JSONError: Unexpected token u in JSON at position 0
-   at Object.eval sandbox-script.js:2:21).]]>
-      </failure>
-    </testcase>
+  <testsuite name="Videos / Upload Video - MP4" id="79d1fe84-e6c3-4376-98f7-50de18bbf7bf" timestamp="2025-11-05T18:23:07.024Z" tests="2" failures="0" errors="0" time="0.009">
+    <testcase name="Status is 201" time="0.009" classname="AthenaAuthApi"/>
+    <testcase name="Response has video ID" time="0.009" classname="AthenaAuthApi"/>
   </testsuite>
-  <testsuite name="Videos / Upload Video - MOV" id="6c9d2519-99db-4e9c-b2b9-a79318288fca" timestamp="2025-09-23T16:39:57.963Z" tests="2" failures="2" errors="1" time="0.000">
-    <system-err><![CDATA[Iteration: 0
-RequestError: Error: connect ECONNREFUSED 127.0.0.1:8080
-    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1278:16)
-
----
-]]></system-err>
-    <testcase name="Status is 201" time="0.000" classname="AthenaAuthApi">
-      <failure type="AssertionFailure" message="expected PostmanResponse{ …(5) } to have property 'code'">
-        <![CDATA[Failed 1 times.]]>
-        <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
-        <![CDATA[Collection name: Athena Auth API.]]>
-        <![CDATA[Request name: Videos / Upload Video - MOV.]]>
-        <![CDATA[Test description: Status is 201.]]>
-        <![CDATA[Error message: expected PostmanResponse{ …(5) } to have property 'code'.]]>
-        <![CDATA[Stacktrace: AssertionError: expected PostmanResponse{ …(5) } to have property 'code'
-   at Object.eval sandbox-script.js:1:22).]]>
-      </failure>
-    </testcase>
-    <testcase name="Response has video ID" time="0.000" classname="AthenaAuthApi">
-      <failure type="AssertionFailure" message="Unexpected token u in JSON at position 0">
-        <![CDATA[Failed 1 times.]]>
-        <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
-        <![CDATA[Collection name: Athena Auth API.]]>
-        <![CDATA[Request name: Videos / Upload Video - MOV.]]>
-        <![CDATA[Test description: Response has video ID.]]>
-        <![CDATA[Error message: Unexpected token u in JSON at position 0.]]>
-        <![CDATA[Stacktrace: JSONError: Unexpected token u in JSON at position 0
-   at Object.eval sandbox-script.js:2:22).]]>
-      </failure>
-    </testcase>
+  <testsuite name="Videos / Upload Video - MOV" id="770ff2f4-b6ac-4f29-bea3-d6745ef84d1e" timestamp="2025-11-05T18:23:07.024Z" tests="2" failures="0" errors="0" time="0.003">
+    <testcase name="Status is 201" time="0.003" classname="AthenaAuthApi"/>
+    <testcase name="Response has video ID" time="0.003" classname="AthenaAuthApi"/>
   </testsuite>
-  <testsuite name="Videos / Upload Video - MKV" id="1e17362b-1e69-47f7-86fb-30e788857d56" timestamp="2025-09-23T16:39:57.963Z" tests="2" failures="2" errors="1" time="0.000">
-    <system-err><![CDATA[Iteration: 0
-RequestError: Error: connect ECONNREFUSED 127.0.0.1:8080
-    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1278:16)
-
----
-]]></system-err>
-    <testcase name="Status is 201" time="0.000" classname="AthenaAuthApi">
-      <failure type="AssertionFailure" message="expected PostmanResponse{ …(5) } to have property 'code'">
-        <![CDATA[Failed 1 times.]]>
-        <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
-        <![CDATA[Collection name: Athena Auth API.]]>
-        <![CDATA[Request name: Videos / Upload Video - MKV.]]>
-        <![CDATA[Test description: Status is 201.]]>
-        <![CDATA[Error message: expected PostmanResponse{ …(5) } to have property 'code'.]]>
-        <![CDATA[Stacktrace: AssertionError: expected PostmanResponse{ …(5) } to have property 'code'
-   at Object.eval sandbox-script.js:1:23).]]>
-      </failure>
-    </testcase>
-    <testcase name="Response has video ID" time="0.000" classname="AthenaAuthApi">
-      <failure type="AssertionFailure" message="Unexpected token u in JSON at position 0">
-        <![CDATA[Failed 1 times.]]>
-        <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
-        <![CDATA[Collection name: Athena Auth API.]]>
-        <![CDATA[Request name: Videos / Upload Video - MKV.]]>
-        <![CDATA[Test description: Response has video ID.]]>
-        <![CDATA[Error message: Unexpected token u in JSON at position 0.]]>
-        <![CDATA[Stacktrace: JSONError: Unexpected token u in JSON at position 0
-   at Object.eval sandbox-script.js:2:23).]]>
-      </failure>
-    </testcase>
+  <testsuite name="Videos / Upload Video - MKV" id="173a8e30-d98e-44ea-b94d-c3ac5745fdea" timestamp="2025-11-05T18:23:07.024Z" tests="2" failures="0" errors="0" time="0.043">
+    <testcase name="Status is 201" time="0.043" classname="AthenaAuthApi"/>
+    <testcase name="Response has video ID" time="0.043" classname="AthenaAuthApi"/>
   </testsuite>
-  <testsuite name="Videos / Upload Video - WebM" id="fabba176-664b-4ed6-aed9-0e322dc71961" timestamp="2025-09-23T16:39:57.963Z" tests="2" failures="2" errors="1" time="0.000">
-    <system-err><![CDATA[Iteration: 0
-RequestError: Error: connect ECONNREFUSED 127.0.0.1:8080
-    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1278:16)
-
----
-]]></system-err>
-    <testcase name="Status is 201" time="0.000" classname="AthenaAuthApi">
-      <failure type="AssertionFailure" message="expected PostmanResponse{ …(5) } to have property 'code'">
-        <![CDATA[Failed 1 times.]]>
-        <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
-        <![CDATA[Collection name: Athena Auth API.]]>
-        <![CDATA[Request name: Videos / Upload Video - WebM.]]>
-        <![CDATA[Test description: Status is 201.]]>
-        <![CDATA[Error message: expected PostmanResponse{ …(5) } to have property 'code'.]]>
-        <![CDATA[Stacktrace: AssertionError: expected PostmanResponse{ …(5) } to have property 'code'
-   at Object.eval sandbox-script.js:1:24).]]>
-      </failure>
-    </testcase>
-    <testcase name="Response has video ID" time="0.000" classname="AthenaAuthApi">
-      <failure type="AssertionFailure" message="Unexpected token u in JSON at position 0">
-        <![CDATA[Failed 1 times.]]>
-        <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
-        <![CDATA[Collection name: Athena Auth API.]]>
-        <![CDATA[Request name: Videos / Upload Video - WebM.]]>
-        <![CDATA[Test description: Response has video ID.]]>
-        <![CDATA[Error message: Unexpected token u in JSON at position 0.]]>
-        <![CDATA[Stacktrace: JSONError: Unexpected token u in JSON at position 0
-   at Object.eval sandbox-script.js:2:24).]]>
-      </failure>
-    </testcase>
+  <testsuite name="Videos / Upload Video - WebM" id="0554cc97-97b1-4fd4-8d8d-8e8f83c04996" timestamp="2025-11-05T18:23:07.024Z" tests="2" failures="0" errors="0" time="0.045">
+    <testcase name="Status is 201" time="0.045" classname="AthenaAuthApi"/>
+    <testcase name="Response has video ID" time="0.045" classname="AthenaAuthApi"/>
   </testsuite>
-  <testsuite name="Videos / Upload Video - AVI" id="8cdb9827-d5dd-4ebb-ab01-b97770673c8b" timestamp="2025-09-23T16:39:57.963Z" tests="2" failures="2" errors="1" time="0.000">
-    <system-err><![CDATA[Iteration: 0
-RequestError: Error: connect ECONNREFUSED 127.0.0.1:8080
-    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1278:16)
-
----
-]]></system-err>
-    <testcase name="Status is 201" time="0.000" classname="AthenaAuthApi">
-      <failure type="AssertionFailure" message="expected PostmanResponse{ …(5) } to have property 'code'">
-        <![CDATA[Failed 1 times.]]>
-        <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
-        <![CDATA[Collection name: Athena Auth API.]]>
-        <![CDATA[Request name: Videos / Upload Video - AVI.]]>
-        <![CDATA[Test description: Status is 201.]]>
-        <![CDATA[Error message: expected PostmanResponse{ …(5) } to have property 'code'.]]>
-        <![CDATA[Stacktrace: AssertionError: expected PostmanResponse{ …(5) } to have property 'code'
-   at Object.eval sandbox-script.js:1:25).]]>
-      </failure>
-    </testcase>
-    <testcase name="Response has video ID" time="0.000" classname="AthenaAuthApi">
-      <failure type="AssertionFailure" message="Unexpected token u in JSON at position 0">
-        <![CDATA[Failed 1 times.]]>
-        <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
-        <![CDATA[Collection name: Athena Auth API.]]>
-        <![CDATA[Request name: Videos / Upload Video - AVI.]]>
-        <![CDATA[Test description: Response has video ID.]]>
-        <![CDATA[Error message: Unexpected token u in JSON at position 0.]]>
-        <![CDATA[Stacktrace: JSONError: Unexpected token u in JSON at position 0
-   at Object.eval sandbox-script.js:2:25).]]>
-      </failure>
-    </testcase>
+  <testsuite name="Videos / Upload Video - AVI" id="06517a56-875d-44c4-a93e-69baf9856381" timestamp="2025-11-05T18:23:07.024Z" tests="2" failures="0" errors="0" time="0.044">
+    <testcase name="Status is 201" time="0.044" classname="AthenaAuthApi"/>
+    <testcase name="Response has video ID" time="0.044" classname="AthenaAuthApi"/>
   </testsuite>
-  <testsuite name="Videos / Upload Video - Invalid MP3 (400)" id="eb12d32d-a086-4e61-b755-fc2e22c6e8ad" timestamp="2025-09-23T16:39:57.963Z" tests="2" failures="2" errors="1" time="0.000">
-    <system-err><![CDATA[Iteration: 0
-RequestError: Error: connect ECONNREFUSED 127.0.0.1:8080
-    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1278:16)
-
----
-]]></system-err>
-    <testcase name="Status is 400" time="0.000" classname="AthenaAuthApi">
-      <failure type="AssertionFailure" message="expected PostmanResponse{ …(5) } to have property 'code'">
-        <![CDATA[Failed 1 times.]]>
-        <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
-        <![CDATA[Collection name: Athena Auth API.]]>
-        <![CDATA[Request name: Videos / Upload Video - Invalid MP3 (400).]]>
-        <![CDATA[Test description: Status is 400.]]>
-        <![CDATA[Error message: expected PostmanResponse{ …(5) } to have property 'code'.]]>
-        <![CDATA[Stacktrace: AssertionError: expected PostmanResponse{ …(5) } to have property 'code'
-   at Object.eval sandbox-script.js:1:26).]]>
-      </failure>
-    </testcase>
-    <testcase name="Has error message" time="0.000" classname="AthenaAuthApi">
-      <failure type="AssertionFailure" message="Unexpected token u in JSON at position 0">
-        <![CDATA[Failed 1 times.]]>
-        <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
-        <![CDATA[Collection name: Athena Auth API.]]>
-        <![CDATA[Request name: Videos / Upload Video - Invalid MP3 (400).]]>
-        <![CDATA[Test description: Has error message.]]>
-        <![CDATA[Error message: Unexpected token u in JSON at position 0.]]>
-        <![CDATA[Stacktrace: JSONError: Unexpected token u in JSON at position 0
-   at Object.eval sandbox-script.js:2:26).]]>
-      </failure>
-    </testcase>
+  <testsuite name="Videos / Upload Video - Invalid MP3 (400)" id="696816a1-c54e-4d0c-9af4-62591000b19c" timestamp="2025-11-05T18:23:07.024Z" tests="2" failures="0" errors="0" time="0.044">
+    <testcase name="Status is 400" time="0.044" classname="AthenaAuthApi"/>
+    <testcase name="Has error message" time="0.044" classname="AthenaAuthApi"/>
   </testsuite>
-  <testsuite name="Videos / Upload Video - Invalid PDF (400)" id="76542bb7-605e-43ba-a249-bbfb1ce24ebc" timestamp="2025-09-23T16:39:57.963Z" tests="2" failures="2" errors="1" time="0.000">
-    <system-err><![CDATA[Iteration: 0
-RequestError: Error: connect ECONNREFUSED 127.0.0.1:8080
-    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1278:16)
-
----
-]]></system-err>
-    <testcase name="Status is 400" time="0.000" classname="AthenaAuthApi">
-      <failure type="AssertionFailure" message="expected PostmanResponse{ …(5) } to have property 'code'">
-        <![CDATA[Failed 1 times.]]>
-        <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
-        <![CDATA[Collection name: Athena Auth API.]]>
-        <![CDATA[Request name: Videos / Upload Video - Invalid PDF (400).]]>
-        <![CDATA[Test description: Status is 400.]]>
-        <![CDATA[Error message: expected PostmanResponse{ …(5) } to have property 'code'.]]>
-        <![CDATA[Stacktrace: AssertionError: expected PostmanResponse{ …(5) } to have property 'code'
-   at Object.eval sandbox-script.js:1:27).]]>
-      </failure>
-    </testcase>
-    <testcase name="Has error message" time="0.000" classname="AthenaAuthApi">
-      <failure type="AssertionFailure" message="Unexpected token u in JSON at position 0">
-        <![CDATA[Failed 1 times.]]>
-        <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
-        <![CDATA[Collection name: Athena Auth API.]]>
-        <![CDATA[Request name: Videos / Upload Video - Invalid PDF (400).]]>
-        <![CDATA[Test description: Has error message.]]>
-        <![CDATA[Error message: Unexpected token u in JSON at position 0.]]>
-        <![CDATA[Stacktrace: JSONError: Unexpected token u in JSON at position 0
-   at Object.eval sandbox-script.js:2:27).]]>
-      </failure>
-    </testcase>
+  <testsuite name="Videos / Upload Video - Invalid PDF (400)" id="2c1ba652-0503-4b73-b507-d9740b422ca2" timestamp="2025-11-05T18:23:07.024Z" tests="2" failures="0" errors="0" time="0.043">
+    <testcase name="Status is 400" time="0.043" classname="AthenaAuthApi"/>
+    <testcase name="Has error message" time="0.043" classname="AthenaAuthApi"/>
   </testsuite>
-  <testsuite name="Videos / Upload Video - Fake MP4 (400)" id="3e539e9e-3d73-4fec-bef3-016e69f78f08" timestamp="2025-09-23T16:39:57.963Z" tests="2" failures="2" errors="1" time="0.000">
-    <system-err><![CDATA[Iteration: 0
-RequestError: Error: connect ECONNREFUSED 127.0.0.1:8080
-    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1278:16)
-
----
-]]></system-err>
-    <testcase name="Status is 400" time="0.000" classname="AthenaAuthApi">
-      <failure type="AssertionFailure" message="expected PostmanResponse{ …(5) } to have property 'code'">
-        <![CDATA[Failed 1 times.]]>
-        <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
-        <![CDATA[Collection name: Athena Auth API.]]>
-        <![CDATA[Request name: Videos / Upload Video - Fake MP4 (400).]]>
-        <![CDATA[Test description: Status is 400.]]>
-        <![CDATA[Error message: expected PostmanResponse{ …(5) } to have property 'code'.]]>
-        <![CDATA[Stacktrace: AssertionError: expected PostmanResponse{ …(5) } to have property 'code'
-   at Object.eval sandbox-script.js:1:28).]]>
-      </failure>
-    </testcase>
-    <testcase name="Has error message" time="0.000" classname="AthenaAuthApi">
-      <failure type="AssertionFailure" message="Unexpected token u in JSON at position 0">
-        <![CDATA[Failed 1 times.]]>
-        <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
-        <![CDATA[Collection name: Athena Auth API.]]>
-        <![CDATA[Request name: Videos / Upload Video - Fake MP4 (400).]]>
-        <![CDATA[Test description: Has error message.]]>
-        <![CDATA[Error message: Unexpected token u in JSON at position 0.]]>
-        <![CDATA[Stacktrace: JSONError: Unexpected token u in JSON at position 0
-   at Object.eval sandbox-script.js:2:28).]]>
-      </failure>
-    </testcase>
+  <testsuite name="Videos / Upload Video - Fake MP4 (400)" id="6468b6f5-62c9-4ad1-b1cd-4e4bd083a504" timestamp="2025-11-05T18:23:07.024Z" tests="2" failures="0" errors="0" time="0.045">
+    <testcase name="Status is 400" time="0.045" classname="AthenaAuthApi"/>
+    <testcase name="Has error message" time="0.045" classname="AthenaAuthApi"/>
   </testsuite>
-  <testsuite name="Videos / Upload Video - Corrupted File (400)" id="02f5b04e-5269-492f-bd4f-75f21bdbc53d" timestamp="2025-09-23T16:39:57.963Z" tests="2" failures="2" errors="1" time="0.000">
-    <system-err><![CDATA[Iteration: 0
-RequestError: Error: connect ECONNREFUSED 127.0.0.1:8080
-    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1278:16)
-
----
-]]></system-err>
-    <testcase name="Status is 400" time="0.000" classname="AthenaAuthApi">
-      <failure type="AssertionFailure" message="expected PostmanResponse{ …(5) } to have property 'code'">
-        <![CDATA[Failed 1 times.]]>
-        <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
-        <![CDATA[Collection name: Athena Auth API.]]>
-        <![CDATA[Request name: Videos / Upload Video - Corrupted File (400).]]>
-        <![CDATA[Test description: Status is 400.]]>
-        <![CDATA[Error message: expected PostmanResponse{ …(5) } to have property 'code'.]]>
-        <![CDATA[Stacktrace: AssertionError: expected PostmanResponse{ …(5) } to have property 'code'
-   at Object.eval sandbox-script.js:1:29).]]>
-      </failure>
-    </testcase>
-    <testcase name="Has error message" time="0.000" classname="AthenaAuthApi">
-      <failure type="AssertionFailure" message="Unexpected token u in JSON at position 0">
-        <![CDATA[Failed 1 times.]]>
-        <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
-        <![CDATA[Collection name: Athena Auth API.]]>
-        <![CDATA[Request name: Videos / Upload Video - Corrupted File (400).]]>
-        <![CDATA[Test description: Has error message.]]>
-        <![CDATA[Error message: Unexpected token u in JSON at position 0.]]>
-        <![CDATA[Stacktrace: JSONError: Unexpected token u in JSON at position 0
-   at Object.eval sandbox-script.js:2:29).]]>
-      </failure>
-    </testcase>
+  <testsuite name="Videos / Upload Video - Corrupted File (400)" id="204a452c-6c84-478d-a45d-70a21d438db1" timestamp="2025-11-05T18:23:07.024Z" tests="2" failures="0" errors="0" time="0.042">
+    <testcase name="Status is 400" time="0.042" classname="AthenaAuthApi"/>
+    <testcase name="Has error message" time="0.042" classname="AthenaAuthApi"/>
   </testsuite>
-  <testsuite name="Videos / Upload Video - Malicious Script (400)" id="38d4a1d8-4439-4892-b8a3-ed1f63d138e7" timestamp="2025-09-23T16:39:57.963Z" tests="2" failures="2" errors="1" time="0.000">
-    <system-err><![CDATA[Iteration: 0
-RequestError: Error: connect ECONNREFUSED 127.0.0.1:8080
-    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1278:16)
-
----
-]]></system-err>
-    <testcase name="Status is 400" time="0.000" classname="AthenaAuthApi">
-      <failure type="AssertionFailure" message="expected PostmanResponse{ …(5) } to have property 'code'">
-        <![CDATA[Failed 1 times.]]>
-        <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
-        <![CDATA[Collection name: Athena Auth API.]]>
-        <![CDATA[Request name: Videos / Upload Video - Malicious Script (400).]]>
-        <![CDATA[Test description: Status is 400.]]>
-        <![CDATA[Error message: expected PostmanResponse{ …(5) } to have property 'code'.]]>
-        <![CDATA[Stacktrace: AssertionError: expected PostmanResponse{ …(5) } to have property 'code'
-   at Object.eval sandbox-script.js:1:30).]]>
-      </failure>
-    </testcase>
-    <testcase name="Has error message" time="0.000" classname="AthenaAuthApi">
-      <failure type="AssertionFailure" message="Unexpected token u in JSON at position 0">
-        <![CDATA[Failed 1 times.]]>
-        <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
-        <![CDATA[Collection name: Athena Auth API.]]>
-        <![CDATA[Request name: Videos / Upload Video - Malicious Script (400).]]>
-        <![CDATA[Test description: Has error message.]]>
-        <![CDATA[Error message: Unexpected token u in JSON at position 0.]]>
-        <![CDATA[Stacktrace: JSONError: Unexpected token u in JSON at position 0
-   at Object.eval sandbox-script.js:2:30).]]>
-      </failure>
-    </testcase>
+  <testsuite name="Videos / Upload Video - Malicious Script (400)" id="c169431c-140e-4749-b71d-918bc14f7524" timestamp="2025-11-05T18:23:07.024Z" tests="2" failures="0" errors="0" time="0.043">
+    <testcase name="Status is 400" time="0.043" classname="AthenaAuthApi"/>
+    <testcase name="Has error message" time="0.043" classname="AthenaAuthApi"/>
   </testsuite>
-  <testsuite name="Videos / Upload Video - HTML XSS (400)" id="bb0181e8-fab6-445b-881c-07053873f5dd" timestamp="2025-09-23T16:39:57.963Z" tests="2" failures="2" errors="1" time="0.000">
-    <system-err><![CDATA[Iteration: 0
-RequestError: Error: connect ECONNREFUSED 127.0.0.1:8080
-    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1278:16)
-
----
-]]></system-err>
-    <testcase name="Status is 400" time="0.000" classname="AthenaAuthApi">
-      <failure type="AssertionFailure" message="expected PostmanResponse{ …(5) } to have property 'code'">
-        <![CDATA[Failed 1 times.]]>
-        <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
-        <![CDATA[Collection name: Athena Auth API.]]>
-        <![CDATA[Request name: Videos / Upload Video - HTML XSS (400).]]>
-        <![CDATA[Test description: Status is 400.]]>
-        <![CDATA[Error message: expected PostmanResponse{ …(5) } to have property 'code'.]]>
-        <![CDATA[Stacktrace: AssertionError: expected PostmanResponse{ …(5) } to have property 'code'
-   at Object.eval sandbox-script.js:1:31).]]>
-      </failure>
-    </testcase>
-    <testcase name="Has error message" time="0.000" classname="AthenaAuthApi">
-      <failure type="AssertionFailure" message="Unexpected token u in JSON at position 0">
-        <![CDATA[Failed 1 times.]]>
-        <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
-        <![CDATA[Collection name: Athena Auth API.]]>
-        <![CDATA[Request name: Videos / Upload Video - HTML XSS (400).]]>
-        <![CDATA[Test description: Has error message.]]>
-        <![CDATA[Error message: Unexpected token u in JSON at position 0.]]>
-        <![CDATA[Stacktrace: JSONError: Unexpected token u in JSON at position 0
-   at Object.eval sandbox-script.js:2:31).]]>
-      </failure>
-    </testcase>
+  <testsuite name="Videos / Upload Video - HTML XSS (400)" id="17327812-a255-4260-b4df-c1936e5a7213" timestamp="2025-11-05T18:23:07.024Z" tests="2" failures="0" errors="0" time="0.045">
+    <testcase name="Status is 400" time="0.045" classname="AthenaAuthApi"/>
+    <testcase name="Has error message" time="0.045" classname="AthenaAuthApi"/>
   </testsuite>
-  <testsuite name="Videos / Upload Video - No Auth (401)" id="3b7e4a97-2f0d-41c9-a622-c9f90cca5586" timestamp="2025-09-23T16:39:57.963Z" tests="2" failures="2" errors="1" time="0.000">
-    <system-err><![CDATA[Iteration: 0
-RequestError: Error: connect ECONNREFUSED 127.0.0.1:8080
-    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1278:16)
-
----
-]]></system-err>
-    <testcase name="Status is 401" time="0.000" classname="AthenaAuthApi">
-      <failure type="AssertionFailure" message="expected PostmanResponse{ …(5) } to have property 'code'">
-        <![CDATA[Failed 1 times.]]>
-        <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
-        <![CDATA[Collection name: Athena Auth API.]]>
-        <![CDATA[Request name: Videos / Upload Video - No Auth (401).]]>
-        <![CDATA[Test description: Status is 401.]]>
-        <![CDATA[Error message: expected PostmanResponse{ …(5) } to have property 'code'.]]>
-        <![CDATA[Stacktrace: AssertionError: expected PostmanResponse{ …(5) } to have property 'code'
-   at Object.eval sandbox-script.js:1:32).]]>
-      </failure>
-    </testcase>
-    <testcase name="Has error message" time="0.000" classname="AthenaAuthApi">
-      <failure type="AssertionFailure" message="Unexpected token u in JSON at position 0">
-        <![CDATA[Failed 1 times.]]>
-        <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
-        <![CDATA[Collection name: Athena Auth API.]]>
-        <![CDATA[Request name: Videos / Upload Video - No Auth (401).]]>
-        <![CDATA[Test description: Has error message.]]>
-        <![CDATA[Error message: Unexpected token u in JSON at position 0.]]>
-        <![CDATA[Stacktrace: JSONError: Unexpected token u in JSON at position 0
-   at Object.eval sandbox-script.js:2:32).]]>
-      </failure>
-    </testcase>
+  <testsuite name="Videos / Upload Video - No Auth (401)" id="bcfea5e7-96cc-4958-9eb3-90dfc70fecdf" timestamp="2025-11-05T18:23:07.024Z" tests="2" failures="0" errors="0" time="0.003">
+    <testcase name="Status is 401" time="0.003" classname="AthenaAuthApi"/>
+    <testcase name="Has error message" time="0.003" classname="AthenaAuthApi"/>
   </testsuite>
-  <testsuite name="Videos / Upload Video - Missing Title (400)" id="25322143-a556-4a69-abf4-b1dac71fb060" timestamp="2025-09-23T16:39:57.963Z" tests="2" failures="2" errors="1" time="0.000">
-    <system-err><![CDATA[Iteration: 0
-RequestError: Error: connect ECONNREFUSED 127.0.0.1:8080
-    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1278:16)
-
----
-]]></system-err>
-    <testcase name="Status is 400" time="0.000" classname="AthenaAuthApi">
-      <failure type="AssertionFailure" message="expected PostmanResponse{ …(5) } to have property 'code'">
-        <![CDATA[Failed 1 times.]]>
-        <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
-        <![CDATA[Collection name: Athena Auth API.]]>
-        <![CDATA[Request name: Videos / Upload Video - Missing Title (400).]]>
-        <![CDATA[Test description: Status is 400.]]>
-        <![CDATA[Error message: expected PostmanResponse{ …(5) } to have property 'code'.]]>
-        <![CDATA[Stacktrace: AssertionError: expected PostmanResponse{ …(5) } to have property 'code'
-   at Object.eval sandbox-script.js:1:33).]]>
-      </failure>
-    </testcase>
-    <testcase name="Has error message" time="0.000" classname="AthenaAuthApi">
-      <failure type="AssertionFailure" message="Unexpected token u in JSON at position 0">
-        <![CDATA[Failed 1 times.]]>
-        <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
-        <![CDATA[Collection name: Athena Auth API.]]>
-        <![CDATA[Request name: Videos / Upload Video - Missing Title (400).]]>
-        <![CDATA[Test description: Has error message.]]>
-        <![CDATA[Error message: Unexpected token u in JSON at position 0.]]>
-        <![CDATA[Stacktrace: JSONError: Unexpected token u in JSON at position 0
-   at Object.eval sandbox-script.js:2:33).]]>
-      </failure>
-    </testcase>
+  <testsuite name="Videos / Upload Video - Missing Title (400)" id="d9a5d438-efdd-44ea-adf2-438bcec24fbc" timestamp="2025-11-05T18:23:07.024Z" tests="2" failures="0" errors="0" time="0.044">
+    <testcase name="Status is 400" time="0.044" classname="AthenaAuthApi"/>
+    <testcase name="Has error message" time="0.044" classname="AthenaAuthApi"/>
   </testsuite>
-  <testsuite name="Videos / List Videos - With Filters" id="8e24341a-6628-48a5-9c6c-a4f5f2cf233d" timestamp="2025-09-23T16:39:57.963Z" tests="1" failures="1" errors="2" time="0.000">
-    <system-err><![CDATA[Iteration: 0
-RequestError: Error: connect ECONNREFUSED 127.0.0.1:8080
-    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1278:16)
-
----
-testScriptError: Unexpected token u in JSON at position 0
----
-]]></system-err>
-    <testcase name="Status is 200" time="0.000" classname="AthenaAuthApi">
-      <failure type="AssertionFailure" message="expected PostmanResponse{ …(5) } to have property 'code'">
-        <![CDATA[Failed 1 times.]]>
-        <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
-        <![CDATA[Collection name: Athena Auth API.]]>
-        <![CDATA[Request name: Videos / List Videos - With Filters.]]>
-        <![CDATA[Test description: Status is 200.]]>
-        <![CDATA[Error message: expected PostmanResponse{ …(5) } to have property 'code'.]]>
-        <![CDATA[Stacktrace: AssertionError: expected PostmanResponse{ …(5) } to have property 'code'
-   at Object.eval sandbox-script.js:1:34).]]>
-      </failure>
-    </testcase>
+  <testsuite name="Videos / List Videos - With Filters" id="4a27098a-ca45-4edb-a493-fa7886eacace" timestamp="2025-11-05T18:23:07.024Z" tests="2" failures="0" errors="0" time="0.004">
+    <testcase name="Status is 200" time="0.004" classname="AthenaAuthApi"/>
+    <testcase name="Response wrapped with data" time="0.004" classname="AthenaAuthApi"/>
   </testsuite>
-  <testsuite name="Videos / Search Videos" id="ba20f1e4-a9ce-4ceb-ab5a-ead2881fcd63" timestamp="2025-09-23T16:39:57.963Z" tests="1" failures="1" errors="2" time="0.000">
-    <system-err><![CDATA[Iteration: 0
-RequestError: Error: connect ECONNREFUSED 127.0.0.1:8080
-    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1278:16)
-
----
-testScriptError: Unexpected token u in JSON at position 0
----
-]]></system-err>
-    <testcase name="Status is 200" time="0.000" classname="AthenaAuthApi">
-      <failure type="AssertionFailure" message="expected PostmanResponse{ …(5) } to have property 'code'">
-        <![CDATA[Failed 1 times.]]>
-        <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
-        <![CDATA[Collection name: Athena Auth API.]]>
-        <![CDATA[Request name: Videos / Search Videos.]]>
-        <![CDATA[Test description: Status is 200.]]>
-        <![CDATA[Error message: expected PostmanResponse{ …(5) } to have property 'code'.]]>
-        <![CDATA[Stacktrace: AssertionError: expected PostmanResponse{ …(5) } to have property 'code'
-   at Object.eval sandbox-script.js:1:35).]]>
-      </failure>
-    </testcase>
+  <testsuite name="Videos / Search Videos" id="6bc80024-107a-45b9-bb12-3642188bd9a5" timestamp="2025-11-05T18:23:07.024Z" tests="3" failures="0" errors="0" time="0.008">
+    <testcase name="Status is 200" time="0.008" classname="AthenaAuthApi"/>
+    <testcase name="Response wrapped with data" time="0.008" classname="AthenaAuthApi"/>
+    <testcase name="Has meta object" time="0.008" classname="AthenaAuthApi"/>
   </testsuite>
-  <testsuite name="Videos / Search Videos - With Tags" id="5902b41e-2dd8-4756-948a-43266d38d2b3" timestamp="2025-09-23T16:39:57.963Z" tests="1" failures="1" errors="2" time="0.000">
-    <system-err><![CDATA[Iteration: 0
-RequestError: Error: connect ECONNREFUSED 127.0.0.1:8080
-    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1278:16)
-
----
-testScriptError: Unexpected token u in JSON at position 0
----
-]]></system-err>
-    <testcase name="Status is 200" time="0.000" classname="AthenaAuthApi">
-      <failure type="AssertionFailure" message="expected PostmanResponse{ …(5) } to have property 'code'">
-        <![CDATA[Failed 1 times.]]>
-        <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
-        <![CDATA[Collection name: Athena Auth API.]]>
-        <![CDATA[Request name: Videos / Search Videos - With Tags.]]>
-        <![CDATA[Test description: Status is 200.]]>
-        <![CDATA[Error message: expected PostmanResponse{ …(5) } to have property 'code'.]]>
-        <![CDATA[Stacktrace: AssertionError: expected PostmanResponse{ …(5) } to have property 'code'
-   at Object.eval sandbox-script.js:1:36).]]>
-      </failure>
-    </testcase>
+  <testsuite name="Videos / Search Videos - With Tags" id="1e19394b-fb96-441d-8ce2-4693d350806a" timestamp="2025-11-05T18:23:07.024Z" tests="2" failures="0" errors="0" time="0.004">
+    <testcase name="Status is 200" time="0.004" classname="AthenaAuthApi"/>
+    <testcase name="Response wrapped with data" time="0.004" classname="AthenaAuthApi"/>
   </testsuite>
-  <testsuite name="Videos / Search Videos - Missing Query (400)" id="0ca8c27f-3ce5-46ef-9c73-a9d957881457" timestamp="2025-09-23T16:39:57.963Z" tests="2" failures="2" errors="1" time="0.000">
-    <system-err><![CDATA[Iteration: 0
-RequestError: Error: connect ECONNREFUSED 127.0.0.1:8080
-    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1278:16)
-
----
-]]></system-err>
-    <testcase name="Status is 400 or 401" time="0.000" classname="AthenaAuthApi">
-      <failure type="AssertionFailure" message="expected [ 400, 401 ] to include undefined">
-        <![CDATA[Failed 1 times.]]>
-        <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
-        <![CDATA[Collection name: Athena Auth API.]]>
-        <![CDATA[Request name: Videos / Search Videos - Missing Query (400).]]>
-        <![CDATA[Test description: Status is 400 or 401.]]>
-        <![CDATA[Error message: expected [ 400, 401 ] to include undefined.]]>
-        <![CDATA[Stacktrace: AssertionError: expected [ 400, 401 ] to include undefined
-   at Object.eval sandbox-script.js:1:37).]]>
-      </failure>
-    </testcase>
-    <testcase name="Has error body" time="0.000" classname="AthenaAuthApi">
-      <failure type="AssertionFailure" message="Unexpected token u in JSON at position 0">
-        <![CDATA[Failed 1 times.]]>
-        <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
-        <![CDATA[Collection name: Athena Auth API.]]>
-        <![CDATA[Request name: Videos / Search Videos - Missing Query (400).]]>
-        <![CDATA[Test description: Has error body.]]>
-        <![CDATA[Error message: Unexpected token u in JSON at position 0.]]>
-        <![CDATA[Stacktrace: JSONError: Unexpected token u in JSON at position 0
-   at Object.eval sandbox-script.js:2:37).]]>
-      </failure>
-    </testcase>
+  <testsuite name="Videos / Search Videos - Missing Query (400)" id="86f330b3-51ba-42c9-be12-571040f5a69c" timestamp="2025-11-05T18:23:07.024Z" tests="2" failures="0" errors="0" time="0.003">
+    <testcase name="Status is 400 or 401" time="0.003" classname="AthenaAuthApi"/>
+    <testcase name="Has error body" time="0.003" classname="AthenaAuthApi"/>
   </testsuite>
-  <testsuite name="Videos / Get Video by ID" id="97fe22a1-78fe-4ee4-a647-3a79a5da2255" timestamp="2025-09-23T16:39:57.963Z" tests="1" failures="1" errors="1" time="0.000">
-    <system-err><![CDATA[Iteration: 0
-RequestError: Error: connect ECONNREFUSED 127.0.0.1:8080
-    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1278:16)
-
----
-]]></system-err>
-    <testcase name="Status is valid (200 or 404, not 400)" time="0.000" classname="AthenaAuthApi">
-      <failure type="AssertionFailure" message="expected [ 200, 404 ] to include undefined">
-        <![CDATA[Failed 1 times.]]>
-        <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
-        <![CDATA[Collection name: Athena Auth API.]]>
-        <![CDATA[Request name: Videos / Get Video by ID.]]>
-        <![CDATA[Test description: Status is valid (200 or 404, not 400).]]>
-        <![CDATA[Error message: expected [ 200, 404 ] to include undefined.]]>
-        <![CDATA[Stacktrace: AssertionError: expected [ 200, 404 ] to include undefined
-   at Object.eval sandbox-script.js:1:38).]]>
-      </failure>
-    </testcase>
+  <testsuite name="Videos / Get Video by ID" id="589373b6-7019-4f19-bf8d-67f21ce8d0c2" timestamp="2025-11-05T18:23:07.024Z" tests="2" failures="0" errors="0" time="0.004">
+    <testcase name="Status is valid (200 or 404, not 400)" time="0.004" classname="AthenaAuthApi"/>
+    <testcase name="404 response has error structure" time="0.004" classname="AthenaAuthApi"/>
   </testsuite>
-  <testsuite name="Videos / Get Video - Not Found (404)" id="46a15f5d-dbe0-4b77-a169-10fdf3014075" timestamp="2025-09-23T16:39:57.963Z" tests="2" failures="2" errors="1" time="0.000">
-    <system-err><![CDATA[Iteration: 0
-RequestError: Error: connect ECONNREFUSED 127.0.0.1:8080
-    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1278:16)
-
----
-]]></system-err>
-    <testcase name="Status is 404 or 401" time="0.000" classname="AthenaAuthApi">
-      <failure type="AssertionFailure" message="expected [ 404, 401 ] to include undefined">
-        <![CDATA[Failed 1 times.]]>
-        <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
-        <![CDATA[Collection name: Athena Auth API.]]>
-        <![CDATA[Request name: Videos / Get Video - Not Found (404).]]>
-        <![CDATA[Test description: Status is 404 or 401.]]>
-        <![CDATA[Error message: expected [ 404, 401 ] to include undefined.]]>
-        <![CDATA[Stacktrace: AssertionError: expected [ 404, 401 ] to include undefined
-   at Object.eval sandbox-script.js:1:39).]]>
-      </failure>
-    </testcase>
-    <testcase name="Has error body" time="0.000" classname="AthenaAuthApi">
-      <failure type="AssertionFailure" message="Unexpected token u in JSON at position 0">
-        <![CDATA[Failed 1 times.]]>
-        <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
-        <![CDATA[Collection name: Athena Auth API.]]>
-        <![CDATA[Request name: Videos / Get Video - Not Found (404).]]>
-        <![CDATA[Test description: Has error body.]]>
-        <![CDATA[Error message: Unexpected token u in JSON at position 0.]]>
-        <![CDATA[Stacktrace: JSONError: Unexpected token u in JSON at position 0
-   at Object.eval sandbox-script.js:2:39).]]>
-      </failure>
-    </testcase>
+  <testsuite name="Videos / Get Video - Not Found (404)" id="7efd59c7-632a-4d65-ab41-ff2fceddc326" timestamp="2025-11-05T18:23:07.024Z" tests="2" failures="0" errors="0" time="0.002">
+    <testcase name="Status is 404 or 401" time="0.002" classname="AthenaAuthApi"/>
+    <testcase name="Has error body" time="0.002" classname="AthenaAuthApi"/>
   </testsuite>
-  <testsuite name="Videos / Create Video" id="356b99a6-ba2f-406c-85e2-b8cd319eb525" timestamp="2025-09-23T16:39:57.963Z" tests="1" failures="1" errors="1" time="0.000">
-    <system-err><![CDATA[Iteration: 0
-RequestError: Error: connect ECONNREFUSED 127.0.0.1:8080
-    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1278:16)
-
----
-]]></system-err>
-    <testcase name="Status is valid (201 or 401)" time="0.000" classname="AthenaAuthApi">
-      <failure type="AssertionFailure" message="expected [ 201, 401 ] to include undefined">
-        <![CDATA[Failed 1 times.]]>
-        <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
-        <![CDATA[Collection name: Athena Auth API.]]>
-        <![CDATA[Request name: Videos / Create Video.]]>
-        <![CDATA[Test description: Status is valid (201 or 401).]]>
-        <![CDATA[Error message: expected [ 201, 401 ] to include undefined.]]>
-        <![CDATA[Stacktrace: AssertionError: expected [ 201, 401 ] to include undefined
-   at Object.eval sandbox-script.js:1:40).]]>
-      </failure>
-    </testcase>
+  <testsuite name="Videos / Create Video" id="6f82ea4d-35f3-4a69-9eba-8121e0d43d41" timestamp="2025-11-05T18:23:07.024Z" tests="6" failures="0" errors="0" time="0.004">
+    <testcase name="Status is valid (201 or 401)" time="0.004" classname="AthenaAuthApi"/>
+    <testcase name="Has Location header" time="0.004" classname="AthenaAuthApi"/>
+    <testcase name="Response wrapped with data" time="0.004" classname="AthenaAuthApi"/>
+    <testcase name="Has id and thumbnail_id" time="0.004" classname="AthenaAuthApi"/>
+    <testcase name="id is uuid" time="0.004" classname="AthenaAuthApi"/>
+    <testcase name="thumbnail_id is uuid" time="0.004" classname="AthenaAuthApi"/>
   </testsuite>
-  <testsuite name="Videos / Create Video - Missing Token (401)" id="7b31bace-1ed4-4f8e-9f2d-cfe62ca9b920" timestamp="2025-09-23T16:39:57.963Z" tests="2" failures="2" errors="1" time="0.000">
-    <system-err><![CDATA[Iteration: 0
-RequestError: Error: connect ECONNREFUSED 127.0.0.1:8080
-    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1278:16)
-
----
-]]></system-err>
-    <testcase name="Status is 401" time="0.000" classname="AthenaAuthApi">
-      <failure type="AssertionFailure" message="expected PostmanResponse{ …(5) } to have property 'code'">
-        <![CDATA[Failed 1 times.]]>
-        <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
-        <![CDATA[Collection name: Athena Auth API.]]>
-        <![CDATA[Request name: Videos / Create Video - Missing Token (401).]]>
-        <![CDATA[Test description: Status is 401.]]>
-        <![CDATA[Error message: expected PostmanResponse{ …(5) } to have property 'code'.]]>
-        <![CDATA[Stacktrace: AssertionError: expected PostmanResponse{ …(5) } to have property 'code'
-   at Object.eval sandbox-script.js:1:41).]]>
-      </failure>
-    </testcase>
-    <testcase name="Has error body or text" time="0.000" classname="AthenaAuthApi">
-      <failure type="AssertionFailure" message="expected response body text to match /Missing authorization header|Invalid…/i but got undefined">
-        <![CDATA[Failed 1 times.]]>
-        <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
-        <![CDATA[Collection name: Athena Auth API.]]>
-        <![CDATA[Request name: Videos / Create Video - Missing Token (401).]]>
-        <![CDATA[Test description: Has error body or text.]]>
-        <![CDATA[Error message: expected response body text to match /Missing authorization header|Invalid…/i but got undefined.]]>
-        <![CDATA[Stacktrace: AssertionError: expected response body text to match /Missing authorization header|Invalid…/i but got undefined
-   at Object.eval sandbox-script.js:2:41).]]>
-      </failure>
-    </testcase>
+  <testsuite name="Videos / Create Video - Missing Token (401)" id="3f19918b-353b-44c7-818b-11067ffa26d0" timestamp="2025-11-05T18:23:07.024Z" tests="2" failures="0" errors="0" time="0.002">
+    <testcase name="Status is 401" time="0.002" classname="AthenaAuthApi"/>
+    <testcase name="Has error body or text" time="0.002" classname="AthenaAuthApi"/>
   </testsuite>
-  <testsuite name="Videos / Update Video" id="bb1d563f-ed88-4641-b5df-51ffcbf67bdb" timestamp="2025-09-23T16:39:57.963Z" tests="1" failures="1" errors="1" time="0.000">
-    <system-err><![CDATA[Iteration: 0
-RequestError: Error: connect ECONNREFUSED 127.0.0.1:8080
-    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1278:16)
-
----
-]]></system-err>
-    <testcase name="Status is valid (200, 401, or 404)" time="0.000" classname="AthenaAuthApi">
-      <failure type="AssertionFailure" message="expected [ 200, 401, 404 ] to include undefined">
-        <![CDATA[Failed 1 times.]]>
-        <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
-        <![CDATA[Collection name: Athena Auth API.]]>
-        <![CDATA[Request name: Videos / Update Video.]]>
-        <![CDATA[Test description: Status is valid (200, 401, or 404).]]>
-        <![CDATA[Error message: expected [ 200, 401, 404 ] to include undefined.]]>
-        <![CDATA[Stacktrace: AssertionError: expected [ 200, 401, 404 ] to include undefined
-   at Object.eval sandbox-script.js:1:42).]]>
-      </failure>
-    </testcase>
+  <testsuite name="Videos / Update Video" id="ffe77f4f-b4db-471b-b606-ce61b23fb529" timestamp="2025-11-05T18:23:07.024Z" tests="3" failures="0" errors="0" time="0.006">
+    <testcase name="Status is valid (200, 401, or 404)" time="0.006" classname="AthenaAuthApi"/>
+    <testcase name="Response wrapped with data" time="0.006" classname="AthenaAuthApi"/>
+    <testcase name="Video updated correctly" time="0.006" classname="AthenaAuthApi"/>
   </testsuite>
-  <testsuite name="Videos / Update Video - Not Found (404)" id="9d722838-28c8-4b3a-b295-c1fcb0eeac01" timestamp="2025-09-23T16:39:57.963Z" tests="2" failures="2" errors="1" time="0.000">
-    <system-err><![CDATA[Iteration: 0
-RequestError: Error: connect ECONNREFUSED 127.0.0.1:8080
-    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1278:16)
-
----
-]]></system-err>
-    <testcase name="Status is 404 or 401" time="0.000" classname="AthenaAuthApi">
-      <failure type="AssertionFailure" message="expected [ 404, 401 ] to include undefined">
-        <![CDATA[Failed 1 times.]]>
-        <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
-        <![CDATA[Collection name: Athena Auth API.]]>
-        <![CDATA[Request name: Videos / Update Video - Not Found (404).]]>
-        <![CDATA[Test description: Status is 404 or 401.]]>
-        <![CDATA[Error message: expected [ 404, 401 ] to include undefined.]]>
-        <![CDATA[Stacktrace: AssertionError: expected [ 404, 401 ] to include undefined
-   at Object.eval sandbox-script.js:1:43).]]>
-      </failure>
-    </testcase>
-    <testcase name="Has error body" time="0.000" classname="AthenaAuthApi">
-      <failure type="AssertionFailure" message="Unexpected token u in JSON at position 0">
-        <![CDATA[Failed 1 times.]]>
-        <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
-        <![CDATA[Collection name: Athena Auth API.]]>
-        <![CDATA[Request name: Videos / Update Video - Not Found (404).]]>
-        <![CDATA[Test description: Has error body.]]>
-        <![CDATA[Error message: Unexpected token u in JSON at position 0.]]>
-        <![CDATA[Stacktrace: JSONError: Unexpected token u in JSON at position 0
-   at Object.eval sandbox-script.js:2:43).]]>
-      </failure>
-    </testcase>
+  <testsuite name="Videos / Update Video - Not Found (404)" id="a8b9dbfc-5b26-41af-b981-7157e6fba837" timestamp="2025-11-05T18:23:07.024Z" tests="2" failures="0" errors="0" time="0.003">
+    <testcase name="Status is 404 or 401" time="0.003" classname="AthenaAuthApi"/>
+    <testcase name="Has error body" time="0.003" classname="AthenaAuthApi"/>
   </testsuite>
-  <testsuite name="Videos / Delete Video" id="60787586-69b6-4a50-a38a-f02a2880236e" timestamp="2025-09-23T16:39:57.963Z" tests="1" failures="1" errors="1" time="0.000">
-    <system-err><![CDATA[Iteration: 0
-RequestError: Error: connect ECONNREFUSED 127.0.0.1:8080
-    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1278:16)
-
----
-]]></system-err>
-    <testcase name="Status is valid (204, 401, or 404)" time="0.000" classname="AthenaAuthApi">
-      <failure type="AssertionFailure" message="expected [ 204, 401, 404 ] to include undefined">
-        <![CDATA[Failed 1 times.]]>
-        <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
-        <![CDATA[Collection name: Athena Auth API.]]>
-        <![CDATA[Request name: Videos / Delete Video.]]>
-        <![CDATA[Test description: Status is valid (204, 401, or 404).]]>
-        <![CDATA[Error message: expected [ 204, 401, 404 ] to include undefined.]]>
-        <![CDATA[Stacktrace: AssertionError: expected [ 204, 401, 404 ] to include undefined
-   at Object.eval sandbox-script.js:1:44).]]>
-      </failure>
-    </testcase>
+  <testsuite name="Videos / Delete Video" id="54465595-f89e-46be-9e52-69e2bf7cfeda" timestamp="2025-11-05T18:23:07.024Z" tests="2" failures="0" errors="0" time="0.003">
+    <testcase name="Status is valid (204, 401, or 404)" time="0.003" classname="AthenaAuthApi"/>
+    <testcase name="No response body" time="0.003" classname="AthenaAuthApi"/>
   </testsuite>
-  <testsuite name="Videos / Delete Video - Not Found (404)" id="f240e9b7-ffec-4991-9f60-dce643f3b9a5" timestamp="2025-09-23T16:39:57.963Z" tests="2" failures="2" errors="1" time="0.000">
-    <system-err><![CDATA[Iteration: 0
-RequestError: Error: connect ECONNREFUSED 127.0.0.1:8080
-    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1278:16)
-
----
-]]></system-err>
-    <testcase name="Status is 404 or 401" time="0.000" classname="AthenaAuthApi">
-      <failure type="AssertionFailure" message="expected [ 404, 401 ] to include undefined">
-        <![CDATA[Failed 1 times.]]>
-        <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
-        <![CDATA[Collection name: Athena Auth API.]]>
-        <![CDATA[Request name: Videos / Delete Video - Not Found (404).]]>
-        <![CDATA[Test description: Status is 404 or 401.]]>
-        <![CDATA[Error message: expected [ 404, 401 ] to include undefined.]]>
-        <![CDATA[Stacktrace: AssertionError: expected [ 404, 401 ] to include undefined
-   at Object.eval sandbox-script.js:1:45).]]>
-      </failure>
-    </testcase>
-    <testcase name="Has error body" time="0.000" classname="AthenaAuthApi">
-      <failure type="AssertionFailure" message="Unexpected token u in JSON at position 0">
-        <![CDATA[Failed 1 times.]]>
-        <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
-        <![CDATA[Collection name: Athena Auth API.]]>
-        <![CDATA[Request name: Videos / Delete Video - Not Found (404).]]>
-        <![CDATA[Test description: Has error body.]]>
-        <![CDATA[Error message: Unexpected token u in JSON at position 0.]]>
-        <![CDATA[Stacktrace: JSONError: Unexpected token u in JSON at position 0
-   at Object.eval sandbox-script.js:2:45).]]>
-      </failure>
-    </testcase>
+  <testsuite name="Videos / Delete Video - Not Found (404)" id="fd3b942a-e978-4966-8d1d-e8747274a9ee" timestamp="2025-11-05T18:23:07.024Z" tests="2" failures="0" errors="0" time="0.003">
+    <testcase name="Status is 404 or 401" time="0.003" classname="AthenaAuthApi"/>
+    <testcase name="Has error body" time="0.003" classname="AthenaAuthApi"/>
   </testsuite>
-  <testsuite name="Videos / Delete Video - Missing Token (401)" id="03a904d1-2cbd-43c9-892d-102e9a7e0377" timestamp="2025-09-23T16:39:57.963Z" tests="2" failures="2" errors="1" time="0.000">
-    <system-err><![CDATA[Iteration: 0
-RequestError: Error: connect ECONNREFUSED 127.0.0.1:8080
-    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1278:16)
-
----
-]]></system-err>
-    <testcase name="Status is 401" time="0.000" classname="AthenaAuthApi">
-      <failure type="AssertionFailure" message="expected PostmanResponse{ …(5) } to have property 'code'">
-        <![CDATA[Failed 1 times.]]>
-        <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
-        <![CDATA[Collection name: Athena Auth API.]]>
-        <![CDATA[Request name: Videos / Delete Video - Missing Token (401).]]>
-        <![CDATA[Test description: Status is 401.]]>
-        <![CDATA[Error message: expected PostmanResponse{ …(5) } to have property 'code'.]]>
-        <![CDATA[Stacktrace: AssertionError: expected PostmanResponse{ …(5) } to have property 'code'
-   at Object.eval sandbox-script.js:1:46).]]>
-      </failure>
-    </testcase>
-    <testcase name="Has error body or text" time="0.000" classname="AthenaAuthApi">
-      <failure type="AssertionFailure" message="expected response body text to match /Missing authorization header|Invalid…/i but got undefined">
-        <![CDATA[Failed 1 times.]]>
-        <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
-        <![CDATA[Collection name: Athena Auth API.]]>
-        <![CDATA[Request name: Videos / Delete Video - Missing Token (401).]]>
-        <![CDATA[Test description: Has error body or text.]]>
-        <![CDATA[Error message: expected response body text to match /Missing authorization header|Invalid…/i but got undefined.]]>
-        <![CDATA[Stacktrace: AssertionError: expected response body text to match /Missing authorization header|Invalid…/i but got undefined
-   at Object.eval sandbox-script.js:2:46).]]>
-      </failure>
-    </testcase>
+  <testsuite name="Videos / Delete Video - Missing Token (401)" id="5f65c0ba-f965-4dc8-853f-2d384e2f9531" timestamp="2025-11-05T18:23:07.024Z" tests="2" failures="0" errors="0" time="0.002">
+    <testcase name="Status is 401" time="0.002" classname="AthenaAuthApi"/>
+    <testcase name="Has error body or text" time="0.002" classname="AthenaAuthApi"/>
   </testsuite>
-  <testsuite name="Videos / Get User Videos" id="a3c688bb-639f-4e24-92f1-b26bb0c3ff2f" timestamp="2025-09-23T16:39:57.963Z" tests="1" failures="1" errors="2" time="0.000">
-    <system-err><![CDATA[Iteration: 0
-RequestError: Error: connect ECONNREFUSED 127.0.0.1:8080
-    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1278:16)
-
----
-testScriptError: Unexpected token u in JSON at position 0
----
-]]></system-err>
-    <testcase name="Status is 200" time="0.000" classname="AthenaAuthApi">
-      <failure type="AssertionFailure" message="expected PostmanResponse{ …(5) } to have property 'code'">
-        <![CDATA[Failed 1 times.]]>
-        <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
-        <![CDATA[Collection name: Athena Auth API.]]>
-        <![CDATA[Request name: Videos / Get User Videos.]]>
-        <![CDATA[Test description: Status is 200.]]>
-        <![CDATA[Error message: expected PostmanResponse{ …(5) } to have property 'code'.]]>
-        <![CDATA[Stacktrace: AssertionError: expected PostmanResponse{ …(5) } to have property 'code'
-   at Object.eval sandbox-script.js:1:47).]]>
-      </failure>
-    </testcase>
+  <testsuite name="Videos / Get User Videos" id="f1f5b9d1-310a-4613-a5d5-782f95349b16" timestamp="2025-11-05T18:23:07.024Z" tests="5" failures="0" errors="0" time="0.003">
+    <testcase name="Status is 200" time="0.003" classname="AthenaAuthApi"/>
+    <testcase name="Response wrapped with data" time="0.003" classname="AthenaAuthApi"/>
+    <testcase name="Has meta object" time="0.003" classname="AthenaAuthApi"/>
+    <testcase name="Meta has pagination fields" time="0.003" classname="AthenaAuthApi"/>
+    <testcase name="All videos belong to user" time="0.003" classname="AthenaAuthApi"/>
   </testsuite>
-  <testsuite name="Videos / Get User Videos - Nonexistent User" id="ba9cf6fa-09e9-48fa-8d76-b5c3f4b49522" timestamp="2025-09-23T16:39:57.963Z" tests="1" failures="1" errors="2" time="0.000">
-    <system-err><![CDATA[Iteration: 0
-RequestError: Error: connect ECONNREFUSED 127.0.0.1:8080
-    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1278:16)
-
----
-testScriptError: Unexpected token u in JSON at position 0
----
-]]></system-err>
-    <testcase name="Status is 200" time="0.000" classname="AthenaAuthApi">
-      <failure type="AssertionFailure" message="expected PostmanResponse{ …(5) } to have property 'code'">
-        <![CDATA[Failed 1 times.]]>
-        <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
-        <![CDATA[Collection name: Athena Auth API.]]>
-        <![CDATA[Request name: Videos / Get User Videos - Nonexistent User.]]>
-        <![CDATA[Test description: Status is 200.]]>
-        <![CDATA[Error message: expected PostmanResponse{ …(5) } to have property 'code'.]]>
-        <![CDATA[Stacktrace: AssertionError: expected PostmanResponse{ …(5) } to have property 'code'
-   at Object.eval sandbox-script.js:1:48).]]>
-      </failure>
-    </testcase>
+  <testsuite name="Videos / Get User Videos - Nonexistent User" id="4bdbe4d7-61a7-4482-bf87-0b3bb3043f0f" timestamp="2025-11-05T18:23:07.024Z" tests="3" failures="0" errors="0" time="0.003">
+    <testcase name="Status is 200" time="0.003" classname="AthenaAuthApi"/>
+    <testcase name="Response wrapped with data" time="0.003" classname="AthenaAuthApi"/>
+    <testcase name="Returns empty array for nonexistent user" time="0.003" classname="AthenaAuthApi"/>
   </testsuite>
-  <testsuite name="Videos / Create Video - Invalid JSON (400)" id="170ee1bc-720b-4a9b-b854-9521a529a43e" timestamp="2025-09-23T16:39:57.963Z" tests="2" failures="2" errors="1" time="0.000">
-    <system-err><![CDATA[Iteration: 0
-RequestError: Error: connect ECONNREFUSED 127.0.0.1:8080
-    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1278:16)
-
----
-]]></system-err>
-    <testcase name="Status is 400 or 401" time="0.000" classname="AthenaAuthApi">
-      <failure type="AssertionFailure" message="expected [ 400, 401 ] to include undefined">
-        <![CDATA[Failed 1 times.]]>
-        <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
-        <![CDATA[Collection name: Athena Auth API.]]>
-        <![CDATA[Request name: Videos / Create Video - Invalid JSON (400).]]>
-        <![CDATA[Test description: Status is 400 or 401.]]>
-        <![CDATA[Error message: expected [ 400, 401 ] to include undefined.]]>
-        <![CDATA[Stacktrace: AssertionError: expected [ 400, 401 ] to include undefined
-   at Object.eval sandbox-script.js:1:49).]]>
-      </failure>
-    </testcase>
-    <testcase name="Has error body" time="0.000" classname="AthenaAuthApi">
-      <failure type="AssertionFailure" message="Unexpected token u in JSON at position 0">
-        <![CDATA[Failed 1 times.]]>
-        <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
-        <![CDATA[Collection name: Athena Auth API.]]>
-        <![CDATA[Request name: Videos / Create Video - Invalid JSON (400).]]>
-        <![CDATA[Test description: Has error body.]]>
-        <![CDATA[Error message: Unexpected token u in JSON at position 0.]]>
-        <![CDATA[Stacktrace: JSONError: Unexpected token u in JSON at position 0
-   at Object.eval sandbox-script.js:2:49).]]>
-      </failure>
-    </testcase>
+  <testsuite name="Videos / Create Video - Invalid JSON (400)" id="f9563e69-6c92-4ea6-adc2-f4da673c8cd3" timestamp="2025-11-05T18:23:07.024Z" tests="2" failures="0" errors="0" time="0.003">
+    <testcase name="Status is 400 or 401" time="0.003" classname="AthenaAuthApi"/>
+    <testcase name="Has error body" time="0.003" classname="AthenaAuthApi"/>
   </testsuite>
-  <testsuite name="Videos / Create Video - Missing Required Fields (400)" id="9a272b7a-83bc-4427-b673-5ae2c074dc6a" timestamp="2025-09-23T16:39:57.963Z" tests="2" failures="2" errors="1" time="0.000">
-    <system-err><![CDATA[Iteration: 0
-RequestError: Error: connect ECONNREFUSED 127.0.0.1:8080
-    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1278:16)
-
----
-]]></system-err>
-    <testcase name="Status is 400 or 401" time="0.000" classname="AthenaAuthApi">
-      <failure type="AssertionFailure" message="expected [ 400, 401 ] to include undefined">
-        <![CDATA[Failed 1 times.]]>
-        <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
-        <![CDATA[Collection name: Athena Auth API.]]>
-        <![CDATA[Request name: Videos / Create Video - Missing Required Fields (400).]]>
-        <![CDATA[Test description: Status is 400 or 401.]]>
-        <![CDATA[Error message: expected [ 400, 401 ] to include undefined.]]>
-        <![CDATA[Stacktrace: AssertionError: expected [ 400, 401 ] to include undefined
-   at Object.eval sandbox-script.js:1:50).]]>
-      </failure>
-    </testcase>
-    <testcase name="Has error body" time="0.000" classname="AthenaAuthApi">
-      <failure type="AssertionFailure" message="Unexpected token u in JSON at position 0">
-        <![CDATA[Failed 1 times.]]>
-        <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
-        <![CDATA[Collection name: Athena Auth API.]]>
-        <![CDATA[Request name: Videos / Create Video - Missing Required Fields (400).]]>
-        <![CDATA[Test description: Has error body.]]>
-        <![CDATA[Error message: Unexpected token u in JSON at position 0.]]>
-        <![CDATA[Stacktrace: JSONError: Unexpected token u in JSON at position 0
-   at Object.eval sandbox-script.js:2:50).]]>
-      </failure>
-    </testcase>
+  <testsuite name="Videos / Create Video - Missing Required Fields (400)" id="a3324a6a-c47d-4523-8aef-c538ecdc77be" timestamp="2025-11-05T18:23:07.024Z" tests="2" failures="0" errors="0" time="0.002">
+    <testcase name="Status is 400 or 401" time="0.002" classname="AthenaAuthApi"/>
+    <testcase name="Has error body" time="0.002" classname="AthenaAuthApi"/>
   </testsuite>
-  <testsuite name="Videos / Update Video - Invalid JSON (400)" id="560ed2a7-c1f8-4a16-945c-0234ff953d5d" timestamp="2025-09-23T16:39:57.963Z" tests="2" failures="2" errors="1" time="0.000">
-    <system-err><![CDATA[Iteration: 0
-RequestError: Error: connect ECONNREFUSED 127.0.0.1:8080
-    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1278:16)
-
----
-]]></system-err>
-    <testcase name="Status is 400 or 401" time="0.000" classname="AthenaAuthApi">
-      <failure type="AssertionFailure" message="expected [ 400, 401 ] to include undefined">
-        <![CDATA[Failed 1 times.]]>
-        <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
-        <![CDATA[Collection name: Athena Auth API.]]>
-        <![CDATA[Request name: Videos / Update Video - Invalid JSON (400).]]>
-        <![CDATA[Test description: Status is 400 or 401.]]>
-        <![CDATA[Error message: expected [ 400, 401 ] to include undefined.]]>
-        <![CDATA[Stacktrace: AssertionError: expected [ 400, 401 ] to include undefined
-   at Object.eval sandbox-script.js:1:51).]]>
-      </failure>
-    </testcase>
-    <testcase name="Has error body" time="0.000" classname="AthenaAuthApi">
-      <failure type="AssertionFailure" message="Unexpected token u in JSON at position 0">
-        <![CDATA[Failed 1 times.]]>
-        <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
-        <![CDATA[Collection name: Athena Auth API.]]>
-        <![CDATA[Request name: Videos / Update Video - Invalid JSON (400).]]>
-        <![CDATA[Test description: Has error body.]]>
-        <![CDATA[Error message: Unexpected token u in JSON at position 0.]]>
-        <![CDATA[Stacktrace: JSONError: Unexpected token u in JSON at position 0
-   at Object.eval sandbox-script.js:2:51).]]>
-      </failure>
-    </testcase>
+  <testsuite name="Videos / Update Video - Invalid JSON (400)" id="24279f9d-b26b-4588-8139-e93cfa31c81c" timestamp="2025-11-05T18:23:07.024Z" tests="2" failures="0" errors="0" time="0.002">
+    <testcase name="Status is 400 or 401" time="0.002" classname="AthenaAuthApi"/>
+    <testcase name="Has error body" time="0.002" classname="AthenaAuthApi"/>
   </testsuite>
-  <testsuite name="Videos / Update Video - Missing Token (401)" id="83767530-f48d-4c13-8488-24367da81934" timestamp="2025-09-23T16:39:57.963Z" tests="2" failures="2" errors="1" time="0.000">
-    <system-err><![CDATA[Iteration: 0
-RequestError: Error: connect ECONNREFUSED 127.0.0.1:8080
-    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1278:16)
-
----
-]]></system-err>
-    <testcase name="Status is 401" time="0.000" classname="AthenaAuthApi">
-      <failure type="AssertionFailure" message="expected PostmanResponse{ …(5) } to have property 'code'">
-        <![CDATA[Failed 1 times.]]>
-        <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
-        <![CDATA[Collection name: Athena Auth API.]]>
-        <![CDATA[Request name: Videos / Update Video - Missing Token (401).]]>
-        <![CDATA[Test description: Status is 401.]]>
-        <![CDATA[Error message: expected PostmanResponse{ …(5) } to have property 'code'.]]>
-        <![CDATA[Stacktrace: AssertionError: expected PostmanResponse{ …(5) } to have property 'code'
-   at Object.eval sandbox-script.js:1:52).]]>
-      </failure>
-    </testcase>
-    <testcase name="Has error body or text" time="0.000" classname="AthenaAuthApi">
-      <failure type="AssertionFailure" message="expected response body text to match /Missing authorization header|Invalid…/i but got undefined">
-        <![CDATA[Failed 1 times.]]>
-        <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
-        <![CDATA[Collection name: Athena Auth API.]]>
-        <![CDATA[Request name: Videos / Update Video - Missing Token (401).]]>
-        <![CDATA[Test description: Has error body or text.]]>
-        <![CDATA[Error message: expected response body text to match /Missing authorization header|Invalid…/i but got undefined.]]>
-        <![CDATA[Stacktrace: AssertionError: expected response body text to match /Missing authorization header|Invalid…/i but got undefined
-   at Object.eval sandbox-script.js:2:52).]]>
-      </failure>
-    </testcase>
+  <testsuite name="Videos / Update Video - Missing Token (401)" id="664d5e14-f08b-4d66-961c-1a4c17f56946" timestamp="2025-11-05T18:23:07.024Z" tests="2" failures="0" errors="0" time="0.002">
+    <testcase name="Status is 401" time="0.002" classname="AthenaAuthApi"/>
+    <testcase name="Has error body or text" time="0.002" classname="AthenaAuthApi"/>
   </testsuite>
-  <testsuite name="Videos / Video Streaming Endpoint" id="89ab34f0-602d-4429-a5e8-4d3141961925" timestamp="2025-09-23T16:39:57.963Z" tests="1" failures="1" errors="1" time="0.000">
-    <system-err><![CDATA[Iteration: 0
-RequestError: Error: connect ECONNREFUSED 127.0.0.1:8080
-    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1278:16)
-
----
-]]></system-err>
-    <testcase name="Status is either 200 or 404" time="0.000" classname="AthenaAuthApi">
-      <failure type="AssertionFailure" message="expected [ 200, 404 ] to include undefined">
-        <![CDATA[Failed 1 times.]]>
-        <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
-        <![CDATA[Collection name: Athena Auth API.]]>
-        <![CDATA[Request name: Videos / Video Streaming Endpoint.]]>
-        <![CDATA[Test description: Status is either 200 or 404.]]>
-        <![CDATA[Error message: expected [ 200, 404 ] to include undefined.]]>
-        <![CDATA[Stacktrace: AssertionError: expected [ 200, 404 ] to include undefined
-   at Object.eval sandbox-script.js:1:53).]]>
-      </failure>
-    </testcase>
+  <testsuite name="Videos / Video Streaming Endpoint" id="35d98baa-5cf4-455f-9963-f4e54f77beee" timestamp="2025-11-05T18:23:07.024Z" tests="2" failures="0" errors="0" time="0.003">
+    <testcase name="Status is 404 (video was deleted)" time="0.003" classname="AthenaAuthApi"/>
+    <testcase name="Has error response" time="0.003" classname="AthenaAuthApi"/>
   </testsuite>
-  <testsuite name="Videos / Stream Video - Invalid Quality (400)" id="3806928b-cd5f-4b3c-9d8c-5fb70b048581" timestamp="2025-09-23T16:39:57.963Z" tests="1" failures="1" errors="2" time="0.000">
-    <system-err><![CDATA[Iteration: 0
-RequestError: Error: connect ECONNREFUSED 127.0.0.1:8080
-    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1278:16)
-
----
-testScriptError: Unexpected token u in JSON at position 0
----
-]]></system-err>
-    <testcase name="Status is 400 or 401" time="0.000" classname="AthenaAuthApi">
-      <failure type="AssertionFailure" message="expected [ 400, 401 ] to include undefined">
-        <![CDATA[Failed 1 times.]]>
-        <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
-        <![CDATA[Collection name: Athena Auth API.]]>
-        <![CDATA[Request name: Videos / Stream Video - Invalid Quality (400).]]>
-        <![CDATA[Test description: Status is 400 or 401.]]>
-        <![CDATA[Error message: expected [ 400, 401 ] to include undefined.]]>
-        <![CDATA[Stacktrace: AssertionError: expected [ 400, 401 ] to include undefined
-   at Object.eval sandbox-script.js:1:54).]]>
-      </failure>
-    </testcase>
+  <testsuite name="Videos / Stream Video - Invalid Quality (400)" id="5053702b-f088-488d-ae2d-d7da2fd25329" timestamp="2025-11-05T18:23:07.024Z" tests="2" failures="0" errors="0" time="0.002">
+    <testcase name="Status is 400 or 401" time="0.002" classname="AthenaAuthApi"/>
+    <testcase name="Response wrapped with error" time="0.002" classname="AthenaAuthApi"/>
   </testsuite>
-  <testsuite name="Videos / Get Supported Qualities" id="a14a96ba-5b5f-4391-a277-1d3a4ee05663" timestamp="2025-09-23T16:39:57.963Z" tests="1" failures="1" errors="2" time="0.000">
-    <system-err><![CDATA[Iteration: 0
-RequestError: Error: connect ECONNREFUSED 127.0.0.1:8080
-    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1278:16)
-
----
-testScriptError: Unexpected token u in JSON at position 0
----
-]]></system-err>
-    <testcase name="Status is 200" time="0.000" classname="AthenaAuthApi">
-      <failure type="AssertionFailure" message="expected PostmanResponse{ …(5) } to have property 'code'">
-        <![CDATA[Failed 1 times.]]>
-        <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
-        <![CDATA[Collection name: Athena Auth API.]]>
-        <![CDATA[Request name: Videos / Get Supported Qualities.]]>
-        <![CDATA[Test description: Status is 200.]]>
-        <![CDATA[Error message: expected PostmanResponse{ …(5) } to have property 'code'.]]>
-        <![CDATA[Stacktrace: AssertionError: expected PostmanResponse{ …(5) } to have property 'code'
-   at Object.eval sandbox-script.js:1:55).]]>
-      </failure>
-    </testcase>
+  <testsuite name="Videos / Get Supported Qualities" id="c678c046-0084-4bb7-83ad-3b6a27805718" timestamp="2025-11-05T18:23:07.024Z" tests="5" failures="0" errors="0" time="0.002">
+    <testcase name="Status is 200" time="0.002" classname="AthenaAuthApi"/>
+    <testcase name="Response wrapped with data" time="0.002" classname="AthenaAuthApi"/>
+    <testcase name="Qualities array present" time="0.002" classname="AthenaAuthApi"/>
+    <testcase name="Default quality present" time="0.002" classname="AthenaAuthApi"/>
+    <testcase name="Common qualities included" time="0.002" classname="AthenaAuthApi"/>
   </testsuite>
-  <testsuite name="Videos / Upload Video Chunk" id="7d989dae-b6bc-40bc-bf07-329686f82839" timestamp="2025-09-23T16:39:57.963Z" tests="1" failures="1" errors="1" time="0.000">
-    <system-err><![CDATA[Iteration: 0
-RequestError: Error: connect ECONNREFUSED 127.0.0.1:8080
-    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1278:16)
-
----
-]]></system-err>
-    <testcase name="Status is valid (200, 401, or 404)" time="0.000" classname="AthenaAuthApi">
-      <failure type="AssertionFailure" message="expected [ 200, 401, 404 ] to include undefined">
-        <![CDATA[Failed 1 times.]]>
-        <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
-        <![CDATA[Collection name: Athena Auth API.]]>
-        <![CDATA[Request name: Videos / Upload Video Chunk.]]>
-        <![CDATA[Test description: Status is valid (200, 401, or 404).]]>
-        <![CDATA[Error message: expected [ 200, 401, 404 ] to include undefined.]]>
-        <![CDATA[Stacktrace: AssertionError: expected [ 200, 401, 404 ] to include undefined
-   at Object.eval sandbox-script.js:1:56).]]>
-      </failure>
-    </testcase>
+  <testsuite name="Videos / Upload Video Chunk" id="05193b2e-0526-4535-bab2-96b368e8602d" timestamp="2025-11-05T18:23:07.024Z" tests="3" failures="0" errors="0" time="0.003">
+    <testcase name="Status is valid (200, 401, or 404)" time="0.003" classname="AthenaAuthApi"/>
+    <testcase name="Response wrapped with data" time="0.003" classname="AthenaAuthApi"/>
+    <testcase name="Upload response has chunk info" time="0.003" classname="AthenaAuthApi"/>
   </testsuite>
-  <testsuite name="Videos / Upload Video Chunk - Missing Headers (400)" id="e97b7ef3-4ac6-4131-bd8f-49661d754caa" timestamp="2025-09-23T16:39:57.963Z" tests="3" failures="2" errors="1" time="0.000">
-    <system-err><![CDATA[Iteration: 0
-RequestError: Error: connect ECONNREFUSED 127.0.0.1:8080
-    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1278:16)
-
----
-]]></system-err>
-    <testcase name="Status is 400 or 401" time="0.000" classname="AthenaAuthApi">
-      <failure type="AssertionFailure" message="expected [ 400, 401, 404 ] to include undefined">
-        <![CDATA[Failed 1 times.]]>
-        <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
-        <![CDATA[Collection name: Athena Auth API.]]>
-        <![CDATA[Request name: Videos / Upload Video Chunk - Missing Headers (400).]]>
-        <![CDATA[Test description: Status is 400 or 401.]]>
-        <![CDATA[Error message: expected [ 400, 401, 404 ] to include undefined.]]>
-        <![CDATA[Stacktrace: AssertionError: expected [ 400, 401, 404 ] to include undefined
-   at Object.eval sandbox-script.js:1:57).]]>
-      </failure>
-    </testcase>
-    <testcase name="404 response has error structure" time="0.000" classname="AthenaAuthApi"/>
-    <testcase name="Has error body" time="0.000" classname="AthenaAuthApi">
-      <failure type="AssertionFailure" message="Unexpected token u in JSON at position 0">
-        <![CDATA[Failed 1 times.]]>
-        <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
-        <![CDATA[Collection name: Athena Auth API.]]>
-        <![CDATA[Request name: Videos / Upload Video Chunk - Missing Headers (400).]]>
-        <![CDATA[Test description: Has error body.]]>
-        <![CDATA[Error message: Unexpected token u in JSON at position 0.]]>
-        <![CDATA[Stacktrace: JSONError: Unexpected token u in JSON at position 0
-   at Object.eval sandbox-script.js:3:57).]]>
-      </failure>
-    </testcase>
+  <testsuite name="Videos / Upload Video Chunk - Missing Headers (400)" id="a292dc59-f5bd-4eec-aeb2-55e337d03024" timestamp="2025-11-05T18:23:07.024Z" tests="3" failures="0" errors="0" time="0.002">
+    <testcase name="Status is 400 or 401" time="0.002" classname="AthenaAuthApi"/>
+    <testcase name="404 response has error structure" time="0.002" classname="AthenaAuthApi"/>
+    <testcase name="Has error body" time="0.002" classname="AthenaAuthApi"/>
   </testsuite>
-  <testsuite name="Videos / Complete Video Upload" id="e6020646-8873-4d09-82e2-925fe74c4aa8" timestamp="2025-09-23T16:39:57.963Z" tests="1" failures="1" errors="1" time="0.000">
-    <system-err><![CDATA[Iteration: 0
-RequestError: Error: connect ECONNREFUSED 127.0.0.1:8080
-    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1278:16)
-
----
-]]></system-err>
-    <testcase name="Status is valid (200, 401, or 404)" time="0.000" classname="AthenaAuthApi">
-      <failure type="AssertionFailure" message="expected [ 200, 401, 404 ] to include undefined">
-        <![CDATA[Failed 1 times.]]>
-        <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
-        <![CDATA[Collection name: Athena Auth API.]]>
-        <![CDATA[Request name: Videos / Complete Video Upload.]]>
-        <![CDATA[Test description: Status is valid (200, 401, or 404).]]>
-        <![CDATA[Error message: expected [ 200, 401, 404 ] to include undefined.]]>
-        <![CDATA[Stacktrace: AssertionError: expected [ 200, 401, 404 ] to include undefined
-   at Object.eval sandbox-script.js:1:58).]]>
-      </failure>
-    </testcase>
+  <testsuite name="Videos / Complete Video Upload" id="4aef3fdf-1879-49a8-a1db-eaf3ba87a27f" timestamp="2025-11-05T18:23:07.024Z" tests="3" failures="0" errors="0" time="0.002">
+    <testcase name="Status is valid (200, 401, or 404)" time="0.002" classname="AthenaAuthApi"/>
+    <testcase name="Response wrapped with data" time="0.002" classname="AthenaAuthApi"/>
+    <testcase name="Upload completion response" time="0.002" classname="AthenaAuthApi"/>
   </testsuite>
 </testsuites>

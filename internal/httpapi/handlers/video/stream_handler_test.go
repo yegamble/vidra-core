@@ -38,6 +38,9 @@ func (m *mockStreamRepo) UpdateProcessingInfo(_ context.Context, _ string, _ dom
 func (m *mockStreamRepo) UpdateProcessingInfoWithCIDs(_ context.Context, _ string, _ domain.ProcessingStatus, _ map[string]string, _ string, _ string, _ map[string]string, _ string, _ string) error {
 	return nil
 }
+func (m *mockStreamRepo) Count(_ context.Context) (int64, error) {
+	return 0, nil
+}
 
 func TestStreamVideoHandler_DBOutputMasterRedirectsToHLS(t *testing.T) {
 	videoID := "vid-stream-1"

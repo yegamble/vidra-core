@@ -55,6 +55,10 @@ func (m *MockVideoRepository) UpdateProcessingInfoWithCIDs(ctx context.Context, 
 	return nil
 }
 
+func (m *MockVideoRepository) Count(ctx context.Context) (int64, error) {
+	return 0, nil
+}
+
 func TestNewVODConverter(t *testing.T) {
 	cfg := &config.Config{
 		HLSOutputDir:           "/tmp/test-vod",

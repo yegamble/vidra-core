@@ -281,6 +281,11 @@ func (m *MockVideoRepository) UpdateProcessingInfoWithCIDs(ctx context.Context, 
 	return args.Error(0)
 }
 
+func (m *MockVideoRepository) Count(ctx context.Context) (int64, error) {
+	args := m.Called(ctx)
+	return args.Get(0).(int64), args.Error(1)
+}
+
 func TestGetLocalActor(t *testing.T) {
 	mockAPRepo := new(MockActivityPubRepository)
 	mockUserRepo := new(MockUserRepository)
