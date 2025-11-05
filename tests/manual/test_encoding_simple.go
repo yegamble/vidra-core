@@ -301,3 +301,7 @@ func (r *mockVideoRepository) UpdateProcessingInfoWithCIDs(ctx context.Context, 
 	}
 	return nil
 }
+
+func (r *mockVideoRepository) Count(ctx context.Context) (int64, error) {
+	return int64(len(r.videos)), nil
+}
