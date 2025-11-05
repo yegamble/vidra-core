@@ -82,7 +82,7 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, deps *shar
 
 	// ActivityPub well-known endpoints (must be at root level, not under /api/v1)
 	if cfg.EnableActivityPub && deps.ActivityPubService != nil {
-		apHandlers := federation.NewActivityPubHandlers(deps.ActivityPubService, cfg)
+		apHandlers := federation.NewActivityPubHandlers(deps.ActivityPubService, cfg, deps.UserRepo, deps.VideoRepo)
 
 		// WebFinger and NodeInfo discovery
 		r.Get("/.well-known/webfinger", apHandlers.WebFinger)
@@ -278,7 +278,9 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, deps *shar
 					deps.LiveStreamRepo,
 					deps.StreamKeyRepo,
 					deps.ViewerSessionRepo,
+					deps.ChannelRepo,
 					deps.StreamManager,
+					deps.Config,
 				)
 
 				// HLS handlers (if transcoder is available)

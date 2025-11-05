@@ -20,13 +20,17 @@ import (
 type ActivityPubHandlers struct {
 	service port.ActivityPubService
 	cfg     *config.Config
+	userRepo port.UserRepository
+	videoRepo port.VideoRepository
 }
 
 // NewActivityPubHandlers creates a new ActivityPub handlers instance
-func NewActivityPubHandlers(service port.ActivityPubService, cfg *config.Config) *ActivityPubHandlers {
+func NewActivityPubHandlers(service port.ActivityPubService, cfg *config.Config, userRepo port.UserRepository, videoRepo port.VideoRepository) *ActivityPubHandlers {
 	return &ActivityPubHandlers{
 		service: service,
 		cfg:     cfg,
+		userRepo: userRepo,
+		videoRepo: videoRepo,
 	}
 }
 
@@ -104,7 +108,19 @@ func (h *ActivityPubHandlers) NodeInfo(w http.ResponseWriter, r *http.Request) {
 
 // NodeInfo20 handles /nodeinfo/2.0 requests
 func (h *ActivityPubHandlers) NodeInfo20(w http.ResponseWriter, r *http.Request) {
-	// TODO: Fetch real statistics from the database
+	// Fetch real statistics from the database
+	userCount, err := h.userRepo.Count(r.Context())
+	if err != nil {
+		// Log error but don't fail the request, use 0 as fallback
+		userCount = 0
+	}
+
+	// Count local videos as posts
+	videoCount, err := h.videoRepo.Count(r.Context())
+	if err != nil {
+		videoCount = 0
+	}
+
 	nodeInfo := domain.NodeInfo{
 		Version: "2.0",
 		Software: domain.NodeInfoSoftware{
@@ -117,8 +133,9 @@ func (h *ActivityPubHandlers) NodeInfo20(w http.ResponseWriter, r *http.Request)
 		OpenRegistrations: true,
 		Usage: domain.NodeInfoUsage{
 			Users: domain.NodeInfoUsers{
-				Total: 0, // TODO: Fetch from database
+				Total: int(userCount),
 			},
+			LocalPosts: int(videoCount),
 		},
 		Metadata: map[string]interface{}{
 			"nodeName":        "Athena",

@@ -1,10 +1,12 @@
 package shared
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 
 	"athena/internal/domain"
+	"athena/internal/middleware"
 
 	chi "github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -90,4 +92,69 @@ func RequireUUIDParam(w http.ResponseWriter, r *http.Request, param, missingCode
 		return "", false
 	}
 	return id, true
+}
+
+// IsAdmin checks if a user has admin role
+func IsAdmin(user *domain.User) bool {
+	if user == nil {
+		return false
+	}
+	return user.Role == domain.RoleAdmin
+}
+
+// IsModerator checks if a user has moderator role
+func IsModerator(user *domain.User) bool {
+	if user == nil {
+		return false
+	}
+	return user.Role == domain.RoleMod
+}
+
+// IsAdminOrModerator checks if a user has admin or moderator role
+func IsAdminOrModerator(user *domain.User) bool {
+	return IsAdmin(user) || IsModerator(user)
+}
+
+// RequireAdminRole checks if user is admin, returns error if not
+func RequireAdminRole(user *domain.User) error {
+	if !IsAdmin(user) {
+		return errors.New("admin role required")
+	}
+	return nil
+}
+
+// RequireModeratorRole checks if user is moderator or admin, returns error if not
+func RequireModeratorRole(user *domain.User) error {
+	if !IsAdminOrModerator(user) {
+		return errors.New("moderator or admin role required")
+	}
+	return nil
+}
+
+// GetUserRoleFromContext retrieves the user role from request context
+func GetUserRoleFromContext(r *http.Request) domain.UserRole {
+	roleValue := r.Context().Value(middleware.UserRoleKey)
+	if roleValue == nil {
+		return domain.RoleUser // default to user role
+	}
+
+	// The role is stored as a string in the context
+	roleStr, ok := roleValue.(string)
+	if !ok {
+		return domain.RoleUser
+	}
+
+	return domain.UserRole(roleStr)
+}
+
+// IsAdminFromContext checks if the request has admin role in context
+func IsAdminFromContext(r *http.Request) bool {
+	role := GetUserRoleFromContext(r)
+	return role == domain.RoleAdmin
+}
+
+// IsModeratorFromContext checks if the request has moderator or admin role in context
+func IsModeratorFromContext(r *http.Request) bool {
+	role := GetUserRoleFromContext(r)
+	return role == domain.RoleMod || role == domain.RoleAdmin
 }

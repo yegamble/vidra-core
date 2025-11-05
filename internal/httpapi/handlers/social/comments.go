@@ -215,8 +215,8 @@ func (h *CommentHandlers) DeleteComment(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Check if user is admin (you might want to get this from context too)
-	isAdmin := false // TODO: Get from user role/context
+	// Check if user is admin or moderator
+	isAdmin := shared.IsAdminFromContext(r)
 
 	err = h.commentService.DeleteComment(r.Context(), userID, commentID, isAdmin)
 	if err != nil {
@@ -355,8 +355,8 @@ func (h *CommentHandlers) ModerateComment(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Check if user is admin (you might want to get this from context too)
-	isAdmin := false // TODO: Get from user role/context
+	// Check if user is admin or moderator
+	isAdmin := shared.IsAdminFromContext(r)
 
 	err = h.commentService.ModerateComment(r.Context(), userID, commentID, status, isAdmin)
 	if err != nil {

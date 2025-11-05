@@ -1,9 +1,11 @@
 package livestream
 
 import (
+	"athena/internal/config"
 	"athena/internal/httpapi/shared"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"time"
@@ -22,7 +24,9 @@ type LiveStreamHandlers struct {
 	streamRepo    repository.LiveStreamRepository
 	streamKeyRepo repository.StreamKeyRepository
 	viewerRepo    repository.ViewerSessionRepository
+	channelRepo   repository.ChannelRepository
 	streamManager *livestream.StreamManager
+	config        *config.Config
 }
 
 // NewLiveStreamHandlers creates new live stream handlers
@@ -30,13 +34,17 @@ func NewLiveStreamHandlers(
 	streamRepo repository.LiveStreamRepository,
 	streamKeyRepo repository.StreamKeyRepository,
 	viewerRepo repository.ViewerSessionRepository,
+	channelRepo repository.ChannelRepository,
 	streamManager *livestream.StreamManager,
+	config *config.Config,
 ) *LiveStreamHandlers {
 	return &LiveStreamHandlers{
 		streamRepo:    streamRepo,
 		streamKeyRepo: streamKeyRepo,
 		viewerRepo:    viewerRepo,
+		channelRepo:   channelRepo,
 		streamManager: streamManager,
+		config:        config,
 	}
 }
 
@@ -117,7 +125,22 @@ func (h *LiveStreamHandlers) CreateStream(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// TODO: Verify user owns the channel
+	// Verify user owns the channel
+	channel, err := h.channelRepo.GetByID(r.Context(), channelID)
+	if err != nil {
+		if err == domain.ErrNotFound {
+			shared.WriteError(w, http.StatusNotFound, errors.New("channel not found"))
+			return
+		}
+		shared.WriteError(w, http.StatusInternalServerError, errors.New("failed to get channel"))
+		return
+	}
+
+	// Check if user owns the channel
+	if channel.AccountID.String() != userID {
+		shared.WriteError(w, http.StatusForbidden, errors.New("you do not own this channel"))
+		return
+	}
 
 	// Generate stream key
 	streamKeyPlaintext, err := domain.GenerateStreamKey()
@@ -164,7 +187,7 @@ func (h *LiveStreamHandlers) CreateStream(w http.ResponseWriter, r *http.Request
 	}
 
 	// Build RTMP URL (without exposing full stream key in URL, key is separate)
-	rtmpURL := "rtmp://localhost:1935/" // TODO: Get from config
+	rtmpURL := fmt.Sprintf("rtmp://%s:%d/live", h.config.RTMPHost, h.config.RTMPPort)
 
 	response := StreamResponse{
 		ID:              stream.ID,
@@ -543,7 +566,7 @@ func (h *LiveStreamHandlers) GetStreamStats(w http.ResponseWriter, r *http.Reque
 // RotateStreamKey handles POST /api/v1/channels/{channelId}/stream-keys/rotate
 func (h *LiveStreamHandlers) RotateStreamKey(w http.ResponseWriter, r *http.Request) {
 	// Get user ID from context
-	_, ok := middleware.GetUserIDFromContext(r.Context())
+	userID, ok := middleware.GetUserIDFromContext(r.Context())
 	if !ok {
 		shared.WriteError(w, http.StatusUnauthorized, domain.ErrUnauthorized)
 		return
@@ -557,7 +580,22 @@ func (h *LiveStreamHandlers) RotateStreamKey(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// TODO: Verify user owns the channel
+	// Verify user owns the channel
+	channel, err := h.channelRepo.GetByID(r.Context(), channelID)
+	if err != nil {
+		if err == domain.ErrNotFound {
+			shared.WriteError(w, http.StatusNotFound, errors.New("channel not found"))
+			return
+		}
+		shared.WriteError(w, http.StatusInternalServerError, errors.New("failed to get channel"))
+		return
+	}
+
+	// Check if user owns the channel
+	if channel.AccountID.String() != userID {
+		shared.WriteError(w, http.StatusForbidden, errors.New("you do not own this channel"))
+		return
+	}
 
 	// Get existing active key
 	existingKey, err := h.streamKeyRepo.GetActiveByChannelID(r.Context(), channelID)

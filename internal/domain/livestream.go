@@ -51,6 +51,9 @@ type LiveStream struct {
 	WaitingRoomMessage string     `json:"waiting_room_message,omitempty" db:"waiting_room_message"`
 	ReminderSent       bool       `json:"reminder_sent" db:"reminder_sent"`
 
+	// Chat settings
+	ChatEnabled bool `json:"chat_enabled" db:"chat_enabled"`
+
 	CreatedAt time.Time `json:"created_at" db:"created_at"`
 	UpdatedAt time.Time `json:"updated_at" db:"updated_at"`
 }
@@ -272,6 +275,7 @@ type CreateLiveStreamParams struct {
 	Description string
 	Privacy     string
 	SaveReplay  bool
+	ChatEnabled bool
 }
 
 // Validate checks if the creation parameters are valid
