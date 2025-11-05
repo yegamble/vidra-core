@@ -455,7 +455,8 @@ func (s *service) validateImportRequest(req *ImportRequest) error {
 	if req.SourceURL == "" {
 		return fmt.Errorf("source_url is required")
 	}
-	if err := domain.ValidateURL(req.SourceURL); err != nil {
+	// Use SSRF-protected validation in the service layer before initiating downloads
+	if err := domain.ValidateURLWithSSRFCheck(req.SourceURL); err != nil {
 		return err
 	}
 	if req.TargetPrivacy == "" {

@@ -96,7 +96,8 @@ func (vi *VideoImport) Validate() error {
 	return nil
 }
 
-// ValidateURL validates that a URL is well-formed, uses http/https, and doesn't target private IPs (SSRF protection)
+// ValidateURL validates that a URL is well-formed and uses http/https
+// For SSRF protection during actual downloads, use ValidateURLWithSSRFCheck
 func ValidateURL(rawURL string) error {
 	if rawURL == "" {
 		return errors.New("URL cannot be empty")
@@ -114,6 +115,19 @@ func ValidateURL(rawURL string) error {
 	if u.Host == "" {
 		return errors.New("URL must have a host")
 	}
+
+	return nil
+}
+
+// ValidateURLWithSSRFCheck validates a URL and performs SSRF protection by checking for private IPs
+// This should be called in the service layer before actually initiating downloads
+func ValidateURLWithSSRFCheck(rawURL string) error {
+	// First do basic validation
+	if err := ValidateURL(rawURL); err != nil {
+		return err
+	}
+
+	u, _ := url.Parse(rawURL) // We already validated this above
 
 	// SSRF Protection: Resolve and check for private IP addresses
 	host, _, err := net.SplitHostPort(u.Host)

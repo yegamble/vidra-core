@@ -181,6 +181,11 @@ func (m *MockVideoRepository) UpdateProcessingInfo(ctx context.Context, videoID 
 	return args.Error(0)
 }
 
+func (m *MockVideoRepository) UpdateProcessingInfoWithCIDs(ctx context.Context, videoID string, status domain.ProcessingStatus, outputPaths map[string]string, thumbnailPath, previewPath string, processedCIDs map[string]string, thumbnailCID, previewCID string) error {
+	args := m.Called(ctx, videoID, status, outputPaths, thumbnailPath, previewPath, processedCIDs, thumbnailCID, previewCID)
+	return args.Error(0)
+}
+
 func TestViewsService_TrackView_NewView(t *testing.T) {
 	mockViewsRepo := &MockViewsRepository{}
 	mockVideoRepo := &MockVideoRepository{}

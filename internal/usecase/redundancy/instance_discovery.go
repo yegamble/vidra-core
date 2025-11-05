@@ -81,8 +81,8 @@ func (d *InstanceDiscovery) DiscoverInstance(ctx context.Context, instanceURL st
 		return nil, fmt.Errorf("invalid instance URL: %w", err)
 	}
 
-	// SSRF Protection: Use domain.ValidateURL which includes private IP blocking
-	if err := domain.ValidateURL(instanceURL); err != nil {
+	// SSRF Protection: Use domain.ValidateURLWithSSRFCheck which includes private IP blocking
+	if err := domain.ValidateURLWithSSRFCheck(instanceURL); err != nil {
 		return nil, fmt.Errorf("invalid or unsafe instance URL: %w", err)
 	}
 
