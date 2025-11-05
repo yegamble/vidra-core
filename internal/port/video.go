@@ -15,4 +15,5 @@ type VideoRepository interface {
 	Search(ctx context.Context, req *domain.VideoSearchRequest) ([]*domain.Video, int64, error)
 	UpdateProcessingInfo(ctx context.Context, videoID string, status domain.ProcessingStatus, outputPaths map[string]string, thumbnailPath, previewPath string) error
 	UpdateProcessingInfoWithCIDs(ctx context.Context, videoID string, status domain.ProcessingStatus, outputPaths map[string]string, thumbnailPath, previewPath string, processedCIDs map[string]string, thumbnailCID, previewCID string) error
+	Count(ctx context.Context) (int64, error)
 }
