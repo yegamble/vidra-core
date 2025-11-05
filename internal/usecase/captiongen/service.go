@@ -156,23 +156,25 @@ func (s *service) CreateJob(
 	req *domain.CreateCaptionGenerationJobRequest,
 ) (*domain.CaptionGenerationJob, error) {
 	// Get video to validate it exists and get source file
-	video, err := s.videoRepo.GetByID(ctx, videoID)
+	video, err := s.videoRepo.GetByID(ctx, videoID.String())
 	if err != nil {
 		return nil, fmt.Errorf("failed to get video: %w", err)
 	}
 
-	if video.ProcessingStatus != domain.ProcessingStatusCompleted {
+	if video.Status != domain.StatusCompleted {
 		return nil, fmt.Errorf("video must be fully processed before generating captions")
 	}
 
-	// Determine source file path (use original file or processed file)
-	sourceVideoPath := storage.OriginalVideoPath(s.uploadsDir, video.ID.String(), video.OriginalFilename)
+	// Determine source file path using storage.Paths helper
+	sp := storage.NewPaths(s.uploadsDir)
+	ext := getExtensionFromMimeType(video.MimeType)
+	sourceVideoPath := sp.WebVideoFilePath(video.ID, ext)
 	if _, err := os.Stat(sourceVideoPath); os.IsNotExist(err) {
 		return nil, fmt.Errorf("source video file not found: %s", sourceVideoPath)
 	}
 
 	// Create audio extraction path
-	audioPath := filepath.Join(s.uploadsDir, "temp", fmt.Sprintf("%s_audio.wav", video.ID.String()))
+	audioPath := filepath.Join(s.uploadsDir, "temp", fmt.Sprintf("%s_audio.wav", video.ID))
 
 	// Set defaults
 	modelSize := req.ModelSize
@@ -262,7 +264,7 @@ func (s *service) processJob(ctx context.Context, job *domain.CaptionGenerationJ
 	startTime := time.Now()
 
 	// Step 1: Get video
-	video, err := s.videoRepo.GetByID(ctx, job.VideoID)
+	video, err := s.videoRepo.GetByID(ctx, job.VideoID.String())
 	if err != nil {
 		return fmt.Errorf("failed to get video: %w", err)
 	}
@@ -271,7 +273,9 @@ func (s *service) processJob(ctx context.Context, job *domain.CaptionGenerationJ
 	_ = s.jobRepo.UpdateProgress(ctx, job.ID, 10)
 
 	// Step 2: Extract audio from video
-	sourceVideoPath := storage.OriginalVideoPath(s.uploadsDir, video.ID.String(), video.OriginalFilename)
+	sp := storage.NewPaths(s.uploadsDir)
+	ext := getExtensionFromMimeType(video.MimeType)
+	sourceVideoPath := sp.WebVideoFilePath(video.ID, ext)
 	if err := s.whisperCli.ExtractAudioFromVideo(ctx, sourceVideoPath, job.SourceAudioPath); err != nil {
 		return fmt.Errorf("failed to extract audio: %w", err)
 	}
@@ -308,7 +312,8 @@ func (s *service) processJob(ctx context.Context, job *domain.CaptionGenerationJ
 	_ = s.jobRepo.UpdateProgress(ctx, job.ID, 80)
 
 	// Step 5: Save caption file
-	captionPath := storage.CaptionFilePath(s.uploadsDir, job.VideoID.String(), result.DetectedLanguage, string(job.OutputFormat))
+	sp = storage.NewPaths(s.uploadsDir)
+	captionPath := sp.CaptionFilePath(job.VideoID.String(), result.DetectedLanguage, string(job.OutputFormat))
 	if err := os.MkdirAll(filepath.Dir(captionPath), 0755); err != nil {
 		return fmt.Errorf("failed to create caption directory: %w", err)
 	}
@@ -353,8 +358,8 @@ func (s *service) processJob(ctx context.Context, job *domain.CaptionGenerationJ
 	}
 
 	// Step 8: Update video language if not set
-	if video.Language == nil || *video.Language == "" {
-		video.Language = &result.DetectedLanguage
+	if video.Language == "" {
+		video.Language = result.DetectedLanguage
 		if err := s.videoRepo.Update(ctx, video); err != nil {
 			// Non-fatal: log but don't fail the job
 			fmt.Printf("Warning: failed to update video language: %v\n", err)
@@ -407,4 +412,27 @@ func getLanguageLabel(code string) string {
 
 	// Fallback: capitalize the code
 	return strings.ToUpper(code)
+}
+
+// getExtensionFromMimeType returns the file extension for a given MIME type
+func getExtensionFromMimeType(mimeType string) string {
+	// Common video MIME types
+	mimeToExt := map[string]string{
+		"video/mp4":        ".mp4",
+		"video/mpeg":       ".mpeg",
+		"video/quicktime":  ".mov",
+		"video/x-msvideo":  ".avi",
+		"video/x-matroska": ".mkv",
+		"video/webm":       ".webm",
+		"video/ogg":        ".ogv",
+		"video/3gpp":       ".3gp",
+		"video/x-flv":      ".flv",
+	}
+
+	if ext, ok := mimeToExt[mimeType]; ok {
+		return ext
+	}
+
+	// Fallback to .mp4 if unknown
+	return ".mp4"
 }
