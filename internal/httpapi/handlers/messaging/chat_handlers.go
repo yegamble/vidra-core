@@ -117,7 +117,7 @@ func (h *ChatHandlers) HandleWebSocketConnection(w http.ResponseWriter, r *http.
 
 	// Check if chat is enabled for this stream
 	if !stream.ChatEnabled {
-		shared.WriteError(w, r, fmt.Errorf("chat is disabled for this stream"), http.StatusForbidden)
+		shared.WriteError(w, http.StatusForbidden, errors.New("chat is disabled for this stream"))
 		return
 	}
 
