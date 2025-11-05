@@ -45,8 +45,8 @@ func main() {
 		HLSSegmentDuration: 4,
 	}
 
-	// Create encoding service (pass nil for notification service in test)
-	service := ucenc.NewService(encodingRepo, videoRepo, nil, tempDir, cfg, nil, nil)
+	// Create encoding service (pass nil for notification service and IPFS client in test)
+	service := ucenc.NewService(encodingRepo, videoRepo, nil, tempDir, cfg, nil, nil, nil)
 
 	// Get video metadata
 	metadata, err := testutil.GetVideoMetadata(videoPath)
@@ -284,6 +284,19 @@ func (r *mockVideoRepository) UpdateProcessingInfo(ctx context.Context, videoID 
 		video.OutputPaths = outputPaths
 		video.ThumbnailPath = thumbnailPath
 		video.PreviewPath = previewPath
+		video.UpdatedAt = time.Now()
+	}
+	return nil
+}
+
+func (r *mockVideoRepository) UpdateProcessingInfoWithCIDs(ctx context.Context, videoID string, status domain.ProcessingStatus, outputPaths map[string]string, thumbnailPath, previewPath string, processedCIDs map[string]string, thumbnailCID, previewCID string) error {
+	if video, exists := r.videos[videoID]; exists {
+		video.Status = status
+		video.OutputPaths = outputPaths
+		video.ThumbnailPath = thumbnailPath
+		video.PreviewPath = previewPath
+		video.ProcessedCIDs = processedCIDs
+		video.ThumbnailCID = thumbnailCID
 		video.UpdatedAt = time.Now()
 	}
 	return nil

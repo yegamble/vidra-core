@@ -36,7 +36,7 @@ func TestEncodingService_ProcessMultipleResolutions(t *testing.T) {
 		HLSSegmentDuration: 4,
 	}
 
-	svc := NewService(encodingRepo, videoRepo, nil, tempDir, cfg, nil, nil)
+	svc := NewService(encodingRepo, videoRepo, nil, tempDir, cfg, nil, nil, nil)
 
 	for _, testVideo := range testutil.TestVideos {
 		t.Run(testVideo.Name, func(t *testing.T) {
@@ -361,6 +361,19 @@ func (r *mockVideoRepository) UpdateProcessingInfo(ctx context.Context, videoID 
 		video.OutputPaths = outputPaths
 		video.ThumbnailPath = thumbnailPath
 		video.PreviewPath = previewPath
+		video.UpdatedAt = time.Now()
+	}
+	return nil
+}
+
+func (r *mockVideoRepository) UpdateProcessingInfoWithCIDs(ctx context.Context, videoID string, status domain.ProcessingStatus, outputPaths map[string]string, thumbnailPath, previewPath string, processedCIDs map[string]string, thumbnailCID, previewCID string) error {
+	if video, exists := r.videos[videoID]; exists {
+		video.Status = status
+		video.OutputPaths = outputPaths
+		video.ThumbnailPath = thumbnailPath
+		video.PreviewPath = previewPath
+		video.ProcessedCIDs = processedCIDs
+		video.ThumbnailCID = thumbnailCID
 		video.UpdatedAt = time.Now()
 	}
 	return nil

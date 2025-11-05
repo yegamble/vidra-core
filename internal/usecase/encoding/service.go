@@ -15,6 +15,7 @@ import (
 
 	"athena/internal/config"
 	"athena/internal/domain"
+	"athena/internal/ipfs"
 	"athena/internal/metrics"
 	"athena/internal/port"
 	"athena/internal/storage"
@@ -49,10 +50,11 @@ type service struct {
 	cfg             *config.Config
 	atproto         Publisher
 	fedEnq          JobEnqueuer
+	ipfsClient      *ipfs.Client
 }
 
-func NewService(repo port.EncodingRepository, videoRepo port.VideoRepository, notificationSvc ucn.Service, uploadsDir string, cfg *config.Config, atproto Publisher, enq JobEnqueuer) Service {
-	return &service{repo: repo, videoRepo: videoRepo, notificationSvc: notificationSvc, uploadsDir: uploadsDir, cfg: cfg, atproto: atproto, fedEnq: enq}
+func NewService(repo port.EncodingRepository, videoRepo port.VideoRepository, notificationSvc ucn.Service, uploadsDir string, cfg *config.Config, atproto Publisher, enq JobEnqueuer, ipfsClient *ipfs.Client) Service {
+	return &service{repo: repo, videoRepo: videoRepo, notificationSvc: notificationSvc, uploadsDir: uploadsDir, cfg: cfg, atproto: atproto, fedEnq: enq, ipfsClient: ipfsClient}
 }
 
 // WithFederationEnqueuer optionally attaches a federation job enqueuer to the encoding service.
@@ -238,14 +240,26 @@ func (s *service) processJob(ctx context.Context, job *domain.EncodingJob) error
 		return fmt.Errorf("master playlist: %w", err)
 	}
 
+	// Upload variants to IPFS (if enabled)
+	processedCIDs, err := s.uploadVariantsToIPFS(ctx, job, outBaseDir)
+	if err != nil {
+		// Log error but don't fail the job - local files are still available
+		// In production, you'd use a proper logger here
+		fmt.Printf("Warning: Failed to upload variants to IPFS: %v\n", err)
+		processedCIDs = make(map[string]string) // Empty map
+	}
+
 	// Generate media assets (thumbnail and preview)
 	thumb, preview, err := s.generateMediaAssets(ctx, job, &sp, update)
 	if err != nil {
 		return err
 	}
 
+	// Upload thumbnail and preview to IPFS (if enabled)
+	thumbCID, previewCID := s.uploadMediaToIPFS(ctx, thumb, preview)
+
 	// Update video processing info
-	if err := s.updateVideoInfo(ctx, job, outBaseDir, thumb, preview); err != nil {
+	if err := s.updateVideoInfo(ctx, job, outBaseDir, thumb, preview, processedCIDs, thumbCID, previewCID); err != nil {
 		return err
 	}
 
@@ -300,8 +314,108 @@ func (s *service) generateMediaAssets(ctx context.Context, job *domain.EncodingJ
 	return thumb, preview, nil
 }
 
+// uploadVariantsToIPFS uploads all resolution variants to IPFS
+func (s *service) uploadVariantsToIPFS(ctx context.Context, job *domain.EncodingJob, outBaseDir string) (map[string]string, error) {
+	processedCIDs := make(map[string]string)
+
+	// Skip if IPFS is not enabled
+	if s.ipfsClient == nil || !s.ipfsClient.IsEnabled() {
+		return processedCIDs, nil
+	}
+
+	// Upload master playlist
+	masterPath := filepath.Join(outBaseDir, "master.m3u8")
+	if _, err := os.Stat(masterPath); err == nil {
+		cid, err := s.ipfsClient.AddAndPin(ctx, masterPath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to upload master playlist: %w", err)
+		}
+		processedCIDs["master"] = cid
+	}
+
+	// Upload each resolution variant directory
+	// Using goroutines for concurrent uploads
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	errCh := make(chan error, len(job.TargetResolutions))
+
+	for _, res := range job.TargetResolutions {
+		height, ok := domain.HeightForResolution(res)
+		if !ok {
+			continue
+		}
+
+		wg.Add(1)
+		go func(resolution string, h int) {
+			defer wg.Done()
+
+			resDir := filepath.Join(outBaseDir, fmt.Sprintf("%dp", h))
+
+			// Verify directory exists
+			if _, err := os.Stat(resDir); os.IsNotExist(err) {
+				errCh <- fmt.Errorf("resolution directory not found: %s", resDir)
+				return
+			}
+
+			// Upload directory to IPFS
+			cid, err := s.ipfsClient.AddDirectoryAndPin(ctx, resDir)
+			if err != nil {
+				errCh <- fmt.Errorf("failed to upload %s variant: %w", resolution, err)
+				return
+			}
+
+			// Store CID
+			mu.Lock()
+			processedCIDs[resolution] = cid
+			mu.Unlock()
+		}(res, height)
+	}
+
+	wg.Wait()
+	close(errCh)
+
+	// Check for errors
+	for err := range errCh {
+		if err != nil {
+			return processedCIDs, err
+		}
+	}
+
+	return processedCIDs, nil
+}
+
+// uploadMediaToIPFS uploads thumbnail and preview to IPFS
+func (s *service) uploadMediaToIPFS(ctx context.Context, thumbPath, previewPath string) (thumbCID, previewCID string) {
+	// Skip if IPFS is not enabled
+	if s.ipfsClient == nil || !s.ipfsClient.IsEnabled() {
+		return "", ""
+	}
+
+	// Upload thumbnail (best-effort)
+	if thumbPath != "" {
+		if _, err := os.Stat(thumbPath); err == nil {
+			cid, err := s.ipfsClient.AddAndPin(ctx, thumbPath)
+			if err == nil {
+				thumbCID = cid
+			}
+		}
+	}
+
+	// Upload preview (best-effort)
+	if previewPath != "" {
+		if _, err := os.Stat(previewPath); err == nil {
+			cid, err := s.ipfsClient.AddAndPin(ctx, previewPath)
+			if err == nil {
+				previewCID = cid
+			}
+		}
+	}
+
+	return thumbCID, previewCID
+}
+
 // updateVideoInfo updates the video processing info in the repository
-func (s *service) updateVideoInfo(ctx context.Context, job *domain.EncodingJob, outBaseDir, thumb, preview string) error {
+func (s *service) updateVideoInfo(ctx context.Context, job *domain.EncodingJob, outBaseDir, thumb, preview string, processedCIDs map[string]string, thumbCID, previewCID string) error {
 	outputs := make(map[string]string)
 	outputs["master"] = filepath.ToSlash(filepath.Join(outBaseDir, "master.m3u8"))
 	for _, res := range job.TargetResolutions {
@@ -309,7 +423,9 @@ func (s *service) updateVideoInfo(ctx context.Context, job *domain.EncodingJob, 
 			outputs[res] = filepath.ToSlash(filepath.Join(outBaseDir, fmt.Sprintf("%dp/stream.m3u8", h)))
 		}
 	}
-	return s.videoRepo.UpdateProcessingInfo(ctx, job.VideoID, domain.StatusCompleted, outputs, filepath.ToSlash(thumb), filepath.ToSlash(preview))
+
+	// Update with IPFS CIDs
+	return s.videoRepo.UpdateProcessingInfoWithCIDs(ctx, job.VideoID, domain.StatusCompleted, outputs, filepath.ToSlash(thumb), filepath.ToSlash(preview), processedCIDs, thumbCID, previewCID)
 }
 
 // triggerNotifications triggers notifications for video processing completion
