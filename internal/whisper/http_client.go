@@ -48,7 +48,7 @@ func (c *httpClient) Transcribe(ctx context.Context, audioPath string, targetLan
 	if err != nil {
 		return nil, fmt.Errorf("failed to open audio file: %w", err)
 	}
-	defer audioFile.Close()
+	defer func() { _ = audioFile.Close() }()
 
 	// Create multipart form
 	var requestBody bytes.Buffer
@@ -99,7 +99,7 @@ func (c *httpClient) Transcribe(ctx context.Context, audioPath string, targetLan
 	if err != nil {
 		return nil, fmt.Errorf("failed to send request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	// Read response
 	body, err := io.ReadAll(resp.Body)
@@ -169,9 +169,9 @@ func (c *httpClient) ExtractAudioFromVideo(ctx context.Context, videoPath string
 		"-i", videoPath,
 		"-vn",                  // No video
 		"-acodec", "pcm_s16le", // PCM 16-bit
-		"-ar", "16000",         // 16kHz sample rate
-		"-ac", "1",             // Mono
-		"-y",                   // Overwrite output
+		"-ar", "16000", // 16kHz sample rate
+		"-ac", "1", // Mono
+		"-y", // Overwrite output
 		outputPath,
 	}
 
@@ -228,8 +228,8 @@ func (c *httpClient) FormatToSRT(result *TranscriptionResult) (string, error) {
 
 // WhisperHTTPResponse represents the JSON response from HTTP Whisper service
 type WhisperHTTPResponse struct {
-	Text     string  `json:"text"`
-	Language string  `json:"language"`
+	Text     string `json:"text"`
+	Language string `json:"language"`
 	Segments []struct {
 		ID               int     `json:"id"`
 		Seek             int     `json:"seek"`

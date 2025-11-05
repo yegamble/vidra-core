@@ -149,17 +149,17 @@ type Config struct {
 	MetricsAddr     string
 
 	// Caption Generation Configuration
-	EnableCaptionGeneration     bool   // Enable automatic caption generation after encoding
-	WhisperProvider             string // 'local' or 'openai-api'
-	WhisperModelSize            string // 'tiny', 'base', 'small', 'medium', 'large'
-	WhisperCppPath              string // Path to whisper.cpp binary (for local provider)
-	WhisperAPIURL               string // URL for HTTP Whisper service (for local provider with HTTP API)
-	WhisperModelsDir            string // Directory containing Whisper models (for local provider)
-	WhisperOpenAIAPIKey         string // OpenAI API key (for openai-api provider)
-	WhisperTempDir              string // Temporary directory for audio extraction
-	CaptionGenerationWorkers    int    // Number of concurrent caption generation workers
-	AutoCaptionFormat           string // Default caption format: 'vtt' or 'srt'
-	AutoCaptionLanguage         string // Default language hint (empty = auto-detect)
+	EnableCaptionGeneration  bool   // Enable automatic caption generation after encoding
+	WhisperProvider          string // 'local' or 'openai-api'
+	WhisperModelSize         string // 'tiny', 'base', 'small', 'medium', 'large'
+	WhisperCppPath           string // Path to whisper.cpp binary (for local provider)
+	WhisperAPIURL            string // URL for HTTP Whisper service (for local provider with HTTP API)
+	WhisperModelsDir         string // Directory containing Whisper models (for local provider)
+	WhisperOpenAIAPIKey      string // OpenAI API key (for openai-api provider)
+	WhisperTempDir           string // Temporary directory for audio extraction
+	CaptionGenerationWorkers int    // Number of concurrent caption generation workers
+	AutoCaptionFormat        string // Default caption format: 'vtt' or 'srt'
+	AutoCaptionLanguage      string // Default language hint (empty = auto-detect)
 
 	// ATProto Integration
 	EnableATProto                 bool

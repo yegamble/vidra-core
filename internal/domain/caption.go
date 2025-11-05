@@ -99,8 +99,8 @@ const (
 type WhisperProvider string
 
 const (
-	WhisperProviderLocal    WhisperProvider = "local"      // Local whisper.cpp installation
-	WhisperProviderOpenAI   WhisperProvider = "openai-api" // OpenAI Whisper API
+	WhisperProviderLocal  WhisperProvider = "local"      // Local whisper.cpp installation
+	WhisperProviderOpenAI WhisperProvider = "openai-api" // OpenAI Whisper API
 )
 
 // CaptionGenerationJob represents a job to automatically generate captions for a video

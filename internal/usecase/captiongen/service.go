@@ -279,7 +279,7 @@ func (s *service) processJob(ctx context.Context, job *domain.CaptionGenerationJ
 	if err := s.whisperCli.ExtractAudioFromVideo(ctx, sourceVideoPath, job.SourceAudioPath); err != nil {
 		return fmt.Errorf("failed to extract audio: %w", err)
 	}
-	defer os.Remove(job.SourceAudioPath) // Cleanup temp audio file
+	defer func() { _ = os.Remove(job.SourceAudioPath) }() // Cleanup temp audio file
 
 	// Update progress: 30%
 	_ = s.jobRepo.UpdateProgress(ctx, job.ID, 30)

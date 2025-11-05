@@ -254,12 +254,12 @@ type GenerateCaptionsRequest struct {
 }
 
 type GenerateCaptionsResponse struct {
-	JobID     uuid.UUID `json:"job_id"`
-	VideoID   uuid.UUID `json:"video_id"`
-	Status    string    `json:"status"`
-	Progress  int       `json:"progress"`
+	JobID     uuid.UUID   `json:"job_id"`
+	VideoID   uuid.UUID   `json:"video_id"`
+	Status    string      `json:"status"`
+	Progress  int         `json:"progress"`
 	CreatedAt interface{} `json:"created_at"`
-	Message   string    `json:"message"`
+	Message   string      `json:"message"`
 }
 
 type ListCaptionGenerationJobsResponse struct {

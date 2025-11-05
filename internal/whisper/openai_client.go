@@ -57,7 +57,7 @@ func (c *openAIClient) Transcribe(ctx context.Context, audioPath string, targetL
 	if err != nil {
 		return nil, fmt.Errorf("failed to open audio file: %w", err)
 	}
-	defer audioFile.Close()
+	defer func() { _ = audioFile.Close() }()
 
 	// Create multipart form
 	var requestBody bytes.Buffer
@@ -113,7 +113,7 @@ func (c *openAIClient) Transcribe(ctx context.Context, audioPath string, targetL
 	if err != nil {
 		return nil, fmt.Errorf("failed to send request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	// Read response
 	body, err := io.ReadAll(resp.Body)
@@ -169,12 +169,12 @@ func (c *openAIClient) ExtractAudioFromVideo(ctx context.Context, videoPath stri
 	// FFmpeg command to extract audio as MP3 for OpenAI API
 	args := []string{
 		"-i", videoPath,
-		"-vn",           // No video
+		"-vn",            // No video
 		"-acodec", "mp3", // MP3 codec (supported by OpenAI)
-		"-ar", "16000",  // 16kHz sample rate
-		"-ac", "1",      // Mono
-		"-b:a", "64k",   // 64kbps bitrate (reduces file size)
-		"-y",            // Overwrite output
+		"-ar", "16000", // 16kHz sample rate
+		"-ac", "1", // Mono
+		"-b:a", "64k", // 64kbps bitrate (reduces file size)
+		"-y", // Overwrite output
 		outputPath,
 	}
 
