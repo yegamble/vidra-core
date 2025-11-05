@@ -83,8 +83,8 @@ func (c *localClient) Transcribe(ctx context.Context, audioPath string, targetLa
 	for i, segment := range whisperOutput.Transcription {
 		result.Segments = append(result.Segments, TranscriptionSegment{
 			Index:      i,
-			Start:      segment.Timestamps.From / 100.0, // Convert centiseconds to seconds
-			End:        segment.Timestamps.To / 100.0,
+			Start:      float64(segment.Timestamps.From) / 100.0, // Convert centiseconds to seconds
+			End:        float64(segment.Timestamps.To) / 100.0,
 			Text:       strings.TrimSpace(segment.Text),
 			Confidence: segment.GetConfidence(),
 		})

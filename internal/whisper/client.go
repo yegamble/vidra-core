@@ -50,6 +50,7 @@ type Config struct {
 	ModelSize      domain.WhisperModelSize
 	OpenAIAPIKey   string
 	WhisperCppPath string // Path to whisper.cpp binary
+	WhisperAPIURL  string // URL for HTTP Whisper service
 	ModelsDir      string // Directory containing Whisper models
 	FFmpegPath     string // Path to FFmpeg binary
 	TempDir        string // Directory for temporary files
@@ -63,6 +64,10 @@ func NewClient(cfg *Config) (Client, error) {
 
 	switch cfg.Provider {
 	case domain.WhisperProviderLocal:
+		// Check if HTTP API URL is provided
+		if cfg.WhisperAPIURL != "" {
+			return newHTTPClient(cfg)
+		}
 		return newLocalClient(cfg)
 	case domain.WhisperProviderOpenAI:
 		return newOpenAIClient(cfg)
@@ -87,17 +92,26 @@ func validateConfig(cfg *Config) error {
 
 	switch cfg.Provider {
 	case domain.WhisperProviderLocal:
-		if cfg.WhisperCppPath == "" {
-			return fmt.Errorf("whisper.cpp path is required for local provider")
-		}
-		if cfg.ModelsDir == "" {
-			return fmt.Errorf("models directory is required for local provider")
-		}
-		if _, err := os.Stat(cfg.WhisperCppPath); os.IsNotExist(err) {
-			return fmt.Errorf("whisper.cpp binary not found at: %s", cfg.WhisperCppPath)
-		}
-		if _, err := os.Stat(cfg.ModelsDir); os.IsNotExist(err) {
-			return fmt.Errorf("models directory not found at: %s", cfg.ModelsDir)
+		// If HTTP API URL is provided, use HTTP client
+		if cfg.WhisperAPIURL != "" {
+			// HTTP client validation
+			if cfg.WhisperAPIURL == "" {
+				return fmt.Errorf("whisper API URL is required for HTTP-based local provider")
+			}
+		} else {
+			// whisper.cpp validation
+			if cfg.WhisperCppPath == "" {
+				return fmt.Errorf("whisper.cpp path is required for local provider")
+			}
+			if cfg.ModelsDir == "" {
+				return fmt.Errorf("models directory is required for local provider")
+			}
+			if _, err := os.Stat(cfg.WhisperCppPath); os.IsNotExist(err) {
+				return fmt.Errorf("whisper.cpp binary not found at: %s", cfg.WhisperCppPath)
+			}
+			if _, err := os.Stat(cfg.ModelsDir); os.IsNotExist(err) {
+				return fmt.Errorf("models directory not found at: %s", cfg.ModelsDir)
+			}
 		}
 
 	case domain.WhisperProviderOpenAI:
