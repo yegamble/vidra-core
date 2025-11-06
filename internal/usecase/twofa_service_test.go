@@ -330,7 +330,8 @@ func TestTwoFAService_VerifyCode(t *testing.T) {
 		mockBackupCodeRepo.On("GetUnusedForUser", ctx, "user-123").Return([]*domain.TwoFABackupCode{}, nil)
 
 		service := NewTwoFAService(mockUserRepo, mockBackupCodeRepo, "TestApp")
-		err := service.VerifyCode(ctx, "user-123", "000000")
+		// Use an 8-character invalid code to trigger backup code check
+		err := service.VerifyCode(ctx, "user-123", "INVALID1")
 
 		assert.Error(t, err)
 		assert.Equal(t, domain.ErrTwoFAInvalidCode, err)
@@ -350,8 +351,8 @@ func TestTwoFAService_Disable(t *testing.T) {
 		code, err := totp.GenerateCode(secret, time.Now())
 		assert.NoError(t, err)
 
-		// This is the bcrypt hash of "password123"
-		passwordHash := "$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy"
+		// This is the bcrypt hash of "password123" (verified)
+		passwordHash := "$2a$10$az.56lD0eF3Zl4n3xQ3UW.dLiokl2S5hUvVHeklFrcA.qqrA3odVq"
 
 		user := &domain.User{
 			ID:           "user-123",
@@ -377,7 +378,8 @@ func TestTwoFAService_Disable(t *testing.T) {
 		mockUserRepo := new(MockTwoFAUserRepo)
 		mockBackupCodeRepo := new(MockTwoFABackupCodeRepository)
 
-		passwordHash := "$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy"
+		// This is the bcrypt hash of "password123" (verified)
+		passwordHash := "$2a$10$az.56lD0eF3Zl4n3xQ3UW.dLiokl2S5hUvVHeklFrcA.qqrA3odVq"
 
 		user := &domain.User{
 			ID:           "user-123",
