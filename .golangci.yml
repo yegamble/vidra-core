@@ -1,5 +1,3 @@
-version: "2"
-
 run:
   tests: false
   timeout: 10m
@@ -17,9 +15,6 @@ linters:
     - misspell
     - unconvert
     - whitespace
-
-formatters:
-  enable:
     - goimports
     - gofmt
 

@@ -74,9 +74,12 @@ jobs:
         run: |
           echo "Generating API documentation from OpenAPI spec..."
           # Check if OpenAPI spec exists
-          if [ -f "openapi.yaml" ]; then
-            echo "Found openapi.yaml, generating documentation..."
+          if [ -f "api/openapi.yaml" ]; then
+            echo "Found api/openapi.yaml, generating documentation..."
             # Use Redocly to build documentation
+            npx @redocly/cli build-docs api/openapi.yaml -o docs/api/index.html || echo "Documentation generation failed"
+          elif [ -f "openapi.yaml" ]; then
+            echo "Found openapi.yaml, generating documentation..."
             npx @redocly/cli build-docs openapi.yaml -o docs/api/index.html || echo "Documentation generation failed"
           elif [ -f "openapi.json" ]; then
             echo "Found openapi.json, generating documentation..."
