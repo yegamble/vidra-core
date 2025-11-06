@@ -205,7 +205,7 @@ func (r *videoRepository) GetByID(ctx context.Context, id string) (*domain.Video
 		// Also treat invalid UUID errors as "not found"
 		errStr := err.Error()
 		if strings.Contains(errStr, "invalid input syntax for type uuid") ||
-		   strings.Contains(errStr, "invalid UUID") {
+			strings.Contains(errStr, "invalid UUID") {
 			return nil, domain.NewDomainError("VIDEO_NOT_FOUND", "Video not found")
 		}
 
