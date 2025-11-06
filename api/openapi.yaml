@@ -1,7 +1,23 @@
 openapi: 3.0.3
 info:
   title: Athena Backend API (PeerTube‑Inspired)
-  description: Athena’s API designed with PeerTube’s patterns in mind — native resources and shapes without a compatibility facade.
+  description: |
+    Athena's API designed with PeerTube's patterns in mind — native resources and shapes without a compatibility facade.
+
+    ## Additional API Documentation
+
+    This specification covers core authentication, OAuth2, video management, and user messaging.
+    For specialized features, see:
+
+    - **Two-Factor Authentication (2FA):** See `openapi_auth_2fa.yaml` for TOTP setup, backup codes, and verification
+    - **Video Uploads:** See `openapi_uploads.yaml` for chunked uploads and encoding status
+    - **Analytics:** See `openapi_analytics.yaml` for view tracking and trending
+    - **Live Streaming:** See `openapi_livestreaming.yaml` for RTMP ingest and HLS delivery
+    - **Video Imports:** See `openapi_imports.yaml` for external URL imports
+    - **Captions:** See `openapi_captions.yaml` for subtitle management
+    - **Federation:** See `openapi_federation.yaml` and `openapi_federation_hardening.yaml`
+    - **Plugins:** See `openapi_plugins.yaml` for plugin system
+    - **Other Features:** See README at `/api/README.md` for complete documentation index
   version: 1.0.0
   contact:
     name: Athena Team

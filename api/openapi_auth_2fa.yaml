@@ -1,0 +1,674 @@
+openapi: 3.0.3
+info:
+  title: Athena Two-Factor Authentication (2FA) API
+  description: |
+    This document describes the Two-Factor Authentication (2FA) endpoints for Athena.
+
+    ## Overview
+
+    Athena implements Time-based One-Time Password (TOTP) authentication following RFC 6238
+    for enhanced account security. Users can enable 2FA to require both password and a
+    time-sensitive code during login.
+
+    ## Features
+
+    - **TOTP Support**: Compatible with standard authenticator apps (Google Authenticator, Authy, 1Password, etc.)
+    - **Backup Codes**: 10 one-time recovery codes generated at setup
+    - **QR Code Generation**: Easy setup via QR code scanning
+    - **Secure Storage**: Secrets encrypted at rest, backup codes hashed with bcrypt
+    - **Login Integration**: Seamless integration with existing authentication flow
+
+    ## 2FA Setup Flow
+
+    1. **Initiate Setup** (`POST /api/v1/auth/2fa/setup`)
+       - User requests to enable 2FA
+       - Server generates TOTP secret and 10 backup codes
+       - Returns QR code URI and plaintext backup codes (only time they're shown)
+
+    2. **Verify Setup** (`POST /api/v1/auth/2fa/verify-setup`)
+       - User scans QR code in authenticator app
+       - User submits 6-digit code from app
+       - Server verifies code and enables 2FA
+
+    3. **Save Backup Codes** (User responsibility)
+       - User must save backup codes in secure location
+       - Codes are hashed and cannot be retrieved later
+
+    ## 2FA Login Flow
+
+    1. User submits credentials (`POST /api/v1/auth/login`)
+    2. If 2FA is enabled but no code provided → `403 Forbidden` with `2FA_REQUIRED` error
+    3. User submits credentials + `twofa_code` (6-digit TOTP or 8-char backup code)
+    4. Server verifies code → returns access/refresh tokens on success
+
+    ## 2FA Disable Flow
+
+    1. **Disable 2FA** (`POST /api/v1/auth/2fa/disable`)
+       - User must provide current password
+       - User must provide valid 2FA code or backup code
+       - Server verifies both and disables 2FA
+       - All backup codes are deleted
+
+    ## Backup Code Management
+
+    - **Regenerate** (`POST /api/v1/auth/2fa/regenerate-backup-codes`)
+      - Generates 10 new backup codes
+      - Requires valid 2FA code to authorize
+      - Replaces all existing backup codes
+
+    ## Security Considerations
+
+    - All 2FA endpoints require JWT authentication (except login)
+    - TOTP uses 30-second time step, 6 digits, SHA-1 algorithm (RFC 6238 compliant)
+    - Backup codes are 8 characters (base32), human-readable format: `XXXX-XXXX`
+    - Backup codes are hashed with bcrypt before storage
+    - Used backup codes are marked but not deleted (for audit trail)
+    - Code cleanup: spaces/dashes removed, case-insensitive matching
+
+    ## Error Codes
+
+    - `2FA_REQUIRED` - Login requires 2FA code
+    - `INVALID_2FA_CODE` - Code verification failed
+    - `2FA_ALREADY_ENABLED` - Attempted setup when already enabled
+    - `2FA_NOT_ENABLED` - Attempted operation requiring 2FA when not enabled
+    - `2FA_SETUP_INCOMPLETE` - Attempted to use 2FA before completing setup
+    - `2FA_BACKUP_CODE_USED` - Attempted to reuse a backup code
+
+  version: 1.0.0
+  contact:
+    name: Athena API Support
+    url: https://github.com/yegamble/athena
+
+servers:
+  - url: http://localhost:8080
+    description: Local development server
+  - url: https://api.athena.example.com
+    description: Production server
+
+tags:
+  - name: 2FA Setup
+    description: Endpoints for enabling and configuring two-factor authentication
+  - name: 2FA Management
+    description: Endpoints for managing active 2FA settings
+  - name: 2FA Status
+    description: Endpoints for checking 2FA status
+
+paths:
+  /api/v1/auth/2fa/setup:
+    post:
+      summary: Initiate 2FA Setup
+      description: |
+        Generates a new TOTP secret and backup codes for the authenticated user.
+
+        **Important:** This endpoint returns plaintext backup codes. This is the ONLY
+        time these codes will be shown to the user. They must be saved securely.
+
+        **Prerequisites:**
+        - User must be authenticated (JWT token required)
+        - 2FA must not already be enabled
+
+        **Response:**
+        - TOTP secret (for manual entry)
+        - QR code URI (otpauth:// format for scanning)
+        - 10 plaintext backup codes in `XXXX-XXXX` format
+
+        **Next Step:**
+        User should scan QR code in authenticator app and call `/verify-setup` with
+        a code from the app to complete setup.
+
+      operationId: setupTwoFA
+      tags:
+        - 2FA Setup
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: 2FA setup initiated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TwoFASetupResponse'
+              example:
+                secret: JBSWY3DPEHPK3PXP
+                qr_code_uri: "otpauth://totp/Athena:user@example.com?secret=JBSWY3DPEHPK3PXP&issuer=Athena"
+                backup_codes:
+                  - "ABCD-EFGH"
+                  - "IJKL-MNOP"
+                  - "QRST-UVWX"
+                  - "YZ12-3456"
+                  - "7890-ABCD"
+                  - "EFGH-IJKL"
+                  - "MNOP-QRST"
+                  - "UVWX-YZ12"
+                  - "3456-7890"
+                  - "ABCD-EFGH"
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          description: 2FA already enabled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: "2FA is already enabled for this account"
+                code: "2FA_ALREADY_ENABLED"
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/auth/2fa/verify-setup:
+    post:
+      summary: Verify and Enable 2FA
+      description: |
+        Verifies the TOTP code from the user's authenticator app and enables 2FA.
+
+        **Prerequisites:**
+        - User must be authenticated (JWT token required)
+        - User must have initiated setup via `/setup` endpoint
+        - 2FA must not already be enabled
+
+        **Code Format:**
+        - 6-digit numeric code from authenticator app
+        - Must be current (within 30-second time window)
+
+        **On Success:**
+        - 2FA is permanently enabled for the account
+        - `twofa_enabled` flag set to `true`
+        - `twofa_confirmed_at` timestamp recorded
+        - User must provide 2FA code on all future logins
+
+      operationId: verifyTwoFASetup
+      tags:
+        - 2FA Setup
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TwoFAVerifySetupRequest'
+            example:
+              code: "123456"
+      responses:
+        '200':
+          description: 2FA enabled successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TwoFAVerifySetupResponse'
+              example:
+                message: "Two-factor authentication enabled successfully"
+                enabled: true
+        '400':
+          description: Invalid request (missing or invalid code)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                invalid_code:
+                  summary: Invalid code format
+                  value:
+                    error: "Code must be 6 digits"
+                    code: "INVALID_REQUEST"
+                verification_failed:
+                  summary: Code verification failed
+                  value:
+                    error: "Invalid or expired 2FA code"
+                    code: "INVALID_2FA_CODE"
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          description: 2FA already enabled or setup not initiated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                already_enabled:
+                  summary: 2FA already enabled
+                  value:
+                    error: "2FA is already enabled for this account"
+                    code: "2FA_ALREADY_ENABLED"
+                setup_not_initiated:
+                  summary: Setup not completed
+                  value:
+                    error: "2FA setup must be initiated first"
+                    code: "2FA_SETUP_INCOMPLETE"
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/auth/2fa/disable:
+    post:
+      summary: Disable 2FA
+      description: |
+        Disables two-factor authentication for the authenticated user.
+
+        **Prerequisites:**
+        - User must be authenticated (JWT token required)
+        - 2FA must currently be enabled
+
+        **Required:**
+        - Current account password (for identity verification)
+        - Valid 2FA code (TOTP from authenticator app OR unused backup code)
+
+        **On Success:**
+        - 2FA is disabled
+        - All backup codes are deleted
+        - `twofa_enabled` flag set to `false`
+        - TOTP secret is cleared
+        - User can login with password only
+
+        **Security:**
+        Both password AND 2FA code are required to prevent unauthorized disabling.
+
+      operationId: disableTwoFA
+      tags:
+        - 2FA Management
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TwoFADisableRequest'
+            example:
+              password: "MySecurePassword123!"
+              code: "123456"
+      responses:
+        '200':
+          description: 2FA disabled successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TwoFADisableResponse'
+              example:
+                message: "Two-factor authentication disabled successfully"
+                enabled: false
+        '400':
+          description: Invalid request or verification failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                missing_fields:
+                  summary: Missing required fields
+                  value:
+                    error: "Password and code are required"
+                    code: "INVALID_REQUEST"
+                invalid_password:
+                  summary: Invalid password
+                  value:
+                    error: "Invalid password"
+                    code: "INVALID_CREDENTIALS"
+                invalid_code:
+                  summary: Invalid 2FA code
+                  value:
+                    error: "Invalid or expired 2FA code"
+                    code: "INVALID_2FA_CODE"
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: 2FA not enabled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: "2FA is not enabled for this account"
+                code: "2FA_NOT_ENABLED"
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/auth/2fa/regenerate-backup-codes:
+    post:
+      summary: Regenerate Backup Codes
+      description: |
+        Generates 10 new backup codes and invalidates all existing backup codes.
+
+        **Prerequisites:**
+        - User must be authenticated (JWT token required)
+        - 2FA must be enabled
+
+        **Required:**
+        - Valid 2FA code (TOTP from authenticator app)
+
+        **Important:** This endpoint returns plaintext backup codes. This is the ONLY
+        time these codes will be shown to the user. They must be saved securely.
+
+        **On Success:**
+        - 10 new backup codes generated in `XXXX-XXXX` format
+        - All previous backup codes (used and unused) are deleted
+        - New codes are hashed with bcrypt before storage
+
+        **Use Cases:**
+        - User lost their backup codes
+        - User suspects backup codes were compromised
+        - User has used most/all backup codes and wants fresh set
+
+      operationId: regenerateBackupCodes
+      tags:
+        - 2FA Management
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TwoFARegenerateBackupCodesRequest'
+            example:
+              code: "123456"
+      responses:
+        '200':
+          description: Backup codes regenerated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TwoFARegenerateBackupCodesResponse'
+              example:
+                backup_codes:
+                  - "WXYZ-9876"
+                  - "STUV-5432"
+                  - "PQRS-1098"
+                  - "LMNO-7654"
+                  - "HIJK-3210"
+                  - "DEFG-9876"
+                  - "ZABC-5432"
+                  - "VWXY-1098"
+                  - "RSTU-7654"
+                  - "NOPQ-3210"
+                message: "Backup codes regenerated successfully. Save these codes securely."
+        '400':
+          description: Invalid request or verification failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                missing_code:
+                  summary: Missing 2FA code
+                  value:
+                    error: "2FA code is required"
+                    code: "INVALID_REQUEST"
+                invalid_code:
+                  summary: Invalid 2FA code
+                  value:
+                    error: "Invalid or expired 2FA code"
+                    code: "INVALID_2FA_CODE"
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: 2FA not enabled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: "2FA is not enabled for this account"
+                code: "2FA_NOT_ENABLED"
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/auth/2fa/status:
+    get:
+      summary: Get 2FA Status
+      description: |
+        Returns the current 2FA status for the authenticated user.
+
+        **Prerequisites:**
+        - User must be authenticated (JWT token required)
+
+        **Response:**
+        - Whether 2FA is enabled
+        - When 2FA was enabled (if applicable)
+
+        **Use Cases:**
+        - Check if user has 2FA enabled before showing setup/disable options
+        - Display security settings in user profile
+        - Conditional UI rendering based on 2FA status
+
+      operationId: getTwoFAStatus
+      tags:
+        - 2FA Status
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: 2FA status retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TwoFAStatusResponse'
+              examples:
+                enabled:
+                  summary: 2FA is enabled
+                  value:
+                    enabled: true
+                    confirmed_at: "2025-01-15T10:30:00Z"
+                disabled:
+                  summary: 2FA is disabled
+                  value:
+                    enabled: false
+                    confirmed_at: null
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        JWT access token obtained from `/api/v1/auth/login` or `/api/v1/auth/refresh`.
+
+        Include in Authorization header:
+        ```
+        Authorization: Bearer <access_token>
+        ```
+
+  schemas:
+    TwoFASetupResponse:
+      type: object
+      required:
+        - secret
+        - qr_code_uri
+        - backup_codes
+      properties:
+        secret:
+          type: string
+          description: Base32-encoded TOTP secret for manual entry
+          example: "JBSWY3DPEHPK3PXP"
+          pattern: "^[A-Z2-7]{16,32}$"
+        qr_code_uri:
+          type: string
+          format: uri
+          description: |
+            otpauth:// URI for QR code generation. Can be rendered as QR code
+            using any QR code library on the client side.
+          example: "otpauth://totp/Athena:user@example.com?secret=JBSWY3DPEHPK3PXP&issuer=Athena"
+        backup_codes:
+          type: array
+          description: |
+            10 one-time recovery codes. Each code can be used once if the user
+            loses access to their authenticator app. These codes are shown in
+            plaintext ONLY at generation time and cannot be retrieved later.
+          minItems: 10
+          maxItems: 10
+          items:
+            type: string
+            pattern: "^[A-Z0-9]{4}-[A-Z0-9]{4}$"
+            example: "ABCD-EFGH"
+
+    TwoFAVerifySetupRequest:
+      type: object
+      required:
+        - code
+      properties:
+        code:
+          type: string
+          description: |
+            6-digit TOTP code from the user's authenticator app.
+            Spaces and dashes are automatically removed during validation.
+          example: "123456"
+          pattern: "^[0-9]{6}$"
+          minLength: 6
+          maxLength: 6
+
+    TwoFAVerifySetupResponse:
+      type: object
+      required:
+        - message
+        - enabled
+      properties:
+        message:
+          type: string
+          description: Success message
+          example: "Two-factor authentication enabled successfully"
+        enabled:
+          type: boolean
+          description: Confirmation that 2FA is now enabled
+          example: true
+
+    TwoFADisableRequest:
+      type: object
+      required:
+        - password
+        - code
+      properties:
+        password:
+          type: string
+          format: password
+          description: Current account password for identity verification
+          example: "MySecurePassword123!"
+          minLength: 8
+        code:
+          type: string
+          description: |
+            6-digit TOTP code from authenticator app OR 8-character backup code.
+            Spaces and dashes are automatically removed during validation.
+          example: "123456"
+          minLength: 6
+          maxLength: 9
+
+    TwoFADisableResponse:
+      type: object
+      required:
+        - message
+        - enabled
+      properties:
+        message:
+          type: string
+          description: Success message
+          example: "Two-factor authentication disabled successfully"
+        enabled:
+          type: boolean
+          description: Confirmation that 2FA is now disabled
+          example: false
+
+    TwoFARegenerateBackupCodesRequest:
+      type: object
+      required:
+        - code
+      properties:
+        code:
+          type: string
+          description: |
+            6-digit TOTP code from the user's authenticator app.
+            Backup codes cannot be used to authorize regeneration.
+          example: "123456"
+          pattern: "^[0-9]{6}$"
+          minLength: 6
+          maxLength: 6
+
+    TwoFARegenerateBackupCodesResponse:
+      type: object
+      required:
+        - backup_codes
+        - message
+      properties:
+        backup_codes:
+          type: array
+          description: |
+            10 new one-time recovery codes. These codes are shown in plaintext
+            ONLY at generation time and cannot be retrieved later.
+          minItems: 10
+          maxItems: 10
+          items:
+            type: string
+            pattern: "^[A-Z0-9]{4}-[A-Z0-9]{4}$"
+            example: "WXYZ-9876"
+        message:
+          type: string
+          description: Success message with security reminder
+          example: "Backup codes regenerated successfully. Save these codes securely."
+
+    TwoFAStatusResponse:
+      type: object
+      required:
+        - enabled
+      properties:
+        enabled:
+          type: boolean
+          description: Whether 2FA is currently enabled for this account
+          example: true
+        confirmed_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: |
+            Timestamp when 2FA was enabled. Null if 2FA is not enabled.
+          example: "2025-01-15T10:30:00Z"
+
+    Error:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: string
+          description: Human-readable error message
+          example: "Invalid 2FA code"
+        code:
+          type: string
+          description: Machine-readable error code
+          example: "INVALID_2FA_CODE"
+        details:
+          type: object
+          description: Additional error details (optional)
+          additionalProperties: true
+
+  responses:
+    Unauthorized:
+      description: Authentication required or JWT token invalid/expired
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          examples:
+            missing_token:
+              summary: Missing authorization header
+              value:
+                error: "Authorization required"
+                code: "UNAUTHORIZED"
+            invalid_token:
+              summary: Invalid or expired JWT
+              value:
+                error: "Invalid or expired token"
+                code: "INVALID_TOKEN"
+
+    InternalServerError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error: "An unexpected error occurred"
+            code: "INTERNAL_ERROR"

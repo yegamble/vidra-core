@@ -12,6 +12,8 @@ A high-performance, feature-complete PeerTube backend implementation in Go with 
 - **Video Import System** - Import from 1000+ platforms (YouTube, Vimeo, etc.) via yt-dlp integration
 - **Advanced Transcoding** - Multi-codec support (H.264, VP9, AV1) with 30-50% bandwidth savings
 - **HLS Adaptive Streaming** - Multi-resolution adaptive bitrate streaming with automatic quality selection
+- **User Messaging** - Direct messaging with optional end-to-end encryption (E2EE) support
+- **Notifications System** - Real-time notifications with automatic triggers and flexible delivery
 
 ### Live Streaming
 - **RTMP Server** - Professional RTMP ingestion compatible with OBS, Streamlabs, and other streaming software
@@ -41,11 +43,19 @@ A high-performance, feature-complete PeerTube backend implementation in Go with 
 - **Security** - Ed25519 signature verification, permission system with 17 permission types
 - **Plugin Marketplace** - Upload API with ZIP validation and automatic installation
 
+### Security & Authentication
+- **Two-Factor Authentication (2FA)** - TOTP-based 2FA with authenticator app support (RFC 6238)
+- **Backup Codes** - 10 one-time recovery codes for account recovery
+- **OAuth2 with PKCE** - Secure authorization with Proof Key for Code Exchange
+- **End-to-End Encrypted Messaging** - Client-side encryption with user-managed keys
+- **Content Moderation** - Abuse reporting, user/instance blocklists, and automated filtering
+- **Rate Limiting** - Per-endpoint rate limiting with sliding window algorithm
+
 ### Production Ready
 - **High Performance** - Built with Go for maximum concurrency and efficient resource usage
-- **Decentralized Storage** - Optional IPFS integration with hybrid storage tiers (hot/warm/cold)
+- **Hybrid Storage** - Multi-tier storage (local/IPFS/S3-compatible) with automatic promotion/demotion
+- **S3-Compatible Storage** - Support for AWS S3, Backblaze B2, DigitalOcean Spaces
 - **Comprehensive Testing** - 719+ automated tests with >85% code coverage
-- **Security** - OAuth2 with PKCE, content moderation, rate limiting, and abuse reporting
 - **Observability** - Structured logging, metrics, and health monitoring
 
 ## Quick Start
@@ -81,7 +91,8 @@ make lint           # Run linters
 
 ## Documentation
 
-- [OpenAPI Specifications](api/README.md) - Comprehensive OpenAPI 3.0 API documentation (~85% coverage)
+- [OpenAPI Specifications](api/README.md) - Comprehensive OpenAPI 3.0 API documentation (98%+ coverage)
+  - [Authentication & 2FA](api/openapi_auth_2fa.yaml) - Two-factor authentication (TOTP + backup codes)
   - [Uploads & Encoding](api/openapi_uploads.yaml) - Chunked uploads, resume, encoding status
   - [Analytics & Views](api/openapi_analytics.yaml) - View tracking, analytics, trending
   - [Live Streaming](api/openapi_livestreaming.yaml) - RTMP ingest, HLS delivery
@@ -93,6 +104,7 @@ make lint           # Run linters
 - [Architecture Overview](docs/architecture.md) - Clean architecture layers, data flow, and design patterns
 - [API Examples](docs/API_EXAMPLES.md) - API usage examples and patterns
 - [Deployment Guide](docs/deployment/README.md) - Production deployment instructions
+- [S3/Backblaze B2 Setup](docs/S3_MIGRATION_SETUP.md) - Hybrid storage configuration and migration
 - [PeerTube Compatibility](docs/PEERTUBE_COMPAT.md) - API compatibility matrix
 - [OAuth2 Guide](docs/OAUTH2.md) - Authentication and authorization setup
 - [Notifications API](docs/NOTIFICATIONS_API.md) - Real-time notification system
@@ -119,6 +131,8 @@ make lint           # Run linters
 | **Analytics** | Video analytics, Retention curves, Channel stats | ✅ Complete |
 | **Plugin System** | Hook architecture, Security, Marketplace API | ✅ Complete |
 | **Video Redundancy** | Cross-instance replication, Health monitoring | ✅ Complete |
+| **Security & Auth** | Two-Factor Authentication (2FA), E2EE Messaging, OAuth2 | ✅ Complete |
+| **Storage** | Hybrid storage (Local/IPFS/S3), Backblaze B2, DigitalOcean Spaces | ✅ Complete |
 
 **Total Progress:** 14/14 sprints complete (100%)
 **Lines of Code:** ~42,886 (production + tests)
