@@ -188,11 +188,12 @@ func (h *TwoFAHandlers) GetTwoFAStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// This would need to be implemented in the service or we can query the user directly
-	// For now, we'll just return a simple response structure
-	response := map[string]interface{}{
-		"enabled": false, // This should be fetched from the user
+	// Get the 2FA status from the service
+	status, err := h.twoFAService.GetStatus(r.Context(), userID)
+	if err != nil {
+		shared.WriteError(w, http.StatusInternalServerError, domain.NewDomainError("INTERNAL_ERROR", "Failed to get two-factor authentication status"))
+		return
 	}
 
-	shared.WriteJSON(w, http.StatusOK, response)
+	shared.WriteJSON(w, http.StatusOK, status)
 }

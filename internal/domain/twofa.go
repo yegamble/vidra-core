@@ -63,6 +63,12 @@ type TwoFAVerifyLoginRequest struct {
 	Code string `json:"code" validate:"required"` // 6-digit TOTP code or backup code
 }
 
+// TwoFAStatusResponse contains the 2FA status for a user
+type TwoFAStatusResponse struct {
+	Enabled     bool       `json:"enabled"`
+	ConfirmedAt *time.Time `json:"confirmed_at,omitempty"`
+}
+
 // Domain errors for 2FA
 var (
 	ErrTwoFAAlreadyEnabled  = errors.New("two-factor authentication is already enabled")
