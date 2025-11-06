@@ -622,3 +622,7 @@ func TestGetLanguageLabel(t *testing.T) {
 		})
 	}
 }
+
+func (m *MockVideoRepository) GetVideosForMigration(ctx context.Context, limit int) ([]*domain.Video, error) {
+	return []*domain.Video{}, nil
+}

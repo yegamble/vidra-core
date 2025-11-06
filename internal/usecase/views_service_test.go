@@ -834,3 +834,7 @@ func getMethodNames(calls []mock.Call) []string {
 func stringPtr(s string) *string {
 	return &s
 }
+
+func (m *MockVideoRepository) GetVideosForMigration(ctx context.Context, limit int) ([]*domain.Video, error) {
+	return []*domain.Video{}, nil
+}

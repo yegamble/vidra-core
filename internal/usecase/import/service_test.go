@@ -783,3 +783,7 @@ func TestImportService_ProcessPendingImports(t *testing.T) {
 
 	importRepo.AssertExpectations(t)
 }
+
+func (m *MockVideoRepository) GetVideosForMigration(ctx context.Context, limit int) ([]*domain.Video, error) {
+	return []*domain.Video{}, nil
+}
