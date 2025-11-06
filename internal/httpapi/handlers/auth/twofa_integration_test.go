@@ -258,9 +258,9 @@ func TestTwoFALoginFlow(t *testing.T) {
 
 	t.Run("Login with 2FA and wrong code should fail", func(t *testing.T) {
 		loginReq := map[string]interface{}{
-			"email":       testUser.Email,
-			"password":    "password123",
-			"twofa_code":  "000000",
+			"email":      testUser.Email,
+			"password":   "password123",
+			"twofa_code": "000000",
 		}
 		loginReqBody, err := json.Marshal(loginReq)
 		require.NoError(t, err)
@@ -279,9 +279,9 @@ func TestTwoFALoginFlow(t *testing.T) {
 		require.NoError(t, err)
 
 		loginReq := map[string]interface{}{
-			"email":       testUser.Email,
-			"password":    "password123",
-			"twofa_code":  code,
+			"email":      testUser.Email,
+			"password":   "password123",
+			"twofa_code": code,
 		}
 		loginReqBody, err := json.Marshal(loginReq)
 		require.NoError(t, err)
