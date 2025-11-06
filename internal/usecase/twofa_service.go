@@ -194,6 +194,26 @@ func (s *TwoFAService) Disable(ctx context.Context, userID, password, code strin
 	return nil
 }
 
+// GetStatus returns the 2FA status for a user
+func (s *TwoFAService) GetStatus(ctx context.Context, userID string) (*domain.TwoFAStatusResponse, error) {
+	// Get user
+	user, err := s.userRepo.GetByID(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get user: %w", err)
+	}
+
+	status := &domain.TwoFAStatusResponse{
+		Enabled: user.TwoFAEnabled,
+	}
+
+	// Only include confirmed_at if 2FA is enabled and was confirmed
+	if user.TwoFAEnabled && user.TwoFAConfirmedAt.Valid {
+		status.ConfirmedAt = &user.TwoFAConfirmedAt.Time
+	}
+
+	return status, nil
+}
+
 // RegenerateBackupCodes regenerates backup codes for a user
 func (s *TwoFAService) RegenerateBackupCodes(ctx context.Context, userID, code string) ([]string, error) {
 	// Get user
