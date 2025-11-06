@@ -49,6 +49,11 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, deps *shar
 		cfg,
 	)
 
+	// Set TwoFAService if available
+	if deps.TwoFAService != nil {
+		server.SetTwoFAService(deps.TwoFAService)
+	}
+
 	// Create auth handlers instance for avatar and other auth-related routes
 	authHandlers := auth.NewAuthHandlers(
 		deps.UserRepo,
@@ -69,6 +74,17 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, deps *shar
 	r.With(strictLoginLimiter).Post("/auth/login", server.Login)
 	r.Post("/auth/refresh", server.RefreshToken)
 	r.With(middleware.Auth(cfg.JWTSecret)).Post("/auth/logout", server.Logout)
+
+	// Two-Factor Authentication routes (require authentication)
+	r.Route("/auth/2fa", func(r chi.Router) {
+		r.Use(middleware.Auth(cfg.JWTSecret))
+		twoFAHandlers := auth.NewTwoFAHandlers(deps.TwoFAService)
+		r.Post("/setup", twoFAHandlers.SetupTwoFA)
+		r.Post("/verify-setup", twoFAHandlers.VerifyTwoFASetup)
+		r.Post("/disable", twoFAHandlers.DisableTwoFA)
+		r.Post("/regenerate-backup-codes", twoFAHandlers.RegenerateBackupCodes)
+		r.Get("/status", twoFAHandlers.GetTwoFAStatus)
+	})
 
 	// OAuth2 endpoints
 	// r.Post("/oauth/token", server.OAuthToken) // TODO: Move to auth handlers

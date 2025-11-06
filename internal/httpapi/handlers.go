@@ -26,6 +26,7 @@ type Server struct {
 	authRepo            usecase.AuthRepository
 	oauthRepo           usecase.OAuthRepository
 	verificationService *usecase.EmailVerificationService
+	twoFAService        *usecase.TwoFAService
 	jwtSecret           string
 	redis               *redis.Client
 	redisPingTimeout    time.Duration
@@ -64,21 +65,31 @@ func (s *Server) SetVerificationService(service *usecase.EmailVerificationServic
 	s.verificationService = service
 }
 
+// SetTwoFAService sets the two-factor authentication service
+func (s *Server) SetTwoFAService(service *usecase.TwoFAService) {
+	s.twoFAService = service
+}
+
 // Login implements ServerInterface.Login
 func (s *Server) Login(w http.ResponseWriter, r *http.Request) {
-	var req generated.LoginRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	// Extended login request to support 2FA
+	var reqData map[string]interface{}
+	if err := json.NewDecoder(r.Body).Decode(&reqData); err != nil {
 		shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_JSON", "Invalid JSON payload"))
 		return
 	}
 
-	if req.Email == "" || req.Password == "" {
+	email, _ := reqData["email"].(string)
+	password, _ := reqData["password"].(string)
+	twoFACode, _ := reqData["twofa_code"].(string)
+
+	if email == "" || password == "" {
 		shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("MISSING_CREDENTIALS", "Email and password are required"))
 		return
 	}
 
 	// Lookup user and verify password
-	dUser, err := s.userRepo.GetByEmail(r.Context(), req.Email)
+	dUser, err := s.userRepo.GetByEmail(r.Context(), email)
 	if err != nil {
 		shared.WriteError(w, http.StatusUnauthorized, domain.ErrInvalidCredentials)
 		return
@@ -88,9 +99,30 @@ func (s *Server) Login(w http.ResponseWriter, r *http.Request) {
 		shared.WriteError(w, http.StatusUnauthorized, domain.ErrInvalidCredentials)
 		return
 	}
-	if bcrypt.CompareHashAndPassword([]byte(hash), []byte(req.Password)) != nil {
+	if bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)) != nil {
 		shared.WriteError(w, http.StatusUnauthorized, domain.ErrInvalidCredentials)
 		return
+	}
+
+	// Check if 2FA is enabled
+	if dUser.TwoFAEnabled {
+		// If 2FA is enabled but no code provided, return error indicating 2FA is required
+		if twoFACode == "" {
+			shared.WriteError(w, http.StatusForbidden, domain.ErrTwoFARequired)
+			return
+		}
+
+		// Verify 2FA code using the service
+		if s.twoFAService != nil {
+			if err := s.twoFAService.VerifyCode(r.Context(), dUser.ID, twoFACode); err != nil {
+				shared.WriteError(w, http.StatusUnauthorized, domain.NewDomainError("INVALID_TWOFA_CODE", "Invalid two-factor authentication code"))
+				return
+			}
+		} else {
+			// If service is not available, deny login for safety
+			shared.WriteError(w, http.StatusInternalServerError, domain.NewDomainError("INTERNAL_ERROR", "Two-factor authentication service not available"))
+			return
+		}
 	}
 
 	// Issue tokens with role claim
@@ -438,6 +470,11 @@ func (s *Server) generateJWTWithRole(userID string, role string, duration time.D
 		return ""
 	}
 	return sgn
+}
+
+// GenerateJWTForTests is a public wrapper for tests to generate JWT tokens
+func (s *Server) GenerateJWTForTests(userID string, role string, duration time.Duration) string {
+	return s.generateJWTWithRole(userID, role, duration)
 }
 
 // generateJWTWithRoleAndScope creates a signed JWT including role and scope claims
