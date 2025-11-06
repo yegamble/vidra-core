@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
@@ -201,7 +202,50 @@ func (r *videoRepository) GetByID(ctx context.Context, id string) (*domain.Video
 		if err == sql.ErrNoRows {
 			return nil, domain.NewDomainError("VIDEO_NOT_FOUND", "Video not found")
 		}
-		return nil, domain.NewDomainError("GET_FAILED", "Failed to get video")
+		// Also treat invalid UUID errors as "not found"
+		errStr := err.Error()
+		if strings.Contains(errStr, "invalid input syntax for type uuid") ||
+		   strings.Contains(errStr, "invalid UUID") {
+			return nil, domain.NewDomainError("VIDEO_NOT_FOUND", "Video not found")
+		}
+
+		// Handle missing columns gracefully - use simpler query without S3 fields
+		if strings.Contains(errStr, "column") && strings.Contains(errStr, "does not exist") {
+			// Try simpler query without S3 migration fields
+			simpleQuery := `
+				SELECT v.id, v.thumbnail_id, v.title, v.description, v.duration, v.views,
+					   v.privacy, v.status, v.upload_date, v.user_id,
+					   v.original_cid, v.processed_cids, v.thumbnail_cid,
+					   v.tags, v.category_id, v.language, v.file_size, v.mime_type, v.metadata,
+					   v.created_at, v.updated_at, v.output_paths, v.thumbnail_path, v.preview_path,
+					   c.id, c.name, c.slug, c.description, c.icon, c.color, c.display_order, c.is_active
+				FROM videos v
+				LEFT JOIN video_categories c ON v.category_id = c.id
+				WHERE v.id = $1`
+
+			err = r.db.QueryRowContext(ctx, simpleQuery, id).Scan(
+				&v.ID, &v.ThumbnailID, &v.Title, &v.Description, &v.Duration, &v.Views,
+				&v.Privacy, &v.Status, &v.UploadDate, &v.UserID,
+				&v.OriginalCID, &processedCIDsJSON, &v.ThumbnailCID,
+				&tags, &v.CategoryID, &v.Language, &v.FileSize, &v.MimeType, &metadataJSON,
+				&v.CreatedAt, &v.UpdatedAt, &outputPathsJSON, &thumbnailPath, &previewPath,
+				&v.CategoryID, &categoryName, &categorySlug, &categoryDesc, &categoryIcon, &categoryColor, &categoryOrder, &categoryActive,
+			)
+
+			if err != nil {
+				if err == sql.ErrNoRows {
+					return nil, domain.NewDomainError("VIDEO_NOT_FOUND", "Video not found")
+				}
+				return nil, domain.NewDomainError("GET_FAILED", "Failed to get video")
+			}
+
+			// Set default values for missing S3 fields
+			v.StorageTier = "hot"
+			v.LocalDeleted = false
+			// Continue to unmarshal JSON fields below
+		} else {
+			return nil, domain.NewDomainError("GET_FAILED", "Failed to get video")
+		}
 	}
 
 	// Unmarshal JSON fields
