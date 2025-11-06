@@ -289,10 +289,17 @@ func (r *videoRepository) GetByUserID(ctx context.Context, userID string, limit,
 }
 
 func (r *videoRepository) Update(ctx context.Context, v *domain.Video) error {
-	// Marshal S3 URLs if present
-	s3URLsJSON, err := json.Marshal(v.S3URLs)
-	if err != nil {
-		return domain.NewDomainError("JSON_MARSHAL_FAILED", "Failed to marshal S3 URLs")
+	// Marshal S3 URLs, ensuring we use empty object instead of null for nil maps
+	var s3URLsJSON []byte
+	var err error
+	if v.S3URLs == nil {
+		// Use empty JSON object to satisfy NOT NULL constraint
+		s3URLsJSON = []byte("{}")
+	} else {
+		s3URLsJSON, err = json.Marshal(v.S3URLs)
+		if err != nil {
+			return domain.NewDomainError("JSON_MARSHAL_FAILED", "Failed to marshal S3 URLs")
+		}
 	}
 
 	query := `
