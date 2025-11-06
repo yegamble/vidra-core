@@ -539,3 +539,7 @@ func TestVODConverter_CreateOutputDirectory(t *testing.T) {
 	_, err = os.Stat(cfg.ReplayStorageDir)
 	assert.NoError(t, err, "Replay storage directory should be created")
 }
+
+func (m *MockVideoRepository) GetVideosForMigration(ctx context.Context, limit int) ([]*domain.Video, error) {
+	return []*domain.Video{}, nil
+}

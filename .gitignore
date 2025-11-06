@@ -98,3 +98,7 @@ server
 
 # Test artifacts from avatar upload tests
 internal/httpapi/handlers/auth/storage/
+
+# S3 migration tool binaries
+s3migrate
+s3test

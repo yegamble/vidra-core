@@ -305,3 +305,8 @@ func (r *mockVideoRepository) UpdateProcessingInfoWithCIDs(ctx context.Context, 
 func (r *mockVideoRepository) Count(ctx context.Context) (int64, error) {
 	return int64(len(r.videos)), nil
 }
+
+func (r *mockVideoRepository) GetVideosForMigration(ctx context.Context, limit int) ([]*domain.Video, error) {
+	// Return empty list for mock - not used in this test
+	return []*domain.Video{}, nil
+}
