@@ -58,7 +58,9 @@ const selectUserWithAvatar = `
                a.id            AS avatar_id,
                a.ipfs_cid      AS avatar_ipfs_cid,
                a.webp_ipfs_cid AS avatar_webp_ipfs_cid,
-               u.bio, u.bitcoin_wallet, u.role, u.is_active, u.email_verified, u.email_verified_at, u.subscriber_count, u.created_at, u.updated_at
+               u.bio, u.bitcoin_wallet, u.role, u.is_active, u.email_verified, u.email_verified_at, u.subscriber_count,
+               u.twofa_enabled, u.twofa_secret, u.twofa_confirmed_at,
+               u.created_at, u.updated_at
         FROM users u
         LEFT JOIN user_avatars a ON a.user_id = u.id`
 
@@ -77,25 +79,31 @@ type userRow struct {
 	EmailVerified     bool            `db:"email_verified"`
 	EmailVerifiedAt   sql.NullTime    `db:"email_verified_at"`
 	SubscriberCount   int64           `db:"subscriber_count"`
+	TwoFAEnabled      bool            `db:"twofa_enabled"`
+	TwoFASecret       string          `db:"twofa_secret"`
+	TwoFAConfirmedAt  sql.NullTime    `db:"twofa_confirmed_at"`
 	CreatedAt         time.Time       `db:"created_at"`
 	UpdatedAt         time.Time       `db:"updated_at"`
 }
 
 func mapUserRow(rrow userRow) *domain.User {
 	u := &domain.User{
-		ID:              rrow.ID,
-		Username:        rrow.Username,
-		Email:           rrow.Email,
-		DisplayName:     rrow.DisplayName,
-		Bio:             rrow.Bio,
-		BitcoinWallet:   rrow.BitcoinWallet,
-		Role:            rrow.Role,
-		IsActive:        rrow.IsActive,
-		EmailVerified:   rrow.EmailVerified,
-		EmailVerifiedAt: rrow.EmailVerifiedAt,
-		SubscriberCount: rrow.SubscriberCount,
-		CreatedAt:       rrow.CreatedAt,
-		UpdatedAt:       rrow.UpdatedAt,
+		ID:               rrow.ID,
+		Username:         rrow.Username,
+		Email:            rrow.Email,
+		DisplayName:      rrow.DisplayName,
+		Bio:              rrow.Bio,
+		BitcoinWallet:    rrow.BitcoinWallet,
+		Role:             rrow.Role,
+		IsActive:         rrow.IsActive,
+		EmailVerified:    rrow.EmailVerified,
+		EmailVerifiedAt:  rrow.EmailVerifiedAt,
+		SubscriberCount:  rrow.SubscriberCount,
+		TwoFAEnabled:     rrow.TwoFAEnabled,
+		TwoFASecret:      rrow.TwoFASecret,
+		TwoFAConfirmedAt: rrow.TwoFAConfirmedAt,
+		CreatedAt:        rrow.CreatedAt,
+		UpdatedAt:        rrow.UpdatedAt,
 	}
 	if rrow.AvatarID.Valid || rrow.AvatarIPFSCID.Valid || rrow.AvatarWebPIPFSCID.Valid {
 		u.Avatar = &domain.Avatar{
@@ -134,14 +142,23 @@ func (r *userRepository) GetByUsername(ctx context.Context, username string) (*d
 func (r *userRepository) Update(ctx context.Context, user *domain.User) error {
 	// Update base user fields (avatar handled in user_avatars separately)
 	query := `
-        UPDATE users 
-        SET username = $2, email = $3, display_name = $4, bio = $5, 
-            bitcoin_wallet = $6, role = $7, is_active = $8, updated_at = $9
+        UPDATE users
+        SET username = $2, email = $3, display_name = $4, bio = $5,
+            bitcoin_wallet = $6, role = $7, is_active = $8,
+            twofa_enabled = $9, twofa_secret = $10, twofa_confirmed_at = $11,
+            updated_at = $12
         WHERE id = $1`
+
+	var twoFAConfirmedAt interface{}
+	if user.TwoFAConfirmedAt.Valid {
+		twoFAConfirmedAt = user.TwoFAConfirmedAt.Time
+	}
 
 	result, err := r.db.ExecContext(ctx, query,
 		user.ID, user.Username, user.Email, user.DisplayName, user.Bio, user.BitcoinWallet,
-		user.Role, user.IsActive, user.UpdatedAt)
+		user.Role, user.IsActive,
+		user.TwoFAEnabled, user.TwoFASecret, twoFAConfirmedAt,
+		user.UpdatedAt)
 
 	if err != nil {
 		return fmt.Errorf("failed to update user: %w", err)

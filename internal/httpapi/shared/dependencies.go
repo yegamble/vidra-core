@@ -56,6 +56,7 @@ type HandlerDependencies struct {
 	RatingService        *ucrt.Service
 	PlaylistService      *usecase.PlaylistService
 	CaptionService       *usecase.CaptionService
+	TwoFAService         *usecase.TwoFAService
 	AtprotoService       usecase.AtprotoPublisher
 	FederationService    usecase.FederationService
 	HardeningService     *usecase.FederationHardeningService

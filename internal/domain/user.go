@@ -20,8 +20,12 @@ type User struct {
 	EmailVerified   bool         `json:"email_verified" db:"email_verified"`
 	EmailVerifiedAt sql.NullTime `json:"email_verified_at" db:"email_verified_at"`
 	SubscriberCount int64        `json:"subscriber_count" db:"subscriber_count"`
-	CreatedAt       time.Time    `json:"created_at" db:"created_at"`
-	UpdatedAt       time.Time    `json:"updated_at" db:"updated_at"`
+	// Two-Factor Authentication fields (not exposed in JSON for security)
+	TwoFAEnabled     bool         `json:"twofa_enabled" db:"twofa_enabled"`
+	TwoFASecret      string       `json:"-" db:"twofa_secret"` // Never expose in JSON
+	TwoFAConfirmedAt sql.NullTime `json:"-" db:"twofa_confirmed_at"`
+	CreatedAt        time.Time    `json:"created_at" db:"created_at"`
+	UpdatedAt        time.Time    `json:"updated_at" db:"updated_at"`
 }
 
 // Avatar represents a user's avatar metadata
