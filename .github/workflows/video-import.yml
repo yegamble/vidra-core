@@ -1,4 +1,4 @@
-name: Sprint 1 - Video Import Tests
+name: Video Import Tests
 
 on:
   push:

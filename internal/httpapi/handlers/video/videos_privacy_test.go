@@ -41,6 +41,9 @@ func (m *mockVideoRepoPrivacy) UpdateProcessingInfoWithCIDs(_ context.Context, _
 func (m *mockVideoRepoPrivacy) Count(_ context.Context) (int64, error) {
 	return 0, nil
 }
+func (m *mockVideoRepoPrivacy) GetVideosForMigration(_ context.Context, _ int) ([]*domain.Video, error) {
+	return nil, nil
+}
 
 func TestGetVideo_PrivacyGate(t *testing.T) {
 	ownerID := "owner-1"
