@@ -1043,16 +1043,23 @@ func fetchVideo(w http.ResponseWriter, r *http.Request, videoRepo usecase.VideoR
 
 	video, err := videoRepo.GetByID(r.Context(), videoID)
 	if err != nil {
-		// Check if error is a DomainError
-		if domainErr, ok := err.(domain.DomainError); ok {
-			if domainErr.Code == "VIDEO_NOT_FOUND" {
-				shared.WriteError(w, http.StatusNotFound, domainErr)
-			} else {
-				shared.WriteError(w, http.StatusInternalServerError, domainErr)
-			}
+		// Check if error is a DomainError (handle both pointer and value types)
+		var domainErr domain.DomainError
+		if de, ok := err.(domain.DomainError); ok {
+			domainErr = de
+		} else if de, ok := err.(*domain.DomainError); ok {
+			domainErr = *de
 		} else {
 			// For non-domain errors, wrap them with more context
 			shared.WriteError(w, http.StatusInternalServerError, domain.NewDomainError("DB_ERROR", fmt.Sprintf("Failed to fetch video: %v", err)))
+			return nil, false
+		}
+
+		// Handle domain errors
+		if domainErr.Code == "VIDEO_NOT_FOUND" {
+			shared.WriteError(w, http.StatusNotFound, domainErr)
+		} else {
+			shared.WriteError(w, http.StatusInternalServerError, domainErr)
 		}
 		return nil, false
 	}
