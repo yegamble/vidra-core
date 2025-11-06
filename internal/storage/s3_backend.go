@@ -18,14 +18,14 @@ import (
 // S3Backend implements the StorageBackend interface for S3-compatible storage
 // including AWS S3, Backblaze B2, DigitalOcean Spaces, etc.
 type S3Backend struct {
-	client       *s3.Client
-	uploader     *manager.Uploader
-	downloader   *manager.Downloader
-	bucket       string
-	endpoint     string
-	region       string
-	publicURL    string
-	pathStyle    bool
+	client     *s3.Client
+	uploader   *manager.Uploader
+	downloader *manager.Downloader
+	bucket     string
+	endpoint   string
+	region     string
+	publicURL  string
+	pathStyle  bool
 }
 
 // S3Config holds configuration for S3-compatible storage
@@ -131,7 +131,12 @@ func (s *S3Backend) UploadFile(ctx context.Context, key string, localPath string
 	if err != nil {
 		return fmt.Errorf("failed to open file: %w", err)
 	}
-	defer file.Close()
+	defer func() {
+		if err := file.Close(); err != nil {
+			// Log error but don't fail the upload if file close fails
+			_ = err
+		}
+	}()
 
 	return s.Upload(ctx, key, file, contentType)
 }

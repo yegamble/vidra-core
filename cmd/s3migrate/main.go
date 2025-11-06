@@ -20,11 +20,11 @@ import (
 
 func main() {
 	var (
-		videoID      string
-		batchSize    int
-		deleteLocal  bool
-		testOnly     bool
-		dryRun       bool
+		videoID     string
+		batchSize   int
+		deleteLocal bool
+		testOnly    bool
+		dryRun      bool
 	)
 
 	flag.StringVar(&videoID, "video-id", "", "Migrate a specific video by ID")
@@ -93,7 +93,11 @@ func main() {
 	if err != nil {
 		logger.Fatalf("Failed to connect to database: %v", err)
 	}
-	defer db.Close()
+	defer func() {
+		if err := db.Close(); err != nil {
+			logger.Errorf("Failed to close database connection: %v", err)
+		}
+	}()
 
 	logger.Info("✓ Database connected")
 
@@ -197,7 +201,9 @@ func testS3Connection(ctx context.Context, s3Backend *storage.S3Backend, logger 
 	if err != nil {
 		return fmt.Errorf("download failed: %w", err)
 	}
-	downloadReader.Close()
+	if err := downloadReader.Close(); err != nil {
+		logger.Warnf("Failed to close download reader: %v", err)
+	}
 	logger.Info("  ✓ Download successful")
 
 	// Test metadata

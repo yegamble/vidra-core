@@ -169,13 +169,17 @@ func (r *videoRepository) GetByID(ctx context.Context, id string) (*domain.Video
                v.original_cid, v.processed_cids, v.thumbnail_cid,
                v.tags, v.category_id, v.language, v.file_size, v.mime_type, v.metadata,
                v.created_at, v.updated_at, v.output_paths, v.thumbnail_path, v.preview_path,
+               COALESCE(v.s3_urls, '{}'::jsonb) as s3_urls,
+               COALESCE(v.storage_tier, 'hot') as storage_tier,
+               v.s3_migrated_at,
+               COALESCE(v.local_deleted, false) as local_deleted,
                c.id, c.name, c.slug, c.description, c.icon, c.color, c.display_order, c.is_active
         FROM videos v
         LEFT JOIN video_categories c ON v.category_id = c.id
         WHERE v.id = $1`
 
 	var v domain.Video
-	var processedCIDsJSON, metadataJSON, outputPathsJSON []byte
+	var processedCIDsJSON, metadataJSON, outputPathsJSON, s3URLsJSON []byte
 	var tags pq.StringArray
 	var category domain.VideoCategory
 	var categoryName, categorySlug sql.NullString
@@ -190,6 +194,7 @@ func (r *videoRepository) GetByID(ctx context.Context, id string) (*domain.Video
 		&v.OriginalCID, &processedCIDsJSON, &v.ThumbnailCID,
 		&tags, &v.CategoryID, &v.Language, &v.FileSize, &v.MimeType, &metadataJSON,
 		&v.CreatedAt, &v.UpdatedAt, &outputPathsJSON, &thumbnailPath, &previewPath,
+		&s3URLsJSON, &v.StorageTier, &v.S3MigratedAt, &v.LocalDeleted,
 		&v.CategoryID, &categoryName, &categorySlug, &categoryDesc, &categoryIcon, &categoryColor, &categoryOrder, &categoryActive,
 	)
 	if err != nil {
@@ -208,6 +213,9 @@ func (r *videoRepository) GetByID(ctx context.Context, id string) (*domain.Video
 	}
 	if len(outputPathsJSON) > 0 {
 		_ = json.Unmarshal(outputPathsJSON, &v.OutputPaths)
+	}
+	if len(s3URLsJSON) > 0 {
+		_ = json.Unmarshal(s3URLsJSON, &v.S3URLs)
 	}
 	v.Tags = []string(tags)
 
