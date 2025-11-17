@@ -570,7 +570,7 @@ func TestDurationConsistencyAcrossSystems(t *testing.T) {
 		t.Fatalf("expected 1 span, got %d", len(spans))
 	}
 
-	spanDuration := spans[0].EndTime().Sub(spans[0].StartTime())
+	spanDuration := spans[0].EndTime.Sub(spans[0].StartTime)
 	if spanDuration < operationDuration {
 		t.Errorf("span duration too short: %v (expected >= %v)", spanDuration, operationDuration)
 	}

@@ -90,10 +90,10 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 	})
 
 	// OAuth2 endpoints
-	r.Post("/oauth/token", server.OAuthToken)
-	r.HandleFunc("/oauth/authorize", server.OAuthAuthorize)
-	r.Post("/oauth/revoke", server.OAuthRevoke)
-	r.Post("/oauth/introspect", server.OAuthIntrospect)
+	r.Post("/oauth/token", authHandlers.OAuthToken)
+	r.HandleFunc("/oauth/authorize", authHandlers.OAuthAuthorize)
+	r.Post("/oauth/revoke", authHandlers.OAuthRevoke)
+	r.Post("/oauth/introspect", authHandlers.OAuthIntrospect)
 
 	// Register health routes
 	r.Get("/health", server.HealthCheck)
@@ -456,10 +456,10 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 			// OAuth client management (admin only)
 			r.Route("/oauth/clients", func(r chi.Router) {
 				r.Use(middleware.RequireRole("admin"))
-				r.Get("/", server.AdminListOAuthClients)
-				r.Post("/", server.AdminCreateOAuthClient)
-				r.Put("/{clientId}/secret", server.AdminRotateOAuthClientSecret)
-				r.Delete("/{clientId}", server.AdminDeleteOAuthClient)
+				r.Get("/", authHandlers.AdminListOAuthClients)
+				r.Post("/", authHandlers.AdminCreateOAuthClient)
+				r.Put("/{clientId}/secret", authHandlers.AdminRotateOAuthClientSecret)
+				r.Delete("/{clientId}", authHandlers.AdminDeleteOAuthClient)
 			})
 
 			// Federation jobs (admin)

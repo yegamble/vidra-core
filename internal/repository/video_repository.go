@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
@@ -17,6 +18,7 @@ import (
 type videoRepository struct {
 	db            *sqlx.DB
 	tm            *TransactionManager
+	schemaOnce    sync.Once
 	hasChannelID  bool
 	checkedSchema bool
 }
@@ -31,21 +33,21 @@ func NewVideoRepository(db *sqlx.DB) usecase.VideoRepository {
 // ensureSchemaChecked detects whether the current schema has a channel_id column
 // on the videos table. It runs once per repository instance and caches the result
 // for subsequent calls to avoid repeated information_schema lookups.
+// Thread-safe using sync.Once.
 func (r *videoRepository) ensureSchemaChecked(ctx context.Context) {
-	if r.checkedSchema {
-		return
-	}
-	var has bool
-	const q = `SELECT EXISTS (
-        SELECT 1 FROM information_schema.columns
-        WHERE table_schema = current_schema()
-          AND table_name = 'videos'
-          AND column_name = 'channel_id'
-    )`
-	// If query fails for any reason, default to false (legacy schema)
-	_ = r.db.QueryRowContext(ctx, q).Scan(&has)
-	r.hasChannelID = has
-	r.checkedSchema = true
+	r.schemaOnce.Do(func() {
+		var has bool
+		const q = `SELECT EXISTS (
+			SELECT 1 FROM information_schema.columns
+			WHERE table_schema = current_schema()
+			  AND table_name = 'videos'
+			  AND column_name = 'channel_id'
+		)`
+		// If query fails for any reason, default to false (legacy schema)
+		_ = r.db.QueryRowContext(ctx, q).Scan(&has)
+		r.hasChannelID = has
+		r.checkedSchema = true
+	})
 }
 
 // scanVideoRow is a helper function to scan a video row and reduce duplication
@@ -717,7 +719,7 @@ func (r *videoRepository) GetVideosForMigration(ctx context.Context, limit int) 
 }
 
 // GetByRemoteURI retrieves a video by its remote ActivityPub URI
-func (r *VideoRepository) GetByRemoteURI(ctx context.Context, remoteURI string) (*domain.Video, error) {
+func (r *videoRepository) GetByRemoteURI(ctx context.Context, remoteURI string) (*domain.Video, error) {
 	query := `
 		SELECT 
 			id, thumbnail_id, title, description, duration, views, privacy, status,
@@ -774,7 +776,7 @@ func (r *VideoRepository) GetByRemoteURI(ctx context.Context, remoteURI string) 
 }
 
 // CreateRemoteVideo creates a new remote video record (from federated instance)
-func (r *VideoRepository) CreateRemoteVideo(ctx context.Context, video *domain.Video) error {
+func (r *videoRepository) CreateRemoteVideo(ctx context.Context, video *domain.Video) error {
 	query := `
 		INSERT INTO videos (
 			id, thumbnail_id, title, description, duration, privacy, status,

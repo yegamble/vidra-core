@@ -55,6 +55,25 @@ func NewTestClient(baseURL string) *TestClient {
 	}
 }
 
+// SetAuthToken sets the authentication token for the client
+func (c *TestClient) SetAuthToken(token string) {
+	c.Token = token
+}
+
+// DoRequest performs an HTTP request with authentication if token is set
+func (c *TestClient) DoRequest(method, path string, body io.Reader) (*http.Response, error) {
+	req, err := http.NewRequest(method, c.BaseURL+path, body)
+	if err != nil {
+		return nil, err
+	}
+
+	if c.Token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.Token)
+	}
+
+	return c.HTTPClient.Do(req)
+}
+
 // RegisterUser registers a new user and returns the access token
 func (c *TestClient) RegisterUser(t *testing.T, username, email, password string) (userID, token string) {
 	payload := map[string]interface{}{

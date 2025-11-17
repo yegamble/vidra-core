@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"athena/internal/obs"
+
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	"go.opentelemetry.io/otel/sdk/trace"
@@ -665,8 +667,8 @@ func newTestLogger(w io.Writer) interface{} {
 	return nil
 }
 
-func newTestMetrics() *testMetrics {
-	return &testMetrics{
+func newTestMetrics() *obs.Metrics {
+	return &obs.Metrics{
 		HTTPRequestsTotal: prometheus.NewCounterVec(
 			prometheus.CounterOpts{
 				Name: "http_requests_total",
@@ -699,11 +701,4 @@ func newTestMetrics() *testMetrics {
 			[]string{"method", "path"},
 		),
 	}
-}
-
-type testMetrics struct {
-	HTTPRequestsTotal   *prometheus.CounterVec
-	HTTPRequestDuration *prometheus.HistogramVec
-	HTTPRequestSize     *prometheus.HistogramVec
-	HTTPResponseSize    *prometheus.HistogramVec
 }

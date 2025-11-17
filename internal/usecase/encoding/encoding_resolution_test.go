@@ -383,6 +383,16 @@ func (r *mockVideoRepository) Count(ctx context.Context) (int64, error) {
 	return int64(len(r.videos)), nil
 }
 
+func (r *mockVideoRepository) GetByRemoteURI(ctx context.Context, remoteURI string) (*domain.Video, error) {
+	// Search for video by remote URI - not used in this test
+	return nil, nil
+}
+
+func (r *mockVideoRepository) CreateRemoteVideo(ctx context.Context, video *domain.Video) error {
+	r.videos[video.ID] = video
+	return nil
+}
+
 func (r *mockVideoRepository) GetVideosForMigration(ctx context.Context, limit int) ([]*domain.Video, error) {
 	// Return empty list for mock - not used in this test
 	return []*domain.Video{}, nil

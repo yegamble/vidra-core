@@ -292,9 +292,10 @@ func TestVerifyRequestWithExpiredSignature(t *testing.T) {
 	verifier := NewHTTPSignatureVerifier()
 	err = verifier.VerifyRequest(req, publicKey)
 
-	// Signature should still be valid (we don't check date expiry in basic implementation)
-	// In production, you'd want to reject old signatures
-	assert.NoError(t, err)
+	// Signature should be rejected because the date is too old (expired)
+	// The implementation checks for signature expiration
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "signature expired")
 }
 
 func TestParseSignatureHeaderWithMalformedInput(t *testing.T) {
