@@ -203,6 +203,27 @@ func (m *MockVideoRepository) Count(ctx context.Context) (int64, error) {
 	return args.Get(0).(int64), args.Error(1)
 }
 
+func (m *MockVideoRepository) GetByRemoteURI(ctx context.Context, remoteURI string) (*domain.Video, error) {
+	args := m.Called(ctx, remoteURI)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*domain.Video), args.Error(1)
+}
+
+func (m *MockVideoRepository) CreateRemoteVideo(ctx context.Context, video *domain.Video) error {
+	args := m.Called(ctx, video)
+	return args.Error(0)
+}
+
+func (m *MockVideoRepository) GetVideosForMigration(ctx context.Context, limit int) ([]*domain.Video, error) {
+	args := m.Called(ctx, limit)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*domain.Video), args.Error(1)
+}
+
 type MockWhisperClient struct {
 	mock.Mock
 }
@@ -621,8 +642,4 @@ func TestGetLanguageLabel(t *testing.T) {
 			assert.Equal(t, tt.expected, result)
 		})
 	}
-}
-
-func (m *MockVideoRepository) GetVideosForMigration(ctx context.Context, limit int) ([]*domain.Video, error) {
-	return []*domain.Video{}, nil
 }

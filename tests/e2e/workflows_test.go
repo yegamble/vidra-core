@@ -10,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -229,36 +228,7 @@ func TestStorageTierWorkflow(t *testing.T) {
 }
 
 // Placeholder test structures to demonstrate what real E2E tests would look like
-
-type TestClient struct {
-	baseURL    string
-	httpClient *http.Client
-	authToken  string
-}
-
-func newTestClient(baseURL string) *TestClient {
-	return &TestClient{
-		baseURL:    baseURL,
-		httpClient: &http.Client{Timeout: 30 * time.Second},
-	}
-}
-
-func (c *TestClient) setAuthToken(token string) {
-	c.authToken = token
-}
-
-func (c *TestClient) doRequest(method, path string, body io.Reader) (*http.Response, error) {
-	req, err := http.NewRequest(method, c.baseURL+path, body)
-	if err != nil {
-		return nil, err
-	}
-
-	if c.authToken != "" {
-		req.Header.Set("Authorization", "Bearer "+c.authToken)
-	}
-
-	return c.httpClient.Do(req)
-}
+// Note: TestClient is defined in helpers.go
 
 // ExampleMockE2ETest demonstrates the structure of a real E2E test
 func TestExampleE2EStructure(t *testing.T) {
@@ -313,10 +283,10 @@ func TestExampleE2EStructure(t *testing.T) {
 		server := httptest.NewServer(handler)
 		defer server.Close()
 
-		client := newTestClient(server.URL)
+		client := NewTestClient(server.URL)
 
 		// Step 1: Create upload session
-		resp, err := client.doRequest("POST", "/api/v1/videos/upload-session", bytes.NewBuffer([]byte(`{"title":"Test Video"}`)))
+		resp, err := client.DoRequest("POST", "/api/v1/videos/upload-session", bytes.NewBuffer([]byte(`{"title":"Test Video"}`)))
 		require.NoError(t, err)
 		defer resp.Body.Close()
 
@@ -347,13 +317,13 @@ func TestExampleE2EStructure(t *testing.T) {
 		require.NoError(t, err)
 		req.Header.Set("Content-Type", writer.FormDataContentType())
 
-		chunkResp, err := client.httpClient.Do(req)
+		chunkResp, err := client.HTTPClient.Do(req)
 		require.NoError(t, err)
 		defer chunkResp.Body.Close()
 		assert.Equal(t, http.StatusOK, chunkResp.StatusCode)
 
 		// Step 3: Finalize upload
-		finalizeResp, err := client.doRequest("POST", "/api/v1/videos/upload-session/test-session-123/finalize", nil)
+		finalizeResp, err := client.DoRequest("POST", "/api/v1/videos/upload-session/test-session-123/finalize", nil)
 		require.NoError(t, err)
 		defer finalizeResp.Body.Close()
 
@@ -364,7 +334,7 @@ func TestExampleE2EStructure(t *testing.T) {
 		assert.Equal(t, "processing", finalizeData["status"])
 
 		// Step 4: Poll for processing completion
-		statusResp, err := client.doRequest("GET", "/api/v1/videos/video-123/status", nil)
+		statusResp, err := client.DoRequest("GET", "/api/v1/videos/video-123/status", nil)
 		require.NoError(t, err)
 		defer statusResp.Body.Close()
 
@@ -394,16 +364,16 @@ func createTestVideoFile(t *testing.T) string {
 // TestE2ETestHelpers verifies that E2E test helper functions work correctly
 func TestE2ETestHelpers(t *testing.T) {
 	t.Run("TestClientCreation", func(t *testing.T) {
-		client := newTestClient("http://localhost:8080")
+		client := NewTestClient("http://localhost:8080")
 		assert.NotNil(t, client)
-		assert.Equal(t, "http://localhost:8080", client.baseURL)
-		assert.Empty(t, client.authToken)
+		assert.Equal(t, "http://localhost:8080", client.BaseURL)
+		assert.Empty(t, client.Token)
 	})
 
 	t.Run("TestClientAuthToken", func(t *testing.T) {
-		client := newTestClient("http://localhost:8080")
-		client.setAuthToken("test-token-123")
-		assert.Equal(t, "test-token-123", client.authToken)
+		client := NewTestClient("http://localhost:8080")
+		client.SetAuthToken("test-token-123")
+		assert.Equal(t, "test-token-123", client.Token)
 	})
 
 	t.Run("CreateTestVideoFile", func(t *testing.T) {

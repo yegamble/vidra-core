@@ -35,7 +35,7 @@ type Metrics struct {
 	VirusScanDuration     *prometheus.HistogramVec
 	MalwareDetections     *prometheus.CounterVec
 	VirusScanErrors       *prometheus.CounterVec
-	VideoEncodingDuration prometheus.Histogram
+	VideoEncodingDuration *prometheus.HistogramVec
 	VideoEncodingQueue    prometheus.Gauge
 	VideoProcessingErrors *prometheus.CounterVec
 }
@@ -110,8 +110,11 @@ func NewMetrics() *Metrics {
 			prometheus.CounterOpts{Name: "virus_scan_errors_total", Help: "Total number of virus scan errors"},
 			[]string{"error_type"},
 		),
-		VideoEncodingDuration: prometheus.NewHistogram(prometheus.HistogramOpts{Name: "video_encoding_duration_seconds", Help: "Video encoding duration", Buckets: prometheus.DefBuckets}),
-		VideoEncodingQueue:    prometheus.NewGauge(prometheus.GaugeOpts{Name: "video_encoding_queue", Help: "Video encoding queue depth"}),
+		VideoEncodingDuration: prometheus.NewHistogramVec(
+			prometheus.HistogramOpts{Name: "video_encoding_duration_seconds", Help: "Video encoding duration", Buckets: prometheus.DefBuckets},
+			[]string{"resolution"},
+		),
+		VideoEncodingQueue: prometheus.NewGauge(prometheus.GaugeOpts{Name: "video_encoding_queue", Help: "Video encoding queue depth"}),
 		VideoProcessingErrors: prometheus.NewCounterVec(
 			prometheus.CounterOpts{Name: "video_processing_errors_total", Help: "Video processing errors"},
 			[]string{"stage"},

@@ -59,6 +59,18 @@ func (m *MockVideoRepository) Count(ctx context.Context) (int64, error) {
 	return 0, nil
 }
 
+func (m *MockVideoRepository) GetByRemoteURI(ctx context.Context, remoteURI string) (*domain.Video, error) {
+	return nil, nil
+}
+
+func (m *MockVideoRepository) CreateRemoteVideo(ctx context.Context, video *domain.Video) error {
+	return nil
+}
+
+func (m *MockVideoRepository) GetVideosForMigration(ctx context.Context, limit int) ([]*domain.Video, error) {
+	return []*domain.Video{}, nil
+}
+
 func TestNewVODConverter(t *testing.T) {
 	cfg := &config.Config{
 		HLSOutputDir:           "/tmp/test-vod",
@@ -538,8 +550,4 @@ func TestVODConverter_CreateOutputDirectory(t *testing.T) {
 	// Replay directory should be created
 	_, err = os.Stat(cfg.ReplayStorageDir)
 	assert.NoError(t, err, "Replay storage directory should be created")
-}
-
-func (m *MockVideoRepository) GetVideosForMigration(ctx context.Context, limit int) ([]*domain.Video, error) {
-	return []*domain.Video{}, nil
 }

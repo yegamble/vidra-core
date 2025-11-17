@@ -133,7 +133,7 @@ func TestHTTPSpanAttributes(t *testing.T) {
 	req := httptest.NewRequest("POST", "/api/v1/videos", nil)
 	req.Header.Set("User-Agent", "test-client")
 
-	ctx, span := tracer.Start(context.Background(), "HTTP POST")
+	_, span := tracer.Start(context.Background(), "HTTP POST")
 	RecordHTTPSpan(span, req, 201, "user-123")
 	span.End()
 
@@ -183,7 +183,7 @@ func TestDatabaseSpanAttributes(t *testing.T) {
 
 	tracer := tp.Tracer("test-tracer")
 
-	ctx, span := tracer.Start(context.Background(), "db.query")
+	_, span := tracer.Start(context.Background(), "db.query")
 	RecordDBSpan(span, "SELECT", "videos", "SELECT * FROM videos WHERE id = $1", 5)
 	span.End()
 
@@ -234,7 +234,7 @@ func TestIPFSSpanAttributes(t *testing.T) {
 
 	tracer := tp.Tracer("test-tracer")
 
-	ctx, span := tracer.Start(context.Background(), "ipfs.pin")
+	_, span := tracer.Start(context.Background(), "ipfs.pin")
 	RecordIPFSSpan(span, "pin.add", "QmTest123", 1048576)
 	span.End()
 
@@ -285,7 +285,7 @@ func TestSpanErrorRecording(t *testing.T) {
 
 	testErr := errors.New("database connection failed")
 
-	ctx, span := tracer.Start(context.Background(), "db.query")
+	_, span := tracer.Start(context.Background(), "db.query")
 	RecordError(span, testErr)
 	span.End()
 
@@ -547,7 +547,7 @@ func TestSamplingConfiguration(t *testing.T) {
 
 			tracer := tp.Tracer("test-tracer")
 
-			ctx, span := tracer.Start(context.Background(), "test-operation")
+			_, span := tracer.Start(context.Background(), "test-operation")
 			span.End()
 
 			if tt.samplingRate == 1.0 {
@@ -587,7 +587,7 @@ func TestSpanKinds(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			exporter.Reset()
 
-			ctx, span := tracer.Start(
+			_, span := tracer.Start(
 				context.Background(),
 				tt.name,
 				oteltrace.WithSpanKind(tt.spanKind),

@@ -19,6 +19,11 @@ import (
 	"athena/internal/security"
 )
 
+const (
+	// ActivityPubPublic is the special public audience in ActivityPub
+	ActivityPubPublic = "https://www.w3.org/ns/activitystreams#Public"
+)
+
 // Service handles ActivityPub federation logic
 type Service struct {
 	repo         port.ActivityPubRepository
@@ -1240,25 +1245,25 @@ func (s *Service) BuildVideoObject(ctx context.Context, video *domain.Video) (*d
 	// Privacy settings
 	videoObj.CommentsEnabled = true
 	videoObj.DownloadEnabled = true
-	videoObj.Sensitive = video.NSFW
+	videoObj.Sensitive = video.Privacy == domain.PrivacyPrivate
 
 	// View count (if available)
-	videoObj.Views = video.ViewCount
+	videoObj.Views = int(video.Views)
 
 	// Build URLs for video files
-	if video.VideoPath != "" {
+	if len(video.OutputPaths) > 0 {
 		// MP4 video file
 		mp4URL := domain.APUrl{
 			Type:      "Link",
 			MediaType: "video/mp4",
 			Href:      fmt.Sprintf("%s/videos/%s/stream", s.cfg.PublicBaseURL, video.ID),
-			Height:    video.Height,
-			Width:     video.Width,
+			Height:    video.Metadata.Height,
+			Width:     video.Metadata.Width,
 		}
 		videoObj.URL = append(videoObj.URL, mp4URL)
 
-		// HLS streaming
-		if video.HLSMasterPlaylist != "" {
+		// HLS streaming - check if any HLS output exists
+		if len(video.OutputPaths) > 0 {
 			hlsURL := domain.APUrl{
 				Type:      "Link",
 				MediaType: "application/x-mpegURL",
@@ -1274,21 +1279,20 @@ func (s *Service) BuildVideoObject(ctx context.Context, video *domain.Video) (*d
 			Type:      "Image",
 			URL:       fmt.Sprintf("%s/thumbnails/%s", s.cfg.PublicBaseURL, video.ThumbnailPath),
 			MediaType: "image/jpeg",
-			Width:     video.ThumbnailWidth,
-			Height:    video.ThumbnailHeight,
+			// Width and Height are optional for thumbnails, omit if not available
 		}
 		videoObj.Icon = []domain.Image{icon}
 	}
 
 	// Federation audience (To/Cc)
 	switch video.Privacy {
-	case "public":
-		videoObj.To = []string{domain.ActivityPubPublic}
+	case domain.PrivacyPublic:
+		videoObj.To = []string{ActivityPubPublic}
 		videoObj.Cc = []string{actorID + "/followers"}
-	case "unlisted":
+	case domain.PrivacyUnlisted:
 		videoObj.To = []string{actorID + "/followers"}
-		videoObj.Cc = []string{domain.ActivityPubPublic}
-	case "private":
+		videoObj.Cc = []string{ActivityPubPublic}
+	case domain.PrivacyPrivate:
 		// Private videos only go to followers
 		videoObj.To = []string{actorID + "/followers"}
 	}
@@ -1356,16 +1360,16 @@ func (s *Service) PublishVideo(ctx context.Context, videoID string) error {
 		return fmt.Errorf("failed to create activity: %w", err)
 	}
 
-	// Get followers to deliver to
-	followers, err := s.repo.GetFollowers(ctx, video.UserID)
+	// Get followers to deliver to (accepted followers only)
+	followers, _, err := s.repo.GetFollowers(ctx, video.UserID, "accepted", 1000, 0)
 	if err != nil {
 		return fmt.Errorf("failed to get followers: %w", err)
 	}
 
-	// Queue delivery jobs for each follower's inbox
+	// Deliver to each follower's inbox
 	for _, follower := range followers {
 		// Get remote actor details
-		remoteActor, err := s.repo.GetRemoteActor(ctx, follower.ActorURI)
+		remoteActor, err := s.repo.GetRemoteActor(ctx, follower.FollowerID)
 		if err != nil {
 			continue // Skip if we can't get the remote actor
 		}
@@ -1376,19 +1380,8 @@ func (s *Service) PublishVideo(ctx context.Context, videoID string) error {
 			inboxURL = *remoteActor.SharedInbox
 		}
 
-		// Queue the delivery job
-		job := &domain.APDeliveryJob{
-			ID:          uuid.New().String(),
-			ActivityID:  activity.ID,
-			ActorID:     activity.Actor,
-			InboxURL:    inboxURL,
-			Activity:    activity,
-			Status:      "pending",
-			MaxRetries:  10,
-			RetryCount:  0,
-		}
-
-		if err := s.repo.CreateDeliveryJob(ctx, job); err != nil {
+		// Deliver the activity
+		if err := s.DeliverActivity(ctx, video.UserID, inboxURL, activity); err != nil {
 			// Log error but continue with other followers
 			continue
 		}
@@ -1441,14 +1434,14 @@ func (s *Service) UpdateVideo(ctx context.Context, videoID string) error {
 		Cc:        videoObj.Cc,
 	}
 
-	// Get followers and queue delivery
-	followers, err := s.repo.GetFollowers(ctx, video.UserID)
+	// Get followers and deliver update activity
+	followers, _, err := s.repo.GetFollowers(ctx, video.UserID, "accepted", 1000, 0)
 	if err != nil {
 		return fmt.Errorf("failed to get followers: %w", err)
 	}
 
 	for _, follower := range followers {
-		remoteActor, err := s.repo.GetRemoteActor(ctx, follower.ActorURI)
+		remoteActor, err := s.repo.GetRemoteActor(ctx, follower.FollowerID)
 		if err != nil {
 			continue
 		}
@@ -1458,18 +1451,7 @@ func (s *Service) UpdateVideo(ctx context.Context, videoID string) error {
 			inboxURL = *remoteActor.SharedInbox
 		}
 
-		job := &domain.APDeliveryJob{
-			ID:          uuid.New().String(),
-			ActivityID:  activity.ID,
-			ActorID:     activity.Actor,
-			InboxURL:    inboxURL,
-			Activity:    activity,
-			Status:      "pending",
-			MaxRetries:  10,
-			RetryCount:  0,
-		}
-
-		if err := s.repo.CreateDeliveryJob(ctx, job); err != nil {
+		if err := s.DeliverActivity(ctx, video.UserID, inboxURL, activity); err != nil {
 			continue
 		}
 	}
@@ -1507,18 +1489,18 @@ func (s *Service) DeleteVideo(ctx context.Context, videoID string) error {
 		Actor:     actorID,
 		Object:    videoObjectID, // Just the ID, not the full object
 		Published: &now,
-		To:        []string{domain.ActivityPubPublic},
+		To:        []string{ActivityPubPublic},
 		Cc:        []string{actorID + "/followers"},
 	}
 
-	// Get followers and queue delivery
-	followers, err := s.repo.GetFollowers(ctx, video.UserID)
+	// Get followers and deliver delete activity
+	followers, _, err := s.repo.GetFollowers(ctx, video.UserID, "accepted", 1000, 0)
 	if err != nil {
 		return fmt.Errorf("failed to get followers: %w", err)
 	}
 
 	for _, follower := range followers {
-		remoteActor, err := s.repo.GetRemoteActor(ctx, follower.ActorURI)
+		remoteActor, err := s.repo.GetRemoteActor(ctx, follower.FollowerID)
 		if err != nil {
 			continue
 		}
@@ -1528,18 +1510,7 @@ func (s *Service) DeleteVideo(ctx context.Context, videoID string) error {
 			inboxURL = *remoteActor.SharedInbox
 		}
 
-		job := &domain.APDeliveryJob{
-			ID:          uuid.New().String(),
-			ActivityID:  activity.ID,
-			ActorID:     activity.Actor,
-			InboxURL:    inboxURL,
-			Activity:    activity,
-			Status:      "pending",
-			MaxRetries:  10,
-			RetryCount:  0,
-		}
-
-		if err := s.repo.CreateDeliveryJob(ctx, job); err != nil {
+		if err := s.DeliverActivity(ctx, video.UserID, inboxURL, activity); err != nil {
 			continue
 		}
 	}
@@ -1623,7 +1594,7 @@ func (s *Service) ingestRemoteVideo(ctx context.Context, videoObj map[string]int
 		Description:          description,
 		Duration:             duration,
 		Privacy:              privacy,
-		Status:               domain.ProcessingStatusCompleted,
+		Status:               domain.StatusCompleted,
 		UploadDate:           uploadDate,
 		Tags:                 tags,
 		Language:             language,
@@ -1823,14 +1794,14 @@ func determinePrivacy(videoObj map[string]interface{}) domain.Privacy {
 
 	// Public if sent to public collection
 	for _, t := range to {
-		if t == domain.ActivityPubPublic || t == "Public" || t == "as:Public" {
+		if t == ActivityPubPublic || t == "Public" || t == "as:Public" {
 			return domain.PrivacyPublic
 		}
 	}
 
 	// Unlisted if cc'd to public
 	for _, c := range cc {
-		if c == domain.ActivityPubPublic || c == "Public" || c == "as:Public" {
+		if c == ActivityPubPublic || c == "Public" || c == "as:Public" {
 			return domain.PrivacyUnlisted
 		}
 	}
