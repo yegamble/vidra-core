@@ -803,6 +803,10 @@ func (s *Service) GetFollowing(ctx context.Context, username string, page int, l
 
 // BuildNoteObject converts a domain.Comment to an ActivityPub NoteObject
 func (s *Service) BuildNoteObject(ctx context.Context, comment *domain.Comment) (*domain.NoteObject, error) {
+	if comment == nil {
+		return nil, fmt.Errorf("comment is nil")
+	}
+
 	// Get the comment author
 	user, err := s.userRepo.GetByID(ctx, comment.UserID.String())
 	if err != nil {
@@ -1321,7 +1325,10 @@ func (s *Service) CreateVideoActivity(ctx context.Context, video *domain.Video) 
 	}
 
 	actorID := s.buildActorID(owner.Username)
-	activityID := fmt.Sprintf("%s/videos/%s/activity", s.cfg.PublicBaseURL, video.ID)
+	activityID := fmt.Sprintf("%s/activities/create-%s", s.cfg.PublicBaseURL, video.ID)
+
+	// Activity is published at the current time
+	now := time.Now()
 
 	// Create the activity
 	activity := &domain.Activity{
@@ -1330,7 +1337,7 @@ func (s *Service) CreateVideoActivity(ctx context.Context, video *domain.Video) 
 		ID:        activityID,
 		Actor:     actorID,
 		Object:    videoObj,
-		Published: &video.CreatedAt,
+		Published: &now,
 		To:        videoObj.To,
 		Cc:        videoObj.Cc,
 	}
@@ -1349,9 +1356,9 @@ func (s *Service) PublishVideo(ctx context.Context, videoID string) error {
 		return fmt.Errorf("video not found")
 	}
 
-	// Only publish public and unlisted videos
-	if video.Privacy == "private" {
-		return nil // Private videos aren't federated
+	// Only publish completed videos
+	if video.Status != domain.StatusCompleted {
+		return fmt.Errorf("video not completed")
 	}
 
 	// Create the activity
@@ -1366,7 +1373,7 @@ func (s *Service) PublishVideo(ctx context.Context, videoID string) error {
 		return fmt.Errorf("failed to get followers: %w", err)
 	}
 
-	// Deliver to each follower's inbox
+	// Queue delivery to each follower's inbox
 	for _, follower := range followers {
 		// Get remote actor details
 		remoteActor, err := s.repo.GetRemoteActor(ctx, follower.FollowerID)
@@ -1380,11 +1387,32 @@ func (s *Service) PublishVideo(ctx context.Context, videoID string) error {
 			inboxURL = *remoteActor.SharedInbox
 		}
 
-		// Deliver the activity
-		if err := s.DeliverActivity(ctx, video.UserID, inboxURL, activity); err != nil {
+		// Queue the delivery for async processing
+		delivery := &domain.APDeliveryQueue{
+			ActivityID: activity.ID,
+			ActorID:    activity.Actor,
+			InboxURL:   inboxURL,
+		}
+
+		if err := s.repo.EnqueueDelivery(ctx, delivery); err != nil {
 			// Log error but continue with other followers
 			continue
 		}
+	}
+
+	// Store the activity in the outbox
+	apActivity := &domain.APActivity{
+		ID:           activity.ID,
+		ActorID:      activity.Actor,
+		Type:         activity.Type,
+		Published:    *activity.Published,
+		ActivityJSON: nil, // Will be marshaled by repository
+		Local:        true,
+	}
+
+	if err := s.repo.StoreActivity(ctx, apActivity); err != nil {
+		// Activity is already queued, so just log this error
+		return fmt.Errorf("failed to store activity: %w", err)
 	}
 
 	return nil
@@ -1451,9 +1479,29 @@ func (s *Service) UpdateVideo(ctx context.Context, videoID string) error {
 			inboxURL = *remoteActor.SharedInbox
 		}
 
-		if err := s.DeliverActivity(ctx, video.UserID, inboxURL, activity); err != nil {
+		delivery := &domain.APDeliveryQueue{
+			ActivityID: activity.ID,
+			ActorID:    activity.Actor,
+			InboxURL:   inboxURL,
+		}
+
+		if err := s.repo.EnqueueDelivery(ctx, delivery); err != nil {
 			continue
 		}
+	}
+
+	// Store the activity in the outbox
+	apActivity := &domain.APActivity{
+		ID:           activity.ID,
+		ActorID:      activity.Actor,
+		Type:         activity.Type,
+		Published:    *activity.Published,
+		ActivityJSON: nil,
+		Local:        true,
+	}
+
+	if err := s.repo.StoreActivity(ctx, apActivity); err != nil {
+		return fmt.Errorf("failed to store activity: %w", err)
 	}
 
 	return nil
@@ -1510,9 +1558,29 @@ func (s *Service) DeleteVideo(ctx context.Context, videoID string) error {
 			inboxURL = *remoteActor.SharedInbox
 		}
 
-		if err := s.DeliverActivity(ctx, video.UserID, inboxURL, activity); err != nil {
+		delivery := &domain.APDeliveryQueue{
+			ActivityID: activity.ID,
+			ActorID:    activity.Actor,
+			InboxURL:   inboxURL,
+		}
+
+		if err := s.repo.EnqueueDelivery(ctx, delivery); err != nil {
 			continue
 		}
+	}
+
+	// Store the activity in the outbox
+	apActivity := &domain.APActivity{
+		ID:           activity.ID,
+		ActorID:      activity.Actor,
+		Type:         activity.Type,
+		Published:    *activity.Published,
+		ActivityJSON: nil,
+		Local:        true,
+	}
+
+	if err := s.repo.StoreActivity(ctx, apActivity); err != nil {
+		return fmt.Errorf("failed to store activity: %w", err)
 	}
 
 	return nil

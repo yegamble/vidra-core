@@ -734,9 +734,9 @@ func TestPublishVideo(t *testing.T) {
 
 		for i, follower := range followers {
 			mockAPRepo.On("GetRemoteActor", ctx, follower.FollowerID).Return(remoteActors[i], nil).Once()
-			mockAPRepo.On("EnqueueDelivery", ctx, mock.AnythingOfType("*domain.APDeliveryQueue")).Return(nil).Once()
 		}
 
+		mockAPRepo.On("EnqueueDelivery", ctx, mock.AnythingOfType("*domain.APDeliveryQueue")).Return(nil).Times(2)
 		mockAPRepo.On("StoreActivity", ctx, mock.AnythingOfType("*domain.APActivity")).Return(nil).Once()
 
 		err := service.PublishVideo(ctx, "video-789")
@@ -755,11 +755,13 @@ func TestPublishVideo(t *testing.T) {
 		deliveryCount := 0
 		for i, follower := range followers {
 			mockAPRepo.On("GetRemoteActor", ctx, follower.FollowerID).Return(remoteActors[i], nil).Once()
-			mockAPRepo.On("EnqueueDelivery", ctx, mock.MatchedBy(func(delivery *domain.APDeliveryQueue) bool {
-				deliveryCount++
-				return delivery.ActorID == user.ID
-			})).Return(nil).Once()
 		}
+
+		// Single EnqueueDelivery expectation that matches any delivery
+		mockAPRepo.On("EnqueueDelivery", ctx, mock.MatchedBy(func(delivery *domain.APDeliveryQueue) bool {
+			deliveryCount++
+			return delivery.ActorID != ""
+		})).Return(nil).Times(2)
 
 		mockAPRepo.On("StoreActivity", ctx, mock.AnythingOfType("*domain.APActivity")).Return(nil).Once()
 

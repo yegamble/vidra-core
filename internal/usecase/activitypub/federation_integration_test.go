@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -128,16 +129,24 @@ func TestVideoUploadToFederation(t *testing.T) {
 		mockUserRepo.On("GetByID", ctx, user.ID).Return(user, nil).Times(2)
 		mockAPRepo.On("GetFollowers", ctx, user.ID, "accepted", mock.Anything, mock.Anything).Return(followers, 2, nil).Once()
 
+		var deliveryMutex sync.Mutex
 		deliveryCount := 0
+		deliveryCalls := make([]string, 0)
+
 		for i, follower := range followers {
 			mockAPRepo.On("GetRemoteActor", ctx, follower.FollowerID).Return(remoteActors[i], nil).Once()
-			mockAPRepo.On("EnqueueDelivery", ctx, mock.MatchedBy(func(delivery *domain.APDeliveryQueue) bool {
-				deliveryCount++
-				assert.NotEmpty(t, delivery.ActivityID)
-				assert.NotEmpty(t, delivery.InboxURL)
-				return true
-			})).Return(nil).Once()
 		}
+
+		// Single EnqueueDelivery expectation that matches any delivery
+		mockAPRepo.On("EnqueueDelivery", ctx, mock.MatchedBy(func(delivery *domain.APDeliveryQueue) bool {
+			deliveryMutex.Lock()
+			defer deliveryMutex.Unlock()
+			deliveryCount++
+			deliveryCalls = append(deliveryCalls, delivery.InboxURL)
+			assert.NotEmpty(t, delivery.ActivityID)
+			assert.NotEmpty(t, delivery.InboxURL)
+			return true
+		})).Return(nil).Times(2) // Expect exactly 2 calls
 
 		mockAPRepo.On("StoreActivity", ctx, mock.MatchedBy(func(activity *domain.APActivity) bool {
 			assert.Equal(t, domain.ActivityTypeCreate, activity.Type)
