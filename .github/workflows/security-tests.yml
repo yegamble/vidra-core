@@ -19,6 +19,8 @@ jobs:
     name: SSRF Protection Tests
     runs-on: self-hosted
     timeout-minutes: 10
+    env:
+      CGO_ENABLED: "1"
 
     steps:
       - name: Checkout code
@@ -76,6 +78,8 @@ jobs:
     name: URL Validation & Domain Tests
     runs-on: self-hosted
     timeout-minutes: 10
+    env:
+      CGO_ENABLED: "1"
 
     steps:
       - name: Checkout code
@@ -109,6 +113,8 @@ jobs:
     name: ActivityPub Security Tests
     runs-on: self-hosted
     timeout-minutes: 10
+    env:
+      CGO_ENABLED: "1"
 
     steps:
       - name: Checkout code

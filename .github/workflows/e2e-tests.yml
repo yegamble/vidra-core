@@ -136,6 +136,8 @@ jobs:
     timeout-minutes: 60
     # Only run on main branch or manual trigger to save CI time
     if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+    env:
+      CGO_ENABLED: "1"
 
     steps:
       - name: Checkout code

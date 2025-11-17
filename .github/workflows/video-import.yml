@@ -44,6 +44,8 @@ jobs:
   unit-tests:
     name: Unit Tests
     runs-on: self-hosted
+    env:
+      CGO_ENABLED: "1"
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -104,6 +106,8 @@ jobs:
   integration-tests:
     name: Integration Tests
     runs-on: self-hosted
+    env:
+      CGO_ENABLED: "1"
     services:
       postgres:
         image: postgres:15
