@@ -1,3 +1,5 @@
+-- +goose Up
+-- +goose StatementBegin
 -- Migrate subscriptions from user-based to channel-based
 -- Since this is a new system, we'll drop and recreate the subscriptions table
 
@@ -139,3 +141,8 @@ COMMENT ON TABLE subscriptions IS 'User subscriptions to channels';
 COMMENT ON COLUMN subscriptions.subscriber_id IS 'User who is subscribing';
 COMMENT ON COLUMN subscriptions.channel_id IS 'Channel being subscribed to';
 COMMENT ON FUNCTION get_subscription_feed IS 'Get subscription feed for a user';
+-- +goose StatementEnd
+
+-- +goose Down
+-- NOTE: Add rollback statements here if needed
+-- For now, we'll keep migrations forward-only for safety

@@ -1,3 +1,5 @@
+-- +goose Up
+-- +goose StatementBegin
 -- Create oauth_clients table for minimal OAuth2 client storage
 -- Allows password and refresh_token grants with client authentication
 
@@ -34,4 +36,8 @@ BEFORE UPDATE ON oauth_clients
 FOR EACH ROW EXECUTE FUNCTION set_updated_at_oauth_clients();
 
 COMMIT;
+-- +goose StatementEnd
 
+-- +goose Down
+-- NOTE: Add rollback statements here if needed
+-- For now, we'll keep migrations forward-only for safety

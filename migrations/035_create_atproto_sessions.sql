@@ -1,3 +1,5 @@
+-- +goose Up
+-- +goose StatementBegin
 -- Secure storage for ATProto session tokens
 
 CREATE TABLE IF NOT EXISTS atproto_sessions (
@@ -23,4 +25,8 @@ DROP TRIGGER IF EXISTS trg_update_atproto_sessions_updated_at ON atproto_session
 CREATE TRIGGER trg_update_atproto_sessions_updated_at
     BEFORE UPDATE ON atproto_sessions
     FOR EACH ROW EXECUTE FUNCTION update_atproto_sessions_updated_at();
+-- +goose StatementEnd
 
+-- +goose Down
+-- NOTE: Add rollback statements here if needed
+-- For now, we'll keep migrations forward-only for safety

@@ -1,3 +1,5 @@
+-- +goose Up
+-- +goose StatementBegin
 -- Move user avatar from users table to dedicated user_avatars table
 -- Provides storage for avatar file UUID and IPFS CID
 
@@ -27,4 +29,8 @@ ON CONFLICT (user_id) DO UPDATE SET url = EXCLUDED.url, updated_at = NOW();
 
 -- Drop avatar column from users
 ALTER TABLE users DROP COLUMN IF EXISTS avatar;
+-- +goose StatementEnd
 
+-- +goose Down
+-- NOTE: Add rollback statements here if needed
+-- For now, we'll keep migrations forward-only for safety

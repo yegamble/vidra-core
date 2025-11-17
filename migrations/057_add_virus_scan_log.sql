@@ -1,3 +1,5 @@
+-- +goose Up
+-- +goose StatementBegin
 -- Create table to log virus scan results
 CREATE TABLE IF NOT EXISTS virus_scan_log (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -27,3 +29,8 @@ COMMENT ON COLUMN virus_scan_log.scan_result IS 'Result of virus scan: clean, in
 COMMENT ON COLUMN virus_scan_log.virus_name IS 'Name of detected virus/malware if infected';
 COMMENT ON COLUMN virus_scan_log.quarantined IS 'Whether file was quarantined';
 COMMENT ON COLUMN virus_scan_log.metadata IS 'Additional metadata about the scan (JSON)';
+-- +goose StatementEnd
+
+-- +goose Down
+-- NOTE: Add rollback statements here if needed
+-- For now, we'll keep migrations forward-only for safety

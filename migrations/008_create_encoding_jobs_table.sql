@@ -1,3 +1,5 @@
+-- +goose Up
+-- +goose StatementBegin
 -- Create encoding_jobs table for video processing queue
 CREATE TABLE IF NOT EXISTS encoding_jobs (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -26,3 +28,8 @@ CREATE TRIGGER update_encoding_jobs_updated_at
     BEFORE UPDATE ON encoding_jobs
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
+-- +goose StatementEnd
+
+-- +goose Down
+-- NOTE: Add rollback statements here if needed
+-- For now, we'll keep migrations forward-only for safety

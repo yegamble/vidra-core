@@ -1,3 +1,5 @@
+-- +goose Up
+-- +goose StatementBegin
 -- Federation Hardening: DLQ, blocklists, metrics, and reliability features
 
 -- Dead Letter Queue for failed federation jobs
@@ -206,3 +208,8 @@ VALUES
     ('federation_enable_abuse_reporting', 'true'::jsonb, 'Enable abuse reporting for federated content', false),
     ('federation_metrics_enabled', 'true'::jsonb, 'Enable federation metrics collection', false)
 ON CONFLICT (key) DO NOTHING;
+-- +goose StatementEnd
+
+-- +goose Down
+-- NOTE: Add rollback statements here if needed
+-- For now, we'll keep migrations forward-only for safety

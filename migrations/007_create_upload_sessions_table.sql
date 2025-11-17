@@ -1,3 +1,5 @@
+-- +goose Up
+-- +goose StatementBegin
 -- Create upload_sessions table for chunked upload tracking
 CREATE TABLE IF NOT EXISTS upload_sessions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -27,3 +29,8 @@ CREATE TRIGGER update_upload_sessions_updated_at
     BEFORE UPDATE ON upload_sessions
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
+-- +goose StatementEnd
+
+-- +goose Down
+-- NOTE: Add rollback statements here if needed
+-- For now, we'll keep migrations forward-only for safety

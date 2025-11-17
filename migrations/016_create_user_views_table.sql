@@ -1,3 +1,5 @@
+-- +goose Up
+-- +goose StatementBegin
 -- Create comprehensive user views table for efficient analytics and metrics
 -- Designed for high-frequency inserts with optimal performance and rich analytics
 
@@ -404,3 +406,8 @@ COMMENT ON COLUMN user_views.fingerprint_hash IS 'Privacy-compliant hash of IP+U
 COMMENT ON COLUMN user_views.completion_percentage IS 'Percentage of video watched (0.00-100.00)';
 COMMENT ON COLUMN user_views.is_anonymous IS 'User opted for anonymous tracking - limits data collection';
 COMMENT ON COLUMN user_views.tracking_consent IS 'User consented to detailed behavioral tracking';
+-- +goose StatementEnd
+
+-- +goose Down
+-- NOTE: Add rollback statements here if needed
+-- For now, we'll keep migrations forward-only for safety

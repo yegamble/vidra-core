@@ -1,3 +1,5 @@
+-- +goose Up
+-- +goose StatementBegin
 -- Migration: Add multi-codec support for VP9 and AV1 encoding
 -- This migration extends the videos and encoding_jobs tables to support multiple codecs
 
@@ -99,3 +101,8 @@ END;
 $$ LANGUAGE plpgsql;
 
 COMMENT ON FUNCTION get_video_codecs IS 'Returns available codec variants for a video';
+-- +goose StatementEnd
+
+-- +goose Down
+-- NOTE: Add rollback statements here if needed
+-- For now, we'll keep migrations forward-only for safety

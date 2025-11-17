@@ -1,3 +1,5 @@
+-- +goose Up
+-- +goose StatementBegin
 -- Add E2EE messaging support with comprehensive security
 -- Uses industry-standard cryptographic patterns
 
@@ -141,3 +143,8 @@ ALTER TABLE user_master_keys ADD CONSTRAINT check_argon2_params
 -- Ensure encrypted conversations have proper key exchange
 ALTER TABLE conversations ADD CONSTRAINT check_encrypted_key_exchange
     CHECK ((is_encrypted = false) OR (is_encrypted = true AND key_exchange_complete = true));
+-- +goose StatementEnd
+
+-- +goose Down
+-- NOTE: Add rollback statements here if needed
+-- For now, we'll keep migrations forward-only for safety

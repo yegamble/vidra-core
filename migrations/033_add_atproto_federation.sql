@@ -1,3 +1,5 @@
+-- +goose Up
+-- +goose StatementBegin
 -- ATProto federation: jobs queue and ingested posts
 
 CREATE TABLE IF NOT EXISTS federation_jobs (
@@ -57,4 +59,8 @@ VALUES (
     'atproto_block_labels', '[]'::jsonb, 'Array of label values to block from ingestion (e.g., "porn", "sexual")', false
 )
 ON CONFLICT (key) DO NOTHING;
+-- +goose StatementEnd
 
+-- +goose Down
+-- NOTE: Add rollback statements here if needed
+-- For now, we'll keep migrations forward-only for safety

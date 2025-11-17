@@ -2,8 +2,20 @@
 
 [![Test](https://github.com/yegamble/athena/actions/workflows/test.yml/badge.svg)](https://github.com/yegamble/athena/actions/workflows/test.yml)
 [![OpenAPI CI](https://github.com/yegamble/athena/actions/workflows/openapi-ci.yml/badge.svg)](https://github.com/yegamble/athena/actions/workflows/openapi-ci.yml)
+[![Database Migrations](https://github.com/yegamble/athena/actions/workflows/goose-migrate.yml/badge.svg)](https://github.com/yegamble/athena/actions/workflows/goose-migrate.yml)
 
 A high-performance, feature-complete PeerTube backend implementation in Go with P2P distribution, live streaming, plugin system, and multi-protocol federation (ActivityPub + ATProto).
+
+## 📊 Project Metrics
+
+| Metric | Count | Description |
+|--------|-------|-------------|
+| **Go Files** | 426 | Total Go source files |
+| **Test Files** | 156 | Comprehensive test coverage |
+| **Lines of Code** | 136,000+ | Total lines including tests |
+| **Database Migrations** | 58 | Goose migrations |
+| **API Endpoints** | 100+ | RESTful + WebSocket |
+| **Security Tests** | 50+ | Including P1 vulnerability fixes |
 
 ## Features
 
@@ -76,9 +88,36 @@ docker compose up --build
 
 # Or run locally
 make deps
-# Apply DB migrations
-make migrate
+
+# Install Goose migration tool
+go install github.com/pressly/goose/v3/cmd/goose@latest
+
+# Apply database migrations
+make migrate-up    # Apply all pending migrations
+# or manually:
+# goose -dir migrations postgres "$DATABASE_URL" up
+
 make run
+```
+
+### Database Migrations
+
+We use [Goose](https://github.com/pressly/goose) for database migrations (no authentication required, simple and reliable).
+
+```bash
+# Install Goose
+go install github.com/pressly/goose/v3/cmd/goose@latest
+
+# Migration commands
+make migrate-up       # Apply all pending migrations
+make migrate-down     # Rollback last migration
+make migrate-status   # Show migration status
+make migrate-version  # Show current version
+make migrate-create NAME=add_feature  # Create new migration
+
+# Manual Goose commands
+goose -dir migrations postgres "$DATABASE_URL" up
+goose -dir migrations postgres "$DATABASE_URL" status
 ```
 
 ### Testing

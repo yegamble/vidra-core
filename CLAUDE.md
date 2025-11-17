@@ -427,26 +427,35 @@ SELECT type, COUNT(*) FROM ap_activities WHERE local = false GROUP BY type;
 - API schemas: OpenAPI (oapi-codegen) or protobuf for future gRPC; keep HTTP first.
 - Error policy: domain errors typed; transport maps to HTTP 4xx/5xx consistently.
 
-## Migrations — Go-Atlas
+## Migrations — Goose
 
-- Config (`atlas.hcl`): dev shadow DB, migration dir, destructive lint.
-- Generate diff:
+- Tool: Goose v3 (https://github.com/pressly/goose) - simple, no auth required
+- Directory: `migrations/` with sequential numbered SQL files
+- Create new:
   ```bash
-  atlas migrate diff add_table --dir "file://migrations" \
-    --to "file://schema.hcl" \
-    --dev-url "postgres://user:pass@localhost:5433/db_shadow?sslmode=disable"
+  goose -dir migrations create add_feature sql
+  # Or via make:
+  make migrate-create NAME=add_feature
   ```
 - Apply:
   ```bash
-  atlas migrate apply --dir "file://migrations" \
-    --url "postgres://user:pass@localhost:5432/video_platform?sslmode=disable"
+  goose -dir migrations postgres "$DATABASE_URL" up
+  # Or via make:
+  make migrate-up
   ```
-- Lint:
+- Status:
   ```bash
-  atlas migrate lint --dir "file://migrations" \
-    --dev-url "postgres://user:pass@localhost:5433/db_shadow?sslmode=disable"
+  goose -dir migrations postgres "$DATABASE_URL" status
+  # Or via make:
+  make migrate-status
   ```
-- Policy: forward-only, no `DROP` without lint waiver, PR requires plan + checksum.
+- Rollback:
+  ```bash
+  goose -dir migrations postgres "$DATABASE_URL" down
+  # Or via make:
+  make migrate-down
+  ```
+- Policy: forward-only migrations recommended, rollbacks require careful review.
 
 ---
 
@@ -516,20 +525,21 @@ docker compose up --build
 **Makefile targets**
 
 ```
-make deps        # go mod download
-make lint        # golangci-lint run ./...
-make test        # unit tests
-make build       # binary
-make docker      # docker build
-make migrate     # atlas migrate apply
+make deps         # go mod download
+make lint         # golangci-lint run ./...
+make test         # unit tests
+make build        # binary
+make docker       # docker build
+make migrate-up   # goose migrate up
 ```
 
 **Testing**
 
 - Unit: usecase/repo with sqlmock for DB.
 - Integration: dockerized Postgres/Redis/IPFS via `docker compose -f docker-compose.test.yml`.
-- E2E: upload → process → HLS play. **CI** (GitHub Actions example stages)
-- `lint → test → build → docker push → atlas plan/lint → deploy`.
+- E2E: upload → process → HLS play.
+**CI** (GitHub Actions example stages)
+- `lint → test → build → docker push → migrate validate → deploy`.
 
 ---
 

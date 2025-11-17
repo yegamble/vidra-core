@@ -1,3 +1,5 @@
+-- +goose Up
+-- +goose StatementBegin
 -- Federation deduplication and conflict resolution enhancements
 
 -- Add content hash to federated_posts for deduplication
@@ -197,3 +199,8 @@ INSERT INTO instance_config (key, value, description, is_public) VALUES
     ('federation_backpressure_threshold', '1000'::jsonb, 'Queue depth before applying backpressure', false),
     ('federation_backpressure_throttle_factor', '0.5'::jsonb, 'Rate reduction factor when throttled', false)
 ON CONFLICT (key) DO NOTHING;
+-- +goose StatementEnd
+
+-- +goose Down
+-- NOTE: Add rollback statements here if needed
+-- For now, we'll keep migrations forward-only for safety

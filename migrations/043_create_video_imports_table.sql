@@ -1,3 +1,5 @@
+-- +goose Up
+-- +goose StatementBegin
 -- Migration: Create video imports table
 -- This migration adds support for importing videos from external sources (YouTube, Vimeo, etc.)
 
@@ -52,3 +54,8 @@ COMMENT ON TABLE video_imports IS 'Tracks video imports from external sources li
 COMMENT ON COLUMN video_imports.metadata IS 'JSON metadata from yt-dlp including original title, description, uploader, etc.';
 COMMENT ON COLUMN video_imports.progress IS 'Download progress percentage (0-100)';
 COMMENT ON COLUMN video_imports.target_privacy IS 'Privacy setting to apply to the imported video (public, unlisted, private)';
+-- +goose StatementEnd
+
+-- +goose Down
+-- NOTE: Add rollback statements here if needed
+-- For now, we'll keep migrations forward-only for safety

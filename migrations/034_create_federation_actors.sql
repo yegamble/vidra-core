@@ -1,3 +1,5 @@
+-- +goose Up
+-- +goose StatementBegin
 -- Dedicated table for ATProto ingestion actors and scheduling
 
 CREATE TABLE IF NOT EXISTS federation_actors (
@@ -16,4 +18,8 @@ CREATE INDEX IF NOT EXISTS idx_fed_actors_next ON federation_actors(next_at);
 
 CREATE TRIGGER update_fed_actors_updated_at BEFORE UPDATE ON federation_actors
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+-- +goose StatementEnd
 
+-- +goose Down
+-- NOTE: Add rollback statements here if needed
+-- For now, we'll keep migrations forward-only for safety

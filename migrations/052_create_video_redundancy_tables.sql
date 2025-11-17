@@ -1,3 +1,5 @@
+-- +goose Up
+-- +goose StatementBegin
 -- Migration: Create video redundancy tables
 -- Description: Adds tables for video redundancy management across instances
 -- Version: 052
@@ -340,3 +342,8 @@ COMMENT ON COLUMN instance_peers.auto_accept_redundancy IS 'Whether this instanc
 COMMENT ON COLUMN video_redundancy.checksum_sha256 IS 'SHA256 checksum of the video file for integrity verification';
 COMMENT ON COLUMN video_redundancy.auto_resync IS 'Whether to automatically verify checksum weekly';
 COMMENT ON COLUMN redundancy_policies.strategy IS 'Strategy for selecting videos to replicate';
+-- +goose StatementEnd
+
+-- +goose Down
+-- NOTE: Add rollback statements here if needed
+-- For now, we'll keep migrations forward-only for safety

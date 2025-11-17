@@ -417,37 +417,29 @@ migrate-diff:  ## Generate new migration from schema diff (usage: make migrate-d
 		echo "Manual migration creation: Please create migrations/$(shell date +%Y%m%d%H%M%S)_$(NAME).sql"; \
 	fi
 
-.PHONY: atlas-migrate-apply
-atlas-migrate-apply:  ## Apply pending migrations using Atlas
-	@if [ -z "$(ENV)" ]; then \
-		echo "Applying migrations to dev environment..."; \
-		atlas migrate apply --env dev; \
-	else \
-		echo "Applying migrations to $(ENV) environment..."; \
-		atlas migrate apply --env $(ENV); \
-	fi
+.PHONY: migrate-up
+migrate-up:  ## Apply all pending migrations using Goose
+	@echo "Applying pending migrations with Goose..."
+	@goose -dir migrations postgres "$${DATABASE_URL}" up
 
-.PHONY: atlas-migrate-status
-atlas-migrate-status:  ## Show migration status using Atlas
-	@ENV_NAME=$${ENV:-dev}; \
-	echo "Migration status for $$ENV_NAME environment:"; \
-	atlas migrate status --env $$ENV_NAME || echo "Error checking migration status"
+.PHONY: migrate-down
+migrate-down:  ## Rollback the last migration using Goose
+	@echo "Rolling back last migration..."
+	@goose -dir migrations postgres "$${DATABASE_URL}" down
 
-.PHONY: atlas-migrate-lint
-atlas-migrate-lint:  ## Lint migration files
-	@echo "Linting migrations (CI environment rules)..."
-	@atlas migrate lint --env ci --latest 1
+.PHONY: migrate-status
+migrate-status:  ## Show migration status using Goose
+	@echo "Migration status:"
+	@goose -dir migrations postgres "$${DATABASE_URL}" status
 
-.PHONY: atlas-migrate-lint-all
-atlas-migrate-lint-all:  ## Lint all migration files
-	@echo "Linting all migrations..."
-	@atlas migrate lint --env ci
+.PHONY: migrate-version
+migrate-version:  ## Show current migration version
+	@goose -dir migrations postgres "$${DATABASE_URL}" version
 
-.PHONY: atlas-migrate-validate
-atlas-migrate-validate:  ## Validate migrations against shadow DB
-	@ENV_NAME=$${ENV:-dev}; \
-	echo "Validating migrations for $$ENV_NAME environment..."; \
-	atlas migrate validate --env $$ENV_NAME
+.PHONY: migrate-validate
+migrate-validate:  ## Validate migration files using Goose
+	@echo "Validating migration files..."
+	@goose -dir migrations validate
 
 .PHONY: atlas-schema-inspect
 atlas-schema-inspect:  ## Inspect current database schema
@@ -478,28 +470,23 @@ atlas-schema-apply:  ## Apply schema changes (declarative mode)
 		--to "file://schema.sql" \
 		--auto-approve=$$AUTO
 
-.PHONY: atlas-migrate-hash
-atlas-migrate-hash:  ## Rehash migration directory (fix integrity check)
-	@echo "Rehashing migration directory..."
-	@atlas migrate hash --env dev
-
-.PHONY: atlas-migrate-new
-atlas-migrate-new:  ## Create new empty migration file (usage: make atlas-migrate-new NAME=add_feature)
+.PHONY: migrate-create
+migrate-create:  ## Create new migration file (usage: make migrate-create NAME=add_feature)
 	@if [ -z "$(NAME)" ]; then \
 		echo "Error: NAME is required."; \
-		echo "Usage: make atlas-migrate-new NAME=add_feature"; \
+		echo "Usage: make migrate-create NAME=add_feature"; \
 		exit 1; \
 	fi
-	@atlas migrate new --env dev $(NAME)
+	@goose -dir migrations create $(NAME) sql
 	@echo "New migration created. Edit the file in migrations/ directory."
 
-.PHONY: atlas-migrate-down
-atlas-migrate-down:  ## Rollback last migration (usage: make atlas-migrate-down ENV=dev)
-	@ENV_NAME=$${ENV:-dev}; \
-	echo "WARNING: Rolling back last migration in $$ENV_NAME environment..."; \
-	echo "Press Ctrl+C to cancel, or wait 5 seconds to continue..."; \
-	sleep 5; \
-	atlas migrate down --env $$ENV_NAME
+.PHONY: migrate-reset
+migrate-reset:  ## Reset database to version 0 and re-run all migrations
+	@echo "WARNING: This will reset the database!"
+	@echo "Press Ctrl+C to cancel, or wait 5 seconds to continue..."
+	@sleep 5
+	@goose -dir migrations postgres "$${DATABASE_URL}" reset
+	@goose -dir migrations postgres "$${DATABASE_URL}" up
 
 .PHONY: atlas-help
 atlas-help:  ## Show Atlas-specific help

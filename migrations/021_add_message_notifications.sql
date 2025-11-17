@@ -1,3 +1,5 @@
+-- +goose Up
+-- +goose StatementBegin
 -- Add trigger to create notifications for new messages
 -- This ensures recipients are notified when they receive a new message
 
@@ -104,3 +106,8 @@ EXECUTE FUNCTION notify_on_message_read();
 CREATE INDEX IF NOT EXISTS idx_messages_recipient_unread 
     ON messages(recipient_id, created_at DESC) 
     WHERE is_read = FALSE;
+-- +goose StatementEnd
+
+-- +goose Down
+-- NOTE: Add rollback statements here if needed
+-- For now, we'll keep migrations forward-only for safety

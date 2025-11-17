@@ -1,3 +1,5 @@
+-- +goose Up
+-- +goose StatementBegin
 -- Create oauth_authorization_codes table for OAuth2 Authorization Code flow
 -- Supports PKCE (code_challenge, code_challenge_method) and scopes
 
@@ -44,3 +46,8 @@ CREATE INDEX idx_oauth_tokens_expires ON oauth_access_tokens(expires_at);
 ALTER TABLE oauth_clients ADD COLUMN IF NOT EXISTS allowed_scopes TEXT[] NOT NULL DEFAULT ARRAY['basic'];
 
 COMMIT;
+-- +goose StatementEnd
+
+-- +goose Down
+-- NOTE: Add rollback statements here if needed
+-- For now, we'll keep migrations forward-only for safety

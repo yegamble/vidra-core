@@ -1,3 +1,5 @@
+-- +goose Up
+-- +goose StatementBegin
 -- Add email verification fields to users table
 ALTER TABLE users ADD COLUMN email_verified BOOLEAN NOT NULL DEFAULT false;
 ALTER TABLE users ADD COLUMN email_verified_at TIMESTAMP WITH TIME ZONE;
@@ -31,3 +33,8 @@ $$ LANGUAGE plpgsql;
 
 -- Optional: Create a scheduled job to cleanup expired tokens (requires pg_cron extension)
 -- SELECT cron.schedule('cleanup-verification-tokens', '0 */6 * * *', 'SELECT cleanup_expired_verification_tokens();');
+-- +goose StatementEnd
+
+-- +goose Down
+-- NOTE: Add rollback statements here if needed
+-- For now, we'll keep migrations forward-only for safety

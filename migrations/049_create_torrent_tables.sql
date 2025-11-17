@@ -1,3 +1,5 @@
+-- +goose Up
+-- +goose StatementBegin
 -- Migration: Create torrent support tables
 -- Description: Adds tables for BitTorrent/WebTorrent P2P video distribution
 -- Sprint: 8 - Torrent Support with IPFS Hybrid
@@ -195,3 +197,8 @@ COMMENT ON COLUMN video_torrents.info_hash IS 'SHA1 hash of torrent info diction
 COMMENT ON COLUMN video_torrents.piece_length IS 'Size of each piece in bytes (256KB for WebTorrent compatibility)';
 COMMENT ON COLUMN torrent_peers.supports_webtorrent IS 'Whether peer supports WebRTC for browser P2P';
 COMMENT ON COLUMN torrent_trackers.is_websocket IS 'Whether tracker uses WebSocket protocol (required for WebTorrent)';
+-- +goose StatementEnd
+
+-- +goose Down
+-- NOTE: Add rollback statements here if needed
+-- For now, we'll keep migrations forward-only for safety

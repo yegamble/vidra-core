@@ -1,3 +1,5 @@
+-- +goose Up
+-- +goose StatementBegin
 -- Create messages table for user messaging system
 CREATE TABLE messages (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -75,3 +77,8 @@ CREATE TRIGGER ensure_conversation_order_trigger
     BEFORE INSERT OR UPDATE ON conversations
     FOR EACH ROW
     EXECUTE FUNCTION ensure_conversation_order();
+-- +goose StatementEnd
+
+-- +goose Down
+-- NOTE: Add rollback statements here if needed
+-- For now, we'll keep migrations forward-only for safety

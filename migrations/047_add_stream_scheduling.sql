@@ -1,3 +1,5 @@
+-- +goose Up
+-- +goose StatementBegin
 -- Add stream scheduling and waiting room support to live_streams table
 -- Migration: 047_add_stream_scheduling.sql
 -- Sprint 7 - Phase 2: Stream Scheduling & Waiting Rooms
@@ -149,3 +151,8 @@ COMMENT ON COLUMN live_streams.waiting_room_message IS 'Custom message to displa
 COMMENT ON COLUMN live_streams.reminder_sent IS 'Whether the pre-stream reminder notification has been sent';
 
 COMMENT ON TABLE stream_notifications_sent IS 'Track which notifications have been sent to users for each stream';
+-- +goose StatementEnd
+
+-- +goose Down
+-- NOTE: Add rollback statements here if needed
+-- For now, we'll keep migrations forward-only for safety

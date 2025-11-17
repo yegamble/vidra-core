@@ -1,3 +1,5 @@
+-- +goose Up
+-- +goose StatementBegin
 -- Create captions table for video subtitle/caption tracks
 CREATE TABLE IF NOT EXISTS captions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -70,3 +72,8 @@ CREATE TRIGGER trigger_update_video_caption_count
     AFTER INSERT OR UPDATE OR DELETE ON captions
     FOR EACH ROW
     EXECUTE FUNCTION update_video_caption_count();
+-- +goose StatementEnd
+
+-- +goose Down
+-- NOTE: Add rollback statements here if needed
+-- For now, we'll keep migrations forward-only for safety
