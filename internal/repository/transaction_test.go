@@ -19,7 +19,11 @@ import (
 func TestTransactionManager_WithTransaction(t *testing.T) {
 	t.Parallel()
 
-	db := testutil.SetupTestDB(t)
+	testDB := testutil.SetupTestDB(t)
+	if testDB == nil {
+		return
+	}
+	db := testDB.DB
 	tm := NewTransactionManager(db)
 
 	t.Run("successful transaction commits", func(t *testing.T) {
@@ -107,18 +111,22 @@ func TestTransactionManager_WithTransaction(t *testing.T) {
 func TestUserRepository_CreateWithTransaction(t *testing.T) {
 	t.Parallel()
 
-	db := testutil.SetupTestDB(t)
+	testDB := testutil.SetupTestDB(t)
+	if testDB == nil {
+		return
+	}
+	db := testDB.DB
 	repo := NewUserRepository(db)
 
 	t.Run("create user with channel succeeds", func(t *testing.T) {
 		ctx := context.Background()
 		user := &domain.User{
-			ID:          uuid.New(),
+			ID:          uuid.New().String(),
 			Username:    "txuser1",
 			Email:       "txuser1@example.com",
 			DisplayName: "TX User 1",
 			Bio:         "Test user bio",
-			Role:        domain.UserRoleUser,
+			Role:        domain.RoleUser,
 			IsActive:    true,
 			CreatedAt:   time.Now(),
 			UpdatedAt:   time.Now(),
@@ -128,7 +136,7 @@ func TestUserRepository_CreateWithTransaction(t *testing.T) {
 		require.NoError(t, err)
 
 		// Verify user was created
-		fetchedUser, err := repo.GetByID(ctx, user.ID.String())
+		fetchedUser, err := repo.GetByID(ctx, user.ID)
 		require.NoError(t, err)
 		assert.Equal(t, user.Username, fetchedUser.Username)
 		assert.Equal(t, user.Email, fetchedUser.Email)
@@ -139,11 +147,11 @@ func TestUserRepository_CreateWithTransaction(t *testing.T) {
 
 		// Create first user
 		user1 := &domain.User{
-			ID:          uuid.New(),
+			ID:          uuid.New().String(),
 			Username:    "txuser2",
 			Email:       "duplicate@example.com",
 			DisplayName: "TX User 2",
-			Role:        domain.UserRoleUser,
+			Role:        domain.RoleUser,
 			IsActive:    true,
 			CreatedAt:   time.Now(),
 			UpdatedAt:   time.Now(),
@@ -153,11 +161,11 @@ func TestUserRepository_CreateWithTransaction(t *testing.T) {
 
 		// Try to create second user with same email (should fail)
 		user2 := &domain.User{
-			ID:          uuid.New(),
+			ID:          uuid.New().String(),
 			Username:    "txuser3",
 			Email:       "duplicate@example.com", // Same email
 			DisplayName: "TX User 3",
-			Role:        domain.UserRoleUser,
+			Role:        domain.RoleUser,
 			IsActive:    true,
 			CreatedAt:   time.Now(),
 			UpdatedAt:   time.Now(),
@@ -166,7 +174,7 @@ func TestUserRepository_CreateWithTransaction(t *testing.T) {
 		require.Error(t, err)
 
 		// Verify second user was not created
-		_, err = repo.GetByID(ctx, user2.ID.String())
+		_, err = repo.GetByID(ctx, user2.ID)
 		assert.Equal(t, domain.ErrUserNotFound, err)
 	})
 }
@@ -175,7 +183,11 @@ func TestUserRepository_CreateWithTransaction(t *testing.T) {
 func TestVideoRepository_TransactionSupport(t *testing.T) {
 	t.Parallel()
 
-	db := testutil.SetupTestDB(t)
+	testDB := testutil.SetupTestDB(t)
+	if testDB == nil {
+		return
+	}
+	db := testDB.DB
 	videoRepo := NewVideoRepository(db)
 	tm := NewTransactionManager(db)
 
@@ -191,15 +203,15 @@ func TestVideoRepository_TransactionSupport(t *testing.T) {
 		require.NoError(t, err)
 
 		video := &domain.Video{
-			ID:          uuid.New(),
+			ID:          uuid.New().String(),
 			Title:       "Test Video",
 			Description: "Test Description",
 			Duration:    120,
 			Views:       0,
-			Privacy:     domain.VideoPrivacyPublic,
-			Status:      domain.ProcessingStatusPending,
+			Privacy:     domain.PrivacyPublic,
+			Status:      domain.StatusQueued,
 			UploadDate:  time.Now(),
-			UserID:      userID,
+			UserID:      userID.String(),
 			CreatedAt:   time.Now(),
 			UpdatedAt:   time.Now(),
 		}
@@ -213,7 +225,7 @@ func TestVideoRepository_TransactionSupport(t *testing.T) {
 		require.NoError(t, err)
 
 		// Verify video was created
-		fetchedVideo, err := videoRepo.GetByID(ctx, video.ID.String())
+		fetchedVideo, err := videoRepo.GetByID(ctx, video.ID)
 		require.NoError(t, err)
 		assert.Equal(t, video.Title, fetchedVideo.Title)
 
@@ -231,7 +243,7 @@ func TestVideoRepository_TransactionSupport(t *testing.T) {
 		require.Error(t, err)
 
 		// Verify title was NOT updated
-		fetchedVideo, err = videoRepo.GetByID(ctx, video.ID.String())
+		fetchedVideo, err = videoRepo.GetByID(ctx, video.ID)
 		require.NoError(t, err)
 		assert.Equal(t, "Test Video", fetchedVideo.Title) // Original title
 	})
@@ -241,7 +253,11 @@ func TestVideoRepository_TransactionSupport(t *testing.T) {
 func TestSubscriptionRepository_AtomicOperations(t *testing.T) {
 	t.Parallel()
 
-	db := testutil.SetupTestDB(t)
+	testDB := testutil.SetupTestDB(t)
+	if testDB == nil {
+		return
+	}
+	db := testDB.DB
 	subRepo := NewSubscriptionRepository(db)
 
 	t.Run("subscribe with atomic check", func(t *testing.T) {
@@ -288,7 +304,11 @@ func TestSubscriptionRepository_AtomicOperations(t *testing.T) {
 func TestUploadRepository_AtomicChunkRecording(t *testing.T) {
 	t.Parallel()
 
-	db := testutil.SetupTestDB(t)
+	testDB := testutil.SetupTestDB(t)
+	if testDB == nil {
+		return
+	}
+	db := testDB.DB
 	uploadRepo := NewUploadRepository(db)
 
 	t.Run("record chunk atomically", func(t *testing.T) {
@@ -350,7 +370,11 @@ func TestUploadRepository_AtomicChunkRecording(t *testing.T) {
 func TestTransactionManager_IsolationLevels(t *testing.T) {
 	t.Parallel()
 
-	db := testutil.SetupTestDB(t)
+	testDB := testutil.SetupTestDB(t)
+	if testDB == nil {
+		return
+	}
+	db := testDB.DB
 	tm := NewTransactionManager(db)
 
 	t.Run("serializable isolation", func(t *testing.T) {
@@ -396,7 +420,11 @@ func TestTransactionManager_IsolationLevels(t *testing.T) {
 func TestCommentRepository_TransactionSupport(t *testing.T) {
 	t.Parallel()
 
-	db := testutil.SetupTestDB(t)
+	testDB := testutil.SetupTestDB(t)
+	if testDB == nil {
+		return
+	}
+	db := testDB.DB
 	commentRepo := NewCommentRepository(db)
 	tm := NewTransactionManager(db)
 
@@ -443,7 +471,11 @@ func TestCommentRepository_TransactionSupport(t *testing.T) {
 func TestRatingRepository_TransactionSupport(t *testing.T) {
 	t.Parallel()
 
-	db := testutil.SetupTestDB(t)
+	testDB := testutil.SetupTestDB(t)
+	if testDB == nil {
+		return
+	}
+	db := testDB.DB
 	ratingRepo := NewRatingRepository(db)
 	tm := NewTransactionManager(db)
 

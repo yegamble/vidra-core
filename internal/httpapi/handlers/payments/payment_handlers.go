@@ -168,17 +168,23 @@ func (h *PaymentHandler) GetTransactionHistory(w http.ResponseWriter, r *http.Re
 func (h *PaymentHandler) successResponse(w http.ResponseWriter, data interface{}, status int) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(map[string]interface{}{
+	if err := json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
 		"data":    data,
-	})
+	}); err != nil {
+		// Best-effort fallback: write a minimal JSON error if encoding fails
+		_, _ = w.Write([]byte(`{"success":false,"error":"failed to encode response"}`))
+	}
 }
 
 func (h *PaymentHandler) errorResponse(w http.ResponseWriter, message string, status int) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(map[string]interface{}{
+	if err := json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": false,
 		"error":   message,
-	})
+	}); err != nil {
+		// Best-effort fallback: write a minimal JSON error if encoding fails
+		_, _ = w.Write([]byte(`{"success":false,"error":"failed to encode error response"}`))
+	}
 }

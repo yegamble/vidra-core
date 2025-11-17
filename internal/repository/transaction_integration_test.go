@@ -19,7 +19,11 @@ import (
 func TestMultiRepositoryTransaction(t *testing.T) {
 	t.Parallel()
 
-	db := testutil.SetupTestDB(t)
+	td := testutil.SetupTestDB(t)
+	if td == nil {
+		return
+	}
+	db := td.DB
 	tm := NewTransactionManager(db)
 
 	// Initialize all repositories
@@ -47,11 +51,11 @@ func TestMultiRepositoryTransaction(t *testing.T) {
 
 			// Step 1: Create two users
 			user1 := &domain.User{
-				ID:          user1ID,
+				ID:          user1ID.String(),
 				Username:    "creator",
 				Email:       "creator@example.com",
 				DisplayName: "Content Creator",
-				Role:        domain.UserRoleUser,
+				Role:        domain.RoleUser,
 				IsActive:    true,
 				CreatedAt:   time.Now(),
 				UpdatedAt:   time.Now(),
@@ -61,11 +65,11 @@ func TestMultiRepositoryTransaction(t *testing.T) {
 			}
 
 			user2 := &domain.User{
-				ID:          user2ID,
+				ID:          user2ID.String(),
 				Username:    "viewer",
 				Email:       "viewer@example.com",
 				DisplayName: "Content Viewer",
-				Role:        domain.UserRoleUser,
+				Role:        domain.RoleUser,
 				IsActive:    true,
 				CreatedAt:   time.Now(),
 				UpdatedAt:   time.Now(),
@@ -87,14 +91,14 @@ func TestMultiRepositoryTransaction(t *testing.T) {
 
 			// Step 3: Create a video
 			video := &domain.Video{
-				ID:          videoID,
+				ID:          videoID.String(),
 				Title:       "Transaction Test Video",
 				Description: "Testing multi-repository transactions",
 				Duration:    300,
-				Privacy:     domain.VideoPrivacyPublic,
-				Status:      domain.ProcessingStatusCompleted,
+				Privacy:     domain.PrivacyPublic,
+				Status:      domain.StatusCompleted,
 				UploadDate:  time.Now(),
-				UserID:      user1ID,
+				UserID:      user1ID.String(),
 				ChannelID:   channel1ID,
 				CreatedAt:   time.Now(),
 				UpdatedAt:   time.Now(),
@@ -174,11 +178,11 @@ func TestMultiRepositoryTransaction(t *testing.T) {
 
 			// Create a user
 			user := &domain.User{
-				ID:          user3ID,
+				ID:          user3ID.String(),
 				Username:    "failuser",
 				Email:       "failuser@example.com",
 				DisplayName: "Fail User",
-				Role:        domain.UserRoleUser,
+				Role:        domain.RoleUser,
 				IsActive:    true,
 				CreatedAt:   time.Now(),
 				UpdatedAt:   time.Now(),
@@ -189,14 +193,14 @@ func TestMultiRepositoryTransaction(t *testing.T) {
 
 			// Create a video
 			video := &domain.Video{
-				ID:          video2ID,
+				ID:          video2ID.String(),
 				Title:       "Rollback Test Video",
 				Description: "This should be rolled back",
 				Duration:    200,
-				Privacy:     domain.VideoPrivacyPublic,
-				Status:      domain.ProcessingStatusCompleted,
+				Privacy:     domain.PrivacyPublic,
+				Status:      domain.StatusCompleted,
 				UploadDate:  time.Now(),
-				UserID:      user3ID,
+				UserID:      user3ID.String(),
 				CreatedAt:   time.Now(),
 				UpdatedAt:   time.Now(),
 			}
@@ -227,7 +231,11 @@ func TestMultiRepositoryTransaction(t *testing.T) {
 func TestTransactionDeadlockRetry(t *testing.T) {
 	t.Parallel()
 
-	db := testutil.SetupTestDB(t)
+	td := testutil.SetupTestDB(t)
+	if td == nil {
+		return
+	}
+	db := td.DB
 	tm := NewTransactionManager(db)
 
 	t.Run("retry on retryable error", func(t *testing.T) {
@@ -285,7 +293,11 @@ func TestTransactionDeadlockRetry(t *testing.T) {
 func TestNestedTransactionContext(t *testing.T) {
 	t.Parallel()
 
-	db := testutil.SetupTestDB(t)
+	td := testutil.SetupTestDB(t)
+	if td == nil {
+		return
+	}
+	db := td.DB
 	tm := NewTransactionManager(db)
 	userRepo := NewUserRepository(db)
 	videoRepo := NewVideoRepository(db)
@@ -299,11 +311,11 @@ func TestNestedTransactionContext(t *testing.T) {
 		// Helper function that creates a user and video in the same transaction
 		createUserAndVideo := func(ctx context.Context) error {
 			user := &domain.User{
-				ID:          userID,
+				ID:          userID.String(),
 				Username:    "nested",
 				Email:       "nested@example.com",
 				DisplayName: "Nested User",
-				Role:        domain.UserRoleUser,
+				Role:        domain.RoleUser,
 				IsActive:    true,
 				CreatedAt:   time.Now(),
 				UpdatedAt:   time.Now(),
@@ -313,14 +325,14 @@ func TestNestedTransactionContext(t *testing.T) {
 			}
 
 			video := &domain.Video{
-				ID:          videoID,
+				ID:          videoID.String(),
 				Title:       "Nested Transaction Video",
 				Description: "Testing nested calls",
 				Duration:    100,
-				Privacy:     domain.VideoPrivacyPublic,
-				Status:      domain.ProcessingStatusCompleted,
+				Privacy:     domain.PrivacyPublic,
+				Status:      domain.StatusCompleted,
 				UploadDate:  time.Now(),
-				UserID:      userID,
+				UserID:      userID.String(),
 				CreatedAt:   time.Now(),
 				UpdatedAt:   time.Now(),
 			}
@@ -370,7 +382,11 @@ func TestNestedTransactionContext(t *testing.T) {
 func TestConcurrentTransactions(t *testing.T) {
 	t.Parallel()
 
-	db := testutil.SetupTestDB(t)
+	td := testutil.SetupTestDB(t)
+	if td == nil {
+		return
+	}
+	db := td.DB
 	tm := NewTransactionManager(db)
 	userRepo := NewUserRepository(db)
 
@@ -387,11 +403,11 @@ func TestConcurrentTransactions(t *testing.T) {
 					txCtx := WithTx(ctx, tx)
 
 					user := &domain.User{
-						ID:          uuid.New(),
+						ID:          uuid.New().String(),
 						Username:    "concurrent" + string(rune('0'+index)),
 						Email:       "concurrent" + string(rune('0'+index)) + "@example.com",
 						DisplayName: "Concurrent User",
-						Role:        domain.UserRoleUser,
+						Role:        domain.RoleUser,
 						IsActive:    true,
 						CreatedAt:   time.Now(),
 						UpdatedAt:   time.Now(),
