@@ -236,6 +236,7 @@ func TestCommentToFederation(t *testing.T) {
 			Status:    domain.CommentStatusActive,
 			CreatedAt: time.Now(),
 		}
+		_ = comment // TODO: Use in test implementation
 
 		commenter := &domain.User{
 			ID:       commenterID.String(),

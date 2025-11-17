@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
+
 	"athena/internal/activitypub"
 	"athena/internal/config"
 	"athena/internal/domain"
@@ -22,6 +24,7 @@ type Service struct {
 	repo         port.ActivityPubRepository
 	userRepo     port.UserRepository
 	videoRepo    port.VideoRepository
+	commentRepo  port.CommentRepository
 	cfg          *config.Config
 	httpClient   *http.Client
 	sigVerifier  *activitypub.HTTPSignatureVerifier
@@ -39,6 +42,7 @@ func NewService(
 		repo:         repo,
 		userRepo:     userRepo,
 		videoRepo:    videoRepo,
+		commentRepo:  nil, // Will be set later when comment repository is available
 		cfg:          cfg,
 		httpClient:   &http.Client{Timeout: 30 * time.Second},
 		sigVerifier:  activitypub.NewHTTPSignatureVerifier(),
@@ -766,4 +770,424 @@ func (s *Service) GetFollowing(ctx context.Context, username string, page int, l
 	}
 
 	return s.buildFollowCollectionPage(username, "following", page, limit, total, items), nil
+}
+
+// Comment Publishing
+
+// BuildNoteObject converts a domain.Comment to an ActivityPub NoteObject
+func (s *Service) BuildNoteObject(ctx context.Context, comment *domain.Comment) (*domain.NoteObject, error) {
+	// Get the comment author
+	user, err := s.userRepo.GetByID(ctx, comment.UserID.String())
+	if err != nil {
+		return nil, fmt.Errorf("failed to get comment author: %w", err)
+	}
+
+	// Get the video the comment is on
+	video, err := s.videoRepo.GetByID(ctx, comment.VideoID.String())
+	if err != nil {
+		return nil, fmt.Errorf("failed to get video: %w", err)
+	}
+
+	// Build the note ID
+	noteID := fmt.Sprintf("%s/comments/%s", s.cfg.PublicBaseURL, comment.ID.String())
+
+	// Build the attributedTo (comment author)
+	attributedTo := s.buildActorID(user.Username)
+
+	// Build inReplyTo - if this is a nested comment, point to parent comment; otherwise point to video
+	var inReplyTo string
+	if comment.ParentID != nil {
+		inReplyTo = fmt.Sprintf("%s/comments/%s", s.cfg.PublicBaseURL, comment.ParentID.String())
+	} else {
+		inReplyTo = fmt.Sprintf("%s/videos/%s", s.cfg.PublicBaseURL, comment.VideoID.String())
+	}
+
+	// Build the note object
+	note := &domain.NoteObject{
+		Type:         domain.ObjectTypeNote,
+		ID:           noteID,
+		Content:      comment.Body,
+		Published:    &comment.CreatedAt,
+		AttributedTo: attributedTo,
+		InReplyTo:    inReplyTo,
+	}
+
+	// Set updated time if edited
+	if comment.EditedAt != nil {
+		note.Updated = comment.EditedAt
+	}
+
+	// Set audience based on video privacy
+	if video.Privacy == domain.PrivacyPublic {
+		note.To = []string{"https://www.w3.org/ns/activitystreams#Public"}
+	} else if video.Privacy == domain.PrivacyUnlisted {
+		note.Cc = []string{"https://www.w3.org/ns/activitystreams#Public"}
+	}
+
+	// Add video owner to Cc if they're not the comment author
+	if video.UserID != user.ID {
+		videoOwner, err := s.userRepo.GetByID(ctx, video.UserID)
+		if err == nil && videoOwner != nil {
+			videoOwnerURI := s.buildActorID(videoOwner.Username)
+			note.Cc = append(note.Cc, videoOwnerURI)
+		}
+	}
+
+	return note, nil
+}
+
+// CreateCommentActivity wraps a NoteObject in a Create activity
+func (s *Service) CreateCommentActivity(ctx context.Context, comment *domain.Comment) (*domain.Activity, error) {
+	// Build the note object
+	note, err := s.BuildNoteObject(ctx, comment)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build note object: %w", err)
+	}
+
+	// Get the comment author
+	user, err := s.userRepo.GetByID(ctx, comment.UserID.String())
+	if err != nil {
+		return nil, fmt.Errorf("failed to get comment author: %w", err)
+	}
+
+	// Build the Create activity
+	actorURI := s.buildActorID(user.Username)
+	activityID := fmt.Sprintf("%s/activities/%s", s.cfg.PublicBaseURL, uuid.New().String())
+
+	activity := &domain.Activity{
+		Context:   []interface{}{domain.ActivityStreamsContext},
+		Type:      domain.ActivityTypeCreate,
+		ID:        activityID,
+		Actor:     actorURI,
+		Object:    note,
+		Published: &comment.CreatedAt,
+		To:        note.To,
+		Cc:        note.Cc,
+	}
+
+	return activity, nil
+}
+
+// PublishComment publishes a comment to ActivityPub followers
+func (s *Service) PublishComment(ctx context.Context, commentID string) error {
+	// For now, return an error indicating this needs a comment repository
+	// The tests will need to be updated to provide a way to fetch comments
+	if s.commentRepo == nil {
+		return fmt.Errorf("comment repository not configured")
+	}
+
+	// Parse comment ID
+	commentUUID, err := uuid.Parse(commentID)
+	if err != nil {
+		return fmt.Errorf("invalid comment ID: %w", err)
+	}
+
+	// Get the comment
+	comment, err := s.commentRepo.GetByID(ctx, commentUUID)
+	if err != nil {
+		return fmt.Errorf("failed to get comment: %w", err)
+	}
+
+	// Don't publish deleted comments
+	if comment.Status == domain.CommentStatusDeleted {
+		return fmt.Errorf("cannot publish deleted comment")
+	}
+
+	// Create the activity
+	activity, err := s.CreateCommentActivity(ctx, comment)
+	if err != nil {
+		return fmt.Errorf("failed to create comment activity: %w", err)
+	}
+
+	// Convert to APActivity for storage
+	activityJSON, err := json.Marshal(activity)
+	if err != nil {
+		return fmt.Errorf("failed to marshal activity: %w", err)
+	}
+
+	noteID := activity.ID
+	noteType := domain.ObjectTypeNote
+
+	apActivity := &domain.APActivity{
+		ActorID:      comment.UserID.String(),
+		Type:         domain.ActivityTypeCreate,
+		ObjectID:     &noteID,
+		ObjectType:   &noteType,
+		Published:    comment.CreatedAt,
+		ActivityJSON: activityJSON,
+		Local:        true,
+	}
+
+	// Store the activity
+	if err := s.repo.StoreActivity(ctx, apActivity); err != nil {
+		return fmt.Errorf("failed to store activity: %w", err)
+	}
+
+	// Get the video to find its owner
+	video, err := s.videoRepo.GetByID(ctx, comment.VideoID.String())
+	if err != nil {
+		return fmt.Errorf("failed to get video: %w", err)
+	}
+
+	// Get video owner's followers for delivery
+	followers, _, err := s.repo.GetFollowers(ctx, video.UserID, "accepted", 100, 0)
+	if err != nil {
+		return fmt.Errorf("failed to get followers: %w", err)
+	}
+
+	// Enqueue delivery to each follower
+	for _, follower := range followers {
+		remoteActor, err := s.repo.GetRemoteActor(ctx, follower.FollowerID)
+		if err != nil {
+			continue
+		}
+
+		delivery := &domain.APDeliveryQueue{
+			ActivityID:  apActivity.ID,
+			InboxURL:    remoteActor.InboxURL,
+			ActorID:     comment.UserID.String(),
+			Attempts:    0,
+			MaxAttempts: 3,
+			NextAttempt: time.Now(),
+			Status:      "pending",
+		}
+
+		if err := s.repo.EnqueueDelivery(ctx, delivery); err != nil {
+			// Log but don't fail on delivery queue errors
+			continue
+		}
+	}
+
+	return nil
+}
+
+// UpdateComment publishes an Update activity for an edited comment
+func (s *Service) UpdateComment(ctx context.Context, commentID string) error {
+	if s.commentRepo == nil {
+		return fmt.Errorf("comment repository not configured")
+	}
+
+	// Parse comment ID
+	commentUUID, err := uuid.Parse(commentID)
+	if err != nil {
+		return fmt.Errorf("invalid comment ID: %w", err)
+	}
+
+	// Get the comment
+	comment, err := s.commentRepo.GetByID(ctx, commentUUID)
+	if err != nil {
+		return fmt.Errorf("failed to get comment: %w", err)
+	}
+
+	// Build the note object
+	note, err := s.BuildNoteObject(ctx, comment)
+	if err != nil {
+		return fmt.Errorf("failed to build note object: %w", err)
+	}
+
+	// Get the comment author
+	user, err := s.userRepo.GetByID(ctx, comment.UserID.String())
+	if err != nil {
+		return fmt.Errorf("failed to get comment author: %w", err)
+	}
+
+	// Build the Update activity
+	actorURI := s.buildActorID(user.Username)
+	activityID := fmt.Sprintf("%s/activities/%s", s.cfg.PublicBaseURL, uuid.New().String())
+	now := time.Now()
+
+	activity := &domain.Activity{
+		Context:   []interface{}{domain.ActivityStreamsContext},
+		Type:      domain.ActivityTypeUpdate,
+		ID:        activityID,
+		Actor:     actorURI,
+		Object:    note,
+		Published: &now,
+		To:        note.To,
+		Cc:        note.Cc,
+	}
+
+	// Marshal to JSON for storage
+	activityJSON, err := json.Marshal(activity)
+	if err != nil {
+		return fmt.Errorf("failed to marshal activity: %w", err)
+	}
+
+	noteID := note.ID
+	noteType := domain.ObjectTypeNote
+
+	apActivity := &domain.APActivity{
+		ActorID:      user.ID,
+		Type:         domain.ActivityTypeUpdate,
+		ObjectID:     &noteID,
+		ObjectType:   &noteType,
+		Published:    now,
+		ActivityJSON: activityJSON,
+		Local:        true,
+	}
+
+	// Store the activity
+	if err := s.repo.StoreActivity(ctx, apActivity); err != nil {
+		return fmt.Errorf("failed to store activity: %w", err)
+	}
+
+	// Get the video to find its owner
+	video, err := s.videoRepo.GetByID(ctx, comment.VideoID.String())
+	if err != nil {
+		return fmt.Errorf("failed to get video: %w", err)
+	}
+
+	// Get video owner's followers for delivery
+	followers, _, err := s.repo.GetFollowers(ctx, video.UserID, "accepted", 100, 0)
+	if err != nil {
+		return fmt.Errorf("failed to get followers: %w", err)
+	}
+
+	// Enqueue delivery to each follower
+	for _, follower := range followers {
+		remoteActor, err := s.repo.GetRemoteActor(ctx, follower.FollowerID)
+		if err != nil {
+			continue
+		}
+
+		delivery := &domain.APDeliveryQueue{
+			ActivityID:  apActivity.ID,
+			InboxURL:    remoteActor.InboxURL,
+			ActorID:     comment.UserID.String(),
+			Attempts:    0,
+			MaxAttempts: 3,
+			NextAttempt: time.Now(),
+			Status:      "pending",
+		}
+
+		if err := s.repo.EnqueueDelivery(ctx, delivery); err != nil {
+			continue
+		}
+	}
+
+	return nil
+}
+
+// DeleteComment publishes a Delete activity for a deleted comment
+func (s *Service) DeleteComment(ctx context.Context, commentID string) error {
+	if s.commentRepo == nil {
+		return fmt.Errorf("comment repository not configured")
+	}
+
+	// Parse comment ID
+	commentUUID, err := uuid.Parse(commentID)
+	if err != nil {
+		return fmt.Errorf("invalid comment ID: %w", err)
+	}
+
+	// Get the comment
+	comment, err := s.commentRepo.GetByID(ctx, commentUUID)
+	if err != nil {
+		return fmt.Errorf("failed to get comment: %w", err)
+	}
+
+	// Get the comment author
+	user, err := s.userRepo.GetByID(ctx, comment.UserID.String())
+	if err != nil {
+		return fmt.Errorf("failed to get comment author: %w", err)
+	}
+
+	// Get the video
+	video, err := s.videoRepo.GetByID(ctx, comment.VideoID.String())
+	if err != nil {
+		return fmt.Errorf("failed to get video: %w", err)
+	}
+
+	// Build the Delete activity
+	actorURI := s.buildActorID(user.Username)
+	activityID := fmt.Sprintf("%s/activities/%s", s.cfg.PublicBaseURL, uuid.New().String())
+	commentURI := fmt.Sprintf("%s/comments/%s", s.cfg.PublicBaseURL, comment.ID.String())
+	now := time.Now()
+
+	activity := &domain.Activity{
+		Context:   []interface{}{domain.ActivityStreamsContext},
+		Type:      domain.ActivityTypeDelete,
+		ID:        activityID,
+		Actor:     actorURI,
+		Object:    commentURI,
+		Published: &now,
+	}
+
+	// Marshal to JSON for storage
+	activityJSON, err := json.Marshal(activity)
+	if err != nil {
+		return fmt.Errorf("failed to marshal activity: %w", err)
+	}
+
+	apActivity := &domain.APActivity{
+		ActorID:      user.ID,
+		Type:         domain.ActivityTypeDelete,
+		ObjectID:     &commentURI,
+		Published:    now,
+		ActivityJSON: activityJSON,
+		Local:        true,
+	}
+
+	// Store the activity
+	if err := s.repo.StoreActivity(ctx, apActivity); err != nil {
+		return fmt.Errorf("failed to store activity: %w", err)
+	}
+
+	// Get video owner's followers for delivery
+	followers, _, err := s.repo.GetFollowers(ctx, video.UserID, "accepted", 100, 0)
+	if err != nil {
+		return fmt.Errorf("failed to get followers: %w", err)
+	}
+
+	// Enqueue delivery to each follower
+	for _, follower := range followers {
+		remoteActor, err := s.repo.GetRemoteActor(ctx, follower.FollowerID)
+		if err != nil {
+			continue
+		}
+
+		delivery := &domain.APDeliveryQueue{
+			ActivityID:  apActivity.ID,
+			InboxURL:    remoteActor.InboxURL,
+			ActorID:     comment.UserID.String(),
+			Attempts:    0,
+			MaxAttempts: 3,
+			NextAttempt: time.Now(),
+			Status:      "pending",
+		}
+
+		if err := s.repo.EnqueueDelivery(ctx, delivery); err != nil {
+			continue
+		}
+	}
+
+	return nil
+}
+
+
+// Video Publishing (stub implementations - to be implemented)
+
+// BuildVideoObject converts a domain.Video to an ActivityPub VideoObject
+func (s *Service) BuildVideoObject(ctx context.Context, video *domain.Video) (*domain.VideoObject, error) {
+	return nil, fmt.Errorf("BuildVideoObject not yet implemented")
+}
+
+// CreateVideoActivity wraps a VideoObject in a Create activity
+func (s *Service) CreateVideoActivity(ctx context.Context, video *domain.Video) (*domain.Activity, error) {
+	return nil, fmt.Errorf("CreateVideoActivity not yet implemented")
+}
+
+// PublishVideo publishes a video to ActivityPub followers
+func (s *Service) PublishVideo(ctx context.Context, videoID string) error {
+	return fmt.Errorf("PublishVideo not yet implemented")
+}
+
+// UpdateVideo publishes an Update activity for an edited video
+func (s *Service) UpdateVideo(ctx context.Context, videoID string) error {
+	return fmt.Errorf("UpdateVideo not yet implemented")
+}
+
+// DeleteVideo publishes a Delete activity for a deleted video
+func (s *Service) DeleteVideo(ctx context.Context, videoID string) error {
+	return fmt.Errorf("DeleteVideo not yet implemented")
 }

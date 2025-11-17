@@ -1,0 +1,854 @@
+go: downloading github.com/RoaringBitmap/roaring v1.2.3
+# athena/cmd/server
+/root/go/pkg/mod/github.com/anacrolix/torrent@v1.59.1/client.go:24:2: github.com/RoaringBitmap/roaring@v1.2.3: Get "https://storage.googleapis.com/proxy-golang-org-prod/037bba95b2a0274d-github.com:RoaringBitmap:roaring-v1.2.3.zip?Expires=1763433682&GoogleAccessId=gcs-urlsigner-prod%40golang-modproxy.iam.gserviceaccount.com&Signature=v%2BYYtGoPV3JCYcjwJ%2BcAnKOa7XumYjDLk2eK3mUDg1cKdSJfURnH214sldf%2FhI9gYXNOifo9iG9Qb%2B0XsDCL14M%2FDLA9kDIFZojFSKNxycC6VtsYTqpLQ1m8hOyuFfIqc9SKZxSnHLDY9lk80u1M4npWosOZYASsG0HUQVAUnMi0oyfQaLliZ1mXCacjVJvUcSoCdh0etJ33SgDXtuG%2FDlbBlgjOinB3GPSHMan3JAJDenMUZqY5jlN4jd8Yf8FCJIf9ixadN%2F5qpjAzOYJ3rsIZpcCWs%2B1GjLl1SGGqvQDXmdTuRrxhXJAjLPA%2Fsq3dXcKw7NvO0mnr83zpL0Taug%3D%3D": dial tcp: lookup storage.googleapis.com on [::1]:53: read udp [::1]:54654->[::1]:53: read: connection refused
+FAIL	athena/cmd/server [setup failed]
+# athena/internal/app
+/root/go/pkg/mod/github.com/anacrolix/torrent@v1.59.1/client.go:24:2: github.com/RoaringBitmap/roaring@v1.2.3: Get "https://storage.googleapis.com/proxy-golang-org-prod/037bba95b2a0274d-github.com:RoaringBitmap:roaring-v1.2.3.zip?Expires=1763433682&GoogleAccessId=gcs-urlsigner-prod%40golang-modproxy.iam.gserviceaccount.com&Signature=v%2BYYtGoPV3JCYcjwJ%2BcAnKOa7XumYjDLk2eK3mUDg1cKdSJfURnH214sldf%2FhI9gYXNOifo9iG9Qb%2B0XsDCL14M%2FDLA9kDIFZojFSKNxycC6VtsYTqpLQ1m8hOyuFfIqc9SKZxSnHLDY9lk80u1M4npWosOZYASsG0HUQVAUnMi0oyfQaLliZ1mXCacjVJvUcSoCdh0etJ33SgDXtuG%2FDlbBlgjOinB3GPSHMan3JAJDenMUZqY5jlN4jd8Yf8FCJIf9ixadN%2F5qpjAzOYJ3rsIZpcCWs%2B1GjLl1SGGqvQDXmdTuRrxhXJAjLPA%2Fsq3dXcKw7NvO0mnr83zpL0Taug%3D%3D": dial tcp: lookup storage.googleapis.com on [::1]:53: read udp [::1]:54654->[::1]:53: read: connection refused
+FAIL	athena/internal/app [setup failed]
+# athena/internal/httpapi
+/root/go/pkg/mod/github.com/anacrolix/torrent@v1.59.1/client.go:24:2: github.com/RoaringBitmap/roaring@v1.2.3: Get "https://storage.googleapis.com/proxy-golang-org-prod/037bba95b2a0274d-github.com:RoaringBitmap:roaring-v1.2.3.zip?Expires=1763433682&GoogleAccessId=gcs-urlsigner-prod%40golang-modproxy.iam.gserviceaccount.com&Signature=v%2BYYtGoPV3JCYcjwJ%2BcAnKOa7XumYjDLk2eK3mUDg1cKdSJfURnH214sldf%2FhI9gYXNOifo9iG9Qb%2B0XsDCL14M%2FDLA9kDIFZojFSKNxycC6VtsYTqpLQ1m8hOyuFfIqc9SKZxSnHLDY9lk80u1M4npWosOZYASsG0HUQVAUnMi0oyfQaLliZ1mXCacjVJvUcSoCdh0etJ33SgDXtuG%2FDlbBlgjOinB3GPSHMan3JAJDenMUZqY5jlN4jd8Yf8FCJIf9ixadN%2F5qpjAzOYJ3rsIZpcCWs%2B1GjLl1SGGqvQDXmdTuRrxhXJAjLPA%2Fsq3dXcKw7NvO0mnr83zpL0Taug%3D%3D": dial tcp: lookup storage.googleapis.com on [::1]:53: read udp [::1]:54654->[::1]:53: read: connection refused
+FAIL	athena/internal/httpapi [setup failed]
+# athena/internal/httpapi/handlers/video
+/root/go/pkg/mod/github.com/anacrolix/torrent@v1.59.1/client.go:24:2: github.com/RoaringBitmap/roaring@v1.2.3: Get "https://storage.googleapis.com/proxy-golang-org-prod/037bba95b2a0274d-github.com:RoaringBitmap:roaring-v1.2.3.zip?Expires=1763433682&GoogleAccessId=gcs-urlsigner-prod%40golang-modproxy.iam.gserviceaccount.com&Signature=v%2BYYtGoPV3JCYcjwJ%2BcAnKOa7XumYjDLk2eK3mUDg1cKdSJfURnH214sldf%2FhI9gYXNOifo9iG9Qb%2B0XsDCL14M%2FDLA9kDIFZojFSKNxycC6VtsYTqpLQ1m8hOyuFfIqc9SKZxSnHLDY9lk80u1M4npWosOZYASsG0HUQVAUnMi0oyfQaLliZ1mXCacjVJvUcSoCdh0etJ33SgDXtuG%2FDlbBlgjOinB3GPSHMan3JAJDenMUZqY5jlN4jd8Yf8FCJIf9ixadN%2F5qpjAzOYJ3rsIZpcCWs%2B1GjLl1SGGqvQDXmdTuRrxhXJAjLPA%2Fsq3dXcKw7NvO0mnr83zpL0Taug%3D%3D": dial tcp: lookup storage.googleapis.com on [::1]:53: read udp [::1]:54654->[::1]:53: read: connection refused
+FAIL	athena/internal/httpapi/handlers/video [setup failed]
+# athena/internal/middleware
+/root/go/pkg/mod/github.com/prometheus/client_golang@v1.23.2/prometheus/testutil/testutil.go:47:2: missing go.sum entry for module providing package github.com/kylelemons/godebug/diff (imported by github.com/prometheus/client_golang/prometheus/testutil); to add:
+	go get github.com/prometheus/client_golang/prometheus/testutil@v1.23.2
+FAIL	athena/internal/middleware [setup failed]
+# athena/internal/obs
+/root/go/pkg/mod/github.com/prometheus/client_golang@v1.23.2/prometheus/testutil/testutil.go:47:2: missing go.sum entry for module providing package github.com/kylelemons/godebug/diff (imported by github.com/prometheus/client_golang/prometheus/testutil); to add:
+	go get github.com/prometheus/client_golang/prometheus/testutil@v1.23.2
+FAIL	athena/internal/obs [setup failed]
+# athena/internal/torrent
+/root/go/pkg/mod/github.com/anacrolix/torrent@v1.59.1/client.go:24:2: github.com/RoaringBitmap/roaring@v1.2.3: Get "https://storage.googleapis.com/proxy-golang-org-prod/037bba95b2a0274d-github.com:RoaringBitmap:roaring-v1.2.3.zip?Expires=1763433682&GoogleAccessId=gcs-urlsigner-prod%40golang-modproxy.iam.gserviceaccount.com&Signature=v%2BYYtGoPV3JCYcjwJ%2BcAnKOa7XumYjDLk2eK3mUDg1cKdSJfURnH214sldf%2FhI9gYXNOifo9iG9Qb%2B0XsDCL14M%2FDLA9kDIFZojFSKNxycC6VtsYTqpLQ1m8hOyuFfIqc9SKZxSnHLDY9lk80u1M4npWosOZYASsG0HUQVAUnMi0oyfQaLliZ1mXCacjVJvUcSoCdh0etJ33SgDXtuG%2FDlbBlgjOinB3GPSHMan3JAJDenMUZqY5jlN4jd8Yf8FCJIf9ixadN%2F5qpjAzOYJ3rsIZpcCWs%2B1GjLl1SGGqvQDXmdTuRrxhXJAjLPA%2Fsq3dXcKw7NvO0mnr83zpL0Taug%3D%3D": dial tcp: lookup storage.googleapis.com on [::1]:53: read udp [::1]:54654->[::1]:53: read: connection refused
+FAIL	athena/internal/torrent [setup failed]
+?   	athena/cmd/encrypt-activitypub-keys	[no test files]
+?   	athena/cmd/s3migrate	[no test files]
+?   	athena/cmd/s3test	[no test files]
+?   	athena/cmd/test_email	[no test files]
+# athena/internal/repository [athena/internal/repository.test]
+internal/repository/iota_repository_test.go:32:30: not enough arguments in call to createTestUser
+	have (*testing.T, *testutil.TestDB)
+	want (*testing.T, usecase.UserRepository, "context".Context, string, string)
+internal/repository/iota_repository_test.go:43:20: cannot use userID (variable of type *domain.User) as string value in struct literal
+internal/repository/iota_repository_test.go:55:20: cannot use userID (variable of type *domain.User) as string value in struct literal
+internal/repository/iota_repository_test.go:108:30: not enough arguments in call to createTestUser
+	have (*testing.T, *testutil.TestDB)
+	want (*testing.T, usecase.UserRepository, "context".Context, string, string)
+internal/repository/iota_repository_test.go:113:18: cannot use userID (variable of type *domain.User) as string value in struct literal
+internal/repository/iota_repository_test.go:129:13: cannot use userID (variable of type *domain.User) as string value in struct literal
+internal/repository/iota_repository_test.go:172:30: not enough arguments in call to createTestUser
+	have (*testing.T, *testutil.TestDB)
+	want (*testing.T, usecase.UserRepository, "context".Context, string, string)
+internal/repository/iota_repository_test.go:176:18: cannot use userID (variable of type *domain.User) as string value in struct literal
+internal/repository/iota_repository_test.go:209:30: not enough arguments in call to createTestUser
+	have (*testing.T, *testutil.TestDB)
+	want (*testing.T, usecase.UserRepository, "context".Context, string, string)
+internal/repository/iota_repository_test.go:213:18: cannot use userID (variable of type *domain.User) as string value in struct literal
+internal/repository/iota_repository_test.go:213:18: too many errors
+# athena/internal/usecase/payments [athena/internal/usecase/payments.test]
+internal/usecase/payments/payment_service_test.go:630:35: service.EncryptSeed undefined (type *PaymentService has no field or method EncryptSeed, but does have method encryptSeed)
+internal/usecase/payments/payment_service_test.go:637:28: service.DecryptSeed undefined (type *PaymentService has no field or method DecryptSeed, but does have method decryptSeed)
+internal/usecase/payments/payment_service_test.go:652:37: service.EncryptSeed undefined (type *PaymentService has no field or method EncryptSeed, but does have method encryptSeed)
+internal/usecase/payments/payment_service_test.go:655:37: service.EncryptSeed undefined (type *PaymentService has no field or method EncryptSeed, but does have method encryptSeed)
+internal/usecase/payments/payment_service_test.go:664:29: service.DecryptSeed undefined (type *PaymentService has no field or method DecryptSeed, but does have method decryptSeed)
+internal/usecase/payments/payment_service_test.go:668:29: service.DecryptSeed undefined (type *PaymentService has no field or method DecryptSeed, but does have method decryptSeed)
+internal/usecase/payments/payment_service_test.go:795:6: repeatString redeclared in this block
+	internal/usecase/payments/payment_service.go:232:6: other declaration of repeatString
+# athena/internal/worker [athena/internal/worker.test]
+internal/worker/iota_payment_worker_test.go:91:55: too many arguments in call to NewIOTAPaymentWorker
+	have (*MockIOTAPaymentRepository, *MockIOTAPaymentClient, time.Duration)
+	want (IOTARepository, IOTAClient)
+internal/worker/iota_payment_worker_test.go:96:40: worker.pollInterval undefined (type *IOTAPaymentWorker has no field or method pollInterval)
+internal/worker/iota_payment_worker_test.go:97:26: worker.stopCh undefined (type *IOTAPaymentWorker has no field or method stopCh)
+internal/worker/iota_payment_worker_test.go:188:57: too many arguments in call to NewIOTAPaymentWorker
+	have (*MockIOTAPaymentRepository, *MockIOTAPaymentClient, time.Duration)
+	want (IOTARepository, IOTAClient)
+internal/worker/iota_payment_worker_test.go:191:18: worker.processPaymentIntent undefined (type *IOTAPaymentWorker has no field or method processPaymentIntent)
+internal/worker/iota_payment_worker_test.go:270:57: too many arguments in call to NewIOTAPaymentWorker
+	have (*MockIOTAPaymentRepository, *MockIOTAPaymentClient, time.Duration)
+	want (IOTARepository, IOTAClient)
+internal/worker/iota_payment_worker_test.go:273:18: worker.processAllIntents undefined (type *IOTAPaymentWorker has no field or method processAllIntents)
+internal/worker/iota_payment_worker_test.go:333:57: too many arguments in call to NewIOTAPaymentWorker
+	have (*MockIOTAPaymentRepository, *MockIOTAPaymentClient, time.Duration)
+	want (IOTARepository, IOTAClient)
+internal/worker/iota_payment_worker_test.go:336:18: worker.expireIntents undefined (type *IOTAPaymentWorker has no field or method expireIntents)
+internal/worker/iota_payment_worker_test.go:413:57: too many arguments in call to NewIOTAPaymentWorker
+	have (*MockIOTAPaymentRepository, *MockIOTAPaymentClient, time.Duration)
+	want (IOTARepository, IOTAClient)
+internal/worker/iota_payment_worker_test.go:413:57: too many errors
+ok  	athena/internal/activitypub	9.298s
+ok  	athena/internal/chat	0.026s
+ok  	athena/internal/config	0.012s
+ok  	athena/internal/crypto	0.350s
+--- FAIL: TestNewPool_Success (0.00s)
+    pool_test.go:123: 
+        	Error Trace:	/home/user/athena/internal/database/pool_test.go:123
+        	Error:      	Not equal: 
+        	            	expected: 0
+        	            	actual  : 1
+        	Test:       	TestNewPool_Success
+        	Messages:   	Initial Idle should be 0
+--- FAIL: TestPool_ConnectionReuse (0.10s)
+    pool_test.go:274: 
+        	Error Trace:	/home/user/athena/internal/database/pool_test.go:274
+        	Error:      	Not equal: 
+        	            	expected: 1
+        	            	actual  : 2
+        	Test:       	TestPool_ConnectionReuse
+        	Messages:   	Connection should be reused from pool
+--- FAIL: TestPool_Stats (0.05s)
+    pool_test.go:497: 
+        	Error Trace:	/home/user/athena/internal/database/pool_test.go:497
+        	Error:      	Not equal: 
+        	            	expected: 0
+        	            	actual  : 1
+        	Test:       	TestPool_Stats
+        	Messages:   	Initial Idle should be 0
+    pool_test.go:498: 
+        	Error Trace:	/home/user/athena/internal/database/pool_test.go:498
+        	Error:      	Not equal: 
+        	            	expected: 0
+        	            	actual  : 1
+        	Test:       	TestPool_Stats
+        	Messages:   	Initial OpenConnections should be 0
+panic: test timed out after 10m0s
+	running tests:
+		TestPool_StatsUnderLoad (9m58s)
+
+goroutine 114 [running]:
+testing.(*M).startAlarm.func1()
+	/usr/local/go1.24.7/src/testing/testing.go:2484 +0x394
+created by time.goFunc
+	/usr/local/go1.24.7/src/time/sleep.go:215 +0x2d
+
+goroutine 1 [chan receive]:
+testing.(*T).Run(0xc0000e0540, {0x6762df?, 0xc0000edb30?}, 0x6878f0)
+	/usr/local/go1.24.7/src/testing/testing.go:1859 +0x431
+testing.runTests.func1(0xc0000e0540)
+	/usr/local/go1.24.7/src/testing/testing.go:2279 +0x37
+testing.tRunner(0xc0000e0540, 0xc0000edc70)
+	/usr/local/go1.24.7/src/testing/testing.go:1792 +0xf4
+testing.runTests(0xc000010090, {0x876b40, 0x11, 0x11}, {0x87ed60?, 0x7?, 0x87dbe0?})
+	/usr/local/go1.24.7/src/testing/testing.go:2277 +0x4b4
+testing.(*M).Run(0xc0000a6f00)
+	/usr/local/go1.24.7/src/testing/testing.go:2142 +0x64a
+main.main()
+	_testmain.go:83 +0x9b
+
+goroutine 74 [sync.WaitGroup.Wait]:
+sync.runtime_SemacquireWaitGroup(0x6d2fa8?)
+	/usr/local/go1.24.7/src/runtime/sema.go:110 +0x25
+sync.(*WaitGroup).Wait(0x6cb800?)
+	/usr/local/go1.24.7/src/sync/waitgroup.go:118 +0x48
+athena/internal/database.TestPool_StatsUnderLoad(0xc000302a80)
+	/home/user/athena/internal/database/pool_test.go:567 +0x76a
+testing.tRunner(0xc000302a80, 0x6878f0)
+	/usr/local/go1.24.7/src/testing/testing.go:1792 +0xf4
+created by testing.(*T).Run in goroutine 1
+	/usr/local/go1.24.7/src/testing/testing.go:1851 +0x413
+
+goroutine 80 [select]:
+database/sql.(*DB).conn(0xc00033c820, {0x6ccea8, 0x89e320}, 0x1)
+	/usr/local/go1.24.7/src/database/sql/sql.go:1369 +0x425
+database/sql.(*DB).query(0xc00033c820, {0x6ccea8, 0x89e320}, {0x67135b, 0x8}, {0x0, 0x0, 0x0}, 0x0?)
+	/usr/local/go1.24.7/src/database/sql/sql.go:1759 +0x57
+database/sql.(*DB).QueryContext.func1(0x0?)
+	/usr/local/go1.24.7/src/database/sql/sql.go:1742 +0x4f
+database/sql.(*DB).retry(0x0?, 0xc0001c6ec8)
+	/usr/local/go1.24.7/src/database/sql/sql.go:1576 +0x42
+database/sql.(*DB).QueryContext(0x0?, {0x6ccea8?, 0x89e320?}, {0x67135b?, 0x0?}, {0x0?, 0x0?, 0x0?})
+	/usr/local/go1.24.7/src/database/sql/sql.go:1741 +0xc5
+database/sql.(*DB).Query(...)
+	/usr/local/go1.24.7/src/database/sql/sql.go:1755
+athena/internal/database.(*Pool).Query(0x0?, {0x67135b?, 0x0?}, {0x0?, 0x0?, 0x0?})
+	/home/user/athena/internal/database/pool.go:100 +0x45
+athena/internal/database.TestPool_StatsUnderLoad.func1()
+	/home/user/athena/internal/database/pool_test.go:550 +0x5e
+created by athena/internal/database.TestPool_StatsUnderLoad in goroutine 74
+	/home/user/athena/internal/database/pool_test.go:548 +0x4e9
+
+goroutine 76 [select]:
+database/sql.(*DB).connectionCleaner(0xc00033c820, 0xc000332280?)
+	/usr/local/go1.24.7/src/database/sql/sql.go:1104 +0x9c
+created by database/sql.(*DB).startCleanerLocked in goroutine 74
+	/usr/local/go1.24.7/src/database/sql/sql.go:1091 +0x105
+
+goroutine 75 [select]:
+database/sql.(*DB).connectionOpener(0xc00033c820, {0x6ccf50, 0xc000332370})
+	/usr/local/go1.24.7/src/database/sql/sql.go:1261 +0x87
+created by database/sql.OpenDB in goroutine 74
+	/usr/local/go1.24.7/src/database/sql/sql.go:841 +0x130
+
+goroutine 81 [select]:
+database/sql.(*DB).conn(0xc00033c820, {0x6ccea8, 0x89e320}, 0x1)
+	/usr/local/go1.24.7/src/database/sql/sql.go:1369 +0x425
+database/sql.(*DB).query(0xc00033c820, {0x6ccea8, 0x89e320}, {0x67135b, 0x8}, {0x0, 0x0, 0x0}, 0x0?)
+	/usr/local/go1.24.7/src/database/sql/sql.go:1759 +0x57
+database/sql.(*DB).QueryContext.func1(0x0?)
+	/usr/local/go1.24.7/src/database/sql/sql.go:1742 +0x4f
+database/sql.(*DB).retry(0x0?, 0xc000285ec8)
+	/usr/local/go1.24.7/src/database/sql/sql.go:1576 +0x42
+database/sql.(*DB).QueryContext(0x0?, {0x6ccea8?, 0x89e320?}, {0x67135b?, 0x0?}, {0x0?, 0x0?, 0x0?})
+	/usr/local/go1.24.7/src/database/sql/sql.go:1741 +0xc5
+database/sql.(*DB).Query(...)
+	/usr/local/go1.24.7/src/database/sql/sql.go:1755
+athena/internal/database.(*Pool).Query(0x0?, {0x67135b?, 0x0?}, {0x0?, 0x0?, 0x0?})
+	/home/user/athena/internal/database/pool.go:100 +0x45
+athena/internal/database.TestPool_StatsUnderLoad.func1()
+	/home/user/athena/internal/database/pool_test.go:550 +0x5e
+created by athena/internal/database.TestPool_StatsUnderLoad in goroutine 74
+	/home/user/athena/internal/database/pool_test.go:548 +0x4e9
+
+goroutine 78 [select]:
+database/sql.(*DB).conn(0xc00033c820, {0x6ccea8, 0x89e320}, 0x1)
+	/usr/local/go1.24.7/src/database/sql/sql.go:1369 +0x425
+database/sql.(*DB).query(0xc00033c820, {0x6ccea8, 0x89e320}, {0x67135b, 0x8}, {0x0, 0x0, 0x0}, 0x0?)
+	/usr/local/go1.24.7/src/database/sql/sql.go:1759 +0x57
+database/sql.(*DB).QueryContext.func1(0x0?)
+	/usr/local/go1.24.7/src/database/sql/sql.go:1742 +0x4f
+database/sql.(*DB).retry(0x0?, 0xc000296ec8)
+	/usr/local/go1.24.7/src/database/sql/sql.go:1576 +0x42
+database/sql.(*DB).QueryContext(0x0?, {0x6ccea8?, 0x89e320?}, {0x67135b?, 0x0?}, {0x0?, 0x0?, 0x0?})
+	/usr/local/go1.24.7/src/database/sql/sql.go:1741 +0xc5
+database/sql.(*DB).Query(...)
+	/usr/local/go1.24.7/src/database/sql/sql.go:1755
+athena/internal/database.(*Pool).Query(0x0?, {0x67135b?, 0x0?}, {0x0?, 0x0?, 0x0?})
+	/home/user/athena/internal/database/pool.go:100 +0x45
+athena/internal/database.TestPool_StatsUnderLoad.func1()
+	/home/user/athena/internal/database/pool_test.go:550 +0x5e
+created by athena/internal/database.TestPool_StatsUnderLoad in goroutine 74
+	/home/user/athena/internal/database/pool_test.go:548 +0x4e9
+
+goroutine 98 [select]:
+database/sql.(*DB).conn(0xc00033c820, {0x6ccea8, 0x89e320}, 0x1)
+	/usr/local/go1.24.7/src/database/sql/sql.go:1369 +0x425
+database/sql.(*DB).query(0xc00033c820, {0x6ccea8, 0x89e320}, {0x67135b, 0x8}, {0x0, 0x0, 0x0}, 0x0?)
+	/usr/local/go1.24.7/src/database/sql/sql.go:1759 +0x57
+database/sql.(*DB).QueryContext.func1(0x0?)
+	/usr/local/go1.24.7/src/database/sql/sql.go:1742 +0x4f
+database/sql.(*DB).retry(0x0?, 0xc000292ec8)
+	/usr/local/go1.24.7/src/database/sql/sql.go:1576 +0x42
+database/sql.(*DB).QueryContext(0x0?, {0x6ccea8?, 0x89e320?}, {0x67135b?, 0x0?}, {0x0?, 0x0?, 0x0?})
+	/usr/local/go1.24.7/src/database/sql/sql.go:1741 +0xc5
+database/sql.(*DB).Query(...)
+	/usr/local/go1.24.7/src/database/sql/sql.go:1755
+athena/internal/database.(*Pool).Query(0x0?, {0x67135b?, 0x0?}, {0x0?, 0x0?, 0x0?})
+	/home/user/athena/internal/database/pool.go:100 +0x45
+athena/internal/database.TestPool_StatsUnderLoad.func1()
+	/home/user/athena/internal/database/pool_test.go:550 +0x5e
+created by athena/internal/database.TestPool_StatsUnderLoad in goroutine 74
+	/home/user/athena/internal/database/pool_test.go:548 +0x4e9
+
+goroutine 99 [select]:
+database/sql.(*DB).conn(0xc00033c820, {0x6ccea8, 0x89e320}, 0x1)
+	/usr/local/go1.24.7/src/database/sql/sql.go:1369 +0x425
+database/sql.(*DB).query(0xc00033c820, {0x6ccea8, 0x89e320}, {0x67135b, 0x8}, {0x0, 0x0, 0x0}, 0x0?)
+	/usr/local/go1.24.7/src/database/sql/sql.go:1759 +0x57
+database/sql.(*DB).QueryContext.func1(0x0?)
+	/usr/local/go1.24.7/src/database/sql/sql.go:1742 +0x4f
+database/sql.(*DB).retry(0x0?, 0xc000207ec8)
+	/usr/local/go1.24.7/src/database/sql/sql.go:1576 +0x42
+database/sql.(*DB).QueryContext(0x0?, {0x6ccea8?, 0x89e320?}, {0x67135b?, 0x0?}, {0x0?, 0x0?, 0x0?})
+	/usr/local/go1.24.7/src/database/sql/sql.go:1741 +0xc5
+database/sql.(*DB).Query(...)
+	/usr/local/go1.24.7/src/database/sql/sql.go:1755
+athena/internal/database.(*Pool).Query(0x0?, {0x67135b?, 0x0?}, {0x0?, 0x0?, 0x0?})
+	/home/user/athena/internal/database/pool.go:100 +0x45
+athena/internal/database.TestPool_StatsUnderLoad.func1()
+	/home/user/athena/internal/database/pool_test.go:550 +0x5e
+created by athena/internal/database.TestPool_StatsUnderLoad in goroutine 74
+	/home/user/athena/internal/database/pool_test.go:548 +0x4e9
+
+goroutine 100 [select]:
+database/sql.(*DB).conn(0xc00033c820, {0x6ccea8, 0x89e320}, 0x1)
+	/usr/local/go1.24.7/src/database/sql/sql.go:1369 +0x425
+database/sql.(*DB).query(0xc00033c820, {0x6ccea8, 0x89e320}, {0x67135b, 0x8}, {0x0, 0x0, 0x0}, 0x0?)
+	/usr/local/go1.24.7/src/database/sql/sql.go:1759 +0x57
+database/sql.(*DB).QueryContext.func1(0x0?)
+	/usr/local/go1.24.7/src/database/sql/sql.go:1742 +0x4f
+database/sql.(*DB).retry(0x0?, 0xc000287ec8)
+	/usr/local/go1.24.7/src/database/sql/sql.go:1576 +0x42
+database/sql.(*DB).QueryContext(0x0?, {0x6ccea8?, 0x89e320?}, {0x67135b?, 0x0?}, {0x0?, 0x0?, 0x0?})
+	/usr/local/go1.24.7/src/database/sql/sql.go:1741 +0xc5
+database/sql.(*DB).Query(...)
+	/usr/local/go1.24.7/src/database/sql/sql.go:1755
+athena/internal/database.(*Pool).Query(0x0?, {0x67135b?, 0x0?}, {0x0?, 0x0?, 0x0?})
+	/home/user/athena/internal/database/pool.go:100 +0x45
+athena/internal/database.TestPool_StatsUnderLoad.func1()
+	/home/user/athena/internal/database/pool_test.go:550 +0x5e
+created by athena/internal/database.TestPool_StatsUnderLoad in goroutine 74
+	/home/user/athena/internal/database/pool_test.go:548 +0x4e9
+
+goroutine 101 [select]:
+database/sql.(*DB).conn(0xc00033c820, {0x6ccea8, 0x89e320}, 0x1)
+	/usr/local/go1.24.7/src/database/sql/sql.go:1369 +0x425
+database/sql.(*DB).query(0xc00033c820, {0x6ccea8, 0x89e320}, {0x67135b, 0x8}, {0x0, 0x0, 0x0}, 0x0?)
+	/usr/local/go1.24.7/src/database/sql/sql.go:1759 +0x57
+database/sql.(*DB).QueryContext.func1(0x0?)
+	/usr/local/go1.24.7/src/database/sql/sql.go:1742 +0x4f
+database/sql.(*DB).retry(0x0?, 0xc000288ec8)
+	/usr/local/go1.24.7/src/database/sql/sql.go:1576 +0x42
+database/sql.(*DB).QueryContext(0x0?, {0x6ccea8?, 0x89e320?}, {0x67135b?, 0x0?}, {0x0?, 0x0?, 0x0?})
+	/usr/local/go1.24.7/src/database/sql/sql.go:1741 +0xc5
+database/sql.(*DB).Query(...)
+	/usr/local/go1.24.7/src/database/sql/sql.go:1755
+athena/internal/database.(*Pool).Query(0x0?, {0x67135b?, 0x0?}, {0x0?, 0x0?, 0x0?})
+	/home/user/athena/internal/database/pool.go:100 +0x45
+athena/internal/database.TestPool_StatsUnderLoad.func1()
+	/home/user/athena/internal/database/pool_test.go:550 +0x5e
+created by athena/internal/database.TestPool_StatsUnderLoad in goroutine 74
+	/home/user/athena/internal/database/pool_test.go:548 +0x4e9
+
+goroutine 102 [select]:
+database/sql.(*DB).conn(0xc00033c820, {0x6ccea8, 0x89e320}, 0x1)
+	/usr/local/go1.24.7/src/database/sql/sql.go:1369 +0x425
+database/sql.(*DB).query(0xc00033c820, {0x6ccea8, 0x89e320}, {0x67135b, 0x8}, {0x0, 0x0, 0x0}, 0x0?)
+	/usr/local/go1.24.7/src/database/sql/sql.go:1759 +0x57
+database/sql.(*DB).QueryContext.func1(0x0?)
+	/usr/local/go1.24.7/src/database/sql/sql.go:1742 +0x4f
+database/sql.(*DB).retry(0x0?, 0xc000289ec8)
+	/usr/local/go1.24.7/src/database/sql/sql.go:1576 +0x42
+database/sql.(*DB).QueryContext(0x0?, {0x6ccea8?, 0x89e320?}, {0x67135b?, 0x0?}, {0x0?, 0x0?, 0x0?})
+	/usr/local/go1.24.7/src/database/sql/sql.go:1741 +0xc5
+database/sql.(*DB).Query(...)
+	/usr/local/go1.24.7/src/database/sql/sql.go:1755
+athena/internal/database.(*Pool).Query(0x0?, {0x67135b?, 0x0?}, {0x0?, 0x0?, 0x0?})
+	/home/user/athena/internal/database/pool.go:100 +0x45
+athena/internal/database.TestPool_StatsUnderLoad.func1()
+	/home/user/athena/internal/database/pool_test.go:550 +0x5e
+created by athena/internal/database.TestPool_StatsUnderLoad in goroutine 74
+	/home/user/athena/internal/database/pool_test.go:548 +0x4e9
+
+goroutine 105 [select]:
+database/sql.(*DB).conn(0xc00033c820, {0x6ccea8, 0x89e320}, 0x1)
+	/usr/local/go1.24.7/src/database/sql/sql.go:1369 +0x425
+database/sql.(*DB).query(0xc00033c820, {0x6ccea8, 0x89e320}, {0x67135b, 0x8}, {0x0, 0x0, 0x0}, 0x0?)
+	/usr/local/go1.24.7/src/database/sql/sql.go:1759 +0x57
+database/sql.(*DB).QueryContext.func1(0x0?)
+	/usr/local/go1.24.7/src/database/sql/sql.go:1742 +0x4f
+database/sql.(*DB).retry(0x0?, 0xc000283ec8)
+	/usr/local/go1.24.7/src/database/sql/sql.go:1576 +0x42
+database/sql.(*DB).QueryContext(0x0?, {0x6ccea8?, 0x89e320?}, {0x67135b?, 0x0?}, {0x0?, 0x0?, 0x0?})
+	/usr/local/go1.24.7/src/database/sql/sql.go:1741 +0xc5
+database/sql.(*DB).Query(...)
+	/usr/local/go1.24.7/src/database/sql/sql.go:1755
+athena/internal/database.(*Pool).Query(0x0?, {0x67135b?, 0x0?}, {0x0?, 0x0?, 0x0?})
+	/home/user/athena/internal/database/pool.go:100 +0x45
+athena/internal/database.TestPool_StatsUnderLoad.func1()
+	/home/user/athena/internal/database/pool_test.go:550 +0x5e
+created by athena/internal/database.TestPool_StatsUnderLoad in goroutine 74
+	/home/user/athena/internal/database/pool_test.go:548 +0x4e9
+
+goroutine 106 [select]:
+database/sql.(*DB).conn(0xc00033c820, {0x6ccea8, 0x89e320}, 0x1)
+	/usr/local/go1.24.7/src/database/sql/sql.go:1369 +0x425
+database/sql.(*DB).query(0xc00033c820, {0x6ccea8, 0x89e320}, {0x67135b, 0x8}, {0x0, 0x0, 0x0}, 0x0?)
+	/usr/local/go1.24.7/src/database/sql/sql.go:1759 +0x57
+database/sql.(*DB).QueryContext.func1(0x0?)
+	/usr/local/go1.24.7/src/database/sql/sql.go:1742 +0x4f
+database/sql.(*DB).retry(0x0?, 0xc000284ec8)
+	/usr/local/go1.24.7/src/database/sql/sql.go:1576 +0x42
+database/sql.(*DB).QueryContext(0x0?, {0x6ccea8?, 0x89e320?}, {0x67135b?, 0x0?}, {0x0?, 0x0?, 0x0?})
+	/usr/local/go1.24.7/src/database/sql/sql.go:1741 +0xc5
+database/sql.(*DB).Query(...)
+	/usr/local/go1.24.7/src/database/sql/sql.go:1755
+athena/internal/database.(*Pool).Query(0x0?, {0x67135b?, 0x0?}, {0x0?, 0x0?, 0x0?})
+	/home/user/athena/internal/database/pool.go:100 +0x45
+athena/internal/database.TestPool_StatsUnderLoad.func1()
+	/home/user/athena/internal/database/pool_test.go:550 +0x5e
+created by athena/internal/database.TestPool_StatsUnderLoad in goroutine 74
+	/home/user/athena/internal/database/pool_test.go:548 +0x4e9
+
+goroutine 108 [select]:
+database/sql.(*DB).conn(0xc00033c820, {0x6ccea8, 0x89e320}, 0x1)
+	/usr/local/go1.24.7/src/database/sql/sql.go:1369 +0x425
+database/sql.(*DB).query(0xc00033c820, {0x6ccea8, 0x89e320}, {0x67135b, 0x8}, {0x0, 0x0, 0x0}, 0x0?)
+	/usr/local/go1.24.7/src/database/sql/sql.go:1759 +0x57
+database/sql.(*DB).QueryContext.func1(0x0?)
+	/usr/local/go1.24.7/src/database/sql/sql.go:1742 +0x4f
+database/sql.(*DB).retry(0x0?, 0xc00020aec8)
+	/usr/local/go1.24.7/src/database/sql/sql.go:1576 +0x42
+database/sql.(*DB).QueryContext(0x0?, {0x6ccea8?, 0x89e320?}, {0x67135b?, 0x0?}, {0x0?, 0x0?, 0x0?})
+	/usr/local/go1.24.7/src/database/sql/sql.go:1741 +0xc5
+database/sql.(*DB).Query(...)
+	/usr/local/go1.24.7/src/database/sql/sql.go:1755
+athena/internal/database.(*Pool).Query(0x0?, {0x67135b?, 0x0?}, {0x0?, 0x0?, 0x0?})
+	/home/user/athena/internal/database/pool.go:100 +0x45
+athena/internal/database.TestPool_StatsUnderLoad.func1()
+	/home/user/athena/internal/database/pool_test.go:550 +0x5e
+created by athena/internal/database.TestPool_StatsUnderLoad in goroutine 74
+	/home/user/athena/internal/database/pool_test.go:548 +0x4e9
+
+goroutine 109 [select]:
+database/sql.(*DB).conn(0xc00033c820, {0x6ccea8, 0x89e320}, 0x1)
+	/usr/local/go1.24.7/src/database/sql/sql.go:1369 +0x425
+database/sql.(*DB).query(0xc00033c820, {0x6ccea8, 0x89e320}, {0x67135b, 0x8}, {0x0, 0x0, 0x0}, 0x0?)
+	/usr/local/go1.24.7/src/database/sql/sql.go:1759 +0x57
+database/sql.(*DB).QueryContext.func1(0x0?)
+	/usr/local/go1.24.7/src/database/sql/sql.go:1742 +0x4f
+database/sql.(*DB).retry(0x0?, 0xc00007bec8)
+	/usr/local/go1.24.7/src/database/sql/sql.go:1576 +0x42
+database/sql.(*DB).QueryContext(0x0?, {0x6ccea8?, 0x89e320?}, {0x67135b?, 0x0?}, {0x0?, 0x0?, 0x0?})
+	/usr/local/go1.24.7/src/database/sql/sql.go:1741 +0xc5
+database/sql.(*DB).Query(...)
+	/usr/local/go1.24.7/src/database/sql/sql.go:1755
+athena/internal/database.(*Pool).Query(0x0?, {0x67135b?, 0x0?}, {0x0?, 0x0?, 0x0?})
+	/home/user/athena/internal/database/pool.go:100 +0x45
+athena/internal/database.TestPool_StatsUnderLoad.func1()
+	/home/user/athena/internal/database/pool_test.go:550 +0x5e
+created by athena/internal/database.TestPool_StatsUnderLoad in goroutine 74
+	/home/user/athena/internal/database/pool_test.go:548 +0x4e9
+
+goroutine 110 [select]:
+database/sql.(*DB).conn(0xc00033c820, {0x6ccea8, 0x89e320}, 0x1)
+	/usr/local/go1.24.7/src/database/sql/sql.go:1369 +0x425
+database/sql.(*DB).query(0xc00033c820, {0x6ccea8, 0x89e320}, {0x67135b, 0x8}, {0x0, 0x0, 0x0}, 0x0?)
+	/usr/local/go1.24.7/src/database/sql/sql.go:1759 +0x57
+database/sql.(*DB).QueryContext.func1(0x0?)
+	/usr/local/go1.24.7/src/database/sql/sql.go:1742 +0x4f
+database/sql.(*DB).retry(0x0?, 0xc000206ec8)
+	/usr/local/go1.24.7/src/database/sql/sql.go:1576 +0x42
+database/sql.(*DB).QueryContext(0x0?, {0x6ccea8?, 0x89e320?}, {0x67135b?, 0x0?}, {0x0?, 0x0?, 0x0?})
+	/usr/local/go1.24.7/src/database/sql/sql.go:1741 +0xc5
+database/sql.(*DB).Query(...)
+	/usr/local/go1.24.7/src/database/sql/sql.go:1755
+athena/internal/database.(*Pool).Query(0x0?, {0x67135b?, 0x0?}, {0x0?, 0x0?, 0x0?})
+	/home/user/athena/internal/database/pool.go:100 +0x45
+athena/internal/database.TestPool_StatsUnderLoad.func1()
+	/home/user/athena/internal/database/pool_test.go:550 +0x5e
+created by athena/internal/database.TestPool_StatsUnderLoad in goroutine 74
+	/home/user/athena/internal/database/pool_test.go:548 +0x4e9
+
+goroutine 111 [select]:
+database/sql.(*DB).conn(0xc00033c820, {0x6ccea8, 0x89e320}, 0x1)
+	/usr/local/go1.24.7/src/database/sql/sql.go:1369 +0x425
+database/sql.(*DB).query(0xc00033c820, {0x6ccea8, 0x89e320}, {0x67135b, 0x8}, {0x0, 0x0, 0x0}, 0x0?)
+	/usr/local/go1.24.7/src/database/sql/sql.go:1759 +0x57
+database/sql.(*DB).QueryContext.func1(0x0?)
+	/usr/local/go1.24.7/src/database/sql/sql.go:1742 +0x4f
+database/sql.(*DB).retry(0x0?, 0xc0001c2ec8)
+	/usr/local/go1.24.7/src/database/sql/sql.go:1576 +0x42
+database/sql.(*DB).QueryContext(0x0?, {0x6ccea8?, 0x89e320?}, {0x67135b?, 0x0?}, {0x0?, 0x0?, 0x0?})
+	/usr/local/go1.24.7/src/database/sql/sql.go:1741 +0xc5
+database/sql.(*DB).Query(...)
+	/usr/local/go1.24.7/src/database/sql/sql.go:1755
+athena/internal/database.(*Pool).Query(0x0?, {0x67135b?, 0x0?}, {0x0?, 0x0?, 0x0?})
+	/home/user/athena/internal/database/pool.go:100 +0x45
+athena/internal/database.TestPool_StatsUnderLoad.func1()
+	/home/user/athena/internal/database/pool_test.go:550 +0x5e
+created by athena/internal/database.TestPool_StatsUnderLoad in goroutine 74
+	/home/user/athena/internal/database/pool_test.go:548 +0x4e9
+
+goroutine 112 [select]:
+database/sql.(*DB).conn(0xc00033c820, {0x6ccea8, 0x89e320}, 0x1)
+	/usr/local/go1.24.7/src/database/sql/sql.go:1369 +0x425
+database/sql.(*DB).query(0xc00033c820, {0x6ccea8, 0x89e320}, {0x67135b, 0x8}, {0x0, 0x0, 0x0}, 0x0?)
+	/usr/local/go1.24.7/src/database/sql/sql.go:1759 +0x57
+database/sql.(*DB).QueryContext.func1(0x0?)
+	/usr/local/go1.24.7/src/database/sql/sql.go:1742 +0x4f
+database/sql.(*DB).retry(0x0?, 0xc00007aec8)
+	/usr/local/go1.24.7/src/database/sql/sql.go:1576 +0x42
+database/sql.(*DB).QueryContext(0x0?, {0x6ccea8?, 0x89e320?}, {0x67135b?, 0x0?}, {0x0?, 0x0?, 0x0?})
+	/usr/local/go1.24.7/src/database/sql/sql.go:1741 +0xc5
+database/sql.(*DB).Query(...)
+	/usr/local/go1.24.7/src/database/sql/sql.go:1755
+athena/internal/database.(*Pool).Query(0x0?, {0x67135b?, 0x0?}, {0x0?, 0x0?, 0x0?})
+	/home/user/athena/internal/database/pool.go:100 +0x45
+athena/internal/database.TestPool_StatsUnderLoad.func1()
+	/home/user/athena/internal/database/pool_test.go:550 +0x5e
+created by athena/internal/database.TestPool_StatsUnderLoad in goroutine 74
+	/home/user/athena/internal/database/pool_test.go:548 +0x4e9
+FAIL	athena/internal/database	600.037s
+ok  	athena/internal/domain	0.041s
+ok  	athena/internal/email	0.023s
+ok  	athena/internal/generated	0.023s
+?   	athena/internal/health	[no test files]
+?   	athena/internal/httpapi/handlers/admin	[no test files]
+ok  	athena/internal/httpapi/handlers/auth	0.188s
+ok  	athena/internal/httpapi/handlers/channel	0.026s
+ok  	athena/internal/httpapi/handlers/federation	0.417s
+ok  	athena/internal/httpapi/handlers/livestream	0.028s
+ok  	athena/internal/httpapi/handlers/messaging	0.030s
+ok  	athena/internal/httpapi/handlers/moderation	0.021s
+--- FAIL: TestValidateInputSanitization (0.00s)
+    --- FAIL: TestValidateInputSanitization/SQL_injection_attempt_in_video_id (0.00s)
+panic: 
+	assert: mock: I don't know what to return because the method call was unexpected.
+		Either do Mock.On("CreatePaymentIntent").Return(...) first, or remove the CreatePaymentIntent() call.
+		This method was unexpected:
+			CreatePaymentIntent(*context.valueCtx,string,*string,int64)
+			0: &context.valueCtx{Context:context.backgroundCtx{emptyCtx:context.emptyCtx{}}, key:"user_id", val:"380ce3fd-1b75-4529-8575-a3a4bf85b43c"}
+			1: "380ce3fd-1b75-4529-8575-a3a4bf85b43c"
+			2: (*string)(0xc0001c0840)
+			3: 1000000
+		at: [/home/user/athena/internal/httpapi/handlers/payments/payment_handlers_test.go:50 /home/user/athena/internal/httpapi/handlers/payments/payment_handlers.go:101 /home/user/athena/internal/httpapi/handlers/payments/payment_handlers_test.go:599] [recovered]
+	panic: 
+	assert: mock: I don't know what to return because the method call was unexpected.
+		Either do Mock.On("CreatePaymentIntent").Return(...) first, or remove the CreatePaymentIntent() call.
+		This method was unexpected:
+			CreatePaymentIntent(*context.valueCtx,string,*string,int64)
+			0: &context.valueCtx{Context:context.backgroundCtx{emptyCtx:context.emptyCtx{}}, key:"user_id", val:"380ce3fd-1b75-4529-8575-a3a4bf85b43c"}
+			1: "380ce3fd-1b75-4529-8575-a3a4bf85b43c"
+			2: (*string)(0xc0001c0840)
+			3: 1000000
+		at: [/home/user/athena/internal/httpapi/handlers/payments/payment_handlers_test.go:50 /home/user/athena/internal/httpapi/handlers/payments/payment_handlers.go:101 /home/user/athena/internal/httpapi/handlers/payments/payment_handlers_test.go:599]
+
+goroutine 31 [running]:
+testing.tRunner.func1.2({0x653740, 0xc0001c0960})
+	/usr/local/go1.24.7/src/testing/testing.go:1734 +0x21c
+testing.tRunner.func1()
+	/usr/local/go1.24.7/src/testing/testing.go:1737 +0x35e
+panic({0x653740?, 0xc0001c0960?})
+	/usr/local/go1.24.7/src/runtime/panic.go:792 +0x132
+github.com/stretchr/testify/mock.(*Mock).fail(0xc000015a90, {0x6bf23b?, 0x4?}, {0xc000091a00?, 0x4?, 0x4?})
+	/root/go/pkg/mod/github.com/stretchr/testify@v1.11.1/mock/mock.go:359 +0x125
+github.com/stretchr/testify/mock.(*Mock).MethodCalled(0xc000015a90, {0x75100d, 0x13}, {0xc000091900, 0x4, 0x4})
+	/root/go/pkg/mod/github.com/stretchr/testify@v1.11.1/mock/mock.go:527 +0x785
+github.com/stretchr/testify/mock.(*Mock).Called(0xc000015a90, {0xc000091900, 0x4, 0x4})
+	/root/go/pkg/mod/github.com/stretchr/testify@v1.11.1/mock/mock.go:491 +0x125
+athena/internal/httpapi/handlers/payments.(*MockPaymentService).CreatePaymentIntent(0xc000015a90, {0x710998, 0xc0001bec60}, {0xc00001fa70, 0x24}, 0xc0001c0840, 0xf4240)
+	/home/user/athena/internal/httpapi/handlers/payments/payment_handlers_test.go:50 +0x156
+athena/internal/httpapi/handlers/payments.(*PaymentHandler).CreatePaymentIntent(0xc0000f1f20, {0x7106a0, 0xc0000918c0}, 0xc0000f1df0)
+	/home/user/athena/internal/httpapi/handlers/payments/payment_handlers.go:101 +0x1c5
+athena/internal/httpapi/handlers/payments.TestValidateInputSanitization.func1(0xc0001ad500)
+	/home/user/athena/internal/httpapi/handlers/payments/payment_handlers_test.go:599 +0x3aa
+testing.tRunner(0xc0001ad500, 0xc0001beba0)
+	/usr/local/go1.24.7/src/testing/testing.go:1792 +0xf4
+created by testing.(*T).Run in goroutine 30
+	/usr/local/go1.24.7/src/testing/testing.go:1851 +0x413
+FAIL	athena/internal/httpapi/handlers/payments	0.027s
+?   	athena/internal/httpapi/handlers/plugin	[no test files]
+ok  	athena/internal/httpapi/handlers/social	0.023s
+?   	athena/internal/httpapi/shared	[no test files]
+?   	athena/internal/importer	[no test files]
+--- FAIL: TestValidateCID_ValidCIDv1Base58 (0.00s)
+    --- FAIL: TestValidateCID_ValidCIDv1Base58/valid_CIDv1_base58_raw (0.00s)
+        cid_validation_test.go:64: 
+            	Error Trace:	/home/user/athena/internal/ipfs/cid_validation_test.go:64
+            	Error:      	Received unexpected error:
+            	            	invalid CID format: invalid cid: Invalid base58 digit ('l')
+            	Test:       	TestValidateCID_ValidCIDv1Base58/valid_CIDv1_base58_raw
+            	Messages:   	Valid CIDv1 base58 should be accepted
+--- FAIL: TestValidateCID_ErrorMessages (0.00s)
+    --- FAIL: TestValidateCID_ErrorMessages/CIDv0 (0.00s)
+        cid_validation_test.go:569: 
+            	Error Trace:	/home/user/athena/internal/ipfs/cid_validation_test.go:569
+            	Error:      	"cidv0 not supported, only cidv1 allowed" does not contain "CIDv0"
+            	Test:       	TestValidateCID_ErrorMessages/CIDv0
+            	Messages:   	Error message should be informative
+--- FAIL: TestClusterAuth_BearerToken (0.00s)
+    cluster_auth_test.go:48: 
+        	Error Trace:	/home/user/athena/internal/ipfs/cluster_auth_test.go:48
+        	Error:      	Should be true
+        	Test:       	TestClusterAuth_BearerToken
+        	Messages:   	Bearer token should be sent in Authorization header
+--- FAIL: TestClusterAuth_TokenFromEnvironment (0.00s)
+    cluster_auth_test.go:77: 
+        	Error Trace:	/home/user/athena/internal/ipfs/cluster_auth_test.go:77
+        	Error:      	Should be true
+        	Test:       	TestClusterAuth_TokenFromEnvironment
+        	Messages:   	Token from environment should be used
+--- FAIL: TestClusterAuth_TokenFromConfig (0.00s)
+    cluster_auth_test.go:105: 
+        	Error Trace:	/home/user/athena/internal/ipfs/cluster_auth_test.go:105
+        	Error:      	Should be true
+        	Test:       	TestClusterAuth_TokenFromConfig
+        	Messages:   	Token from config should be used
+--- FAIL: TestClusterAuth_TokenRotation (0.00s)
+    cluster_auth_test.go:335: 
+        	Error Trace:	/home/user/athena/internal/ipfs/cluster_auth_test.go:335
+        	Error:      	Not equal: 
+        	            	expected: "token-v1"
+        	            	actual  : ""
+        	            	
+        	            	Diff:
+        	            	--- Expected
+        	            	+++ Actual
+        	            	@@ -1 +1 @@
+        	            	-token-v1
+        	            	+
+        	Test:       	TestClusterAuth_TokenRotation
+        	Messages:   	Should use initial token
+    cluster_auth_test.go:343: 
+        	Error Trace:	/home/user/athena/internal/ipfs/cluster_auth_test.go:343
+        	Error:      	Not equal: 
+        	            	expected: "token-v2"
+        	            	actual  : ""
+        	            	
+        	            	Diff:
+        	            	--- Expected
+        	            	+++ Actual
+        	            	@@ -1 +1 @@
+        	            	-token-v2
+        	            	+
+        	Test:       	TestClusterAuth_TokenRotation
+        	Messages:   	Should use rotated token
+--- FAIL: TestClusterAuth_Pin_Authenticated (0.00s)
+    cluster_auth_test.go:456: 
+        	Error Trace:	/home/user/athena/internal/ipfs/cluster_auth_test.go:456
+        	Error:      	Should be true
+        	Test:       	TestClusterAuth_Pin_Authenticated
+        	Messages:   	Authenticated pin should succeed
+--- FAIL: TestClusterAuth_Unpin_Authenticated (0.00s)
+    cluster_auth_test.go:493: 
+        	Error Trace:	/home/user/athena/internal/ipfs/cluster_auth_test.go:493
+        	Error:      	Should be true
+        	Test:       	TestClusterAuth_Unpin_Authenticated
+        	Messages:   	Authenticated unpin should succeed
+FAIL
+FAIL	athena/internal/ipfs	0.068s
+ok  	athena/internal/livestream	0.911s
+ok  	athena/internal/metrics	0.023s
+ok  	athena/internal/payments	3.024s
+--- FAIL: TestManager_TriggerEvent (0.00s)
+    manager_test.go:433: 
+        	Error Trace:	/home/user/athena/internal/plugin/manager_test.go:433
+        	Error:      	Received unexpected error:
+        	            	hook execution errors: [hook timeout in plugin video-plugin: context canceled]
+        	Test:       	TestManager_TriggerEvent
+FAIL
+FAIL	athena/internal/plugin	0.173s
+?   	athena/internal/plugin/examples	[no test files]
+?   	athena/internal/port	[no test files]
+FAIL	athena/internal/repository [build failed]
+ok  	athena/internal/scheduler	1.839s
+--- FAIL: TestValidateURL_PublicIPs (0.00s)
+    url_validator_test.go:224: Expected public IP http://8.8.8.8 to be allowed, but got error: access to private IP addresses is not allowed: 8.8.8.8 resolves to 8.8.8.8
+    url_validator_test.go:224: Expected public IP http://1.1.1.1 to be allowed, but got error: access to private IP addresses is not allowed: 1.1.1.1 resolves to 1.1.1.1
+    url_validator_test.go:224: Expected public IP http://93.184.216.34 to be allowed, but got error: access to private IP addresses is not allowed: 93.184.216.34 resolves to 93.184.216.34
+    url_validator_test.go:224: Expected public IP http://[2606:2800:220:1:248:1893:25c8:1946] to be allowed, but got error: failed to resolve host [2606:2800:220:1:248:1893:25c8:1946]: lookup [2606:2800:220:1:248:1893:25c8:1946]: no such host
+--- FAIL: TestValidateURL_PortVariations (0.00s)
+    url_validator_test.go:249: Expected http://8.8.8.8:443 (public IP with HTTPS port) to be allowed, but got error: access to private IP addresses is not allowed: 8.8.8.8 resolves to 8.8.8.8
+--- FAIL: TestIsPrivateIP (0.00s)
+    url_validator_test.go:322: Expected http://8.8.8.8 to be detected as public IP, got error: access to private IP addresses is not allowed: 8.8.8.8 resolves to 8.8.8.8
+    url_validator_test.go:322: Expected http://1.1.1.1 to be detected as public IP, got error: access to private IP addresses is not allowed: 1.1.1.1 resolves to 1.1.1.1
+{"level":"info","address":"localhost:3310","timeout":30000,"max_retries":3,"time":"2025-11-17T04:30:14Z","message":"Virus scanner initialized"}
+{"level":"info","address":"localhost:3310","timeout":10000,"max_retries":3,"time":"2025-11-17T04:30:14Z","message":"Virus scanner initialized"}
+{"level":"info","address":"localhost:9999","timeout":5000,"max_retries":3,"time":"2025-11-17T04:30:14Z","message":"Virus scanner initialized"}
+{"level":"warn","error":"dial unix localhost:9999: connect: no such file or directory","attempt":1,"file":"../../testdata/virus_scanner/clean_file.txt","time":"2025-11-17T04:30:14Z","message":"ClamAV scan attempt failed"}
+{"level":"warn","error":"dial unix localhost:9999: connect: no such file or directory","attempt":2,"file":"../../testdata/virus_scanner/clean_file.txt","time":"2025-11-17T04:30:15Z","message":"ClamAV scan attempt failed"}
+{"level":"warn","error":"dial unix localhost:9999: connect: no such file or directory","attempt":3,"file":"../../testdata/virus_scanner/clean_file.txt","time":"2025-11-17T04:30:16Z","message":"ClamAV scan attempt failed"}
+{"level":"warn","error":"dial unix localhost:9999: connect: no such file or directory","attempt":4,"file":"../../testdata/virus_scanner/clean_file.txt","time":"2025-11-17T04:30:17Z","message":"ClamAV scan attempt failed"}
+{"level":"error","error":"dial unix localhost:9999: connect: no such file or directory","file":"../../testdata/virus_scanner/clean_file.txt","time":"2025-11-17T04:30:17Z","message":"ClamAV scan failed after retries"}
+{"level":"warn","file":"../../testdata/virus_scanner/clean_file.txt","time":"2025-11-17T04:30:17Z","message":"ClamAV unavailable, allowing file with warning"}
+{"level":"info","address":"localhost:9999","timeout":1000,"max_retries":2,"time":"2025-11-17T04:30:17Z","message":"Virus scanner initialized"}
+{"level":"info","time":"2025-11-17T04:30:17Z","message":"ScanStream: Buffering non-seekable stream for safe retry support"}
+{"level":"debug","bytes_buffered":68,"temp_file":"/tmp/TestVirusScanner_RetryVulnerabilityexhausted_reader_should_fail3293218711/001/virus-scan-1146911307.tmp","time":"2025-11-17T04:30:17Z","message":"Stream buffered for scanning"}
+{"level":"warn","error":"dial unix localhost:9999: connect: no such file or directory","attempt":1,"max_retries":2,"bytes_read":0,"time":"2025-11-17T04:30:17Z","message":"ClamAV stream scan attempt failed"}
+{"level":"debug","attempt":2,"time":"2025-11-17T04:30:18Z","message":"Stream position reset for retry"}
+{"level":"warn","error":"dial unix localhost:9999: connect: no such file or directory","attempt":2,"max_retries":2,"bytes_read":0,"time":"2025-11-17T04:30:18Z","message":"ClamAV stream scan attempt failed"}
+{"level":"debug","attempt":3,"time":"2025-11-17T04:30:18Z","message":"Stream position reset for retry"}
+{"level":"warn","error":"dial unix localhost:9999: connect: no such file or directory","attempt":3,"max_retries":2,"bytes_read":0,"time":"2025-11-17T04:30:18Z","message":"ClamAV stream scan attempt failed"}
+{"level":"error","error":"dial unix localhost:9999: connect: no such file or directory","retries":2,"duration":203.603623,"time":"2025-11-17T04:30:18Z","message":"ClamAV stream scan failed after all retries"}
+{"level":"warn","error":"remove /tmp/TestVirusScanner_RetryVulnerabilityexhausted_reader_should_fail3293218711/001/virus-scan-1146911307.tmp: no such file or directory","file":"/tmp/TestVirusScanner_RetryVulnerabilityexhausted_reader_should_fail3293218711/001/virus-scan-1146911307.tmp","time":"2025-11-17T04:30:18Z","message":"Failed to remove temporary scan buffer"}
+{"level":"info","address":"localhost:9999","timeout":1000,"max_retries":2,"time":"2025-11-17T04:30:18Z","message":"Virus scanner initialized"}
+{"level":"debug","time":"2025-11-17T04:30:18Z","message":"ScanStream: Using seekable reader directly"}
+{"level":"warn","error":"dial unix localhost:9999: connect: no such file or directory","attempt":1,"max_retries":2,"bytes_read":0,"time":"2025-11-17T04:30:18Z","message":"ClamAV stream scan attempt failed"}
+{"level":"debug","attempt":2,"time":"2025-11-17T04:30:18Z","message":"Stream position reset for retry"}
+{"level":"warn","error":"dial unix localhost:9999: connect: no such file or directory","attempt":2,"max_retries":2,"bytes_read":0,"time":"2025-11-17T04:30:18Z","message":"ClamAV stream scan attempt failed"}
+{"level":"debug","attempt":3,"time":"2025-11-17T04:30:18Z","message":"Stream position reset for retry"}
+{"level":"warn","error":"dial unix localhost:9999: connect: no such file or directory","attempt":3,"max_retries":2,"bytes_read":0,"time":"2025-11-17T04:30:18Z","message":"ClamAV stream scan attempt failed"}
+{"level":"error","error":"dial unix localhost:9999: connect: no such file or directory","retries":2,"duration":202.933419,"time":"2025-11-17T04:30:18Z","message":"ClamAV stream scan failed after all retries"}
+{"level":"info","address":"localhost:9999","timeout":1000,"max_retries":2,"time":"2025-11-17T04:30:18Z","message":"Virus scanner initialized"}
+{"level":"info","time":"2025-11-17T04:30:18Z","message":"ScanStream: Buffering non-seekable stream for safe retry support"}
+{"level":"debug","bytes_buffered":68,"temp_file":"/tmp/TestVirusScanner_RetryVulnerabilitybuffered_reader_should_work217042810/001/virus-scan-4293212902.tmp","time":"2025-11-17T04:30:18Z","message":"Stream buffered for scanning"}
+{"level":"warn","error":"dial unix localhost:9999: connect: no such file or directory","attempt":1,"max_retries":2,"bytes_read":0,"time":"2025-11-17T04:30:18Z","message":"ClamAV stream scan attempt failed"}
+{"level":"debug","attempt":2,"time":"2025-11-17T04:30:18Z","message":"Stream position reset for retry"}
+{"level":"warn","error":"dial unix localhost:9999: connect: no such file or directory","attempt":2,"max_retries":2,"bytes_read":0,"time":"2025-11-17T04:30:18Z","message":"ClamAV stream scan attempt failed"}
+{"level":"debug","attempt":3,"time":"2025-11-17T04:30:18Z","message":"Stream position reset for retry"}
+{"level":"warn","error":"dial unix localhost:9999: connect: no such file or directory","attempt":3,"max_retries":2,"bytes_read":0,"time":"2025-11-17T04:30:18Z","message":"ClamAV stream scan attempt failed"}
+{"level":"error","error":"dial unix localhost:9999: connect: no such file or directory","retries":2,"duration":202.186494,"time":"2025-11-17T04:30:18Z","message":"ClamAV stream scan failed after all retries"}
+{"level":"warn","error":"remove /tmp/TestVirusScanner_RetryVulnerabilitybuffered_reader_should_work217042810/001/virus-scan-4293212902.tmp: no such file or directory","file":"/tmp/TestVirusScanner_RetryVulnerabilitybuffered_reader_should_work217042810/001/virus-scan-4293212902.tmp","time":"2025-11-17T04:30:18Z","message":"Failed to remove temporary scan buffer"}
+{"level":"info","address":"localhost:9999","timeout":5000,"max_retries":1,"time":"2025-11-17T04:30:18Z","message":"Virus scanner initialized"}
+{"level":"info","time":"2025-11-17T04:30:18Z","message":"ScanStream: Buffering non-seekable stream for safe retry support"}
+{"level":"debug","bytes_buffered":30,"temp_file":"/tmp/TestVirusScanner_StreamBufferingVulnerability2171918751/001/virus-scan-108184846.tmp","time":"2025-11-17T04:30:18Z","message":"Stream buffered for scanning"}
+{"level":"warn","error":"dial unix localhost:9999: connect: no such file or directory","attempt":1,"max_retries":1,"bytes_read":0,"time":"2025-11-17T04:30:18Z","message":"ClamAV stream scan attempt failed"}
+{"level":"debug","attempt":2,"time":"2025-11-17T04:30:18Z","message":"Stream position reset for retry"}
+{"level":"warn","error":"dial unix localhost:9999: connect: no such file or directory","attempt":2,"max_retries":1,"bytes_read":0,"time":"2025-11-17T04:30:18Z","message":"ClamAV stream scan attempt failed"}
+{"level":"error","error":"dial unix localhost:9999: connect: no such file or directory","retries":1,"duration":101.623377,"time":"2025-11-17T04:30:18Z","message":"ClamAV stream scan failed after all retries"}
+{"level":"warn","error":"remove /tmp/TestVirusScanner_StreamBufferingVulnerability2171918751/001/virus-scan-108184846.tmp: no such file or directory","file":"/tmp/TestVirusScanner_StreamBufferingVulnerability2171918751/001/virus-scan-108184846.tmp","time":"2025-11-17T04:30:18Z","message":"Failed to remove temporary scan buffer"}
+{"level":"info","address":"localhost:9999","timeout":5000,"max_retries":3,"time":"2025-11-17T04:30:18Z","message":"Virus scanner initialized"}
+{"level":"info","time":"2025-11-17T04:30:18Z","message":"ScanStream: Buffering non-seekable stream for safe retry support"}
+{"level":"error","bytes_written":104857601,"max_size":104857600,"time":"2025-11-17T04:30:18Z","message":"Stream exceeded maximum size limit for virus scanning"}
+{"level":"warn","error":"remove /tmp/TestVirusScanner_LargeStreamLimitVulnerability3613170368/001/virus-scan-4229394243.tmp: no such file or directory","file":"/tmp/TestVirusScanner_LargeStreamLimitVulnerability3613170368/001/virus-scan-4229394243.tmp","time":"2025-11-17T04:30:18Z","message":"Failed to remove temporary scan buffer"}
+--- FAIL: TestVirusScanner_LargeStreamLimitVulnerability (0.18s)
+    virus_scanner_vulnerability_test.go:172: Expected size limit error, got: stream too large for scanning: 104857601 bytes exceeds limit of 104857600 bytes
+{"level":"info","address":"localhost:9999","timeout":500,"max_retries":3,"time":"2025-11-17T04:30:18Z","message":"Virus scanner initialized"}
+{"level":"debug","time":"2025-11-17T04:30:18Z","message":"ScanStream: Using seekable reader directly"}
+{"level":"warn","error":"dial unix localhost:9999: connect: no such file or directory","attempt":1,"max_retries":3,"bytes_read":0,"time":"2025-11-17T04:30:18Z","message":"ClamAV stream scan attempt failed"}
+{"level":"warn","error":"context deadline exceeded","attempt":1,"time":"2025-11-17T04:30:19Z","message":"Scan context cancelled during retry"}
+{"level":"debug","attempt":2,"time":"2025-11-17T04:30:19Z","message":"Stream position reset for retry"}
+{"level":"warn","error":"dial unix localhost:9999: connect: no such file or directory","attempt":2,"max_retries":3,"bytes_read":0,"time":"2025-11-17T04:30:19Z","message":"ClamAV stream scan attempt failed"}
+{"level":"warn","error":"context deadline exceeded","attempt":2,"time":"2025-11-17T04:30:19Z","message":"Scan context cancelled during retry"}
+{"level":"debug","attempt":3,"time":"2025-11-17T04:30:19Z","message":"Stream position reset for retry"}
+{"level":"warn","error":"dial unix localhost:9999: connect: no such file or directory","attempt":3,"max_retries":3,"bytes_read":0,"time":"2025-11-17T04:30:19Z","message":"ClamAV stream scan attempt failed"}
+{"level":"warn","error":"context deadline exceeded","attempt":3,"time":"2025-11-17T04:30:19Z","message":"Scan context cancelled during retry"}
+{"level":"debug","attempt":4,"time":"2025-11-17T04:30:19Z","message":"Stream position reset for retry"}
+{"level":"warn","error":"dial unix localhost:9999: connect: no such file or directory","attempt":4,"max_retries":3,"bytes_read":0,"time":"2025-11-17T04:30:19Z","message":"ClamAV stream scan attempt failed"}
+{"level":"error","error":"dial unix localhost:9999: connect: no such file or directory","retries":3,"duration":501.597998,"time":"2025-11-17T04:30:19Z","message":"ClamAV stream scan failed after all retries"}
+{"level":"info","address":"localhost:9999","timeout":500,"max_retries":3,"time":"2025-11-17T04:30:19Z","message":"Virus scanner initialized"}
+{"level":"debug","time":"2025-11-17T04:30:19Z","message":"ScanStream: Using seekable reader directly"}
+{"level":"warn","error":"dial unix localhost:9999: connect: no such file or directory","attempt":1,"max_retries":3,"bytes_read":0,"time":"2025-11-17T04:30:19Z","message":"ClamAV stream scan attempt failed"}
+{"level":"warn","error":"context deadline exceeded","attempt":1,"time":"2025-11-17T04:30:19Z","message":"Scan context cancelled during retry"}
+{"level":"debug","attempt":2,"time":"2025-11-17T04:30:19Z","message":"Stream position reset for retry"}
+{"level":"warn","error":"dial unix localhost:9999: connect: no such file or directory","attempt":2,"max_retries":3,"bytes_read":0,"time":"2025-11-17T04:30:19Z","message":"ClamAV stream scan attempt failed"}
+{"level":"warn","error":"context deadline exceeded","attempt":2,"time":"2025-11-17T04:30:19Z","message":"Scan context cancelled during retry"}
+{"level":"debug","attempt":3,"time":"2025-11-17T04:30:19Z","message":"Stream position reset for retry"}
+{"level":"warn","error":"dial unix localhost:9999: connect: no such file or directory","attempt":3,"max_retries":3,"bytes_read":0,"time":"2025-11-17T04:30:19Z","message":"ClamAV stream scan attempt failed"}
+{"level":"warn","error":"context deadline exceeded","attempt":3,"time":"2025-11-17T04:30:19Z","message":"Scan context cancelled during retry"}
+{"level":"debug","attempt":4,"time":"2025-11-17T04:30:19Z","message":"Stream position reset for retry"}
+{"level":"warn","error":"dial unix localhost:9999: connect: no such file or directory","attempt":4,"max_retries":3,"bytes_read":0,"time":"2025-11-17T04:30:19Z","message":"ClamAV stream scan attempt failed"}
+{"level":"error","error":"dial unix localhost:9999: connect: no such file or directory","retries":3,"duration":500.886214,"time":"2025-11-17T04:30:19Z","message":"ClamAV stream scan failed after all retries"}
+{"level":"warn","time":"2025-11-17T04:30:19Z","message":"ClamAV unavailable, allowing stream with warning (NOT RECOMMENDED)"}
+{"level":"info","address":"localhost:9999","timeout":500,"max_retries":3,"time":"2025-11-17T04:30:19Z","message":"Virus scanner initialized"}
+{"level":"debug","time":"2025-11-17T04:30:19Z","message":"ScanStream: Using seekable reader directly"}
+{"level":"warn","error":"dial unix localhost:9999: connect: no such file or directory","attempt":1,"max_retries":3,"bytes_read":0,"time":"2025-11-17T04:30:19Z","message":"ClamAV stream scan attempt failed"}
+{"level":"warn","error":"context deadline exceeded","attempt":1,"time":"2025-11-17T04:30:20Z","message":"Scan context cancelled during retry"}
+{"level":"debug","attempt":2,"time":"2025-11-17T04:30:20Z","message":"Stream position reset for retry"}
+{"level":"warn","error":"dial unix localhost:9999: connect: no such file or directory","attempt":2,"max_retries":3,"bytes_read":0,"time":"2025-11-17T04:30:20Z","message":"ClamAV stream scan attempt failed"}
+{"level":"warn","error":"context deadline exceeded","attempt":2,"time":"2025-11-17T04:30:20Z","message":"Scan context cancelled during retry"}
+{"level":"debug","attempt":3,"time":"2025-11-17T04:30:20Z","message":"Stream position reset for retry"}
+{"level":"warn","error":"dial unix localhost:9999: connect: no such file or directory","attempt":3,"max_retries":3,"bytes_read":0,"time":"2025-11-17T04:30:20Z","message":"ClamAV stream scan attempt failed"}
+{"level":"warn","error":"context deadline exceeded","attempt":3,"time":"2025-11-17T04:30:20Z","message":"Scan context cancelled during retry"}
+{"level":"debug","attempt":4,"time":"2025-11-17T04:30:20Z","message":"Stream position reset for retry"}
+{"level":"warn","error":"dial unix localhost:9999: connect: no such file or directory","attempt":4,"max_retries":3,"bytes_read":0,"time":"2025-11-17T04:30:20Z","message":"ClamAV stream scan attempt failed"}
+{"level":"error","error":"dial unix localhost:9999: connect: no such file or directory","retries":3,"duration":501.66322,"time":"2025-11-17T04:30:20Z","message":"ClamAV stream scan failed after all retries"}
+{"level":"error","time":"2025-11-17T04:30:20Z","message":"SECURITY WARNING: Allowing unscanned stream due to FallbackModeAllow"}
+--- FAIL: TestValidateSeedStrength (0.00s)
+    --- FAIL: TestValidateSeedStrength/valid_64_character_seed (0.00s)
+        wallet_encryption_test.go:339: 
+            	Error Trace:	/home/user/athena/internal/security/wallet_encryption_test.go:339
+            	Error:      	Received unexpected error:
+            	            	weak seed: all characters are the same
+            	Test:       	TestValidateSeedStrength/valid_64_character_seed
+    --- FAIL: TestValidateSeedStrength/valid_81_character_seed_(IOTA_legacy) (0.00s)
+        wallet_encryption_test.go:339: 
+            	Error Trace:	/home/user/athena/internal/security/wallet_encryption_test.go:339
+            	Error:      	Received unexpected error:
+            	            	weak seed: all characters are the same
+            	Test:       	TestValidateSeedStrength/valid_81_character_seed_(IOTA_legacy)
+FAIL
+FAIL	athena/internal/security	15.017s
+ok  	athena/internal/storage	0.039s
+ok  	athena/internal/testutil	0.020s
+ok  	athena/internal/usecase	2.584s
+--- FAIL: TestBuildNoteObject_Audience (0.00s)
+    --- FAIL: TestBuildNoteObject_Audience/Comment_addresses_video_owner (0.00s)
+        comment_publisher_test.go:273: FAIL:	GetByID(context.backgroundCtx,string)
+            		at: [/home/user/athena/internal/usecase/activitypub/comment_publisher_test.go:265]
+        comment_publisher_test.go:273: FAIL: 3 out of 4 expectation(s) were met.
+            	The code you are testing needs to make 1 more call(s).
+            	at: [/home/user/athena/internal/usecase/activitypub/comment_publisher_test.go:273]
+    --- FAIL: TestBuildNoteObject_Audience/Unlisted_video_comment_uses_CC_for_public (0.00s)
+        comment_publisher_test.go:295: FAIL:	GetByID(context.backgroundCtx,string)
+            		at: [/home/user/athena/internal/usecase/activitypub/comment_publisher_test.go:265]
+        comment_publisher_test.go:295: FAIL: 5 out of 6 expectation(s) were met.
+            	The code you are testing needs to make 1 more call(s).
+            	at: [/home/user/athena/internal/usecase/activitypub/comment_publisher_test.go:295]
+--- FAIL: TestCreateCommentActivity (0.00s)
+    --- FAIL: TestCreateCommentActivity/Wraps_Note_in_Create_activity (0.00s)
+panic: 
+	
+	mock: Unexpected Method Call
+	-----------------------------
+	
+	GetByID(context.backgroundCtx,string)
+			0: context.backgroundCtx{emptyCtx:context.emptyCtx{}}
+			1: "video-owner-123"
+	
+	The closest call I have is: 
+	
+	GetByID(context.backgroundCtx,string)
+			0: context.backgroundCtx{emptyCtx:context.emptyCtx{}}
+			1: "d592eade-800c-429c-b9a4-0615b10045e1"
+	
+	
+	Diff: 0: PASS:  (context.backgroundCtx=context.Background) == (context.backgroundCtx=context.Background)
+		1: FAIL:  (string=video-owner-123) != (string=d592eade-800c-429c-b9a4-0615b10045e1)
+	at: [/home/user/athena/internal/usecase/activitypub/service_test.go:157 /home/user/athena/internal/usecase/activitypub/service.go:829 /home/user/athena/internal/usecase/activitypub/service.go:842 /home/user/athena/internal/usecase/activitypub/comment_publisher_test.go:343]
+	 [recovered]
+	panic: 
+	
+	mock: Unexpected Method Call
+	-----------------------------
+	
+	GetByID(context.backgroundCtx,string)
+			0: context.backgroundCtx{emptyCtx:context.emptyCtx{}}
+			1: "video-owner-123"
+	
+	The closest call I have is: 
+	
+	GetByID(context.backgroundCtx,string)
+			0: context.backgroundCtx{emptyCtx:context.emptyCtx{}}
+			1: "d592eade-800c-429c-b9a4-0615b10045e1"
+	
+	
+	Diff: 0: PASS:  (context.backgroundCtx=context.Background) == (context.backgroundCtx=context.Background)
+		1: FAIL:  (string=video-owner-123) != (string=d592eade-800c-429c-b9a4-0615b10045e1)
+	at: [/home/user/athena/internal/usecase/activitypub/service_test.go:157 /home/user/athena/internal/usecase/activitypub/service.go:829 /home/user/athena/internal/usecase/activitypub/service.go:842 /home/user/athena/internal/usecase/activitypub/comment_publisher_test.go:343]
+	
+
+goroutine 22 [running]:
+testing.tRunner.func1.2({0x7d8040, 0xc0001dbb10})
+	/usr/local/go1.24.7/src/testing/testing.go:1734 +0x21c
+testing.tRunner.func1()
+	/usr/local/go1.24.7/src/testing/testing.go:1737 +0x35e
+panic({0x7d8040?, 0xc0001dbb10?})
+	/usr/local/go1.24.7/src/runtime/panic.go:792 +0x132
+github.com/stretchr/testify/mock.(*Mock).fail(0xc000014dc0, {0x885d4a?, 0x4?}, {0xc000014eb0?, 0x2?, 0x2?})
+	/root/go/pkg/mod/github.com/stretchr/testify@v1.11.1/mock/mock.go:359 +0x125
+github.com/stretchr/testify/mock.(*Mock).MethodCalled(0xc000014dc0, {0x96a5df, 0x7}, {0xc0001f02e0, 0x2, 0x2})
+	/root/go/pkg/mod/github.com/stretchr/testify@v1.11.1/mock/mock.go:519 +0x5c8
+github.com/stretchr/testify/mock.(*Mock).Called(0xc000014dc0, {0xc0001f02e0, 0x2, 0x2})
+	/root/go/pkg/mod/github.com/stretchr/testify@v1.11.1/mock/mock.go:491 +0x125
+athena/internal/usecase/activitypub.(*MockUserRepository).GetByID(0xc000014dc0, {0x905d18, 0xbc67e0}, {0x86ae78, 0xf})
+	/home/user/athena/internal/usecase/activitypub/service_test.go:157 +0xdd
+athena/internal/usecase/activitypub.(*Service).BuildNoteObject(0xc0000925a0, {0x905d18, 0xbc67e0}, 0xc0000c4900)
+	/home/user/athena/internal/usecase/activitypub/service.go:829 +0x897
+athena/internal/usecase/activitypub.(*Service).CreateCommentActivity(0xc0000925a0, {0x905d18, 0xbc67e0}, 0xc0000c4900)
+	/home/user/athena/internal/usecase/activitypub/service.go:842 +0x45
+athena/internal/usecase/activitypub.TestCreateCommentActivity.func1(0xc0001dc540)
+	/home/user/athena/internal/usecase/activitypub/comment_publisher_test.go:343 +0x3d6
+testing.tRunner(0xc0001dc540, 0xc0000fe850)
+	/usr/local/go1.24.7/src/testing/testing.go:1792 +0xf4
+created by testing.(*T).Run in goroutine 21
+	/usr/local/go1.24.7/src/testing/testing.go:1851 +0x413
+FAIL	athena/internal/usecase/activitypub	0.028s
+?   	athena/internal/usecase/analytics	[no test files]
+?   	athena/internal/usecase/caption	[no test files]
+ok  	athena/internal/usecase/captiongen	0.045s
+?   	athena/internal/usecase/channel	[no test files]
+?   	athena/internal/usecase/comment	[no test files]
+ok  	athena/internal/usecase/encoding	0.051s
+ok  	athena/internal/usecase/import	0.021s
+?   	athena/internal/usecase/ipfs_streaming	[no test files]
+?   	athena/internal/usecase/message	[no test files]
+ok  	athena/internal/usecase/migration	0.045s
+?   	athena/internal/usecase/notification	[no test files]
+FAIL	athena/internal/usecase/payments [build failed]
+?   	athena/internal/usecase/playlist	[no test files]
+?   	athena/internal/usecase/rating	[no test files]
+?   	athena/internal/usecase/redundancy	[no test files]
+?   	athena/internal/usecase/social	[no test files]
+?   	athena/internal/usecase/upload	[no test files]
+?   	athena/internal/usecase/views	[no test files]
+ok  	athena/internal/validation	0.020s
+?   	athena/internal/whisper	[no test files]
+FAIL	athena/internal/worker [build failed]
+ok  	athena/pkg/imageutil	0.010s
+ok  	athena/pkg/strutil	0.010s
+ok  	athena/tests/e2e	0.022s
+--- FAIL: TestSSRFProtection_URLValidator (0.00s)
+    --- FAIL: TestSSRFProtection_URLValidator/Google_DNS (0.00s)
+        ssrf_protection_test.go:112: Expected to allow http://8.8.8.8/ (Public IP), but it was blocked: access to private IP addresses is not allowed: 8.8.8.8 resolves to 8.8.8.8
+    --- FAIL: TestSSRFProtection_URLValidator/Cloudflare_DNS (0.00s)
+        ssrf_protection_test.go:112: Expected to allow http://1.1.1.1/ (Public IP), but it was blocked: access to private IP addresses is not allowed: 1.1.1.1 resolves to 1.1.1.1
+    --- FAIL: TestSSRFProtection_URLValidator/Public_HTTPS (0.00s)
+        ssrf_protection_test.go:112: Expected to allow https://example.com/ (Public domain), but it was blocked: failed to resolve host example.com: lookup example.com on [::1]:53: read udp [::1]:49866->[::1]:53: read: connection refused
+    --- FAIL: TestSSRFProtection_URLValidator/Public_HTTP (0.00s)
+        ssrf_protection_test.go:112: Expected to allow http://example.com/ (Public domain), but it was blocked: failed to resolve host example.com: lookup example.com on [::1]:53: read udp [::1]:45404->[::1]:53: read: connection refused
+FAIL
+FAIL	athena/tests/integration	5.036s
+?   	athena/tests/manual	[no test files]
+FAIL

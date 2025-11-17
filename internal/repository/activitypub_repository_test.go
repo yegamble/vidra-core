@@ -16,19 +16,19 @@ import (
 )
 
 // Helper function to create test database (mock for now)
-func setupTestDB(t *testing.T) *sqlx.DB {
+func setupAPTestDB(t *testing.T) *sqlx.DB {
 	t.Skip("Skipping database integration test - requires test database setup")
 	return nil
 }
 
 func TestActorKeys(t *testing.T) {
-	db := setupTestDB(t)
+	db := setupAPTestDB(t)
 	if db == nil {
 		return
 	}
 	defer db.Close()
 
-	repo := NewActivityPubRepository(db)
+	repo := NewActivityPubRepository(db, nil)
 	ctx := context.Background()
 
 	actorID := uuid.New().String()
@@ -68,13 +68,13 @@ func TestActorKeys(t *testing.T) {
 }
 
 func TestRemoteActors(t *testing.T) {
-	db := setupTestDB(t)
+	db := setupAPTestDB(t)
 	if db == nil {
 		return
 	}
 	defer db.Close()
 
-	repo := NewActivityPubRepository(db)
+	repo := NewActivityPubRepository(db, nil)
 	ctx := context.Background()
 
 	t.Run("Upsert and retrieve remote actor", func(t *testing.T) {
@@ -149,13 +149,13 @@ func TestRemoteActors(t *testing.T) {
 }
 
 func TestFollowers(t *testing.T) {
-	db := setupTestDB(t)
+	db := setupAPTestDB(t)
 	if db == nil {
 		return
 	}
 	defer db.Close()
 
-	repo := NewActivityPubRepository(db)
+	repo := NewActivityPubRepository(db, nil)
 	ctx := context.Background()
 
 	actorID := "local-user-id"
@@ -235,13 +235,13 @@ func TestFollowers(t *testing.T) {
 }
 
 func TestActivities(t *testing.T) {
-	db := setupTestDB(t)
+	db := setupAPTestDB(t)
 	if db == nil {
 		return
 	}
 	defer db.Close()
 
-	repo := NewActivityPubRepository(db)
+	repo := NewActivityPubRepository(db, nil)
 	ctx := context.Background()
 
 	t.Run("Store and retrieve activity", func(t *testing.T) {
@@ -300,13 +300,13 @@ func TestActivities(t *testing.T) {
 }
 
 func TestDeduplication(t *testing.T) {
-	db := setupTestDB(t)
+	db := setupAPTestDB(t)
 	if db == nil {
 		return
 	}
 	defer db.Close()
 
-	repo := NewActivityPubRepository(db)
+	repo := NewActivityPubRepository(db, nil)
 	ctx := context.Background()
 
 	activityURI := "https://mastodon.example/activities/" + uuid.New().String()
@@ -333,13 +333,13 @@ func TestDeduplication(t *testing.T) {
 }
 
 func TestVideoReactions(t *testing.T) {
-	db := setupTestDB(t)
+	db := setupAPTestDB(t)
 	if db == nil {
 		return
 	}
 	defer db.Close()
 
-	repo := NewActivityPubRepository(db)
+	repo := NewActivityPubRepository(db, nil)
 	ctx := context.Background()
 
 	videoID := uuid.New().String()
@@ -384,13 +384,13 @@ func TestVideoReactions(t *testing.T) {
 }
 
 func TestVideoShares(t *testing.T) {
-	db := setupTestDB(t)
+	db := setupAPTestDB(t)
 	if db == nil {
 		return
 	}
 	defer db.Close()
 
-	repo := NewActivityPubRepository(db)
+	repo := NewActivityPubRepository(db, nil)
 	ctx := context.Background()
 
 	videoID := uuid.New().String()
@@ -432,13 +432,13 @@ func TestVideoShares(t *testing.T) {
 }
 
 func TestDeliveryQueue(t *testing.T) {
-	db := setupTestDB(t)
+	db := setupAPTestDB(t)
 	if db == nil {
 		return
 	}
 	defer db.Close()
 
-	repo := NewActivityPubRepository(db)
+	repo := NewActivityPubRepository(db, nil)
 	ctx := context.Background()
 
 	// First create an activity to reference

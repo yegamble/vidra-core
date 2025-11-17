@@ -107,7 +107,7 @@ jobs:
           --health-retries 5
 
       clamav:
-        image: clamav/clamav:${{ env.CLAMAV_VERSION }}
+        image: clamav/clamav:latest
         ports:
           - 3310:3310
         options: >-
@@ -208,7 +208,7 @@ jobs:
           - 6379:6379
 
       clamav:
-        image: clamav/clamav:${{ env.CLAMAV_VERSION }}
+        image: clamav/clamav:latest
         ports:
           - 3310:3310
 
@@ -350,7 +350,7 @@ jobs:
 
     services:
       clamav:
-        image: clamav/clamav:${{ env.CLAMAV_VERSION }}
+        image: clamav/clamav:latest
         ports:
           - 3310:3310
 

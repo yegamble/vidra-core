@@ -439,6 +439,7 @@ func TestPaymentService_DetectPayment(t *testing.T) {
 		name       string
 		setupMocks func(*MockIOTARepository, *MockIOTAClient)
 		wantErr    bool
+		errType    error
 	}{
 		{
 			name: "detect exact payment",
@@ -789,14 +790,6 @@ func TestPaymentService_ConcurrentWalletCreation(t *testing.T) {
 
 func stringPtr(s string) *string {
 	return &s
-}
-
-func repeatString(s string, n int) string {
-	result := ""
-	for i := 0; i < n; i++ {
-		result += s
-	}
-	return result
 }
 
 // Encryption helper (stub - actual implementation would be in service)
