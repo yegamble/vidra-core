@@ -19,7 +19,9 @@ CREATE TABLE IF NOT EXISTS federation_dlq (
 CREATE INDEX idx_fed_dlq_created ON federation_dlq(created_at DESC);
 CREATE INDEX idx_fed_dlq_can_retry ON federation_dlq(can_retry, created_at DESC);
 CREATE INDEX idx_fed_dlq_job_type ON federation_dlq(job_type);
+-- +goose StatementEnd
 
+-- +goose StatementBegin
 -- Instance blocklist for federation
 CREATE TABLE IF NOT EXISTS federation_instance_blocks (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -39,7 +41,9 @@ CREATE INDEX IF NOT EXISTS idx_instance_blocks_active_null ON federation_instanc
 CREATE INDEX IF NOT EXISTS idx_instance_blocks_expires ON federation_instance_blocks(expires_at);
 -- Composite index to aid queries filtering by domain and expiration
 CREATE INDEX IF NOT EXISTS idx_instance_blocks_domain_expires ON federation_instance_blocks(instance_domain, expires_at);
+-- +goose StatementEnd
 
+-- +goose StatementBegin
 -- Actor blocklist for federation
 CREATE TABLE IF NOT EXISTS federation_actor_blocks (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -64,7 +68,9 @@ CREATE INDEX IF NOT EXISTS idx_actor_blocks_expires ON federation_actor_blocks(e
 -- Composite indexes to aid queries filtering by actor and expiration
 CREATE INDEX IF NOT EXISTS idx_actor_blocks_did_expires ON federation_actor_blocks(actor_did, expires_at);
 CREATE INDEX IF NOT EXISTS idx_actor_blocks_handle_expires ON federation_actor_blocks(actor_handle, expires_at);
+-- +goose StatementEnd
 
+-- +goose StatementBegin
 -- Federation health metrics table
 CREATE TABLE IF NOT EXISTS federation_metrics (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -81,7 +87,9 @@ CREATE INDEX idx_fed_metrics_timestamp ON federation_metrics(timestamp DESC);
 CREATE INDEX idx_fed_metrics_type_time ON federation_metrics(metric_type, timestamp DESC);
 CREATE INDEX idx_fed_metrics_instance ON federation_metrics(instance_domain, timestamp DESC) WHERE instance_domain IS NOT NULL;
 CREATE INDEX idx_fed_metrics_actor ON federation_metrics(actor_did, timestamp DESC) WHERE actor_did IS NOT NULL;
+-- +goose StatementEnd
 
+-- +goose StatementBegin
 -- Idempotency keys for federation operations
 CREATE TABLE IF NOT EXISTS federation_idempotency (
     idempotency_key VARCHAR(256) PRIMARY KEY,
@@ -95,7 +103,9 @@ CREATE TABLE IF NOT EXISTS federation_idempotency (
 
 CREATE INDEX idx_idempotency_expires ON federation_idempotency(expires_at);
 CREATE INDEX idx_idempotency_created ON federation_idempotency(created_at DESC);
+-- +goose StatementEnd
 
+-- +goose StatementBegin
 -- Request signatures cache for preventing replay attacks
 CREATE TABLE IF NOT EXISTS federation_request_signatures (
     signature_hash VARCHAR(256) PRIMARY KEY,
@@ -107,7 +117,9 @@ CREATE TABLE IF NOT EXISTS federation_request_signatures (
 
 CREATE INDEX idx_signatures_expires ON federation_request_signatures(expires_at);
 CREATE INDEX idx_signatures_instance ON federation_request_signatures(instance_domain, received_at DESC);
+-- +goose StatementEnd
 
+-- +goose StatementBegin
 -- Abuse reports for federation content
 CREATE TABLE IF NOT EXISTS federation_abuse_reports (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -131,7 +143,9 @@ CREATE INDEX idx_abuse_reports_content ON federation_abuse_reports(reported_cont
 
 CREATE TRIGGER update_abuse_reports_updated_at BEFORE UPDATE ON federation_abuse_reports
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+-- +goose StatementEnd
 
+-- +goose StatementBegin
 -- Rate limit tracking for federation endpoints
 CREATE TABLE IF NOT EXISTS federation_rate_limits (
     id VARCHAR(256) PRIMARY KEY, -- instance_domain or actor_did
@@ -144,7 +158,9 @@ CREATE TABLE IF NOT EXISTS federation_rate_limits (
 
 CREATE INDEX idx_rate_limits_blocked ON federation_rate_limits(is_blocked, blocked_until) WHERE is_blocked = true;
 CREATE INDEX idx_rate_limits_window ON federation_rate_limits(window_start);
+-- +goose StatementEnd
 
+-- +goose StatementBegin
 -- Materialized view for federation health dashboard
 CREATE MATERIALIZED VIEW IF NOT EXISTS federation_health_summary AS
 SELECT
@@ -161,7 +177,9 @@ WHERE timestamp > CURRENT_TIMESTAMP - INTERVAL '7 days'
 GROUP BY DATE_TRUNC('hour', timestamp), metric_type;
 
 CREATE UNIQUE INDEX idx_health_summary ON federation_health_summary(hour, metric_type);
+-- +goose StatementEnd
 
+-- +goose StatementBegin
 -- Function to refresh federation health summary
 CREATE OR REPLACE FUNCTION refresh_federation_health()
 RETURNS void AS $$
@@ -169,7 +187,9 @@ BEGIN
     REFRESH MATERIALIZED VIEW CONCURRENTLY federation_health_summary;
 END;
 $$ LANGUAGE plpgsql;
+-- +goose StatementEnd
 
+-- +goose StatementBegin
 -- Function to clean up expired data
 CREATE OR REPLACE FUNCTION cleanup_federation_expired()
 RETURNS void AS $$
@@ -187,14 +207,18 @@ BEGIN
     DELETE FROM federation_rate_limits WHERE window_start < CURRENT_TIMESTAMP - INTERVAL '1 hour' AND is_blocked = false;
 END;
 $$ LANGUAGE plpgsql;
+-- +goose StatementEnd
 
+-- +goose StatementBegin
 -- Update federation_jobs table with backoff fields if not exists
 ALTER TABLE federation_jobs ADD COLUMN IF NOT EXISTS backoff_multiplier DECIMAL DEFAULT 1.5;
 ALTER TABLE federation_jobs ADD COLUMN IF NOT EXISTS max_backoff_seconds INTEGER DEFAULT 3600;
 ALTER TABLE federation_jobs ADD COLUMN IF NOT EXISTS idempotency_key VARCHAR(256);
 
 CREATE INDEX IF NOT EXISTS idx_fed_jobs_idempotency ON federation_jobs(idempotency_key) WHERE idempotency_key IS NOT NULL;
+-- +goose StatementEnd
 
+-- +goose StatementBegin
 -- Configuration for federation hardening
 INSERT INTO instance_config (key, value, description, is_public)
 VALUES
