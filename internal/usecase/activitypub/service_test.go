@@ -890,10 +890,6 @@ func TestExtractVideoIDFromURI(t *testing.T) {
 	}
 }
 
-func (m *MockVideoRepository) GetVideosForMigration(ctx context.Context, limit int) ([]*domain.Video, error) {
-	return []*domain.Video{}, nil
-}
-
 // Additional mock methods for comment repository
 type MockCommentRepository struct {
 	mock.Mock
