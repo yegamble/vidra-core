@@ -343,7 +343,7 @@ func (b *FileTypeBlocker) validateTextOrUnknownMagic(ext string, content []byte)
 	case "":
 		isExe := bytes.HasPrefix(content, magicBytes["exe"])
 		isElf := bytes.HasPrefix(content, magicBytes["elf"])
-		return !(isExe || isElf)
+		return !isExe && !isElf
 	default:
 		if bytes.HasPrefix(content, magicBytes["exe"]) || bytes.HasPrefix(content, magicBytes["elf"]) {
 			return false
