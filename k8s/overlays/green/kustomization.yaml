@@ -1,0 +1,29 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: athena
+
+# Base resources
+resources:
+- ../../base/deployment.yaml
+- ../../base/service.yaml
+- ../../base/configmap.yaml
+- ../../base/hpa.yaml
+
+# Green environment specific patches
+patchesStrategicMerge:
+- deployment-patch.yaml
+
+# Add green version labels
+commonLabels:
+  deployment-color: green
+
+# Name suffix for green resources
+nameSuffix: -green
+
+# Resource limits (production capacity)
+replicas:
+- name: athena-api
+  count: 3
+- name: athena-encoding-worker
+  count: 2

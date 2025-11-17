@@ -42,7 +42,8 @@ type Config struct {
 	IPFSStreamingBufferSize        int
 
 	// IOTA Configuration
-	IOTANodeURL string
+	IOTANodeURL             string
+	IOTAWalletEncryptionKey string
 
 	// FFmpeg Configuration
 	FFMPEGPath string
@@ -344,6 +345,7 @@ func Load() (*Config, error) {
 	cfg.IPFSStreamingFallbackToLocal = getBoolEnv("IPFS_STREAMING_FALLBACK_TO_LOCAL", true)
 	cfg.IPFSStreamingBufferSize = getIntEnv("IPFS_STREAMING_BUFFER_SIZE", 32768)
 	cfg.IOTANodeURL = getEnvOrDefault("IOTA_NODE_URL", "")
+	cfg.IOTAWalletEncryptionKey = getEnvOrDefault("IOTA_WALLET_ENCRYPTION_KEY", "")
 	cfg.FFMPEGPath = getEnvOrDefault("FFMPEG_PATH", "ffmpeg")
 
 	cfg.JWTSecret = getEnvOrDefault("JWT_SECRET", "")

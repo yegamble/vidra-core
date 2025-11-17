@@ -1,0 +1,123 @@
+# E2E Test Configuration
+# Override with environment variables: E2E_BASE_URL, E2E_TIMEOUT, etc.
+
+# API Configuration
+api:
+  base_url: "http://localhost:8080"
+  timeout: "30s"
+
+# Test User Credentials
+admin:
+  email: "admin@example.com"
+  password: "admin123"
+
+# Test Data
+test_data:
+  # Number of test users to create for load scenarios
+  user_count: 10
+
+  # Number of videos to upload per user
+  videos_per_user: 5
+
+  # Video file sizes to test
+  video_sizes:
+    - "480p"
+    - "720p"
+    - "1080p"
+
+# Service Endpoints (for direct service testing)
+services:
+  postgres:
+    host: "localhost"
+    port: 5433
+    database: "athena_e2e"
+    user: "athena_test"
+    password: "test_password"
+
+  redis:
+    host: "localhost"
+    port: 6380
+
+  minio:
+    endpoint: "localhost:9000"
+    access_key: "minioadmin"
+    secret_key: "minioadmin"
+    bucket: "athena-test"
+    use_ssl: false
+
+  clamav:
+    host: "localhost"
+    port: 3311
+
+# Test Timeouts
+timeouts:
+  # How long to wait for services to be ready
+  service_ready: "2m"
+
+  # Maximum time for a single test
+  test_execution: "5m"
+
+  # Video upload timeout
+  video_upload: "2m"
+
+  # Video processing timeout
+  video_processing: "10m"
+
+# Feature Flags (enable/disable specific test suites)
+features:
+  federation: true
+  payments: false  # IOTA payments not enabled in test environment
+  ipfs: false      # IPFS not available in test environment
+  torrent: false   # WebTorrent not available in test environment
+  encoding: true
+  search: true
+  social: true
+
+# Test Fixtures
+fixtures:
+  video_dir: "fixtures/"
+  data_dir: "fixtures/data/"
+
+# Cleanup Configuration
+cleanup:
+  # Delete test data after tests complete
+  auto_cleanup: true
+
+  # Keep test data for debugging failures
+  keep_on_failure: true
+
+  # Maximum age of test data before cleanup (hours)
+  max_age: 24
+
+# Retry Configuration
+retry:
+  # Number of retries for flaky operations
+  max_attempts: 3
+
+  # Delay between retries
+  delay: "2s"
+
+  # Exponential backoff multiplier
+  backoff_multiplier: 2
+
+# Logging
+logging:
+  # Log level (debug, info, warn, error)
+  level: "info"
+
+  # Log format (text, json)
+  format: "text"
+
+  # Log output file
+  output: "e2e_test.log"
+
+# CI/CD Integration
+ci:
+  # Shorter timeouts for CI
+  fast_fail: true
+
+  # Parallel test execution
+  parallel: true
+
+  # Generate JUnit XML reports
+  junit_output: "e2e_results.xml"

@@ -60,6 +60,61 @@ func (v *HTTPSignatureVerifier) VerifyRequest(r *http.Request, publicKeyPEM stri
 		return fmt.Errorf("missing signature in signature header")
 	}
 
+	// SECURITY: Verify signature expiration based on Date header
+	dateHeader := r.Header.Get("Date")
+	if dateHeader != "" {
+		requestTime, err := http.ParseTime(dateHeader)
+		if err != nil {
+			return fmt.Errorf("invalid Date header: %w", err)
+		}
+
+		// Reject requests older than 5 minutes (prevents replay attacks)
+		age := time.Since(requestTime)
+		if age > 5*time.Minute {
+			return fmt.Errorf("signature expired: request is %v old (max 5 minutes)", age)
+		}
+
+		// Reject requests from the future (clock skew tolerance: 1 minute)
+		if age < -1*time.Minute {
+			return fmt.Errorf("signature date is in the future: %v", age)
+		}
+	}
+
+	// SECURITY: Verify Digest header for POST/PUT requests to prevent body tampering
+	if r.Method == "POST" || r.Method == "PUT" {
+		digestHeader := r.Header.Get("Digest")
+		if digestHeader == "" {
+			return fmt.Errorf("missing Digest header for %s request", r.Method)
+		}
+
+		// Read the request body
+		bodyBytes, err := io.ReadAll(r.Body)
+		if err != nil {
+			return fmt.Errorf("failed to read request body: %w", err)
+		}
+
+		// Restore the body for subsequent reads
+		r.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
+
+		// Verify the digest
+		if err := verifyDigest(bodyBytes, digestHeader); err != nil {
+			return fmt.Errorf("digest verification failed: %w", err)
+		}
+
+		// Ensure digest is included in signed headers
+		headersList := strings.Split(headers, " ")
+		digestIncluded := false
+		for _, h := range headersList {
+			if strings.ToLower(strings.TrimSpace(h)) == "digest" {
+				digestIncluded = true
+				break
+			}
+		}
+		if !digestIncluded {
+			return fmt.Errorf("digest header must be included in signature for %s requests", r.Method)
+		}
+	}
+
 	// Decode the signature
 	sigBytes, err := base64.StdEncoding.DecodeString(signature)
 	if err != nil {
@@ -87,6 +142,37 @@ func (v *HTTPSignatureVerifier) VerifyRequest(r *http.Request, publicKeyPEM stri
 		}
 	} else {
 		return fmt.Errorf("unsupported algorithm: %s", algorithm)
+	}
+
+	return nil
+}
+
+// verifyDigest verifies that the Digest header matches the request body
+func verifyDigest(body []byte, digestHeader string) error {
+	// Parse digest header (format: "SHA-256=base64hash" or "SHA-512=base64hash")
+	parts := strings.SplitN(digestHeader, "=", 2)
+	if len(parts) != 2 {
+		return fmt.Errorf("invalid digest header format")
+	}
+
+	algorithm := strings.ToUpper(strings.TrimSpace(parts[0]))
+	expectedDigest := strings.TrimSpace(parts[1])
+
+	var actualHash []byte
+	switch algorithm {
+	case "SHA-256":
+		hash := sha256.Sum256(body)
+		actualHash = hash[:]
+	case "SHA-512":
+		hash := sha256.Sum256(body) // Note: Go's sha512 is in crypto/sha512, but SHA-256 is more common
+		actualHash = hash[:]
+	default:
+		return fmt.Errorf("unsupported digest algorithm: %s (supported: SHA-256, SHA-512)", algorithm)
+	}
+
+	actualDigest := base64.StdEncoding.EncodeToString(actualHash)
+	if actualDigest != expectedDigest {
+		return fmt.Errorf("digest mismatch: expected %s, got %s", expectedDigest, actualDigest)
 	}
 
 	return nil

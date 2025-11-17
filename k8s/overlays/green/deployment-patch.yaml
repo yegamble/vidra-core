@@ -1,0 +1,67 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: athena-api
+  labels:
+    version: green
+spec:
+  template:
+    metadata:
+      labels:
+        version: green
+      annotations:
+        deployment.athena/color: "green"
+        deployment.athena/timestamp: "TIMESTAMP_PLACEHOLDER"
+    spec:
+      containers:
+      - name: athena
+        env:
+        - name: DEPLOYMENT_COLOR
+          value: "green"
+        - name: DEPLOYMENT_VERSION
+          value: "VERSION_PLACEHOLDER"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: athena-encoding-worker
+  labels:
+    version: green
+spec:
+  template:
+    metadata:
+      labels:
+        version: green
+      annotations:
+        deployment.athena/color: "green"
+    spec:
+      terminationGracePeriodSeconds: 7200  # 2 hours for encoding jobs
+      containers:
+      - name: encoding-worker
+        env:
+        - name: DEPLOYMENT_COLOR
+          value: "green"
+        - name: WORKER_VERSION
+          value: "green"
+        lifecycle:
+          preStop:
+            exec:
+              command:
+              - /bin/sh
+              - -c
+              - |
+                echo "Green worker shutting down gracefully..."
+                redis-cli -u "$REDIS_URL" HSET "worker:$(hostname):status" accepting_jobs false
+                timeout=7200
+                elapsed=0
+                while [ $elapsed -lt $timeout ]; do
+                  current_job=$(redis-cli -u "$REDIS_URL" HGET "worker:$(hostname):current_job" || echo "")
+                  if [ -z "$current_job" ] || [ "$current_job" = "(nil)" ]; then
+                    echo "No active job, safe to terminate"
+                    exit 0
+                  fi
+                  echo "Waiting for job to complete... ($elapsed/$timeout seconds)"
+                  sleep 30
+                  elapsed=$((elapsed + 30))
+                done
+                echo "Timeout reached, forcing shutdown"

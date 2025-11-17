@@ -1,0 +1,258 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+  namespace: monitoring
+  labels:
+    app: prometheus
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+      evaluation_interval: 15s
+      external_labels:
+        cluster: 'athena-production'
+        environment: 'production'
+
+    # Alertmanager configuration
+    alerting:
+      alertmanagers:
+        - static_configs:
+            - targets: ['alertmanager:9093']
+
+    # Load alerting rules
+    rule_files:
+      - '/etc/prometheus/rules/*.yml'
+
+    # Scrape configurations
+    scrape_configs:
+      # Athena API servers
+      - job_name: 'athena-api'
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces:
+              names:
+                - default
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_label_app]
+            action: keep
+            regex: athena
+          - source_labels: [__meta_kubernetes_pod_label_component]
+            action: keep
+            regex: api
+          - source_labels: [__meta_kubernetes_pod_container_port_name]
+            action: keep
+            regex: metrics
+          - source_labels: [__meta_kubernetes_pod_name]
+            target_label: pod
+          - source_labels: [__meta_kubernetes_namespace]
+            target_label: namespace
+
+      # Athena encoding workers
+      - job_name: 'athena-encoding-worker'
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces:
+              names:
+                - default
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_label_app]
+            action: keep
+            regex: athena
+          - source_labels: [__meta_kubernetes_pod_label_component]
+            action: keep
+            regex: encoding-worker
+          - source_labels: [__meta_kubernetes_pod_name]
+            target_label: pod
+
+      # PostgreSQL (if using postgres_exporter)
+      - job_name: 'postgres'
+        static_configs:
+          - targets: ['postgres-exporter:9187']
+
+      # Redis (if using redis_exporter)
+      - job_name: 'redis'
+        static_configs:
+          - targets: ['redis-exporter:9121']
+
+      # Kubernetes components
+      - job_name: 'kubernetes-apiservers'
+        kubernetes_sd_configs:
+          - role: endpoints
+        scheme: https
+        tls_config:
+          ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_namespace, __meta_kubernetes_service_name, __meta_kubernetes_endpoint_port_name]
+            action: keep
+            regex: default;kubernetes;https
+
+      - job_name: 'kubernetes-nodes'
+        kubernetes_sd_configs:
+          - role: node
+        scheme: https
+        tls_config:
+          ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+        relabel_configs:
+          - action: labelmap
+            regex: __meta_kubernetes_node_label_(.+)
+
+      - job_name: 'kubernetes-pods'
+        kubernetes_sd_configs:
+          - role: pod
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+            action: keep
+            regex: true
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+            action: replace
+            target_label: __metrics_path__
+            regex: (.+)
+          - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+            action: replace
+            regex: ([^:]+)(?::\d+)?;(\d+)
+            replacement: $1:$2
+            target_label: __address__
+          - action: labelmap
+            regex: __meta_kubernetes_pod_label_(.+)
+          - source_labels: [__meta_kubernetes_namespace]
+            action: replace
+            target_label: kubernetes_namespace
+          - source_labels: [__meta_kubernetes_pod_name]
+            action: replace
+            target_label: kubernetes_pod_name
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-rules
+  namespace: monitoring
+  labels:
+    app: prometheus
+data:
+  athena-alerts.yml: |
+    groups:
+    - name: athena_api
+      interval: 30s
+      rules:
+      # API Availability
+      - alert: AthenaAPIDown
+        expr: up{job="athena-api"} == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Athena API is down"
+          description: "Athena API {{ $labels.pod }} has been down for more than 5 minutes."
+
+      # High Error Rate
+      - alert: AthenaHighErrorRate
+        expr: rate(athena_http_requests_total{status=~"5.."}[5m]) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High error rate detected"
+          description: "Athena API has a 5xx error rate above 5% (current: {{ $value }})"
+
+      # High Latency
+      - alert: AthenaHighLatency
+        expr: histogram_quantile(0.99, rate(athena_http_request_duration_seconds_bucket[5m])) > 2
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High API latency"
+          description: "99th percentile latency is above 2s (current: {{ $value }}s)"
+
+      # Database Connection Pool Exhaustion
+      - alert: AthenaDBPoolExhaustion
+        expr: athena_database_connections_in_use / athena_database_connections_max > 0.9
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Database connection pool near exhaustion"
+          description: "Database connection pool is {{ $value | humanizePercentage }} full"
+
+      # Redis Connection Issues
+      - alert: AthenaRedisDown
+        expr: athena_redis_ping_duration_seconds == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Redis is unreachable"
+          description: "Redis connection has been down for more than 5 minutes"
+
+      # High Encoding Queue Depth
+      - alert: AthenaHighEncodingQueue
+        expr: athena_encoding_queue_depth > 100
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High encoding queue depth"
+          description: "Encoding queue has {{ $value }} pending jobs"
+
+      # IPFS Gateway Issues
+      - alert: AthenaIPFSGatewayDown
+        expr: athena_ipfs_gateway_health == 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "IPFS gateway is unhealthy"
+          description: "IPFS gateway {{ $labels.gateway }} has been unhealthy for 10+ minutes"
+
+      # Virus Scanner Issues
+      - alert: AthenaClamAVDown
+        expr: athena_virus_scan_duration_seconds == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "ClamAV virus scanner is down"
+          description: "ClamAV has been unreachable for 5+ minutes - blocking all uploads"
+
+      # Malware Detection
+      - alert: AthenaMalwareDetected
+        expr: rate(athena_virus_scan_total{result="infected"}[5m]) > 0
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Malware detected in uploads"
+          description: "Malware has been detected in uploaded files (rate: {{ $value }}/s)"
+
+      # Pod Memory Pressure
+      - alert: AthenaHighMemoryUsage
+        expr: container_memory_usage_bytes{pod=~"athena-.*"} / container_spec_memory_limit_bytes{pod=~"athena-.*"} > 0.9
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High memory usage"
+          description: "Pod {{ $labels.pod }} is using {{ $value | humanizePercentage }} of memory limit"
+
+      # Pod CPU Pressure
+      - alert: AthenaHighCPUUsage
+        expr: rate(container_cpu_usage_seconds_total{pod=~"athena-.*"}[5m]) / container_spec_cpu_quota{pod=~"athena-.*"} > 0.9
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High CPU usage"
+          description: "Pod {{ $labels.pod }} is using {{ $value | humanizePercentage }} of CPU limit"
+
+      # Federation Delivery Failures
+      - alert: AthenaFederationDeliveryFailures
+        expr: rate(athena_activitypub_delivery_total{status="failed"}[5m]) > 0.1
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High federation delivery failure rate"
+          description: "Federation delivery failure rate is {{ $value }}/s"

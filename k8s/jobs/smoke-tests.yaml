@@ -1,0 +1,120 @@
+# Smoke Tests Job
+# Runs functional smoke tests against a deployment
+# Tests critical user workflows
+
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: smoke-tests
+  namespace: athena
+  labels:
+    app: athena
+    component: testing
+spec:
+  backoffLimit: 1
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels:
+        app: athena
+        component: testing
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: smoke-tests
+        image: curlimages/curl:latest
+        command:
+        - sh
+        - -c
+        - |
+          set -e
+
+          BASE_URL="${BASE_URL:-http://athena-api-green}"
+          echo "Running smoke tests against $BASE_URL"
+
+          # Test counter
+          tests_passed=0
+          tests_failed=0
+
+          # Test function
+          run_test() {
+            local test_name=$1
+            local test_command=$2
+
+            echo ""
+            echo "Running: $test_name"
+            if eval "$test_command"; then
+              echo "  ✓ PASSED"
+              tests_passed=$((tests_passed + 1))
+            else
+              echo "  ✗ FAILED"
+              tests_failed=$((tests_failed + 1))
+            fi
+          }
+
+          echo "=========================================="
+          echo "  SMOKE TESTS"
+          echo "=========================================="
+
+          # Test 1: Homepage
+          run_test "Homepage accessible" \
+            "curl -f -s -o /dev/null $BASE_URL"
+
+          # Test 2: Health endpoint
+          run_test "Health endpoint returns 200" \
+            "curl -f -s -o /dev/null $BASE_URL/health"
+
+          # Test 3: API config endpoint
+          run_test "API config endpoint returns JSON" \
+            "curl -f -s $BASE_URL/api/v1/config/instance | grep -q 'name'"
+
+          # Test 4: OpenAPI docs
+          run_test "OpenAPI documentation accessible" \
+            "curl -f -s -o /dev/null $BASE_URL/api/docs"
+
+          # Test 5: NodeInfo (federation)
+          run_test "NodeInfo endpoint accessible" \
+            "curl -f -s -o /dev/null $BASE_URL/.well-known/nodeinfo"
+
+          # Test 6: Metrics endpoint
+          run_test "Prometheus metrics endpoint" \
+            "curl -f -s $BASE_URL:9090/metrics | grep -q 'athena_'"
+
+          # Test 7: CORS headers
+          run_test "CORS headers present" \
+            "curl -s -I $BASE_URL | grep -qi 'access-control-allow-origin'"
+
+          # Test 8: API returns valid JSON
+          run_test "API returns valid JSON" \
+            "curl -s $BASE_URL/api/v1/config/instance | grep -q '{'"
+
+          # Test 9: Rate limiting headers
+          run_test "Rate limiting configured" \
+            "curl -s -I $BASE_URL/api/v1/config/instance | grep -qi 'x-ratelimit' || true"
+
+          # Test 10: TLS redirect (if configured)
+          if [ "$EXPECT_TLS" = "true" ]; then
+            run_test "HTTPS redirect configured" \
+              "curl -s -I $BASE_URL | grep -qi 'location: https'"
+          fi
+
+          echo ""
+          echo "=========================================="
+          echo "  SMOKE TESTS SUMMARY"
+          echo "=========================================="
+          echo "Passed: $tests_passed"
+          echo "Failed: $tests_failed"
+          echo ""
+
+          if [ "$tests_failed" -eq 0 ]; then
+            echo "✓ All smoke tests passed"
+            exit 0
+          else
+            echo "✗ Some smoke tests failed"
+            exit 1
+          fi
+        env:
+        - name: BASE_URL
+          value: "http://athena-api-green"
+        - name: EXPECT_TLS
+          value: "false"

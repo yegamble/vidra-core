@@ -1,0 +1,51 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: athena-config
+  labels:
+    app: athena
+data:
+  # IPFS Configuration
+  ipfs-api: "http://ipfs:5001"
+  ipfs-cluster-api: "http://ipfs-cluster:9094"
+
+  # ClamAV Configuration
+  clamav-address: "clamav:3310"
+  clamav-timeout: "300"
+  clamav-max-retries: "3"
+  clamav-fallback-mode: "strict"
+
+  # Logging
+  log-level: "info"
+  log-format: "json"
+
+  # Upload Limits
+  max-upload-size: "5368709120"  # 5GB
+  chunk-size: "33554432"  # 32MB
+  max-concurrent-uploads: "10"
+
+  # Processing
+  max-processing-workers: "4"
+  processing-timeout: "3600"
+
+  # Rate Limiting
+  rate-limit-requests: "100"
+  rate-limit-window: "60"
+
+  # CORS
+  cors-allowed-origins: "*"
+  cors-allowed-methods: "GET,POST,PUT,DELETE,OPTIONS,PATCH"
+  cors-allowed-headers: "Accept,Authorization,Content-Type,X-CSRF-Token,X-Requested-With,Idempotency-Key"
+
+  # Encoding
+  encoding-scheduler-interval-seconds: "5"
+  encoding-scheduler-burst: "3"
+
+  # Feature Flags
+  enable-ipfs-cluster: "true"
+  enable-encoding-scheduler: "true"
+  require-ipfs: "true"
+  enable-iota: "false"
+  enable-s3: "false"
+  enable-activitypub: "true"
+  enable-atproto: "false"

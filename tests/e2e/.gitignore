@@ -1,0 +1,33 @@
+# Test video files (too large for git)
+fixtures/*.mp4
+fixtures/*.avi
+fixtures/*.mov
+fixtures/*.mkv
+fixtures/*.webm
+
+# Test image files
+fixtures/*.jpg
+fixtures/*.jpeg
+fixtures/*.png
+fixtures/*.gif
+
+# Test audio files
+fixtures/*.mp3
+fixtures/*.wav
+fixtures/*.ogg
+
+# Test logs
+*.log
+e2e_test_output.log
+e2e_test.log
+
+# Test results
+e2e_results.xml
+coverage.out
+
+# Temporary files
+*.tmp
+*.temp
+
+# Keep the EICAR test file is small enough
+!fixtures/eicar.com
