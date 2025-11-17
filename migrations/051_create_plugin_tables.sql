@@ -1,3 +1,5 @@
+-- +goose Up
+-- +goose StatementBegin
 -- Migration: Create Plugin System Tables
 -- Description: Adds tables for plugin management, hooks, execution tracking, and statistics
 -- Version: 051
@@ -290,3 +292,8 @@ COMMENT ON FUNCTION cleanup_old_plugin_executions() IS 'Removes plugin execution
 COMMENT ON FUNCTION get_plugin_health(UUID) IS 'Returns health and performance metrics for a plugin';
 COMMENT ON FUNCTION get_enabled_plugins() IS 'Returns all currently enabled plugins';
 COMMENT ON FUNCTION check_plugin_dependencies(TEXT) IS 'Checks if all plugin dependencies are satisfied';
+-- +goose StatementEnd
+
+-- +goose Down
+-- NOTE: Add rollback statements here if needed
+-- For now, we'll keep migrations forward-only for safety

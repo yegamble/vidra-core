@@ -1,3 +1,5 @@
+-- +goose Up
+-- +goose StatementBegin
 -- Add stream analytics and metrics collection
 -- Migration: 048_create_stream_analytics.sql
 -- Sprint 7 - Phase 3: Analytics & Metrics
@@ -318,3 +320,8 @@ COMMENT ON TABLE viewer_sessions IS 'Individual viewer session tracking for anal
 COMMENT ON FUNCTION get_current_viewer_count IS 'Returns the current number of active viewers for a stream';
 COMMENT ON FUNCTION get_stream_analytics_range IS 'Returns analytics data aggregated by time buckets';
 COMMENT ON FUNCTION update_stream_stats_summary IS 'Recalculates and updates the summary statistics for a stream';
+-- +goose StatementEnd
+
+-- +goose Down
+-- NOTE: Add rollback statements here if needed
+-- For now, we'll keep migrations forward-only for safety

@@ -1,3 +1,5 @@
+-- +goose Up
+-- +goose StatementBegin
 -- Migration: Create Analytics Tables
 -- Description: Comprehensive video analytics system with event tracking, daily aggregates, and retention curves
 -- Created: 2025-10-23
@@ -194,3 +196,8 @@ COMMENT ON COLUMN video_analytics_daily.avg_watch_percentage IS 'Average percent
 COMMENT ON COLUMN video_analytics_daily.completion_rate IS 'Percentage of viewers who watched to completion';
 COMMENT ON COLUMN video_analytics_retention.timestamp_seconds IS 'Second in the video timeline';
 COMMENT ON COLUMN video_analytics_retention.viewer_count IS 'Number of viewers at this timestamp';
+-- +goose StatementEnd
+
+-- +goose Down
+-- NOTE: Add rollback statements here if needed
+-- For now, we'll keep migrations forward-only for safety

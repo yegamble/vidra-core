@@ -1,3 +1,5 @@
+-- +goose Up
+-- +goose StatementBegin
 -- Add channel_id to videos table
 -- First add as nullable, backfill, then make non-nullable
 
@@ -61,3 +63,8 @@ SET videos_count = (
     FROM videos v
     WHERE v.channel_id = c.id
 );
+-- +goose StatementEnd
+
+-- +goose Down
+-- NOTE: Add rollback statements here if needed
+-- For now, we'll keep migrations forward-only for safety

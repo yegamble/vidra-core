@@ -1,3 +1,5 @@
+-- +goose Up
+-- +goose StatementBegin
 -- Create channels table
 -- Channels are separate from users and own videos (PeerTube model)
 CREATE TABLE IF NOT EXISTS channels (
@@ -55,3 +57,8 @@ COMMENT ON COLUMN channels.handle IS 'Unique channel handle/username';
 COMMENT ON COLUMN channels.account_id IS 'User account that owns this channel';
 COMMENT ON COLUMN channels.is_local IS 'Whether this channel is local or federated';
 COMMENT ON COLUMN channels.actor_id IS 'ActivityPub actor ID for federation';
+-- +goose StatementEnd
+
+-- +goose Down
+-- NOTE: Add rollback statements here if needed
+-- For now, we'll keep migrations forward-only for safety

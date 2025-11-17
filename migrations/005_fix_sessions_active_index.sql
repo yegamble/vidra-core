@@ -1,3 +1,5 @@
+-- +goose Up
+-- +goose StatementBegin
 -- Drop invalid partial index if it exists and recreate a safe index
 DO $$
 BEGIN
@@ -13,3 +15,8 @@ BEGIN
 END$$;
 
 CREATE INDEX IF NOT EXISTS idx_sessions_active ON sessions(user_id, expires_at);
+-- +goose StatementEnd
+
+-- +goose Down
+-- NOTE: Add rollback statements here if needed
+-- For now, we'll keep migrations forward-only for safety

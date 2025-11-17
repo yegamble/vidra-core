@@ -23,6 +23,10 @@ info:
     - Rate limiting applies (10 requests/minute for imports)
     - File validation includes magic byte verification
     - Maximum file size: 10GB (chunked), 500MB (legacy)
+    - **Virus Scanning**: All uploads scanned with ClamAV before processing
+      - Infected files rejected with 422 error
+      - Scanner unavailable: 503 error (strict mode) or warning logged (warn mode)
+      - See [Security Policy](../SECURITY.md) for virus scanning details
   version: 1.0.0
 
 paths:
@@ -181,6 +185,38 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: Virus detected in file
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                virus_detected:
+                  value:
+                    error:
+                      code: "VIRUS_DETECTED"
+                      message: "File failed virus scan"
+                      details:
+                        virus_name: "EICAR-Test-Signature"
+                        scan_duration_ms: 234
+                        quarantined: true
+                    success: false
+        '503':
+          description: Virus scanner unavailable (strict mode)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                scanner_unavailable:
+                  value:
+                    error:
+                      code: "SCANNER_UNAVAILABLE"
+                      message: "Virus scanning service temporarily unavailable"
+                      details:
+                        retry_after: 60
+                    success: false
       security:
         - bearerAuth: []
 
@@ -252,6 +288,29 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
         '404':
           description: Upload session not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: Virus detected in uploaded file
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                virus_detected:
+                  value:
+                    error:
+                      code: "VIRUS_DETECTED"
+                      message: "File failed virus scan during merge"
+                      details:
+                        virus_name: "Win.Trojan.Generic"
+                        quarantined: true
+                        quarantine_path: "/quarantine/20250116-143025_infected_file_a3f2b1.bin"
+                    success: false
+        '503':
+          description: Virus scanner unavailable
           content:
             application/json:
               schema:

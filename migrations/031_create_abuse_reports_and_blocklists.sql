@@ -1,3 +1,5 @@
+-- +goose Up
+-- +goose StatementBegin
 -- Create abuse reports table for reporting videos, comments, and users
 CREATE TABLE IF NOT EXISTS abuse_reports (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -99,3 +101,8 @@ INSERT INTO instance_config (key, value, description, is_public) VALUES
     ('upload_limit_per_user', '52428800'::jsonb, 'Upload limit per user in bytes (50MB default)', false),
     ('video_quota_per_user', '5368709120'::jsonb, 'Video quota per user in bytes (5GB default)', false)
 ON CONFLICT (key) DO NOTHING;
+-- +goose StatementEnd
+
+-- +goose Down
+-- NOTE: Add rollback statements here if needed
+-- For now, we'll keep migrations forward-only for safety

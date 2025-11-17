@@ -114,6 +114,114 @@ User messaging is implemented with a dedicated schema and functions to ensure co
 - Tests should check multiple users sending and reciving messages, including edge cases like large attachments, network interruptions, and concurrent sends.
 - Support for end-to-end encrypted conversations with user-managed keys; see E2EE notes below.
 
+---
+
+## Virus Scanning (ClamAV Integration)
+
+All uploaded files (videos, images, documents, attachments) undergo mandatory virus scanning before processing.
+
+### Architecture
+
+```
+/internal/security/virus_scanner.go      # ClamAV client with retry logic
+/internal/security/virus_scanner_test.go # Comprehensive test coverage
+/migrations/057_add_virus_scan_log.sql   # Audit logging schema
+```
+
+### Core Components
+
+- **Scanner Service**: Wrapper around `go-clamd` library with streaming support
+- **Retry Logic**: Configurable retries with exponential backoff for network failures
+- **Quarantine System**: Automatic isolation of infected files with audit trail
+- **Audit Logging**: Database logging (virus_scan_log table) + optional file logs
+- **Fallback Modes**: Configurable behavior when ClamAV is unavailable (strict/warn/allow)
+
+### Security Workflow
+
+1. **Upload Initiation**: File chunks received via `/api/v1/uploads/{sessionId}/chunks`
+2. **Pre-Scan**: Complete file assembled from chunks before any processing
+3. **Virus Scan**: Stream file to ClamAV daemon for signature-based detection
+4. **Scan Result Handling**:
+   - **Clean**: Proceed to FFmpeg transcoding and IPFS pinning
+   - **Infected**: Quarantine file, log to database, return 422 error to client
+   - **Error**: Reject upload (strict mode) or log warning (warn mode)
+5. **Quarantine**: Infected files moved to isolated directory with read-only permissions
+6. **Cleanup**: Automated quarantine cleanup after retention period (default 30 days)
+
+### Configuration
+
+```bash
+# ClamAV Connection
+CLAMAV_ADDRESS=localhost:3310         # ClamAV daemon address
+CLAMAV_TIMEOUT=300                     # Scan timeout in seconds (default 5min)
+CLAMAV_MAX_RETRIES=3                   # Max connection retry attempts
+CLAMAV_RETRY_DELAY=1                   # Delay between retries (seconds)
+
+# Fallback Behavior (when ClamAV unavailable)
+CLAMAV_FALLBACK_MODE=strict            # strict|warn|allow
+  # strict: Reject uploads if scanner unavailable (RECOMMENDED for production)
+  # warn: Log warning but allow upload (for development/degraded mode)
+  # allow: Silently allow (NOT RECOMMENDED)
+
+# Quarantine Settings
+QUARANTINE_DIR=/app/quarantine         # Isolated directory for infected files
+CLAMAV_AUTO_QUARANTINE=true            # Automatically quarantine infected files
+QUARANTINE_RETENTION_DAYS=30           # Days to retain quarantined files
+CLAMAV_AUDIT_LOG=/var/log/athena/virus_scan.log  # Optional audit log file
+```
+
+### Critical Security Fix (P1)
+
+**Vulnerability**: CVE-ATHENA-2025-001 - Virus Scanner Retry Logic Bypass
+
+**Description**: Prior implementation had a race condition in the retry logic where exhausted retries with no valid scan response could fall through to fallback mode handling. In `FallbackModeWarn` or `FallbackModeAllow` configurations, this could allow infected files to bypass scanning.
+
+**Root Cause**: The retry loop (lines 158-196 in virus_scanner.go) would break when `response != nil`, but if all retries were exhausted and `response == nil`, the code would proceed to line 200 where fallback mode logic was applied. An attacker could exploit network instability or ClamAV service degradation to cause retry exhaustion.
+
+**Fix**: Enhanced validation ensures that:
+1. Retry loop only breaks on valid scan response (`response != nil`)
+2. After retry exhaustion, explicit nil check at line 227 returns error
+3. Fallback mode ONLY applies to connection/network errors (line 200-224)
+4. Fallback mode NEVER bypasses actual scan results (infected files always rejected)
+
+**Impact**: HIGH - Could allow malware upload in degraded network conditions
+**Remediation**: Update to latest virus_scanner.go, audit logs for bypassed scans
+**Mitigation**: Always use `CLAMAV_FALLBACK_MODE=strict` in production
+
+### Best Practices
+
+1. **Deployment**:
+   - Run ClamAV in dedicated container with signature auto-updates (freshclam)
+   - Set `CLAMAV_FALLBACK_MODE=strict` in production
+   - Monitor ClamAV availability with health checks
+   - Allocate sufficient memory (2GB+ for ClamAV)
+
+2. **Performance**:
+   - Scan timeout scales with file size (5min for videos up to 10GB)
+   - Streaming scan (no memory buffering of entire file)
+   - Concurrent scans supported (ClamAV handles multiple connections)
+   - Redis caching for scan status during processing
+
+3. **Monitoring**:
+   - Track `virus_scan_log` table for infection trends
+   - Alert on scan failures or fallback mode activations
+   - Monitor quarantine directory size and cleanup job
+   - Log scanner availability metrics
+
+4. **Testing**:
+   - Use EICAR test file for integration testing (`testdata/virus_scanner/eicar.txt`)
+   - Test retry logic with unreachable ClamAV daemon
+   - Verify quarantine isolation and permissions
+   - Load test concurrent scan throughput
+
+### Error Codes
+
+- `422 Unprocessable Entity`: File failed virus scan (infected)
+- `503 Service Unavailable`: ClamAV unavailable (strict mode)
+- `500 Internal Server Error`: Scan timeout or unexpected error
+
+See `/internal/security/virus_scanner_test.go` for comprehensive test coverage including EICAR detection, quarantine, retry logic, and fallback modes.
+
 ### Security Best Practices
 
 - MIME sniff + extension match: detect type server-side; reject mismatches.
@@ -319,26 +427,35 @@ SELECT type, COUNT(*) FROM ap_activities WHERE local = false GROUP BY type;
 - API schemas: OpenAPI (oapi-codegen) or protobuf for future gRPC; keep HTTP first.
 - Error policy: domain errors typed; transport maps to HTTP 4xx/5xx consistently.
 
-## Migrations — Go-Atlas
+## Migrations — Goose
 
-- Config (`atlas.hcl`): dev shadow DB, migration dir, destructive lint.
-- Generate diff:
+- Tool: Goose v3 (https://github.com/pressly/goose) - simple, no auth required
+- Directory: `migrations/` with sequential numbered SQL files
+- Create new:
   ```bash
-  atlas migrate diff add_table --dir "file://migrations" \
-    --to "file://schema.hcl" \
-    --dev-url "postgres://user:pass@localhost:5433/db_shadow?sslmode=disable"
+  goose -dir migrations create add_feature sql
+  # Or via make:
+  make migrate-create NAME=add_feature
   ```
 - Apply:
   ```bash
-  atlas migrate apply --dir "file://migrations" \
-    --url "postgres://user:pass@localhost:5432/video_platform?sslmode=disable"
+  goose -dir migrations postgres "$DATABASE_URL" up
+  # Or via make:
+  make migrate-up
   ```
-- Lint:
+- Status:
   ```bash
-  atlas migrate lint --dir "file://migrations" \
-    --dev-url "postgres://user:pass@localhost:5433/db_shadow?sslmode=disable"
+  goose -dir migrations postgres "$DATABASE_URL" status
+  # Or via make:
+  make migrate-status
   ```
-- Policy: forward-only, no `DROP` without lint waiver, PR requires plan + checksum.
+- Rollback:
+  ```bash
+  goose -dir migrations postgres "$DATABASE_URL" down
+  # Or via make:
+  make migrate-down
+  ```
+- Policy: forward-only migrations recommended, rollbacks require careful review.
 
 ---
 
@@ -408,20 +525,21 @@ docker compose up --build
 **Makefile targets**
 
 ```
-make deps        # go mod download
-make lint        # golangci-lint run ./...
-make test        # unit tests
-make build       # binary
-make docker      # docker build
-make migrate     # atlas migrate apply
+make deps         # go mod download
+make lint         # golangci-lint run ./...
+make test         # unit tests
+make build        # binary
+make docker       # docker build
+make migrate-up   # goose migrate up
 ```
 
 **Testing**
 
 - Unit: usecase/repo with sqlmock for DB.
 - Integration: dockerized Postgres/Redis/IPFS via `docker compose -f docker-compose.test.yml`.
-- E2E: upload → process → HLS play. **CI** (GitHub Actions example stages)
-- `lint → test → build → docker push → atlas plan/lint → deploy`.
+- E2E: upload → process → HLS play.
+**CI** (GitHub Actions example stages)
+- `lint → test → build → docker push → migrate validate → deploy`.
 
 ---
 

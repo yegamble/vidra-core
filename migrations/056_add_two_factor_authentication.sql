@@ -1,3 +1,5 @@
+-- +goose Up
+-- +goose StatementBegin
 -- Add Two-Factor Authentication support to users table
 ALTER TABLE users
 ADD COLUMN twofa_enabled BOOLEAN NOT NULL DEFAULT false,
@@ -27,3 +29,8 @@ COMMENT ON COLUMN users.twofa_confirmed_at IS 'Timestamp when 2FA was successful
 COMMENT ON TABLE twofa_backup_codes IS 'One-time backup codes for 2FA recovery (hashed with bcrypt)';
 COMMENT ON COLUMN twofa_backup_codes.code_hash IS 'Bcrypt hash of the backup code';
 COMMENT ON COLUMN twofa_backup_codes.used_at IS 'Timestamp when this backup code was used (NULL if unused)';
+-- +goose StatementEnd
+
+-- +goose Down
+-- NOTE: Add rollback statements here if needed
+-- For now, we'll keep migrations forward-only for safety

@@ -1,3 +1,5 @@
+-- +goose Up
+-- +goose StatementBegin
 -- Create video_categories table
 CREATE TABLE IF NOT EXISTS video_categories (
     id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
@@ -49,3 +51,8 @@ CREATE TRIGGER trigger_update_video_categories_updated_at
     BEFORE UPDATE ON video_categories
     FOR EACH ROW
     EXECUTE FUNCTION update_video_categories_updated_at();
+-- +goose StatementEnd
+
+-- +goose Down
+-- NOTE: Add rollback statements here if needed
+-- For now, we'll keep migrations forward-only for safety

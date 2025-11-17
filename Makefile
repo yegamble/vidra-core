@@ -378,3 +378,140 @@ migrate-up: migrate-dev ## Alias: apply migrations to development database
 
 # Common alias used in README and scripts
 migrate: migrate-dev ## Alias: apply migrations to development database
+
+# ============================================================================
+# Atlas Migration Management
+# ============================================================================
+
+.PHONY: atlas-install
+atlas-install:  ## Install Atlas CLI
+	@if command -v atlas >/dev/null 2>&1; then \
+		echo "Atlas is already installed: $$(atlas version)"; \
+	else \
+		echo "Installing Atlas CLI..."; \
+		curl -sSf https://atlasgo.sh | sh; \
+		echo "Atlas installed successfully!"; \
+	fi
+
+.PHONY: atlas-version
+atlas-version:  ## Show Atlas version
+	@atlas version || echo "Atlas not installed. Run 'make atlas-install' to install."
+
+.PHONY: migrate-diff
+migrate-diff:  ## Generate new migration from schema diff (usage: make migrate-diff NAME=add_feature)
+	@if [ -z "$(NAME)" ]; then \
+		echo "Error: NAME is required."; \
+		echo "Usage: make migrate-diff NAME=add_feature"; \
+		echo "Example: make migrate-diff NAME=add_user_notifications"; \
+		exit 1; \
+	fi
+	@if [ ! -f "schema.sql" ]; then \
+		echo "Warning: schema.sql not found. Creating migrations without schema comparison."; \
+		echo "To use schema-based migrations, create schema.sql with your desired schema."; \
+	fi
+	@if [ -f "schema.sql" ]; then \
+		atlas migrate diff $(NAME) \
+			--env dev \
+			--to "file://schema.sql"; \
+	else \
+		echo "Manual migration creation: Please create migrations/$(shell date +%Y%m%d%H%M%S)_$(NAME).sql"; \
+	fi
+
+.PHONY: migrate-up
+migrate-up:  ## Apply all pending migrations using Goose
+	@echo "Applying pending migrations with Goose..."
+	@goose -dir migrations postgres "$${DATABASE_URL}" up
+
+.PHONY: migrate-down
+migrate-down:  ## Rollback the last migration using Goose
+	@echo "Rolling back last migration..."
+	@goose -dir migrations postgres "$${DATABASE_URL}" down
+
+.PHONY: migrate-status
+migrate-status:  ## Show migration status using Goose
+	@echo "Migration status:"
+	@goose -dir migrations postgres "$${DATABASE_URL}" status
+
+.PHONY: migrate-version
+migrate-version:  ## Show current migration version
+	@goose -dir migrations postgres "$${DATABASE_URL}" version
+
+.PHONY: migrate-validate
+migrate-validate:  ## Validate migration files using Goose
+	@echo "Validating migration files..."
+	@goose -dir migrations validate
+
+.PHONY: atlas-schema-inspect
+atlas-schema-inspect:  ## Inspect current database schema
+	@ENV_NAME=$${ENV:-dev}; \
+	echo "Inspecting schema for $$ENV_NAME environment..."; \
+	atlas schema inspect --env $$ENV_NAME
+
+.PHONY: atlas-schema-inspect-file
+atlas-schema-inspect-file:  ## Inspect and save current database schema to file
+	@ENV_NAME=$${ENV:-dev}; \
+	OUTPUT=$${OUTPUT:-schema_current.sql}; \
+	echo "Inspecting schema for $$ENV_NAME environment and saving to $$OUTPUT..."; \
+	atlas schema inspect --env $$ENV_NAME --url "$(DATABASE_URL)" > $$OUTPUT; \
+	echo "Schema saved to $$OUTPUT"
+
+.PHONY: atlas-schema-apply
+atlas-schema-apply:  ## Apply schema changes (declarative mode)
+	@if [ ! -f "schema.sql" ]; then \
+		echo "Error: schema.sql not found."; \
+		echo "Create schema.sql with your desired database schema first."; \
+		exit 1; \
+	fi
+	@ENV_NAME=$${ENV:-dev}; \
+	AUTO=$${AUTO_APPROVE:-false}; \
+	echo "Applying schema to $$ENV_NAME environment..."; \
+	atlas schema apply \
+		--env $$ENV_NAME \
+		--to "file://schema.sql" \
+		--auto-approve=$$AUTO
+
+.PHONY: migrate-create
+migrate-create:  ## Create new migration file (usage: make migrate-create NAME=add_feature)
+	@if [ -z "$(NAME)" ]; then \
+		echo "Error: NAME is required."; \
+		echo "Usage: make migrate-create NAME=add_feature"; \
+		exit 1; \
+	fi
+	@goose -dir migrations create $(NAME) sql
+	@echo "New migration created. Edit the file in migrations/ directory."
+
+.PHONY: migrate-reset
+migrate-reset:  ## Reset database to version 0 and re-run all migrations
+	@echo "WARNING: This will reset the database!"
+	@echo "Press Ctrl+C to cancel, or wait 5 seconds to continue..."
+	@sleep 5
+	@goose -dir migrations postgres "$${DATABASE_URL}" reset
+	@goose -dir migrations postgres "$${DATABASE_URL}" up
+
+.PHONY: atlas-help
+atlas-help:  ## Show Atlas-specific help
+	@echo "Atlas Migration Commands:"
+	@echo "  make atlas-install              - Install Atlas CLI"
+	@echo "  make atlas-version              - Show Atlas version"
+	@echo "  make migrate-diff NAME=<name>   - Generate migration from schema diff"
+	@echo "  make atlas-migrate-new NAME=<n> - Create new empty migration"
+	@echo "  make atlas-migrate-apply        - Apply pending migrations"
+	@echo "  make atlas-migrate-status       - Show migration status"
+	@echo "  make atlas-migrate-lint         - Lint new migrations"
+	@echo "  make atlas-migrate-validate     - Validate migrations"
+	@echo "  make atlas-schema-inspect       - Inspect current schema"
+	@echo "  make atlas-migrate-hash         - Rehash migration directory"
+	@echo ""
+	@echo "Environment variables:"
+	@echo "  ENV=<env>           - Target environment (dev, prod, ci, test)"
+	@echo "  NAME=<name>         - Migration name"
+	@echo "  AUTO_APPROVE=<bool> - Auto-approve schema changes"
+	@echo ""
+	@echo "Examples:"
+	@echo "  make migrate-diff NAME=add_user_table"
+	@echo "  make atlas-migrate-apply ENV=dev"
+	@echo "  make atlas-migrate-status ENV=prod"
+
+# Default ENV for Atlas commands
+ENV ?= dev
+AUTO_APPROVE ?= false

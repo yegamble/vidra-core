@@ -1,3 +1,5 @@
+-- +goose Up
+-- +goose StatementBegin
 -- 055_add_s3_storage_fields.sql
 -- Add S3 storage tracking fields to videos table
 
@@ -21,3 +23,8 @@ COMMENT ON COLUMN videos.s3_urls IS 'JSONB mapping of variant names to S3 URLs (
 COMMENT ON COLUMN videos.storage_tier IS 'Storage tier: hot (local), warm (IPFS), cold (S3)';
 COMMENT ON COLUMN videos.s3_migrated_at IS 'Timestamp when video was migrated to S3';
 COMMENT ON COLUMN videos.local_deleted IS 'Whether local files have been deleted after S3 migration';
+-- +goose StatementEnd
+
+-- +goose Down
+-- NOTE: Add rollback statements here if needed
+-- For now, we'll keep migrations forward-only for safety

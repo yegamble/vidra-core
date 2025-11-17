@@ -16,11 +16,13 @@ import (
 	"github.com/sirupsen/logrus"
 
 	"athena/internal/config"
+	"athena/internal/database"
 	"athena/internal/httpapi"
 	"athena/internal/httpapi/shared"
 	"athena/internal/ipfs"
 	"athena/internal/livestream"
 	"athena/internal/metrics"
+	"athena/internal/middleware"
 	"athena/internal/repository"
 	"athena/internal/scheduler"
 	"athena/internal/usecase"
@@ -47,10 +49,11 @@ type Application struct {
 	firehosePoller      *scheduler.FirehosePoller
 
 	// lifecycle-managed components
-	metricsServer *http.Server
-	rtmpServer    *livestream.RTMPServer
-	hlsTranscoder *livestream.HLSTranscoder
-	vodConverter  *livestream.VODConverter
+	metricsServer      *http.Server
+	rtmpServer         *livestream.RTMPServer
+	hlsTranscoder      *livestream.HLSTranscoder
+	vodConverter       *livestream.VODConverter
+	rateLimiterManager *middleware.RateLimiterManager
 }
 
 type Dependencies struct {
@@ -99,9 +102,10 @@ type Dependencies struct {
 
 func New(cfg *config.Config) (*Application, error) {
 	app := &Application{
-		Config:     cfg,
-		Router:     chi.NewRouter(),
-		schedulers: []scheduler.Scheduler{},
+		Config:             cfg,
+		Router:             chi.NewRouter(),
+		schedulers:         []scheduler.Scheduler{},
+		rateLimiterManager: middleware.NewRateLimiterManager(),
 	}
 
 	if err := app.initializeDatabase(); err != nil {
@@ -133,7 +137,15 @@ func (app *Application) initializeDatabase() error {
 	if err != nil {
 		return fmt.Errorf("failed to connect to database: %w", err)
 	}
-	app.DB = db
+
+	// Configure connection pool per CLAUDE.md
+	pool, err := database.NewPool(db, database.DefaultPoolConfig())
+	if err != nil {
+		db.Close()
+		return fmt.Errorf("failed to configure connection pool: %w", err)
+	}
+
+	app.DB = pool.GetDB() // Maintain compatibility
 	return nil
 }
 
@@ -355,7 +367,7 @@ func (app *Application) initializeSchedulers(deps *Dependencies) {
 }
 
 func (app *Application) registerRoutes(deps *Dependencies) {
-	httpapi.RegisterRoutesWithDependencies(app.Router, app.Config, &shared.HandlerDependencies{
+	httpapi.RegisterRoutesWithDependencies(app.Router, app.Config, app.rateLimiterManager, &shared.HandlerDependencies{
 		UserRepo:             deps.UserRepo,
 		VideoRepo:            deps.VideoRepo,
 		UploadRepo:           deps.UploadRepo,
@@ -455,6 +467,14 @@ func (app *Application) Start(ctx context.Context) error {
 }
 
 func (app *Application) Shutdown(ctx context.Context) error {
+	// Shutdown rate limiters first (graceful, allows requests to continue)
+	if app.rateLimiterManager != nil {
+		log.Println("Shutting down rate limiters...")
+		if err := app.rateLimiterManager.Shutdown(ctx); err != nil {
+			log.Printf("Failed to shutdown rate limiters: %v", err)
+		}
+	}
+
 	for _, s := range app.schedulers {
 		s.Stop()
 	}

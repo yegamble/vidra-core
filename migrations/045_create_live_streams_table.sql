@@ -1,3 +1,5 @@
+-- +goose Up
+-- +goose StatementBegin
 -- Migration: Create live streaming infrastructure
 -- This migration adds support for RTMP live streaming with HLS output
 
@@ -170,3 +172,8 @@ JOIN users u ON ls.user_id = u.id
 WHERE ls.status = 'live';
 
 COMMENT ON VIEW active_live_streams IS 'Shows all currently active live streams with real-time viewer counts';
+-- +goose StatementEnd
+
+-- +goose Down
+-- NOTE: Add rollback statements here if needed
+-- For now, we'll keep migrations forward-only for safety

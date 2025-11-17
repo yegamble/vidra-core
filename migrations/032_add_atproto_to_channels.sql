@@ -1,3 +1,5 @@
+-- +goose Up
+-- +goose StatementBegin
 -- Add ATProto federation fields to channels and instance config
 
 -- Channels: add optional ATProto identifiers
@@ -28,4 +30,8 @@ VALUES (
     'atproto_pds_url', '""'::jsonb, 'Default ATProto PDS base URL for this instance', false
 )
 ON CONFLICT (key) DO NOTHING;
+-- +goose StatementEnd
 
+-- +goose Down
+-- NOTE: Add rollback statements here if needed
+-- For now, we'll keep migrations forward-only for safety

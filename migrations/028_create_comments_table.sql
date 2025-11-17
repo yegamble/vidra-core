@@ -1,3 +1,5 @@
+-- +goose Up
+-- +goose StatementBegin
 -- Create comments table for video comments with threading support
 CREATE TABLE IF NOT EXISTS comments (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -141,3 +143,8 @@ CREATE TRIGGER trigger_notify_on_comment
     FOR EACH ROW
     WHEN (NEW.status = 'active')
     EXECUTE FUNCTION notify_on_new_comment();
+-- +goose StatementEnd
+
+-- +goose Down
+-- NOTE: Add rollback statements here if needed
+-- For now, we'll keep migrations forward-only for safety

@@ -1,3 +1,5 @@
+-- +goose Up
+-- +goose StatementBegin
 -- Create sessions table for session management
 CREATE TABLE sessions (
     id VARCHAR(255) PRIMARY KEY,
@@ -12,3 +14,8 @@ CREATE INDEX idx_sessions_expires_at ON sessions(expires_at);
 
 -- Create index for sessions by user and expiration (avoid non-immutable predicates)
 CREATE INDEX idx_sessions_active ON sessions(user_id, expires_at);
+-- +goose StatementEnd
+
+-- +goose Down
+-- NOTE: Add rollback statements here if needed
+-- For now, we'll keep migrations forward-only for safety

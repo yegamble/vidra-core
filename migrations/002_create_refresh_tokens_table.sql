@@ -1,3 +1,5 @@
+-- +goose Up
+-- +goose StatementBegin
 -- Create refresh_tokens table
 CREATE TABLE refresh_tokens (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -17,3 +19,8 @@ CREATE INDEX idx_refresh_tokens_revoked_at ON refresh_tokens(revoked_at);
 -- Create partial index for active tokens
 CREATE INDEX idx_refresh_tokens_active ON refresh_tokens(user_id, expires_at) 
     WHERE revoked_at IS NULL;
+-- +goose StatementEnd
+
+-- +goose Down
+-- NOTE: Add rollback statements here if needed
+-- For now, we'll keep migrations forward-only for safety

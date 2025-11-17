@@ -1,3 +1,5 @@
+-- +goose Up
+-- +goose StatementBegin
 -- ActivityPub Support Migration
 -- This migration adds tables for ActivityPub federation support
 
@@ -146,3 +148,8 @@ CREATE TRIGGER update_ap_followers_updated_at
 CREATE TRIGGER update_ap_delivery_queue_updated_at
     BEFORE UPDATE ON ap_delivery_queue
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+-- +goose StatementEnd
+
+-- +goose Down
+-- NOTE: Add rollback statements here if needed
+-- For now, we'll keep migrations forward-only for safety

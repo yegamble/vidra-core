@@ -1,3 +1,5 @@
+-- +goose Up
+-- +goose StatementBegin
 -- Create video_ratings table for like/dislike functionality
 CREATE TABLE IF NOT EXISTS video_ratings (
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -178,3 +180,8 @@ WHERE NOT EXISTS (
     WHERE playlists.user_id = users.id
     AND playlists.is_watch_later = TRUE
 );
+-- +goose StatementEnd
+
+-- +goose Down
+-- NOTE: Add rollback statements here if needed
+-- For now, we'll keep migrations forward-only for safety

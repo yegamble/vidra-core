@@ -1,3 +1,5 @@
+-- +goose Up
+-- +goose StatementBegin
 -- ATProto social interactions: follows, likes, comments, moderation
 
 -- ATProto actors table
@@ -150,3 +152,8 @@ VALUES
     ('atproto_enable_comments', 'true'::jsonb, 'Enable ATProto comments functionality', false),
     ('atproto_moderation_labels', '["spam", "impersonation", "harassment"]'::jsonb, 'Moderation label types to apply', false)
 ON CONFLICT (key) DO NOTHING;
+-- +goose StatementEnd
+
+-- +goose Down
+-- NOTE: Add rollback statements here if needed
+-- For now, we'll keep migrations forward-only for safety

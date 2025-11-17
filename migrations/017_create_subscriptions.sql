@@ -1,3 +1,5 @@
+-- +goose Up
+-- +goose StatementBegin
 -- Create user subscriptions table and maintain subscriber counts
 
 -- Add denormalized subscriber_count to users for fast reads
@@ -44,4 +46,8 @@ DROP TRIGGER IF EXISTS trg_subscriptions_dec ON subscriptions;
 CREATE TRIGGER trg_subscriptions_dec
 AFTER DELETE ON subscriptions
 FOR EACH ROW EXECUTE FUNCTION decrement_subscriber_count();
+-- +goose StatementEnd
 
+-- +goose Down
+-- NOTE: Add rollback statements here if needed
+-- For now, we'll keep migrations forward-only for safety

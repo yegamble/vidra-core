@@ -1,3 +1,5 @@
+-- +goose Up
+-- +goose StatementBegin
 -- Migration: Create chat tables for live stream chat functionality
 -- Description: Adds chat messages, moderators, and bans tables
 -- Author: Claude Code
@@ -219,3 +221,8 @@ COMMENT ON VIEW chat_stream_stats IS
 -- GRANT EXECUTE ON FUNCTION get_chat_message_count(UUID) TO athena_app;
 -- GRANT EXECUTE ON FUNCTION cleanup_expired_bans() TO athena_app;
 -- GRANT SELECT ON chat_stream_stats TO athena_app;
+-- +goose StatementEnd
+
+-- +goose Down
+-- NOTE: Add rollback statements here if needed
+-- For now, we'll keep migrations forward-only for safety
