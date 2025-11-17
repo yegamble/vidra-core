@@ -44,27 +44,6 @@ func (m *MockIOTANodeClient) SubmitTransaction(ctx context.Context, tx *SignedTr
 	return args.String(0), args.Error(1)
 }
 
-// Stub types representing IOTA node responses
-type NodeInfo struct {
-	NetworkID string
-	Version   string
-	IsHealthy bool
-}
-
-type TransactionStatus struct {
-	TxHash        string
-	Confirmations int
-	IsConfirmed   bool
-	BlockID       string
-}
-
-type SignedTransaction struct {
-	FromAddress string
-	ToAddress   string
-	Amount      int64
-	Signature   []byte
-}
-
 // TestIOTAClient_GenerateSeed tests secure seed generation
 func TestIOTAClient_GenerateSeed(t *testing.T) {
 	tests := []struct {
@@ -607,9 +586,15 @@ func TestIOTAClient_WaitForConfirmation(t *testing.T) {
 			defer cancel()
 
 			// Mock multiple status calls
-			for _, status := range tt.mockStatuses {
-				mockNodeClient.On("GetTransactionStatus", mock.Anything, tt.txHash).
-					Return(status, nil).Once()
+			for i, status := range tt.mockStatuses {
+				// For timeout scenarios, the last status should be returnable indefinitely
+				if tt.wantErr && i == len(tt.mockStatuses)-1 {
+					mockNodeClient.On("GetTransactionStatus", mock.Anything, tt.txHash).
+						Return(status, nil).Maybe()
+				} else {
+					mockNodeClient.On("GetTransactionStatus", mock.Anything, tt.txHash).
+						Return(status, nil).Once()
+				}
 			}
 
 			confirmations, err := client.WaitForConfirmation(ctx, tt.txHash, tt.requiredConfirms, 500*time.Millisecond)
@@ -638,13 +623,6 @@ func TestIOTAClient_ContextTimeout(t *testing.T) {
 	_, err := client.GetBalance(ctx, "iota1qtest")
 	assert.Error(t, err)
 	assert.ErrorIs(t, err, context.Canceled)
-}
-
-// Stub types for testing
-type UnsignedTransaction struct {
-	FromAddress string
-	ToAddress   string
-	Amount      int64
 }
 
 // Helper to repeat string

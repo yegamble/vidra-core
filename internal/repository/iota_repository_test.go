@@ -29,7 +29,7 @@ func TestIOTARepository_CreateWallet(t *testing.T) {
 	ctx := context.Background()
 
 	// Create test user
-	userID := createTestUser(t, testDB)
+	userID := createTestUserForIOTA(t, testDB)
 
 	tests := []struct {
 		name    string
@@ -105,7 +105,7 @@ func TestIOTARepository_GetWalletByUserID(t *testing.T) {
 	ctx := context.Background()
 
 	// Create test user
-	userID := createTestUser(t, testDB)
+	userID := createTestUserForIOTA(t, testDB)
 
 	// Create wallet
 	wallet := &domain.IOTAWallet{
@@ -169,7 +169,7 @@ func TestIOTARepository_GetWalletByID(t *testing.T) {
 	repo := NewIOTARepository(testDB.DB)
 	ctx := context.Background()
 
-	userID := createTestUser(t, testDB)
+	userID := createTestUserForIOTA(t, testDB)
 
 	wallet := &domain.IOTAWallet{
 		ID:            uuid.New().String(),
@@ -206,7 +206,7 @@ func TestIOTARepository_UpdateWalletBalance(t *testing.T) {
 	repo := NewIOTARepository(testDB.DB)
 	ctx := context.Background()
 
-	userID := createTestUser(t, testDB)
+	userID := createTestUserForIOTA(t, testDB)
 
 	wallet := &domain.IOTAWallet{
 		ID:            uuid.New().String(),
@@ -350,7 +350,7 @@ func TestIOTARepository_GetPaymentIntentByID(t *testing.T) {
 	repo := NewIOTARepository(testDB.DB)
 	ctx := context.Background()
 
-	userID := createTestUser(t, testDB)
+	userID := createTestUserForIOTA(t, testDB)
 
 	intent := &domain.IOTAPaymentIntent{
 		ID:             uuid.New().String(),
@@ -391,7 +391,7 @@ func TestIOTARepository_UpdatePaymentIntentStatus(t *testing.T) {
 	repo := NewIOTARepository(testDB.DB)
 	ctx := context.Background()
 
-	userID := createTestUser(t, testDB)
+	userID := createTestUserForIOTA(t, testDB)
 
 	intent := &domain.IOTAPaymentIntent{
 		ID:             uuid.New().String(),
@@ -472,7 +472,7 @@ func TestIOTARepository_GetActivePaymentIntents(t *testing.T) {
 	repo := NewIOTARepository(testDB.DB)
 	ctx := context.Background()
 
-	userID := createTestUser(t, testDB)
+	userID := createTestUserForIOTA(t, testDB)
 
 	// Create multiple payment intents with different statuses
 	activeIntent1 := &domain.IOTAPaymentIntent{
@@ -551,7 +551,7 @@ func TestIOTARepository_GetExpiredPaymentIntents(t *testing.T) {
 	repo := NewIOTARepository(testDB.DB)
 	ctx := context.Background()
 
-	userID := createTestUser(t, testDB)
+	userID := createTestUserForIOTA(t, testDB)
 
 	// Create expired pending intent
 	expiredIntent := &domain.IOTAPaymentIntent{
@@ -599,7 +599,7 @@ func TestIOTARepository_CreateTransaction(t *testing.T) {
 	repo := NewIOTARepository(testDB.DB)
 	ctx := context.Background()
 
-	userID := createTestUser(t, testDB)
+	userID := createTestUserForIOTA(t, testDB)
 
 	// Create wallet for transaction
 	wallet := &domain.IOTAWallet{
@@ -679,7 +679,7 @@ func TestIOTARepository_GetTransactionByHash(t *testing.T) {
 	repo := NewIOTARepository(testDB.DB)
 	ctx := context.Background()
 
-	userID := createTestUser(t, testDB)
+	userID := createTestUserForIOTA(t, testDB)
 
 	wallet := &domain.IOTAWallet{
 		ID:            uuid.New().String(),
@@ -729,7 +729,7 @@ func TestIOTARepository_UpdateTransactionStatus(t *testing.T) {
 	repo := NewIOTARepository(testDB.DB)
 	ctx := context.Background()
 
-	userID := createTestUser(t, testDB)
+	userID := createTestUserForIOTA(t, testDB)
 
 	wallet := &domain.IOTAWallet{
 		ID:            uuid.New().String(),
@@ -779,7 +779,7 @@ func TestIOTARepository_GetTransactionsByWalletID(t *testing.T) {
 	repo := NewIOTARepository(testDB.DB)
 	ctx := context.Background()
 
-	userID := createTestUser(t, testDB)
+	userID := createTestUserForIOTA(t, testDB)
 
 	wallet := &domain.IOTAWallet{
 		ID:            uuid.New().String(),
@@ -835,7 +835,7 @@ func TestIOTARepository_EncryptedSeedNotExposed(t *testing.T) {
 	repo := NewIOTARepository(testDB.DB)
 	ctx := context.Background()
 
-	userID := createTestUser(t, testDB)
+	userID := createTestUserForIOTA(t, testDB)
 
 	wallet := &domain.IOTAWallet{
 		ID:            uuid.New().String(),
@@ -863,6 +863,7 @@ func TestIOTARepository_EncryptedSeedNotExposed(t *testing.T) {
 
 func createTestUserForIOTA(t *testing.T, testDB *testutil.TestDB) string {
 	t.Helper()
+	// Using the actual NewUserRepository from this package
 	userRepo := NewUserRepository(testDB.DB)
 	ctx := context.Background()
 
@@ -882,6 +883,7 @@ func createTestUserForIOTA(t *testing.T, testDB *testutil.TestDB) string {
 
 func createTestVideoForIOTA(t *testing.T, testDB *testutil.TestDB, userID string) string {
 	t.Helper()
+	// Using the actual NewVideoRepository from this package
 	videoRepo := NewVideoRepository(testDB.DB)
 	ctx := context.Background()
 

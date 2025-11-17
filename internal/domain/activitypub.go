@@ -135,6 +135,21 @@ type VideoObject struct {
 	Attachment      []APAttachment `json:"attachment,omitempty"`
 }
 
+// NoteObject represents a comment/note in ActivityPub format
+type NoteObject struct {
+	Context      interface{} `json:"@context,omitempty"`
+	Type         string      `json:"type"`
+	ID           string      `json:"id"`
+	Content      string      `json:"content"`
+	Published    *time.Time  `json:"published,omitempty"`
+	Updated      *time.Time  `json:"updated,omitempty"`
+	AttributedTo string      `json:"attributedTo"`
+	InReplyTo    string      `json:"inReplyTo,omitempty"`
+	To           []string    `json:"to,omitempty"`
+	Cc           []string    `json:"cc,omitempty"`
+	Tag          []APTag     `json:"tag,omitempty"`
+}
+
 // APUrl represents a URL with additional metadata
 type APUrl struct {
 	Type      string `json:"type"`
