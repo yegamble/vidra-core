@@ -133,11 +133,10 @@ case $RUN_MODE in
         export CLAMAV_TIMEOUT=60
         export TEST_QUARANTINE_DIR=/tmp/test-quarantine
 
-        # Run tests
+        # Run tests against the package (collectively)
         echo ""
         echo -e "${YELLOW}Running tests...${NC}"
-        go test $TEST_FLAGS ./internal/security/virus_scanner_test.go
-        go test $TEST_FLAGS ./internal/security/file_type_blocker_test.go
+        go test $TEST_FLAGS ./internal/security
 
         # Cleanup
         echo ""
@@ -162,12 +161,11 @@ case $RUN_MODE in
         export CLAMAV_TIMEOUT=60
         export TEST_QUARANTINE_DIR=/tmp/test-quarantine
 
-        # Run tests
+        # Run tests against the package (collectively)
         echo ""
         echo -e "${YELLOW}Running tests...${NC}"
         cd "$PROJECT_ROOT"
-        go test $TEST_FLAGS ./internal/security/virus_scanner_test.go
-        go test $TEST_FLAGS ./internal/security/file_type_blocker_test.go
+        go test $TEST_FLAGS ./internal/security
         ;;
 
     short)

@@ -295,6 +295,7 @@ func (s *VirusScanner) ScanStream(ctx context.Context, reader io.Reader) (*ScanR
 	var scanReader io.ReadSeeker
 	var tempFile *os.File
 	var cleanupFunc func()
+	cleaned := false
 
 	// Check if reader is already seekable
 	if seeker, ok := reader.(io.ReadSeeker); ok {
@@ -326,9 +327,10 @@ func (s *VirusScanner) ScanStream(ctx context.Context, reader io.Reader) (*ScanR
 			}, fmt.Errorf("failed to create scan buffer: %w", err)
 		}
 
-		// Ensure cleanup even on panic
+		// Ensure cleanup even on panic. Idempotent to avoid duplicate warnings.
 		cleanupFunc = func() {
-			if tempFile != nil {
+			if tempFile != nil && !cleaned {
+				cleaned = true
 				if err := tempFile.Close(); err != nil {
 					log.Warn().
 						Err(err).
@@ -388,10 +390,11 @@ func (s *VirusScanner) ScanStream(ctx context.Context, reader io.Reader) (*ScanR
 				Int64("max_size", s.config.MaxStreamSize).
 				Msg("Stream exceeded maximum size limit for virus scanning")
 			// SECURITY: Reject oversized streams to prevent resource exhaustion
+			// Include phrase "exceeds maximum" to align with test expectations
 			return &ScanResult{
 					Status:       ScanStatusError,
 					ScanDuration: time.Since(start),
-				}, fmt.Errorf("stream too large for scanning: %d bytes exceeds limit of %d bytes",
+				}, fmt.Errorf("stream too large for scanning: %d bytes exceeds maximum %d bytes",
 					bytesWritten, s.config.MaxStreamSize)
 		}
 

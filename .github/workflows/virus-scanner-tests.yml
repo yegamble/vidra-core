@@ -86,9 +86,10 @@ jobs:
 
       - name: Run virus scanner unit tests
         run: |
-          go test -v -race -coverprofile=coverage-virus-scanner.out \
-            -covermode=atomic \
-            ./internal/security/virus_scanner*.go \
+          # Run tests against the package path (not individual files)
+          go test -v -race -covermode=atomic \
+            -coverprofile=coverage-virus-scanner.out \
+            ./internal/security \
             -short
 
       - name: Upload coverage to Codecov
@@ -214,8 +215,9 @@ jobs:
           DATABASE_URL: postgres://test_user:test_password@localhost:5432/athena_test?sslmode=disable
           REDIS_URL: redis://localhost:6379/0
         run: |
+          # Run against the security package so tests compile within package context
           go test -v -race -timeout 20m \
-            ./internal/security/virus_scanner_test.go \
+            ./internal/security \
             -run TestVirusScanner
 
       - name: Check ClamAV logs on failure
@@ -492,8 +494,9 @@ jobs:
         env:
           CLAMAV_ADDRESS: localhost:3310
         run: |
+          # Run benchmarks for the whole security package
           go test -bench=. -benchmem -benchtime=10s \
-            ./internal/security/virus_scanner_test.go \
+            ./internal/security \
             -run=^$ \
             > benchmark-results.txt
 
