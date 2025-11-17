@@ -2,7 +2,7 @@
 
 ## Overview
 
-Rebuild PeerTube’s backend in Go using: **Chi**, **SQLX+PostgreSQL** (`pg_trgm`, `unaccent`, `uuid-ossp`), **Redis**, **IPFS** (Kubo + Cluster), **FFmpeg**, **IOTA**, **Hybrid storage** (local/IPFS/S3), **Docker/K8s**, **Go-Atlas** (migrations). Designed for concurrency, resiliency, and cost-efficient delivery.
+Rebuild PeerTube's backend in Go using: **Chi**, **SQLX+PostgreSQL** (`pg_trgm`, `unaccent`, `uuid-ossp`), **Redis**, **IPFS** (Kubo + Cluster), **FFmpeg**, **IOTA**, **Hybrid storage** (local/IPFS/S3), **Docker/K8s**, **Goose** (migrations). Designed for concurrency, resiliency, and cost-efficient delivery.
 
 ---
 
@@ -44,7 +44,7 @@ Rebuild PeerTube’s backend in Go using: **Chi**, **SQLX+PostgreSQL** (`pg_trgm
 - Pool: `MaxOpen=25`, `MaxIdle=5`, `ConnMaxLifetime=5m`, `ConnMaxIdleTime=2m`.
 - Extensions: `pg_trgm`, `unaccent`, `uuid-ossp`, `btree_gin`.
 - Indexes on: `processing_status`, `privacy`, `upload_date`, GIN on `title`, `description`, `tags`, `metadata`.
-- Migrations: Go-Atlas (see below).
+- Migrations: Goose (see below).
 - Transactions: repo methods accept `*sqlx.Tx` or context key to join existing tx.
 
 ## Redis
@@ -576,7 +576,7 @@ make migrate-up   # goose migrate up
 
 ## Summary
 
-Highly concurrent Go backend mirroring PeerTube features with decentralized storage (IPFS), hybrid delivery, robust processing, and production-grade ops: migrations (Atlas), linting (golangci), Docker/K8s deploys, observability, and strict reliability/security practices.
+Highly concurrent Go backend mirroring PeerTube features with decentralized storage (IPFS), hybrid delivery, robust processing, and production-grade ops: migrations (Goose), linting (golangci), Docker/K8s deploys, observability, and strict reliability/security practices.
 
 This design emphasizes modularity, testability, and maintainability while ensuring a smooth user experience for video uploads, processing, and playback. The architecture is built to scale efficiently with the growth of the platform, leveraging Go's strengths in concurrency and performance.
 ```
