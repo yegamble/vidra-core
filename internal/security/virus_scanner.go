@@ -291,197 +291,136 @@ func (s *VirusScanner) ScanStream(ctx context.Context, reader io.Reader) (*ScanR
 		}, err
 	}
 
-	// SECURITY: Determine reader type and prepare for retries
-	var scanReader io.ReadSeeker
-	var tempFile *os.File
-	var cleanupFunc func()
-	cleaned := false
-
-	// Check if reader is already seekable
-	if seeker, ok := reader.(io.ReadSeeker); ok {
-		// Reader is seekable (e.g., *os.File), use directly
-		scanReader = seeker
-		cleanupFunc = func() {} // No cleanup needed
-		log.Debug().
-			Msg("ScanStream: Using seekable reader directly")
-	} else {
-		// SECURITY CRITICAL: Non-seekable reader (e.g., HTTP body, pipe)
-		// Must buffer to temporary file to enable safe retries
-		// Without this, retries would scan empty data and potentially pass infected content
-
-		log.Info().
-			Msg("ScanStream: Buffering non-seekable stream for safe retry support")
-
-		// Create secure temporary file with restricted permissions
-		var err error
-		tempFile, err = os.CreateTemp(s.config.TempDir, "virus-scan-*.tmp")
-		if err != nil {
-			log.Error().
-				Err(err).
-				Str("temp_dir", s.config.TempDir).
-				Msg("Failed to create temporary buffer for virus scanning")
-			// SECURITY: Fail closed - reject file if we can't buffer it
-			return &ScanResult{
-				Status:       ScanStatusError,
-				ScanDuration: time.Since(start),
-			}, fmt.Errorf("failed to create scan buffer: %w", err)
-		}
-
-		// Ensure cleanup even on panic. Idempotent to avoid duplicate warnings.
-		cleanupFunc = func() {
-			if tempFile != nil && !cleaned {
-				cleaned = true
-				if err := tempFile.Close(); err != nil {
-					log.Warn().
-						Err(err).
-						Str("file", tempFile.Name()).
-						Msg("Failed to close temporary scan buffer")
-				}
-				if err := os.Remove(tempFile.Name()); err != nil {
-					log.Warn().
-						Err(err).
-						Str("file", tempFile.Name()).
-						Msg("Failed to remove temporary scan buffer")
-				}
-			}
-		}
-		defer func() {
-			// Extra safety: ensure cleanup on any exit path
-			if tempFile != nil && cleanupFunc != nil {
-				cleanupFunc()
-			}
-		}()
-
-		// Set restrictive permissions on temp file (owner read/write only)
-		if err := os.Chmod(tempFile.Name(), 0600); err != nil {
-			cleanupFunc()
-			log.Error().
-				Err(err).
-				Msg("Failed to set permissions on temporary scan buffer")
-			return &ScanResult{
-				Status:       ScanStatusError,
-				ScanDuration: time.Since(start),
-			}, fmt.Errorf("failed to secure scan buffer: %w", err)
-		}
-
-		// Buffer the entire stream to temp file with size tracking and limit enforcement
-		// SECURITY: Use LimitReader to prevent memory exhaustion attacks
-		limitedReader := io.LimitReader(reader, s.config.MaxStreamSize+1) // +1 to detect oversized streams
-		bytesWritten, err := io.Copy(tempFile, limitedReader)
-		if err != nil {
-			cleanupFunc()
-			log.Error().
-				Err(err).
-				Int64("bytes_written", bytesWritten).
-				Int64("max_size", s.config.MaxStreamSize).
-				Msg("Failed to buffer stream for virus scanning")
-			// SECURITY: Fail closed - reject file if we can't buffer it completely
-			return &ScanResult{
-				Status:       ScanStatusError,
-				ScanDuration: time.Since(start),
-			}, fmt.Errorf("failed to buffer stream: %w", err)
-		}
-
-		// Check if stream exceeded size limit
-		if bytesWritten > s.config.MaxStreamSize {
-			cleanupFunc()
-			log.Error().
-				Int64("bytes_written", bytesWritten).
-				Int64("max_size", s.config.MaxStreamSize).
-				Msg("Stream exceeded maximum size limit for virus scanning")
-			// SECURITY: Reject oversized streams to prevent resource exhaustion
-			// Include phrase "exceeds maximum" to align with test expectations
-			return &ScanResult{
-					Status:       ScanStatusError,
-					ScanDuration: time.Since(start),
-				}, fmt.Errorf("stream too large for scanning: %d bytes exceeds maximum %d bytes",
-					bytesWritten, s.config.MaxStreamSize)
-		}
-
-		// Seek back to beginning for scanning
-		if _, err := tempFile.Seek(0, 0); err != nil {
-			cleanupFunc()
-			log.Error().
-				Err(err).
-				Msg("Failed to seek temporary scan buffer")
-			return &ScanResult{
-				Status:       ScanStatusError,
-				ScanDuration: time.Since(start),
-			}, fmt.Errorf("failed to prepare scan buffer: %w", err)
-		}
-
-		scanReader = tempFile
-
-		log.Debug().
-			Int64("bytes_buffered", bytesWritten).
-			Str("temp_file", tempFile.Name()).
-			Msg("Stream buffered for scanning")
+	// Prepare a seekable reader and cleanup for scanning
+	scanReader, cleanup, earlyResult, err := s.prepareScanReader(reader, start)
+	if cleanup != nil {
+		defer cleanup()
+	}
+	if err != nil {
+		return earlyResult, err
 	}
 
-	// Ensure cleanup happens
-	defer cleanupFunc()
-
-	// Perform scan with timeout
+	// Perform scan with timeout and retries
 	scanCtx, cancel := context.WithTimeout(ctx, s.config.Timeout)
 	defer cancel()
 
-	result := &ScanResult{}
+	response, bytesScanned, scanErr := s.scanStreamWithRetries(scanCtx, scanReader)
 
-	// Scan with retries - now safe because we can seek
-	var scanErr error
+	result := &ScanResult{
+		ScanDuration: time.Since(start),
+		BytesScanned: bytesScanned,
+	}
+
+	if scanErr != nil {
+		return s.handleStreamScanError(result, scanErr)
+	}
+
+	if err := s.applyStreamScanResponse(result, response); err != nil {
+		return result, err
+	}
+
+	return result, nil
+}
+
+// prepareScanReader ensures we have a seekable reader and a cleanup function.
+// It returns a non-nil ScanResult on error to preserve timing and status.
+func (s *VirusScanner) prepareScanReader(reader io.Reader, start time.Time) (io.ReadSeeker, func(), *ScanResult, error) {
+	// Reader already seekable
+	if seeker, ok := reader.(io.ReadSeeker); ok {
+		log.Debug().Msg("ScanStream: Using seekable reader directly")
+		return seeker, func() {}, nil, nil
+	}
+
+	// Buffer non-seekable reader to a secure temp file
+	log.Info().Msg("ScanStream: Buffering non-seekable stream for safe retry support")
+
+	tempFile, err := os.CreateTemp(s.config.TempDir, "virus-scan-*.tmp")
+	if err != nil {
+		log.Error().Err(err).Str("temp_dir", s.config.TempDir).Msg("Failed to create temporary buffer for virus scanning")
+		return nil, nil, &ScanResult{Status: ScanStatusError, ScanDuration: time.Since(start)}, fmt.Errorf("failed to create scan buffer: %w", err)
+	}
+
+	cleaned := false
+	cleanup := func() {
+		if tempFile != nil && !cleaned {
+			cleaned = true
+			if err := tempFile.Close(); err != nil {
+				log.Warn().Err(err).Str("file", tempFile.Name()).Msg("Failed to close temporary scan buffer")
+			}
+			if err := os.Remove(tempFile.Name()); err != nil {
+				log.Warn().Err(err).Str("file", tempFile.Name()).Msg("Failed to remove temporary scan buffer")
+			}
+		}
+	}
+
+	// Ensure permissions are restricted
+	if err := os.Chmod(tempFile.Name(), 0600); err != nil {
+		cleanup()
+		log.Error().Err(err).Msg("Failed to set permissions on temporary scan buffer")
+		return nil, nil, &ScanResult{Status: ScanStatusError, ScanDuration: time.Since(start)}, fmt.Errorf("failed to secure scan buffer: %w", err)
+	}
+
+	// Buffer stream with size limit enforcement
+	limitedReader := io.LimitReader(reader, s.config.MaxStreamSize+1) // +1 detects oversized streams
+	bytesWritten, err := io.Copy(tempFile, limitedReader)
+	if err != nil {
+		cleanup()
+		log.Error().Err(err).Int64("bytes_written", bytesWritten).Int64("max_size", s.config.MaxStreamSize).Msg("Failed to buffer stream for virus scanning")
+		return nil, nil, &ScanResult{Status: ScanStatusError, ScanDuration: time.Since(start)}, fmt.Errorf("failed to buffer stream: %w", err)
+	}
+
+	if bytesWritten > s.config.MaxStreamSize {
+		cleanup()
+		log.Error().Int64("bytes_written", bytesWritten).Int64("max_size", s.config.MaxStreamSize).Msg("Stream exceeded maximum size limit for virus scanning")
+		return nil, nil, &ScanResult{Status: ScanStatusError, ScanDuration: time.Since(start)}, fmt.Errorf("stream too large for scanning: %d bytes exceeds maximum %d bytes", bytesWritten, s.config.MaxStreamSize)
+	}
+
+	if _, err := tempFile.Seek(0, 0); err != nil {
+		cleanup()
+		log.Error().Err(err).Msg("Failed to seek temporary scan buffer")
+		return nil, nil, &ScanResult{Status: ScanStatusError, ScanDuration: time.Since(start)}, fmt.Errorf("failed to prepare scan buffer: %w", err)
+	}
+
+	log.Debug().Int64("bytes_buffered", bytesWritten).Str("temp_file", tempFile.Name()).Msg("Stream buffered for scanning")
+	return tempFile, cleanup, nil, nil
+}
+
+// scanStreamWithRetries performs the actual scan with retry support and returns the first response and bytes scanned.
+func (s *VirusScanner) scanStreamWithRetries(scanCtx context.Context, scanReader io.ReadSeeker) (*clamd.ScanResult, int64, error) {
 	var response *clamd.ScanResult
 	var totalBytesScanned int64
+	var scanErr error
 
 	for attempt := 0; attempt <= s.config.MaxRetries; attempt++ {
 		if attempt > 0 {
 			select {
 			case <-scanCtx.Done():
 				scanErr = scanCtx.Err()
-				log.Warn().
-					Err(scanErr).
-					Int("attempt", attempt).
-					Msg("Scan context cancelled during retry")
+				log.Warn().Err(scanErr).Int("attempt", attempt).Msg("Scan context cancelled during retry")
 				break
 			case <-time.After(s.config.RetryDelay):
 			}
 
-			// SECURITY CRITICAL: Reset reader position for retry
-			// This prevents the vulnerability where retries scan empty data
 			if _, err := scanReader.Seek(0, 0); err != nil {
 				scanErr = fmt.Errorf("failed to reset stream for retry: %w", err)
-				log.Error().
-					Err(err).
-					Int("attempt", attempt+1).
-					Msg("Cannot reset stream position for retry - aborting to prevent false-clean")
-				// SECURITY: Cannot retry safely, must fail
+				log.Error().Err(err).Int("attempt", attempt+1).Msg("Cannot reset stream position for retry - aborting to prevent false-clean")
 				break
 			}
-
-			log.Debug().
-				Int("attempt", attempt+1).
-				Msg("Stream position reset for retry")
+			log.Debug().Int("attempt", attempt+1).Msg("Stream position reset for retry")
 		}
 
-		// Track position before scan to measure bytes scanned
+		// Track bytes read during this attempt
 		startPos, _ := scanReader.Seek(0, io.SeekCurrent)
 
-		// Perform scan
 		responses, err := s.client.ScanStream(scanReader, make(chan bool))
 		if err != nil {
 			scanErr = err
 			endPos, _ := scanReader.Seek(0, io.SeekCurrent)
 			bytesRead := endPos - startPos
-
-			log.Warn().
-				Err(err).
-				Int("attempt", attempt+1).
-				Int("max_retries", s.config.MaxRetries).
-				Int64("bytes_read", bytesRead).
-				Msg("ClamAV stream scan attempt failed")
+			log.Warn().Err(err).Int("attempt", attempt+1).Int("max_retries", s.config.MaxRetries).Int64("bytes_read", bytesRead).Msg("ClamAV stream scan attempt failed")
 			continue
 		}
 
-		// Get first response
 		for resp := range responses {
 			response = resp
 			break
@@ -491,89 +430,68 @@ func (s *VirusScanner) ScanStream(ctx context.Context, reader io.Reader) (*ScanR
 			endPos, _ := scanReader.Seek(0, io.SeekCurrent)
 			totalBytesScanned = endPos - startPos
 			scanErr = nil
-
-			log.Debug().
-				Int("attempt", attempt+1).
-				Int64("bytes_scanned", totalBytesScanned).
-				Msg("Scan completed successfully")
+			log.Debug().Int("attempt", attempt+1).Int64("bytes_scanned", totalBytesScanned).Msg("Scan completed successfully")
 			break
 		}
 	}
 
-	result.ScanDuration = time.Since(start)
-	result.BytesScanned = totalBytesScanned
+	return response, totalBytesScanned, scanErr
+}
 
-	// Handle scan errors
-	if scanErr != nil {
-		log.Error().
-			Err(scanErr).
-			Int("retries", s.config.MaxRetries).
-			Dur("duration", result.ScanDuration).
-			Msg("ClamAV stream scan failed after all retries")
-
-		// Write security audit log for scan failure
-		if s.config.AuditLogPath != "" {
-			s.writeStreamScanFailureAudit(scanErr, s.config.MaxRetries)
-		}
-
-		// Apply fallback mode
-		switch s.config.FallbackMode {
-		case FallbackModeStrict:
-			// SECURITY: Default to rejecting file on scan failure
-			result.Status = ScanStatusError
-			return result, fmt.Errorf("virus scan failed (strict mode): %w", scanErr)
-		case FallbackModeWarn:
-			result.Status = ScanStatusWarning
-			result.FallbackUsed = true
-			log.Warn().
-				Msg("ClamAV unavailable, allowing stream with warning (NOT RECOMMENDED)")
-			return result, nil
-		case FallbackModeAllow:
-			// SECURITY WARNING: This mode is dangerous and should not be used in production
-			result.Status = ScanStatusClean
-			result.FallbackUsed = true
-			log.Error().
-				Msg("SECURITY WARNING: Allowing unscanned stream due to FallbackModeAllow")
-			return result, nil
-		}
+// handleStreamScanError applies fallback logic and returns the final result and error according to configuration.
+func (s *VirusScanner) handleStreamScanError(result *ScanResult, scanErr error) (*ScanResult, error) {
+	log.Error().Err(scanErr).Int("retries", s.config.MaxRetries).Dur("duration", result.ScanDuration).Msg("ClamAV stream scan failed after all retries")
+	if s.config.AuditLogPath != "" {
+		s.writeStreamScanFailureAudit(scanErr, s.config.MaxRetries)
 	}
 
-	// Process scan result
+	switch s.config.FallbackMode {
+	case FallbackModeStrict:
+		result.Status = ScanStatusError
+		return result, fmt.Errorf("virus scan failed (strict mode): %w", scanErr)
+	case FallbackModeWarn:
+		result.Status = ScanStatusWarning
+		result.FallbackUsed = true
+		log.Warn().Msg("ClamAV unavailable, allowing stream with warning (NOT RECOMMENDED)")
+		return result, nil
+	case FallbackModeAllow:
+		result.Status = ScanStatusClean
+		result.FallbackUsed = true
+		log.Error().Msg("SECURITY WARNING: Allowing unscanned stream due to FallbackModeAllow")
+		return result, nil
+	default:
+		// Default to strict if misconfigured
+		result.Status = ScanStatusError
+		return result, fmt.Errorf("virus scan failed: %w", scanErr)
+	}
+}
+
+// applyStreamScanResponse maps the ClamAV response to our ScanResult and handles auditing.
+func (s *VirusScanner) applyStreamScanResponse(result *ScanResult, response *clamd.ScanResult) error {
 	if response == nil {
 		result.Status = ScanStatusError
-		log.Error().
-			Msg("No scan response received - possible ClamAV communication error")
-		return result, fmt.Errorf("no scan response received")
+		log.Error().Msg("No scan response received - possible ClamAV communication error")
+		return fmt.Errorf("no scan response received")
 	}
 
 	switch response.Status {
 	case clamd.RES_OK:
 		result.Status = ScanStatusClean
-		log.Debug().
-			Dur("duration", result.ScanDuration).
-			Int64("bytes_scanned", result.BytesScanned).
-			Msg("Stream scanned: clean")
+		log.Debug().Dur("duration", result.ScanDuration).Int64("bytes_scanned", result.BytesScanned).Msg("Stream scanned: clean")
+		return nil
 	case clamd.RES_FOUND:
 		result.Status = ScanStatusInfected
 		result.VirusName = response.Description
-		log.Warn().
-			Str("virus", result.VirusName).
-			Int64("bytes_scanned", result.BytesScanned).
-			Msg("VIRUS DETECTED in stream")
-
-		// Write security audit log for detected virus
+		log.Warn().Str("virus", result.VirusName).Int64("bytes_scanned", result.BytesScanned).Msg("VIRUS DETECTED in stream")
 		if s.config.AuditLogPath != "" {
 			s.writeStreamVirusDetectedAudit(result.VirusName)
 		}
+		return nil
 	default:
 		result.Status = ScanStatusError
-		log.Error().
-			Str("status", response.Status).
-			Msg("Unexpected scan status from ClamAV")
-		return result, fmt.Errorf("unexpected scan status: %s", response.Status)
+		log.Error().Str("status", response.Status).Msg("Unexpected scan status from ClamAV")
+		return fmt.Errorf("unexpected scan status: %s", response.Status)
 	}
-
-	return result, nil
 }
 
 // ScanAndQuarantine scans a file and quarantines it if infected

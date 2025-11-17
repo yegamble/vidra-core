@@ -13,11 +13,13 @@ import (
 	"github.com/google/uuid"
 )
 
-type contextKey string
+// ctxKey is an unexported context key type for auth middleware
+// Renamed from contextKey to avoid conflicts with test helpers
+type ctxKey string
 
 const (
-	UserIDKey   contextKey = "userID"
-	UserRoleKey contextKey = "userRole"
+	UserIDKey   ctxKey = "userID"
+	UserRoleKey ctxKey = "userRole"
 )
 
 func Auth(jwtSecret string) func(http.Handler) http.Handler {
