@@ -55,6 +55,11 @@ jobs:
           cd tests/e2e
           make fixtures
 
+      - name: Cleanup previous test environment
+        run: |
+          cd tests/e2e
+          docker compose down -v 2>/dev/null || true
+
       - name: Start test environment
         run: |
           cd tests/e2e
@@ -171,6 +176,11 @@ jobs:
         run: |
           cd tests/e2e
           make fixtures
+
+      - name: Cleanup previous test environment
+        run: |
+          cd tests/e2e
+          docker compose down -v 2>/dev/null || true
 
       - name: Start test environment
         run: |
