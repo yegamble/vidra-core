@@ -41,13 +41,14 @@ func NewService(
 	repo port.ActivityPubRepository,
 	userRepo port.UserRepository,
 	videoRepo port.VideoRepository,
+	commentRepo port.CommentRepository,
 	cfg *config.Config,
 ) *Service {
 	return &Service{
 		repo:         repo,
 		userRepo:     userRepo,
 		videoRepo:    videoRepo,
-		commentRepo:  nil, // Will be set later when comment repository is available
+		commentRepo:  commentRepo,
 		cfg:          cfg,
 		httpClient:   &http.Client{Timeout: 30 * time.Second},
 		sigVerifier:  activitypub.NewHTTPSignatureVerifier(),
@@ -1216,13 +1217,13 @@ func (s *Service) BuildVideoObject(ctx context.Context, video *domain.Video) (*d
 
 	// Build VideoObject
 	videoObj := &domain.VideoObject{
-		Context:  []interface{}{domain.ActivityStreamsContext, domain.PeerTubeContext},
-		Type:     domain.ObjectTypeVideo,
-		ID:       videoID,
-		Name:     video.Title,
-		UUID:     video.ID,
-		Published: &video.CreatedAt,
-		Updated:  &video.UpdatedAt,
+		Context:      []interface{}{domain.ActivityStreamsContext, domain.PeerTubeContext},
+		Type:         domain.ObjectTypeVideo,
+		ID:           videoID,
+		Name:         video.Title,
+		UUID:         video.ID,
+		Published:    &video.CreatedAt,
+		Updated:      &video.UpdatedAt,
 		AttributedTo: []string{actorID},
 	}
 

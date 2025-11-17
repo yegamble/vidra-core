@@ -27,6 +27,7 @@ import (
 	"athena/internal/repository"
 	"athena/internal/scheduler"
 	"athena/internal/usecase"
+	ucactivitypub "athena/internal/usecase/activitypub"
 	ucchannel "athena/internal/usecase/channel"
 	uccmt "athena/internal/usecase/comment"
 	ucenc "athena/internal/usecase/encoding"
@@ -93,6 +94,7 @@ type Dependencies struct {
 	RatingService        *ucrt.Service
 	PlaylistService      *usecase.PlaylistService
 	CaptionService       *usecase.CaptionService
+	ActivityPubService   *ucactivitypub.Service
 	AtprotoService       usecase.AtprotoPublisher
 	FederationService    usecase.FederationService
 	HardeningService     *usecase.FederationHardeningService
@@ -234,6 +236,7 @@ func (app *Application) initializeDependencies() *Dependencies {
 		ModerationRepo:    repository.NewModerationRepository(app.DB),
 		FederationRepo:    repository.NewFederationRepository(app.DB),
 		HardeningRepo:     repository.NewFederationHardeningRepository(app.DB),
+		ImportRepo:        repository.NewImportRepository(app.DB),
 		LiveStreamRepo:    repository.NewLiveStreamRepository(app.DB),
 		StreamKeyRepo:     repository.NewStreamKeyRepository(app.DB),
 		ViewerSessionRepo: repository.NewViewerSessionRepository(app.DB),
@@ -300,6 +303,18 @@ func (app *Application) initializeDependencies() *Dependencies {
 
 	deps.HardeningService = usecase.NewFederationHardeningService(deps.HardeningRepo, deps.FederationService, app.Config)
 	_ = deps.HardeningService.Initialize(context.Background())
+
+	// Initialize ActivityPub service if enabled
+	if app.Config.EnableActivityPub {
+		activityPubRepo := repository.NewActivityPubRepository(app.DB)
+		deps.ActivityPubService = ucactivitypub.NewService(
+			activityPubRepo,
+			deps.UserRepo,
+			deps.VideoRepo,
+			deps.CommentRepo,
+			app.Config,
+		)
+	}
 
 	// Initialize IPFS streaming service
 	deps.IPFSStreamingService = ucipfs.NewService(app.Config)

@@ -68,18 +68,18 @@ type Video struct {
 	Channel       *Channel          `json:"channel,omitempty" db:"-"`
 	Language      string            `json:"language" db:"language"`
 	FileSize      int64             `json:"file_size" db:"file_size"`
-	MimeType              string            `json:"mime_type" db:"mime_type"`
-	Metadata              VideoMetadata     `json:"metadata" db:"metadata"`
+	MimeType      string            `json:"mime_type" db:"mime_type"`
+	Metadata      VideoMetadata     `json:"metadata" db:"metadata"`
 	// Remote video fields (for federated videos from other instances)
-	IsRemote              bool       `json:"is_remote" db:"is_remote"`
-	RemoteURI             *string    `json:"remote_uri,omitempty" db:"remote_uri"`
-	RemoteActorURI        *string    `json:"remote_actor_uri,omitempty" db:"remote_actor_uri"`
-	RemoteVideoURL        *string    `json:"remote_video_url,omitempty" db:"remote_video_url"`
-	RemoteInstanceDomain  *string    `json:"remote_instance_domain,omitempty" db:"remote_instance_domain"`
-	RemoteThumbnailURL    *string    `json:"remote_thumbnail_url,omitempty" db:"remote_thumbnail_url"`
-	RemoteLastSyncedAt    *time.Time `json:"remote_last_synced_at,omitempty" db:"remote_last_synced_at"`
-	CreatedAt             time.Time  `json:"created_at" db:"created_at"`
-	UpdatedAt             time.Time  `json:"updated_at" db:"updated_at"`
+	IsRemote             bool       `json:"is_remote" db:"is_remote"`
+	RemoteURI            *string    `json:"remote_uri,omitempty" db:"remote_uri"`
+	RemoteActorURI       *string    `json:"remote_actor_uri,omitempty" db:"remote_actor_uri"`
+	RemoteVideoURL       *string    `json:"remote_video_url,omitempty" db:"remote_video_url"`
+	RemoteInstanceDomain *string    `json:"remote_instance_domain,omitempty" db:"remote_instance_domain"`
+	RemoteThumbnailURL   *string    `json:"remote_thumbnail_url,omitempty" db:"remote_thumbnail_url"`
+	RemoteLastSyncedAt   *time.Time `json:"remote_last_synced_at,omitempty" db:"remote_last_synced_at"`
+	CreatedAt            time.Time  `json:"created_at" db:"created_at"`
+	UpdatedAt            time.Time  `json:"updated_at" db:"updated_at"`
 }
 
 type VideoMetadata struct {
