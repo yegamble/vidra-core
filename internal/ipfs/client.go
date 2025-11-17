@@ -66,6 +66,17 @@ func NewClientWithAuth(apiURL, clusterAPIURL string, timeout time.Duration, auth
 
 	// Create authenticated cluster client if auth is provided
 	if auth != nil {
+		// SECURITY: Enforce HTTPS when Bearer token authentication is used
+		if auth.Token != "" && strings.HasPrefix(effectiveClusterURL, "http://") {
+			// This is a critical security issue - fail immediately
+			// Bearer tokens MUST NOT be transmitted over unencrypted HTTP
+			client.clusterClient = &http.Client{Timeout: timeout}
+			client.clusterAuth = nil
+			client.clusterEnabled = false
+			// In production, this would log a critical security error
+			return client
+		}
+
 		if err := auth.Validate(); err != nil {
 			// Log validation error but continue with default client
 			// In production, this would use the logger
@@ -79,12 +90,6 @@ func NewClientWithAuth(apiURL, clusterAPIURL string, timeout time.Duration, auth
 				authClient.Timeout = timeout
 				client.clusterClient = authClient
 			}
-		}
-
-		// Warn if using auth over HTTP (security issue)
-		if auth.Token != "" && strings.HasPrefix(clusterAPIURL, "http://") {
-			// In production, this would use the logger
-			// For now, we just continue - the warning is implicit
 		}
 	} else {
 		client.clusterClient = &http.Client{Timeout: timeout}

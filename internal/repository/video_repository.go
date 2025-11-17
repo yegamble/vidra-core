@@ -16,12 +16,16 @@ import (
 
 type videoRepository struct {
 	db            *sqlx.DB
+	tm            *TransactionManager
 	hasChannelID  bool
 	checkedSchema bool
 }
 
 func NewVideoRepository(db *sqlx.DB) usecase.VideoRepository {
-	return &videoRepository{db: db}
+	return &videoRepository{
+		db: db,
+		tm: NewTransactionManager(db),
+	}
 }
 
 // ensureSchemaChecked detects whether the current schema has a channel_id column
@@ -77,6 +81,9 @@ func scanVideoRow(rows *sql.Rows) (*domain.Video, error) {
 }
 
 func (r *videoRepository) Create(ctx context.Context, v *domain.Video) error {
+	// Get executor (either transaction from context or DB)
+	exec := GetExecutor(ctx, r.db)
+
 	// Detect schema and choose compatible insert
 	r.ensureSchemaChecked(ctx)
 
@@ -138,7 +145,7 @@ func (r *videoRepository) Create(ctx context.Context, v *domain.Video) error {
 
 	var err error
 	if r.hasChannelID {
-		_, err = r.db.ExecContext(ctx, query,
+		_, err = exec.ExecContext(ctx, query,
 			v.ID, v.ThumbnailID, v.Title, v.Description, v.Duration, v.Views,
 			v.Privacy, v.Status, v.UploadDate, v.UserID,
 			channelIDParam,
@@ -148,7 +155,7 @@ func (r *videoRepository) Create(ctx context.Context, v *domain.Video) error {
 			outputPathsJSON, v.ThumbnailPath, v.PreviewPath,
 		)
 	} else {
-		_, err = r.db.ExecContext(ctx, query,
+		_, err = exec.ExecContext(ctx, query,
 			v.ID, v.ThumbnailID, v.Title, v.Description, v.Duration, v.Views,
 			v.Privacy, v.Status, v.UploadDate, v.UserID,
 			v.OriginalCID, processedCIDsJSON, v.ThumbnailCID,
@@ -333,6 +340,9 @@ func (r *videoRepository) GetByUserID(ctx context.Context, userID string, limit,
 }
 
 func (r *videoRepository) Update(ctx context.Context, v *domain.Video) error {
+	// Get executor (either transaction from context or DB)
+	exec := GetExecutor(ctx, r.db)
+
 	// Marshal S3 URLs, ensuring we use empty object instead of null for nil maps
 	var s3URLsJSON []byte
 	var err error
@@ -355,7 +365,7 @@ func (r *videoRepository) Update(ctx context.Context, v *domain.Video) error {
             s3_migrated_at = $13, local_deleted = $14
         WHERE id = $1 AND user_id = $10`
 
-	result, err := r.db.ExecContext(ctx, query,
+	result, err := exec.ExecContext(ctx, query,
 		v.ID, v.Title, v.Description, v.Privacy,
 		pq.Array(v.Tags), v.CategoryID, v.Language,
 		v.Status, v.UpdatedAt, v.UserID,
@@ -377,9 +387,12 @@ func (r *videoRepository) Update(ctx context.Context, v *domain.Video) error {
 }
 
 func (r *videoRepository) Delete(ctx context.Context, id string, userID string) error {
+	// Get executor (either transaction from context or DB)
+	exec := GetExecutor(ctx, r.db)
+
 	query := `DELETE FROM videos WHERE id = $1 AND user_id = $2`
 
-	result, err := r.db.ExecContext(ctx, query, id, userID)
+	result, err := exec.ExecContext(ctx, query, id, userID)
 	if err != nil {
 		return domain.NewDomainError("DELETE_FAILED", "Failed to delete video")
 	}

@@ -14,43 +14,54 @@ import (
 
 type userRepository struct {
 	db *sqlx.DB
+	tm *TransactionManager
 }
 
 func NewUserRepository(db *sqlx.DB) usecase.UserRepository {
-	return &userRepository{db: db}
+	return &userRepository{
+		db: db,
+		tm: NewTransactionManager(db),
+	}
 }
 
 func (r *userRepository) Create(ctx context.Context, user *domain.User, passwordHash string) error {
-	// Insert user record (avatar stored in user_avatars separately)
-	query := `
-        INSERT INTO users (id, username, email, display_name, bio, bitcoin_wallet, role, password_hash, is_active, created_at, updated_at)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`
+	// Use transaction for atomic user + channel creation
+	return r.tm.WithTransaction(ctx, nil, func(tx *sqlx.Tx) error {
+		// Insert user record (avatar stored in user_avatars separately)
+		query := `
+            INSERT INTO users (id, username, email, display_name, bio, bitcoin_wallet, role, password_hash, is_active, created_at, updated_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`
 
-	_, err := r.db.ExecContext(ctx, query,
-		user.ID, user.Username, user.Email, user.DisplayName, user.Bio, user.BitcoinWallet,
-		user.Role, passwordHash, user.IsActive, user.CreatedAt, user.UpdatedAt)
+		_, err := tx.ExecContext(ctx, query,
+			user.ID, user.Username, user.Email, user.DisplayName, user.Bio, user.BitcoinWallet,
+			user.Role, passwordHash, user.IsActive, user.CreatedAt, user.UpdatedAt)
 
-	if err != nil {
-		return fmt.Errorf("failed to create user: %w", err)
-	}
+		if err != nil {
+			return fmt.Errorf("failed to create user: %w", err)
+		}
 
-	// If channels table exists in this schema, ensure a default channel for the user.
-	// This guards tests that use a legacy schema without channels.
-	var channelsExist bool
-	const q = `SELECT EXISTS (
-        SELECT 1 FROM information_schema.tables
-        WHERE table_schema = current_schema()
-          AND table_name = 'channels'
-    )`
-	if err := r.db.QueryRowContext(ctx, q).Scan(&channelsExist); err == nil && channelsExist {
-		_, _ = r.db.ExecContext(ctx, `
-            INSERT INTO channels (account_id, handle, display_name, description)
-            SELECT $1::uuid, $2, COALESCE(NULLIF($3, ''), $2), $4
-            WHERE NOT EXISTS (SELECT 1 FROM channels WHERE account_id = $1::uuid)
-        `, user.ID, user.Username, user.DisplayName, user.Bio)
-	}
+		// If channels table exists in this schema, ensure a default channel for the user.
+		// This guards tests that use a legacy schema without channels.
+		var channelsExist bool
+		const q = `SELECT EXISTS (
+            SELECT 1 FROM information_schema.tables
+            WHERE table_schema = current_schema()
+              AND table_name = 'channels'
+        )`
+		if err := tx.QueryRowContext(ctx, q).Scan(&channelsExist); err == nil && channelsExist {
+			_, err = tx.ExecContext(ctx, `
+                INSERT INTO channels (account_id, handle, display_name, description)
+                SELECT $1::uuid, $2, COALESCE(NULLIF($3, ''), $2), $4
+                WHERE NOT EXISTS (SELECT 1 FROM channels WHERE account_id = $1::uuid)
+            `, user.ID, user.Username, user.DisplayName, user.Bio)
 
-	return nil
+			if err != nil {
+				return fmt.Errorf("failed to create default channel: %w", err)
+			}
+		}
+
+		return nil
+	})
 }
 
 const selectUserWithAvatar = `
@@ -140,6 +151,9 @@ func (r *userRepository) GetByUsername(ctx context.Context, username string) (*d
 }
 
 func (r *userRepository) Update(ctx context.Context, user *domain.User) error {
+	// Get executor (either transaction from context or DB)
+	exec := GetExecutor(ctx, r.db)
+
 	// Update base user fields (avatar handled in user_avatars separately)
 	query := `
         UPDATE users
@@ -154,7 +168,7 @@ func (r *userRepository) Update(ctx context.Context, user *domain.User) error {
 		twoFAConfirmedAt = user.TwoFAConfirmedAt.Time
 	}
 
-	result, err := r.db.ExecContext(ctx, query,
+	result, err := exec.ExecContext(ctx, query,
 		user.ID, user.Username, user.Email, user.DisplayName, user.Bio, user.BitcoinWallet,
 		user.Role, user.IsActive,
 		user.TwoFAEnabled, user.TwoFASecret, twoFAConfirmedAt,
@@ -177,9 +191,12 @@ func (r *userRepository) Update(ctx context.Context, user *domain.User) error {
 }
 
 func (r *userRepository) Delete(ctx context.Context, id string) error {
+	// Get executor (either transaction from context or DB)
+	exec := GetExecutor(ctx, r.db)
+
 	query := `DELETE FROM users WHERE id = $1`
 
-	result, err := r.db.ExecContext(ctx, query, id)
+	result, err := exec.ExecContext(ctx, query, id)
 	if err != nil {
 		return fmt.Errorf("failed to delete user: %w", err)
 	}

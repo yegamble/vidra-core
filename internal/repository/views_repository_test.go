@@ -40,8 +40,8 @@ func TestViewsRepository_CreateUserView(t *testing.T) {
 		QualityChanges:       1,
 		InitialLoadTime:      intPtr(1500),
 		BufferEvents:         0,
-		ConnectionType:       stringPtr("wifi"),
-		VideoQuality:         stringPtr("720p"),
+		ConnectionType:       stringPtrForViews("wifi"),
+		VideoQuality:         stringPtrForViews("720p"),
 		DeviceType:           "mobile",
 		OSName:               "iOS",
 		BrowserName:          "Safari",
@@ -58,7 +58,7 @@ func TestViewsRepository_CreateUserView(t *testing.T) {
 		UTMCampaign:          "summer2024",
 		IsAnonymous:          false,
 		TrackingConsent:      true,
-		GDPRConsent:          boolPtr(true),
+		GDPRConsent:          boolPtrForViews(true),
 		ViewDate:             now.Truncate(24 * time.Hour),
 		ViewHour:             now.Hour(),
 		Weekday:              int(now.Weekday()),
@@ -588,10 +588,10 @@ func intPtr(i int) *int {
 	return &i
 }
 
-func stringPtr(s string) *string {
+func stringPtrForViews(s string) *string {
 	return &s
 }
 
-func boolPtr(b bool) *bool {
+func boolPtrForViews(b bool) *bool {
 	return &b
 }

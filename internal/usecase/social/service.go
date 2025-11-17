@@ -12,6 +12,7 @@ import (
 
 	"athena/internal/config"
 	"athena/internal/domain"
+	"athena/internal/security"
 )
 
 // SocialRepository defines the interface for social data persistence
@@ -48,11 +49,12 @@ type AtprotoPublisher interface {
 
 // Service handles ATProto social interactions
 type Service struct {
-	cfg        *config.Config
-	socialRepo SocialRepository
-	atproto    AtprotoPublisher
-	client     *http.Client
-	encKey     []byte
+	cfg          *config.Config
+	socialRepo   SocialRepository
+	atproto      AtprotoPublisher
+	client       *http.Client
+	encKey       []byte
+	urlValidator *security.URLValidator
 }
 
 // NewService creates a new social service instance
@@ -63,11 +65,12 @@ func NewService(
 	encKey []byte,
 ) *Service {
 	return &Service{
-		cfg:        cfg,
-		socialRepo: socialRepo,
-		atproto:    atproto,
-		client:     &http.Client{Timeout: 10 * time.Second},
-		encKey:     encKey,
+		cfg:          cfg,
+		socialRepo:   socialRepo,
+		atproto:      atproto,
+		client:       &http.Client{Timeout: 10 * time.Second},
+		encKey:       encKey,
+		urlValidator: security.NewURLValidator(),
 	}
 }
 
@@ -487,6 +490,11 @@ func (s *Service) resolveActor(ctx context.Context, handle string) (*domain.ATPr
 	pds := strings.TrimRight(s.cfg.ATProtoPDSURL, "/")
 	url := fmt.Sprintf("%s/xrpc/com.atproto.identity.resolveHandle?handle=%s", pds, handle)
 
+	// SSRF Protection: Validate PDS URL before making request
+	if err := s.urlValidator.ValidateURL(url); err != nil {
+		return nil, fmt.Errorf("invalid or unsafe PDS URL: %w", err)
+	}
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
@@ -516,6 +524,11 @@ func (s *Service) resolveActor(ctx context.Context, handle string) (*domain.ATPr
 func (s *Service) getProfile(ctx context.Context, did string) (*domain.ATProtoActor, error) {
 	pds := strings.TrimRight(s.cfg.ATProtoPDSURL, "/")
 	url := fmt.Sprintf("%s/xrpc/app.bsky.actor.getProfile?actor=%s", pds, did)
+
+	// SSRF Protection: Validate PDS URL before making request
+	if err := s.urlValidator.ValidateURL(url); err != nil {
+		return nil, fmt.Errorf("invalid or unsafe PDS URL: %w", err)
+	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
@@ -666,6 +679,11 @@ func (s *Service) getActorFeed(ctx context.Context, did string, limit int) (map[
 	}
 
 	url := fmt.Sprintf("%s/xrpc/app.bsky.feed.getAuthorFeed?actor=%s&limit=%d", pds, did, limit)
+
+	// SSRF Protection: Validate PDS URL before making request
+	if err := s.urlValidator.ValidateURL(url); err != nil {
+		return nil, fmt.Errorf("invalid or unsafe PDS URL: %w", err)
+	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
