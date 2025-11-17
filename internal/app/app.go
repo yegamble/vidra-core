@@ -23,6 +23,7 @@ import (
 	"athena/internal/livestream"
 	"athena/internal/metrics"
 	"athena/internal/middleware"
+	"athena/internal/payments"
 	"athena/internal/repository"
 	"athena/internal/scheduler"
 	"athena/internal/usecase"
@@ -31,6 +32,7 @@ import (
 	ucenc "athena/internal/usecase/encoding"
 	ucipfs "athena/internal/usecase/ipfs_streaming"
 	ucn "athena/internal/usecase/notification"
+	ucpayments "athena/internal/usecase/payments"
 	ucrt "athena/internal/usecase/rating"
 	ucup "athena/internal/usecase/upload"
 	ucviews "athena/internal/usecase/views"
@@ -80,6 +82,7 @@ type Dependencies struct {
 	LiveStreamRepo    repository.LiveStreamRepository
 	StreamKeyRepo     repository.StreamKeyRepository
 	ViewerSessionRepo repository.ViewerSessionRepository
+	IOTARepo          *repository.IOTARepository
 
 	UploadService        ucup.Service
 	MessageService       *usecase.MessageService
@@ -95,6 +98,7 @@ type Dependencies struct {
 	HardeningService     *usecase.FederationHardeningService
 	EncodingService      ucenc.Service
 	ImportService        any // ucimport.Service
+	PaymentService       *ucpayments.PaymentService
 	StreamManager        *livestream.StreamManager
 	IPFSStreamingService *ucipfs.Service
 	IPFSClient           *ipfs.Client
@@ -235,6 +239,11 @@ func (app *Application) initializeDependencies() *Dependencies {
 		ViewerSessionRepo: repository.NewViewerSessionRepository(app.DB),
 	}
 
+	// Initialize IOTA repository if enabled
+	if app.Config.EnableIOTA {
+		deps.IOTARepo = repository.NewIOTARepository(app.DB)
+	}
+
 	redisSessionRepo := repository.NewRedisSessionRepository(app.Redis)
 	deps.SessionRepo = repository.NewCompositeAuthRepository(deps.AuthRepo, redisSessionRepo)
 
@@ -343,6 +352,44 @@ func (app *Application) initializeDependencies() *Dependencies {
 	// Wire up import service dependencies
 	app.WireImportDependencies(deps)
 
+	// Initialize Payment Service if IOTA is enabled
+	if app.Config.EnableIOTA && deps.IOTARepo != nil {
+		// Create IOTA client
+		iotaClient := payments.NewIOTAClient(app.Config.IOTANodeURL)
+
+		// Parse encryption key if provided
+		var encKey []byte
+		if app.Config.IOTAWalletEncryptionKey != "" {
+			if k, err := repository.DecodeTokenKey(app.Config.IOTAWalletEncryptionKey); err == nil {
+				encKey = k
+			} else {
+				log.Printf("Warning: Failed to decode IOTA wallet encryption key, using default")
+				// Use a default key derived from JWT secret as fallback
+				encKey = []byte(app.Config.JWTSecret)[:32] // Take first 32 bytes for AES-256
+			}
+		} else {
+			// Use JWT secret as default encryption key
+			encKey = []byte(app.Config.JWTSecret)
+			if len(encKey) > 32 {
+				encKey = encKey[:32] // Ensure it's 32 bytes for AES-256
+			} else if len(encKey) < 32 {
+				// Pad with zeros if too short
+				padded := make([]byte, 32)
+				copy(padded, encKey)
+				encKey = padded
+			}
+		}
+
+		// Create payment service
+		deps.PaymentService = ucpayments.NewPaymentService(
+			deps.IOTARepo,
+			iotaClient,
+			encKey,
+		)
+
+		log.Println("IOTA payment service initialized")
+	}
+
 	return deps
 }
 
@@ -406,6 +453,7 @@ func (app *Application) registerRoutes(deps *Dependencies) {
 		HardeningService:     deps.HardeningService,
 		EncodingService:      deps.EncodingService,
 		ImportService:        deps.ImportService,
+		PaymentService:       deps.PaymentService,
 		StreamManager:        deps.StreamManager,
 		HLSTranscoder:        app.hlsTranscoder,
 		IPFSStreamingService: deps.IPFSStreamingService,

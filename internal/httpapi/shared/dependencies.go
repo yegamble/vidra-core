@@ -5,6 +5,7 @@ import (
 
 	redis "github.com/redis/go-redis/v9"
 
+	"athena/internal/httpapi/handlers/payments"
 	"athena/internal/livestream"
 	"athena/internal/port"
 	"athena/internal/repository"
@@ -57,7 +58,7 @@ type HandlerDependencies struct {
 	PlaylistService      *usecase.PlaylistService
 	CaptionService       *usecase.CaptionService
 	TwoFAService         *usecase.TwoFAService
-	PaymentService       any // Payment service for IOTA payments (optional)
+	PaymentService       payments.PaymentService // Payment service for IOTA payments (optional)
 	AtprotoService       usecase.AtprotoPublisher
 	FederationService    usecase.FederationService
 	HardeningService     *usecase.FederationHardeningService
