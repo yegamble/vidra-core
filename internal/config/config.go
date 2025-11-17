@@ -317,9 +317,12 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("REDIS_URL is required")
 	}
 
+	// Load RequireIPFS flag first to determine if IPFS_API is required
+	cfg.RequireIPFS = getBoolEnv("REQUIRE_IPFS", true)
+
 	cfg.IPFSApi = getEnvOrDefault("IPFS_API", "")
-	if cfg.IPFSApi == "" {
-		return nil, fmt.Errorf("IPFS_API is required")
+	if cfg.RequireIPFS && cfg.IPFSApi == "" {
+		return nil, fmt.Errorf("IPFS_API is required when REQUIRE_IPFS=true")
 	}
 
 	cfg.IPFSCluster = getEnvOrDefault("IPFS_CLUSTER_API", "")
@@ -394,7 +397,7 @@ func Load() (*Config, error) {
 	cfg.DBPingTimeout = getIntEnv("DB_PING_TIMEOUT", 5)
 	cfg.RedisPingTimeout = getIntEnv("REDIS_PING_TIMEOUT", 3)
 	cfg.IPFSPingTimeout = getIntEnv("IPFS_PING_TIMEOUT", 10)
-	cfg.RequireIPFS = getBoolEnv("REQUIRE_IPFS", true)
+	// cfg.RequireIPFS is now loaded earlier (line 321) to determine if IPFS_API is required
 
 	// Video Processing Configuration
 	cfg.VideoQualities = getStringSliceEnv("VIDEO_QUALITIES", []string{"360p", "480p", "720p", "1080p"})
