@@ -46,7 +46,7 @@ jobs:
           filters: |
             docker:
               - 'Dockerfile'
-              - 'docker-compose*.yml'
+              - 'docker compose*.yml'
               - 'scripts/**'
               - '.github/workflows/**'
 
@@ -409,10 +409,10 @@ jobs:
           cache-to: type=gha,mode=max
       - name: Test Docker Compose
         run: |
-          docker compose -f docker-compose.test.yml up -d
+          docker compose -f docker compose.test.yml up -d
           sleep 10
-          docker compose -f docker-compose.test.yml ps
-          docker compose -f docker-compose.test.yml down -v
+          docker compose -f docker compose.test.yml ps
+          docker compose -f docker compose.test.yml down -v
 
   postman-e2e:
     name: Postman E2E Tests
@@ -459,12 +459,12 @@ jobs:
           name: newman-results-e2e
           path: postman/newman-results.xml
 
-      - name: Collect docker-compose logs
+      - name: Collect docker compose logs
         if: failure()
         run: |
           set -e
           mkdir -p artifacts
-          COMPOSE_PROJECT_NAME=athena-test docker compose -f docker-compose.test.yml logs --no-color > artifacts/compose-logs.txt || true
+          COMPOSE_PROJECT_NAME=athena-test docker compose -f docker compose.test.yml logs --no-color > artifacts/compose-logs.txt || true
 
       - name: Upload compose logs
         if: failure()

@@ -17,7 +17,7 @@ jobs:
     timeout-minutes: 45
 
     # Note: Docker Compose is used instead of GH services for better control
-    # Services are defined in tests/e2e/docker-compose.yml
+    # Services are defined in tests/e2e/docker compose.yml
 
     steps:
       - name: Checkout code
@@ -58,7 +58,7 @@ jobs:
       - name: Start test environment
         run: |
           cd tests/e2e
-          docker-compose up -d
+          docker compose up -d
 
       - name: Wait for services to be ready
         run: |
@@ -72,8 +72,8 @@ jobs:
       - name: Check service health
         run: |
           cd tests/e2e
-          docker-compose ps
-          docker-compose logs --tail=50
+          docker compose ps
+          docker compose logs --tail=50
 
       - name: Run E2E tests
         env:
@@ -96,13 +96,13 @@ jobs:
         run: |
           cd tests/e2e
           echo "=== API Logs ==="
-          docker-compose logs athena-api-e2e
+          docker compose logs athena-api-e2e
           echo "=== PostgreSQL Logs ==="
-          docker-compose logs postgres-e2e
+          docker compose logs postgres-e2e
           echo "=== Redis Logs ==="
-          docker-compose logs redis-e2e
+          docker compose logs redis-e2e
           echo "=== MinIO Logs ==="
-          docker-compose logs minio-e2e
+          docker compose logs minio-e2e
 
       - name: Upload service logs
         if: failure()
@@ -117,7 +117,7 @@ jobs:
         if: always()
         run: |
           cd tests/e2e
-          docker-compose down -v
+          docker compose down -v
 
       - name: Report test summary
         if: always()
@@ -175,7 +175,7 @@ jobs:
       - name: Start test environment
         run: |
           cd tests/e2e
-          docker-compose up -d
+          docker compose up -d
 
       - name: Wait for services
         run: |
@@ -193,4 +193,4 @@ jobs:
         if: always()
         run: |
           cd tests/e2e
-          docker-compose down -v
+          docker compose down -v

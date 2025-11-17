@@ -210,7 +210,7 @@ logs: ## Tail app logs
 	JWT_SECRET="test-jwt-secret" \
 	IPFS_API="http://localhost:5001" \
 	sh -lc 'go test -v -race ./internal/repository && go test -v -race ./internal/httpapi -run Integration'
-	docker-compose -f docker-compose.test.yml down -v
+	$(DOCKER_COMPOSE) -f docker-compose.test.yml down -v
 
 build: ## Build the server binary
 	go build -o bin/athena-server ./cmd/server
