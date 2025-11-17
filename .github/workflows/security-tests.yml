@@ -17,7 +17,7 @@ permissions:
 jobs:
   ssrf-protection-tests:
     name: SSRF Protection Tests
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     timeout-minutes: 10
 
     steps:
@@ -74,7 +74,7 @@ jobs:
 
   url-validation-tests:
     name: URL Validation & Domain Tests
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     timeout-minutes: 10
 
     steps:
@@ -107,7 +107,7 @@ jobs:
 
   activitypub-security-tests:
     name: ActivityPub Security Tests
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     timeout-minutes: 10
 
     steps:
@@ -144,7 +144,7 @@ jobs:
 
   dependency-scanning:
     name: Dependency Vulnerability Scan
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     timeout-minutes: 10
 
     steps:
@@ -180,7 +180,7 @@ jobs:
 
   static-analysis:
     name: Static Security Analysis
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     timeout-minutes: 15
 
     steps:
@@ -246,7 +246,7 @@ jobs:
 
   penetration-testing:
     name: Penetration Testing (SSRF)
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     timeout-minutes: 15
 
     steps:
@@ -278,7 +278,7 @@ jobs:
 
   security-report:
     name: Generate Security Report
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     needs: [ssrf-protection-tests, url-validation-tests, activitypub-security-tests, dependency-scanning, static-analysis]
     if: always()
 

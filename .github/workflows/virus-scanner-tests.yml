@@ -45,7 +45,7 @@ env:
 jobs:
   unit-tests:
     name: Unit Tests - Virus Scanner
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     timeout-minutes: 15
 
     steps:
@@ -101,7 +101,7 @@ jobs:
 
   integration-tests:
     name: Integration Tests - ClamAV
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     timeout-minutes: 30
     needs: unit-tests
 
@@ -228,7 +228,7 @@ jobs:
 
   edge-case-tests:
     name: Edge Cases & Breaking Scenarios
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     timeout-minutes: 45
     needs: integration-tests
     if: github.event.inputs.run_breaking_tests != 'false'
@@ -430,7 +430,7 @@ jobs:
 
   performance-benchmarks:
     name: Performance Benchmarks
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     timeout-minutes: 30
     needs: integration-tests
     if: github.event.inputs.run_performance_tests != 'false'
@@ -526,7 +526,7 @@ jobs:
 
   security-audit:
     name: Security Audit
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     needs: [edge-case-tests, performance-benchmarks]
     if: always()
 
@@ -559,7 +559,7 @@ jobs:
 
   post-test-report:
     name: Generate Test Report
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     needs: [unit-tests, integration-tests, edge-case-tests, performance-benchmarks, security-audit]
     if: always()
 

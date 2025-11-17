@@ -24,7 +24,7 @@ env:
 jobs:
   validate-migrations:
     name: Validate Migrations
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
 
     services:
       postgres:

@@ -32,7 +32,7 @@ env:
 
 jobs:
   changes:
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     outputs:
       docker: ${{ steps.filter.outputs.docker }}
     steps:
@@ -51,7 +51,7 @@ jobs:
               - '.github/workflows/**'
 
   unit:
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     needs: changes
     env:
       # Configure Go for better network reliability
@@ -139,7 +139,7 @@ jobs:
         run: make test-unit
 
   integration:
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     needs: [unit, changes]
     env:
       # Force Go modules mode to avoid GOPATH issues
@@ -241,7 +241,7 @@ jobs:
         run: make test-integration-ci
 
   lint:
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     env:
       # Force Go modules mode to avoid GOPATH issues
       GO111MODULE: on
@@ -262,7 +262,7 @@ jobs:
           args: --timeout=10m
 
   build:
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     needs: [unit, integration, lint, changes]
     env:
       # Force Go modules mode to avoid GOPATH issues
@@ -305,7 +305,7 @@ jobs:
           retention-days: 7
 
   migrations:
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     services:
       postgres:
         image: postgres:15-alpine
@@ -339,7 +339,7 @@ jobs:
         run: psql -h localhost -U test_user -d athena_test -c '\dt'
 
   docker:
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     needs: [integration, lint, changes]
     if: needs.changes.outputs.docker == 'true'
     steps:
@@ -364,7 +364,7 @@ jobs:
 
   postman-e2e:
     name: Postman E2E Tests
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     needs: changes
     timeout-minutes: 30
 
