@@ -12,7 +12,7 @@ echo "Validating Postman test files in: $POSTMAN_DIR"
 # Check if files exist
 FILES=(
     "avatar.png"
-    "avatar.jpg" 
+    "avatar.jpg"
     "avatar.webp"
     "avatar.gif"
     "avatar.tiff"
@@ -29,7 +29,7 @@ for file in "${FILES[@]}"; do
         missing_files+=("$file")
     else
         echo "✓ Found: $file"
-        
+
         # Check file signatures
         case "$file" in
             "avatar.png")

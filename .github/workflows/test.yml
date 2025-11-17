@@ -236,7 +236,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: [unit, integration, lint, changes]
     env:
-      # Force Go modules mode to avoid GOPATH issues  
+      # Force Go modules mode to avoid GOPATH issues
       GO111MODULE: on
 
     steps:
@@ -334,7 +334,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: changes
     timeout-minutes: 30
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4

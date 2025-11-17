@@ -27,4 +27,3 @@ ON CONFLICT (user_id) DO UPDATE SET url = EXCLUDED.url, updated_at = NOW();
 
 -- Drop avatar column from users
 ALTER TABLE users DROP COLUMN IF EXISTS avatar;
-

@@ -100,7 +100,6 @@ func (m *MockVideoRepository) GetVideosForMigration(ctx context.Context, limit i
 	return args.Get(0).([]*domain.Video), args.Error(1)
 }
 
-
 func TestMigrateVideo_Success(t *testing.T) {
 	// Setup
 	ctx := context.Background()
@@ -118,8 +117,8 @@ func TestMigrateVideo_Success(t *testing.T) {
 
 	// Setup test video
 	video := &domain.Video{
-		ID:         videoID,
-		Title:      "Test Video",
+		ID:          videoID,
+		Title:       "Test Video",
 		StorageTier: "hot",
 		OutputPaths: map[string]string{
 			"1080p": testFilePath,
@@ -479,8 +478,8 @@ func TestGetContentType(t *testing.T) {
 	})
 
 	tests := []struct {
-		path        string
-		wantType    string
+		path     string
+		wantType string
 	}{
 		{"/path/to/video.mp4", "video/mp4"},
 		{"/path/to/video.webm", "video/webm"},

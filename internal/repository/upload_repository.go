@@ -202,7 +202,7 @@ func (r *uploadRepository) IsChunkUploaded(ctx context.Context, sessionID string
 
 func (r *uploadRepository) ExpireOldSessions(ctx context.Context) error {
 	query := `
-		UPDATE upload_sessions 
+		UPDATE upload_sessions
 		SET status = 'expired', updated_at = NOW()
 		WHERE expires_at < NOW() AND status = 'active'`
 
@@ -219,7 +219,7 @@ func (r *uploadRepository) GetExpiredSessions(ctx context.Context) ([]*domain.Up
 		SELECT id, video_id, user_id, filename, file_size, chunk_size,
 		       total_chunks, uploaded_chunks, status, temp_file_path,
 		       created_at, updated_at, expires_at
-		FROM upload_sessions 
+		FROM upload_sessions
 		WHERE status = 'expired' OR (expires_at < NOW() AND status != 'completed')`
 
 	rows, err := r.db.QueryContext(ctx, query)

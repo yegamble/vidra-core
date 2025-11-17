@@ -16,4 +16,3 @@ CREATE INDEX IF NOT EXISTS idx_fed_actors_next ON federation_actors(next_at);
 
 CREATE TRIGGER update_fed_actors_updated_at BEFORE UPDATE ON federation_actors
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
-

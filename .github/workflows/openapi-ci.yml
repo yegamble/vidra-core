@@ -69,7 +69,7 @@ jobs:
           # Only install modern, maintained tools
           npm install -g @redocly/cli@latest
           npm install -g @apidevtools/swagger-cli@latest
-          
+
       - name: Generate documentation
         run: |
           echo "Generating API documentation from OpenAPI spec..."

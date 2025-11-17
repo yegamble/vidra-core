@@ -151,7 +151,7 @@ func (r *encodingRepository) GetPendingJobs(ctx context.Context, limit int) ([]*
 		SELECT id, video_id, source_file_path, source_resolution,
 		       target_resolutions, status, progress, error_message,
 		       started_at, completed_at, created_at, updated_at
-		FROM encoding_jobs 
+		FROM encoding_jobs
 		WHERE status = 'pending'
 		ORDER BY created_at ASC
 		LIMIT $1`
@@ -199,7 +199,7 @@ func (r *encodingRepository) GetNextJob(ctx context.Context) (*domain.EncodingJo
 		SELECT id, video_id, source_file_path, source_resolution,
 		       target_resolutions, status, progress, error_message,
 		       started_at, completed_at, created_at, updated_at
-		FROM encoding_jobs 
+		FROM encoding_jobs
 		WHERE status = 'pending'
 		ORDER BY created_at ASC
 		LIMIT 1
@@ -224,7 +224,7 @@ func (r *encodingRepository) GetNextJob(ctx context.Context) (*domain.EncodingJo
 
 	// Update job status to processing
 	updateQuery := `
-		UPDATE encoding_jobs 
+		UPDATE encoding_jobs
 		SET status = 'processing', started_at = NOW(), updated_at = NOW()
 		WHERE id = $1`
 
@@ -246,7 +246,7 @@ func (r *encodingRepository) GetNextJob(ctx context.Context) (*domain.EncodingJo
 
 func (r *encodingRepository) UpdateJobStatus(ctx context.Context, jobID string, status domain.EncodingStatus) error {
 	query := `
-		UPDATE encoding_jobs 
+		UPDATE encoding_jobs
 		SET status = $2, updated_at = NOW()
 		WHERE id = $1`
 
@@ -268,7 +268,7 @@ func (r *encodingRepository) UpdateJobStatus(ctx context.Context, jobID string, 
 
 func (r *encodingRepository) UpdateJobProgress(ctx context.Context, jobID string, progress int) error {
 	query := `
-		UPDATE encoding_jobs 
+		UPDATE encoding_jobs
 		SET progress = $2, updated_at = NOW()
 		WHERE id = $1`
 
@@ -314,7 +314,7 @@ func (r *encodingRepository) GetJobCounts(ctx context.Context) (map[string]int64
 
 func (r *encodingRepository) SetJobError(ctx context.Context, jobID string, errorMsg string) error {
 	query := `
-		UPDATE encoding_jobs 
+		UPDATE encoding_jobs
 		SET status = 'failed', error_message = $2, updated_at = NOW()
 		WHERE id = $1`
 

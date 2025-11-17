@@ -305,7 +305,7 @@ func (r *userRepository) SetAvatarFields(ctx context.Context, userID string, ipf
 // MarkEmailAsVerified marks a user's email as verified
 func (r *userRepository) MarkEmailAsVerified(ctx context.Context, userID string) error {
 	query := `
-		UPDATE users 
+		UPDATE users
 		SET email_verified = true, email_verified_at = NOW(), updated_at = NOW()
 		WHERE id = $1
 	`

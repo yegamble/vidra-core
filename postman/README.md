@@ -65,14 +65,14 @@ The collection includes comprehensive avatar upload tests covering multiple imag
 The following test files are used for avatar upload testing:
 
 #### **Valid Image Formats**
-- `avatar.png` - PNG format (original test file)  
-- `avatar.jpg` - JPEG format  
+- `avatar.png` - PNG format (original test file)
+- `avatar.jpg` - JPEG format
 - `avatar.webp` - WebP format (modern format)
 - `avatar.gif` - GIF format (supports animation)
 - `avatar.tiff` - TIFF format (high quality)
 - `avatar.heic` - HEIC format (Apple's modern format)
 
-#### **Security Test Files** 
+#### **Security Test Files**
 - `document.pdf` - PDF file (should be rejected - invalid extension)
 - `malware.png` - Executable disguised as PNG (should be rejected - invalid content)
 
@@ -82,7 +82,7 @@ The avatar upload tests cover:
 
 #### **✅ Positive Test Cases:**
 1. **PNG Upload** - Basic PNG image upload with WebP conversion
-2. **JPEG Upload** - JPEG image upload with WebP conversion  
+2. **JPEG Upload** - JPEG image upload with WebP conversion
 3. **WebP Upload** - Direct WebP image upload (no conversion needed)
 4. **HEIC Upload** - Apple HEIC format with WebP conversion
 5. **GIF Upload** - GIF image upload with WebP conversion
@@ -90,7 +90,7 @@ The avatar upload tests cover:
 
 #### **❌ Negative Test Cases:**
 1. **Invalid Extension** - PDF file upload (should return 400)
-2. **Malicious File** - Executable disguised as image (should return 400)  
+2. **Malicious File** - Executable disguised as image (should return 400)
 3. **Missing File** - No file provided (should return 400)
 4. **No Authentication** - Missing auth token (should return 401)
 
@@ -178,7 +178,7 @@ Validate all test files are present and have correct signatures:
 The avatar upload system includes multiple security layers:
 
 1. **Extension Validation** - Only image extensions allowed
-2. **MIME Type Validation** - Content-Type header verification  
+2. **MIME Type Validation** - Content-Type header verification
 3. **File Content Validation** - Actual image format verification
 4. **HEIC Special Handling** - File signature-based validation for HEIC
 5. **Executable Detection** - Rejects executable files disguised as images

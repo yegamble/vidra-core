@@ -11,7 +11,7 @@
 
 **Files affected:** All files in `internal/httpapi/handlers/*/*.go`
 
-### 2. Duplicate Handler Struct Declarations  
+### 2. Duplicate Handler Struct Declarations
 **Problem:** `channel/` and `moderation/` packages had duplicate handler struct definitions in both `handlers.go` and the main implementation file.
 
 **Fix:** Deleted duplicate `handlers.go` files:
@@ -28,7 +28,7 @@
 
 **Fix:** Exported helper functions:
 - `getBoolParam` → `GetBoolParam`
-- `getIntParam` → `GetIntParam`  
+- `getIntParam` → `GetIntParam`
 - Added `RequireUUIDParam` to shared helpers (was duplicated in video package)
 
 ### 5. Response Type References
@@ -85,7 +85,7 @@ go build ./internal/httpapi/handlers/...
 
 ## Test Status
 
-✅ **Main packages pass tests**  
+✅ **Main packages pass tests**
 ⚠️ **Handler test files need updates** - Test files reference `Response` type and need to use `shared.Response`
 
 ## Next Steps
@@ -101,13 +101,13 @@ go build ./internal/httpapi/handlers/...
 - All handler implementation files in `internal/httpapi/handlers/*/`
 - `internal/httpapi/shared/helpers.go` - Added exports and RequireUUIDParam
 - `internal/httpapi/handlers.go` - Added shared import
-- `internal/httpapi/routes.go` - Added shared import  
+- `internal/httpapi/routes.go` - Added shared import
 - Deleted: `internal/httpapi/handlers/channel/handlers.go`
 - Deleted: `internal/httpapi/handlers/moderation/handlers.go`
 
 ## Compilation Results
 
-Before fixes: **200+ compilation errors**  
+Before fixes: **200+ compilation errors**
 After fixes: **0 compilation errors** (handlers only)
 
 ---

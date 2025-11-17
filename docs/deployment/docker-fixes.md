@@ -24,7 +24,7 @@ healthcheck:
 
 **Solution**: Fixed the function to use a temporary variable for swapping:
 ```sql
-CREATE OR REPLACE FUNCTION ensure_conversation_order() 
+CREATE OR REPLACE FUNCTION ensure_conversation_order()
 RETURNS TRIGGER AS $$
 DECLARE
     temp_id UUID;
@@ -44,7 +44,7 @@ $$ LANGUAGE plpgsql;
 After these fixes, `make docker-up` now works successfully:
 
 1. ✅ PostgreSQL starts healthy with all tables and extensions
-2. ✅ Redis starts healthy with persistence enabled  
+2. ✅ Redis starts healthy with persistence enabled
 3. ✅ IPFS starts healthy with server profile
 4. ✅ Application starts healthy and passes readiness checks
 
@@ -56,7 +56,7 @@ docker-compose ps
 # Test health endpoint
 curl http://localhost:8080/health
 
-# Test readiness endpoint  
+# Test readiness endpoint
 curl http://localhost:8080/ready
 ```
 

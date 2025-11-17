@@ -277,13 +277,13 @@ server {
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
-        
+
         # Timeouts for long uploads
         proxy_connect_timeout 600;
         proxy_send_timeout 600;
         proxy_read_timeout 600;
         send_timeout 600;
-        
+
         # Upload size
         client_max_body_size 5G;
         client_body_buffer_size 32M;

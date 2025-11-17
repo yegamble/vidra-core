@@ -86,11 +86,11 @@ func (r *ViewsRepository) UpdateUserView(ctx context.Context, view *domain.UserV
 // GetUserViewBySessionAndVideo finds a view by session ID and video ID
 func (r *ViewsRepository) GetUserViewBySessionAndVideo(ctx context.Context, sessionID, videoID string) (*domain.UserView, error) {
 	query := `
-		SELECT 
+		SELECT
 			id, video_id, user_id, session_id, fingerprint_hash,
 			watch_duration, video_duration, completion_percentage, is_completed,
 			seek_count, pause_count, replay_count, quality_changes,
-			initial_load_time, buffer_events, 
+			initial_load_time, buffer_events,
 			connection_type, video_quality,
 			COALESCE(referrer_url, '') as referrer_url,
 			COALESCE(referrer_type, '') as referrer_type,
@@ -109,9 +109,9 @@ func (r *ViewsRepository) GetUserViewBySessionAndVideo(ctx context.Context, sess
 			is_anonymous, tracking_consent, gdpr_consent,
 			view_date, view_hour, weekday,
 			created_at, updated_at
-		FROM user_views 
-		WHERE session_id = $1 AND video_id = $2 
-		ORDER BY created_at DESC 
+		FROM user_views
+		WHERE session_id = $1 AND video_id = $2
+		ORDER BY created_at DESC
 		LIMIT 1`
 
 	var view domain.UserView
@@ -312,8 +312,8 @@ func (r *ViewsRepository) getHourlyStats(ctx context.Context, baseQuery string, 
 // GetDailyVideoStats retrieves daily stats for a video
 func (r *ViewsRepository) GetDailyVideoStats(ctx context.Context, videoID string, startDate, endDate time.Time) ([]domain.DailyVideoStats, error) {
 	query := `
-		SELECT * FROM daily_video_stats 
-		WHERE video_id = $1 
+		SELECT * FROM daily_video_stats
+		WHERE video_id = $1
 		AND stat_date BETWEEN $2 AND $3
 		ORDER BY stat_date`
 
@@ -329,8 +329,8 @@ func (r *ViewsRepository) GetDailyVideoStats(ctx context.Context, videoID string
 // GetUserEngagementStats retrieves engagement stats for a user
 func (r *ViewsRepository) GetUserEngagementStats(ctx context.Context, userID string, startDate, endDate time.Time) ([]domain.UserEngagementStats, error) {
 	query := `
-		SELECT * FROM user_engagement_stats 
-		WHERE user_id = $1 
+		SELECT * FROM user_engagement_stats
+		WHERE user_id = $1
 		AND stat_date BETWEEN $2 AND $3
 		ORDER BY stat_date`
 
@@ -346,7 +346,7 @@ func (r *ViewsRepository) GetUserEngagementStats(ctx context.Context, userID str
 // GetTrendingVideos retrieves trending videos
 func (r *ViewsRepository) GetTrendingVideos(ctx context.Context, limit int) ([]domain.TrendingVideo, error) {
 	query := `
-		SELECT * FROM trending_videos 
+		SELECT * FROM trending_videos
 		WHERE is_trending = true
 		ORDER BY engagement_score DESC, velocity_score DESC
 		LIMIT $1`
@@ -486,14 +486,14 @@ func (r *ViewsRepository) GetTopVideos(ctx context.Context, startDate, endDate t
 	AvgDuration float64 `db:"avg_duration"`
 }, error) {
 	query := `
-		SELECT 
+		SELECT
 			video_id,
 			COUNT(*) as total_views,
 			COUNT(DISTINCT session_id) as unique_views,
 			AVG(watch_duration) as avg_duration
-		FROM user_views 
+		FROM user_views
 		WHERE created_at BETWEEN $1 AND $2
-		GROUP BY video_id 
+		GROUP BY video_id
 		ORDER BY total_views DESC
 		LIMIT $3`
 
@@ -527,7 +527,7 @@ func (r *ViewsRepository) GetViewCountsByVideo(ctx context.Context, videoIDs []s
 
 	query := `
 		SELECT video_id, COUNT(*) as view_count
-		FROM user_views 
+		FROM user_views
 		WHERE video_id = ANY($1)
 		GROUP BY video_id`
 
@@ -561,9 +561,9 @@ func (r *ViewsRepository) GetViewCountsByVideo(ctx context.Context, videoIDs []s
 // GetRecentViews gets recent views for a user
 func (r *ViewsRepository) GetRecentViews(ctx context.Context, userID string, limit int) ([]domain.UserView, error) {
 	query := `
-		SELECT * FROM user_views 
-		WHERE user_id = $1 
-		ORDER BY created_at DESC 
+		SELECT * FROM user_views
+		WHERE user_id = $1
+		ORDER BY created_at DESC
 		LIMIT $2`
 
 	var views []domain.UserView

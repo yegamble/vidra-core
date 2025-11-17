@@ -504,7 +504,7 @@ func createTestViewsVideo(t *testing.T, testDB *testutil.TestDB, userID string) 
 		UpdatedAt:   time.Now(),
 	}
 
-	query := `INSERT INTO videos (id, thumbnail_id, title, description, duration, views, privacy, status, 
+	query := `INSERT INTO videos (id, thumbnail_id, title, description, duration, views, privacy, status,
 		upload_date, user_id, category_id, file_size, mime_type, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`
 
@@ -559,8 +559,8 @@ func createTestUserViewWithDetails(t *testing.T, testDB *testutil.TestDB, userID
 		UpdatedAt:            now,
 	}
 
-	query := `INSERT INTO user_views (id, video_id, user_id, session_id, fingerprint_hash, watch_duration, 
-		video_duration, completion_percentage, is_completed, seek_count, pause_count, device_type, 
+	query := `INSERT INTO user_views (id, video_id, user_id, session_id, fingerprint_hash, watch_duration,
+		video_duration, completion_percentage, is_completed, seek_count, pause_count, device_type,
 		country_code, view_date, view_hour, weekday, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)`
 

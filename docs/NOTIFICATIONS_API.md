@@ -352,8 +352,8 @@ CREATE TABLE notifications (
 CREATE INDEX idx_notifications_user_id ON notifications(user_id);
 CREATE INDEX idx_notifications_user_read ON notifications(user_id, read);
 CREATE INDEX idx_notifications_created_at ON notifications(created_at DESC);
-CREATE INDEX idx_notifications_user_unread_recent 
-    ON notifications(user_id, created_at DESC) 
+CREATE INDEX idx_notifications_user_unread_recent
+    ON notifications(user_id, created_at DESC)
     WHERE read = FALSE;
 ```
 

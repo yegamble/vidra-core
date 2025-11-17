@@ -205,26 +205,26 @@ func composeVerificationEmail(cfg *Config, username, token, code string) (string
         <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
             <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
                 <h2 style="color: #2c3e50;">Welcome to Athena, %s!</h2>
-                
+
                 <p>Thank you for registering. Please verify your email address to complete your registration.</p>
-                
+
                 <div style="margin: 30px 0;">
                     <a href="%s" style="background-color: #3498db; color: white; padding: 12px 30px; text-decoration: none; border-radius: 5px; display: inline-block;">
                         Verify Email Address
                     </a>
                 </div>
-                
+
                 <p>Or you can enter this verification code manually:</p>
                 <div style="background-color: #f8f9fa; padding: 15px; border-radius: 5px; font-size: 24px; font-weight: bold; text-align: center; letter-spacing: 3px;">
                     %s
                 </div>
-                
+
                 <p style="color: #666; font-size: 14px; margin-top: 30px;">
                     This verification link and code will expire in 24 hours. If you didn't create an account, you can safely ignore this email.
                 </p>
-                
+
                 <hr style="border: none; border-top: 1px solid #eee; margin: 30px 0;">
-                
+
                 <p style="color: #999; font-size: 12px;">
                     If you're having trouble clicking the button, copy and paste this URL into your browser:<br>
                     <a href="%s" style="color: #3498db;">%s</a>
@@ -261,23 +261,23 @@ func composePasswordResetEmail(cfg *Config, username, token string) (string, str
         <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
             <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
                 <h2 style="color: #2c3e50;">Password Reset Request</h2>
-                
+
                 <p>Hi %s,</p>
-                
+
                 <p>We received a request to reset your password. Click the button below to set a new password:</p>
-                
+
                 <div style="margin: 30px 0;">
                     <a href="%s" style="background-color: #e74c3c; color: white; padding: 12px 30px; text-decoration: none; border-radius: 5px; display: inline-block;">
                         Reset Password
                     </a>
                 </div>
-                
+
                 <p style="color: #666; font-size: 14px;">
                     This link will expire in 1 hour. If you didn't request a password reset, you can safely ignore this email.
                 </p>
-                
+
                 <hr style="border: none; border-top: 1px solid #eee; margin: 30px 0;">
-                
+
                 <p style="color: #999; font-size: 12px;">
                     If you're having trouble clicking the button, copy and paste this URL into your browser:<br>
                     <a href="%s" style="color: #3498db;">%s</a>
@@ -311,28 +311,28 @@ func composeResendVerificationEmail(cfg *Config, username, token, code string) (
         <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
             <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
                 <h2 style="color: #2c3e50;">New Verification Code</h2>
-                
+
                 <p>Hi %s,</p>
-                
+
                 <p>You requested a new verification code. Here's your new code to verify your email address:</p>
-                
+
                 <div style="margin: 30px 0;">
                     <a href="%s" style="background-color: #27ae60; color: white; padding: 12px 30px; text-decoration: none; border-radius: 5px; display: inline-block;">
                         Verify Email Address
                     </a>
                 </div>
-                
+
                 <p>Or enter this new verification code:</p>
                 <div style="background-color: #f8f9fa; padding: 15px; border-radius: 5px; font-size: 24px; font-weight: bold; text-align: center; letter-spacing: 3px;">
                     %s
                 </div>
-                
+
                 <p style="color: #666; font-size: 14px; margin-top: 30px;">
                     This verification link and code will expire in 24 hours.
                 </p>
-                
+
                 <hr style="border: none; border-top: 1px solid #eee; margin: 30px 0;">
-                
+
                 <p style="color: #999; font-size: 12px;">
                     If you're having trouble clicking the button, copy and paste this URL into your browser:<br>
                     <a href="%s" style="color: #3498db;">%s</a>

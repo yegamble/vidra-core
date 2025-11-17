@@ -29,7 +29,7 @@ func NewCryptoRepository(db *sqlx.DB) *CryptoRepository {
 func (r *CryptoRepository) CreateUserMasterKey(ctx context.Context, tx *sqlx.Tx, masterKey *domain.UserMasterKey) error {
 	query := `
 		INSERT INTO user_master_keys (
-			user_id, encrypted_master_key, argon2_salt, argon2_memory, 
+			user_id, encrypted_master_key, argon2_salt, argon2_memory,
 			argon2_time, argon2_parallelism, key_version
 		) VALUES (
 			:user_id, :encrypted_master_key, :argon2_salt, :argon2_memory,
@@ -74,7 +74,7 @@ func (r *CryptoRepository) GetUserMasterKey(ctx context.Context, userID string) 
 // UpdateUserMasterKey updates a user's master key (for key rotation)
 func (r *CryptoRepository) UpdateUserMasterKey(ctx context.Context, tx *sqlx.Tx, masterKey *domain.UserMasterKey) error {
 	query := `
-		UPDATE user_master_keys 
+		UPDATE user_master_keys
 		SET encrypted_master_key = :encrypted_master_key,
 			argon2_salt = :argon2_salt,
 			key_version = :key_version,
@@ -206,7 +206,7 @@ func (r *CryptoRepository) ListConversationKeys(ctx context.Context, conversatio
 // UpdateConversationKey updates a conversation key
 func (r *CryptoRepository) UpdateConversationKey(ctx context.Context, tx *sqlx.Tx, key *domain.ConversationKey) error {
 	query := `
-		UPDATE conversation_keys 
+		UPDATE conversation_keys
 		SET encrypted_shared_secret = :encrypted_shared_secret,
 			is_active = :is_active,
 			expires_at = :expires_at
@@ -229,7 +229,7 @@ func (r *CryptoRepository) UpdateConversationKey(ctx context.Context, tx *sqlx.T
 // DeactivateConversationKeys deactivates old keys for rotation
 func (r *CryptoRepository) DeactivateConversationKeys(ctx context.Context, tx *sqlx.Tx, conversationID string, excludeKeyVersion int) error {
 	query := `
-		UPDATE conversation_keys 
+		UPDATE conversation_keys
 		SET is_active = false
 		WHERE conversation_id = $1 AND key_version != $2`
 
@@ -421,7 +421,7 @@ func (r *CryptoRepository) GetUserPublicSigningKey(ctx context.Context, userID s
 // UpdateUserSigningKey updates a user's signing key
 func (r *CryptoRepository) UpdateUserSigningKey(ctx context.Context, tx *sqlx.Tx, key *domain.UserSigningKey) error {
 	query := `
-		UPDATE user_signing_keys 
+		UPDATE user_signing_keys
 		SET encrypted_private_key = :encrypted_private_key,
 			public_key = :public_key,
 			key_version = :key_version

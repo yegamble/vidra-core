@@ -6,6 +6,14 @@
 
 A high-performance, feature-complete PeerTube backend implementation in Go with P2P distribution, live streaming, plugin system, and multi-protocol federation (ActivityPub + ATProto).
 
+## IMPORTANT: Code Quality and Validation
+
+**All code changes must pass validation checks before use.** This project uses automated validation to ensure code quality, security, and reliability.
+
+**Quick Validation**: `make validate-all`
+
+See [VALIDATION_REQUIRED.md](VALIDATION_REQUIRED.md) for complete requirements, especially if you're using Claude AI or other AI assistants.
+
 ## 📊 Project Metrics
 
 | Metric | Count | Description |

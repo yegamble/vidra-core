@@ -4,4 +4,3 @@ ALTER TABLE federated_posts
 
 -- Helpful index for filtering by type in timelines (optional)
 CREATE INDEX IF NOT EXISTS idx_fed_posts_embed_type ON federated_posts(embed_type);
-

@@ -21,10 +21,10 @@ CREATE INDEX idx_email_verification_tokens_expires_at ON email_verification_toke
 CREATE INDEX idx_users_email_verified ON users(email_verified);
 
 -- Function to automatically clean up expired tokens
-CREATE OR REPLACE FUNCTION cleanup_expired_verification_tokens() 
+CREATE OR REPLACE FUNCTION cleanup_expired_verification_tokens()
 RETURNS void AS $$
 BEGIN
-    DELETE FROM email_verification_tokens 
+    DELETE FROM email_verification_tokens
     WHERE expires_at < NOW() AND used_at IS NULL;
 END;
 $$ LANGUAGE plpgsql;

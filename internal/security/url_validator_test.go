@@ -212,9 +212,9 @@ func TestValidateURL_PublicIPs(t *testing.T) {
 	validator := NewURLValidator()
 
 	publicURLs := []string{
-		"http://8.8.8.8",         // Google DNS
-		"http://1.1.1.1",         // Cloudflare DNS
-		"http://93.184.216.34",   // example.com
+		"http://8.8.8.8",       // Google DNS
+		"http://1.1.1.1",       // Cloudflare DNS
+		"http://93.184.216.34", // example.com
 		"http://[2606:2800:220:1:248:1893:25c8:1946]", // example.com IPv6
 	}
 

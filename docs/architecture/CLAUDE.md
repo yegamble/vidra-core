@@ -1,5 +1,58 @@
 # Claude.md — PeerTube Backend in Go (Concise, with Best Practices)
 
+## CRITICAL: VALIDATION REQUIREMENTS FOR ALL CLAUDE INSTANCES
+
+**READ THIS FIRST** - This applies to ALL Claude instances (CLI, Web, API, etc.) on ALL platforms (Mac, Linux, Windows).
+
+### Mandatory Validation Before Claiming Success
+
+If you are Claude and you have made ANY code changes:
+
+1. **Claude Code (CLI with shell access)**:
+   - You MUST run: `make validate-all` or `./scripts/validate-all.sh`
+   - Review all output for failures
+   - Fix any failures and re-run validations
+   - Include validation results in your response
+   - Only claim success after all validations pass
+
+2. **Claude Web (no shell access)**:
+   - You CANNOT run validations directly
+   - Tell the user: "Validations are required before using these changes"
+   - Provide exact commands: `make validate-all`
+   - Do NOT claim the work is complete until user confirms validations pass
+   - Explain what each validation checks
+
+3. **All Instances**:
+   - See `/Users/yosefgamble/github/athena/VALIDATION_REQUIRED.md` for full requirements
+   - Validations are NOT optional
+   - No exceptions
+
+### What Gets Validated
+
+- Code formatting (gofmt, goimports)
+- Linting (golangci-lint with gosec)
+- YAML validation (pre-commit)
+- Unit tests
+- Build verification
+- Go vet checks
+
+### Quick Reference
+
+```bash
+# Run all validations
+make validate-all
+
+# Individual checks
+make fmt-check    # Formatting
+make lint         # Linting
+make test-unit    # Tests
+make build        # Build
+```
+
+See `VALIDATION_REQUIRED.md` for complete details.
+
+---
+
 ## Overview
 
 Rebuild PeerTube's backend in Go using: **Chi**, **SQLX+PostgreSQL** (`pg_trgm`, `unaccent`, `uuid-ossp`), **Redis**, **IPFS** (Kubo + Cluster), **FFmpeg**, **IOTA**, **Hybrid storage** (local/IPFS/S3), **Docker/K8s**, **Goose** (migrations). Designed for concurrency, resiliency, and cost-efficient delivery.

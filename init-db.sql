@@ -47,9 +47,9 @@ CREATE INDEX IF NOT EXISTS idx_users_bitcoin_wallet ON users(bitcoin_wallet);
 
 -- Create trigger for users
 DROP TRIGGER IF EXISTS update_users_updated_at ON users;
-CREATE TRIGGER update_users_updated_at 
-    BEFORE UPDATE ON users 
-    FOR EACH ROW 
+CREATE TRIGGER update_users_updated_at
+    BEFORE UPDATE ON users
+    FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
 
 -- Create user_avatars table
@@ -63,9 +63,9 @@ CREATE TABLE IF NOT EXISTS user_avatars (
 );
 
 DROP TRIGGER IF EXISTS update_user_avatars_updated_at ON user_avatars;
-CREATE TRIGGER update_user_avatars_updated_at 
-    BEFORE UPDATE ON user_avatars 
-    FOR EACH ROW 
+CREATE TRIGGER update_user_avatars_updated_at
+    BEFORE UPDATE ON user_avatars
+    FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
 
 -- Create refresh_tokens table
@@ -83,7 +83,7 @@ CREATE INDEX IF NOT EXISTS idx_refresh_tokens_token ON refresh_tokens(token);
 CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user_id ON refresh_tokens(user_id);
 CREATE INDEX IF NOT EXISTS idx_refresh_tokens_expires_at ON refresh_tokens(expires_at);
 CREATE INDEX IF NOT EXISTS idx_refresh_tokens_revoked_at ON refresh_tokens(revoked_at);
-CREATE INDEX IF NOT EXISTS idx_refresh_tokens_active ON refresh_tokens(user_id, expires_at) 
+CREATE INDEX IF NOT EXISTS idx_refresh_tokens_active ON refresh_tokens(user_id, expires_at)
     WHERE revoked_at IS NULL;
 
 -- Create sessions table
@@ -184,9 +184,9 @@ CREATE INDEX IF NOT EXISTS idx_videos_upload_date ON videos(upload_date);
 CREATE INDEX IF NOT EXISTS idx_videos_category_id ON videos(category_id);
 
 DROP TRIGGER IF EXISTS update_videos_updated_at ON videos;
-CREATE TRIGGER update_videos_updated_at 
-    BEFORE UPDATE ON videos 
-    FOR EACH ROW 
+CREATE TRIGGER update_videos_updated_at
+    BEFORE UPDATE ON videos
+    FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
 
 -- Upload sessions & encoding jobs
@@ -331,9 +331,9 @@ CREATE TABLE IF NOT EXISTS user_views (
     CONSTRAINT check_completion_percentage CHECK (completion_percentage >= 0.0 AND completion_percentage <= 100.0),
     CONSTRAINT check_watch_duration CHECK (watch_duration >= 0),
     CONSTRAINT check_positive_counts CHECK (
-        seek_count >= 0 AND 
-        pause_count >= 0 AND 
-        replay_count >= 0 AND 
+        seek_count >= 0 AND
+        pause_count >= 0 AND
+        replay_count >= 0 AND
         quality_changes >= 0 AND
         buffer_events >= 0
     )

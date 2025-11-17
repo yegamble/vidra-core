@@ -1,6 +1,6 @@
 # Test Baseline Status Report
-**Generated**: 2025-11-16  
-**Branch**: claude/code-review-quality-security-01Qv4Ue6jRRvxyQVLcZEFzdi  
+**Generated**: 2025-11-16
+**Branch**: claude/code-review-quality-security-01Qv4Ue6jRRvxyQVLcZEFzdi
 **Command**: `go test ./... -v -coverprofile=coverage.out -covermode=atomic`
 
 ---
@@ -43,7 +43,7 @@ athena/internal/torrent                    [setup failed]
 Two packages have failing integration tests due to missing database connectivity:
 
 #### `athena/internal/httpapi/handlers/auth` (Coverage: 21.9%)
-**Duration**: 85.286s  
+**Duration**: 85.286s
 **Failed Tests**:
 - `TestUnverifiedUserRestrictions`
 - `TestEmailVerificationWorkflow`
@@ -56,7 +56,7 @@ Two packages have failing integration tests due to missing database connectivity
 ---
 
 #### `athena/internal/httpapi/handlers/messaging` (Coverage: N/A)
-**Duration**: 50.097s  
+**Duration**: 50.097s
 **Failed Tests**:
 - `TestMessageNotificationWorkflow`
 - `TestMessageNotificationService`

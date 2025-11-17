@@ -18,8 +18,8 @@ CREATE INDEX IF NOT EXISTS idx_notifications_created_at ON notifications(created
 CREATE INDEX IF NOT EXISTS idx_notifications_type ON notifications(type);
 
 -- Composite index for common query pattern (user's unread notifications ordered by date)
-CREATE INDEX IF NOT EXISTS idx_notifications_user_unread_recent 
-    ON notifications(user_id, created_at DESC) 
+CREATE INDEX IF NOT EXISTS idx_notifications_user_unread_recent
+    ON notifications(user_id, created_at DESC)
     WHERE read = FALSE;
 
 -- Function to auto-create notifications for new video uploads
@@ -29,7 +29,7 @@ BEGIN
     -- Only create notifications for completed public videos
     IF NEW.status = 'completed' AND NEW.privacy = 'public' THEN
         INSERT INTO notifications (user_id, type, title, message, data)
-        SELECT 
+        SELECT
             s.subscriber_id,
             'new_video',
             'New video from ' || u.username,
@@ -64,9 +64,9 @@ DECLARE
     deleted_count INTEGER;
 BEGIN
     DELETE FROM notifications
-    WHERE read = TRUE 
+    WHERE read = TRUE
     AND read_at < NOW() - INTERVAL '1 day' * days_to_keep;
-    
+
     GET DIAGNOSTICS deleted_count = ROW_COUNT;
     RETURN deleted_count;
 END;

@@ -29,8 +29,8 @@ func (r *messageRepository) CreateMessage(ctx context.Context, message *domain.M
 
 	// Insert the message
 	query := `
-		INSERT INTO messages (id, sender_id, recipient_id, content, message_type, 
-			is_read, is_deleted_by_sender, is_deleted_by_recipient, parent_message_id, 
+		INSERT INTO messages (id, sender_id, recipient_id, content, message_type,
+			is_read, is_deleted_by_sender, is_deleted_by_recipient, parent_message_id,
 			created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`
 
@@ -63,7 +63,7 @@ func (r *messageRepository) GetMessage(ctx context.Context, messageID string, us
 		JOIN users s ON s.id = m.sender_id
 		JOIN users r ON r.id = m.recipient_id
 		WHERE m.id = $1 AND (m.sender_id = $2 OR m.recipient_id = $2)
-			AND ((m.sender_id = $2 AND m.is_deleted_by_sender = false) OR 
+			AND ((m.sender_id = $2 AND m.is_deleted_by_sender = false) OR
 				 (m.recipient_id = $2 AND m.is_deleted_by_recipient = false))`
 
 	rows, err := r.db.QueryContext(ctx, query, messageID, userID)
@@ -112,7 +112,7 @@ func (r *messageRepository) GetMessages(ctx context.Context, userID string, othe
 		JOIN users s ON s.id = m.sender_id
 		JOIN users r ON r.id = m.recipient_id
 		WHERE ((m.sender_id = $1 AND m.recipient_id = $2) OR (m.sender_id = $2 AND m.recipient_id = $1))
-			AND ((m.sender_id = $1 AND m.is_deleted_by_sender = false) OR 
+			AND ((m.sender_id = $1 AND m.is_deleted_by_sender = false) OR
 				 (m.recipient_id = $1 AND m.is_deleted_by_recipient = false))
 		ORDER BY m.created_at DESC
 		LIMIT $3 OFFSET $4`
@@ -154,7 +154,7 @@ func (r *messageRepository) GetMessages(ctx context.Context, userID string, othe
 
 func (r *messageRepository) MarkMessageAsRead(ctx context.Context, messageID string, userID string) error {
 	query := `
-		UPDATE messages 
+		UPDATE messages
 		SET is_read = true, read_at = NOW(), updated_at = NOW()
 		WHERE id = $1 AND recipient_id = $2 AND is_read = false`
 
@@ -178,7 +178,7 @@ func (r *messageRepository) MarkMessageAsRead(ctx context.Context, messageID str
 func (r *messageRepository) DeleteMessage(ctx context.Context, messageID string, userID string) error {
 	// Soft delete by marking as deleted for the user
 	query := `
-		UPDATE messages 
+		UPDATE messages
 		SET is_deleted_by_sender = CASE WHEN sender_id = $2 THEN true ELSE is_deleted_by_sender END,
 			is_deleted_by_recipient = CASE WHEN recipient_id = $2 THEN true ELSE is_deleted_by_recipient END,
 			updated_at = NOW()
@@ -207,7 +207,7 @@ func (r *messageRepository) GetConversations(ctx context.Context, userID string,
 			c.last_message_at, c.created_at, c.updated_at,
 			p1.id as "p1.id", p1.username as "p1.username", p1.display_name as "p1.display_name",
 			p2.id as "p2.id", p2.username as "p2.username", p2.display_name as "p2.display_name",
-			lm.id as "last_message.id", lm.content as "last_message.content", 
+			lm.id as "last_message.id", lm.content as "last_message.content",
 			lm.sender_id as "last_message.sender_id", lm.created_at as "last_message.created_at",
 			COALESCE(unread.count, 0) as unread_count
 		FROM conversations c
@@ -215,16 +215,16 @@ func (r *messageRepository) GetConversations(ctx context.Context, userID string,
 		JOIN users p2 ON p2.id = c.participant_two_id
 		LEFT JOIN messages lm ON lm.id = c.last_message_id
 		LEFT JOIN (
-			SELECT 
-				CASE 
-					WHEN sender_id = $1 THEN recipient_id 
-					ELSE sender_id 
+			SELECT
+				CASE
+					WHEN sender_id = $1 THEN recipient_id
+					ELSE sender_id
 				END as other_user_id,
 				COUNT(*) as count
-			FROM messages 
-			WHERE (sender_id = $1 OR recipient_id = $1) 
-				AND recipient_id = $1 
-				AND is_read = false 
+			FROM messages
+			WHERE (sender_id = $1 OR recipient_id = $1)
+				AND recipient_id = $1
+				AND is_read = false
 				AND is_deleted_by_recipient = false
 			GROUP BY other_user_id
 		) unread ON unread.other_user_id = CASE WHEN c.participant_one_id = $1 THEN c.participant_two_id ELSE c.participant_one_id END
@@ -283,8 +283,8 @@ func (r *messageRepository) GetConversations(ctx context.Context, userID string,
 
 func (r *messageRepository) GetUnreadCount(ctx context.Context, userID string) (int, error) {
 	query := `
-		SELECT COUNT(*) 
-		FROM messages 
+		SELECT COUNT(*)
+		FROM messages
 		WHERE recipient_id = $1 AND is_read = false AND is_deleted_by_recipient = false`
 
 	var count int
@@ -308,8 +308,8 @@ func (r *messageRepository) upsertConversation(ctx context.Context, tx *sqlx.Tx,
 	query := `
 		INSERT INTO conversations (participant_one_id, participant_two_id, last_message_id, last_message_at, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, NOW(), NOW())
-		ON CONFLICT (participant_one_id, participant_two_id) 
-		DO UPDATE SET 
+		ON CONFLICT (participant_one_id, participant_two_id)
+		DO UPDATE SET
 			last_message_id = $3,
 			last_message_at = $4,
 			updated_at = NOW()`

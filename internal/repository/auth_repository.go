@@ -37,7 +37,7 @@ func (r *authRepository) CreateRefreshToken(ctx context.Context, token *usecase.
 func (r *authRepository) GetRefreshToken(ctx context.Context, token string) (*usecase.RefreshToken, error) {
 	query := `
         SELECT id, user_id, token, expires_at, created_at, revoked_at
-        FROM refresh_tokens 
+        FROM refresh_tokens
         WHERE token = $1 AND revoked_at IS NULL AND expires_at >= NOW()`
 
 	var refreshToken usecase.RefreshToken

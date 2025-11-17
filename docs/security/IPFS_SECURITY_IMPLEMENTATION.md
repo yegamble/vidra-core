@@ -20,26 +20,26 @@ Successfully implemented comprehensive IPFS CID validation and cluster authentic
 
 ### CID Validation (`cid_validation.go`)
 
-✓ **CIDv1-Only Policy**: Rejects all CIDv0 inputs per CLAUDE.md requirements  
-✓ **Codec Whitelist**: Only allows raw (0x55), dag-pb (0x70), dag-cbor (0x71)  
-✓ **Path Traversal Prevention**: Blocks ../, ..\, /, \, and encoded variants  
-✓ **Injection Attack Prevention**: Rejects control characters, null bytes, special chars  
-✓ **URL Encoding Protection**: Blocks % characters to prevent encoding attacks  
-✓ **DoS Protection**: 256-character max length prevents memory exhaustion  
-✓ **Case Sensitivity**: Enforces lowercase for base32 CIDs  
-✓ **Thread-Safe**: No shared state, safe for concurrent validation  
-✓ **Performance**: <1ms for valid CIDs, <10ms for malicious inputs  
+✓ **CIDv1-Only Policy**: Rejects all CIDv0 inputs per CLAUDE.md requirements
+✓ **Codec Whitelist**: Only allows raw (0x55), dag-pb (0x70), dag-cbor (0x71)
+✓ **Path Traversal Prevention**: Blocks ../, ..\, /, \, and encoded variants
+✓ **Injection Attack Prevention**: Rejects control characters, null bytes, special chars
+✓ **URL Encoding Protection**: Blocks % characters to prevent encoding attacks
+✓ **DoS Protection**: 256-character max length prevents memory exhaustion
+✓ **Case Sensitivity**: Enforces lowercase for base32 CIDs
+✓ **Thread-Safe**: No shared state, safe for concurrent validation
+✓ **Performance**: <1ms for valid CIDs, <10ms for malicious inputs
 
 ### Cluster Authentication (`cluster_auth.go`)
 
-✓ **Bearer Token Authentication**: Standard HTTP Authorization header  
-✓ **mTLS Support**: Client certificate + private key authentication  
-✓ **CA Verification**: Optional CA certificate for server validation  
-✓ **TLS 1.2+ Enforcement**: Minimum TLS version configurable  
-✓ **Token Rotation**: Thread-safe UpdateToken() method  
-✓ **Environment Integration**: Auto-loads from IPFS_CLUSTER_SECRET, etc.  
-✓ **Secret Protection**: Tokens redacted in logs and string output  
-✓ **Thread-Safe**: Mutex-protected configuration updates  
+✓ **Bearer Token Authentication**: Standard HTTP Authorization header
+✓ **mTLS Support**: Client certificate + private key authentication
+✓ **CA Verification**: Optional CA certificate for server validation
+✓ **TLS 1.2+ Enforcement**: Minimum TLS version configurable
+✓ **Token Rotation**: Thread-safe UpdateToken() method
+✓ **Environment Integration**: Auto-loads from IPFS_CLUSTER_SECRET, etc.
+✓ **Secret Protection**: Tokens redacted in logs and string output
+✓ **Thread-Safe**: Mutex-protected configuration updates
 
 ## Test Results
 
@@ -70,7 +70,7 @@ Successfully implemented comprehensive IPFS CID validation and cluster authentic
 1. `TestValidateCID_ValidCIDv1Base58/valid_CIDv1_base58_raw`
    - **Issue**: Test CID contains 'l' (invalid base58 character)
    - **Impact**: None - test data problem
-   
+
 2. `TestValidateCID_ErrorMessages/CIDv0`
    - **Issue**: Test checks for "CIDv0" in lowercased error string
    - **Impact**: None - test logic bug
@@ -216,7 +216,7 @@ IPFS_CLUSTER_CA_CERT=/path/to/ca.crt
 ```go
 type Config struct {
     // ... existing fields ...
-    
+
     // IPFS Cluster Security
     IPFSClusterSecret     string
     IPFSClusterClientCert string
@@ -250,26 +250,26 @@ type Config struct {
   - Valid CIDs: ~0.5ms average
   - Malicious inputs: <10ms (early rejection)
   - No allocations for string validation checks
-  
+
 - **Authentication Overhead**:
   - Bearer token: ~1μs (header addition only)
   - mTLS: Initial handshake ~50-100ms, subsequent requests negligible
-  
+
 - **Thread Safety**:
   - CID validation: Lock-free (no shared state)
   - Auth config: Read-optimized with RWMutex
-  
+
 - **Memory**:
   - CID validation: Constant memory (no allocations)
   - Auth config: ~1KB per client instance
 
 ## Backward Compatibility
 
-✓ Existing `NewClient()` constructor unchanged  
-✓ All existing methods maintain same signatures  
-✓ No breaking changes to public API  
-✓ Authentication is opt-in (new constructors)  
-✓ Default behavior unchanged (no auth)  
+✓ Existing `NewClient()` constructor unchanged
+✓ All existing methods maintain same signatures
+✓ No breaking changes to public API
+✓ Authentication is opt-in (new constructors)
+✓ Default behavior unchanged (no auth)
 
 ## Deployment Guide
 
@@ -319,19 +319,19 @@ go test -v ./internal/ipfs -run TestCluster
 All test failures are due to test bugs or invalid test data, NOT implementation issues:
 
 ### 1. TestValidateCID_ValidCIDv1Base58/valid_CIDv1_base58_raw
-**Problem**: Test CID "zdj7WhuEjrB5mR8s9cLnFKfH8dJVGTqcHxo7lMpR9RbJTUmHu" contains 'l' (invalid base58)  
-**Fix**: Replace with valid base58 CID or remove test  
-**Impact**: None - implementation correctly rejects invalid CIDs  
+**Problem**: Test CID "zdj7WhuEjrB5mR8s9cLnFKfH8dJVGTqcHxo7lMpR9RbJTUmHu" contains 'l' (invalid base58)
+**Fix**: Replace with valid base58 CID or remove test
+**Impact**: None - implementation correctly rejects invalid CIDs
 
 ### 2. TestValidateCID_ErrorMessages/CIDv0
-**Problem**: Test checks `strings.Contains(strings.ToLower(err), "CIDv0")` - uppercase in lowercase string  
-**Fix**: Change expectedInMsg to "cidv0" (lowercase)  
-**Impact**: None - error message is correct, test logic is wrong  
+**Problem**: Test checks `strings.Contains(strings.ToLower(err), "CIDv0")` - uppercase in lowercase string
+**Fix**: Change expectedInMsg to "cidv0" (lowercase)
+**Impact**: None - error message is correct, test logic is wrong
 
 ### 3. TestClusterAuth_MultipleRequests
-**Problem**: Test uses invalid CIDs: "bafybei0", "bafybei1", etc. (too short, invalid format)  
-**Fix**: Use valid CIDv1 strings  
-**Impact**: None - implementation correctly rejects invalid CIDs  
+**Problem**: Test uses invalid CIDs: "bafybei0", "bafybei1", etc. (too short, invalid format)
+**Fix**: Use valid CIDv1 strings
+**Impact**: None - implementation correctly rejects invalid CIDs
 
 ## Security Audit Checklist
 

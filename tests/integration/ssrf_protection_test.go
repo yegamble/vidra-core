@@ -162,10 +162,10 @@ func TestSSRFProtection_EdgeCases(t *testing.T) {
 		{"Empty URL", "", true},
 		{"No Host", "http://", true},
 		{"No Scheme", "example.com", true},
-		{"Integer Overflow IP", "http://2130706433/", true}, // 127.0.0.1 as integer
-		{"Octal IP Localhost", "http://0177.0.0.1/", true},  // Octal representation
-		{"Hex IP Localhost", "http://0x7f.0.0.1/", true},    // Hex representation
-		{"Mixed Encoding", "http://127.0.0.1.nip.io/", true}, // DNS rebinding service
+		{"Integer Overflow IP", "http://2130706433/", true},              // 127.0.0.1 as integer
+		{"Octal IP Localhost", "http://0177.0.0.1/", true},               // Octal representation
+		{"Hex IP Localhost", "http://0x7f.0.0.1/", true},                 // Hex representation
+		{"Mixed Encoding", "http://127.0.0.1.nip.io/", true},             // DNS rebinding service
 		{"URL with Credentials", "http://user:pass@example.com/", false}, // Should validate host only
 		{"URL with Fragment", "https://example.com/#test", false},
 		{"URL with Query", "https://example.com/?q=test", false},
@@ -211,9 +211,9 @@ func TestSSRFProtection_DNSRebinding(t *testing.T) {
 	// These domains might resolve to different IPs on repeated lookups
 	// The validator should check at validation time
 	rebindingTests := []string{
-		"http://localtest.me/",      // Often resolves to 127.0.0.1
-		"http://127.0.0.1.nip.io/",  // DNS wildcard service
-		"http://10.0.0.1.nip.io/",   // Should resolve to private IP
+		"http://localtest.me/",     // Often resolves to 127.0.0.1
+		"http://127.0.0.1.nip.io/", // DNS wildcard service
+		"http://10.0.0.1.nip.io/",  // Should resolve to private IP
 	}
 
 	for _, url := range rebindingTests {

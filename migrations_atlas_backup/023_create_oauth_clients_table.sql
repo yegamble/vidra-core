@@ -34,4 +34,3 @@ BEFORE UPDATE ON oauth_clients
 FOR EACH ROW EXECUTE FUNCTION set_updated_at_oauth_clients();
 
 COMMIT;
-

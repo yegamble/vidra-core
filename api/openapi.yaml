@@ -1081,15 +1081,15 @@ paths:
       summary: Upload user avatar
       description: |
         Uploads a user avatar image with comprehensive format support and security validation.
-        
+
         **Supported Formats:**
         - PNG - Standard format with WebP conversion
-        - JPEG/JPG - Standard format with WebP conversion  
+        - JPEG/JPG - Standard format with WebP conversion
         - WebP - Modern format (direct upload, no conversion needed)
         - HEIC/HEIF - Apple format with special file signature validation
         - GIF - Animation-capable format with WebP conversion
         - TIFF/TIF - High-quality format with WebP conversion
-        
+
         **Security Features:**
         - Extension validation (only image extensions allowed)
         - MIME type verification via Content-Type header
@@ -1097,13 +1097,13 @@ paths:
         - HEIC special handling via file signature detection
         - Executable file detection and rejection
         - 5MB file size limit
-        
+
         **Processing:**
         - Original image stored and uploaded to IPFS
         - WebP optimization automatically generated (except for WebP uploads)
         - Both original and WebP versions pinned in IPFS
         - User record updated with IPFS content identifiers
-        
+
         Response includes an avatar object with fields:
         - id (UUID)
         - ipfs_cid (original)
@@ -1129,7 +1129,7 @@ paths:
                 value:
                   file: "(binary PNG data)"
               jpeg_upload:
-                summary: JPEG image upload  
+                summary: JPEG image upload
                 value:
                   file: "(binary JPEG data)"
               webp_upload:
@@ -1195,7 +1195,7 @@ paths:
                   value:
                     success: false
                     error:
-                      code: "INVALID_FILE_EXTENSION" 
+                      code: "INVALID_FILE_EXTENSION"
                       message: "invalid file extension: bad request"
                       details: {}
                 unsupported_format:

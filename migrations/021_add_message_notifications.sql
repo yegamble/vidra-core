@@ -16,15 +16,15 @@ BEGIN
         SELECT username INTO sender_username
         FROM users
         WHERE id = NEW.sender_id;
-        
+
         -- Create a preview of the message (first 100 chars)
-        message_preview := CASE 
-            WHEN LENGTH(NEW.content) > 100 THEN 
+        message_preview := CASE
+            WHEN LENGTH(NEW.content) > 100 THEN
                 SUBSTRING(NEW.content FROM 1 FOR 97) || '...'
-            ELSE 
+            ELSE
                 NEW.content
         END;
-        
+
         -- Create notification for the recipient
         INSERT INTO notifications (user_id, type, title, message, data)
         VALUES (
@@ -41,7 +41,7 @@ BEGIN
             )
         );
     END IF;
-    
+
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
@@ -67,10 +67,10 @@ BEGIN
         SELECT username INTO recipient_username
         FROM users
         WHERE id = NEW.recipient_id;
-        
+
         -- Get sender ID
         sender_id := NEW.sender_id;
-        
+
         -- Create read receipt notification for the sender (optional - can be enabled/disabled)
         -- Uncomment the following if you want read receipts
         /*
@@ -89,7 +89,7 @@ BEGIN
         );
         */
     END IF;
-    
+
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
@@ -103,8 +103,8 @@ WHEN (NEW.is_read = TRUE AND OLD.is_read = FALSE)
 EXECUTE FUNCTION notify_on_message_read();
 
 -- Add index for better performance on message queries
-CREATE INDEX IF NOT EXISTS idx_messages_recipient_unread 
-    ON messages(recipient_id, created_at DESC) 
+CREATE INDEX IF NOT EXISTS idx_messages_recipient_unread
+    ON messages(recipient_id, created_at DESC)
     WHERE is_read = FALSE;
 -- +goose StatementEnd
 

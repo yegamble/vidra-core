@@ -21,8 +21,8 @@ import (
 // 3. Development/testing environments
 // For production, use: PKCS11HSM, CloudHSM, or VaultHSM
 type SoftwareHSM struct {
-	masterKeys map[string][]byte
-	mu         sync.RWMutex
+	masterKeys    map[string][]byte
+	mu            sync.RWMutex
 	keyDerivation KeyDerivationConfig
 }
 

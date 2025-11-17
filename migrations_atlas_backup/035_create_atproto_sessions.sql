@@ -23,4 +23,3 @@ DROP TRIGGER IF EXISTS trg_update_atproto_sessions_updated_at ON atproto_session
 CREATE TRIGGER trg_update_atproto_sessions_updated_at
     BEFORE UPDATE ON atproto_sessions
     FOR EACH ROW EXECUTE FUNCTION update_atproto_sessions_updated_at();
-

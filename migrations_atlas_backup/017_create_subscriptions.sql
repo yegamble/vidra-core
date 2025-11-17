@@ -44,4 +44,3 @@ DROP TRIGGER IF EXISTS trg_subscriptions_dec ON subscriptions;
 CREATE TRIGGER trg_subscriptions_dec
 AFTER DELETE ON subscriptions
 FOR EACH ROW EXECUTE FUNCTION decrement_subscriber_count();
-

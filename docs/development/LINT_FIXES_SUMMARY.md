@@ -32,7 +32,7 @@
 **File:** `internal/httpapi/routes.go`
 
 **Fix:**
-- Added `"athena/internal/httpapi/handlers/video"` import  
+- Added `"athena/internal/httpapi/handlers/video"` import
 - Changed to `video.NewViewsHandler`
 
 ### 5. undefined: MapDomainErrorToHTTP
@@ -72,7 +72,7 @@
 - `NewHLSHandlers` → `video.NewHLSHandlers`
 - `NewImportHandlers` → `video.NewImportHandlers`
 
-### 8. Social Handler Functions  
+### 8. Social Handler Functions
 **File:** `internal/httpapi/routes.go`
 
 **Fix:** Added `social.` prefix:
@@ -131,7 +131,7 @@
 **Fix:** Added `admin.` prefix:
 - `NewInstanceHandlers` → `admin.NewInstanceHandlers`
 
-### 15. Federation Handler Functions  
+### 15. Federation Handler Functions
 **File:** `internal/httpapi/routes.go`
 
 **Fix:** Added `federation.` prefix:
@@ -199,5 +199,5 @@ These need to be properly wired through the new auth handler structs.
 
 ---
 
-**Status:** All linter errors resolved ✅  
+**Status:** All linter errors resolved ✅
 **Next:** Wire OAuth and Avatar endpoints through auth handlers

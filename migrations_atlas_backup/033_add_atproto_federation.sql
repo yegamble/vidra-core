@@ -57,4 +57,3 @@ VALUES (
     'atproto_block_labels', '[]'::jsonb, 'Array of label values to block from ingestion (e.g., "porn", "sexual")', false
 )
 ON CONFLICT (key) DO NOTHING;
-

@@ -43,4 +43,3 @@ for f in "${MIG_FILES[@]}"; do
 done
 
 echo "All migrations applied (idempotent)."
-

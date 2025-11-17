@@ -23,7 +23,7 @@ func NewVideoCategoryRepository(db *sqlx.DB) usecase.VideoCategoryRepository {
 func (r *videoCategoryRepository) Create(ctx context.Context, category *domain.VideoCategory) error {
 	query := `
 		INSERT INTO video_categories (
-			name, slug, description, icon, color, display_order, 
+			name, slug, description, icon, color, display_order,
 			is_active, created_by
 		) VALUES (
 			$1, $2, $3, $4, $5, $6, $7, $8
@@ -50,7 +50,7 @@ func (r *videoCategoryRepository) Create(ctx context.Context, category *domain.V
 func (r *videoCategoryRepository) GetByID(ctx context.Context, id uuid.UUID) (*domain.VideoCategory, error) {
 	var category domain.VideoCategory
 	query := `
-		SELECT id, name, slug, description, icon, color, display_order, 
+		SELECT id, name, slug, description, icon, color, display_order,
 		       is_active, created_at, updated_at, created_by
 		FROM video_categories
 		WHERE id = $1`
@@ -69,7 +69,7 @@ func (r *videoCategoryRepository) GetByID(ctx context.Context, id uuid.UUID) (*d
 func (r *videoCategoryRepository) GetBySlug(ctx context.Context, slug string) (*domain.VideoCategory, error) {
 	var category domain.VideoCategory
 	query := `
-		SELECT id, name, slug, description, icon, color, display_order, 
+		SELECT id, name, slug, description, icon, color, display_order,
 		       is_active, created_at, updated_at, created_by
 		FROM video_categories
 		WHERE slug = $1`
@@ -87,7 +87,7 @@ func (r *videoCategoryRepository) GetBySlug(ctx context.Context, slug string) (*
 
 func (r *videoCategoryRepository) List(ctx context.Context, opts domain.VideoCategoryListOptions) ([]*domain.VideoCategory, error) {
 	query := `
-		SELECT id, name, slug, description, icon, color, display_order, 
+		SELECT id, name, slug, description, icon, color, display_order,
 		       is_active, created_at, updated_at, created_by
 		FROM video_categories
 		WHERE 1=1`
@@ -239,7 +239,7 @@ func (r *videoCategoryRepository) Delete(ctx context.Context, id uuid.UUID) erro
 func (r *videoCategoryRepository) GetDefault(ctx context.Context) (*domain.VideoCategory, error) {
 	var category domain.VideoCategory
 	query := `
-		SELECT id, name, slug, description, icon, color, display_order, 
+		SELECT id, name, slug, description, icon, color, display_order,
 		       is_active, created_at, updated_at, created_by
 		FROM video_categories
 		WHERE slug = 'other'

@@ -34,19 +34,19 @@ CREATE TABLE conversation_keys (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     conversation_id UUID NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    
+
     -- X25519 key pair for ECDH key exchange
     encrypted_private_key TEXT NOT NULL, -- Encrypted with user's master key
     public_key TEXT NOT NULL, -- X25519 public key (base64, 32 bytes)
-    
+
     -- Derived shared secret (encrypted)
     encrypted_shared_secret TEXT, -- ChaCha20Poly1305 key encrypted with master key
-    
+
     key_version INTEGER NOT NULL DEFAULT 1,
     is_active BOOLEAN NOT NULL DEFAULT true,
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
     expires_at TIMESTAMP WITH TIME ZONE, -- For key rotation
-    
+
     UNIQUE(conversation_id, user_id, key_version)
 );
 
@@ -56,12 +56,12 @@ CREATE TABLE key_exchange_messages (
     conversation_id UUID NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
     sender_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     recipient_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    
+
     exchange_type VARCHAR(20) NOT NULL CHECK (exchange_type IN ('offer', 'accept', 'confirm')),
     public_key TEXT NOT NULL, -- X25519 public key
     signature TEXT NOT NULL, -- Ed25519 signature for authenticity
     nonce TEXT NOT NULL, -- Unique nonce to prevent replay
-    
+
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
     expires_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT (NOW() + INTERVAL '1 hour')
 );
@@ -105,13 +105,13 @@ CREATE INDEX idx_crypto_audit_conversation ON crypto_audit_log(conversation_id);
 CREATE INDEX idx_crypto_audit_created ON crypto_audit_log(created_at);
 
 -- Update triggers for timestamp management
-CREATE TRIGGER update_user_master_keys_updated_at 
-    BEFORE UPDATE ON user_master_keys 
-    FOR EACH ROW 
+CREATE TRIGGER update_user_master_keys_updated_at
+    BEFORE UPDATE ON user_master_keys
+    FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
 
 -- Constraints for security
-ALTER TABLE messages ADD CONSTRAINT check_encrypted_content 
+ALTER TABLE messages ADD CONSTRAINT check_encrypted_content
     CHECK ((is_encrypted = true AND encrypted_content IS NOT NULL AND content_nonce IS NOT NULL AND content IS NULL) OR
            (is_encrypted = false AND encrypted_content IS NULL AND content_nonce IS NULL AND content IS NOT NULL));
 
@@ -127,15 +127,15 @@ $$ LANGUAGE plpgsql;
 CREATE OR REPLACE FUNCTION mark_keys_for_rotation()
 RETURNS void AS $$
 BEGIN
-    UPDATE conversation_keys 
-    SET is_active = false 
-    WHERE created_at < NOW() - INTERVAL '30 days' 
+    UPDATE conversation_keys
+    SET is_active = false
+    WHERE created_at < NOW() - INTERVAL '30 days'
     AND expires_at IS NULL;
 END;
 $$ LANGUAGE plpgsql;
 
 -- Security policies and additional constraints
-ALTER TABLE user_master_keys ADD CONSTRAINT check_argon2_params 
+ALTER TABLE user_master_keys ADD CONSTRAINT check_argon2_params
     CHECK (argon2_memory >= 32768 AND argon2_time >= 2 AND argon2_parallelism >= 1);
 
 -- Ensure encrypted conversations have proper key exchange

@@ -2,6 +2,7 @@ SHELL := /bin/bash
 
 .PHONY: help deps lint test test-unit test-integration test-integration-ci build docker docker-up docker-down clean dev install-tools test-ci postman-newman postman-e2e run logs run-with-encoding
 .PHONY: migrate-dev migrate-test migrate-custom migrate-dev-docker migrate-test-docker migrate-up db-ensure-dev-user
+.PHONY: validate-all validate-quick
 
 # Use docker compose v2 if available; override with DOCKER_COMPOSE="docker-compose" if needed
 DOCKER_COMPOSE ?= docker compose
@@ -21,6 +22,13 @@ endif
 help: ## Display this help message
 	@echo "Available targets:"
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}'
+
+validate-all: ## Run all validation checks (formatting, linting, tests, build)
+	@echo "Running comprehensive validation suite..."
+	@./scripts/validate-all.sh
+
+validate-quick: fmt-check lint ## Quick validation (formatting + linting only)
+	@echo "Quick validation complete!"
 
 
 deps: ## Download Go dependencies
@@ -188,7 +196,7 @@ migrate-custom: ## Apply migrations to custom DATABASE_URL (set via environment)
 	DATABASE_URL="${DATABASE_URL}" bash ./scripts/migrate_idempotent.sh
 
 # docker-up moved to avoid duplicates - see line 101
-# docker-down moved to avoid duplicates - see line 107  
+# docker-down moved to avoid duplicates - see line 107
 # dev moved to avoid duplicates - see line 169
 
 run: ## Run server locally (requires local Postgres/Redis/IPFS env)

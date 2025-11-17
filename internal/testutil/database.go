@@ -495,7 +495,7 @@ func ensureTestSchema(db *sqlx.DB) error {
 		    CONSTRAINT check_completion_percentage CHECK (completion_percentage >= 0.0 AND completion_percentage <= 100.0),
 		    CONSTRAINT check_watch_duration CHECK (watch_duration >= 0),
 		    CONSTRAINT check_positive_counts CHECK (
-		        seek_count >= 0 AND pause_count >= 0 AND replay_count >= 0 AND 
+		        seek_count >= 0 AND pause_count >= 0 AND replay_count >= 0 AND
 		        quality_changes >= 0 AND buffer_events >= 0
 		    )
 		)`,
@@ -583,7 +583,7 @@ func ensureTestSchema(db *sqlx.DB) error {
 		`CREATE OR REPLACE FUNCTION increment_video_views(p_video_id UUID)
 		RETURNS void AS $$
 		BEGIN
-		    UPDATE videos 
+		    UPDATE videos
 		    SET views = views + 1, updated_at = NOW()
 		    WHERE id = p_video_id;
 		END;
@@ -599,10 +599,10 @@ func ensureTestSchema(db *sqlx.DB) error {
 		BEGIN
 		    SELECT COUNT(DISTINCT session_id)
 		    INTO unique_count
-		    FROM user_views 
-		    WHERE video_id = p_video_id 
+		    FROM user_views
+		    WHERE video_id = p_video_id
 		    AND created_at BETWEEN p_start_date AND p_end_date;
-		    
+
 		    RETURN COALESCE(unique_count, 0);
 		END;
 		$$ LANGUAGE plpgsql`,
@@ -618,28 +618,28 @@ func ensureTestSchema(db *sqlx.DB) error {
 		    unique_viewers BIGINT;
 		    recency_weight DECIMAL(4,2);
 		BEGIN
-		    SELECT 
+		    SELECT
 		        COUNT(*),
 		        AVG(completion_percentage),
 		        COUNT(DISTINCT session_id)
 		    INTO view_count, avg_completion, unique_viewers
-		    FROM user_views 
-		    WHERE video_id = p_video_id 
+		    FROM user_views
+		    WHERE video_id = p_video_id
 		    AND created_at >= NOW() - (p_hours_back || ' hours')::INTERVAL;
-		    
-		    recency_weight := CASE 
+
+		    recency_weight := CASE
 		        WHEN p_hours_back <= 1 THEN 2.0
 		        WHEN p_hours_back <= 6 THEN 1.5
 		        WHEN p_hours_back <= 24 THEN 1.2
 		        ELSE 1.0
 		    END;
-		    
+
 		    score := (
 		        (COALESCE(view_count, 0) * 1.0) +
 		        (COALESCE(unique_viewers, 0) * 1.5) +
 		        (COALESCE(avg_completion, 0) / 100.0 * view_count * 2.0)
 		    ) * recency_weight;
-		    
+
 		    RETURN score;
 		END;
 		$$ LANGUAGE plpgsql`,

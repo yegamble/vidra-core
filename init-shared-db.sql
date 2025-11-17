@@ -49,9 +49,9 @@ CREATE INDEX IF NOT EXISTS idx_users_bitcoin_wallet ON users(bitcoin_wallet);
 
 -- Create trigger for users
 DROP TRIGGER IF EXISTS update_users_updated_at ON users;
-CREATE TRIGGER update_users_updated_at 
-    BEFORE UPDATE ON users 
-    FOR EACH ROW 
+CREATE TRIGGER update_users_updated_at
+    BEFORE UPDATE ON users
+    FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
 
 -- Create user_avatars table
@@ -67,9 +67,9 @@ CREATE TABLE IF NOT EXISTS user_avatars (
 );
 
 DROP TRIGGER IF EXISTS update_user_avatars_updated_at ON user_avatars;
-CREATE TRIGGER update_user_avatars_updated_at 
-    BEFORE UPDATE ON user_avatars 
-    FOR EACH ROW 
+CREATE TRIGGER update_user_avatars_updated_at
+    BEFORE UPDATE ON user_avatars
+    FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
 
 -- Create refresh_tokens table
@@ -87,7 +87,7 @@ CREATE INDEX IF NOT EXISTS idx_refresh_tokens_token ON refresh_tokens(token);
 CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user_id ON refresh_tokens(user_id);
 CREATE INDEX IF NOT EXISTS idx_refresh_tokens_expires_at ON refresh_tokens(expires_at);
 CREATE INDEX IF NOT EXISTS idx_refresh_tokens_revoked_at ON refresh_tokens(revoked_at);
-CREATE INDEX IF NOT EXISTS idx_refresh_tokens_active ON refresh_tokens(user_id, expires_at) 
+CREATE INDEX IF NOT EXISTS idx_refresh_tokens_active ON refresh_tokens(user_id, expires_at)
     WHERE revoked_at IS NULL;
 
 -- Create sessions table
@@ -139,9 +139,9 @@ CREATE INDEX IF NOT EXISTS idx_videos_upload_date ON videos(upload_date);
 
 -- Trigger for videos
 DROP TRIGGER IF EXISTS update_videos_updated_at ON videos;
-CREATE TRIGGER update_videos_updated_at 
-    BEFORE UPDATE ON videos 
-    FOR EACH ROW 
+CREATE TRIGGER update_videos_updated_at
+    BEFORE UPDATE ON videos
+    FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
 
 -- Create upload_sessions table
@@ -168,9 +168,9 @@ CREATE INDEX IF NOT EXISTS idx_upload_sessions_status ON upload_sessions(status)
 CREATE INDEX IF NOT EXISTS idx_upload_sessions_expires_at ON upload_sessions(expires_at);
 
 DROP TRIGGER IF EXISTS update_upload_sessions_updated_at ON upload_sessions;
-CREATE TRIGGER update_upload_sessions_updated_at 
-    BEFORE UPDATE ON upload_sessions 
-    FOR EACH ROW 
+CREATE TRIGGER update_upload_sessions_updated_at
+    BEFORE UPDATE ON upload_sessions
+    FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
 
 -- Create encoding_jobs table
@@ -195,9 +195,9 @@ CREATE INDEX IF NOT EXISTS idx_encoding_jobs_created_at ON encoding_jobs(created
 CREATE INDEX IF NOT EXISTS idx_encoding_jobs_status_created ON encoding_jobs(status, created_at);
 
 DROP TRIGGER IF EXISTS update_encoding_jobs_updated_at ON encoding_jobs;
-CREATE TRIGGER update_encoding_jobs_updated_at 
-    BEFORE UPDATE ON encoding_jobs 
-    FOR EACH ROW 
+CREATE TRIGGER update_encoding_jobs_updated_at
+    BEFORE UPDATE ON encoding_jobs
+    FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
 
 -- Ensure at most one active job per video
@@ -294,20 +294,20 @@ CREATE INDEX IF NOT EXISTS idx_conversations_participants ON conversations(parti
 
 -- Create trigger to update messages updated_at
 DROP TRIGGER IF EXISTS update_messages_updated_at ON messages;
-CREATE TRIGGER update_messages_updated_at 
-    BEFORE UPDATE ON messages 
-    FOR EACH ROW 
+CREATE TRIGGER update_messages_updated_at
+    BEFORE UPDATE ON messages
+    FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
 
 -- Create trigger to update conversations updated_at
 DROP TRIGGER IF EXISTS update_conversations_updated_at ON conversations;
-CREATE TRIGGER update_conversations_updated_at 
-    BEFORE UPDATE ON conversations 
-    FOR EACH ROW 
+CREATE TRIGGER update_conversations_updated_at
+    BEFORE UPDATE ON conversations
+    FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
 
 -- Function to ensure conversation participants are ordered consistently
-CREATE OR REPLACE FUNCTION ensure_conversation_order() 
+CREATE OR REPLACE FUNCTION ensure_conversation_order()
 RETURNS TRIGGER AS $$
 DECLARE
     temp_id UUID;

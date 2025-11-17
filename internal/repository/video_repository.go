@@ -316,9 +316,9 @@ func (r *videoRepository) GetByUserID(ctx context.Context, userID string, limit,
                original_cid, processed_cids, thumbnail_cid,
                tags, category_id, language, file_size, mime_type, metadata,
                created_at, updated_at, output_paths, thumbnail_path, preview_path
-        FROM videos 
-        WHERE user_id = $1 
-        ORDER BY upload_date DESC 
+        FROM videos
+        WHERE user_id = $1
+        ORDER BY upload_date DESC
         LIMIT $2 OFFSET $3`
 
 	rows, err := r.db.QueryContext(ctx, query, userID, limit, offset)
@@ -461,7 +461,7 @@ func (r *videoRepository) List(ctx context.Context, req *domain.VideoSearchReque
                original_cid, processed_cids, thumbnail_cid,
                tags, category_id, language, file_size, mime_type, metadata,
                created_at, updated_at, output_paths, thumbnail_path, preview_path
-        FROM videos 
+        FROM videos
         WHERE privacy = 'public' AND status = 'completed'`
 
 	countQuery := `SELECT COUNT(*) FROM videos WHERE privacy = 'public' AND status = 'completed'`
@@ -546,7 +546,7 @@ func (r *videoRepository) Search(ctx context.Context, req *domain.VideoSearchReq
                original_cid, processed_cids, thumbnail_cid,
                tags, category_id, language, file_size, mime_type, metadata,
                created_at, updated_at, output_paths, thumbnail_path, preview_path
-        FROM videos 
+        FROM videos
         WHERE privacy = 'public' AND status = 'completed'`
 
 	countQuery := `SELECT COUNT(*) FROM videos WHERE privacy = 'public' AND status = 'completed'`

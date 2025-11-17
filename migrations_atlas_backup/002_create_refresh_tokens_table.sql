@@ -15,5 +15,5 @@ CREATE INDEX idx_refresh_tokens_expires_at ON refresh_tokens(expires_at);
 CREATE INDEX idx_refresh_tokens_revoked_at ON refresh_tokens(revoked_at);
 
 -- Create partial index for active tokens
-CREATE INDEX idx_refresh_tokens_active ON refresh_tokens(user_id, expires_at) 
+CREATE INDEX idx_refresh_tokens_active ON refresh_tokens(user_id, expires_at)
     WHERE revoked_at IS NULL;

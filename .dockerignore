@@ -28,7 +28,7 @@ docker-compose.test.yml
 *.log
 *~
 
-# Build cache and modules (let Docker handle these)  
+# Build cache and modules (let Docker handle these)
 .cache/
 vendor/
 

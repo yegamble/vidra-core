@@ -169,8 +169,8 @@ func (tm *TransactionManager) WithRetry(ctx context.Context, maxRetries int, opt
 
 		// PostgreSQL error codes
 		if contains(errStr, "deadlock detected") ||
-		   contains(errStr, "could not serialize") ||
-		   contains(errStr, "concurrent update") {
+			contains(errStr, "could not serialize") ||
+			contains(errStr, "concurrent update") {
 			isRetryable = true
 		}
 

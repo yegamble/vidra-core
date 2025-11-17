@@ -28,4 +28,3 @@ VALUES (
     'atproto_pds_url', '""'::jsonb, 'Default ATProto PDS base URL for this instance', false
 )
 ON CONFLICT (key) DO NOTHING;
-

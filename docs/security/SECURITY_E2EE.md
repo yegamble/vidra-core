@@ -54,7 +54,7 @@ Password-Derived Key (32 bytes)
 Master Key (32 bytes) ← Encrypted at rest
      ↓ (XChaCha20-Poly1305 encryption)
 ├── Conversation Keys (X25519 pairs)
-├── Signing Keys (Ed25519 pairs)  
+├── Signing Keys (Ed25519 pairs)
 └── Shared Secrets (ECDH results)
 ```
 
@@ -122,7 +122,7 @@ user_master_keys:
   - argon2_salt (32 bytes, base64)
   - argon2_memory/time/parallelism (work factors)
 
--- Conversation keys (encrypted with master key)  
+-- Conversation keys (encrypted with master key)
 conversation_keys:
   - encrypted_private_key (base64, X25519 private key)
   - public_key (base64, X25519 public key)
@@ -138,7 +138,7 @@ messages:
 ### Security Constraints
 
 - **Check Constraints**: Ensure encrypted messages have required fields
-- **Unique Constraints**: Prevent key reuse and replay attacks  
+- **Unique Constraints**: Prevent key reuse and replay attacks
 - **Index Security**: Only encrypted data is indexed for search
 - **Row-Level Security**: Users can only access their own keys
 
@@ -220,21 +220,21 @@ def test_message_tampering():
     # Send legitimate message
     response = send_encrypted_message("Hello World")
     message_id = response['message']['id']
-    
+
     # Attempt to tamper with encrypted content
     tampered_content = base64.b64encode(b"TAMPERED_DATA").decode()
-    
+
     # Try to update message (should fail)
-    result = requests.put(f"/api/v1/messages/{message_id}", 
+    result = requests.put(f"/api/v1/messages/{message_id}",
                          json={"encrypted_content": tampered_content})
     assert result.status_code == 403, "Message tampering should be rejected"
 
 def test_replay_attack():
     # Capture legitimate message
     message = send_encrypted_message("Original message")
-    
+
     # Attempt to replay same message (should fail due to nonce uniqueness)
-    result = requests.post("/api/v1/messages/secure", 
+    result = requests.post("/api/v1/messages/secure",
                           json=message)
     assert result.status_code == 400, "Replay attack should be rejected"
 ```
@@ -248,7 +248,7 @@ def test_signature_forgery():
         "encrypted_content": "dGVzdCBjb250ZW50",  # "test content"
         "pgp_signature": "aW52YWxpZCBzaWduYXR1cmU="  # "invalid signature"
     }
-    
+
     response = requests.post("/api/v1/messages/secure", json=message)
     assert response.status_code == 400, "Invalid signature should be rejected"
     assert "invalid_signature" in response.json()["error"]["code"]
@@ -270,16 +270,16 @@ def test_timing_attacks():
         "completely-different",
         "a" * 100  # Very different length
     ]
-    
+
     times_correct = []
     times_wrong = []
-    
+
     # Measure correct password timing
     for _ in range(100):
         start = time.perf_counter()
         unlock_e2ee(correct_password)
         times_correct.append(time.perf_counter() - start)
-    
+
     # Measure wrong password timing
     for wrong_pwd in wrong_passwords:
         for _ in range(25):
@@ -289,11 +289,11 @@ def test_timing_attacks():
             except:
                 pass
             times_wrong.append(time.perf_counter() - start)
-    
+
     # Statistical analysis
     mean_correct = statistics.mean(times_correct)
     mean_wrong = statistics.mean(times_wrong)
-    
+
     # Timing difference should be minimal (< 10% variation)
     timing_ratio = abs(mean_correct - mean_wrong) / min(mean_correct, mean_wrong)
     assert timing_ratio < 0.1, f"Timing difference too large: {timing_ratio}"
@@ -314,7 +314,7 @@ curl -X POST http://localhost:8080/api/v1/messages/secure -d '{"recipient_id":"u
 
 # Check for sensitive data in memory
 kill -USR1 $PID  # Trigger memory dump
-strings core.dump | grep -i "test123\|private.*key\|master.*key" 
+strings core.dump | grep -i "test123\|private.*key\|master.*key"
 # Expect: No sensitive data found
 ```
 
@@ -326,23 +326,23 @@ def test_key_rotation():
     # Setup initial E2EE
     setup_e2ee("password123")
     initial_key_version = get_e2ee_status()["key_version"]
-    
+
     # Send message with old key
     send_encrypted_message("Message with old key")
-    
+
     # Rotate keys
     rotate_keys("password123")
     new_key_version = get_e2ee_status()["key_version"]
-    
+
     assert new_key_version > initial_key_version, "Key version should increment"
-    
+
     # Send message with new key
     send_encrypted_message("Message with new key")
-    
+
     # Verify both messages can be decrypted
     old_message = get_message(old_message_id)
     new_message = get_message(new_message_id)
-    
+
     assert decrypt_message(old_message) == "Message with old key"
     assert decrypt_message(new_message) == "Message with new key"
 ```
@@ -353,13 +353,13 @@ def test_session_expiry():
     # Setup E2EE session
     unlock_e2ee("password123")
     assert is_session_active() == True
-    
+
     # Fast-forward time (mock system time)
     mock_time_advance(hours=25)  # Beyond 24h session limit
-    
+
     # Session should be expired
     assert is_session_active() == False
-    
+
     # Operations should require re-unlock
     result = send_encrypted_message("test")
     assert result.status_code == 401
@@ -377,19 +377,19 @@ def test_malformed_inputs():
         "public_key": "not-valid-base64!!!",  # Invalid base64
         "signature": "valid-signature-here"
     }
-    
-    response = requests.post("/api/v1/e2ee/key-exchange/initiate", 
+
+    response = requests.post("/api/v1/e2ee/key-exchange/initiate",
                            json=invalid_key_exchange)
     assert response.status_code == 400
-    
+
     # Test oversized inputs
     oversized_message = {
         "recipient_id": "valid-user",
         "encrypted_content": "A" * 10000000,  # 10MB content
         "pgp_signature": "valid-signature"
     }
-    
-    response = requests.post("/api/v1/messages/secure", 
+
+    response = requests.post("/api/v1/messages/secure",
                            json=oversized_message)
     assert response.status_code == 413  # Payload too large
 ```
@@ -402,10 +402,10 @@ def test_unauthorized_access():
     # User A tries to decrypt User B's message
     user_a_token = login_user_a()
     user_b_token = login_user_b()
-    
+
     # User B sends message to User C
     message = send_message(user_b_token, recipient="user_c", content="secret")
-    
+
     # User A tries to decrypt User B's message (should fail)
     response = requests.get(f"/api/v1/messages/{message['id']}/decrypt",
                           headers={"Authorization": f"Bearer {user_a_token}"})
@@ -424,7 +424,7 @@ def test_unauthorized_access():
 
 2. **Cryptographic Events**:
    - Key generation failures
-   - Signature verification failures  
+   - Signature verification failures
    - Decryption failures
    - Invalid key exchange attempts
 
@@ -441,9 +441,9 @@ def test_unauthorized_access():
 -- Detect brute force E2EE unlock attempts
 SELECT user_id, client_ip, COUNT(*) as failed_attempts,
        MAX(created_at) as last_attempt
-FROM crypto_audit_log 
-WHERE operation = 'decryption' 
-  AND success = false 
+FROM crypto_audit_log
+WHERE operation = 'decryption'
+  AND success = false
   AND created_at > NOW() - INTERVAL '1 hour'
 GROUP BY user_id, client_ip
 HAVING COUNT(*) > 10;
@@ -499,7 +499,7 @@ HAVING COUNT(*) > 5;
    - Document findings
 
 3. **Recovery**:
-   - Patch vulnerabilities  
+   - Patch vulnerabilities
    - Update cryptographic parameters
    - Re-key affected conversations
    - Monitor for continued attacks
@@ -513,7 +513,7 @@ HAVING COUNT(*) > 5;
 go test -bench=BenchmarkCrypto ./internal/crypto
 # Target: <1ms key generation, <0.1ms encrypt/decrypt
 
-# Load testing E2EE endpoints  
+# Load testing E2EE endpoints
 hey -n 10000 -c 100 -m POST \
   -H "Authorization: Bearer $TOKEN" \
   -d '{"recipient_id":"test","encrypted_content":"msg","pgp_signature":"sig"}' \

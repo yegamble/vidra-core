@@ -44,19 +44,19 @@ CREATE INDEX idx_conversations_last_message_at ON conversations(last_message_at)
 CREATE INDEX idx_conversations_participants ON conversations(participant_one_id, participant_two_id);
 
 -- Create trigger to update messages updated_at
-CREATE TRIGGER update_messages_updated_at 
-    BEFORE UPDATE ON messages 
-    FOR EACH ROW 
+CREATE TRIGGER update_messages_updated_at
+    BEFORE UPDATE ON messages
+    FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
 
 -- Create trigger to update conversations updated_at
-CREATE TRIGGER update_conversations_updated_at 
-    BEFORE UPDATE ON conversations 
-    FOR EACH ROW 
+CREATE TRIGGER update_conversations_updated_at
+    BEFORE UPDATE ON conversations
+    FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
 
 -- Function to ensure conversation participants are ordered consistently
-CREATE OR REPLACE FUNCTION ensure_conversation_order() 
+CREATE OR REPLACE FUNCTION ensure_conversation_order()
 RETURNS TRIGGER AS $$
 DECLARE
     temp_id UUID;

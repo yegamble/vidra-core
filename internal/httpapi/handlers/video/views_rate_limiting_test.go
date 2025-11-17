@@ -618,7 +618,7 @@ func createTestViewsRateLimitVideo(t *testing.T, testDB *testutil.TestDB, userID
 		UpdatedAt:   time.Now(),
 	}
 
-	query := `INSERT INTO videos (id, thumbnail_id, title, description, duration, views, privacy, status, 
+	query := `INSERT INTO videos (id, thumbnail_id, title, description, duration, views, privacy, status,
 		upload_date, user_id, file_size, mime_type, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`
 

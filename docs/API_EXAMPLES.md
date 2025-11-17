@@ -378,11 +378,11 @@ async function createCategory(token, categoryData) {
     },
     body: JSON.stringify(categoryData)
   });
-  
+
   if (!response.ok) {
     throw new Error(`Failed to create category: ${response.statusText}`);
   }
-  
+
   return await response.json();
 }
 ```
@@ -403,7 +403,7 @@ def create_video(token, video_data):
         'Authorization': f'Bearer {token}',
         'Content-Type': 'application/json'
     }
-    
+
     data = {
         'title': video_data['title'],
         'description': video_data['description'],
@@ -411,7 +411,7 @@ def create_video(token, video_data):
         'privacy': 'public',
         'tags': video_data.get('tags', [])
     }
-    
+
     response = requests.post(
         'http://localhost:8080/api/v1/videos',
         headers=headers,
@@ -425,16 +425,16 @@ def update_category(token, category_id, updates):
         'Authorization': f'Bearer {token}',
         'Content-Type': 'application/json'
     }
-    
+
     response = requests.put(
         f'http://localhost:8080/api/v1/admin/categories/{category_id}',
         headers=headers,
         json=updates
     )
-    
+
     if response.status_code != 200:
         raise Exception(f'Failed to update category: {response.text}')
-    
+
     return response.json()
 ```
 

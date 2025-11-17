@@ -40,10 +40,10 @@ func TestClusterAuth_HTTPSEnforcement_BearerTokenOverHTTP(t *testing.T) {
 // TestClusterAuth_HTTPSEnforcement_ValidateSecureTransport tests the security validation method
 func TestClusterAuth_HTTPSEnforcement_ValidateSecureTransport(t *testing.T) {
 	tests := []struct {
-		name       string
-		token      string
-		clusterURL string
-		wantErr    bool
+		name        string
+		token       string
+		clusterURL  string
+		wantErr     bool
 		errContains string
 	}{
 		{
@@ -53,10 +53,10 @@ func TestClusterAuth_HTTPSEnforcement_ValidateSecureTransport(t *testing.T) {
 			wantErr:    false,
 		},
 		{
-			name:       "bearer token over HTTP - forbidden",
-			token:      "secret-token",
-			clusterURL: "http://cluster.example.com:9094",
-			wantErr:    true,
+			name:        "bearer token over HTTP - forbidden",
+			token:       "secret-token",
+			clusterURL:  "http://cluster.example.com:9094",
+			wantErr:     true,
 			errContains: "CRITICAL SECURITY ERROR",
 		},
 		{
@@ -72,10 +72,10 @@ func TestClusterAuth_HTTPSEnforcement_ValidateSecureTransport(t *testing.T) {
 			wantErr:    false,
 		},
 		{
-			name:       "bearer token over HTTP localhost - still forbidden",
-			token:      "dev-token",
-			clusterURL: "http://localhost:9094",
-			wantErr:    true,
+			name:        "bearer token over HTTP localhost - still forbidden",
+			token:       "dev-token",
+			clusterURL:  "http://localhost:9094",
+			wantErr:     true,
 			errContains: "Bearer token authentication over HTTP is forbidden",
 		},
 	}

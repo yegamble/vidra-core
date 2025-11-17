@@ -313,7 +313,7 @@ func (r *NotificationRepository) GetStats(ctx context.Context, userID uuid.UUID)
 
 	// Get total and unread counts
 	query := `
-		SELECT 
+		SELECT
 			COUNT(*) as total,
 			SUM(CASE WHEN read = false THEN 1 ELSE 0 END) as unread
 		FROM notifications

@@ -2,7 +2,6 @@ package repository
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"testing"
 	"time"
@@ -310,7 +309,7 @@ func TestUploadRepository_AtomicChunkRecording(t *testing.T) {
 			UserID:         userID.String(),
 			FileName:       "test.mp4",
 			FileSize:       1024 * 1024, // 1MB
-			ChunkSize:      1024,         // 1KB chunks
+			ChunkSize:      1024,        // 1KB chunks
 			TotalChunks:    1024,
 			UploadedChunks: []int{},
 			Status:         "active",
