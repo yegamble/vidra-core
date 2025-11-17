@@ -155,6 +155,14 @@ func (m *Manager) RegisterPlugin(plugin Plugin, config map[string]any) error {
 
 // LoadPlugin loads a plugin from a manifest file
 func (m *Manager) LoadPlugin(manifestPath string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.loadPluginUnlocked(manifestPath)
+}
+
+// loadPluginUnlocked loads a plugin without acquiring the lock
+// NOTE: Caller must hold m.mu lock
+func (m *Manager) loadPluginUnlocked(manifestPath string) error {
 	// Read manifest file
 	data, err := os.ReadFile(manifestPath)
 	if err != nil {
@@ -195,9 +203,7 @@ func (m *Manager) LoadPlugin(manifestPath string) error {
 		info.Hooks[i] = EventType(hook)
 	}
 
-	m.mu.Lock()
 	m.pluginInfo[manifest.Name] = info
-	m.mu.Unlock()
 
 	return nil
 }
@@ -354,6 +360,7 @@ func (m *Manager) TriggerEvent(ctx context.Context, eventType EventType, data an
 // Private methods
 
 // discoverPlugins discovers all plugins in the plugin directory
+// NOTE: Caller must hold m.mu lock
 func (m *Manager) discoverPlugins() error {
 	// Find all manifest files
 	manifests, err := filepath.Glob(filepath.Join(m.pluginDir, "*", "plugin.json"))
@@ -363,7 +370,7 @@ func (m *Manager) discoverPlugins() error {
 
 	// Load each plugin
 	for _, manifestPath := range manifests {
-		if err := m.LoadPlugin(manifestPath); err != nil {
+		if err := m.loadPluginUnlocked(manifestPath); err != nil {
 			// Log error but continue loading other plugins
 			fmt.Printf("Warning: failed to load plugin from %s: %v\n", manifestPath, err)
 			continue
