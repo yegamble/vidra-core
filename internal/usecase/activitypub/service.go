@@ -1747,7 +1747,7 @@ func parseDuration(durationStr string) int {
 	// Parse hours
 	if idx := strings.Index(durationStr, "H"); idx > 0 {
 		hours := 0
-		fmt.Sscanf(durationStr[:idx], "%d", &hours)
+		_, _ = fmt.Sscanf(durationStr[:idx], "%d", &hours)
 		duration += hours * 3600
 		durationStr = durationStr[idx+1:]
 	}
@@ -1755,7 +1755,7 @@ func parseDuration(durationStr string) int {
 	// Parse minutes
 	if idx := strings.Index(durationStr, "M"); idx > 0 {
 		minutes := 0
-		fmt.Sscanf(durationStr[:idx], "%d", &minutes)
+		_, _ = fmt.Sscanf(durationStr[:idx], "%d", &minutes)
 		duration += minutes * 60
 		durationStr = durationStr[idx+1:]
 	}
@@ -1763,7 +1763,7 @@ func parseDuration(durationStr string) int {
 	// Parse seconds
 	if idx := strings.Index(durationStr, "S"); idx > 0 {
 		seconds := 0
-		fmt.Sscanf(durationStr[:idx], "%d", &seconds)
+		_, _ = fmt.Sscanf(durationStr[:idx], "%d", &seconds)
 		duration += seconds
 	}
 

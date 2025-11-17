@@ -133,10 +133,23 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Install PostgreSQL client
+      - name: Install Docker
+        run: |
+          if ! command -v docker &> /dev/null; then
+            echo "Installing Docker..."
+            curl -fsSL https://get.docker.com -o get-docker.sh
+            sudo sh get-docker.sh
+            sudo usermod -aG docker $USER
+            rm get-docker.sh
+            echo "Docker installed successfully"
+          else
+            echo "Docker already installed"
+          fi
+
+      - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y postgresql-client
+          sudo apt-get install -y postgresql-client make
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -216,10 +229,23 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Install PostgreSQL client
+      - name: Install Docker
+        run: |
+          if ! command -v docker &> /dev/null; then
+            echo "Installing Docker..."
+            curl -fsSL https://get.docker.com -o get-docker.sh
+            sudo sh get-docker.sh
+            sudo usermod -aG docker $USER
+            rm get-docker.sh
+            echo "Docker installed successfully"
+          else
+            echo "Docker already installed"
+          fi
+
+      - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y postgresql-client
+          sudo apt-get install -y postgresql-client make
 
       - name: Run all migrations in order
         env:
@@ -335,4 +361,3 @@ jobs:
         run: |
           go mod tidy
           git diff --exit-code go.mod go.sum || (echo "go.mod or go.sum changed, please run 'go mod tidy'" && exit 1)
-  workflow_dispatch:

@@ -16,24 +16,36 @@ jobs:
     runs-on: self-hosted
     timeout-minutes: 45
 
-    services:
-      # Note: Docker Compose is used instead of GH services for better control
-      # Services are defined in tests/e2e/docker-compose.yml
+    # Note: Docker Compose is used instead of GH services for better control
+    # Services are defined in tests/e2e/docker-compose.yml
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Install Docker
+        run: |
+          if ! command -v docker &> /dev/null; then
+            echo "Installing Docker..."
+            curl -fsSL https://get.docker.com -o get-docker.sh
+            sudo sh get-docker.sh
+            sudo usermod -aG docker $USER
+            rm get-docker.sh
+            echo "Docker installed successfully"
+          else
+            echo "Docker already installed"
+          fi
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg make
 
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
           go-version: '1.24'
           cache: true
-
-      - name: Install FFmpeg
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y ffmpeg
 
       - name: Verify FFmpeg installation
         run: ffmpeg -version
@@ -129,16 +141,29 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Install Docker
+        run: |
+          if ! command -v docker &> /dev/null; then
+            echo "Installing Docker..."
+            curl -fsSL https://get.docker.com -o get-docker.sh
+            sudo sh get-docker.sh
+            sudo usermod -aG docker $USER
+            rm get-docker.sh
+            echo "Docker installed successfully"
+          else
+            echo "Docker already installed"
+          fi
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg make
+
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
           go-version: '1.24'
           cache: true
-
-      - name: Install FFmpeg
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y ffmpeg
 
       - name: Generate test fixtures
         run: |
