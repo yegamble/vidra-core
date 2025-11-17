@@ -696,7 +696,6 @@ type NoteObject struct {
 }
 
 // NOTE: The following tests for BuildNoteObject, CreateCommentActivity, and PublishComment
-// are skipped because the production code methods don't exist yet. 
+// are skipped because the production code methods don't exist yet.
 // These need to be implemented along with the domain.NoteObject type.
 // See: https://github.com/your-org/athena/issues/XXX
-

@@ -1164,7 +1164,6 @@ func (s *Service) DeleteComment(ctx context.Context, commentID string) error {
 	return nil
 }
 
-
 // Video Publishing (stub implementations - to be implemented)
 
 // BuildVideoObject converts a domain.Video to an ActivityPub VideoObject

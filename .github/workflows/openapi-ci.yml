@@ -58,7 +58,8 @@ jobs:
       - name: Validate OpenAPI spec
         run: |
           echo "Validating OpenAPI specification..."
-          make validate-openapi || echo "OpenAPI spec not found or invalid"
+          # Fail the job if validation fails
+          make validate-openapi
 
       - name: Generate API Documentation Preview
         if: github.event_name == 'pull_request'
@@ -123,19 +124,8 @@ jobs:
       - name: Generate documentation
         run: |
           echo "Generating API documentation from OpenAPI spec..."
-          # Check if OpenAPI spec exists
-          if [ -f "openapi.yaml" ]; then
-            echo "Found openapi.yaml, generating documentation..."
-            # Use Redocly to build documentation
-            npx @redocly/cli build-docs openapi.yaml -o docs/api/index.html || echo "Documentation generation failed"
-          elif [ -f "openapi.json" ]; then
-            echo "Found openapi.json, generating documentation..."
-            npx @redocly/cli build-docs openapi.json -o docs/api/index.html || echo "Documentation generation failed"
-          else
-            echo "No OpenAPI specification found, skipping documentation generation"
-            mkdir -p docs/api
-            echo "<html><body><h1>API Documentation</h1><p>OpenAPI specification not found</p></body></html>" > docs/api/index.html
-          fi
+          # Use Makefile which handles both api/openapi.yaml and root openapi.yaml
+          make generate-docs
 
       - name: Upload documentation artifacts
         uses: actions/upload-artifact@v4

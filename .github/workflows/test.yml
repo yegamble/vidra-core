@@ -323,6 +323,10 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+      - name: Install PostgreSQL client
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
       - name: Apply SQL migrations
         env:
           DATABASE_URL: ${{ env.CI_DATABASE_URL }}
