@@ -756,6 +756,38 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
+    post:
+      tags:
+        - Videos
+      summary: Create a new video
+      description: Create a new video entry before uploading content
+      operationId: createVideo
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateVideoRequest'
+      responses:
+        '201':
+          description: Video created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Video'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
   /api/v1/videos/qualities:
     get:
       tags:
@@ -993,6 +1025,86 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/WrappedVideoResponse'
+        '404':
+          description: Video not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+    put:
+      tags:
+        - Videos
+      summary: Update video
+      description: Update video metadata
+      operationId: updateVideo
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateVideoRequest'
+      responses:
+        '200':
+          description: Video updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Video'
+        '400':
+          description: Invalid request or invalid ID format
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Video not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+    delete:
+      tags:
+        - Videos
+      summary: Delete video
+      description: Delete a video
+      operationId: deleteVideo
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Video deleted successfully
+        '400':
+          description: Invalid ID format
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         '404':
           description: Video not found
           content:
@@ -1629,208 +1741,6 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
 
   # Video endpoints
-  /api/v1/videos:
-    get:
-      tags:
-        - Videos
-      summary: List videos
-      description: Get a paginated list of public videos
-      operationId: listVideos
-      security: []
-      parameters:
-        - in: query
-          name: page
-          required: false
-          schema: { type: integer, minimum: 1 }
-          description: 1-based page index (preferred)
-        - in: query
-          name: pageSize
-          required: false
-          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
-          description: Page size (preferred)
-        - in: query
-          name: limit
-          required: false
-          schema: { type: integer, minimum: 1, maximum: 100 }
-          description: Deprecated; use pageSize
-        - in: query
-          name: offset
-          required: false
-          schema: { type: integer, minimum: 0 }
-          description: Deprecated; use page
-        - name: sort
-          in: query
-          schema:
-            type: string
-            enum: [title, views, upload_date, duration]
-            default: upload_date
-        - name: order
-          in: query
-          schema:
-            type: string
-            enum: [asc, desc]
-            default: desc
-        - name: category
-          in: query
-          schema:
-            type: string
-        - name: language
-          in: query
-          schema:
-            type: string
-      responses:
-        '200':
-          description: List of videos
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  videos:
-                    type: array
-                    items:
-                      $ref: '#/components/schemas/Video'
-                  total:
-                    type: integer
-                  limit:
-                    type: integer
-                  offset:
-                    type: integer
-    post:
-      tags:
-        - Videos
-      summary: Create a new video
-      description: Create a new video entry before uploading content
-      operationId: createVideo
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/CreateVideoRequest'
-      responses:
-        '201':
-          description: Video created successfully
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Video'
-        '400':
-          description: Invalid request
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-        '401':
-          description: Unauthorized
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-
-  /api/v1/videos/search:
-    get:
-      tags:
-        - Videos
-      summary: Search videos
-      description: Search for videos by query, tags, and filters
-      operationId: searchVideos
-      security: []
-      parameters:
-        - name: q
-          in: query
-          required: true
-          schema:
-            type: string
-            description: Search query
-        - name: tags
-          in: query
-          schema:
-            type: array
-            items:
-              type: string
-          style: form
-          explode: true
-        - name: category
-          in: query
-          schema:
-            type: string
-        - name: language
-          in: query
-          schema:
-            type: string
-        - name: sort
-          in: query
-          schema:
-            type: string
-            enum: [relevance, title, views, upload_date, duration]
-            default: relevance
-        - name: order
-          in: query
-          schema:
-            type: string
-            enum: [asc, desc]
-            default: desc
-        - name: limit
-          in: query
-          schema:
-            type: integer
-            default: 20
-            maximum: 100
-        - name: offset
-          in: query
-          schema:
-            type: integer
-            default: 0
-      responses:
-        '200':
-          description: Search results
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  videos:
-                    type: array
-                    items:
-                      $ref: '#/components/schemas/Video'
-                  total:
-                    type: integer
-                  limit:
-                    type: integer
-                  offset:
-                    type: integer
-
-  /api/v1/videos/qualities:
-    get:
-      tags:
-        - Videos
-      summary: Get supported video qualities
-      description: Returns list of supported video quality options
-      operationId: getSupportedQualities
-      security: []
-      responses:
-        '200':
-          description: List of supported qualities
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  qualities:
-                    type: array
-                    items:
-                      type: object
-                      properties:
-                        resolution:
-                          type: string
-                        height:
-                          type: integer
-                        width:
-                          type: integer
-                        bitrate:
-                          type: string
-
   /api/v1/videos/top:
     get:
       tags:
@@ -1864,39 +1774,6 @@ paths:
                     type: array
                     items:
                       $ref: '#/components/schemas/Video'
-
-  /api/v1/videos/subscriptions:
-    get:
-      tags:
-        - Videos
-      summary: Get subscription feed
-      description: Get videos from channels user is subscribed to
-      operationId: getSubscriptionVideos
-      parameters:
-        - name: limit
-          in: query
-          schema:
-            type: integer
-            default: 20
-            maximum: 100
-        - name: offset
-          in: query
-          schema:
-            type: integer
-            default: 0
-      responses:
-        '200':
-          description: Subscription feed videos
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/WrappedVideosResponse'
-        '401':
-          description: Unauthorized
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
 
   /api/v1/videos/upload:
     post:
@@ -1940,148 +1817,6 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
         '401':
           description: Unauthorized
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-
-  /api/v1/videos/{id}:
-    get:
-      tags:
-        - Videos
-      summary: Get video by ID
-      description: Get a specific video by its ID
-      operationId: getVideo
-      security: []
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-            format: uuid
-      responses:
-        '200':
-          description: Video details
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Video'
-        '404':
-          description: Video not found
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-    put:
-      tags:
-        - Videos
-      summary: Update video
-      description: Update video metadata
-      operationId: updateVideo
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-            format: uuid
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/UpdateVideoRequest'
-      responses:
-        '200':
-          description: Video updated successfully
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Video'
-        '400':
-          description: Invalid request or invalid ID format
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-        '401':
-          description: Unauthorized
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-        '404':
-          description: Video not found
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-    delete:
-      tags:
-        - Videos
-      summary: Delete video
-      description: Delete a video
-      operationId: deleteVideo
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-            format: uuid
-      responses:
-        '204':
-          description: Video deleted successfully
-        '400':
-          description: Invalid ID format
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-        '401':
-          description: Unauthorized
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-        '404':
-          description: Video not found
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-
-  /api/v1/videos/{id}/stream:
-    get:
-      tags:
-        - Videos
-      summary: Stream video
-      description: Get HLS stream playlist for video
-      operationId: streamVideo
-      security: []
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-            format: uuid
-        - name: quality
-          in: query
-          schema:
-            type: string
-            enum: [auto, 2160p, 1440p, 1080p, 720p, 480p, 360p, 240p]
-            default: auto
-      responses:
-        '200':
-          description: HLS playlist
-          content:
-            application/vnd.apple.mpegurl:
-              schema:
-                type: string
-        '404':
-          description: Video not found
           content:
             application/json:
               schema:
