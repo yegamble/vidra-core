@@ -41,7 +41,7 @@ permissions:
 jobs:
   validate-input:
     name: Validate Deployment Input
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     outputs:
       current_color: ${{ steps.detect.outputs.current_color }}
       target_color: ${{ steps.detect.outputs.target_color }}
@@ -95,7 +95,7 @@ jobs:
 
   staging-deployment:
     name: Deploy to Staging
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     needs: [validate-input]
     if: ${{ !inputs.skip_staging }}
     environment:
@@ -136,7 +136,7 @@ jobs:
 
   database-migration:
     name: Apply Database Migrations
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     needs: [validate-input, staging-deployment]
     if: always() && needs.validate-input.result == 'success' && (needs.staging-deployment.result == 'success' || inputs.skip_staging)
     environment:
@@ -215,7 +215,7 @@ jobs:
 
   deploy-target-environment:
     name: Deploy ${{ needs.validate-input.outputs.target_color }} Environment
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     needs: [validate-input, database-migration]
     environment:
       name: production-${{ needs.validate-input.outputs.target_color }}
@@ -271,7 +271,7 @@ jobs:
 
   pre-switch-validation:
     name: Pre-Switch Validation
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     needs: [validate-input, deploy-target-environment]
     steps:
       - name: Checkout code
@@ -314,7 +314,7 @@ jobs:
 
   canary-rollout:
     name: Canary Rollout (${{ inputs.canary_percentage }}%)
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     needs: [validate-input, pre-switch-validation]
     environment:
       name: production-canary
@@ -356,7 +356,7 @@ jobs:
 
   full-rollout:
     name: Full Rollout (100%)
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     needs: [validate-input, canary-rollout]
     environment:
       name: production-full-rollout
@@ -420,7 +420,7 @@ jobs:
 
   notify-success:
     name: Notify Success
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     needs: [validate-input, full-rollout]
     if: success()
     steps:
@@ -450,7 +450,7 @@ jobs:
 
   rollback-on-failure:
     name: Automatic Rollback
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     needs: [validate-input, full-rollout]
     if: failure()
     steps:

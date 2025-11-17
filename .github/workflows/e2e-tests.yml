@@ -13,7 +13,7 @@ on:
 jobs:
   e2e-tests:
     name: End-to-End Tests
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     timeout-minutes: 45
 
     services:
@@ -120,7 +120,7 @@ jobs:
   # Optional: Run E2E tests with race detector (slower but catches concurrency issues)
   e2e-tests-race:
     name: E2E Tests (Race Detection)
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     timeout-minutes: 60
     # Only run on main branch or manual trigger to save CI time
     if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'

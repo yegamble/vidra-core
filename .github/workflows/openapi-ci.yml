@@ -24,7 +24,7 @@ permissions:
 jobs:
   validate:
     name: Validate OpenAPI Spec
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
 
     steps:
       - name: Checkout code
@@ -69,7 +69,7 @@ jobs:
 
   generate-docs:
     name: Generate API Documentation
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     needs: validate
     if: github.ref == 'refs/heads/main' && success()
 
