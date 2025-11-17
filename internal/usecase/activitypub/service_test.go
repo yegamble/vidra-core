@@ -311,12 +311,13 @@ func TestGetLocalActor(t *testing.T) {
 	mockAPRepo := new(MockActivityPubRepository)
 	mockUserRepo := new(MockUserRepository)
 	mockVideoRepo := new(MockVideoRepository)
+	mockCommentRepo := new(MockCommentRepository)
 
 	cfg := &config.Config{
 		PublicBaseURL: "https://video.example",
 	}
 
-	service := NewService(mockAPRepo, mockUserRepo, mockVideoRepo, cfg)
+	service := NewService(mockAPRepo, mockUserRepo, mockVideoRepo, mockCommentRepo, cfg)
 
 	ctx := context.Background()
 	username := "alice"
@@ -387,12 +388,13 @@ func TestFetchRemoteActor(t *testing.T) {
 	mockAPRepo := new(MockActivityPubRepository)
 	mockUserRepo := new(MockUserRepository)
 	mockVideoRepo := new(MockVideoRepository)
+	mockCommentRepo := new(MockCommentRepository)
 
 	cfg := &config.Config{
 		PublicBaseURL: "https://video.example",
 	}
 
-	service := NewService(mockAPRepo, mockUserRepo, mockVideoRepo, cfg)
+	service := NewService(mockAPRepo, mockUserRepo, mockVideoRepo, mockCommentRepo, cfg)
 
 	ctx := context.Background()
 
@@ -464,6 +466,7 @@ func TestHandleFollow(t *testing.T) {
 	mockAPRepo := new(MockActivityPubRepository)
 	mockUserRepo := new(MockUserRepository)
 	mockVideoRepo := new(MockVideoRepository)
+	mockCommentRepo := new(MockCommentRepository)
 
 	// Create a mock HTTP server to receive the Accept activity
 	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -477,7 +480,7 @@ func TestHandleFollow(t *testing.T) {
 		ActivityPubAcceptFollowAutomatic: true,
 	}
 
-	service := NewService(mockAPRepo, mockUserRepo, mockVideoRepo, cfg)
+	service := NewService(mockAPRepo, mockUserRepo, mockVideoRepo, mockCommentRepo, cfg)
 
 	ctx := context.Background()
 
@@ -546,12 +549,13 @@ func TestHandleLike(t *testing.T) {
 	mockAPRepo := new(MockActivityPubRepository)
 	mockUserRepo := new(MockUserRepository)
 	mockVideoRepo := new(MockVideoRepository)
+	mockCommentRepo := new(MockCommentRepository)
 
 	cfg := &config.Config{
 		PublicBaseURL: "https://video.example",
 	}
 
-	service := NewService(mockAPRepo, mockUserRepo, mockVideoRepo, cfg)
+	service := NewService(mockAPRepo, mockUserRepo, mockVideoRepo, mockCommentRepo, cfg)
 
 	ctx := context.Background()
 
@@ -592,12 +596,13 @@ func TestHandleUndo(t *testing.T) {
 	mockAPRepo := new(MockActivityPubRepository)
 	mockUserRepo := new(MockUserRepository)
 	mockVideoRepo := new(MockVideoRepository)
+	mockCommentRepo := new(MockCommentRepository)
 
 	cfg := &config.Config{
 		PublicBaseURL: "https://video.example",
 	}
 
-	service := NewService(mockAPRepo, mockUserRepo, mockVideoRepo, cfg)
+	service := NewService(mockAPRepo, mockUserRepo, mockVideoRepo, mockCommentRepo, cfg)
 
 	ctx := context.Background()
 
@@ -671,13 +676,14 @@ func TestGetOutbox(t *testing.T) {
 	mockAPRepo := new(MockActivityPubRepository)
 	mockUserRepo := new(MockUserRepository)
 	mockVideoRepo := new(MockVideoRepository)
+	mockCommentRepo := new(MockCommentRepository)
 
 	cfg := &config.Config{
 		PublicBaseURL:                   "https://video.example",
 		ActivityPubMaxActivitiesPerPage: 20,
 	}
 
-	service := NewService(mockAPRepo, mockUserRepo, mockVideoRepo, cfg)
+	service := NewService(mockAPRepo, mockUserRepo, mockVideoRepo, mockCommentRepo, cfg)
 
 	ctx := context.Background()
 
@@ -736,13 +742,14 @@ func TestGetFollowers(t *testing.T) {
 	mockAPRepo := new(MockActivityPubRepository)
 	mockUserRepo := new(MockUserRepository)
 	mockVideoRepo := new(MockVideoRepository)
+	mockCommentRepo := new(MockCommentRepository)
 
 	cfg := &config.Config{
 		PublicBaseURL:                   "https://video.example",
 		ActivityPubMaxActivitiesPerPage: 20,
 	}
 
-	service := NewService(mockAPRepo, mockUserRepo, mockVideoRepo, cfg)
+	service := NewService(mockAPRepo, mockUserRepo, mockVideoRepo, mockCommentRepo, cfg)
 
 	ctx := context.Background()
 
@@ -786,12 +793,13 @@ func TestExtractUsernameFromURI(t *testing.T) {
 	mockAPRepo := new(MockActivityPubRepository)
 	mockUserRepo := new(MockUserRepository)
 	mockVideoRepo := new(MockVideoRepository)
+	mockCommentRepo := new(MockCommentRepository)
 
 	cfg := &config.Config{
 		PublicBaseURL: "https://video.example",
 	}
 
-	service := NewService(mockAPRepo, mockUserRepo, mockVideoRepo, cfg)
+	service := NewService(mockAPRepo, mockUserRepo, mockVideoRepo, mockCommentRepo, cfg)
 
 	tests := []struct {
 		name        string
@@ -843,12 +851,13 @@ func TestExtractVideoIDFromURI(t *testing.T) {
 	mockAPRepo := new(MockActivityPubRepository)
 	mockUserRepo := new(MockUserRepository)
 	mockVideoRepo := new(MockVideoRepository)
+	mockCommentRepo := new(MockCommentRepository)
 
 	cfg := &config.Config{
 		PublicBaseURL: "https://video.example",
 	}
 
-	service := NewService(mockAPRepo, mockUserRepo, mockVideoRepo, cfg)
+	service := NewService(mockAPRepo, mockUserRepo, mockVideoRepo, mockCommentRepo, cfg)
 
 	tests := []struct {
 		name        string
@@ -895,7 +904,7 @@ type MockCommentRepository struct {
 	mock.Mock
 }
 
-func (m *MockCommentRepository) GetByID(ctx context.Context, id string) (*domain.Comment, error) {
+func (m *MockCommentRepository) GetByID(ctx context.Context, id uuid.UUID) (*domain.Comment, error) {
 	args := m.Called(ctx, id)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -912,12 +921,13 @@ func TestServicePublishVideo(t *testing.T) {
 	mockAPRepo := new(MockActivityPubRepository)
 	mockUserRepo := new(MockUserRepository)
 	mockVideoRepo := new(MockVideoRepository)
+	mockCommentRepo := new(MockCommentRepository)
 
 	cfg := &config.Config{
 		PublicBaseURL: "https://video.example",
 	}
 
-	service := NewService(mockAPRepo, mockUserRepo, mockVideoRepo, cfg)
+	service := NewService(mockAPRepo, mockUserRepo, mockVideoRepo, mockCommentRepo, cfg)
 
 	ctx := context.Background()
 
@@ -996,12 +1006,13 @@ func TestServiceUpdateVideo(t *testing.T) {
 	mockAPRepo := new(MockActivityPubRepository)
 	mockUserRepo := new(MockUserRepository)
 	mockVideoRepo := new(MockVideoRepository)
+	mockCommentRepo := new(MockCommentRepository)
 
 	cfg := &config.Config{
 		PublicBaseURL: "https://video.example",
 	}
 
-	service := NewService(mockAPRepo, mockUserRepo, mockVideoRepo, cfg)
+	service := NewService(mockAPRepo, mockUserRepo, mockVideoRepo, mockCommentRepo, cfg)
 
 	ctx := context.Background()
 
@@ -1064,12 +1075,13 @@ func TestServiceDeleteVideo(t *testing.T) {
 	mockAPRepo := new(MockActivityPubRepository)
 	mockUserRepo := new(MockUserRepository)
 	mockVideoRepo := new(MockVideoRepository)
+	mockCommentRepo := new(MockCommentRepository)
 
 	cfg := &config.Config{
 		PublicBaseURL: "https://video.example",
 	}
 
-	service := NewService(mockAPRepo, mockUserRepo, mockVideoRepo, cfg)
+	service := NewService(mockAPRepo, mockUserRepo, mockVideoRepo, mockCommentRepo, cfg)
 
 	ctx := context.Background()
 
@@ -1122,12 +1134,13 @@ func TestServicePublishComment(t *testing.T) {
 	mockAPRepo := new(MockActivityPubRepository)
 	mockUserRepo := new(MockUserRepository)
 	mockVideoRepo := new(MockVideoRepository)
+	mockCommentRepo := new(MockCommentRepository)
 
 	cfg := &config.Config{
 		PublicBaseURL: "https://video.example",
 	}
 
-	service := NewService(mockAPRepo, mockUserRepo, mockVideoRepo, cfg)
+	service := NewService(mockAPRepo, mockUserRepo, mockVideoRepo, mockCommentRepo, cfg)
 
 	ctx := context.Background()
 
@@ -1149,12 +1162,13 @@ func TestServiceBuildVideoObject(t *testing.T) {
 	mockAPRepo := new(MockActivityPubRepository)
 	mockUserRepo := new(MockUserRepository)
 	mockVideoRepo := new(MockVideoRepository)
+	mockCommentRepo := new(MockCommentRepository)
 
 	cfg := &config.Config{
 		PublicBaseURL: "https://video.example",
 	}
 
-	service := NewService(mockAPRepo, mockUserRepo, mockVideoRepo, cfg)
+	service := NewService(mockAPRepo, mockUserRepo, mockVideoRepo, mockCommentRepo, cfg)
 
 	ctx := context.Background()
 
@@ -1195,12 +1209,13 @@ func TestServiceBuildNoteObject(t *testing.T) {
 	mockAPRepo := new(MockActivityPubRepository)
 	mockUserRepo := new(MockUserRepository)
 	mockVideoRepo := new(MockVideoRepository)
+	mockCommentRepo := new(MockCommentRepository)
 
 	cfg := &config.Config{
 		PublicBaseURL: "https://video.example",
 	}
 
-	service := NewService(mockAPRepo, mockUserRepo, mockVideoRepo, cfg)
+	service := NewService(mockAPRepo, mockUserRepo, mockVideoRepo, mockCommentRepo, cfg)
 
 	ctx := context.Background()
 
@@ -1223,12 +1238,13 @@ func TestServiceCreateVideoActivity(t *testing.T) {
 	mockAPRepo := new(MockActivityPubRepository)
 	mockUserRepo := new(MockUserRepository)
 	mockVideoRepo := new(MockVideoRepository)
+	mockCommentRepo := new(MockCommentRepository)
 
 	cfg := &config.Config{
 		PublicBaseURL: "https://video.example",
 	}
 
-	service := NewService(mockAPRepo, mockUserRepo, mockVideoRepo, cfg)
+	service := NewService(mockAPRepo, mockUserRepo, mockVideoRepo, mockCommentRepo, cfg)
 
 	ctx := context.Background()
 
@@ -1267,12 +1283,13 @@ func TestServiceCreateCommentActivity(t *testing.T) {
 	mockAPRepo := new(MockActivityPubRepository)
 	mockUserRepo := new(MockUserRepository)
 	mockVideoRepo := new(MockVideoRepository)
+	mockCommentRepo := new(MockCommentRepository)
 
 	cfg := &config.Config{
 		PublicBaseURL: "https://video.example",
 	}
 
-	service := NewService(mockAPRepo, mockUserRepo, mockVideoRepo, cfg)
+	service := NewService(mockAPRepo, mockUserRepo, mockVideoRepo, mockCommentRepo, cfg)
 
 	ctx := context.Background()
 
