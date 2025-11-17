@@ -62,6 +62,8 @@ jobs:
       GO111MODULE: on
       # Increase timeouts for network operations
       GOPROXY_TIMEOUT: 600s
+      # Enable CGO for race detector
+      CGO_ENABLED: "1"
 
     steps:
       - name: Checkout code
@@ -149,6 +151,8 @@ jobs:
     env:
       # Force Go modules mode to avoid GOPATH issues
       GO111MODULE: on
+      # Enable CGO for race detector
+      CGO_ENABLED: "1"
 
     services:
       postgres:
