@@ -3,13 +3,12 @@ package httpapi
 import (
 	"athena/internal/health"
 	"athena/internal/httpapi/shared"
-	"context"
-	"encoding/json"
 	"log"
 	"net/http"
 	"time"
 
 	"athena/internal/domain"
+
 	"github.com/jmoiron/sqlx"
 	"github.com/redis/go-redis/v9"
 )

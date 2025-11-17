@@ -220,10 +220,10 @@ func TestIOTARepository_UpdateWalletBalance(t *testing.T) {
 	require.NoError(t, err)
 
 	tests := []struct {
-		name        string
-		walletID    string
-		newBalance  int64
-		wantErr     error
+		name       string
+		walletID   string
+		newBalance int64
+		wantErr    error
 	}{
 		{
 			name:       "increase balance",

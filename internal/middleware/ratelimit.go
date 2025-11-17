@@ -23,12 +23,12 @@ type RateLimiter struct {
 	mu             sync.RWMutex
 	rate           time.Duration
 	burst          int
-	done           chan struct{}   // Shutdown signal
-	wg             sync.WaitGroup  // Wait for cleanup to finish
-	shutdownOnce   sync.Once       // Ensure shutdown is idempotent
-	cleanupPeriod  time.Duration   // How often to run cleanup
-	visitorTimeout time.Duration   // How long to keep idle visitors
-	isShutdown     atomic.Bool     // Track shutdown state
+	done           chan struct{}  // Shutdown signal
+	wg             sync.WaitGroup // Wait for cleanup to finish
+	shutdownOnce   sync.Once      // Ensure shutdown is idempotent
+	cleanupPeriod  time.Duration  // How often to run cleanup
+	visitorTimeout time.Duration  // How long to keep idle visitors
+	isShutdown     atomic.Bool    // Track shutdown state
 }
 
 // NewRateLimiter creates a new rate limiter with default cleanup settings

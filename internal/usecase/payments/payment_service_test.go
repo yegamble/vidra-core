@@ -5,7 +5,6 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
-	"database/sql"
 	"errors"
 	"testing"
 	"time"
@@ -137,11 +136,11 @@ func (m *MockIOTAClient) GetBalance(ctx context.Context, address string) (int64,
 // TestPaymentService_CreateWallet tests wallet creation
 func TestPaymentService_CreateWallet(t *testing.T) {
 	tests := []struct {
-		name        string
-		userID      string
-		setupMocks  func(*MockIOTARepository, *MockIOTAClient)
-		wantErr     bool
-		errType     error
+		name       string
+		userID     string
+		setupMocks func(*MockIOTARepository, *MockIOTAClient)
+		wantErr    bool
+		errType    error
 	}{
 		{
 			name:   "successful wallet creation",

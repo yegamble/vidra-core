@@ -70,26 +70,26 @@ func TestFileTypeBlocker_RejectDangerousFormats(t *testing.T) {
 	blocker := NewFileTypeBlocker()
 
 	dangerous := []string{
-		".svg",   // Active content
-		".swf",   // Flash
-		".iso",   // Disk image
-		".img",   // Disk image
-		".vhd",   // Virtual disk
-		".vhdx",  // Virtual disk
-		".apk",   // Android package
-		".ipa",   // iOS package
-		".app",   // macOS app
-		".pkg",   // Package
-		".dmg",   // macOS disk image
-		".lnk",   // Shortcut
-		".url",   // Internet shortcut
-		".webloc", // macOS web location
+		".svg",     // Active content
+		".swf",     // Flash
+		".iso",     // Disk image
+		".img",     // Disk image
+		".vhd",     // Virtual disk
+		".vhdx",    // Virtual disk
+		".apk",     // Android package
+		".ipa",     // iOS package
+		".app",     // macOS app
+		".pkg",     // Package
+		".dmg",     // macOS disk image
+		".lnk",     // Shortcut
+		".url",     // Internet shortcut
+		".webloc",  // macOS web location
 		".desktop", // Linux desktop entry
-		".reg",   // Registry file
-		".cpl",   // Control panel
-		".hta",   // HTML application
-		".chm",   // Compiled HTML
-		".scf",   // Shell command file
+		".reg",     // Registry file
+		".cpl",     // Control panel
+		".hta",     // HTML application
+		".chm",     // Compiled HTML
+		".scf",     // Shell command file
 	}
 
 	for _, ext := range dangerous {
@@ -162,10 +162,10 @@ func TestFileTypeBlocker_AllowLegitimateDocuments(t *testing.T) {
 		ext   string
 		magic []byte
 	}{
-		{".pdf", []byte{0x25, 0x50, 0x44, 0x46}},                         // %PDF
-		{".docx", []byte{0x50, 0x4B, 0x03, 0x04}},                        // PK (ZIP)
-		{".xlsx", []byte{0x50, 0x4B, 0x03, 0x04}},                        // PK (ZIP)
-		{".pptx", []byte{0x50, 0x4B, 0x03, 0x04}},                        // PK (ZIP)
+		{".pdf", []byte{0x25, 0x50, 0x44, 0x46}},  // %PDF
+		{".docx", []byte{0x50, 0x4B, 0x03, 0x04}}, // PK (ZIP)
+		{".xlsx", []byte{0x50, 0x4B, 0x03, 0x04}}, // PK (ZIP)
+		{".pptx", []byte{0x50, 0x4B, 0x03, 0x04}}, // PK (ZIP)
 		{".txt", []byte("This is plain text")},
 	}
 
@@ -189,12 +189,12 @@ func TestFileTypeBlocker_AllowLegitimateAudio(t *testing.T) {
 		ext   string
 		magic []byte
 	}{
-		{".mp3", []byte{0xFF, 0xFB}},                         // MP3 frame sync
-		{".wav", []byte{0x52, 0x49, 0x46, 0x46}},            // RIFF
+		{".mp3", []byte{0xFF, 0xFB}},                                     // MP3 frame sync
+		{".wav", []byte{0x52, 0x49, 0x46, 0x46}},                         // RIFF
 		{".m4a", []byte{0x00, 0x00, 0x00, 0x20, 0x66, 0x74, 0x79, 0x70}}, // ftyp
-		{".aac", []byte{0xFF, 0xF1}},                         // AAC ADTS
-		{".flac", []byte{0x66, 0x4C, 0x61, 0x43}},           // fLaC
-		{".ogg", []byte{0x4F, 0x67, 0x67, 0x53}},            // OggS
+		{".aac", []byte{0xFF, 0xF1}},                                     // AAC ADTS
+		{".flac", []byte{0x66, 0x4C, 0x61, 0x43}},                        // fLaC
+		{".ogg", []byte{0x4F, 0x67, 0x67, 0x53}},                         // OggS
 	}
 
 	for _, aud := range audio {
@@ -320,9 +320,9 @@ func TestFileTypeBlocker_ArchiveWithBlockedTypes(t *testing.T) {
 
 	// Create ZIP containing .exe
 	dangerousZIP := createZIPWithFiles(t, map[string][]byte{
-		"readme.txt":    []byte("Hello"),
-		"malware.exe":   {0x4D, 0x5A}, // MZ header
-		"document.pdf":  {0x25, 0x50, 0x44, 0x46},
+		"readme.txt":   []byte("Hello"),
+		"malware.exe":  {0x4D, 0x5A}, // MZ header
+		"document.pdf": {0x25, 0x50, 0x44, 0x46},
 	})
 
 	allowed, reason := blocker.ValidateArchive("archive.zip", dangerousZIP)
@@ -336,9 +336,9 @@ func TestFileTypeBlocker_ValidArchive(t *testing.T) {
 
 	// Create valid ZIP with allowed files
 	validZIP := createZIPWithFiles(t, map[string][]byte{
-		"readme.txt":    []byte("Project documentation"),
-		"image.png":     {0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A},
-		"document.pdf":  {0x25, 0x50, 0x44, 0x46},
+		"readme.txt":   []byte("Project documentation"),
+		"image.png":    {0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A},
+		"document.pdf": {0x25, 0x50, 0x44, 0x46},
 	})
 
 	allowed, reason := blocker.ValidateArchive("archive.zip", validZIP)

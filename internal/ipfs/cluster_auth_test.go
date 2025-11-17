@@ -183,9 +183,9 @@ AwEHoUQDQgAElxmEmM5woRnMJzPQRCLj7VKBRoKL5TqdKbXu1cXLMx8LxbVOQyvn
 	require.NoError(t, err)
 
 	authConfig := &ClusterAuthConfig{
-		TLSEnabled:  true,
-		CertFile:    certFile,
-		KeyFile:     keyFile,
+		TLSEnabled: true,
+		CertFile:   certFile,
+		KeyFile:    keyFile,
 	}
 
 	client := NewClientWithAuth("https://localhost:9096", "", 5*time.Second, authConfig)
@@ -596,7 +596,7 @@ func TestClusterAuth_RequestHeaders(t *testing.T) {
 // TestClusterAuth_TLSVersions verifies minimum TLS version is enforced
 func TestClusterAuth_TLSVersions(t *testing.T) {
 	authConfig := &ClusterAuthConfig{
-		TLSEnabled: true,
+		TLSEnabled:    true,
 		MinTLSVersion: tls.VersionTLS12,
 	}
 

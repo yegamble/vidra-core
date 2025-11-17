@@ -383,10 +383,10 @@ func (s *VirusScanner) ScanStream(ctx context.Context, reader io.Reader) (*ScanR
 				Msg("Stream exceeded maximum size limit for virus scanning")
 			// SECURITY: Reject oversized streams to prevent resource exhaustion
 			return &ScanResult{
-				Status:       ScanStatusError,
-				ScanDuration: time.Since(start),
-			}, fmt.Errorf("stream too large for scanning: %d bytes exceeds limit of %d bytes",
-				bytesWritten, s.config.MaxStreamSize)
+					Status:       ScanStatusError,
+					ScanDuration: time.Since(start),
+				}, fmt.Errorf("stream too large for scanning: %d bytes exceeds limit of %d bytes",
+					bytesWritten, s.config.MaxStreamSize)
 		}
 
 		// Seek back to beginning for scanning

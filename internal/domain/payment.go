@@ -10,7 +10,7 @@ type IOTAWallet struct {
 	ID            string    `json:"id" db:"id"`
 	UserID        string    `json:"user_id" db:"user_id"`
 	EncryptedSeed []byte    `json:"-" db:"encrypted_seed"` // Never expose in JSON
-	SeedNonce     []byte    `json:"-" db:"seed_nonce"`      // Never expose in JSON
+	SeedNonce     []byte    `json:"-" db:"seed_nonce"`     // Never expose in JSON
 	Address       string    `json:"address" db:"address"`
 	BalanceIOTA   int64     `json:"balance_iota" db:"balance_iota"`
 	CreatedAt     time.Time `json:"created_at" db:"created_at"`
@@ -79,19 +79,19 @@ type IOTATransaction struct {
 
 // Payment errors using DomainError
 var (
-	ErrWalletNotFound         = NewDomainError("WALLET_NOT_FOUND", "Wallet not found")
-	ErrWalletAlreadyExists    = NewDomainError("WALLET_ALREADY_EXISTS", "Wallet already exists for this user")
-	ErrPaymentIntentNotFound  = NewDomainError("PAYMENT_INTENT_NOT_FOUND", "Payment intent not found")
-	ErrPaymentIntentExpired   = NewDomainError("PAYMENT_INTENT_EXPIRED", "Payment intent has expired")
-	ErrInvalidAmount          = NewDomainError("INVALID_AMOUNT", "Invalid payment amount")
-	ErrInsufficientBalance    = NewDomainError("INSUFFICIENT_BALANCE", "Insufficient wallet balance")
-	ErrTransactionNotFound    = NewDomainError("TRANSACTION_NOT_FOUND", "Transaction not found")
-	ErrInvalidAddress         = NewDomainError("INVALID_ADDRESS", "Invalid IOTA address")
-	ErrPaymentAlreadyPaid     = NewDomainError("PAYMENT_ALREADY_PAID", "Payment intent already paid")
-	ErrInvalidSeed            = NewDomainError("INVALID_SEED", "Invalid wallet seed")
-	ErrEncryptionFailed       = NewDomainError("ENCRYPTION_FAILED", "Failed to encrypt wallet seed")
-	ErrDecryptionFailed       = NewDomainError("DECRYPTION_FAILED", "Failed to decrypt wallet seed")
-	ErrIOTANodeUnavailable    = NewDomainError("IOTA_NODE_UNAVAILABLE", "IOTA node is unavailable")
-	ErrTransactionBroadcast   = NewDomainError("TRANSACTION_BROADCAST_FAILED", "Failed to broadcast transaction")
-	ErrRateLimitExceeded      = NewDomainError("RATE_LIMIT_EXCEEDED", "Rate limit exceeded for wallet operations")
+	ErrWalletNotFound        = NewDomainError("WALLET_NOT_FOUND", "Wallet not found")
+	ErrWalletAlreadyExists   = NewDomainError("WALLET_ALREADY_EXISTS", "Wallet already exists for this user")
+	ErrPaymentIntentNotFound = NewDomainError("PAYMENT_INTENT_NOT_FOUND", "Payment intent not found")
+	ErrPaymentIntentExpired  = NewDomainError("PAYMENT_INTENT_EXPIRED", "Payment intent has expired")
+	ErrInvalidAmount         = NewDomainError("INVALID_AMOUNT", "Invalid payment amount")
+	ErrInsufficientBalance   = NewDomainError("INSUFFICIENT_BALANCE", "Insufficient wallet balance")
+	ErrTransactionNotFound   = NewDomainError("TRANSACTION_NOT_FOUND", "Transaction not found")
+	ErrInvalidAddress        = NewDomainError("INVALID_ADDRESS", "Invalid IOTA address")
+	ErrPaymentAlreadyPaid    = NewDomainError("PAYMENT_ALREADY_PAID", "Payment intent already paid")
+	ErrInvalidSeed           = NewDomainError("INVALID_SEED", "Invalid wallet seed")
+	ErrEncryptionFailed      = NewDomainError("ENCRYPTION_FAILED", "Failed to encrypt wallet seed")
+	ErrDecryptionFailed      = NewDomainError("DECRYPTION_FAILED", "Failed to decrypt wallet seed")
+	ErrIOTANodeUnavailable   = NewDomainError("IOTA_NODE_UNAVAILABLE", "IOTA node is unavailable")
+	ErrTransactionBroadcast  = NewDomainError("TRANSACTION_BROADCAST_FAILED", "Failed to broadcast transaction")
+	ErrRateLimitExceeded     = NewDomainError("RATE_LIMIT_EXCEEDED", "Rate limit exceeded for wallet operations")
 )

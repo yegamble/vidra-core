@@ -1,12 +1,10 @@
 package httpapi
 
 import (
-	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -16,8 +14,7 @@ import (
 	"time"
 
 	"athena/internal/health"
-	"github.com/jmoiron/sqlx"
-	"github.com/redis/go-redis/v9"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

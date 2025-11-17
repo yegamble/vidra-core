@@ -87,8 +87,8 @@ var blockedExtensions = map[string]string{
 // Magic byte signatures for file type validation
 var magicBytes = map[string][]byte{
 	// Executables (blocked)
-	"exe":  {0x4D, 0x5A},       // MZ
-	"elf":  {0x7F, 0x45, 0x4C, 0x46}, // ELF
+	"exe": {0x4D, 0x5A},             // MZ
+	"elf": {0x7F, 0x45, 0x4C, 0x46}, // ELF
 
 	// Images (allowed)
 	"jpg":  {0xFF, 0xD8, 0xFF},
@@ -97,12 +97,12 @@ var magicBytes = map[string][]byte{
 	"webp": {0x52, 0x49, 0x46, 0x46}, // RIFF (need to check WEBP after)
 
 	// Videos (allowed)
-	"mp4":  {0x00, 0x00, 0x00}, // ftyp (need more validation)
+	"mp4":  {0x00, 0x00, 0x00},       // ftyp (need more validation)
 	"webm": {0x1A, 0x45, 0xDF, 0xA3}, // EBML
 	"avi":  {0x52, 0x49, 0x46, 0x46}, // RIFF
 
 	// Audio (allowed)
-	"mp3":  {0xFF, 0xFB}, // or 0xFF, 0xF3 or 0xFF, 0xF2
+	"mp3":  {0xFF, 0xFB},             // or 0xFF, 0xF3 or 0xFF, 0xF2
 	"flac": {0x66, 0x4C, 0x61, 0x43}, // fLaC
 	"ogg":  {0x4F, 0x67, 0x67, 0x53}, // OggS
 	"wav":  {0x52, 0x49, 0x46, 0x46}, // RIFF
@@ -118,7 +118,7 @@ func NewFileTypeBlocker() *FileTypeBlocker {
 		maxArchiveDepth:     2,
 		maxArchiveFiles:     10000,
 		maxUncompressedSize: 10 * 1024 * 1024 * 1024, // 10 GB
-		maxFileSize:         25 * 1024 * 1024,         // 25 MB
+		maxFileSize:         25 * 1024 * 1024,        // 25 MB
 	}
 }
 
@@ -289,9 +289,9 @@ func (b *FileTypeBlocker) validateMagicBytes(filename string, content []byte) bo
 	case ".mp3":
 		// MP3 can have ID3 tags or start with frame sync
 		return bytes.HasPrefix(content, magicBytes["mp3"]) ||
-		       bytes.HasPrefix(content, []byte{0xFF, 0xF3}) ||
-		       bytes.HasPrefix(content, []byte{0xFF, 0xF2}) ||
-		       bytes.HasPrefix(content, []byte("ID3"))
+			bytes.HasPrefix(content, []byte{0xFF, 0xF3}) ||
+			bytes.HasPrefix(content, []byte{0xFF, 0xF2}) ||
+			bytes.HasPrefix(content, []byte("ID3"))
 
 	case ".m4a", ".aac":
 		// M4A uses MP4 container
@@ -315,11 +315,11 @@ func (b *FileTypeBlocker) validateMagicBytes(filename string, content []byte) bo
 	case ".txt":
 		// Text files - ensure they don't have binary magic bytes
 		if bytes.HasPrefix(content, magicBytes["pdf"]) ||
-		   bytes.HasPrefix(content, magicBytes["zip"]) ||
-		   bytes.HasPrefix(content, magicBytes["png"]) ||
-		   bytes.HasPrefix(content, magicBytes["jpg"]) ||
-		   bytes.HasPrefix(content, magicBytes["exe"]) ||
-		   bytes.HasPrefix(content, magicBytes["elf"]) {
+			bytes.HasPrefix(content, magicBytes["zip"]) ||
+			bytes.HasPrefix(content, magicBytes["png"]) ||
+			bytes.HasPrefix(content, magicBytes["jpg"]) ||
+			bytes.HasPrefix(content, magicBytes["exe"]) ||
+			bytes.HasPrefix(content, magicBytes["elf"]) {
 			return false
 		}
 		return true

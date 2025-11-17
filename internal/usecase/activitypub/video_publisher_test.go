@@ -269,9 +269,9 @@ func TestBuildVideoObject_Metadata(t *testing.T) {
 		require.Len(t, videoObject.Tag, 3)
 
 		expectedTags := map[string]bool{
-			"#golang":       false,
-			"#activitypub":  false,
-			"#federation":   false,
+			"#golang":      false,
+			"#activitypub": false,
+			"#federation":  false,
 		}
 
 		for _, tag := range videoObject.Tag {

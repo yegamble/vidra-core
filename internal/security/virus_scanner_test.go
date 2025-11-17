@@ -67,11 +67,11 @@ func TestVirusScanner_Initialize(t *testing.T) {
 // TestVirusScanner_ConnectionFallback tests graceful degradation when ClamAV unavailable
 func TestVirusScanner_ConnectionFallback(t *testing.T) {
 	config := VirusScannerConfig{
-		Address:          "localhost:9999", // Non-existent port
-		Timeout:          5 * time.Second,
-		FallbackMode:     FallbackModeWarn, // Warn but allow files
-		MaxRetries:       3,
-		RetryDelay:       1 * time.Second,
+		Address:      "localhost:9999", // Non-existent port
+		Timeout:      5 * time.Second,
+		FallbackMode: FallbackModeWarn, // Warn but allow files
+		MaxRetries:   3,
+		RetryDelay:   1 * time.Second,
 	}
 
 	scanner, err := NewVirusScanner(config)
@@ -295,11 +295,11 @@ func TestVirusScanner_NonSeekableReaderRetry(t *testing.T) {
 	ctx := context.Background()
 
 	tests := []struct {
-		name            string
-		data            []byte
-		expectInfected  bool
-		allowError      bool
-		description     string
+		name           string
+		data           []byte
+		expectInfected bool
+		allowError     bool
+		description    string
 	}{
 		{
 			name:           "infected_eicar_non_seekable",
@@ -505,7 +505,7 @@ func TestVirusScanner_ConcurrentStreamScans(t *testing.T) {
 			defer wg.Done()
 
 			var reader io.Reader
-			expectInfected := (id % 2 == 0)
+			expectInfected := (id%2 == 0)
 
 			if expectInfected {
 				reader = bytes.NewReader([]byte(eicarString))
@@ -1353,11 +1353,11 @@ func setupScanner(t *testing.T) *VirusScanner {
 	t.Helper()
 
 	config := VirusScannerConfig{
-		Address:        "localhost:3310",
-		Timeout:        30 * time.Second,
-		MaxRetries:     3,
-		RetryDelay:     1 * time.Second,
-		FallbackMode:   FallbackModeStrict,
+		Address:      "localhost:3310",
+		Timeout:      30 * time.Second,
+		MaxRetries:   3,
+		RetryDelay:   1 * time.Second,
+		FallbackMode: FallbackModeStrict,
 	}
 
 	scanner, err := NewVirusScanner(config)

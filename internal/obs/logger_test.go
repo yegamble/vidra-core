@@ -11,11 +11,11 @@ import (
 
 func TestNewLogger(t *testing.T) {
 	tests := []struct {
-		name        string
-		env         string
-		level       string
-		wantJSON    bool
-		wantLevel   slog.Level
+		name      string
+		env       string
+		level     string
+		wantJSON  bool
+		wantLevel slog.Level
 	}{
 		{
 			name:      "production JSON logger",
@@ -164,10 +164,10 @@ func TestLoggerWithRequestContext(t *testing.T) {
 
 func TestLogLevels(t *testing.T) {
 	tests := []struct {
-		name       string
-		logLevel   string
-		logFunc    func(*slog.Logger, string)
-		shouldLog  bool
+		name      string
+		logLevel  string
+		logFunc   func(*slog.Logger, string)
+		shouldLog bool
 	}{
 		{
 			name:      "debug logged when level is debug",

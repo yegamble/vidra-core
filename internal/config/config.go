@@ -275,11 +275,11 @@ type Config struct {
 	// Virus Scanning Configuration
 	VirusScanEnabled         bool
 	ClamAVAddress            string
-	VirusScanTimeout         int  // seconds
+	VirusScanTimeout         int // seconds
 	QuarantineDir            string
 	VirusScanFallbackOnError bool
 	VirusScanMaxRetries      int
-	VirusScanRetryDelay      int  // seconds
+	VirusScanRetryDelay      int // seconds
 
 	// File Type Blocking Configuration
 	FileTypeBlockingEnabled bool

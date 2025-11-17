@@ -105,10 +105,10 @@ func NewDatabaseChecker(db *sqlx.DB) *DatabaseChecker {
 
 // RedisChecker checks Redis health
 type RedisChecker struct {
-	Client           *redis.Client
-	MaxPingTime      time.Duration
-	CheckMemory      bool
-	MaxMemoryUsage   float64 // percentage, e.g., 0.90 for 90%
+	Client         *redis.Client
+	MaxPingTime    time.Duration
+	CheckMemory    bool
+	MaxMemoryUsage float64 // percentage, e.g., 0.90 for 90%
 }
 
 // Check verifies Redis connectivity and optional memory status
@@ -193,10 +193,10 @@ func NewRedisChecker(client *redis.Client) *RedisChecker {
 
 // IPFSChecker checks IPFS node health
 type IPFSChecker struct {
-	APIEndpoint      string
-	ClusterEndpoint  string
-	MaxResponseTime  time.Duration
-	CheckCluster     bool
+	APIEndpoint     string
+	ClusterEndpoint string
+	MaxResponseTime time.Duration
+	CheckCluster    bool
 }
 
 // Check verifies IPFS API and optional cluster connectivity
@@ -290,11 +290,11 @@ func NewIPFSCheckerWithCluster(apiEndpoint, clusterEndpoint string) *IPFSChecker
 
 // QueueDepthChecker checks queue depth thresholds
 type QueueDepthChecker struct {
-	GetEncodingQueueDepth  func() (int, error)
-	GetActivityQueueDepth  func() (int, error)
-	MaxEncodingQueue       int
-	MaxActivityQueue       int
-	WarningThreshold       float64 // percentage, e.g., 0.80 for 80%
+	GetEncodingQueueDepth func() (int, error)
+	GetActivityQueueDepth func() (int, error)
+	MaxEncodingQueue      int
+	MaxActivityQueue      int
+	WarningThreshold      float64 // percentage, e.g., 0.80 for 80%
 }
 
 // Check verifies queue depths are within acceptable limits

@@ -536,9 +536,9 @@ func TestClusterPin_ValidatesCID(t *testing.T) {
 // TestValidateCID_ErrorMessages verifies error messages are informative
 func TestValidateCID_ErrorMessages(t *testing.T) {
 	tests := []struct {
-		name           string
-		cid            string
-		expectedInMsg  string
+		name          string
+		cid           string
+		expectedInMsg string
 	}{
 		{
 			name:          "empty CID",
@@ -629,9 +629,9 @@ func TestFuzzValidateCID_ByteSequences(t *testing.T) {
 func TestValidateCID_PerformanceDoS(t *testing.T) {
 	// Validation should complete quickly even for malicious inputs
 	tests := []struct {
-		name         string
-		cid          string
-		maxDuration  time.Duration
+		name        string
+		cid         string
+		maxDuration time.Duration
 	}{
 		{
 			name:        "normal CID",

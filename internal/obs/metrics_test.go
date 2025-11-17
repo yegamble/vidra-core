@@ -127,10 +127,10 @@ func TestHTTPRequestDuration(t *testing.T) {
 	registry.MustRegister(metrics.HTTPRequestDuration)
 
 	// Record various request durations
-	metrics.HTTPRequestDuration.WithLabelValues("GET", "/api/v1/videos").Observe(0.050)  // 50ms
-	metrics.HTTPRequestDuration.WithLabelValues("GET", "/api/v1/videos").Observe(0.100)  // 100ms
-	metrics.HTTPRequestDuration.WithLabelValues("GET", "/api/v1/videos").Observe(0.200)  // 200ms
-	metrics.HTTPRequestDuration.WithLabelValues("POST", "/api/v1/upload").Observe(2.5)   // 2.5s
+	metrics.HTTPRequestDuration.WithLabelValues("GET", "/api/v1/videos").Observe(0.050) // 50ms
+	metrics.HTTPRequestDuration.WithLabelValues("GET", "/api/v1/videos").Observe(0.100) // 100ms
+	metrics.HTTPRequestDuration.WithLabelValues("GET", "/api/v1/videos").Observe(0.200) // 200ms
+	metrics.HTTPRequestDuration.WithLabelValues("POST", "/api/v1/upload").Observe(2.5)  // 2.5s
 
 	// Verify histogram buckets
 	count := testutil.CollectAndCount(metrics.HTTPRequestDuration)
@@ -143,9 +143,9 @@ func TestHTTPRequestSize(t *testing.T) {
 	metrics := NewMetrics()
 
 	// Record various request sizes
-	metrics.HTTPRequestSize.WithLabelValues("POST", "/api/v1/upload").Observe(1024)        // 1KB
-	metrics.HTTPRequestSize.WithLabelValues("POST", "/api/v1/upload").Observe(1048576)     // 1MB
-	metrics.HTTPRequestSize.WithLabelValues("POST", "/api/v1/upload").Observe(10485760)    // 10MB
+	metrics.HTTPRequestSize.WithLabelValues("POST", "/api/v1/upload").Observe(1024)     // 1KB
+	metrics.HTTPRequestSize.WithLabelValues("POST", "/api/v1/upload").Observe(1048576)  // 1MB
+	metrics.HTTPRequestSize.WithLabelValues("POST", "/api/v1/upload").Observe(10485760) // 10MB
 
 	count := testutil.CollectAndCount(metrics.HTTPRequestSize)
 	if count == 0 {
@@ -157,9 +157,9 @@ func TestHTTPResponseSize(t *testing.T) {
 	metrics := NewMetrics()
 
 	// Record various response sizes
-	metrics.HTTPResponseSize.WithLabelValues("GET", "/api/v1/videos").Observe(512)      // 512 bytes
-	metrics.HTTPResponseSize.WithLabelValues("GET", "/api/v1/videos").Observe(2048)     // 2KB
-	metrics.HTTPResponseSize.WithLabelValues("GET", "/api/v1/videos").Observe(10240)    // 10KB
+	metrics.HTTPResponseSize.WithLabelValues("GET", "/api/v1/videos").Observe(512)   // 512 bytes
+	metrics.HTTPResponseSize.WithLabelValues("GET", "/api/v1/videos").Observe(2048)  // 2KB
+	metrics.HTTPResponseSize.WithLabelValues("GET", "/api/v1/videos").Observe(10240) // 10KB
 
 	count := testutil.CollectAndCount(metrics.HTTPResponseSize)
 	if count == 0 {
@@ -194,10 +194,10 @@ func TestDBQueryDuration(t *testing.T) {
 	metrics := NewMetrics()
 
 	// Record query durations
-	metrics.DBQueryDuration.WithLabelValues("SELECT", "videos").Observe(0.005)  // 5ms
-	metrics.DBQueryDuration.WithLabelValues("INSERT", "videos").Observe(0.010)  // 10ms
-	metrics.DBQueryDuration.WithLabelValues("UPDATE", "videos").Observe(0.015)  // 15ms
-	metrics.DBQueryDuration.WithLabelValues("DELETE", "videos").Observe(0.020)  // 20ms
+	metrics.DBQueryDuration.WithLabelValues("SELECT", "videos").Observe(0.005) // 5ms
+	metrics.DBQueryDuration.WithLabelValues("INSERT", "videos").Observe(0.010) // 10ms
+	metrics.DBQueryDuration.WithLabelValues("UPDATE", "videos").Observe(0.015) // 15ms
+	metrics.DBQueryDuration.WithLabelValues("DELETE", "videos").Observe(0.020) // 20ms
 
 	count := testutil.CollectAndCount(metrics.DBQueryDuration)
 	if count == 0 {
@@ -233,9 +233,9 @@ func TestIPFSPinDuration(t *testing.T) {
 	metrics := NewMetrics()
 
 	// Record pin operation durations
-	metrics.IPFSPinDuration.WithLabelValues("add").Observe(5.5)      // 5.5s
-	metrics.IPFSPinDuration.WithLabelValues("add").Observe(3.2)      // 3.2s
-	metrics.IPFSPinDuration.WithLabelValues("remove").Observe(0.5)   // 0.5s
+	metrics.IPFSPinDuration.WithLabelValues("add").Observe(5.5)    // 5.5s
+	metrics.IPFSPinDuration.WithLabelValues("add").Observe(3.2)    // 3.2s
+	metrics.IPFSPinDuration.WithLabelValues("remove").Observe(0.5) // 0.5s
 
 	count := testutil.CollectAndCount(metrics.IPFSPinDuration)
 	if count == 0 {
@@ -328,9 +328,9 @@ func TestIOTAConfirmationDuration(t *testing.T) {
 	metrics := NewMetrics()
 
 	// Record payment confirmation durations
-	metrics.IOTAConfirmationDuration.Observe(30.5)   // 30.5 seconds
-	metrics.IOTAConfirmationDuration.Observe(45.2)   // 45.2 seconds
-	metrics.IOTAConfirmationDuration.Observe(60.0)   // 60 seconds
+	metrics.IOTAConfirmationDuration.Observe(30.5) // 30.5 seconds
+	metrics.IOTAConfirmationDuration.Observe(45.2) // 45.2 seconds
+	metrics.IOTAConfirmationDuration.Observe(60.0) // 60 seconds
 
 	count := testutil.CollectAndCount(metrics.IOTAConfirmationDuration)
 	if count == 0 {

@@ -33,8 +33,8 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 
 	// SECURITY: Create stricter rate limiters for critical endpoints
 	// These prevent abuse of authentication and resource-intensive operations
-	strictAuthLimiter := rlManager.CreateRateLimiter(60*time.Second, 5)   // 5 per minute for registration
-	strictLoginLimiter := rlManager.CreateRateLimiter(60*time.Second, 10) // 10 per minute for login
+	strictAuthLimiter := rlManager.CreateRateLimiter(60*time.Second, 5)    // 5 per minute for registration
+	strictLoginLimiter := rlManager.CreateRateLimiter(60*time.Second, 10)  // 10 per minute for login
 	strictImportLimiter := rlManager.CreateRateLimiter(60*time.Second, 10) // 10 per minute for imports
 
 	// Create server instance with dependencies

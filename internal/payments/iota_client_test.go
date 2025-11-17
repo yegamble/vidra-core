@@ -113,11 +113,11 @@ func TestIOTAClient_GenerateSeed_UniqueSeeds(t *testing.T) {
 // TestIOTAClient_DeriveAddress tests address derivation from seed
 func TestIOTAClient_DeriveAddress(t *testing.T) {
 	tests := []struct {
-		name       string
-		seed       string
-		index      uint32
-		wantErr    bool
-		errType    error
+		name    string
+		seed    string
+		index   uint32
+		wantErr bool
+		errType error
 	}{
 		{
 			name:    "valid seed and index",
@@ -569,12 +569,12 @@ func TestIOTAClient_GetTransactionStatus(t *testing.T) {
 // TestIOTAClient_WaitForConfirmation tests waiting for transaction confirmation
 func TestIOTAClient_WaitForConfirmation(t *testing.T) {
 	tests := []struct {
-		name              string
-		txHash            string
-		requiredConfirms  int
-		mockStatuses      []*TransactionStatus
-		wantErr           bool
-		expectedConfirms  int
+		name             string
+		txHash           string
+		requiredConfirms int
+		mockStatuses     []*TransactionStatus
+		wantErr          bool
+		expectedConfirms int
 	}{
 		{
 			name:             "quick confirmation",

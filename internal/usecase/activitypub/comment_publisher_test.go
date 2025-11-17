@@ -671,14 +671,14 @@ func TestDeleteComment(t *testing.T) {
 
 // Mock types for Note object (not yet defined in domain)
 type NoteObject struct {
-	Context      interface{} `json:"@context,omitempty"`
-	Type         string      `json:"type"`
-	ID           string      `json:"id"`
-	Content      string      `json:"content"`
-	Published    *time.Time  `json:"published,omitempty"`
-	AttributedTo string      `json:"attributedTo"`
-	InReplyTo    string      `json:"inReplyTo,omitempty"`
-	To           []string    `json:"to,omitempty"`
-	Cc           []string    `json:"cc,omitempty"`
+	Context      interface{}    `json:"@context,omitempty"`
+	Type         string         `json:"type"`
+	ID           string         `json:"id"`
+	Content      string         `json:"content"`
+	Published    *time.Time     `json:"published,omitempty"`
+	AttributedTo string         `json:"attributedTo"`
+	InReplyTo    string         `json:"inReplyTo,omitempty"`
+	To           []string       `json:"to,omitempty"`
+	Cc           []string       `json:"cc,omitempty"`
 	Tag          []domain.APTag `json:"tag,omitempty"`
 }
