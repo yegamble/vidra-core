@@ -26,6 +26,7 @@ import (
 	"athena/internal/payments"
 	"athena/internal/repository"
 	"athena/internal/scheduler"
+	"athena/internal/security"
 	"athena/internal/usecase"
 	ucactivitypub "athena/internal/usecase/activitypub"
 	ucchannel "athena/internal/usecase/channel"
@@ -306,7 +307,13 @@ func (app *Application) initializeDependencies() *Dependencies {
 
 	// Initialize ActivityPub service if enabled
 	if app.Config.EnableActivityPub {
-		activityPubRepo := repository.NewActivityPubRepository(app.DB)
+		// Create encryption for ActivityPub private keys
+		encryption, err := security.NewActivityPubKeyEncryption(app.Config.ActivityPubKeyEncryptionKey)
+		if err != nil {
+			log.Fatalf("Failed to initialize ActivityPub key encryption: %v", err)
+		}
+
+		activityPubRepo := repository.NewActivityPubRepository(app.DB, encryption)
 		deps.ActivityPubService = ucactivitypub.NewService(
 			activityPubRepo,
 			deps.UserRepo,
