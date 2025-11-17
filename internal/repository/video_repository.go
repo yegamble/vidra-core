@@ -715,3 +715,96 @@ func (r *videoRepository) GetVideosForMigration(ctx context.Context, limit int) 
 
 	return videos, nil
 }
+
+// GetByRemoteURI retrieves a video by its remote ActivityPub URI
+func (r *VideoRepository) GetByRemoteURI(ctx context.Context, remoteURI string) (*domain.Video, error) {
+	query := `
+		SELECT 
+			id, thumbnail_id, title, description, duration, views, privacy, status,
+			upload_date, user_id, channel_id, original_cid, processed_cids, thumbnail_cid,
+			output_paths, s3_urls, storage_tier, s3_migrated_at, local_deleted,
+			thumbnail_path, preview_path, tags, category_id, language,
+			file_size, mime_type, metadata, 
+			is_remote, remote_uri, remote_actor_uri, remote_video_url,
+			remote_instance_domain, remote_thumbnail_url, remote_last_synced_at,
+			created_at, updated_at
+		FROM videos
+		WHERE remote_uri = $1 AND is_remote = true
+	`
+
+	var v domain.Video
+	var processedCIDsJSON, outputPathsJSON, s3URLsJSON, metadataJSON []byte
+	var tags pq.StringArray
+
+	err := r.db.QueryRowContext(ctx, query, remoteURI).Scan(
+		&v.ID, &v.ThumbnailID, &v.Title, &v.Description, &v.Duration, &v.Views,
+		&v.Privacy, &v.Status, &v.UploadDate, &v.UserID, &v.ChannelID,
+		&v.OriginalCID, &processedCIDsJSON, &v.ThumbnailCID, &outputPathsJSON,
+		&s3URLsJSON, &v.StorageTier, &v.S3MigratedAt, &v.LocalDeleted,
+		&v.ThumbnailPath, &v.PreviewPath, &tags, &v.CategoryID, &v.Language,
+		&v.FileSize, &v.MimeType, &metadataJSON,
+		&v.IsRemote, &v.RemoteURI, &v.RemoteActorURI, &v.RemoteVideoURL,
+		&v.RemoteInstanceDomain, &v.RemoteThumbnailURL, &v.RemoteLastSyncedAt,
+		&v.CreatedAt, &v.UpdatedAt,
+	)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	// Unmarshal JSON fields
+	if len(processedCIDsJSON) > 0 {
+		_ = json.Unmarshal(processedCIDsJSON, &v.ProcessedCIDs)
+	}
+	if len(metadataJSON) > 0 {
+		_ = json.Unmarshal(metadataJSON, &v.Metadata)
+	}
+	if len(outputPathsJSON) > 0 {
+		_ = json.Unmarshal(outputPathsJSON, &v.OutputPaths)
+	}
+	if len(s3URLsJSON) > 0 {
+		_ = json.Unmarshal(s3URLsJSON, &v.S3URLs)
+	}
+	v.Tags = []string(tags)
+
+	return &v, nil
+}
+
+// CreateRemoteVideo creates a new remote video record (from federated instance)
+func (r *VideoRepository) CreateRemoteVideo(ctx context.Context, video *domain.Video) error {
+	query := `
+		INSERT INTO videos (
+			id, thumbnail_id, title, description, duration, privacy, status,
+			upload_date, tags, language, file_size, metadata,
+			is_remote, remote_uri, remote_actor_uri, remote_video_url,
+			remote_instance_domain, remote_thumbnail_url, remote_last_synced_at,
+			created_at, updated_at
+		) VALUES (
+			$1, COALESCE($2, gen_random_uuid()), $3, $4, $5, $6, $7,
+			$8, $9, $10, $11, $12,
+			$13, $14, $15, $16,
+			$17, $18, $19,
+			$20, $21
+		)
+	`
+
+	// Marshal JSON fields
+	metadataJSON, _ := json.Marshal(video.Metadata)
+
+	// Convert tags to pq.Array
+	tags := pq.StringArray(video.Tags)
+
+	_, err := r.db.ExecContext(ctx, query,
+		video.ID, nil, // thumbnail_id will be generated
+		video.Title, video.Description, video.Duration, video.Privacy, video.Status,
+		video.UploadDate, tags, video.Language, video.FileSize, metadataJSON,
+		video.IsRemote, video.RemoteURI, video.RemoteActorURI, video.RemoteVideoURL,
+		video.RemoteInstanceDomain, video.RemoteThumbnailURL, video.RemoteLastSyncedAt,
+		video.CreatedAt, video.UpdatedAt,
+	)
+
+	return err
+}

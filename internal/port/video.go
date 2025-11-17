@@ -17,4 +17,7 @@ type VideoRepository interface {
 	UpdateProcessingInfoWithCIDs(ctx context.Context, videoID string, status domain.ProcessingStatus, outputPaths map[string]string, thumbnailPath, previewPath string, processedCIDs map[string]string, thumbnailCID, previewCID string) error
 	Count(ctx context.Context) (int64, error)
 	GetVideosForMigration(ctx context.Context, limit int) ([]*domain.Video, error)
+	// Remote video methods for federation
+	GetByRemoteURI(ctx context.Context, remoteURI string) (*domain.Video, error)
+	CreateRemoteVideo(ctx context.Context, video *domain.Video) error
 }

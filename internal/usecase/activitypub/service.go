@@ -479,37 +479,59 @@ func (s *Service) handleAnnounce(ctx context.Context, activity map[string]interf
 }
 
 func (s *Service) handleCreate(ctx context.Context, activity map[string]interface{}, remoteActor *domain.APRemoteActor) error {
-	// Handle creation of remote objects (comments, etc.)
-	// For now, we'll just store the activity
+	// Handle creation of remote objects (videos, comments, etc.)
 	activityJSON, err := json.Marshal(activity)
 	if err != nil {
 		return fmt.Errorf("failed to marshal activity: %w", err)
 	}
 
 	// Validate activity has an ID
-	if _, ok := activity["id"].(string); !ok {
+	activityID, ok := activity["id"].(string)
+	if !ok {
 		return fmt.Errorf("missing activity id")
 	}
 
+	// Extract object
+	obj, ok := activity["object"].(map[string]interface{})
+	if !ok {
+		return fmt.Errorf("missing or invalid object in Create activity")
+	}
+
+	// Get object type
+	objType, ok := obj["type"].(string)
+	if !ok {
+		return fmt.Errorf("missing object type")
+	}
+
+	objID, _ := obj["id"].(string)
+
+	// Create activity record
 	apActivity := &domain.APActivity{
 		ActorID:      remoteActor.ActorURI,
 		Type:         domain.ActivityTypeCreate,
 		Published:    time.Now(),
 		ActivityJSON: activityJSON,
 		Local:        false,
+		ObjectID:     &objID,
+		ObjectType:   &objType,
 	}
 
-	// Extract object info if possible
-	if obj, ok := activity["object"].(map[string]interface{}); ok {
-		if objID, ok := obj["id"].(string); ok {
-			apActivity.ObjectID = &objID
-		}
-		if objType, ok := obj["type"].(string); ok {
-			apActivity.ObjectType = &objType
-		}
+	// Store the activity
+	if err := s.repo.StoreActivity(ctx, apActivity); err != nil {
+		return fmt.Errorf("failed to store activity: %w", err)
 	}
 
-	return s.repo.StoreActivity(ctx, apActivity)
+	// Handle specific object types
+	switch objType {
+	case "Video":
+		return s.ingestRemoteVideo(ctx, obj, remoteActor, activityID)
+	case "Note":
+		// Handle remote comments/notes (already implemented elsewhere)
+		return nil
+	default:
+		// Unknown object type - activity is stored but not processed
+		return nil
+	}
 }
 
 func (s *Service) handleUpdate(ctx context.Context, activity map[string]interface{}, remoteActor *domain.APRemoteActor) error {
@@ -1523,4 +1545,316 @@ func (s *Service) DeleteVideo(ctx context.Context, videoID string) error {
 	}
 
 	return nil
+}
+
+// ingestRemoteVideo processes a remote Video object from a Create activity
+func (s *Service) ingestRemoteVideo(ctx context.Context, videoObj map[string]interface{}, remoteActor *domain.APRemoteActor, activityID string) error {
+	// Extract video URI
+	videoURI, ok := videoObj["id"].(string)
+	if !ok {
+		return fmt.Errorf("missing video id")
+	}
+
+	// Check if we already have this video
+	existingVideo, err := s.videoRepo.GetByRemoteURI(ctx, videoURI)
+	if err == nil && existingVideo != nil {
+		// Video already exists, update it instead
+		return s.updateRemoteVideo(ctx, videoObj, existingVideo, remoteActor)
+	}
+
+	// Extract video metadata
+	title, _ := videoObj["name"].(string)
+	if title == "" {
+		title = "Untitled Remote Video"
+	}
+
+	description, _ := videoObj["content"].(string)
+	if description == "" {
+		description, _ = videoObj["summary"].(string)
+	}
+
+	// Parse duration (ISO 8601 format like "PT5M30S")
+	duration := 0
+	if durationStr, ok := videoObj["duration"].(string); ok {
+		duration = parseDuration(durationStr)
+	}
+
+	// Extract video URL (prefer MP4, then any video URL)
+	videoURL := extractVideoURL(videoObj)
+	if videoURL == "" {
+		return fmt.Errorf("no video URL found in remote video object")
+	}
+
+	// Extract thumbnail URL
+	thumbnailURL := extractThumbnailURL(videoObj)
+
+	// Extract instance domain from video URI
+	instanceDomain := extractDomain(videoURI)
+
+	// Determine privacy level
+	privacy := determinePrivacy(videoObj)
+
+	// Extract publish date
+	uploadDate := time.Now()
+	if published, ok := videoObj["published"].(string); ok {
+		if parsed, err := time.Parse(time.RFC3339, published); err == nil {
+			uploadDate = parsed
+		}
+	}
+
+	// Extract language
+	language := "en" // default
+	if lang, ok := videoObj["language"].(map[string]interface{}); ok {
+		if identifier, ok := lang["identifier"].(string); ok {
+			language = identifier
+		}
+	} else if langStr, ok := videoObj["language"].(string); ok {
+		language = langStr
+	}
+
+	// Extract tags
+	tags := extractTags(videoObj)
+
+	// Create remote video record
+	now := time.Now()
+	video := &domain.Video{
+		ID:                   uuid.New().String(),
+		Title:                title,
+		Description:          description,
+		Duration:             duration,
+		Privacy:              privacy,
+		Status:               domain.ProcessingStatusCompleted,
+		UploadDate:           uploadDate,
+		Tags:                 tags,
+		Language:             language,
+		IsRemote:             true,
+		RemoteURI:            &videoURI,
+		RemoteActorURI:       &remoteActor.ActorURI,
+		RemoteVideoURL:       &videoURL,
+		RemoteInstanceDomain: &instanceDomain,
+		RemoteThumbnailURL:   &thumbnailURL,
+		RemoteLastSyncedAt:   &now,
+		CreatedAt:            uploadDate,
+		UpdatedAt:            now,
+	}
+
+	// Store the remote video
+	if err := s.videoRepo.CreateRemoteVideo(ctx, video); err != nil {
+		return fmt.Errorf("failed to create remote video: %w", err)
+	}
+
+	return nil
+}
+
+// updateRemoteVideo updates an existing remote video with new metadata
+func (s *Service) updateRemoteVideo(ctx context.Context, videoObj map[string]interface{}, existingVideo *domain.Video, remoteActor *domain.APRemoteActor) error {
+	// Extract updated metadata
+	if title, ok := videoObj["name"].(string); ok && title != "" {
+		existingVideo.Title = title
+	}
+
+	if description, ok := videoObj["content"].(string); ok {
+		existingVideo.Description = description
+	} else if summary, ok := videoObj["summary"].(string); ok {
+		existingVideo.Description = summary
+	}
+
+	// Update duration if changed
+	if durationStr, ok := videoObj["duration"].(string); ok {
+		existingVideo.Duration = parseDuration(durationStr)
+	}
+
+	// Update video URL
+	if videoURL := extractVideoURL(videoObj); videoURL != "" {
+		existingVideo.RemoteVideoURL = &videoURL
+	}
+
+	// Update thumbnail
+	if thumbnailURL := extractThumbnailURL(videoObj); thumbnailURL != "" {
+		existingVideo.RemoteThumbnailURL = &thumbnailURL
+	}
+
+	// Update privacy
+	existingVideo.Privacy = determinePrivacy(videoObj)
+
+	// Update tags
+	existingVideo.Tags = extractTags(videoObj)
+
+	// Update last synced timestamp
+	now := time.Now()
+	existingVideo.RemoteLastSyncedAt = &now
+	existingVideo.UpdatedAt = now
+
+	// Save updates
+	if err := s.videoRepo.Update(ctx, existingVideo); err != nil {
+		return fmt.Errorf("failed to update remote video: %w", err)
+	}
+
+	return nil
+}
+
+// Helper functions for extracting video metadata
+
+// parseDuration parses ISO 8601 duration (e.g., "PT5M30S") to seconds
+func parseDuration(durationStr string) int {
+	duration := 0
+	if len(durationStr) < 3 || !strings.HasPrefix(durationStr, "PT") {
+		return 0
+	}
+
+	durationStr = durationStr[2:] // Remove "PT"
+
+	// Parse hours
+	if idx := strings.Index(durationStr, "H"); idx > 0 {
+		hours := 0
+		fmt.Sscanf(durationStr[:idx], "%d", &hours)
+		duration += hours * 3600
+		durationStr = durationStr[idx+1:]
+	}
+
+	// Parse minutes
+	if idx := strings.Index(durationStr, "M"); idx > 0 {
+		minutes := 0
+		fmt.Sscanf(durationStr[:idx], "%d", &minutes)
+		duration += minutes * 60
+		durationStr = durationStr[idx+1:]
+	}
+
+	// Parse seconds
+	if idx := strings.Index(durationStr, "S"); idx > 0 {
+		seconds := 0
+		fmt.Sscanf(durationStr[:idx], "%d", &seconds)
+		duration += seconds
+	}
+
+	return duration
+}
+
+// extractVideoURL extracts the best video URL from a VideoObject
+func extractVideoURL(videoObj map[string]interface{}) string {
+	// Try URL array first (PeerTube format)
+	if urls, ok := videoObj["url"].([]interface{}); ok {
+		// Prefer MP4
+		for _, u := range urls {
+			if urlObj, ok := u.(map[string]interface{}); ok {
+				if mediaType, ok := urlObj["mediaType"].(string); ok && mediaType == "video/mp4" {
+					if href, ok := urlObj["href"].(string); ok {
+						return href
+					}
+				}
+			}
+		}
+		// Fall back to first video URL
+		for _, u := range urls {
+			if urlObj, ok := u.(map[string]interface{}); ok {
+				if mediaType, ok := urlObj["mediaType"].(string); ok && strings.HasPrefix(mediaType, "video/") {
+					if href, ok := urlObj["href"].(string); ok {
+						return href
+					}
+				}
+			}
+		}
+	}
+
+	// Try single URL string
+	if url, ok := videoObj["url"].(string); ok {
+		return url
+	}
+
+	return ""
+}
+
+// extractThumbnailURL extracts thumbnail URL from VideoObject
+func extractThumbnailURL(videoObj map[string]interface{}) string {
+	// Try icon first
+	if icon, ok := videoObj["icon"].(map[string]interface{}); ok {
+		if url, ok := icon["url"].(string); ok {
+			return url
+		}
+	}
+
+	// Try image
+	if image, ok := videoObj["image"].(map[string]interface{}); ok {
+		if url, ok := image["url"].(string); ok {
+			return url
+		}
+	}
+
+	// Try preview
+	if preview, ok := videoObj["preview"].(map[string]interface{}); ok {
+		if url, ok := preview["url"].(string); ok {
+			return url
+		}
+	}
+
+	return ""
+}
+
+// extractDomain extracts domain from a URL
+func extractDomain(uri string) string {
+	parsedURL, err := url.Parse(uri)
+	if err != nil {
+		return ""
+	}
+	return parsedURL.Host
+}
+
+// determinePrivacy determines privacy level from ActivityPub audience fields
+func determinePrivacy(videoObj map[string]interface{}) domain.Privacy {
+	// Check "to" field
+	to := []string{}
+	if toField, ok := videoObj["to"].([]interface{}); ok {
+		for _, t := range toField {
+			if str, ok := t.(string); ok {
+				to = append(to, str)
+			}
+		}
+	}
+
+	// Check "cc" field
+	cc := []string{}
+	if ccField, ok := videoObj["cc"].([]interface{}); ok {
+		for _, c := range ccField {
+			if str, ok := c.(string); ok {
+				cc = append(cc, str)
+			}
+		}
+	}
+
+	// Public if sent to public collection
+	for _, t := range to {
+		if t == domain.ActivityPubPublic || t == "Public" || t == "as:Public" {
+			return domain.PrivacyPublic
+		}
+	}
+
+	// Unlisted if cc'd to public
+	for _, c := range cc {
+		if c == domain.ActivityPubPublic || c == "Public" || c == "as:Public" {
+			return domain.PrivacyUnlisted
+		}
+	}
+
+	// Default to private
+	return domain.PrivacyPrivate
+}
+
+// extractTags extracts tags from VideoObject
+func extractTags(videoObj map[string]interface{}) []string {
+	tags := []string{}
+
+	if tagField, ok := videoObj["tag"].([]interface{}); ok {
+		for _, t := range tagField {
+			if tagObj, ok := t.(map[string]interface{}); ok {
+				if tagName, ok := tagObj["name"].(string); ok {
+					tagName = strings.TrimPrefix(tagName, "#")
+					tags = append(tags, tagName)
+				}
+			} else if tagStr, ok := t.(string); ok {
+				tags = append(tags, strings.TrimPrefix(tagStr, "#"))
+			}
+		}
+	}
+
+	return tags
 }
