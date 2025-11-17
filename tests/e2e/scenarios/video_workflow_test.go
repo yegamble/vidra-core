@@ -7,7 +7,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/yegamble/athena/tests/e2e"
+	"athena/tests/e2e"
 )
 
 // TestVideoUploadWorkflow tests the complete video upload, view, and delete workflow
