@@ -1165,29 +1165,362 @@ func (s *Service) DeleteComment(ctx context.Context, commentID string) error {
 	return nil
 }
 
-// Video Publishing (stub implementations - to be implemented)
+// Video Publishing
 
 // BuildVideoObject converts a domain.Video to an ActivityPub VideoObject
 func (s *Service) BuildVideoObject(ctx context.Context, video *domain.Video) (*domain.VideoObject, error) {
-	return nil, fmt.Errorf("BuildVideoObject not yet implemented")
+	if video == nil {
+		return nil, fmt.Errorf("video is nil")
+	}
+
+	// Get video owner
+	owner, err := s.userRepo.GetByID(ctx, video.UserID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get video owner: %w", err)
+	}
+
+	// Build video URL
+	videoID := fmt.Sprintf("%s/videos/%s", s.cfg.PublicBaseURL, video.ID)
+	actorID := s.buildActorID(owner.Username)
+
+	// Build VideoObject
+	videoObj := &domain.VideoObject{
+		Context:  []interface{}{domain.ActivityStreamsContext, domain.PeerTubeContext},
+		Type:     domain.ObjectTypeVideo,
+		ID:       videoID,
+		Name:     video.Title,
+		UUID:     video.ID,
+		Published: &video.CreatedAt,
+		Updated:  &video.UpdatedAt,
+		AttributedTo: []string{actorID},
+	}
+
+	// Description and metadata
+	if video.Description != "" {
+		videoObj.Content = video.Description
+		videoObj.Summary = video.Description
+	}
+
+	// Duration in ISO 8601 format (PT1H2M3S)
+	if video.Duration > 0 {
+		hours := video.Duration / 3600
+		minutes := (video.Duration % 3600) / 60
+		seconds := video.Duration % 60
+		if hours > 0 {
+			videoObj.Duration = fmt.Sprintf("PT%dH%dM%dS", hours, minutes, seconds)
+		} else if minutes > 0 {
+			videoObj.Duration = fmt.Sprintf("PT%dM%dS", minutes, seconds)
+		} else {
+			videoObj.Duration = fmt.Sprintf("PT%dS", seconds)
+		}
+	}
+
+	// Privacy settings
+	videoObj.CommentsEnabled = true
+	videoObj.DownloadEnabled = true
+	videoObj.Sensitive = video.NSFW
+
+	// View count (if available)
+	videoObj.Views = video.ViewCount
+
+	// Build URLs for video files
+	if video.VideoPath != "" {
+		// MP4 video file
+		mp4URL := domain.APUrl{
+			Type:      "Link",
+			MediaType: "video/mp4",
+			Href:      fmt.Sprintf("%s/videos/%s/stream", s.cfg.PublicBaseURL, video.ID),
+			Height:    video.Height,
+			Width:     video.Width,
+		}
+		videoObj.URL = append(videoObj.URL, mp4URL)
+
+		// HLS streaming
+		if video.HLSMasterPlaylist != "" {
+			hlsURL := domain.APUrl{
+				Type:      "Link",
+				MediaType: "application/x-mpegURL",
+				Href:      fmt.Sprintf("%s/hls/%s/master.m3u8", s.cfg.PublicBaseURL, video.ID),
+			}
+			videoObj.URL = append(videoObj.URL, hlsURL)
+		}
+	}
+
+	// Thumbnail
+	if video.ThumbnailPath != "" {
+		icon := domain.Image{
+			Type:      "Image",
+			URL:       fmt.Sprintf("%s/thumbnails/%s", s.cfg.PublicBaseURL, video.ThumbnailPath),
+			MediaType: "image/jpeg",
+			Width:     video.ThumbnailWidth,
+			Height:    video.ThumbnailHeight,
+		}
+		videoObj.Icon = []domain.Image{icon}
+	}
+
+	// Federation audience (To/Cc)
+	switch video.Privacy {
+	case "public":
+		videoObj.To = []string{domain.ActivityPubPublic}
+		videoObj.Cc = []string{actorID + "/followers"}
+	case "unlisted":
+		videoObj.To = []string{actorID + "/followers"}
+		videoObj.Cc = []string{domain.ActivityPubPublic}
+	case "private":
+		// Private videos only go to followers
+		videoObj.To = []string{actorID + "/followers"}
+	}
+
+	// Collection endpoints
+	videoObj.Likes = videoID + "/likes"
+	videoObj.Dislikes = videoID + "/dislikes"
+	videoObj.Shares = videoID + "/shares"
+	videoObj.Comments = videoID + "/comments"
+
+	return videoObj, nil
 }
 
 // CreateVideoActivity wraps a VideoObject in a Create activity
 func (s *Service) CreateVideoActivity(ctx context.Context, video *domain.Video) (*domain.Activity, error) {
-	return nil, fmt.Errorf("CreateVideoActivity not yet implemented")
+	// Build the video object
+	videoObj, err := s.BuildVideoObject(ctx, video)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build video object: %w", err)
+	}
+
+	// Get video owner
+	owner, err := s.userRepo.GetByID(ctx, video.UserID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get video owner: %w", err)
+	}
+
+	actorID := s.buildActorID(owner.Username)
+	activityID := fmt.Sprintf("%s/videos/%s/activity", s.cfg.PublicBaseURL, video.ID)
+
+	// Create the activity
+	activity := &domain.Activity{
+		Context:   []interface{}{domain.ActivityStreamsContext},
+		Type:      domain.ActivityTypeCreate,
+		ID:        activityID,
+		Actor:     actorID,
+		Object:    videoObj,
+		Published: &video.CreatedAt,
+		To:        videoObj.To,
+		Cc:        videoObj.Cc,
+	}
+
+	return activity, nil
 }
 
 // PublishVideo publishes a video to ActivityPub followers
 func (s *Service) PublishVideo(ctx context.Context, videoID string) error {
-	return fmt.Errorf("PublishVideo not yet implemented")
+	// Get the video
+	video, err := s.videoRepo.GetByID(ctx, videoID)
+	if err != nil {
+		return fmt.Errorf("failed to get video: %w", err)
+	}
+	if video == nil {
+		return fmt.Errorf("video not found")
+	}
+
+	// Only publish public and unlisted videos
+	if video.Privacy == "private" {
+		return nil // Private videos aren't federated
+	}
+
+	// Create the activity
+	activity, err := s.CreateVideoActivity(ctx, video)
+	if err != nil {
+		return fmt.Errorf("failed to create activity: %w", err)
+	}
+
+	// Get followers to deliver to
+	followers, err := s.repo.GetFollowers(ctx, video.UserID)
+	if err != nil {
+		return fmt.Errorf("failed to get followers: %w", err)
+	}
+
+	// Queue delivery jobs for each follower's inbox
+	for _, follower := range followers {
+		// Get remote actor details
+		remoteActor, err := s.repo.GetRemoteActor(ctx, follower.ActorURI)
+		if err != nil {
+			continue // Skip if we can't get the remote actor
+		}
+
+		// Determine inbox URL (prefer shared inbox)
+		inboxURL := remoteActor.InboxURL
+		if remoteActor.SharedInbox != nil && *remoteActor.SharedInbox != "" {
+			inboxURL = *remoteActor.SharedInbox
+		}
+
+		// Queue the delivery job
+		job := &domain.APDeliveryJob{
+			ID:          uuid.New().String(),
+			ActivityID:  activity.ID,
+			ActorID:     activity.Actor,
+			InboxURL:    inboxURL,
+			Activity:    activity,
+			Status:      "pending",
+			MaxRetries:  10,
+			RetryCount:  0,
+		}
+
+		if err := s.repo.CreateDeliveryJob(ctx, job); err != nil {
+			// Log error but continue with other followers
+			continue
+		}
+	}
+
+	return nil
 }
 
 // UpdateVideo publishes an Update activity for an edited video
 func (s *Service) UpdateVideo(ctx context.Context, videoID string) error {
-	return fmt.Errorf("UpdateVideo not yet implemented")
+	// Get the video
+	video, err := s.videoRepo.GetByID(ctx, videoID)
+	if err != nil {
+		return fmt.Errorf("failed to get video: %w", err)
+	}
+	if video == nil {
+		return fmt.Errorf("video not found")
+	}
+
+	// Only update public and unlisted videos
+	if video.Privacy == "private" {
+		return nil
+	}
+
+	// Build the updated video object
+	videoObj, err := s.BuildVideoObject(ctx, video)
+	if err != nil {
+		return fmt.Errorf("failed to build video object: %w", err)
+	}
+
+	// Get video owner
+	owner, err := s.userRepo.GetByID(ctx, video.UserID)
+	if err != nil {
+		return fmt.Errorf("failed to get video owner: %w", err)
+	}
+
+	actorID := s.buildActorID(owner.Username)
+	activityID := fmt.Sprintf("%s/videos/%s/activity/update-%d", s.cfg.PublicBaseURL, video.ID, time.Now().Unix())
+
+	// Create Update activity
+	now := time.Now()
+	activity := &domain.Activity{
+		Context:   []interface{}{domain.ActivityStreamsContext},
+		Type:      domain.ActivityTypeUpdate,
+		ID:        activityID,
+		Actor:     actorID,
+		Object:    videoObj,
+		Published: &now,
+		To:        videoObj.To,
+		Cc:        videoObj.Cc,
+	}
+
+	// Get followers and queue delivery
+	followers, err := s.repo.GetFollowers(ctx, video.UserID)
+	if err != nil {
+		return fmt.Errorf("failed to get followers: %w", err)
+	}
+
+	for _, follower := range followers {
+		remoteActor, err := s.repo.GetRemoteActor(ctx, follower.ActorURI)
+		if err != nil {
+			continue
+		}
+
+		inboxURL := remoteActor.InboxURL
+		if remoteActor.SharedInbox != nil && *remoteActor.SharedInbox != "" {
+			inboxURL = *remoteActor.SharedInbox
+		}
+
+		job := &domain.APDeliveryJob{
+			ID:          uuid.New().String(),
+			ActivityID:  activity.ID,
+			ActorID:     activity.Actor,
+			InboxURL:    inboxURL,
+			Activity:    activity,
+			Status:      "pending",
+			MaxRetries:  10,
+			RetryCount:  0,
+		}
+
+		if err := s.repo.CreateDeliveryJob(ctx, job); err != nil {
+			continue
+		}
+	}
+
+	return nil
 }
 
 // DeleteVideo publishes a Delete activity for a deleted video
 func (s *Service) DeleteVideo(ctx context.Context, videoID string) error {
-	return fmt.Errorf("DeleteVideo not yet implemented")
+	// Get the video (it should still exist briefly before actual deletion)
+	video, err := s.videoRepo.GetByID(ctx, videoID)
+	if err != nil {
+		return fmt.Errorf("failed to get video: %w", err)
+	}
+	if video == nil {
+		return fmt.Errorf("video not found")
+	}
+
+	// Get video owner
+	owner, err := s.userRepo.GetByID(ctx, video.UserID)
+	if err != nil {
+		return fmt.Errorf("failed to get video owner: %w", err)
+	}
+
+	actorID := s.buildActorID(owner.Username)
+	videoObjectID := fmt.Sprintf("%s/videos/%s", s.cfg.PublicBaseURL, video.ID)
+	activityID := fmt.Sprintf("%s/videos/%s/activity/delete-%d", s.cfg.PublicBaseURL, video.ID, time.Now().Unix())
+
+	// Create Delete activity
+	now := time.Now()
+	activity := &domain.Activity{
+		Context:   []interface{}{domain.ActivityStreamsContext},
+		Type:      domain.ActivityTypeDelete,
+		ID:        activityID,
+		Actor:     actorID,
+		Object:    videoObjectID, // Just the ID, not the full object
+		Published: &now,
+		To:        []string{domain.ActivityPubPublic},
+		Cc:        []string{actorID + "/followers"},
+	}
+
+	// Get followers and queue delivery
+	followers, err := s.repo.GetFollowers(ctx, video.UserID)
+	if err != nil {
+		return fmt.Errorf("failed to get followers: %w", err)
+	}
+
+	for _, follower := range followers {
+		remoteActor, err := s.repo.GetRemoteActor(ctx, follower.ActorURI)
+		if err != nil {
+			continue
+		}
+
+		inboxURL := remoteActor.InboxURL
+		if remoteActor.SharedInbox != nil && *remoteActor.SharedInbox != "" {
+			inboxURL = *remoteActor.SharedInbox
+		}
+
+		job := &domain.APDeliveryJob{
+			ID:          uuid.New().String(),
+			ActivityID:  activity.ID,
+			ActorID:     activity.Actor,
+			InboxURL:    inboxURL,
+			Activity:    activity,
+			Status:      "pending",
+			MaxRetries:  10,
+			RetryCount:  0,
+		}
+
+		if err := s.repo.CreateDeliveryJob(ctx, job); err != nil {
+			continue
+		}
+	}
+
+	return nil
 }
