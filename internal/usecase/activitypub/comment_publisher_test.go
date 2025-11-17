@@ -57,7 +57,7 @@ func TestBuildNoteObject_Basic(t *testing.T) {
 	t.Run("Converts basic comment fields correctly", func(t *testing.T) {
 		mockUserRepo.On("GetByID", ctx, userID.String()).Return(user, nil).Once()
 		mockVideoRepo.On("GetByID", ctx, videoID.String()).Return(video, nil).Once()
-		mockUserRepo.On("GetByID", ctx, "video-owner-123").Return(nil, fmt.Errorf("not found")).Maybe()
+		mockUserRepo.On("GetByID", ctx, "video-owner-123").Return(nil, fmt.Errorf("not found")).Once()
 
 		noteObject, err := service.BuildNoteObject(ctx, comment)
 		require.NoError(t, err)
@@ -75,7 +75,7 @@ func TestBuildNoteObject_Basic(t *testing.T) {
 	t.Run("Sets inReplyTo to video ActivityPub ID", func(t *testing.T) {
 		mockUserRepo.On("GetByID", ctx, userID.String()).Return(user, nil).Once()
 		mockVideoRepo.On("GetByID", ctx, videoID.String()).Return(video, nil).Once()
-		mockUserRepo.On("GetByID", ctx, "video-owner-123").Return(nil, fmt.Errorf("not found")).Maybe()
+		mockUserRepo.On("GetByID", ctx, "video-owner-123").Return(nil, fmt.Errorf("not found")).Once()
 
 		noteObject, err := service.BuildNoteObject(ctx, comment)
 		require.NoError(t, err)
@@ -89,7 +89,7 @@ func TestBuildNoteObject_Basic(t *testing.T) {
 	t.Run("Includes attributedTo with commenter actor URI", func(t *testing.T) {
 		mockUserRepo.On("GetByID", ctx, userID.String()).Return(user, nil).Once()
 		mockVideoRepo.On("GetByID", ctx, videoID.String()).Return(video, nil).Once()
-		mockUserRepo.On("GetByID", ctx, "video-owner-123").Return(nil, fmt.Errorf("not found")).Maybe()
+		mockUserRepo.On("GetByID", ctx, "video-owner-123").Return(nil, fmt.Errorf("not found")).Once()
 
 		noteObject, err := service.BuildNoteObject(ctx, comment)
 		require.NoError(t, err)
@@ -167,7 +167,7 @@ func TestBuildNoteObject_NestedReplies(t *testing.T) {
 	t.Run("Nested comment has inReplyTo pointing to parent comment", func(t *testing.T) {
 		mockUserRepo.On("GetByID", ctx, userID.String()).Return(user, nil).Once()
 		mockVideoRepo.On("GetByID", ctx, videoID.String()).Return(video, nil).Once()
-		mockUserRepo.On("GetByID", ctx, "video-owner-123").Return(nil, fmt.Errorf("not found")).Maybe()
+		mockUserRepo.On("GetByID", ctx, "video-owner-123").Return(nil, fmt.Errorf("not found")).Once()
 
 		noteObject, err := service.BuildNoteObject(ctx, comment)
 		require.NoError(t, err)
@@ -182,7 +182,7 @@ func TestBuildNoteObject_NestedReplies(t *testing.T) {
 	t.Run("Includes tag for parent comment context", func(t *testing.T) {
 		mockUserRepo.On("GetByID", ctx, userID.String()).Return(user, nil).Once()
 		mockVideoRepo.On("GetByID", ctx, videoID.String()).Return(video, nil).Once()
-		mockUserRepo.On("GetByID", ctx, "video-owner-123").Return(nil, fmt.Errorf("not found")).Maybe()
+		mockUserRepo.On("GetByID", ctx, "video-owner-123").Return(nil, fmt.Errorf("not found")).Once()
 
 		noteObject, err := service.BuildNoteObject(ctx, comment)
 		require.NoError(t, err)
@@ -241,7 +241,7 @@ func TestBuildNoteObject_Audience(t *testing.T) {
 
 		mockUserRepo.On("GetByID", ctx, userID.String()).Return(user, nil).Once()
 		mockVideoRepo.On("GetByID", ctx, videoID.String()).Return(publicVideo, nil).Once()
-		mockUserRepo.On("GetByID", ctx, videoOwnerID.String()).Return(videoOwner, nil).Maybe()
+		mockUserRepo.On("GetByID", ctx, videoOwnerID.String()).Return(videoOwner, nil).Once()
 
 		noteObject, err := service.BuildNoteObject(ctx, comment)
 		require.NoError(t, err)
@@ -284,7 +284,7 @@ func TestBuildNoteObject_Audience(t *testing.T) {
 
 		mockUserRepo.On("GetByID", ctx, userID.String()).Return(user, nil).Once()
 		mockVideoRepo.On("GetByID", ctx, videoID.String()).Return(unlistedVideo, nil).Once()
-		mockUserRepo.On("GetByID", ctx, videoOwnerID.String()).Return(videoOwner, nil).Maybe()
+		mockUserRepo.On("GetByID", ctx, videoOwnerID.String()).Return(videoOwner, nil).Once()
 
 		noteObject, err := service.BuildNoteObject(ctx, comment)
 		require.NoError(t, err)
@@ -339,6 +339,7 @@ func TestCreateCommentActivity(t *testing.T) {
 	t.Run("Wraps Note in Create activity", func(t *testing.T) {
 		mockUserRepo.On("GetByID", ctx, userID.String()).Return(user, nil).Times(2)
 		mockVideoRepo.On("GetByID", ctx, videoID.String()).Return(video, nil).Once()
+		mockUserRepo.On("GetByID", ctx, "video-owner-123").Return(nil, fmt.Errorf("not found")).Once()
 
 		activity, err := service.CreateCommentActivity(ctx, comment)
 		require.NoError(t, err)
@@ -354,6 +355,7 @@ func TestCreateCommentActivity(t *testing.T) {
 	t.Run("Activity has unique ID", func(t *testing.T) {
 		mockUserRepo.On("GetByID", ctx, userID.String()).Return(user, nil).Times(2)
 		mockVideoRepo.On("GetByID", ctx, videoID.String()).Return(video, nil).Once()
+		mockUserRepo.On("GetByID", ctx, "video-owner-123").Return(nil, fmt.Errorf("not found")).Once()
 
 		activity, err := service.CreateCommentActivity(ctx, comment)
 		require.NoError(t, err)

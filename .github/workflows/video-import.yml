@@ -55,7 +55,25 @@ jobs:
           cache: true
 
       - name: Download dependencies
-        run: go mod download
+        run: |
+          # Download dependencies with retry logic and exponential backoff
+          export GOPROXY_TIMEOUT=600s
+          max_attempts=5
+          for i in $(seq 1 $max_attempts); do
+            if timeout 600 go mod download; then
+              echo "Dependencies downloaded successfully on attempt $i"
+              break
+            else
+              if [ $i -lt $max_attempts ]; then
+                delay=$((2 ** (i - 1) * 2))
+                echo "Download attempt $i failed, retrying in ${delay} seconds..."
+                sleep $delay
+              else
+                echo "All $max_attempts attempts failed"
+                exit 1
+              fi
+            fi
+          done
 
       - name: Run domain tests
         run: go test -v -race -coverprofile=domain-coverage.out ./internal/domain -run TestImport
@@ -118,7 +136,25 @@ jobs:
           cache: true
 
       - name: Download dependencies
-        run: go mod download
+        run: |
+          # Download dependencies with retry logic and exponential backoff
+          export GOPROXY_TIMEOUT=600s
+          max_attempts=5
+          for i in $(seq 1 $max_attempts); do
+            if timeout 600 go mod download; then
+              echo "Dependencies downloaded successfully on attempt $i"
+              break
+            else
+              if [ $i -lt $max_attempts ]; then
+                delay=$((2 ** (i - 1) * 2))
+                echo "Download attempt $i failed, retrying in ${delay} seconds..."
+                sleep $delay
+              else
+                echo "All $max_attempts attempts failed"
+                exit 1
+              fi
+            fi
+          done
 
       - name: Run migrations
         env:
@@ -215,8 +251,23 @@ jobs:
 
       - name: Run Gosec Security Scanner
         run: |
-          # Install specific version of gosec with working SARIF support
-          go install github.com/securego/gosec/v2/cmd/gosec@v2.18.2
+          # Install specific version of gosec with working SARIF support and retry logic
+          max_attempts=5
+          for i in $(seq 1 $max_attempts); do
+            if go install github.com/securego/gosec/v2/cmd/gosec@v2.18.2; then
+              echo "gosec installed successfully on attempt $i"
+              break
+            else
+              if [ $i -lt $max_attempts ]; then
+                delay=$((2 ** (i - 1) * 2))
+                echo "Install attempt $i failed, retrying in ${delay} seconds..."
+                sleep $delay
+              else
+                echo "All $max_attempts attempts failed"
+                exit 1
+              fi
+            fi
+          done
 
           # Run gosec and capture results
           ~/go/bin/gosec -no-fail -fmt sarif -out results.sarif \
