@@ -1,0 +1,191 @@
+# Pre-commit hooks configuration for Athena project
+# See https://pre-commit.com for more information
+
+default_stages: [commit]
+fail_fast: false
+
+repos:
+  # General file checks
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.5.0
+    hooks:
+      - id: trailing-whitespace
+        name: Trim Trailing Whitespace
+      - id: end-of-file-fixer
+        name: Fix End of Files
+      - id: check-yaml
+        name: Check YAML Syntax
+        args: [--allow-multiple-documents]
+      - id: check-json
+        name: Check JSON Syntax
+      - id: check-added-large-files
+        name: Check for Large Files
+        args: [--maxkb=5000]
+      - id: check-case-conflict
+        name: Check for Case Conflicts
+      - id: check-merge-conflict
+        name: Check for Merge Conflicts
+      - id: check-executables-have-shebangs
+        name: Check Executables Have Shebangs
+      - id: check-shebang-scripts-are-executable
+        name: Check Scripts with Shebangs are Executable
+      - id: detect-private-key
+        name: Detect Private Keys
+      - id: mixed-line-ending
+        name: Fix Mixed Line Endings
+        args: [--fix=lf]
+
+  # Go specific hooks
+  - repo: https://github.com/dnephin/pre-commit-golang
+    rev: v0.5.1
+    hooks:
+      - id: go-fmt
+        name: Go Format
+      - id: go-vet
+        name: Go Vet
+      - id: go-imports
+        name: Go Imports
+        args: [-w, -local, github.com/yosefgamble/athena]
+      - id: go-cyclo
+        name: Go Cyclomatic Complexity
+        args: [-over, "15"]
+      - id: go-mod-tidy
+        name: Go Mod Tidy
+      - id: go-unit-tests
+        name: Go Unit Tests
+        args: [-short]
+      - id: golangci-lint
+        name: GolangCI Lint
+
+  # Security scanning
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: v1.4.0
+    hooks:
+      - id: detect-secrets
+        name: Detect Secrets
+        args: [--baseline, .secrets.baseline]
+        exclude: .*\.lock$|package-lock\.json$|yarn\.lock$|go\.sum$
+
+  # Go security checks
+  - repo: local
+    hooks:
+      - id: gosec
+        name: Go Security Check
+        entry: bash -c 'if command -v gosec &> /dev/null; then gosec -fmt sarif -out gosec-results.sarif ./... 2>/dev/null; fi || true'
+        language: system
+        files: \.go$
+        pass_filenames: false
+
+  # SQL/Database checks
+      - id: sql-format-check
+        name: SQL Format Check
+        entry: bash -c 'for f in migrations/*.sql; do if [ -f "$f" ]; then sql-formatter --language postgresql --verify "$f" 2>/dev/null || true; fi; done'
+        language: system
+        files: migrations/.*\.sql$
+        pass_filenames: false
+
+  # Dockerfile linting
+  - repo: https://github.com/hadolint/hadolint
+    rev: v2.12.0
+    hooks:
+      - id: hadolint-docker
+        name: Lint Dockerfiles
+        files: Dockerfile.*
+
+  # YAML linting
+  - repo: https://github.com/adrienverge/yamllint
+    rev: v1.33.0
+    hooks:
+      - id: yamllint
+        name: YAML Lint
+        args: [--strict, -c=.yamllint]
+
+  # Markdown linting
+  - repo: https://github.com/igorshubovych/markdownlint-cli
+    rev: v0.38.0
+    hooks:
+      - id: markdownlint
+        name: Markdown Lint
+        args: [--fix]
+
+  # Git commit message linting
+  - repo: https://github.com/jorisroovers/gitlint
+    rev: v0.19.1
+    hooks:
+      - id: gitlint
+        name: Git Commit Message Lint
+        stages: [commit-msg]
+
+  # Shell script checks
+  - repo: https://github.com/shellcheck-py/shellcheck-py
+    rev: v0.9.0.6
+    hooks:
+      - id: shellcheck
+        name: Shell Check
+
+  # Custom local hooks
+  - repo: local
+    hooks:
+      # Check for TODO/FIXME comments
+      - id: check-todos
+        name: Check TODOs
+        entry: bash -c 'grep -r "TODO\|FIXME\|XXX\|HACK" --include="*.go" . || true'
+        language: system
+        pass_filenames: false
+
+      # Run make fmt (preserving existing behavior)
+      - id: make-fmt
+        name: Make Format
+        entry: make fmt
+        language: system
+        files: \.go$
+        pass_filenames: false
+
+      # Check Go build
+      - id: go-build
+        name: Go Build Check
+        entry: bash -c 'go build -v ./cmd/server'
+        language: system
+        files: \.go$
+        pass_filenames: false
+
+      # Check for sensitive data patterns
+      - id: sensitive-data-check
+        name: Sensitive Data Check
+        entry: bash -c 'grep -r -E "(password|secret|token|key|api_key)\s*=\s*[\"'\'']\w+[\"'\'']" --include="*.go" --include="*.yaml" --include="*.yml" --include="*.json" . || true'
+        language: system
+        pass_filenames: false
+
+      # Validate OpenAPI spec if exists
+      - id: openapi-validate
+        name: OpenAPI Spec Validation
+        entry: bash -c 'if [ -f "openapi.yaml" ]; then npx @apidevtools/swagger-cli validate openapi.yaml 2>/dev/null || true; fi'
+        language: system
+        files: openapi\.yaml$
+
+      # Check for database migration conflicts
+      - id: migration-check
+        name: Database Migration Check
+        entry: bash -c 'ls -1 migrations/*.sql 2>/dev/null | sed "s/.*\///" | cut -d_ -f1 | sort | uniq -d | if grep -q .; then echo "Duplicate migration numbers found!" && exit 1; fi || exit 0'
+        language: system
+        pass_filenames: false
+
+      # Ensure tests are passing
+      - id: test-coverage
+        name: Test Coverage Check
+        entry: bash -c 'go test -coverprofile=coverage.out ./... 2>/dev/null && go tool cover -func=coverage.out | grep total | awk "{if (\$3+0 < 60) exit 1}" || true'
+        language: system
+        files: \.go$
+        pass_filenames: false
+
+# Configuration for specific hooks
+exclude: |
+  (?x)^(
+    .*\.pb\.go$|
+    .*\.pb\.gw\.go$|
+    vendor/.*|
+    third_party/.*|
+    .*\.git/.*|
+    .*\.idea/.*|
+    testdata/.*
+  )$
