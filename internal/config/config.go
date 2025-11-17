@@ -206,6 +206,7 @@ type Config struct {
 	ActivityPubInstanceDescription   string
 	ActivityPubInstanceContactEmail  string
 	ActivityPubMaxActivitiesPerPage  int
+	ActivityPubKeyEncryptionKey      string // Master key for encrypting ActivityPub private keys at rest
 
 	// Live Streaming (RTMP) Configuration
 	EnableLiveStreaming bool
@@ -503,6 +504,10 @@ func Load() (*Config, error) {
 	cfg.ActivityPubInstanceDescription = getEnvOrDefault("ACTIVITYPUB_INSTANCE_DESCRIPTION", "A PeerTube-compatible video platform")
 	cfg.ActivityPubInstanceContactEmail = getEnvOrDefault("ACTIVITYPUB_INSTANCE_CONTACT_EMAIL", "")
 	cfg.ActivityPubMaxActivitiesPerPage = getIntEnv("ACTIVITYPUB_MAX_ACTIVITIES_PER_PAGE", 20)
+	cfg.ActivityPubKeyEncryptionKey = getEnvOrDefault("ACTIVITYPUB_KEY_ENCRYPTION_KEY", "")
+	if cfg.EnableActivityPub && cfg.ActivityPubKeyEncryptionKey == "" {
+		return nil, fmt.Errorf("ACTIVITYPUB_KEY_ENCRYPTION_KEY is required when ActivityPub is enabled")
+	}
 
 	// Live Streaming (RTMP) Configuration
 	cfg.EnableLiveStreaming = getBoolEnv("ENABLE_LIVE_STREAMING", false)

@@ -14,19 +14,26 @@ import (
 
 type commentRepository struct {
 	db *sqlx.DB
+	tm *TransactionManager
 }
 
 func NewCommentRepository(db *sqlx.DB) usecase.CommentRepository {
-	return &commentRepository{db: db}
+	return &commentRepository{
+		db: db,
+		tm: NewTransactionManager(db),
+	}
 }
 
 func (r *commentRepository) Create(ctx context.Context, comment *domain.Comment) error {
+	// Get executor (either transaction from context or DB)
+	exec := GetExecutor(ctx, r.db)
+
 	query := `
 		INSERT INTO comments (video_id, user_id, parent_id, body, status, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7)
 		RETURNING id, created_at, updated_at`
 
-	err := r.db.QueryRowContext(
+	err := exec.QueryRowContext(
 		ctx,
 		query,
 		comment.VideoID,

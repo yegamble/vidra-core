@@ -14,10 +14,14 @@ import (
 
 type ratingRepository struct {
 	db *sqlx.DB
+	tm *TransactionManager
 }
 
 func NewRatingRepository(db *sqlx.DB) usecase.RatingRepository {
-	return &ratingRepository{db: db}
+	return &ratingRepository{
+		db: db,
+		tm: NewTransactionManager(db),
+	}
 }
 
 // SetRating sets or updates a user's rating for a video (idempotent)
@@ -26,6 +30,9 @@ func (r *ratingRepository) SetRating(ctx context.Context, userID, videoID uuid.U
 		return fmt.Errorf("invalid rating value: %d", rating)
 	}
 
+	// Get executor (either transaction from context or DB)
+	exec := GetExecutor(ctx, r.db)
+
 	query := `
 		INSERT INTO video_ratings (user_id, video_id, rating, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $4)
@@ -33,7 +40,7 @@ func (r *ratingRepository) SetRating(ctx context.Context, userID, videoID uuid.U
 		DO UPDATE SET rating = $3, updated_at = $4
 		WHERE video_ratings.rating != $3`
 
-	_, err := r.db.ExecContext(ctx, query, userID, videoID, rating, time.Now())
+	_, err := exec.ExecContext(ctx, query, userID, videoID, rating, time.Now())
 	if err != nil {
 		return fmt.Errorf("failed to set rating: %w", err)
 	}

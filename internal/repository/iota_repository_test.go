@@ -283,8 +283,8 @@ func TestIOTARepository_CreatePaymentIntent(t *testing.T) {
 	repo := NewIOTARepository(testDB.DB)
 	ctx := context.Background()
 
-	userID := createTestUser(t, testDB)
-	videoID := createTestVideo(t, testDB, userID)
+	userID := createTestUserForIOTA(t, testDB)
+	videoID := createTestVideoForIOTA(t, testDB, userID)
 
 	tests := []struct {
 		name    string
@@ -416,7 +416,7 @@ func TestIOTARepository_UpdatePaymentIntentStatus(t *testing.T) {
 			name:          "mark as paid",
 			intentID:      intent.ID,
 			newStatus:     domain.PaymentIntentStatusPaid,
-			transactionID: stringPtr(uuid.New().String()),
+			transactionID: stringPtrForIOTA(uuid.New().String()),
 			wantErr:       nil,
 		},
 		{
@@ -861,7 +861,7 @@ func TestIOTARepository_EncryptedSeedNotExposed(t *testing.T) {
 
 // Helper functions
 
-func createTestUser(t *testing.T, testDB *testutil.TestDB) string {
+func createTestUserForIOTA(t *testing.T, testDB *testutil.TestDB) string {
 	t.Helper()
 	userRepo := NewUserRepository(testDB.DB)
 	ctx := context.Background()
@@ -880,7 +880,7 @@ func createTestUser(t *testing.T, testDB *testutil.TestDB) string {
 	return user.ID
 }
 
-func createTestVideo(t *testing.T, testDB *testutil.TestDB, userID string) string {
+func createTestVideoForIOTA(t *testing.T, testDB *testutil.TestDB, userID string) string {
 	t.Helper()
 	videoRepo := NewVideoRepository(testDB.DB)
 	ctx := context.Background()
@@ -898,6 +898,6 @@ func createTestVideo(t *testing.T, testDB *testutil.TestDB, userID string) strin
 	return video.ID
 }
 
-func stringPtr(s string) *string {
+func stringPtrForIOTA(s string) *string {
 	return &s
 }

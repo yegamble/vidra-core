@@ -14,16 +14,18 @@ import (
 	"athena/internal/config"
 	"athena/internal/domain"
 	"athena/internal/port"
+	"athena/internal/security"
 )
 
 // Service handles ActivityPub federation logic
 type Service struct {
-	repo        port.ActivityPubRepository
-	userRepo    port.UserRepository
-	videoRepo   port.VideoRepository
-	cfg         *config.Config
-	httpClient  *http.Client
-	sigVerifier *activitypub.HTTPSignatureVerifier
+	repo         port.ActivityPubRepository
+	userRepo     port.UserRepository
+	videoRepo    port.VideoRepository
+	cfg          *config.Config
+	httpClient   *http.Client
+	sigVerifier  *activitypub.HTTPSignatureVerifier
+	urlValidator *security.URLValidator
 }
 
 // NewService creates a new ActivityPub service
@@ -34,12 +36,13 @@ func NewService(
 	cfg *config.Config,
 ) *Service {
 	return &Service{
-		repo:        repo,
-		userRepo:    userRepo,
-		videoRepo:   videoRepo,
-		cfg:         cfg,
-		httpClient:  &http.Client{Timeout: 30 * time.Second},
-		sigVerifier: activitypub.NewHTTPSignatureVerifier(),
+		repo:         repo,
+		userRepo:     userRepo,
+		videoRepo:    videoRepo,
+		cfg:          cfg,
+		httpClient:   &http.Client{Timeout: 30 * time.Second},
+		sigVerifier:  activitypub.NewHTTPSignatureVerifier(),
+		urlValidator: security.NewURLValidator(),
 	}
 }
 
@@ -104,6 +107,11 @@ func (s *Service) FetchRemoteActor(ctx context.Context, actorURI string) (*domai
 		if time.Since(*cached.LastFetchedAt) < 24*time.Hour {
 			return cached, nil
 		}
+	}
+
+	// SSRF Protection: Validate URL before fetching
+	if err := s.urlValidator.ValidateURL(actorURI); err != nil {
+		return nil, fmt.Errorf("invalid or unsafe actor URI: %w", err)
 	}
 
 	// Fetch from remote

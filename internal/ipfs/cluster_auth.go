@@ -73,6 +73,20 @@ func (c *ClusterAuthConfig) Validate() error {
 	return nil
 }
 
+// ValidateSecureTransport verifies that authentication is not used over insecure HTTP
+// This is a critical security check that MUST be performed before using bearer tokens
+func (c *ClusterAuthConfig) ValidateSecureTransport(clusterURL string) error {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	// If bearer token is configured, HTTPS is required
+	if c.Token != "" && strings.HasPrefix(clusterURL, "http://") {
+		return fmt.Errorf("CRITICAL SECURITY ERROR: Bearer token authentication over HTTP is forbidden - use HTTPS")
+	}
+
+	return nil
+}
+
 // ApplyToRequest adds authentication headers to an HTTP request
 func (c *ClusterAuthConfig) ApplyToRequest(req *http.Request) error {
 	c.mu.RLock()

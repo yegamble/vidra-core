@@ -246,8 +246,10 @@ func parsePrivateKey(pemStr string) (*rsa.PrivateKey, error) {
 
 // GenerateKeyPair generates a new RSA key pair for an actor
 func GenerateKeyPair() (publicKeyPEM, privateKeyPEM string, err error) {
-	// Generate a 2048-bit RSA key pair
-	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	// Generate a 3072-bit RSA key pair (NIST recommendation as of 2023+)
+	// 3072-bit keys provide equivalent security to 128-bit symmetric keys
+	// and are recommended until 2030 according to NIST SP 800-57 Part 1
+	privateKey, err := rsa.GenerateKey(rand.Reader, 3072)
 	if err != nil {
 		return "", "", fmt.Errorf("failed to generate key pair: %w", err)
 	}

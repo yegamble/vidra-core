@@ -13,38 +13,45 @@ import (
 
 type subscriptionRepository struct {
 	db *sqlx.DB
+	tm *TransactionManager
 }
 
 func NewSubscriptionRepository(db *sqlx.DB) usecase.SubscriptionRepository {
-	return &subscriptionRepository{db: db}
+	return &subscriptionRepository{
+		db: db,
+		tm: NewTransactionManager(db),
+	}
 }
 
 // SubscribeToChannel subscribes a user to a channel
 func (r *subscriptionRepository) SubscribeToChannel(ctx context.Context, subscriberID, channelID uuid.UUID) error {
-	// Check if user is trying to subscribe to their own channel
-	var accountID uuid.UUID
-	checkQuery := `SELECT account_id FROM channels WHERE id = $1`
-	if err := r.db.GetContext(ctx, &accountID, checkQuery, channelID); err != nil {
-		if err == sql.ErrNoRows {
-			return domain.ErrNotFound
+	// Use transaction for atomicity
+	return r.tm.WithTransaction(ctx, nil, func(tx *sqlx.Tx) error {
+		// Check if user is trying to subscribe to their own channel
+		var accountID uuid.UUID
+		checkQuery := `SELECT account_id FROM channels WHERE id = $1`
+		if err := tx.GetContext(ctx, &accountID, checkQuery, channelID); err != nil {
+			if err == sql.ErrNoRows {
+				return domain.ErrNotFound
+			}
+			return fmt.Errorf("failed to check channel ownership: %w", err)
 		}
-		return fmt.Errorf("failed to check channel ownership: %w", err)
-	}
 
-	if accountID == subscriberID {
-		return fmt.Errorf("cannot subscribe to your own channel")
-	}
+		if accountID == subscriberID {
+			return fmt.Errorf("cannot subscribe to your own channel")
+		}
 
-	// Idempotent insert; DB trigger adjusts counts when rows change
-	query := `
-        INSERT INTO subscriptions (subscriber_id, channel_id, created_at)
-        VALUES ($1, $2, NOW())
-        ON CONFLICT (subscriber_id, channel_id) DO NOTHING`
+		// Idempotent insert; DB trigger adjusts counts when rows change
+		query := `
+            INSERT INTO subscriptions (subscriber_id, channel_id, created_at)
+            VALUES ($1, $2, NOW())
+            ON CONFLICT (subscriber_id, channel_id) DO NOTHING`
 
-	if _, err := r.db.ExecContext(ctx, query, subscriberID, channelID); err != nil {
-		return fmt.Errorf("failed to subscribe: %w", err)
-	}
-	return nil
+		if _, err := tx.ExecContext(ctx, query, subscriberID, channelID); err != nil {
+			return fmt.Errorf("failed to subscribe: %w", err)
+		}
+		return nil
+	})
 }
 
 // UnsubscribeFromChannel unsubscribes a user from a channel

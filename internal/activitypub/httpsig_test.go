@@ -25,14 +25,27 @@ func TestGenerateKeyPair(t *testing.T) {
 	}
 
 	// Verify keys can be parsed
-	_, err = parsePublicKey(publicKey)
+	parsedPublicKey, err := parsePublicKey(publicKey)
 	if err != nil {
 		t.Errorf("Failed to parse generated public key: %v", err)
 	}
 
-	_, err = parsePrivateKey(privateKey)
+	parsedPrivateKey, err := parsePrivateKey(privateKey)
 	if err != nil {
 		t.Errorf("Failed to parse generated private key: %v", err)
+	}
+
+	// CRITICAL SECURITY TEST: Verify key size is 3072 bits (NIST standard)
+	keySize := parsedPrivateKey.N.BitLen()
+	expectedKeySize := 3072
+	if keySize != expectedKeySize {
+		t.Errorf("SECURITY: RSA key size is %d bits, expected %d bits per NIST SP 800-57", keySize, expectedKeySize)
+	}
+
+	// Also verify the public key has the same size
+	publicKeySize := parsedPublicKey.N.BitLen()
+	if publicKeySize != expectedKeySize {
+		t.Errorf("SECURITY: RSA public key size is %d bits, expected %d bits", publicKeySize, expectedKeySize)
 	}
 }
 

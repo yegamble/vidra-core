@@ -10,32 +10,65 @@ import (
 	"github.com/jmoiron/sqlx"
 
 	"athena/internal/domain"
+	"athena/internal/security"
 )
 
 // ActivityPubRepository handles ActivityPub data persistence
 type ActivityPubRepository struct {
-	db *sqlx.DB
+	db         *sqlx.DB
+	encryption *security.ActivityPubKeyEncryption
 }
 
 // NewActivityPubRepository creates a new ActivityPub repository
-func NewActivityPubRepository(db *sqlx.DB) *ActivityPubRepository {
-	return &ActivityPubRepository{db: db}
+func NewActivityPubRepository(db *sqlx.DB, encryption *security.ActivityPubKeyEncryption) *ActivityPubRepository {
+	return &ActivityPubRepository{
+		db:         db,
+		encryption: encryption,
+	}
 }
 
 // Actor Keys Methods
 
 // GetActorKeys retrieves the public/private key pair for a local actor
+// The private key is automatically decrypted before being returned
 func (r *ActivityPubRepository) GetActorKeys(ctx context.Context, actorID string) (publicKey, privateKey string, err error) {
 	query := `SELECT public_key_pem, private_key_pem FROM ap_actor_keys WHERE actor_id = $1`
-	err = r.db.QueryRowContext(ctx, query, actorID).Scan(&publicKey, &privateKey)
+	var encryptedPrivateKey string
+	err = r.db.QueryRowContext(ctx, query, actorID).Scan(&publicKey, &encryptedPrivateKey)
 	if err != nil {
 		return "", "", fmt.Errorf("failed to get actor keys: %w", err)
 	}
+
+	// Decrypt the private key
+	if r.encryption != nil {
+		privateKey, err = r.encryption.DecryptPrivateKey(encryptedPrivateKey)
+		if err != nil {
+			return "", "", fmt.Errorf("failed to decrypt private key: %w", err)
+		}
+	} else {
+		// Fallback for testing or when encryption is not configured
+		privateKey = encryptedPrivateKey
+	}
+
 	return publicKey, privateKey, nil
 }
 
 // StoreActorKeys stores the public/private key pair for a local actor
+// The private key is automatically encrypted before being stored
 func (r *ActivityPubRepository) StoreActorKeys(ctx context.Context, actorID, publicKey, privateKey string) error {
+	// Encrypt the private key before storing
+	var encryptedPrivateKey string
+	var err error
+	if r.encryption != nil {
+		encryptedPrivateKey, err = r.encryption.EncryptPrivateKey(privateKey)
+		if err != nil {
+			return fmt.Errorf("failed to encrypt private key: %w", err)
+		}
+	} else {
+		// Fallback for testing or when encryption is not configured
+		encryptedPrivateKey = privateKey
+	}
+
 	query := `
 		INSERT INTO ap_actor_keys (actor_id, public_key_pem, private_key_pem)
 		VALUES ($1, $2, $3)
@@ -44,7 +77,7 @@ func (r *ActivityPubRepository) StoreActorKeys(ctx context.Context, actorID, pub
 		    private_key_pem = EXCLUDED.private_key_pem,
 		    updated_at = CURRENT_TIMESTAMP
 	`
-	_, err := r.db.ExecContext(ctx, query, actorID, publicKey, privateKey)
+	_, err = r.db.ExecContext(ctx, query, actorID, publicKey, encryptedPrivateKey)
 	if err != nil {
 		return fmt.Errorf("failed to store actor keys: %w", err)
 	}

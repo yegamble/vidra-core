@@ -1,0 +1,286 @@
+name: Security Tests
+
+on:
+  push:
+    branches: [main, develop, 'claude/**']
+  pull_request:
+    branches: [main, develop]
+  schedule:
+    # Run security tests daily at 2 AM UTC
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  ssrf-protection-tests:
+    name: SSRF Protection Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+          cache: true
+
+      - name: Run SSRF Protection Unit Tests
+        run: |
+          echo "::group::SSRF Protection Unit Tests"
+          go test -v -race -coverprofile=ssrf-coverage.out ./internal/security/...
+          echo "::endgroup::"
+
+      - name: Run SSRF Integration Tests
+        run: |
+          echo "::group::SSRF Protection Integration Tests"
+          go test -v -race -coverprofile=ssrf-integration-coverage.out ./tests/integration/ssrf_protection_test.go
+          echo "::endgroup::"
+
+      - name: Generate Coverage Report
+        run: |
+          go tool cover -func=ssrf-coverage.out
+          go tool cover -html=ssrf-coverage.out -o ssrf-coverage.html
+
+      - name: Upload Coverage Artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ssrf-coverage-reports
+          path: |
+            ssrf-coverage.out
+            ssrf-coverage.html
+            ssrf-integration-coverage.out
+          retention-days: 30
+
+      - name: Check Coverage Threshold
+        run: |
+          COVERAGE=$(go tool cover -func=ssrf-coverage.out | grep total | awk '{print $3}' | sed 's/%//')
+          echo "SSRF Protection Coverage: ${COVERAGE}%"
+          if (( $(echo "$COVERAGE < 80" | bc -l) )); then
+            echo "::error::SSRF protection coverage is below 80% threshold"
+            exit 1
+          fi
+
+  url-validation-tests:
+    name: URL Validation & Domain Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+          cache: true
+
+      - name: Run Domain URL Validation Tests
+        run: |
+          echo "::group::Domain Import Tests"
+          go test -v -race ./internal/domain/import_test.go
+          echo "::endgroup::"
+
+      - name: Run Import Service Tests
+        run: |
+          echo "::group::Import Service Tests"
+          go test -v -race ./internal/usecase/import/...
+          echo "::endgroup::"
+
+      - name: Run Redundancy Discovery Tests
+        run: |
+          echo "::group::Redundancy Instance Discovery Tests"
+          go test -v -race ./internal/usecase/redundancy/...
+          echo "::endgroup::"
+
+  activitypub-security-tests:
+    name: ActivityPub Security Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+          cache: true
+
+      - name: Run ActivityPub Service Tests
+        run: |
+          echo "::group::ActivityPub Service Security Tests"
+          go test -v -race -coverprofile=activitypub-coverage.out ./internal/usecase/activitypub/...
+          echo "::endgroup::"
+
+      - name: Run Social Service Tests
+        run: |
+          echo "::group::Social Service Security Tests"
+          go test -v -race -coverprofile=social-coverage.out ./internal/usecase/social/...
+          echo "::endgroup::"
+
+      - name: Upload Coverage Reports
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: federation-coverage-reports
+          path: |
+            activitypub-coverage.out
+            social-coverage.out
+          retention-days: 30
+
+  dependency-scanning:
+    name: Dependency Vulnerability Scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+          cache: true
+
+      - name: Run govulncheck
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
+
+  static-analysis:
+    name: Static Security Analysis
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+          cache: true
+
+      - name: Run gosec security scanner
+        run: |
+          go install github.com/securego/gosec/v2/cmd/gosec@latest
+          gosec -fmt=json -out=gosec-report.json ./...
+        continue-on-error: true
+
+      - name: Run staticcheck
+        run: |
+          go install honnef.co/go/tools/cmd/staticcheck@latest
+          staticcheck ./...
+
+      - name: Upload gosec report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: gosec-security-report
+          path: gosec-report.json
+          retention-days: 30
+
+  penetration-testing:
+    name: Penetration Testing (SSRF)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+          cache: true
+
+      - name: Build application
+        run: |
+          go build -o athena-server ./cmd/server
+
+      - name: Run SSRF Attack Simulation Tests
+        run: |
+          echo "::group::SSRF Attack Simulation"
+          # Run tests that attempt common SSRF attack vectors
+          go test -v -tags=pentest ./tests/integration/ssrf_protection_test.go
+          echo "::endgroup::"
+
+      - name: Test URL Validation Edge Cases
+        run: |
+          echo "::group::URL Validation Edge Cases"
+          go test -v ./internal/security/... -run TestValidateURL
+          echo "::endgroup::"
+
+  security-report:
+    name: Generate Security Report
+    runs-on: ubuntu-latest
+    needs: [ssrf-protection-tests, url-validation-tests, activitypub-security-tests, dependency-scanning, static-analysis]
+    if: always()
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+
+      - name: Generate Security Summary
+        run: |
+          cat << 'EOF' > security-summary.md
+          # Security Test Results
+
+          ## Test Execution Summary
+
+          - ✅ SSRF Protection Tests: ${{ needs.ssrf-protection-tests.result }}
+          - ✅ URL Validation Tests: ${{ needs.url-validation-tests.result }}
+          - ✅ ActivityPub Security: ${{ needs.activitypub-security-tests.result }}
+          - ✅ Dependency Scanning: ${{ needs.dependency-scanning.result }}
+          - ✅ Static Analysis: ${{ needs.static-analysis.result }}
+
+          ## Coverage Reports
+
+          Coverage reports are available in the artifacts section.
+
+          ## Security Recommendations
+
+          1. Review SSRF protection for all external URL fetching
+          2. Ensure HTTP clients have redirect limits configured
+          3. Validate all user-supplied URLs before processing
+          4. Implement rate limiting on external URL fetches
+          5. Monitor for DNS rebinding attacks
+
+          EOF
+
+      - name: Upload Security Summary
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-summary
+          path: security-summary.md
+          retention-days: 90
+
+      - name: Comment on PR (if applicable)
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const summary = fs.readFileSync('security-summary.md', 'utf8');
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: summary
+            });

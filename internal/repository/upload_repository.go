@@ -13,10 +13,14 @@ import (
 
 type uploadRepository struct {
 	db *sqlx.DB
+	tm *TransactionManager
 }
 
 func NewUploadRepository(db *sqlx.DB) usecase.UploadRepository {
-	return &uploadRepository{db: db}
+	return &uploadRepository{
+		db: db,
+		tm: NewTransactionManager(db),
+	}
 }
 
 func (r *uploadRepository) CreateSession(ctx context.Context, session *domain.UploadSession) error {
@@ -119,36 +123,45 @@ func (r *uploadRepository) DeleteSession(ctx context.Context, sessionID string) 
 }
 
 func (r *uploadRepository) RecordChunk(ctx context.Context, sessionID string, chunkIndex int) error {
-	// First check if chunk is already recorded
-	isUploaded, err := r.IsChunkUploaded(ctx, sessionID, chunkIndex)
-	if err != nil {
-		return err
-	}
-	if isUploaded {
-		return nil // Already recorded
-	}
+	// Use transaction for atomic check-then-update
+	return r.tm.WithTransaction(ctx, nil, func(tx *sqlx.Tx) error {
+		// Check if chunk is already recorded
+		checkQuery := `SELECT $2 = ANY(uploaded_chunks) FROM upload_sessions WHERE id = $1`
+		var isUploaded bool
+		err := tx.QueryRowContext(ctx, checkQuery, sessionID, chunkIndex).Scan(&isUploaded)
+		if err != nil {
+			if err == sql.ErrNoRows {
+				return domain.NewDomainError("SESSION_NOT_FOUND", "Upload session not found")
+			}
+			return fmt.Errorf("failed to check chunk status: %w", err)
+		}
 
-	// Add chunk to uploaded_chunks array
-	query := `
-		UPDATE upload_sessions 
-		SET uploaded_chunks = array_append(uploaded_chunks, $2),
-		    updated_at = NOW()
-		WHERE id = $1`
+		if isUploaded {
+			return nil // Already recorded
+		}
 
-	result, err := r.db.ExecContext(ctx, query, sessionID, chunkIndex)
-	if err != nil {
-		return fmt.Errorf("failed to record chunk: %w", err)
-	}
+		// Add chunk to uploaded_chunks array
+		updateQuery := `
+			UPDATE upload_sessions
+			SET uploaded_chunks = array_append(uploaded_chunks, $2),
+			    updated_at = NOW()
+			WHERE id = $1`
 
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("failed to get rows affected: %w", err)
-	}
-	if rowsAffected == 0 {
-		return domain.NewDomainError("SESSION_NOT_FOUND", "Upload session not found")
-	}
+		result, err := tx.ExecContext(ctx, updateQuery, sessionID, chunkIndex)
+		if err != nil {
+			return fmt.Errorf("failed to record chunk: %w", err)
+		}
 
-	return nil
+		rowsAffected, err := result.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("failed to get rows affected: %w", err)
+		}
+		if rowsAffected == 0 {
+			return domain.NewDomainError("SESSION_NOT_FOUND", "Upload session not found")
+		}
+
+		return nil
+	})
 }
 
 func (r *uploadRepository) GetUploadedChunks(ctx context.Context, sessionID string) ([]int, error) {
