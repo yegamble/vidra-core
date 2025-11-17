@@ -149,7 +149,7 @@ func (s *VirusScanner) ScanFile(ctx context.Context, filePath string) (*ScanResu
 			ScanDuration: time.Since(start),
 		}, fmt.Errorf("failed to open file: %w", err)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	// Perform scan with timeout
 	scanCtx, cancel := context.WithTimeout(ctx, s.config.Timeout)
@@ -255,20 +255,21 @@ func (s *VirusScanner) ScanFile(ctx context.Context, filePath string) (*ScanResu
 	}
 
 	// Scan completed successfully - process result
-	if response.Status == clamd.RES_OK {
+	switch response.Status {
+	case clamd.RES_OK:
 		result.Status = ScanStatusClean
 		log.Debug().
 			Str("file", filePath).
 			Dur("duration", result.ScanDuration).
 			Msg("File scanned: clean")
-	} else if response.Status == clamd.RES_FOUND {
+	case clamd.RES_FOUND:
 		result.Status = ScanStatusInfected
 		result.VirusName = response.Description
 		log.Warn().
 			Str("file", filePath).
 			Str("virus", result.VirusName).
 			Msg("Virus detected")
-	} else {
+	default:
 		result.Status = ScanStatusError
 		return result, fmt.Errorf("unexpected scan status: %s", response.Status)
 	}
@@ -328,7 +329,12 @@ func (s *VirusScanner) ScanStream(ctx context.Context, reader io.Reader) (*ScanR
 		// Ensure cleanup even on panic
 		cleanupFunc = func() {
 			if tempFile != nil {
-				tempFile.Close()
+				if err := tempFile.Close(); err != nil {
+					log.Warn().
+						Err(err).
+						Str("file", tempFile.Name()).
+						Msg("Failed to close temporary scan buffer")
+				}
 				if err := os.Remove(tempFile.Name()); err != nil {
 					log.Warn().
 						Err(err).
@@ -537,13 +543,14 @@ func (s *VirusScanner) ScanStream(ctx context.Context, reader io.Reader) (*ScanR
 		return result, fmt.Errorf("no scan response received")
 	}
 
-	if response.Status == clamd.RES_OK {
+	switch response.Status {
+	case clamd.RES_OK:
 		result.Status = ScanStatusClean
 		log.Debug().
 			Dur("duration", result.ScanDuration).
 			Int64("bytes_scanned", result.BytesScanned).
 			Msg("Stream scanned: clean")
-	} else if response.Status == clamd.RES_FOUND {
+	case clamd.RES_FOUND:
 		result.Status = ScanStatusInfected
 		result.VirusName = response.Description
 		log.Warn().
@@ -555,10 +562,10 @@ func (s *VirusScanner) ScanStream(ctx context.Context, reader io.Reader) (*ScanR
 		if s.config.AuditLogPath != "" {
 			s.writeStreamVirusDetectedAudit(result.VirusName)
 		}
-	} else {
+	default:
 		result.Status = ScanStatusError
 		log.Error().
-			Str("status", string(response.Status)).
+			Str("status", response.Status).
 			Msg("Unexpected scan status from ClamAV")
 		return result, fmt.Errorf("unexpected scan status: %s", response.Status)
 	}
@@ -660,7 +667,7 @@ func (s *VirusScanner) writeAuditLog(originalPath, quarantinePath, virusName str
 			Msg("Failed to open audit log")
 		return
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	if _, err := f.WriteString(entry); err != nil {
 		log.Error().
@@ -685,7 +692,7 @@ func (s *VirusScanner) writeStreamScanFailureAudit(scanErr error, retries int) {
 			Msg("Failed to open audit log for scan failure")
 		return
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	if _, err := f.WriteString(entry); err != nil {
 		log.Error().
@@ -709,7 +716,7 @@ func (s *VirusScanner) writeStreamVirusDetectedAudit(virusName string) {
 			Msg("Failed to open audit log for virus detection")
 		return
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	if _, err := f.WriteString(entry); err != nil {
 		log.Error().
@@ -824,7 +831,7 @@ func generateFileHash(filePath string) string {
 	if err != nil {
 		return fmt.Sprintf("%d", time.Now().UnixNano())
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	h := sha256.New()
 	if _, err := io.Copy(h, f); err != nil {
@@ -839,13 +846,13 @@ func copyFile(src, dst string) error {
 	if err != nil {
 		return err
 	}
-	defer sourceFile.Close()
+	defer func() { _ = sourceFile.Close() }()
 
 	destFile, err := os.Create(dst)
 	if err != nil {
 		return err
 	}
-	defer destFile.Close()
+	defer func() { _ = destFile.Close() }()
 
 	if _, err := io.Copy(destFile, sourceFile); err != nil {
 		return err

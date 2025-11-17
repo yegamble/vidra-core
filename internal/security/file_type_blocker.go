@@ -196,7 +196,7 @@ func (b *FileTypeBlocker) ValidateArchive(filename string, content []byte) (bool
 
 	// Check for encrypted files
 	for _, file := range zipReader.File {
-		if file.FileHeader.Flags&0x1 != 0 {
+		if file.Flags&0x1 != 0 {
 			return false, "encrypted archive detected"
 		}
 	}
@@ -248,72 +248,89 @@ func (b *FileTypeBlocker) ValidateArchive(filename string, content []byte) (bool
 // validateMagicBytes checks if file content matches expected magic bytes for extension
 func (b *FileTypeBlocker) validateMagicBytes(filename string, content []byte) bool {
 	// Even small files can have identifiable magic bytes (e.g., ELF is 4 bytes)
-	// Don't skip validation for small files
-
 	ext := strings.ToLower(filepath.Ext(filename))
+	if b.validateImageMagic(ext, content) {
+		return true
+	}
+	if b.validateVideoMagic(ext, content) {
+		return true
+	}
+	if b.validateAudioMagic(ext, content) {
+		return true
+	}
+	if b.validateDocArchiveMagic(ext, content) {
+		return true
+	}
+	return b.validateTextOrUnknownMagic(ext, content)
+}
 
-	// Special handling for specific extensions
+func (b *FileTypeBlocker) validateImageMagic(ext string, content []byte) bool {
 	switch ext {
 	case ".jpg", ".jpeg":
 		return bytes.HasPrefix(content, magicBytes["jpg"])
-
 	case ".png":
 		return bytes.HasPrefix(content, magicBytes["png"])
-
 	case ".gif":
 		return bytes.HasPrefix(content, magicBytes["gif"])
-
 	case ".webp":
-		// WEBP is RIFF + WEBP signature at offset 8
 		if len(content) < 12 {
 			return false
 		}
 		return bytes.HasPrefix(content, magicBytes["webp"]) && string(content[8:12]) == "WEBP"
+	}
+	return false
+}
 
-	case ".pdf":
-		return bytes.HasPrefix(content, magicBytes["pdf"])
-
+func (b *FileTypeBlocker) validateVideoMagic(ext string, content []byte) bool {
+	switch ext {
 	case ".mp4", ".mov":
-		// MP4/MOV have ftyp box, check for ftyp signature
 		if len(content) < 8 {
 			return false
 		}
 		return string(content[4:8]) == "ftyp"
-
 	case ".webm", ".mkv":
 		return bytes.HasPrefix(content, magicBytes["webm"])
-
 	case ".avi":
 		return bytes.HasPrefix(content, magicBytes["avi"])
+	}
+	return false
+}
 
+func (b *FileTypeBlocker) validateAudioMagic(ext string, content []byte) bool {
+	switch ext {
 	case ".mp3":
-		// MP3 can have ID3 tags or start with frame sync
 		return bytes.HasPrefix(content, magicBytes["mp3"]) ||
 			bytes.HasPrefix(content, []byte{0xFF, 0xF3}) ||
 			bytes.HasPrefix(content, []byte{0xFF, 0xF2}) ||
 			bytes.HasPrefix(content, []byte("ID3"))
-
 	case ".m4a", ".aac":
-		// M4A uses MP4 container
 		if len(content) < 8 {
 			return false
 		}
 		return string(content[4:8]) == "ftyp" || bytes.HasPrefix(content, []byte{0xFF, 0xF1})
-
 	case ".wav":
 		return bytes.HasPrefix(content, magicBytes["wav"])
-
 	case ".flac":
 		return bytes.HasPrefix(content, magicBytes["flac"])
-
 	case ".ogg":
 		return bytes.HasPrefix(content, magicBytes["ogg"])
+	}
+	return false
+}
 
+func (b *FileTypeBlocker) validateDocArchiveMagic(ext string, content []byte) bool {
+	switch ext {
+	case ".pdf":
+		return bytes.HasPrefix(content, magicBytes["pdf"])
 	case ".zip", ".docx", ".xlsx", ".pptx":
 		return bytes.HasPrefix(content, magicBytes["zip"])
+	}
+	return false
+}
 
+func (b *FileTypeBlocker) validateTextOrUnknownMagic(ext string, content []byte) bool {
+	switch ext {
 	case ".txt":
-		// Text files - ensure they don't have binary magic bytes
 		if bytes.HasPrefix(content, magicBytes["pdf"]) ||
 			bytes.HasPrefix(content, magicBytes["zip"]) ||
 			bytes.HasPrefix(content, magicBytes["png"]) ||
@@ -323,23 +340,14 @@ func (b *FileTypeBlocker) validateMagicBytes(filename string, content []byte) bo
 			return false
 		}
 		return true
-
 	case "":
-		// Files without extension - check they're not executables or binaries
 		isExe := bytes.HasPrefix(content, magicBytes["exe"])
 		isElf := bytes.HasPrefix(content, magicBytes["elf"])
-		if isExe || isElf {
-			return false
-		}
-		// Allow text-like content
-		return true
-
+		return !(isExe || isElf)
 	default:
-		// For unknown extensions, check they're not executables
 		if bytes.HasPrefix(content, magicBytes["exe"]) || bytes.HasPrefix(content, magicBytes["elf"]) {
 			return false
 		}
-
 		return true
 	}
 }
@@ -388,7 +396,7 @@ func (b *FileTypeBlocker) checkNestedArchive(file *zip.File, depth int) error {
 	if err != nil {
 		return err
 	}
-	defer rc.Close()
+	defer func() { _ = rc.Close() }()
 
 	// Read content
 	content, err := io.ReadAll(rc)

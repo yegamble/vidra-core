@@ -141,7 +141,9 @@ func (app *Application) initializeDatabase() error {
 	// Configure connection pool per CLAUDE.md
 	pool, err := database.NewPool(db, database.DefaultPoolConfig())
 	if err != nil {
-		db.Close()
+		if cerr := db.Close(); cerr != nil {
+			log.Printf("failed to close DB after pool init error: %v", cerr)
+		}
 		return fmt.Errorf("failed to configure connection pool: %w", err)
 	}
 

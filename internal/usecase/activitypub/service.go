@@ -818,9 +818,10 @@ func (s *Service) BuildNoteObject(ctx context.Context, comment *domain.Comment) 
 	}
 
 	// Set audience based on video privacy
-	if video.Privacy == domain.PrivacyPublic {
+	switch video.Privacy {
+	case domain.PrivacyPublic:
 		note.To = []string{"https://www.w3.org/ns/activitystreams#Public"}
-	} else if video.Privacy == domain.PrivacyUnlisted {
+	case domain.PrivacyUnlisted:
 		note.Cc = []string{"https://www.w3.org/ns/activitystreams#Public"}
 	}
 

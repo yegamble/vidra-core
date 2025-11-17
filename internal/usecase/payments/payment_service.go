@@ -228,15 +228,6 @@ func (s *PaymentService) DecryptSeed(encryptedSeed, nonce []byte) (string, error
 	return string(plaintext), nil
 }
 
-// Helper function to repeat a string n times
-func repeatString(s string, n int) string {
-	result := ""
-	for i := 0; i < n; i++ {
-		result += s
-	}
-	return result
-}
-
 // DetectPayment checks if payment has been received for a payment intent
 func (s *PaymentService) DetectPayment(ctx context.Context, intentID string) error {
 	// Get the payment intent

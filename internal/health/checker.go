@@ -224,7 +224,7 @@ func (i *IPFSChecker) Check(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("IPFS API request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("IPFS API returned status %d", resp.StatusCode)
@@ -248,7 +248,7 @@ func (i *IPFSChecker) Check(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("IPFS Cluster request failed: %w", err)
 		}
-		defer clusterResp.Body.Close()
+		defer func() { _ = clusterResp.Body.Close() }()
 
 		if clusterResp.StatusCode != http.StatusOK {
 			return fmt.Errorf("IPFS Cluster returned status %d", clusterResp.StatusCode)

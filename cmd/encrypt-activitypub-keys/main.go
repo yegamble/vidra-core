@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"log"
 	"os"
@@ -48,7 +47,11 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to connect to database: %v", err)
 	}
-	defer db.Close()
+	defer func() {
+		if err := db.Close(); err != nil {
+			log.Printf("Failed to close database: %v", err)
+		}
+	}()
 
 	// Create encryption instance
 	encryption, err := security.NewActivityPubKeyEncryption(cfg.ActivityPubKeyEncryptionKey)
@@ -77,7 +80,9 @@ func main() {
 	fmt.Print("Do you want to proceed? (yes/no): ")
 
 	var response string
-	fmt.Scanln(&response)
+	if _, err := fmt.Scanln(&response); err != nil {
+		log.Fatalf("Failed to read response: %v", err)
+	}
 
 	if response != "yes" {
 		log.Println("Migration cancelled.")
@@ -170,24 +175,5 @@ func markAsEncrypted(ctx context.Context, db *sqlx.DB, actorID string) error {
 	return err
 }
 
-func verifyDecryption(db *sqlx.DB, encryption *security.ActivityPubKeyEncryption) error {
-	// Fetch one encrypted key and verify we can decrypt it
-	var key KeyRecord
-	err := db.Get(&key, "SELECT actor_id, private_key_pem FROM ap_actor_keys WHERE keys_encrypted = TRUE LIMIT 1")
-	if err != nil {
-		if err == sql.ErrNoRows {
-			// No encrypted keys to verify
-			return nil
-		}
-		return fmt.Errorf("failed to fetch test key: %w", err)
-	}
-
-	// Try to decrypt
-	_, err = encryption.DecryptPrivateKey(key.PrivateKeyPem)
-	if err != nil {
-		return fmt.Errorf("failed to decrypt test key for actor %s: %w", key.ActorID, err)
-	}
-
-	log.Printf("Verification successful: Can decrypt keys with current encryption key\n")
-	return nil
-}
+// verifyDecryption was previously used for manual verification during migration.
+// It has been removed to satisfy lint rules (unused).

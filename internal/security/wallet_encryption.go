@@ -117,7 +117,7 @@ func (s *WalletEncryptionService) DecryptSeed(ctx context.Context, encSeed *Encr
 	var err error
 
 	// Use envelope decryption if envelope data is present
-	if encSeed.EncryptedDataKey != nil && len(encSeed.EncryptedDataKey) > 0 {
+	if len(encSeed.EncryptedDataKey) > 0 {
 		plaintext, err = s.decryptWithEnvelope(ctx, encSeed)
 	} else {
 		plaintext, err = s.decryptDirect(ctx, encSeed)

@@ -335,3 +335,4 @@ jobs:
         run: |
           go mod tidy
           git diff --exit-code go.mod go.sum || (echo "go.mod or go.sum changed, please run 'go mod tidy'" && exit 1)
+  workflow_dispatch:
