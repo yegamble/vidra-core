@@ -8,6 +8,7 @@ import (
 	"athena/internal/httpapi/handlers/livestream"
 	"athena/internal/httpapi/handlers/messaging"
 	"athena/internal/httpapi/handlers/moderation"
+	"athena/internal/httpapi/handlers/payments"
 	"athena/internal/httpapi/handlers/social"
 	"athena/internal/httpapi/handlers/video"
 	"athena/internal/httpapi/shared"
@@ -89,10 +90,10 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 	})
 
 	// OAuth2 endpoints
-	// r.Post("/oauth/token", server.OAuthToken) // TODO: Move to auth handlers
-	// r.HandleFunc("/oauth/authorize", server.OAuthAuthorize) // TODO: Move to auth handlers
-	// r.Post("/oauth/revoke", server.OAuthRevoke) // TODO: Move to auth handlers
-	// r.Post("/oauth/introspect", server.OAuthIntrospect) // TODO: Move to auth handlers
+	r.Post("/oauth/token", server.OAuthToken)
+	r.HandleFunc("/oauth/authorize", server.OAuthAuthorize)
+	r.Post("/oauth/revoke", server.OAuthRevoke)
+	r.Post("/oauth/introspect", server.OAuthIntrospect)
 
 	// Register health routes
 	r.Get("/health", server.HealthCheck)
@@ -364,6 +365,23 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 			r.Delete("/{id}", notificationHandlers.DeleteNotification)
 		})
 
+		// IOTA Payment endpoints (if payment service is enabled)
+		if cfg.EnableIOTA && deps.PaymentService != nil {
+			log.Printf("Registering IOTA payment routes...")
+			r.Route("/payments", func(r chi.Router) {
+				r.Use(middleware.Auth(cfg.JWTSecret))
+				paymentHandler := payments.NewPaymentHandler(deps.PaymentService)
+				// Wallet management
+				r.Post("/wallet", paymentHandler.CreateWallet)
+				r.Get("/wallet", paymentHandler.GetWallet)
+				// Payment intents
+				r.Post("/intents", paymentHandler.CreatePaymentIntent)
+				r.Get("/intents/{id}", paymentHandler.GetPaymentIntent)
+				// Transaction history
+				r.Get("/transactions", paymentHandler.GetTransactionHistory)
+			})
+		}
+
 		// IPFS Streaming Metrics
 		if deps.IPFSStreamingService != nil {
 			r.Route("/ipfs", func(r chi.Router) {
@@ -436,13 +454,13 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 			})
 
 			// OAuth client management (admin only)
-			// 			r.Route("/oauth/clients", func(r chi.Router) {
-			// 				r.Use(middleware.RequireRole("admin"))
-			// 				r.Get("/", // TODO: server.AdminListOAuthClients - Wire through auth handlers)
-			// 				r.Post("/", // TODO: server.AdminCreateOAuthClient - Wire through auth handlers)
-			// 				r.Put("/{clientId}/secret", // TODO: server.AdminRotateOAuthClientSecret - Wire through auth handlers)
-			// 				r.Delete("/{clientId}", // TODO: server.AdminDeleteOAuthClient - Wire through auth handlers)
-			// 			})
+			r.Route("/oauth/clients", func(r chi.Router) {
+				r.Use(middleware.RequireRole("admin"))
+				r.Get("/", server.AdminListOAuthClients)
+				r.Post("/", server.AdminCreateOAuthClient)
+				r.Put("/{clientId}/secret", server.AdminRotateOAuthClientSecret)
+				r.Delete("/{clientId}", server.AdminDeleteOAuthClient)
+			})
 
 			// Federation jobs (admin)
 			fedAdminHandlers := federation.NewAdminFederationHandlers(deps.FederationRepo)

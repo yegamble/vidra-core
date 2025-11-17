@@ -57,6 +57,7 @@ type HandlerDependencies struct {
 	PlaylistService      *usecase.PlaylistService
 	CaptionService       *usecase.CaptionService
 	TwoFAService         *usecase.TwoFAService
+	PaymentService       any // Payment service for IOTA payments (optional)
 	AtprotoService       usecase.AtprotoPublisher
 	FederationService    usecase.FederationService
 	HardeningService     *usecase.FederationHardeningService
