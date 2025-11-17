@@ -59,7 +59,25 @@ jobs:
           cache: true
 
       - name: Install dependencies
-        run: go mod download
+        run: |
+          # Download dependencies with retry logic and exponential backoff
+          export GOPROXY_TIMEOUT=600s
+          max_attempts=5
+          for i in $(seq 1 $max_attempts); do
+            if timeout 600 go mod download; then
+              echo "Dependencies downloaded successfully on attempt $i"
+              break
+            else
+              if [ $i -lt $max_attempts ]; then
+                delay=$((2 ** (i - 1) * 2))
+                echo "Download attempt $i failed, retrying in ${delay} seconds..."
+                sleep $delay
+              else
+                echo "All $max_attempts attempts failed"
+                exit 1
+              fi
+            fi
+          done
 
       - name: Run virus scanner unit tests
         run: |
@@ -131,17 +149,33 @@ jobs:
           echo "Waiting for ClamAV daemon to start and load signatures..."
           timeout=300
           elapsed=0
-          while ! docker exec $(docker ps -q -f ancestor=clamav/clamav:${{ env.CLAMAV_VERSION }}) clamdscan --version 2>/dev/null; do
-            if [ $elapsed -ge $timeout ]; then
-              echo "ClamAV failed to start within $timeout seconds"
-              docker logs $(docker ps -q -f ancestor=clamav/clamav:${{ env.CLAMAV_VERSION }})
-              exit 1
+          retry_count=0
+          max_retries=3
+
+          while true; do
+            if docker exec $(docker ps -q -f ancestor=clamav/clamav:${{ env.CLAMAV_VERSION }}) clamdscan --version 2>/dev/null; then
+              echo "ClamAV is ready!"
+              break
             fi
-            echo "Waiting... ($elapsed/$timeout seconds)"
+
+            if [ $elapsed -ge $timeout ]; then
+              if [ $retry_count -lt $max_retries ]; then
+                retry_count=$((retry_count + 1))
+                echo "ClamAV check timeout, retry $retry_count/$max_retries - restarting container..."
+                docker restart $(docker ps -q -f ancestor=clamav/clamav:${{ env.CLAMAV_VERSION }})
+                elapsed=0
+                sleep 30
+              else
+                echo "ClamAV failed to start after $max_retries retries"
+                docker logs $(docker ps -q -f ancestor=clamav/clamav:${{ env.CLAMAV_VERSION }})
+                exit 1
+              fi
+            fi
+
+            echo "Waiting... ($elapsed/$timeout seconds, retry $retry_count/$max_retries)"
             sleep 10
             elapsed=$((elapsed + 10))
           done
-          echo "ClamAV is ready!"
 
       - name: Create test fixtures
         run: |
@@ -222,11 +256,57 @@ jobs:
           node-version: '20'
 
       - name: Install Newman
-        run: npm install -g newman newman-reporter-htmlextra
+        run: |
+          # Install Newman and reporter with retry logic and exponential backoff
+          max_attempts=5
+          for i in $(seq 1 $max_attempts); do
+            if npm install -g newman newman-reporter-htmlextra; then
+              echo "Newman installed successfully on attempt $i"
+              break
+            else
+              if [ $i -lt $max_attempts ]; then
+                delay=$((2 ** (i - 1) * 2))
+                echo "Install attempt $i failed, retrying in ${delay} seconds..."
+                sleep $delay
+              else
+                echo "All $max_attempts attempts failed"
+                exit 1
+              fi
+            fi
+          done
 
       - name: Wait for services
         run: |
-          timeout 300 bash -c 'until docker exec $(docker ps -q -f ancestor=clamav/clamav:${{ env.CLAMAV_VERSION }}) clamdscan --version; do sleep 10; done'
+          # Wait for ClamAV with retry logic
+          echo "Waiting for ClamAV daemon..."
+          timeout=300
+          elapsed=0
+          retry_count=0
+          max_retries=3
+
+          while true; do
+            if docker exec $(docker ps -q -f ancestor=clamav/clamav:${{ env.CLAMAV_VERSION }}) clamdscan --version 2>/dev/null; then
+              echo "ClamAV is ready!"
+              break
+            fi
+
+            if [ $elapsed -ge $timeout ]; then
+              if [ $retry_count -lt $max_retries ]; then
+                retry_count=$((retry_count + 1))
+                echo "ClamAV check timeout, retry $retry_count/$max_retries - restarting container..."
+                docker restart $(docker ps -q -f ancestor=clamav/clamav:${{ env.CLAMAV_VERSION }})
+                elapsed=0
+                sleep 30
+              else
+                echo "ClamAV failed to start after $max_retries retries"
+                exit 1
+              fi
+            fi
+
+            echo "Waiting... ($elapsed/$timeout seconds, retry $retry_count/$max_retries)"
+            sleep 10
+            elapsed=$((elapsed + 10))
+          done
 
       - name: Start application
         env:
@@ -366,7 +446,36 @@ jobs:
 
       - name: Wait for ClamAV
         run: |
-          timeout 300 bash -c 'until docker exec $(docker ps -q -f ancestor=clamav/clamav:${{ env.CLAMAV_VERSION }}) clamdscan --version; do sleep 10; done'
+          # Wait for ClamAV with retry logic
+          echo "Waiting for ClamAV daemon..."
+          timeout=300
+          elapsed=0
+          retry_count=0
+          max_retries=3
+
+          while true; do
+            if docker exec $(docker ps -q -f ancestor=clamav/clamav:${{ env.CLAMAV_VERSION }}) clamdscan --version 2>/dev/null; then
+              echo "ClamAV is ready!"
+              break
+            fi
+
+            if [ $elapsed -ge $timeout ]; then
+              if [ $retry_count -lt $max_retries ]; then
+                retry_count=$((retry_count + 1))
+                echo "ClamAV check timeout, retry $retry_count/$max_retries - restarting container..."
+                docker restart $(docker ps -q -f ancestor=clamav/clamav:${{ env.CLAMAV_VERSION }})
+                elapsed=0
+                sleep 30
+              else
+                echo "ClamAV failed to start after $max_retries retries"
+                exit 1
+              fi
+            fi
+
+            echo "Waiting... ($elapsed/$timeout seconds, retry $retry_count/$max_retries)"
+            sleep 10
+            elapsed=$((elapsed + 10))
+          done
 
       - name: Create benchmark test files
         run: |

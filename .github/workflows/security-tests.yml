@@ -27,7 +27,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.21'
+          go-version: '1.24'
           cache: true
 
       - name: Run SSRF Protection Unit Tests
@@ -79,7 +79,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.21'
+          go-version: '1.24'
           cache: true
 
       - name: Run Domain URL Validation Tests
@@ -112,7 +112,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.21'
+          go-version: '1.24'
           cache: true
 
       - name: Run ActivityPub Service Tests
@@ -149,12 +149,28 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.21'
+          go-version: '1.24'
           cache: true
 
       - name: Run govulncheck
         run: |
-          go install golang.org/x/vuln/cmd/govulncheck@latest
+          # Install govulncheck with retry logic
+          max_attempts=5
+          for i in $(seq 1 $max_attempts); do
+            if go install golang.org/x/vuln/cmd/govulncheck@latest; then
+              echo "govulncheck installed successfully on attempt $i"
+              break
+            else
+              if [ $i -lt $max_attempts ]; then
+                delay=$((2 ** (i - 1) * 2))
+                echo "Install attempt $i failed, retrying in ${delay} seconds..."
+                sleep $delay
+              else
+                echo "All $max_attempts attempts failed"
+                exit 1
+              fi
+            fi
+          done
           govulncheck ./...
 
   static-analysis:
@@ -169,18 +185,50 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.21'
+          go-version: '1.24'
           cache: true
 
       - name: Run gosec security scanner
         run: |
-          go install github.com/securego/gosec/v2/cmd/gosec@latest
+          # Install gosec with retry logic
+          max_attempts=5
+          for i in $(seq 1 $max_attempts); do
+            if go install github.com/securego/gosec/v2/cmd/gosec@latest; then
+              echo "gosec installed successfully on attempt $i"
+              break
+            else
+              if [ $i -lt $max_attempts ]; then
+                delay=$((2 ** (i - 1) * 2))
+                echo "Install attempt $i failed, retrying in ${delay} seconds..."
+                sleep $delay
+              else
+                echo "All $max_attempts attempts failed"
+                exit 1
+              fi
+            fi
+          done
           gosec -fmt=json -out=gosec-report.json ./...
         continue-on-error: true
 
       - name: Run staticcheck
         run: |
-          go install honnef.co/go/tools/cmd/staticcheck@latest
+          # Install staticcheck with retry logic
+          max_attempts=5
+          for i in $(seq 1 $max_attempts); do
+            if go install honnef.co/go/tools/cmd/staticcheck@latest; then
+              echo "staticcheck installed successfully on attempt $i"
+              break
+            else
+              if [ $i -lt $max_attempts ]; then
+                delay=$((2 ** (i - 1) * 2))
+                echo "Install attempt $i failed, retrying in ${delay} seconds..."
+                sleep $delay
+              else
+                echo "All $max_attempts attempts failed"
+                exit 1
+              fi
+            fi
+          done
           staticcheck ./...
 
       - name: Upload gosec report
@@ -203,7 +251,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.21'
+          go-version: '1.24'
           cache: true
 
       - name: Build application

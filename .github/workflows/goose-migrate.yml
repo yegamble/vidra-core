@@ -54,7 +54,23 @@ jobs:
 
       - name: Install Goose
         run: |
-          go install github.com/pressly/goose/v3/cmd/goose@latest
+          # Install Goose with retry logic and exponential backoff
+          max_attempts=5
+          for i in $(seq 1 $max_attempts); do
+            if go install github.com/pressly/goose/v3/cmd/goose@latest; then
+              echo "Goose installed successfully on attempt $i"
+              break
+            else
+              if [ $i -lt $max_attempts ]; then
+                delay=$((2 ** (i - 1) * 2))
+                echo "Install attempt $i failed, retrying in ${delay} seconds..."
+                sleep $delay
+              else
+                echo "All $max_attempts attempts failed"
+                exit 1
+              fi
+            fi
+          done
           goose -version
 
       - name: Setup test database
