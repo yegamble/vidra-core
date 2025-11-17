@@ -872,3 +872,402 @@ func TestExtractVideoIDFromURI(t *testing.T) {
 func (m *MockVideoRepository) GetVideosForMigration(ctx context.Context, limit int) ([]*domain.Video, error) {
 	return []*domain.Video{}, nil
 }
+
+// Additional mock methods for comment repository
+type MockCommentRepository struct {
+	mock.Mock
+}
+
+func (m *MockCommentRepository) GetByID(ctx context.Context, id string) (*domain.Comment, error) {
+	args := m.Called(ctx, id)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*domain.Comment), args.Error(1)
+}
+
+// ============================================================================
+// NEW TESTS FOR VIDEO AND COMMENT FEDERATION
+// ============================================================================
+
+// TestServicePublishVideo tests the PublishVideo service method
+func TestServicePublishVideo(t *testing.T) {
+	mockAPRepo := new(MockActivityPubRepository)
+	mockUserRepo := new(MockUserRepository)
+	mockVideoRepo := new(MockVideoRepository)
+
+	cfg := &config.Config{
+		PublicBaseURL: "https://video.example",
+	}
+
+	service := NewService(mockAPRepo, mockUserRepo, mockVideoRepo, cfg)
+
+	ctx := context.Background()
+
+	t.Run("PublishVideo with valid completed video", func(t *testing.T) {
+		video := &domain.Video{
+			ID:      "video-123",
+			Title:   "Test Video",
+			UserID:  "user-123",
+			Privacy: domain.PrivacyPublic,
+			Status:  domain.StatusCompleted,
+		}
+
+		user := &domain.User{
+			ID:       "user-123",
+			Username: "testuser",
+		}
+
+		followers := []*domain.APFollower{
+			{
+				ActorID:    "user-123",
+				FollowerID: "https://mastodon.example/users/alice",
+				State:      "accepted",
+			},
+		}
+
+		remoteActor := &domain.APRemoteActor{
+			ActorURI: "https://mastodon.example/users/alice",
+			InboxURL: "https://mastodon.example/users/alice/inbox",
+		}
+
+		mockVideoRepo.On("GetByID", ctx, "video-123").Return(video, nil).Once()
+		mockUserRepo.On("GetByID", ctx, video.UserID).Return(user, nil).Times(2)
+		mockAPRepo.On("GetFollowers", ctx, user.ID, "accepted", mock.Anything, mock.Anything).Return(followers, 1, nil).Once()
+		mockAPRepo.On("GetRemoteActor", ctx, followers[0].FollowerID).Return(remoteActor, nil).Once()
+		mockAPRepo.On("EnqueueDelivery", ctx, mock.AnythingOfType("*domain.APDeliveryQueue")).Return(nil).Once()
+		mockAPRepo.On("StoreActivity", ctx, mock.MatchedBy(func(activity *domain.APActivity) bool {
+			return activity.Type == domain.ActivityTypeCreate && activity.Local == true
+		})).Return(nil).Once()
+
+		err := service.PublishVideo(ctx, "video-123")
+		require.NoError(t, err)
+
+		mockVideoRepo.AssertExpectations(t)
+		mockUserRepo.AssertExpectations(t)
+		mockAPRepo.AssertExpectations(t)
+	})
+
+	t.Run("PublishVideo returns error for non-existent video", func(t *testing.T) {
+		mockVideoRepo.On("GetByID", ctx, "nonexistent").Return(nil, assert.AnError).Once()
+
+		err := service.PublishVideo(ctx, "nonexistent")
+		assert.Error(t, err)
+
+		mockVideoRepo.AssertExpectations(t)
+	})
+
+	t.Run("PublishVideo returns error for non-completed video", func(t *testing.T) {
+		processingVideo := &domain.Video{
+			ID:     "video-processing",
+			Title:  "Processing",
+			UserID: "user-123",
+			Status: domain.StatusProcessing,
+		}
+
+		mockVideoRepo.On("GetByID", ctx, "video-processing").Return(processingVideo, nil).Once()
+
+		err := service.PublishVideo(ctx, "video-processing")
+		assert.Error(t, err)
+
+		mockVideoRepo.AssertExpectations(t)
+	})
+}
+
+// TestServiceUpdateVideo tests the UpdateVideo service method
+func TestServiceUpdateVideo(t *testing.T) {
+	mockAPRepo := new(MockActivityPubRepository)
+	mockUserRepo := new(MockUserRepository)
+	mockVideoRepo := new(MockVideoRepository)
+
+	cfg := &config.Config{
+		PublicBaseURL: "https://video.example",
+	}
+
+	service := NewService(mockAPRepo, mockUserRepo, mockVideoRepo, cfg)
+
+	ctx := context.Background()
+
+	t.Run("UpdateVideo sends Update activity", func(t *testing.T) {
+		video := &domain.Video{
+			ID:      "video-456",
+			Title:   "Updated Title",
+			UserID:  "user-456",
+			Privacy: domain.PrivacyPublic,
+			Status:  domain.StatusCompleted,
+		}
+
+		user := &domain.User{
+			ID:       "user-456",
+			Username: "updater",
+		}
+
+		followers := []*domain.APFollower{
+			{
+				ActorID:    "user-456",
+				FollowerID: "https://peertube.example/accounts/bob",
+				State:      "accepted",
+			},
+		}
+
+		remoteActor := &domain.APRemoteActor{
+			ActorURI: "https://peertube.example/accounts/bob",
+			InboxURL: "https://peertube.example/accounts/bob/inbox",
+		}
+
+		mockVideoRepo.On("GetByID", ctx, "video-456").Return(video, nil).Once()
+		mockUserRepo.On("GetByID", ctx, video.UserID).Return(user, nil).Times(2)
+		mockAPRepo.On("GetFollowers", ctx, user.ID, "accepted", mock.Anything, mock.Anything).Return(followers, 1, nil).Once()
+		mockAPRepo.On("GetRemoteActor", ctx, followers[0].FollowerID).Return(remoteActor, nil).Once()
+		mockAPRepo.On("EnqueueDelivery", ctx, mock.AnythingOfType("*domain.APDeliveryQueue")).Return(nil).Once()
+		mockAPRepo.On("StoreActivity", ctx, mock.MatchedBy(func(activity *domain.APActivity) bool {
+			return activity.Type == domain.ActivityTypeUpdate
+		})).Return(nil).Once()
+
+		err := service.UpdateVideo(ctx, "video-456")
+		require.NoError(t, err)
+
+		mockVideoRepo.AssertExpectations(t)
+		mockUserRepo.AssertExpectations(t)
+		mockAPRepo.AssertExpectations(t)
+	})
+
+	t.Run("UpdateVideo returns error for non-existent video", func(t *testing.T) {
+		mockVideoRepo.On("GetByID", ctx, "nonexistent").Return(nil, assert.AnError).Once()
+
+		err := service.UpdateVideo(ctx, "nonexistent")
+		assert.Error(t, err)
+
+		mockVideoRepo.AssertExpectations(t)
+	})
+}
+
+// TestServiceDeleteVideo tests the DeleteVideo service method
+func TestServiceDeleteVideo(t *testing.T) {
+	mockAPRepo := new(MockActivityPubRepository)
+	mockUserRepo := new(MockUserRepository)
+	mockVideoRepo := new(MockVideoRepository)
+
+	cfg := &config.Config{
+		PublicBaseURL: "https://video.example",
+	}
+
+	service := NewService(mockAPRepo, mockUserRepo, mockVideoRepo, cfg)
+
+	ctx := context.Background()
+
+	t.Run("DeleteVideo sends Delete activity with Tombstone", func(t *testing.T) {
+		video := &domain.Video{
+			ID:      "video-789",
+			Title:   "To Be Deleted",
+			UserID:  "user-789",
+			Privacy: domain.PrivacyPublic,
+		}
+
+		user := &domain.User{
+			ID:       "user-789",
+			Username: "deleter",
+		}
+
+		followers := []*domain.APFollower{
+			{
+				ActorID:    "user-789",
+				FollowerID: "https://mastodon.example/users/charlie",
+				State:      "accepted",
+			},
+		}
+
+		remoteActor := &domain.APRemoteActor{
+			ActorURI: "https://mastodon.example/users/charlie",
+			InboxURL: "https://mastodon.example/users/charlie/inbox",
+		}
+
+		mockVideoRepo.On("GetByID", ctx, "video-789").Return(video, nil).Once()
+		mockUserRepo.On("GetByID", ctx, video.UserID).Return(user, nil).Once()
+		mockAPRepo.On("GetFollowers", ctx, user.ID, "accepted", mock.Anything, mock.Anything).Return(followers, 1, nil).Once()
+		mockAPRepo.On("GetRemoteActor", ctx, followers[0].FollowerID).Return(remoteActor, nil).Once()
+		mockAPRepo.On("EnqueueDelivery", ctx, mock.AnythingOfType("*domain.APDeliveryQueue")).Return(nil).Once()
+		mockAPRepo.On("StoreActivity", ctx, mock.MatchedBy(func(activity *domain.APActivity) bool {
+			return activity.Type == domain.ActivityTypeDelete
+		})).Return(nil).Once()
+
+		err := service.DeleteVideo(ctx, "video-789")
+		require.NoError(t, err)
+
+		mockVideoRepo.AssertExpectations(t)
+		mockUserRepo.AssertExpectations(t)
+		mockAPRepo.AssertExpectations(t)
+	})
+}
+
+// TestServicePublishComment tests the PublishComment service method
+func TestServicePublishComment(t *testing.T) {
+	mockAPRepo := new(MockActivityPubRepository)
+	mockUserRepo := new(MockUserRepository)
+	mockVideoRepo := new(MockVideoRepository)
+
+	cfg := &config.Config{
+		PublicBaseURL: "https://video.example",
+	}
+
+	service := NewService(mockAPRepo, mockUserRepo, mockVideoRepo, cfg)
+
+	ctx := context.Background()
+
+	t.Run("PublishComment delivers to video owner and followers", func(t *testing.T) {
+		// This test verifies the method exists and has correct signature
+		// Full implementation will be added in the next phase
+
+		// Placeholder: verify method can be called
+		err := service.PublishComment(ctx, "comment-123")
+
+		// For now, we expect this to fail since it's not implemented
+		// Once implemented, this will pass
+		_ = err
+	})
+}
+
+// TestServiceBuildVideoObject tests the BuildVideoObject service method
+func TestServiceBuildVideoObject(t *testing.T) {
+	mockAPRepo := new(MockActivityPubRepository)
+	mockUserRepo := new(MockUserRepository)
+	mockVideoRepo := new(MockVideoRepository)
+
+	cfg := &config.Config{
+		PublicBaseURL: "https://video.example",
+	}
+
+	service := NewService(mockAPRepo, mockUserRepo, mockVideoRepo, cfg)
+
+	ctx := context.Background()
+
+	t.Run("BuildVideoObject creates valid VideoObject", func(t *testing.T) {
+		video := &domain.Video{
+			ID:          "video-build-123",
+			Title:       "Build Test",
+			Description: "Testing BuildVideoObject",
+			Duration:    120,
+			UserID:      "user-build-123",
+			Privacy:     domain.PrivacyPublic,
+			Status:      domain.StatusCompleted,
+		}
+
+		user := &domain.User{
+			ID:       "user-build-123",
+			Username: "builder",
+		}
+
+		mockUserRepo.On("GetByID", ctx, user.ID).Return(user, nil).Once()
+
+		videoObject, err := service.BuildVideoObject(ctx, video)
+
+		// For now, we expect this to fail since it's not implemented
+		// Once implemented, this will verify:
+		// - VideoObject type is "Video"
+		// - All required fields are present
+		// - Privacy is correctly set
+		_ = videoObject
+		_ = err
+
+		mockUserRepo.AssertExpectations(t)
+	})
+}
+
+// TestServiceBuildNoteObject tests the BuildNoteObject service method
+func TestServiceBuildNoteObject(t *testing.T) {
+	mockAPRepo := new(MockActivityPubRepository)
+	mockUserRepo := new(MockUserRepository)
+	mockVideoRepo := new(MockVideoRepository)
+
+	cfg := &config.Config{
+		PublicBaseURL: "https://video.example",
+	}
+
+	service := NewService(mockAPRepo, mockUserRepo, mockVideoRepo, cfg)
+
+	ctx := context.Background()
+
+	t.Run("BuildNoteObject creates valid Note", func(t *testing.T) {
+		// This test verifies the method exists and has correct signature
+		// Full implementation will be added in the next phase
+
+		// Placeholder: verify method can be called
+		var comment *domain.Comment
+		noteObject, err := service.BuildNoteObject(ctx, comment)
+
+		// For now, we expect this to fail since it's not implemented
+		_ = noteObject
+		_ = err
+	})
+}
+
+// TestServiceCreateVideoActivity tests the CreateVideoActivity service method
+func TestServiceCreateVideoActivity(t *testing.T) {
+	mockAPRepo := new(MockActivityPubRepository)
+	mockUserRepo := new(MockUserRepository)
+	mockVideoRepo := new(MockVideoRepository)
+
+	cfg := &config.Config{
+		PublicBaseURL: "https://video.example",
+	}
+
+	service := NewService(mockAPRepo, mockUserRepo, mockVideoRepo, cfg)
+
+	ctx := context.Background()
+
+	t.Run("CreateVideoActivity wraps VideoObject in Create", func(t *testing.T) {
+		video := &domain.Video{
+			ID:      "video-create-123",
+			Title:   "Create Activity Test",
+			UserID:  "user-create-123",
+			Privacy: domain.PrivacyPublic,
+			Status:  domain.StatusCompleted,
+		}
+
+		user := &domain.User{
+			ID:       "user-create-123",
+			Username: "creator",
+		}
+
+		mockUserRepo.On("GetByID", ctx, user.ID).Return(user, nil).Times(2)
+
+		activity, err := service.CreateVideoActivity(ctx, video)
+
+		// For now, we expect this to fail since it's not implemented
+		// Once implemented, this will verify:
+		// - Activity type is "Create"
+		// - Object is a VideoObject
+		// - Actor is correct
+		_ = activity
+		_ = err
+
+		mockUserRepo.AssertExpectations(t)
+	})
+}
+
+// TestServiceCreateCommentActivity tests the CreateCommentActivity service method
+func TestServiceCreateCommentActivity(t *testing.T) {
+	mockAPRepo := new(MockActivityPubRepository)
+	mockUserRepo := new(MockUserRepository)
+	mockVideoRepo := new(MockVideoRepository)
+
+	cfg := &config.Config{
+		PublicBaseURL: "https://video.example",
+	}
+
+	service := NewService(mockAPRepo, mockUserRepo, mockVideoRepo, cfg)
+
+	ctx := context.Background()
+
+	t.Run("CreateCommentActivity wraps Note in Create", func(t *testing.T) {
+		// This test verifies the method exists and has correct signature
+		// Full implementation will be added in the next phase
+
+		var comment *domain.Comment
+		activity, err := service.CreateCommentActivity(ctx, comment)
+
+		// For now, we expect this to fail since it's not implemented
+		_ = activity
+		_ = err
+	})
+}

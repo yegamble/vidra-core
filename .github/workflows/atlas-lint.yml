@@ -1,0 +1,172 @@
+name: Atlas Migration Lint
+
+on:
+  pull_request:
+    paths:
+      - 'migrations/**'
+      - 'atlas.hcl'
+      - 'schema.sql'
+  push:
+    branches:
+      - main
+      - master
+      - develop
+    paths:
+      - 'migrations/**'
+      - 'atlas.hcl'
+      - 'schema.sql'
+
+jobs:
+  lint:
+    name: Lint Database Migrations
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: athena_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Fetch all history for proper migration analysis
+
+      - name: Install Atlas CLI
+        run: |
+          curl -sSf https://atlasgo.sh | sh
+          sudo mv atlas /usr/local/bin/
+          atlas version
+
+      - name: Create Shadow Database
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql -h localhost -U postgres -c "CREATE DATABASE athena_shadow;"
+          echo "Shadow database created successfully"
+
+      - name: Enable PostgreSQL Extensions
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql -h localhost -U postgres -d athena_test -c "CREATE EXTENSION IF NOT EXISTS pg_trgm;"
+          psql -h localhost -U postgres -d athena_test -c "CREATE EXTENSION IF NOT EXISTS unaccent;"
+          psql -h localhost -U postgres -d athena_test -c 'CREATE EXTENSION IF NOT EXISTS "uuid-ossp";'
+          psql -h localhost -U postgres -d athena_test -c "CREATE EXTENSION IF NOT EXISTS btree_gin;"
+          psql -h localhost -U postgres -d athena_shadow -c "CREATE EXTENSION IF NOT EXISTS pg_trgm;"
+          psql -h localhost -U postgres -d athena_shadow -c "CREATE EXTENSION IF NOT EXISTS unaccent;"
+          psql -h localhost -U postgres -d athena_shadow -c 'CREATE EXTENSION IF NOT EXISTS "uuid-ossp";'
+          psql -h localhost -U postgres -d athena_shadow -c "CREATE EXTENSION IF NOT EXISTS btree_gin;"
+
+      - name: Lint Migrations
+        env:
+          DATABASE_URL: "postgres://postgres:postgres@localhost:5432/athena_test?sslmode=disable"
+          SHADOW_DATABASE_URL: "postgres://postgres:postgres@localhost:5432/athena_shadow?sslmode=disable"
+        run: |
+          echo "Linting migrations with Atlas..."
+          atlas migrate lint --env ci --latest 1 || {
+            echo "::error::Migration lint failed. Please review the errors above."
+            exit 1
+          }
+
+      - name: Validate Migrations
+        env:
+          DATABASE_URL: "postgres://postgres:postgres@localhost:5432/athena_test?sslmode=disable"
+          SHADOW_DATABASE_URL: "postgres://postgres:postgres@localhost:5432/athena_shadow?sslmode=disable"
+        run: |
+          echo "Validating migration integrity..."
+          atlas migrate validate --env ci || {
+            echo "::error::Migration validation failed. Migration files may be corrupted or modified."
+            exit 1
+          }
+
+      - name: Check Migration Status
+        env:
+          DATABASE_URL: "postgres://postgres:postgres@localhost:5432/athena_test?sslmode=disable"
+          SHADOW_DATABASE_URL: "postgres://postgres:postgres@localhost:5432/athena_shadow?sslmode=disable"
+        run: |
+          echo "Checking migration status..."
+          atlas migrate status --env ci || true
+
+      - name: Test Migration Apply
+        env:
+          DATABASE_URL: "postgres://postgres:postgres@localhost:5432/athena_test?sslmode=disable"
+          SHADOW_DATABASE_URL: "postgres://postgres:postgres@localhost:5432/athena_shadow?sslmode=disable"
+        run: |
+          echo "Testing migration application..."
+          atlas migrate apply --env ci --auto-approve || {
+            echo "::error::Failed to apply migrations. Please check migration syntax."
+            exit 1
+          }
+
+      - name: Comment PR (Success)
+        if: success() && github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const body = `## ✅ Atlas Migration Validation Successful
+
+            All migration checks passed:
+            - ✅ Lint check completed
+            - ✅ Migration integrity validated
+            - ✅ Test migration application successful
+
+            The migrations are safe to merge.`;
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: body
+            });
+
+      - name: Comment PR (Failure)
+        if: failure() && github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const body = `## ❌ Atlas Migration Validation Failed
+
+            Migration validation encountered errors. Please review the logs above and:
+
+            1. Check for destructive changes (DROP TABLE, DROP COLUMN, etc.)
+            2. Ensure migrations are reversible where required
+            3. Validate SQL syntax
+            4. Check for data-dependent changes
+            5. Review migration file integrity (no manual edits to applied migrations)
+
+            Run locally:
+            \`\`\`bash
+            make atlas-migrate-lint
+            make atlas-migrate-validate
+            \`\`\`
+
+            See [docs/database/MIGRATIONS.md](/docs/database/MIGRATIONS.md) for more information.`;
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: body
+            });
+
+      - name: Upload Logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: atlas-logs
+          path: |
+            *.log
+            atlas-*.txt
+          retention-days: 7
+          if-no-files-found: ignore

@@ -67,6 +67,7 @@ require (
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f // indirect
 	github.com/dustin/go-humanize v1.0.0 // indirect
+	github.com/dutchcoders/go-clamd v0.0.0-20170520113014-b970184f4d9e // indirect
 	github.com/edsrzf/mmap-go v1.1.0 // indirect
 	github.com/gabriel-vasile/mimetype v1.4.10 // indirect
 	github.com/go-llsqlite/adapter v0.0.0-20230927005056-7f5ce7f0c916 // indirect
@@ -77,12 +78,17 @@ require (
 	github.com/go-playground/universal-translator v0.18.1 // indirect
 	github.com/google/btree v1.1.2 // indirect
 	github.com/huandu/xstrings v1.3.2 // indirect
+	github.com/ipfs/go-cid v0.4.1 // indirect
 	github.com/klauspost/cpuid/v2 v2.2.3 // indirect
 	github.com/leodido/go-urn v1.4.0 // indirect
-	github.com/mattn/go-isatty v0.0.16 // indirect
+	github.com/mattn/go-colorable v0.1.13 // indirect
+	github.com/mattn/go-isatty v0.0.19 // indirect
 	github.com/minio/sha256-simd v1.0.0 // indirect
 	github.com/mr-tron/base58 v1.2.0 // indirect
 	github.com/mschoch/smat v0.2.0 // indirect
+	github.com/multiformats/go-base32 v0.0.3 // indirect
+	github.com/multiformats/go-base36 v0.1.0 // indirect
+	github.com/multiformats/go-multibase v0.0.3 // indirect
 	github.com/multiformats/go-multihash v0.2.3 // indirect
 	github.com/multiformats/go-varint v0.0.6 // indirect
 	github.com/pion/datachannel v1.5.9 // indirect
@@ -107,6 +113,7 @@ require (
 	github.com/protolambda/ctxlock v0.1.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/rs/dnscache v0.0.0-20211102005908-e0241e321417 // indirect
+	github.com/rs/zerolog v1.34.0 // indirect
 	github.com/spaolacci/murmur3 v1.1.0 // indirect
 	github.com/stretchr/objx v0.5.2 // indirect
 	github.com/tidwall/btree v1.6.0 // indirect

@@ -54,6 +54,29 @@ services:
     networks:
       - test-network
 
+  clamav-test:
+    image: clamav/clamav:latest
+    container_name: athena_test_clamav
+    ports:
+      - "3310:3310"
+    environment:
+      - CLAMAV_NO_FRESHCLAM=false
+      - CLAMD_STARTUP_TIMEOUT=300
+    volumes:
+      # Persist virus signatures to speed up subsequent runs
+      - clamav-test-signatures:/var/lib/clamav
+      # Mount test files (read-only)
+      - ./testdata/virus_scanner:/testdata:ro
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/clamd-ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 120s  # ClamAV needs time to load signatures
+    mem_limit: 2g
+    networks:
+      - test-network
+
   app-test:
     image: athena:latest
     build: .
@@ -64,6 +87,8 @@ services:
         condition: service_healthy
       ipfs-test:
         condition: service_started
+      clamav-test:
+        condition: service_healthy
     environment:
       DATABASE_URL: postgres://test_user:test_password@postgres-test:5432/athena_test?sslmode=disable
       REDIS_URL: redis://redis-test:6379/0
@@ -74,6 +99,11 @@ services:
       VALIDATION_TEST_MODE: "true"
       LOG_LEVEL: debug
       STORAGE_DIR: /tmp/storage
+      # ClamAV configuration
+      CLAMAV_ADDRESS: clamav-test:3310
+      CLAMAV_TIMEOUT: "60"
+      CLAMAV_FALLBACK_MODE: strict
+      TEST_QUARANTINE_DIR: /tmp/quarantine
     tmpfs:
       - /tmp/storage:uid=1000,gid=1000
     ports:
@@ -107,3 +137,7 @@ services:
 networks:
   test-network:
     driver: bridge
+
+volumes:
+  clamav-test-signatures:
+    driver: local

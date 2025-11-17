@@ -25,6 +25,12 @@ type Config struct {
 	IPFSApi     string
 	IPFSCluster string
 
+	// IPFS Cluster Security
+	IPFSClusterSecret     string
+	IPFSClusterClientCert string
+	IPFSClusterClientKey  string
+	IPFSClusterCACert     string
+
 	// IPFS Streaming Configuration
 	EnableIPFSStreaming            bool
 	IPFSGatewayURLs                []string
@@ -265,6 +271,18 @@ type Config struct {
 	HybridDistributionEnabled bool
 	HybridPreferIPFS          bool
 	HybridFallbackTimeout     time.Duration
+
+	// Virus Scanning Configuration
+	VirusScanEnabled         bool
+	ClamAVAddress            string
+	VirusScanTimeout         int  // seconds
+	QuarantineDir            string
+	VirusScanFallbackOnError bool
+	VirusScanMaxRetries      int
+	VirusScanRetryDelay      int  // seconds
+
+	// File Type Blocking Configuration
+	FileTypeBlockingEnabled bool
 }
 
 func Load() (*Config, error) {
@@ -303,6 +321,12 @@ func Load() (*Config, error) {
 	}
 
 	cfg.IPFSCluster = getEnvOrDefault("IPFS_CLUSTER_API", "")
+
+	// IPFS Cluster Security Configuration
+	cfg.IPFSClusterSecret = getEnvOrDefault("IPFS_CLUSTER_SECRET", "")
+	cfg.IPFSClusterClientCert = getEnvOrDefault("IPFS_CLUSTER_CLIENT_CERT", "")
+	cfg.IPFSClusterClientKey = getEnvOrDefault("IPFS_CLUSTER_CLIENT_KEY", "")
+	cfg.IPFSClusterCACert = getEnvOrDefault("IPFS_CLUSTER_CA_CERT", "")
 
 	// IPFS Streaming Configuration
 	cfg.EnableIPFSStreaming = getBoolEnv("ENABLE_IPFS_STREAMING", false)
@@ -549,6 +573,18 @@ func Load() (*Config, error) {
 	cfg.HybridDistributionEnabled = getBoolEnv("HYBRID_DISTRIBUTION_ENABLED", true)
 	cfg.HybridPreferIPFS = getBoolEnv("HYBRID_PREFER_IPFS", false) // Prefer torrent by default
 	cfg.HybridFallbackTimeout = time.Duration(getIntEnv("HYBRID_FALLBACK_TIMEOUT", 10)) * time.Second
+
+	// Virus Scanning Configuration
+	cfg.VirusScanEnabled = getBoolEnv("VIRUS_SCAN_ENABLED", true)
+	cfg.ClamAVAddress = getEnvOrDefault("CLAMAV_ADDRESS", "localhost:3310")
+	cfg.VirusScanTimeout = getIntEnv("VIRUS_SCAN_TIMEOUT", 300) // 5 minutes
+	cfg.QuarantineDir = getEnvOrDefault("QUARANTINE_DIR", "./quarantine")
+	cfg.VirusScanFallbackOnError = getBoolEnv("VIRUS_SCAN_FALLBACK", false)
+	cfg.VirusScanMaxRetries = getIntEnv("CLAMAV_MAX_RETRIES", 3)
+	cfg.VirusScanRetryDelay = getIntEnv("CLAMAV_RETRY_DELAY", 1)
+
+	// File Type Blocking Configuration
+	cfg.FileTypeBlockingEnabled = getBoolEnv("FILE_TYPE_BLOCKING_ENABLED", true)
 
 	return cfg, nil
 }
