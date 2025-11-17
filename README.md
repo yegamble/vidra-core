@@ -50,6 +50,7 @@ A high-performance, feature-complete PeerTube backend implementation in Go with 
 - **End-to-End Encrypted Messaging** - Client-side encryption with user-managed keys
 - **Content Moderation** - Abuse reporting, user/instance blocklists, and automated filtering
 - **Rate Limiting** - Per-endpoint rate limiting with sliding window algorithm
+- **Virus Scanning** - Mandatory ClamAV scanning for all uploads with quarantine and audit logging
 
 ### Production Ready
 - **High Performance** - Built with Go for maximum concurrency and efficient resource usage
@@ -151,6 +152,23 @@ Key configuration areas:
 - **Storage**: Local, IPFS, or S3-compatible backends
 - **Federation**: ATProto and Bluesky integration settings
 - **Security**: JWT, rate limiting, CORS configuration
+- **Virus Scanning**: ClamAV integration with configurable fallback modes
+
+### Critical Security Configuration
+
+For production deployments, ensure virus scanning is properly configured:
+
+```bash
+# ClamAV virus scanning (REQUIRED for production)
+CLAMAV_ADDRESS=clamav:3310              # ClamAV daemon address
+CLAMAV_FALLBACK_MODE=strict             # MUST be 'strict' in production
+CLAMAV_TIMEOUT=300                      # 5-minute scan timeout
+CLAMAV_MAX_RETRIES=3                    # Connection retry attempts
+QUARANTINE_DIR=/var/quarantine          # Isolated quarantine directory
+CLAMAV_AUTO_QUARANTINE=true             # Auto-quarantine infected files
+```
+
+See [SECURITY.md](SECURITY.md) for security advisories and [Security Deployment Guide](docs/deployment/security.md) for detailed configuration.
 
 ## Contributing
 

@@ -177,17 +177,110 @@ MAX_IMAGE_SIZE=10MB
 MAX_SUBTITLE_SIZE=1MB
 ```
 
-### File Sanitization
+### File Sanitization & Virus Scanning
+
+All uploaded files undergo mandatory ClamAV virus scanning before processing.
 
 ```bash
-# Enable file scanning
-ENABLE_ANTIVIRUS=true
-CLAMAV_HOST=clamav:3310
+# ClamAV Connection
+CLAMAV_ADDRESS=clamav:3310         # ClamAV daemon address (host:port)
+CLAMAV_TIMEOUT=300                  # Scan timeout in seconds (5min default)
+CLAMAV_MAX_RETRIES=3                # Connection retry attempts
+CLAMAV_RETRY_DELAY=1                # Delay between retries (seconds)
 
-# Quarantine settings
-QUARANTINE_DIR=/app/quarantine
-QUARANTINE_DAYS=7
+# Fallback Mode (Critical Security Setting)
+CLAMAV_FALLBACK_MODE=strict         # strict|warn|allow
+  # PRODUCTION MUST USE: strict
+  # strict: Reject uploads if ClamAV unavailable (RECOMMENDED)
+  # warn: Log warning but allow (DEV/TEST ONLY - security risk)
+  # allow: Silently bypass scanning (NEVER USE - critical vulnerability)
+
+# Quarantine Settings
+QUARANTINE_DIR=/var/quarantine      # Isolated directory for infected files
+CLAMAV_AUTO_QUARANTINE=true         # Auto-quarantine infected files
+QUARANTINE_RETENTION_DAYS=30        # Days to keep quarantined files (forensics)
+CLAMAV_AUDIT_LOG=/var/log/athena/virus_scan.log  # Audit trail
 ```
+
+#### ClamAV Deployment (Docker)
+
+```yaml
+# docker-compose.yml
+services:
+  clamav:
+    image: clamav/clamav:latest
+    container_name: athena-clamav
+    restart: unless-stopped
+    volumes:
+      - clamav-signatures:/var/lib/clamav  # Virus signature database
+      - ./quarantine:/quarantine:ro        # Read-only quarantine mount
+    environment:
+      - CLAMAV_NO_FRESHCLAM=false          # Enable auto-updates
+    healthcheck:
+      test: ["CMD", "clamdscan", "--ping", "1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 120s  # Allow time for initial signature download
+    deploy:
+      resources:
+        limits:
+          memory: 2G      # ClamAV requires 1.5-2GB RAM
+        reservations:
+          memory: 1G
+    networks:
+      - athena-backend  # Isolated network
+
+  app:
+    depends_on:
+      clamav:
+        condition: service_healthy
+    environment:
+      - CLAMAV_ADDRESS=clamav:3310
+      - CLAMAV_FALLBACK_MODE=strict
+```
+
+#### Virus Scanner Monitoring
+
+```bash
+# Check ClamAV health
+docker exec athena-clamav clamdscan --ping
+
+# Monitor scan logs
+tail -f /var/log/athena/virus_scan.log
+
+# Database query for scan statistics
+psql -U athena_user -d athena -c "
+  SELECT
+    scan_result,
+    COUNT(*) as total,
+    COUNT(DISTINCT user_id) as unique_users,
+    AVG(scan_duration_ms) as avg_duration_ms
+  FROM virus_scan_log
+  WHERE scanned_at > NOW() - INTERVAL '24 hours'
+  GROUP BY scan_result
+  ORDER BY total DESC;
+"
+
+# Check for quarantined files
+ls -lh /var/quarantine/
+
+# Alert on high failure rate (Prometheus)
+# virus_scan_failures_total / virus_scan_total > 0.1
+```
+
+#### Security Considerations
+
+**Critical**: Always use `CLAMAV_FALLBACK_MODE=strict` in production to prevent infected file uploads during scanner outages.
+
+**CVE-ATHENA-2025-001 Mitigation**:
+- Ensure ClamAV version is up-to-date
+- Monitor scanner availability with health checks
+- Set up alerts for scan failures or fallback mode activations
+- Review audit logs regularly for suspicious patterns
+- Test disaster recovery procedures (ClamAV failover)
+
+See [SECURITY.md](../../SECURITY.md) for detailed vulnerability disclosure and remediation steps.
 
 ### Upload Restrictions
 

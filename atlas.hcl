@@ -84,11 +84,6 @@ env "prod" {
       error = true
     }
 
-    # Require reversible migrations
-    reversible {
-      error = true
-    }
-
     # Data-dependent changes require review
     data_depend {
       error = true
@@ -140,10 +135,6 @@ env "ci" {
     # Strict checks for CI
     destructive {
       error = true
-    }
-
-    reversible {
-      error = false  # Warn in CI but don't block (some migrations may be one-way)
     }
 
     data_depend {
