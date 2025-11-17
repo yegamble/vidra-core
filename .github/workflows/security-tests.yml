@@ -159,7 +159,6 @@ jobs:
 
       - name: Run govulncheck
         run: |
-<<<<<<< Updated upstream
           # Install govulncheck with retry logic
           max_attempts=5
           for i in $(seq 1 $max_attempts); do
@@ -178,10 +177,6 @@ jobs:
             fi
           done
           govulncheck ./...
-=======
-          go install golang.org/x/vuln/cmd/govulncheck@latest
-          ~/go/bin/govulncheck ./...
->>>>>>> Stashed changes
 
   static-analysis:
     name: Static Security Analysis
@@ -200,7 +195,6 @@ jobs:
 
       - name: Run gosec security scanner
         run: |
-<<<<<<< Updated upstream
           # Install gosec with retry logic
           max_attempts=5
           for i in $(seq 1 $max_attempts); do
@@ -219,15 +213,10 @@ jobs:
             fi
           done
           gosec -fmt=json -out=gosec-report.json ./...
-=======
-          go install github.com/securego/gosec/v2/cmd/gosec@latest
-          ~/go/bin/gosec -fmt=json -out=gosec-report.json ./...
->>>>>>> Stashed changes
         continue-on-error: true
 
       - name: Run staticcheck
         run: |
-<<<<<<< Updated upstream
           # Install staticcheck with retry logic
           max_attempts=5
           for i in $(seq 1 $max_attempts); do
@@ -246,10 +235,6 @@ jobs:
             fi
           done
           staticcheck ./...
-=======
-          go install honnef.co/go/tools/cmd/staticcheck@latest
-          ~/go/bin/staticcheck ./...
->>>>>>> Stashed changes
 
       - name: Upload gosec report
         uses: actions/upload-artifact@v4

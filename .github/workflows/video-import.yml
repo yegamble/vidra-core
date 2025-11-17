@@ -92,12 +92,14 @@ jobs:
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
         with:
           files: ./domain-coverage.out,./repository-coverage.out,./service-coverage.out,./handlers-coverage.out,./importer-coverage.out
           flags: unit
           name: unit-tests
-          token: ${{ secrets.CODECOV_TOKEN }}
-        if: ${{ secrets.CODECOV_TOKEN != '' }}
+          token: ${{ env.CODECOV_TOKEN }}
+        if: ${{ env.CODECOV_TOKEN != '' }}
 
   integration-tests:
     name: Integration Tests
