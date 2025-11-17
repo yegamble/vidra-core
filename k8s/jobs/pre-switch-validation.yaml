@@ -1,0 +1,161 @@
+# Pre-Switch Validation Job
+# Runs comprehensive health checks on Green environment before traffic switch
+# Must pass before automated traffic shift proceeds
+
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: pre-switch-validation
+  namespace: athena
+  labels:
+    app: athena
+    component: validation
+spec:
+  backoffLimit: 0  # Don't retry on failure
+  ttlSecondsAfterFinished: 3600  # Keep for 1 hour
+  template:
+    metadata:
+      labels:
+        app: athena
+        component: validation
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: validation
+        image: curlimages/curl:latest
+        command:
+        - sh
+        - -c
+        - |
+          set -e
+
+          TARGET_SERVICE="${TARGET_SERVICE:-athena-api-green}"
+          echo "Running pre-switch validation against $TARGET_SERVICE"
+
+          # Function to check HTTP endpoint
+          check_endpoint() {
+            local url=$1
+            local expected_status=$2
+            local description=$3
+
+            echo "Checking $description: $url"
+            status=$(curl -s -o /dev/null -w "%{http_code}" "$url" || echo "000")
+
+            if [ "$status" = "$expected_status" ]; then
+              echo "  ✓ $description: OK (HTTP $status)"
+              return 0
+            else
+              echo "  ✗ $description: FAILED (HTTP $status, expected $expected_status)"
+              return 1
+            fi
+          }
+
+          # Function to check JSON field
+          check_json_field() {
+            local url=$1
+            local field=$2
+            local expected_value=$3
+            local description=$4
+
+            echo "Checking $description"
+            actual_value=$(curl -s "$url" | grep -o "\"$field\":\"[^\"]*\"" | cut -d'"' -f4 || echo "")
+
+            if [ "$actual_value" = "$expected_value" ]; then
+              echo "  ✓ $description: $field=$actual_value"
+              return 0
+            else
+              echo "  ✗ $description: FAILED ($field=$actual_value, expected $expected_value)"
+              return 1
+            fi
+          }
+
+          echo ""
+          echo "=========================================="
+          echo "  PRE-SWITCH VALIDATION"
+          echo "=========================================="
+          echo ""
+
+          # 1. Basic health check
+          echo "1. Basic Health Check"
+          check_endpoint "http://$TARGET_SERVICE/health" "200" "Basic health endpoint"
+          echo ""
+
+          # 2. Readiness check
+          echo "2. Readiness Check"
+          check_json_field "http://$TARGET_SERVICE/ready" "status" "ok" "Overall readiness"
+          echo ""
+
+          # 3. Database connectivity
+          echo "3. Database Connectivity"
+          check_json_field "http://$TARGET_SERVICE/ready" "checks.database" "ok" "Database connection"
+          echo ""
+
+          # 4. Redis connectivity
+          echo "4. Redis Connectivity"
+          check_json_field "http://$TARGET_SERVICE/ready" "checks.redis" "ok" "Redis connection"
+          echo ""
+
+          # 5. IPFS connectivity (optional)
+          echo "5. IPFS Connectivity"
+          ipfs_status=$(curl -s "http://$TARGET_SERVICE/ready" | grep -o '"ipfs":"[^"]*"' | cut -d'"' -f4 || echo "unknown")
+          if [ "$ipfs_status" = "ok" ] || [ "$ipfs_status" = "degraded" ]; then
+            echo "  ✓ IPFS status: $ipfs_status"
+          else
+            echo "  ⚠ IPFS status: $ipfs_status (non-critical)"
+          fi
+          echo ""
+
+          # 6. Queue health check
+          echo "6. Queue Health"
+          check_json_field "http://$TARGET_SERVICE/ready" "checks.queue" "ok" "Queue health"
+          echo ""
+
+          # 7. API endpoint smoke tests
+          echo "7. API Endpoint Smoke Tests"
+          check_endpoint "http://$TARGET_SERVICE/api/v1/config/instance" "200" "Instance config endpoint"
+          echo ""
+
+          # 8. Federation endpoints (critical for federated video platform)
+          echo "8. Federation Endpoints"
+          check_endpoint "http://$TARGET_SERVICE/.well-known/nodeinfo" "200" "NodeInfo endpoint"
+
+          # Webfinger check (may not have test user)
+          echo "  Checking Webfinger endpoint..."
+          wf_status=$(curl -s -o /dev/null -w "%{http_code}" "http://$TARGET_SERVICE/.well-known/webfinger?resource=acct:test@athena.example.com" || echo "000")
+          if [ "$wf_status" = "200" ] || [ "$wf_status" = "404" ]; then
+            echo "  ✓ Webfinger endpoint: responsive (HTTP $wf_status)"
+          else
+            echo "  ✗ Webfinger endpoint: FAILED (HTTP $wf_status)"
+            exit 1
+          fi
+          echo ""
+
+          # 9. Metrics endpoint
+          echo "9. Metrics Endpoint"
+          check_endpoint "http://$TARGET_SERVICE:9090/metrics" "200" "Prometheus metrics"
+          echo ""
+
+          # 10. Response time check
+          echo "10. Response Time Check"
+          start_time=$(date +%s%N)
+          curl -s -o /dev/null "http://$TARGET_SERVICE/health"
+          end_time=$(date +%s%N)
+          response_time=$(( (end_time - start_time) / 1000000 ))  # Convert to milliseconds
+
+          if [ "$response_time" -lt 1000 ]; then
+            echo "  ✓ Response time: ${response_time}ms (< 1000ms)"
+          else
+            echo "  ✗ Response time: ${response_time}ms (too slow)"
+            exit 1
+          fi
+          echo ""
+
+          echo "=========================================="
+          echo "  ✓ ALL VALIDATIONS PASSED"
+          echo "=========================================="
+          echo ""
+          echo "Green environment is ready for traffic switch"
+          exit 0
+        env:
+        - name: TARGET_SERVICE
+          value: "athena-api-green"
