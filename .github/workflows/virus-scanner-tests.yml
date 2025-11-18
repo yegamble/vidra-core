@@ -59,6 +59,7 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
+          cache-dependency-path: go.sum
 
       - name: Install jq and PostgreSQL client
         run: |
@@ -153,6 +154,7 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
+          cache-dependency-path: go.sum
 
       - name: Wait for ClamAV to be ready
         run: |
@@ -464,6 +466,7 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
+          cache-dependency-path: go.sum
 
       - name: Wait for ClamAV
         run: |

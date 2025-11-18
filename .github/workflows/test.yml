@@ -74,16 +74,7 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
-
-      - name: Cache Go modules
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
-          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-          restore-keys: |
-            ${{ runner.os }}-go-
+          cache-dependency-path: go.sum
 
       - name: Install system dependencies
         run: |
@@ -216,16 +207,7 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
-
-      - name: Cache Go modules
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
-          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-          restore-keys: |
-            ${{ runner.os }}-go-
+          cache-dependency-path: go.sum
 
       - name: Install dependencies
         run: |
@@ -304,17 +286,7 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
-
-      - name: Cache Go modules and build cache
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
-          key: ${{ runner.os }}-go-${{ env.GO_VERSION }}-${{ hashFiles('**/go.sum') }}
-          restore-keys: |
-            ${{ runner.os }}-go-${{ env.GO_VERSION }}-
-            ${{ runner.os }}-go-
+          cache-dependency-path: go.sum
 
       - name: Build binary
         run: |
