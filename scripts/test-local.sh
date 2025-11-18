@@ -5,7 +5,7 @@ echo "Starting local test environment..."
 
 # Start test services
 echo "Starting Docker services..."
-docker-compose -f docker-compose.test.yml up -d postgres-test redis-test
+docker compose -f docker compose.test.yml up -d postgres-test redis-test
 
 # Wait for services to be ready
 echo "Waiting for PostgreSQL..."
@@ -48,6 +48,6 @@ echo "Coverage report available at: coverage.html"
 
 # Cleanup
 echo "Cleaning up..."
-docker-compose -f docker-compose.test.yml down -v
+docker compose -f docker compose.test.yml down -v
 
 echo "Done!"

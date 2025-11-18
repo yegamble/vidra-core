@@ -44,6 +44,12 @@ func (m *mockVideoRepoPrivacy) Count(_ context.Context) (int64, error) {
 func (m *mockVideoRepoPrivacy) GetVideosForMigration(_ context.Context, _ int) ([]*domain.Video, error) {
 	return nil, nil
 }
+func (m *mockVideoRepoPrivacy) GetByRemoteURI(_ context.Context, _ string) (*domain.Video, error) {
+	return nil, nil
+}
+func (m *mockVideoRepoPrivacy) CreateRemoteVideo(_ context.Context, _ *domain.Video) error {
+	return nil
+}
 
 func TestGetVideo_PrivacyGate(t *testing.T) {
 	ownerID := "owner-1"

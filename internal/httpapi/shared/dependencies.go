@@ -63,8 +63,8 @@ type HandlerDependencies struct {
 	FederationService    usecase.FederationService
 	HardeningService     *usecase.FederationHardeningService
 	EncodingService      encoding.Service
-	ActivityPubService   port.ActivityPubService
-	ImportService        any // Import service for video imports
+	ActivityPubService   port.ActivityPubService // ActivityPub federation service
+	ImportService        any                     // Import service for video imports
 	StreamManager        *livestream.StreamManager
 	HLSTranscoder        *livestream.HLSTranscoder
 	IPFSStreamingService *ucipfs.Service

@@ -1,5 +1,3 @@
-version: '3.8'
-
 # E2E Test Environment
 # This docker-compose file sets up a complete test environment for end-to-end testing
 # Run with: docker-compose -f tests/e2e/docker-compose.yml up -d
@@ -109,6 +107,7 @@ services:
 
       # Features
       ENABLE_IPFS: "false"
+      REQUIRE_IPFS: "false"
       ENABLE_IOTA: "false"
       ENABLE_TORRENT: "false"
 

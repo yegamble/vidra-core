@@ -16,24 +16,37 @@ jobs:
     runs-on: self-hosted
     timeout-minutes: 45
 
-    services:
-      # Note: Docker Compose is used instead of GH services for better control
-      # Services are defined in tests/e2e/docker-compose.yml
+    # Note: Docker Compose is used instead of GH services for better control
+    # Services are defined in tests/e2e/docker compose.yml
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Install Docker
+        run: |
+          if ! command -v docker &> /dev/null; then
+            echo "Installing Docker..."
+            curl -fsSL https://get.docker.com -o get-docker.sh
+            sudo sh get-docker.sh
+            sudo usermod -aG docker $USER
+            rm get-docker.sh
+            echo "Docker installed successfully"
+          else
+            echo "Docker already installed"
+          fi
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg make
 
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
           go-version: '1.24'
           cache: true
-
-      - name: Install FFmpeg
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y ffmpeg
+          cache-dependency-path: go.sum
 
       - name: Verify FFmpeg installation
         run: ffmpeg -version
@@ -43,10 +56,22 @@ jobs:
           cd tests/e2e
           make fixtures
 
+      - name: Cleanup previous test environment
+        run: |
+          # Clean up E2E test environment
+          cd tests/e2e
+          docker compose down -v 2>/dev/null || true
+          # Clean up any other test environments that may use conflicting ports
+          cd ../..
+          docker compose -f docker-compose.test.yml down -v 2>/dev/null || true
+          # Force cleanup any containers using our ports
+          docker stop $(docker ps -q --filter "publish=5433" --filter "publish=6380" --filter "publish=8080") 2>/dev/null || true
+          docker rm $(docker ps -aq --filter "publish=5433" --filter "publish=6380" --filter "publish=8080") 2>/dev/null || true
+
       - name: Start test environment
         run: |
           cd tests/e2e
-          docker-compose up -d
+          docker compose up -d
 
       - name: Wait for services to be ready
         run: |
@@ -60,8 +85,8 @@ jobs:
       - name: Check service health
         run: |
           cd tests/e2e
-          docker-compose ps
-          docker-compose logs --tail=50
+          docker compose ps
+          docker compose logs --tail=50
 
       - name: Run E2E tests
         env:
@@ -84,13 +109,13 @@ jobs:
         run: |
           cd tests/e2e
           echo "=== API Logs ==="
-          docker-compose logs athena-api-e2e
+          docker compose logs athena-api-e2e
           echo "=== PostgreSQL Logs ==="
-          docker-compose logs postgres-e2e
+          docker compose logs postgres-e2e
           echo "=== Redis Logs ==="
-          docker-compose logs redis-e2e
+          docker compose logs redis-e2e
           echo "=== MinIO Logs ==="
-          docker-compose logs minio-e2e
+          docker compose logs minio-e2e
 
       - name: Upload service logs
         if: failure()
@@ -105,7 +130,7 @@ jobs:
         if: always()
         run: |
           cd tests/e2e
-          docker-compose down -v
+          docker compose down -v
 
       - name: Report test summary
         if: always()
@@ -124,31 +149,59 @@ jobs:
     timeout-minutes: 60
     # Only run on main branch or manual trigger to save CI time
     if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+    env:
+      CGO_ENABLED: "1"
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Install Docker
+        run: |
+          if ! command -v docker &> /dev/null; then
+            echo "Installing Docker..."
+            curl -fsSL https://get.docker.com -o get-docker.sh
+            sudo sh get-docker.sh
+            sudo usermod -aG docker $USER
+            rm get-docker.sh
+            echo "Docker installed successfully"
+          else
+            echo "Docker already installed"
+          fi
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg make
 
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
           go-version: '1.24'
           cache: true
-
-      - name: Install FFmpeg
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y ffmpeg
+          cache-dependency-path: go.sum
 
       - name: Generate test fixtures
         run: |
           cd tests/e2e
           make fixtures
 
+      - name: Cleanup previous test environment
+        run: |
+          # Clean up E2E test environment
+          cd tests/e2e
+          docker compose down -v 2>/dev/null || true
+          # Clean up any other test environments that may use conflicting ports
+          cd ../..
+          docker compose -f docker-compose.test.yml down -v 2>/dev/null || true
+          # Force cleanup any containers using our ports
+          docker stop $(docker ps -q --filter "publish=5433" --filter "publish=6380" --filter "publish=8080") 2>/dev/null || true
+          docker rm $(docker ps -aq --filter "publish=5433" --filter "publish=6380" --filter "publish=8080") 2>/dev/null || true
+
       - name: Start test environment
         run: |
           cd tests/e2e
-          docker-compose up -d
+          docker compose up -d
 
       - name: Wait for services
         run: |
@@ -166,4 +219,4 @@ jobs:
         if: always()
         run: |
           cd tests/e2e
-          docker-compose down -v
+          docker compose down -v

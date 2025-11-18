@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -311,12 +312,13 @@ func TestGetLocalActor(t *testing.T) {
 	mockAPRepo := new(MockActivityPubRepository)
 	mockUserRepo := new(MockUserRepository)
 	mockVideoRepo := new(MockVideoRepository)
+	mockCommentRepo := new(MockCommentRepository)
 
 	cfg := &config.Config{
 		PublicBaseURL: "https://video.example",
 	}
 
-	service := NewService(mockAPRepo, mockUserRepo, mockVideoRepo, cfg)
+	service := NewService(mockAPRepo, mockUserRepo, mockVideoRepo, mockCommentRepo, cfg)
 
 	ctx := context.Background()
 	username := "alice"
@@ -387,12 +389,13 @@ func TestFetchRemoteActor(t *testing.T) {
 	mockAPRepo := new(MockActivityPubRepository)
 	mockUserRepo := new(MockUserRepository)
 	mockVideoRepo := new(MockVideoRepository)
+	mockCommentRepo := new(MockCommentRepository)
 
 	cfg := &config.Config{
 		PublicBaseURL: "https://video.example",
 	}
 
-	service := NewService(mockAPRepo, mockUserRepo, mockVideoRepo, cfg)
+	service := NewService(mockAPRepo, mockUserRepo, mockVideoRepo, mockCommentRepo, cfg)
 
 	ctx := context.Background()
 
@@ -464,6 +467,7 @@ func TestHandleFollow(t *testing.T) {
 	mockAPRepo := new(MockActivityPubRepository)
 	mockUserRepo := new(MockUserRepository)
 	mockVideoRepo := new(MockVideoRepository)
+	mockCommentRepo := new(MockCommentRepository)
 
 	// Create a mock HTTP server to receive the Accept activity
 	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -477,7 +481,7 @@ func TestHandleFollow(t *testing.T) {
 		ActivityPubAcceptFollowAutomatic: true,
 	}
 
-	service := NewService(mockAPRepo, mockUserRepo, mockVideoRepo, cfg)
+	service := NewService(mockAPRepo, mockUserRepo, mockVideoRepo, mockCommentRepo, cfg)
 
 	ctx := context.Background()
 
@@ -546,12 +550,13 @@ func TestHandleLike(t *testing.T) {
 	mockAPRepo := new(MockActivityPubRepository)
 	mockUserRepo := new(MockUserRepository)
 	mockVideoRepo := new(MockVideoRepository)
+	mockCommentRepo := new(MockCommentRepository)
 
 	cfg := &config.Config{
 		PublicBaseURL: "https://video.example",
 	}
 
-	service := NewService(mockAPRepo, mockUserRepo, mockVideoRepo, cfg)
+	service := NewService(mockAPRepo, mockUserRepo, mockVideoRepo, mockCommentRepo, cfg)
 
 	ctx := context.Background()
 
@@ -592,12 +597,13 @@ func TestHandleUndo(t *testing.T) {
 	mockAPRepo := new(MockActivityPubRepository)
 	mockUserRepo := new(MockUserRepository)
 	mockVideoRepo := new(MockVideoRepository)
+	mockCommentRepo := new(MockCommentRepository)
 
 	cfg := &config.Config{
 		PublicBaseURL: "https://video.example",
 	}
 
-	service := NewService(mockAPRepo, mockUserRepo, mockVideoRepo, cfg)
+	service := NewService(mockAPRepo, mockUserRepo, mockVideoRepo, mockCommentRepo, cfg)
 
 	ctx := context.Background()
 
@@ -671,13 +677,14 @@ func TestGetOutbox(t *testing.T) {
 	mockAPRepo := new(MockActivityPubRepository)
 	mockUserRepo := new(MockUserRepository)
 	mockVideoRepo := new(MockVideoRepository)
+	mockCommentRepo := new(MockCommentRepository)
 
 	cfg := &config.Config{
 		PublicBaseURL:                   "https://video.example",
 		ActivityPubMaxActivitiesPerPage: 20,
 	}
 
-	service := NewService(mockAPRepo, mockUserRepo, mockVideoRepo, cfg)
+	service := NewService(mockAPRepo, mockUserRepo, mockVideoRepo, mockCommentRepo, cfg)
 
 	ctx := context.Background()
 
@@ -736,13 +743,14 @@ func TestGetFollowers(t *testing.T) {
 	mockAPRepo := new(MockActivityPubRepository)
 	mockUserRepo := new(MockUserRepository)
 	mockVideoRepo := new(MockVideoRepository)
+	mockCommentRepo := new(MockCommentRepository)
 
 	cfg := &config.Config{
 		PublicBaseURL:                   "https://video.example",
 		ActivityPubMaxActivitiesPerPage: 20,
 	}
 
-	service := NewService(mockAPRepo, mockUserRepo, mockVideoRepo, cfg)
+	service := NewService(mockAPRepo, mockUserRepo, mockVideoRepo, mockCommentRepo, cfg)
 
 	ctx := context.Background()
 
@@ -786,12 +794,13 @@ func TestExtractUsernameFromURI(t *testing.T) {
 	mockAPRepo := new(MockActivityPubRepository)
 	mockUserRepo := new(MockUserRepository)
 	mockVideoRepo := new(MockVideoRepository)
+	mockCommentRepo := new(MockCommentRepository)
 
 	cfg := &config.Config{
 		PublicBaseURL: "https://video.example",
 	}
 
-	service := NewService(mockAPRepo, mockUserRepo, mockVideoRepo, cfg)
+	service := NewService(mockAPRepo, mockUserRepo, mockVideoRepo, mockCommentRepo, cfg)
 
 	tests := []struct {
 		name        string
@@ -843,12 +852,13 @@ func TestExtractVideoIDFromURI(t *testing.T) {
 	mockAPRepo := new(MockActivityPubRepository)
 	mockUserRepo := new(MockUserRepository)
 	mockVideoRepo := new(MockVideoRepository)
+	mockCommentRepo := new(MockCommentRepository)
 
 	cfg := &config.Config{
 		PublicBaseURL: "https://video.example",
 	}
 
-	service := NewService(mockAPRepo, mockUserRepo, mockVideoRepo, cfg)
+	service := NewService(mockAPRepo, mockUserRepo, mockVideoRepo, mockCommentRepo, cfg)
 
 	tests := []struct {
 		name        string
@@ -895,12 +905,84 @@ type MockCommentRepository struct {
 	mock.Mock
 }
 
-func (m *MockCommentRepository) GetByID(ctx context.Context, id string) (*domain.Comment, error) {
+func (m *MockCommentRepository) GetByID(ctx context.Context, id uuid.UUID) (*domain.Comment, error) {
 	args := m.Called(ctx, id)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
 	return args.Get(0).(*domain.Comment), args.Error(1)
+}
+
+func (m *MockCommentRepository) Create(ctx context.Context, comment *domain.Comment) error {
+	args := m.Called(ctx, comment)
+	return args.Error(0)
+}
+
+func (m *MockCommentRepository) GetByIDWithUser(ctx context.Context, id uuid.UUID) (*domain.CommentWithUser, error) {
+	args := m.Called(ctx, id)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*domain.CommentWithUser), args.Error(1)
+}
+
+func (m *MockCommentRepository) Update(ctx context.Context, id uuid.UUID, body string) error {
+	args := m.Called(ctx, id, body)
+	return args.Error(0)
+}
+
+func (m *MockCommentRepository) Delete(ctx context.Context, id uuid.UUID) error {
+	args := m.Called(ctx, id)
+	return args.Error(0)
+}
+
+func (m *MockCommentRepository) ListByVideo(ctx context.Context, opts domain.CommentListOptions) ([]*domain.CommentWithUser, error) {
+	args := m.Called(ctx, opts)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*domain.CommentWithUser), args.Error(1)
+}
+
+func (m *MockCommentRepository) ListReplies(ctx context.Context, parentID uuid.UUID, limit, offset int) ([]*domain.CommentWithUser, error) {
+	args := m.Called(ctx, parentID, limit, offset)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*domain.CommentWithUser), args.Error(1)
+}
+
+func (m *MockCommentRepository) CountByVideo(ctx context.Context, videoID uuid.UUID, activeOnly bool) (int, error) {
+	args := m.Called(ctx, videoID, activeOnly)
+	return args.Int(0), args.Error(1)
+}
+
+func (m *MockCommentRepository) FlagComment(ctx context.Context, flag *domain.CommentFlag) error {
+	args := m.Called(ctx, flag)
+	return args.Error(0)
+}
+
+func (m *MockCommentRepository) UnflagComment(ctx context.Context, commentID, userID uuid.UUID) error {
+	args := m.Called(ctx, commentID, userID)
+	return args.Error(0)
+}
+
+func (m *MockCommentRepository) GetFlags(ctx context.Context, commentID uuid.UUID) ([]*domain.CommentFlag, error) {
+	args := m.Called(ctx, commentID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*domain.CommentFlag), args.Error(1)
+}
+
+func (m *MockCommentRepository) UpdateStatus(ctx context.Context, id uuid.UUID, status domain.CommentStatus) error {
+	args := m.Called(ctx, id, status)
+	return args.Error(0)
+}
+
+func (m *MockCommentRepository) IsOwner(ctx context.Context, commentID, userID uuid.UUID) (bool, error) {
+	args := m.Called(ctx, commentID, userID)
+	return args.Bool(0), args.Error(1)
 }
 
 // ============================================================================
@@ -912,12 +994,13 @@ func TestServicePublishVideo(t *testing.T) {
 	mockAPRepo := new(MockActivityPubRepository)
 	mockUserRepo := new(MockUserRepository)
 	mockVideoRepo := new(MockVideoRepository)
+	mockCommentRepo := new(MockCommentRepository)
 
 	cfg := &config.Config{
 		PublicBaseURL: "https://video.example",
 	}
 
-	service := NewService(mockAPRepo, mockUserRepo, mockVideoRepo, cfg)
+	service := NewService(mockAPRepo, mockUserRepo, mockVideoRepo, mockCommentRepo, cfg)
 
 	ctx := context.Background()
 
@@ -996,12 +1079,13 @@ func TestServiceUpdateVideo(t *testing.T) {
 	mockAPRepo := new(MockActivityPubRepository)
 	mockUserRepo := new(MockUserRepository)
 	mockVideoRepo := new(MockVideoRepository)
+	mockCommentRepo := new(MockCommentRepository)
 
 	cfg := &config.Config{
 		PublicBaseURL: "https://video.example",
 	}
 
-	service := NewService(mockAPRepo, mockUserRepo, mockVideoRepo, cfg)
+	service := NewService(mockAPRepo, mockUserRepo, mockVideoRepo, mockCommentRepo, cfg)
 
 	ctx := context.Background()
 
@@ -1064,12 +1148,13 @@ func TestServiceDeleteVideo(t *testing.T) {
 	mockAPRepo := new(MockActivityPubRepository)
 	mockUserRepo := new(MockUserRepository)
 	mockVideoRepo := new(MockVideoRepository)
+	mockCommentRepo := new(MockCommentRepository)
 
 	cfg := &config.Config{
 		PublicBaseURL: "https://video.example",
 	}
 
-	service := NewService(mockAPRepo, mockUserRepo, mockVideoRepo, cfg)
+	service := NewService(mockAPRepo, mockUserRepo, mockVideoRepo, mockCommentRepo, cfg)
 
 	ctx := context.Background()
 
@@ -1122,12 +1207,13 @@ func TestServicePublishComment(t *testing.T) {
 	mockAPRepo := new(MockActivityPubRepository)
 	mockUserRepo := new(MockUserRepository)
 	mockVideoRepo := new(MockVideoRepository)
+	mockCommentRepo := new(MockCommentRepository)
 
 	cfg := &config.Config{
 		PublicBaseURL: "https://video.example",
 	}
 
-	service := NewService(mockAPRepo, mockUserRepo, mockVideoRepo, cfg)
+	service := NewService(mockAPRepo, mockUserRepo, mockVideoRepo, mockCommentRepo, cfg)
 
 	ctx := context.Background()
 
@@ -1149,12 +1235,13 @@ func TestServiceBuildVideoObject(t *testing.T) {
 	mockAPRepo := new(MockActivityPubRepository)
 	mockUserRepo := new(MockUserRepository)
 	mockVideoRepo := new(MockVideoRepository)
+	mockCommentRepo := new(MockCommentRepository)
 
 	cfg := &config.Config{
 		PublicBaseURL: "https://video.example",
 	}
 
-	service := NewService(mockAPRepo, mockUserRepo, mockVideoRepo, cfg)
+	service := NewService(mockAPRepo, mockUserRepo, mockVideoRepo, mockCommentRepo, cfg)
 
 	ctx := context.Background()
 
@@ -1195,12 +1282,13 @@ func TestServiceBuildNoteObject(t *testing.T) {
 	mockAPRepo := new(MockActivityPubRepository)
 	mockUserRepo := new(MockUserRepository)
 	mockVideoRepo := new(MockVideoRepository)
+	mockCommentRepo := new(MockCommentRepository)
 
 	cfg := &config.Config{
 		PublicBaseURL: "https://video.example",
 	}
 
-	service := NewService(mockAPRepo, mockUserRepo, mockVideoRepo, cfg)
+	service := NewService(mockAPRepo, mockUserRepo, mockVideoRepo, mockCommentRepo, cfg)
 
 	ctx := context.Background()
 
@@ -1223,12 +1311,13 @@ func TestServiceCreateVideoActivity(t *testing.T) {
 	mockAPRepo := new(MockActivityPubRepository)
 	mockUserRepo := new(MockUserRepository)
 	mockVideoRepo := new(MockVideoRepository)
+	mockCommentRepo := new(MockCommentRepository)
 
 	cfg := &config.Config{
 		PublicBaseURL: "https://video.example",
 	}
 
-	service := NewService(mockAPRepo, mockUserRepo, mockVideoRepo, cfg)
+	service := NewService(mockAPRepo, mockUserRepo, mockVideoRepo, mockCommentRepo, cfg)
 
 	ctx := context.Background()
 
@@ -1267,12 +1356,13 @@ func TestServiceCreateCommentActivity(t *testing.T) {
 	mockAPRepo := new(MockActivityPubRepository)
 	mockUserRepo := new(MockUserRepository)
 	mockVideoRepo := new(MockVideoRepository)
+	mockCommentRepo := new(MockCommentRepository)
 
 	cfg := &config.Config{
 		PublicBaseURL: "https://video.example",
 	}
 
-	service := NewService(mockAPRepo, mockUserRepo, mockVideoRepo, cfg)
+	service := NewService(mockAPRepo, mockUserRepo, mockVideoRepo, mockCommentRepo, cfg)
 
 	ctx := context.Background()
 

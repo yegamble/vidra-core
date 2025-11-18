@@ -47,6 +47,8 @@ jobs:
     name: Unit Tests - Virus Scanner
     runs-on: self-hosted
     timeout-minutes: 15
+    env:
+      CGO_ENABLED: "1"
 
     steps:
       - name: Checkout code
@@ -57,6 +59,7 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
+          cache-dependency-path: go.sum
 
       - name: Install jq and PostgreSQL client
         run: |
@@ -104,6 +107,8 @@ jobs:
     runs-on: self-hosted
     timeout-minutes: 30
     needs: unit-tests
+    env:
+      CGO_ENABLED: "1"
 
     services:
       postgres:
@@ -135,7 +140,7 @@ jobs:
         ports:
           - 3310:3310
         options: >-
-          --health-cmd "clamdcheck"
+          --health-cmd "/usr/local/bin/clamdcheck.sh"
           --health-interval 30s
           --health-timeout 10s
           --health-retries 10
@@ -149,6 +154,7 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
+          cache-dependency-path: go.sum
 
       - name: Wait for ClamAV to be ready
         run: |
@@ -252,6 +258,11 @@ jobs:
         image: clamav/clamav:latest
         ports:
           - 3310:3310
+        options: >-
+          --health-cmd "/usr/local/bin/clamdcheck.sh"
+          --health-interval 30s
+          --health-timeout 10s
+          --health-retries 10
 
     steps:
       - name: Checkout code
@@ -440,6 +451,11 @@ jobs:
         image: clamav/clamav:latest
         ports:
           - 3310:3310
+        options: >-
+          --health-cmd "/usr/local/bin/clamdcheck.sh"
+          --health-interval 30s
+          --health-timeout 10s
+          --health-retries 10
 
     steps:
       - name: Checkout code
@@ -450,6 +466,7 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
+          cache-dependency-path: go.sum
 
       - name: Wait for ClamAV
         run: |

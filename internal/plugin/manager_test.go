@@ -2,6 +2,7 @@ package plugin
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -467,9 +468,55 @@ func TestManager_Initialize_EmptyDirectory(t *testing.T) {
 }
 
 func TestManager_Initialize_WithManifest(t *testing.T) {
-	t.Skip("Skipping test that requires fixing deadlock in Initialize/LoadPlugin - requires refactoring lock acquisition")
+	// FIXED: Deadlock issue resolved by creating loadPluginUnlocked() internal method
+	// Initialize() now safely calls discoverPlugins() which calls loadPluginUnlocked()
 
-	// TODO: Fix deadlock issue in manager.go
-	// The issue is that Initialize() holds the lock and calls discoverPlugins(), which calls LoadPlugin(), which also tries to acquire the lock
-	// This test is skipped until the lock acquisition is refactored
+	// Create temporary plugin directory
+	tmpDir := t.TempDir()
+	pluginDir := filepath.Join(tmpDir, "test-plugin")
+	if err := os.MkdirAll(pluginDir, 0755); err != nil {
+		t.Fatalf("Failed to create plugin directory: %v", err)
+	}
+
+	// Create a test plugin manifest
+	manifest := map[string]interface{}{
+		"name":        "test-plugin",
+		"version":     "1.0.0",
+		"author":      "Test Author",
+		"description": "Test plugin for deadlock fix verification",
+		"enabled":     true,
+		"config":      map[string]interface{}{},
+		"permissions": []string{},
+		"hooks":       []string{},
+	}
+
+	manifestData, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatalf("Failed to marshal manifest: %v", err)
+	}
+
+	manifestPath := filepath.Join(pluginDir, "plugin.json")
+	if err := os.WriteFile(manifestPath, manifestData, 0644); err != nil {
+		t.Fatalf("Failed to write manifest: %v", err)
+	}
+
+	// Create manager with test directory
+	ctx := context.Background()
+	manager := NewManager(tmpDir)
+
+	// This should not deadlock anymore
+	err = manager.Initialize(ctx)
+	if err != nil {
+		t.Fatalf("Initialize failed: %v", err)
+	}
+
+	// Verify plugin was discovered
+	plugins := manager.ListPlugins()
+	if len(plugins) != 1 {
+		t.Errorf("Expected 1 plugin, got %d", len(plugins))
+	}
+
+	if plugins[0].Name != "test-plugin" {
+		t.Errorf("Expected plugin name 'test-plugin', got '%s'", plugins[0].Name)
+	}
 }

@@ -23,6 +23,17 @@ import (
 // LIVENESS PROBE TESTS (/health)
 // ============================================================================
 
+// Helper function to unwrap health response from shared.Response envelope
+func unmarshalHealthResponse(t *testing.T, body []byte) HealthResponse {
+	var envelope struct {
+		Data    HealthResponse `json:"data"`
+		Success bool           `json:"success"`
+	}
+	err := json.Unmarshal(body, &envelope)
+	require.NoError(t, err, "Should unmarshal response envelope")
+	return envelope.Data
+}
+
 func TestHealthHandler_Always200(t *testing.T) {
 	// Test that health endpoint always returns 200 when server is alive
 	req := httptest.NewRequest("GET", "/health", nil)
@@ -32,9 +43,7 @@ func TestHealthHandler_Always200(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, w.Code, "Health check should always return 200")
 
-	var response HealthResponse
-	err := json.Unmarshal(w.Body.Bytes(), &response)
-	require.NoError(t, err, "Should unmarshal response")
+	response := unmarshalHealthResponse(t, w.Body.Bytes())
 	assert.Equal(t, "ok", response.Status)
 	assert.NotEmpty(t, response.Version)
 	assert.NotEmpty(t, response.Uptime)
@@ -61,9 +70,7 @@ func TestHealthHandler_NoDependencyChecks(t *testing.T) {
 
 	HealthCheck(w, req)
 
-	var response HealthResponse
-	err := json.Unmarshal(w.Body.Bytes(), &response)
-	require.NoError(t, err)
+	response := unmarshalHealthResponse(t, w.Body.Bytes())
 
 	// Checks field should be nil or empty for liveness
 	assert.Empty(t, response.Checks, "Liveness check should not include dependency checks")
@@ -120,9 +127,7 @@ func TestReadyHandler_DatabaseHealthy(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, w.Code, "Should return 200 when database is healthy")
 
-	var response HealthResponse
-	err := json.Unmarshal(w.Body.Bytes(), &response)
-	require.NoError(t, err)
+	response := unmarshalHealthResponse(t, w.Body.Bytes())
 	assert.Equal(t, "ok", response.Checks["database"])
 }
 
@@ -141,9 +146,7 @@ func TestReadyHandler_DatabaseDown(t *testing.T) {
 	assert.Equal(t, http.StatusServiceUnavailable, w.Code,
 		"Should return 503 when database is down")
 
-	var response HealthResponse
-	err := json.Unmarshal(w.Body.Bytes(), &response)
-	require.NoError(t, err)
+	response := unmarshalHealthResponse(t, w.Body.Bytes())
 	assert.Equal(t, "fail", response.Checks["database"])
 	assert.Equal(t, "fail", response.Status)
 }
@@ -219,9 +222,7 @@ func TestReadyHandler_RedisHealthy(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, w.Code, "Should return 200 when Redis is healthy")
 
-	var response HealthResponse
-	err := json.Unmarshal(w.Body.Bytes(), &response)
-	require.NoError(t, err)
+	response := unmarshalHealthResponse(t, w.Body.Bytes())
 	assert.Equal(t, "ok", response.Checks["redis"])
 }
 
@@ -240,9 +241,7 @@ func TestReadyHandler_RedisDown(t *testing.T) {
 	assert.Equal(t, http.StatusServiceUnavailable, w.Code,
 		"Should return 503 when Redis is down")
 
-	var response HealthResponse
-	err := json.Unmarshal(w.Body.Bytes(), &response)
-	require.NoError(t, err)
+	response := unmarshalHealthResponse(t, w.Body.Bytes())
 	assert.Equal(t, "fail", response.Checks["redis"])
 }
 
@@ -313,9 +312,7 @@ func TestReadyHandler_IPFSHealthy(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, w.Code, "Should return 200 when IPFS is healthy")
 
-	var response HealthResponse
-	err := json.Unmarshal(w.Body.Bytes(), &response)
-	require.NoError(t, err)
+	response := unmarshalHealthResponse(t, w.Body.Bytes())
 	assert.Equal(t, "ok", response.Checks["ipfs"])
 }
 
@@ -334,9 +331,7 @@ func TestReadyHandler_IPFSDown(t *testing.T) {
 	assert.Equal(t, http.StatusServiceUnavailable, w.Code,
 		"Should return 503 when IPFS is down")
 
-	var response HealthResponse
-	err := json.Unmarshal(w.Body.Bytes(), &response)
-	require.NoError(t, err)
+	response := unmarshalHealthResponse(t, w.Body.Bytes())
 	assert.Equal(t, "fail", response.Checks["ipfs"])
 }
 
@@ -357,9 +352,7 @@ func TestReadyHandler_IPFSVersionEndpoint(t *testing.T) {
 
 	ReadinessCheck(w, req)
 
-	var response HealthResponse
-	err := json.Unmarshal(w.Body.Bytes(), &response)
-	require.NoError(t, err)
+	_ = unmarshalHealthResponse(t, w.Body.Bytes())
 }
 
 func TestReadyHandler_IPFSTimeout(t *testing.T) {
@@ -390,9 +383,7 @@ func TestReadyHandler_IPFSClusterAvailability(t *testing.T) {
 
 	ReadinessCheck(w, req)
 
-	var response HealthResponse
-	err := json.Unmarshal(w.Body.Bytes(), &response)
-	require.NoError(t, err)
+	response := unmarshalHealthResponse(t, w.Body.Bytes())
 
 	// Should have both ipfs and ipfs-cluster checks when cluster is enabled
 	assert.Contains(t, response.Checks, "ipfs")
@@ -412,9 +403,7 @@ func TestReadyHandler_QueueNormal(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code,
 		"Should return 200 when queue depth is normal")
 
-	var response HealthResponse
-	err := json.Unmarshal(w.Body.Bytes(), &response)
-	require.NoError(t, err)
+	response := unmarshalHealthResponse(t, w.Body.Bytes())
 	assert.Equal(t, "ok", response.Checks["queue"])
 }
 
@@ -432,9 +421,7 @@ func TestReadyHandler_QueueSaturated(t *testing.T) {
 	assert.Equal(t, http.StatusServiceUnavailable, w.Code,
 		"Should return 503 when queue is saturated (>5000)")
 
-	var response HealthResponse
-	err := json.Unmarshal(w.Body.Bytes(), &response)
-	require.NoError(t, err)
+	response := unmarshalHealthResponse(t, w.Body.Bytes())
 	assert.Equal(t, "fail", response.Checks["queue"])
 }
 
@@ -447,9 +434,7 @@ func TestReadyHandler_EncodingQueueDepth(t *testing.T) {
 
 	ReadinessCheck(w, req)
 
-	var response HealthResponse
-	err := json.Unmarshal(w.Body.Bytes(), &response)
-	require.NoError(t, err)
+	response := unmarshalHealthResponse(t, w.Body.Bytes())
 
 	// Should have specific queue metrics in details
 	assert.Contains(t, response.Checks, "queue")
@@ -464,9 +449,7 @@ func TestReadyHandler_ActivityPubDeliveryQueueDepth(t *testing.T) {
 
 	ReadinessCheck(w, req)
 
-	var response HealthResponse
-	err := json.Unmarshal(w.Body.Bytes(), &response)
-	require.NoError(t, err)
+	response := unmarshalHealthResponse(t, w.Body.Bytes())
 
 	// Should check ActivityPub delivery queue
 	assert.Contains(t, response.Checks, "queue")
@@ -481,9 +464,7 @@ func TestReadyHandler_CombinedQueueMetrics(t *testing.T) {
 
 	ReadinessCheck(w, req)
 
-	var response HealthResponse
-	err := json.Unmarshal(w.Body.Bytes(), &response)
-	require.NoError(t, err)
+	response := unmarshalHealthResponse(t, w.Body.Bytes())
 
 	// Should have comprehensive queue status
 	assert.NotEmpty(t, response.Checks["queue"])
@@ -503,9 +484,7 @@ func TestReadyHandler_JSONResponseStructure(t *testing.T) {
 	assert.Equal(t, "application/json", w.Header().Get("Content-Type"))
 
 	// Verify JSON structure
-	var response HealthResponse
-	err := json.Unmarshal(w.Body.Bytes(), &response)
-	require.NoError(t, err, "Response should be valid JSON")
+	response := unmarshalHealthResponse(t, w.Body.Bytes())
 
 	// Verify all expected fields
 	assert.NotEmpty(t, response.Status, "Status field is required")
@@ -521,9 +500,7 @@ func TestReadyHandler_ComponentStatusDetails(t *testing.T) {
 
 	ReadinessCheck(w, req)
 
-	var response HealthResponse
-	err := json.Unmarshal(w.Body.Bytes(), &response)
-	require.NoError(t, err)
+	response := unmarshalHealthResponse(t, w.Body.Bytes())
 
 	// Verify each component has a status
 	expectedComponents := []string{"database", "redis", "ipfs", "queue"}
@@ -564,9 +541,7 @@ func TestReadyHandler_VersionInformation(t *testing.T) {
 
 	ReadinessCheck(w, req)
 
-	var response HealthResponse
-	err := json.Unmarshal(w.Body.Bytes(), &response)
-	require.NoError(t, err)
+	response := unmarshalHealthResponse(t, w.Body.Bytes())
 
 	assert.Equal(t, "1.0.0", response.Version, "Should include version information")
 }
@@ -864,9 +839,7 @@ func TestIntegration_AllComponentsHealthy(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code,
 		"Should return 200 when all components are healthy")
 
-	var response HealthResponse
-	err := json.Unmarshal(w.Body.Bytes(), &response)
-	require.NoError(t, err)
+	response := unmarshalHealthResponse(t, w.Body.Bytes())
 
 	assert.Equal(t, "ok", response.Status)
 	for component, status := range response.Checks {
@@ -887,9 +860,7 @@ func TestIntegration_AnyComponentDown503(t *testing.T) {
 	ReadinessCheck(w, req)
 
 	// If any component is down, should return 503
-	var response HealthResponse
-	err := json.Unmarshal(w.Body.Bytes(), &response)
-	require.NoError(t, err)
+	response := unmarshalHealthResponse(t, w.Body.Bytes())
 
 	hasFailure := false
 	for _, status := range response.Checks {
@@ -922,9 +893,7 @@ func TestIntegration_RealPostgreSQL(t *testing.T) {
 
 	ReadinessCheck(w, req)
 
-	var response HealthResponse
-	err := json.Unmarshal(w.Body.Bytes(), &response)
-	require.NoError(t, err)
+	response := unmarshalHealthResponse(t, w.Body.Bytes())
 
 	assert.Equal(t, "ok", response.Checks["database"],
 		"Should successfully check real PostgreSQL")
@@ -944,9 +913,7 @@ func TestIntegration_RealRedis(t *testing.T) {
 
 	ReadinessCheck(w, req)
 
-	var response HealthResponse
-	err := json.Unmarshal(w.Body.Bytes(), &response)
-	require.NoError(t, err)
+	response := unmarshalHealthResponse(t, w.Body.Bytes())
 
 	assert.Equal(t, "ok", response.Checks["redis"],
 		"Should successfully check real Redis")
@@ -966,9 +933,7 @@ func TestIntegration_RealIPFS(t *testing.T) {
 
 	ReadinessCheck(w, req)
 
-	var response HealthResponse
-	err := json.Unmarshal(w.Body.Bytes(), &response)
-	require.NoError(t, err)
+	response := unmarshalHealthResponse(t, w.Body.Bytes())
 
 	assert.Equal(t, "ok", response.Checks["ipfs"],
 		"Should successfully check real IPFS node")
@@ -1046,9 +1011,7 @@ func TestReadyHandler_StatusCodes(t *testing.T) {
 			assert.Equal(t, tt.expectedCode, w.Code,
 				"Expected status code %d, got %d", tt.expectedCode, w.Code)
 
-			var response HealthResponse
-			err := json.Unmarshal(w.Body.Bytes(), &response)
-			require.NoError(t, err)
+			response := unmarshalHealthResponse(t, w.Body.Bytes())
 
 			assert.Equal(t, tt.expectedStatus, response.Status)
 
@@ -1182,9 +1145,7 @@ func TestReadyHandler_PartialFailure(t *testing.T) {
 
 	ReadinessCheck(w, req)
 
-	var response HealthResponse
-	err := json.Unmarshal(w.Body.Bytes(), &response)
-	require.NoError(t, err)
+	response := unmarshalHealthResponse(t, w.Body.Bytes())
 
 	// Should have mixed statuses
 	hasOk := false

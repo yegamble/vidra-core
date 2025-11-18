@@ -22,12 +22,13 @@ func TestVideoUploadToFederation(t *testing.T) {
 	mockAPRepo := new(MockActivityPubRepository)
 	mockUserRepo := new(MockUserRepository)
 	mockVideoRepo := new(MockVideoRepository)
+	mockCommentRepo := new(MockCommentRepository)
 
 	cfg := &config.Config{
 		PublicBaseURL: "https://video.example",
 	}
 
-	service := NewService(mockAPRepo, mockUserRepo, mockVideoRepo, cfg)
+	service := NewService(mockAPRepo, mockUserRepo, mockVideoRepo, mockCommentRepo, cfg)
 
 	ctx := context.Background()
 
@@ -214,12 +215,13 @@ func TestCommentToFederation(t *testing.T) {
 	mockAPRepo := new(MockActivityPubRepository)
 	mockUserRepo := new(MockUserRepository)
 	mockVideoRepo := new(MockVideoRepository)
+	mockCommentRepo := new(MockCommentRepository)
 
 	cfg := &config.Config{
 		PublicBaseURL: "https://video.example",
 	}
 
-	service := NewService(mockAPRepo, mockUserRepo, mockVideoRepo, cfg)
+	service := NewService(mockAPRepo, mockUserRepo, mockVideoRepo, mockCommentRepo, cfg)
 
 	ctx := context.Background()
 
@@ -348,12 +350,13 @@ func TestPeerTubeCompatibility(t *testing.T) {
 	mockAPRepo := new(MockActivityPubRepository)
 	mockUserRepo := new(MockUserRepository)
 	mockVideoRepo := new(MockVideoRepository)
+	mockCommentRepo := new(MockCommentRepository)
 
 	cfg := &config.Config{
 		PublicBaseURL: "https://video.example",
 	}
 
-	service := NewService(mockAPRepo, mockUserRepo, mockVideoRepo, cfg)
+	service := NewService(mockAPRepo, mockUserRepo, mockVideoRepo, mockCommentRepo, cfg)
 
 	ctx := context.Background()
 
@@ -523,12 +526,13 @@ func TestMastodonCompatibility(t *testing.T) {
 	mockAPRepo := new(MockActivityPubRepository)
 	mockUserRepo := new(MockUserRepository)
 	mockVideoRepo := new(MockVideoRepository)
+	mockCommentRepo := new(MockCommentRepository)
 
 	cfg := &config.Config{
 		PublicBaseURL: "https://video.example",
 	}
 
-	service := NewService(mockAPRepo, mockUserRepo, mockVideoRepo, cfg)
+	service := NewService(mockAPRepo, mockUserRepo, mockVideoRepo, mockCommentRepo, cfg)
 
 	ctx := context.Background()
 
@@ -614,12 +618,13 @@ func TestCrossInstanceFederation(t *testing.T) {
 	mockAPRepo := new(MockActivityPubRepository)
 	mockUserRepo := new(MockUserRepository)
 	mockVideoRepo := new(MockVideoRepository)
+	mockCommentRepo := new(MockCommentRepository)
 
 	cfg := &config.Config{
 		PublicBaseURL: "https://video.example",
 	}
 
-	service := NewService(mockAPRepo, mockUserRepo, mockVideoRepo, cfg)
+	service := NewService(mockAPRepo, mockUserRepo, mockVideoRepo, mockCommentRepo, cfg)
 
 	ctx := context.Background()
 
@@ -700,12 +705,13 @@ func TestErrorHandling(t *testing.T) {
 	mockAPRepo := new(MockActivityPubRepository)
 	mockUserRepo := new(MockUserRepository)
 	mockVideoRepo := new(MockVideoRepository)
+	mockCommentRepo := new(MockCommentRepository)
 
 	cfg := &config.Config{
 		PublicBaseURL: "https://video.example",
 	}
 
-	service := NewService(mockAPRepo, mockUserRepo, mockVideoRepo, cfg)
+	service := NewService(mockAPRepo, mockUserRepo, mockVideoRepo, mockCommentRepo, cfg)
 
 	ctx := context.Background()
 

@@ -87,7 +87,7 @@ func (c *TestClient) RegisterUser(t *testing.T, username, email, password string
 
 	resp, err := c.Post("/auth/register", "application/json", bytes.NewReader(body))
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	require.Equal(t, http.StatusCreated, resp.StatusCode, "User registration failed")
 
@@ -117,7 +117,7 @@ func (c *TestClient) Login(t *testing.T, username, password string) (userID, tok
 
 	resp, err := c.Post("/auth/login", "application/json", bytes.NewReader(body))
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	require.Equal(t, http.StatusOK, resp.StatusCode, "User login failed")
 
@@ -144,7 +144,7 @@ func (c *TestClient) UploadVideo(t *testing.T, videoPath, title, description str
 	// Add video file
 	file, err := os.Open(videoPath)
 	require.NoError(t, err)
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	part, err := writer.CreateFormFile("video", filepath.Base(videoPath))
 	require.NoError(t, err)
@@ -169,7 +169,7 @@ func (c *TestClient) UploadVideo(t *testing.T, videoPath, title, description str
 
 	resp, err := c.HTTPClient.Do(req)
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	require.Equal(t, http.StatusCreated, resp.StatusCode, "Video upload failed")
 
@@ -187,7 +187,7 @@ func (c *TestClient) UploadVideo(t *testing.T, videoPath, title, description str
 func (c *TestClient) GetVideo(t *testing.T, videoID string) map[string]interface{} {
 	resp, err := c.Get(fmt.Sprintf("/api/v1/videos/%s", videoID))
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	require.Equal(t, http.StatusOK, resp.StatusCode, "Get video failed")
 
@@ -202,7 +202,7 @@ func (c *TestClient) GetVideo(t *testing.T, videoID string) map[string]interface
 func (c *TestClient) ListVideos(t *testing.T) []map[string]interface{} {
 	resp, err := c.Get("/api/v1/videos")
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	require.Equal(t, http.StatusOK, resp.StatusCode, "List videos failed")
 
@@ -220,7 +220,7 @@ func (c *TestClient) ListVideos(t *testing.T) []map[string]interface{} {
 func (c *TestClient) SearchVideos(t *testing.T, query string) []map[string]interface{} {
 	resp, err := c.Get(fmt.Sprintf("/api/v1/videos/search?q=%s", query))
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	require.Equal(t, http.StatusOK, resp.StatusCode, "Search videos failed")
 
@@ -243,7 +243,7 @@ func (c *TestClient) DeleteVideo(t *testing.T, videoID string) {
 
 	resp, err := c.HTTPClient.Do(req)
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	require.Equal(t, http.StatusNoContent, resp.StatusCode, "Delete video failed")
 }
@@ -291,12 +291,12 @@ func WaitForService(ctx context.Context, url string, timeout time.Duration) erro
 
 		resp, err := client.Do(req)
 		if err == nil && resp.StatusCode == http.StatusOK {
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			return nil
 		}
 
 		if resp != nil {
-			resp.Body.Close()
+			_ = resp.Body.Close()
 		}
 
 		select {
@@ -314,7 +314,7 @@ func WaitForService(ctx context.Context, url string, timeout time.Duration) erro
 func HealthCheck(t *testing.T, baseURL string) {
 	resp, err := http.Get(baseURL + "/health")
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	require.Equal(t, http.StatusOK, resp.StatusCode, "Health check failed")
 }

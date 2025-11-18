@@ -44,6 +44,12 @@ func (m *mockStreamRepo) Count(_ context.Context) (int64, error) {
 func (m *mockStreamRepo) GetVideosForMigration(_ context.Context, _ int) ([]*domain.Video, error) {
 	return nil, nil
 }
+func (m *mockStreamRepo) GetByRemoteURI(_ context.Context, _ string) (*domain.Video, error) {
+	return nil, nil
+}
+func (m *mockStreamRepo) CreateRemoteVideo(_ context.Context, _ *domain.Video) error {
+	return nil
+}
 
 func TestStreamVideoHandler_DBOutputMasterRedirectsToHLS(t *testing.T) {
 	videoID := "vid-stream-1"
