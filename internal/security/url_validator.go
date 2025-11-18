@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"strings"
 )
 
 // URLValidator provides secure URL validation with SSRF protection
@@ -54,7 +55,19 @@ func (v *URLValidator) ValidateURL(rawURL string) error {
 		host = u.Host
 	}
 
-	// Resolve hostname to IP addresses
+	// Remove brackets from IPv6 addresses (e.g., [::1] -> ::1)
+	host = strings.Trim(host, "[]")
+
+	// Check if host is already an IP address
+	if ip := net.ParseIP(host); ip != nil {
+		// Host is a direct IP address, validate it directly
+		if !v.allowPrivate && isPrivateIP(ip) {
+			return fmt.Errorf("access to private IP addresses is not allowed: %s", host)
+		}
+		return nil
+	}
+
+	// Not a direct IP, resolve hostname to IP addresses
 	ips, err := net.LookupIP(host)
 	if err != nil {
 		return fmt.Errorf("failed to resolve host %s: %w", host, err)
