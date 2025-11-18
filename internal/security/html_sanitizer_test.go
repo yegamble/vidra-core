@@ -564,10 +564,10 @@ func TestValidateAndSanitizeLength(t *testing.T) {
 func TestSanitizer_EdgeCases(t *testing.T) {
 	t.Run("handles malformed HTML gracefully", func(t *testing.T) {
 		inputs := []string{
-			`<div><div><div>nested</div>`,         // Unclosed tags
+			`<div><div><div>nested</div>`,           // Unclosed tags
 			`<script<script>>alert('XSS')</script>`, // Malformed script
-			`<<SCRIPT>alert("XSS");//<</SCRIPT>`,  // Double brackets
-			`<img src=x:alert(1)//`,               // Incomplete tag
+			`<<SCRIPT>alert("XSS");//<</SCRIPT>`,    // Double brackets
+			`<img src=x:alert(1)//`,                 // Incomplete tag
 		}
 
 		for _, input := range inputs {
@@ -589,9 +589,9 @@ func TestSanitizer_EdgeCases(t *testing.T) {
 
 	t.Run("handles unicode and special characters", func(t *testing.T) {
 		inputs := []string{
-			`<script>alert('XSS')</script>你好世界`,        // Chinese characters
-			`<img src=x onerror="alert('مرحبا')">`, // Arabic
-			`Test emoji 😀 <script>alert('XSS')</script>`,    // Emoji
+			`<script>alert('XSS')</script>你好世界`,          // Chinese characters
+			`<img src=x onerror="alert('مرحبا')">`,       // Arabic
+			`Test emoji 😀 <script>alert('XSS')</script>`, // Emoji
 		}
 
 		for _, input := range inputs {

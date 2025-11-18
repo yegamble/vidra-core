@@ -166,7 +166,7 @@ func TestNewClientWithMockedDHT(t *testing.T) {
 
 	t.Run("handles rate limiting configuration", func(t *testing.T) {
 		cfg := MockedDHTConfig()
-		cfg.UploadRateLimit = 1024 * 1024     // 1 MB/s
+		cfg.UploadRateLimit = 1024 * 1024       // 1 MB/s
 		cfg.DownloadRateLimit = 2 * 1024 * 1024 // 2 MB/s
 
 		client, err := NewClient(cfg, logger)

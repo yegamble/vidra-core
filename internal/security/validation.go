@@ -34,14 +34,14 @@ const (
 
 // Private IP ranges that should be blocked for SSRF protection
 var privateIPBlocks = []*net.IPNet{
-	parseCIDR("127.0.0.0/8"),     // Loopback
-	parseCIDR("10.0.0.0/8"),      // Private class A
-	parseCIDR("172.16.0.0/12"),   // Private class B
-	parseCIDR("192.168.0.0/16"),  // Private class C
-	parseCIDR("169.254.0.0/16"),  // Link-local
-	parseCIDR("::1/128"),          // IPv6 loopback
-	parseCIDR("fe80::/10"),        // IPv6 link-local
-	parseCIDR("fc00::/7"),         // IPv6 private
+	parseCIDR("127.0.0.0/8"),    // Loopback
+	parseCIDR("10.0.0.0/8"),     // Private class A
+	parseCIDR("172.16.0.0/12"),  // Private class B
+	parseCIDR("192.168.0.0/16"), // Private class C
+	parseCIDR("169.254.0.0/16"), // Link-local
+	parseCIDR("::1/128"),        // IPv6 loopback
+	parseCIDR("fe80::/10"),      // IPv6 link-local
+	parseCIDR("fc00::/7"),       // IPv6 private
 }
 
 // AWS metadata service IPs that must be blocked

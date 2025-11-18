@@ -475,82 +475,82 @@ func TestComments_Integration(t *testing.T) {
 	t.Run("XSSProtection", func(t *testing.T) {
 		// Test cases for various XSS attack vectors
 		xssTestCases := []struct {
-			name            string
-			input           string
+			name             string
+			input            string
 			shouldNotContain []string
-			description     string
+			description      string
 		}{
 			{
-				name:  "blocks_script_tags",
-				input: `Hello <script>alert('XSS')</script> World`,
+				name:             "blocks_script_tags",
+				input:            `Hello <script>alert('XSS')</script> World`,
 				shouldNotContain: []string{"<script>", "alert(", "</script>"},
-				description: "Script tags should be completely removed",
+				description:      "Script tags should be completely removed",
 			},
 			{
-				name:  "blocks_event_handlers",
-				input: `Click <img src=x onerror="alert('XSS')"> here`,
+				name:             "blocks_event_handlers",
+				input:            `Click <img src=x onerror="alert('XSS')"> here`,
 				shouldNotContain: []string{"onerror", "alert("},
-				description: "Event handlers should be stripped",
+				description:      "Event handlers should be stripped",
 			},
 			{
-				name:  "blocks_javascript_urls",
-				input: `Visit <a href="javascript:alert('XSS')">my site</a>`,
+				name:             "blocks_javascript_urls",
+				input:            `Visit <a href="javascript:alert('XSS')">my site</a>`,
 				shouldNotContain: []string{"javascript:", "alert("},
-				description: "JavaScript URLs should be blocked",
+				description:      "JavaScript URLs should be blocked",
 			},
 			{
-				name:  "blocks_data_urls",
-				input: `<a href="data:text/html,<script>alert('XSS')</script>">Click</a>`,
+				name:             "blocks_data_urls",
+				input:            `<a href="data:text/html,<script>alert('XSS')</script>">Click</a>`,
 				shouldNotContain: []string{"data:", "<script>", "alert("},
-				description: "Data URLs with scripts should be blocked",
+				description:      "Data URLs with scripts should be blocked",
 			},
 			{
-				name:  "blocks_style_attacks",
-				input: `<div style="background:url('javascript:alert(1)')">Styled</div>`,
+				name:             "blocks_style_attacks",
+				input:            `<div style="background:url('javascript:alert(1)')">Styled</div>`,
 				shouldNotContain: []string{"javascript:", "alert("},
-				description: "JavaScript in styles should be blocked",
+				description:      "JavaScript in styles should be blocked",
 			},
 			{
-				name:  "blocks_svg_attacks",
-				input: `<svg onload="alert('XSS')"></svg>`,
+				name:             "blocks_svg_attacks",
+				input:            `<svg onload="alert('XSS')"></svg>`,
 				shouldNotContain: []string{"onload", "alert("},
-				description: "SVG event handlers should be blocked",
+				description:      "SVG event handlers should be blocked",
 			},
 			{
-				name:  "blocks_iframe_injection",
-				input: `Watch this <iframe src="evil.html"></iframe> video`,
+				name:             "blocks_iframe_injection",
+				input:            `Watch this <iframe src="evil.html"></iframe> video`,
 				shouldNotContain: []string{"<iframe", "evil.html"},
-				description: "iFrames should be completely blocked",
+				description:      "iFrames should be completely blocked",
 			},
 			{
-				name:  "blocks_form_injection",
-				input: `<form action="steal.php"><input name="password"></form>`,
+				name:             "blocks_form_injection",
+				input:            `<form action="steal.php"><input name="password"></form>`,
 				shouldNotContain: []string{"<form", "<input", "steal.php"},
-				description: "Forms should be blocked to prevent CSRF",
+				description:      "Forms should be blocked to prevent CSRF",
 			},
 			{
-				name:  "blocks_mixed_case_attacks",
-				input: `<ScRiPt>alert('XSS')</ScRiPt>`,
+				name:             "blocks_mixed_case_attacks",
+				input:            `<ScRiPt>alert('XSS')</ScRiPt>`,
 				shouldNotContain: []string{"ScRiPt", "alert("},
-				description: "Mixed case script tags should be blocked",
+				description:      "Mixed case script tags should be blocked",
 			},
 			{
-				name:  "blocks_encoded_attacks",
-				input: `<img src=x onerror="&#97;&#108;&#101;&#114;&#116;('XSS')">`,
+				name:             "blocks_encoded_attacks",
+				input:            `<img src=x onerror="&#97;&#108;&#101;&#114;&#116;('XSS')">`,
 				shouldNotContain: []string{"onerror", "&#97;", "&#108;"},
-				description: "Encoded event handlers should be blocked",
+				description:      "Encoded event handlers should be blocked",
 			},
 			{
-				name:  "blocks_nested_attacks",
-				input: `<div><div><script>alert('nested')</script></div></div>`,
+				name:             "blocks_nested_attacks",
+				input:            `<div><div><script>alert('nested')</script></div></div>`,
 				shouldNotContain: []string{"<script>", "alert("},
-				description: "Nested script tags should be blocked",
+				description:      "Nested script tags should be blocked",
 			},
 			{
-				name:  "blocks_meta_redirect",
-				input: `<meta http-equiv="refresh" content="0;url=evil.com">`,
+				name:             "blocks_meta_redirect",
+				input:            `<meta http-equiv="refresh" content="0;url=evil.com">`,
 				shouldNotContain: []string{"<meta", "refresh", "evil.com"},
-				description: "Meta refresh tags should be blocked",
+				description:      "Meta refresh tags should be blocked",
 			},
 		}
 
@@ -608,23 +608,23 @@ func TestComments_Integration(t *testing.T) {
 
 		// Try to update with XSS content
 		xssAttempts := []struct {
-			name     string
-			payload  string
+			name             string
+			payload          string
 			shouldNotContain []string
 		}{
 			{
-				name:    "script_in_update",
-				payload: `Updated with <script>alert('XSS')</script>`,
+				name:             "script_in_update",
+				payload:          `Updated with <script>alert('XSS')</script>`,
 				shouldNotContain: []string{"<script>", "alert("},
 			},
 			{
-				name:    "event_handler_in_update",
-				payload: `Updated <img src=x onerror="alert('XSS')">`,
+				name:             "event_handler_in_update",
+				payload:          `Updated <img src=x onerror="alert('XSS')">`,
 				shouldNotContain: []string{"onerror", "alert("},
 			},
 			{
-				name:    "javascript_url_in_update",
-				payload: `Check <a href="javascript:void(0)">this</a> out`,
+				name:             "javascript_url_in_update",
+				payload:          `Check <a href="javascript:void(0)">this</a> out`,
 				shouldNotContain: []string{"javascript:"},
 			},
 		}
@@ -687,33 +687,33 @@ func TestComments_Integration(t *testing.T) {
 	t.Run("AllowsBasicFormatting", func(t *testing.T) {
 		// Test that legitimate formatting is preserved
 		formattingTests := []struct {
-			name     string
-			input    string
+			name          string
+			input         string
 			shouldContain []string
 		}{
 			{
-				name:  "allows_bold_text",
-				input: `This is <b>bold</b> and <strong>strong</strong> text`,
+				name:          "allows_bold_text",
+				input:         `This is <b>bold</b> and <strong>strong</strong> text`,
 				shouldContain: []string{"bold", "strong"},
 			},
 			{
-				name:  "allows_italic_text",
-				input: `This is <i>italic</i> and <em>emphasized</em> text`,
+				name:          "allows_italic_text",
+				input:         `This is <i>italic</i> and <em>emphasized</em> text`,
 				shouldContain: []string{"italic", "emphasized"},
 			},
 			{
-				name:  "allows_links",
-				input: `Visit <a href="https://example.com">my website</a>`,
+				name:          "allows_links",
+				input:         `Visit <a href="https://example.com">my website</a>`,
 				shouldContain: []string{"my website", "https://example.com"},
 			},
 			{
-				name:  "allows_lists",
-				input: `<ul><li>Item 1</li><li>Item 2</li></ul>`,
+				name:          "allows_lists",
+				input:         `<ul><li>Item 1</li><li>Item 2</li></ul>`,
 				shouldContain: []string{"Item 1", "Item 2"},
 			},
 			{
-				name:  "allows_code_blocks",
-				input: `Here is <code>const x = 1;</code> code`,
+				name:          "allows_code_blocks",
+				input:         `Here is <code>const x = 1;</code> code`,
 				shouldContain: []string{"const x = 1;"},
 			},
 		}

@@ -147,7 +147,7 @@ func (y *YtDlp) Download(ctx context.Context, url, importID string, progressCall
 		"--merge-output-format", "mp4",
 		"--no-playlist",
 		"--no-warnings",
-		"--newline", // Output progress on new lines (easier to parse)
+		"--newline",                                          // Output progress on new lines (easier to parse)
 		"--max-filesize", strconv.FormatInt(maxFileSize, 10), // Add size limit
 		"--output", outputTemplate,
 		url,

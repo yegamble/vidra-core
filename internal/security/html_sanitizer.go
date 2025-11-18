@@ -121,14 +121,14 @@ func SanitizeMarkdown(input string) string {
 // SanitizeWithCustomPolicy allows creating a custom sanitization policy
 // for specific use cases
 type CustomSanitizerOptions struct {
-	AllowImages       bool
-	AllowLinks        bool
-	AllowFormatting   bool
-	AllowLists        bool
-	AllowTables       bool
-	MaxLinkLength     int
-	RequireNoFollow   bool
-	RequireHTTPS      bool
+	AllowImages     bool
+	AllowLinks      bool
+	AllowFormatting bool
+	AllowLists      bool
+	AllowTables     bool
+	MaxLinkLength   int
+	RequireNoFollow bool
+	RequireHTTPS    bool
 }
 
 // SanitizeWithCustomPolicy sanitizes HTML with custom options
