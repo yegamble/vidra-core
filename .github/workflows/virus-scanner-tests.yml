@@ -139,7 +139,7 @@ jobs:
         ports:
           - 3310:3310
         options: >-
-          --health-cmd "clamdcheck"
+          --health-cmd "/usr/local/bin/clamdcheck.sh"
           --health-interval 30s
           --health-timeout 10s
           --health-retries 10
@@ -256,6 +256,11 @@ jobs:
         image: clamav/clamav:latest
         ports:
           - 3310:3310
+        options: >-
+          --health-cmd "/usr/local/bin/clamdcheck.sh"
+          --health-interval 30s
+          --health-timeout 10s
+          --health-retries 10
 
     steps:
       - name: Checkout code
@@ -444,6 +449,11 @@ jobs:
         image: clamav/clamav:latest
         ports:
           - 3310:3310
+        options: >-
+          --health-cmd "/usr/local/bin/clamdcheck.sh"
+          --health-interval 30s
+          --health-timeout 10s
+          --health-retries 10
 
     steps:
       - name: Checkout code
