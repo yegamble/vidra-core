@@ -19,22 +19,26 @@ func TestHealthCheck_BasicStructure(t *testing.T) {
 		t.Errorf("Expected status 200, got %d", w.Code)
 	}
 
-	var response HealthResponse
-	err := json.Unmarshal(w.Body.Bytes(), &response)
+	// Response is wrapped in shared.Response envelope
+	var envelope struct {
+		Data    HealthResponse `json:"data"`
+		Success bool           `json:"success"`
+	}
+	err := json.Unmarshal(w.Body.Bytes(), &envelope)
 	if err != nil {
 		t.Errorf("Failed to unmarshal response: %v", err)
 	}
 
-	if response.Status != "ok" {
-		t.Errorf("Expected status 'ok', got '%s'", response.Status)
+	if envelope.Data.Status != "ok" {
+		t.Errorf("Expected status 'ok', got '%s'", envelope.Data.Status)
 	}
 
-	if response.Version != "1.0.0" {
-		t.Errorf("Expected version '1.0.0', got '%s'", response.Version)
+	if envelope.Data.Version != "1.0.0" {
+		t.Errorf("Expected version '1.0.0', got '%s'", envelope.Data.Version)
 	}
 
 	t.Logf("Health check basic test passed: status=%s, version=%s",
-		response.Status, response.Version)
+		envelope.Data.Status, envelope.Data.Version)
 }
 
 // Test readiness check structure
@@ -49,8 +53,12 @@ func TestReadinessCheck_BasicStructure(t *testing.T) {
 		t.Errorf("Expected status 200, got %d", w.Code)
 	}
 
-	var response HealthResponse
-	err := json.Unmarshal(w.Body.Bytes(), &response)
+	// Response is wrapped in shared.Response envelope
+	var envelope struct {
+		Data    HealthResponse `json:"data"`
+		Success bool           `json:"success"`
+	}
+	err := json.Unmarshal(w.Body.Bytes(), &envelope)
 	if err != nil {
 		t.Errorf("Failed to unmarshal response: %v", err)
 	}
@@ -58,7 +66,7 @@ func TestReadinessCheck_BasicStructure(t *testing.T) {
 	// Verify all expected components are present
 	expectedComponents := []string{"database", "redis", "ipfs", "queue"}
 	for _, component := range expectedComponents {
-		if status, exists := response.Checks[component]; !exists {
+		if status, exists := envelope.Data.Checks[component]; !exists {
 			t.Errorf("Missing component check: %s", component)
 		} else if status != "ok" {
 			t.Errorf("Component %s status is '%s', expected 'ok' (stub implementation)",
@@ -67,7 +75,7 @@ func TestReadinessCheck_BasicStructure(t *testing.T) {
 	}
 
 	t.Logf("Readiness check structure test passed with %d components checked",
-		len(response.Checks))
+		len(envelope.Data.Checks))
 }
 
 // Test that demonstrates stub limitations

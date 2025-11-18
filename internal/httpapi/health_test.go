@@ -23,6 +23,17 @@ import (
 // LIVENESS PROBE TESTS (/health)
 // ============================================================================
 
+// Helper function to unwrap health response from shared.Response envelope
+func unmarshalHealthResponse(t *testing.T, body []byte) HealthResponse {
+	var envelope struct {
+		Data    HealthResponse `json:"data"`
+		Success bool           `json:"success"`
+	}
+	err := json.Unmarshal(body, &envelope)
+	require.NoError(t, err, "Should unmarshal response envelope")
+	return envelope.Data
+}
+
 func TestHealthHandler_Always200(t *testing.T) {
 	// Test that health endpoint always returns 200 when server is alive
 	req := httptest.NewRequest("GET", "/health", nil)
@@ -32,9 +43,7 @@ func TestHealthHandler_Always200(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, w.Code, "Health check should always return 200")
 
-	var response HealthResponse
-	err := json.Unmarshal(w.Body.Bytes(), &response)
-	require.NoError(t, err, "Should unmarshal response")
+	response := unmarshalHealthResponse(t, w.Body.Bytes())
 	assert.Equal(t, "ok", response.Status)
 	assert.NotEmpty(t, response.Version)
 	assert.NotEmpty(t, response.Uptime)
@@ -61,9 +70,7 @@ func TestHealthHandler_NoDependencyChecks(t *testing.T) {
 
 	HealthCheck(w, req)
 
-	var response HealthResponse
-	err := json.Unmarshal(w.Body.Bytes(), &response)
-	require.NoError(t, err)
+	response := unmarshalHealthResponse(t, w.Body.Bytes())
 
 	// Checks field should be nil or empty for liveness
 	assert.Empty(t, response.Checks, "Liveness check should not include dependency checks")
