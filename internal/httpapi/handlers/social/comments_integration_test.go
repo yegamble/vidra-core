@@ -471,4 +471,292 @@ func TestComments_Integration(t *testing.T) {
 			}
 		}
 	})
+
+	t.Run("XSSProtection", func(t *testing.T) {
+		// Test cases for various XSS attack vectors
+		xssTestCases := []struct {
+			name            string
+			input           string
+			shouldNotContain []string
+			description     string
+		}{
+			{
+				name:  "blocks_script_tags",
+				input: `Hello <script>alert('XSS')</script> World`,
+				shouldNotContain: []string{"<script>", "alert(", "</script>"},
+				description: "Script tags should be completely removed",
+			},
+			{
+				name:  "blocks_event_handlers",
+				input: `Click <img src=x onerror="alert('XSS')"> here`,
+				shouldNotContain: []string{"onerror", "alert("},
+				description: "Event handlers should be stripped",
+			},
+			{
+				name:  "blocks_javascript_urls",
+				input: `Visit <a href="javascript:alert('XSS')">my site</a>`,
+				shouldNotContain: []string{"javascript:", "alert("},
+				description: "JavaScript URLs should be blocked",
+			},
+			{
+				name:  "blocks_data_urls",
+				input: `<a href="data:text/html,<script>alert('XSS')</script>">Click</a>`,
+				shouldNotContain: []string{"data:", "<script>", "alert("},
+				description: "Data URLs with scripts should be blocked",
+			},
+			{
+				name:  "blocks_style_attacks",
+				input: `<div style="background:url('javascript:alert(1)')">Styled</div>`,
+				shouldNotContain: []string{"javascript:", "alert("},
+				description: "JavaScript in styles should be blocked",
+			},
+			{
+				name:  "blocks_svg_attacks",
+				input: `<svg onload="alert('XSS')"></svg>`,
+				shouldNotContain: []string{"onload", "alert("},
+				description: "SVG event handlers should be blocked",
+			},
+			{
+				name:  "blocks_iframe_injection",
+				input: `Watch this <iframe src="evil.html"></iframe> video`,
+				shouldNotContain: []string{"<iframe", "evil.html"},
+				description: "iFrames should be completely blocked",
+			},
+			{
+				name:  "blocks_form_injection",
+				input: `<form action="steal.php"><input name="password"></form>`,
+				shouldNotContain: []string{"<form", "<input", "steal.php"},
+				description: "Forms should be blocked to prevent CSRF",
+			},
+			{
+				name:  "blocks_mixed_case_attacks",
+				input: `<ScRiPt>alert('XSS')</ScRiPt>`,
+				shouldNotContain: []string{"ScRiPt", "alert("},
+				description: "Mixed case script tags should be blocked",
+			},
+			{
+				name:  "blocks_encoded_attacks",
+				input: `<img src=x onerror="&#97;&#108;&#101;&#114;&#116;('XSS')">`,
+				shouldNotContain: []string{"onerror", "&#97;", "&#108;"},
+				description: "Encoded event handlers should be blocked",
+			},
+			{
+				name:  "blocks_nested_attacks",
+				input: `<div><div><script>alert('nested')</script></div></div>`,
+				shouldNotContain: []string{"<script>", "alert("},
+				description: "Nested script tags should be blocked",
+			},
+			{
+				name:  "blocks_meta_redirect",
+				input: `<meta http-equiv="refresh" content="0;url=evil.com">`,
+				shouldNotContain: []string{"<meta", "refresh", "evil.com"},
+				description: "Meta refresh tags should be blocked",
+			},
+		}
+
+		for _, tc := range xssTestCases {
+			t.Run(tc.name, func(t *testing.T) {
+				// Create comment with XSS attempt
+				createBody := map[string]interface{}{
+					"body": tc.input,
+				}
+				w := makeRequest("POST", fmt.Sprintf("/api/v1/videos/%s/comments", video.ID), createBody, token1)
+				require.Equal(t, http.StatusCreated, w.Code)
+
+				var createResp struct {
+					Data domain.Comment `json:"data"`
+				}
+				err := json.NewDecoder(w.Body).Decode(&createResp)
+				require.NoError(t, err)
+
+				// Verify XSS content is sanitized in the response
+				for _, dangerous := range tc.shouldNotContain {
+					assert.NotContains(t, createResp.Data.Body, dangerous, tc.description)
+				}
+
+				// Fetch the comment to ensure it's sanitized in storage
+				w = makeRequest("GET", fmt.Sprintf("/api/v1/comments/%s", createResp.Data.ID), nil, "")
+				assert.Equal(t, http.StatusOK, w.Code)
+
+				var getResp struct {
+					Data domain.CommentWithUser `json:"data"`
+				}
+				err = json.NewDecoder(w.Body).Decode(&getResp)
+				require.NoError(t, err)
+
+				// Verify XSS content is still sanitized
+				for _, dangerous := range tc.shouldNotContain {
+					assert.NotContains(t, getResp.Data.Body, dangerous, tc.description)
+				}
+			})
+		}
+	})
+
+	t.Run("XSSProtection_UpdateComment", func(t *testing.T) {
+		// Create a normal comment first
+		createBody := map[string]interface{}{
+			"body": "Normal comment",
+		}
+		w := makeRequest("POST", fmt.Sprintf("/api/v1/videos/%s/comments", video.ID), createBody, token1)
+		require.Equal(t, http.StatusCreated, w.Code)
+
+		var createResp struct {
+			Data domain.Comment `json:"data"`
+		}
+		err := json.NewDecoder(w.Body).Decode(&createResp)
+		require.NoError(t, err)
+
+		// Try to update with XSS content
+		xssAttempts := []struct {
+			name     string
+			payload  string
+			shouldNotContain []string
+		}{
+			{
+				name:    "script_in_update",
+				payload: `Updated with <script>alert('XSS')</script>`,
+				shouldNotContain: []string{"<script>", "alert("},
+			},
+			{
+				name:    "event_handler_in_update",
+				payload: `Updated <img src=x onerror="alert('XSS')">`,
+				shouldNotContain: []string{"onerror", "alert("},
+			},
+			{
+				name:    "javascript_url_in_update",
+				payload: `Check <a href="javascript:void(0)">this</a> out`,
+				shouldNotContain: []string{"javascript:"},
+			},
+		}
+
+		for _, attempt := range xssAttempts {
+			t.Run(attempt.name, func(t *testing.T) {
+				updateBody := map[string]interface{}{
+					"body": attempt.payload,
+				}
+				w := makeRequest("PUT", fmt.Sprintf("/api/v1/comments/%s", createResp.Data.ID), updateBody, token1)
+				assert.Equal(t, http.StatusNoContent, w.Code)
+
+				// Verify the update is sanitized
+				w = makeRequest("GET", fmt.Sprintf("/api/v1/comments/%s", createResp.Data.ID), nil, "")
+				assert.Equal(t, http.StatusOK, w.Code)
+
+				var getResp struct {
+					Data domain.CommentWithUser `json:"data"`
+				}
+				err := json.NewDecoder(w.Body).Decode(&getResp)
+				require.NoError(t, err)
+
+				for _, dangerous := range attempt.shouldNotContain {
+					assert.NotContains(t, getResp.Data.Body, dangerous)
+				}
+			})
+		}
+	})
+
+	t.Run("XSSProtection_FlagDetails", func(t *testing.T) {
+		// Create a comment to flag
+		createBody := map[string]interface{}{
+			"body": "Comment to flag",
+		}
+		w := makeRequest("POST", fmt.Sprintf("/api/v1/videos/%s/comments", video.ID), createBody, token1)
+		require.Equal(t, http.StatusCreated, w.Code)
+
+		var createResp struct {
+			Data domain.Comment `json:"data"`
+		}
+		err := json.NewDecoder(w.Body).Decode(&createResp)
+		require.NoError(t, err)
+
+		// Try to inject XSS in flag details
+		flagBody := map[string]interface{}{
+			"reason":  "spam",
+			"details": `<script>alert('XSS in flag')</script>`,
+		}
+		w = makeRequest("POST", fmt.Sprintf("/api/v1/comments/%s/flag", createResp.Data.ID), flagBody, token2)
+		assert.Equal(t, http.StatusCreated, w.Code)
+
+		// The flag details are not directly exposed in the API response,
+		// but we verify that the request succeeds (sanitization doesn't break functionality)
+		var flagResp map[string]interface{}
+		err = json.NewDecoder(w.Body).Decode(&flagResp)
+		require.NoError(t, err)
+		assert.Equal(t, "Comment flagged successfully", flagResp["message"])
+	})
+
+	t.Run("AllowsBasicFormatting", func(t *testing.T) {
+		// Test that legitimate formatting is preserved
+		formattingTests := []struct {
+			name     string
+			input    string
+			shouldContain []string
+		}{
+			{
+				name:  "allows_bold_text",
+				input: `This is <b>bold</b> and <strong>strong</strong> text`,
+				shouldContain: []string{"bold", "strong"},
+			},
+			{
+				name:  "allows_italic_text",
+				input: `This is <i>italic</i> and <em>emphasized</em> text`,
+				shouldContain: []string{"italic", "emphasized"},
+			},
+			{
+				name:  "allows_links",
+				input: `Visit <a href="https://example.com">my website</a>`,
+				shouldContain: []string{"my website", "https://example.com"},
+			},
+			{
+				name:  "allows_lists",
+				input: `<ul><li>Item 1</li><li>Item 2</li></ul>`,
+				shouldContain: []string{"Item 1", "Item 2"},
+			},
+			{
+				name:  "allows_code_blocks",
+				input: `Here is <code>const x = 1;</code> code`,
+				shouldContain: []string{"const x = 1;"},
+			},
+		}
+
+		for _, ft := range formattingTests {
+			t.Run(ft.name, func(t *testing.T) {
+				createBody := map[string]interface{}{
+					"body": ft.input,
+				}
+				w := makeRequest("POST", fmt.Sprintf("/api/v1/videos/%s/comments", video.ID), createBody, token1)
+				require.Equal(t, http.StatusCreated, w.Code)
+
+				var createResp struct {
+					Data domain.Comment `json:"data"`
+				}
+				err := json.NewDecoder(w.Body).Decode(&createResp)
+				require.NoError(t, err)
+
+				// Verify safe formatting is preserved
+				for _, expected := range ft.shouldContain {
+					assert.Contains(t, createResp.Data.Body, expected)
+				}
+			})
+		}
+	})
+
+	t.Run("LinkSecurity", func(t *testing.T) {
+		// Test that links are properly secured
+		createBody := map[string]interface{}{
+			"body": `Check out <a href="https://example.com">this link</a>`,
+		}
+		w := makeRequest("POST", fmt.Sprintf("/api/v1/videos/%s/comments", video.ID), createBody, token1)
+		require.Equal(t, http.StatusCreated, w.Code)
+
+		var createResp struct {
+			Data domain.Comment `json:"data"`
+		}
+		err := json.NewDecoder(w.Body).Decode(&createResp)
+		require.NoError(t, err)
+
+		// Verify security attributes are added to links
+		assert.Contains(t, createResp.Data.Body, `rel="nofollow`)
+		assert.Contains(t, createResp.Data.Body, `noreferrer`)
+		assert.Contains(t, createResp.Data.Body, `target="_blank"`)
+	})
 }

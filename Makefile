@@ -97,7 +97,14 @@ test-integration-ci: ## Run repository + httpapi Integration tests (CI services 
 	@echo "Running integration tests with short flag to skip load/stress tests..."
 	@$(GO_ENV) go test -v -short -race -parallel=8 ./...
 
-test-local: ## Run tests with local Docker services
+.PHONY: test-setup
+test-setup: ## Setup test environment with DNS and port checks
+	@./scripts/test-setup.sh
+
+test-local: test-setup ## Run tests with local Docker services
+	@echo "Pre-flight cleanup for test-local..."
+	-COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) -f docker-compose.test.yml down -v 2>/dev/null || true
+	@echo "Starting test services..."
 	COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) -f docker-compose.test.yml up -d
 	@echo "Waiting for Postgres on 5433..."
 	@bash -lc 'for i in $$(seq 1 60); do pg_isready -h 127.0.0.1 -p 5433 -d athena_test -U test_user >/dev/null 2>&1 && exit 0; sleep 1; done; echo "Postgres not ready"; exit 1'
@@ -109,6 +116,7 @@ test-local: ## Run tests with local Docker services
 	JWT_SECRET="test-jwt-secret" \
 	IPFS_API="http://localhost:15001" \
 	$(GO_ENV) go test -v -race -coverprofile=coverage.out ./...
+	@echo "Cleaning up test services..."
 	COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) -f docker-compose.test.yml down -v
 
 test-integration-local: ## Run only integration tests with local Docker services
@@ -299,6 +307,58 @@ clean: ## Clean build artifacts
 	rm -f coverage.out coverage.html
 	go clean -cache -testcache
 
+.PHONY: test-cleanup
+test-cleanup: ## Clean up ALL test containers and ports
+	@echo "Performing comprehensive test cleanup..."
+	@echo "Stopping all test-related containers..."
+	-docker stop $$(docker ps -aq --filter "name=athena-test") 2>/dev/null || true
+	-docker stop $$(docker ps -aq --filter "name=athena_test") 2>/dev/null || true
+	@echo "Removing test containers..."
+	-docker rm -f $$(docker ps -aq --filter "name=athena-test") 2>/dev/null || true
+	-docker rm -f $$(docker ps -aq --filter "name=athena_test") 2>/dev/null || true
+	@echo "Cleaning up docker-compose projects..."
+	-COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) -f docker-compose.test.yml down --remove-orphans --volumes 2>/dev/null || true
+	@echo "Removing test networks..."
+	-docker network rm athena-test_test-network 2>/dev/null || true
+	-docker network rm athena_test_default 2>/dev/null || true
+	@echo "Pruning unused docker resources..."
+	-docker network prune -f 2>/dev/null || true
+	@echo "Test cleanup complete!"
+
+.PHONY: test-ports-check
+test-ports-check: ## Check if test ports are available
+	@echo "Checking test port availability..."
+	@PORT_CONFLICTS=""; \
+	if lsof -Pi :5433 -sTCP:LISTEN -t >/dev/null 2>&1; then \
+		echo "✗ Port 5433 (Postgres test) is in use"; \
+		PORT_CONFLICTS="yes"; \
+	else \
+		echo "✓ Port 5433 (Postgres test) is available"; \
+	fi; \
+	if lsof -Pi :6380 -sTCP:LISTEN -t >/dev/null 2>&1; then \
+		echo "✗ Port 6380 (Redis test) is in use"; \
+		PORT_CONFLICTS="yes"; \
+	else \
+		echo "✓ Port 6380 (Redis test) is available"; \
+	fi; \
+	if lsof -Pi :15001 -sTCP:LISTEN -t >/dev/null 2>&1; then \
+		echo "✗ Port 15001 (IPFS test) is in use"; \
+		PORT_CONFLICTS="yes"; \
+	else \
+		echo "✓ Port 15001 (IPFS test) is available"; \
+	fi; \
+	if lsof -Pi :18080 -sTCP:LISTEN -t >/dev/null 2>&1; then \
+		echo "✗ Port 18080 (App test) is in use"; \
+		PORT_CONFLICTS="yes"; \
+	else \
+		echo "✓ Port 18080 (App test) is available"; \
+	fi; \
+	if [ -n "$$PORT_CONFLICTS" ]; then \
+		echo ""; \
+		echo "Some test ports are in use. Run 'make test-cleanup' to free them."; \
+		exit 1; \
+	fi
+
 dev: ## Run development server with live reload
 	@if [ ! -f .env ]; then \
 		echo "Creating .env from .env.example..."; \
@@ -334,28 +394,83 @@ postman-newman: ## Run Postman auth tests via Newman (server must be running)
 
 # Spin up test stack, app, then run Newman end-to-end
 postman-e2e: ## Start test services + app and run Newman end-to-end
-	@echo "Cleaning up any existing test containers..."
-	COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) -f docker-compose.test.yml down -v 2>/dev/null || true
-	@echo "Removing old Docker image..."
+	@echo "========================================="
+	@echo "Postman E2E Tests - Starting..."
+	@echo "========================================="
+
+	@echo "[1/8] Pre-flight cleanup - removing any existing test containers..."
+	-docker stop $$(docker ps -aq --filter "name=athena-test") 2>/dev/null || true
+	-docker rm -f $$(docker ps -aq --filter "name=athena-test") 2>/dev/null || true
+	-docker rm -f athena-test-redis athena-test-postgres athena-test-api 2>/dev/null || true
+	-COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) -f docker-compose.test.yml down --remove-orphans --volumes 2>/dev/null || true
+	-docker network rm athena-test_test-network 2>/dev/null || true
+
+	@echo "[2/8] Checking port availability..."
+	@if lsof -Pi :6380 -sTCP:LISTEN -t >/dev/null 2>&1; then \
+		echo "  WARNING: Port 6380 is in use. Attempting to free it..."; \
+		PID=$$(lsof -Pi :6380 -sTCP:LISTEN -t); \
+		echo "  Process $$PID is using port 6380"; \
+		docker ps --filter "publish=6380" --format "table {{.Names}}\t{{.Ports}}" | grep 6380 || true; \
+		docker stop $$(docker ps --filter "publish=6380" -q) 2>/dev/null || true; \
+	fi
+	@if lsof -Pi :5433 -sTCP:LISTEN -t >/dev/null 2>&1; then \
+		echo "  WARNING: Port 5433 is in use. Attempting to free it..."; \
+		docker stop $$(docker ps --filter "publish=5433" -q) 2>/dev/null || true; \
+	fi
+
+	@echo "[3/8] Removing old Docker image..."
 	docker rmi athena:latest 2>/dev/null || true
-	@echo "Building fresh Docker image..."
+
+	@echo "[4/8] Building fresh Docker image..."
 	docker build -t athena:latest . --no-cache
-	@echo "Starting test stack (DB, Redis, App, IPFS, ClamAV)..."
+
+	@echo "[5/8] Starting test stack (DB, Redis, App, IPFS, ClamAV)..."
 	COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) -f docker-compose.test.yml up -d --build postgres-test redis-test ipfs-test clamav-test app-test
-	@echo "Waiting for app-test to be healthy..."
-	@for i in $$(seq 1 40); do \
-	  status=$$(docker inspect --format='{{json .State.Health.Status}}' $$(COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) -f docker-compose.test.yml ps -q app-test) 2>/dev/null | tr -d '"'); \
-	  if [ "$$status" = "healthy" ]; then echo "app-test is healthy"; break; fi; \
-	  sleep 2; \
+
+	@echo "[6/8] Waiting for services to be healthy..."
+	@echo "  Checking postgres-test..."
+	@for i in $$(seq 1 30); do \
+		if docker exec $$(COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) -f docker-compose.test.yml ps -q postgres-test) pg_isready -U test_user -d athena_test >/dev/null 2>&1; then \
+			echo "  ✓ postgres-test is ready"; break; \
+		fi; \
+		echo -n "."; sleep 1; \
 	done
-	@echo "Running Newman inside compose network against http://app-test:8080 ..."
+
+	@echo "  Checking redis-test..."
+	@for i in $$(seq 1 30); do \
+		if docker exec $$(COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) -f docker-compose.test.yml ps -q redis-test) redis-cli ping >/dev/null 2>&1; then \
+			echo "  ✓ redis-test is ready"; break; \
+		fi; \
+		echo -n "."; sleep 1; \
+	done
+
+	@echo "  Checking app-test health..."
+	@for i in $$(seq 1 40); do \
+		status=$$(docker inspect --format='{{json .State.Health.Status}}' $$(COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) -f docker-compose.test.yml ps -q app-test) 2>/dev/null | tr -d '"'); \
+		if [ "$$status" = "healthy" ]; then \
+			echo "  ✓ app-test is healthy"; break; \
+		fi; \
+		echo -n "."; sleep 2; \
+	done
+
+	@echo "[7/8] Running Newman tests against http://app-test:8080..."
 	COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) -f docker-compose.test.yml run --rm newman || { \
-	  echo "Newman tests failed"; \
-	  COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) -f docker-compose.test.yml down -v; \
-	  exit 1; \
+		echo "=========================================" ; \
+		echo "Newman tests FAILED" ; \
+		echo "Preserving logs for debugging..." ; \
+		COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) -f docker-compose.test.yml logs app-test | tail -100 > postman-e2e-failure.log ; \
+		echo "Logs saved to postman-e2e-failure.log" ; \
+		echo "=========================================" ; \
+		COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) -f docker-compose.test.yml down -v ; \
+		exit 1; \
 	}
-	@echo "Shutting down test stack..."
-	COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) -f docker-compose.test.yml down -v
+
+	@echo "[8/8] Cleaning up test environment..."
+	COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) -f docker-compose.test.yml down --remove-orphans --volumes
+
+	@echo "========================================="
+	@echo "Postman E2E Tests - PASSED ✓"
+	@echo "========================================="
 
 
 setup: ## Initial project setup
