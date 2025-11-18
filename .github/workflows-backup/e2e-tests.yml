@@ -1,0 +1,222 @@
+name: E2E Tests
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+  schedule:
+    # Run E2E tests daily at 2 AM UTC
+    - cron: '0 2 * * *'
+  workflow_dispatch:  # Allow manual triggering
+
+jobs:
+  e2e-tests:
+    name: End-to-End Tests
+    runs-on: self-hosted
+    timeout-minutes: 45
+
+    # Note: Docker Compose is used instead of GH services for better control
+    # Services are defined in tests/e2e/docker compose.yml
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Docker
+        run: |
+          if ! command -v docker &> /dev/null; then
+            echo "Installing Docker..."
+            curl -fsSL https://get.docker.com -o get-docker.sh
+            sudo sh get-docker.sh
+            sudo usermod -aG docker $USER
+            rm get-docker.sh
+            echo "Docker installed successfully"
+          else
+            echo "Docker already installed"
+          fi
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg make
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache: true
+          cache-dependency-path: go.sum
+
+      - name: Verify FFmpeg installation
+        run: ffmpeg -version
+
+      - name: Generate test fixtures
+        run: |
+          cd tests/e2e
+          make fixtures
+
+      - name: Cleanup previous test environment
+        run: |
+          # Clean up E2E test environment
+          cd tests/e2e
+          docker compose down -v 2>/dev/null || true
+          # Clean up any other test environments that may use conflicting ports
+          cd ../..
+          docker compose -f docker-compose.test.yml down -v 2>/dev/null || true
+          # Force cleanup any containers using our ports
+          docker stop $(docker ps -q --filter "publish=5433" --filter "publish=6380" --filter "publish=8080") 2>/dev/null || true
+          docker rm $(docker ps -aq --filter "publish=5433" --filter "publish=6380" --filter "publish=8080") 2>/dev/null || true
+
+      - name: Start test environment
+        run: |
+          cd tests/e2e
+          docker compose up -d
+
+      - name: Wait for services to be ready
+        run: |
+          echo "Waiting for API to be ready..."
+          timeout 180 bash -c 'until curl -sf http://localhost:8080/health > /dev/null 2>&1; do
+            echo "Waiting for API... ($(date +%T))";
+            sleep 5;
+          done'
+          echo "✓ API is ready"
+
+      - name: Check service health
+        run: |
+          cd tests/e2e
+          docker compose ps
+          docker compose logs --tail=50
+
+      - name: Run E2E tests
+        env:
+          E2E_BASE_URL: http://localhost:8080
+          E2E_TIMEOUT: 30m
+        run: |
+          cd tests/e2e
+          go test -v -timeout 30m -count=1 ./scenarios/... 2>&1 | tee e2e_test_output.log
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-test-results
+          path: tests/e2e/e2e_test_output.log
+          retention-days: 7
+
+      - name: Collect service logs on failure
+        if: failure()
+        run: |
+          cd tests/e2e
+          echo "=== API Logs ==="
+          docker compose logs athena-api-e2e
+          echo "=== PostgreSQL Logs ==="
+          docker compose logs postgres-e2e
+          echo "=== Redis Logs ==="
+          docker compose logs redis-e2e
+          echo "=== MinIO Logs ==="
+          docker compose logs minio-e2e
+
+      - name: Upload service logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: service-logs
+          path: |
+            tests/e2e/e2e_test_output.log
+          retention-days: 7
+
+      - name: Cleanup test environment
+        if: always()
+        run: |
+          cd tests/e2e
+          docker compose down -v
+
+      - name: Report test summary
+        if: always()
+        run: |
+          if [ -f tests/e2e/e2e_test_output.log ]; then
+            echo "### E2E Test Summary" >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+            grep -E "(PASS|FAIL|ok|FAIL)" tests/e2e/e2e_test_output.log | tail -20 >> $GITHUB_STEP_SUMMARY || echo "No test results found" >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          fi
+
+  # Optional: Run E2E tests with race detector (slower but catches concurrency issues)
+  e2e-tests-race:
+    name: E2E Tests (Race Detection)
+    runs-on: self-hosted
+    timeout-minutes: 60
+    # Only run on main branch or manual trigger to save CI time
+    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+    env:
+      CGO_ENABLED: "1"
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Docker
+        run: |
+          if ! command -v docker &> /dev/null; then
+            echo "Installing Docker..."
+            curl -fsSL https://get.docker.com -o get-docker.sh
+            sudo sh get-docker.sh
+            sudo usermod -aG docker $USER
+            rm get-docker.sh
+            echo "Docker installed successfully"
+          else
+            echo "Docker already installed"
+          fi
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg make
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache: true
+          cache-dependency-path: go.sum
+
+      - name: Generate test fixtures
+        run: |
+          cd tests/e2e
+          make fixtures
+
+      - name: Cleanup previous test environment
+        run: |
+          # Clean up E2E test environment
+          cd tests/e2e
+          docker compose down -v 2>/dev/null || true
+          # Clean up any other test environments that may use conflicting ports
+          cd ../..
+          docker compose -f docker-compose.test.yml down -v 2>/dev/null || true
+          # Force cleanup any containers using our ports
+          docker stop $(docker ps -q --filter "publish=5433" --filter "publish=6380" --filter "publish=8080") 2>/dev/null || true
+          docker rm $(docker ps -aq --filter "publish=5433" --filter "publish=6380" --filter "publish=8080") 2>/dev/null || true
+
+      - name: Start test environment
+        run: |
+          cd tests/e2e
+          docker compose up -d
+
+      - name: Wait for services
+        run: |
+          timeout 180 bash -c 'until curl -sf http://localhost:8080/health > /dev/null 2>&1; do sleep 5; done'
+
+      - name: Run E2E tests with race detector
+        env:
+          E2E_BASE_URL: http://localhost:8080
+          E2E_TIMEOUT: 45m
+        run: |
+          cd tests/e2e
+          go test -v -race -timeout 45m -count=1 ./scenarios/...
+
+      - name: Cleanup
+        if: always()
+        run: |
+          cd tests/e2e
+          docker compose down -v
