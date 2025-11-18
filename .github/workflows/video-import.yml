@@ -21,6 +21,10 @@ on:
       - 'internal/httpapi/import*.go'
       - 'migrations/043_*.sql'
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   lint:
     name: Lint Import Code
