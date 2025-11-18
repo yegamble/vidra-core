@@ -68,7 +68,7 @@ services:
       # Mount test files (read-only)
       - ./testdata/virus_scanner:/testdata:ro
     healthcheck:
-      test: ["CMD", "/usr/local/bin/clamd-ping"]
+      test: ["CMD", "/usr/local/bin/clamdcheck.sh"]
       interval: 10s
       timeout: 5s
       retries: 30
