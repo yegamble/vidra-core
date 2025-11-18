@@ -6,6 +6,7 @@ import (
 	"strconv"
 
 	"athena/internal/domain"
+	"athena/internal/security"
 	importuc "athena/internal/usecase/import"
 
 	"github.com/go-chi/chi/v5"
@@ -69,6 +70,16 @@ func (h *ImportHandlers) CreateImport(w http.ResponseWriter, r *http.Request) {
 	// Validate required fields
 	if req.SourceURL == "" {
 		writeError(w, http.StatusBadRequest, "source_url is required", nil)
+		return
+	}
+
+	// SECURITY FIX: Validate URL for SSRF attacks and file size limits
+	// This prevents attacks on internal services like AWS metadata (169.254.169.254)
+	// and DoS attacks using extremely large files (e.g., 100GB videos)
+	if err := security.ValidateVideoURL(req.SourceURL); err != nil {
+		// Log detailed error server-side for debugging
+		// Return generic error to client to avoid information disclosure
+		writeError(w, http.StatusBadRequest, "Invalid or unsafe URL", err)
 		return
 	}
 
