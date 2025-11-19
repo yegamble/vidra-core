@@ -196,6 +196,16 @@ runs:
           echo "Skipping go clean -modcache (no module cache configured)"
         fi
 
+    # Configure Go proxy to avoid storage.googleapis.com DNS issues
+    - name: Configure Go proxy
+      shell: bash
+      run: |
+        set -euo pipefail
+        echo "Configuring GOPROXY to use goproxy.io as primary proxy..."
+        echo "GOPROXY=https://goproxy.io,direct" >> "$GITHUB_ENV"
+        go env -w GOPROXY=https://goproxy.io,direct
+        echo "✓ GOPROXY=$(go env GOPROXY)"
+
     # Ensure module files are tidy and dependencies are downloadable
     - name: Tidy and download modules
       shell: bash
