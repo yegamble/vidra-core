@@ -14,12 +14,54 @@ inputs:
 runs:
   using: 'composite'
   steps:
+    # Detect runtime environment to handle containers differently
+    - name: Detect runtime environment
+      id: detect-env
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        # Check if running in container
+        if [ -f /.dockerenv ] || grep -q 'docker\|lxc' /proc/1/cgroup 2>/dev/null; then
+          echo "container=true" >> "$GITHUB_OUTPUT"
+          echo "⚠️  Running in container environment"
+        else
+          echo "container=false" >> "$GITHUB_OUTPUT"
+          echo "✓ Running on bare metal/VM"
+        fi
+
+        # Log critical environment variables for debugging
+        echo "Environment variables:"
+        echo "  HOME=${HOME:-UNSET}"
+        echo "  RUNNER_TEMP=${RUNNER_TEMP:-UNSET}"
+        echo "  GITHUB_WORKSPACE=${GITHUB_WORKSPACE:-UNSET}"
+
     - name: Set up Go
       uses: actions/setup-go@v5
       with:
         go-version: ${{ inputs.go-version }}
         cache: true
         cache-dependency-path: ${{ inputs.cache-dependency-path }}
+
+    # Ensure GOPATH is set (required for GOMODCACHE default location)
+    - name: Ensure Go path
+      shell: bash
+      run: |
+        set -euo pipefail
+        CURRENT_GOPATH="$(go env GOPATH || true)"
+
+        if [[ -z "${CURRENT_GOPATH}" || "${CURRENT_GOPATH}" == "off" ]]; then
+          if [[ -n "${HOME:-}" ]]; then
+            CHOSEN_GOPATH="${HOME}/go"
+          else
+            CHOSEN_GOPATH="${RUNNER_TEMP}/go"
+          fi
+          mkdir -p "${CHOSEN_GOPATH}"
+          echo "GOPATH path: ${CHOSEN_GOPATH}"
+          echo "GOPATH=${CHOSEN_GOPATH}" >> "$GITHUB_ENV"
+        else
+          echo "✓ GOPATH already set: ${CURRENT_GOPATH}"
+        fi
 
     # Ensure Go build cache is enabled and consistent across steps
     - name: Ensure Go build cache path
@@ -54,6 +96,93 @@ runs:
         echo "GOCACHE=${CHOSEN_CACHE}" >> "$GITHUB_ENV"
         echo "gocache_path=${CHOSEN_CACHE}" >> "$GITHUB_OUTPUT"
 
+    # Ensure GOMODCACHE is set to avoid "module cache not found" errors
+    - name: Ensure Go module cache path
+      shell: bash
+      run: |
+        set -euo pipefail
+        # Detect current GOMODCACHE value
+        CURRENT_MODCACHE="$(go env GOMODCACHE || true)"
+        CHOSEN_MODCACHE=""
+
+        if [[ -z "${CURRENT_MODCACHE}" || "${CURRENT_MODCACHE}" == "off" ]]; then
+          # Choose a sane default:
+          # - Use GOPATH/pkg/mod if GOPATH is set
+          # - Else use $HOME/go/pkg/mod (Go's default)
+          GOPATH_VAR="$(go env GOPATH || true)"
+          if [[ -n "${GOPATH_VAR}" && "${GOPATH_VAR}" != "off" ]]; then
+            CHOSEN_MODCACHE="${GOPATH_VAR}/pkg/mod"
+          elif [[ -n "${HOME:-}" ]]; then
+            CHOSEN_MODCACHE="${HOME}/go/pkg/mod"
+          else
+            CHOSEN_MODCACHE="${RUNNER_TEMP}/go/pkg/mod"
+          fi
+        else
+          CHOSEN_MODCACHE="${CURRENT_MODCACHE}"
+        fi
+
+        mkdir -p "${CHOSEN_MODCACHE}"
+        echo "GOMODCACHE path: ${CHOSEN_MODCACHE}"
+
+        # Persist for subsequent steps in this job
+        echo "GOMODCACHE=${CHOSEN_MODCACHE}" >> "$GITHUB_ENV"
+
+    # Validate Go environment is properly configured
+    - name: Validate Go environment
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        echo "=== Go Environment Validation ==="
+
+        # Check required variables are set
+        GOPATH_CHECK="$(go env GOPATH)"
+        GOMODCACHE_CHECK="$(go env GOMODCACHE)"
+        GOCACHE_CHECK="$(go env GOCACHE)"
+
+        VALIDATION_FAILED=0
+
+        if [[ -z "${GOPATH_CHECK}" ]]; then
+          echo "❌ ERROR: GOPATH is not set" >&2
+          VALIDATION_FAILED=1
+        else
+          echo "✓ GOPATH=${GOPATH_CHECK}"
+        fi
+
+        if [[ -z "${GOMODCACHE_CHECK}" ]]; then
+          echo "❌ ERROR: GOMODCACHE is not set" >&2
+          VALIDATION_FAILED=1
+        else
+          echo "✓ GOMODCACHE=${GOMODCACHE_CHECK}"
+        fi
+
+        if [[ -z "${GOCACHE_CHECK}" || "${GOCACHE_CHECK}" == "off" ]]; then
+          echo "❌ ERROR: GOCACHE is not set or disabled" >&2
+          VALIDATION_FAILED=1
+        else
+          echo "✓ GOCACHE=${GOCACHE_CHECK}"
+        fi
+
+        # Verify directories exist and are writable
+        for dir in "${GOPATH_CHECK}" "${GOMODCACHE_CHECK}" "${GOCACHE_CHECK}"; do
+          if [[ ! -d "${dir}" ]]; then
+            echo "❌ ERROR: Directory does not exist: ${dir}" >&2
+            VALIDATION_FAILED=1
+          elif [[ ! -w "${dir}" ]]; then
+            echo "❌ ERROR: Directory not writable: ${dir}" >&2
+            VALIDATION_FAILED=1
+          else
+            echo "✓ Directory OK: ${dir}"
+          fi
+        done
+
+        if [ $VALIDATION_FAILED -ne 0 ]; then
+          echo "❌ Go environment validation failed"
+          exit 1
+        fi
+
+        echo "✅ All Go environment checks passed"
+
     # Clean potentially corrupted module cache to avoid ziphash errors
     - name: Clean Go module cache
       shell: bash
@@ -71,9 +200,41 @@ runs:
     - name: Tidy and download modules
       shell: bash
       run: |
-        go mod tidy
-        # Prefetch modules to fail early if there are issues
-        go mod download
+        set -euo pipefail
+
+        # Ensure we're in the right directory
+        if [[ ! -f "go.mod" ]]; then
+          echo "❌ ERROR: go.mod not found in $(pwd)" >&2
+          ls -la
+          exit 1
+        fi
+
+        # Run with verbose output for debugging
+        echo "Running go mod tidy..."
+        go mod tidy -v
+
+        # Verify tidy didn't make changes (indicates drift)
+        if ! git diff --exit-code go.mod go.sum 2>/dev/null; then
+          echo "⚠️  WARNING: go mod tidy modified go.mod/go.sum"
+          git diff go.mod go.sum || true
+        fi
+
+        # Prefetch modules with retry logic
+        echo "Downloading modules..."
+        for i in {1..3}; do
+          if go mod download; then
+            echo "✅ Module download successful"
+            break
+          else
+            if [ $i -lt 3 ]; then
+              echo "⚠️  Retry $i/3 failed, waiting 5s..."
+              sleep 5
+            else
+              echo "❌ ERROR: Failed to download modules after 3 attempts" >&2
+              exit 1
+            fi
+          fi
+        done
 
     - name: Cache Go build cache
       uses: actions/cache@v4
