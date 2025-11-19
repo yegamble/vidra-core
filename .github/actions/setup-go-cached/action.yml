@@ -1,5 +1,5 @@
 name: 'Setup Go with Optimal Caching'
-description: 'Sets up Go with module and build caching optimized for self-hosted runners'
+description: 'Sets up Go with module and build caching optimized for self-hosted runners. Supports configurable GOPROXY fallback for environments with restricted network access.'
 
 inputs:
   go-version:
@@ -211,7 +211,17 @@ runs:
           FALLBACK_PROXY="${{ inputs.goproxy-fallback }}"
           if [[ -n "$FALLBACK_PROXY" ]]; then
             echo "ℹ️  No GOPROXY set, using fallback: $FALLBACK_PROXY"
+
+            # Set for current step and all subsequent steps in workflow
+            export GOPROXY="$FALLBACK_PROXY"
             echo "GOPROXY=$FALLBACK_PROXY" >> "$GITHUB_ENV"
+
+            # Verify it was set
+            if [[ "$(go env GOPROXY)" == "$FALLBACK_PROXY" ]]; then
+              echo "✓ GOPROXY successfully configured"
+            else
+              echo "⚠️  Warning: GOPROXY may not be active yet (will be set for next step)"
+            fi
           else
             echo "ℹ️  No GOPROXY set and no fallback configured, using Go defaults"
           fi
