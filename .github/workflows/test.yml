@@ -98,9 +98,6 @@ jobs:
           --health-retries 15
 
     steps:
-      - name: Docker cleanup
-        uses: ./.github/actions/docker-cleanup
-
       - name: Checkout code
         uses: actions/checkout@v4
 
