@@ -30,8 +30,9 @@ defaults:
 env:
   GO_VERSION: "1.24"
   GO111MODULE: on
-  CI_DATABASE_URL: postgres://test_user:test_password@localhost:5434/athena_test?sslmode=disable
-  CI_REDIS_URL: redis://localhost:6379/0
+  # Note: Integration tests run in container and use service names (postgres, redis, ipfs)
+  CI_DATABASE_URL: postgres://test_user:test_password@postgres:5432/athena_test?sslmode=disable
+  CI_REDIS_URL: redis://redis:6379/0
   CI_JWT_SECRET: test-jwt-secret-for-ci
 
 jobs:
@@ -59,6 +60,12 @@ jobs:
     name: Integration Tests
     runs-on: self-hosted
     timeout-minutes: 15
+
+    # Run in container to access services via Docker network (no port mapping needed)
+    container:
+      image: golang:1.24
+      options: --user root
+
     env:
       CGO_ENABLED: "1"
 
@@ -69,8 +76,6 @@ jobs:
           POSTGRES_DB: athena_test
           POSTGRES_USER: test_user
           POSTGRES_PASSWORD: test_password
-        ports:
-          - 5434:5432
         options: >-
           --health-cmd pg_isready
           --health-interval 10s
@@ -79,8 +84,6 @@ jobs:
 
       redis:
         image: redis:7.2-alpine
-        ports:
-          - 6380:6379
         options: >-
           --health-cmd "sh -c 'redis-cli ping | grep PONG'"
           --health-interval 10s
@@ -89,8 +92,6 @@ jobs:
 
       ipfs:
         image: ipfs/kubo:v0.29.0
-        ports:
-          - 5002:5001
         options: >-
           --health-cmd "ipfs version"
           --health-interval 10s
@@ -109,20 +110,20 @@ jobs:
 
       - name: Install PostgreSQL client
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y postgresql-client
+          apt-get update -qq
+          apt-get install -y postgresql-client
 
       - name: Apply test migrations
         env:
-          DATABASE_URL: postgres://test_user:test_password@localhost:5434/athena_test?sslmode=disable
+          DATABASE_URL: postgres://test_user:test_password@postgres:5432/athena_test?sslmode=disable
         run: make migrate-custom
 
       - name: Run integration tests
         env:
-          DATABASE_URL: postgres://test_user:test_password@localhost:5434/athena_test?sslmode=disable
-          REDIS_URL: redis://localhost:6380/0
+          DATABASE_URL: postgres://test_user:test_password@postgres:5432/athena_test?sslmode=disable
+          REDIS_URL: redis://redis:6379/0
           JWT_SECRET: ${{ env.CI_JWT_SECRET }}
-          IPFS_API: http://localhost:5002
+          IPFS_API: http://ipfs:5001
           REQUIRE_IPFS: false
           VALIDATION_TEST_MODE: true
           LOG_LEVEL: debug
