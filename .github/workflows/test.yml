@@ -26,7 +26,7 @@ concurrency:
 env:
   GO_VERSION: "1.24"
   GO111MODULE: on
-  CI_DATABASE_URL: postgres://test_user:test_password@localhost:5432/athena_test?sslmode=disable
+  CI_DATABASE_URL: postgres://test_user:test_password@localhost:5434/athena_test?sslmode=disable
   CI_REDIS_URL: redis://localhost:6379/0
   CI_JWT_SECRET: test-jwt-secret-for-ci
 
@@ -74,7 +74,7 @@ jobs:
           POSTGRES_USER: test_user
           POSTGRES_PASSWORD: test_password
         ports:
-          - 5432:5432
+          - 5434:5432
         options: >-
           --health-cmd pg_isready
           --health-interval 10s
@@ -216,7 +216,7 @@ jobs:
           POSTGRES_USER: test_user
           POSTGRES_PASSWORD: test_password
         ports:
-          - 5432:5432
+          - 5434:5432
         options: >-
           --health-cmd pg_isready
           --health-interval 10s
