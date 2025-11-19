@@ -44,6 +44,11 @@ jobs:
     needs: setup
     timeout-minutes: 10
 
+    env:
+      GOPATH: /home/runner/go
+      GOMODCACHE: /home/runner/go/pkg/mod
+      GOCACHE: /home/runner/.cache/go-build
+
     steps:
       - uses: actions/checkout@v4
 
@@ -61,19 +66,18 @@ jobs:
           cache: false
 
       - name: Run unit tests
-        run: |
-          # Set Go environment variables
-          export GOPATH="${GOPATH:-$HOME/go}"
-          export GOMODCACHE="${GOMODCACHE:-$GOPATH/pkg/mod}"
-          export GOCACHE="${GOCACHE:-$HOME/.cache/go-build}"
-
-          make test-unit
+        run: make test-unit
 
   lint:
     name: Code Quality (Lint & Format)
     runs-on: self-hosted
     needs: setup
     timeout-minutes: 10
+
+    env:
+      GOPATH: /home/runner/go
+      GOMODCACHE: /home/runner/go/pkg/mod
+      GOCACHE: /home/runner/.cache/go-build
 
     steps:
       - uses: actions/checkout@v4
@@ -93,11 +97,6 @@ jobs:
 
       - name: Check formatting
         run: |
-          # Set Go environment variables
-          export GOPATH="${GOPATH:-$HOME/go}"
-          export GOMODCACHE="${GOMODCACHE:-$GOPATH/pkg/mod}"
-          export GOCACHE="${GOCACHE:-$HOME/.cache/go-build}"
-
           if [ -n "$(gofmt -l .)" ]; then
             echo "Go files are not formatted. Run: gofmt -w ."
             gofmt -l .
@@ -119,6 +118,7 @@ jobs:
         with:
           version: latest
           args: --timeout=10m
+          skip-cache: true  # We manage cache ourselves
 
   # ============================================================================
   # INTEGRATION TESTS - Run after unit tests pass
@@ -206,6 +206,11 @@ jobs:
     needs: [setup, lint, unit]
     timeout-minutes: 10
 
+    env:
+      GOPATH: /home/runner/go
+      GOMODCACHE: /home/runner/go/pkg/mod
+      GOCACHE: /home/runner/.cache/go-build
+
     steps:
       - uses: actions/checkout@v4
 
@@ -224,11 +229,6 @@ jobs:
 
       - name: Build binaries
         run: |
-          # Set Go environment variables
-          export GOPATH="${GOPATH:-$HOME/go}"
-          export GOMODCACHE="${GOMODCACHE:-$GOPATH/pkg/mod}"
-          export GOCACHE="${GOCACHE:-$HOME/.cache/go-build}"
-
           echo "🔨 Building server..."
           go build -v -o bin/athena ./cmd/server
           ls -lh bin/athena
