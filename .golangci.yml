@@ -18,11 +18,8 @@ linters:
     - misspell
     - unconvert
     - whitespace
-
-formatters:
-  enable:
-    - goimports
     - gofmt
+    - goimports
 
 issues:
   max-issues-per-linter: 0
