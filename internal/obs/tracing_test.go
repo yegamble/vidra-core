@@ -334,7 +334,6 @@ func TestContextPropagation(t *testing.T) {
 
 	// Create parent span
 	ctx, parentSpan := tracer.Start(context.Background(), "parent-operation")
-	defer parentSpan.End()
 
 	// Simulate HTTP request with propagation headers
 	req := httptest.NewRequest("GET", "/api/v1/videos", nil)
@@ -346,6 +345,9 @@ func TestContextPropagation(t *testing.T) {
 	// Create child span from extracted context
 	_, childSpan := tracer.Start(extractedCtx, "child-operation")
 	childSpan.End()
+
+	// End parent span after child
+	parentSpan.End()
 
 	spans := exporter.GetSpans()
 	if len(spans) != 2 {

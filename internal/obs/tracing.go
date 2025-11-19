@@ -42,6 +42,12 @@ func RecordHTTPSpan(span oteltrace.Span, req *http.Request, statusCode int, user
 	if userID != "" {
 		span.SetAttributes(attribute.String("user.id", userID))
 	}
+	// Extract request_id from request context if present
+	if reqID := req.Context().Value(ctxKeyRequestID); reqID != nil {
+		if id, ok := reqID.(string); ok && id != "" {
+			span.SetAttributes(attribute.String("request_id", id))
+		}
+	}
 }
 
 // RecordDBSpan annotates a span with DB operation details.

@@ -2,6 +2,10 @@ package middleware
 
 import (
 	"bytes"
+	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -10,7 +14,17 @@ import (
 
 	"athena/internal/obs"
 
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 	oteltrace "go.opentelemetry.io/otel/trace"
+)
+
+// Context keys
+type contextKey string
+
+const (
+	requestIDKey contextKey = "request_id"
+	userIDKey    contextKey = "user_id"
 )
 
 // LoggingMiddleware logs request/response details.
@@ -35,13 +49,26 @@ func LoggingMiddleware(logger interface{}) func(http.Handler) http.Handler {
 			// Capture status/size
 			rw := &responseWriter{ResponseWriter: w, status: http.StatusOK}
 
-			// Propagate request id header if present
+			// Get or generate request ID
 			reqID := r.Header.Get("X-Request-ID")
-			if reqID != "" {
-				w.Header().Set("X-Request-ID", reqID)
+			if reqID == "" {
+				reqID = generateRequestID()
 			}
+			w.Header().Set("X-Request-ID", reqID)
+
+			// Store request_id in context for downstream middleware
+			ctx := context.WithValue(r.Context(), requestIDKey, reqID)
+			r = r.WithContext(ctx)
 
 			next.ServeHTTP(rw, r)
+
+			// Check for user_id in context after handler runs
+			var userID string
+			if uid := r.Context().Value(userIDKey); uid != nil {
+				if id, ok := uid.(string); ok {
+					userID = id
+				}
+			}
 
 			// Level based on status
 			level := slog.LevelInfo
@@ -57,8 +84,10 @@ func LoggingMiddleware(logger interface{}) func(http.Handler) http.Handler {
 				"duration_ms", time.Since(start).Milliseconds(),
 			}
 
-			if reqID != "" {
-				attrs = append(attrs, "request_id", reqID)
+			attrs = append(attrs, "request_id", reqID)
+
+			if userID != "" {
+				attrs = append(attrs, "user_id", userID)
 			}
 
 			// Log
@@ -90,8 +119,37 @@ func MetricsMiddleware(m *obs.Metrics) func(http.Handler) http.Handler {
 func TracingMiddleware(tracer oteltrace.Tracer) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// For simplicity in tests, just call next; actual tracing is covered in obs package
-			next.ServeHTTP(w, r)
+			spanName := r.Method + " " + r.URL.Path
+			ctx, span := tracer.Start(r.Context(), spanName)
+			defer span.End()
+
+			// Wrap response writer to capture status
+			rw := &responseWriter{ResponseWriter: w, status: http.StatusOK}
+
+			// Add request ID to span if present (check context first, then header)
+			var reqID string
+			if id := r.Context().Value(requestIDKey); id != nil {
+				if s, ok := id.(string); ok {
+					reqID = s
+				}
+			}
+			if reqID == "" {
+				reqID = r.Header.Get("X-Request-ID")
+			}
+			if reqID != "" {
+				span.SetAttributes(attribute.String("request_id", reqID))
+			}
+
+			// Call next handler with updated context
+			next.ServeHTTP(rw, r.WithContext(ctx))
+
+			// Record HTTP span attributes
+			obs.RecordHTTPSpan(span, r, rw.status, "")
+
+			// Mark span as error for 5xx responses
+			if rw.status >= 500 {
+				span.SetStatus(codes.Error, "HTTP "+strconv.Itoa(rw.status))
+			}
 		})
 	}
 }
@@ -123,4 +181,13 @@ func readContentLength(r *http.Request) int64 {
 		}
 	}
 	return 0
+}
+
+func generateRequestID() string {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		// Fallback to timestamp-based ID if entropy source fails
+		return fmt.Sprintf("%d", time.Now().UnixNano())
+	}
+	return hex.EncodeToString(b)
 }

@@ -295,7 +295,7 @@ golangci-lint run ./... # Should PASS
 
    IOTA:
    - iota_payment_intents_total (counter: status)
-   - iota_confirmation_duration_seconds (histogram)
+   - iota_payment_confirmation_duration_seconds (histogram)
    - iota_wallets_total (gauge)
    - iota_errors_total (counter: operation)
 
@@ -307,7 +307,7 @@ golangci-lint run ./... # Should PASS
    Video Processing:
    - video_encoding_duration_seconds (histogram: quality)
    - video_encoding_queue_depth (gauge)
-   - video_processing_errors_total (counter: stage)
+   - video_processing_errors_total (counter: error_type)
 
    Test: go test ./internal/obs -run TestMetrics -v
    Gate: All 24+ metrics tests passing

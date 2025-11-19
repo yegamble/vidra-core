@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -218,10 +219,6 @@ func TestMetricsMiddlewareMultipleRequests(t *testing.T) {
 	metrics := newTestMetrics()
 	registry.MustRegister(metrics.HTTPRequestsTotal)
 
-	handler := MetricsMiddleware(metrics)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
-
 	requests := []struct {
 		method string
 		path   string
@@ -234,6 +231,9 @@ func TestMetricsMiddlewareMultipleRequests(t *testing.T) {
 	}
 
 	for _, req := range requests {
+		handler := MetricsMiddleware(metrics)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(req.status)
+		}))
 		for i := 0; i < req.count; i++ {
 			r := httptest.NewRequest(req.method, req.path, nil)
 			w := httptest.NewRecorder()
@@ -658,13 +658,8 @@ func BenchmarkObservabilityStack(b *testing.B) {
 
 // Helper functions and types
 
-type contextKey string
-
-const userIDKey contextKey = "user_id"
-
-func newTestLogger(w io.Writer) interface{} {
-	// This would return an actual logger implementation
-	return nil
+func newTestLogger(w io.Writer) *slog.Logger {
+	return obs.NewLogger("production", "info", w)
 }
 
 func newTestMetrics() *obs.Metrics {

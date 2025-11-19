@@ -55,7 +55,10 @@ func setupTestNotificationEnvironment(t *testing.T) (*sqlx.DB, *chi.Mux, *config
 	}
 
 	db, err := sqlx.Connect("postgres", cfg.DatabaseURL)
-	require.NoError(t, err)
+	if err != nil {
+		t.Skipf("Skipping test: Postgres not available (%v)", err)
+		return nil, nil, nil
+	}
 
 	// Clean up test data
 	t.Cleanup(func() {

@@ -16,6 +16,7 @@ func TestNewLogger(t *testing.T) {
 		level     string
 		wantJSON  bool
 		wantLevel slog.Level
+		logFunc   func(*slog.Logger)
 	}{
 		{
 			name:      "production JSON logger",
@@ -23,6 +24,7 @@ func TestNewLogger(t *testing.T) {
 			level:     "info",
 			wantJSON:  true,
 			wantLevel: slog.LevelInfo,
+			logFunc:   func(l *slog.Logger) { l.Info("test message", "key", "value") },
 		},
 		{
 			name:      "development text logger",
@@ -30,6 +32,7 @@ func TestNewLogger(t *testing.T) {
 			level:     "debug",
 			wantJSON:  false,
 			wantLevel: slog.LevelDebug,
+			logFunc:   func(l *slog.Logger) { l.Debug("test message", "key", "value") },
 		},
 		{
 			name:      "error level logger",
@@ -37,6 +40,7 @@ func TestNewLogger(t *testing.T) {
 			level:     "error",
 			wantJSON:  true,
 			wantLevel: slog.LevelError,
+			logFunc:   func(l *slog.Logger) { l.Error("test message", "key", "value") },
 		},
 		{
 			name:      "warn level logger",
@@ -44,6 +48,7 @@ func TestNewLogger(t *testing.T) {
 			level:     "warn",
 			wantJSON:  true,
 			wantLevel: slog.LevelWarn,
+			logFunc:   func(l *slog.Logger) { l.Warn("test message", "key", "value") },
 		},
 	}
 
@@ -56,8 +61,8 @@ func TestNewLogger(t *testing.T) {
 				t.Fatal("NewLogger returned nil")
 			}
 
-			// Log a test message
-			logger.Info("test message", "key", "value")
+			// Log a test message at the appropriate level
+			tt.logFunc(logger)
 			output := buf.String()
 
 			if tt.wantJSON {

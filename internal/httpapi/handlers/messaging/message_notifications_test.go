@@ -41,7 +41,10 @@ func TestMessageNotificationWorkflow(t *testing.T) {
 	}
 
 	db, err := sqlx.Connect("postgres", cfg.DatabaseURL)
-	require.NoError(t, err)
+	if err != nil {
+		t.Skipf("Skipping test: Postgres not available (%v)", err)
+		return
+	}
 
 	// Clean up test data
 	t.Cleanup(func() {
@@ -416,7 +419,10 @@ func TestMessageNotificationService(t *testing.T) {
 	}
 
 	db, err := sqlx.Connect("postgres", dbURL)
-	require.NoError(t, err)
+	if err != nil {
+		t.Skipf("Skipping test: Postgres not available (%v)", err)
+		return
+	}
 	defer db.Close()
 
 	// Clean up test data

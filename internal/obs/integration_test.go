@@ -13,6 +13,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
@@ -52,7 +53,8 @@ func TestFullRequestTrace(t *testing.T) {
 	RecordHTTPMetrics(metrics, "GET", "/api/v1/videos", 200, 150*time.Millisecond, 0, 1024)
 
 	// Complete span
-	RecordHTTPSpan(span, httptest.NewRequest("GET", "/api/v1/videos", nil), 200, "user-123")
+	req := httptest.NewRequest("GET", "/api/v1/videos", nil).WithContext(ctx)
+	RecordHTTPSpan(span, req, 200, "user-123")
 	span.End()
 
 	// Log the response
@@ -118,8 +120,11 @@ func TestErrorCorrelationAcrossSystems(t *testing.T) {
 
 	// Simulate an error scenario
 	requestID := "error-test-456"
-	ctx, span := tracer.Start(context.Background(), "database query")
-	ctx = ContextWithRequestID(ctx, requestID)
+	ctx := ContextWithRequestID(context.Background(), requestID)
+	ctx, span := tracer.Start(ctx, "database query")
+
+	// Add request_id to span
+	span.SetAttributes(attribute.String("request_id", requestID))
 
 	testErr := &DatabaseError{
 		Message: "connection timeout",

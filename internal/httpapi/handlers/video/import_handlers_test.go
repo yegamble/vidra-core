@@ -18,50 +18,6 @@ import (
 	"github.com/stretchr/testify/mock"
 )
 
-// MockImportService is a mock implementation of import.Service
-type MockImportService struct {
-	mock.Mock
-}
-
-func (m *MockImportService) ImportVideo(ctx context.Context, req *importuc.ImportRequest) (*domain.VideoImport, error) {
-	args := m.Called(ctx, req)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(*domain.VideoImport), args.Error(1)
-}
-
-func (m *MockImportService) CancelImport(ctx context.Context, importID, userID string) error {
-	args := m.Called(ctx, importID, userID)
-	return args.Error(0)
-}
-
-func (m *MockImportService) GetImport(ctx context.Context, importID, userID string) (*domain.VideoImport, error) {
-	args := m.Called(ctx, importID, userID)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(*domain.VideoImport), args.Error(1)
-}
-
-func (m *MockImportService) ListUserImports(ctx context.Context, userID string, limit, offset int) ([]*domain.VideoImport, int, error) {
-	args := m.Called(ctx, userID, limit, offset)
-	if args.Get(0) == nil {
-		return nil, 0, args.Error(2)
-	}
-	return args.Get(0).([]*domain.VideoImport), args.Int(1), args.Error(2)
-}
-
-func (m *MockImportService) ProcessPendingImports(ctx context.Context) error {
-	args := m.Called(ctx)
-	return args.Error(0)
-}
-
-func (m *MockImportService) CleanupOldImports(ctx context.Context, daysOld int) (int64, error) {
-	args := m.Called(ctx, daysOld)
-	return args.Get(0).(int64), args.Error(1)
-}
-
 func TestImportHandlers_CreateImport_Success(t *testing.T) {
 	mockService := new(MockImportService)
 	handlers := NewImportHandlers(mockService)

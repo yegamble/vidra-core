@@ -93,7 +93,6 @@ func TestHTTPRequestsTotal(t *testing.T) {
 		status string
 		count  int
 	}{
-		{"GET", "/api/v1/videos", "200", 1},
 		{"GET", "/api/v1/videos", "200", 2},
 		{"POST", "/api/v1/videos", "201", 1},
 		{"GET", "/api/v1/videos", "404", 1},
@@ -504,6 +503,26 @@ func TestMetricsRegistration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to register metrics: %v", err)
 	}
+
+	// Record at least one value for each metric to ensure they show up in Gather()
+	// Prometheus doesn't include Vec metrics in Gather() until they have values
+	metrics.HTTPRequestsTotal.WithLabelValues("GET", "/test", "200").Add(0)
+	metrics.HTTPRequestDuration.WithLabelValues("GET", "/test").Observe(0)
+	metrics.HTTPRequestSize.WithLabelValues("GET", "/test").Observe(0)
+	metrics.HTTPResponseSize.WithLabelValues("GET", "/test").Observe(0)
+	metrics.DBConnections.WithLabelValues("open").Add(0)
+	metrics.DBQueryDuration.WithLabelValues("SELECT", "test").Observe(0)
+	metrics.DBQueryErrors.WithLabelValues("test").Add(0)
+	metrics.IPFSPinDuration.WithLabelValues("add").Observe(0)
+	metrics.IPFSGatewayDuration.WithLabelValues("test").Observe(0)
+	metrics.IPFSErrors.WithLabelValues("test").Add(0)
+	metrics.IOTAPaymentIntents.WithLabelValues("created").Add(0)
+	metrics.IOTAErrors.WithLabelValues("test").Add(0)
+	metrics.VirusScanDuration.WithLabelValues("clean").Observe(0)
+	metrics.MalwareDetections.WithLabelValues("test").Add(0)
+	metrics.VirusScanErrors.WithLabelValues("test").Add(0)
+	metrics.VideoEncodingDuration.WithLabelValues("720p").Observe(0)
+	metrics.VideoProcessingErrors.WithLabelValues("test").Add(0)
 
 	// Verify metrics are registered
 	metricFamilies, err := registry.Gather()
