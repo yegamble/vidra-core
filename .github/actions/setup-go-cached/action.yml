@@ -10,6 +10,10 @@ inputs:
     description: 'Path to go.sum for cache key'
     required: false
     default: 'go.sum'
+  goproxy-fallback:
+    description: 'Fallback GOPROXY to use if not already set (empty to skip)'
+    required: false
+    default: 'https://goproxy.io,direct'
 
 runs:
   using: 'composite'
@@ -196,21 +200,33 @@ runs:
           echo "Skipping go clean -modcache (no module cache configured)"
         fi
 
-    # Configure Go proxy to avoid storage.googleapis.com DNS issues
-    - name: Configure Go proxy
+    # Configure Go proxy as fallback to avoid storage.googleapis.com DNS issues
+    - name: Configure Go proxy (if not already set)
       shell: bash
       run: |
         set -euo pipefail
-        echo "Configuring GOPROXY to use goproxy.io as primary proxy..."
-        echo "GOPROXY=https://goproxy.io,direct" >> "$GITHUB_ENV"
-        go env -w GOPROXY=https://goproxy.io,direct
-        echo "✓ GOPROXY=$(go env GOPROXY)"
+
+        # Only set GOPROXY if not already configured by caller
+        if [[ -z "${GOPROXY:-}" ]]; then
+          FALLBACK_PROXY="${{ inputs.goproxy-fallback }}"
+          if [[ -n "$FALLBACK_PROXY" ]]; then
+            echo "ℹ️  No GOPROXY set, using fallback: $FALLBACK_PROXY"
+            echo "GOPROXY=$FALLBACK_PROXY" >> "$GITHUB_ENV"
+          else
+            echo "ℹ️  No GOPROXY set and no fallback configured, using Go defaults"
+          fi
+        else
+          echo "✓ Using existing GOPROXY: $GOPROXY"
+        fi
 
     # Ensure module files are tidy and dependencies are downloadable
     - name: Tidy and download modules
       shell: bash
       run: |
         set -euo pipefail
+
+        # Verify GOPROXY is set (should be set by previous step via $GITHUB_ENV)
+        echo "Active GOPROXY: $(go env GOPROXY)"
 
         # Ensure we're in the right directory
         if [[ ! -f "go.mod" ]]; then
