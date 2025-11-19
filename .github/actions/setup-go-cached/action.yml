@@ -21,12 +21,51 @@ runs:
         cache: true
         cache-dependency-path: ${{ inputs.cache-dependency-path }}
 
+    # Ensure Go build cache is enabled and consistent across steps
+    - name: Ensure Go build cache path
+      id: ensure-gocache
+      shell: bash
+      run: |
+        set -euo pipefail
+        # Detect current GOCACHE value
+        CURRENT_CACHE="$(go env GOCACHE || true)"
+        CHOSEN_CACHE=""
+
+        if [[ -z "${CURRENT_CACHE}" || "${CURRENT_CACHE}" == "off" ]]; then
+          # Choose a sane default:
+          # - Prefer XDG_CACHE_HOME if set
+          # - Else use ~/.cache/go-build
+          # - Else fall back to RUNNER_TEMP
+          if [[ -n "${XDG_CACHE_HOME:-}" ]]; then
+            CHOSEN_CACHE="${XDG_CACHE_HOME}/go-build"
+          elif [[ -n "${HOME:-}" ]]; then
+            CHOSEN_CACHE="${HOME}/.cache/go-build"
+          else
+            CHOSEN_CACHE="${RUNNER_TEMP}/go-build"
+          fi
+        else
+          CHOSEN_CACHE="${CURRENT_CACHE}"
+        fi
+
+        mkdir -p "${CHOSEN_CACHE}"
+        echo "GOCACHE path: ${CHOSEN_CACHE}"
+
+        # Persist for subsequent steps in this job
+        echo "GOCACHE=${CHOSEN_CACHE}" >> "$GITHUB_ENV"
+        echo "gocache_path=${CHOSEN_CACHE}" >> "$GITHUB_OUTPUT"
+
     # Clean potentially corrupted module cache to avoid ziphash errors
     - name: Clean Go module cache
       shell: bash
       run: |
-        echo "Cleaning Go module cache at: $(go env GOMODCACHE)"
-        go clean -modcache
+        set -euo pipefail
+        MODCACHE="$(go env GOMODCACHE || true)"
+        echo "Cleaning Go module cache at: ${MODCACHE}"
+        if [[ -n "${MODCACHE}" && "${MODCACHE}" != "off" ]]; then
+          go clean -modcache
+        else
+          echo "Skipping go clean -modcache (no module cache configured)"
+        fi
 
     # Ensure module files are tidy and dependencies are downloadable
     - name: Tidy and download modules
@@ -39,9 +78,8 @@ runs:
     - name: Cache Go build cache
       uses: actions/cache@v4
       with:
-        path: |
-          ~/.cache/go-build
-        key: go-build-${{ runner.os }}-${{ hashFiles('**/go.sum') }}
+        path: ${{ steps.ensure-gocache.outputs.gocache_path }}
+        key: go-build-${{ runner.os }}-go${{ inputs.go-version }}-${{ hashFiles('**/go.sum') }}
         restore-keys: |
           go-build-${{ runner.os }}-
 
