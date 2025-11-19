@@ -30,30 +30,6 @@ defaults:
     shell: bash
 
 jobs:
-  lint:
-    name: Lint Import Code
-    runs-on: self-hosted
-    timeout-minutes: 10
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Docker cleanup
-        uses: ./.github/actions/docker-cleanup
-
-      - name: Set up Go (cached)
-        uses: ./.github/actions/setup-go-cached
-        with:
-          go-version: '1.24'
-          cache-dependency-path: go.sum
-
-      - name: golangci-lint
-        uses: golangci/golangci-lint-action@v7
-        with:
-          version: latest
-          args: --timeout=5m ./internal/domain/... ./internal/repository/... ./internal/usecase/import/... ./internal/importer/... ./internal/httpapi/...
-
   unit-tests:
     name: Unit Tests
     runs-on: self-hosted
@@ -220,7 +196,7 @@ jobs:
     name: Build Check
     runs-on: self-hosted
     timeout-minutes: 10
-    needs: [lint, unit-tests]
+    needs: [unit-tests]
 
     steps:
       - name: Checkout code

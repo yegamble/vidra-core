@@ -3,6 +3,7 @@ version: "2"
 run:
   tests: false
   timeout: 10m
+  allow-parallel-runners: true
 
 linters:
   enable:
