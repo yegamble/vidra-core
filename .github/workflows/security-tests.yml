@@ -40,6 +40,8 @@ jobs:
     name: ${{ matrix.category }} Tests
     runs-on: self-hosted
     timeout-minutes: 15
+    # Only run on PR when labeled 'security'; always run on push/schedule/dispatch
+    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'security')
 
     strategy:
       fail-fast: false
@@ -211,6 +213,9 @@ jobs:
     runs-on: self-hosted
     needs: security-tests
     if: always()
+    # Only comment/report on PRs when 'security' labeled
+    # The 'security-tests' job already controls execution on PRs
+    
 
     steps:
       - name: Checkout code

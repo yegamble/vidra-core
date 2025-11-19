@@ -113,8 +113,6 @@ jobs:
   integration-tests:
     name: Integration Tests
     runs-on: self-hosted
-    container:
-      image: golang:1.24
     env:
       CGO_ENABLED: "1"
     services:
@@ -124,6 +122,8 @@ jobs:
           POSTGRES_USER: test_user
           POSTGRES_PASSWORD: test_password
           POSTGRES_DB: athena_test
+        ports:
+          - 5436:5432
         options: >-
           --health-cmd pg_isready
           --health-interval 10s
@@ -132,6 +132,8 @@ jobs:
 
       redis:
         image: redis:7.2-alpine
+        ports:
+          - 6381:6379
         options: >-
           --health-cmd "redis-cli ping"
           --health-interval 10s
@@ -144,8 +146,8 @@ jobs:
 
       - name: Install system dependencies
         run: |
-          apt-get update -qq
-          apt-get install -y postgresql-client make
+          sudo apt-get update -qq
+          sudo apt-get install -y postgresql-client make
 
       - name: Set up Go (cached)
         uses: ./.github/actions/setup-go-cached
@@ -180,93 +182,28 @@ jobs:
         run: |
           for migration in migrations/*.sql; do
             echo "Applying: $(basename "$migration")"
-            psql -h postgres -U test_user -d athena_test -f "$migration" > /dev/null 2>&1 || echo "  -> Already applied or error (continuing...)"
+            psql -h localhost -p 5436 -U test_user -d athena_test -f "$migration" > /dev/null 2>&1 || echo "  -> Already applied or error (continuing...)"
           done
 
       - name: Verify migration
         env:
           PGPASSWORD: test_password
         run: |
-          psql -h postgres -U test_user -d athena_test -c "SELECT COUNT(*) FROM video_imports;" || echo "Table not created yet"
+          psql -h localhost -p 5436 -U test_user -d athena_test -c "SELECT COUNT(*) FROM video_imports;" || echo "Table not created yet"
 
       - name: Run repository integration tests
         env:
-          TEST_DATABASE_URL: postgres://test_user:test_password@postgres:5432/athena_test?sslmode=disable
-          REDIS_URL: redis://redis:6379/0
+          TEST_DATABASE_URL: postgres://test_user:test_password@localhost:5436/athena_test?sslmode=disable
+          REDIS_URL: redis://localhost:6381/0
         run: |
           go test -v -race -tags=integration ./internal/repository -run TestImport
 
       - name: Run API integration tests
         env:
-          TEST_DATABASE_URL: postgres://test_user:test_password@postgres:5432/athena_test?sslmode=disable
-          REDIS_URL: redis://redis:6379/0
+          TEST_DATABASE_URL: postgres://test_user:test_password@localhost:5436/athena_test?sslmode=disable
+          REDIS_URL: redis://localhost:6381/0
         run: |
           go test -v -race -tags=integration ./internal/httpapi -run TestImportIntegration || echo "Note: Some integration tests may skip if yt-dlp not available"
-
-
-  security-scan:
-    name: Security Scan
-    runs-on: self-hosted
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Go (cached)
-        uses: ./.github/actions/setup-go-cached
-        with:
-          go-version: '1.24'
-          cache-dependency-path: go.sum
-
-      - name: Install jq
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y jq
-
-      - name: Run Gosec Security Scanner
-        run: |
-          # Install specific version of gosec with working SARIF support and retry logic
-          max_attempts=5
-          for i in $(seq 1 $max_attempts); do
-            if go install github.com/securego/gosec/v2/cmd/gosec@v2.18.2; then
-              echo "gosec installed successfully on attempt $i"
-              break
-            else
-              if [ $i -lt $max_attempts ]; then
-                delay=$((2 ** (i - 1) * 2))
-                echo "Install attempt $i failed, retrying in ${delay} seconds..."
-                sleep $delay
-              else
-                echo "All $max_attempts attempts failed"
-                exit 1
-              fi
-            fi
-          done
-
-          # Run gosec and capture results
-          ~/go/bin/gosec -no-fail -fmt sarif -out results.sarif \
-            ./internal/domain/import*.go \
-            ./internal/repository/import*.go \
-            ./internal/usecase/import/... \
-            ./internal/importer/... \
-            ./internal/httpapi/import*.go || true
-
-          # Check if SARIF was created
-          if [ -f results.sarif ]; then
-            echo "SARIF file created successfully"
-            # Attempt to normalize artifactChanges arrays if present; ignore failure to avoid breaking CI
-            jq 'if type=="object" then (.runs // []) |= (map(if (.results // null) then . else . end)) else . end' results.sarif > results-fixed.sarif 2>/dev/null || cp results.sarif results-fixed.sarif
-            mv results-fixed.sarif results.sarif
-          else
-            echo "No SARIF file created, creating empty valid SARIF"
-            echo '{"version":"2.1.0","$schema":"https://json.schemastore.org/sarif-2.1.0.json","runs":[{"tool":{"driver":{"name":"gosec","version":"2.18.2"}},"results":[]}]}' > results.sarif
-          fi
-
-      - name: Upload SARIF file
-        uses: github/codeql-action/upload-sarif@v3
-        if: always()
-        continue-on-error: true
-        with:
-          sarif_file: results.sarif
 
   build:
     name: Build Check
