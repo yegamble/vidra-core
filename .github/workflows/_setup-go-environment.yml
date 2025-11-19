@@ -42,13 +42,26 @@ jobs:
 
     outputs:
       cache-key: ${{ steps.cache-key.outputs.key }}
-      cache-hit: ${{ steps.go-cache.outputs.cache-hit }}
+      cache-hit: ${{ steps.module-cache.outputs.cache-hit }}
       go-mod-path: ${{ steps.detect-env.outputs.go-mod-path }}
       go-build-path: ${{ steps.detect-env.outputs.go-build-path }}
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ inputs.go-version }}
+          cache: false  # We manage cache manually for cross-job sharing
+
+      - name: Generate cache key
+        id: cache-key
+        run: |
+          CACHE_KEY="go-mod-${{ runner.os }}-${{ inputs.go-version }}-${{ hashFiles('go.sum') }}"
+          echo "key=$CACHE_KEY" >> $GITHUB_OUTPUT
+          echo "Generated cache key: $CACHE_KEY"
 
       - name: Detect environment
         id: detect-env
@@ -58,41 +71,17 @@ jobs:
             echo "container=true" >> $GITHUB_OUTPUT
             echo "go-mod-path=/go/pkg/mod" >> $GITHUB_OUTPUT
             echo "go-build-path=/root/.cache/go-build" >> $GITHUB_OUTPUT
-            echo "Container environment detected"
-            echo "  Go mod cache: /go/pkg/mod"
-            echo "  Go build cache: /root/.cache/go-build"
+            echo "Environment: Container"
           else
             echo "container=false" >> $GITHUB_OUTPUT
-            echo "go-mod-path=~/go/pkg/mod" >> $GITHUB_OUTPUT
-            echo "go-build-path=~/.cache/go-build" >> $GITHUB_OUTPUT
-            echo "Bare-metal/VM environment detected"
-            echo "  Go mod cache: ~/go/pkg/mod"
-            echo "  Go build cache: ~/.cache/go-build"
+            # Use actual paths, not tilde
+            echo "go-mod-path=$HOME/go/pkg/mod" >> $GITHUB_OUTPUT
+            echo "go-build-path=$HOME/.cache/go-build" >> $GITHUB_OUTPUT
+            echo "Environment: Bare-metal/VM"
           fi
 
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: ${{ inputs.go-version }}
-          cache: false  # We manage cache manually
-
-      - name: Verify Go environment
-        run: |
-          echo "Verifying Go installation..."
-          go version
-          echo "GOPATH=$(go env GOPATH)"
-          echo "GOMODCACHE=$(go env GOMODCACHE)"
-          echo "GOCACHE=$(go env GOCACHE)"
-
-      - name: Generate cache key
-        id: cache-key
-        run: |
-          CACHE_KEY="go-mod-${{ runner.os }}-${{ inputs.go-version }}-${{ hashFiles('go.sum') }}"
-          echo "key=$CACHE_KEY" >> $GITHUB_OUTPUT
-          echo "Cache key: $CACHE_KEY"
-
-      - name: Restore Go module cache
-        id: go-cache
+      - name: Cache Go modules
+        id: module-cache
         uses: actions/cache@v4
         with:
           path: |
@@ -103,59 +92,36 @@ jobs:
             go-mod-${{ runner.os }}-${{ inputs.go-version }}-
             go-mod-${{ runner.os }}-
 
-      - name: Download Go modules
-        if: inputs.download-modules == true && steps.go-cache.outputs.cache-hit != 'true'
-        env:
-          GOMODCACHE_PATH: ${{ steps.detect-env.outputs.go-mod-path }}
+      - name: Download modules
+        if: inputs.download-modules == true && steps.module-cache.outputs.cache-hit != 'true'
         run: |
           echo "Downloading Go modules..."
-
-          # Count modules
-          TOTAL=$(go list -m -f '{{.Path}}' all 2>/dev/null | wc -l || echo "unknown")
-          echo "Total modules: $TOTAL"
-
-          # Dynamic timeout based on module count
-          if [ "$TOTAL" != "unknown" ] && [ "$TOTAL" -gt 150 ]; then
-            TIMEOUT="15m"
-            echo "Large module count detected, using ${TIMEOUT} timeout"
-          else
-            TIMEOUT="10m"
-          fi
+          echo "GOPATH: $(go env GOPATH)"
+          echo "GOMODCACHE: $(go env GOMODCACHE)"
 
           # Download with timeout
-          if timeout $TIMEOUT go mod download; then
-            echo "Modules downloaded successfully"
+          timeout 15m go mod download || {
+            echo "Module download failed or timed out"
+            exit 1
+          }
 
-            # Show cache size (expand tilde for bare-metal environments)
-            CACHE_PATH="${GOMODCACHE_PATH/#\~/$HOME}"
-            if [ -d "$CACHE_PATH" ]; then
-              CACHE_SIZE=$(du -sh "$CACHE_PATH" 2>/dev/null | cut -f1 || echo "unknown")
-              echo "Cache size: $CACHE_SIZE"
-            fi
-          else
-            EXIT_CODE=$?
-            echo "Module download failed (exit code: $EXIT_CODE)"
-            exit $EXIT_CODE
-          fi
+          echo "Modules downloaded successfully"
+          du -sh "$(go env GOMODCACHE)" 2>/dev/null || echo "Cache size: unknown"
 
       - name: Verify modules
+        if: inputs.download-modules == true
         run: |
           echo "Verifying module integrity..."
           go mod verify
-          echo "All modules verified successfully"
+          echo "All modules verified"
 
-      - name: Cache summary
-        env:
-          IS_CONTAINER: ${{ steps.detect-env.outputs.container }}
+      - name: Setup summary
         run: |
           echo "========================================="
-          echo "Cache Summary"
+          echo "Setup Complete"
           echo "========================================="
-          echo "Environment: $([ "$IS_CONTAINER" = "true" ] && echo "Container" || echo "Bare-metal/VM")"
           echo "Go version: $(go version | awk '{print $3}')"
           echo "Cache key: ${{ steps.cache-key.outputs.key }}"
-          echo "Cache hit: ${{ steps.go-cache.outputs.cache-hit }}"
-          echo "Modules downloaded: ${{ steps.go-cache.outputs.cache-hit != 'true' }}"
-          echo "Go mod path: ${{ steps.detect-env.outputs.go-mod-path }}"
-          echo "Go build path: ${{ steps.detect-env.outputs.go-build-path }}"
+          echo "Cache hit: ${{ steps.module-cache.outputs.cache-hit }}"
+          echo "GOMODCACHE: $(go env GOMODCACHE)"
           echo "========================================="
