@@ -4,6 +4,11 @@ SHELL := /bin/bash
 .PHONY: migrate-dev migrate-test migrate-custom migrate-dev-docker migrate-test-docker migrate-up db-ensure-dev-user
 .PHONY: validate-all validate-quick
 
+.PHONY: install-hooks
+install-hooks: ## Configure Git to use repo .githooks
+	@git config core.hooksPath .githooks
+	@echo "Git hooks path set to .githooks"
+
 # Use docker compose v2 if available; override with DOCKER_COMPOSE="docker-compose" if needed
 DOCKER_COMPOSE ?= docker compose
 

@@ -3,11 +3,13 @@
 #
 # Git pre-commit hook for Athena project
 #
-# This hook runs validation checks before allowing a commit.
-# To bypass (not recommended): git commit --no-verify
+# - Enforces gofmt on staged Go files
+# - Re-stages any files that were reformatted
+# - Runs lint and optional pre-commit hooks
 #
+# To bypass (not recommended): git commit --no-verify
 
-set -e
+set -euo pipefail
 
 echo "Running pre-commit validations..."
 echo ""
@@ -18,32 +20,38 @@ cd "$(git rev-parse --show-toplevel)"
 # Track failures
 FAILURES=0
 
-# 1. Auto-format and stage changes
-echo "[1/3] Running code formatter..."
-# Store list of modified files before formatting
-MODIFIED_BEFORE=$(git diff --name-only --cached --diff-filter=d)
+# 1) Format only staged Go files and re-stage them
+echo "[1/3] Enforcing gofmt on staged Go files..."
 
-# Run formatter
-if make fmt >/dev/null 2>&1; then
-    # Check if any files were modified by formatting
-    MODIFIED_AFTER=$(git diff --name-only)
-
-    if [ -n "$MODIFIED_AFTER" ]; then
-        echo "✓ Formatted and staging files:"
-        for file in $MODIFIED_AFTER; do
-            echo "  → $file"
-            git add "$file"
-        done
-    else
-        echo "✓ Code formatting check passed (no changes needed)"
-    fi
-else
-    echo "✗ Formatting failed"
-    echo "  Please check make fmt output"
-    FAILURES=$((FAILURES + 1))
+if ! command -v gofmt >/dev/null 2>&1; then
+    echo "✗ gofmt not found in PATH. Please install Go toolchain."
+    exit 1
 fi
 
-# 2. Linting
+# Collect staged Go files (Added, Copied, Modified, Renamed)
+STAGED_GO=$(git diff --cached --name-only --diff-filter=ACMR | grep -E '\.go$' || true)
+
+if [ -z "$STAGED_GO" ]; then
+    echo "✓ No staged Go files"
+else
+    # Determine which of the staged files need formatting
+    NEED_FMT=$(gofmt -s -l $STAGED_GO || true)
+    if [ -n "$NEED_FMT" ]; then
+        echo "Formatting and re-staging:"
+        gofmt -s -w $NEED_FMT
+        # Re-add only the files that were actually reformatted
+        for f in $NEED_FMT; do
+            echo "  → $f"
+            git add -- "$f"
+        done
+        COUNT=$(printf '%s\n' "$NEED_FMT" | sed '/^$/d' | wc -l | tr -d ' ')
+        echo "✓ gofmt applied to ${COUNT} file(s)"
+    else
+        echo "✓ All staged Go files are gofmt clean"
+    fi
+fi
+
+# 2) Lint (may auto-fix import groups if configured)
 echo "[2/3] Running linter..."
 if make lint >/dev/null 2>&1; then
     echo "✓ Linting passed"
@@ -53,7 +61,7 @@ else
     FAILURES=$((FAILURES + 1))
 fi
 
-# 3. Pre-commit hooks (if available)
+# 3) Run optional pre-commit hooks (e.g., yamllint) if available
 if command -v pre-commit >/dev/null 2>&1; then
     echo "[3/3] Running pre-commit hooks..."
     if pre-commit run --all-files >/dev/null 2>&1; then
