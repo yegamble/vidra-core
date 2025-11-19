@@ -14,8 +14,8 @@ runs:
       run: |
         # Check if psql is already installed
         if ! command -v psql &> /dev/null; then
-          # Check if running in container (no sudo) or on host (needs sudo)
-          if [ "$USER" = "root" ]; then
+          # Check if running as root (UID 0) - no sudo needed
+          if [ "$(id -u)" -eq 0 ]; then
             apt-get update -qq
             apt-get install -y postgresql-client
           else
