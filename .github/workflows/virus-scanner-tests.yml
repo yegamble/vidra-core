@@ -117,7 +117,7 @@ jobs:
           POSTGRES_USER: test_user
           POSTGRES_PASSWORD: test_password
         ports:
-          - 5432:5432
+          - 5435:5432
         options: >-
           --health-cmd pg_isready
           --health-interval 10s
@@ -205,7 +205,7 @@ jobs:
 
       - name: Apply database migrations
         env:
-          DATABASE_URL: postgres://test_user:test_password@localhost:5432/athena_test?sslmode=disable
+          DATABASE_URL: postgres://test_user:test_password@localhost:5435/athena_test?sslmode=disable
         run: |
           make migrate-custom
 
@@ -216,7 +216,7 @@ jobs:
           CLAMAV_MAX_RETRIES: 3
           CLAMAV_FALLBACK_MODE: strict
           QUARANTINE_DIR: /tmp/quarantine
-          DATABASE_URL: postgres://test_user:test_password@localhost:5432/athena_test?sslmode=disable
+          DATABASE_URL: postgres://test_user:test_password@localhost:5435/athena_test?sslmode=disable
           REDIS_URL: redis://localhost:6379/0
         run: |
           # Run against the security package so tests compile within package context
@@ -245,7 +245,7 @@ jobs:
           POSTGRES_USER: test_user
           POSTGRES_PASSWORD: test_password
         ports:
-          - 5432:5432
+          - 5435:5432
 
       redis:
         image: redis:7-alpine
@@ -326,7 +326,7 @@ jobs:
 
       - name: Start application
         env:
-          DATABASE_URL: postgres://test_user:test_password@localhost:5432/athena_test?sslmode=disable
+          DATABASE_URL: postgres://test_user:test_password@localhost:5435/athena_test?sslmode=disable
           REDIS_URL: redis://localhost:6379/0
           CLAMAV_ADDRESS: localhost:3310
           VIRUS_SCAN_ENABLED: true
