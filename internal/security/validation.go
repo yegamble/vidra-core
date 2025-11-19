@@ -171,7 +171,7 @@ func CheckFileSize(urlStr string, maxSize int64) error {
 	if err != nil {
 		return fmt.Errorf("failed to check file size: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	// Check Content-Length header
 	contentLength := resp.ContentLength
