@@ -1,0 +1,16 @@
+name: 'Setup IPFS Test Environment'
+description: 'Configures IPFS service for integration tests'
+
+outputs:
+  ipfs-api:
+    description: 'IPFS API endpoint URL'
+    value: ${{ steps.set-outputs.outputs.ipfs-api }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Set IPFS API URL output
+      id: set-outputs
+      shell: bash
+      run: |
+        echo "ipfs-api=http://ipfs:5001" >> $GITHUB_OUTPUT

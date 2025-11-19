@@ -1,0 +1,16 @@
+name: 'Setup Redis Test Environment'
+description: 'Configures Redis service for integration tests'
+
+outputs:
+  redis-url:
+    description: 'Redis connection URL'
+    value: ${{ steps.set-outputs.outputs.redis-url }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Set Redis URL output
+      id: set-outputs
+      shell: bash
+      run: |
+        echo "redis-url=redis://redis:6379/0" >> $GITHUB_OUTPUT
