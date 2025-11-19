@@ -2,7 +2,7 @@ name: Video Import Tests
 
 on:
   push:
-    branches: [main, develop, feature/video-import, 'claude/**']
+    branches: [main, develop]  # Only run on push for deployed branches
     paths:
       - 'internal/domain/import*.go'
       - 'internal/repository/import*.go'

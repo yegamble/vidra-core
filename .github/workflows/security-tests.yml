@@ -2,7 +2,7 @@ name: Security Tests (Optimized)
 
 on:
   push:
-    branches: [main, develop, 'claude/**']
+    branches: [main, develop]  # Only run on push for deployed branches
     paths:
       - '**.go'
       - 'go.mod'

@@ -5,7 +5,7 @@ on:
     branches:
       - main
       - develop
-      - 'claude/**'
+      # Only run on push for deployed branches
     paths:
       - 'migrations/**'
       - '.github/workflows/goose-migrate.yml'
