@@ -1,4 +1,4 @@
-name: Test Suite (Optimized)
+name: CI
 
 on:
   push:
@@ -40,31 +40,17 @@ jobs:
     env:
       CGO_ENABLED: "1"
     steps:
-      - name: Cleanup previous containers
-        run: |
-          echo "Cleaning up any lingering containers and networks..."
-          docker ps -aq | xargs -r docker rm -f || true
-          docker network prune -f || true
-          docker volume prune -f || true
-        continue-on-error: true
+      - name: Docker cleanup
+        uses: ./.github/actions/docker-cleanup
 
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Go with caching
-        uses: actions/setup-go@v5
+      - name: Set up Go (cached)
+        uses: ./.github/actions/setup-go-cached
         with:
           go-version: ${{ env.GO_VERSION }}
-          cache: true
           cache-dependency-path: go.sum
-
-      - name: Cache Go build cache
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/go-build
-          key: go-build-${{ runner.os }}-${{ hashFiles('**/go.sum') }}
-          restore-keys: |
-            go-build-${{ runner.os }}-
 
       # Removed: Docker installation (not needed on self-hosted)
       # Removed: apt-get update (base runner has common packages)
@@ -116,31 +102,17 @@ jobs:
           --health-retries 15
 
     steps:
-      - name: Cleanup previous containers
-        run: |
-          echo "Cleaning up any lingering containers and networks..."
-          docker ps -aq | xargs -r docker rm -f || true
-          docker network prune -f || true
-          docker volume prune -f || true
-        continue-on-error: true
+      - name: Docker cleanup
+        uses: ./.github/actions/docker-cleanup
 
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Go with caching
-        uses: actions/setup-go@v5
+      - name: Set up Go (cached)
+        uses: ./.github/actions/setup-go-cached
         with:
           go-version: ${{ env.GO_VERSION }}
-          cache: true
           cache-dependency-path: go.sum
-
-      - name: Cache Go build cache
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/go-build
-          key: go-build-${{ runner.os }}-${{ hashFiles('**/go.sum') }}
-          restore-keys: |
-            go-build-${{ runner.os }}-
 
       # Removed: Docker installation
       # Removed: Manual dependency installation with retry logic
@@ -169,20 +141,11 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Go with caching
-        uses: actions/setup-go@v5
+      - name: Set up Go (cached)
+        uses: ./.github/actions/setup-go-cached
         with:
           go-version: ${{ env.GO_VERSION }}
-          cache: true
           cache-dependency-path: go.sum
-
-      - name: Cache Go build cache
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/go-build
-          key: go-build-${{ runner.os }}-${{ hashFiles('**/go.sum') }}
-          restore-keys: |
-            go-build-${{ runner.os }}-
 
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v7
@@ -202,20 +165,11 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Go with caching
-        uses: actions/setup-go@v5
+      - name: Set up Go (cached)
+        uses: ./.github/actions/setup-go-cached
         with:
           go-version: ${{ env.GO_VERSION }}
-          cache: true
           cache-dependency-path: go.sum
-
-      - name: Cache Go build cache
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/go-build
-          key: go-build-${{ runner.os }}-${{ hashFiles('**/go.sum') }}
-          restore-keys: |
-            go-build-${{ runner.os }}-
 
       # Removed: Duplicate module download/verify logic
       # CHANGE: Simplified format check using Makefile
@@ -231,11 +185,10 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Go with caching
-        uses: actions/setup-go@v5
+      - name: Set up Go (cached)
+        uses: ./.github/actions/setup-go-cached
         with:
           go-version: ${{ env.GO_VERSION }}
-          cache: true
           cache-dependency-path: go.sum
 
       - name: Build binary
@@ -278,7 +231,13 @@ jobs:
       # Removed: apt-get update
 
       - name: Install PostgreSQL client
-        run: sudo apt-get install -y postgresql-client
+        run: |
+          if ! command -v psql >/dev/null 2>&1; then
+            sudo apt-get update -qq
+            sudo apt-get install -y postgresql-client
+          else
+            echo "PostgreSQL client already installed"
+          fi
 
       - name: Apply SQL migrations
         env:

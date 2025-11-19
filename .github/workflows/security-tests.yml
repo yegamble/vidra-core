@@ -1,4 +1,4 @@
-name: Security Tests (Optimized)
+name: Security
 
 on:
   push:
@@ -59,30 +59,14 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Go with caching
-        uses: actions/setup-go@v5
+      - name: Set up Go (cached)
+        uses: ./.github/actions/setup-go-cached
         with:
           go-version: ${{ env.GO_VERSION }}
-          cache: true
           cache-dependency-path: go.sum
 
-      - name: Cache Go build cache
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/go-build
-          key: go-build-${{ runner.os }}-${{ hashFiles('**/go.sum') }}
-          restore-keys: |
-            go-build-${{ runner.os }}-
-
-      # OPTIMIZATION: Use cache for security tools
-      - name: Cache security tools
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/go/bin/govulncheck
-            ~/go/bin/gosec
-            ~/go/bin/staticcheck
-          key: security-tools-${{ runner.os }}-${{ hashFiles('.github/workflows/security-tests-optimized.yml') }}
+      - name: Install security tools (cached)
+        uses: ./.github/actions/install-security-tools
 
       # SSRF Protection Tests
       - name: Run SSRF Protection Unit Tests
@@ -157,30 +141,11 @@ jobs:
           echo "::endgroup::"
 
       # Dependency Scanning
-      - name: Install govulncheck
-        if: matrix.category == 'dependency-scanning'
-        run: |
-          if ! command -v govulncheck &> /dev/null; then
-            go install golang.org/x/vuln/cmd/govulncheck@latest
-          else
-            echo "govulncheck already installed"
-          fi
-
       - name: Run govulncheck
         if: matrix.category == 'dependency-scanning'
         run: govulncheck ./...
 
       # Static Analysis
-      - name: Install security scanners
-        if: matrix.category == 'static-analysis'
-        run: |
-          if ! command -v gosec &> /dev/null; then
-            go install github.com/securego/gosec/v2/cmd/gosec@latest
-          fi
-          if ! command -v staticcheck &> /dev/null; then
-            go install honnef.co/go/tools/cmd/staticcheck@latest
-          fi
-
       - name: Run gosec security scanner
         if: matrix.category == 'static-analysis'
         run: |

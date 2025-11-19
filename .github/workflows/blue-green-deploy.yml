@@ -232,6 +232,11 @@ jobs:
           echo "${{ secrets.KUBE_CONFIG }}" | base64 -d > ${{ env.KUBECONFIG_PATH }}
           echo "KUBECONFIG=${{ env.KUBECONFIG_PATH }}" >> $GITHUB_ENV
 
+      - name: Setup kustomize
+        uses: imranismail/setup-kustomize@v3
+        with:
+          kustomize-version: v5.4.1
+
       - name: Update image tag in manifests
         run: |
           TARGET_COLOR="${{ needs.validate-input.outputs.target_color }}"
@@ -429,7 +434,7 @@ jobs:
     if: success()
     steps:
       - name: Send Slack notification
-        if: vars.SLACK_WEBHOOK_URL != ''
+        if: ${{ secrets.SLACK_WEBHOOK_URL != '' }}
         run: |
           curl -X POST ${{ secrets.SLACK_WEBHOOK_URL }} \
             -H 'Content-Type: application/json' \
