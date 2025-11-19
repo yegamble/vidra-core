@@ -230,7 +230,6 @@ runs:
     # Ensure module files are tidy and dependencies are downloadable
     - name: Tidy and download modules
       shell: bash
-      timeout-minutes: 10
       run: |
         set -euo pipefail
 
