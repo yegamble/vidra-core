@@ -9,8 +9,12 @@ on:
   workflow_dispatch:  # Allow manual triggering
 
 concurrency:
-  group: heavy-tests-${{ github.ref }}
+  group: heavy-tests-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
 
 jobs:
   e2e-tests:
@@ -32,7 +36,7 @@ jobs:
 
       - name: Install system dependencies
         run: |
-          sudo apt-get update
+          sudo apt-get update -qq
           sudo apt-get install -y ffmpeg make
 
       - name: Set up Go (cached)
@@ -151,7 +155,7 @@ jobs:
 
       - name: Install system dependencies
         run: |
-          sudo apt-get update
+          sudo apt-get update -qq
           sudo apt-get install -y ffmpeg make
 
       - name: Set up Go (cached)

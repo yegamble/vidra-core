@@ -22,13 +22,19 @@ on:
       - 'migrations/043_*.sql'
 
 concurrency:
-  group: postgres-workflows-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: false
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
 
 jobs:
   lint:
     name: Lint Import Code
     runs-on: self-hosted
+    timeout-minutes: 10
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -51,8 +57,10 @@ jobs:
   unit-tests:
     name: Unit Tests
     runs-on: self-hosted
+    timeout-minutes: 15
     env:
       CGO_ENABLED: "1"
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -62,27 +70,6 @@ jobs:
         with:
           go-version: '1.24'
           cache-dependency-path: go.sum
-
-      - name: Download dependencies
-        run: |
-          # Download dependencies with retry logic and exponential backoff
-          export GOPROXY_TIMEOUT=600s
-          max_attempts=5
-          for i in $(seq 1 $max_attempts); do
-            if timeout 600 go mod download; then
-              echo "Dependencies downloaded successfully on attempt $i"
-              break
-            else
-              if [ $i -lt $max_attempts ]; then
-                delay=$((2 ** (i - 1) * 2))
-                echo "Download attempt $i failed, retrying in ${delay} seconds..."
-                sleep $delay
-              else
-                echo "All $max_attempts attempts failed"
-                exit 1
-              fi
-            fi
-          done
 
       - name: Run domain tests
         run: go test -v -race -coverprofile=domain-coverage.out ./internal/domain -run TestImport
@@ -113,8 +100,10 @@ jobs:
   integration-tests:
     name: Integration Tests
     runs-on: self-hosted
+    timeout-minutes: 20
     env:
       CGO_ENABLED: "1"
+
     services:
       postgres:
         image: postgres:15.6-alpine
@@ -155,27 +144,6 @@ jobs:
           go-version: '1.24'
           cache-dependency-path: go.sum
 
-      - name: Download dependencies
-        run: |
-          # Download dependencies with retry logic and exponential backoff
-          export GOPROXY_TIMEOUT=600s
-          max_attempts=5
-          for i in $(seq 1 $max_attempts); do
-            if timeout 600 go mod download; then
-              echo "Dependencies downloaded successfully on attempt $i"
-              break
-            else
-              if [ $i -lt $max_attempts ]; then
-                delay=$((2 ** (i - 1) * 2))
-                echo "Download attempt $i failed, retrying in ${delay} seconds..."
-                sleep $delay
-              else
-                echo "All $max_attempts attempts failed"
-                exit 1
-              fi
-            fi
-          done
-
       - name: Run migrations
         env:
           PGPASSWORD: test_password
@@ -208,7 +176,9 @@ jobs:
   build:
     name: Build Check
     runs-on: self-hosted
+    timeout-minutes: 10
     needs: [lint, unit-tests]
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4

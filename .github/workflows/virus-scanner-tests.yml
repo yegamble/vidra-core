@@ -22,17 +22,20 @@ on:
 
 permissions:
   contents: read
-  pull-requests: write  # For posting test results
-  security-events: write  # For security scanning
+  pull-requests: write
+  security-events: write
 
 concurrency:
-  group: heavy-tests-${{ github.ref }}
+  group: heavy-tests-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
 
 env:
   GO_VERSION: "1.24"
   CLAMAV_VERSION: "stable"
-  EICAR_TEST_STRING: "X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*"
 
 jobs:
   unit-tests:
@@ -54,29 +57,8 @@ jobs:
 
       - name: Install jq and PostgreSQL client
         run: |
-          sudo apt-get update
+          sudo apt-get update -qq
           sudo apt-get install -y jq postgresql-client
-
-      - name: Install dependencies
-        run: |
-          # Download dependencies with retry logic and exponential backoff
-          export GOPROXY_TIMEOUT=600s
-          max_attempts=5
-          for i in $(seq 1 $max_attempts); do
-            if timeout 600 go mod download; then
-              echo "Dependencies downloaded successfully on attempt $i"
-              break
-            else
-              if [ $i -lt $max_attempts ]; then
-                delay=$((2 ** (i - 1) * 2))
-                echo "Download attempt $i failed, retrying in ${delay} seconds..."
-                sleep $delay
-              else
-                echo "All $max_attempts attempts failed"
-                exit 1
-              fi
-            fi
-          done
 
       - name: Run virus scanner unit tests
         run: |
@@ -147,37 +129,14 @@ jobs:
           cache-dependency-path: go.sum
 
       - name: Wait for ClamAV to be ready
-        run: |
-          echo "Waiting for ClamAV daemon to start and load signatures..."
-          timeout=300
-          elapsed=0
-          retry_count=0
-          max_retries=3
-
-          while true; do
-            if docker exec $(docker ps -q -f ancestor=clamav/clamav:${{ env.CLAMAV_VERSION }}) clamdscan --version 2>/dev/null; then
-              echo "ClamAV is ready!"
-              break
-            fi
-
-            if [ $elapsed -ge $timeout ]; then
-              if [ $retry_count -lt $max_retries ]; then
-                retry_count=$((retry_count + 1))
-                echo "ClamAV check timeout, retry $retry_count/$max_retries - restarting container..."
-                docker restart $(docker ps -q -f ancestor=clamav/clamav:${{ env.CLAMAV_VERSION }})
-                elapsed=0
-                sleep 30
-              else
-                echo "ClamAV failed to start after $max_retries retries"
-                docker logs $(docker ps -q -f ancestor=clamav/clamav:${{ env.CLAMAV_VERSION }})
-                exit 1
-              fi
-            fi
-
-            echo "Waiting... ($elapsed/$timeout seconds, retry $retry_count/$max_retries)"
-            sleep 10
-            elapsed=$((elapsed + 10))
-          done
+        uses: ./.github/actions/wait-for-service
+        with:
+          service_type: 'docker'
+          check_command: 'docker exec $(docker ps -q -f ancestor=clamav/clamav:${{ env.CLAMAV_VERSION }}) clamdscan --version 2>/dev/null'
+          timeout: '300'
+          docker_container: '$(docker ps -q -f ancestor=clamav/clamav:${{ env.CLAMAV_VERSION }})'
+          max_restarts: '3'
+          service_name: 'ClamAV daemon'
 
       - name: Create test fixtures
         run: |
@@ -186,8 +145,8 @@ jobs:
           # Create clean test file
           echo "This is a clean test file" > testdata/virus_scanner/clean_file.txt
 
-          # Create EICAR test virus file
-          echo "${{ env.EICAR_TEST_STRING }}" > testdata/virus_scanner/eicar.txt
+          # Generate EICAR test virus file at runtime (security best practice)
+          echo 'X5O!P%@AP[4\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*' > testdata/virus_scanner/eicar.txt
 
           # Create large clean file (100MB)
           dd if=/dev/urandom of=testdata/virus_scanner/large_clean.bin bs=1M count=100
@@ -258,63 +217,22 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
+      - name: Set up Node.js with Newman
+        uses: ./.github/actions/setup-node-tools
         with:
           node-version: '20'
+          packages: 'newman newman-reporter-htmlextra'
+          cache-key-suffix: 'virus-scanner'
 
-      - name: Install Newman
-        run: |
-          # Install Newman and reporter with retry logic and exponential backoff
-          max_attempts=5
-          for i in $(seq 1 $max_attempts); do
-            if npm install -g newman newman-reporter-htmlextra; then
-              echo "Newman installed successfully on attempt $i"
-              break
-            else
-              if [ $i -lt $max_attempts ]; then
-                delay=$((2 ** (i - 1) * 2))
-                echo "Install attempt $i failed, retrying in ${delay} seconds..."
-                sleep $delay
-              else
-                echo "All $max_attempts attempts failed"
-                exit 1
-              fi
-            fi
-          done
-
-      - name: Wait for services
-        run: |
-          # Wait for ClamAV with retry logic
-          echo "Waiting for ClamAV daemon..."
-          timeout=300
-          elapsed=0
-          retry_count=0
-          max_retries=3
-
-          while true; do
-            if docker exec $(docker ps -q -f ancestor=clamav/clamav:${{ env.CLAMAV_VERSION }}) clamdscan --version 2>/dev/null; then
-              echo "ClamAV is ready!"
-              break
-            fi
-
-            if [ $elapsed -ge $timeout ]; then
-              if [ $retry_count -lt $max_retries ]; then
-                retry_count=$((retry_count + 1))
-                echo "ClamAV check timeout, retry $retry_count/$max_retries - restarting container..."
-                docker restart $(docker ps -q -f ancestor=clamav/clamav:${{ env.CLAMAV_VERSION }})
-                elapsed=0
-                sleep 30
-              else
-                echo "ClamAV failed to start after $max_retries retries"
-                exit 1
-              fi
-            fi
-
-            echo "Waiting... ($elapsed/$timeout seconds, retry $retry_count/$max_retries)"
-            sleep 10
-            elapsed=$((elapsed + 10))
-          done
+      - name: Wait for ClamAV
+        uses: ./.github/actions/wait-for-service
+        with:
+          service_type: 'docker'
+          check_command: 'docker exec $(docker ps -q -f ancestor=clamav/clamav:${{ env.CLAMAV_VERSION }}) clamdscan --version 2>/dev/null'
+          timeout: '300'
+          docker_container: '$(docker ps -q -f ancestor=clamav/clamav:${{ env.CLAMAV_VERSION }})'
+          max_restarts: '3'
+          service_name: 'ClamAV daemon'
 
       - name: Start application
         env:
@@ -361,9 +279,9 @@ jobs:
           dd if=/dev/urandom of=postman/test-files/security/10mb-plus-one.bin bs=1M count=10
           echo "X" >> postman/test-files/security/10mb-plus-one.bin
 
-          # EICAR test files
-          echo "${{ env.EICAR_TEST_STRING }}" > postman/test-files/security/eicar.txt
-          echo "${{ env.EICAR_TEST_STRING }}" > postman/test-files/security/eicar.com
+          # Generate EICAR test files at runtime (security best practice)
+          echo 'X5O!P%@AP[4\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*' > postman/test-files/security/eicar.txt
+          echo 'X5O!P%@AP[4\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*' > postman/test-files/security/eicar.com
 
           # Large file for performance testing
           dd if=/dev/urandom of=postman/test-files/security/100mb-test.bin bs=1M count=100
@@ -407,8 +325,8 @@ jobs:
           # Restart ClamAV for subsequent tests
           docker start $(docker ps -a -q -f ancestor=clamav/clamav:${{ env.CLAMAV_VERSION }})
 
-          # Verify upload was rejected (should fail with network error)
-          if [ $UPLOAD_EXIT_CODE -eq 0 ]; then
+          # Verify upload was rejected
+          if [ ${UPLOAD_EXIT_CODE:-0} -eq 0 ]; then
             echo "SECURITY FAILURE: Upload succeeded despite ClamAV interruption!"
             exit 1
           else
@@ -423,11 +341,12 @@ jobs:
           path: |
             postman/newman/virus-scanner-report.html
             postman/newman/virus-scanner-results.json
+          retention-days: 14
 
       - name: Cleanup
         if: always()
         run: |
-          kill ${{ env.APP_PID }} || true
+          kill ${{ env.APP_PID }} 2>/dev/null || echo "App already stopped"
 
   performance-benchmarks:
     name: Performance Benchmarks
@@ -458,37 +377,14 @@ jobs:
           cache-dependency-path: go.sum
 
       - name: Wait for ClamAV
-        run: |
-          # Wait for ClamAV with retry logic
-          echo "Waiting for ClamAV daemon..."
-          timeout=300
-          elapsed=0
-          retry_count=0
-          max_retries=3
-
-          while true; do
-            if docker exec $(docker ps -q -f ancestor=clamav/clamav:${{ env.CLAMAV_VERSION }}) clamdscan --version 2>/dev/null; then
-              echo "ClamAV is ready!"
-              break
-            fi
-
-            if [ $elapsed -ge $timeout ]; then
-              if [ $retry_count -lt $max_retries ]; then
-                retry_count=$((retry_count + 1))
-                echo "ClamAV check timeout, retry $retry_count/$max_retries - restarting container..."
-                docker restart $(docker ps -q -f ancestor=clamav/clamav:${{ env.CLAMAV_VERSION }})
-                elapsed=0
-                sleep 30
-              else
-                echo "ClamAV failed to start after $max_retries retries"
-                exit 1
-              fi
-            fi
-
-            echo "Waiting... ($elapsed/$timeout seconds, retry $retry_count/$max_retries)"
-            sleep 10
-            elapsed=$((elapsed + 10))
-          done
+        uses: ./.github/actions/wait-for-service
+        with:
+          service_type: 'docker'
+          check_command: 'docker exec $(docker ps -q -f ancestor=clamav/clamav:${{ env.CLAMAV_VERSION }}) clamdscan --version 2>/dev/null'
+          timeout: '300'
+          docker_container: '$(docker ps -q -f ancestor=clamav/clamav:${{ env.CLAMAV_VERSION }})'
+          max_restarts: '3'
+          service_name: 'ClamAV daemon'
 
       - name: Create benchmark test files
         run: |
@@ -510,16 +406,17 @@ jobs:
 
       - name: Check performance thresholds
         run: |
-          # Extract benchmark results and validate against thresholds
           echo "Validating performance benchmarks..."
 
           # Small file scan should be < 10ms average
-          SMALL_FILE_NS=$(grep "BenchmarkVirusScanner_ScanSmallFile" benchmark-results.txt | awk '{print $3}')
-          SMALL_FILE_MS=$(echo "scale=2; $SMALL_FILE_NS / 1000000" | bc)
+          if grep -q "BenchmarkVirusScanner_ScanSmallFile" benchmark-results.txt; then
+            SMALL_FILE_NS=$(grep "BenchmarkVirusScanner_ScanSmallFile" benchmark-results.txt | awk '{print $3}')
+            SMALL_FILE_MS=$(echo "scale=2; $SMALL_FILE_NS / 1000000" | bc)
 
-          if (( $(echo "$SMALL_FILE_MS > 10" | bc -l) )); then
-            echo "PERFORMANCE DEGRADATION: Small file scan took ${SMALL_FILE_MS}ms (threshold: 10ms)"
-            exit 1
+            if (( $(echo "$SMALL_FILE_MS > 10" | bc -l) )); then
+              echo "PERFORMANCE DEGRADATION: Small file scan took ${SMALL_FILE_MS}ms (threshold: 10ms)"
+              exit 1
+            fi
           fi
 
           echo "Performance benchmarks PASSED"
@@ -529,10 +426,12 @@ jobs:
         with:
           name: performance-benchmarks
           path: benchmark-results.txt
+          retention-days: 14
 
   security-audit:
     name: Security Audit
     runs-on: self-hosted
+    timeout-minutes: 15
     needs: [edge-case-tests, performance-benchmarks]
     if: always()
 
@@ -562,10 +461,12 @@ jobs:
         with:
           name: security-audit-results
           path: gosec-results.json
+          retention-days: 90
 
   post-test-report:
     name: Generate Test Report
     runs-on: self-hosted
+    timeout-minutes: 10
     needs: [unit-tests, integration-tests, edge-case-tests, performance-benchmarks, security-audit]
     if: always()
 

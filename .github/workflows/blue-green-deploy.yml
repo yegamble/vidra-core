@@ -42,10 +42,15 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
   validate-input:
     name: Validate Deployment Input
     runs-on: self-hosted
+    timeout-minutes: 10
     outputs:
       current_color: ${{ steps.detect.outputs.current_color }}
       target_color: ${{ steps.detect.outputs.target_color }}
@@ -100,6 +105,7 @@ jobs:
   staging-deployment:
     name: Deploy to Staging
     runs-on: self-hosted
+    timeout-minutes: 20
     needs: [validate-input]
     if: ${{ !inputs.skip_staging }}
     environment:
@@ -141,6 +147,7 @@ jobs:
   database-migration:
     name: Apply Database Migrations
     runs-on: self-hosted
+    timeout-minutes: 15
     needs: [validate-input, staging-deployment]
     if: always() && needs.validate-input.result == 'success' && (needs.staging-deployment.result == 'success' || inputs.skip_staging)
     environment:
@@ -220,6 +227,7 @@ jobs:
   deploy-target-environment:
     name: Deploy ${{ needs.validate-input.outputs.target_color }} Environment
     runs-on: self-hosted
+    timeout-minutes: 30
     needs: [validate-input, database-migration]
     environment:
       name: production-${{ needs.validate-input.outputs.target_color }}
@@ -324,6 +332,7 @@ jobs:
   canary-rollout:
     name: Canary Rollout (${{ inputs.canary_percentage }}%)
     runs-on: self-hosted
+    timeout-minutes: 20
     needs: [validate-input, pre-switch-validation]
     environment:
       name: production-canary
@@ -366,6 +375,7 @@ jobs:
   full-rollout:
     name: Full Rollout (100%)
     runs-on: self-hosted
+    timeout-minutes: 60
     needs: [validate-input, canary-rollout]
     environment:
       name: production-full-rollout

@@ -20,8 +20,12 @@ permissions:
   pull-requests: read
 
 concurrency:
-  group: postgres-workflows-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: false
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
 
 env:
   GO_VERSION: "1.24"
@@ -31,14 +35,13 @@ env:
   CI_JWT_SECRET: test-jwt-secret-for-ci
 
 jobs:
-  # Run unit tests, integration tests, and linting in parallel
-  # Previous version: sequential with dependencies
-  # Time savings: 6-10 minutes
   unit:
     name: Unit Tests
     runs-on: self-hosted
+    timeout-minutes: 10
     env:
       CGO_ENABLED: "1"
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -49,17 +52,13 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache-dependency-path: go.sum
 
-      # Removed: Docker installation (not needed on self-hosted)
-      # Removed: apt-get update (base runner has common packages)
-      # Removed: Manual go mod download (setup-go with cache handles this)
-
       - name: Run unit tests
         run: make test-unit
 
   integration:
     name: Integration Tests
     runs-on: self-hosted
-    # CHANGE: No longer depends on 'unit' - runs in parallel
+    timeout-minutes: 15
     env:
       CGO_ENABLED: "1"
 
@@ -111,9 +110,6 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache-dependency-path: go.sum
 
-      # Removed: Docker installation
-      # Removed: Manual dependency installation with retry logic
-
       - name: Install PostgreSQL client
         run: |
           sudo apt-get update -qq
@@ -138,7 +134,8 @@ jobs:
   lint:
     name: Lint
     runs-on: self-hosted
-    # CHANGE: No longer depends on other jobs - runs in parallel
+    timeout-minutes: 10
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -154,7 +151,6 @@ jobs:
         with:
           version: latest
           args: --timeout=10m
-          # Enable caching for golangci-lint
           skip-cache: false
           skip-pkg-cache: false
           skip-build-cache: false
@@ -162,7 +158,8 @@ jobs:
   format-check:
     name: Format Check
     runs-on: self-hosted
-    # CHANGE: Separate job for formatting, runs in parallel
+    timeout-minutes: 10
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -173,16 +170,15 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache-dependency-path: go.sum
 
-      # Removed: Duplicate module download/verify logic
-      # CHANGE: Simplified format check using Makefile
       - name: Check formatting
         run: make fmt-check
 
   build:
     name: Build
     runs-on: self-hosted
-    # CHANGE: Only needs unit and lint to pass (not integration)
+    timeout-minutes: 15
     needs: [unit, lint]
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -209,13 +205,11 @@ jobs:
   postman-e2e:
     name: Postman E2E Tests
     runs-on: self-hosted
-    # CHANGE: Runs in parallel with other tests
-    timeout-minutes: 20  # Reduced from 30
+    timeout-minutes: 20
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
-      # Removed: Docker installation
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -231,12 +225,13 @@ jobs:
         with:
           name: newman-results-e2e
           path: postman/newman-results.xml
+          retention-days: 14
 
       - name: Collect docker compose logs
         if: failure()
         run: |
           mkdir -p artifacts
-          COMPOSE_PROJECT_NAME=athena-test docker compose -f docker-compose.test.yml logs --no-color > artifacts/compose-logs.txt || true
+          COMPOSE_PROJECT_NAME=athena-test docker compose -f docker-compose.test.yml logs --no-color > artifacts/compose-logs.txt 2>/dev/null || echo "Unable to collect logs"
 
       - name: Upload compose logs
         if: failure()
@@ -244,13 +239,15 @@ jobs:
         with:
           name: compose-logs-e2e
           path: artifacts/compose-logs.txt
+          retention-days: 7
 
-  # Final gate: All critical tests must pass
   all-tests-passed:
     name: All Tests Passed
     runs-on: self-hosted
+    timeout-minutes: 5
     needs: [unit, integration, lint, format-check, build, postman-e2e]
     if: always()
+
     steps:
       - name: Check test results
         run: |
@@ -274,8 +271,6 @@ jobs:
             echo "Build failed"
             exit 1
           fi
-          # Migrations are validated in goose-migrate workflow; integration also applies them
-          # Docker build job removed; covered by E2E compose run
           if [ "${{ needs.postman-e2e.result }}" != "success" ]; then
             echo "Postman E2E tests failed"
             exit 1

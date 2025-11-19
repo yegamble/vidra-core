@@ -1,0 +1,44 @@
+name: 'Retry Command with Exponential Backoff'
+description: 'Executes a command with retry logic and exponential backoff'
+
+inputs:
+  command:
+    description: 'Command to execute'
+    required: true
+  max_attempts:
+    description: 'Maximum number of retry attempts'
+    required: false
+    default: '5'
+  initial_delay:
+    description: 'Initial delay in seconds'
+    required: false
+    default: '2'
+  description:
+    description: 'Description of what is being retried'
+    required: false
+    default: 'Command'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Execute with retry
+      shell: bash
+      run: |
+        max_attempts=${{ inputs.max_attempts }}
+        initial_delay=${{ inputs.initial_delay }}
+
+        for i in $(seq 1 $max_attempts); do
+          if ${{ inputs.command }}; then
+            echo "${{ inputs.description }} succeeded on attempt $i"
+            exit 0
+          else
+            if [ $i -lt $max_attempts ]; then
+              delay=$((initial_delay * (2 ** (i - 1))))
+              echo "${{ inputs.description }} attempt $i failed, retrying in ${delay} seconds..."
+              sleep $delay
+            else
+              echo "All $max_attempts attempts failed for: ${{ inputs.description }}"
+              exit 1
+            fi
+          fi
+        done

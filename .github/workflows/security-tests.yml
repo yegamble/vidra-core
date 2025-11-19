@@ -29,13 +29,14 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
   cancel-in-progress: true
 
+defaults:
+  run:
+    shell: bash
+
 env:
   GO_VERSION: "1.24"
 
 jobs:
-  # OPTIMIZATION: Use matrix strategy to run all security test categories in parallel
-  # Previous: 6 sequential jobs taking 15-20 minutes
-  # Optimized: 1 matrix job with 6 parallel instances taking 4-6 minutes
   security-tests:
     name: ${{ matrix.category }} Tests
     runs-on: self-hosted
@@ -205,17 +206,14 @@ jobs:
         with:
           name: gosec-security-report
           path: gosec-report.json
-          retention-days: 30
+          retention-days: 90
 
-  # Generate comprehensive security report after all tests complete
   security-report:
     name: Generate Security Report
     runs-on: self-hosted
+    timeout-minutes: 10
     needs: security-tests
     if: always()
-    # Only comment/report on PRs when 'security' labeled
-    # The 'security-tests' job already controls execution on PRs
-    
 
     steps:
       - name: Checkout code
