@@ -1,0 +1,56 @@
+name: 'Install Security Tools'
+description: 'Installs Go security scanning tools with caching'
+
+inputs:
+  tools:
+    description: 'Comma-separated list of tools to install (govulncheck,gosec,staticcheck)'
+    required: false
+    default: 'govulncheck,gosec,staticcheck'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Cache security tools
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/go/bin/govulncheck
+          ~/go/bin/gosec
+          ~/go/bin/staticcheck
+        key: security-tools-${{ runner.os }}-${{ inputs.tools }}-${{ hashFiles('go.sum') }}
+        restore-keys: |
+          security-tools-${{ runner.os }}-${{ inputs.tools }}-
+          security-tools-${{ runner.os }}-
+
+    - name: Install govulncheck
+      if: contains(inputs.tools, 'govulncheck')
+      shell: bash
+      run: |
+        if ! command -v govulncheck &> /dev/null; then
+          echo "Installing govulncheck..."
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+        else
+          echo "govulncheck already installed: $(govulncheck -version 2>&1 || echo 'version unknown')"
+        fi
+
+    - name: Install gosec
+      if: contains(inputs.tools, 'gosec')
+      shell: bash
+      run: |
+        if ! command -v gosec &> /dev/null; then
+          echo "Installing gosec..."
+          go install github.com/securego/gosec/v2/cmd/gosec@latest
+        else
+          echo "gosec already installed: $(gosec -version 2>&1 || echo 'version unknown')"
+        fi
+
+    - name: Install staticcheck
+      if: contains(inputs.tools, 'staticcheck')
+      shell: bash
+      run: |
+        if ! command -v staticcheck &> /dev/null; then
+          echo "Installing staticcheck..."
+          go install honnef.co/go/tools/cmd/staticcheck@latest
+        else
+          echo "staticcheck already installed: $(staticcheck -version 2>&1 || echo 'version unknown')"
+        fi

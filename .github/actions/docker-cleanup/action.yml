@@ -1,0 +1,13 @@
+name: 'Docker Cleanup'
+description: 'Cleans up dangling containers, networks, and volumes to avoid port conflicts between jobs'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Cleanup previous containers and networks
+      shell: bash
+      run: |
+        echo "Cleaning up any lingering containers, networks, and volumes..."
+        docker ps -aq | xargs -r docker rm -f || true
+        docker network prune -f || true
+        docker volume prune -f || true

@@ -1,0 +1,44 @@
+name: 'Setup Go with Optimal Caching'
+description: 'Sets up Go with module and build caching optimized for self-hosted runners'
+
+inputs:
+  go-version:
+    description: 'Go version to use'
+    required: false
+    default: '1.24'
+  cache-dependency-path:
+    description: 'Path to go.sum for cache key'
+    required: false
+    default: 'go.sum'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: ${{ inputs.go-version }}
+        cache: true
+        cache-dependency-path: ${{ inputs.cache-dependency-path }}
+
+    - name: Cache Go build cache
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cache/go-build
+        key: go-build-${{ runner.os }}-${{ hashFiles('**/go.sum') }}
+        restore-keys: |
+          go-build-${{ runner.os }}-
+
+    - name: Verify Go installation
+      shell: bash
+      run: |
+        echo "Go version: $(go version)"
+        echo "GOMODCACHE: $(go env GOMODCACHE)"
+        echo "GOCACHE: $(go env GOCACHE)"
+
+    - name: Verify modules
+      shell: bash
+      run: |
+        # Verify go.mod and go.sum are in sync
+        go mod verify

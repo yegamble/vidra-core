@@ -1,10 +1,21 @@
-name: Security Tests
+name: Security
 
 on:
   push:
-    branches: [main, develop, 'claude/**']
+    branches: [main, develop]  # Only run on push for deployed branches
+    paths:
+      - '**.go'
+      - 'go.mod'
+      - 'go.sum'
+      - 'internal/security/**'
+      - '.github/workflows/security-tests*.yml'
   pull_request:
     branches: [main, develop]
+    paths:
+      - '**.go'
+      - 'go.mod'
+      - 'go.sum'
+      - 'internal/security/**'
   schedule:
     # Run security tests daily at 2 AM UTC
     - cron: '0 2 * * *'
@@ -14,11 +25,35 @@ permissions:
   contents: read
   security-events: write
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+env:
+  GO_VERSION: "1.24"
+
 jobs:
-  ssrf-protection-tests:
-    name: SSRF Protection Tests
+  # OPTIMIZATION: Use matrix strategy to run all security test categories in parallel
+  # Previous: 6 sequential jobs taking 15-20 minutes
+  # Optimized: 1 matrix job with 6 parallel instances taking 4-6 minutes
+  security-tests:
+    name: ${{ matrix.category }} Tests
     runs-on: self-hosted
-    timeout-minutes: 10
+    timeout-minutes: 15
+    # Only run on PR when labeled 'security'; always run on push/schedule/dispatch
+    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'security')
+
+    strategy:
+      fail-fast: false
+      matrix:
+        category:
+          - ssrf-protection
+          - url-validation
+          - activitypub-security
+          - dependency-scanning
+          - static-analysis
+          - penetration-testing
+
     env:
       CGO_ENABLED: "1"
 
@@ -26,43 +61,38 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Go
-        uses: actions/setup-go@v5
+      - name: Set up Go (cached)
+        uses: ./.github/actions/setup-go-cached
         with:
-          go-version: '1.24'
-          cache: true
+          go-version: ${{ env.GO_VERSION }}
           cache-dependency-path: go.sum
 
+      - name: Install security tools (cached)
+        uses: ./.github/actions/install-security-tools
+
+      # SSRF Protection Tests
       - name: Run SSRF Protection Unit Tests
+        if: matrix.category == 'ssrf-protection'
         run: |
           echo "::group::SSRF Protection Unit Tests"
           go test -v -race -coverprofile=ssrf-coverage.out ./internal/security/...
           echo "::endgroup::"
 
       - name: Run SSRF Integration Tests
+        if: matrix.category == 'ssrf-protection'
         run: |
           echo "::group::SSRF Protection Integration Tests"
-          # Run only SSRF-related tests in the integration package
           go test -v -race -coverprofile=ssrf-integration-coverage.out ./tests/integration -run '^TestSSRFProtection'
           echo "::endgroup::"
 
-      - name: Generate Coverage Report
+      - name: Generate Coverage Report (SSRF)
+        if: matrix.category == 'ssrf-protection'
         run: |
           go tool cover -func=ssrf-coverage.out
           go tool cover -html=ssrf-coverage.out -o ssrf-coverage.html
 
-      - name: Upload Coverage Artifacts
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: ssrf-coverage-reports
-          path: |
-            ssrf-coverage.out
-            ssrf-coverage.html
-            ssrf-integration-coverage.out
-          retention-days: 30
-
-      - name: Check Coverage Threshold
+      - name: Check Coverage Threshold (SSRF)
+        if: matrix.category == 'ssrf-protection'
         run: |
           python3 - << 'PY'
           import re, sys, subprocess
@@ -75,75 +105,93 @@ jobs:
               sys.exit(1)
           PY
 
-  url-validation-tests:
-    name: URL Validation & Domain Tests
-    runs-on: self-hosted
-    timeout-minutes: 10
-    env:
-      CGO_ENABLED: "1"
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.24'
-          cache: true
-          cache-dependency-path: go.sum
-
+      # URL Validation Tests
       - name: Run Domain URL Validation Tests
+        if: matrix.category == 'url-validation'
         run: |
           echo "::group::Domain Import Tests"
           go test -v -race ./internal/domain -run '^TestImport'
           echo "::endgroup::"
 
       - name: Run Import Service Tests
+        if: matrix.category == 'url-validation'
         run: |
           echo "::group::Import Service Tests"
           go test -v -race ./internal/usecase/import/...
           echo "::endgroup::"
 
       - name: Run Redundancy Discovery Tests
+        if: matrix.category == 'url-validation'
         run: |
           echo "::group::Redundancy Instance Discovery Tests"
           go test -v -race ./internal/usecase/redundancy/...
           echo "::endgroup::"
 
-  activitypub-security-tests:
-    name: ActivityPub Security Tests
-    runs-on: self-hosted
-    timeout-minutes: 10
-    env:
-      CGO_ENABLED: "1"
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.24'
-          cache: true
-          cache-dependency-path: go.sum
-
+      # ActivityPub Security Tests
       - name: Run ActivityPub Service Tests
+        if: matrix.category == 'activitypub-security'
         run: |
           echo "::group::ActivityPub Service Security Tests"
           go test -v -race -coverprofile=activitypub-coverage.out ./internal/usecase/activitypub/...
           echo "::endgroup::"
 
       - name: Run Social Service Tests
+        if: matrix.category == 'activitypub-security'
         run: |
           echo "::group::Social Service Security Tests"
           go test -v -race -coverprofile=social-coverage.out ./internal/usecase/social/...
           echo "::endgroup::"
 
-      - name: Upload Coverage Reports
+      # Dependency Scanning
+      - name: Run govulncheck
+        if: matrix.category == 'dependency-scanning'
+        run: govulncheck ./...
+
+      # Static Analysis
+      - name: Run gosec security scanner
+        if: matrix.category == 'static-analysis'
+        run: |
+          gosec -fmt=json -out=gosec-report.json ./...
+        continue-on-error: true
+
+      - name: Run staticcheck
+        if: matrix.category == 'static-analysis'
+        run: staticcheck ./...
+
+      # Penetration Testing
+      - name: Build application
+        if: matrix.category == 'penetration-testing'
+        run: go build -o athena-server ./cmd/server
+
+      - name: Run SSRF Attack Simulation Tests
+        if: matrix.category == 'penetration-testing'
+        run: |
+          echo "::group::SSRF Attack Simulation"
+          go test -v -tags=pentest ./tests/integration/ssrf_protection_test.go
+          echo "::endgroup::"
+
+      - name: Test URL Validation Edge Cases
+        if: matrix.category == 'penetration-testing'
+        run: |
+          echo "::group::URL Validation Edge Cases"
+          go test -v ./internal/security/... -run TestValidateURL
+          echo "::endgroup::"
+
+      # Upload artifacts based on category
+      - name: Upload Coverage Artifacts (SSRF)
+        if: matrix.category == 'ssrf-protection' && always()
         uses: actions/upload-artifact@v4
-        if: always()
+        with:
+          name: ssrf-coverage-reports
+          path: |
+            ssrf-coverage.out
+            ssrf-coverage.html
+            ssrf-integration-coverage.out
+          retention-days: 30
+
+      - name: Upload Coverage Reports (ActivityPub)
+        if: matrix.category == 'activitypub-security' && always()
+        uses: actions/upload-artifact@v4
         with:
           name: federation-coverage-reports
           path: |
@@ -151,148 +199,23 @@ jobs:
             social-coverage.out
           retention-days: 30
 
-  dependency-scanning:
-    name: Dependency Vulnerability Scan
-    runs-on: self-hosted
-    timeout-minutes: 10
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.24'
-          cache: true
-          cache-dependency-path: go.sum
-
-      - name: Run govulncheck
-        run: |
-          # Install govulncheck with retry logic
-          max_attempts=5
-          for i in $(seq 1 $max_attempts); do
-            if go install golang.org/x/vuln/cmd/govulncheck@latest; then
-              echo "govulncheck installed successfully on attempt $i"
-              break
-            else
-              if [ $i -lt $max_attempts ]; then
-                delay=$((2 ** (i - 1) * 2))
-                echo "Install attempt $i failed, retrying in ${delay} seconds..."
-                sleep $delay
-              else
-                echo "All $max_attempts attempts failed"
-                exit 1
-              fi
-            fi
-          done
-          govulncheck ./...
-
-  static-analysis:
-    name: Static Security Analysis
-    runs-on: self-hosted
-    timeout-minutes: 15
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.24'
-          cache: true
-          cache-dependency-path: go.sum
-
-      - name: Run gosec security scanner
-        run: |
-          # Install gosec with retry logic
-          max_attempts=5
-          for i in $(seq 1 $max_attempts); do
-            if go install github.com/securego/gosec/v2/cmd/gosec@latest; then
-              echo "gosec installed successfully on attempt $i"
-              break
-            else
-              if [ $i -lt $max_attempts ]; then
-                delay=$((2 ** (i - 1) * 2))
-                echo "Install attempt $i failed, retrying in ${delay} seconds..."
-                sleep $delay
-              else
-                echo "All $max_attempts attempts failed"
-                exit 1
-              fi
-            fi
-          done
-          gosec -fmt=json -out=gosec-report.json ./...
-        continue-on-error: true
-
-      - name: Run staticcheck
-        run: |
-          # Install staticcheck with retry logic
-          max_attempts=5
-          for i in $(seq 1 $max_attempts); do
-            if go install honnef.co/go/tools/cmd/staticcheck@latest; then
-              echo "staticcheck installed successfully on attempt $i"
-              break
-            else
-              if [ $i -lt $max_attempts ]; then
-                delay=$((2 ** (i - 1) * 2))
-                echo "Install attempt $i failed, retrying in ${delay} seconds..."
-                sleep $delay
-              else
-                echo "All $max_attempts attempts failed"
-                exit 1
-              fi
-            fi
-          done
-          staticcheck ./...
-
       - name: Upload gosec report
+        if: matrix.category == 'static-analysis' && always()
         uses: actions/upload-artifact@v4
-        if: always()
         with:
           name: gosec-security-report
           path: gosec-report.json
           retention-days: 30
 
-  penetration-testing:
-    name: Penetration Testing (SSRF)
-    runs-on: self-hosted
-    timeout-minutes: 15
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.24'
-          cache: true
-          cache-dependency-path: go.sum
-
-      - name: Build application
-        run: |
-          go build -o athena-server ./cmd/server
-
-      - name: Run SSRF Attack Simulation Tests
-        run: |
-          echo "::group::SSRF Attack Simulation"
-          # Run tests that attempt common SSRF attack vectors
-          go test -v -tags=pentest ./tests/integration/ssrf_protection_test.go
-          echo "::endgroup::"
-
-      - name: Test URL Validation Edge Cases
-        run: |
-          echo "::group::URL Validation Edge Cases"
-          go test -v ./internal/security/... -run TestValidateURL
-          echo "::endgroup::"
-
+  # Generate comprehensive security report after all tests complete
   security-report:
     name: Generate Security Report
     runs-on: self-hosted
-    needs: [ssrf-protection-tests, url-validation-tests, activitypub-security-tests, dependency-scanning, static-analysis]
+    needs: security-tests
     if: always()
+    # Only comment/report on PRs when 'security' labeled
+    # The 'security-tests' job already controls execution on PRs
+    
 
     steps:
       - name: Checkout code
@@ -308,11 +231,12 @@ jobs:
 
           ## Test Execution Summary
 
-          - ✅ SSRF Protection Tests: ${{ needs.ssrf-protection-tests.result }}
-          - ✅ URL Validation Tests: ${{ needs.url-validation-tests.result }}
-          - ✅ ActivityPub Security: ${{ needs.activitypub-security-tests.result }}
-          - ✅ Dependency Scanning: ${{ needs.dependency-scanning.result }}
-          - ✅ Static Analysis: ${{ needs.static-analysis.result }}
+          - ✅ SSRF Protection Tests: ${{ needs.security-tests.result }}
+          - ✅ URL Validation Tests: ${{ needs.security-tests.result }}
+          - ✅ ActivityPub Security: ${{ needs.security-tests.result }}
+          - ✅ Dependency Scanning: ${{ needs.security-tests.result }}
+          - ✅ Static Analysis: ${{ needs.security-tests.result }}
+          - ✅ Penetration Testing: ${{ needs.security-tests.result }}
 
           ## Coverage Reports
 

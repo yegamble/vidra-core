@@ -55,7 +55,19 @@ func (v *URLValidator) ValidateURL(rawURL string) error {
 		host = u.Host
 	}
 
-	// Resolve hostname to IP addresses
+	// Remove brackets from IPv6 addresses (e.g., [::1] -> ::1)
+	host = strings.Trim(host, "[]")
+
+	// Check if host is already an IP address
+	if ip := net.ParseIP(host); ip != nil {
+		// Host is a direct IP address, validate it directly
+		if !v.allowPrivate && isPrivateIP(ip) {
+			return fmt.Errorf("access to private IP addresses is not allowed: %s", host)
+		}
+		return nil
+	}
+
+	// Not a direct IP, resolve hostname to IP addresses
 	ips, err := net.LookupIP(host)
 	if err != nil {
 		return fmt.Errorf("failed to resolve host %s: %w", host, err)
@@ -75,6 +87,11 @@ func (v *URLValidator) ValidateURL(rawURL string) error {
 
 // isPrivateIP checks if an IP address is in a private range
 func isPrivateIP(ip net.IP) bool {
+	// Normalize IPv4-mapped IPv6 to IPv4
+	if v4 := ip.To4(); v4 != nil {
+		ip = v4
+	}
+
 	// IPv4 private/restricted ranges
 	private4 := []string{
 		"10.0.0.0/8",         // RFC1918 private network
@@ -101,22 +118,22 @@ func isPrivateIP(ip net.IP) bool {
 		"fe80::/10",     // Link-local
 		"ff00::/8",      // Multicast
 		"::/128",        // Unspecified
-		"::ffff:0:0/96", // IPv4-mapped IPv6
 		"2001:db8::/32", // Documentation
 	}
 
-	// Check IPv4 ranges
-	for _, cidr := range private4 {
-		_, network, err := net.ParseCIDR(cidr)
-		if err != nil {
-			continue
+	if ip.To4() != nil {
+		for _, cidr := range private4 {
+			_, network, err := net.ParseCIDR(cidr)
+			if err != nil {
+				continue
+			}
+			if network.Contains(ip) {
+				return true
+			}
 		}
-		if network.Contains(ip) {
-			return true
-		}
+		return false
 	}
 
-	// Check IPv6 ranges
 	for _, cidr := range private6 {
 		_, network, err := net.ParseCIDR(cidr)
 		if err != nil {
@@ -124,24 +141,6 @@ func isPrivateIP(ip net.IP) bool {
 		}
 		if network.Contains(ip) {
 			return true
-		}
-	}
-
-	// Additional checks for IPv4-mapped IPv6 addresses
-	if ip.To4() != nil {
-		// Convert to IPv4 and check again
-		return isPrivateIP(ip.To4())
-	}
-
-	// Check for IPv4-compatible IPv6 addresses (deprecated)
-	if strings.HasPrefix(ip.String(), "::ffff:") {
-		// Extract IPv4 part
-		parts := strings.Split(ip.String(), ":")
-		if len(parts) > 0 {
-			ipv4Str := parts[len(parts)-1]
-			if ipv4 := net.ParseIP(ipv4Str); ipv4 != nil {
-				return isPrivateIP(ipv4)
-			}
 		}
 	}
 

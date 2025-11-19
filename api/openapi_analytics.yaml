@@ -502,9 +502,8 @@ paths:
                 fingerprint:
                   value:
                     data:
-                      fingerprint: "fp_a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6"
-                      expires_at: "2024-01-15T11:00:00Z"
-                      valid_for_seconds: 1800
+                      fingerprint_hash: "fp_a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6"
+                      created_at: "2024-01-15T10:30:00Z"
                     success: true
         '429':
           description: Rate limit exceeded
@@ -518,23 +517,175 @@ paths:
 
 components:
   schemas:
+    # Global Response Wrappers
+    SuccessResponse:
+      type: object
+      required:
+        - success
+        - data
+      properties:
+        success:
+          type: boolean
+          example: true
+          description: Indicates if the request was successful
+        data:
+          type: object
+          description: Response payload (schema varies by endpoint)
+        error:
+          type: object
+          nullable: true
+          description: Null on success
+        meta:
+          type: object
+          description: Optional pagination metadata
+          properties:
+            total:
+              type: integer
+            limit:
+              type: integer
+            offset:
+              type: integer
+            page:
+              type: integer
+            pageSize:
+              type: integer
+
+    ErrorResponse:
+      type: object
+      required:
+        - success
+        - error
+      properties:
+        success:
+          type: boolean
+          example: false
+          description: Indicates if the request was successful
+        data:
+          type: object
+          nullable: true
+          description: Null on error
+        error:
+          type: object
+          required:
+            - code
+            - message
+          properties:
+            code:
+              type: string
+              example: "INVALID_REQUEST"
+              description: Error code for programmatic handling
+            message:
+              type: string
+              example: "Invalid request parameters"
+              description: Human-readable error message
+            details:
+              type: string
+              description: Additional error context
+
     TrackViewRequest:
       type: object
+      required:
+        - fingerprint
       properties:
+        session_id:
+          type: string
+          format: uuid
+          description: Client-generated session UUID
         fingerprint:
           type: string
-          description: Viewer fingerprint from /api/v1/views/fingerprint
+          description: Viewer fingerprint hash from /api/v1/views/fingerprint
           example: "fp_a1b2c3d4e5f6g7h8"
-        watch_time_seconds:
+        watch_duration:
           type: integer
-          description: Seconds watched (for completion rate tracking)
+          description: Duration watched in seconds
           minimum: 0
           example: 120
-        referrer:
+        video_duration:
+          type: integer
+          description: Total video duration in seconds
+          minimum: 0
+        completion_percentage:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 100
+          description: Percentage of video watched
+        is_completed:
+          type: boolean
+          description: Whether video was watched to completion (≥95%)
+        seek_count:
+          type: integer
+          minimum: 0
+          description: Number of seek/jump events
+        pause_count:
+          type: integer
+          minimum: 0
+          description: Number of pause events
+        replay_count:
+          type: integer
+          minimum: 0
+        quality_changes:
+          type: integer
+          minimum: 0
+        buffer_events:
+          type: integer
+          minimum: 0
+        initial_load_time:
+          type: integer
+          description: Milliseconds to first frame
+        video_quality:
+          type: string
+          enum: [360p, 480p, 720p, 1080p, 1440p, 2160p]
+        referrer_url:
           type: string
           format: uri
-          description: Referring URL
+          description: Referring URL (truncated for privacy)
           example: "https://example.com/page"
+        referrer_type:
+          type: string
+          enum: [search, social, direct, suggested, embedded, external]
+        utm_source:
+          type: string
+        utm_medium:
+          type: string
+        utm_campaign:
+          type: string
+        device_type:
+          type: string
+          enum: [desktop, mobile, tablet, tv]
+        os_name:
+          type: string
+          example: "iOS"
+        browser_name:
+          type: string
+          example: "Safari"
+        screen_resolution:
+          type: string
+          example: "1920x1080"
+        is_mobile:
+          type: boolean
+        country_code:
+          type: string
+          pattern: '^[A-Z]{2}$'
+          example: "US"
+        region_code:
+          type: string
+        city_name:
+          type: string
+        timezone:
+          type: string
+          example: "America/New_York"
+        is_anonymous:
+          type: boolean
+        tracking_consent:
+          type: boolean
+          description: Whether user has consented to tracking
+        gdpr_consent:
+          type: boolean
+          description: GDPR consent where applicable
+        connection_type:
+          type: string
+          enum: [wifi, cellular, ethernet, other]
 
     TrackViewResponse:
       type: object
@@ -550,6 +701,11 @@ components:
               description: Total views for the video
             message:
               type: string
+              example: "View tracked successfully"
+            video_id:
+              type: string
+              format: uuid
+              description: ID of the video that was viewed
         success:
           type: boolean
 
@@ -821,42 +977,16 @@ components:
         data:
           type: object
           properties:
-            fingerprint:
+            fingerprint_hash:
               type: string
-              description: Unique viewer fingerprint
-            expires_at:
+              description: Unique viewer fingerprint hash
+              example: "abc123def456"
+            created_at:
               type: string
               format: date-time
-            valid_for_seconds:
-              type: integer
-              description: Validity duration in seconds
+              description: When the fingerprint was generated
         success:
           type: boolean
-
-    ErrorResponse:
-      type: object
-      required:
-        - error
-        - success
-      properties:
-        error:
-          type: object
-          required:
-            - code
-            - message
-          properties:
-            code:
-              type: string
-              example: "NOT_FOUND"
-            message:
-              type: string
-              example: "Video not found"
-            details:
-              type: object
-              additionalProperties: true
-        success:
-          type: boolean
-          example: false
 
   securitySchemes:
     bearerAuth:

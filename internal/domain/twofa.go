@@ -34,7 +34,8 @@ type TwoFAVerifySetupRequest struct {
 
 // TwoFAVerifySetupResponse is the response after successfully enabling 2FA
 type TwoFAVerifySetupResponse struct {
-	Enabled bool `json:"enabled"`
+	Message string `json:"message"`
+	Enabled bool   `json:"enabled"`
 }
 
 // TwoFADisableRequest is the request to disable 2FA
@@ -45,7 +46,8 @@ type TwoFADisableRequest struct {
 
 // TwoFADisableResponse is the response after disabling 2FA
 type TwoFADisableResponse struct {
-	Disabled bool `json:"disabled"`
+	Message string `json:"message"`
+	Enabled bool   `json:"enabled"`
 }
 
 // TwoFARegenerateBackupCodesRequest is the request to regenerate backup codes

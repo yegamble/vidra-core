@@ -6,6 +6,7 @@ import (
 
 	"athena/internal/domain"
 	"athena/internal/port"
+	"athena/internal/security"
 
 	"github.com/google/uuid"
 )
@@ -61,11 +62,22 @@ func (s *Service) CreateComment(ctx context.Context, userID uuid.UUID, req *doma
 		}
 	}
 
+	// Sanitize comment body to prevent XSS attacks
+	sanitizedBody := security.SanitizeCommentHTML(req.Body)
+
+	// Validate length after sanitization
+	if len(sanitizedBody) == 0 {
+		return nil, fmt.Errorf("comment body is empty after sanitization")
+	}
+	if len(sanitizedBody) > 10000 {
+		return nil, fmt.Errorf("comment body exceeds maximum length after sanitization")
+	}
+
 	comment := &domain.Comment{
 		VideoID:  req.VideoID,
 		UserID:   userID,
 		ParentID: req.ParentID,
-		Body:     req.Body,
+		Body:     sanitizedBody,
 		Status:   domain.CommentStatusActive,
 	}
 
@@ -101,8 +113,19 @@ func (s *Service) UpdateComment(ctx context.Context, userID uuid.UUID, commentID
 		return domain.ErrUnauthorized
 	}
 
-	// Update the comment
-	if err := s.commentRepo.Update(ctx, commentID, req.Body); err != nil {
+	// Sanitize comment body to prevent XSS attacks
+	sanitizedBody := security.SanitizeCommentHTML(req.Body)
+
+	// Validate length after sanitization
+	if len(sanitizedBody) == 0 {
+		return fmt.Errorf("comment body is empty after sanitization")
+	}
+	if len(sanitizedBody) > 10000 {
+		return fmt.Errorf("comment body exceeds maximum length after sanitization")
+	}
+
+	// Update the comment with sanitized body
+	if err := s.commentRepo.Update(ctx, commentID, sanitizedBody); err != nil {
 		return fmt.Errorf("failed to update comment: %w", err)
 	}
 
@@ -229,11 +252,22 @@ func (s *Service) FlagComment(ctx context.Context, userID uuid.UUID, commentID u
 		return fmt.Errorf("cannot flag deleted or hidden comment")
 	}
 
+	// Sanitize flag details if provided to prevent XSS
+	var sanitizedDetails *string
+	if req.Details != nil && *req.Details != "" {
+		sanitized := security.SanitizeStrictText(*req.Details)
+		// Limit details length
+		if len(sanitized) > 500 {
+			sanitized = sanitized[:500]
+		}
+		sanitizedDetails = &sanitized
+	}
+
 	flag := &domain.CommentFlag{
 		CommentID: commentID,
 		UserID:    userID,
 		Reason:    req.Reason,
-		Details:   req.Details,
+		Details:   sanitizedDetails,
 	}
 
 	if err := s.commentRepo.FlagComment(ctx, flag); err != nil {

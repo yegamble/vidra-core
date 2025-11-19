@@ -103,7 +103,10 @@ func NewClient(config *ClientConfig, logger *logrus.Logger) (*Client, error) {
 
 	// Create torrent client config
 	clientConfig := torrent.NewDefaultClientConfig()
-	clientConfig.ListenHost = func(string) string { return config.ListenAddr }
+	// Don't set ListenHost function if address is empty or default
+	if config.ListenAddr != "" && config.ListenAddr != ":0" && config.ListenAddr != "127.0.0.1:0" {
+		clientConfig.ListenHost = func(string) string { return config.ListenAddr }
+	}
 	clientConfig.DisableTCP = config.DisableTCP
 	clientConfig.DisableUTP = config.DisableUTP
 	clientConfig.DisableIPv6 = config.DisableIPv6

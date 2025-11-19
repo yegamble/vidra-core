@@ -125,8 +125,12 @@ func (y *YtDlp) ExtractMetadata(ctx context.Context, url string) (*domain.Import
 	return metadata, nil
 }
 
-// Download downloads a video from the given URL
+// Download downloads a video from the given URL with size protection
 func (y *YtDlp) Download(ctx context.Context, url, importID string, progressCallback ProgressCallback) (string, error) {
+	// SECURITY FIX: Add file size protection to prevent DoS attacks
+	// Limit downloads to 5GB to prevent memory exhaustion from malicious large files
+	const maxFileSize = int64(5 * 1024 * 1024 * 1024) // 5GB
+
 	// Create output directory
 	outputPath := filepath.Join(y.outputDir, importID)
 	if err := os.MkdirAll(outputPath, 0750); err != nil {
@@ -136,13 +140,15 @@ func (y *YtDlp) Download(ctx context.Context, url, importID string, progressCall
 	// Output template: {importID}/video.%(ext)s
 	outputTemplate := filepath.Join(outputPath, "video.%(ext)s")
 
-	// yt-dlp arguments
+	// yt-dlp arguments with size limit
+	// --max-filesize limits the download size to prevent DoS
 	args := []string{
 		"--format", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
 		"--merge-output-format", "mp4",
 		"--no-playlist",
 		"--no-warnings",
-		"--newline", // Output progress on new lines (easier to parse)
+		"--newline",                                          // Output progress on new lines (easier to parse)
+		"--max-filesize", strconv.FormatInt(maxFileSize, 10), // Add size limit
 		"--output", outputTemplate,
 		url,
 	}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 
 	"athena/internal/domain"
@@ -233,7 +234,7 @@ func TestSSRFProtection_PortScanning(t *testing.T) {
 	ports := []int{22, 23, 25, 80, 443, 3306, 5432, 6379, 8080, 9200, 27017}
 
 	for _, port := range ports {
-		url := "http://127.0.0.1:" + string(rune(port)) + "/"
+		url := "http://127.0.0.1:" + strconv.Itoa(port) + "/"
 		err := validator.ValidateURL(url)
 		if err == nil {
 			t.Errorf("Port scanning protection failed: localhost:%d was allowed", port)

@@ -474,6 +474,58 @@ components:
         ```
 
   schemas:
+    # Global Response Wrappers
+    SuccessResponse:
+      type: object
+      required:
+        - success
+        - data
+      properties:
+        success:
+          type: boolean
+          example: true
+          description: Indicates if the request was successful
+        data:
+          type: object
+          description: Response payload (schema varies by endpoint)
+        error:
+          type: object
+          nullable: true
+          description: Null on success
+
+    ErrorResponse:
+      type: object
+      required:
+        - success
+        - error
+      properties:
+        success:
+          type: boolean
+          example: false
+          description: Indicates if the request was successful
+        data:
+          type: object
+          nullable: true
+          description: Null on error
+        error:
+          type: object
+          required:
+            - code
+            - message
+          properties:
+            code:
+              type: string
+              example: "INVALID_REQUEST"
+              description: Error code for programmatic handling
+            message:
+              type: string
+              example: "Invalid request parameters"
+              description: Human-readable error message
+            details:
+              type: object
+              description: Additional error context
+              additionalProperties: true
+
     TwoFASetupResponse:
       type: object
       required:

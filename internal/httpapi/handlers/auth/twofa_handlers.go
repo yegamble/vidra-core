@@ -85,6 +85,7 @@ func (h *TwoFAHandlers) VerifyTwoFASetup(w http.ResponseWriter, r *http.Request)
 	}
 
 	response := domain.TwoFAVerifySetupResponse{
+		Message: "Two-factor authentication enabled successfully",
 		Enabled: true,
 	}
 
@@ -131,7 +132,8 @@ func (h *TwoFAHandlers) DisableTwoFA(w http.ResponseWriter, r *http.Request) {
 	}
 
 	response := domain.TwoFADisableResponse{
-		Disabled: true,
+		Message: "Two-factor authentication disabled successfully",
+		Enabled: false,
 	}
 
 	shared.WriteJSON(w, http.StatusOK, response)

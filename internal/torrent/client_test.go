@@ -15,6 +15,9 @@ func TestNewClientFromAppConfig(t *testing.T) {
 		t.Skip("skipping integration test")
 	}
 
+	// Setup test DNS to avoid resolution errors
+	SetupTestDNS(t)
+
 	logger := logrus.New()
 	logger.SetLevel(logrus.FatalLevel)
 
@@ -137,5 +140,44 @@ func TestHybridDistributionConfiguration(t *testing.T) {
 		assert.False(t, cfg.HybridPreferIPFS) // Prefer torrent
 		assert.True(t, cfg.EnableIPFS)
 		assert.True(t, cfg.EnableTorrents)
+	})
+}
+
+func TestNewClientWithMockedDHT(t *testing.T) {
+	logger := logrus.New()
+	logger.SetLevel(logrus.FatalLevel)
+
+	t.Run("creates client without external network calls", func(t *testing.T) {
+		cfg := MockedDHTConfig()
+
+		client, err := NewClient(cfg, logger)
+		require.NoError(t, err)
+		require.NotNil(t, client)
+
+		assert.NotNil(t, client.client)
+		assert.NotNil(t, client.config)
+		assert.True(t, client.config.NoDHT)
+		assert.True(t, client.config.DisablePEX)
+		assert.True(t, client.config.DisableWebtorrent)
+
+		// Cleanup
+		client.Close()
+	})
+
+	t.Run("handles rate limiting configuration", func(t *testing.T) {
+		cfg := MockedDHTConfig()
+		cfg.UploadRateLimit = 1024 * 1024       // 1 MB/s
+		cfg.DownloadRateLimit = 2 * 1024 * 1024 // 2 MB/s
+
+		client, err := NewClient(cfg, logger)
+		require.NoError(t, err)
+		require.NotNil(t, client)
+
+		assert.NotNil(t, client.rateLimiter)
+		assert.Equal(t, int64(1024*1024), client.config.UploadRateLimit)
+		assert.Equal(t, int64(2*1024*1024), client.config.DownloadRateLimit)
+
+		// Cleanup
+		client.Close()
 	})
 }

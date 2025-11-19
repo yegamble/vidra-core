@@ -8,18 +8,15 @@ on:
     paths:
       - 'migrations/**'
       - '.github/workflows/goose-migrate.yml'
-
-  pull_request:
-    types: [opened, synchronize, reopened]
-    paths:
-      - 'migrations/**'
-      - '.github/workflows/goose-migrate.yml'
-
   workflow_dispatch:
 
 env:
   GO_VERSION: '1.24'
   POSTGRES_VERSION: '16'
+
+concurrency:
+  group: postgres-workflows-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
 
 jobs:
   validate-migrations:
@@ -33,13 +30,14 @@ jobs:
           POSTGRES_USER: test_user
           POSTGRES_PASSWORD: test_pass
           POSTGRES_DB: test_db
+        ports:
+          - 5435:5432
         options: >-
           --health-cmd pg_isready
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
-        ports:
-          - 5432:5432
+        # Host port mapping for access from runner
 
     steps:
       - name: Checkout code
@@ -47,15 +45,18 @@ jobs:
         with:
           fetch-depth: 0
 
+      # Running on self-hosted runner; no special container cleanup required
+
       - name: Install PostgreSQL client
         run: |
           sudo apt-get update
           sudo apt-get install -y postgresql-client
 
-      - name: Setup Go
-        uses: actions/setup-go@v5
+      - name: Setup Go (cached)
+        uses: ./.github/actions/setup-go-cached
         with:
           go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: go.sum
 
       - name: Install Goose
         run: |
@@ -80,10 +81,10 @@ jobs:
 
       - name: Setup test database
         env:
-          DATABASE_URL: postgres://test_user:test_pass@localhost:5432/test_db?sslmode=disable
+          DATABASE_URL: postgres://test_user:test_pass@localhost:5435/test_db?sslmode=disable
         run: |
           echo "Creating test database schema..."
-          PGPASSWORD=test_pass psql -h localhost -U test_user -d test_db -c "SELECT version();"
+          PGPASSWORD=test_pass psql -h localhost -p 5435 -U test_user -d test_db -c "SELECT version();"
 
       - name: Validate migration files
         run: |
@@ -92,21 +93,21 @@ jobs:
 
       - name: Test migrations up
         env:
-          DATABASE_URL: postgres://test_user:test_pass@localhost:5432/test_db?sslmode=disable
+          DATABASE_URL: postgres://test_user:test_pass@localhost:5435/test_db?sslmode=disable
         run: |
           echo "Running migrations..."
           goose -dir migrations postgres "$DATABASE_URL" up
 
       - name: Check migration status
         env:
-          DATABASE_URL: postgres://test_user:test_pass@localhost:5432/test_db?sslmode=disable
+          DATABASE_URL: postgres://test_user:test_pass@localhost:5435/test_db?sslmode=disable
         run: |
           echo "Current migration status:"
           goose -dir migrations postgres "$DATABASE_URL" status
 
       - name: Test migration rollback
         env:
-          DATABASE_URL: postgres://test_user:test_pass@localhost:5432/test_db?sslmode=disable
+          DATABASE_URL: postgres://test_user:test_pass@localhost:5435/test_db?sslmode=disable
         run: |
           echo "Testing rollback of last migration..."
           # Only test rollback if we have more than one migration

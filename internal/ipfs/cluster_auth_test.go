@@ -20,22 +20,47 @@ import (
 
 // TestClusterAuth_BearerToken verifies Bearer token authentication
 func TestClusterAuth_BearerToken(t *testing.T) {
-	t.Skip("Test requires HTTPS - client enforces bearer token security (no HTTP transmission)")
+	expectedToken := "test-bearer-token-12345"
+	tokenReceived := false
 
-	// Note: The implementation correctly prevents bearer tokens from being sent over HTTP
-	// as a security measure. httptest.NewServer() creates HTTP servers, not HTTPS.
-	// To properly test this, we would need httptest.NewTLSServer() or similar.
-	// The security enforcement is working as designed (see client.go NewClientWithAuth).
+	// Create HTTPS test server (required for bearer token security)
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		auth := r.Header.Get("Authorization")
+		if auth == "Bearer "+expectedToken {
+			tokenReceived = true
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{"status":"pinned"}`))
+		} else {
+			w.WriteHeader(http.StatusUnauthorized)
+		}
+	}))
+	defer server.Close()
+
+	authConfig := &ClusterAuthConfig{
+		Token: expectedToken,
+	}
+
+	client := NewClientWithAuth("", server.URL, 5*time.Second, authConfig)
+	require.NotNil(t, client)
+
+	// Configure client to accept test server's self-signed certificate
+	client.clusterClient = server.Client()
+	client.clusterClient.Timeout = 5 * time.Second
+
+	ctx := context.Background()
+	err := client.ClusterPin(ctx, "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi")
+
+	assert.NoError(t, err)
+	assert.True(t, tokenReceived, "Bearer token should be sent and verified")
 }
 
 // TestClusterAuth_TokenFromEnvironment verifies token loaded from environment
 func TestClusterAuth_TokenFromEnvironment(t *testing.T) {
-	t.Skip("Test requires HTTPS - client enforces bearer token security (no HTTP transmission)")
-
 	expectedToken := "env-token-67890"
 	tokenReceived := false
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	// Create HTTPS test server (required for bearer token security)
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		auth := r.Header.Get("Authorization")
 		if auth == "Bearer "+expectedToken {
 			tokenReceived = true
@@ -52,6 +77,10 @@ func TestClusterAuth_TokenFromEnvironment(t *testing.T) {
 	client := NewClientWithAuthFromEnv(server.URL, "", 5*time.Second)
 	require.NotNil(t, client)
 
+	// Configure client to accept test server's self-signed certificate
+	client.clusterClient = server.Client()
+	client.clusterClient.Timeout = 5 * time.Second
+
 	ctx := context.Background()
 	err := client.ClusterPin(ctx, "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi")
 
@@ -61,12 +90,11 @@ func TestClusterAuth_TokenFromEnvironment(t *testing.T) {
 
 // TestClusterAuth_TokenFromConfig verifies token loaded from configuration
 func TestClusterAuth_TokenFromConfig(t *testing.T) {
-	t.Skip("Test requires HTTPS - client enforces bearer token security (no HTTP transmission)")
-
 	configToken := "config-token-abcdef"
 	tokenReceived := false
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	// Create HTTPS test server (required for bearer token security)
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		auth := r.Header.Get("Authorization")
 		if auth == "Bearer "+configToken {
 			tokenReceived = true
@@ -82,6 +110,12 @@ func TestClusterAuth_TokenFromConfig(t *testing.T) {
 	}
 
 	client := NewClientWithAuth(server.URL, "", 5*time.Second, authConfig)
+	require.NotNil(t, client)
+
+	// Configure client to accept test server's self-signed certificate
+	client.clusterClient = server.Client()
+	client.clusterClient.Timeout = 5 * time.Second
+
 	ctx := context.Background()
 	err := client.ClusterPin(ctx, "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi")
 
@@ -290,13 +324,12 @@ func TestClusterAuth_UnauthorizedAccess(t *testing.T) {
 
 // TestClusterAuth_TokenRotation verifies token rotation support
 func TestClusterAuth_TokenRotation(t *testing.T) {
-	t.Skip("Test requires HTTPS - client enforces bearer token security (no HTTP transmission)")
-
 	currentToken := "token-v1"
 	newToken := "token-v2"
 	tokenUsed := ""
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	// Create HTTPS test server (required for bearer token security)
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		auth := r.Header.Get("Authorization")
 		tokenUsed = strings.TrimPrefix(auth, "Bearer ")
 
@@ -313,6 +346,12 @@ func TestClusterAuth_TokenRotation(t *testing.T) {
 	}
 
 	client := NewClientWithAuth(server.URL, "", 5*time.Second, authConfig)
+	require.NotNil(t, client)
+
+	// Configure client to accept test server's self-signed certificate
+	client.clusterClient = server.Client()
+	client.clusterClient.Timeout = 5 * time.Second
+
 	ctx := context.Background()
 
 	// First request with old token
@@ -407,12 +446,11 @@ func TestClusterAuth_HTTPSEnforcement(t *testing.T) {
 
 // TestClusterAuth_Pin_Authenticated tests authenticated Pin operation
 func TestClusterAuth_Pin_Authenticated(t *testing.T) {
-	t.Skip("Test requires HTTPS - client enforces bearer token security (no HTTP transmission)")
-
 	validToken := "cluster-pin-token"
 	pinCalled := false
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	// Create HTTPS test server (required for bearer token security)
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		auth := r.Header.Get("Authorization")
 
 		if auth != "Bearer "+validToken {
@@ -436,6 +474,12 @@ func TestClusterAuth_Pin_Authenticated(t *testing.T) {
 	}
 
 	client := NewClientWithAuth("https://localhost:5001", server.URL, 5*time.Second, authConfig)
+	require.NotNil(t, client)
+
+	// Configure client to accept test server's self-signed certificate
+	client.clusterClient = server.Client()
+	client.clusterClient.Timeout = 5 * time.Second
+
 	ctx := context.Background()
 
 	err := client.ClusterPin(ctx, "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi")
@@ -446,12 +490,11 @@ func TestClusterAuth_Pin_Authenticated(t *testing.T) {
 
 // TestClusterAuth_Unpin_Authenticated tests authenticated Unpin operation
 func TestClusterAuth_Unpin_Authenticated(t *testing.T) {
-	t.Skip("Test requires HTTPS - client enforces bearer token security (no HTTP transmission)")
-
 	validToken := "cluster-unpin-token"
 	unpinCalled := false
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	// Create HTTPS test server (required for bearer token security)
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		auth := r.Header.Get("Authorization")
 
 		if auth != "Bearer "+validToken {
@@ -475,6 +518,12 @@ func TestClusterAuth_Unpin_Authenticated(t *testing.T) {
 	}
 
 	client := NewClientWithAuth("https://localhost:5001", server.URL, 5*time.Second, authConfig)
+	require.NotNil(t, client)
+
+	// Configure client to accept test server's self-signed certificate
+	client.clusterClient = server.Client()
+	client.clusterClient.Timeout = 5 * time.Second
+
 	ctx := context.Background()
 
 	err := client.ClusterUnpin(ctx, "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi")
@@ -532,7 +581,8 @@ func TestClusterAuth_MultipleRequests(t *testing.T) {
 	validToken := "persistent-token"
 	requestCount := 0
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	// Create HTTPS test server (required for bearer token security)
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		auth := r.Header.Get("Authorization")
 
 		if auth != "Bearer "+validToken {
@@ -549,8 +599,13 @@ func TestClusterAuth_MultipleRequests(t *testing.T) {
 		Token: validToken,
 	}
 
-	// Use HTTPS for security compliance
 	client := NewClientWithAuth("https://localhost:5001", server.URL, 5*time.Second, authConfig)
+	require.NotNil(t, client)
+
+	// Configure client to accept test server's self-signed certificate
+	client.clusterClient = server.Client()
+	client.clusterClient.Timeout = 5 * time.Second
+
 	ctx := context.Background()
 
 	// Make multiple requests
@@ -558,11 +613,8 @@ func TestClusterAuth_MultipleRequests(t *testing.T) {
 		_ = client.ClusterPin(ctx, fmt.Sprintf("bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi"))
 	}
 
-	// With HTTP + token, cluster is disabled, so no requests sent
-	// This test now validates that security blocking works
-	if requestCount > 0 {
-		assert.Equal(t, 5, requestCount, "All requests should be authenticated when cluster is enabled")
-	}
+	// All requests should be authenticated and successful
+	assert.Equal(t, 5, requestCount, "All requests should be authenticated")
 }
 
 // TestClusterAuth_RequestHeaders verifies all required headers are set
@@ -570,7 +622,8 @@ func TestClusterAuth_RequestHeaders(t *testing.T) {
 	token := "header-test-token"
 	headers := make(map[string]string)
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	// Create HTTPS test server (required for bearer token security)
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		headers["Authorization"] = r.Header.Get("Authorization")
 		headers["Content-Type"] = r.Header.Get("Content-Type")
 		headers["User-Agent"] = r.Header.Get("User-Agent")
@@ -583,18 +636,20 @@ func TestClusterAuth_RequestHeaders(t *testing.T) {
 		Token: token,
 	}
 
-	// Use HTTPS to comply with security requirements
 	client := NewClientWithAuth("https://localhost:5001", server.URL, 5*time.Second, authConfig)
+	require.NotNil(t, client)
+
+	// Configure client to accept test server's self-signed certificate
+	client.clusterClient = server.Client()
+	client.clusterClient.Timeout = 5 * time.Second
+
 	ctx := context.Background()
 
 	_ = client.ClusterPin(ctx, "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi")
 
-	// Note: With our security fix, HTTP with bearer token blocks requests
-	// So headers may not be set. This test now validates proper blocking behavior
-	if headers["Authorization"] != "" {
-		assert.Equal(t, "Bearer "+token, headers["Authorization"],
-			"Authorization header should be set when allowed")
-	}
+	// Verify authentication header is properly set
+	assert.Equal(t, "Bearer "+token, headers["Authorization"],
+		"Authorization header should be set with bearer token")
 }
 
 // TestClusterAuth_TLSVersions verifies minimum TLS version is enforced

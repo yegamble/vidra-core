@@ -7,6 +7,7 @@ import (
 	"strconv"
 
 	"athena/internal/domain"
+	"athena/internal/security"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -95,6 +96,13 @@ func (h *PaymentHandler) CreatePaymentIntent(w http.ResponseWriter, r *http.Requ
 
 	if req.AmountIOTA <= 0 {
 		h.errorResponse(w, "Invalid amount: must be greater than zero", http.StatusBadRequest)
+		return
+	}
+
+	// SECURITY FIX: Validate video_id is a valid UUID to prevent SQL injection
+	// This validation prevents malicious payloads like "'; DROP TABLE videos; --"
+	if err := security.ValidateOptionalUUID(req.VideoID); err != nil {
+		h.errorResponse(w, "Invalid video_id: must be a valid UUID", http.StatusBadRequest)
 		return
 	}
 

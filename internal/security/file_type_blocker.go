@@ -249,19 +249,24 @@ func (b *FileTypeBlocker) ValidateArchive(filename string, content []byte) (bool
 func (b *FileTypeBlocker) validateMagicBytes(filename string, content []byte) bool {
 	// Even small files can have identifiable magic bytes (e.g., ELF is 4 bytes)
 	ext := strings.ToLower(filepath.Ext(filename))
-	if b.validateImageMagic(ext, content) {
-		return true
+
+	// For known types, require a positive magic match. Do not fall back to a
+	// permissive default for mismatches to prevent spoofing (e.g., .mp4 with ZIP magic).
+	switch ext {
+	case ".jpg", ".jpeg", ".png", ".gif", ".webp":
+		return b.validateImageMagic(ext, content)
+	case ".mp4", ".mov", ".webm", ".mkv", ".avi":
+		return b.validateVideoMagic(ext, content)
+	case ".mp3", ".m4a", ".aac", ".wav", ".flac", ".ogg":
+		return b.validateAudioMagic(ext, content)
+	case ".pdf", ".zip", ".docx", ".xlsx", ".pptx":
+		return b.validateDocArchiveMagic(ext, content)
+	case ".txt", "":
+		return b.validateTextOrUnknownMagic(ext, content)
+	default:
+		// Unknown extensions: be conservative.
+		return b.validateTextOrUnknownMagic(ext, content)
 	}
-	if b.validateVideoMagic(ext, content) {
-		return true
-	}
-	if b.validateAudioMagic(ext, content) {
-		return true
-	}
-	if b.validateDocArchiveMagic(ext, content) {
-		return true
-	}
-	return b.validateTextOrUnknownMagic(ext, content)
 }
 
 func (b *FileTypeBlocker) validateImageMagic(ext string, content []byte) bool {
@@ -345,10 +350,16 @@ func (b *FileTypeBlocker) validateTextOrUnknownMagic(ext string, content []byte)
 		isElf := bytes.HasPrefix(content, magicBytes["elf"])
 		return !isExe && !isElf
 	default:
+		// For other extensions not explicitly handled, be strict: reject known dangerous
+		// magic bytes and common container magic that indicates a mismatch.
 		if bytes.HasPrefix(content, magicBytes["exe"]) || bytes.HasPrefix(content, magicBytes["elf"]) {
 			return false
 		}
-		return true
+		if bytes.HasPrefix(content, magicBytes["zip"]) || bytes.HasPrefix(content, magicBytes["pdf"]) {
+			return false
+		}
+		// No clear, safe match for unknown extension
+		return false
 	}
 }
 

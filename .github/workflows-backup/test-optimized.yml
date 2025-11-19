@@ -1,0 +1,357 @@
+name: Test Suite (Optimized)
+
+on:
+  push:
+    branches: [ main, develop ]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - '.github/workflows/blue-green-deploy.yml'
+      - '.github/workflows/e2e-tests.yml'
+  pull_request:
+    branches: [ main ]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GO_VERSION: "1.24"
+  GO111MODULE: on
+  CI_DATABASE_URL: postgres://test_user:test_password@localhost:5432/athena_test?sslmode=disable
+  CI_REDIS_URL: redis://localhost:6379/0
+  CI_JWT_SECRET: test-jwt-secret-for-ci
+
+jobs:
+  # Run unit tests, integration tests, and linting in parallel
+  # Previous version: sequential with dependencies
+  # Time savings: 6-10 minutes
+  unit:
+    name: Unit Tests
+    runs-on: self-hosted
+    env:
+      CGO_ENABLED: "1"
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go with caching
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+          cache-dependency-path: go.sum
+
+      # Removed: Docker installation (not needed on self-hosted)
+      # Removed: apt-get update (base runner has common packages)
+      # Removed: Manual go mod download (setup-go with cache handles this)
+
+      - name: Run unit tests
+        run: make test-unit
+
+  integration:
+    name: Integration Tests
+    runs-on: self-hosted
+    # CHANGE: No longer depends on 'unit' - runs in parallel
+    env:
+      CGO_ENABLED: "1"
+
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_DB: athena_test
+          POSTGRES_USER: test_user
+          POSTGRES_PASSWORD: test_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      ipfs:
+        image: ipfs/kubo:latest
+        ports:
+          - 5001:5001
+        options: >-
+          --health-cmd "ipfs version"
+          --health-interval 10s
+          --health-timeout 10s
+          --health-retries 15
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go with caching
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+          cache-dependency-path: go.sum
+
+      # Removed: Docker installation
+      # Removed: Manual dependency installation with retry logic
+
+      - name: Apply test migrations
+        env:
+          DATABASE_URL: ${{ env.CI_DATABASE_URL }}
+        run: make migrate-custom
+
+      - name: Run integration tests
+        env:
+          DATABASE_URL: ${{ env.CI_DATABASE_URL }}
+          REDIS_URL: ${{ env.CI_REDIS_URL }}
+          JWT_SECRET: ${{ env.CI_JWT_SECRET }}
+          IPFS_API: http://localhost:5001
+          REQUIRE_IPFS: false
+          VALIDATION_TEST_MODE: true
+          LOG_LEVEL: debug
+        run: make test-integration-ci
+
+  lint:
+    name: Lint
+    runs-on: self-hosted
+    # CHANGE: No longer depends on other jobs - runs in parallel
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go with caching
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+          cache-dependency-path: go.sum
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v7
+        with:
+          version: latest
+          args: --timeout=10m
+          # Enable caching for golangci-lint
+          skip-cache: false
+          skip-pkg-cache: false
+          skip-build-cache: false
+
+  format-check:
+    name: Format Check
+    runs-on: self-hosted
+    # CHANGE: Separate job for formatting, runs in parallel
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go with caching
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+          cache-dependency-path: go.sum
+
+      # Removed: Duplicate module download/verify logic
+      # CHANGE: Simplified format check using Makefile
+      - name: Check formatting
+        run: make fmt-check
+
+  build:
+    name: Build
+    runs-on: self-hosted
+    # CHANGE: Only needs unit and lint to pass (not integration)
+    needs: [unit, lint]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go with caching
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+          cache-dependency-path: go.sum
+
+      - name: Build binary
+        run: go build -v -o bin/athena ./cmd/server
+
+      - name: Test binary
+        run: ./bin/athena --help || true
+
+      - name: Upload binary as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: athena-binary
+          path: bin/athena
+          retention-days: 7
+
+  migrations:
+    name: Migration Tests
+    runs-on: self-hosted
+    # CHANGE: Runs in parallel with other test jobs
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_DB: athena_test
+          POSTGRES_USER: test_user
+          POSTGRES_PASSWORD: test_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # Removed: Docker installation
+      # Removed: apt-get update
+
+      - name: Install PostgreSQL client
+        run: sudo apt-get install -y postgresql-client
+
+      - name: Apply SQL migrations
+        env:
+          DATABASE_URL: ${{ env.CI_DATABASE_URL }}
+        run: make migrate-custom
+
+      - name: Smoke check tables
+        env:
+          PGPASSWORD: test_password
+        run: psql -h localhost -U test_user -d athena_test -c '\dt'
+
+  docker:
+    name: Docker Build
+    runs-on: self-hosted
+    # CHANGE: Only needs integration and lint (not full suite)
+    needs: [integration, lint]
+    # CHANGE: Always run (removed conditional check)
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # Removed: Docker installation check
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          tags: athena:test
+          # OPTIMIZATION: Use GitHub Actions cache
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Test Docker Compose
+        run: |
+          docker compose -f docker-compose.test.yml up -d
+          sleep 10
+          docker compose -f docker-compose.test.yml ps
+          docker compose -f docker-compose.test.yml down -v
+
+  postman-e2e:
+    name: Postman E2E Tests
+    runs-on: self-hosted
+    # CHANGE: Runs in parallel with other tests
+    timeout-minutes: 20  # Reduced from 30
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # Removed: Docker installation
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Run Postman E2E via Makefile
+        env:
+          DOCKER_COMPOSE: docker compose
+        run: make postman-e2e
+
+      - name: Upload Newman results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: newman-results-e2e
+          path: postman/newman-results.xml
+
+      - name: Collect docker compose logs
+        if: failure()
+        run: |
+          mkdir -p artifacts
+          COMPOSE_PROJECT_NAME=athena-test docker compose -f docker-compose.test.yml logs --no-color > artifacts/compose-logs.txt || true
+
+      - name: Upload compose logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: compose-logs-e2e
+          path: artifacts/compose-logs.txt
+
+  # Final gate: All critical tests must pass
+  all-tests-passed:
+    name: All Tests Passed
+    runs-on: self-hosted
+    needs: [unit, integration, lint, format-check, build, migrations, docker, postman-e2e]
+    if: always()
+    steps:
+      - name: Check test results
+        run: |
+          if [ "${{ needs.unit.result }}" != "success" ]; then
+            echo "Unit tests failed"
+            exit 1
+          fi
+          if [ "${{ needs.integration.result }}" != "success" ]; then
+            echo "Integration tests failed"
+            exit 1
+          fi
+          if [ "${{ needs.lint.result }}" != "success" ]; then
+            echo "Linting failed"
+            exit 1
+          fi
+          if [ "${{ needs.format-check.result }}" != "success" ]; then
+            echo "Format check failed"
+            exit 1
+          fi
+          if [ "${{ needs.build.result }}" != "success" ]; then
+            echo "Build failed"
+            exit 1
+          fi
+          if [ "${{ needs.migrations.result }}" != "success" ]; then
+            echo "Migration tests failed"
+            exit 1
+          fi
+          if [ "${{ needs.docker.result }}" != "success" ]; then
+            echo "Docker build failed"
+            exit 1
+          fi
+          if [ "${{ needs.postman-e2e.result }}" != "success" ]; then
+            echo "Postman E2E tests failed"
+            exit 1
+          fi
+          echo "All tests passed successfully!"
