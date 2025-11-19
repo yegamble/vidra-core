@@ -31,6 +31,16 @@ type MockImportService struct {
 	mock.Mock
 }
 
+// MockURLValidator is a mock implementation of URLValidator for testing
+type MockURLValidator struct {
+	mock.Mock
+}
+
+func (m *MockURLValidator) ValidateVideoURL(urlStr string) error {
+	args := m.Called(urlStr)
+	return args.Error(0)
+}
+
 func (m *MockImportService) ImportVideo(ctx context.Context, req *importuc.ImportRequest) (*domain.VideoImport, error) {
 	args := m.Called(ctx, req)
 	if args.Get(0) == nil {

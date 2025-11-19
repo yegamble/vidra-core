@@ -162,9 +162,8 @@ func NewClientFromAppConfig(cfg *config.Config, logger *logrus.Logger) (*Client,
 
 	// Create torrent client config
 	clientConfig := torrent.NewDefaultClientConfig()
-	clientConfig.ListenHost = func(string) string {
-		return fmt.Sprintf("0.0.0.0:%d", cfg.TorrentListenPort)
-	}
+	// Set listen port (the library will bind to 0.0.0.0 by default)
+	clientConfig.SetListenAddr(fmt.Sprintf(":%d", cfg.TorrentListenPort))
 	clientConfig.DisableTCP = false
 	clientConfig.DisableUTP = false
 	clientConfig.DisableIPv6 = false

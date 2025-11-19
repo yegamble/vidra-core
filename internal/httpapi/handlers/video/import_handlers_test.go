@@ -20,7 +20,8 @@ import (
 
 func TestImportHandlers_CreateImport_Success(t *testing.T) {
 	mockService := new(MockImportService)
-	handlers := NewImportHandlers(mockService)
+	mockValidator := new(MockURLValidator)
+	handlers := NewImportHandlers(mockService, mockValidator)
 
 	now := time.Now()
 	expectedImport := &domain.VideoImport{
@@ -33,6 +34,7 @@ func TestImportHandlers_CreateImport_Success(t *testing.T) {
 		UpdatedAt:     now,
 	}
 
+	mockValidator.On("ValidateVideoURL", "https://youtube.com/watch?v=test").Return(nil)
 	mockService.On("ImportVideo", mock.Anything, mock.MatchedBy(func(req *importuc.ImportRequest) bool {
 		return req.UserID == "user-123" && req.SourceURL == "https://youtube.com/watch?v=test"
 	})).Return(expectedImport, nil)
@@ -59,12 +61,15 @@ func TestImportHandlers_CreateImport_Success(t *testing.T) {
 	assert.Equal(t, "pending", resp.Status)
 
 	mockService.AssertExpectations(t)
+	mockValidator.AssertExpectations(t)
 }
 
 func TestImportHandlers_CreateImport_QuotaExceeded(t *testing.T) {
 	mockService := new(MockImportService)
-	handlers := NewImportHandlers(mockService)
+	mockValidator := new(MockURLValidator)
+	handlers := NewImportHandlers(mockService, mockValidator)
 
+	mockValidator.On("ValidateVideoURL", "https://youtube.com/watch?v=test").Return(nil)
 	mockService.On("ImportVideo", mock.Anything, mock.Anything).Return(nil, domain.ErrImportQuotaExceeded)
 
 	reqBody := CreateImportRequest{
@@ -87,12 +92,15 @@ func TestImportHandlers_CreateImport_QuotaExceeded(t *testing.T) {
 	assert.Contains(t, resp.Message, "quota exceeded")
 
 	mockService.AssertExpectations(t)
+	mockValidator.AssertExpectations(t)
 }
 
 func TestImportHandlers_CreateImport_RateLimited(t *testing.T) {
 	mockService := new(MockImportService)
-	handlers := NewImportHandlers(mockService)
+	mockValidator := new(MockURLValidator)
+	handlers := NewImportHandlers(mockService, mockValidator)
 
+	mockValidator.On("ValidateVideoURL", "https://youtube.com/watch?v=test").Return(nil)
 	mockService.On("ImportVideo", mock.Anything, mock.Anything).Return(nil, domain.ErrImportRateLimited)
 
 	reqBody := CreateImportRequest{
@@ -115,12 +123,15 @@ func TestImportHandlers_CreateImport_RateLimited(t *testing.T) {
 	assert.Contains(t, resp.Message, "concurrent imports")
 
 	mockService.AssertExpectations(t)
+	mockValidator.AssertExpectations(t)
 }
 
 func TestImportHandlers_CreateImport_UnsupportedURL(t *testing.T) {
 	mockService := new(MockImportService)
-	handlers := NewImportHandlers(mockService)
+	mockValidator := new(MockURLValidator)
+	handlers := NewImportHandlers(mockService, mockValidator)
 
+	mockValidator.On("ValidateVideoURL", "https://unsupported.com/video").Return(nil)
 	mockService.On("ImportVideo", mock.Anything, mock.Anything).Return(nil, domain.ErrImportUnsupportedURL)
 
 	reqBody := CreateImportRequest{
@@ -143,6 +154,7 @@ func TestImportHandlers_CreateImport_UnsupportedURL(t *testing.T) {
 	assert.Contains(t, resp.Message, "unsupported")
 
 	mockService.AssertExpectations(t)
+	mockValidator.AssertExpectations(t)
 }
 
 func TestImportHandlers_CreateImport_MissingSourceURL(t *testing.T) {

@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dutchcoders/go-clamd"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -953,6 +954,11 @@ func TestVirusScanner_ScanTimeout(t *testing.T) {
 		t.Skip("Skipping integration test in short mode")
 	}
 
+	// Check if ClamAV is available
+	if !isClamAVAvailable("localhost:3310") {
+		t.Skip("ClamAV daemon not available at localhost:3310 - skipping test")
+	}
+
 	config := VirusScannerConfig{
 		Address: "localhost:3310",
 		Timeout: 100 * time.Millisecond, // Very short timeout
@@ -1003,6 +1009,11 @@ func TestVirusScanner_QuarantineInfected(t *testing.T) {
 		t.Skip("Skipping integration test in short mode")
 	}
 
+	// Check if ClamAV is available
+	if !isClamAVAvailable("localhost:3310") {
+		t.Skip("ClamAV daemon not available at localhost:3310 - skipping test")
+	}
+
 	quarantineDir := t.TempDir()
 
 	config := VirusScannerConfig{
@@ -1044,7 +1055,10 @@ func TestVirusScanner_QuarantinePermissions(t *testing.T) {
 		t.Skip("Skipping integration test in short mode")
 	}
 
-	quarantineDir := t.TempDir()
+	// Create a parent temp directory, but not the quarantine directory itself
+	// This allows NewVirusScanner to create the quarantine directory with proper permissions
+	tempParent := t.TempDir()
+	quarantineDir := filepath.Join(tempParent, "quarantine")
 
 	config := VirusScannerConfig{
 		Address:        "localhost:3310",
@@ -1069,6 +1083,11 @@ func TestVirusScanner_QuarantinePermissions(t *testing.T) {
 func TestVirusScanner_QuarantineAuditLog(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration test in short mode")
+	}
+
+	// Check if ClamAV is available
+	if !isClamAVAvailable("localhost:3310") {
+		t.Skip("ClamAV daemon not available at localhost:3310 - skipping test")
 	}
 
 	quarantineDir := t.TempDir()
@@ -1349,8 +1368,65 @@ func TestVirusScanner_MemoryUsage(t *testing.T) {
 
 // Helper functions
 
+// isClamAVAvailable checks if ClamAV daemon is running and accessible
+func isClamAVAvailable(address string) bool {
+	// Use the go-clamd client directly for a quick availability check
+	client := clamd.NewClamd(address)
+
+	// Try to ping ClamAV with a very short timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+	defer cancel()
+
+	// Create a minimal test stream
+	testData := bytes.NewReader([]byte("test"))
+
+	// Create a channel for the scan
+	abort := make(chan bool)
+
+	// Try to scan - if we get any response, ClamAV is available
+	// We don't care about the result, just whether we can connect
+	done := make(chan bool)
+	var scanErr error
+
+	go func() {
+		responses, err := client.ScanStream(testData, abort)
+		scanErr = err
+		// Drain responses
+		for range responses {
+		}
+		close(done)
+	}()
+
+	// Wait for either completion or timeout
+	select {
+	case <-ctx.Done():
+		// Timeout - ClamAV not available
+		close(abort)
+		return false
+	case <-done:
+		// Got a response - check if it's a connection error
+		if scanErr != nil {
+			errStr := strings.ToLower(scanErr.Error())
+			// Check for connection-related errors
+			if strings.Contains(errStr, "connection refused") ||
+				strings.Contains(errStr, "connection reset") ||
+				strings.Contains(errStr, "no such host") ||
+				strings.Contains(errStr, "no such file") ||
+				strings.Contains(errStr, "i/o timeout") {
+				return false
+			}
+		}
+		return true
+	}
+}
+
 func setupScanner(t *testing.T) *VirusScanner {
 	t.Helper()
+
+	// Check if ClamAV is available
+	if !isClamAVAvailable("localhost:3310") {
+		t.Skip("ClamAV daemon not available at localhost:3310 - skipping test")
+	}
 
 	config := VirusScannerConfig{
 		Address:      "localhost:3310",
@@ -1369,6 +1445,11 @@ func setupScanner(t *testing.T) *VirusScanner {
 
 func setupScannerForBenchmark(b *testing.B) *VirusScanner {
 	b.Helper()
+
+	// Check if ClamAV is available
+	if !isClamAVAvailable("localhost:3310") {
+		b.Skip("ClamAV daemon not available at localhost:3310 - skipping benchmark")
+	}
 
 	config := VirusScannerConfig{
 		Address: "localhost:3310",

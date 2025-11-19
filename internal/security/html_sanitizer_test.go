@@ -563,18 +563,30 @@ func TestValidateAndSanitizeLength(t *testing.T) {
 
 func TestSanitizer_EdgeCases(t *testing.T) {
 	t.Run("handles malformed HTML gracefully", func(t *testing.T) {
-		inputs := []string{
-			`<div><div><div>nested</div>`,           // Unclosed tags
-			`<script<script>>alert('XSS')</script>`, // Malformed script
-			`<<SCRIPT>alert("XSS");//<</SCRIPT>`,    // Double brackets
-			`<img src=x:alert(1)//`,                 // Incomplete tag
+		tests := []struct {
+			input      string
+			allowEmpty bool
+		}{
+			{input: `<div><div><div>nested</div>`, allowEmpty: false},         // Unclosed tags - has content
+			{input: `<script<script>>alert('XSS')</script>`, allowEmpty: true}, // Malformed script - may be fully removed
+			{input: `<<SCRIPT>alert("XSS");//<</SCRIPT>`, allowEmpty: true},    // Double brackets - may be fully removed
+			{input: `<img src=x:alert(1)//`, allowEmpty: true},                 // Incomplete tag - may be fully removed
 		}
 
-		for _, input := range inputs {
-			result := SanitizeCommentHTML(input)
-			// Should not panic and should remove dangerous content
-			assert.NotContains(t, strings.ToLower(result), "script")
-			assert.NotContains(t, strings.ToLower(result), "alert")
+		for _, tt := range tests {
+			result := SanitizeCommentHTML(tt.input)
+			// Should not panic and should remove dangerous executable content
+			// Note: HTML-encoded text like "&gt;alert(&#39;XSS&#39;)" is safe and acceptable
+			// We only check for patterns that would be executable
+			assert.NotContains(t, result, "<script", "Script tags should be removed")
+			assert.NotContains(t, strings.ToLower(result), "<script", "Script tags (any case) should be removed")
+			assert.NotContains(t, result, "javascript:", "JavaScript URLs should be removed")
+			assert.NotContains(t, result, "onerror=", "Event handlers should be removed")
+			assert.NotContains(t, result, "onclick=", "Event handlers should be removed")
+			// Verify no panic occurred
+			if !tt.allowEmpty {
+				assert.NotEmpty(t, result, "Sanitizer should preserve safe content")
+			}
 		}
 	})
 

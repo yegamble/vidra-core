@@ -47,12 +47,17 @@ if r.Method == "POST" || r.Method == "PUT" {
 **Converts** `domain.Video` **to** `domain.VideoObject` **with**:
 - ✅ PeerTube-compatible context (`@context` with ActivityStreams + PeerTube namespace)
 - ✅ Video metadata (title, description, duration in ISO 8601 format)
-- ✅ Multiple URL types (MP4 direct download, HLS streaming)
+- ✅ PeerTube compatibility fields (state, category, language, waitTranscoding)
+- ✅ Published date using video.UploadDate (not CreatedAt)
+- ✅ Multiple URL types (MP4 direct download, HLS master playlist, quality variants)
+- ✅ HLS URLs using `/videos/{id}/master.m3u8` path format
+- ✅ Individual quality variant URLs from OutputPaths (1080p.m3u8, 720p.m3u8, etc.)
 - ✅ Thumbnails with dimensions
 - ✅ Privacy-aware audience (`to`/`cc` based on public/unlisted/private)
 - ✅ Collection endpoints (likes, dislikes, shares, comments)
 - ✅ Attribution to actor/owner
 - ✅ View counts and sensitive content flags
+- ✅ Tags converted to hashtags with # prefix
 
 **Example Output**:
 ```json
@@ -68,6 +73,32 @@ if r.Method == "POST" || r.Method == "PUT" {
   "name": "My Video Title",
   "duration": "PT5M30S",
   "content": "Video description...",
+  "summary": "Video description...",
+  "published": "2025-11-19T10:30:00Z",
+  "updated": "2025-11-19T12:00:00Z",
+  "state": 1,
+  "category": {
+    "identifier": "cat-uuid-123",
+    "name": "Technology"
+  },
+  "language": {
+    "identifier": "en"
+  },
+  "waitTranscoding": false,
+  "commentsEnabled": true,
+  "downloadEnabled": true,
+  "sensitive": false,
+  "views": 42,
+  "tag": [
+    {
+      "type": "Hashtag",
+      "name": "#opensource"
+    },
+    {
+      "type": "Hashtag",
+      "name": "#video"
+    }
+  ],
   "url": [
     {
       "type": "Link",
@@ -79,7 +110,21 @@ if r.Method == "POST" || r.Method == "PUT" {
     {
       "type": "Link",
       "mediaType": "application/x-mpegURL",
-      "href": "https://athena.example.com/hls/abc123/master.m3u8"
+      "href": "https://athena.example.com/videos/abc123/master.m3u8"
+    },
+    {
+      "type": "Link",
+      "mediaType": "application/x-mpegURL",
+      "href": "https://athena.example.com/videos/abc123/1080p.m3u8",
+      "height": 1080,
+      "width": 1920
+    },
+    {
+      "type": "Link",
+      "mediaType": "application/x-mpegURL",
+      "href": "https://athena.example.com/videos/abc123/720p.m3u8",
+      "height": 720,
+      "width": 1280
     }
   ],
   "icon": [{
@@ -91,6 +136,8 @@ if r.Method == "POST" || r.Method == "PUT" {
   "to": ["https://www.w3.org/ns/activitystreams#Public"],
   "cc": ["https://athena.example.com/users/alice/followers"],
   "likes": "https://athena.example.com/videos/abc123/likes",
+  "dislikes": "https://athena.example.com/videos/abc123/dislikes",
+  "shares": "https://athena.example.com/videos/abc123/shares",
   "comments": "https://athena.example.com/videos/abc123/comments"
 }
 ```

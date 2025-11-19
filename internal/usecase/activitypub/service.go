@@ -1222,9 +1222,10 @@ func (s *Service) BuildVideoObject(ctx context.Context, video *domain.Video) (*d
 		ID:           videoID,
 		Name:         video.Title,
 		UUID:         video.ID,
-		Published:    &video.CreatedAt,
+		Published:    &video.UploadDate,
 		Updated:      &video.UpdatedAt,
 		AttributedTo: []string{actorID},
+		State:        1, // PeerTube state: 1 = published
 	}
 
 	// Description and metadata
@@ -1251,9 +1252,36 @@ func (s *Service) BuildVideoObject(ctx context.Context, video *domain.Video) (*d
 	videoObj.CommentsEnabled = true
 	videoObj.DownloadEnabled = true
 	videoObj.Sensitive = video.Privacy == domain.PrivacyPrivate
+	videoObj.WaitTranscoding = video.Status == domain.StatusProcessing
 
 	// View count (if available)
 	videoObj.Views = int(video.Views)
+
+	// Tags - convert to hashtags for ActivityPub
+	if len(video.Tags) > 0 {
+		videoObj.Tag = make([]domain.APTag, len(video.Tags))
+		for i, tag := range video.Tags {
+			videoObj.Tag[i] = domain.APTag{
+				Type: "Hashtag",
+				Name: "#" + tag,
+			}
+		}
+	}
+
+	// Category (PeerTube compatibility)
+	if video.Category != nil {
+		videoObj.Category = &domain.APCategory{
+			Identifier: video.Category.ID.String(),
+			Name:       video.Category.Name,
+		}
+	}
+
+	// Language (PeerTube compatibility)
+	if video.Language != "" {
+		videoObj.Language = &domain.APLanguage{
+			Identifier: video.Language,
+		}
+	}
 
 	// Build URLs for video files
 	if len(video.OutputPaths) > 0 {
@@ -1267,22 +1295,48 @@ func (s *Service) BuildVideoObject(ctx context.Context, video *domain.Video) (*d
 		}
 		videoObj.URL = append(videoObj.URL, mp4URL)
 
-		// HLS streaming - check if any HLS output exists
-		if len(video.OutputPaths) > 0 {
-			hlsURL := domain.APUrl{
+		// HLS master playlist
+		hlsURL := domain.APUrl{
+			Type:      "Link",
+			MediaType: "application/x-mpegURL",
+			Href:      fmt.Sprintf("%s/videos/%s/master.m3u8", s.cfg.PublicBaseURL, video.ID),
+		}
+		videoObj.URL = append(videoObj.URL, hlsURL)
+
+		// Add individual quality variants from OutputPaths
+		for quality, path := range video.OutputPaths {
+			variantURL := domain.APUrl{
 				Type:      "Link",
 				MediaType: "application/x-mpegURL",
-				Href:      fmt.Sprintf("%s/hls/%s/master.m3u8", s.cfg.PublicBaseURL, video.ID),
+				Href:      fmt.Sprintf("%s%s", s.cfg.PublicBaseURL, path),
 			}
-			videoObj.URL = append(videoObj.URL, hlsURL)
+			// Parse resolution from quality string (e.g., "1080p" -> 1080)
+			var height int
+			if _, err := fmt.Sscanf(quality, "%dp", &height); err == nil {
+				variantURL.Height = height
+				// Assume 16:9 aspect ratio for width if not available
+				if video.Metadata.Width > 0 && video.Metadata.Height > 0 {
+					variantURL.Width = (height * video.Metadata.Width) / video.Metadata.Height
+				} else {
+					variantURL.Width = (height * 16) / 9
+				}
+			}
+			videoObj.URL = append(videoObj.URL, variantURL)
 		}
 	}
 
 	// Thumbnail
 	if video.ThumbnailPath != "" {
+		// Handle both absolute paths and relative paths
+		thumbnailURL := video.ThumbnailPath
+		if !strings.HasPrefix(thumbnailURL, "http") {
+			// Remove leading slash if present to avoid double slashes
+			thumbnailURL = strings.TrimPrefix(thumbnailURL, "/")
+			thumbnailURL = fmt.Sprintf("%s/%s", s.cfg.PublicBaseURL, thumbnailURL)
+		}
 		icon := domain.Image{
 			Type:      "Image",
-			URL:       fmt.Sprintf("%s/thumbnails/%s", s.cfg.PublicBaseURL, video.ThumbnailPath),
+			URL:       thumbnailURL,
 			MediaType: "image/jpeg",
 			// Width and Height are optional for thumbnails, omit if not available
 		}

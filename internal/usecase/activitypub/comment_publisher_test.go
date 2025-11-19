@@ -626,16 +626,9 @@ func TestUpdateComment(t *testing.T) {
 
 // TestDeleteComment tests Delete activity for removed comments
 func TestDeleteComment(t *testing.T) {
-	mockAPRepo := new(MockActivityPubRepository)
-	mockUserRepo := new(MockUserRepository)
-	mockVideoRepo := new(MockVideoRepository)
-	mockCommentRepo := new(MockCommentRepository)
-
 	cfg := &config.Config{
 		PublicBaseURL: "https://video.example",
 	}
-
-	service := NewService(mockAPRepo, mockUserRepo, mockVideoRepo, mockCommentRepo, cfg)
 
 	ctx := context.Background()
 
@@ -652,16 +645,10 @@ func TestDeleteComment(t *testing.T) {
 		Status:    domain.CommentStatusDeleted,
 		CreatedAt: time.Now(),
 	}
-	_ = comment // TODO: Use in test implementation
 
 	user := &domain.User{
 		ID:       userID.String(),
 		Username: "commenter",
-	}
-
-	videoOwner := &domain.User{
-		ID:       videoOwnerID.String(),
-		Username: "videoowner",
 	}
 
 	video := &domain.Video{
@@ -672,10 +659,17 @@ func TestDeleteComment(t *testing.T) {
 	}
 
 	t.Run("Sends Delete activity when comment is deleted", func(t *testing.T) {
+		// Create fresh mocks for this subtest
+		mockAPRepo := new(MockActivityPubRepository)
+		mockUserRepo := new(MockUserRepository)
+		mockVideoRepo := new(MockVideoRepository)
+		mockCommentRepo := new(MockCommentRepository)
+
+		service := NewService(mockAPRepo, mockUserRepo, mockVideoRepo, mockCommentRepo, cfg)
+
 		mockCommentRepo.On("GetByID", ctx, commentID).Return(comment, nil).Once()
 		mockUserRepo.On("GetByID", ctx, userID.String()).Return(user, nil).Once()
 		mockVideoRepo.On("GetByID", ctx, videoID.String()).Return(video, nil).Once()
-		mockUserRepo.On("GetByID", ctx, videoOwnerID.String()).Return(videoOwner, nil).Once()
 		mockAPRepo.On("GetFollowers", ctx, videoOwnerID.String(), "accepted", mock.Anything, mock.Anything).Return([]*domain.APFollower{}, 0, nil).Once()
 		mockAPRepo.On("StoreActivity", ctx, mock.MatchedBy(func(activity *domain.APActivity) bool {
 			return activity.Type == domain.ActivityTypeDelete
@@ -691,10 +685,17 @@ func TestDeleteComment(t *testing.T) {
 	})
 
 	t.Run("Delete activity object is comment URI", func(t *testing.T) {
+		// Create fresh mocks for this subtest
+		mockAPRepo := new(MockActivityPubRepository)
+		mockUserRepo := new(MockUserRepository)
+		mockVideoRepo := new(MockVideoRepository)
+		mockCommentRepo := new(MockCommentRepository)
+
+		service := NewService(mockAPRepo, mockUserRepo, mockVideoRepo, mockCommentRepo, cfg)
+
 		mockCommentRepo.On("GetByID", ctx, commentID).Return(comment, nil).Once()
 		mockUserRepo.On("GetByID", ctx, userID.String()).Return(user, nil).Once()
 		mockVideoRepo.On("GetByID", ctx, videoID.String()).Return(video, nil).Once()
-		mockUserRepo.On("GetByID", ctx, videoOwnerID.String()).Return(videoOwner, nil).Once()
 		mockAPRepo.On("GetFollowers", ctx, videoOwnerID.String(), "accepted", mock.Anything, mock.Anything).Return([]*domain.APFollower{}, 0, nil).Once()
 		mockAPRepo.On("StoreActivity", ctx, mock.AnythingOfType("*domain.APActivity")).Return(nil).Once()
 
