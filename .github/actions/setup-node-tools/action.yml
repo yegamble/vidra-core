@@ -1,0 +1,58 @@
+name: 'Setup Node.js with Tool Installation'
+description: 'Sets up Node.js and installs global packages with retry logic'
+
+inputs:
+  node-version:
+    description: 'Node.js version'
+    required: false
+    default: '20'
+  packages:
+    description: 'Space-separated list of npm packages to install globally'
+    required: true
+  cache-key-suffix:
+    description: 'Additional cache key suffix'
+    required: false
+    default: ''
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ inputs.node-version }}
+
+    - name: Cache global npm packages
+      uses: actions/cache@v4
+      with:
+        path: ~/.npm
+        key: npm-global-${{ runner.os }}-${{ inputs.node-version }}-${{ inputs.cache-key-suffix }}
+        restore-keys: |
+          npm-global-${{ runner.os }}-${{ inputs.node-version }}-
+
+    - name: Install packages
+      shell: bash
+      run: |
+        for package in ${{ inputs.packages }}; do
+          if ! npm list -g "$package" &>/dev/null; then
+            echo "Installing $package..."
+            max_attempts=5
+            for i in $(seq 1 $max_attempts); do
+              if npm install -g "$package"; then
+                echo "$package installed successfully"
+                break
+              else
+                if [ $i -lt $max_attempts ]; then
+                  delay=$((2 ** (i - 1) * 2))
+                  echo "Install attempt $i failed, retrying in ${delay} seconds..."
+                  sleep $delay
+                else
+                  echo "Failed to install $package after $max_attempts attempts"
+                  exit 1
+                fi
+              fi
+            done
+          else
+            echo "$package already installed"
+          fi
+        done

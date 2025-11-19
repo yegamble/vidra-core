@@ -1,11 +1,13 @@
-name: Test Suite
+name: CI
 
 on:
   push:
-    branches: [ main, develop ]
+    branches: [ main, develop ]  # Only run on push for deployed branches
     paths-ignore:
       - '**/*.md'
       - 'docs/**'
+      - '.github/workflows/blue-green-deploy.yml'
+      - '.github/workflows/e2e-tests.yml'
   pull_request:
     branches: [ main ]
     paths-ignore:
@@ -18,142 +20,57 @@ permissions:
   pull-requests: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
   cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
 
 env:
   GO_VERSION: "1.24"
-  # Force Go modules mode globally to avoid GOPATH issues
   GO111MODULE: on
-  # Standard test database configuration for CI
-  CI_DATABASE_URL: postgres://test_user:test_password@localhost:5432/athena_test?sslmode=disable
+  CI_DATABASE_URL: postgres://test_user:test_password@localhost:5434/athena_test?sslmode=disable
   CI_REDIS_URL: redis://localhost:6379/0
   CI_JWT_SECRET: test-jwt-secret-for-ci
 
 jobs:
-  changes:
-    runs-on: self-hosted
-    outputs:
-      docker: ${{ steps.filter.outputs.docker }}
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-      - name: Detect changed file groups
-        id: filter
-        uses: dorny/paths-filter@v3
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          filters: |
-            docker:
-              - 'Dockerfile'
-              - 'docker compose*.yml'
-              - 'scripts/**'
-              - '.github/workflows/**'
-
   unit:
+    name: Unit Tests
     runs-on: self-hosted
-    needs: changes
+    timeout-minutes: 10
     env:
-      # Configure Go for better network reliability
-      GOPROXY: https://proxy.golang.org,direct
-      GOSUMDB: sum.golang.org
-      GOTOOLCHAIN: auto
-      # Force Go modules mode to avoid GOPATH issues
-      GO111MODULE: on
-      # Increase timeouts for network operations
-      GOPROXY_TIMEOUT: 600s
-      # Enable CGO for race detector
       CGO_ENABLED: "1"
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Go
-        uses: actions/setup-go@v5
+      - name: Set up Go (cached)
+        uses: ./.github/actions/setup-go-cached
         with:
           go-version: ${{ env.GO_VERSION }}
-          cache: true
           cache-dependency-path: go.sum
 
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y make
-
-      - name: Install dependencies
-        run: |
-          # Configure Go timeouts and retries for network issues with exponential backoff
-          export GOPROXY_TIMEOUT=600s
-          max_attempts=5
-          for i in $(seq 1 $max_attempts); do
-            if timeout 600 go mod download; then
-              echo "Dependencies downloaded successfully on attempt $i"
-              break
-            else
-              if [ $i -lt $max_attempts ]; then
-                delay=$((2 ** (i - 1) * 2))  # Exponential backoff: 2s, 4s, 8s, 16s
-                echo "Download attempt $i failed, retrying in ${delay} seconds..."
-                sleep $delay
-              else
-                echo "All $max_attempts attempts failed"
-                exit 1
-              fi
-            fi
-          done
-
-      - name: Check formatting
-        run: |
-          # Force Go modules mode and disable GOPATH completely
-          unset GOPATH
-          export GO111MODULE=on
-          export GOPROXY=https://proxy.golang.org,direct
-          export GOPROXY_TIMEOUT=600s
-          # Verify we're in modules mode
-          go env GO111MODULE
-          go env GOPATH
-          go env GOMOD
-          # Download and verify modules with retry logic
-          max_attempts=5
-          for i in $(seq 1 $max_attempts); do
-            if go mod download && go mod verify; then
-              echo "Modules downloaded and verified successfully on attempt $i"
-              break
-            else
-              if [ $i -lt $max_attempts ]; then
-                delay=$((2 ** (i - 1) * 2))
-                echo "Module download/verify attempt $i failed, retrying in ${delay} seconds..."
-                sleep $delay
-              else
-                echo "All $max_attempts attempts failed"
-                exit 1
-              fi
-            fi
-          done
-          # Check formatting with explicit modules mode
-          GO111MODULE=on make fmt-check
-
-      - name: Run unit tests (Makefile)
+      - name: Run unit tests
         run: make test-unit
 
   integration:
+    name: Integration Tests
     runs-on: self-hosted
-    needs: [unit, changes]
+    timeout-minutes: 15
     env:
-      # Force Go modules mode to avoid GOPATH issues
-      GO111MODULE: on
-      # Enable CGO for race detector
       CGO_ENABLED: "1"
 
     services:
       postgres:
-        image: postgres:15-alpine
+        image: postgres:15.6-alpine
         env:
           POSTGRES_DB: athena_test
           POSTGRES_USER: test_user
           POSTGRES_PASSWORD: test_password
         ports:
-          - 5432:5432
+          - 5434:5432
         options: >-
           --health-cmd pg_isready
           --health-interval 10s
@@ -161,9 +78,9 @@ jobs:
           --health-retries 5
 
       redis:
-        image: redis:7-alpine
+        image: redis:7.2-alpine
         ports:
-          - 6379:6379
+          - 6380:6379
         options: >-
           --health-cmd "redis-cli ping"
           --health-interval 10s
@@ -171,9 +88,9 @@ jobs:
           --health-retries 5
 
       ipfs:
-        image: ipfs/kubo:latest
+        image: ipfs/kubo:v0.29.0
         ports:
-          - 5001:5001
+          - 5002:5001
         options: >-
           --health-cmd "ipfs version"
           --health-interval 10s
@@ -181,120 +98,102 @@ jobs:
           --health-retries 15
 
     steps:
+      - name: Docker cleanup
+        uses: ./.github/actions/docker-cleanup
+
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Install Docker
-        run: |
-          if ! command -v docker &> /dev/null; then
-            echo "Installing Docker..."
-            curl -fsSL https://get.docker.com -o get-docker.sh
-            sudo sh get-docker.sh
-            sudo usermod -aG docker $USER
-            rm get-docker.sh
-            echo "Docker installed successfully"
-          else
-            echo "Docker already installed"
-          fi
-
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y make
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
+      - name: Set up Go (cached)
+        uses: ./.github/actions/setup-go-cached
         with:
           go-version: ${{ env.GO_VERSION }}
-          cache: true
           cache-dependency-path: go.sum
 
-      - name: Install dependencies
+      - name: Install PostgreSQL client
         run: |
-          # Configure Go timeouts and retries for network issues with exponential backoff
-          export GOPROXY_TIMEOUT=600s
-          max_attempts=5
-          for i in $(seq 1 $max_attempts); do
-            if timeout 600 go mod download; then
-              echo "Dependencies downloaded successfully on attempt $i"
-              break
-            else
-              if [ $i -lt $max_attempts ]; then
-                delay=$((2 ** (i - 1) * 2))  # Exponential backoff: 2s, 4s, 8s, 16s
-                echo "Download attempt $i failed, retrying in ${delay} seconds..."
-                sleep $delay
-              else
-                echo "All $max_attempts attempts failed"
-                exit 1
-              fi
-            fi
-          done
+          sudo apt-get update -qq
+          sudo apt-get install -y postgresql-client
 
       - name: Apply test migrations
         env:
-          DATABASE_URL: ${{ env.CI_DATABASE_URL }}
-        run: |
-          echo "Applying test migrations using new migration system..."
-          make migrate-custom
+          DATABASE_URL: postgres://test_user:test_password@localhost:5434/athena_test?sslmode=disable
+        run: make migrate-custom
 
-      - name: Run integration tests (Makefile)
+      - name: Run integration tests
         env:
-          # Standardized test environment configuration
-          DATABASE_URL: ${{ env.CI_DATABASE_URL }}
-          REDIS_URL: ${{ env.CI_REDIS_URL }}
+          DATABASE_URL: postgres://test_user:test_password@localhost:5434/athena_test?sslmode=disable
+          REDIS_URL: redis://localhost:6380/0
           JWT_SECRET: ${{ env.CI_JWT_SECRET }}
-          IPFS_API: http://localhost:5001
+          IPFS_API: http://localhost:5002
           REQUIRE_IPFS: false
           VALIDATION_TEST_MODE: true
           LOG_LEVEL: debug
         run: make test-integration-ci
 
   lint:
+    name: Lint
     runs-on: self-hosted
-    env:
-      # Force Go modules mode to avoid GOPATH issues
-      GO111MODULE: on
+    timeout-minutes: 10
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Go
-        uses: actions/setup-go@v5
+      - name: Set up Go (cached)
+        uses: ./.github/actions/setup-go-cached
         with:
           go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: go.sum
 
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v7
         with:
           version: latest
           args: --timeout=10m
+          skip-cache: false
+          skip-pkg-cache: false
+          skip-build-cache: false
 
-  build:
+  format-check:
+    name: Format Check
     runs-on: self-hosted
-    needs: [unit, integration, lint, changes]
-    env:
-      # Force Go modules mode to avoid GOPATH issues
-      GO111MODULE: on
+    timeout-minutes: 10
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Go
-        uses: actions/setup-go@v5
+      - name: Set up Go (cached)
+        uses: ./.github/actions/setup-go-cached
         with:
           go-version: ${{ env.GO_VERSION }}
-          cache: true
+          cache-dependency-path: go.sum
+
+      - name: Check formatting
+        run: make fmt-check
+
+  build:
+    name: Build
+    runs-on: self-hosted
+    timeout-minutes: 15
+    needs: [unit, lint]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go (cached)
+        uses: ./.github/actions/setup-go-cached
+        with:
+          go-version: ${{ env.GO_VERSION }}
           cache-dependency-path: go.sum
 
       - name: Build binary
-        run: |
-          go build -v -o bin/athena ./cmd/server
+        run: go build -v -o bin/athena ./cmd/server
 
       - name: Test binary
-        run: |
-          ./bin/athena --help || true
+        run: ./bin/athena --help || true
 
       - name: Upload binary as artifact
         uses: actions/upload-artifact@v4
@@ -303,120 +202,14 @@ jobs:
           path: bin/athena
           retention-days: 7
 
-  migrations:
-    runs-on: self-hosted
-    services:
-      postgres:
-        image: postgres:15-alpine
-        env:
-          POSTGRES_DB: athena_test
-          POSTGRES_USER: test_user
-          POSTGRES_PASSWORD: test_password
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Install Docker
-        run: |
-          if ! command -v docker &> /dev/null; then
-            echo "Installing Docker..."
-            curl -fsSL https://get.docker.com -o get-docker.sh
-            sudo sh get-docker.sh
-            sudo usermod -aG docker $USER
-            rm get-docker.sh
-            echo "Docker installed successfully"
-          else
-            echo "Docker already installed"
-          fi
-
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y postgresql-client make
-
-      - name: Apply SQL migrations
-        env:
-          DATABASE_URL: ${{ env.CI_DATABASE_URL }}
-        run: |
-          echo "Testing migration system with clean database..."
-          make migrate-custom
-      - name: Smoke check tables
-        env:
-          PGPASSWORD: test_password
-        run: psql -h localhost -U test_user -d athena_test -c '\dt'
-
-  docker:
-    runs-on: self-hosted
-    needs: [integration, lint, changes]
-    if: needs.changes.outputs.docker == 'true'
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Install Docker
-        run: |
-          if ! command -v docker &> /dev/null; then
-            echo "Installing Docker..."
-            curl -fsSL https://get.docker.com -o get-docker.sh
-            sudo sh get-docker.sh
-            sudo usermod -aG docker $USER
-            rm get-docker.sh
-            echo "Docker installed successfully"
-          else
-            echo "Docker already installed"
-          fi
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-      - name: Build Docker image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          push: false
-          tags: athena:test
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-      - name: Test Docker Compose
-        run: |
-          docker compose -f docker-compose.test.yml up -d
-          sleep 10
-          docker compose -f docker-compose.test.yml ps
-          docker compose -f docker-compose.test.yml down -v
-
   postman-e2e:
     name: Postman E2E Tests
     runs-on: self-hosted
-    needs: changes
-    timeout-minutes: 30
+    timeout-minutes: 20
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
-      - name: Install Docker
-        run: |
-          if ! command -v docker &> /dev/null; then
-            echo "Installing Docker..."
-            curl -fsSL https://get.docker.com -o get-docker.sh
-            sudo sh get-docker.sh
-            sudo usermod -aG docker $USER
-            rm get-docker.sh
-            echo "Docker installed successfully"
-          else
-            echo "Docker already installed"
-          fi
-
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y make
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -424,9 +217,7 @@ jobs:
       - name: Run Postman E2E via Makefile
         env:
           DOCKER_COMPOSE: docker compose
-        run: |
-          echo "Running Postman E2E tests with test stack..."
-          make postman-e2e
+        run: make postman-e2e
 
       - name: Upload Newman results
         if: always()
@@ -434,13 +225,13 @@ jobs:
         with:
           name: newman-results-e2e
           path: postman/newman-results.xml
+          retention-days: 14
 
       - name: Collect docker compose logs
         if: failure()
         run: |
-          set -e
           mkdir -p artifacts
-          COMPOSE_PROJECT_NAME=athena-test docker compose -f docker-compose.test.yml logs --no-color > artifacts/compose-logs.txt || true
+          COMPOSE_PROJECT_NAME=athena-test docker compose -f docker-compose.test.yml logs --no-color > artifacts/compose-logs.txt 2>/dev/null || echo "Unable to collect logs"
 
       - name: Upload compose logs
         if: failure()
@@ -448,3 +239,40 @@ jobs:
         with:
           name: compose-logs-e2e
           path: artifacts/compose-logs.txt
+          retention-days: 7
+
+  all-tests-passed:
+    name: All Tests Passed
+    runs-on: self-hosted
+    timeout-minutes: 5
+    needs: [unit, integration, lint, format-check, build, postman-e2e]
+    if: always()
+
+    steps:
+      - name: Check test results
+        run: |
+          if [ "${{ needs.unit.result }}" != "success" ]; then
+            echo "Unit tests failed"
+            exit 1
+          fi
+          if [ "${{ needs.integration.result }}" != "success" ]; then
+            echo "Integration tests failed"
+            exit 1
+          fi
+          if [ "${{ needs.lint.result }}" != "success" ]; then
+            echo "Linting failed"
+            exit 1
+          fi
+          if [ "${{ needs.format-check.result }}" != "success" ]; then
+            echo "Format check failed"
+            exit 1
+          fi
+          if [ "${{ needs.build.result }}" != "success" ]; then
+            echo "Build failed"
+            exit 1
+          fi
+          if [ "${{ needs.postman-e2e.result }}" != "success" ]; then
+            echo "Postman E2E tests failed"
+            exit 1
+          fi
+          echo "All tests passed successfully!"

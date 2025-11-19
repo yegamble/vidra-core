@@ -38,10 +38,19 @@ permissions:
   packages: read
   id-token: write
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
 jobs:
   validate-input:
     name: Validate Deployment Input
     runs-on: self-hosted
+    timeout-minutes: 10
     outputs:
       current_color: ${{ steps.detect.outputs.current_color }}
       target_color: ${{ steps.detect.outputs.target_color }}
@@ -96,6 +105,7 @@ jobs:
   staging-deployment:
     name: Deploy to Staging
     runs-on: self-hosted
+    timeout-minutes: 20
     needs: [validate-input]
     if: ${{ !inputs.skip_staging }}
     environment:
@@ -137,6 +147,7 @@ jobs:
   database-migration:
     name: Apply Database Migrations
     runs-on: self-hosted
+    timeout-minutes: 15
     needs: [validate-input, staging-deployment]
     if: always() && needs.validate-input.result == 'success' && (needs.staging-deployment.result == 'success' || inputs.skip_staging)
     environment:
@@ -216,6 +227,7 @@ jobs:
   deploy-target-environment:
     name: Deploy ${{ needs.validate-input.outputs.target_color }} Environment
     runs-on: self-hosted
+    timeout-minutes: 30
     needs: [validate-input, database-migration]
     environment:
       name: production-${{ needs.validate-input.outputs.target_color }}
@@ -227,6 +239,11 @@ jobs:
         run: |
           echo "${{ secrets.KUBE_CONFIG }}" | base64 -d > ${{ env.KUBECONFIG_PATH }}
           echo "KUBECONFIG=${{ env.KUBECONFIG_PATH }}" >> $GITHUB_ENV
+
+      - name: Setup kustomize
+        uses: imranismail/setup-kustomize@v3
+        with:
+          kustomize-version: v5.4.1
 
       - name: Update image tag in manifests
         run: |
@@ -315,6 +332,7 @@ jobs:
   canary-rollout:
     name: Canary Rollout (${{ inputs.canary_percentage }}%)
     runs-on: self-hosted
+    timeout-minutes: 20
     needs: [validate-input, pre-switch-validation]
     environment:
       name: production-canary
@@ -357,6 +375,7 @@ jobs:
   full-rollout:
     name: Full Rollout (100%)
     runs-on: self-hosted
+    timeout-minutes: 60
     needs: [validate-input, canary-rollout]
     environment:
       name: production-full-rollout
@@ -425,7 +444,7 @@ jobs:
     if: success()
     steps:
       - name: Send Slack notification
-        if: vars.SLACK_WEBHOOK_URL != ''
+        if: ${{ secrets.SLACK_WEBHOOK_URL != '' }}
         run: |
           curl -X POST ${{ secrets.SLACK_WEBHOOK_URL }} \
             -H 'Content-Type: application/json' \

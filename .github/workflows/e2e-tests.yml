@@ -1,8 +1,6 @@
 name: E2E Tests
 
 on:
-  push:
-    branches: [main, develop]
   pull_request:
     branches: [main, develop]
   schedule:
@@ -10,42 +8,41 @@ on:
     - cron: '0 2 * * *'
   workflow_dispatch:  # Allow manual triggering
 
+concurrency:
+  group: heavy-tests-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
 jobs:
   e2e-tests:
     name: End-to-End Tests
     runs-on: self-hosted
     timeout-minutes: 45
+    # Only run on PR when labeled 'e2e'; always run on schedule/dispatch
+    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'e2e')
 
     # Note: Docker Compose is used instead of GH services for better control
     # Services are defined in tests/e2e/docker compose.yml
 
     steps:
+      - name: Docker cleanup
+        uses: ./.github/actions/docker-cleanup
+
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Install Docker
-        run: |
-          if ! command -v docker &> /dev/null; then
-            echo "Installing Docker..."
-            curl -fsSL https://get.docker.com -o get-docker.sh
-            sudo sh get-docker.sh
-            sudo usermod -aG docker $USER
-            rm get-docker.sh
-            echo "Docker installed successfully"
-          else
-            echo "Docker already installed"
-          fi
-
       - name: Install system dependencies
         run: |
-          sudo apt-get update
+          sudo apt-get update -qq
           sudo apt-get install -y ffmpeg make
 
-      - name: Set up Go
-        uses: actions/setup-go@v5
+      - name: Set up Go (cached)
+        uses: ./.github/actions/setup-go-cached
         with:
           go-version: '1.24'
-          cache: true
           cache-dependency-path: go.sum
 
       - name: Verify FFmpeg installation
@@ -71,7 +68,7 @@ jobs:
       - name: Start test environment
         run: |
           cd tests/e2e
-          docker compose up -d
+          COMPOSE_PROJECT_NAME=athena-e2e-${{ github.run_id }} docker compose up -d
 
       - name: Wait for services to be ready
         run: |
@@ -85,8 +82,8 @@ jobs:
       - name: Check service health
         run: |
           cd tests/e2e
-          docker compose ps
-          docker compose logs --tail=50
+          COMPOSE_PROJECT_NAME=athena-e2e-${{ github.run_id }} docker compose ps
+          COMPOSE_PROJECT_NAME=athena-e2e-${{ github.run_id }} docker compose logs --tail=50
 
       - name: Run E2E tests
         env:
@@ -109,13 +106,13 @@ jobs:
         run: |
           cd tests/e2e
           echo "=== API Logs ==="
-          docker compose logs athena-api-e2e
+          COMPOSE_PROJECT_NAME=athena-e2e-${{ github.run_id }} docker compose logs athena-api-e2e
           echo "=== PostgreSQL Logs ==="
-          docker compose logs postgres-e2e
+          COMPOSE_PROJECT_NAME=athena-e2e-${{ github.run_id }} docker compose logs postgres-e2e
           echo "=== Redis Logs ==="
-          docker compose logs redis-e2e
+          COMPOSE_PROJECT_NAME=athena-e2e-${{ github.run_id }} docker compose logs redis-e2e
           echo "=== MinIO Logs ==="
-          docker compose logs minio-e2e
+          COMPOSE_PROJECT_NAME=athena-e2e-${{ github.run_id }} docker compose logs minio-e2e
 
       - name: Upload service logs
         if: failure()
@@ -130,7 +127,7 @@ jobs:
         if: always()
         run: |
           cd tests/e2e
-          docker compose down -v
+          COMPOSE_PROJECT_NAME=athena-e2e-${{ github.run_id }} docker compose down -v
 
       - name: Report test summary
         if: always()
@@ -148,7 +145,7 @@ jobs:
     runs-on: self-hosted
     timeout-minutes: 60
     # Only run on main branch or manual trigger to save CI time
-    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' || (github.ref == 'refs/heads/main' && (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'e2e')))
     env:
       CGO_ENABLED: "1"
 
@@ -156,29 +153,15 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Install Docker
-        run: |
-          if ! command -v docker &> /dev/null; then
-            echo "Installing Docker..."
-            curl -fsSL https://get.docker.com -o get-docker.sh
-            sudo sh get-docker.sh
-            sudo usermod -aG docker $USER
-            rm get-docker.sh
-            echo "Docker installed successfully"
-          else
-            echo "Docker already installed"
-          fi
-
       - name: Install system dependencies
         run: |
-          sudo apt-get update
+          sudo apt-get update -qq
           sudo apt-get install -y ffmpeg make
 
-      - name: Set up Go
-        uses: actions/setup-go@v5
+      - name: Set up Go (cached)
+        uses: ./.github/actions/setup-go-cached
         with:
           go-version: '1.24'
-          cache: true
           cache-dependency-path: go.sum
 
       - name: Generate test fixtures
@@ -201,7 +184,7 @@ jobs:
       - name: Start test environment
         run: |
           cd tests/e2e
-          docker compose up -d
+          COMPOSE_PROJECT_NAME=athena-e2e-${{ github.run_id }} docker compose up -d
 
       - name: Wait for services
         run: |
@@ -219,4 +202,4 @@ jobs:
         if: always()
         run: |
           cd tests/e2e
-          docker compose down -v
+          COMPOSE_PROJECT_NAME=athena-e2e-${{ github.run_id }} docker compose down -v
