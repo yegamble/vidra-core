@@ -2,7 +2,7 @@ name: Virus Scanner Security Tests
 
 on:
   push:
-    branches: [ main, develop ]
+    branches: [ main, develop, 'claude/**' ]
     paths:
       - 'internal/security/**'
       - 'internal/usecase/upload/**'

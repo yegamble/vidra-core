@@ -2,7 +2,7 @@ name: Test Suite (Optimized)
 
 on:
   push:
-    branches: [ main, develop ]
+    branches: [ main, develop, 'claude/**' ]
     paths-ignore:
       - '**/*.md'
       - 'docs/**'

@@ -2,7 +2,7 @@ name: Video Import Tests
 
 on:
   push:
-    branches: [main, develop, feature/video-import]
+    branches: [main, develop, feature/video-import, 'claude/**']
     paths:
       - 'internal/domain/import*.go'
       - 'internal/repository/import*.go'

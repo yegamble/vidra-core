@@ -5,6 +5,7 @@ on:
     branches:
       - main
       - develop
+      - 'claude/**'
     paths:
       - 'migrations/**'
       - '.github/workflows/goose-migrate.yml'

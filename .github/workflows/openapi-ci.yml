@@ -2,7 +2,7 @@ name: OpenAPI Validation
 
 on:
   push:
-    branches: [ main, develop ]
+    branches: [ main, develop, 'claude/**' ]
     paths:
       - 'api/openapi.yaml'
       - 'api/*.yaml'
