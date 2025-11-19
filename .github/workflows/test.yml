@@ -249,6 +249,9 @@ jobs:
     name: Lint
     runs-on: self-hosted
     timeout-minutes: 10
+    concurrency:
+      group: golangci-lint-${{ github.head_ref || github.ref }}
+      cancel-in-progress: true
 
     steps:
       - name: Checkout code
