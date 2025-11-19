@@ -61,10 +61,16 @@ jobs:
           cache: false
 
       - name: Run unit tests
-        run: make test-unit
+        run: |
+          # Set Go environment variables
+          export GOPATH="${GOPATH:-$HOME/go}"
+          export GOMODCACHE="${GOMODCACHE:-$GOPATH/pkg/mod}"
+          export GOCACHE="${GOCACHE:-$HOME/.cache/go-build}"
+
+          make test-unit
 
   lint:
-    name: Lint
+    name: Code Quality (Lint & Format)
     runs-on: self-hosted
     needs: setup
     timeout-minutes: 10
@@ -85,36 +91,13 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache: false
 
-      - name: Run golangci-lint
-        uses: golangci/golangci-lint-action@v7
-        with:
-          version: v1.61.0
-          args: --timeout=10m
-
-  format-check:
-    name: Format Check
-    runs-on: self-hosted
-    needs: setup
-    timeout-minutes: 5
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Restore module cache
-        uses: actions/cache/restore@v4
-        with:
-          path: |
-            ~/go/pkg/mod
-            ~/.cache/go-build
-          key: ${{ needs.setup.outputs.cache-key }}
-
-      - uses: actions/setup-go@v5
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: false
-
       - name: Check formatting
         run: |
+          # Set Go environment variables
+          export GOPATH="${GOPATH:-$HOME/go}"
+          export GOMODCACHE="${GOMODCACHE:-$GOPATH/pkg/mod}"
+          export GOCACHE="${GOCACHE:-$HOME/.cache/go-build}"
+
           if [ -n "$(gofmt -l .)" ]; then
             echo "Go files are not formatted. Run: gofmt -w ."
             gofmt -l .
@@ -130,6 +113,12 @@ jobs:
             goimports -l .
             exit 1
           fi
+
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@v7
+        with:
+          version: latest
+          args: --timeout=10m
 
   # ============================================================================
   # INTEGRATION TESTS - Run after unit tests pass
@@ -235,6 +224,11 @@ jobs:
 
       - name: Build binaries
         run: |
+          # Set Go environment variables
+          export GOPATH="${GOPATH:-$HOME/go}"
+          export GOMODCACHE="${GOMODCACHE:-$GOPATH/pkg/mod}"
+          export GOCACHE="${GOCACHE:-$HOME/.cache/go-build}"
+
           echo "🔨 Building server..."
           go build -v -o bin/athena ./cmd/server
           ls -lh bin/athena
