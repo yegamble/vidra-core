@@ -96,8 +96,15 @@ jobs:
         if: inputs.download-modules == true && steps.module-cache.outputs.cache-hit != 'true'
         run: |
           echo "Downloading Go modules..."
-          echo "GOPATH: $(go env GOPATH)"
-          echo "GOMODCACHE: $(go env GOMODCACHE)"
+
+          # Explicitly set Go environment variables since cache: false doesn't set them
+          export GOPATH="${GOPATH:-$HOME/go}"
+          export GOMODCACHE="${GOMODCACHE:-$GOPATH/pkg/mod}"
+          export GOCACHE="${GOCACHE:-$HOME/.cache/go-build}"
+
+          echo "GOPATH: $GOPATH"
+          echo "GOMODCACHE: $GOMODCACHE"
+          echo "GOCACHE: $GOCACHE"
 
           # Download with timeout
           timeout 15m go mod download || {
@@ -106,22 +113,34 @@ jobs:
           }
 
           echo "Modules downloaded successfully"
-          du -sh "$(go env GOMODCACHE)" 2>/dev/null || echo "Cache size: unknown"
+          du -sh "$GOMODCACHE" 2>/dev/null || echo "Cache size: unknown"
 
       - name: Verify modules
         if: inputs.download-modules == true
         run: |
+          # Set Go environment variables for verification
+          export GOPATH="${GOPATH:-$HOME/go}"
+          export GOMODCACHE="${GOMODCACHE:-$GOPATH/pkg/mod}"
+          export GOCACHE="${GOCACHE:-$HOME/.cache/go-build}"
+
           echo "Verifying module integrity..."
           go mod verify
           echo "All modules verified"
 
       - name: Setup summary
         run: |
+          # Set Go environment variables
+          export GOPATH="${GOPATH:-$HOME/go}"
+          export GOMODCACHE="${GOMODCACHE:-$GOPATH/pkg/mod}"
+          export GOCACHE="${GOCACHE:-$HOME/.cache/go-build}"
+
           echo "========================================="
           echo "Setup Complete"
           echo "========================================="
           echo "Go version: $(go version | awk '{print $3}')"
           echo "Cache key: ${{ steps.cache-key.outputs.key }}"
           echo "Cache hit: ${{ steps.module-cache.outputs.cache-hit }}"
-          echo "GOMODCACHE: $(go env GOMODCACHE)"
+          echo "GOPATH: $GOPATH"
+          echo "GOMODCACHE: $GOMODCACHE"
+          echo "GOCACHE: $GOCACHE"
           echo "========================================="
