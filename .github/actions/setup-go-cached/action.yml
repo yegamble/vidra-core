@@ -247,11 +247,27 @@ runs:
         # Note: We skip 'go mod tidy' in CI as it's slow and can modify files
         # Developers should run 'go mod tidy' locally before committing
         echo "📦 Downloading modules with 5-minute timeout per attempt..."
+
+        # Count total modules for progress tracking
+        TOTAL_MODULES=$(go list -m -f '{{.Path}}' all 2>/dev/null | wc -l || echo "unknown")
+        echo "Total modules to download: $TOTAL_MODULES"
+
         for i in {1..3}; do
           echo "Attempt $i/3..."
 
-          # Use timeout command to prevent hanging (5 minutes per attempt)
-          if timeout 5m go mod download -x 2>&1; then
+          # Use JSON output for better progress tracking
+          if timeout 5m go mod download -json 2>&1 | while IFS= read -r line; do
+            # Show progress for each downloaded module
+            if echo "$line" | grep -q '"Path"'; then
+              MODULE=$(echo "$line" | grep '"Path"' | cut -d'"' -f4)
+              echo "  ✓ $MODULE"
+            elif echo "$line" | grep -q '"Error"'; then
+              ERROR=$(echo "$line" | grep '"Error"' | cut -d'"' -f4)
+              echo "  ✗ Error: $ERROR"
+            fi
+            # Pass through all output for debugging
+            echo "$line"
+          done; then
             echo "✅ Module download successful"
             break
           else
@@ -273,6 +289,11 @@ runs:
                 echo "  - Slow proxy servers"
                 echo "  - Large modules taking too long"
                 echo "  - Network connectivity issues"
+                echo ""
+                echo "Try these solutions:"
+                echo "  1. Use vendored dependencies: go mod vendor"
+                echo "  2. Use a faster GOPROXY"
+                echo "  3. Increase timeout in action configuration"
               fi
               exit $EXIT_CODE
             fi
