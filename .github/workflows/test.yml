@@ -40,9 +40,6 @@ jobs:
     env:
       CGO_ENABLED: "1"
     steps:
-      - name: Docker cleanup
-        uses: ./.github/actions/docker-cleanup
-
       - name: Checkout code
         uses: actions/checkout@v4
 
@@ -62,19 +59,19 @@ jobs:
   integration:
     name: Integration Tests
     runs-on: self-hosted
+    container:
+      image: golang:1.24
     # CHANGE: No longer depends on 'unit' - runs in parallel
     env:
       CGO_ENABLED: "1"
 
     services:
       postgres:
-        image: postgres:15-alpine
+        image: postgres:15.6-alpine
         env:
           POSTGRES_DB: athena_test
           POSTGRES_USER: test_user
           POSTGRES_PASSWORD: test_password
-        ports:
-          - 5434:5432
         options: >-
           --health-cmd pg_isready
           --health-interval 10s
@@ -82,9 +79,7 @@ jobs:
           --health-retries 5
 
       redis:
-        image: redis:7-alpine
-        ports:
-          - 6379:6379
+        image: redis:7.2-alpine
         options: >-
           --health-cmd "redis-cli ping"
           --health-interval 10s
@@ -92,9 +87,7 @@ jobs:
           --health-retries 5
 
       ipfs:
-        image: ipfs/kubo:latest
-        ports:
-          - 5001:5001
+        image: ipfs/kubo:v0.29.0
         options: >-
           --health-cmd "ipfs version"
           --health-interval 10s
@@ -117,17 +110,22 @@ jobs:
       # Removed: Docker installation
       # Removed: Manual dependency installation with retry logic
 
+      - name: Install PostgreSQL client
+        run: |
+          apt-get update -qq
+          apt-get install -y postgresql-client
+
       - name: Apply test migrations
         env:
-          DATABASE_URL: ${{ env.CI_DATABASE_URL }}
+          DATABASE_URL: postgres://test_user:test_password@postgres:5432/athena_test?sslmode=disable
         run: make migrate-custom
 
       - name: Run integration tests
         env:
-          DATABASE_URL: ${{ env.CI_DATABASE_URL }}
-          REDIS_URL: ${{ env.CI_REDIS_URL }}
+          DATABASE_URL: postgres://test_user:test_password@postgres:5432/athena_test?sslmode=disable
+          REDIS_URL: redis://redis:6379/0
           JWT_SECRET: ${{ env.CI_JWT_SECRET }}
-          IPFS_API: http://localhost:5001
+          IPFS_API: http://ipfs:5001
           REQUIRE_IPFS: false
           VALIDATION_TEST_MODE: true
           LOG_LEVEL: debug
@@ -204,83 +202,6 @@ jobs:
           path: bin/athena
           retention-days: 7
 
-  migrations:
-    name: Migration Tests
-    runs-on: self-hosted
-    # CHANGE: Runs in parallel with other test jobs
-    services:
-      postgres:
-        image: postgres:15-alpine
-        env:
-          POSTGRES_DB: athena_test
-          POSTGRES_USER: test_user
-          POSTGRES_PASSWORD: test_password
-        ports:
-          - 5434:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      # Removed: Docker installation
-      # Removed: apt-get update
-
-      - name: Install PostgreSQL client
-        run: |
-          if ! command -v psql >/dev/null 2>&1; then
-            sudo apt-get update -qq
-            sudo apt-get install -y postgresql-client
-          else
-            echo "PostgreSQL client already installed"
-          fi
-
-      - name: Apply SQL migrations
-        env:
-          DATABASE_URL: ${{ env.CI_DATABASE_URL }}
-        run: make migrate-custom
-
-      - name: Smoke check tables
-        env:
-          PGPASSWORD: test_password
-        run: psql -h localhost -U test_user -d athena_test -c '\dt'
-
-  docker:
-    name: Docker Build
-    runs-on: self-hosted
-    # CHANGE: Only needs integration and lint (not full suite)
-    needs: [integration, lint]
-    # CHANGE: Always run (removed conditional check)
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      # Removed: Docker installation check
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Build Docker image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          push: false
-          tags: athena:test
-          # OPTIMIZATION: Use GitHub Actions cache
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      - name: Test Docker Compose
-        run: |
-          docker compose -f docker-compose.test.yml up -d
-          sleep 10
-          docker compose -f docker-compose.test.yml ps
-          docker compose -f docker-compose.test.yml down -v
-
   postman-e2e:
     name: Postman E2E Tests
     runs-on: self-hosted
@@ -324,7 +245,7 @@ jobs:
   all-tests-passed:
     name: All Tests Passed
     runs-on: self-hosted
-    needs: [unit, integration, lint, format-check, build, migrations, docker, postman-e2e]
+    needs: [unit, integration, lint, format-check, build, postman-e2e]
     if: always()
     steps:
       - name: Check test results
@@ -349,14 +270,8 @@ jobs:
             echo "Build failed"
             exit 1
           fi
-          if [ "${{ needs.migrations.result }}" != "success" ]; then
-            echo "Migration tests failed"
-            exit 1
-          fi
-          if [ "${{ needs.docker.result }}" != "success" ]; then
-            echo "Docker build failed"
-            exit 1
-          fi
+          # Migrations are validated in goose-migrate workflow; integration also applies them
+          # Docker build job removed; covered by E2E compose run
           if [ "${{ needs.postman-e2e.result }}" != "success" ]; then
             echo "Postman E2E tests failed"
             exit 1

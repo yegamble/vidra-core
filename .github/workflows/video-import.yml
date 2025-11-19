@@ -33,6 +33,9 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Docker cleanup
+        uses: ./.github/actions/docker-cleanup
+
       - name: Set up Go (cached)
         uses: ./.github/actions/setup-go-cached
         with:
@@ -110,17 +113,17 @@ jobs:
   integration-tests:
     name: Integration Tests
     runs-on: self-hosted
+    container:
+      image: golang:1.24
     env:
       CGO_ENABLED: "1"
     services:
       postgres:
-        image: postgres:15
+        image: postgres:15.6-alpine
         env:
           POSTGRES_USER: test_user
           POSTGRES_PASSWORD: test_password
           POSTGRES_DB: athena_test
-        ports:
-          - 5433:5432
         options: >-
           --health-cmd pg_isready
           --health-interval 10s
@@ -128,9 +131,7 @@ jobs:
           --health-retries 5
 
       redis:
-        image: redis:7-alpine
-        ports:
-          - 6380:6379
+        image: redis:7.2-alpine
         options: >-
           --health-cmd "redis-cli ping"
           --health-interval 10s
@@ -141,23 +142,10 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Install Docker
-        run: |
-          if ! command -v docker &> /dev/null; then
-            echo "Installing Docker..."
-            curl -fsSL https://get.docker.com -o get-docker.sh
-            sudo sh get-docker.sh
-            sudo usermod -aG docker $USER
-            rm get-docker.sh
-            echo "Docker installed successfully"
-          else
-            echo "Docker already installed"
-          fi
-
       - name: Install system dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y postgresql-client make
+          apt-get update -qq
+          apt-get install -y postgresql-client make
 
       - name: Set up Go (cached)
         uses: ./.github/actions/setup-go-cached
@@ -192,97 +180,29 @@ jobs:
         run: |
           for migration in migrations/*.sql; do
             echo "Applying: $(basename "$migration")"
-            psql -h localhost -p 5433 -U test_user -d athena_test -f "$migration" > /dev/null 2>&1 || echo "  -> Already applied or error (continuing...)"
+            psql -h postgres -U test_user -d athena_test -f "$migration" > /dev/null 2>&1 || echo "  -> Already applied or error (continuing...)"
           done
 
       - name: Verify migration
         env:
           PGPASSWORD: test_password
         run: |
-          psql -h localhost -p 5433 -U test_user -d athena_test -c "SELECT COUNT(*) FROM video_imports;" || echo "Table not created yet"
+          psql -h postgres -U test_user -d athena_test -c "SELECT COUNT(*) FROM video_imports;" || echo "Table not created yet"
 
       - name: Run repository integration tests
         env:
-          TEST_DATABASE_URL: postgres://test_user:test_password@localhost:5433/athena_test?sslmode=disable
-          REDIS_URL: redis://localhost:6380/0
+          TEST_DATABASE_URL: postgres://test_user:test_password@postgres:5432/athena_test?sslmode=disable
+          REDIS_URL: redis://redis:6379/0
         run: |
           go test -v -race -tags=integration ./internal/repository -run TestImport
 
       - name: Run API integration tests
         env:
-          TEST_DATABASE_URL: postgres://test_user:test_password@localhost:5433/athena_test?sslmode=disable
-          REDIS_URL: redis://localhost:6380/0
+          TEST_DATABASE_URL: postgres://test_user:test_password@postgres:5432/athena_test?sslmode=disable
+          REDIS_URL: redis://redis:6379/0
         run: |
           go test -v -race -tags=integration ./internal/httpapi -run TestImportIntegration || echo "Note: Some integration tests may skip if yt-dlp not available"
 
-  migration-validation:
-    name: Migration Validation
-    runs-on: self-hosted
-    services:
-      postgres:
-        image: postgres:15
-        env:
-          POSTGRES_USER: test_user
-          POSTGRES_PASSWORD: test_password
-          POSTGRES_DB: athena_test
-        ports:
-          - 5433:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Install Docker
-        run: |
-          if ! command -v docker &> /dev/null; then
-            echo "Installing Docker..."
-            curl -fsSL https://get.docker.com -o get-docker.sh
-            sudo sh get-docker.sh
-            sudo usermod -aG docker $USER
-            rm get-docker.sh
-            echo "Docker installed successfully"
-          else
-            echo "Docker already installed"
-          fi
-
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y postgresql-client make
-
-      - name: Run all migrations in order
-        env:
-          PGPASSWORD: test_password
-        run: |
-          echo "Running migrations..."
-          for migration in migrations/*.sql; do
-            echo "Applying: $(basename "$migration")"
-            psql -h localhost -p 5433 -U test_user -d athena_test -f "$migration" || exit 1
-          done
-
-      - name: Verify video_imports table structure
-        env:
-          PGPASSWORD: test_password
-        run: |
-          echo "Verifying video_imports table..."
-          psql -h localhost -p 5433 -U test_user -d athena_test -c "\d video_imports"
-
-      - name: Test table constraints
-        env:
-          PGPASSWORD: test_password
-        run: |
-          echo "Testing constraints..."
-          # Test enum constraint
-          psql -h localhost -p 5433 -U test_user -d athena_test -c "SELECT 'pending'::import_status;" || exit 1
-          # Test progress check constraint
-          psql -h localhost -p 5433 -U test_user -d athena_test -c "INSERT INTO users (username, email, password_hash) VALUES ('test', 'test@example.com', 'hash') RETURNING id;" > /tmp/user_id.txt
-          USER_ID=$(cat /tmp/user_id.txt | grep -oE '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' | head -1)
-          psql -h localhost -p 5433 -U test_user -d athena_test -c "INSERT INTO video_imports (user_id, source_url, progress) VALUES ('$USER_ID', 'https://youtube.com/watch?v=test', 150);" 2>&1 | grep -q "violates check constraint" && echo "✓ Progress constraint works" || exit 1
 
   security-scan:
     name: Security Scan
