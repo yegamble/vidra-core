@@ -14,16 +14,6 @@ on:
         required: false
         type: string
         default: '1.24'
-      working-directory:
-        description: 'Working directory for the job'
-        required: false
-        type: string
-        default: '.'
-      cache-dependency-path:
-        description: 'Path to go.sum for cache key'
-        required: false
-        type: string
-        default: 'go.sum'
       download-modules:
         description: 'Whether to download modules (false to skip if already cached)'
         required: false
@@ -37,6 +27,12 @@ on:
       modules-cached:
         description: 'Whether modules were restored from cache'
         value: ${{ jobs.setup.outputs.cache-hit }}
+      go-mod-path:
+        description: 'Path to Go module cache (container-aware)'
+        value: ${{ jobs.setup.outputs.go-mod-path }}
+      go-build-path:
+        description: 'Path to Go build cache (container-aware)'
+        value: ${{ jobs.setup.outputs.go-build-path }}
 
 jobs:
   setup:
@@ -47,32 +43,32 @@ jobs:
     outputs:
       cache-key: ${{ steps.cache-key.outputs.key }}
       cache-hit: ${{ steps.go-cache.outputs.cache-hit }}
+      go-mod-path: ${{ steps.detect-env.outputs.go-mod-path }}
+      go-build-path: ${{ steps.detect-env.outputs.go-build-path }}
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-        with:
-          path: ${{ inputs.working-directory }}
 
-      - name: Generate cache key
-        id: cache-key
-        working-directory: ${{ inputs.working-directory }}
+      - name: Detect environment
+        id: detect-env
         run: |
-          CACHE_KEY="go-mod-${{ runner.os }}-${{ inputs.go-version }}-${{ hashFiles(format('{0}/{1}', inputs.working-directory, inputs.cache-dependency-path)) }}"
-          echo "key=$CACHE_KEY" >> $GITHUB_OUTPUT
-          echo "📦 Cache key: $CACHE_KEY"
-
-      - name: Restore Go module cache
-        id: go-cache
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/go/pkg/mod
-            ~/.cache/go-build
-          key: ${{ steps.cache-key.outputs.key }}
-          restore-keys: |
-            go-mod-${{ runner.os }}-${{ inputs.go-version }}-
-            go-mod-${{ runner.os }}-
+          # Detect if running in container
+          if [ -f /.dockerenv ] || grep -q 'docker\|lxc' /proc/1/cgroup 2>/dev/null; then
+            echo "container=true" >> $GITHUB_OUTPUT
+            echo "go-mod-path=/go/pkg/mod" >> $GITHUB_OUTPUT
+            echo "go-build-path=/root/.cache/go-build" >> $GITHUB_OUTPUT
+            echo "Container environment detected"
+            echo "  Go mod cache: /go/pkg/mod"
+            echo "  Go build cache: /root/.cache/go-build"
+          else
+            echo "container=false" >> $GITHUB_OUTPUT
+            echo "go-mod-path=~/go/pkg/mod" >> $GITHUB_OUTPUT
+            echo "go-build-path=~/.cache/go-build" >> $GITHUB_OUTPUT
+            echo "Bare-metal/VM environment detected"
+            echo "  Go mod cache: ~/go/pkg/mod"
+            echo "  Go build cache: ~/.cache/go-build"
+          fi
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -80,11 +76,39 @@ jobs:
           go-version: ${{ inputs.go-version }}
           cache: false  # We manage cache manually
 
+      - name: Verify Go environment
+        run: |
+          echo "Verifying Go installation..."
+          go version
+          echo "GOPATH=$(go env GOPATH)"
+          echo "GOMODCACHE=$(go env GOMODCACHE)"
+          echo "GOCACHE=$(go env GOCACHE)"
+
+      - name: Generate cache key
+        id: cache-key
+        run: |
+          CACHE_KEY="go-mod-${{ runner.os }}-${{ inputs.go-version }}-${{ hashFiles('go.sum') }}"
+          echo "key=$CACHE_KEY" >> $GITHUB_OUTPUT
+          echo "Cache key: $CACHE_KEY"
+
+      - name: Restore Go module cache
+        id: go-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ steps.detect-env.outputs.go-mod-path }}
+            ${{ steps.detect-env.outputs.go-build-path }}
+          key: ${{ steps.cache-key.outputs.key }}
+          restore-keys: |
+            go-mod-${{ runner.os }}-${{ inputs.go-version }}-
+            go-mod-${{ runner.os }}-
+
       - name: Download Go modules
         if: inputs.download-modules == true && steps.go-cache.outputs.cache-hit != 'true'
-        working-directory: ${{ inputs.working-directory }}
+        env:
+          GOMODCACHE_PATH: ${{ steps.detect-env.outputs.go-mod-path }}
         run: |
-          echo "📦 Downloading Go modules..."
+          echo "Downloading Go modules..."
 
           # Count modules
           TOTAL=$(go list -m -f '{{.Path}}' all 2>/dev/null | wc -l || echo "unknown")
@@ -93,34 +117,45 @@ jobs:
           # Dynamic timeout based on module count
           if [ "$TOTAL" != "unknown" ] && [ "$TOTAL" -gt 150 ]; then
             TIMEOUT="15m"
-            echo "⚠️  Large module count detected, using ${TIMEOUT} timeout"
+            echo "Large module count detected, using ${TIMEOUT} timeout"
           else
             TIMEOUT="10m"
           fi
 
           # Download with timeout
           if timeout $TIMEOUT go mod download; then
-            echo "✅ Modules downloaded successfully"
+            echo "Modules downloaded successfully"
 
-            # Show cache size
-            CACHE_SIZE=$(du -sh ~/go/pkg/mod 2>/dev/null | cut -f1 || echo "unknown")
-            echo "📊 Cache size: $CACHE_SIZE"
+            # Show cache size (expand tilde for bare-metal environments)
+            CACHE_PATH="${GOMODCACHE_PATH/#\~/$HOME}"
+            if [ -d "$CACHE_PATH" ]; then
+              CACHE_SIZE=$(du -sh "$CACHE_PATH" 2>/dev/null | cut -f1 || echo "unknown")
+              echo "Cache size: $CACHE_SIZE"
+            fi
           else
             EXIT_CODE=$?
-            echo "❌ Module download failed (exit code: $EXIT_CODE)"
+            echo "Module download failed (exit code: $EXIT_CODE)"
             exit $EXIT_CODE
           fi
 
       - name: Verify modules
-        working-directory: ${{ inputs.working-directory }}
         run: |
-          echo "🔍 Verifying module integrity..."
+          echo "Verifying module integrity..."
           go mod verify
-          echo "✅ All modules verified"
+          echo "All modules verified successfully"
 
       - name: Cache summary
+        env:
+          IS_CONTAINER: ${{ steps.detect-env.outputs.container }}
         run: |
-          echo "📊 Cache Summary:"
-          echo "  Cache key: ${{ steps.cache-key.outputs.key }}"
-          echo "  Cache hit: ${{ steps.go-cache.outputs.cache-hit }}"
-          echo "  Modules downloaded: ${{ steps.go-cache.outputs.cache-hit != 'true' }}"
+          echo "========================================="
+          echo "Cache Summary"
+          echo "========================================="
+          echo "Environment: $([ "$IS_CONTAINER" = "true" ] && echo "Container" || echo "Bare-metal/VM")"
+          echo "Go version: $(go version | awk '{print $3}')"
+          echo "Cache key: ${{ steps.cache-key.outputs.key }}"
+          echo "Cache hit: ${{ steps.go-cache.outputs.cache-hit }}"
+          echo "Modules downloaded: ${{ steps.go-cache.outputs.cache-hit != 'true' }}"
+          echo "Go mod path: ${{ steps.detect-env.outputs.go-mod-path }}"
+          echo "Go build path: ${{ steps.detect-env.outputs.go-build-path }}"
+          echo "========================================="

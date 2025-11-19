@@ -176,6 +176,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Verify Go environment (container)
+        run: |
+          echo "Verifying Go environment in container..."
+          go version
+          echo "GOPATH=$(go env GOPATH)"
+          echo "GOMODCACHE=$(go env GOMODCACHE)"
+          echo "GOCACHE=$(go env GOCACHE)"
+
       - name: Restore module cache (container)
         uses: actions/cache/restore@v4
         with:
@@ -183,6 +191,7 @@ jobs:
             /go/pkg/mod
             /root/.cache/go-build
           key: ${{ needs.setup.outputs.cache-key }}
+          fail-on-cache-miss: true
 
       - name: Set up test services
         id: services
@@ -254,6 +263,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Verify Go environment (container)
+        run: |
+          echo "Verifying Go environment in container..."
+          go version
+          echo "GOPATH=$(go env GOPATH)"
+          echo "GOMODCACHE=$(go env GOMODCACHE)"
+          echo "GOCACHE=$(go env GOCACHE)"
+
       - name: Restore module cache (container)
         uses: actions/cache/restore@v4
         with:
@@ -261,6 +278,7 @@ jobs:
             /go/pkg/mod
             /root/.cache/go-build
           key: ${{ needs.setup.outputs.cache-key }}
+          fail-on-cache-miss: true
 
       - name: Install GCC
         run: |
@@ -313,6 +331,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Verify Go environment (container)
+        run: |
+          echo "Verifying Go environment in container..."
+          go version
+          echo "GOPATH=$(go env GOPATH)"
+          echo "GOMODCACHE=$(go env GOMODCACHE)"
+          echo "GOCACHE=$(go env GOCACHE)"
+
       - name: Restore module cache (container)
         uses: actions/cache/restore@v4
         with:
@@ -320,6 +346,7 @@ jobs:
             /go/pkg/mod
             /root/.cache/go-build
           key: ${{ needs.setup.outputs.cache-key }}
+          fail-on-cache-miss: true
 
       - name: Install GCC
         run: |
