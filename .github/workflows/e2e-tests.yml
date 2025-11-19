@@ -24,6 +24,14 @@ jobs:
     # Services are defined in tests/e2e/docker compose.yml
 
     steps:
+      - name: Cleanup previous containers
+        run: |
+          echo "Cleaning up any lingering containers and networks..."
+          docker ps -aq | xargs -r docker rm -f || true
+          docker network prune -f || true
+          docker volume prune -f || true
+        continue-on-error: true
+
       - name: Checkout code
         uses: actions/checkout@v4
 
