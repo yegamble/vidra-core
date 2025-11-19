@@ -20,8 +20,8 @@ permissions:
   pull-requests: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
-  cancel-in-progress: true
+  group: postgres-workflows-${{ github.head_ref || github.ref }}
+  cancel-in-progress: false
 
 env:
   GO_VERSION: "1.24"

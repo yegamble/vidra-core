@@ -11,8 +11,8 @@ on:
   workflow_dispatch:  # Allow manual triggering
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
-  cancel-in-progress: true
+  group: postgres-workflows-${{ github.head_ref || github.ref }}
+  cancel-in-progress: false
 
 jobs:
   e2e-tests:

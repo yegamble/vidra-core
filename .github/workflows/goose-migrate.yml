@@ -22,8 +22,8 @@ env:
   POSTGRES_VERSION: '16'
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
-  cancel-in-progress: true
+  group: postgres-workflows-${{ github.head_ref || github.ref }}
+  cancel-in-progress: false
 
 jobs:
   validate-migrations:
