@@ -567,7 +567,7 @@ func TestSanitizer_EdgeCases(t *testing.T) {
 			input      string
 			allowEmpty bool
 		}{
-			{input: `<div><div><div>nested</div>`, allowEmpty: false},         // Unclosed tags - has content
+			{input: `<div><div><div>nested</div>`, allowEmpty: false},          // Unclosed tags - has content
 			{input: `<script<script>>alert('XSS')</script>`, allowEmpty: true}, // Malformed script - may be fully removed
 			{input: `<<SCRIPT>alert("XSS");//<</SCRIPT>`, allowEmpty: true},    // Double brackets - may be fully removed
 			{input: `<img src=x:alert(1)//`, allowEmpty: true},                 // Incomplete tag - may be fully removed
