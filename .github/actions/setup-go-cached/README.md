@@ -8,6 +8,9 @@ A composite GitHub Action that sets up Go with optimized module and build cachin
 - ✅ Optimized caching for Go modules and build artifacts
 - ✅ Supports both bare-metal and containerized runners
 - ✅ Configurable GOPROXY fallback (non-invasive)
+- ✅ Multiple proxy fallback chain for redundancy
+- ✅ Built-in timeout protection (prevents 17min+ hangs)
+- ✅ Automatic retry logic for transient failures
 - ✅ Respects existing GOPROXY configuration
 - ✅ Works in corporate/restricted network environments
 
@@ -205,6 +208,25 @@ go: downloading ... failed: dial tcp: lookup storage.googleapis.com: no such hos
 2. Configure `goproxy-fallback` input to use an accessible proxy
 3. Use vendored modules (`go mod vendor` + `go build -mod=vendor`)
 
+### Module Download Timeouts
+
+If downloads hang or timeout:
+```
+Error: The operation was canceled.
+```
+
+**Built-in Protection**:
+- Per-attempt timeout: 5 minutes
+- Total step timeout: 10 minutes
+- Automatic retries: 3 attempts
+- Proxy fallback chain: goproxy.io → proxy.golang.org → direct
+
+**Additional Solutions**:
+1. Check network connectivity to proxy servers
+2. Use a faster proxy via `goproxy-fallback` input
+3. Pre-vendor large dependencies
+4. Contact proxy administrators if using corporate proxy
+
 ### Corporate Proxy Issues
 
 If your organization requires a specific proxy:
@@ -239,6 +261,45 @@ The action configures caching for:
 - `GOMODCACHE`: Go module cache (typically `~/go/pkg/mod`)
 - `GOCACHE`: Go build cache (typically `~/.cache/go-build`)
 
+### Proxy Fallback Chain
+
+When `goproxy-fallback` is enabled (default), GOPROXY is set to:
+```
+https://goproxy.io,https://proxy.golang.org,direct
+```
+
+**Behavior**:
+1. Try `goproxy.io` first (fast Chinese CDN)
+2. Fall back to `proxy.golang.org` (official Go proxy)
+3. Fall back to `direct` (fetch from source)
+
+This ensures module downloads succeed even if one proxy is slow or unavailable.
+
+### Timeout Protection
+
+**Per-Attempt Timeout**: 5 minutes
+- Prevents individual module downloads from hanging
+- Exit code 124 indicates timeout
+
+**Step-Level Timeout**: 10 minutes
+- Prevents entire step from running indefinitely
+- Accounts for 3 retry attempts (3 × 5min = 15min theoretical max)
+
+**Retry Logic**:
+```
+Attempt 1: timeout 5m go mod download
+  → Success: Done
+  → Timeout/Fail: Wait 10s, retry
+
+Attempt 2: timeout 5m go mod download
+  → Success: Done
+  → Timeout/Fail: Wait 10s, retry
+
+Attempt 3: timeout 5m go mod download
+  → Success: Done
+  → Timeout/Fail: Exit with error
+```
+
 ### Environment Detection
 
 The action automatically detects:
@@ -251,6 +312,7 @@ The action automatically detects:
 - Uses `set -euo pipefail` for strict error handling
 - Validates environment variables before use
 - Provides informative error messages
+- Distinguishes timeout errors from other failures
 - Fails fast on configuration issues
 
 ## Contributing
