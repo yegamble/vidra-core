@@ -1,0 +1,126 @@
+name: Setup Go Environment (Reusable)
+
+# Reusable workflow that handles all common setup:
+# - Checkout code
+# - Setup Go
+# - Download/cache modules
+# Can be called from other workflows to avoid duplication
+
+on:
+  workflow_call:
+    inputs:
+      go-version:
+        description: 'Go version to use'
+        required: false
+        type: string
+        default: '1.24'
+      working-directory:
+        description: 'Working directory for the job'
+        required: false
+        type: string
+        default: '.'
+      cache-dependency-path:
+        description: 'Path to go.sum for cache key'
+        required: false
+        type: string
+        default: 'go.sum'
+      download-modules:
+        description: 'Whether to download modules (false to skip if already cached)'
+        required: false
+        type: boolean
+        default: true
+
+    outputs:
+      cache-key:
+        description: 'The cache key used for Go modules'
+        value: ${{ jobs.setup.outputs.cache-key }}
+      modules-cached:
+        description: 'Whether modules were restored from cache'
+        value: ${{ jobs.setup.outputs.cache-hit }}
+
+jobs:
+  setup:
+    name: Setup Go Environment
+    runs-on: self-hosted
+    timeout-minutes: 15
+
+    outputs:
+      cache-key: ${{ steps.cache-key.outputs.key }}
+      cache-hit: ${{ steps.go-cache.outputs.cache-hit }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          path: ${{ inputs.working-directory }}
+
+      - name: Generate cache key
+        id: cache-key
+        working-directory: ${{ inputs.working-directory }}
+        run: |
+          CACHE_KEY="go-mod-${{ runner.os }}-${{ inputs.go-version }}-${{ hashFiles(format('{0}/{1}', inputs.working-directory, inputs.cache-dependency-path)) }}"
+          echo "key=$CACHE_KEY" >> $GITHUB_OUTPUT
+          echo "📦 Cache key: $CACHE_KEY"
+
+      - name: Restore Go module cache
+        id: go-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: ${{ steps.cache-key.outputs.key }}
+          restore-keys: |
+            go-mod-${{ runner.os }}-${{ inputs.go-version }}-
+            go-mod-${{ runner.os }}-
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ inputs.go-version }}
+          cache: false  # We manage cache manually
+
+      - name: Download Go modules
+        if: inputs.download-modules == true && steps.go-cache.outputs.cache-hit != 'true'
+        working-directory: ${{ inputs.working-directory }}
+        run: |
+          echo "📦 Downloading Go modules..."
+
+          # Count modules
+          TOTAL=$(go list -m -f '{{.Path}}' all 2>/dev/null | wc -l || echo "unknown")
+          echo "Total modules: $TOTAL"
+
+          # Dynamic timeout based on module count
+          if [ "$TOTAL" != "unknown" ] && [ "$TOTAL" -gt 150 ]; then
+            TIMEOUT="15m"
+            echo "⚠️  Large module count detected, using ${TIMEOUT} timeout"
+          else
+            TIMEOUT="10m"
+          fi
+
+          # Download with timeout
+          if timeout $TIMEOUT go mod download; then
+            echo "✅ Modules downloaded successfully"
+
+            # Show cache size
+            CACHE_SIZE=$(du -sh ~/go/pkg/mod 2>/dev/null | cut -f1 || echo "unknown")
+            echo "📊 Cache size: $CACHE_SIZE"
+          else
+            EXIT_CODE=$?
+            echo "❌ Module download failed (exit code: $EXIT_CODE)"
+            exit $EXIT_CODE
+          fi
+
+      - name: Verify modules
+        working-directory: ${{ inputs.working-directory }}
+        run: |
+          echo "🔍 Verifying module integrity..."
+          go mod verify
+          echo "✅ All modules verified"
+
+      - name: Cache summary
+        run: |
+          echo "📊 Cache Summary:"
+          echo "  Cache key: ${{ steps.cache-key.outputs.key }}"
+          echo "  Cache hit: ${{ steps.go-cache.outputs.cache-hit }}"
+          echo "  Modules downloaded: ${{ steps.go-cache.outputs.cache-hit != 'true' }}"
