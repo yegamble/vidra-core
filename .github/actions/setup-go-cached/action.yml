@@ -210,18 +210,16 @@ runs:
         if [[ -z "${GOPROXY:-}" ]]; then
           FALLBACK_PROXY="${{ inputs.goproxy-fallback }}"
           if [[ -n "$FALLBACK_PROXY" ]]; then
-            echo "ℹ️  No GOPROXY set, using fallback: $FALLBACK_PROXY"
+            # Use multiple proxies for redundancy and speed
+            # goproxy.io, proxy.golang.org, and direct as fallbacks
+            PROXY_CHAIN="https://goproxy.io,https://proxy.golang.org,direct"
+            echo "ℹ️  No GOPROXY set, using proxy chain: $PROXY_CHAIN"
 
             # Set for current step and all subsequent steps in workflow
-            export GOPROXY="$FALLBACK_PROXY"
-            echo "GOPROXY=$FALLBACK_PROXY" >> "$GITHUB_ENV"
+            export GOPROXY="$PROXY_CHAIN"
+            echo "GOPROXY=$PROXY_CHAIN" >> "$GITHUB_ENV"
 
-            # Verify it was set
-            if [[ "$(go env GOPROXY)" == "$FALLBACK_PROXY" ]]; then
-              echo "✓ GOPROXY successfully configured"
-            else
-              echo "⚠️  Warning: GOPROXY may not be active yet (will be set for next step)"
-            fi
+            echo "✓ GOPROXY configured with multiple fallbacks"
           else
             echo "ℹ️  No GOPROXY set and no fallback configured, using Go defaults"
           fi
@@ -232,6 +230,7 @@ runs:
     # Ensure module files are tidy and dependencies are downloadable
     - name: Tidy and download modules
       shell: bash
+      timeout-minutes: 10
       run: |
         set -euo pipefail
 
@@ -255,19 +254,36 @@ runs:
           git diff go.mod go.sum || true
         fi
 
-        # Prefetch modules with retry logic
-        echo "Downloading modules..."
+        # Prefetch modules with retry logic and timeout per attempt
+        echo "Downloading modules with 5-minute timeout per attempt..."
         for i in {1..3}; do
-          if go mod download; then
+          echo "Attempt $i/3..."
+
+          # Use timeout command to prevent hanging (5 minutes per attempt)
+          if timeout 5m go mod download -x 2>&1; then
             echo "✅ Module download successful"
             break
           else
+            EXIT_CODE=$?
+            if [ $EXIT_CODE -eq 124 ]; then
+              echo "⚠️  Attempt $i timed out after 5 minutes"
+            else
+              echo "⚠️  Attempt $i failed with exit code $EXIT_CODE"
+            fi
+
             if [ $i -lt 3 ]; then
-              echo "⚠️  Retry $i/3 failed, waiting 5s..."
-              sleep 5
+              echo "Retrying in 10 seconds..."
+              sleep 10
             else
               echo "❌ ERROR: Failed to download modules after 3 attempts" >&2
-              exit 1
+              echo "Last exit code: $EXIT_CODE"
+              if [ $EXIT_CODE -eq 124 ]; then
+                echo "Download timed out - this may indicate:"
+                echo "  - Slow proxy servers"
+                echo "  - Large modules taking too long"
+                echo "  - Network connectivity issues"
+              fi
+              exit $EXIT_CODE
             fi
           fi
         done
