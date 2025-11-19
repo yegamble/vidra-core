@@ -1,0 +1,111 @@
+name: 'Install GCC for CGO'
+description: 'Installs GCC compiler required for CGO and Go race detector'
+
+inputs:
+  skip-if-installed:
+    description: 'Skip installation if gcc is already available'
+    required: false
+    default: 'true'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Check if GCC is already installed
+      id: check-gcc
+      shell: bash
+      run: |
+        if command -v gcc >/dev/null 2>&1; then
+          echo "installed=true" >> "$GITHUB_OUTPUT"
+          echo "GCC is already installed: $(gcc --version | head -n1)"
+        else
+          echo "installed=false" >> "$GITHUB_OUTPUT"
+          echo "GCC not found, will install"
+        fi
+
+    - name: Install GCC (Debian/Ubuntu)
+      if: steps.check-gcc.outputs.installed == 'false' || inputs.skip-if-installed == 'false'
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        # Detect OS
+        if [ -f /etc/os-release ]; then
+          . /etc/os-release
+          OS_ID="$ID"
+        else
+          echo "Cannot detect OS, assuming Debian-based"
+          OS_ID="debian"
+        fi
+
+        echo "Installing GCC for OS: $OS_ID"
+
+        case "$OS_ID" in
+          debian|ubuntu)
+            # Use non-interactive mode to avoid prompts
+            export DEBIAN_FRONTEND=noninteractive
+
+            # Update package list (with retries)
+            echo "Updating package lists..."
+            for i in {1..3}; do
+              if apt-get update -qq; then
+                break
+              else
+                if [ $i -lt 3 ]; then
+                  echo "Retry $i/3 failed, waiting 5s..."
+                  sleep 5
+                else
+                  echo "Failed to update package lists after 3 attempts"
+                  exit 1
+                fi
+              fi
+            done
+
+            # Install build-essential (includes gcc, g++, make)
+            echo "Installing build-essential..."
+            apt-get install -y -qq --no-install-recommends \
+              build-essential \
+              libc6-dev
+
+            # Verify installation
+            gcc --version
+            echo "GCC installed successfully"
+            ;;
+
+          alpine)
+            echo "Installing GCC for Alpine..."
+            apk add --no-cache gcc musl-dev
+            gcc --version
+            echo "GCC installed successfully"
+            ;;
+
+          *)
+            echo "Unsupported OS: $OS_ID"
+            echo "Please install GCC manually or update this action"
+            exit 1
+            ;;
+        esac
+
+    - name: Verify GCC installation
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        if ! command -v gcc >/dev/null 2>&1; then
+          echo "ERROR: GCC installation failed"
+          exit 1
+        fi
+
+        echo "GCC version: $(gcc --version | head -n1)"
+        echo "GCC path: $(which gcc)"
+
+        # Test basic compilation
+        echo 'int main() { return 0; }' > /tmp/test.c
+        if gcc /tmp/test.c -o /tmp/test 2>/dev/null; then
+          echo "GCC can compile C programs"
+          rm -f /tmp/test.c /tmp/test
+        else
+          echo "ERROR: GCC cannot compile basic C program"
+          exit 1
+        fi
+
+        echo "GCC is ready for CGO and race detector"

@@ -78,29 +78,49 @@ fmt-check: ## Verify Go files are formatted and imports sorted
 		echo "All Go files are formatted and imports are sorted."; \
 	fi
 
-test: ## Run unit tests
-	$(GO_ENV) go test -v -race -coverprofile=coverage.out ./...
+test: ## Run unit tests (without race detection for speed)
+	$(GO_ENV) go test -v -coverprofile=coverage.out ./...
+	$(GO_ENV) go tool cover -html=coverage.out -o coverage.html
+
+test-race: ## Run unit tests with race detection (requires CGO_ENABLED=1 and gcc)
+	CGO_ENABLED=1 $(GO_ENV) go test -v -race -coverprofile=coverage.out ./...
 	$(GO_ENV) go tool cover -html=coverage.out -o coverage.html
 
 test-unit: ## Run unit tests (exclude DB-backed repository pkg and integration tests)
 	@set -e; \
 	PKGS=$$(go list ./... | grep -v "/internal/repository$$" | grep -v '^athena/tests/integration$$'); \
 	echo "Running unit tests in: $$PKGS"; \
-	$(GO_ENV) go test -v -race -parallel=8 -short $$PKGS
+	$(GO_ENV) go test -v -parallel=8 -short $$PKGS
+
+test-unit-race: ## Run unit tests with race detection (requires CGO_ENABLED=1 and gcc)
+	@set -e; \
+	PKGS=$$(go list ./... | grep -v "/internal/repository$$" | grep -v '^athena/tests/integration$$'); \
+	echo "Running unit tests with race detection in: $$PKGS"; \
+	CGO_ENABLED=1 $(GO_ENV) go test -v -race -parallel=8 -short $$PKGS
 
 test-ci: ## Run tests for CI environment
-	$(GO_ENV) go test -v -race -coverprofile=coverage.out ./...
+	$(GO_ENV) go test -v -coverprofile=coverage.out ./...
+
+test-ci-race: ## Run tests for CI environment with race detection (requires CGO_ENABLED=1 and gcc)
+	CGO_ENABLED=1 $(GO_ENV) go test -v -race -coverprofile=coverage.out ./...
 
 .PHONY: generate-openapi
 generate-openapi: ## Regenerate OpenAPI types and server interfaces
 	@scripts/gen-openapi.sh
 
 test-integration: ## Run only integration tests (loads .env.test if present)
-	@bash -lc 'set -a; [ -f .env.test ] && source .env.test || true; set +a; $(GO_ENV) go test -v -race -tags=integration ./tests/integration'
+	@bash -lc 'set -a; [ -f .env.test ] && source .env.test || true; set +a; $(GO_ENV) go test -v -tags=integration ./tests/integration'
+
+test-integration-race: ## Run integration tests with race detection (requires CGO_ENABLED=1 and gcc)
+	@bash -lc 'set -a; [ -f .env.test ] && source .env.test || true; set +a; CGO_ENABLED=1 $(GO_ENV) go test -v -race -tags=integration ./tests/integration'
 
 test-integration-ci: ## Run repository + httpapi Integration tests (CI services env)
 	@echo "Running integration tests with short flag to skip load/stress tests..."
-	@$(GO_ENV) go test -v -short -race -parallel=8 ./...
+	@$(GO_ENV) go test -v -short -parallel=8 ./...
+
+test-integration-ci-race: ## Run integration tests in CI with race detection (requires CGO_ENABLED=1 and gcc)
+	@echo "Running integration tests with short flag and race detection..."
+	@CGO_ENABLED=1 $(GO_ENV) go test -v -short -race -parallel=8 ./...
 
 .PHONY: test-setup
 test-setup: ## Setup test environment with DNS and port checks
@@ -120,7 +140,25 @@ test-local: test-setup ## Run tests with local Docker services
 	REDIS_URL="redis://localhost:6380/0" \
 	JWT_SECRET="test-jwt-secret" \
 	IPFS_API="http://localhost:15001" \
-	$(GO_ENV) go test -v -race -coverprofile=coverage.out ./...
+	$(GO_ENV) go test -v -coverprofile=coverage.out ./...
+	@echo "Cleaning up test services..."
+	COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) -f docker-compose.test.yml down -v
+
+test-local-race: test-setup ## Run tests with local Docker services with race detection (requires CGO_ENABLED=1 and gcc)
+	@echo "Pre-flight cleanup for test-local..."
+	-COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) -f docker-compose.test.yml down -v 2>/dev/null || true
+	@echo "Starting test services..."
+	COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) -f docker-compose.test.yml up -d
+	@echo "Waiting for Postgres on 5433..."
+	@bash -lc 'for i in $$(seq 1 60); do pg_isready -h 127.0.0.1 -p 5433 -d athena_test -U test_user >/dev/null 2>&1 && exit 0; sleep 1; done; echo "Postgres not ready"; exit 1'
+	@echo "Waiting for Redis on 6380..."
+	@bash -lc 'for i in $$(seq 1 60); do redis-cli -u redis://127.0.0.1:6380 ping >/dev/null 2>&1 && exit 0; sleep 1; done; echo "Redis not ready"; exit 1'
+	DATABASE_URL="postgres://test_user:test_password@localhost:5433/athena_test?sslmode=disable" \
+	TEST_DATABASE_URL="postgres://test_user:test_password@localhost:5433/athena_test?sslmode=disable" \
+	REDIS_URL="redis://localhost:6380/0" \
+	JWT_SECRET="test-jwt-secret" \
+	IPFS_API="http://localhost:15001" \
+	CGO_ENABLED=1 $(GO_ENV) go test -v -race -coverprofile=coverage.out ./...
 	@echo "Cleaning up test services..."
 	COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) -f docker-compose.test.yml down -v
 
@@ -135,7 +173,21 @@ test-integration-local: ## Run only integration tests with local Docker services
 	REDIS_URL="redis://localhost:6380/0" \
 	JWT_SECRET="test-jwt-secret" \
 	IPFS_API="http://localhost:15001" \
-	$(GO_ENV) go test -v -race -tags=integration ./tests/integration
+	$(GO_ENV) go test -v -tags=integration ./tests/integration
+	COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) -f docker-compose.test.yml down -v
+
+test-integration-local-race: ## Run integration tests with local Docker services with race detection (requires CGO_ENABLED=1 and gcc)
+	COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) -f docker-compose.test.yml up -d
+	@echo "Waiting for Postgres on 5433..."
+	@bash -lc 'for i in $$(seq 1 60); do pg_isready -h 127.0.0.1 -p 5433 -d athena_test -U test_user >/dev/null 2>&1 && exit 0; sleep 1; done; echo "Postgres not ready"; exit 1'
+	@echo "Waiting for Redis on 6380..."
+	@bash -lc 'for i in $$(seq 1 60); do redis-cli -u redis://127.0.0.1:6380 ping >/dev/null 2>&1 && exit 0; sleep 1; done; echo "Redis not ready"; exit 1'
+	DATABASE_URL="postgres://test_user:test_password@localhost:5433/athena_test?sslmode=disable" \
+	TEST_DATABASE_URL="postgres://test_user:test_password@localhost:5433/athena_test?sslmode=disable" \
+	REDIS_URL="redis://localhost:6380/0" \
+	JWT_SECRET="test-jwt-secret" \
+	IPFS_API="http://localhost:15001" \
+	CGO_ENABLED=1 $(GO_ENV) go test -v -race -tags=integration ./tests/integration
 	COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) -f docker-compose.test.yml down -v
 
 
@@ -217,13 +269,6 @@ run: ## Run server locally (requires local Postgres/Redis/IPFS env)
 
 logs: ## Tail app logs
 	docker compose logs -f app
-	TEST_DATABASE_URL="postgres://test_user:test_password@localhost:5433/athena_test?sslmode=disable" \
-	DATABASE_URL="postgres://test_user:test_password@localhost:5433/athena_test?sslmode=disable" \
-	REDIS_URL="redis://localhost:6380/0" \
-	JWT_SECRET="test-jwt-secret" \
-	IPFS_API="http://localhost:5001" \
-	sh -lc 'go test -v -race ./internal/repository && go test -v -race ./internal/httpapi -run Integration'
-	$(DOCKER_COMPOSE) -f docker-compose.test.yml down -v
 
 build: ## Build the server binary
 	go build -o bin/athena-server ./cmd/server

@@ -37,7 +37,7 @@ env:
 
 jobs:
   unit:
-    name: Unit Tests
+    name: Unit Tests (Fast)
     runs-on: self-hosted
     timeout-minutes: 10
     env:
@@ -53,11 +53,39 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache-dependency-path: go.sum
 
-      - name: Run unit tests
+      - name: Run unit tests without race detection
         run: make test-unit
 
+  unit-race:
+    name: Unit Tests (Race Detection)
+    runs-on: self-hosted
+    timeout-minutes: 15
+    needs: unit  # Run only after fast tests pass
+
+    container:
+      image: golang:1.24
+      options: --user root
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install GCC for race detector
+        uses: ./.github/actions/install-gcc
+
+      - name: Set up Go (cached)
+        uses: ./.github/actions/setup-go-cached
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: go.sum
+
+      - name: Run unit tests with race detection
+        env:
+          CGO_ENABLED: "1"
+        run: make test-unit-race
+
   integration:
-    name: Integration Tests
+    name: Integration Tests (Fast)
     runs-on: self-hosted
     timeout-minutes: 15
 
@@ -125,7 +153,7 @@ jobs:
           DATABASE_URL: ${{ steps.postgres.outputs.database-url }}
         run: make migrate-custom
 
-      - name: Run integration tests
+      - name: Run integration tests without race detection
         env:
           DATABASE_URL: ${{ steps.postgres.outputs.database-url }}
           REDIS_URL: ${{ steps.redis.outputs.redis-url }}
@@ -135,6 +163,87 @@ jobs:
           VALIDATION_TEST_MODE: true
           LOG_LEVEL: debug
         run: make test-integration-ci
+
+  integration-race:
+    name: Integration Tests (Race Detection)
+    runs-on: self-hosted
+    timeout-minutes: 20
+    needs: integration  # Run only after fast tests pass
+
+    container:
+      image: golang:1.24
+      options: --user root
+
+    services:
+      postgres:
+        image: postgres:15.6-alpine
+        env:
+          POSTGRES_DB: athena_test
+          POSTGRES_USER: test_user
+          POSTGRES_PASSWORD: test_password
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7.2-alpine
+        options: >-
+          --health-cmd "sh -c 'redis-cli ping | grep PONG'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+      ipfs:
+        image: ipfs/kubo:v0.29.0
+        options: >-
+          --health-cmd "ipfs version"
+          --health-interval 10s
+          --health-timeout 10s
+          --health-retries 15
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install GCC for race detector
+        uses: ./.github/actions/install-gcc
+
+      - name: Set up Go (cached)
+        uses: ./.github/actions/setup-go-cached
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: go.sum
+
+      - name: Set up PostgreSQL test environment
+        id: postgres
+        uses: ./.github/actions/setup-postgres-test
+
+      - name: Set up Redis test environment
+        id: redis
+        uses: ./.github/actions/setup-redis-test
+
+      - name: Set up IPFS test environment
+        id: ipfs
+        uses: ./.github/actions/setup-ipfs-test
+
+      - name: Apply test migrations
+        env:
+          DATABASE_URL: ${{ steps.postgres.outputs.database-url }}
+        run: make migrate-custom
+
+      - name: Run integration tests with race detection
+        env:
+          CGO_ENABLED: "1"
+          DATABASE_URL: ${{ steps.postgres.outputs.database-url }}
+          REDIS_URL: ${{ steps.redis.outputs.redis-url }}
+          JWT_SECRET: ${{ env.CI_JWT_SECRET }}
+          IPFS_API: ${{ steps.ipfs.outputs.ipfs-api }}
+          REQUIRE_IPFS: false
+          VALIDATION_TEST_MODE: true
+          LOG_LEVEL: debug
+        run: make test-integration-ci-race
 
   lint:
     name: Lint
@@ -250,7 +359,7 @@ jobs:
     name: All Tests Passed
     runs-on: self-hosted
     timeout-minutes: 5
-    needs: [unit, integration, lint, format-check, build, postman-e2e]
+    needs: [unit, unit-race, integration, integration-race, lint, format-check, build, postman-e2e]
     if: always()
 
     steps:
@@ -260,8 +369,16 @@ jobs:
             echo "Unit tests failed"
             exit 1
           fi
+          if [ "${{ needs.unit-race.result }}" != "success" ]; then
+            echo "Unit tests with race detection failed"
+            exit 1
+          fi
           if [ "${{ needs.integration.result }}" != "success" ]; then
             echo "Integration tests failed"
+            exit 1
+          fi
+          if [ "${{ needs.integration-race.result }}" != "success" ]; then
+            echo "Integration tests with race detection failed"
             exit 1
           fi
           if [ "${{ needs.lint.result }}" != "success" ]; then

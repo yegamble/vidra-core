@@ -76,14 +76,14 @@ jobs:
         if: matrix.category == 'ssrf-protection'
         run: |
           echo "::group::SSRF Protection Unit Tests"
-          go test -v -race -coverprofile=ssrf-coverage.out ./internal/security/...
+          go test -v -coverprofile=ssrf-coverage.out ./internal/security/...
           echo "::endgroup::"
 
       - name: Run SSRF Integration Tests
         if: matrix.category == 'ssrf-protection'
         run: |
           echo "::group::SSRF Protection Integration Tests"
-          go test -v -race -coverprofile=ssrf-integration-coverage.out ./tests/integration -run '^TestSSRFProtection'
+          go test -v -coverprofile=ssrf-integration-coverage.out ./tests/integration -run '^TestSSRFProtection'
           echo "::endgroup::"
 
       - name: Generate Coverage Report (SSRF)
@@ -111,21 +111,21 @@ jobs:
         if: matrix.category == 'url-validation'
         run: |
           echo "::group::Domain Import Tests"
-          go test -v -race ./internal/domain -run '^TestImport'
+          go test -v ./internal/domain -run '^TestImport'
           echo "::endgroup::"
 
       - name: Run Import Service Tests
         if: matrix.category == 'url-validation'
         run: |
           echo "::group::Import Service Tests"
-          go test -v -race ./internal/usecase/import/...
+          go test -v ./internal/usecase/import/...
           echo "::endgroup::"
 
       - name: Run Redundancy Discovery Tests
         if: matrix.category == 'url-validation'
         run: |
           echo "::group::Redundancy Instance Discovery Tests"
-          go test -v -race ./internal/usecase/redundancy/...
+          go test -v ./internal/usecase/redundancy/...
           echo "::endgroup::"
 
       # ActivityPub Security Tests
@@ -133,14 +133,14 @@ jobs:
         if: matrix.category == 'activitypub-security'
         run: |
           echo "::group::ActivityPub Service Security Tests"
-          go test -v -race -coverprofile=activitypub-coverage.out ./internal/usecase/activitypub/...
+          go test -v -coverprofile=activitypub-coverage.out ./internal/usecase/activitypub/...
           echo "::endgroup::"
 
       - name: Run Social Service Tests
         if: matrix.category == 'activitypub-security'
         run: |
           echo "::group::Social Service Security Tests"
-          go test -v -race -coverprofile=social-coverage.out ./internal/usecase/social/...
+          go test -v -coverprofile=social-coverage.out ./internal/usecase/social/...
           echo "::endgroup::"
 
       # Dependency Scanning
@@ -207,6 +207,70 @@ jobs:
           name: gosec-security-report
           path: gosec-report.json
           retention-days: 90
+
+  security-tests-race:
+    name: ${{ matrix.category }} Race Tests
+    runs-on: self-hosted
+    timeout-minutes: 20
+    needs: security-tests  # Run after fast tests pass
+    # Only run on main branch, schedule, or manual trigger to save CI time
+    if: (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'security')) && (github.ref == 'refs/heads/main' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+
+    container:
+      image: golang:1.24
+      options: --user root
+
+    strategy:
+      fail-fast: false
+      matrix:
+        category:
+          - ssrf-protection
+          - activitypub-security
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install GCC for race detector
+        uses: ./.github/actions/install-gcc
+
+      - name: Set up Go (cached)
+        uses: ./.github/actions/setup-go-cached
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: go.sum
+
+      - name: Install security tools (cached)
+        uses: ./.github/actions/install-security-tools
+
+      # SSRF Protection Race Tests
+      - name: Run SSRF Protection Tests with Race Detection
+        if: matrix.category == 'ssrf-protection'
+        env:
+          CGO_ENABLED: "1"
+        run: |
+          echo "::group::SSRF Protection Race Tests"
+          go test -v -race -coverprofile=ssrf-race-coverage.out ./internal/security/...
+          echo "::endgroup::"
+
+      # ActivityPub Race Tests
+      - name: Run ActivityPub Tests with Race Detection
+        if: matrix.category == 'activitypub-security'
+        env:
+          CGO_ENABLED: "1"
+        run: |
+          echo "::group::ActivityPub Race Tests"
+          go test -v -race ./internal/usecase/activitypub/...
+          go test -v -race ./internal/usecase/social/...
+          echo "::endgroup::"
+
+      - name: Upload Race Coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-race-coverage-${{ matrix.category }}
+          path: "*-race-coverage.out"
+          retention-days: 30
 
   security-report:
     name: Generate Security Report
