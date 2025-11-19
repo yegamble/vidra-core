@@ -34,7 +34,7 @@ permissions:
   security-events: write  # For security scanning
 
 concurrency:
-  group: postgres-workflows-${{ github.head_ref || github.ref }}
+  group: postgres-workflows-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: false
 
 env:
