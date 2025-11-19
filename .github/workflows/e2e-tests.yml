@@ -146,17 +146,22 @@ jobs:
     timeout-minutes: 60
     # Only run on main branch or manual trigger to save CI time
     if: github.event_name == 'workflow_dispatch' || (github.ref == 'refs/heads/main' && (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'e2e')))
-    env:
-      CGO_ENABLED: "1"
+
+    container:
+      image: golang:1.24
+      options: --user root
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Install GCC for race detector
+        uses: ./.github/actions/install-gcc
+
       - name: Install system dependencies
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y ffmpeg make
+          apt-get update -qq
+          apt-get install -y -qq --no-install-recommends ffmpeg make
 
       - name: Set up Go (cached)
         uses: ./.github/actions/setup-go-cached
@@ -192,6 +197,7 @@ jobs:
 
       - name: Run E2E tests with race detector
         env:
+          CGO_ENABLED: "1"
           E2E_BASE_URL: http://localhost:8080
           E2E_TIMEOUT: 45m
         run: |
