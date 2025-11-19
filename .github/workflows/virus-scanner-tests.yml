@@ -43,7 +43,7 @@ jobs:
     runs-on: self-hosted
     timeout-minutes: 15
     env:
-      CGO_ENABLED: "1"
+      CGO_ENABLED: "0"
 
     steps:
       - name: Checkout code
@@ -81,7 +81,7 @@ jobs:
     timeout-minutes: 30
     needs: unit-tests
     env:
-      CGO_ENABLED: "1"
+      CGO_ENABLED: "0"
 
     services:
       postgres:

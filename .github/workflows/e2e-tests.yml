@@ -147,7 +147,7 @@ jobs:
     # Only run on main branch or manual trigger to save CI time
     if: github.event_name == 'workflow_dispatch' || (github.ref == 'refs/heads/main' && (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'e2e')))
     env:
-      CGO_ENABLED: "1"
+      CGO_ENABLED: "0"
 
     steps:
       - name: Checkout code
