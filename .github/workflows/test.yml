@@ -78,6 +78,7 @@ jobs:
       GOPATH: /home/runner/go
       GOMODCACHE: /home/runner/go/pkg/mod
       GOCACHE: /home/runner/.cache/go-build
+      GOLANGCI_LINT_CACHE: /home/runner/.cache/golangci-lint
 
     steps:
       - uses: actions/checkout@v4
