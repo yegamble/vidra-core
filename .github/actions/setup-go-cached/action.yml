@@ -21,6 +21,21 @@ runs:
         cache: true
         cache-dependency-path: ${{ inputs.cache-dependency-path }}
 
+    # Clean potentially corrupted module cache to avoid ziphash errors
+    - name: Clean Go module cache
+      shell: bash
+      run: |
+        echo "Cleaning Go module cache at: $(go env GOMODCACHE)"
+        go clean -modcache
+
+    # Ensure module files are tidy and dependencies are downloadable
+    - name: Tidy and download modules
+      shell: bash
+      run: |
+        go mod tidy
+        # Prefetch modules to fail early if there are issues
+        go mod download
+
     - name: Cache Go build cache
       uses: actions/cache@v4
       with:
