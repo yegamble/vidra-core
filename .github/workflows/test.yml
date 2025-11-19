@@ -2,12 +2,10 @@ name: CI
 
 on:
   push:
-    branches: [ main, develop ]  # Only run on push for deployed branches
+    branches: [ main, develop ]
     paths-ignore:
       - '**/*.md'
       - 'docs/**'
-      - '.github/workflows/blue-green-deploy.yml'
-      - '.github/workflows/e2e-tests.yml'
   pull_request:
     branches: [ main ]
     paths-ignore:
@@ -23,381 +21,322 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
   cancel-in-progress: true
 
-defaults:
-  run:
-    shell: bash
-
 env:
   GO_VERSION: "1.24"
-  GO111MODULE: on
-  # Note: Integration tests run in container and use service names (postgres, redis, ipfs)
-  CI_DATABASE_URL: postgres://test_user:test_password@postgres:5432/athena_test?sslmode=disable
-  CI_REDIS_URL: redis://redis:6379/0
-  CI_JWT_SECRET: test-jwt-secret-for-ci
 
 jobs:
+  # ============================================================================
+  # SETUP - Downloads modules once, shares with all other jobs via cache
+  # ============================================================================
+  setup:
+    name: Setup Dependencies
+    uses: ./.github/workflows/_setup-go-environment.yml
+    with:
+      go-version: "1.24"
+      download-modules: true
+
+  # ============================================================================
+  # FAST TESTS - Run in parallel after setup completes
+  # ============================================================================
   unit:
-    name: Unit Tests (Fast)
+    name: Unit Tests
     runs-on: self-hosted
+    needs: setup
     timeout-minutes: 10
-    env:
-      CGO_ENABLED: "0"
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up Go (cached)
-        uses: ./.github/actions/setup-go-cached
+      - name: Restore module cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: ${{ needs.setup.outputs.cache-key }}
+
+      - uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
-          cache-dependency-path: go.sum
+          cache: false
 
-      - name: Run unit tests without race detection
+      - name: Run unit tests
         run: make test-unit
-
-  unit-race:
-    name: Unit Tests (Race Detection)
-    runs-on: self-hosted
-    timeout-minutes: 15
-    needs: unit  # Run only after fast tests pass
-
-    container:
-      image: golang:1.24
-      options: --user root
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Install GCC for race detector
-        uses: ./.github/actions/install-gcc
-
-      - name: Set up Go (cached)
-        uses: ./.github/actions/setup-go-cached
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache-dependency-path: go.sum
-
-      - name: Run unit tests with race detection
-        env:
-          CGO_ENABLED: "1"
-        run: make test-unit-race
-
-  integration:
-    name: Integration Tests (Fast)
-    runs-on: self-hosted
-    timeout-minutes: 15
-
-    # Run in container to access services via Docker network (no port mapping needed)
-    container:
-      image: golang:1.24
-      options: --user root
-
-    env:
-      CGO_ENABLED: "0"
-
-    services:
-      postgres:
-        image: postgres:15.6-alpine
-        env:
-          POSTGRES_DB: athena_test
-          POSTGRES_USER: test_user
-          POSTGRES_PASSWORD: test_password
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
-      redis:
-        image: redis:7.2-alpine
-        options: >-
-          --health-cmd "sh -c 'redis-cli ping | grep PONG'"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 10
-
-      ipfs:
-        image: ipfs/kubo:v0.29.0
-        options: >-
-          --health-cmd "ipfs version"
-          --health-interval 10s
-          --health-timeout 10s
-          --health-retries 15
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Go (cached)
-        uses: ./.github/actions/setup-go-cached
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache-dependency-path: go.sum
-
-      - name: Set up PostgreSQL test environment
-        id: postgres
-        uses: ./.github/actions/setup-postgres-test
-
-      - name: Set up Redis test environment
-        id: redis
-        uses: ./.github/actions/setup-redis-test
-
-      - name: Set up IPFS test environment
-        id: ipfs
-        uses: ./.github/actions/setup-ipfs-test
-
-      - name: Apply test migrations
-        env:
-          DATABASE_URL: ${{ steps.postgres.outputs.database-url }}
-        run: make migrate-custom
-
-      - name: Run integration tests without race detection
-        env:
-          DATABASE_URL: ${{ steps.postgres.outputs.database-url }}
-          REDIS_URL: ${{ steps.redis.outputs.redis-url }}
-          JWT_SECRET: ${{ env.CI_JWT_SECRET }}
-          IPFS_API: ${{ steps.ipfs.outputs.ipfs-api }}
-          REQUIRE_IPFS: false
-          VALIDATION_TEST_MODE: true
-          LOG_LEVEL: debug
-        run: make test-integration-ci
-
-  integration-race:
-    name: Integration Tests (Race Detection)
-    runs-on: self-hosted
-    timeout-minutes: 20
-    needs: integration  # Run only after fast tests pass
-
-    container:
-      image: golang:1.24
-      options: --user root
-
-    services:
-      postgres:
-        image: postgres:15.6-alpine
-        env:
-          POSTGRES_DB: athena_test
-          POSTGRES_USER: test_user
-          POSTGRES_PASSWORD: test_password
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
-      redis:
-        image: redis:7.2-alpine
-        options: >-
-          --health-cmd "sh -c 'redis-cli ping | grep PONG'"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 10
-
-      ipfs:
-        image: ipfs/kubo:v0.29.0
-        options: >-
-          --health-cmd "ipfs version"
-          --health-interval 10s
-          --health-timeout 10s
-          --health-retries 15
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Install GCC for race detector
-        uses: ./.github/actions/install-gcc
-
-      - name: Set up Go (cached)
-        uses: ./.github/actions/setup-go-cached
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache-dependency-path: go.sum
-
-      - name: Set up PostgreSQL test environment
-        id: postgres
-        uses: ./.github/actions/setup-postgres-test
-
-      - name: Set up Redis test environment
-        id: redis
-        uses: ./.github/actions/setup-redis-test
-
-      - name: Set up IPFS test environment
-        id: ipfs
-        uses: ./.github/actions/setup-ipfs-test
-
-      - name: Apply test migrations
-        env:
-          DATABASE_URL: ${{ steps.postgres.outputs.database-url }}
-        run: make migrate-custom
-
-      - name: Run integration tests with race detection
-        env:
-          CGO_ENABLED: "1"
-          DATABASE_URL: ${{ steps.postgres.outputs.database-url }}
-          REDIS_URL: ${{ steps.redis.outputs.redis-url }}
-          JWT_SECRET: ${{ env.CI_JWT_SECRET }}
-          IPFS_API: ${{ steps.ipfs.outputs.ipfs-api }}
-          REQUIRE_IPFS: false
-          VALIDATION_TEST_MODE: true
-          LOG_LEVEL: debug
-        run: make test-integration-ci-race
 
   lint:
     name: Lint
     runs-on: self-hosted
+    needs: setup
     timeout-minutes: 10
-    concurrency:
-      group: golangci-lint-${{ github.head_ref || github.ref }}
-      cancel-in-progress: true
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up Go (cached)
-        uses: ./.github/actions/setup-go-cached
+      - name: Restore module cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: ${{ needs.setup.outputs.cache-key }}
+
+      - uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
-          cache-dependency-path: go.sum
+          cache: false
 
-      - name: golangci-lint
+      - name: Run golangci-lint
         uses: golangci/golangci-lint-action@v7
         with:
-          version: latest
+          version: v1.61.0
           args: --timeout=10m
-          skip-cache: false
-          skip-pkg-cache: false
-          skip-build-cache: false
 
   format-check:
     name: Format Check
     runs-on: self-hosted
-    timeout-minutes: 10
+    needs: setup
+    timeout-minutes: 5
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up Go (cached)
-        uses: ./.github/actions/setup-go-cached
+      - name: Restore module cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: ${{ needs.setup.outputs.cache-key }}
+
+      - uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
-          cache-dependency-path: go.sum
+          cache: false
 
       - name: Check formatting
-        run: make fmt-check
+        run: |
+          if [ -n "$(gofmt -l .)" ]; then
+            echo "Go files are not formatted. Run: gofmt -w ."
+            gofmt -l .
+            exit 1
+          fi
 
+          if ! command -v goimports &> /dev/null; then
+            go install golang.org/x/tools/cmd/goimports@latest
+          fi
+
+          if [ -n "$(goimports -l .)" ]; then
+            echo "Go files have incorrect imports. Run: goimports -w ."
+            goimports -l .
+            exit 1
+          fi
+
+  # ============================================================================
+  # INTEGRATION TESTS - Run after unit tests pass
+  # ============================================================================
+  integration:
+    name: Integration Tests
+    runs-on: self-hosted
+    needs: [setup, unit]
+    timeout-minutes: 15
+
+    container:
+      image: golang:1.24
+      options: --user root
+
+    services:
+      postgres:
+        image: postgres:15.6-alpine
+        env:
+          POSTGRES_DB: athena_test
+          POSTGRES_USER: test_user
+          POSTGRES_PASSWORD: test_password
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7.2-alpine
+        options: >-
+          --health-cmd "sh -c 'redis-cli ping | grep PONG'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+      ipfs:
+        image: ipfs/kubo:v0.29.0
+        options: >-
+          --health-cmd "ipfs version"
+          --health-interval 10s
+          --health-timeout 10s
+          --health-retries 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Restore module cache (container)
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            /go/pkg/mod
+            /root/.cache/go-build
+          key: ${{ needs.setup.outputs.cache-key }}
+
+      - name: Set up test services
+        id: services
+        run: |
+          echo "database-url=postgres://test_user:test_password@postgres:5432/athena_test?sslmode=disable" >> $GITHUB_OUTPUT
+          echo "redis-url=redis://redis:6379/0" >> $GITHUB_OUTPUT
+          echo "ipfs-api=http://ipfs:5001" >> $GITHUB_OUTPUT
+
+      - name: Run integration tests
+        env:
+          DATABASE_URL: ${{ steps.services.outputs.database-url }}
+          REDIS_URL: ${{ steps.services.outputs.redis-url }}
+          IPFS_API: ${{ steps.services.outputs.ipfs-api }}
+          JWT_SECRET: test-jwt-secret
+        run: make test-integration-ci
+
+  # ============================================================================
+  # BUILD - Run after lint and unit tests pass
+  # ============================================================================
   build:
     name: Build
     runs-on: self-hosted
-    timeout-minutes: 15
-    needs: [unit, lint]
+    needs: [setup, lint, unit]
+    timeout-minutes: 10
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up Go (cached)
-        uses: ./.github/actions/setup-go-cached
+      - name: Restore module cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: ${{ needs.setup.outputs.cache-key }}
+
+      - uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
-          cache-dependency-path: go.sum
+          cache: false
 
-      - name: Build binary
-        run: go build -v -o bin/athena ./cmd/server
+      - name: Build binaries
+        run: |
+          echo "🔨 Building server..."
+          go build -v -o bin/athena ./cmd/server
+          ls -lh bin/athena
+          echo "✅ Build successful"
 
-      - name: Test binary
-        run: ./bin/athena --help || true
-
-      - name: Upload binary as artifact
+      - name: Upload binary artifact
         uses: actions/upload-artifact@v4
         with:
           name: athena-binary
           path: bin/athena
           retention-days: 7
 
-  postman-e2e:
-    name: Postman E2E Tests
+  # ============================================================================
+  # RACE DETECTION TESTS - Run last (slowest tests)
+  # ============================================================================
+  unit-race:
+    name: Unit Tests (Race)
     runs-on: self-hosted
+    needs: [setup, unit, lint]
+    timeout-minutes: 15
+
+    container:
+      image: golang:1.24
+      options: --user root
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Restore module cache (container)
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            /go/pkg/mod
+            /root/.cache/go-build
+          key: ${{ needs.setup.outputs.cache-key }}
+
+      - name: Install GCC
+        run: |
+          apt-get update && apt-get install -y gcc g++
+
+      - name: Run unit tests with race detector
+        env:
+          CGO_ENABLED: "1"
+        run: make test-unit-race
+
+  integration-race:
+    name: Integration Tests (Race)
+    runs-on: self-hosted
+    needs: [setup, integration]
     timeout-minutes: 20
 
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+    container:
+      image: golang:1.24
+      options: --user root
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Run Postman E2E via Makefile
+    services:
+      postgres:
+        image: postgres:15.6-alpine
         env:
-          DOCKER_COMPOSE: docker compose
-        run: make postman-e2e
+          POSTGRES_DB: athena_test
+          POSTGRES_USER: test_user
+          POSTGRES_PASSWORD: test_password
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
 
-      - name: Upload Newman results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: newman-results-e2e
-          path: postman/newman-results.xml
-          retention-days: 14
+      redis:
+        image: redis:7.2-alpine
+        options: >-
+          --health-cmd "sh -c 'redis-cli ping | grep PONG'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
 
-      - name: Collect docker compose logs
-        if: failure()
-        run: |
-          mkdir -p artifacts
-          COMPOSE_PROJECT_NAME=athena-test docker compose -f docker-compose.test.yml logs --no-color > artifacts/compose-logs.txt 2>/dev/null || echo "Unable to collect logs"
-
-      - name: Upload compose logs
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: compose-logs-e2e
-          path: artifacts/compose-logs.txt
-          retention-days: 7
-
-  all-tests-passed:
-    name: All Tests Passed
-    runs-on: self-hosted
-    timeout-minutes: 5
-    needs: [unit, unit-race, integration, integration-race, lint, format-check, build, postman-e2e]
-    if: always()
+      ipfs:
+        image: ipfs/kubo:v0.29.0
+        options: >-
+          --health-cmd "ipfs version"
+          --health-interval 10s
+          --health-timeout 10s
+          --health-retries 15
 
     steps:
-      - name: Check test results
+      - uses: actions/checkout@v4
+
+      - name: Restore module cache (container)
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            /go/pkg/mod
+            /root/.cache/go-build
+          key: ${{ needs.setup.outputs.cache-key }}
+
+      - name: Install GCC
         run: |
-          if [ "${{ needs.unit.result }}" != "success" ]; then
-            echo "Unit tests failed"
-            exit 1
-          fi
-          if [ "${{ needs.unit-race.result }}" != "success" ]; then
-            echo "Unit tests with race detection failed"
-            exit 1
-          fi
-          if [ "${{ needs.integration.result }}" != "success" ]; then
-            echo "Integration tests failed"
-            exit 1
-          fi
-          if [ "${{ needs.integration-race.result }}" != "success" ]; then
-            echo "Integration tests with race detection failed"
-            exit 1
-          fi
-          if [ "${{ needs.lint.result }}" != "success" ]; then
-            echo "Linting failed"
-            exit 1
-          fi
-          if [ "${{ needs.format-check.result }}" != "success" ]; then
-            echo "Format check failed"
-            exit 1
-          fi
-          if [ "${{ needs.build.result }}" != "success" ]; then
-            echo "Build failed"
-            exit 1
-          fi
-          if [ "${{ needs.postman-e2e.result }}" != "success" ]; then
-            echo "Postman E2E tests failed"
-            exit 1
-          fi
-          echo "All tests passed successfully!"
+          apt-get update && apt-get install -y gcc g++
+
+      - name: Set up test services
+        id: services
+        run: |
+          echo "database-url=postgres://test_user:test_password@postgres:5432/athena_test?sslmode=disable" >> $GITHUB_OUTPUT
+          echo "redis-url=redis://redis:6379/0" >> $GITHUB_OUTPUT
+          echo "ipfs-api=http://ipfs:5001" >> $GITHUB_OUTPUT
+
+      - name: Run integration tests with race detector
+        env:
+          CGO_ENABLED: "1"
+          DATABASE_URL: ${{ steps.services.outputs.database-url }}
+          REDIS_URL: ${{ steps.services.outputs.redis-url }}
+          IPFS_API: ${{ steps.services.outputs.ipfs-api }}
+          JWT_SECRET: test-jwt-secret
+        run: make test-integration-ci-race
