@@ -412,6 +412,8 @@ func TestPool_AllConnectionsBusy(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"col"}).AddRow(1))
 	mock.ExpectQuery("SELECT SLEEP").WillDelayFor(2 * time.Second).
 		WillReturnRows(sqlmock.NewRows([]string{"col"}).AddRow(1))
+	// Set up expectation for the third query BEFORE starting goroutines to avoid race
+	mock.ExpectQuery("SELECT 1").WillReturnRows(sqlmock.NewRows([]string{"col"}).AddRow(1))
 
 	// Start two long-running queries to exhaust the pool
 	var wg sync.WaitGroup
@@ -430,8 +432,6 @@ func TestPool_AllConnectionsBusy(t *testing.T) {
 	// Attempt to acquire another connection with timeout
 	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
-
-	mock.ExpectQuery("SELECT 1").WillReturnRows(sqlmock.NewRows([]string{"col"}).AddRow(1))
 
 	_, err = pool.QueryContext(ctx, "SELECT 1")
 
