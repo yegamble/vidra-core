@@ -117,6 +117,7 @@ jobs:
           --health-interval 30s
           --health-timeout 10s
           --health-retries 10
+          --health-start-period 180s
 
     steps:
       - name: Checkout code
@@ -227,6 +228,7 @@ jobs:
           --health-interval 30s
           --health-timeout 10s
           --health-retries 10
+          --health-start-period 180s
 
     steps:
       - name: Checkout code
@@ -317,6 +319,7 @@ jobs:
           --health-interval 30s
           --health-timeout 10s
           --health-retries 10
+          --health-start-period 180s
 
     steps:
       - name: Checkout code
@@ -470,6 +473,7 @@ jobs:
           --health-interval 30s
           --health-timeout 10s
           --health-retries 10
+          --health-start-period 180s
 
     steps:
       - name: Checkout code

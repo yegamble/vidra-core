@@ -172,6 +172,7 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 30
+          --health-start-period 180s
 
     steps:
       - uses: actions/checkout@v4
@@ -342,6 +343,7 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 30
+          --health-start-period 180s
 
     steps:
       - uses: actions/checkout@v4
