@@ -317,14 +317,16 @@ jobs:
           go mod download
           echo "Modules downloaded"
 
-      - name: Install GCC (required for race detector)
+      - name: Install build tools (required for race detector with CGO)
         run: |
-          if ! command -v gcc &> /dev/null; then
-            echo "GCC not found, installing..."
+          if ! command -v gcc &> /dev/null || ! command -v g++ &> /dev/null; then
+            echo "Build tools not found, installing..."
             sudo apt-get update -qq
-            sudo apt-get install -y gcc
+            sudo apt-get install -y build-essential
           else
-            echo "GCC already installed: $(gcc --version | head -n1)"
+            echo "Build tools already installed:"
+            echo "  GCC: $(gcc --version | head -n1)"
+            echo "  G++: $(g++ --version | head -n1)"
           fi
 
       - name: Run unit tests with race detector
@@ -370,14 +372,16 @@ jobs:
           go mod download
           echo "Modules downloaded"
 
-      - name: Install GCC (required for race detector)
+      - name: Install build tools (required for race detector with CGO)
         run: |
-          if ! command -v gcc &> /dev/null; then
-            echo "GCC not found, installing..."
+          if ! command -v gcc &> /dev/null || ! command -v g++ &> /dev/null; then
+            echo "Build tools not found, installing..."
             sudo apt-get update -qq
-            sudo apt-get install -y gcc
+            sudo apt-get install -y build-essential
           else
-            echo "GCC already installed: $(gcc --version | head -n1)"
+            echo "Build tools already installed:"
+            echo "  GCC: $(gcc --version | head -n1)"
+            echo "  G++: $(g++ --version | head -n1)"
           fi
 
       - name: Start services with docker compose
