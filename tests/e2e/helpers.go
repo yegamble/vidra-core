@@ -28,7 +28,7 @@ type Config struct {
 func DefaultConfig() *Config {
 	baseURL := os.Getenv("E2E_BASE_URL")
 	if baseURL == "" {
-		baseURL = "http://localhost:8080"
+		baseURL = "http://localhost:18080"
 	}
 
 	return &Config{

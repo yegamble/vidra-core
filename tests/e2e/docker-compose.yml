@@ -13,8 +13,8 @@ services:
       POSTGRES_DB: athena_e2e
     ports:
       - "5433:5432"
-    volumes:
-      - postgres-e2e-data:/var/lib/postgresql/data
+    tmpfs:
+      - /var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U athena_test"]
       interval: 5s
@@ -44,8 +44,8 @@ services:
     ports:
       - "9000:9000"
       - "9001:9001"
-    volumes:
-      - minio-e2e-data:/data
+    tmpfs:
+      - /data
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
       interval: 10s
@@ -58,8 +58,8 @@ services:
     container_name: athena-e2e-clamav
     ports:
       - "3311:3310"
-    volumes:
-      - clamav-e2e-data:/var/lib/clamav
+    tmpfs:
+      - /var/lib/clamav
     healthcheck:
       test: ["CMD", "/usr/local/bin/clamdcheck.sh"]
       interval: 30s
@@ -102,7 +102,7 @@ services:
       # Application
       PORT: "8080"
       JWT_SECRET: "test-jwt-secret-for-e2e-testing-only"
-      PUBLIC_BASE_URL: "http://localhost:8080"
+      PUBLIC_BASE_URL: "http://localhost:18080"
       ENVIRONMENT: "test"
 
       # Features
@@ -114,18 +114,13 @@ services:
       # Logging
       LOG_LEVEL: "debug"
     ports:
-      - "8080:8080"
+      - "18080:8080"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
       interval: 10s
       timeout: 5s
       retries: 5
       start_period: 30s
-
-volumes:
-  postgres-e2e-data:
-  minio-e2e-data:
-  clamav-e2e-data:
 
 networks:
   default:
