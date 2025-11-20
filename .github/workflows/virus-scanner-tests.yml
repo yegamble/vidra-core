@@ -83,42 +83,6 @@ jobs:
     env:
       CGO_ENABLED: "0"
 
-    services:
-      postgres:
-        image: postgres:15.6-alpine
-        env:
-          POSTGRES_DB: athena_test
-          POSTGRES_USER: test_user
-          POSTGRES_PASSWORD: test_password
-        ports:
-          - 5435:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
-      redis:
-        image: redis:7.2-alpine
-        ports:
-          - 6379:6379
-        options: >-
-          --health-cmd "redis-cli ping"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
-      clamav:
-        image: clamav/clamav:stable
-        ports:
-          - 3310:3310
-        options: >-
-          --health-cmd "/usr/local/bin/clamdcheck.sh"
-          --health-interval 30s
-          --health-timeout 10s
-          --health-retries 10
-          --health-start-period 180s
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -129,15 +93,22 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache-dependency-path: go.sum
 
-      - name: Wait for ClamAV to be ready
-        uses: ./.github/actions/wait-for-service
-        with:
-          service_type: 'docker'
-          check_command: 'docker exec $(docker ps -q -f ancestor=clamav/clamav:${{ env.CLAMAV_VERSION }}) clamdscan --version 2>/dev/null'
-          timeout: '300'
-          docker_container: '$(docker ps -q -f ancestor=clamav/clamav:${{ env.CLAMAV_VERSION }})'
-          max_restarts: '3'
-          service_name: 'ClamAV daemon'
+      - name: Start services with docker-compose
+        run: |
+          docker-compose -f docker-compose.ci.yml up -d
+          echo "Waiting for services to be healthy..."
+          docker-compose -f docker-compose.ci.yml ps
+
+      - name: Wait for services to be ready
+        run: |
+          # Wait for postgres
+          timeout 60 bash -c 'until docker exec $(docker-compose -f docker-compose.ci.yml ps -q postgres-ci) pg_isready -U test_user -d athena_test; do sleep 2; done'
+
+          # Wait for redis
+          timeout 60 bash -c 'until docker exec $(docker-compose -f docker-compose.ci.yml ps -q redis-ci) redis-cli ping | grep PONG; do sleep 2; done'
+
+          # Wait for ClamAV (longer timeout due to signature loading)
+          timeout 300 bash -c 'until docker exec $(docker-compose -f docker-compose.ci.yml ps -q clamav-ci) /usr/local/bin/clamdcheck.sh; do sleep 5; done'
 
       - name: Create test fixtures
         run: |
@@ -157,7 +128,7 @@ jobs:
 
       - name: Apply database migrations
         env:
-          DATABASE_URL: postgres://test_user:test_password@localhost:5435/athena_test?sslmode=disable
+          DATABASE_URL: postgres://test_user:test_password@localhost:5432/athena_test?sslmode=disable
         run: |
           make migrate-custom
 
@@ -168,7 +139,7 @@ jobs:
           CLAMAV_MAX_RETRIES: 3
           CLAMAV_FALLBACK_MODE: strict
           QUARANTINE_DIR: /tmp/quarantine
-          DATABASE_URL: postgres://test_user:test_password@localhost:5435/athena_test?sslmode=disable
+          DATABASE_URL: postgres://test_user:test_password@localhost:5432/athena_test?sslmode=disable
           REDIS_URL: redis://localhost:6379/0
         run: |
           # Run against the security package so tests compile within package context
@@ -180,7 +151,11 @@ jobs:
         if: failure()
         run: |
           echo "=== ClamAV Daemon Logs ==="
-          docker logs $(docker ps -q -f ancestor=clamav/clamav:${{ env.CLAMAV_VERSION }})
+          docker logs $(docker-compose -f docker-compose.ci.yml ps -q clamav-ci)
+
+      - name: Cleanup services
+        if: always()
+        run: docker-compose -f docker-compose.ci.yml down -v
 
   integration-tests-race:
     name: Integration Tests (Race Detection) - ClamAV
@@ -189,53 +164,12 @@ jobs:
     needs: integration-tests
     # Only run on main branch or manual trigger to save CI time
     if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
-
-    container:
-      image: golang:1.24
-      options: --user root
-
-    services:
-      postgres:
-        image: postgres:15.6-alpine
-        env:
-          POSTGRES_DB: athena_test
-          POSTGRES_USER: test_user
-          POSTGRES_PASSWORD: test_password
-        ports:
-          - 5435:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
-      redis:
-        image: redis:7.2-alpine
-        ports:
-          - 6379:6379
-        options: >-
-          --health-cmd "redis-cli ping"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
-      clamav:
-        image: clamav/clamav:stable
-        ports:
-          - 3310:3310
-        options: >-
-          --health-cmd "/usr/local/bin/clamdcheck.sh"
-          --health-interval 30s
-          --health-timeout 10s
-          --health-retries 10
-          --health-start-period 180s
+    env:
+      CGO_ENABLED: "1"
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
-      - name: Install GCC for race detector
-        uses: ./.github/actions/install-gcc
 
       - name: Set up Go (cached)
         uses: ./.github/actions/setup-go-cached
@@ -243,15 +177,22 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache-dependency-path: go.sum
 
-      - name: Wait for ClamAV to be ready
-        uses: ./.github/actions/wait-for-service
-        with:
-          service_type: 'docker'
-          check_command: 'docker exec $(docker ps -q -f ancestor=clamav/clamav:${{ env.CLAMAV_VERSION }}) clamdscan --version 2>/dev/null'
-          timeout: '300'
-          docker_container: '$(docker ps -q -f ancestor=clamav/clamav:${{ env.CLAMAV_VERSION }})'
-          max_restarts: '3'
-          service_name: 'ClamAV daemon'
+      - name: Start services with docker-compose
+        run: |
+          docker-compose -f docker-compose.ci.yml up -d
+          echo "Waiting for services to be healthy..."
+          docker-compose -f docker-compose.ci.yml ps
+
+      - name: Wait for services to be ready
+        run: |
+          # Wait for postgres
+          timeout 60 bash -c 'until docker exec $(docker-compose -f docker-compose.ci.yml ps -q postgres-ci) pg_isready -U test_user -d athena_test; do sleep 2; done'
+
+          # Wait for redis
+          timeout 60 bash -c 'until docker exec $(docker-compose -f docker-compose.ci.yml ps -q redis-ci) redis-cli ping | grep PONG; do sleep 2; done'
+
+          # Wait for ClamAV (longer timeout due to signature loading)
+          timeout 300 bash -c 'until docker exec $(docker-compose -f docker-compose.ci.yml ps -q clamav-ci) /usr/local/bin/clamdcheck.sh; do sleep 5; done'
 
       - name: Create test fixtures
         run: |
@@ -263,19 +204,18 @@ jobs:
 
       - name: Apply database migrations
         env:
-          DATABASE_URL: postgres://test_user:test_password@localhost:5435/athena_test?sslmode=disable
+          DATABASE_URL: postgres://test_user:test_password@localhost:5432/athena_test?sslmode=disable
         run: |
           make migrate-custom
 
       - name: Run integration tests with race detection
         env:
-          CGO_ENABLED: "1"
           CLAMAV_ADDRESS: localhost:3310
           CLAMAV_TIMEOUT: 300
           CLAMAV_MAX_RETRIES: 3
           CLAMAV_FALLBACK_MODE: strict
           QUARANTINE_DIR: /tmp/quarantine
-          DATABASE_URL: postgres://test_user:test_password@localhost:5435/athena_test?sslmode=disable
+          DATABASE_URL: postgres://test_user:test_password@localhost:5432/athena_test?sslmode=disable
           REDIS_URL: redis://localhost:6379/0
         run: |
           go test -v -race -timeout 25m \
@@ -286,7 +226,11 @@ jobs:
         if: failure()
         run: |
           echo "=== ClamAV Daemon Logs ==="
-          docker logs $(docker ps -q -f ancestor=clamav/clamav:${{ env.CLAMAV_VERSION }})
+          docker logs $(docker-compose -f docker-compose.ci.yml ps -q clamav-ci)
+
+      - name: Cleanup services
+        if: always()
+        run: docker-compose -f docker-compose.ci.yml down -v
 
   edge-case-tests:
     name: Edge Cases & Breaking Scenarios
@@ -294,32 +238,6 @@ jobs:
     timeout-minutes: 45
     needs: integration-tests
     if: github.event.inputs.run_breaking_tests != 'false'
-
-    services:
-      postgres:
-        image: postgres:15.6-alpine
-        env:
-          POSTGRES_DB: athena_test
-          POSTGRES_USER: test_user
-          POSTGRES_PASSWORD: test_password
-        ports:
-          - 5435:5432
-
-      redis:
-        image: redis:7.2-alpine
-        ports:
-          - 6379:6379
-
-      clamav:
-        image: clamav/clamav:stable
-        ports:
-          - 3310:3310
-        options: >-
-          --health-cmd "/usr/local/bin/clamdcheck.sh"
-          --health-interval 30s
-          --health-timeout 10s
-          --health-retries 10
-          --health-start-period 180s
 
     steps:
       - name: Checkout code
@@ -332,19 +250,26 @@ jobs:
           packages: 'newman newman-reporter-htmlextra'
           cache-key-suffix: 'virus-scanner'
 
-      - name: Wait for ClamAV
-        uses: ./.github/actions/wait-for-service
-        with:
-          service_type: 'docker'
-          check_command: 'docker exec $(docker ps -q -f ancestor=clamav/clamav:${{ env.CLAMAV_VERSION }}) clamdscan --version 2>/dev/null'
-          timeout: '300'
-          docker_container: '$(docker ps -q -f ancestor=clamav/clamav:${{ env.CLAMAV_VERSION }})'
-          max_restarts: '3'
-          service_name: 'ClamAV daemon'
+      - name: Start services with docker-compose
+        run: |
+          docker-compose -f docker-compose.ci.yml up -d
+          echo "Waiting for services to be healthy..."
+          docker-compose -f docker-compose.ci.yml ps
+
+      - name: Wait for services to be ready
+        run: |
+          # Wait for postgres
+          timeout 60 bash -c 'until docker exec $(docker-compose -f docker-compose.ci.yml ps -q postgres-ci) pg_isready -U test_user -d athena_test; do sleep 2; done'
+
+          # Wait for redis
+          timeout 60 bash -c 'until docker exec $(docker-compose -f docker-compose.ci.yml ps -q redis-ci) redis-cli ping | grep PONG; do sleep 2; done'
+
+          # Wait for ClamAV (longer timeout due to signature loading)
+          timeout 300 bash -c 'until docker exec $(docker-compose -f docker-compose.ci.yml ps -q clamav-ci) /usr/local/bin/clamdcheck.sh; do sleep 5; done'
 
       - name: Start application
         env:
-          DATABASE_URL: postgres://test_user:test_password@localhost:5435/athena_test?sslmode=disable
+          DATABASE_URL: postgres://test_user:test_password@localhost:5432/athena_test?sslmode=disable
           REDIS_URL: redis://localhost:6379/0
           CLAMAV_ADDRESS: localhost:3310
           VIRUS_SCAN_ENABLED: true
@@ -425,13 +350,14 @@ jobs:
 
           # Wait briefly, then kill ClamAV
           sleep 0.5
-          docker stop $(docker ps -q -f ancestor=clamav/clamav:${{ env.CLAMAV_VERSION }})
+          docker-compose -f docker-compose.ci.yml stop clamav-ci
 
           # Wait for upload to complete
           wait $UPLOAD_PID || UPLOAD_EXIT_CODE=$?
 
           # Restart ClamAV for subsequent tests
-          docker start $(docker ps -a -q -f ancestor=clamav/clamav:${{ env.CLAMAV_VERSION }})
+          docker-compose -f docker-compose.ci.yml start clamav-ci
+          timeout 300 bash -c 'until docker exec $(docker-compose -f docker-compose.ci.yml ps -q clamav-ci) /usr/local/bin/clamdcheck.sh; do sleep 5; done'
 
           # Verify upload was rejected
           if [ ${UPLOAD_EXIT_CODE:-0} -eq 0 ]; then
@@ -455,6 +381,7 @@ jobs:
         if: always()
         run: |
           kill ${{ env.APP_PID }} 2>/dev/null || echo "App already stopped"
+          docker-compose -f docker-compose.ci.yml down -v
 
   performance-benchmarks:
     name: Performance Benchmarks
@@ -462,18 +389,6 @@ jobs:
     timeout-minutes: 30
     needs: integration-tests
     if: github.event.inputs.run_performance_tests != 'false'
-
-    services:
-      clamav:
-        image: clamav/clamav:stable
-        ports:
-          - 3310:3310
-        options: >-
-          --health-cmd "/usr/local/bin/clamdcheck.sh"
-          --health-interval 30s
-          --health-timeout 10s
-          --health-retries 10
-          --health-start-period 180s
 
     steps:
       - name: Checkout code
@@ -485,15 +400,16 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache-dependency-path: go.sum
 
-      - name: Wait for ClamAV
-        uses: ./.github/actions/wait-for-service
-        with:
-          service_type: 'docker'
-          check_command: 'docker exec $(docker ps -q -f ancestor=clamav/clamav:${{ env.CLAMAV_VERSION }}) clamdscan --version 2>/dev/null'
-          timeout: '300'
-          docker_container: '$(docker ps -q -f ancestor=clamav/clamav:${{ env.CLAMAV_VERSION }})'
-          max_restarts: '3'
-          service_name: 'ClamAV daemon'
+      - name: Start ClamAV service with docker-compose
+        run: |
+          # Only start ClamAV for benchmarks (no need for postgres/redis)
+          docker-compose -f docker-compose.ci.yml up -d clamav-ci
+          echo "Waiting for ClamAV to be healthy..."
+          docker-compose -f docker-compose.ci.yml ps
+
+      - name: Wait for ClamAV to be ready
+        run: |
+          timeout 300 bash -c 'until docker exec $(docker-compose -f docker-compose.ci.yml ps -q clamav-ci) /usr/local/bin/clamdcheck.sh; do sleep 5; done'
 
       - name: Create benchmark test files
         run: |
@@ -536,6 +452,10 @@ jobs:
           name: performance-benchmarks
           path: benchmark-results.txt
           retention-days: 14
+
+      - name: Cleanup services
+        if: always()
+        run: docker-compose -f docker-compose.ci.yml down -v
 
   security-audit:
     name: Security Audit

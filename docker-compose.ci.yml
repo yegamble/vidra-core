@@ -1,5 +1,6 @@
-# Docker Compose configuration aligned with GitHub Actions CI/CD
-# This mirrors the service configuration from .github/workflows/test.yml
+# Docker Compose configuration for CI/CD environments
+# Single source of truth for all GitHub Actions workflow service definitions
+# Used by: .github/workflows/test.yml, .github/workflows/virus-scanner-tests.yml
 
 services:
   postgres-ci:
@@ -44,6 +45,19 @@ services:
       timeout: 10s
       retries: 15
       start_period: 45s
+    networks:
+      - ci-network
+
+  clamav-ci:
+    image: clamav/clamav:stable
+    ports:
+      - "3310:3310"
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/clamdcheck.sh"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 180s
     networks:
       - ci-network
 
