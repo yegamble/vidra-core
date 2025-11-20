@@ -72,7 +72,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 30
-      start_period: 120s  # ClamAV needs time to load signatures
+      start_period: 180s  # ClamAV needs time to load signatures
     mem_limit: 2g
     networks:
       - test-network
