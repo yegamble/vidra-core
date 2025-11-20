@@ -286,7 +286,6 @@ jobs:
     timeout-minutes: 15
 
     env:
-      HOME: /home/runner
       GOPATH: /home/runner/go
       GOMODCACHE: /home/runner/go/pkg/mod
       GOCACHE: /home/runner/.cache/go-build
@@ -342,7 +341,6 @@ jobs:
     timeout-minutes: 20
 
     env:
-      HOME: /home/runner
       GOPATH: /home/runner/go
       GOMODCACHE: /home/runner/go/pkg/mod
       GOCACHE: /home/runner/.cache/go-build
