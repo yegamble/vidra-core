@@ -195,7 +195,13 @@ func TestVideoSearchFunctionality(t *testing.T) {
 func createTestVideoFile(t *testing.T) string {
 	// Use existing test video from postman test files
 	// This allows E2E tests to run without requiring ffmpeg
-	testVideoPath := "../../postman/test-files/videos/test-video.mp4"
+
+	// Use environment variable if set, otherwise use relative path
+	testVideoPath := os.Getenv("E2E_TEST_VIDEO_PATH")
+	if testVideoPath == "" {
+		// Fallback to relative path from test directory
+		testVideoPath = "../../postman/test-files/videos/test-video.mp4"
+	}
 
 	// Check if the test video exists
 	if _, err := os.Stat(testVideoPath); err != nil {
@@ -206,8 +212,9 @@ func createTestVideoFile(t *testing.T) string {
 }
 
 // Helper: Clean up test files
+// Note: This is a no-op for E2E tests since we use a shared test video file
+// from the postman test-files directory. Individual test resources (uploaded videos,
+// users) are cleaned up via API calls (DeleteVideo, DeleteUser) rather than file deletion.
 func cleanupTestFile(t *testing.T, path string) {
-	if path != "" {
-		// os.Remove(path)
-	}
+	// No-op: Shared test video files should not be deleted
 }

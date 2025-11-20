@@ -8,6 +8,7 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"testing"
@@ -238,7 +239,11 @@ func (c *TestClient) ListVideos(t *testing.T) []map[string]interface{} {
 
 // SearchVideos searches for videos
 func (c *TestClient) SearchVideos(t *testing.T, query string) []map[string]interface{} {
-	resp, err := c.Get(fmt.Sprintf("/api/v1/videos/search?q=%s", query))
+	// URL encode the query parameter to handle spaces and special characters
+	encodedQuery := url.QueryEscape(query)
+	searchURL := fmt.Sprintf("/api/v1/videos/search?q=%s", encodedQuery)
+
+	resp, err := c.Get(searchURL)
 	require.NoError(t, err)
 	defer func() { _ = resp.Body.Close() }()
 
