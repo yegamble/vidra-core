@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -117,33 +118,64 @@ func TestSSRFProtection(t *testing.T) {
 
 // TestFileSizeDoSProtection tests that large file DoS attacks are prevented
 func TestFileSizeDoSProtection(t *testing.T) {
-	// This test would require a mock HTTP server to test properly
-	// as we need to simulate Content-Length headers
-	t.Run("100GB file DoS attempt", func(t *testing.T) {
-		// In production, this would be blocked by ValidateVideoURL
-		// which checks Content-Length before allowing the import
-		mockService := new(MockImportService)
-		handler := NewImportHandlers(mockService)
+	tests := []struct {
+		name          string
+		sourceURL     string
+		mockError     error
+		expectedError string
+	}{
+		{
+			name:          "100GB file DoS attempt",
+			sourceURL:     "http://evil.com/100gb-video.mp4",
+			mockError:     fmt.Errorf("file size exceeds maximum allowed limit: file is 107374182400 bytes, maximum allowed is 5368709120 bytes"),
+			expectedError: "Invalid or unsafe URL",
+		},
+		{
+			name:          "10GB file exceeding 5GB limit",
+			sourceURL:     "https://attacker.com/10gb-video.mkv",
+			mockError:     fmt.Errorf("file size exceeds maximum allowed limit: file is 10737418240 bytes, maximum allowed is 5368709120 bytes"),
+			expectedError: "Invalid or unsafe URL",
+		},
+	}
 
-		reqBody := CreateImportRequest{
-			SourceURL:     "http://evil.com/100gb-video.mp4",
-			TargetPrivacy: "private",
-		}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockService := new(MockImportService)
+			mockValidator := new(MockURLValidator)
+			handler := NewImportHandlers(mockService, mockValidator)
 
-		bodyBytes, _ := json.Marshal(reqBody)
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/videos/imports", bytes.NewReader(bodyBytes))
-		req.Header.Set("Content-Type", "application/json")
-		ctx := context.WithValue(req.Context(), "user_id", "test-user-123")
-		req = req.WithContext(ctx)
-		rr := httptest.NewRecorder()
+			// Configure validator to reject the URL due to file size
+			mockValidator.On("ValidateVideoURL", tt.sourceURL).Return(tt.mockError)
 
-		// Mock DNS resolution to fail for evil.com
-		// This would normally be handled by security.ValidateVideoURL
-		handler.CreateImport(rr, req)
+			reqBody := CreateImportRequest{
+				SourceURL:     tt.sourceURL,
+				TargetPrivacy: "private",
+			}
 
-		// The request should fail due to URL validation
-		assert.Equal(t, http.StatusBadRequest, rr.Code)
-	})
+			bodyBytes, _ := json.Marshal(reqBody)
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/videos/imports", bytes.NewReader(bodyBytes))
+			req.Header.Set("Content-Type", "application/json")
+			ctx := context.WithValue(req.Context(), "user_id", "test-user-123")
+			req = req.WithContext(ctx)
+			rr := httptest.NewRecorder()
+
+			handler.CreateImport(rr, req)
+
+			// Verify the request was rejected
+			assert.Equal(t, http.StatusBadRequest, rr.Code)
+
+			var response ErrorResponse
+			err := json.Unmarshal(rr.Body.Bytes(), &response)
+			require.NoError(t, err)
+			assert.Contains(t, response.Message, tt.expectedError)
+
+			// Verify import service was never called
+			mockService.AssertNotCalled(t, "ImportVideo")
+
+			// Verify validator was called
+			mockValidator.AssertExpectations(t)
+		})
+	}
 }
 
 // TestValidImportRequest tests that valid import requests are allowed
