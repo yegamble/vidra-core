@@ -97,6 +97,12 @@ func NewClient(config *ClientConfig, logger *logrus.Logger) (*Client, error) {
 	if config == nil {
 		config = DefaultClientConfig()
 	}
+
+	// Copy config to avoid sharing the caller's pointer
+	// This prevents race conditions if the caller modifies the config
+	configCopy := *config
+	config = &configCopy
+
 	if logger == nil {
 		logger = logrus.New()
 	}
@@ -334,7 +340,9 @@ func (c *Client) AddTorrent(data []byte) (*Download, error) {
 
 	// Start downloading
 	t.DownloadAll()
+	download.mu.Lock()
 	download.Status = DownloadStatusDownloading
+	download.mu.Unlock()
 
 	// Monitor progress
 	go c.monitorDownload(download)
@@ -385,7 +393,9 @@ func (c *Client) AddMagnet(magnetURI string) (*Download, error) {
 
 	// Start downloading
 	t.DownloadAll()
+	download.mu.Lock()
 	download.Status = DownloadStatusDownloading
+	download.mu.Unlock()
 
 	// Monitor progress
 	go c.monitorDownload(download)
@@ -551,7 +561,11 @@ func (c *Client) GetStats() ClientStats {
 	}
 
 	for _, d := range c.downloads {
-		if d.Status == DownloadStatusDownloading {
+		d.mu.RLock()
+		status := d.Status
+		d.mu.RUnlock()
+
+		if status == DownloadStatusDownloading {
 			stats.ActiveDownloads++
 		}
 
