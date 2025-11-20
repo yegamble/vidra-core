@@ -154,25 +154,25 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache: false
 
-      - name: Start services with docker-compose
+      - name: Start services with docker compose
         run: |
-          docker-compose -f docker-compose.ci.yml up -d
+          docker compose -f docker compose.ci.yml up -d
           echo "Waiting for services to be healthy..."
-          docker-compose -f docker-compose.ci.yml ps
+          docker compose -f docker compose.ci.yml ps
 
       - name: Wait for services to be ready
         run: |
           # Wait for postgres
-          timeout 60 bash -c 'until docker exec $(docker-compose -f docker-compose.ci.yml ps -q postgres-ci) pg_isready -U test_user -d athena_test; do sleep 2; done'
+          timeout 60 bash -c 'until docker exec $(docker compose -f docker compose.ci.yml ps -q postgres-ci) pg_isready -U test_user -d athena_test; do sleep 2; done'
 
           # Wait for redis
-          timeout 60 bash -c 'until docker exec $(docker-compose -f docker-compose.ci.yml ps -q redis-ci) redis-cli ping | grep PONG; do sleep 2; done'
+          timeout 60 bash -c 'until docker exec $(docker compose -f docker compose.ci.yml ps -q redis-ci) redis-cli ping | grep PONG; do sleep 2; done'
 
           # Wait for IPFS
-          timeout 60 bash -c 'until docker exec $(docker-compose -f docker-compose.ci.yml ps -q ipfs-ci) ipfs version; do sleep 2; done'
+          timeout 60 bash -c 'until docker exec $(docker compose -f docker compose.ci.yml ps -q ipfs-ci) ipfs version; do sleep 2; done'
 
           # Wait for ClamAV (longer timeout due to signature loading)
-          timeout 300 bash -c 'until docker exec $(docker-compose -f docker-compose.ci.yml ps -q clamav-ci) /usr/local/bin/clamdcheck.sh; do sleep 5; done'
+          timeout 300 bash -c 'until docker exec $(docker compose -f docker compose.ci.yml ps -q clamav-ci) /usr/local/bin/clamdcheck.sh; do sleep 5; done'
 
       - name: Run integration tests
         env:
@@ -186,8 +186,8 @@ jobs:
       - name: Cleanup services
         if: always()
         run: |
-          docker-compose -f docker-compose.ci.yml down -v
-          docker-compose -f docker-compose.ci.yml ps
+          docker compose -f docker compose.ci.yml down -v
+          docker compose -f docker compose.ci.yml ps
 
   # ============================================================================
   # BUILD - Run after lint and unit tests pass
@@ -297,25 +297,25 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache: false
 
-      - name: Start services with docker-compose
+      - name: Start services with docker compose
         run: |
-          docker-compose -f docker-compose.ci.yml up -d
+          docker compose -f docker compose.ci.yml up -d
           echo "Waiting for services to be healthy..."
-          docker-compose -f docker-compose.ci.yml ps
+          docker compose -f docker compose.ci.yml ps
 
       - name: Wait for services to be ready
         run: |
           # Wait for postgres
-          timeout 60 bash -c 'until docker exec $(docker-compose -f docker-compose.ci.yml ps -q postgres-ci) pg_isready -U test_user -d athena_test; do sleep 2; done'
+          timeout 60 bash -c 'until docker exec $(docker compose -f docker compose.ci.yml ps -q postgres-ci) pg_isready -U test_user -d athena_test; do sleep 2; done'
 
           # Wait for redis
-          timeout 60 bash -c 'until docker exec $(docker-compose -f docker-compose.ci.yml ps -q redis-ci) redis-cli ping | grep PONG; do sleep 2; done'
+          timeout 60 bash -c 'until docker exec $(docker compose -f docker compose.ci.yml ps -q redis-ci) redis-cli ping | grep PONG; do sleep 2; done'
 
           # Wait for IPFS
-          timeout 60 bash -c 'until docker exec $(docker-compose -f docker-compose.ci.yml ps -q ipfs-ci) ipfs version; do sleep 2; done'
+          timeout 60 bash -c 'until docker exec $(docker compose -f docker compose.ci.yml ps -q ipfs-ci) ipfs version; do sleep 2; done'
 
           # Wait for ClamAV (longer timeout due to signature loading)
-          timeout 300 bash -c 'until docker exec $(docker-compose -f docker-compose.ci.yml ps -q clamav-ci) /usr/local/bin/clamdcheck.sh; do sleep 5; done'
+          timeout 300 bash -c 'until docker exec $(docker compose -f docker compose.ci.yml ps -q clamav-ci) /usr/local/bin/clamdcheck.sh; do sleep 5; done'
 
       - name: Run integration tests with race detector
         env:
@@ -330,5 +330,5 @@ jobs:
       - name: Cleanup services
         if: always()
         run: |
-          docker-compose -f docker-compose.ci.yml down -v
-          docker-compose -f docker-compose.ci.yml ps
+          docker compose -f docker compose.ci.yml down -v
+          docker compose -f docker compose.ci.yml ps
