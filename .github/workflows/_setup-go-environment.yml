@@ -40,6 +40,9 @@ jobs:
     runs-on: self-hosted
     timeout-minutes: 15
 
+    env:
+      HOME: /root
+
     outputs:
       cache-key: ${{ steps.cache-key.outputs.key }}
       cache-hit: ${{ steps.module-cache.outputs.cache-hit }}
@@ -49,6 +52,18 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Install build tools (required for CGO dependencies)
+        run: |
+          if ! command -v gcc &> /dev/null || ! command -v g++ &> /dev/null; then
+            echo "Build tools not found, installing..."
+            sudo apt-get update -qq
+            sudo apt-get install -y build-essential
+          else
+            echo "Build tools already installed:"
+            echo "  GCC: $(gcc --version | head -n1)"
+            echo "  G++: $(g++ --version | head -n1)"
+          fi
 
       - name: Set up Go
         uses: actions/setup-go@v5
