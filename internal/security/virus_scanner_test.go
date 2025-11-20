@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dutchcoders/go-clamd"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -280,9 +281,15 @@ func TestVirusScanner_NonSeekableReaderRetry(t *testing.T) {
 		t.Skip("Skipping integration test in short mode")
 	}
 
+	// Get ClamAV address from environment or use default
+	clamavAddr := os.Getenv("CLAMAV_HOST")
+	if clamavAddr == "" {
+		clamavAddr = "localhost:3310"
+	}
+
 	// Create scanner with retry enabled
 	config := VirusScannerConfig{
-		Address:      "localhost:3310",
+		Address:      clamavAddr,
 		Timeout:      30 * time.Second,
 		MaxRetries:   3,
 		RetryDelay:   100 * time.Millisecond,
@@ -594,9 +601,15 @@ func TestVirusScanner_NetworkErrorRetry(t *testing.T) {
 		t.Skip("Skipping integration test in short mode")
 	}
 
+	// Get ClamAV address from environment or use default
+	clamavAddr := os.Getenv("CLAMAV_HOST")
+	if clamavAddr == "" {
+		clamavAddr = "localhost:3310"
+	}
+
 	// Scanner with short timeout to simulate network issues
 	config := VirusScannerConfig{
-		Address:      "localhost:3310",
+		Address:      clamavAddr,
 		Timeout:      30 * time.Second,
 		MaxRetries:   2,
 		RetryDelay:   100 * time.Millisecond,
@@ -832,8 +845,14 @@ func TestVirusScanner_BusinessLogic_ErrorHandlingConsistency(t *testing.T) {
 		t.Skip("Skipping integration test in short mode")
 	}
 
+	// Get ClamAV address from environment or use default
+	clamavAddr := os.Getenv("CLAMAV_HOST")
+	if clamavAddr == "" {
+		clamavAddr = "localhost:3310"
+	}
+
 	config := VirusScannerConfig{
-		Address:      "localhost:3310",
+		Address:      clamavAddr,
 		Timeout:      30 * time.Second,
 		MaxRetries:   3,
 		RetryDelay:   100 * time.Millisecond,
@@ -953,8 +972,19 @@ func TestVirusScanner_ScanTimeout(t *testing.T) {
 		t.Skip("Skipping integration test in short mode")
 	}
 
+	// Get ClamAV address from environment or use default
+	clamavAddr := os.Getenv("CLAMAV_HOST")
+	if clamavAddr == "" {
+		clamavAddr = "localhost:3310"
+	}
+
+	// Check if ClamAV is available
+	if !isClamAVAvailable(clamavAddr) {
+		t.Skipf("ClamAV daemon not available at %s - skipping test", clamavAddr)
+	}
+
 	config := VirusScannerConfig{
-		Address: "localhost:3310",
+		Address: clamavAddr,
 		Timeout: 100 * time.Millisecond, // Very short timeout
 	}
 
@@ -1003,10 +1033,21 @@ func TestVirusScanner_QuarantineInfected(t *testing.T) {
 		t.Skip("Skipping integration test in short mode")
 	}
 
+	// Get ClamAV address from environment or use default
+	clamavAddr := os.Getenv("CLAMAV_HOST")
+	if clamavAddr == "" {
+		clamavAddr = "localhost:3310"
+	}
+
+	// Check if ClamAV is available
+	if !isClamAVAvailable(clamavAddr) {
+		t.Skipf("ClamAV daemon not available at %s - skipping test", clamavAddr)
+	}
+
 	quarantineDir := t.TempDir()
 
 	config := VirusScannerConfig{
-		Address:        "localhost:3310",
+		Address:        clamavAddr,
 		Timeout:        30 * time.Second,
 		QuarantineDir:  quarantineDir,
 		AutoQuarantine: true,
@@ -1044,10 +1085,19 @@ func TestVirusScanner_QuarantinePermissions(t *testing.T) {
 		t.Skip("Skipping integration test in short mode")
 	}
 
-	quarantineDir := t.TempDir()
+	// Create a parent temp directory, but not the quarantine directory itself
+	// This allows NewVirusScanner to create the quarantine directory with proper permissions
+	tempParent := t.TempDir()
+	quarantineDir := filepath.Join(tempParent, "quarantine")
+
+	// Get ClamAV address from environment or use default
+	clamavAddr := os.Getenv("CLAMAV_HOST")
+	if clamavAddr == "" {
+		clamavAddr = "localhost:3310"
+	}
 
 	config := VirusScannerConfig{
-		Address:        "localhost:3310",
+		Address:        clamavAddr,
 		Timeout:        30 * time.Second,
 		QuarantineDir:  quarantineDir,
 		AutoQuarantine: true,
@@ -1071,11 +1121,22 @@ func TestVirusScanner_QuarantineAuditLog(t *testing.T) {
 		t.Skip("Skipping integration test in short mode")
 	}
 
+	// Get ClamAV address from environment or use default
+	clamavAddr := os.Getenv("CLAMAV_HOST")
+	if clamavAddr == "" {
+		clamavAddr = "localhost:3310"
+	}
+
+	// Check if ClamAV is available
+	if !isClamAVAvailable(clamavAddr) {
+		t.Skipf("ClamAV daemon not available at %s - skipping test", clamavAddr)
+	}
+
 	quarantineDir := t.TempDir()
 	auditLogPath := filepath.Join(quarantineDir, "audit.log")
 
 	config := VirusScannerConfig{
-		Address:        "localhost:3310",
+		Address:        clamavAddr,
 		Timeout:        30 * time.Second,
 		QuarantineDir:  quarantineDir,
 		AutoQuarantine: true,
@@ -1114,10 +1175,16 @@ func TestVirusScanner_QuarantineCleanup(t *testing.T) {
 		t.Skip("Skipping integration test in short mode")
 	}
 
+	// Get ClamAV address from environment or use default
+	clamavAddr := os.Getenv("CLAMAV_HOST")
+	if clamavAddr == "" {
+		clamavAddr = "localhost:3310"
+	}
+
 	quarantineDir := t.TempDir()
 
 	config := VirusScannerConfig{
-		Address:             "localhost:3310",
+		Address:             clamavAddr,
 		Timeout:             30 * time.Second,
 		QuarantineDir:       quarantineDir,
 		QuarantineRetention: 24 * time.Hour,
@@ -1349,11 +1416,74 @@ func TestVirusScanner_MemoryUsage(t *testing.T) {
 
 // Helper functions
 
+// isClamAVAvailable checks if ClamAV daemon is running and accessible
+func isClamAVAvailable(address string) bool {
+	// Use the go-clamd client directly for a quick availability check
+	client := clamd.NewClamd(address)
+
+	// Try to ping ClamAV with a very short timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+	defer cancel()
+
+	// Create a minimal test stream
+	testData := bytes.NewReader([]byte("test"))
+
+	// Create a channel for the scan
+	abort := make(chan bool)
+
+	// Try to scan - if we get any response, ClamAV is available
+	// We don't care about the result, just whether we can connect
+	done := make(chan bool)
+	var scanErr error
+
+	go func() {
+		responses, err := client.ScanStream(testData, abort)
+		scanErr = err
+		// Drain responses
+		for range responses {
+		}
+		close(done)
+	}()
+
+	// Wait for either completion or timeout
+	select {
+	case <-ctx.Done():
+		// Timeout - ClamAV not available
+		close(abort)
+		return false
+	case <-done:
+		// Got a response - check if it's a connection error
+		if scanErr != nil {
+			errStr := strings.ToLower(scanErr.Error())
+			// Check for connection-related errors
+			if strings.Contains(errStr, "connection refused") ||
+				strings.Contains(errStr, "connection reset") ||
+				strings.Contains(errStr, "no such host") ||
+				strings.Contains(errStr, "no such file") ||
+				strings.Contains(errStr, "i/o timeout") {
+				return false
+			}
+		}
+		return true
+	}
+}
+
 func setupScanner(t *testing.T) *VirusScanner {
 	t.Helper()
 
+	// Get ClamAV address from environment or use default
+	clamavAddr := os.Getenv("CLAMAV_HOST")
+	if clamavAddr == "" {
+		clamavAddr = "localhost:3310"
+	}
+
+	// Check if ClamAV is available
+	if !isClamAVAvailable(clamavAddr) {
+		t.Skipf("ClamAV daemon not available at %s - skipping test", clamavAddr)
+	}
+
 	config := VirusScannerConfig{
-		Address:      "localhost:3310",
+		Address:      clamavAddr,
 		Timeout:      30 * time.Second,
 		MaxRetries:   3,
 		RetryDelay:   1 * time.Second,
@@ -1370,8 +1500,19 @@ func setupScanner(t *testing.T) *VirusScanner {
 func setupScannerForBenchmark(b *testing.B) *VirusScanner {
 	b.Helper()
 
+	// Get ClamAV address from environment or use default
+	clamavAddr := os.Getenv("CLAMAV_HOST")
+	if clamavAddr == "" {
+		clamavAddr = "localhost:3310"
+	}
+
+	// Check if ClamAV is available
+	if !isClamAVAvailable(clamavAddr) {
+		b.Skipf("ClamAV daemon not available at %s - skipping benchmark", clamavAddr)
+	}
+
 	config := VirusScannerConfig{
-		Address: "localhost:3310",
+		Address: clamavAddr,
 		Timeout: 30 * time.Second,
 	}
 

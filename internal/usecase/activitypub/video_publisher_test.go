@@ -202,13 +202,15 @@ func TestBuildVideoObject_URLs(t *testing.T) {
 		videoObject, err := service.BuildVideoObject(ctx, video)
 		require.NoError(t, err)
 
-		// Find the 1080p variant
+		// Find the 1080p HLS variant
+		found1080pHLS := false
 		for _, url := range videoObject.URL {
-			if url.Height == 1080 {
+			if url.Height == 1080 && url.MediaType == "application/x-mpegURL" {
 				assert.Equal(t, 1920, url.Width)
-				assert.Equal(t, "application/x-mpegURL", url.MediaType)
+				found1080pHLS = true
 			}
 		}
+		assert.True(t, found1080pHLS, "Should have 1080p HLS variant")
 
 		mockUserRepo.AssertExpectations(t)
 	})

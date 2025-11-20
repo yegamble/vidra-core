@@ -102,9 +102,13 @@ jobs:
           export GOMODCACHE="${GOMODCACHE:-$GOPATH/pkg/mod}"
           export GOCACHE="${GOCACHE:-$HOME/.cache/go-build}"
 
+          # Use direct proxy to avoid DNS issues with storage.googleapis.com
+          export GOPROXY="direct"
+
           echo "GOPATH: $GOPATH"
           echo "GOMODCACHE: $GOMODCACHE"
           echo "GOCACHE: $GOCACHE"
+          echo "GOPROXY: $GOPROXY"
 
           # Download with timeout
           timeout 15m go mod download || {
@@ -122,6 +126,7 @@ jobs:
           export GOPATH="${GOPATH:-$HOME/go}"
           export GOMODCACHE="${GOMODCACHE:-$GOPATH/pkg/mod}"
           export GOCACHE="${GOCACHE:-$HOME/.cache/go-build}"
+          export GOPROXY="direct"
 
           echo "Verifying module integrity..."
           go mod verify
@@ -133,6 +138,7 @@ jobs:
           export GOPATH="${GOPATH:-$HOME/go}"
           export GOMODCACHE="${GOMODCACHE:-$GOPATH/pkg/mod}"
           export GOCACHE="${GOCACHE:-$HOME/.cache/go-build}"
+          export GOPROXY="direct"
 
           echo "========================================="
           echo "Setup Complete"
@@ -143,4 +149,5 @@ jobs:
           echo "GOPATH: $GOPATH"
           echo "GOMODCACHE: $GOMODCACHE"
           echo "GOCACHE: $GOCACHE"
+          echo "GOPROXY: $GOPROXY"
           echo "========================================="

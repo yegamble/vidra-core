@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -387,10 +388,10 @@ func TestDNSRebindingProtection(t *testing.T) {
 }
 
 func TestCreateSecureHTTPClient(t *testing.T) {
-	client := CreateSecureHTTPClient(30)
+	client := CreateSecureHTTPClient(30 * time.Second)
 
 	assert.NotNil(t, client)
-	assert.Equal(t, 30*1e9, int64(client.Timeout))
+	assert.Equal(t, int64(30*time.Second), int64(client.Timeout))
 	assert.NotNil(t, client.CheckRedirect)
 
 	// Test redirect validation

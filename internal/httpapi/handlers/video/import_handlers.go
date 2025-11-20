@@ -12,15 +12,37 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
+// URLValidator defines the interface for URL validation
+type URLValidator interface {
+	ValidateVideoURL(urlStr string) error
+}
+
+// RealURLValidator implements URLValidator using the security package
+type RealURLValidator struct{}
+
+func (v *RealURLValidator) ValidateVideoURL(urlStr string) error {
+	return security.ValidateVideoURL(urlStr)
+}
+
 // ImportHandlers handles HTTP requests for video imports
 type ImportHandlers struct {
 	importService importuc.Service
+	urlValidator  URLValidator
 }
 
 // NewImportHandlers creates new import handlers
-func NewImportHandlers(importService importuc.Service) *ImportHandlers {
+// If urlValidator is nil, it will use the real security validator
+func NewImportHandlers(importService importuc.Service, urlValidator ...URLValidator) *ImportHandlers {
+	var validator URLValidator
+	if len(urlValidator) > 0 && urlValidator[0] != nil {
+		validator = urlValidator[0]
+	} else {
+		validator = &RealURLValidator{}
+	}
+
 	return &ImportHandlers{
 		importService: importService,
+		urlValidator:  validator,
 	}
 }
 
@@ -76,7 +98,7 @@ func (h *ImportHandlers) CreateImport(w http.ResponseWriter, r *http.Request) {
 	// SECURITY FIX: Validate URL for SSRF attacks and file size limits
 	// This prevents attacks on internal services like AWS metadata (169.254.169.254)
 	// and DoS attacks using extremely large files (e.g., 100GB videos)
-	if err := security.ValidateVideoURL(req.SourceURL); err != nil {
+	if err := h.urlValidator.ValidateVideoURL(req.SourceURL); err != nil {
 		// Log detailed error server-side for debugging
 		// Return generic error to client to avoid information disclosure
 		writeError(w, http.StatusBadRequest, "Invalid or unsafe URL", err)

@@ -91,7 +91,7 @@ func NewMetrics() *Metrics {
 			prometheus.CounterOpts{Name: "iota_payment_intents_total", Help: "Total number of IOTA payment intents"},
 			[]string{"status"},
 		),
-		IOTAConfirmationDuration: prometheus.NewHistogram(prometheus.HistogramOpts{Name: "iota_confirmation_duration_seconds", Help: "IOTA confirmation duration", Buckets: prometheus.DefBuckets}),
+		IOTAConfirmationDuration: prometheus.NewHistogram(prometheus.HistogramOpts{Name: "iota_payment_confirmation_duration_seconds", Help: "IOTA payment confirmation duration", Buckets: prometheus.DefBuckets}),
 		IOTAWallets:              prometheus.NewCounter(prometheus.CounterOpts{Name: "iota_wallets_total", Help: "Total number of IOTA wallets created"}),
 		IOTAErrors: prometheus.NewCounterVec(
 			prometheus.CounterOpts{Name: "iota_errors_total", Help: "Total number of IOTA errors"},
@@ -114,10 +114,10 @@ func NewMetrics() *Metrics {
 			prometheus.HistogramOpts{Name: "video_encoding_duration_seconds", Help: "Video encoding duration", Buckets: prometheus.DefBuckets},
 			[]string{"resolution"},
 		),
-		VideoEncodingQueue: prometheus.NewGauge(prometheus.GaugeOpts{Name: "video_encoding_queue", Help: "Video encoding queue depth"}),
+		VideoEncodingQueue: prometheus.NewGauge(prometheus.GaugeOpts{Name: "video_encoding_queue_depth", Help: "Current number of videos in encoding queue"}),
 		VideoProcessingErrors: prometheus.NewCounterVec(
-			prometheus.CounterOpts{Name: "video_processing_errors_total", Help: "Video processing errors"},
-			[]string{"stage"},
+			prometheus.CounterOpts{Name: "video_processing_errors_total", Help: "Total number of video processing errors"},
+			[]string{"error_type"},
 		),
 	}
 	return m

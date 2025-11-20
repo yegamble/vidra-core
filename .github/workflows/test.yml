@@ -16,6 +16,7 @@ on:
 permissions:
   contents: read
   pull-requests: read
+  checks: write  # Required for golangci-lint-action annotations
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
@@ -23,6 +24,7 @@ concurrency:
 
 env:
   GO_VERSION: "1.24"
+  GOPROXY: "direct"  # Bypass proxy to avoid DNS issues with storage.googleapis.com
 
 jobs:
   # ============================================================================
@@ -163,6 +165,14 @@ jobs:
           --health-timeout 10s
           --health-retries 15
 
+      clamav:
+        image: clamav/clamav:latest
+        options: >-
+          --health-cmd "clamdscan --ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 30
+
     steps:
       - uses: actions/checkout@v4
 
@@ -189,12 +199,14 @@ jobs:
           echo "database-url=postgres://test_user:test_password@postgres:5432/athena_test?sslmode=disable" >> $GITHUB_OUTPUT
           echo "redis-url=redis://redis:6379/0" >> $GITHUB_OUTPUT
           echo "ipfs-api=http://ipfs:5001" >> $GITHUB_OUTPUT
+          echo "clamav-host=clamav:3310" >> $GITHUB_OUTPUT
 
       - name: Run integration tests
         env:
           DATABASE_URL: ${{ steps.services.outputs.database-url }}
           REDIS_URL: ${{ steps.services.outputs.redis-url }}
           IPFS_API: ${{ steps.services.outputs.ipfs-api }}
+          CLAMAV_HOST: ${{ steps.services.outputs.clamav-host }}
           JWT_SECRET: test-jwt-secret
         run: make test-integration-ci
 
@@ -323,6 +335,14 @@ jobs:
           --health-timeout 10s
           --health-retries 15
 
+      clamav:
+        image: clamav/clamav:latest
+        options: >-
+          --health-cmd "clamdscan --ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 30
+
     steps:
       - uses: actions/checkout@v4
 
@@ -353,6 +373,7 @@ jobs:
           echo "database-url=postgres://test_user:test_password@postgres:5432/athena_test?sslmode=disable" >> $GITHUB_OUTPUT
           echo "redis-url=redis://redis:6379/0" >> $GITHUB_OUTPUT
           echo "ipfs-api=http://ipfs:5001" >> $GITHUB_OUTPUT
+          echo "clamav-host=clamav:3310" >> $GITHUB_OUTPUT
 
       - name: Run integration tests with race detector
         env:
@@ -360,5 +381,6 @@ jobs:
           DATABASE_URL: ${{ steps.services.outputs.database-url }}
           REDIS_URL: ${{ steps.services.outputs.redis-url }}
           IPFS_API: ${{ steps.services.outputs.ipfs-api }}
+          CLAMAV_HOST: ${{ steps.services.outputs.clamav-host }}
           JWT_SECRET: test-jwt-secret
         run: make test-integration-ci-race

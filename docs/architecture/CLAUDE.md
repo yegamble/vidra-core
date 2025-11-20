@@ -547,9 +547,17 @@ docker compose up --build
 
 ## Observability
 
-- Logging: structured (zap/slog), request-scoped fields (req\_id, user\_id, ip, route, dur\_ms).
-- Metrics: Prometheus (HTTP latency, QPS, queue depth, transcode time, IPFS pin time, Redis ops, DB pool stats).
-- Tracing: OpenTelemetry (ingest → processing → IPFS → DB). Export OTLP.
+- Logging: structured (slog), request-scoped fields (request_id, user_id, ip, route, duration_ms)
+  - LoggingMiddleware: Automatic request ID generation with fallback to timestamp if entropy unavailable
+  - Request IDs propagated via X-Request-ID header and context
+  - Error-level logging for 5xx responses, info-level for others
+- Metrics: Prometheus (HTTP latency, QPS, queue depth, transcode time, IPFS pin time, Redis ops, DB pool stats)
+  - Key metrics: `iota_payment_confirmation_duration_seconds`, `video_encoding_queue_depth`, `video_processing_errors_total{error_type}`
+  - MetricsMiddleware: Records HTTP metrics with method, path, status, duration, request/response sizes
+- Tracing: OpenTelemetry (ingest → processing → IPFS → DB). Export OTLP
+  - TracingMiddleware: Creates spans around requests, captures request ID, records HTTP attributes
+  - Automatic error marking for 5xx responses with span status
+  - W3C Trace Context propagation across services
 
 ---
 
