@@ -97,17 +97,23 @@ func NewClient(config *ClientConfig, logger *logrus.Logger) (*Client, error) {
 	if config == nil {
 		config = DefaultClientConfig()
 	}
+
+	// Copy config to avoid sharing the caller's pointer
+	// This prevents race conditions if the caller modifies the config
+	configCopy := *config
+	config = &configCopy
+
 	if logger == nil {
 		logger = logrus.New()
 	}
 
 	// Create torrent client config
 	clientConfig := torrent.NewDefaultClientConfig()
-	// Don't set ListenHost function if address is empty or default
-	if config.ListenAddr != "" && config.ListenAddr != ":0" && config.ListenAddr != "127.0.0.1:0" {
-		// Create local copy to avoid race condition with config struct access
-		listenAddr := config.ListenAddr
-		clientConfig.ListenHost = func(string) string { return listenAddr }
+	// Set listen address - use SetListenAddr to ensure proper port binding
+	// For random port allocation (":0" or "127.0.0.1:0"), we must explicitly set it
+	// to avoid the library's default port which causes conflicts in parallel tests
+	if config.ListenAddr != "" {
+		clientConfig.SetListenAddr(config.ListenAddr)
 	}
 	clientConfig.DisableTCP = config.DisableTCP
 	clientConfig.DisableUTP = config.DisableUTP
@@ -334,7 +340,9 @@ func (c *Client) AddTorrent(data []byte) (*Download, error) {
 
 	// Start downloading
 	t.DownloadAll()
+	download.mu.Lock()
 	download.Status = DownloadStatusDownloading
+	download.mu.Unlock()
 
 	// Monitor progress
 	go c.monitorDownload(download)
@@ -385,7 +393,9 @@ func (c *Client) AddMagnet(magnetURI string) (*Download, error) {
 
 	// Start downloading
 	t.DownloadAll()
+	download.mu.Lock()
 	download.Status = DownloadStatusDownloading
+	download.mu.Unlock()
 
 	// Monitor progress
 	go c.monitorDownload(download)
@@ -551,7 +561,11 @@ func (c *Client) GetStats() ClientStats {
 	}
 
 	for _, d := range c.downloads {
-		if d.Status == DownloadStatusDownloading {
+		d.mu.RLock()
+		status := d.Status
+		d.mu.RUnlock()
+
+		if status == DownloadStatusDownloading {
 			stats.ActiveDownloads++
 		}
 

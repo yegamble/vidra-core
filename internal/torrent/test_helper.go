@@ -2,9 +2,12 @@ package torrent
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"testing"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // SetupTestDNS configures DNS resolution for test environment
@@ -27,7 +30,13 @@ func SetupTestDNS(t *testing.T) {
 
 // MockedDHTConfig returns a client config with DHT disabled for unit tests
 // This avoids external network calls during testing
+// Each call generates a unique data directory to prevent conflicts in parallel tests
 func MockedDHTConfig() *ClientConfig {
+	// Generate unique data directory for each test to avoid SQLite lock conflicts
+	// when tests run in parallel with -parallel flag
+	uniqueID := uuid.New().String()[:8]
+	dataDir := fmt.Sprintf("/tmp/test-torrents-%s", uniqueID)
+
 	return &ClientConfig{
 		ListenAddr:        "127.0.0.1:0", // Use localhost with random port
 		DisableTCP:        false,
@@ -35,7 +44,7 @@ func MockedDHTConfig() *ClientConfig {
 		DisableIPv6:       true, // Disable IPv6 in tests
 		NoDHT:             true, // Disable DHT to avoid external DNS
 		NoUpload:          true, // No upload in tests
-		DataDir:           "/tmp/test-torrents",
+		DataDir:           dataDir,
 		CacheSize:         1024 * 1024, // 1MB for tests
 		MaxConnections:    10,
 		UploadRateLimit:   0, // Unlimited by default (tests can override)
