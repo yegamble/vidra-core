@@ -286,9 +286,10 @@ jobs:
     timeout-minutes: 15
 
     env:
-      GOPATH: /home/runner/go
-      GOMODCACHE: /home/runner/go/pkg/mod
-      GOCACHE: /home/runner/.cache/go-build
+      HOME: /root
+      GOPATH: /root/go
+      GOMODCACHE: /root/go/pkg/mod
+      GOCACHE: /root/.cache/go-build
 
     steps:
       - uses: actions/checkout@v4
@@ -341,9 +342,10 @@ jobs:
     timeout-minutes: 20
 
     env:
-      GOPATH: /home/runner/go
-      GOMODCACHE: /home/runner/go/pkg/mod
-      GOCACHE: /home/runner/.cache/go-build
+      HOME: /root
+      GOPATH: /root/go
+      GOMODCACHE: /root/go/pkg/mod
+      GOCACHE: /root/.cache/go-build
 
     steps:
       - uses: actions/checkout@v4

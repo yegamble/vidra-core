@@ -40,6 +40,9 @@ jobs:
     runs-on: self-hosted
     timeout-minutes: 15
 
+    env:
+      HOME: /root
+
     outputs:
       cache-key: ${{ steps.cache-key.outputs.key }}
       cache-hit: ${{ steps.module-cache.outputs.cache-hit }}
