@@ -317,6 +317,16 @@ jobs:
           go mod download
           echo "Modules downloaded"
 
+      - name: Install GCC (required for race detector)
+        run: |
+          if ! command -v gcc &> /dev/null; then
+            echo "GCC not found, installing..."
+            sudo apt-get update -qq
+            sudo apt-get install -y gcc
+          else
+            echo "GCC already installed: $(gcc --version | head -n1)"
+          fi
+
       - name: Run unit tests with race detector
         env:
           CGO_ENABLED: "1"
@@ -359,6 +369,16 @@ jobs:
           echo "Cache miss - downloading modules..."
           go mod download
           echo "Modules downloaded"
+
+      - name: Install GCC (required for race detector)
+        run: |
+          if ! command -v gcc &> /dev/null; then
+            echo "GCC not found, installing..."
+            sudo apt-get update -qq
+            sudo apt-get install -y gcc
+          else
+            echo "GCC already installed: $(gcc --version | head -n1)"
+          fi
 
       - name: Start services with docker compose
         run: |
