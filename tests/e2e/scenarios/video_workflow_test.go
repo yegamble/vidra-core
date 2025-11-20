@@ -2,6 +2,7 @@ package scenarios
 
 import (
 	"context"
+	"os"
 	"testing"
 	"time"
 
@@ -192,10 +193,16 @@ func TestVideoSearchFunctionality(t *testing.T) {
 
 // Helper: Create a minimal test video file
 func createTestVideoFile(t *testing.T) string {
-	// TODO: Generate a real test video file using ffmpeg or use a fixture
-	// For now, this is a placeholder stub
-	t.Skip("Test video file generation not implemented - requires ffmpeg or test fixtures")
-	return ""
+	// Use existing test video from postman test files
+	// This allows E2E tests to run without requiring ffmpeg
+	testVideoPath := "../../postman/test-files/videos/test-video.mp4"
+
+	// Check if the test video exists
+	if _, err := os.Stat(testVideoPath); err != nil {
+		t.Fatalf("Test video file not found at %s: %v", testVideoPath, err)
+	}
+
+	return testVideoPath
 }
 
 // Helper: Clean up test files

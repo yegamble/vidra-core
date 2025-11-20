@@ -91,18 +91,24 @@ func (c *TestClient) RegisterUser(t *testing.T, username, email, password string
 
 	require.Equal(t, http.StatusCreated, resp.StatusCode, "User registration failed")
 
-	var result struct {
-		UserID string `json:"user_id"`
-		Token  string `json:"access_token"`
+	// Parse response envelope
+	var envelope struct {
+		Data struct {
+			User struct {
+				ID       string `json:"id"`
+				Username string `json:"username"`
+			} `json:"user"`
+			AccessToken string `json:"access_token"`
+		} `json:"data"`
 	}
 
-	err = json.NewDecoder(resp.Body).Decode(&result)
+	err = json.NewDecoder(resp.Body).Decode(&envelope)
 	require.NoError(t, err)
 
-	c.Token = result.Token
-	c.UserID = result.UserID
+	c.Token = envelope.Data.AccessToken
+	c.UserID = envelope.Data.User.ID
 
-	return result.UserID, result.Token
+	return envelope.Data.User.ID, envelope.Data.AccessToken
 }
 
 // Login authenticates a user and returns the access token
@@ -121,18 +127,24 @@ func (c *TestClient) Login(t *testing.T, username, password string) (userID, tok
 
 	require.Equal(t, http.StatusOK, resp.StatusCode, "User login failed")
 
-	var result struct {
-		UserID string `json:"user_id"`
-		Token  string `json:"access_token"`
+	// Parse response envelope
+	var envelope struct {
+		Data struct {
+			User struct {
+				ID       string `json:"id"`
+				Username string `json:"username"`
+			} `json:"user"`
+			AccessToken string `json:"access_token"`
+		} `json:"data"`
 	}
 
-	err = json.NewDecoder(resp.Body).Decode(&result)
+	err = json.NewDecoder(resp.Body).Decode(&envelope)
 	require.NoError(t, err)
 
-	c.Token = result.Token
-	c.UserID = result.UserID
+	c.Token = envelope.Data.AccessToken
+	c.UserID = envelope.Data.User.ID
 
-	return result.UserID, result.Token
+	return envelope.Data.User.ID, envelope.Data.AccessToken
 }
 
 // UploadVideo uploads a test video file
@@ -173,14 +185,17 @@ func (c *TestClient) UploadVideo(t *testing.T, videoPath, title, description str
 
 	require.Equal(t, http.StatusCreated, resp.StatusCode, "Video upload failed")
 
-	var result struct {
-		VideoID string `json:"video_id"`
+	// Parse response envelope
+	var envelope struct {
+		Data struct {
+			ID string `json:"id"`
+		} `json:"data"`
 	}
 
-	err = json.NewDecoder(resp.Body).Decode(&result)
+	err = json.NewDecoder(resp.Body).Decode(&envelope)
 	require.NoError(t, err)
 
-	return result.VideoID
+	return envelope.Data.ID
 }
 
 // GetVideo retrieves video details
@@ -191,11 +206,15 @@ func (c *TestClient) GetVideo(t *testing.T, videoID string) map[string]interface
 
 	require.Equal(t, http.StatusOK, resp.StatusCode, "Get video failed")
 
-	var result map[string]interface{}
-	err = json.NewDecoder(resp.Body).Decode(&result)
+	// Parse response envelope
+	var envelope struct {
+		Data map[string]interface{} `json:"data"`
+	}
+
+	err = json.NewDecoder(resp.Body).Decode(&envelope)
 	require.NoError(t, err)
 
-	return result
+	return envelope.Data
 }
 
 // ListVideos retrieves a list of videos
@@ -206,14 +225,15 @@ func (c *TestClient) ListVideos(t *testing.T) []map[string]interface{} {
 
 	require.Equal(t, http.StatusOK, resp.StatusCode, "List videos failed")
 
-	var result struct {
-		Videos []map[string]interface{} `json:"videos"`
+	// Parse response envelope
+	var envelope struct {
+		Data []map[string]interface{} `json:"data"`
 	}
 
-	err = json.NewDecoder(resp.Body).Decode(&result)
+	err = json.NewDecoder(resp.Body).Decode(&envelope)
 	require.NoError(t, err)
 
-	return result.Videos
+	return envelope.Data
 }
 
 // SearchVideos searches for videos
@@ -224,14 +244,15 @@ func (c *TestClient) SearchVideos(t *testing.T, query string) []map[string]inter
 
 	require.Equal(t, http.StatusOK, resp.StatusCode, "Search videos failed")
 
-	var result struct {
-		Results []map[string]interface{} `json:"results"`
+	// Parse response envelope
+	var envelope struct {
+		Data []map[string]interface{} `json:"data"`
 	}
 
-	err = json.NewDecoder(resp.Body).Decode(&result)
+	err = json.NewDecoder(resp.Body).Decode(&envelope)
 	require.NoError(t, err)
 
-	return result.Results
+	return envelope.Data
 }
 
 // DeleteVideo deletes a video
