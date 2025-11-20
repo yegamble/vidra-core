@@ -136,6 +136,11 @@ func NewClient(config *ClientConfig, logger *logrus.Logger) (*Client, error) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 
+	// Create local copies of rate limits to avoid race condition
+	// Similar to the fix for ListenAddr at lines 108-110
+	uploadLimit := config.UploadRateLimit
+	downloadLimit := config.DownloadRateLimit
+
 	client := &Client{
 		client:    torrentClient,
 		config:    config,
@@ -146,10 +151,11 @@ func NewClient(config *ClientConfig, logger *logrus.Logger) (*Client, error) {
 	}
 
 	// Initialize bandwidth manager if rate limits are set
-	if config.UploadRateLimit > 0 || config.DownloadRateLimit > 0 {
+	// Use local copies instead of reading from config pointer
+	if uploadLimit > 0 || downloadLimit > 0 {
 		client.rateLimiter = NewBandwidthManager(
-			config.UploadRateLimit,
-			config.DownloadRateLimit,
+			uploadLimit,
+			downloadLimit,
 		)
 	}
 
@@ -209,6 +215,10 @@ func NewClientFromAppConfig(cfg *config.Config, logger *logrus.Logger) (*Client,
 
 	ctx, cancel := context.WithCancel(context.Background())
 
+	// Create local copies of rate limits to avoid race condition
+	uploadLimit := cfg.TorrentUploadRateLimit
+	downloadLimit := cfg.TorrentDownloadRateLimit
+
 	clientCfg := &ClientConfig{
 		ListenAddr:        fmt.Sprintf(":%d", cfg.TorrentListenPort),
 		NoDHT:             !cfg.EnableDHT,
@@ -217,8 +227,8 @@ func NewClientFromAppConfig(cfg *config.Config, logger *logrus.Logger) (*Client,
 		DataDir:           cfg.TorrentDataDir,
 		CacheSize:         cfg.TorrentCacheSize,
 		MaxConnections:    cfg.TorrentMaxConnections,
-		UploadRateLimit:   cfg.TorrentUploadRateLimit,
-		DownloadRateLimit: cfg.TorrentDownloadRateLimit,
+		UploadRateLimit:   uploadLimit,
+		DownloadRateLimit: downloadLimit,
 		Seed:              true,
 		HandshakeTimeout:  3 * time.Second,
 		RequestTimeout:    5 * time.Second,
@@ -235,10 +245,11 @@ func NewClientFromAppConfig(cfg *config.Config, logger *logrus.Logger) (*Client,
 	}
 
 	// Initialize bandwidth manager if rate limits are set
-	if cfg.TorrentUploadRateLimit > 0 || cfg.TorrentDownloadRateLimit > 0 {
+	// Use local copies instead of reading from cfg pointer
+	if uploadLimit > 0 || downloadLimit > 0 {
 		client.rateLimiter = NewBandwidthManager(
-			cfg.TorrentUploadRateLimit,
-			cfg.TorrentDownloadRateLimit,
+			uploadLimit,
+			downloadLimit,
 		)
 	}
 
