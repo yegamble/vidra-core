@@ -172,9 +172,9 @@ func TestValidateURL_EdgeCases(t *testing.T) {
 		{"http:///path", true, "no host with path"},
 		{"://example.com", true, "no scheme"},
 		{"example.com", true, "no scheme"},
-		{"http://example.com/../../../etc/passwd", false, "path traversal (scheme/host valid)"},
-		{"http://example.com\r\n\r\nGET /admin", false, "HTTP request smuggling attempt (URL parsing should handle)"},
-		{"http://user:pass@example.com", false, "URL with credentials"},
+		{"http://93.184.216.34/../../../etc/passwd", false, "path traversal (scheme/host valid, using example.com IP)"},
+		{"http://example.com\r\n\r\nGET /admin", true, "HTTP request smuggling attempt (control chars rejected)"},
+		{"http://user:pass@93.184.216.34", false, "URL with credentials (using example.com IP)"},
 		{"http://example.com:99999", true, "invalid port"},
 		{"http://[invalid", true, "malformed IPv6"},
 	}
@@ -184,8 +184,88 @@ func TestValidateURL_EdgeCases(t *testing.T) {
 		if test.shouldFail && err == nil {
 			t.Errorf("Expected %s (%s) to fail validation, but it passed", test.url, test.description)
 		} else if !test.shouldFail && err != nil {
-			t.Logf("URL %s (%s) failed validation: %v", test.url, test.description, err)
+			t.Errorf("Expected %s (%s) to pass validation, but it failed: %v", test.url, test.description, err)
+		} else if test.shouldFail && err != nil {
+			t.Logf("✓ Correctly rejected %s: %v", test.description, err)
+		} else {
+			t.Logf("✓ Correctly accepted %s", test.description)
 		}
+	}
+}
+
+// TestValidateURL_ComprehensiveEdgeCases tests all potential bypass techniques
+func TestValidateURL_ComprehensiveEdgeCases(t *testing.T) {
+	validator := NewURLValidator()
+
+	tests := []struct {
+		url         string
+		shouldFail  bool
+		description string
+		category    string
+	}{
+		// Alternative IP Notations (Critical Security Edge Cases)
+		{"http://127.0.0.%31", true, "URL encoded loopback", "encoding"},
+		{"http://127.%30.%30.1", true, "partially encoded loopback", "encoding"},
+		{"http://127.1", true, "shortened loopback notation", "encoding"},
+		{"http://127.0.1", true, "shortened loopback notation 2", "encoding"},
+		{"http://2130706433", true, "decimal IP (127.0.0.1)", "encoding"},
+		{"http://0x7f000001", true, "hexadecimal IP (127.0.0.1)", "encoding"},
+		{"http://0177.0.0.1", true, "octal IP (127.0.0.1)", "encoding"},
+
+		// IPv6 Edge Cases
+		{"http://[::ffff:7f00:1]", true, "IPv4-mapped IPv6 loopback", "ipv6"},
+		{"http://[0:0:0:0:0:ffff:127.0.0.1]", true, "IPv4-mapped IPv6 expanded", "ipv6"},
+		{"http://[::127.0.0.1]", true, "IPv6 compatible IPv4 loopback", "ipv6"},
+
+		// Port Edge Cases
+		{"http://93.184.216.34:0", true, "port 0", "port"},
+		{"http://93.184.216.34:-1", true, "negative port", "port"},
+		{"http://93.184.216.34:65536", true, "port > 65535", "port"},
+		{"http://8.8.8.8:65535", false, "max valid port", "port"},
+		{"http://8.8.8.8:80", false, "explicit HTTP port", "port"},
+
+		// Control Characters
+		{"http://example.com\x00", true, "null byte", "control"},
+		{"http://example.com\t", true, "tab character", "control"},
+		{"http://example.com\n", true, "newline", "control"},
+		{"http://example.com ", true, "trailing space", "control"},
+		{" http://example.com", true, "leading space", "control"},
+
+		// Alternative Notations
+		{"http://0", true, "IP 0 shorthand", "notation"},
+		{"http://0.0.0.0", true, "unspecified address", "notation"},
+		{"http://255.255.255.255", true, "broadcast", "notation"},
+
+		// Valid but unusual
+		{"http://8.8.8.8", false, "Google DNS IP", "valid"},
+		{"http://1.1.1.1", false, "Cloudflare DNS IP", "valid"},
+		{"https://93.184.216.34:443", false, "explicit HTTPS port", "valid"},
+		{"http://93.184.216.34:8080/path?query=value#fragment", false, "full URL components", "valid"},
+
+		// Fragment & Query Parameter Edge Cases
+		{"http://93.184.216.34#@evil.com", false, "fragment with @", "fragment"},
+		{"http://93.184.216.34?@evil.com", false, "query with @", "fragment"},
+		{"http://93.184.216.34#http://evil.com", false, "URL in fragment", "fragment"},
+
+		// Case sensitivity
+		{"HTTP://8.8.8.8", false, "uppercase scheme", "case"},
+		{"HtTp://8.8.8.8", false, "mixed case scheme", "case"},
+		{"FTP://8.8.8.8", true, "FTP scheme", "case"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.category+"_"+test.description, func(t *testing.T) {
+			err := validator.ValidateURL(test.url)
+			if test.shouldFail && err == nil {
+				t.Errorf("Expected %s (%s) to fail, but passed", test.url, test.description)
+			} else if !test.shouldFail && err != nil {
+				t.Errorf("Expected %s (%s) to pass, but failed: %v", test.url, test.description, err)
+			} else if test.shouldFail && err != nil {
+				t.Logf("✓ Correctly rejected %s: %v", test.description, err)
+			} else {
+				t.Logf("✓ Correctly accepted %s", test.description)
+			}
+		})
 	}
 }
 

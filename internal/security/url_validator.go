@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"strconv"
 	"strings"
 )
 
@@ -48,11 +49,22 @@ func (v *URLValidator) ValidateURL(rawURL string) error {
 		return errors.New("URL must have a host")
 	}
 
-	// Extract hostname (remove port if present)
-	host, _, err := net.SplitHostPort(u.Host)
+	// Extract hostname and port
+	host, port, err := net.SplitHostPort(u.Host)
 	if err != nil {
 		// No port present, use the whole host
 		host = u.Host
+	} else {
+		// Validate port if present
+		if port != "" {
+			portNum, err := strconv.Atoi(port)
+			if err != nil {
+				return fmt.Errorf("invalid port: %s", port)
+			}
+			if portNum < 1 || portNum > 65535 {
+				return fmt.Errorf("port must be between 1 and 65535, got: %d", portNum)
+			}
+		}
 	}
 
 	// Remove brackets from IPv6 addresses (e.g., [::1] -> ::1)
@@ -87,9 +99,28 @@ func (v *URLValidator) ValidateURL(rawURL string) error {
 
 // isPrivateIP checks if an IP address is in a private range
 func isPrivateIP(ip net.IP) bool {
-	// Normalize IPv4-mapped IPv6 to IPv4
+	// Normalize IPv4-mapped IPv6 to IPv4 (::ffff:192.0.2.1)
 	if v4 := ip.To4(); v4 != nil {
 		ip = v4
+	}
+
+	// Check for IPv6-compatible IPv4 addresses (::192.0.2.1 - deprecated but still possible)
+	// These are IPv6 addresses with the first 96 bits as 0 and last 32 bits as IPv4
+	if len(ip) == 16 {
+		// Check if first 12 bytes are zero (IPv6-compatible IPv4)
+		isCompat := true
+		for i := 0; i < 12; i++ {
+			if ip[i] != 0 {
+				isCompat = false
+				break
+			}
+		}
+		if isCompat {
+			// Extract the IPv4 portion from last 4 bytes
+			v4 := net.IPv4(ip[12], ip[13], ip[14], ip[15])
+			// Recursively check the extracted IPv4 address
+			return isPrivateIP(v4)
+		}
 	}
 
 	// IPv4 private/restricted ranges
