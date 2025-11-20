@@ -128,6 +128,13 @@ func (rl *RateLimiter) Shutdown() error {
 
 // ShutdownWithContext gracefully stops the rate limiter with context timeout
 func (rl *RateLimiter) ShutdownWithContext(ctx context.Context) error {
+	// Check if context is already done before attempting shutdown
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+
 	var err error
 
 	rl.shutdownOnce.Do(func() {
