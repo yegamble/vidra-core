@@ -1,0 +1,243 @@
+name: Registration API Edge Case Tests
+
+on:
+  pull_request:
+    paths:
+      - 'internal/httpapi/handlers.go'
+      - 'internal/httpapi/handlers/auth/**'
+      - 'internal/repository/user_repository.go'
+      - 'migrations/**'
+  push:
+    branches: [main, develop]
+  schedule:
+    # Run daily at 3 AM UTC
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  registration-tests:
+    name: Registration Endpoint Edge Cases
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: athena
+          POSTGRES_PASSWORD: athena_pass
+          POSTGRES_DB: athena_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+
+    env:
+      DATABASE_URL: postgres://athena:athena_pass@localhost:5432/athena_test?sslmode=disable
+      REDIS_URL: redis://localhost:6379
+      JWT_SECRET: test-secret-key-for-registration-tests
+      PORT: 8080
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache: true
+
+      - name: Install Newman
+        run: npm install -g newman newman-reporter-htmlextra
+
+      - name: Run database migrations
+        run: |
+          go install github.com/pressly/goose/v3/cmd/goose@latest
+          cd migrations
+          goose postgres "$DATABASE_URL" up
+
+      - name: Build application
+        run: |
+          go build -o athena-server ./cmd/server
+
+      - name: Start API server in background
+        run: |
+          ./athena-server &
+          echo "SERVER_PID=$!" >> $GITHUB_ENV
+        env:
+          DATABASE_URL: ${{ env.DATABASE_URL }}
+          REDIS_URL: ${{ env.REDIS_URL }}
+          JWT_SECRET: ${{ env.JWT_SECRET }}
+          PORT: ${{ env.PORT }}
+
+      - name: Wait for API to be ready
+        run: |
+          timeout 60 bash -c 'until curl -f http://localhost:8080/health; do sleep 2; done'
+
+      - name: Run Postman collection with Newman
+        id: newman
+        continue-on-error: true
+        run: |
+          newman run postman/athena-registration-edge-cases.postman_collection.json \
+            --environment postman/environments/local.postman_environment.json \
+            --reporters cli,htmlextra,json \
+            --reporter-htmlextra-export newman-report.html \
+            --reporter-json-export newman-report.json \
+            --bail \
+            --color on \
+            --delay-request 100 \
+            --timeout-request 10000
+
+      - name: Upload Newman HTML report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: newman-report-html
+          path: newman-report.html
+          retention-days: 30
+
+      - name: Upload Newman JSON report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: newman-report-json
+          path: newman-report.json
+          retention-days: 30
+
+      - name: Parse Newman results
+        if: always()
+        id: parse-results
+        run: |
+          if [ -f newman-report.json ]; then
+            TOTAL=$(jq '.run.stats.tests.total' newman-report.json)
+            FAILED=$(jq '.run.stats.tests.failed' newman-report.json)
+            PASSED=$(jq '.run.stats.tests.passed' newman-report.json)
+
+            echo "total=$TOTAL" >> $GITHUB_OUTPUT
+            echo "failed=$FAILED" >> $GITHUB_OUTPUT
+            echo "passed=$PASSED" >> $GITHUB_OUTPUT
+
+            echo "### Newman Test Results" >> $GITHUB_STEP_SUMMARY
+            echo "- Total: $TOTAL" >> $GITHUB_STEP_SUMMARY
+            echo "- Passed: $PASSED" >> $GITHUB_STEP_SUMMARY
+            echo "- Failed: $FAILED" >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Comment PR with test results
+        if: github.event_name == 'pull_request' && always()
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+
+            let comment = '## 🧪 Registration API Edge Case Tests\n\n';
+
+            if (fs.existsSync('newman-report.json')) {
+              const report = JSON.parse(fs.readFileSync('newman-report.json', 'utf8'));
+              const stats = report.run.stats;
+
+              comment += `### Summary\n`;
+              comment += `- ✅ Passed: ${stats.tests.passed}\n`;
+              comment += `- ❌ Failed: ${stats.tests.failed}\n`;
+              comment += `- ⏭️ Skipped: ${stats.tests.pending}\n`;
+              comment += `- 📊 Total: ${stats.tests.total}\n\n`;
+
+              if (stats.tests.failed > 0) {
+                comment += `### ⚠️ Failed Tests\n\n`;
+                report.run.executions.forEach(exec => {
+                  exec.assertions.forEach(assertion => {
+                    if (assertion.error) {
+                      comment += `- **${exec.item.name}**: ${assertion.assertion}\n`;
+                      comment += `  - Error: ${assertion.error.message}\n`;
+                    }
+                  });
+                });
+              }
+
+              comment += `\n[View detailed HTML report](https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})`;
+            } else {
+              comment += '❌ Test execution failed - no report generated';
+            }
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: comment
+            });
+
+      - name: Check for critical failures
+        if: always()
+        run: |
+          if [ -f newman-report.json ]; then
+            FAILED=$(jq '.run.stats.tests.failed' newman-report.json)
+
+            # Critical test failures that should block merges
+            CRITICAL_FAILURES=$(jq -r '.run.executions[] | select(.assertions[].error) | .item.name' newman-report.json | grep -E "Edge Case: Username 51|SQL Injection|XSS" | wc -l)
+
+            if [ "$CRITICAL_FAILURES" -gt 0 ]; then
+              echo "❌ CRITICAL: Security or validation tests failed!"
+              echo "This indicates missing input validation that could lead to:"
+              echo "  - Username truncation collisions (409 errors)"
+              echo "  - SQL injection vulnerabilities"
+              echo "  - XSS attacks"
+              exit 1
+            fi
+
+            if [ "$FAILED" -gt 0 ]; then
+              echo "⚠️ WARNING: Some tests failed but are non-critical"
+              echo "Review the Newman report for details"
+            else
+              echo "✅ All tests passed!"
+            fi
+          fi
+
+      - name: Stop server
+        if: always()
+        run: |
+          if [ -n "$SERVER_PID" ]; then
+            kill $SERVER_PID || true
+          fi
+
+  security-scan:
+    name: Security Vulnerability Scan
+    runs-on: ubuntu-latest
+    needs: registration-tests
+    if: always()
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+
+      - name: Upload Trivy results to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: 'trivy-results.sarif'

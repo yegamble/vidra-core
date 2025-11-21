@@ -20,7 +20,7 @@ help:
 # Complete setup (fixtures + start services)
 setup: fixtures start
 	@echo "Waiting for services to be ready..."
-	@timeout 120 bash -c 'until curl -sf http://localhost:8080/health > /dev/null; do echo "Waiting for API..."; sleep 5; done'
+	@timeout 120 bash -c 'until curl -sf http://localhost:18080/health > /dev/null; do echo "Waiting for API..."; sleep 5; done'
 	@echo "✓ E2E test environment is ready!"
 
 # Start test environment
@@ -48,12 +48,12 @@ logs:
 # Run E2E tests
 test:
 	@echo "Running E2E tests..."
-	E2E_BASE_URL=http://localhost:8080 go test -v -timeout 30m ./scenarios/...
+	E2E_BASE_URL=http://localhost:18080 go test -v -timeout 30m ./scenarios/...
 
 # Run E2E tests with verbose output
 test-verbose:
 	@echo "Running E2E tests (verbose)..."
-	E2E_BASE_URL=http://localhost:8080 go test -v -count=1 -timeout 30m ./scenarios/... 2>&1 | tee e2e_test_output.log
+	E2E_BASE_URL=http://localhost:18080 go test -v -count=1 -timeout 30m ./scenarios/... 2>&1 | tee e2e_test_output.log
 
 # Generate test fixtures
 fixtures:
@@ -106,4 +106,4 @@ status:
 # Run specific test
 test-single:
 	@echo "Running specific test: $(TEST)"
-	E2E_BASE_URL=http://localhost:8080 go test -v -timeout 30m ./scenarios/ -run $(TEST)
+	E2E_BASE_URL=http://localhost:18080 go test -v -timeout 30m ./scenarios/ -run $(TEST)
