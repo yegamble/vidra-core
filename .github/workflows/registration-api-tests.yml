@@ -97,7 +97,8 @@ jobs:
         continue-on-error: true
         run: |
           newman run postman/athena-registration-edge-cases.postman_collection.json \
-            --environment postman/environments/local.postman_environment.json \
+            --environment postman/test-local.postman_environment.json \
+            --env-var "baseUrl=http://localhost:8080" \
             --reporters cli,htmlextra,json \
             --reporter-htmlextra-export newman-report.html \
             --reporter-json-export newman-report.json \
