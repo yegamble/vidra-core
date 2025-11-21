@@ -68,6 +68,16 @@ jobs:
       - name: Install Newman
         run: npm install -g newman newman-reporter-htmlextra
 
+      - name: Wait for services to be ready
+        run: |
+          echo "Waiting for PostgreSQL..."
+          timeout 30 bash -c 'until pg_isready -h localhost -p 5432 -U athena; do sleep 2; done'
+          echo "PostgreSQL is ready!"
+
+          echo "Waiting for Redis..."
+          timeout 30 bash -c 'until redis-cli -h localhost -p 6379 ping | grep -q PONG; do sleep 2; done'
+          echo "Redis is ready!"
+
       - name: Run database migrations
         run: |
           go install github.com/pressly/goose/v3/cmd/goose@latest
@@ -80,8 +90,23 @@ jobs:
 
       - name: Start API server in background
         run: |
-          ./athena-server &
-          echo "SERVER_PID=$!" >> $GITHUB_ENV
+          echo "Starting Athena API server on port 8080..."
+          ./athena-server > server.log 2>&1 &
+          SERVER_PID=$!
+          echo "SERVER_PID=$SERVER_PID" >> $GITHUB_ENV
+          echo "Server started with PID: $SERVER_PID"
+
+          # Give server a moment to start
+          sleep 2
+
+          # Check if server is still running
+          if ps -p $SERVER_PID > /dev/null; then
+            echo "Server process is running"
+          else
+            echo "ERROR: Server process died immediately!"
+            cat server.log
+            exit 1
+          fi
         env:
           DATABASE_URL: ${{ env.DATABASE_URL }}
           REDIS_URL: ${{ env.REDIS_URL }}
@@ -90,7 +115,15 @@ jobs:
 
       - name: Wait for API to be ready
         run: |
-          timeout 60 bash -c 'until curl -f http://localhost:8080/health; do sleep 2; done'
+          echo "Waiting for API to be ready..."
+          timeout 60 bash -c 'until curl -sf http://localhost:8080/health > /dev/null 2>&1; do
+            echo "Waiting for API... ($(date +%T))";
+            sleep 2;
+          done'
+          echo "API is ready!"
+
+          # Verify API health endpoint
+          curl -v http://localhost:8080/health
 
       - name: Run Postman collection with Newman
         id: newman
@@ -98,6 +131,8 @@ jobs:
         run: |
           newman run postman/athena-registration-edge-cases.postman_collection.json \
             --environment postman/environments/local.postman_environment.json \
+            --env-var "baseUrl=http://localhost:8080" \
+            --env-var "base_url=http://localhost:8080" \
             --reporters cli,htmlextra,json \
             --reporter-htmlextra-export newman-report.html \
             --reporter-json-export newman-report.json \
@@ -184,6 +219,31 @@ jobs:
               repo: context.repo.repo,
               body: comment
             });
+
+      - name: Collect server logs on failure
+        if: failure()
+        run: |
+          echo "=== Server Logs ==="
+          if [ -f server.log ]; then
+            cat server.log
+          else
+            echo "No server log file found"
+          fi
+
+          echo ""
+          echo "=== Server Process Status ==="
+          ps aux | grep athena-server || echo "Server process not found"
+
+      - name: Upload server logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: server-logs
+          path: |
+            server.log
+            newman-report.html
+            newman-report.json
+          retention-days: 7
 
       - name: Check for critical failures
         if: always()

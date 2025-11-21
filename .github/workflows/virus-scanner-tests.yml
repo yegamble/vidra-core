@@ -277,29 +277,52 @@ jobs:
         run: |
           # Build and start the application
           make build
-          ./bin/athena --port 8082 &
+          echo "Starting Athena API server on port 8082..."
+          ./bin/athena --port 8082 > virus-scanner-server.log 2>&1 &
           APP_PID=$!
           echo "APP_PID=$APP_PID" >> $GITHUB_ENV
+          echo "Server started with PID: $APP_PID"
+
+          # Give server a moment to start
+          sleep 2
 
           # Wait for app to be ready
-          timeout 60 bash -c 'until curl -f http://localhost:8082/api/v1/health; do sleep 2; done'
+          echo "Waiting for API to be ready..."
+          timeout 60 bash -c 'until curl -sf http://localhost:8082/health > /dev/null 2>&1; do
+            echo "Waiting for API... ($(date +%T))";
+            sleep 2;
+          done'
+          echo "API is ready!"
+
+          # Verify health endpoint
+          curl -v http://localhost:8082/health
 
       - name: Create test user and get token
         id: auth
         run: |
           # Register test user
-          RESPONSE=$(curl -s -X POST http://localhost:8082/api/v1/auth/register \
+          RESPONSE=$(curl -s -X POST http://localhost:8082/auth/register \
             -H "Content-Type: application/json" \
             -d '{
-              "username": "testuser",
-              "email": "test@example.com",
+              "username": "virusscantest_'"$(date +%s)"'",
+              "email": "virusscantest_'"$(date +%s)"'@example.com",
               "password": "TestPassword123!",
-              "display_name": "Test User"
+              "display_name": "Virus Scan Test User"
             }')
+
+          echo "Registration response: $RESPONSE"
 
           # Extract access token
           ACCESS_TOKEN=$(echo $RESPONSE | jq -r '.data.access_token')
+
+          if [ "$ACCESS_TOKEN" == "null" ] || [ -z "$ACCESS_TOKEN" ]; then
+            echo "ERROR: Failed to get access token"
+            echo "Response: $RESPONSE"
+            exit 1
+          fi
+
           echo "access_token=$ACCESS_TOKEN" >> $GITHUB_OUTPUT
+          echo "Successfully authenticated user"
 
       - name: Create test files
         run: |
@@ -340,7 +363,7 @@ jobs:
           echo "Scenario: Upload infected file, then kill ClamAV mid-scan"
 
           # Start upload of EICAR file in background
-          curl -X POST http://localhost:8082/api/v1/uploads/direct \
+          curl -X POST http://localhost:8082/uploads/direct \
             -H "Authorization: Bearer ${{ steps.auth.outputs.access_token }}" \
             -H "Content-Type: application/octet-stream" \
             -H "X-Filename: eicar-breaking-test.txt" \
@@ -367,6 +390,20 @@ jobs:
             echo "SUCCESS: Upload rejected as expected"
           fi
 
+      - name: Collect server logs on failure
+        if: failure()
+        run: |
+          echo "=== Server Logs ==="
+          if [ -f virus-scanner-server.log ]; then
+            cat virus-scanner-server.log
+          else
+            echo "No server log file found"
+          fi
+
+          echo ""
+          echo "=== Server Process Status ==="
+          ps aux | grep athena || echo "Server process not found"
+
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v4
@@ -375,6 +412,7 @@ jobs:
           path: |
             postman/newman/virus-scanner-report.html
             postman/newman/virus-scanner-results.json
+            virus-scanner-server.log
           retention-days: 14
 
       - name: Cleanup
