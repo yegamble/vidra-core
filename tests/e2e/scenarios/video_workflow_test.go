@@ -2,6 +2,7 @@ package scenarios
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"testing"
 	"time"
@@ -32,8 +33,9 @@ func TestVideoUploadWorkflow(t *testing.T) {
 	// Create test client
 	client := e2e.NewTestClient(cfg.BaseURL)
 
-	// Step 1: Register a new user
-	username := "testuser_" + time.Now().Format("20060102150405")
+	// Step 1: Register a new user with unique username (test name + nanosecond timestamp)
+	timestamp := time.Now().UnixNano()
+	username := fmt.Sprintf("testuser_%s_%d", t.Name(), timestamp)
 	email := username + "@example.com"
 	password := "SecurePass123!"
 
@@ -108,8 +110,9 @@ func TestUserAuthenticationFlow(t *testing.T) {
 
 	client := e2e.NewTestClient(cfg.BaseURL)
 
-	// Step 1: Register a new user
-	username := "authtest_" + time.Now().Format("20060102150405")
+	// Step 1: Register a new user with unique username (test name + nanosecond timestamp)
+	timestamp := time.Now().UnixNano()
+	username := fmt.Sprintf("authtest_%s_%d", t.Name(), timestamp)
 	email := username + "@example.com"
 	password := "SecurePass123!"
 
@@ -156,8 +159,9 @@ func TestVideoSearchFunctionality(t *testing.T) {
 
 	client := e2e.NewTestClient(cfg.BaseURL)
 
-	// Register user
-	username := "searchtest_" + time.Now().Format("20060102150405")
+	// Register user with unique username (test name + nanosecond timestamp)
+	timestamp := time.Now().UnixNano()
+	username := fmt.Sprintf("searchtest_%s_%d", t.Name(), timestamp)
 	email := username + "@example.com"
 	client.RegisterUser(t, username, email, "SecurePass123!")
 
