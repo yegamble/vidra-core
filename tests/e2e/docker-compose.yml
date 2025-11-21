@@ -6,15 +6,14 @@ services:
   # PostgreSQL Test Database
   postgres-e2e:
     image: postgres:15-alpine
-    container_name: athena-e2e-postgres
     environment:
       POSTGRES_USER: athena_test
       POSTGRES_PASSWORD: test_password
       POSTGRES_DB: athena_e2e
     ports:
       - "5433:5432"
-    volumes:
-      - postgres-e2e-data:/var/lib/postgresql/data
+    tmpfs:
+      - /var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U athena_test"]
       interval: 5s
@@ -24,7 +23,6 @@ services:
   # Redis Test Cache
   redis-e2e:
     image: redis:7-alpine
-    container_name: athena-e2e-redis
     ports:
       - "6380:6379"
     healthcheck:
@@ -36,7 +34,6 @@ services:
   # MinIO for S3-compatible storage testing
   minio-e2e:
     image: minio/minio:latest
-    container_name: athena-e2e-minio
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: minioadmin
@@ -44,8 +41,8 @@ services:
     ports:
       - "9000:9000"
       - "9001:9001"
-    volumes:
-      - minio-e2e-data:/data
+    tmpfs:
+      - /data
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
       interval: 10s
@@ -55,11 +52,10 @@ services:
   # ClamAV for virus scanning tests
   clamav-e2e:
     image: clamav/clamav:latest
-    container_name: athena-e2e-clamav
     ports:
       - "3311:3310"
-    volumes:
-      - clamav-e2e-data:/var/lib/clamav
+    tmpfs:
+      - /var/lib/clamav
     healthcheck:
       test: ["CMD", "/usr/local/bin/clamdcheck.sh"]
       interval: 30s
@@ -72,7 +68,6 @@ services:
     build:
       context: ../..
       dockerfile: Dockerfile
-    container_name: athena-e2e-api
     depends_on:
       postgres-e2e:
         condition: service_healthy
@@ -102,7 +97,7 @@ services:
       # Application
       PORT: "8080"
       JWT_SECRET: "test-jwt-secret-for-e2e-testing-only"
-      PUBLIC_BASE_URL: "http://localhost:8080"
+      PUBLIC_BASE_URL: "http://localhost:18080"
       ENVIRONMENT: "test"
 
       # Features
@@ -114,7 +109,7 @@ services:
       # Logging
       LOG_LEVEL: "debug"
     ports:
-      - "8080:8080"
+      - "18080:8080"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
       interval: 10s
@@ -122,11 +117,5 @@ services:
       retries: 5
       start_period: 30s
 
-volumes:
-  postgres-e2e-data:
-  minio-e2e-data:
-  clamav-e2e-data:
-
 networks:
   default:
-    name: athena-e2e-network

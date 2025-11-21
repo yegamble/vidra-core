@@ -2,6 +2,9 @@ package scenarios
 
 import (
 	"context"
+	"crypto/md5"
+	"fmt"
+	"os"
 	"testing"
 	"time"
 
@@ -31,8 +34,11 @@ func TestVideoUploadWorkflow(t *testing.T) {
 	// Create test client
 	client := e2e.NewTestClient(cfg.BaseURL)
 
-	// Step 1: Register a new user
-	username := "testuser_" + time.Now().Format("20060102150405")
+	// Step 1: Register a new user with unique username (hash + short timestamp)
+	// Keep username under 50 chars (database constraint: VARCHAR(50))
+	timestamp := time.Now().UnixNano() % 10000000000  // 10 digits
+	testHash := fmt.Sprintf("%x", md5.Sum([]byte(t.Name())))[:8]  // 8-char hash
+	username := fmt.Sprintf("e2e_%s_%d", testHash, timestamp)  // ~23 chars total
 	email := username + "@example.com"
 	password := "SecurePass123!"
 
@@ -107,8 +113,11 @@ func TestUserAuthenticationFlow(t *testing.T) {
 
 	client := e2e.NewTestClient(cfg.BaseURL)
 
-	// Step 1: Register a new user
-	username := "authtest_" + time.Now().Format("20060102150405")
+	// Step 1: Register a new user with unique username (hash + short timestamp)
+	// Keep username under 50 chars (database constraint: VARCHAR(50))
+	timestamp := time.Now().UnixNano() % 10000000000  // 10 digits
+	testHash := fmt.Sprintf("%x", md5.Sum([]byte(t.Name())))[:8]  // 8-char hash
+	username := fmt.Sprintf("e2e_%s_%d", testHash, timestamp)  // ~23 chars total
 	email := username + "@example.com"
 	password := "SecurePass123!"
 
@@ -155,8 +164,11 @@ func TestVideoSearchFunctionality(t *testing.T) {
 
 	client := e2e.NewTestClient(cfg.BaseURL)
 
-	// Register user
-	username := "searchtest_" + time.Now().Format("20060102150405")
+	// Register user with unique username (hash + short timestamp)
+	// Keep username under 50 chars (database constraint: VARCHAR(50))
+	timestamp := time.Now().UnixNano() % 10000000000  // 10 digits
+	testHash := fmt.Sprintf("%x", md5.Sum([]byte(t.Name())))[:8]  // 8-char hash
+	username := fmt.Sprintf("e2e_%s_%d", testHash, timestamp)  // ~23 chars total
 	email := username + "@example.com"
 	client.RegisterUser(t, username, email, "SecurePass123!")
 
@@ -192,15 +204,28 @@ func TestVideoSearchFunctionality(t *testing.T) {
 
 // Helper: Create a minimal test video file
 func createTestVideoFile(t *testing.T) string {
-	// TODO: Generate a real test video file using ffmpeg or use a fixture
-	// For now, this is a placeholder stub
-	t.Skip("Test video file generation not implemented - requires ffmpeg or test fixtures")
-	return ""
+	// Use existing test video from postman test files
+	// This allows E2E tests to run without requiring ffmpeg
+
+	// Use environment variable if set, otherwise use relative path
+	testVideoPath := os.Getenv("E2E_TEST_VIDEO_PATH")
+	if testVideoPath == "" {
+		// Fallback to relative path from test directory
+		testVideoPath = "../../postman/test-files/videos/test-video.mp4"
+	}
+
+	// Check if the test video exists
+	if _, err := os.Stat(testVideoPath); err != nil {
+		t.Fatalf("Test video file not found at %s: %v", testVideoPath, err)
+	}
+
+	return testVideoPath
 }
 
 // Helper: Clean up test files
+// Note: This is a no-op for E2E tests since we use a shared test video file
+// from the postman test-files directory. Individual test resources (uploaded videos,
+// users) are cleaned up via API calls (DeleteVideo, DeleteUser) rather than file deletion.
 func cleanupTestFile(t *testing.T, path string) {
-	if path != "" {
-		// os.Remove(path)
-	}
+	// No-op: Shared test video files should not be deleted
 }
