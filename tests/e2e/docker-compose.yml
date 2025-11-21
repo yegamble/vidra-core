@@ -6,7 +6,6 @@ services:
   # PostgreSQL Test Database
   postgres-e2e:
     image: postgres:15-alpine
-    container_name: athena-e2e-postgres
     environment:
       POSTGRES_USER: athena_test
       POSTGRES_PASSWORD: test_password
@@ -24,7 +23,6 @@ services:
   # Redis Test Cache
   redis-e2e:
     image: redis:7-alpine
-    container_name: athena-e2e-redis
     ports:
       - "6380:6379"
     healthcheck:
@@ -36,7 +34,6 @@ services:
   # MinIO for S3-compatible storage testing
   minio-e2e:
     image: minio/minio:latest
-    container_name: athena-e2e-minio
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: minioadmin
@@ -55,7 +52,6 @@ services:
   # ClamAV for virus scanning tests
   clamav-e2e:
     image: clamav/clamav:latest
-    container_name: athena-e2e-clamav
     ports:
       - "3311:3310"
     tmpfs:
@@ -72,7 +68,6 @@ services:
     build:
       context: ../..
       dockerfile: Dockerfile
-    container_name: athena-e2e-api
     depends_on:
       postgres-e2e:
         condition: service_healthy
@@ -124,4 +119,3 @@ services:
 
 networks:
   default:
-    name: athena-e2e-network

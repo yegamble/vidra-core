@@ -2,6 +2,7 @@ package scenarios
 
 import (
 	"context"
+	"crypto/md5"
 	"fmt"
 	"os"
 	"testing"
@@ -33,9 +34,11 @@ func TestVideoUploadWorkflow(t *testing.T) {
 	// Create test client
 	client := e2e.NewTestClient(cfg.BaseURL)
 
-	// Step 1: Register a new user with unique username (test name + nanosecond timestamp)
-	timestamp := time.Now().UnixNano()
-	username := fmt.Sprintf("testuser_%s_%d", t.Name(), timestamp)
+	// Step 1: Register a new user with unique username (hash + short timestamp)
+	// Keep username under 50 chars (database constraint: VARCHAR(50))
+	timestamp := time.Now().UnixNano() % 10000000000  // 10 digits
+	testHash := fmt.Sprintf("%x", md5.Sum([]byte(t.Name())))[:8]  // 8-char hash
+	username := fmt.Sprintf("e2e_%s_%d", testHash, timestamp)  // ~23 chars total
 	email := username + "@example.com"
 	password := "SecurePass123!"
 
@@ -110,9 +113,11 @@ func TestUserAuthenticationFlow(t *testing.T) {
 
 	client := e2e.NewTestClient(cfg.BaseURL)
 
-	// Step 1: Register a new user with unique username (test name + nanosecond timestamp)
-	timestamp := time.Now().UnixNano()
-	username := fmt.Sprintf("authtest_%s_%d", t.Name(), timestamp)
+	// Step 1: Register a new user with unique username (hash + short timestamp)
+	// Keep username under 50 chars (database constraint: VARCHAR(50))
+	timestamp := time.Now().UnixNano() % 10000000000  // 10 digits
+	testHash := fmt.Sprintf("%x", md5.Sum([]byte(t.Name())))[:8]  // 8-char hash
+	username := fmt.Sprintf("e2e_%s_%d", testHash, timestamp)  // ~23 chars total
 	email := username + "@example.com"
 	password := "SecurePass123!"
 
@@ -159,9 +164,11 @@ func TestVideoSearchFunctionality(t *testing.T) {
 
 	client := e2e.NewTestClient(cfg.BaseURL)
 
-	// Register user with unique username (test name + nanosecond timestamp)
-	timestamp := time.Now().UnixNano()
-	username := fmt.Sprintf("searchtest_%s_%d", t.Name(), timestamp)
+	// Register user with unique username (hash + short timestamp)
+	// Keep username under 50 chars (database constraint: VARCHAR(50))
+	timestamp := time.Now().UnixNano() % 10000000000  // 10 digits
+	testHash := fmt.Sprintf("%x", md5.Sum([]byte(t.Name())))[:8]  // 8-char hash
+	username := fmt.Sprintf("e2e_%s_%d", testHash, timestamp)  // ~23 chars total
 	email := username + "@example.com"
 	client.RegisterUser(t, username, email, "SecurePass123!")
 
