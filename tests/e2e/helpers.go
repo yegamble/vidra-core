@@ -76,40 +76,59 @@ func (c *TestClient) DoRequest(method, path string, body io.Reader) (*http.Respo
 }
 
 // RegisterUser registers a new user and returns the access token
-func (c *TestClient) RegisterUser(t *testing.T, username, email, password string) (userID, token string) {
-	payload := map[string]interface{}{
-		"username": username,
-		"email":    email,
-		"password": password,
+func (c *TestClient) RegisterUser(t *testing.T, username, email, password string) (userID, token, usedUsername string) {
+	usedUsername = username
+	usedEmail := email
+
+	for attempt := 1; attempt <= 3; attempt++ {
+		payload := map[string]interface{}{
+			"username": usedUsername,
+			"email":    usedEmail,
+			"password": password,
+		}
+
+		body, err := json.Marshal(payload)
+		require.NoError(t, err)
+
+		resp, err := c.Post("/auth/register", "application/json", bytes.NewReader(body))
+		require.NoError(t, err)
+
+		respBody, err := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		require.NoError(t, err)
+
+		if resp.StatusCode == http.StatusConflict && attempt < 3 {
+			// If a conflict occurs (likely due to lingering data in CI), retry with a fresh username/email
+			suffix := time.Now().UnixNano()
+			usedUsername = fmt.Sprintf("%s_%d", username, suffix)
+			usedEmail = usedUsername + "@example.com"
+			continue
+		}
+
+		require.Equalf(t, http.StatusCreated, resp.StatusCode, "User registration failed: %s", string(respBody))
+
+		// Parse response envelope
+		var envelope struct {
+			Data struct {
+				User struct {
+					ID       string `json:"id"`
+					Username string `json:"username"`
+				} `json:"user"`
+				AccessToken string `json:"access_token"`
+			} `json:"data"`
+		}
+
+		err = json.NewDecoder(bytes.NewReader(respBody)).Decode(&envelope)
+		require.NoError(t, err)
+
+		c.Token = envelope.Data.AccessToken
+		c.UserID = envelope.Data.User.ID
+
+		return envelope.Data.User.ID, envelope.Data.AccessToken, envelope.Data.User.Username
 	}
 
-	body, err := json.Marshal(payload)
-	require.NoError(t, err)
-
-	resp, err := c.Post("/auth/register", "application/json", bytes.NewReader(body))
-	require.NoError(t, err)
-	defer func() { _ = resp.Body.Close() }()
-
-	require.Equal(t, http.StatusCreated, resp.StatusCode, "User registration failed")
-
-	// Parse response envelope
-	var envelope struct {
-		Data struct {
-			User struct {
-				ID       string `json:"id"`
-				Username string `json:"username"`
-			} `json:"user"`
-			AccessToken string `json:"access_token"`
-		} `json:"data"`
-	}
-
-	err = json.NewDecoder(resp.Body).Decode(&envelope)
-	require.NoError(t, err)
-
-	c.Token = envelope.Data.AccessToken
-	c.UserID = envelope.Data.User.ID
-
-	return envelope.Data.User.ID, envelope.Data.AccessToken
+	require.FailNow(t, "exceeded registration retries")
+	return "", "", ""
 }
 
 // Login authenticates a user and returns the access token

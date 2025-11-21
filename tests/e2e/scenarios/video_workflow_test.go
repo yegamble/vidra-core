@@ -36,13 +36,13 @@ func TestVideoUploadWorkflow(t *testing.T) {
 
 	// Step 1: Register a new user with unique username (hash + short timestamp)
 	// Keep username under 50 chars (database constraint: VARCHAR(50))
-	timestamp := time.Now().UnixNano() % 10000000000  // 10 digits
-	testHash := fmt.Sprintf("%x", md5.Sum([]byte(t.Name())))[:8]  // 8-char hash
-	username := fmt.Sprintf("e2e_%s_%d", testHash, timestamp)  // ~23 chars total
+	timestamp := time.Now().UnixNano() % 10000000000             // 10 digits
+	testHash := fmt.Sprintf("%x", md5.Sum([]byte(t.Name())))[:8] // 8-char hash
+	username := fmt.Sprintf("e2e_%s_%d", testHash, timestamp)    // ~23 chars total
 	email := username + "@example.com"
 	password := "SecurePass123!"
 
-	userID, token := client.RegisterUser(t, username, email, password)
+	userID, token, username := client.RegisterUser(t, username, email, password)
 	assert.NotEmpty(t, userID, "User ID should not be empty")
 	assert.NotEmpty(t, token, "Access token should not be empty")
 
@@ -115,13 +115,13 @@ func TestUserAuthenticationFlow(t *testing.T) {
 
 	// Step 1: Register a new user with unique username (hash + short timestamp)
 	// Keep username under 50 chars (database constraint: VARCHAR(50))
-	timestamp := time.Now().UnixNano() % 10000000000  // 10 digits
-	testHash := fmt.Sprintf("%x", md5.Sum([]byte(t.Name())))[:8]  // 8-char hash
-	username := fmt.Sprintf("e2e_%s_%d", testHash, timestamp)  // ~23 chars total
+	timestamp := time.Now().UnixNano() % 10000000000             // 10 digits
+	testHash := fmt.Sprintf("%x", md5.Sum([]byte(t.Name())))[:8] // 8-char hash
+	username := fmt.Sprintf("e2e_%s_%d", testHash, timestamp)    // ~23 chars total
 	email := username + "@example.com"
 	password := "SecurePass123!"
 
-	userID, token := client.RegisterUser(t, username, email, password)
+	userID, token, username := client.RegisterUser(t, username, email, password)
 	assert.NotEmpty(t, userID)
 	assert.NotEmpty(t, token)
 
@@ -166,11 +166,11 @@ func TestVideoSearchFunctionality(t *testing.T) {
 
 	// Register user with unique username (hash + short timestamp)
 	// Keep username under 50 chars (database constraint: VARCHAR(50))
-	timestamp := time.Now().UnixNano() % 10000000000  // 10 digits
-	testHash := fmt.Sprintf("%x", md5.Sum([]byte(t.Name())))[:8]  // 8-char hash
-	username := fmt.Sprintf("e2e_%s_%d", testHash, timestamp)  // ~23 chars total
+	timestamp := time.Now().UnixNano() % 10000000000             // 10 digits
+	testHash := fmt.Sprintf("%x", md5.Sum([]byte(t.Name())))[:8] // 8-char hash
+	username := fmt.Sprintf("e2e_%s_%d", testHash, timestamp)    // ~23 chars total
 	email := username + "@example.com"
-	client.RegisterUser(t, username, email, "SecurePass123!")
+	_, _, username = client.RegisterUser(t, username, email, "SecurePass123!")
 
 	// Create test video file
 	testVideoPath := createTestVideoFile(t)
