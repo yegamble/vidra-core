@@ -7,8 +7,14 @@ on:
       - 'internal/httpapi/handlers/auth/**'
       - 'internal/repository/user_repository.go'
       - 'migrations/**'
+      - '.github/workflows/registration-api-tests.yml'
+      - 'postman/athena-registration-edge-cases.postman_collection.json'
+      - 'postman/environments/**'
   push:
-    branches: [main, develop]
+    branches:
+      - main
+      - develop
+      - 'claude/fix-postman-github-actions*'
   schedule:
     # Run daily at 3 AM UTC
     - cron: '0 3 * * *'

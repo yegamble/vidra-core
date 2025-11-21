@@ -25,8 +25,8 @@ jobs:
     name: End-to-End Tests
     runs-on: self-hosted
     timeout-minutes: 45
-    # Only run on PR when labeled 'e2e'; always run on schedule/dispatch or claude/enable-e2e-tests branch
-    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'e2e') || startsWith(github.head_ref, 'claude/enable-e2e-tests')
+    # Only run on PR when labeled 'e2e'; always run on schedule/dispatch or claude/enable-e2e-tests or claude/fix-postman-github-actions branch
+    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'e2e') || startsWith(github.head_ref, 'claude/enable-e2e-tests') || startsWith(github.head_ref, 'claude/fix-postman-github-actions')
 
     # Note: Docker Compose is used instead of GH services for better control
     # Services are defined in tests/e2e/docker compose.yml
@@ -148,8 +148,8 @@ jobs:
     name: E2E Tests (Race Detection)
     runs-on: self-hosted
     timeout-minutes: 60
-    # Only run on main branch, manual trigger, or claude/enable-e2e-tests branch to save CI time
-    if: github.event_name == 'workflow_dispatch' || (github.ref == 'refs/heads/main' && (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'e2e'))) || startsWith(github.head_ref, 'claude/enable-e2e-tests')
+    # Only run on main branch, manual trigger, or claude/enable-e2e-tests or claude/fix-postman-github-actions branch to save CI time
+    if: github.event_name == 'workflow_dispatch' || (github.ref == 'refs/heads/main' && (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'e2e'))) || startsWith(github.head_ref, 'claude/enable-e2e-tests') || startsWith(github.head_ref, 'claude/fix-postman-github-actions')
 
     container:
       image: golang:1.24

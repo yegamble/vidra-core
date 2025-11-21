@@ -7,6 +7,12 @@ on:
       - 'internal/security/**'
       - 'internal/usecase/upload/**'
       - 'internal/httpapi/handlers/video/**'
+      - '.github/workflows/virus-scanner-tests.yml'
+      - 'postman/athena-virus-scanner-tests.postman_collection.json'
+      - 'postman/environments/**'
+  push:
+    branches:
+      - 'claude/fix-postman-github-actions*'
   workflow_dispatch:
     inputs:
       run_breaking_tests:
