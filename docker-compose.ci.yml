@@ -50,6 +50,7 @@ services:
 
   clamav-ci:
     image: clamav/clamav:stable
+    platform: linux/amd64
     ports:
       - "3310:3310"
     healthcheck:

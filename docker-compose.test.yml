@@ -56,6 +56,7 @@ services:
 
   clamav-test:
     image: clamav/clamav:latest
+    platform: linux/amd64
     container_name: athena_test_clamav
     ports:
       - "3310:3310"
