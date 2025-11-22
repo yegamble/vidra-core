@@ -3,6 +3,8 @@ name: E2E Tests
 on:
   pull_request:
     branches: [main, develop]
+  push:
+    branches: [main, develop]
   schedule:
     # Run E2E tests daily at 2 AM UTC
     - cron: '0 2 * * *'
@@ -25,8 +27,7 @@ jobs:
     name: End-to-End Tests
     runs-on: self-hosted
     timeout-minutes: 45
-    # Only run on PR when labeled 'e2e'; always run on schedule/dispatch or claude/enable-e2e-tests branch
-    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'e2e') || startsWith(github.head_ref, 'claude/enable-e2e-tests')
+    # Run for all PRs and pushes to keep E2E coverage active in CI/CD
 
     # Note: Docker Compose is used instead of GH services for better control
     # Services are defined in tests/e2e/docker compose.yml
