@@ -12,6 +12,10 @@ services:
       POSTGRES_DB: athena_e2e
     ports:
       - "5433:5432"
+    volumes:
+      # Mount init script to create database schema on first start
+      # This is CRITICAL - without it, PostgreSQL has no tables and tests fail with 409 errors
+      - ../../init-test-db.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
     tmpfs:
       - /var/lib/postgresql/data
     healthcheck:
