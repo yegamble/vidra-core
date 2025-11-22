@@ -3,6 +3,7 @@ package e2e
 import (
 	"bytes"
 	"context"
+	"crypto/md5"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -344,3 +345,22 @@ func HealthCheck(t *testing.T, baseURL string) {
 
 	require.Equal(t, http.StatusOK, resp.StatusCode, "Health check failed")
 }
+
+// GenerateUniqueUsername generates a unique username for E2E testing
+// It uses the test name, GitHub run ID, and microsecond timestamp for uniqueness
+// The username is kept under 50 characters (database constraint: VARCHAR(50))
+func GenerateUniqueUsername(t *testing.T) string {
+	// Use E2E_RUN_ID from GitHub Actions for better uniqueness across runs
+	runID := os.Getenv("E2E_RUN_ID")
+	if runID == "" {
+		runID = fmt.Sprintf("%d", time.Now().Unix())
+	}
+	timestamp := time.Now().UnixNano() % 1000000                 // 6 digits microsecond precision
+	testHash := fmt.Sprintf("%x", md5.Sum([]byte(t.Name())))[:6] // 6-char hash
+	username := fmt.Sprintf("e2e_%s_%s_%d", testHash, runID, timestamp)
+	if len(username) > 50 {
+		username = username[:50] // Truncate if too long
+	}
+	return username
+}
+
