@@ -1,0 +1,587 @@
+# OPTIMIZED VERSION OF test.yml
+# This is an example showing the improvements recommended in TEST_WORKFLOW_ANALYSIS.md
+# Key improvements:
+# 1. Better parallelization (removed unnecessary dependencies)
+# 2. Test result caching
+# 3. Conditional execution based on file changes
+# 4. Centralized coverage reporting
+# 5. Enhanced failure reporting
+
+name: CI (Optimized)
+
+on:
+  push:
+    branches: [ main, develop ]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+  pull_request:
+    branches: [ main ]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+  checks: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+env:
+  GO_VERSION: "1.24"
+  GOPROXY: "direct"
+
+jobs:
+  # ============================================================================
+  # PRE-CHECK - Determine what needs to be tested
+  # ============================================================================
+  check-changes:
+    name: Check Changed Files
+    runs-on: ubuntu-latest
+    outputs:
+      should_test_code: ${{ steps.filter.outputs.code }}
+      should_test_integration: ${{ steps.filter.outputs.integration }}
+      changed_packages: ${{ steps.packages.outputs.packages }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2  # Need previous commit for diff
+
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            code:
+              - '**/*.go'
+              - 'go.mod'
+              - 'go.sum'
+            integration:
+              - 'internal/repository/**'
+              - 'internal/httpapi/**'
+              - 'migrations/**'
+              - 'tests/integration/**'
+
+      - name: Determine changed packages
+        id: packages
+        run: |
+          # Get packages that changed
+          changed_files=$(git diff --name-only HEAD~1 HEAD | grep '\.go$' || echo "")
+
+          if [ -z "$changed_files" ]; then
+            echo "packages=./..." >> $GITHUB_OUTPUT
+          else
+            # Get unique package paths
+            packages=$(echo "$changed_files" | xargs -I{} dirname {} | sort -u | xargs go list || echo "./...")
+            echo "packages=$packages" >> $GITHUB_OUTPUT
+          fi
+
+  # ============================================================================
+  # SETUP - Downloads modules once, shares with all other jobs via cache
+  # ============================================================================
+  setup:
+    name: Setup Dependencies
+    uses: ./.github/workflows/_setup-go-environment.yml
+    needs: check-changes
+    if: needs.check-changes.outputs.should_test_code == 'true'
+    with:
+      go-version: "1.24"
+      download-modules: true
+
+  # ============================================================================
+  # FAST TESTS - Run in parallel (OPTIMIZED: removed unnecessary dependencies)
+  # ============================================================================
+  unit:
+    name: Unit Tests
+    runs-on: self-hosted
+    needs: [setup, check-changes]
+    if: needs.check-changes.outputs.should_test_code == 'true'
+    timeout-minutes: 10
+
+    env:
+      HOME: /root
+      GOPATH: /root/go
+      GOMODCACHE: /root/go/pkg/mod
+      GOCACHE: /root/.cache/go-build
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Restore module cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: ${{ needs.setup.outputs.cache-key }}
+
+      # NEW: Test result caching
+      - name: Restore test result cache
+        id: test-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-test-results
+            unit-coverage.out
+          key: test-results-unit-${{ runner.os }}-${{ hashFiles('**/*.go', 'go.sum') }}
+          restore-keys: |
+            test-results-unit-${{ runner.os }}-
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
+
+      - name: Install build tools
+        run: |
+          if ! command -v gcc &> /dev/null; then
+            sudo apt-get update -qq
+            sudo apt-get install -y build-essential
+          fi
+
+      # OPTIMIZED: Only test changed packages if cache exists
+      - name: Run unit tests
+        run: |
+          if [ "${{ steps.test-cache.outputs.cache-hit }}" = "true" ]; then
+            echo "Test cache hit - testing only changed packages"
+            packages="${{ needs.check-changes.outputs.changed_packages }}"
+          else
+            echo "Cache miss - running all tests"
+            packages="./..."
+          fi
+
+          # Exclude integration and repository tests
+          test_packages=$(go list $packages | grep -v "/internal/repository$" | grep -v "^athena/tests/integration$")
+
+          go test -v -parallel=8 -short -coverprofile=unit-coverage.out $test_packages
+
+      # NEW: Upload coverage artifact
+      - name: Upload unit coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-unit
+          path: unit-coverage.out
+          retention-days: 7
+
+  lint:
+    name: Code Quality (Lint & Format)
+    runs-on: self-hosted
+    needs: [setup, check-changes]
+    if: needs.check-changes.outputs.should_test_code == 'true'
+    timeout-minutes: 10
+
+    env:
+      HOME: /root
+      GOPATH: /root/go
+      GOMODCACHE: /root/go/pkg/mod
+      GOCACHE: /root/.cache/go-build
+      GOLANGCI_LINT_CACHE: /root/.cache/golangci-lint
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Restore module cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: ${{ needs.setup.outputs.cache-key }}
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
+
+      - name: Install build tools
+        run: |
+          if ! command -v gcc &> /dev/null; then
+            sudo apt-get update -qq
+            sudo apt-get install -y build-essential
+          fi
+
+      - name: Check formatting
+        run: |
+          if [ -n "$(gofmt -l .)" ]; then
+            echo "::error::Go files are not formatted. Run: gofmt -w ."
+            gofmt -l .
+            exit 1
+          fi
+
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@v7
+        with:
+          version: latest
+          args: --timeout=10m
+          skip-cache: true
+
+  # ============================================================================
+  # INTEGRATION TESTS - OPTIMIZED: No longer waits for unit tests
+  # ============================================================================
+  integration:
+    name: Integration Tests
+    runs-on: self-hosted
+    needs: [setup, check-changes]  # REMOVED: unit dependency
+    if: needs.check-changes.outputs.should_test_integration == 'true'
+    timeout-minutes: 15
+
+    env:
+      HOME: /root
+      GOPATH: /root/go
+      GOMODCACHE: /root/go/pkg/mod
+      GOCACHE: /root/.cache/go-build
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Restore module cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: ${{ needs.setup.outputs.cache-key }}
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
+
+      - name: Install build tools
+        run: |
+          if ! command -v gcc &> /dev/null; then
+            sudo apt-get update -qq
+            sudo apt-get install -y build-essential
+          fi
+
+      # NEW: Use unique project name for isolation
+      - name: Start services with docker compose
+        run: |
+          # Use unique project name to prevent conflicts
+          COMPOSE_PROJECT_NAME=athena-ci-${{ github.run_id }} \
+          docker compose -f docker-compose.ci.yml up -d --force-recreate
+
+      - name: Wait for services to be ready
+        run: |
+          timeout 60 bash -c 'until docker exec $(COMPOSE_PROJECT_NAME=athena-ci-${{ github.run_id }} docker compose -f docker-compose.ci.yml ps -q postgres-ci) pg_isready -U test_user -d athena_test; do sleep 2; done'
+          timeout 60 bash -c 'until docker exec $(COMPOSE_PROJECT_NAME=athena-ci-${{ github.run_id }} docker compose -f docker-compose.ci.yml ps -q redis-ci) redis-cli ping | grep PONG; do sleep 2; done'
+
+      - name: Run integration tests
+        env:
+          DATABASE_URL: postgres://test_user:test_password@localhost:5432/athena_test?sslmode=disable
+          REDIS_URL: redis://localhost:6379/0
+          IPFS_API: http://localhost:5001
+          CLAMAV_HOST: localhost:3310
+          JWT_SECRET: test-jwt-secret
+        run: |
+          go test -v -short -parallel=8 -coverprofile=integration-coverage.out ./...
+
+      # NEW: Upload coverage artifact
+      - name: Upload integration coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-integration
+          path: integration-coverage.out
+          retention-days: 7
+
+      - name: Cleanup services
+        if: always()
+        run: |
+          COMPOSE_PROJECT_NAME=athena-ci-${{ github.run_id }} \
+          docker compose -f docker-compose.ci.yml down -v
+
+  # ============================================================================
+  # BUILD - OPTIMIZED: Only needs lint to pass
+  # ============================================================================
+  build:
+    name: Build
+    runs-on: self-hosted
+    needs: [setup, lint]  # REMOVED: unit dependency
+    timeout-minutes: 10
+
+    env:
+      HOME: /root
+      GOPATH: /root/go
+      GOMODCACHE: /root/go/pkg/mod
+      GOCACHE: /root/.cache/go-build
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Restore module cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: ${{ needs.setup.outputs.cache-key }}
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
+
+      - name: Install build tools
+        run: |
+          if ! command -v gcc &> /dev/null; then
+            sudo apt-get update -qq
+            sudo apt-get install -y build-essential
+          fi
+
+      - name: Build binaries
+        run: |
+          go build -v -o bin/athena ./cmd/server
+          ls -lh bin/athena
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: athena-binary
+          path: bin/athena
+          retention-days: 7
+
+  # ============================================================================
+  # NEW: CENTRALIZED COVERAGE REPORTING
+  # ============================================================================
+  coverage-report:
+    name: Coverage Report
+    runs-on: self-hosted
+    needs: [unit, integration]
+    if: always()
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Download all coverage reports
+        uses: actions/download-artifact@v4
+        with:
+          pattern: coverage-*
+          path: coverage-reports/
+
+      - name: Install gocovmerge
+        run: go install github.com/wadey/gocovmerge@latest
+
+      - name: Merge coverage reports
+        run: |
+          # Merge all coverage files
+          find coverage-reports -name "*.out" -exec echo {} \;
+          gocovmerge coverage-reports/*/*.out > coverage-merged.out
+
+          # Generate reports
+          go tool cover -html=coverage-merged.out -o coverage-merged.html
+          go tool cover -func=coverage-merged.out > coverage-summary.txt
+
+          # Extract total coverage
+          total_coverage=$(go tool cover -func=coverage-merged.out | grep total | awk '{print $3}' | sed 's/%//')
+          echo "TOTAL_COVERAGE=$total_coverage" >> $GITHUB_ENV
+
+          echo "Total coverage: ${total_coverage}%"
+
+      - name: Check coverage threshold
+        run: |
+          if (( $(echo "$TOTAL_COVERAGE < 70.0" | bc -l) )); then
+            echo "::error::Coverage ${TOTAL_COVERAGE}% is below 70% threshold"
+            exit 1
+          fi
+
+          echo "✅ Coverage ${TOTAL_COVERAGE}% meets threshold"
+
+      - name: Upload merged coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-merged
+          path: |
+            coverage-merged.out
+            coverage-merged.html
+            coverage-summary.txt
+          retention-days: 30
+
+      - name: Comment PR with coverage
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const coverage = parseFloat(process.env.TOTAL_COVERAGE);
+            const summary = fs.readFileSync('coverage-summary.txt', 'utf8');
+
+            const emoji = coverage >= 80 ? '🟢' : coverage >= 70 ? '🟡' : '🔴';
+            const status = coverage >= 80 ? 'Excellent' : coverage >= 70 ? 'Good' : 'Needs Improvement';
+
+            let body = `## ${emoji} Code Coverage Report\n\n`;
+            body += `**Total Coverage:** ${coverage.toFixed(2)}% (${status})\n\n`;
+            body += `### Coverage by Package\n\n`;
+            body += '```\n' + summary + '\n```\n\n';
+
+            if (coverage < 70) {
+              body += '⚠️ **Warning:** Coverage is below the 70% threshold.\n';
+            } else if (coverage >= 80) {
+              body += '✅ Excellent coverage! Keep up the good work.\n';
+            }
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: body
+            });
+
+  # ============================================================================
+  # RACE DETECTION TESTS - OPTIMIZED: Better dependencies
+  # ============================================================================
+  unit-race:
+    name: Unit Tests (Race)
+    runs-on: self-hosted
+    needs: [setup, unit]  # REMOVED: lint dependency
+    timeout-minutes: 15
+
+    env:
+      HOME: /root
+      GOPATH: /root/go
+      GOMODCACHE: /root/go/pkg/mod
+      GOCACHE: /root/.cache/go-build
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Restore module cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: ${{ needs.setup.outputs.cache-key }}
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
+
+      - name: Install build tools
+        run: |
+          if ! command -v gcc &> /dev/null; then
+            sudo apt-get update -qq
+            sudo apt-get install -y build-essential
+          fi
+
+      - name: Run unit tests with race detector
+        env:
+          CGO_ENABLED: "1"
+        run: make test-unit-race
+
+  integration-race:
+    name: Integration Tests (Race)
+    runs-on: self-hosted
+    needs: [setup, integration]
+    timeout-minutes: 20
+
+    env:
+      HOME: /root
+      GOPATH: /root/go
+      GOMODCACHE: /root/go/pkg/mod
+      GOCACHE: /root/.cache/go-build
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Restore module cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: ${{ needs.setup.outputs.cache-key }}
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
+
+      - name: Install build tools
+        run: |
+          if ! command -v gcc &> /dev/null; then
+            sudo apt-get update -qq
+            sudo apt-get install -y build-essential
+          fi
+
+      - name: Start services with docker compose
+        run: |
+          COMPOSE_PROJECT_NAME=athena-ci-race-${{ github.run_id }} \
+          docker compose -f docker-compose.ci.yml up -d --force-recreate
+
+      - name: Wait for services to be ready
+        run: |
+          timeout 60 bash -c 'until docker exec $(COMPOSE_PROJECT_NAME=athena-ci-race-${{ github.run_id }} docker compose -f docker-compose.ci.yml ps -q postgres-ci) pg_isready -U test_user -d athena_test; do sleep 2; done'
+          timeout 60 bash -c 'until docker exec $(COMPOSE_PROJECT_NAME=athena-ci-race-${{ github.run_id }} docker compose -f docker-compose.ci.yml ps -q redis-ci) redis-cli ping | grep PONG; do sleep 2; done'
+
+      - name: Run integration tests with race detector
+        env:
+          CGO_ENABLED: "1"
+          DATABASE_URL: postgres://test_user:test_password@localhost:5432/athena_test?sslmode=disable
+          REDIS_URL: redis://localhost:6379/0
+        run: make test-integration-ci-race
+
+      - name: Cleanup services
+        if: always()
+        run: |
+          COMPOSE_PROJECT_NAME=athena-ci-race-${{ github.run_id }} \
+          docker compose -f docker-compose.ci.yml down -v
+
+  # ============================================================================
+  # NEW: ENHANCED FAILURE REPORTING
+  # ============================================================================
+  notify-on-failure:
+    name: Failure Notification
+    runs-on: ubuntu-latest
+    needs: [unit, integration, lint, build]
+    if: failure()
+
+    steps:
+      - name: Create failure report
+        uses: actions/github-script@v7
+        with:
+          script: |
+            let body = '## 🚨 CI Test Failure\n\n';
+            body += `**Workflow:** CI (Optimized)\n`;
+            body += `**Run:** [#${context.runNumber}](${context.payload.repository.html_url}/actions/runs/${context.runId})\n`;
+            body += `**Triggered by:** @${context.actor}\n\n`;
+
+            body += '### Failed Jobs\n\n';
+            body += '- Check the [workflow run](';
+            body += `${context.payload.repository.html_url}/actions/runs/${context.runId}`;
+            body += ') for details\n\n';
+
+            body += '### Quick Actions\n';
+            body += '- [ ] Review failure logs\n';
+            body += '- [ ] Check if failure is flaky (re-run workflow)\n';
+            body += '- [ ] Verify recent code changes\n';
+            body += '- [ ] Check if dependencies changed\n\n';
+
+            body += '### Debug Commands\n';
+            body += '```bash\n';
+            body += '# Run tests locally\n';
+            body += 'make test-local\n\n';
+            body += '# Check for flaky tests\n';
+            body += 'make test-flaky\n';
+            body += '```\n';
+
+            console.log(body);
+
+            // Add comment to PR if applicable
+            if (context.payload.pull_request) {
+              await github.rest.issues.createComment({
+                issue_number: context.payload.pull_request.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: body
+              });
+            }

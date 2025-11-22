@@ -1,0 +1,372 @@
+name: Flaky Test Detection
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'  # Every 6 hours
+  workflow_dispatch:
+    inputs:
+      iterations:
+        description: 'Number of test iterations'
+        required: false
+        default: '10'
+        type: number
+      package:
+        description: 'Specific package to test (empty for all)'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: flaky-test-detection
+  cancel-in-progress: false
+
+env:
+  GO_VERSION: "1.24"
+
+jobs:
+  detect-flaky-tests:
+    name: Run Tests Multiple Times
+    runs-on: self-hosted
+    timeout-minutes: 180
+
+    env:
+      HOME: /root
+      GOPATH: /root/go
+      GOMODCACHE: /root/go/pkg/mod
+      GOCACHE: /root/.cache/go-build
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Determine test target
+        id: target
+        run: |
+          if [ -n "${{ inputs.package }}" ]; then
+            echo "package=${{ inputs.package }}" >> $GITHUB_OUTPUT
+          else
+            echo "package=./..." >> $GITHUB_OUTPUT
+          fi
+
+          if [ -n "${{ inputs.iterations }}" ]; then
+            echo "iterations=${{ inputs.iterations }}" >> $GITHUB_OUTPUT
+          else
+            echo "iterations=10" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Run tests multiple times
+        run: |
+          mkdir -p flaky-test-results
+
+          iterations=${{ steps.target.outputs.iterations }}
+          package=${{ steps.target.outputs.package }}
+
+          echo "Running tests $iterations times for package: $package"
+
+          for i in $(seq 1 $iterations); do
+            echo "===================================================="
+            echo "Test iteration $i/$iterations"
+            echo "===================================================="
+
+            go test -v -json -timeout 30m $package > flaky-test-results/run-$i.json 2>&1 || true
+
+            # Brief pause between runs
+            sleep 2
+          done
+
+          echo "Test execution complete. Analyzing results..."
+
+      - name: Analyze for flaky tests
+        id: analyze
+        run: |
+          python3 - <<'PY'
+          import json
+          import sys
+          from collections import defaultdict
+          import os
+
+          test_results = defaultdict(list)
+          test_durations = defaultdict(list)
+
+          # Parse all test runs
+          iterations = int(os.environ.get('ITERATIONS', '10'))
+
+          for i in range(1, iterations + 1):
+              try:
+                  with open(f'flaky-test-results/run-{i}.json') as f:
+                      for line in f:
+                          try:
+                              event = json.loads(line)
+                              if event.get('Action') in ['pass', 'fail', 'skip']:
+                                  test_name = f"{event.get('Package', '')}/{event.get('Test', '')}"
+                                  test_results[test_name].append(event['Action'])
+
+                                  # Track test duration for performance analysis
+                                  if 'Elapsed' in event:
+                                      test_durations[test_name].append(event['Elapsed'])
+                          except json.JSONDecodeError:
+                              pass
+              except FileNotFoundError:
+                  print(f"Warning: run-{i}.json not found")
+
+          # Find flaky tests (tests that both passed and failed)
+          flaky_tests = []
+          for test, results in test_results.items():
+              unique_results = set(results)
+              if len(unique_results) > 1 and 'skip' not in unique_results:
+                  pass_count = results.count('pass')
+                  fail_count = results.count('fail')
+                  total = len(results)
+
+                  flaky_tests.append({
+                      'test': test,
+                      'passes': pass_count,
+                      'fails': fail_count,
+                      'total': total,
+                      'flake_rate': (fail_count / total) * 100 if total > 0 else 0
+                  })
+
+          # Find slow/inconsistent tests
+          slow_tests = []
+          for test, durations in test_durations.items():
+              if len(durations) >= 3:  # Only analyze if we have enough data
+                  avg_duration = sum(durations) / len(durations)
+                  max_duration = max(durations)
+                  min_duration = min(durations)
+                  variance = max_duration - min_duration
+
+                  # Flag if test is slow (>5s) or has high variance (>2s difference)
+                  if avg_duration > 5.0 or variance > 2.0:
+                      slow_tests.append({
+                          'test': test,
+                          'avg': avg_duration,
+                          'min': min_duration,
+                          'max': max_duration,
+                          'variance': variance
+                      })
+
+          # Sort by flake rate
+          flaky_tests.sort(key=lambda x: x['flake_rate'], reverse=True)
+          slow_tests.sort(key=lambda x: x['avg'], reverse=True)
+
+          # Generate report
+          has_issues = False
+
+          with open('flaky-test-report.md', 'w') as f:
+              f.write("# Flaky and Slow Test Detection Report\n\n")
+              f.write(f"**Test Iterations:** {iterations}\n")
+              f.write(f"**Total Unique Tests:** {len(test_results)}\n\n")
+
+              if flaky_tests:
+                  has_issues = True
+                  f.write(f"## 🔥 Flaky Tests Detected ({len(flaky_tests)})\n\n")
+                  f.write("Tests that inconsistently pass/fail:\n\n")
+                  f.write("| Test | Passes | Fails | Total | Flake Rate |\n")
+                  f.write("|------|--------|-------|-------|------------|\n")
+
+                  for t in flaky_tests[:20]:  # Top 20
+                      f.write(f"| `{t['test']}` | {t['passes']} | {t['fails']} | {t['total']} | {t['flake_rate']:.1f}% |\n")
+
+                  f.write("\n### Flaky Test Details\n\n")
+                  for t in flaky_tests[:10]:  # Top 10 with details
+                      f.write(f"#### {t['test']}\n")
+                      f.write(f"- **Flake Rate:** {t['flake_rate']:.1f}%\n")
+                      f.write(f"- **Passes:** {t['passes']}/{t['total']}\n")
+                      f.write(f"- **Fails:** {t['fails']}/{t['total']}\n")
+                      f.write(f"- **Severity:** {'🔴 HIGH' if t['flake_rate'] > 30 else '🟡 MEDIUM' if t['flake_rate'] > 10 else '🟢 LOW'}\n\n")
+
+              else:
+                  f.write("## ✅ No Flaky Tests Detected\n\n")
+                  f.write("All tests passed/failed consistently across all iterations.\n\n")
+
+              if slow_tests:
+                  has_issues = True
+                  f.write(f"\n## ⏱️ Slow/Inconsistent Tests ({len(slow_tests)})\n\n")
+                  f.write("Tests with high execution time or variance:\n\n")
+                  f.write("| Test | Avg Duration | Min | Max | Variance |\n")
+                  f.write("|------|--------------|-----|-----|----------|\n")
+
+                  for t in slow_tests[:20]:  # Top 20
+                      f.write(f"| `{t['test']}` | {t['avg']:.2f}s | {t['min']:.2f}s | {t['max']:.2f}s | {t['variance']:.2f}s |\n")
+
+              f.write("\n## Recommendations\n\n")
+
+              if flaky_tests:
+                  f.write("### For Flaky Tests:\n")
+                  f.write("1. Review test for race conditions or timing dependencies\n")
+                  f.write("2. Add proper test isolation (database cleanup, state reset)\n")
+                  f.write("3. Increase timeouts if tests fail due to slow operations\n")
+                  f.write("4. Use `t.Retry()` for genuinely flaky external dependencies\n")
+                  f.write("5. Consider mocking unreliable external services\n\n")
+
+              if slow_tests:
+                  f.write("### For Slow Tests:\n")
+                  f.write("1. Use `testing.Short()` to skip slow tests in quick runs\n")
+                  f.write("2. Optimize database queries or use smaller test datasets\n")
+                  f.write("3. Mock expensive operations (file I/O, network calls)\n")
+                  f.write("4. Consider parallelization for independent slow tests\n")
+                  f.write("5. Profile tests to identify bottlenecks\n\n")
+
+          # Print to console
+          print("\n" + "="*80)
+          print("FLAKY TEST DETECTION RESULTS")
+          print("="*80 + "\n")
+
+          if flaky_tests:
+              print(f"🔥 FLAKY TESTS DETECTED: {len(flaky_tests)}\n")
+              for t in flaky_tests[:5]:
+                  print(f"  {t['test']}")
+                  print(f"    Flake Rate: {t['flake_rate']:.1f}% ({t['fails']}/{t['total']} failures)")
+                  print()
+
+          if slow_tests:
+              print(f"⏱️  SLOW TESTS DETECTED: {len(slow_tests)}\n")
+              for t in slow_tests[:5]:
+                  print(f"  {t['test']}")
+                  print(f"    Avg Duration: {t['avg']:.2f}s (range: {t['min']:.2f}s - {t['max']:.2f}s)")
+                  print()
+
+          if not flaky_tests and not slow_tests:
+              print("✅ No flaky or slow tests detected!")
+
+          # Set output for GitHub Actions
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+              f.write(f"has_flaky={'true' if flaky_tests else 'false'}\n")
+              f.write(f"has_slow={'true' if slow_tests else 'false'}\n")
+              f.write(f"flaky_count={len(flaky_tests)}\n")
+              f.write(f"slow_count={len(slow_tests)}\n")
+
+          sys.exit(1 if has_issues else 0)
+          PY
+        env:
+          ITERATIONS: ${{ steps.target.outputs.iterations }}
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: flaky-test-results
+          path: |
+            flaky-test-results/
+            flaky-test-report.md
+          retention-days: 90
+
+      - name: Add to job summary
+        if: always()
+        run: |
+          if [ -f flaky-test-report.md ]; then
+            cat flaky-test-report.md >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Check for existing flaky test issue
+        if: always() && steps.analyze.outputs.has_flaky == 'true'
+        id: check-issue
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const issues = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: 'flaky-test'
+            });
+
+            if (issues.data.length > 0) {
+              core.setOutput('issue_number', issues.data[0].number);
+              core.setOutput('exists', 'true');
+            } else {
+              core.setOutput('exists', 'false');
+            }
+
+      - name: Create or update flaky test issue
+        if: always() && steps.analyze.outputs.has_flaky == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const report = fs.readFileSync('flaky-test-report.md', 'utf8');
+
+            const issueBody = `${report}
+
+---
+
+**Detection Run:** [#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+**Timestamp:** ${new Date().toISOString()}
+**Flaky Tests Found:** ${{ steps.analyze.outputs.flaky_count }}
+**Slow Tests Found:** ${{ steps.analyze.outputs.slow_count }}
+
+### Action Items
+
+- [ ] Review flaky tests and identify root causes
+- [ ] Add test isolation or fix race conditions
+- [ ] Optimize slow tests or mark as long-running
+- [ ] Re-run detection after fixes
+
+/cc @yegamble
+            `;
+
+            if ('${{ steps.check-issue.outputs.exists }}' === 'true') {
+              // Update existing issue
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: parseInt('${{ steps.check-issue.outputs.issue_number }}'),
+                body: `## 🔄 Updated Flaky Test Detection\n\n${issueBody}`
+              });
+
+              // Update issue title with count
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: parseInt('${{ steps.check-issue.outputs.issue_number }}'),
+                title: `🔥 Flaky Tests Detected (${{ steps.analyze.outputs.flaky_count }} tests)`
+              });
+            } else {
+              // Create new issue
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: `🔥 Flaky Tests Detected (${{ steps.analyze.outputs.flaky_count }} tests)`,
+                body: issueBody,
+                labels: ['flaky-test', 'bug', 'testing', 'P2']
+              });
+            }
+
+      - name: Create issue for slow tests
+        if: always() && steps.analyze.outputs.has_slow == 'true' && steps.analyze.outputs.slow_count > 10
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const report = fs.readFileSync('flaky-test-report.md', 'utf8');
+
+            // Extract slow test section
+            const slowTestSection = report.split('## ⏱️ Slow/Inconsistent Tests')[1] || '';
+
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `⏱️ Slow Test Performance Review Needed (${{ steps.analyze.outputs.slow_count }} tests)`,
+              body: `## Slow Test Detection Report
+
+${{ steps.analyze.outputs.slow_count }} tests detected with high execution time or variance.
+
+${slowTestSection}
+
+**Detection Run:** [#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+
+### Recommendations
+1. Review slow tests for optimization opportunities
+2. Consider using \`testing.Short()\` for expensive tests
+3. Mock external dependencies where possible
+4. Profile tests to identify bottlenecks
+              `,
+              labels: ['performance', 'testing', 'P3']
+            });
