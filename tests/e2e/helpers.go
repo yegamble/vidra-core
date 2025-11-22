@@ -351,12 +351,14 @@ func HealthCheck(t *testing.T, baseURL string) {
 // The username is kept under 50 characters (database constraint: VARCHAR(50))
 func GenerateUniqueUsername(t *testing.T) string {
 	// Use E2E_RUN_ID from GitHub Actions for better uniqueness across runs
+	// Falls back to Unix timestamp for local development or non-GitHub CI environments
 	runID := os.Getenv("E2E_RUN_ID")
 	if runID == "" {
 		runID = fmt.Sprintf("%d", time.Now().Unix())
 	}
 	// Zero-padded 6-digit microsecond precision for consistent formatting
 	timestamp := time.Now().UnixNano() % 1000000
+	// Use MD5 hash for a short, deterministic test identifier (not for security)
 	testHash := fmt.Sprintf("%x", md5.Sum([]byte(t.Name())))[:6] // 6-char hash
 	
 	// Format: e2e_<hash>_<runID>_<timestamp>
@@ -367,9 +369,11 @@ func GenerateUniqueUsername(t *testing.T) string {
 	}
 	username := fmt.Sprintf("e2e_%s_%s_%06d", testHash, runID, timestamp)
 	
-	// Final safety check (should not be needed with above constraints)
+	// Final safety check (should not be needed with above constraints, but included for robustness)
+	// Truncation here would be extremely rare and would only happen if our math is wrong above
 	if len(username) > 50 {
-		username = username[:50]
+		// In the unlikely case of truncation, keep the timestamp suffix for uniqueness
+		username = username[:44] + username[len(username)-6:]
 	}
 	return username
 }
