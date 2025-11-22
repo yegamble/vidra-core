@@ -14,6 +14,10 @@ inputs:
     description: 'Fallback GOPROXY to use if not already set (empty to skip)'
     required: false
     default: 'https://goproxy.io,direct'
+  clean-cache:
+    description: 'Clean module cache before downloading (use only if experiencing corruption issues)'
+    required: false
+    default: 'false'
 
 runs:
   using: 'composite'
@@ -187,15 +191,26 @@ runs:
 
         echo "✅ All Go environment checks passed"
 
-    # Clean potentially corrupted module cache to avoid ziphash errors
-    - name: Clean Go module cache
+    # Clean module cache only if explicitly requested via input
+    # Note: Aggressive cache cleaning can cause "directory not empty" errors
+    # Only enable this if you're experiencing ziphash or corruption issues
+    - name: Clean Go module cache (conditional)
+      if: inputs.clean-cache == 'true'
       shell: bash
       run: |
         set -euo pipefail
         MODCACHE="$(go env GOMODCACHE || true)"
-        echo "Cleaning Go module cache at: ${MODCACHE}"
+        echo "⚠️  Cleaning Go module cache at: ${MODCACHE}"
         if [[ -n "${MODCACHE}" && "${MODCACHE}" != "off" ]]; then
-          go clean -modcache
+          # Try to clean, but don't fail if directories are in use
+          go clean -modcache || {
+            echo "⚠️  Cache cleaning failed (cache may be in use) - continuing anyway"
+            # Force remove with rm as fallback
+            if [[ -d "${MODCACHE}" ]]; then
+              rm -rf "${MODCACHE}"/* 2>/dev/null || true
+            fi
+          }
+          echo "✓ Module cache cleaned"
         else
           echo "Skipping go clean -modcache (no module cache configured)"
         fi
