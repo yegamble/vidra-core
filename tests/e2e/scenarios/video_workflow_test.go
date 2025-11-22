@@ -2,7 +2,6 @@ package scenarios
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"testing"
 	"time"
