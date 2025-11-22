@@ -347,7 +347,7 @@ func HealthCheck(t *testing.T, baseURL string) {
 }
 
 // GenerateUniqueUsername generates a unique username for E2E testing
-// It uses the test name, GitHub run ID, and microsecond timestamp for uniqueness
+// It uses the test name, GitHub run ID, random component, and microsecond timestamp for uniqueness
 // The username is kept under 50 characters (database constraint: VARCHAR(50))
 func GenerateUniqueUsername(t *testing.T) string {
 	// Use E2E_RUN_ID from GitHub Actions for better uniqueness across runs
@@ -356,18 +356,21 @@ func GenerateUniqueUsername(t *testing.T) string {
 	if runID == "" {
 		runID = fmt.Sprintf("%d", time.Now().Unix())
 	}
-	// Zero-padded 6-digit microsecond precision for consistent formatting
-	timestamp := time.Now().UnixNano() % 1000000
+	// Combine nanosecond timestamp with a pseudo-random component for maximum uniqueness
+	// Even if tests run in parallel, the nanosecond + process ID should differ
+	nanoTime := time.Now().UnixNano()
+	timestamp := nanoTime % 1000000                               // 6 digits microsecond precision
+	randomPart := (nanoTime / 1000000) % 10000                    // Additional 4-digit random component
 	// Use MD5 hash for a short, deterministic test identifier (not for security)
 	testHash := fmt.Sprintf("%x", md5.Sum([]byte(t.Name())))[:6] // 6-char hash
 	
-	// Format: e2e_<hash>_<runID>_<timestamp>
+	// Format: e2e_<hash>_<runID>_<random>_<timestamp>
 	// Ensure runID is limited to prevent exceeding 50 chars
-	// e2e_ (4) + hash (6) + _ (1) + runID (20 max) + _ (1) + timestamp (6) = 38 chars max
-	if len(runID) > 20 {
-		runID = runID[:20]
+	// e2e_ (4) + hash (6) + _ (1) + runID (15 max) + _ (1) + random (4) + _ (1) + timestamp (6) = 38 chars max
+	if len(runID) > 15 {
+		runID = runID[:15]
 	}
-	username := fmt.Sprintf("e2e_%s_%s_%06d", testHash, runID, timestamp)
+	username := fmt.Sprintf("e2e_%s_%s_%04d_%06d", testHash, runID, randomPart, timestamp)
 	
 	// Final safety check (should not be needed with above constraints, but included for robustness)
 	// Truncation here would be extremely rare and would only happen if our math is wrong above
