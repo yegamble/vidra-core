@@ -94,7 +94,17 @@ jobs:
       - name: Start test environment
         run: |
           echo "Starting E2E test environment..."
-          COMPOSE_PROJECT_NAME=athena-e2e-${{ github.run_id }} docker compose -f tests/e2e/docker-compose.yml up -d
+
+          # Ensure containers for THIS run don't exist (prevents docker-compose from reusing stopped containers)
+          # Docker Compose will reuse existing stopped containers if project name matches, preserving tmpfs data!
+          COMPOSE_PROJECT_NAME=athena-e2e-${{ github.run_id }} docker compose -f tests/e2e/docker-compose.yml down -v 2>/dev/null || true
+
+          # Force remove any containers that might still exist for this run
+          docker ps -a --filter "name=athena-e2e-${{ github.run_id }}" -q | xargs -r docker rm -f 2>/dev/null || true
+
+          # Now start fresh containers with --force-recreate to ensure clean state
+          # This ensures PostgreSQL tmpfs is recreated fresh, not reused
+          COMPOSE_PROJECT_NAME=athena-e2e-${{ github.run_id }} docker compose -f tests/e2e/docker-compose.yml up -d --force-recreate
 
       - name: Wait for services to be ready
         run: |
@@ -239,7 +249,18 @@ jobs:
 
       - name: Start test environment
         run: |
-          COMPOSE_PROJECT_NAME=athena-e2e-${{ github.run_id }} docker compose -f tests/e2e/docker-compose.yml up -d
+          echo "Starting E2E test environment..."
+
+          # Ensure containers for THIS run don't exist (prevents docker-compose from reusing stopped containers)
+          # Docker Compose will reuse existing stopped containers if project name matches, preserving tmpfs data!
+          COMPOSE_PROJECT_NAME=athena-e2e-${{ github.run_id }} docker compose -f tests/e2e/docker-compose.yml down -v 2>/dev/null || true
+
+          # Force remove any containers that might still exist for this run
+          docker ps -a --filter "name=athena-e2e-${{ github.run_id }}" -q | xargs -r docker rm -f 2>/dev/null || true
+
+          # Now start fresh containers with --force-recreate to ensure clean state
+          # This ensures PostgreSQL tmpfs is recreated fresh, not reused
+          COMPOSE_PROJECT_NAME=athena-e2e-${{ github.run_id }} docker compose -f tests/e2e/docker-compose.yml up -d --force-recreate
 
       - name: Wait for services
         run: |
