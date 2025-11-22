@@ -80,7 +80,7 @@ func (c *TestClient) RegisterUser(t *testing.T, username, email, password string
 	usedUsername = username
 	usedEmail := email
 
-	for attempt := 1; attempt <= 3; attempt++ {
+	for attempt := 1; attempt <= 5; attempt++ {
 		payload := map[string]interface{}{
 			"username": usedUsername,
 			"email":    usedEmail,
@@ -97,15 +97,44 @@ func (c *TestClient) RegisterUser(t *testing.T, username, email, password string
 		_ = resp.Body.Close()
 		require.NoError(t, err)
 
-		if resp.StatusCode == http.StatusConflict && attempt < 3 {
+		// Handle retryable responses first
+		switch resp.StatusCode {
+		case http.StatusCreated:
+			// success, proceed to decode response
+		case http.StatusConflict:
+			if attempt == 5 {
+				require.Equalf(t, http.StatusCreated, resp.StatusCode, "User registration failed after retries: %s", string(respBody))
+			}
+
 			// If a conflict occurs (likely due to lingering data in CI), retry with a fresh username/email
 			suffix := time.Now().UnixNano()
 			usedUsername = fmt.Sprintf("%s_%d", username, suffix)
 			usedEmail = usedUsername + "@example.com"
+			time.Sleep(time.Duration(attempt) * 200 * time.Millisecond)
 			continue
-		}
+		case http.StatusTooManyRequests:
+			if attempt == 5 {
+				require.Equalf(t, http.StatusCreated, resp.StatusCode, "User registration failed after retries: %s", string(respBody))
+			}
 
-		require.Equalf(t, http.StatusCreated, resp.StatusCode, "User registration failed: %s", string(respBody))
+			// Respect Retry-After header when present, otherwise backoff
+			retryAfter := time.Duration(attempt) * 300 * time.Millisecond
+			if header := resp.Header.Get("Retry-After"); header != "" {
+				if secs, parseErr := time.ParseDuration(header + "s"); parseErr == nil {
+					retryAfter = secs
+				}
+			}
+
+			time.Sleep(retryAfter)
+			continue
+		default:
+			if resp.StatusCode >= 500 && attempt < 5 {
+				time.Sleep(time.Duration(attempt) * 300 * time.Millisecond)
+				continue
+			}
+
+			require.Equalf(t, http.StatusCreated, resp.StatusCode, "User registration failed: %s", string(respBody))
+		}
 
 		// Parse response envelope
 		var envelope struct {
