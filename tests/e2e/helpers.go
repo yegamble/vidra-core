@@ -355,11 +355,21 @@ func GenerateUniqueUsername(t *testing.T) string {
 	if runID == "" {
 		runID = fmt.Sprintf("%d", time.Now().Unix())
 	}
-	timestamp := time.Now().UnixNano() % 1000000                 // 6 digits microsecond precision
+	// Zero-padded 6-digit microsecond precision for consistent formatting
+	timestamp := time.Now().UnixNano() % 1000000
 	testHash := fmt.Sprintf("%x", md5.Sum([]byte(t.Name())))[:6] // 6-char hash
-	username := fmt.Sprintf("e2e_%s_%s_%d", testHash, runID, timestamp)
+	
+	// Format: e2e_<hash>_<runID>_<timestamp>
+	// Ensure runID is limited to prevent exceeding 50 chars
+	// e2e_ (4) + hash (6) + _ (1) + runID (20 max) + _ (1) + timestamp (6) = 38 chars max
+	if len(runID) > 20 {
+		runID = runID[:20]
+	}
+	username := fmt.Sprintf("e2e_%s_%s_%06d", testHash, runID, timestamp)
+	
+	// Final safety check (should not be needed with above constraints)
 	if len(username) > 50 {
-		username = username[:50] // Truncate if too long
+		username = username[:50]
 	}
 	return username
 }
