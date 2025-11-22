@@ -64,13 +64,32 @@ jobs:
 
       - name: Cleanup previous test environment
         run: |
-          # Clean up E2E test environment
+          echo "=== Cleaning up previous test environment ==="
+
+          # Show what's currently running for debugging
+          echo "Current containers:"
+          docker ps -a --filter "name=athena-e2e" || true
+
+          # Clean up any E2E test environments (including old project names)
+          # This catches containers from previous runs with different project names
+          docker ps -a --filter "name=athena-e2e" -q | xargs -r docker rm -f 2>/dev/null || true
+
+          # Clean up default project name containers
           docker compose -f tests/e2e/docker-compose.yml down -v 2>/dev/null || true
-          # Clean up any other test environments that may use conflicting ports
           docker compose -f docker-compose.test.yml down -v 2>/dev/null || true
+
           # Force cleanup any containers using our ports
-          docker stop $(docker ps -q --filter "publish=5433" --filter "publish=6380" --filter "publish=18080") 2>/dev/null || true
-          docker rm $(docker ps -aq --filter "publish=5433" --filter "publish=6380" --filter "publish=18080") 2>/dev/null || true
+          docker ps -q --filter "publish=5433" | xargs -r docker stop 2>/dev/null || true
+          docker ps -q --filter "publish=6380" | xargs -r docker stop 2>/dev/null || true
+          docker ps -q --filter "publish=18080" | xargs -r docker stop 2>/dev/null || true
+          docker ps -aq --filter "publish=5433" | xargs -r docker rm 2>/dev/null || true
+          docker ps -aq --filter "publish=6380" | xargs -r docker rm 2>/dev/null || true
+          docker ps -aq --filter "publish=18080" | xargs -r docker rm 2>/dev/null || true
+
+          # Remove any dangling volumes that might contain old database data
+          docker volume ls -qf "name=athena-e2e" | xargs -r docker volume rm 2>/dev/null || true
+
+          echo "✓ Cleanup complete"
 
       - name: Start test environment
         run: |
@@ -191,13 +210,32 @@ jobs:
 
       - name: Cleanup previous test environment
         run: |
-          # Clean up E2E test environment
+          echo "=== Cleaning up previous test environment ==="
+
+          # Show what's currently running for debugging
+          echo "Current containers:"
+          docker ps -a --filter "name=athena-e2e" || true
+
+          # Clean up any E2E test environments (including old project names)
+          # This catches containers from previous runs with different project names
+          docker ps -a --filter "name=athena-e2e" -q | xargs -r docker rm -f 2>/dev/null || true
+
+          # Clean up default project name containers
           docker compose -f tests/e2e/docker-compose.yml down -v 2>/dev/null || true
-          # Clean up any other test environments that may use conflicting ports
           docker compose -f docker-compose.test.yml down -v 2>/dev/null || true
+
           # Force cleanup any containers using our ports
-          docker stop $(docker ps -q --filter "publish=5433" --filter "publish=6380" --filter "publish=18080") 2>/dev/null || true
-          docker rm $(docker ps -aq --filter "publish=5433" --filter "publish=6380" --filter "publish=18080") 2>/dev/null || true
+          docker ps -q --filter "publish=5433" | xargs -r docker stop 2>/dev/null || true
+          docker ps -q --filter "publish=6380" | xargs -r docker stop 2>/dev/null || true
+          docker ps -q --filter "publish=18080" | xargs -r docker stop 2>/dev/null || true
+          docker ps -aq --filter "publish=5433" | xargs -r docker rm 2>/dev/null || true
+          docker ps -aq --filter "publish=6380" | xargs -r docker rm 2>/dev/null || true
+          docker ps -aq --filter "publish=18080" | xargs -r docker rm 2>/dev/null || true
+
+          # Remove any dangling volumes that might contain old database data
+          docker volume ls -qf "name=athena-e2e" | xargs -r docker volume rm 2>/dev/null || true
+
+          echo "✓ Cleanup complete"
 
       - name: Start test environment
         run: |
