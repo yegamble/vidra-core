@@ -26,24 +26,24 @@ setup: fixtures start
 # Start test environment
 start:
 	@echo "Starting E2E test environment..."
-	docker compose -f docker compose.yml up -d
+	docker compose -f docker-compose.yml up -d
 	@echo "✓ Services started"
 
 # Stop test environment
 stop:
 	@echo "Stopping E2E test environment..."
-	docker compose -f docker compose.yml stop
+	docker compose -f docker-compose.yml stop
 	@echo "✓ Services stopped"
 
 # Restart test environment
 restart:
 	@echo "Restarting E2E test environment..."
-	docker compose -f docker compose.yml restart
+	docker compose -f docker-compose.yml restart
 	@echo "✓ Services restarted"
 
 # View logs
 logs:
-	docker compose -f docker compose.yml logs -f
+	docker compose -f docker-compose.yml logs -f
 
 # Run E2E tests
 test:
@@ -87,7 +87,7 @@ fixtures:
 # Clean up environment and volumes
 clean:
 	@echo "Cleaning up E2E test environment..."
-	docker compose -f docker compose.yml down -v
+	docker compose -f docker-compose.yml down -v
 	@echo "✓ Environment cleaned"
 
 # Access PostgreSQL shell
@@ -101,7 +101,7 @@ redis-shell:
 # Check service status
 status:
 	@echo "Service Status:"
-	@docker compose -f docker compose.yml ps
+	@docker compose -f docker-compose.yml ps
 
 # Run specific test
 test-single:

@@ -25,28 +25,28 @@ defaults:
 jobs:
   e2e-tests:
     name: End-to-End Tests
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     timeout-minutes: 45
     # Run on PRs, schedule and manual dispatch
 
     # Note: Docker Compose is used instead of GH services for better control
-    # Services are defined in tests/e2e/docker compose.yml
-
-    # Use default runner HOME/caches; composite action configures Go caches
-    env: {}
+    # Services are defined in tests/e2e/docker-compose.yml
 
     steps:
-      - name: Docker cleanup
-        uses: ./.github/actions/docker-cleanup
-
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Go (cached)
-        uses: ./.github/actions/setup-go-cached
+      - name: Set up Go
+        uses: actions/setup-go@v5
         with:
           go-version: '1.24'
+          cache: true
           cache-dependency-path: go.sum
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
 
       - name: Generate test fixtures (optional)
         run: |
@@ -169,35 +169,26 @@ jobs:
   # Optional: Run E2E tests with race detector (slower but catches concurrency issues)
   e2e-tests-race:
     name: E2E Tests (Race Detection)
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     timeout-minutes: 60
     # Only run on main branch or manual trigger to save CI time
     if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main'
-
-    # Use default runner HOME/caches; composite action configures Go caches
-    env: {}
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Install GCC for race detector
-        uses: ./.github/actions/install-gcc
-
-      - name: Generate test fixtures (optional)
-        run: |
-          if command -v ffmpeg >/dev/null 2>&1; then
-            cd tests/e2e
-            make fixtures
-          else
-            echo "ffmpeg not installed; skipping fixtures"
-          fi
-
-      - name: Set up Go (cached)
-        uses: ./.github/actions/setup-go-cached
+      - name: Set up Go
+        uses: actions/setup-go@v5
         with:
           go-version: '1.24'
+          cache: true
           cache-dependency-path: go.sum
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg build-essential
 
       - name: Generate test fixtures (optional)
         run: |
