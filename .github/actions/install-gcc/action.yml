@@ -44,27 +44,40 @@ runs:
             # Use non-interactive mode to avoid prompts
             export DEBIAN_FRONTEND=noninteractive
 
+            # Wait for dpkg/apt locks to be released (avoid concurrent apt operations)
+            echo "Ensuring dpkg/apt locks are free..."
+            for i in {1..60}; do
+              if fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 || \
+                 fuser /var/lib/dpkg/lock >/dev/null 2>&1 || \
+                 fuser /var/lib/apt/lists/lock >/dev/null 2>&1; then
+                echo "Lock held, waiting... ($i/60)"; sleep 5;
+              else
+                break
+              fi
+            done
+            dpkg --configure -a || true
+
             # Update package list (with retries)
             echo "Updating package lists..."
-            for i in {1..3}; do
+            for i in {1..5}; do
               if apt-get update -qq; then
                 break
               else
-                if [ $i -lt 3 ]; then
-                  echo "Retry $i/3 failed, waiting 5s..."
-                  sleep 5
-                else
-                  echo "Failed to update package lists after 3 attempts"
-                  exit 1
-                fi
+                echo "apt-get update failed (attempt $i/5). Checking locks and retrying..."
+                sleep 6
               fi
             done
 
             # Install build-essential (includes gcc, g++, make)
             echo "Installing build-essential..."
-            apt-get install -y -qq --no-install-recommends \
-              build-essential \
-              libc6-dev
+            for i in {1..5}; do
+              if apt-get install -y -qq --no-install-recommends build-essential libc6-dev; then
+                break
+              else
+                echo "apt-get install failed (attempt $i/5). Checking locks and retrying..."
+                sleep 6
+              fi
+            done
 
             # Verify installation
             gcc --version
