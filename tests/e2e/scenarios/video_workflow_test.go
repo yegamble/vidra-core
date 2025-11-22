@@ -2,8 +2,6 @@ package scenarios
 
 import (
 	"context"
-	"crypto/md5"
-	"fmt"
 	"os"
 	"testing"
 	"time"
@@ -34,13 +32,14 @@ func TestVideoUploadWorkflow(t *testing.T) {
 	// Create test client
 	client := e2e.NewTestClient(cfg.BaseURL)
 
-	// Step 1: Register a new user with unique username (hash + short timestamp)
-	// Keep username under 50 chars (database constraint: VARCHAR(50))
-	timestamp := time.Now().UnixNano() % 10000000000  // 10 digits
-	testHash := fmt.Sprintf("%x", md5.Sum([]byte(t.Name())))[:8]  // 8-char hash
-	username := fmt.Sprintf("e2e_%s_%d", testHash, timestamp)  // ~23 chars total
-	email := username + "@example.com"
+	// Step 1: Register a new user with guaranteed unique username
+	// Uses atomic counter + timestamp + random hex for collision-free generation
+	username := e2e.GenerateUniqueUsername(t)
+	email := e2e.GenerateTestEmail(username)
 	password := "SecurePass123!"
+
+	// Add small delay before registration to avoid rate limits
+	e2e.RateLimitDelay(t, 500*time.Millisecond)
 
 	userID, token := client.RegisterUser(t, username, email, password)
 	assert.NotEmpty(t, userID, "User ID should not be empty")
@@ -113,13 +112,14 @@ func TestUserAuthenticationFlow(t *testing.T) {
 
 	client := e2e.NewTestClient(cfg.BaseURL)
 
-	// Step 1: Register a new user with unique username (hash + short timestamp)
-	// Keep username under 50 chars (database constraint: VARCHAR(50))
-	timestamp := time.Now().UnixNano() % 10000000000  // 10 digits
-	testHash := fmt.Sprintf("%x", md5.Sum([]byte(t.Name())))[:8]  // 8-char hash
-	username := fmt.Sprintf("e2e_%s_%d", testHash, timestamp)  // ~23 chars total
-	email := username + "@example.com"
+	// Step 1: Register a new user with guaranteed unique username
+	// Uses atomic counter + timestamp + random hex for collision-free generation
+	username := e2e.GenerateUniqueUsername(t)
+	email := e2e.GenerateTestEmail(username)
 	password := "SecurePass123!"
+
+	// Add small delay before registration to avoid rate limits
+	e2e.RateLimitDelay(t, 500*time.Millisecond)
 
 	userID, token := client.RegisterUser(t, username, email, password)
 	assert.NotEmpty(t, userID)
@@ -164,13 +164,16 @@ func TestVideoSearchFunctionality(t *testing.T) {
 
 	client := e2e.NewTestClient(cfg.BaseURL)
 
-	// Register user with unique username (hash + short timestamp)
-	// Keep username under 50 chars (database constraint: VARCHAR(50))
-	timestamp := time.Now().UnixNano() % 10000000000  // 10 digits
-	testHash := fmt.Sprintf("%x", md5.Sum([]byte(t.Name())))[:8]  // 8-char hash
-	username := fmt.Sprintf("e2e_%s_%d", testHash, timestamp)  // ~23 chars total
-	email := username + "@example.com"
-	client.RegisterUser(t, username, email, "SecurePass123!")
+	// Register user with guaranteed unique username
+	// Uses atomic counter + timestamp + random hex for collision-free generation
+	username := e2e.GenerateUniqueUsername(t)
+	email := e2e.GenerateTestEmail(username)
+	password := "SecurePass123!"
+
+	// Add small delay before registration to avoid rate limits
+	e2e.RateLimitDelay(t, 500*time.Millisecond)
+
+	client.RegisterUser(t, username, email, password)
 
 	// Create test video file
 	testVideoPath := createTestVideoFile(t)

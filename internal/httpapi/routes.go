@@ -34,9 +34,24 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 
 	// SECURITY: Create stricter rate limiters for critical endpoints
 	// These prevent abuse of authentication and resource-intensive operations
-	strictAuthLimiter := rlManager.CreateRateLimiter(60*time.Second, 5)    // 5 per minute for registration
-	strictLoginLimiter := rlManager.CreateRateLimiter(60*time.Second, 10)  // 10 per minute for login
-	strictImportLimiter := rlManager.CreateRateLimiter(60*time.Second, 10) // 10 per minute for imports
+	// In test/e2e environments, use relaxed limits to prevent test failures
+	authBurst := 5    // Production: 5 registrations per minute
+	loginBurst := 10  // Production: 10 logins per minute
+	importBurst := 10 // Production: 10 imports per minute
+
+	if cfg.Environment == "test" || cfg.Environment == "e2e" {
+		// Test environments: use much higher limits to prevent flaky tests
+		// All tests share the same IP (localhost), so parallel tests would exhaust strict limits
+		authBurst = 1000
+		loginBurst = 1000
+		importBurst = 1000
+		log.Printf("Using relaxed rate limits for %s environment: auth=%d, login=%d, import=%d per minute",
+			cfg.Environment, authBurst, loginBurst, importBurst)
+	}
+
+	strictAuthLimiter := rlManager.CreateRateLimiter(60*time.Second, authBurst)
+	strictLoginLimiter := rlManager.CreateRateLimiter(60*time.Second, loginBurst)
+	strictImportLimiter := rlManager.CreateRateLimiter(60*time.Second, importBurst)
 
 	// Create server instance with dependencies
 	server := NewServerWithOAuth(

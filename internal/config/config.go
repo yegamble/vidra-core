@@ -285,6 +285,9 @@ type Config struct {
 
 	// File Type Blocking Configuration
 	FileTypeBlockingEnabled bool
+
+	// Environment Configuration
+	Environment string // "production", "development", "test", "e2e"
 }
 
 func Load() (*Config, error) {
@@ -391,6 +394,9 @@ func Load() (*Config, error) {
 	// Logging Configuration
 	cfg.LogLevel = getEnvOrDefault("LOG_LEVEL", "info")
 	cfg.LogFormat = getEnvOrDefault("LOG_FORMAT", "json")
+
+	// Environment Configuration
+	cfg.Environment = getEnvOrDefault("ENVIRONMENT", "production")
 
 	// Health Check Configuration
 	cfg.HealthCheckTimeout = getIntEnv("HEALTH_CHECK_TIMEOUT", 30)

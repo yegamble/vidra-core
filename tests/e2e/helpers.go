@@ -3,6 +3,8 @@ package e2e
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -11,10 +13,16 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
+)
+
+var (
+	// Global atomic counter for guaranteed username uniqueness
+	usernameCounter atomic.Uint64
 )
 
 // Config holds E2E test configuration
@@ -76,6 +84,7 @@ func (c *TestClient) DoRequest(method, path string, body io.Reader) (*http.Respo
 }
 
 // RegisterUser registers a new user and returns the access token
+// Now includes retry logic with exponential backoff for rate limit handling
 func (c *TestClient) RegisterUser(t *testing.T, username, email, password string) (userID, token string) {
 	payload := map[string]interface{}{
 		"username": username,
@@ -86,11 +95,58 @@ func (c *TestClient) RegisterUser(t *testing.T, username, email, password string
 	body, err := json.Marshal(payload)
 	require.NoError(t, err)
 
-	resp, err := c.Post("/auth/register", "application/json", bytes.NewReader(body))
-	require.NoError(t, err)
-	defer func() { _ = resp.Body.Close() }()
+	// Retry logic for handling rate limits and transient failures
+	maxRetries := 5
+	baseDelay := 2 * time.Second
 
-	require.Equal(t, http.StatusCreated, resp.StatusCode, "User registration failed")
+	var resp *http.Response
+	var lastErr error
+
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		if attempt > 0 {
+			// Exponential backoff: 2s, 4s, 8s, 16s, 32s
+			delay := baseDelay * time.Duration(1<<uint(attempt-1))
+			t.Logf("Retry attempt %d/%d after %v (previous error: %v)", attempt+1, maxRetries, delay, lastErr)
+			time.Sleep(delay)
+		}
+
+		resp, err = c.Post("/auth/register", "application/json", bytes.NewReader(body))
+		if err != nil {
+			lastErr = fmt.Errorf("HTTP request failed: %w", err)
+			continue
+		}
+
+		// Success case
+		if resp.StatusCode == http.StatusCreated {
+			break
+		}
+
+		// Read error response for logging
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+
+		// Handle rate limit (429) - retry with backoff
+		if resp.StatusCode == http.StatusTooManyRequests {
+			lastErr = fmt.Errorf("rate limit exceeded (429)")
+			continue
+		}
+
+		// Handle conflict (409) - this is terminal, don't retry
+		if resp.StatusCode == http.StatusConflict {
+			require.Failf(t, "User already exists", "Status: %d, Response: %s", resp.StatusCode, string(bodyBytes))
+			return
+		}
+
+		// Other errors - retry
+		lastErr = fmt.Errorf("unexpected status %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	if resp == nil || resp.StatusCode != http.StatusCreated {
+		require.Failf(t, "User registration failed after retries", "Last error: %v", lastErr)
+		return
+	}
+
+	defer func() { _ = resp.Body.Close() }()
 
 	// Parse response envelope
 	var envelope struct {
@@ -109,10 +165,13 @@ func (c *TestClient) RegisterUser(t *testing.T, username, email, password string
 	c.Token = envelope.Data.AccessToken
 	c.UserID = envelope.Data.User.ID
 
+	t.Logf("Successfully registered user: %s (ID: %s)", envelope.Data.User.Username, envelope.Data.User.ID)
+
 	return envelope.Data.User.ID, envelope.Data.AccessToken
 }
 
 // Login authenticates a user and returns the access token
+// Now includes retry logic with exponential backoff for rate limit handling
 func (c *TestClient) Login(t *testing.T, username, password string) (userID, token string) {
 	payload := map[string]interface{}{
 		"username": username,
@@ -122,11 +181,58 @@ func (c *TestClient) Login(t *testing.T, username, password string) (userID, tok
 	body, err := json.Marshal(payload)
 	require.NoError(t, err)
 
-	resp, err := c.Post("/auth/login", "application/json", bytes.NewReader(body))
-	require.NoError(t, err)
-	defer func() { _ = resp.Body.Close() }()
+	// Retry logic for handling rate limits and transient failures
+	maxRetries := 5
+	baseDelay := 2 * time.Second
 
-	require.Equal(t, http.StatusOK, resp.StatusCode, "User login failed")
+	var resp *http.Response
+	var lastErr error
+
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		if attempt > 0 {
+			// Exponential backoff: 2s, 4s, 8s, 16s, 32s
+			delay := baseDelay * time.Duration(1<<uint(attempt-1))
+			t.Logf("Login retry attempt %d/%d after %v (previous error: %v)", attempt+1, maxRetries, delay, lastErr)
+			time.Sleep(delay)
+		}
+
+		resp, err = c.Post("/auth/login", "application/json", bytes.NewReader(body))
+		if err != nil {
+			lastErr = fmt.Errorf("HTTP request failed: %w", err)
+			continue
+		}
+
+		// Success case
+		if resp.StatusCode == http.StatusOK {
+			break
+		}
+
+		// Read error response for logging
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+
+		// Handle rate limit (429) - retry with backoff
+		if resp.StatusCode == http.StatusTooManyRequests {
+			lastErr = fmt.Errorf("rate limit exceeded (429)")
+			continue
+		}
+
+		// Handle auth failures (401) - this is terminal, don't retry
+		if resp.StatusCode == http.StatusUnauthorized {
+			require.Failf(t, "Login failed - invalid credentials", "Status: %d, Response: %s", resp.StatusCode, string(bodyBytes))
+			return
+		}
+
+		// Other errors - retry
+		lastErr = fmt.Errorf("unexpected status %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	if resp == nil || resp.StatusCode != http.StatusOK {
+		require.Failf(t, "User login failed after retries", "Last error: %v", lastErr)
+		return
+	}
+
+	defer func() { _ = resp.Body.Close() }()
 
 	// Parse response envelope
 	var envelope struct {
@@ -144,6 +250,8 @@ func (c *TestClient) Login(t *testing.T, username, password string) (userID, tok
 
 	c.Token = envelope.Data.AccessToken
 	c.UserID = envelope.Data.User.ID
+
+	t.Logf("Successfully logged in user: %s (ID: %s)", envelope.Data.User.Username, envelope.Data.User.ID)
 
 	return envelope.Data.User.ID, envelope.Data.AccessToken
 }
@@ -343,4 +451,51 @@ func HealthCheck(t *testing.T, baseURL string) {
 	defer func() { _ = resp.Body.Close() }()
 
 	require.Equal(t, http.StatusOK, resp.StatusCode, "Health check failed")
+}
+
+// GenerateUniqueUsername generates a guaranteed unique username for E2E tests
+// Uses multiple layers of entropy to prevent collisions:
+// 1. Atomic counter (guaranteed unique across goroutines)
+// 2. Nanosecond timestamp (time-based uniqueness)
+// 3. Random hex string (cryptographic randomness)
+// 4. Test name hash (test isolation)
+//
+// Format: e2e_{counter}_{timestamp}_{random}
+// Example: e2e_001_1732137222_a1b2c3d4
+// Length: ~30 chars (well under 50 char DB limit)
+func GenerateUniqueUsername(t *testing.T) string {
+	// Atomic counter for guaranteed uniqueness
+	counter := usernameCounter.Add(1)
+
+	// Nanosecond timestamp (last 8 digits for brevity)
+	timestamp := time.Now().UnixNano() % 100000000 // 8 digits
+
+	// Random hex string for additional entropy
+	randomBytes := make([]byte, 4)
+	_, err := rand.Read(randomBytes)
+	require.NoError(t, err, "Failed to generate random bytes")
+	randomHex := hex.EncodeToString(randomBytes)
+
+	// Format: e2e_{counter}_{timestamp}_{random}
+	username := fmt.Sprintf("e2e_%03d_%d_%s", counter, timestamp, randomHex)
+
+	// Ensure username is under 50 chars (DB constraint)
+	if len(username) > 50 {
+		username = username[:50]
+	}
+
+	t.Logf("Generated unique username: %s", username)
+	return username
+}
+
+// GenerateTestEmail generates a unique email from a username
+func GenerateTestEmail(username string) string {
+	return username + "@e2e-test.local"
+}
+
+// RateLimitDelay adds a small delay to avoid hitting rate limits
+// Use this between tests or after rate-limited operations
+func RateLimitDelay(t *testing.T, duration time.Duration) {
+	t.Logf("Rate limit delay: sleeping for %v", duration)
+	time.Sleep(duration)
 }

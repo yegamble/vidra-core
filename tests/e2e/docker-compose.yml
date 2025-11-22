@@ -100,6 +100,12 @@ services:
       PUBLIC_BASE_URL: "http://localhost:18080"
       ENVIRONMENT: "test"
 
+      # Rate Limiting - Relaxed for E2E testing
+      # Production defaults: 100 req/60s general, 5 reg/min, 10 login/min
+      # Test environment: much higher limits to prevent flaky tests
+      RATE_LIMIT_REQUESTS: "1000"    # General rate limit: 1000 req/min (vs 100 in prod)
+      RATE_LIMIT_WINDOW: "60"        # 60 second window
+
       # Features
       ENABLE_IPFS: "false"
       REQUIRE_IPFS: "false"

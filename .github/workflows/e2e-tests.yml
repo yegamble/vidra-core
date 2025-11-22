@@ -96,8 +96,14 @@ jobs:
           E2E_BASE_URL: http://localhost:18080
           E2E_TIMEOUT: 30m
           E2E_TEST_VIDEO_PATH: ${{ github.workspace }}/postman/test-files/videos/test-video.mp4
+          # Disable parallel execution to avoid rate limit conflicts
+          GOMAXPROCS: "1"
         run: |
-          go test -v -timeout 30m -count=1 ./tests/e2e/scenarios/... 2>&1 | tee tests/e2e/e2e_test_output.log
+          # Run tests sequentially with -p=1 to prevent rate limit exhaustion
+          # The -count=1 flag disables test caching
+          # The -failfast flag stops on first failure for faster feedback
+          echo "Running E2E tests sequentially to avoid rate limit conflicts..."
+          go test -v -timeout 30m -count=1 -p=1 -parallel=1 ./tests/e2e/scenarios/... 2>&1 | tee tests/e2e/e2e_test_output.log
 
       - name: Upload test results
         if: always()
@@ -207,8 +213,12 @@ jobs:
           E2E_BASE_URL: http://localhost:18080
           E2E_TIMEOUT: 45m
           E2E_TEST_VIDEO_PATH: ${{ github.workspace }}/postman/test-files/videos/test-video.mp4
+          # Disable parallel execution to avoid rate limit conflicts
+          GOMAXPROCS: "1"
         run: |
-          go test -v -race -timeout 45m -count=1 ./tests/e2e/scenarios/...
+          # Run tests sequentially with -p=1 to prevent rate limit exhaustion
+          echo "Running E2E tests with race detector (sequential execution)..."
+          go test -v -race -timeout 45m -count=1 -p=1 -parallel=1 ./tests/e2e/scenarios/...
 
       - name: Cleanup
         if: always()
