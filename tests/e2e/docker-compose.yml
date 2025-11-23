@@ -12,6 +12,8 @@ services:
       POSTGRES_DB: athena_e2e
     ports:
       - "5433:5432"
+    volumes:
+      - ../../init-shared-db.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
     tmpfs:
       - /var/lib/postgresql/data
     healthcheck:
