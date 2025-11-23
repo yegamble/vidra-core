@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -114,8 +115,15 @@ func (c *TestClient) RegisterUser(t *testing.T, username, email, password string
 
 // Login authenticates a user and returns the access token
 func (c *TestClient) Login(t *testing.T, username, password string) (userID, token string) {
+	// The API expects email, not username. Convert username to email format
+	// that matches what was used during registration
+	email := username
+	if !strings.Contains(username, "@") {
+		email = username + "@example.com"
+	}
+
 	payload := map[string]interface{}{
-		"username": username,
+		"email":    email, // Changed from "username" to "email"
 		"password": password,
 	}
 

@@ -51,6 +51,19 @@ services:
       timeout: 5s
       retries: 3
 
+  # MinIO bucket initialization
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      minio-e2e:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set minio http://minio-e2e:9000 minioadmin minioadmin;
+      mc mb minio/athena-test --ignore-existing;
+      echo 'MinIO bucket initialized';
+      "
+
   # ClamAV for virus scanning tests
   clamav-e2e:
     image: clamav/clamav:latest
@@ -77,6 +90,8 @@ services:
         condition: service_healthy
       minio-e2e:
         condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
       clamav-e2e:
         condition: service_healthy
     environment:
@@ -103,6 +118,12 @@ services:
       JWT_SECRET: "test-jwt-secret-for-e2e-testing-only"
       PUBLIC_BASE_URL: "http://localhost:18080"
       ENVIRONMENT: "test"
+
+      # Validation
+      VALIDATION_TEST_MODE: "true"
+
+      # Storage
+      STORAGE_DIR: "/tmp/storage"
 
       # Features
       ENABLE_IPFS: "false"
