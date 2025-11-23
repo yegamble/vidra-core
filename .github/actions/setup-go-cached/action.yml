@@ -195,7 +195,14 @@ runs:
         MODCACHE="$(go env GOMODCACHE || true)"
         echo "Cleaning Go module cache at: ${MODCACHE}"
         if [[ -n "${MODCACHE}" && "${MODCACHE}" != "off" ]]; then
-          go clean -modcache
+          # Try go clean first, but don't fail if it has permission issues
+          go clean -modcache || {
+            echo "⚠️  go clean -modcache failed, trying manual cleanup"
+            # Manually remove cache directories if they exist
+            if [[ -d "${MODCACHE}/cache" ]]; then
+              rm -rf "${MODCACHE}/cache" || echo "Could not remove cache directory"
+            fi
+          }
         else
           echo "Skipping go clean -modcache (no module cache configured)"
         fi
