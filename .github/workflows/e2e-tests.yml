@@ -32,8 +32,11 @@ jobs:
     # Note: Docker Compose is used instead of GH services for better control
     # Services are defined in tests/e2e/docker compose.yml
 
-    # Use default runner HOME/caches; composite action configures Go caches
-    env: {}
+    # Set required environment variables for Go
+    env:
+      HOME: /root
+      GOCACHE: /root/.cache/go-build
+      GOMODCACHE: /root/go/pkg/mod
 
     steps:
       - name: Docker cleanup
@@ -185,8 +188,11 @@ jobs:
     # Only run on main branch or manual trigger to save CI time
     if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main'
 
-    # Use default runner HOME/caches; composite action configures Go caches
-    env: {}
+    # Set required environment variables for Go
+    env:
+      HOME: /root
+      GOCACHE: /root/.cache/go-build
+      GOMODCACHE: /root/go/pkg/mod
 
     steps:
       - name: Checkout code
