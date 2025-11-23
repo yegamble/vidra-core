@@ -199,6 +199,8 @@ jobs:
     timeout-minutes: 60
     # Only run on main branch or manual trigger to save CI time
     if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main'
+    # Run after main E2E tests to avoid port conflicts
+    needs: e2e-tests
 
     # Set required environment variables for Go
     env:
