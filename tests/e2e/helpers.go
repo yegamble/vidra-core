@@ -91,6 +91,15 @@ func (c *TestClient) RegisterUser(t *testing.T, username, email, password string
 	require.NoError(t, err)
 	defer func() { _ = resp.Body.Close() }()
 
+	// Read response body for parsing
+	respBody, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+
+	// If registration fails, log the error
+	if resp.StatusCode != http.StatusCreated {
+		t.Logf("Registration failed with status %d: %s", resp.StatusCode, string(respBody))
+	}
+
 	require.Equal(t, http.StatusCreated, resp.StatusCode, "User registration failed")
 
 	// Parse response envelope
@@ -104,7 +113,7 @@ func (c *TestClient) RegisterUser(t *testing.T, username, email, password string
 		} `json:"data"`
 	}
 
-	err = json.NewDecoder(resp.Body).Decode(&envelope)
+	err = json.Unmarshal(respBody, &envelope)
 	require.NoError(t, err)
 
 	c.Token = envelope.Data.AccessToken
@@ -130,9 +139,21 @@ func (c *TestClient) Login(t *testing.T, username, password string) (userID, tok
 	body, err := json.Marshal(payload)
 	require.NoError(t, err)
 
+	// Log the request for debugging
+	t.Logf("Login attempt with email: %s", email)
+
 	resp, err := c.Post("/auth/login", "application/json", bytes.NewReader(body))
 	require.NoError(t, err)
 	defer func() { _ = resp.Body.Close() }()
+
+	// Read the entire response body for potential debugging
+	respBody, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+
+	// If login fails, log the error response for debugging
+	if resp.StatusCode != http.StatusOK {
+		t.Logf("Login failed with status %d: %s", resp.StatusCode, string(respBody))
+	}
 
 	require.Equal(t, http.StatusOK, resp.StatusCode, "User login failed")
 
@@ -147,7 +168,7 @@ func (c *TestClient) Login(t *testing.T, username, password string) (userID, tok
 		} `json:"data"`
 	}
 
-	err = json.NewDecoder(resp.Body).Decode(&envelope)
+	err = json.Unmarshal(respBody, &envelope)
 	require.NoError(t, err)
 
 	c.Token = envelope.Data.AccessToken
@@ -181,8 +202,8 @@ func (c *TestClient) UploadVideo(t *testing.T, videoPath, title, description str
 	err = writer.Close()
 	require.NoError(t, err)
 
-	// Send request
-	req, err := http.NewRequest("POST", c.BaseURL+"/api/v1/videos", &buf)
+	// Send request - use /upload endpoint for multipart file uploads
+	req, err := http.NewRequest("POST", c.BaseURL+"/api/v1/videos/upload", &buf)
 	require.NoError(t, err)
 
 	req.Header.Set("Content-Type", writer.FormDataContentType())
@@ -192,16 +213,24 @@ func (c *TestClient) UploadVideo(t *testing.T, videoPath, title, description str
 	require.NoError(t, err)
 	defer func() { _ = resp.Body.Close() }()
 
+	// Read and log response for debugging
+	respBody, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+
+	if resp.StatusCode != http.StatusCreated {
+		t.Logf("Video upload failed with status %d: %s", resp.StatusCode, string(respBody))
+	}
+
 	require.Equal(t, http.StatusCreated, resp.StatusCode, "Video upload failed")
 
-	// Parse response envelope
+	// Parse response envelope from already-read body
 	var envelope struct {
 		Data struct {
 			ID string `json:"id"`
 		} `json:"data"`
 	}
 
-	err = json.NewDecoder(resp.Body).Decode(&envelope)
+	err = json.Unmarshal(respBody, &envelope)
 	require.NoError(t, err)
 
 	return envelope.Data.ID
