@@ -91,13 +91,19 @@ type userRow struct {
 	EmailVerifiedAt   sql.NullTime    `db:"email_verified_at"`
 	SubscriberCount   int64           `db:"subscriber_count"`
 	TwoFAEnabled      bool            `db:"twofa_enabled"`
-	TwoFASecret       string          `db:"twofa_secret"`
+	TwoFASecret       sql.NullString  `db:"twofa_secret"`
 	TwoFAConfirmedAt  sql.NullTime    `db:"twofa_confirmed_at"`
 	CreatedAt         time.Time       `db:"created_at"`
 	UpdatedAt         time.Time       `db:"updated_at"`
 }
 
 func mapUserRow(rrow userRow) *domain.User {
+	// Convert sql.NullString to string for TwoFASecret
+	twoFASecret := ""
+	if rrow.TwoFASecret.Valid {
+		twoFASecret = rrow.TwoFASecret.String
+	}
+
 	u := &domain.User{
 		ID:               rrow.ID,
 		Username:         rrow.Username,
@@ -111,7 +117,7 @@ func mapUserRow(rrow userRow) *domain.User {
 		EmailVerifiedAt:  rrow.EmailVerifiedAt,
 		SubscriberCount:  rrow.SubscriberCount,
 		TwoFAEnabled:     rrow.TwoFAEnabled,
-		TwoFASecret:      rrow.TwoFASecret,
+		TwoFASecret:      twoFASecret,
 		TwoFAConfirmedAt: rrow.TwoFAConfirmedAt,
 		CreatedAt:        rrow.CreatedAt,
 		UpdatedAt:        rrow.UpdatedAt,

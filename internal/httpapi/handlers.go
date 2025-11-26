@@ -5,7 +5,6 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"log"
 	"net/http"
 	"time"
 
@@ -90,27 +89,20 @@ func (s *Server) Login(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Lookup user and verify password
-	log.Printf("Login: Attempting login for email=%s", email)
 	dUser, err := s.userRepo.GetByEmail(r.Context(), email)
 	if err != nil {
-		log.Printf("Login: GetByEmail failed for email=%s error=%v", email, err)
 		shared.WriteError(w, http.StatusUnauthorized, domain.ErrInvalidCredentials)
 		return
 	}
-	log.Printf("Login: Found user id=%s email=%s", dUser.ID, dUser.Email)
 	hash, err := s.userRepo.GetPasswordHash(r.Context(), dUser.ID)
 	if err != nil {
-		log.Printf("Login: GetPasswordHash failed for userID=%s error=%v", dUser.ID, err)
 		shared.WriteError(w, http.StatusUnauthorized, domain.ErrInvalidCredentials)
 		return
 	}
-	log.Printf("Login: Got hash length=%d for userID=%s", len(hash), dUser.ID)
 	if bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)) != nil {
-		log.Printf("Login: bcrypt.CompareHashAndPassword FAILED for userID=%s passwordLen=%d hashLen=%d", dUser.ID, len(password), len(hash))
 		shared.WriteError(w, http.StatusUnauthorized, domain.ErrInvalidCredentials)
 		return
 	}
-	log.Printf("Login: Password verified successfully for userID=%s", dUser.ID)
 
 	// Check if 2FA is enabled
 	if dUser.TwoFAEnabled {
