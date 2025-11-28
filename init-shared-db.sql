@@ -108,6 +108,68 @@ CREATE TABLE IF NOT EXISTS sessions (
 CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions(expires_at);
 
+-- Create video_categories table
+CREATE TABLE IF NOT EXISTS video_categories (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name VARCHAR(100) NOT NULL,
+    slug VARCHAR(100) UNIQUE NOT NULL,
+    description TEXT,
+    icon VARCHAR(50),
+    color VARCHAR(20),
+    display_order INTEGER NOT NULL DEFAULT 0,
+    is_active BOOLEAN NOT NULL DEFAULT true,
+    created_by UUID REFERENCES users(id),
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_video_categories_slug ON video_categories(slug);
+CREATE INDEX IF NOT EXISTS idx_video_categories_display_order ON video_categories(display_order);
+CREATE INDEX IF NOT EXISTS idx_video_categories_is_active ON video_categories(is_active);
+
+-- Trigger for video_categories
+DROP TRIGGER IF EXISTS update_video_categories_updated_at ON video_categories;
+CREATE TRIGGER update_video_categories_updated_at
+    BEFORE UPDATE ON video_categories
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
+
+-- Create channels table
+CREATE TABLE IF NOT EXISTS channels (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    account_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    handle VARCHAR(50) UNIQUE NOT NULL,
+    name VARCHAR(100) NOT NULL,
+    display_name VARCHAR(100) NOT NULL,
+    description TEXT,
+    support TEXT,
+    is_local BOOLEAN NOT NULL DEFAULT true,
+    atproto_did VARCHAR(255),
+    atproto_pds_url TEXT,
+    avatar_filename VARCHAR(255),
+    avatar_ipfs_cid TEXT,
+    banner_filename VARCHAR(255),
+    banner_ipfs_cid TEXT,
+    followers_count INTEGER NOT NULL DEFAULT 0,
+    following_count INTEGER NOT NULL DEFAULT 0,
+    videos_count INTEGER NOT NULL DEFAULT 0,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_channels_account_id ON channels(account_id);
+CREATE INDEX IF NOT EXISTS idx_channels_user_id ON channels(user_id);
+CREATE INDEX IF NOT EXISTS idx_channels_handle ON channels(handle);
+CREATE INDEX IF NOT EXISTS idx_channels_is_local ON channels(is_local);
+
+-- Trigger for channels
+DROP TRIGGER IF EXISTS update_channels_updated_at ON channels;
+CREATE TRIGGER update_channels_updated_at
+    BEFORE UPDATE ON channels
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
+
 -- Create videos table
 CREATE TABLE IF NOT EXISTS videos (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -120,6 +182,7 @@ CREATE TABLE IF NOT EXISTS videos (
     status VARCHAR(20) NOT NULL CHECK (status IN ('uploading','queued','processing','completed','failed')),
     upload_date TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    channel_id UUID REFERENCES channels(id) ON DELETE SET NULL,
     original_cid TEXT,
     processed_cids JSONB NOT NULL DEFAULT '{}'::jsonb,
     thumbnail_cid TEXT,
@@ -129,7 +192,7 @@ CREATE TABLE IF NOT EXISTS videos (
     preview_path TEXT,
     -- Tags are now nullable per migration 010
     tags TEXT[] DEFAULT '{}',
-    category VARCHAR(100),
+    category_id UUID REFERENCES video_categories(id),
     language VARCHAR(10),
     file_size BIGINT NOT NULL DEFAULT 0,
     mime_type VARCHAR(120),
@@ -139,6 +202,7 @@ CREATE TABLE IF NOT EXISTS videos (
 );
 
 CREATE INDEX IF NOT EXISTS idx_videos_user_id ON videos(user_id);
+CREATE INDEX IF NOT EXISTS idx_videos_channel_id ON videos(channel_id);
 CREATE INDEX IF NOT EXISTS idx_videos_privacy ON videos(privacy);
 CREATE INDEX IF NOT EXISTS idx_videos_status ON videos(status);
 CREATE INDEX IF NOT EXISTS idx_videos_upload_date ON videos(upload_date);
