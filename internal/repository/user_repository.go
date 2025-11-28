@@ -51,7 +51,7 @@ func (r *userRepository) Create(ctx context.Context, user *domain.User, password
 		if err := tx.QueryRowContext(ctx, q).Scan(&channelsExist); err == nil && channelsExist {
 			_, err = tx.ExecContext(ctx, `
                 INSERT INTO channels (account_id, handle, display_name, description)
-                SELECT $1::uuid, $2, COALESCE(NULLIF($3, ''), $2), $4
+                SELECT $1::uuid, $2::text, COALESCE(NULLIF($3::text, ''), $2::text), $4::text
                 WHERE NOT EXISTS (SELECT 1 FROM channels WHERE account_id = $1::uuid)
             `, user.ID, user.Username, user.DisplayName, user.Bio)
 
