@@ -138,9 +138,9 @@ CREATE TRIGGER update_video_categories_updated_at
 CREATE TABLE IF NOT EXISTS channels (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     account_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    user_id UUID REFERENCES users(id) ON DELETE CASCADE,  -- Optional, defaults to account_id via trigger
     handle VARCHAR(50) UNIQUE NOT NULL,
-    name VARCHAR(100) NOT NULL,
+    name VARCHAR(100),  -- Optional, can default to handle
     display_name VARCHAR(100) NOT NULL,
     description TEXT,
     support TEXT,
@@ -157,6 +157,28 @@ CREATE TABLE IF NOT EXISTS channels (
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
 );
+
+-- Function to set default values for channels before insert
+CREATE OR REPLACE FUNCTION set_channel_defaults()
+RETURNS TRIGGER AS $$
+BEGIN
+    -- Default user_id to account_id if not provided
+    IF NEW.user_id IS NULL THEN
+        NEW.user_id := NEW.account_id;
+    END IF;
+    -- Default name to handle if not provided
+    IF NEW.name IS NULL OR NEW.name = '' THEN
+        NEW.name := NEW.handle;
+    END IF;
+    RETURN NEW;
+END;
+$$ language 'plpgsql';
+
+DROP TRIGGER IF EXISTS set_channel_defaults_trigger ON channels;
+CREATE TRIGGER set_channel_defaults_trigger
+    BEFORE INSERT ON channels
+    FOR EACH ROW
+    EXECUTE FUNCTION set_channel_defaults();
 
 CREATE INDEX IF NOT EXISTS idx_channels_account_id ON channels(account_id);
 CREATE INDEX IF NOT EXISTS idx_channels_user_id ON channels(user_id);
