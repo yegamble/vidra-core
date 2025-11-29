@@ -236,7 +236,7 @@ func TestVerifyRequestWithTamperedBody(t *testing.T) {
 	// Verification should still pass because we're not verifying Digest in this implementation
 	// This demonstrates a limitation - we should verify Digest header in production
 	verifier := NewHTTPSignatureVerifier()
-	err = verifier.VerifyRequest(req, publicKey)
+	_ = verifier.VerifyRequest(req, publicKey)
 	// This might pass or fail depending on implementation details
 	// In production, you'd want to verify the Digest header
 }

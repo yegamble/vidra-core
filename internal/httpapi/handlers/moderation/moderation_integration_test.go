@@ -543,7 +543,7 @@ func TestInstanceConfigIntegration(t *testing.T) {
 		r = r.WithContext(context.WithValue(r.Context(), chi.RouteCtxKey, chi.NewRouteContext()))
 		rctx = chi.RouteContext(r.Context())
 		rctx.URLParams.Add("key", "upload_limits")
-		w = httptest.NewRecorder()
+		_ = httptest.NewRecorder() // Recorder created for potential future use
 
 		// Verify config was created instead of trying to delete it
 		config, err := moderationRepo.GetInstanceConfig(context.Background(), "upload_limits")

@@ -240,7 +240,7 @@ func TestFederationWorkflow_EndToEnd(t *testing.T) {
 		}
 
 		// Get actor state
-		cursor, nextAt, attempts, _, err := fedRepo.GetActorStateSimple(ctx, actor)
+		cursor, _, _, _, err := fedRepo.GetActorStateSimple(ctx, actor)
 		if err != nil {
 			// Actor might not exist yet, which is okay for this test
 			t.Logf("Actor state not found (expected): %v", err)

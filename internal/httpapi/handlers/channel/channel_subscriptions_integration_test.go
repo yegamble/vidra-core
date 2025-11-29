@@ -329,7 +329,7 @@ func TestChannelSubscriptionFeed_Integration(t *testing.T) {
 
 	t.Run("Feed Updates When Subscriptions Change", func(t *testing.T) {
 		// Initially subscribed to channels 0 and 1
-		videos, total, err := subRepo.GetSubscriptionVideos(ctx, uuid.MustParse(subscriber.ID), 100, 0)
+		_, total, err := subRepo.GetSubscriptionVideos(ctx, uuid.MustParse(subscriber.ID), 100, 0)
 		require.NoError(t, err)
 		assert.Equal(t, 6, total)
 
@@ -338,7 +338,7 @@ func TestChannelSubscriptionFeed_Integration(t *testing.T) {
 		require.NoError(t, err)
 
 		// Feed should now have 9 videos
-		videos, total, err = subRepo.GetSubscriptionVideos(ctx, uuid.MustParse(subscriber.ID), 100, 0)
+		_, total, err = subRepo.GetSubscriptionVideos(ctx, uuid.MustParse(subscriber.ID), 100, 0)
 		require.NoError(t, err)
 		assert.Equal(t, 9, total)
 
@@ -347,7 +347,7 @@ func TestChannelSubscriptionFeed_Integration(t *testing.T) {
 		require.NoError(t, err)
 
 		// Feed should now have 6 videos (from channels 1 and 2)
-		videos, total, err = subRepo.GetSubscriptionVideos(ctx, uuid.MustParse(subscriber.ID), 100, 0)
+		videos, total, err := subRepo.GetSubscriptionVideos(ctx, uuid.MustParse(subscriber.ID), 100, 0)
 		require.NoError(t, err)
 		assert.Equal(t, 6, total)
 

@@ -132,10 +132,8 @@ func TestSubscriptionsBackwardCompatibility_Integration(t *testing.T) {
 		subscriber, _ := createUserWithChannel(t, "subscriber", "subscriber@test.com")
 
 		// Create multiple creators with channels
-		channels := []*domain.Channel{}
 		for i := 0; i < 3; i++ {
 			_, channel := createUserWithChannel(t, fmt.Sprintf("creator%d", i), fmt.Sprintf("creator%d@test.com", i))
-			channels = append(channels, channel)
 
 			// Subscribe to each channel
 			err := subRepo.SubscribeToChannel(ctx, uuid.MustParse(subscriber.ID), channel.ID)
