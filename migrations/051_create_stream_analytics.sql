@@ -1,7 +1,6 @@
 -- +goose Up
--- +goose StatementBegin
 -- Add stream analytics and metrics collection
--- Migration: 048_create_stream_analytics.sql
+-- Migration: 051_create_stream_analytics.sql
 -- Sprint 7 - Phase 3: Analytics & Metrics
 
 -- Create table for storing stream analytics time-series data
@@ -137,6 +136,7 @@ ON viewer_sessions(session_id);
 CREATE INDEX IF NOT EXISTS idx_viewer_sessions_active
 ON viewer_sessions(stream_id) WHERE left_at IS NULL;
 
+-- +goose StatementBegin
 -- Function to calculate current viewer count for a stream
 CREATE OR REPLACE FUNCTION get_current_viewer_count(p_stream_id UUID)
 RETURNS INTEGER AS $$
@@ -152,7 +152,9 @@ BEGIN
     RETURN COALESCE(v_count, 0);
 END;
 $$ LANGUAGE plpgsql;
+-- +goose StatementEnd
 
+-- +goose StatementBegin
 -- Function to get stream analytics for a time range
 CREATE OR REPLACE FUNCTION get_stream_analytics_range(
     p_stream_id UUID,
@@ -183,7 +185,9 @@ BEGIN
     ORDER BY time_bucket ASC;
 END;
 $$ LANGUAGE plpgsql;
+-- +goose StatementEnd
 
+-- +goose StatementBegin
 -- Function to update stream stats summary
 CREATE OR REPLACE FUNCTION update_stream_stats_summary(p_stream_id UUID)
 RETURNS VOID AS $$
@@ -288,7 +292,9 @@ BEGIN
         updated_at = NOW();
 END;
 $$ LANGUAGE plpgsql;
+-- +goose StatementEnd
 
+-- +goose StatementBegin
 -- Trigger to update timestamps
 CREATE OR REPLACE FUNCTION update_analytics_timestamp()
 RETURNS TRIGGER AS $$
@@ -297,17 +303,22 @@ BEGIN
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
+-- +goose StatementEnd
 
+-- Make triggers idempotent
+DROP TRIGGER IF EXISTS update_stream_analytics_timestamp ON stream_analytics;
 CREATE TRIGGER update_stream_analytics_timestamp
     BEFORE UPDATE ON stream_analytics
     FOR EACH ROW
     EXECUTE FUNCTION update_analytics_timestamp();
 
+DROP TRIGGER IF EXISTS update_stream_stats_summary_timestamp ON stream_stats_summary;
 CREATE TRIGGER update_stream_stats_summary_timestamp
     BEFORE UPDATE ON stream_stats_summary
     FOR EACH ROW
     EXECUTE FUNCTION update_analytics_timestamp();
 
+DROP TRIGGER IF EXISTS update_viewer_sessions_timestamp ON viewer_sessions;
 CREATE TRIGGER update_viewer_sessions_timestamp
     BEFORE UPDATE ON viewer_sessions
     FOR EACH ROW
@@ -320,7 +331,6 @@ COMMENT ON TABLE viewer_sessions IS 'Individual viewer session tracking for anal
 COMMENT ON FUNCTION get_current_viewer_count IS 'Returns the current number of active viewers for a stream';
 COMMENT ON FUNCTION get_stream_analytics_range IS 'Returns analytics data aggregated by time buckets';
 COMMENT ON FUNCTION update_stream_stats_summary IS 'Recalculates and updates the summary statistics for a stream';
--- +goose StatementEnd
 
 -- +goose Down
 -- NOTE: Add rollback statements here if needed
