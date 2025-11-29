@@ -9,6 +9,7 @@ on:
       - 'go.sum'
       - 'internal/security/**'
       - '.github/workflows/security-tests*.yml'
+      - '.github/actions/**'
   pull_request:
     branches: [main, develop]
     paths:
@@ -16,6 +17,7 @@ on:
       - 'go.mod'
       - 'go.sum'
       - 'internal/security/**'
+      - '.github/actions/**'
   schedule:
     # Run security tests daily at 2 AM UTC
     - cron: '0 2 * * *'
