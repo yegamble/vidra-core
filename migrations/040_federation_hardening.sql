@@ -16,9 +16,9 @@ CREATE TABLE IF NOT EXISTS federation_dlq (
     metadata JSONB -- Additional debugging info
 );
 
-CREATE INDEX idx_fed_dlq_created ON federation_dlq(created_at DESC);
-CREATE INDEX idx_fed_dlq_can_retry ON federation_dlq(can_retry, created_at DESC);
-CREATE INDEX idx_fed_dlq_job_type ON federation_dlq(job_type);
+CREATE INDEX IF NOT EXISTS idx_fed_dlq_created ON federation_dlq(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_fed_dlq_can_retry ON federation_dlq(can_retry, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_fed_dlq_job_type ON federation_dlq(job_type);
 -- +goose StatementEnd
 
 -- +goose StatementBegin
@@ -34,7 +34,7 @@ CREATE TABLE IF NOT EXISTS federation_instance_blocks (
     metadata JSONB -- Additional info (abuse reports, etc.)
 );
 
-CREATE INDEX idx_instance_blocks_domain ON federation_instance_blocks(instance_domain);
+CREATE INDEX IF NOT EXISTS idx_instance_blocks_domain ON federation_instance_blocks(instance_domain);
 -- Avoid non-immutable CURRENT_TIMESTAMP in predicates; split into two indexes
 CREATE INDEX IF NOT EXISTS idx_instance_blocks_active_null ON federation_instance_blocks(instance_domain)
     WHERE expires_at IS NULL;
@@ -59,8 +59,8 @@ CREATE TABLE IF NOT EXISTS federation_actor_blocks (
     CHECK (actor_did IS NOT NULL OR actor_handle IS NOT NULL)
 );
 
-CREATE INDEX idx_actor_blocks_did ON federation_actor_blocks(actor_did);
-CREATE INDEX idx_actor_blocks_handle ON federation_actor_blocks(actor_handle);
+CREATE INDEX IF NOT EXISTS idx_actor_blocks_did ON federation_actor_blocks(actor_did);
+CREATE INDEX IF NOT EXISTS idx_actor_blocks_handle ON federation_actor_blocks(actor_handle);
 -- Avoid non-immutable CURRENT_TIMESTAMP in predicates; split into two indexes
 CREATE INDEX IF NOT EXISTS idx_actor_blocks_active_null ON federation_actor_blocks(actor_did, actor_handle)
     WHERE expires_at IS NULL;
@@ -83,10 +83,10 @@ CREATE TABLE IF NOT EXISTS federation_metrics (
     metadata JSONB
 );
 
-CREATE INDEX idx_fed_metrics_timestamp ON federation_metrics(timestamp DESC);
-CREATE INDEX idx_fed_metrics_type_time ON federation_metrics(metric_type, timestamp DESC);
-CREATE INDEX idx_fed_metrics_instance ON federation_metrics(instance_domain, timestamp DESC) WHERE instance_domain IS NOT NULL;
-CREATE INDEX idx_fed_metrics_actor ON federation_metrics(actor_did, timestamp DESC) WHERE actor_did IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_fed_metrics_timestamp ON federation_metrics(timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_fed_metrics_type_time ON federation_metrics(metric_type, timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_fed_metrics_instance ON federation_metrics(instance_domain, timestamp DESC) WHERE instance_domain IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_fed_metrics_actor ON federation_metrics(actor_did, timestamp DESC) WHERE actor_did IS NOT NULL;
 -- +goose StatementEnd
 
 -- +goose StatementBegin
@@ -101,8 +101,8 @@ CREATE TABLE IF NOT EXISTS federation_idempotency (
     expires_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP + INTERVAL '24 hours'
 );
 
-CREATE INDEX idx_idempotency_expires ON federation_idempotency(expires_at);
-CREATE INDEX idx_idempotency_created ON federation_idempotency(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_idempotency_expires ON federation_idempotency(expires_at);
+CREATE INDEX IF NOT EXISTS idx_idempotency_created ON federation_idempotency(created_at DESC);
 -- +goose StatementEnd
 
 -- +goose StatementBegin
@@ -115,8 +115,8 @@ CREATE TABLE IF NOT EXISTS federation_request_signatures (
     expires_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP + INTERVAL '5 minutes'
 );
 
-CREATE INDEX idx_signatures_expires ON federation_request_signatures(expires_at);
-CREATE INDEX idx_signatures_instance ON federation_request_signatures(instance_domain, received_at DESC);
+CREATE INDEX IF NOT EXISTS idx_signatures_expires ON federation_request_signatures(expires_at);
+CREATE INDEX IF NOT EXISTS idx_signatures_instance ON federation_request_signatures(instance_domain, received_at DESC);
 -- +goose StatementEnd
 
 -- +goose StatementBegin
@@ -137,10 +137,11 @@ CREATE TABLE IF NOT EXISTS federation_abuse_reports (
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE INDEX idx_abuse_reports_status ON federation_abuse_reports(status, created_at DESC);
-CREATE INDEX idx_abuse_reports_actor ON federation_abuse_reports(reported_actor_did) WHERE reported_actor_did IS NOT NULL;
-CREATE INDEX idx_abuse_reports_content ON federation_abuse_reports(reported_content_uri) WHERE reported_content_uri IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_abuse_reports_status ON federation_abuse_reports(status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_abuse_reports_actor ON federation_abuse_reports(reported_actor_did) WHERE reported_actor_did IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_abuse_reports_content ON federation_abuse_reports(reported_content_uri) WHERE reported_content_uri IS NOT NULL;
 
+DROP TRIGGER IF EXISTS update_abuse_reports_updated_at ON federation_abuse_reports;
 CREATE TRIGGER update_abuse_reports_updated_at BEFORE UPDATE ON federation_abuse_reports
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 -- +goose StatementEnd
@@ -156,8 +157,8 @@ CREATE TABLE IF NOT EXISTS federation_rate_limits (
     blocked_until TIMESTAMP
 );
 
-CREATE INDEX idx_rate_limits_blocked ON federation_rate_limits(is_blocked, blocked_until) WHERE is_blocked = true;
-CREATE INDEX idx_rate_limits_window ON federation_rate_limits(window_start);
+CREATE INDEX IF NOT EXISTS idx_rate_limits_blocked ON federation_rate_limits(is_blocked, blocked_until) WHERE is_blocked = true;
+CREATE INDEX IF NOT EXISTS idx_rate_limits_window ON federation_rate_limits(window_start);
 -- +goose StatementEnd
 
 -- +goose StatementBegin
@@ -176,7 +177,7 @@ FROM federation_metrics
 WHERE timestamp > CURRENT_TIMESTAMP - INTERVAL '7 days'
 GROUP BY DATE_TRUNC('hour', timestamp), metric_type;
 
-CREATE UNIQUE INDEX idx_health_summary ON federation_health_summary(hour, metric_type);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_health_summary ON federation_health_summary(hour, metric_type);
 -- +goose StatementEnd
 
 -- +goose StatementBegin
