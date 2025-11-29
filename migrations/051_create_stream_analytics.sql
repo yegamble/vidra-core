@@ -93,6 +93,7 @@ CREATE TABLE IF NOT EXISTS stream_stats_summary (
 
 -- Add additional columns to existing viewer_sessions table if they don't exist
 -- Note: viewer_sessions was created in migration 048 with live_stream_id
+-- +goose StatementBegin
 DO $$
 BEGIN
     -- Add city column if not exists
@@ -137,6 +138,7 @@ BEGIN
         ALTER TABLE viewer_sessions ADD COLUMN shared BOOLEAN DEFAULT FALSE;
     END IF;
 END $$;
+-- +goose StatementEnd
 
 -- +goose StatementBegin
 -- Function to calculate current viewer count for a stream (analytics version)
