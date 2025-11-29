@@ -258,7 +258,7 @@ func TestFederationWorkflow_EndToEnd(t *testing.T) {
 		}
 
 		// Verify next_at was set
-		_, nextAt, _, _, err = fedRepo.GetActorStateSimple(ctx, actor)
+		_, nextAt, _, _, err := fedRepo.GetActorStateSimple(ctx, actor)
 		if err != nil {
 			t.Logf("Failed to get updated state (may be expected): %v", err)
 		}

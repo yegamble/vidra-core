@@ -1,10 +1,15 @@
 package channel
 
 import (
+	"context"
+	"encoding/json"
 	"net/http"
+	"net/http/httptest"
+	"testing"
 
 	"athena/internal/httpapi/handlers/messaging"
 	"athena/internal/httpapi/shared"
+	"athena/internal/middleware"
 	ucn "athena/internal/usecase/notification"
 )
 
@@ -38,4 +43,41 @@ func NewServer(deps ...interface{}) *AuthServerStub {
 // NewNotificationHandlers creates notification handlers for tests
 func NewNotificationHandlers(notificationService ucn.Service) *messaging.NotificationHandlers {
 	return messaging.NewNotificationHandlers(notificationService)
+}
+
+// integResp is a wrapper for API responses
+type integResp struct {
+	Data    json.RawMessage   `json:"data"`
+	Error   *shared.ErrorInfo `json:"error"`
+	Success bool              `json:"success"`
+	Meta    *shared.Meta      `json:"meta"`
+}
+
+// authResp is a common response type for auth endpoints
+type authResp struct {
+	AccessToken  string `json:"access_token"`
+	RefreshToken string `json:"refresh_token"`
+}
+
+// testResponse is the standard response structure for tests
+type testResponse struct {
+	Data    json.RawMessage   `json:"data"`
+	Error   *shared.ErrorInfo `json:"error"`
+	Success bool              `json:"success"`
+	Meta    *shared.Meta      `json:"meta"`
+}
+
+// withUserID adds a user ID to the context (test helper)
+func withUserID(ctx context.Context, id string) context.Context {
+	return context.WithValue(ctx, middleware.UserIDKey, id)
+}
+
+// decodeResponse decodes a response for tests
+func decodeResponse(t *testing.T, rr *httptest.ResponseRecorder) testResponse {
+	t.Helper()
+	var resp testResponse
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	return resp
 }

@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
+	"testing"
 
 	"athena/internal/domain"
 	"athena/internal/httpapi/shared"
@@ -67,6 +69,16 @@ type testResponse struct {
 // withUserID adds a user ID to the context (test helper)
 func withUserID(ctx context.Context, id string) context.Context {
 	return context.WithValue(ctx, middleware.UserIDKey, id)
+}
+
+// decodeResponse decodes a response for tests
+func decodeResponse(t *testing.T, rr *httptest.ResponseRecorder) testResponse {
+	t.Helper()
+	var resp testResponse
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	return resp
 }
 
 // Stub methods for testing - these should be implemented properly
