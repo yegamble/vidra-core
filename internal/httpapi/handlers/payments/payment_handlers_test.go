@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"athena/internal/domain"
+	"athena/internal/middleware"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -142,7 +143,7 @@ func TestCreateWallet(t *testing.T) {
 
 			req := httptest.NewRequest(http.MethodPost, "/api/v1/payments/wallet", nil)
 			if tt.authenticated {
-				ctx := context.WithValue(req.Context(), "user_id", tt.userID)
+				ctx := context.WithValue(req.Context(), middleware.UserIDKey, tt.userID)
 				req = req.WithContext(ctx)
 			}
 			rr := httptest.NewRecorder()
@@ -228,7 +229,7 @@ func TestGetWallet(t *testing.T) {
 
 			req := httptest.NewRequest(http.MethodGet, "/api/v1/payments/wallet", nil)
 			if tt.authenticated {
-				ctx := context.WithValue(req.Context(), "user_id", tt.userID)
+				ctx := context.WithValue(req.Context(), middleware.UserIDKey, tt.userID)
 				req = req.WithContext(ctx)
 			}
 			rr := httptest.NewRecorder()
@@ -349,7 +350,7 @@ func TestCreatePaymentIntent(t *testing.T) {
 			req := httptest.NewRequest(http.MethodPost, "/api/v1/payments/intent", bytes.NewReader(bodyBytes))
 			req.Header.Set("Content-Type", "application/json")
 			if tt.authenticated {
-				ctx := context.WithValue(req.Context(), "user_id", tt.userID)
+				ctx := context.WithValue(req.Context(), middleware.UserIDKey, tt.userID)
 				req = req.WithContext(ctx)
 			}
 			rr := httptest.NewRecorder()
@@ -440,7 +441,7 @@ func TestGetPaymentIntent(t *testing.T) {
 
 			req := httptest.NewRequest(http.MethodGet, "/api/v1/payments/intent/"+tt.intentID, nil)
 			if tt.authenticated {
-				ctx := context.WithValue(req.Context(), "user_id", tt.userID)
+				ctx := context.WithValue(req.Context(), middleware.UserIDKey, tt.userID)
 				req = req.WithContext(ctx)
 			}
 
@@ -538,7 +539,7 @@ func TestGetTransactionHistory(t *testing.T) {
 
 			req := httptest.NewRequest(http.MethodGet, "/api/v1/payments/transactions"+tt.queryParams, nil)
 			if tt.authenticated {
-				ctx := context.WithValue(req.Context(), "user_id", tt.userID)
+				ctx := context.WithValue(req.Context(), middleware.UserIDKey, tt.userID)
 				req = req.WithContext(ctx)
 			}
 			rr := httptest.NewRecorder()
@@ -631,7 +632,7 @@ func TestValidateInputSanitization(t *testing.T) {
 			bodyBytes, _ := json.Marshal(tt.requestBody)
 			req := httptest.NewRequest(http.MethodPost, "/api/v1/payments/intent", bytes.NewReader(bodyBytes))
 			req.Header.Set("Content-Type", "application/json")
-			ctx := context.WithValue(req.Context(), "user_id", uuid.New().String())
+			ctx := context.WithValue(req.Context(), middleware.UserIDKey, uuid.New().String())
 			req = req.WithContext(ctx)
 			rr := httptest.NewRecorder()
 
@@ -694,7 +695,7 @@ func TestErrorHandling(t *testing.T) {
 			handler := NewPaymentHandler(mockService)
 
 			req := httptest.NewRequest(http.MethodGet, "/api/v1/payments/wallet", nil)
-			ctx := context.WithValue(req.Context(), "user_id", uuid.New().String())
+			ctx := context.WithValue(req.Context(), middleware.UserIDKey, uuid.New().String())
 			req = req.WithContext(ctx)
 			rr := httptest.NewRecorder()
 
@@ -727,7 +728,7 @@ func TestSecurityHeaders(t *testing.T) {
 	handler := NewPaymentHandler(mockService)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/payments/wallet", nil)
-	ctx := context.WithValue(req.Context(), "user_id", uuid.New().String())
+	ctx := context.WithValue(req.Context(), middleware.UserIDKey, uuid.New().String())
 	req = req.WithContext(ctx)
 	rr := httptest.NewRecorder()
 

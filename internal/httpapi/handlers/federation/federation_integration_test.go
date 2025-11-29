@@ -273,7 +273,7 @@ func TestFederationWorkflow_EndToEnd(t *testing.T) {
 			t.Fatalf("Failed to set attempts: %v", err)
 		}
 
-		_, _, attempts, _, err = fedRepo.GetActorStateSimple(ctx, actor)
+		_, _, attempts, _, err := fedRepo.GetActorStateSimple(ctx, actor)
 		if err != nil {
 			t.Logf("Failed to get attempts (may be expected): %v", err)
 		}
