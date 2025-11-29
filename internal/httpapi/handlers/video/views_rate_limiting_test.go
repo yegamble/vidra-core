@@ -350,36 +350,34 @@ func TestHighVolumeViewTracking(t *testing.T) {
 		requestCount := 0
 
 		for time.Since(start) < duration && requestCount < totalRequests {
-			select {
-			case <-ticker.C:
-				wg.Add(1)
-				go func(index int) {
-					defer wg.Done()
+			<-ticker.C
+			wg.Add(1)
+			go func(index int) {
+				defer wg.Done()
 
-					request := domain.ViewTrackingRequest{
-						SessionID:            uuid.New().String(),
-						FingerprintHash:      fmt.Sprintf("sustained_user_%d", index),
-						WatchDuration:        60 + index%180,
-						VideoDuration:        300,
-						CompletionPercentage: float64(20 + index%60),
-						DeviceType:           "mobile",
-						TrackingConsent:      true,
-					}
+				request := domain.ViewTrackingRequest{
+					SessionID:            uuid.New().String(),
+					FingerprintHash:      fmt.Sprintf("sustained_user_%d", index),
+					WatchDuration:        60 + index%180,
+					VideoDuration:        300,
+					CompletionPercentage: float64(20 + index%60),
+					DeviceType:           "mobile",
+					TrackingConsent:      true,
+				}
 
-					body, _ := json.Marshal(request)
-					req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/v1/videos/%s/views", video.ID), bytes.NewReader(body))
-					req.Header.Set("Content-Type", "application/json")
+				body, _ := json.Marshal(request)
+				req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/v1/videos/%s/views", video.ID), bytes.NewReader(body))
+				req.Header.Set("Content-Type", "application/json")
 
-					rr := httptest.NewRecorder()
-					router := chi.NewRouter()
-					router.Post("/api/v1/videos/{videoId}/views", handler.TrackView)
-					router.ServeHTTP(rr, req)
+				rr := httptest.NewRecorder()
+				router := chi.NewRouter()
+				router.Post("/api/v1/videos/{videoId}/views", handler.TrackView)
+				router.ServeHTTP(rr, req)
 
-					results <- rr.Code
-				}(requestCount)
+				results <- rr.Code
+			}(requestCount)
 
-				requestCount++
-			}
+			requestCount++
 		}
 
 		wg.Wait()
@@ -628,8 +626,4 @@ func createTestViewsRateLimitVideo(t *testing.T, testDB *testutil.TestDB, userID
 	require.NoError(t, err)
 
 	return video
-}
-
-func stringPtrRL(s string) *string {
-	return &s
 }

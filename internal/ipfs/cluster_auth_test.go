@@ -3,8 +3,6 @@ package ipfs
 import (
 	"context"
 	"crypto/tls"
-	"crypto/x509"
-	"encoding/pem"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -610,7 +608,7 @@ func TestClusterAuth_MultipleRequests(t *testing.T) {
 
 	// Make multiple requests
 	for i := 0; i < 5; i++ {
-		_ = client.ClusterPin(ctx, fmt.Sprintf("bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi"))
+		_ = client.ClusterPin(ctx, "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi")
 	}
 
 	// All requests should be authenticated and successful
@@ -735,57 +733,4 @@ func BenchmarkClusterAuth_TokenAddition(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		_ = client.ClusterPin(ctx, "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi")
 	}
-}
-
-// Helper function to create test certificate
-func createTestCertificate(t *testing.T, tmpDir string) (certFile, keyFile string) {
-	certPEM := `-----BEGIN CERTIFICATE-----
-MIICEjCCAXsCAg36MA0GCSqGSIb3DQEBBQUAMIGbMQswCQYDVQQGEwJKUDEOMAwG
-A1UECBMFVG9reW8xEDAOBgNVBAcTB0NodW8ta3UxETAPBgNVBAoTCEZyYW5rNERE
-MRgwFgYDVQQLEw9XZWJDZXJ0IFN1cHBvcnQxGDAWBgNVBAMTD0ZyYW5rNEREIFdl
-YiBDQTEjMCEGCSqGSIb3DQEJARYUc3VwcG9ydEBmcmFuazRkZC5jb20wHhcNMTIw
-ODA4MTExMzI4WhcNMTcwODA3MTExMzI4WjBKMQswCQYDVQQGEwJKUDEOMAwGA1UE
-CAwFVG9reW8xETAPBgNVBAoMCEZyYW5rNEREMRgwFgYDVQQDDA93d3cuZXhhbXBs
-ZS5jb20wgZ8wDQYJKoZIhvcNAQEBBQADgY0AMIGJAoGBAMYBBrx5PlP0WNI/ZdzD
-+6Pktmurn+F2kQYbtc7XQh8/LTBvCo+P6iZoLEmUA9e7EXLRxgU1CVqeAi7QcAn9
-MwBlc8ksFJHB0rtf9pmf8Oza9E0Bynlq/4/Kb1x+d+AyhL7oK9tQwB24uHOueHi1
-C/iVv8CSWKiYe6hzN1txYe8rAgMBAAEwDQYJKoZIhvcNAQEFBQADgYEAASPdjigJ
-kXCqKWpnZ/Oc75EUcMi6HztaW8abUMlYXPIgkV2F7YanHOB7K4f7OOLjiz8DTPFf
-jC9UeuErhaA/zzWi8ewMTFZW/WshOrm3fNvcMrMLKtH534JKvcdMg6qIdjTFINIr
-evnAhf0cwULaebn+lMs8Pdl7y37+sfluVok=
------END CERTIFICATE-----`
-
-	keyPEM := `-----BEGIN PRIVATE KEY-----
-MIICdgIBADANBgkqhkiG9w0BAQEFAASCAmAwggJcAgEAAoGBAMYBBrx5PlP0WNI/
-ZdzD+6Pktmurn+F2kQYbtc7XQh8/LTBvCo+P6iZoLEmUA9e7EXLRxgU1CVqeAi7Q
-cAn9MwBlc8ksFJHB0rtf9pmf8Oza9E0Bynlq/4/Kb1x+d+AyhL7oK9tQwB24uHOu
-eHi1C/iVv8CSWKiYe6hzN1txYe8rAgMBAAECgYBYWVtleUzavkbrPjy0T5FMou8H
-X3+Au9zykUvMSXNE4qlP/xQ+I5w0Xr6cj1/+rJmpyQZqXl9q8QU6n0V8yGPr4BrQ
------END PRIVATE KEY-----`
-
-	certFile = filepath.Join(tmpDir, "test.crt")
-	keyFile = filepath.Join(tmpDir, "test.key")
-
-	err := os.WriteFile(certFile, []byte(certPEM), 0600)
-	require.NoError(t, err)
-
-	err = os.WriteFile(keyFile, []byte(keyPEM), 0600)
-	require.NoError(t, err)
-
-	return certFile, keyFile
-}
-
-// Helper function to parse certificate for testing
-func parseCertificate(certPEM []byte) (*x509.Certificate, error) {
-	block, _ := pem.Decode(certPEM)
-	if block == nil {
-		return nil, fmt.Errorf("failed to parse PEM block")
-	}
-
-	cert, err := x509.ParseCertificate(block.Bytes)
-	if err != nil {
-		return nil, err
-	}
-
-	return cert, nil
 }

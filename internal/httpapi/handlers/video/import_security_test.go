@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"athena/internal/domain"
+	"athena/internal/middleware"
 	importuc "athena/internal/usecase/import"
 
 	"github.com/stretchr/testify/assert"
@@ -97,7 +98,7 @@ func TestSSRFProtection(t *testing.T) {
 			bodyBytes, _ := json.Marshal(reqBody)
 			req := httptest.NewRequest(http.MethodPost, "/api/v1/videos/imports", bytes.NewReader(bodyBytes))
 			req.Header.Set("Content-Type", "application/json")
-			ctx := context.WithValue(req.Context(), "user_id", "test-user-123")
+			ctx := context.WithValue(req.Context(), middleware.UserIDKey, "test-user-123")
 			req = req.WithContext(ctx)
 			rr := httptest.NewRecorder()
 
@@ -155,7 +156,7 @@ func TestFileSizeDoSProtection(t *testing.T) {
 			bodyBytes, _ := json.Marshal(reqBody)
 			req := httptest.NewRequest(http.MethodPost, "/api/v1/videos/imports", bytes.NewReader(bodyBytes))
 			req.Header.Set("Content-Type", "application/json")
-			ctx := context.WithValue(req.Context(), "user_id", "test-user-123")
+			ctx := context.WithValue(req.Context(), middleware.UserIDKey, "test-user-123")
 			req = req.WithContext(ctx)
 			rr := httptest.NewRecorder()
 
@@ -203,7 +204,7 @@ func TestValidImportRequest(t *testing.T) {
 	bodyBytes, _ := json.Marshal(reqBody)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/videos/imports", bytes.NewReader(bodyBytes))
 	req.Header.Set("Content-Type", "application/json")
-	ctx := context.WithValue(req.Context(), "user_id", "test-user-123")
+	ctx := context.WithValue(req.Context(), middleware.UserIDKey, "test-user-123")
 	req = req.WithContext(ctx)
 	rr := httptest.NewRecorder()
 
@@ -258,7 +259,7 @@ func TestImportWithInvalidURLs(t *testing.T) {
 			bodyBytes, _ := json.Marshal(reqBody)
 			req := httptest.NewRequest(http.MethodPost, "/api/v1/videos/imports", bytes.NewReader(bodyBytes))
 			req.Header.Set("Content-Type", "application/json")
-			ctx := context.WithValue(req.Context(), "user_id", "test-user-123")
+			ctx := context.WithValue(req.Context(), middleware.UserIDKey, "test-user-123")
 			req = req.WithContext(ctx)
 			rr := httptest.NewRecorder()
 

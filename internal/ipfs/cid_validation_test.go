@@ -280,11 +280,11 @@ func TestValidateCID_MaxLength(t *testing.T) {
 	validCID := longButValidPrefix + strings.Repeat("a", maxValidCIDLength-len(longButValidPrefix)-1)
 	tooLongCID := longButValidPrefix + strings.Repeat("a", maxValidCIDLength+100)
 
-	err := ValidateCID(validCID)
 	// May fail due to invalid CID, but shouldn't panic or hang
+	_ = ValidateCID(validCID)
 	assert.NotPanics(t, func() { _ = ValidateCID(validCID) })
 
-	err = ValidateCID(tooLongCID)
+	err := ValidateCID(tooLongCID)
 	assert.Error(t, err, "CID exceeding max length should be rejected")
 }
 
