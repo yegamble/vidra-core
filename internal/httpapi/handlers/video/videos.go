@@ -701,7 +701,8 @@ func UploadVideoFileHandler(repo usecase.VideoRepository, cfg *config.Config) ht
 			reader = io.MultiReader(bytes.NewReader(head[:n]), file)
 		}
 
-		// Create new video record in DB (status uploading)
+		// Create new video record in DB
+		// For one-shot uploads, set status to 'completed' since file is immediately available
 		now := time.Now()
 		video := &domain.Video{
 			ID:          uuid.NewString(),
@@ -709,7 +710,7 @@ func UploadVideoFileHandler(repo usecase.VideoRepository, cfg *config.Config) ht
 			Title:       title,
 			Description: description,
 			Privacy:     domain.Privacy(privacy),
-			Status:      domain.StatusUploading,
+			Status:      domain.StatusCompleted,
 			UploadDate:  now,
 			UserID:      userID,
 			Tags:        []string{},
