@@ -12,3 +12,8 @@ type ErrorInfo = shared.ErrorInfo
 
 // Meta is an alias for shared.Meta for tests
 type Meta = shared.Meta
+
+// stringPtr returns a pointer to a string
+func stringPtr(s string) *string {
+	return &s
+}
