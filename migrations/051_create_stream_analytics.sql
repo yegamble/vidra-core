@@ -2,6 +2,7 @@
 -- Add stream analytics and metrics collection
 -- Migration: 051_create_stream_analytics.sql
 -- Sprint 7 - Phase 3: Analytics & Metrics
+-- Note: viewer_sessions table already exists in migration 048, so we extend it here
 
 -- Create table for storing stream analytics time-series data
 CREATE TABLE IF NOT EXISTS stream_analytics (
@@ -90,54 +91,56 @@ CREATE TABLE IF NOT EXISTS stream_stats_summary (
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
--- Create table for viewer session tracking
-CREATE TABLE IF NOT EXISTS viewer_sessions (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    stream_id UUID NOT NULL REFERENCES live_streams(id) ON DELETE CASCADE,
-    user_id UUID REFERENCES users(id) ON DELETE SET NULL,
-    session_id VARCHAR(255) NOT NULL, -- for anonymous users
+-- Add additional columns to existing viewer_sessions table if they don't exist
+-- Note: viewer_sessions was created in migration 048 with live_stream_id
+DO $$
+BEGIN
+    -- Add city column if not exists
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                   WHERE table_name = 'viewer_sessions' AND column_name = 'city') THEN
+        ALTER TABLE viewer_sessions ADD COLUMN city VARCHAR(100);
+    END IF;
 
-    joined_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    left_at TIMESTAMP,
-    watch_duration INTEGER GENERATED ALWAYS AS (
-        CASE
-            WHEN left_at IS NOT NULL THEN EXTRACT(EPOCH FROM (left_at - joined_at))::INTEGER
-            ELSE NULL
-        END
-    ) STORED,
+    -- Add device_type column if not exists
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                   WHERE table_name = 'viewer_sessions' AND column_name = 'device_type') THEN
+        ALTER TABLE viewer_sessions ADD COLUMN device_type VARCHAR(50);
+    END IF;
 
-    -- Session details
-    ip_address INET,
-    country_code VARCHAR(2),
-    city VARCHAR(100),
-    device_type VARCHAR(50),
-    browser VARCHAR(50),
-    operating_system VARCHAR(50),
+    -- Add browser column if not exists
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                   WHERE table_name = 'viewer_sessions' AND column_name = 'browser') THEN
+        ALTER TABLE viewer_sessions ADD COLUMN browser VARCHAR(50);
+    END IF;
 
-    -- Engagement during session
-    messages_sent INTEGER DEFAULT 0,
-    liked BOOLEAN DEFAULT FALSE,
-    shared BOOLEAN DEFAULT FALSE,
+    -- Add operating_system column if not exists
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                   WHERE table_name = 'viewer_sessions' AND column_name = 'operating_system') THEN
+        ALTER TABLE viewer_sessions ADD COLUMN operating_system VARCHAR(50);
+    END IF;
 
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
+    -- Add messages_sent column if not exists
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                   WHERE table_name = 'viewer_sessions' AND column_name = 'messages_sent') THEN
+        ALTER TABLE viewer_sessions ADD COLUMN messages_sent INTEGER DEFAULT 0;
+    END IF;
 
--- Create indexes for viewer sessions
-CREATE INDEX IF NOT EXISTS idx_viewer_sessions_stream_id
-ON viewer_sessions(stream_id, joined_at DESC);
+    -- Add liked column if not exists
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                   WHERE table_name = 'viewer_sessions' AND column_name = 'liked') THEN
+        ALTER TABLE viewer_sessions ADD COLUMN liked BOOLEAN DEFAULT FALSE;
+    END IF;
 
-CREATE INDEX IF NOT EXISTS idx_viewer_sessions_user_id
-ON viewer_sessions(user_id) WHERE user_id IS NOT NULL;
-
-CREATE INDEX IF NOT EXISTS idx_viewer_sessions_session_id
-ON viewer_sessions(session_id);
-
-CREATE INDEX IF NOT EXISTS idx_viewer_sessions_active
-ON viewer_sessions(stream_id) WHERE left_at IS NULL;
+    -- Add shared column if not exists
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                   WHERE table_name = 'viewer_sessions' AND column_name = 'shared') THEN
+        ALTER TABLE viewer_sessions ADD COLUMN shared BOOLEAN DEFAULT FALSE;
+    END IF;
+END $$;
 
 -- +goose StatementBegin
--- Function to calculate current viewer count for a stream
+-- Function to calculate current viewer count for a stream (analytics version)
+-- Note: This is a different function from get_live_viewer_count in migration 048
 CREATE OR REPLACE FUNCTION get_current_viewer_count(p_stream_id UUID)
 RETURNS INTEGER AS $$
 DECLARE
@@ -146,7 +149,7 @@ BEGIN
     SELECT COUNT(*)
     INTO v_count
     FROM viewer_sessions
-    WHERE stream_id = p_stream_id
+    WHERE live_stream_id = p_stream_id
     AND left_at IS NULL;
 
     RETURN COALESCE(v_count, 0);
@@ -195,13 +198,14 @@ DECLARE
     v_record RECORD;
 BEGIN
     -- Calculate aggregate statistics
+    -- Note: Uses live_stream_id from viewer_sessions (created in migration 048)
     WITH stats AS (
         SELECT
             COUNT(DISTINCT vs.user_id) + COUNT(DISTINCT vs.session_id) AS total_viewers,
             MAX(sa.viewer_count) AS peak_viewers,
             AVG(sa.viewer_count)::INTEGER AS avg_viewers,
-            SUM(COALESCE(vs.watch_duration, 0)) AS total_watch_time,
-            AVG(COALESCE(vs.watch_duration, 0))::INTEGER AS avg_watch_duration,
+            SUM(EXTRACT(EPOCH FROM COALESCE(vs.left_at, NOW()) - vs.joined_at)::INTEGER) AS total_watch_time,
+            AVG(EXTRACT(EPOCH FROM COALESCE(vs.left_at, NOW()) - vs.joined_at)::INTEGER)::INTEGER AS avg_watch_duration,
             SUM(sa.chat_messages_count) AS total_messages,
             COUNT(DISTINCT CASE WHEN vs.messages_sent > 0 THEN COALESCE(vs.user_id::TEXT, vs.session_id) END) AS unique_chatters,
             SUM(sa.likes_count) AS total_likes,
@@ -217,7 +221,7 @@ BEGIN
                 LIMIT 1
             ) AS peak_time
         FROM stream_analytics sa
-        LEFT JOIN viewer_sessions vs ON vs.stream_id = sa.stream_id
+        LEFT JOIN viewer_sessions vs ON vs.live_stream_id = sa.stream_id
         WHERE sa.stream_id = p_stream_id
     ),
     geo_stats AS (
@@ -230,8 +234,8 @@ BEGIN
                 ) ORDER BY COUNT(*) DESC
             ) FILTER (WHERE country_code IS NOT NULL) AS top_countries
         FROM viewer_sessions
-        WHERE stream_id = p_stream_id
-        GROUP BY stream_id
+        WHERE live_stream_id = p_stream_id
+        GROUP BY live_stream_id
     )
     SELECT * INTO v_record FROM stats, geo_stats;
 
@@ -318,16 +322,9 @@ CREATE TRIGGER update_stream_stats_summary_timestamp
     FOR EACH ROW
     EXECUTE FUNCTION update_analytics_timestamp();
 
-DROP TRIGGER IF EXISTS update_viewer_sessions_timestamp ON viewer_sessions;
-CREATE TRIGGER update_viewer_sessions_timestamp
-    BEFORE UPDATE ON viewer_sessions
-    FOR EACH ROW
-    EXECUTE FUNCTION update_analytics_timestamp();
-
 -- Add comments
 COMMENT ON TABLE stream_analytics IS 'Time-series analytics data collected periodically during streams';
 COMMENT ON TABLE stream_stats_summary IS 'Aggregated statistics summary for each stream';
-COMMENT ON TABLE viewer_sessions IS 'Individual viewer session tracking for analytics';
 COMMENT ON FUNCTION get_current_viewer_count IS 'Returns the current number of active viewers for a stream';
 COMMENT ON FUNCTION get_stream_analytics_range IS 'Returns analytics data aggregated by time buckets';
 COMMENT ON FUNCTION update_stream_stats_summary IS 'Recalculates and updates the summary statistics for a stream';
