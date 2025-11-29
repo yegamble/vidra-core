@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"athena/internal/domain"
+	"athena/internal/middleware"
 	importuc "athena/internal/usecase/import"
 
 	"github.com/go-chi/chi/v5"
@@ -46,7 +47,7 @@ func TestImportHandlers_CreateImport_Success(t *testing.T) {
 	body, _ := json.Marshal(reqBody)
 
 	req := httptest.NewRequest("POST", "/api/v1/videos/imports", bytes.NewReader(body))
-	req = req.WithContext(context.WithValue(req.Context(), "user_id", "user-123"))
+	req = req.WithContext(context.WithValue(req.Context(), middleware.UserIDKey, "user-123"))
 	w := httptest.NewRecorder()
 
 	handlers.CreateImport(w, req)
@@ -79,7 +80,7 @@ func TestImportHandlers_CreateImport_QuotaExceeded(t *testing.T) {
 	body, _ := json.Marshal(reqBody)
 
 	req := httptest.NewRequest("POST", "/api/v1/videos/imports", bytes.NewReader(body))
-	req = req.WithContext(context.WithValue(req.Context(), "user_id", "user-123"))
+	req = req.WithContext(context.WithValue(req.Context(), middleware.UserIDKey, "user-123"))
 	w := httptest.NewRecorder()
 
 	handlers.CreateImport(w, req)
@@ -110,7 +111,7 @@ func TestImportHandlers_CreateImport_RateLimited(t *testing.T) {
 	body, _ := json.Marshal(reqBody)
 
 	req := httptest.NewRequest("POST", "/api/v1/videos/imports", bytes.NewReader(body))
-	req = req.WithContext(context.WithValue(req.Context(), "user_id", "user-123"))
+	req = req.WithContext(context.WithValue(req.Context(), middleware.UserIDKey, "user-123"))
 	w := httptest.NewRecorder()
 
 	handlers.CreateImport(w, req)
@@ -141,7 +142,7 @@ func TestImportHandlers_CreateImport_UnsupportedURL(t *testing.T) {
 	body, _ := json.Marshal(reqBody)
 
 	req := httptest.NewRequest("POST", "/api/v1/videos/imports", bytes.NewReader(body))
-	req = req.WithContext(context.WithValue(req.Context(), "user_id", "user-123"))
+	req = req.WithContext(context.WithValue(req.Context(), middleware.UserIDKey, "user-123"))
 	w := httptest.NewRecorder()
 
 	handlers.CreateImport(w, req)
@@ -167,7 +168,7 @@ func TestImportHandlers_CreateImport_MissingSourceURL(t *testing.T) {
 	body, _ := json.Marshal(reqBody)
 
 	req := httptest.NewRequest("POST", "/api/v1/videos/imports", bytes.NewReader(body))
-	req = req.WithContext(context.WithValue(req.Context(), "user_id", "user-123"))
+	req = req.WithContext(context.WithValue(req.Context(), middleware.UserIDKey, "user-123"))
 	w := httptest.NewRecorder()
 
 	handlers.CreateImport(w, req)
@@ -185,7 +186,7 @@ func TestImportHandlers_CreateImport_InvalidJSON(t *testing.T) {
 	handlers := NewImportHandlers(mockService)
 
 	req := httptest.NewRequest("POST", "/api/v1/videos/imports", bytes.NewReader([]byte("invalid json")))
-	req = req.WithContext(context.WithValue(req.Context(), "user_id", "user-123"))
+	req = req.WithContext(context.WithValue(req.Context(), middleware.UserIDKey, "user-123"))
 	w := httptest.NewRecorder()
 
 	handlers.CreateImport(w, req)
@@ -212,7 +213,7 @@ func TestImportHandlers_GetImport_Success(t *testing.T) {
 	mockService.On("GetImport", mock.Anything, "import-123", "user-123").Return(expectedImport, nil)
 
 	req := httptest.NewRequest("GET", "/api/v1/videos/imports/import-123", nil)
-	req = req.WithContext(context.WithValue(req.Context(), "user_id", "user-123"))
+	req = req.WithContext(context.WithValue(req.Context(), middleware.UserIDKey, "user-123"))
 
 	// Use chi router context for URL params
 	rctx := chi.NewRouteContext()
@@ -242,7 +243,7 @@ func TestImportHandlers_GetImport_NotFound(t *testing.T) {
 	mockService.On("GetImport", mock.Anything, "nonexistent", "user-123").Return(nil, domain.ErrImportNotFound)
 
 	req := httptest.NewRequest("GET", "/api/v1/videos/imports/nonexistent", nil)
-	req = req.WithContext(context.WithValue(req.Context(), "user_id", "user-123"))
+	req = req.WithContext(context.WithValue(req.Context(), middleware.UserIDKey, "user-123"))
 
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("id", "nonexistent")
@@ -288,7 +289,7 @@ func TestImportHandlers_ListImports_Success(t *testing.T) {
 	mockService.On("ListUserImports", mock.Anything, "user-123", 20, 0).Return(expectedImports, 42, nil)
 
 	req := httptest.NewRequest("GET", "/api/v1/videos/imports", nil)
-	req = req.WithContext(context.WithValue(req.Context(), "user_id", "user-123"))
+	req = req.WithContext(context.WithValue(req.Context(), middleware.UserIDKey, "user-123"))
 	w := httptest.NewRecorder()
 
 	handlers.ListImports(w, req)
@@ -326,7 +327,7 @@ func TestImportHandlers_ListImports_WithPagination(t *testing.T) {
 	mockService.On("ListUserImports", mock.Anything, "user-123", 10, 20).Return(expectedImports, 42, nil)
 
 	req := httptest.NewRequest("GET", "/api/v1/videos/imports?limit=10&offset=20", nil)
-	req = req.WithContext(context.WithValue(req.Context(), "user_id", "user-123"))
+	req = req.WithContext(context.WithValue(req.Context(), middleware.UserIDKey, "user-123"))
 	w := httptest.NewRecorder()
 
 	handlers.ListImports(w, req)
@@ -351,7 +352,7 @@ func TestImportHandlers_ListImports_Error(t *testing.T) {
 	mockService.On("ListUserImports", mock.Anything, "user-123", 20, 0).Return(nil, 0, errors.New("database error"))
 
 	req := httptest.NewRequest("GET", "/api/v1/videos/imports", nil)
-	req = req.WithContext(context.WithValue(req.Context(), "user_id", "user-123"))
+	req = req.WithContext(context.WithValue(req.Context(), middleware.UserIDKey, "user-123"))
 	w := httptest.NewRecorder()
 
 	handlers.ListImports(w, req)
@@ -368,7 +369,7 @@ func TestImportHandlers_CancelImport_Success(t *testing.T) {
 	mockService.On("CancelImport", mock.Anything, "import-123", "user-123").Return(nil)
 
 	req := httptest.NewRequest("DELETE", "/api/v1/videos/imports/import-123", nil)
-	req = req.WithContext(context.WithValue(req.Context(), "user_id", "user-123"))
+	req = req.WithContext(context.WithValue(req.Context(), middleware.UserIDKey, "user-123"))
 
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("id", "import-123")
@@ -390,7 +391,7 @@ func TestImportHandlers_CancelImport_NotFound(t *testing.T) {
 	mockService.On("CancelImport", mock.Anything, "nonexistent", "user-123").Return(domain.ErrImportNotFound)
 
 	req := httptest.NewRequest("DELETE", "/api/v1/videos/imports/nonexistent", nil)
-	req = req.WithContext(context.WithValue(req.Context(), "user_id", "user-123"))
+	req = req.WithContext(context.WithValue(req.Context(), middleware.UserIDKey, "user-123"))
 
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("id", "nonexistent")
@@ -412,7 +413,7 @@ func TestImportHandlers_CancelImport_Error(t *testing.T) {
 	mockService.On("CancelImport", mock.Anything, "import-123", "user-123").Return(errors.New("cancellation failed"))
 
 	req := httptest.NewRequest("DELETE", "/api/v1/videos/imports/import-123", nil)
-	req = req.WithContext(context.WithValue(req.Context(), "user_id", "user-123"))
+	req = req.WithContext(context.WithValue(req.Context(), middleware.UserIDKey, "user-123"))
 
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("id", "import-123")

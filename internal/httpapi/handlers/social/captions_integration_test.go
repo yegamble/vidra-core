@@ -15,8 +15,6 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -355,20 +353,4 @@ Hola Mundo`
 
 func captionStrPtr(s string) *string {
 	return &s
-}
-
-// Create simple test VTT file
-func createTestVTTFile(t *testing.T, dir, content string) string {
-	filePath := filepath.Join(dir, "test.vtt")
-	err := os.WriteFile(filePath, []byte(content), 0644)
-	require.NoError(t, err)
-	return filePath
-}
-
-// Create simple test SRT file
-func createTestSRTFile(t *testing.T, dir, content string) string {
-	filePath := filepath.Join(dir, "test.srt")
-	err := os.WriteFile(filePath, []byte(content), 0644)
-	require.NoError(t, err)
-	return filePath
 }
