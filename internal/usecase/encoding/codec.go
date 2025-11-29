@@ -6,8 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-
-	"athena/internal/domain"
 )
 
 // CodecEncoder defines the interface for codec-specific encoding
@@ -288,68 +286,4 @@ func (s *service) GetEnabledCodecs() []string {
 	}
 
 	return codecs
-}
-
-// transcodeHLSWithCodec encodes a video using the specified codec
-//
-//nolint:unused // Will be used in Sprint 3 for live streaming integration
-func (s *service) transcodeHLSWithCodec(ctx context.Context, codec string, input string, height int, outPlaylist string, segPattern string) error { //nolint:U1000
-	encoder, err := s.GetCodecEncoder(codec)
-	if err != nil {
-		return err
-	}
-
-	return encoder.Encode(ctx, input, height, outPlaylist, segPattern)
-}
-
-// encodeResolutionsMultiCodec encodes all target resolutions for multiple codecs
-//
-//nolint:unused // Will be used in Sprint 3 for live streaming integration
-func (s *service) encodeResolutionsMultiCodec(ctx context.Context, job *domain.EncodingJob, baseOutDir string, codecs []string, update func()) error { //nolint:U1000
-	for _, codec := range codecs {
-		codecDir := filepath.Join(baseOutDir, codec)
-		if err := os.MkdirAll(codecDir, 0o750); err != nil {
-			return fmt.Errorf("failed to create codec dir %s: %w", codec, err)
-		}
-
-		// Encode all resolutions for this codec
-		if err := s.encodeResolutionsForCodec(ctx, job, codecDir, codec, update); err != nil {
-			return fmt.Errorf("encoding %s failed: %w", codec, err)
-		}
-	}
-
-	return nil
-}
-
-// encodeResolutionsForCodec encodes all resolutions for a single codec
-//
-//nolint:unused // Will be used in Sprint 3 for live streaming integration
-func (s *service) encodeResolutionsForCodec(ctx context.Context, job *domain.EncodingJob, codecDir string, codec string, update func()) error { //nolint:U1000
-	encoder, err := s.GetCodecEncoder(codec)
-	if err != nil {
-		return err
-	}
-
-	for _, res := range job.TargetResolutions {
-		height, ok := domain.HeightForResolution(res)
-		if !ok || !encoder.SupportsResolution(res) {
-			continue
-		}
-
-		resDir := filepath.Join(codecDir, fmt.Sprintf("%dp", height))
-		if err := os.MkdirAll(resDir, 0o750); err != nil {
-			return err
-		}
-
-		outPlaylist := filepath.Join(resDir, "stream.m3u8")
-		segPattern := filepath.Join(resDir, "segment_%05d.ts")
-
-		if err := encoder.Encode(ctx, job.SourceFilePath, height, outPlaylist, segPattern); err != nil {
-			return fmt.Errorf("encode %s %s: %w", codec, res, err)
-		}
-
-		update()
-	}
-
-	return nil
 }
