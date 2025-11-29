@@ -762,13 +762,13 @@ func UploadVideoFileHandler(repo usecase.VideoRepository, cfg *config.Config) ht
 			return
 		}
 
-		// Return minimal JSON (unwrapped) for Postman test compatibility
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusCreated)
-		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		// Return JSON wrapped in data envelope for E2E test compatibility
+		shared.WriteJSON(w, http.StatusCreated, map[string]interface{}{
 			"id":          video.ID,
 			"title":       video.Title,
+			"description": video.Description,
 			"privacy":     video.Privacy,
+			"user_id":     video.UserID,
 			"file_size":   video.FileSize,
 			"mime_type":   video.MimeType,
 			"upload_date": video.UploadDate,

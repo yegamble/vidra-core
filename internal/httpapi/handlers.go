@@ -460,6 +460,7 @@ func (s *Server) generateJWTWithRole(userID string, role string, duration time.D
 		"sub": userID,
 		"iat": now.Unix(),
 		"exp": now.Add(duration).Unix(),
+		"jti": uuid.NewString(), // Unique JWT ID to ensure each token is unique
 	}
 	if role != "" {
 		claims["role"] = role
