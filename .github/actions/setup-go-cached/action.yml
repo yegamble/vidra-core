@@ -18,8 +18,9 @@ inputs:
 runs:
   using: 'composite'
   steps:
-    # Detect runtime environment to handle containers differently
-    - name: Detect runtime environment
+    # Detect runtime environment and ensure HOME is set BEFORE actions/setup-go runs
+    # This is critical for self-hosted runners where HOME may not be set
+    - name: Detect runtime environment and ensure HOME
       id: detect-env
       shell: bash
       run: |
@@ -34,9 +35,49 @@ runs:
           echo "✓ Running on bare metal/VM"
         fi
 
+        # CRITICAL: Ensure HOME is set before actions/setup-go runs
+        # actions/setup-go requires HOME or GOCACHE to be defined
+        if [[ -z "${HOME:-}" ]]; then
+          # Use RUNNER_TEMP as fallback for HOME
+          if [[ -n "${RUNNER_TEMP:-}" ]]; then
+            FALLBACK_HOME="${RUNNER_TEMP}/home"
+          else
+            FALLBACK_HOME="/tmp/runner-home"
+          fi
+          mkdir -p "${FALLBACK_HOME}"
+          echo "⚠️  HOME not set, using fallback: ${FALLBACK_HOME}"
+          echo "HOME=${FALLBACK_HOME}" >> "$GITHUB_ENV"
+          # Also export for immediate use in this step
+          export HOME="${FALLBACK_HOME}"
+        fi
+
+        # Pre-create directories that will be used by the setup-go step
+        # This ensures they exist before Go tries to use them
+        mkdir -p "${RUNNER_TEMP}/home"
+        mkdir -p "${RUNNER_TEMP}/go-build"
+        mkdir -p "${RUNNER_TEMP}/go/pkg/mod"
+
+        # CRITICAL: Pre-set GOCACHE before actions/setup-go runs
+        # This prevents the "build cache is required" error
+        if [[ -z "${GOCACHE:-}" || "${GOCACHE:-}" == "off" ]]; then
+          if [[ -n "${XDG_CACHE_HOME:-}" ]]; then
+            CHOSEN_CACHE="${XDG_CACHE_HOME}/go-build"
+          elif [[ -n "${HOME:-}" ]]; then
+            CHOSEN_CACHE="${HOME}/.cache/go-build"
+          elif [[ -n "${RUNNER_TEMP:-}" ]]; then
+            CHOSEN_CACHE="${RUNNER_TEMP}/go-build"
+          else
+            CHOSEN_CACHE="/tmp/go-build"
+          fi
+          mkdir -p "${CHOSEN_CACHE}"
+          echo "GOCACHE=${CHOSEN_CACHE}" >> "$GITHUB_ENV"
+          echo "Pre-set GOCACHE: ${CHOSEN_CACHE}"
+        fi
+
         # Log critical environment variables for debugging
         echo "Environment variables:"
         echo "  HOME=${HOME:-UNSET}"
+        echo "  GOCACHE=${GOCACHE:-UNSET}"
         echo "  RUNNER_TEMP=${RUNNER_TEMP:-UNSET}"
         echo "  GITHUB_WORKSPACE=${GITHUB_WORKSPACE:-UNSET}"
 
@@ -46,6 +87,13 @@ runs:
         go-version: ${{ inputs.go-version }}
         cache: true
         cache-dependency-path: ${{ inputs.cache-dependency-path }}
+      env:
+        # CRITICAL: Ensure HOME, GOCACHE, and GOMODCACHE are available for this step
+        # On self-hosted runners, HOME may not be set, causing Go to fail
+        # We use runner.temp as a reliable fallback that's always available
+        HOME: ${{ env.HOME || format('{0}/home', runner.temp) }}
+        GOCACHE: ${{ env.GOCACHE || format('{0}/go-build', runner.temp) }}
+        GOMODCACHE: ${{ env.GOMODCACHE || format('{0}/go/pkg/mod', runner.temp) }}
 
     # Ensure GOPATH is set (required for GOMODCACHE default location)
     - name: Ensure Go path
