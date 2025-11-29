@@ -291,8 +291,9 @@ func (s *service) GetEnabledCodecs() []string {
 }
 
 // transcodeHLSWithCodec encodes a video using the specified codec
-// nolint:unused // Will be used in Sprint 3 for live streaming integration
-func (s *service) transcodeHLSWithCodec(ctx context.Context, codec string, input string, height int, outPlaylist string, segPattern string) error {
+//
+//nolint:unused // Will be used in Sprint 3 for live streaming integration
+func (s *service) transcodeHLSWithCodec(ctx context.Context, codec string, input string, height int, outPlaylist string, segPattern string) error { //nolint:U1000
 	encoder, err := s.GetCodecEncoder(codec)
 	if err != nil {
 		return err
@@ -302,8 +303,9 @@ func (s *service) transcodeHLSWithCodec(ctx context.Context, codec string, input
 }
 
 // encodeResolutionsMultiCodec encodes all target resolutions for multiple codecs
-// nolint:unused // Will be used in Sprint 3 for live streaming integration
-func (s *service) encodeResolutionsMultiCodec(ctx context.Context, job *domain.EncodingJob, baseOutDir string, codecs []string, update func()) error {
+//
+//nolint:unused // Will be used in Sprint 3 for live streaming integration
+func (s *service) encodeResolutionsMultiCodec(ctx context.Context, job *domain.EncodingJob, baseOutDir string, codecs []string, update func()) error { //nolint:U1000
 	for _, codec := range codecs {
 		codecDir := filepath.Join(baseOutDir, codec)
 		if err := os.MkdirAll(codecDir, 0o750); err != nil {
@@ -320,8 +322,9 @@ func (s *service) encodeResolutionsMultiCodec(ctx context.Context, job *domain.E
 }
 
 // encodeResolutionsForCodec encodes all resolutions for a single codec
-// nolint:unused // Will be used in Sprint 3 for live streaming integration
-func (s *service) encodeResolutionsForCodec(ctx context.Context, job *domain.EncodingJob, codecDir string, codec string, update func()) error {
+//
+//nolint:unused // Will be used in Sprint 3 for live streaming integration
+func (s *service) encodeResolutionsForCodec(ctx context.Context, job *domain.EncodingJob, codecDir string, codec string, update func()) error { //nolint:U1000
 	encoder, err := s.GetCodecEncoder(codec)
 	if err != nil {
 		return err

@@ -82,7 +82,7 @@ func TestStringPtr(t *testing.T) {
 	s := "test"
 	ptr := StringPtr(s)
 	if ptr == nil {
-		t.Error("StringPtr() returned nil")
+		t.Fatal("StringPtr() returned nil")
 	}
 	if *ptr != s {
 		t.Errorf("StringPtr() = %v, want %v", *ptr, s)

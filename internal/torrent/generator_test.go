@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strings"
@@ -51,7 +50,7 @@ func TestGeneratorConfig(t *testing.T) {
 // TestGenerateFromVideo tests torrent generation from video files
 func TestGenerateFromVideo(t *testing.T) {
 	// Create temporary test files
-	tempDir, err := ioutil.TempDir("", "torrent-test-*")
+	tempDir, err := os.MkdirTemp("", "torrent-test-*")
 	require.NoError(t, err)
 	defer os.RemoveAll(tempDir)
 
@@ -59,7 +58,7 @@ func TestGenerateFromVideo(t *testing.T) {
 		// Create a test file
 		testFile := filepath.Join(tempDir, "video.mp4")
 		testContent := []byte("test video content for torrent generation")
-		err := ioutil.WriteFile(testFile, testContent, 0644)
+		err := os.WriteFile(testFile, testContent, 0644)
 		require.NoError(t, err)
 
 		gen := NewGenerator(DefaultGeneratorConfig())
@@ -93,7 +92,7 @@ func TestGenerateFromVideo(t *testing.T) {
 			filename := fmt.Sprintf("segment_%d.ts", i)
 			testFile := filepath.Join(tempDir, filename)
 			content := []byte(fmt.Sprintf("segment %d content with some data to make it longer", i))
-			err := ioutil.WriteFile(testFile, content, 0644)
+			err := os.WriteFile(testFile, content, 0644)
 			require.NoError(t, err)
 			files = append(files, VideoFile{
 				Path: testFile,
@@ -123,7 +122,7 @@ func TestGenerateFromVideo(t *testing.T) {
 		for i := range largeContent {
 			largeContent[i] = byte(i % 256)
 		}
-		err := ioutil.WriteFile(testFile, largeContent, 0644)
+		err := os.WriteFile(testFile, largeContent, 0644)
 		require.NoError(t, err)
 
 		// Use smaller piece length to ensure multiple pieces
@@ -151,7 +150,7 @@ func TestGenerateFromVideo(t *testing.T) {
 	t.Run("WithWebSeeds", func(t *testing.T) {
 		testFile := filepath.Join(tempDir, "webseed_video.mp4")
 		testContent := []byte("video with web seeds")
-		err := ioutil.WriteFile(testFile, testContent, 0644)
+		err := os.WriteFile(testFile, testContent, 0644)
 		require.NoError(t, err)
 
 		config := DefaultGeneratorConfig()
@@ -198,7 +197,7 @@ func TestGenerateFromVideo(t *testing.T) {
 		// Create a large file
 		testFile := filepath.Join(tempDir, "cancel_test.mp4")
 		largeContent := make([]byte, 1024*1024*5) // 5MB
-		err := ioutil.WriteFile(testFile, largeContent, 0644)
+		err := os.WriteFile(testFile, largeContent, 0644)
 		require.NoError(t, err)
 
 		gen := NewGenerator(&GeneratorConfig{
@@ -265,13 +264,13 @@ func TestParseMagnetURI(t *testing.T) {
 // TestValidateTorrent tests torrent file validation
 func TestValidateTorrent(t *testing.T) {
 	// Create a valid torrent for testing
-	tempDir, err := ioutil.TempDir("", "validate-test-*")
+	tempDir, err := os.MkdirTemp("", "validate-test-*")
 	require.NoError(t, err)
 	defer os.RemoveAll(tempDir)
 
 	testFile := filepath.Join(tempDir, "test.mp4")
 	testContent := []byte("test content for validation")
-	err = ioutil.WriteFile(testFile, testContent, 0644)
+	err = os.WriteFile(testFile, testContent, 0644)
 	require.NoError(t, err)
 
 	gen := NewGenerator(DefaultGeneratorConfig())
@@ -308,13 +307,13 @@ func TestValidateTorrent(t *testing.T) {
 // TestGenerateMagnetFromTorrent tests magnet URI generation from torrent
 func TestGenerateMagnetFromTorrent(t *testing.T) {
 	// Create a valid torrent
-	tempDir, err := ioutil.TempDir("", "magnet-test-*")
+	tempDir, err := os.MkdirTemp("", "magnet-test-*")
 	require.NoError(t, err)
 	defer os.RemoveAll(tempDir)
 
 	testFile := filepath.Join(tempDir, "test.mp4")
 	testContent := []byte("test content")
-	err = ioutil.WriteFile(testFile, testContent, 0644)
+	err = os.WriteFile(testFile, testContent, 0644)
 	require.NoError(t, err)
 
 	gen := NewGenerator(DefaultGeneratorConfig())
@@ -412,7 +411,7 @@ func TestBuildWebSeeds(t *testing.T) {
 
 // TestPieceGeneration tests the piece generation logic
 func TestPieceGeneration(t *testing.T) {
-	tempDir, err := ioutil.TempDir("", "piece-test-*")
+	tempDir, err := os.MkdirTemp("", "piece-test-*")
 	require.NoError(t, err)
 	defer os.RemoveAll(tempDir)
 
@@ -424,7 +423,7 @@ func TestPieceGeneration(t *testing.T) {
 		for i := range content {
 			content[i] = byte(i % 256)
 		}
-		err := ioutil.WriteFile(testFile, content, 0644)
+		err := os.WriteFile(testFile, content, 0644)
 		require.NoError(t, err)
 
 		config := &GeneratorConfig{
@@ -446,7 +445,7 @@ func TestPieceGeneration(t *testing.T) {
 		testFile := filepath.Join(tempDir, "partial.bin")
 		// Create file with 1.5 pieces worth of data
 		content := make([]byte, pieceSize+pieceSize/2)
-		err := ioutil.WriteFile(testFile, content, 0644)
+		err := os.WriteFile(testFile, content, 0644)
 		require.NoError(t, err)
 
 		config := &GeneratorConfig{
@@ -468,7 +467,7 @@ func TestPieceGeneration(t *testing.T) {
 		numPieces := 5
 		testFile := filepath.Join(tempDir, "multi.bin")
 		content := make([]byte, pieceSize*int64(numPieces))
-		err := ioutil.WriteFile(testFile, content, 0644)
+		err := os.WriteFile(testFile, content, 0644)
 		require.NoError(t, err)
 
 		config := &GeneratorConfig{
@@ -489,13 +488,13 @@ func TestPieceGeneration(t *testing.T) {
 // BenchmarkGenerateTorrent benchmarks torrent generation
 func BenchmarkGenerateTorrent(b *testing.B) {
 	// Setup test file
-	tempDir, err := ioutil.TempDir("", "bench-*")
+	tempDir, err := os.MkdirTemp("", "bench-*")
 	require.NoError(b, err)
 	defer os.RemoveAll(tempDir)
 
 	testFile := filepath.Join(tempDir, "bench.mp4")
 	content := make([]byte, 1024*1024) // 1MB
-	err = ioutil.WriteFile(testFile, content, 0644)
+	err = os.WriteFile(testFile, content, 0644)
 	require.NoError(b, err)
 
 	gen := NewGenerator(DefaultGeneratorConfig())
@@ -513,13 +512,13 @@ func BenchmarkGenerateTorrent(b *testing.B) {
 
 // BenchmarkPieceGeneration benchmarks piece hash generation
 func BenchmarkPieceGeneration(b *testing.B) {
-	tempDir, err := ioutil.TempDir("", "bench-piece-*")
+	tempDir, err := os.MkdirTemp("", "bench-piece-*")
 	require.NoError(b, err)
 	defer os.RemoveAll(tempDir)
 
 	testFile := filepath.Join(tempDir, "piece.mp4")
 	content := make([]byte, 10*1024*1024) // 10MB
-	err = ioutil.WriteFile(testFile, content, 0644)
+	err = os.WriteFile(testFile, content, 0644)
 	require.NoError(b, err)
 
 	gen := NewGenerator(DefaultGeneratorConfig())
@@ -536,13 +535,13 @@ func BenchmarkPieceGeneration(b *testing.B) {
 
 // TestInfoHashConsistency tests that the same files produce the same info hash
 func TestInfoHashConsistency(t *testing.T) {
-	tempDir, err := ioutil.TempDir("", "consistency-*")
+	tempDir, err := os.MkdirTemp("", "consistency-*")
 	require.NoError(t, err)
 	defer os.RemoveAll(tempDir)
 
 	testFile := filepath.Join(tempDir, "consistent.mp4")
 	testContent := []byte("consistent content for info hash testing")
-	err = ioutil.WriteFile(testFile, testContent, 0644)
+	err = os.WriteFile(testFile, testContent, 0644)
 	require.NoError(t, err)
 
 	gen := NewGenerator(DefaultGeneratorConfig())
@@ -566,12 +565,12 @@ func TestInfoHashConsistency(t *testing.T) {
 
 // TestInfoHashFormat tests that info hashes are properly formatted
 func TestInfoHashFormat(t *testing.T) {
-	tempDir, err := ioutil.TempDir("", "format-*")
+	tempDir, err := os.MkdirTemp("", "format-*")
 	require.NoError(t, err)
 	defer os.RemoveAll(tempDir)
 
 	testFile := filepath.Join(tempDir, "format.mp4")
-	err = ioutil.WriteFile(testFile, []byte("test"), 0644)
+	err = os.WriteFile(testFile, []byte("test"), 0644)
 	require.NoError(t, err)
 
 	gen := NewGenerator(DefaultGeneratorConfig())

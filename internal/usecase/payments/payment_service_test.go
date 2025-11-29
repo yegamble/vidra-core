@@ -2,8 +2,6 @@ package payments
 
 import (
 	"context"
-	"crypto/aes"
-	"crypto/cipher"
 	"crypto/rand"
 	"errors"
 	"testing"
@@ -814,25 +812,4 @@ func TestPaymentService_ConcurrentWalletCreation(t *testing.T) {
 
 func stringPtr(s string) *string {
 	return &s
-}
-
-// Encryption helper (stub - actual implementation would be in service)
-func encryptWithAESGCM(plaintext []byte, key []byte) (ciphertext, nonce []byte, err error) {
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	nonce = make([]byte, gcm.NonceSize())
-	if _, err := rand.Read(nonce); err != nil {
-		return nil, nil, err
-	}
-
-	ciphertext = gcm.Seal(nil, nonce, plaintext, nil)
-	return ciphertext, nonce, nil
 }

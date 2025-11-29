@@ -715,7 +715,11 @@ func TestVirusScanner_DifferentErrorTypes(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			result, err := scanner.ScanStream(ctx, tt.reader)
 
-			t.Logf("Test %s: err=%v, status=%v", tt.description, err, result.Status)
+			if result != nil {
+				t.Logf("Test %s: err=%v, status=%v", tt.description, err, result.Status)
+			} else {
+				t.Logf("Test %s: err=%v, result=nil", tt.description, err)
+			}
 
 			// CRITICAL: Never mark as clean on error
 			if result != nil && result.Status == ScanStatusClean {
