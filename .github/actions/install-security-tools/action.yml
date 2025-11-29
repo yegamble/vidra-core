@@ -10,6 +10,14 @@ inputs:
 runs:
   using: 'composite'
   steps:
+    - name: Prepare cache key
+      id: cache-key
+      shell: bash
+      run: |
+        # Replace commas with underscores for valid cache key
+        TOOLS_KEY=$(echo "${{ inputs.tools }}" | tr ',' '_')
+        echo "tools_key=${TOOLS_KEY}" >> "$GITHUB_OUTPUT"
+
     - name: Cache security tools
       uses: actions/cache@v4
       with:
@@ -17,9 +25,9 @@ runs:
           ~/go/bin/govulncheck
           ~/go/bin/gosec
           ~/go/bin/staticcheck
-        key: security-tools-${{ runner.os }}-${{ inputs.tools }}-${{ hashFiles('go.sum') }}
+        key: security-tools-${{ runner.os }}-${{ steps.cache-key.outputs.tools_key }}-${{ hashFiles('go.sum') }}
         restore-keys: |
-          security-tools-${{ runner.os }}-${{ inputs.tools }}-
+          security-tools-${{ runner.os }}-${{ steps.cache-key.outputs.tools_key }}-
           security-tools-${{ runner.os }}-
 
     - name: Install govulncheck
