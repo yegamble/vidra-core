@@ -70,6 +70,15 @@ func (v *URLValidator) ValidateURL(rawURL string) error {
 	// Remove brackets from IPv6 addresses (e.g., [::1] -> ::1)
 	host = strings.Trim(host, "[]")
 
+	// Check for obfuscated IP addresses (octal, hex, integer representations)
+	// These are SSRF bypass techniques that need to be blocked
+	if ip := parseObfuscatedIP(host); ip != nil {
+		if !v.allowPrivate && isPrivateIP(ip) {
+			return fmt.Errorf("access to private IP addresses is not allowed: %s", host)
+		}
+		return nil
+	}
+
 	// Check if host is already an IP address
 	if ip := net.ParseIP(host); ip != nil {
 		// Host is a direct IP address, validate it directly
@@ -176,6 +185,63 @@ func isPrivateIP(ip net.IP) bool {
 	}
 
 	return false
+}
+
+// parseObfuscatedIP detects and parses obfuscated IP representations
+// This handles SSRF bypass techniques like:
+// - Octal: 0177.0.0.1 (127.0.0.1)
+// - Hex: 0x7f.0.0.1 (127.0.0.1)
+// - Integer: 2130706433 (127.0.0.1)
+// - Mixed: combinations of the above
+func parseObfuscatedIP(host string) net.IP {
+	// Try parsing as integer IP (e.g., 2130706433 = 127.0.0.1)
+	if intIP, err := strconv.ParseUint(host, 10, 32); err == nil {
+		return net.IPv4(
+			byte(intIP>>24),
+			byte(intIP>>16),
+			byte(intIP>>8),
+			byte(intIP),
+		)
+	}
+
+	// Try parsing as dotted notation with octal/hex components
+	parts := strings.Split(host, ".")
+	if len(parts) == 4 {
+		var octets [4]byte
+		hasObfuscation := false
+		valid := true
+
+		for i, part := range parts {
+			var val uint64
+			var err error
+
+			if strings.HasPrefix(part, "0x") || strings.HasPrefix(part, "0X") {
+				// Hex: 0x7f
+				val, err = strconv.ParseUint(part[2:], 16, 8)
+				hasObfuscation = true
+			} else if len(part) > 1 && part[0] == '0' && !strings.Contains(part, "x") {
+				// Octal: 0177
+				val, err = strconv.ParseUint(part, 8, 8)
+				hasObfuscation = true
+			} else {
+				// Decimal
+				val, err = strconv.ParseUint(part, 10, 8)
+			}
+
+			if err != nil || val > 255 {
+				valid = false
+				break
+			}
+			octets[i] = byte(val)
+		}
+
+		// Only return if we detected obfuscation and it's valid
+		if valid && hasObfuscation {
+			return net.IPv4(octets[0], octets[1], octets[2], octets[3])
+		}
+	}
+
+	return nil
 }
 
 // ValidateAndResolveURL validates a URL and returns the resolved IPs (for testing)

@@ -7,6 +7,7 @@ import (
 	"strconv"
 
 	"athena/internal/domain"
+	"athena/internal/middleware"
 	"athena/internal/security"
 
 	"github.com/go-chi/chi/v5"
@@ -36,7 +37,7 @@ func NewPaymentHandler(service PaymentService) *PaymentHandler {
 
 // CreateWallet handles POST /api/v1/payments/wallet
 func (h *PaymentHandler) CreateWallet(w http.ResponseWriter, r *http.Request) {
-	userID, ok := r.Context().Value("user_id").(string)
+	userID, ok := r.Context().Value(middleware.UserIDKey).(string)
 	if !ok || userID == "" {
 		h.errorResponse(w, "Unauthorized", http.StatusUnauthorized)
 		return
@@ -57,7 +58,7 @@ func (h *PaymentHandler) CreateWallet(w http.ResponseWriter, r *http.Request) {
 
 // GetWallet handles GET /api/v1/payments/wallet
 func (h *PaymentHandler) GetWallet(w http.ResponseWriter, r *http.Request) {
-	userID, ok := r.Context().Value("user_id").(string)
+	userID, ok := r.Context().Value(middleware.UserIDKey).(string)
 	if !ok || userID == "" {
 		h.errorResponse(w, "Unauthorized", http.StatusUnauthorized)
 		return
@@ -78,7 +79,7 @@ func (h *PaymentHandler) GetWallet(w http.ResponseWriter, r *http.Request) {
 
 // CreatePaymentIntent handles POST /api/v1/payments/intent
 func (h *PaymentHandler) CreatePaymentIntent(w http.ResponseWriter, r *http.Request) {
-	userID, ok := r.Context().Value("user_id").(string)
+	userID, ok := r.Context().Value(middleware.UserIDKey).(string)
 	if !ok || userID == "" {
 		h.errorResponse(w, "Unauthorized", http.StatusUnauthorized)
 		return
@@ -117,7 +118,7 @@ func (h *PaymentHandler) CreatePaymentIntent(w http.ResponseWriter, r *http.Requ
 
 // GetPaymentIntent handles GET /api/v1/payments/intent/:id
 func (h *PaymentHandler) GetPaymentIntent(w http.ResponseWriter, r *http.Request) {
-	userID, ok := r.Context().Value("user_id").(string)
+	userID, ok := r.Context().Value(middleware.UserIDKey).(string)
 	if !ok || userID == "" {
 		h.errorResponse(w, "Unauthorized", http.StatusUnauthorized)
 		return
@@ -144,7 +145,7 @@ func (h *PaymentHandler) GetPaymentIntent(w http.ResponseWriter, r *http.Request
 
 // GetTransactionHistory handles GET /api/v1/payments/transactions
 func (h *PaymentHandler) GetTransactionHistory(w http.ResponseWriter, r *http.Request) {
-	userID, ok := r.Context().Value("user_id").(string)
+	userID, ok := r.Context().Value(middleware.UserIDKey).(string)
 	if !ok || userID == "" {
 		h.errorResponse(w, "Unauthorized", http.StatusUnauthorized)
 		return

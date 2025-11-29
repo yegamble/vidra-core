@@ -6,6 +6,7 @@ import (
 	"strconv"
 
 	"athena/internal/domain"
+	"athena/internal/middleware"
 	"athena/internal/security"
 	importuc "athena/internal/usecase/import"
 
@@ -278,7 +279,7 @@ func parsePagination(r *http.Request) (limit, offset int) {
 
 // getUserID extracts user ID from request context (set by auth middleware)
 func getUserID(r *http.Request) string {
-	if userID, ok := r.Context().Value("user_id").(string); ok {
+	if userID, ok := r.Context().Value(middleware.UserIDKey).(string); ok {
 		return userID
 	}
 	return ""
