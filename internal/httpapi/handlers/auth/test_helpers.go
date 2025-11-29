@@ -1,11 +1,13 @@
 package auth
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 
 	"athena/internal/domain"
 	"athena/internal/httpapi/shared"
+	"athena/internal/middleware"
 	"athena/internal/usecase"
 )
 
@@ -49,6 +51,22 @@ func NewServer(
 	}
 
 	return h
+}
+
+// integResp is an alias for testResponse for backwards compatibility
+type integResp = testResponse
+
+// testResponse is the standard response structure for tests
+type testResponse struct {
+	Data    json.RawMessage   `json:"data"`
+	Error   *shared.ErrorInfo `json:"error"`
+	Success bool              `json:"success"`
+	Meta    *shared.Meta      `json:"meta"`
+}
+
+// withUserID adds a user ID to the context (test helper)
+func withUserID(ctx context.Context, id string) context.Context {
+	return context.WithValue(ctx, middleware.UserIDKey, id)
 }
 
 // Stub methods for testing - these should be implemented properly
