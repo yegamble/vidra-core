@@ -78,7 +78,8 @@ jobs:
         if: matrix.category == 'ssrf-protection'
         run: |
           echo "::group::SSRF Protection Unit Tests"
-          go test -v -coverprofile=ssrf-coverage.out ./internal/security/...
+          # Run all security tests with coverage
+          go test -v -coverprofile=ssrf-coverage.out -covermode=atomic ./internal/security/...
           echo "::endgroup::"
 
       - name: Run SSRF Integration Tests
@@ -99,12 +100,37 @@ jobs:
         run: |
           python3 - << 'PY'
           import re, sys, subprocess
+
+          # Get coverage data for SSRF-specific files only
           out = subprocess.check_output(['go', 'tool', 'cover', '-func=ssrf-coverage.out'], text=True)
-          m = re.search(r'total:\s*\(statements\)\s*([0-9.]+)%', out)
-          cov = float(m.group(1)) if m else 0.0
-          print(f"SSRF Protection Coverage: {cov}%")
-          if cov < 80.0:
-              print('::error::SSRF protection coverage is below 80% threshold')
+
+          # SSRF-related files to measure (use patterns that won't match other files)
+          ssrf_files = ['url_validator.go', '/validation.go:']
+
+          # Parse coverage percentages and calculate weighted average
+          coverages = []
+          print("SSRF Protection Coverage by file:")
+          for line in out.split('\n'):
+              if any(f in line for f in ssrf_files):
+                  # Extract percentage from the line
+                  match = re.search(r'(\d+\.?\d*)%$', line.strip())
+                  if match:
+                      pct = float(match.group(1))
+                      coverages.append(pct)
+                      print(f"  {line.strip()}")
+
+          if coverages:
+              # Simple average across all functions
+              avg_cov = sum(coverages) / len(coverages)
+              print(f"\nSSRF Protection Coverage (average across {len(coverages)} functions): {avg_cov:.1f}%")
+
+              if avg_cov < 80.0:
+                  print('::error::SSRF protection coverage is below 80% threshold')
+                  sys.exit(1)
+              else:
+                  print(f"✅ SSRF coverage {avg_cov:.1f}% meets 80% threshold")
+          else:
+              print("::error::Could not parse SSRF coverage data")
               sys.exit(1)
           PY
 

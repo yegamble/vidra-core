@@ -1,6 +1,8 @@
 package security
 
 import (
+	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -398,4 +400,551 @@ func TestCreateSecureHTTPClient(t *testing.T) {
 	req := httptest.NewRequest("GET", "http://169.254.169.254/", nil)
 	err := client.CheckRedirect(req, []*http.Request{})
 	assert.Error(t, err)
+}
+
+// TestCheckFileSizeWithMockServer tests CheckFileSize with a mock HTTP server
+func TestCheckFileSizeWithMockServer(t *testing.T) {
+	// Test with invalid URL (should fail SSRF validation)
+	t.Run("SSRF blocked URL", func(t *testing.T) {
+		err := CheckFileSize("http://127.0.0.1:8080/file", MaxVideoFileSize)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "URL validation failed")
+	})
+
+	t.Run("invalid URL scheme", func(t *testing.T) {
+		err := CheckFileSize("ftp://example.com/file", MaxVideoFileSize)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "URL validation failed")
+	})
+
+	t.Run("invalid URL format", func(t *testing.T) {
+		err := CheckFileSize("not-a-valid-url", MaxVideoFileSize)
+		assert.Error(t, err)
+	})
+
+	t.Run("empty URL", func(t *testing.T) {
+		err := CheckFileSize("", MaxVideoFileSize)
+		assert.Error(t, err)
+	})
+
+	t.Run("private IP blocked", func(t *testing.T) {
+		err := CheckFileSize("http://192.168.1.1/file", MaxVideoFileSize)
+		assert.Error(t, err)
+	})
+
+	t.Run("metadata service blocked", func(t *testing.T) {
+		err := CheckFileSize("http://169.254.169.254/latest/meta-data/", MaxVideoFileSize)
+		assert.Error(t, err)
+	})
+}
+
+// TestValidateVideoURL tests ValidateVideoURL function
+func TestValidateVideoURL(t *testing.T) {
+	t.Run("blocks localhost", func(t *testing.T) {
+		err := ValidateVideoURL("http://localhost:8080/video.mp4")
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "security validation failed")
+	})
+
+	t.Run("blocks AWS metadata", func(t *testing.T) {
+		err := ValidateVideoURL("http://169.254.169.254/latest/meta-data/")
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "security validation failed")
+	})
+
+	t.Run("blocks private IPs - 10.x", func(t *testing.T) {
+		err := ValidateVideoURL("http://10.0.0.1/video.mp4")
+		assert.Error(t, err)
+	})
+
+	t.Run("blocks private IPs - 172.16.x", func(t *testing.T) {
+		err := ValidateVideoURL("http://172.16.0.1/video.mp4")
+		assert.Error(t, err)
+	})
+
+	t.Run("blocks private IPs - 192.168.x", func(t *testing.T) {
+		err := ValidateVideoURL("http://192.168.1.1/video.mp4")
+		assert.Error(t, err)
+	})
+
+	t.Run("blocks file scheme", func(t *testing.T) {
+		err := ValidateVideoURL("file:///etc/passwd")
+		assert.Error(t, err)
+	})
+
+	t.Run("blocks ftp scheme", func(t *testing.T) {
+		err := ValidateVideoURL("ftp://example.com/video.mp4")
+		assert.Error(t, err)
+	})
+
+	t.Run("blocks gopher scheme", func(t *testing.T) {
+		err := ValidateVideoURL("gopher://example.com/video")
+		assert.Error(t, err)
+	})
+
+	t.Run("blocks IPv6 loopback", func(t *testing.T) {
+		err := ValidateVideoURL("http://[::1]/video.mp4")
+		assert.Error(t, err)
+	})
+
+	t.Run("blocks IPv6 private", func(t *testing.T) {
+		err := ValidateVideoURL("http://[fc00::1]/video.mp4")
+		assert.Error(t, err)
+	})
+
+	t.Run("blocks link-local", func(t *testing.T) {
+		err := ValidateVideoURL("http://[fe80::1]/video.mp4")
+		assert.Error(t, err)
+	})
+}
+
+// TestIsSSRFSafeURL_EdgeCases tests edge cases for IsSSRFSafeURL
+func TestIsSSRFSafeURL_EdgeCases(t *testing.T) {
+	t.Run("empty hostname", func(t *testing.T) {
+		err := IsSSRFSafeURL("http:///path")
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "hostname cannot be empty")
+	})
+
+	t.Run("IPv6 loopback expanded", func(t *testing.T) {
+		err := IsSSRFSafeURL("http://[0:0:0:0:0:0:0:1]/")
+		assert.Error(t, err)
+	})
+
+	t.Run("IPv6 link-local", func(t *testing.T) {
+		err := IsSSRFSafeURL("http://[fe80::1]/")
+		assert.Error(t, err)
+	})
+
+	t.Run("IPv6 unique local fc00", func(t *testing.T) {
+		err := IsSSRFSafeURL("http://[fc00::1]/")
+		assert.Error(t, err)
+	})
+
+	t.Run("AWS metadata IPv6", func(t *testing.T) {
+		err := IsSSRFSafeURL("http://[fd00:ec2::254]/")
+		assert.Error(t, err)
+	})
+
+	t.Run("URL with port - private IP", func(t *testing.T) {
+		err := IsSSRFSafeURL("http://10.0.0.1:8080/path")
+		assert.Error(t, err)
+	})
+}
+
+// TestAreIPListsEqual tests the areIPListsEqual helper function
+func TestAreIPListsEqual(t *testing.T) {
+	t.Run("equal lists same order", func(t *testing.T) {
+		ips1 := []net.IP{net.ParseIP("8.8.8.8"), net.ParseIP("8.8.4.4")}
+		ips2 := []net.IP{net.ParseIP("8.8.8.8"), net.ParseIP("8.8.4.4")}
+		assert.True(t, areIPListsEqual(ips1, ips2))
+	})
+
+	t.Run("equal lists different order", func(t *testing.T) {
+		ips1 := []net.IP{net.ParseIP("8.8.8.8"), net.ParseIP("8.8.4.4")}
+		ips2 := []net.IP{net.ParseIP("8.8.4.4"), net.ParseIP("8.8.8.8")}
+		assert.True(t, areIPListsEqual(ips1, ips2))
+	})
+
+	t.Run("different lengths", func(t *testing.T) {
+		ips1 := []net.IP{net.ParseIP("8.8.8.8")}
+		ips2 := []net.IP{net.ParseIP("8.8.8.8"), net.ParseIP("8.8.4.4")}
+		assert.False(t, areIPListsEqual(ips1, ips2))
+	})
+
+	t.Run("different IPs", func(t *testing.T) {
+		ips1 := []net.IP{net.ParseIP("8.8.8.8"), net.ParseIP("1.1.1.1")}
+		ips2 := []net.IP{net.ParseIP("8.8.8.8"), net.ParseIP("8.8.4.4")}
+		assert.False(t, areIPListsEqual(ips1, ips2))
+	})
+
+	t.Run("empty lists", func(t *testing.T) {
+		ips1 := []net.IP{}
+		ips2 := []net.IP{}
+		assert.True(t, areIPListsEqual(ips1, ips2))
+	})
+
+	t.Run("IPv6 addresses", func(t *testing.T) {
+		ips1 := []net.IP{net.ParseIP("2001:4860:4860::8888")}
+		ips2 := []net.IP{net.ParseIP("2001:4860:4860::8888")}
+		assert.True(t, areIPListsEqual(ips1, ips2))
+	})
+}
+
+// TestCheckIPSafety tests the checkIPSafety helper function
+func TestCheckIPSafety(t *testing.T) {
+	t.Run("public IPv4 is safe", func(t *testing.T) {
+		ip := net.ParseIP("8.8.8.8")
+		err := checkIPSafety(ip)
+		assert.NoError(t, err)
+	})
+
+	t.Run("loopback is blocked", func(t *testing.T) {
+		ip := net.ParseIP("127.0.0.1")
+		err := checkIPSafety(ip)
+		assert.ErrorIs(t, err, ErrSSRFBlocked)
+	})
+
+	t.Run("private 10.x is blocked", func(t *testing.T) {
+		ip := net.ParseIP("10.0.0.1")
+		err := checkIPSafety(ip)
+		assert.ErrorIs(t, err, ErrSSRFBlocked)
+	})
+
+	t.Run("private 172.16.x is blocked", func(t *testing.T) {
+		ip := net.ParseIP("172.16.0.1")
+		err := checkIPSafety(ip)
+		assert.ErrorIs(t, err, ErrSSRFBlocked)
+	})
+
+	t.Run("private 192.168.x is blocked", func(t *testing.T) {
+		ip := net.ParseIP("192.168.1.1")
+		err := checkIPSafety(ip)
+		assert.ErrorIs(t, err, ErrSSRFBlocked)
+	})
+
+	t.Run("link-local is blocked", func(t *testing.T) {
+		ip := net.ParseIP("169.254.1.1")
+		err := checkIPSafety(ip)
+		assert.ErrorIs(t, err, ErrSSRFBlocked)
+	})
+
+	t.Run("AWS metadata is blocked", func(t *testing.T) {
+		ip := net.ParseIP("169.254.169.254")
+		err := checkIPSafety(ip)
+		assert.ErrorIs(t, err, ErrMetadataServiceBlocked)
+	})
+
+	t.Run("AWS metadata IPv6 is blocked", func(t *testing.T) {
+		ip := net.ParseIP("fd00:ec2::254")
+		err := checkIPSafety(ip)
+		assert.ErrorIs(t, err, ErrMetadataServiceBlocked)
+	})
+
+	t.Run("IPv6 loopback is blocked", func(t *testing.T) {
+		ip := net.ParseIP("::1")
+		err := checkIPSafety(ip)
+		assert.ErrorIs(t, err, ErrSSRFBlocked)
+	})
+
+	t.Run("IPv6 link-local is blocked", func(t *testing.T) {
+		ip := net.ParseIP("fe80::1")
+		err := checkIPSafety(ip)
+		assert.ErrorIs(t, err, ErrSSRFBlocked)
+	})
+
+	t.Run("IPv6 private is blocked", func(t *testing.T) {
+		ip := net.ParseIP("fc00::1")
+		err := checkIPSafety(ip)
+		assert.ErrorIs(t, err, ErrSSRFBlocked)
+	})
+
+	t.Run("public IPv6 is safe", func(t *testing.T) {
+		ip := net.ParseIP("2001:4860:4860::8888")
+		err := checkIPSafety(ip)
+		assert.NoError(t, err)
+	})
+}
+
+// TestCreateSecureHTTPClient_TooManyRedirects tests redirect limit
+func TestCreateSecureHTTPClient_TooManyRedirects(t *testing.T) {
+	client := CreateSecureHTTPClient(30 * time.Second)
+
+	// Create a chain of 11 requests to exceed limit
+	via := make([]*http.Request, 10)
+	for i := range via {
+		via[i] = httptest.NewRequest("GET", "http://example.com", nil)
+	}
+
+	req := httptest.NewRequest("GET", "http://example.com/redirect", nil)
+	err := client.CheckRedirect(req, via)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "too many redirects")
+}
+
+// TestCreateSecureHTTPClient_RedirectToPrivateIP tests redirect SSRF protection
+func TestCreateSecureHTTPClient_RedirectToPrivateIP(t *testing.T) {
+	client := CreateSecureHTTPClient(30 * time.Second)
+
+	tests := []struct {
+		name string
+		url  string
+	}{
+		{"localhost", "http://localhost/"},
+		{"127.0.0.1", "http://127.0.0.1/"},
+		{"private 10.x", "http://10.0.0.1/"},
+		{"private 172.x", "http://172.16.0.1/"},
+		{"private 192.168.x", "http://192.168.1.1/"},
+		{"AWS metadata", "http://169.254.169.254/"},
+		{"IPv6 loopback", "http://[::1]/"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest("GET", tt.url, nil)
+			err := client.CheckRedirect(req, []*http.Request{})
+			assert.Error(t, err)
+			assert.Contains(t, err.Error(), "redirect blocked")
+		})
+	}
+}
+
+// TestPrivateIPBlocks tests that all private IP blocks are properly initialized
+func TestPrivateIPBlocks(t *testing.T) {
+	// Verify privateIPBlocks is properly initialized
+	assert.NotEmpty(t, privateIPBlocks)
+
+	// Test each CIDR block contains expected IPs
+	testCases := []struct {
+		cidr       string
+		testIP     string
+		shouldFind bool
+	}{
+		{"127.0.0.0/8", "127.0.0.1", true},
+		{"127.0.0.0/8", "127.255.255.255", true},
+		{"10.0.0.0/8", "10.0.0.1", true},
+		{"10.0.0.0/8", "10.255.255.255", true},
+		{"172.16.0.0/12", "172.16.0.1", true},
+		{"172.16.0.0/12", "172.31.255.255", true},
+		{"192.168.0.0/16", "192.168.0.1", true},
+		{"192.168.0.0/16", "192.168.255.255", true},
+		{"169.254.0.0/16", "169.254.169.254", true},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.cidr+"_"+tc.testIP, func(t *testing.T) {
+			ip := net.ParseIP(tc.testIP)
+			found := false
+			for _, block := range privateIPBlocks {
+				if block.Contains(ip) {
+					found = true
+					break
+				}
+			}
+			assert.Equal(t, tc.shouldFind, found, "IP %s should be in private blocks", tc.testIP)
+		})
+	}
+}
+
+// TestMetadataServiceIPs tests metadata service IP detection
+func TestMetadataServiceIPs(t *testing.T) {
+	assert.Contains(t, metadataServiceIPs, "169.254.169.254")
+	assert.Contains(t, metadataServiceIPs, "fd00:ec2::254")
+}
+
+// TestCheckFileSize_RedirectHandler tests redirect handling in CheckFileSize
+func TestCheckFileSize_RedirectHandler(t *testing.T) {
+	// Test the redirect check function directly
+	client := &http.Client{
+		Timeout: DefaultHTTPTimeout,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 10 {
+				return errors.New("too many redirects")
+			}
+			return IsSSRFSafeURL(req.URL.String())
+		},
+	}
+
+	t.Run("redirect to private IP blocked", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "http://127.0.0.1/", nil)
+		err := client.CheckRedirect(req, []*http.Request{})
+		assert.Error(t, err)
+	})
+
+	t.Run("too many redirects", func(t *testing.T) {
+		via := make([]*http.Request, 10)
+		for i := range via {
+			via[i] = httptest.NewRequest("GET", "http://example.com/", nil)
+		}
+		req := httptest.NewRequest("GET", "http://example.com/redirect", nil)
+		err := client.CheckRedirect(req, via)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "too many redirects")
+	})
+
+	t.Run("redirect to metadata service blocked", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "http://169.254.169.254/latest/", nil)
+		err := client.CheckRedirect(req, []*http.Request{})
+		assert.Error(t, err)
+	})
+}
+
+// TestIsSSRFSafeURL_MoreEdgeCases tests additional edge cases
+func TestIsSSRFSafeURL_MoreEdgeCases(t *testing.T) {
+	t.Run("ldap scheme blocked", func(t *testing.T) {
+		err := IsSSRFSafeURL("ldap://example.com/")
+		assert.Error(t, err)
+		assert.ErrorIs(t, err, ErrInvalidURLScheme)
+	})
+
+	t.Run("dict scheme blocked", func(t *testing.T) {
+		err := IsSSRFSafeURL("dict://example.com/")
+		assert.Error(t, err)
+		assert.ErrorIs(t, err, ErrInvalidURLScheme)
+	})
+
+	t.Run("sftp scheme blocked", func(t *testing.T) {
+		err := IsSSRFSafeURL("sftp://example.com/file")
+		assert.Error(t, err)
+		assert.ErrorIs(t, err, ErrInvalidURLScheme)
+	})
+
+	t.Run("javascript scheme blocked", func(t *testing.T) {
+		err := IsSSRFSafeURL("javascript:alert(1)")
+		assert.Error(t, err)
+		assert.ErrorIs(t, err, ErrInvalidURLScheme)
+	})
+
+	t.Run("data scheme blocked", func(t *testing.T) {
+		err := IsSSRFSafeURL("data:text/html,<script>alert(1)</script>")
+		assert.Error(t, err)
+		assert.ErrorIs(t, err, ErrInvalidURLScheme)
+	})
+
+	t.Run("127.x.x.x variants blocked", func(t *testing.T) {
+		blockedIPs := []string{
+			"http://127.0.0.1/",
+			"http://127.0.0.2/",
+			"http://127.1.1.1/",
+			"http://127.255.255.255/",
+		}
+		for _, url := range blockedIPs {
+			err := IsSSRFSafeURL(url)
+			assert.Error(t, err, "URL %s should be blocked", url)
+		}
+	})
+
+	t.Run("172.16-31.x.x range blocked", func(t *testing.T) {
+		blockedIPs := []string{
+			"http://172.16.0.1/",
+			"http://172.20.0.1/",
+			"http://172.31.255.255/",
+		}
+		for _, url := range blockedIPs {
+			err := IsSSRFSafeURL(url)
+			assert.Error(t, err, "URL %s should be blocked", url)
+		}
+	})
+
+	// 172.32.x.x should NOT be blocked (outside private range)
+	t.Run("172.32.x.x allowed", func(t *testing.T) {
+		err := IsSSRFSafeURL("http://172.32.0.1/")
+		// This should pass SSRF check (may fail DNS resolution in test env)
+		if err != nil {
+			assert.NotErrorIs(t, err, ErrSSRFBlocked)
+		}
+	})
+}
+
+// TestValidateVideoURL_MoreEdgeCases tests additional video URL validation cases
+func TestValidateVideoURL_MoreEdgeCases(t *testing.T) {
+	t.Run("blocks 127.x.x.x range", func(t *testing.T) {
+		err := ValidateVideoURL("http://127.1.2.3/video.mp4")
+		assert.Error(t, err)
+	})
+
+	t.Run("blocks IPv4-mapped IPv6", func(t *testing.T) {
+		err := ValidateVideoURL("http://[::ffff:127.0.0.1]/video.mp4")
+		assert.Error(t, err)
+	})
+
+	t.Run("blocks internal docker networks", func(t *testing.T) {
+		err := ValidateVideoURL("http://172.17.0.1/video.mp4")
+		assert.Error(t, err)
+	})
+
+	t.Run("blocks kubernetes service IPs", func(t *testing.T) {
+		err := ValidateVideoURL("http://10.96.0.1/video.mp4")
+		assert.Error(t, err)
+	})
+}
+
+// TestParseCIDR tests the parseCIDR helper function
+func TestParseCIDR(t *testing.T) {
+	t.Run("valid CIDR", func(t *testing.T) {
+		// parseCIDR panics on invalid CIDR, so test with known valid ones
+		assert.NotPanics(t, func() {
+			result := parseCIDR("10.0.0.0/8")
+			assert.NotNil(t, result)
+		})
+	})
+
+	t.Run("valid IPv6 CIDR", func(t *testing.T) {
+		assert.NotPanics(t, func() {
+			result := parseCIDR("::1/128")
+			assert.NotNil(t, result)
+		})
+	})
+}
+
+// TestCheckFileSize_AllPaths tests all code paths in CheckFileSize
+func TestCheckFileSize_AllPaths(t *testing.T) {
+	t.Run("SSRF validation fails first", func(t *testing.T) {
+		// These should fail SSRF validation before making HTTP request
+		urls := []string{
+			"http://localhost/file",
+			"http://127.0.0.1/file",
+			"http://10.0.0.1/file",
+			"http://192.168.1.1/file",
+			"http://169.254.169.254/file",
+			"ftp://example.com/file",
+			"file:///etc/passwd",
+		}
+		for _, url := range urls {
+			err := CheckFileSize(url, MaxVideoFileSize)
+			assert.Error(t, err)
+			assert.Contains(t, err.Error(), "URL validation failed")
+		}
+	})
+}
+
+// TestValidateVideoURL_AllPaths tests all code paths in ValidateVideoURL
+func TestValidateVideoURL_AllPaths(t *testing.T) {
+	t.Run("SSRF validation fails", func(t *testing.T) {
+		urls := []string{
+			"http://localhost/video.mp4",
+			"http://[::1]/video.mp4",
+			"http://169.254.169.254/",
+			"ftp://example.com/video.mp4",
+		}
+		for _, url := range urls {
+			err := ValidateVideoURL(url)
+			assert.Error(t, err)
+			assert.Contains(t, err.Error(), "security validation failed")
+		}
+	})
+}
+
+// TestSecurityConstants tests that security constants are properly defined
+func TestSecurityConstants(t *testing.T) {
+	t.Run("MaxVideoFileSize is 5GB", func(t *testing.T) {
+		assert.Equal(t, int64(5*1024*1024*1024), MaxVideoFileSize)
+	})
+
+	t.Run("MaxImageFileSize is 50MB", func(t *testing.T) {
+		assert.Equal(t, int64(50*1024*1024), MaxImageFileSize)
+	})
+
+	t.Run("MaxDocumentSize is 100MB", func(t *testing.T) {
+		assert.Equal(t, int64(100*1024*1024), MaxDocumentSize)
+	})
+
+	t.Run("DefaultHTTPTimeout is 30 seconds", func(t *testing.T) {
+		assert.Equal(t, 30*time.Second, DefaultHTTPTimeout)
+	})
+
+	t.Run("DNSRebindDelay is 100ms", func(t *testing.T) {
+		assert.Equal(t, 100*time.Millisecond, DNSRebindDelay)
+	})
+}
+
+// TestErrorTypes tests that error types are properly defined
+func TestErrorTypes(t *testing.T) {
+	assert.NotNil(t, ErrInvalidUUID)
+	assert.NotNil(t, ErrInvalidURLScheme)
+	assert.NotNil(t, ErrSSRFBlocked)
+	assert.NotNil(t, ErrMetadataServiceBlocked)
+	assert.NotNil(t, ErrFileTooLarge)
+	assert.NotNil(t, ErrContentLengthMissing)
+	assert.NotNil(t, ErrDNSRebindingDetected)
 }
