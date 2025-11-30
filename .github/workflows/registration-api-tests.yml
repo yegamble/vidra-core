@@ -54,6 +54,7 @@ jobs:
       REDIS_URL: redis://localhost:6379
       JWT_SECRET: test-secret-key-for-registration-tests
       PORT: 8080
+      REQUIRE_IPFS: false
 
     steps:
       - name: Checkout code
@@ -80,17 +81,29 @@ jobs:
 
       - name: Start API server in background
         run: |
-          ./athena-server &
+          ./athena-server > server.log 2>&1 &
           echo "SERVER_PID=$!" >> $GITHUB_ENV
+          sleep 2
+          # Check if server started successfully
+          if ! kill -0 $! 2>/dev/null; then
+            echo "Server failed to start. Log output:"
+            cat server.log
+            exit 1
+          fi
         env:
           DATABASE_URL: ${{ env.DATABASE_URL }}
           REDIS_URL: ${{ env.REDIS_URL }}
           JWT_SECRET: ${{ env.JWT_SECRET }}
           PORT: ${{ env.PORT }}
+          REQUIRE_IPFS: ${{ env.REQUIRE_IPFS }}
 
       - name: Wait for API to be ready
         run: |
-          timeout 60 bash -c 'until curl -f http://localhost:8080/health; do sleep 2; done'
+          timeout 60 bash -c 'until curl -f http://localhost:8080/health; do sleep 2; done' || {
+            echo "Server failed to become ready. Log output:"
+            cat server.log
+            exit 1
+          }
 
       - name: Run Postman collection with Newman
         id: newman
@@ -121,6 +134,14 @@ jobs:
           name: newman-report-json
           path: newman-report.json
           retention-days: 30
+
+      - name: Upload server log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: server-log
+          path: server.log
+          retention-days: 7
 
       - name: Parse Newman results
         if: always()
