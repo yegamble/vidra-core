@@ -259,8 +259,24 @@ jobs:
           format: 'sarif'
           output: 'trivy-results.sarif'
 
+      - name: Run Trivy for workflow summary
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'table'
+
       - name: Upload Trivy results to GitHub Security
         uses: github/codeql-action/upload-sarif@v4
         if: always()
+        continue-on-error: true  # Don't fail if Code Scanning isn't enabled
         with:
           sarif_file: 'trivy-results.sarif'
+
+      - name: Upload Trivy SARIF as artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: trivy-security-scan
+          path: trivy-results.sarif
+          retention-days: 30
