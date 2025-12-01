@@ -18,12 +18,12 @@ See [VALIDATION_REQUIRED.md](VALIDATION_REQUIRED.md) for complete requirements, 
 
 | Metric | Count | Description |
 |--------|-------|-------------|
-| **Go Files** | 454 | Total Go source files |
-| **Test Files** | 168 | Comprehensive test coverage |
-| **Lines of Code** | 144,000+ | Total lines including tests |
-| **Database Migrations** | 62 | Goose migrations |
-| **API Endpoints** | 105+ | RESTful + WebSocket + Payments |
-| **Security Tests** | 50+ | Including P1 vulnerability fixes |
+| **Go Files** | 467 | Total Go source files |
+| **Test Files** | 179 | Comprehensive test coverage |
+| **Lines of Code** | 151,000+ | ~75K source + ~76K test code |
+| **Database Migrations** | 61 | Goose SQL migrations |
+| **API Endpoints** | 100+ | RESTful + WebSocket + Federation |
+| **Security Tests** | 50+ | Including SSRF, virus scanning, auth |
 
 ## Features
 
@@ -257,14 +257,14 @@ make lint           # Run linters
 
 | Metric | Count | Description |
 |--------|-------|-------------|
-| **Go Files** | 426 | Total Go source files |
-| **Test Files** | 156 | 36.6% test-to-code ratio |
-| **Lines of Code** | 136,000+ | Total lines including tests |
-| **Database Migrations** | 58 | Goose migrations |
-| **API Endpoints** | 100+ | RESTful + WebSocket |
+| **Go Files** | 467 | Total Go source files (288 non-test) |
+| **Test Files** | 179 | 38% test-to-code ratio |
+| **Lines of Code** | 151,000+ | ~75K source + ~76K test code |
+| **Database Migrations** | 61 | Goose SQL migrations |
+| **API Endpoints** | 100+ | RESTful + WebSocket + Federation |
 | **Test Coverage** | 85%+ | Average across all packages |
-| **Security Tests** | 50+ | Including CVE-ATHENA-2025-001 regression tests |
-| **Automated Tests** | 719+ | All passing in CI |
+| **Security Tests** | 50+ | SSRF, virus scanning, auth, input validation |
+| **Automated Tests** | 750+ | All passing in CI |
 
 See [Project Management Documentation](docs/project-management/README.md) and [Sprint History](docs/project-management/sprints/README.md) for detailed progress tracking.
 
@@ -273,16 +273,19 @@ See [Project Management Documentation](docs/project-management/README.md) and [S
 Configuration is managed through environment variables. See [.env.example](.env.example) for all available options.
 
 Key configuration areas:
-- **Database**: PostgreSQL with connection pooling
-- **Cache**: Redis for sessions and rate limiting
-- **Storage**: Local, IPFS, or S3-compatible backends
-- **Federation**: ATProto and Bluesky integration settings
-- **Security**: JWT, rate limiting, CORS configuration
+- **Database**: PostgreSQL with connection pooling and extensions (pg_trgm, uuid-ossp)
+- **Cache**: Redis for sessions, rate limiting, and video status
+- **Storage**: Local, IPFS, or S3-compatible backends (AWS, Backblaze B2, DigitalOcean Spaces)
+- **Federation**: ActivityPub and ATProto/Bluesky integration settings
+- **Security**: JWT, OAuth2, 2FA (TOTP), rate limiting, CORS, SSRF protection
 - **Virus Scanning**: ClamAV integration with configurable fallback modes
+- **Transcoding**: H.264, VP9, AV1 codec options with FFmpeg
+- **Live Streaming**: RTMP ingestion with HLS output
+- **Caption Generation**: Optional Whisper integration for auto-captions
 
 ### Critical Security Configuration
 
-For production deployments, ensure virus scanning is properly configured:
+For production deployments, ensure these security features are properly configured:
 
 ```bash
 # ClamAV virus scanning (REQUIRED for production)
@@ -292,7 +295,17 @@ CLAMAV_TIMEOUT=300                      # 5-minute scan timeout
 CLAMAV_MAX_RETRIES=3                    # Connection retry attempts
 QUARANTINE_DIR=/var/quarantine          # Isolated quarantine directory
 CLAMAV_AUTO_QUARANTINE=true             # Auto-quarantine infected files
+
+# ActivityPub key encryption (REQUIRED for federation)
+ACTIVITYPUB_KEY_ENCRYPTION_KEY=         # 32-byte base64 key for encrypting AP private keys
 ```
+
+**Built-in Security Features:**
+- **SSRF Protection**: Blocks private IPs (RFC1918), metadata services (169.254.169.254), obfuscated IPs (octal/hex/integer), DNS rebinding
+- **File Type Blocking**: 40+ dangerous file types blocked, polyglot detection, ZIP bomb protection
+- **HTML Sanitization**: Multiple policies for XSS prevention using bluemonday
+- **Input Validation**: UUID validation, string sanitization, file size limits (5GB video, 50MB image)
+- **Cryptographic Security**: AES-256-GCM encryption, Argon2id key derivation, HSM interface support
 
 See [SECURITY.md](docs/security/SECURITY.md) for security advisories including CVE-ATHENA-2025-001 and [Security Deployment Guide](docs/deployment/security.md) for detailed configuration.
 

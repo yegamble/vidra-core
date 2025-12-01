@@ -307,6 +307,104 @@ Also reject archives that exceed nesting depth, total file count, or uncompresse
 - Deny private/link-local/loopback CIDRs (RFC1918/4193, link-local, loopback) and `.onion`.
 - Use dedicated egress; verify TLS; limit redirects (≤3), body size (≤512 KB), and content types (HTML only). No cookies/auth headers; do not execute JS.
 
+---
+
+## SSRF Protection (Comprehensive)
+
+Robust SSRF (Server-Side Request Forgery) protection implemented in `/internal/security/url_validator.go` and `/internal/security/validation.go`.
+
+### Features
+
+- **Private IP Blocking**: All RFC1918 ranges (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16)
+- **Loopback Detection**: 127.0.0.0/8, ::1/128
+- **Link-Local Blocking**: 169.254.0.0/16, fe80::/10
+- **Metadata Service Protection**: AWS EC2 (169.254.169.254), GCP, Azure metadata endpoints
+- **Obfuscated IP Detection**: Octal (0177.0.0.1), hex (0x7f.0.0.1), integer (2130706433) formats
+- **IPv4-mapped IPv6**: Detects ::ffff:192.168.1.1 bypass attempts
+- **DNS Rebinding Protection**: Double-resolution with delay to detect DNS rebinding attacks
+- **Scheme Validation**: Only http/https allowed; blocks file://, ftp://, gopher://, ldap://, etc.
+
+### Blocked IP Ranges
+
+```go
+// Private ranges (RFC1918)
+10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16
+
+// Loopback
+127.0.0.0/8, ::1/128
+
+// Link-local
+169.254.0.0/16, fe80::/10
+
+// Carrier-grade NAT
+100.64.0.0/10
+
+// Test networks
+192.0.0.0/24, 192.0.2.0/24, 198.51.100.0/24, 203.0.113.0/24
+
+// Multicast/Reserved
+224.0.0.0/4, 240.0.0.0/4, 255.255.255.255/32
+
+// IPv6 private/reserved
+fc00::/7, ff00::/8, ::/128, 2001:db8::/32
+```
+
+### Usage
+
+```go
+// URL Validator (recommended for video imports)
+validator := security.NewURLValidator()
+if err := validator.ValidateURL(rawURL); err != nil {
+    return fmt.Errorf("SSRF blocked: %w", err)
+}
+
+// Alternative with DNS rebinding protection
+if err := security.IsSSRFSafeURL(urlStr); err != nil {
+    return err
+}
+
+// Video-specific validation (includes file size check)
+if err := security.ValidateVideoURL(urlStr); err != nil {
+    return err
+}
+```
+
+### Configuration
+
+```bash
+# File size limits (enforced by validation.go)
+MaxVideoFileSize=5GB   # 5 * 1024 * 1024 * 1024
+MaxImageFileSize=50MB  # 50 * 1024 * 1024
+MaxDocumentSize=100MB  # 100 * 1024 * 1024
+
+# HTTP timeout for SSRF checks
+DefaultHTTPTimeout=30s
+
+# DNS rebinding protection delay
+DNSRebindDelay=100ms
+```
+
+### Error Types
+
+- `ErrSSRFBlocked`: Access to private/internal IPs blocked
+- `ErrMetadataServiceBlocked`: Access to cloud metadata service blocked
+- `ErrInvalidURLScheme`: Non-HTTP(S) scheme blocked
+- `ErrDNSRebindingDetected`: DNS rebinding attack detected
+- `ErrFileTooLarge`: File exceeds size limit
+- `ErrContentLengthMissing`: Content-Length header missing
+
+### Testing
+
+SSRF protection has 85%+ code coverage. Run tests:
+
+```bash
+go test ./internal/security/... -run 'SSRF|URLValidator|ValidateURL'
+```
+
+Test files:
+- `/internal/security/url_validator_test.go` - URLValidator tests
+- `/internal/security/validation_test.go` - IsSSRFSafeURL, CheckFileSize, ValidateVideoURL tests
+
 ### E2EE Notes
 
 - In E2EE mode, messages and attachments are encrypted client-side; the server stores ciphertext only. Scanning and previews are disabled by design.
@@ -563,12 +661,41 @@ docker compose up --build
 
 ## Security & Auth
 
-- JWT access + refresh tokens; short-lived access, rotate refresh.
-- Optional OAuth providers; rate-limit login/refresh.
+- JWT access + refresh tokens; short-lived access (15min), rotate refresh (7 days).
+- Two-Factor Authentication: TOTP (RFC 6238) with 10 backup codes.
+- Optional OAuth2 providers with PKCE; rate-limit login/refresh.
 - CORS allowlist; CSRF not needed for pure API + JWT.
 - Validate media: mime sniff + ffprobe; reject executables.
 - Least-privilege DB user; separate read replica role.
 - Secret management: KMS/SealedSecrets; never log secrets.
+
+### Cryptographic Security
+
+Located in `/internal/security/`:
+
+- **HSM Interface** (`hsm_interface.go`): Hardware security module abstraction
+- **Software HSM** (`software_hsm.go`): Fallback with AES-256-GCM, Argon2id key derivation
+- **Wallet Encryption** (`wallet_encryption.go`): Envelope encryption for crypto wallet seeds
+- **ActivityPub Keys** (`activitypub_key_encryption.go`): AES-256-GCM encryption at rest, PBKDF2 (100K iterations)
+- **HLS Signing** (`hls_signing.go`): HMAC-SHA256 token generation for stream access
+
+```bash
+# Required for ActivityPub federation
+ACTIVITYPUB_KEY_ENCRYPTION_KEY=<32-byte-base64-encoded-key>
+
+# Generate a key:
+openssl rand -base64 32
+```
+
+### HTML Sanitization
+
+Multiple policies via bluemonday (`html_sanitizer.go`):
+
+- `SanitizeHTML()` - Strict (all HTML removed)
+- `SanitizeHTMLWithBasicFormatting()` - UGC policy (safe formatting)
+- `SanitizeCommentHTML()` - Comments with nofollow/noreferrer links
+- `SanitizeMarkdown()` - Markdown content
+- `SanitizeWithCustomPolicy()` - Configurable
 
 ---
 
