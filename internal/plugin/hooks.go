@@ -130,18 +130,20 @@ func (hm *HookManager) Trigger(ctx context.Context, eventType EventType, data an
 
 		// Execute hook in goroutine with timeout
 		errChan := make(chan error, 1)
-		// Pass pluginName and hookFunc as parameters to avoid race condition
-		// where loop variables are captured by reference
-		go func(pName string, hFunc HookFunc) {
+		// Pass pluginName, hookFunc, and cancel as parameters to avoid race condition
+		// where loop variables are captured by reference. The cancel function must be
+		// passed as a parameter because the main goroutine may advance to the next
+		// loop iteration (creating a new cancel) before this goroutine's defer runs.
+		go func(pName string, hFunc HookFunc, cancelFunc context.CancelFunc) {
 			defer func() {
 				if r := recover(); r != nil {
 					errChan <- fmt.Errorf("hook panic in plugin %s: %v", pName, r)
 				}
-				cancel()
+				cancelFunc()
 			}()
 
 			errChan <- hFunc(hookCtx, eventData)
-		}(pluginName, hookFunc)
+		}(pluginName, hookFunc, cancel)
 
 		// Wait for hook completion or timeout
 		select {
