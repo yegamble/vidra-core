@@ -22,7 +22,7 @@ See [VALIDATION_REQUIRED.md](VALIDATION_REQUIRED.md) for complete requirements, 
 | **Test Files** | 179 | Comprehensive test coverage |
 | **Lines of Code** | 151,000+ | ~75K source + ~76K test code |
 | **Database Migrations** | 61 | Goose SQL migrations |
-| **API Endpoints** | 100+ | RESTful + WebSocket + Federation |
+| **API Endpoints** | 123+ | RESTful + WebSocket + Federation |
 | **Security Tests** | 50+ | Including SSRF, virus scanning, auth |
 
 ## Features
@@ -37,8 +37,9 @@ See [VALIDATION_REQUIRED.md](VALIDATION_REQUIRED.md) for complete requirements, 
 
 ### Live Streaming
 - **RTMP Server** - Professional RTMP ingestion compatible with OBS, Streamlabs, and other streaming software
-- **Real-time Chat** - WebSocket-based chat supporting 10,000+ concurrent connections with moderation
-- **Stream Scheduling** - Advanced scheduling system with waiting rooms and automatic notifications
+- **Real-time Chat** - WebSocket-based chat supporting 10,000+ concurrent connections with role-based moderation
+- **Stream Scheduling** - Advanced scheduling system with waiting rooms, automated status transitions, and subscriber notifications
+- **Stream Analytics** - Real-time metrics with 30-second intervals, session tracking, peak viewer counts, and engagement rates
 - **VOD Conversion** - Automatic conversion of live streams to on-demand videos with IPFS support
 
 ### P2P Distribution
@@ -145,7 +146,7 @@ make lint           # Run linters
   - [Authentication & 2FA](api/openapi_auth_2fa.yaml) - Two-factor authentication (TOTP + backup codes)
   - [Uploads & Encoding](api/openapi_uploads.yaml) - Chunked uploads, resume, encoding status
   - [Analytics & Views](api/openapi_analytics.yaml) - View tracking, analytics, trending
-  - [Live Streaming](api/openapi_livestreaming.yaml) - RTMP ingest, HLS delivery
+  - [Live Streaming](api/openapi_livestreaming.yaml) - RTMP ingest, HLS delivery, scheduling, analytics
   - [Video Imports](api/openapi_imports.yaml) - External URL imports
   - [Comments](api/openapi_comments.yaml), [Channels](api/openapi_channels.yaml), [Captions](api/openapi_captions.yaml)
   - [Ratings & Playlists](api/openapi_ratings_playlists.yaml), [Notifications](docs/openapi_notifications.yaml)
@@ -225,7 +226,7 @@ make lint           # Run linters
 | **Security & Auth** | 90% | ⚠️ Action Required | 2FA, E2EE, OAuth2 complete; credential rotation pending |
 | **Federation** | 93% | ✅ Ready | ActivityPub 100%, ATProto 75% (BETA) |
 | **P2P Distribution** | 92% | ✅ Proven | IPFS/WebTorrent operational, HLS streaming experimental |
-| **Live Streaming** | 95% | ✅ Complete | RTMP, HLS, chat, scheduling, VOD conversion |
+| **Live Streaming** | 100% | ✅ Complete | RTMP, HLS, chat, scheduling, analytics, VOD conversion |
 | **Video Import** | 100% | ✅ Complete | 1000+ platforms via yt-dlp |
 | **Analytics** | 96% | ✅ Complete | Video analytics, retention curves, channel stats |
 | **Plugin System** | 94% | ✅ Complete | Hook architecture, security, marketplace |
@@ -261,7 +262,7 @@ make lint           # Run linters
 | **Test Files** | 179 | 38% test-to-code ratio |
 | **Lines of Code** | 151,000+ | ~75K source + ~76K test code |
 | **Database Migrations** | 61 | Goose SQL migrations |
-| **API Endpoints** | 100+ | RESTful + WebSocket + Federation |
+| **API Endpoints** | 123+ | RESTful + WebSocket + Federation |
 | **Test Coverage** | 85%+ | Average across all packages |
 | **Security Tests** | 50+ | SSRF, virus scanning, auth, input validation |
 | **Automated Tests** | 750+ | All passing in CI |

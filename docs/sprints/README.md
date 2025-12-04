@@ -75,8 +75,8 @@ See [peertube_compatibility.md](./peertube_compatibility.md) for:
 
 ### Overall Statistics
 - **Total Sprints:** 14 (100% complete)
-- **Total Code:** ~42,886 lines (production + tests)
-- **Automated Tests:** 719+ passing
+- **Total Code:** ~151,000+ lines (75K production + 76K tests)
+- **Automated Tests:** 750+ passing
 - **Code Coverage:** >85%
 - **Development Time:** ~7 months (28 weeks)
 
