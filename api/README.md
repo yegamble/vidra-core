@@ -43,15 +43,17 @@ The API documentation is split into modular files by functional domain for bette
    - Fingerprint generation for view deduplication
    - **Coverage**: 6 endpoints
 
-5. **`openapi_livestreaming.yaml`** - Live Streaming ✅ **NEW**
+5. **`openapi_livestreaming.yaml`** - Live Streaming ✅ **COMPLETE**
    - Stream management (create, update, end, stats)
    - RTMP ingest configuration
    - HLS transcoding and delivery
    - Stream key rotation
+   - Stream scheduling with waiting rooms
    - Multi-quality variants (360p-1080p)
    - Master and variant playlists
    - Segment delivery
-   - **Coverage**: 12 endpoints
+   - Real-time analytics collection
+   - **Coverage**: 25 endpoints (12 streaming + 6 scheduling + 7 analytics)
 
 6. **`openapi_imports.yaml`** - Video Imports ✅ **NEW**
    - Import from external URLs
@@ -99,11 +101,14 @@ The API documentation is split into modular files by functional domain for bette
     - Notification statistics
     - Automatic triggers (new video, message, etc.)
 
-13. **`openapi_chat.yaml`** - WebSocket Chat ✅
-    - Live chat for streams
-    - Chat moderation
-    - User bans and timeouts
-    - Message history
+13. **`openapi_chat.yaml`** - WebSocket Chat ✅ **COMPLETE (Sprint 7)**
+    - Live chat for streams (10,000+ concurrent connections)
+    - Role-based moderation (owner/moderator permissions)
+    - User bans (temporary/permanent) and timeouts
+    - Message history with soft deletes
+    - Rate limiting (5 msg/10s users, 10 msg/10s moderators)
+    - Chat statistics and analytics
+    - **Coverage**: 10 endpoints
 
 14. **`openapi_federation.yaml`** - ActivityPub Federation ✅
     - Federation timeline
@@ -191,14 +196,14 @@ The API documentation is split into modular files by functional domain for bette
 | Videos (Core) | 12 | 12 | 100% ✅ |
 | **Uploads** | **10** | **10** | **100% ✅** |
 | **Analytics** | **6** | **6** | **100% ✅** |
-| **Live Streaming** | **12** | **12** | **100% ✅** |
+| **Live Streaming** | **25** | **25** | **100% ✅** (includes scheduling & analytics) |
 | **Imports** | **4** | **4** | **100% ✅** |
 | Comments | 7 | 7 | 100% ✅ |
 | Channels | 8 | 8 | 100% ✅ |
 | Captions | 5 | 5 | 100% ✅ |
 | Ratings & Playlists | 10 | 10 | 100% ✅ |
 | Notifications | 6 | 6 | 100% ✅ |
-| Chat | 8 | 8 | 100% ✅ |
+| Chat | 10 | 10 | 100% ✅ (Sprint 7) |
 | Moderation | 12 | 12 | 100% ✅ |
 | Federation | 4 | 1 | 25% ⚠️ |
 | Federation Hardening | 12 | 12 | 100% ✅ |
@@ -206,7 +211,7 @@ The API documentation is split into modular files by functional domain for bette
 | Redundancy | 6 | 6 | 100% ✅ |
 | User Profiles | 6 | 1 | 17% ⚠️ |
 | HLS Static | 1 | 0 | 0% ⚠️ |
-| **TOTAL** | **~155** | **~152** | **~98%** |
+| **TOTAL** | **~173** | **~170** | **~98%** |
 
 ---
 
@@ -364,6 +369,23 @@ Authorization: Bearer <jwt_access_token>
 ---
 
 ## Changelog
+
+### 2025-12-04 - Sprint 7 Complete: Enhanced Live Streaming Features
+
+**Updated:**
+- ✅ `openapi_livestreaming.yaml` - Added scheduling and analytics endpoints
+  - 6 scheduling endpoints (waiting rooms, scheduled streams, upcoming streams)
+  - 7 analytics endpoints (real-time metrics, session tracking, engagement)
+  - Total: 25 endpoints (12 streaming + 6 scheduling + 7 analytics)
+- ✅ `openapi_chat.yaml` - Updated with Sprint 7 enhancements
+  - 10 endpoints for WebSocket chat (up from 8)
+  - 10,000+ concurrent connection support
+  - Role-based moderation, bans, and rate limiting
+
+**Result:**
+- API coverage maintained at 98%+
+- All Sprint 7 features (chat, scheduling, analytics) fully documented
+- Total endpoints increased from ~155 to ~173
 
 ### 2025-01-06 - Two-Factor Authentication Documentation
 
