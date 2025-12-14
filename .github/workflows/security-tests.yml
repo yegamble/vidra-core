@@ -73,6 +73,14 @@ jobs:
       - name: Install security tools (cached)
         uses: ./.github/actions/install-security-tools
 
+      - name: Install jq for report parsing
+        if: matrix.category == 'static-analysis'
+        run: |
+          if ! command -v jq &> /dev/null; then
+            sudo apt-get update -qq
+            sudo apt-get install -y jq
+          fi
+
       # SSRF Protection Tests
       - name: Run SSRF Protection Unit Tests
         if: matrix.category == 'ssrf-protection'
@@ -180,8 +188,54 @@ jobs:
       - name: Run gosec security scanner
         if: matrix.category == 'static-analysis'
         run: |
-          gosec -fmt=json -out=gosec-report.json ./...
-        continue-on-error: true
+          set +e  # Don't exit on gosec failure
+
+          # Gosec exclusions (see .gosec.yaml and .golangci.yml for rationale):
+          # G101: Hardcoded credentials - handled by secret scanning
+          # G104: Unchecked errors - handled by errcheck linter
+          # G115: Integer overflow - often false positives
+          GOSEC_EXCLUDES="-exclude=G101,G104,G115"
+          GOSEC_EXCLUDE_DIRS="-exclude-dir=testdata -exclude-dir=tests/e2e/fixtures -exclude-dir=vendor -exclude-dir=internal/generated"
+
+          # Generate both SARIF (for GitHub Security) and JSON (for analysis)
+          gosec $GOSEC_EXCLUDES $GOSEC_EXCLUDE_DIRS -fmt sarif -out gosec-results.sarif -severity medium ./...
+          GOSEC_SARIF_EXIT=$?
+
+          gosec $GOSEC_EXCLUDES $GOSEC_EXCLUDE_DIRS -fmt json -out gosec-report.json -severity medium ./...
+          GOSEC_JSON_EXIT=$?
+
+          # Generate summary for GitHub Actions
+          echo "## Gosec Security Scan Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [ -f gosec-report.json ]; then
+            ISSUE_COUNT=$(jq '[.Issues[]] | length' gosec-report.json 2>/dev/null || echo "0")
+            HIGH_COUNT=$(jq '[.Issues[] | select(.severity == "HIGH")] | length' gosec-report.json 2>/dev/null || echo "0")
+            MEDIUM_COUNT=$(jq '[.Issues[] | select(.severity == "MEDIUM")] | length' gosec-report.json 2>/dev/null || echo "0")
+
+            echo "- Total Issues: $ISSUE_COUNT" >> $GITHUB_STEP_SUMMARY
+            echo "- High Severity: $HIGH_COUNT" >> $GITHUB_STEP_SUMMARY
+            echo "- Medium Severity: $MEDIUM_COUNT" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+
+            if [ "$ISSUE_COUNT" -gt 0 ]; then
+              echo "⚠️ Security issues found. Review the Security tab for details." >> $GITHUB_STEP_SUMMARY
+            else
+              echo "✅ No security issues detected." >> $GITHUB_STEP_SUMMARY
+            fi
+          else
+            echo "⚠️ Gosec report not generated" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          # Don't fail the workflow - findings are informational
+          exit 0
+
+      - name: Upload SARIF to GitHub Security
+        if: matrix.category == 'static-analysis' && always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: gosec-results.sarif
+          category: gosec
 
       - name: Run staticcheck
         if: matrix.category == 'static-analysis'
@@ -228,12 +282,14 @@ jobs:
             social-coverage.out
           retention-days: 30
 
-      - name: Upload gosec report
+      - name: Upload gosec reports
         if: matrix.category == 'static-analysis' && always()
         uses: actions/upload-artifact@v4
         with:
           name: gosec-security-report
-          path: gosec-report.json
+          path: |
+            gosec-report.json
+            gosec-results.sarif
           retention-days: 90
 
   security-tests-race:
