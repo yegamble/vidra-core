@@ -57,7 +57,7 @@ jobs:
 
       - name: Restore module cache
         id: cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         with:
           path: |
             ~/go/pkg/mod
@@ -112,7 +112,7 @@ jobs:
 
       - name: Restore module cache
         id: cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         with:
           path: |
             ~/go/pkg/mod
@@ -191,7 +191,7 @@ jobs:
 
       - name: Restore module cache
         id: cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         with:
           path: |
             ~/go/pkg/mod
@@ -280,7 +280,7 @@ jobs:
 
       - name: Restore module cache
         id: cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         with:
           path: |
             ~/go/pkg/mod
@@ -348,7 +348,7 @@ jobs:
 
       - name: Restore module cache
         id: cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         with:
           path: |
             ~/go/pkg/mod
@@ -404,7 +404,7 @@ jobs:
 
       - name: Restore module cache
         id: cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         with:
           path: |
             ~/go/pkg/mod
