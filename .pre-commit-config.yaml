@@ -70,13 +70,26 @@ repos:
   - repo: local
     hooks:
       - id: gosec
-        name: Go Security Check
-        entry: bash -c 'if command -v gosec &> /dev/null; then gosec -fmt sarif -out gosec-results.sarif ./... 2>/dev/null; fi || true'
+        name: Go Security Check (High Severity)
+        # Run gosec with consistent settings matching .golangci.yml and CI workflow
+        # Only fail on HIGH severity issues during pre-commit to avoid blocking development
+        # Medium+ issues are caught in CI and reported to GitHub Security tab
+        entry: bash -c 'if ! command -v gosec &> /dev/null; then echo "gosec not installed, skipping"; exit 0; fi; gosec -exclude=G101,G104,G115 -exclude-dir=vendor -exclude-dir=internal/generated -exclude-dir=internal/testutil -exclude-dir=testdata -exclude-dir=tests -severity high -confidence medium -fmt text ./... || { echo "High severity security issues found!"; exit 1; }'
         language: system
         files: \.go$
         pass_filenames: false
+        verbose: true
 
-  # SQL/Database checks
+      - id: gosec-sarif
+        name: Go Security Report (SARIF)
+        # Generate SARIF report for optional review, does not block commit
+        entry: bash -c 'if command -v gosec &> /dev/null; then gosec -exclude=G101,G104,G115 -exclude-dir=vendor -exclude-dir=internal/generated -exclude-dir=internal/testutil -exclude-dir=testdata -exclude-dir=tests -severity medium -fmt sarif -out gosec-results.sarif ./... 2>/dev/null || true; fi'
+        language: system
+        files: \.go$
+        pass_filenames: false
+        stages: [manual]
+
+      # SQL/Database checks
       - id: sql-format-check
         name: SQL Format Check
         entry: bash -c 'for f in migrations/*.sql; do if [ -f "$f" ]; then sql-formatter --language postgresql --verify "$f" 2>/dev/null || true; fi; done'

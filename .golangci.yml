@@ -4,6 +4,15 @@ run:
   tests: false
   timeout: 10m
   allow-parallel-runners: true
+  # Skip generated and vendor directories
+  skip-dirs:
+    - vendor
+    - internal/generated
+    - testdata
+  skip-files:
+    - ".*\\.pb\\.go$"
+    - ".*\\.pb\\.gw\\.go$"
+    - ".*_gen\\.go$"
 
 linters:
   enable:
@@ -18,7 +27,84 @@ linters:
     - misspell
     - unconvert
     - whitespace
+    - gosec
+
+linters-settings:
+  gosec:
+    # Gosec security scanner configuration
+    # See: https://github.com/securego/gosec#available-rules
+    #
+    # Severity levels: LOW, MEDIUM, HIGH
+    # Confidence levels: LOW, MEDIUM, HIGH
+    severity: medium
+    confidence: medium
+    excludes:
+      # G101: Hardcoded credentials - excluded, handled by secret scanning in CI
+      # We use environment variables for all secrets (see .env.example)
+      - G101
+      # G104: Audit errors not checked - too noisy, errcheck handles this better
+      - G104
+      # G115: Integer overflow conversion - often false positives in Go 1.22+
+      - G115
+    config:
+      # G306: Poor file permissions (default 0600 is enforced where needed)
+      G306:
+        mode: "0644"
+      # G301: Poor directory permissions
+      G301:
+        mode: "0755"
+  gocyclo:
+    # Maximum cyclomatic complexity before flagging
+    min-complexity: 15
+  dupl:
+    # Tokens count to trigger duplication issue
+    threshold: 150
 
 issues:
   max-issues-per-linter: 0
   max-same-issues: 0
+  # Exclude test files from certain linters
+  exclude-dirs:
+    - vendor
+    - internal/generated
+    - testdata
+  # Exclude specific patterns
+  exclude-rules:
+    # Exclude G401 (weak crypto) in torrent package - SHA1 is required by BitTorrent protocol
+    - path: internal/torrent/
+      linters:
+        - gosec
+      text: "G401"
+    # Exclude G107 (SSRF) in import package - URLs are validated by security layer
+    - path: internal/usecase/import/
+      linters:
+        - gosec
+      text: "G107"
+    # Exclude G107 in redundancy package - federated instance discovery requires variable URLs
+    - path: internal/usecase/redundancy/
+      linters:
+        - gosec
+      text: "G107"
+    # Exclude G107 in activitypub package - federation requires external HTTP requests
+    - path: internal/activitypub/
+      linters:
+        - gosec
+      text: "G107"
+    - path: internal/usecase/activitypub/
+      linters:
+        - gosec
+      text: "G107"
+    # Exclude G107 in importer package - yt-dlp import requires external URLs
+    - path: internal/importer/
+      linters:
+        - gosec
+      text: "G107"
+    # Exclude G304 (file inclusion) warnings in storage package - paths are validated
+    - path: internal/storage/
+      linters:
+        - gosec
+      text: "G304"
+    # Exclude issues in test helper utilities
+    - path: internal/testutil/
+      linters:
+        - gosec

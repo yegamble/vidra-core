@@ -112,6 +112,39 @@ go test ./internal/security/... -run 'SSRF|URLValidator'
 go test ./internal/security/... -run VirusScanner
 ```
 
+## Gosec Static Analysis
+
+Gosec is configured in three places (keep in sync):
+- `.golangci.yml` - Primary config for `make lint`
+- `.github/workflows/security-tests.yml` - CI workflow with SARIF upload
+- `.pre-commit-config.yaml` - Pre-commit hooks
+
+### Excluded Rules
+
+| Rule | Reason | Alternative |
+|------|--------|-------------|
+| G101 | Hardcoded credentials | Secret scanning in CI |
+| G104 | Unhandled errors | errcheck linter |
+| G115 | Integer overflow | False positives in Go 1.22+ |
+
+### Path-Specific Exclusions
+
+| Path | Rule | Reason |
+|------|------|--------|
+| `internal/torrent/` | G401 | SHA1 required by BitTorrent protocol |
+| `internal/usecase/import/` | G107 | URLs validated by SSRF protection |
+| `internal/activitypub/` | G107 | Federation requires external HTTP |
+| `internal/importer/` | G107 | yt-dlp import requires external URLs |
+| `internal/storage/` | G304 | Paths validated by storage layer |
+
+### Inline Suppression
+
+Use `#nosec` with justification comment:
+```go
+// #nosec G304 - path validated by validateFilePath()
+file, err := os.Open(path)
+```
+
 ## Security Review Checklist
 
 When modifying this module:
