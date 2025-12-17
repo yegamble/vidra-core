@@ -369,7 +369,7 @@ jobs:
 
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: virus-scanner-test-results
           path: |
@@ -447,7 +447,7 @@ jobs:
           echo "Performance benchmarks PASSED"
 
       - name: Upload benchmark results
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: performance-benchmarks
           path: benchmark-results.txt
@@ -538,7 +538,7 @@ jobs:
 
       - name: Upload security scan results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: security-audit-results
           path: |

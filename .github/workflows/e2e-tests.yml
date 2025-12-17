@@ -148,7 +148,7 @@ jobs:
 
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: e2e-test-results
           path: tests/e2e/e2e_test_output.log
@@ -170,7 +170,7 @@ jobs:
 
       - name: Upload service logs
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: service-logs
           path: |
