@@ -43,7 +43,7 @@ jobs:
         uses: ./.github/actions/docker-cleanup
 
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up Go (cached)
         uses: ./.github/actions/setup-go-cached
@@ -210,7 +210,7 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Install GCC for race detector
         uses: ./.github/actions/install-gcc

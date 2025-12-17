@@ -56,7 +56,7 @@ jobs:
       target_color: ${{ steps.detect.outputs.target_color }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Validate image tag format
         run: |
@@ -113,7 +113,7 @@ jobs:
       url: https://staging.athena.example.com
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Configure kubectl
         run: |
@@ -154,7 +154,7 @@ jobs:
       name: production-migration
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Configure kubectl
         run: |
@@ -233,7 +233,7 @@ jobs:
       name: production-${{ needs.validate-input.outputs.target_color }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Configure kubectl
         run: |
@@ -292,7 +292,7 @@ jobs:
     needs: [validate-input, deploy-target-environment]
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Configure kubectl
         run: |
@@ -338,7 +338,7 @@ jobs:
       name: production-canary
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Configure kubectl
         run: |
@@ -381,7 +381,7 @@ jobs:
       name: production-full-rollout
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Configure kubectl
         run: |
