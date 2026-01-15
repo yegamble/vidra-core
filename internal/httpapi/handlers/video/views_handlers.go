@@ -183,8 +183,10 @@ func (h *ViewsHandler) GetUserEngagement(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	if authUserID.(string) != userID {
-		// TODO: Add admin role check here if needed
+	authUserRole := r.Context().Value(middleware.UserRoleKey)
+	isAdmin := authUserRole != nil && authUserRole.(string) == "admin"
+
+	if authUserID.(string) != userID && !isAdmin {
 		shared.WriteError(w, http.StatusForbidden, domain.NewDomainError("FORBIDDEN", "Cannot access other user's engagement data"))
 		return
 	}
