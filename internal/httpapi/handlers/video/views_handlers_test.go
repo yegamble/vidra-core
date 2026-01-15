@@ -21,8 +21,85 @@ import (
 	"athena/internal/middleware"
 	"athena/internal/repository"
 	"athena/internal/testutil"
-	"athena/internal/usecase"
+	ucviews "athena/internal/usecase/views"
 )
+
+func TestViewsHandler_GetUserEngagement(t *testing.T) {
+	testDB := testutil.SetupTestDB(t)
+	viewsRepo := repository.NewViewsRepository(testDB.DB)
+	viewsService := ucviews.NewService(viewsRepo, nil) // videoRepo not needed for this test
+	handler := NewViewsHandler(viewsService)
+
+	// Create test data
+	user := createTestViewsUser(t, testDB)
+	adminUser := createTestAdminUser(t, testDB)
+
+	// Create some test views for the user
+	video := createTestViewsVideo(t, testDB, user.ID)
+	for i := 0; i < 3; i++ {
+		createTestViewsUserView(t, testDB, user.ID, video.ID, i)
+	}
+
+	t.Run("get own engagement data", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/users/%s/engagement", user.ID), nil)
+		ctx := context.WithValue(req.Context(), middleware.UserIDKey, user.ID)
+		req = req.WithContext(ctx)
+
+		rr := httptest.NewRecorder()
+		router := chi.NewRouter()
+		router.Get("/api/v1/users/{userId}/engagement", handler.GetUserEngagement)
+		router.ServeHTTP(rr, req)
+
+		assert.Equal(t, http.StatusOK, rr.Code)
+		var response map[string]interface{}
+		err := json.Unmarshal(rr.Body.Bytes(), &response)
+		require.NoError(t, err)
+		assert.Equal(t, user.ID, response["user_id"])
+	})
+
+	t.Run("admin can get other user's engagement data", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/users/%s/engagement", user.ID), nil)
+		ctx := context.WithValue(req.Context(), middleware.UserIDKey, adminUser.ID)
+		ctx = context.WithValue(ctx, middleware.UserRoleKey, "admin")
+		req = req.WithContext(ctx)
+
+		rr := httptest.NewRecorder()
+		router := chi.NewRouter()
+		router.Get("/api/v1/users/{userId}/engagement", handler.GetUserEngagement)
+		router.ServeHTTP(rr, req)
+
+		assert.Equal(t, http.StatusOK, rr.Code)
+		var response map[string]interface{}
+		err := json.Unmarshal(rr.Body.Bytes(), &response)
+		require.NoError(t, err)
+		assert.Equal(t, user.ID, response["user_id"])
+	})
+
+	t.Run("non-admin cannot get other user's engagement data", func(t *testing.T) {
+		otherUser := createTestViewsUser(t, testDB)
+		req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/users/%s/engagement", user.ID), nil)
+		ctx := context.WithValue(req.Context(), middleware.UserIDKey, otherUser.ID)
+		req = req.WithContext(ctx)
+
+		rr := httptest.NewRecorder()
+		router := chi.NewRouter()
+		router.Get("/api/v1/users/{userId}/engagement", handler.GetUserEngagement)
+		router.ServeHTTP(rr, req)
+
+		assert.Equal(t, http.StatusForbidden, rr.Code)
+	})
+
+	t.Run("unauthenticated user cannot get engagement data", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/users/%s/engagement", user.ID), nil)
+
+		rr := httptest.NewRecorder()
+		router := chi.NewRouter()
+		router.Get("/api/v1/users/{userId}/engagement", handler.GetUserEngagement)
+		router.ServeHTTP(rr, req)
+
+		assert.Equal(t, http.StatusUnauthorized, rr.Code)
+	})
+}
 
 func TestViewsHandler_TrackView(t *testing.T) {
 	testDB := testutil.SetupTestDB(t)
@@ -727,14 +804,22 @@ func TestViewsHandler_BulkViewTracking(t *testing.T) {
 // Helper functions
 
 func createTestViewsUser(t *testing.T, testDB *testutil.TestDB) *domain.User {
+	return createTestUserWithRole(t, testDB, domain.RoleUser)
+}
+
+func createTestAdminUser(t *testing.T, testDB *testutil.TestDB) *domain.User {
+	return createTestUserWithRole(t, testDB, domain.RoleAdmin)
+}
+
+func createTestUserWithRole(t *testing.T, testDB *testutil.TestDB, role domain.UserRole) *domain.User {
 	t.Helper()
 
 	user := &domain.User{
 		ID:          uuid.New().String(),
-		Username:    "testuser_" + uuid.New().String()[:8],
-		Email:       "test_" + uuid.New().String()[:8] + "@example.com",
-		DisplayName: "Test User",
-		Role:        domain.RoleUser,
+		Username:    string(role) + "_" + uuid.New().String()[:8],
+		Email:       string(role) + "_" + uuid.New().String()[:8] + "@example.com",
+		DisplayName: "Test " + strings.ToTitle(string(role)),
+		Role:        role,
 		IsActive:    true,
 		CreatedAt:   time.Now(),
 		UpdatedAt:   time.Now(),
