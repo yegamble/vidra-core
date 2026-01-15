@@ -314,27 +314,32 @@ func (r *subscriptionRepository) ListSubscriptions(ctx context.Context, subscrib
 		return nil, 0, err
 	}
 
-	// Convert to user list for backward compatibility
-	userMap := make(map[string]*domain.User)
+	// Collect all user IDs from the channels
+	userIDs := make([]uuid.UUID, 0)
 	for _, sub := range response.Data {
 		if sub.Channel != nil {
-			// Get the user who owns this channel
-			var user domain.User
-			userQuery := `
-				SELECT id, username, email, display_name, bio, bitcoin_wallet,
-				       role, is_active, created_at, updated_at
-				FROM users WHERE id = $1`
-
-			if err := r.db.GetContext(ctx, &user, userQuery, sub.Channel.AccountID.String()); err == nil {
-				userMap[user.ID] = &user
-			}
+			userIDs = append(userIDs, sub.Channel.AccountID)
 		}
 	}
 
-	// Convert map to slice
-	users := make([]*domain.User, 0, len(userMap))
-	for _, user := range userMap {
-		users = append(users, user)
+	// If there are no user IDs, return an empty list
+	if len(userIDs) == 0 {
+		return []*domain.User{}, int64(response.Total), nil
+	}
+
+	// Fetch all users in a single query
+	var users []*domain.User
+	query, args, err := sqlx.In(`
+		SELECT id, username, email, display_name, bio, bitcoin_wallet,
+			   role, is_active, created_at, updated_at
+		FROM users WHERE id IN (?)`, userIDs)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to create query: %w", err)
+	}
+
+	query = r.db.Rebind(query)
+	if err := r.db.SelectContext(ctx, &users, query, args...); err != nil {
+		return nil, 0, fmt.Errorf("failed to fetch users: %w", err)
 	}
 
 	return users, int64(response.Total), nil
