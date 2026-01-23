@@ -201,130 +201,158 @@ func (c *AnalyticsCollector) collectAllStreams(ctx context.Context) error {
 		return fmt.Errorf("failed to get active streams: %w", err)
 	}
 
-	for _, stream := range streams {
-		if err := c.collectStreamAnalytics(ctx, stream.ID); err != nil {
-			log.Printf("Error collecting analytics for stream %s: %v", stream.ID, err)
-		}
+	if len(streams) == 0 {
+		return nil
 	}
 
-	return nil
-}
-
-// collectStreamAnalytics collects analytics for a single stream
-func (c *AnalyticsCollector) collectStreamAnalytics(ctx context.Context, streamID uuid.UUID) error {
-	// Initialize metrics for new streams
-	c.mu.Lock()
-	metrics, exists := c.activeStreams[streamID]
-	if !exists {
-		metrics = &streamMetrics{
-			StreamID:       streamID,
-			UniqueViewers:  make(map[string]bool),
-			UniqueCharters: make(map[string]bool),
-		}
-		c.activeStreams[streamID] = metrics
+	streamIDs := make([]uuid.UUID, len(streams))
+	for i, s := range streams {
+		streamIDs[i] = s.ID
 	}
-	c.mu.Unlock()
 
-	// Get current viewer count from active sessions
-	viewerCount, err := c.analyticsRepo.GetCurrentViewerCount(ctx, streamID)
+	// Batch fetch viewer counts
+	viewerCounts, err := c.analyticsRepo.GetCurrentViewerCounts(ctx, streamIDs)
 	if err != nil {
-		return fmt.Errorf("failed to get viewer count: %w", err)
+		log.Printf("Error batch fetching viewer counts: %v", err)
+		// Continue with partial data or empty
+		viewerCounts = make(map[uuid.UUID]int)
 	}
 
-	// Update peak viewer count
-	if viewerCount > metrics.PeakViewerCount {
-		metrics.PeakViewerCount = viewerCount
-	}
-
-	// Get active viewer sessions for unique viewer tracking
-	sessions, err := c.analyticsRepo.GetActiveViewers(ctx, streamID)
+	// Batch fetch active viewers
+	activeViewersMap, err := c.analyticsRepo.GetActiveViewersForStreams(ctx, streamIDs)
 	if err != nil {
-		return fmt.Errorf("failed to get active viewers: %w", err)
+		log.Printf("Error batch fetching active viewers: %v", err)
+		activeViewersMap = make(map[uuid.UUID][]*domain.AnalyticsViewerSession)
 	}
 
-	for _, session := range sessions {
-		metrics.UniqueViewers[session.SessionID] = true
+	// Batch fetch redis metrics using pipeline
+	type redisMetrics struct {
+		bitrate    *redis.StringCmd
+		framerate  *redis.StringCmd
+		resolution *redis.StringCmd
 	}
+	redisCmds := make(map[uuid.UUID]*redisMetrics)
 
-	// Get chat statistics since last collection
-	var chatMessageCount, chatParticipantCount int
-	if c.chatRepo != nil {
-		// Get message count since last collection
-		messageCount, err := c.chatRepo.GetMessageCountSince(ctx, streamID, metrics.LastCollectedAt)
-		if err == nil {
-			chatMessageCount = messageCount
-			metrics.TotalMessages += messageCount
-		}
-
-		// Get unique chatters (this would need a new method in ChatRepository)
-		// For now, we'll use a simplified approach
-		chatParticipantCount = len(metrics.UniqueCharters)
-	}
-
-	// Get technical metrics from Redis (if available)
-	var bitrate *int
-	var framerate *float64
-	var resolution string
-
-	// Try to get technical metrics from Redis
 	if c.redis != nil {
-		bitrateKey := fmt.Sprintf("stream:%s:bitrate", streamID)
-		if val, err := c.redis.Get(ctx, bitrateKey).Result(); err == nil {
-			var br int
-			if _, err := fmt.Sscanf(val, "%d", &br); err == nil {
-				bitrate = &br
+		pipe := c.redis.Pipeline()
+		for _, id := range streamIDs {
+			cmds := &redisMetrics{}
+			cmds.bitrate = pipe.Get(ctx, fmt.Sprintf("stream:%s:bitrate", id))
+			cmds.framerate = pipe.Get(ctx, fmt.Sprintf("stream:%s:framerate", id))
+			cmds.resolution = pipe.Get(ctx, fmt.Sprintf("stream:%s:resolution", id))
+			redisCmds[id] = cmds
+		}
+		_, _ = pipe.Exec(ctx) // Best effort, ignore pipeline errors
+	}
+
+	var analyticsList []*domain.StreamAnalytics
+
+	for _, stream := range streams {
+		streamID := stream.ID
+
+		// Initialize metrics for new streams
+		c.mu.Lock()
+		metrics, exists := c.activeStreams[streamID]
+		if !exists {
+			metrics = &streamMetrics{
+				StreamID:       streamID,
+				UniqueViewers:  make(map[string]bool),
+				UniqueCharters: make(map[string]bool),
+			}
+			c.activeStreams[streamID] = metrics
+		}
+		c.mu.Unlock()
+
+		viewerCount := viewerCounts[streamID]
+
+		// Update peak viewer count
+		if viewerCount > metrics.PeakViewerCount {
+			metrics.PeakViewerCount = viewerCount
+		}
+
+		// Update unique viewers
+		if sessions, ok := activeViewersMap[streamID]; ok {
+			for _, session := range sessions {
+				metrics.UniqueViewers[session.SessionID] = true
 			}
 		}
 
-		framerateKey := fmt.Sprintf("stream:%s:framerate", streamID)
-		if val, err := c.redis.Get(ctx, framerateKey).Result(); err == nil {
-			var fr float64
-			if _, err := fmt.Sscanf(val, "%f", &fr); err == nil {
-				framerate = &fr
+		// Chat statistics (still per-stream for now)
+		var chatMessageCount, chatParticipantCount int
+		if c.chatRepo != nil {
+			messageCount, err := c.chatRepo.GetMessageCountSince(ctx, streamID, metrics.LastCollectedAt)
+			if err == nil {
+				chatMessageCount = messageCount
+				metrics.TotalMessages += messageCount
+			}
+			chatParticipantCount = len(metrics.UniqueCharters)
+		}
+
+		// Redis metrics processing
+		var bitrate *int
+		var framerate *float64
+		var resolution string
+
+		if cmds, ok := redisCmds[streamID]; ok {
+			if val, err := cmds.bitrate.Result(); err == nil {
+				var br int
+				if _, err := fmt.Sscanf(val, "%d", &br); err == nil {
+					bitrate = &br
+				}
+			}
+			if val, err := cmds.framerate.Result(); err == nil {
+				var fr float64
+				if _, err := fmt.Sscanf(val, "%f", &fr); err == nil {
+					framerate = &fr
+				}
+			}
+			if val, err := cmds.resolution.Result(); err == nil {
+				resolution = val
 			}
 		}
 
-		resolutionKey := fmt.Sprintf("stream:%s:resolution", streamID)
-		if val, err := c.redis.Get(ctx, resolutionKey).Result(); err == nil {
-			resolution = val
+		// Create analytics record
+		analytics := &domain.StreamAnalytics{
+			ID:                uuid.New(),
+			StreamID:          streamID,
+			CollectedAt:       time.Now(),
+			ViewerCount:       viewerCount,
+			PeakViewerCount:   metrics.PeakViewerCount,
+			UniqueViewers:     len(metrics.UniqueViewers),
+			ChatMessagesCount: chatMessageCount,
+			ChatParticipants:  chatParticipantCount,
+			Bitrate:           bitrate,
+			Framerate:         framerate,
+			Resolution:        resolution,
+			ViewerCountries:   json.RawMessage("{}"),
+			ViewerDevices:     json.RawMessage("{}"),
+			ViewerBrowsers:    json.RawMessage("{}"),
+			CreatedAt:         time.Now(),
+			UpdatedAt:         time.Now(),
+		}
+		analyticsList = append(analyticsList, analytics)
+
+		// Update last collected time
+		metrics.LastCollectedAt = time.Now()
+	}
+
+	// Batch insert analytics
+	if len(analyticsList) > 0 {
+		if err := c.analyticsRepo.BatchCreateAnalytics(ctx, analyticsList); err != nil {
+			log.Printf("Error batch creating analytics: %v", err)
 		}
 	}
 
-	// Create analytics record
-	analytics := &domain.StreamAnalytics{
-		ID:                uuid.New(),
-		StreamID:          streamID,
-		CollectedAt:       time.Now(),
-		ViewerCount:       viewerCount,
-		PeakViewerCount:   metrics.PeakViewerCount,
-		UniqueViewers:     len(metrics.UniqueViewers),
-		ChatMessagesCount: chatMessageCount,
-		ChatParticipants:  chatParticipantCount,
-		Bitrate:           bitrate,
-		Framerate:         framerate,
-		Resolution:        resolution,
-		ViewerCountries:   json.RawMessage("{}"),
-		ViewerDevices:     json.RawMessage("{}"),
-		ViewerBrowsers:    json.RawMessage("{}"),
-		CreatedAt:         time.Now(),
-		UpdatedAt:         time.Now(),
+	// Batch update stream summaries
+	if len(streamIDs) > 0 {
+		if err := c.analyticsRepo.BatchUpdateStreamSummaries(ctx, streamIDs); err != nil {
+			log.Printf("Error batch updating stream summaries: %v", err)
+		}
 	}
-
-	// Store analytics data
-	if err := c.analyticsRepo.CreateAnalytics(ctx, analytics); err != nil {
-		return fmt.Errorf("failed to store analytics: %w", err)
-	}
-
-	// Update stream summary
-	if err := c.analyticsRepo.UpdateStreamSummary(ctx, streamID); err != nil {
-		log.Printf("Failed to update stream summary for %s: %v", streamID, err)
-	}
-
-	// Update last collected time
-	metrics.LastCollectedAt = time.Now()
 
 	return nil
 }
+
 
 // TrackViewerJoin tracks when a viewer joins a stream
 func (c *AnalyticsCollector) TrackViewerJoin(ctx context.Context, streamID uuid.UUID, userID *uuid.UUID, sessionID, ipAddress, userAgent string) error {

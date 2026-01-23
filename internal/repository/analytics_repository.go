@@ -36,6 +36,12 @@ type AnalyticsRepository interface {
 	// Utility
 	CleanupOldAnalytics(ctx context.Context, retentionDays int) error
 	GetCurrentViewerCount(ctx context.Context, streamID uuid.UUID) (int, error)
+
+	// Batch operations
+	GetActiveViewersForStreams(ctx context.Context, streamIDs []uuid.UUID) (map[uuid.UUID][]*domain.AnalyticsViewerSession, error)
+	GetCurrentViewerCounts(ctx context.Context, streamIDs []uuid.UUID) (map[uuid.UUID]int, error)
+	BatchCreateAnalytics(ctx context.Context, analytics []*domain.StreamAnalytics) error
+	BatchUpdateStreamSummaries(ctx context.Context, streamIDs []uuid.UUID) error
 }
 
 // analyticsRepository implements AnalyticsRepository
@@ -352,4 +358,126 @@ func (r *analyticsRepository) GetCurrentViewerCount(ctx context.Context, streamI
 	}
 
 	return count, nil
+}
+
+// GetActiveViewersForStreams retrieves active viewer sessions for multiple streams
+func (r *analyticsRepository) GetActiveViewersForStreams(ctx context.Context, streamIDs []uuid.UUID) (map[uuid.UUID][]*domain.AnalyticsViewerSession, error) {
+	if len(streamIDs) == 0 {
+		return make(map[uuid.UUID][]*domain.AnalyticsViewerSession), nil
+	}
+
+	query, args, err := sqlx.In(`
+		SELECT * FROM viewer_sessions
+		WHERE stream_id IN (?) AND left_at IS NULL
+		ORDER BY joined_at DESC`, streamIDs)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build query: %w", err)
+	}
+
+	query = r.db.Rebind(query)
+	var sessions []*domain.AnalyticsViewerSession
+	err = r.db.SelectContext(ctx, &sessions, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get active viewers for streams: %w", err)
+	}
+
+	result := make(map[uuid.UUID][]*domain.AnalyticsViewerSession)
+	for _, session := range sessions {
+		result[session.StreamID] = append(result[session.StreamID], session)
+	}
+
+	return result, nil
+}
+
+// GetCurrentViewerCounts returns the current number of active viewers for multiple streams
+func (r *analyticsRepository) GetCurrentViewerCounts(ctx context.Context, streamIDs []uuid.UUID) (map[uuid.UUID]int, error) {
+	if len(streamIDs) == 0 {
+		return make(map[uuid.UUID]int), nil
+	}
+
+	query, args, err := sqlx.In(`
+		SELECT stream_id, COUNT(*) as count
+		FROM viewer_sessions
+		WHERE stream_id IN (?) AND left_at IS NULL
+		GROUP BY stream_id`, streamIDs)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build query: %w", err)
+	}
+
+	query = r.db.Rebind(query)
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get viewer counts: %w", err)
+	}
+	defer rows.Close()
+
+	result := make(map[uuid.UUID]int)
+	for rows.Next() {
+		var streamID uuid.UUID
+		var count int
+		if err := rows.Scan(&streamID, &count); err != nil {
+			return nil, fmt.Errorf("failed to scan row: %w", err)
+		}
+		result[streamID] = count
+	}
+
+	return result, nil
+}
+
+// BatchCreateAnalytics creates multiple analytics records
+func (r *analyticsRepository) BatchCreateAnalytics(ctx context.Context, analytics []*domain.StreamAnalytics) error {
+	if len(analytics) == 0 {
+		return nil
+	}
+
+	query := `
+		INSERT INTO stream_analytics (
+			id, stream_id, collected_at,
+			viewer_count, peak_viewer_count, unique_viewers, average_watch_time,
+			chat_messages_count, chat_participants, likes_count, shares_count,
+			bitrate, framerate, resolution, buffering_ratio, avg_latency,
+			viewer_countries, viewer_devices, viewer_browsers,
+			created_at, updated_at
+		) VALUES (
+			:id, :stream_id, :collected_at,
+			:viewer_count, :peak_viewer_count, :unique_viewers, :average_watch_time,
+			:chat_messages_count, :chat_participants, :likes_count, :shares_count,
+			:bitrate, :framerate, :resolution, :buffering_ratio, :avg_latency,
+			:viewer_countries, :viewer_devices, :viewer_browsers,
+			:created_at, :updated_at
+		)`
+
+	_, err := r.db.NamedExecContext(ctx, query, analytics)
+	if err != nil {
+		return fmt.Errorf("failed to batch create analytics: %w", err)
+	}
+
+	return nil
+}
+
+// BatchUpdateStreamSummaries updates summaries for multiple streams
+func (r *analyticsRepository) BatchUpdateStreamSummaries(ctx context.Context, streamIDs []uuid.UUID) error {
+	if len(streamIDs) == 0 {
+		return nil
+	}
+
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	stmt, err := tx.PrepareContext(ctx, `SELECT update_stream_stats_summary($1)`)
+	if err != nil {
+		return fmt.Errorf("failed to prepare statement: %w", err)
+	}
+	defer stmt.Close()
+
+	for _, id := range streamIDs {
+		if _, err := stmt.ExecContext(ctx, id); err != nil {
+			return fmt.Errorf("failed to update summary for stream %s: %w", id, err)
+		}
+	}
+
+	return tx.Commit()
 }
