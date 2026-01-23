@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"athena/internal/domain"
+	"athena/internal/middleware"
 	"athena/internal/usecase/analytics"
 
 	"github.com/go-chi/chi/v5"
@@ -344,9 +345,11 @@ func (h *VideoAnalyticsHandler) GetChannelAnalytics(w http.ResponseWriter, r *ht
 
 // getUserIDFromContext extracts the user ID from the request context (if authenticated)
 func getUserIDFromContext(ctx context.Context) *uuid.UUID {
-	// TODO: Implement actual user context extraction
-	// This would typically come from an authentication middleware
-	return nil
+	userID, ok := middleware.GetUserIDFromContext(ctx)
+	if !ok {
+		return nil
+	}
+	return &userID
 }
 
 // parseDateRange parses start and end dates from query parameters
