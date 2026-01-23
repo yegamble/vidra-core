@@ -68,6 +68,21 @@ func (m *MockActivityPubService) GetFollowing(ctx context.Context, username stri
 	return args.Get(0).(*domain.OrderedCollectionPage), args.Error(1)
 }
 
+func (m *MockActivityPubService) GetOutboxCount(ctx context.Context, username string) (int, error) {
+	args := m.Called(ctx, username)
+	return args.Int(0), args.Error(1)
+}
+
+func (m *MockActivityPubService) GetFollowersCount(ctx context.Context, username string) (int, error) {
+	args := m.Called(ctx, username)
+	return args.Int(0), args.Error(1)
+}
+
+func (m *MockActivityPubService) GetFollowingCount(ctx context.Context, username string) (int, error) {
+	args := m.Called(ctx, username)
+	return args.Int(0), args.Error(1)
+}
+
 func (m *MockActivityPubService) DeliverActivity(ctx context.Context, actorID, inboxURL string, activity interface{}) error {
 	args := m.Called(ctx, actorID, inboxURL, activity)
 	return args.Error(0)
@@ -282,6 +297,8 @@ func TestGetOutboxIntegration(t *testing.T) {
 
 		w := httptest.NewRecorder()
 
+		mockService.On("GetOutboxCount", req.Context(), "alice").Return(5, nil).Once()
+
 		handlers.GetOutbox(w, req)
 
 		assert.Equal(t, http.StatusOK, w.Code)
@@ -293,6 +310,9 @@ func TestGetOutboxIntegration(t *testing.T) {
 
 		assert.Equal(t, domain.ObjectTypeOrderedCollection, collection.Type)
 		assert.Equal(t, "https://video.example/users/alice/outbox", collection.ID)
+		assert.Equal(t, 5, collection.TotalItems)
+
+		mockService.AssertExpectations(t)
 	})
 
 	t.Run("Get outbox page (paginated)", func(t *testing.T) {

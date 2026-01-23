@@ -178,6 +178,7 @@ func (h *ActivityPubHandlers) getOrderedCollectionHandler(
 	w http.ResponseWriter, r *http.Request,
 	collectionType string,
 	fetchPage func(ctx context.Context, username string, page, limit int) (*domain.OrderedCollectionPage, error),
+	fetchCount func(ctx context.Context, username string) (int, error),
 ) {
 	username := chi.URLParam(r, "username")
 	if username == "" {
@@ -191,11 +192,17 @@ func (h *ActivityPubHandlers) getOrderedCollectionHandler(
 		actorURL := fmt.Sprintf("%s/users/%s", h.cfg.PublicBaseURL, username)
 		collectionURL := actorURL + "/" + collectionType
 
+		count, err := fetchCount(r.Context(), username)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("failed to get %s count: %v", collectionType, err), http.StatusNotFound)
+			return
+		}
+
 		collection := domain.OrderedCollection{
 			Context:    domain.ActivityStreamsContext,
 			Type:       domain.ObjectTypeOrderedCollection,
 			ID:         collectionURL,
-			TotalItems: 0, // TODO: Get actual count
+			TotalItems: count,
 			First:      collectionURL + "?page=0",
 		}
 
@@ -220,7 +227,7 @@ func (h *ActivityPubHandlers) getOrderedCollectionHandler(
 
 // GetOutbox handles GET /users/:username/outbox
 func (h *ActivityPubHandlers) GetOutbox(w http.ResponseWriter, r *http.Request) {
-	h.getOrderedCollectionHandler(w, r, "outbox", h.service.GetOutbox)
+	h.getOrderedCollectionHandler(w, r, "outbox", h.service.GetOutbox, h.service.GetOutboxCount)
 }
 
 // GetInbox handles GET /users/:username/inbox
@@ -289,12 +296,12 @@ func (h *ActivityPubHandlers) PostSharedInbox(w http.ResponseWriter, r *http.Req
 
 // GetFollowers handles GET /users/:username/followers
 func (h *ActivityPubHandlers) GetFollowers(w http.ResponseWriter, r *http.Request) {
-	h.getOrderedCollectionHandler(w, r, "followers", h.service.GetFollowers)
+	h.getOrderedCollectionHandler(w, r, "followers", h.service.GetFollowers, h.service.GetFollowersCount)
 }
 
 // GetFollowing handles GET /users/:username/following
 func (h *ActivityPubHandlers) GetFollowing(w http.ResponseWriter, r *http.Request) {
-	h.getOrderedCollectionHandler(w, r, "following", h.service.GetFollowing)
+	h.getOrderedCollectionHandler(w, r, "following", h.service.GetFollowing, h.service.GetFollowingCount)
 }
 
 // HostMeta handles /.well-known/host-meta requests

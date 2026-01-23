@@ -21,4 +21,9 @@ type ActivityPubService interface {
 	GetOutbox(ctx context.Context, username string, page int, limit int) (*domain.OrderedCollectionPage, error)
 	GetFollowers(ctx context.Context, username string, page int, limit int) (*domain.OrderedCollectionPage, error)
 	GetFollowing(ctx context.Context, username string, page int, limit int) (*domain.OrderedCollectionPage, error)
+
+	// Collection counts
+	GetOutboxCount(ctx context.Context, username string) (int, error)
+	GetFollowersCount(ctx context.Context, username string) (int, error)
+	GetFollowingCount(ctx context.Context, username string) (int, error)
 }
