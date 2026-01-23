@@ -2,7 +2,7 @@
 
 ## Quick Reference
 
-**Stack**: Go (Chi router), PostgreSQL (SQLX), Redis, IPFS, FFmpeg, IOTA payments
+**Stack**: Go (Chi router), PostgreSQL (SQLX), Redis, IPFS, FFmpeg, IOTA payments (Phase 2)
 **Architecture**: Clean architecture with domain/usecase/repository layers
 
 ## Mandatory Validation
