@@ -51,7 +51,7 @@ See [VALIDATION_REQUIRED.md](VALIDATION_REQUIRED.md) for complete requirements, 
 
 ### Federation
 - **ActivityPub** - Full PeerTube-compatible federation with WebFinger, NodeInfo, and HTTP Signatures
-- **ATProto Integration** - Optional Bluesky integration for cross-platform content syndication
+- **ATProto Integration (BETA)** - Optional Bluesky integration for cross-platform content syndication
 - **Video Redundancy** - Cross-instance video replication with automatic sync and health monitoring
 
 ### Analytics & Monitoring

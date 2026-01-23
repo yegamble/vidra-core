@@ -443,6 +443,16 @@ postman-newman: ## Run Postman auth tests via Newman (server must be running)
 	  --reporter-junit-export /etc/newman/newman-results.xml
 
 # Spin up test stack, app, then run Newman end-to-end
+load-test: ## Run k6 load test (requires app running at localhost:8080)
+	@echo "Running k6 load test..."
+	@if ! docker ps | grep -q "athena"; then \
+		echo "Warning: Athena app container not detected. Ensure app is running on localhost:8080"; \
+	fi
+	docker run --rm -i --network host \
+		-v $$(pwd)/tests/loadtest:/src \
+		-e BASE_URL=http://localhost:8080 \
+		grafana/k6 run /src/k6-video-platform.js
+
 postman-e2e: ## Start test services + app and run Newman end-to-end
 	@echo "========================================="
 	@echo "Postman E2E Tests - Starting..."
