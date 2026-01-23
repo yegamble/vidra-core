@@ -801,6 +801,83 @@ func TestViewsHandler_BulkViewTracking(t *testing.T) {
 	assert.Equal(t, int64(1), analytics.UniqueViews)
 }
 
+func TestViewsHandler_GetViewHistory(t *testing.T) {
+	testDB := testutil.SetupTestDB(t)
+	viewsRepo := repository.NewViewsRepository(testDB.DB)
+	viewsService := ucviews.NewService(viewsRepo, nil) // videoRepo not needed
+	handler := NewViewsHandler(viewsService)
+
+	// Create test data
+	user1 := createTestViewsUser(t, testDB)
+	user2 := createTestViewsUser(t, testDB)
+	adminUser := createTestAdminUser(t, testDB)
+	video := createTestViewsVideo(t, testDB, user1.ID)
+
+	// Create some view history for user1
+	for i := 0; i < 3; i++ {
+		createTestViewsUserView(t, testDB, user1.ID, video.ID, i)
+	}
+
+	t.Run("get own view history", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/views/history?user_id=%s", user1.ID), nil)
+		ctx := context.WithValue(req.Context(), middleware.UserIDKey, user1.ID)
+		req = req.WithContext(ctx)
+
+		rr := httptest.NewRecorder()
+		router := chi.NewRouter()
+		router.Get("/api/v1/views/history", handler.GetViewHistory)
+		router.ServeHTTP(rr, req)
+
+		assert.Equal(t, http.StatusOK, rr.Code)
+		var response map[string]interface{}
+		err := json.Unmarshal(rr.Body.Bytes(), &response)
+		require.NoError(t, err)
+		assert.Equal(t, float64(3), response["count"])
+	})
+
+	t.Run("non-admin cannot get other user's view history", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/views/history?user_id=%s", user1.ID), nil)
+		ctx := context.WithValue(req.Context(), middleware.UserIDKey, user2.ID)
+		req = req.WithContext(ctx)
+
+		rr := httptest.NewRecorder()
+		router := chi.NewRouter()
+		router.Get("/api/v1/views/history", handler.GetViewHistory)
+		router.ServeHTTP(rr, req)
+
+		assert.Equal(t, http.StatusForbidden, rr.Code)
+	})
+
+	t.Run("admin can get other user's view history", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/views/history?user_id=%s", user1.ID), nil)
+		ctx := context.WithValue(req.Context(), middleware.UserIDKey, adminUser.ID)
+		ctx = context.WithValue(ctx, middleware.UserRoleKey, "admin")
+		req = req.WithContext(ctx)
+
+		rr := httptest.NewRecorder()
+		router := chi.NewRouter()
+		router.Get("/api/v1/views/history", handler.GetViewHistory)
+		router.ServeHTTP(rr, req)
+
+		assert.Equal(t, http.StatusOK, rr.Code)
+		var response map[string]interface{}
+		err := json.Unmarshal(rr.Body.Bytes(), &response)
+		require.NoError(t, err)
+		assert.Equal(t, float64(3), response["count"])
+	})
+
+	t.Run("unauthenticated user cannot get view history", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/views/history?user_id=%s", user1.ID), nil)
+
+		rr := httptest.NewRecorder()
+		router := chi.NewRouter()
+		router.Get("/api/v1/views/history", handler.GetViewHistory)
+		router.ServeHTTP(rr, req)
+
+		assert.Equal(t, http.StatusUnauthorized, rr.Code)
+	})
+}
+
 // Helper functions
 
 func createTestViewsUser(t *testing.T, testDB *testutil.TestDB) *domain.User {
