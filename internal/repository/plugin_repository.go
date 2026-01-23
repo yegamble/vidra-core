@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -61,6 +62,7 @@ func (r *PluginRepository) Create(ctx context.Context, plugin *domain.PluginReco
 // GetByID retrieves a plugin by ID
 func (r *PluginRepository) GetByID(ctx context.Context, id uuid.UUID) (*domain.PluginRecord, error) {
 	var plugin domain.PluginRecord
+	var configJSON []byte
 
 	query := `
 		SELECT id, name, version, author, description, status, config,
@@ -77,7 +79,7 @@ func (r *PluginRepository) GetByID(ctx context.Context, id uuid.UUID) (*domain.P
 		&plugin.Author,
 		&plugin.Description,
 		&plugin.Status,
-		&plugin.Config,
+		&configJSON,
 		pq.Array(&plugin.Permissions),
 		pq.Array(&plugin.Hooks),
 		&plugin.InstallPath,
@@ -97,12 +99,19 @@ func (r *PluginRepository) GetByID(ctx context.Context, id uuid.UUID) (*domain.P
 		return nil, err
 	}
 
+	if len(configJSON) > 0 {
+		if err := json.Unmarshal(configJSON, &plugin.Config); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal config: %w", err)
+		}
+	}
+
 	return &plugin, nil
 }
 
 // GetByName retrieves a plugin by name
 func (r *PluginRepository) GetByName(ctx context.Context, name string) (*domain.PluginRecord, error) {
 	var plugin domain.PluginRecord
+	var configJSON []byte
 
 	query := `
 		SELECT id, name, version, author, description, status, config,
@@ -119,7 +128,7 @@ func (r *PluginRepository) GetByName(ctx context.Context, name string) (*domain.
 		&plugin.Author,
 		&plugin.Description,
 		&plugin.Status,
-		&plugin.Config,
+		&configJSON,
 		pq.Array(&plugin.Permissions),
 		pq.Array(&plugin.Hooks),
 		&plugin.InstallPath,
@@ -137,6 +146,12 @@ func (r *PluginRepository) GetByName(ctx context.Context, name string) (*domain.
 
 	if err != nil {
 		return nil, err
+	}
+
+	if len(configJSON) > 0 {
+		if err := json.Unmarshal(configJSON, &plugin.Config); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal config: %w", err)
+		}
 	}
 
 	return &plugin, nil
@@ -170,6 +185,7 @@ func (r *PluginRepository) List(ctx context.Context, status *domain.PluginStatus
 	var plugins []*domain.PluginRecord
 	for rows.Next() {
 		var plugin domain.PluginRecord
+		var configJSON []byte
 		err := rows.Scan(
 			&plugin.ID,
 			&plugin.Name,
@@ -177,7 +193,7 @@ func (r *PluginRepository) List(ctx context.Context, status *domain.PluginStatus
 			&plugin.Author,
 			&plugin.Description,
 			&plugin.Status,
-			&plugin.Config,
+			&configJSON,
 			pq.Array(&plugin.Permissions),
 			pq.Array(&plugin.Hooks),
 			&plugin.InstallPath,
@@ -190,6 +206,11 @@ func (r *PluginRepository) List(ctx context.Context, status *domain.PluginStatus
 		)
 		if err != nil {
 			return nil, err
+		}
+		if len(configJSON) > 0 {
+			if err := json.Unmarshal(configJSON, &plugin.Config); err != nil {
+				return nil, fmt.Errorf("failed to unmarshal config: %w", err)
+			}
 		}
 		plugins = append(plugins, &plugin)
 	}
@@ -429,6 +450,56 @@ func (r *PluginRepository) GetStatistics(ctx context.Context, pluginID uuid.UUID
 	}
 
 	return &stats, nil
+}
+
+// GetStatisticsForPlugins retrieves statistics for multiple plugins
+func (r *PluginRepository) GetStatisticsForPlugins(ctx context.Context, pluginIDs []uuid.UUID) (map[uuid.UUID]*domain.PluginStatistics, error) {
+	if len(pluginIDs) == 0 {
+		return make(map[uuid.UUID]*domain.PluginStatistics), nil
+	}
+
+	query, args, err := sqlx.In(`
+		SELECT plugin_id, plugin_name, total_executions, success_count,
+		       failure_count, avg_duration_ms, last_executed_at
+		FROM plugin_statistics
+		WHERE plugin_id IN (?)
+	`, pluginIDs)
+	if err != nil {
+		return nil, err
+	}
+	query = r.db.Rebind(query)
+
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		_ = rows.Close()
+	}()
+
+	result := make(map[uuid.UUID]*domain.PluginStatistics)
+	for rows.Next() {
+		var stats domain.PluginStatistics
+		err := rows.Scan(
+			&stats.PluginID,
+			&stats.PluginName,
+			&stats.TotalExecutions,
+			&stats.SuccessCount,
+			&stats.FailureCount,
+			&stats.AvgDuration,
+			&stats.LastExecutedAt,
+		)
+		if err != nil {
+			return nil, err
+		}
+		result[stats.PluginID] = &stats
+	}
+
+	if err = rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return result, nil
 }
 
 // GetAllStatistics retrieves statistics for all plugins
