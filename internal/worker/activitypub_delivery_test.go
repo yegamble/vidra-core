@@ -127,6 +127,15 @@ func (m *MockAPService) GetFollowers(ctx context.Context, username string, page 
 func (m *MockAPService) GetFollowing(ctx context.Context, username string, page int, limit int) (*domain.OrderedCollectionPage, error) {
 	return nil, nil
 }
+func (m *MockAPService) GetOutboxCount(ctx context.Context, username string) (int, error) {
+	return 0, nil
+}
+func (m *MockAPService) GetFollowersCount(ctx context.Context, username string) (int, error) {
+	return 0, nil
+}
+func (m *MockAPService) GetFollowingCount(ctx context.Context, username string) (int, error) {
+	return 0, nil
+}
 
 func TestNewActivityPubDeliveryWorker(t *testing.T) {
 	mockRepo := new(MockAPRepository)

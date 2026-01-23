@@ -800,6 +800,51 @@ func (s *Service) GetFollowing(ctx context.Context, username string, page int, l
 	return s.buildFollowCollectionPage(username, "following", page, limit, total, items), nil
 }
 
+// GetOutboxCount retrieves the total number of activities in the outbox
+func (s *Service) GetOutboxCount(ctx context.Context, username string) (int, error) {
+	user, err := s.userRepo.GetByUsername(ctx, username)
+	if err != nil || user == nil {
+		return 0, fmt.Errorf("user not found")
+	}
+
+	_, total, err := s.repo.GetActivitiesByActor(ctx, user.ID, 0, 0)
+	if err != nil {
+		return 0, fmt.Errorf("failed to get activities count: %w", err)
+	}
+
+	return total, nil
+}
+
+// GetFollowersCount retrieves the total number of followers
+func (s *Service) GetFollowersCount(ctx context.Context, username string) (int, error) {
+	user, err := s.userRepo.GetByUsername(ctx, username)
+	if err != nil || user == nil {
+		return 0, fmt.Errorf("user not found")
+	}
+
+	_, total, err := s.repo.GetFollowers(ctx, user.ID, "accepted", 0, 0)
+	if err != nil {
+		return 0, fmt.Errorf("failed to get followers count: %w", err)
+	}
+
+	return total, nil
+}
+
+// GetFollowingCount retrieves the total number of following
+func (s *Service) GetFollowingCount(ctx context.Context, username string) (int, error) {
+	user, err := s.userRepo.GetByUsername(ctx, username)
+	if err != nil || user == nil {
+		return 0, fmt.Errorf("user not found")
+	}
+
+	_, total, err := s.repo.GetFollowing(ctx, user.ID, "accepted", 0, 0)
+	if err != nil {
+		return 0, fmt.Errorf("failed to get following count: %w", err)
+	}
+
+	return total, nil
+}
+
 // Comment Publishing
 
 // BuildNoteObject converts a domain.Comment to an ActivityPub NoteObject
