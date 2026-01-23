@@ -335,9 +335,12 @@ func (h *ViewsHandler) GetViewHistory(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if authUserID.(string) != userIDFilter {
-			// TODO: Add admin role check here if needed
-			shared.WriteError(w, http.StatusForbidden, domain.NewDomainError("FORBIDDEN", "Cannot access other user's view history"))
-			return
+			authUserRole := r.Context().Value(middleware.UserRoleKey)
+			isAdmin := authUserRole != nil && authUserRole.(string) == "admin"
+			if !isAdmin {
+				shared.WriteError(w, http.StatusForbidden, domain.NewDomainError("FORBIDDEN", "Cannot access other user's view history"))
+				return
+			}
 		}
 		filter.UserID = userIDFilter
 	}
