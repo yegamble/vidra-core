@@ -63,8 +63,20 @@ func (h *PluginHandler) ListPlugins(w http.ResponseWriter, r *http.Request) {
 
 	// Also get statistics for each plugin
 	result := make([]map[string]any, len(plugins))
+
+	// Collect plugin IDs for bulk statistics fetch
+	pluginIDs := make([]uuid.UUID, len(plugins))
 	for i, p := range plugins {
-		stats, _ := h.pluginRepo.GetStatistics(r.Context(), p.ID)
+		pluginIDs[i] = p.ID
+	}
+
+	statsMap, _ := h.pluginRepo.GetStatisticsForPlugins(r.Context(), pluginIDs)
+	if statsMap == nil {
+		statsMap = make(map[uuid.UUID]*domain.PluginStatistics)
+	}
+
+	for i, p := range plugins {
+		stats := statsMap[p.ID]
 
 		result[i] = map[string]any{
 			"id":           p.ID,
