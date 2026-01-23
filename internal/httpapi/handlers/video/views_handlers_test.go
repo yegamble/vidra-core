@@ -21,6 +21,7 @@ import (
 	"athena/internal/middleware"
 	"athena/internal/repository"
 	"athena/internal/testutil"
+	"athena/internal/usecase"
 	ucviews "athena/internal/usecase/views"
 )
 
