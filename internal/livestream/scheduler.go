@@ -175,13 +175,22 @@ func (s *StreamScheduler) sendReminders(ctx context.Context) error {
 		return fmt.Errorf("failed to get streams needing reminders: %w", err)
 	}
 
+	if len(streams) == 0 {
+		return nil
+	}
+
+	channelIDs := make([]uuid.UUID, 0, len(streams))
 	for _, stream := range streams {
-		// Get subscribers for the channel
-		subscribers, err := s.getChannelSubscribers(ctx, stream.ChannelID)
-		if err != nil {
-			log.Printf("Failed to get subscribers for channel %s: %v", stream.ChannelID, err)
-			continue
-		}
+		channelIDs = append(channelIDs, stream.ChannelID)
+	}
+
+	subscribersByChannel, err := s.getChannelSubscribersForChannels(ctx, channelIDs)
+	if err != nil {
+		return fmt.Errorf("could not get channel subscribers for channels: %w", err)
+	}
+
+	for _, stream := range streams {
+		subscribers := subscribersByChannel[stream.ChannelID]
 
 		// Send notifications
 		if s.notificationSender != nil && len(subscribers) > 0 {
@@ -295,6 +304,46 @@ func (s *StreamScheduler) markReminderSent(ctx context.Context, streamID uuid.UU
 	}
 
 	return nil
+}
+
+// getChannelSubscribersForChannels gets all subscribers for multiple channels
+func (s *StreamScheduler) getChannelSubscribersForChannels(ctx context.Context, channelIDs []uuid.UUID) (map[uuid.UUID][]uuid.UUID, error) {
+	if len(channelIDs) == 0 {
+		return make(map[uuid.UUID][]uuid.UUID), nil
+	}
+
+	query, args, err := sqlx.In(`
+		SELECT channel_id, subscriber_id
+		FROM channel_subscriptions
+		WHERE channel_id IN (?)
+		AND subscribed_at IS NOT NULL
+		ORDER BY channel_id, subscribed_at DESC
+	`, channelIDs)
+	if err != nil {
+		return nil, fmt.Errorf("failed to construct query: %w", err)
+	}
+
+	query = s.db.Rebind(query)
+
+	type channelSubscriber struct {
+		ChannelID    uuid.UUID `db:"channel_id"`
+		SubscriberID uuid.UUID `db:"subscriber_id"`
+	}
+
+	var results []channelSubscriber
+	if err := s.db.SelectContext(ctx, &results, query, args...); err != nil {
+		if err == sql.ErrNoRows {
+			return make(map[uuid.UUID][]uuid.UUID), nil
+		}
+		return nil, fmt.Errorf("failed to get channel subscribers for channels: %w", err)
+	}
+
+	subscribersByChannel := make(map[uuid.UUID][]uuid.UUID, len(channelIDs))
+	for _, res := range results {
+		subscribersByChannel[res.ChannelID] = append(subscribersByChannel[res.ChannelID], res.SubscriberID)
+	}
+
+	return subscribersByChannel, nil
 }
 
 // getChannelSubscribers gets all subscribers for a channel
