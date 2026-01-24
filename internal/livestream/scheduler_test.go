@@ -194,6 +194,51 @@ func TestStreamScheduler_sendReminders(t *testing.T) {
 			},
 			expectedError: false,
 		},
+		{
+			name: "multiple streams needing reminders (batch optimization)",
+			setupMock: func(mock sqlmock.Sqlmock, sender *MockNotificationSender) {
+				stream1ID := uuid.New()
+				channel1ID := uuid.New()
+				sub1ID := uuid.New()
+
+				stream2ID := uuid.New()
+				channel2ID := uuid.New()
+				sub2ID := uuid.New()
+				sub3ID := uuid.New()
+
+				scheduledStart := time.Now().Add(10 * time.Minute)
+
+				// 1. Get streams query (returns 2 streams)
+				mock.ExpectQuery("SELECT id, channel_id, title, scheduled_start").
+					WillReturnRows(sqlmock.NewRows([]string{"id", "channel_id", "title", "scheduled_start", "reminder_sent", "status"}).
+						AddRow(stream1ID, channel1ID, "Stream 1", scheduledStart, false, "scheduled").
+						AddRow(stream2ID, channel2ID, "Stream 2", scheduledStart, false, "scheduled"))
+
+				// 2. Batch get subscribers query (Expect 1 query, not 2)
+				// The query uses IN (?) which expands to multiple params.
+				mock.ExpectQuery("SELECT channel_id, subscriber_id FROM channel_subscriptions").
+					WithArgs(channel1ID, channel2ID).
+					WillReturnRows(sqlmock.NewRows([]string{"channel_id", "subscriber_id"}).
+						AddRow(channel1ID, sub1ID).
+						AddRow(channel2ID, sub2ID).
+						AddRow(channel2ID, sub3ID))
+
+				// 3. Send notifications (loop)
+				ctx := context.Background()
+				sender.On("SendStreamStartingNotification", ctx, stream1ID, []uuid.UUID{sub1ID}).Return(nil)
+				sender.On("SendStreamStartingNotification", ctx, stream2ID, []uuid.UUID{sub2ID, sub3ID}).Return(nil)
+
+				// 4. Mark reminders sent (loop)
+				mock.ExpectExec("UPDATE live_streams SET reminder_sent = true").
+					WithArgs(stream1ID).
+					WillReturnResult(sqlmock.NewResult(1, 1))
+
+				mock.ExpectExec("UPDATE live_streams SET reminder_sent = true").
+					WithArgs(stream2ID).
+					WillReturnResult(sqlmock.NewResult(1, 1))
+			},
+			expectedError: false,
+		},
 	}
 
 	for _, tt := range tests {
