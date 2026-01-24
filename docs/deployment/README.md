@@ -98,16 +98,17 @@ GRANT ALL PRIVILEGES ON DATABASE athena TO athena_app;
 
 ### 2. Run Migrations
 
+We use [Goose](https://github.com/pressly/goose) for migrations.
+
 ```bash
-# Using Atlas
-atlas migrate apply \
-  --dir "file://migrations" \
-  --url "$DATABASE_URL"
+# Using Makefile (Recommended)
+make migrate-up
+
+# Or manually using Goose CLI
+goose -dir migrations postgres "$DATABASE_URL" up
 
 # Check status
-atlas migrate status \
-  --dir "file://migrations" \
-  --url "$DATABASE_URL"
+goose -dir migrations postgres "$DATABASE_URL" status
 ```
 
 ### 3. Create Indexes

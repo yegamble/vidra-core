@@ -72,7 +72,7 @@ athena/
 │   ├── email/               # Email service
 │   ├── metrics/             # Prometheus metrics
 │   └── generated/           # OpenAPI generated types
-├── migrations/              # Atlas database migrations
+├── migrations/              # Goose database migrations
 ├── docs/                    # Documentation
 │   ├── architecture.md      # This file
 │   └── claude/              # Claude AI-specific guides
@@ -136,7 +136,7 @@ athena/
 - **Implements**: Port interfaces from `internal/port`
 - **Transaction Support**: Methods accept `*sqlx.Tx` for atomic operations
 - **Query Optimization**: Prepared statements, connection pooling, indexes
-- **Migration**: Schema managed via Atlas
+- **Migration**: Schema managed via Goose
 
 #### HTTP API (`internal/httpapi`)
 
@@ -286,7 +286,7 @@ FederationService.PublishToATProto()
 
 ### Infrastructure
 
-- **Migrations**: Atlas (declarative SQL schema)
+- **Migrations**: Goose (SQL migrations)
 - **Containerization**: Docker + Docker Compose
 - **Orchestration**: Kubernetes-ready with health probes
 - **Observability**: Prometheus metrics, structured logging (slog/zap)
