@@ -189,6 +189,8 @@ func (s *StreamScheduler) sendReminders(ctx context.Context) error {
 		return fmt.Errorf("could not get channel subscribers for channels: %w", err)
 	}
 
+	var successfullyNotified []uuid.UUID
+
 	for _, stream := range streams {
 		subscribers := subscribersByChannel[stream.ChannelID]
 
@@ -200,13 +202,51 @@ func (s *StreamScheduler) sendReminders(ctx context.Context) error {
 			}
 		}
 
-		// Mark reminder as sent
-		if err := s.markReminderSent(ctx, stream.ID); err != nil {
-			log.Printf("Failed to mark reminder sent for stream %s: %v", stream.ID, err)
-			continue
-		}
-
+		successfullyNotified = append(successfullyNotified, stream.ID)
 		log.Printf("Sent reminder notifications for stream %s (%s)", stream.ID, stream.Title)
+	}
+
+	if len(successfullyNotified) > 0 {
+		if err := s.markRemindersSentBatch(ctx, successfullyNotified); err != nil {
+			log.Printf("Failed to mark reminders sent batch: %v", err)
+			return err
+		}
+	}
+
+	return nil
+}
+
+// markRemindersSentBatch marks that a reminder has been sent for multiple streams
+func (s *StreamScheduler) markRemindersSentBatch(ctx context.Context, streamIDs []uuid.UUID) error {
+	if len(streamIDs) == 0 {
+		return nil
+	}
+
+	query, args, err := sqlx.In(`
+		UPDATE live_streams
+		SET reminder_sent = true, updated_at = NOW()
+		WHERE id IN (?)
+	`, streamIDs)
+	if err != nil {
+		return fmt.Errorf("failed to construct query: %w", err)
+	}
+
+	query = s.db.Rebind(query)
+
+	result, err := s.db.ExecContext(ctx, query, args...)
+	if err != nil {
+		return fmt.Errorf("failed to mark reminders sent: %w", err)
+	}
+
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to get rows affected: %w", err)
+	}
+
+	// We don't strictly enforce that rows == len(streamIDs) because of potential race conditions
+	// or deletions, but we log if there's a mismatch for debugging.
+	if rows != int64(len(streamIDs)) {
+		log.Printf("Warning: marked %d reminders sent, but expected %d", rows, len(streamIDs))
 	}
 
 	return nil
