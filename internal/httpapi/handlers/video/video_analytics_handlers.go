@@ -343,7 +343,7 @@ func (h *VideoAnalyticsHandler) GetChannelAnalytics(w http.ResponseWriter, r *ht
 // Helper Functions
 // ======================================================================
 
-// getUserIDFromContext extracts the authenticated user ID from the request context using the middleware
+// getUserIDFromContext extracts the authenticated user ID from the request context using the middleware.
 func getUserIDFromContext(ctx context.Context) *uuid.UUID {
 	userID, ok := middleware.GetUserIDFromContext(ctx)
 	if !ok {
