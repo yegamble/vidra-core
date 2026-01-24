@@ -93,6 +93,7 @@ cd athena
 cp .env.example .env
 
 # Run with Docker Compose
+# Note: Ensure you are authenticated with Docker Hub to avoid rate limits
 docker compose up --build
 
 # Or run locally
@@ -209,7 +210,9 @@ make lint           # Run linters
 
 ## Project Status
 
-### 🎯 88% COMPLETE - PRODUCTION READY (Conditional Go)
+### 🎯 88% COMPLETE - STABILIZATION PHASE
+
+**Current Focus**: Restoring test infrastructure and verifying build integrity.
 
 **Recent Achievements** (Last 24-48 hours):
 - ✅ **Migration from Atlas to Goose** - Eliminated authentication issues, simplified workflow
