@@ -28,68 +28,21 @@ env:
 
 jobs:
   # ============================================================================
-  # SETUP - Downloads modules once, shares with all other jobs via cache
-  # ============================================================================
-  setup:
-    name: Setup Dependencies
-    uses: ./.github/workflows/_setup-go-environment.yml
-    with:
-      go-version: "1.24"
-      download-modules: true
-
-  # ============================================================================
-  # FAST TESTS - Run in parallel after setup completes
+  # FAST TESTS - Run in parallel
   # ============================================================================
   unit:
     name: Unit Tests
     runs-on: self-hosted
-    needs: setup
     timeout-minutes: 10
-
-    env:
-      HOME: /root
-      GOPATH: /root/go
-      GOMODCACHE: /root/go/pkg/mod
-      GOCACHE: /root/.cache/go-build
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Restore module cache
-        id: cache
-        uses: actions/cache/restore@v4
-        with:
-          path: |
-            ~/go/pkg/mod
-            ~/.cache/go-build
-          key: ${{ needs.setup.outputs.cache-key }}
-          restore-keys: |
-            go-mod-${{ runner.os }}-${{ env.GO_VERSION }}-
-            go-mod-${{ runner.os }}-
-
-      - uses: actions/setup-go@v5
+      - uses: ./.github/actions/setup-go-cached
         with:
           go-version: ${{ env.GO_VERSION }}
-          cache: false
 
-      - name: Download modules (if cache missed)
-        if: steps.cache.outputs.cache-hit != 'true'
-        run: |
-          echo "Cache miss - downloading modules..."
-          go mod download
-          echo "Modules downloaded"
-
-      - name: Install build tools (required for CGO dependencies)
-        run: |
-          if ! command -v gcc &> /dev/null || ! command -v g++ &> /dev/null; then
-            echo "Build tools not found, installing..."
-            sudo apt-get update -qq
-            sudo apt-get install -y build-essential
-          else
-            echo "Build tools already installed:"
-            echo "  GCC: $(gcc --version | head -n1)"
-            echo "  G++: $(g++ --version | head -n1)"
-          fi
+      - uses: ./.github/actions/install-gcc
 
       - name: Run unit tests
         run: make test-unit
@@ -97,54 +50,16 @@ jobs:
   lint:
     name: Code Quality (Lint & Format)
     runs-on: self-hosted
-    needs: setup
     timeout-minutes: 10
-
-    env:
-      HOME: /root
-      GOPATH: /root/go
-      GOMODCACHE: /root/go/pkg/mod
-      GOCACHE: /root/.cache/go-build
-      GOLANGCI_LINT_CACHE: /root/.cache/golangci-lint
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Restore module cache
-        id: cache
-        uses: actions/cache/restore@v4
-        with:
-          path: |
-            ~/go/pkg/mod
-            ~/.cache/go-build
-          key: ${{ needs.setup.outputs.cache-key }}
-          restore-keys: |
-            go-mod-${{ runner.os }}-${{ env.GO_VERSION }}-
-            go-mod-${{ runner.os }}-
-
-      - uses: actions/setup-go@v5
+      - uses: ./.github/actions/setup-go-cached
         with:
           go-version: ${{ env.GO_VERSION }}
-          cache: false
 
-      - name: Download modules (if cache missed)
-        if: steps.cache.outputs.cache-hit != 'true'
-        run: |
-          echo "Cache miss - downloading modules..."
-          go mod download
-          echo "Modules downloaded"
-
-      - name: Install build tools (required for CGO type checking)
-        run: |
-          if ! command -v gcc &> /dev/null || ! command -v g++ &> /dev/null; then
-            echo "Build tools not found, installing..."
-            sudo apt-get update -qq
-            sudo apt-get install -y build-essential
-          else
-            echo "Build tools already installed:"
-            echo "  GCC: $(gcc --version | head -n1)"
-            echo "  G++: $(g++ --version | head -n1)"
-          fi
+      - uses: ./.github/actions/install-gcc
 
       - name: Check formatting
         run: |
@@ -177,53 +92,17 @@ jobs:
   integration:
     name: Integration Tests
     runs-on: self-hosted
-    needs: [setup, unit]
+    needs: [unit]
     timeout-minutes: 15
-
-    env:
-      HOME: /root
-      GOPATH: /root/go
-      GOMODCACHE: /root/go/pkg/mod
-      GOCACHE: /root/.cache/go-build
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Restore module cache
-        id: cache
-        uses: actions/cache/restore@v4
-        with:
-          path: |
-            ~/go/pkg/mod
-            ~/.cache/go-build
-          key: ${{ needs.setup.outputs.cache-key }}
-          restore-keys: |
-            go-mod-${{ runner.os }}-${{ env.GO_VERSION }}-
-            go-mod-${{ runner.os }}-
-
-      - uses: actions/setup-go@v5
+      - uses: ./.github/actions/setup-go-cached
         with:
           go-version: ${{ env.GO_VERSION }}
-          cache: false
 
-      - name: Download modules (if cache missed)
-        if: steps.cache.outputs.cache-hit != 'true'
-        run: |
-          echo "Cache miss - downloading modules..."
-          go mod download
-          echo "Modules downloaded"
-
-      - name: Install build tools (required for CGO dependencies)
-        run: |
-          if ! command -v gcc &> /dev/null || ! command -v g++ &> /dev/null; then
-            echo "Build tools not found, installing..."
-            sudo apt-get update -qq
-            sudo apt-get install -y build-essential
-          else
-            echo "Build tools already installed:"
-            echo "  GCC: $(gcc --version | head -n1)"
-            echo "  G++: $(g++ --version | head -n1)"
-          fi
+      - uses: ./.github/actions/install-gcc
 
       - name: Start services with docker compose
         run: |
@@ -266,53 +145,17 @@ jobs:
   build:
     name: Build
     runs-on: self-hosted
-    needs: [setup, lint, unit]
+    needs: [lint, unit]
     timeout-minutes: 10
-
-    env:
-      HOME: /root
-      GOPATH: /root/go
-      GOMODCACHE: /root/go/pkg/mod
-      GOCACHE: /root/.cache/go-build
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Restore module cache
-        id: cache
-        uses: actions/cache/restore@v4
-        with:
-          path: |
-            ~/go/pkg/mod
-            ~/.cache/go-build
-          key: ${{ needs.setup.outputs.cache-key }}
-          restore-keys: |
-            go-mod-${{ runner.os }}-${{ env.GO_VERSION }}-
-            go-mod-${{ runner.os }}-
-
-      - uses: actions/setup-go@v5
+      - uses: ./.github/actions/setup-go-cached
         with:
           go-version: ${{ env.GO_VERSION }}
-          cache: false
 
-      - name: Download modules (if cache missed)
-        if: steps.cache.outputs.cache-hit != 'true'
-        run: |
-          echo "Cache miss - downloading modules..."
-          go mod download
-          echo "Modules downloaded"
-
-      - name: Install build tools (required for CGO dependencies)
-        run: |
-          if ! command -v gcc &> /dev/null || ! command -v g++ &> /dev/null; then
-            echo "Build tools not found, installing..."
-            sudo apt-get update -qq
-            sudo apt-get install -y build-essential
-          else
-            echo "Build tools already installed:"
-            echo "  GCC: $(gcc --version | head -n1)"
-            echo "  G++: $(g++ --version | head -n1)"
-          fi
+      - uses: ./.github/actions/install-gcc
 
       - name: Build binaries
         run: |
@@ -334,53 +177,17 @@ jobs:
   unit-race:
     name: Unit Tests (Race)
     runs-on: self-hosted
-    needs: [setup, unit, lint]
+    needs: [unit, lint]
     timeout-minutes: 15
-
-    env:
-      HOME: /root
-      GOPATH: /root/go
-      GOMODCACHE: /root/go/pkg/mod
-      GOCACHE: /root/.cache/go-build
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Restore module cache
-        id: cache
-        uses: actions/cache/restore@v4
-        with:
-          path: |
-            ~/go/pkg/mod
-            ~/.cache/go-build
-          key: ${{ needs.setup.outputs.cache-key }}
-          restore-keys: |
-            go-mod-${{ runner.os }}-${{ env.GO_VERSION }}-
-            go-mod-${{ runner.os }}-
-
-      - uses: actions/setup-go@v5
+      - uses: ./.github/actions/setup-go-cached
         with:
           go-version: ${{ env.GO_VERSION }}
-          cache: false
 
-      - name: Download modules (if cache missed)
-        if: steps.cache.outputs.cache-hit != 'true'
-        run: |
-          echo "Cache miss - downloading modules..."
-          go mod download
-          echo "Modules downloaded"
-
-      - name: Install build tools (required for race detector with CGO)
-        run: |
-          if ! command -v gcc &> /dev/null || ! command -v g++ &> /dev/null; then
-            echo "Build tools not found, installing..."
-            sudo apt-get update -qq
-            sudo apt-get install -y build-essential
-          else
-            echo "Build tools already installed:"
-            echo "  GCC: $(gcc --version | head -n1)"
-            echo "  G++: $(g++ --version | head -n1)"
-          fi
+      - uses: ./.github/actions/install-gcc
 
       - name: Run unit tests with race detector
         env:
@@ -390,53 +197,17 @@ jobs:
   integration-race:
     name: Integration Tests (Race)
     runs-on: self-hosted
-    needs: [setup, integration]
+    needs: [integration]
     timeout-minutes: 20
-
-    env:
-      HOME: /root
-      GOPATH: /root/go
-      GOMODCACHE: /root/go/pkg/mod
-      GOCACHE: /root/.cache/go-build
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Restore module cache
-        id: cache
-        uses: actions/cache/restore@v4
-        with:
-          path: |
-            ~/go/pkg/mod
-            ~/.cache/go-build
-          key: ${{ needs.setup.outputs.cache-key }}
-          restore-keys: |
-            go-mod-${{ runner.os }}-${{ env.GO_VERSION }}-
-            go-mod-${{ runner.os }}-
-
-      - uses: actions/setup-go@v5
+      - uses: ./.github/actions/setup-go-cached
         with:
           go-version: ${{ env.GO_VERSION }}
-          cache: false
 
-      - name: Download modules (if cache missed)
-        if: steps.cache.outputs.cache-hit != 'true'
-        run: |
-          echo "Cache miss - downloading modules..."
-          go mod download
-          echo "Modules downloaded"
-
-      - name: Install build tools (required for race detector with CGO)
-        run: |
-          if ! command -v gcc &> /dev/null || ! command -v g++ &> /dev/null; then
-            echo "Build tools not found, installing..."
-            sudo apt-get update -qq
-            sudo apt-get install -y build-essential
-          else
-            echo "Build tools already installed:"
-            echo "  GCC: $(gcc --version | head -n1)"
-            echo "  G++: $(g++ --version | head -n1)"
-          fi
+      - uses: ./.github/actions/install-gcc
 
       - name: Start services with docker compose
         run: |

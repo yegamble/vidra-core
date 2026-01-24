@@ -353,7 +353,6 @@ func (c *AnalyticsCollector) collectAllStreams(ctx context.Context) error {
 	return nil
 }
 
-
 // TrackViewerJoin tracks when a viewer joins a stream
 func (c *AnalyticsCollector) TrackViewerJoin(ctx context.Context, streamID uuid.UUID, userID *uuid.UUID, sessionID, ipAddress, userAgent string) error {
 	// Parse user agent to extract device info (simplified)

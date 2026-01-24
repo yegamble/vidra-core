@@ -136,11 +136,11 @@ func TestStreamScheduler_sendReminders(t *testing.T) {
 						AddRow(streamID, channelID, "Test Stream", scheduledStart, false, "scheduled"))
 
 				// Get subscribers for channel
-				mock.ExpectQuery("SELECT subscriber_id FROM channel_subscriptions").
+				mock.ExpectQuery("SELECT channel_id, subscriber_id FROM channel_subscriptions").
 					WithArgs(channelID).
-					WillReturnRows(sqlmock.NewRows([]string{"subscriber_id"}).
-						AddRow(subscriberID1).
-						AddRow(subscriberID2))
+					WillReturnRows(sqlmock.NewRows([]string{"channel_id", "subscriber_id"}).
+						AddRow(channelID, subscriberID1).
+						AddRow(channelID, subscriberID2))
 
 				// Send notification
 				ctx := context.Background()
@@ -183,9 +183,9 @@ func TestStreamScheduler_sendReminders(t *testing.T) {
 					WillReturnRows(sqlmock.NewRows([]string{"id", "channel_id", "title", "scheduled_start", "reminder_sent", "status"}).
 						AddRow(streamID, channelID, "Test Stream", scheduledStart, false, "scheduled"))
 
-				mock.ExpectQuery("SELECT subscriber_id FROM channel_subscriptions").
+				mock.ExpectQuery("SELECT channel_id, subscriber_id FROM channel_subscriptions").
 					WithArgs(channelID).
-					WillReturnRows(sqlmock.NewRows([]string{"subscriber_id"}))
+					WillReturnRows(sqlmock.NewRows([]string{"channel_id", "subscriber_id"}))
 
 				// Mark reminder as sent even with no subscribers
 				mock.ExpectExec("UPDATE live_streams SET reminder_sent = true").
