@@ -1,5 +1,9 @@
 # Atlas Migration Management - Implementation Summary
 
+> **⚠️ DEPRECATED:** This document is preserved for historical reference only.
+> The project has migrated to using [Goose](https://github.com/pressly/goose) for database migrations.
+> Please refer to [MIGRATIONS.md](MIGRATIONS.md) for current documentation.
+
 **Sprint:** 2 - Epic 4
 **Date:** 2025-11-17
 **Status:** ✅ Complete

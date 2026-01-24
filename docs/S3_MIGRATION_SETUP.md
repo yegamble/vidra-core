@@ -18,7 +18,7 @@ The system now supports migrating videos from local storage to Backblaze B2 (S3-
   - Batch deletion
   - Support for Backblaze B2, AWS S3, DigitalOcean Spaces, etc.
 
-### 2. Database Schema (`migrations/055_add_s3_storage_fields.sql`)
+### 2. Database Schema (`migrations/058_add_s3_storage_fields.sql`)
 
 New fields added to the `videos` table:
 - `s3_urls` (JSONB): Maps variant names to S3 URLs
@@ -130,11 +130,8 @@ If using a bucket-scoped key (recommended for security), ensure it's scoped to y
 ### Step 3: Apply Database Migration
 
 ```bash
-# Using Atlas (if configured)
-atlas migrate apply --dir "file://migrations" --url "postgres://..."
-
-# Or using psql directly
-psql -h localhost -U athena_user -d athena -f migrations/055_add_s3_storage_fields.sql
+# Using Goose (via Makefile)
+make migrate-up
 ```
 
 ### Step 4: Test S3 Connection
@@ -361,7 +358,7 @@ s3_signed_url_generations_total
 
 1. **Create/verify Backblaze bucket** with correct name
 2. **Run diagnostic tests** to confirm connectivity
-3. **Apply database migration** (055_add_s3_storage_fields.sql)
+3. **Apply database migration** (058_add_s3_storage_fields.sql)
 4. **Test migration tool** with 1-2 videos
 5. **Integrate S3 handler** into main application
 6. **Set up automatic migration** (cron or background worker)
@@ -385,7 +382,7 @@ For issues or questions:
 - `internal/httpapi/handlers/video/hls_s3_handler.go` - S3-aware HLS handler
 - `cmd/s3migrate/main.go` - CLI migration tool
 - `cmd/s3test/main.go` - CLI diagnostic tool
-- `migrations/055_add_s3_storage_fields.sql` - Database migration
+- `migrations/058_add_s3_storage_fields.sql` - Database migration
 - `docs/S3_MIGRATION_SETUP.md` - This documentation
 
 ### Modified Files
