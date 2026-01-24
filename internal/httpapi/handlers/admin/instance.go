@@ -3,7 +3,9 @@ package admin
 import (
 	"athena/internal/httpapi/shared"
 	"encoding/json"
+	"encoding/xml"
 	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -21,6 +23,25 @@ type InstanceHandlers struct {
 	moderationRepo *repository.ModerationRepository
 	userRepo       usecase.UserRepository
 	videoRepo      usecase.VideoRepository
+}
+
+// OEmbedResponse defines the structure for oEmbed responses (both JSON and XML)
+type OEmbedResponse struct {
+	XMLName         xml.Name `json:"-" xml:"oembed"`
+	Version         string   `json:"version" xml:"version"`
+	Type            string   `json:"type" xml:"type"`
+	Title           string   `json:"title" xml:"title"`
+	AuthorName      string   `json:"author_name" xml:"author_name"`
+	AuthorURL       string   `json:"author_url" xml:"author_url"`
+	ProviderName    string   `json:"provider_name" xml:"provider_name"`
+	ProviderURL     string   `json:"provider_url" xml:"provider_url"`
+	Width           int      `json:"width" xml:"width"`
+	Height          int      `json:"height" xml:"height"`
+	HTML            string   `json:"html" xml:"html"`
+	ThumbnailURL    string   `json:"thumbnail_url,omitempty" xml:"thumbnail_url,omitempty"`
+	ThumbnailWidth  int      `json:"thumbnail_width,omitempty" xml:"thumbnail_width,omitempty"`
+	ThumbnailHeight int      `json:"thumbnail_height,omitempty" xml:"thumbnail_height,omitempty"`
+	Duration        int      `json:"duration,omitempty" xml:"duration,omitempty"`
 }
 
 // NewInstanceHandlers creates a new instance of InstanceHandlers
@@ -317,54 +338,45 @@ func (h *InstanceHandlers) OEmbed(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	oembedResponse := map[string]interface{}{
-		"version":       "1.0",
-		"type":          "video",
-		"title":         video.Title,
-		"author_name":   uploader.DisplayName,
-		"author_url":    fmt.Sprintf("%s/users/%s", r.Host, uploader.ID),
-		"provider_name": "Athena Video Platform",
-		"provider_url":  fmt.Sprintf("https://%s", r.Host),
-		"width":         width,
-		"height":        height,
-		"html": fmt.Sprintf(`<iframe width="%d" height="%d" src="%s/embed/%s" frameborder="0" allowfullscreen></iframe>`,
+	resp := OEmbedResponse{
+		Version:      "1.0",
+		Type:         "video",
+		Title:        video.Title,
+		AuthorName:   uploader.DisplayName,
+		AuthorURL:    fmt.Sprintf("%s/users/%s", r.Host, uploader.ID),
+		ProviderName: "Athena Video Platform",
+		ProviderURL:  fmt.Sprintf("https://%s", r.Host),
+		Width:        width,
+		Height:       height,
+		HTML: fmt.Sprintf(`<iframe width="%d" height="%d" src="%s/embed/%s" frameborder="0" allowfullscreen></iframe>`,
 			width, height, r.Host, video.ID),
 	}
 
 	// Add thumbnail if available
 	if video.ThumbnailCID != "" {
-		oembedResponse["thumbnail_url"] = fmt.Sprintf("%s/ipfs/%s", r.Host, video.ThumbnailCID)
-		oembedResponse["thumbnail_width"] = 640
-		oembedResponse["thumbnail_height"] = 360
+		resp.ThumbnailURL = fmt.Sprintf("%s/ipfs/%s", r.Host, video.ThumbnailCID)
+		resp.ThumbnailWidth = 640
+		resp.ThumbnailHeight = 360
 	}
 
 	// Add duration if available
 	if video.Duration > 0 {
-		oembedResponse["duration"] = video.Duration
+		resp.Duration = video.Duration
 	}
 
 	// Handle format
 	if format == "xml" {
-		w.Header().Set("Content-Type", "application/xml")
-		// Simple XML encoding - need to escape HTML content
-		xmlResponse := `<?xml version="1.0" encoding="UTF-8"?><oembed>`
-		for k, v := range oembedResponse {
-			// HTML needs to be escaped in XML
-			valueStr := fmt.Sprintf("%v", v)
-			if k == "html" {
-				// Escape HTML for XML
-				valueStr = strings.ReplaceAll(valueStr, "&", "&amp;")
-				valueStr = strings.ReplaceAll(valueStr, "<", "&lt;")
-				valueStr = strings.ReplaceAll(valueStr, ">", "&gt;")
-				valueStr = strings.ReplaceAll(valueStr, "\"", "&quot;")
-			}
-			xmlResponse += fmt.Sprintf("<%s>%s</%s>", k, valueStr, k)
-		}
-		xmlResponse += "</oembed>"
-		_, _ = w.Write([]byte(xmlResponse))
-	} else {
-		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Type", "application/xml; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
-		_ = json.NewEncoder(w).Encode(oembedResponse)
+		w.Write([]byte(xml.Header))
+		if err := xml.NewEncoder(w).Encode(resp); err != nil {
+			log.Printf("Failed to encode XML response: %v", err)
+		}
+	} else {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		if err := json.NewEncoder(w).Encode(resp); err != nil {
+			log.Printf("Failed to encode JSON response: %v", err)
+		}
 	}
 }
