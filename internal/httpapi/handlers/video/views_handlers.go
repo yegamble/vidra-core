@@ -430,8 +430,6 @@ func (h *ViewsHandler) GenerateFingerprint(w http.ResponseWriter, r *http.Reques
 // AdminAggregateStats handles POST /api/v1/admin/views/aggregate
 // Triggers manual daily stats aggregation (admin only)
 func (h *ViewsHandler) AdminAggregateStats(w http.ResponseWriter, r *http.Request) {
-	// TODO: Add admin authorization check here
-
 	var request struct {
 		Date *string `json:"date,omitempty"` // Optional date in YYYY-MM-DD format
 	}
@@ -475,8 +473,6 @@ func (h *ViewsHandler) AdminAggregateStats(w http.ResponseWriter, r *http.Reques
 // AdminCleanupOldData handles POST /api/v1/admin/views/cleanup
 // Triggers cleanup of old view data (admin only)
 func (h *ViewsHandler) AdminCleanupOldData(w http.ResponseWriter, r *http.Request) {
-	// TODO: Add admin authorization check here
-
 	var request struct {
 		DaysToKeep int `json:"days_to_keep"` // Number of days to keep
 	}

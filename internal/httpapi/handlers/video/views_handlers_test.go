@@ -879,6 +879,97 @@ func TestViewsHandler_GetViewHistory(t *testing.T) {
 	})
 }
 
+func TestViewsHandler_AdminAggregateStats(t *testing.T) {
+	testDB := testutil.SetupTestDB(t)
+	viewsRepo := repository.NewViewsRepository(testDB.DB)
+	viewsService := ucviews.NewService(viewsRepo, nil) // videoRepo not needed
+	handler := NewViewsHandler(viewsService)
+
+	user := createTestViewsUser(t, testDB)
+	adminUser := createTestAdminUser(t, testDB)
+
+	t.Run("admin can trigger aggregation", func(t *testing.T) {
+		reqBody := map[string]string{}
+		body, _ := json.Marshal(reqBody)
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/views/aggregate", bytes.NewReader(body))
+		ctx := context.WithValue(req.Context(), middleware.UserIDKey, adminUser.ID)
+		ctx = context.WithValue(ctx, middleware.UserRoleKey, "admin")
+		req = req.WithContext(ctx)
+
+		rr := httptest.NewRecorder()
+		router := chi.NewRouter()
+		router.Use(middleware.RequireRole("admin"))
+		router.Post("/api/v1/admin/views/aggregate", handler.AdminAggregateStats)
+		router.ServeHTTP(rr, req)
+
+		assert.Equal(t, http.StatusOK, rr.Code)
+		var response map[string]interface{}
+		json.Unmarshal(rr.Body.Bytes(), &response)
+		assert.True(t, response["success"].(bool))
+	})
+
+	t.Run("non-admin cannot trigger aggregation", func(t *testing.T) {
+		reqBody := map[string]string{}
+		body, _ := json.Marshal(reqBody)
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/views/aggregate", bytes.NewReader(body))
+		ctx := context.WithValue(req.Context(), middleware.UserIDKey, user.ID)
+		ctx = context.WithValue(ctx, middleware.UserRoleKey, "user")
+		req = req.WithContext(ctx)
+
+		rr := httptest.NewRecorder()
+		router := chi.NewRouter()
+		router.Use(middleware.RequireRole("admin"))
+		router.Post("/api/v1/admin/views/aggregate", handler.AdminAggregateStats)
+		router.ServeHTTP(rr, req)
+
+		assert.Equal(t, http.StatusForbidden, rr.Code)
+	})
+}
+
+func TestViewsHandler_AdminCleanupOldData(t *testing.T) {
+	testDB := testutil.SetupTestDB(t)
+	viewsRepo := repository.NewViewsRepository(testDB.DB)
+	viewsService := ucviews.NewService(viewsRepo, nil)
+	handler := NewViewsHandler(viewsService)
+
+	user := createTestViewsUser(t, testDB)
+	adminUser := createTestAdminUser(t, testDB)
+
+	t.Run("admin can trigger cleanup", func(t *testing.T) {
+		reqBody := map[string]int{"days_to_keep": 30}
+		body, _ := json.Marshal(reqBody)
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/views/cleanup", bytes.NewReader(body))
+		ctx := context.WithValue(req.Context(), middleware.UserIDKey, adminUser.ID)
+		ctx = context.WithValue(ctx, middleware.UserRoleKey, "admin")
+		req = req.WithContext(ctx)
+
+		rr := httptest.NewRecorder()
+		router := chi.NewRouter()
+		router.Use(middleware.RequireRole("admin"))
+		router.Post("/api/v1/admin/views/cleanup", handler.AdminCleanupOldData)
+		router.ServeHTTP(rr, req)
+
+		assert.Equal(t, http.StatusOK, rr.Code)
+	})
+
+	t.Run("non-admin cannot trigger cleanup", func(t *testing.T) {
+		reqBody := map[string]int{"days_to_keep": 30}
+		body, _ := json.Marshal(reqBody)
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/views/cleanup", bytes.NewReader(body))
+		ctx := context.WithValue(req.Context(), middleware.UserIDKey, user.ID)
+		ctx = context.WithValue(ctx, middleware.UserRoleKey, "user")
+		req = req.WithContext(ctx)
+
+		rr := httptest.NewRecorder()
+		router := chi.NewRouter()
+		router.Use(middleware.RequireRole("admin"))
+		router.Post("/api/v1/admin/views/cleanup", handler.AdminCleanupOldData)
+		router.ServeHTTP(rr, req)
+
+		assert.Equal(t, http.StatusForbidden, rr.Code)
+	})
+}
+
 // Helper functions
 
 func createTestViewsUser(t *testing.T, testDB *testutil.TestDB) *domain.User {

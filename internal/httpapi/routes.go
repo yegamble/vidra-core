@@ -445,6 +445,13 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 				r.Delete("/{id}", moderationHandlers.DeleteBlocklistEntry)
 			})
 
+			// Views management
+			r.Route("/views", func(r chi.Router) {
+				r.Use(middleware.RequireRole("admin"))
+				r.Post("/aggregate", viewsHandler.AdminAggregateStats)
+				r.Post("/cleanup", viewsHandler.AdminCleanupOldData)
+			})
+
 			// Instance configuration (admin only)
 			r.Route("/instance/config", func(r chi.Router) {
 				r.Use(middleware.RequireRole("admin"))
