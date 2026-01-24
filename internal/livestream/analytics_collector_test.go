@@ -54,7 +54,9 @@ func (m *mockAnalyticsRepo) UpdateStreamSummary(ctx context.Context, streamID uu
 }
 
 // Satisfy AnalyticsRepository interface
-func (m *mockAnalyticsRepo) CleanupOldAnalytics(ctx context.Context, retentionDays int) error { return nil }
+func (m *mockAnalyticsRepo) CleanupOldAnalytics(ctx context.Context, retentionDays int) error {
+	return nil
+}
 func (m *mockAnalyticsRepo) GetAnalyticsByStream(ctx context.Context, streamID uuid.UUID, timeRange *domain.AnalyticsTimeRange) ([]*domain.StreamAnalytics, error) {
 	return nil, nil
 }
