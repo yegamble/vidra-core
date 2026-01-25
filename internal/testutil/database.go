@@ -4,11 +4,13 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -23,11 +25,36 @@ type TestDB struct {
 	Redis *redis.Client
 }
 
+var (
+	dbAvailability bool
+	dbCheckOnce    sync.Once
+)
+
+func checkDBAvailability() {
+	host := getEnvDefault("TEST_DB_HOST", "localhost")
+	port := getEnvDefault("TEST_DB_PORT", "5432")
+	address := net.JoinHostPort(host, port)
+
+	conn, err := net.DialTimeout("tcp", address, 100*time.Millisecond)
+	if err != nil {
+		dbAvailability = false
+		return
+	}
+	conn.Close()
+	dbAvailability = true
+}
+
 func SetupTestDB(t *testing.T) *TestDB {
 	t.Helper()
 
 	if testing.Short() {
 		t.Skip("Skipping integration test in short mode")
+		return nil
+	}
+
+	dbCheckOnce.Do(checkDBAvailability)
+	if !dbAvailability {
+		t.Skip("Skipping test: Database not available (Fail Fast)")
 		return nil
 	}
 

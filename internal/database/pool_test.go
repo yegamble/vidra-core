@@ -524,9 +524,16 @@ func TestPool_Stats(t *testing.T) {
 
 // TestPool_StatsUnderLoad tests stats accuracy under concurrent load
 func TestPool_StatsUnderLoad(t *testing.T) {
-	mockDB, mock, err := sqlmock.New(sqlmock.MonitorPingsOption(true))
+	// Configure sqlmock to be robust against concurrency
+	mockDB, mock, err := sqlmock.New(
+		sqlmock.MonitorPingsOption(true),
+		sqlmock.QueryMatcherOption(sqlmock.QueryMatcherEqual),
+	)
 	require.NoError(t, err)
 	defer mockDB.Close()
+
+	// Disable order matching for concurrent execution
+	mock.MatchExpectationsInOrder(false)
 
 	mock.ExpectPing().WillReturnError(nil)
 
@@ -543,6 +550,7 @@ func TestPool_StatsUnderLoad(t *testing.T) {
 	defer pool.Close()
 
 	const numQueries = 20
+	// Setup expectations for all concurrent queries
 	for i := 0; i < numQueries; i++ {
 		mock.ExpectQuery("SELECT 1").WillReturnRows(sqlmock.NewRows([]string{"col"}).AddRow(1))
 	}
@@ -553,8 +561,14 @@ func TestPool_StatsUnderLoad(t *testing.T) {
 	for i := 0; i < numQueries; i++ {
 		go func() {
 			defer wg.Done()
-			rows, err := pool.Query("SELECT 1")
+
+			// Use context with timeout to prevent deadlock
+			ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+			defer cancel()
+
+			rows, err := pool.QueryContext(ctx, "SELECT 1")
 			if err != nil {
+				// Don't fail test here, just log, otherwise it might be flaky if pool is exhausted
 				t.Logf("Query error: %v", err)
 				return
 			}
@@ -576,7 +590,19 @@ func TestPool_StatsUnderLoad(t *testing.T) {
 	assert.LessOrEqual(t, stats.OpenConnections, config.MaxOpenConns,
 		"OpenConnections should not exceed MaxOpenConns")
 
-	wg.Wait()
+	// Wait with timeout
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		// Success
+	case <-time.After(5 * time.Second):
+		t.Fatal("Test timed out waiting for goroutines")
+	}
 
 	// Final stats after load
 	finalStats := pool.Stats()
@@ -716,12 +742,7 @@ func BenchmarkPool_ConnectionAcquisition(b *testing.B) {
 	mock.ExpectPing().WillReturnError(nil)
 
 	sqlxDB := sqlx.NewDb(mockDB, "sqlmock")
-	config := PoolConfig{
-		MaxOpenConns:    1, // Force serialization
-		MaxIdleConns:    1,
-		ConnMaxLifetime: 5 * time.Minute,
-		ConnMaxIdleTime: 2 * time.Minute,
-	}
+	config := DefaultPoolConfig()
 
 	pool, err := NewPool(sqlxDB, config)
 	require.NoError(b, err)
