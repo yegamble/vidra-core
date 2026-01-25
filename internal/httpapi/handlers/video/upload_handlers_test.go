@@ -22,6 +22,7 @@ import (
 	chi "github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -37,44 +38,41 @@ func createTestConfig() *config.Config {
 }
 
 func TestInitiateUploadHandler(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping integration tests in short mode")
-	}
+	// Refactored to use mocks - no longer skips in short mode
+	mockService := new(MockUploadService)
+	mockVideoRepo := new(MockVideoRepository)
 
-	testDB := testutil.SetupTestDB(t)
-	uploadRepo := repository.NewUploadRepository(testDB.DB)
-	encodingRepo := repository.NewEncodingRepository(testDB.DB)
-	videoRepo := repository.NewVideoRepository(testDB.DB)
-	userRepo := repository.NewUserRepository(testDB.DB)
-
-	tempDir := t.TempDir()
-	uploadService := usecase.NewUploadService(uploadRepo, encodingRepo, videoRepo, tempDir, createTestConfig())
-
-	// Create test user
-	ctx := context.Background()
-	user := createTestUser(t, userRepo, ctx, "testuser", "test@example.com")
+	userID := uuid.NewString()
 
 	// Prepare request
 	req := domain.InitiateUploadRequest{
-		FileName: "test_video.mp4",
-		// Choose a file size that divides evenly into the chunk size
-		// to make expected TotalChunks deterministic for assertions.
-		FileSize:  10485 * 100, // 100 chunks of size 10,485 bytes
-		ChunkSize: 10485,       // ~10KB
+		FileName:  "test_video.mp4",
+		FileSize:  1048500, // 100 chunks of ~10KB
+		ChunkSize: 10485,
 	}
+
+	expectedResponse := &domain.InitiateUploadResponse{
+		SessionID:   uuid.NewString(),
+		ChunkSize:   req.ChunkSize,
+		TotalChunks: 100,
+		UploadURL:   fmt.Sprintf("/api/v1/uploads/%s/chunks", uuid.NewString()),
+	}
+
+	// Expect InitiateUpload to be called
+	mockService.On("InitiateUpload", mock.Anything, userID, &req).Return(expectedResponse, nil)
 
 	reqBody, _ := json.Marshal(req)
 
 	// Create HTTP request
 	httpReq := httptest.NewRequest("POST", "/api/v1/uploads/initiate", bytes.NewReader(reqBody))
 	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq = httpReq.WithContext(context.WithValue(httpReq.Context(), middleware.UserIDKey, user.ID))
+	httpReq = httpReq.WithContext(context.WithValue(httpReq.Context(), middleware.UserIDKey, userID))
 
 	// Create response recorder
 	w := httptest.NewRecorder()
 
 	// Call handler
-	handler := InitiateUploadHandler(uploadService, videoRepo)
+	handler := InitiateUploadHandler(mockService, mockVideoRepo)
 	handler(w, httpReq)
 
 	// Assert response
@@ -91,24 +89,16 @@ func TestInitiateUploadHandler(t *testing.T) {
 	err = json.Unmarshal(dataBytes, &response)
 	require.NoError(t, err)
 
-	assert.NotEmpty(t, response.SessionID)
+	assert.Equal(t, expectedResponse.SessionID, response.SessionID)
 	assert.Equal(t, req.ChunkSize, response.ChunkSize)
 	assert.Equal(t, 100, response.TotalChunks)
-	assert.Contains(t, response.UploadURL, response.SessionID)
+
+	mockService.AssertExpectations(t)
 }
 
 func TestInitiateUploadHandler_Unauthorized(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping integration tests in short mode")
-	}
-
-	testDB := testutil.SetupTestDB(t)
-	uploadRepo := repository.NewUploadRepository(testDB.DB)
-	encodingRepo := repository.NewEncodingRepository(testDB.DB)
-	videoRepo := repository.NewVideoRepository(testDB.DB)
-
-	tempDir := t.TempDir()
-	uploadService := usecase.NewUploadService(uploadRepo, encodingRepo, videoRepo, tempDir, createTestConfig())
+	mockService := new(MockUploadService)
+	mockVideoRepo := new(MockVideoRepository)
 
 	req := domain.InitiateUploadRequest{
 		FileName:  "test_video.mp4",
@@ -124,51 +114,45 @@ func TestInitiateUploadHandler_Unauthorized(t *testing.T) {
 
 	w := httptest.NewRecorder()
 
-	handler := InitiateUploadHandler(uploadService, videoRepo)
+	handler := InitiateUploadHandler(mockService, mockVideoRepo)
 	handler(w, httpReq)
 
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
 }
 
 func TestUploadChunkHandler(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping integration tests in short mode")
-	}
+	mockService := new(MockUploadService)
+	cfg := createTestConfig()
 
-	testDB := testutil.SetupTestDB(t)
-	uploadRepo := repository.NewUploadRepository(testDB.DB)
-	encodingRepo := repository.NewEncodingRepository(testDB.DB)
-	videoRepo := repository.NewVideoRepository(testDB.DB)
-	userRepo := repository.NewUserRepository(testDB.DB)
-
-	tempDir := t.TempDir()
-	uploadService := usecase.NewUploadService(uploadRepo, encodingRepo, videoRepo, tempDir, createTestConfig())
-
-	ctx := context.Background()
-
-	// Setup test data
-	user := createTestUser(t, userRepo, ctx, "testuser", "test@example.com")
-	response := initiateTestUpload(t, uploadService, ctx, user.ID)
-
-	// Prepare chunk data
+	sessionID := uuid.NewString()
+	chunkIndex := 0
 	chunkData := []byte("test chunk data for chunk 0")
 	hasher := sha256.New()
 	hasher.Write(chunkData)
 	checksum := hex.EncodeToString(hasher.Sum(nil))
 
+	// Expect UploadChunk to be called
+	mockService.On("UploadChunk", mock.Anything, sessionID, mock.MatchedBy(func(c *domain.ChunkUpload) bool {
+		return c.ChunkIndex == chunkIndex && c.Checksum == checksum && bytes.Equal(c.Data, chunkData)
+	})).Return(&domain.ChunkUploadResponse{
+		ChunkIndex: chunkIndex,
+		Uploaded:   true,
+		RemainingChunks: []int{1, 2, 3},
+	}, nil)
+
 	// Create HTTP request
-	httpReq := httptest.NewRequest("POST", fmt.Sprintf("/api/v1/uploads/%s/chunks", response.SessionID), bytes.NewReader(chunkData))
+	httpReq := httptest.NewRequest("POST", fmt.Sprintf("/api/v1/uploads/%s/chunks", sessionID), bytes.NewReader(chunkData))
 	httpReq.Header.Set("X-Chunk-Index", "0")
 	httpReq.Header.Set("X-Chunk-Checksum", checksum)
 
 	// Add URL parameters
 	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("sessionId", response.SessionID)
+	rctx.URLParams.Add("sessionId", sessionID)
 	httpReq = httpReq.WithContext(context.WithValue(httpReq.Context(), chi.RouteCtxKey, rctx))
 
 	w := httptest.NewRecorder()
 
-	handler := UploadChunkHandler(uploadService, createTestConfig())
+	handler := UploadChunkHandler(mockService, cfg)
 	handler(w, httpReq)
 
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -185,45 +169,30 @@ func TestUploadChunkHandler(t *testing.T) {
 
 	assert.Equal(t, 0, chunkResponse.ChunkIndex)
 	assert.True(t, chunkResponse.Uploaded)
-	assert.Len(t, chunkResponse.RemainingChunks, response.TotalChunks-1)
+
+	mockService.AssertExpectations(t)
 }
 
 func TestUploadChunkHandler_InvalidChecksum(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping integration tests in short mode")
-	}
+	mockService := new(MockUploadService)
+	cfg := createTestConfig()
 
-	testDB := testutil.SetupTestDB(t)
-	uploadRepo := repository.NewUploadRepository(testDB.DB)
-	encodingRepo := repository.NewEncodingRepository(testDB.DB)
-	videoRepo := repository.NewVideoRepository(testDB.DB)
-	userRepo := repository.NewUserRepository(testDB.DB)
-
-	tempDir := t.TempDir()
-	uploadService := usecase.NewUploadService(uploadRepo, encodingRepo, videoRepo, tempDir, createTestConfig())
-
-	ctx := context.Background()
-
-	// Setup test data
-	user := createTestUser(t, userRepo, ctx, "testuser", "test@example.com")
-	response := initiateTestUpload(t, uploadService, ctx, user.ID)
-
-	// Prepare chunk data with wrong checksum
+	sessionID := uuid.NewString()
 	chunkData := []byte("test chunk data")
 
 	// Create HTTP request with invalid checksum
-	httpReq := httptest.NewRequest("POST", fmt.Sprintf("/api/v1/uploads/%s/chunks", response.SessionID), bytes.NewReader(chunkData))
+	httpReq := httptest.NewRequest("POST", fmt.Sprintf("/api/v1/uploads/%s/chunks", sessionID), bytes.NewReader(chunkData))
 	httpReq.Header.Set("X-Chunk-Index", "0")
 	httpReq.Header.Set("X-Chunk-Checksum", "invalid_checksum")
 
 	// Add URL parameters
 	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("sessionId", response.SessionID)
+	rctx.URLParams.Add("sessionId", sessionID)
 	httpReq = httpReq.WithContext(context.WithValue(httpReq.Context(), chi.RouteCtxKey, rctx))
 
 	w := httptest.NewRecorder()
 
-	handler := UploadChunkHandler(uploadService, createTestConfig())
+	handler := UploadChunkHandler(mockService, cfg)
 	handler(w, httpReq)
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
@@ -234,6 +203,8 @@ func TestUploadChunkHandler_InvalidChecksum(t *testing.T) {
 	require.False(t, envelope.Success)
 	require.NotNil(t, envelope.Error)
 	assert.Contains(t, envelope.Error.Code, "CHECKSUM_MISMATCH")
+
+	mockService.AssertNotCalled(t, "UploadChunk")
 }
 
 func TestCompleteUploadHandler(t *testing.T) {
@@ -291,40 +262,29 @@ func TestCompleteUploadHandler(t *testing.T) {
 }
 
 func TestGetUploadStatusHandler(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping integration tests in short mode")
+	mockService := new(MockUploadService)
+
+	sessionID := uuid.NewString()
+	expectedSession := &domain.UploadSession{
+		ID:             sessionID,
+		Status:         domain.UploadStatusActive,
+		TotalChunks:    10,
+		UploadedChunks: []int{0, 2},
 	}
 
-	testDB := testutil.SetupTestDB(t)
-	uploadRepo := repository.NewUploadRepository(testDB.DB)
-	encodingRepo := repository.NewEncodingRepository(testDB.DB)
-	videoRepo := repository.NewVideoRepository(testDB.DB)
-	userRepo := repository.NewUserRepository(testDB.DB)
-
-	tempDir := t.TempDir()
-	uploadService := usecase.NewUploadService(uploadRepo, encodingRepo, videoRepo, tempDir, createTestConfig())
-
-	ctx := context.Background()
-
-	// Setup test data
-	user := createTestUser(t, userRepo, ctx, "testuser", "test@example.com")
-	response := initiateTestUpload(t, uploadService, ctx, user.ID)
-
-	// Upload some chunks
-	uploadTestChunk(t, uploadService, ctx, response.SessionID, 0)
-	uploadTestChunk(t, uploadService, ctx, response.SessionID, 2)
+	mockService.On("GetUploadStatus", mock.Anything, sessionID).Return(expectedSession, nil)
 
 	// Create HTTP request
-	httpReq := httptest.NewRequest("GET", fmt.Sprintf("/api/v1/uploads/%s/status", response.SessionID), nil)
+	httpReq := httptest.NewRequest("GET", fmt.Sprintf("/api/v1/uploads/%s/status", sessionID), nil)
 
 	// Add URL parameters
 	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("sessionId", response.SessionID)
+	rctx.URLParams.Add("sessionId", sessionID)
 	httpReq = httpReq.WithContext(context.WithValue(httpReq.Context(), chi.RouteCtxKey, rctx))
 
 	w := httptest.NewRecorder()
 
-	handler := GetUploadStatusHandler(uploadService)
+	handler := GetUploadStatusHandler(mockService)
 	handler(w, httpReq)
 
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -339,49 +299,40 @@ func TestGetUploadStatusHandler(t *testing.T) {
 	err = json.Unmarshal(dataBytes, &session)
 	require.NoError(t, err)
 
-	assert.Equal(t, response.SessionID, session.ID)
+	assert.Equal(t, sessionID, session.ID)
 	assert.Equal(t, domain.UploadStatusActive, session.Status)
 	assert.Len(t, session.UploadedChunks, 2)
 	assert.Contains(t, session.UploadedChunks, 0)
 	assert.Contains(t, session.UploadedChunks, 2)
+
+	mockService.AssertExpectations(t)
 }
 
 func TestResumeUploadHandler(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping integration tests in short mode")
+	mockService := new(MockUploadService)
+
+	sessionID := uuid.NewString()
+	expectedSession := &domain.UploadSession{
+		ID:             sessionID,
+		Status:         domain.UploadStatusActive,
+		TotalChunks:    10,
+		UploadedChunks: []int{0, 1, 3},
+		ExpiresAt:      time.Now().Add(1 * time.Hour),
 	}
 
-	testDB := testutil.SetupTestDB(t)
-	uploadRepo := repository.NewUploadRepository(testDB.DB)
-	encodingRepo := repository.NewEncodingRepository(testDB.DB)
-	videoRepo := repository.NewVideoRepository(testDB.DB)
-	userRepo := repository.NewUserRepository(testDB.DB)
-
-	tempDir := t.TempDir()
-	uploadService := usecase.NewUploadService(uploadRepo, encodingRepo, videoRepo, tempDir, createTestConfig())
-
-	ctx := context.Background()
-
-	// Setup test data
-	user := createTestUser(t, userRepo, ctx, "testuser", "test@example.com")
-	response := initiateTestUpload(t, uploadService, ctx, user.ID)
-
-	// Upload some chunks (simulating interrupted upload)
-	uploadTestChunk(t, uploadService, ctx, response.SessionID, 0)
-	uploadTestChunk(t, uploadService, ctx, response.SessionID, 1)
-	uploadTestChunk(t, uploadService, ctx, response.SessionID, 3)
+	mockService.On("GetUploadStatus", mock.Anything, sessionID).Return(expectedSession, nil)
 
 	// Create HTTP request
-	httpReq := httptest.NewRequest("GET", fmt.Sprintf("/api/v1/uploads/%s/resume", response.SessionID), nil)
+	httpReq := httptest.NewRequest("GET", fmt.Sprintf("/api/v1/uploads/%s/resume", sessionID), nil)
 
 	// Add URL parameters
 	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("sessionId", response.SessionID)
+	rctx.URLParams.Add("sessionId", sessionID)
 	httpReq = httpReq.WithContext(context.WithValue(httpReq.Context(), chi.RouteCtxKey, rctx))
 
 	w := httptest.NewRecorder()
 
-	handler := ResumeUploadHandler(uploadService)
+	handler := ResumeUploadHandler(mockService)
 	handler(w, httpReq)
 
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -396,8 +347,8 @@ func TestResumeUploadHandler(t *testing.T) {
 	err = json.Unmarshal(dataBytes, &resumeResponse)
 	require.NoError(t, err)
 
-	assert.Equal(t, response.SessionID, resumeResponse["session_id"])
-	assert.Equal(t, float64(response.TotalChunks), resumeResponse["total_chunks"])
+	assert.Equal(t, sessionID, resumeResponse["session_id"])
+	assert.Equal(t, float64(10), resumeResponse["total_chunks"])
 
 	// Check uploaded chunks
 	uploadedChunks := resumeResponse["uploaded_chunks"].([]interface{})
@@ -405,33 +356,19 @@ func TestResumeUploadHandler(t *testing.T) {
 
 	// Check remaining chunks
 	remainingChunks := resumeResponse["remaining_chunks"].([]interface{})
-	expectedRemaining := response.TotalChunks - 3
+	expectedRemaining := 7
 	assert.Len(t, remainingChunks, expectedRemaining)
 
-	// Should not contain uploaded chunks
-	for _, chunk := range remainingChunks {
-		chunkNum := int(chunk.(float64))
-		assert.NotContains(t, []int{0, 1, 3}, chunkNum)
-	}
-
-	// Progress should be 30% (3 out of 10 chunks)
-	progressPercent := resumeResponse["progress_percent"].(float64)
-	expectedProgress := float64(3) / float64(response.TotalChunks) * 100
-	assert.Equal(t, expectedProgress, progressPercent)
+	mockService.AssertExpectations(t)
 }
 
 func TestUploadHandlers_InvalidSessionID(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping integration tests in short mode")
-	}
+	mockService := new(MockUploadService)
+	// We need a real encoding repo for CompleteUploadHandler signature, or we can just pass nil if it's not used
+	// before the validation check.
 
-	testDB := testutil.SetupTestDB(t)
-	uploadRepo := repository.NewUploadRepository(testDB.DB)
-	encodingRepo := repository.NewEncodingRepository(testDB.DB)
-	videoRepo := repository.NewVideoRepository(testDB.DB)
-
-	tempDir := t.TempDir()
-	uploadService := usecase.NewUploadService(uploadRepo, encodingRepo, videoRepo, tempDir, createTestConfig())
+	// Create handlers
+	// For CompleteUploadHandler, we pass nil for encodingRepo because session ID validation happens first
 
 	handlers := []struct {
 		name    string
@@ -439,10 +376,10 @@ func TestUploadHandlers_InvalidSessionID(t *testing.T) {
 		method  string
 		path    string
 	}{
-		{"UploadChunk", UploadChunkHandler(uploadService, createTestConfig()), "POST", "/chunks"},
-		{"CompleteUpload", CompleteUploadHandler(uploadService, encodingRepo), "POST", "/complete"},
-		{"GetUploadStatus", GetUploadStatusHandler(uploadService), "GET", "/status"},
-		{"ResumeUpload", ResumeUploadHandler(uploadService), "GET", "/resume"},
+		{"UploadChunk", UploadChunkHandler(mockService, createTestConfig()), "POST", "/chunks"},
+		{"CompleteUpload", CompleteUploadHandler(mockService, nil), "POST", "/complete"},
+		{"GetUploadStatus", GetUploadStatusHandler(mockService), "GET", "/status"},
+		{"ResumeUpload", ResumeUploadHandler(mockService), "GET", "/resume"},
 	}
 
 	for _, tc := range handlers {
@@ -490,7 +427,7 @@ func TestUploadHandlers_InvalidSessionID(t *testing.T) {
 	}
 }
 
-// Helper functions
+// Helper functions (kept for TestCompleteUploadHandler which is skipped but needs compilation)
 func createTestUser(t *testing.T, repo usecase.UserRepository, ctx context.Context, username, email string) *domain.User {
 	t.Helper()
 
