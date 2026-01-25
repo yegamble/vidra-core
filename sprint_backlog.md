@@ -1,43 +1,64 @@
 # Sprint Backlog: Operation Bedrock
 
-## High Priority (Blockers)
+## 🚨 Critical Path (Blockers)
 
-### 1. Fix Test Infrastructure (Docker Rate Limits)
-**Problem**: `docker compose up` fails due to unauthenticated pull rate limits from Docker Hub.
-**Solution**:
-*   Configure CI/Developer environment with authenticated Docker Hub credentials.
-*   OR: Switch to a public mirror or cached registry.
-*   **Workaround**: Developer instructions for `docker login`.
+### Issue #1: Fail-Fast Test Infrastructure
+**Assignee**: 🛠️ Builder
+**Priority**: Critical
+**Status**: To Do
+**Description**:
+Currently, running `make test` without Docker services running causes a massive timeout (>400s) because every test package retries the DB connection for 5 seconds.
+We need a global "check once" mechanism or a faster failure mode in `internal/testutil/database.go`.
 
-### 2. Implement "Fail Fast" in Test Helpers
-**Problem**: `internal/repository` tests take >400s to fail when DB is missing because each test retries connection for 5s.
-**Solution**:
-*   Modify `internal/testutil/database.go` -> `SetupTestDB`.
-*   Check for global "DB Unavailable" flag or check connection *once* at package init level.
-*   If DB unavailable, `t.SkipNow()` immediately with 0 delay.
+**Acceptance Criteria**:
+- [ ] `internal/testutil/database.go` checks for DB connectivity *once* with a short timeout (e.g., 1s) before attempting retries.
+- [ ] If DB is unreachable, `SetupTestDB` calls `t.SkipNow()` immediately.
+- [ ] `make test-unit` completes in < 1 minute even if Docker is down.
+- [ ] CI integration tests still pass (services are available there).
 
-### 3. Verify `internal/repository` Tests
-**Problem**: Tests have not been verified recently due to timeouts.
-**Action**:
-*   Once Task 1/2 is done, run `go test -v ./internal/repository`.
-*   Fix any SQL errors, schema mismatches, or logic bugs.
+### Issue #2: Verify User Repository Tests
+**Assignee**: 🧪 QA Guardian
+**Priority**: High
+**Status**: Blocked by #1
+**Description**:
+User repository tests (`internal/repository/user_repository_test.go`) are the foundation of auth. They need to be verified against the current schema.
 
-### 4. Verify `internal/ipfs` Tests
-**Problem**: Integration tests requiring IPFS node are skipped.
-**Action**:
-*   Ensure IPFS container starts.
-*   Run tests and fix `CID` validation or connection logic if needed.
+**Acceptance Criteria**:
+- [ ] `go test -v ./internal/repository/user_repository_test.go` passes locally with Docker services up.
+- [ ] All SQL queries in `user_repository.go` match the schema in `migrations/`.
+- [ ] No regression in `CreateUser`, `GetUserByEmail`, or `UpdateUser`.
 
-## Medium Priority
+### Issue #3: Update Developer Documentation
+**Assignee**: 📝 Scribe
+**Priority**: High
+**Status**: To Do
+**Description**:
+The `README.md` does not explicitly warn developers about Docker Hub rate limits or the need for `docker login`. It also claims "Production Ready" which is misleading given the current test state.
 
-### 5. Update Documentation
-**Problem**: `README.md` claims "Production Ready" but tests are not passing in fresh environments.
-**Action**:
-*   Add "Prerequisites" section (Docker with auth).
-*   Clarify "Conditional Go" status.
+**Acceptance Criteria**:
+- [ ] `README.md` includes a "Prerequisites" section listing Docker (authenticated), Go 1.24, and Make.
+- [ ] `README.md` clarifies the "Stabilization Phase" status.
+- [ ] `docs/development/TESTING_STRATEGY.md` is updated to mention the "Fail Fast" behavior.
 
-### 6. Refactor `internal/database` Tests
-**Problem**: `TestPool_StatsUnderLoad` was flaky (timeout).
-**Action**:
-*   Review `go-sqlmock` usage to ensure determinism.
-*   Consider reducing `Sleep` times or using channels for synchronization.
+## ⚠️ Medium Priority
+
+### Issue #4: Verify IPFS Integration Tests
+**Assignee**: 🧪 QA Guardian
+**Priority**: Medium
+**Status**: To Do
+**Description**:
+`internal/ipfs` tests are often skipped. We need to ensure they run when IPFS is available.
+
+**Acceptance Criteria**:
+- [ ] IPFS tests run and pass when `IPFS_API` is set.
+- [ ] IPFS tests skip gracefully if `IPFS_API` is missing (covered by Issue #1 logic?).
+
+### Issue #5: Refactor Flaky DB Tests
+**Assignee**: 🛠️ Builder
+**Priority**: Medium
+**Status**: To Do
+**Description**:
+`TestPool_StatsUnderLoad` in `internal/database` is flaky.
+
+**Acceptance Criteria**:
+- [ ] Test is deterministic or removed if not adding value.
