@@ -224,8 +224,8 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 		})
 
 		r.Route("/users", func(r chi.Router) {
-			// Admin-style create user; currently just requires auth (role checks TBD)
-			r.With(middleware.Auth(cfg.JWTSecret)).Post("/", auth.CreateUserHandler(deps.UserRepo))
+			// Admin-style create user; restricted to admin role
+			r.With(middleware.Auth(cfg.JWTSecret), middleware.RequireRole("admin")).Post("/", auth.CreateUserHandler(deps.UserRepo))
 			r.With(middleware.Auth(cfg.JWTSecret)).Get("/me", auth.GetCurrentUserHandler(deps.UserRepo))
 			r.With(middleware.Auth(cfg.JWTSecret)).Put("/me", auth.UpdateCurrentUserHandler(deps.UserRepo))
 			r.With(middleware.Auth(cfg.JWTSecret)).Post("/me/avatar", authHandlers.UploadAvatar)
