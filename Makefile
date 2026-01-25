@@ -115,12 +115,12 @@ test-integration-race: ## Run integration tests with race detection (requires CG
 	@bash -lc 'set -a; [ -f .env.test ] && source .env.test || true; set +a; CGO_ENABLED=1 $(GO_ENV) go test -v -race -tags=integration ./tests/integration'
 
 test-integration-ci: ## Run repository + httpapi Integration tests (CI services env)
-	@echo "Running integration tests with short flag to skip load/stress tests..."
-	@$(GO_ENV) go test -v -short -parallel=8 ./...
+	@echo "Running integration tests (with integration tags)..."
+	@$(GO_ENV) go test -v -parallel=8 -tags=integration ./...
 
 test-integration-ci-race: ## Run integration tests in CI with race detection (requires CGO_ENABLED=1 and gcc)
-	@echo "Running integration tests with short flag and race detection..."
-	@CGO_ENABLED=1 $(GO_ENV) go test -v -short -race -parallel=8 ./...
+	@echo "Running integration tests with race detection (with integration tags)..."
+	@CGO_ENABLED=1 $(GO_ENV) go test -v -race -parallel=8 -tags=integration ./...
 
 .PHONY: test-setup
 test-setup: ## Setup test environment with DNS and port checks
