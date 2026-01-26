@@ -1,43 +1,57 @@
 # Sprint Backlog: Operation Bedrock
 
-## High Priority (Blockers)
+## In Progress
 
-### 1. Fix Test Infrastructure (Docker Rate Limits)
-**Problem**: `docker compose up` fails due to unauthenticated pull rate limits from Docker Hub.
-**Solution**:
-*   Configure CI/Developer environment with authenticated Docker Hub credentials.
-*   OR: Switch to a public mirror or cached registry.
-*   **Workaround**: Developer instructions for `docker login`.
+### Task 1: Implement "Fail Fast" in Test Helpers
+**Assignee**: Builder 🛠️
+**Priority**: High (Blocker)
+**Description**:
+Currently, `SetupTestDB` retries connections for every test, leading to massive timeouts when the DB is missing.
+**Requirements**:
+- Modify `internal/testutil/database.go` to use `sync.Once` for the initial connection check.
+- Store the result in a global variable (e.g., `dbAvailable`).
+- If `dbAvailable` is false, `SetupTestDB` must `t.SkipNow()` immediately (0ms delay).
+- Ensure this state persists across the entire test suite execution.
 
-### 2. Implement "Fail Fast" in Test Helpers
-**Problem**: `internal/repository` tests take >400s to fail when DB is missing because each test retries connection for 5s.
-**Solution**:
-*   Modify `internal/testutil/database.go` -> `SetupTestDB`.
-*   Check for global "DB Unavailable" flag or check connection *once* at package init level.
-*   If DB unavailable, `t.SkipNow()` immediately with 0 delay.
+### Task 2: Verify "Fail Fast" Mechanism
+**Assignee**: QA Guardian 🧪
+**Priority**: High
+**Description**:
+Confirm that the fix in Task 1 actually works.
+**Steps**:
+- Stop all Docker containers (`docker compose down`).
+- Run `go test -v ./internal/repository/...`.
+- **Expected Result**: Tests should finish in < 5 seconds (all skipped), not 400s+.
 
-### 3. Verify `internal/repository` Tests
-**Problem**: Tests have not been verified recently due to timeouts.
-**Action**:
-*   Once Task 1/2 is done, run `go test -v ./internal/repository`.
-*   Fix any SQL errors, schema mismatches, or logic bugs.
+### Task 3: Verify `internal/repository` Tests
+**Assignee**: QA Guardian 🧪
+**Priority**: High
+**Description**:
+Run the core repository tests against a real database to establish a baseline.
+**Steps**:
+- Start DB: `docker compose -f docker-compose.test.yml up -d postgres-test redis-test`.
+- Run: `go test -v ./internal/repository/...`.
+- **Output**: Create GitHub Issues for any failures. Do not fix complex bugs yet; just log them.
 
-### 4. Verify `internal/ipfs` Tests
-**Problem**: Integration tests requiring IPFS node are skipped.
-**Action**:
-*   Ensure IPFS container starts.
-*   Run tests and fix `CID` validation or connection logic if needed.
+### Task 4: Verify `internal/ipfs` Tests
+**Assignee**: QA Guardian 🧪
+**Priority**: Medium
+**Description**:
+Run IPFS integration tests.
+**Steps**:
+- Start IPFS: `docker compose -f docker-compose.test.yml up -d ipfs-test`.
+- Run: `go test -v ./internal/ipfs/...`.
+- **Output**: Log failures.
 
-## Medium Priority
+### Task 5: Update Documentation
+**Assignee**: Scribe 📝
+**Priority**: Medium
+**Description**:
+Update `README.md` to reflect the current test environment requirements.
+**Requirements**:
+- Add "Prerequisites" section: "Docker with authenticated pull (or mirror) is required to run integration tests."
+- Explain the "Fail Fast" behavior: "Tests will automatically skip if DB is not on port 5433."
 
-### 5. Update Documentation
-**Problem**: `README.md` claims "Production Ready" but tests are not passing in fresh environments.
-**Action**:
-*   Add "Prerequisites" section (Docker with auth).
-*   Clarify "Conditional Go" status.
-
-### 6. Refactor `internal/database` Tests
-**Problem**: `TestPool_StatsUnderLoad` was flaky (timeout).
-**Action**:
-*   Review `go-sqlmock` usage to ensure determinism.
-*   Consider reducing `Sleep` times or using channels for synchronization.
+## Todo (Next Sprint)
+- Fix identified bugs from Task 3 & 4.
+- Implement caching/mirroring for Docker in CI.
