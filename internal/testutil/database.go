@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -23,6 +24,18 @@ type TestDB struct {
 	Redis *redis.Client
 }
 
+var (
+	// Postgres availability check
+	dbCheckOnce sync.Once
+	dbAvailable bool
+	dbCheckErr  error
+
+	// Redis availability check
+	redisCheckOnce sync.Once
+	redisAvailable bool
+	redisCheckErr  error
+)
+
 func SetupTestDB(t *testing.T) *TestDB {
 	t.Helper()
 
@@ -31,15 +44,29 @@ func SetupTestDB(t *testing.T) *TestDB {
 		return nil
 	}
 
+	// Fail Fast: Check Postgres availability once globally
+	checkDBAvailability()
+	if !dbAvailable {
+		t.Skipf("Skipping test: Postgres not available (fail-fast): %v", dbCheckErr)
+		return nil
+	}
+
 	db, err := setupPostgres()
 	if err != nil {
-		t.Skipf("Skipping test: Postgres not available (%v)", err)
+		t.Skipf("Skipping test: Postgres setup failed: %v", err)
+		return nil
+	}
+
+	// Fail Fast: Check Redis availability once globally
+	checkRedisAvailability()
+	if !redisAvailable {
+		t.Skipf("Skipping test: Redis not available (fail-fast): %v", redisCheckErr)
 		return nil
 	}
 
 	redisClient, err := setupRedis()
 	if err != nil {
-		t.Skipf("Skipping test: Redis not available (%v)", err)
+		t.Skipf("Skipping test: Redis setup failed: %v", err)
 		return nil
 	}
 
@@ -55,14 +82,57 @@ func SetupTestDB(t *testing.T) *TestDB {
 	return testDB
 }
 
-func setupPostgres() (*sqlx.DB, error) {
+func checkDBAvailability() {
+	dbCheckOnce.Do(func() {
+		loadEnv()
+		dsn := getPostgresDSN()
+		// Try to connect with a short timeout to verify availability
+		// We use a simplified connection check here
+		db, err := connectWithRetry(dsn, 5*time.Second)
+		if err != nil {
+			dbAvailable = false
+			dbCheckErr = err
+			return
+		}
+		_ = db.Close()
+		dbAvailable = true
+	})
+}
+
+func checkRedisAvailability() {
+	redisCheckOnce.Do(func() {
+		loadEnv()
+		url := getRedisURL()
+		opt, err := redis.ParseURL(url)
+		if err != nil {
+			redisAvailable = false
+			redisCheckErr = err
+			return
+		}
+		client := redis.NewClient(opt)
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		if err := client.Ping(ctx).Err(); err != nil {
+			redisAvailable = false
+			redisCheckErr = err
+			_ = client.Close()
+			return
+		}
+		_ = client.Close()
+		redisAvailable = true
+	})
+}
+
+func loadEnv() {
 	// Try loading env files commonly used in tests from multiple locations
 	// Load .env.test first (overrides), then .env if present; ignore errors silently
 	_ = godotenv.Load("../../.env.test")
 	_ = godotenv.Load(".env.test")
 	_ = godotenv.Load("../../.env")
 	_ = godotenv.Load(".env")
+}
 
+func getPostgresDSN() string {
 	// Prefer an explicit test URL if provided
 	dbURL := os.Getenv("TEST_DATABASE_URL")
 	if dbURL == "" {
@@ -80,6 +150,25 @@ func setupPostgres() (*sqlx.DB, error) {
 		ssl := getEnvDefault("TEST_DB_SSLMODE", "disable")
 		dbURL = fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=%s", user, pass, host, port, name, ssl)
 	}
+	return dbURL
+}
+
+func getRedisURL() string {
+	// Use TEST_REDIS_URL first, then REDIS_URL, then default
+	redisURL := os.Getenv("TEST_REDIS_URL")
+	if redisURL == "" {
+		redisURL = os.Getenv("REDIS_URL")
+	}
+	if redisURL == "" {
+		// Default Redis URL: use 6379 for both CI and local since Docker is running on 6379
+		redisURL = "redis://localhost:6379/1"
+	}
+	return redisURL
+}
+
+func setupPostgres() (*sqlx.DB, error) {
+	loadEnv()
+	dbURL := getPostgresDSN()
 
 	// Derive an isolated schema per calling test package to avoid cross-package interference
 	schema := deriveTestSchema()
@@ -685,15 +774,8 @@ func getEnvDefault(key, def string) string {
 }
 
 func setupRedis() (*redis.Client, error) {
-	// Use TEST_REDIS_URL first, then REDIS_URL, then default
-	redisURL := os.Getenv("TEST_REDIS_URL")
-	if redisURL == "" {
-		redisURL = os.Getenv("REDIS_URL")
-	}
-	if redisURL == "" {
-		// Default Redis URL: use 6379 for both CI and local since Docker is running on 6379
-		redisURL = "redis://localhost:6379/1"
-	}
+	loadEnv()
+	redisURL := getRedisURL()
 
 	opt, err := redis.ParseURL(redisURL)
 	if err != nil {
