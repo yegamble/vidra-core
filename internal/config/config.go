@@ -11,7 +11,12 @@ import (
 	"github.com/joho/godotenv"
 )
 
+const DefaultInsecureJWTSecret = "your-super-secret-jwt-key-change-in-production"
+
 type Config struct {
+	// Environment
+	Environment string
+
 	// Server Configuration
 	Port int
 
@@ -297,10 +302,28 @@ func Load() (*Config, error) {
 
 	cfg := &Config{}
 
-	port := flag.Int("port", 8080, "Server port")
-	flag.Parse()
+	// Environment
+	cfg.Environment = getEnvOrDefault("APP_ENV", "development")
 
-	cfg.Port = *port
+	// Parse flags securely (avoid redefinition panics in tests)
+	var port int
+	if flag.Lookup("port") == nil {
+		flag.IntVar(&port, "port", 8080, "Server port")
+	} else {
+		// Use existing flag value if already defined
+		if f := flag.Lookup("port"); f != nil {
+			if val, err := strconv.Atoi(f.Value.String()); err == nil {
+				port = val
+			} else {
+				port = 8080
+			}
+		}
+	}
+	if !flag.Parsed() {
+		flag.Parse()
+	}
+
+	cfg.Port = port
 	if envPort := os.Getenv("PORT"); envPort != "" {
 		if p, err := strconv.Atoi(envPort); err == nil {
 			cfg.Port = p
@@ -354,6 +377,28 @@ func Load() (*Config, error) {
 	cfg.JWTSecret = getEnvOrDefault("JWT_SECRET", "")
 	if cfg.JWTSecret == "" {
 		return nil, fmt.Errorf("JWT_SECRET is required")
+	}
+
+	// Security Check: Insecure JWT Secret
+	if cfg.JWTSecret == DefaultInsecureJWTSecret {
+		msg := fmt.Sprintf("CRITICAL SECURITY WARNING: You are using the default insecure JWT_SECRET (%s). This is extremely dangerous.", DefaultInsecureJWTSecret)
+		if cfg.Environment == "production" {
+			return nil, fmt.Errorf("%s Refusing to start in production mode.", msg)
+		}
+		// In dev, just log it
+		fmt.Println("********************************************************************************")
+		fmt.Println(msg)
+		fmt.Println("Please set JWT_SECRET environment variable to a strong random string.")
+		fmt.Println("********************************************************************************")
+	}
+
+	// Security Check: Short JWT Secret
+	if len(cfg.JWTSecret) < 32 {
+		msg := fmt.Sprintf("SECURITY WARNING: JWT_SECRET is too short (%d chars). Minimum recommended is 32 characters.", len(cfg.JWTSecret))
+		if cfg.Environment == "production" {
+			return nil, fmt.Errorf("%s Refusing to start in production mode.", msg)
+		}
+		fmt.Println(msg)
 	}
 
 	cfg.EnableIOTA = getBoolEnv("ENABLE_IOTA", false)
