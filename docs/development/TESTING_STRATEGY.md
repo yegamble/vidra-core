@@ -339,6 +339,8 @@ Based on golang-test-guardian analysis, here's the current test coverage:
 
 **Run All Tests**:
 ```bash
+# NOTE: Ensure you are authenticated with Docker Hub (docker login) to avoid rate limits
+# when pulling test database images.
 make test
 # Or manually:
 go test ./... -race -coverprofile=coverage.out

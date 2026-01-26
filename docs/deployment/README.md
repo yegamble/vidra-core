@@ -4,6 +4,7 @@
 
 - Linux server (Ubuntu 22.04 LTS recommended)
 - Docker & Docker Compose installed
+- Docker Hub Account (authenticated via `docker login`) to avoid rate limits
 - Domain name with SSL certificate
 - PostgreSQL 15+ (managed or self-hosted)
 - Redis 7+ (managed or self-hosted)

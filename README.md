@@ -82,6 +82,12 @@ See [VALIDATION_REQUIRED.md](VALIDATION_REQUIRED.md) for complete requirements, 
 
 ## Quick Start
 
+### Prerequisites
+
+- **Docker & Docker Compose**: Required for running the complete stack (database, cache, app).
+- **Docker Hub Account**: You **must** be authenticated with Docker Hub to pull images (Postgres, Redis, etc.) without hitting anonymous rate limits. Run `docker login` before starting.
+- **Go 1.21+**: If running the application locally without Docker.
+
 ### Development
 
 ```bash
@@ -93,7 +99,7 @@ cd athena
 cp .env.example .env
 
 # Run with Docker Compose
-# Note: Ensure you are authenticated with Docker Hub to avoid rate limits
+# IMPORTANT: Ensure you are authenticated with Docker Hub (docker login) to avoid rate limits
 docker compose up --build
 
 # Or run locally
@@ -239,12 +245,14 @@ make lint           # Run linters
 
 ### Production Readiness Assessment
 
-**✅ Phase 1 Launch Ready** (After credential rotation, 1-2 weeks):
+**✅ Phase 1 Launch Ready (Conditional)** (After credential rotation & infra verification):
 - Core video platform fully functional
 - Security hardened (P1 vulnerability fixed)
 - Federation operational (ActivityPub)
 - Testing comprehensive (85%+ coverage)
-- Docker deployment proven
+- Docker deployment proven (requires auth for images)
+
+**Note**: We are currently in a "Stabilization Phase" to ensure reproducible builds and test infrastructure reliability. "Production Ready" claims assume a properly configured environment with all prerequisites met (especially Docker Hub authentication).
 
 **⚠️ Action Items Before Launch**:
 1. Complete credential rotation (security advisory compliance)
