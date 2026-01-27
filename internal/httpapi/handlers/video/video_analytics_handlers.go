@@ -343,13 +343,13 @@ func (h *VideoAnalyticsHandler) GetChannelAnalytics(w http.ResponseWriter, r *ht
 // Helper Functions
 // ======================================================================
 
-// getUserIDFromContext extracts the authenticated user ID from the request context using the middleware.
+// getUserIDFromContext helper extracts the authenticated user ID from the request context.
 func getUserIDFromContext(ctx context.Context) *uuid.UUID {
-	userID, ok := middleware.GetUserIDFromContext(ctx)
+	uid, ok := middleware.GetUserIDFromContext(ctx)
 	if !ok {
 		return nil
 	}
-	return &userID
+	return &uid
 }
 
 // parseDateRange parses start and end dates from query parameters
