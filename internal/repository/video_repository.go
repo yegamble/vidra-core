@@ -58,7 +58,7 @@ func scanVideoRow(rows *sql.Rows) (*domain.Video, error) {
 
 	err := rows.Scan(
 		&v.ID, &v.ThumbnailID, &v.Title, &v.Description, &v.Duration, &v.Views,
-		&v.Privacy, &v.Status, &v.UploadDate, &v.UserID,
+		&v.Privacy, &v.Status, &v.UploadDate, &v.UserID, &v.ChannelID,
 		&v.OriginalCID, &processedCIDsJSON, &v.ThumbnailCID,
 		&tags, &v.CategoryID, &v.Language, &v.FileSize, &v.MimeType, &metadataJSON,
 		&v.CreatedAt, &v.UpdatedAt, &outputPathsJSON, &v.ThumbnailPath, &v.PreviewPath,
@@ -183,6 +183,7 @@ func (r *videoRepository) GetByID(ctx context.Context, id string) (*domain.Video
                COALESCE(v.storage_tier, 'hot') as storage_tier,
                v.s3_migrated_at,
                COALESCE(v.local_deleted, false) as local_deleted,
+               v.channel_id,
                c.id, c.name, c.slug, c.description, c.icon, c.color, c.display_order, c.is_active
         FROM videos v
         LEFT JOIN video_categories c ON v.category_id = c.id
@@ -205,6 +206,7 @@ func (r *videoRepository) GetByID(ctx context.Context, id string) (*domain.Video
 		&tags, &v.CategoryID, &v.Language, &v.FileSize, &v.MimeType, &metadataJSON,
 		&v.CreatedAt, &v.UpdatedAt, &outputPathsJSON, &thumbnailPath, &previewPath,
 		&s3URLsJSON, &v.StorageTier, &v.S3MigratedAt, &v.LocalDeleted,
+		&v.ChannelID,
 		&v.CategoryID, &categoryName, &categorySlug, &categoryDesc, &categoryIcon, &categoryColor, &categoryOrder, &categoryActive,
 	)
 	if err != nil {
@@ -314,7 +316,7 @@ func (r *videoRepository) GetByUserID(ctx context.Context, userID string, limit,
 	// Get videos
 	query := `
         SELECT id, thumbnail_id, title, description, duration, views,
-               privacy, status, upload_date, user_id,
+               privacy, status, upload_date, user_id, channel_id,
                original_cid, processed_cids, thumbnail_cid,
                tags, category_id, language, file_size, mime_type, metadata,
                created_at, updated_at, output_paths, thumbnail_path, preview_path
@@ -459,7 +461,7 @@ func (r *videoRepository) UpdateProcessingInfoWithCIDs(ctx context.Context, vide
 func (r *videoRepository) List(ctx context.Context, req *domain.VideoSearchRequest) ([]*domain.Video, int64, error) {
 	baseQuery := `
         SELECT id, thumbnail_id, title, description, duration, views,
-               privacy, status, upload_date, user_id,
+               privacy, status, upload_date, user_id, channel_id,
                original_cid, processed_cids, thumbnail_cid,
                tags, category_id, language, file_size, mime_type, metadata,
                created_at, updated_at, output_paths, thumbnail_path, preview_path
@@ -544,7 +546,7 @@ func (r *videoRepository) List(ctx context.Context, req *domain.VideoSearchReque
 func (r *videoRepository) Search(ctx context.Context, req *domain.VideoSearchRequest) ([]*domain.Video, int64, error) {
 	baseQuery := `
         SELECT id, thumbnail_id, title, description, duration, views,
-               privacy, status, upload_date, user_id,
+               privacy, status, upload_date, user_id, channel_id,
                original_cid, processed_cids, thumbnail_cid,
                tags, category_id, language, file_size, mime_type, metadata,
                created_at, updated_at, output_paths, thumbnail_path, preview_path
@@ -659,7 +661,7 @@ func (r *videoRepository) Search(ctx context.Context, req *domain.VideoSearchReq
 func (r *videoRepository) GetVideosForMigration(ctx context.Context, limit int) ([]*domain.Video, error) {
 	query := `
         SELECT id, thumbnail_id, title, description, duration, views,
-               privacy, status, upload_date, user_id,
+               privacy, status, upload_date, user_id, channel_id,
                original_cid, processed_cids, thumbnail_cid,
                tags, category_id, language, file_size, mime_type, metadata,
                created_at, updated_at, output_paths, thumbnail_path, preview_path,
@@ -687,7 +689,7 @@ func (r *videoRepository) GetVideosForMigration(ctx context.Context, limit int) 
 
 		err := rows.Scan(
 			&v.ID, &v.ThumbnailID, &v.Title, &v.Description, &v.Duration, &v.Views,
-			&v.Privacy, &v.Status, &v.UploadDate, &v.UserID,
+			&v.Privacy, &v.Status, &v.UploadDate, &v.UserID, &v.ChannelID,
 			&v.OriginalCID, &processedCIDsJSON, &v.ThumbnailCID,
 			&tags, &v.CategoryID, &v.Language, &v.FileSize, &v.MimeType, &metadataJSON,
 			&v.CreatedAt, &v.UpdatedAt, &outputPathsJSON, &v.ThumbnailPath, &v.PreviewPath,
