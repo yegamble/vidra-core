@@ -210,7 +210,7 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 		// Chunked upload endpoints
 		r.Route("/uploads", func(r chi.Router) {
 			r.Use(middleware.Auth(cfg.JWTSecret))
-			r.Post("/initiate", video.InitiateUploadHandler(deps.UploadService, deps.VideoRepo))
+			r.Post("/initiate", video.InitiateUploadHandler(deps.UploadService, deps.VideoRepo, cfg))
 			r.Route("/{sessionId}", func(r chi.Router) {
 				r.Post("/chunks", video.UploadChunkHandler(deps.UploadService, cfg))
 				r.Post("/complete", video.CompleteUploadHandler(deps.UploadService, deps.EncodingRepo))

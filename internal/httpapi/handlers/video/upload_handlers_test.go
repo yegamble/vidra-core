@@ -33,6 +33,7 @@ func createTestConfig() *config.Config {
 		ValidationTestMode:            true, // Enable test mode for bypasses
 		ValidationEnableIntegrityJobs: false,
 		ValidationLogEvents:           false,
+		ChunkSize:                     32 * 1024 * 1024,
 	}
 }
 
@@ -74,7 +75,7 @@ func TestInitiateUploadHandler(t *testing.T) {
 	w := httptest.NewRecorder()
 
 	// Call handler
-	handler := InitiateUploadHandler(uploadService, videoRepo)
+	handler := InitiateUploadHandler(uploadService, videoRepo, createTestConfig())
 	handler(w, httpReq)
 
 	// Assert response
@@ -124,7 +125,7 @@ func TestInitiateUploadHandler_Unauthorized(t *testing.T) {
 
 	w := httptest.NewRecorder()
 
-	handler := InitiateUploadHandler(uploadService, videoRepo)
+	handler := InitiateUploadHandler(uploadService, videoRepo, createTestConfig())
 	handler(w, httpReq)
 
 	assert.Equal(t, http.StatusUnauthorized, w.Code)

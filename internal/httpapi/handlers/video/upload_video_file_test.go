@@ -123,7 +123,7 @@ func TestUploadWithActualVideoFile(t *testing.T) {
 	httpReq = httpReq.WithContext(context.WithValue(httpReq.Context(), middleware.UserIDKey, user.ID))
 
 	w := httptest.NewRecorder()
-	handler := InitiateUploadHandler(uploadService, videoRepo)
+	handler := InitiateUploadHandler(uploadService, videoRepo, createTestConfig())
 	handler(w, httpReq)
 	if w.Code != http.StatusCreated {
 		t.Fatalf("initiate failed: code=%d body=%s", w.Code, w.Body.String())
@@ -260,7 +260,7 @@ func TestUploadLargeVideo_VariousChunkSizes(t *testing.T) {
 		httpReq.Header.Set("Content-Type", "application/json")
 		httpReq = httpReq.WithContext(context.WithValue(httpReq.Context(), middleware.UserIDKey, user.ID))
 		w := httptest.NewRecorder()
-		InitiateUploadHandler(uploadService, videoRepo)(w, httpReq)
+		InitiateUploadHandler(uploadService, videoRepo, createTestConfig())(w, httpReq)
 		if w.Code != http.StatusCreated {
 			t.Fatalf("initiate failed chunkSize=%d: code=%d body=%s", chunkSize, w.Code, w.Body.String())
 		}
@@ -369,7 +369,7 @@ func TestResumeUploadWithActualVideoFile(t *testing.T) {
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq = httpReq.WithContext(context.WithValue(httpReq.Context(), middleware.UserIDKey, user.ID))
 	w := httptest.NewRecorder()
-	InitiateUploadHandler(uploadService, videoRepo)(w, httpReq)
+	InitiateUploadHandler(uploadService, videoRepo, createTestConfig())(w, httpReq)
 	if w.Code != http.StatusCreated {
 		t.Fatalf("initiate failed: %d %s", w.Code, w.Body.String())
 	}
@@ -510,7 +510,7 @@ func TestUploadResumeAfterChecksumMismatch_WithVideoFile(t *testing.T) {
 
 	tempDir := t.TempDir()
 	// Use relaxed config (strict=false) so only mismatched checksum causes 400, not missing
-	cfg := &config.Config{ValidationStrictMode: false, ValidationAllowedAlgorithms: []string{"sha256"}, ValidationTestMode: false}
+	cfg := &config.Config{ValidationStrictMode: false, ValidationAllowedAlgorithms: []string{"sha256"}, ValidationTestMode: false, ChunkSize: 32 * 1024 * 1024}
 	uploadService := usecase.NewUploadService(uploadRepo, encodingRepo, videoRepo, tempDir, cfg)
 
 	ctx := context.Background()
@@ -534,7 +534,7 @@ func TestUploadResumeAfterChecksumMismatch_WithVideoFile(t *testing.T) {
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq = httpReq.WithContext(context.WithValue(httpReq.Context(), middleware.UserIDKey, user.ID))
 	w := httptest.NewRecorder()
-	InitiateUploadHandler(uploadService, videoRepo)(w, httpReq)
+	InitiateUploadHandler(uploadService, videoRepo, cfg)(w, httpReq)
 	if w.Code != http.StatusCreated {
 		t.Fatalf("initiate failed: %d %s", w.Code, w.Body.String())
 	}
@@ -706,7 +706,7 @@ func TestStrictModeRequiresChecksum(t *testing.T) {
 
 	tempDir := t.TempDir()
 	// Strict mode on, test mode off
-	strictCfg := &config.Config{ValidationStrictMode: true, ValidationAllowedAlgorithms: []string{"sha256"}, ValidationTestMode: false}
+	strictCfg := &config.Config{ValidationStrictMode: true, ValidationAllowedAlgorithms: []string{"sha256"}, ValidationTestMode: false, ChunkSize: 32 * 1024 * 1024}
 	uploadService := usecase.NewUploadService(uploadRepo, encodingRepo, videoRepo, tempDir, strictCfg)
 
 	ctx := context.Background()
@@ -726,7 +726,7 @@ func TestStrictModeRequiresChecksum(t *testing.T) {
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq = httpReq.WithContext(context.WithValue(httpReq.Context(), middleware.UserIDKey, user.ID))
 	w := httptest.NewRecorder()
-	InitiateUploadHandler(uploadService, videoRepo)(w, httpReq)
+	InitiateUploadHandler(uploadService, videoRepo, strictCfg)(w, httpReq)
 	if w.Code != http.StatusCreated {
 		t.Fatalf("initiate failed: %d %s", w.Code, w.Body.String())
 	}

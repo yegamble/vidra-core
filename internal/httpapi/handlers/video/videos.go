@@ -381,7 +381,7 @@ func DeleteVideoHandler(repo usecase.VideoRepository) http.HandlerFunc {
 }
 
 // InitiateUploadHandler creates a new upload session for chunked uploads
-func InitiateUploadHandler(uploadService usecase.UploadService, videoRepo usecase.VideoRepository) http.HandlerFunc {
+func InitiateUploadHandler(uploadService usecase.UploadService, videoRepo usecase.VideoRepository, cfg *config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		userID, _ := r.Context().Value(middleware.UserIDKey).(string)
 		if userID == "" {
@@ -389,15 +389,30 @@ func InitiateUploadHandler(uploadService usecase.UploadService, videoRepo usecas
 			return
 		}
 
+		// Limit request body size for initiation to 1MB to prevent DoS
+		r.Body = http.MaxBytesReader(w, r.Body, 1024*1024)
+
 		var req domain.InitiateUploadRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_JSON", "Invalid JSON payload"))
 			return
 		}
 
+		// Determine safe max chunk size (fallback to 32MB if config is invalid/zero)
+		maxChunkSize := cfg.ChunkSize
+		if maxChunkSize <= 0 {
+			maxChunkSize = 32 * 1024 * 1024
+		}
+
 		// Set default chunk size if not provided
 		if req.ChunkSize == 0 {
-			req.ChunkSize = 10 * 1024 * 1024 // 10MB default
+			req.ChunkSize = maxChunkSize
+		}
+
+		// Enforce max chunk size to prevent memory exhaustion during upload
+		if req.ChunkSize > maxChunkSize {
+			shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_CHUNK_SIZE", fmt.Sprintf("Chunk size exceeds maximum limit of %d bytes", maxChunkSize)))
+			return
 		}
 
 		response, err := uploadService.InitiateUpload(r.Context(), userID, &req)
@@ -446,6 +461,16 @@ func UploadChunkHandler(uploadService usecase.UploadService, cfg *config.Config)
 			shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("MISSING_CHECKSUM", "Chunk checksum is required in strict mode"))
 			return
 		}
+
+		// Determine safe max chunk size (fallback to 32MB if config is invalid/zero)
+		maxChunkSize := cfg.ChunkSize
+		if maxChunkSize <= 0 {
+			maxChunkSize = 32 * 1024 * 1024
+		}
+
+		// Enforce max body size to prevent DoS via memory exhaustion
+		// We allow ChunkSize + 1KB buffer for safety
+		r.Body = http.MaxBytesReader(w, r.Body, maxChunkSize+1024)
 
 		// Read chunk data
 		data, err := io.ReadAll(r.Body)
@@ -892,6 +917,16 @@ func VideoUploadChunkHandler(uploadService usecase.UploadService, cfg *config.Co
 			shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("MISSING_CHECKSUM", "X-Chunk-Checksum header is required in strict mode"))
 			return
 		}
+
+		// Determine safe max chunk size (fallback to 32MB if config is invalid/zero)
+		maxChunkSize := cfg.ChunkSize
+		if maxChunkSize <= 0 {
+			maxChunkSize = 32 * 1024 * 1024
+		}
+
+		// Enforce max body size to prevent DoS via memory exhaustion
+		// We allow ChunkSize + 1KB buffer for safety
+		r.Body = http.MaxBytesReader(w, r.Body, maxChunkSize+1024)
 
 		// Read chunk data
 		data, err := io.ReadAll(r.Body)
