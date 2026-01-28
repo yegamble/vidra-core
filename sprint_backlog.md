@@ -9,12 +9,13 @@
 The current `SetupTestDB` function in `internal/testutil/database.go` attempts to connect to the database for every single test package, often retrying for 5 seconds if the DB is missing. This makes running the full suite locally extremely slow if services aren't running.
 
 **Tasks:**
-- [ ] Modify `internal/testutil/database.go` to use `sync.Once` for checking Postgres and Redis availability.
-- [ ] Store the availability status in a global variable (e.g., `infraAvailable bool`).
+- [ ] Modify `internal/testutil/database.go` to use `sync.Once` to check Postgres and Redis availability exactly once per test run.
+- [ ] Store the availability status in a thread-safe manner (e.g., global atomic boolean or simple bool protected by Once).
 - [ ] Update `SetupTestDB` to check this flag immediately. If false, call `t.Skip("Skipping: Infra unavailable")` without attempting a connection.
+- [ ] Ensure `TestMain` or init logic resets this if needed (though usually per-process is fine).
 
 **Acceptance Criteria:**
-- Running `go test ./internal/repository/...` without Docker running completes (skips) in < 5 seconds.
+- Running `go test ./internal/repository/...` without Docker running completes (skips all) in < 2 seconds.
 
 ---
 
@@ -28,8 +29,9 @@ Integration tests in `internal/repository` have not been verified recently due t
 
 **Tasks:**
 - [ ] Run `go test -v ./internal/repository/...` (requires running DB).
-- [ ] Identify failures.
+- [ ] Capture output and identify failures.
 - [ ] Fix SQL queries, mock data, or schema definitions in `internal/testutil/database.go` to match the actual code.
+- [ ] Ensure `TestVideoRepository_Create` and similar CRUD tests pass.
 
 **Acceptance Criteria:**
 - All tests in `internal/repository` pass when a test DB is available.
@@ -70,3 +72,20 @@ The `README.md` claims "Production Ready" but lacks critical setup information f
 
 **Acceptance Criteria:**
 - `README.md` is accurate and helpful for a new developer setting up the repo.
+
+---
+
+## 5. CI Docker Rate Limit Mitigation
+**Assignee:** Gatekeeper 🚦
+**Priority:** High
+**Status:** To Do
+
+**Description:**
+CI workflows are frequently failing due to Docker Hub rate limits on anonymous pulls.
+
+**Tasks:**
+- [ ] Investigate using GitHub Actions Container Registry cache or Authenticated Docker Hub pulls in `docker-compose.ci.yml`.
+- [ ] Document the solution in `.jules/gatekeeper.md`.
+
+**Acceptance Criteria:**
+- CI runs reliably without rate limit errors.

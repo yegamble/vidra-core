@@ -82,6 +82,15 @@ See [VALIDATION_REQUIRED.md](VALIDATION_REQUIRED.md) for complete requirements, 
 
 ## Quick Start
 
+### Prerequisites
+
+*   **Docker & Docker Compose**: Required for running the stack.
+*   **Docker Hub Account**: You **must** be authenticated with Docker Hub to run the test stack, or you will hit rate limits immediately on the database images.
+    ```bash
+    docker login
+    ```
+*   **Go 1.21+**: For local development.
+
 ### Development
 
 ```bash
@@ -93,7 +102,6 @@ cd athena
 cp .env.example .env
 
 # Run with Docker Compose
-# Note: Ensure you are authenticated with Docker Hub to avoid rate limits
 docker compose up --build
 
 # Or run locally
@@ -210,9 +218,9 @@ make lint           # Run linters
 
 ## Project Status
 
-### 🎯 88% COMPLETE - STABILIZATION PHASE
+### 🎯 88% COMPLETE - STABILIZATION PHASE (Operation Bedrock)
 
-**Current Focus**: Restoring test infrastructure and verifying build integrity.
+**Current Focus**: Restoring test infrastructure and verifying build integrity. See [Roadmap](docs/architecture/roadmap.md) for details.
 
 **Recent Achievements** (Last 24-48 hours):
 - ✅ **Migration from Atlas to Goose** - Eliminated authentication issues, simplified workflow
