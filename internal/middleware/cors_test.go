@@ -9,51 +9,74 @@ import (
 func TestCORS(t *testing.T) {
 	tests := []struct {
 		name           string
+		allowedOrigins string
+		requestOrigin  string
 		method         string
 		expectedStatus int
-		checkHeaders   bool
+		expectHeaders  bool
+		expectedOrigin string
 	}{
 		{
-			name:           "OPTIONS request",
+			name:           "OPTIONS request with match",
+			allowedOrigins: "https://example.com",
+			requestOrigin:  "https://example.com",
 			method:         http.MethodOptions,
 			expectedStatus: http.StatusOK,
-			checkHeaders:   true,
+			expectHeaders:  true,
+			expectedOrigin: "https://example.com",
 		},
 		{
-			name:           "GET request",
+			name:           "GET request with match",
+			allowedOrigins: "https://example.com",
+			requestOrigin:  "https://example.com",
 			method:         http.MethodGet,
 			expectedStatus: http.StatusOK,
-			checkHeaders:   true,
+			expectHeaders:  true,
+			expectedOrigin: "https://example.com",
 		},
 		{
-			name:           "POST request",
-			method:         http.MethodPost,
+			name:           "GET request with mismatch",
+			allowedOrigins: "https://example.com",
+			requestOrigin:  "https://attacker.com",
+			method:         http.MethodGet,
 			expectedStatus: http.StatusOK,
-			checkHeaders:   true,
+			expectHeaders:  false,
 		},
 		{
-			name:           "PUT request",
-			method:         http.MethodPut,
+			name:           "Wildcard allowed",
+			allowedOrigins: "*",
+			requestOrigin:  "https://foo.com",
+			method:         http.MethodGet,
 			expectedStatus: http.StatusOK,
-			checkHeaders:   true,
+			expectHeaders:  true,
+			expectedOrigin: "https://foo.com",
 		},
 		{
-			name:           "DELETE request",
-			method:         http.MethodDelete,
+			name:           "No Origin header",
+			allowedOrigins: "*",
+			requestOrigin:  "",
+			method:         http.MethodGet,
 			expectedStatus: http.StatusOK,
-			checkHeaders:   true,
+			expectHeaders:  false,
 		},
 		{
-			name:           "PATCH request",
-			method:         http.MethodPatch,
+			name:           "Multiple allowed origins",
+			allowedOrigins: "https://a.com, https://b.com",
+			requestOrigin:  "https://b.com",
+			method:         http.MethodGet,
 			expectedStatus: http.StatusOK,
-			checkHeaders:   true,
+			expectHeaders:  true,
+			expectedOrigin: "https://b.com",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			req := httptest.NewRequest(tt.method, "/test", nil)
+			if tt.requestOrigin != "" {
+				req.Header.Set("Origin", tt.requestOrigin)
+			}
+
 			w := httptest.NewRecorder()
 
 			handlerCalled := false
@@ -62,7 +85,7 @@ func TestCORS(t *testing.T) {
 				w.WriteHeader(http.StatusOK)
 			})
 
-			corsMiddleware := CORS()
+			corsMiddleware := CORS(tt.allowedOrigins)
 			handler := corsMiddleware(next)
 			handler.ServeHTTP(w, req)
 
@@ -70,21 +93,19 @@ func TestCORS(t *testing.T) {
 				t.Errorf("Expected status %d, got %d", tt.expectedStatus, w.Code)
 			}
 
-			if tt.checkHeaders {
-				expectedHeaders := map[string]string{
-					"Access-Control-Allow-Origin":      "*",
-					"Access-Control-Allow-Methods":     "GET, POST, PUT, DELETE, OPTIONS, PATCH",
-					"Access-Control-Allow-Headers":     "Accept, Authorization, Content-Type, X-CSRF-Token, X-Requested-With, Idempotency-Key",
-					"Access-Control-Expose-Headers":    "Link",
-					"Access-Control-Allow-Credentials": "true",
-					"Access-Control-Max-Age":           "300",
+			if tt.expectHeaders {
+				if val := w.Header().Get("Access-Control-Allow-Origin"); val != tt.expectedOrigin {
+					t.Errorf("Expected Access-Control-Allow-Origin %s, got %s", tt.expectedOrigin, val)
 				}
-
-				for header, expectedValue := range expectedHeaders {
-					actualValue := w.Header().Get(header)
-					if actualValue != expectedValue {
-						t.Errorf("Expected header %s to be %s, got %s", header, expectedValue, actualValue)
-					}
+				if val := w.Header().Get("Access-Control-Allow-Credentials"); val != "true" {
+					t.Errorf("Expected Access-Control-Allow-Credentials true, got %s", val)
+				}
+				if val := w.Header().Get("Vary"); val != "Origin" {
+					t.Errorf("Expected Vary Origin, got %s", val)
+				}
+			} else {
+				if val := w.Header().Get("Access-Control-Allow-Origin"); val != "" {
+					t.Errorf("Expected no Access-Control-Allow-Origin, got %s", val)
 				}
 			}
 
@@ -99,66 +120,5 @@ func TestCORS(t *testing.T) {
 				}
 			}
 		})
-	}
-}
-
-func TestCORSPreflightRequest(t *testing.T) {
-	req := httptest.NewRequest(http.MethodOptions, "/api/test", nil)
-	req.Header.Set("Origin", "https://example.com")
-	req.Header.Set("Access-Control-Request-Method", "POST")
-	req.Header.Set("Access-Control-Request-Headers", "Content-Type, Authorization")
-
-	w := httptest.NewRecorder()
-
-	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		t.Error("Next handler should not be called for OPTIONS request")
-	})
-
-	corsMiddleware := CORS()
-	handler := corsMiddleware(next)
-	handler.ServeHTTP(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Errorf("Expected status %d, got %d", http.StatusOK, w.Code)
-	}
-
-	// Verify CORS headers are present
-	if w.Header().Get("Access-Control-Allow-Origin") != "*" {
-		t.Error("Expected Access-Control-Allow-Origin header to be set")
-	}
-
-	if w.Header().Get("Access-Control-Allow-Methods") == "" {
-		t.Error("Expected Access-Control-Allow-Methods header to be set")
-	}
-}
-
-func TestCORSWithActualRequest(t *testing.T) {
-	req := httptest.NewRequest(http.MethodPost, "/api/test", nil)
-	req.Header.Set("Origin", "https://example.com")
-	req.Header.Set("Content-Type", "application/json")
-
-	w := httptest.NewRecorder()
-
-	handlerCalled := false
-	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		handlerCalled = true
-		w.WriteHeader(http.StatusCreated)
-	})
-
-	corsMiddleware := CORS()
-	handler := corsMiddleware(next)
-	handler.ServeHTTP(w, req)
-
-	if !handlerCalled {
-		t.Error("Expected next handler to be called for actual request")
-	}
-
-	if w.Code != http.StatusCreated {
-		t.Errorf("Expected status %d, got %d", http.StatusCreated, w.Code)
-	}
-
-	// Verify CORS headers are still present
-	if w.Header().Get("Access-Control-Allow-Origin") != "*" {
-		t.Error("Expected Access-Control-Allow-Origin header to be set")
 	}
 }
