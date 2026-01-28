@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -23,11 +24,67 @@ type TestDB struct {
 	Redis *redis.Client
 }
 
+var (
+	infraCheckOnce sync.Once
+	infraAvailable bool
+	infraError     error
+)
+
+func verifyInfra() error {
+	loadEnv()
+
+	// Check Postgres
+	dsn := getPostgresDSN()
+	// Use a short timeout for the check
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	// Connect to postgres just to ping
+	db, err := sqlx.ConnectContext(ctx, "postgres", dsn)
+	if err != nil {
+		return fmt.Errorf("postgres unavailable: %w", err)
+	}
+	defer db.Close()
+
+	if err := db.PingContext(ctx); err != nil {
+		return fmt.Errorf("postgres ping failed: %w", err)
+	}
+
+	// Check Redis
+	redisURL := getRedisURL()
+	opt, err := redis.ParseURL(redisURL)
+	if err != nil {
+		return fmt.Errorf("invalid redis url: %w", err)
+	}
+	rClient := redis.NewClient(opt)
+	defer rClient.Close()
+
+	if err := rClient.Ping(ctx).Err(); err != nil {
+		return fmt.Errorf("redis unavailable: %w", err)
+	}
+
+	return nil
+}
+
 func SetupTestDB(t *testing.T) *TestDB {
 	t.Helper()
 
 	if testing.Short() {
 		t.Skip("Skipping integration test in short mode")
+		return nil
+	}
+
+	infraCheckOnce.Do(func() {
+		if err := verifyInfra(); err != nil {
+			infraAvailable = false
+			infraError = err
+		} else {
+			infraAvailable = true
+		}
+	})
+
+	if !infraAvailable {
+		t.Skipf("Skipping test: Infra unavailable (%v)", infraError)
 		return nil
 	}
 
@@ -56,30 +113,7 @@ func SetupTestDB(t *testing.T) *TestDB {
 }
 
 func setupPostgres() (*sqlx.DB, error) {
-	// Try loading env files commonly used in tests from multiple locations
-	// Load .env.test first (overrides), then .env if present; ignore errors silently
-	_ = godotenv.Load("../../.env.test")
-	_ = godotenv.Load(".env.test")
-	_ = godotenv.Load("../../.env")
-	_ = godotenv.Load(".env")
-
-	// Prefer an explicit test URL if provided
-	dbURL := os.Getenv("TEST_DATABASE_URL")
-	if dbURL == "" {
-		dbURL = os.Getenv("DATABASE_URL")
-	}
-	if dbURL == "" {
-		// Assemble from granular TEST_DB_* envs if provided
-		host := getEnvDefault("TEST_DB_HOST", "localhost")
-		// Default port logic: use 5432 for both CI and local since Docker is running on 5432
-		defaultPort := "5432"
-		port := getEnvDefault("TEST_DB_PORT", defaultPort)
-		name := getEnvDefault("TEST_DB_NAME", "athena_test")
-		user := getEnvDefault("TEST_DB_USER", "test_user")
-		pass := getEnvDefault("TEST_DB_PASSWORD", "test_password")
-		ssl := getEnvDefault("TEST_DB_SSLMODE", "disable")
-		dbURL = fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=%s", user, pass, host, port, name, ssl)
-	}
+	dbURL := getPostgresDSN()
 
 	// Derive an isolated schema per calling test package to avoid cross-package interference
 	schema := deriveTestSchema()
@@ -685,15 +719,7 @@ func getEnvDefault(key, def string) string {
 }
 
 func setupRedis() (*redis.Client, error) {
-	// Use TEST_REDIS_URL first, then REDIS_URL, then default
-	redisURL := os.Getenv("TEST_REDIS_URL")
-	if redisURL == "" {
-		redisURL = os.Getenv("REDIS_URL")
-	}
-	if redisURL == "" {
-		// Default Redis URL: use 6379 for both CI and local since Docker is running on 6379
-		redisURL = "redis://localhost:6379/1"
-	}
+	redisURL := getRedisURL()
 
 	opt, err := redis.ParseURL(redisURL)
 	if err != nil {
@@ -804,4 +830,47 @@ func (tdb *TestDB) WithTx(t *testing.T, fn func(*sqlx.Tx)) {
 	}()
 
 	fn(tx)
+}
+
+func loadEnv() {
+	// Try loading env files commonly used in tests from multiple locations
+	// Load .env.test first (overrides), then .env if present; ignore errors silently
+	_ = godotenv.Load("../../.env.test")
+	_ = godotenv.Load(".env.test")
+	_ = godotenv.Load("../../.env")
+	_ = godotenv.Load(".env")
+}
+
+func getPostgresDSN() string {
+	// Prefer an explicit test URL if provided
+	dbURL := os.Getenv("TEST_DATABASE_URL")
+	if dbURL == "" {
+		dbURL = os.Getenv("DATABASE_URL")
+	}
+	if dbURL == "" {
+		// Assemble from granular TEST_DB_* envs if provided
+		host := getEnvDefault("TEST_DB_HOST", "localhost")
+		// Default port logic: use 5432 for both CI and local since Docker is running on 5432
+		defaultPort := "5432"
+		port := getEnvDefault("TEST_DB_PORT", defaultPort)
+		name := getEnvDefault("TEST_DB_NAME", "athena_test")
+		user := getEnvDefault("TEST_DB_USER", "test_user")
+		pass := getEnvDefault("TEST_DB_PASSWORD", "test_password")
+		ssl := getEnvDefault("TEST_DB_SSLMODE", "disable")
+		dbURL = fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=%s", user, pass, host, port, name, ssl)
+	}
+	return dbURL
+}
+
+func getRedisURL() string {
+	// Use TEST_REDIS_URL first, then REDIS_URL, then default
+	redisURL := os.Getenv("TEST_REDIS_URL")
+	if redisURL == "" {
+		redisURL = os.Getenv("REDIS_URL")
+	}
+	if redisURL == "" {
+		// Default Redis URL: use 6379 for both CI and local since Docker is running on 6379
+		redisURL = "redis://localhost:6379/1"
+	}
+	return redisURL
 }
