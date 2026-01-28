@@ -82,6 +82,17 @@ See [VALIDATION_REQUIRED.md](VALIDATION_REQUIRED.md) for complete requirements, 
 
 ## Quick Start
 
+### Prerequisites
+
+Before running the project locally or via Docker, ensure you have the following:
+
+- **Docker Hub Authentication**: You must be logged in to Docker Hub to avoid rate limits when pulling images (Postgres, Redis, etc.).
+  ```bash
+  docker login
+  ```
+- **Go 1.21+**: Required for local development.
+- **Make**: Required for running build and test commands.
+
 ### Development
 
 ```bash
@@ -138,6 +149,21 @@ make test-unit      # Unit tests only
 make test-integration # Integration tests
 make lint           # Run linters
 ```
+
+### Troubleshooting
+
+Common issues when running tests or the application:
+
+- **"connection refused" on Postgres/Redis**:
+  - Ensure Docker containers are running and healthy (`docker ps`).
+  - Check if you hit Docker Hub rate limits (see Prerequisites).
+  - If running tests locally, ensure `TEST_DB_PORT` and `TEST_REDIS_URL` match your local setup.
+
+- **"overlayfs" errors in Docker**:
+  - This can happen in some environments. Try pruning Docker system: `docker system prune`.
+
+- **Tests failing with "Infra unavailable"**:
+  - The test suite skips integration tests if dependencies aren't ready. Ensure you've run `docker compose up -d` before `make test`.
 
 ## Documentation
 
@@ -210,7 +236,7 @@ make lint           # Run linters
 
 ## Project Status
 
-### 🎯 88% COMPLETE - STABILIZATION PHASE
+### 🎯 88% COMPLETE - STABILIZATION PHASE (Operation Bedrock)
 
 **Current Focus**: Restoring test infrastructure and verifying build integrity.
 
