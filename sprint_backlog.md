@@ -3,7 +3,7 @@
 ## 1. Implement "Fail Fast" in Test Helpers (Blocker)
 **Assignee:** Builder 🛠️
 **Priority:** High
-**Status:** To Do
+**Status:** In Progress
 
 **Description:**
 The current `SetupTestDB` function in `internal/testutil/database.go` attempts to connect to the database for every single test package, often retrying for 5 seconds if the DB is missing. This makes running the full suite locally extremely slow if services aren't running.

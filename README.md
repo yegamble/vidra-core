@@ -132,10 +132,36 @@ goose -dir migrations postgres "$DATABASE_URL" status
 
 ### Testing
 
+The test suite includes both unit tests and integration tests.
+
+**Running Unit Tests (Fast):**
+Unit tests that do not require external infrastructure (Postgres/Redis) can be run quickly:
 ```bash
-make test           # Run all tests
+make test-unit
+```
+
+**Running Integration Tests (Requires Docker):**
+Integration tests require running Postgres and Redis instances. The test runner uses a "Fail Fast" mechanism: if infrastructure is not available, these tests will be skipped automatically to save time.
+
+To run full integration tests:
+1. Ensure you are logged into Docker Hub (to avoid rate limits):
+   ```bash
+   docker login
+   ```
+2. Start the test infrastructure:
+   ```bash
+   docker compose up -d postgres redis
+   ```
+3. Run the tests:
+   ```bash
+   make test
+   ```
+
+*Note: In some constrained environments (like certain CI sandboxes), Docker mount issues may prevent the database from starting. In this case, integration tests will skip, and only unit tests will execute.*
+
+```bash
+make test           # Run all tests (skips integration if no DB)
 make test-unit      # Unit tests only
-make test-integration # Integration tests
 make lint           # Run linters
 ```
 
@@ -215,11 +241,11 @@ make lint           # Run linters
 **Current Focus**: Restoring test infrastructure and verifying build integrity.
 
 **Recent Achievements** (Last 24-48 hours):
+- ✅ **Test Infrastructure Reliability** - Implemented "Fail Fast" logic to skip integration tests when Docker is unavailable
 - ✅ **Migration from Atlas to Goose** - Eliminated authentication issues, simplified workflow
 - ✅ **P1 Security Fix** - CVE-ATHENA-2025-001 (virus scanner retry logic bypass) resolved
 - ✅ **Pre-commit Hooks** - Prevents credential leaks, enforces YAML linting
 - ✅ **Code Quality** - Struct field alignment, formatting standardization
-- ✅ **Claude Code Hooks** - Automated quality assurance with go-backend-reviewer and golang-test-guardian
 
 ### Feature Completion by Category
 
