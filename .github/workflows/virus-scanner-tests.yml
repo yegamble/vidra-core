@@ -95,20 +95,8 @@ jobs:
 
       - name: Start services with docker compose
         run: |
-          docker compose -f docker-compose.ci.yml up -d
-          echo "Waiting for services to be healthy..."
+          docker compose -f docker-compose.ci.yml up -d --wait
           docker compose -f docker-compose.ci.yml ps
-
-      - name: Wait for services to be ready
-        run: |
-          # Wait for postgres
-          timeout 60 bash -c 'until docker exec $(docker compose -f docker-compose.ci.yml ps -q postgres-ci) pg_isready -U test_user -d athena_test; do sleep 2; done'
-
-          # Wait for redis
-          timeout 60 bash -c 'until docker exec $(docker compose -f docker-compose.ci.yml ps -q redis-ci) redis-cli ping | grep PONG; do sleep 2; done'
-
-          # Wait for ClamAV (longer timeout due to signature loading)
-          timeout 300 bash -c 'until docker exec $(docker compose -f docker-compose.ci.yml ps -q clamav-ci) /usr/local/bin/clamdcheck.sh; do sleep 5; done'
 
       - name: Create test fixtures
         run: |
@@ -179,20 +167,8 @@ jobs:
 
       - name: Start services with docker compose
         run: |
-          docker compose -f docker-compose.ci.yml up -d
-          echo "Waiting for services to be healthy..."
+          docker compose -f docker-compose.ci.yml up -d --wait
           docker compose -f docker-compose.ci.yml ps
-
-      - name: Wait for services to be ready
-        run: |
-          # Wait for postgres
-          timeout 60 bash -c 'until docker exec $(docker compose -f docker-compose.ci.yml ps -q postgres-ci) pg_isready -U test_user -d athena_test; do sleep 2; done'
-
-          # Wait for redis
-          timeout 60 bash -c 'until docker exec $(docker compose -f docker-compose.ci.yml ps -q redis-ci) redis-cli ping | grep PONG; do sleep 2; done'
-
-          # Wait for ClamAV (longer timeout due to signature loading)
-          timeout 300 bash -c 'until docker exec $(docker compose -f docker-compose.ci.yml ps -q clamav-ci) /usr/local/bin/clamdcheck.sh; do sleep 5; done'
 
       - name: Create test fixtures
         run: |
@@ -252,20 +228,8 @@ jobs:
 
       - name: Start services with docker compose
         run: |
-          docker compose -f docker-compose.ci.yml up -d
-          echo "Waiting for services to be healthy..."
+          docker compose -f docker-compose.ci.yml up -d --wait
           docker compose -f docker-compose.ci.yml ps
-
-      - name: Wait for services to be ready
-        run: |
-          # Wait for postgres
-          timeout 60 bash -c 'until docker exec $(docker compose -f docker-compose.ci.yml ps -q postgres-ci) pg_isready -U test_user -d athena_test; do sleep 2; done'
-
-          # Wait for redis
-          timeout 60 bash -c 'until docker exec $(docker compose -f docker-compose.ci.yml ps -q redis-ci) redis-cli ping | grep PONG; do sleep 2; done'
-
-          # Wait for ClamAV (longer timeout due to signature loading)
-          timeout 300 bash -c 'until docker exec $(docker compose -f docker-compose.ci.yml ps -q clamav-ci) /usr/local/bin/clamdcheck.sh; do sleep 5; done'
 
       - name: Start application
         env:
@@ -403,13 +367,8 @@ jobs:
       - name: Start ClamAV service with docker compose
         run: |
           # Only start ClamAV for benchmarks (no need for postgres/redis)
-          docker compose -f docker-compose.ci.yml up -d clamav-ci
-          echo "Waiting for ClamAV to be healthy..."
+          docker compose -f docker-compose.ci.yml up -d --wait clamav-ci
           docker compose -f docker-compose.ci.yml ps
-
-      - name: Wait for ClamAV to be ready
-        run: |
-          timeout 300 bash -c 'until docker exec $(docker compose -f docker-compose.ci.yml ps -q clamav-ci) /usr/local/bin/clamdcheck.sh; do sleep 5; done'
 
       - name: Create benchmark test files
         run: |
