@@ -28,7 +28,7 @@ func (m *MockVideoRepo) Create(ctx context.Context, video *domain.Video) error {
 func (m *MockVideoRepo) GetByUserID(ctx context.Context, userID string, limit, offset int) ([]*domain.Video, int64, error) {
 	return nil, 0, nil
 }
-func (m *MockVideoRepo) Update(ctx context.Context, video *domain.Video) error { return nil }
+func (m *MockVideoRepo) Update(ctx context.Context, video *domain.Video) error      { return nil }
 func (m *MockVideoRepo) Delete(ctx context.Context, id string, userID string) error { return nil }
 func (m *MockVideoRepo) List(ctx context.Context, req *domain.VideoSearchRequest) ([]*domain.Video, int64, error) {
 	return nil, 0, nil
@@ -65,18 +65,31 @@ func (m *MockUserRepo) GetByID(ctx context.Context, id string) (*domain.User, er
 }
 
 // Implement other methods as stubs
-func (m *MockUserRepo) Create(ctx context.Context, user *domain.User, password string) error { return nil }
-func (m *MockUserRepo) GetByEmail(ctx context.Context, email string) (*domain.User, error) { return nil, nil }
-func (m *MockUserRepo) GetByUsername(ctx context.Context, username string) (*domain.User, error) { return nil, nil }
+func (m *MockUserRepo) Create(ctx context.Context, user *domain.User, password string) error {
+	return nil
+}
+func (m *MockUserRepo) GetByEmail(ctx context.Context, email string) (*domain.User, error) {
+	return nil, nil
+}
+func (m *MockUserRepo) GetByUsername(ctx context.Context, username string) (*domain.User, error) {
+	return nil, nil
+}
 func (m *MockUserRepo) Update(ctx context.Context, user *domain.User) error { return nil }
-func (m *MockUserRepo) Delete(ctx context.Context, id string) error { return nil }
-func (m *MockUserRepo) List(ctx context.Context, limit, offset int) ([]*domain.User, error) { return nil, nil }
+func (m *MockUserRepo) Delete(ctx context.Context, id string) error         { return nil }
+func (m *MockUserRepo) List(ctx context.Context, limit, offset int) ([]*domain.User, error) {
+	return nil, nil
+}
 func (m *MockUserRepo) Count(ctx context.Context) (int64, error) { return 0, nil }
-func (m *MockUserRepo) GetPasswordHash(ctx context.Context, userID string) (string, error) { return "", nil }
-func (m *MockUserRepo) UpdatePassword(ctx context.Context, userID, passwordHash string) error { return nil }
-func (m *MockUserRepo) SetAvatarFields(ctx context.Context, userID string, ipfsCID sql.NullString, webpCID sql.NullString) error { return nil }
+func (m *MockUserRepo) GetPasswordHash(ctx context.Context, userID string) (string, error) {
+	return "", nil
+}
+func (m *MockUserRepo) UpdatePassword(ctx context.Context, userID, passwordHash string) error {
+	return nil
+}
+func (m *MockUserRepo) SetAvatarFields(ctx context.Context, userID string, ipfsCID sql.NullString, webpCID sql.NullString) error {
+	return nil
+}
 func (m *MockUserRepo) MarkEmailAsVerified(ctx context.Context, userID string) error { return nil }
-
 
 func TestOEmbed_XMLInjection(t *testing.T) {
 	// Setup mocks
