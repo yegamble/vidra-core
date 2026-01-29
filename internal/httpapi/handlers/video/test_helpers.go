@@ -129,3 +129,91 @@ func withChiURLParam(r *http.Request, key, value string) *http.Request {
 	rctx.URLParams.Add(key, value)
 	return r.WithContext(context.WithValue(r.Context(), chi.RouteCtxKey, rctx))
 }
+
+// MockVideoRepository is a mock implementation of the video repository
+type MockVideoRepository struct {
+	mock.Mock
+}
+
+func (m *MockVideoRepository) Create(ctx context.Context, video *domain.Video) error {
+	args := m.Called(ctx, video)
+	return args.Error(0)
+}
+
+func (m *MockVideoRepository) GetByID(ctx context.Context, id string) (*domain.Video, error) {
+	args := m.Called(ctx, id)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*domain.Video), args.Error(1)
+}
+
+func (m *MockVideoRepository) GetByUserID(ctx context.Context, userID string, limit, offset int) ([]*domain.Video, int64, error) {
+	args := m.Called(ctx, userID, limit, offset)
+	if args.Get(0) == nil {
+		return nil, args.Get(1).(int64), args.Error(2)
+	}
+	return args.Get(0).([]*domain.Video), args.Get(1).(int64), args.Error(2)
+}
+
+func (m *MockVideoRepository) Update(ctx context.Context, video *domain.Video) error {
+	args := m.Called(ctx, video)
+	return args.Error(0)
+}
+
+func (m *MockVideoRepository) Delete(ctx context.Context, id string, userID string) error {
+	args := m.Called(ctx, id, userID)
+	return args.Error(0)
+}
+
+func (m *MockVideoRepository) List(ctx context.Context, req *domain.VideoSearchRequest) ([]*domain.Video, int64, error) {
+	args := m.Called(ctx, req)
+	if args.Get(0) == nil {
+		return nil, args.Get(1).(int64), args.Error(2)
+	}
+	return args.Get(0).([]*domain.Video), args.Get(1).(int64), args.Error(2)
+}
+
+func (m *MockVideoRepository) Search(ctx context.Context, req *domain.VideoSearchRequest) ([]*domain.Video, int64, error) {
+	args := m.Called(ctx, req)
+	if args.Get(0) == nil {
+		return nil, args.Get(1).(int64), args.Error(2)
+	}
+	return args.Get(0).([]*domain.Video), args.Get(1).(int64), args.Error(2)
+}
+
+func (m *MockVideoRepository) UpdateProcessingInfo(ctx context.Context, videoID string, status domain.ProcessingStatus, outputPaths map[string]string, thumbnailPath, previewPath string) error {
+	args := m.Called(ctx, videoID, status, outputPaths, thumbnailPath, previewPath)
+	return args.Error(0)
+}
+
+func (m *MockVideoRepository) UpdateProcessingInfoWithCIDs(ctx context.Context, videoID string, status domain.ProcessingStatus, outputPaths map[string]string, thumbnailPath, previewPath string, processedCIDs map[string]string, thumbnailCID, previewCID string) error {
+	args := m.Called(ctx, videoID, status, outputPaths, thumbnailPath, previewPath, processedCIDs, thumbnailCID, previewCID)
+	return args.Error(0)
+}
+
+func (m *MockVideoRepository) Count(ctx context.Context) (int64, error) {
+	args := m.Called(ctx)
+	return args.Get(0).(int64), args.Error(1)
+}
+
+func (m *MockVideoRepository) GetByRemoteURI(ctx context.Context, remoteURI string) (*domain.Video, error) {
+	args := m.Called(ctx, remoteURI)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*domain.Video), args.Error(1)
+}
+
+func (m *MockVideoRepository) CreateRemoteVideo(ctx context.Context, video *domain.Video) error {
+	args := m.Called(ctx, video)
+	return args.Error(0)
+}
+
+func (m *MockVideoRepository) GetVideosForMigration(ctx context.Context, limit int) ([]*domain.Video, error) {
+	args := m.Called(ctx, limit)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*domain.Video), args.Error(1)
+}
