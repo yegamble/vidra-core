@@ -85,33 +85,7 @@ jobs:
       - name: Start test environment
         run: |
           echo "Starting E2E test environment..."
-          COMPOSE_PROJECT_NAME=athena-e2e-${{ github.run_id }}-main docker compose -f tests/e2e/docker-compose.yml up -d
-
-      - name: Wait for ClamAV readiness
-        run: |
-          echo "Waiting for ClamAV (clamav-e2e) to be healthy..."
-          CID=$(COMPOSE_PROJECT_NAME=athena-e2e-${{ github.run_id }}-main docker compose -f tests/e2e/docker-compose.yml ps -q clamav-e2e)
-          if [ -z "$CID" ]; then
-            echo "Failed to get clamav-e2e container id" >&2
-            exit 1
-          fi
-          max_tries=60
-          i=1
-          while [ $i -le $max_tries ]; do
-            status=$(docker inspect -f '{{.State.Health.Status}}' "$CID" 2>/dev/null || true)
-            echo "ClamAV status: ${status:-unknown} ($(date +%T))"
-            if [ "$status" = "healthy" ]; then
-              echo "✓ ClamAV is healthy"
-              break
-            fi
-            sleep 10
-            i=$((i+1))
-          done
-          if [ "$status" != "healthy" ]; then
-            echo "❌ ClamAV did not become healthy in time" >&2
-            COMPOSE_PROJECT_NAME=athena-e2e-${{ github.run_id }}-main docker compose -f tests/e2e/docker-compose.yml logs clamav-e2e || true
-            exit 1
-          fi
+          COMPOSE_PROJECT_NAME=athena-e2e-${{ github.run_id }}-main docker compose -f tests/e2e/docker-compose.yml up -d --wait
 
       - name: Verify database schema
         run: |
@@ -123,15 +97,6 @@ jobs:
             exit 1
           }
           echo "✓ Database schema verified"
-
-      - name: Wait for services to be ready
-        run: |
-          echo "Waiting for API to be ready..."
-          timeout 180 bash -c 'until curl -sf http://localhost:18080/health > /dev/null 2>&1; do
-            echo "Waiting for API... ($(date +%T))";
-            sleep 5;
-          done'
-          echo "✓ API is ready"
 
       - name: Check service health
         run: |
@@ -263,34 +228,7 @@ jobs:
 
       - name: Start test environment
         run: |
-          COMPOSE_PROJECT_NAME=athena-e2e-${{ github.run_id }}-race docker compose -f tests/e2e/docker-compose.yml up -d
-
-      - name: Wait for ClamAV readiness
-        run: |
-          CID=$(COMPOSE_PROJECT_NAME=athena-e2e-${{ github.run_id }}-race docker compose -f tests/e2e/docker-compose.yml ps -q clamav-e2e)
-          if [ -z "$CID" ]; then
-            echo "Failed to get clamav-e2e container id" >&2
-            exit 1
-          fi
-          max_tries=60
-          i=1
-          while [ $i -le $max_tries ]; do
-            status=$(docker inspect -f '{{.State.Health.Status}}' "$CID" 2>/dev/null || true)
-            if [ "$status" = "healthy" ]; then
-              break
-            fi
-            sleep 10
-            i=$((i+1))
-          done
-          if [ "$status" != "healthy" ]; then
-            echo "ClamAV did not become healthy in time" >&2
-            COMPOSE_PROJECT_NAME=athena-e2e-${{ github.run_id }}-race docker compose -f tests/e2e/docker-compose.yml logs clamav-e2e || true
-            exit 1
-          fi
-
-      - name: Wait for services
-        run: |
-          timeout 180 bash -c 'until curl -sf http://localhost:18080/health > /dev/null 2>&1; do sleep 5; done'
+          COMPOSE_PROJECT_NAME=athena-e2e-${{ github.run_id }}-race docker compose -f tests/e2e/docker-compose.yml up -d --wait
 
       - name: Run E2E tests with race detector
         env:
