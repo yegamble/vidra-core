@@ -6,8 +6,8 @@
 The project is in a "Stabilization Phase". While feature completion is high (88%), local verification is hindered by infrastructure dependencies (Postgres, Redis, IPFS) and Docker rate limits. We cannot safely proceed with Phase 2 features until the foundation is solid and verifiable by any developer.
 
 ## Priorities
-1.  **Infrastructure Reliability**: Enable developers (and CI) to run all tests without hitting rate limits or "connection refused" delays.
-2.  **Codebase Verification**: Once infra is reliable, run the full suite (`internal/repository`, `internal/ipfs`) and fix uncovered logic bugs.
+1.  **Infrastructure Reliability**: Confirm "Fail Fast" logic works to enable developers to run tests without waiting for timeouts.
+2.  **Codebase Verification**: Run the full suite (`internal/repository`, `internal/ipfs`) and fix uncovered logic bugs.
 3.  **Documentation Accuracy**: Align `README.md` with the verified reality and provide clear developer setup instructions.
 
 ## Schedule
