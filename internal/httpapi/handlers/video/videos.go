@@ -447,6 +447,10 @@ func UploadChunkHandler(uploadService usecase.UploadService, cfg *config.Config)
 			return
 		}
 
+		// Limit request body size to prevent DoS
+		// 100MB (max chunk) + 5MB overhead
+		r.Body = http.MaxBytesReader(w, r.Body, 105*1024*1024)
+
 		// Read chunk data
 		data, err := io.ReadAll(r.Body)
 		if err != nil {
@@ -648,6 +652,14 @@ func UploadVideoFileHandler(repo usecase.VideoRepository, cfg *config.Config) ht
 			shared.WriteError(w, http.StatusUnauthorized, domain.NewDomainError("UNAUTHORIZED", "Missing or invalid authentication"))
 			return
 		}
+
+		// Limit request body size to prevent DoS
+		// Default MaxUploadSize is 5GB. We add a 10MB buffer for multipart overhead.
+		maxSize := int64(5 * 1024 * 1024 * 1024)
+		if cfg != nil && cfg.MaxUploadSize > 0 {
+			maxSize = cfg.MaxUploadSize
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, maxSize+(10<<20))
 
 		// Parse multipart form. Limit to 512MB to be safe for tests; adjust as needed.
 		if err := r.ParseMultipartForm(512 << 20); err != nil {
@@ -892,6 +904,10 @@ func VideoUploadChunkHandler(uploadService usecase.UploadService, cfg *config.Co
 			shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("MISSING_CHECKSUM", "X-Chunk-Checksum header is required in strict mode"))
 			return
 		}
+
+		// Limit request body size to prevent DoS
+		// 100MB (max chunk) + 5MB overhead
+		r.Body = http.MaxBytesReader(w, r.Body, 105*1024*1024)
 
 		// Read chunk data
 		data, err := io.ReadAll(r.Body)

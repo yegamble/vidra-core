@@ -9,3 +9,9 @@
 **Resolution:** Added `middleware.RequireRole("admin")` to the route definition in `internal/httpapi/routes.go`.
 **Learning:** Routes intended for administrative tasks (like manual user creation) must explicitly enforce role checks. "Auth" middleware only confirms identity, not authority.
 **Prevention:** Audit all routes under `internal/httpapi/routes.go` to ensure that sensitive actions (create, delete, update global configs) are protected by `RequireRole("admin")` or similar authorization logic.
+
+## 2026-02-14 - Unbounded Request Body Read in Upload Handlers
+**Vulnerability/Issue:** Found `io.ReadAll(r.Body)` and `r.ParseMultipartForm` used in video upload handlers without a prior limit on the request body size. This exposed the server to DoS attacks via memory exhaustion (OOM) or disk filling if an attacker sent an extremely large payload.
+**Resolution:** Wrapped `r.Body` with `http.MaxBytesReader` in `UploadChunkHandler`, `VideoUploadChunkHandler`, and `UploadVideoFileHandler`. Enforced limits of 105MB for chunks and `cfg.MaxUploadSize + 10MB` for full files.
+**Learning:** `io.ReadAll` is dangerous in HTTP handlers. Even `ParseMultipartForm`'s memory limit parameter doesn't prevent it from reading the entire body (spilling to disk), so `MaxBytesReader` is essential for hard limits.
+**Prevention:** Always use `http.MaxBytesReader` or `io.LimitReader` before reading request bodies in handlers dealing with file uploads or potentially large inputs.
