@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -77,6 +78,18 @@ func verifyInfra() bool {
 
 		// Check Postgres
 		dbURL := getPostgresDSN()
+		// Attempt fast port check if URL is parseable
+		if u, err := url.Parse(dbURL); err == nil && u.Host != "" {
+			host := u.Hostname()
+			port := u.Port()
+			if port == "" {
+				port = "5432"
+			}
+			if !isPortOpen(host, port) {
+				return
+			}
+		}
+
 		db, err := connectWithRetry(dbURL, 2*time.Second)
 		if err != nil {
 			return
@@ -89,6 +102,13 @@ func verifyInfra() bool {
 		if err != nil {
 			return
 		}
+		// Fast TCP check for Redis
+		if host, port, err := net.SplitHostPort(opt.Addr); err == nil {
+			if !isPortOpen(host, port) {
+				return
+			}
+		}
+
 		rdb := redis.NewClient(opt)
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
@@ -856,4 +876,14 @@ func (tdb *TestDB) WithTx(t *testing.T, fn func(*sqlx.Tx)) {
 	}()
 
 	fn(tx)
+}
+
+func isPortOpen(host, port string) bool {
+	timeout := 100 * time.Millisecond
+	conn, err := net.DialTimeout("tcp", net.JoinHostPort(host, port), timeout)
+	if err != nil {
+		return false
+	}
+	conn.Close()
+	return true
 }

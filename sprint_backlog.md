@@ -3,15 +3,15 @@
 ## 1. Implement "Fail Fast" in Test Helpers (Blocker)
 **Assignee:** Builder 🛠️
 **Priority:** High
-**Status:** In Progress
+**Status:** Done
 
 **Description:**
 The current `SetupTestDB` function in `internal/testutil/database.go` attempts to connect to the database for every single test package, often retrying for 5 seconds if the DB is missing. This makes running the full suite locally extremely slow if services aren't running.
 
 **Tasks:**
-- [ ] Modify `internal/testutil/database.go` to use `sync.Once` for checking Postgres and Redis availability.
-- [ ] Store the availability status in a global variable (e.g., `infraAvailable bool`).
-- [ ] Update `SetupTestDB` to check this flag immediately. If false, call `t.Skip("Skipping: Infra unavailable")` without attempting a connection.
+- [x] Modify `internal/testutil/database.go` to use `sync.Once` for checking Postgres and Redis availability.
+- [x] Store the availability status in a global variable (e.g., `infraAvailable bool`).
+- [x] Update `SetupTestDB` to check this flag immediately. If false, call `t.Skip("Skipping: Infra unavailable")` without attempting a connection.
 
 **Acceptance Criteria:**
 - Running `go test ./internal/repository/...` without Docker running completes (skips) in < 5 seconds.
