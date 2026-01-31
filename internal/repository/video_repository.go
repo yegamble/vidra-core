@@ -786,11 +786,15 @@ func (r *videoRepository) Search(ctx context.Context, req *domain.VideoSearchReq
 
 	// Add sorting
 	orderBy := "upload_date"
+	sortArgsCount := 0
 	if req.Sort != "" {
 		switch req.Sort {
 		case "title", "views", "upload_date", "duration", "relevance":
 			if req.Sort == "relevance" && req.Query != "" {
-				orderBy = "ts_rank(to_tsvector('english', title || ' ' || description), plainto_tsquery('english', '" + req.Query + "'))"
+				orderBy = fmt.Sprintf("ts_rank(to_tsvector('english', title || ' ' || description), plainto_tsquery('english', $%d))", argIndex)
+				args = append(args, req.Query)
+				argIndex++
+				sortArgsCount++
 			} else {
 				orderBy = req.Sort
 			}
@@ -819,7 +823,7 @@ func (r *videoRepository) Search(ctx context.Context, req *domain.VideoSearchReq
 
 	// Get total count
 	var total int64
-	err := r.db.QueryRowContext(ctx, countQuery, args[:len(args)-2]...).Scan(&total)
+	err := r.db.QueryRowContext(ctx, countQuery, args[:len(args)-2-sortArgsCount]...).Scan(&total)
 	if err != nil {
 		return nil, 0, domain.NewDomainError("COUNT_FAILED", "Failed to count search results")
 	}
