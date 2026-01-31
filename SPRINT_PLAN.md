@@ -1,26 +1,45 @@
 # Sprint Plan: Operation Bedrock (Reliability & Verification)
 
-**Sprint Goal**: Establish a reliable, reproducible test environment and verify the codebase integrity to validate the "88% Production Ready" claim.
+**Sprint Goal**: Verify the integrity of the Data Access Layer (Repository) and ensure all core tests pass reliably.
 
 ## Context
-The project is in a "Stabilization Phase". While feature completion is high (88%), local verification is hindered by infrastructure dependencies (Postgres, Redis, IPFS) and Docker rate limits. We cannot safely proceed with Phase 2 features until the foundation is solid and verifiable by any developer.
+We are in **Phase 1: Stabilization**. "Fail Fast" logic is implemented, allowing tests to skip gracefully when infrastructure is missing. Now we must run the tests with infrastructure available and fix the regressions that were hidden by skipped tests.
 
 ## Priorities
-1.  **Infrastructure Reliability**: Enable developers (and CI) to run all tests without hitting rate limits or "connection refused" delays.
-2.  **Codebase Verification**: Once infra is reliable, run the full suite (`internal/repository`, `internal/ipfs`) and fix uncovered logic bugs.
-3.  **Documentation Accuracy**: Align `README.md` with the verified reality and provide clear developer setup instructions.
+1.  **Infrastructure Reliability**: ✅ **DONE** ("Fail Fast" logic implemented).
+2.  **Codebase Verification (Repositories)**: Run the full `internal/repository` suite and fix logic bugs.
+3.  **Codebase Verification (IPFS)**: Run `internal/ipfs` tests and ensure they pass/skip correctly.
+4.  **Documentation Accuracy**: Align `README.md` and dev docs.
 
-## Schedule
-*   **Week 1**: Fix Test Infra (Fail Fast logic), Verify Repository Tests.
-*   **Week 2**: Verify IPFS Tests, Update Documentation, CI Optimization.
+## Execution Plan: Repository Verification
+We are splitting the repository verification into logical chunks to isolate failures.
+
+### Chunk A: Identity & Auth (Critical Path)
+*   **Modules**: `user_repository`, `auth_repository`, `session_repository`
+*   **Goal**: Ensure users can sign up, login, and maintain sessions.
+*   **Status**: Pending
+
+### Chunk B: Content Management (Core Feature)
+*   **Modules**: `video_repository`, `upload_repository`, `encoding_repository`
+*   **Goal**: Ensure video metadata is stored, uploads are tracked, and encoding jobs are persisted.
+*   **Status**: Pending
+
+### Chunk C: Social & Interaction
+*   **Modules**: `comment_repository`, `rating_repository`, `subscription_repository`, `playlist_repository`
+*   **Goal**: Ensure users can interact with content and each other.
+*   **Status**: Pending
+
+### Chunk D: Federation (ActivityPub)
+*   **Modules**: `activitypub_repository`, `federation_repository`
+*   **Goal**: Ensure federation keys and actors are correctly managed.
+*   **Status**: Pending
 
 ## Risks
-*   **Docker Rate Limits**: Persistent blocker for anonymous CI/CD. Solution: Authenticated registry or caching.
-*   **Hidden Regressions**: `internal/repository` tests might reveal broken SQL queries once they actually run.
+*   **Hidden Regressions**: We expect to find broken SQL queries (e.g., schema mismatches) now that tests are actually running.
+*   **Test Data Pollution**: Tests might interfere with each other if `TruncateTables` isn't used correctly.
 
 ## Definition of Done
-*   [ ] `make test` runs successfully in < 5 minutes locally (skipping integration tests instantly if DB unavailable).
-*   [ ] `internal/repository` tests pass when DB is available.
-*   [ ] `internal/ipfs` tests pass when IPFS is available.
-*   [ ] CI pipeline is green and reliable.
-*   [ ] `README.md` accurately reflects supported features, known limitations, and setup instructions.
+*   [x] `make test` runs successfully in < 5 minutes locally (skipping integration tests instantly if DB unavailable).
+*   [ ] `internal/repository/...` tests pass 100% when DB is available.
+*   [ ] `internal/ipfs/...` tests pass when IPFS is available.
+*   [ ] `README.md` updated with correct "Local Development" instructions.

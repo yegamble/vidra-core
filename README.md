@@ -236,9 +236,9 @@ make lint           # Run linters
 
 ## Project Status
 
-### 🎯 88% COMPLETE - STABILIZATION PHASE
+### 🎯 88% COMPLETE - STABILIZATION PHASE (Operation Bedrock)
 
-**Current Focus**: Restoring test infrastructure and verifying build integrity.
+**Current Focus**: Restoring test infrastructure and verifying build integrity. See [Roadmap](docs/architecture/roadmap.md) for details.
 
 **Recent Achievements** (Last 24-48 hours):
 - ✅ **Test Infrastructure Reliability** - Implemented "Fail Fast" logic to skip integration tests when Docker is unavailable
@@ -265,22 +265,17 @@ make lint           # Run linters
 
 ### Production Readiness Assessment
 
-**✅ Phase 1 Launch Ready** (After credential rotation, 1-2 weeks):
-- Core video platform fully functional
-- Security hardened (P1 vulnerability fixed)
-- Federation operational (ActivityPub)
-- Testing comprehensive (85%+ coverage)
-- Docker deployment proven
+**✅ Phase 1: Stabilization** (Current):
+- Goal: Reliable CI, verifiable tests, fix regressions.
+- Deliverable: "Fail Fast" infra, Verified `internal/repository` tests.
 
-**⚠️ Action Items Before Launch**:
-1. Complete credential rotation (security advisory compliance)
-2. Finalize Kubernetes deployment configs
-3. Production environment setup and load testing
-4. Performance optimization review
+**⚠️ Phase 2: Launch Prep** (Next):
+- Goal: Production readiness, security hardening.
+- Action Items: Credential rotation, Kubernetes configs, Load testing.
 
-**📋 Phase 2 Enhancements** (Future):
-- IOTA payments integration (strategic decision pending)
-- ATProto enhancements (move from BETA to stable)
+**📋 Phase 3: Future Growth**:
+- IOTA payments integration
+- ATProto enhancements
 - Advanced analytics features
 
 ### Test Metrics
