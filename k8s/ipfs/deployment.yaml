@@ -1,0 +1,98 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ipfs
+  labels:
+    app: ipfs
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ipfs
+  template:
+    metadata:
+      labels:
+        app: ipfs
+    spec:
+      containers:
+      - name: ipfs
+        image: ipfs/kubo:latest
+        imagePullPolicy: IfNotPresent
+        env:
+        - name: IPFS_PROFILE
+          value: "server"
+        ports:
+        - containerPort: 5001
+          name: api
+        - containerPort: 8080
+          name: gateway
+        - containerPort: 4001
+          name: swarm
+        volumeMounts:
+        - name: storage
+          mountPath: /data/ipfs
+        - name: staging
+          mountPath: /export
+        readinessProbe:
+          httpGet:
+            path: /api/v0/version
+            port: 5001
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+      volumes:
+      - name: storage
+        persistentVolumeClaim:
+          claimName: ipfs-storage
+      - name: staging
+        persistentVolumeClaim:
+          claimName: ipfs-staging
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ipfs-cluster
+  labels:
+    app: ipfs-cluster
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ipfs-cluster
+  template:
+    metadata:
+      labels:
+        app: ipfs-cluster
+    spec:
+      containers:
+      - name: ipfs-cluster
+        image: ipfs/ipfs-cluster:latest
+        imagePullPolicy: IfNotPresent
+        env:
+        - name: CLUSTER_IPFSHTTP_NODEMULTIADDRESS
+          value: "/dns4/ipfs/tcp/5001"
+        - name: CLUSTER_CRDT_TRUSTEDPEERS
+          value: "*"
+        ports:
+        - containerPort: 9094
+          name: api
+        - containerPort: 9096
+          name: proxy
+        readinessProbe:
+          tcpSocket:
+            port: 9094
+          initialDelaySeconds: 10
+          periodSeconds: 10
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"

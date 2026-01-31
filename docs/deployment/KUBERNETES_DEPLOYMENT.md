@@ -196,10 +196,10 @@ CREATE EXTENSION IF NOT EXISTS "btree_gin";
 
 ```bash
 # Deploy IPFS (if running in-cluster)
-kubectl apply -f k8s/ipfs/
+kubectl apply -f k8s/ipfs/ --namespace athena
 
 # Deploy ClamAV
-kubectl apply -f k8s/clamav/
+kubectl apply -f k8s/clamav/ --namespace athena
 
 # Deploy PostgreSQL exporter (for monitoring)
 helm install postgres-exporter prometheus-community/prometheus-postgres-exporter \
