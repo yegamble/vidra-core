@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -77,6 +78,17 @@ func verifyInfra() bool {
 
 		// Check Postgres
 		dbURL := getPostgresDSN()
+		// Fast check for Postgres port
+		if u, err := url.Parse(dbURL); err == nil {
+			addr := u.Host
+			if _, _, err := net.SplitHostPort(addr); err != nil {
+				addr = net.JoinHostPort(addr, "5432")
+			}
+			if err := checkTCP(addr); err != nil {
+				return
+			}
+		}
+
 		db, err := connectWithRetry(dbURL, 2*time.Second)
 		if err != nil {
 			return
@@ -85,6 +97,17 @@ func verifyInfra() bool {
 
 		// Check Redis
 		redisURL := getRedisURL()
+		// Fast check for Redis port
+		if opt, err := redis.ParseURL(redisURL); err == nil {
+			addr := opt.Addr
+			if _, _, err := net.SplitHostPort(addr); err != nil {
+				addr = net.JoinHostPort(addr, "6379")
+			}
+			if err := checkTCP(addr); err != nil {
+				return
+			}
+		}
+
 		opt, err := redis.ParseURL(redisURL)
 		if err != nil {
 			return
@@ -100,6 +123,15 @@ func verifyInfra() bool {
 		infraReady = true
 	})
 	return infraReady
+}
+
+func checkTCP(address string) error {
+	conn, err := net.DialTimeout("tcp", address, 100*time.Millisecond)
+	if err != nil {
+		return err
+	}
+	conn.Close()
+	return nil
 }
 
 func getPostgresDSN() string {
