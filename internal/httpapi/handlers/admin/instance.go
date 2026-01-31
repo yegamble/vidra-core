@@ -207,7 +207,7 @@ func (h *InstanceHandlers) GetInstanceConfig(w http.ResponseWriter, r *http.Requ
 
 	config, err := h.moderationRepo.GetInstanceConfig(r.Context(), key)
 	if err != nil {
-		if domainErr, ok := err.(*domain.DomainError); ok && domainErr.Code == "NOT_FOUND" {
+		if domainErr, ok := err.(domain.DomainError); ok && domainErr.Code == "NOT_FOUND" {
 			shared.WriteError(w, http.StatusNotFound, err)
 		} else {
 			shared.WriteError(w, http.StatusInternalServerError, domain.NewDomainError("INTERNAL_ERROR", "Failed to get configuration"))
