@@ -1,3 +1,5 @@
+//go:build load
+
 package video
 
 import (
@@ -24,10 +26,6 @@ import (
 // TestLoadScenarios tests various high-volume scenarios to ensure the system
 // can handle genuine traffic patterns without degradation
 func TestLoadScenarios(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping load tests in short mode")
-	}
-
 	db := testutil.SetupTestDB(t)
 	defer func(DB *sqlx.DB) {
 		err := DB.Close()
