@@ -30,7 +30,7 @@ services:
     depends_on:
       - prometheus
 
-  # Optional: Redis Exporter
+  # Redis Exporter
   redis-exporter:
     image: oliver006/redis_exporter:latest
     environment:
@@ -41,7 +41,7 @@ services:
     depends_on:
       - redis
 
-  # Optional: Postgres Exporter
+  # Postgres Exporter
   postgres-exporter:
     image: prometheuscommunity/postgres-exporter
     environment:
@@ -51,10 +51,14 @@ services:
     depends_on:
       - postgres
 
-networks:
-  athena-network:
-    external: true
-    name: athena_athena-network # Adjust based on main docker-compose project name
+  # App override to ensure metrics are enabled
+  # Note: This file is intended to be used WITH the main docker-compose.yml
+  app:
+    environment:
+      - ENABLE_ENCODING=true
+      - METRICS_ADDR=:9090
+
+# No top-level networks block needed as we extend the main compose file
 
 volumes:
   prometheus_data:

@@ -5,22 +5,21 @@ This guide explains how to set up monitoring for the Athena Video Platform using
 ## Prerequisites
 
 - Docker and Docker Compose
-- Running Athena instance (using `docker-compose.yml`)
+- Athena codebase
 
 ## Quick Start
 
-1. **Ensure the main application is running:**
+To run the monitoring stack alongside the main application, it is recommended to use Docker Compose's multiple file support. This ensures all services are in the same network context and configuration overrides are applied correctly.
+
+1. **Start the application with monitoring:**
    ```bash
-   docker-compose up -d
+   # From the root of the repository
+   docker compose -f docker-compose.yml -f docs/deployment/monitoring/docker-compose.monitoring.yml up -d
    ```
 
-2. **Start the monitoring stack:**
-   ```bash
-   cd docs/deployment/monitoring
-   docker-compose -f docker-compose.monitoring.yml up -d
-   ```
+   This command merges the main configuration with the monitoring configuration. It also ensures that the `app` service is configured to expose metrics (via `ENABLE_ENCODING=true`).
 
-3. **Access the dashboards:**
+2. **Access the dashboards:**
    - **Prometheus:** http://localhost:9090
    - **Grafana:** http://localhost:3000 (Default login: admin/admin)
 
@@ -30,12 +29,12 @@ This guide explains how to set up monitoring for the Athena Video Platform using
 
 The configuration is in `prometheus.yml`. It is configured to scrape:
 - Athena App (metrics endpoint `:9090/metrics`)
-- Redis Exporter
-- Postgres Exporter
+- Redis Exporter (for Redis metrics)
+- Postgres Exporter (for Database metrics)
 
 ### Grafana
 
-1. Login to Grafana.
+1. Login to Grafana (default: admin/admin).
 2. Go to **Configuration > Data Sources**.
 3. Add **Prometheus** as a data source:
    - URL: `http://prometheus:9090`
@@ -52,8 +51,9 @@ The configuration is in `prometheus.yml`. It is configured to scrape:
     - Change the Grafana admin password immediately.
     - Put Grafana behind a reverse proxy (Nginx) with SSL.
     - Restrict access to port 9090 (Prometheus) if not needed externally.
-- **Network:** The monitoring stack expects to attach to the `athena_athena-network`. You may need to adjust the network name in `docker-compose.monitoring.yml` if your main project folder is not named `athena` or if you customized the network name. Check `docker network ls` to find the correct network name.
+- **Network:** The monitoring services attach to the `athena-network` defined in the main `docker-compose.yml`.
 
 ## Troubleshooting
 
-- **Targets Down:** Check Prometheus targets at `http://localhost:9090/targets`. If `app` is down, ensure `ENABLE_METRICS=true` and `METRICS_ADDR=:9090` are set in your `.env`.
+- **Targets Down:** Check Prometheus targets at `http://localhost:9090/targets`.
+- **App Metrics Missing:** The Athena metrics server runs on a separate port (default 9090). Ensure `ENABLE_ENCODING=true` is set (as this currently controls the metrics server start) and `METRICS_ADDR=:9090` is configured. The provided `docker-compose.monitoring.yml` sets these automatically.
