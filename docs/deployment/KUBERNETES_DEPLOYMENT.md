@@ -194,12 +194,14 @@ CREATE EXTENSION IF NOT EXISTS "btree_gin";
 
 ### Step 2: Deploy Supporting Services
 
+> **Note:** The `k8s/ipfs/` and `k8s/clamav/` manifests are currently Work In Progress and not yet available in the repository. Please refer to the Docker Compose setup or deploy these services manually for now.
+
 ```bash
 # Deploy IPFS (if running in-cluster)
-kubectl apply -f k8s/ipfs/
+# kubectl apply -f k8s/ipfs/  # TODO: Pending implementation
 
 # Deploy ClamAV
-kubectl apply -f k8s/clamav/
+# kubectl apply -f k8s/clamav/  # TODO: Pending implementation
 
 # Deploy PostgreSQL exporter (for monitoring)
 helm install postgres-exporter prometheus-community/prometheus-postgres-exporter \

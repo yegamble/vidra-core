@@ -34,10 +34,10 @@ curl http://localhost:8080/health
 
 See detailed guides:
 - [Docker Deployment](docker.md) - Container-based deployment
-- [Kubernetes Deployment](kubernetes.md) - Cloud-native deployment
+- [Kubernetes Deployment](KUBERNETES_DEPLOYMENT.md) - Cloud-native deployment
 - [Security Configuration](security.md) - Hardening guide
-- [Database Setup](database.md) - PostgreSQL configuration
-- [Monitoring Setup](monitoring.md) - Observability stack
+- [Database Setup](#database-setup) and [Database Migrations](../database/MIGRATIONS.md) - PostgreSQL configuration
+- [Monitoring Setup](MONITORING.md) - Observability stack
 
 ## Environment Configuration
 
