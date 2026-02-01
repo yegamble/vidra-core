@@ -106,7 +106,7 @@ jobs:
 
       - name: Start services with docker compose
         run: |
-          docker compose -f docker-compose.ci.yml up -d --wait
+          docker compose -f docker-compose.ci.yml up -d --wait postgres-ci redis-ci ipfs-ci
           docker compose -f docker-compose.ci.yml ps
 
       - name: Run integration tests
@@ -114,7 +114,6 @@ jobs:
           DATABASE_URL: postgres://test_user:test_password@localhost:5432/athena_test?sslmode=disable
           REDIS_URL: redis://localhost:6379/0
           IPFS_API: http://localhost:5001
-          CLAMAV_HOST: localhost:3310
           JWT_SECRET: test-jwt-secret
         run: make test-integration-ci
 
@@ -196,7 +195,7 @@ jobs:
 
       - name: Start services with docker compose
         run: |
-          docker compose -f docker-compose.ci.yml up -d --wait
+          docker compose -f docker-compose.ci.yml up -d --wait postgres-ci redis-ci ipfs-ci
           docker compose -f docker-compose.ci.yml ps
 
       - name: Run integration tests with race detector
@@ -205,7 +204,6 @@ jobs:
           DATABASE_URL: postgres://test_user:test_password@localhost:5432/athena_test?sslmode=disable
           REDIS_URL: redis://localhost:6379/0
           IPFS_API: http://localhost:5001
-          CLAMAV_HOST: localhost:3310
           JWT_SECRET: test-jwt-secret
         run: make test-integration-ci-race
 
