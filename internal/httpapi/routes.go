@@ -220,7 +220,8 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 		})
 
 		r.Route("/encoding", func(r chi.Router) {
-			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/status", video.EncodingStatusHandlerEnhanced(deps.EncodingRepo, cfg, deps.EncodingScheduler))
+			// SECURITY: Encoding status exposes internal job counts and scheduler config
+			r.With(middleware.Auth(cfg.JWTSecret), middleware.RequireRole("admin")).Get("/status", video.EncodingStatusHandlerEnhanced(deps.EncodingRepo, cfg, deps.EncodingScheduler))
 		})
 
 		r.Route("/users", func(r chi.Router) {
@@ -385,6 +386,9 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 		// IPFS Streaming Metrics
 		if deps.IPFSStreamingService != nil {
 			r.Route("/ipfs", func(r chi.Router) {
+				// SECURITY: These endpoints expose internal metrics and should be restricted
+				r.Use(middleware.Auth(cfg.JWTSecret))
+				r.Use(middleware.RequireRole("admin"))
 				ipfsMetricsHandlers := video.NewIPFSMetricsHandlers(deps.IPFSStreamingService)
 				r.Get("/metrics", ipfsMetricsHandlers.GetMetrics)
 				r.Get("/gateways", ipfsMetricsHandlers.GetGatewayHealth)
