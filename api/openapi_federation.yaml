@@ -1,7 +1,7 @@
 openapi: 3.0.0
 info:
   title: Athena Federation API
-  description: ATProto federation endpoints for cross-platform content syndication
+  description: ActivityPub and ATProto federation endpoints for cross-platform content syndication
   version: 1.0.0
 
 servers:
@@ -28,6 +28,233 @@ paths:
           description: DID document not found
         '500':
           description: Internal server error
+
+  /.well-known/webfinger:
+    get:
+      summary: WebFinger discovery
+      description: ActivityPub WebFinger endpoint to discover users and resources
+      tags:
+        - ActivityPub
+      parameters:
+        - in: query
+          name: resource
+          required: true
+          schema:
+            type: string
+          description: The resource to look up (e.g. acct:user@domain)
+      responses:
+        '200':
+          description: WebFinger response
+          content:
+            application/jrd+json:
+              schema:
+                $ref: '#/components/schemas/WebFingerResponse'
+        '400':
+          description: Invalid resource
+        '404':
+          description: Resource not found
+
+  /.well-known/nodeinfo:
+    get:
+      summary: NodeInfo discovery
+      description: Returns links to NodeInfo metadata
+      tags:
+        - ActivityPub
+      responses:
+        '200':
+          description: NodeInfo links
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  links:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        rel:
+                          type: string
+                        href:
+                          type: string
+
+  /.well-known/host-meta:
+    get:
+      summary: Host-Meta discovery
+      description: Returns LRDD link for WebFinger
+      tags:
+        - ActivityPub
+      responses:
+        '200':
+          description: Host-Meta XML
+          content:
+            application/xrd+xml:
+              schema:
+                type: string
+
+  /nodeinfo/2.0:
+    get:
+      summary: NodeInfo 2.0
+      description: Returns server statistics and metadata
+      tags:
+        - ActivityPub
+      responses:
+        '200':
+          description: NodeInfo 2.0 response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NodeInfo'
+
+  /users/{username}:
+    get:
+      summary: Get ActivityPub Actor
+      description: Returns the ActivityPub actor profile for a user
+      tags:
+        - ActivityPub
+      parameters:
+        - in: path
+          name: username
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Actor profile
+          content:
+            application/activity+json:
+              schema:
+                $ref: '#/components/schemas/ActivityPubActor'
+        '404':
+          description: Actor not found
+
+  /users/{username}/outbox:
+    get:
+      summary: Get Actor Outbox
+      description: Returns the user's outbox (activities they performed)
+      tags:
+        - ActivityPub
+      parameters:
+        - in: path
+          name: username
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: page
+          schema:
+            type: boolean
+      responses:
+        '200':
+          description: Outbox collection
+          content:
+            application/activity+json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/OrderedCollection'
+                  - $ref: '#/components/schemas/OrderedCollectionPage'
+
+  /users/{username}/inbox:
+    post:
+      summary: Post to Inbox
+      description: Delivery endpoint for activities addressed to this user
+      tags:
+        - ActivityPub
+      parameters:
+        - in: path
+          name: username
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/activity+json:
+            schema:
+              $ref: '#/components/schemas/Activity'
+      responses:
+        '202':
+          description: Activity accepted
+    get:
+      summary: Get Inbox
+      description: Retrieve items in the inbox (Not Implemented)
+      tags:
+        - ActivityPub
+      parameters:
+        - in: path
+          name: username
+          required: true
+          schema:
+            type: string
+      responses:
+        '501':
+          description: Not implemented
+
+  /inbox:
+    post:
+      summary: Shared Inbox
+      description: Delivery endpoint for public activities (shared inbox)
+      tags:
+        - ActivityPub
+      requestBody:
+        content:
+          application/activity+json:
+            schema:
+              $ref: '#/components/schemas/Activity'
+      responses:
+        '202':
+          description: Activity accepted
+
+  /users/{username}/followers:
+    get:
+      summary: Get Followers
+      description: Returns the collection of accounts following this user
+      tags:
+        - ActivityPub
+      parameters:
+        - in: path
+          name: username
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: page
+          schema:
+            type: boolean
+      responses:
+        '200':
+          description: Followers collection
+          content:
+            application/activity+json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/OrderedCollection'
+                  - $ref: '#/components/schemas/OrderedCollectionPage'
+
+  /users/{username}/following:
+    get:
+      summary: Get Following
+      description: Returns the collection of accounts this user is following
+      tags:
+        - ActivityPub
+      parameters:
+        - in: path
+          name: username
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: page
+          schema:
+            type: boolean
+      responses:
+        '200':
+          description: Following collection
+          content:
+            application/activity+json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/OrderedCollection'
+                  - $ref: '#/components/schemas/OrderedCollectionPage'
 
   /api/v1/federation/status:
     get:
@@ -332,326 +559,6 @@ paths:
           description: Forbidden - Admin access required
         '500':
           description: Internal server error
-
-components:
-  securitySchemes:
-    bearerAuth:
-      type: http
-      scheme: bearer
-      bearerFormat: JWT
-
-  schemas:
-    DIDDocument:
-      type: object
-      required:
-        - '@context'
-        - id
-        - service
-      properties:
-        '@context':
-          type: array
-          items:
-            type: string
-          example: ["https://www.w3.org/ns/did/v1"]
-        id:
-          type: string
-          description: The DID identifier
-          example: "did:web:example.com"
-        alsoKnownAs:
-          type: array
-          items:
-            type: string
-          description: Alternative identifiers
-          example: ["https://example.com/users/admin"]
-        service:
-          type: array
-          items:
-            type: object
-            properties:
-              id:
-                type: string
-              type:
-                type: string
-              serviceEndpoint:
-                type: string
-        verificationMethod:
-          type: array
-          items:
-            type: object
-            properties:
-              id:
-                type: string
-              type:
-                type: string
-              controller:
-                type: string
-              publicKeyMultibase:
-                type: string
-
-    FederationStatus:
-      type: object
-      properties:
-        enabled:
-          type: boolean
-          description: Whether federation is enabled
-        healthy:
-          type: boolean
-          description: Overall federation health status
-        instanceDid:
-          type: string
-          description: This instance's DID
-        instanceHandle:
-          type: string
-          description: This instance's handle
-        connections:
-          type: object
-          properties:
-            active:
-              type: integer
-              description: Number of active peer connections
-            pending:
-              type: integer
-              description: Number of pending connections
-            failed:
-              type: integer
-              description: Number of failed connections
-        subscriptions:
-          type: object
-          properties:
-            firehose:
-              type: boolean
-              description: Whether firehose subscription is active
-            lastActivity:
-              type: string
-              format: date-time
-              description: Last activity timestamp
-        statistics:
-          type: object
-          properties:
-            postsCreated:
-              type: integer
-              description: Number of posts created via federation
-            postsSynced:
-              type: integer
-              description: Number of posts synced from peers
-            errors:
-              type: integer
-              description: Number of federation errors in last 24h
-
-    FederatedTimeline:
-      type: object
-      properties:
-        data:
-          type: array
-          items:
-            $ref: '#/components/schemas/FederatedPost'
-        cursor:
-          type: string
-          description: Pagination cursor for next page
-        hasMore:
-          type: boolean
-          description: Whether more items are available
-
-    FederatedPost:
-      type: object
-      properties:
-        id:
-          type: string
-          description: Unique post identifier
-        uri:
-          type: string
-          description: ATProto URI
-        cid:
-          type: string
-          description: Content identifier
-        author:
-          type: object
-          properties:
-            did:
-              type: string
-            handle:
-              type: string
-            displayName:
-              type: string
-            avatar:
-              type: string
-        text:
-          type: string
-          description: Post text content
-        embed:
-          type: object
-          description: Embedded content (video, image, etc.)
-          properties:
-            type:
-              type: string
-              enum: [video, image, external, record]
-            uri:
-              type: string
-            title:
-              type: string
-            description:
-              type: string
-            thumbnail:
-              type: string
-        createdAt:
-          type: string
-          format: date-time
-        indexedAt:
-          type: string
-          format: date-time
-        metrics:
-          type: object
-          properties:
-            likes:
-              type: integer
-            reposts:
-              type: integer
-            replies:
-              type: integer
-
-    FederationConfig:
-      type: object
-      properties:
-        enabled:
-          type: boolean
-          description: Whether federation is enabled
-        instanceDid:
-          type: string
-          description: Instance DID
-        instanceHandle:
-          type: string
-          description: Instance handle
-        blueskyEnabled:
-          type: boolean
-          description: Whether Bluesky integration is enabled
-        blueskyHandle:
-          type: string
-          description: Bluesky account handle
-        blueskyPdsUrl:
-          type: string
-          description: Bluesky PDS URL
-        firehoseUrl:
-          type: string
-          description: Firehose subscription URL
-        autoPublish:
-          type: boolean
-          description: Automatically publish new videos to federation
-        syncInterval:
-          type: integer
-          description: Sync interval in seconds
-        maxRetries:
-          type: integer
-          description: Maximum retry attempts for failed operations
-
-    FederationConfigUpdate:
-      type: object
-      properties:
-        enabled:
-          type: boolean
-        blueskyEnabled:
-          type: boolean
-        blueskyHandle:
-          type: string
-        blueskyAppPassword:
-          type: string
-          format: password
-        autoPublish:
-          type: boolean
-        syncInterval:
-          type: integer
-          minimum: 60
-          maximum: 3600
-        maxRetries:
-          type: integer
-          minimum: 1
-          maximum: 10
-
-    FederationPeer:
-      type: object
-      properties:
-        id:
-          type: string
-          format: uuid
-        did:
-          type: string
-          description: Peer's DID
-        handle:
-          type: string
-          description: Peer's handle
-        serviceUrl:
-          type: string
-          description: Peer's service endpoint
-        status:
-          type: string
-          enum: [active, inactive, pending, blocked]
-        lastSeen:
-          type: string
-          format: date-time
-        createdAt:
-          type: string
-          format: date-time
-        statistics:
-          type: object
-          properties:
-            postsSynced:
-              type: integer
-            lastSync:
-              type: string
-              format: date-time
-            errors:
-              type: integer
-
-    FederationPeerCreate:
-      type: object
-      required:
-        - did
-        - handle
-      properties:
-        did:
-          type: string
-          description: Peer's DID
-        handle:
-          type: string
-          description: Peer's handle
-        serviceUrl:
-          type: string
-          description: Peer's service endpoint
-
-    FederationPeerUpdate:
-      type: object
-      properties:
-        status:
-          type: string
-          enum: [active, inactive, pending, blocked]
-        serviceUrl:
-          type: string
-
-    FederationSubscription:
-      type: object
-      properties:
-        id:
-          type: string
-          format: uuid
-        type:
-          type: string
-          enum: [firehose, webhook, polling]
-        url:
-          type: string
-          description: Subscription endpoint URL
-        status:
-          type: string
-          enum: [active, paused, failed]
-        filters:
-          type: object
-          description: Subscription filters
-        lastActivity:
-          type: string
-          format: date-time
-        errorCount:
-          type: integer
-        createdAt:
-          type: string
-          format: date-time
 
   /api/v1/admin/federation/jobs:
     get:
@@ -1000,7 +907,7 @@ components:
           required: true
           schema:
             type: string
-          description: ATProto actor DID or handle
+            description: ATProto actor DID or handle
       responses:
         '200':
           description: Actor deleted successfully
@@ -1022,7 +929,325 @@ components:
           description: Internal server error
 
 components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
   schemas:
+    DIDDocument:
+      type: object
+      required:
+        - '@context'
+        - id
+        - service
+      properties:
+        '@context':
+          type: array
+          items:
+            type: string
+          example: ["https://www.w3.org/ns/did/v1"]
+        id:
+          type: string
+          description: The DID identifier
+          example: "did:web:example.com"
+        alsoKnownAs:
+          type: array
+          items:
+            type: string
+          description: Alternative identifiers
+          example: ["https://example.com/users/admin"]
+        service:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+              type:
+                type: string
+              serviceEndpoint:
+                type: string
+        verificationMethod:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+              type:
+                type: string
+              controller:
+                type: string
+              publicKeyMultibase:
+                type: string
+
+    FederationStatus:
+      type: object
+      properties:
+        enabled:
+          type: boolean
+          description: Whether federation is enabled
+        healthy:
+          type: boolean
+          description: Overall federation health status
+        instanceDid:
+          type: string
+          description: This instance's DID
+        instanceHandle:
+          type: string
+          description: This instance's handle
+        connections:
+          type: object
+          properties:
+            active:
+              type: integer
+              description: Number of active peer connections
+            pending:
+              type: integer
+              description: Number of pending connections
+            failed:
+              type: integer
+              description: Number of failed connections
+        subscriptions:
+          type: object
+          properties:
+            firehose:
+              type: boolean
+              description: Whether firehose subscription is active
+            lastActivity:
+              type: string
+              format: date-time
+              description: Last activity timestamp
+        statistics:
+          type: object
+          properties:
+            postsCreated:
+              type: integer
+              description: Number of posts created via federation
+            postsSynced:
+              type: integer
+              description: Number of posts synced from peers
+            errors:
+              type: integer
+              description: Number of federation errors in last 24h
+
+    FederatedTimeline:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/FederatedPost'
+        cursor:
+          type: string
+          description: Pagination cursor for next page
+        hasMore:
+          type: boolean
+          description: Whether more items are available
+
+    FederatedPost:
+      type: object
+      properties:
+        id:
+          type: string
+          description: Unique post identifier
+        uri:
+          type: string
+          description: ATProto URI
+        cid:
+          type: string
+          description: Content identifier
+        author:
+          type: object
+          properties:
+            did:
+              type: string
+            handle:
+              type: string
+            displayName:
+              type: string
+            avatar:
+              type: string
+        text:
+          type: string
+          description: Post text content
+        embed:
+          type: object
+          description: Embedded content (video, image, etc.)
+          properties:
+            type:
+              type: string
+              enum: [video, image, external, record]
+            uri:
+              type: string
+            title:
+              type: string
+            description:
+              type: string
+            thumbnail:
+              type: string
+        createdAt:
+          type: string
+          format: date-time
+        indexedAt:
+          type: string
+          format: date-time
+        metrics:
+          type: object
+          properties:
+            likes:
+              type: integer
+            reposts:
+              type: integer
+            replies:
+              type: integer
+
+    FederationConfig:
+      type: object
+      properties:
+        enabled:
+          type: boolean
+          description: Whether federation is enabled
+        instanceDid:
+          type: string
+          description: Instance DID
+        instanceHandle:
+          type: string
+          description: Instance handle
+        blueskyEnabled:
+          type: boolean
+          description: Whether Bluesky integration is enabled
+        blueskyHandle:
+          type: string
+          description: Bluesky account handle
+        blueskyPdsUrl:
+          type: string
+          description: Bluesky PDS URL
+        firehoseUrl:
+          type: string
+          description: Firehose subscription URL
+        autoPublish:
+          type: boolean
+          description: Automatically publish new videos to federation
+        syncInterval:
+          type: integer
+          description: Sync interval in seconds
+        maxRetries:
+          type: integer
+          description: Maximum retry attempts for failed operations
+
+    FederationConfigUpdate:
+      type: object
+      properties:
+        enabled:
+          type: boolean
+        blueskyEnabled:
+          type: boolean
+        blueskyHandle:
+          type: string
+        blueskyAppPassword:
+          type: string
+          format: password
+        autoPublish:
+          type: boolean
+        syncInterval:
+          type: integer
+          minimum: 60
+          maximum: 3600
+        maxRetries:
+          type: integer
+          minimum: 1
+          maximum: 10
+
+    FederationPeer:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        did:
+          type: string
+          description: Peer's DID
+        handle:
+          type: string
+          description: Peer's handle
+        serviceUrl:
+          type: string
+          description: Peer's service endpoint
+        status:
+          type: string
+          enum: [active, inactive, pending, blocked]
+        lastSeen:
+          type: string
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+        statistics:
+          type: object
+          properties:
+            postsSynced:
+              type: integer
+            lastSync:
+              type: string
+              format: date-time
+            errors:
+              type: integer
+
+    FederationPeerCreate:
+      type: object
+      required:
+        - did
+        - handle
+      properties:
+        did:
+          type: string
+          description: Peer's DID
+        handle:
+          type: string
+          description: Peer's handle
+        serviceUrl:
+          type: string
+          description: Peer's service endpoint
+
+    FederationPeerUpdate:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [active, inactive, pending, blocked]
+        serviceUrl:
+          type: string
+
+    FederationSubscription:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        type:
+          type: string
+          enum: [firehose, webhook, polling]
+        url:
+          type: string
+          description: Subscription endpoint URL
+        status:
+          type: string
+          enum: [active, paused, failed]
+        filters:
+          type: object
+          description: Subscription filters
+        lastActivity:
+          type: string
+          format: date-time
+        errorCount:
+          type: integer
+        createdAt:
+          type: string
+          format: date-time
+
     FederationJob:
       type: object
       properties:
@@ -1107,8 +1332,160 @@ components:
           type: string
           format: date-time
 
+    WebFingerResponse:
+      type: object
+      properties:
+        subject:
+          type: string
+          description: The subject of the WebFinger response (e.g. acct:user@domain)
+        aliases:
+          type: array
+          items:
+            type: string
+          description: List of aliases for the subject
+        links:
+          type: array
+          items:
+            type: object
+            properties:
+              rel:
+                type: string
+              type:
+                type: string
+              href:
+                type: string
+              template:
+                type: string
+          description: List of links for the subject
+
+    NodeInfo:
+      type: object
+      properties:
+        version:
+          type: string
+          description: NodeInfo version
+        software:
+          type: object
+          properties:
+            name:
+              type: string
+            version:
+              type: string
+        protocols:
+          type: array
+          items:
+            type: string
+        usage:
+          type: object
+          properties:
+            users:
+              type: object
+              properties:
+                total:
+                  type: integer
+            localPosts:
+              type: integer
+        openRegistrations:
+          type: boolean
+        metadata:
+          type: object
+          additionalProperties: true
+
+    ActivityPubActor:
+      type: object
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+        preferredUsername:
+          type: string
+        name:
+          type: string
+        inbox:
+          type: string
+        outbox:
+          type: string
+        followers:
+          type: string
+        following:
+          type: string
+        publicKey:
+          type: object
+          properties:
+            id:
+              type: string
+            owner:
+              type: string
+            publicKeyPem:
+              type: string
+
+    OrderedCollection:
+      type: object
+      properties:
+        "@context":
+          type: string
+        id:
+          type: string
+        type:
+          type: string
+        totalItems:
+          type: integer
+        first:
+          type: string
+        last:
+          type: string
+
+    OrderedCollectionPage:
+      type: object
+      properties:
+        "@context":
+          type: string
+        id:
+          type: string
+        type:
+          type: string
+        partOf:
+          type: string
+        orderedItems:
+          type: array
+          items:
+            $ref: '#/components/schemas/Activity'
+        next:
+          type: string
+        prev:
+          type: string
+
+    Activity:
+      type: object
+      properties:
+        "@context":
+          type: string
+        id:
+          type: string
+        type:
+          type: string
+        actor:
+          type: string
+        object:
+          type: object
+          additionalProperties: true
+        published:
+          type: string
+          format: date-time
+        to:
+          type: array
+          items:
+            type: string
+        cc:
+          type: array
+          items:
+            type: string
+
 tags:
   - name: Federation
     description: ATProto federation endpoints
+  - name: ActivityPub
+    description: ActivityPub federation endpoints
   - name: Admin
     description: Administrative endpoints
