@@ -9,3 +9,9 @@
 **Resolution:** Added `middleware.RequireRole("admin")` to the route definition in `internal/httpapi/routes.go`.
 **Learning:** Routes intended for administrative tasks (like manual user creation) must explicitly enforce role checks. "Auth" middleware only confirms identity, not authority.
 **Prevention:** Audit all routes under `internal/httpapi/routes.go` to ensure that sensitive actions (create, delete, update global configs) are protected by `RequireRole("admin")` or similar authorization logic.
+
+## 2026-02-02 - Argument Injection in yt-dlp Wrapper
+**Vulnerability/Issue:** The `yt-dlp` wrapper in `internal/importer/ytdlp.go` passed user-provided URLs directly as arguments to `exec.CommandContext` without the `--` delimiter. Although validation prevented flags starting with `-`, a parser bypass or malformed URL could theoretically be interpreted as a flag, leading to argument injection.
+**Resolution:** Added `--` delimiter before the URL argument in all `yt-dlp` command invocations (`ValidateURL`, `ExtractMetadata`, `Download`, `DownloadThumbnail`) to explicitly mark the end of options.
+**Learning:** Always use `--` to separate options from positional arguments when invoking external commands with user input, even if the input is validated. Validations can be bypassed or might be insufficient for all edge cases (e.g. parser quirks).
+**Prevention:** Enforce the use of `--` in all `exec.Command` calls that pass user input as arguments, especially for tools like `ffmpeg`, `yt-dlp`, etc. Add regression tests that verify the command structure.
