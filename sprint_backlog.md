@@ -3,15 +3,15 @@
 ## 1. Implement "Fail Fast" in Test Helpers (Blocker)
 **Assignee:** Builder 🛠️
 **Priority:** High
-**Status:** In Progress
+**Status:** Done
 
 **Description:**
 The current `SetupTestDB` function in `internal/testutil/database.go` attempts to connect to the database for every single test package, often retrying for 5 seconds if the DB is missing. This makes running the full suite locally extremely slow if services aren't running.
 
 **Tasks:**
-- [ ] Modify `internal/testutil/database.go` to use `sync.Once` for checking Postgres and Redis availability.
-- [ ] Store the availability status in a global variable (e.g., `infraAvailable bool`).
-- [ ] Update `SetupTestDB` to check this flag immediately. If false, call `t.Skip("Skipping: Infra unavailable")` without attempting a connection.
+- [x] Modify `internal/testutil/database.go` to use `sync.Once` for checking Postgres and Redis availability.
+- [x] Store the availability status in a global variable (e.g., `infraAvailable bool`).
+- [x] Update `SetupTestDB` to check this flag immediately. If false, call `t.Skip("Skipping: Infra unavailable")` without attempting a connection.
 
 **Acceptance Criteria:**
 - Running `go test ./internal/repository/...` without Docker running completes (skips) in < 5 seconds.
@@ -21,15 +21,15 @@ The current `SetupTestDB` function in `internal/testutil/database.go` attempts t
 ## 2. Verify and Fix Repository Tests
 **Assignee:** Builder 🛠️
 **Priority:** High
-**Status:** To Do
+**Status:** Done
 
 **Description:**
 Integration tests in `internal/repository` have not been verified recently due to the infrastructure issues. They likely contain SQL syntax errors or schema mismatches (e.g., `updated_at` triggers, new columns).
 
 **Tasks:**
-- [ ] Run `go test -v ./internal/repository/...` (requires running DB).
-- [ ] Identify failures.
-- [ ] Fix SQL queries, mock data, or schema definitions in `internal/testutil/database.go` to match the actual code.
+- [x] Run `go test -v ./internal/repository/...` (requires running DB).
+- [x] Identify failures.
+- [x] Fix SQL queries, mock data, or schema definitions in `internal/testutil/database.go` to match the actual code.
 
 **Acceptance Criteria:**
 - All tests in `internal/repository` pass when a test DB is available.

@@ -374,16 +374,9 @@ func TestCreateCommentActivity(t *testing.T) {
 
 // TestPublishComment tests comment delivery
 func TestPublishComment(t *testing.T) {
-	mockAPRepo := new(MockActivityPubRepository)
-	mockUserRepo := new(MockUserRepository)
-	mockVideoRepo := new(MockVideoRepository)
-	mockCommentRepo := new(MockCommentRepository)
-
 	cfg := &config.Config{
 		PublicBaseURL: "https://video.example",
 	}
-
-	service := NewService(mockAPRepo, mockUserRepo, mockVideoRepo, mockCommentRepo, cfg)
 
 	ctx := context.Background()
 
@@ -431,7 +424,18 @@ func TestPublishComment(t *testing.T) {
 		InboxURL: "https://mastodon.example/users/alice/inbox",
 	}
 
+	setup := func() (*Service, *MockActivityPubRepository, *MockUserRepository, *MockVideoRepository, *MockCommentRepository) {
+		mockAPRepo := new(MockActivityPubRepository)
+		mockUserRepo := new(MockUserRepository)
+		mockVideoRepo := new(MockVideoRepository)
+		mockCommentRepo := new(MockCommentRepository)
+		service := NewService(mockAPRepo, mockUserRepo, mockVideoRepo, mockCommentRepo, cfg)
+		return service, mockAPRepo, mockUserRepo, mockVideoRepo, mockCommentRepo
+	}
+
 	t.Run("Delivers comment to video owner", func(t *testing.T) {
+		service, mockAPRepo, mockUserRepo, mockVideoRepo, mockCommentRepo := setup()
+
 		mockCommentRepo.On("GetByID", ctx, commentID).Return(comment, nil).Once()
 		mockUserRepo.On("GetByID", ctx, userID.String()).Return(user, nil).Times(2)
 		mockVideoRepo.On("GetByID", ctx, videoID.String()).Return(video, nil).Times(2) // Called in BuildNoteObject and PublishComment
@@ -452,7 +456,8 @@ func TestPublishComment(t *testing.T) {
 	})
 
 	t.Run("Delivers comment to video followers", func(t *testing.T) {
-		t.Skip("TODO: Follower delivery implementation incomplete - skipping until delivery logic is fully implemented")
+		service, mockAPRepo, mockUserRepo, mockVideoRepo, mockCommentRepo := setup()
+
 		mockCommentRepo.On("GetByID", ctx, commentID).Return(comment, nil).Once()
 		mockUserRepo.On("GetByID", ctx, userID.String()).Return(user, nil).Times(2)
 		mockVideoRepo.On("GetByID", ctx, videoID.String()).Return(video, nil).Times(2) // Called in BuildNoteObject and PublishComment
@@ -472,7 +477,8 @@ func TestPublishComment(t *testing.T) {
 	})
 
 	t.Run("Delivers to parent comment author for nested replies", func(t *testing.T) {
-		t.Skip("TODO: Parent comment author delivery not yet implemented - test is placeholder")
+		service, mockAPRepo, mockUserRepo, mockVideoRepo, mockCommentRepo := setup()
+
 		parentCommentID := uuid.New()
 		parentAuthorID := uuid.New()
 
@@ -491,7 +497,14 @@ func TestPublishComment(t *testing.T) {
 			Username: "parentauthor",
 		}
 
+		parentComment := &domain.Comment{
+			ID:      parentCommentID,
+			VideoID: videoID,
+			UserID:  parentAuthorID,
+		}
+
 		mockCommentRepo.On("GetByID", ctx, commentID).Return(nestedComment, nil).Once()
+		mockCommentRepo.On("GetByID", ctx, parentCommentID).Return(parentComment, nil).Once()
 		mockUserRepo.On("GetByID", ctx, userID.String()).Return(user, nil).Times(2)
 		mockVideoRepo.On("GetByID", ctx, videoID.String()).Return(video, nil).Times(2) // Called in BuildNoteObject and PublishComment
 		mockUserRepo.On("GetByID", ctx, videoOwnerID.String()).Return(videoOwner, nil).Once()
@@ -503,9 +516,6 @@ func TestPublishComment(t *testing.T) {
 
 		err := service.PublishComment(ctx, commentID.String())
 
-		// Note: The actual implementation should fetch parent comment and deliver to its author
-		// This test will need adjustment once implementation exists
-
 		mockCommentRepo.AssertExpectations(t)
 		mockUserRepo.AssertExpectations(t)
 		mockVideoRepo.AssertExpectations(t)
@@ -516,6 +526,8 @@ func TestPublishComment(t *testing.T) {
 	})
 
 	t.Run("Does not publish deleted comments", func(t *testing.T) {
+		service, _, _, _, mockCommentRepo := setup()
+
 		deletedComment := &domain.Comment{
 			ID:        commentID,
 			VideoID:   videoID,

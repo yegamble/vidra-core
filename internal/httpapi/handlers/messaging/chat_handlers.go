@@ -483,6 +483,18 @@ func (h *ChatHandlers) UnbanUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Verify stream ownership to allow owner to unban
+	stream, err := h.streamRepo.GetByID(ctx, streamID)
+	if err != nil {
+		if err == domain.ErrNotFound {
+			shared.WriteError(w, http.StatusNotFound, errors.New("stream not found"))
+			return
+		}
+		shared.WriteError(w, http.StatusInternalServerError, errors.New("failed to get stream"))
+		return
+	}
+	isOwner := stream.UserID == moderatorID
+
 	// Check if user is moderator or stream owner
 	isMod, err := h.chatRepo.IsModerator(ctx, streamID, moderatorID)
 	if err != nil {
@@ -490,8 +502,7 @@ func (h *ChatHandlers) UnbanUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// TODO: Also check if moderatorID is stream owner
-	if !isMod {
+	if !isMod && !isOwner {
 		shared.WriteError(w, http.StatusForbidden, errors.New("moderator privileges required"))
 		return
 	}
@@ -530,6 +541,18 @@ func (h *ChatHandlers) GetBans(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Verify stream ownership to allow owner to view bans
+	stream, err := h.streamRepo.GetByID(ctx, streamID)
+	if err != nil {
+		if err == domain.ErrNotFound {
+			shared.WriteError(w, http.StatusNotFound, errors.New("stream not found"))
+			return
+		}
+		shared.WriteError(w, http.StatusInternalServerError, errors.New("failed to get stream"))
+		return
+	}
+	isOwner := stream.UserID == moderatorID
+
 	// Check if user is moderator or stream owner
 	isMod, err := h.chatRepo.IsModerator(ctx, streamID, moderatorID)
 	if err != nil {
@@ -537,8 +560,7 @@ func (h *ChatHandlers) GetBans(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// TODO: Also check if moderatorID is stream owner
-	if !isMod {
+	if !isMod && !isOwner {
 		shared.WriteError(w, http.StatusForbidden, errors.New("moderator privileges required"))
 		return
 	}
