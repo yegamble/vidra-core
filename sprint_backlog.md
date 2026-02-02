@@ -1,20 +1,21 @@
 # Sprint Backlog: Operation Bedrock
 
-## 1. Implement "Fail Fast" in Test Helpers (Blocker)
+## 1. Optimize "Fail Fast" in Test Helpers (Blocker)
 **Assignee:** Builder 🛠️
 **Priority:** High
 **Status:** In Progress
 
 **Description:**
-The current `SetupTestDB` function in `internal/testutil/database.go` attempts to connect to the database for every single test package, often retrying for 5 seconds if the DB is missing. This makes running the full suite locally extremely slow if services aren't running.
+The current `verifyInfra` in `internal/testutil/database.go` (called by `SetupTestDB`) attempts to connect to the database with a 2-second timeout. Since Go executes tests for different packages in separate processes, this 2-second delay occurs for *every* package, causing massive slowdowns (minutes) when infrastructure is not running.
 
 **Tasks:**
-- [ ] Modify `internal/testutil/database.go` to use `sync.Once` for checking Postgres and Redis availability.
-- [ ] Store the availability status in a global variable (e.g., `infraAvailable bool`).
-- [ ] Update `SetupTestDB` to check this flag immediately. If false, call `t.Skip("Skipping: Infra unavailable")` without attempting a connection.
+- [ ] Modify `verifyInfra` in `internal/testutil/database.go`.
+- [ ] Replace the existing `connectWithRetry` call with a fast TCP check: `net.DialTimeout("tcp", dbHost+":"+dbPort, 100*time.Millisecond)`.
+- [ ] Apply similar logic for Redis.
+- [ ] Ensure `SetupTestDB` checks this result and calls `t.Skip` immediately if infra is missing.
 
 **Acceptance Criteria:**
-- Running `go test ./internal/repository/...` without Docker running completes (skips) in < 5 seconds.
+- Running `go test ./...` without Docker running completes (skips all) in < 1 second total.
 
 ---
 
@@ -24,49 +25,41 @@ The current `SetupTestDB` function in `internal/testutil/database.go` attempts t
 **Status:** To Do
 
 **Description:**
-Integration tests in `internal/repository` have not been verified recently due to the infrastructure issues. They likely contain SQL syntax errors or schema mismatches (e.g., `updated_at` triggers, new columns).
+Integration tests in `internal/repository` have not been verified recently. They likely contain SQL syntax errors or schema mismatches (e.g., `updated_at` triggers, new columns) compared to the current codebase state.
 
 **Tasks:**
-- [ ] Run `go test -v ./internal/repository/...` (requires running DB).
-- [ ] Identify failures.
-- [ ] Fix SQL queries, mock data, or schema definitions in `internal/testutil/database.go` to match the actual code.
+- [ ] Start test infrastructure (`docker compose up -d postgres redis`).
+- [ ] Run `go test -v ./internal/repository/...`.
+- [ ] Analyze failures (look for "column does not exist", "syntax error", or type mismatches).
+- [ ] Fix SQL queries in `internal/repository` or schema definitions in `internal/testutil/database.go` to match.
 
 **Acceptance Criteria:**
 - All tests in `internal/repository` pass when a test DB is available.
 
 ---
 
-## 3. Verify and Fix IPFS Tests
-**Assignee:** Builder 🛠️
-**Priority:** Medium
-**Status:** To Do
-
-**Description:**
-Integration tests involving IPFS (`internal/ipfs`) need verification to ensure they handle connection failures gracefully and pass when IPFS is present.
-
-**Tasks:**
-- [ ] Run `go test -v ./internal/ipfs/...`.
-- [ ] Ensure tests skip gracefully if IPFS is missing (check `SetupTestDB` logic or similar).
-- [ ] Fix any logic errors in content addressing or gateway interaction.
-
-**Acceptance Criteria:**
-- IPFS tests pass when `ipfs-ci` container is running.
-- IPFS tests skip gracefully when container is missing.
-
----
-
-## 4. Update Documentation
+## 3. Update Documentation
 **Assignee:** Scribe 📝
 **Priority:** Medium
 **Status:** To Do
 
 **Description:**
-The `README.md` claims "Production Ready" but lacks critical setup information for the current environment (Docker rate limits).
+The `README.md` needs to reflect the current "Stabilization Phase" and provide critical setup information to avoid confusion.
 
 **Tasks:**
 - [ ] Add "Prerequisites" section to `README.md` explaining the need for `docker login` to avoid rate limits.
-- [ ] Update "Project Status" to "Stabilization Phase" (Operation Bedrock).
+- [ ] Update "Project Status" to "Stabilization Phase".
 - [ ] Add a "Troubleshooting" section for common test failures (e.g., "Postgres not ready").
 
 **Acceptance Criteria:**
-- `README.md` is accurate and helpful for a new developer setting up the repo.
+- `README.md` accurately guides a new developer and warns about known issues.
+
+---
+
+## 4. Verify and Fix IPFS Tests (Deferred)
+**Assignee:** Builder 🛠️
+**Priority:** Low
+**Status:** Backlog
+
+**Description:**
+Integration tests involving IPFS (`internal/ipfs`) need verification. Deferred to next sprint to focus on Core DB reliability first.
