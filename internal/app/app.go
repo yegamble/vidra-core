@@ -514,25 +514,25 @@ func (app *Application) Start(ctx context.Context) error {
 				log.Printf("Encoding workers stopped with error: %v", err)
 			}
 		}()
+	}
 
-		// Start a lightweight metrics server if configured
-		if app.Config.MetricsAddr != "" {
-			mux := http.NewServeMux()
-			mux.HandleFunc("/metrics", metrics.Handler)
-			app.metricsServer = &http.Server{
-				Addr:         app.Config.MetricsAddr,
-				Handler:      mux,
-				ReadTimeout:  10 * time.Second,
-				WriteTimeout: 10 * time.Second,
-				IdleTimeout:  30 * time.Second,
-			}
-			go func() {
-				log.Printf("Starting metrics server on %s", app.Config.MetricsAddr)
-				if err := app.metricsServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-					log.Printf("Metrics server error: %v", err)
-				}
-			}()
+	// Start a lightweight metrics server if configured
+	if app.Config.EnableMetrics && app.Config.MetricsAddr != "" {
+		mux := http.NewServeMux()
+		mux.HandleFunc("/metrics", metrics.Handler)
+		app.metricsServer = &http.Server{
+			Addr:         app.Config.MetricsAddr,
+			Handler:      mux,
+			ReadTimeout:  10 * time.Second,
+			WriteTimeout:  10 * time.Second,
+			IdleTimeout:  30 * time.Second,
 		}
+		go func() {
+			log.Printf("Starting metrics server on %s", app.Config.MetricsAddr)
+			if err := app.metricsServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				log.Printf("Metrics server error: %v", err)
+			}
+		}()
 	}
 
 	return nil

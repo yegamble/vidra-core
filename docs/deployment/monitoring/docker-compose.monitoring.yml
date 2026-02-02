@@ -38,8 +38,6 @@ services:
       - REDIS_PASSWORD=${REDIS_PASSWORD}
     networks:
       - athena-network
-    depends_on:
-      - redis
 
   # Optional: Postgres Exporter
   postgres-exporter:
@@ -48,8 +46,6 @@ services:
       DATA_SOURCE_NAME: "postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/athena?sslmode=disable"
     networks:
       - athena-network
-    depends_on:
-      - postgres
 
 networks:
   athena-network:

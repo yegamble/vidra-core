@@ -355,6 +355,7 @@ func getTestConfig(t *testing.T) *config.Config {
 		FederationSchedulerIntervalSeconds: 60,
 		FederationSchedulerBurst:           5,
 		EncodingWorkers:                    2,
-		MetricsAddr:                        "", // Don't start metrics server in tests
+		EnableMetrics:                      false, // Don't start metrics server in tests
+		MetricsAddr:                        "",
 	}
 }

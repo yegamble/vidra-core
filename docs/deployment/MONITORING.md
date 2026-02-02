@@ -5,7 +5,7 @@ This guide explains how to set up monitoring for the Athena Video Platform using
 ## Prerequisites
 
 - Docker and Docker Compose
-- Running Athena instance (using `docker-compose.yml`)
+- Running Athena instance (using `docker-compose.yml`) with `ENABLE_METRICS=true` in `.env`
 
 ## Quick Start
 

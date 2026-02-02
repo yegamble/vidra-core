@@ -153,7 +153,10 @@ type Config struct {
 	// Encoding Worker Configuration
 	EnableEncoding  bool
 	EncodingWorkers int
-	MetricsAddr     string
+
+	// Metrics Configuration
+	EnableMetrics bool
+	MetricsAddr   string
 
 	// Caption Generation Configuration
 	EnableCaptionGeneration  bool   // Enable automatic caption generation after encoding
@@ -458,6 +461,9 @@ func Load() (*Config, error) {
 	// Encoding Worker Configuration
 	cfg.EnableEncoding = getBoolEnv("ENABLE_ENCODING", false)
 	cfg.EncodingWorkers = getIntEnv("ENCODING_WORKERS", 2)
+
+	// Metrics Configuration
+	cfg.EnableMetrics = getBoolEnv("ENABLE_METRICS", false)
 	cfg.MetricsAddr = getEnvOrDefault("METRICS_ADDR", ":9090")
 
 	// Caption Generation Configuration
