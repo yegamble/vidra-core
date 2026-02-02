@@ -7,7 +7,6 @@ import (
 	"math"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -111,13 +110,13 @@ func (s *service) InitiateUpload(ctx context.Context, userID string, req *domain
 	return &domain.InitiateUploadResponse{SessionID: sessionID, ChunkSize: req.ChunkSize, TotalChunks: totalChunks, UploadURL: fmt.Sprintf("/api/v1/uploads/%s/chunks", sessionID)}, nil
 }
 
-var uploadExtRe = regexp.MustCompile(`^\.[A-Za-z0-9]{1,8}$`)
-
 func validUploadExt(ext string) bool {
-	if ext == "" {
+	switch strings.ToLower(ext) {
+	case ".mp4", ".mov", ".mkv", ".webm", ".avi":
 		return true
+	default:
+		return false
 	}
-	return uploadExtRe.MatchString(ext)
 }
 
 func validateFilePath(path, expectedRoot string) error {
