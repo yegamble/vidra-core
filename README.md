@@ -84,6 +84,12 @@ See [VALIDATION_REQUIRED.md](VALIDATION_REQUIRED.md) for complete requirements, 
 
 ### Development
 
+**Prerequisites:**
+To run integration tests that pull Docker images, you must be authenticated with Docker Hub to avoid rate limits.
+```bash
+docker login
+```
+
 ```bash
 # Clone the repository
 git clone https://github.com/yegamble/athena.git
