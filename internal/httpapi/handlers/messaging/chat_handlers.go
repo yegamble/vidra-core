@@ -1,6 +1,7 @@
 package messaging
 
 import (
+	"context"
 	"athena/internal/httpapi/shared"
 	"encoding/json"
 	"errors"
@@ -484,15 +485,7 @@ func (h *ChatHandlers) UnbanUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Check if user is moderator or stream owner
-	isMod, err := h.chatRepo.IsModerator(ctx, streamID, moderatorID)
-	if err != nil {
-		shared.WriteError(w, http.StatusInternalServerError, errors.New("failed to check moderator status"))
-		return
-	}
-
-	// TODO: Also check if moderatorID is stream owner
-	if !isMod {
-		shared.WriteError(w, http.StatusForbidden, errors.New("moderator privileges required"))
+	if !h.verifyModeratorOrOwner(w, ctx, streamID, moderatorID) {
 		return
 	}
 
@@ -531,15 +524,7 @@ func (h *ChatHandlers) GetBans(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Check if user is moderator or stream owner
-	isMod, err := h.chatRepo.IsModerator(ctx, streamID, moderatorID)
-	if err != nil {
-		shared.WriteError(w, http.StatusInternalServerError, errors.New("failed to check moderator status"))
-		return
-	}
-
-	// TODO: Also check if moderatorID is stream owner
-	if !isMod {
-		shared.WriteError(w, http.StatusForbidden, errors.New("moderator privileges required"))
+	if !h.verifyModeratorOrOwner(w, ctx, streamID, moderatorID) {
 		return
 	}
 
@@ -579,4 +564,35 @@ func (h *ChatHandlers) GetChatStats(w http.ResponseWriter, r *http.Request) {
 		"stats":           stats,
 		"connected_users": connectedUsers,
 	})
+}
+
+// verifyModeratorOrOwner checks if the user is a moderator or the owner of the stream
+// It writes the appropriate error response if the check fails and returns false
+func (h *ChatHandlers) verifyModeratorOrOwner(w http.ResponseWriter, ctx context.Context, streamID, userID uuid.UUID) bool {
+	isMod, err := h.chatRepo.IsModerator(ctx, streamID, userID)
+	if err != nil {
+		shared.WriteError(w, http.StatusInternalServerError, errors.New("failed to check moderator status"))
+		return false
+	}
+
+	if isMod {
+		return true
+	}
+
+	stream, err := h.streamRepo.GetByID(ctx, streamID)
+	if err != nil {
+		if err == domain.ErrNotFound {
+			shared.WriteError(w, http.StatusNotFound, errors.New("stream not found"))
+			return false
+		}
+		shared.WriteError(w, http.StatusInternalServerError, errors.New("failed to get stream"))
+		return false
+	}
+
+	if stream.UserID != userID {
+		shared.WriteError(w, http.StatusForbidden, errors.New("moderator privileges required"))
+		return false
+	}
+
+	return true
 }
