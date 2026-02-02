@@ -112,7 +112,8 @@ The API documentation is split into modular files by functional domain for bette
 
 14. **`openapi_federation.yaml`** - ActivityPub Federation ✅
     - Federation timeline
-    - (Note: Missing ActivityPub well-known and actor endpoints - see below)
+    - ActivityPub discovery endpoints (.well-known)
+    - Actor endpoints (inbox, outbox, followers, following)
 
 15. **`openapi_federation_hardening.yaml`** - Federation Security ✅
     - Dead letter queue management
@@ -162,22 +163,7 @@ The API documentation is split into modular files by functional domain for bette
    DELETE /api/v1/messages/{messageId}
    ```
 
-4. **ActivityPub Well-Known & Actor Endpoints** (add to `openapi_federation.yaml`)
-   ```
-   GET    /.well-known/webfinger
-   GET    /.well-known/nodeinfo
-   GET    /.well-known/host-meta
-   GET    /nodeinfo/2.0
-   POST   /inbox (shared inbox)
-   GET    /users/{username}
-   GET    /users/{username}/outbox
-   GET    /users/{username}/inbox
-   POST   /users/{username}/inbox
-   GET    /users/{username}/followers
-   GET    /users/{username}/following
-   ```
-
-5. **ATProto DID Endpoint** (add to `openapi.yaml` or `openapi_federation.yaml`)
+4. **ATProto DID Endpoint** (add to `openapi.yaml` or `openapi_federation.yaml`)
    ```
    GET    /.well-known/atproto-did
    ```
@@ -205,13 +191,13 @@ The API documentation is split into modular files by functional domain for bette
 | Notifications | 6 | 6 | 100% ✅ |
 | Chat | 10 | 10 | 100% ✅ (Sprint 7) |
 | Moderation | 12 | 12 | 100% ✅ |
-| Federation | 4 | 1 | 25% ⚠️ |
+| Federation | 15 | 15 | 100% ✅ |
 | Federation Hardening | 12 | 12 | 100% ✅ |
 | Plugins | 8 | 8 | 100% ✅ |
 | Redundancy | 6 | 6 | 100% ✅ |
 | User Profiles | 6 | 1 | 17% ⚠️ |
 | HLS Static | 1 | 0 | 0% ⚠️ |
-| **TOTAL** | **~173** | **~170** | **~98%** |
+| **TOTAL** | **~184** | **~181** | **~99%** |
 
 ---
 
@@ -419,7 +405,6 @@ Authorization: Bearer <jwt_access_token>
 **Remaining Work:**
 - Add user profile endpoints to main spec
 - Add HLS static serving endpoint
-- Add ActivityPub well-known and actor endpoints
 - Complete conversation/messaging endpoints
 
 ---
