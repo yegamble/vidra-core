@@ -131,10 +131,10 @@ func NewManager(
 	}
 
 	// Create directories
-	if err := os.MkdirAll(config.TorrentDir, 0755); err != nil {
+	if err := os.MkdirAll(config.TorrentDir, 0750); err != nil {
 		return nil, fmt.Errorf("failed to create torrent dir: %w", err)
 	}
-	if err := os.MkdirAll(config.DataDir, 0755); err != nil {
+	if err := os.MkdirAll(config.DataDir, 0750); err != nil {
 		return nil, fmt.Errorf("failed to create data dir: %w", err)
 	}
 
@@ -272,7 +272,7 @@ func (m *Manager) AddVideoTorrent(ctx context.Context, videoID uuid.UUID, files 
 
 	// Save torrent file
 	torrentPath := filepath.Join(m.config.TorrentDir, fmt.Sprintf("%s.torrent", videoID))
-	if err := os.WriteFile(torrentPath, info.TorrentFile, 0644); err != nil {
+	if err := os.WriteFile(torrentPath, info.TorrentFile, 0600); err != nil {
 		return nil, fmt.Errorf("failed to save torrent file: %w", err)
 	}
 
