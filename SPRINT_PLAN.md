@@ -1,26 +1,47 @@
-# Sprint Plan: Operation Bedrock (Reliability & Verification)
+# Sprint Plan: Operation Bedrock & Secure Launch
 
-**Sprint Goal**: Establish a reliable, reproducible test environment and verify the codebase integrity to validate the "88% Production Ready" claim.
+**Sprint Goal**: Establish a reliable, reproducible test environment AND secure the platform for Phase 1 Launch.
 
 ## Context
-The project is in a "Stabilization Phase". While feature completion is high (88%), local verification is hindered by infrastructure dependencies (Postgres, Redis, IPFS) and Docker rate limits. We cannot safely proceed with Phase 2 features until the foundation is solid and verifiable by any developer.
+We are combining "Operation Bedrock" (Reliability) and "Sprint 15" (Phase 1 Launch) into a single execution plan.
+- **Reliability**: The current test infrastructure is too slow (missing "Fail Fast" optimization) and repository tests are unverified. This blocks efficient development.
+- **Security**: A critical security advisory (Credential Exposure) requires immediate remediation (Credential Rotation, Git History Cleanup).
 
 ## Priorities
-1.  **Infrastructure Reliability**: Enable developers (and CI) to run all tests quickly without hitting rate limits or "connection refused" delays. Specifically, optimize "Fail Fast" logic using TCP dialing.
-2.  **Codebase Verification**: Once infra is reliable, run the full suite (`internal/repository`) and fix uncovered logic bugs or schema drift.
-3.  **Documentation Accuracy**: Align `README.md` with the verified reality and provide clear developer setup instructions (including Docker Hub login).
+1.  **Infrastructure Reliability (Blocker)**: Optimize "Fail Fast" logic to unblock local development and CI.
+2.  **Security Hardening (Critical)**: Create scripts and guides to rotate credentials and clean git history.
+3.  **Codebase Verification (High)**: Run and fix `internal/repository` tests to ensure logic integrity.
+4.  **Documentation (Medium)**: Align docs with reality (Stabilization Phase, Setup Instructions).
 
-## Schedule
-*   **Step 1**: Optimize "Fail Fast" in Test Helpers (Builder).
-*   **Step 2**: Verify and Fix Repository Tests (Builder).
-*   **Step 3**: Update Documentation (Scribe).
+## Schedule & Assignments
+
+### Step 1: Unblock Development (Builder 🛠️)
+*   **Task**: Optimize "Fail Fast" in `internal/testutil/database.go`.
+*   **Method**: Replace `connectWithRetry` with `net.DialTimeout` (TCP check).
+*   **Result**: `go test` skips instantly if DB is missing.
+
+### Step 2: Secure the Platform (Sentinel 🛡️)
+*   **Task**: Create Credential Rotation Scripts.
+*   **Task**: Create Git History Cleanup Guide.
+*   **Result**: Paths to remediation are scripted/documented.
+
+### Step 3: Verify Integrity (Builder 🛠️)
+*   **Task**: Run `go test ./internal/repository/...` with DB.
+*   **Task**: Fix any SQL/Logic errors found.
+*   **Result**: Repository layer is proven correct.
+
+### Step 4: Update Documentation (Scribe 📝)
+*   **Task**: Update `README.md` (Project Status, Prerequisites).
+*   **Task**: Verify Monitoring Docs.
+*   **Result**: Documentation matches "Stabilization Phase" reality.
 
 ## Risks
-*   **Docker Rate Limits**: Persistent blocker for anonymous CI/CD. Solution: Authenticated registry or caching.
-*   **Hidden Regressions**: `internal/repository` tests might reveal broken SQL queries once they actually run.
+*   **Docker Rate Limits**: CI requires authentication.
+*   **Data Loss**: Git history cleanup is destructive (requires force push).
+*   **Hidden Regressions**: Repository tests may reveal significant broken logic.
 
 ## Definition of Done
-*   [ ] `make test` runs successfully in < 5 minutes locally (skipping integration tests instantly if DB unavailable).
-*   [ ] `internal/repository` tests pass when DB is available.
-*   [ ] CI pipeline is green and reliable.
-*   [ ] `README.md` accurately reflects supported features, known limitations, and setup instructions.
+*   [ ] `make test` runs efficiently (fast skip or fast pass).
+*   [ ] Security remediation scripts exist in `scripts/`.
+*   [ ] `internal/repository` tests pass.
+*   [ ] `README.md` is accurate.
