@@ -8,11 +8,18 @@ on:
     paths:
       - 'migrations/**'
       - '.github/workflows/goose-migrate.yml'
+  pull_request:
+    branches:
+      - main
+      - develop
+    paths:
+      - 'migrations/**'
+      - '.github/workflows/goose-migrate.yml'
   workflow_dispatch:
 
 env:
   GO_VERSION: '1.24'
-  POSTGRES_VERSION: '16'
+  POSTGRES_VERSION: '15'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -30,7 +37,7 @@ jobs:
 
     services:
       postgres:
-        image: postgres:16-alpine
+        image: postgres:15-alpine
         env:
           POSTGRES_USER: test_user
           POSTGRES_PASSWORD: test_pass
