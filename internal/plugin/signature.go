@@ -83,7 +83,7 @@ func (v *SignatureVerifier) RemoveTrustedKey(author string) error {
 // saveTrustedKeys saves trusted keys to file
 func (v *SignatureVerifier) saveTrustedKeys(comment string) error {
 	// Ensure directory exists
-	if err := os.MkdirAll(filepath.Dir(v.keyFile), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(v.keyFile), 0750); err != nil {
 		return fmt.Errorf("failed to create key directory: %w", err)
 	}
 
@@ -101,7 +101,7 @@ func (v *SignatureVerifier) saveTrustedKeys(comment string) error {
 		return fmt.Errorf("failed to marshal trusted keys: %w", err)
 	}
 
-	if err := os.WriteFile(v.keyFile, data, 0644); err != nil {
+	if err := os.WriteFile(v.keyFile, data, 0600); err != nil {
 		return fmt.Errorf("failed to write trusted keys: %w", err)
 	}
 

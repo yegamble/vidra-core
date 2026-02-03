@@ -58,7 +58,7 @@ func (m *Manager) Initialize(ctx context.Context) error {
 	defer m.mu.Unlock()
 
 	// Ensure plugin directory exists
-	if err := os.MkdirAll(m.pluginDir, 0755); err != nil {
+	if err := os.MkdirAll(m.pluginDir, 0750); err != nil {
 		return fmt.Errorf("failed to create plugin directory: %w", err)
 	}
 

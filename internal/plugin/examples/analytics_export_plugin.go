@@ -76,7 +76,7 @@ func (p *AnalyticsExportPlugin) Initialize(ctx context.Context, config map[strin
 	}
 
 	// Ensure export directory exists
-	if err := os.MkdirAll(p.exportPath, 0755); err != nil {
+	if err := os.MkdirAll(p.exportPath, 0750); err != nil {
 		return fmt.Errorf("failed to create export directory: %w", err)
 	}
 
@@ -203,7 +203,7 @@ func (p *AnalyticsExportPlugin) flushUnlocked() error {
 		return fmt.Errorf("failed to marshal events: %w", err)
 	}
 
-	if err := os.WriteFile(filepath, data, 0644); err != nil {
+	if err := os.WriteFile(filepath, data, 0600); err != nil {
 		return fmt.Errorf("failed to write events to file: %w", err)
 	}
 
