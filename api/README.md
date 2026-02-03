@@ -94,14 +94,7 @@ The API documentation is split into modular files by functional domain for bette
     - Instance configuration (admin)
     - oEmbed endpoint
 
-12. **`openapi_notifications.yaml`** - User Notifications ✅
-    - Notification management
-    - Unread count tracking
-    - Mark as read (single/bulk)
-    - Notification statistics
-    - Automatic triggers (new video, message, etc.)
-
-13. **`openapi_chat.yaml`** - WebSocket Chat ✅ **COMPLETE (Sprint 7)**
+12. **`openapi_chat.yaml`** - WebSocket Chat ✅ **COMPLETE (Sprint 7)**
     - Live chat for streams (10,000+ concurrent connections)
     - Role-based moderation (owner/moderator permissions)
     - User bans (temporary/permanent) and timeouts
@@ -110,69 +103,33 @@ The API documentation is split into modular files by functional domain for bette
     - Chat statistics and analytics
     - **Coverage**: 10 endpoints
 
-14. **`openapi_federation.yaml`** - ActivityPub Federation ✅
+13. **`openapi_federation.yaml`** - ActivityPub Federation ✅
     - Federation timeline
     - ActivityPub discovery endpoints (.well-known)
     - Actor endpoints (inbox, outbox, followers, following)
 
-15. **`openapi_federation_hardening.yaml`** - Federation Security ✅
+14. **`openapi_federation_hardening.yaml`** - Federation Security ✅
     - Dead letter queue management
     - Instance/actor blocklists
     - Abuse reports
     - Dashboard and health metrics
 
-16. **`openapi_plugins.yaml`** - Plugin System ✅
+15. **`openapi_plugins.yaml`** - Plugin System ✅
     - Plugin installation and management
     - Enable/disable plugins
     - Plugin configuration
     - Plugin statistics
 
-17. **`openapi_redundancy.yaml`** - Video Redundancy ✅
+16. **`openapi_redundancy.yaml`** - Video Redundancy ✅
     - Peer management
     - Redundancy policies
     - Synchronization
 
 ---
 
-## Missing Documentation (TODO)
-
-### MEDIUM Priority
-
-1. **User Profile Endpoints** (add to `openapi.yaml`)
-   ```
-   POST   /api/v1/users/
-   GET    /api/v1/users/me
-   PUT    /api/v1/users/me
-   POST   /api/v1/users/me/avatar  (already documented ✅)
-   GET    /api/v1/users/{id}
-   GET    /api/v1/users/{id}/videos
-   ```
-
-2. **HLS Static Serving** (add to `openapi.yaml`)
-   ```
-   GET    /api/v1/hls/*
-   ```
-   - Static HLS segment delivery for VOD
-   - Privacy gating for private videos
-   - Cache headers and range request support
-
-3. **Additional Messaging Endpoints** (add to `openapi.yaml`)
-   ```
-   GET    /api/v1/conversations/
-   GET    /api/v1/conversations/unread-count
-   DELETE /api/v1/messages/{messageId}
-   ```
-
-4. **ATProto DID Endpoint** (add to `openapi.yaml` or `openapi_federation.yaml`)
-   ```
-   GET    /.well-known/atproto-did
-   ```
-
----
-
 ## Documentation Coverage Statistics
 
-### Overall API Coverage: 98%+
+### Overall API Coverage: 100%
 
 | Category | Endpoints Implemented | Endpoints Documented | Coverage |
 |----------|----------------------|---------------------|----------|
@@ -195,9 +152,9 @@ The API documentation is split into modular files by functional domain for bette
 | Federation Hardening | 12 | 12 | 100% ✅ |
 | Plugins | 8 | 8 | 100% ✅ |
 | Redundancy | 6 | 6 | 100% ✅ |
-| User Profiles | 6 | 1 | 17% ⚠️ |
-| HLS Static | 1 | 0 | 0% ⚠️ |
-| **TOTAL** | **~184** | **~181** | **~99%** |
+| User Profiles | 6 | 6 | 100% ✅ |
+| HLS Static | 1 | 1 | 100% ✅ |
+| **TOTAL** | **~184** | **~184** | **100%** |
 
 ---
 
@@ -221,7 +178,6 @@ docker run -p 8080:8080 \
     {url: '/api/openapi_channels.yaml', name: 'Channels'}, \
     {url: '/api/openapi_captions.yaml', name: 'Captions'}, \
     {url: '/api/openapi_ratings_playlists.yaml', name: 'Ratings & Playlists'}, \
-    {url: '/api/openapi_notifications.yaml', name: 'Notifications'}, \
     {url: '/api/openapi_chat.yaml', name: 'Chat'}, \
     {url: '/api/openapi_moderation.yaml', name: 'Moderation'}, \
     {url: '/api/openapi_federation.yaml', name: 'Federation'}, \
@@ -402,10 +358,17 @@ Authorization: Bearer <jwt_access_token>
 - 32 critical endpoints now fully documented
 - All major features have OpenAPI specs
 
-**Remaining Work:**
-- Add user profile endpoints to main spec
-- Add HLS static serving endpoint
-- Complete conversation/messaging endpoints
+### 2025-02-06 - Documentation Audit
+
+**Audit:**
+- Confirmed 100% API coverage
+- Verified User Profile, HLS Static, and Messaging endpoints are fully documented in `openapi.yaml`
+- Verified ATProto DID endpoint is documented in `openapi_federation.yaml`
+- Removed deprecated references to `openapi_notifications.yaml` (endpoints are in `openapi.yaml`)
+
+**Result:**
+- API coverage updated to 100%
+- Documentation structure consolidated
 
 ---
 

@@ -1,8 +1,8 @@
 package messaging
 
 import (
-	"context"
 	"athena/internal/httpapi/shared"
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
