@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -75,31 +76,42 @@ func verifyInfra() bool {
 		_ = godotenv.Load("../../.env")
 		_ = godotenv.Load(".env")
 
-		// Check Postgres
-		dbURL := getPostgresDSN()
-		db, err := connectWithRetry(dbURL, 2*time.Second)
-		if err != nil {
+		// Check Postgres (Fail Fast via TCP)
+		if !checkTCP(getPostgresDSN(), "5432") {
 			return
 		}
-		db.Close()
 
-		// Check Redis
-		redisURL := getRedisURL()
-		opt, err := redis.ParseURL(redisURL)
-		if err != nil {
+		// Check Redis (Fail Fast via TCP)
+		if !checkTCP(getRedisURL(), "6379") {
 			return
 		}
-		rdb := redis.NewClient(opt)
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
-		if err := rdb.Ping(ctx).Err(); err != nil {
-			return
-		}
-		rdb.Close()
 
 		infraReady = true
 	})
 	return infraReady
+}
+
+func checkTCP(urlStr, defaultPort string) bool {
+	u, err := url.Parse(urlStr)
+	if err != nil {
+		return false
+	}
+
+	host := u.Host
+	if host == "" {
+		return false
+	}
+
+	if _, _, err := net.SplitHostPort(host); err != nil {
+		host = net.JoinHostPort(host, defaultPort)
+	}
+
+	conn, err := net.DialTimeout("tcp", host, 100*time.Millisecond)
+	if err != nil {
+		return false
+	}
+	conn.Close()
+	return true
 }
 
 func getPostgresDSN() string {
