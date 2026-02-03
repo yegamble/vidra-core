@@ -82,6 +82,7 @@ func (m *MockVideoRepository) Create(ctx context.Context, video *domain.Video) e
 	args := m.Called(ctx, video)
 	return args.Error(0)
 }
+
 // Add other methods as stubs if needed, but Create is mostly what we need for InitiateUpload
 func (m *MockVideoRepository) GetByID(ctx context.Context, id string) (*domain.Video, error) {
 	args := m.Called(ctx, id)
@@ -90,35 +91,72 @@ func (m *MockVideoRepository) GetByID(ctx context.Context, id string) (*domain.V
 	}
 	return args.Get(0).(*domain.Video), args.Error(1)
 }
+
 // Stub out the rest to satisfy interface
-func (m *MockVideoRepository) GetByUserID(ctx context.Context, userID string, limit, offset int) ([]*domain.Video, int64, error) { return nil, 0, nil }
-func (m *MockVideoRepository) Update(ctx context.Context, video *domain.Video) error { return nil }
+func (m *MockVideoRepository) GetByUserID(ctx context.Context, userID string, limit, offset int) ([]*domain.Video, int64, error) {
+	return nil, 0, nil
+}
+func (m *MockVideoRepository) Update(ctx context.Context, video *domain.Video) error      { return nil }
 func (m *MockVideoRepository) Delete(ctx context.Context, id string, userID string) error { return nil }
-func (m *MockVideoRepository) List(ctx context.Context, req *domain.VideoSearchRequest) ([]*domain.Video, int64, error) { return nil, 0, nil }
-func (m *MockVideoRepository) Search(ctx context.Context, req *domain.VideoSearchRequest) ([]*domain.Video, int64, error) { return nil, 0, nil }
-func (m *MockVideoRepository) UpdateProcessingInfo(ctx context.Context, videoID string, status domain.ProcessingStatus, outputPaths map[string]string, thumbnailPath, previewPath string) error { return nil }
-func (m *MockVideoRepository) UpdateProcessingInfoWithCIDs(ctx context.Context, videoID string, status domain.ProcessingStatus, outputPaths map[string]string, thumbnailPath, previewPath string, processedCIDs map[string]string, thumbnailCID, previewCID string) error { return nil }
+func (m *MockVideoRepository) List(ctx context.Context, req *domain.VideoSearchRequest) ([]*domain.Video, int64, error) {
+	return nil, 0, nil
+}
+func (m *MockVideoRepository) Search(ctx context.Context, req *domain.VideoSearchRequest) ([]*domain.Video, int64, error) {
+	return nil, 0, nil
+}
+func (m *MockVideoRepository) UpdateProcessingInfo(ctx context.Context, videoID string, status domain.ProcessingStatus, outputPaths map[string]string, thumbnailPath, previewPath string) error {
+	return nil
+}
+func (m *MockVideoRepository) UpdateProcessingInfoWithCIDs(ctx context.Context, videoID string, status domain.ProcessingStatus, outputPaths map[string]string, thumbnailPath, previewPath string, processedCIDs map[string]string, thumbnailCID, previewCID string) error {
+	return nil
+}
 func (m *MockVideoRepository) Count(ctx context.Context) (int64, error) { return 0, nil }
-func (m *MockVideoRepository) GetVideosForMigration(ctx context.Context, limit int) ([]*domain.Video, error) { return nil, nil }
-func (m *MockVideoRepository) GetByRemoteURI(ctx context.Context, remoteURI string) (*domain.Video, error) { return nil, nil }
-func (m *MockVideoRepository) CreateRemoteVideo(ctx context.Context, video *domain.Video) error { return nil }
+func (m *MockVideoRepository) GetVideosForMigration(ctx context.Context, limit int) ([]*domain.Video, error) {
+	return nil, nil
+}
+func (m *MockVideoRepository) GetByRemoteURI(ctx context.Context, remoteURI string) (*domain.Video, error) {
+	return nil, nil
+}
+func (m *MockVideoRepository) CreateRemoteVideo(ctx context.Context, video *domain.Video) error {
+	return nil
+}
 
 type MockEncodingRepository struct {
 	mock.Mock
 }
-// Stubs for encoding repo
-func (m *MockEncodingRepository) CreateJob(ctx context.Context, job *domain.EncodingJob) error { return nil }
-func (m *MockEncodingRepository) GetJob(ctx context.Context, jobID string) (*domain.EncodingJob, error) { return nil, nil }
-func (m *MockEncodingRepository) GetJobByVideoID(ctx context.Context, videoID string) (*domain.EncodingJob, error) { return nil, nil }
-func (m *MockEncodingRepository) UpdateJob(ctx context.Context, job *domain.EncodingJob) error { return nil }
-func (m *MockEncodingRepository) DeleteJob(ctx context.Context, jobID string) error { return nil }
-func (m *MockEncodingRepository) GetPendingJobs(ctx context.Context, limit int) ([]*domain.EncodingJob, error) { return nil, nil }
-func (m *MockEncodingRepository) GetNextJob(ctx context.Context) (*domain.EncodingJob, error) { return nil, nil }
-func (m *MockEncodingRepository) UpdateJobStatus(ctx context.Context, jobID string, status domain.EncodingStatus) error { return nil }
-func (m *MockEncodingRepository) UpdateJobProgress(ctx context.Context, jobID string, progress int) error { return nil }
-func (m *MockEncodingRepository) SetJobError(ctx context.Context, jobID string, errorMsg string) error { return nil }
-func (m *MockEncodingRepository) GetJobCounts(ctx context.Context) (map[string]int64, error) { return nil, nil }
 
+// Stubs for encoding repo
+func (m *MockEncodingRepository) CreateJob(ctx context.Context, job *domain.EncodingJob) error {
+	return nil
+}
+func (m *MockEncodingRepository) GetJob(ctx context.Context, jobID string) (*domain.EncodingJob, error) {
+	return nil, nil
+}
+func (m *MockEncodingRepository) GetJobByVideoID(ctx context.Context, videoID string) (*domain.EncodingJob, error) {
+	return nil, nil
+}
+func (m *MockEncodingRepository) UpdateJob(ctx context.Context, job *domain.EncodingJob) error {
+	return nil
+}
+func (m *MockEncodingRepository) DeleteJob(ctx context.Context, jobID string) error { return nil }
+func (m *MockEncodingRepository) GetPendingJobs(ctx context.Context, limit int) ([]*domain.EncodingJob, error) {
+	return nil, nil
+}
+func (m *MockEncodingRepository) GetNextJob(ctx context.Context) (*domain.EncodingJob, error) {
+	return nil, nil
+}
+func (m *MockEncodingRepository) UpdateJobStatus(ctx context.Context, jobID string, status domain.EncodingStatus) error {
+	return nil
+}
+func (m *MockEncodingRepository) UpdateJobProgress(ctx context.Context, jobID string, progress int) error {
+	return nil
+}
+func (m *MockEncodingRepository) SetJobError(ctx context.Context, jobID string, errorMsg string) error {
+	return nil
+}
+func (m *MockEncodingRepository) GetJobCounts(ctx context.Context) (map[string]int64, error) {
+	return nil, nil
+}
 
 func TestInitiateUpload_Security_FileSizeLimit(t *testing.T) {
 	mockUploadRepo := new(MockUploadRepository)
