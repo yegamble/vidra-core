@@ -16,21 +16,25 @@ We are combining "Operation Bedrock" (Reliability) and "Sprint 15" (Phase 1 Laun
 ## Schedule & Assignments
 
 ### Step 1: Unblock Development (Builder 🛠️)
+*   **Status**: ✅ Complete
 *   **Task**: Optimize "Fail Fast" in `internal/testutil/database.go`.
-*   **Method**: Replace `connectWithRetry` with `net.DialTimeout` (TCP check).
-*   **Result**: `go test` skips instantly if DB is missing.
+*   **Method**: Verified `checkTCP` implementation in `verifyInfra`.
+*   **Result**: `go test` skips instantly if DB is missing (Verified 0.00s skips).
 
 ### Step 2: Secure the Platform (Sentinel 🛡️)
+*   **Status**: 🔄 In Progress
 *   **Task**: Create Credential Rotation Scripts.
 *   **Task**: Create Git History Cleanup Guide.
-*   **Result**: Paths to remediation are scripted/documented.
+*   **Result**: Scripts exist (`scripts/rotate-credentials.sh`, `scripts/clean-git-history.sh`); pending final verification and `setup-production-env.sh`.
 
 ### Step 3: Verify Integrity (Builder 🛠️)
+*   **Status**: 🔄 In Progress
 *   **Task**: Run `go test ./internal/repository/...` with DB.
 *   **Task**: Fix any SQL/Logic errors found.
-*   **Result**: Repository layer is proven correct.
+*   **Result**: Tests to be run with `docker compose -f docker-compose.ci.yml`.
 
 ### Step 4: Update Documentation (Scribe 📝)
+*   **Status**: 📋 To Do
 *   **Task**: Update `README.md` (Project Status, Prerequisites).
 *   **Task**: Verify Monitoring Docs.
 *   **Result**: Documentation matches "Stabilization Phase" reality.
@@ -41,7 +45,7 @@ We are combining "Operation Bedrock" (Reliability) and "Sprint 15" (Phase 1 Laun
 *   **Hidden Regressions**: Repository tests may reveal significant broken logic.
 
 ## Definition of Done
-*   [ ] `make test` runs efficiently (fast skip or fast pass).
+*   [x] `make test` runs efficiently (fast skip or fast pass).
 *   [ ] Security remediation scripts exist in `scripts/`.
 *   [ ] `internal/repository` tests pass.
 *   [ ] `README.md` is accurate.

@@ -252,13 +252,14 @@ make lint           # Run linters
 - ✅ **P1 Security Fix** - CVE-ATHENA-2025-001 (virus scanner retry logic bypass) resolved
 - ✅ **Pre-commit Hooks** - Prevents credential leaks, enforces YAML linting
 - ✅ **Code Quality** - Struct field alignment, formatting standardization
+- ✅ **Security Hardening** - Created credential rotation and environment setup scripts
 
 ### Feature Completion by Category
 
 | Category | Completion | Status | Notes |
 |----------|-----------|--------|-------|
 | **Core Platform** | 98% | ✅ Production Ready | Channels, subscriptions, comments, ratings, playlists, captions |
-| **Security & Auth** | 90% | ⚠️ Action Required | 2FA, E2EE, OAuth2 complete; credential rotation pending |
+| **Security & Auth** | 90% | ⚠️ Action Required | 2FA, E2EE, OAuth2 complete; credential rotation scripts ready |
 | **Federation** | 93% | ✅ Ready | ActivityPub 100%, ATProto 75% (BETA) |
 | **P2P Distribution** | 92% | ✅ Proven | IPFS/WebTorrent operational, HLS streaming experimental |
 | **Live Streaming** | 100% | ✅ Complete | RTMP, HLS, chat, scheduling, analytics, VOD conversion |
@@ -279,7 +280,7 @@ make lint           # Run linters
 - Docker deployment proven
 
 **⚠️ Action Items Before Launch**:
-1. Complete credential rotation (security advisory compliance)
+1. Execute credential rotation using `scripts/rotate-credentials.sh`
 2. Finalize Kubernetes deployment configs
 3. Production environment setup and load testing
 4. Performance optimization review
