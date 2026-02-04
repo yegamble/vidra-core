@@ -158,18 +158,14 @@ func setupPostgres() (*sqlx.DB, error) {
 	schema := deriveTestSchema()
 
 	// First connect without custom search_path to create the schema if needed
-	// Use a short deadline so tests skip fast when DB isn't available locally
-	db, err := connectWithRetry(dbURL, 5*time.Second)
+	// We use connectFast instead of retry loop because verifyInfra() already confirmed connectivity.
+	db, err := connectFast(dbURL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to test database: %w", err)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-
-	if err := db.PingContext(ctx); err != nil {
-		return nil, fmt.Errorf("failed to ping test database: %w", err)
-	}
 
 	// Create schema if needed
 	if _, err := db.ExecContext(ctx, fmt.Sprintf("CREATE SCHEMA IF NOT EXISTS %s", pqQuoteIdent(schema))); err != nil {
@@ -192,7 +188,7 @@ func setupPostgres() (*sqlx.DB, error) {
 		dbURL = dbURL + fmt.Sprintf(" search_path='%s,public'", schema)
 	}
 
-	db, err = connectWithRetry(dbURL, 5*time.Second)
+	db, err = connectFast(dbURL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to reconnect to test database with schema: %w", err)
 	}
@@ -726,28 +722,25 @@ func ensureTestSchema(db *sqlx.DB) error {
 	return nil
 }
 
-// connectWithRetry attempts to connect and ping the database until the deadline,
-// returning the first successful connection or the last error.
-func connectWithRetry(dsn string, deadline time.Duration) (*sqlx.DB, error) {
-	start := time.Now()
-	var last error
-	for time.Since(start) < deadline {
-		db, err := sqlx.Connect("postgres", dsn)
-		if err == nil {
-			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-			pingErr := db.PingContext(ctx)
-			cancel()
-			if pingErr == nil {
-				return db, nil
-			}
-			_ = db.Close()
-			last = pingErr
-		} else {
-			last = err
-		}
-		time.Sleep(1 * time.Second)
+// connectFast attempts to connect and ping the database with a short timeout.
+// It relies on verifyInfra having already checked TCP connectivity.
+func connectFast(dsn string) (*sqlx.DB, error) {
+	// sqlx.Open doesn't connect immediately, it just validates arguments
+	db, err := sqlx.Open("postgres", dsn)
+	if err != nil {
+		return nil, err
 	}
-	return nil, fmt.Errorf("database not ready after %s: %w", deadline, last)
+
+	// Ping with short timeout to verify connection
+	// 500ms should be enough for local DB if TCP is up.
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+
+	if err := db.PingContext(ctx); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	return db, nil
 }
 
 func getEnvDefault(key, def string) string {
@@ -766,7 +759,8 @@ func setupRedis() (*redis.Client, error) {
 
 	client := redis.NewClient(opt)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	// Short timeout because verifyInfra already checked TCP
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
 
 	if err := client.Ping(ctx).Err(); err != nil {
