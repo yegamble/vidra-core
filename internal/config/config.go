@@ -12,6 +12,9 @@ import (
 )
 
 type Config struct {
+	// Environment (development, production, test)
+	Environment string
+
 	// Server Configuration
 	Port int
 
@@ -287,6 +290,8 @@ type Config struct {
 	FileTypeBlockingEnabled bool
 }
 
+var port = flag.Int("port", 8080, "Server port")
+
 func Load() (*Config, error) {
 	// Load .env file if it exists
 	if err := godotenv.Load(); err != nil {
@@ -297,8 +302,11 @@ func Load() (*Config, error) {
 
 	cfg := &Config{}
 
-	port := flag.Int("port", 8080, "Server port")
-	flag.Parse()
+	cfg.Environment = getEnvOrDefault("NODE_ENV", "development")
+
+	if !flag.Parsed() {
+		flag.Parse()
+	}
 
 	cfg.Port = *port
 	if envPort := os.Getenv("PORT"); envPort != "" {
@@ -354,6 +362,23 @@ func Load() (*Config, error) {
 	cfg.JWTSecret = getEnvOrDefault("JWT_SECRET", "")
 	if cfg.JWTSecret == "" {
 		return nil, fmt.Errorf("JWT_SECRET is required")
+	}
+
+	// Security Check: Ensure default JWT secret is not used in production
+	insecureSecrets := []string{
+		"your-super-secret-jwt-key-change-in-production",
+		"CHANGE_ME_IN_PRODUCTION_openssl_rand_hex_32",
+	}
+
+	for _, secret := range insecureSecrets {
+		if cfg.JWTSecret == secret {
+			if cfg.Environment == "production" {
+				return nil, fmt.Errorf("FATAL: Security risk! You are using a default insecure JWT_SECRET in production. Please change it in your .env file")
+			}
+			// In development/test, just warn
+			fmt.Fprintf(os.Stderr, "WARNING: You are using a default insecure JWT_SECRET (%s). This is fine for development but MUST be changed in production.\n", secret)
+			break
+		}
 	}
 
 	cfg.EnableIOTA = getBoolEnv("ENABLE_IOTA", false)

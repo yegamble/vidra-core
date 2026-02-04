@@ -97,7 +97,7 @@ services:
     environment:
       DATABASE_URL: postgres://athena_user:athena_password@postgres:5432/athena?sslmode=disable
       REDIS_URL: redis://redis:6379/0
-      JWT_SECRET: ${JWT_SECRET:-your-super-secret-jwt-key-change-in-production}
+      JWT_SECRET: ${JWT_SECRET}
       IPFS_API: http://ipfs:5001
       REQUIRE_IPFS: ${REQUIRE_IPFS:-false}
       PORT: 8080
