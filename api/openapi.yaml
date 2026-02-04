@@ -2267,7 +2267,7 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
 
   # HLS streaming endpoint
-  /api/v1/hls/*:
+  /api/v1/hls/{path}:
     get:
       tags:
         - Streaming

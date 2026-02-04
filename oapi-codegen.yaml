@@ -1,6 +1,0 @@
-package: generated
-output: internal/generated
-generate:
-  models: true
-  chi-server: true
-  client: true
