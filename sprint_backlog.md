@@ -22,15 +22,15 @@ The current `verifyInfra` in `internal/testutil/database.go` uses a slow connect
 ## 2. Security: Credential Rotation Scripts (Critical)
 **Assignee:** Sentinel 🛡️
 **Priority:** Critical
-**Status:** To Do
+**Status:** Done
 
 **Description:**
 As per `docs/security/SECURITY_ADVISORY.md`, credentials were exposed. We need scripts to facilitate the rotation process.
 
 **Tasks:**
-- [ ] Create `scripts/rotate-credentials.sh` to generate strong random secrets for JWT, DB passwords, etc.
-- [ ] Create `scripts/setup-production-env.sh` (or update instructions) to help operators apply these new secrets.
-- [ ] Verify the script output meets complexity requirements.
+- [x] Create `scripts/rotate-credentials.sh` to generate strong random secrets for JWT, DB passwords, etc.
+- [x] Create `scripts/setup-production-env.sh` (or update instructions) to help operators apply these new secrets.
+- [x] Verify the script output meets complexity requirements.
 
 **Acceptance Criteria:**
 - Scripts exist and function correctly.

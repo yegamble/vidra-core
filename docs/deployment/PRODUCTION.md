@@ -16,7 +16,22 @@
 
 ### 1. Environment Variables
 
-Create a production `.env` file with strong secrets:
+We provide helper scripts to generate secure credentials and set up your production environment.
+
+**Step 1: Generate Secrets**
+Run the credential rotation script to generate a secure `.env.production.new` file:
+```bash
+./scripts/rotate-credentials.sh
+```
+
+**Step 2: Apply Configuration**
+Run the setup script to apply these credentials to `.env.production` (or `.env`):
+```bash
+./scripts/setup-production-env.sh
+```
+
+**Manual Configuration (Alternative)**
+If you prefer to configure manually, create a production `.env` file with strong secrets:
 
 ```bash
 # Generate secure secrets
