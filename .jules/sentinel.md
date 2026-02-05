@@ -9,3 +9,9 @@
 **Resolution:** Added `middleware.RequireRole("admin")` to the route definition in `internal/httpapi/routes.go`.
 **Learning:** Routes intended for administrative tasks (like manual user creation) must explicitly enforce role checks. "Auth" middleware only confirms identity, not authority.
 **Prevention:** Audit all routes under `internal/httpapi/routes.go` to ensure that sensitive actions (create, delete, update global configs) are protected by `RequireRole("admin")` or similar authorization logic.
+
+## 2026-05-20 - Argument Injection in Command Wrappers
+**Vulnerability/Issue:** The `yt-dlp` wrapper (`internal/importer/ytdlp.go`) passed user-supplied URLs directly to `exec.CommandContext` without the `--` delimiter. This allowed malicious input starting with `-` to be interpreted as command-line flags (argument injection), potentially enabling unexpected behavior or information disclosure.
+**Resolution:** Inserted the `--` delimiter before the user-supplied URL argument in all `exec.CommandContext` calls. This forces the subsequent argument to be treated as a positional parameter (the URL) rather than a flag.
+**Learning:** When wrapping external CLIs, always assume inputs can start with `-`. The double-dash `--` is a standard convention to terminate option parsing and treat remaining arguments as positional.
+**Prevention:** Audit all usages of `exec.Command` and `exec.CommandContext`. Ensure that any user-controlled input is either strictly validated to not start with `-` or, preferably, preceded by `--` if the tool supports it.
