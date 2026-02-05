@@ -194,12 +194,16 @@ CREATE EXTENSION IF NOT EXISTS "btree_gin";
 
 ### Step 2: Deploy Supporting Services
 
+**Note:** Manifests for IPFS and ClamAV are currently under development. You will need to deploy these services using Helm or create your own manifests, or use external service providers.
+
 ```bash
 # Deploy IPFS (if running in-cluster)
-kubectl apply -f k8s/ipfs/
+# TODO: Use Helm chart or create manifests
+# helm install ipfs ipfs/ipfs
 
 # Deploy ClamAV
-kubectl apply -f k8s/clamav/
+# TODO: Use Helm chart or create manifests
+# helm install clamav prometheus-community/prometheus-clamav-exporter  # (Example)
 
 # Deploy PostgreSQL exporter (for monitoring)
 helm install postgres-exporter prometheus-community/prometheus-postgres-exporter \
@@ -440,7 +444,7 @@ kubectl logs deployment/clamav --namespace athena
 
 ## Additional Resources
 
-- [Helm Chart](../helm/README.md) (coming soon)
-- [Terraform Modules](../../infrastructure/README.md) (coming soon)
-- [Production Runbook](../operations/RUNBOOK.md) (coming soon)
-- [Performance Tuning](../operations/PERFORMANCE.md) (coming soon)
+- Helm Chart (coming soon)
+- Terraform Modules (coming soon)
+- Production Runbook (coming soon)
+- Performance Tuning (coming soon)
