@@ -41,13 +41,11 @@ deps: ## Download Go dependencies
 	go mod tidy
 
 lint: ## Run golangci-lint (auto-fixes incl. import sorting)
-	@if command -v golangci-lint >/dev/null 2>&1; then \
-		golangci-lint run --fix ./...; \
-	else \
+	@if ! command -v golangci-lint >/dev/null 2>&1; then \
 		echo "golangci-lint not installed. Installing..."; \
-		brew install golangci-lint; \
-		golangci-lint run --fix ./...; \
+		curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $$(go env GOPATH)/bin v1.64.5; \
 	fi
+	@PATH=$$(go env GOPATH)/bin:$$PATH golangci-lint run --fix ./...
 
 fmt: ## Format Go files (incl. import sorting)
 	@# Sort and group imports, then run gofmt simplify

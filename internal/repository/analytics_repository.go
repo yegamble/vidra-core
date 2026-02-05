@@ -465,7 +465,9 @@ func (r *analyticsRepository) BatchUpdateStreamSummaries(ctx context.Context, st
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() {
+		_ = tx.Rollback()
+	}()
 
 	stmt, err := tx.PrepareContext(ctx, `SELECT update_stream_stats_summary($1)`)
 	if err != nil {

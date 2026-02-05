@@ -368,7 +368,7 @@ func (h *InstanceHandlers) OEmbed(w http.ResponseWriter, r *http.Request) {
 	if format == "xml" {
 		w.Header().Set("Content-Type", "application/xml; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(xml.Header))
+		_, _ = w.Write([]byte(xml.Header))
 		if err := xml.NewEncoder(w).Encode(resp); err != nil {
 			log.Printf("Failed to encode XML response: %v", err)
 		}

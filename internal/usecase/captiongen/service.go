@@ -318,7 +318,7 @@ func (s *service) processJob(ctx context.Context, job *domain.CaptionGenerationJ
 		return fmt.Errorf("failed to create caption directory: %w", err)
 	}
 
-	if err := os.WriteFile(captionPath, []byte(captionContent), 0644); err != nil {
+	if err := os.WriteFile(captionPath, []byte(captionContent), 0600); err != nil {
 		return fmt.Errorf("failed to write caption file: %w", err)
 	}
 

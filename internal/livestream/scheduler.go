@@ -321,31 +321,6 @@ func (s *StreamScheduler) transitionToLive(ctx context.Context) error {
 	return rows.Err()
 }
 
-// markReminderSent marks that a reminder has been sent for a stream
-func (s *StreamScheduler) markReminderSent(ctx context.Context, streamID uuid.UUID) error {
-	query := `
-		UPDATE live_streams
-		SET reminder_sent = true, updated_at = NOW()
-		WHERE id = $1
-	`
-
-	result, err := s.db.ExecContext(ctx, query, streamID)
-	if err != nil {
-		return fmt.Errorf("failed to mark reminder sent: %w", err)
-	}
-
-	rows, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("failed to get rows affected: %w", err)
-	}
-
-	if rows == 0 {
-		return fmt.Errorf("stream not found or already marked: %s", streamID)
-	}
-
-	return nil
-}
-
 // getChannelSubscribersForChannels gets all subscribers for multiple channels
 func (s *StreamScheduler) getChannelSubscribersForChannels(ctx context.Context, channelIDs []uuid.UUID) (map[uuid.UUID][]uuid.UUID, error) {
 	if len(channelIDs) == 0 {
@@ -384,27 +359,6 @@ func (s *StreamScheduler) getChannelSubscribersForChannels(ctx context.Context, 
 	}
 
 	return subscribersByChannel, nil
-}
-
-// getChannelSubscribers gets all subscribers for a channel
-func (s *StreamScheduler) getChannelSubscribers(ctx context.Context, channelID uuid.UUID) ([]uuid.UUID, error) {
-	query := `
-		SELECT subscriber_id
-		FROM channel_subscriptions
-		WHERE channel_id = $1
-		AND subscribed_at IS NOT NULL
-		ORDER BY subscribed_at DESC
-	`
-
-	var subscribers []uuid.UUID
-	if err := s.db.SelectContext(ctx, &subscribers, query, channelID); err != nil {
-		if err == sql.ErrNoRows {
-			return []uuid.UUID{}, nil
-		}
-		return nil, fmt.Errorf("failed to get channel subscribers: %w", err)
-	}
-
-	return subscribers, nil
 }
 
 // GetUpcomingStreams gets all upcoming scheduled streams
