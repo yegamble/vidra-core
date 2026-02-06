@@ -197,6 +197,7 @@ make lint           # Run linters
 
 - **[Deployment Guide](docs/deployment/README.md)** - Production deployment instructions
 - **[Operations Runbook](docs/deployment/OPERATIONS_RUNBOOK.md)** - Monitoring, incident response, backup procedures
+- **[Monitoring Guide](docs/deployment/MONITORING.md)** - Prometheus & Grafana setup
 - **[S3/Backblaze B2 Setup](docs/S3_MIGRATION_SETUP.md)** - Hybrid storage configuration and migration
 - **[Virus Scanner Runbook](docs/VIRUS_SCANNER_RUNBOOK.md)** - ClamAV integration and troubleshooting
 

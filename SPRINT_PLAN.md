@@ -41,7 +41,7 @@ We are combining "Operation Bedrock" (Reliability) and "Sprint 15" (Phase 1 Laun
 *   **Hidden Regressions**: Repository tests may reveal significant broken logic.
 
 ## Definition of Done
-*   [ ] `make test` runs efficiently (fast skip or fast pass).
-*   [ ] Security remediation scripts exist in `scripts/`.
-*   [ ] `internal/repository` tests pass.
-*   [ ] `README.md` is accurate.
+*   [x] `make test` runs efficiently (fast skip or fast pass).
+*   [x] Security remediation scripts exist in `scripts/`.
+*   [x] `internal/repository` tests pass.
+*   [x] `README.md` is accurate.
