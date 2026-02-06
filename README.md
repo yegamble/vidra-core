@@ -82,13 +82,20 @@ See [VALIDATION_REQUIRED.md](VALIDATION_REQUIRED.md) for complete requirements, 
 
 ## Quick Start
 
-### Development
+### Prerequisites
 
-**Prerequisites:**
-To run integration tests that pull Docker images, you must be authenticated with Docker Hub to avoid rate limits.
+To ensure a smooth setup and avoid rate limits during image pulls, please verify you have the following:
+
+- **Docker & Docker Compose**
+- **Go 1.23+** (for local development)
+- **Docker Hub Authentication**
+
 ```bash
+# Authenticate with Docker Hub to avoid rate limits
 docker login
 ```
+
+### Development
 
 ```bash
 # Clone the repository
@@ -246,7 +253,7 @@ make lint           # Run linters
 
 **Current Focus**: Restoring test infrastructure and verifying build integrity.
 
-**Recent Achievements** (Last 24-48 hours):
+**Recent Achievements**:
 - ✅ **Test Infrastructure Reliability** - Implemented "Fail Fast" logic to skip integration tests when Docker is unavailable
 - ✅ **Migration from Atlas to Goose** - Eliminated authentication issues, simplified workflow
 - ✅ **P1 Security Fix** - CVE-ATHENA-2025-001 (virus scanner retry logic bypass) resolved
