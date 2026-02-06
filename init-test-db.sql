@@ -35,6 +35,12 @@ CREATE TABLE IF NOT EXISTS users (
     role VARCHAR(20) NOT NULL DEFAULT 'user' CHECK (role IN ('user', 'admin', 'moderator')),
     password_hash TEXT NOT NULL,
     is_active BOOLEAN NOT NULL DEFAULT true,
+    subscriber_count BIGINT NOT NULL DEFAULT 0,
+    email_verified BOOLEAN NOT NULL DEFAULT false,
+    email_verified_at TIMESTAMP WITH TIME ZONE,
+    twofa_enabled BOOLEAN NOT NULL DEFAULT false,
+    twofa_secret TEXT,
+    twofa_confirmed_at TIMESTAMP WITH TIME ZONE,
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
 );
@@ -258,6 +264,21 @@ CREATE TRIGGER update_encoding_jobs_updated_at BEFORE UPDATE ON encoding_jobs FO
 -- Subscriptions for tests: table and triggers
 ALTER TABLE users
     ADD COLUMN IF NOT EXISTS subscriber_count BIGINT NOT NULL DEFAULT 0;
+
+ALTER TABLE users
+    ADD COLUMN IF NOT EXISTS email_verified BOOLEAN NOT NULL DEFAULT false;
+
+ALTER TABLE users
+    ADD COLUMN IF NOT EXISTS email_verified_at TIMESTAMP WITH TIME ZONE;
+
+ALTER TABLE users
+    ADD COLUMN IF NOT EXISTS twofa_enabled BOOLEAN NOT NULL DEFAULT false;
+
+ALTER TABLE users
+    ADD COLUMN IF NOT EXISTS twofa_secret TEXT;
+
+ALTER TABLE users
+    ADD COLUMN IF NOT EXISTS twofa_confirmed_at TIMESTAMP WITH TIME ZONE;
 
 CREATE TABLE IF NOT EXISTS subscriptions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

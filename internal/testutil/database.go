@@ -286,12 +286,18 @@ func ensureTestSchema(db *sqlx.DB) error {
             subscriber_count BIGINT NOT NULL DEFAULT 0,
             email_verified BOOLEAN NOT NULL DEFAULT false,
             email_verified_at TIMESTAMP WITH TIME ZONE,
+            twofa_enabled BOOLEAN NOT NULL DEFAULT false,
+            twofa_secret TEXT,
+            twofa_confirmed_at TIMESTAMP WITH TIME ZONE,
             created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
             updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
         )`,
 		`ALTER TABLE users ADD COLUMN IF NOT EXISTS subscriber_count BIGINT NOT NULL DEFAULT 0`,
 		`ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified BOOLEAN NOT NULL DEFAULT false`,
 		`ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified_at TIMESTAMP WITH TIME ZONE`,
+		`ALTER TABLE users ADD COLUMN IF NOT EXISTS twofa_enabled BOOLEAN NOT NULL DEFAULT false`,
+		`ALTER TABLE users ADD COLUMN IF NOT EXISTS twofa_secret TEXT`,
+		`ALTER TABLE users ADD COLUMN IF NOT EXISTS twofa_confirmed_at TIMESTAMP WITH TIME ZONE`,
 		// Subscriptions table
 		`CREATE TABLE IF NOT EXISTS subscriptions (
 		    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

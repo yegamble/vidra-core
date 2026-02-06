@@ -3,7 +3,7 @@
 ## 1. Optimize "Fail Fast" in Test Helpers (Blocker)
 **Assignee:** Builder 🛠️
 **Priority:** Blocker
-**Status:** In Progress
+**Status:** Done
 
 **Description:**
 The current `verifyInfra` in `internal/testutil/database.go` uses a slow connection retry loop (waiting up to 2 seconds per package). This makes running `go test ./...` extremely slow when infrastructure is not running.
