@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -60,7 +61,32 @@ func main() {
 
 	// CORS and request size limiting
 	root.Use(appMiddleware.CORS())
-	root.Use(appMiddleware.SizeLimiter(100 * 1024 * 1024)) // 100MB default, override for upload endpoints
+	// SECURITY: Limit request body size to 10MB by default to prevent DoS.
+	// Allow larger payloads (cfg.MaxUploadSize) only for specific video upload endpoints.
+	root.Use(appMiddleware.SizeLimiter(10*1024*1024, func(r *http.Request) int64 {
+		path := r.URL.Path
+		// Only POST requests carry upload bodies
+		if r.Method != http.MethodPost {
+			return 0
+		}
+
+		// Legacy one-shot upload: /api/v1/videos/upload
+		if path == "/api/v1/videos/upload" {
+			return cfg.MaxUploadSize
+		}
+
+		// Legacy chunked upload: /api/v1/videos/{id}/upload
+		if strings.HasPrefix(path, "/api/v1/videos/") && strings.HasSuffix(path, "/upload") {
+			return cfg.MaxUploadSize
+		}
+
+		// New chunked upload: /api/v1/uploads/{sessionId}/chunks
+		if strings.HasPrefix(path, "/api/v1/uploads/") && strings.HasSuffix(path, "/chunks") {
+			return cfg.MaxUploadSize
+		}
+
+		return 0 // Use default 10MB limit
+	}))
 
 	// Mount the pre-registered application routes
 	root.Mount("/", appRouter)

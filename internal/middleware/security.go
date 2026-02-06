@@ -83,11 +83,19 @@ func RequestID() func(http.Handler) http.Handler {
 	}
 }
 
-// SizeLimiter limits the size of request bodies
-func SizeLimiter(maxBytes int64) func(http.Handler) http.Handler {
+// SizeLimiter limits the size of request bodies.
+// maxBytes is the default limit.
+// limitFunc is optional; if provided and returns > 0, that value is used as the limit.
+func SizeLimiter(maxBytes int64, limitFunc func(r *http.Request) int64) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			r.Body = http.MaxBytesReader(w, r.Body, maxBytes)
+			limit := maxBytes
+			if limitFunc != nil {
+				if l := limitFunc(r); l > 0 {
+					limit = l
+				}
+			}
+			r.Body = http.MaxBytesReader(w, r.Body, limit)
 			next.ServeHTTP(w, r)
 		})
 	}

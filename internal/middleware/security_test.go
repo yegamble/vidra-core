@@ -100,17 +100,24 @@ func TestRequestID(t *testing.T) {
 func TestSizeLimiter(t *testing.T) {
 	maxSize := int64(1024) // 1KB limit
 
-	handler := SizeLimiter(maxSize)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body := make([]byte, maxSize+1)
-		_, err := r.Body.Read(body)
-		if err != nil {
-			http.Error(w, "Request too large", http.StatusRequestEntityTooLarge)
-			return
-		}
-		w.WriteHeader(http.StatusOK)
-	}))
+	// Helper to create handler with optional override function
+	createHandler := func(limitFunc func(r *http.Request) int64) http.Handler {
+		return SizeLimiter(maxSize, limitFunc)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Try to read more than any expected limit to trigger error
+			// Max test case uses 6KB body, limit is 5KB
+			body := make([]byte, 10*1024)
+			_, err := r.Body.Read(body)
+			// MaxBytesReader returns error when limit is exceeded, but might read up to limit first
+			if err != nil && err.Error() == "http: request body too large" {
+				http.Error(w, "Request too large", http.StatusRequestEntityTooLarge)
+				return
+			}
+			w.WriteHeader(http.StatusOK)
+		}))
+	}
 
 	t.Run("allows requests within size limit", func(t *testing.T) {
+		handler := createHandler(nil)
 		body := strings.NewReader(strings.Repeat("a", 512))
 		req := httptest.NewRequest(http.MethodPost, "/", body)
 		rr := httptest.NewRecorder()
@@ -121,6 +128,7 @@ func TestSizeLimiter(t *testing.T) {
 	})
 
 	t.Run("rejects requests exceeding size limit", func(t *testing.T) {
+		handler := createHandler(nil)
 		body := strings.NewReader(strings.Repeat("a", 2048))
 		req := httptest.NewRequest(http.MethodPost, "/", body)
 		rr := httptest.NewRecorder()
@@ -128,6 +136,38 @@ func TestSizeLimiter(t *testing.T) {
 		handler.ServeHTTP(rr, req)
 
 		assert.Equal(t, http.StatusRequestEntityTooLarge, rr.Code)
+	})
+
+	t.Run("respects dynamic override limit", func(t *testing.T) {
+		// Override to allow 5KB for /upload path
+		limitFunc := func(r *http.Request) int64 {
+			if r.URL.Path == "/upload" {
+				return 5 * 1024
+			}
+			return 0
+		}
+		handler := createHandler(limitFunc)
+
+		// Case 1: Exceeds default limit but within override -> Should Pass
+		body := strings.NewReader(strings.Repeat("a", 2048)) // 2KB > 1KB default
+		req := httptest.NewRequest(http.MethodPost, "/upload", body)
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, req)
+		assert.Equal(t, http.StatusOK, rr.Code)
+
+		// Case 2: Exceeds override limit -> Should Fail
+		body2 := strings.NewReader(strings.Repeat("a", 6*1024)) // 6KB > 5KB override
+		req2 := httptest.NewRequest(http.MethodPost, "/upload", body2)
+		rr2 := httptest.NewRecorder()
+		handler.ServeHTTP(rr2, req2)
+		assert.Equal(t, http.StatusRequestEntityTooLarge, rr2.Code)
+
+		// Case 3: Other path uses default limit -> Should Fail
+		body3 := strings.NewReader(strings.Repeat("a", 2048)) // 2KB > 1KB default
+		req3 := httptest.NewRequest(http.MethodPost, "/other", body3)
+		rr3 := httptest.NewRecorder()
+		handler.ServeHTTP(rr3, req3)
+		assert.Equal(t, http.StatusRequestEntityTooLarge, rr3.Code)
 	})
 }
 
