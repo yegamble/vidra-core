@@ -9,3 +9,9 @@
 **Analysis:** The migration validation workflow was only running on push to main/develop, leaving a gap where broken migrations could be merged via PRs. Additionally, the workflow used Postgres 16 while other tests and dev env use 15, risking version-specific incompatibilities.
 **Resolution/Improvement:** Enabled PR validation for migrations and aligned Postgres version to 15-alpine.
 **Lesson:** Critical validation workflows (like DB migrations) must always run on PRs to prevent broken states from reaching shared branches. Environment consistency across CI jobs prevents "works in X but not Y" issues.
+
+## 2026-02-14 - Optimized CI Integration Tests
+**Incident/Change:** Modified `.github/workflows/test.yml` to only start `postgres-ci`, `redis-ci`, and `ipfs-ci` for integration tests, excluding `clamav-ci`.
+**Analysis:** The `clamav-ci` service has a long startup period (180s) which was delaying the integration test job. Since the general integration tests (via `internal/security/virus_scanner_test.go`) are designed to skip virus scanning if ClamAV is unavailable, waiting for it was unnecessary overhead. Dedicated virus scanning tests remain in `virus-scanner-tests.yml`.
+**Resolution/Improvement:** Explicitly specified required services in `docker compose up` command within `test.yml`.
+**Lesson:** Review service dependencies for CI jobs; lazy-loading or excluding non-critical heavy services can significantly improve feedback loops.
