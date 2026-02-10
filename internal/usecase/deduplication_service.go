@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"time"
 
 	"athena/internal/domain"
@@ -203,10 +204,7 @@ func (s *deduplicationService) resolveMerge(ctx context.Context, original, dupli
 	}
 
 	// Merge labels
-	if duplicate.Labels != nil && merged.Labels == nil {
-		merged.Labels = duplicate.Labels
-	}
-	// TODO: Implement proper JSON label merging when both posts have labels
+	merged.Labels = mergeJSONLabels(merged.Labels, duplicate.Labels)
 
 	// Update the original with merged content
 	if err := s.fedRepo.UpsertPost(ctx, &merged); err != nil {
@@ -222,6 +220,119 @@ func (s *deduplicationService) resolveMerge(ctx context.Context, original, dupli
 	}
 
 	return s.recordResolution(ctx, original.ID, duplicate.ID, "merge")
+}
+
+func mergeJSONLabels(original, duplicate json.RawMessage) json.RawMessage {
+	if len(duplicate) == 0 {
+		return cloneRawJSON(original)
+	}
+	if len(original) == 0 {
+		return cloneRawJSON(duplicate)
+	}
+
+	merged, err := mergeJSONRawMessages(original, duplicate)
+	if err != nil {
+		// Preserve existing metadata if merging fails.
+		return cloneRawJSON(original)
+	}
+
+	return merged
+}
+
+func mergeJSONRawMessages(a, b json.RawMessage) (json.RawMessage, error) {
+	var av interface{}
+	if err := json.Unmarshal(a, &av); err != nil {
+		return nil, err
+	}
+
+	var bv interface{}
+	if err := json.Unmarshal(b, &bv); err != nil {
+		return nil, err
+	}
+
+	merged := mergeJSONValues(av, bv)
+	raw, err := json.Marshal(merged)
+	if err != nil {
+		return nil, err
+	}
+
+	return json.RawMessage(raw), nil
+}
+
+func mergeJSONValues(a, b interface{}) interface{} {
+	if a == nil {
+		return b
+	}
+	if b == nil {
+		return a
+	}
+
+	if amap, ok := a.(map[string]interface{}); ok {
+		if bmap, ok := b.(map[string]interface{}); ok {
+			merged := make(map[string]interface{}, len(amap)+len(bmap))
+			for k, v := range amap {
+				merged[k] = v
+			}
+			for k, v := range bmap {
+				if existing, exists := merged[k]; exists {
+					merged[k] = mergeJSONValues(existing, v)
+					continue
+				}
+				merged[k] = v
+			}
+			return merged
+		}
+	}
+
+	if arrA, ok := a.([]interface{}); ok {
+		if arrB, ok := b.([]interface{}); ok {
+			return mergeJSONArrays(arrA, arrB)
+		}
+	}
+
+	if reflect.DeepEqual(a, b) {
+		return a
+	}
+
+	return mergeJSONArrays([]interface{}{a}, []interface{}{b})
+}
+
+func mergeJSONArrays(a, b []interface{}) []interface{} {
+	merged := make([]interface{}, 0, len(a)+len(b))
+	seen := make(map[string]struct{}, len(a)+len(b))
+
+	appendUnique := func(values []interface{}) {
+		for _, value := range values {
+			key := jsonValueKey(value)
+			if _, exists := seen[key]; exists {
+				continue
+			}
+			seen[key] = struct{}{}
+			merged = append(merged, value)
+		}
+	}
+
+	appendUnique(a)
+	appendUnique(b)
+
+	return merged
+}
+
+func jsonValueKey(v interface{}) string {
+	raw, err := json.Marshal(v)
+	if err != nil {
+		return fmt.Sprintf("%T:%v", v, v)
+	}
+	return string(raw)
+}
+
+func cloneRawJSON(raw json.RawMessage) json.RawMessage {
+	if len(raw) == 0 {
+		return nil
+	}
+	cloned := make([]byte, len(raw))
+	copy(cloned, raw)
+	return cloned
 }
 
 // markForManualReview flags duplicates for human review
