@@ -63,9 +63,14 @@ jobs:
 
       - name: Check formatting
         run: |
-          if [ -n "$(gofmt -l .)" ]; then
+          # Ensure GOPATH/bin is in PATH for installed tools
+          export PATH="$(go env GOPATH)/bin:$PATH"
+
+          # Use go list to get only actual Go source directories (excludes .git, vendor, etc.)
+          UNFORMATTED=$(gofmt -l $(go list -f '{{.Dir}}' ./...) 2>/dev/null || true)
+          if [ -n "$UNFORMATTED" ]; then
             echo "Go files are not formatted. Run: gofmt -w ."
-            gofmt -l .
+            echo "$UNFORMATTED"
             exit 1
           fi
 
@@ -73,18 +78,30 @@ jobs:
             go install golang.org/x/tools/cmd/goimports@latest
           fi
 
-          if [ -n "$(goimports -l .)" ]; then
+          BADIMPORTS=$(goimports -l $(go list -f '{{.Dir}}' ./...) 2>/dev/null || true)
+          if [ -n "$BADIMPORTS" ]; then
             echo "Go files have incorrect imports. Run: goimports -w ."
-            goimports -l .
+            echo "$BADIMPORTS"
             exit 1
           fi
 
-      - name: Run golangci-lint
+      - name: Run golangci-lint (GitHub Actions)
+        if: ${{ !env.ACT }}
         uses: golangci/golangci-lint-action@v7
         with:
           version: latest
           args: --timeout=10m
           skip-cache: true  # We manage cache ourselves
+
+      - name: Run golangci-lint (act local)
+        if: ${{ env.ACT == 'true' }}
+        run: |
+          export PATH="$(go env GOPATH)/bin:$PATH"
+          if ! command -v golangci-lint &> /dev/null; then
+            echo "Installing golangci-lint via binary..."
+            curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh | sh -s -- -b "$(go env GOPATH)/bin"
+          fi
+          golangci-lint run --timeout=10m
 
   # ============================================================================
   # INTEGRATION TESTS - Run after unit tests pass

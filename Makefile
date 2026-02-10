@@ -1,6 +1,6 @@
 SHELL := /bin/bash
 
-.PHONY: help deps lint test test-unit test-integration test-integration-ci build docker docker-up docker-down clean dev install-tools test-ci postman-newman postman-e2e run logs run-with-encoding
+.PHONY: help deps lint test test-unit test-integration test-integration-ci build docker docker-up docker-down clean dev install-tools test-ci postman-newman postman-e2e run logs run-with-encoding act-test
 .PHONY: migrate-dev migrate-test migrate-custom migrate-dev-docker migrate-test-docker migrate-up db-ensure-dev-user
 .PHONY: validate-all validate-quick
 
@@ -103,6 +103,15 @@ test-ci: ## Run tests for CI environment
 
 test-ci-race: ## Run tests for CI environment with race detection (requires CGO_ENABLED=1 and gcc)
 	CGO_ENABLED=1 $(GO_ENV) go test -v -race -coverprofile=coverage.out ./...
+
+.PHONY: act-test
+act-test: ## Run primary GitHub Actions jobs locally with act (requires .secrets)
+	@if [ ! -f .secrets ]; then \
+		echo "Missing .secrets file. Create one (see CONTRIBUTING.md) before running act."; \
+		exit 1; \
+	fi
+	act -j unit --secret-file .secrets
+	act -j lint --secret-file .secrets
 
 .PHONY: generate-openapi
 generate-openapi: ## Regenerate OpenAPI types and server interfaces

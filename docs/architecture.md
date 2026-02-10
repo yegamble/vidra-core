@@ -54,9 +54,9 @@ athena/
 │   │   ├── rating/          # Rating feature slice
 │   │   ├── notification/    # Notification feature slice
 │   │   ├── message/         # Messaging feature slice
-│   │   ├── auth/            # Authentication (planned)
-│   │   ├── federation/      # Federation (planned)
-│   │   └── e2ee/            # End-to-end encryption (planned)
+│   │   ├── auth/            # Authentication
+│   │   ├── federation/      # Federation (ATProto + ActivityPub)
+│   │   └── e2ee/            # End-to-end encryption
 │   ├── repository/          # PostgreSQL implementations of port interfaces
 │   │   ├── video_repository.go
 │   │   ├── user_repository.go
@@ -70,13 +70,30 @@ athena/
 │   ├── scheduler/           # Background job schedulers
 │   ├── crypto/              # Cryptography utilities
 │   ├── email/               # Email service
+│   ├── activitypub/         # ActivityPub protocol implementation
+│   ├── chat/                # WebSocket-based live chat
+│   ├── database/            # DB connectivity and pool helpers
+│   ├── health/              # Liveness/readiness checks
+│   ├── importer/            # Video import orchestration (yt-dlp)
+│   ├── ipfs/                # IPFS integration layer
+│   ├── livestream/          # RTMP + HLS live streaming services
 │   ├── metrics/             # Prometheus metrics
+│   ├── obs/                 # OBS/Streamlabs integration helpers
+│   ├── payments/            # Payments subsystem integration points
+│   ├── plugin/              # Extensible plugin hook system
+│   ├── security/            # Security-focused infrastructure components
+│   ├── storage/             # Local/IPFS/S3 hybrid storage abstractions
+│   ├── testutil/            # Shared testing utilities
+│   ├── torrent/             # WebTorrent P2P support
+│   ├── validation/          # Request and domain validation
+│   ├── whisper/             # Auto-caption generation (Whisper)
+│   ├── worker/              # Async job workers
 │   └── generated/           # OpenAPI generated types
 ├── migrations/              # Goose database migrations
 ├── docs/                    # Documentation
 │   ├── architecture.md      # This file
+│   ├── architecture/README.md # Detailed architecture and diagrams
 │   └── claude/              # Claude AI-specific guides
-└── pkg/                     # Shared utilities (planned)
 ```
 
 ## Layer Responsibilities
@@ -274,11 +291,39 @@ FederationService.PublishToATProto()
 - **Batch Operations**: Mark all as read, delete by type
 - **Statistics**: Unread counts by type
 
+### Live Streaming
+
+- **RTMP Ingest**: Stream ingestion compatible with OBS/Streamlabs
+- **HLS Output**: Adaptive playback outputs with segment generation
+- **Scheduling**: Waiting rooms and scheduled stream lifecycle
+- **Post-Processing**: Automatic VOD conversion and publishing
+
+### P2P Distribution
+
+- **WebTorrent Integration**: Torrent generation and seeding pipeline
+- **Hybrid Delivery**: IPFS + torrent + local fallback routing
+- **Peer Discovery**: DHT and peer exchange support
+- **Distribution Controls**: Seeding policies and bandwidth management
+
+### Plugin System
+
+- **Hook Architecture**: Event-driven extension points across upload, processing, and moderation
+- **Permission Model**: Plugin-level security checks and scoped capabilities
+- **Packaging**: Zip-based plugin packaging and lifecycle operations
+- **Isolation**: Managed execution and validation guards
+
+### Real-Time Chat
+
+- **WebSocket Transport**: Low-latency chat channels for live streams
+- **Moderation Controls**: Role-aware moderation primitives
+- **Presence Tracking**: Active participant tracking and fanout support
+- **Safety Controls**: Validation, rate limiting, and abuse defenses
+
 ## Technology Stack
 
 ### Core
 
-- **Language**: Go 1.22+
+- **Language**: Go 1.24
 - **HTTP Router**: Chi v5
 - **Database**: PostgreSQL 15+ with SQLX
 - **Cache**: Redis 7+
@@ -405,7 +450,8 @@ func TestVideoService_Create(t *testing.T) {
 ---
 
 For more specific guides, see:
-- [Development Guide](DEVELOPMENT.md)
+- [Detailed Architecture Guide](architecture/README.md)
+- [Development Guide](development/README.md)
 - [Deployment Guide](deployment/README.md)
-- [API Documentation](api/README.md)
+- [API Documentation](../api/README.md)
 - [Claude AI Guides](claude/)

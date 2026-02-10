@@ -85,7 +85,7 @@ runs:
       uses: actions/setup-go@v5
       with:
         go-version: ${{ inputs.go-version }}
-        cache: true
+        cache: ${{ env.ACT != 'true' }}
         cache-dependency-path: ${{ inputs.cache-dependency-path }}
       env:
         # CRITICAL: Ensure HOME, GOCACHE, and GOMODCACHE are available for this step
@@ -380,6 +380,7 @@ runs:
         fi
 
     - name: Cache Go build cache
+      if: ${{ env.ACT != 'true' }}
       uses: actions/cache@v4
       with:
         path: ${{ steps.ensure-gocache.outputs.gocache_path }}

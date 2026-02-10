@@ -12,17 +12,18 @@ A high-performance, feature-complete PeerTube backend implementation in Go with 
 
 **Quick Validation**: `make validate-all`
 
-See [VALIDATION_REQUIRED.md](VALIDATION_REQUIRED.md) for complete requirements, especially if you're using Claude AI or other AI assistants.
+See [VALIDATION_REQUIRED.md](docs/development/VALIDATION_REQUIRED.md) for complete requirements, especially if you're using Claude AI or other AI assistants.
 
 ## 📊 Project Metrics
 
 | Metric | Count | Description |
 |--------|-------|-------------|
-| **Go Files** | 467 | Total Go source files |
-| **Test Files** | 179 | Comprehensive test coverage |
-| **Lines of Code** | 151,000+ | ~75K source + ~76K test code |
+| **Go Files** | 476 | Total Go source files |
+| **Test Files** | 188 | Test files across unit, integration, and E2E suites |
+| **Lines of Code** | 153,000+ | ~75K source + ~78K test code |
 | **Database Migrations** | 61 | Goose SQL migrations |
 | **API Endpoints** | 123+ | RESTful + WebSocket + Federation |
+| **Coverage Baseline** | 23.8% | Latest full-package baseline (`docs/development/TEST_BASELINE_REPORT.md`) |
 | **Security Tests** | 50+ | Including SSRF, virus scanning, auth |
 
 ## Features
@@ -77,7 +78,7 @@ See [VALIDATION_REQUIRED.md](VALIDATION_REQUIRED.md) for complete requirements, 
 - **High Performance** - Built with Go for maximum concurrency and efficient resource usage
 - **Hybrid Storage** - Multi-tier storage (local/IPFS/S3-compatible) with automatic promotion/demotion
 - **S3-Compatible Storage** - Support for AWS S3, Backblaze B2, DigitalOcean Spaces
-- **Comprehensive Testing** - 719+ automated tests with >85% code coverage
+- **Comprehensive Testing** - 1,400+ test cases with active coverage-improvement plan (23.8% full-package baseline)
 - **Observability** - Structured logging, metrics, and health monitoring
 
 ## Quick Start
@@ -172,6 +173,8 @@ make lint           # Run linters
 ```
 
 ## Documentation
+
+See the full documentation index at [docs/README.md](docs/README.md).
 
 ### API Documentation
 
@@ -275,7 +278,7 @@ make lint           # Run linters
 - Core video platform fully functional
 - Security hardened (P1 vulnerability fixed)
 - Federation operational (ActivityPub)
-- Testing comprehensive (85%+ coverage)
+- Testing baseline established (23.8% full-package coverage; improvement plan in progress)
 - Docker deployment proven
 
 **⚠️ Action Items Before Launch**:
@@ -293,14 +296,14 @@ make lint           # Run linters
 
 | Metric | Count | Description |
 |--------|-------|-------------|
-| **Go Files** | 467 | Total Go source files (288 non-test) |
-| **Test Files** | 179 | 38% test-to-code ratio |
-| **Lines of Code** | 151,000+ | ~75K source + ~76K test code |
+| **Go Files** | 476 | Total Go source files (288 non-test) |
+| **Test Files** | 188 | Test files across unit, integration, and E2E suites |
+| **Lines of Code** | 153,000+ | ~75K source + ~78K test code |
 | **Database Migrations** | 61 | Goose SQL migrations |
 | **API Endpoints** | 123+ | RESTful + WebSocket + Federation |
-| **Test Coverage** | 85%+ | Average across all packages |
+| **Test Coverage** | 23.8% baseline | Latest full-package baseline (2025-11-16 report) |
 | **Security Tests** | 50+ | SSRF, virus scanning, auth, input validation |
-| **Automated Tests** | 750+ | All passing in CI |
+| **Automated Tests** | 1,458 | `func Test*` count across `*_test.go` files |
 
 See [Project Management Documentation](docs/project-management/README.md) and [Sprint History](docs/project-management/sprints/README.md) for detailed progress tracking.
 
@@ -348,6 +351,8 @@ See [SECURITY.md](docs/security/SECURITY.md) for security advisories including C
 ## Contributing
 
 We welcome contributions! Please see our documentation for:
+- [Contributing Guide](CONTRIBUTING.md) - Setup, workflow, and PR requirements
+- [Code of Conduct](CODE_OF_CONDUCT.md) - Community participation expectations
 - [Architecture Guidelines](docs/architecture.md) - System design and patterns
 - [Claude Contributing Guide](docs/claude/contributing.md) - AI-assisted development workflow
 - Code style enforced via `golangci-lint`

@@ -32,10 +32,12 @@ This audit found the Athena codebase is **significantly more complete than docum
 
 The README and TESTING_STRATEGY.md claim 85%+ coverage. The TEST_BASELINE_REPORT.md (Nov 16) shows 23.8%. This discrepancy must be resolved immediately.
 
-- [ ] **P0** Update README.md test metrics table to reflect actual coverage (23.8% baseline, target 60%+)
-- [ ] **P0** Update TESTING_STRATEGY.md coverage targets to be realistic (current: 23.8%, near-term target: 60%, stretch: 80%)
+- [x] **P0** Update README.md test metrics table to reflect actual coverage (23.8% baseline, target 60%+)
+- [x] **P0** Update TESTING_STRATEGY.md coverage targets to be realistic (current: 23.8%, near-term target: 60%, stretch: 80%)
 - [ ] **P0** Run `go test -coverprofile=coverage.out ./...` to establish current baseline
-- [ ] **P0** Add coverage-by-package breakdown to TEST_BASELINE_REPORT.md
+- [x] **P0** Add coverage-by-package breakdown to TEST_BASELINE_REPORT.md
+
+Note (2026-02-10): a fresh full-repo `go test -coverprofile=coverage.out ./...` run was attempted but did not complete in this environment due long-running package stalls; current baseline remains 23.8% from `TEST_BASELINE_REPORT.md`.
 
 **Success Criteria**: All documentation reflects actual measured coverage. No aspirational numbers presented as current state.
 
@@ -43,10 +45,10 @@ The README and TESTING_STRATEGY.md claim 85%+ coverage. The TEST_BASELINE_REPORT
 
 Architecture doc marks implemented features as planned.
 
-- [ ] **P0** In `docs/architecture.md` lines 57-59: Change `auth/ # Authentication (planned)` to `auth/ # Authentication`
-- [ ] **P0** Change `federation/ # Federation (planned)` to `federation/ # Federation (ATProto + ActivityPub)`
-- [ ] **P0** Change `e2ee/ # End-to-end encryption (planned)` to `e2ee/ # End-to-end encryption`
-- [ ] **P0** Remove `pkg/ # Shared utilities (planned)` (line 79) since it doesn't exist and utilities are in subsystem packages
+- [x] **P0** In `docs/architecture.md` lines 57-59: Change `auth/ # Authentication (planned)` to `auth/ # Authentication`
+- [x] **P0** Change `federation/ # Federation (planned)` to `federation/ # Federation (ATProto + ActivityPub)`
+- [x] **P0** Change `e2ee/ # End-to-end encryption (planned)` to `e2ee/ # End-to-end encryption`
+- [x] **P0** Remove `pkg/ # Shared utilities (planned)` (line 79) since it doesn't exist and utilities are in subsystem packages
 
 **Success Criteria**: No implemented features marked as "planned" in documentation.
 
@@ -117,7 +119,7 @@ API handlers are the system boundary — where user input enters. Low coverage h
 
 ### 2.1 Fix .actrc Configuration
 
-- [ ] **P2** Expand `.actrc` with proper configuration:
+- [x] **P2** Expand `.actrc` with proper configuration:
   ```
   -P self-hosted=catthehacker/ubuntu:act-latest
   -P ubuntu-latest=catthehacker/ubuntu:act-latest
@@ -127,12 +129,14 @@ API handlers are the system boundary — where user input enters. Low coverage h
 - [ ] **P2** Verify `act -j test` runs the main test workflow successfully
 - [ ] **P2** Verify `act -j lint` runs formatting/linting checks
 
+Note (2026-02-10): `act -n -j unit` and `act -n -j lint` dry-runs pass with the updated `.actrc`; full non-dry execution is still pending.
+
 ### 2.2 Document Local CI Execution
 
-- [ ] **P2** Add "Running CI Locally" section to README or CONTRIBUTING.md
-- [ ] **P2** Document which workflows work with act and which don't (blue-green-deploy: N/A)
-- [ ] **P2** Document required env vars: DATABASE_URL, REDIS_URL, JWT_SECRET, etc.
-- [ ] **P2** Add `make act-test` target to Makefile for common local CI run
+- [x] **P2** Add "Running CI Locally" section to README or CONTRIBUTING.md
+- [x] **P2** Document which workflows work with act and which don't (blue-green-deploy: N/A)
+- [x] **P2** Document required env vars: DATABASE_URL, REDIS_URL, JWT_SECRET, etc.
+- [x] **P2** Add `make act-test` target to Makefile for common local CI run
 
 ### 2.3 CI Optimization
 
@@ -153,7 +157,7 @@ API handlers are the system boundary — where user input enters. Low coverage h
 
 The architecture doc is missing 14+ subsystems that exist in code.
 
-- [ ] **P2** Add missing subsystems to project structure:
+- [x] **P2** Add missing subsystems to project structure:
   - `internal/chat/` - WebSocket-based live chat
   - `internal/database/` - Connection pool management
   - `internal/health/` - Liveness/readiness probes
@@ -168,9 +172,9 @@ The architecture doc is missing 14+ subsystems that exist in code.
   - `internal/worker/` - FFmpeg workers, async jobs
   - `internal/testutil/` - Test utilities
   - `internal/generated/` - OpenAPI generated types
-- [ ] **P2** Add Key Subsystems sections for: Live Streaming, Plugin System, P2P Distribution, Chat
-- [ ] **P2** Update technology stack (Go version is now 1.24, not 1.22+)
-- [ ] **P2** Add reference to `docs/architecture/README.md` which has more detailed mermaid diagrams
+- [x] **P2** Add Key Subsystems sections for: Live Streaming, Plugin System, P2P Distribution, Chat
+- [x] **P2** Update technology stack (Go version is now 1.24, not 1.22+)
+- [x] **P2** Add reference to `docs/architecture/README.md` which has more detailed mermaid diagrams
 
 ### 3.2 Add Architecture Diagrams
 
@@ -187,7 +191,7 @@ Currently NO visual diagrams exist (only text-based mermaid in markdown).
 ### 3.3 Fix Documentation Cross-References
 
 - [ ] **P2** Verify all links in README Documentation section point to existing files
-- [ ] **P2** Create docs/README.md index linking all documentation
+- [x] **P2** Create docs/README.md index linking all documentation
 - [ ] **P2** Ensure docs/architecture.md references per-subsystem CLAUDE.md files
 
 **Success Criteria**: Architecture doc lists all 31 subsystems. At least 4 diagrams exist. No dead links.
@@ -255,26 +259,26 @@ The sprint documents show Sprints A-K ALL COMPLETE:
 
 ### 5.1 Repository Cleanup
 
-- [ ] **P3** Remove `internal/httpapi/handlers/plugin/plugin_handlers.go.bak`
-- [ ] **P3** Check for and remove any `.rej` patch files in repo root
+- [x] **P3** Remove `internal/httpapi/handlers/plugin/plugin_handlers.go.bak`
+- [x] **P3** Check for and remove any `.rej` patch files in repo root
 - [ ] **P3** Verify no hardcoded credentials in code (run `make validate-all`)
 - [ ] **P3** Remove or update any stale TODO comments
 
 ### 5.2 Community Documentation
 
-- [ ] **P3** Create CONTRIBUTING.md with:
+- [x] **P3** Create CONTRIBUTING.md with:
   - Setup instructions (link to Quick Start)
   - Code style (golangci-lint, gofmt)
   - Testing requirements (run `make validate-all` before PR)
   - Branch naming / commit message conventions
   - How to run CI locally with act
-- [ ] **P3** Add CODE_OF_CONDUCT.md (Contributor Covenant)
+- [x] **P3** Add CODE_OF_CONDUCT.md (Contributor Covenant)
 
 ### 5.3 README Accuracy
 
 - [ ] **P3** Review feature list: mark what's implemented vs. roadmap
 - [ ] **P3** Verify all badge links work
-- [ ] **P3** Update "Project Metrics" table with accurate numbers
+- [x] **P3** Update "Project Metrics" table with accurate numbers
 - [ ] **P3** Clearly separate "implemented" features from "planned" features
 
 **Success Criteria**: No stale files. CONTRIBUTING.md exists. README is accurate.

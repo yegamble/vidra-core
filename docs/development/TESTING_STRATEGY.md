@@ -5,8 +5,10 @@ This document outlines the comprehensive testing strategy for the Athena video p
 ## Overview
 
 **Current Test Metrics**:
-- **Total Test Files**: 156 (36.6% test-to-code ratio)
-- **Code Coverage**: 85%+ average
+- **Total Test Files**: 188
+- **Code Coverage Baseline**: 23.8% (latest full-package report)
+- **Near-Term Coverage Target**: >=60%
+- **Stretch Coverage Target**: >=80%
 - **Security Tests**: 50+
 - **Integration Tests**: Comprehensive across all major features
 - **E2E Tests**: Critical user workflows
@@ -246,72 +248,28 @@ k6 run --vus 100 --duration 5m scripts/load_test.js
 
 ---
 
-## Test Coverage by Feature
+## Baseline Coverage Snapshot
 
-Based on golang-test-guardian analysis, here's the current test coverage:
+The latest full-package baseline (`docs/development/TEST_BASELINE_REPORT.md`, generated 2025-11-16) reports:
 
-### Core Features (95%+ coverage)
+- **Overall coverage**: 23.8%
+- **Repository layer**: 9.6%
+- **Handler hotspots**:
+  - `internal/httpapi/handlers/channel`: 7.3%
+  - `internal/httpapi/handlers/federation`: 14.8%
+  - `internal/httpapi/handlers/moderation`: 0.0%
+  - `internal/httpapi/handlers/social`: 0.0%
+- **Usecase hotspots**:
+  - `internal/usecase/import`: 0.0%
+  - `internal/usecase/encoding`: 27.3%
 
-- ✅ **Authentication & Authorization**: 98%
-  - JWT generation/validation
-  - 2FA (TOTP + backup codes)
-  - OAuth2 with PKCE
-  - Session management
+Highest-coverage packages in the same baseline:
 
-- ✅ **Video Management**: 96%
-  - CRUD operations
-  - Search & filtering
-  - Chunked uploads
-  - Processing pipeline
-
-- ✅ **Security (Virus Scanner)**: 100%
-  - EICAR detection
-  - Retry logic (P1 fix)
-  - Quarantine system
-  - Fallback modes
-
-### Good Coverage (85-94%)
-
-- ✅ **Federation (ActivityPub)**: 93%
-  - HTTP signatures
-  - WebFinger
-  - Activity handling
-  - Delivery worker
-
-- ✅ **Notifications**: 91%
-  - Creation triggers
-  - Delivery
-  - Filtering
-  - Batch operations
-
-- ✅ **Live Streaming**: 89%
-  - RTMP ingestion
-  - HLS transcoding
-  - Chat system
-  - VOD conversion
-
-- ✅ **IPFS Integration**: 87%
-  - Pinning
-  - Streaming
-  - Gateway fallback
-  - CID validation
-
-### Needs Improvement (< 85%)
-
-- ⚠️ **ATProto Integration**: 75% (BETA status)
-  - PDS communication
-  - BlueSky sync
-  - Cross-platform federation
-
-- ⚠️ **Plugin System**: 82%
-  - Hook execution
-  - Permission checks
-  - Marketplace API
-
-- ⚠️ **Video Redundancy**: 78%
-  - Cross-instance replication
-  - Health monitoring
-  - Automatic sync
+- `internal/middleware`: 95.4%
+- `internal/config`: 91.9%
+- `internal/scheduler`: 90.6%
+- `internal/worker`: 86.9%
+- `internal/activitypub`: 82.4%
 
 ### Critical Gaps Identified
 
@@ -667,7 +625,7 @@ go tool cover -html=coverage.out -o coverage.html
 **Check coverage threshold**:
 ```bash
 go test -coverprofile=coverage.out ./...
-go tool cover -func=coverage.out | grep total | awk '{print $3}' | sed 's/%//' | awk '{if ($1 < 85) exit 1}'
+go tool cover -func=coverage.out | grep total | awk '{print $3}' | sed 's/%//' | awk '{if ($1 < 60) exit 1}'
 ```
 
 ### Test Reports in CI
@@ -683,7 +641,7 @@ gotestsum --junitfile report.xml --format testname -- -coverprofile=coverage.out
 
 ### Planned Enhancements
 
-1. **Increase Coverage** (Target: 90%+)
+1. **Increase Coverage** (Target: >=60% near-term, >=80% stretch)
    - [ ] ATProto integration tests
    - [ ] Plugin system edge cases
    - [ ] Video redundancy scenarios
