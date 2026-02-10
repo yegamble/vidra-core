@@ -54,9 +54,9 @@ athena/
 │   │   ├── rating/          # Rating feature slice
 │   │   ├── notification/    # Notification feature slice
 │   │   ├── message/         # Messaging feature slice
-│   │   ├── auth/            # Authentication (planned)
-│   │   ├── federation/      # Federation (planned)
-│   │   └── e2ee/            # End-to-end encryption (planned)
+│   │   ├── auth/            # Authentication and OAuth2 flows
+│   │   ├── federation/      # Federation services (ActivityPub/ATProto)
+│   │   └── e2ee/            # End-to-end encryption messaging
 │   ├── repository/          # PostgreSQL implementations of port interfaces
 │   │   ├── video_repository.go
 │   │   ├── user_repository.go
@@ -78,6 +78,15 @@ athena/
 │   └── claude/              # Claude AI-specific guides
 └── pkg/                     # Shared utilities (planned)
 ```
+
+## High-Level System Overview
+
+Athena exposes a primary HTTP API (`internal/httpapi`) for clients and integrates with background workers and external services such as PostgreSQL, Redis, FFmpeg, IPFS, and federation providers.
+
+For visual references, see [Architecture Diagrams](diagrams/architecture.md):
+- Component diagram (API, usecases, repositories, and external systems)
+- Upload and encoding sequence diagram
+- Core ER diagram (User, Channel, Video, Playlist, Comment, Caption)
 
 ## Layer Responsibilities
 
@@ -191,7 +200,7 @@ Repository Implementations (infrastructure)
     ↓ injected into
 Usecase Services (business logic, depends on port interfaces)
     ↓ injected into
-HTTP Handlers (presentation)
+HTTP Handlers (`internal/httpapi` presentation layer)
 ```
 
 ### Video Upload Flow
@@ -273,6 +282,25 @@ FederationService.PublishToATProto()
 - **Delivery**: Poll-based API with filtering and pagination
 - **Batch Operations**: Mark all as read, delete by type
 - **Statistics**: Unread counts by type
+
+
+### P2P Distribution (WebTorrent)
+
+- **Torrenting**: WebTorrent-compatible distribution with DHT/PEX-aware swarm support
+- **Hybrid Delivery**: Coexists with HTTP/HLS and IPFS strategies
+- **Seeding Controls**: Prioritization and bandwidth-sensitive behavior
+
+### Live Streaming
+
+- **Ingest**: RTMP-compatible live ingestion pipeline
+- **Delivery**: HLS output for playback clients
+- **Lifecycle**: Scheduled start/stop, transitions to VOD workflows
+
+### Real-Time Chat
+
+- **Transport**: WebSocket-based room/session handling
+- **Moderation**: Role-based controls and abuse handling
+- **Integration**: Linked to live stream lifecycle and channel context
 
 ## Technology Stack
 

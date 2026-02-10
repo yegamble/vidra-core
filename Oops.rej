@@ -1,9 +1,0 @@
-@@ -25,7 +26,7 @@
- 	chatServer *chat.ChatServer,
- 	chatRepo   repository.ChatRepository,
- 	streamRepo repository.LiveStreamRepository,
--	userRepo   repository.UserRepository,
-+	userRepo   usecase.UserRepository,
- ) *ChatHandlers {
- 	return &ChatHandlers{
- 		chatServer: chatServer,

@@ -173,6 +173,10 @@ make lint           # Run linters
 
 ## Documentation
 
+- **[Documentation Index](docs/README.md)** - Central entry point for architecture, development, security, and operations docs
+- **[Contributing](CONTRIBUTING.md)** - Contribution workflow, validation, and PR expectations
+- **[Code of Conduct](CODE_OF_CONDUCT.md)** - Community participation standards
+
 ### API Documentation
 
 - **[OpenAPI Specifications](api/README.md)** - Comprehensive OpenAPI 3.0 API documentation (98%+ coverage)
