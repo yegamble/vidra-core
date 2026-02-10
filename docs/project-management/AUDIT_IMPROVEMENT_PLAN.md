@@ -17,10 +17,10 @@ This audit found the Athena codebase is **significantly more complete than docum
 | Test coverage | 85%+ | 23.8% | -61.2pp |
 | Subsystems documented | ~17 | 31 | 14 missing |
 | "Planned" features | 3 (auth, federation, e2ee) | 0 (all implemented) | 3 stale |
-| Handler test coverage | 60%+ target | 7-21% | Severe |
+| Handler test coverage | 60%+ target | 7-32% | Severe |
 | Repository test coverage | Not mentioned | 9.6% | Critical |
-| Moderation handler tests | Expected | 0% | Zero |
-| Social handler tests | Expected | 0% | Zero |
+| Moderation handler tests | Expected | 27.1% | Improved, below target |
+| Social handler tests | Expected | 31.6% | Improved, below target |
 
 ---
 
@@ -76,8 +76,8 @@ The repository layer handles all database CRUD. At 9.6% coverage, virtually all 
 
 API handlers are the system boundary — where user input enters. Low coverage here means injection/validation bugs go undetected.
 
-- [ ] **P1** Add tests for `httpapi/handlers/moderation/` (currently 0%)
-- [ ] **P1** Add tests for `httpapi/handlers/social/` (ratings, playlists, captions - currently 0%)
+- [x] **P1** Add tests for `httpapi/handlers/moderation/` (validation/auth paths now covered; package at 27.1%)
+- [x] **P1** Add tests for `httpapi/handlers/social/` (validation/auth paths now covered across ratings/playlists/captions; package at 31.6%)
 - [ ] **P1** Improve tests for `httpapi/handlers/video/` (currently ~21%)
 - [ ] **P1** Improve tests for `httpapi/handlers/channel/` (only subscription pagination test exists)
 - [ ] **P1** Improve tests for `httpapi/handlers/livestream/` (only waiting room test exists)
@@ -88,13 +88,18 @@ API handlers are the system boundary — where user input enters. Low coverage h
 
 ### 1.3 Untested Business Logic
 
-- [ ] **P1** Add tests for `usecase/import/` (video import - currently 0%)
+- [x] **P1** Add tests for `usecase/import/` (real `service.go` coverage added; package at 48.6%)
 - [ ] **P1** Add tests for `internal/importer/` (no test file exists)
 - [ ] **P1** Add tests for `internal/health/` (no dedicated test file)
 - [ ] **P1** Improve `internal/storage/` tests (currently 16.8%)
 - [ ] **P1** Improve `usecase/encoding/` tests (currently 27.3%)
 
 **Success Criteria**: No usecase or infrastructure package at 0% coverage.
+
+Note (2026-02-10): added no-infra unit tests for moderation/social handlers and added real-service tests for `internal/usecase/import/service.go` (instead of test-wrapper-only coverage). Verified with:
+- `go test -coverprofile=/tmp/mod_new.out ./internal/httpapi/handlers/moderation && go tool cover -func=/tmp/mod_new.out | tail -n 1` (27.1%)
+- `go test -coverprofile=/tmp/social_new.out ./internal/httpapi/handlers/social && go tool cover -func=/tmp/social_new.out | tail -n 1` (31.6%)
+- `go test -coverprofile=/tmp/import_new.out ./internal/usecase/import && go tool cover -func=/tmp/import_new.out | tail -n 1` (48.6%)
 
 ---
 
