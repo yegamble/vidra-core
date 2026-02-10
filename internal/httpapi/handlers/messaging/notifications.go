@@ -4,6 +4,7 @@ import (
 	"athena/internal/httpapi/shared"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"athena/internal/domain"
 	"athena/internal/middleware"
@@ -50,12 +51,13 @@ func (h *NotificationHandlers) GetNotifications(w http.ResponseWriter, r *http.R
 		filter.Unread = &unread
 	}
 
-	// Parse notification types
-	// TODO: Implement filtering by notification types when needed
-	// if typesStr := r.URL.Query().Get("types"); typesStr != "" {
-	//     Parse comma-separated types
-	//     e.g., "new_video,comment,mention"
-	// }
+	// Parse notification types from query (?types=a,b or ?type=a&type=b)
+	types, err := parseNotificationTypes(r)
+	if err != nil {
+		shared.WriteError(w, http.StatusBadRequest, err)
+		return
+	}
+	filter.Types = types
 
 	// Get notifications
 	notifications, err := h.notificationService.GetUserNotifications(r.Context(), userUUID, filter)
@@ -77,6 +79,60 @@ func (h *NotificationHandlers) GetNotifications(w http.ResponseWriter, r *http.R
 	}
 	meta := &shared.Meta{Total: int64(stats.TotalCount), Limit: filter.Limit, Offset: filter.Offset, Page: page, PageSize: pageSize}
 	shared.WriteJSONWithMeta(w, http.StatusOK, notifications, meta)
+}
+
+func parseNotificationTypes(r *http.Request) ([]domain.NotificationType, error) {
+	var rawTypes []string
+
+	if typesCSV := r.URL.Query().Get("types"); typesCSV != "" {
+		rawTypes = append(rawTypes, strings.Split(typesCSV, ",")...)
+	}
+
+	for _, value := range r.URL.Query()["type"] {
+		rawTypes = append(rawTypes, strings.Split(value, ",")...)
+	}
+
+	if len(rawTypes) == 0 {
+		return nil, nil
+	}
+
+	validTypes := map[domain.NotificationType]struct{}{
+		domain.NotificationNewVideo:       {},
+		domain.NotificationVideoProcessed: {},
+		domain.NotificationVideoFailed:    {},
+		domain.NotificationNewSubscriber:  {},
+		domain.NotificationComment:        {},
+		domain.NotificationMention:        {},
+		domain.NotificationSystem:         {},
+		domain.NotificationNewMessage:     {},
+		domain.NotificationMessageRead:    {},
+	}
+
+	types := make([]domain.NotificationType, 0, len(rawTypes))
+	seen := make(map[domain.NotificationType]struct{}, len(rawTypes))
+	for _, raw := range rawTypes {
+		raw = strings.TrimSpace(raw)
+		if raw == "" {
+			continue
+		}
+
+		t := domain.NotificationType(raw)
+		if _, ok := validTypes[t]; !ok {
+			return nil, fmt.Errorf("invalid notification type: %s", raw)
+		}
+		if _, exists := seen[t]; exists {
+			continue
+		}
+
+		seen[t] = struct{}{}
+		types = append(types, t)
+	}
+
+	if len(types) == 0 {
+		return nil, nil
+	}
+
+	return types, nil
 }
 
 // GetUnreadCount returns the count of unread notifications

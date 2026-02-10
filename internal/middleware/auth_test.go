@@ -425,6 +425,32 @@ func TestRequireRole(t *testing.T) {
 			t.Error("Expected next handler not to be called")
 		}
 	})
+
+	t.Run("with one of multiple allowed roles", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/test", nil)
+		ctx := context.WithValue(req.Context(), UserIDKey, uuid.New().String())
+		ctx = context.WithValue(ctx, UserRoleKey, "moderator")
+		req = req.WithContext(ctx)
+
+		w := httptest.NewRecorder()
+
+		handlerCalled := false
+		next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			handlerCalled = true
+			w.WriteHeader(http.StatusOK)
+		})
+
+		handler := RequireRole("admin", "moderator")(next)
+		handler.ServeHTTP(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Errorf("Expected status %d, got %d", http.StatusOK, w.Code)
+		}
+
+		if !handlerCalled {
+			t.Error("Expected next handler to be called")
+		}
+	})
 }
 
 func TestWriteError(t *testing.T) {

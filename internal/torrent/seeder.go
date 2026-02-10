@@ -14,6 +14,7 @@ import (
 	"github.com/anacrolix/torrent/storage"
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
+	"golang.org/x/time/rate"
 )
 
 // Seeder manages torrent seeding for videos
@@ -21,6 +22,7 @@ type Seeder struct {
 	client      *torrent.Client
 	config      *SeederConfig
 	torrents    map[string]*torrent.Torrent // keyed by info hash
+	addedAt     map[string]time.Time        // keyed by info hash
 	mu          sync.RWMutex
 	ctx         context.Context
 	cancel      context.CancelFunc
@@ -110,13 +112,12 @@ func NewSeeder(config *SeederConfig, logger *logrus.Logger) (*Seeder, error) {
 	clientConfig.Seed = true
 
 	// Set bandwidth limits
-	// TODO: Implement proper rate limiting with the torrent library's expected interface
-	// if config.UploadRateLimit > 0 {
-	// 	clientConfig.UploadRateLimiter = NewRateLimiter(config.UploadRateLimit)
-	// }
-	// if config.DownloadRateLimit > 0 {
-	// 	clientConfig.DownloadRateLimiter = NewRateLimiter(config.DownloadRateLimit)
-	// }
+	if limiter := newTorrentRateLimiter(config.UploadRateLimit); limiter != nil {
+		clientConfig.UploadRateLimiter = limiter
+	}
+	if limiter := newTorrentRateLimiter(config.DownloadRateLimit); limiter != nil {
+		clientConfig.DownloadRateLimiter = limiter
+	}
 
 	// Set connection limits
 	clientConfig.EstablishedConnsPerTorrent = config.MaxConnectionsPerTorrent
@@ -140,6 +141,7 @@ func NewSeeder(config *SeederConfig, logger *logrus.Logger) (*Seeder, error) {
 		client:   client,
 		config:   config,
 		torrents: make(map[string]*torrent.Torrent),
+		addedAt:  make(map[string]time.Time),
 		ctx:      ctx,
 		cancel:   cancel,
 		logger:   logger,
@@ -182,6 +184,7 @@ func (s *Seeder) AddTorrent(torrentData []byte, videoID uuid.UUID) error {
 
 	// Store in map
 	s.torrents[infoHash] = t
+	s.addedAt[infoHash] = time.Now()
 
 	// Start downloading/seeding
 	t.DownloadAll()
@@ -226,6 +229,7 @@ func (s *Seeder) AddMagnet(magnetURI string, videoID uuid.UUID) error {
 
 	// Store in map
 	s.torrents[infoHash] = t
+	s.addedAt[infoHash] = time.Now()
 
 	// Start downloading/seeding
 	t.DownloadAll()
@@ -254,6 +258,7 @@ func (s *Seeder) RemoveTorrent(infoHash string) error {
 
 	// Remove from map
 	delete(s.torrents, infoHash)
+	delete(s.addedAt, infoHash)
 
 	s.logger.WithField("info_hash", infoHash).Info("Removed torrent")
 
@@ -271,6 +276,12 @@ func (s *Seeder) GetTorrentStatus(infoHash string) (*TorrentStatus, error) {
 	}
 
 	stats := t.Stats()
+	addedAt, ok := s.addedAt[infoHash]
+	if !ok {
+		addedAt = s.stats.StartTime
+	}
+	totalUploaded := stats.BytesWrittenData.Int64()
+	totalDownloaded := stats.BytesReadData.Int64()
 
 	return &TorrentStatus{
 		InfoHash:        infoHash,
@@ -279,10 +290,10 @@ func (s *Seeder) GetTorrentStatus(infoHash string) (*TorrentStatus, error) {
 		Length:          t.Length(),
 		Seeders:         stats.ConnectedSeeders,
 		Leechers:        stats.ActivePeers - stats.ConnectedSeeders,
-		UploadRate:      0, // TODO: Calculate rate from BytesWrittenData
-		DownloadRate:    0, // TODO: Calculate rate from BytesReadData
-		TotalUploaded:   stats.BytesWrittenData.Int64(),
-		TotalDownloaded: stats.BytesReadData.Int64(),
+		UploadRate:      calculateRate(totalUploaded, addedAt),
+		DownloadRate:    calculateRate(totalDownloaded, addedAt),
+		TotalUploaded:   totalUploaded,
+		TotalDownloaded: totalDownloaded,
 		IsSeeding:       t.Seeding(),
 		IsComplete:      t.BytesCompleted() == t.Length(),
 	}, nil
@@ -297,6 +308,12 @@ func (s *Seeder) GetAllStatuses() ([]*TorrentStatus, error) {
 
 	for infoHash, t := range s.torrents {
 		stats := t.Stats()
+		addedAt, ok := s.addedAt[infoHash]
+		if !ok {
+			addedAt = s.stats.StartTime
+		}
+		totalUploaded := stats.BytesWrittenData.Int64()
+		totalDownloaded := stats.BytesReadData.Int64()
 
 		status := &TorrentStatus{
 			InfoHash:        infoHash,
@@ -305,10 +322,10 @@ func (s *Seeder) GetAllStatuses() ([]*TorrentStatus, error) {
 			Length:          t.Length(),
 			Seeders:         stats.ConnectedSeeders,
 			Leechers:        stats.ActivePeers - stats.ConnectedSeeders,
-			UploadRate:      0, // TODO: Calculate rate from BytesWrittenData
-			DownloadRate:    0, // TODO: Calculate rate from BytesReadData
-			TotalUploaded:   stats.BytesWrittenData.Int64(),
-			TotalDownloaded: stats.BytesReadData.Int64(),
+			UploadRate:      calculateRate(totalUploaded, addedAt),
+			DownloadRate:    calculateRate(totalDownloaded, addedAt),
+			TotalUploaded:   totalUploaded,
+			TotalDownloaded: totalDownloaded,
 			IsSeeding:       t.Seeding(),
 			IsComplete:      t.BytesCompleted() == t.Length(),
 		}
@@ -432,6 +449,7 @@ func (s *Seeder) Stop() error {
 		t.Drop()
 	}
 	s.torrents = make(map[string]*torrent.Torrent)
+	s.addedAt = make(map[string]time.Time)
 	s.mu.Unlock()
 
 	// Close client
@@ -456,6 +474,38 @@ type TorrentStatus struct {
 	TotalDownloaded int64
 	IsSeeding       bool
 	IsComplete      bool
+}
+
+func calculateRate(totalBytes int64, startedAt time.Time) float64 {
+	if totalBytes <= 0 {
+		return 0
+	}
+
+	elapsed := time.Since(startedAt).Seconds()
+	if elapsed <= 0 {
+		return 0
+	}
+
+	return float64(totalBytes) / elapsed
+}
+
+func newTorrentRateLimiter(bytesPerSecond int64) *rate.Limiter {
+	if bytesPerSecond <= 0 {
+		return nil
+	}
+
+	maxInt := int(^uint(0) >> 1)
+	burst := maxInt
+	if bytesPerSecond < int64(maxInt) {
+		burst = int(bytesPerSecond)
+	}
+
+	const minBurst = 16 * 1024
+	if burst < minBurst {
+		burst = minBurst
+	}
+
+	return rate.NewLimiter(rate.Limit(bytesPerSecond), burst)
 }
 
 // GetHealthRatio returns the health ratio (seeders/leechers)

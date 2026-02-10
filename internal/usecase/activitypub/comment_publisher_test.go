@@ -568,7 +568,8 @@ func TestUpdateComment(t *testing.T) {
 		CreatedAt: time.Now().Add(-1 * time.Hour),
 		EditedAt:  &editedTime,
 	}
-	_ = comment // TODO: Use in test implementation
+	assert.Equal(t, "Edited comment text", comment.Body)
+	assert.NotNil(t, comment.EditedAt)
 
 	user := &domain.User{
 		ID:       userID.String(),

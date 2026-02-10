@@ -35,6 +35,11 @@ func NewYtDlp(binaryPath, outputDir string) *YtDlp {
 // ProgressCallback is called during download to report progress
 type ProgressCallback func(progress int, downloadedBytes int64, totalBytes int64)
 
+var (
+	progressPercentRegex = regexp.MustCompile(`(\d+\.?\d*)%`)
+	progressSizeRegex    = regexp.MustCompile(`([\d.]+)([KMG]iB) of ([\d.]+)([KMG]iB)`)
+)
+
 // ValidateURL checks if yt-dlp can handle the URL (dry run)
 func (y *YtDlp) ValidateURL(ctx context.Context, url string) error {
 	// Use --get-title to validate without downloading
@@ -222,8 +227,7 @@ func parseProgress(line string, callback ProgressCallback) {
 	}
 
 	// Extract percentage
-	percentRegex := regexp.MustCompile(`(\d+\.?\d*)%`)
-	matches := percentRegex.FindStringSubmatch(line)
+	matches := progressPercentRegex.FindStringSubmatch(line)
 	if len(matches) < 2 {
 		return
 	}
@@ -239,8 +243,7 @@ func parseProgress(line string, callback ProgressCallback) {
 	var downloadedBytes, totalBytes int64
 
 	// Pattern: "45.2% of 123.45MiB"
-	sizeRegex := regexp.MustCompile(`([\d.]+)([KMG]iB) of ([\d.]+)([KMG]iB)`)
-	sizeMatches := sizeRegex.FindStringSubmatch(line)
+	sizeMatches := progressSizeRegex.FindStringSubmatch(line)
 	if len(sizeMatches) >= 5 {
 		downloaded, _ := strconv.ParseFloat(sizeMatches[1], 64)
 		downloadedUnit := sizeMatches[2]

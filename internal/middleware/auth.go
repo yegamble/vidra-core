@@ -160,9 +160,9 @@ func RequireAuth(next http.Handler) http.Handler {
 	})
 }
 
-// RequireRole returns a middleware that requires a specific user role
+// RequireRole returns a middleware that requires one of the specified user roles.
 // It must be used AFTER the Auth middleware which sets the user context
-func RequireRole(role string) func(http.Handler) http.Handler {
+func RequireRole(roles ...string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// Get user ID from context (set by Auth middleware)
@@ -184,10 +184,19 @@ func RequireRole(role string) func(http.Handler) http.Handler {
 				return
 			}
 
-			// Check if user has the required role
-			if userRole != role {
-				writeError(w, http.StatusForbidden, domain.NewDomainError("FORBIDDEN", "Insufficient permissions"))
-				return
+			// Check if user has one of the required roles
+			if len(roles) > 0 {
+				authorized := false
+				for _, role := range roles {
+					if userRole == role {
+						authorized = true
+						break
+					}
+				}
+				if !authorized {
+					writeError(w, http.StatusForbidden, domain.NewDomainError("FORBIDDEN", "Insufficient permissions"))
+					return
+				}
 			}
 
 			next.ServeHTTP(w, r)

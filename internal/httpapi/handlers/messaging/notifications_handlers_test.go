@@ -19,6 +19,8 @@ type mockNotificationService struct {
 	markAllCalled  bool
 	deleteCalled   bool
 	deleteID       uuid.UUID
+	lastFilter     domain.NotificationFilter
+	notifications  []domain.Notification
 }
 
 func (m *mockNotificationService) CreateVideoNotificationForSubscribers(context.Context, *domain.Video, string) error {
@@ -30,8 +32,9 @@ func (m *mockNotificationService) CreateMessageNotification(context.Context, *do
 func (m *mockNotificationService) CreateMessageReadNotification(context.Context, uuid.UUID, uuid.UUID, string) error {
 	return nil
 }
-func (m *mockNotificationService) GetUserNotifications(context.Context, uuid.UUID, domain.NotificationFilter) ([]domain.Notification, error) {
-	return nil, nil
+func (m *mockNotificationService) GetUserNotifications(_ context.Context, _ uuid.UUID, filter domain.NotificationFilter) ([]domain.Notification, error) {
+	m.lastFilter = filter
+	return m.notifications, nil
 }
 func (m *mockNotificationService) MarkAsRead(_ context.Context, nid, _ uuid.UUID) error {
 	m.markReadCalled = true
@@ -118,5 +121,58 @@ func TestNotificationHandlers_Delete_OK(t *testing.T) {
 	}
 	if !svc.deleteCalled || svc.deleteID != id {
 		t.Fatalf("expected delete called with %s", id)
+	}
+}
+
+func TestNotificationHandlers_GetNotifications_TypeFilter_OK(t *testing.T) {
+	svc := &mockNotificationService{}
+	h := NewNotificationHandlers(svc)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/notifications?types=new_video,comment&type=mention", nil)
+	req = req.WithContext(withUserID(req.Context(), uuid.NewString()))
+	rr := httptest.NewRecorder()
+
+	router := chi.NewRouter()
+	router.Get("/api/v1/notifications", h.GetNotifications)
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+
+	if len(svc.lastFilter.Types) != 3 {
+		t.Fatalf("expected 3 notification types, got %d", len(svc.lastFilter.Types))
+	}
+
+	expected := map[domain.NotificationType]bool{
+		domain.NotificationNewVideo: true,
+		domain.NotificationComment:  true,
+		domain.NotificationMention:  true,
+	}
+	for _, tpe := range svc.lastFilter.Types {
+		if !expected[tpe] {
+			t.Fatalf("unexpected notification type in filter: %s", tpe)
+		}
+		delete(expected, tpe)
+	}
+	if len(expected) != 0 {
+		t.Fatalf("missing expected notification types: %+v", expected)
+	}
+}
+
+func TestNotificationHandlers_GetNotifications_InvalidType_BadRequest(t *testing.T) {
+	svc := &mockNotificationService{}
+	h := NewNotificationHandlers(svc)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/notifications?types=not-a-real-type", nil)
+	req = req.WithContext(withUserID(req.Context(), uuid.NewString()))
+	rr := httptest.NewRecorder()
+
+	router := chi.NewRouter()
+	router.Get("/api/v1/notifications", h.GetNotifications)
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", rr.Code)
 	}
 }

@@ -427,7 +427,7 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 		// Admin moderation endpoints
 		r.Route("/admin", func(r chi.Router) {
 			r.Use(middleware.Auth(cfg.JWTSecret))
-			r.Use(middleware.RequireRole("admin")) // TODO: Add moderator role support
+			r.Use(middleware.RequireRole(string(domain.RoleAdmin), string(domain.RoleMod)))
 
 			// Abuse reports management
 			r.Route("/abuse-reports", func(r chi.Router) {

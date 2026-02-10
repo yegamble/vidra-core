@@ -249,7 +249,8 @@ func TestCommentToFederation(t *testing.T) {
 			Status:    domain.CommentStatusActive,
 			CreatedAt: time.Now(),
 		}
-		_ = comment // TODO: Use in test implementation
+		assert.Equal(t, "Great video! Thanks for sharing.", comment.Body)
+		assert.Equal(t, domain.CommentStatusActive, comment.Status)
 
 		commenter := &domain.User{
 			ID:       commenterID.String(),

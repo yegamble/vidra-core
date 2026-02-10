@@ -2,6 +2,7 @@ package usecase
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"testing"
 	"time"
@@ -294,6 +295,7 @@ func TestDeduplicationService_ResolveStrategies(t *testing.T) {
 				URI:      "at://test/1",
 				Text:     strPtr("Original text"),
 				EmbedURL: nil,
+				Labels:   json.RawMessage(`["a","b"]`),
 			},
 			duplicate: &domain.FederatedPost{
 				ID:       "dup-id",
@@ -301,12 +303,18 @@ func TestDeduplicationService_ResolveStrategies(t *testing.T) {
 				URI:      "at://test/2",
 				Text:     strPtr("Duplicate text"),
 				EmbedURL: strPtr("https://example.com"),
+				Labels:   json.RawMessage(`["b","c"]`),
 			},
 			setupMocks: func(repo *MockFederationRepositoryExt, hardening *MockHardeningRepository) {
 				// Expect merged content to be saved
 				repo.On("UpsertPost", ctx, mock.MatchedBy(func(p *domain.FederatedPost) bool {
+					var labels []string
+					if err := json.Unmarshal(p.Labels, &labels); err != nil {
+						return false
+					}
 					return p.Text != nil && *p.Text == "Original text\n---\nDuplicate text" &&
-						p.EmbedURL != nil && *p.EmbedURL == "https://example.com"
+						p.EmbedURL != nil && *p.EmbedURL == "https://example.com" &&
+						assert.ElementsMatch(t, []string{"a", "b", "c"}, labels)
 				})).Return(nil)
 				origID := "orig-id"
 				repo.On("UpdatePostDuplicateOf", ctx, "dup-id", &origID).Return(nil)

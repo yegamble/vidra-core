@@ -39,6 +39,12 @@ type videoCategoryUseCase struct {
 	validator    *validator.Validate
 }
 
+var (
+	validSlugRegex     = regexp.MustCompile(`^[a-z0-9-]+$`)
+	validHexColorRegex = regexp.MustCompile(`^#([A-Fa-f0-9]{6}|[A-Fa-f0-9]{3})$`)
+	slugCharsRegex     = regexp.MustCompile(`[^a-z0-9]+`)
+)
+
 func NewVideoCategoryUseCase(
 	categoryRepo VideoCategoryRepository,
 	userRepo UserRepository,
@@ -228,8 +234,7 @@ func validateSlug(fl validator.FieldLevel) bool {
 		return false
 	}
 	// Slug should only contain lowercase letters, numbers, and hyphens
-	match, _ := regexp.MatchString("^[a-z0-9-]+$", slug)
-	return match
+	return validSlugRegex.MatchString(slug)
 }
 
 // validateHexColor checks if a string is a valid hex color code
@@ -239,8 +244,7 @@ func validateHexColor(fl validator.FieldLevel) bool {
 		return true // Allow empty
 	}
 	// Hex color should be in format #RRGGBB or #RGB
-	match, _ := regexp.MatchString("^#([A-Fa-f0-9]{6}|[A-Fa-f0-9]{3})$", color)
-	return match
+	return validHexColorRegex.MatchString(color)
 }
 
 // Helper function to generate a slug from a name
@@ -249,8 +253,7 @@ func GenerateSlug(name string) string {
 	slug := strings.ToLower(name)
 
 	// Replace spaces and special characters with hyphens
-	reg := regexp.MustCompile(`[^a-z0-9]+`)
-	slug = reg.ReplaceAllString(slug, "-")
+	slug = slugCharsRegex.ReplaceAllString(slug, "-")
 
 	// Remove leading and trailing hyphens
 	slug = strings.Trim(slug, "-")
