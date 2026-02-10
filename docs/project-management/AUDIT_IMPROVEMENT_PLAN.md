@@ -62,7 +62,7 @@ Architecture doc marks implemented features as planned.
 
 The repository layer handles all database CRUD. At 9.6% coverage, virtually all persistence logic is untested.
 
-- [ ] **P1** Add unit tests for `repository/video_repository.go` (core CRUD)
+- [x] **P1** Add unit tests for `repository/video_repository.go` (core CRUD + list/search/migration/remote branches via sqlmock)
 - [ ] **P1** Add unit tests for `repository/user_repository.go` (auth flows)
 - [ ] **P1** Add unit tests for `repository/channel_repository.go` (channel CRUD)
 - [ ] **P1** Add unit tests for `repository/comment_repository.go`
@@ -71,6 +71,12 @@ The repository layer handles all database CRUD. At 9.6% coverage, virtually all 
 - [ ] **P1** Verify integration tests work with Docker services (`make test-local`)
 
 **Success Criteria**: Repository package coverage >= 60%. All CRUD operations have at least happy-path + error-path tests.
+
+Note (2026-02-10): added `internal/repository/video_repository_unit_more_test.go` to cover previously untested `video_repository.go` and `video_repository_count.go` methods (GetByUserID, Update, Delete, processing updates, List, Search, migration, remote, Count, and GetByID fallback/error branches). Verified with:
+- `go test -coverprofile=/tmp/video_repo_unit_after.out ./internal/repository -run 'TestVideoRepository_Unit' -count=1`
+- `go tool cover -func=/tmp/video_repo_unit_after.out | rg 'internal/repository/video_repository.go|internal/repository/video_repository_count.go|total:'`
+  - `internal/repository/video_repository.go`: mostly 77.8%–100.0% per function, with several at 90%+.
+  - `internal/repository/video_repository_count.go:Count`: 100.0%.
 
 ### 1.2 Handler Tests (7-21% -> 50%+)
 
