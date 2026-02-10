@@ -4,7 +4,7 @@
 [![OpenAPI CI](https://github.com/yegamble/athena/actions/workflows/openapi-ci.yml/badge.svg)](https://github.com/yegamble/athena/actions/workflows/openapi-ci.yml)
 [![Database Migrations](https://github.com/yegamble/athena/actions/workflows/goose-migrate.yml/badge.svg)](https://github.com/yegamble/athena/actions/workflows/goose-migrate.yml)
 
-A high-performance, feature-complete PeerTube backend implementation in Go with P2P distribution, live streaming, plugin system, and multi-protocol federation (ActivityPub + ATProto).
+A high-performance, PeerTube-compatible backend implementation in Go with P2P distribution, live streaming, plugin system, and multi-protocol federation (ActivityPub + ATProto).
 
 ## IMPORTANT: Code Quality and Validation
 
@@ -28,58 +28,58 @@ See [VALIDATION_REQUIRED.md](docs/development/VALIDATION_REQUIRED.md) for comple
 
 ## Features
 
-### Core Video Platform
-- **PeerTube API Compatibility** - Full compatibility with channels, subscriptions, comments, ratings, playlists, and captions
-- **Video Import System** - Import from 1000+ platforms (YouTube, Vimeo, etc.) via yt-dlp integration
-- **Advanced Transcoding** - Multi-codec support (H.264, VP9, AV1) with 30-50% bandwidth savings
-- **HLS Adaptive Streaming** - Multi-resolution adaptive bitrate streaming with automatic quality selection
-- **User Messaging** - Direct messaging with optional end-to-end encryption (E2EE) support
-- **Notifications System** - Real-time notifications with automatic triggers and flexible delivery
+Status legend:
+- `✅` Implemented and available
+- `🧪` Implemented but beta/experimental
+- `🛣️` Planned roadmap work
 
-### Live Streaming
-- **RTMP Server** - Professional RTMP ingestion compatible with OBS, Streamlabs, and other streaming software
-- **Real-time Chat** - WebSocket-based chat supporting 10,000+ concurrent connections with role-based moderation
-- **Stream Scheduling** - Advanced scheduling system with waiting rooms, automated status transitions, and subscriber notifications
-- **Stream Analytics** - Real-time metrics with 30-second intervals, session tracking, peak viewer counts, and engagement rates
-- **VOD Conversion** - Automatic conversion of live streams to on-demand videos with IPFS support
+### Implemented Features (`✅`)
 
-### P2P Distribution
-- **WebTorrent P2P** - Browser-compatible P2P delivery with automatic torrent generation and seeding
-- **DHT & PEX Support** - Trackerless operation with distributed hash table and peer exchange
-- **Smart Seeding** - Multi-factor prioritization with automatic bandwidth management
-- **Hybrid Distribution** - Configurable IPFS + Torrent hybrid distribution for maximum resilience
-- **IPFS Streaming** - Optional IPFS gateway streaming for HLS content with automatic fallback to local delivery
+#### Core Video Platform
+- **PeerTube API Compatibility** - Channels, subscriptions, comments, ratings, playlists, and captions
+- **Video Import System** - Import from external platforms via `yt-dlp` integration
+- **Transcoding + HLS** - FFmpeg processing with adaptive streaming outputs
+- **User Messaging** - Direct messaging with optional end-to-end encryption (E2EE)
+- **Notifications System** - Real-time notifications with automatic triggers and delivery controls
 
-### Federation
-- **ActivityPub** - Full PeerTube-compatible federation with WebFinger, NodeInfo, and HTTP Signatures
-- **ATProto Integration (BETA)** - Optional Bluesky integration for cross-platform content syndication
-- **Video Redundancy** - Cross-instance video replication with automatic sync and health monitoring
+#### Live Streaming
+- **RTMP Server** - RTMP ingestion compatible with OBS/Streamlabs and similar tooling
+- **Real-time Chat** - WebSocket-based stream chat with moderation controls
+- **Stream Scheduling** - Waiting rooms, scheduled lifecycle transitions, and subscriber notifications
+- **Stream Analytics** - Near real-time stream metrics and session tracking
+- **VOD Conversion** - Conversion of live streams to on-demand videos
 
-### Analytics & Monitoring
-- **Video Analytics** - Comprehensive analytics with view tracking, retention curves, and engagement metrics
-- **Real-time Metrics** - Active viewer tracking with 30-second heartbeat intervals
-- **Channel Analytics** - Aggregated channel-level statistics and daily reporting
+#### P2P and Storage
+- **WebTorrent + IPFS Hybrid Distribution** - P2P delivery and decentralized storage options
+- **DHT and Peer Exchange** - Trackerless peer discovery capabilities
+- **Smart Seeding Controls** - Automated seeding behavior and fallback routing
+- **S3-Compatible Storage** - AWS S3, Backblaze B2, and DigitalOcean Spaces support
 
-### Extensibility
-- **Plugin System** - Extensible hook-based plugin architecture with 30+ event types
-- **Security** - Ed25519 signature verification, permission system with 17 permission types
-- **Plugin Marketplace** - Upload API with ZIP validation and automatic installation
+#### Federation
+- **ActivityPub** - PeerTube-compatible federation with WebFinger, NodeInfo, and HTTP signatures
+- **Video Redundancy** - Cross-instance replication and sync workflows
 
-### Security & Authentication
-- **Two-Factor Authentication (2FA)** - TOTP-based 2FA with authenticator app support (RFC 6238)
-- **Backup Codes** - 10 one-time recovery codes for account recovery
-- **OAuth2 with PKCE** - Secure authorization with Proof Key for Code Exchange
-- **End-to-End Encrypted Messaging** - Client-side encryption with user-managed keys
-- **Content Moderation** - Abuse reporting, user/instance blocklists, and automated filtering
-- **Rate Limiting** - Per-endpoint rate limiting with sliding window algorithm
-- **Virus Scanning** - Mandatory ClamAV scanning for all uploads with quarantine and audit logging
+#### Security, Auth, and Extensibility
+- **Two-Factor Authentication (2FA)** - TOTP and backup codes
+- **OAuth2 with PKCE** - Authorization code and secure token flows
+- **Content Moderation** - Abuse reporting and blocklist moderation tooling
+- **Rate Limiting + Virus Scanning** - Endpoint limits and ClamAV-backed scanning pipeline
+- **Plugin System** - Hook-based plugin architecture and plugin upload APIs
+- **Observability** - Structured logging, metrics, and health endpoints
 
-### Production Ready
-- **High Performance** - Built with Go for maximum concurrency and efficient resource usage
-- **Hybrid Storage** - Multi-tier storage (local/IPFS/S3-compatible) with automatic promotion/demotion
-- **S3-Compatible Storage** - Support for AWS S3, Backblaze B2, DigitalOcean Spaces
-- **Comprehensive Testing** - 1,400+ test cases with active coverage-improvement plan (23.8% full-package baseline)
-- **Observability** - Structured logging, metrics, and health monitoring
+### Implemented Beta Features (`🧪`)
+
+- **ATProto Integration (BETA)** - Optional Bluesky syndication and interoperability workflows
+
+### Planned / In-Progress Roadmap (`🛣️`)
+
+- **ATProto Stabilization** - Move ATProto integration from beta to stable production profile
+- **Codec Matrix Expansion** - Additional codec and container expansion beyond current baseline defaults
+- **Payments Integration** - IOTA-based payments features
+- **Advanced Analytics Enhancements** - Additional analytics/reporting depth
+- **Kubernetes + Blue/Green Hardening** - Expanded production deployment automation
+
+See the detailed status section in [Project Status](#project-status) and planning docs in [Project Management](docs/project-management/README.md).
 
 ## Quick Start
 
@@ -195,6 +195,7 @@ See the full documentation index at [docs/README.md](docs/README.md).
 - **[Architecture Overview](docs/architecture.md)** - Clean architecture layers, data flow, and design patterns
 - **[CLAUDE.md](docs/architecture/CLAUDE.md)** - Comprehensive architecture guide for AI-assisted development
 - **[PeerTube Compatibility](docs/PEERTUBE_COMPAT.md)** - API compatibility matrix
+- **[PeerTube Migration](docs/PEERTUBE_MIGRATION.md)** - High-level migration guide from PeerTube to Athena
 
 ### Deployment & Operations
 
@@ -227,7 +228,7 @@ See the full documentation index at [docs/README.md](docs/README.md).
 ### Project Management
 
 - **[Project Status](docs/project-management/README.md)** - Current status and roadmap
-- **[Sprint Documentation](docs/project-management/sprints/README.md)** - Sprint history and completion reports
+- **[Sprint Documentation](docs/sprints/README.md)** - Sprint history and completion reports
 - **[PM Assessment](docs/project-management/PM_COMPREHENSIVE_ASSESSMENT.md)** - Comprehensive project assessment
 
 ### Features
@@ -305,7 +306,7 @@ See the full documentation index at [docs/README.md](docs/README.md).
 | **Security Tests** | 50+ | SSRF, virus scanning, auth, input validation |
 | **Automated Tests** | 1,458 | `func Test*` count across `*_test.go` files |
 
-See [Project Management Documentation](docs/project-management/README.md) and [Sprint History](docs/project-management/sprints/README.md) for detailed progress tracking.
+See [Project Management Documentation](docs/project-management/README.md) and [Sprint History](docs/sprints/README.md) for detailed progress tracking.
 
 ## Configuration
 

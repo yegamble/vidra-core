@@ -4,12 +4,17 @@ info:
   version: 1.0.0
   description: API endpoints for video ratings (like/dislike) and user playlists management
 
+tags:
+  - name: PeerTube-Compat
+    description: Endpoints intended to match PeerTube-style resource contracts.
+
 paths:
   /api/v1/videos/{videoId}/rating:
     get:
       summary: Get rating statistics for a video
       tags:
         - Ratings
+        - PeerTube-Compat
       parameters:
         - in: path
           name: videoId
@@ -34,6 +39,7 @@ paths:
       summary: Set or update rating for a video
       tags:
         - Ratings
+        - PeerTube-Compat
       security:
         - bearerAuth: []
       parameters:
@@ -73,6 +79,7 @@ paths:
       summary: Remove rating from a video
       tags:
         - Ratings
+        - PeerTube-Compat
       security:
         - bearerAuth: []
       parameters:
@@ -96,6 +103,7 @@ paths:
       summary: Get current user's ratings
       tags:
         - Ratings
+        - PeerTube-Compat
       security:
         - bearerAuth: []
       parameters:
@@ -136,6 +144,7 @@ paths:
       summary: List playlists
       tags:
         - Playlists
+        - PeerTube-Compat
       security:
         - bearerAuth: []
       parameters:
@@ -184,6 +193,7 @@ paths:
       summary: Create a new playlist
       tags:
         - Playlists
+        - PeerTube-Compat
       security:
         - bearerAuth: []
       requestBody:
@@ -209,6 +219,7 @@ paths:
       summary: Get a specific playlist
       tags:
         - Playlists
+        - PeerTube-Compat
       parameters:
         - in: path
           name: playlistId
@@ -236,6 +247,7 @@ paths:
       summary: Update a playlist
       tags:
         - Playlists
+        - PeerTube-Compat
       security:
         - bearerAuth: []
       parameters:
@@ -267,6 +279,7 @@ paths:
       summary: Delete a playlist
       tags:
         - Playlists
+        - PeerTube-Compat
       security:
         - bearerAuth: []
       parameters:
@@ -291,6 +304,7 @@ paths:
       summary: Get items in a playlist
       tags:
         - Playlists
+        - PeerTube-Compat
       parameters:
         - in: path
           name: playlistId
@@ -334,6 +348,7 @@ paths:
       summary: Add video to playlist
       tags:
         - Playlists
+        - PeerTube-Compat
       security:
         - bearerAuth: []
       parameters:
@@ -370,6 +385,7 @@ paths:
       summary: Remove video from playlist
       tags:
         - Playlists
+        - PeerTube-Compat
       security:
         - bearerAuth: []
       parameters:
@@ -400,6 +416,7 @@ paths:
       summary: Reorder item in playlist
       tags:
         - Playlists
+        - PeerTube-Compat
       security:
         - bearerAuth: []
       parameters:
@@ -445,6 +462,7 @@ paths:
       summary: Get or create watch later playlist
       tags:
         - Playlists
+        - PeerTube-Compat
       security:
         - bearerAuth: []
       responses:
@@ -469,6 +487,7 @@ paths:
       description: Get the authenticated user's watch later playlist (alias for convenience)
       tags:
         - Playlists
+        - PeerTube-Compat
         - Users
       security:
         - bearerAuth: []

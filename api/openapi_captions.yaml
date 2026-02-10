@@ -4,11 +4,16 @@ info:
   description: Endpoints for managing video captions and subtitles
   version: 1.0.0
 
+tags:
+  - name: PeerTube-Compat
+    description: Endpoints intended to match PeerTube-style resource contracts.
+
 paths:
   /api/v1/videos/{id}/captions:
     get:
       tags:
         - Captions
+        - PeerTube-Compat
       summary: Get all captions for a video
       description: Retrieve all caption tracks available for a specific video
       operationId: getCaptions
@@ -79,6 +84,7 @@ paths:
     post:
       tags:
         - Captions
+        - PeerTube-Compat
       summary: Upload a caption file for a video
       description: Upload a new caption/subtitle track (VTT or SRT format) for a video. Only video owner can upload captions.
       operationId: createCaption
@@ -197,6 +203,7 @@ paths:
     get:
       tags:
         - Captions
+        - PeerTube-Compat
       summary: Download caption file content
       description: Download the actual caption/subtitle file content (VTT or SRT format)
       operationId: getCaptionContent
@@ -275,6 +282,7 @@ paths:
     put:
       tags:
         - Captions
+        - PeerTube-Compat
       summary: Update caption metadata
       description: Update the label or language code of an existing caption. Only video owner can update.
       operationId: updateCaption
@@ -350,6 +358,7 @@ paths:
     delete:
       tags:
         - Captions
+        - PeerTube-Compat
       summary: Delete a caption
       description: Delete a caption track from a video. Only video owner can delete.
       operationId: deleteCaption

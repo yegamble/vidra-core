@@ -447,6 +447,14 @@ func TestVideoService_Create(t *testing.T) {
 - **Indexes**: Optimized for common query patterns
 - **Chunked Uploads**: 32MB chunks for resumability
 
+## Subsystem Deep Dives
+
+Subsystem-specific architecture references:
+
+- [HTTP API subsystem](../internal/httpapi/CLAUDE.md)
+- [ActivityPub subsystem](../internal/activitypub/CLAUDE.md)
+- [Security subsystem](../internal/security/CLAUDE.md)
+
 ---
 
 For more specific guides, see:

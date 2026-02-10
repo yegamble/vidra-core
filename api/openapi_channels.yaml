@@ -7,6 +7,7 @@
     get:
       tags:
         - Channels
+        - PeerTube-Compat
       summary: List channels
       description: Returns a paginated list of channels with optional filtering
       operationId: listChannels
@@ -98,6 +99,7 @@
     post:
       tags:
         - Channels
+        - PeerTube-Compat
       summary: Create a channel
       description: Creates a new channel for the authenticated user
       operationId: createChannel
@@ -158,6 +160,7 @@
     get:
       tags:
         - Channels
+        - PeerTube-Compat
       summary: Get channel by ID or handle
       description: Returns a single channel by its UUID or handle
       operationId: getChannel
@@ -191,6 +194,7 @@
     put:
       tags:
         - Channels
+        - PeerTube-Compat
       summary: Update channel
       description: Updates channel details (only channel owner can update)
       operationId: updateChannel
@@ -249,6 +253,7 @@
     delete:
       tags:
         - Channels
+        - PeerTube-Compat
       summary: Delete channel
       description: Deletes a channel (only channel owner can delete)
       operationId: deleteChannel
@@ -286,6 +291,7 @@
     get:
       tags:
         - Channels
+        - PeerTube-Compat
         - Videos
       summary: Get channel videos
       description: Returns paginated list of videos from a channel
@@ -331,6 +337,7 @@
     post:
       tags:
         - Channels
+        - PeerTube-Compat
         - Subscriptions
       summary: Subscribe to channel
       description: Subscribe the authenticated user to a channel
@@ -390,6 +397,7 @@
     delete:
       tags:
         - Channels
+        - PeerTube-Compat
         - Subscriptions
       summary: Unsubscribe from channel
       description: Unsubscribe the authenticated user from a channel
@@ -435,6 +443,7 @@
     get:
       tags:
         - Channels
+        - PeerTube-Compat
         - Subscriptions
       summary: List channel subscribers
       description: Returns paginated list of users subscribed to a channel
@@ -497,6 +506,7 @@
     get:
       tags:
         - Channels
+        - PeerTube-Compat
         - Users
       summary: Get my channels
       description: Returns all channels owned by the authenticated user
@@ -781,6 +791,7 @@
       x-deprecation-message: "Use /api/v1/channels/{id}/subscribe instead. This endpoint subscribes to the user's default channel."
       tags:
         - Subscriptions
+        - PeerTube-Compat
         - Users
       summary: Subscribe to user's default channel (DEPRECATED)
       description: |
@@ -811,6 +822,7 @@
       x-deprecation-message: "Use /api/v1/channels/{id}/subscribe instead"
       tags:
         - Subscriptions
+        - PeerTube-Compat
         - Users
       summary: Unsubscribe from user's default channel (DEPRECATED)
       description: |

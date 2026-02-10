@@ -1,195 +1,86 @@
-# PeerTube‑Inspired API Roadmap (Athena)
+# PeerTube Compatibility Status
 
-This roadmap uses PeerTube’s resource model and API patterns as guidance to finish Athena’s API natively (no compatibility facade). We’ll adopt the spirit of PeerTube’s shapes and flows while keeping Athena’s strengths (encoding, IPFS, notifications) and minimizing breaking changes.
+**Last Updated**: 2026-02-10
+**Scope**: PeerTube-inspired API/resource compatibility for Athena native APIs (no facade layer)
 
-Notes:
-- We will converge toward consistent shapes, pagination, and naming inline with common PeerTube clients, prioritizing clarity and maintainability.
-- Status legend: Done = shipped; Planned = upcoming; Future = longer‑term.
+## Summary
 
-## 1) Current Coverage (by area)
+Athena now implements the major PeerTube-aligned API areas (channels, channel subscriptions, comments, ratings, playlists, captions, OAuth2, instance/oEmbed, and ActivityPub discovery). Compatibility is functional for common client flows, with a small set of intentional deviations documented below.
 
-### Videos (list/search/get/stream)
-- Athena: `GET /api/v1/videos` → list public videos (Covered/Partial: payload shape likely differs)
-- Athena: `GET /api/v1/videos/search` → search videos (Covered/Partial)
-- Athena: `GET /api/v1/videos/{id}` → get video (Covered/Partial)
-- Athena: `GET /api/v1/videos/{id}/stream` → HLS master/variants (Covered/Partial)
-- Athena: `GET /api/v1/hls/*` → HLS static file server with privacy (Covered/Partial)
-- Athena: `GET /api/v1/trending` and `GET /api/v1/videos/top` (Covered; not a core PeerTube shape but useful)
+## Compatibility Matrix
 
-Upload & Processing
-- Athena: Chunked upload flow: `/api/v1/uploads/{initiate,chunks,complete,status,resume}` (Covered/Partial)
-- Athena: Legacy one-shot upload: `POST /api/v1/videos/upload` (Covered/Partial)
-- Athena: Post-upload processing/encoding queue + status: `GET /api/v1/encoding/status` (Covered/Partial)
+| Area | Athena Endpoints | PeerTube Capability | Status | Notes |
+|---|---|---|---|---|
+| Channels | `/api/v1/channels`, `/api/v1/channels/{id}`, `/api/v1/channels/{id}/videos` | Video channels as first-class publishers | ✅ Implemented | Channel/account model is active; videos are channel-linked |
+| Channel subscriptions | `/api/v1/channels/{id}/subscribe`, `/api/v1/channels/{id}/subscribers`, `/api/v1/videos/subscriptions` | Channel follow + subscription feed | ✅ Implemented | Legacy user subscription endpoints remain as compatibility shims |
+| Comments (threaded) | `/api/v1/videos/{videoId}/comments`, `/api/v1/comments/{commentId}`, `/api/v1/comments/{commentId}/flag`, `/api/v1/comments/{commentId}/moderate` | Threaded comments + moderation | ✅ Implemented | Reply threading via `parentId`; moderation + flagging supported |
+| Ratings | `/api/v1/videos/{videoId}/rating` | Like/dislike interactions | ✅ Implemented | Idempotent rating behavior covered by tests |
+| Playlists | `/api/v1/playlists`, `/api/v1/playlists/{playlistId}`, `/api/v1/playlists/{playlistId}/items` | Playlist CRUD + item management | ✅ Implemented | Includes ordering endpoint and watch-later convenience |
+| Captions | `/api/v1/videos/{id}/captions`, `/api/v1/videos/{id}/captions/{captionId}`, `/api/v1/videos/{id}/captions/{captionId}/content` | Subtitle upload/list/delete/fetch | ✅ Implemented | VTT/SRT with language metadata supported |
+| OAuth2 | `/oauth/token`, `/oauth/authorize`, `/oauth/revoke`, `/oauth/introspect` | OAuth2 auth flows | ✅ Implemented | Includes auth code + revocation + introspection |
+| Instance metadata | `/api/v1/instance/about`, `/oembed` | Instance/about + oEmbed | ✅ Implemented | Admin instance config APIs also available |
+| Federation discovery | `/.well-known/webfinger`, `/.well-known/nodeinfo`, `/nodeinfo/2.0` | ActivityPub/NodeInfo discovery | ✅ Implemented | Actor and inbox/outbox endpoints implemented |
 
-Views & Analytics
-- Athena: `POST /api/v1/videos/{videoId}/views` (Covered; tracking)
-- Athena: `GET /api/v1/videos/{videoId}/analytics` (Covered)
-- Athena: `GET /api/v1/videos/{videoId}/stats/daily` (Covered)
-- Athena: `POST /api/v1/views/fingerprint` (Covered; dedup helper)
+## OpenAPI Coverage
 
-### Users / Profiles
-- Athena: `GET /api/v1/users/{id}`; `GET /api/v1/users/{id}/videos` (Covered/Partial)
-- Athena: `GET /api/v1/users/me`, `PUT /api/v1/users/me` (Covered/Partial)
-- Athena: `POST /api/v1/users/me/avatar` (Covered, with IPFS pinning)
+PeerTube-aligned routes are documented in:
 
-### Subscriptions
-- Athena: `POST/DELETE /api/v1/users/{id}/subscribe` (Covered/Partial)
-- Athena: `GET /api/v1/users/me/subscriptions` (Covered/Partial)
-- Athena: `GET /api/v1/videos/subscriptions` (Covered/Partial)
+- `api/openapi_channels.yaml`
+- `api/openapi_comments.yaml`
+- `api/openapi_ratings_playlists.yaml`
+- `api/openapi_captions.yaml`
+- `api/openapi_moderation.yaml`
+- `api/openapi_federation.yaml`
+- `api/openapi.yaml` (OAuth2 + core)
 
-### Categories
-- Athena: `GET /api/v1/categories`, `GET /api/v1/categories/{id}` (Covered)
-- Athena: Admin: `POST/PUT/DELETE /api/v1/admin/categories*` (Covered)
+A compatibility tag is now present across these specs for matching operations:
 
-### Notifications (Athena-specific)
-- Athena: `GET/PUT/DELETE /api/v1/notifications*` + stats (Covered; not a standard PeerTube REST area)
+- `PeerTube-Compat`
 
-### Messaging (Athena-specific)
-- Athena: `/api/v1/messages*`, `/api/v1/conversations*` (Covered; not PeerTube standard)
-- E2EE helpers present (Athena-specific)
+## Intentional Deviations
 
-### Auth / OAuth2
-- Athena (legacy): `/auth/register`, `/auth/login`, `/auth/refresh`, `/auth/logout` (Covered)
-- Athena (OAuth2):
-  - `POST /oauth/token` with `grant_type=password|refresh_token` (Covered)
-  - Admin OAuth client management: `GET/POST/PUT/DELETE /api/v1/admin/oauth/clients*` (Covered)
-  - Notes: access tokens are JWTs signed with HS256 (same `JWT_SECRET`); refresh tokens reuse Athena sessions. See `docs/OAUTH2.md`.
+These are current intentional differences from strict PeerTube shape parity:
 
-### Health/Infra
-- Athena: `/health`, `/ready` (Covered)
+1. Pagination style is mixed by endpoint family.
+- Some endpoints use `page/pageSize`; others use `limit/offset`.
 
-## 2) Design Principles
+2. Response envelope conventions differ by handler family.
+- Many handlers return wrapped payloads (for example `data`, `pagination`, `success`) rather than a single global envelope standard.
 
-- Resources: introduce Channels separate from Accounts (users); videos belong to channels.
-- Shapes: consistent JSON naming; pagination (`page`, `pageSize`, `total`); standard sorting/filtering.
-- Auth: OAuth2 bearer tokens; refine toward authorization code grant + scopes.
-- Errors: standardized codes/messages; consistent 401/403/404/409 behavior.
-- Privacy/streaming: keep current privacy gating and HLS; expose shapes akin to PeerTube.
+3. Legacy compatibility routes are retained.
+- User-based subscription routes remain available while channel-based subscriptions are canonical.
 
-## 3) Roadmap (Phases)
+4. Federation is multi-protocol.
+- Athena includes ATProto in addition to ActivityPub; this extends beyond strict PeerTube scope.
 
-Phase 1 — Core Videos + Users (Planned)
-- Videos: align list/get/search shapes, unify pagination/meta, standard filters.
-- Uploads: converge one‑shot + chunked flows to stable paths and forms.
-- OpenAPI: update schemas/paths to target shapes; deprecate legacy fields where needed.
-- Tests: table‑driven handler tests for list/get/search; keep current coverage.
+## Test Verification
 
-Accounts / Channels Model
-- Missing: Distinct Channel and Account resources (Athena equates User as channel). Requires DB and ownership model changes.
+PeerTube-relevant behavior is already covered in existing handler integration/unit suites:
 
-Playlists
-- Missing: CRUD for playlists, items, privacy, watch-later.
+- Channels/subscriptions:
+  - `internal/httpapi/handlers/channel/channel_subscriptions_integration_test.go`
+  - `internal/httpapi/handlers/channel/subscriptions_backward_compat_test.go`
+  - `internal/httpapi/handlers/channel/subscriptions_pagination_test.go`
+- Comments/threading:
+  - `internal/httpapi/handlers/social/comments_integration_test.go`
+- Ratings/playlists:
+  - `internal/httpapi/handlers/social/ratings_playlists_integration_test.go`
+- Captions:
+  - `internal/httpapi/handlers/social/captions_integration_test.go`
+- Instance/oEmbed:
+  - `internal/httpapi/handlers/moderation/moderation_test.go`
+  - `internal/httpapi/handlers/moderation/moderation_integration_test.go`
+- ActivityPub NodeInfo discovery:
+  - `internal/httpapi/handlers/federation/activitypub_test.go`
 
-Comments
-- Missing: Threaded comments, list/create/delete, moderation, mentions.
+## Remaining Gaps
 
-Ratings / Interactions
-- Missing: Reactions (like/dislike), favorites, watch-later toggles, history aligned to PeerTube data model.
+1. Full one-to-one response-schema parity with PeerTube for every list/details payload.
+2. Uniform pagination contract across all compatibility routes.
+3. Expanded compatibility conformance tests that assert strict JSON schema parity against PeerTube fixtures.
 
-Captions / Subtitles
-- Missing: Upload/list/delete caption tracks (VTT/SRT), language metadata.
+## Next Actions
 
-Video Import / Redundancy / Live
-- Missing: Import by URL/magnet, redundancy controls, live stream lifecycle & ingest keys.
-
-Instance / Config / oEmbed / Plugins / Moderation
-- Missing: Public server config & info endpoints, oEmbed, plugin management, abuse reports and moderation actions.
-
-Federation (non-REST, but essential)
-- Missing: ATProto integration (PDS/XRPC); `.well-known/atproto-did` now available but disabled by default until configured.
-
-## 3) Shim Route Proposals (Phase 1 scope)
-
-Goal: Provide PeerTube-shaped routes that wrap Athena’s existing handlers, translating requests/responses to expected payloads. Exact PeerTube paths/payloads will be verified against the spec before implementation.
-
-Videos
-- Add compatibility layer for list/search/get: map Athena responses to PeerTube field names, pagination meta, and embed-friendly structures.
-- Streaming: ensure `GET /api/v1/videos/{id}` includes streaming URLs in PeerTube’s structure (or expose `/api/v1/videos/{id}/streaming-playlists` where expected), while continuing to serve `/{id}/stream` and `/hls/*` for continuity.
-
-Uploads
-- Expose PeerTube’s upload endpoints (resumable/one-shot) as thin proxies to Athena’s `/uploads` or `/videos/{id}/upload` flows; align form fields and response contracts.
-
-Users / Channels (interim)
-- Until channels are formalized, expose channel-shaped responses derived from `User` and mark as a single default channel; provide IDs and slugs consistent with channel expectations.
-
-Subscriptions
-- Adapt payloads (e.g., `accounts`/`channels` schemas) while reusing Athena’s subscription repositories.
-
-Categories
-- Align naming/fields to PeerTube’s taxonomy where they differ.
-
-OpenAPI
-- Add a `compat` tag set and corresponding routes in `api/openapi.yaml` that reflect PeerTube method/paths while documenting Athena’s native routes. Keep both during transition.
-
-Phase 2 — Channels Model (Planned)
-- DB: add `channels` table; backfill default channel per user; add `videos.channel_id`.
-- API: list/get channels; update create/update video to accept `channel_id`.
-- Subscriptions: migrate to channels (keep user subscribe aliases temporarily).
-
-Phase 3 — OAuth2 Refinement (Planned)
-- Authorization Code (+PKCE), token revocation, basic introspection.
-- Enforce scopes and improve standardized OAuth error responses.
-
-Phase 4 — Community Features (Future)
-- Comments (threaded), Ratings (like/dislike), Playlists, Captions.
-- Instance info/config endpoints; oEmbed; moderation endpoints.
-
-Phase 5 — Advanced (Future)
-- Live streams; import by URL/magnet; redundancy/mirroring.
-
-## 5) Channels Model Refactor
-
-Rationale
-- PeerTube distinguishes Accounts (users) from Channels (publishers). Videos belong to Channels; users manage one or more channels.
-
-DB Changes (Incremental, safe)
-1) New `channels` table:
-   - id (UUID), account_id (UUID → users.id), handle (unique), display_name, description, avatar_id (nullable), banner fields, created_at, updated_at, is_public, etc.
-2) `videos` table: add `channel_id` (nullable initially), backfill default channel per user, then make `channel_id` required; keep `user_id` during migration window.
-3) Indexes: `channels(handle)`, `videos(channel_id)`.
-
-API Changes
-- New endpoints to list/get channels, create/update my channels, list channel videos.
-- Update video create/update to accept `channel_id`; default to user’s default channel if omitted.
-- Subscriptions switch to channel-based where relevant.
-
-Migration Plan
-1) Create default channel for each existing user (handle = username; display_name = existing display_name).
-2) Backfill `videos.channel_id` for all rows using the owner’s default channel.
-3) Update repositories/services to prefer `channel_id` but keep `user_id` fallback during transition.
-4) Update subscriptions to be against channels; keep compatibility routes for user-subscribe until all consumers migrate.
-
-## 4) Endpoint Checklist (Initial)
-
-Core (Phase 1)
-- [x] OAuth2 token endpoint (password + refresh)
-- [x] Minimal OAuth client registration (admin endpoints)
-- [ ] Videos list/search/get shape and pagination alignment
-- [ ] Uploads form/contracts convergence
-- [ ] Users payload alignment and pagination
-
-Community (Phase 2)
-- [ ] Comments: list/create/delete, thread model, moderation hooks
-- [ ] Ratings: like/dislike; favorites; watch later
-- [ ] Playlists: CRUD + items + privacy
-- [ ] Captions: upload/list/delete; language tags
-- [ ] Instance config/about endpoints; oEmbed
-
-Admin/Moderation (Phase 3)
-- [ ] Abuse reports endpoints and admin actions
-- [ ] Blacklist/blocklist endpoints
-- [ ] Server stats/config endpoints
-
-Advanced (Phase 4)
-- [ ] Live streaming lifecycle + ingest keys
-- [ ] Import by URL/magnet + status
-- [ ] Redundancy/mirroring endpoints
-- [ ] Plugins API exposure (list/config)
-
-## 5) Next Steps
-
-1) Confirm target shapes and pagination for videos/users; update OpenAPI and handlers accordingly.
-2) Expand OAuth2 support: authorization code grant (+PKCE), token revocation/introspection, scope enforcement.
-3) Begin channels table/migration scaffolding (default channel per user) and ship read‑only channel endpoints.
-
-Once the above lands, most PeerTube clients should be able to browse, authenticate (OAuth2), and upload/watch via familiar contracts while we layer on community and admin features.
+1. Add schema-level compatibility assertions for channels/comments/playlists/captions response contracts.
+2. Standardize pagination contract for compat-tagged routes.
+3. Keep legacy shims time-boxed and remove once clients have migrated.

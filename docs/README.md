@@ -21,6 +21,7 @@ This index links the core Athena documentation by area.
 - [OpenAPI Index](../api/README.md)
 - [API Examples](API_EXAMPLES.md)
 - [PeerTube Compatibility](PEERTUBE_COMPAT.md)
+- [PeerTube Migration Guide](PEERTUBE_MIGRATION.md)
 
 ## Deployment and Operations
 

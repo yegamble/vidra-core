@@ -4,11 +4,16 @@ info:
   description: Admin moderation features, instance configuration, and oEmbed support
   version: 1.0.0
 
+tags:
+  - name: PeerTube-Compat
+    description: Endpoints intended to match PeerTube-style resource contracts.
+
 paths:
   /api/v1/abuse-reports:
     post:
       tags:
         - Moderation
+        - PeerTube-Compat
       summary: Create an abuse report
       description: Report abusive content (video, comment, user, or channel)
       operationId: createAbuseReport
@@ -41,6 +46,7 @@ paths:
     get:
       tags:
         - Admin
+        - PeerTube-Compat
       summary: List abuse reports
       description: List all abuse reports (admin/moderator only)
       operationId: listAbuseReports
@@ -94,6 +100,7 @@ paths:
     get:
       tags:
         - Admin
+        - PeerTube-Compat
       summary: Get an abuse report
       description: Get a specific abuse report by ID (admin/moderator only)
       operationId: getAbuseReport
@@ -124,6 +131,7 @@ paths:
     put:
       tags:
         - Admin
+        - PeerTube-Compat
       summary: Update an abuse report
       description: Update the status of an abuse report (admin/moderator only)
       operationId: updateAbuseReport
@@ -151,6 +159,7 @@ paths:
     delete:
       tags:
         - Admin
+        - PeerTube-Compat
       summary: Delete an abuse report
       description: Delete an abuse report (admin only)
       operationId: deleteAbuseReport
@@ -173,6 +182,7 @@ paths:
     get:
       tags:
         - Admin
+        - PeerTube-Compat
       summary: List blocklist entries
       description: List all blocklist entries (admin/moderator only)
       operationId: listBlocklistEntries
@@ -218,6 +228,7 @@ paths:
     post:
       tags:
         - Admin
+        - PeerTube-Compat
       summary: Create blocklist entry
       description: Add a new entry to the blocklist (admin/moderator only)
       operationId: createBlocklistEntry
@@ -246,6 +257,7 @@ paths:
     put:
       tags:
         - Admin
+        - PeerTube-Compat
       summary: Update blocklist entry
       description: Update a blocklist entry (admin/moderator only)
       operationId: updateBlocklistEntry
@@ -280,6 +292,7 @@ paths:
     delete:
       tags:
         - Admin
+        - PeerTube-Compat
       summary: Delete blocklist entry
       description: Remove an entry from the blocklist (admin only)
       operationId: deleteBlocklistEntry
@@ -302,6 +315,7 @@ paths:
     get:
       tags:
         - Instance
+        - PeerTube-Compat
       summary: Get instance information
       description: Get public information about this instance
       operationId: getInstanceAbout
@@ -323,6 +337,7 @@ paths:
     get:
       tags:
         - Admin
+        - PeerTube-Compat
       summary: List instance configurations
       description: List all instance configuration values (admin only)
       operationId: listInstanceConfigs
@@ -347,6 +362,7 @@ paths:
     get:
       tags:
         - Admin
+        - PeerTube-Compat
       summary: Get instance configuration
       description: Get a specific instance configuration value (admin only)
       operationId: getInstanceConfig
@@ -376,6 +392,7 @@ paths:
     put:
       tags:
         - Admin
+        - PeerTube-Compat
       summary: Update instance configuration
       description: Update an instance configuration value (admin only)
       operationId: updateInstanceConfig
@@ -401,6 +418,7 @@ paths:
     get:
       tags:
         - oEmbed
+        - PeerTube-Compat
       summary: Get oEmbed data
       description: Get oEmbed data for a video URL
       operationId: oembed

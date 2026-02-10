@@ -10,6 +10,10 @@ servers:
   - url: https://api.example.com
     description: Production server
 
+tags:
+  - name: PeerTube-Compat
+    description: Endpoints intended to match PeerTube-style resource contracts.
+
 paths:
   /.well-known/atproto-did:
     get:
@@ -17,6 +21,7 @@ paths:
       description: Returns the instance's DID document for ATProto federation
       tags:
         - Federation
+        - PeerTube-Compat
       responses:
         '200':
           description: DID document retrieved successfully
@@ -35,6 +40,7 @@ paths:
       description: ActivityPub WebFinger endpoint to discover users and resources
       tags:
         - ActivityPub
+        - PeerTube-Compat
       parameters:
         - in: query
           name: resource
@@ -60,6 +66,7 @@ paths:
       description: Returns links to NodeInfo metadata
       tags:
         - ActivityPub
+        - PeerTube-Compat
       responses:
         '200':
           description: NodeInfo links
@@ -84,6 +91,7 @@ paths:
       description: Returns LRDD link for WebFinger
       tags:
         - ActivityPub
+        - PeerTube-Compat
       responses:
         '200':
           description: Host-Meta XML
@@ -98,6 +106,7 @@ paths:
       description: Returns server statistics and metadata
       tags:
         - ActivityPub
+        - PeerTube-Compat
       responses:
         '200':
           description: NodeInfo 2.0 response
@@ -112,6 +121,7 @@ paths:
       description: Returns the ActivityPub actor profile for a user
       tags:
         - ActivityPub
+        - PeerTube-Compat
       parameters:
         - in: path
           name: username
@@ -134,6 +144,7 @@ paths:
       description: Returns the user's outbox (activities they performed)
       tags:
         - ActivityPub
+        - PeerTube-Compat
       parameters:
         - in: path
           name: username
@@ -160,6 +171,7 @@ paths:
       description: Delivery endpoint for activities addressed to this user
       tags:
         - ActivityPub
+        - PeerTube-Compat
       parameters:
         - in: path
           name: username
@@ -179,6 +191,7 @@ paths:
       description: Retrieve items in the inbox (Not Implemented)
       tags:
         - ActivityPub
+        - PeerTube-Compat
       parameters:
         - in: path
           name: username
@@ -195,6 +208,7 @@ paths:
       description: Delivery endpoint for public activities (shared inbox)
       tags:
         - ActivityPub
+        - PeerTube-Compat
       requestBody:
         content:
           application/activity+json:
@@ -210,6 +224,7 @@ paths:
       description: Returns the collection of accounts following this user
       tags:
         - ActivityPub
+        - PeerTube-Compat
       parameters:
         - in: path
           name: username
@@ -236,6 +251,7 @@ paths:
       description: Returns the collection of accounts this user is following
       tags:
         - ActivityPub
+        - PeerTube-Compat
       parameters:
         - in: path
           name: username
@@ -262,6 +278,7 @@ paths:
       description: Returns the current federation status and health information
       tags:
         - Federation
+        - PeerTube-Compat
       security:
         - bearerAuth: []
       responses:
@@ -282,6 +299,7 @@ paths:
       description: Returns aggregated content from federated peers
       tags:
         - Federation
+        - PeerTube-Compat
       parameters:
         - in: query
           name: limit
@@ -321,6 +339,7 @@ paths:
       description: Returns the current federation configuration settings
       tags:
         - Federation
+        - PeerTube-Compat
         - Admin
       security:
         - bearerAuth: []
@@ -343,6 +362,7 @@ paths:
       description: Updates the federation configuration settings
       tags:
         - Federation
+        - PeerTube-Compat
         - Admin
       security:
         - bearerAuth: []
@@ -374,6 +394,7 @@ paths:
       description: Returns a list of federated peer instances
       tags:
         - Federation
+        - PeerTube-Compat
         - Admin
       security:
         - bearerAuth: []
@@ -410,6 +431,7 @@ paths:
       description: Adds a new federation peer instance
       tags:
         - Federation
+        - PeerTube-Compat
         - Admin
       security:
         - bearerAuth: []
@@ -452,6 +474,7 @@ paths:
       description: Returns details about a specific federation peer
       tags:
         - Federation
+        - PeerTube-Compat
         - Admin
       security:
         - bearerAuth: []
@@ -476,6 +499,7 @@ paths:
       description: Updates a federation peer's configuration
       tags:
         - Federation
+        - PeerTube-Compat
         - Admin
       security:
         - bearerAuth: []
@@ -508,6 +532,7 @@ paths:
       description: Removes a federation peer instance
       tags:
         - Federation
+        - PeerTube-Compat
         - Admin
       security:
         - bearerAuth: []
@@ -529,6 +554,7 @@ paths:
       description: Returns a list of active federation subscriptions
       tags:
         - Federation
+        - PeerTube-Compat
         - Admin
       security:
         - bearerAuth: []
@@ -566,6 +592,7 @@ paths:
       description: List all federation sync jobs with optional status filtering (admin only)
       tags:
         - Admin
+        - PeerTube-Compat
         - Federation
       security:
         - bearerAuth: []
@@ -625,6 +652,7 @@ paths:
       description: Retrieve detailed information about a specific federation job (admin only)
       tags:
         - Admin
+        - PeerTube-Compat
         - Federation
       security:
         - bearerAuth: []
@@ -656,6 +684,7 @@ paths:
       description: Retry a failed or pending federation job (admin only)
       tags:
         - Admin
+        - PeerTube-Compat
         - Federation
       security:
         - bearerAuth: []
@@ -703,6 +732,7 @@ paths:
       description: Delete a federation job from the queue (admin only)
       tags:
         - Admin
+        - PeerTube-Compat
         - Federation
       security:
         - bearerAuth: []
@@ -739,6 +769,7 @@ paths:
       description: List all tracked ATProto actors/feeds being synced (admin only)
       tags:
         - Admin
+        - PeerTube-Compat
         - Federation
       security:
         - bearerAuth: []
@@ -788,6 +819,7 @@ paths:
       description: Add a new ATProto actor/feed to track or update existing one (admin only)
       tags:
         - Admin
+        - PeerTube-Compat
         - Federation
       security:
         - bearerAuth: []
@@ -839,6 +871,7 @@ paths:
       description: Update specific fields of a tracked actor (admin only)
       tags:
         - Admin
+        - PeerTube-Compat
         - Federation
       security:
         - bearerAuth: []
@@ -898,6 +931,7 @@ paths:
       description: Stop tracking an ATProto actor and remove from sync queue (admin only)
       tags:
         - Admin
+        - PeerTube-Compat
         - Federation
       security:
         - bearerAuth: []

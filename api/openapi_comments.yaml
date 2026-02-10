@@ -4,12 +4,17 @@ info:
   version: 1.0.0
   description: API endpoints for video comments with threading and moderation support
 
+tags:
+  - name: PeerTube-Compat
+    description: Endpoints intended to match PeerTube-style resource contracts.
+
 paths:
   /api/v1/videos/{videoId}/comments:
     get:
       summary: Get comments for a video
       tags:
         - Comments
+        - PeerTube-Compat
       parameters:
         - in: path
           name: videoId
@@ -67,6 +72,7 @@ paths:
       summary: Create a comment
       tags:
         - Comments
+        - PeerTube-Compat
       security:
         - bearerAuth: []
       parameters:
@@ -114,6 +120,7 @@ paths:
       summary: Get a specific comment
       tags:
         - Comments
+        - PeerTube-Compat
       parameters:
         - in: path
           name: commentId
@@ -136,6 +143,7 @@ paths:
       summary: Update a comment
       tags:
         - Comments
+        - PeerTube-Compat
       security:
         - bearerAuth: []
       parameters:
@@ -176,6 +184,7 @@ paths:
       summary: Delete a comment (soft delete)
       tags:
         - Comments
+        - PeerTube-Compat
       security:
         - bearerAuth: []
       parameters:
@@ -201,6 +210,7 @@ paths:
       summary: Flag a comment for moderation
       tags:
         - Comments
+        - PeerTube-Compat
       security:
         - bearerAuth: []
       parameters:
@@ -255,6 +265,7 @@ paths:
       summary: Remove flag from a comment
       tags:
         - Comments
+        - PeerTube-Compat
       security:
         - bearerAuth: []
       parameters:
@@ -278,6 +289,7 @@ paths:
       summary: Moderate a comment (admin/owner only)
       tags:
         - Comments
+        - PeerTube-Compat
       security:
         - bearerAuth: []
       parameters:
