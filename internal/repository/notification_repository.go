@@ -24,13 +24,23 @@ func NewNotificationRepository(db *sqlx.DB) *NotificationRepository {
 // Create creates a new notification
 func (r *NotificationRepository) Create(ctx context.Context, notification *domain.Notification) error {
 	query := `
-		INSERT INTO notifications (user_id, type, title, message, data)
-		VALUES ($1, $2, $3, $4, $5)
+		INSERT INTO notifications (user_id, type, title, message, data, read, read_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
 		RETURNING id, created_at`
 
 	dataJSON, err := json.Marshal(notification.Data)
 	if err != nil {
 		return fmt.Errorf("marshaling notification data: %w", err)
+	}
+
+	var readAt any
+	if notification.Read {
+		if notification.ReadAt != nil {
+			readAt = *notification.ReadAt
+		} else {
+			now := time.Now()
+			readAt = now
+		}
 	}
 
 	err = r.db.QueryRowContext(
@@ -40,6 +50,8 @@ func (r *NotificationRepository) Create(ctx context.Context, notification *domai
 		notification.Title,
 		notification.Message,
 		dataJSON,
+		notification.Read,
+		readAt,
 	).Scan(&notification.ID, &notification.CreatedAt)
 
 	if err != nil {
@@ -62,8 +74,8 @@ func (r *NotificationRepository) CreateBatch(ctx context.Context, notifications 
 	defer func() { _ = tx.Rollback() }()
 
 	stmt, err := tx.PrepareContext(ctx, `
-		INSERT INTO notifications (user_id, type, title, message, data)
-		VALUES ($1, $2, $3, $4, $5)
+		INSERT INTO notifications (user_id, type, title, message, data, read, read_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
 		RETURNING id, created_at`)
 	if err != nil {
 		return fmt.Errorf("preparing statement: %w", err)
@@ -76,6 +88,16 @@ func (r *NotificationRepository) CreateBatch(ctx context.Context, notifications 
 			return fmt.Errorf("marshaling notification data: %w", err)
 		}
 
+		var readAt any
+		if notifications[i].Read {
+			if notifications[i].ReadAt != nil {
+				readAt = *notifications[i].ReadAt
+			} else {
+				now := time.Now()
+				readAt = now
+			}
+		}
+
 		err = stmt.QueryRowContext(
 			ctx,
 			notifications[i].UserID,
@@ -83,6 +105,8 @@ func (r *NotificationRepository) CreateBatch(ctx context.Context, notifications 
 			notifications[i].Title,
 			notifications[i].Message,
 			dataJSON,
+			notifications[i].Read,
+			readAt,
 		).Scan(&notifications[i].ID, &notifications[i].CreatedAt)
 
 		if err != nil {
@@ -97,6 +121,8 @@ func (r *NotificationRepository) CreateBatch(ctx context.Context, notifications 
 func (r *NotificationRepository) GetByID(ctx context.Context, id uuid.UUID) (*domain.Notification, error) {
 	var notification domain.Notification
 	var dataJSON []byte
+	var title sql.NullString
+	var message sql.NullString
 
 	query := `
 		SELECT id, user_id, type, title, message, data, read, created_at, read_at
@@ -107,8 +133,8 @@ func (r *NotificationRepository) GetByID(ctx context.Context, id uuid.UUID) (*do
 		&notification.ID,
 		&notification.UserID,
 		&notification.Type,
-		&notification.Title,
-		&notification.Message,
+		&title,
+		&message,
 		&dataJSON,
 		&notification.Read,
 		&notification.CreatedAt,
@@ -120,6 +146,12 @@ func (r *NotificationRepository) GetByID(ctx context.Context, id uuid.UUID) (*do
 	}
 	if err != nil {
 		return nil, fmt.Errorf("getting notification: %w", err)
+	}
+	if title.Valid {
+		notification.Title = title.String
+	}
+	if message.Valid {
+		notification.Message = message.String
 	}
 
 	if err := json.Unmarshal(dataJSON, &notification.Data); err != nil {
@@ -187,13 +219,15 @@ func (r *NotificationRepository) ListByUser(ctx context.Context, filter domain.N
 	for rows.Next() {
 		var notification domain.Notification
 		var dataJSON []byte
+		var title sql.NullString
+		var message sql.NullString
 
 		err := rows.Scan(
 			&notification.ID,
 			&notification.UserID,
 			&notification.Type,
-			&notification.Title,
-			&notification.Message,
+			&title,
+			&message,
 			&dataJSON,
 			&notification.Read,
 			&notification.CreatedAt,
@@ -201,6 +235,12 @@ func (r *NotificationRepository) ListByUser(ctx context.Context, filter domain.N
 		)
 		if err != nil {
 			return nil, fmt.Errorf("scanning notification: %w", err)
+		}
+		if title.Valid {
+			notification.Title = title.String
+		}
+		if message.Valid {
+			notification.Message = message.String
 		}
 
 		if err := json.Unmarshal(dataJSON, &notification.Data); err != nil {
@@ -315,7 +355,7 @@ func (r *NotificationRepository) GetStats(ctx context.Context, userID uuid.UUID)
 	query := `
 		SELECT
 			COUNT(*) as total,
-			SUM(CASE WHEN read = false THEN 1 ELSE 0 END) as unread
+			COALESCE(SUM(CASE WHEN read = false THEN 1 ELSE 0 END), 0) as unread
 		FROM notifications
 		WHERE user_id = $1`
 

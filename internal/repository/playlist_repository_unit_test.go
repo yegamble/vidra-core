@@ -384,9 +384,19 @@ func TestPlaylistRepository_Unit_AddRemoveItems(t *testing.T) {
 		defer cleanup()
 
 		pos := 7
+		mock.ExpectBegin()
+		mock.ExpectQuery(regexp.QuoteMeta(`SELECT EXISTS(SELECT 1 FROM playlist_items WHERE playlist_id = $1 AND video_id = $2)`)).
+			WithArgs(playlistID, videoID).
+			WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
+		mock.ExpectExec(regexp.QuoteMeta(`UPDATE playlist_items
+			 SET position = position + 1
+			 WHERE playlist_id = $1 AND position >= $2`)).
+			WithArgs(playlistID, pos).
+			WillReturnResult(sqlmock.NewResult(0, 0))
 		mock.ExpectExec(`(?s)INSERT INTO playlist_items`).
 			WithArgs(sqlmock.AnyArg(), playlistID, videoID, pos, sqlmock.AnyArg()).
 			WillReturnResult(sqlmock.NewResult(1, 1))
+		mock.ExpectCommit()
 
 		err := repo.AddItem(ctx, playlistID, videoID, &pos)
 		require.NoError(t, err)
@@ -397,12 +407,22 @@ func TestPlaylistRepository_Unit_AddRemoveItems(t *testing.T) {
 		repo, mock, cleanup := newPlaylistRepo(t)
 		defer cleanup()
 
+		mock.ExpectBegin()
+		mock.ExpectQuery(regexp.QuoteMeta(`SELECT EXISTS(SELECT 1 FROM playlist_items WHERE playlist_id = $1 AND video_id = $2)`)).
+			WithArgs(playlistID, videoID).
+			WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
 		mock.ExpectQuery(regexp.QuoteMeta(`SELECT COALESCE(MAX(position), -1) FROM playlist_items WHERE playlist_id = $1`)).
 			WithArgs(playlistID).
 			WillReturnRows(sqlmock.NewRows([]string{"max"}).AddRow(2))
+		mock.ExpectExec(regexp.QuoteMeta(`UPDATE playlist_items
+			 SET position = position + 1
+			 WHERE playlist_id = $1 AND position >= $2`)).
+			WithArgs(playlistID, 3).
+			WillReturnResult(sqlmock.NewResult(0, 0))
 		mock.ExpectExec(`(?s)INSERT INTO playlist_items`).
 			WithArgs(sqlmock.AnyArg(), playlistID, videoID, 3, sqlmock.AnyArg()).
 			WillReturnResult(sqlmock.NewResult(1, 1))
+		mock.ExpectCommit()
 
 		err := repo.AddItem(ctx, playlistID, videoID, nil)
 		require.NoError(t, err)
@@ -413,9 +433,14 @@ func TestPlaylistRepository_Unit_AddRemoveItems(t *testing.T) {
 		repo, mock, cleanup := newPlaylistRepo(t)
 		defer cleanup()
 
+		mock.ExpectBegin()
+		mock.ExpectQuery(regexp.QuoteMeta(`SELECT EXISTS(SELECT 1 FROM playlist_items WHERE playlist_id = $1 AND video_id = $2)`)).
+			WithArgs(playlistID, videoID).
+			WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
 		mock.ExpectQuery(regexp.QuoteMeta(`SELECT COALESCE(MAX(position), -1) FROM playlist_items WHERE playlist_id = $1`)).
 			WithArgs(playlistID).
 			WillReturnError(errors.New("lookup failed"))
+		mock.ExpectRollback()
 
 		err := repo.AddItem(ctx, playlistID, videoID, nil)
 		require.Error(t, err)
@@ -428,9 +453,19 @@ func TestPlaylistRepository_Unit_AddRemoveItems(t *testing.T) {
 		defer cleanup()
 
 		pos := 0
+		mock.ExpectBegin()
+		mock.ExpectQuery(regexp.QuoteMeta(`SELECT EXISTS(SELECT 1 FROM playlist_items WHERE playlist_id = $1 AND video_id = $2)`)).
+			WithArgs(playlistID, videoID).
+			WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
+		mock.ExpectExec(regexp.QuoteMeta(`UPDATE playlist_items
+			 SET position = position + 1
+			 WHERE playlist_id = $1 AND position >= $2`)).
+			WithArgs(playlistID, pos).
+			WillReturnResult(sqlmock.NewResult(0, 0))
 		mock.ExpectExec(`(?s)INSERT INTO playlist_items`).
 			WithArgs(sqlmock.AnyArg(), playlistID, videoID, pos, sqlmock.AnyArg()).
 			WillReturnError(errors.New("insert failed"))
+		mock.ExpectRollback()
 
 		err := repo.AddItem(ctx, playlistID, videoID, &pos)
 		require.Error(t, err)

@@ -121,15 +121,11 @@ func (h *CommentHandlers) GetComments(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	response := map[string]interface{}{
-		"data": comments,
-		"pagination": map[string]interface{}{
-			"limit":  limit,
-			"offset": offset,
-		},
-	}
-
-	shared.WriteJSON(w, http.StatusOK, response)
+	shared.WriteJSONWithMeta(w, http.StatusOK, comments, &shared.Meta{
+		Total:  int64(len(comments)),
+		Limit:  limit,
+		Offset: offset,
+	})
 }
 
 // GetComment handles GET /api/v1/comments/{commentId}

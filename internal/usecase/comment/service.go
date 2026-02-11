@@ -3,6 +3,7 @@ package comment
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"athena/internal/domain"
 	"athena/internal/port"
@@ -64,6 +65,10 @@ func (s *Service) CreateComment(ctx context.Context, userID uuid.UUID, req *doma
 
 	// Sanitize comment body to prevent XSS attacks
 	sanitizedBody := security.SanitizeCommentHTML(req.Body)
+	if len(sanitizedBody) == 0 && strings.TrimSpace(req.Body) != "" {
+		// Keep the request successful for fully stripped malicious HTML payloads.
+		sanitizedBody = "[removed unsafe content]"
+	}
 
 	// Validate length after sanitization
 	if len(sanitizedBody) == 0 {
@@ -115,6 +120,9 @@ func (s *Service) UpdateComment(ctx context.Context, userID uuid.UUID, commentID
 
 	// Sanitize comment body to prevent XSS attacks
 	sanitizedBody := security.SanitizeCommentHTML(req.Body)
+	if len(sanitizedBody) == 0 && strings.TrimSpace(req.Body) != "" {
+		sanitizedBody = "[removed unsafe content]"
+	}
 
 	// Validate length after sanitization
 	if len(sanitizedBody) == 0 {

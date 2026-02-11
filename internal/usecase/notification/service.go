@@ -37,8 +37,12 @@ func (s *service) CreateVideoNotificationForSubscribers(ctx context.Context, vid
 	if video.Status != domain.StatusCompleted || video.Privacy != domain.PrivacyPublic {
 		return nil
 	}
+	channelID := video.UserID
+	if video.ChannelID != uuid.Nil {
+		channelID = video.ChannelID.String()
+	}
 	// Get all subscribers for this channel
-	subscribers, err := s.subscriptionRepo.GetSubscribers(ctx, video.UserID)
+	subscribers, err := s.subscriptionRepo.GetSubscribers(ctx, channelID)
 	if err != nil {
 		return fmt.Errorf("failed to get subscribers: %w", err)
 	}
@@ -63,7 +67,7 @@ func (s *service) CreateVideoNotificationForSubscribers(ctx context.Context, vid
 			Message: fmt.Sprintf("%s uploaded: %s", channelName, video.Title),
 			Data: map[string]interface{}{
 				"video_id":      video.ID,
-				"channel_id":    video.UserID,
+				"channel_id":    channelID,
 				"channel_name":  channelName,
 				"video_title":   video.Title,
 				"thumbnail_cid": video.ThumbnailCID,

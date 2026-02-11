@@ -9,6 +9,7 @@ import (
 	"athena/internal/domain"
 	"athena/internal/usecase"
 
+	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 )
 
@@ -58,11 +59,12 @@ func (r *userRepository) createWithExecutor(ctx context.Context, exec Executor, 
               AND table_name = 'channels'
         )`
 	if err := exec.QueryRowContext(ctx, q).Scan(&channelsExist); err == nil && channelsExist {
+		channelID := uuid.NewString()
 		_, err = exec.ExecContext(ctx, `
-                INSERT INTO channels (account_id, handle, display_name, description)
-                SELECT $1::uuid, $2::text, COALESCE(NULLIF($3::text, ''), $2::text), $4::text
-                WHERE NOT EXISTS (SELECT 1 FROM channels WHERE account_id = $1::uuid)
-            `, user.ID, user.Username, user.DisplayName, user.Bio)
+                INSERT INTO channels (id, account_id, handle, display_name, description)
+                SELECT $1::uuid, $2::uuid, $3::text, COALESCE(NULLIF($4::text, ''), $3::text), $5::text
+                WHERE NOT EXISTS (SELECT 1 FROM channels WHERE account_id = $2::uuid)
+            `, channelID, user.ID, user.Username, user.DisplayName, user.Bio)
 
 		if err != nil {
 			return fmt.Errorf("failed to create default channel: %w", err)

@@ -121,7 +121,7 @@ func TestUserRepository_Unit_Create(t *testing.T) {
         )`)).
 			WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
 		mock.ExpectExec(`(?s)INSERT INTO channels`).
-			WithArgs(baseUser.ID, baseUser.Username, baseUser.DisplayName, baseUser.Bio).
+			WithArgs(sqlmock.AnyArg(), baseUser.ID, baseUser.Username, baseUser.DisplayName, baseUser.Bio).
 			WillReturnResult(sqlmock.NewResult(1, 1))
 		mock.ExpectCommit()
 

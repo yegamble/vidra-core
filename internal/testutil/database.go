@@ -1000,11 +1000,21 @@ func cleanupTestDB(t *testing.T, testDB *TestDB) {
 func (tdb *TestDB) TruncateTables(t *testing.T, tables ...string) {
 	t.Helper()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
 	for _, table := range tables {
-		if _, err := tdb.DB.ExecContext(ctx, fmt.Sprintf("TRUNCATE TABLE %s CASCADE", table)); err != nil {
+		stmt := fmt.Sprintf("TRUNCATE TABLE %s CASCADE", table)
+
+		// Use a fresh timeout per table so one slow truncate does not poison the rest.
+		var err error
+		for attempt := 0; attempt < 2; attempt++ {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			_, err = tdb.DB.ExecContext(ctx, stmt)
+			cancel()
+			if err == nil {
+				break
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+		if err != nil {
 			t.Fatalf("Failed to truncate table %s: %v", table, err)
 		}
 	}

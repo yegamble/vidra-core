@@ -222,31 +222,65 @@ func (r *playlistRepository) List(ctx context.Context, opts domain.PlaylistListO
 // AddItem adds a video to a playlist
 func (r *playlistRepository) AddItem(ctx context.Context, playlistID, videoID uuid.UUID, position *int) error {
 	itemID := uuid.New()
+	tx, err := r.db.BeginTxx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	// Idempotent behavior: if video is already in playlist, do nothing.
+	var exists bool
+	if err := tx.GetContext(
+		ctx,
+		&exists,
+		`SELECT EXISTS(SELECT 1 FROM playlist_items WHERE playlist_id = $1 AND video_id = $2)`,
+		playlistID,
+		videoID,
+	); err != nil {
+		return fmt.Errorf("failed to check existing playlist item: %w", err)
+	}
+	if exists {
+		return tx.Commit()
+	}
 
 	// If position is not specified, append to end
+	insertPosition := 0
 	if position == nil {
 		var maxPos int
-		err := r.db.GetContext(ctx, &maxPos,
+		if err := tx.GetContext(ctx, &maxPos,
 			`SELECT COALESCE(MAX(position), -1) FROM playlist_items WHERE playlist_id = $1`,
-			playlistID)
-		if err != nil {
+			playlistID); err != nil {
 			return fmt.Errorf("failed to get max position: %w", err)
 		}
-		newPos := maxPos + 1
-		position = &newPos
+		insertPosition = maxPos + 1
+	} else {
+		insertPosition = *position
+		if insertPosition < 0 {
+			insertPosition = 0
+		}
+	}
+
+	// Make room for explicit/target position to satisfy unique (playlist_id, position).
+	if _, err := tx.ExecContext(
+		ctx,
+		`UPDATE playlist_items
+		 SET position = position + 1
+		 WHERE playlist_id = $1 AND position >= $2`,
+		playlistID,
+		insertPosition,
+	); err != nil {
+		return fmt.Errorf("failed to shift playlist positions: %w", err)
 	}
 
 	query := `
 		INSERT INTO playlist_items (id, playlist_id, video_id, position, added_at)
-		VALUES ($1, $2, $3, $4, $5)
-		ON CONFLICT (playlist_id, video_id) DO NOTHING`
-
-	_, err := r.db.ExecContext(ctx, query, itemID, playlistID, videoID, *position, time.Now())
+		VALUES ($1, $2, $3, $4, $5)`
+	_, err = tx.ExecContext(ctx, query, itemID, playlistID, videoID, insertPosition, time.Now())
 	if err != nil {
 		return fmt.Errorf("failed to add item to playlist: %w", err)
 	}
 
-	return nil
+	return tx.Commit()
 }
 
 // RemoveItem removes a video from a playlist
@@ -342,7 +376,7 @@ func (r *playlistRepository) ReorderItem(ctx context.Context, playlistID, itemID
 
 	// Move target item out of the constrained range first to avoid
 	// transient (playlist_id, position) unique conflicts while shifting.
-	const tempPosition = int(^uint(0) >> 1) // max int
+	const tempPosition = 2147483647 // max PostgreSQL INTEGER
 	_, err = tx.ExecContext(ctx,
 		`UPDATE playlist_items SET position = $1 WHERE id = $2`,
 		tempPosition, itemID)

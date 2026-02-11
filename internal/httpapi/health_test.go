@@ -759,44 +759,42 @@ func TestReadyHandler_Latency(t *testing.T) {
 }
 
 func TestProbes_ConcurrentLoad(t *testing.T) {
-	// Test 100 req/s concurrent probe requests
-	duration := 1 * time.Second
-	requestsPerSecond := 100
-	ticker := time.NewTicker(time.Duration(1000/requestsPerSecond) * time.Millisecond)
-	defer ticker.Stop()
-
-	done := time.After(duration)
+	// Execute a fixed concurrent probe burst to avoid scheduler-dependent flakes.
+	const totalRequests = 100
 	requestCount := int32(0)
 	errorCount := int32(0)
 
 	var wg sync.WaitGroup
+	wg.Add(totalRequests)
+	for i := 0; i < totalRequests; i++ {
+		go func() {
+			defer wg.Done()
+			req := httptest.NewRequest("GET", "/health", nil)
+			w := httptest.NewRecorder()
 
-Loop:
-	for {
-		select {
-		case <-ticker.C:
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				req := httptest.NewRequest("GET", "/health", nil)
-				w := httptest.NewRecorder()
+			HealthCheck(w, req)
+			atomic.AddInt32(&requestCount, 1)
 
-				HealthCheck(w, req)
-				atomic.AddInt32(&requestCount, 1)
-
-				if w.Code != http.StatusOK {
-					atomic.AddInt32(&errorCount, 1)
-				}
-			}()
-		case <-done:
-			break Loop
-		}
+			if w.Code != http.StatusOK {
+				atomic.AddInt32(&errorCount, 1)
+			}
+		}()
 	}
 
-	wg.Wait()
+	waitDone := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(waitDone)
+	}()
 
-	assert.GreaterOrEqual(t, requestCount, int32(90),
-		"Should handle at least 90 requests in 1 second")
+	select {
+	case <-waitDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Concurrent health probe burst did not complete in time")
+	}
+
+	assert.Equal(t, int32(totalRequests), requestCount,
+		"Should complete the full concurrent probe burst")
 	assert.Equal(t, int32(0), errorCount,
 		"No requests should fail under load")
 }

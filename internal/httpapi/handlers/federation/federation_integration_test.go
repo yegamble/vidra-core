@@ -88,11 +88,14 @@ func TestFederationTimeline_Integration(t *testing.T) {
 			t.Errorf("Expected status %d, got %d", http.StatusOK, w.Code)
 		}
 
-		var resp domain.FederatedTimeline
-		err := json.Unmarshal(w.Body.Bytes(), &resp)
+		var envelope struct {
+			Data domain.FederatedTimeline `json:"data"`
+		}
+		err := json.Unmarshal(w.Body.Bytes(), &envelope)
 		if err != nil {
 			t.Fatalf("Failed to parse response: %v", err)
 		}
+		resp := envelope.Data
 
 		if resp.Total < 3 {
 			t.Errorf("Expected at least 3 posts, got %d", resp.Total)
@@ -116,11 +119,14 @@ func TestFederationTimeline_Integration(t *testing.T) {
 			t.Errorf("Expected status %d, got %d", http.StatusOK, w.Code)
 		}
 
-		var resp domain.FederatedTimeline
-		err := json.Unmarshal(w.Body.Bytes(), &resp)
+		var envelope struct {
+			Data domain.FederatedTimeline `json:"data"`
+		}
+		err := json.Unmarshal(w.Body.Bytes(), &envelope)
 		if err != nil {
 			t.Fatalf("Failed to parse response: %v", err)
 		}
+		resp := envelope.Data
 
 		if len(resp.Data) > 2 {
 			t.Errorf("Expected max 2 posts in page, got %d", len(resp.Data))
@@ -141,11 +147,14 @@ func TestFederationTimeline_Integration(t *testing.T) {
 			t.Errorf("Expected status %d, got %d", http.StatusOK, w.Code)
 		}
 
-		var resp domain.FederatedTimeline
-		err := json.Unmarshal(w.Body.Bytes(), &resp)
+		var envelope struct {
+			Data domain.FederatedTimeline `json:"data"`
+		}
+		err := json.Unmarshal(w.Body.Bytes(), &envelope)
 		if err != nil {
 			t.Fatalf("Failed to parse response: %v", err)
 		}
+		resp := envelope.Data
 
 		if resp.Page != 2 {
 			t.Errorf("Expected page 2, got %d", resp.Page)
@@ -159,8 +168,11 @@ func TestFederationTimeline_Integration(t *testing.T) {
 
 		r.ServeHTTP(w, req)
 
-		var resp domain.FederatedTimeline
-		json.Unmarshal(w.Body.Bytes(), &resp)
+		var envelope struct {
+			Data domain.FederatedTimeline `json:"data"`
+		}
+		_ = json.Unmarshal(w.Body.Bytes(), &envelope)
+		resp := envelope.Data
 
 		if resp.PageSize != 100 {
 			t.Errorf("Expected pageSize capped at 100, got %d", resp.PageSize)

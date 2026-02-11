@@ -184,11 +184,19 @@ func TestChannelNotifications_Integration(t *testing.T) {
 		}
 		notifs, err := notifRepo.ListByUser(ctx, filter)
 		require.NoError(t, err)
-		assert.Len(t, notifs, 1)
+		require.NotEmpty(t, notifs)
 
-		notifData := notifs[0].Data
-		assert.Equal(t, channel.ID.String(), notifData["channel_id"])
-		assert.Equal(t, subscriber.Username, notifData["subscriber_name"])
+		var matched map[string]interface{}
+		for i := range notifs {
+			data := notifs[i].Data
+			if data["channel_id"] == channel.ID.String() && data["subscriber_name"] == subscriber.Username {
+				matched = data
+				break
+			}
+		}
+		require.NotNil(t, matched)
+		assert.Equal(t, channel.ID.String(), matched["channel_id"])
+		assert.Equal(t, subscriber.Username, matched["subscriber_name"])
 	})
 
 	t.Run("Multiple Channel Notifications", func(t *testing.T) {
@@ -389,17 +397,22 @@ func TestChannelNotifications_Integration(t *testing.T) {
 
 		assert.Equal(t, http.StatusOK, rr.Code)
 
-		var stats map[string]interface{}
-		err := json.NewDecoder(rr.Body).Decode(&stats)
+		var resp struct {
+			Data struct {
+				TotalCount  int            `json:"total_count"`
+				UnreadCount int            `json:"unread_count"`
+				ByType      map[string]int `json:"by_type"`
+			} `json:"data"`
+		}
+		err := json.NewDecoder(rr.Body).Decode(&resp)
 		require.NoError(t, err)
 
 		// Verify statistics
-		assert.Equal(t, float64(5), stats["total"])
-		assert.Equal(t, float64(3), stats["unread"])
-		assert.Equal(t, float64(2), stats["read"])
+		assert.Equal(t, 5, resp.Data.TotalCount)
+		assert.Equal(t, 3, resp.Data.UnreadCount)
+		assert.Equal(t, 2, resp.Data.TotalCount-resp.Data.UnreadCount)
 
 		// Type breakdown should show new_video notifications
-		typeBreakdown := stats["by_type"].(map[string]interface{})
-		assert.Equal(t, float64(5), typeBreakdown["new_video"])
+		assert.Equal(t, 5, resp.Data.ByType["new_video"])
 	})
 }

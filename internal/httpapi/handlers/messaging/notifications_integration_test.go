@@ -65,6 +65,7 @@ func setupTestNotificationEnvironment(t *testing.T) (*sqlx.DB, *chi.Mux, *config
 		_, _ = db.Exec("DELETE FROM notifications")
 		_, _ = db.Exec("DELETE FROM subscriptions")
 		_, _ = db.Exec("DELETE FROM videos")
+		_, _ = db.Exec("DELETE FROM channels")
 		_, _ = db.Exec("DELETE FROM users")
 		db.Close()
 	})
@@ -82,6 +83,7 @@ func TestNotificationWorkflow(t *testing.T) {
 	userRepo := repository.NewUserRepository(db)
 	videoRepo := repository.NewVideoRepository(db)
 	subRepo := repository.NewSubscriptionRepository(db)
+	channelRepo := repository.NewChannelRepository(db)
 	notificationRepo := repository.NewNotificationRepository(db)
 
 	// Initialize services
@@ -129,10 +131,15 @@ func TestNotificationWorkflow(t *testing.T) {
 	err = userRepo.Create(ctx, subscriber, passwordHash)
 	require.NoError(t, err)
 
-	// Create subscription
 	subscriberUUID, _ := uuid.Parse(subscriber.ID)
+	channelAccountUUID, _ := uuid.Parse(channel.ID)
+	channelRecords, err := channelRepo.GetChannelsByAccountID(ctx, channelAccountUUID)
+	require.NoError(t, err)
+	require.NotEmpty(t, channelRecords)
+	channelID := channelRecords[0].ID
 
-	err = subRepo.Subscribe(ctx, subscriber.ID, channel.ID)
+	// Create subscription
+	err = subRepo.SubscribeToChannel(ctx, subscriberUUID, channelID)
 	require.NoError(t, err)
 
 	t.Run("Upload video and notify subscriber", func(t *testing.T) {
@@ -145,6 +152,7 @@ func TestNotificationWorkflow(t *testing.T) {
 			Privacy:       domain.PrivacyPublic,
 			Status:        domain.StatusCompleted,
 			UserID:        channel.ID,
+			ChannelID:     channelID,
 			ThumbnailCID:  "QmTestThumbnailCID",
 			FileSize:      1024 * 1024, // 1MB
 			ProcessedCIDs: map[string]string{},
@@ -177,7 +185,7 @@ func TestNotificationWorkflow(t *testing.T) {
 
 		// Verify notification data
 		assert.Equal(t, video.ID, notification.Data["video_id"])
-		assert.Equal(t, channel.ID, notification.Data["channel_id"])
+		assert.Equal(t, channelID.String(), notification.Data["channel_id"])
 		assert.Equal(t, channel.Username, notification.Data["channel_name"])
 		assert.Equal(t, video.Title, notification.Data["video_title"])
 		assert.Equal(t, video.ThumbnailCID, notification.Data["thumbnail_cid"])
@@ -192,10 +200,12 @@ func TestNotificationWorkflow(t *testing.T) {
 
 		assert.Equal(t, http.StatusOK, w.Code)
 
-		var apiNotifications []domain.Notification
+		var apiNotifications struct {
+			Data []domain.Notification `json:"data"`
+		}
 		err = json.Unmarshal(w.Body.Bytes(), &apiNotifications)
 		require.NoError(t, err)
-		assert.Len(t, apiNotifications, 1)
+		assert.Len(t, apiNotifications.Data, 1)
 
 		// Test unread count
 		req = httptest.NewRequest("GET", "/api/v1/notifications/unread-count", nil)
@@ -206,10 +216,12 @@ func TestNotificationWorkflow(t *testing.T) {
 
 		assert.Equal(t, http.StatusOK, w.Code)
 
-		var unreadResponse map[string]int
+		var unreadResponse struct {
+			Data map[string]int `json:"data"`
+		}
 		err = json.Unmarshal(w.Body.Bytes(), &unreadResponse)
 		require.NoError(t, err)
-		assert.Equal(t, 1, unreadResponse["unread_count"])
+		assert.Equal(t, 1, unreadResponse.Data["unread_count"])
 
 		// Mark notification as read
 		req = httptest.NewRequest("PUT", fmt.Sprintf("/api/v1/notifications/%s/read", notification.ID), nil)
@@ -245,6 +257,7 @@ func TestNotificationWorkflow(t *testing.T) {
 			Privacy:       domain.PrivacyPrivate, // Private
 			Status:        domain.StatusCompleted,
 			UserID:        channel.ID,
+			ChannelID:     channelID,
 			ThumbnailCID:  "QmPrivateThumbnailCID",
 			FileSize:      1024 * 1024,
 			ProcessedCIDs: map[string]string{},
@@ -284,6 +297,7 @@ func TestNotificationWorkflow(t *testing.T) {
 			Privacy:       domain.PrivacyPublic,
 			Status:        domain.StatusProcessing, // Still processing
 			UserID:        channel.ID,
+			ChannelID:     channelID,
 			ThumbnailCID:  "QmProcessingThumbnailCID",
 			FileSize:      1024 * 1024,
 			ProcessedCIDs: map[string]string{},
@@ -321,6 +335,7 @@ func TestMultipleSubscribersNotification(t *testing.T) {
 	userRepo := repository.NewUserRepository(db)
 	videoRepo := repository.NewVideoRepository(db)
 	subRepo := repository.NewSubscriptionRepository(db)
+	channelRepo := repository.NewChannelRepository(db)
 	notificationRepo := repository.NewNotificationRepository(db)
 
 	// Initialize services
@@ -342,6 +357,11 @@ func TestMultipleSubscribersNotification(t *testing.T) {
 	passwordHash := "$2a$10$abcdefghijklmnopqrstuvwx" // bcrypt hash
 	err := userRepo.Create(ctx, channel, passwordHash)
 	require.NoError(t, err)
+	channelAccountUUID, _ := uuid.Parse(channel.ID)
+	channelRecords, err := channelRepo.GetChannelsByAccountID(ctx, channelAccountUUID)
+	require.NoError(t, err)
+	require.NotEmpty(t, channelRecords)
+	channelID := channelRecords[0].ID
 
 	// Create multiple subscribers
 	subscriberIDs := []uuid.UUID{}
@@ -363,7 +383,7 @@ func TestMultipleSubscribersNotification(t *testing.T) {
 		subscriberIDs = append(subscriberIDs, subUUID)
 
 		// Subscribe to channel
-		err = subRepo.Subscribe(ctx, subscriber.ID, channel.ID)
+		err = subRepo.SubscribeToChannel(ctx, subUUID, channelID)
 		require.NoError(t, err)
 	}
 
@@ -376,6 +396,7 @@ func TestMultipleSubscribersNotification(t *testing.T) {
 		Privacy:       domain.PrivacyPublic,
 		Status:        domain.StatusCompleted,
 		UserID:        channel.ID,
+		ChannelID:     channelID,
 		ThumbnailCID:  "QmPopularThumbnailCID",
 		FileSize:      1024 * 1024,
 		ProcessedCIDs: map[string]string{},
@@ -404,6 +425,7 @@ func TestMultipleSubscribersNotification(t *testing.T) {
 		notification := notifications[0]
 		assert.Equal(t, domain.NotificationNewVideo, notification.Type)
 		assert.Equal(t, video.ID, notification.Data["video_id"])
+		assert.Equal(t, channelID.String(), notification.Data["channel_id"])
 		assert.False(t, notification.Read)
 	}
 }

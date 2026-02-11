@@ -14,14 +14,37 @@ import (
 	"athena/internal/domain"
 	"athena/internal/middleware"
 	"athena/internal/usecase"
+
+	"github.com/google/uuid"
 )
 
 var validate = validator.New()
 
+func getUserID(ctx context.Context) string {
+	if raw := ctx.Value(middleware.UserIDKey); raw != nil {
+		switch v := raw.(type) {
+		case string:
+			if v != "" {
+				return v
+			}
+		case uuid.UUID:
+			if v != uuid.Nil {
+				return v.String()
+			}
+		}
+	}
+
+	// Backward-compatible fallback for tests or legacy middleware that used plain string keys.
+	if v, ok := ctx.Value("userID").(string); ok && v != "" {
+		return v
+	}
+	return ""
+}
+
 // SendMessageHandler handles sending a new message
 func SendMessageHandler(messageService *usecase.MessageService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		userID, _ := r.Context().Value(middleware.UserIDKey).(string)
+		userID := getUserID(r.Context())
 		if userID == "" {
 			shared.WriteError(w, http.StatusUnauthorized, domain.NewDomainError("UNAUTHORIZED", "Missing or invalid authentication"))
 			return
@@ -52,7 +75,7 @@ func SendMessageHandler(messageService *usecase.MessageService) http.HandlerFunc
 // GetMessagesHandler handles retrieving messages in a conversation
 func GetMessagesHandler(messageService *usecase.MessageService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		userID, _ := r.Context().Value(middleware.UserIDKey).(string)
+		userID := getUserID(r.Context())
 		if userID == "" {
 			shared.WriteError(w, http.StatusUnauthorized, domain.NewDomainError("UNAUTHORIZED", "Missing or invalid authentication"))
 			return
@@ -93,7 +116,7 @@ func GetMessagesHandler(messageService *usecase.MessageService) http.HandlerFunc
 
 // messageActionHandler is a helper to reduce duplication in message handlers
 func messageActionHandler(w http.ResponseWriter, r *http.Request, action func(ctx context.Context, userID, messageID string) error, errorCode string) {
-	userID, _ := r.Context().Value(middleware.UserIDKey).(string)
+	userID := getUserID(r.Context())
 	if userID == "" {
 		shared.WriteError(w, http.StatusUnauthorized, domain.NewDomainError("UNAUTHORIZED", "Missing or invalid authentication"))
 		return
@@ -144,7 +167,7 @@ func DeleteMessageHandler(messageService *usecase.MessageService) http.HandlerFu
 // GetConversationsHandler handles retrieving user's conversations
 func GetConversationsHandler(messageService *usecase.MessageService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		userID, _ := r.Context().Value(middleware.UserIDKey).(string)
+		userID := getUserID(r.Context())
 		if userID == "" {
 			shared.WriteError(w, http.StatusUnauthorized, domain.NewDomainError("UNAUTHORIZED", "Missing or invalid authentication"))
 			return
@@ -177,7 +200,7 @@ func GetConversationsHandler(messageService *usecase.MessageService) http.Handle
 // GetUnreadCountHandler handles retrieving the user's unread message count
 func GetUnreadCountHandler(messageService *usecase.MessageService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		userID, _ := r.Context().Value(middleware.UserIDKey).(string)
+		userID := getUserID(r.Context())
 		if userID == "" {
 			shared.WriteError(w, http.StatusUnauthorized, domain.NewDomainError("UNAUTHORIZED", "Missing or invalid authentication"))
 			return

@@ -28,7 +28,7 @@ func (r *FederationRepository) EnqueueJob(ctx context.Context, jobType string, p
 	id := uuid.New().String()
 	q := `INSERT INTO federation_jobs (id, job_type, payload, status, next_attempt_at)
           VALUES ($1, $2, $3, 'pending', $4)`
-	if _, err := r.db.ExecContext(ctx, q, id, jobType, b, runAt); err != nil {
+	if _, err := r.db.ExecContext(ctx, q, id, jobType, string(b), runAt); err != nil {
 		return "", fmt.Errorf("enqueue job: %w", err)
 	}
 	return id, nil
@@ -92,7 +92,7 @@ func (r *FederationRepository) RescheduleJob(ctx context.Context, id string, las
 // Posts
 func (r *FederationRepository) UpsertPost(ctx context.Context, p *domain.FederatedPost) error {
 	q := `INSERT INTO federated_posts (actor_did, actor_handle, uri, cid, text, created_at, indexed_at, embed_type, embed_url, embed_title, embed_description, labels, raw)
-          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb,$13::jsonb)
           ON CONFLICT (uri) DO UPDATE SET
             actor_did=EXCLUDED.actor_did,
             actor_handle=EXCLUDED.actor_handle,
@@ -107,10 +107,27 @@ func (r *FederationRepository) UpsertPost(ctx context.Context, p *domain.Federat
             labels=EXCLUDED.labels,
             raw=EXCLUDED.raw,
             updated_at=CURRENT_TIMESTAMP`
+	labels := jsonRawToDBValue(p.Labels)
+	raw := jsonRawToDBValue(p.Raw)
 	_, err := r.db.ExecContext(ctx, q,
-		p.ActorDID, p.ActorHandle, p.URI, p.CID, p.Text, p.CreatedAt, p.IndexedAt, p.EmbedType, p.EmbedURL, p.EmbedTitle, p.EmbedDescription, p.Labels, p.Raw,
+		p.ActorDID, p.ActorHandle, p.URI, p.CID, p.Text, p.CreatedAt, p.IndexedAt, p.EmbedType, p.EmbedURL, p.EmbedTitle, p.EmbedDescription, labels, raw,
 	)
 	return err
+}
+
+func jsonRawToDBValue(raw json.RawMessage) any {
+	if len(raw) == 0 {
+		return nil
+	}
+	if json.Valid(raw) {
+		return string(raw)
+	}
+	// Preserve unexpected payloads as JSON strings instead of failing inserts.
+	b, err := json.Marshal(string(raw))
+	if err != nil {
+		return nil
+	}
+	return string(b)
 }
 
 func (r *FederationRepository) ListTimeline(ctx context.Context, limit, offset int) ([]domain.FederatedPost, int, error) {
@@ -124,7 +141,10 @@ func (r *FederationRepository) ListTimeline(ctx context.Context, limit, offset i
 	if err := r.db.GetContext(ctx, &total, `SELECT COUNT(*) FROM federated_posts`); err != nil {
 		return nil, 0, err
 	}
-	rows, err := r.db.QueryxContext(ctx, `SELECT id, actor_did, actor_handle, uri, cid, text, created_at, indexed_at, embed_type, embed_url, embed_title, embed_description, labels, raw, inserted_at, updated_at
+	rows, err := r.db.QueryxContext(ctx, `SELECT id, actor_did, actor_handle, uri, cid, text, created_at, indexed_at, embed_type, embed_url, embed_title, embed_description,
+                                          COALESCE(labels, '[]'::jsonb) AS labels,
+                                          COALESCE(raw, '{}'::jsonb) AS raw,
+                                          inserted_at, updated_at
                                           FROM federated_posts
                                           ORDER BY COALESCE(indexed_at, inserted_at) DESC
                                           LIMIT $1 OFFSET $2`, limit, offset)
@@ -381,7 +401,9 @@ func (r *FederationRepository) GetPostByContentHash(ctx context.Context, hash st
 	var post domain.FederatedPost
 	err := r.db.GetContext(ctx, &post, `
 		SELECT id, actor_did, actor_handle, uri, cid, text, created_at, indexed_at,
-		       embed_type, embed_url, embed_title, embed_description, labels, raw,
+		       embed_type, embed_url, embed_title, embed_description,
+		       COALESCE(labels, '[]'::jsonb) AS labels,
+		       COALESCE(raw, '{}'::jsonb) AS raw,
 		       inserted_at, updated_at, content_hash, duplicate_of, is_canonical, version_number
 		FROM federated_posts
 		WHERE content_hash = $1 AND is_canonical = true
@@ -414,7 +436,9 @@ func (r *FederationRepository) UpdatePostDuplicateOf(ctx context.Context, id str
 func (r *FederationRepository) GetPostDuplicates(ctx context.Context, postID string) ([]domain.FederatedPost, error) {
 	rows, err := r.db.QueryxContext(ctx, `
 		SELECT id, actor_did, actor_handle, uri, cid, text, created_at, indexed_at,
-		       embed_type, embed_url, embed_title, embed_description, labels, raw,
+		       embed_type, embed_url, embed_title, embed_description,
+		       COALESCE(labels, '[]'::jsonb) AS labels,
+		       COALESCE(raw, '{}'::jsonb) AS raw,
 		       inserted_at, updated_at, content_hash, duplicate_of, is_canonical, version_number
 		FROM federated_posts
 		WHERE duplicate_of = $1
@@ -440,7 +464,9 @@ func (r *FederationRepository) GetPost(ctx context.Context, id string) (*domain.
 	var post domain.FederatedPost
 	err := r.db.GetContext(ctx, &post, `
 		SELECT id, actor_did, actor_handle, uri, cid, text, created_at, indexed_at,
-		       embed_type, embed_url, embed_title, embed_description, labels, raw,
+		       embed_type, embed_url, embed_title, embed_description,
+		       COALESCE(labels, '[]'::jsonb) AS labels,
+		       COALESCE(raw, '{}'::jsonb) AS raw,
 		       inserted_at, updated_at, content_hash, duplicate_of, is_canonical, version_number
 		FROM federated_posts
 		WHERE id = $1`, id)

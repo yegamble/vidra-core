@@ -16,15 +16,12 @@ import (
 
 // SetupTestDBWithMigration creates a test database connection
 func SetupTestDBWithMigration(t *testing.T) *sqlx.DB {
-	// Get test database URL from environment or use default
-	dbURL := os.Getenv("TEST_DATABASE_URL")
-	if dbURL == "" {
-		// Default to local test database
-		dbURL = "postgres://postgres:postgres@localhost:5432/athena_test?sslmode=disable"
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+		return nil
 	}
 
-	// Connect to database
-	db, err := sqlx.Connect("postgres", dbURL)
+	db, err := setupPostgres()
 	if err != nil {
 		t.Skipf("Skipping test: Postgres not available (%v)", err)
 		return nil
@@ -71,38 +68,22 @@ func CleanupTestDB(t *testing.T, db *sqlx.DB) {
 
 // RunMigrations runs database migrations for tests
 func RunMigrations(t *testing.T, db *sqlx.DB) {
-	// Read and execute migration files
-	migrationDir := "../../migrations"
-
-	// Check if running from different directory
-	if _, err := os.Stat(migrationDir); os.IsNotExist(err) {
-		migrationDir = "migrations"
+	t.Helper()
+	if db == nil {
+		t.Fatalf("RunMigrations called with nil DB")
 	}
 
-	files, err := os.ReadDir(migrationDir)
+	var schema string
+	err := db.Get(&schema, `SELECT current_schema()`)
 	if err != nil {
-		t.Fatalf("Failed to read migration directory: %v", err)
+		t.Fatalf("Failed to resolve current schema: %v", err)
 	}
 
-	for _, file := range files {
-		if file.IsDir() {
-			continue
-		}
-
-		// Read migration file
-		content, err := os.ReadFile(fmt.Sprintf("%s/%s", migrationDir, file.Name()))
-		if err != nil {
-			t.Fatalf("Failed to read migration %s: %v", file.Name(), err)
-		}
-
-		// Execute migration
-		_, err = db.Exec(string(content))
-		if err != nil {
-			// Check if it's a "already exists" error which we can ignore
-			if !isAlreadyExistsError(err) {
-				t.Fatalf("Failed to execute migration %s: %v", file.Name(), err)
-			}
-		}
+	if err := applySchemaMigrations(db, schema); err != nil {
+		t.Fatalf("Failed to run schema migrations: %v", err)
+	}
+	if err := applyPostMigrationCompatibility(db); err != nil {
+		t.Fatalf("Failed to apply migration compatibility setup: %v", err)
 	}
 }
 

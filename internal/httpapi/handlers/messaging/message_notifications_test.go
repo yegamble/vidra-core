@@ -158,11 +158,13 @@ func TestMessageNotificationWorkflow(t *testing.T) {
 		r.ServeHTTP(w, req)
 		assert.Equal(t, http.StatusOK, w.Code)
 
-		var apiNotifications []domain.Notification
-		err = json.Unmarshal(w.Body.Bytes(), &apiNotifications)
+		var notificationsResp struct {
+			Data []domain.Notification `json:"data"`
+		}
+		err = json.Unmarshal(w.Body.Bytes(), &notificationsResp)
 		require.NoError(t, err)
-		assert.Len(t, apiNotifications, 1)
-		assert.Equal(t, domain.NotificationNewMessage, apiNotifications[0].Type)
+		assert.Len(t, notificationsResp.Data, 1)
+		assert.Equal(t, domain.NotificationNewMessage, notificationsResp.Data[0].Type)
 
 		// Test unread count
 		req = httptest.NewRequest("GET", "/api/v1/notifications/unread-count", nil)
@@ -172,10 +174,12 @@ func TestMessageNotificationWorkflow(t *testing.T) {
 		r.ServeHTTP(w, req)
 		assert.Equal(t, http.StatusOK, w.Code)
 
-		var unreadResponse map[string]int
+		var unreadResponse struct {
+			Data map[string]int `json:"data"`
+		}
 		err = json.Unmarshal(w.Body.Bytes(), &unreadResponse)
 		require.NoError(t, err)
-		assert.Equal(t, 1, unreadResponse["unread_count"])
+		assert.Equal(t, 1, unreadResponse.Data["unread_count"])
 
 		// Test stats endpoint
 		req = httptest.NewRequest("GET", "/api/v1/notifications/stats", nil)
@@ -185,12 +189,14 @@ func TestMessageNotificationWorkflow(t *testing.T) {
 		r.ServeHTTP(w, req)
 		assert.Equal(t, http.StatusOK, w.Code)
 
-		var statsResponse domain.NotificationStats
+		var statsResponse struct {
+			Data domain.NotificationStats `json:"data"`
+		}
 		err = json.Unmarshal(w.Body.Bytes(), &statsResponse)
 		require.NoError(t, err)
-		assert.Equal(t, 1, statsResponse.TotalCount)
-		assert.Equal(t, 1, statsResponse.UnreadCount)
-		assert.Equal(t, 1, statsResponse.ByType[domain.NotificationNewMessage])
+		assert.Equal(t, 1, statsResponse.Data.TotalCount)
+		assert.Equal(t, 1, statsResponse.Data.UnreadCount)
+		assert.Equal(t, 1, statsResponse.Data.ByType[domain.NotificationNewMessage])
 
 		// Mark notification as read
 		req = httptest.NewRequest("PUT", fmt.Sprintf("/api/v1/notifications/%s/read", notification.ID), nil)

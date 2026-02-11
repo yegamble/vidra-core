@@ -107,6 +107,16 @@ Note (2026-02-10): ran `make test-local` to verify Docker-backed integration exe
 
 Note (2026-02-10): current repository package aggregate coverage remains 25.8% (`go test -short -coverprofile=/tmp/repository_short_after.out ./internal/repository`) because many specialized repositories still lack dedicated tests; high-risk CRUD repositories in this phase now have explicit sqlmock branch coverage.
 
+Note (2026-02-11): completed the remaining Phase 1.1 repository/sqlmock follow-through and related integration blocker fixes:
+- finalized `user_repository.go` + sqlmock branch alignment for default-channel UUID inserts
+- fixed notification/social/federation/playlist/messaging integration regressions discovered during `make test-local` runs (response envelope handling, channel-backed subscriptions, JSONB NULL/COALESCE handling, playlist position/reorder edge cases)
+- updated playlist repository sqlmock suites for transactional `AddItem` behavior (begin/exists/shift/insert/commit + rollback paths)
+- replaced moderation instance test stubs with the real admin instance handlers to remove false-positive behavior mismatches
+- validated with targeted package runs:
+  - `go test ./internal/httpapi/handlers/messaging -count=1`
+  - `go test ./internal/httpapi/handlers/moderation -count=1`
+  - `go test ./internal/httpapi -count=1`
+
 ### 1.2 Handler Tests (7-21% -> 50%+)
 
 API handlers are the system boundary — where user input enters. Low coverage here means injection/validation bugs go undetected.

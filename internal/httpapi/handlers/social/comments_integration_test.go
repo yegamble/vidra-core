@@ -671,10 +671,12 @@ func TestComments_Integration(t *testing.T) {
 
 		// The flag details are not directly exposed in the API response,
 		// but we verify that the request succeeds (sanitization doesn't break functionality)
-		var flagResp map[string]interface{}
+		var flagResp struct {
+			Data map[string]interface{} `json:"data"`
+		}
 		err = json.NewDecoder(w.Body).Decode(&flagResp)
 		require.NoError(t, err)
-		assert.Equal(t, "Comment flagged successfully", flagResp["message"])
+		assert.Equal(t, "Comment flagged successfully", flagResp.Data["message"])
 	})
 
 	t.Run("AllowsBasicFormatting", func(t *testing.T) {
