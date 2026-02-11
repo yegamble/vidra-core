@@ -123,10 +123,10 @@ API handlers are the system boundary — where user input enters. Low coverage h
 
 - [x] **P1** Add tests for `httpapi/handlers/moderation/` (validation/auth paths now covered; package at 27.1%)
 - [x] **P1** Add tests for `httpapi/handlers/social/` (validation/auth paths now covered across ratings/playlists/captions; package at 31.6%)
-- [ ] **P1** Improve tests for `httpapi/handlers/video/` (currently ~21%)
-- [ ] **P1** Improve tests for `httpapi/handlers/channel/` (only subscription pagination test exists)
-- [ ] **P1** Improve tests for `httpapi/handlers/livestream/` (only waiting room test exists)
-- [ ] **P1** Add tests for `httpapi/handlers/plugin/` (no tests, .go.bak file suggests instability)
+- [x] **P1** Improve tests for `httpapi/handlers/video/` (raised from 22.8% to 51.2% with unit branch coverage on videos/views/ipfs/encoding handlers)
+- [x] **P1** Improve tests for `httpapi/handlers/channel/` (raised from 7.1% to 59.5% with new `channels.go` unit suites)
+- [x] **P1** Improve tests for `httpapi/handlers/livestream/` (verified package currently at 57.1%; existing livestream + waiting-room suites are active)
+- [x] **P1** Add tests for `httpapi/handlers/plugin/` (added runnable unit suites; package moved from 0.0% to 40.5%)
 - [ ] **P1** Each handler test should cover: valid input, invalid input, auth required, not found
 
 **Success Criteria**: Every handler package has at least one test file. Average handler coverage >= 50%.
@@ -145,6 +145,30 @@ Note (2026-02-10): added no-infra unit tests for moderation/social handlers and 
 - `go test -coverprofile=/tmp/mod_new.out ./internal/httpapi/handlers/moderation && go tool cover -func=/tmp/mod_new.out | tail -n 1` (27.1%)
 - `go test -coverprofile=/tmp/social_new.out ./internal/httpapi/handlers/social && go tool cover -func=/tmp/social_new.out | tail -n 1` (31.6%)
 - `go test -coverprofile=/tmp/import_new.out ./internal/usecase/import && go tool cover -func=/tmp/import_new.out | tail -n 1` (48.6%)
+
+Note (2026-02-11): completed targeted video-handler coverage expansion with non-Docker unit suites:
+- Added branch coverage for `videos.go` CRUD/upload/stream helper paths (`CreateVideoHandler`, `UpdateVideoHandler`, `DeleteVideoHandler`, `CompleteUploadHandler`, `GetUploadStatusHandler`, `ResumeUploadHandler`, `UploadVideoFileHandler`, compatibility handlers, and helper functions).
+- Added unit coverage for `views_handlers.go` (tracking, analytics, auth/forbidden checks, trending/top/history filters, fingerprint/admin actions, and daily stats).
+- Added unit coverage for `ipfs_metrics_handlers.go` and `encoding.go` (`EncodingStatusHandler`).
+- Coverage progression for `internal/httpapi/handlers/video`:
+  - baseline: `go test ./internal/httpapi/handlers/video -coverprofile=/tmp/video_handlers_phase1.out -count=1` → **22.8%**
+  - after video-branch suite: `go test ./internal/httpapi/handlers/video -coverprofile=/tmp/video_handlers_phase1_after.out -count=1` → **35.9%**
+  - after views suite: `go test ./internal/httpapi/handlers/video -coverprofile=/tmp/video_handlers_phase1_after2.out -count=1` → **46.1%**
+  - current: `go test ./internal/httpapi/handlers/video -coverprofile=/tmp/video_handlers_phase1_after3.out -count=1` → **51.2%**
+
+Note (2026-02-11): completed channel-handler branch coverage expansion for `channels.go` using unit stubs for channel/user/subscription repositories:
+- Added `internal/httpapi/handlers/channel/channels_unit_test.go` covering list/get/create/update/delete, channel videos, “my channels”, subscribe/unsubscribe, and subscribers pagination/error paths.
+- Coverage progression for `internal/httpapi/handlers/channel`:
+  - baseline: `go test ./internal/httpapi/handlers/channel -coverprofile=/tmp/channel_handlers_phase1.out -count=1` → **7.1%**
+  - current: `go test ./internal/httpapi/handlers/channel -coverprofile=/tmp/channel_handlers_phase1_after.out -count=1` → **59.5%**
+
+Note (2026-02-11): livestream handler package baseline verification shows this item is no longer blocked:
+- `go test ./internal/httpapi/handlers/livestream -coverprofile=/tmp/livestream_handlers_phase1.out -count=1` → **57.1%**
+- Coverage details indicate live-stream handler paths are already exercised (not just waiting-room flows).
+
+Note (2026-02-11): added first runnable unit suite for plugin handlers (`internal/httpapi/handlers/plugin/plugin_handlers_unit_test.go`) covering constructors, helper/extraction functions, invalid-ID branches, body validation, and upload validation/signer gating:
+- baseline: `go test ./internal/httpapi/handlers/plugin -coverprofile=/tmp/plugin_handlers_phase1.out -count=1` → **0.0%**
+- current: `go test ./internal/httpapi/handlers/plugin -coverprofile=/tmp/plugin_handlers_phase1_after.out -count=1` → **40.5%**
 
 ---
 
