@@ -156,7 +156,7 @@ func TestVideoRepository_Unit_GetByID(t *testing.T) {
 
 	rows := sqlmock.NewRows([]string{
 		"id", "thumbnail_id", "title", "description", "duration", "views",
-		"privacy", "status", "upload_date", "user_id",
+		"privacy", "status", "upload_date", "user_id", "channel_id",
 		"original_cid", "processed_cids", "thumbnail_cid",
 		"tags", "category_id", "language", "file_size", "mime_type", "metadata",
 		"created_at", "updated_at", "output_paths", "thumbnail_path", "preview_path",
@@ -164,7 +164,7 @@ func TestVideoRepository_Unit_GetByID(t *testing.T) {
 		"cat_id", "cat_name", "cat_slug", "cat_desc", "cat_icon", "cat_color", "cat_order", "cat_active",
 	}).AddRow(
 		expectedVideo.ID, expectedVideo.ThumbnailID, expectedVideo.Title, expectedVideo.Description, expectedVideo.Duration, expectedVideo.Views,
-		expectedVideo.Privacy, expectedVideo.Status, expectedVideo.UploadDate, expectedVideo.UserID,
+		expectedVideo.Privacy, expectedVideo.Status, expectedVideo.UploadDate, expectedVideo.UserID, uuid.New(),
 		expectedVideo.OriginalCID, processedCIDsJSON, expectedVideo.ThumbnailCID,
 		pq.Array(expectedVideo.Tags), expectedVideo.CategoryID, expectedVideo.Language, expectedVideo.FileSize, expectedVideo.MimeType, metadataJSON,
 		expectedVideo.CreatedAt, expectedVideo.UpdatedAt, outputPathsJSON, expectedVideo.ThumbnailPath, expectedVideo.PreviewPath,

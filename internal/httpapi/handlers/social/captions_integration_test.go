@@ -32,10 +32,10 @@ func TestCaptionsIntegration(t *testing.T) {
 
 	// Setup test database
 	db := testutil.SetupTestDB(t)
-	defer db.DB.Close()
 
 	// Initialize repositories
 	userRepo := repository.NewUserRepository(db.DB)
+	channelRepo := repository.NewChannelRepository(db.DB)
 	videoRepo := repository.NewVideoRepository(db.DB)
 	captionRepo := repository.NewCaptionRepository(db.DB)
 
@@ -62,11 +62,21 @@ func TestCaptionsIntegration(t *testing.T) {
 	err := userRepo.Create(context.Background(), user, "hashedpassword")
 	require.NoError(t, err)
 
+	channel := &domain.Channel{
+		AccountID:   userID,
+		Handle:      fmt.Sprintf("captions_%s", userID.String()[:8]),
+		DisplayName: "Captions Channel",
+		IsLocal:     true,
+	}
+	err = channelRepo.Create(context.Background(), channel)
+	require.NoError(t, err)
+
 	// Create test video
 	videoID := uuid.New()
 	video := &domain.Video{
 		ID:            videoID.String(),
 		ThumbnailID:   uuid.NewString(),
+		ChannelID:     channel.ID,
 		Title:         "Test Video",
 		Description:   "Test Description",
 		Privacy:       domain.PrivacyPublic,
@@ -144,14 +154,16 @@ This is a test caption`
 		// Assert response
 		assert.Equal(t, http.StatusCreated, rec.Code)
 
-		var caption domain.Caption
-		err = json.NewDecoder(rec.Body).Decode(&caption)
+		var response struct {
+			Data domain.Caption `json:"data"`
+		}
+		err = json.NewDecoder(rec.Body).Decode(&response)
 		require.NoError(t, err)
 
-		assert.Equal(t, "en", caption.LanguageCode)
-		assert.Equal(t, "English", caption.Label)
-		assert.Equal(t, domain.CaptionFormatVTT, caption.FileFormat)
-		assert.Equal(t, videoID, caption.VideoID)
+		assert.Equal(t, "en", response.Data.LanguageCode)
+		assert.Equal(t, "English", response.Data.Label)
+		assert.Equal(t, domain.CaptionFormatVTT, response.Data.FileFormat)
+		assert.Equal(t, videoID, response.Data.VideoID)
 	})
 
 	t.Run("GetCaptions", func(t *testing.T) {
@@ -165,14 +177,16 @@ This is a test caption`
 		// Assert response
 		assert.Equal(t, http.StatusOK, rec.Code)
 
-		var response domain.CaptionListResponse
+		var response struct {
+			Data domain.CaptionListResponse `json:"data"`
+		}
 		err = json.NewDecoder(rec.Body).Decode(&response)
 		require.NoError(t, err)
 
-		assert.Equal(t, 1, response.Count)
-		if len(response.Captions) > 0 {
-			assert.Len(t, response.Captions, 1)
-			assert.Equal(t, "en", response.Captions[0].LanguageCode)
+		assert.Equal(t, 1, response.Data.Count)
+		if len(response.Data.Captions) > 0 {
+			assert.Len(t, response.Data.Captions, 1)
+			assert.Equal(t, "en", response.Data.Captions[0].LanguageCode)
 		} else {
 			t.Log("Warning: No captions returned, CreateCaption test may not have persisted data")
 		}
@@ -184,16 +198,18 @@ This is a test caption`
 		rec := httptest.NewRecorder()
 		r.ServeHTTP(rec, req)
 
-		var listResponse domain.CaptionListResponse
+		var listResponse struct {
+			Data domain.CaptionListResponse `json:"data"`
+		}
 		err = json.NewDecoder(rec.Body).Decode(&listResponse)
 		require.NoError(t, err)
 
-		if len(listResponse.Captions) == 0 {
+		if len(listResponse.Data.Captions) == 0 {
 			t.Skip("No captions available, skipping content test")
 			return
 		}
 
-		captionID := listResponse.Captions[0].ID
+		captionID := listResponse.Data.Captions[0].ID
 
 		// Get caption content
 		req = httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/videos/%s/captions/%s/content", videoID, captionID), nil)
@@ -216,16 +232,18 @@ This is a test caption`
 		rec := httptest.NewRecorder()
 		r.ServeHTTP(rec, req)
 
-		var listResponse domain.CaptionListResponse
+		var listResponse struct {
+			Data domain.CaptionListResponse `json:"data"`
+		}
 		err = json.NewDecoder(rec.Body).Decode(&listResponse)
 		require.NoError(t, err)
 
-		if len(listResponse.Captions) == 0 {
+		if len(listResponse.Data.Captions) == 0 {
 			t.Skip("No captions available, skipping update test")
 			return
 		}
 
-		captionID := listResponse.Captions[0].ID
+		captionID := listResponse.Data.Captions[0].ID
 
 		// Update caption
 		updateReq := domain.UpdateCaptionRequest{
@@ -244,11 +262,13 @@ This is a test caption`
 		// Assert response
 		assert.Equal(t, http.StatusOK, rec.Code)
 
-		var caption domain.Caption
-		err = json.NewDecoder(rec.Body).Decode(&caption)
+		var updateResp struct {
+			Data domain.Caption `json:"data"`
+		}
+		err = json.NewDecoder(rec.Body).Decode(&updateResp)
 		require.NoError(t, err)
 
-		assert.Equal(t, "English (US)", caption.Label)
+		assert.Equal(t, "English (US)", updateResp.Data.Label)
 	})
 
 	t.Run("DeleteCaption", func(t *testing.T) {
@@ -278,12 +298,14 @@ Hola Mundo`
 		r.ServeHTTP(rec, req)
 		assert.Equal(t, http.StatusCreated, rec.Code)
 
-		var caption domain.Caption
-		err = json.NewDecoder(rec.Body).Decode(&caption)
+		var createResp struct {
+			Data domain.Caption `json:"data"`
+		}
+		err = json.NewDecoder(rec.Body).Decode(&createResp)
 		require.NoError(t, err)
 
 		// Delete the caption
-		req = httptest.NewRequest(http.MethodDelete, fmt.Sprintf("/api/v1/videos/%s/captions/%s", videoID, caption.ID), nil)
+		req = httptest.NewRequest(http.MethodDelete, fmt.Sprintf("/api/v1/videos/%s/captions/%s", videoID, createResp.Data.ID), nil)
 		req.Header.Set("Authorization", "Bearer "+token)
 
 		rec = httptest.NewRecorder()
@@ -293,7 +315,7 @@ Hola Mundo`
 		assert.Equal(t, http.StatusOK, rec.Code)
 
 		// Verify caption is deleted
-		req = httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/videos/%s/captions/%s/content", videoID, caption.ID), nil)
+		req = httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/videos/%s/captions/%s/content", videoID, createResp.Data.ID), nil)
 		rec = httptest.NewRecorder()
 		r.ServeHTTP(rec, req)
 
@@ -301,16 +323,36 @@ Hola Mundo`
 	})
 
 	t.Run("PrivateVideoAccessControl", func(t *testing.T) {
+		privateOwnerID := uuid.New()
+		privateOwner := &domain.User{
+			ID:       privateOwnerID.String(),
+			Email:    "private-owner@example.com",
+			Username: "private_owner",
+			Role:     domain.RoleUser,
+		}
+		err = userRepo.Create(context.Background(), privateOwner, "hashedpassword")
+		require.NoError(t, err)
+
+		privateChannel := &domain.Channel{
+			AccountID:   privateOwnerID,
+			Handle:      fmt.Sprintf("private_%s", privateOwnerID.String()[:8]),
+			DisplayName: "Private Channel",
+			IsLocal:     true,
+		}
+		err = channelRepo.Create(context.Background(), privateChannel)
+		require.NoError(t, err)
+
 		// Create private video
 		privateVideoID := uuid.New()
 		privateVideo := &domain.Video{
 			ID:            privateVideoID.String(),
 			ThumbnailID:   uuid.NewString(),
+			ChannelID:     privateChannel.ID,
 			Title:         "Private Video",
 			Description:   "Private Test",
 			Privacy:       domain.PrivacyPrivate,
 			Status:        domain.StatusCompleted,
-			UserID:        uuid.NewString(), // Different user
+			UserID:        privateOwnerID.String(), // Different user
 			Tags:          []string{},
 			FileSize:      1024,
 			Metadata:      domain.VideoMetadata{},

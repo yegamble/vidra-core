@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -17,8 +18,6 @@ import (
 
 // TestMultiRepositoryTransaction tests transactions across multiple repositories
 func TestMultiRepositoryTransaction(t *testing.T) {
-	t.Parallel()
-
 	td := testutil.SetupTestDB(t)
 	if td == nil {
 		return
@@ -61,7 +60,7 @@ func TestMultiRepositoryTransaction(t *testing.T) {
 				UpdatedAt:   time.Now(),
 			}
 			if err := userRepo.Create(txCtx, user1, "password123"); err != nil {
-				return err
+				return fmt.Errorf("create user1: %w", err)
 			}
 
 			user2 := &domain.User{
@@ -75,7 +74,7 @@ func TestMultiRepositoryTransaction(t *testing.T) {
 				UpdatedAt:   time.Now(),
 			}
 			if err := userRepo.Create(txCtx, user2, "password456"); err != nil {
-				return err
+				return fmt.Errorf("create user2: %w", err)
 			}
 
 			// Step 2: Create channels directly (since userRepo.Create might create default channels)
@@ -86,7 +85,7 @@ func TestMultiRepositoryTransaction(t *testing.T) {
 					($3, $4, 'viewer_channel', 'Viewer Channel', NOW(), NOW())
 			`, channel1ID, user1ID, channel2ID, user2ID)
 			if err != nil {
-				return err
+				return fmt.Errorf("create channels: %w", err)
 			}
 
 			// Step 3: Create a video
@@ -104,12 +103,12 @@ func TestMultiRepositoryTransaction(t *testing.T) {
 				UpdatedAt:   time.Now(),
 			}
 			if err := videoRepo.Create(txCtx, video); err != nil {
-				return err
+				return fmt.Errorf("create video: %w", err)
 			}
 
 			// Step 4: User2 subscribes to User1's channel
 			if err := subRepo.SubscribeToChannel(txCtx, user2ID, channel1ID); err != nil {
-				return err
+				return fmt.Errorf("subscribe: %w", err)
 			}
 
 			// Step 5: User2 comments on the video
@@ -120,12 +119,13 @@ func TestMultiRepositoryTransaction(t *testing.T) {
 				Body:    "Great video!",
 			}
 			if err := commentRepo.Create(txCtx, comment); err != nil {
-				return err
+				return fmt.Errorf("create comment: %w", err)
 			}
+			commentID = comment.ID
 
 			// Step 6: User2 likes the video
 			if err := ratingRepo.SetRating(txCtx, user2ID, videoID, domain.RatingLike); err != nil {
-				return err
+				return fmt.Errorf("set rating: %w", err)
 			}
 
 			return nil
@@ -188,7 +188,7 @@ func TestMultiRepositoryTransaction(t *testing.T) {
 				UpdatedAt:   time.Now(),
 			}
 			if err := userRepo.Create(txCtx, user, "password789"); err != nil {
-				return err
+				return fmt.Errorf("create rollback user: %w", err)
 			}
 
 			// Create a video
@@ -205,7 +205,7 @@ func TestMultiRepositoryTransaction(t *testing.T) {
 				UpdatedAt:   time.Now(),
 			}
 			if err := videoRepo.Create(txCtx, video); err != nil {
-				return err
+				return fmt.Errorf("create rollback video: %w", err)
 			}
 
 			// Force an error to trigger rollback
@@ -229,8 +229,6 @@ func TestMultiRepositoryTransaction(t *testing.T) {
 
 // TestTransactionDeadlockRetry tests retry logic for deadlocks
 func TestTransactionDeadlockRetry(t *testing.T) {
-	t.Parallel()
-
 	td := testutil.SetupTestDB(t)
 	if td == nil {
 		return
@@ -291,8 +289,6 @@ func TestTransactionDeadlockRetry(t *testing.T) {
 
 // TestNestedTransactionContext tests passing transaction through context
 func TestNestedTransactionContext(t *testing.T) {
-	t.Parallel()
-
 	td := testutil.SetupTestDB(t)
 	if td == nil {
 		return
@@ -380,8 +376,6 @@ func TestNestedTransactionContext(t *testing.T) {
 
 // TestConcurrentTransactions tests concurrent transaction execution
 func TestConcurrentTransactions(t *testing.T) {
-	t.Parallel()
-
 	td := testutil.SetupTestDB(t)
 	if td == nil {
 		return

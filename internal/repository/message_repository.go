@@ -79,17 +79,21 @@ func (r *messageRepository) GetMessage(ctx context.Context, messageID string, us
 	var message domain.Message
 	var sender domain.User
 	var recipient domain.User
+	var senderDisplayName sql.NullString
+	var recipientDisplayName sql.NullString
 
 	err = rows.Scan(
 		&message.ID, &message.SenderID, &message.RecipientID, &message.Content, &message.MessageType,
 		&message.IsRead, &message.IsDeletedBySender, &message.IsDeletedByRecipient,
 		&message.ParentMessageID, &message.CreatedAt, &message.UpdatedAt, &message.ReadAt,
-		&sender.ID, &sender.Username, &sender.DisplayName,
-		&recipient.ID, &recipient.Username, &recipient.DisplayName,
+		&sender.ID, &sender.Username, &senderDisplayName,
+		&recipient.ID, &recipient.Username, &recipientDisplayName,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to scan message: %w", err)
 	}
+	sender.DisplayName = senderDisplayName.String
+	recipient.DisplayName = recipientDisplayName.String
 
 	message.Sender = &sender
 	message.Recipient = &recipient
@@ -128,17 +132,21 @@ func (r *messageRepository) GetMessages(ctx context.Context, userID string, othe
 		var message domain.Message
 		var sender domain.User
 		var recipient domain.User
+		var senderDisplayName sql.NullString
+		var recipientDisplayName sql.NullString
 
 		err = rows.Scan(
 			&message.ID, &message.SenderID, &message.RecipientID, &message.Content, &message.MessageType,
 			&message.IsRead, &message.IsDeletedBySender, &message.IsDeletedByRecipient,
 			&message.ParentMessageID, &message.CreatedAt, &message.UpdatedAt, &message.ReadAt,
-			&sender.ID, &sender.Username, &sender.DisplayName,
-			&recipient.ID, &recipient.Username, &recipient.DisplayName,
+			&sender.ID, &sender.Username, &senderDisplayName,
+			&recipient.ID, &recipient.Username, &recipientDisplayName,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan message: %w", err)
 		}
+		sender.DisplayName = senderDisplayName.String
+		recipient.DisplayName = recipientDisplayName.String
 
 		message.Sender = &sender
 		message.Recipient = &recipient
@@ -242,6 +250,7 @@ func (r *messageRepository) GetConversations(ctx context.Context, userID string,
 	for rows.Next() {
 		var conv domain.Conversation
 		var p1, p2 domain.User
+		var p1DisplayName, p2DisplayName sql.NullString
 		var lastMessage domain.Message
 		var lastMessageID sql.NullString
 		var lastMessageContent sql.NullString
@@ -251,14 +260,16 @@ func (r *messageRepository) GetConversations(ctx context.Context, userID string,
 		err = rows.Scan(
 			&conv.ID, &conv.ParticipantOneID, &conv.ParticipantTwoID, &conv.LastMessageID,
 			&conv.LastMessageAt, &conv.CreatedAt, &conv.UpdatedAt,
-			&p1.ID, &p1.Username, &p1.DisplayName,
-			&p2.ID, &p2.Username, &p2.DisplayName,
+			&p1.ID, &p1.Username, &p1DisplayName,
+			&p2.ID, &p2.Username, &p2DisplayName,
 			&lastMessageID, &lastMessageContent, &lastMessageSenderID, &lastMessageCreatedAt,
 			&conv.UnreadCount,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan conversation: %w", err)
 		}
+		p1.DisplayName = p1DisplayName.String
+		p2.DisplayName = p2DisplayName.String
 
 		conv.ParticipantOne = &p1
 		conv.ParticipantTwo = &p2

@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -35,13 +36,9 @@ func TestComments_Integration(t *testing.T) {
 	videoRepo := repository.NewVideoRepository(td.DB)
 	commentRepo := repository.NewCommentRepository(td.DB)
 	commentService := usecase.NewCommentService(commentRepo, videoRepo, userRepo, channelRepo)
-	authRepo := repository.NewAuthRepository(td.DB)
 
 	// Create handlers
 	commentHandlers := NewCommentHandlers(commentService)
-
-	// Create test server for auth
-	s := NewServer(userRepo, authRepo, "test-secret", nil, 0, "", "", 0, nil)
 
 	// Setup router
 	router := chi.NewRouter()
@@ -82,29 +79,17 @@ func TestComments_Integration(t *testing.T) {
 		err = userRepo.Create(context.Background(), user, string(hash))
 		require.NoError(t, err)
 
-		// Login to get token
-		body := map[string]any{"email": email, "password": pw}
-		b, _ := json.Marshal(body)
-		req := httptest.NewRequest(http.MethodPost, "/auth/login", bytes.NewReader(b))
-		req.Header.Set("Content-Type", "application/json")
-		rr := httptest.NewRecorder()
-		s.Login(rr, req)
-
-		require.Equal(t, http.StatusOK, rr.Code)
-
-		var resp struct {
-			Data json.RawMessage `json:"data"`
+		now := time.Now()
+		claims := jwt.MapClaims{
+			"sub": user.ID,
+			"iat": now.Unix(),
+			"exp": now.Add(time.Hour).Unix(),
 		}
-		err = json.NewDecoder(rr.Body).Decode(&resp)
+		tokenObj := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+		token, err := tokenObj.SignedString([]byte("test-secret"))
 		require.NoError(t, err)
 
-		var authResp struct {
-			AccessToken string `json:"access_token"`
-		}
-		err = json.Unmarshal(resp.Data, &authResp)
-		require.NoError(t, err)
-
-		return user, authResp.AccessToken
+		return user, token
 	}
 
 	// Helper to create channel
@@ -124,16 +109,24 @@ func TestComments_Integration(t *testing.T) {
 	}
 
 	// Helper to create video
-	createVideo := func(t *testing.T, channelID uuid.UUID) *domain.Video {
+	createVideo := func(t *testing.T, userID string, channelID uuid.UUID) *domain.Video {
 		video := &domain.Video{
-			ID:          uuid.NewString(),
-			ChannelID:   channelID,
-			Title:       "Test Video",
-			Description: "Test Description",
-			Duration:    120,
-			Privacy:     domain.PrivacyPublic,
-			CreatedAt:   time.Now(),
-			UpdatedAt:   time.Now(),
+			ID:            uuid.NewString(),
+			ThumbnailID:   uuid.NewString(),
+			ChannelID:     channelID,
+			UserID:        userID,
+			Title:         "Test Video",
+			Description:   "Test Description",
+			Duration:      120,
+			Privacy:       domain.PrivacyPublic,
+			Status:        domain.StatusCompleted,
+			Tags:          []string{},
+			FileSize:      1024,
+			Metadata:      domain.VideoMetadata{},
+			ProcessedCIDs: map[string]string{},
+			OutputPaths:   map[string]string{},
+			CreatedAt:     time.Now(),
+			UpdatedAt:     time.Now(),
 		}
 		err := videoRepo.Create(context.Background(), video)
 		require.NoError(t, err)
@@ -167,7 +160,7 @@ func TestComments_Integration(t *testing.T) {
 
 	// Create a test video
 	channel1 := createChannel(t, user1.ID)
-	video := createVideo(t, channel1.ID)
+	video := createVideo(t, user1.ID, channel1.ID)
 
 	t.Run("CreateComment", func(t *testing.T) {
 		body := map[string]interface{}{
@@ -204,8 +197,8 @@ func TestComments_Integration(t *testing.T) {
 
 		// Create a reply
 		replyBody := map[string]interface{}{
-			"body":     "This is a reply",
-			"parentId": parentResp.Data.ID,
+			"body":      "This is a reply",
+			"parent_id": parentResp.Data.ID,
 		}
 		w = makeRequest("POST", fmt.Sprintf("/api/v1/videos/%s/comments", video.ID), replyBody, token2)
 		assert.Equal(t, http.StatusCreated, w.Code)
@@ -217,7 +210,7 @@ func TestComments_Integration(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, "This is a reply", replyResp.Data.Body)
 		assert.Equal(t, uuid.MustParse(user2.ID), replyResp.Data.UserID)
-		assert.NotNil(t, replyResp.Data.ParentID)
+		require.NotNil(t, replyResp.Data.ParentID)
 		assert.Equal(t, parentResp.Data.ID, *replyResp.Data.ParentID)
 	})
 
@@ -354,7 +347,7 @@ func TestComments_Integration(t *testing.T) {
 
 		// Non-owner can't moderate (create another video for user2)
 		channel2 := createChannel(t, user2.ID)
-		video2 := createVideo(t, channel2.ID)
+		video2 := createVideo(t, user2.ID, channel2.ID)
 
 		// Create comment on video2 by user1
 		createBody2 := map[string]interface{}{
@@ -391,8 +384,8 @@ func TestComments_Integration(t *testing.T) {
 		// Create multiple replies
 		for i := 0; i < 3; i++ {
 			replyBody := map[string]interface{}{
-				"body":     fmt.Sprintf("Reply %d", i),
-				"parentId": parentResp.Data.ID,
+				"body":      fmt.Sprintf("Reply %d", i),
+				"parent_id": parentResp.Data.ID,
 			}
 			w := makeRequest("POST", fmt.Sprintf("/api/v1/videos/%s/comments", video.ID), replyBody, token2)
 			require.Equal(t, http.StatusCreated, w.Code)
@@ -430,7 +423,7 @@ func TestComments_Integration(t *testing.T) {
 
 	t.Run("Pagination", func(t *testing.T) {
 		// Create a new video for clean pagination test
-		video3 := createVideo(t, channel1.ID)
+		video3 := createVideo(t, user1.ID, channel1.ID)
 
 		// Create many comments
 		for i := 0; i < 25; i++ {

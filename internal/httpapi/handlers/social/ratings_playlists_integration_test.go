@@ -2,20 +2,15 @@ package social
 
 import (
 	"athena/internal/domain"
-	"athena/internal/middleware"
 	"athena/internal/repository"
 	"athena/internal/testutil"
 	"athena/internal/usecase"
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"testing"
 	"time"
 
-	"github.com/go-chi/chi/v5"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -35,17 +30,9 @@ func TestRatingsPlaylists_Integration(t *testing.T) {
 	videoRepo := repository.NewVideoRepository(td.DB)
 	ratingRepo := repository.NewRatingRepository(td.DB)
 	playlistRepo := repository.NewPlaylistRepository(td.DB)
-	authRepo := repository.NewAuthRepository(td.DB)
 
 	ratingService := usecase.NewRatingService(ratingRepo, videoRepo)
 	playlistService := usecase.NewPlaylistService(playlistRepo, videoRepo)
-
-	// Create test server for auth
-	s := NewServer(userRepo, authRepo, "test-secret", nil, 0, "", "", 0, nil)
-
-	// Setup router
-	router := chi.NewRouter()
-	router.Use(middleware.RequestID())
 
 	// Helper function to create authenticated user
 	createUser := func(t *testing.T, username, email string) (*domain.User, string) {
@@ -65,29 +52,17 @@ func TestRatingsPlaylists_Integration(t *testing.T) {
 		err = userRepo.Create(context.Background(), user, string(hash))
 		require.NoError(t, err)
 
-		// Login to get token
-		body := map[string]any{"email": email, "password": pw}
-		b, _ := json.Marshal(body)
-		req := httptest.NewRequest(http.MethodPost, "/auth/login", bytes.NewReader(b))
-		req.Header.Set("Content-Type", "application/json")
-		rr := httptest.NewRecorder()
-		s.Login(rr, req)
-
-		require.Equal(t, http.StatusOK, rr.Code)
-
-		var resp struct {
-			Data json.RawMessage `json:"data"`
+		now := time.Now()
+		claims := jwt.MapClaims{
+			"sub": user.ID,
+			"iat": now.Unix(),
+			"exp": now.Add(time.Hour).Unix(),
 		}
-		err = json.NewDecoder(rr.Body).Decode(&resp)
+		tokenObj := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+		token, err := tokenObj.SignedString([]byte("test-secret"))
 		require.NoError(t, err)
 
-		var authResp struct {
-			AccessToken string `json:"access_token"`
-		}
-		err = json.Unmarshal(resp.Data, &authResp)
-		require.NoError(t, err)
-
-		return user, authResp.AccessToken
+		return user, token
 	}
 
 	// Helper to create channel
@@ -107,16 +82,24 @@ func TestRatingsPlaylists_Integration(t *testing.T) {
 	}
 
 	// Helper to create video
-	createVideo := func(t *testing.T, channelID uuid.UUID) *domain.Video {
+	createVideo := func(t *testing.T, userID string, channelID uuid.UUID) *domain.Video {
 		video := &domain.Video{
-			ID:          uuid.NewString(),
-			ChannelID:   channelID,
-			Title:       "Test Video",
-			Description: "Test Description",
-			Duration:    120,
-			Privacy:     domain.PrivacyPublic,
-			CreatedAt:   time.Now(),
-			UpdatedAt:   time.Now(),
+			ID:            uuid.NewString(),
+			ThumbnailID:   uuid.NewString(),
+			ChannelID:     channelID,
+			UserID:        userID,
+			Title:         "Test Video",
+			Description:   "Test Description",
+			Duration:      120,
+			Privacy:       domain.PrivacyPublic,
+			Status:        domain.StatusCompleted,
+			Tags:          []string{},
+			FileSize:      1024,
+			Metadata:      domain.VideoMetadata{},
+			ProcessedCIDs: map[string]string{},
+			OutputPaths:   map[string]string{},
+			CreatedAt:     time.Now(),
+			UpdatedAt:     time.Now(),
 		}
 		err := videoRepo.Create(context.Background(), video)
 		require.NoError(t, err)
@@ -128,8 +111,8 @@ func TestRatingsPlaylists_Integration(t *testing.T) {
 	user2, _ := createUser(t, "user2", "user2@example.com")
 
 	channel1 := createChannel(t, user1.ID)
-	video1 := createVideo(t, channel1.ID)
-	video2 := createVideo(t, channel1.ID)
+	video1 := createVideo(t, user1.ID, channel1.ID)
+	video2 := createVideo(t, user1.ID, channel1.ID)
 
 	t.Run("Ratings", func(t *testing.T) {
 		t.Run("SetRating_Like", func(t *testing.T) {

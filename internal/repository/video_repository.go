@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
@@ -85,6 +86,39 @@ func scanVideoRow(rows *sql.Rows) (*domain.Video, error) {
 func (r *videoRepository) Create(ctx context.Context, v *domain.Video) error {
 	// Get executor (either transaction from context or DB)
 	exec := GetExecutor(ctx, r.db)
+
+	// Backward-compatible defaults for older callers/tests that provide minimal fields.
+	now := time.Now()
+	if strings.TrimSpace(v.ID) == "" {
+		v.ID = uuid.NewString()
+	}
+	if strings.TrimSpace(v.ThumbnailID) == "" {
+		v.ThumbnailID = uuid.NewString()
+	}
+	if v.Privacy == "" {
+		v.Privacy = domain.PrivacyPublic
+	}
+	if v.Status == "" {
+		v.Status = domain.StatusQueued
+	}
+	if v.UploadDate.IsZero() {
+		v.UploadDate = now
+	}
+	if v.CreatedAt.IsZero() {
+		v.CreatedAt = now
+	}
+	if v.UpdatedAt.IsZero() {
+		v.UpdatedAt = now
+	}
+	if v.ProcessedCIDs == nil {
+		v.ProcessedCIDs = map[string]string{}
+	}
+	if v.OutputPaths == nil {
+		v.OutputPaths = map[string]string{}
+	}
+	if v.Tags == nil {
+		v.Tags = []string{}
+	}
 
 	// Detect schema and choose compatible insert
 	r.ensureSchemaChecked(ctx)
@@ -167,7 +201,7 @@ func (r *videoRepository) Create(ctx context.Context, v *domain.Video) error {
 		)
 	}
 	if err != nil {
-		return domain.NewDomainError("CREATE_FAILED", "Failed to create video")
+		return domain.NewDomainError("CREATE_FAILED", fmt.Sprintf("Failed to create video: %v", err))
 	}
 	return nil
 }
@@ -175,7 +209,7 @@ func (r *videoRepository) Create(ctx context.Context, v *domain.Video) error {
 func (r *videoRepository) GetByID(ctx context.Context, id string) (*domain.Video, error) {
 	query := `
         SELECT v.id, v.thumbnail_id, v.title, v.description, v.duration, v.views,
-               v.privacy, v.status, v.upload_date, v.user_id,
+               v.privacy, v.status, v.upload_date, v.user_id, v.channel_id,
                v.original_cid, v.processed_cids, v.thumbnail_cid,
                v.tags, v.category_id, v.language, v.file_size, v.mime_type, v.metadata,
                v.created_at, v.updated_at, v.output_paths, v.thumbnail_path, v.preview_path,
@@ -200,7 +234,7 @@ func (r *videoRepository) GetByID(ctx context.Context, id string) (*domain.Video
 
 	err := r.db.QueryRowContext(ctx, query, id).Scan(
 		&v.ID, &v.ThumbnailID, &v.Title, &v.Description, &v.Duration, &v.Views,
-		&v.Privacy, &v.Status, &v.UploadDate, &v.UserID,
+		&v.Privacy, &v.Status, &v.UploadDate, &v.UserID, &v.ChannelID,
 		&v.OriginalCID, &processedCIDsJSON, &v.ThumbnailCID,
 		&tags, &v.CategoryID, &v.Language, &v.FileSize, &v.MimeType, &metadataJSON,
 		&v.CreatedAt, &v.UpdatedAt, &outputPathsJSON, &thumbnailPath, &previewPath,
@@ -209,13 +243,13 @@ func (r *videoRepository) GetByID(ctx context.Context, id string) (*domain.Video
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			return nil, domain.NewDomainError("VIDEO_NOT_FOUND", "Video not found")
+			return nil, domain.ErrNotFound
 		}
 		// Also treat invalid UUID errors as "not found"
 		errStr := err.Error()
 		if strings.Contains(errStr, "invalid input syntax for type uuid") ||
 			strings.Contains(errStr, "invalid UUID") {
-			return nil, domain.NewDomainError("VIDEO_NOT_FOUND", "Video not found")
+			return nil, domain.ErrNotFound
 		}
 
 		// Handle missing columns gracefully - use simpler query without S3 fields
@@ -223,7 +257,7 @@ func (r *videoRepository) GetByID(ctx context.Context, id string) (*domain.Video
 			// Try simpler query without S3 migration fields
 			simpleQuery := `
 				SELECT v.id, v.thumbnail_id, v.title, v.description, v.duration, v.views,
-					   v.privacy, v.status, v.upload_date, v.user_id,
+					   v.privacy, v.status, v.upload_date, v.user_id, v.channel_id,
 					   v.original_cid, v.processed_cids, v.thumbnail_cid,
 					   v.tags, v.category_id, v.language, v.file_size, v.mime_type, v.metadata,
 					   v.created_at, v.updated_at, v.output_paths, v.thumbnail_path, v.preview_path,
@@ -234,7 +268,7 @@ func (r *videoRepository) GetByID(ctx context.Context, id string) (*domain.Video
 
 			err = r.db.QueryRowContext(ctx, simpleQuery, id).Scan(
 				&v.ID, &v.ThumbnailID, &v.Title, &v.Description, &v.Duration, &v.Views,
-				&v.Privacy, &v.Status, &v.UploadDate, &v.UserID,
+				&v.Privacy, &v.Status, &v.UploadDate, &v.UserID, &v.ChannelID,
 				&v.OriginalCID, &processedCIDsJSON, &v.ThumbnailCID,
 				&tags, &v.CategoryID, &v.Language, &v.FileSize, &v.MimeType, &metadataJSON,
 				&v.CreatedAt, &v.UpdatedAt, &outputPathsJSON, &thumbnailPath, &previewPath,
@@ -243,7 +277,7 @@ func (r *videoRepository) GetByID(ctx context.Context, id string) (*domain.Video
 
 			if err != nil {
 				if err == sql.ErrNoRows {
-					return nil, domain.NewDomainError("VIDEO_NOT_FOUND", "Video not found")
+					return nil, domain.ErrNotFound
 				}
 				return nil, domain.NewDomainError("GET_FAILED", "Failed to get video")
 			}
@@ -344,6 +378,16 @@ func (r *videoRepository) GetByUserID(ctx context.Context, userID string, limit,
 func (r *videoRepository) Update(ctx context.Context, v *domain.Video) error {
 	// Get executor (either transaction from context or DB)
 	exec := GetExecutor(ctx, r.db)
+
+	if v.UpdatedAt.IsZero() {
+		v.UpdatedAt = time.Now()
+	}
+	if v.Tags == nil {
+		v.Tags = []string{}
+	}
+	if v.StorageTier == "" {
+		v.StorageTier = "hot"
+	}
 
 	// Marshal S3 URLs, ensuring we use empty object instead of null for nil maps
 	var s3URLsJSON []byte

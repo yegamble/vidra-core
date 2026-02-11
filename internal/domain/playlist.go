@@ -15,7 +15,7 @@ type Playlist struct {
 	Privacy      Privacy   `json:"privacy" db:"privacy"`
 	ThumbnailURL *string   `json:"thumbnail_url,omitempty" db:"thumbnail_url"`
 	IsWatchLater bool      `json:"is_watch_later" db:"is_watch_later"`
-	ItemCount    int       `json:"item_count,omitempty"` // Computed field
+	ItemCount    int       `json:"item_count,omitempty" db:"item_count"` // Computed field
 	CreatedAt    time.Time `json:"created_at" db:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at" db:"updated_at"`
 }

@@ -17,8 +17,6 @@ import (
 
 // TestTransactionManager_WithTransaction tests basic transaction functionality
 func TestTransactionManager_WithTransaction(t *testing.T) {
-	t.Parallel()
-
 	testDB := testutil.SetupTestDB(t)
 	if testDB == nil {
 		return
@@ -109,8 +107,6 @@ func TestTransactionManager_WithTransaction(t *testing.T) {
 
 // TestUserRepository_CreateWithTransaction tests user creation with transaction
 func TestUserRepository_CreateWithTransaction(t *testing.T) {
-	t.Parallel()
-
 	testDB := testutil.SetupTestDB(t)
 	if testDB == nil {
 		return
@@ -181,8 +177,6 @@ func TestUserRepository_CreateWithTransaction(t *testing.T) {
 
 // TestVideoRepository_TransactionSupport tests video repository with transactions
 func TestVideoRepository_TransactionSupport(t *testing.T) {
-	t.Parallel()
-
 	testDB := testutil.SetupTestDB(t)
 	if testDB == nil {
 		return
@@ -251,8 +245,6 @@ func TestVideoRepository_TransactionSupport(t *testing.T) {
 
 // TestSubscriptionRepository_AtomicOperations tests atomic subscription operations
 func TestSubscriptionRepository_AtomicOperations(t *testing.T) {
-	t.Parallel()
-
 	testDB := testutil.SetupTestDB(t)
 	if testDB == nil {
 		return
@@ -302,8 +294,6 @@ func TestSubscriptionRepository_AtomicOperations(t *testing.T) {
 
 // TestUploadRepository_AtomicChunkRecording tests atomic chunk recording
 func TestUploadRepository_AtomicChunkRecording(t *testing.T) {
-	t.Parallel()
-
 	testDB := testutil.SetupTestDB(t)
 	if testDB == nil {
 		return
@@ -322,10 +312,17 @@ func TestUploadRepository_AtomicChunkRecording(t *testing.T) {
 		`, userID)
 		require.NoError(t, err)
 
+		videoID := uuid.New()
+		_, err = db.Exec(`
+			INSERT INTO videos (id, title, description, user_id, status, privacy, created_at, updated_at)
+			VALUES ($1, 'Upload Source', 'Upload test source video', $2, 'completed', 'private', NOW(), NOW())
+		`, videoID, userID)
+		require.NoError(t, err)
+
 		// Create upload session
 		session := &domain.UploadSession{
 			ID:             uuid.New().String(),
-			VideoID:        uuid.New().String(),
+			VideoID:        videoID.String(),
 			UserID:         userID.String(),
 			FileName:       "test.mp4",
 			FileSize:       1024 * 1024, // 1MB
@@ -368,8 +365,6 @@ func TestUploadRepository_AtomicChunkRecording(t *testing.T) {
 
 // TestTransactionManager_IsolationLevels tests different isolation levels
 func TestTransactionManager_IsolationLevels(t *testing.T) {
-	t.Parallel()
-
 	testDB := testutil.SetupTestDB(t)
 	if testDB == nil {
 		return
@@ -405,21 +400,18 @@ func TestTransactionManager_IsolationLevels(t *testing.T) {
 				"INSERT INTO users (id, username, email, role, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6)",
 				uuid.New(), "readonly", "readonly@example.com", "user", time.Now(), time.Now())
 
-			// We expect this to fail
-			if err != nil {
-				return nil // Expected error, return nil to commit the read-only transaction
+			// We expect this to fail and propagate.
+			if err == nil {
+				return errors.New("expected write to fail in read-only transaction")
 			}
-
-			return errors.New("expected write to fail in read-only transaction")
+			return err
 		})
-		assert.NoError(t, err)
+		require.Error(t, err)
 	})
 }
 
 // TestCommentRepository_TransactionSupport tests comment repository with transactions
 func TestCommentRepository_TransactionSupport(t *testing.T) {
-	t.Parallel()
-
 	testDB := testutil.SetupTestDB(t)
 	if testDB == nil {
 		return
@@ -469,8 +461,6 @@ func TestCommentRepository_TransactionSupport(t *testing.T) {
 
 // TestRatingRepository_TransactionSupport tests rating repository with transactions
 func TestRatingRepository_TransactionSupport(t *testing.T) {
-	t.Parallel()
-
 	testDB := testutil.SetupTestDB(t)
 	if testDB == nil {
 		return

@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"strconv"
 	"testing"
 	"time"
 
@@ -258,7 +259,7 @@ func TestVideoRepository_Count(t *testing.T) {
 	// Create videos
 	for i := 0; i < 3; i++ {
 		video := &domain.Video{
-			Title:       "Test Video " + string(rune(i)),
+			Title:       "Test Video " + strconv.Itoa(i),
 			Description: "Test Description",
 			UserID:      user.ID,
 			Privacy:     domain.PrivacyPublic,
@@ -303,7 +304,7 @@ func TestVideoRepository_List(t *testing.T) {
 	// Create multiple videos
 	for i := 0; i < 5; i++ {
 		video := &domain.Video{
-			Title:       "Test Video " + string(rune(i)),
+			Title:       "Test Video " + strconv.Itoa(i),
 			Description: "Test Description",
 			UserID:      user.ID,
 			Privacy:     domain.PrivacyPublic,

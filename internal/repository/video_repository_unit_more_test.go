@@ -215,7 +215,7 @@ func TestVideoRepository_Unit_GetByID_Branches(t *testing.T) {
 		video, err := repo.GetByID(context.Background(), videoID)
 		require.Nil(t, video)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "VIDEO_NOT_FOUND")
+		assert.ErrorIs(t, err, domain.ErrNotFound)
 		require.NoError(t, mock.ExpectationsWereMet())
 	})
 
@@ -231,7 +231,7 @@ func TestVideoRepository_Unit_GetByID_Branches(t *testing.T) {
 		video, err := repo.GetByID(context.Background(), videoID)
 		require.Nil(t, video)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "VIDEO_NOT_FOUND")
+		assert.ErrorIs(t, err, domain.ErrNotFound)
 		require.NoError(t, mock.ExpectationsWereMet())
 	})
 
@@ -252,14 +252,14 @@ func TestVideoRepository_Unit_GetByID_Branches(t *testing.T) {
 
 		fallbackRows := sqlmock.NewRows([]string{
 			"id", "thumbnail_id", "title", "description", "duration", "views",
-			"privacy", "status", "upload_date", "user_id",
+			"privacy", "status", "upload_date", "user_id", "channel_id",
 			"original_cid", "processed_cids", "thumbnail_cid",
 			"tags", "category_id", "language", "file_size", "mime_type", "metadata",
 			"created_at", "updated_at", "output_paths", "thumbnail_path", "preview_path",
 			"cat_id", "cat_name", "cat_slug", "cat_desc", "cat_icon", "cat_color", "cat_order", "cat_active",
 		}).AddRow(
 			videoID, uuid.New().String(), "fallback-title", "fallback-desc", 140, int64(7),
-			domain.PrivacyPublic, domain.StatusCompleted, now, userID,
+			domain.PrivacyPublic, domain.StatusCompleted, now, userID, uuid.New(),
 			"orig-cid", processedCIDsJSON, "thumb-cid",
 			pq.Array([]string{"fallback"}), nil, "en", int64(4096), "video/mp4", metadataJSON,
 			now, now, outputPathsJSON, "/thumb.jpg", "/preview.jpg",

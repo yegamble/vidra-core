@@ -340,6 +340,16 @@ func (r *playlistRepository) ReorderItem(ctx context.Context, playlistID, itemID
 		return nil // No change needed
 	}
 
+	// Move target item out of the constrained range first to avoid
+	// transient (playlist_id, position) unique conflicts while shifting.
+	const tempPosition = int(^uint(0) >> 1) // max int
+	_, err = tx.ExecContext(ctx,
+		`UPDATE playlist_items SET position = $1 WHERE id = $2`,
+		tempPosition, itemID)
+	if err != nil {
+		return fmt.Errorf("failed to reserve temporary item position: %w", err)
+	}
+
 	// Shift other items
 	if newPosition < currentPosition {
 		// Moving up - shift items down

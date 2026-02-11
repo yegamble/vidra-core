@@ -26,11 +26,12 @@ func (r *IOTARepository) CreateWallet(ctx context.Context, wallet *domain.IOTAWa
 	query := `
 		INSERT INTO iota_wallets (id, user_id, encrypted_seed, seed_nonce, address, balance_iota, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
+		RETURNING created_at, updated_at
 	`
-	_, err := r.db.ExecContext(ctx, query,
+	err := r.db.QueryRowContext(ctx, query,
 		wallet.ID, wallet.UserID, wallet.EncryptedSeed, wallet.SeedNonce,
 		wallet.Address, wallet.BalanceIOTA,
-	)
+	).Scan(&wallet.CreatedAt, &wallet.UpdatedAt)
 	if err != nil {
 		if isUniqueViolation(err) {
 			return domain.ErrWalletAlreadyExists
@@ -90,16 +91,21 @@ func (r *IOTARepository) UpdateWalletBalance(ctx context.Context, walletID strin
 
 // CreatePaymentIntent creates a new payment intent
 func (r *IOTARepository) CreatePaymentIntent(ctx context.Context, intent *domain.IOTAPaymentIntent) error {
+	var metadata any
+	if len(intent.Metadata) > 0 {
+		metadata = string(intent.Metadata)
+	}
+
 	query := `
 		INSERT INTO iota_payment_intents
 		(id, user_id, video_id, amount_iota, payment_address, status, expires_at, metadata, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, NOW(), NOW())
+		RETURNING created_at, updated_at
 	`
-	_, err := r.db.ExecContext(ctx, query,
+	return r.db.QueryRowContext(ctx, query,
 		intent.ID, intent.UserID, intent.VideoID, intent.AmountIOTA,
-		intent.PaymentAddress, intent.Status, intent.ExpiresAt, intent.Metadata,
-	)
-	return err
+		intent.PaymentAddress, intent.Status, intent.ExpiresAt, metadata,
+	).Scan(&intent.CreatedAt, &intent.UpdatedAt)
 }
 
 // GetPaymentIntentByID retrieves a payment intent by ID
@@ -120,7 +126,10 @@ func (r *IOTARepository) GetPaymentIntentByID(ctx context.Context, intentID stri
 func (r *IOTARepository) UpdatePaymentIntentStatus(ctx context.Context, intentID string, status domain.PaymentIntentStatus, txID *string) error {
 	query := `
 		UPDATE iota_payment_intents
-		SET status = $1, transaction_id = $2, paid_at = CASE WHEN $1 = 'paid' THEN NOW() ELSE paid_at END, updated_at = NOW()
+		SET status = $1::varchar,
+		    transaction_id = $2,
+		    paid_at = CASE WHEN $1::varchar = 'paid' THEN NOW() ELSE paid_at END,
+		    updated_at = NOW()
 		WHERE id = $3
 	`
 	result, err := r.db.ExecContext(ctx, query, status, txID, intentID)
@@ -169,16 +178,21 @@ func (r *IOTARepository) GetExpiredPaymentIntents(ctx context.Context) ([]*domai
 
 // CreateTransaction creates a new transaction record
 func (r *IOTARepository) CreateTransaction(ctx context.Context, tx *domain.IOTATransaction) error {
+	var metadata any
+	if len(tx.Metadata) > 0 {
+		metadata = string(tx.Metadata)
+	}
+
 	query := `
 		INSERT INTO iota_transactions
 		(id, wallet_id, transaction_hash, amount_iota, tx_type, status, confirmations, from_address, to_address, metadata, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, NOW())
+		RETURNING created_at
 	`
-	_, err := r.db.ExecContext(ctx, query,
+	return r.db.QueryRowContext(ctx, query,
 		tx.ID, tx.WalletID, tx.TransactionHash, tx.AmountIOTA, tx.TxType,
-		tx.Status, tx.Confirmations, tx.FromAddress, tx.ToAddress, tx.Metadata,
-	)
-	return err
+		tx.Status, tx.Confirmations, tx.FromAddress, tx.ToAddress, metadata,
+	).Scan(&tx.CreatedAt)
 }
 
 // GetTransactionByHash retrieves a transaction by hash
@@ -199,7 +213,9 @@ func (r *IOTARepository) GetTransactionByHash(ctx context.Context, txHash string
 func (r *IOTARepository) UpdateTransactionStatus(ctx context.Context, txID string, status domain.TransactionStatus, confirmations int) error {
 	query := `
 		UPDATE iota_transactions
-		SET status = $1, confirmations = $2, confirmed_at = CASE WHEN $1 = 'confirmed' THEN NOW() ELSE confirmed_at END
+		SET status = $1::varchar,
+		    confirmations = $2,
+		    confirmed_at = CASE WHEN $1::varchar = 'confirmed' THEN NOW() ELSE confirmed_at END
 		WHERE id = $3
 	`
 	_, err := r.db.ExecContext(ctx, query, status, confirmations, txID)

@@ -25,43 +25,51 @@ func NewUserRepository(db *sqlx.DB) usecase.UserRepository {
 }
 
 func (r *userRepository) Create(ctx context.Context, user *domain.User, passwordHash string) error {
+	if tx := GetTxFromContext(ctx); tx != nil {
+		return r.createWithExecutor(ctx, tx, user, passwordHash)
+	}
+
 	// Use transaction for atomic user + channel creation
 	return r.tm.WithTransaction(ctx, nil, func(tx *sqlx.Tx) error {
-		// Insert user record (avatar stored in user_avatars separately)
-		query := `
+		return r.createWithExecutor(ctx, tx, user, passwordHash)
+	})
+}
+
+func (r *userRepository) createWithExecutor(ctx context.Context, exec Executor, user *domain.User, passwordHash string) error {
+	// Insert user record (avatar stored in user_avatars separately)
+	query := `
             INSERT INTO users (id, username, email, display_name, bio, bitcoin_wallet, role, password_hash, is_active, created_at, updated_at)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`
 
-		_, err := tx.ExecContext(ctx, query,
-			user.ID, user.Username, user.Email, user.DisplayName, user.Bio, user.BitcoinWallet,
-			user.Role, passwordHash, user.IsActive, user.CreatedAt, user.UpdatedAt)
+	_, err := exec.ExecContext(ctx, query,
+		user.ID, user.Username, user.Email, user.DisplayName, user.Bio, user.BitcoinWallet,
+		user.Role, passwordHash, user.IsActive, user.CreatedAt, user.UpdatedAt)
 
-		if err != nil {
-			return fmt.Errorf("failed to create user: %w", err)
-		}
+	if err != nil {
+		return fmt.Errorf("failed to create user: %w", err)
+	}
 
-		// If channels table exists in this schema, ensure a default channel for the user.
-		// This guards tests that use a legacy schema without channels.
-		var channelsExist bool
-		const q = `SELECT EXISTS (
+	// If channels table exists in this schema, ensure a default channel for the user.
+	// This guards tests that use a legacy schema without channels.
+	var channelsExist bool
+	const q = `SELECT EXISTS (
             SELECT 1 FROM information_schema.tables
             WHERE table_schema = current_schema()
               AND table_name = 'channels'
         )`
-		if err := tx.QueryRowContext(ctx, q).Scan(&channelsExist); err == nil && channelsExist {
-			_, err = tx.ExecContext(ctx, `
+	if err := exec.QueryRowContext(ctx, q).Scan(&channelsExist); err == nil && channelsExist {
+		_, err = exec.ExecContext(ctx, `
                 INSERT INTO channels (account_id, handle, display_name, description)
                 SELECT $1::uuid, $2::text, COALESCE(NULLIF($3::text, ''), $2::text), $4::text
                 WHERE NOT EXISTS (SELECT 1 FROM channels WHERE account_id = $1::uuid)
             `, user.ID, user.Username, user.DisplayName, user.Bio)
 
-			if err != nil {
-				return fmt.Errorf("failed to create default channel: %w", err)
-			}
+		if err != nil {
+			return fmt.Errorf("failed to create default channel: %w", err)
 		}
+	}
 
-		return nil
-	})
+	return nil
 }
 
 const selectUserWithAvatar = `
