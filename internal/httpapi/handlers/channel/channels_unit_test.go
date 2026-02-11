@@ -132,6 +132,8 @@ type unitSubscriptionRepoStub struct {
 	listChannelSubscribersFn  func(ctx context.Context, channelID uuid.UUID, limit, offset int) (*domain.SubscriptionResponse, error)
 	listUserSubscriptionsFn   func(ctx context.Context, subscriberID uuid.UUID, limit, offset int) (*domain.SubscriptionResponse, error)
 	getSubscriptionVideosFn   func(ctx context.Context, subscriberID uuid.UUID, limit, offset int) ([]domain.Video, int, error)
+	subscribeLegacyFn         func(ctx context.Context, subscriberID, channelID string) error
+	unsubscribeLegacyFn       func(ctx context.Context, subscriberID, channelID string) error
 	capturedListLimit         int
 	capturedListOffset        int
 	capturedSubscribersFilter *uuid.UUID
@@ -173,8 +175,18 @@ func (s *unitSubscriptionRepoStub) GetSubscriptionVideos(ctx context.Context, su
 	}
 	return []domain.Video{}, 0, nil
 }
-func (s *unitSubscriptionRepoStub) Subscribe(context.Context, string, string) error   { return nil }
-func (s *unitSubscriptionRepoStub) Unsubscribe(context.Context, string, string) error { return nil }
+func (s *unitSubscriptionRepoStub) Subscribe(ctx context.Context, subscriberID, channelID string) error {
+	if s.subscribeLegacyFn != nil {
+		return s.subscribeLegacyFn(ctx, subscriberID, channelID)
+	}
+	return nil
+}
+func (s *unitSubscriptionRepoStub) Unsubscribe(ctx context.Context, subscriberID, channelID string) error {
+	if s.unsubscribeLegacyFn != nil {
+		return s.unsubscribeLegacyFn(ctx, subscriberID, channelID)
+	}
+	return nil
+}
 func (s *unitSubscriptionRepoStub) ListSubscriptions(context.Context, string, int, int) ([]*domain.User, int64, error) {
 	return nil, 0, nil
 }
@@ -498,5 +510,141 @@ func TestChannelHandlers_Subscriptions_Unit(t *testing.T) {
 		assert.Equal(t, channelID, *subRepo.capturedSubscribersFilter)
 		assert.Equal(t, 10, subRepo.capturedListLimit)
 		assert.Equal(t, 10, subRepo.capturedListOffset)
+	})
+}
+
+func TestLegacySubscriptionHandlers_Unit(t *testing.T) {
+	me := uuid.New().String()
+	target := uuid.New().String()
+
+	t.Run("subscribe unauthorized and invalid id", func(t *testing.T) {
+		subRepo := &unitSubscriptionRepoStub{}
+		userRepo := &unitUserRepoStub{}
+		handler := SubscribeToUserHandler(subRepo, userRepo)
+
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/users/"+target+"/subscribe", nil)
+		req = withChannelParam(req, "id", target)
+		rr := httptest.NewRecorder()
+		handler(rr, req)
+		require.Equal(t, http.StatusUnauthorized, rr.Code)
+
+		req = httptest.NewRequest(http.MethodPost, "/api/v1/users/bad/subscribe", nil)
+		req = withChannelParam(req, "id", "bad-uuid")
+		req = req.WithContext(context.WithValue(req.Context(), middleware.UserIDKey, me))
+		rr = httptest.NewRecorder()
+		handler(rr, req)
+		require.Equal(t, http.StatusBadRequest, rr.Code)
+	})
+
+	t.Run("subscribe target not found and internal verification error", func(t *testing.T) {
+		subRepo := &unitSubscriptionRepoStub{}
+		userRepo := &unitUserRepoStub{
+			getByIDFn: func(context.Context, string) (*domain.User, error) {
+				return nil, domain.ErrUserNotFound
+			},
+		}
+		handler := SubscribeToUserHandler(subRepo, userRepo)
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/users/"+target+"/subscribe", nil)
+		req = withChannelParam(req, "id", target)
+		req = req.WithContext(context.WithValue(req.Context(), middleware.UserIDKey, me))
+		rr := httptest.NewRecorder()
+		handler(rr, req)
+		require.Equal(t, http.StatusNotFound, rr.Code)
+
+		userRepo.getByIDFn = func(context.Context, string) (*domain.User, error) {
+			return nil, errors.New("db error")
+		}
+		req = httptest.NewRequest(http.MethodPost, "/api/v1/users/"+target+"/subscribe", nil)
+		req = withChannelParam(req, "id", target)
+		req = req.WithContext(context.WithValue(req.Context(), middleware.UserIDKey, me))
+		rr = httptest.NewRecorder()
+		handler(rr, req)
+		require.Equal(t, http.StatusInternalServerError, rr.Code)
+	})
+
+	t.Run("subscribe repository failure and success", func(t *testing.T) {
+		capturedSubscriber := ""
+		capturedTarget := ""
+		subRepo := &unitSubscriptionRepoStub{
+			subscribeLegacyFn: func(_ context.Context, subscriberID, channelID string) error {
+				capturedSubscriber = subscriberID
+				capturedTarget = channelID
+				return errors.New("insert error")
+			},
+		}
+		userRepo := &unitUserRepoStub{}
+		handler := SubscribeToUserHandler(subRepo, userRepo)
+
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/users/"+target+"/subscribe", nil)
+		req = withChannelParam(req, "id", target)
+		req = req.WithContext(context.WithValue(req.Context(), middleware.UserIDKey, me))
+		rr := httptest.NewRecorder()
+		handler(rr, req)
+		require.Equal(t, http.StatusInternalServerError, rr.Code)
+		assert.Equal(t, me, capturedSubscriber)
+		assert.Equal(t, target, capturedTarget)
+
+		subRepo.subscribeLegacyFn = func(_ context.Context, subscriberID, channelID string) error {
+			capturedSubscriber = subscriberID
+			capturedTarget = channelID
+			return nil
+		}
+		req = httptest.NewRequest(http.MethodPost, "/api/v1/users/"+target+"/subscribe", nil)
+		req = withChannelParam(req, "id", target)
+		req = req.WithContext(context.WithValue(req.Context(), middleware.UserIDKey, me))
+		rr = httptest.NewRecorder()
+		handler(rr, req)
+		require.Equal(t, http.StatusNoContent, rr.Code)
+		assert.Equal(t, me, capturedSubscriber)
+		assert.Equal(t, target, capturedTarget)
+	})
+
+	t.Run("unsubscribe unauthorized invalid id error success", func(t *testing.T) {
+		capturedSubscriber := ""
+		capturedTarget := ""
+		subRepo := &unitSubscriptionRepoStub{
+			unsubscribeLegacyFn: func(_ context.Context, subscriberID, channelID string) error {
+				capturedSubscriber = subscriberID
+				capturedTarget = channelID
+				return errors.New("delete error")
+			},
+		}
+		handler := UnsubscribeFromUserHandler(subRepo)
+
+		req := httptest.NewRequest(http.MethodDelete, "/api/v1/users/"+target+"/subscribe", nil)
+		req = withChannelParam(req, "id", target)
+		rr := httptest.NewRecorder()
+		handler(rr, req)
+		require.Equal(t, http.StatusUnauthorized, rr.Code)
+
+		req = httptest.NewRequest(http.MethodDelete, "/api/v1/users/bad/subscribe", nil)
+		req = withChannelParam(req, "id", "not-uuid")
+		req = req.WithContext(context.WithValue(req.Context(), middleware.UserIDKey, me))
+		rr = httptest.NewRecorder()
+		handler(rr, req)
+		require.Equal(t, http.StatusBadRequest, rr.Code)
+
+		req = httptest.NewRequest(http.MethodDelete, "/api/v1/users/"+target+"/subscribe", nil)
+		req = withChannelParam(req, "id", target)
+		req = req.WithContext(context.WithValue(req.Context(), middleware.UserIDKey, me))
+		rr = httptest.NewRecorder()
+		handler(rr, req)
+		require.Equal(t, http.StatusInternalServerError, rr.Code)
+		assert.Equal(t, me, capturedSubscriber)
+		assert.Equal(t, target, capturedTarget)
+
+		subRepo.unsubscribeLegacyFn = func(_ context.Context, subscriberID, channelID string) error {
+			capturedSubscriber = subscriberID
+			capturedTarget = channelID
+			return nil
+		}
+		req = httptest.NewRequest(http.MethodDelete, "/api/v1/users/"+target+"/subscribe", nil)
+		req = withChannelParam(req, "id", target)
+		req = req.WithContext(context.WithValue(req.Context(), middleware.UserIDKey, me))
+		rr = httptest.NewRecorder()
+		handler(rr, req)
+		require.Equal(t, http.StatusNoContent, rr.Code)
+		assert.Equal(t, me, capturedSubscriber)
+		assert.Equal(t, target, capturedTarget)
 	})
 }

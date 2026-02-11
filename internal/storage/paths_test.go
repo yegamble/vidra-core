@@ -43,6 +43,16 @@ func TestPaths_ThumbnailsAndPreviews(t *testing.T) {
 	assert.Equal(t, filepath.Join(root, "previews", vid+"_preview.webp"), p.PreviewPath(vid))
 }
 
+func TestPaths_CaptionsPaths(t *testing.T) {
+	root := "./storage"
+	p := NewPaths(root)
+	vid := "video-caption-1"
+
+	assert.Equal(t, filepath.Join(root, "captions"), p.CaptionsRootDir())
+	assert.Equal(t, filepath.Join(root, "captions", vid), p.VideoCaptionsDir(vid))
+	assert.Equal(t, filepath.Join(root, "captions", vid, "en.vtt"), p.CaptionFilePath(vid, "en", "vtt"))
+}
+
 func TestPaths_HLSPathsAndRel(t *testing.T) {
 	root := "./storage"
 	p := NewPaths(root)

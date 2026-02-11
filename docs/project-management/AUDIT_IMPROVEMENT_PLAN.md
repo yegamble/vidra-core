@@ -124,9 +124,9 @@ API handlers are the system boundary — where user input enters. Low coverage h
 - [x] **P1** Add tests for `httpapi/handlers/moderation/` (validation/auth paths now covered; package at 27.1%)
 - [x] **P1** Add tests for `httpapi/handlers/social/` (validation/auth paths now covered across ratings/playlists/captions; package at 31.6%)
 - [x] **P1** Improve tests for `httpapi/handlers/video/` (raised from 22.8% to 51.2% with unit branch coverage on videos/views/ipfs/encoding handlers)
-- [x] **P1** Improve tests for `httpapi/handlers/channel/` (raised from 7.1% to 59.5% with new `channels.go` unit suites)
+- [x] **P1** Improve tests for `httpapi/handlers/channel/` (raised from 7.1% to 71.4% with new `channels.go` + legacy subscription unit suites)
 - [x] **P1** Improve tests for `httpapi/handlers/livestream/` (verified package currently at 57.1%; existing livestream + waiting-room suites are active)
-- [x] **P1** Add tests for `httpapi/handlers/plugin/` (added runnable unit suites; package moved from 0.0% to 40.5%)
+- [x] **P1** Add tests for `httpapi/handlers/plugin/` (added runnable unit + expanded sqlmock suites; package moved from 0.0% to 67.5%)
 - [ ] **P1** Each handler test should cover: valid input, invalid input, auth required, not found
 
 **Success Criteria**: Every handler package has at least one test file. Average handler coverage >= 50%.
@@ -134,10 +134,10 @@ API handlers are the system boundary — where user input enters. Low coverage h
 ### 1.3 Untested Business Logic
 
 - [x] **P1** Add tests for `usecase/import/` (real `service.go` coverage added; package at 48.6%)
-- [ ] **P1** Add tests for `internal/importer/` (no test file exists)
-- [ ] **P1** Add tests for `internal/health/` (no dedicated test file)
-- [ ] **P1** Improve `internal/storage/` tests (currently 16.8%)
-- [ ] **P1** Improve `usecase/encoding/` tests (currently 27.3%)
+- [x] **P1** Add tests for `internal/importer/` (added dedicated `internal/importer/ytdlp_test.go`; package at 87.1%)
+- [x] **P1** Add tests for `internal/health/` (added dedicated `internal/health/checker_test.go`; package at 68.2%)
+- [x] **P1** Improve `internal/storage/` tests (raised from 14.6% to 86.2% with S3/IPFS backend unit suites)
+- [x] **P1** Improve `usecase/encoding/` tests (verified current package coverage at 52.5%; previous 27.3% note was stale)
 
 **Success Criteria**: No usecase or infrastructure package at 0% coverage.
 
@@ -156,11 +156,12 @@ Note (2026-02-11): completed targeted video-handler coverage expansion with non-
   - after views suite: `go test ./internal/httpapi/handlers/video -coverprofile=/tmp/video_handlers_phase1_after2.out -count=1` → **46.1%**
   - current: `go test ./internal/httpapi/handlers/video -coverprofile=/tmp/video_handlers_phase1_after3.out -count=1` → **51.2%**
 
-Note (2026-02-11): completed channel-handler branch coverage expansion for `channels.go` using unit stubs for channel/user/subscription repositories:
-- Added `internal/httpapi/handlers/channel/channels_unit_test.go` covering list/get/create/update/delete, channel videos, “my channels”, subscribe/unsubscribe, and subscribers pagination/error paths.
+Note (2026-02-11): completed channel-handler branch coverage expansion for `channels.go` and legacy `subscriptions.go` paths using unit stubs for channel/user/subscription repositories:
+- Added `internal/httpapi/handlers/channel/channels_unit_test.go` covering list/get/create/update/delete, channel videos, “my channels”, subscribe/unsubscribe, legacy user-subscribe/unsubscribe, and subscribers pagination/error paths.
 - Coverage progression for `internal/httpapi/handlers/channel`:
   - baseline: `go test ./internal/httpapi/handlers/channel -coverprofile=/tmp/channel_handlers_phase1.out -count=1` → **7.1%**
-  - current: `go test ./internal/httpapi/handlers/channel -coverprofile=/tmp/channel_handlers_phase1_after.out -count=1` → **59.5%**
+  - after channels suite: `go test ./internal/httpapi/handlers/channel -coverprofile=/tmp/channel_handlers_phase1_after.out -count=1` → **59.5%**
+  - current: `go test ./internal/httpapi/handlers/channel -coverprofile=/tmp/channel_handlers_phase1_after2.out -count=1` → **71.4%**
 
 Note (2026-02-11): livestream handler package baseline verification shows this item is no longer blocked:
 - `go test ./internal/httpapi/handlers/livestream -coverprofile=/tmp/livestream_handlers_phase1.out -count=1` → **57.1%**
@@ -169,6 +170,35 @@ Note (2026-02-11): livestream handler package baseline verification shows this i
 Note (2026-02-11): added first runnable unit suite for plugin handlers (`internal/httpapi/handlers/plugin/plugin_handlers_unit_test.go`) covering constructors, helper/extraction functions, invalid-ID branches, body validation, and upload validation/signer gating:
 - baseline: `go test ./internal/httpapi/handlers/plugin -coverprofile=/tmp/plugin_handlers_phase1.out -count=1` → **0.0%**
 - current: `go test ./internal/httpapi/handlers/plugin -coverprofile=/tmp/plugin_handlers_phase1_after.out -count=1` → **40.5%**
+
+Note (2026-02-11): expanded plugin handler coverage with sqlmock-backed repository path tests in `internal/httpapi/handlers/plugin/plugin_handlers_sqlmock_test.go`:
+- Added success/error path coverage for `ListPlugins`, `GetPlugin`, `GetAllStatistics`, `CleanupExecutions`, `EnablePlugin`/`DisablePlugin` state guards, `UninstallPlugin`, and `UpdatePluginConfig` not-found handling.
+- Updated package coverage:
+  - `go test ./internal/httpapi/handlers/plugin -coverprofile=/tmp/plugin_handlers_phase1_after2.out -count=1` → **58.0%**
+
+Note (2026-02-11): added second-pass plugin sqlmock coverage for statistics/history/health endpoints and manager-error branches in toggle/config flows:
+- Added coverage for `GetPluginStatistics`, `GetExecutionHistory`, `GetPluginHealth`, plus `togglePluginStatus` and `UpdatePluginConfig` manager-failure paths.
+- Updated package coverage:
+  - `go test ./internal/httpapi/handlers/plugin -coverprofile=/tmp/plugin_cov_after3.out -count=1` → **67.5%**
+- Handler package snapshot after this pass (moderation/social/video/channel/livestream/plugin): **~51.0% average**, satisfying the Phase 1.2 average coverage criterion.
+
+Note (2026-02-11): added dedicated `internal/health/checker_test.go` to cover `DatabaseChecker`, `RedisChecker` (failure/default), `IPFSChecker`, `QueueDepthChecker`, `HealthService`, and stats helpers:
+- baseline: `go test ./internal/health -coverprofile=/tmp/health_phase1_before.out -count=1` → **0.0%**
+- current: `go test ./internal/health -coverprofile=/tmp/health_phase1_after.out -count=1` → **68.2%**
+
+Note (2026-02-11): added `internal/importer/ytdlp_test.go` with mock-executable unit coverage for URL validation, metadata extraction, download/thumbnail flows, progress parsing, and helper functions:
+- current: `go test ./internal/importer -coverprofile=/tmp/importer_phase1_after.out -count=1` → **87.1%**
+
+Note (2026-02-11): expanded `internal/storage` coverage with new backend suites:
+- Added `internal/storage/ipfs_backend_test.go` covering constructor validation/defaults and IPFS backend operation/error branches.
+- Added `internal/storage/s3_backend_test.go` covering constructor validation/defaults, signed/public URL paths, local-file failure handling, context-canceled error wrapping, and delete-multiple batching error paths.
+- Added captions path coverage in `internal/storage/paths_test.go` (`CaptionsRootDir`, `VideoCaptionsDir`, `CaptionFilePath`).
+- Coverage progression:
+  - baseline: `go test ./internal/storage -coverprofile=/tmp/internal_storage_phase1_before.out -count=1` → **14.6%**
+  - current: `go test ./internal/storage -coverprofile=/tmp/internal_storage_phase1_after.out -count=1` → **86.2%**
+
+Note (2026-02-11): verified current `internal/usecase/encoding` package coverage is above threshold and updated stale baseline references:
+- `go test ./internal/usecase/encoding -coverprofile=/tmp/usecase_encoding_phase1_before.out -count=1` → **52.5%**
 
 ---
 
