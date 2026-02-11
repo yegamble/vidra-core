@@ -45,7 +45,10 @@ jobs:
       - uses: ./.github/actions/install-gcc
 
       - name: Run unit tests
-        run: make test-unit
+        run: COVERAGE_OUT=coverage.out make test-unit
+
+      - name: Enforce coverage baseline
+        run: ./scripts/check-coverage-threshold.sh coverage.out 23.8
 
   lint:
     name: Code Quality (Lint & Format)
@@ -123,8 +126,8 @@ jobs:
 
       - name: Start services with docker compose
         run: |
-          docker compose -f docker-compose.ci.yml up -d --wait
-          docker compose -f docker-compose.ci.yml ps
+          docker compose --profile ci up -d --wait postgres-ci redis-ci ipfs-ci clamav-ci
+          docker compose --profile ci ps
 
       - name: Run integration tests
         env:
@@ -138,8 +141,8 @@ jobs:
       - name: Cleanup services
         if: always()
         run: |
-          docker compose -f docker-compose.ci.yml down -v
-          docker compose -f docker-compose.ci.yml ps
+          docker compose --profile ci down -v
+          docker compose --profile ci ps
 
   # ============================================================================
   # BUILD - Run after lint and unit tests pass
@@ -213,8 +216,8 @@ jobs:
 
       - name: Start services with docker compose
         run: |
-          docker compose -f docker-compose.ci.yml up -d --wait
-          docker compose -f docker-compose.ci.yml ps
+          docker compose --profile ci up -d --wait postgres-ci redis-ci ipfs-ci clamav-ci
+          docker compose --profile ci ps
 
       - name: Run integration tests with race detector
         env:
@@ -229,5 +232,5 @@ jobs:
       - name: Cleanup services
         if: always()
         run: |
-          docker compose -f docker-compose.ci.yml down -v
-          docker compose -f docker-compose.ci.yml ps
+          docker compose --profile ci down -v
+          docker compose --profile ci ps

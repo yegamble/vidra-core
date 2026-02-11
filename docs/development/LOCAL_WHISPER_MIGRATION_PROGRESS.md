@@ -70,7 +70,7 @@ The caption generation service has type mismatches with the domain model:
 
 ### 3. CI/CD Pipeline 🟡
 - Ensure Whisper service is available in CI environment (or mock it)
-- Add Whisper service to `docker-compose.test.yml` if needed
+- Add Whisper service to `docker-compose.yml` under the `test` profile if needed
 - Update test configuration to handle Whisper dependency
 
 ### 4. Documentation 🟢

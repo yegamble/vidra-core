@@ -6,7 +6,7 @@ echo "Starting test environment..."
 cd "$(dirname "$0")/.."
 
 # Ensure services are running
-COMPOSE_PROJECT_NAME=athena-test docker compose -f docker-compose.test.yml up -d postgres-test redis-test ipfs-test app-test > /dev/null 2>&1
+COMPOSE_PROJECT_NAME=athena-test docker compose --profile test up -d postgres-test redis-test ipfs-test app-test > /dev/null 2>&1
 
 echo "Waiting for services..."
 sleep 3
@@ -96,6 +96,6 @@ fi
 
 echo ""
 echo "Cleaning up..."
-COMPOSE_PROJECT_NAME=athena-test docker compose -f docker-compose.test.yml down -v > /dev/null 2>&1
+COMPOSE_PROJECT_NAME=athena-test docker compose --profile test down -v > /dev/null 2>&1
 
 echo "Validation tests complete!"

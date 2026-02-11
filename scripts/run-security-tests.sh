@@ -105,7 +105,7 @@ case $RUN_MODE in
         cd "$PROJECT_ROOT"
 
         # Start ClamAV
-        docker compose -f docker-compose.test.yml up -d clamav-test
+        docker compose --profile test up -d clamav-test
 
         echo "Waiting for ClamAV to be ready (this may take 2-3 minutes)..."
 
@@ -113,7 +113,7 @@ case $RUN_MODE in
         MAX_WAIT=180  # 3 minutes
         WAITED=0
         while [ $WAITED -lt $MAX_WAIT ]; do
-            if docker compose -f docker-compose.test.yml ps clamav-test | grep -q "healthy"; then
+            if docker compose --profile test ps clamav-test | grep -q "healthy"; then
                 echo -e "${GREEN}ClamAV is ready!${NC}"
                 break
             fi
@@ -124,7 +124,7 @@ case $RUN_MODE in
 
         if [ $WAITED -ge $MAX_WAIT ]; then
             echo -e "${RED}ClamAV failed to start in time${NC}"
-            docker compose -f docker-compose.test.yml logs clamav-test
+            docker compose --profile test logs clamav-test
             exit 1
         fi
 
@@ -141,7 +141,7 @@ case $RUN_MODE in
         # Cleanup
         echo ""
         echo "Cleaning up..."
-        docker compose -f docker-compose.test.yml down
+        docker compose --profile test down
         ;;
 
     local)

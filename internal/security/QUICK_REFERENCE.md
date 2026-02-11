@@ -275,7 +275,7 @@ CLAMAV_AUDIT_LOG=/var/log/virus-scans.log
 
 ### Run Locally (Same as CI)
 ```bash
-docker compose -f docker-compose.test.yml up --abort-on-container-exit
+docker compose --profile test up --abort-on-container-exit
 ```
 
 ---

@@ -1,4 +1,7 @@
 services:
+  # ---------------------------------------------------------------------------
+  # Development stack (default profile)
+  # ---------------------------------------------------------------------------
   postgres:
     image: postgres:15-alpine
     restart: unless-stopped
@@ -42,7 +45,7 @@ services:
     environment:
       - IPFS_PROFILE=server
     ports:
-      - "5001:5001" # API
+      - "5001:5001"
     volumes:
       - ipfs_staging:/export
       - ipfs_data:/data/ipfs
@@ -101,7 +104,6 @@ services:
       IPFS_API: http://ipfs:5001
       REQUIRE_IPFS: ${REQUIRE_IPFS:-false}
       PORT: 8080
-      # Whisper Configuration
       ENABLE_CAPTION_GENERATION: ${ENABLE_CAPTION_GENERATION:-true}
       WHISPER_PROVIDER: ${WHISPER_PROVIDER:-local}
       WHISPER_API_URL: ${WHISPER_API_URL:-http://whisper:9000}
@@ -119,6 +121,215 @@ services:
       retries: 20
       start_period: 5s
 
+  # ---------------------------------------------------------------------------
+  # Local test stack (profile: test)
+  # ---------------------------------------------------------------------------
+  postgres-test:
+    profiles: ["test"]
+    image: postgres:15-alpine
+    tmpfs:
+      - /var/lib/postgresql/data
+    environment:
+      POSTGRES_DB: athena_test
+      POSTGRES_USER: test_user
+      POSTGRES_PASSWORD: test_password
+      POSTGRES_HOST_AUTH_METHOD: trust
+    ports:
+      - "5433:5432"
+    volumes:
+      - ./init-test-db.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U test_user -d athena_test"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 20s
+    networks:
+      - test-network
+
+  redis-test:
+    profiles: ["test"]
+    image: redis:7-alpine
+    tmpfs:
+      - /data
+    ports:
+      - "6380:6379"
+    command: redis-server --save ""
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - test-network
+
+  ipfs-test:
+    profiles: ["test"]
+    image: ipfs/kubo:latest
+    tmpfs:
+      - /export
+      - /data/ipfs
+    environment:
+      - IPFS_PROFILE=server
+    ports:
+      - "15001:5001"
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider -q -T 3 http://127.0.0.1:5001/api/v0/version || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 45s
+    networks:
+      - test-network
+
+  clamav-test:
+    profiles: ["test"]
+    image: clamav/clamav:latest
+    platform: linux/amd64
+    container_name: athena_test_clamav
+    ports:
+      - "3310:3310"
+    environment:
+      - CLAMAV_NO_FRESHCLAM=false
+      - CLAMD_STARTUP_TIMEOUT=300
+    volumes:
+      - clamav-test-signatures:/var/lib/clamav
+      - ./testdata/virus_scanner:/testdata:ro
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/clamdcheck.sh"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 180s
+    mem_limit: 2g
+    networks:
+      - test-network
+
+  app-test:
+    profiles: ["test"]
+    image: athena:latest
+    build: .
+    depends_on:
+      postgres-test:
+        condition: service_healthy
+      redis-test:
+        condition: service_healthy
+      ipfs-test:
+        condition: service_started
+      clamav-test:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://test_user:test_password@postgres-test:5432/athena_test?sslmode=disable
+      REDIS_URL: redis://redis-test:6379/0
+      JWT_SECRET: test-jwt-secret
+      IPFS_API: http://ipfs-test:5001
+      REQUIRE_IPFS: "false"
+      PORT: 8080
+      VALIDATION_TEST_MODE: "true"
+      LOG_LEVEL: debug
+      STORAGE_DIR: /tmp/storage
+      CLAMAV_ADDRESS: clamav-test:3310
+      CLAMAV_TIMEOUT: "60"
+      CLAMAV_FALLBACK_MODE: strict
+      TEST_QUARANTINE_DIR: /tmp/quarantine
+    tmpfs:
+      - /tmp/storage:uid=1000,gid=1000
+    ports:
+      - "18080:8080"
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8080/health"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+      start_period: 2s
+    networks:
+      - test-network
+
+  newman:
+    profiles: ["test"]
+    image: postman/newman:alpine
+    depends_on:
+      app-test:
+        condition: service_healthy
+    volumes:
+      - ./postman:/etc/newman
+    entrypoint:
+      [
+        "newman", "run", "/etc/newman/athena-auth.postman_collection.json",
+        "-e", "/etc/newman/athena.local.postman_environment.json",
+        "--env-var", "baseUrl=http://app-test:8080",
+        "--reporters", "cli,junit",
+        "--reporter-junit-export", "/etc/newman/newman-results.xml"
+      ]
+    networks:
+      - test-network
+
+  # ---------------------------------------------------------------------------
+  # CI stack (profile: ci)
+  # ---------------------------------------------------------------------------
+  postgres-ci:
+    profiles: ["ci"]
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: athena_test
+      POSTGRES_USER: test_user
+      POSTGRES_PASSWORD: test_password
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U test_user -d athena_test"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - ./init-test-db.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    networks:
+      - ci-network
+
+  redis-ci:
+    profiles: ["ci"]
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - ci-network
+
+  ipfs-ci:
+    profiles: ["ci"]
+    image: ipfs/kubo:latest
+    environment:
+      - IPFS_PROFILE=server
+    ports:
+      - "5001:5001"
+    healthcheck:
+      test: ["CMD-SHELL", "ipfs version || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 15
+      start_period: 45s
+    networks:
+      - ci-network
+
+  clamav-ci:
+    profiles: ["ci"]
+    image: clamav/clamav:stable
+    platform: linux/amd64
+    ports:
+      - "3310:3310"
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/clamdcheck.sh"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 180s
+    networks:
+      - ci-network
+
 volumes:
   postgres_data:
     driver: local
@@ -134,7 +345,13 @@ volumes:
     driver: local
   whisper_models:
     driver: local
+  clamav-test-signatures:
+    driver: local
 
 networks:
   athena-network:
+    driver: bridge
+  test-network:
+    driver: bridge
+  ci-network:
     driver: bridge

@@ -229,11 +229,18 @@ Note (2026-02-11): verified current `internal/usecase/encoding` package coverage
   -P ubuntu-latest=catthehacker/ubuntu:act-latest
   --container-daemon-socket /var/run/docker.sock
   ```
-- [ ] **P2** Create `.secrets.example` template (not committed) listing required secrets
-- [ ] **P2** Verify `act -j test` runs the main test workflow successfully
-- [ ] **P2** Verify `act -j lint` runs formatting/linting checks
+- [x] **P2** Create `.secrets.example` template listing required secrets
+- [x] **P2** Verify `act -j unit` runs the main test workflow successfully
+- [x] **P2** Verify `act -j lint` runs formatting/linting checks
 
 Note (2026-02-10): `act -n -j unit` and `act -n -j lint` dry-runs pass with the updated `.actrc`; full non-dry execution is still pending.
+Note (2026-02-11): added repository-root `.secrets.example` with required local `act` variables (`DATABASE_URL`, `REDIS_URL`, `JWT_SECRET`) plus optional provider tokens.
+Note (2026-02-11): with Docker daemon available, ran full non-dry `act` checks with `.secrets.example`:
+- `act -j unit --secret-file .secrets.example`
+- `act -j lint --secret-file .secrets.example`
+Result:
+- `unit` job executes successfully and passes coverage gate (`39.5%` vs threshold `23.8%`).
+- `lint` job executes but fails on existing repository issues (`dupl`, `errcheck`, `gosec`, `unused`), not workflow wiring.
 
 ### 2.2 Document Local CI Execution
 
@@ -244,12 +251,34 @@ Note (2026-02-10): `act -n -j unit` and `act -n -j lint` dry-runs pass with the 
 
 ### 2.3 CI Optimization
 
-- [ ] **P2** Consolidate 3 docker-compose files into single file with profiles
-- [ ] **P2** Add coverage threshold enforcement in CI (fail if coverage drops below baseline)
-- [ ] **P2** Ensure `paths-ignore` is set on all workflows for docs-only changes
-- [ ] **P2** Review custom GitHub Actions in `.github/actions/` for reuse opportunities
+- [x] **P2** Consolidate 3 docker-compose files into single file with profiles
+- [x] **P2** Add coverage threshold enforcement in CI (fail if coverage drops below baseline)
+- [x] **P2** Ensure `paths-ignore` is set on all workflows for docs-only changes
+- [x] **P2** Review custom GitHub Actions in `.github/actions/` for reuse opportunities
 
-**Success Criteria**: `act -j test` and `act -j lint` pass locally. CONTRIBUTING.md documents setup.
+Note (2026-02-11): added `scripts/check-coverage-threshold.sh` and wired it into `.github/workflows/test.yml` unit job (`COVERAGE_OUT=coverage.out make test-unit` + threshold check at 23.8%).
+Note (2026-02-11): consolidated root compose definitions into profile-based `/docker-compose.yml`:
+- `test` profile: replaces former `docker-compose.test.yml` services (`postgres-test`, `redis-test`, `ipfs-test`, `clamav-test`, `app-test`, `newman`)
+- `ci` profile: replaces former `docker-compose.ci.yml` services (`postgres-ci`, `redis-ci`, `ipfs-ci`, `clamav-ci`)
+- removed obsolete split files (`docker-compose.test.yml`, `docker-compose.ci.yml`, and stale backup `docker-compose.test.yml.bak`)
+- updated operational references in `Makefile`, GitHub workflows, and helper scripts to use `docker compose --profile test|ci ...`
+Note (2026-02-11): runtime verification of consolidated compose setup:
+- `docker compose config`, `docker compose --profile test config`, and `docker compose --profile ci config` all succeed.
+- `COMPOSE_PROJECT_NAME=athena-test docker compose --profile test up -d postgres-test redis-test ipfs-test clamav-test app-test` starts expected services; `app-test` is healthy.
+- Full `make test-local` now reaches integration execution with Docker-backed services (previously daemon-blocked), but still has existing test-suite blockers.
+- Targeted reproduction: `go test -v -count=1 -run 'TestChannelNotifications_Integration|TestChannelSubscriptions_Integration' ./internal/httpapi/handlers/channel` fails in `TestChannelSubscriptions_Integration/Subscribe_to_Channel` (`expected 200, got 400`) and panics on index access in `channel_subscriptions_integration_test.go`.
+- `ipfs-test` unhealthy status is pre-existing (same healthcheck command as historical `docker-compose.test.yml`), not introduced by profile consolidation.
+Note (2026-02-11): fixed the channel-subscription integration blocker in `internal/httpapi/handlers/channel/channel_subscriptions_integration_test.go` by setting chi route params (`id`) on direct handler requests and decoding the shared response envelope before asserting payload fields. Validation:
+- `go test -v -count=1 -run 'TestChannelSubscriptions_Integration|TestChannelNotifications_Integration' ./internal/httpapi/handlers/channel` -> pass.
+- Full package run still has separate pre-existing failures to triage next (`TestChannelSubscriptionFeed_Integration` scan error on `processed_cids`, and `TestSubscriptionsBackwardCompatibility_Integration` duplicate-entry setup failures).
+Note (2026-02-11): verified unit coverage locally with the updated target:
+- `COVERAGE_OUT=/tmp/unit_cov_after_make.out make test-unit`
+- `go tool cover -func=/tmp/unit_cov_after_make.out | tail -n 1` -> `total: ... 39.5%`
+- `./scripts/check-coverage-threshold.sh /tmp/unit_cov_after_make.out 23.8` -> pass
+Note (2026-02-11): added docs-only `paths-ignore` gates for heavy workflows lacking them (`e2e-tests.yml` push/pull_request and `registration-api-tests.yml` push).
+Note (2026-02-11): reviewed `.github/actions/` for reuse opportunities; the current reusable action set is already centralized (Go setup/cache, security tooling, retry wrapper, Docker cleanup, service waiters), so no immediate dedup refactor was required.
+
+**Success Criteria**: `act -j unit` and `act -j lint` pass locally. CONTRIBUTING.md documents setup.
 
 ---
 
@@ -284,13 +313,15 @@ The architecture doc is missing 14+ subsystems that exist in code.
 
 Currently NO visual diagrams exist (only text-based mermaid in markdown).
 
-- [ ] **P2** Create system architecture diagram (mermaid in docs/architecture/):
+- [x] **P2** Create system architecture diagram (mermaid in docs/architecture/):
   - HTTP clients -> Chi Router -> Handlers -> Usecases -> Repositories -> PostgreSQL
   - Background workers -> Redis -> Schedulers
   - External: IPFS, ClamAV, FFmpeg, ATProto
-- [ ] **P2** Create database ER diagram (key entities: User, Channel, Video, Comment, Playlist, Subscription)
-- [ ] **P2** Create video upload/encoding flow diagram
-- [ ] **P2** Create federation architecture diagram (ATProto + ActivityPub)
+- [x] **P2** Create database ER diagram (key entities: User, Channel, Video, Comment, Playlist, Subscription)
+- [x] **P2** Create video upload/encoding flow diagram
+- [x] **P2** Create federation architecture diagram (ATProto + ActivityPub)
+
+Note (2026-02-11): added `docs/architecture/DIAGRAMS.md` with four Mermaid diagrams (system, ER, upload/encoding sequence, federation) and linked it from both `docs/architecture/README.md` and `docs/architecture.md`.
 
 ### 3.3 Fix Documentation Cross-References
 

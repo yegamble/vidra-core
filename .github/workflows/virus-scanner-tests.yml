@@ -95,8 +95,8 @@ jobs:
 
       - name: Start services with docker compose
         run: |
-          docker compose -f docker-compose.ci.yml up -d --wait
-          docker compose -f docker-compose.ci.yml ps
+          docker compose --profile ci up -d --wait postgres-ci redis-ci ipfs-ci clamav-ci
+          docker compose --profile ci ps
 
       - name: Create test fixtures
         run: |
@@ -139,11 +139,11 @@ jobs:
         if: failure()
         run: |
           echo "=== ClamAV Daemon Logs ==="
-          docker logs $(docker compose -f docker-compose.ci.yml ps -q clamav-ci)
+          docker logs $(docker compose --profile ci ps -q clamav-ci)
 
       - name: Cleanup services
         if: always()
-        run: docker compose -f docker-compose.ci.yml down -v
+        run: docker compose --profile ci down -v
 
   integration-tests-race:
     name: Integration Tests (Race Detection) - ClamAV
@@ -167,8 +167,8 @@ jobs:
 
       - name: Start services with docker compose
         run: |
-          docker compose -f docker-compose.ci.yml up -d --wait
-          docker compose -f docker-compose.ci.yml ps
+          docker compose --profile ci up -d --wait postgres-ci redis-ci ipfs-ci clamav-ci
+          docker compose --profile ci ps
 
       - name: Create test fixtures
         run: |
@@ -202,11 +202,11 @@ jobs:
         if: failure()
         run: |
           echo "=== ClamAV Daemon Logs ==="
-          docker logs $(docker compose -f docker-compose.ci.yml ps -q clamav-ci)
+          docker logs $(docker compose --profile ci ps -q clamav-ci)
 
       - name: Cleanup services
         if: always()
-        run: docker compose -f docker-compose.ci.yml down -v
+        run: docker compose --profile ci down -v
 
   edge-case-tests:
     name: Edge Cases & Breaking Scenarios
@@ -228,8 +228,8 @@ jobs:
 
       - name: Start services with docker compose
         run: |
-          docker compose -f docker-compose.ci.yml up -d --wait
-          docker compose -f docker-compose.ci.yml ps
+          docker compose --profile ci up -d --wait postgres-ci redis-ci ipfs-ci clamav-ci
+          docker compose --profile ci ps
 
       - name: Start application
         env:
@@ -314,14 +314,14 @@ jobs:
 
           # Wait briefly, then kill ClamAV
           sleep 0.5
-          docker compose -f docker-compose.ci.yml stop clamav-ci
+          docker compose --profile ci stop clamav-ci
 
           # Wait for upload to complete
           wait $UPLOAD_PID || UPLOAD_EXIT_CODE=$?
 
           # Restart ClamAV for subsequent tests
-          docker compose -f docker-compose.ci.yml start clamav-ci
-          timeout 300 bash -c 'until docker exec $(docker compose -f docker-compose.ci.yml ps -q clamav-ci) /usr/local/bin/clamdcheck.sh; do sleep 5; done'
+          docker compose --profile ci start clamav-ci
+          timeout 300 bash -c 'until docker exec $(docker compose --profile ci ps -q clamav-ci) /usr/local/bin/clamdcheck.sh; do sleep 5; done'
 
           # Verify upload was rejected
           if [ ${UPLOAD_EXIT_CODE:-0} -eq 0 ]; then
@@ -345,7 +345,7 @@ jobs:
         if: always()
         run: |
           kill ${{ env.APP_PID }} 2>/dev/null || echo "App already stopped"
-          docker compose -f docker-compose.ci.yml down -v
+          docker compose --profile ci down -v
 
   performance-benchmarks:
     name: Performance Benchmarks
@@ -367,8 +367,8 @@ jobs:
       - name: Start ClamAV service with docker compose
         run: |
           # Only start ClamAV for benchmarks (no need for postgres/redis)
-          docker compose -f docker-compose.ci.yml up -d --wait clamav-ci
-          docker compose -f docker-compose.ci.yml ps
+          docker compose --profile ci up -d --wait clamav-ci
+          docker compose --profile ci ps
 
       - name: Create benchmark test files
         run: |
@@ -414,7 +414,7 @@ jobs:
 
       - name: Cleanup services
         if: always()
-        run: docker compose -f docker-compose.ci.yml down -v
+        run: docker compose --profile ci down -v
 
   security-audit:
     name: Security Audit

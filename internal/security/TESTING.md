@@ -129,26 +129,26 @@ go test -short ./internal/security/...
 
 ```bash
 # Start ClamAV test container
-docker compose -f docker-compose.test.yml up -d clamav-test
+docker compose --profile test up -d clamav-test
 
 # Wait for ClamAV to be ready (may take 2-3 minutes for signature loading)
-docker compose -f docker-compose.test.yml logs -f clamav-test
+docker compose --profile test logs -f clamav-test
 
 # Run tests against containerized ClamAV
 CLAMAV_ADDRESS=localhost:3310 go test -v ./internal/security/...
 
 # Run full integration test suite
-docker compose -f docker-compose.test.yml up --abort-on-container-exit
+docker compose --profile test up --abort-on-container-exit
 
 # Cleanup
-docker compose -f docker-compose.test.yml down -v
+docker compose --profile test down -v
 ```
 
 ### CI/CD Integration
 
 ```bash
 # GitHub Actions / GitLab CI
-docker compose -f docker-compose.test.yml up --abort-on-container-exit --exit-code-from app-test
+docker compose --profile test up --abort-on-container-exit --exit-code-from app-test
 ```
 
 ## Test Fixtures
@@ -266,7 +266,7 @@ Error: dial tcp 127.0.0.1:3310: connect: connection refused
 **Solutions:**
 - Ensure ClamAV daemon is running: `systemctl status clamav-daemon`
 - Check port binding: `netstat -tlnp | grep 3310`
-- Use Docker container: `docker compose -f docker-compose.test.yml up clamav-test`
+- Use Docker container: `docker compose --profile test up clamav-test`
 - Run tests in short mode to skip integration: `go test -short`
 
 ### ClamAV Signature Update
@@ -278,7 +278,7 @@ Error: Can't connect to clamd: No such file or directory
 **Solutions:**
 - Update virus signatures: `sudo freshclam`
 - Wait for Docker container initialization (2-3 minutes)
-- Check ClamAV logs: `docker compose -f docker-compose.test.yml logs clamav-test`
+- Check ClamAV logs: `docker compose --profile test logs clamav-test`
 
 ### Test Timeout
 
@@ -288,7 +288,7 @@ panic: test timed out after 10m0s
 
 **Solutions:**
 - Increase test timeout: `go test -timeout 20m`
-- Check ClamAV is responding: `docker compose -f docker-compose.test.yml ps`
+- Check ClamAV is responding: `docker compose --profile test ps`
 - Verify network connectivity to ClamAV
 
 ## Code Coverage

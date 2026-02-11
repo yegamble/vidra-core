@@ -66,7 +66,7 @@ go test ./internal/security/...
 
 Or with Docker:
 ```bash
-docker compose -f docker-compose.test.yml up clamav-test
+docker compose --profile test up clamav-test
 ```
 
 ## Security Note

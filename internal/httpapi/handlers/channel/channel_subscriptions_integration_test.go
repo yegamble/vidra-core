@@ -115,6 +115,7 @@ func TestChannelSubscriptions_Integration(t *testing.T) {
 
 		// User1 subscribes to channel
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/channels/"+channel.ID.String()+"/subscribe", nil)
+		req = withChannelParam(req, "id", channel.ID.String())
 		req = req.WithContext(context.WithValue(req.Context(), middleware.UserIDKey, user1.ID))
 		rr := httptest.NewRecorder()
 
@@ -138,6 +139,7 @@ func TestChannelSubscriptions_Integration(t *testing.T) {
 
 		// Try to subscribe to own channel
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/channels/"+channel.ID.String()+"/subscribe", nil)
+		req = withChannelParam(req, "id", channel.ID.String())
 		req = req.WithContext(context.WithValue(req.Context(), middleware.UserIDKey, user.ID))
 		rr := httptest.NewRecorder()
 
@@ -159,6 +161,7 @@ func TestChannelSubscriptions_Integration(t *testing.T) {
 
 		// Unsubscribe
 		req := httptest.NewRequest(http.MethodDelete, "/api/v1/channels/"+channel.ID.String()+"/subscribe", nil)
+		req = withChannelParam(req, "id", channel.ID.String())
 		req = req.WithContext(context.WithValue(req.Context(), middleware.UserIDKey, user1.ID))
 		rr := httptest.NewRecorder()
 
@@ -188,14 +191,20 @@ func TestChannelSubscriptions_Integration(t *testing.T) {
 
 		// Get subscribers
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/channels/"+channel.ID.String()+"/subscribers?page=1&pageSize=3", nil)
+		req = withChannelParam(req, "id", channel.ID.String())
 		rr := httptest.NewRecorder()
 
 		channelHandlers.GetChannelSubscribers(rr, req)
 
 		assert.Equal(t, http.StatusOK, rr.Code)
 
+		var env integResp
+		err := json.NewDecoder(rr.Body).Decode(&env)
+		require.NoError(t, err)
+		require.True(t, env.Success)
+
 		var response map[string]interface{}
-		err := json.NewDecoder(rr.Body).Decode(&response)
+		err = json.Unmarshal(env.Data, &response)
 		require.NoError(t, err)
 
 		assert.Equal(t, float64(5), response["total"])
@@ -214,6 +223,7 @@ func TestChannelSubscriptions_Integration(t *testing.T) {
 		fakeChannelID := uuid.NewString()
 
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/channels/"+fakeChannelID+"/subscribe", nil)
+		req = withChannelParam(req, "id", fakeChannelID)
 		req = req.WithContext(context.WithValue(req.Context(), middleware.UserIDKey, user.ID))
 		rr := httptest.NewRecorder()
 

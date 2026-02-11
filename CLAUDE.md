@@ -80,4 +80,4 @@ For detailed guidance in specific areas, see:
 ### Testing
 - Unit tests per package
 - Use `sqlmock` for DB mocking
-- Integration tests with `docker-compose.test.yml`
+- Integration tests with `docker-compose.yml` (`--profile test`)

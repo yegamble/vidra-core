@@ -3,8 +3,14 @@ name: E2E Tests
 on:
   push:
     branches: [ main ]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
   pull_request:
     branches: [main, develop]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
   schedule:
     # Run E2E tests daily at 2 AM UTC
     - cron: '0 2 * * *'
@@ -74,7 +80,7 @@ jobs:
           docker compose -f tests/e2e/docker-compose.yml down -v 2>/dev/null || true
 
           # Clean up any other test environments that may use conflicting ports
-          docker compose -f docker-compose.test.yml down -v 2>/dev/null || true
+          docker compose --profile test down -v 2>/dev/null || true
 
           # Force cleanup any containers using our ports
           docker stop $(docker ps -q --filter "publish=5433" --filter "publish=6380" --filter "publish=18080" --filter "publish=3311") 2>/dev/null || true
@@ -218,7 +224,7 @@ jobs:
           docker compose -f tests/e2e/docker-compose.yml down -v 2>/dev/null || true
 
           # Clean up any other test environments that may use conflicting ports
-          docker compose -f docker-compose.test.yml down -v 2>/dev/null || true
+          docker compose --profile test down -v 2>/dev/null || true
 
           # Force cleanup any containers using our ports
           docker stop $(docker ps -q --filter "publish=5433" --filter "publish=6380" --filter "publish=18080" --filter "publish=3311") 2>/dev/null || true

@@ -149,7 +149,7 @@ messages:
 **Test Environment:**
 ```bash
 # Setup isolated test environment
-docker-compose -f docker-compose.test.yml up -d
+docker compose --profile test up -d postgres-test redis-test ipfs-test clamav-test app-test
 
 # Initialize test database with E2EE schema
 DATABASE_URL="postgres://test_user:test_password@localhost:5433/athena_test?sslmode=disable" \

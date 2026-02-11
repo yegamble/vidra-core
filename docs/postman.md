@@ -78,10 +78,10 @@ Notes
 - Logout uses `Authorization: Bearer {{access_token}}`.
 
 Run with Newman
-- Prereqs: Docker and docker-compose installed.
+- Prereqs: Docker with `docker compose` support installed.
 - Quick run against an already-running server:
   - `make postman-newman` (uses `BASE_URL=http://localhost:8080` by default)
   - Override base URL: `make postman-newman BASE_URL=http://localhost:18080`
 - End-to-end spin-up + run + teardown:
-  - `make postman-e2e` (starts Postgres/Redis/app via `docker-compose.test.yml`, runs Newman, then tears down)
+  - `make postman-e2e` (starts test services via `docker-compose.yml` with `--profile test`, runs Newman, then tears down)
 - JUnit results written to `postman/newman-results.xml` for CI consumption.

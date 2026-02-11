@@ -9,6 +9,9 @@ on:
       - 'migrations/**'
   push:
     branches: [main, develop]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
   schedule:
     # Run daily at 3 AM UTC
     - cron: '0 3 * * *'

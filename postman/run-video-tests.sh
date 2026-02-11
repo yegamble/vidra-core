@@ -6,8 +6,8 @@
 cd "$(dirname "$0")/.."  # Go to project root
 
 echo "Starting test environment..."
-COMPOSE_PROJECT_NAME=athena-test docker compose -f docker-compose.test.yml down -v > /dev/null 2>&1
-COMPOSE_PROJECT_NAME=athena-test docker compose -f docker-compose.test.yml up -d postgres-test redis-test ipfs-test app-test
+COMPOSE_PROJECT_NAME=athena-test docker compose --profile test down -v > /dev/null 2>&1
+COMPOSE_PROJECT_NAME=athena-test docker compose --profile test up -d postgres-test redis-test ipfs-test app-test
 
 echo "Waiting for services to be ready..."
 sleep 5
@@ -23,6 +23,6 @@ docker run --rm \
   --reporter-junit-export /etc/newman/newman-results.xml
 
 echo "Cleaning up test environment..."
-COMPOSE_PROJECT_NAME=athena-test docker compose -f docker-compose.test.yml down -v
+COMPOSE_PROJECT_NAME=athena-test docker compose --profile test down -v
 
 echo "Tests complete!"

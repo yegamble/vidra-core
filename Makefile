@@ -12,6 +12,7 @@ install-hooks: ## Configure Git to use repo .githooks
 
 # Use docker compose v2 if available; override with DOCKER_COMPOSE="docker-compose" if needed
 DOCKER_COMPOSE ?= docker compose
+TEST_PROFILE_SERVICES ?= postgres-test redis-test ipfs-test clamav-test app-test
 
 # Offline toolchain toggle:
 # - Set GO_OFFLINE=1 to force Go to use the locally installed toolchain
@@ -97,7 +98,12 @@ test-unit: ## Run unit tests (exclude DB-backed repository pkg and integration t
 	@set -e; \
 	PKGS=$$(go list ./... | grep -v "/internal/repository$$" | grep -v '^athena/tests/integration$$'); \
 	echo "Running unit tests in: $$PKGS"; \
-	$(GO_ENV) go test -v -parallel=8 -short $$PKGS
+	if [ -n "$${COVERAGE_OUT:-}" ]; then \
+		echo "Writing coverage profile to $${COVERAGE_OUT}"; \
+		$(GO_ENV) go test -v -parallel=8 -short -covermode=atomic -coverprofile="$${COVERAGE_OUT}" $$PKGS; \
+	else \
+		$(GO_ENV) go test -v -parallel=8 -short $$PKGS; \
+	fi
 
 test-unit-race: ## Run unit tests with race detection (requires CGO_ENABLED=1 and gcc)
 	@set -e; \
@@ -144,9 +150,9 @@ test-setup: ## Setup test environment with DNS and port checks
 
 test-local: test-setup ## Run tests with local Docker services
 	@echo "Pre-flight cleanup for test-local..."
-	-COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) -f docker-compose.test.yml down -v 2>/dev/null || true
+	-COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) --profile test down -v 2>/dev/null || true
 	@echo "Starting test services..."
-	COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) -f docker-compose.test.yml up -d
+	COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) --profile test up -d $(TEST_PROFILE_SERVICES)
 	@echo "Waiting for Postgres on 5433..."
 	@bash -lc 'for i in $$(seq 1 60); do pg_isready -h 127.0.0.1 -p 5433 -d athena_test -U test_user >/dev/null 2>&1 && exit 0; sleep 1; done; echo "Postgres not ready"; exit 1'
 	@echo "Waiting for Redis on 6380..."
@@ -158,13 +164,13 @@ test-local: test-setup ## Run tests with local Docker services
 	IPFS_API="http://localhost:15001" \
 	$(GO_ENV) go test -v -coverprofile=coverage.out ./...
 	@echo "Cleaning up test services..."
-	COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) -f docker-compose.test.yml down -v
+	COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) --profile test down -v
 
 test-local-race: test-setup ## Run tests with local Docker services with race detection (requires CGO_ENABLED=1 and gcc)
 	@echo "Pre-flight cleanup for test-local..."
-	-COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) -f docker-compose.test.yml down -v 2>/dev/null || true
+	-COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) --profile test down -v 2>/dev/null || true
 	@echo "Starting test services..."
-	COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) -f docker-compose.test.yml up -d
+	COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) --profile test up -d $(TEST_PROFILE_SERVICES)
 	@echo "Waiting for Postgres on 5433..."
 	@bash -lc 'for i in $$(seq 1 60); do pg_isready -h 127.0.0.1 -p 5433 -d athena_test -U test_user >/dev/null 2>&1 && exit 0; sleep 1; done; echo "Postgres not ready"; exit 1'
 	@echo "Waiting for Redis on 6380..."
@@ -176,10 +182,10 @@ test-local-race: test-setup ## Run tests with local Docker services with race de
 	IPFS_API="http://localhost:15001" \
 	CGO_ENABLED=1 $(GO_ENV) go test -v -race -coverprofile=coverage.out ./...
 	@echo "Cleaning up test services..."
-	COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) -f docker-compose.test.yml down -v
+	COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) --profile test down -v
 
 test-integration-local: ## Run only integration tests with local Docker services
-	COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) -f docker-compose.test.yml up -d
+	COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) --profile test up -d $(TEST_PROFILE_SERVICES)
 	@echo "Waiting for Postgres on 5433..."
 	@bash -lc 'for i in $$(seq 1 60); do pg_isready -h 127.0.0.1 -p 5433 -d athena_test -U test_user >/dev/null 2>&1 && exit 0; sleep 1; done; echo "Postgres not ready"; exit 1'
 	@echo "Waiting for Redis on 6380..."
@@ -190,10 +196,10 @@ test-integration-local: ## Run only integration tests with local Docker services
 	JWT_SECRET="test-jwt-secret" \
 	IPFS_API="http://localhost:15001" \
 	$(GO_ENV) go test -v -tags=integration ./tests/integration
-	COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) -f docker-compose.test.yml down -v
+	COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) --profile test down -v
 
 test-integration-local-race: ## Run integration tests with local Docker services with race detection (requires CGO_ENABLED=1 and gcc)
-	COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) -f docker-compose.test.yml up -d
+	COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) --profile test up -d $(TEST_PROFILE_SERVICES)
 	@echo "Waiting for Postgres on 5433..."
 	@bash -lc 'for i in $$(seq 1 60); do pg_isready -h 127.0.0.1 -p 5433 -d athena_test -U test_user >/dev/null 2>&1 && exit 0; sleep 1; done; echo "Postgres not ready"; exit 1'
 	@echo "Waiting for Redis on 6380..."
@@ -204,7 +210,7 @@ test-integration-local-race: ## Run integration tests with local Docker services
 	JWT_SECRET="test-jwt-secret" \
 	IPFS_API="http://localhost:15001" \
 	CGO_ENABLED=1 $(GO_ENV) go test -v -race -tags=integration ./tests/integration
-	COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) -f docker-compose.test.yml down -v
+	COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) --profile test down -v
 
 
 # Helper: ensure dev DB role/db exists inside docker postgres
@@ -322,13 +328,13 @@ migrate-dev-docker: ## Apply development migrations using Docker Postgres contai
 
 migrate-test-docker: ## Apply test migrations using Docker test Postgres container
 	@echo "Applying test migrations inside docker service 'postgres-test'..."
-	@COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) -f docker-compose.test.yml up -d postgres-test >/dev/null
+	@COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) --profile test up -d postgres-test >/dev/null
 	@echo "Waiting for postgres-test to be healthy..." && sleep 3
 	@set -e; \
 	shopt -s nullglob; \
 	for f in migrations/*.sql; do \
 		echo "Applying $$f via Docker test container"; \
-		COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) -f docker-compose.test.yml exec -T postgres-test psql -U test_user -d athena_test -f /dev/stdin < "$$f"; \
+		COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) --profile test exec -T postgres-test psql -U test_user -d athena_test -f /dev/stdin < "$$f"; \
 	done; \
 	echo "Test Docker migrations applied successfully."
 
@@ -383,7 +389,7 @@ test-cleanup: ## Clean up ALL test containers and ports
 	-docker rm -f $$(docker ps -aq --filter "name=athena-test") 2>/dev/null || true
 	-docker rm -f $$(docker ps -aq --filter "name=athena_test") 2>/dev/null || true
 	@echo "Cleaning up docker-compose projects..."
-	-COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) -f docker-compose.test.yml down --remove-orphans --volumes 2>/dev/null || true
+	-COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) --profile test down --remove-orphans --volumes 2>/dev/null || true
 	@echo "Removing test networks..."
 	-docker network rm athena-test_test-network 2>/dev/null || true
 	-docker network rm athena_test_default 2>/dev/null || true
@@ -478,7 +484,7 @@ postman-e2e: ## Start test services + app and run Newman end-to-end
 	-docker stop $$(docker ps -aq --filter "name=athena-test") 2>/dev/null || true
 	-docker rm -f $$(docker ps -aq --filter "name=athena-test") 2>/dev/null || true
 	-docker rm -f athena-test-redis athena-test-postgres athena-test-api 2>/dev/null || true
-	-COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) -f docker-compose.test.yml down --remove-orphans --volumes 2>/dev/null || true
+	-COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) --profile test down --remove-orphans --volumes 2>/dev/null || true
 	-docker network rm athena-test_test-network 2>/dev/null || true
 
 	@echo "[2/8] Checking port availability..."
@@ -501,12 +507,12 @@ postman-e2e: ## Start test services + app and run Newman end-to-end
 	docker build -t athena:latest . --no-cache
 
 	@echo "[5/8] Starting test stack (DB, Redis, App, IPFS, ClamAV)..."
-	COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) -f docker-compose.test.yml up -d --build postgres-test redis-test ipfs-test clamav-test app-test
+	COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) --profile test up -d --build postgres-test redis-test ipfs-test clamav-test app-test
 
 	@echo "[6/8] Waiting for services to be healthy..."
 	@echo "  Checking postgres-test..."
 	@for i in $$(seq 1 30); do \
-		if docker exec $$(COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) -f docker-compose.test.yml ps -q postgres-test) pg_isready -U test_user -d athena_test >/dev/null 2>&1; then \
+		if docker exec $$(COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) --profile test ps -q postgres-test) pg_isready -U test_user -d athena_test >/dev/null 2>&1; then \
 			echo "  ✓ postgres-test is ready"; break; \
 		fi; \
 		echo -n "."; sleep 1; \
@@ -514,7 +520,7 @@ postman-e2e: ## Start test services + app and run Newman end-to-end
 
 	@echo "  Checking redis-test..."
 	@for i in $$(seq 1 30); do \
-		if docker exec $$(COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) -f docker-compose.test.yml ps -q redis-test) redis-cli ping >/dev/null 2>&1; then \
+		if docker exec $$(COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) --profile test ps -q redis-test) redis-cli ping >/dev/null 2>&1; then \
 			echo "  ✓ redis-test is ready"; break; \
 		fi; \
 		echo -n "."; sleep 1; \
@@ -522,7 +528,7 @@ postman-e2e: ## Start test services + app and run Newman end-to-end
 
 	@echo "  Checking app-test health..."
 	@for i in $$(seq 1 40); do \
-		status=$$(docker inspect --format='{{json .State.Health.Status}}' $$(COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) -f docker-compose.test.yml ps -q app-test) 2>/dev/null | tr -d '"'); \
+		status=$$(docker inspect --format='{{json .State.Health.Status}}' $$(COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) --profile test ps -q app-test) 2>/dev/null | tr -d '"'); \
 		if [ "$$status" = "healthy" ]; then \
 			echo "  ✓ app-test is healthy"; break; \
 		fi; \
@@ -530,19 +536,19 @@ postman-e2e: ## Start test services + app and run Newman end-to-end
 	done
 
 	@echo "[7/8] Running Newman tests against http://app-test:8080..."
-	COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) -f docker-compose.test.yml run --rm newman || { \
+	COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) --profile test run --rm newman || { \
 		echo "=========================================" ; \
 		echo "Newman tests FAILED" ; \
 		echo "Preserving logs for debugging..." ; \
-		COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) -f docker-compose.test.yml logs app-test | tail -100 > postman-e2e-failure.log ; \
+		COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) --profile test logs app-test | tail -100 > postman-e2e-failure.log ; \
 		echo "Logs saved to postman-e2e-failure.log" ; \
 		echo "=========================================" ; \
-		COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) -f docker-compose.test.yml down -v ; \
+		COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) --profile test down -v ; \
 		exit 1; \
 	}
 
 	@echo "[8/8] Cleaning up test environment..."
-	COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) -f docker-compose.test.yml down --remove-orphans --volumes
+	COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) --profile test down --remove-orphans --volumes
 
 	@echo "========================================="
 	@echo "Postman E2E Tests - PASSED ✓"

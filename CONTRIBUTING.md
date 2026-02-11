@@ -73,9 +73,10 @@ Athena workflows are designed for GitHub Actions and can be exercised locally wi
 
 ### 2. Provide secrets
 
-Create a local `.secrets` file (do not commit) and add values like:
+Copy `.secrets.example` to `.secrets` (do not commit) and customize values:
 
 ```bash
+cp .secrets.example .secrets
 DATABASE_URL=postgres://test_user:test_password@localhost:5432/athena_test?sslmode=disable
 REDIS_URL=redis://localhost:6379/0
 JWT_SECRET=local-test-secret

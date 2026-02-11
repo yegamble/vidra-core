@@ -4,6 +4,8 @@
 
 Athena follows clean architecture principles with clear separation of concerns and dependency inversion. The system is designed for high concurrency, scalability, and maintainability.
 
+For canonical architecture diagrams, see [`docs/architecture/DIAGRAMS.md`](./DIAGRAMS.md).
+
 ## Core Architecture Layers
 
 ### 1. Domain Layer (`/internal/domain`)

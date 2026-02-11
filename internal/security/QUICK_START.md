@@ -26,10 +26,10 @@
 ### Run Tests (Manual)
 ```bash
 # Start ClamAV
-docker compose -f docker-compose.test.yml up -d clamav-test
+docker compose --profile test up -d clamav-test
 
 # Wait 2-3 minutes for ClamAV to load signatures
-docker compose -f docker-compose.test.yml logs -f clamav-test
+docker compose --profile test logs -f clamav-test
 
 # Run virus scanner tests
 CLAMAV_ADDRESS=localhost:3310 go test -v ./internal/security/virus_scanner_test.go
@@ -63,7 +63,7 @@ open coverage.html
 | Virus scanner tests | `/internal/security/virus_scanner_test.go` |
 | File type blocker tests | `/internal/security/file_type_blocker_test.go` |
 | Test fixtures | `/testdata/virus_scanner/` |
-| Docker config | `/docker-compose.test.yml` |
+| Docker config | `/docker-compose.yml` (`test` profile) |
 | Documentation | `/internal/security/TESTING.md` |
 | Test runner | `/scripts/run-security-tests.sh` |
 
@@ -163,7 +163,7 @@ go get github.com/stretchr/testify
 ### "connection refused" on port 3310
 ClamAV isn't running. Start it:
 ```bash
-docker compose -f docker-compose.test.yml up -d clamav-test
+docker compose --profile test up -d clamav-test
 ```
 
 ### "test timed out"

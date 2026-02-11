@@ -229,7 +229,7 @@ gh run view <run-id> --log
 make test-virus-scanner-ci
 
 # Or manually:
-docker compose -f docker-compose.test.yml up --abort-on-container-exit
+docker compose --profile test up --abort-on-container-exit
 ```
 
 ---

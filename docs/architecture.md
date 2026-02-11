@@ -8,6 +8,7 @@ Athena is a high-performance PeerTube backend implementation in Go, following **
 - [Project Structure](#project-structure)
 - [Layer Responsibilities](#layer-responsibilities)
 - [Data Flow](#data-flow)
+- [Architecture Diagrams](#architecture-diagrams)
 - [Key Subsystems](#key-subsystems)
 - [Technology Stack](#technology-stack)
 - [Patterns and Practices](#patterns-and-practices)
@@ -247,6 +248,14 @@ NotificationService.NotifySubscribers()
     ↓
 FederationService.PublishToATProto()
 ```
+
+## Architecture Diagrams
+
+Detailed Mermaid diagrams are maintained in [`docs/architecture/DIAGRAMS.md`](./architecture/DIAGRAMS.md):
+- System architecture
+- Core database ER model
+- Video upload/encoding flow
+- Federation architecture
 
 ## Key Subsystems
 
