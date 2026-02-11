@@ -18,14 +18,14 @@ See [VALIDATION_REQUIRED.md](docs/development/VALIDATION_REQUIRED.md) for comple
 
 | Metric | Count | Description |
 |--------|-------|-------------|
-| **Go Files** | 490 | Total Go files (including tests) |
+| **Go Files** | 490 | Total Go files (284 non-test) |
 | **Test Files** | 206 | Test files across unit, integration, and E2E suites |
-| **Lines of Code** | 162,800+ | ~75K source + ~87K test code |
+| **Lines of Code** | 162,799+ | ~75,479 source + ~87,320 test code |
 | **Database Migrations** | 61 | Goose SQL migrations |
 | **API Endpoints** | ~184 | RESTful + WebSocket + Federation (OpenAPI-documented) |
 | **Coverage Baseline** | 23.8% | Latest full-repo baseline (`docs/development/TEST_BASELINE_REPORT.md`, 2025-11-16) |
-| **Phase 1 Coverage Snapshot** | 52.5%-87.1% | Current targeted-package range (encoding/usecase through importer/storage) |
 | **Security Tests** | 50+ | Including SSRF, virus scanning, auth |
+| **Automated Tests** | 1,582 | `func Test*` count across `*_test.go` files |
 
 ## Features
 
@@ -300,11 +300,10 @@ See the full documentation index at [docs/README.md](docs/README.md).
 |--------|-------|-------------|
 | **Go Files** | 490 | Total Go files (284 non-test) |
 | **Test Files** | 206 | Test files across unit, integration, and E2E suites |
-| **Lines of Code** | 162,800+ | ~75K source + ~87K test code |
+| **Lines of Code** | 162,799+ | ~75,479 source + ~87,320 test code |
 | **Database Migrations** | 61 | Goose SQL migrations |
 | **API Endpoints** | ~184 | RESTful + WebSocket + Federation (OpenAPI-documented) |
-| **Test Coverage** | 23.8% baseline | Latest full-repo baseline (2025-11-16 report) |
-| **Phase 1 Coverage Snapshot** | 52.5%-87.1% | Targeted packages now at: channel 71.4%, plugin 67.5%, health 68.2%, importer 87.1%, storage 86.2%, usecase/encoding 52.5% |
+| **Test Coverage** | 23.8% baseline | Latest full-repo baseline (`docs/development/TEST_BASELINE_REPORT.md`, 2025-11-16) |
 | **Security Tests** | 50+ | SSRF, virus scanning, auth, input validation |
 | **Automated Tests** | 1,582 | `func Test*` count across `*_test.go` files |
 

@@ -3,6 +3,7 @@ SHELL := /bin/bash
 .PHONY: help deps lint test test-unit test-integration test-integration-ci build docker docker-up docker-down clean dev install-tools test-ci postman-newman postman-e2e run logs run-with-encoding act-test
 .PHONY: migrate-dev migrate-test migrate-custom migrate-dev-docker migrate-test-docker migrate-up db-ensure-dev-user
 .PHONY: validate-all validate-quick
+.PHONY: update-readme-metrics check-readme-metrics
 
 .PHONY: install-hooks
 install-hooks: ## Configure Git to use repo .githooks
@@ -34,6 +35,12 @@ validate-all: ## Run all validation checks (formatting, linting, tests, build)
 
 validate-quick: fmt-check lint ## Quick validation (formatting + linting only)
 	@echo "Quick validation complete!"
+
+update-readme-metrics: ## Recompute and refresh README metric tables
+	@./scripts/update-readme-metrics.sh
+
+check-readme-metrics: ## Verify README metric tables are up to date
+	@./scripts/update-readme-metrics.sh --check
 
 
 deps: ## Download Go dependencies
