@@ -18,9 +18,9 @@ See [VALIDATION_REQUIRED.md](docs/development/VALIDATION_REQUIRED.md) for comple
 
 | Metric | Count | Description |
 |--------|-------|-------------|
-| **Go Files** | 490 | Total Go files (284 non-test) |
+| **Go Files** | 493 | Total Go files (287 non-test) |
 | **Test Files** | 206 | Test files across unit, integration, and E2E suites |
-| **Lines of Code** | 162,799+ | ~75,479 source + ~87,320 test code |
+| **Lines of Code** | 163,278+ | ~75,958 source + ~87,320 test code |
 | **Database Migrations** | 61 | Goose SQL migrations |
 | **API Endpoints** | ~184 | RESTful + WebSocket + Federation (OpenAPI-documented) |
 | **Coverage Baseline** | 23.8% | Latest full-repo baseline (`docs/development/TEST_BASELINE_REPORT.md`, 2025-11-16) |
@@ -298,9 +298,9 @@ See the full documentation index at [docs/README.md](docs/README.md).
 
 | Metric | Count | Description |
 |--------|-------|-------------|
-| **Go Files** | 490 | Total Go files (284 non-test) |
+| **Go Files** | 493 | Total Go files (287 non-test) |
 | **Test Files** | 206 | Test files across unit, integration, and E2E suites |
-| **Lines of Code** | 162,799+ | ~75,479 source + ~87,320 test code |
+| **Lines of Code** | 163,278+ | ~75,958 source + ~87,320 test code |
 | **Database Migrations** | 61 | Goose SQL migrations |
 | **API Endpoints** | ~184 | RESTful + WebSocket + Federation (OpenAPI-documented) |
 | **Test Coverage** | 23.8% baseline | Latest full-repo baseline (`docs/development/TEST_BASELINE_REPORT.md`, 2025-11-16) |

@@ -25,14 +25,78 @@ format_int() {
 
 cd "$ROOT_DIR"
 
-go_files="$(rg --files -g '*.go' | wc -l | tr -d ' ')"
-non_test_go_files="$(rg --files -g '*.go' -g '!**/*_test.go' | wc -l | tr -d ' ')"
-test_files="$(rg --files -g '*_test.go' | wc -l | tr -d ' ')"
-migrations="$(rg --files migrations -g '*.sql' | wc -l | tr -d ' ')"
-automated_tests="$(rg -n '^func Test' --glob '*_test.go' | wc -l | tr -d ' ')"
+tmp_all_files="$(mktemp)"
+tmp_go_files="$(mktemp)"
+tmp_non_test_go_files="$(mktemp)"
+tmp_test_files="$(mktemp)"
+tmp_migration_files="$(mktemp)"
+tmp_file="$(mktemp)"
+trap 'rm -f "$tmp_file" "$tmp_all_files" "$tmp_go_files" "$tmp_non_test_go_files" "$tmp_test_files" "$tmp_migration_files"' EXIT
 
-source_lines="$(rg --files -0 -g '*.go' -g '!**/*_test.go' | xargs -0 wc -l | awk 'END{print $1+0}')"
-test_lines="$(rg --files -0 -g '*_test.go' | xargs -0 wc -l | awk 'END{print $1+0}')"
+collect_file_inventory() {
+	if command -v git >/dev/null 2>&1 && git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+		{
+			git ls-files
+			git ls-files --others --exclude-standard
+		} | awk 'NF > 0 && $0 !~ /(^|\/)\./' | sort -u > "$tmp_all_files"
+		return
+	fi
+
+	find . -type f -not -path './.git/*' -print | sed 's#^\./##' | awk '$0 !~ /(^|\/)\./' > "$tmp_all_files"
+}
+
+sum_line_counts() {
+	local list_file="$1"
+	local total=0
+	local file=""
+	local line_count=0
+
+	while IFS= read -r file; do
+		[[ -z "$file" ]] && continue
+		[[ ! -f "$file" ]] && continue
+
+		line_count="$(wc -l < "$file")"
+		line_count="${line_count//[[:space:]]/}"
+		total=$((total + line_count))
+	done < "$list_file"
+
+	printf "%s" "$total"
+}
+
+count_test_functions() {
+	local list_file="$1"
+	local total=0
+	local file=""
+	local count=0
+
+	while IFS= read -r file; do
+		[[ -z "$file" ]] && continue
+		[[ ! -f "$file" ]] && continue
+
+		count="$(grep -E -c '^func Test' "$file" || true)"
+		count="${count//[[:space:]]/}"
+		[[ -z "$count" ]] && count=0
+		total=$((total + count))
+	done < "$list_file"
+
+	printf "%s" "$total"
+}
+
+collect_file_inventory
+
+awk '/\.go$/ {print}' "$tmp_all_files" > "$tmp_go_files"
+awk '/_test\.go$/ {print}' "$tmp_all_files" > "$tmp_test_files"
+awk '/\.go$/ && $0 !~ /_test\.go$/ {print}' "$tmp_all_files" > "$tmp_non_test_go_files"
+awk '/^migrations\/.*\.sql$/ {print}' "$tmp_all_files" > "$tmp_migration_files"
+
+go_files="$(awk 'END{print NR+0}' "$tmp_go_files")"
+non_test_go_files="$(awk 'END{print NR+0}' "$tmp_non_test_go_files")"
+test_files="$(awk 'END{print NR+0}' "$tmp_test_files")"
+migrations="$(awk 'END{print NR+0}' "$tmp_migration_files")"
+automated_tests="$(count_test_functions "$tmp_test_files")"
+
+source_lines="$(sum_line_counts "$tmp_non_test_go_files")"
+test_lines="$(sum_line_counts "$tmp_test_files")"
 total_lines=$((source_lines + test_lines))
 
 api_endpoints="$(sed -nE 's/^\| \*\*TOTAL\*\* \| \*\*(~?[0-9]+)\*\* \|.*$/\1/p' "$API_README_FILE" | head -n 1)"
@@ -57,9 +121,6 @@ source_lines_fmt="$(format_int "$source_lines")"
 test_lines_fmt="$(format_int "$test_lines")"
 total_lines_fmt="$(format_int "$total_lines")"
 automated_tests_fmt="$(format_int "$automated_tests")"
-
-tmp_file="$(mktemp)"
-trap 'rm -f "$tmp_file"' EXIT
 
 awk \
 	-v go_files_fmt="$go_files_fmt" \
