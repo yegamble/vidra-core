@@ -18,12 +18,13 @@ See [VALIDATION_REQUIRED.md](docs/development/VALIDATION_REQUIRED.md) for comple
 
 | Metric | Count | Description |
 |--------|-------|-------------|
-| **Go Files** | 476 | Total Go source files |
-| **Test Files** | 188 | Test files across unit, integration, and E2E suites |
-| **Lines of Code** | 153,000+ | ~75K source + ~78K test code |
+| **Go Files** | 490 | Total Go files (including tests) |
+| **Test Files** | 206 | Test files across unit, integration, and E2E suites |
+| **Lines of Code** | 162,800+ | ~75K source + ~87K test code |
 | **Database Migrations** | 61 | Goose SQL migrations |
-| **API Endpoints** | 123+ | RESTful + WebSocket + Federation |
-| **Coverage Baseline** | 23.8% | Latest full-package baseline (`docs/development/TEST_BASELINE_REPORT.md`) |
+| **API Endpoints** | ~184 | RESTful + WebSocket + Federation (OpenAPI-documented) |
+| **Coverage Baseline** | 23.8% | Latest full-repo baseline (`docs/development/TEST_BASELINE_REPORT.md`, 2025-11-16) |
+| **Phase 1 Coverage Snapshot** | 52.5%-87.1% | Current targeted-package range (encoding/usecase through importer/storage) |
 | **Security Tests** | 50+ | Including SSRF, virus scanning, auth |
 
 ## Features
@@ -297,14 +298,15 @@ See the full documentation index at [docs/README.md](docs/README.md).
 
 | Metric | Count | Description |
 |--------|-------|-------------|
-| **Go Files** | 476 | Total Go source files (288 non-test) |
-| **Test Files** | 188 | Test files across unit, integration, and E2E suites |
-| **Lines of Code** | 153,000+ | ~75K source + ~78K test code |
+| **Go Files** | 490 | Total Go files (284 non-test) |
+| **Test Files** | 206 | Test files across unit, integration, and E2E suites |
+| **Lines of Code** | 162,800+ | ~75K source + ~87K test code |
 | **Database Migrations** | 61 | Goose SQL migrations |
-| **API Endpoints** | 123+ | RESTful + WebSocket + Federation |
-| **Test Coverage** | 23.8% baseline | Latest full-package baseline (2025-11-16 report) |
+| **API Endpoints** | ~184 | RESTful + WebSocket + Federation (OpenAPI-documented) |
+| **Test Coverage** | 23.8% baseline | Latest full-repo baseline (2025-11-16 report) |
+| **Phase 1 Coverage Snapshot** | 52.5%-87.1% | Targeted packages now at: channel 71.4%, plugin 67.5%, health 68.2%, importer 87.1%, storage 86.2%, usecase/encoding 52.5% |
 | **Security Tests** | 50+ | SSRF, virus scanning, auth, input validation |
-| **Automated Tests** | 1,458 | `func Test*` count across `*_test.go` files |
+| **Automated Tests** | 1,582 | `func Test*` count across `*_test.go` files |
 
 See [Project Management Documentation](docs/project-management/README.md) and [Sprint History](docs/sprints/README.md) for detailed progress tracking.
 
