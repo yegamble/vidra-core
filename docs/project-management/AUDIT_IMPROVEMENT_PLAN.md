@@ -1,7 +1,7 @@
 # Athena Project Audit & Improvement Plan v2
 
 **Date**: 2026-02-10
-**Status**: Active
+**Status**: Active (Phase 1 coverage objectives complete)
 **Based on**: Full codebase exploration (architecture, testing, CI/CD, PeerTube compat)
 
 ---
@@ -14,14 +14,14 @@ This audit found the Athena codebase is **significantly more complete than docum
 
 | Metric | Documented | Actual | Gap |
 |--------|-----------|--------|-----|
-| Test coverage | 85%+ | 36.8% (up from 23.8%) | -48.2pp (improving, was -61.2pp) |
+| Test coverage | 85%+ | 48.7% (up from 23.8%) | -36.3pp (improving, was -61.2pp) |
 | Subsystems documented | ~17 | 31 | 14 added (Phase 3 complete) |
 | "Planned" features | 3 (auth, federation, e2ee) | 0 (all implemented) | Fixed (Phase 0 complete) |
 | Handler test pattern audit | 4/4 all packages | 10/10 packages at 4/4 | Complete |
-| Handler test coverage | 60%+ target | ~39% avg (in progress) | Agents expanding coverage |
-| Repository test coverage | 60%+ target | 25.6% (in progress) | Agents adding sqlmock suites |
-| Overall Go files | 493 | 505 (288 source, 217 test) | Updated |
-| Automated tests | 1,582 | 1,674 | +92 tests added |
+| Handler test coverage | 50%+ target | 62.54% avg | Above target |
+| Repository test coverage | 60%+ target | 60.1% (up from 25.6%) | Target met (+0.1pp) |
+| Overall Go files | 493 | 516 (284 source, 232 test) | Updated |
+| Automated tests | 1,582 | 2,139 | +557 tests added |
 
 ---
 
@@ -243,16 +243,36 @@ Note (2026-02-12): **Phase 1 Coverage Push Session** — launched parallel agent
 - `video_category_repository_unit_test.go` (9 funcs: category CRUD, list, assign)
 
 **Handler layer (targeting 50%+ avg):** added unit test suites for:
-- federation handlers (15.0% baseline → targeting 50%+)
-- admin handlers (20.5% baseline → targeting 50%+)
-- auth handlers (21.2% baseline → targeting 50%+)
-- moderation handlers (27.8% baseline → targeting 50%+)
-- messaging handlers (29.2% baseline → targeting 50%+)
-- social handlers (31.6% baseline → targeting 50%+)
+- federation handlers: 15.0% → **57.4%** (target met)
+- admin handlers: 20.5% → **55.4%** (target met)
+- moderation handlers: 27.8% → **96.4%** (target met)
+- messaging handlers: 29.2% → **57.3%** (target met)
+- auth handlers: 21.2% → **62.2%** (target met)
+- social handlers: 31.6% → **49.5%** (package below 50, but overall handler average target met)
+
+**Measured results:**
+- Overall coverage: 36.8% → **48.7%** (+11.9pp)
+- Repository coverage: 25.6% → **60.1%** (+34.5pp)
+- Handler average (10 packages): **62.54%** (above 50% target)
+- Total test functions: 1,582 → **2,139** (+557)
+- Total Go files: 505 → **516** (284 source, 232 test)
 
 **Handler test pattern audit corrected:** re-audit confirmed all 10 packages at 4/4 pattern coverage (valid/invalid/auth/not-found). Previous table incorrectly marked 5 packages as missing not-found tests.
 
-**README metrics updated (2026-02-12):** Go Files: 505, Test Files: 217, LOC: 172,700+, Tests: 1,674, Coverage: 36.8%.
+**README metrics updated (2026-02-12):** Go Files: 516, Test Files: 232, LOC: 185,654, Tests: 2,139, Coverage: 48.7%.
+
+Note (2026-02-12, completion pass): closed the remaining Phase 1.1 repository gap by adding sqlmock/unit coverage for previously untested repositories and helpers:
+- `internal/repository/plugin_repository_unit_test.go`
+- `internal/repository/oauth_repository_unit_test.go`
+- `internal/repository/caption_generation_repository_unit_test.go`
+- `internal/repository/atproto_repository_unit_test.go`
+- plus auth/social handler completion passes in `internal/httpapi/handlers/auth/auth_handlers_unit_test.go` and `internal/httpapi/handlers/social/social_handlers_unit_test.go`
+
+Validation:
+- `go test ./internal/repository -coverprofile=/tmp/repository_cov_after3.out -count=1` → **60.1%**
+- `go test -short -covermode=atomic -coverprofile=/tmp/coverage_short_after.out ./...` → **48.7%**
+- `go test ./internal/httpapi/handlers/auth -coverprofile=/tmp/auth_cov_after.out -count=1` → **62.2%**
+- `go test ./internal/httpapi/handlers/social -coverprofile=/tmp/social_cov_after.out -count=1` → **49.5%**
 
 ---
 

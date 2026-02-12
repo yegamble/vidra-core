@@ -29,6 +29,10 @@ func (r *PluginRepository) Create(ctx context.Context, plugin *domain.PluginReco
 	if err := plugin.Validate(); err != nil {
 		return err
 	}
+	configJSON, err := json.Marshal(plugin.Config)
+	if err != nil {
+		return fmt.Errorf("failed to marshal config: %w", err)
+	}
 
 	query := `
 		INSERT INTO plugins (
@@ -49,7 +53,7 @@ func (r *PluginRepository) Create(ctx context.Context, plugin *domain.PluginReco
 		plugin.Author,
 		plugin.Description,
 		plugin.Status,
-		plugin.Config,
+		configJSON,
 		pq.Array(plugin.Permissions),
 		pq.Array(plugin.Hooks),
 		plugin.InstallPath,
@@ -227,6 +231,10 @@ func (r *PluginRepository) Update(ctx context.Context, plugin *domain.PluginReco
 	if err := plugin.Validate(); err != nil {
 		return err
 	}
+	configJSON, err := json.Marshal(plugin.Config)
+	if err != nil {
+		return fmt.Errorf("failed to marshal config: %w", err)
+	}
 
 	query := `
 		UPDATE plugins
@@ -243,7 +251,7 @@ func (r *PluginRepository) Update(ctx context.Context, plugin *domain.PluginReco
 		plugin.Author,
 		plugin.Description,
 		plugin.Status,
-		plugin.Config,
+		configJSON,
 		pq.Array(plugin.Permissions),
 		pq.Array(plugin.Hooks),
 		plugin.EnabledAt,
@@ -327,9 +335,14 @@ func (r *PluginRepository) UpdateStatus(ctx context.Context, id uuid.UUID, statu
 
 // UpdateConfig updates the configuration of a plugin
 func (r *PluginRepository) UpdateConfig(ctx context.Context, id uuid.UUID, config map[string]any) error {
+	configJSON, err := json.Marshal(config)
+	if err != nil {
+		return fmt.Errorf("failed to marshal config: %w", err)
+	}
+
 	query := `UPDATE plugins SET config = $1, updated_at = $2 WHERE id = $3`
 
-	result, err := r.db.ExecContext(ctx, query, config, time.Now(), id)
+	result, err := r.db.ExecContext(ctx, query, configJSON, time.Now(), id)
 	if err != nil {
 		return err
 	}

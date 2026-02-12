@@ -18,14 +18,14 @@ See [VALIDATION_REQUIRED.md](docs/development/VALIDATION_REQUIRED.md) for comple
 
 | Metric | Count | Description |
 |--------|-------|-------------|
-| **Go Files** | 505 | Total Go files (288 non-test) |
-| **Test Files** | 217 | Test files across unit, integration, and E2E suites |
-| **Lines of Code** | 172,700+ | ~76,500 source + ~96,200 test code |
+| **Go Files** | 516 | Total Go files (284 source, 232 test) |
+| **Test Files** | 232 | Test files across unit, integration, and E2E suites |
+| **Lines of Code** | 185,654 | 76,034 source + 109,620 test code |
 | **Database Migrations** | 61 | Goose SQL migrations |
 | **API Endpoints** | ~184 | RESTful + WebSocket + Federation (OpenAPI-documented) |
-| **Coverage Baseline** | 36.8% | Full-repo baseline (2026-02-12, up from 23.8%) |
+| **Coverage** | 48.7% | Full-repo short baseline (2026-02-12, up from 23.8%) |
 | **Security Tests** | 50+ | Including SSRF, virus scanning, auth |
-| **Automated Tests** | 1,674 | `func Test*` count across `*_test.go` files |
+| **Automated Tests** | 2,139 | `func Test*` count across `*_test.go` files |
 
 ## Features
 
@@ -280,7 +280,7 @@ See the full documentation index at [docs/README.md](docs/README.md).
 - Core video platform fully functional
 - Security hardened (P1 vulnerability fixed)
 - Federation operational (ActivityPub)
-- Testing baseline established (23.8% full-package coverage; improvement plan in progress)
+- Testing baseline established (48.7% full-package short coverage, up from 23.8%)
 - Docker deployment proven
 
 **⚠️ Action Items Before Launch**:
@@ -298,14 +298,14 @@ See the full documentation index at [docs/README.md](docs/README.md).
 
 | Metric | Count | Description |
 |--------|-------|-------------|
-| **Go Files** | 493 | Total Go files (287 non-test) |
-| **Test Files** | 206 | Test files across unit, integration, and E2E suites |
-| **Lines of Code** | 163,278+ | ~75,958 source + ~87,320 test code |
+| **Go Files** | 516 | Total Go files (284 source, 232 test) |
+| **Test Files** | 232 | Test files across unit, integration, and E2E suites |
+| **Lines of Code** | 185,654 | 76,034 source + 109,620 test code |
 | **Database Migrations** | 61 | Goose SQL migrations |
 | **API Endpoints** | ~184 | RESTful + WebSocket + Federation (OpenAPI-documented) |
-| **Test Coverage** | 23.8% baseline | Latest full-repo baseline (`docs/development/TEST_BASELINE_REPORT.md`, 2025-11-16) |
+| **Coverage** | 48.7% | Full-repo short baseline (2026-02-12, up from 23.8%) |
 | **Security Tests** | 50+ | SSRF, virus scanning, auth, input validation |
-| **Automated Tests** | 1,582 | `func Test*` count across `*_test.go` files |
+| **Automated Tests** | 2,139 | `func Test*` count across `*_test.go` files |
 
 See [Project Management Documentation](docs/project-management/README.md) and [Sprint History](docs/sprints/README.md) for detailed progress tracking.
 

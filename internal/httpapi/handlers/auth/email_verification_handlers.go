@@ -2,6 +2,7 @@ package auth
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 
 	"athena/internal/domain"
@@ -105,6 +106,14 @@ func (h *EmailVerificationHandlers) ResendVerification(w http.ResponseWriter, r 
 				"success": true,
 			})
 		default:
+			if errors.Is(err, domain.ErrUserNotFound) {
+				// Keep response behavior consistent when the service wraps ErrUserNotFound.
+				shared.WriteJSON(w, http.StatusOK, map[string]interface{}{
+					"message": "If the email exists, a verification email has been sent",
+					"success": true,
+				})
+				return
+			}
 			shared.WriteError(w, http.StatusInternalServerError, domain.NewDomainError("INTERNAL_ERROR", "Failed to send verification email"))
 		}
 		return
