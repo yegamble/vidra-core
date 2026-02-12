@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
+	"strings"
 	"time"
 
 	"athena/internal/domain"
@@ -551,6 +553,62 @@ func (r *VideoAnalyticsRepository) UpsertActiveViewer(ctx context.Context, viewe
 	)
 
 	return err
+}
+
+// UpsertActiveViewersBatch creates or updates multiple active viewers in a single transaction
+func (r *VideoAnalyticsRepository) UpsertActiveViewersBatch(ctx context.Context, viewers []*domain.ActiveViewer) error {
+	if len(viewers) == 0 {
+		return nil
+	}
+
+	// Helper to execute a batch
+	executeBatch := func(batch []*domain.ActiveViewer) error {
+		var queryBuilder strings.Builder
+		queryBuilder.WriteString("INSERT INTO video_active_viewers (id, video_id, session_id, user_id, last_heartbeat, created_at) VALUES ")
+
+		args := make([]interface{}, 0, len(batch)*6)
+
+		for i, v := range batch {
+			// Set defaults if needed
+			if v.ID == uuid.Nil {
+				v.ID = uuid.New()
+			}
+			if v.CreatedAt.IsZero() {
+				v.CreatedAt = time.Now()
+			}
+			// Update heartbeat to now
+			v.LastHeartbeat = time.Now()
+
+			if i > 0 {
+				queryBuilder.WriteString(",")
+			}
+			// ($1, $2, $3, $4, $5, $6)
+			base := i * 6
+			fmt.Fprintf(&queryBuilder, "($%d, $%d, $%d, $%d, $%d, $%d)", base+1, base+2, base+3, base+4, base+5, base+6)
+
+			args = append(args, v.ID, v.VideoID, v.SessionID, v.UserID, v.LastHeartbeat, v.CreatedAt)
+		}
+
+		queryBuilder.WriteString(" ON CONFLICT (video_id, session_id) DO UPDATE SET last_heartbeat = EXCLUDED.last_heartbeat")
+
+		_, err := r.db.ExecContext(ctx, queryBuilder.String(), args...)
+		return err
+	}
+
+	// Chunking to avoid parameter limit (Postgres limit is 65535 parameters)
+	// 6 parameters per row -> ~10000 rows max. We use 1000 as a safe batch size.
+	const batchSize = 1000
+	for i := 0; i < len(viewers); i += batchSize {
+		end := i + batchSize
+		if end > len(viewers) {
+			end = len(viewers)
+		}
+		if err := executeBatch(viewers[i:end]); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 // GetActiveViewerCount returns the current number of active viewers for a video
