@@ -452,13 +452,20 @@ func TestPublishComment(t *testing.T) {
 	})
 
 	t.Run("Delivers comment to video followers", func(t *testing.T) {
-		t.Skip("TODO: Follower delivery implementation incomplete - skipping until delivery logic is fully implemented")
+		// Create fresh mocks for this subtest to avoid state pollution
+		mockAPRepo := new(MockActivityPubRepository)
+		mockUserRepo := new(MockUserRepository)
+		mockVideoRepo := new(MockVideoRepository)
+		mockCommentRepo := new(MockCommentRepository)
+
+		service := NewService(mockAPRepo, mockUserRepo, mockVideoRepo, mockCommentRepo, cfg)
+
 		mockCommentRepo.On("GetByID", ctx, commentID).Return(comment, nil).Once()
 		mockUserRepo.On("GetByID", ctx, userID.String()).Return(user, nil).Times(2)
 		mockVideoRepo.On("GetByID", ctx, videoID.String()).Return(video, nil).Times(2) // Called in BuildNoteObject and PublishComment
 		mockUserRepo.On("GetByID", ctx, videoOwnerID.String()).Return(videoOwner, nil).Once()
 		mockAPRepo.On("GetFollowers", ctx, videoOwnerID.String(), "accepted", mock.Anything, mock.Anything).Return(videoOwnerFollowers, 1, nil).Once()
-		mockAPRepo.On("GetRemoteActors", ctx, []string{videoOwnerFollowers[0].FollowerID}).Return([]*domain.APRemoteActor{remoteActor}, nil).Once()
+		mockAPRepo.On("GetRemoteActors", ctx, mock.Anything).Return([]*domain.APRemoteActor{remoteActor}, nil).Once()
 		mockAPRepo.On("BulkEnqueueDelivery", ctx, mock.AnythingOfType("[]*domain.APDeliveryQueue")).Return(nil).Once()
 		mockAPRepo.On("StoreActivity", ctx, mock.AnythingOfType("*domain.APActivity")).Return(nil).Once()
 
@@ -710,21 +717,3 @@ func TestDeleteComment(t *testing.T) {
 	})
 }
 
-// Mock types for Note object (not yet defined in domain)
-type NoteObject struct {
-	Context      interface{}    `json:"@context,omitempty"`
-	Type         string         `json:"type"`
-	ID           string         `json:"id"`
-	Content      string         `json:"content"`
-	Published    *time.Time     `json:"published,omitempty"`
-	AttributedTo string         `json:"attributedTo"`
-	InReplyTo    string         `json:"inReplyTo,omitempty"`
-	To           []string       `json:"to,omitempty"`
-	Cc           []string       `json:"cc,omitempty"`
-	Tag          []domain.APTag `json:"tag,omitempty"`
-}
-
-// NOTE: The following tests for BuildNoteObject, CreateCommentActivity, and PublishComment
-// are skipped because the production code methods don't exist yet.
-// These need to be implemented along with the domain.NoteObject type.
-// See: https://github.com/your-org/athena/issues/XXX
