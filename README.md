@@ -18,14 +18,14 @@ See [VALIDATION_REQUIRED.md](docs/development/VALIDATION_REQUIRED.md) for comple
 
 | Metric | Count | Description |
 |--------|-------|-------------|
-| **Go Files** | 493 | Total Go files (287 non-test) |
-| **Test Files** | 206 | Test files across unit, integration, and E2E suites |
-| **Lines of Code** | 163,278+ | ~75,958 source + ~87,320 test code |
+| **Go Files** | 505 | Total Go files (288 non-test) |
+| **Test Files** | 217 | Test files across unit, integration, and E2E suites |
+| **Lines of Code** | 172,700+ | ~76,500 source + ~96,200 test code |
 | **Database Migrations** | 61 | Goose SQL migrations |
 | **API Endpoints** | ~184 | RESTful + WebSocket + Federation (OpenAPI-documented) |
-| **Coverage Baseline** | 23.8% | Latest full-repo baseline (`docs/development/TEST_BASELINE_REPORT.md`, 2025-11-16) |
+| **Coverage Baseline** | 36.8% | Full-repo baseline (2026-02-12, up from 23.8%) |
 | **Security Tests** | 50+ | Including SSRF, virus scanning, auth |
-| **Automated Tests** | 1,582 | `func Test*` count across `*_test.go` files |
+| **Automated Tests** | 1,674 | `func Test*` count across `*_test.go` files |
 
 ## Features
 

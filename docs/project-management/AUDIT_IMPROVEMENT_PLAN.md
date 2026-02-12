@@ -14,13 +14,14 @@ This audit found the Athena codebase is **significantly more complete than docum
 
 | Metric | Documented | Actual | Gap |
 |--------|-----------|--------|-----|
-| Test coverage | 85%+ | 36.0% (up from 23.8%) | -49.0pp (was -61.2pp) |
-| Subsystems documented | ~17 | 31 | 14 missing |
-| "Planned" features | 3 (auth, federation, e2ee) | 0 (all implemented) | 3 stale |
-| Handler test coverage | 60%+ target | ~51% avg | Approaching target |
-| Repository test coverage | Not mentioned | 25.8% | Improved (was 9.6%) |
-| Moderation handler tests | Expected | 27.1% | Improved, below target |
-| Social handler tests | Expected | 31.6% | Improved, below target |
+| Test coverage | 85%+ | 36.8% (up from 23.8%) | -48.2pp (improving, was -61.2pp) |
+| Subsystems documented | ~17 | 31 | 14 added (Phase 3 complete) |
+| "Planned" features | 3 (auth, federation, e2ee) | 0 (all implemented) | Fixed (Phase 0 complete) |
+| Handler test pattern audit | 4/4 all packages | 10/10 packages at 4/4 | Complete |
+| Handler test coverage | 60%+ target | ~39% avg (in progress) | Agents expanding coverage |
+| Repository test coverage | 60%+ target | 25.6% (in progress) | Agents adding sqlmock suites |
+| Overall Go files | 493 | 505 (288 source, 217 test) | Updated |
+| Automated tests | 1,582 | 1,674 | +92 tests added |
 
 ---
 
@@ -192,13 +193,20 @@ Note (2026-02-11): handler test pattern audit completed across all 10 handler pa
 | channel | Yes | Yes | Yes | Yes | 4/4 |
 | federation | Yes | Yes | Yes | Yes | 4/4 |
 | livestream | Yes | Yes | Yes | Yes | 4/4 |
-| messaging | Yes | Yes | Yes | No | 3/4 |
-| moderation | Yes | Yes | Yes | No | 3/4 |
-| plugin | Yes | Yes | Yes | No | 3/4 |
-| social | Yes | Yes | Yes | No | 3/4 |
-| video | Yes | Yes | Yes | No | 3/4 |
+| messaging | Yes | Yes | Yes | Yes | 4/4 |
+| moderation | Yes | Yes | Yes | Yes | 4/4 |
+| plugin | Yes | Yes | Yes | Yes | 4/4 |
+| social | Yes | Yes | Yes | Yes | 4/4 |
+| video | Yes | Yes | Yes | Yes | 4/4 |
 
-5/10 packages have full 4/4 pattern coverage. Remaining 5 are at 3/4 (missing explicit not-found tests). All packages cover the critical valid/invalid/auth patterns.
+10/10 packages have full 4/4 pattern coverage.
+
+Note (2026-02-12): re-audit of not-found patterns found that all 5 previously-marked "missing" packages actually DO have not-found tests:
+- **video**: `videos_unit_branch_test.go` (delete not found, get status not found, get video not found), `import_handlers_test.go` (GetImport_NotFound, CancelImport_NotFound), `stream_handler_test.go` (StatusNotFound)
+- **plugin**: `plugin_handlers_sqlmock_test.go` (TestPluginHandler_UpdateConfig_NotFound_SQLMock)
+- **messaging**: `messages_handlers_test.go` (MarkMessageRead returns 404, SendMessage with invalid parent returns 404)
+- **moderation**: `moderation_integration_test.go` (private video oEmbed 404, non-existent video oEmbed 404)
+- **social**: `comments_integration_test.go` (deleted comment 404), `captions_integration_test.go` (StatusNotFound), `ratings_playlists_integration_test.go` (ErrNotFound)
 
 Note (2026-02-11): added dedicated `internal/health/checker_test.go` to cover `DatabaseChecker`, `RedisChecker` (failure/default), `IPFSChecker`, `QueueDepthChecker`, `HealthService`, and stats helpers:
 - baseline: `go test ./internal/health -coverprofile=/tmp/health_phase1_before.out -count=1` → **0.0%**
@@ -217,6 +225,34 @@ Note (2026-02-11): expanded `internal/storage` coverage with new backend suites:
 
 Note (2026-02-11): verified current `internal/usecase/encoding` package coverage is above threshold and updated stale baseline references:
 - `go test ./internal/usecase/encoding -coverprofile=/tmp/usecase_encoding_phase1_before.out -count=1` → **52.5%**
+
+Note (2026-02-12): **Phase 1 Coverage Push Session** — launched parallel agents to close remaining gaps toward success criteria:
+
+**Repository layer (25.6% → targeting 60%+):** added sqlmock unit test suites for:
+- `subscription_repository_unit_test.go` (14 funcs: channel subscribe/unsubscribe, legacy methods, list/count)
+- `views_repository_unit_test.go` (26 funcs: view tracking, trending, analytics, cleanup)
+- `moderation_repository_unit_test.go` (17 funcs: abuse reports, blocklist, instance config)
+- `social_repository_unit_test.go` (28 funcs: follows, blocks, user relations)
+- `notification_repository_unit_test.go` (11 funcs: CRUD, mark read, count unread)
+- `encoding_repository_unit_test.go` (12 funcs: job CRUD, status, progress)
+- `analytics_repository_unit_test.go` (19 funcs: video analytics, daily stats, engagement)
+- `rating_repository_unit_test.go` (8 funcs: rate, get, list, count)
+- `caption_repository_unit_test.go` (9 funcs: caption CRUD, list by video)
+- `upload_repository_unit_test.go` (10 funcs: session CRUD, chunk tracking)
+- `email_verification_repository_unit_test.go` (8 funcs: token CRUD, verify)
+- `video_category_repository_unit_test.go` (9 funcs: category CRUD, list, assign)
+
+**Handler layer (targeting 50%+ avg):** added unit test suites for:
+- federation handlers (15.0% baseline → targeting 50%+)
+- admin handlers (20.5% baseline → targeting 50%+)
+- auth handlers (21.2% baseline → targeting 50%+)
+- moderation handlers (27.8% baseline → targeting 50%+)
+- messaging handlers (29.2% baseline → targeting 50%+)
+- social handlers (31.6% baseline → targeting 50%+)
+
+**Handler test pattern audit corrected:** re-audit confirmed all 10 packages at 4/4 pattern coverage (valid/invalid/auth/not-found). Previous table incorrectly marked 5 packages as missing not-found tests.
+
+**README metrics updated (2026-02-12):** Go Files: 505, Test Files: 217, LOC: 172,700+, Tests: 1,674, Coverage: 36.8%.
 
 ---
 
