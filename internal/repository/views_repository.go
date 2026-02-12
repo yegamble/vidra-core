@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
+	"github.com/lib/pq"
 
 	"athena/internal/domain"
 )
@@ -386,6 +387,107 @@ func (r *ViewsRepository) UpdateTrendingVideo(ctx context.Context, trending *dom
 
 	trending.LastUpdated = time.Now()
 	_, err := r.db.NamedExecContext(ctx, query, trending)
+	return err
+}
+
+// GetBatchTrendingStats retrieves trending statistics for multiple videos in a single query
+func (r *ViewsRepository) GetBatchTrendingStats(ctx context.Context, videoIDs []string) ([]domain.VideoTrendingStats, error) {
+	if len(videoIDs) == 0 {
+		return []domain.VideoTrendingStats{}, nil
+	}
+
+	query := `
+		SELECT
+			v.video_id,
+			get_unique_views(v.video_id::uuid, NOW() - INTERVAL '1 hour', NOW()) as views_last_hour,
+			get_unique_views(v.video_id::uuid, NOW() - INTERVAL '24 hours', NOW()) as views_last_24h,
+			get_unique_views(v.video_id::uuid, NOW() - INTERVAL '7 days', NOW()) as views_last_7d,
+			calculate_engagement_score(v.video_id::uuid, 1) as score_1h,
+			calculate_engagement_score(v.video_id::uuid, 24) as score_24h,
+			calculate_engagement_score(v.video_id::uuid, 168) as score_7d
+		FROM unnest($1::text[]) as v(video_id)`
+
+	var stats []domain.VideoTrendingStats
+	err := r.db.SelectContext(ctx, &stats, query, pq.Array(videoIDs))
+	if err != nil {
+		return nil, fmt.Errorf("failed to get batch trending stats: %w", err)
+	}
+
+	return stats, nil
+}
+
+// BatchUpdateTrendingVideos updates trending data for multiple videos in a single query
+func (r *ViewsRepository) BatchUpdateTrendingVideos(ctx context.Context, videos []*domain.TrendingVideo) error {
+	if len(videos) == 0 {
+		return nil
+	}
+
+	// Prepare data for UNNEST
+	count := len(videos)
+	videoIDs := make([]string, count)
+	viewsLastHour := make([]int64, count)
+	viewsLast24h := make([]int64, count)
+	viewsLast7d := make([]int64, count)
+	engagementScores := make([]float64, count)
+	velocityScores := make([]float64, count)
+	hourlyRanks := make([]*int, count)
+	dailyRanks := make([]*int, count)
+	weeklyRanks := make([]*int, count)
+	lastUpdated := make([]time.Time, count)
+	isTrendings := make([]bool, count)
+
+	now := time.Now()
+
+	for i, v := range videos {
+		videoIDs[i] = v.VideoID
+		viewsLastHour[i] = v.ViewsLastHour
+		viewsLast24h[i] = v.ViewsLast24h
+		viewsLast7d[i] = v.ViewsLast7d
+		engagementScores[i] = v.EngagementScore
+		velocityScores[i] = v.VelocityScore
+		hourlyRanks[i] = v.HourlyRank
+		dailyRanks[i] = v.DailyRank
+		weeklyRanks[i] = v.WeeklyRank
+		lastUpdated[i] = now
+		isTrendings[i] = v.IsTrending
+	}
+
+	query := `
+		INSERT INTO trending_videos (
+			video_id, views_last_hour, views_last_24h, views_last_7d,
+			engagement_score, velocity_score, hourly_rank, daily_rank, weekly_rank,
+			last_updated, is_trending
+		)
+		SELECT
+			v.video_id::uuid, v.views_last_hour, v.views_last_24h, v.views_last_7d,
+			v.engagement_score, v.velocity_score, v.hourly_rank, v.daily_rank, v.weekly_rank,
+			v.last_updated, v.is_trending
+		FROM UNNEST(
+			$1::text[], $2::bigint[], $3::bigint[], $4::bigint[],
+			$5::decimal[], $6::decimal[], $7::int[], $8::int[], $9::int[],
+			$10::timestamp[], $11::boolean[]
+		) AS v(
+			video_id, views_last_hour, views_last_24h, views_last_7d,
+			engagement_score, velocity_score, hourly_rank, daily_rank, weekly_rank,
+			last_updated, is_trending
+		)
+		ON CONFLICT (video_id) DO UPDATE SET
+			views_last_hour = EXCLUDED.views_last_hour,
+			views_last_24h = EXCLUDED.views_last_24h,
+			views_last_7d = EXCLUDED.views_last_7d,
+			engagement_score = EXCLUDED.engagement_score,
+			velocity_score = EXCLUDED.velocity_score,
+			hourly_rank = EXCLUDED.hourly_rank,
+			daily_rank = EXCLUDED.daily_rank,
+			weekly_rank = EXCLUDED.weekly_rank,
+			last_updated = EXCLUDED.last_updated,
+			is_trending = EXCLUDED.is_trending`
+
+	_, err := r.db.ExecContext(ctx, query,
+		pq.Array(videoIDs), pq.Array(viewsLastHour), pq.Array(viewsLast24h), pq.Array(viewsLast7d),
+		pq.Array(engagementScores), pq.Array(velocityScores), pq.Array(hourlyRanks), pq.Array(dailyRanks), pq.Array(weeklyRanks),
+		pq.Array(lastUpdated), pq.Array(isTrendings),
+	)
 	return err
 }
 

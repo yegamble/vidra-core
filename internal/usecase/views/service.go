@@ -228,45 +228,33 @@ func (s *Service) GetTrendingVideosWithDetails(ctx context.Context, limit int) (
 // UpdateTrendingMetrics calculates and updates trending metrics for videos
 func (s *Service) UpdateTrendingMetrics(ctx context.Context, videoIDs []string) error {
 	now := time.Now()
-	for _, videoID := range videoIDs {
-		hourlyScore, err := s.viewsRepo.CalculateEngagementScore(ctx, videoID, 1)
-		if err != nil {
-			continue
-		}
-		dailyScore, err := s.viewsRepo.CalculateEngagementScore(ctx, videoID, 24)
-		if err != nil {
-			continue
-		}
-		weeklyScore, err := s.viewsRepo.CalculateEngagementScore(ctx, videoID, 168)
-		if err != nil {
-			continue
-		}
-		viewsLastHour, err := s.getViewsInPeriod(ctx, videoID, 1*time.Hour)
-		if err != nil {
-			continue
-		}
-		viewsLast24h, err := s.getViewsInPeriod(ctx, videoID, 24*time.Hour)
-		if err != nil {
-			continue
-		}
-		viewsLast7d, err := s.getViewsInPeriod(ctx, videoID, 7*24*time.Hour)
-		if err != nil {
-			continue
-		}
-		velocityScore := calculateVelocityScore(viewsLastHour, viewsLast24h, viewsLast7d)
-		isTrending := dailyScore > 100.0 || (hourlyScore > 50.0 && velocityScore > 10.0) || weeklyScore > 200.0
+
+	stats, err := s.viewsRepo.GetBatchTrendingStats(ctx, videoIDs)
+	if err != nil {
+		return err
+	}
+
+	trendingVideos := make([]*domain.TrendingVideo, 0, len(stats))
+	for _, stat := range stats {
+		velocityScore := calculateVelocityScore(stat.ViewsLastHour, stat.ViewsLast24h, stat.ViewsLast7d)
+		isTrending := stat.Score24h > 100.0 || (stat.Score1h > 50.0 && velocityScore > 10.0) || stat.Score7d > 200.0
 		tv := &domain.TrendingVideo{
-			VideoID:         videoID,
-			ViewsLastHour:   viewsLastHour,
-			ViewsLast24h:    viewsLast24h,
-			ViewsLast7d:     viewsLast7d,
-			EngagementScore: dailyScore,
+			VideoID:         stat.VideoID,
+			ViewsLastHour:   stat.ViewsLastHour,
+			ViewsLast24h:    stat.ViewsLast24h,
+			ViewsLast7d:     stat.ViewsLast7d,
+			EngagementScore: stat.Score24h,
 			VelocityScore:   velocityScore,
 			LastUpdated:     now,
 			IsTrending:      isTrending,
 		}
-		_ = s.viewsRepo.UpdateTrendingVideo(ctx, tv)
+		trendingVideos = append(trendingVideos, tv)
 	}
+
+	if len(trendingVideos) > 0 {
+		return s.viewsRepo.BatchUpdateTrendingVideos(ctx, trendingVideos)
+	}
+
 	return nil
 }
 
