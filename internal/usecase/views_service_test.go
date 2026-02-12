@@ -216,6 +216,7 @@ func TestViewsService_TrackView_NewView(t *testing.T) {
 	mockViewsRepo := &MockViewsRepository{}
 	mockVideoRepo := &MockVideoRepository{}
 	service := NewViewsService(mockViewsRepo, mockVideoRepo)
+	defer service.Close()
 
 	ctx := context.Background()
 	userID := uuid.New().String()
@@ -231,13 +232,13 @@ func TestViewsService_TrackView_NewView(t *testing.T) {
 	mockVideoRepo.On("GetByID", ctx, videoID).Return(video, nil)
 
 	// Mock no existing view (new view)
-	mockViewsRepo.On("GetUserViewBySessionAndVideo", ctx, sessionID, videoID).Return(nil, nil)
+	mockViewsRepo.On("GetUserViewBySessionAndVideo", mock.Anything, sessionID, videoID).Return(nil, nil)
 
 	// Mock successful view creation
-	mockViewsRepo.On("CreateUserView", ctx, mock.AnythingOfType("*domain.UserView")).Return(nil)
+	mockViewsRepo.On("CreateUserView", mock.Anything, mock.AnythingOfType("*domain.UserView")).Return(nil)
 
 	// Mock successful view count increment
-	mockViewsRepo.On("IncrementVideoViews", ctx, videoID).Return(nil)
+	mockViewsRepo.On("IncrementVideoViews", mock.Anything, videoID).Return(nil)
 
 	request := &domain.ViewTrackingRequest{
 		VideoID:              videoID,
@@ -255,25 +256,35 @@ func TestViewsService_TrackView_NewView(t *testing.T) {
 	err := service.TrackView(ctx, &userID, request)
 	require.NoError(t, err)
 
+	// Wait for worker to process
+	service.Close()
+
 	// Verify all mocks were called
 	mockVideoRepo.AssertExpectations(t)
 	mockViewsRepo.AssertExpectations(t)
 
 	// Verify CreateUserView was called with correct data
-	createCall := mockViewsRepo.Calls[1] // Second call after GetUserViewBySessionAndVideo
-	assert.Equal(t, "CreateUserView", createCall.Method)
-	createdView := createCall.Arguments[1].(*domain.UserView)
-	assert.Equal(t, videoID, createdView.VideoID)
-	assert.Equal(t, &userID, createdView.UserID)
-	assert.Equal(t, sessionID, createdView.SessionID)
-	assert.Equal(t, 120, createdView.WatchDuration)
-	assert.Equal(t, 40.0, createdView.CompletionPercentage)
+	foundCreate := false
+	for _, call := range mockViewsRepo.Calls {
+		if call.Method == "CreateUserView" {
+			createdView := call.Arguments[1].(*domain.UserView)
+			assert.Equal(t, videoID, createdView.VideoID)
+			assert.Equal(t, &userID, createdView.UserID)
+			assert.Equal(t, sessionID, createdView.SessionID)
+			assert.Equal(t, 120, createdView.WatchDuration)
+			assert.Equal(t, 40.0, createdView.CompletionPercentage)
+			foundCreate = true
+			break
+		}
+	}
+	assert.True(t, foundCreate, "CreateUserView should have been called")
 }
 
 func TestViewsService_TrackView_UpdateExistingView(t *testing.T) {
 	mockViewsRepo := &MockViewsRepository{}
 	mockVideoRepo := &MockVideoRepository{}
 	service := NewViewsService(mockViewsRepo, mockVideoRepo)
+	defer service.Close()
 
 	ctx := context.Background()
 	userID := uuid.New().String()
@@ -299,10 +310,10 @@ func TestViewsService_TrackView_UpdateExistingView(t *testing.T) {
 		IsCompleted:          false,
 		SeekCount:            1,
 	}
-	mockViewsRepo.On("GetUserViewBySessionAndVideo", ctx, sessionID, videoID).Return(existingView, nil)
+	mockViewsRepo.On("GetUserViewBySessionAndVideo", mock.Anything, sessionID, videoID).Return(existingView, nil)
 
 	// Mock successful view update
-	mockViewsRepo.On("UpdateUserView", ctx, mock.AnythingOfType("*domain.UserView")).Return(nil)
+	mockViewsRepo.On("UpdateUserView", mock.Anything, mock.AnythingOfType("*domain.UserView")).Return(nil)
 
 	request := &domain.ViewTrackingRequest{
 		VideoID:              videoID,
@@ -318,6 +329,8 @@ func TestViewsService_TrackView_UpdateExistingView(t *testing.T) {
 	err := service.TrackView(ctx, &userID, request)
 	require.NoError(t, err)
 
+	service.Close()
+
 	mockVideoRepo.AssertExpectations(t)
 	mockViewsRepo.AssertExpectations(t)
 
@@ -330,6 +343,7 @@ func TestViewsService_TrackView_VideoNotFound(t *testing.T) {
 	mockViewsRepo := &MockViewsRepository{}
 	mockVideoRepo := &MockVideoRepository{}
 	service := NewViewsService(mockViewsRepo, mockVideoRepo)
+	defer service.Close()
 
 	ctx := context.Background()
 	userID := uuid.New().String()
@@ -357,6 +371,7 @@ func TestViewsService_TrackView_AnonymousUser(t *testing.T) {
 	mockViewsRepo := &MockViewsRepository{}
 	mockVideoRepo := &MockVideoRepository{}
 	service := NewViewsService(mockViewsRepo, mockVideoRepo)
+	defer service.Close()
 
 	ctx := context.Background()
 	videoID := uuid.New().String()
@@ -367,13 +382,13 @@ func TestViewsService_TrackView_AnonymousUser(t *testing.T) {
 	mockVideoRepo.On("GetByID", ctx, videoID).Return(video, nil)
 
 	// Mock no existing view
-	mockViewsRepo.On("GetUserViewBySessionAndVideo", ctx, sessionID, videoID).Return(nil, nil)
+	mockViewsRepo.On("GetUserViewBySessionAndVideo", mock.Anything, sessionID, videoID).Return(nil, nil)
 
 	// Mock successful view creation
-	mockViewsRepo.On("CreateUserView", ctx, mock.AnythingOfType("*domain.UserView")).Return(nil)
+	mockViewsRepo.On("CreateUserView", mock.Anything, mock.AnythingOfType("*domain.UserView")).Return(nil)
 
 	// Mock successful view count increment
-	mockViewsRepo.On("IncrementVideoViews", ctx, videoID).Return(nil)
+	mockViewsRepo.On("IncrementVideoViews", mock.Anything, videoID).Return(nil)
 
 	request := &domain.ViewTrackingRequest{
 		VideoID:         videoID,
@@ -386,17 +401,27 @@ func TestViewsService_TrackView_AnonymousUser(t *testing.T) {
 	err := service.TrackView(ctx, nil, request)
 	require.NoError(t, err)
 
+	service.Close()
+
 	// Verify CreateUserView was called with nil user_id
-	createCall := mockViewsRepo.Calls[1]
-	createdView := createCall.Arguments[1].(*domain.UserView)
-	assert.Nil(t, createdView.UserID)
-	assert.True(t, createdView.IsAnonymous)
+	foundCreate := false
+	for _, call := range mockViewsRepo.Calls {
+		if call.Method == "CreateUserView" {
+			createdView := call.Arguments[1].(*domain.UserView)
+			assert.Nil(t, createdView.UserID)
+			assert.True(t, createdView.IsAnonymous)
+			foundCreate = true
+			break
+		}
+	}
+	assert.True(t, foundCreate, "CreateUserView should have been called")
 }
 
 func TestViewsService_GetVideoAnalytics(t *testing.T) {
 	mockViewsRepo := &MockViewsRepository{}
 	mockVideoRepo := &MockVideoRepository{}
 	service := NewViewsService(mockViewsRepo, mockVideoRepo)
+	defer service.Close()
 
 	ctx := context.Background()
 	videoID := uuid.New().String()
@@ -429,6 +454,7 @@ func TestViewsService_GetTrendingVideos(t *testing.T) {
 	mockViewsRepo := &MockViewsRepository{}
 	mockVideoRepo := &MockVideoRepository{}
 	service := NewViewsService(mockViewsRepo, mockVideoRepo)
+	defer service.Close()
 
 	ctx := context.Background()
 	limit := 25
@@ -467,6 +493,7 @@ func TestViewsService_GetTrendingVideos_LimitValidation(t *testing.T) {
 	mockViewsRepo := &MockViewsRepository{}
 	mockVideoRepo := &MockVideoRepository{}
 	service := NewViewsService(mockViewsRepo, mockVideoRepo)
+	defer service.Close()
 
 	ctx := context.Background()
 
@@ -494,6 +521,7 @@ func TestViewsService_GetTrendingVideosWithDetails(t *testing.T) {
 	mockViewsRepo := &MockViewsRepository{}
 	mockVideoRepo := &MockVideoRepository{}
 	service := NewViewsService(mockViewsRepo, mockVideoRepo)
+	defer service.Close()
 
 	ctx := context.Background()
 	limit := 10
@@ -531,6 +559,7 @@ func TestViewsService_UpdateTrendingMetrics(t *testing.T) {
 	mockViewsRepo := &MockViewsRepository{}
 	mockVideoRepo := &MockVideoRepository{}
 	service := NewViewsService(mockViewsRepo, mockVideoRepo)
+	defer service.Close()
 
 	ctx := context.Background()
 	videoIDs := []string{uuid.New().String(), uuid.New().String()}
@@ -571,6 +600,7 @@ func TestViewsService_GetTopVideos(t *testing.T) {
 	mockViewsRepo := &MockViewsRepository{}
 	mockVideoRepo := &MockVideoRepository{}
 	service := NewViewsService(mockViewsRepo, mockVideoRepo)
+	defer service.Close()
 
 	ctx := context.Background()
 	days := 7
@@ -617,6 +647,7 @@ func TestViewsService_AggregateStats(t *testing.T) {
 	mockViewsRepo := &MockViewsRepository{}
 	mockVideoRepo := &MockVideoRepository{}
 	service := NewViewsService(mockViewsRepo, mockVideoRepo)
+	defer service.Close()
 
 	ctx := context.Background()
 
@@ -644,6 +675,7 @@ func TestViewsService_CleanupOldData(t *testing.T) {
 	mockViewsRepo := &MockViewsRepository{}
 	mockVideoRepo := &MockVideoRepository{}
 	service := NewViewsService(mockViewsRepo, mockVideoRepo)
+	defer service.Close()
 
 	ctx := context.Background()
 
@@ -786,6 +818,7 @@ func TestViewsService_ConcurrentViewTracking(t *testing.T) {
 	mockViewsRepo := &MockViewsRepository{}
 	mockVideoRepo := &MockVideoRepository{}
 	service := NewViewsService(mockViewsRepo, mockVideoRepo)
+	defer service.Close()
 
 	ctx := context.Background()
 	videoID := uuid.New().String()
@@ -796,13 +829,13 @@ func TestViewsService_ConcurrentViewTracking(t *testing.T) {
 	mockVideoRepo.On("GetByID", ctx, videoID).Return(video, nil).Times(50)
 
 	// Mock no existing views (all are new)
-	mockViewsRepo.On("GetUserViewBySessionAndVideo", ctx, mock.AnythingOfType("string"), videoID).Return(nil, nil).Times(50)
+	mockViewsRepo.On("GetUserViewBySessionAndVideo", mock.Anything, mock.AnythingOfType("string"), videoID).Return(nil, nil).Times(50)
 
 	// Mock successful view creations
-	mockViewsRepo.On("CreateUserView", ctx, mock.AnythingOfType("*domain.UserView")).Return(nil).Times(50)
+	mockViewsRepo.On("CreateUserView", mock.Anything, mock.AnythingOfType("*domain.UserView")).Return(nil).Times(50)
 
 	// Mock successful view count increments
-	mockViewsRepo.On("IncrementVideoViews", ctx, videoID).Return(nil).Times(50)
+	mockViewsRepo.On("IncrementVideoViews", mock.Anything, videoID).Return(nil).Times(50)
 
 	concurrency := 50
 	results := make(chan error, concurrency)
@@ -836,6 +869,8 @@ func TestViewsService_ConcurrentViewTracking(t *testing.T) {
 
 	// All concurrent operations should succeed
 	assert.Empty(t, errors, "Concurrent view tracking should not fail")
+
+	service.Close()
 
 	// Verify all mocks were satisfied
 	mockVideoRepo.AssertExpectations(t)
