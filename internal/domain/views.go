@@ -268,6 +268,17 @@ type VideoStats struct {
 	EngagementScore float64 `json:"engagement_score,omitempty"`
 }
 
+// VideoTrendingStats holds raw metrics for trending calculation
+type VideoTrendingStats struct {
+	VideoID       string  `db:"video_id"`
+	ViewsLastHour int64   `db:"views_last_hour"`
+	ViewsLast24h  int64   `db:"views_last_24h"`
+	ViewsLast7d   int64   `db:"views_last_7d"`
+	Score1h       float64 `db:"score_1h"`
+	Score24h      float64 `db:"score_24h"`
+	Score7d       float64 `db:"score_7d"`
+}
+
 // Helper methods for UserView
 
 // GenerateSessionID creates a new session ID if not provided
