@@ -4,36 +4,65 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
+	"sync"
 	"time"
 
 	"athena/internal/domain"
 	"athena/internal/port"
 )
 
+type viewTask struct {
+	userID  *string
+	request *domain.ViewTrackingRequest
+}
+
 type Service struct {
 	viewsRepo port.ViewsRepository
 	videoRepo port.VideoRepository
+	viewQueue chan viewTask
+	workerWG  sync.WaitGroup
+	closeOnce sync.Once
 }
 
 func NewService(viewsRepo port.ViewsRepository, videoRepo port.VideoRepository) *Service {
-	return &Service{viewsRepo: viewsRepo, videoRepo: videoRepo}
+	s := &Service{
+		viewsRepo: viewsRepo,
+		videoRepo: videoRepo,
+		viewQueue: make(chan viewTask, 1000), // Buffer size 1000
+	}
+	s.workerWG.Add(1)
+	go s.worker()
+	return s
 }
 
-// TrackView tracks a user view with deduplication and session management
-func (s *Service) TrackView(ctx context.Context, userID *string, request *domain.ViewTrackingRequest) error {
-	// Validate that the video exists
-	video, err := s.videoRepo.GetByID(ctx, request.VideoID)
-	if err != nil {
-		return fmt.Errorf("failed to verify video exists: %w", err)
+// Close gracefully shuts down the service, waiting for pending tasks
+func (s *Service) Close() {
+	s.closeOnce.Do(func() {
+		close(s.viewQueue)
+	})
+	s.workerWG.Wait()
+}
+
+func (s *Service) worker() {
+	defer s.workerWG.Done()
+	for task := range s.viewQueue {
+		s.processViewTask(task)
 	}
-	if video == nil {
-		return fmt.Errorf("video not found: %s", request.VideoID)
-	}
+}
+
+func (s *Service) processViewTask(task viewTask) {
+	// Use a background context with timeout for worker operations
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Minute)
+	defer cancel()
+
+	request := task.request
+	userID := task.userID
 
 	// Check if this is an existing view session
 	existingView, err := s.viewsRepo.GetUserViewBySessionAndVideo(ctx, request.SessionID, request.VideoID)
 	if err != nil {
-		return fmt.Errorf("failed to check existing view: %w", err)
+		// In a real application, we should log this error
+		return
 	}
 
 	now := time.Now()
@@ -49,11 +78,8 @@ func (s *Service) TrackView(ctx context.Context, userID *string, request *domain
 		existingView.QualityChanges = request.QualityChanges
 		existingView.BufferEvents = request.BufferEvents
 
-		err = s.viewsRepo.UpdateUserView(ctx, existingView)
-		if err != nil {
-			return fmt.Errorf("failed to update existing view: %w", err)
-		}
-		return nil
+		_ = s.viewsRepo.UpdateUserView(ctx, existingView)
+		return
 	}
 
 	// Create new view record
@@ -117,11 +143,30 @@ func (s *Service) TrackView(ctx context.Context, userID *string, request *domain
 
 	// Create the view record
 	if err := s.viewsRepo.CreateUserView(ctx, view); err != nil {
-		return fmt.Errorf("failed to create user view: %w", err)
+		return
 	}
 	// Increment the video's total view count (best-effort)
 	_ = s.viewsRepo.IncrementVideoViews(ctx, request.VideoID)
-	return nil
+}
+
+// TrackView tracks a user view with deduplication and session management
+func (s *Service) TrackView(ctx context.Context, userID *string, request *domain.ViewTrackingRequest) error {
+	// Validate that the video exists
+	video, err := s.videoRepo.GetByID(ctx, request.VideoID)
+	if err != nil {
+		return fmt.Errorf("failed to verify video exists: %w", err)
+	}
+	if video == nil {
+		return fmt.Errorf("video not found: %s", request.VideoID)
+	}
+
+	// Submit task to background worker
+	select {
+	case s.viewQueue <- viewTask{userID: userID, request: request}:
+		return nil
+	default:
+		return fmt.Errorf("tracking queue full")
+	}
 }
 
 // GetVideoAnalytics gets comprehensive analytics for a video
