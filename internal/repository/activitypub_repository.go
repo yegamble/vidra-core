@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -98,6 +99,27 @@ func (r *ActivityPubRepository) GetRemoteActor(ctx context.Context, actorURI str
 		return nil, fmt.Errorf("failed to get remote actor: %w", err)
 	}
 	return &actor, nil
+}
+
+// GetRemoteActors retrieves multiple cached remote actors by their URIs
+func (r *ActivityPubRepository) GetRemoteActors(ctx context.Context, actorURIs []string) ([]*domain.APRemoteActor, error) {
+	if len(actorURIs) == 0 {
+		return nil, nil
+	}
+
+	query, args, err := sqlx.In(`SELECT * FROM ap_remote_actors WHERE actor_uri IN (?)`, actorURIs)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build IN query: %w", err)
+	}
+
+	query = r.db.Rebind(query)
+	var actors []*domain.APRemoteActor
+	err = r.db.SelectContext(ctx, &actors, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get remote actors: %w", err)
+	}
+
+	return actors, nil
 }
 
 // UpsertRemoteActor inserts or updates a remote actor in the cache
@@ -334,6 +356,40 @@ func (r *ActivityPubRepository) EnqueueDelivery(ctx context.Context, delivery *d
 		delivery.LastError, delivery.Status,
 	)
 
+	return err
+}
+
+// BulkEnqueueDelivery adds multiple activities to the delivery queue in a single batch
+func (r *ActivityPubRepository) BulkEnqueueDelivery(ctx context.Context, deliveries []*domain.APDeliveryQueue) error {
+	if len(deliveries) == 0 {
+		return nil
+	}
+
+	const numFields = 9
+	query := `INSERT INTO ap_delivery_queue (
+		id, activity_id, inbox_url, actor_id, attempts, max_attempts,
+		next_attempt, last_error, status
+	) VALUES `
+
+	values := make([]interface{}, 0, len(deliveries)*numFields)
+	placeholders := make([]string, 0, len(deliveries))
+
+	for i, d := range deliveries {
+		if d.ID == "" {
+			d.ID = uuid.New().String()
+		}
+
+		offset := i * numFields
+		placeholders = append(placeholders, fmt.Sprintf("($%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d)",
+			offset+1, offset+2, offset+3, offset+4, offset+5, offset+6, offset+7, offset+8, offset+9))
+
+		values = append(values, d.ID, d.ActivityID, d.InboxURL, d.ActorID,
+			d.Attempts, d.MaxAttempts, d.NextAttempt, d.LastError, d.Status)
+	}
+
+	query += strings.Join(placeholders, ", ")
+
+	_, err := r.db.ExecContext(ctx, query, values...)
 	return err
 }
 

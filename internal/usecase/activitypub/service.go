@@ -1014,25 +1014,33 @@ func (s *Service) PublishComment(ctx context.Context, commentID string) error {
 	}
 
 	// Enqueue delivery to each follower
-	for _, follower := range followers {
-		remoteActor, err := s.repo.GetRemoteActor(ctx, follower.FollowerID)
+	if len(followers) > 0 {
+		followerURIs := make([]string, len(followers))
+		for i, f := range followers {
+			followerURIs[i] = f.FollowerID
+		}
+
+		remoteActors, err := s.repo.GetRemoteActors(ctx, followerURIs)
 		if err != nil {
-			continue
+			return fmt.Errorf("failed to get remote actors: %w", err)
 		}
 
-		delivery := &domain.APDeliveryQueue{
-			ActivityID:  apActivity.ID,
-			InboxURL:    remoteActor.InboxURL,
-			ActorID:     comment.UserID.String(),
-			Attempts:    0,
-			MaxAttempts: 3,
-			NextAttempt: time.Now(),
-			Status:      "pending",
+		deliveries := make([]*domain.APDeliveryQueue, 0, len(remoteActors))
+		for _, remoteActor := range remoteActors {
+			deliveries = append(deliveries, &domain.APDeliveryQueue{
+				ActivityID:  apActivity.ID,
+				InboxURL:    remoteActor.InboxURL,
+				ActorID:     comment.UserID.String(),
+				Attempts:    0,
+				MaxAttempts: 3,
+				NextAttempt: time.Now(),
+				Status:      "pending",
+			})
 		}
 
-		if err := s.repo.EnqueueDelivery(ctx, delivery); err != nil {
+		if err := s.repo.BulkEnqueueDelivery(ctx, deliveries); err != nil {
 			// Log but don't fail on delivery queue errors
-			continue
+			fmt.Printf("failed to bulk enqueue deliveries for comment %s: %v\n", commentID, err)
 		}
 	}
 
@@ -1122,24 +1130,33 @@ func (s *Service) UpdateComment(ctx context.Context, commentID string) error {
 	}
 
 	// Enqueue delivery to each follower
-	for _, follower := range followers {
-		remoteActor, err := s.repo.GetRemoteActor(ctx, follower.FollowerID)
+	if len(followers) > 0 {
+		followerURIs := make([]string, len(followers))
+		for i, f := range followers {
+			followerURIs[i] = f.FollowerID
+		}
+
+		remoteActors, err := s.repo.GetRemoteActors(ctx, followerURIs)
 		if err != nil {
-			continue
+			return fmt.Errorf("failed to get remote actors: %w", err)
 		}
 
-		delivery := &domain.APDeliveryQueue{
-			ActivityID:  apActivity.ID,
-			InboxURL:    remoteActor.InboxURL,
-			ActorID:     comment.UserID.String(),
-			Attempts:    0,
-			MaxAttempts: 3,
-			NextAttempt: time.Now(),
-			Status:      "pending",
+		deliveries := make([]*domain.APDeliveryQueue, 0, len(remoteActors))
+		for _, remoteActor := range remoteActors {
+			deliveries = append(deliveries, &domain.APDeliveryQueue{
+				ActivityID:  apActivity.ID,
+				InboxURL:    remoteActor.InboxURL,
+				ActorID:     comment.UserID.String(),
+				Attempts:    0,
+				MaxAttempts: 3,
+				NextAttempt: time.Now(),
+				Status:      "pending",
+			})
 		}
 
-		if err := s.repo.EnqueueDelivery(ctx, delivery); err != nil {
-			continue
+		if err := s.repo.BulkEnqueueDelivery(ctx, deliveries); err != nil {
+			// Log but don't fail on delivery queue errors
+			fmt.Printf("failed to bulk enqueue update deliveries for comment %s: %v\n", commentID, err)
 		}
 	}
 
@@ -1218,24 +1235,33 @@ func (s *Service) DeleteComment(ctx context.Context, commentID string) error {
 	}
 
 	// Enqueue delivery to each follower
-	for _, follower := range followers {
-		remoteActor, err := s.repo.GetRemoteActor(ctx, follower.FollowerID)
+	if len(followers) > 0 {
+		followerURIs := make([]string, len(followers))
+		for i, f := range followers {
+			followerURIs[i] = f.FollowerID
+		}
+
+		remoteActors, err := s.repo.GetRemoteActors(ctx, followerURIs)
 		if err != nil {
-			continue
+			return fmt.Errorf("failed to get remote actors: %w", err)
 		}
 
-		delivery := &domain.APDeliveryQueue{
-			ActivityID:  apActivity.ID,
-			InboxURL:    remoteActor.InboxURL,
-			ActorID:     comment.UserID.String(),
-			Attempts:    0,
-			MaxAttempts: 3,
-			NextAttempt: time.Now(),
-			Status:      "pending",
+		deliveries := make([]*domain.APDeliveryQueue, 0, len(remoteActors))
+		for _, remoteActor := range remoteActors {
+			deliveries = append(deliveries, &domain.APDeliveryQueue{
+				ActivityID:  apActivity.ID,
+				InboxURL:    remoteActor.InboxURL,
+				ActorID:     comment.UserID.String(),
+				Attempts:    0,
+				MaxAttempts: 3,
+				NextAttempt: time.Now(),
+				Status:      "pending",
+			})
 		}
 
-		if err := s.repo.EnqueueDelivery(ctx, delivery); err != nil {
-			continue
+		if err := s.repo.BulkEnqueueDelivery(ctx, deliveries); err != nil {
+			// Log error but don't fail the operation
+			fmt.Printf("failed to bulk enqueue delete deliveries for comment %s: %v\n", commentID, err)
 		}
 	}
 
@@ -1474,29 +1500,39 @@ func (s *Service) PublishVideo(ctx context.Context, videoID string) error {
 	}
 
 	// Queue delivery to each follower's inbox
-	for _, follower := range followers {
-		// Get remote actor details
-		remoteActor, err := s.repo.GetRemoteActor(ctx, follower.FollowerID)
+	if len(followers) > 0 {
+		followerURIs := make([]string, len(followers))
+		for i, f := range followers {
+			followerURIs[i] = f.FollowerID
+		}
+
+		remoteActors, err := s.repo.GetRemoteActors(ctx, followerURIs)
 		if err != nil {
-			continue // Skip if we can't get the remote actor
+			return fmt.Errorf("failed to get remote actors: %w", err)
 		}
 
-		// Determine inbox URL (prefer shared inbox)
-		inboxURL := remoteActor.InboxURL
-		if remoteActor.SharedInbox != nil && *remoteActor.SharedInbox != "" {
-			inboxURL = *remoteActor.SharedInbox
+		deliveries := make([]*domain.APDeliveryQueue, 0, len(remoteActors))
+		for _, remoteActor := range remoteActors {
+			// Determine inbox URL (prefer shared inbox)
+			inboxURL := remoteActor.InboxURL
+			if remoteActor.SharedInbox != nil && *remoteActor.SharedInbox != "" {
+				inboxURL = *remoteActor.SharedInbox
+			}
+
+			deliveries = append(deliveries, &domain.APDeliveryQueue{
+				ActivityID:  activity.ID,
+				ActorID:     activity.Actor,
+				InboxURL:    inboxURL,
+				Attempts:    0,
+				MaxAttempts: 10,
+				NextAttempt: time.Now(),
+				Status:      "pending",
+			})
 		}
 
-		// Queue the delivery for async processing
-		delivery := &domain.APDeliveryQueue{
-			ActivityID: activity.ID,
-			ActorID:    activity.Actor,
-			InboxURL:   inboxURL,
-		}
-
-		if err := s.repo.EnqueueDelivery(ctx, delivery); err != nil {
-			// Log error but continue with other followers
-			continue
+		if err := s.repo.BulkEnqueueDelivery(ctx, deliveries); err != nil {
+			// Log error but continue
+			fmt.Printf("failed to bulk enqueue deliveries for video %s: %v\n", videoID, err)
 		}
 	}
 
@@ -1568,25 +1604,39 @@ func (s *Service) UpdateVideo(ctx context.Context, videoID string) error {
 		return fmt.Errorf("failed to get followers: %w", err)
 	}
 
-	for _, follower := range followers {
-		remoteActor, err := s.repo.GetRemoteActor(ctx, follower.FollowerID)
+	if len(followers) > 0 {
+		followerURIs := make([]string, len(followers))
+		for i, f := range followers {
+			followerURIs[i] = f.FollowerID
+		}
+
+		remoteActors, err := s.repo.GetRemoteActors(ctx, followerURIs)
 		if err != nil {
-			continue
+			return fmt.Errorf("failed to get remote actors: %w", err)
 		}
 
-		inboxURL := remoteActor.InboxURL
-		if remoteActor.SharedInbox != nil && *remoteActor.SharedInbox != "" {
-			inboxURL = *remoteActor.SharedInbox
+		deliveries := make([]*domain.APDeliveryQueue, 0, len(remoteActors))
+		for _, remoteActor := range remoteActors {
+			// Determine inbox URL (prefer shared inbox)
+			inboxURL := remoteActor.InboxURL
+			if remoteActor.SharedInbox != nil && *remoteActor.SharedInbox != "" {
+				inboxURL = *remoteActor.SharedInbox
+			}
+
+			deliveries = append(deliveries, &domain.APDeliveryQueue{
+				ActivityID:  activity.ID,
+				ActorID:     activity.Actor,
+				InboxURL:    inboxURL,
+				Attempts:    0,
+				MaxAttempts: 10,
+				NextAttempt: time.Now(),
+				Status:      "pending",
+			})
 		}
 
-		delivery := &domain.APDeliveryQueue{
-			ActivityID: activity.ID,
-			ActorID:    activity.Actor,
-			InboxURL:   inboxURL,
-		}
-
-		if err := s.repo.EnqueueDelivery(ctx, delivery); err != nil {
-			continue
+		if err := s.repo.BulkEnqueueDelivery(ctx, deliveries); err != nil {
+			// Log error but continue
+			fmt.Printf("failed to bulk enqueue update deliveries for video %s: %v\n", videoID, err)
 		}
 	}
 
@@ -1647,25 +1697,39 @@ func (s *Service) DeleteVideo(ctx context.Context, videoID string) error {
 		return fmt.Errorf("failed to get followers: %w", err)
 	}
 
-	for _, follower := range followers {
-		remoteActor, err := s.repo.GetRemoteActor(ctx, follower.FollowerID)
+	if len(followers) > 0 {
+		followerURIs := make([]string, len(followers))
+		for i, f := range followers {
+			followerURIs[i] = f.FollowerID
+		}
+
+		remoteActors, err := s.repo.GetRemoteActors(ctx, followerURIs)
 		if err != nil {
-			continue
+			return fmt.Errorf("failed to get remote actors: %w", err)
 		}
 
-		inboxURL := remoteActor.InboxURL
-		if remoteActor.SharedInbox != nil && *remoteActor.SharedInbox != "" {
-			inboxURL = *remoteActor.SharedInbox
+		deliveries := make([]*domain.APDeliveryQueue, 0, len(remoteActors))
+		for _, remoteActor := range remoteActors {
+			// Determine inbox URL (prefer shared inbox)
+			inboxURL := remoteActor.InboxURL
+			if remoteActor.SharedInbox != nil && *remoteActor.SharedInbox != "" {
+				inboxURL = *remoteActor.SharedInbox
+			}
+
+			deliveries = append(deliveries, &domain.APDeliveryQueue{
+				ActivityID:  activity.ID,
+				ActorID:     activity.Actor,
+				InboxURL:    inboxURL,
+				Attempts:    0,
+				MaxAttempts: 10,
+				NextAttempt: time.Now(),
+				Status:      "pending",
+			})
 		}
 
-		delivery := &domain.APDeliveryQueue{
-			ActivityID: activity.ID,
-			ActorID:    activity.Actor,
-			InboxURL:   inboxURL,
-		}
-
-		if err := s.repo.EnqueueDelivery(ctx, delivery); err != nil {
-			continue
+		if err := s.repo.BulkEnqueueDelivery(ctx, deliveries); err != nil {
+			// Log error but continue
+			fmt.Printf("failed to bulk enqueue delete deliveries for video %s: %v\n", videoID, err)
 		}
 	}
 
