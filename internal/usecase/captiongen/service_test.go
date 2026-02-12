@@ -158,6 +158,14 @@ func (m *MockVideoRepository) GetByID(ctx context.Context, videoID string) (*dom
 	return args.Get(0).(*domain.Video), args.Error(1)
 }
 
+func (m *MockVideoRepository) GetByIDs(ctx context.Context, ids []string) ([]*domain.Video, error) {
+	args := m.Called(ctx, ids)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*domain.Video), args.Error(1)
+}
+
 func (m *MockVideoRepository) Update(ctx context.Context, video *domain.Video) error {
 	args := m.Called(ctx, video)
 	return args.Error(0)

@@ -21,6 +21,9 @@ func (m *mockStreamRepo) Create(_ context.Context, _ *domain.Video) error { retu
 func (m *mockStreamRepo) GetByID(_ context.Context, _ string) (*domain.Video, error) {
 	return m.vid, nil
 }
+func (m *mockStreamRepo) GetByIDs(_ context.Context, _ []string) ([]*domain.Video, error) {
+	return nil, nil
+}
 func (m *mockStreamRepo) GetByUserID(_ context.Context, _ string, _ int, _ int) ([]*domain.Video, int64, error) {
 	return nil, 0, nil
 }

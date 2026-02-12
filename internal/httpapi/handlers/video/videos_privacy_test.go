@@ -21,6 +21,9 @@ func (m *mockVideoRepoPrivacy) Create(context.Context, *domain.Video) error { re
 func (m *mockVideoRepoPrivacy) GetByID(context.Context, string) (*domain.Video, error) {
 	return m.v, nil
 }
+func (m *mockVideoRepoPrivacy) GetByIDs(context.Context, []string) ([]*domain.Video, error) {
+	return nil, nil
+}
 func (m *mockVideoRepoPrivacy) GetByUserID(context.Context, string, int, int) ([]*domain.Video, int64, error) {
 	return m.list, m.total, nil
 }

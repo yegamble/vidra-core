@@ -202,10 +202,26 @@ func (s *Service) GetTrendingVideosWithDetails(ctx context.Context, limit int) (
 	if err != nil {
 		return nil, err
 	}
+
+	videoIDs := make([]string, 0, len(trendingVideos))
+	for _, tv := range trendingVideos {
+		videoIDs = append(videoIDs, tv.VideoID)
+	}
+
+	videos, err := s.videoRepo.GetByIDs(ctx, videoIDs)
+	if err != nil {
+		return nil, err
+	}
+
+	videoMap := make(map[string]*domain.Video)
+	for _, v := range videos {
+		videoMap[v.ID] = v
+	}
+
 	response := &domain.TrendingVideosResponse{Videos: make([]domain.TrendingVideoWithDetails, 0, len(trendingVideos)), UpdatedAt: time.Now()}
 	for _, tv := range trendingVideos {
-		video, err := s.videoRepo.GetByID(ctx, tv.VideoID)
-		if err != nil || video == nil {
+		video, exists := videoMap[tv.VideoID]
+		if !exists || video == nil {
 			continue
 		}
 		response.Videos = append(response.Videos, domain.TrendingVideoWithDetails{

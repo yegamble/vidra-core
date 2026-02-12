@@ -8,6 +8,7 @@ import (
 type VideoRepository interface {
 	Create(ctx context.Context, video *domain.Video) error
 	GetByID(ctx context.Context, id string) (*domain.Video, error)
+	GetByIDs(ctx context.Context, ids []string) ([]*domain.Video, error)
 	GetByUserID(ctx context.Context, userID string, limit, offset int) ([]*domain.Video, int64, error)
 	Update(ctx context.Context, video *domain.Video) error
 	Delete(ctx context.Context, id string, userID string) error
