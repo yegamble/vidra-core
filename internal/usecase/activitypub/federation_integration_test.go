@@ -134,20 +134,24 @@ func TestVideoUploadToFederation(t *testing.T) {
 		deliveryCount := 0
 		deliveryCalls := make([]string, 0)
 
-		for i, follower := range followers {
-			mockAPRepo.On("GetRemoteActor", ctx, follower.FollowerID).Return(remoteActors[i], nil).Once()
+		followerURIs := make([]string, len(followers))
+		for i, f := range followers {
+			followerURIs[i] = f.FollowerID
 		}
+		mockAPRepo.On("GetRemoteActors", ctx, followerURIs).Return(remoteActors, nil).Once()
 
-		// Single EnqueueDelivery expectation that matches any delivery
-		mockAPRepo.On("EnqueueDelivery", ctx, mock.MatchedBy(func(delivery *domain.APDeliveryQueue) bool {
+		// Single BulkEnqueueDelivery expectation
+		mockAPRepo.On("BulkEnqueueDelivery", ctx, mock.MatchedBy(func(deliveries []*domain.APDeliveryQueue) bool {
 			deliveryMutex.Lock()
 			defer deliveryMutex.Unlock()
-			deliveryCount++
-			deliveryCalls = append(deliveryCalls, delivery.InboxURL)
-			assert.NotEmpty(t, delivery.ActivityID)
-			assert.NotEmpty(t, delivery.InboxURL)
+			deliveryCount = len(deliveries)
+			for _, d := range deliveries {
+				deliveryCalls = append(deliveryCalls, d.InboxURL)
+				assert.NotEmpty(t, d.ActivityID)
+				assert.NotEmpty(t, d.InboxURL)
+			}
 			return true
-		})).Return(nil).Times(2) // Expect exactly 2 calls
+		})).Return(nil).Once()
 
 		mockAPRepo.On("StoreActivity", ctx, mock.MatchedBy(func(activity *domain.APActivity) bool {
 			assert.Equal(t, domain.ActivityTypeCreate, activity.Type)
@@ -280,8 +284,8 @@ func TestCommentToFederation(t *testing.T) {
 		mockVideoRepo.On("GetByID", ctx, videoID.String()).Return(video, nil).Once()
 		mockUserRepo.On("GetByID", ctx, videoOwnerID.String()).Return(videoOwner, nil).Once()
 		mockAPRepo.On("GetFollowers", ctx, videoOwnerID.String(), "accepted", mock.Anything, mock.Anything).Return(videoOwnerFollowers, 1, nil).Once()
-		mockAPRepo.On("GetRemoteActor", ctx, videoOwnerFollowers[0].FollowerID).Return(remoteActor, nil).Once()
-		mockAPRepo.On("EnqueueDelivery", ctx, mock.AnythingOfType("*domain.APDeliveryQueue")).Return(nil).Once()
+		mockAPRepo.On("GetRemoteActors", ctx, []string{videoOwnerFollowers[0].FollowerID}).Return([]*domain.APRemoteActor{remoteActor}, nil).Once()
+		mockAPRepo.On("BulkEnqueueDelivery", ctx, mock.AnythingOfType("[]*domain.APDeliveryQueue")).Return(nil).Once()
 		mockAPRepo.On("StoreActivity", ctx, mock.MatchedBy(func(activity *domain.APActivity) bool {
 			assert.Equal(t, domain.ActivityTypeCreate, activity.Type)
 			return true
@@ -503,11 +507,11 @@ func TestPeerTubeCompatibility(t *testing.T) {
 		mockVideoRepo.On("GetByID", ctx, video.ID).Return(video, nil).Once()
 		mockUserRepo.On("GetByID", ctx, user.ID).Return(user, nil).Times(2)
 		mockAPRepo.On("GetFollowers", ctx, user.ID, "accepted", mock.Anything, mock.Anything).Return(followers, 1, nil).Once()
-		mockAPRepo.On("GetRemoteActor", ctx, followers[0].FollowerID).Return(peertubeActor, nil).Once()
+		mockAPRepo.On("GetRemoteActors", ctx, []string{followers[0].FollowerID}).Return([]*domain.APRemoteActor{peertubeActor}, nil).Once()
 
 		// Verify delivery queue entry
-		mockAPRepo.On("EnqueueDelivery", ctx, mock.MatchedBy(func(delivery *domain.APDeliveryQueue) bool {
-			assert.Equal(t, "https://peertube.example/inbox", delivery.InboxURL, "Should use shared inbox")
+		mockAPRepo.On("BulkEnqueueDelivery", ctx, mock.MatchedBy(func(deliveries []*domain.APDeliveryQueue) bool {
+			assert.Equal(t, "https://peertube.example/inbox", deliveries[0].InboxURL, "Should use shared inbox")
 			return true
 		})).Return(nil).Once()
 
@@ -570,9 +574,9 @@ func TestMastodonCompatibility(t *testing.T) {
 		mockVideoRepo.On("GetByID", ctx, video.ID).Return(video, nil).Once()
 		mockUserRepo.On("GetByID", ctx, user.ID).Return(user, nil).Times(2)
 		mockAPRepo.On("GetFollowers", ctx, user.ID, "accepted", mock.Anything, mock.Anything).Return(followers, 1, nil).Once()
-		mockAPRepo.On("GetRemoteActor", ctx, followers[0].FollowerID).Return(mastodonActor, nil).Once()
-		mockAPRepo.On("EnqueueDelivery", ctx, mock.MatchedBy(func(delivery *domain.APDeliveryQueue) bool {
-			assert.Contains(t, delivery.InboxURL, "mastodon.social")
+		mockAPRepo.On("GetRemoteActors", ctx, []string{followers[0].FollowerID}).Return([]*domain.APRemoteActor{mastodonActor}, nil).Once()
+		mockAPRepo.On("BulkEnqueueDelivery", ctx, mock.MatchedBy(func(deliveries []*domain.APDeliveryQueue) bool {
+			assert.Contains(t, deliveries[0].InboxURL, "mastodon.social")
 			return true
 		})).Return(nil).Once()
 		mockAPRepo.On("StoreActivity", ctx, mock.AnythingOfType("*domain.APActivity")).Return(nil).Once()
@@ -681,13 +685,17 @@ func TestCrossInstanceFederation(t *testing.T) {
 		mockUserRepo.On("GetByID", ctx, user.ID).Return(user, nil).Times(2)
 		mockAPRepo.On("GetFollowers", ctx, user.ID, "accepted", mock.Anything, mock.Anything).Return(followers, 3, nil).Once()
 
-		deliveryCount := 0
-		for i, follower := range followers {
-			mockAPRepo.On("GetRemoteActor", ctx, follower.FollowerID).Return(remoteActors[i], nil).Once()
-			mockAPRepo.On("EnqueueDelivery", ctx, mock.AnythingOfType("*domain.APDeliveryQueue")).Run(func(args mock.Arguments) {
-				deliveryCount++
-			}).Return(nil).Once()
+		followerURIs := make([]string, len(followers))
+		for i, f := range followers {
+			followerURIs[i] = f.FollowerID
 		}
+		mockAPRepo.On("GetRemoteActors", ctx, followerURIs).Return(remoteActors, nil).Once()
+
+		deliveryCount := 0
+		mockAPRepo.On("BulkEnqueueDelivery", ctx, mock.AnythingOfType("[]*domain.APDeliveryQueue")).Run(func(args mock.Arguments) {
+			deliveries := args.Get(1).([]*domain.APDeliveryQueue)
+			deliveryCount = len(deliveries)
+		}).Return(nil).Once()
 
 		mockAPRepo.On("StoreActivity", ctx, mock.AnythingOfType("*domain.APActivity")).Return(nil).Once()
 
@@ -741,7 +749,7 @@ func TestErrorHandling(t *testing.T) {
 		mockVideoRepo.On("GetByID", ctx, video.ID).Return(video, nil).Once()
 		mockUserRepo.On("GetByID", ctx, user.ID).Return(user, nil).Times(2)
 		mockAPRepo.On("GetFollowers", ctx, user.ID, "accepted", mock.Anything, mock.Anything).Return(followers, 1, nil).Once()
-		mockAPRepo.On("GetRemoteActor", ctx, followers[0].FollowerID).Return(nil, fmt.Errorf("instance unreachable")).Once()
+		mockAPRepo.On("GetRemoteActors", ctx, []string{followers[0].FollowerID}).Return(nil, fmt.Errorf("instance unreachable")).Once()
 
 		// Should still store activity even if delivery fails
 		mockAPRepo.On("StoreActivity", ctx, mock.AnythingOfType("*domain.APActivity")).Return(nil).Once()
@@ -785,8 +793,8 @@ func TestErrorHandling(t *testing.T) {
 		mockVideoRepo.On("GetByID", ctx, video.ID).Return(video, nil).Once()
 		mockUserRepo.On("GetByID", ctx, user.ID).Return(user, nil).Times(2)
 		mockAPRepo.On("GetFollowers", ctx, user.ID, "accepted", mock.Anything, mock.Anything).Return(followers, 1, nil).Once()
-		mockAPRepo.On("GetRemoteActor", ctx, followers[0].FollowerID).Return(remoteActor, nil).Once()
-		mockAPRepo.On("EnqueueDelivery", ctx, mock.AnythingOfType("*domain.APDeliveryQueue")).Return(fmt.Errorf("queue full")).Once()
+		mockAPRepo.On("GetRemoteActors", ctx, []string{followers[0].FollowerID}).Return([]*domain.APRemoteActor{remoteActor}, nil).Once()
+		mockAPRepo.On("BulkEnqueueDelivery", ctx, mock.AnythingOfType("[]*domain.APDeliveryQueue")).Return(fmt.Errorf("queue full")).Once()
 
 		// Should still store activity
 		mockAPRepo.On("StoreActivity", ctx, mock.AnythingOfType("*domain.APActivity")).Return(nil).Once()

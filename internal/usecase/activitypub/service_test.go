@@ -42,6 +42,14 @@ func (m *MockActivityPubRepository) GetRemoteActor(ctx context.Context, actorURI
 	return args.Get(0).(*domain.APRemoteActor), args.Error(1)
 }
 
+func (m *MockActivityPubRepository) GetRemoteActors(ctx context.Context, actorURIs []string) ([]*domain.APRemoteActor, error) {
+	args := m.Called(ctx, actorURIs)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*domain.APRemoteActor), args.Error(1)
+}
+
 func (m *MockActivityPubRepository) UpsertRemoteActor(ctx context.Context, actor *domain.APRemoteActor) error {
 	args := m.Called(ctx, actor)
 	return args.Error(0)
@@ -125,6 +133,11 @@ func (m *MockActivityPubRepository) DeleteVideoShare(ctx context.Context, activi
 
 func (m *MockActivityPubRepository) EnqueueDelivery(ctx context.Context, delivery *domain.APDeliveryQueue) error {
 	args := m.Called(ctx, delivery)
+	return args.Error(0)
+}
+
+func (m *MockActivityPubRepository) BulkEnqueueDelivery(ctx context.Context, deliveries []*domain.APDeliveryQueue) error {
+	args := m.Called(ctx, deliveries)
 	return args.Error(0)
 }
 
@@ -1027,8 +1040,10 @@ func TestServicePublishVideo(t *testing.T) {
 		mockVideoRepo.On("GetByID", ctx, "video-123").Return(video, nil).Once()
 		mockUserRepo.On("GetByID", ctx, video.UserID).Return(user, nil).Times(2)
 		mockAPRepo.On("GetFollowers", ctx, user.ID, "accepted", mock.Anything, mock.Anything).Return(followers, 1, nil).Once()
-		mockAPRepo.On("GetRemoteActor", ctx, followers[0].FollowerID).Return(remoteActor, nil).Once()
-		mockAPRepo.On("EnqueueDelivery", ctx, mock.AnythingOfType("*domain.APDeliveryQueue")).Return(nil).Once()
+		mockAPRepo.On("GetRemoteActors", ctx, []string{followers[0].FollowerID}).Return([]*domain.APRemoteActor{remoteActor}, nil).Once()
+		mockAPRepo.On("BulkEnqueueDelivery", ctx, mock.MatchedBy(func(deliveries []*domain.APDeliveryQueue) bool {
+			return len(deliveries) == 1 && deliveries[0].InboxURL == remoteActor.InboxURL
+		})).Return(nil).Once()
 		mockAPRepo.On("StoreActivity", ctx, mock.MatchedBy(func(activity *domain.APActivity) bool {
 			return activity.Type == domain.ActivityTypeCreate && activity.Local == true
 		})).Return(nil).Once()
@@ -1112,8 +1127,10 @@ func TestServiceUpdateVideo(t *testing.T) {
 		mockVideoRepo.On("GetByID", ctx, "video-456").Return(video, nil).Once()
 		mockUserRepo.On("GetByID", ctx, video.UserID).Return(user, nil).Times(2)
 		mockAPRepo.On("GetFollowers", ctx, user.ID, "accepted", mock.Anything, mock.Anything).Return(followers, 1, nil).Once()
-		mockAPRepo.On("GetRemoteActor", ctx, followers[0].FollowerID).Return(remoteActor, nil).Once()
-		mockAPRepo.On("EnqueueDelivery", ctx, mock.AnythingOfType("*domain.APDeliveryQueue")).Return(nil).Once()
+		mockAPRepo.On("GetRemoteActors", ctx, []string{followers[0].FollowerID}).Return([]*domain.APRemoteActor{remoteActor}, nil).Once()
+		mockAPRepo.On("BulkEnqueueDelivery", ctx, mock.MatchedBy(func(deliveries []*domain.APDeliveryQueue) bool {
+			return len(deliveries) == 1 && deliveries[0].InboxURL == remoteActor.InboxURL
+		})).Return(nil).Once()
 		mockAPRepo.On("StoreActivity", ctx, mock.MatchedBy(func(activity *domain.APActivity) bool {
 			return activity.Type == domain.ActivityTypeUpdate
 		})).Return(nil).Once()
@@ -1180,8 +1197,10 @@ func TestServiceDeleteVideo(t *testing.T) {
 		mockVideoRepo.On("GetByID", ctx, "video-789").Return(video, nil).Once()
 		mockUserRepo.On("GetByID", ctx, video.UserID).Return(user, nil).Once()
 		mockAPRepo.On("GetFollowers", ctx, user.ID, "accepted", mock.Anything, mock.Anything).Return(followers, 1, nil).Once()
-		mockAPRepo.On("GetRemoteActor", ctx, followers[0].FollowerID).Return(remoteActor, nil).Once()
-		mockAPRepo.On("EnqueueDelivery", ctx, mock.AnythingOfType("*domain.APDeliveryQueue")).Return(nil).Once()
+		mockAPRepo.On("GetRemoteActors", ctx, []string{followers[0].FollowerID}).Return([]*domain.APRemoteActor{remoteActor}, nil).Once()
+		mockAPRepo.On("BulkEnqueueDelivery", ctx, mock.MatchedBy(func(deliveries []*domain.APDeliveryQueue) bool {
+			return len(deliveries) == 1 && deliveries[0].InboxURL == remoteActor.InboxURL
+		})).Return(nil).Once()
 		mockAPRepo.On("StoreActivity", ctx, mock.MatchedBy(func(activity *domain.APActivity) bool {
 			return activity.Type == domain.ActivityTypeDelete
 		})).Return(nil).Once()

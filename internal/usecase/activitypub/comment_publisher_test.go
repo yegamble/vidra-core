@@ -439,7 +439,7 @@ func TestPublishComment(t *testing.T) {
 
 		// Should deliver to video owner's inbox
 		mockAPRepo.On("GetFollowers", ctx, videoOwnerID.String(), "accepted", mock.Anything, mock.Anything).Return([]*domain.APFollower{}, 0, nil).Once()
-		mockAPRepo.On("GetRemoteActor", ctx, mock.Anything).Return(nil, fmt.Errorf("not federated")).Maybe()
+		mockAPRepo.On("GetRemoteActors", ctx, mock.Anything).Return([]*domain.APRemoteActor{}, nil).Maybe()
 		mockAPRepo.On("StoreActivity", ctx, mock.AnythingOfType("*domain.APActivity")).Return(nil).Once()
 
 		err := service.PublishComment(ctx, commentID.String())
@@ -458,8 +458,8 @@ func TestPublishComment(t *testing.T) {
 		mockVideoRepo.On("GetByID", ctx, videoID.String()).Return(video, nil).Times(2) // Called in BuildNoteObject and PublishComment
 		mockUserRepo.On("GetByID", ctx, videoOwnerID.String()).Return(videoOwner, nil).Once()
 		mockAPRepo.On("GetFollowers", ctx, videoOwnerID.String(), "accepted", mock.Anything, mock.Anything).Return(videoOwnerFollowers, 1, nil).Once()
-		mockAPRepo.On("GetRemoteActor", ctx, videoOwnerFollowers[0].FollowerID).Return(remoteActor, nil).Once()
-		mockAPRepo.On("EnqueueDelivery", ctx, mock.AnythingOfType("*domain.APDeliveryQueue")).Return(nil).Once()
+		mockAPRepo.On("GetRemoteActors", ctx, []string{videoOwnerFollowers[0].FollowerID}).Return([]*domain.APRemoteActor{remoteActor}, nil).Once()
+		mockAPRepo.On("BulkEnqueueDelivery", ctx, mock.AnythingOfType("[]*domain.APDeliveryQueue")).Return(nil).Once()
 		mockAPRepo.On("StoreActivity", ctx, mock.AnythingOfType("*domain.APActivity")).Return(nil).Once()
 
 		err := service.PublishComment(ctx, commentID.String())

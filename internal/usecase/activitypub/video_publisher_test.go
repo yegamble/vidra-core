@@ -684,10 +684,9 @@ func TestPublishVideo(t *testing.T) {
 		mockUserRepo.On("GetByID", ctx, video.UserID).Return(user, nil).Times(2)
 		mockAPRepo.On("GetFollowers", ctx, user.ID, "accepted", mock.Anything, mock.Anything).Return(followers, 2, nil).Once()
 
-		for i, follower := range followers {
-			mockAPRepo.On("GetRemoteActor", ctx, follower.FollowerID).Return(remoteActors[i], nil).Once()
-			mockAPRepo.On("EnqueueDelivery", ctx, mock.AnythingOfType("*domain.APDeliveryQueue")).Return(nil).Once()
-		}
+		followerURIs := []string{followers[0].FollowerID, followers[1].FollowerID}
+		mockAPRepo.On("GetRemoteActors", ctx, followerURIs).Return(remoteActors, nil).Once()
+		mockAPRepo.On("BulkEnqueueDelivery", ctx, mock.AnythingOfType("[]*domain.APDeliveryQueue")).Return(nil).Once()
 
 		mockAPRepo.On("StoreActivity", ctx, mock.AnythingOfType("*domain.APActivity")).Return(nil).Once()
 
@@ -741,11 +740,10 @@ func TestPublishVideo(t *testing.T) {
 		mockUserRepo.On("GetByID", ctx, privateVideo.UserID).Return(user, nil).Times(2)
 		mockAPRepo.On("GetFollowers", ctx, user.ID, "accepted", mock.Anything, mock.Anything).Return(followers, 2, nil).Once()
 
-		for i, follower := range followers {
-			mockAPRepo.On("GetRemoteActor", ctx, follower.FollowerID).Return(remoteActors[i], nil).Once()
-		}
+		followerURIs := []string{followers[0].FollowerID, followers[1].FollowerID}
+		mockAPRepo.On("GetRemoteActors", ctx, followerURIs).Return(remoteActors, nil).Once()
 
-		mockAPRepo.On("EnqueueDelivery", ctx, mock.AnythingOfType("*domain.APDeliveryQueue")).Return(nil).Times(2)
+		mockAPRepo.On("BulkEnqueueDelivery", ctx, mock.AnythingOfType("[]*domain.APDeliveryQueue")).Return(nil).Once()
 		mockAPRepo.On("StoreActivity", ctx, mock.AnythingOfType("*domain.APActivity")).Return(nil).Once()
 
 		err := service.PublishVideo(ctx, "video-789")
@@ -761,16 +759,15 @@ func TestPublishVideo(t *testing.T) {
 		mockUserRepo.On("GetByID", ctx, video.UserID).Return(user, nil).Times(2)
 		mockAPRepo.On("GetFollowers", ctx, user.ID, "accepted", mock.Anything, mock.Anything).Return(followers, 2, nil).Once()
 
-		deliveryCount := 0
-		for i, follower := range followers {
-			mockAPRepo.On("GetRemoteActor", ctx, follower.FollowerID).Return(remoteActors[i], nil).Once()
-		}
+		followerURIs := []string{followers[0].FollowerID, followers[1].FollowerID}
+		mockAPRepo.On("GetRemoteActors", ctx, followerURIs).Return(remoteActors, nil).Once()
 
-		// Single EnqueueDelivery expectation that matches any delivery
-		mockAPRepo.On("EnqueueDelivery", ctx, mock.MatchedBy(func(delivery *domain.APDeliveryQueue) bool {
-			deliveryCount++
-			return delivery.ActorID != ""
-		})).Return(nil).Times(2)
+		deliveryCount := 0
+		// Single BulkEnqueueDelivery expectation
+		mockAPRepo.On("BulkEnqueueDelivery", ctx, mock.MatchedBy(func(deliveries []*domain.APDeliveryQueue) bool {
+			deliveryCount = len(deliveries)
+			return true
+		})).Return(nil).Once()
 
 		mockAPRepo.On("StoreActivity", ctx, mock.AnythingOfType("*domain.APActivity")).Return(nil).Once()
 
@@ -788,10 +785,10 @@ func TestPublishVideo(t *testing.T) {
 		mockUserRepo.On("GetByID", ctx, video.UserID).Return(user, nil).Times(2)
 		mockAPRepo.On("GetFollowers", ctx, user.ID, "accepted", mock.Anything, mock.Anything).Return([]*domain.APFollower{followers[0]}, 1, nil).Once()
 
-		mockAPRepo.On("GetRemoteActor", ctx, followers[0].FollowerID).Return(remoteActors[0], nil).Once()
-		mockAPRepo.On("EnqueueDelivery", ctx, mock.MatchedBy(func(delivery *domain.APDeliveryQueue) bool {
+		mockAPRepo.On("GetRemoteActors", ctx, []string{followers[0].FollowerID}).Return([]*domain.APRemoteActor{remoteActors[0]}, nil).Once()
+		mockAPRepo.On("BulkEnqueueDelivery", ctx, mock.MatchedBy(func(deliveries []*domain.APDeliveryQueue) bool {
 			// Should use shared inbox
-			return delivery.InboxURL == "https://mastodon.example/inbox"
+			return len(deliveries) == 1 && deliveries[0].InboxURL == "https://mastodon.example/inbox"
 		})).Return(nil).Once()
 
 		mockAPRepo.On("StoreActivity", ctx, mock.AnythingOfType("*domain.APActivity")).Return(nil).Once()
@@ -809,10 +806,9 @@ func TestPublishVideo(t *testing.T) {
 		mockUserRepo.On("GetByID", ctx, video.UserID).Return(user, nil).Times(2)
 		mockAPRepo.On("GetFollowers", ctx, user.ID, "accepted", mock.Anything, mock.Anything).Return(followers, 2, nil).Once()
 
-		for i, follower := range followers {
-			mockAPRepo.On("GetRemoteActor", ctx, follower.FollowerID).Return(remoteActors[i], nil).Once()
-			mockAPRepo.On("EnqueueDelivery", ctx, mock.AnythingOfType("*domain.APDeliveryQueue")).Return(nil).Once()
-		}
+		followerURIs := []string{followers[0].FollowerID, followers[1].FollowerID}
+		mockAPRepo.On("GetRemoteActors", ctx, followerURIs).Return(remoteActors, nil).Once()
+		mockAPRepo.On("BulkEnqueueDelivery", ctx, mock.AnythingOfType("[]*domain.APDeliveryQueue")).Return(nil).Once()
 
 		mockAPRepo.On("StoreActivity", ctx, mock.MatchedBy(func(activity *domain.APActivity) bool {
 			return activity.Type == domain.ActivityTypeCreate && activity.Local == true
@@ -872,8 +868,8 @@ func TestUpdateVideo(t *testing.T) {
 		mockVideoRepo.On("GetByID", ctx, "video-123").Return(video, nil).Once()
 		mockUserRepo.On("GetByID", ctx, video.UserID).Return(user, nil).Times(2)
 		mockAPRepo.On("GetFollowers", ctx, user.ID, "accepted", mock.Anything, mock.Anything).Return(followers, 1, nil).Once()
-		mockAPRepo.On("GetRemoteActor", ctx, followers[0].FollowerID).Return(remoteActor, nil).Once()
-		mockAPRepo.On("EnqueueDelivery", ctx, mock.AnythingOfType("*domain.APDeliveryQueue")).Return(nil).Once()
+		mockAPRepo.On("GetRemoteActors", ctx, []string{followers[0].FollowerID}).Return([]*domain.APRemoteActor{remoteActor}, nil).Once()
+		mockAPRepo.On("BulkEnqueueDelivery", ctx, mock.AnythingOfType("[]*domain.APDeliveryQueue")).Return(nil).Once()
 		mockAPRepo.On("StoreActivity", ctx, mock.MatchedBy(func(activity *domain.APActivity) bool {
 			return activity.Type == domain.ActivityTypeUpdate
 		})).Return(nil).Once()
@@ -890,8 +886,8 @@ func TestUpdateVideo(t *testing.T) {
 		mockVideoRepo.On("GetByID", ctx, "video-123").Return(video, nil).Once()
 		mockUserRepo.On("GetByID", ctx, video.UserID).Return(user, nil).Times(2)
 		mockAPRepo.On("GetFollowers", ctx, user.ID, "accepted", mock.Anything, mock.Anything).Return(followers, 1, nil).Once()
-		mockAPRepo.On("GetRemoteActor", ctx, followers[0].FollowerID).Return(remoteActor, nil).Once()
-		mockAPRepo.On("EnqueueDelivery", ctx, mock.AnythingOfType("*domain.APDeliveryQueue")).Return(nil).Once()
+		mockAPRepo.On("GetRemoteActors", ctx, []string{followers[0].FollowerID}).Return([]*domain.APRemoteActor{remoteActor}, nil).Once()
+		mockAPRepo.On("BulkEnqueueDelivery", ctx, mock.AnythingOfType("[]*domain.APDeliveryQueue")).Return(nil).Once()
 		mockAPRepo.On("StoreActivity", ctx, mock.AnythingOfType("*domain.APActivity")).Return(nil).Once()
 
 		err := service.UpdateVideo(ctx, "video-123")
@@ -947,8 +943,8 @@ func TestDeleteVideo(t *testing.T) {
 		mockVideoRepo.On("GetByID", ctx, "video-123").Return(video, nil).Once()
 		mockUserRepo.On("GetByID", ctx, video.UserID).Return(user, nil).Once()
 		mockAPRepo.On("GetFollowers", ctx, user.ID, "accepted", mock.Anything, mock.Anything).Return(followers, 1, nil).Once()
-		mockAPRepo.On("GetRemoteActor", ctx, followers[0].FollowerID).Return(remoteActor, nil).Once()
-		mockAPRepo.On("EnqueueDelivery", ctx, mock.AnythingOfType("*domain.APDeliveryQueue")).Return(nil).Once()
+		mockAPRepo.On("GetRemoteActors", ctx, []string{followers[0].FollowerID}).Return([]*domain.APRemoteActor{remoteActor}, nil).Once()
+		mockAPRepo.On("BulkEnqueueDelivery", ctx, mock.AnythingOfType("[]*domain.APDeliveryQueue")).Return(nil).Once()
 		mockAPRepo.On("StoreActivity", ctx, mock.MatchedBy(func(activity *domain.APActivity) bool {
 			return activity.Type == domain.ActivityTypeDelete
 		})).Return(nil).Once()
@@ -965,8 +961,8 @@ func TestDeleteVideo(t *testing.T) {
 		mockVideoRepo.On("GetByID", ctx, "video-123").Return(video, nil).Once()
 		mockUserRepo.On("GetByID", ctx, video.UserID).Return(user, nil).Once()
 		mockAPRepo.On("GetFollowers", ctx, user.ID, "accepted", mock.Anything, mock.Anything).Return(followers, 1, nil).Once()
-		mockAPRepo.On("GetRemoteActor", ctx, followers[0].FollowerID).Return(remoteActor, nil).Once()
-		mockAPRepo.On("EnqueueDelivery", ctx, mock.AnythingOfType("*domain.APDeliveryQueue")).Return(nil).Once()
+		mockAPRepo.On("GetRemoteActors", ctx, []string{followers[0].FollowerID}).Return([]*domain.APRemoteActor{remoteActor}, nil).Once()
+		mockAPRepo.On("BulkEnqueueDelivery", ctx, mock.AnythingOfType("[]*domain.APDeliveryQueue")).Return(nil).Once()
 		mockAPRepo.On("StoreActivity", ctx, mock.AnythingOfType("*domain.APActivity")).Return(nil).Once()
 
 		err := service.DeleteVideo(ctx, "video-123")

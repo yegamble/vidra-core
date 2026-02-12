@@ -13,6 +13,7 @@ type ActivityPubRepository interface {
 
 	// Remote actors
 	GetRemoteActor(ctx context.Context, actorURI string) (*domain.APRemoteActor, error)
+	GetRemoteActors(ctx context.Context, actorURIs []string) ([]*domain.APRemoteActor, error)
 	UpsertRemoteActor(ctx context.Context, actor *domain.APRemoteActor) error
 
 	// Activities
@@ -41,6 +42,7 @@ type ActivityPubRepository interface {
 
 	// Delivery queue
 	EnqueueDelivery(ctx context.Context, delivery *domain.APDeliveryQueue) error
+	BulkEnqueueDelivery(ctx context.Context, deliveries []*domain.APDeliveryQueue) error
 	GetPendingDeliveries(ctx context.Context, limit int) ([]*domain.APDeliveryQueue, error)
 	UpdateDeliveryStatus(ctx context.Context, deliveryID string, status string, attempts int, lastError *string, nextAttempt time.Time) error
 }
