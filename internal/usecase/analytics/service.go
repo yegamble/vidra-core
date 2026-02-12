@@ -77,6 +77,7 @@ func (s *Service) TrackEventsBatch(ctx context.Context, events []*domain.Analyti
 	}
 
 	// Update active viewers for view events
+	var viewers []*domain.ActiveViewer
 	for _, event := range events {
 		if event.EventType == domain.EventTypeView {
 			viewer := &domain.ActiveViewer{
@@ -84,8 +85,12 @@ func (s *Service) TrackEventsBatch(ctx context.Context, events []*domain.Analyti
 				SessionID: event.SessionID,
 				UserID:    event.UserID,
 			}
-			_ = s.repo.UpsertActiveViewer(ctx, viewer)
+			viewers = append(viewers, viewer)
 		}
+	}
+
+	if len(viewers) > 0 {
+		_ = s.repo.UpsertActiveViewersBatch(ctx, viewers)
 	}
 
 	return nil
