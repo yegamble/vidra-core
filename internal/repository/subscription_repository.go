@@ -5,10 +5,12 @@ import (
 	"athena/internal/usecase"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
+	"github.com/lib/pq"
 )
 
 type subscriptionRepository struct {
@@ -231,21 +233,22 @@ func (r *subscriptionRepository) GetSubscriptionVideos(ctx context.Context, subs
         JOIN subscriptions s ON s.channel_id = c.id
         WHERE s.subscriber_id = $1
             AND v.privacy = 'public'
-            AND v.status = 'ready'`
+            AND v.status = 'completed'`
 
 	if err := r.db.GetContext(ctx, &total, countQuery, subscriberID); err != nil {
 		return nil, 0, fmt.Errorf("failed to count subscription videos: %w", err)
 	}
 
-	// Get videos from subscribed channels
+	// Get videos from subscribed channels using manual row scanning
+	// (SQLX SelectContext cannot scan JSONB into map[string]string)
 	query := `
         SELECT
             v.id, v.title, v.description, v.duration, v.views,
             v.privacy, v.status, v.upload_date, v.user_id, v.channel_id,
             v.original_cid, v.processed_cids, v.thumbnail_cid,
-            v.output_paths, v.thumbnail_path, v.preview_path,
             v.tags, v.category_id, v.language, v.file_size,
-            v.mime_type, v.metadata, v.created_at, v.updated_at
+            v.mime_type, v.metadata, v.created_at, v.updated_at,
+            v.output_paths, v.thumbnail_path, v.preview_path
         FROM videos v
         JOIN channels c ON v.channel_id = c.id
         JOIN subscriptions s ON s.channel_id = c.id
@@ -255,9 +258,41 @@ func (r *subscriptionRepository) GetSubscriptionVideos(ctx context.Context, subs
         ORDER BY v.upload_date DESC
         LIMIT $2 OFFSET $3`
 
-	var videos []domain.Video
-	if err := r.db.SelectContext(ctx, &videos, query, subscriberID, limit, offset); err != nil {
+	rows, err := r.db.QueryContext(ctx, query, subscriberID, limit, offset)
+	if err != nil {
 		return nil, 0, fmt.Errorf("failed to get subscription videos: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var videos []domain.Video
+	for rows.Next() {
+		var v domain.Video
+		var processedCIDsJSON, metadataJSON, outputPathsJSON []byte
+		var tags pq.StringArray
+
+		if err := rows.Scan(
+			&v.ID, &v.Title, &v.Description, &v.Duration, &v.Views,
+			&v.Privacy, &v.Status, &v.UploadDate, &v.UserID, &v.ChannelID,
+			&v.OriginalCID, &processedCIDsJSON, &v.ThumbnailCID,
+			&tags, &v.CategoryID, &v.Language, &v.FileSize,
+			&v.MimeType, &metadataJSON, &v.CreatedAt, &v.UpdatedAt,
+			&outputPathsJSON, &v.ThumbnailPath, &v.PreviewPath,
+		); err != nil {
+			return nil, 0, fmt.Errorf("failed to scan subscription video: %w", err)
+		}
+
+		if len(processedCIDsJSON) > 0 {
+			_ = json.Unmarshal(processedCIDsJSON, &v.ProcessedCIDs)
+		}
+		if len(metadataJSON) > 0 {
+			_ = json.Unmarshal(metadataJSON, &v.Metadata)
+		}
+		if len(outputPathsJSON) > 0 {
+			_ = json.Unmarshal(outputPathsJSON, &v.OutputPaths)
+		}
+		v.Tags = []string(tags)
+
+		videos = append(videos, v)
 	}
 
 	return videos, total, nil

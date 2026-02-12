@@ -37,7 +37,9 @@ func TestSubscriptionsBackwardCompatibility_Integration(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Helper to create user with default channel
+	// Helper to create user with default channel.
+	// userRepo.Create already creates a default channel (handle = username),
+	// so we retrieve it instead of creating a duplicate.
 	createUserWithChannel := func(t *testing.T, username, email string) (*domain.User, *domain.Channel) {
 		pw := "password123"
 		hash, err := bcrypt.GenerateFromPassword([]byte(pw), bcrypt.DefaultCost)
@@ -55,18 +57,8 @@ func TestSubscriptionsBackwardCompatibility_Integration(t *testing.T) {
 		err = userRepo.Create(ctx, user, string(hash))
 		require.NoError(t, err)
 
-		// Create default channel for user (simulating migration)
-		channel := &domain.Channel{
-			ID:          uuid.New(),
-			AccountID:   uuid.MustParse(user.ID),
-			Handle:      username,
-			DisplayName: username + "'s Channel",
-			Description: ptr("Default channel"),
-			IsLocal:     true,
-			CreatedAt:   time.Now(),
-			UpdatedAt:   time.Now(),
-		}
-		err = channelRepo.Create(ctx, channel)
+		// Retrieve the default channel auto-created by userRepo.Create
+		channel, err := channelRepo.GetByHandle(ctx, username)
 		require.NoError(t, err)
 
 		return user, channel
@@ -85,6 +77,7 @@ func TestSubscriptionsBackwardCompatibility_Integration(t *testing.T) {
 		// Subscribe using deprecated user endpoint
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/users/"+user2.ID+"/subscribe", nil)
 		req = req.WithContext(context.WithValue(req.Context(), middleware.UserIDKey, user1.ID))
+		req = withChannelParam(req, "id", user2.ID)
 		rr := httptest.NewRecorder()
 
 		handler(rr, req)
@@ -113,6 +106,7 @@ func TestSubscriptionsBackwardCompatibility_Integration(t *testing.T) {
 		handler := UnsubscribeFromUserHandler(subRepo)
 		req := httptest.NewRequest(http.MethodDelete, "/api/v1/users/"+user2.ID+"/unsubscribe", nil)
 		req = req.WithContext(context.WithValue(req.Context(), middleware.UserIDKey, user1.ID))
+		req = withChannelParam(req, "id", user2.ID)
 		rr := httptest.NewRecorder()
 
 		handler(rr, req)
@@ -248,6 +242,7 @@ func TestSubscriptionsBackwardCompatibility_Integration(t *testing.T) {
 		handler := SubscribeToUserHandler(subRepo, userRepo)
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/users/"+user1.ID+"/subscribe", nil)
 		req = req.WithContext(context.WithValue(req.Context(), middleware.UserIDKey, subscriber.ID))
+		req = withChannelParam(req, "id", user1.ID)
 		rr := httptest.NewRecorder()
 		handler(rr, req)
 		assert.Equal(t, http.StatusNoContent, rr.Code)
@@ -277,7 +272,7 @@ func TestSubscriptionsBackwardCompatibility_Integration(t *testing.T) {
 		// Create subscriber with default channel
 		subscriber, _ := createUserWithChannel(t, "subscriber", "subscriber@test.com")
 
-		// Create user without default channel (edge case)
+		// Create user, then delete its auto-created default channel to simulate edge case
 		userWithoutChannel := &domain.User{
 			ID:        uuid.NewString(),
 			Username:  "no-channel",
@@ -291,10 +286,17 @@ func TestSubscriptionsBackwardCompatibility_Integration(t *testing.T) {
 		err := userRepo.Create(ctx, userWithoutChannel, string(hash))
 		require.NoError(t, err)
 
+		// Remove the auto-created channel so the user has no default channel
+		autoChannel, chErr := channelRepo.GetByHandle(ctx, "no-channel")
+		if chErr == nil {
+			_ = channelRepo.Delete(ctx, autoChannel.ID)
+		}
+
 		// Try to subscribe to user without default channel
 		handler := SubscribeToUserHandler(subRepo, userRepo)
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/users/"+userWithoutChannel.ID+"/subscribe", nil)
 		req = req.WithContext(context.WithValue(req.Context(), middleware.UserIDKey, subscriber.ID))
+		req = withChannelParam(req, "id", userWithoutChannel.ID)
 		rr := httptest.NewRecorder()
 
 		handler(rr, req)

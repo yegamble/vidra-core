@@ -270,7 +270,11 @@ Note (2026-02-11): runtime verification of consolidated compose setup:
 - `ipfs-test` unhealthy status is pre-existing (same healthcheck command as historical `docker-compose.test.yml`), not introduced by profile consolidation.
 Note (2026-02-11): fixed the channel-subscription integration blocker in `internal/httpapi/handlers/channel/channel_subscriptions_integration_test.go` by setting chi route params (`id`) on direct handler requests and decoding the shared response envelope before asserting payload fields. Validation:
 - `go test -v -count=1 -run 'TestChannelSubscriptions_Integration|TestChannelNotifications_Integration' ./internal/httpapi/handlers/channel` -> pass.
-- Full package run still has separate pre-existing failures to triage next (`TestChannelSubscriptionFeed_Integration` scan error on `processed_cids`, and `TestSubscriptionsBackwardCompatibility_Integration` duplicate-entry setup failures).
+- Full package run still had separate pre-existing failures (`TestChannelSubscriptionFeed_Integration` scan error on `processed_cids`, and `TestSubscriptionsBackwardCompatibility_Integration` duplicate-entry setup failures).
+Note (2026-02-11): fixed all remaining channel handler integration failures:
+- **`GetSubscriptionVideos` (subscription_repository.go)**: Two bugs: (1) count query used `status = 'ready'` but data query used `status = 'completed'` (mismatch); (2) used `SelectContext` which can't scan JSONB into `map[string]string`. Fixed by aligning count status to `'completed'` and switching to manual `QueryContext` + row scanning (consistent with all other video listing methods).
+- **`TestSubscriptionsBackwardCompatibility_Integration`**: Two bugs: (1) test helper created duplicate channels because `userRepo.Create` already auto-creates a default channel — switched to `channelRepo.GetByHandle` to retrieve the auto-created one; (2) handler calls lacked chi route params — added `withChannelParam` for Subscribe/Unsubscribe handlers; (3) "User Without Default Channel" edge case broken by auto-creation — now deletes auto-created channel before testing.
+- Validation: `go test -v -count=1 ./internal/httpapi/handlers/channel/...` -> **38/38 PASS** (0 failures).
 Note (2026-02-11): verified unit coverage locally with the updated target:
 - `COVERAGE_OUT=/tmp/unit_cov_after_make.out make test-unit`
 - `go tool cover -func=/tmp/unit_cov_after_make.out | tail -n 1` -> `total: ... 39.5%`
