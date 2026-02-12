@@ -336,6 +336,150 @@ func (r *videoRepository) GetByID(ctx context.Context, id string) (*domain.Video
 	return &v, nil
 }
 
+func (r *videoRepository) GetByIDs(ctx context.Context, ids []string) ([]*domain.Video, error) {
+	if len(ids) == 0 {
+		return []*domain.Video{}, nil
+	}
+
+	query := `
+        SELECT v.id, v.thumbnail_id, v.title, v.description, v.duration, v.views,
+               v.privacy, v.status, v.upload_date, v.user_id, v.channel_id,
+               v.original_cid, v.processed_cids, v.thumbnail_cid,
+               v.tags, v.category_id, v.language, v.file_size, v.mime_type, v.metadata,
+               v.created_at, v.updated_at, v.output_paths, v.thumbnail_path, v.preview_path,
+               COALESCE(v.s3_urls, '{}'::jsonb) as s3_urls,
+               COALESCE(v.storage_tier, 'hot') as storage_tier,
+               v.s3_migrated_at,
+               COALESCE(v.local_deleted, false) as local_deleted,
+               c.id, c.name, c.slug, c.description, c.icon, c.color, c.display_order, c.is_active
+        FROM videos v
+        LEFT JOIN video_categories c ON v.category_id = c.id
+        WHERE v.id = ANY($1)`
+
+	// Try full query first
+	rows, err := r.db.QueryContext(ctx, query, pq.Array(ids))
+	if err != nil {
+		// Handle missing columns gracefully - try simpler query
+		errStr := err.Error()
+		if strings.Contains(errStr, "column") && strings.Contains(errStr, "does not exist") {
+			simpleQuery := `
+				SELECT v.id, v.thumbnail_id, v.title, v.description, v.duration, v.views,
+					   v.privacy, v.status, v.upload_date, v.user_id, v.channel_id,
+					   v.original_cid, v.processed_cids, v.thumbnail_cid,
+					   v.tags, v.category_id, v.language, v.file_size, v.mime_type, v.metadata,
+					   v.created_at, v.updated_at, v.output_paths, v.thumbnail_path, v.preview_path,
+					   c.id, c.name, c.slug, c.description, c.icon, c.color, c.display_order, c.is_active
+				FROM videos v
+				LEFT JOIN video_categories c ON v.category_id = c.id
+				WHERE v.id = ANY($1)`
+
+			rows, err = r.db.QueryContext(ctx, simpleQuery, pq.Array(ids))
+			if err != nil {
+				return nil, domain.NewDomainError("QUERY_FAILED", "Failed to get videos by IDs")
+			}
+		} else {
+			return nil, domain.NewDomainError("QUERY_FAILED", "Failed to get videos by IDs")
+		}
+	}
+	defer func() { _ = rows.Close() }()
+
+	var videos []*domain.Video
+	for rows.Next() {
+		var v domain.Video
+		var processedCIDsJSON, metadataJSON, outputPathsJSON, s3URLsJSON []byte
+		var tags pq.StringArray
+		var category domain.VideoCategory
+		var categoryName, categorySlug sql.NullString
+		var categoryDesc, categoryIcon, categoryColor sql.NullString
+		var categoryOrder sql.NullInt64
+		var categoryActive sql.NullBool
+		var thumbnailPath, previewPath sql.NullString
+
+		// Attempt to scan assuming full query columns
+		// We need to know which query ran.
+		// Actually, standard sql.Rows.Scan requires matching column count.
+		// The simple query returns fewer columns.
+
+		columns, _ := rows.Columns()
+		isSimple := len(columns) < 36 // Full query has 36 columns (approx)
+
+		var err error
+		if !isSimple {
+			err = rows.Scan(
+				&v.ID, &v.ThumbnailID, &v.Title, &v.Description, &v.Duration, &v.Views,
+				&v.Privacy, &v.Status, &v.UploadDate, &v.UserID, &v.ChannelID,
+				&v.OriginalCID, &processedCIDsJSON, &v.ThumbnailCID,
+				&tags, &v.CategoryID, &v.Language, &v.FileSize, &v.MimeType, &metadataJSON,
+				&v.CreatedAt, &v.UpdatedAt, &outputPathsJSON, &thumbnailPath, &previewPath,
+				&s3URLsJSON, &v.StorageTier, &v.S3MigratedAt, &v.LocalDeleted,
+				&v.CategoryID, &categoryName, &categorySlug, &categoryDesc, &categoryIcon, &categoryColor, &categoryOrder, &categoryActive,
+			)
+		} else {
+			err = rows.Scan(
+				&v.ID, &v.ThumbnailID, &v.Title, &v.Description, &v.Duration, &v.Views,
+				&v.Privacy, &v.Status, &v.UploadDate, &v.UserID, &v.ChannelID,
+				&v.OriginalCID, &processedCIDsJSON, &v.ThumbnailCID,
+				&tags, &v.CategoryID, &v.Language, &v.FileSize, &v.MimeType, &metadataJSON,
+				&v.CreatedAt, &v.UpdatedAt, &outputPathsJSON, &thumbnailPath, &previewPath,
+				&v.CategoryID, &categoryName, &categorySlug, &categoryDesc, &categoryIcon, &categoryColor, &categoryOrder, &categoryActive,
+			)
+			// Set defaults for missing fields
+			v.StorageTier = "hot"
+			v.LocalDeleted = false
+		}
+
+		if err != nil {
+			return nil, domain.NewDomainError("SCAN_FAILED", "Failed to scan video row")
+		}
+
+		// Unmarshal JSON fields
+		if len(processedCIDsJSON) > 0 {
+			_ = json.Unmarshal(processedCIDsJSON, &v.ProcessedCIDs)
+		}
+		if len(metadataJSON) > 0 {
+			_ = json.Unmarshal(metadataJSON, &v.Metadata)
+		}
+		if len(outputPathsJSON) > 0 {
+			_ = json.Unmarshal(outputPathsJSON, &v.OutputPaths)
+		}
+		if len(s3URLsJSON) > 0 {
+			_ = json.Unmarshal(s3URLsJSON, &v.S3URLs)
+		}
+		v.Tags = []string(tags)
+
+		// Assign nullable string fields
+		if thumbnailPath.Valid {
+			v.ThumbnailPath = thumbnailPath.String
+		}
+		if previewPath.Valid {
+			v.PreviewPath = previewPath.String
+		}
+
+		// Populate category if it exists
+		if v.CategoryID != nil {
+			category.ID = *v.CategoryID
+			category.Name = categoryName.String
+			category.Slug = categorySlug.String
+			if categoryDesc.Valid {
+				category.Description = &categoryDesc.String
+			}
+			if categoryIcon.Valid {
+				category.Icon = &categoryIcon.String
+			}
+			if categoryColor.Valid {
+				category.Color = &categoryColor.String
+			}
+			category.DisplayOrder = int(categoryOrder.Int64)
+			category.IsActive = categoryActive.Bool
+			v.Category = &category
+		}
+
+		videos = append(videos, &v)
+	}
+
+	return videos, nil
+}
+
 func (r *videoRepository) GetByUserID(ctx context.Context, userID string, limit, offset int) ([]*domain.Video, int64, error) {
 	// Get total count
 	countQuery := `SELECT COUNT(*) FROM videos WHERE user_id = $1`

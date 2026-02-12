@@ -29,6 +29,8 @@ type unitViewsRepoStub struct {
 	getUserEngagementStatsFn       func(ctx context.Context, userID string, startDate, endDate time.Time) ([]domain.UserEngagementStats, error)
 	getTrendingVideosFn            func(ctx context.Context, limit int) ([]domain.TrendingVideo, error)
 	updateTrendingVideoFn          func(ctx context.Context, trending *domain.TrendingVideo) error
+	getBatchTrendingStatsFn        func(ctx context.Context, videoIDs []string) ([]domain.VideoTrendingStats, error)
+	batchUpdateTrendingVideosFn    func(ctx context.Context, videos []*domain.TrendingVideo) error
 	incrementVideoViewsFn          func(ctx context.Context, videoID string) error
 	getUniqueViewsFn               func(ctx context.Context, videoID string, startDate, endDate time.Time) (int64, error)
 	calculateEngagementScoreFn     func(ctx context.Context, videoID string, hoursBack int) (float64, error)
@@ -102,6 +104,20 @@ func (s *unitViewsRepoStub) GetTrendingVideos(ctx context.Context, limit int) ([
 func (s *unitViewsRepoStub) UpdateTrendingVideo(ctx context.Context, trending *domain.TrendingVideo) error {
 	if s.updateTrendingVideoFn != nil {
 		return s.updateTrendingVideoFn(ctx, trending)
+	}
+	return nil
+}
+
+func (s *unitViewsRepoStub) GetBatchTrendingStats(ctx context.Context, videoIDs []string) ([]domain.VideoTrendingStats, error) {
+	if s.getBatchTrendingStatsFn != nil {
+		return s.getBatchTrendingStatsFn(ctx, videoIDs)
+	}
+	return nil, nil
+}
+
+func (s *unitViewsRepoStub) BatchUpdateTrendingVideos(ctx context.Context, videos []*domain.TrendingVideo) error {
+	if s.batchUpdateTrendingVideosFn != nil {
+		return s.batchUpdateTrendingVideosFn(ctx, videos)
 	}
 	return nil
 }

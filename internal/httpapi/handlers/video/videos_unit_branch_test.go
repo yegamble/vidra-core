@@ -47,6 +47,10 @@ func (s *unitVideoRepoStub) GetByID(ctx context.Context, id string) (*domain.Vid
 	return nil, domain.NewDomainError("VIDEO_NOT_FOUND", "video not found")
 }
 
+func (s *unitVideoRepoStub) GetByIDs(ctx context.Context, ids []string) ([]*domain.Video, error) {
+	return nil, nil
+}
+
 func (s *unitVideoRepoStub) GetByUserID(ctx context.Context, userID string, limit, offset int) ([]*domain.Video, int64, error) {
 	if s.getByUserIDFn != nil {
 		return s.getByUserIDFn(ctx, userID, limit, offset)

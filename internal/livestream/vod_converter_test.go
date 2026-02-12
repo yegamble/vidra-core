@@ -27,6 +27,10 @@ func (m *MockVideoRepository) GetByID(ctx context.Context, id string) (*domain.V
 	return nil, nil
 }
 
+func (m *MockVideoRepository) GetByIDs(ctx context.Context, ids []string) ([]*domain.Video, error) {
+	return nil, nil
+}
+
 func (m *MockVideoRepository) GetByUserID(ctx context.Context, userID string, limit, offset int) ([]*domain.Video, int64, error) {
 	return nil, 0, nil
 }
