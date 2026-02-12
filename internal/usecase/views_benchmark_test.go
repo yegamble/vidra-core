@@ -5,9 +5,10 @@ import (
 	"testing"
 	"time"
 
+	"athena/internal/domain"
+
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/mock"
-	"athena/internal/domain"
 )
 
 func BenchmarkTrackView(b *testing.B) {

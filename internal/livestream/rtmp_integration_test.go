@@ -484,8 +484,8 @@ func connectRTMP(rtmpURL string) (*rtmp.Conn, error) {
 		return nil, fmt.Errorf("failed to parse RTMP URL: %w", err)
 	}
 
-	// Connect to server - u.Port() returns a string
-	addr := fmt.Sprintf("%s:%s", u.Host, u.Port())
+	// Connect to server - use JoinHostPort for IPv6 safety
+	addr := net.JoinHostPort(u.Hostname(), u.Port())
 	netConn, err := net.DialTimeout("tcp", addr, 5*time.Second)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to RTMP server: %w", err)

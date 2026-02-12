@@ -52,6 +52,9 @@ func (m *MockVideoRepo) GetByRemoteURI(ctx context.Context, remoteURI string) (*
 func (m *MockVideoRepo) CreateRemoteVideo(ctx context.Context, video *domain.Video) error {
 	return nil
 }
+func (m *MockVideoRepo) GetByIDs(ctx context.Context, ids []string) ([]*domain.Video, error) {
+	return nil, nil
+}
 
 type MockUserRepo struct {
 	User *domain.User

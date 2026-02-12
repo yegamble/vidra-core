@@ -716,4 +716,3 @@ func TestDeleteComment(t *testing.T) {
 		mockAPRepo.AssertExpectations(t)
 	})
 }
-

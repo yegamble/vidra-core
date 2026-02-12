@@ -186,7 +186,7 @@ fi
 print_header "Import Sorting Check (goimports)"
 
 if check_command goimports; then
-    UNSORTED=$(goimports -l $GO_FILES 2>/dev/null || echo "")
+    UNSORTED=$(find . -name '*.go' -not -path './vendor/*' -exec goimports -l {} + 2>/dev/null || echo "")
 
     if [ -z "$UNSORTED" ]; then
         print_success "All imports are sorted correctly"

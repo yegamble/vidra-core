@@ -2,12 +2,12 @@ name: CI
 
 on:
   push:
-    branches: [ main, develop ]
+    branches: [main, develop]
     paths-ignore:
       - '**/*.md'
       - 'docs/**'
   pull_request:
-    branches: [ main ]
+    branches: [main]
     paths-ignore:
       - '**/*.md'
       - 'docs/**'
@@ -48,7 +48,7 @@ jobs:
         run: COVERAGE_OUT=coverage.out make test-unit
 
       - name: Enforce coverage baseline
-        run: ./scripts/check-coverage-threshold.sh coverage.out 23.8
+        run: ./scripts/check-coverage-threshold.sh coverage.out 35.0
 
   lint:
     name: Code Quality (Lint & Format)
@@ -102,7 +102,8 @@ jobs:
           export PATH="$(go env GOPATH)/bin:$PATH"
           if ! command -v golangci-lint &> /dev/null; then
             echo "Installing golangci-lint via binary..."
-            curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh | sh -s -- -b "$(go env GOPATH)/bin"
+            curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh \
+              | sh -s -- -b "$(go env GOPATH)/bin"
           fi
           golangci-lint run --timeout=10m
 

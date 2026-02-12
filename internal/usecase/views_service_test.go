@@ -69,8 +69,21 @@ func (m *MockViewsRepository) GetTrendingVideos(ctx context.Context, limit int) 
 	return args.Get(0).([]domain.TrendingVideo), args.Error(1)
 }
 
+func (m *MockViewsRepository) GetBatchTrendingStats(ctx context.Context, videoIDs []string) ([]domain.VideoTrendingStats, error) {
+	args := m.Called(ctx, videoIDs)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]domain.VideoTrendingStats), args.Error(1)
+}
+
 func (m *MockViewsRepository) UpdateTrendingVideo(ctx context.Context, trending *domain.TrendingVideo) error {
 	args := m.Called(ctx, trending)
+	return args.Error(0)
+}
+
+func (m *MockViewsRepository) BatchUpdateTrendingVideos(ctx context.Context, videos []*domain.TrendingVideo) error {
+	args := m.Called(ctx, videos)
 	return args.Error(0)
 }
 
@@ -546,8 +559,7 @@ func TestViewsService_GetTrendingVideosWithDetails(t *testing.T) {
 	video2 := &domain.Video{ID: videoID2, Title: "Trending Video 2"}
 
 	mockViewsRepo.On("GetTrendingVideos", ctx, limit).Return(trendingVideos, nil)
-	mockVideoRepo.On("GetByID", ctx, videoID1).Return(video1, nil)
-	mockVideoRepo.On("GetByID", ctx, videoID2).Return(video2, nil)
+	mockVideoRepo.On("GetByIDs", ctx, []string{videoID1, videoID2}).Return([]*domain.Video{video1, video2}, nil)
 
 	result, err := service.GetTrendingVideosWithDetails(ctx, limit)
 	require.NoError(t, err)
@@ -572,31 +584,42 @@ func TestViewsService_UpdateTrendingMetrics(t *testing.T) {
 	ctx := context.Background()
 	videoIDs := []string{uuid.New().String(), uuid.New().String()}
 
-	// Mock engagement score calculations for both videos
-	for _, videoID := range videoIDs {
-		mockViewsRepo.On("CalculateEngagementScore", ctx, videoID, 1).Return(50.0, nil)    // Hourly
-		mockViewsRepo.On("CalculateEngagementScore", ctx, videoID, 24).Return(120.0, nil)  // Daily
-		mockViewsRepo.On("CalculateEngagementScore", ctx, videoID, 168).Return(800.0, nil) // Weekly
-
-		// Mock view counts for different periods
-		now := time.Now()
-		mockViewsRepo.On("GetUniqueViews", ctx, videoID,
-			mock.MatchedBy(func(t time.Time) bool { return t.After(now.Add(-2 * time.Hour)) }),                          // ~1 hour ago
-			mock.MatchedBy(func(t time.Time) bool { return t.After(now.Add(-1 * time.Minute)) })).Return(int64(25), nil) // Hourly views
-
-		mockViewsRepo.On("GetUniqueViews", ctx, videoID,
-			mock.MatchedBy(func(t time.Time) bool { return t.After(now.Add(-25 * time.Hour)) }),                          // ~24 hours ago
-			mock.MatchedBy(func(t time.Time) bool { return t.After(now.Add(-1 * time.Minute)) })).Return(int64(600), nil) // Daily views
-
-		mockViewsRepo.On("GetUniqueViews", ctx, videoID,
-			mock.MatchedBy(func(t time.Time) bool { return t.After(now.Add(-8 * 24 * time.Hour)) }),                       // ~7 days ago
-			mock.MatchedBy(func(t time.Time) bool { return t.After(now.Add(-1 * time.Minute)) })).Return(int64(3500), nil) // Weekly views
-
-		// Mock trending video update
-		mockViewsRepo.On("UpdateTrendingVideo", ctx, mock.MatchedBy(func(tv *domain.TrendingVideo) bool {
-			return tv.VideoID == videoID && tv.EngagementScore == 120.0
-		})).Return(nil)
+	// Mock batch trending stats retrieval
+	stats := []domain.VideoTrendingStats{
+		{
+			VideoID:       videoIDs[0],
+			ViewsLastHour: 25,
+			ViewsLast24h:  600,
+			ViewsLast7d:   3500,
+			Score1h:       50.0,
+			Score24h:      120.0,
+			Score7d:       800.0,
+		},
+		{
+			VideoID:       videoIDs[1],
+			ViewsLastHour: 25,
+			ViewsLast24h:  600,
+			ViewsLast7d:   3500,
+			Score1h:       50.0,
+			Score24h:      120.0,
+			Score7d:       800.0,
+		},
 	}
+
+	mockViewsRepo.On("GetBatchTrendingStats", ctx, videoIDs).Return(stats, nil)
+
+	// Mock batch update of trending videos
+	mockViewsRepo.On("BatchUpdateTrendingVideos", ctx, mock.MatchedBy(func(videos []*domain.TrendingVideo) bool {
+		if len(videos) != 2 {
+			return false
+		}
+		for _, tv := range videos {
+			if tv.EngagementScore != 120.0 {
+				return false
+			}
+		}
+		return true
+	})).Return(nil)
 
 	err := service.UpdateTrendingMetrics(ctx, videoIDs)
 	require.NoError(t, err)

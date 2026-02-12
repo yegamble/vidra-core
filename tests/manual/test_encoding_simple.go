@@ -316,6 +316,10 @@ func (r *mockVideoRepository) CreateRemoteVideo(ctx context.Context, video *doma
 	return nil
 }
 
+func (r *mockVideoRepository) GetByIDs(ctx context.Context, ids []string) ([]*domain.Video, error) {
+	return nil, nil
+}
+
 func (r *mockVideoRepository) GetVideosForMigration(ctx context.Context, limit int) ([]*domain.Video, error) {
 	// Return empty list for mock - not used in this test
 	return []*domain.Video{}, nil

@@ -97,6 +97,12 @@ func (m *MockAPRepository) DeleteVideoShare(ctx context.Context, activityURI str
 func (m *MockAPRepository) EnqueueDelivery(ctx context.Context, delivery *domain.APDeliveryQueue) error {
 	return nil
 }
+func (m *MockAPRepository) BulkEnqueueDelivery(ctx context.Context, deliveries []*domain.APDeliveryQueue) error {
+	return nil
+}
+func (m *MockAPRepository) GetRemoteActors(ctx context.Context, actorURIs []string) ([]*domain.APRemoteActor, error) {
+	return nil, nil
+}
 
 // MockAPService mocks the ActivityPub service
 type MockAPService struct {

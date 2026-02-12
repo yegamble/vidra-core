@@ -711,20 +711,20 @@ func TestCrossInstanceFederation(t *testing.T) {
 
 // TestErrorHandling tests error scenarios in federation
 func TestErrorHandling(t *testing.T) {
-	mockAPRepo := new(MockActivityPubRepository)
-	mockUserRepo := new(MockUserRepository)
-	mockVideoRepo := new(MockVideoRepository)
-	mockCommentRepo := new(MockCommentRepository)
-
-	cfg := &config.Config{
-		PublicBaseURL: "https://video.example",
-	}
-
-	service := NewService(mockAPRepo, mockUserRepo, mockVideoRepo, mockCommentRepo, cfg)
-
 	ctx := context.Background()
 
 	t.Run("Handles remote actor fetch failure gracefully", func(t *testing.T) {
+		mockAPRepo := new(MockActivityPubRepository)
+		mockUserRepo := new(MockUserRepository)
+		mockVideoRepo := new(MockVideoRepository)
+		mockCommentRepo := new(MockCommentRepository)
+
+		cfg := &config.Config{
+			PublicBaseURL: "https://video.example",
+		}
+
+		service := NewService(mockAPRepo, mockUserRepo, mockVideoRepo, mockCommentRepo, cfg)
+
 		video := &domain.Video{
 			ID:      "video-error-123",
 			Title:   "Error Test",
@@ -751,12 +751,10 @@ func TestErrorHandling(t *testing.T) {
 		mockAPRepo.On("GetFollowers", ctx, user.ID, "accepted", mock.Anything, mock.Anything).Return(followers, 1, nil).Once()
 		mockAPRepo.On("GetRemoteActors", ctx, []string{followers[0].FollowerID}).Return(nil, fmt.Errorf("instance unreachable")).Once()
 
-		// Should still store activity even if delivery fails
-		mockAPRepo.On("StoreActivity", ctx, mock.AnythingOfType("*domain.APActivity")).Return(nil).Once()
-
 		err := service.PublishVideo(ctx, video.ID)
-		// Should not return error for delivery failures (handled by queue)
-		require.NoError(t, err)
+		// GetRemoteActors failure propagates as an error
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to get remote actors")
 
 		mockVideoRepo.AssertExpectations(t)
 		mockUserRepo.AssertExpectations(t)
@@ -764,6 +762,17 @@ func TestErrorHandling(t *testing.T) {
 	})
 
 	t.Run("Handles delivery queue failures", func(t *testing.T) {
+		mockAPRepo := new(MockActivityPubRepository)
+		mockUserRepo := new(MockUserRepository)
+		mockVideoRepo := new(MockVideoRepository)
+		mockCommentRepo := new(MockCommentRepository)
+
+		cfg := &config.Config{
+			PublicBaseURL: "https://video.example",
+		}
+
+		service := NewService(mockAPRepo, mockUserRepo, mockVideoRepo, mockCommentRepo, cfg)
+
 		video := &domain.Video{
 			ID:      "video-queue-123",
 			Title:   "Queue Error Test",
@@ -796,12 +805,12 @@ func TestErrorHandling(t *testing.T) {
 		mockAPRepo.On("GetRemoteActors", ctx, []string{followers[0].FollowerID}).Return([]*domain.APRemoteActor{remoteActor}, nil).Once()
 		mockAPRepo.On("BulkEnqueueDelivery", ctx, mock.AnythingOfType("[]*domain.APDeliveryQueue")).Return(fmt.Errorf("queue full")).Once()
 
-		// Should still store activity
+		// Should still store activity even when delivery queue fails
 		mockAPRepo.On("StoreActivity", ctx, mock.AnythingOfType("*domain.APActivity")).Return(nil).Once()
 
 		err := service.PublishVideo(ctx, video.ID)
-		// May return error for queue failures
-		_ = err
+		// BulkEnqueueDelivery failure is logged but does not propagate
+		require.NoError(t, err)
 
 		mockVideoRepo.AssertExpectations(t)
 		mockUserRepo.AssertExpectations(t)

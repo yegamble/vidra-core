@@ -255,6 +255,8 @@ func TestViewsHandler_TrackView_UnitBranches(t *testing.T) {
 		rr := httptest.NewRecorder()
 		handler.TrackView(rr, req)
 		require.Equal(t, http.StatusOK, rr.Code)
+		// Close the service to flush the async view queue before asserting
+		handler.viewsService.Close()
 		require.NotNil(t, capturedUserID)
 		assert.Equal(t, "user-123", *capturedUserID)
 	})
