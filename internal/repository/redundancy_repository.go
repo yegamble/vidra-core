@@ -8,10 +8,14 @@ import (
 	"time"
 
 	"athena/internal/domain"
+	"athena/internal/port"
 
 	"github.com/jmoiron/sqlx"
 	"github.com/lib/pq"
 )
+
+// Compile-time interface satisfaction check.
+var _ port.RedundancyRepository = (*RedundancyRepository)(nil)
 
 // RedundancyRepository handles database operations for video redundancy
 type RedundancyRepository struct {

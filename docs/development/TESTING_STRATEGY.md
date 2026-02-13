@@ -5,13 +5,14 @@ This document outlines the comprehensive testing strategy for the Athena video p
 ## Overview
 
 **Current Test Metrics**:
-- **Total Test Files**: 188
+- **Total Test Files**: 191
 - **Code Coverage Baseline**: 23.8% (latest full-package report)
 - **Near-Term Coverage Target**: >=60%
 - **Stretch Coverage Target**: >=80%
 - **Security Tests**: 50+
 - **Integration Tests**: Comprehensive across all major features
 - **E2E Tests**: Critical user workflows
+- **Usecase Unit Tests**: analytics (42 subtests), redundancy (53 subtests) — mock-based, no DB required
 
 **Testing Philosophy**:
 1. **Test Pyramid**: Many unit tests, fewer integration tests, minimal E2E tests

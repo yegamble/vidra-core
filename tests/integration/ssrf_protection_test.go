@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"athena/internal/domain"
 	"athena/internal/security"
@@ -48,7 +49,7 @@ func TestSSRFProtection_VideoImport(t *testing.T) {
 
 // TestSSRFProtection_InstanceDiscovery tests SSRF protection for instance discovery
 func TestSSRFProtection_InstanceDiscovery(t *testing.T) {
-	discovery := redundancy.NewInstanceDiscovery()
+	discovery := redundancy.NewInstanceDiscovery(&http.Client{Timeout: 10 * time.Second})
 	ctx := context.Background()
 
 	maliciousURLs := []struct {

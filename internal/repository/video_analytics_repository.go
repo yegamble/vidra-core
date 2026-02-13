@@ -9,10 +9,14 @@ import (
 	"time"
 
 	"athena/internal/domain"
+	"athena/internal/port"
 
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 )
+
+// Compile-time interface satisfaction check.
+var _ port.VideoAnalyticsRepository = (*VideoAnalyticsRepository)(nil)
 
 // VideoAnalyticsRepository handles video analytics data persistence
 type VideoAnalyticsRepository struct {

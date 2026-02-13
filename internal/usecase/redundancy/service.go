@@ -11,33 +11,31 @@ import (
 	"time"
 
 	"athena/internal/domain"
-	"athena/internal/repository"
+	"athena/internal/port"
 )
+
+// HTTPDoer abstracts http.Client.Do for testability.
+type HTTPDoer interface {
+	Do(req *http.Request) (*http.Response, error)
+}
 
 // Service handles video redundancy business logic
 type Service struct {
-	redundancyRepo *repository.RedundancyRepository
-	videoRepo      VideoRepository
-	httpClient     *http.Client
-}
-
-// VideoRepository defines the interface for video operations
-type VideoRepository interface {
-	GetByID(ctx context.Context, id string) (*domain.Video, error)
-	GetVideosForRedundancy(ctx context.Context, strategy domain.RedundancyStrategy, limit int) ([]*domain.Video, error)
+	redundancyRepo port.RedundancyRepository
+	videoRepo      port.RedundancyVideoRepository
+	httpClient     HTTPDoer
 }
 
 // NewService creates a new redundancy service
 func NewService(
-	redundancyRepo *repository.RedundancyRepository,
-	videoRepo VideoRepository,
+	redundancyRepo port.RedundancyRepository,
+	videoRepo port.RedundancyVideoRepository,
+	httpClient HTTPDoer,
 ) *Service {
 	return &Service{
 		redundancyRepo: redundancyRepo,
 		videoRepo:      videoRepo,
-		httpClient: &http.Client{
-			Timeout: 10 * time.Minute, // Long timeout for large file transfers
-		},
+		httpClient:     httpClient,
 	}
 }
 

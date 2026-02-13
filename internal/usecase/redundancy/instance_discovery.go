@@ -15,15 +15,13 @@ import (
 
 // InstanceDiscovery handles discovery of peer instances via ActivityPub
 type InstanceDiscovery struct {
-	httpClient *http.Client
+	httpClient HTTPDoer
 }
 
 // NewInstanceDiscovery creates a new instance discovery service
-func NewInstanceDiscovery() *InstanceDiscovery {
+func NewInstanceDiscovery(httpClient HTTPDoer) *InstanceDiscovery {
 	return &InstanceDiscovery{
-		httpClient: &http.Client{
-			Timeout: 10 * time.Second,
-		},
+		httpClient: httpClient,
 	}
 }
 

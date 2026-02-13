@@ -52,6 +52,10 @@ This document outlines the comprehensive improvements made to make the Athena Pe
 - Fixed all failing tests in CI/CD pipeline
 - Added skip flags for heavy load/stress tests in CI
 - Improved test database setup with proper schema
+- Refactored `analytics` and `redundancy` usecase packages to accept interfaces (via `internal/port/`) instead of concrete repository structs, enabling mock-based unit testing without a database
+- Added `internal/usecase/analytics/service_test.go` (42 subtests covering all 18 public methods)
+- Added `internal/usecase/redundancy/service_test.go` (53 subtests covering service + instance discovery)
+- Added `HTTPDoer` interface in redundancy package to abstract `http.Client` for testability
 
 ### 2. Test Fixes
 - Fixed missing `subscriber_count` column in test database

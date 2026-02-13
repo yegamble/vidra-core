@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"athena/internal/domain"
-	"athena/internal/repository"
+	"athena/internal/port"
 
 	"github.com/google/uuid"
 	"github.com/mssola/user_agent"
@@ -15,11 +15,11 @@ import (
 
 // Service provides video analytics operations
 type Service struct {
-	repo *repository.VideoAnalyticsRepository
+	repo port.VideoAnalyticsRepository
 }
 
 // NewService creates a new analytics service
-func NewService(repo *repository.VideoAnalyticsRepository) *Service {
+func NewService(repo port.VideoAnalyticsRepository) *Service {
 	return &Service{
 		repo: repo,
 	}

@@ -274,6 +274,13 @@ Validation:
 - `go test ./internal/httpapi/handlers/auth -coverprofile=/tmp/auth_cov_after.out -count=1` → **62.2%**
 - `go test ./internal/httpapi/handlers/social -coverprofile=/tmp/social_cov_after.out -count=1` → **49.5%**
 
+Note (2026-02-13): **Usecase interface refactoring + unit test coverage** for analytics and redundancy:
+- Refactored `analytics` and `redundancy` usecase packages to depend on interfaces (`port.VideoAnalyticsRepository`, `port.RedundancyRepository`, `port.RedundancyVideoRepository`) instead of concrete repository structs
+- Added `HTTPDoer` interface in redundancy package to abstract `http.Client` for mock-based testing
+- Added `internal/usecase/analytics/service_test.go` (18 test functions, 42 subtests, ~98% coverage)
+- Added `internal/usecase/redundancy/service_test.go` + `instance_discovery_test.go` (53 subtests covering service + instance discovery)
+- Compile-time interface satisfaction checks added to `video_analytics_repository.go` and `redundancy_repository.go`
+
 ---
 
 ## Phase 2: CI/CD & act Compatibility (P2 - Week 2-3)
