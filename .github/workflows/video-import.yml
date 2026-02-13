@@ -32,7 +32,7 @@ defaults:
 jobs:
   unit-tests:
     name: Unit Tests
-    runs-on: self-hosted
+    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 15
     env:
       CGO_ENABLED: "0"
@@ -75,7 +75,7 @@ jobs:
 
   integration-tests:
     name: Integration Tests
-    runs-on: self-hosted
+    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 20
     env:
       CGO_ENABLED: "0"
@@ -151,7 +151,7 @@ jobs:
 
   unit-tests-race:
     name: Unit Tests (Race Detection)
-    runs-on: self-hosted
+    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 20
     needs: unit-tests
     # Only run on main branch or manual trigger to save CI time
@@ -194,7 +194,7 @@ jobs:
 
   build:
     name: Build Check
-    runs-on: self-hosted
+    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 10
     needs: [unit-tests]
 

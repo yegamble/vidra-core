@@ -41,7 +41,7 @@ env:
 jobs:
   security-tests:
     name: ${{ matrix.category }} Tests
-    runs-on: self-hosted
+    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 15
     # Only run on PR when labeled 'security'; always run on push/schedule/dispatch
     if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'security')
@@ -294,7 +294,7 @@ jobs:
 
   security-tests-race:
     name: ${{ matrix.category }} Race Tests
-    runs-on: self-hosted
+    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 20
     needs: security-tests  # Run after fast tests pass
     # Only run on main branch, schedule, or manual trigger to save CI time
@@ -358,7 +358,7 @@ jobs:
 
   security-report:
     name: Generate Security Report
-    runs-on: self-hosted
+    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 10
     needs: security-tests
     if: always()

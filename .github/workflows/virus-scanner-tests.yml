@@ -40,7 +40,7 @@ env:
 jobs:
   unit-tests:
     name: Unit Tests - Virus Scanner
-    runs-on: self-hosted
+    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 15
     env:
       CGO_ENABLED: "0"
@@ -77,7 +77,7 @@ jobs:
 
   integration-tests:
     name: Integration Tests - ClamAV
-    runs-on: self-hosted
+    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 30
     needs: unit-tests
     env:
@@ -147,7 +147,7 @@ jobs:
 
   integration-tests-race:
     name: Integration Tests (Race Detection) - ClamAV
-    runs-on: self-hosted
+    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 35
     needs: integration-tests
     # Only run on main branch or manual trigger to save CI time
@@ -210,7 +210,7 @@ jobs:
 
   edge-case-tests:
     name: Edge Cases & Breaking Scenarios
-    runs-on: self-hosted
+    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 45
     needs: integration-tests
     if: github.event.inputs.run_breaking_tests != 'false'
@@ -349,7 +349,7 @@ jobs:
 
   performance-benchmarks:
     name: Performance Benchmarks
-    runs-on: self-hosted
+    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 30
     needs: integration-tests
     if: github.event.inputs.run_performance_tests != 'false'
@@ -418,7 +418,7 @@ jobs:
 
   security-audit:
     name: Security Audit
-    runs-on: self-hosted
+    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 15
     needs: [edge-case-tests, performance-benchmarks]
     if: always()
@@ -507,7 +507,7 @@ jobs:
 
   post-test-report:
     name: Generate Test Report
-    runs-on: self-hosted
+    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 10
     needs: [unit-tests, integration-tests, edge-case-tests, performance-benchmarks, security-audit]
     if: always()

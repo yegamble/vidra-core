@@ -25,6 +25,8 @@ concurrency:
 env:
   GO_VERSION: "1.24"
   GOPROXY: "direct"  # Bypass proxy to avoid DNS issues with storage.googleapis.com
+  # Runner configuration: uses ubuntu-latest by default, falls back to self-hosted via vars.RUNNER
+  DEFAULT_RUNNER: "ubuntu-latest"
 
 jobs:
   # ============================================================================
@@ -32,7 +34,7 @@ jobs:
   # ============================================================================
   unit:
     name: Unit Tests
-    runs-on: self-hosted
+    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 10
 
     steps:
@@ -52,7 +54,7 @@ jobs:
 
   lint:
     name: Code Quality (Lint & Format)
-    runs-on: self-hosted
+    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 10
 
     steps:
@@ -112,7 +114,7 @@ jobs:
   # ============================================================================
   integration:
     name: Integration Tests
-    runs-on: self-hosted
+    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
     needs: [unit]
     timeout-minutes: 15
 
@@ -150,7 +152,7 @@ jobs:
   # ============================================================================
   build:
     name: Build
-    runs-on: self-hosted
+    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
     needs: [lint, unit]
     timeout-minutes: 10
 
@@ -182,7 +184,7 @@ jobs:
   # ============================================================================
   unit-race:
     name: Unit Tests (Race)
-    runs-on: self-hosted
+    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
     needs: [unit, lint]
     timeout-minutes: 15
 
@@ -202,7 +204,7 @@ jobs:
 
   integration-race:
     name: Integration Tests (Race)
-    runs-on: self-hosted
+    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
     needs: [integration]
     timeout-minutes: 20
 

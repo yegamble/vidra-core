@@ -78,12 +78,12 @@ func TestVideoRepository_Search_SQLInjection_Fix(t *testing.T) {
 	// Search query expectation
 	mock.ExpectQuery(expectedQueryRegex).
 		WithArgs(
-			"test_query",      // $1
-			"%test_query%",    // $2
-			"%test_query%",    // $3
-			"test_query",      // $4 - The crucial fix!
-			20,                // $5
-			0,                 // $6
+			"test_query",   // $1
+			"%test_query%", // $2
+			"%test_query%", // $3
+			"test_query",   // $4 - The crucial fix!
+			20,             // $5
+			0,              // $6
 		).
 		WillReturnRows(rows)
 

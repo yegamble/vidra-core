@@ -80,7 +80,7 @@ func TestUploadAvatar_InvalidMIMETypeRejected(t *testing.T) {
 func TestUploadAvatar_ValidPNG_WithMockIPFS(t *testing.T) {
 	// Mock user repo with a user
 	repo := newMockUserRepo()
-	u := &domain.User{ID: "u1", Username: "alice", Email: "a@e.com", Role: domain.RoleUser, IsActive: true, CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	u := &domain.User{ID: "11111111-1111-1111-1111-111111111111", Username: "alice", Email: "a@e.com", Role: domain.RoleUser, IsActive: true, CreatedAt: time.Now(), UpdatedAt: time.Now()}
 	repo.users[u.ID] = u
 
 	s := NewServer(repo, nil, "test", nil, 0, "http://test-ipfs:5001", "", 0, nil)
@@ -151,7 +151,7 @@ func TestUploadAvatar_ValidPNG_WithMockIPFS(t *testing.T) {
 func TestUploadAvatar_ValidJPEG_WithMockIPFS(t *testing.T) {
 	// Mock user repo with a user
 	repo := newMockUserRepo()
-	u := &domain.User{ID: "u2", Username: "bob", Email: "b@e.com", Role: domain.RoleUser, IsActive: true, CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	u := &domain.User{ID: "22222222-2222-2222-2222-222222222222", Username: "bob", Email: "b@e.com", Role: domain.RoleUser, IsActive: true, CreatedAt: time.Now(), UpdatedAt: time.Now()}
 	repo.users[u.ID] = u
 
 	s := NewServer(repo, nil, "test", nil, 0, "http://test-ipfs:5001", "", 0, nil)
@@ -297,7 +297,7 @@ func TestUploadAvatar_HEICExtensionAccepted(t *testing.T) {
 // Test successful WebP upload with valid image data
 func TestUploadAvatar_ValidWebP_WithMockIPFS(t *testing.T) {
 	repo := newMockUserRepo()
-	u := &domain.User{ID: "u3", Username: "charlie", Email: "c@e.com", Role: domain.RoleUser, IsActive: true, CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	u := &domain.User{ID: "33333333-3333-3333-3333-333333333333", Username: "charlie", Email: "c@e.com", Role: domain.RoleUser, IsActive: true, CreatedAt: time.Now(), UpdatedAt: time.Now()}
 	repo.users[u.ID] = u
 
 	s := NewServer(repo, nil, "test", nil, 0, "http://test-ipfs:5001", "", 0, nil)
@@ -372,7 +372,7 @@ func TestUploadAvatar_ValidWebP_WithMockIPFS(t *testing.T) {
 // Test successful GIF upload with valid image data
 func TestUploadAvatar_ValidGIF_WithMockIPFS(t *testing.T) {
 	repo := newMockUserRepo()
-	u := &domain.User{ID: "u4", Username: "dave", Email: "d@e.com", Role: domain.RoleUser, IsActive: true, CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	u := &domain.User{ID: "44444444-4444-4444-4444-444444444444", Username: "dave", Email: "d@e.com", Role: domain.RoleUser, IsActive: true, CreatedAt: time.Now(), UpdatedAt: time.Now()}
 	repo.users[u.ID] = u
 
 	s := NewServer(repo, nil, "test", nil, 0, "http://test-ipfs:5001", "", 0, nil)
@@ -437,7 +437,7 @@ func TestUploadAvatar_ValidGIF_WithMockIPFS(t *testing.T) {
 // Test successful TIFF upload with valid image data
 func TestUploadAvatar_ValidTIFF_WithMockIPFS(t *testing.T) {
 	repo := newMockUserRepo()
-	u := &domain.User{ID: "u5", Username: "eve", Email: "e@e.com", Role: domain.RoleUser, IsActive: true, CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	u := &domain.User{ID: "55555555-5555-5555-5555-555555555555", Username: "eve", Email: "e@e.com", Role: domain.RoleUser, IsActive: true, CreatedAt: time.Now(), UpdatedAt: time.Now()}
 	repo.users[u.ID] = u
 
 	s := NewServer(repo, nil, "test", nil, 0, "http://test-ipfs:5001", "", 0, nil)
@@ -502,7 +502,7 @@ func TestUploadAvatar_ValidTIFF_WithMockIPFS(t *testing.T) {
 // Test successful HEIC upload with valid image data
 func TestUploadAvatar_ValidHEIC_WithMockIPFS(t *testing.T) {
 	repo := newMockUserRepo()
-	u := &domain.User{ID: "u6", Username: "frank", Email: "f@e.com", Role: domain.RoleUser, IsActive: true, CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	u := &domain.User{ID: "66666666-6666-6666-6666-666666666666", Username: "frank", Email: "f@e.com", Role: domain.RoleUser, IsActive: true, CreatedAt: time.Now(), UpdatedAt: time.Now()}
 	repo.users[u.ID] = u
 
 	s := NewServer(repo, nil, "test", nil, 0, "http://test-ipfs:5001", "", 0, nil)

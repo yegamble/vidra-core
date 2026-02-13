@@ -26,7 +26,7 @@ permissions:
 jobs:
   registration-tests:
     name: Registration Endpoint Edge Cases
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 15
 
     services:
@@ -246,7 +246,7 @@ jobs:
 
   security-scan:
     name: Security Vulnerability Scan
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
     needs: registration-tests
     if: always()
 

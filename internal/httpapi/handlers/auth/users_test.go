@@ -122,8 +122,10 @@ func (m *mockUserRepo) SetAvatarFields(_ context.Context, userID string, ipfsCID
 	}
 	// Create a new user with avatar data
 	if u.Avatar == nil {
+		// Use a deterministic UUID based on userID for test reproducibility
+		avatarID := "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
 		u.Avatar = &domain.Avatar{
-			ID: "avatar-" + userID,
+			ID: avatarID,
 		}
 	}
 	u.Avatar.IPFSCID = ipfsCID

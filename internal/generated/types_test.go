@@ -9,7 +9,7 @@ import (
 func TestUserSerialization(t *testing.T) {
 	displayName := "John Doe"
 	user := User{
-		ID:          "user123",
+		Id:          "user123",
 		Username:    "johndoe",
 		Email:       "john@example.com",
 		DisplayName: &displayName,
@@ -30,8 +30,8 @@ func TestUserSerialization(t *testing.T) {
 		t.Fatalf("Failed to unmarshal user: %v", err)
 	}
 
-	if unmarshaled.ID != user.ID {
-		t.Errorf("Expected ID %s, got %s", user.ID, unmarshaled.ID)
+	if unmarshaled.Id != user.Id {
+		t.Errorf("Expected ID %s, got %s", user.Id, unmarshaled.Id)
 	}
 
 	if unmarshaled.Username != user.Username {
@@ -67,7 +67,7 @@ func TestLoginRequest(t *testing.T) {
 
 func TestAuthResponse(t *testing.T) {
 	user := User{
-		ID:        "user123",
+		Id:        "user123",
 		Username:  "testuser",
 		Email:     "test@example.com",
 		Role:      UserRoleUser,
@@ -94,8 +94,8 @@ func TestAuthResponse(t *testing.T) {
 		t.Fatalf("Failed to unmarshal auth response: %v", err)
 	}
 
-	if unmarshaled.User.ID != response.User.ID {
-		t.Errorf("Expected user ID %s, got %s", response.User.ID, unmarshaled.User.ID)
+	if unmarshaled.User.Id != response.User.Id {
+		t.Errorf("Expected user ID %s, got %s", response.User.Id, unmarshaled.User.Id)
 	}
 
 	if unmarshaled.AccessToken != response.AccessToken {

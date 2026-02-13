@@ -49,7 +49,7 @@ defaults:
 jobs:
   validate-input:
     name: Validate Deployment Input
-    runs-on: self-hosted
+    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 10
     outputs:
       current_color: ${{ steps.detect.outputs.current_color }}
@@ -104,7 +104,7 @@ jobs:
 
   staging-deployment:
     name: Deploy to Staging
-    runs-on: self-hosted
+    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 20
     needs: [validate-input]
     if: ${{ !inputs.skip_staging }}
@@ -146,7 +146,7 @@ jobs:
 
   database-migration:
     name: Apply Database Migrations
-    runs-on: self-hosted
+    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 15
     needs: [validate-input, staging-deployment]
     if: always() && needs.validate-input.result == 'success' && (needs.staging-deployment.result == 'success' || inputs.skip_staging)
@@ -226,7 +226,7 @@ jobs:
 
   deploy-target-environment:
     name: Deploy ${{ needs.validate-input.outputs.target_color }} Environment
-    runs-on: self-hosted
+    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 30
     needs: [validate-input, database-migration]
     environment:
@@ -288,7 +288,7 @@ jobs:
 
   pre-switch-validation:
     name: Pre-Switch Validation
-    runs-on: self-hosted
+    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
     needs: [validate-input, deploy-target-environment]
     steps:
       - name: Checkout code
@@ -331,7 +331,7 @@ jobs:
 
   canary-rollout:
     name: Canary Rollout (${{ inputs.canary_percentage }}%)
-    runs-on: self-hosted
+    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 20
     needs: [validate-input, pre-switch-validation]
     environment:
@@ -374,7 +374,7 @@ jobs:
 
   full-rollout:
     name: Full Rollout (100%)
-    runs-on: self-hosted
+    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 60
     needs: [validate-input, canary-rollout]
     environment:
@@ -439,7 +439,7 @@ jobs:
 
   notify-success:
     name: Notify Success
-    runs-on: self-hosted
+    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
     needs: [validate-input, full-rollout]
     if: success()
     steps:
@@ -471,7 +471,7 @@ jobs:
 
   rollback-on-failure:
     name: Automatic Rollback
-    runs-on: self-hosted
+    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
     needs: [validate-input, full-rollout]
     if: failure()
     steps:
