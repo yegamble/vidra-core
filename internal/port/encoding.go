@@ -3,6 +3,7 @@ package port
 import (
 	"athena/internal/domain"
 	"context"
+	"time"
 )
 
 type EncodingRepository interface {
@@ -16,6 +17,7 @@ type EncodingRepository interface {
 	// Queue operations
 	GetPendingJobs(ctx context.Context, limit int) ([]*domain.EncodingJob, error)
 	GetNextJob(ctx context.Context) (*domain.EncodingJob, error)
+	ResetStaleJobs(ctx context.Context, staleDuration time.Duration) (int64, error)
 
 	// Job status tracking
 	UpdateJobStatus(ctx context.Context, jobID string, status domain.EncodingStatus) error

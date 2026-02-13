@@ -165,6 +165,9 @@ func (m *MockEncodingRepository) SetJobError(ctx context.Context, jobID string, 
 func (m *MockEncodingRepository) GetJobCounts(ctx context.Context) (map[string]int64, error) {
 	return nil, nil
 }
+func (m *MockEncodingRepository) ResetStaleJobs(ctx context.Context, staleDuration time.Duration) (int64, error) {
+	return 0, nil
+}
 
 func TestInitiateUpload_Security_FileSizeLimit(t *testing.T) {
 	mockUploadRepo := new(MockUploadRepository)

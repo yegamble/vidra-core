@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"athena/internal/config"
 	"athena/internal/domain"
@@ -36,6 +37,9 @@ func (m *mockEncodingRepo) UpdateJobProgress(_ context.Context, _ string, _ int)
 func (m *mockEncodingRepo) SetJobError(_ context.Context, _ string, _ string) error    { return nil }
 func (m *mockEncodingRepo) GetJobCounts(_ context.Context) (map[string]int64, error) {
 	return m.counts, nil
+}
+func (m *mockEncodingRepo) ResetStaleJobs(_ context.Context, _ time.Duration) (int64, error) {
+	return 0, nil
 }
 
 // Ensure mockEncodingRepo satisfies the interface at compile time

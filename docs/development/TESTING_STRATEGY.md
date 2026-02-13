@@ -280,6 +280,8 @@ Highest-coverage packages in the same baseline:
    - [ ] Simultaneous IPFS pin operations
 
 2. **Error Recovery Tests**
+   - [x] Stale/orphaned encoding job recovery on server restart
+   - [x] Long-running encode job not incorrectly reset (heartbeat safety)
    - [ ] Database connection loss recovery
    - [ ] Redis failover handling
    - [ ] IPFS gateway failure recovery
@@ -306,6 +308,15 @@ go test ./... -race -coverprofile=coverage.out
 **Run Specific Test**:
 ```bash
 go test ./internal/usecase -run TestVideoService_Create
+```
+
+**Run Encoding Resilience Tests**:
+```bash
+# Unit tests (mock-based, no DB required)
+go test ./internal/usecase/encoding/... -v -run "Recovery|ResetStale"
+
+# Integration tests (requires test DB)
+go test ./internal/repository/... -v -run "ResetStaleJobs"
 ```
 
 **Run with Coverage**:

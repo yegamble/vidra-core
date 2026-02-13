@@ -39,7 +39,7 @@ Status legend:
 #### Core Video Platform
 - **PeerTube API Compatibility** - Channels, subscriptions, comments, ratings, playlists, and captions
 - **Video Import System** - Import from external platforms via `yt-dlp` integration
-- **Transcoding + HLS** - FFmpeg processing with adaptive streaming outputs
+- **Transcoding + HLS** - FFmpeg processing with adaptive streaming outputs, heartbeat-based stale job recovery on server restart
 - **User Messaging** - Direct messaging with optional end-to-end encryption (E2EE)
 - **Notifications System** - Real-time notifications with automatic triggers and delivery controls
 

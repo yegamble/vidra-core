@@ -239,6 +239,22 @@ func (r *mockEncodingRepository) GetJobCounts(ctx context.Context) (map[string]i
 	return counts, nil
 }
 
+func (r *mockEncodingRepository) ResetStaleJobs(ctx context.Context, staleDuration time.Duration) (int64, error) {
+	var count int64
+	cutoff := time.Now().Add(-staleDuration)
+	for _, job := range r.jobs {
+		if job.Status == domain.EncodingStatusProcessing && job.UpdatedAt.Before(cutoff) {
+			job.Status = domain.EncodingStatusPending
+			job.Progress = 0
+			job.StartedAt = nil
+			job.ErrorMessage = ""
+			job.UpdatedAt = time.Now()
+			count++
+		}
+	}
+	return count, nil
+}
+
 type mockVideoRepository struct {
 	videos map[string]*domain.Video
 }

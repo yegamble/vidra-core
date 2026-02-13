@@ -283,6 +283,11 @@ func (m *MockEncodingRepository) GetJobCounts(ctx context.Context) (map[string]i
 	return args.Get(0).(map[string]int64), args.Error(1)
 }
 
+func (m *MockEncodingRepository) ResetStaleJobs(ctx context.Context, staleDuration time.Duration) (int64, error) {
+	args := m.Called(ctx, staleDuration)
+	return args.Get(0).(int64), args.Error(1)
+}
+
 // MockYtDlp is a mock implementation of yt-dlp
 type MockYtDlp struct {
 	mock.Mock

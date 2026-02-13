@@ -170,6 +170,9 @@ func (s *unitEncodingRepoStub) GetJobCounts(ctx context.Context) (map[string]int
 	}
 	return map[string]int64{"pending": 0, "processing": 0, "completed": 0, "failed": 0}, nil
 }
+func (s *unitEncodingRepoStub) ResetStaleJobs(context.Context, time.Duration) (int64, error) {
+	return 0, nil
+}
 
 func decodeHandlerResponse(t *testing.T, rr *httptest.ResponseRecorder) Response {
 	t.Helper()

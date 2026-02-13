@@ -114,6 +114,10 @@ func (m *mockEncodingRepo) GetJobCounts(ctx context.Context) (map[string]int64, 
 	}
 	return args.Get(0).(map[string]int64), args.Error(1)
 }
+func (m *mockEncodingRepo) ResetStaleJobs(ctx context.Context, staleDuration time.Duration) (int64, error) {
+	args := m.Called(ctx, staleDuration)
+	return args.Get(0).(int64), args.Error(1)
+}
 
 type mockVideoRepo struct{ mock.Mock }
 

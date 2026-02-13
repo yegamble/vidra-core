@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -83,6 +84,17 @@ func (s *service) Run(ctx context.Context, workers int) error {
 		if workers < 2 {
 			workers = 2
 		}
+	}
+
+	// Recover orphaned jobs that were stuck in "processing" from a prior crash.
+	// The heartbeat in processJob keeps updated_at fresh every 5 minutes for
+	// active jobs, so a 30-minute threshold safely identifies only truly dead jobs.
+	const defaultStaleDuration = 30 * time.Minute
+	resetCount, err := s.repo.ResetStaleJobs(ctx, defaultStaleDuration)
+	if err != nil {
+		log.Printf("Warning: failed to reset stale encoding jobs: %v", err)
+	} else if resetCount > 0 {
+		log.Printf("Recovered %d stale encoding job(s) back to pending", resetCount)
 	}
 
 	wg := &sync.WaitGroup{}
@@ -228,6 +240,24 @@ func (s *service) encodeResolutions(ctx context.Context, job *domain.EncodingJob
 }
 
 func (s *service) processJob(ctx context.Context, job *domain.EncodingJob) error {
+	// Start heartbeat to keep updated_at fresh during long encodes.
+	// This prevents ResetStaleJobs from incorrectly resetting active jobs
+	// that may take hours (e.g., 4K video on a low-spec server).
+	hbCtx, hbCancel := context.WithCancel(ctx)
+	defer hbCancel()
+	go func() {
+		ticker := time.NewTicker(5 * time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-hbCtx.Done():
+				return
+			case <-ticker.C:
+				_ = s.repo.UpdateJobProgress(hbCtx, job.ID, job.Progress)
+			}
+		}
+	}()
+
 	// Validate job
 	if err := s.validateJob(job); err != nil {
 		return err

@@ -345,6 +345,168 @@ func TestEncodingRepository_ConcurrentGetNextJob(t *testing.T) {
 	}
 }
 
+func TestEncodingRepository_ResetStaleJobs(t *testing.T) {
+	testDB := testutil.SetupTestDB(t)
+	encodingRepo := NewEncodingRepository(testDB.DB)
+	videoRepo := NewVideoRepository(testDB.DB)
+	userRepo := NewUserRepository(testDB.DB)
+
+	ctx := context.Background()
+
+	user := createTestUser(t, userRepo, ctx, "testuser", "test@example.com")
+
+	// Create three videos with jobs in different states
+	video1 := createTestVideo(t, videoRepo, ctx, user.ID, "Stale Processing Video")
+	video2 := createTestVideo(t, videoRepo, ctx, user.ID, "Fresh Processing Video")
+	video3 := createTestVideo(t, videoRepo, ctx, user.ID, "Pending Video")
+
+	job1 := createTestEncodingJob(t, encodingRepo, ctx, video1.ID)
+	job2 := createTestEncodingJob(t, encodingRepo, ctx, video2.ID)
+	job3 := createTestEncodingJob(t, encodingRepo, ctx, video3.ID)
+
+	// Move job1 and job2 to processing
+	err := encodingRepo.UpdateJobStatus(ctx, job1.ID, domain.EncodingStatusProcessing)
+	require.NoError(t, err)
+	err = encodingRepo.UpdateJobStatus(ctx, job2.ID, domain.EncodingStatusProcessing)
+	require.NoError(t, err)
+	// job3 stays pending
+
+	// Disable the updated_at trigger so we can manually set old timestamps
+	_, err = testDB.DB.ExecContext(ctx,
+		`ALTER TABLE encoding_jobs DISABLE TRIGGER update_encoding_jobs_updated_at`)
+	require.NoError(t, err)
+	defer func() {
+		_, _ = testDB.DB.ExecContext(ctx,
+			`ALTER TABLE encoding_jobs ENABLE TRIGGER update_encoding_jobs_updated_at`)
+	}()
+
+	// Make job1 stale (2 hours old)
+	_, err = testDB.DB.ExecContext(ctx,
+		`UPDATE encoding_jobs SET updated_at = NOW() - INTERVAL '2 hours' WHERE id = $1`, job1.ID)
+	require.NoError(t, err)
+
+	// Re-enable trigger
+	_, err = testDB.DB.ExecContext(ctx,
+		`ALTER TABLE encoding_jobs ENABLE TRIGGER update_encoding_jobs_updated_at`)
+	require.NoError(t, err)
+
+	// job2 was just updated so its updated_at is recent (not stale)
+
+	// Reset stale jobs older than 1 hour
+	resetCount, err := encodingRepo.ResetStaleJobs(ctx, 1*time.Hour)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), resetCount) // Only job1 should be reset
+
+	// Verify job1 was reset to pending
+	resetJob, err := encodingRepo.GetJob(ctx, job1.ID)
+	require.NoError(t, err)
+	assert.Equal(t, domain.EncodingStatusPending, resetJob.Status)
+	assert.Equal(t, 0, resetJob.Progress)
+	assert.Nil(t, resetJob.StartedAt)
+	assert.Empty(t, resetJob.ErrorMessage)
+
+	// Verify job2 is still processing (active, NOT reset)
+	freshJob, err := encodingRepo.GetJob(ctx, job2.ID)
+	require.NoError(t, err)
+	assert.Equal(t, domain.EncodingStatusProcessing, freshJob.Status)
+
+	// Verify job3 is still pending (untouched)
+	pendingJob, err := encodingRepo.GetJob(ctx, job3.ID)
+	require.NoError(t, err)
+	assert.Equal(t, domain.EncodingStatusPending, pendingJob.Status)
+}
+
+func TestEncodingRepository_ResetStaleJobs_NoStaleJobs(t *testing.T) {
+	testDB := testutil.SetupTestDB(t)
+	encodingRepo := NewEncodingRepository(testDB.DB)
+
+	ctx := context.Background()
+
+	// No jobs at all
+	resetCount, err := encodingRepo.ResetStaleJobs(ctx, 30*time.Minute)
+	require.NoError(t, err)
+	assert.Equal(t, int64(0), resetCount)
+}
+
+func TestEncodingRepository_ResetStaleJobs_ThenPickedUp(t *testing.T) {
+	testDB := testutil.SetupTestDB(t)
+	encodingRepo := NewEncodingRepository(testDB.DB)
+	videoRepo := NewVideoRepository(testDB.DB)
+	userRepo := NewUserRepository(testDB.DB)
+
+	ctx := context.Background()
+
+	user := createTestUser(t, userRepo, ctx, "testuser", "test@example.com")
+	video := createTestVideo(t, videoRepo, ctx, user.ID, "Recovery Video")
+	job := createTestEncodingJob(t, encodingRepo, ctx, video.ID)
+
+	// Move to processing and make it stale
+	err := encodingRepo.UpdateJobStatus(ctx, job.ID, domain.EncodingStatusProcessing)
+	require.NoError(t, err)
+
+	// Disable trigger, set old timestamp, re-enable
+	_, err = testDB.DB.ExecContext(ctx,
+		`ALTER TABLE encoding_jobs DISABLE TRIGGER update_encoding_jobs_updated_at`)
+	require.NoError(t, err)
+	_, err = testDB.DB.ExecContext(ctx,
+		`UPDATE encoding_jobs SET updated_at = NOW() - INTERVAL '2 hours' WHERE id = $1`, job.ID)
+	require.NoError(t, err)
+	_, err = testDB.DB.ExecContext(ctx,
+		`ALTER TABLE encoding_jobs ENABLE TRIGGER update_encoding_jobs_updated_at`)
+	require.NoError(t, err)
+
+	// Reset stale jobs
+	resetCount, err := encodingRepo.ResetStaleJobs(ctx, 1*time.Hour)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), resetCount)
+
+	// Verify GetNextJob can now pick it up again
+	nextJob, err := encodingRepo.GetNextJob(ctx)
+	require.NoError(t, err)
+	require.NotNil(t, nextJob)
+	assert.Equal(t, job.ID, nextJob.ID)
+	assert.Equal(t, domain.EncodingStatusProcessing, nextJob.Status) // GetNextJob sets it to processing
+}
+
+func TestEncodingRepository_ResetStaleJobs_LongRunningJobNotReset(t *testing.T) {
+	testDB := testutil.SetupTestDB(t)
+	encodingRepo := NewEncodingRepository(testDB.DB)
+	videoRepo := NewVideoRepository(testDB.DB)
+	userRepo := NewUserRepository(testDB.DB)
+
+	ctx := context.Background()
+
+	user := createTestUser(t, userRepo, ctx, "testuser", "test@example.com")
+	video := createTestVideo(t, videoRepo, ctx, user.ID, "Long Running Video")
+	job := createTestEncodingJob(t, encodingRepo, ctx, video.ID)
+
+	// Move to processing
+	err := encodingRepo.UpdateJobStatus(ctx, job.ID, domain.EncodingStatusProcessing)
+	require.NoError(t, err)
+
+	// Simulate a heartbeat that touched updated_at 20 minutes ago
+	// (within the 30-minute threshold, so this is NOT stale)
+	_, err = testDB.DB.ExecContext(ctx,
+		`ALTER TABLE encoding_jobs DISABLE TRIGGER update_encoding_jobs_updated_at`)
+	require.NoError(t, err)
+	_, err = testDB.DB.ExecContext(ctx,
+		`UPDATE encoding_jobs SET updated_at = NOW() - INTERVAL '20 minutes' WHERE id = $1`, job.ID)
+	require.NoError(t, err)
+	_, err = testDB.DB.ExecContext(ctx,
+		`ALTER TABLE encoding_jobs ENABLE TRIGGER update_encoding_jobs_updated_at`)
+	require.NoError(t, err)
+
+	// Attempt to reset with 30-minute threshold
+	resetCount, err := encodingRepo.ResetStaleJobs(ctx, 30*time.Minute)
+	require.NoError(t, err)
+	assert.Equal(t, int64(0), resetCount) // Should NOT reset — heartbeat kept it fresh
+
+	// Verify job is still processing
+	activeJob, err := encodingRepo.GetJob(ctx, job.ID)
+	require.NoError(t, err)
+	assert.Equal(t, domain.EncodingStatusProcessing, activeJob.Status)
+}
+
 // Helper function to create test encoding job
 func createTestEncodingJob(t *testing.T, repo usecase.EncodingRepository, ctx context.Context, videoID string) *domain.EncodingJob {
 	t.Helper()

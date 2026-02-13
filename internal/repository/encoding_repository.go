@@ -6,6 +6,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"time"
 
 	"github.com/jmoiron/sqlx"
 	"github.com/lib/pq"
@@ -332,4 +333,26 @@ func (r *encodingRepository) SetJobError(ctx context.Context, jobID string, erro
 	}
 
 	return nil
+}
+
+func (r *encodingRepository) ResetStaleJobs(ctx context.Context, staleDuration time.Duration) (int64, error) {
+	cutoff := time.Now().Add(-staleDuration)
+
+	query := `
+		UPDATE encoding_jobs
+		SET status = 'pending', progress = 0, started_at = NULL, error_message = ''
+		WHERE status = 'processing'
+		  AND updated_at < $1`
+
+	result, err := r.db.ExecContext(ctx, query, cutoff)
+	if err != nil {
+		return 0, fmt.Errorf("failed to reset stale encoding jobs: %w", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("failed to get rows affected: %w", err)
+	}
+
+	return rowsAffected, nil
 }
