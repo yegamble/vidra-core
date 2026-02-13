@@ -9,3 +9,9 @@
 **Resolution:** Added `middleware.RequireRole("admin")` to the route definition in `internal/httpapi/routes.go`.
 **Learning:** Routes intended for administrative tasks (like manual user creation) must explicitly enforce role checks. "Auth" middleware only confirms identity, not authority.
 **Prevention:** Audit all routes under `internal/httpapi/routes.go` to ensure that sensitive actions (create, delete, update global configs) are protected by `RequireRole("admin")` or similar authorization logic.
+
+## 2026-01-31 - SQL Injection in Video Search
+**Vulnerability/Issue:** Found SQL injection in `internal/repository/video_repository.go` where user input (`req.Query`) was directly concatenated into the `ORDER BY` clause when sorting by "relevance".
+**Resolution:** Replaced string concatenation with parameter binding (`plainto_tsquery('english', $X)`). Updated `countQuery` execution logic to correctly account for the extra argument added for sorting. Added regression test `internal/repository/video_repository_security_test.go`.
+**Learning:** Even when using parameterized queries for `WHERE` clauses, `ORDER BY` clauses built dynamically can be vulnerable if they include user input in function arguments or expressions.
+**Prevention:** Always use placeholders for any user input, even in complex expressions like `ts_rank`. Avoid manual string building for SQL wherever possible.
