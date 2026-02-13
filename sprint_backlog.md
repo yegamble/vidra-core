@@ -1,45 +1,39 @@
-# Sprint Backlog: Quality Programme - Sprint 15 (Stabilize & Integrate)
+# Sprint Backlog: Quality Programme - Sprint 16 (API Contract Reproducibility)
 
 **Programme:** Athena Quality Programme (Sprints 15-20)
-**Sprint Goal:** Merge/close/resolve the high-impact PR queue; stabilize mainline
-**Sprint Duration:** Feb 16 - Mar 2, 2026
+**Sprint Goal:** Make the API contract stable and reproducible with CI enforcement
+**Sprint Duration:** Mar 3 - Mar 16, 2026
+**Previous Sprint:** [Sprint 15 Complete](docs/sprints/SPRINT15_COMPLETE.md)
 **Full Programme Details:** [docs/sprints/QUALITY_PROGRAMME.md](docs/sprints/QUALITY_PROGRAMME.md)
 
 ---
 
-## Sprint 15 Progress Summary
+## Sprint 15 Final Status: COMPLETE
 
-### Completed
-
-- [x] **P0 Security fixes** - Already merged to main (JWT validation, ytdlp, size limits)
-- [x] **OpenAPI generation** - Fixed on main (HLS wildcard path, QualitiesData schema)
-- [x] **PR queue cleanup** - Closed 25+ stale/duplicate PRs
-- [x] **README update** - Reflects Quality Programme status
-- [x] **Build verification** - `make build` and `make lint` pass
-- [x] **PR #206** - SQL injection fix merged (parameterized ORDER BY clause)
-- [x] **PR #238** - Flaky DB pool tests fixed (timeouts, retry loops)
-- [x] **PR #234** - Closed (lint config already working on main)
-- [x] **PR #240** - Closed (ClamAV CI optimization deferred - had conflicts)
-
-### Remaining Work
-
-| Priority | PR(s) | Focus | Status |
-|----------|-------|-------|--------|
-| **P2** | #244, #228 | Comment repo/service tests | Coverage uplift |
-| **P2** | #184 | CORS defaults fix | Security review |
-| **P2** | #166 | Privilege escalation fix | Security review |
+- [x] **P0 Security fixes** - Merged (JWT validation, yt-dlp injection, size limits)
+- [x] **P1 CI/stability** - Merged/closed (SQL injection, flaky DB pool, lint config, ClamAV)
+- [x] **P2 Security: CORS** - Applied to main (origin-aware validation, Vary: Origin)
+- [x] **P2 Security: Privilege escalation** - Verified on main, PR #166 closed
+- [x] **OpenAPI generation** - Fixed (HLS wildcard, QualitiesData schema)
+- [x] **PR queue cleanup** - Closed 25+ stale/duplicate PRs + 2 resolved security PRs
+- [x] **Coverage baseline** - 52.9% documented
+- [x] **Build/CI** - All Go checks passing (gofmt, lint, tests, build, vet)
 
 ---
 
-## Remaining Open PRs (Triage)
+## Sprint 16 Tasks
 
-### P1: CI & Security (Complete)
+| Task | Est. | Acceptance Criteria |
+|------|------|---------------------|
+| Add CI job: regenerate OpenAPI types and fail on diff | 5 pts | CI fails if generated code changes |
+| Add Postman smoke workflow | 8 pts | Runs on PR; reports failures clearly |
+| Document federation "well-known" endpoints | 5 pts | Endpoints in OpenAPI or documented exclusion |
+| Add "API review checklist" to PR template | 2 pts | Checklist forces schema review |
+| Create API contract policy doc | 3 pts | Source of truth documented |
 
-All P1 items resolved:
-- ✅ #206 merged - SQL injection fix
-- ✅ #238 merged - Flaky DB pool tests fix
-- ✅ #234 closed - Lint config already working
-- ✅ #240 closed - ClamAV CI optimization deferred
+---
+
+## Remaining Open PRs
 
 ### P2: Test Coverage (Sprint 17-18)
 
@@ -55,13 +49,6 @@ All P1 items resolved:
 | #204 | Admin Instance Handler tests | Review for Sprint 17 |
 | #170 | Upload handler test refactor | Review for Sprint 17 |
 | #171 | Auth rate limiting tests | Review for Sprint 17 |
-
-### P2: Security (Sprint 15-16)
-
-| PR # | Title | Action |
-|------|-------|--------|
-| #184 | Fix insecure CORS defaults | Security review |
-| #166 | Fix privilege escalation in user creation | Security review |
 
 ### P3: Features/Fixes (Backlog)
 
@@ -89,78 +76,22 @@ All P1 items resolved:
 
 ---
 
-## Sprint 15 Metrics
+## Metrics
 
-### Completed
-
-| Metric | Before | After |
-|--------|--------|-------|
-| Open PRs | 50+ | 21 |
-| P0 security issues | 3 | 0 |
-| P1 PRs | 4 | 0 ✅ |
-| OpenAPI generation | Broken | Working |
-| Build status | Broken | Passing |
-| Lint status | Unknown | Passing |
-
-### Targets for Sprint End
-
-| Metric | Target | Status |
-|--------|--------|--------|
-| Open P1 PRs | 0 | ✅ Complete |
-| CI passing on main | Yes | ✅ Complete |
-| Coverage baseline documented | Yes | ✅ **52.9%** |
-
----
-
-## Coverage Baseline (Sprint 15)
-
-**Overall: 52.9%** (target for Sprint 20: 60%)
-
-| Package | Coverage | Notes |
-|---------|----------|-------|
-| usecase/analytics | 97.9% | High |
-| scheduler | 90.6% | High |
-| middleware | 89.7% | High |
-| importer | 87.1% | High |
-| storage | 86.2% | High |
-| worker | 85.7% | High |
-| payments | 83.9% | High |
-| rating | 82.8% | High |
-| handlers/payments | 82.6% | High |
-| channel | 79.2% | Good |
-| notification | 79.2% | Good |
-| message | 79.7% | Good |
-| plugin | 74.0% | Good |
-| usecase/payments | 71.9% | Good |
-| encoding | 67.9% | Medium |
-| handlers/plugin | 67.5% | Medium |
-| security | 66.8% | Medium |
-| playlist | 65.2% | Medium |
-| comment | 63.0% | Medium |
-| ipfs | 63.6% | Medium |
-| upload | 60.9% | Medium |
-| repository | 59.6% | Medium |
-| migration | 57.6% | Medium |
-| handlers/video | 51.2% | Low - needs tests |
-| handlers/social | 49.5% | Low - needs tests |
-| usecase | 49.4% | Low - needs tests |
-| activitypub | 48.7% | Low - needs tests |
-| import | 48.6% | Low - needs tests |
-
----
-
-## Next Steps
-
-1. ~~**Review P1 PRs** (#240, #238, #234, #206)~~ ✅ Complete
-2. ~~**Establish coverage baseline**~~ ✅ **52.9%**
-3. **Review P2 Security PRs** (#184, #166) - CORS and privilege escalation
-4. **Plan Sprint 16** - API contract reproducibility
+| Metric | Sprint 15 Start | Sprint 15 End | Sprint 16 Target |
+|--------|----------------|---------------|------------------|
+| Open PRs | 50+ | 15 | 14 (close Dependabot) |
+| P0/P1 issues | 7 | 0 | 0 |
+| P2 security | 2 | 0 | 0 |
+| Coverage | ~48.7% | 52.9% | 52.9%+ |
+| Build | Broken | Passing | Passing |
+| OpenAPI CI | None | None | Enforced |
 
 ---
 
 ## How to Use This Backlog
 
-1. **Pick a task** from your assigned priority level
+1. **Pick a task** from the Sprint 16 task list
 2. **Update status** in this file when starting work
 3. **Create PR** following the checklist in task
 4. **Update status** when PR is merged
@@ -170,5 +101,3 @@ All P1 items resolved:
 ```bash
 make validate-all   # or ./scripts/validate-all.sh
 ```
-
-This runs: `gofmt`, `goimports`, `golangci-lint` (with gosec), unit tests, and build verification.

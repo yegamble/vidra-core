@@ -105,11 +105,13 @@ A task is "done" only when:
 
 ### Sprint 15 Acceptance Criteria
 
-- [ ] All P0 security PRs merged
-- [ ] OpenAPI generation works reproducibly
-- [ ] CI green on main branch
-- [ ] No duplicate PRs covering same issue
-- [ ] Coverage baseline established and documented
+- [x] All P0 security PRs merged
+- [x] OpenAPI generation works reproducibly
+- [x] CI green on main branch
+- [x] No duplicate PRs covering same issue
+- [x] Coverage baseline established and documented (52.9%)
+
+**Sprint 15 Status: COMPLETE** (See [SPRINT15_COMPLETE.md](./SPRINT15_COMPLETE.md))
 
 ---
 

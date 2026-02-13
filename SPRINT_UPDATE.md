@@ -1,30 +1,35 @@
-# Sprint Update: 2025-02-13
+# Sprint Update: 2026-02-13
 
-**Goal:** Establish a reliable, reproducible test environment AND secure the platform for Phase 1 Launch.
+**Sprint 15 Goal:** Stabilize mainline; integrate PR queue; establish coverage baseline.
 
-## Status Overview
+## Status: COMPLETE
 
-- **Fail Fast (Blocker):** ✅ **DONE**. Test infrastructure now correctly skips integration tests when Docker is unavailable (< 1s execution time).
-- **Security (Critical):** 🚧 **IN PROGRESS**.
-    - `scripts/rotate-credentials.sh` exists and is functional.
-    - `scripts/clean-git-history.sh` exists and is functional.
-    - **Missing:** `scripts/setup-production-env.sh` (to apply rotated credentials).
-    - **Missing:** `docs/security/GIT_HISTORY_CLEANUP.md` (detailed guide).
-- **Repository Verification:** 🚧 **IN PROGRESS**. Unit tests pass. Integration tests skipped due to Docker Hub rate limits in the current environment.
-- **Documentation:** 🚧 **IN PROGRESS**. `README.md` needs updates to reflect the new security scripts.
+### Summary
 
-## Next Actions for Builder/Sentinel
+Sprint 15 is fully complete. All acceptance criteria met:
 
-1.  **Create `scripts/setup-production-env.sh`:**
-    - Input: `.env.production.new` (from rotation script).
-    - Action: Apply to `.env.production` with secure permissions (0600).
+- **P0 Security PRs:** All merged (JWT validation, yt-dlp injection, request size limits)
+- **P1 CI/Stability:** All resolved (SQL injection fix, flaky DB pool tests, lint config, ClamAV)
+- **P2 Security: CORS:** Applied to main - CORS middleware now uses `CORSAllowedOrigins` config, reflects origin instead of wildcard `*`, adds `Vary: Origin` header. 9 test cases.
+- **P2 Security: Privilege Escalation:** Verified on main (`RequireRole("admin")` + regression test). PR #166 closed.
+- **OpenAPI generation:** Working (HLS wildcard path, QualitiesData schema fixed)
+- **PR queue cleanup:** 50+ open PRs reduced to 15
+- **Coverage baseline:** 52.9% established and documented
+- **Build/CI:** All Go checks passing (gofmt, lint, tests, build, vet)
 
-2.  **Create `docs/security/GIT_HISTORY_CLEANUP.md`:**
-    - Document the usage of `scripts/clean-git-history.sh`.
-    - Provide manual fallback instructions using `git filter-branch`.
+### Metrics
 
-3.  **Update `README.md`:**
-    - Update "Project Status" to mention security hardening.
+| Metric | Before | After |
+|--------|--------|-------|
+| Open PRs | 50+ | 15 |
+| P0 security issues | 3 | 0 |
+| P1 CI issues | 4 | 0 |
+| P2 security issues | 2 | 0 |
+| Coverage | ~48.7% | 52.9% |
+| Build | Broken | Passing |
+| Test functions | 2,139 | 2,364 |
 
-## Blocker Note
-- **Docker Rate Limits:** The current execution environment cannot pull Docker images (`unauthenticated pull rate limit`). Integration tests requiring `postgres` and `redis` containers cannot be verified in this session.
+### Next: Sprint 16 - API Contract Reproducibility
+
+See [Sprint 15 Complete](docs/sprints/SPRINT15_COMPLETE.md) for full details.
+See [Sprint Backlog](sprint_backlog.md) for Sprint 16 tasks.

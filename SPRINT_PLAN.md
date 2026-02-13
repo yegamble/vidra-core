@@ -1,47 +1,39 @@
-# Sprint Plan: Operation Bedrock & Secure Launch
+# Sprint Plan: Quality Programme - Sprint 16
 
-**Sprint Goal**: Establish a reliable, reproducible test environment AND secure the platform for Phase 1 Launch.
+**Sprint Goal**: Make the API contract stable and reproducible with CI enforcement.
 
 ## Context
-We are combining "Operation Bedrock" (Reliability) and "Sprint 15" (Phase 1 Launch) into a single execution plan.
-- **Reliability**: The current test infrastructure is too slow (missing "Fail Fast" optimization) and repository tests are unverified. This blocks efficient development.
-- **Security**: A critical security advisory (Credential Exposure) requires immediate remediation (Credential Rotation, Git History Cleanup).
+Sprint 15 (Stabilize & Integrate) is complete. All P0-P2 security PRs are resolved, CI is green, and the coverage baseline is established at 52.9%. Sprint 16 focuses on API contract reproducibility.
 
-## Priorities
-1.  **Infrastructure Reliability (Blocker)**: Optimize "Fail Fast" logic to unblock local development and CI.
-2.  **Security Hardening (Critical)**: Create scripts and guides to rotate credentials and clean git history.
-3.  **Codebase Verification (High)**: Run and fix `internal/repository` tests to ensure logic integrity.
-4.  **Documentation (Medium)**: Align docs with reality (Stabilization Phase, Setup Instructions).
+## Sprint 16 Tasks
 
-## Schedule & Assignments
+### 1. OpenAPI CI Enforcement
+- Add CI job to regenerate OpenAPI types and fail if generated code differs
+- Ensures API contract cannot drift from specification
 
-### Step 1: Unblock Development (Builder 🛠️)
-*   **Task**: Optimize "Fail Fast" in `internal/testutil/database.go`.
-*   **Method**: Replace `connectWithRetry` with `net.DialTimeout` (TCP check).
-*   **Result**: `go test` skips instantly if DB is missing.
+### 2. Postman Smoke Tests
+- Add Postman smoke test workflow that runs on PRs
+- Reports failures clearly with bounded runtime
 
-### Step 2: Secure the Platform (Sentinel 🛡️)
-*   **Task**: Create Credential Rotation Scripts.
-*   **Task**: Create Git History Cleanup Guide.
-*   **Result**: Paths to remediation are scripted/documented.
+### 3. Federation Endpoint Documentation
+- Document federation "well-known" endpoints in OpenAPI
+- Or explicitly document exclusions
 
-### Step 3: Verify Integrity (Builder 🛠️)
-*   **Task**: Run `go test ./internal/repository/...` with DB.
-*   **Task**: Fix any SQL/Logic errors found.
-*   **Result**: Repository layer is proven correct.
+### 4. API Review Checklist
+- Add API review checklist to PR template
+- Forces schema and error code review
 
-### Step 4: Update Documentation (Scribe 📝)
-*   **Task**: Update `README.md` (Project Status, Prerequisites).
-*   **Task**: Verify Monitoring Docs.
-*   **Result**: Documentation matches "Stabilization Phase" reality.
+### 5. API Contract Policy
+- Create API contract policy document
+- Define source of truth and change process
 
-## Risks
-*   **Docker Rate Limits**: CI requires authentication.
-*   **Data Loss**: Git history cleanup is destructive (requires force push).
-*   **Hidden Regressions**: Repository tests may reveal significant broken logic.
+## Acceptance Criteria
+- [ ] OpenAPI generation enforced in CI
+- [ ] Postman smoke tests pass on PR
+- [ ] Federation endpoints documented or explicitly excluded
+- [ ] API change review process documented
 
-## Definition of Done
-*   [ ] `make test` runs efficiently (fast skip or fast pass).
-*   [ ] Security remediation scripts exist in `scripts/`.
-*   [ ] `internal/repository` tests pass.
-*   [ ] `README.md` is accurate.
+## References
+- [Sprint 15 Complete](docs/sprints/SPRINT15_COMPLETE.md)
+- [Quality Programme](docs/sprints/QUALITY_PROGRAMME.md)
+- [Sprint Backlog](sprint_backlog.md)

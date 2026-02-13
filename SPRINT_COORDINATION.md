@@ -1,33 +1,36 @@
-# Sprint Coordination: Operation Bedrock & Secure Launch
+# Sprint Coordination: Quality Programme - Sprint 16
 
-This document outlines the execution flow and agent handoffs for the current sprint.
+This document outlines the execution flow for the current sprint.
 
-## 🔄 Execution Sequence
+## Sprint 16: API Contract Reproducibility
 
-### Phase 1: Unblock & Secure (Parallel)
-*   **Builder 🛠️**: **IMMEDIATELY** pick up "Optimize Fail Fast" (#1).
-    *   *Goal*: Allow tests to be run locally without massive delays.
-    *   *Handoff*: Once done, signal QA/Sentinel that CI is faster.
-*   **Sentinel 🛡️**: **IMMEDIATELY** pick up "Credential Rotation" (#2) and "Git Cleanup" (#3).
-    *   *Goal*: Prepare the security scripts.
-    *   *Note*: These tasks can happen in parallel with Builder's work.
+**Goal:** Make the API contract stable and reproducible with CI enforcement.
 
-### Phase 2: Verification (Sequential)
-*   **Builder 🛠️**: Once "Fail Fast" is done, verify `internal/repository` tests (#4).
-    *   *Goal*: Ensure SQL logic is sound.
-    *   *Dependency*: Requires "Fail Fast" to be fixed so running tests isn't painful.
+**Prerequisites:** Sprint 15 complete. Mainline stable, all security PRs merged, coverage at 52.9%.
 
-### Phase 3: Documentation & Final Polish
-*   **Scribe 📝**: Update `README.md` and check Monitoring docs (#5).
-    *   *Goal*: Reflect the true state of the project.
-    *   *Trigger*: Can start anytime, but best after Phase 1.
+## Execution Sequence
 
-## 🚦 Handoff Protocols
+### Phase 1: CI Infrastructure
+1. Add CI job to regenerate OpenAPI types and fail on diff
+2. Validate existing `make generate-openapi` works on clean checkout
 
-*   **Builder -> Sentinel**: When `internal/testutil` is updated, ensure it doesn't break any security scanners (unlikely, but good to check).
-*   **Sentinel -> All**: When Credential Scripts are ready, broadcast that `.env` setup might change for production.
-*   **QA -> Builder**: If Load Tests (from Sprint 15 scope) are added, coordinate with Builder on where to run them.
+### Phase 2: Smoke Tests
+1. Add Postman smoke test workflow to run on PRs
+2. Ensure bounded runtime and clear failure reporting
 
-## ⚠️ Critical Flags
-*   **Do NOT** force push the Git History Cleanup changes without explicit human approval. Sentinel should only provide the *script/guide*.
-*   **Do NOT** merge broken repository tests. Fix the tests or the code.
+### Phase 3: Documentation
+1. Document federation "well-known" endpoints in OpenAPI or explicit exclusion list
+2. Add API review checklist to PR template
+3. Create API contract policy document
+
+## Acceptance Criteria
+- [ ] `make generate-openapi` produces deterministic output
+- [ ] CI job fails if generated types change
+- [ ] Postman smoke tests run on PR and report clearly
+- [ ] Federation endpoints documented or excluded
+- [ ] API change review process documented
+
+## References
+- [Sprint 15 Complete](docs/sprints/SPRINT15_COMPLETE.md)
+- [Quality Programme](docs/sprints/QUALITY_PROGRAMME.md)
+- [Sprint Backlog](sprint_backlog.md)

@@ -59,7 +59,7 @@ func main() {
 	root.Use(middleware.Compress(5))
 
 	// CORS and request size limiting
-	root.Use(appMiddleware.CORS())
+	root.Use(appMiddleware.CORS(cfg.CORSAllowedOrigins))
 	root.Use(appMiddleware.SizeLimiter(100 * 1024 * 1024)) // 100MB default, override for upload endpoints
 
 	// Mount the pre-registered application routes

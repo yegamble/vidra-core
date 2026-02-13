@@ -23,9 +23,9 @@ See [VALIDATION_REQUIRED.md](docs/development/VALIDATION_REQUIRED.md) for comple
 | **Lines of Code** | 185,654 | 76,034 source + 109,620 test code |
 | **Database Migrations** | 61 | Goose SQL migrations |
 | **API Endpoints** | ~184 | RESTful + WebSocket + Federation (OpenAPI-documented) |
-| **Coverage** | 48.7% | Full-repo short baseline (2026-02-12, up from 23.8%) |
-| **Security Tests** | 50+ | Including SSRF, virus scanning, auth |
-| **Automated Tests** | 2,139 | `func Test*` count across `*_test.go` files |
+| **Coverage** | 52.9% | Full-repo short baseline (2026-02-13, up from 23.8%) |
+| **Security Tests** | 50+ | Including SSRF, virus scanning, CORS, auth |
+| **Automated Tests** | 2,364 | `func Test*` count across `*_test.go` files |
 
 ## Features
 
@@ -260,17 +260,17 @@ See the full documentation index at [docs/README.md](docs/README.md).
 - 200+ API endpoints
 - Full ActivityPub federation
 
-**Sprint 15** (Current): Stabilize & Integrate
-- Merging security hardening PRs (secrets, injection fixes)
-- Consolidating OpenAPI generation
-- CI/test reliability improvements
+**Sprint 16** (Current): API Contract Reproducibility
+- OpenAPI CI enforcement (fail on generated code drift)
+- Postman smoke tests on PR
+- Federation endpoint documentation
 
 ### Feature Completion by Category
 
 | Category | Completion | Status | Notes |
 |----------|-----------|--------|-------|
 | **Core Platform** | 100% | ✅ Complete | Channels, subscriptions, comments, ratings, playlists, captions |
-| **Security & Auth** | 95% | ⚠️ PRs Pending | 2FA, E2EE, OAuth2 complete; hardening PRs in review |
+| **Security & Auth** | 100% | ✅ Complete | 2FA, E2EE, OAuth2, CORS origin validation, privilege escalation fix |
 | **Federation** | 100% | ✅ Complete | ActivityPub 100%, ATProto 75% (BETA) |
 | **P2P Distribution** | 100% | ✅ Complete | IPFS/WebTorrent, DHT, PEX, smart seeding |
 | **Live Streaming** | 100% | ✅ Complete | RTMP, HLS, chat, scheduling, analytics, VOD conversion |
@@ -278,28 +278,20 @@ See the full documentation index at [docs/README.md](docs/README.md).
 | **Analytics** | 100% | ✅ Complete | Video analytics, retention curves, channel stats |
 | **Plugin System** | 100% | ✅ Complete | Hook architecture, Ed25519 signatures, 17 permissions |
 | **Video Redundancy** | 100% | ✅ Complete | Cross-instance replication, health monitoring |
-| **Quality Programme** | 15% | 🔄 Sprint 15/20 | Stabilization and coverage uplift |
+| **Quality Programme** | 17% | 🔄 Sprint 16/20 | API contract, coverage uplift, release hardening |
 
 ### Quality Programme (Sprints 15-20)
 
 | Sprint | Focus | Status |
 |--------|-------|--------|
-| **Sprint 15** | Stabilize mainline; integrate PR queue | 🔄 In Progress |
-| **Sprint 16** | API contract reproducibility | Planned |
+| **Sprint 15** | Stabilize mainline; integrate PR queue | ✅ Complete |
+| **Sprint 16** | API contract reproducibility | 🔄 In Progress |
 | **Sprint 17** | Core services 100% coverage | Planned |
 | **Sprint 18** | Handlers/repos 90%+ coverage | Planned |
 | **Sprint 19** | Documentation accuracy pass | Planned |
 | **Sprint 20** | Release hardening | Planned |
 
 See [Quality Programme](docs/sprints/QUALITY_PROGRAMME.md) for full details.
-
-### Current Sprint: PR Queue Status
-
-| Priority | PRs | Focus |
-|----------|-----|-------|
-| **P0** | #229, #235, #227/#231 | Security + build stability |
-| **P1** | #242, #240, #238, #234 | DoS protection, CI, tests |
-| **P2** | #244 | Coverage uplift |
 
 ### Test Metrics
 
@@ -309,10 +301,10 @@ See [Quality Programme](docs/sprints/QUALITY_PROGRAMME.md) for full details.
 | **Test Files** | 232 | Test files across unit, integration, and E2E suites |
 | **Lines of Code** | 185,654 | 76,034 source + 109,620 test code |
 | **Database Migrations** | 61 | Goose SQL migrations |
-| **API Endpoints** | ~200 | RESTful + WebSocket + Federation (OpenAPI-documented) |
-| **Coverage** | 48.7% | Full-repo short baseline (target: 90%+ core) |
-| **Security Tests** | 50+ | SSRF, virus scanning, auth, input validation |
-| **Automated Tests** | 2,139 | `func Test*` count across `*_test.go` files |
+| **API Endpoints** | ~184 | RESTful + WebSocket + Federation (OpenAPI-documented) |
+| **Coverage** | 52.9% | Full-repo short baseline (target: 90%+ core) |
+| **Security Tests** | 50+ | SSRF, virus scanning, auth, CORS, input validation |
+| **Automated Tests** | 2,364 | `func Test*` count across `*_test.go` files |
 
 See [Project Management Documentation](docs/project-management/README.md), [Sprint History](docs/sprints/README.md), and [Quality Programme](docs/sprints/QUALITY_PROGRAMME.md) for detailed progress tracking.
 
