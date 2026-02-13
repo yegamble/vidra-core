@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -129,6 +130,77 @@ func TestSizeLimiter(t *testing.T) {
 
 		assert.Equal(t, http.StatusRequestEntityTooLarge, rr.Code)
 	})
+}
+
+func TestSizeLimiterWithOverrides(t *testing.T) {
+	defaultLimit := int64(1024)
+	uploadLimit := int64(4096)
+
+	handler := SizeLimiterWithOverrides(defaultLimit, []RequestSizeOverride{
+		{PathPrefix: "/api/v1/uploads", MaxBytes: uploadLimit},
+		{PathPrefix: "/api/v1/videos/", PathSuffix: "/upload", MaxBytes: uploadLimit},
+	})(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, err := io.ReadAll(r.Body); err != nil {
+			http.Error(w, "Request too large", http.StatusRequestEntityTooLarge)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	t.Run("uses default limit for normal route", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/videos", strings.NewReader(strings.Repeat("a", 2048)))
+		rr := httptest.NewRecorder()
+
+		handler.ServeHTTP(rr, req)
+
+		assert.Equal(t, http.StatusRequestEntityTooLarge, rr.Code)
+	})
+
+	t.Run("uses upload override for chunk route", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/uploads/session-1/chunks", strings.NewReader(strings.Repeat("a", 2048)))
+		rr := httptest.NewRecorder()
+
+		handler.ServeHTTP(rr, req)
+
+		assert.Equal(t, http.StatusOK, rr.Code)
+	})
+
+	t.Run("uses upload override for video upload route", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/videos/123/upload", strings.NewReader(strings.Repeat("a", 2048)))
+		rr := httptest.NewRecorder()
+
+		handler.ServeHTTP(rr, req)
+
+		assert.Equal(t, http.StatusOK, rr.Code)
+	})
+}
+
+func TestParseByteSize(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		want    int64
+		wantErr bool
+	}{
+		{name: "raw bytes", input: "1024", want: 1024},
+		{name: "megabytes", input: "10MB", want: 10 * 1000 * 1000},
+		{name: "mebibytes", input: "10MiB", want: 10 * 1024 * 1024},
+		{name: "with spaces", input: " 5 KB ", want: 5 * 1000},
+		{name: "invalid", input: "ten", wantErr: true},
+		{name: "zero", input: "0", wantErr: true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := ParseByteSize(tc.input)
+			if tc.wantErr {
+				assert.Error(t, err)
+				return
+			}
+			assert.NoError(t, err)
+			assert.Equal(t, tc.want, got)
+		})
+	}
 }
 
 func TestAPIKeyAuth(t *testing.T) {

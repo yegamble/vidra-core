@@ -32,6 +32,24 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 	generalLimiter := rlManager.CreateRateLimiter(cfg.RateLimitDuration, cfg.RateLimitRequests)
 	r.Use(generalLimiter.Limit)
 
+	defaultMaxRequestBytes, err := middleware.ParseByteSize(cfg.APIMaxRequestSize)
+	if err != nil {
+		defaultMaxRequestBytes = 10 * 1024 * 1024
+		log.Printf("Invalid API_MAX_REQUEST_SIZE value %q; using default %d bytes: %v", cfg.APIMaxRequestSize, defaultMaxRequestBytes, err)
+	}
+
+	uploadMaxRequestBytes := cfg.MaxUploadSize
+	if uploadMaxRequestBytes <= 0 {
+		uploadMaxRequestBytes = defaultMaxRequestBytes
+	}
+
+	// Enforce strict default request-body limits while allowing larger upload endpoints.
+	r.Use(middleware.SizeLimiterWithOverrides(defaultMaxRequestBytes, []middleware.RequestSizeOverride{
+		{PathPrefix: "/api/v1/uploads", MaxBytes: uploadMaxRequestBytes},
+		{PathPrefix: "/api/v1/videos/", PathSuffix: "/upload", MaxBytes: uploadMaxRequestBytes},
+		{PathPrefix: "/api/v1/users/me/avatar", MaxBytes: uploadMaxRequestBytes},
+	}))
+
 	// SECURITY: Create stricter rate limiters for critical endpoints
 	// These prevent abuse of authentication and resource-intensive operations
 	strictAuthLimiter := rlManager.CreateRateLimiter(60*time.Second, 5)    // 5 per minute for registration

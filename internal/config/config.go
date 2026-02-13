@@ -1,7 +1,6 @@
 package config
 
 import (
-	"flag"
 	"fmt"
 	"os"
 	"strconv"
@@ -297,10 +296,7 @@ func Load() (*Config, error) {
 
 	cfg := &Config{}
 
-	port := flag.Int("port", 8080, "Server port")
-	flag.Parse()
-
-	cfg.Port = *port
+	cfg.Port = parsePortFromArgs(os.Args[1:], 8080)
 	if envPort := os.Getenv("PORT"); envPort != "" {
 		if p, err := strconv.Atoi(envPort); err == nil {
 			cfg.Port = p
@@ -354,6 +350,9 @@ func Load() (*Config, error) {
 	cfg.JWTSecret = getEnvOrDefault("JWT_SECRET", "")
 	if cfg.JWTSecret == "" {
 		return nil, fmt.Errorf("JWT_SECRET is required")
+	}
+	if err := validateJWTSecret(cfg.JWTSecret); err != nil {
+		return nil, err
 	}
 
 	cfg.EnableIOTA = getBoolEnv("ENABLE_IOTA", false)
@@ -597,6 +596,74 @@ func Load() (*Config, error) {
 	cfg.FileTypeBlockingEnabled = getBoolEnv("FILE_TYPE_BLOCKING_ENABLED", true)
 
 	return cfg, nil
+}
+
+func parsePortFromArgs(args []string, defaultPort int) int {
+	port := defaultPort
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "-port" || arg == "--port":
+			if i+1 < len(args) {
+				if p, err := strconv.Atoi(args[i+1]); err == nil {
+					port = p
+				}
+				i++
+			}
+		case strings.HasPrefix(arg, "-port="):
+			if p, err := strconv.Atoi(strings.TrimPrefix(arg, "-port=")); err == nil {
+				port = p
+			}
+		case strings.HasPrefix(arg, "--port="):
+			if p, err := strconv.Atoi(strings.TrimPrefix(arg, "--port=")); err == nil {
+				port = p
+			}
+		}
+	}
+	return port
+}
+
+func validateJWTSecret(secret string) error {
+	if !isProductionEnvironment() {
+		return nil
+	}
+
+	normalized := strings.ToLower(strings.TrimSpace(secret))
+	if len(secret) < 32 {
+		return fmt.Errorf("JWT_SECRET is insecure for production: minimum length is 32 characters")
+	}
+
+	insecureSecrets := map[string]struct{}{
+		"your-super-secret-jwt-key-change-in-production": {},
+		"change-me":       {},
+		"changeme":        {},
+		"default":         {},
+		"secret":          {},
+		"jwt-secret":      {},
+		"test-secret":     {},
+		"test-jwt-secret": {},
+	}
+	if _, found := insecureSecrets[normalized]; found {
+		return fmt.Errorf("JWT_SECRET is insecure for production: replace placeholder/default value")
+	}
+
+	if strings.Contains(normalized, "change-in-production") {
+		return fmt.Errorf("JWT_SECRET is insecure for production: replace placeholder/default value")
+	}
+
+	return nil
+}
+
+func isProductionEnvironment() bool {
+	for _, key := range []string{"ENV", "APP_ENV", "ENVIRONMENT", "GO_ENV", "NODE_ENV"} {
+		value := strings.ToLower(strings.TrimSpace(os.Getenv(key)))
+		if value == "prod" || value == "production" {
+			return true
+		}
+	}
+
+	// Kubernetes deployments should always enforce secure secrets.
+	return os.Getenv("KUBERNETES_SERVICE_HOST") != ""
 }
 
 func getEnvOrDefault(key, defaultValue string) string {

@@ -44,7 +44,7 @@ var (
 func (y *YtDlp) ValidateURL(ctx context.Context, url string) error {
 	// Use --get-title to validate without downloading
 	// #nosec G204 - URL is validated and sanitized by domain layer
-	cmd := exec.CommandContext(ctx, y.binaryPath, "--get-title", "--no-warnings", url)
+	cmd := exec.CommandContext(ctx, y.binaryPath, "--get-title", "--no-warnings", "--", url)
 
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -66,6 +66,7 @@ func (y *YtDlp) ExtractMetadata(ctx context.Context, url string) (*domain.Import
 		"--dump-json",
 		"--no-warnings",
 		"--no-playlist", // Only get the single video, not playlist
+		"--",            // Stop option parsing before user-controlled URL
 		url,
 	}
 
@@ -155,6 +156,7 @@ func (y *YtDlp) Download(ctx context.Context, url, importID string, progressCall
 		"--newline",                                          // Output progress on new lines (easier to parse)
 		"--max-filesize", strconv.FormatInt(maxFileSize, 10), // Add size limit
 		"--output", outputTemplate,
+		"--", // Stop option parsing before user-controlled URL
 		url,
 	}
 
@@ -347,6 +349,7 @@ func (y *YtDlp) DownloadThumbnail(ctx context.Context, url, outputPath string) e
 		"--skip-download",
 		"--convert-thumbnails", "jpg",
 		"--output", outputPath,
+		"--", // Stop option parsing before user-controlled URL
 		url,
 	}
 

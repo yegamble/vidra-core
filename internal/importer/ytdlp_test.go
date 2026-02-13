@@ -43,7 +43,18 @@ func TestYtDlp_ValidateURL(t *testing.T) {
 	outputDir := t.TempDir()
 
 	t.Run("success", func(t *testing.T) {
-		binary := writeMockExecutable(t, `echo "Sample Title"`)
+		binary := writeMockExecutable(t, `
+has_delimiter=0
+for arg in "$@"; do
+  if [ "$arg" = "--" ]; then
+    has_delimiter=1
+  fi
+done
+if [ "$has_delimiter" -ne 1 ]; then
+  echo "missing -- delimiter" 1>&2
+  exit 1
+fi
+echo "Sample Title"`)
 		y := NewYtDlp(binary, outputDir)
 
 		if err := y.ValidateURL(context.Background(), "https://example.com/video"); err != nil {
@@ -82,7 +93,18 @@ func TestYtDlp_ExtractMetadata(t *testing.T) {
 	outputDir := t.TempDir()
 
 	t.Run("success", func(t *testing.T) {
-		binary := writeMockExecutable(t, `cat <<'EOF'
+		binary := writeMockExecutable(t, `
+has_delimiter=0
+for arg in "$@"; do
+  if [ "$arg" = "--" ]; then
+    has_delimiter=1
+  fi
+done
+if [ "$has_delimiter" -ne 1 ]; then
+  echo "missing -- delimiter" 1>&2
+  exit 1
+fi
+cat <<'EOF'
 {
   "title": "Test Video",
   "description": "Description",
@@ -170,6 +192,10 @@ prev=""
 for arg in "$@"; do
   if [ "$prev" = "--output" ]; then
     out="$arg"
+  fi
+  if [ "$arg" = "https://example.com/video" ] && [ "$prev" != "--" ]; then
+    echo "missing -- delimiter before URL" 1>&2
+    exit 1
   fi
   prev="$arg"
 done
@@ -399,7 +425,18 @@ func TestYtDlp_DownloadThumbnail(t *testing.T) {
 	outputDir := t.TempDir()
 
 	t.Run("success", func(t *testing.T) {
-		binary := writeMockExecutable(t, `exit 0`)
+		binary := writeMockExecutable(t, `
+has_delimiter=0
+for arg in "$@"; do
+  if [ "$arg" = "--" ]; then
+    has_delimiter=1
+  fi
+done
+if [ "$has_delimiter" -ne 1 ]; then
+  echo "missing -- delimiter" 1>&2
+  exit 1
+fi
+exit 0`)
 		y := NewYtDlp(binary, outputDir)
 
 		if err := y.DownloadThumbnail(context.Background(), "https://example.com/video", filepath.Join(outputDir, "thumb")); err != nil {
