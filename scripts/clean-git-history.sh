@@ -2,6 +2,7 @@
 
 # clean-git-history.sh
 # Guide and helper for cleaning sensitive files (like .env) from git history.
+# Referenced by docs/security/GIT_HISTORY_CLEANUP.md
 # WARNING: This script uses git filter-branch/bfg which rewrites history.
 # You will need to force push after this.
 
