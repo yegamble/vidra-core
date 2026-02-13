@@ -41,6 +41,12 @@ func (m *mockEncodingRepo) GetJobCounts(_ context.Context) (map[string]int64, er
 func (m *mockEncodingRepo) ResetStaleJobs(_ context.Context, _ time.Duration) (int64, error) {
 	return 0, nil
 }
+func (m *mockEncodingRepo) GetJobsByVideoID(_ context.Context, _ string) ([]*domain.EncodingJob, error) {
+	return nil, nil
+}
+func (m *mockEncodingRepo) GetActiveJobsByVideoID(_ context.Context, _ string) ([]*domain.EncodingJob, error) {
+	return nil, nil
+}
 
 // Ensure mockEncodingRepo satisfies the interface at compile time
 var _ usecase.EncodingRepository = (*mockEncodingRepo)(nil)

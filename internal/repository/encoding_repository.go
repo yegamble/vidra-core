@@ -356,3 +356,85 @@ func (r *encodingRepository) ResetStaleJobs(ctx context.Context, staleDuration t
 
 	return rowsAffected, nil
 }
+
+// GetJobsByVideoID returns all encoding jobs for a specific video
+func (r *encodingRepository) GetJobsByVideoID(ctx context.Context, videoID string) ([]*domain.EncodingJob, error) {
+	query := `
+		SELECT id, video_id, source_file_path, source_resolution,
+		       target_resolutions, status, progress, error_message,
+		       started_at, completed_at, created_at, updated_at
+		FROM encoding_jobs
+		WHERE video_id = $1
+		ORDER BY created_at DESC`
+
+	rows, err := r.db.QueryContext(ctx, query, videoID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get jobs for video: %w", err)
+	}
+	defer rows.Close()
+
+	var jobs []*domain.EncodingJob
+	for rows.Next() {
+		var job domain.EncodingJob
+		var targetResolutions pq.StringArray
+
+		err := rows.Scan(
+			&job.ID, &job.VideoID, &job.SourceFilePath, &job.SourceResolution,
+			&targetResolutions, &job.Status, &job.Progress, &job.ErrorMessage,
+			&job.StartedAt, &job.CompletedAt, &job.CreatedAt, &job.UpdatedAt,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan job: %w", err)
+		}
+
+		job.TargetResolutions = []string(targetResolutions)
+		jobs = append(jobs, &job)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating over rows: %w", err)
+	}
+
+	return jobs, nil
+}
+
+// GetActiveJobsByVideoID returns only active (pending or processing) encoding jobs for a specific video
+func (r *encodingRepository) GetActiveJobsByVideoID(ctx context.Context, videoID string) ([]*domain.EncodingJob, error) {
+	query := `
+		SELECT id, video_id, source_file_path, source_resolution,
+		       target_resolutions, status, progress, error_message,
+		       started_at, completed_at, created_at, updated_at
+		FROM encoding_jobs
+		WHERE video_id = $1 AND status IN ('pending', 'processing')
+		ORDER BY created_at DESC`
+
+	rows, err := r.db.QueryContext(ctx, query, videoID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get active jobs for video: %w", err)
+	}
+	defer rows.Close()
+
+	var jobs []*domain.EncodingJob
+	for rows.Next() {
+		var job domain.EncodingJob
+		var targetResolutions pq.StringArray
+
+		err := rows.Scan(
+			&job.ID, &job.VideoID, &job.SourceFilePath, &job.SourceResolution,
+			&targetResolutions, &job.Status, &job.Progress, &job.ErrorMessage,
+			&job.StartedAt, &job.CompletedAt, &job.CreatedAt, &job.UpdatedAt,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan job: %w", err)
+		}
+
+		job.TargetResolutions = []string(targetResolutions)
+		jobs = append(jobs, &job)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating over rows: %w", err)
+	}
+
+	return jobs, nil
+}

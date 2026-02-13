@@ -119,6 +119,22 @@ func (m *mockEncodingRepo) ResetStaleJobs(ctx context.Context, staleDuration tim
 	return args.Get(0).(int64), args.Error(1)
 }
 
+func (m *mockEncodingRepo) GetJobsByVideoID(ctx context.Context, videoID string) ([]*domain.EncodingJob, error) {
+	args := m.Called(ctx, videoID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*domain.EncodingJob), args.Error(1)
+}
+
+func (m *mockEncodingRepo) GetActiveJobsByVideoID(ctx context.Context, videoID string) ([]*domain.EncodingJob, error) {
+	args := m.Called(ctx, videoID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*domain.EncodingJob), args.Error(1)
+}
+
 type mockVideoRepo struct{ mock.Mock }
 
 func (m *mockVideoRepo) Create(ctx context.Context, video *domain.Video) error {

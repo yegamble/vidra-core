@@ -528,3 +528,185 @@ func createTestEncodingJob(t *testing.T, repo usecase.EncodingRepository, ctx co
 
 	return job
 }
+
+func TestEncodingRepository_GetJobsByVideoID(t *testing.T) {
+	testDB := testutil.SetupTestDB(t)
+	encodingRepo := NewEncodingRepository(testDB.DB)
+	videoRepo := NewVideoRepository(testDB.DB)
+	userRepo := NewUserRepository(testDB.DB)
+
+	ctx := context.Background()
+
+	// Create test user and videos
+	user := createTestUser(t, userRepo, ctx, "testuser", "test@example.com")
+	video1 := createTestVideo(t, videoRepo, ctx, user.ID, "Test Video 1")
+	video2 := createTestVideo(t, videoRepo, ctx, user.ID, "Test Video 2")
+
+	// Create multiple jobs for video1
+	job1 := createTestEncodingJob(t, encodingRepo, ctx, video1.ID)
+	time.Sleep(10 * time.Millisecond) // Ensure different timestamps
+
+	job2 := &domain.EncodingJob{
+		ID:                uuid.NewString(),
+		VideoID:           video1.ID,
+		SourceFilePath:    "/path/to/source2.mp4",
+		SourceResolution:  "720p",
+		TargetResolutions: []string{"720p", "480p"},
+		Status:            domain.EncodingStatusCompleted,
+		Progress:          100,
+		CreatedAt:         time.Now(),
+		UpdatedAt:         time.Now(),
+		CompletedAt:       &time.Time{},
+	}
+	err := encodingRepo.CreateJob(ctx, job2)
+	require.NoError(t, err)
+
+	job3 := &domain.EncodingJob{
+		ID:                uuid.NewString(),
+		VideoID:           video1.ID,
+		SourceFilePath:    "/path/to/source3.mp4",
+		SourceResolution:  "480p",
+		TargetResolutions: []string{"480p"},
+		Status:            domain.EncodingStatusFailed,
+		Progress:          50,
+		ErrorMessage:      "FFmpeg error",
+		CreatedAt:         time.Now(),
+		UpdatedAt:         time.Now(),
+	}
+	err = encodingRepo.CreateJob(ctx, job3)
+	require.NoError(t, err)
+
+	// Create job for video2
+	job4 := createTestEncodingJob(t, encodingRepo, ctx, video2.ID)
+
+	// Test GetJobsByVideoID for video1
+	t.Run("get all jobs for video1", func(t *testing.T) {
+		jobs, err := encodingRepo.GetJobsByVideoID(ctx, video1.ID)
+		require.NoError(t, err)
+		require.Len(t, jobs, 3)
+
+		// Verify order (newest first)
+		assert.Equal(t, job3.ID, jobs[0].ID)
+		assert.Equal(t, job2.ID, jobs[1].ID)
+		assert.Equal(t, job1.ID, jobs[2].ID)
+
+		// Verify statuses
+		assert.Equal(t, domain.EncodingStatusFailed, jobs[0].Status)
+		assert.Equal(t, domain.EncodingStatusCompleted, jobs[1].Status)
+		assert.Equal(t, domain.EncodingStatusPending, jobs[2].Status)
+	})
+
+	// Test GetJobsByVideoID for video2
+	t.Run("get all jobs for video2", func(t *testing.T) {
+		jobs, err := encodingRepo.GetJobsByVideoID(ctx, video2.ID)
+		require.NoError(t, err)
+		require.Len(t, jobs, 1)
+		assert.Equal(t, job4.ID, jobs[0].ID)
+	})
+
+	// Test GetJobsByVideoID for non-existent video
+	t.Run("get jobs for non-existent video", func(t *testing.T) {
+		jobs, err := encodingRepo.GetJobsByVideoID(ctx, uuid.NewString())
+		require.NoError(t, err)
+		assert.Empty(t, jobs)
+	})
+}
+
+func TestEncodingRepository_GetActiveJobsByVideoID(t *testing.T) {
+	testDB := testutil.SetupTestDB(t)
+	encodingRepo := NewEncodingRepository(testDB.DB)
+	videoRepo := NewVideoRepository(testDB.DB)
+	userRepo := NewUserRepository(testDB.DB)
+
+	ctx := context.Background()
+
+	// Create test user and video
+	user := createTestUser(t, userRepo, ctx, "testuser", "test@example.com")
+	video := createTestVideo(t, videoRepo, ctx, user.ID, "Test Video")
+
+	// Create jobs with different statuses
+	pendingJob := &domain.EncodingJob{
+		ID:                uuid.NewString(),
+		VideoID:           video.ID,
+		SourceFilePath:    "/path/to/pending.mp4",
+		SourceResolution:  "1080p",
+		TargetResolutions: []string{"1080p", "720p"},
+		Status:            domain.EncodingStatusPending,
+		Progress:          0,
+		CreatedAt:         time.Now(),
+		UpdatedAt:         time.Now(),
+	}
+	err := encodingRepo.CreateJob(ctx, pendingJob)
+	require.NoError(t, err)
+
+	processingJob := &domain.EncodingJob{
+		ID:                uuid.NewString(),
+		VideoID:           video.ID,
+		SourceFilePath:    "/path/to/processing.mp4",
+		SourceResolution:  "720p",
+		TargetResolutions: []string{"720p", "480p"},
+		Status:            domain.EncodingStatusProcessing,
+		Progress:          45,
+		StartedAt:         &time.Time{},
+		CreatedAt:         time.Now(),
+		UpdatedAt:         time.Now(),
+	}
+	err = encodingRepo.CreateJob(ctx, processingJob)
+	require.NoError(t, err)
+
+	completedJob := &domain.EncodingJob{
+		ID:                uuid.NewString(),
+		VideoID:           video.ID,
+		SourceFilePath:    "/path/to/completed.mp4",
+		SourceResolution:  "480p",
+		TargetResolutions: []string{"480p"},
+		Status:            domain.EncodingStatusCompleted,
+		Progress:          100,
+		CompletedAt:       &time.Time{},
+		CreatedAt:         time.Now(),
+		UpdatedAt:         time.Now(),
+	}
+	err = encodingRepo.CreateJob(ctx, completedJob)
+	require.NoError(t, err)
+
+	failedJob := &domain.EncodingJob{
+		ID:                uuid.NewString(),
+		VideoID:           video.ID,
+		SourceFilePath:    "/path/to/failed.mp4",
+		SourceResolution:  "360p",
+		TargetResolutions: []string{"360p"},
+		Status:            domain.EncodingStatusFailed,
+		Progress:          30,
+		ErrorMessage:      "FFmpeg crash",
+		CreatedAt:         time.Now(),
+		UpdatedAt:         time.Now(),
+	}
+	err = encodingRepo.CreateJob(ctx, failedJob)
+	require.NoError(t, err)
+
+	// Test GetActiveJobsByVideoID
+	t.Run("get only active jobs", func(t *testing.T) {
+		jobs, err := encodingRepo.GetActiveJobsByVideoID(ctx, video.ID)
+		require.NoError(t, err)
+		require.Len(t, jobs, 2) // Only pending and processing
+
+		// Check we got the right jobs
+		jobIDs := make(map[string]bool)
+		for _, job := range jobs {
+			jobIDs[job.ID] = true
+			assert.True(t, job.Status == domain.EncodingStatusPending || job.Status == domain.EncodingStatusProcessing)
+		}
+
+		assert.True(t, jobIDs[pendingJob.ID])
+		assert.True(t, jobIDs[processingJob.ID])
+		assert.False(t, jobIDs[completedJob.ID])
+		assert.False(t, jobIDs[failedJob.ID])
+	})
+
+	// Test GetActiveJobsByVideoID for non-existent video
+	t.Run("get active jobs for non-existent video", func(t *testing.T) {
+		jobs, err := encodingRepo.GetActiveJobsByVideoID(ctx, uuid.NewString())
+		require.NoError(t, err)
+		assert.Empty(t, jobs)
+	})
+}

@@ -2540,6 +2540,131 @@ paths:
                           type: string
                           format: date-time
 
+  # Get specific encoding job
+  /api/v1/encoding/jobs/{jobID}:
+    get:
+      tags:
+        - Encoding
+      summary: Get encoding job details
+      description: Get details for a specific encoding job. Only accessible by the video owner, administrators, or moderators.
+      operationId: getEncodingJob
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: jobID
+          in: path
+          required: true
+          description: The encoding job ID
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Encoding job details
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/EncodingJob'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden - user does not have access to this job
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Job not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # Get encoding jobs for a video
+  /api/v1/videos/{id}/encoding-jobs:
+    get:
+      tags:
+        - Videos
+        - Encoding
+      summary: Get encoding jobs for a video
+      description: Get all encoding jobs for a specific video. Only accessible by the video owner, administrators, or moderators. Supports filtering by active jobs only.
+      operationId: getVideoEncodingJobs
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: The video ID
+          schema:
+            type: string
+            format: uuid
+        - name: active
+          in: query
+          required: false
+          description: Filter to show only active (pending/processing) jobs
+          schema:
+            type: boolean
+      responses:
+        '200':
+          description: Encoding jobs for the video
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      video_id:
+                        type: string
+                        format: uuid
+                      jobs:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/EncodingJob'
+                      total:
+                        type: integer
+                        description: Total number of jobs
+                      active_count:
+                        type: integer
+                        description: Number of active jobs
+                      overall_progress:
+                        type: integer
+                        minimum: 0
+                        maximum: 100
+                        description: Average progress of active jobs
+        '400':
+          description: Invalid video ID format
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden - user does not have access to this video
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Video not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
   # User endpoints
   /api/v1/users:
     post:
@@ -3352,6 +3477,59 @@ components:
           type: string
           description: Default stream quality
           example: "720p"
+
+    EncodingJob:
+      type: object
+      properties:
+        id:
+          type: string
+          description: Unique identifier for the encoding job
+        video_id:
+          type: string
+          format: uuid
+          description: ID of the video being encoded
+        resolution:
+          type: string
+          description: Target resolution (e.g., "720p", "1080p")
+        status:
+          type: string
+          enum: [pending, processing, completed, failed]
+          description: Current status of the encoding job
+        progress:
+          type: integer
+          minimum: 0
+          maximum: 100
+          description: Progress percentage (0-100)
+        error_message:
+          type: string
+          nullable: true
+          description: Error message if job failed
+        started_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: When the job started processing
+        completed_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: When the job completed
+        created_at:
+          type: string
+          format: date-time
+          description: When the job was created
+        updated_at:
+          type: string
+          format: date-time
+          description: When the job was last updated
+      required:
+        - id
+        - video_id
+        - resolution
+        - status
+        - progress
+        - created_at
+        - updated_at
       required: [qualities, default]
 
     WrappedQualitiesResponse:

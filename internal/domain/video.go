@@ -191,6 +191,8 @@ type EncodingJob struct {
 	TargetResolutions []string       `json:"target_resolutions" db:"target_resolutions"`
 	Status            EncodingStatus `json:"status" db:"status"`
 	Progress          int            `json:"progress" db:"progress"` // 0-100
+	CurrentResolution string         `json:"current_resolution,omitempty" db:"current_resolution"`
+	Duration          int            `json:"duration,omitempty" db:"duration"` // seconds
 	ErrorMessage      string         `json:"error_message" db:"error_message"`
 	StartedAt         *time.Time     `json:"started_at" db:"started_at"`
 	CompletedAt       *time.Time     `json:"completed_at" db:"completed_at"`

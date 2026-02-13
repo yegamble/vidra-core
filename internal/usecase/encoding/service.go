@@ -1,7 +1,9 @@
 package encoding
 
 import (
+	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -9,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -221,7 +224,7 @@ func (s *service) encodeResolutions(ctx context.Context, job *domain.EncodingJob
 			}
 			outPlaylist := filepath.Join(resDir, "stream.m3u8")
 			segPattern := filepath.Join(resDir, "segment_%05d.ts")
-			if err := s.transcodeHLS(ctx, job.SourceFilePath, h, outPlaylist, segPattern); err != nil {
+			if err := s.transcodeHLS(ctx, job.SourceFilePath, h, outPlaylist, segPattern, job.ID); err != nil {
 				errCh <- fmt.Errorf("encode %s: %w", label, err)
 				return
 			}
@@ -524,7 +527,7 @@ func (s *service) triggerCaptionGeneration(ctx context.Context, videoID string) 
 	_, _ = s.captionGen.CreateJob(ctx, vidUUID, userUUID, req)
 }
 
-func (s *service) transcodeHLS(ctx context.Context, input string, height int, outPlaylist string, segPattern string) error {
+func (s *service) transcodeHLS(ctx context.Context, input string, height int, outPlaylist string, segPattern string, jobID string) error {
 	args := []string{
 		"-y",
 		"-i", input,
@@ -539,6 +542,12 @@ func (s *service) transcodeHLS(ctx context.Context, input string, height int, ou
 		"-hls_playlist_type", "vod",
 		"-hls_segment_filename", segPattern,
 		outPlaylist,
+	}
+
+	// Use progress tracking if jobID is provided
+	if jobID != "" {
+		resLabel := fmt.Sprintf("%dp", height)
+		return s.execFFmpegWithProgress(ctx, args, jobID, resLabel)
 	}
 	return s.execFFmpeg(ctx, args)
 }
@@ -631,6 +640,176 @@ func validateBinaryPath(path string) error {
 	// Reject paths with suspicious characters that could be used for injection
 	if strings.ContainsAny(cleanPath, ";|&$`") {
 		return fmt.Errorf("path contains suspicious characters: %s", path)
+	}
+
+	return nil
+}
+
+// getVideoDuration uses ffprobe to get the duration of a video file
+func (s *service) getVideoDuration(ctx context.Context, input string) (time.Duration, error) {
+	bin := "ffprobe"
+	if s.cfg.FFMPEGPath != "" {
+		// If FFMPEGPath is specified, assume ffprobe is in the same directory
+		bin = filepath.Join(filepath.Dir(s.cfg.FFMPEGPath), "ffprobe")
+	}
+
+	args := []string{
+		"-v", "error",
+		"-show_entries", "format=duration",
+		"-of", "json",
+		input,
+	}
+
+	// #nosec G204 - ffprobe binary path is controlled and args are vetted
+	cmd := exec.CommandContext(ctx, bin, args...)
+	output, err := cmd.Output()
+	if err != nil {
+		return 0, fmt.Errorf("ffprobe failed: %w", err)
+	}
+
+	var result struct {
+		Format struct {
+			Duration string `json:"duration"`
+		} `json:"format"`
+	}
+
+	if err := json.Unmarshal(output, &result); err != nil {
+		return 0, fmt.Errorf("failed to parse ffprobe output: %w", err)
+	}
+
+	seconds, err := strconv.ParseFloat(result.Format.Duration, 64)
+	if err != nil {
+		return 0, fmt.Errorf("failed to parse duration: %w", err)
+	}
+
+	return time.Duration(seconds) * time.Second, nil
+}
+
+// execFFmpegWithProgress executes FFmpeg with real-time progress tracking
+func (s *service) execFFmpegWithProgress(ctx context.Context, args []string, jobID string, resolutionLabel string) error {
+	bin := s.cfg.FFMPEGPath
+	if bin == "" {
+		bin = "ffmpeg"
+	}
+
+	// Validate binary path to prevent command injection
+	if err := validateBinaryPath(bin); err != nil {
+		return fmt.Errorf("invalid ffmpeg binary path: %w", err)
+	}
+
+	// Get video duration first for progress calculation
+	// Extract input file from args
+	var inputFile string
+	for i, arg := range args {
+		if arg == "-i" && i+1 < len(args) {
+			inputFile = args[i+1]
+			break
+		}
+	}
+
+	if inputFile == "" {
+		return fmt.Errorf("no input file found in ffmpeg args")
+	}
+
+	duration, err := s.getVideoDuration(ctx, inputFile)
+	if err != nil {
+		// Log error but continue without fine-grained progress
+		log.Printf("Warning: Could not get video duration for progress tracking: %v", err)
+		// Fall back to regular execution
+		return s.execFFmpeg(ctx, args)
+	}
+
+	// Add progress reporting to stderr
+	progressArgs := append([]string{"-progress", "pipe:2", "-stats"}, args...)
+
+	// #nosec G204 - ffmpeg binary path is validated by validateBinaryPath and args are vetted
+	cmd := exec.CommandContext(ctx, bin, progressArgs...)
+
+	// Create pipes for stderr to capture progress
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return fmt.Errorf("failed to create stderr pipe: %w", err)
+	}
+
+	// Start the command
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("failed to start ffmpeg: %w", err)
+	}
+
+	// Create progress parser
+	progressParser := NewProgressParser(duration)
+
+	// Parse progress in a goroutine
+	progressDone := make(chan struct{})
+	go func() {
+		defer close(progressDone)
+		scanner := bufio.NewScanner(stderr)
+		lastProgress := -1
+		progressBatch := make(map[string]string)
+
+		for scanner.Scan() {
+			line := scanner.Text()
+
+			// FFmpeg -progress outputs key=value pairs
+			if strings.Contains(line, "=") {
+				parts := strings.SplitN(line, "=", 2)
+				if len(parts) == 2 {
+					progressBatch[parts[0]] = parts[1]
+				}
+			}
+
+			// When we see "progress=", process the batch
+			if line == "progress=continue" || line == "progress=end" {
+				// Convert batch to string for parsing
+				var batchStr strings.Builder
+				for k, v := range progressBatch {
+					batchStr.WriteString(k)
+					batchStr.WriteString("=")
+					batchStr.WriteString(v)
+					batchStr.WriteString("\n")
+				}
+
+				progress, _, _, found := progressParser.ParseProgressStats(batchStr.String())
+				if found && progress != lastProgress {
+					// Update every 5% or on significant changes
+					if progress >= lastProgress+5 || progress == 100 {
+						if err := s.repo.UpdateJobProgress(ctx, jobID, progress); err != nil {
+							log.Printf("Failed to update job progress: %v", err)
+						}
+						lastProgress = progress
+						log.Printf("Encoding %s for job %s: %d%%", resolutionLabel, jobID, progress)
+					}
+				}
+
+				// Clear batch for next set
+				progressBatch = make(map[string]string)
+			}
+
+			// Also try to parse the line directly for older FFmpeg versions
+			if progress, found := progressParser.ParseLine(line); found && progress != lastProgress {
+				if progress >= lastProgress+5 || progress == 100 {
+					if err := s.repo.UpdateJobProgress(ctx, jobID, progress); err != nil {
+						log.Printf("Failed to update job progress: %v", err)
+					}
+					lastProgress = progress
+					log.Printf("Encoding %s for job %s: %d%%", resolutionLabel, jobID, progress)
+				}
+			}
+		}
+
+		if err := scanner.Err(); err != nil {
+			log.Printf("Error reading ffmpeg output: %v", err)
+		}
+	}()
+
+	// Wait for command to complete
+	err = cmd.Wait()
+
+	// Wait for progress parsing to finish
+	<-progressDone
+
+	if err != nil {
+		return fmt.Errorf("ffmpeg failed: %w", err)
 	}
 
 	return nil

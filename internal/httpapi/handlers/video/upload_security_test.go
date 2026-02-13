@@ -129,50 +129,56 @@ func (m *MockVideoRepository) CreateRemoteVideo(ctx context.Context, video *doma
 	return nil
 }
 
-type MockEncodingRepository struct {
+type MockEncodingRepoUpload struct {
 	mock.Mock
 }
 
 // Stubs for encoding repo
-func (m *MockEncodingRepository) CreateJob(ctx context.Context, job *domain.EncodingJob) error {
+func (m *MockEncodingRepoUpload) CreateJob(ctx context.Context, job *domain.EncodingJob) error {
 	return nil
 }
-func (m *MockEncodingRepository) GetJob(ctx context.Context, jobID string) (*domain.EncodingJob, error) {
+func (m *MockEncodingRepoUpload) GetJob(ctx context.Context, jobID string) (*domain.EncodingJob, error) {
 	return nil, nil
 }
-func (m *MockEncodingRepository) GetJobByVideoID(ctx context.Context, videoID string) (*domain.EncodingJob, error) {
+func (m *MockEncodingRepoUpload) GetJobByVideoID(ctx context.Context, videoID string) (*domain.EncodingJob, error) {
 	return nil, nil
 }
-func (m *MockEncodingRepository) UpdateJob(ctx context.Context, job *domain.EncodingJob) error {
+func (m *MockEncodingRepoUpload) UpdateJob(ctx context.Context, job *domain.EncodingJob) error {
 	return nil
 }
-func (m *MockEncodingRepository) DeleteJob(ctx context.Context, jobID string) error { return nil }
-func (m *MockEncodingRepository) GetPendingJobs(ctx context.Context, limit int) ([]*domain.EncodingJob, error) {
+func (m *MockEncodingRepoUpload) DeleteJob(ctx context.Context, jobID string) error { return nil }
+func (m *MockEncodingRepoUpload) GetPendingJobs(ctx context.Context, limit int) ([]*domain.EncodingJob, error) {
 	return nil, nil
 }
-func (m *MockEncodingRepository) GetNextJob(ctx context.Context) (*domain.EncodingJob, error) {
+func (m *MockEncodingRepoUpload) GetNextJob(ctx context.Context) (*domain.EncodingJob, error) {
 	return nil, nil
 }
-func (m *MockEncodingRepository) UpdateJobStatus(ctx context.Context, jobID string, status domain.EncodingStatus) error {
+func (m *MockEncodingRepoUpload) UpdateJobStatus(ctx context.Context, jobID string, status domain.EncodingStatus) error {
 	return nil
 }
-func (m *MockEncodingRepository) UpdateJobProgress(ctx context.Context, jobID string, progress int) error {
+func (m *MockEncodingRepoUpload) UpdateJobProgress(ctx context.Context, jobID string, progress int) error {
 	return nil
 }
-func (m *MockEncodingRepository) SetJobError(ctx context.Context, jobID string, errorMsg string) error {
+func (m *MockEncodingRepoUpload) SetJobError(ctx context.Context, jobID string, errorMsg string) error {
 	return nil
 }
-func (m *MockEncodingRepository) GetJobCounts(ctx context.Context) (map[string]int64, error) {
+func (m *MockEncodingRepoUpload) GetJobCounts(ctx context.Context) (map[string]int64, error) {
 	return nil, nil
 }
-func (m *MockEncodingRepository) ResetStaleJobs(ctx context.Context, staleDuration time.Duration) (int64, error) {
+func (m *MockEncodingRepoUpload) ResetStaleJobs(ctx context.Context, staleDuration time.Duration) (int64, error) {
 	return 0, nil
+}
+func (m *MockEncodingRepoUpload) GetJobsByVideoID(ctx context.Context, videoID string) ([]*domain.EncodingJob, error) {
+	return nil, nil
+}
+func (m *MockEncodingRepoUpload) GetActiveJobsByVideoID(ctx context.Context, videoID string) ([]*domain.EncodingJob, error) {
+	return nil, nil
 }
 
 func TestInitiateUpload_Security_FileSizeLimit(t *testing.T) {
 	mockUploadRepo := new(MockUploadRepository)
 	mockVideoRepo := new(MockVideoRepository)
-	mockEncodingRepo := new(MockEncodingRepository)
+	mockEncodingRepo := new(MockEncodingRepoUpload)
 
 	cfg := &config.Config{} // Defaults are fine
 	tempDir := t.TempDir()
@@ -211,7 +217,7 @@ func TestInitiateUpload_Security_FileSizeLimit(t *testing.T) {
 func TestInitiateUpload_Security_InvalidExtension(t *testing.T) {
 	mockUploadRepo := new(MockUploadRepository)
 	mockVideoRepo := new(MockVideoRepository)
-	mockEncodingRepo := new(MockEncodingRepository)
+	mockEncodingRepo := new(MockEncodingRepoUpload)
 
 	cfg := &config.Config{}
 	tempDir := t.TempDir()
@@ -273,7 +279,7 @@ func TestInitiateUpload_Security_InvalidExtension(t *testing.T) {
 func TestUploadChunk_Security_BoundsCheck(t *testing.T) {
 	mockUploadRepo := new(MockUploadRepository)
 	mockVideoRepo := new(MockVideoRepository)
-	mockEncodingRepo := new(MockEncodingRepository)
+	mockEncodingRepo := new(MockEncodingRepoUpload)
 
 	cfg := &config.Config{
 		ValidationStrictMode:        false,

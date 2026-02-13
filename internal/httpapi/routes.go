@@ -173,6 +173,9 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 			playlistHandlers := social.NewPlaylistHandlers(deps.PlaylistService)
 			r.With(middleware.Auth(cfg.JWTSecret)).Post("/{id}/watch-later", playlistHandlers.AddToWatchLater)
 
+			// Encoding jobs for a specific video
+			r.With(middleware.Auth(cfg.JWTSecret)).Get("/{id}/encoding-jobs", video.GetEncodingJobsByVideoHandler(deps.EncodingRepo, deps.VideoRepo))
+
 			// Caption endpoints
 			captionHandlers := social.NewCaptionHandlers(deps.CaptionService, deps.VideoRepo)
 			r.Route("/{id}/captions", func(r chi.Router) {
@@ -221,6 +224,15 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 
 		r.Route("/encoding", func(r chi.Router) {
 			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/status", video.EncodingStatusHandlerEnhanced(deps.EncodingRepo, cfg, deps.EncodingScheduler))
+
+			// Individual job access (requires authentication)
+			r.Route("/jobs", func(r chi.Router) {
+				r.Use(middleware.Auth(cfg.JWTSecret))
+				r.Get("/{jobID}", video.GetEncodingJobHandler(deps.EncodingRepo, deps.VideoRepo))
+			})
+
+			// User's encoding jobs
+			r.With(middleware.Auth(cfg.JWTSecret)).Get("/my-jobs", video.GetMyEncodingJobsHandler(deps.EncodingRepo, deps.VideoRepo))
 		})
 
 		r.Route("/users", func(r chi.Router) {

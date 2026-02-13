@@ -173,6 +173,12 @@ func (s *unitEncodingRepoStub) GetJobCounts(ctx context.Context) (map[string]int
 func (s *unitEncodingRepoStub) ResetStaleJobs(context.Context, time.Duration) (int64, error) {
 	return 0, nil
 }
+func (s *unitEncodingRepoStub) GetJobsByVideoID(context.Context, string) ([]*domain.EncodingJob, error) {
+	return nil, nil
+}
+func (s *unitEncodingRepoStub) GetActiveJobsByVideoID(context.Context, string) ([]*domain.EncodingJob, error) {
+	return nil, nil
+}
 
 func decodeHandlerResponse(t *testing.T, rr *httptest.ResponseRecorder) Response {
 	t.Helper()

@@ -24,4 +24,8 @@ type EncodingRepository interface {
 	UpdateJobProgress(ctx context.Context, jobID string, progress int) error
 	SetJobError(ctx context.Context, jobID string, errorMsg string) error
 	GetJobCounts(ctx context.Context) (map[string]int64, error)
+
+	// Job queries
+	GetJobsByVideoID(ctx context.Context, videoID string) ([]*domain.EncodingJob, error)
+	GetActiveJobsByVideoID(ctx context.Context, videoID string) ([]*domain.EncodingJob, error)
 }

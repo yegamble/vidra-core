@@ -328,6 +328,26 @@ func (r *mockEncodingRepository) ResetStaleJobs(ctx context.Context, staleDurati
 	return count, nil
 }
 
+func (r *mockEncodingRepository) GetJobsByVideoID(ctx context.Context, videoID string) ([]*domain.EncodingJob, error) {
+	var jobs []*domain.EncodingJob
+	for _, job := range r.jobs {
+		if job.VideoID == videoID {
+			jobs = append(jobs, job)
+		}
+	}
+	return jobs, nil
+}
+
+func (r *mockEncodingRepository) GetActiveJobsByVideoID(ctx context.Context, videoID string) ([]*domain.EncodingJob, error) {
+	var jobs []*domain.EncodingJob
+	for _, job := range r.jobs {
+		if job.VideoID == videoID && (job.Status == domain.EncodingStatusPending || job.Status == domain.EncodingStatusProcessing) {
+			jobs = append(jobs, job)
+		}
+	}
+	return jobs, nil
+}
+
 type mockVideoRepository struct {
 	videos map[string]*domain.Video
 }
