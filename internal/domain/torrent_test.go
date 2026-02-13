@@ -875,6 +875,204 @@ func TestNewTorrentStats(t *testing.T) {
 	assert.WithinDuration(t, time.Now(), stats.CreatedAt, time.Second)
 }
 
+func TestValidateMagnetURI_EdgeCases(t *testing.T) {
+	tests := []struct {
+		name    string
+		uri     string
+		wantErr bool
+		errMsg  string
+	}{
+		{
+			name:    "Valid magnet with multiple trackers",
+			uri:     "magnet:?xt=urn:btih:1234567890abcdef1234567890abcdef12345678&tr=wss://tracker.openwebtorrent.com&tr=udp://tracker.example.com:6969",
+			wantErr: false,
+		},
+		{
+			name:    "Valid magnet with display name and tracker",
+			uri:     "magnet:?xt=urn:btih:1234567890abcdef1234567890abcdef12345678&dn=my+video.mp4&tr=https://tracker.example.com/announce",
+			wantErr: false,
+		},
+		{
+			name:    "Magnet with xt but wrong btih prefix",
+			uri:     "magnet:?xt=urn:sha1:1234567890abcdef1234567890abcdef12345678",
+			wantErr: true,
+			errMsg:  "xt must start with 'urn:btih:'",
+		},
+		{
+			name:    "Just magnet prefix with no params",
+			uri:     "magnet:?",
+			wantErr: true,
+			errMsg:  "missing xt parameter",
+		},
+		{
+			name:    "Magnet prefix only (no question mark)",
+			uri:     "magnet:",
+			wantErr: true,
+			errMsg:  "must start with 'magnet:?'",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateMagnetURI(tt.uri)
+			if tt.wantErr {
+				assert.Error(t, err)
+				if tt.errMsg != "" {
+					assert.Contains(t, err.Error(), tt.errMsg)
+				}
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestValidateTrackerURL_EdgeCases(t *testing.T) {
+	tests := []struct {
+		name    string
+		url     string
+		wantErr bool
+		errMsg  string
+	}{
+		{
+			name:    "Empty URL",
+			url:     "",
+			wantErr: true,
+			errMsg:  "unsupported scheme",
+		},
+		{
+			name:    "FTP scheme (unsupported)",
+			url:     "ftp://tracker.example.com/announce",
+			wantErr: true,
+			errMsg:  "unsupported scheme",
+		},
+		{
+			name:    "Valid HTTP tracker",
+			url:     "http://tracker.example.com:8080/announce",
+			wantErr: false,
+		},
+		{
+			name:    "Valid HTTPS tracker",
+			url:     "https://tracker.example.com/announce",
+			wantErr: false,
+		},
+		{
+			name:    "Valid UDP tracker",
+			url:     "udp://tracker.example.com:6969",
+			wantErr: false,
+		},
+		{
+			name:    "Valid WSS tracker",
+			url:     "wss://tracker.openwebtorrent.com",
+			wantErr: false,
+		},
+		{
+			name:    "Valid WS tracker",
+			url:     "ws://tracker.example.com/announce",
+			wantErr: false,
+		},
+		{
+			name:    "SSH scheme (unsupported)",
+			url:     "ssh://tracker.example.com",
+			wantErr: true,
+			errMsg:  "unsupported scheme",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateTrackerURL(tt.url)
+			if tt.wantErr {
+				assert.Error(t, err)
+				if tt.errMsg != "" {
+					assert.Contains(t, err.Error(), tt.errMsg)
+				}
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestNewTorrentWebSeed_EdgeCases(t *testing.T) {
+	videoTorrentID := uuid.New()
+
+	tests := []struct {
+		name           string
+		videoTorrentID uuid.UUID
+		url            string
+		priority       int
+		wantErr        bool
+		errMsg         string
+	}{
+		{
+			name:           "Empty URL",
+			videoTorrentID: videoTorrentID,
+			url:            "",
+			priority:       1,
+			wantErr:        true,
+		},
+		{
+			name:           "Valid HTTP URL (non-TLS)",
+			videoTorrentID: videoTorrentID,
+			url:            "http://cdn.example.com/videos/file.mp4",
+			priority:       1,
+			wantErr:        false,
+		},
+		{
+			name:           "Valid HTTPS URL",
+			videoTorrentID: videoTorrentID,
+			url:            "https://cdn.example.com/videos/file.mp4",
+			priority:       1,
+			wantErr:        false,
+		},
+		{
+			name:           "FTP URL (invalid scheme)",
+			videoTorrentID: videoTorrentID,
+			url:            "ftp://cdn.example.com/videos/file.mp4",
+			priority:       1,
+			wantErr:        true,
+			errMsg:         "must use HTTP or HTTPS",
+		},
+		{
+			name:           "WSS URL (invalid scheme for web seed)",
+			videoTorrentID: videoTorrentID,
+			url:            "wss://cdn.example.com/videos/file.mp4",
+			priority:       1,
+			wantErr:        true,
+			errMsg:         "must use HTTP or HTTPS",
+		},
+		{
+			name:           "Zero priority (valid)",
+			videoTorrentID: videoTorrentID,
+			url:            "https://cdn.example.com/videos/file.mp4",
+			priority:       0,
+			wantErr:        false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			webSeed, err := NewTorrentWebSeed(tt.videoTorrentID, tt.url, tt.priority)
+
+			if tt.wantErr {
+				assert.Error(t, err)
+				assert.Nil(t, webSeed)
+				if tt.errMsg != "" {
+					assert.Contains(t, err.Error(), tt.errMsg)
+				}
+			} else {
+				require.NoError(t, err)
+				require.NotNil(t, webSeed)
+				assert.Equal(t, tt.videoTorrentID, webSeed.VideoTorrentID)
+				assert.Equal(t, tt.url, webSeed.URL)
+				assert.Equal(t, tt.priority, webSeed.Priority)
+				assert.True(t, webSeed.IsActive)
+			}
+		})
+	}
+}
+
 func TestTorrentStats_GetTransferRatio(t *testing.T) {
 	tests := []struct {
 		name            string

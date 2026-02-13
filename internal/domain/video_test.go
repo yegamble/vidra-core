@@ -254,6 +254,114 @@ func TestDefaultResolution(t *testing.T) {
 	assert.Contains(t, SupportedResolutions, DefaultResolution, "Default resolution should be supported")
 }
 
+func TestGetTargetResolutions_EdgeCases(t *testing.T) {
+	tests := []struct {
+		name             string
+		sourceResolution string
+		wantContains     []string
+		wantExactLen     int
+		wantNotContains  []string
+	}{
+		{
+			name:             "Below minimum resolution (144p is not standard)",
+			sourceResolution: "144p",
+			// 144p is not in ResolutionHeights, so fallback is returned
+			wantContains: []string{"720p", "480p", "360p", "240p"},
+			wantExactLen: 4,
+		},
+		{
+			name:             "1440p includes all up to 1440p",
+			sourceResolution: "1440p",
+			wantContains:     []string{"240p", "360p", "480p", "720p", "1080p", "1440p"},
+			wantExactLen:     6,
+			wantNotContains:  []string{"2160p", "4320p"},
+		},
+		{
+			name:             "240p only includes 240p",
+			sourceResolution: "240p",
+			wantContains:     []string{"240p"},
+			wantExactLen:     1,
+			wantNotContains:  []string{"360p", "480p", "720p"},
+		},
+		{
+			name:             "Empty string is treated as invalid",
+			sourceResolution: "",
+			wantContains:     []string{"240p"},
+			wantExactLen:     4, // fallback: 720p, 480p, 360p, 240p
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			targets := GetTargetResolutions(tt.sourceResolution)
+
+			if tt.wantExactLen > 0 {
+				assert.Len(t, targets, tt.wantExactLen)
+			}
+
+			for _, want := range tt.wantContains {
+				assert.Contains(t, targets, want, "should contain %s", want)
+			}
+
+			for _, notWant := range tt.wantNotContains {
+				assert.NotContains(t, targets, notWant, "should not contain %s", notWant)
+			}
+		})
+	}
+}
+
+func TestDetectResolutionFromHeight_EdgeCases(t *testing.T) {
+	tests := []struct {
+		name     string
+		height   int
+		expected string
+	}{
+		// Exact boundary values
+		{"Exact 240", 240, "240p"},
+		{"Exact 360", 360, "360p"},
+		{"Exact 480", 480, "480p"},
+		{"Exact 720", 720, "720p"},
+		{"Exact 1080", 1080, "1080p"},
+		{"Exact 1440", 1440, "1440p"},
+		{"Exact 2160", 2160, "2160p"},
+
+		// Values between thresholds
+		{"Between 240 and 360 - closer to 240", 270, "240p"},
+		{"Between 240 and 360 - midpoint 300 prefers lower", 300, "240p"},
+		{"Between 240 and 360 - closer to 360", 340, "360p"},
+		{"Between 360 and 480 - closer to 360", 400, "360p"},
+		{"Between 360 and 480 - closer to 480", 460, "480p"},
+		{"Between 480 and 720 - closer to 480", 550, "480p"},
+		{"Between 480 and 720 - closer to 720", 650, "720p"},
+		{"Between 720 and 1080 - closer to 720", 850, "720p"},
+		{"Between 720 and 1080 - closer to 1080", 950, "1080p"},
+		{"Between 1080 and 1440 - closer to 1080", 1200, "1080p"},
+		{"Between 1080 and 1440 - closer to 1440", 1350, "1440p"},
+		{"Between 1440 and 2160 - closer to 1440", 1600, "1440p"},
+		{"Between 1440 and 2160 - closer to 2160", 1900, "2160p"},
+
+		// Very small height
+		{"Very small height 1", 1, "240p"},
+		{"Zero height", 0, "240p"},
+		{"Height 50", 50, "240p"},
+
+		// Very large height
+		{"Very large height beyond 4320", 8000, "4320p"},
+		{"Slightly above 4320", 4400, "4320p"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := DetectResolutionFromHeight(tt.height)
+			assert.Equal(t, tt.expected, result)
+
+			// Verify the result is always a valid resolution
+			_, exists := ResolutionHeights[result]
+			assert.True(t, exists, "Detected resolution %s should be valid", result)
+		})
+	}
+}
+
 func TestAbsFunction(t *testing.T) {
 	tests := []struct {
 		input    int

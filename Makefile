@@ -3,7 +3,7 @@ SHELL := /bin/bash
 .PHONY: help deps lint test test-unit test-integration test-integration-ci build docker docker-up docker-down clean dev install-tools test-ci postman-newman postman-e2e run logs run-with-encoding act-test
 .PHONY: migrate-dev migrate-test migrate-custom migrate-dev-docker migrate-test-docker migrate-up db-ensure-dev-user
 .PHONY: validate-all validate-quick
-.PHONY: coverage-check coverage-report
+.PHONY: coverage-check coverage-report coverage-per-package
 .PHONY: update-readme-metrics check-readme-metrics
 
 .PHONY: install-hooks
@@ -105,6 +105,13 @@ coverage-check: ## Run tests and fail if coverage drops below threshold
 	else \
 		echo "PASS: Coverage $${COVERAGE}% meets threshold $(COVERAGE_THRESHOLD)%"; \
 	fi
+
+coverage-per-package: ## Check per-package coverage thresholds
+	@if [ ! -f coverage.out ]; then \
+		echo "coverage.out not found. Run 'make test-unit' with COVERAGE_OUT=coverage.out first."; \
+		exit 1; \
+	fi
+	@./scripts/check-per-package-coverage.sh coverage.out
 
 coverage-report: ## Generate and open HTML coverage report
 	@$(GO_ENV) go test -coverprofile=coverage.out ./...

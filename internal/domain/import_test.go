@@ -4,6 +4,9 @@ import (
 	"encoding/json"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestImportStatus_IsTerminal(t *testing.T) {
@@ -464,4 +467,386 @@ func TestVideoImport_StateMachine(t *testing.T) {
 	if imp.CanTransition(ImportStatusDownloading) {
 		t.Error("Should not be able to transition from completed status")
 	}
+}
+
+func TestValidateURLWithSSRFCheck(t *testing.T) {
+	tests := []struct {
+		name       string
+		url        string
+		wantErr    bool
+		errContain string
+	}{
+		{
+			name:       "Empty URL fails basic validation",
+			url:        "",
+			wantErr:    true,
+			errContain: "empty",
+		},
+		{
+			name:       "Invalid scheme fails basic validation",
+			url:        "ftp://example.com",
+			wantErr:    true,
+			errContain: "scheme",
+		},
+		{
+			name:       "Localhost resolves to private IP",
+			url:        "https://localhost/path",
+			wantErr:    true,
+			errContain: "private",
+		},
+		{
+			name:       "127.0.0.1 is private",
+			url:        "https://127.0.0.1/path",
+			wantErr:    true,
+			errContain: "private",
+		},
+		{
+			name:       "URL with port and localhost",
+			url:        "https://localhost:8080/path",
+			wantErr:    true,
+			errContain: "private",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateURLWithSSRFCheck(tt.url)
+			if tt.wantErr {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.errContain)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestCanTransition_AdditionalEdgeCases(t *testing.T) {
+	tests := []struct {
+		name       string
+		fromStatus ImportStatus
+		toStatus   ImportStatus
+		expected   bool
+	}{
+		{
+			name:       "Completed to Failed is blocked (terminal)",
+			fromStatus: ImportStatusCompleted,
+			toStatus:   ImportStatusFailed,
+			expected:   false,
+		},
+		{
+			name:       "Completed to Completed is blocked (terminal)",
+			fromStatus: ImportStatusCompleted,
+			toStatus:   ImportStatusCompleted,
+			expected:   false,
+		},
+		{
+			name:       "Unknown status to Downloading returns false",
+			fromStatus: ImportStatus("unknown"),
+			toStatus:   ImportStatusDownloading,
+			expected:   false,
+		},
+		{
+			name:       "Unknown status to Failed returns false",
+			fromStatus: ImportStatus("unknown"),
+			toStatus:   ImportStatusFailed,
+			expected:   false,
+		},
+		{
+			name:       "Downloading to Downloading is invalid",
+			fromStatus: ImportStatusDownloading,
+			toStatus:   ImportStatusDownloading,
+			expected:   false,
+		},
+		{
+			name:       "Processing to Downloading is invalid",
+			fromStatus: ImportStatusProcessing,
+			toStatus:   ImportStatusDownloading,
+			expected:   false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			imp := &VideoImport{Status: tt.fromStatus}
+			got := imp.CanTransition(tt.toStatus)
+			assert.Equal(t, tt.expected, got)
+		})
+	}
+}
+
+func TestMarkProcessing_InvalidTransitions(t *testing.T) {
+	tests := []struct {
+		name       string
+		fromStatus ImportStatus
+		wantErr    bool
+	}{
+		{
+			name:       "From pending should fail",
+			fromStatus: ImportStatusPending,
+			wantErr:    true,
+		},
+		{
+			name:       "From completed should fail",
+			fromStatus: ImportStatusCompleted,
+			wantErr:    true,
+		},
+		{
+			name:       "From processing should fail (already processing)",
+			fromStatus: ImportStatusProcessing,
+			wantErr:    true,
+		},
+		{
+			name:       "From failed should fail",
+			fromStatus: ImportStatusFailed,
+			wantErr:    true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			imp := &VideoImport{Status: tt.fromStatus}
+			err := imp.MarkProcessing()
+			if tt.wantErr {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), "cannot transition")
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestComplete_InvalidTransitions(t *testing.T) {
+	tests := []struct {
+		name       string
+		fromStatus ImportStatus
+		wantErr    bool
+	}{
+		{
+			name:       "From pending should fail",
+			fromStatus: ImportStatusPending,
+			wantErr:    true,
+		},
+		{
+			name:       "From downloading should fail",
+			fromStatus: ImportStatusDownloading,
+			wantErr:    true,
+		},
+		{
+			name:       "From completed should fail (terminal)",
+			fromStatus: ImportStatusCompleted,
+			wantErr:    true,
+		},
+		{
+			name:       "From failed should fail (terminal)",
+			fromStatus: ImportStatusFailed,
+			wantErr:    true,
+		},
+		{
+			name:       "From cancelled should fail (terminal)",
+			fromStatus: ImportStatusCancelled,
+			wantErr:    true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			imp := &VideoImport{Status: tt.fromStatus}
+			err := imp.Complete("video-999")
+			assert.Error(t, err)
+			assert.Contains(t, err.Error(), "cannot transition")
+		})
+	}
+}
+
+func TestFail_FromTerminalNonFailedStatus(t *testing.T) {
+	tests := []struct {
+		name       string
+		fromStatus ImportStatus
+		wantErr    bool
+	}{
+		{
+			name:       "From completed should fail (terminal, non-failed)",
+			fromStatus: ImportStatusCompleted,
+			wantErr:    true,
+		},
+		{
+			name:       "From cancelled should fail (terminal, non-failed)",
+			fromStatus: ImportStatusCancelled,
+			wantErr:    true,
+		},
+		{
+			name:       "From failed should succeed (re-fail is allowed)",
+			fromStatus: ImportStatusFailed,
+			wantErr:    false,
+		},
+		{
+			name:       "From pending should succeed",
+			fromStatus: ImportStatusPending,
+			wantErr:    false,
+		},
+		{
+			name:       "From processing should succeed",
+			fromStatus: ImportStatusProcessing,
+			wantErr:    false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			imp := &VideoImport{Status: tt.fromStatus}
+			err := imp.Fail("something went wrong")
+			if tt.wantErr {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), "cannot transition from terminal status")
+			} else {
+				assert.NoError(t, err)
+				assert.Equal(t, ImportStatusFailed, imp.Status)
+				require.NotNil(t, imp.ErrorMessage)
+				assert.Equal(t, "something went wrong", *imp.ErrorMessage)
+			}
+		})
+	}
+}
+
+func TestSetMetadata_FileSizeBranches(t *testing.T) {
+	tests := []struct {
+		name             string
+		metadata         *ImportMetadata
+		wantFileSize     *int64
+		wantMetadataJSON bool
+	}{
+		{
+			name: "Filesize > 0 sets FileSizeBytes from Filesize",
+			metadata: &ImportMetadata{
+				Title:    "Video with filesize",
+				Filesize: 5000000,
+			},
+			wantFileSize:     int64Ptr(5000000),
+			wantMetadataJSON: true,
+		},
+		{
+			name: "FilesizeApprox > 0 sets FileSizeBytes when Filesize is 0",
+			metadata: &ImportMetadata{
+				Title:          "Video with approx filesize",
+				Filesize:       0,
+				FilesizeApprox: 3000000,
+			},
+			wantFileSize:     int64Ptr(3000000),
+			wantMetadataJSON: true,
+		},
+		{
+			name: "Both zero leaves FileSizeBytes nil",
+			metadata: &ImportMetadata{
+				Title:          "Video with no filesize",
+				Filesize:       0,
+				FilesizeApprox: 0,
+			},
+			wantFileSize:     nil,
+			wantMetadataJSON: true,
+		},
+		{
+			name: "Filesize takes precedence over FilesizeApprox",
+			metadata: &ImportMetadata{
+				Title:          "Video with both sizes",
+				Filesize:       8000000,
+				FilesizeApprox: 7500000,
+			},
+			wantFileSize:     int64Ptr(8000000),
+			wantMetadataJSON: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			imp := &VideoImport{}
+			err := imp.SetMetadata(tt.metadata)
+			require.NoError(t, err)
+
+			if tt.wantMetadataJSON {
+				assert.NotEmpty(t, imp.Metadata)
+			}
+
+			assert.Equal(t, tt.metadata, imp.MetadataParsed)
+
+			if tt.wantFileSize == nil {
+				assert.Nil(t, imp.FileSizeBytes)
+			} else {
+				require.NotNil(t, imp.FileSizeBytes)
+				assert.Equal(t, *tt.wantFileSize, *imp.FileSizeBytes)
+			}
+		})
+	}
+}
+
+func TestGetMetadata_EdgeCases(t *testing.T) {
+	t.Run("Returns cached MetadataParsed without unmarshalling", func(t *testing.T) {
+		cached := &ImportMetadata{
+			Title:    "Cached Video",
+			Duration: 120,
+		}
+		imp := &VideoImport{
+			MetadataParsed: cached,
+			// Metadata (JSON) is intentionally empty - should still return cached
+		}
+
+		result, err := imp.GetMetadata()
+		require.NoError(t, err)
+		assert.Equal(t, cached, result)
+		assert.Equal(t, "Cached Video", result.Title)
+	})
+
+	t.Run("Empty Metadata with nil MetadataParsed returns error", func(t *testing.T) {
+		imp := &VideoImport{
+			Metadata:       nil,
+			MetadataParsed: nil,
+		}
+
+		result, err := imp.GetMetadata()
+		assert.Error(t, err)
+		assert.Nil(t, result)
+		assert.Contains(t, err.Error(), "no metadata available")
+	})
+
+	t.Run("Invalid JSON in Metadata returns unmarshal error", func(t *testing.T) {
+		imp := &VideoImport{
+			Metadata: json.RawMessage(`{invalid json`),
+		}
+
+		result, err := imp.GetMetadata()
+		assert.Error(t, err)
+		assert.Nil(t, result)
+		assert.Contains(t, err.Error(), "failed to unmarshal metadata")
+	})
+
+	t.Run("Valid JSON sets MetadataParsed cache on first call", func(t *testing.T) {
+		metadata := &ImportMetadata{
+			Title:       "Fresh Video",
+			Description: "A test",
+			Duration:    60,
+		}
+		metadataJSON, err := json.Marshal(metadata)
+		require.NoError(t, err)
+
+		imp := &VideoImport{
+			Metadata: metadataJSON,
+		}
+
+		// MetadataParsed is nil before first call
+		assert.Nil(t, imp.MetadataParsed)
+
+		result, err := imp.GetMetadata()
+		require.NoError(t, err)
+		assert.Equal(t, "Fresh Video", result.Title)
+
+		// MetadataParsed should now be cached
+		assert.NotNil(t, imp.MetadataParsed)
+		assert.Equal(t, result, imp.MetadataParsed)
+	})
+}
+
+// int64Ptr is a helper to create a pointer to an int64 value.
+func int64Ptr(v int64) *int64 {
+	return &v
 }

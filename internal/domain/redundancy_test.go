@@ -756,6 +756,354 @@ func TestValidateRedundancyStrategy(t *testing.T) {
 	}
 }
 
+func TestInstancePeer_Validate_EdgeCases(t *testing.T) {
+	tests := []struct {
+		name    string
+		peer    *InstancePeer
+		wantErr bool
+		errMsg  string
+	}{
+		{
+			name: "URL with no host (just scheme)",
+			peer: &InstancePeer{
+				InstanceURL:         "https://",
+				MaxRedundancySizeGB: 0,
+			},
+			wantErr: true,
+			errMsg:  "host is required",
+		},
+		{
+			name: "large negative storage",
+			peer: &InstancePeer{
+				InstanceURL:         "https://example.com",
+				MaxRedundancySizeGB: -999,
+			},
+			wantErr: true,
+			errMsg:  "max redundancy size cannot be negative",
+		},
+		{
+			name: "URL with path and port",
+			peer: &InstancePeer{
+				InstanceURL:         "https://peertube.example.com:8443/api",
+				MaxRedundancySizeGB: 50,
+			},
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.peer.Validate()
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Validate() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+
+			if tt.wantErr && tt.errMsg != "" {
+				if err.Error() == "" || !contains(err.Error(), tt.errMsg) {
+					t.Errorf("Validate() error = %v, want error containing %v", err, tt.errMsg)
+				}
+			}
+		})
+	}
+}
+
+func TestInstancePeer_CalculateHealthScore_EdgeCases(t *testing.T) {
+	now := time.Now()
+	recentSuccess := now.Add(-1 * time.Hour)
+	monthAgo := now.Add(-30 * 24 * time.Hour)
+
+	tests := []struct {
+		name           string
+		peer           *InstancePeer
+		wantScoreRange [2]float64
+	}{
+		{
+			name: "all perfect metrics - active, no failures, recent contact and sync success",
+			peer: &InstancePeer{
+				IsActive:          true,
+				FailedSyncCount:   0,
+				LastContactedAt:   &recentSuccess,
+				LastSyncSuccessAt: &recentSuccess,
+			},
+			wantScoreRange: [2]float64{1.0, 1.0}, // 1.0 base + 0.1 bonus, clamped to 1.0
+		},
+		{
+			name: "all worst metrics - active but extremely degraded",
+			peer: &InstancePeer{
+				IsActive:        true,
+				FailedSyncCount: 20,        // -1.0 from failures
+				LastContactedAt: &monthAgo, // heavy time penalty
+			},
+			wantScoreRange: [2]float64{0.0, 0.0}, // score goes negative, clamped to 0.0
+		},
+		{
+			name: "exactly zero score boundary - inactive overrides all",
+			peer: &InstancePeer{
+				IsActive:          false,
+				FailedSyncCount:   0,
+				LastContactedAt:   &recentSuccess,
+				LastSyncSuccessAt: &recentSuccess,
+			},
+			wantScoreRange: [2]float64{0.0, 0.0},
+		},
+		{
+			name: "high failures but recent sync success",
+			peer: &InstancePeer{
+				IsActive:          true,
+				FailedSyncCount:   10,             // -0.5
+				LastContactedAt:   &recentSuccess, // no penalty (< 24h)
+				LastSyncSuccessAt: &recentSuccess, // +0.1 bonus
+			},
+			wantScoreRange: [2]float64{0.5, 0.7}, // 1.0 - 0.5 + 0.1 = 0.6
+		},
+		{
+			name: "single failure no contact ever",
+			peer: &InstancePeer{
+				IsActive:        true,
+				FailedSyncCount: 1, // -0.05
+				// LastContactedAt nil => -0.3
+			},
+			wantScoreRange: [2]float64{0.6, 0.7}, // 1.0 - 0.05 - 0.3 = 0.65
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			score := tt.peer.CalculateHealthScore()
+
+			if score < tt.wantScoreRange[0] || score > tt.wantScoreRange[1] {
+				t.Errorf("CalculateHealthScore() = %v, want between %v and %v",
+					score, tt.wantScoreRange[0], tt.wantScoreRange[1])
+			}
+		})
+	}
+}
+
+func TestRedundancyPolicy_Validate_EdgeCases(t *testing.T) {
+	tests := []struct {
+		name    string
+		policy  *RedundancyPolicy
+		wantErr bool
+		errMsg  string
+	}{
+		{
+			name: "target instance count of zero",
+			policy: &RedundancyPolicy{
+				Name:                    "test-policy",
+				Strategy:                RedundancyStrategyRecent,
+				TargetInstanceCount:     0,
+				MinInstanceCount:        1,
+				EvaluationIntervalHours: 24,
+			},
+			wantErr: true,
+			errMsg:  "target instance count must be at least 1",
+		},
+		{
+			name: "min instance count of zero",
+			policy: &RedundancyPolicy{
+				Name:                    "test-policy",
+				Strategy:                RedundancyStrategyRecent,
+				TargetInstanceCount:     2,
+				MinInstanceCount:        0,
+				EvaluationIntervalHours: 24,
+			},
+			wantErr: true,
+			errMsg:  "minimum instance count must be at least 1",
+		},
+		{
+			name: "zero evaluation interval",
+			policy: &RedundancyPolicy{
+				Name:                    "test-policy",
+				Strategy:                RedundancyStrategyRecent,
+				TargetInstanceCount:     2,
+				MinInstanceCount:        1,
+				EvaluationIntervalHours: 0,
+			},
+			wantErr: true,
+			errMsg:  "evaluation interval must be positive",
+		},
+		{
+			name: "invalid strategy on policy",
+			policy: &RedundancyPolicy{
+				Name:                    "test-policy",
+				Strategy:                RedundancyStrategy("invalid"),
+				TargetInstanceCount:     2,
+				MinInstanceCount:        1,
+				EvaluationIntervalHours: 24,
+			},
+			wantErr: true,
+		},
+		{
+			name: "max age less than min age",
+			policy: func() *RedundancyPolicy {
+				maxAge := 5
+				return &RedundancyPolicy{
+					Name:                    "test-policy",
+					Strategy:                RedundancyStrategyRecent,
+					TargetInstanceCount:     2,
+					MinInstanceCount:        1,
+					MinAgeDays:              10,
+					MaxAgeDays:              &maxAge,
+					EvaluationIntervalHours: 24,
+				}
+			}(),
+			wantErr: true,
+			errMsg:  "max age days must be greater than min age days",
+		},
+		{
+			name: "max age equal to min age",
+			policy: func() *RedundancyPolicy {
+				maxAge := 10
+				return &RedundancyPolicy{
+					Name:                    "test-policy",
+					Strategy:                RedundancyStrategyRecent,
+					TargetInstanceCount:     2,
+					MinInstanceCount:        1,
+					MinAgeDays:              10,
+					MaxAgeDays:              &maxAge,
+					EvaluationIntervalHours: 24,
+				}
+			}(),
+			wantErr: true,
+			errMsg:  "max age days must be greater than min age days",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.policy.Validate()
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Validate() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+
+			if tt.wantErr && tt.errMsg != "" {
+				if err.Error() == "" || !contains(err.Error(), tt.errMsg) {
+					t.Errorf("Validate() error = %v, want error containing %v", err, tt.errMsg)
+				}
+			}
+		})
+	}
+}
+
+func TestRedundancyPolicy_IsValidStrategy(t *testing.T) {
+	tests := []struct {
+		name     string
+		strategy RedundancyStrategy
+		want     bool
+	}{
+		{"recent strategy", RedundancyStrategyRecent, true},
+		{"most_viewed strategy", RedundancyStrategyMostViewed, true},
+		{"trending strategy", RedundancyStrategyTrending, true},
+		{"manual strategy", RedundancyStrategyManual, true},
+		{"all strategy", RedundancyStrategyAll, true},
+		{"empty strategy", RedundancyStrategy(""), false},
+		{"invalid strategy", RedundancyStrategy("geographic"), false},
+		{"cost strategy (not a real one)", RedundancyStrategy("cost"), false},
+		{"speed strategy (not a real one)", RedundancyStrategy("speed"), false},
+		{"reliability strategy (not a real one)", RedundancyStrategy("reliability"), false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			policy := &RedundancyPolicy{Strategy: tt.strategy}
+			got := policy.IsValidStrategy()
+			if got != tt.want {
+				t.Errorf("IsValidStrategy() = %v, want %v for strategy %q", got, tt.want, tt.strategy)
+			}
+		})
+	}
+}
+
+func TestVideoRedundancy_IsValidStrategy(t *testing.T) {
+	tests := []struct {
+		name     string
+		strategy RedundancyStrategy
+		want     bool
+	}{
+		{"recent", RedundancyStrategyRecent, true},
+		{"most_viewed", RedundancyStrategyMostViewed, true},
+		{"trending", RedundancyStrategyTrending, true},
+		{"manual", RedundancyStrategyManual, true},
+		{"all", RedundancyStrategyAll, true},
+		{"empty", RedundancyStrategy(""), false},
+		{"invalid", RedundancyStrategy("invalid"), false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			v := &VideoRedundancy{Strategy: tt.strategy}
+			got := v.IsValidStrategy()
+			if got != tt.want {
+				t.Errorf("IsValidStrategy() = %v, want %v for strategy %q", got, tt.want, tt.strategy)
+			}
+		})
+	}
+}
+
+func TestCalculateNextSyncTime(t *testing.T) {
+	tests := []struct {
+		name             string
+		attemptCount     int
+		baseDelayMinutes int
+		minDelay         time.Duration
+		maxDelay         time.Duration
+	}{
+		{
+			name:             "zero attempts",
+			attemptCount:     0,
+			baseDelayMinutes: 60,
+			minDelay:         59 * time.Minute,
+			maxDelay:         61 * time.Minute,
+		},
+		{
+			name:             "one attempt doubles delay",
+			attemptCount:     1,
+			baseDelayMinutes: 60,
+			minDelay:         119 * time.Minute,
+			maxDelay:         121 * time.Minute,
+		},
+		{
+			name:             "two attempts quadruples delay",
+			attemptCount:     2,
+			baseDelayMinutes: 60,
+			minDelay:         239 * time.Minute,
+			maxDelay:         241 * time.Minute,
+		},
+		{
+			name:             "high attempt count caps at 24 hours",
+			attemptCount:     10,
+			baseDelayMinutes: 60,
+			minDelay:         1439 * time.Minute,
+			maxDelay:         1441 * time.Minute,
+		},
+		{
+			name:             "small base delay with many attempts",
+			attemptCount:     5,
+			baseDelayMinutes: 1,
+			minDelay:         31 * time.Minute,
+			maxDelay:         33 * time.Minute, // 1*2^5 = 32
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			before := time.Now()
+			result := calculateNextSyncTime(tt.attemptCount, tt.baseDelayMinutes)
+			after := time.Now()
+
+			minExpected := before.Add(tt.minDelay)
+			maxExpected := after.Add(tt.maxDelay)
+
+			if result.Before(minExpected) || result.After(maxExpected) {
+				t.Errorf("calculateNextSyncTime() = %v, want between %v and %v",
+					result, minExpected, maxExpected)
+			}
+		})
+	}
+}
+
 // Helper function for substring checking
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) && (s == substr || len(s) > len(substr) && (s[:len(substr)] == substr ||

@@ -413,6 +413,48 @@ func TestCreateLiveStreamParams_Validate(t *testing.T) {
 	}
 }
 
+func TestLiveStream_IsEnded(t *testing.T) {
+	tests := []struct {
+		name   string
+		status string
+		want   bool
+	}{
+		{"Ended stream", StreamStatusEnded, true},
+		{"Waiting stream", StreamStatusWaiting, false},
+		{"Live stream", StreamStatusLive, false},
+		{"Error stream", StreamStatusError, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stream := &LiveStream{Status: tt.status}
+			assert.Equal(t, tt.want, stream.IsEnded())
+		})
+	}
+}
+
+func TestGenerateStreamKey_Length(t *testing.T) {
+	t.Run("Key is non-empty and at least 32 chars", func(t *testing.T) {
+		key, err := GenerateStreamKey()
+		require.NoError(t, err)
+		assert.NotEmpty(t, key)
+		// base64 encoding of 32 bytes produces 44 characters (with padding)
+		assert.GreaterOrEqual(t, len(key), 32, "stream key should be at least 32 characters")
+	})
+
+	t.Run("Multiple keys are unique and consistently sized", func(t *testing.T) {
+		keys := make(map[string]struct{})
+		for i := 0; i < 10; i++ {
+			key, err := GenerateStreamKey()
+			require.NoError(t, err)
+			assert.NotEmpty(t, key)
+			assert.GreaterOrEqual(t, len(key), 32)
+			keys[key] = struct{}{}
+		}
+		assert.Len(t, keys, 10, "all generated keys should be unique")
+	})
+}
+
 func TestValidationHelpers(t *testing.T) {
 	t.Run("isValidStreamStatus", func(t *testing.T) {
 		assert.True(t, isValidStreamStatus(StreamStatusWaiting))
