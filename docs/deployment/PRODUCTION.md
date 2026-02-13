@@ -520,52 +520,7 @@ psql -h localhost -U postgres -d athena < backup_20240101.sql
 
 ## 🎯 Performance Tuning
 
-### 1. PostgreSQL Tuning
-
-```sql
--- postgresql.conf
-shared_buffers = 256MB
-effective_cache_size = 1GB
-maintenance_work_mem = 64MB
-checkpoint_completion_target = 0.9
-wal_buffers = 16MB
-default_statistics_target = 100
-random_page_cost = 1.1
-effective_io_concurrency = 200
-work_mem = 4MB
-min_wal_size = 1GB
-max_wal_size = 4GB
-max_worker_processes = 8
-max_parallel_workers_per_gather = 4
-max_parallel_workers = 8
-max_parallel_maintenance_workers = 4
-```
-
-### 2. Redis Tuning
-
-```conf
-# redis.conf
-maxmemory 2gb
-maxmemory-policy allkeys-lru
-save 900 1
-save 300 10
-save 60 10000
-appendonly yes
-appendfsync everysec
-```
-
-### 3. Application Tuning
-
-```bash
-# System limits
-ulimit -n 65536  # File descriptors
-ulimit -u 32768  # Processes
-
-# Sysctl tuning
-sysctl -w net.core.somaxconn=65535
-sysctl -w net.ipv4.tcp_max_syn_backlog=8192
-sysctl -w net.core.netdev_max_backlog=16384
-```
+See [Performance Tuning Guide](../operations/PERFORMANCE.md) for detailed configuration.
 
 ## 🚨 Disaster Recovery
 

@@ -2,7 +2,7 @@ package torrent
 
 import (
 	"context"
-	"crypto/sha1"
+	"crypto/sha1" // #nosec G505 - BitTorrent v1 requires SHA1
 	"encoding/hex"
 	"fmt"
 	"io"

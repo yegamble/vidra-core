@@ -133,7 +133,7 @@ func validateConfig(cfg *Config) error {
 	}
 
 	// Ensure temp directory exists
-	if err := os.MkdirAll(cfg.TempDir, 0755); err != nil {
+	if err := os.MkdirAll(cfg.TempDir, 0750); err != nil {
 		return fmt.Errorf("failed to create temp directory: %w", err)
 	}
 

@@ -112,16 +112,18 @@ data:
 
 ## Deployment Environments
 
-### Staging
+Athena uses a Blue/Green deployment strategy for zero-downtime updates.
+
+### Blue Environment (Active)
 
 ```bash
-kubectl apply -k overlays/staging/
+kubectl apply -k overlays/blue/
 ```
 
-### Production
+### Green Environment (Standby/New)
 
 ```bash
-kubectl apply -k overlays/production/
+kubectl apply -k overlays/green/
 ```
 
 ## Resource Requirements
@@ -310,10 +312,10 @@ kubectl patch service athena-api -n athena -p '{"spec":{"selector":{"version":"g
 
 - [Full Deployment Guide](../docs/deployment/KUBERNETES_DEPLOYMENT.md)
 - [Blue/Green Deployments](../docs/deployment/BLUE_GREEN_DEPLOYMENT_STRATEGY.md) ⭐ NEW
-- [Operations Runbook](../docs/deployment/OPERATIONS_RUNBOOK.md)
+- [Operations Runbook](../docs/operations/RUNBOOK.md)
 - [Production Guide](../docs/deployment/PRODUCTION.md)
-- [Monitoring Guide](../docs/operations/MONITORING.md) (coming soon)
-- [Performance Tuning](../docs/operations/PERFORMANCE.md) (coming soon)
+- [Monitoring Guide](../docs/operations/MONITORING.md)
+- [Performance Tuning](../docs/operations/PERFORMANCE.md)
 
 ## Support
 

@@ -136,7 +136,7 @@ func (v *VODConverter) ConvertStreamToVOD(ctx context.Context, stream *domain.Li
 	if outputDir == "" {
 		outputDir = filepath.Join(v.cfg.HLSOutputDir, "..", "replays")
 	}
-	if err := os.MkdirAll(outputDir, 0755); err != nil {
+	if err := os.MkdirAll(outputDir, 0750); err != nil {
 		return fmt.Errorf("failed to create replay directory: %w", err)
 	}
 

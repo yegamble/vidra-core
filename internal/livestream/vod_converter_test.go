@@ -394,13 +394,13 @@ func TestVODConverter_FindBestVariant(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			testDir := filepath.Join(tmpDir, uuid.New().String())
-			os.MkdirAll(testDir, 0755)
+			os.MkdirAll(testDir, 0750)
 			defer os.RemoveAll(testDir)
 
 			// Create variant directories with dummy files
 			for _, variant := range tt.variantsToCreate {
 				variantDir := filepath.Join(testDir, variant)
-				os.MkdirAll(variantDir, 0755)
+				os.MkdirAll(variantDir, 0750)
 				// Create a dummy segment file
 				os.WriteFile(filepath.Join(variantDir, "segment_000.ts"), []byte("test"), 0644)
 			}

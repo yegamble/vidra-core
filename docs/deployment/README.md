@@ -37,7 +37,7 @@ See detailed guides:
 - [Kubernetes Deployment](KUBERNETES_DEPLOYMENT.md) - Cloud-native deployment
 - [Security Configuration](security.md) - Hardening guide
 - [Database Setup](#database-setup) - PostgreSQL configuration
-- [Monitoring Setup](MONITORING.md) - Observability stack
+- [Monitoring Setup](../operations/MONITORING.md) - Observability stack
 
 ## Environment Configuration
 
@@ -312,39 +312,7 @@ iostat -x 1
 
 ## Performance Tuning
 
-### Database Optimization
-
-```sql
--- Update statistics
-ANALYZE;
-
--- Vacuum tables
-VACUUM ANALYZE videos;
-
--- Check slow queries
-SELECT query, calls, mean_exec_time
-FROM pg_stat_statements
-ORDER BY mean_exec_time DESC
-LIMIT 10;
-```
-
-### Application Tuning
-
-```bash
-# Environment variables
-GOMAXPROCS=4  # Match CPU cores
-GOGC=100      # GC threshold
-GOMEMLIMIT=4GiB  # Memory limit
-```
-
-### Redis Optimization
-
-```bash
-# redis.conf
-maxmemory 2gb
-maxmemory-policy allkeys-lru
-save ""  # Disable persistence if not needed
-```
+See [Performance Tuning Guide](../operations/PERFORMANCE.md) for detailed optimization strategies.
 
 ## Security Checklist
 
