@@ -131,10 +131,12 @@ A task is "done" only when:
 
 ### Sprint 16 Acceptance Criteria
 
-- [ ] OpenAPI generation enforced in CI
-- [ ] Postman smoke tests pass on PR
-- [ ] Federation endpoints documented or explicitly excluded
-- [ ] API change review process documented
+- [x] OpenAPI generation enforced in CI
+- [x] Postman smoke tests pass on PR
+- [x] Federation endpoints documented or explicitly excluded
+- [x] API change review process documented
+
+**Sprint 16 Status: COMPLETE** (See [SPRINT16_COMPLETE.md](./SPRINT16_COMPLETE.md))
 
 ---
 

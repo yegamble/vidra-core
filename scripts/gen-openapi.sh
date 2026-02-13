@@ -1,9 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-#!/usr/bin/env bash
-set -euo pipefail
-
 SPEC_FILE="api/openapi.yaml"
 OUT_DIR="internal/generated"
 OUT_FILE="$OUT_DIR/types.go"

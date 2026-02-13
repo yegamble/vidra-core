@@ -71,6 +71,12 @@ See [peertube_compatibility.md](./peertube_compatibility.md) for:
 **Progress Files:**
 - [SPRINT13_PROGRESS.md](./SPRINT13_PROGRESS.md)
 
+### Quality Programme (Sprints 15-20)
+
+- **[SPRINT15_COMPLETE.md](./SPRINT15_COMPLETE.md)** - Stabilize mainline; integrate PR queue
+- **[SPRINT16_COMPLETE.md](./SPRINT16_COMPLETE.md)** - API contract reproducibility (CI enforcement, Postman smoke tests)
+- **[QUALITY_PROGRAMME.md](./QUALITY_PROGRAMME.md)** - Full Quality Programme roadmap
+
 ## Project Metrics
 
 ### Overall Statistics
@@ -110,6 +116,7 @@ See [peertube_compatibility.md](./peertube_compatibility.md) for:
 - **Federation (H-K):** Multi-protocol federation
 - **Distribution (8-9, 14):** P2P and redundancy
 - **Platform (10-13):** Analytics and plugins
+- **Quality Programme (15-20):** Stabilization, coverage, docs, release
 
 ## Quick Links
 

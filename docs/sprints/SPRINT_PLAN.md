@@ -1628,8 +1628,8 @@ This sprint plan provides a comprehensive roadmap for implementing PeerTube feat
 With feature parity complete, the project is in the **Quality Programme** phase:
 
 1. **Sprint 15:** Stabilize mainline; integrate PR queue - **COMPLETE** ([SPRINT15_COMPLETE.md](./SPRINT15_COMPLETE.md))
-2. **Sprint 16:** Make API contract reproducible (OpenAPI CI enforcement) - Next
-3. **Sprint 17:** Unit coverage uplift - core services (100% target)
+2. **Sprint 16:** Make API contract reproducible (OpenAPI CI enforcement) - **COMPLETE** ([SPRINT16_COMPLETE.md](./SPRINT16_COMPLETE.md))
+3. **Sprint 17:** Unit coverage uplift - core services (100% target) - Next
 4. **Sprint 18:** Unit coverage uplift - handlers/repos (90%+ target)
 5. **Sprint 19:** Documentation accuracy pass
 6. **Sprint 20:** Release hardening and sign-off

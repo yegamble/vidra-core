@@ -152,6 +152,10 @@ act-test: ## Run primary GitHub Actions jobs locally with act (requires .secrets
 generate-openapi: ## Regenerate OpenAPI types and server interfaces
 	@scripts/gen-openapi.sh
 
+.PHONY: verify-openapi
+verify-openapi: ## Verify generated OpenAPI types match the spec (fails on drift)
+	@scripts/verify-openapi.sh
+
 test-integration: ## Run only integration tests (loads .env.test if present)
 	@bash -lc 'set -a; [ -f .env.test ] && source .env.test || true; set +a; $(GO_ENV) go test -v -tags=integration ./tests/integration'
 

@@ -190,6 +190,7 @@ See the full documentation index at [docs/README.md](docs/README.md).
   - [Chat](api/openapi_chat.yaml), [Moderation](api/openapi_moderation.yaml), [Federation](api/openapi_federation.yaml)
   - [Plugins](api/openapi_plugins.yaml), [Redundancy](api/openapi_redundancy.yaml)
 - **[API Examples](docs/API_EXAMPLES.md)** - API usage examples and patterns
+- **[API Contract Policy](docs/API_CONTRACT_POLICY.md)** - API change governance and CI enforcement
 
 ### Architecture & Design
 
@@ -260,10 +261,10 @@ See the full documentation index at [docs/README.md](docs/README.md).
 - 200+ API endpoints
 - Full ActivityPub federation
 
-**Sprint 16** (Current): API Contract Reproducibility
-- OpenAPI CI enforcement (fail on generated code drift)
-- Postman smoke tests on PR
-- Federation endpoint documentation
+**Sprint 17** (Current): Core Services 100% Coverage
+- Per-package coverage thresholds in CI
+- Domain and usecase packages to 100% unit coverage
+- Race detector validation on all packages
 
 ### Feature Completion by Category
 
@@ -278,15 +279,15 @@ See the full documentation index at [docs/README.md](docs/README.md).
 | **Analytics** | 100% | ✅ Complete | Video analytics, retention curves, channel stats |
 | **Plugin System** | 100% | ✅ Complete | Hook architecture, Ed25519 signatures, 17 permissions |
 | **Video Redundancy** | 100% | ✅ Complete | Cross-instance replication, health monitoring |
-| **Quality Programme** | 17% | 🔄 Sprint 16/20 | API contract, coverage uplift, release hardening |
+| **Quality Programme** | 33% | 🔄 Sprint 17/20 | API contract, coverage uplift, release hardening |
 
 ### Quality Programme (Sprints 15-20)
 
 | Sprint | Focus | Status |
 |--------|-------|--------|
 | **Sprint 15** | Stabilize mainline; integrate PR queue | ✅ Complete |
-| **Sprint 16** | API contract reproducibility | 🔄 In Progress |
-| **Sprint 17** | Core services 100% coverage | Planned |
+| **Sprint 16** | API contract reproducibility | ✅ Complete |
+| **Sprint 17** | Core services 100% coverage | 🔄 In Progress |
 | **Sprint 18** | Handlers/repos 90%+ coverage | Planned |
 | **Sprint 19** | Documentation accuracy pass | Planned |
 | **Sprint 20** | Release hardening | Planned |

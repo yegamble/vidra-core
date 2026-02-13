@@ -2,18 +2,22 @@ name: OpenAPI Validation
 
 on:
   push:
-    branches: [ main, develop ]  # Only run on push for deployed branches
+    branches: [ main, develop ]
     paths:
       - 'api/openapi.yaml'
       - 'api/*.yaml'
-      - 'docs/openapi/**'
+      - 'internal/generated/**'
+      - 'scripts/gen-openapi.sh'
+      - 'scripts/verify-openapi.sh'
       - '.github/workflows/openapi-ci.yml'
   pull_request:
     branches: [ main ]
     paths:
       - 'api/openapi.yaml'
       - 'api/*.yaml'
-      - 'docs/openapi/**'
+      - 'internal/generated/**'
+      - 'scripts/gen-openapi.sh'
+      - 'scripts/verify-openapi.sh'
       - '.github/workflows/openapi-ci.yml'
   workflow_dispatch:
 
@@ -28,6 +32,9 @@ concurrency:
 defaults:
   run:
     shell: bash
+
+env:
+  GO_VERSION: "1.24"
 
 jobs:
   validate:
@@ -56,6 +63,27 @@ jobs:
         run: |
           echo "OpenAPI validation complete"
           echo "Documentation can be generated from validated spec"
+
+  verify-codegen:
+    name: Verify Generated Types
+    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 10
+    needs: validate
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: ./.github/actions/setup-go-cached
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Install oapi-codegen
+        run: go install github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@latest
+
+      - name: Verify generated types match spec
+        run: make verify-openapi
 
   generate-docs:
     name: Generate API Documentation
