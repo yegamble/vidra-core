@@ -693,7 +693,7 @@ func (h *PluginHandler) extractPlugin(zipData []byte, destDir, pluginName string
 	}
 
 	pluginDir := filepath.Join(destDir, pluginName)
-	if err := os.MkdirAll(pluginDir, 0755); err != nil {
+	if err := os.MkdirAll(pluginDir, 0750); err != nil {
 		return "", fmt.Errorf("failed to create plugin directory: %w", err)
 	}
 
@@ -713,7 +713,7 @@ func (h *PluginHandler) extractPlugin(zipData []byte, destDir, pluginName string
 		}
 
 		// Create parent directory if needed
-		if err := os.MkdirAll(filepath.Dir(destPath), 0755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(destPath), 0750); err != nil {
 			return "", fmt.Errorf("failed to create parent directory: %w", err)
 		}
 

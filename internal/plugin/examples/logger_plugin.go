@@ -57,7 +57,7 @@ func (p *LoggerPlugin) Description() string {
 func (p *LoggerPlugin) Initialize(ctx context.Context, config map[string]any) error {
 	// Extract log file path from config (optional)
 	if logPath, ok := config["log_file"].(string); ok && logPath != "" {
-		file, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+		file, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
 		if err != nil {
 			return fmt.Errorf("failed to open log file: %w", err)
 		}

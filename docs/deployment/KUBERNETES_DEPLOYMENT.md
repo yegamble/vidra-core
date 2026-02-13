@@ -442,5 +442,5 @@ kubectl logs deployment/clamav --namespace athena
 
 - [Helm Chart](../helm/README.md) (coming soon)
 - [Terraform Modules](../../infrastructure/README.md) (coming soon)
-- [Production Runbook](../operations/RUNBOOK.md) (coming soon)
-- [Performance Tuning](../operations/PERFORMANCE.md) (coming soon)
+- [Production Runbook](../operations/RUNBOOK.md)
+- [Performance Tuning](../operations/PERFORMANCE.md)

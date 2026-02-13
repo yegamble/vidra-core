@@ -151,7 +151,7 @@ func (t *HLSTranscoder) StartTranscoding(ctx context.Context, stream *domain.Liv
 
 	// Create output directory
 	outputDir := filepath.Join(t.cfg.HLSOutputDir, stream.ID.String())
-	if err := os.MkdirAll(outputDir, 0755); err != nil {
+	if err := os.MkdirAll(outputDir, 0750); err != nil {
 		return fmt.Errorf("failed to create output directory: %w", err)
 	}
 
@@ -164,7 +164,7 @@ func (t *HLSTranscoder) StartTranscoding(ctx context.Context, stream *domain.Liv
 	// Create variant directories
 	for _, v := range variants {
 		variantDir := filepath.Join(outputDir, v.Name)
-		if err := os.MkdirAll(variantDir, 0755); err != nil {
+		if err := os.MkdirAll(variantDir, 0750); err != nil {
 			return fmt.Errorf("failed to create variant directory %s: %w", v.Name, err)
 		}
 	}

@@ -314,11 +314,11 @@ func (s *service) processJob(ctx context.Context, job *domain.CaptionGenerationJ
 	// Step 5: Save caption file
 	sp = storage.NewPaths(s.uploadsDir)
 	captionPath := sp.CaptionFilePath(job.VideoID.String(), result.DetectedLanguage, string(job.OutputFormat))
-	if err := os.MkdirAll(filepath.Dir(captionPath), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(captionPath), 0750); err != nil {
 		return fmt.Errorf("failed to create caption directory: %w", err)
 	}
 
-	if err := os.WriteFile(captionPath, []byte(captionContent), 0644); err != nil {
+	if err := os.WriteFile(captionPath, []byte(captionContent), 0600); err != nil {
 		return fmt.Errorf("failed to write caption file: %w", err)
 	}
 

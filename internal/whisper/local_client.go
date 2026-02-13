@@ -100,7 +100,7 @@ func (c *localClient) Transcribe(ctx context.Context, audioPath string, targetLa
 // ExtractAudioFromVideo extracts audio track from video using FFmpeg
 func (c *localClient) ExtractAudioFromVideo(ctx context.Context, videoPath string, outputPath string) error {
 	// Ensure output directory exists
-	if err := os.MkdirAll(filepath.Dir(outputPath), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(outputPath), 0750); err != nil {
 		return fmt.Errorf("failed to create output directory: %w", err)
 	}
 

@@ -201,8 +201,9 @@ See the full documentation index at [docs/README.md](docs/README.md).
 ### Deployment & Operations
 
 - **[Deployment Guide](docs/deployment/README.md)** - Production deployment instructions
-- **[Operations Runbook](docs/deployment/OPERATIONS_RUNBOOK.md)** - Incident response, backup procedures
-- **[Monitoring Guide](docs/deployment/MONITORING.md)** - Prometheus & Grafana setup
+- **[Operations Runbook](docs/operations/RUNBOOK.md)** - Incident response, backup procedures
+- **[Monitoring Guide](docs/operations/MONITORING.md)** - Prometheus & Grafana setup
+- **[Performance Tuning](docs/operations/PERFORMANCE.md)** - Optimization and scaling guide
 - **[S3/Backblaze B2 Setup](docs/S3_MIGRATION_SETUP.md)** - Hybrid storage configuration and migration
 - **[Virus Scanner Runbook](docs/VIRUS_SCANNER_RUNBOOK.md)** - ClamAV integration and troubleshooting
 

@@ -284,14 +284,14 @@ func TestRegenerateCaptionWithSpecificLanguage(t *testing.T) {
 
 	// Create a fake video file in web-videos directory (required for validation)
 	webVideosDir := filepath.Join(tempDir, "web-videos")
-	err := os.MkdirAll(webVideosDir, 0755)
+	err := os.MkdirAll(webVideosDir, 0750)
 	require.NoError(t, err)
 	videoPath := filepath.Join(webVideosDir, videoID.String()+".mp4")
-	err = os.WriteFile(videoPath, []byte("fake video content"), 0644)
+	err = os.WriteFile(videoPath, []byte("fake video content"), 0600)
 	require.NoError(t, err)
 
 	// Create a temporary caption file
-	err = os.WriteFile(captionPath, []byte("WEBVTT\n\n00:00:00.000 --> 00:00:02.000\nOld English caption"), 0644)
+	err = os.WriteFile(captionPath, []byte("WEBVTT\n\n00:00:00.000 --> 00:00:02.000\nOld English caption"), 0600)
 	require.NoError(t, err)
 
 	// Setup: video exists with English caption
@@ -351,19 +351,19 @@ func TestRegenerateCaptionMultiLanguagePreservation(t *testing.T) {
 
 	// Create a fake video file in web-videos directory (required for validation)
 	webVideosDir := filepath.Join(tempDir, "web-videos")
-	err := os.MkdirAll(webVideosDir, 0755)
+	err := os.MkdirAll(webVideosDir, 0750)
 	require.NoError(t, err)
 	videoPath := filepath.Join(webVideosDir, videoID.String()+".mp4")
-	err = os.WriteFile(videoPath, []byte("fake video content"), 0644)
+	err = os.WriteFile(videoPath, []byte("fake video content"), 0600)
 	require.NoError(t, err)
 
 	// Create caption files
 	captionPathEN := filepath.Join(tempDir, "caption_en.vtt")
 	captionPathES := filepath.Join(tempDir, "caption_es.vtt")
 
-	err = os.WriteFile(captionPathEN, []byte("WEBVTT\n\n00:00:00.000 --> 00:00:02.000\nOld English"), 0644)
+	err = os.WriteFile(captionPathEN, []byte("WEBVTT\n\n00:00:00.000 --> 00:00:02.000\nOld English"), 0600)
 	require.NoError(t, err)
-	err = os.WriteFile(captionPathES, []byte("WEBVTT\n\n00:00:00.000 --> 00:00:02.000\nEspañol antiguo"), 0644)
+	err = os.WriteFile(captionPathES, []byte("WEBVTT\n\n00:00:00.000 --> 00:00:02.000\nEspañol antiguo"), 0600)
 	require.NoError(t, err)
 
 	// Setup: video has both English and Spanish captions
@@ -426,10 +426,10 @@ func TestRegenerateCaptionAutoDetect(t *testing.T) {
 
 	// Create a fake video file in web-videos directory (required for validation)
 	webVideosDir := filepath.Join(tempDir, "web-videos")
-	err := os.MkdirAll(webVideosDir, 0755)
+	err := os.MkdirAll(webVideosDir, 0750)
 	require.NoError(t, err)
 	videoPath := filepath.Join(webVideosDir, videoID.String()+".mp4")
-	err = os.WriteFile(videoPath, []byte("fake video content"), 0644)
+	err = os.WriteFile(videoPath, []byte("fake video content"), 0600)
 	require.NoError(t, err)
 
 	// Setup: video exists
@@ -473,10 +473,10 @@ func TestCreateJob(t *testing.T) {
 
 	// Create a fake video file in web-videos directory (actual location)
 	webVideosDir := filepath.Join(tempDir, "web-videos")
-	err := os.MkdirAll(webVideosDir, 0755)
+	err := os.MkdirAll(webVideosDir, 0750)
 	require.NoError(t, err)
 	videoPath := filepath.Join(webVideosDir, videoID.String()+".mp4")
-	err = os.WriteFile(videoPath, []byte("fake video content"), 0644)
+	err = os.WriteFile(videoPath, []byte("fake video content"), 0600)
 	require.NoError(t, err)
 
 	service := NewService(mockJobRepo, mockCaptionRepo, mockVideoRepo, mockWhisper, tempDir)
