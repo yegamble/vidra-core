@@ -2267,7 +2267,7 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
 
   # HLS streaming endpoint
-  /api/v1/hls/*:
+  /api/v1/hls/{path}:
     get:
       tags:
         - Streaming
@@ -3477,6 +3477,7 @@ components:
           type: string
           description: Default stream quality
           example: "720p"
+      required: [qualities, default]
 
     EncodingJob:
       type: object
@@ -3530,7 +3531,6 @@ components:
         - progress
         - created_at
         - updated_at
-      required: [qualities, default]
 
     WrappedQualitiesResponse:
       type: object
