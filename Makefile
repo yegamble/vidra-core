@@ -3,6 +3,7 @@ SHELL := /bin/bash
 .PHONY: help deps lint test test-unit test-integration test-integration-ci build docker docker-up docker-down clean dev install-tools test-ci postman-newman postman-e2e run logs run-with-encoding act-test
 .PHONY: migrate-dev migrate-test migrate-custom migrate-dev-docker migrate-test-docker migrate-up db-ensure-dev-user
 .PHONY: validate-all validate-quick
+.PHONY: coverage-check coverage-report
 .PHONY: update-readme-metrics check-readme-metrics
 
 .PHONY: install-hooks
@@ -89,6 +90,27 @@ fmt-check: ## Verify Go files are formatted and imports sorted
 test: ## Run unit tests (without race detection for speed)
 	$(GO_ENV) go test -v -coverprofile=coverage.out ./...
 	$(GO_ENV) go tool cover -html=coverage.out -o coverage.html
+
+# Coverage threshold (percentage). Adjust upward as coverage improves.
+COVERAGE_THRESHOLD ?= 50
+
+coverage-check: ## Run tests and fail if coverage drops below threshold
+	@echo "Running tests with coverage..."
+	@$(GO_ENV) go test -coverprofile=coverage.out ./... > /dev/null 2>&1 || true
+	@COVERAGE=$$($(GO_ENV) go tool cover -func=coverage.out | grep '^total:' | awk '{print $$NF}' | tr -d '%'); \
+	echo "Total coverage: $${COVERAGE}% (threshold: $(COVERAGE_THRESHOLD)%)"; \
+	if [ $$(echo "$${COVERAGE} < $(COVERAGE_THRESHOLD)" | bc -l) -eq 1 ]; then \
+		echo "FAIL: Coverage $${COVERAGE}% is below threshold $(COVERAGE_THRESHOLD)%"; \
+		exit 1; \
+	else \
+		echo "PASS: Coverage $${COVERAGE}% meets threshold $(COVERAGE_THRESHOLD)%"; \
+	fi
+
+coverage-report: ## Generate and open HTML coverage report
+	@$(GO_ENV) go test -coverprofile=coverage.out ./...
+	@$(GO_ENV) go tool cover -html=coverage.out -o coverage.html
+	@echo "Coverage report written to coverage.html"
+	@open coverage.html 2>/dev/null || xdg-open coverage.html 2>/dev/null || echo "Open coverage.html in your browser"
 
 test-race: ## Run unit tests with race detection (requires CGO_ENABLED=1 and gcc)
 	CGO_ENABLED=1 $(GO_ENV) go test -v -race -coverprofile=coverage.out ./...

@@ -287,7 +287,41 @@ else
 fi
 
 #
-# Validation 8: Build Check
+# Validation 8: Coverage Threshold Check
+#
+
+print_header "Coverage Threshold Check"
+
+COVERAGE_THRESHOLD="${COVERAGE_THRESHOLD:-50}"
+
+echo "Running coverage analysis (threshold: ${COVERAGE_THRESHOLD}%)..."
+
+COVERAGE_OUT=$(mktemp)
+if go test -coverprofile="$COVERAGE_OUT" ./... >/dev/null 2>&1; then
+    COVERAGE=$(go tool cover -func="$COVERAGE_OUT" | grep '^total:' | awk '{print $NF}' | tr -d '%')
+    rm -f "$COVERAGE_OUT"
+
+    echo "Total coverage: ${COVERAGE}%"
+
+    # Compare as integers (truncate decimal) to avoid bc dependency
+    COVERAGE_INT=${COVERAGE%%.*}
+    THRESHOLD_INT=${COVERAGE_THRESHOLD%%.*}
+
+    if [ "$COVERAGE_INT" -ge "$THRESHOLD_INT" ]; then
+        print_success "Coverage ${COVERAGE}% meets threshold ${COVERAGE_THRESHOLD}%"
+        record_pass
+    else
+        print_failure "Coverage ${COVERAGE}% is below threshold ${COVERAGE_THRESHOLD}%"
+        record_fail "coverage below ${COVERAGE_THRESHOLD}%"
+    fi
+else
+    rm -f "$COVERAGE_OUT"
+    print_warning "Could not compute coverage (tests may have failed above)"
+    record_skip
+fi
+
+#
+# Validation 9: Build Verification
 #
 
 print_header "Build Verification"
@@ -308,7 +342,7 @@ else
 fi
 
 #
-# Validation 9: Vet Check
+# Validation 10: Vet Check
 #
 
 print_header "Go Vet Check"
