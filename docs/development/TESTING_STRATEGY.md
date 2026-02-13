@@ -649,6 +649,60 @@ gotestsum --junitfile report.xml --format testname -- -coverprofile=coverage.out
 
 ---
 
+## Recent Feature Updates
+
+### Encoding Progress Tracking (February 2026)
+
+**Feature**: Real-time FFmpeg encoding progress tracking with authorization-based access control.
+
+**Implementation**:
+- Added `Progress` field (0-100) to `EncodingJob` domain model
+- Enhanced encoding service to parse FFmpeg stderr output in real-time
+- Created new API endpoints with role-based authorization
+- Added Postman E2E test collection for comprehensive testing
+
+**New Endpoints**:
+- `GET /api/v1/encoding/jobs/{jobID}` - Get individual job details
+- `GET /api/v1/videos/{id}/encoding-jobs` - Get all jobs for a video
+
+**Test Coverage**:
+- **Unit Tests**:
+  - Progress parser utility (`internal/usecase/encoding/progress_test.go`)
+  - Authorization scenarios (owner, admin, moderator, unauthorized)
+  - Error handling (job not found, video not found)
+- **Integration Tests**:
+  - API handler tests with mocked repositories
+  - Response structure validation
+  - Overall progress calculation for multiple jobs
+- **E2E Tests** (Postman):
+  - Complete authorization matrix testing
+  - Progress monitoring workflow
+  - Active job filtering
+  - Error response validation
+
+**Authorization Matrix**:
+| Role | Can Access Own Videos | Can Access Any Video |
+|------|---------------------|-------------------|
+| Owner | ✅ | ❌ |
+| Admin | ✅ | ✅ |
+| Moderator | ✅ | ✅ |
+| Other User | ❌ | ❌ |
+
+**Run Progress Tracking Tests**:
+```bash
+# Unit tests for progress parsing
+go test ./internal/usecase/encoding -v -run "Progress"
+
+# API handler tests with authorization
+go test ./internal/httpapi/handlers/video -v -run "EncodingJob"
+
+# Run Postman E2E tests
+newman run postman/athena-encoding-jobs.postman_collection.json \
+  -e postman/athena.local.postman_environment.json
+```
+
+---
+
 ## Future Improvements
 
 ### Planned Enhancements

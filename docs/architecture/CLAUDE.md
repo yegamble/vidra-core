@@ -50,11 +50,14 @@ Upload → Virus Scan → Chunk Merge → FFmpeg → IPFS Pin → Ready
 - HLS: 4s segments, VOD playlists
 - Worker pool with bounded channel and per-job deadlines
 
-### Encoding Job Resilience
+### Encoding Job Resilience & Progress Tracking
 - **Heartbeat**: Active encoding jobs emit a heartbeat every 5 minutes (updates `updated_at`), keeping long-running encodes (e.g., 4K on low-spec hardware) alive
 - **Stale Job Recovery**: On worker startup, `ResetStaleJobs` resets orphaned `processing` jobs (no heartbeat for 30+ minutes) back to `pending` for automatic re-processing
 - **Safety margin**: 6x ratio (5-min heartbeat vs 30-min threshold) prevents false resets of active jobs
 - **Atomic job claiming**: `FOR UPDATE SKIP LOCKED` prevents duplicate processing across workers
+- **Real-time Progress**: FFmpeg stderr parsing provides 0-100% progress updates, stored in DB and exposed via API
+- **Progress API Access**: Restricted to video owner, administrators, and moderators via JWT role validation
+- **Aggregate Progress**: When multiple resolutions encode in parallel, overall progress is calculated as average
 
 ## Chunked Upload Flow
 
