@@ -542,6 +542,415 @@ func TestGenerateS3Key(t *testing.T) {
 	}
 }
 
+func TestNewS3MigrationService_NilLogger(t *testing.T) {
+	// When Logger is nil, NewS3MigrationService should create a default logger
+	service := NewS3MigrationService(Config{
+		S3Backend:   new(MockStorageBackend),
+		VideoRepo:   new(MockVideoRepository),
+		StoragePath: storage.NewPaths(t.TempDir()),
+		Logger:      nil,
+		DeleteLocal: false,
+	})
+
+	assert.NotNil(t, service)
+	assert.NotNil(t, service.logger)
+}
+
+func TestMigrateVideo_GetVideoError(t *testing.T) {
+	ctx := context.Background()
+	videoID := "test-video-123"
+
+	mockS3 := new(MockStorageBackend)
+	mockVideoRepo := new(MockVideoRepository)
+
+	mockVideoRepo.On("GetByID", ctx, videoID).Return(nil, errors.New("database error"))
+
+	service := NewS3MigrationService(Config{
+		S3Backend:   mockS3,
+		VideoRepo:   mockVideoRepo,
+		StoragePath: storage.NewPaths(t.TempDir()),
+		Logger:      logrus.New(),
+		DeleteLocal: false,
+	})
+
+	err := service.MigrateVideo(ctx, videoID)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to get video")
+	mockVideoRepo.AssertExpectations(t)
+}
+
+func TestMigrateVideo_EmptyOutputPath(t *testing.T) {
+	ctx := context.Background()
+	videoID := "test-video-123"
+
+	mockS3 := new(MockStorageBackend)
+	mockVideoRepo := new(MockVideoRepository)
+
+	video := &domain.Video{
+		ID:          videoID,
+		StorageTier: "hot",
+		OutputPaths: map[string]string{
+			"1080p": "", // Empty path should be skipped
+		},
+	}
+
+	mockVideoRepo.On("GetByID", ctx, videoID).Return(video, nil)
+	mockVideoRepo.On("Update", ctx, mock.MatchedBy(func(v *domain.Video) bool {
+		return v.StorageTier == "cold" && v.S3MigratedAt != nil
+	})).Return(nil)
+
+	service := NewS3MigrationService(Config{
+		S3Backend:   mockS3,
+		VideoRepo:   mockVideoRepo,
+		StoragePath: storage.NewPaths(t.TempDir()),
+		Logger:      logrus.New(),
+		DeleteLocal: false,
+	})
+
+	err := service.MigrateVideo(ctx, videoID)
+	require.NoError(t, err)
+	mockS3.AssertNotCalled(t, "UploadFile")
+}
+
+func TestMigrateVideo_UpdateError(t *testing.T) {
+	ctx := context.Background()
+	videoID := "test-video-123"
+
+	mockS3 := new(MockStorageBackend)
+	mockVideoRepo := new(MockVideoRepository)
+
+	tmpDir := t.TempDir()
+	testFilePath := filepath.Join(tmpDir, "test-video.mp4")
+	err := os.WriteFile(testFilePath, []byte("test"), 0644)
+	require.NoError(t, err)
+
+	video := &domain.Video{
+		ID:          videoID,
+		StorageTier: "hot",
+		OutputPaths: map[string]string{
+			"1080p": testFilePath,
+		},
+	}
+
+	mockVideoRepo.On("GetByID", ctx, videoID).Return(video, nil)
+	mockS3.On("UploadFile", ctx, mock.Anything, testFilePath, "video/mp4").Return(nil)
+	mockS3.On("GetURL", mock.Anything).Return("https://s3.example.com/video.mp4")
+	mockVideoRepo.On("Update", ctx, mock.Anything).Return(errors.New("update failed"))
+
+	service := NewS3MigrationService(Config{
+		S3Backend:   mockS3,
+		VideoRepo:   mockVideoRepo,
+		StoragePath: storage.NewPaths(tmpDir),
+		Logger:      logrus.New(),
+		DeleteLocal: false,
+	})
+
+	err = service.MigrateVideo(ctx, videoID)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to update video record")
+}
+
+func TestMigrateVideo_WithThumbnailAndPreview(t *testing.T) {
+	ctx := context.Background()
+	videoID := "test-video-123"
+
+	mockS3 := new(MockStorageBackend)
+	mockVideoRepo := new(MockVideoRepository)
+
+	tmpDir := t.TempDir()
+	testFilePath := filepath.Join(tmpDir, "test-video.mp4")
+	thumbPath := filepath.Join(tmpDir, "thumb.jpg")
+	previewPath := filepath.Join(tmpDir, "preview.webp")
+
+	err := os.WriteFile(testFilePath, []byte("video"), 0644)
+	require.NoError(t, err)
+	err = os.WriteFile(thumbPath, []byte("thumb"), 0644)
+	require.NoError(t, err)
+	err = os.WriteFile(previewPath, []byte("preview"), 0644)
+	require.NoError(t, err)
+
+	video := &domain.Video{
+		ID:            videoID,
+		StorageTier:   "hot",
+		OutputPaths:   map[string]string{"720p": testFilePath},
+		ThumbnailPath: thumbPath,
+		PreviewPath:   previewPath,
+	}
+
+	mockVideoRepo.On("GetByID", ctx, videoID).Return(video, nil)
+	mockS3.On("UploadFile", ctx, mock.Anything, testFilePath, "video/mp4").Return(nil)
+	mockS3.On("UploadFile", ctx, mock.Anything, thumbPath, "image/jpeg").Return(nil)
+	mockS3.On("UploadFile", ctx, mock.Anything, previewPath, "image/webp").Return(nil)
+	mockS3.On("GetURL", mock.Anything).Return("https://s3.example.com/video.mp4")
+	mockVideoRepo.On("Update", ctx, mock.Anything).Return(nil)
+
+	service := NewS3MigrationService(Config{
+		S3Backend:   mockS3,
+		VideoRepo:   mockVideoRepo,
+		StoragePath: storage.NewPaths(tmpDir),
+		Logger:      logrus.New(),
+		DeleteLocal: false,
+	})
+
+	err = service.MigrateVideo(ctx, videoID)
+	require.NoError(t, err)
+	mockS3.AssertExpectations(t)
+}
+
+func TestMigrateVideo_ThumbnailNotFound(t *testing.T) {
+	ctx := context.Background()
+	videoID := "test-video-123"
+
+	mockS3 := new(MockStorageBackend)
+	mockVideoRepo := new(MockVideoRepository)
+
+	tmpDir := t.TempDir()
+
+	video := &domain.Video{
+		ID:            videoID,
+		StorageTier:   "hot",
+		OutputPaths:   map[string]string{},
+		ThumbnailPath: "/nonexistent/thumb.jpg",
+		PreviewPath:   "/nonexistent/preview.webp",
+	}
+
+	mockVideoRepo.On("GetByID", ctx, videoID).Return(video, nil)
+	mockVideoRepo.On("Update", ctx, mock.Anything).Return(nil)
+
+	service := NewS3MigrationService(Config{
+		S3Backend:   mockS3,
+		VideoRepo:   mockVideoRepo,
+		StoragePath: storage.NewPaths(tmpDir),
+		Logger:      logrus.New(),
+		DeleteLocal: false,
+	})
+
+	err := service.MigrateVideo(ctx, videoID)
+	require.NoError(t, err)
+	// Thumbnail and preview should be skipped since files don't exist
+	mockS3.AssertNotCalled(t, "UploadFile")
+}
+
+func TestMigrateVideo_WithHLSFiles(t *testing.T) {
+	ctx := context.Background()
+	videoID := "test-video-123"
+
+	mockS3 := new(MockStorageBackend)
+	mockVideoRepo := new(MockVideoRepository)
+
+	tmpDir := t.TempDir()
+	mockPaths := storage.NewPaths(tmpDir)
+
+	// Create HLS directory with files
+	hlsDir := mockPaths.HLSVideoDir(videoID)
+	err := os.MkdirAll(hlsDir, 0755)
+	require.NoError(t, err)
+
+	// Create HLS files
+	err = os.WriteFile(filepath.Join(hlsDir, "master.m3u8"), []byte("hls playlist"), 0644)
+	require.NoError(t, err)
+	err = os.WriteFile(filepath.Join(hlsDir, "segment0.ts"), []byte("segment data"), 0644)
+	require.NoError(t, err)
+
+	video := &domain.Video{
+		ID:          videoID,
+		StorageTier: "hot",
+		OutputPaths: map[string]string{},
+	}
+
+	mockVideoRepo.On("GetByID", ctx, videoID).Return(video, nil)
+	// HLS file uploads
+	mockS3.On("UploadFile", ctx, mock.MatchedBy(func(key string) bool {
+		return true
+	}), mock.Anything, mock.Anything).Return(nil)
+	mockVideoRepo.On("Update", ctx, mock.Anything).Return(nil)
+
+	service := NewS3MigrationService(Config{
+		S3Backend:   mockS3,
+		VideoRepo:   mockVideoRepo,
+		StoragePath: mockPaths,
+		Logger:      logrus.New(),
+		DeleteLocal: false,
+	})
+
+	err = service.MigrateVideo(ctx, videoID)
+	require.NoError(t, err)
+	mockS3.AssertExpectations(t)
+}
+
+func TestMigrateVideo_HLSUploadFailure(t *testing.T) {
+	ctx := context.Background()
+	videoID := "test-video-123"
+
+	mockS3 := new(MockStorageBackend)
+	mockVideoRepo := new(MockVideoRepository)
+
+	tmpDir := t.TempDir()
+	mockPaths := storage.NewPaths(tmpDir)
+
+	// Create HLS directory with a file
+	hlsDir := mockPaths.HLSVideoDir(videoID)
+	err := os.MkdirAll(hlsDir, 0755)
+	require.NoError(t, err)
+	err = os.WriteFile(filepath.Join(hlsDir, "master.m3u8"), []byte("hls"), 0644)
+	require.NoError(t, err)
+
+	video := &domain.Video{
+		ID:          videoID,
+		StorageTier: "hot",
+		OutputPaths: map[string]string{},
+	}
+
+	mockVideoRepo.On("GetByID", ctx, videoID).Return(video, nil)
+	mockS3.On("UploadFile", ctx, mock.Anything, mock.Anything, mock.Anything).Return(errors.New("HLS upload error"))
+
+	service := NewS3MigrationService(Config{
+		S3Backend:   mockS3,
+		VideoRepo:   mockVideoRepo,
+		StoragePath: mockPaths,
+		Logger:      logrus.New(),
+		DeleteLocal: false,
+	})
+
+	err = service.MigrateVideo(ctx, videoID)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to migrate HLS files")
+}
+
+func TestDeleteLocalFiles_AllSuccess(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	file1 := filepath.Join(tmpDir, "file1.mp4")
+	file2 := filepath.Join(tmpDir, "file2.mp4")
+	err := os.WriteFile(file1, []byte("test1"), 0644)
+	require.NoError(t, err)
+	err = os.WriteFile(file2, []byte("test2"), 0644)
+	require.NoError(t, err)
+
+	service := NewS3MigrationService(Config{
+		Logger: logrus.New(),
+	})
+
+	err = service.deleteLocalFiles([]string{file1, file2})
+	assert.NoError(t, err)
+
+	// Verify files are deleted
+	_, err = os.Stat(file1)
+	assert.True(t, os.IsNotExist(err))
+	_, err = os.Stat(file2)
+	assert.True(t, os.IsNotExist(err))
+}
+
+func TestDeleteLocalFiles_PartialFailure(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	file1 := filepath.Join(tmpDir, "file1.mp4")
+	err := os.WriteFile(file1, []byte("test1"), 0644)
+	require.NoError(t, err)
+
+	service := NewS3MigrationService(Config{
+		Logger: logrus.New(),
+	})
+
+	// Second file doesn't exist, should cause partial failure
+	err = service.deleteLocalFiles([]string{file1, "/nonexistent/file.mp4"})
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to delete some files")
+
+	// First file should still be deleted
+	_, err = os.Stat(file1)
+	assert.True(t, os.IsNotExist(err))
+}
+
+func TestMigrateBatch_GetVideosError(t *testing.T) {
+	ctx := context.Background()
+
+	mockS3 := new(MockStorageBackend)
+	mockVideoRepo := new(MockVideoRepository)
+
+	mockVideoRepo.On("GetVideosForMigration", ctx, 10).Return(nil, errors.New("db error"))
+
+	service := NewS3MigrationService(Config{
+		S3Backend:   mockS3,
+		VideoRepo:   mockVideoRepo,
+		StoragePath: storage.NewPaths(t.TempDir()),
+		Logger:      logrus.New(),
+		DeleteLocal: false,
+	})
+
+	count, err := service.MigrateBatch(ctx, 10)
+	require.Error(t, err)
+	assert.Equal(t, 0, count)
+	assert.Contains(t, err.Error(), "failed to get videos for migration")
+}
+
+func TestMigrateBatch_EmptyList(t *testing.T) {
+	ctx := context.Background()
+
+	mockS3 := new(MockStorageBackend)
+	mockVideoRepo := new(MockVideoRepository)
+
+	mockVideoRepo.On("GetVideosForMigration", ctx, 10).Return([]*domain.Video{}, nil)
+
+	service := NewS3MigrationService(Config{
+		S3Backend:   mockS3,
+		VideoRepo:   mockVideoRepo,
+		StoragePath: storage.NewPaths(t.TempDir()),
+		Logger:      logrus.New(),
+		DeleteLocal: false,
+	})
+
+	count, err := service.MigrateBatch(ctx, 10)
+	require.NoError(t, err)
+	assert.Equal(t, 0, count)
+}
+
+func TestMigrateVideo_WithLocalDeletion_DeleteError(t *testing.T) {
+	ctx := context.Background()
+	videoID := "test-video-123"
+
+	mockS3 := new(MockStorageBackend)
+	mockVideoRepo := new(MockVideoRepository)
+
+	tmpDir := t.TempDir()
+	mockPaths := storage.NewPaths(tmpDir)
+	testFilePath := filepath.Join(tmpDir, "test-video.mp4")
+	err := os.WriteFile(testFilePath, []byte("test video content"), 0644)
+	require.NoError(t, err)
+
+	video := &domain.Video{
+		ID:          videoID,
+		StorageTier: "hot",
+		OutputPaths: map[string]string{
+			"1080p": testFilePath,
+		},
+	}
+
+	mockVideoRepo.On("GetByID", ctx, videoID).Return(video, nil)
+	mockS3.On("UploadFile", ctx, mock.Anything, testFilePath, "video/mp4").Return(nil)
+	mockS3.On("GetURL", mock.Anything).Return("https://s3.example.com/video.mp4")
+	mockVideoRepo.On("Update", ctx, mock.MatchedBy(func(v *domain.Video) bool {
+		return v.StorageTier == "cold" && v.S3MigratedAt != nil
+	})).Return(nil).Once()
+
+	// Remove the file before deleteLocalFiles is called so it fails
+	service := NewS3MigrationService(Config{
+		S3Backend:   mockS3,
+		VideoRepo:   mockVideoRepo,
+		StoragePath: mockPaths,
+		Logger:      logrus.New(),
+		DeleteLocal: true,
+	})
+
+	// Delete file early so deleteLocalFiles will fail (but migration succeeds)
+	err = os.Remove(testFilePath)
+	require.NoError(t, err)
+
+	err = service.MigrateVideo(ctx, videoID)
+	// Should still succeed even though local deletion failed
+	require.NoError(t, err)
+}
+
 func TestGetContentType(t *testing.T) {
 	service := NewS3MigrationService(Config{
 		Logger: logrus.New(),

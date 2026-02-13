@@ -668,3 +668,686 @@ func TestUnflagComment_Error(t *testing.T) {
 	err := svc.UnflagComment(context.Background(), uuid.New(), uuid.New())
 	assert.Error(t, err)
 }
+
+// --- GetCommentFlags tests ---
+
+func TestGetCommentFlags_AdminSuccess(t *testing.T) {
+	commentRepo := new(mockCommentRepo)
+	videoRepo := new(mockVideoRepo)
+	userRepo := new(mockUserRepo)
+	channelRepo := new(mockChannelRepo)
+	svc := NewService(commentRepo, videoRepo, userRepo, channelRepo)
+
+	commentID := uuid.New()
+	expectedFlags := []*domain.CommentFlag{
+		{ID: uuid.New(), CommentID: commentID, UserID: uuid.New(), Reason: domain.FlagReasonSpam},
+		{ID: uuid.New(), CommentID: commentID, UserID: uuid.New(), Reason: domain.FlagReasonHarassment},
+	}
+
+	commentRepo.On("GetFlags", mock.Anything, commentID).Return(expectedFlags, nil)
+
+	flags, err := svc.GetCommentFlags(context.Background(), commentID, uuid.New(), true)
+	assert.NoError(t, err)
+	assert.Len(t, flags, 2)
+	assert.Equal(t, expectedFlags, flags)
+}
+
+func TestGetCommentFlags_ChannelOwnerSuccess(t *testing.T) {
+	commentRepo := new(mockCommentRepo)
+	videoRepo := new(mockVideoRepo)
+	userRepo := new(mockUserRepo)
+	channelRepo := new(mockChannelRepo)
+	svc := NewService(commentRepo, videoRepo, userRepo, channelRepo)
+
+	channelOwnerID := uuid.New()
+	commentID := uuid.New()
+	videoID := uuid.New()
+	channelID := uuid.New()
+
+	commentRepo.On("GetByID", mock.Anything, commentID).Return(&domain.Comment{
+		ID: commentID, VideoID: videoID,
+	}, nil)
+	videoRepo.On("GetByID", mock.Anything, videoID.String()).Return(&domain.Video{
+		ID: videoID.String(), ChannelID: channelID,
+	}, nil)
+	channelRepo.On("GetByID", mock.Anything, channelID).Return(&domain.Channel{
+		ID: channelID, AccountID: channelOwnerID,
+	}, nil)
+
+	expectedFlags := []*domain.CommentFlag{
+		{ID: uuid.New(), CommentID: commentID, Reason: domain.FlagReasonSpam},
+	}
+	commentRepo.On("GetFlags", mock.Anything, commentID).Return(expectedFlags, nil)
+
+	flags, err := svc.GetCommentFlags(context.Background(), commentID, channelOwnerID, false)
+	assert.NoError(t, err)
+	assert.Len(t, flags, 1)
+}
+
+func TestGetCommentFlags_NonOwnerUnauthorized(t *testing.T) {
+	commentRepo := new(mockCommentRepo)
+	videoRepo := new(mockVideoRepo)
+	userRepo := new(mockUserRepo)
+	channelRepo := new(mockChannelRepo)
+	svc := NewService(commentRepo, videoRepo, userRepo, channelRepo)
+
+	userID := uuid.New()
+	otherOwnerID := uuid.New()
+	commentID := uuid.New()
+	videoID := uuid.New()
+	channelID := uuid.New()
+
+	commentRepo.On("GetByID", mock.Anything, commentID).Return(&domain.Comment{
+		ID: commentID, VideoID: videoID,
+	}, nil)
+	videoRepo.On("GetByID", mock.Anything, videoID.String()).Return(&domain.Video{
+		ID: videoID.String(), ChannelID: channelID,
+	}, nil)
+	channelRepo.On("GetByID", mock.Anything, channelID).Return(&domain.Channel{
+		ID: channelID, AccountID: otherOwnerID,
+	}, nil)
+
+	flags, err := svc.GetCommentFlags(context.Background(), commentID, userID, false)
+	assert.ErrorIs(t, err, domain.ErrUnauthorized)
+	assert.Nil(t, flags)
+}
+
+func TestGetCommentFlags_CommentNotFound(t *testing.T) {
+	commentRepo := new(mockCommentRepo)
+	videoRepo := new(mockVideoRepo)
+	userRepo := new(mockUserRepo)
+	channelRepo := new(mockChannelRepo)
+	svc := NewService(commentRepo, videoRepo, userRepo, channelRepo)
+
+	commentID := uuid.New()
+	commentRepo.On("GetByID", mock.Anything, commentID).Return(nil, domain.ErrNotFound)
+
+	flags, err := svc.GetCommentFlags(context.Background(), commentID, uuid.New(), false)
+	assert.Error(t, err)
+	assert.Nil(t, flags)
+}
+
+func TestGetCommentFlags_GetFlagsRepoError(t *testing.T) {
+	commentRepo := new(mockCommentRepo)
+	videoRepo := new(mockVideoRepo)
+	userRepo := new(mockUserRepo)
+	channelRepo := new(mockChannelRepo)
+	svc := NewService(commentRepo, videoRepo, userRepo, channelRepo)
+
+	commentID := uuid.New()
+	commentRepo.On("GetFlags", mock.Anything, commentID).Return(nil, errors.New("db error"))
+
+	flags, err := svc.GetCommentFlags(context.Background(), commentID, uuid.New(), true)
+	assert.Error(t, err)
+	assert.Nil(t, flags)
+	assert.Contains(t, err.Error(), "failed to get comment flags")
+}
+
+func TestGetCommentFlags_EmptyFlags(t *testing.T) {
+	commentRepo := new(mockCommentRepo)
+	videoRepo := new(mockVideoRepo)
+	userRepo := new(mockUserRepo)
+	channelRepo := new(mockChannelRepo)
+	svc := NewService(commentRepo, videoRepo, userRepo, channelRepo)
+
+	commentID := uuid.New()
+	commentRepo.On("GetFlags", mock.Anything, commentID).Return([]*domain.CommentFlag{}, nil)
+
+	flags, err := svc.GetCommentFlags(context.Background(), commentID, uuid.New(), true)
+	assert.NoError(t, err)
+	assert.Empty(t, flags)
+}
+
+// --- FlagComment additional edge cases ---
+
+func TestFlagComment_CommentNotFound(t *testing.T) {
+	commentRepo := new(mockCommentRepo)
+	videoRepo := new(mockVideoRepo)
+	userRepo := new(mockUserRepo)
+	channelRepo := new(mockChannelRepo)
+	svc := NewService(commentRepo, videoRepo, userRepo, channelRepo)
+
+	commentID := uuid.New()
+	commentRepo.On("GetByID", mock.Anything, commentID).Return(nil, domain.ErrNotFound)
+
+	err := svc.FlagComment(context.Background(), uuid.New(), commentID, &domain.FlagCommentRequest{Reason: "spam"})
+	assert.Error(t, err)
+}
+
+func TestFlagComment_DeletedComment(t *testing.T) {
+	commentRepo := new(mockCommentRepo)
+	videoRepo := new(mockVideoRepo)
+	userRepo := new(mockUserRepo)
+	channelRepo := new(mockChannelRepo)
+	svc := NewService(commentRepo, videoRepo, userRepo, channelRepo)
+
+	userID := uuid.New()
+	commentAuthor := uuid.New()
+	commentID := uuid.New()
+
+	commentRepo.On("GetByID", mock.Anything, commentID).Return(&domain.Comment{
+		ID: commentID, UserID: commentAuthor, Status: domain.CommentStatusDeleted,
+	}, nil)
+
+	err := svc.FlagComment(context.Background(), userID, commentID, &domain.FlagCommentRequest{Reason: "spam"})
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "cannot flag deleted or hidden comment")
+}
+
+func TestFlagComment_WithDetails(t *testing.T) {
+	commentRepo := new(mockCommentRepo)
+	videoRepo := new(mockVideoRepo)
+	userRepo := new(mockUserRepo)
+	channelRepo := new(mockChannelRepo)
+	svc := NewService(commentRepo, videoRepo, userRepo, channelRepo)
+
+	userID := uuid.New()
+	commentAuthor := uuid.New()
+	commentID := uuid.New()
+
+	commentRepo.On("GetByID", mock.Anything, commentID).Return(&domain.Comment{
+		ID: commentID, UserID: commentAuthor, Status: domain.CommentStatusActive, FlagCount: 0,
+	}, nil)
+	commentRepo.On("FlagComment", mock.Anything, mock.AnythingOfType("*domain.CommentFlag")).Return(nil)
+
+	details := "This comment is spamming product links"
+	err := svc.FlagComment(context.Background(), userID, commentID, &domain.FlagCommentRequest{
+		Reason:  "spam",
+		Details: &details,
+	})
+	assert.NoError(t, err)
+}
+
+func TestFlagComment_AutoHideHighFlagCount(t *testing.T) {
+	commentRepo := new(mockCommentRepo)
+	videoRepo := new(mockVideoRepo)
+	userRepo := new(mockUserRepo)
+	channelRepo := new(mockChannelRepo)
+	svc := NewService(commentRepo, videoRepo, userRepo, channelRepo)
+
+	userID := uuid.New()
+	commentAuthor := uuid.New()
+	commentID := uuid.New()
+
+	// Comment already has 5 flags, so flagging should trigger auto-hide
+	commentRepo.On("GetByID", mock.Anything, commentID).Return(&domain.Comment{
+		ID: commentID, UserID: commentAuthor, Status: domain.CommentStatusActive, FlagCount: 5,
+	}, nil)
+	commentRepo.On("FlagComment", mock.Anything, mock.AnythingOfType("*domain.CommentFlag")).Return(nil)
+	commentRepo.On("UpdateStatus", mock.Anything, commentID, domain.CommentStatusFlagged).Return(nil)
+
+	err := svc.FlagComment(context.Background(), userID, commentID, &domain.FlagCommentRequest{Reason: "spam"})
+	assert.NoError(t, err)
+	commentRepo.AssertCalled(t, "UpdateStatus", mock.Anything, commentID, domain.CommentStatusFlagged)
+}
+
+func TestFlagComment_RepoError(t *testing.T) {
+	commentRepo := new(mockCommentRepo)
+	videoRepo := new(mockVideoRepo)
+	userRepo := new(mockUserRepo)
+	channelRepo := new(mockChannelRepo)
+	svc := NewService(commentRepo, videoRepo, userRepo, channelRepo)
+
+	userID := uuid.New()
+	commentAuthor := uuid.New()
+	commentID := uuid.New()
+
+	commentRepo.On("GetByID", mock.Anything, commentID).Return(&domain.Comment{
+		ID: commentID, UserID: commentAuthor, Status: domain.CommentStatusActive, FlagCount: 0,
+	}, nil)
+	commentRepo.On("FlagComment", mock.Anything, mock.AnythingOfType("*domain.CommentFlag")).Return(errors.New("db error"))
+
+	err := svc.FlagComment(context.Background(), userID, commentID, &domain.FlagCommentRequest{Reason: "spam"})
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to flag comment")
+}
+
+// --- DeleteComment additional edge cases ---
+
+func TestDeleteComment_IsOwnerCheckError(t *testing.T) {
+	commentRepo := new(mockCommentRepo)
+	videoRepo := new(mockVideoRepo)
+	userRepo := new(mockUserRepo)
+	channelRepo := new(mockChannelRepo)
+	svc := NewService(commentRepo, videoRepo, userRepo, channelRepo)
+
+	commentID := uuid.New()
+	commentRepo.On("IsOwner", mock.Anything, commentID, mock.Anything).Return(false, errors.New("db error"))
+
+	err := svc.DeleteComment(context.Background(), uuid.New(), commentID, false)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to check ownership")
+}
+
+func TestDeleteComment_GetCommentError(t *testing.T) {
+	commentRepo := new(mockCommentRepo)
+	videoRepo := new(mockVideoRepo)
+	userRepo := new(mockUserRepo)
+	channelRepo := new(mockChannelRepo)
+	svc := NewService(commentRepo, videoRepo, userRepo, channelRepo)
+
+	userID := uuid.New()
+	commentID := uuid.New()
+
+	commentRepo.On("IsOwner", mock.Anything, commentID, userID).Return(false, nil)
+	commentRepo.On("GetByID", mock.Anything, commentID).Return(nil, errors.New("db error"))
+
+	err := svc.DeleteComment(context.Background(), userID, commentID, false)
+	assert.Error(t, err)
+}
+
+func TestDeleteComment_GetVideoError(t *testing.T) {
+	commentRepo := new(mockCommentRepo)
+	videoRepo := new(mockVideoRepo)
+	userRepo := new(mockUserRepo)
+	channelRepo := new(mockChannelRepo)
+	svc := NewService(commentRepo, videoRepo, userRepo, channelRepo)
+
+	userID := uuid.New()
+	commentID := uuid.New()
+	videoID := uuid.New()
+
+	commentRepo.On("IsOwner", mock.Anything, commentID, userID).Return(false, nil)
+	commentRepo.On("GetByID", mock.Anything, commentID).Return(&domain.Comment{
+		ID: commentID, VideoID: videoID,
+	}, nil)
+	videoRepo.On("GetByID", mock.Anything, videoID.String()).Return(nil, errors.New("db error"))
+
+	err := svc.DeleteComment(context.Background(), userID, commentID, false)
+	assert.Error(t, err)
+}
+
+func TestDeleteComment_GetChannelError(t *testing.T) {
+	commentRepo := new(mockCommentRepo)
+	videoRepo := new(mockVideoRepo)
+	userRepo := new(mockUserRepo)
+	channelRepo := new(mockChannelRepo)
+	svc := NewService(commentRepo, videoRepo, userRepo, channelRepo)
+
+	userID := uuid.New()
+	commentID := uuid.New()
+	videoID := uuid.New()
+	channelID := uuid.New()
+
+	commentRepo.On("IsOwner", mock.Anything, commentID, userID).Return(false, nil)
+	commentRepo.On("GetByID", mock.Anything, commentID).Return(&domain.Comment{
+		ID: commentID, VideoID: videoID,
+	}, nil)
+	videoRepo.On("GetByID", mock.Anything, videoID.String()).Return(&domain.Video{
+		ID: videoID.String(), ChannelID: channelID,
+	}, nil)
+	channelRepo.On("GetByID", mock.Anything, channelID).Return(nil, errors.New("db error"))
+
+	err := svc.DeleteComment(context.Background(), userID, commentID, false)
+	assert.Error(t, err)
+}
+
+func TestDeleteComment_RepoDeleteError(t *testing.T) {
+	commentRepo := new(mockCommentRepo)
+	videoRepo := new(mockVideoRepo)
+	userRepo := new(mockUserRepo)
+	channelRepo := new(mockChannelRepo)
+	svc := NewService(commentRepo, videoRepo, userRepo, channelRepo)
+
+	commentID := uuid.New()
+	commentRepo.On("Delete", mock.Anything, commentID).Return(errors.New("db error"))
+
+	err := svc.DeleteComment(context.Background(), uuid.New(), commentID, true)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to delete comment")
+}
+
+// --- UpdateComment additional edge cases ---
+
+func TestUpdateComment_IsOwnerCheckError(t *testing.T) {
+	commentRepo := new(mockCommentRepo)
+	videoRepo := new(mockVideoRepo)
+	userRepo := new(mockUserRepo)
+	channelRepo := new(mockChannelRepo)
+	svc := NewService(commentRepo, videoRepo, userRepo, channelRepo)
+
+	commentID := uuid.New()
+	commentRepo.On("IsOwner", mock.Anything, commentID, mock.Anything).Return(false, errors.New("db error"))
+
+	err := svc.UpdateComment(context.Background(), uuid.New(), commentID, &domain.UpdateCommentRequest{Body: "test"})
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to check ownership")
+}
+
+func TestUpdateComment_EmptyBody(t *testing.T) {
+	commentRepo := new(mockCommentRepo)
+	videoRepo := new(mockVideoRepo)
+	userRepo := new(mockUserRepo)
+	channelRepo := new(mockChannelRepo)
+	svc := NewService(commentRepo, videoRepo, userRepo, channelRepo)
+
+	userID := uuid.New()
+	commentID := uuid.New()
+	commentRepo.On("IsOwner", mock.Anything, commentID, userID).Return(true, nil)
+
+	err := svc.UpdateComment(context.Background(), userID, commentID, &domain.UpdateCommentRequest{Body: ""})
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "empty after sanitization")
+}
+
+func TestUpdateComment_XSSSanitization(t *testing.T) {
+	commentRepo := new(mockCommentRepo)
+	videoRepo := new(mockVideoRepo)
+	userRepo := new(mockUserRepo)
+	channelRepo := new(mockChannelRepo)
+	svc := NewService(commentRepo, videoRepo, userRepo, channelRepo)
+
+	userID := uuid.New()
+	commentID := uuid.New()
+	commentRepo.On("IsOwner", mock.Anything, commentID, userID).Return(true, nil)
+	commentRepo.On("Update", mock.Anything, commentID, mock.AnythingOfType("string")).Return(nil)
+
+	err := svc.UpdateComment(context.Background(), userID, commentID, &domain.UpdateCommentRequest{
+		Body: "<script>alert('xss')</script>safe update",
+	})
+	assert.NoError(t, err)
+}
+
+func TestUpdateComment_RepoError(t *testing.T) {
+	commentRepo := new(mockCommentRepo)
+	videoRepo := new(mockVideoRepo)
+	userRepo := new(mockUserRepo)
+	channelRepo := new(mockChannelRepo)
+	svc := NewService(commentRepo, videoRepo, userRepo, channelRepo)
+
+	userID := uuid.New()
+	commentID := uuid.New()
+	commentRepo.On("IsOwner", mock.Anything, commentID, userID).Return(true, nil)
+	commentRepo.On("Update", mock.Anything, commentID, mock.AnythingOfType("string")).Return(errors.New("db error"))
+
+	err := svc.UpdateComment(context.Background(), userID, commentID, &domain.UpdateCommentRequest{Body: "valid text"})
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to update comment")
+}
+
+// --- ListComments additional tests ---
+
+func TestListComments_VideoNotFound(t *testing.T) {
+	commentRepo := new(mockCommentRepo)
+	videoRepo := new(mockVideoRepo)
+	userRepo := new(mockUserRepo)
+	channelRepo := new(mockChannelRepo)
+	svc := NewService(commentRepo, videoRepo, userRepo, channelRepo)
+
+	videoID := uuid.New()
+	videoRepo.On("GetByID", mock.Anything, videoID.String()).Return(nil, domain.ErrNotFound)
+
+	comments, err := svc.ListComments(context.Background(), videoID, nil, 20, 0, "newest")
+	assert.Error(t, err)
+	assert.Nil(t, comments)
+}
+
+func TestListComments_CustomPagination(t *testing.T) {
+	commentRepo := new(mockCommentRepo)
+	videoRepo := new(mockVideoRepo)
+	userRepo := new(mockUserRepo)
+	channelRepo := new(mockChannelRepo)
+	svc := NewService(commentRepo, videoRepo, userRepo, channelRepo)
+
+	videoID := uuid.New()
+	videoRepo.On("GetByID", mock.Anything, videoID.String()).Return(&domain.Video{ID: videoID.String()}, nil)
+	commentRepo.On("ListByVideo", mock.Anything, mock.MatchedBy(func(opts domain.CommentListOptions) bool {
+		return opts.Limit == 50 && opts.Offset == 10 && opts.OrderBy == "oldest"
+	})).Return([]*domain.CommentWithUser{}, nil)
+
+	comments, err := svc.ListComments(context.Background(), videoID, nil, 50, 10, "oldest")
+	assert.NoError(t, err)
+	assert.Empty(t, comments)
+}
+
+func TestListComments_LimitCapped(t *testing.T) {
+	commentRepo := new(mockCommentRepo)
+	videoRepo := new(mockVideoRepo)
+	userRepo := new(mockUserRepo)
+	channelRepo := new(mockChannelRepo)
+	svc := NewService(commentRepo, videoRepo, userRepo, channelRepo)
+
+	videoID := uuid.New()
+	videoRepo.On("GetByID", mock.Anything, videoID.String()).Return(&domain.Video{ID: videoID.String()}, nil)
+	commentRepo.On("ListByVideo", mock.Anything, mock.MatchedBy(func(opts domain.CommentListOptions) bool {
+		return opts.Limit == 20 // 200 should be capped to 20
+	})).Return([]*domain.CommentWithUser{}, nil)
+
+	comments, err := svc.ListComments(context.Background(), videoID, nil, 200, 0, "newest")
+	assert.NoError(t, err)
+	assert.Empty(t, comments)
+}
+
+func TestListComments_WithReplies(t *testing.T) {
+	commentRepo := new(mockCommentRepo)
+	videoRepo := new(mockVideoRepo)
+	userRepo := new(mockUserRepo)
+	channelRepo := new(mockChannelRepo)
+	svc := NewService(commentRepo, videoRepo, userRepo, channelRepo)
+
+	videoID := uuid.New()
+	commentID := uuid.New()
+	replyUserID := uuid.New()
+
+	videoRepo.On("GetByID", mock.Anything, videoID.String()).Return(&domain.Video{ID: videoID.String()}, nil)
+
+	topLevelComment := &domain.CommentWithUser{
+		Comment: domain.Comment{
+			ID:      commentID,
+			VideoID: videoID,
+			UserID:  uuid.New(),
+			Body:    "Top level comment",
+			Status:  domain.CommentStatusActive,
+		},
+		Username: "testuser",
+	}
+
+	commentRepo.On("ListByVideo", mock.Anything, mock.Anything).Return([]*domain.CommentWithUser{topLevelComment}, nil)
+
+	replyComment := &domain.CommentWithUser{
+		Comment: domain.Comment{
+			ID:       uuid.New(),
+			VideoID:  videoID,
+			UserID:   replyUserID,
+			ParentID: &commentID,
+			Body:     "This is a reply",
+			Status:   domain.CommentStatusActive,
+		},
+		Username: "replyuser",
+	}
+
+	commentRepo.On("ListReplies", mock.Anything, commentID, 3, 0).Return([]*domain.CommentWithUser{replyComment}, nil)
+
+	comments, err := svc.ListComments(context.Background(), videoID, nil, 20, 0, "newest")
+	assert.NoError(t, err)
+	assert.Len(t, comments, 1)
+	assert.Len(t, comments[0].Replies, 1)
+	assert.Equal(t, "This is a reply", comments[0].Replies[0].Body)
+}
+
+func TestListComments_WithParentID(t *testing.T) {
+	commentRepo := new(mockCommentRepo)
+	videoRepo := new(mockVideoRepo)
+	userRepo := new(mockUserRepo)
+	channelRepo := new(mockChannelRepo)
+	svc := NewService(commentRepo, videoRepo, userRepo, channelRepo)
+
+	videoID := uuid.New()
+	parentID := uuid.New()
+
+	videoRepo.On("GetByID", mock.Anything, videoID.String()).Return(&domain.Video{ID: videoID.String()}, nil)
+	commentRepo.On("ListByVideo", mock.Anything, mock.MatchedBy(func(opts domain.CommentListOptions) bool {
+		return opts.ParentID != nil && *opts.ParentID == parentID
+	})).Return([]*domain.CommentWithUser{}, nil)
+
+	// When parentID is provided, replies should NOT be fetched (only top-level triggers reply fetch)
+	comments, err := svc.ListComments(context.Background(), videoID, &parentID, 20, 0, "newest")
+	assert.NoError(t, err)
+	assert.Empty(t, comments)
+	// ListReplies should NOT be called when parentID is set
+	commentRepo.AssertNotCalled(t, "ListReplies", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+}
+
+func TestListComments_RepoError(t *testing.T) {
+	commentRepo := new(mockCommentRepo)
+	videoRepo := new(mockVideoRepo)
+	userRepo := new(mockUserRepo)
+	channelRepo := new(mockChannelRepo)
+	svc := NewService(commentRepo, videoRepo, userRepo, channelRepo)
+
+	videoID := uuid.New()
+	videoRepo.On("GetByID", mock.Anything, videoID.String()).Return(&domain.Video{ID: videoID.String()}, nil)
+	commentRepo.On("ListByVideo", mock.Anything, mock.Anything).Return(nil, errors.New("db error"))
+
+	comments, err := svc.ListComments(context.Background(), videoID, nil, 20, 0, "newest")
+	assert.Error(t, err)
+	assert.Nil(t, comments)
+	assert.Contains(t, err.Error(), "failed to list comments")
+}
+
+// --- GetComment additional tests ---
+
+func TestGetComment_RepoError(t *testing.T) {
+	commentRepo := new(mockCommentRepo)
+	videoRepo := new(mockVideoRepo)
+	userRepo := new(mockUserRepo)
+	channelRepo := new(mockChannelRepo)
+	svc := NewService(commentRepo, videoRepo, userRepo, channelRepo)
+
+	commentID := uuid.New()
+	commentRepo.On("GetByIDWithUser", mock.Anything, commentID).Return(nil, errors.New("db error"))
+
+	comment, err := svc.GetComment(context.Background(), commentID)
+	assert.Error(t, err)
+	assert.Nil(t, comment)
+}
+
+// --- ModerateComment additional tests ---
+
+func TestModerateComment_ChannelOwnerAllowed(t *testing.T) {
+	commentRepo := new(mockCommentRepo)
+	videoRepo := new(mockVideoRepo)
+	userRepo := new(mockUserRepo)
+	channelRepo := new(mockChannelRepo)
+	svc := NewService(commentRepo, videoRepo, userRepo, channelRepo)
+
+	channelOwnerID := uuid.New()
+	commentID := uuid.New()
+	videoID := uuid.New()
+	channelID := uuid.New()
+
+	commentRepo.On("GetByID", mock.Anything, commentID).Return(&domain.Comment{
+		ID: commentID, VideoID: videoID,
+	}, nil)
+	videoRepo.On("GetByID", mock.Anything, videoID.String()).Return(&domain.Video{
+		ID: videoID.String(), ChannelID: channelID,
+	}, nil)
+	channelRepo.On("GetByID", mock.Anything, channelID).Return(&domain.Channel{
+		ID: channelID, AccountID: channelOwnerID,
+	}, nil)
+	commentRepo.On("UpdateStatus", mock.Anything, commentID, domain.CommentStatusHidden).Return(nil)
+
+	err := svc.ModerateComment(context.Background(), channelOwnerID, commentID, domain.CommentStatusHidden, false)
+	assert.NoError(t, err)
+}
+
+func TestModerateComment_UpdateStatusError(t *testing.T) {
+	commentRepo := new(mockCommentRepo)
+	videoRepo := new(mockVideoRepo)
+	userRepo := new(mockUserRepo)
+	channelRepo := new(mockChannelRepo)
+	svc := NewService(commentRepo, videoRepo, userRepo, channelRepo)
+
+	commentID := uuid.New()
+	commentRepo.On("UpdateStatus", mock.Anything, commentID, domain.CommentStatusFlagged).Return(errors.New("db error"))
+
+	err := svc.ModerateComment(context.Background(), uuid.New(), commentID, domain.CommentStatusFlagged, true)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to update comment status")
+}
+
+// --- CreateComment additional tests ---
+
+func TestCreateComment_ReplyToNonExistentParent(t *testing.T) {
+	commentRepo := new(mockCommentRepo)
+	videoRepo := new(mockVideoRepo)
+	userRepo := new(mockUserRepo)
+	channelRepo := new(mockChannelRepo)
+	svc := NewService(commentRepo, videoRepo, userRepo, channelRepo)
+
+	videoID := uuid.New()
+	parentID := uuid.New()
+
+	videoRepo.On("GetByID", mock.Anything, videoID.String()).Return(&domain.Video{
+		ID: videoID.String(), Privacy: domain.PrivacyPublic,
+	}, nil)
+	commentRepo.On("GetByID", mock.Anything, parentID).Return(nil, domain.ErrNotFound)
+
+	req := &domain.CreateCommentRequest{VideoID: videoID, Body: "Reply", ParentID: &parentID}
+	_, err := svc.CreateComment(context.Background(), uuid.New(), req)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "parent comment not found")
+}
+
+func TestCreateComment_ReplyToDifferentVideo(t *testing.T) {
+	commentRepo := new(mockCommentRepo)
+	videoRepo := new(mockVideoRepo)
+	userRepo := new(mockUserRepo)
+	channelRepo := new(mockChannelRepo)
+	svc := NewService(commentRepo, videoRepo, userRepo, channelRepo)
+
+	videoID := uuid.New()
+	otherVideoID := uuid.New()
+	parentID := uuid.New()
+
+	videoRepo.On("GetByID", mock.Anything, videoID.String()).Return(&domain.Video{
+		ID: videoID.String(), Privacy: domain.PrivacyPublic,
+	}, nil)
+	commentRepo.On("GetByID", mock.Anything, parentID).Return(&domain.Comment{
+		ID: parentID, VideoID: otherVideoID, Status: domain.CommentStatusActive,
+	}, nil)
+
+	req := &domain.CreateCommentRequest{VideoID: videoID, Body: "Reply", ParentID: &parentID}
+	_, err := svc.CreateComment(context.Background(), uuid.New(), req)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "parent comment is from a different video")
+}
+
+func TestCreateComment_UnlistedVideoAllowed(t *testing.T) {
+	commentRepo := new(mockCommentRepo)
+	videoRepo := new(mockVideoRepo)
+	userRepo := new(mockUserRepo)
+	channelRepo := new(mockChannelRepo)
+	svc := NewService(commentRepo, videoRepo, userRepo, channelRepo)
+
+	videoID := uuid.New()
+	videoRepo.On("GetByID", mock.Anything, videoID.String()).Return(&domain.Video{
+		ID: videoID.String(), Privacy: domain.PrivacyUnlisted,
+	}, nil)
+	commentRepo.On("Create", mock.Anything, mock.AnythingOfType("*domain.Comment")).Return(nil)
+
+	req := &domain.CreateCommentRequest{VideoID: videoID, Body: "Comment on unlisted video"}
+	comment, err := svc.CreateComment(context.Background(), uuid.New(), req)
+	assert.NoError(t, err)
+	assert.NotNil(t, comment)
+}
+
+func TestCreateComment_RepoCreateError(t *testing.T) {
+	commentRepo := new(mockCommentRepo)
+	videoRepo := new(mockVideoRepo)
+	userRepo := new(mockUserRepo)
+	channelRepo := new(mockChannelRepo)
+	svc := NewService(commentRepo, videoRepo, userRepo, channelRepo)
+
+	videoID := uuid.New()
+	videoRepo.On("GetByID", mock.Anything, videoID.String()).Return(&domain.Video{
+		ID: videoID.String(), Privacy: domain.PrivacyPublic,
+	}, nil)
+	commentRepo.On("Create", mock.Anything, mock.AnythingOfType("*domain.Comment")).Return(errors.New("db error"))
+
+	req := &domain.CreateCommentRequest{VideoID: videoID, Body: "Test comment"}
+	comment, err := svc.CreateComment(context.Background(), uuid.New(), req)
+	assert.Error(t, err)
+	assert.Nil(t, comment)
+	assert.Contains(t, err.Error(), "failed to create comment")
+}

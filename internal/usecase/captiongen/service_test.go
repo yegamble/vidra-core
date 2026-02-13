@@ -4,9 +4,12 @@ import (
 	"athena/internal/domain"
 	"athena/internal/whisper"
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -650,4 +653,1038 @@ func TestGetLanguageLabel(t *testing.T) {
 			assert.Equal(t, tt.expected, result)
 		})
 	}
+}
+
+// --- NewService tests ---
+
+func TestNewService(t *testing.T) {
+	mockJobRepo := new(MockJobRepository)
+	mockCaptionRepo := new(MockCaptionRepository)
+	mockVideoRepo := new(MockVideoRepository)
+	mockWhisper := new(MockWhisperClient)
+
+	svc := NewService(mockJobRepo, mockCaptionRepo, mockVideoRepo, mockWhisper, "/tmp/uploads")
+
+	assert.NotNil(t, svc, "NewService should return a non-nil Service")
+
+	// Verify it implements the Service interface
+	var _ Service = svc
+}
+
+// --- ProcessNext tests ---
+
+func TestProcessNext_NoPendingJobs(t *testing.T) {
+	mockJobRepo := new(MockJobRepository)
+	mockCaptionRepo := new(MockCaptionRepository)
+	mockVideoRepo := new(MockVideoRepository)
+	mockWhisper := new(MockWhisperClient)
+
+	svc := NewService(mockJobRepo, mockCaptionRepo, mockVideoRepo, mockWhisper, t.TempDir())
+	ctx := context.Background()
+
+	mockJobRepo.On("GetNextPendingJob", ctx).Return(nil, nil)
+
+	processed, err := svc.ProcessNext(ctx)
+
+	assert.NoError(t, err)
+	assert.False(t, processed, "Should return false when no pending jobs exist")
+	mockJobRepo.AssertCalled(t, "GetNextPendingJob", ctx)
+}
+
+func TestProcessNext_GetNextPendingJobError(t *testing.T) {
+	mockJobRepo := new(MockJobRepository)
+	mockCaptionRepo := new(MockCaptionRepository)
+	mockVideoRepo := new(MockVideoRepository)
+	mockWhisper := new(MockWhisperClient)
+
+	svc := NewService(mockJobRepo, mockCaptionRepo, mockVideoRepo, mockWhisper, t.TempDir())
+	ctx := context.Background()
+
+	mockJobRepo.On("GetNextPendingJob", ctx).Return(nil, errors.New("database connection failed"))
+
+	processed, err := svc.ProcessNext(ctx)
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to get next job")
+	assert.False(t, processed)
+}
+
+func TestProcessNext_UpdateStatusError(t *testing.T) {
+	mockJobRepo := new(MockJobRepository)
+	mockCaptionRepo := new(MockCaptionRepository)
+	mockVideoRepo := new(MockVideoRepository)
+	mockWhisper := new(MockWhisperClient)
+
+	svc := NewService(mockJobRepo, mockCaptionRepo, mockVideoRepo, mockWhisper, t.TempDir())
+	ctx := context.Background()
+
+	job := &domain.CaptionGenerationJob{
+		ID:      uuid.New(),
+		VideoID: uuid.New(),
+		Status:  domain.CaptionGenStatusPending,
+	}
+
+	mockJobRepo.On("GetNextPendingJob", ctx).Return(job, nil)
+	mockJobRepo.On("UpdateStatus", ctx, job.ID, domain.CaptionGenStatusProcessing).Return(errors.New("update failed"))
+
+	processed, err := svc.ProcessNext(ctx)
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to mark job as processing")
+	assert.True(t, processed, "Should return true since a job was found")
+}
+
+func TestProcessNext_ProcessJobFailure_MarksFailed(t *testing.T) {
+	mockJobRepo := new(MockJobRepository)
+	mockCaptionRepo := new(MockCaptionRepository)
+	mockVideoRepo := new(MockVideoRepository)
+	mockWhisper := new(MockWhisperClient)
+
+	tempDir := t.TempDir()
+	svc := NewService(mockJobRepo, mockCaptionRepo, mockVideoRepo, mockWhisper, tempDir)
+	ctx := context.Background()
+
+	videoID := uuid.New()
+	job := &domain.CaptionGenerationJob{
+		ID:           uuid.New(),
+		VideoID:      videoID,
+		Status:       domain.CaptionGenStatusPending,
+		OutputFormat: domain.CaptionFormatVTT,
+	}
+
+	mockJobRepo.On("GetNextPendingJob", ctx).Return(job, nil)
+	mockJobRepo.On("UpdateStatus", ctx, job.ID, domain.CaptionGenStatusProcessing).Return(nil)
+	// processJob will fail when getting the video
+	mockVideoRepo.On("GetByID", ctx, videoID.String()).Return(nil, errors.New("video not found"))
+	mockJobRepo.On("UpdateProgress", ctx, job.ID, mock.AnythingOfType("int")).Return(nil)
+	mockJobRepo.On("MarkFailed", ctx, job.ID, mock.AnythingOfType("string")).Return(nil)
+
+	processed, err := svc.ProcessNext(ctx)
+
+	assert.Error(t, err)
+	assert.True(t, processed)
+	mockJobRepo.AssertCalled(t, "MarkFailed", ctx, job.ID, mock.AnythingOfType("string"))
+}
+
+// --- processJob tests ---
+
+func TestProcessJob_FullSuccess_VTT(t *testing.T) {
+	mockJobRepo := new(MockJobRepository)
+	mockCaptionRepo := new(MockCaptionRepository)
+	mockVideoRepo := new(MockVideoRepository)
+	mockWhisper := new(MockWhisperClient)
+
+	tempDir := t.TempDir()
+	svc := NewService(mockJobRepo, mockCaptionRepo, mockVideoRepo, mockWhisper, tempDir).(*service)
+	ctx := context.Background()
+
+	videoID := uuid.New()
+	audioPath := filepath.Join(tempDir, "temp", videoID.String()+"_audio.wav")
+
+	job := &domain.CaptionGenerationJob{
+		ID:              uuid.New(),
+		VideoID:         videoID,
+		UserID:          uuid.New(),
+		SourceAudioPath: audioPath,
+		OutputFormat:    domain.CaptionFormatVTT,
+		ModelSize:       domain.WhisperModelBase,
+	}
+
+	mockVideo := &domain.Video{
+		ID:       videoID.String(),
+		Status:   domain.StatusCompleted,
+		MimeType: "video/mp4",
+		Language: "",
+	}
+
+	transcriptionResult := &whisper.TranscriptionResult{
+		Text:             "Hello world",
+		DetectedLanguage: "en",
+		Confidence:       0.95,
+		Duration:         10.0,
+		Segments: []whisper.TranscriptionSegment{
+			{Index: 0, Start: 0.0, End: 2.0, Text: "Hello world", Confidence: 0.95},
+		},
+	}
+
+	vttContent := "WEBVTT\n\n00:00:00.000 --> 00:00:02.000\nHello world\n"
+
+	// Create web-videos directory and fake source video
+	webVideosDir := filepath.Join(tempDir, "web-videos")
+	require.NoError(t, os.MkdirAll(webVideosDir, 0750))
+	videoPath := filepath.Join(webVideosDir, videoID.String()+".mp4")
+	require.NoError(t, os.WriteFile(videoPath, []byte("fake video"), 0600))
+
+	mockVideoRepo.On("GetByID", ctx, videoID.String()).Return(mockVideo, nil)
+	mockJobRepo.On("UpdateProgress", ctx, job.ID, mock.AnythingOfType("int")).Return(nil)
+	mockWhisper.On("ExtractAudioFromVideo", ctx, videoPath, audioPath).Return(nil)
+	mockWhisper.On("Transcribe", ctx, audioPath, (*string)(nil)).Return(transcriptionResult, nil)
+	mockWhisper.On("FormatToVTT", transcriptionResult).Return(vttContent, nil)
+	mockCaptionRepo.On("GetByVideoAndLanguage", ctx, videoID, "en").Return(nil, errors.New("not found"))
+	mockCaptionRepo.On("Create", ctx, mock.AnythingOfType("*domain.Caption")).Return(nil)
+	mockVideoRepo.On("Update", ctx, mock.AnythingOfType("*domain.Video")).Return(nil)
+	mockJobRepo.On("MarkCompleted", ctx, job.ID, mock.AnythingOfType("uuid.UUID"), "en", mock.AnythingOfType("int")).Return(nil)
+
+	err := svc.processJob(ctx, job)
+
+	assert.NoError(t, err)
+	mockWhisper.AssertCalled(t, "ExtractAudioFromVideo", ctx, videoPath, audioPath)
+	mockWhisper.AssertCalled(t, "Transcribe", ctx, audioPath, (*string)(nil))
+	mockWhisper.AssertCalled(t, "FormatToVTT", transcriptionResult)
+	mockCaptionRepo.AssertCalled(t, "Create", ctx, mock.AnythingOfType("*domain.Caption"))
+	mockJobRepo.AssertCalled(t, "MarkCompleted", ctx, job.ID, mock.AnythingOfType("uuid.UUID"), "en", mock.AnythingOfType("int"))
+	// Verify video language was updated since it was empty
+	mockVideoRepo.AssertCalled(t, "Update", ctx, mock.AnythingOfType("*domain.Video"))
+}
+
+func TestProcessJob_FullSuccess_SRT(t *testing.T) {
+	mockJobRepo := new(MockJobRepository)
+	mockCaptionRepo := new(MockCaptionRepository)
+	mockVideoRepo := new(MockVideoRepository)
+	mockWhisper := new(MockWhisperClient)
+
+	tempDir := t.TempDir()
+	svc := NewService(mockJobRepo, mockCaptionRepo, mockVideoRepo, mockWhisper, tempDir).(*service)
+	ctx := context.Background()
+
+	videoID := uuid.New()
+	audioPath := filepath.Join(tempDir, "temp", videoID.String()+"_audio.wav")
+
+	job := &domain.CaptionGenerationJob{
+		ID:              uuid.New(),
+		VideoID:         videoID,
+		UserID:          uuid.New(),
+		SourceAudioPath: audioPath,
+		OutputFormat:    domain.CaptionFormatSRT,
+		ModelSize:       domain.WhisperModelBase,
+	}
+
+	mockVideo := &domain.Video{
+		ID:       videoID.String(),
+		Status:   domain.StatusCompleted,
+		MimeType: "video/mp4",
+		Language: "en", // Already set, should not update
+	}
+
+	transcriptionResult := &whisper.TranscriptionResult{
+		Text:             "Hello world",
+		DetectedLanguage: "en",
+		Confidence:       0.95,
+	}
+
+	srtContent := "1\n00:00:00,000 --> 00:00:02,000\nHello world\n"
+
+	webVideosDir := filepath.Join(tempDir, "web-videos")
+	require.NoError(t, os.MkdirAll(webVideosDir, 0750))
+	videoPath := filepath.Join(webVideosDir, videoID.String()+".mp4")
+	require.NoError(t, os.WriteFile(videoPath, []byte("fake video"), 0600))
+
+	mockVideoRepo.On("GetByID", ctx, videoID.String()).Return(mockVideo, nil)
+	mockJobRepo.On("UpdateProgress", ctx, job.ID, mock.AnythingOfType("int")).Return(nil)
+	mockWhisper.On("ExtractAudioFromVideo", ctx, videoPath, audioPath).Return(nil)
+	mockWhisper.On("Transcribe", ctx, audioPath, (*string)(nil)).Return(transcriptionResult, nil)
+	mockWhisper.On("FormatToSRT", transcriptionResult).Return(srtContent, nil)
+	mockCaptionRepo.On("GetByVideoAndLanguage", ctx, videoID, "en").Return(nil, errors.New("not found"))
+	mockCaptionRepo.On("Create", ctx, mock.AnythingOfType("*domain.Caption")).Return(nil)
+	mockJobRepo.On("MarkCompleted", ctx, job.ID, mock.AnythingOfType("uuid.UUID"), "en", mock.AnythingOfType("int")).Return(nil)
+
+	err := svc.processJob(ctx, job)
+
+	assert.NoError(t, err)
+	mockWhisper.AssertCalled(t, "FormatToSRT", transcriptionResult)
+	// Video language already set, should NOT update
+	mockVideoRepo.AssertNotCalled(t, "Update", mock.Anything, mock.Anything)
+}
+
+func TestProcessJob_UnsupportedFormat(t *testing.T) {
+	mockJobRepo := new(MockJobRepository)
+	mockCaptionRepo := new(MockCaptionRepository)
+	mockVideoRepo := new(MockVideoRepository)
+	mockWhisper := new(MockWhisperClient)
+
+	tempDir := t.TempDir()
+	svc := NewService(mockJobRepo, mockCaptionRepo, mockVideoRepo, mockWhisper, tempDir).(*service)
+	ctx := context.Background()
+
+	videoID := uuid.New()
+	audioPath := filepath.Join(tempDir, "temp", videoID.String()+"_audio.wav")
+
+	job := &domain.CaptionGenerationJob{
+		ID:              uuid.New(),
+		VideoID:         videoID,
+		SourceAudioPath: audioPath,
+		OutputFormat:    domain.CaptionFormat("ass"), // Unsupported
+	}
+
+	mockVideo := &domain.Video{
+		ID:       videoID.String(),
+		Status:   domain.StatusCompleted,
+		MimeType: "video/mp4",
+	}
+
+	transcriptionResult := &whisper.TranscriptionResult{
+		Text:             "Hello world",
+		DetectedLanguage: "en",
+	}
+
+	webVideosDir := filepath.Join(tempDir, "web-videos")
+	require.NoError(t, os.MkdirAll(webVideosDir, 0750))
+	videoPath := filepath.Join(webVideosDir, videoID.String()+".mp4")
+	require.NoError(t, os.WriteFile(videoPath, []byte("fake video"), 0600))
+
+	mockVideoRepo.On("GetByID", ctx, videoID.String()).Return(mockVideo, nil)
+	mockJobRepo.On("UpdateProgress", ctx, job.ID, mock.AnythingOfType("int")).Return(nil)
+	mockWhisper.On("ExtractAudioFromVideo", ctx, videoPath, audioPath).Return(nil)
+	mockWhisper.On("Transcribe", ctx, audioPath, (*string)(nil)).Return(transcriptionResult, nil)
+
+	err := svc.processJob(ctx, job)
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "unsupported caption format")
+}
+
+func TestProcessJob_ExtractAudioError(t *testing.T) {
+	mockJobRepo := new(MockJobRepository)
+	mockCaptionRepo := new(MockCaptionRepository)
+	mockVideoRepo := new(MockVideoRepository)
+	mockWhisper := new(MockWhisperClient)
+
+	tempDir := t.TempDir()
+	svc := NewService(mockJobRepo, mockCaptionRepo, mockVideoRepo, mockWhisper, tempDir).(*service)
+	ctx := context.Background()
+
+	videoID := uuid.New()
+	audioPath := filepath.Join(tempDir, "temp", videoID.String()+"_audio.wav")
+
+	job := &domain.CaptionGenerationJob{
+		ID:              uuid.New(),
+		VideoID:         videoID,
+		SourceAudioPath: audioPath,
+		OutputFormat:    domain.CaptionFormatVTT,
+	}
+
+	mockVideo := &domain.Video{
+		ID:       videoID.String(),
+		Status:   domain.StatusCompleted,
+		MimeType: "video/mp4",
+	}
+
+	webVideosDir := filepath.Join(tempDir, "web-videos")
+	require.NoError(t, os.MkdirAll(webVideosDir, 0750))
+	videoPath := filepath.Join(webVideosDir, videoID.String()+".mp4")
+	require.NoError(t, os.WriteFile(videoPath, []byte("fake video"), 0600))
+
+	mockVideoRepo.On("GetByID", ctx, videoID.String()).Return(mockVideo, nil)
+	mockJobRepo.On("UpdateProgress", ctx, job.ID, mock.AnythingOfType("int")).Return(nil)
+	mockWhisper.On("ExtractAudioFromVideo", ctx, videoPath, audioPath).Return(errors.New("ffmpeg not found"))
+
+	err := svc.processJob(ctx, job)
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to extract audio")
+}
+
+func TestProcessJob_TranscribeError(t *testing.T) {
+	mockJobRepo := new(MockJobRepository)
+	mockCaptionRepo := new(MockCaptionRepository)
+	mockVideoRepo := new(MockVideoRepository)
+	mockWhisper := new(MockWhisperClient)
+
+	tempDir := t.TempDir()
+	svc := NewService(mockJobRepo, mockCaptionRepo, mockVideoRepo, mockWhisper, tempDir).(*service)
+	ctx := context.Background()
+
+	videoID := uuid.New()
+	audioPath := filepath.Join(tempDir, "temp", videoID.String()+"_audio.wav")
+
+	job := &domain.CaptionGenerationJob{
+		ID:              uuid.New(),
+		VideoID:         videoID,
+		SourceAudioPath: audioPath,
+		OutputFormat:    domain.CaptionFormatVTT,
+	}
+
+	mockVideo := &domain.Video{
+		ID:       videoID.String(),
+		Status:   domain.StatusCompleted,
+		MimeType: "video/mp4",
+	}
+
+	webVideosDir := filepath.Join(tempDir, "web-videos")
+	require.NoError(t, os.MkdirAll(webVideosDir, 0750))
+	videoPath := filepath.Join(webVideosDir, videoID.String()+".mp4")
+	require.NoError(t, os.WriteFile(videoPath, []byte("fake video"), 0600))
+
+	mockVideoRepo.On("GetByID", ctx, videoID.String()).Return(mockVideo, nil)
+	mockJobRepo.On("UpdateProgress", ctx, job.ID, mock.AnythingOfType("int")).Return(nil)
+	mockWhisper.On("ExtractAudioFromVideo", ctx, videoPath, audioPath).Return(nil)
+	mockWhisper.On("Transcribe", ctx, audioPath, (*string)(nil)).Return(nil, errors.New("whisper model not loaded"))
+
+	err := svc.processJob(ctx, job)
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to transcribe audio")
+}
+
+func TestProcessJob_FormatToVTTError(t *testing.T) {
+	mockJobRepo := new(MockJobRepository)
+	mockCaptionRepo := new(MockCaptionRepository)
+	mockVideoRepo := new(MockVideoRepository)
+	mockWhisper := new(MockWhisperClient)
+
+	tempDir := t.TempDir()
+	svc := NewService(mockJobRepo, mockCaptionRepo, mockVideoRepo, mockWhisper, tempDir).(*service)
+	ctx := context.Background()
+
+	videoID := uuid.New()
+	audioPath := filepath.Join(tempDir, "temp", videoID.String()+"_audio.wav")
+
+	job := &domain.CaptionGenerationJob{
+		ID:              uuid.New(),
+		VideoID:         videoID,
+		SourceAudioPath: audioPath,
+		OutputFormat:    domain.CaptionFormatVTT,
+	}
+
+	mockVideo := &domain.Video{
+		ID:       videoID.String(),
+		MimeType: "video/mp4",
+	}
+
+	transcriptionResult := &whisper.TranscriptionResult{
+		Text:             "test",
+		DetectedLanguage: "en",
+	}
+
+	webVideosDir := filepath.Join(tempDir, "web-videos")
+	require.NoError(t, os.MkdirAll(webVideosDir, 0750))
+	videoPath := filepath.Join(webVideosDir, videoID.String()+".mp4")
+	require.NoError(t, os.WriteFile(videoPath, []byte("fake"), 0600))
+
+	mockVideoRepo.On("GetByID", ctx, videoID.String()).Return(mockVideo, nil)
+	mockJobRepo.On("UpdateProgress", ctx, job.ID, mock.AnythingOfType("int")).Return(nil)
+	mockWhisper.On("ExtractAudioFromVideo", ctx, videoPath, audioPath).Return(nil)
+	mockWhisper.On("Transcribe", ctx, audioPath, (*string)(nil)).Return(transcriptionResult, nil)
+	mockWhisper.On("FormatToVTT", transcriptionResult).Return("", errors.New("formatting failed"))
+
+	err := svc.processJob(ctx, job)
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to format caption")
+}
+
+func TestProcessJob_CreateCaptionRecordError(t *testing.T) {
+	mockJobRepo := new(MockJobRepository)
+	mockCaptionRepo := new(MockCaptionRepository)
+	mockVideoRepo := new(MockVideoRepository)
+	mockWhisper := new(MockWhisperClient)
+
+	tempDir := t.TempDir()
+	svc := NewService(mockJobRepo, mockCaptionRepo, mockVideoRepo, mockWhisper, tempDir).(*service)
+	ctx := context.Background()
+
+	videoID := uuid.New()
+	audioPath := filepath.Join(tempDir, "temp", videoID.String()+"_audio.wav")
+
+	job := &domain.CaptionGenerationJob{
+		ID:              uuid.New(),
+		VideoID:         videoID,
+		SourceAudioPath: audioPath,
+		OutputFormat:    domain.CaptionFormatVTT,
+	}
+
+	mockVideo := &domain.Video{
+		ID:       videoID.String(),
+		MimeType: "video/mp4",
+		Language: "en",
+	}
+
+	transcriptionResult := &whisper.TranscriptionResult{
+		Text:             "test",
+		DetectedLanguage: "en",
+	}
+
+	webVideosDir := filepath.Join(tempDir, "web-videos")
+	require.NoError(t, os.MkdirAll(webVideosDir, 0750))
+	videoPath := filepath.Join(webVideosDir, videoID.String()+".mp4")
+	require.NoError(t, os.WriteFile(videoPath, []byte("fake"), 0600))
+
+	mockVideoRepo.On("GetByID", ctx, videoID.String()).Return(mockVideo, nil)
+	mockJobRepo.On("UpdateProgress", ctx, job.ID, mock.AnythingOfType("int")).Return(nil)
+	mockWhisper.On("ExtractAudioFromVideo", ctx, videoPath, audioPath).Return(nil)
+	mockWhisper.On("Transcribe", ctx, audioPath, (*string)(nil)).Return(transcriptionResult, nil)
+	mockWhisper.On("FormatToVTT", transcriptionResult).Return("WEBVTT\n\ntest", nil)
+	mockCaptionRepo.On("GetByVideoAndLanguage", ctx, videoID, "en").Return(nil, errors.New("not found"))
+	mockCaptionRepo.On("Create", ctx, mock.AnythingOfType("*domain.Caption")).Return(errors.New("db write error"))
+
+	err := svc.processJob(ctx, job)
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to create caption record")
+}
+
+func TestProcessJob_MarkCompletedError(t *testing.T) {
+	mockJobRepo := new(MockJobRepository)
+	mockCaptionRepo := new(MockCaptionRepository)
+	mockVideoRepo := new(MockVideoRepository)
+	mockWhisper := new(MockWhisperClient)
+
+	tempDir := t.TempDir()
+	svc := NewService(mockJobRepo, mockCaptionRepo, mockVideoRepo, mockWhisper, tempDir).(*service)
+	ctx := context.Background()
+
+	videoID := uuid.New()
+	audioPath := filepath.Join(tempDir, "temp", videoID.String()+"_audio.wav")
+
+	job := &domain.CaptionGenerationJob{
+		ID:              uuid.New(),
+		VideoID:         videoID,
+		SourceAudioPath: audioPath,
+		OutputFormat:    domain.CaptionFormatVTT,
+	}
+
+	mockVideo := &domain.Video{
+		ID:       videoID.String(),
+		MimeType: "video/mp4",
+		Language: "en",
+	}
+
+	transcriptionResult := &whisper.TranscriptionResult{
+		Text:             "test",
+		DetectedLanguage: "en",
+	}
+
+	webVideosDir := filepath.Join(tempDir, "web-videos")
+	require.NoError(t, os.MkdirAll(webVideosDir, 0750))
+	videoPath := filepath.Join(webVideosDir, videoID.String()+".mp4")
+	require.NoError(t, os.WriteFile(videoPath, []byte("fake"), 0600))
+
+	mockVideoRepo.On("GetByID", ctx, videoID.String()).Return(mockVideo, nil)
+	mockJobRepo.On("UpdateProgress", ctx, job.ID, mock.AnythingOfType("int")).Return(nil)
+	mockWhisper.On("ExtractAudioFromVideo", ctx, videoPath, audioPath).Return(nil)
+	mockWhisper.On("Transcribe", ctx, audioPath, (*string)(nil)).Return(transcriptionResult, nil)
+	mockWhisper.On("FormatToVTT", transcriptionResult).Return("WEBVTT\n\ntest", nil)
+	mockCaptionRepo.On("GetByVideoAndLanguage", ctx, videoID, "en").Return(nil, errors.New("not found"))
+	mockCaptionRepo.On("Create", ctx, mock.AnythingOfType("*domain.Caption")).Return(nil)
+	mockJobRepo.On("MarkCompleted", ctx, job.ID, mock.AnythingOfType("uuid.UUID"), "en", mock.AnythingOfType("int")).Return(errors.New("db error"))
+
+	err := svc.processJob(ctx, job)
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to mark job as completed")
+}
+
+func TestProcessJob_GetVideoError(t *testing.T) {
+	mockJobRepo := new(MockJobRepository)
+	mockCaptionRepo := new(MockCaptionRepository)
+	mockVideoRepo := new(MockVideoRepository)
+	mockWhisper := new(MockWhisperClient)
+
+	tempDir := t.TempDir()
+	svc := NewService(mockJobRepo, mockCaptionRepo, mockVideoRepo, mockWhisper, tempDir).(*service)
+	ctx := context.Background()
+
+	videoID := uuid.New()
+	job := &domain.CaptionGenerationJob{
+		ID:      uuid.New(),
+		VideoID: videoID,
+	}
+
+	mockVideoRepo.On("GetByID", ctx, videoID.String()).Return(nil, errors.New("not found"))
+	mockJobRepo.On("UpdateProgress", ctx, job.ID, mock.AnythingOfType("int")).Return(nil)
+
+	err := svc.processJob(ctx, job)
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to get video")
+}
+
+func TestProcessJob_AutoDetectDeletesExistingCaption(t *testing.T) {
+	mockJobRepo := new(MockJobRepository)
+	mockCaptionRepo := new(MockCaptionRepository)
+	mockVideoRepo := new(MockVideoRepository)
+	mockWhisper := new(MockWhisperClient)
+
+	tempDir := t.TempDir()
+	svc := NewService(mockJobRepo, mockCaptionRepo, mockVideoRepo, mockWhisper, tempDir).(*service)
+	ctx := context.Background()
+
+	videoID := uuid.New()
+	audioPath := filepath.Join(tempDir, "temp", videoID.String()+"_audio.wav")
+
+	// No target language = auto-detect
+	job := &domain.CaptionGenerationJob{
+		ID:              uuid.New(),
+		VideoID:         videoID,
+		SourceAudioPath: audioPath,
+		TargetLanguage:  nil,
+		OutputFormat:    domain.CaptionFormatVTT,
+	}
+
+	// Existing caption for the detected language
+	existingCaptionPath := filepath.Join(tempDir, "old_caption.vtt")
+	require.NoError(t, os.WriteFile(existingCaptionPath, []byte("old content"), 0600))
+
+	existingCaption := &domain.Caption{
+		ID:           uuid.New(),
+		VideoID:      videoID,
+		LanguageCode: "en",
+		FilePath:     &existingCaptionPath,
+	}
+
+	mockVideo := &domain.Video{
+		ID:       videoID.String(),
+		MimeType: "video/mp4",
+		Language: "en",
+	}
+
+	transcriptionResult := &whisper.TranscriptionResult{
+		Text:             "Hello",
+		DetectedLanguage: "en",
+	}
+
+	webVideosDir := filepath.Join(tempDir, "web-videos")
+	require.NoError(t, os.MkdirAll(webVideosDir, 0750))
+	videoPath := filepath.Join(webVideosDir, videoID.String()+".mp4")
+	require.NoError(t, os.WriteFile(videoPath, []byte("fake"), 0600))
+
+	mockVideoRepo.On("GetByID", ctx, videoID.String()).Return(mockVideo, nil)
+	mockJobRepo.On("UpdateProgress", ctx, job.ID, mock.AnythingOfType("int")).Return(nil)
+	mockWhisper.On("ExtractAudioFromVideo", ctx, videoPath, audioPath).Return(nil)
+	mockWhisper.On("Transcribe", ctx, audioPath, (*string)(nil)).Return(transcriptionResult, nil)
+	mockWhisper.On("FormatToVTT", transcriptionResult).Return("WEBVTT\n\nHello", nil)
+	// Auto-detect: existing caption for detected language should be deleted
+	mockCaptionRepo.On("GetByVideoAndLanguage", ctx, videoID, "en").Return(existingCaption, nil)
+	mockCaptionRepo.On("Delete", ctx, existingCaption.ID).Return(nil)
+	mockCaptionRepo.On("Create", ctx, mock.AnythingOfType("*domain.Caption")).Return(nil)
+	mockJobRepo.On("MarkCompleted", ctx, job.ID, mock.AnythingOfType("uuid.UUID"), "en", mock.AnythingOfType("int")).Return(nil)
+
+	err := svc.processJob(ctx, job)
+
+	assert.NoError(t, err)
+	// Verify old caption file was deleted from disk
+	_, err = os.Stat(existingCaptionPath)
+	assert.True(t, os.IsNotExist(err), "Old caption file should be deleted for auto-detect")
+	mockCaptionRepo.AssertCalled(t, "Delete", ctx, existingCaption.ID)
+}
+
+// --- CreateJob error path tests ---
+
+func TestCreateJob_VideoNotFound(t *testing.T) {
+	mockJobRepo := new(MockJobRepository)
+	mockCaptionRepo := new(MockCaptionRepository)
+	mockVideoRepo := new(MockVideoRepository)
+	mockWhisper := new(MockWhisperClient)
+
+	svc := NewService(mockJobRepo, mockCaptionRepo, mockVideoRepo, mockWhisper, t.TempDir())
+	ctx := context.Background()
+
+	videoID := uuid.New()
+	userID := uuid.New()
+	lang := "en"
+
+	mockVideoRepo.On("GetByID", ctx, videoID.String()).Return(nil, errors.New("not found"))
+
+	req := &domain.CreateCaptionGenerationJobRequest{
+		VideoID:        videoID,
+		TargetLanguage: &lang,
+	}
+
+	job, err := svc.CreateJob(ctx, videoID, userID, req)
+
+	assert.Error(t, err)
+	assert.Nil(t, job)
+	assert.Contains(t, err.Error(), "failed to get video")
+}
+
+func TestCreateJob_SourceFileNotFound(t *testing.T) {
+	mockJobRepo := new(MockJobRepository)
+	mockCaptionRepo := new(MockCaptionRepository)
+	mockVideoRepo := new(MockVideoRepository)
+	mockWhisper := new(MockWhisperClient)
+
+	tempDir := t.TempDir()
+	// Do NOT create the web-videos file
+	svc := NewService(mockJobRepo, mockCaptionRepo, mockVideoRepo, mockWhisper, tempDir)
+	ctx := context.Background()
+
+	videoID := uuid.New()
+	userID := uuid.New()
+	lang := "en"
+
+	mockVideo := &domain.Video{
+		ID:       videoID.String(),
+		Status:   domain.StatusCompleted,
+		MimeType: "video/mp4",
+	}
+
+	mockVideoRepo.On("GetByID", ctx, videoID.String()).Return(mockVideo, nil)
+
+	req := &domain.CreateCaptionGenerationJobRequest{
+		VideoID:        videoID,
+		TargetLanguage: &lang,
+	}
+
+	job, err := svc.CreateJob(ctx, videoID, userID, req)
+
+	assert.Error(t, err)
+	assert.Nil(t, job)
+	assert.Contains(t, err.Error(), "source video file not found")
+}
+
+func TestCreateJob_DefaultValues(t *testing.T) {
+	mockJobRepo := new(MockJobRepository)
+	mockCaptionRepo := new(MockCaptionRepository)
+	mockVideoRepo := new(MockVideoRepository)
+	mockWhisper := new(MockWhisperClient)
+
+	tempDir := t.TempDir()
+	svc := NewService(mockJobRepo, mockCaptionRepo, mockVideoRepo, mockWhisper, tempDir)
+	ctx := context.Background()
+
+	videoID := uuid.New()
+	userID := uuid.New()
+
+	webVideosDir := filepath.Join(tempDir, "web-videos")
+	require.NoError(t, os.MkdirAll(webVideosDir, 0750))
+	videoPath := filepath.Join(webVideosDir, videoID.String()+".mp4")
+	require.NoError(t, os.WriteFile(videoPath, []byte("fake video"), 0600))
+
+	mockVideo := &domain.Video{
+		ID:       videoID.String(),
+		Status:   domain.StatusCompleted,
+		MimeType: "video/mp4",
+	}
+
+	mockVideoRepo.On("GetByID", ctx, videoID.String()).Return(mockVideo, nil)
+	mockJobRepo.On("Create", ctx, mock.AnythingOfType("*domain.CaptionGenerationJob")).Return(nil)
+	mockWhisper.On("GetProvider").Return(domain.WhisperProviderOpenAI)
+
+	// Request with empty defaults
+	req := &domain.CreateCaptionGenerationJobRequest{
+		VideoID: videoID,
+	}
+
+	job, err := svc.CreateJob(ctx, videoID, userID, req)
+
+	assert.NoError(t, err)
+	require.NotNil(t, job)
+	// Verify defaults are applied
+	assert.Equal(t, domain.WhisperModelBase, job.ModelSize, "Default model should be base")
+	assert.Equal(t, domain.CaptionFormatVTT, job.OutputFormat, "Default format should be VTT")
+	assert.Equal(t, domain.WhisperProviderOpenAI, job.Provider, "Provider should come from whisper client")
+	assert.Equal(t, domain.CaptionGenStatusPending, job.Status)
+	assert.Equal(t, 0, job.Progress)
+	assert.Equal(t, 3, job.MaxRetries)
+	assert.False(t, job.IsAutomatic)
+}
+
+func TestCreateJob_RepoCreateError(t *testing.T) {
+	mockJobRepo := new(MockJobRepository)
+	mockCaptionRepo := new(MockCaptionRepository)
+	mockVideoRepo := new(MockVideoRepository)
+	mockWhisper := new(MockWhisperClient)
+
+	tempDir := t.TempDir()
+	svc := NewService(mockJobRepo, mockCaptionRepo, mockVideoRepo, mockWhisper, tempDir)
+	ctx := context.Background()
+
+	videoID := uuid.New()
+	userID := uuid.New()
+
+	webVideosDir := filepath.Join(tempDir, "web-videos")
+	require.NoError(t, os.MkdirAll(webVideosDir, 0750))
+	videoPath := filepath.Join(webVideosDir, videoID.String()+".mp4")
+	require.NoError(t, os.WriteFile(videoPath, []byte("fake video"), 0600))
+
+	mockVideo := &domain.Video{
+		ID:       videoID.String(),
+		Status:   domain.StatusCompleted,
+		MimeType: "video/mp4",
+	}
+
+	mockVideoRepo.On("GetByID", ctx, videoID.String()).Return(mockVideo, nil)
+	mockJobRepo.On("Create", ctx, mock.AnythingOfType("*domain.CaptionGenerationJob")).Return(errors.New("database full"))
+	mockWhisper.On("GetProvider").Return(domain.WhisperProviderLocal)
+
+	req := &domain.CreateCaptionGenerationJobRequest{
+		VideoID: videoID,
+	}
+
+	job, err := svc.CreateJob(ctx, videoID, userID, req)
+
+	assert.Error(t, err)
+	assert.Nil(t, job)
+	assert.Contains(t, err.Error(), "failed to create job")
+}
+
+// --- RegenerateCaption error path tests ---
+
+func TestRegenerateCaption_VideoNotFound(t *testing.T) {
+	mockJobRepo := new(MockJobRepository)
+	mockCaptionRepo := new(MockCaptionRepository)
+	mockVideoRepo := new(MockVideoRepository)
+	mockWhisper := new(MockWhisperClient)
+
+	svc := NewService(mockJobRepo, mockCaptionRepo, mockVideoRepo, mockWhisper, t.TempDir())
+	ctx := context.Background()
+
+	videoID := uuid.New()
+	userID := uuid.New()
+	lang := "en"
+
+	// RegenerateCaption queries caption repo first, then delegates to CreateJob
+	mockCaptionRepo.On("GetByVideoAndLanguage", ctx, videoID, "en").Return(nil, errors.New("not found"))
+	mockVideoRepo.On("GetByID", ctx, videoID.String()).Return(nil, errors.New("not found"))
+
+	job, err := svc.RegenerateCaption(ctx, videoID, userID, &lang)
+
+	assert.Error(t, err)
+	assert.Nil(t, job)
+}
+
+func TestRegenerateCaption_NoCaptionToDelete(t *testing.T) {
+	mockJobRepo := new(MockJobRepository)
+	mockCaptionRepo := new(MockCaptionRepository)
+	mockVideoRepo := new(MockVideoRepository)
+	mockWhisper := new(MockWhisperClient)
+
+	tempDir := t.TempDir()
+	svc := NewService(mockJobRepo, mockCaptionRepo, mockVideoRepo, mockWhisper, tempDir)
+	ctx := context.Background()
+
+	videoID := uuid.New()
+	userID := uuid.New()
+	lang := "en"
+
+	webVideosDir := filepath.Join(tempDir, "web-videos")
+	require.NoError(t, os.MkdirAll(webVideosDir, 0750))
+	videoPath := filepath.Join(webVideosDir, videoID.String()+".mp4")
+	require.NoError(t, os.WriteFile(videoPath, []byte("fake video"), 0600))
+
+	mockVideo := &domain.Video{
+		ID:       videoID.String(),
+		Status:   domain.StatusCompleted,
+		MimeType: "video/mp4",
+	}
+
+	mockVideoRepo.On("GetByID", ctx, videoID.String()).Return(mockVideo, nil)
+	// No existing caption found - should not error, just skip deletion
+	mockCaptionRepo.On("GetByVideoAndLanguage", ctx, videoID, "en").Return(nil, errors.New("not found"))
+	mockJobRepo.On("Create", ctx, mock.AnythingOfType("*domain.CaptionGenerationJob")).Return(nil)
+	mockWhisper.On("GetProvider").Return(domain.WhisperProviderLocal)
+
+	job, err := svc.RegenerateCaption(ctx, videoID, userID, &lang)
+
+	assert.NoError(t, err)
+	assert.NotNil(t, job)
+	// Delete should not be called since no caption was found
+	mockCaptionRepo.AssertNotCalled(t, "Delete", mock.Anything, mock.Anything)
+}
+
+func TestRegenerateCaption_EmptyLanguageString(t *testing.T) {
+	mockJobRepo := new(MockJobRepository)
+	mockCaptionRepo := new(MockCaptionRepository)
+	mockVideoRepo := new(MockVideoRepository)
+	mockWhisper := new(MockWhisperClient)
+
+	tempDir := t.TempDir()
+	svc := NewService(mockJobRepo, mockCaptionRepo, mockVideoRepo, mockWhisper, tempDir)
+	ctx := context.Background()
+
+	videoID := uuid.New()
+	userID := uuid.New()
+	emptyLang := ""
+
+	webVideosDir := filepath.Join(tempDir, "web-videos")
+	require.NoError(t, os.MkdirAll(webVideosDir, 0750))
+	videoPath := filepath.Join(webVideosDir, videoID.String()+".mp4")
+	require.NoError(t, os.WriteFile(videoPath, []byte("fake video"), 0600))
+
+	mockVideo := &domain.Video{
+		ID:       videoID.String(),
+		Status:   domain.StatusCompleted,
+		MimeType: "video/mp4",
+	}
+
+	mockVideoRepo.On("GetByID", ctx, videoID.String()).Return(mockVideo, nil)
+	mockJobRepo.On("Create", ctx, mock.AnythingOfType("*domain.CaptionGenerationJob")).Return(nil)
+	mockWhisper.On("GetProvider").Return(domain.WhisperProviderLocal)
+
+	// Empty string should be treated like nil (no deletion)
+	job, err := svc.RegenerateCaption(ctx, videoID, userID, &emptyLang)
+
+	assert.NoError(t, err)
+	assert.NotNil(t, job)
+	mockCaptionRepo.AssertNotCalled(t, "GetByVideoAndLanguage", mock.Anything, mock.Anything, mock.Anything)
+}
+
+// --- GetJobStatus error tests ---
+
+func TestGetJobStatus_NotFound(t *testing.T) {
+	mockJobRepo := new(MockJobRepository)
+	mockCaptionRepo := new(MockCaptionRepository)
+	mockVideoRepo := new(MockVideoRepository)
+	mockWhisper := new(MockWhisperClient)
+
+	svc := NewService(mockJobRepo, mockCaptionRepo, mockVideoRepo, mockWhisper, t.TempDir())
+	ctx := context.Background()
+
+	jobID := uuid.New()
+	mockJobRepo.On("GetByID", ctx, jobID).Return(nil, errors.New("not found"))
+
+	job, err := svc.GetJobStatus(ctx, jobID)
+
+	assert.Error(t, err)
+	assert.Nil(t, job)
+}
+
+// --- GetJobsByVideo error tests ---
+
+func TestGetJobsByVideo_Error(t *testing.T) {
+	mockJobRepo := new(MockJobRepository)
+	mockCaptionRepo := new(MockCaptionRepository)
+	mockVideoRepo := new(MockVideoRepository)
+	mockWhisper := new(MockWhisperClient)
+
+	svc := NewService(mockJobRepo, mockCaptionRepo, mockVideoRepo, mockWhisper, t.TempDir())
+	ctx := context.Background()
+
+	videoID := uuid.New()
+	mockJobRepo.On("GetByVideoID", ctx, videoID).Return([]domain.CaptionGenerationJob(nil), errors.New("db error"))
+
+	jobs, err := svc.GetJobsByVideo(ctx, videoID)
+
+	assert.Error(t, err)
+	assert.Nil(t, jobs)
+}
+
+// --- Run tests ---
+
+func TestRun_ContextCancellation(t *testing.T) {
+	mockJobRepo := new(MockJobRepository)
+	mockCaptionRepo := new(MockCaptionRepository)
+	mockVideoRepo := new(MockVideoRepository)
+	mockWhisper := new(MockWhisperClient)
+
+	svc := NewService(mockJobRepo, mockCaptionRepo, mockVideoRepo, mockWhisper, t.TempDir())
+
+	// No pending jobs - workers will back off and eventually exit on cancel
+	mockJobRepo.On("GetNextPendingJob", mock.Anything).Return(nil, nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	err := svc.Run(ctx, 2)
+
+	// Should exit cleanly when context is cancelled
+	assert.NoError(t, err)
+}
+
+func TestRun_DefaultWorkerCount(t *testing.T) {
+	mockJobRepo := new(MockJobRepository)
+	mockCaptionRepo := new(MockCaptionRepository)
+	mockVideoRepo := new(MockVideoRepository)
+	mockWhisper := new(MockWhisperClient)
+
+	svc := NewService(mockJobRepo, mockCaptionRepo, mockVideoRepo, mockWhisper, t.TempDir())
+
+	mockJobRepo.On("GetNextPendingJob", mock.Anything).Return(nil, nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	// workers=0 should use default (NumCPU or 2)
+	err := svc.Run(ctx, 0)
+	assert.NoError(t, err)
+}
+
+func TestRun_NegativeWorkerCount(t *testing.T) {
+	mockJobRepo := new(MockJobRepository)
+	mockCaptionRepo := new(MockCaptionRepository)
+	mockVideoRepo := new(MockVideoRepository)
+	mockWhisper := new(MockWhisperClient)
+
+	svc := NewService(mockJobRepo, mockCaptionRepo, mockVideoRepo, mockWhisper, t.TempDir())
+
+	mockJobRepo.On("GetNextPendingJob", mock.Anything).Return(nil, nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	// Negative workers should also use default
+	err := svc.Run(ctx, -1)
+	assert.NoError(t, err)
+}
+
+// --- getExtensionFromMimeType tests ---
+
+func TestGetExtensionFromMimeType(t *testing.T) {
+	tests := []struct {
+		mimeType string
+		expected string
+	}{
+		{"video/mp4", ".mp4"},
+		{"video/mpeg", ".mpeg"},
+		{"video/quicktime", ".mov"},
+		{"video/x-msvideo", ".avi"},
+		{"video/x-matroska", ".mkv"},
+		{"video/webm", ".webm"},
+		{"video/ogg", ".ogv"},
+		{"video/3gpp", ".3gp"},
+		{"video/x-flv", ".flv"},
+		{"unknown/type", ".mp4"},    // Fallback
+		{"", ".mp4"},                // Empty string fallback
+		{"application/pdf", ".mp4"}, // Non-video fallback
+	}
+
+	for _, tt := range tests {
+		t.Run(fmt.Sprintf("%s->%s", tt.mimeType, tt.expected), func(t *testing.T) {
+			result := getExtensionFromMimeType(tt.mimeType)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+// --- getLanguageLabel extended tests ---
+
+func TestGetLanguageLabel_AllLanguages(t *testing.T) {
+	tests := []struct {
+		code     string
+		expected string
+	}{
+		{"pt", "Portuguese"},
+		{"ru", "Russian"},
+		{"ko", "Korean"},
+		{"ar", "Arabic"},
+		{"hi", "Hindi"},
+		{"nl", "Dutch"},
+		{"pl", "Polish"},
+		{"tr", "Turkish"},
+		{"sv", "Swedish"},
+		{"da", "Danish"},
+		{"fi", "Finnish"},
+		{"no", "Norwegian"},
+		{"cs", "Czech"},
+		{"el", "Greek"},
+		{"he", "Hebrew"},
+		{"id", "Indonesian"},
+		{"th", "Thai"},
+		{"vi", "Vietnamese"},
+		{"it", "Italian"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.code, func(t *testing.T) {
+			result := getLanguageLabel(tt.code)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func TestGetLanguageLabel_CaseInsensitive(t *testing.T) {
+	// The function lowercases the code before lookup
+	assert.Equal(t, "English", getLanguageLabel("EN"))
+	assert.Equal(t, "French", getLanguageLabel("FR"))
+	assert.Equal(t, "Spanish", getLanguageLabel("Es"))
 }
