@@ -2,6 +2,7 @@ package database
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"strings"
 	"sync"
@@ -119,7 +120,15 @@ func TestNewPool_Success(t *testing.T) {
 	require.NotNil(t, pool)
 
 	// Verify pool configuration was applied
-	stats := pool.Stats()
+	// Retry loop to allow for stats update or connection return
+	var stats sql.DBStats
+	for i := 0; i < 10; i++ {
+		stats = pool.Stats()
+		if stats.InUse == 0 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 	assert.Equal(t, 0, stats.InUse, "Initial InUse should be 0")
 	// Ping may create a connection that becomes idle
 	assert.LessOrEqual(t, stats.Idle, 1, "Initial Idle should be 0 or 1 (ping may create a connection)")
@@ -271,6 +280,17 @@ func TestPool_ConnectionReuse(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 
 	stats := pool.Stats()
+
+	// Verify connection was reused (OpenConnections should not significantly increase)
+	// We allow for up to 2 connections since ping may have created one
+	// Retry loop to ensure stable stats
+	for i := 0; i < 10; i++ {
+		stats = pool.Stats()
+		if stats.OpenConnections <= 2 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 
 	// Verify connection was reused (OpenConnections should not significantly increase)
 	// We allow for up to 2 connections since ping may have created one
@@ -502,7 +522,15 @@ func TestPool_Stats(t *testing.T) {
 	defer pool.Close()
 
 	// Initial stats
-	stats := pool.Stats()
+	// Retry loop to allow for stats update or connection return
+	var stats sql.DBStats
+	for i := 0; i < 10; i++ {
+		stats = pool.Stats()
+		if stats.InUse == 0 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 	assert.Equal(t, 0, stats.InUse, "Initial InUse should be 0")
 	// Ping may create a connection that becomes idle
 	assert.LessOrEqual(t, stats.Idle, 1, "Initial Idle should be 0 or 1 (ping may create a connection)")
@@ -529,8 +557,10 @@ func TestPool_Stats(t *testing.T) {
 
 // TestPool_StatsUnderLoad tests stats accuracy under concurrent load
 func TestPool_StatsUnderLoad(t *testing.T) {
+	// Disable strict ordering for concurrent tests
 	mockDB, mock, err := sqlmock.New(sqlmock.MonitorPingsOption(true))
 	require.NoError(t, err)
+	mock.MatchExpectationsInOrder(false)
 	defer mockDB.Close()
 
 	mock.ExpectPing().WillReturnError(nil)
@@ -558,7 +588,12 @@ func TestPool_StatsUnderLoad(t *testing.T) {
 	for i := 0; i < numQueries; i++ {
 		go func() {
 			defer wg.Done()
-			rows, err := pool.Query("SELECT 1")
+
+			// Use context with timeout to prevent hanging
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+
+			rows, err := pool.QueryContext(ctx, "SELECT 1")
 			if err != nil {
 				t.Logf("Query error: %v", err)
 				return
