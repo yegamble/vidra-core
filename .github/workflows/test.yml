@@ -34,7 +34,7 @@ jobs:
   # ============================================================================
   unit:
     name: Unit Tests
-    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
+    runs-on: 'self-hosted'
     timeout-minutes: 10
 
     steps:
