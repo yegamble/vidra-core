@@ -201,7 +201,8 @@ See the full documentation index at [docs/README.md](docs/README.md).
 ### Deployment & Operations
 
 - **[Deployment Guide](docs/deployment/README.md)** - Production deployment instructions
-- **[Operations Runbook](docs/deployment/OPERATIONS_RUNBOOK.md)** - Monitoring, incident response, backup procedures
+- **[Operations Runbook](docs/deployment/OPERATIONS_RUNBOOK.md)** - Incident response, backup procedures
+- **[Monitoring Guide](docs/deployment/MONITORING.md)** - Prometheus & Grafana setup
 - **[S3/Backblaze B2 Setup](docs/S3_MIGRATION_SETUP.md)** - Hybrid storage configuration and migration
 - **[Virus Scanner Runbook](docs/VIRUS_SCANNER_RUNBOOK.md)** - ClamAV integration and troubleshooting
 
@@ -247,9 +248,9 @@ See the full documentation index at [docs/README.md](docs/README.md).
 
 ## Project Status
 
-### 🎯 88% COMPLETE - STABILIZATION PHASE
+### 🎯 88% COMPLETE - SECURITY HARDENING & STABILIZATION
 
-**Current Focus**: Restoring test infrastructure and verifying build integrity.
+**Current Focus**: Restoring test infrastructure, verifying build integrity, and applying security hardening measures (credential rotation, git history cleanup).
 
 **Recent Achievements** (Last 24-48 hours):
 - ✅ **Test Infrastructure Reliability** - Implemented "Fail Fast" logic to skip integration tests when Docker is unavailable

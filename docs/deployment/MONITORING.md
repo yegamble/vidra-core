@@ -1,6 +1,7 @@
 # Monitoring Setup Guide
 
 This guide explains how to set up monitoring for the Athena Video Platform using Prometheus and Grafana.
+For operational procedures and incident response, see the [Operations Runbook](OPERATIONS_RUNBOOK.md).
 
 ## Prerequisites
 

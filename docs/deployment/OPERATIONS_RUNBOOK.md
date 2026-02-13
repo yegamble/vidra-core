@@ -16,6 +16,8 @@ This runbook provides operational procedures for monitoring, troubleshooting, an
 
 ## Health Monitoring
 
+For detailed setup instructions for Prometheus and Grafana, see the [Monitoring Guide](MONITORING.md).
+
 ### Health Check Endpoints
 
 **Liveness Probe**: `/health`
