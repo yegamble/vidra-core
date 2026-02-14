@@ -469,3 +469,200 @@ func TestFederationRepository_Unit_Errors(t *testing.T) {
 		require.NoError(t, mock.ExpectationsWereMet())
 	})
 }
+
+func TestFederationRepository_GetJob(t *testing.T) {
+	t.Run("success", func(t *testing.T) {
+		mockDB, mock, err := sqlmock.New()
+		require.NoError(t, err)
+		defer mockDB.Close()
+		db := sqlx.NewDb(mockDB, "sqlmock")
+		repo := NewFederationRepository(db)
+		ctx := context.Background()
+
+		now := time.Now()
+		rows := sqlmock.NewRows([]string{"id", "job_type", "payload", "status", "attempts", "max_attempts", "next_attempt_at", "last_error", "created_at", "updated_at"}).
+			AddRow("job-123", "deliver", []byte(`{}`), "pending", 0, 5, now, nil, now, now)
+		mock.ExpectQuery(`SELECT id, job_type, payload, status, attempts, max_attempts, next_attempt_at, last_error, created_at, updated_at FROM federation_jobs WHERE id`).
+			WithArgs("job-123").
+			WillReturnRows(rows)
+
+		job, err := repo.GetJob(ctx, "job-123")
+		require.NoError(t, err)
+		assert.Equal(t, "job-123", job.ID)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("not found", func(t *testing.T) {
+		mockDB, mock, err := sqlmock.New()
+		require.NoError(t, err)
+		defer mockDB.Close()
+		db := sqlx.NewDb(mockDB, "sqlmock")
+		repo := NewFederationRepository(db)
+		ctx := context.Background()
+
+		mock.ExpectQuery(`SELECT id, job_type, payload, status, attempts, max_attempts, next_attempt_at, last_error, created_at, updated_at FROM federation_jobs WHERE id`).
+			WithArgs("nonexistent").
+			WillReturnError(sql.ErrNoRows)
+
+		job, err := repo.GetJob(ctx, "nonexistent")
+		require.Nil(t, job)
+		require.Error(t, err)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+}
+
+func TestFederationRepository_RetryJob(t *testing.T) {
+	mockDB, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer mockDB.Close()
+	db := sqlx.NewDb(mockDB, "sqlmock")
+	repo := NewFederationRepository(db)
+	ctx := context.Background()
+
+	when := time.Now().Add(time.Hour)
+	mock.ExpectExec(`UPDATE federation_jobs SET status='pending', next_attempt_at`).
+		WithArgs("job-123", when).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	err = repo.RetryJob(ctx, "job-123", when)
+	require.NoError(t, err)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestFederationRepository_GetActorStateSimple(t *testing.T) {
+	mockDB, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer mockDB.Close()
+	db := sqlx.NewDb(mockDB, "sqlmock")
+	repo := NewFederationRepository(db)
+	ctx := context.Background()
+
+	now := time.Now()
+	rows := sqlmock.NewRows([]string{"cursor", "next_at", "attempts", "rate_limit_seconds"}).
+		AddRow("cursor-123", now, 2, 60)
+	mock.ExpectQuery(`SELECT cursor, next_at, attempts, rate_limit_seconds FROM federation_actors WHERE actor`).
+		WithArgs("did:plc:test").
+		WillReturnRows(rows)
+
+	cursor, nextAt, attempts, rateLimitSeconds, err := repo.GetActorStateSimple(ctx, "did:plc:test")
+	require.NoError(t, err)
+	assert.Equal(t, "cursor-123", cursor)
+	assert.NotNil(t, nextAt)
+	assert.Equal(t, 2, attempts)
+	assert.Equal(t, 60, rateLimitSeconds)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestFederationRepository_SetActorNextAt(t *testing.T) {
+	mockDB, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer mockDB.Close()
+	db := sqlx.NewDb(mockDB, "sqlmock")
+	repo := NewFederationRepository(db)
+	ctx := context.Background()
+
+	nextAt := time.Now().Add(time.Hour)
+	mock.ExpectExec(`UPDATE federation_actors SET next_at`).
+		WithArgs("did:plc:test", sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	err = repo.SetActorNextAt(ctx, "did:plc:test", nextAt)
+	require.NoError(t, err)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestFederationRepository_SetActorAttempts(t *testing.T) {
+	mockDB, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer mockDB.Close()
+	db := sqlx.NewDb(mockDB, "sqlmock")
+	repo := NewFederationRepository(db)
+	ctx := context.Background()
+
+	mock.ExpectExec(`UPDATE federation_actors SET attempts`).
+		WithArgs("did:plc:test", 3).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	err = repo.SetActorAttempts(ctx, "did:plc:test", 3)
+	require.NoError(t, err)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestFederationRepository_GetPostByContentHash(t *testing.T) {
+	mockDB, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer mockDB.Close()
+	db := sqlx.NewDb(mockDB, "sqlmock")
+	repo := NewFederationRepository(db)
+	ctx := context.Background()
+
+	now := time.Now()
+	rows := sqlmock.NewRows([]string{"id", "actor_did", "actor_handle", "uri", "cid", "text", "created_at", "indexed_at", "embed_type", "embed_url", "embed_title", "embed_description", "labels", "raw", "inserted_at", "updated_at", "content_hash", "duplicate_of", "is_canonical", "version_number"}).
+		AddRow("post-123", "did:plc:test", "test@example.com", "at://uri", "cid-123", "test post", now, now, nil, nil, nil, nil, []byte(`[]`), []byte(`{}`), now, now, "hash-123", nil, true, 1)
+	mock.ExpectQuery(`SELECT id, actor_did, actor_handle, uri, cid, text, created_at, indexed_at`).
+		WithArgs("hash-123").
+		WillReturnRows(rows)
+
+	post, err := repo.GetPostByContentHash(ctx, "hash-123")
+	require.NoError(t, err)
+	assert.NotNil(t, post)
+	assert.Equal(t, "post-123", post.ID)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestFederationRepository_UpdatePostCanonical(t *testing.T) {
+	mockDB, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer mockDB.Close()
+	db := sqlx.NewDb(mockDB, "sqlmock")
+	repo := NewFederationRepository(db)
+	ctx := context.Background()
+
+	mock.ExpectExec(`UPDATE federated_posts SET is_canonical`).
+		WithArgs("post-123", true).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	err = repo.UpdatePostCanonical(ctx, "post-123", true)
+	require.NoError(t, err)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestFederationRepository_UpdatePostDuplicateOf(t *testing.T) {
+	mockDB, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer mockDB.Close()
+	db := sqlx.NewDb(mockDB, "sqlmock")
+	repo := NewFederationRepository(db)
+	ctx := context.Background()
+
+	duplicateOf := "post-456"
+	mock.ExpectExec(`UPDATE federated_posts SET duplicate_of`).
+		WithArgs("post-123", &duplicateOf).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	err = repo.UpdatePostDuplicateOf(ctx, "post-123", &duplicateOf)
+	require.NoError(t, err)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestFederationRepository_GetPostDuplicates(t *testing.T) {
+	mockDB, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer mockDB.Close()
+	db := sqlx.NewDb(mockDB, "sqlmock")
+	repo := NewFederationRepository(db)
+	ctx := context.Background()
+
+	now := time.Now()
+	rows := sqlmock.NewRows([]string{"id", "actor_did", "actor_handle", "uri", "cid", "text", "created_at", "indexed_at", "embed_type", "embed_url", "embed_title", "embed_description", "labels", "raw", "inserted_at", "updated_at", "content_hash", "duplicate_of", "is_canonical", "version_number"}).
+		AddRow("post-789", "did:plc:test", "test@example.com", "at://uri2", "cid-789", "duplicate post", now, now, nil, nil, nil, nil, []byte(`[]`), []byte(`{}`), now, now, "hash-123", "post-123", false, 2)
+	mock.ExpectQuery(`SELECT id, actor_did, actor_handle, uri, cid, text, created_at, indexed_at`).
+		WithArgs("post-123").
+		WillReturnRows(rows)
+
+	posts, err := repo.GetPostDuplicates(ctx, "post-123")
+	require.NoError(t, err)
+	assert.Len(t, posts, 1)
+	assert.Equal(t, "post-789", posts[0].ID)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
