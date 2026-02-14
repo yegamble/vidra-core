@@ -9,16 +9,15 @@ import (
 
 	"athena/internal/domain"
 	"athena/internal/middleware"
-	"athena/internal/repository"
 
 	"github.com/go-chi/chi/v5"
 )
 
 type AdminFederationHandlers struct {
-	repo *repository.FederationRepository
+	repo FederationRepositoryInterface
 }
 
-func NewAdminFederationHandlers(repo *repository.FederationRepository) *AdminFederationHandlers {
+func NewAdminFederationHandlers(repo FederationRepositoryInterface) *AdminFederationHandlers {
 	return &AdminFederationHandlers{repo: repo}
 }
 
@@ -52,7 +51,7 @@ func (h *AdminFederationHandlers) GetJob(w http.ResponseWriter, r *http.Request)
 	id := chi.URLParam(r, "id")
 	job, err := h.repo.GetJob(r.Context(), id)
 	if err != nil {
-		if de, ok := err.(*domain.DomainError); ok && de.Code == "NOT_FOUND" {
+		if de, ok := err.(domain.DomainError); ok && de.Code == "NOT_FOUND" {
 			shared.WriteError(w, http.StatusNotFound, de)
 			return
 		}
@@ -76,7 +75,7 @@ func (h *AdminFederationHandlers) RetryJob(w http.ResponseWriter, r *http.Reques
 	}
 	when := time.Now().Add(time.Duration(req.DelaySeconds) * time.Second)
 	if err := h.repo.RetryJob(r.Context(), id, when); err != nil {
-		if de, ok := err.(*domain.DomainError); ok && de.Code == "NOT_FOUND" {
+		if de, ok := err.(domain.DomainError); ok && de.Code == "NOT_FOUND" {
 			shared.WriteError(w, http.StatusNotFound, de)
 			return
 		}
@@ -92,7 +91,7 @@ func (h *AdminFederationHandlers) DeleteJob(w http.ResponseWriter, r *http.Reque
 	}
 	id := chi.URLParam(r, "id")
 	if err := h.repo.DeleteJob(r.Context(), id); err != nil {
-		if de, ok := err.(*domain.DomainError); ok && de.Code == "NOT_FOUND" {
+		if de, ok := err.(domain.DomainError); ok && de.Code == "NOT_FOUND" {
 			shared.WriteError(w, http.StatusNotFound, de)
 			return
 		}

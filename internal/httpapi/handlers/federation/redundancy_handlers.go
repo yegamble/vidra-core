@@ -7,29 +7,24 @@ import (
 	"net/http"
 
 	"athena/internal/domain"
-	"athena/internal/usecase/redundancy"
 
 	"github.com/go-chi/chi/v5"
 )
 
-// RedundancyHandler handles HTTP requests for video redundancy
 type RedundancyHandler struct {
-	service   *redundancy.Service
-	discovery *redundancy.InstanceDiscovery
+	service   RedundancyServiceInterface
+	discovery InstanceDiscoveryInterface
 }
 
-// NewRedundancyHandler creates a new redundancy handler
-func NewRedundancyHandler(service *redundancy.Service, discovery *redundancy.InstanceDiscovery) *RedundancyHandler {
+func NewRedundancyHandler(service RedundancyServiceInterface, discovery InstanceDiscoveryInterface) *RedundancyHandler {
 	return &RedundancyHandler{
 		service:   service,
 		discovery: discovery,
 	}
 }
 
-// RegisterRoutes registers redundancy routes
 func (h *RedundancyHandler) RegisterRoutes(r chi.Router) {
 	r.Route("/api/v1/admin/redundancy", func(r chi.Router) {
-		// Instance peer management
 		r.Get("/instances", h.ListInstancePeers)
 		r.Post("/instances", h.RegisterInstancePeer)
 		r.Get("/instances/{id}", h.GetInstancePeer)
@@ -37,7 +32,6 @@ func (h *RedundancyHandler) RegisterRoutes(r chi.Router) {
 		r.Delete("/instances/{id}", h.DeleteInstancePeer)
 		r.Post("/instances/discover", h.DiscoverInstance)
 
-		// Policy management
 		r.Get("/policies", h.ListPolicies)
 		r.Post("/policies", h.CreatePolicy)
 		r.Get("/policies/{id}", h.GetPolicy)
@@ -45,28 +39,21 @@ func (h *RedundancyHandler) RegisterRoutes(r chi.Router) {
 		r.Delete("/policies/{id}", h.DeletePolicy)
 		r.Post("/policies/evaluate", h.EvaluatePolicies)
 
-		// Redundancy management
 		r.Post("/create", h.CreateRedundancy)
 		r.Get("/redundancies/{id}", h.GetRedundancy)
 		r.Delete("/redundancies/{id}", h.DeleteRedundancy)
 		r.Post("/redundancies/{id}/cancel", h.CancelRedundancy)
 		r.Post("/redundancies/{id}/sync", h.SyncRedundancy)
 
-		// Statistics
 		r.Get("/stats", h.GetStats)
 	})
 
-	// Public redundancy endpoints
 	r.Route("/api/v1/redundancy", func(r chi.Router) {
 		r.Get("/videos/{id}/redundancies", h.ListVideoRedundancies)
 		r.Get("/videos/{id}/health", h.GetVideoHealth)
 	})
 }
 
-// ==================== Instance Peer Handlers ====================
-
-// ListInstancePeers lists all instance peers
-// GET /api/v1/admin/redundancy/instances?limit=50&offset=0&active_only=true
 func (h *RedundancyHandler) ListInstancePeers(w http.ResponseWriter, r *http.Request) {
 	limit := shared.GetIntParam(r, "limit", 50)
 	offset := shared.GetIntParam(r, "offset", 0)
@@ -85,8 +72,6 @@ func (h *RedundancyHandler) ListInstancePeers(w http.ResponseWriter, r *http.Req
 	})
 }
 
-// RegisterInstancePeer registers a new instance peer
-// POST /api/v1/admin/redundancy/instances
 func (h *RedundancyHandler) RegisterInstancePeer(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		InstanceURL          string `json:"instance_url"`
@@ -124,8 +109,6 @@ func (h *RedundancyHandler) RegisterInstancePeer(w http.ResponseWriter, r *http.
 	shared.WriteJSON(w, http.StatusCreated, peer)
 }
 
-// GetInstancePeer retrieves an instance peer
-// GET /api/v1/admin/redundancy/instances/{id}
 func (h *RedundancyHandler) GetInstancePeer(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 
@@ -142,8 +125,6 @@ func (h *RedundancyHandler) GetInstancePeer(w http.ResponseWriter, r *http.Reque
 	shared.WriteJSON(w, http.StatusOK, peer)
 }
 
-// UpdateInstancePeer updates an instance peer
-// PUT /api/v1/admin/redundancy/instances/{id}
 func (h *RedundancyHandler) UpdateInstancePeer(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 
@@ -169,7 +150,6 @@ func (h *RedundancyHandler) UpdateInstancePeer(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	// Update fields
 	peer.AutoAcceptRedundancy = req.AutoAcceptRedundancy
 	peer.MaxRedundancySizeGB = req.MaxRedundancySizeGB
 	peer.AcceptsNewRedundancy = req.AcceptsNewRedundancy
@@ -183,8 +163,6 @@ func (h *RedundancyHandler) UpdateInstancePeer(w http.ResponseWriter, r *http.Re
 	shared.WriteJSON(w, http.StatusOK, peer)
 }
 
-// DeleteInstancePeer deletes an instance peer
-// DELETE /api/v1/admin/redundancy/instances/{id}
 func (h *RedundancyHandler) DeleteInstancePeer(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 
@@ -202,8 +180,6 @@ func (h *RedundancyHandler) DeleteInstancePeer(w http.ResponseWriter, r *http.Re
 	})
 }
 
-// DiscoverInstance discovers and registers a new instance
-// POST /api/v1/admin/redundancy/instances/discover
 func (h *RedundancyHandler) DiscoverInstance(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		InstanceURL string `json:"instance_url"`
@@ -225,7 +201,6 @@ func (h *RedundancyHandler) DiscoverInstance(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// Register the discovered instance
 	if err := h.service.RegisterInstancePeer(r.Context(), peer); err != nil {
 		if err == domain.ErrInstancePeerAlreadyExists {
 			shared.WriteError(w, http.StatusConflict, fmt.Errorf("instance peer already exists: %w", err))
@@ -238,10 +213,6 @@ func (h *RedundancyHandler) DiscoverInstance(w http.ResponseWriter, r *http.Requ
 	shared.WriteJSON(w, http.StatusCreated, peer)
 }
 
-// ==================== Redundancy Handlers ====================
-
-// CreateRedundancy creates a new video redundancy
-// POST /api/v1/admin/redundancy/create
 func (h *RedundancyHandler) CreateRedundancy(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		VideoID    string `json:"video_id"`
@@ -283,8 +254,6 @@ func (h *RedundancyHandler) CreateRedundancy(w http.ResponseWriter, r *http.Requ
 	shared.WriteJSON(w, http.StatusCreated, redundancy)
 }
 
-// GetRedundancy retrieves a redundancy
-// GET /api/v1/admin/redundancy/redundancies/{id}
 func (h *RedundancyHandler) GetRedundancy(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 
@@ -301,8 +270,6 @@ func (h *RedundancyHandler) GetRedundancy(w http.ResponseWriter, r *http.Request
 	shared.WriteJSON(w, http.StatusOK, redundancy)
 }
 
-// ListVideoRedundancies lists redundancies for a video
-// GET /api/v1/redundancy/videos/{id}/redundancies
 func (h *RedundancyHandler) ListVideoRedundancies(w http.ResponseWriter, r *http.Request) {
 	videoID := chi.URLParam(r, "id")
 
@@ -318,8 +285,6 @@ func (h *RedundancyHandler) ListVideoRedundancies(w http.ResponseWriter, r *http
 	})
 }
 
-// CancelRedundancy cancels a redundancy sync
-// POST /api/v1/admin/redundancy/redundancies/{id}/cancel
 func (h *RedundancyHandler) CancelRedundancy(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 
@@ -337,8 +302,6 @@ func (h *RedundancyHandler) CancelRedundancy(w http.ResponseWriter, r *http.Requ
 	})
 }
 
-// SyncRedundancy triggers a redundancy sync
-// POST /api/v1/admin/redundancy/redundancies/{id}/sync
 func (h *RedundancyHandler) SyncRedundancy(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 
@@ -361,8 +324,6 @@ func (h *RedundancyHandler) SyncRedundancy(w http.ResponseWriter, r *http.Reques
 	})
 }
 
-// DeleteRedundancy deletes a redundancy
-// DELETE /api/v1/admin/redundancy/redundancies/{id}
 func (h *RedundancyHandler) DeleteRedundancy(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 
@@ -380,10 +341,6 @@ func (h *RedundancyHandler) DeleteRedundancy(w http.ResponseWriter, r *http.Requ
 	})
 }
 
-// ==================== Policy Handlers ====================
-
-// ListPolicies lists all redundancy policies
-// GET /api/v1/admin/redundancy/policies?enabled_only=false
 func (h *RedundancyHandler) ListPolicies(w http.ResponseWriter, r *http.Request) {
 	enabledOnly := shared.GetBoolParam(r, "enabled_only", false)
 
@@ -398,8 +355,6 @@ func (h *RedundancyHandler) ListPolicies(w http.ResponseWriter, r *http.Request)
 	})
 }
 
-// CreatePolicy creates a new redundancy policy
-// POST /api/v1/admin/redundancy/policies
 func (h *RedundancyHandler) CreatePolicy(w http.ResponseWriter, r *http.Request) {
 	var policy domain.RedundancyPolicy
 
@@ -420,8 +375,6 @@ func (h *RedundancyHandler) CreatePolicy(w http.ResponseWriter, r *http.Request)
 	shared.WriteJSON(w, http.StatusCreated, policy)
 }
 
-// GetPolicy retrieves a policy
-// GET /api/v1/admin/redundancy/policies/{id}
 func (h *RedundancyHandler) GetPolicy(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 
@@ -438,8 +391,6 @@ func (h *RedundancyHandler) GetPolicy(w http.ResponseWriter, r *http.Request) {
 	shared.WriteJSON(w, http.StatusOK, policy)
 }
 
-// UpdatePolicy updates a policy
-// PUT /api/v1/admin/redundancy/policies/{id}
 func (h *RedundancyHandler) UpdatePolicy(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 
@@ -463,8 +414,6 @@ func (h *RedundancyHandler) UpdatePolicy(w http.ResponseWriter, r *http.Request)
 	shared.WriteJSON(w, http.StatusOK, policy)
 }
 
-// DeletePolicy deletes a policy
-// DELETE /api/v1/admin/redundancy/policies/{id}
 func (h *RedundancyHandler) DeletePolicy(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 
@@ -482,8 +431,6 @@ func (h *RedundancyHandler) DeletePolicy(w http.ResponseWriter, r *http.Request)
 	})
 }
 
-// EvaluatePolicies triggers policy evaluation
-// POST /api/v1/admin/redundancy/policies/evaluate
 func (h *RedundancyHandler) EvaluatePolicies(w http.ResponseWriter, r *http.Request) {
 	count, err := h.service.EvaluatePolicies(r.Context())
 	if err != nil {
@@ -497,10 +444,6 @@ func (h *RedundancyHandler) EvaluatePolicies(w http.ResponseWriter, r *http.Requ
 	})
 }
 
-// ==================== Statistics Handlers ====================
-
-// GetStats retrieves redundancy statistics
-// GET /api/v1/admin/redundancy/stats
 func (h *RedundancyHandler) GetStats(w http.ResponseWriter, r *http.Request) {
 	stats, err := h.service.GetStats(r.Context())
 	if err != nil {
@@ -511,8 +454,6 @@ func (h *RedundancyHandler) GetStats(w http.ResponseWriter, r *http.Request) {
 	shared.WriteJSON(w, http.StatusOK, stats)
 }
 
-// GetVideoHealth retrieves redundancy health for a video
-// GET /api/v1/redundancy/videos/{id}/health
 func (h *RedundancyHandler) GetVideoHealth(w http.ResponseWriter, r *http.Request) {
 	videoID := chi.URLParam(r, "id")
 
@@ -529,4 +470,3 @@ func (h *RedundancyHandler) GetVideoHealth(w http.ResponseWriter, r *http.Reques
 }
 
 // Note: Helper functions (getIntParam, getBoolParam, WriteJSON, WriteError)
-// are defined in helpers.go and response.go and shared across the httpapi package

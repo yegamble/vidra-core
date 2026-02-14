@@ -8,16 +8,15 @@ import (
 	"time"
 
 	"athena/internal/domain"
-	"athena/internal/repository"
 
 	"github.com/go-chi/chi/v5"
 )
 
 type AdminFederationActorsHandlers struct {
-	repo *repository.FederationRepository
+	repo FederationRepositoryInterface
 }
 
-func NewAdminFederationActorsHandlers(repo *repository.FederationRepository) *AdminFederationActorsHandlers {
+func NewAdminFederationActorsHandlers(repo FederationRepositoryInterface) *AdminFederationActorsHandlers {
 	return &AdminFederationActorsHandlers{repo: repo}
 }
 
@@ -99,7 +98,7 @@ func (h *AdminFederationActorsHandlers) DeleteActor(w http.ResponseWriter, r *ht
 	}
 	actor := chi.URLParam(r, "actor")
 	if err := h.repo.DeleteActor(r.Context(), actor); err != nil {
-		if de, ok := err.(*domain.DomainError); ok && de.Code == "NOT_FOUND" {
+		if de, ok := err.(domain.DomainError); ok && de.Code == "NOT_FOUND" {
 			shared.WriteError(w, http.StatusNotFound, de)
 			return
 		}

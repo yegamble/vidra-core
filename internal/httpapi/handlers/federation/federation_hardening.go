@@ -16,30 +16,24 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-// FederationHardeningHandler handles federation hardening endpoints
 type FederationHardeningHandler struct {
 	service *usecase.FederationHardeningService
 }
 
-// NewFederationHardeningHandler creates a new federation hardening handler
 func NewFederationHardeningHandler(service *usecase.FederationHardeningService) *FederationHardeningHandler {
 	return &FederationHardeningHandler{
 		service: service,
 	}
 }
 
-// RegisterRoutes registers federation hardening API routes
 func (h *FederationHardeningHandler) RegisterRoutes(r chi.Router) {
 	r.Route("/api/v1/federation/hardening", func(r chi.Router) {
-		// Dashboard and metrics
 		r.Get("/dashboard", h.GetDashboard)
 		r.Get("/health", h.GetHealthMetrics)
 
-		// DLQ management
 		r.Get("/dlq", h.GetDLQJobs)
 		r.Post("/dlq/{id}/retry", h.RetryDLQJob)
 
-		// Blocklist management
 		r.Route("/blocklist", func(r chi.Router) {
 			r.Get("/instances", h.GetInstanceBlocks)
 			r.Post("/instances", h.BlockInstance)
@@ -49,19 +43,16 @@ func (h *FederationHardeningHandler) RegisterRoutes(r chi.Router) {
 			r.Get("/check", h.CheckBlocked)
 		})
 
-		// Abuse reporting
 		r.Route("/abuse", func(r chi.Router) {
 			r.Post("/report", h.ReportAbuse)
 			r.Get("/reports", h.GetAbuseReports)
 			r.Post("/reports/{id}/resolve", h.ResolveAbuseReport)
 		})
 
-		// Cleanup endpoint
 		r.Post("/cleanup", h.RunCleanup)
 	})
 }
 
-// GetDashboard returns federation dashboard data
 func (h *FederationHardeningHandler) GetDashboard(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -74,7 +65,6 @@ func (h *FederationHardeningHandler) GetDashboard(w http.ResponseWriter, r *http
 	shared.WriteJSON(w, http.StatusOK, data)
 }
 
-// GetHealthMetrics returns federation health metrics
 func (h *FederationHardeningHandler) GetHealthMetrics(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -87,9 +77,6 @@ func (h *FederationHardeningHandler) GetHealthMetrics(w http.ResponseWriter, r *
 	shared.WriteJSON(w, http.StatusOK, metrics)
 }
 
-// DLQ Operations
-
-// GetDLQJobs retrieves dead letter queue jobs
 func (h *FederationHardeningHandler) GetDLQJobs(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -111,7 +98,6 @@ func (h *FederationHardeningHandler) GetDLQJobs(w http.ResponseWriter, r *http.R
 	shared.WriteJSON(w, http.StatusOK, jobs)
 }
 
-// RetryDLQJob retries a job from the DLQ
 func (h *FederationHardeningHandler) RetryDLQJob(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	dlqID := chi.URLParam(r, "id")
@@ -124,18 +110,14 @@ func (h *FederationHardeningHandler) RetryDLQJob(w http.ResponseWriter, r *http.
 	shared.WriteJSON(w, http.StatusOK, map[string]string{"status": "retry_queued"})
 }
 
-// Blocklist Operations
-
-// BlockInstanceRequest represents an instance block request
 type BlockInstanceRequest struct {
 	InstanceDomain string               `json:"instance_domain"`
 	Reason         string               `json:"reason"`
 	Severity       domain.BlockSeverity `json:"severity"`
 	BlockedBy      string               `json:"blocked_by"`
-	Duration       string               `json:"duration,omitempty"` // e.g., "24h", "7d"
+	Duration       string               `json:"duration,omitempty"`
 }
 
-// BlockInstance blocks an instance
 func (h *FederationHardeningHandler) BlockInstance(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -163,7 +145,6 @@ func (h *FederationHardeningHandler) BlockInstance(w http.ResponseWriter, r *htt
 	shared.WriteJSON(w, http.StatusOK, map[string]string{"status": "blocked"})
 }
 
-// UnblockInstance unblocks an instance
 func (h *FederationHardeningHandler) UnblockInstance(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	domain := chi.URLParam(r, "domain")
@@ -176,7 +157,6 @@ func (h *FederationHardeningHandler) UnblockInstance(w http.ResponseWriter, r *h
 	shared.WriteJSON(w, http.StatusOK, map[string]string{"status": "unblocked"})
 }
 
-// GetInstanceBlocks retrieves instance blocks
 func (h *FederationHardeningHandler) GetInstanceBlocks(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -189,7 +169,6 @@ func (h *FederationHardeningHandler) GetInstanceBlocks(w http.ResponseWriter, r 
 	shared.WriteJSON(w, http.StatusOK, blocks)
 }
 
-// BlockActorRequest represents an actor block request
 type BlockActorRequest struct {
 	ActorDID    string               `json:"actor_did"`
 	ActorHandle string               `json:"actor_handle"`
@@ -199,7 +178,6 @@ type BlockActorRequest struct {
 	Duration    string               `json:"duration,omitempty"`
 }
 
-// BlockActor blocks an actor
 func (h *FederationHardeningHandler) BlockActor(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -227,7 +205,6 @@ func (h *FederationHardeningHandler) BlockActor(w http.ResponseWriter, r *http.R
 	shared.WriteJSON(w, http.StatusOK, map[string]string{"status": "blocked"})
 }
 
-// CheckBlocked checks if an instance or actor is blocked
 func (h *FederationHardeningHandler) CheckBlocked(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -253,9 +230,6 @@ func (h *FederationHardeningHandler) CheckBlocked(w http.ResponseWriter, r *http
 	shared.WriteJSON(w, http.StatusOK, result)
 }
 
-// Abuse Reporting
-
-// ReportAbuseRequest represents an abuse report request
 type ReportAbuseRequest struct {
 	ReporterDID string          `json:"reporter_did"`
 	ReportType  string          `json:"report_type"`
@@ -265,7 +239,6 @@ type ReportAbuseRequest struct {
 	Evidence    json.RawMessage `json:"evidence,omitempty"`
 }
 
-// ReportAbuse creates an abuse report
 func (h *FederationHardeningHandler) ReportAbuse(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -283,7 +256,6 @@ func (h *FederationHardeningHandler) ReportAbuse(w http.ResponseWriter, r *http.
 	shared.WriteJSON(w, http.StatusOK, map[string]string{"status": "reported"})
 }
 
-// GetAbuseReports retrieves pending abuse reports
 func (h *FederationHardeningHandler) GetAbuseReports(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -303,14 +275,12 @@ func (h *FederationHardeningHandler) GetAbuseReports(w http.ResponseWriter, r *h
 	shared.WriteJSON(w, http.StatusOK, reports)
 }
 
-// ResolveAbuseReportRequest represents a resolution request
 type ResolveAbuseReportRequest struct {
 	Resolution string `json:"resolution"`
 	ResolvedBy string `json:"resolved_by"`
 	TakeAction bool   `json:"take_action"`
 }
 
-// ResolveAbuseReport resolves an abuse report
 func (h *FederationHardeningHandler) ResolveAbuseReport(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reportID := chi.URLParam(r, "id")
@@ -329,7 +299,6 @@ func (h *FederationHardeningHandler) ResolveAbuseReport(w http.ResponseWriter, r
 	shared.WriteJSON(w, http.StatusOK, map[string]string{"status": "resolved"})
 }
 
-// RunCleanup runs cleanup tasks
 func (h *FederationHardeningHandler) RunCleanup(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -341,23 +310,17 @@ func (h *FederationHardeningHandler) RunCleanup(w http.ResponseWriter, r *http.R
 	shared.WriteJSON(w, http.StatusOK, map[string]string{"status": "cleanup_completed"})
 }
 
-// FederationMiddleware validates incoming federation requests
 func FederationMiddleware(service *usecase.FederationHardeningService) func(next http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// Extract instance domain from header or request
 			instanceDomain := r.Header.Get("X-Federation-Instance")
 			if instanceDomain == "" {
-				// Try to extract from host
 				instanceDomain = r.Host
 			}
 
-			// Get signature
 			signature := r.Header.Get("X-Federation-Signature")
-			// Optional timestamp header (unix seconds or RFC3339)
 			ts := r.Header.Get("X-Federation-Timestamp")
 
-			// Read body for validation (limited to prevent memory issues)
 			maxSize := int64(10485760)
 			if service != nil && service.Config() != nil && service.Config().MaxRequestSize > 0 {
 				maxSize = service.Config().MaxRequestSize
@@ -368,13 +331,11 @@ func FederationMiddleware(service *usecase.FederationHardeningService) func(next
 				return
 			}
 
-			// Validate the request
 			if err := service.ValidateFederationRequest(r.Context(), instanceDomain, signature, r.URL.Path, body, ts); err != nil {
 				shared.WriteError(w, http.StatusForbidden, err)
 				return
 			}
 
-			// Restore body for handler
 			r.Body = io.NopCloser(bytes.NewReader(body))
 
 			next.ServeHTTP(w, r)
