@@ -1510,3 +1510,116 @@ func TestUploadAvatar_MissingAvatarField(t *testing.T) {
 
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
 }
+
+// IPFS avatar handler tests (targeted for 80% coverage)
+
+func TestIPFSAdd_NotConfigured(t *testing.T) {
+	h := &AuthHandlers{
+		ipfsAPI: "", // Not configured
+	}
+
+	cid, err := h.ipfsAdd("/tmp/test.jpg")
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "ipfs api not configured")
+	assert.Empty(t, cid)
+}
+
+func TestIPFSAdd_InvalidPath(t *testing.T) {
+	h := &AuthHandlers{
+		ipfsAPI: "http://localhost:5001",
+	}
+
+	// Path traversal attempt
+	cid, err := h.ipfsAdd("../../etc/passwd")
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid file path")
+	assert.Empty(t, cid)
+}
+
+func TestIPFSAdd_FileNotFound(t *testing.T) {
+	h := &AuthHandlers{
+		ipfsAPI: "http://localhost:5001",
+	}
+
+	cid, err := h.ipfsAdd("./storage/nonexistent.jpg")
+
+	assert.Error(t, err)
+	assert.Empty(t, cid)
+}
+
+func TestIPFSClusterAdd_NotConfigured(t *testing.T) {
+	h := &AuthHandlers{
+		ipfsClusterAPI: "", // Not configured
+	}
+
+	cid, err := h.ipfsClusterAdd("/tmp/test.jpg")
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "ipfs cluster api not configured")
+	assert.Empty(t, cid)
+}
+
+func TestIPFSPin_NotConfigured(t *testing.T) {
+	h := &AuthHandlers{
+		ipfsAPI: "", // Not configured
+	}
+
+	err := h.ipfsPin("QmTest123")
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "ipfs api not configured")
+}
+
+func TestParseIPFSAddResponse_ValidNDJSON(t *testing.T) {
+	// IPFS returns NDJSON (newline-delimited JSON)
+	ndjson := `{"Name":"file1.jpg","Hash":"QmFirst","Size":"1234"}
+{"Name":"file2.jpg","Hash":"QmSecond","Size":"5678"}
+{"Name":"final.jpg","Hash":"QmFinalCID","Size":"9999"}
+`
+
+	cid, err := parseIPFSAddResponse(strings.NewReader(ndjson))
+
+	assert.NoError(t, err)
+	assert.Equal(t, "QmFinalCID", cid)
+}
+
+func TestParseIPFSAddResponse_EmptyResponse(t *testing.T) {
+	cid, err := parseIPFSAddResponse(strings.NewReader(""))
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "missing CID in IPFS response")
+	assert.Empty(t, cid)
+}
+
+func TestParseIPFSAddResponse_InvalidJSON(t *testing.T) {
+	cid, err := parseIPFSAddResponse(strings.NewReader("not-json"))
+
+	assert.Error(t, err)
+	assert.Empty(t, cid)
+}
+
+func TestIPFSClusterAdd_InvalidPath(t *testing.T) {
+	h := &AuthHandlers{
+		ipfsClusterAPI: "http://localhost:9094",
+	}
+
+	// Path traversal attempt
+	cid, err := h.ipfsClusterAdd("../../etc/passwd")
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid file path")
+	assert.Empty(t, cid)
+}
+
+func TestIPFSClusterAdd_FileNotFound(t *testing.T) {
+	h := &AuthHandlers{
+		ipfsClusterAPI: "http://localhost:9094",
+	}
+
+	cid, err := h.ipfsClusterAdd("./storage/nonexistent.jpg")
+
+	assert.Error(t, err)
+	assert.Empty(t, cid)
+}
