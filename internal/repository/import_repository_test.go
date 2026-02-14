@@ -33,7 +33,6 @@ func TestImportRepository_Create(t *testing.T) {
 		Progress:      0,
 	}
 
-	// Match the actual query used by Create
 	mock.ExpectQuery(regexp.QuoteMeta(`INSERT INTO video_imports (
 			user_id, channel_id, source_url, status, target_privacy, target_category, metadata
 		) VALUES (
@@ -81,7 +80,6 @@ func TestImportRepository_GetByID(t *testing.T) {
 		"private", nil, now, &now, nil, now,
 	)
 
-	// Match the actual SELECT query
 	mock.ExpectQuery(regexp.QuoteMeta(`SELECT id, user_id, channel_id, source_url, status, video_id, error_message,
 		       progress, metadata, file_size_bytes, downloaded_bytes, target_privacy,
 		       target_category, created_at, started_at, completed_at, updated_at
@@ -425,7 +423,218 @@ func TestImportRepository_Update(t *testing.T) {
 	assert.NoError(t, mock.ExpectationsWereMet())
 }
 
-// Helper function to create string pointer
+func TestImportRepository_UpdateStatus(t *testing.T) {
+	tests := []struct {
+		name        string
+		importID    string
+		status      domain.ImportStatus
+		setupMock   func(sqlmock.Sqlmock)
+		wantErr     bool
+		expectError error
+	}{
+		{
+			name:     "success",
+			importID: "import-123",
+			status:   domain.ImportStatusCompleted,
+			setupMock: func(mock sqlmock.Sqlmock) {
+				mock.ExpectExec(regexp.QuoteMeta(`UPDATE video_imports SET status = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $1`)).
+					WithArgs("import-123", domain.ImportStatusCompleted).
+					WillReturnResult(sqlmock.NewResult(0, 1))
+			},
+			wantErr: false,
+		},
+		{
+			name:     "not found",
+			importID: "nonexistent",
+			status:   domain.ImportStatusCompleted,
+			setupMock: func(mock sqlmock.Sqlmock) {
+				mock.ExpectExec(regexp.QuoteMeta(`UPDATE video_imports SET status = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $1`)).
+					WithArgs("nonexistent", domain.ImportStatusCompleted).
+					WillReturnResult(sqlmock.NewResult(0, 0))
+			},
+			wantErr:     true,
+			expectError: domain.ErrImportNotFound,
+		},
+		{
+			name:     "database error",
+			importID: "import-123",
+			status:   domain.ImportStatusFailed,
+			setupMock: func(mock sqlmock.Sqlmock) {
+				mock.ExpectExec(regexp.QuoteMeta(`UPDATE video_imports SET status = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $1`)).
+					WithArgs("import-123", domain.ImportStatusFailed).
+					WillReturnError(sql.ErrConnDone)
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db, mock, err := sqlmock.New()
+			require.NoError(t, err)
+			defer db.Close()
+
+			sqlxDB := sqlx.NewDb(db, "postgres")
+			repo := NewImportRepository(sqlxDB)
+
+			tt.setupMock(mock)
+
+			err = repo.UpdateStatus(context.Background(), tt.importID, tt.status)
+
+			if tt.wantErr {
+				require.Error(t, err)
+				if tt.expectError != nil {
+					assert.ErrorIs(t, err, tt.expectError)
+				}
+			} else {
+				require.NoError(t, err)
+			}
+
+			assert.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
+}
+
+func TestImportRepository_UpdateMetadata(t *testing.T) {
+	tests := []struct {
+		name        string
+		importID    string
+		metadata    []byte
+		setupMock   func(sqlmock.Sqlmock)
+		wantErr     bool
+		expectError error
+	}{
+		{
+			name:     "success",
+			importID: "import-123",
+			metadata: []byte(`{"title":"Test Video","duration":300}`),
+			setupMock: func(mock sqlmock.Sqlmock) {
+				mock.ExpectExec(regexp.QuoteMeta(`UPDATE video_imports SET metadata = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $1`)).
+					WithArgs("import-123", []byte(`{"title":"Test Video","duration":300}`)).
+					WillReturnResult(sqlmock.NewResult(0, 1))
+			},
+			wantErr: false,
+		},
+		{
+			name:     "not found",
+			importID: "nonexistent",
+			metadata: []byte(`{}`),
+			setupMock: func(mock sqlmock.Sqlmock) {
+				mock.ExpectExec(regexp.QuoteMeta(`UPDATE video_imports SET metadata = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $1`)).
+					WithArgs("nonexistent", []byte(`{}`)).
+					WillReturnResult(sqlmock.NewResult(0, 0))
+			},
+			wantErr:     true,
+			expectError: domain.ErrImportNotFound,
+		},
+		{
+			name:     "database error",
+			importID: "import-123",
+			metadata: []byte(`{}`),
+			setupMock: func(mock sqlmock.Sqlmock) {
+				mock.ExpectExec(regexp.QuoteMeta(`UPDATE video_imports SET metadata = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $1`)).
+					WithArgs("import-123", []byte(`{}`)).
+					WillReturnError(sql.ErrConnDone)
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db, mock, err := sqlmock.New()
+			require.NoError(t, err)
+			defer db.Close()
+
+			sqlxDB := sqlx.NewDb(db, "postgres")
+			repo := NewImportRepository(sqlxDB)
+
+			tt.setupMock(mock)
+
+			err = repo.UpdateMetadata(context.Background(), tt.importID, tt.metadata)
+
+			if tt.wantErr {
+				require.Error(t, err)
+				if tt.expectError != nil {
+					assert.ErrorIs(t, err, tt.expectError)
+				}
+			} else {
+				require.NoError(t, err)
+			}
+
+			assert.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
+}
+
+func TestImportRepository_Delete(t *testing.T) {
+	tests := []struct {
+		name        string
+		importID    string
+		setupMock   func(sqlmock.Sqlmock)
+		wantErr     bool
+		expectError error
+	}{
+		{
+			name:     "success",
+			importID: "import-123",
+			setupMock: func(mock sqlmock.Sqlmock) {
+				mock.ExpectExec(regexp.QuoteMeta(`DELETE FROM video_imports WHERE id = $1`)).
+					WithArgs("import-123").
+					WillReturnResult(sqlmock.NewResult(0, 1))
+			},
+			wantErr: false,
+		},
+		{
+			name:     "not found",
+			importID: "nonexistent",
+			setupMock: func(mock sqlmock.Sqlmock) {
+				mock.ExpectExec(regexp.QuoteMeta(`DELETE FROM video_imports WHERE id = $1`)).
+					WithArgs("nonexistent").
+					WillReturnResult(sqlmock.NewResult(0, 0))
+			},
+			wantErr:     true,
+			expectError: domain.ErrImportNotFound,
+		},
+		{
+			name:     "database error",
+			importID: "import-123",
+			setupMock: func(mock sqlmock.Sqlmock) {
+				mock.ExpectExec(regexp.QuoteMeta(`DELETE FROM video_imports WHERE id = $1`)).
+					WithArgs("import-123").
+					WillReturnError(sql.ErrConnDone)
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db, mock, err := sqlmock.New()
+			require.NoError(t, err)
+			defer db.Close()
+
+			sqlxDB := sqlx.NewDb(db, "postgres")
+			repo := NewImportRepository(sqlxDB)
+
+			tt.setupMock(mock)
+
+			err = repo.Delete(context.Background(), tt.importID)
+
+			if tt.wantErr {
+				require.Error(t, err)
+				if tt.expectError != nil {
+					assert.ErrorIs(t, err, tt.expectError)
+				}
+			} else {
+				require.NoError(t, err)
+			}
+
+			assert.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
+}
+
 func strPtr(s string) *string {
 	return &s
 }
