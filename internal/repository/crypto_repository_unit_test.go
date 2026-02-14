@@ -720,6 +720,69 @@ func TestCryptoRepository_Unit_UserSigningKey_CRUD(t *testing.T) {
 		require.NoError(t, mock.ExpectationsWereMet())
 	})
 
+	t.Run("update success - without tx", func(t *testing.T) {
+		repo, mock, cleanup := newCryptoRepo(t)
+		defer cleanup()
+
+		key := &domain.UserSigningKey{
+			UserID:              userID,
+			EncryptedPrivateKey: "new_enc_priv",
+			PublicKey:           "new_pub_key",
+			KeyVersion:          2,
+		}
+
+		mock.ExpectExec(`(?s)UPDATE user_signing_keys`).
+			WithArgs("new_enc_priv", "new_pub_key", 2, userID).
+			WillReturnResult(sqlmock.NewResult(0, 1))
+
+		err := repo.UpdateUserSigningKey(ctx, nil, key)
+		require.NoError(t, err)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("update success - with tx", func(t *testing.T) {
+		repo, mock, cleanup := newCryptoRepo(t)
+		defer cleanup()
+
+		key := &domain.UserSigningKey{
+			UserID:              userID,
+			EncryptedPrivateKey: "new_enc_priv",
+			PublicKey:           "new_pub_key",
+			KeyVersion:          2,
+		}
+
+		mock.ExpectBegin()
+		tx, _ := repo.db.BeginTxx(ctx, nil)
+
+		mock.ExpectExec(`(?s)UPDATE user_signing_keys`).
+			WithArgs("new_enc_priv", "new_pub_key", 2, userID).
+			WillReturnResult(sqlmock.NewResult(0, 1))
+
+		err := repo.UpdateUserSigningKey(ctx, tx, key)
+		require.NoError(t, err)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("update error", func(t *testing.T) {
+		repo, mock, cleanup := newCryptoRepo(t)
+		defer cleanup()
+
+		key := &domain.UserSigningKey{
+			UserID:              userID,
+			EncryptedPrivateKey: "new_enc_priv",
+			PublicKey:           "new_pub_key",
+			KeyVersion:          2,
+		}
+
+		mock.ExpectExec(`(?s)UPDATE user_signing_keys`).
+			WithArgs("new_enc_priv", "new_pub_key", 2, userID).
+			WillReturnError(sql.ErrConnDone)
+
+		err := repo.UpdateUserSigningKey(ctx, nil, key)
+		require.Error(t, err)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
 	t.Run("delete success", func(t *testing.T) {
 		repo, mock, cleanup := newCryptoRepo(t)
 		defer cleanup()
@@ -781,6 +844,66 @@ func TestCryptoRepository_Unit_AuditLog(t *testing.T) {
 		logs, err := repo.GetAuditLogs(ctx, userID, 10, 0)
 		require.NoError(t, err)
 		require.Len(t, logs, 1)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("get audit logs by conversation success", func(t *testing.T) {
+		repo, mock, cleanup := newCryptoRepo(t)
+		defer cleanup()
+
+		conversationID := uuid.NewString()
+		now := time.Now()
+		clientIP := "10.0.0.1"
+		userAgent := "browser"
+		rows := sqlmock.NewRows([]string{
+			"id", "user_id", "conversation_id", "operation", "success", "error_message", "client_ip", "user_agent", "created_at",
+		}).
+			AddRow(uuid.NewString(), userID, &conversationID, "encrypt", true, nil, &clientIP, &userAgent, now).
+			AddRow(uuid.NewString(), userID, &conversationID, "decrypt", true, nil, &clientIP, &userAgent, now)
+
+		mock.ExpectQuery(regexp.QuoteMeta(`SELECT id, user_id, conversation_id, operation, success, error_message, client_ip, user_agent, created_at FROM crypto_audit_log WHERE conversation_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3`)).
+			WithArgs(conversationID, 20, 0).
+			WillReturnRows(rows)
+
+		logs, err := repo.GetAuditLogsByConversation(ctx, conversationID, 20, 0)
+		require.NoError(t, err)
+		require.Len(t, logs, 2)
+		assert.Equal(t, conversationID, *logs[0].ConversationID)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("get audit logs by conversation - empty result", func(t *testing.T) {
+		repo, mock, cleanup := newCryptoRepo(t)
+		defer cleanup()
+
+		conversationID := uuid.NewString()
+		rows := sqlmock.NewRows([]string{
+			"id", "user_id", "conversation_id", "operation", "success", "error_message", "client_ip", "user_agent", "created_at",
+		})
+
+		mock.ExpectQuery(regexp.QuoteMeta(`SELECT id, user_id, conversation_id, operation, success, error_message, client_ip, user_agent, created_at FROM crypto_audit_log WHERE conversation_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3`)).
+			WithArgs(conversationID, 10, 0).
+			WillReturnRows(rows)
+
+		logs, err := repo.GetAuditLogsByConversation(ctx, conversationID, 10, 0)
+		require.NoError(t, err)
+		require.Len(t, logs, 0)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("get audit logs by conversation - database error", func(t *testing.T) {
+		repo, mock, cleanup := newCryptoRepo(t)
+		defer cleanup()
+
+		conversationID := uuid.NewString()
+
+		mock.ExpectQuery(regexp.QuoteMeta(`SELECT id, user_id, conversation_id, operation, success, error_message, client_ip, user_agent, created_at FROM crypto_audit_log WHERE conversation_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3`)).
+			WithArgs(conversationID, 10, 0).
+			WillReturnError(sql.ErrConnDone)
+
+		logs, err := repo.GetAuditLogsByConversation(ctx, conversationID, 10, 0)
+		require.Error(t, err)
+		require.Nil(t, logs)
 		require.NoError(t, mock.ExpectationsWereMet())
 	})
 
