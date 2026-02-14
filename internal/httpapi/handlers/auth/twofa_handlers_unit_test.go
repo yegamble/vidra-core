@@ -380,3 +380,150 @@ func TestRegenerateBackupCodes_MissingCode(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
 	assert.Contains(t, rec.Body.String(), "MISSING_CODE")
 }
+
+// Additional DisableTwoFA error path tests
+
+func TestDisableTwoFA_InvalidJSON(t *testing.T) {
+	service := &mockTwoFAService{}
+	h := &TwoFAHandlers{twoFAService: service}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/2fa/disable", bytes.NewReader([]byte("invalid-json")))
+	req = req.WithContext(context.WithValue(req.Context(), middleware.UserIDKey, "test-user-id"))
+	rec := httptest.NewRecorder()
+
+	h.DisableTwoFA(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+	assert.Contains(t, rec.Body.String(), "INVALID_JSON")
+}
+
+func TestDisableTwoFA_MissingPassword(t *testing.T) {
+	service := &mockTwoFAService{}
+	h := &TwoFAHandlers{twoFAService: service}
+
+	reqBody := domain.TwoFADisableRequest{Password: "", Code: "123456"}
+	body, _ := json.Marshal(reqBody)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/2fa/disable", bytes.NewReader(body))
+	req = req.WithContext(context.WithValue(req.Context(), middleware.UserIDKey, "test-user-id"))
+	rec := httptest.NewRecorder()
+
+	h.DisableTwoFA(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+	assert.Contains(t, rec.Body.String(), "MISSING_FIELDS")
+}
+
+func TestDisableTwoFA_MissingCode(t *testing.T) {
+	service := &mockTwoFAService{}
+	h := &TwoFAHandlers{twoFAService: service}
+
+	reqBody := domain.TwoFADisableRequest{Password: "password123", Code: ""}
+	body, _ := json.Marshal(reqBody)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/2fa/disable", bytes.NewReader(body))
+	req = req.WithContext(context.WithValue(req.Context(), middleware.UserIDKey, "test-user-id"))
+	rec := httptest.NewRecorder()
+
+	h.DisableTwoFA(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+	assert.Contains(t, rec.Body.String(), "MISSING_FIELDS")
+}
+
+func TestDisableTwoFA_InvalidPassword(t *testing.T) {
+	service := &mockTwoFAService{disableErr: domain.ErrInvalidCredentials}
+	h := &TwoFAHandlers{twoFAService: service}
+
+	reqBody := domain.TwoFADisableRequest{Password: "wrong-password", Code: "123456"}
+	body, _ := json.Marshal(reqBody)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/2fa/disable", bytes.NewReader(body))
+	req = req.WithContext(context.WithValue(req.Context(), middleware.UserIDKey, "test-user-id"))
+	rec := httptest.NewRecorder()
+
+	h.DisableTwoFA(rec, req)
+
+	assert.Equal(t, http.StatusUnauthorized, rec.Code)
+	assert.Contains(t, rec.Body.String(), "INVALID_PASSWORD")
+}
+
+func TestDisableTwoFA_InvalidCode(t *testing.T) {
+	service := &mockTwoFAService{disableErr: domain.ErrTwoFAInvalidCode}
+	h := &TwoFAHandlers{twoFAService: service}
+
+	reqBody := domain.TwoFADisableRequest{Password: "password123", Code: "wrong-code"}
+	body, _ := json.Marshal(reqBody)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/2fa/disable", bytes.NewReader(body))
+	req = req.WithContext(context.WithValue(req.Context(), middleware.UserIDKey, "test-user-id"))
+	rec := httptest.NewRecorder()
+
+	h.DisableTwoFA(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+	assert.Contains(t, rec.Body.String(), "INVALID_CODE")
+}
+
+func TestDisableTwoFA_ServiceError(t *testing.T) {
+	service := &mockTwoFAService{disableErr: errors.New("service error")}
+	h := &TwoFAHandlers{twoFAService: service}
+
+	reqBody := domain.TwoFADisableRequest{Password: "password123", Code: "123456"}
+	body, _ := json.Marshal(reqBody)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/2fa/disable", bytes.NewReader(body))
+	req = req.WithContext(context.WithValue(req.Context(), middleware.UserIDKey, "test-user-id"))
+	rec := httptest.NewRecorder()
+
+	h.DisableTwoFA(rec, req)
+
+	assert.Equal(t, http.StatusInternalServerError, rec.Code)
+	assert.Contains(t, rec.Body.String(), "INTERNAL_ERROR")
+}
+
+// GetTwoFAStatus tests
+
+func TestGetTwoFAStatus_Success(t *testing.T) {
+	service := &mockTwoFAService{}
+	h := &TwoFAHandlers{twoFAService: service}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/2fa/status", nil)
+	req = req.WithContext(context.WithValue(req.Context(), middleware.UserIDKey, "test-user-id"))
+	rec := httptest.NewRecorder()
+
+	h.GetTwoFAStatus(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	var response map[string]interface{}
+	err := json.Unmarshal(rec.Body.Bytes(), &response)
+	require.NoError(t, err)
+	assert.Contains(t, response, "data")
+}
+
+func TestGetTwoFAStatus_Unauthorized(t *testing.T) {
+	service := &mockTwoFAService{}
+	h := &TwoFAHandlers{twoFAService: service}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/2fa/status", nil)
+	rec := httptest.NewRecorder()
+
+	h.GetTwoFAStatus(rec, req)
+
+	assert.Equal(t, http.StatusUnauthorized, rec.Code)
+	assert.Contains(t, rec.Body.String(), "UNAUTHORIZED")
+}
+
+func TestGetTwoFAStatus_ServiceError(t *testing.T) {
+	service := &mockTwoFAService{getStatusErr: errors.New("service error")}
+	h := &TwoFAHandlers{twoFAService: service}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/2fa/status", nil)
+	req = req.WithContext(context.WithValue(req.Context(), middleware.UserIDKey, "test-user-id"))
+	rec := httptest.NewRecorder()
+
+	h.GetTwoFAStatus(rec, req)
+
+	assert.Equal(t, http.StatusInternalServerError, rec.Code)
+	assert.Contains(t, rec.Body.String(), "INTERNAL_ERROR")
+}

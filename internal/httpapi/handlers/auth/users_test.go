@@ -298,3 +298,153 @@ func TestGetUserHandler_NotFound(t *testing.T) {
 }
 
 // no extra helpers needed; we set middleware.UserIDKey directly in request context
+
+// errorMockUserRepo is a mock that returns errors for testing error paths
+type errorMockUserRepo struct {
+	getByIDErr error
+	updateErr  error
+	user       *domain.User
+}
+
+func (m *errorMockUserRepo) GetByID(_ context.Context, id string) (*domain.User, error) {
+	if m.getByIDErr != nil {
+		return nil, m.getByIDErr
+	}
+	if m.user != nil {
+		return m.user, nil
+	}
+	return &domain.User{ID: id, Username: "testuser"}, nil
+}
+
+func (m *errorMockUserRepo) Update(_ context.Context, user *domain.User) error {
+	return m.updateErr
+}
+
+// Implement remaining interface methods (not used in tests)
+func (m *errorMockUserRepo) Create(_ context.Context, _ *domain.User, _ string) error { return nil }
+func (m *errorMockUserRepo) GetByEmail(_ context.Context, _ string) (*domain.User, error) {
+	return nil, nil
+}
+func (m *errorMockUserRepo) GetByUsername(_ context.Context, _ string) (*domain.User, error) {
+	return nil, nil
+}
+func (m *errorMockUserRepo) Delete(_ context.Context, _ string) error { return nil }
+func (m *errorMockUserRepo) GetPasswordHash(_ context.Context, _ string) (string, error) {
+	return "", nil
+}
+func (m *errorMockUserRepo) UpdatePassword(_ context.Context, _, _ string) error { return nil }
+func (m *errorMockUserRepo) List(_ context.Context, _, _ int) ([]*domain.User, error) {
+	return nil, nil
+}
+func (m *errorMockUserRepo) Count(_ context.Context) (int64, error) { return 0, nil }
+func (m *errorMockUserRepo) SetAvatarFields(_ context.Context, _ string, _ sql.NullString, _ sql.NullString) error {
+	return nil
+}
+func (m *errorMockUserRepo) MarkEmailAsVerified(_ context.Context, _ string) error { return nil }
+
+// Additional UpdateCurrentUserHandler error path tests
+
+func TestUpdateCurrentUserHandler_Unauthorized(t *testing.T) {
+	mockRepo := newMockUserRepo()
+	handler := UpdateCurrentUserHandler(mockRepo)
+
+	reqBody := map[string]string{"display_name": "New Name"}
+	body, _ := json.Marshal(reqBody)
+
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/users/me", bytes.NewReader(body))
+	// No user ID in context
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", rec.Code)
+	}
+}
+
+func TestUpdateCurrentUserHandler_InvalidJSON(t *testing.T) {
+	mockRepo := newMockUserRepo()
+	handler := UpdateCurrentUserHandler(mockRepo)
+
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/users/me", bytes.NewReader([]byte("invalid-json")))
+	req = req.WithContext(context.WithValue(req.Context(), middleware.UserIDKey, "user-123"))
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", rec.Code)
+	}
+}
+
+func TestUpdateCurrentUserHandler_UserNotFoundOnGet(t *testing.T) {
+	mockRepo := &errorMockUserRepo{getByIDErr: domain.ErrUserNotFound}
+	handler := UpdateCurrentUserHandler(mockRepo)
+
+	reqBody := map[string]string{"display_name": "New Name"}
+	body, _ := json.Marshal(reqBody)
+
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/users/me", bytes.NewReader(body))
+	req = req.WithContext(context.WithValue(req.Context(), middleware.UserIDKey, "user-123"))
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", rec.Code)
+	}
+}
+
+func TestUpdateCurrentUserHandler_ServiceErrorOnGet(t *testing.T) {
+	mockRepo := &errorMockUserRepo{getByIDErr: sql.ErrConnDone}
+	handler := UpdateCurrentUserHandler(mockRepo)
+
+	reqBody := map[string]string{"display_name": "New Name"}
+	body, _ := json.Marshal(reqBody)
+
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/users/me", bytes.NewReader(body))
+	req = req.WithContext(context.WithValue(req.Context(), middleware.UserIDKey, "user-123"))
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d", rec.Code)
+	}
+}
+
+func TestUpdateCurrentUserHandler_UserNotFoundOnUpdate(t *testing.T) {
+	mockRepo := &errorMockUserRepo{updateErr: domain.ErrUserNotFound}
+	handler := UpdateCurrentUserHandler(mockRepo)
+
+	reqBody := map[string]string{"display_name": "New Name"}
+	body, _ := json.Marshal(reqBody)
+
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/users/me", bytes.NewReader(body))
+	req = req.WithContext(context.WithValue(req.Context(), middleware.UserIDKey, "user-123"))
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", rec.Code)
+	}
+}
+
+func TestUpdateCurrentUserHandler_ServiceErrorOnUpdate(t *testing.T) {
+	mockRepo := &errorMockUserRepo{updateErr: sql.ErrConnDone}
+	handler := UpdateCurrentUserHandler(mockRepo)
+
+	reqBody := map[string]string{"display_name": "New Name"}
+	body, _ := json.Marshal(reqBody)
+
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/users/me", bytes.NewReader(body))
+	req = req.WithContext(context.WithValue(req.Context(), middleware.UserIDKey, "user-123"))
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d", rec.Code)
+	}
+}
