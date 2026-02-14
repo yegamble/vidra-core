@@ -301,7 +301,10 @@ func TestGenerateBackupCodes_Success(t *testing.T) {
 	service := &mockTwoFAService{}
 	h := &TwoFAHandlers{twoFAService: service}
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/2fa/backup-codes", nil)
+	reqBody := domain.TwoFARegenerateBackupCodesRequest{Code: "123456"}
+	body, _ := json.Marshal(reqBody)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/2fa/backup-codes", bytes.NewReader(body))
 	req = req.WithContext(context.WithValue(req.Context(), middleware.UserIDKey, "test-user-id"))
 	rec := httptest.NewRecorder()
 
@@ -309,10 +312,14 @@ func TestGenerateBackupCodes_Success(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, rec.Code)
 
-	var response domain.TwoFARegenerateBackupCodesResponse
-	err := json.Unmarshal(rec.Body.Bytes(), &response)
+	var wrapper struct {
+		Data    domain.TwoFARegenerateBackupCodesResponse `json:"data"`
+		Success bool                                      `json:"success"`
+	}
+	err := json.Unmarshal(rec.Body.Bytes(), &wrapper)
 	require.NoError(t, err)
-	assert.Len(t, response.BackupCodes, 3)
+	assert.True(t, wrapper.Success)
+	assert.Len(t, wrapper.Data.BackupCodes, 3)
 }
 
 func TestRegenerateBackupCodes_Unauthorized(t *testing.T) {
@@ -380,8 +387,6 @@ func TestRegenerateBackupCodes_MissingCode(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
 	assert.Contains(t, rec.Body.String(), "MISSING_CODE")
 }
-
-// Additional DisableTwoFA error path tests
 
 func TestDisableTwoFA_InvalidJSON(t *testing.T) {
 	service := &mockTwoFAService{}
@@ -481,8 +486,6 @@ func TestDisableTwoFA_ServiceError(t *testing.T) {
 	assert.Equal(t, http.StatusInternalServerError, rec.Code)
 	assert.Contains(t, rec.Body.String(), "INTERNAL_ERROR")
 }
-
-// GetTwoFAStatus tests
 
 func TestGetTwoFAStatus_Success(t *testing.T) {
 	service := &mockTwoFAService{}

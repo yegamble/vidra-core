@@ -1,9 +1,11 @@
 package auth
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"errors"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -12,6 +14,7 @@ import (
 	"time"
 
 	"athena/internal/domain"
+	"athena/internal/middleware"
 	"athena/internal/port"
 
 	"github.com/google/uuid"
@@ -178,7 +181,8 @@ func (m *mockAuthRepository) DeleteAllUserSessions(ctx context.Context, userID s
 func (m *mockAuthRepository) CleanExpiredTokens(ctx context.Context) error { return nil }
 
 type mockOAuthRepository struct {
-	clients map[string]*port.OAuthClient
+	clients   map[string]*port.OAuthClient
+	authCodes map[string]*port.OAuthAuthorizationCode
 }
 
 func newMockOAuthRepository() *mockOAuthRepository {
@@ -226,7 +230,14 @@ func (m *mockOAuthRepository) CreateAuthorizationCode(ctx context.Context, code 
 	return nil
 }
 func (m *mockOAuthRepository) GetAuthorizationCode(ctx context.Context, code string) (*port.OAuthAuthorizationCode, error) {
-	return nil, nil
+	if m.authCodes == nil {
+		return nil, domain.ErrNotFound
+	}
+	authCode, ok := m.authCodes[code]
+	if !ok {
+		return nil, domain.ErrNotFound
+	}
+	return authCode, nil
 }
 func (m *mockOAuthRepository) MarkCodeAsUsed(ctx context.Context, code string) error { return nil }
 func (m *mockOAuthRepository) DeleteExpiredCodes(ctx context.Context) error          { return nil }
@@ -662,4 +673,840 @@ func TestOAuthToken_InvalidFormData(t *testing.T) {
 	h.OAuthToken(rec, req)
 
 	assert.NotEqual(t, http.StatusOK, rec.Code)
+}
+
+func TestOAuthAuthorize_GET_ShowsForm(t *testing.T) {
+	h, userRepo, _, oauthRepo := setupOAuthTest(t)
+
+	user := &domain.User{
+		ID:       uuid.NewString(),
+		Username: "testuser",
+		Email:    "test@example.com",
+	}
+	_ = userRepo.addUser(user, "password123")
+
+	oauthRepo.addClient(&port.OAuthClient{
+		ClientID:       "test-client",
+		RedirectURIs:   []string{"https://example.com/callback"},
+		GrantTypes:     []string{"authorization_code"},
+		AllowedScopes:  []string{"read", "write"},
+		IsConfidential: true,
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/oauth/authorize?client_id=test-client&redirect_uri=https://example.com/callback&response_type=code", nil)
+	ctx := context.WithValue(req.Context(), middleware.UserIDKey, user.ID)
+	req = req.WithContext(ctx)
+	rec := httptest.NewRecorder()
+
+	h.OAuthAuthorize(rec, req)
+
+	assert.True(t, rec.Code == http.StatusOK || rec.Code == http.StatusFound)
+}
+
+func TestOAuthAuthorize_GET_NoUser_RedirectsToLogin(t *testing.T) {
+	h, _, _, _ := setupOAuthTest(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/oauth/authorize?client_id=test-client", nil)
+	rec := httptest.NewRecorder()
+
+	h.OAuthAuthorize(rec, req)
+
+	assert.Equal(t, http.StatusFound, rec.Code)
+	location := rec.Header().Get("Location")
+	assert.Contains(t, location, "/auth/login")
+}
+
+func TestOAuthAuthorize_POST_MethodNotAllowed(t *testing.T) {
+	h, _, _, _ := setupOAuthTest(t)
+
+	req := httptest.NewRequest(http.MethodPut, "/oauth/authorize", nil)
+	rec := httptest.NewRecorder()
+
+	h.OAuthAuthorize(rec, req)
+
+	assert.Equal(t, http.StatusMethodNotAllowed, rec.Code)
+}
+
+func TestOAuthAuthorize_POST_NoUser_RedirectsToLogin(t *testing.T) {
+	h, _, _, _ := setupOAuthTest(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/oauth/authorize", nil)
+	rec := httptest.NewRecorder()
+
+	h.OAuthAuthorize(rec, req)
+
+	assert.Equal(t, http.StatusFound, rec.Code)
+	location := rec.Header().Get("Location")
+	assert.Contains(t, location, "/auth/login")
+}
+
+func TestOAuthAuthorize_POST_InvalidFormData(t *testing.T) {
+	h, userRepo, _, _ := setupOAuthTest(t)
+
+	user := &domain.User{
+		ID:       uuid.NewString(),
+		Username: "testuser",
+		Email:    "test@example.com",
+	}
+	_ = userRepo.addUser(user, "password123")
+
+	req := httptest.NewRequest(http.MethodPost, "/oauth/authorize", strings.NewReader("invalid%form"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	ctx := context.WithValue(req.Context(), middleware.UserIDKey, user.ID)
+	req = req.WithContext(ctx)
+	rec := httptest.NewRecorder()
+
+	h.OAuthAuthorize(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+	assert.Contains(t, rec.Body.String(), "invalid_request")
+}
+
+func TestOAuthAuthorize_POST_MissingClientID(t *testing.T) {
+	h, userRepo, _, _ := setupOAuthTest(t)
+
+	user := &domain.User{
+		ID:       uuid.NewString(),
+		Username: "testuser",
+		Email:    "test@example.com",
+	}
+	_ = userRepo.addUser(user, "password123")
+
+	form := url.Values{}
+	form.Set("redirect_uri", "https://example.com/callback")
+	form.Set("response_type", "code")
+
+	req := httptest.NewRequest(http.MethodPost, "/oauth/authorize", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	ctx := context.WithValue(req.Context(), middleware.UserIDKey, user.ID)
+	req = req.WithContext(ctx)
+	rec := httptest.NewRecorder()
+
+	h.OAuthAuthorize(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+	assert.Contains(t, rec.Body.String(), "invalid_request")
+}
+
+func TestOAuthAuthorize_POST_MissingRedirectURI(t *testing.T) {
+	h, userRepo, _, _ := setupOAuthTest(t)
+
+	user := &domain.User{
+		ID:       uuid.NewString(),
+		Username: "testuser",
+		Email:    "test@example.com",
+	}
+	_ = userRepo.addUser(user, "password123")
+
+	form := url.Values{}
+	form.Set("client_id", "test-client")
+	form.Set("response_type", "code")
+
+	req := httptest.NewRequest(http.MethodPost, "/oauth/authorize", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	ctx := context.WithValue(req.Context(), middleware.UserIDKey, user.ID)
+	req = req.WithContext(ctx)
+	rec := httptest.NewRecorder()
+
+	h.OAuthAuthorize(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+	assert.Contains(t, rec.Body.String(), "invalid_request")
+}
+
+func TestOAuthAuthorize_POST_InvalidResponseType(t *testing.T) {
+	h, userRepo, _, _ := setupOAuthTest(t)
+
+	user := &domain.User{
+		ID:       uuid.NewString(),
+		Username: "testuser",
+		Email:    "test@example.com",
+	}
+	_ = userRepo.addUser(user, "password123")
+
+	form := url.Values{}
+	form.Set("client_id", "test-client")
+	form.Set("redirect_uri", "https://example.com/callback")
+	form.Set("response_type", "token")
+
+	req := httptest.NewRequest(http.MethodPost, "/oauth/authorize", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	ctx := context.WithValue(req.Context(), middleware.UserIDKey, user.ID)
+	req = req.WithContext(ctx)
+	rec := httptest.NewRecorder()
+
+	h.OAuthAuthorize(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+	assert.Contains(t, rec.Body.String(), "invalid_request")
+}
+
+func TestOAuthAuthorize_POST_OAuthRepoNil(t *testing.T) {
+	h, userRepo, _, _ := setupOAuthTest(t)
+
+	h.oauthRepo = nil
+
+	user := &domain.User{
+		ID:       uuid.NewString(),
+		Username: "testuser",
+		Email:    "test@example.com",
+	}
+	_ = userRepo.addUser(user, "password123")
+
+	form := url.Values{}
+	form.Set("client_id", "test-client")
+	form.Set("redirect_uri", "https://example.com/callback")
+	form.Set("response_type", "code")
+
+	req := httptest.NewRequest(http.MethodPost, "/oauth/authorize", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	ctx := context.WithValue(req.Context(), middleware.UserIDKey, user.ID)
+	req = req.WithContext(ctx)
+	rec := httptest.NewRecorder()
+
+	h.OAuthAuthorize(rec, req)
+
+	assert.Equal(t, http.StatusNotImplemented, rec.Code)
+	assert.Contains(t, rec.Body.String(), "server_error")
+}
+
+func TestOAuthAuthorize_POST_UnknownClient(t *testing.T) {
+	h, userRepo, _, _ := setupOAuthTest(t)
+
+	user := &domain.User{
+		ID:       uuid.NewString(),
+		Username: "testuser",
+		Email:    "test@example.com",
+	}
+	_ = userRepo.addUser(user, "password123")
+
+	form := url.Values{}
+	form.Set("client_id", "unknown-client")
+	form.Set("redirect_uri", "https://example.com/callback")
+	form.Set("response_type", "code")
+	form.Set("state", "teststate")
+
+	req := httptest.NewRequest(http.MethodPost, "/oauth/authorize", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	ctx := context.WithValue(req.Context(), middleware.UserIDKey, user.ID)
+	req = req.WithContext(ctx)
+	rec := httptest.NewRecorder()
+
+	h.OAuthAuthorize(rec, req)
+
+	assert.Equal(t, http.StatusFound, rec.Code)
+	location := rec.Header().Get("Location")
+	assert.Contains(t, location, "error=invalid_client")
+	assert.Contains(t, location, "state=teststate")
+}
+
+func TestOAuthAuthorize_POST_InvalidRedirectURI(t *testing.T) {
+	h, userRepo, _, oauthRepo := setupOAuthTest(t)
+
+	user := &domain.User{
+		ID:       uuid.NewString(),
+		Username: "testuser",
+		Email:    "test@example.com",
+	}
+	_ = userRepo.addUser(user, "password123")
+
+	oauthRepo.addClient(&port.OAuthClient{
+		ClientID:       "test-client",
+		RedirectURIs:   []string{"https://example.com/callback"},
+		GrantTypes:     []string{"authorization_code"},
+		AllowedScopes:  []string{"read"},
+		IsConfidential: true,
+	})
+
+	form := url.Values{}
+	form.Set("client_id", "test-client")
+	form.Set("redirect_uri", "https://evil.com/callback")
+	form.Set("response_type", "code")
+
+	req := httptest.NewRequest(http.MethodPost, "/oauth/authorize", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	ctx := context.WithValue(req.Context(), middleware.UserIDKey, user.ID)
+	req = req.WithContext(ctx)
+	rec := httptest.NewRecorder()
+
+	h.OAuthAuthorize(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+	assert.Contains(t, rec.Body.String(), "invalid_request")
+}
+
+func TestOAuthAuthorize_POST_GrantTypeNotAllowed(t *testing.T) {
+	h, userRepo, _, oauthRepo := setupOAuthTest(t)
+
+	user := &domain.User{
+		ID:       uuid.NewString(),
+		Username: "testuser",
+		Email:    "test@example.com",
+	}
+	_ = userRepo.addUser(user, "password123")
+
+	oauthRepo.addClient(&port.OAuthClient{
+		ClientID:       "test-client",
+		RedirectURIs:   []string{"https://example.com/callback"},
+		GrantTypes:     []string{"password"},
+		AllowedScopes:  []string{"read"},
+		IsConfidential: true,
+	})
+
+	form := url.Values{}
+	form.Set("client_id", "test-client")
+	form.Set("redirect_uri", "https://example.com/callback")
+	form.Set("response_type", "code")
+	form.Set("state", "teststate")
+
+	req := httptest.NewRequest(http.MethodPost, "/oauth/authorize", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	ctx := context.WithValue(req.Context(), middleware.UserIDKey, user.ID)
+	req = req.WithContext(ctx)
+	rec := httptest.NewRecorder()
+
+	h.OAuthAuthorize(rec, req)
+
+	assert.Equal(t, http.StatusFound, rec.Code)
+	location := rec.Header().Get("Location")
+	assert.Contains(t, location, "error=unauthorized_client")
+	assert.Contains(t, location, "state=teststate")
+}
+
+func TestOAuthAuthorize_POST_InvalidScope(t *testing.T) {
+	h, userRepo, _, oauthRepo := setupOAuthTest(t)
+
+	user := &domain.User{
+		ID:       uuid.NewString(),
+		Username: "testuser",
+		Email:    "test@example.com",
+	}
+	_ = userRepo.addUser(user, "password123")
+
+	oauthRepo.addClient(&port.OAuthClient{
+		ClientID:       "test-client",
+		RedirectURIs:   []string{"https://example.com/callback"},
+		GrantTypes:     []string{"authorization_code"},
+		AllowedScopes:  []string{"read"},
+		IsConfidential: true,
+	})
+
+	form := url.Values{}
+	form.Set("client_id", "test-client")
+	form.Set("redirect_uri", "https://example.com/callback")
+	form.Set("response_type", "code")
+	form.Set("scope", "read write admin")
+	form.Set("state", "teststate")
+
+	req := httptest.NewRequest(http.MethodPost, "/oauth/authorize", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	ctx := context.WithValue(req.Context(), middleware.UserIDKey, user.ID)
+	req = req.WithContext(ctx)
+	rec := httptest.NewRecorder()
+
+	h.OAuthAuthorize(rec, req)
+
+	assert.Equal(t, http.StatusFound, rec.Code)
+	location := rec.Header().Get("Location")
+	assert.Contains(t, location, "error=invalid_scope")
+	assert.Contains(t, location, "state=teststate")
+}
+
+func TestOAuthAuthorize_POST_UserDenied(t *testing.T) {
+	h, userRepo, _, oauthRepo := setupOAuthTest(t)
+
+	user := &domain.User{
+		ID:       uuid.NewString(),
+		Username: "testuser",
+		Email:    "test@example.com",
+	}
+	_ = userRepo.addUser(user, "password123")
+
+	oauthRepo.addClient(&port.OAuthClient{
+		ClientID:       "test-client",
+		RedirectURIs:   []string{"https://example.com/callback"},
+		GrantTypes:     []string{"authorization_code"},
+		AllowedScopes:  []string{"read"},
+		IsConfidential: true,
+	})
+
+	form := url.Values{}
+	form.Set("client_id", "test-client")
+	form.Set("redirect_uri", "https://example.com/callback")
+	form.Set("response_type", "code")
+	form.Set("scope", "read")
+	form.Set("approve", "false")
+	form.Set("state", "teststate")
+
+	req := httptest.NewRequest(http.MethodPost, "/oauth/authorize", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	ctx := context.WithValue(req.Context(), middleware.UserIDKey, user.ID)
+	req = req.WithContext(ctx)
+	rec := httptest.NewRecorder()
+
+	h.OAuthAuthorize(rec, req)
+
+	assert.Equal(t, http.StatusFound, rec.Code)
+	location := rec.Header().Get("Location")
+	assert.Contains(t, location, "error=access_denied")
+	assert.Contains(t, location, "state=teststate")
+}
+
+func TestOAuthAuthorize_POST_Success(t *testing.T) {
+	h, userRepo, _, oauthRepo := setupOAuthTest(t)
+
+	user := &domain.User{
+		ID:       uuid.NewString(),
+		Username: "testuser",
+		Email:    "test@example.com",
+	}
+	_ = userRepo.addUser(user, "password123")
+
+	oauthRepo.addClient(&port.OAuthClient{
+		ClientID:       "test-client",
+		RedirectURIs:   []string{"https://example.com/callback"},
+		GrantTypes:     []string{"authorization_code"},
+		AllowedScopes:  []string{"read", "write"},
+		IsConfidential: true,
+	})
+
+	form := url.Values{}
+	form.Set("client_id", "test-client")
+	form.Set("redirect_uri", "https://example.com/callback")
+	form.Set("response_type", "code")
+	form.Set("scope", "read write")
+	form.Set("approve", "true")
+	form.Set("state", "teststate")
+
+	req := httptest.NewRequest(http.MethodPost, "/oauth/authorize", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	ctx := context.WithValue(req.Context(), middleware.UserIDKey, user.ID)
+	req = req.WithContext(ctx)
+	rec := httptest.NewRecorder()
+
+	h.OAuthAuthorize(rec, req)
+
+	assert.Equal(t, http.StatusFound, rec.Code)
+	location := rec.Header().Get("Location")
+	assert.Contains(t, location, "https://example.com/callback")
+	assert.Contains(t, location, "code=")
+	assert.Contains(t, location, "state=teststate")
+	assert.NotContains(t, location, "error=")
+}
+
+func TestOAuthToken_AuthorizationCodeGrant_Success(t *testing.T) {
+	h, userRepo, authRepo, oauthRepo := setupOAuthTest(t)
+
+	user := &domain.User{
+		ID:       uuid.NewString(),
+		Username: "testuser",
+		Email:    "test@example.com",
+	}
+	_ = userRepo.addUser(user, "password123")
+
+	clientSecret := "client-secret"
+	secretHash, _ := bcrypt.GenerateFromPassword([]byte(clientSecret), bcrypt.DefaultCost)
+	secretHashStr := string(secretHash)
+	oauthRepo.addClient(&port.OAuthClient{
+		ClientID:         "test-client",
+		ClientSecretHash: &secretHashStr,
+		IsConfidential:   true,
+		GrantTypes:       []string{"authorization_code"},
+	})
+
+	authCode := "test-auth-code"
+	codeRecord := &port.OAuthAuthorizationCode{
+		ID:          uuid.NewString(),
+		Code:        authCode,
+		ClientID:    "test-client",
+		UserID:      user.ID,
+		RedirectURI: "https://example.com/callback",
+		Scope:       "read write",
+		ExpiresAt:   time.Now().Add(10 * time.Minute),
+		CreatedAt:   time.Now(),
+	}
+
+	if oauthRepo.authCodes == nil {
+		oauthRepo.authCodes = make(map[string]*port.OAuthAuthorizationCode)
+	}
+	oauthRepo.authCodes[authCode] = codeRecord
+
+	form := url.Values{}
+	form.Set("grant_type", "authorization_code")
+	form.Set("code", authCode)
+	form.Set("redirect_uri", "https://example.com/callback")
+
+	req := httptest.NewRequest(http.MethodPost, "/oauth/token", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.SetBasicAuth("test-client", clientSecret)
+	rec := httptest.NewRecorder()
+
+	h.OAuthToken(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	assert.Contains(t, rec.Body.String(), "access_token")
+	assert.Contains(t, rec.Body.String(), "refresh_token")
+
+	assert.Greater(t, len(authRepo.refreshTokens), 0)
+}
+
+func TestOAuthToken_AuthorizationCodeGrant_MissingCode(t *testing.T) {
+	h, _, _, oauthRepo := setupOAuthTest(t)
+
+	clientSecret := "client-secret"
+	secretHash, _ := bcrypt.GenerateFromPassword([]byte(clientSecret), bcrypt.DefaultCost)
+	secretHashStr := string(secretHash)
+	oauthRepo.addClient(&port.OAuthClient{
+		ClientID:         "test-client",
+		ClientSecretHash: &secretHashStr,
+		IsConfidential:   true,
+		GrantTypes:       []string{"authorization_code"},
+	})
+
+	form := url.Values{}
+	form.Set("grant_type", "authorization_code")
+	form.Set("redirect_uri", "https://example.com/callback")
+
+	req := httptest.NewRequest(http.MethodPost, "/oauth/token", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.SetBasicAuth("test-client", clientSecret)
+	rec := httptest.NewRecorder()
+
+	h.OAuthToken(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+	assert.Contains(t, rec.Body.String(), "invalid_request")
+}
+
+func TestOAuthToken_AuthorizationCodeGrant_MissingRedirectURI(t *testing.T) {
+	h, _, _, oauthRepo := setupOAuthTest(t)
+
+	clientSecret := "client-secret"
+	secretHash, _ := bcrypt.GenerateFromPassword([]byte(clientSecret), bcrypt.DefaultCost)
+	secretHashStr := string(secretHash)
+	oauthRepo.addClient(&port.OAuthClient{
+		ClientID:         "test-client",
+		ClientSecretHash: &secretHashStr,
+		IsConfidential:   true,
+		GrantTypes:       []string{"authorization_code"},
+	})
+
+	form := url.Values{}
+	form.Set("grant_type", "authorization_code")
+	form.Set("code", "test-code")
+
+	req := httptest.NewRequest(http.MethodPost, "/oauth/token", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.SetBasicAuth("test-client", clientSecret)
+	rec := httptest.NewRecorder()
+
+	h.OAuthToken(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+	assert.Contains(t, rec.Body.String(), "invalid_request")
+}
+
+func TestOAuthToken_AuthorizationCodeGrant_InvalidCode(t *testing.T) {
+	h, _, _, oauthRepo := setupOAuthTest(t)
+
+	clientSecret := "client-secret"
+	secretHash, _ := bcrypt.GenerateFromPassword([]byte(clientSecret), bcrypt.DefaultCost)
+	secretHashStr := string(secretHash)
+	oauthRepo.addClient(&port.OAuthClient{
+		ClientID:         "test-client",
+		ClientSecretHash: &secretHashStr,
+		IsConfidential:   true,
+		GrantTypes:       []string{"authorization_code"},
+	})
+
+	form := url.Values{}
+	form.Set("grant_type", "authorization_code")
+	form.Set("code", "invalid-code")
+	form.Set("redirect_uri", "https://example.com/callback")
+
+	req := httptest.NewRequest(http.MethodPost, "/oauth/token", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.SetBasicAuth("test-client", clientSecret)
+	rec := httptest.NewRecorder()
+
+	h.OAuthToken(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+	assert.Contains(t, rec.Body.String(), "invalid_grant")
+}
+
+func TestOAuthToken_AuthorizationCodeGrant_CodeExpired(t *testing.T) {
+	h, userRepo, _, oauthRepo := setupOAuthTest(t)
+
+	user := &domain.User{
+		ID:       uuid.NewString(),
+		Username: "testuser",
+		Email:    "test@example.com",
+	}
+	_ = userRepo.addUser(user, "password123")
+
+	clientSecret := "client-secret"
+	secretHash, _ := bcrypt.GenerateFromPassword([]byte(clientSecret), bcrypt.DefaultCost)
+	secretHashStr := string(secretHash)
+	oauthRepo.addClient(&port.OAuthClient{
+		ClientID:         "test-client",
+		ClientSecretHash: &secretHashStr,
+		IsConfidential:   true,
+		GrantTypes:       []string{"authorization_code"},
+	})
+
+	authCode := "expired-code"
+	codeRecord := &port.OAuthAuthorizationCode{
+		ID:          uuid.NewString(),
+		Code:        authCode,
+		ClientID:    "test-client",
+		UserID:      user.ID,
+		RedirectURI: "https://example.com/callback",
+		Scope:       "read",
+		ExpiresAt:   time.Now().Add(-10 * time.Minute),
+		CreatedAt:   time.Now().Add(-20 * time.Minute),
+	}
+
+	if oauthRepo.authCodes == nil {
+		oauthRepo.authCodes = make(map[string]*port.OAuthAuthorizationCode)
+	}
+	oauthRepo.authCodes[authCode] = codeRecord
+
+	form := url.Values{}
+	form.Set("grant_type", "authorization_code")
+	form.Set("code", authCode)
+	form.Set("redirect_uri", "https://example.com/callback")
+
+	req := httptest.NewRequest(http.MethodPost, "/oauth/token", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.SetBasicAuth("test-client", clientSecret)
+	rec := httptest.NewRecorder()
+
+	h.OAuthToken(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+	assert.Contains(t, rec.Body.String(), "invalid_grant")
+}
+
+func TestOAuthToken_AuthorizationCodeGrant_CodeAlreadyUsed(t *testing.T) {
+	h, userRepo, _, oauthRepo := setupOAuthTest(t)
+
+	user := &domain.User{
+		ID:       uuid.NewString(),
+		Username: "testuser",
+		Email:    "test@example.com",
+	}
+	_ = userRepo.addUser(user, "password123")
+
+	clientSecret := "client-secret"
+	secretHash, _ := bcrypt.GenerateFromPassword([]byte(clientSecret), bcrypt.DefaultCost)
+	secretHashStr := string(secretHash)
+	oauthRepo.addClient(&port.OAuthClient{
+		ClientID:         "test-client",
+		ClientSecretHash: &secretHashStr,
+		IsConfidential:   true,
+		GrantTypes:       []string{"authorization_code"},
+	})
+
+	authCode := "used-code"
+	usedAt := time.Now().Add(-5 * time.Minute)
+	codeRecord := &port.OAuthAuthorizationCode{
+		ID:          uuid.NewString(),
+		Code:        authCode,
+		ClientID:    "test-client",
+		UserID:      user.ID,
+		RedirectURI: "https://example.com/callback",
+		Scope:       "read",
+		ExpiresAt:   time.Now().Add(10 * time.Minute),
+		CreatedAt:   time.Now().Add(-15 * time.Minute),
+		UsedAt:      &usedAt,
+	}
+
+	if oauthRepo.authCodes == nil {
+		oauthRepo.authCodes = make(map[string]*port.OAuthAuthorizationCode)
+	}
+	oauthRepo.authCodes[authCode] = codeRecord
+
+	form := url.Values{}
+	form.Set("grant_type", "authorization_code")
+	form.Set("code", authCode)
+	form.Set("redirect_uri", "https://example.com/callback")
+
+	req := httptest.NewRequest(http.MethodPost, "/oauth/token", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.SetBasicAuth("test-client", clientSecret)
+	rec := httptest.NewRecorder()
+
+	h.OAuthToken(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+	assert.Contains(t, rec.Body.String(), "invalid_grant")
+}
+
+func TestOAuthToken_AuthorizationCodeGrant_ClientMismatch(t *testing.T) {
+	h, userRepo, _, oauthRepo := setupOAuthTest(t)
+
+	user := &domain.User{
+		ID:       uuid.NewString(),
+		Username: "testuser",
+		Email:    "test@example.com",
+	}
+	_ = userRepo.addUser(user, "password123")
+
+	clientSecret := "client-secret"
+	secretHash, _ := bcrypt.GenerateFromPassword([]byte(clientSecret), bcrypt.DefaultCost)
+	secretHashStr := string(secretHash)
+	oauthRepo.addClient(&port.OAuthClient{
+		ClientID:         "test-client",
+		ClientSecretHash: &secretHashStr,
+		IsConfidential:   true,
+		GrantTypes:       []string{"authorization_code"},
+	})
+
+	authCode := "test-code"
+	codeRecord := &port.OAuthAuthorizationCode{
+		ID:          uuid.NewString(),
+		Code:        authCode,
+		ClientID:    "different-client",
+		UserID:      user.ID,
+		RedirectURI: "https://example.com/callback",
+		Scope:       "read",
+		ExpiresAt:   time.Now().Add(10 * time.Minute),
+		CreatedAt:   time.Now(),
+	}
+
+	if oauthRepo.authCodes == nil {
+		oauthRepo.authCodes = make(map[string]*port.OAuthAuthorizationCode)
+	}
+	oauthRepo.authCodes[authCode] = codeRecord
+
+	form := url.Values{}
+	form.Set("grant_type", "authorization_code")
+	form.Set("code", authCode)
+	form.Set("redirect_uri", "https://example.com/callback")
+
+	req := httptest.NewRequest(http.MethodPost, "/oauth/token", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.SetBasicAuth("test-client", clientSecret)
+	rec := httptest.NewRecorder()
+
+	h.OAuthToken(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+	assert.Contains(t, rec.Body.String(), "invalid_grant")
+}
+
+func TestOAuthToken_AuthorizationCodeGrant_RedirectURIMismatch(t *testing.T) {
+	h, userRepo, _, oauthRepo := setupOAuthTest(t)
+
+	user := &domain.User{
+		ID:       uuid.NewString(),
+		Username: "testuser",
+		Email:    "test@example.com",
+	}
+	_ = userRepo.addUser(user, "password123")
+
+	clientSecret := "client-secret"
+	secretHash, _ := bcrypt.GenerateFromPassword([]byte(clientSecret), bcrypt.DefaultCost)
+	secretHashStr := string(secretHash)
+	oauthRepo.addClient(&port.OAuthClient{
+		ClientID:         "test-client",
+		ClientSecretHash: &secretHashStr,
+		IsConfidential:   true,
+		GrantTypes:       []string{"authorization_code"},
+	})
+
+	authCode := "test-code"
+	codeRecord := &port.OAuthAuthorizationCode{
+		ID:          uuid.NewString(),
+		Code:        authCode,
+		ClientID:    "test-client",
+		UserID:      user.ID,
+		RedirectURI: "https://example.com/callback", // Original redirect URI
+		Scope:       "read",
+		ExpiresAt:   time.Now().Add(10 * time.Minute),
+		CreatedAt:   time.Now(),
+	}
+
+	if oauthRepo.authCodes == nil {
+		oauthRepo.authCodes = make(map[string]*port.OAuthAuthorizationCode)
+	}
+	oauthRepo.authCodes[authCode] = codeRecord
+
+	form := url.Values{}
+	form.Set("grant_type", "authorization_code")
+	form.Set("code", authCode)
+	form.Set("redirect_uri", "https://evil.com/callback") // Different redirect URI
+
+	req := httptest.NewRequest(http.MethodPost, "/oauth/token", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.SetBasicAuth("test-client", clientSecret)
+	rec := httptest.NewRecorder()
+
+	h.OAuthToken(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+	assert.Contains(t, rec.Body.String(), "invalid_grant")
+}
+
+func TestUploadAvatar_Unauthorized(t *testing.T) {
+	h := &AuthHandlers{
+		userRepo: newMockUserRepository(),
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/users/me/avatar", nil)
+	rec := httptest.NewRecorder()
+
+	h.UploadAvatar(rec, req)
+
+	assert.Equal(t, http.StatusUnauthorized, rec.Code)
+}
+
+func TestUploadAvatar_NoMultipartForm(t *testing.T) {
+	h := &AuthHandlers{
+		userRepo: newMockUserRepository(),
+	}
+
+	user := &domain.User{
+		ID:       uuid.NewString(),
+		Username: "testuser",
+		Email:    "test@example.com",
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/users/me/avatar", nil)
+	req.Header.Set("Content-Type", "text/plain")
+	ctx := context.WithValue(req.Context(), middleware.UserIDKey, user.ID)
+	req = req.WithContext(ctx)
+	rec := httptest.NewRecorder()
+
+	h.UploadAvatar(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+func TestUploadAvatar_MissingAvatarField(t *testing.T) {
+	h := &AuthHandlers{
+		userRepo: newMockUserRepository(),
+	}
+
+	user := &domain.User{
+		ID:       uuid.NewString(),
+		Username: "testuser",
+		Email:    "test@example.com",
+	}
+
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+	_ = writer.WriteField("other_field", "value")
+	writer.Close()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/users/me/avatar", body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	ctx := context.WithValue(req.Context(), middleware.UserIDKey, user.ID)
+	req = req.WithContext(ctx)
+	rec := httptest.NewRecorder()
+
+	h.UploadAvatar(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
 }
