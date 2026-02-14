@@ -865,3 +865,235 @@ func TestLiveStreamRepositoryUnit_EndStream(t *testing.T) {
 		})
 	}
 }
+
+func setupViewerSessionRepositoryTest(t *testing.T) (ViewerSessionRepository, sqlmock.Sqlmock) {
+	t.Helper()
+	mockDB, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	db := sqlx.NewDb(mockDB, "sqlmock")
+	repo := NewViewerSessionRepository(db)
+	return repo, mock
+}
+
+func TestViewerSessionRepositoryUnit_GetByID(t *testing.T) {
+	sessionID := uuid.New()
+	streamID := uuid.New()
+	userID := uuid.New()
+
+	tests := []struct {
+		name      string
+		id        uuid.UUID
+		setupMock func(sqlmock.Sqlmock)
+		wantErr   bool
+	}{
+		{
+			name: "success",
+			id:   sessionID,
+			setupMock: func(mock sqlmock.Sqlmock) {
+				rows := sqlmock.NewRows([]string{
+					"id", "live_stream_id", "session_id", "user_id", "ip_address",
+					"user_agent", "country_code", "joined_at", "left_at", "last_heartbeat_at",
+				}).AddRow(
+					sessionID, streamID, "session-abc", &userID, "192.168.1.1",
+					"Mozilla/5.0", "US", time.Now(), nil, time.Now(),
+				)
+				mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM viewer_sessions WHERE id = $1`)).
+					WithArgs(sessionID).
+					WillReturnRows(rows)
+			},
+			wantErr: false,
+		},
+		{
+			name: "not found",
+			id:   sessionID,
+			setupMock: func(mock sqlmock.Sqlmock) {
+				mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM viewer_sessions WHERE id = $1`)).
+					WithArgs(sessionID).
+					WillReturnError(sql.ErrNoRows)
+			},
+			wantErr: true,
+		},
+		{
+			name: "database error",
+			id:   sessionID,
+			setupMock: func(mock sqlmock.Sqlmock) {
+				mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM viewer_sessions WHERE id = $1`)).
+					WithArgs(sessionID).
+					WillReturnError(sql.ErrConnDone)
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo, mock := setupViewerSessionRepositoryTest(t)
+			tt.setupMock(mock)
+
+			session, err := repo.GetByID(context.Background(), tt.id)
+
+			if tt.wantErr {
+				require.Error(t, err)
+				assert.Nil(t, session)
+			} else {
+				require.NoError(t, err)
+				require.NotNil(t, session)
+				assert.Equal(t, tt.id, session.ID)
+			}
+
+			assert.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
+}
+
+func TestViewerSessionRepositoryUnit_GetBySessionIDStr(t *testing.T) {
+	sessionUUID := uuid.New()
+	streamID := uuid.New()
+	sessionIDStr := "session-abc-123"
+
+	tests := []struct {
+		name      string
+		sessionID string
+		setupMock func(sqlmock.Sqlmock)
+		wantErr   bool
+	}{
+		{
+			name:      "success",
+			sessionID: sessionIDStr,
+			setupMock: func(mock sqlmock.Sqlmock) {
+				rows := sqlmock.NewRows([]string{
+					"id", "live_stream_id", "session_id", "user_id", "ip_address",
+					"user_agent", "country_code", "joined_at", "left_at", "last_heartbeat_at",
+				}).AddRow(
+					sessionUUID, streamID, sessionIDStr, (*uuid.UUID)(nil), "10.0.0.1",
+					"curl/7.0", "UK", time.Now(), nil, time.Now(),
+				)
+				mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM viewer_sessions WHERE session_id = $1`)).
+					WithArgs(sessionIDStr).
+					WillReturnRows(rows)
+			},
+			wantErr: false,
+		},
+		{
+			name:      "not found",
+			sessionID: "nonexistent",
+			setupMock: func(mock sqlmock.Sqlmock) {
+				mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM viewer_sessions WHERE session_id = $1`)).
+					WithArgs("nonexistent").
+					WillReturnError(sql.ErrNoRows)
+			},
+			wantErr: true,
+		},
+		{
+			name:      "database error",
+			sessionID: sessionIDStr,
+			setupMock: func(mock sqlmock.Sqlmock) {
+				mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM viewer_sessions WHERE session_id = $1`)).
+					WithArgs(sessionIDStr).
+					WillReturnError(sql.ErrConnDone)
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo, mock := setupViewerSessionRepositoryTest(t)
+			tt.setupMock(mock)
+
+			session, err := repo.GetBySessionID(context.Background(), tt.sessionID)
+
+			if tt.wantErr {
+				require.Error(t, err)
+				assert.Nil(t, session)
+			} else {
+				require.NoError(t, err)
+				require.NotNil(t, session)
+				assert.Equal(t, tt.sessionID, session.SessionID)
+			}
+
+			assert.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
+}
+
+func TestViewerSessionRepositoryUnit_GetActiveByStream(t *testing.T) {
+	streamID := uuid.New()
+	session1 := uuid.New()
+	session2 := uuid.New()
+
+	tests := []struct {
+		name      string
+		streamID  uuid.UUID
+		limit     int
+		offset    int
+		setupMock func(sqlmock.Sqlmock)
+		wantCount int
+		wantErr   bool
+	}{
+		{
+			name:     "success - multiple sessions",
+			streamID: streamID,
+			limit:    10,
+			offset:   0,
+			setupMock: func(mock sqlmock.Sqlmock) {
+				rows := sqlmock.NewRows([]string{
+					"id", "live_stream_id", "session_id", "user_id", "ip_address",
+					"user_agent", "country_code", "joined_at", "left_at", "last_heartbeat_at",
+				}).
+					AddRow(session1, streamID, "s1", (*uuid.UUID)(nil), "10.0.0.1", "ua1", "US", time.Now(), nil, time.Now()).
+					AddRow(session2, streamID, "s2", (*uuid.UUID)(nil), "10.0.0.2", "ua2", "CA", time.Now(), nil, time.Now())
+
+				mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM viewer_sessions WHERE live_stream_id = $1 AND left_at IS NULL ORDER BY joined_at DESC LIMIT $2 OFFSET $3`)).
+					WithArgs(streamID, 10, 0).
+					WillReturnRows(rows)
+			},
+			wantCount: 2,
+			wantErr:   false,
+		},
+		{
+			name:     "success - no active sessions",
+			streamID: streamID,
+			limit:    10,
+			offset:   0,
+			setupMock: func(mock sqlmock.Sqlmock) {
+				mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM viewer_sessions WHERE live_stream_id = $1 AND left_at IS NULL ORDER BY joined_at DESC LIMIT $2 OFFSET $3`)).
+					WithArgs(streamID, 10, 0).
+					WillReturnRows(sqlmock.NewRows([]string{"id", "live_stream_id", "session_id", "user_id", "ip_address", "user_agent", "country_code", "joined_at", "left_at", "last_heartbeat_at"}))
+			},
+			wantCount: 0,
+			wantErr:   false,
+		},
+		{
+			name:     "database error",
+			streamID: streamID,
+			limit:    10,
+			offset:   0,
+			setupMock: func(mock sqlmock.Sqlmock) {
+				mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM viewer_sessions WHERE live_stream_id = $1 AND left_at IS NULL ORDER BY joined_at DESC LIMIT $2 OFFSET $3`)).
+					WithArgs(streamID, 10, 0).
+					WillReturnError(sql.ErrConnDone)
+			},
+			wantCount: 0,
+			wantErr:   true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo, mock := setupViewerSessionRepositoryTest(t)
+			tt.setupMock(mock)
+
+			sessions, err := repo.GetActiveByStream(context.Background(), tt.streamID, tt.limit, tt.offset)
+
+			if tt.wantErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+				assert.Len(t, sessions, tt.wantCount)
+			}
+
+			assert.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
+}

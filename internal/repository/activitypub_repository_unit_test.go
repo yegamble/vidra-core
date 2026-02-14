@@ -1633,3 +1633,89 @@ func TestActivityPubRepository_Unit_GetPendingDeliveries(t *testing.T) {
 		})
 	}
 }
+
+func TestActivityPubRepository_Unit_GetRemoteActor(t *testing.T) {
+	ctx := context.Background()
+	displayName := "Test User"
+
+	tests := []struct {
+		name      string
+		actorURI  string
+		setupMock func(sqlmock.Sqlmock)
+		wantActor bool
+		wantErr   bool
+	}{
+		{
+			name:     "success - actor found",
+			actorURI: "https://remote.example/users/alice",
+			setupMock: func(mock sqlmock.Sqlmock) {
+				rows := sqlmock.NewRows([]string{
+					"id", "actor_uri", "type", "username", "domain", "display_name",
+					"summary", "inbox_url", "outbox_url", "shared_inbox", "followers_url",
+					"following_url", "public_key_id", "public_key_pem", "icon_url",
+					"image_url", "last_fetched_at", "created_at", "updated_at",
+				}).AddRow(
+					"actor-123", "https://remote.example/users/alice", "Person",
+					"alice", "remote.example", &displayName, (*string)(nil),
+					"https://remote.example/users/alice/inbox", (*string)(nil), (*string)(nil),
+					"https://remote.example/users/alice/followers",
+					"https://remote.example/users/alice/following",
+					"https://remote.example/users/alice#main-key",
+					"-----BEGIN PUBLIC KEY-----", (*string)(nil), (*string)(nil),
+					(*time.Time)(nil), time.Now(), time.Now(),
+				)
+				mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM ap_remote_actors WHERE actor_uri = $1`)).
+					WithArgs("https://remote.example/users/alice").
+					WillReturnRows(rows)
+			},
+			wantActor: true,
+			wantErr:   false,
+		},
+		{
+			name:     "not found - returns nil",
+			actorURI: "https://remote.example/users/nonexistent",
+			setupMock: func(mock sqlmock.Sqlmock) {
+				mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM ap_remote_actors WHERE actor_uri = $1`)).
+					WithArgs("https://remote.example/users/nonexistent").
+					WillReturnError(sql.ErrNoRows)
+			},
+			wantActor: false,
+			wantErr:   false,
+		},
+		{
+			name:     "database error",
+			actorURI: "https://remote.example/users/alice",
+			setupMock: func(mock sqlmock.Sqlmock) {
+				mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM ap_remote_actors WHERE actor_uri = $1`)).
+					WithArgs("https://remote.example/users/alice").
+					WillReturnError(assert.AnError)
+			},
+			wantActor: false,
+			wantErr:   true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db, mock := setupAPMockDB(t)
+			defer db.Close()
+			repo := NewActivityPubRepository(db, nil)
+			tt.setupMock(mock)
+
+			actor, err := repo.GetRemoteActor(ctx, tt.actorURI)
+			if tt.wantErr {
+				assert.Error(t, err)
+				assert.Nil(t, actor)
+			} else {
+				assert.NoError(t, err)
+				if tt.wantActor {
+					require.NotNil(t, actor)
+					assert.Equal(t, tt.actorURI, actor.ActorURI)
+				} else {
+					assert.Nil(t, actor)
+				}
+			}
+			assert.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
+}
