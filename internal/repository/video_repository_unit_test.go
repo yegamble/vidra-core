@@ -65,7 +65,6 @@ func TestVideoRepository_Unit_Create(t *testing.T) {
 		PreviewPath:   "/preview.jpg",
 	}
 
-	// Mock the schema check query
 	mock.ExpectQuery(regexp.QuoteMeta(`SELECT EXISTS (
 			SELECT 1 FROM information_schema.columns
 			WHERE table_schema = current_schema()
@@ -73,12 +72,10 @@ func TestVideoRepository_Unit_Create(t *testing.T) {
 			  AND column_name = 'channel_id'
 		)`)).WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
 
-	// JSON fields
 	processedCIDsJSON, _ := json.Marshal(video.ProcessedCIDs)
 	metadataJSON, _ := json.Marshal(video.Metadata)
 	outputPathsJSON, _ := json.Marshal(video.OutputPaths)
 
-	// Mock the INSERT query
 	// Note: We use a regex for the query matching because whitespace might differ
 	query := `INSERT INTO videos`
 
@@ -86,7 +83,7 @@ func TestVideoRepository_Unit_Create(t *testing.T) {
 		WithArgs(
 			video.ID, video.ThumbnailID, video.Title, video.Description, video.Duration, video.Views,
 			video.Privacy, video.Status, video.UploadDate, video.UserID,
-			video.ChannelID, // channel_id
+			video.ChannelID,
 			video.OriginalCID, processedCIDsJSON, video.ThumbnailCID,
 			pq.Array(video.Tags), video.CategoryID, video.Language, video.FileSize, video.MimeType, metadataJSON,
 			video.CreatedAt, video.UpdatedAt,
@@ -148,7 +145,6 @@ func TestVideoRepository_Unit_GetByID(t *testing.T) {
 		},
 	}
 
-	// Prepare rows
 	processedCIDsJSON, _ := json.Marshal(expectedVideo.ProcessedCIDs)
 	metadataJSON, _ := json.Marshal(expectedVideo.Metadata)
 	outputPathsJSON, _ := json.Marshal(expectedVideo.OutputPaths)
@@ -172,9 +168,6 @@ func TestVideoRepository_Unit_GetByID(t *testing.T) {
 		expectedVideo.Category.ID, expectedVideo.Category.Name, expectedVideo.Category.Slug, nil, nil, nil, expectedVideo.Category.DisplayOrder, expectedVideo.Category.IsActive,
 	)
 
-	// Mock the SELECT query
-	// We use regexp.QuoteMeta to match the query start, but since the actual query has joins and fields,
-	// we should match the structure. The query starts with "SELECT v.id".
 	mock.ExpectQuery(regexp.QuoteMeta(`SELECT v.id, v.thumbnail_id, v.title`)).
 		WithArgs(videoID).
 		WillReturnRows(rows)
@@ -186,4 +179,75 @@ func TestVideoRepository_Unit_GetByID(t *testing.T) {
 	assert.Equal(t, expectedVideo.ProcessedCIDs, result.ProcessedCIDs)
 	assert.Equal(t, expectedVideo.Category.Name, result.Category.Name)
 	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestVideoRepository_Unit_Count(t *testing.T) {
+	ctx := context.Background()
+
+	tests := []struct {
+		name      string
+		setupMock func(sqlmock.Sqlmock)
+		wantCount int64
+		wantErr   bool
+	}{
+		{
+			name: "success - zero videos",
+			setupMock: func(mock sqlmock.Sqlmock) {
+				mock.ExpectQuery(regexp.QuoteMeta(`SELECT COUNT(*) FROM videos WHERE deleted_at IS NULL`)).
+					WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+			},
+			wantCount: 0,
+			wantErr:   false,
+		},
+		{
+			name: "success - multiple videos",
+			setupMock: func(mock sqlmock.Sqlmock) {
+				mock.ExpectQuery(regexp.QuoteMeta(`SELECT COUNT(*) FROM videos WHERE deleted_at IS NULL`)).
+					WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(42))
+			},
+			wantCount: 42,
+			wantErr:   false,
+		},
+		{
+			name: "success - large count",
+			setupMock: func(mock sqlmock.Sqlmock) {
+				mock.ExpectQuery(regexp.QuoteMeta(`SELECT COUNT(*) FROM videos WHERE deleted_at IS NULL`)).
+					WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1000000))
+			},
+			wantCount: 1000000,
+			wantErr:   false,
+		},
+		{
+			name: "database connection error",
+			setupMock: func(mock sqlmock.Sqlmock) {
+				mock.ExpectQuery(regexp.QuoteMeta(`SELECT COUNT(*) FROM videos WHERE deleted_at IS NULL`)).
+					WillReturnError(assert.AnError)
+			},
+			wantCount: 0,
+			wantErr:   true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db, mock := setupVideoMockDB(t)
+			defer db.Close()
+
+			repo := NewVideoRepository(db)
+
+			tt.setupMock(mock)
+
+			count, err := repo.Count(ctx)
+
+			if tt.wantErr {
+				assert.Error(t, err)
+				assert.Equal(t, int64(0), count)
+			} else {
+				require.NoError(t, err)
+				assert.Equal(t, tt.wantCount, count)
+			}
+
+			assert.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
 }
