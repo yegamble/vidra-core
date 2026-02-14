@@ -13,8 +13,6 @@ import (
 	"github.com/stretchr/testify/mock"
 )
 
-// --- Mocks ---
-
 type mockMessageRepo struct{ mock.Mock }
 
 func (m *mockMessageRepo) CreateMessage(ctx context.Context, message *domain.Message) error {
@@ -108,8 +106,6 @@ func (m *mockUserRepo) SetAvatarFields(ctx context.Context, userID string, ipfsC
 func (m *mockUserRepo) MarkEmailAsVerified(ctx context.Context, userID string) error {
 	return m.Called(ctx, userID).Error(0)
 }
-
-// --- Tests ---
 
 func TestSendMessage_Success(t *testing.T) {
 	msgRepo := new(mockMessageRepo)
@@ -217,7 +213,6 @@ func TestGetMessages_DefaultLimit(t *testing.T) {
 	svc := NewService(msgRepo, userRepo)
 
 	userRepo.On("GetByID", mock.Anything, "user-2").Return(&domain.User{ID: "user-2"}, nil)
-	// Default limit is 50, so expects limit+1 = 51
 	msgRepo.On("GetMessages", mock.Anything, "user-1", "user-2", 51, 0).Return([]*domain.Message{}, nil)
 
 	req := &domain.GetMessagesRequest{ConversationWith: "user-2", Limit: 0}
@@ -232,7 +227,6 @@ func TestGetMessages_OverMaxLimit(t *testing.T) {
 	svc := NewService(msgRepo, userRepo)
 
 	userRepo.On("GetByID", mock.Anything, "user-2").Return(&domain.User{ID: "user-2"}, nil)
-	// Over 100 should default to 50, so expects 51
 	msgRepo.On("GetMessages", mock.Anything, "user-1", "user-2", 51, 0).Return([]*domain.Message{}, nil)
 
 	req := &domain.GetMessagesRequest{ConversationWith: "user-2", Limit: 200}
@@ -278,7 +272,6 @@ func TestGetConversations_HasMore(t *testing.T) {
 	userRepo := new(mockUserRepo)
 	svc := NewService(msgRepo, userRepo)
 
-	// Return 21 conversations when limit is 20 (default), to trigger hasMore
 	convs := make([]*domain.Conversation, 21)
 	for i := range convs {
 		convs[i] = &domain.Conversation{ParticipantOneID: "user-1"}
@@ -302,4 +295,221 @@ func TestGetUnreadCount_Success(t *testing.T) {
 	count, err := svc.GetUnreadCount(context.Background(), "user-1")
 	assert.NoError(t, err)
 	assert.Equal(t, 5, count)
+}
+
+func TestGetUnreadCount_Error(t *testing.T) {
+	msgRepo := new(mockMessageRepo)
+	userRepo := new(mockUserRepo)
+	svc := NewService(msgRepo, userRepo)
+
+	msgRepo.On("GetUnreadCount", mock.Anything, "user-1").Return(0, errors.New("db error"))
+
+	count, err := svc.GetUnreadCount(context.Background(), "user-1")
+	assert.Error(t, err)
+	assert.Equal(t, 0, count)
+	assert.Contains(t, err.Error(), "failed to get unread count")
+}
+
+func TestSendMessage_SenderNotFound(t *testing.T) {
+	msgRepo := new(mockMessageRepo)
+	userRepo := new(mockUserRepo)
+	svc := NewService(msgRepo, userRepo)
+
+	userRepo.On("GetByID", mock.Anything, "user-1").Return(nil, errors.New("not found"))
+
+	req := &domain.SendMessageRequest{
+		RecipientID: "user-2",
+		Content:     "Hello",
+	}
+
+	msg, err := svc.SendMessage(context.Background(), "user-1", req)
+	assert.Error(t, err)
+	assert.Nil(t, msg)
+	assert.Contains(t, err.Error(), "failed to get sender")
+}
+
+func TestSendMessage_CreateMessageError(t *testing.T) {
+	msgRepo := new(mockMessageRepo)
+	userRepo := new(mockUserRepo)
+	svc := NewService(msgRepo, userRepo)
+
+	sender := &domain.User{ID: "user-1"}
+	recipient := &domain.User{ID: "user-2"}
+
+	userRepo.On("GetByID", mock.Anything, "user-1").Return(sender, nil)
+	userRepo.On("GetByID", mock.Anything, "user-2").Return(recipient, nil)
+	msgRepo.On("CreateMessage", mock.Anything, mock.AnythingOfType("*domain.Message")).Return(errors.New("db error"))
+
+	req := &domain.SendMessageRequest{RecipientID: "user-2", Content: "Hello"}
+
+	msg, err := svc.SendMessage(context.Background(), "user-1", req)
+	assert.Error(t, err)
+	assert.Nil(t, msg)
+	assert.Contains(t, err.Error(), "failed to create message")
+}
+
+func TestSendMessage_WithParentMessage(t *testing.T) {
+	msgRepo := new(mockMessageRepo)
+	userRepo := new(mockUserRepo)
+	svc := NewService(msgRepo, userRepo)
+
+	sender := &domain.User{ID: "user-1"}
+	recipient := &domain.User{ID: "user-2"}
+	parentID := "parent-msg-1"
+
+	userRepo.On("GetByID", mock.Anything, "user-1").Return(sender, nil)
+	userRepo.On("GetByID", mock.Anything, "user-2").Return(recipient, nil)
+	msgRepo.On("GetMessage", mock.Anything, parentID, "user-1").Return(&domain.Message{
+		ID: parentID, SenderID: "user-1", RecipientID: "user-2",
+	}, nil)
+	msgRepo.On("CreateMessage", mock.Anything, mock.AnythingOfType("*domain.Message")).Return(nil)
+
+	req := &domain.SendMessageRequest{
+		RecipientID:     "user-2",
+		Content:         "Reply",
+		ParentMessageID: &parentID,
+	}
+
+	msg, err := svc.SendMessage(context.Background(), "user-1", req)
+	assert.NoError(t, err)
+	assert.NotNil(t, msg)
+}
+
+func TestSendMessage_ParentMessageNotFound(t *testing.T) {
+	msgRepo := new(mockMessageRepo)
+	userRepo := new(mockUserRepo)
+	svc := NewService(msgRepo, userRepo)
+
+	sender := &domain.User{ID: "user-1"}
+	recipient := &domain.User{ID: "user-2"}
+	parentID := "bad-parent"
+
+	userRepo.On("GetByID", mock.Anything, "user-1").Return(sender, nil)
+	userRepo.On("GetByID", mock.Anything, "user-2").Return(recipient, nil)
+	msgRepo.On("GetMessage", mock.Anything, parentID, "user-1").Return(nil, errors.New("not found"))
+
+	req := &domain.SendMessageRequest{
+		RecipientID:     "user-2",
+		Content:         "Reply",
+		ParentMessageID: &parentID,
+	}
+
+	msg, err := svc.SendMessage(context.Background(), "user-1", req)
+	assert.Error(t, err)
+	assert.Nil(t, msg)
+	assert.Contains(t, err.Error(), "failed to get parent message")
+}
+
+func TestSendMessage_ParentMessageWrongConversation(t *testing.T) {
+	msgRepo := new(mockMessageRepo)
+	userRepo := new(mockUserRepo)
+	svc := NewService(msgRepo, userRepo)
+
+	sender := &domain.User{ID: "user-1"}
+	recipient := &domain.User{ID: "user-2"}
+	parentID := "wrong-convo-msg"
+
+	userRepo.On("GetByID", mock.Anything, "user-1").Return(sender, nil)
+	userRepo.On("GetByID", mock.Anything, "user-2").Return(recipient, nil)
+	msgRepo.On("GetMessage", mock.Anything, parentID, "user-1").Return(&domain.Message{
+		ID: parentID, SenderID: "user-3", RecipientID: "user-4",
+	}, nil)
+
+	req := &domain.SendMessageRequest{
+		RecipientID:     "user-2",
+		Content:         "Reply",
+		ParentMessageID: &parentID,
+	}
+
+	msg, err := svc.SendMessage(context.Background(), "user-1", req)
+	assert.Error(t, err)
+	assert.Nil(t, msg)
+	assert.ErrorIs(t, err, domain.ErrMessageNotFound)
+}
+
+func TestMarkMessageAsRead_Error(t *testing.T) {
+	msgRepo := new(mockMessageRepo)
+	userRepo := new(mockUserRepo)
+	svc := NewService(msgRepo, userRepo)
+
+	msgRepo.On("MarkMessageAsRead", mock.Anything, "msg-1", "user-1").Return(errors.New("db error"))
+
+	err := svc.MarkMessageAsRead(context.Background(), "user-1", &domain.MarkMessageReadRequest{MessageID: "msg-1"})
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to mark message as read")
+}
+
+func TestGetMessages_UserNotFound(t *testing.T) {
+	msgRepo := new(mockMessageRepo)
+	userRepo := new(mockUserRepo)
+	svc := NewService(msgRepo, userRepo)
+
+	userRepo.On("GetByID", mock.Anything, "user-2").Return(nil, errors.New("not found"))
+
+	req := &domain.GetMessagesRequest{ConversationWith: "user-2"}
+	resp, err := svc.GetMessages(context.Background(), "user-1", req)
+	assert.Error(t, err)
+	assert.Nil(t, resp)
+	assert.Contains(t, err.Error(), "failed to get conversation partner")
+}
+
+func TestGetMessages_RepoError(t *testing.T) {
+	msgRepo := new(mockMessageRepo)
+	userRepo := new(mockUserRepo)
+	svc := NewService(msgRepo, userRepo)
+
+	userRepo.On("GetByID", mock.Anything, "user-2").Return(&domain.User{ID: "user-2"}, nil)
+	msgRepo.On("GetMessages", mock.Anything, "user-1", "user-2", 51, 0).Return(nil, errors.New("db error"))
+
+	req := &domain.GetMessagesRequest{ConversationWith: "user-2"}
+	resp, err := svc.GetMessages(context.Background(), "user-1", req)
+	assert.Error(t, err)
+	assert.Nil(t, resp)
+}
+
+func TestGetMessages_HasMore(t *testing.T) {
+	msgRepo := new(mockMessageRepo)
+	userRepo := new(mockUserRepo)
+	svc := NewService(msgRepo, userRepo)
+
+	userRepo.On("GetByID", mock.Anything, "user-2").Return(&domain.User{ID: "user-2"}, nil)
+
+	msgs := make([]*domain.Message, 11)
+	for i := range msgs {
+		msgs[i] = &domain.Message{ID: "msg"}
+	}
+	msgRepo.On("GetMessages", mock.Anything, "user-1", "user-2", 11, 0).Return(msgs, nil)
+
+	req := &domain.GetMessagesRequest{ConversationWith: "user-2", Limit: 10}
+	resp, err := svc.GetMessages(context.Background(), "user-1", req)
+	assert.NoError(t, err)
+	assert.True(t, resp.HasMore)
+	assert.Len(t, resp.Messages, 10)
+}
+
+func TestGetConversations_Error(t *testing.T) {
+	msgRepo := new(mockMessageRepo)
+	userRepo := new(mockUserRepo)
+	svc := NewService(msgRepo, userRepo)
+
+	msgRepo.On("GetConversations", mock.Anything, "user-1", 21, 0).Return(nil, errors.New("db error"))
+
+	req := &domain.GetConversationsRequest{}
+	resp, err := svc.GetConversations(context.Background(), "user-1", req)
+	assert.Error(t, err)
+	assert.Nil(t, resp)
+}
+
+func TestGetConversations_OverMaxLimit(t *testing.T) {
+	msgRepo := new(mockMessageRepo)
+	userRepo := new(mockUserRepo)
+	svc := NewService(msgRepo, userRepo)
+
+	msgRepo.On("GetConversations", mock.Anything, "user-1", 21, 0).Return([]*domain.Conversation{}, nil)
+
+	req := &domain.GetConversationsRequest{Limit: 100}
+	resp, err := svc.GetConversations(context.Background(), "user-1", req)
+	assert.NoError(t, err)
+	assert.NotNil(t, resp)
+	assert.False(t, resp.HasMore)
 }

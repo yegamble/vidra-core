@@ -13,8 +13,6 @@ import (
 	"github.com/stretchr/testify/mock"
 )
 
-// --- Mocks ---
-
 type mockChannelRepo struct{ mock.Mock }
 
 func (m *mockChannelRepo) Create(ctx context.Context, channel *domain.Channel) error {
@@ -126,8 +124,6 @@ func (m *mockUserRepo) SetAvatarFields(ctx context.Context, userID string, ipfsC
 func (m *mockUserRepo) MarkEmailAsVerified(ctx context.Context, userID string) error {
 	return m.Called(ctx, userID).Error(0)
 }
-
-// --- Tests ---
 
 func TestCreateChannel_Success(t *testing.T) {
 	chRepo := new(mockChannelRepo)
@@ -341,4 +337,155 @@ func TestGetChannelVideos_ReturnsPlaceholder(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NotNil(t, resp)
 	assert.Equal(t, 0, resp.Total)
+}
+
+func TestListChannels_Success(t *testing.T) {
+	chRepo := new(mockChannelRepo)
+	userRepo := new(mockUserRepo)
+	svc := NewService(chRepo, userRepo)
+
+	expected := &domain.ChannelListResponse{Total: 2}
+	params := domain.ChannelListParams{Page: 1, PageSize: 10}
+	chRepo.On("List", mock.Anything, params).Return(expected, nil)
+
+	resp, err := svc.ListChannels(context.Background(), params)
+	assert.NoError(t, err)
+	assert.Equal(t, expected, resp)
+}
+
+func TestListChannels_Error(t *testing.T) {
+	chRepo := new(mockChannelRepo)
+	userRepo := new(mockUserRepo)
+	svc := NewService(chRepo, userRepo)
+
+	params := domain.ChannelListParams{}
+	chRepo.On("List", mock.Anything, params).Return(nil, errors.New("db error"))
+
+	resp, err := svc.ListChannels(context.Background(), params)
+	assert.Error(t, err)
+	assert.Nil(t, resp)
+}
+
+func TestGetUserChannels_Success(t *testing.T) {
+	chRepo := new(mockChannelRepo)
+	userRepo := new(mockUserRepo)
+	svc := NewService(chRepo, userRepo)
+
+	userID := uuid.New()
+	expected := []domain.Channel{{ID: uuid.New(), Handle: "ch1"}}
+	chRepo.On("GetChannelsByAccountID", mock.Anything, userID).Return(expected, nil)
+
+	channels, err := svc.GetUserChannels(context.Background(), userID)
+	assert.NoError(t, err)
+	assert.Len(t, channels, 1)
+}
+
+func TestGetUserChannels_Error(t *testing.T) {
+	chRepo := new(mockChannelRepo)
+	userRepo := new(mockUserRepo)
+	svc := NewService(chRepo, userRepo)
+
+	userID := uuid.New()
+	chRepo.On("GetChannelsByAccountID", mock.Anything, userID).Return(nil, errors.New("db error"))
+
+	channels, err := svc.GetUserChannels(context.Background(), userID)
+	assert.Error(t, err)
+	assert.Nil(t, channels)
+}
+
+func TestUpdateChannel_CheckOwnershipError(t *testing.T) {
+	chRepo := new(mockChannelRepo)
+	userRepo := new(mockUserRepo)
+	svc := NewService(chRepo, userRepo)
+
+	userID := uuid.New()
+	channelID := uuid.New()
+	displayName := "Test"
+
+	chRepo.On("CheckOwnership", mock.Anything, channelID, userID).Return(false, errors.New("db error"))
+
+	ch, err := svc.UpdateChannel(context.Background(), userID, channelID, domain.ChannelUpdateRequest{DisplayName: &displayName})
+	assert.Error(t, err)
+	assert.Nil(t, ch)
+	assert.Contains(t, err.Error(), "failed to check channel ownership")
+}
+
+func TestDeleteChannel_CheckOwnershipError(t *testing.T) {
+	chRepo := new(mockChannelRepo)
+	userRepo := new(mockUserRepo)
+	svc := NewService(chRepo, userRepo)
+
+	userID := uuid.New()
+	channelID := uuid.New()
+
+	chRepo.On("CheckOwnership", mock.Anything, channelID, userID).Return(false, errors.New("db error"))
+
+	err := svc.DeleteChannel(context.Background(), userID, channelID)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to check channel ownership")
+}
+
+func TestDeleteChannel_GetChannelsError(t *testing.T) {
+	chRepo := new(mockChannelRepo)
+	userRepo := new(mockUserRepo)
+	svc := NewService(chRepo, userRepo)
+
+	userID := uuid.New()
+	channelID := uuid.New()
+
+	chRepo.On("CheckOwnership", mock.Anything, channelID, userID).Return(true, nil)
+	chRepo.On("GetChannelsByAccountID", mock.Anything, userID).Return(nil, errors.New("db error"))
+
+	err := svc.DeleteChannel(context.Background(), userID, channelID)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to get user channels")
+}
+
+func TestCreateChannel_InvalidRequest(t *testing.T) {
+	chRepo := new(mockChannelRepo)
+	userRepo := new(mockUserRepo)
+	svc := NewService(chRepo, userRepo)
+
+	req := domain.ChannelCreateRequest{
+		Handle:      "",
+		DisplayName: "",
+	}
+
+	ch, err := svc.CreateChannel(context.Background(), uuid.New(), req)
+	assert.Error(t, err)
+	assert.Nil(t, ch)
+}
+
+func TestUpdateChannel_InvalidRequest(t *testing.T) {
+	chRepo := new(mockChannelRepo)
+	userRepo := new(mockUserRepo)
+	svc := NewService(chRepo, userRepo)
+
+	emptyDesc := ""
+	req := domain.ChannelUpdateRequest{Description: &emptyDesc}
+
+	userID := uuid.New()
+	channelID := uuid.New()
+	chRepo.On("CheckOwnership", mock.Anything, channelID, userID).Return(true, nil)
+	chRepo.On("Update", mock.Anything, channelID, mock.Anything).Return(&domain.Channel{}, nil)
+
+	_, _ = svc.UpdateChannel(context.Background(), userID, channelID, req)
+}
+
+func TestEnsureDefaultChannel_EmptyDisplayName(t *testing.T) {
+	chRepo := new(mockChannelRepo)
+	userRepo := new(mockUserRepo)
+	svc := NewService(chRepo, userRepo)
+
+	userID := uuid.New()
+	user := &domain.User{ID: userID.String(), Username: "testuser", DisplayName: ""}
+
+	chRepo.On("GetDefaultChannelForAccount", mock.Anything, userID).Return(nil, domain.ErrNotFound)
+	userRepo.On("GetByID", mock.Anything, userID.String()).Return(user, nil)
+	chRepo.On("Create", mock.Anything, mock.AnythingOfType("*domain.Channel")).Return(nil)
+
+	ch, err := svc.EnsureDefaultChannel(context.Background(), userID)
+	assert.NoError(t, err)
+	assert.NotNil(t, ch)
+	assert.Contains(t, ch.DisplayName, "testuser")
 }

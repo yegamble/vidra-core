@@ -14,8 +14,6 @@ import (
 	"github.com/stretchr/testify/mock"
 )
 
-// --- Mocks ---
-
 type mockUploadRepo struct{ mock.Mock }
 
 func (m *mockUploadRepo) CreateSession(ctx context.Context, session *domain.UploadSession) error {
@@ -209,8 +207,6 @@ func (m *mockVideoRepo) CreateRemoteVideo(ctx context.Context, video *domain.Vid
 	return m.Called(ctx, video).Error(0)
 }
 
-// --- Helper ---
-
 func newTestService(t *testing.T) (Service, *mockUploadRepo, *mockEncodingRepo, *mockVideoRepo, string) {
 	t.Helper()
 	uploadRepo := new(mockUploadRepo)
@@ -224,8 +220,6 @@ func newTestService(t *testing.T) (Service, *mockUploadRepo, *mockEncodingRepo, 
 	svc := NewService(uploadRepo, encodingRepo, videoRepo, tmpDir, cfg)
 	return svc, uploadRepo, encodingRepo, videoRepo, tmpDir
 }
-
-// --- Tests for validUploadExt ---
 
 func TestValidUploadExt(t *testing.T) {
 	tests := []struct {
@@ -250,8 +244,6 @@ func TestValidUploadExt(t *testing.T) {
 		})
 	}
 }
-
-// --- Tests for validateFilePath ---
 
 func TestValidateFilePath(t *testing.T) {
 	tests := []struct {
@@ -279,8 +271,6 @@ func TestValidateFilePath(t *testing.T) {
 	}
 }
 
-// --- Tests for parseAspectRatio ---
-
 func TestParseAspectRatio(t *testing.T) {
 	svc := &service{cfg: &config.Config{LogLevel: "info"}}
 
@@ -306,8 +296,6 @@ func TestParseAspectRatio(t *testing.T) {
 		})
 	}
 }
-
-// --- Tests for detectSourceResolution ---
 
 func TestDetectSourceResolution(t *testing.T) {
 	svc := &service{cfg: &config.Config{LogLevel: "info"}}
@@ -352,8 +340,6 @@ func TestDetectSourceResolution(t *testing.T) {
 	}
 }
 
-// --- Tests for InitiateUpload ---
-
 func TestInitiateUpload_Success(t *testing.T) {
 	svc, uploadRepo, _, videoRepo, _ := newTestService(t)
 
@@ -362,8 +348,8 @@ func TestInitiateUpload_Success(t *testing.T) {
 
 	req := &domain.InitiateUploadRequest{
 		FileName:  "test.mp4",
-		FileSize:  10485760, // 10MB
-		ChunkSize: 1048576,  // 1MB
+		FileSize:  10485760,
+		ChunkSize: 1048576,
 	}
 
 	resp, err := svc.InitiateUpload(context.Background(), "user-1", req)
@@ -396,7 +382,7 @@ func TestInitiateUpload_FileTooLarge(t *testing.T) {
 
 	req := &domain.InitiateUploadRequest{
 		FileName:  "test.mp4",
-		FileSize:  11 * 1024 * 1024 * 1024, // 11GB
+		FileSize:  11 * 1024 * 1024 * 1024,
 		ChunkSize: 1048576,
 	}
 
@@ -405,8 +391,6 @@ func TestInitiateUpload_FileTooLarge(t *testing.T) {
 	assert.Nil(t, resp)
 	assert.Contains(t, err.Error(), "FILE_TOO_LARGE")
 }
-
-// --- Tests for GetUploadStatus ---
 
 func TestGetUploadStatus_Success(t *testing.T) {
 	svc, uploadRepo, _, _, _ := newTestService(t)
@@ -436,8 +420,6 @@ func TestGetUploadStatus_NotFound(t *testing.T) {
 	assert.Nil(t, result)
 }
 
-// --- Tests for UploadChunk ---
-
 func TestUploadChunk_Success(t *testing.T) {
 	svc, uploadRepo, _, _, tmpDir := newTestService(t)
 
@@ -461,7 +443,7 @@ func TestUploadChunk_Success(t *testing.T) {
 		SessionID:  "sess-1",
 		ChunkIndex: 0,
 		Data:       []byte("test data"),
-		Checksum:   "test", // test mode bypass
+		Checksum:   "test",
 	}
 
 	resp, err := svc.UploadChunk(context.Background(), "sess-1", chunk)
@@ -547,8 +529,6 @@ func TestUploadChunk_AlreadyUploaded(t *testing.T) {
 	assert.True(t, resp.Uploaded)
 }
 
-// --- Tests for CompleteUpload ---
-
 func TestCompleteUpload_IncompleteUpload(t *testing.T) {
 	svc, uploadRepo, _, _, _ := newTestService(t)
 
@@ -581,12 +561,9 @@ func TestCompleteUpload_SessionNotActive(t *testing.T) {
 	assert.Contains(t, err.Error(), "INVALID_SESSION")
 }
 
-// --- Tests for CleanupTempFiles ---
-
 func TestCleanupTempFiles_Success(t *testing.T) {
 	svc, uploadRepo, _, _, tmpDir := newTestService(t)
 
-	// Create temp directory structure
 	tempDir := filepath.Join(tmpDir, "cache", "uploads", "sess-1", "chunks")
 	_ = os.MkdirAll(tempDir, 0750)
 	_ = os.WriteFile(filepath.Join(tempDir, "chunk_0"), []byte("data"), 0600)
@@ -601,7 +578,6 @@ func TestCleanupTempFiles_Success(t *testing.T) {
 	err := svc.CleanupTempFiles(context.Background(), "sess-1")
 	assert.NoError(t, err)
 
-	// Verify directory was removed
 	_, statErr := os.Stat(filepath.Dir(tempDir))
 	assert.True(t, os.IsNotExist(statErr))
 }
@@ -613,4 +589,208 @@ func TestCleanupTempFiles_SessionNotFound(t *testing.T) {
 
 	err := svc.CleanupTempFiles(context.Background(), "nonexistent")
 	assert.Error(t, err)
+}
+
+func TestAssembleChunks_Success(t *testing.T) {
+	svc, uploadRepo, _, _, tmpDir := newTestService(t)
+
+	sessionID := "assemble-test"
+	chunksDir := filepath.Join(tmpDir, "cache", "uploads", sessionID, "chunks")
+	_ = os.MkdirAll(chunksDir, 0750)
+
+	_ = os.WriteFile(filepath.Join(chunksDir, "chunk_0"), []byte("hello "), 0600)
+	_ = os.WriteFile(filepath.Join(chunksDir, "chunk_1"), []byte("world"), 0600)
+
+	session := &domain.UploadSession{
+		ID:           sessionID,
+		VideoID:      "video-1",
+		FileName:     "test.mp4",
+		TotalChunks:  2,
+		TempFilePath: chunksDir,
+	}
+
+	uploadRepo.On("GetUploadedChunks", mock.Anything, sessionID).Return([]int{0, 1}, nil)
+
+	err := svc.AssembleChunks(context.Background(), session)
+	assert.NoError(t, err)
+
+	finalPath := filepath.Join(tmpDir, "web-videos", "video-1.mp4")
+	data, err := os.ReadFile(finalPath)
+	assert.NoError(t, err)
+	assert.Equal(t, "hello world", string(data))
+}
+
+func TestAssembleChunks_GetUploadedChunksError(t *testing.T) {
+	svc, uploadRepo, _, _, tmpDir := newTestService(t)
+
+	_ = os.MkdirAll(filepath.Join(tmpDir, "web-videos"), 0750)
+
+	session := &domain.UploadSession{
+		ID:           "sess-err",
+		VideoID:      "video-1",
+		FileName:     "test.mp4",
+		TempFilePath: filepath.Join(tmpDir, "chunks"),
+	}
+
+	uploadRepo.On("GetUploadedChunks", mock.Anything, "sess-err").Return(nil, assert.AnError)
+
+	err := svc.AssembleChunks(context.Background(), session)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to get uploaded chunks")
+}
+
+func TestCompleteUpload_FullSuccess(t *testing.T) {
+	svc, uploadRepo, encodingRepo, videoRepo, tmpDir := newTestService(t)
+
+	sessionID := "complete-test"
+	chunksDir := filepath.Join(tmpDir, "cache", "uploads", sessionID, "chunks")
+	_ = os.MkdirAll(chunksDir, 0750)
+
+	_ = os.WriteFile(filepath.Join(chunksDir, "chunk_0"), []byte("video data"), 0600)
+
+	session := &domain.UploadSession{
+		ID:           sessionID,
+		VideoID:      "video-1",
+		UserID:       "user-1",
+		FileName:     "test.mp4",
+		TotalChunks:  1,
+		Status:       domain.UploadStatusActive,
+		TempFilePath: chunksDir,
+	}
+
+	video := &domain.Video{
+		ID:       "video-1",
+		Metadata: domain.VideoMetadata{Height: 1080},
+	}
+
+	uploadRepo.On("GetSession", mock.Anything, sessionID).Return(session, nil)
+	uploadRepo.On("GetUploadedChunks", mock.Anything, sessionID).Return([]int{0}, nil)
+	uploadRepo.On("UpdateSession", mock.Anything, mock.AnythingOfType("*domain.UploadSession")).Return(nil)
+	videoRepo.On("GetByID", mock.Anything, "video-1").Return(video, nil)
+	videoRepo.On("Update", mock.Anything, mock.AnythingOfType("*domain.Video")).Return(nil)
+	encodingRepo.On("CreateJob", mock.Anything, mock.AnythingOfType("*domain.EncodingJob")).Return(nil)
+
+	err := svc.CompleteUpload(context.Background(), sessionID)
+	assert.NoError(t, err)
+	uploadRepo.AssertExpectations(t)
+	videoRepo.AssertExpectations(t)
+	encodingRepo.AssertExpectations(t)
+}
+
+func TestCompleteUpload_GetSessionError(t *testing.T) {
+	svc, uploadRepo, _, _, _ := newTestService(t)
+
+	uploadRepo.On("GetSession", mock.Anything, "bad").Return(nil, assert.AnError)
+
+	err := svc.CompleteUpload(context.Background(), "bad")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to get upload session")
+}
+
+func TestCompleteUpload_GetUploadedChunksError(t *testing.T) {
+	svc, uploadRepo, _, _, _ := newTestService(t)
+
+	session := &domain.UploadSession{
+		ID:          "sess-1",
+		TotalChunks: 1,
+		Status:      domain.UploadStatusActive,
+	}
+
+	uploadRepo.On("GetSession", mock.Anything, "sess-1").Return(session, nil)
+	uploadRepo.On("GetUploadedChunks", mock.Anything, "sess-1").Return(nil, assert.AnError)
+
+	err := svc.CompleteUpload(context.Background(), "sess-1")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to get uploaded chunks")
+}
+
+func TestLogResolutionEstimation_DebugLevel(t *testing.T) {
+	svc := &service{cfg: &config.Config{LogLevel: "debug"}}
+
+	video := &domain.Video{Metadata: domain.VideoMetadata{Width: 1920, AspectRatio: "16:9"}}
+	arInfo := aspectRatioInfo{ratio: 16.0 / 9.0, usedDefault: false}
+
+	svc.logResolutionEstimation(video, arInfo, 1080, "1080p")
+}
+
+func TestLogResolutionEstimation_DefaultAR(t *testing.T) {
+	svc := &service{cfg: &config.Config{LogLevel: "trace"}}
+
+	video := &domain.Video{Metadata: domain.VideoMetadata{Width: 1920}}
+	arInfo := aspectRatioInfo{ratio: 16.0 / 9.0, usedDefault: true}
+
+	svc.logResolutionEstimation(video, arInfo, 1080, "1080p")
+}
+
+func TestLogResolutionEstimation_NilService(t *testing.T) {
+	var svc *service
+	svc.logResolutionEstimation(&domain.Video{}, aspectRatioInfo{}, 0, "")
+}
+
+func TestLogResolutionEstimation_NonDebugLevel(t *testing.T) {
+	svc := &service{cfg: &config.Config{LogLevel: "info"}}
+
+	video := &domain.Video{Metadata: domain.VideoMetadata{Width: 1920}}
+	arInfo := aspectRatioInfo{ratio: 16.0 / 9.0, usedDefault: true}
+
+	svc.logResolutionEstimation(video, arInfo, 1080, "1080p")
+}
+
+func TestGetUploadStatus_ChunksError(t *testing.T) {
+	svc, uploadRepo, _, _, _ := newTestService(t)
+
+	session := &domain.UploadSession{ID: "sess-1"}
+	uploadRepo.On("GetSession", mock.Anything, "sess-1").Return(session, nil)
+	uploadRepo.On("GetUploadedChunks", mock.Anything, "sess-1").Return(nil, assert.AnError)
+
+	result, err := svc.GetUploadStatus(context.Background(), "sess-1")
+	assert.Error(t, err)
+	assert.Nil(t, result)
+}
+
+func TestInitiateUpload_VideoCreateError(t *testing.T) {
+	svc, _, _, videoRepo, _ := newTestService(t)
+
+	videoRepo.On("Create", mock.Anything, mock.AnythingOfType("*domain.Video")).Return(assert.AnError)
+
+	req := &domain.InitiateUploadRequest{
+		FileName:  "test.mp4",
+		FileSize:  1000,
+		ChunkSize: 500,
+	}
+
+	resp, err := svc.InitiateUpload(context.Background(), "user-1", req)
+	assert.Error(t, err)
+	assert.Nil(t, resp)
+	assert.Contains(t, err.Error(), "failed to create video record")
+}
+
+func TestUploadChunk_SessionNotFound(t *testing.T) {
+	svc, uploadRepo, _, _, _ := newTestService(t)
+
+	uploadRepo.On("GetSession", mock.Anything, "bad").Return(nil, assert.AnError)
+
+	chunk := &domain.ChunkUpload{ChunkIndex: 0, Data: []byte("data")}
+	resp, err := svc.UploadChunk(context.Background(), "bad", chunk)
+	assert.Error(t, err)
+	assert.Nil(t, resp)
+}
+
+func TestUploadChunk_NegativeChunkIndex(t *testing.T) {
+	svc, uploadRepo, _, _, _ := newTestService(t)
+
+	session := &domain.UploadSession{
+		ID:          "sess-1",
+		TotalChunks: 3,
+		Status:      domain.UploadStatusActive,
+		ExpiresAt:   time.Now().Add(1 * time.Hour),
+	}
+
+	uploadRepo.On("GetSession", mock.Anything, "sess-1").Return(session, nil)
+
+	chunk := &domain.ChunkUpload{ChunkIndex: -1, Data: []byte("data"), Checksum: "test"}
+	resp, err := svc.UploadChunk(context.Background(), "sess-1", chunk)
+	assert.Error(t, err)
+	assert.Nil(t, resp)
+	assert.Contains(t, err.Error(), "INVALID_CHUNK_INDEX")
 }

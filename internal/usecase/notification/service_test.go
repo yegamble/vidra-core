@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -13,8 +14,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 )
-
-// --- Mocks ---
 
 type mockNotificationRepo struct{ mock.Mock }
 
@@ -185,8 +184,6 @@ func (m *mockUserRepo) MarkEmailAsVerified(ctx context.Context, userID string) e
 	return m.Called(ctx, userID).Error(0)
 }
 
-// --- Tests ---
-
 func TestCreateVideoNotification_SkipsNonPublic(t *testing.T) {
 	notifRepo := new(mockNotificationRepo)
 	subRepo := new(mockSubscriptionRepo)
@@ -196,7 +193,6 @@ func TestCreateVideoNotification_SkipsNonPublic(t *testing.T) {
 	video := &domain.Video{Status: domain.StatusProcessing, Privacy: domain.PrivacyPublic}
 	err := svc.CreateVideoNotificationForSubscribers(context.Background(), video, "TestChannel")
 	assert.NoError(t, err)
-	// Should not call any repo methods
 	notifRepo.AssertNotCalled(t, "CreateBatch")
 }
 
@@ -440,7 +436,6 @@ func TestCreateVideoNotification_FetchesChannelName(t *testing.T) {
 	userRepo.On("GetByID", mock.Anything, userIDStr).Return(&domain.User{Username: "alice"}, nil)
 	notifRepo.On("CreateBatch", mock.Anything, mock.Anything).Return(nil)
 
-	// Pass empty channel name to trigger user lookup
 	err := svc.CreateVideoNotificationForSubscribers(context.Background(), video, "")
 	assert.NoError(t, err)
 	userRepo.AssertCalled(t, "GetByID", mock.Anything, userIDStr)
@@ -464,4 +459,207 @@ func TestCreateVideoNotification_SubscriberFetchError(t *testing.T) {
 
 	err := svc.CreateVideoNotificationForSubscribers(context.Background(), video, "Channel")
 	assert.Error(t, err)
+}
+
+func TestCreateMessageNotification_InvalidSenderID(t *testing.T) {
+	notifRepo := new(mockNotificationRepo)
+	subRepo := new(mockSubscriptionRepo)
+	userRepo := new(mockUserRepo)
+	svc := NewService(notifRepo, subRepo, userRepo)
+
+	msg := &domain.Message{
+		ID:          uuid.New().String(),
+		SenderID:    "not-a-uuid",
+		RecipientID: uuid.New().String(),
+		Content:     "Hello",
+		MessageType: "text",
+	}
+
+	err := svc.CreateMessageNotification(context.Background(), msg, "Alice")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid sender ID")
+}
+
+func TestCreateMessageNotification_InvalidMessageID(t *testing.T) {
+	notifRepo := new(mockNotificationRepo)
+	subRepo := new(mockSubscriptionRepo)
+	userRepo := new(mockUserRepo)
+	svc := NewService(notifRepo, subRepo, userRepo)
+
+	msg := &domain.Message{
+		ID:          "not-a-uuid",
+		SenderID:    uuid.New().String(),
+		RecipientID: uuid.New().String(),
+		Content:     "Hello",
+		MessageType: "text",
+	}
+
+	err := svc.CreateMessageNotification(context.Background(), msg, "Alice")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid message ID")
+}
+
+func TestCreateMessageNotification_LookupSenderName(t *testing.T) {
+	notifRepo := new(mockNotificationRepo)
+	subRepo := new(mockSubscriptionRepo)
+	userRepo := new(mockUserRepo)
+	svc := NewService(notifRepo, subRepo, userRepo)
+
+	senderID := uuid.New()
+	msg := &domain.Message{
+		ID:          uuid.New().String(),
+		SenderID:    senderID.String(),
+		RecipientID: uuid.New().String(),
+		Content:     "Hello",
+		MessageType: "text",
+	}
+
+	userRepo.On("GetByID", mock.Anything, senderID.String()).Return(&domain.User{Username: "alice"}, nil)
+	notifRepo.On("Create", mock.Anything, mock.AnythingOfType("*domain.Notification")).Return(nil)
+
+	err := svc.CreateMessageNotification(context.Background(), msg, "")
+	assert.NoError(t, err)
+	userRepo.AssertCalled(t, "GetByID", mock.Anything, senderID.String())
+}
+
+func TestCreateMessageNotification_LookupSenderNameError(t *testing.T) {
+	notifRepo := new(mockNotificationRepo)
+	subRepo := new(mockSubscriptionRepo)
+	userRepo := new(mockUserRepo)
+	svc := NewService(notifRepo, subRepo, userRepo)
+
+	senderID := uuid.New()
+	msg := &domain.Message{
+		ID:          uuid.New().String(),
+		SenderID:    senderID.String(),
+		RecipientID: uuid.New().String(),
+		Content:     "Hello",
+		MessageType: "text",
+	}
+
+	userRepo.On("GetByID", mock.Anything, senderID.String()).Return(nil, errors.New("not found"))
+	notifRepo.On("Create", mock.Anything, mock.AnythingOfType("*domain.Notification")).Return(nil)
+
+	err := svc.CreateMessageNotification(context.Background(), msg, "")
+	assert.NoError(t, err)
+}
+
+func TestCreateMessageNotification_LongContent(t *testing.T) {
+	notifRepo := new(mockNotificationRepo)
+	subRepo := new(mockSubscriptionRepo)
+	userRepo := new(mockUserRepo)
+	svc := NewService(notifRepo, subRepo, userRepo)
+
+	longContent := strings.Repeat("a", 200)
+	msg := &domain.Message{
+		ID:          uuid.New().String(),
+		SenderID:    uuid.New().String(),
+		RecipientID: uuid.New().String(),
+		Content:     longContent,
+		MessageType: "text",
+	}
+
+	notifRepo.On("Create", mock.Anything, mock.MatchedBy(func(n *domain.Notification) bool {
+		return len(n.Message) == 100 && strings.HasSuffix(n.Message, "...")
+	})).Return(nil)
+
+	err := svc.CreateMessageNotification(context.Background(), msg, "Alice")
+	assert.NoError(t, err)
+}
+
+func TestCreateMessageNotification_CreateError(t *testing.T) {
+	notifRepo := new(mockNotificationRepo)
+	subRepo := new(mockSubscriptionRepo)
+	userRepo := new(mockUserRepo)
+	svc := NewService(notifRepo, subRepo, userRepo)
+
+	msg := &domain.Message{
+		ID:          uuid.New().String(),
+		SenderID:    uuid.New().String(),
+		RecipientID: uuid.New().String(),
+		Content:     "Hello",
+		MessageType: "text",
+	}
+
+	notifRepo.On("Create", mock.Anything, mock.AnythingOfType("*domain.Notification")).Return(errors.New("db error"))
+
+	err := svc.CreateMessageNotification(context.Background(), msg, "Alice")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to create message notification")
+}
+
+func TestCreateVideoNotification_UsesChannelID(t *testing.T) {
+	notifRepo := new(mockNotificationRepo)
+	subRepo := new(mockSubscriptionRepo)
+	userRepo := new(mockUserRepo)
+	svc := NewService(notifRepo, subRepo, userRepo)
+
+	channelID := uuid.New()
+	subscriberID := uuid.New()
+
+	video := &domain.Video{
+		ID:        uuid.New().String(),
+		UserID:    uuid.New().String(),
+		ChannelID: channelID,
+		Title:     "Test",
+		Status:    domain.StatusCompleted,
+		Privacy:   domain.PrivacyPublic,
+	}
+
+	subRepo.On("GetSubscribers", mock.Anything, channelID.String()).Return([]*domain.Subscription{
+		{SubscriberID: subscriberID},
+	}, nil)
+	notifRepo.On("CreateBatch", mock.Anything, mock.Anything).Return(nil)
+
+	err := svc.CreateVideoNotificationForSubscribers(context.Background(), video, "TestChannel")
+	assert.NoError(t, err)
+	subRepo.AssertCalled(t, "GetSubscribers", mock.Anything, channelID.String())
+}
+
+func TestCreateVideoNotification_CreateBatchError(t *testing.T) {
+	notifRepo := new(mockNotificationRepo)
+	subRepo := new(mockSubscriptionRepo)
+	userRepo := new(mockUserRepo)
+	svc := NewService(notifRepo, subRepo, userRepo)
+
+	video := &domain.Video{
+		ID:      uuid.New().String(),
+		UserID:  uuid.New().String(),
+		Title:   "Test",
+		Status:  domain.StatusCompleted,
+		Privacy: domain.PrivacyPublic,
+	}
+
+	subRepo.On("GetSubscribers", mock.Anything, video.UserID).Return([]*domain.Subscription{
+		{SubscriberID: uuid.New()},
+	}, nil)
+	notifRepo.On("CreateBatch", mock.Anything, mock.Anything).Return(errors.New("db error"))
+
+	err := svc.CreateVideoNotificationForSubscribers(context.Background(), video, "Channel")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to create notifications")
+}
+
+func TestCreateVideoNotification_FetchChannelNameError(t *testing.T) {
+	notifRepo := new(mockNotificationRepo)
+	subRepo := new(mockSubscriptionRepo)
+	userRepo := new(mockUserRepo)
+	svc := NewService(notifRepo, subRepo, userRepo)
+
+	video := &domain.Video{
+		ID:      uuid.New().String(),
+		UserID:  uuid.New().String(),
+		Title:   "Test",
+		Status:  domain.StatusCompleted,
+		Privacy: domain.PrivacyPublic,
+	}
+
+	subRepo.On("GetSubscribers", mock.Anything, video.UserID).Return([]*domain.Subscription{
+		{SubscriberID: uuid.New()},
+	}, nil)
+	userRepo.On("GetByID", mock.Anything, video.UserID).Return(nil, errors.New("not found"))
+
+	err := svc.CreateVideoNotificationForSubscribers(context.Background(), video, "")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to get channel user")
 }

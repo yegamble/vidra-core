@@ -440,4 +440,232 @@ func TestRealService_FileHelpers(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, "copy-me", string(data))
 	})
+
+	t.Run("copyFile returns error for missing source", func(t *testing.T) {
+		dst := filepath.Join(t.TempDir(), "dest.txt")
+		err := copyFile("/nonexistent/source.txt", dst)
+		require.Error(t, err)
+	})
+
+	t.Run("copyFile returns error for bad destination", func(t *testing.T) {
+		src := filepath.Join(t.TempDir(), "source.txt")
+		require.NoError(t, os.WriteFile(src, []byte("data"), 0o600))
+		err := copyFile(src, "/nonexistent/dir/dest.txt")
+		require.Error(t, err)
+	})
+
+	t.Run("moveToUploads preserves file extension", func(t *testing.T) {
+		storageDir := t.TempDir()
+		svc := newRealService(new(MockImportRepository), new(MockVideoRepository), new(MockEncodingRepository), storageDir)
+
+		srcPath := filepath.Join(t.TempDir(), "video.webm")
+		require.NoError(t, os.WriteFile(srcPath, []byte("webm-data"), 0o600))
+
+		destPath, err := svc.moveToUploads("video-456", srcPath)
+		require.NoError(t, err)
+		require.True(t, strings.HasSuffix(destPath, ".webm"))
+	})
+}
+
+func TestNewService(t *testing.T) {
+	importRepo := new(MockImportRepository)
+	videoRepo := new(MockVideoRepository)
+	encodingRepo := new(MockEncodingRepository)
+	cfg := &config.Config{StorageDir: "/tmp/test"}
+
+	svc := NewService(importRepo, videoRepo, encodingRepo, nil, cfg, cfg.StorageDir)
+
+	require.NotNil(t, svc)
+}
+
+func TestRealService_GetImport(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("success", func(t *testing.T) {
+		importRepo := new(MockImportRepository)
+		svc := newRealService(importRepo, nil, nil, t.TempDir())
+		importID := "import-get-ok"
+
+		importRepo.On("GetByID", ctx, importID).Return(&domain.VideoImport{
+			ID:     importID,
+			UserID: importUnitUserID,
+			Status: domain.ImportStatusDownloading,
+		}, nil)
+
+		imp, err := svc.GetImport(ctx, importID, importUnitUserID)
+
+		require.NoError(t, err)
+		require.Equal(t, importID, imp.ID)
+		importRepo.AssertExpectations(t)
+	})
+
+	t.Run("unauthorized", func(t *testing.T) {
+		importRepo := new(MockImportRepository)
+		svc := newRealService(importRepo, nil, nil, t.TempDir())
+		importID := "import-get-unauth"
+
+		importRepo.On("GetByID", ctx, importID).Return(&domain.VideoImport{
+			ID:     importID,
+			UserID: "other-user",
+			Status: domain.ImportStatusDownloading,
+		}, nil)
+
+		imp, err := svc.GetImport(ctx, importID, importUnitUserID)
+
+		require.Nil(t, imp)
+		require.ErrorContains(t, err, "unauthorized")
+		importRepo.AssertExpectations(t)
+	})
+
+	t.Run("repo error", func(t *testing.T) {
+		importRepo := new(MockImportRepository)
+		svc := newRealService(importRepo, nil, nil, t.TempDir())
+		importID := "import-get-err"
+
+		importRepo.On("GetByID", ctx, importID).Return((*domain.VideoImport)(nil), errors.New("not found"))
+
+		imp, err := svc.GetImport(ctx, importID, importUnitUserID)
+
+		require.Nil(t, imp)
+		require.Error(t, err)
+		importRepo.AssertExpectations(t)
+	})
+}
+
+func TestRealService_ListUserImports(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("success", func(t *testing.T) {
+		importRepo := new(MockImportRepository)
+		svc := newRealService(importRepo, nil, nil, t.TempDir())
+
+		expected := []*domain.VideoImport{
+			{ID: "i-1", UserID: importUnitUserID},
+			{ID: "i-2", UserID: importUnitUserID},
+		}
+		importRepo.On("GetByUserID", ctx, importUnitUserID, 20, 0).Return(expected, nil)
+		importRepo.On("CountByUserID", ctx, importUnitUserID).Return(5, nil)
+
+		imports, total, err := svc.ListUserImports(ctx, importUnitUserID, 20, 0)
+
+		require.NoError(t, err)
+		require.Len(t, imports, 2)
+		require.Equal(t, 5, total)
+		importRepo.AssertExpectations(t)
+	})
+
+	t.Run("GetByUserID error", func(t *testing.T) {
+		importRepo := new(MockImportRepository)
+		svc := newRealService(importRepo, nil, nil, t.TempDir())
+
+		importRepo.On("GetByUserID", ctx, importUnitUserID, 10, 0).Return(([]*domain.VideoImport)(nil), errors.New("db err"))
+
+		imports, total, err := svc.ListUserImports(ctx, importUnitUserID, 10, 0)
+
+		require.Nil(t, imports)
+		require.Equal(t, 0, total)
+		require.Error(t, err)
+		importRepo.AssertExpectations(t)
+	})
+
+	t.Run("CountByUserID error", func(t *testing.T) {
+		importRepo := new(MockImportRepository)
+		svc := newRealService(importRepo, nil, nil, t.TempDir())
+
+		importRepo.On("GetByUserID", ctx, importUnitUserID, 10, 0).Return([]*domain.VideoImport{}, nil)
+		importRepo.On("CountByUserID", ctx, importUnitUserID).Return(0, errors.New("count err"))
+
+		imports, total, err := svc.ListUserImports(ctx, importUnitUserID, 10, 0)
+
+		require.Nil(t, imports)
+		require.Equal(t, 0, total)
+		require.Error(t, err)
+		importRepo.AssertExpectations(t)
+	})
+}
+
+func TestRealService_CleanupOldImports(t *testing.T) {
+	ctx := context.Background()
+
+	importRepo := new(MockImportRepository)
+	svc := newRealService(importRepo, nil, nil, t.TempDir())
+
+	importRepo.On("CleanupOldImports", ctx, 30).Return(int64(7), nil)
+
+	deleted, err := svc.CleanupOldImports(ctx, 30)
+
+	require.NoError(t, err)
+	require.Equal(t, int64(7), deleted)
+	importRepo.AssertExpectations(t)
+}
+
+func TestRealService_ProcessImport_EarlyExits(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("GetByID fails returns early", func(t *testing.T) {
+		importRepo := new(MockImportRepository)
+		svc := newRealService(importRepo, nil, nil, t.TempDir())
+
+		importRepo.On("GetByID", mock.Anything, "bad-import").Return((*domain.VideoImport)(nil), errors.New("not found"))
+
+		svc.processImport(ctx, "bad-import")
+
+		importRepo.AssertExpectations(t)
+		svc.mu.Lock()
+		_, exists := svc.activeImports["bad-import"]
+		svc.mu.Unlock()
+		require.False(t, exists)
+	})
+
+	t.Run("Start fails marks import failed", func(t *testing.T) {
+		importRepo := new(MockImportRepository)
+		svc := newRealService(importRepo, nil, nil, t.TempDir())
+
+		importRepo.On("GetByID", mock.Anything, "start-fail").Return(&domain.VideoImport{
+			ID:     "start-fail",
+			UserID: importUnitUserID,
+			Status: domain.ImportStatusCompleted,
+		}, nil)
+		importRepo.On("MarkFailed", mock.Anything, "start-fail", mock.Anything).Return(nil)
+
+		svc.processImport(ctx, "start-fail")
+
+		importRepo.AssertExpectations(t)
+	})
+
+	t.Run("first Update fails returns early", func(t *testing.T) {
+		importRepo := new(MockImportRepository)
+		svc := newRealService(importRepo, nil, nil, t.TempDir())
+
+		importRepo.On("GetByID", mock.Anything, "update-fail").Return(&domain.VideoImport{
+			ID:     "update-fail",
+			UserID: importUnitUserID,
+			Status: domain.ImportStatusPending,
+		}, nil)
+		importRepo.On("Update", mock.Anything, mock.Anything).Return(errors.New("db down"))
+
+		svc.processImport(ctx, "update-fail")
+
+		importRepo.AssertExpectations(t)
+	})
+
+	t.Run("processing import check repo error", func(t *testing.T) {
+		importRepo := new(MockImportRepository)
+		svc := newRealService(importRepo, nil, nil, t.TempDir())
+		req := &ImportRequest{
+			UserID:        importUnitUserID,
+			SourceURL:     "https://8.8.8.8/video",
+			TargetPrivacy: string(domain.PrivacyPrivate),
+		}
+
+		importRepo.On("CountByUserIDToday", ctx, req.UserID).Return(0, nil)
+		importRepo.On("CountByUserIDAndStatus", ctx, req.UserID, domain.ImportStatusDownloading).Return(0, nil)
+		importRepo.On("CountByUserIDAndStatus", ctx, req.UserID, domain.ImportStatusProcessing).Return(0, errors.New("db err"))
+
+		imp, err := svc.ImportVideo(ctx, req)
+
+		require.Nil(t, imp)
+		require.ErrorContains(t, err, "failed to check processing imports")
+		importRepo.AssertExpectations(t)
+	})
 }

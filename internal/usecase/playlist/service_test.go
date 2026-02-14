@@ -12,8 +12,6 @@ import (
 	"github.com/stretchr/testify/mock"
 )
 
-// --- Mocks ---
-
 type mockPlaylistRepo struct{ mock.Mock }
 
 func (m *mockPlaylistRepo) Create(ctx context.Context, playlist *domain.Playlist) error {
@@ -140,8 +138,6 @@ func (m *mockVideoRepo) GetByRemoteURI(ctx context.Context, remoteURI string) (*
 func (m *mockVideoRepo) CreateRemoteVideo(ctx context.Context, video *domain.Video) error {
 	return m.Called(ctx, video).Error(0)
 }
-
-// --- Tests ---
 
 func TestCreatePlaylist_Success(t *testing.T) {
 	plRepo := new(mockPlaylistRepo)
@@ -433,4 +429,421 @@ func TestAddToWatchLater_WatchLaterError(t *testing.T) {
 
 	err := svc.AddToWatchLater(context.Background(), uuid.New(), uuid.New())
 	assert.Error(t, err)
+}
+
+func TestCreatePlaylist_RepoError(t *testing.T) {
+	plRepo := new(mockPlaylistRepo)
+	vidRepo := new(mockVideoRepo)
+	svc := NewService(plRepo, vidRepo)
+
+	plRepo.On("Create", mock.Anything, mock.AnythingOfType("*domain.Playlist")).Return(errors.New("db error"))
+
+	req := &domain.CreatePlaylistRequest{Name: "Test", Privacy: domain.PrivacyPublic}
+	pl, err := svc.CreatePlaylist(context.Background(), uuid.New(), req)
+	assert.Error(t, err)
+	assert.Nil(t, pl)
+	assert.Contains(t, err.Error(), "failed to create playlist")
+}
+
+func TestGetPlaylist_NotFound(t *testing.T) {
+	plRepo := new(mockPlaylistRepo)
+	vidRepo := new(mockVideoRepo)
+	svc := NewService(plRepo, vidRepo)
+
+	plID := uuid.New()
+	plRepo.On("GetByID", mock.Anything, plID).Return(nil, domain.ErrNotFound)
+
+	pl, err := svc.GetPlaylist(context.Background(), plID, nil)
+	assert.Error(t, err)
+	assert.Nil(t, pl)
+}
+
+func TestGetPlaylist_PrivateNoUser(t *testing.T) {
+	plRepo := new(mockPlaylistRepo)
+	vidRepo := new(mockVideoRepo)
+	svc := NewService(plRepo, vidRepo)
+
+	plID := uuid.New()
+	plRepo.On("GetByID", mock.Anything, plID).Return(&domain.Playlist{
+		ID: plID, UserID: uuid.New(), Privacy: domain.PrivacyPrivate,
+	}, nil)
+
+	pl, err := svc.GetPlaylist(context.Background(), plID, nil)
+	assert.Error(t, err)
+	assert.Nil(t, pl)
+	assert.ErrorIs(t, err, domain.ErrUnauthorized)
+}
+
+func TestUpdatePlaylist_Success(t *testing.T) {
+	plRepo := new(mockPlaylistRepo)
+	vidRepo := new(mockVideoRepo)
+	svc := NewService(plRepo, vidRepo)
+
+	userID := uuid.New()
+	plID := uuid.New()
+	newName := "Updated"
+
+	plRepo.On("IsOwner", mock.Anything, plID, userID).Return(true, nil)
+	plRepo.On("GetByID", mock.Anything, plID).Return(&domain.Playlist{ID: plID, IsWatchLater: false}, nil)
+	plRepo.On("Update", mock.Anything, plID, mock.Anything).Return(nil)
+
+	err := svc.UpdatePlaylist(context.Background(), userID, plID, domain.UpdatePlaylistRequest{Name: &newName})
+	assert.NoError(t, err)
+}
+
+func TestUpdatePlaylist_IsOwnerError(t *testing.T) {
+	plRepo := new(mockPlaylistRepo)
+	vidRepo := new(mockVideoRepo)
+	svc := NewService(plRepo, vidRepo)
+
+	plRepo.On("IsOwner", mock.Anything, mock.Anything, mock.Anything).Return(false, errors.New("db error"))
+
+	err := svc.UpdatePlaylist(context.Background(), uuid.New(), uuid.New(), domain.UpdatePlaylistRequest{})
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to check ownership")
+}
+
+func TestUpdatePlaylist_GetByIDError(t *testing.T) {
+	plRepo := new(mockPlaylistRepo)
+	vidRepo := new(mockVideoRepo)
+	svc := NewService(plRepo, vidRepo)
+
+	userID := uuid.New()
+	plID := uuid.New()
+
+	plRepo.On("IsOwner", mock.Anything, plID, userID).Return(true, nil)
+	plRepo.On("GetByID", mock.Anything, plID).Return(nil, errors.New("db error"))
+
+	err := svc.UpdatePlaylist(context.Background(), userID, plID, domain.UpdatePlaylistRequest{})
+	assert.Error(t, err)
+}
+
+func TestUpdatePlaylist_RepoUpdateError(t *testing.T) {
+	plRepo := new(mockPlaylistRepo)
+	vidRepo := new(mockVideoRepo)
+	svc := NewService(plRepo, vidRepo)
+
+	userID := uuid.New()
+	plID := uuid.New()
+
+	plRepo.On("IsOwner", mock.Anything, plID, userID).Return(true, nil)
+	plRepo.On("GetByID", mock.Anything, plID).Return(&domain.Playlist{ID: plID, IsWatchLater: false}, nil)
+	plRepo.On("Update", mock.Anything, plID, mock.Anything).Return(errors.New("db error"))
+
+	err := svc.UpdatePlaylist(context.Background(), userID, plID, domain.UpdatePlaylistRequest{})
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to update playlist")
+}
+
+func TestDeletePlaylist_NotOwner(t *testing.T) {
+	plRepo := new(mockPlaylistRepo)
+	vidRepo := new(mockVideoRepo)
+	svc := NewService(plRepo, vidRepo)
+
+	plRepo.On("IsOwner", mock.Anything, mock.Anything, mock.Anything).Return(false, nil)
+
+	err := svc.DeletePlaylist(context.Background(), uuid.New(), uuid.New())
+	assert.ErrorIs(t, err, domain.ErrUnauthorized)
+}
+
+func TestDeletePlaylist_IsOwnerError(t *testing.T) {
+	plRepo := new(mockPlaylistRepo)
+	vidRepo := new(mockVideoRepo)
+	svc := NewService(plRepo, vidRepo)
+
+	plRepo.On("IsOwner", mock.Anything, mock.Anything, mock.Anything).Return(false, errors.New("db error"))
+
+	err := svc.DeletePlaylist(context.Background(), uuid.New(), uuid.New())
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to check ownership")
+}
+
+func TestDeletePlaylist_GetByIDError(t *testing.T) {
+	plRepo := new(mockPlaylistRepo)
+	vidRepo := new(mockVideoRepo)
+	svc := NewService(plRepo, vidRepo)
+
+	userID := uuid.New()
+	plID := uuid.New()
+
+	plRepo.On("IsOwner", mock.Anything, plID, userID).Return(true, nil)
+	plRepo.On("GetByID", mock.Anything, plID).Return(nil, errors.New("db error"))
+
+	err := svc.DeletePlaylist(context.Background(), userID, plID)
+	assert.Error(t, err)
+}
+
+func TestDeletePlaylist_DeleteRepoError(t *testing.T) {
+	plRepo := new(mockPlaylistRepo)
+	vidRepo := new(mockVideoRepo)
+	svc := NewService(plRepo, vidRepo)
+
+	userID := uuid.New()
+	plID := uuid.New()
+
+	plRepo.On("IsOwner", mock.Anything, plID, userID).Return(true, nil)
+	plRepo.On("GetByID", mock.Anything, plID).Return(&domain.Playlist{ID: plID, IsWatchLater: false}, nil)
+	plRepo.On("Delete", mock.Anything, plID).Return(errors.New("db error"))
+
+	err := svc.DeletePlaylist(context.Background(), userID, plID)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to delete playlist")
+}
+
+func TestListPlaylists_RepoError(t *testing.T) {
+	plRepo := new(mockPlaylistRepo)
+	vidRepo := new(mockVideoRepo)
+	svc := NewService(plRepo, vidRepo)
+
+	plRepo.On("List", mock.Anything, mock.Anything).Return(nil, 0, errors.New("db error"))
+
+	resp, err := svc.ListPlaylists(context.Background(), domain.PlaylistListOptions{Limit: 10})
+	assert.Error(t, err)
+	assert.Nil(t, resp)
+}
+
+func TestAddVideoToPlaylist_IsOwnerError(t *testing.T) {
+	plRepo := new(mockPlaylistRepo)
+	vidRepo := new(mockVideoRepo)
+	svc := NewService(plRepo, vidRepo)
+
+	plRepo.On("IsOwner", mock.Anything, mock.Anything, mock.Anything).Return(false, errors.New("db error"))
+
+	err := svc.AddVideoToPlaylist(context.Background(), uuid.New(), uuid.New(), uuid.New(), nil)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to check ownership")
+}
+
+func TestAddVideoToPlaylist_NotOwner(t *testing.T) {
+	plRepo := new(mockPlaylistRepo)
+	vidRepo := new(mockVideoRepo)
+	svc := NewService(plRepo, vidRepo)
+
+	plRepo.On("IsOwner", mock.Anything, mock.Anything, mock.Anything).Return(false, nil)
+
+	err := svc.AddVideoToPlaylist(context.Background(), uuid.New(), uuid.New(), uuid.New(), nil)
+	assert.ErrorIs(t, err, domain.ErrUnauthorized)
+}
+
+func TestAddVideoToPlaylist_AddItemError(t *testing.T) {
+	plRepo := new(mockPlaylistRepo)
+	vidRepo := new(mockVideoRepo)
+	svc := NewService(plRepo, vidRepo)
+
+	userID := uuid.New()
+	plID := uuid.New()
+	videoID := uuid.New()
+
+	plRepo.On("IsOwner", mock.Anything, plID, userID).Return(true, nil)
+	vidRepo.On("GetByID", mock.Anything, videoID.String()).Return(&domain.Video{}, nil)
+	plRepo.On("AddItem", mock.Anything, plID, videoID, (*int)(nil)).Return(errors.New("db error"))
+
+	err := svc.AddVideoToPlaylist(context.Background(), userID, plID, videoID, nil)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to add video to playlist")
+}
+
+func TestRemoveVideoFromPlaylist_Success(t *testing.T) {
+	plRepo := new(mockPlaylistRepo)
+	vidRepo := new(mockVideoRepo)
+	svc := NewService(plRepo, vidRepo)
+
+	userID := uuid.New()
+	plID := uuid.New()
+	itemID := uuid.New()
+
+	plRepo.On("IsOwner", mock.Anything, plID, userID).Return(true, nil)
+	plRepo.On("RemoveItem", mock.Anything, plID, itemID).Return(nil)
+
+	err := svc.RemoveVideoFromPlaylist(context.Background(), userID, plID, itemID)
+	assert.NoError(t, err)
+}
+
+func TestRemoveVideoFromPlaylist_IsOwnerError(t *testing.T) {
+	plRepo := new(mockPlaylistRepo)
+	vidRepo := new(mockVideoRepo)
+	svc := NewService(plRepo, vidRepo)
+
+	plRepo.On("IsOwner", mock.Anything, mock.Anything, mock.Anything).Return(false, errors.New("db error"))
+
+	err := svc.RemoveVideoFromPlaylist(context.Background(), uuid.New(), uuid.New(), uuid.New())
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to check ownership")
+}
+
+func TestRemoveVideoFromPlaylist_RemoveError(t *testing.T) {
+	plRepo := new(mockPlaylistRepo)
+	vidRepo := new(mockVideoRepo)
+	svc := NewService(plRepo, vidRepo)
+
+	userID := uuid.New()
+	plID := uuid.New()
+	itemID := uuid.New()
+
+	plRepo.On("IsOwner", mock.Anything, plID, userID).Return(true, nil)
+	plRepo.On("RemoveItem", mock.Anything, plID, itemID).Return(errors.New("db error"))
+
+	err := svc.RemoveVideoFromPlaylist(context.Background(), userID, plID, itemID)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to remove video from playlist")
+}
+
+func TestGetPlaylistItems_Success(t *testing.T) {
+	plRepo := new(mockPlaylistRepo)
+	vidRepo := new(mockVideoRepo)
+	svc := NewService(plRepo, vidRepo)
+
+	plID := uuid.New()
+	ownerID := uuid.New()
+	expected := []*domain.PlaylistItem{{ID: uuid.New()}}
+
+	plRepo.On("GetByID", mock.Anything, plID).Return(&domain.Playlist{
+		ID: plID, UserID: ownerID, Privacy: domain.PrivacyPublic,
+	}, nil)
+	plRepo.On("GetItems", mock.Anything, plID, 20, 0).Return(expected, nil)
+
+	items, err := svc.GetPlaylistItems(context.Background(), plID, nil, 20, 0)
+	assert.NoError(t, err)
+	assert.Len(t, items, 1)
+}
+
+func TestGetPlaylistItems_DefaultLimits(t *testing.T) {
+	plRepo := new(mockPlaylistRepo)
+	vidRepo := new(mockVideoRepo)
+	svc := NewService(plRepo, vidRepo)
+
+	plID := uuid.New()
+	ownerID := uuid.New()
+
+	plRepo.On("GetByID", mock.Anything, plID).Return(&domain.Playlist{
+		ID: plID, UserID: ownerID, Privacy: domain.PrivacyPublic,
+	}, nil)
+	plRepo.On("GetItems", mock.Anything, plID, 20, 0).Return([]*domain.PlaylistItem{}, nil)
+
+	items, err := svc.GetPlaylistItems(context.Background(), plID, nil, -1, -5)
+	assert.NoError(t, err)
+	assert.Empty(t, items)
+}
+
+func TestGetPlaylistItems_OverLimit(t *testing.T) {
+	plRepo := new(mockPlaylistRepo)
+	vidRepo := new(mockVideoRepo)
+	svc := NewService(plRepo, vidRepo)
+
+	plID := uuid.New()
+	ownerID := uuid.New()
+
+	plRepo.On("GetByID", mock.Anything, plID).Return(&domain.Playlist{
+		ID: plID, UserID: ownerID, Privacy: domain.PrivacyPublic,
+	}, nil)
+	plRepo.On("GetItems", mock.Anything, plID, 20, 0).Return([]*domain.PlaylistItem{}, nil)
+
+	items, err := svc.GetPlaylistItems(context.Background(), plID, nil, 200, 0)
+	assert.NoError(t, err)
+	assert.Empty(t, items)
+}
+
+func TestGetPlaylistItems_NotFound(t *testing.T) {
+	plRepo := new(mockPlaylistRepo)
+	vidRepo := new(mockVideoRepo)
+	svc := NewService(plRepo, vidRepo)
+
+	plID := uuid.New()
+	plRepo.On("GetByID", mock.Anything, plID).Return(nil, domain.ErrNotFound)
+
+	items, err := svc.GetPlaylistItems(context.Background(), plID, nil, 20, 0)
+	assert.Error(t, err)
+	assert.Nil(t, items)
+}
+
+func TestGetPlaylistItems_GetItemsError(t *testing.T) {
+	plRepo := new(mockPlaylistRepo)
+	vidRepo := new(mockVideoRepo)
+	svc := NewService(plRepo, vidRepo)
+
+	plID := uuid.New()
+	plRepo.On("GetByID", mock.Anything, plID).Return(&domain.Playlist{
+		ID: plID, Privacy: domain.PrivacyPublic,
+	}, nil)
+	plRepo.On("GetItems", mock.Anything, plID, 20, 0).Return(nil, errors.New("db error"))
+
+	items, err := svc.GetPlaylistItems(context.Background(), plID, nil, 20, 0)
+	assert.Error(t, err)
+	assert.Nil(t, items)
+	assert.Contains(t, err.Error(), "failed to get playlist items")
+}
+
+func TestGetPlaylistItems_PrivateOwnerAllowed(t *testing.T) {
+	plRepo := new(mockPlaylistRepo)
+	vidRepo := new(mockVideoRepo)
+	svc := NewService(plRepo, vidRepo)
+
+	plID := uuid.New()
+	ownerID := uuid.New()
+
+	plRepo.On("GetByID", mock.Anything, plID).Return(&domain.Playlist{
+		ID: plID, UserID: ownerID, Privacy: domain.PrivacyPrivate,
+	}, nil)
+	plRepo.On("GetItems", mock.Anything, plID, 20, 0).Return([]*domain.PlaylistItem{}, nil)
+
+	items, err := svc.GetPlaylistItems(context.Background(), plID, &ownerID, 20, 0)
+	assert.NoError(t, err)
+	assert.Empty(t, items)
+}
+
+func TestReorderPlaylistItem_Success(t *testing.T) {
+	plRepo := new(mockPlaylistRepo)
+	vidRepo := new(mockVideoRepo)
+	svc := NewService(plRepo, vidRepo)
+
+	userID := uuid.New()
+	plID := uuid.New()
+	itemID := uuid.New()
+
+	plRepo.On("IsOwner", mock.Anything, plID, userID).Return(true, nil)
+	plRepo.On("ReorderItem", mock.Anything, plID, itemID, 3).Return(nil)
+
+	err := svc.ReorderPlaylistItem(context.Background(), userID, plID, itemID, 3)
+	assert.NoError(t, err)
+}
+
+func TestReorderPlaylistItem_IsOwnerError(t *testing.T) {
+	plRepo := new(mockPlaylistRepo)
+	vidRepo := new(mockVideoRepo)
+	svc := NewService(plRepo, vidRepo)
+
+	plRepo.On("IsOwner", mock.Anything, mock.Anything, mock.Anything).Return(false, errors.New("db error"))
+
+	err := svc.ReorderPlaylistItem(context.Background(), uuid.New(), uuid.New(), uuid.New(), 1)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to check ownership")
+}
+
+func TestReorderPlaylistItem_ReorderError(t *testing.T) {
+	plRepo := new(mockPlaylistRepo)
+	vidRepo := new(mockVideoRepo)
+	svc := NewService(plRepo, vidRepo)
+
+	userID := uuid.New()
+	plID := uuid.New()
+	itemID := uuid.New()
+
+	plRepo.On("IsOwner", mock.Anything, plID, userID).Return(true, nil)
+	plRepo.On("ReorderItem", mock.Anything, plID, itemID, 1).Return(errors.New("db error"))
+
+	err := svc.ReorderPlaylistItem(context.Background(), userID, plID, itemID, 1)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to reorder playlist item")
+}
+
+func TestGetOrCreateWatchLater_Error(t *testing.T) {
+	plRepo := new(mockPlaylistRepo)
+	vidRepo := new(mockVideoRepo)
+	svc := NewService(plRepo, vidRepo)
+
+	plRepo.On("GetOrCreateWatchLater", mock.Anything, mock.Anything).Return(nil, errors.New("db error"))
+
+	pl, err := svc.GetOrCreateWatchLater(context.Background(), uuid.New())
+	assert.Error(t, err)
+	assert.Nil(t, pl)
 }

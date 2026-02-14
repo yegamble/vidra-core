@@ -3,6 +3,9 @@ package caption
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"athena/internal/config"
@@ -12,8 +15,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 )
-
-// --- Mocks ---
 
 type mockCaptionRepo struct{ mock.Mock }
 
@@ -129,8 +130,6 @@ func (m *mockVideoRepo) CreateRemoteVideo(ctx context.Context, video *domain.Vid
 	return m.Called(ctx, video).Error(0)
 }
 
-// --- Helper ---
-
 func newTestService(t *testing.T) (*Service, *mockCaptionRepo, *mockVideoRepo) {
 	t.Helper()
 	capRepo := new(mockCaptionRepo)
@@ -139,8 +138,6 @@ func newTestService(t *testing.T) (*Service, *mockCaptionRepo, *mockVideoRepo) {
 	svc := NewService(capRepo, vidRepo, cfg)
 	return svc, capRepo, vidRepo
 }
-
-// --- Tests ---
 
 func TestGetCaptionByID_Success(t *testing.T) {
 	svc, capRepo, vidRepo := newTestService(t)
@@ -287,7 +284,7 @@ func TestDeleteCaption_Success(t *testing.T) {
 	captionID := uuid.New()
 	caption := &domain.Caption{
 		ID:       captionID,
-		FilePath: nil, // No file to delete
+		FilePath: nil,
 	}
 
 	capRepo.On("GetByID", mock.Anything, captionID).Return(caption, nil)
@@ -367,7 +364,7 @@ func TestCreateCaption_InvalidLanguageCode(t *testing.T) {
 	vidRepo.On("GetByID", mock.Anything, videoID.String()).Return(video, nil)
 
 	req := &domain.CreateCaptionRequest{
-		LanguageCode: "x", // Too short
+		LanguageCode: "x",
 		Label:        "Test",
 		FileFormat:   domain.CaptionFormatVTT,
 	}
@@ -409,4 +406,407 @@ func TestGenerateCaptionURL(t *testing.T) {
 	assert.Contains(t, url, videoID.String())
 	assert.Contains(t, url, captionID.String())
 	assert.Contains(t, url, "/api/v1/videos/")
+}
+
+func TestCreateCaption_Success(t *testing.T) {
+	svc, capRepo, vidRepo := newTestService(t)
+
+	videoID := uuid.New()
+	video := &domain.Video{ID: videoID.String()}
+	vidRepo.On("GetByID", mock.Anything, videoID.String()).Return(video, nil)
+	capRepo.On("Create", mock.Anything, mock.AnythingOfType("*domain.Caption")).Return(nil)
+
+	req := &domain.CreateCaptionRequest{
+		LanguageCode: "en",
+		Label:        "English",
+		FileFormat:   domain.CaptionFormatVTT,
+	}
+
+	file := strings.NewReader("WEBVTT\n\n00:00:00.000 --> 00:00:05.000\nHello world")
+	result, err := svc.CreateCaption(context.Background(), videoID, req, file)
+	assert.NoError(t, err)
+	assert.NotNil(t, result)
+	assert.Equal(t, "en", result.LanguageCode)
+	assert.Equal(t, "English", result.Label)
+	assert.NotEmpty(t, result.URL)
+	capRepo.AssertExpectations(t)
+}
+
+func TestCreateCaption_VideoRepoError(t *testing.T) {
+	svc, _, vidRepo := newTestService(t)
+
+	videoID := uuid.New()
+	vidRepo.On("GetByID", mock.Anything, videoID.String()).Return(nil, errors.New("db error"))
+
+	req := &domain.CreateCaptionRequest{
+		LanguageCode: "en",
+		Label:        "English",
+		FileFormat:   domain.CaptionFormatVTT,
+	}
+	result, err := svc.CreateCaption(context.Background(), videoID, req, nil)
+	assert.Error(t, err)
+	assert.Nil(t, result)
+	assert.Contains(t, err.Error(), "failed to verify video")
+}
+
+func TestCreateCaption_InvalidLanguageTooLong(t *testing.T) {
+	svc, _, vidRepo := newTestService(t)
+
+	videoID := uuid.New()
+	video := &domain.Video{ID: videoID.String()}
+	vidRepo.On("GetByID", mock.Anything, videoID.String()).Return(video, nil)
+
+	req := &domain.CreateCaptionRequest{
+		LanguageCode: "toolonglangu",
+		Label:        "Test",
+		FileFormat:   domain.CaptionFormatVTT,
+	}
+	result, err := svc.CreateCaption(context.Background(), videoID, req, nil)
+	assert.Error(t, err)
+	assert.Nil(t, result)
+	assert.Contains(t, err.Error(), "INVALID_LANGUAGE")
+}
+
+func TestCreateCaption_RepoCreateError(t *testing.T) {
+	svc, capRepo, vidRepo := newTestService(t)
+
+	videoID := uuid.New()
+	video := &domain.Video{ID: videoID.String()}
+	vidRepo.On("GetByID", mock.Anything, videoID.String()).Return(video, nil)
+	capRepo.On("Create", mock.Anything, mock.AnythingOfType("*domain.Caption")).Return(errors.New("db error"))
+
+	req := &domain.CreateCaptionRequest{
+		LanguageCode: "en",
+		Label:        "English",
+		FileFormat:   domain.CaptionFormatVTT,
+	}
+
+	file := strings.NewReader("WEBVTT\n\n00:00:00.000 --> 00:00:05.000\nHello")
+	result, err := svc.CreateCaption(context.Background(), videoID, req, file)
+	assert.Error(t, err)
+	assert.Nil(t, result)
+	assert.Contains(t, err.Error(), "failed to create caption record")
+}
+
+func TestCreateCaption_EmptyFile(t *testing.T) {
+	svc, _, vidRepo := newTestService(t)
+
+	videoID := uuid.New()
+	video := &domain.Video{ID: videoID.String()}
+	vidRepo.On("GetByID", mock.Anything, videoID.String()).Return(video, nil)
+
+	req := &domain.CreateCaptionRequest{
+		LanguageCode: "en",
+		Label:        "English",
+		FileFormat:   domain.CaptionFormatVTT,
+	}
+
+	file := strings.NewReader("")
+	result, err := svc.CreateCaption(context.Background(), videoID, req, file)
+	assert.Error(t, err)
+	assert.Nil(t, result)
+	assert.Contains(t, err.Error(), "EMPTY_FILE")
+}
+
+func TestGetCaptionContent_Success(t *testing.T) {
+	svc, capRepo, _ := newTestService(t)
+
+	tmpDir := t.TempDir()
+	tmpFile := filepath.Join(tmpDir, "en.vtt")
+	err := os.WriteFile(tmpFile, []byte("WEBVTT\n\n00:00:00.000 --> 00:00:05.000\nHello"), 0644)
+	assert.NoError(t, err)
+
+	captionID := uuid.New()
+	caption := &domain.Caption{
+		ID:         captionID,
+		FilePath:   &tmpFile,
+		FileFormat: domain.CaptionFormatVTT,
+	}
+
+	capRepo.On("GetByID", mock.Anything, captionID).Return(caption, nil)
+
+	reader, contentType, err := svc.GetCaptionContent(context.Background(), captionID)
+	assert.NoError(t, err)
+	assert.NotNil(t, reader)
+	assert.NotEmpty(t, contentType)
+	defer reader.Close()
+}
+
+func TestGetCaptionContent_RepoError(t *testing.T) {
+	svc, capRepo, _ := newTestService(t)
+
+	captionID := uuid.New()
+	capRepo.On("GetByID", mock.Anything, captionID).Return(nil, errors.New("db error"))
+
+	reader, contentType, err := svc.GetCaptionContent(context.Background(), captionID)
+	assert.Error(t, err)
+	assert.Nil(t, reader)
+	assert.Empty(t, contentType)
+}
+
+func TestGetCaptionContent_EmptyFilePath(t *testing.T) {
+	svc, capRepo, _ := newTestService(t)
+
+	captionID := uuid.New()
+	emptyPath := ""
+	caption := &domain.Caption{
+		ID:       captionID,
+		FilePath: &emptyPath,
+	}
+
+	capRepo.On("GetByID", mock.Anything, captionID).Return(caption, nil)
+
+	reader, contentType, err := svc.GetCaptionContent(context.Background(), captionID)
+	assert.Error(t, err)
+	assert.Nil(t, reader)
+	assert.Empty(t, contentType)
+	assert.Contains(t, err.Error(), "NO_FILE")
+}
+
+func TestGetCaptionContent_FileNotExist(t *testing.T) {
+	svc, capRepo, _ := newTestService(t)
+
+	captionID := uuid.New()
+	nonExistent := "/nonexistent/path/caption.vtt"
+	caption := &domain.Caption{
+		ID:         captionID,
+		FilePath:   &nonExistent,
+		FileFormat: domain.CaptionFormatVTT,
+	}
+
+	capRepo.On("GetByID", mock.Anything, captionID).Return(caption, nil)
+
+	reader, _, err := svc.GetCaptionContent(context.Background(), captionID)
+	assert.Error(t, err)
+	assert.Nil(t, reader)
+	assert.Contains(t, err.Error(), "failed to open caption file")
+}
+
+func TestGetCaptionsByVideoID_RepoError(t *testing.T) {
+	svc, capRepo, vidRepo := newTestService(t)
+
+	videoID := uuid.New()
+	video := &domain.Video{ID: videoID.String()}
+	vidRepo.On("GetByID", mock.Anything, videoID.String()).Return(video, nil)
+	capRepo.On("GetByVideoID", mock.Anything, videoID).Return(nil, errors.New("db error"))
+
+	result, err := svc.GetCaptionsByVideoID(context.Background(), videoID)
+	assert.Error(t, err)
+	assert.Nil(t, result)
+	assert.Contains(t, err.Error(), "failed to get captions")
+}
+
+func TestGetCaptionsByVideoID_VideoRepoGenericError(t *testing.T) {
+	svc, _, vidRepo := newTestService(t)
+
+	videoID := uuid.New()
+	vidRepo.On("GetByID", mock.Anything, videoID.String()).Return(nil, errors.New("connection timeout"))
+
+	result, err := svc.GetCaptionsByVideoID(context.Background(), videoID)
+	assert.Error(t, err)
+	assert.Nil(t, result)
+	assert.Contains(t, err.Error(), "failed to verify video")
+}
+
+func TestUpdateCaption_LanguageChangeWithFileRename(t *testing.T) {
+	svc, capRepo, vidRepo := newTestService(t)
+
+	tmpDir := t.TempDir()
+	oldFile := filepath.Join(tmpDir, "en.vtt")
+	err := os.WriteFile(oldFile, []byte("WEBVTT\n\ntest"), 0644)
+	assert.NoError(t, err)
+
+	captionID := uuid.New()
+	videoID := uuid.New()
+	existing := &domain.Caption{
+		ID:           captionID,
+		VideoID:      videoID,
+		LanguageCode: "en",
+		Label:        "English",
+		FileFormat:   domain.CaptionFormatVTT,
+		FilePath:     &oldFile,
+	}
+
+	newLang := "fr"
+	req := &domain.UpdateCaptionRequest{LanguageCode: &newLang}
+
+	capRepo.On("GetByID", mock.Anything, captionID).Return(existing, nil)
+	capRepo.On("GetByVideoAndLanguage", mock.Anything, videoID, "fr").Return(nil, domain.ErrNotFound)
+	capRepo.On("Update", mock.Anything, mock.AnythingOfType("*domain.Caption")).Return(nil)
+	vidRepo.On("GetByID", mock.Anything, videoID.String()).Return(&domain.Video{ID: videoID.String()}, nil)
+
+	result, err := svc.UpdateCaption(context.Background(), captionID, req)
+	assert.NoError(t, err)
+	assert.NotNil(t, result)
+	assert.Equal(t, "fr", result.LanguageCode)
+
+	expectedNewPath := filepath.Join(tmpDir, "fr.vtt")
+	assert.Equal(t, expectedNewPath, *result.FilePath)
+	assert.FileExists(t, expectedNewPath)
+}
+
+func TestUpdateCaption_UpdateRepoError(t *testing.T) {
+	svc, capRepo, _ := newTestService(t)
+
+	captionID := uuid.New()
+	videoID := uuid.New()
+	existing := &domain.Caption{
+		ID:           captionID,
+		VideoID:      videoID,
+		LanguageCode: "en",
+		Label:        "English",
+		FileFormat:   domain.CaptionFormatVTT,
+	}
+
+	newLabel := "Updated"
+	req := &domain.UpdateCaptionRequest{Label: &newLabel}
+
+	capRepo.On("GetByID", mock.Anything, captionID).Return(existing, nil)
+	capRepo.On("Update", mock.Anything, mock.AnythingOfType("*domain.Caption")).Return(errors.New("db error"))
+
+	result, err := svc.UpdateCaption(context.Background(), captionID, req)
+	assert.Error(t, err)
+	assert.Nil(t, result)
+	assert.Contains(t, err.Error(), "failed to update caption")
+}
+
+func TestDeleteCaption_WithFilePath(t *testing.T) {
+	svc, capRepo, _ := newTestService(t)
+
+	tmpDir := t.TempDir()
+	tmpFile := filepath.Join(tmpDir, "en.vtt")
+	err := os.WriteFile(tmpFile, []byte("test"), 0644)
+	assert.NoError(t, err)
+
+	captionID := uuid.New()
+	caption := &domain.Caption{
+		ID:       captionID,
+		FilePath: &tmpFile,
+	}
+
+	capRepo.On("GetByID", mock.Anything, captionID).Return(caption, nil)
+	capRepo.On("Delete", mock.Anything, captionID).Return(nil)
+
+	err = svc.DeleteCaption(context.Background(), captionID)
+	assert.NoError(t, err)
+	_, statErr := os.Stat(tmpFile)
+	assert.True(t, os.IsNotExist(statErr))
+}
+
+func TestValidateCaptionFormat_ValidVTT(t *testing.T) {
+	svc, _, _ := newTestService(t)
+
+	tmpDir := t.TempDir()
+	tmpFile := filepath.Join(tmpDir, "test.vtt")
+	err := os.WriteFile(tmpFile, []byte("WEBVTT\n\n00:00:00.000 --> 00:00:05.000\nHello"), 0644)
+	assert.NoError(t, err)
+
+	err = svc.validateCaptionFormat(tmpFile)
+	assert.NoError(t, err)
+}
+
+func TestValidateCaptionFormat_InvalidVTT(t *testing.T) {
+	svc, _, _ := newTestService(t)
+
+	tmpDir := t.TempDir()
+	tmpFile := filepath.Join(tmpDir, "test.vtt")
+	err := os.WriteFile(tmpFile, []byte("not a vtt file content"), 0644)
+	assert.NoError(t, err)
+
+	err = svc.validateCaptionFormat(tmpFile)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "INVALID_VTT")
+}
+
+func TestValidateCaptionFormat_ValidSRT(t *testing.T) {
+	svc, _, _ := newTestService(t)
+
+	tmpDir := t.TempDir()
+	tmpFile := filepath.Join(tmpDir, "test.srt")
+	err := os.WriteFile(tmpFile, []byte("1\n00:00:00,000 --> 00:00:05,000\nHello"), 0644)
+	assert.NoError(t, err)
+
+	err = svc.validateCaptionFormat(tmpFile)
+	assert.NoError(t, err)
+}
+
+func TestValidateCaptionFormat_InvalidSRT(t *testing.T) {
+	svc, _, _ := newTestService(t)
+
+	tmpDir := t.TempDir()
+	tmpFile := filepath.Join(tmpDir, "test.srt")
+	err := os.WriteFile(tmpFile, []byte("binary\x00data"), 0644)
+	assert.NoError(t, err)
+
+	err = svc.validateCaptionFormat(tmpFile)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "INVALID_SRT")
+}
+
+func TestValidateCaptionFormat_EmptyFile(t *testing.T) {
+	svc, _, _ := newTestService(t)
+
+	tmpDir := t.TempDir()
+	tmpFile := filepath.Join(tmpDir, "test.vtt")
+	err := os.WriteFile(tmpFile, []byte{}, 0644)
+	assert.NoError(t, err)
+
+	err = svc.validateCaptionFormat(tmpFile)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "EMPTY_FILE")
+}
+
+func TestValidateCaptionFormat_NonexistentFile(t *testing.T) {
+	svc, _, _ := newTestService(t)
+
+	err := svc.validateCaptionFormat("/nonexistent/path/test.vtt")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to open file for validation")
+}
+
+func TestSaveCaption_Success(t *testing.T) {
+	svc, _, _ := newTestService(t)
+
+	tmpDir := t.TempDir()
+	filePath := filepath.Join(tmpDir, "test.vtt")
+	reader := strings.NewReader("WEBVTT\n\n00:00:00.000 --> 00:00:05.000\nHello")
+
+	written, err := svc.saveCaption(reader, filePath)
+	assert.NoError(t, err)
+	assert.Greater(t, written, int64(0))
+	assert.FileExists(t, filePath)
+}
+
+func TestSaveCaption_EmptyReader(t *testing.T) {
+	svc, _, _ := newTestService(t)
+
+	tmpDir := t.TempDir()
+	filePath := filepath.Join(tmpDir, "test.vtt")
+	reader := strings.NewReader("")
+
+	written, err := svc.saveCaption(reader, filePath)
+	assert.Error(t, err)
+	assert.Equal(t, int64(0), written)
+	assert.Contains(t, err.Error(), "EMPTY_FILE")
+}
+
+func TestGetCaptionByID_VideoRepoError(t *testing.T) {
+	svc, capRepo, vidRepo := newTestService(t)
+
+	captionID := uuid.New()
+	videoID := uuid.New()
+	caption := &domain.Caption{
+		ID:           captionID,
+		VideoID:      videoID,
+		LanguageCode: "en",
+		FileFormat:   domain.CaptionFormatVTT,
+	}
+
+	capRepo.On("GetByID", mock.Anything, captionID).Return(caption, nil)
+	vidRepo.On("GetByID", mock.Anything, videoID.String()).Return(nil, errors.New("db error"))
+
+	result, err := svc.GetCaptionByID(context.Background(), captionID)
+	assert.NoError(t, err)
+	assert.NotNil(t, result)
+	assert.Empty(t, result.URL)
 }

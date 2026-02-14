@@ -13,19 +13,16 @@ import (
 	"athena/internal/domain"
 )
 
-// InstanceDiscovery handles discovery of peer instances via ActivityPub
 type InstanceDiscovery struct {
 	httpClient HTTPDoer
 }
 
-// NewInstanceDiscovery creates a new instance discovery service
 func NewInstanceDiscovery(httpClient HTTPDoer) *InstanceDiscovery {
 	return &InstanceDiscovery{
 		httpClient: httpClient,
 	}
 }
 
-// NodeInfo represents the NodeInfo 2.0 schema
 type NodeInfo struct {
 	Version  string `json:"version"`
 	Software struct {
@@ -46,7 +43,6 @@ type NodeInfo struct {
 	Metadata map[string]interface{} `json:"metadata"`
 }
 
-// WebFingerResponse represents a WebFinger response
 type WebFingerResponse struct {
 	Subject string `json:"subject"`
 	Links   []struct {
@@ -56,7 +52,6 @@ type WebFingerResponse struct {
 	} `json:"links"`
 }
 
-// ActivityPubActor represents an ActivityPub actor
 type ActivityPubActor struct {
 	Context           interface{} `json:"@context"`
 	ID                string      `json:"id"`
@@ -72,14 +67,12 @@ type ActivityPubActor struct {
 	} `json:"publicKey"`
 }
 
-// DiscoverInstance discovers instance metadata via ActivityPub and NodeInfo
 func (d *InstanceDiscovery) DiscoverInstance(ctx context.Context, instanceURL string) (*domain.InstancePeer, error) {
 	parsedURL, err := url.Parse(instanceURL)
 	if err != nil {
 		return nil, fmt.Errorf("invalid instance URL: %w", err)
 	}
 
-	// SSRF Protection: Use domain.ValidateURLWithSSRFCheck which includes private IP blocking
 	if err := domain.ValidateURLWithSSRFCheck(instanceURL); err != nil {
 		return nil, fmt.Errorf("invalid or unsafe instance URL: %w", err)
 	}
@@ -92,7 +85,6 @@ func (d *InstanceDiscovery) DiscoverInstance(ctx context.Context, instanceURL st
 		IsActive:             true,
 	}
 
-	// Try NodeInfo discovery first
 	nodeInfo, err := d.fetchNodeInfo(ctx, instanceURL)
 	if err == nil {
 		peer.Software = nodeInfo.Software.Name
@@ -100,7 +92,6 @@ func (d *InstanceDiscovery) DiscoverInstance(ctx context.Context, instanceURL st
 		peer.InstanceName = extractInstanceName(nodeInfo)
 	}
 
-	// Try to discover actor endpoint
 	actor, err := d.fetchInstanceActor(ctx, instanceURL)
 	if err == nil {
 		peer.ActorURL = actor.ID
@@ -114,9 +105,7 @@ func (d *InstanceDiscovery) DiscoverInstance(ctx context.Context, instanceURL st
 	return peer, nil
 }
 
-// fetchNodeInfo fetches NodeInfo 2.0 metadata
 func (d *InstanceDiscovery) fetchNodeInfo(ctx context.Context, instanceURL string) (*NodeInfo, error) {
-	// First, fetch the NodeInfo well-known endpoint
 	wellKnownURL := instanceURL + "/.well-known/nodeinfo"
 
 	req, err := http.NewRequestWithContext(ctx, "GET", wellKnownURL, nil)
@@ -125,14 +114,14 @@ func (d *InstanceDiscovery) fetchNodeInfo(ctx context.Context, instanceURL strin
 	}
 	req.Header.Set("Accept", "application/json")
 
-	resp, err := d.httpClient.Do(req)
+	wkResp, err := d.httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch NodeInfo well-known: %w", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer func() { _ = wkResp.Body.Close() }()
 
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+	if wkResp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("unexpected status code: %d", wkResp.StatusCode)
 	}
 
 	var wellKnown struct {
@@ -142,11 +131,10 @@ func (d *InstanceDiscovery) fetchNodeInfo(ctx context.Context, instanceURL strin
 		} `json:"links"`
 	}
 
-	if err := json.NewDecoder(resp.Body).Decode(&wellKnown); err != nil {
+	if err := json.NewDecoder(wkResp.Body).Decode(&wellKnown); err != nil {
 		return nil, fmt.Errorf("failed to decode well-known: %w", err)
 	}
 
-	// Find NodeInfo 2.0 link
 	var nodeInfoURL string
 	for _, link := range wellKnown.Links {
 		if strings.Contains(link.Rel, "nodeinfo/2.0") {
@@ -159,14 +147,13 @@ func (d *InstanceDiscovery) fetchNodeInfo(ctx context.Context, instanceURL strin
 		return nil, fmt.Errorf("NodeInfo 2.0 not found")
 	}
 
-	// Fetch the actual NodeInfo
 	req, err = http.NewRequestWithContext(ctx, "GET", nodeInfoURL, nil)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Accept", "application/json")
 
-	resp, err = d.httpClient.Do(req)
+	resp, err := d.httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch NodeInfo: %w", err)
 	}
@@ -184,9 +171,7 @@ func (d *InstanceDiscovery) fetchNodeInfo(ctx context.Context, instanceURL strin
 	return &nodeInfo, nil
 }
 
-// fetchInstanceActor fetches the instance's ActivityPub actor
 func (d *InstanceDiscovery) fetchInstanceActor(ctx context.Context, instanceURL string) (*ActivityPubActor, error) {
-	// Try common actor endpoints
 	actorURLs := []string{
 		instanceURL + "/actor",
 		instanceURL + "/users/instance",
@@ -205,7 +190,6 @@ func (d *InstanceDiscovery) fetchInstanceActor(ctx context.Context, instanceURL 
 	return nil, fmt.Errorf("failed to fetch instance actor: %w", lastErr)
 }
 
-// fetchActor fetches an ActivityPub actor
 func (d *InstanceDiscovery) fetchActor(ctx context.Context, actorURL string) (*ActivityPubActor, error) {
 	req, err := http.NewRequestWithContext(ctx, "GET", actorURL, nil)
 	if err != nil {
@@ -232,14 +216,11 @@ func (d *InstanceDiscovery) fetchActor(ctx context.Context, actorURL string) (*A
 	return &actor, nil
 }
 
-// NegotiateRedundancy sends a redundancy request to a peer instance
 func (d *InstanceDiscovery) NegotiateRedundancy(ctx context.Context, peer *domain.InstancePeer, videoID string, videoSize int64) (bool, error) {
-	// Check if instance has capacity
 	if !peer.HasCapacity(videoSize) {
 		return false, domain.ErrInsufficientStorage
 	}
 
-	// Construct redundancy request (ActivityPub-like message)
 	requestURL := peer.InboxURL
 	if requestURL == "" {
 		requestURL = peer.InstanceURL + "/api/v1/redundancy/request"
@@ -265,21 +246,16 @@ func (d *InstanceDiscovery) NegotiateRedundancy(ctx context.Context, peer *domai
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 
-	// In production: add HTTP signature authentication
-	// req = signRequest(req, privateKey)
-
 	resp, err := d.httpClient.Do(req)
 	if err != nil {
 		return false, fmt.Errorf("failed to send request: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	// Read response
 	body, _ := io.ReadAll(resp.Body)
 
 	switch resp.StatusCode {
 	case http.StatusAccepted, http.StatusOK:
-		// Request accepted
 		return true, nil
 	case http.StatusForbidden, http.StatusUnauthorized:
 		return false, domain.ErrInstanceRefusedRedundancy
@@ -290,9 +266,7 @@ func (d *InstanceDiscovery) NegotiateRedundancy(ctx context.Context, peer *domai
 	}
 }
 
-// CheckInstanceHealth performs a health check on a peer instance
 func (d *InstanceDiscovery) CheckInstanceHealth(ctx context.Context, instanceURL string) (bool, error) {
-	// Try multiple health check endpoints
 	healthURLs := []string{
 		instanceURL + "/health",
 		instanceURL + "/api/v1/health",
@@ -319,7 +293,6 @@ func (d *InstanceDiscovery) CheckInstanceHealth(ctx context.Context, instanceURL
 	return false, fmt.Errorf("instance appears to be down")
 }
 
-// FetchRedundancyCapabilities fetches instance redundancy capabilities
 func (d *InstanceDiscovery) FetchRedundancyCapabilities(ctx context.Context, instanceURL string) (map[string]interface{}, error) {
 	capabilitiesURL := instanceURL + "/api/v1/redundancy/capabilities"
 
@@ -347,7 +320,6 @@ func (d *InstanceDiscovery) FetchRedundancyCapabilities(ctx context.Context, ins
 	return capabilities, nil
 }
 
-// extractInstanceName extracts instance name from NodeInfo metadata
 func extractInstanceName(nodeInfo *NodeInfo) string {
 	if name, ok := nodeInfo.Metadata["nodeName"].(string); ok {
 		return name
@@ -358,12 +330,10 @@ func extractInstanceName(nodeInfo *NodeInfo) string {
 	return nodeInfo.Software.Name
 }
 
-// DiscoverInstancesFromKnownPeers discovers new instances from known peers
 func (d *InstanceDiscovery) DiscoverInstancesFromKnownPeers(ctx context.Context, knownPeers []*domain.InstancePeer) ([]*domain.InstancePeer, error) {
 	var discovered []*domain.InstancePeer
 
 	for _, peer := range knownPeers {
-		// Fetch peer's peer list (if available)
 		peersURL := peer.InstanceURL + "/api/v1/server/followers/instances"
 
 		req, err := http.NewRequestWithContext(ctx, "GET", peersURL, nil)
@@ -392,7 +362,6 @@ func (d *InstanceDiscovery) DiscoverInstancesFromKnownPeers(ctx context.Context,
 		}
 		_ = resp.Body.Close()
 
-		// Discover each peer
 		for _, p := range peerList {
 			instanceURL := "https://" + p.Host
 			newPeer, err := d.DiscoverInstance(ctx, instanceURL)
