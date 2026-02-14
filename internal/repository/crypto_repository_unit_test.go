@@ -1,0 +1,833 @@
+package repository
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"regexp"
+	"testing"
+	"time"
+
+	"athena/internal/domain"
+
+	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/google/uuid"
+	"github.com/jmoiron/sqlx"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+func setupCryptoMockDB(t *testing.T) (*sqlx.DB, sqlmock.Sqlmock) {
+	t.Helper()
+
+	mockDB, mock, err := sqlmock.New()
+	require.NoError(t, err)
+
+	return sqlx.NewDb(mockDB, "sqlmock"), mock
+}
+
+func newCryptoRepo(t *testing.T) (*CryptoRepository, sqlmock.Sqlmock, func()) {
+	t.Helper()
+
+	db, mock := setupCryptoMockDB(t)
+	repo := NewCryptoRepository(db)
+	cleanup := func() { _ = db.Close() }
+	return repo, mock, cleanup
+}
+
+func TestCryptoRepository_Unit_UserMasterKey_Create(t *testing.T) {
+	ctx := context.Background()
+	userID := uuid.NewString()
+
+	t.Run("success without tx", func(t *testing.T) {
+		repo, mock, cleanup := newCryptoRepo(t)
+		defer cleanup()
+
+		masterKey := &domain.UserMasterKey{
+			UserID:             userID,
+			EncryptedMasterKey: "encrypted123",
+			Argon2Salt:         "salt123",
+			Argon2Memory:       65536,
+			Argon2Time:         3,
+			Argon2Parallelism:  2,
+			KeyVersion:         1,
+		}
+
+		mock.ExpectExec(`(?s)INSERT INTO user_master_keys`).
+			WithArgs(userID, "encrypted123", "salt123", 65536, 3, 2, 1).
+			WillReturnResult(sqlmock.NewResult(0, 1))
+
+		err := repo.CreateUserMasterKey(ctx, nil, masterKey)
+		require.NoError(t, err)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("success with tx", func(t *testing.T) {
+		repo, mock, cleanup := newCryptoRepo(t)
+		defer cleanup()
+
+		masterKey := &domain.UserMasterKey{
+			UserID:             userID,
+			EncryptedMasterKey: "encrypted456",
+			Argon2Salt:         "salt456",
+			Argon2Memory:       65536,
+			Argon2Time:         3,
+			Argon2Parallelism:  2,
+			KeyVersion:         1,
+		}
+
+		mock.ExpectBegin()
+		tx, _ := repo.db.BeginTxx(ctx, nil)
+
+		mock.ExpectExec(`(?s)INSERT INTO user_master_keys`).
+			WithArgs(userID, "encrypted456", "salt456", 65536, 3, 2, 1).
+			WillReturnResult(sqlmock.NewResult(0, 1))
+
+		err := repo.CreateUserMasterKey(ctx, tx, masterKey)
+		require.NoError(t, err)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("insert failure", func(t *testing.T) {
+		repo, mock, cleanup := newCryptoRepo(t)
+		defer cleanup()
+
+		masterKey := &domain.UserMasterKey{UserID: userID}
+
+		mock.ExpectExec(`(?s)INSERT INTO user_master_keys`).
+			WillReturnError(errors.New("insert failed"))
+
+		err := repo.CreateUserMasterKey(ctx, nil, masterKey)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to create user master key")
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+}
+
+func TestCryptoRepository_Unit_UserMasterKey_Get(t *testing.T) {
+	ctx := context.Background()
+	userID := uuid.NewString()
+	now := time.Now()
+
+	t.Run("success", func(t *testing.T) {
+		repo, mock, cleanup := newCryptoRepo(t)
+		defer cleanup()
+
+		rows := sqlmock.NewRows([]string{
+			"user_id", "encrypted_master_key", "argon2_salt", "argon2_memory",
+			"argon2_time", "argon2_parallelism", "key_version", "created_at", "updated_at",
+		}).AddRow(userID, "enc123", "salt123", 65536, 3, 2, 1, now, now)
+
+		mock.ExpectQuery(`(?s)SELECT user_id, encrypted_master_key, argon2_salt`).
+			WithArgs(userID).
+			WillReturnRows(rows)
+
+		key, err := repo.GetUserMasterKey(ctx, userID)
+		require.NoError(t, err)
+		require.NotNil(t, key)
+		assert.Equal(t, userID, key.UserID)
+		assert.Equal(t, "enc123", key.EncryptedMasterKey)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("not found returns nil", func(t *testing.T) {
+		repo, mock, cleanup := newCryptoRepo(t)
+		defer cleanup()
+
+		mock.ExpectQuery(`(?s)SELECT user_id, encrypted_master_key, argon2_salt`).
+			WithArgs(userID).
+			WillReturnError(sql.ErrNoRows)
+
+		key, err := repo.GetUserMasterKey(ctx, userID)
+		require.NoError(t, err)
+		require.Nil(t, key)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("query failure", func(t *testing.T) {
+		repo, mock, cleanup := newCryptoRepo(t)
+		defer cleanup()
+
+		mock.ExpectQuery(`(?s)SELECT user_id, encrypted_master_key, argon2_salt`).
+			WithArgs(userID).
+			WillReturnError(errors.New("query failed"))
+
+		key, err := repo.GetUserMasterKey(ctx, userID)
+		require.Nil(t, key)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to get user master key")
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+}
+
+func TestCryptoRepository_Unit_UserMasterKey_Update(t *testing.T) {
+	ctx := context.Background()
+	userID := uuid.NewString()
+
+	t.Run("success without tx", func(t *testing.T) {
+		repo, mock, cleanup := newCryptoRepo(t)
+		defer cleanup()
+
+		masterKey := &domain.UserMasterKey{
+			UserID:             userID,
+			EncryptedMasterKey: "new_enc",
+			Argon2Salt:         "new_salt",
+			KeyVersion:         2,
+		}
+
+		mock.ExpectExec(`(?s)UPDATE user_master_keys\s+SET`).
+			WithArgs("new_enc", "new_salt", 2, userID).
+			WillReturnResult(sqlmock.NewResult(0, 1))
+
+		err := repo.UpdateUserMasterKey(ctx, nil, masterKey)
+		require.NoError(t, err)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("update failure", func(t *testing.T) {
+		repo, mock, cleanup := newCryptoRepo(t)
+		defer cleanup()
+
+		masterKey := &domain.UserMasterKey{UserID: userID}
+
+		mock.ExpectExec(`(?s)UPDATE user_master_keys\s+SET`).
+			WillReturnError(errors.New("update failed"))
+
+		err := repo.UpdateUserMasterKey(ctx, nil, masterKey)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to update user master key")
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+}
+
+func TestCryptoRepository_Unit_UserMasterKey_Delete(t *testing.T) {
+	ctx := context.Background()
+	userID := uuid.NewString()
+
+	t.Run("success without tx", func(t *testing.T) {
+		repo, mock, cleanup := newCryptoRepo(t)
+		defer cleanup()
+
+		mock.ExpectExec(regexp.QuoteMeta(`DELETE FROM user_master_keys WHERE user_id = $1`)).
+			WithArgs(userID).
+			WillReturnResult(sqlmock.NewResult(0, 1))
+
+		err := repo.DeleteUserMasterKey(ctx, nil, userID)
+		require.NoError(t, err)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("delete failure", func(t *testing.T) {
+		repo, mock, cleanup := newCryptoRepo(t)
+		defer cleanup()
+
+		mock.ExpectExec(regexp.QuoteMeta(`DELETE FROM user_master_keys WHERE user_id = $1`)).
+			WithArgs(userID).
+			WillReturnError(errors.New("delete failed"))
+
+		err := repo.DeleteUserMasterKey(ctx, nil, userID)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to delete user master key")
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+}
+
+func TestCryptoRepository_Unit_ConversationKey_Create(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("success without tx", func(t *testing.T) {
+		repo, mock, cleanup := newCryptoRepo(t)
+		defer cleanup()
+
+		key := &domain.ConversationKey{
+			ID:                  uuid.NewString(),
+			ConversationID:      uuid.NewString(),
+			UserID:              uuid.NewString(),
+			EncryptedPrivateKey: "enc_priv",
+			PublicKey:           "pub_key",
+			KeyVersion:          1,
+			IsActive:            true,
+		}
+
+		mock.ExpectExec(`(?s)INSERT INTO conversation_keys`).
+			WithArgs(key.ID, key.ConversationID, key.UserID, "enc_priv", "pub_key", nil, 1, true, sqlmock.AnyArg()).
+			WillReturnResult(sqlmock.NewResult(0, 1))
+
+		err := repo.CreateConversationKey(ctx, nil, key)
+		require.NoError(t, err)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("insert failure", func(t *testing.T) {
+		repo, mock, cleanup := newCryptoRepo(t)
+		defer cleanup()
+
+		key := &domain.ConversationKey{ID: uuid.NewString()}
+
+		mock.ExpectExec(`(?s)INSERT INTO conversation_keys`).
+			WillReturnError(errors.New("insert failed"))
+
+		err := repo.CreateConversationKey(ctx, nil, key)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to create conversation key")
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+}
+
+func TestCryptoRepository_Unit_ConversationKey_Get(t *testing.T) {
+	ctx := context.Background()
+	conversationID := uuid.NewString()
+	userID := uuid.NewString()
+	keyVersion := 1
+	now := time.Now()
+
+	t.Run("success", func(t *testing.T) {
+		repo, mock, cleanup := newCryptoRepo(t)
+		defer cleanup()
+
+		rows := sqlmock.NewRows([]string{
+			"id", "conversation_id", "user_id", "encrypted_private_key", "public_key",
+			"encrypted_shared_secret", "key_version", "is_active", "created_at", "expires_at",
+		}).AddRow(
+			uuid.NewString(), conversationID, userID, "enc_priv", "pub_key", nil, keyVersion, true, now, nil,
+		)
+
+		mock.ExpectQuery(`(?s)SELECT id, conversation_id, user_id`).
+			WithArgs(conversationID, userID, keyVersion).
+			WillReturnRows(rows)
+
+		key, err := repo.GetConversationKey(ctx, conversationID, userID, keyVersion)
+		require.NoError(t, err)
+		require.NotNil(t, key)
+		assert.Equal(t, conversationID, key.ConversationID)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("not found", func(t *testing.T) {
+		repo, mock, cleanup := newCryptoRepo(t)
+		defer cleanup()
+
+		mock.ExpectQuery(`(?s)SELECT id, conversation_id, user_id`).
+			WithArgs(conversationID, userID, keyVersion).
+			WillReturnError(sql.ErrNoRows)
+
+		key, err := repo.GetConversationKey(ctx, conversationID, userID, keyVersion)
+		require.Nil(t, key)
+		require.NoError(t, err)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("query failure", func(t *testing.T) {
+		repo, mock, cleanup := newCryptoRepo(t)
+		defer cleanup()
+
+		mock.ExpectQuery(`(?s)SELECT id, conversation_id, user_id`).
+			WithArgs(conversationID, userID, keyVersion).
+			WillReturnError(errors.New("query failed"))
+
+		key, err := repo.GetConversationKey(ctx, conversationID, userID, keyVersion)
+		require.Nil(t, key)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to get conversation key")
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+}
+
+func TestCryptoRepository_Unit_ConversationKey_GetActive(t *testing.T) {
+	ctx := context.Background()
+	conversationID := uuid.NewString()
+	userID := uuid.NewString()
+	now := time.Now()
+
+	t.Run("success", func(t *testing.T) {
+		repo, mock, cleanup := newCryptoRepo(t)
+		defer cleanup()
+
+		rows := sqlmock.NewRows([]string{
+			"id", "conversation_id", "user_id", "encrypted_private_key", "public_key",
+			"encrypted_shared_secret", "key_version", "is_active", "created_at", "expires_at",
+		}).AddRow(
+			uuid.NewString(), conversationID, userID, "enc_priv", "pub_key", nil, 1, true, now, nil,
+		)
+
+		mock.ExpectQuery(`(?s)SELECT id, conversation_id, user_id.*WHERE conversation_id.*AND user_id.*AND is_active = true`).
+			WithArgs(conversationID, userID).
+			WillReturnRows(rows)
+
+		key, err := repo.GetActiveConversationKey(ctx, conversationID, userID)
+		require.NoError(t, err)
+		require.NotNil(t, key)
+		assert.True(t, key.IsActive)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("not found", func(t *testing.T) {
+		repo, mock, cleanup := newCryptoRepo(t)
+		defer cleanup()
+
+		mock.ExpectQuery(`(?s)SELECT id, conversation_id, user_id.*WHERE conversation_id.*AND user_id.*AND is_active = true`).
+			WithArgs(conversationID, userID).
+			WillReturnError(sql.ErrNoRows)
+
+		key, err := repo.GetActiveConversationKey(ctx, conversationID, userID)
+		require.Nil(t, key)
+		require.NoError(t, err)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+}
+
+func TestCryptoRepository_Unit_ConversationKey_List(t *testing.T) {
+	ctx := context.Background()
+	conversationID := uuid.NewString()
+	now := time.Now()
+
+	t.Run("success with multiple keys", func(t *testing.T) {
+		repo, mock, cleanup := newCryptoRepo(t)
+		defer cleanup()
+
+		rows := sqlmock.NewRows([]string{
+			"id", "conversation_id", "user_id", "encrypted_private_key", "public_key",
+			"encrypted_shared_secret", "key_version", "is_active", "created_at", "expires_at",
+		}).AddRow(
+			uuid.NewString(), conversationID, uuid.NewString(), "enc1", "pub1", nil, 1, true, now, nil,
+		).AddRow(
+			uuid.NewString(), conversationID, uuid.NewString(), "enc2", "pub2", nil, 1, false, now, nil,
+		)
+
+		mock.ExpectQuery(`(?s)SELECT id, conversation_id, user_id.*WHERE conversation_id`).
+			WithArgs(conversationID).
+			WillReturnRows(rows)
+
+		keys, err := repo.ListConversationKeys(ctx, conversationID)
+		require.NoError(t, err)
+		require.Len(t, keys, 2)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("query failure", func(t *testing.T) {
+		repo, mock, cleanup := newCryptoRepo(t)
+		defer cleanup()
+
+		mock.ExpectQuery(`(?s)SELECT id, conversation_id, user_id.*WHERE conversation_id`).
+			WithArgs(conversationID).
+			WillReturnError(errors.New("query failed"))
+
+		keys, err := repo.ListConversationKeys(ctx, conversationID)
+		require.Nil(t, keys)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to list conversation keys")
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+}
+
+func TestCryptoRepository_Unit_ConversationKey_UpdateAndDeactivate(t *testing.T) {
+	ctx := context.Background()
+	conversationID := uuid.NewString()
+
+	t.Run("update success", func(t *testing.T) {
+		repo, mock, cleanup := newCryptoRepo(t)
+		defer cleanup()
+
+		sharedSecret := "shared_secret"
+		expiresAt := time.Now().Add(1 * time.Hour)
+		key := &domain.ConversationKey{
+			ID:                    uuid.NewString(),
+			ConversationID:        conversationID,
+			UserID:                uuid.NewString(),
+			EncryptedPrivateKey:   "new_enc",
+			PublicKey:             "new_pub",
+			EncryptedSharedSecret: &sharedSecret,
+			KeyVersion:            2,
+			IsActive:              true,
+			ExpiresAt:             &expiresAt,
+		}
+
+		mock.ExpectExec(`(?s)UPDATE conversation_keys\s+SET encrypted_shared_secret`).
+			WithArgs(&sharedSecret, true, &expiresAt, key.ID).
+			WillReturnResult(sqlmock.NewResult(0, 1))
+
+		err := repo.UpdateConversationKey(ctx, nil, key)
+		require.NoError(t, err)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("deactivate keys success", func(t *testing.T) {
+		repo, mock, cleanup := newCryptoRepo(t)
+		defer cleanup()
+
+		mock.ExpectExec(`(?s)UPDATE conversation_keys\s+SET is_active = false`).
+			WithArgs(conversationID, 2).
+			WillReturnResult(sqlmock.NewResult(0, 3))
+
+		err := repo.DeactivateConversationKeys(ctx, nil, conversationID, 2)
+		require.NoError(t, err)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("deactivate failure", func(t *testing.T) {
+		repo, mock, cleanup := newCryptoRepo(t)
+		defer cleanup()
+
+		mock.ExpectExec(`(?s)UPDATE conversation_keys\s+SET is_active = false`).
+			WithArgs(conversationID, 2).
+			WillReturnError(errors.New("update failed"))
+
+		err := repo.DeactivateConversationKeys(ctx, nil, conversationID, 2)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to deactivate conversation keys")
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+}
+
+func TestCryptoRepository_Unit_KeyExchangeMessage_Create(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("success without tx", func(t *testing.T) {
+		repo, mock, cleanup := newCryptoRepo(t)
+		defer cleanup()
+
+		msg := &domain.KeyExchangeMessage{
+			ID:             uuid.NewString(),
+			SenderID:       uuid.NewString(),
+			RecipientID:    uuid.NewString(),
+			ConversationID: uuid.NewString(),
+			ExchangeType:   "dh_key_exchange",
+			PublicKey:      "pub_key",
+			Signature:      "sig",
+			Nonce:          "nonce",
+		}
+
+		mock.ExpectExec(`(?s)INSERT INTO key_exchange_messages`).
+			WithArgs(msg.ID, msg.ConversationID, msg.SenderID, msg.RecipientID, "dh_key_exchange", "pub_key", "sig", "nonce", sqlmock.AnyArg()).
+			WillReturnResult(sqlmock.NewResult(0, 1))
+
+		err := repo.CreateKeyExchangeMessage(ctx, nil, msg)
+		require.NoError(t, err)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("insert failure", func(t *testing.T) {
+		repo, mock, cleanup := newCryptoRepo(t)
+		defer cleanup()
+
+		msg := &domain.KeyExchangeMessage{ID: uuid.NewString()}
+
+		mock.ExpectExec(`(?s)INSERT INTO key_exchange_messages`).
+			WillReturnError(errors.New("insert failed"))
+
+		err := repo.CreateKeyExchangeMessage(ctx, nil, msg)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to create key exchange message")
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+}
+
+func TestCryptoRepository_Unit_KeyExchangeMessage_Get(t *testing.T) {
+	ctx := context.Background()
+	messageID := uuid.NewString()
+	now := time.Now()
+
+	t.Run("success", func(t *testing.T) {
+		repo, mock, cleanup := newCryptoRepo(t)
+		defer cleanup()
+
+		rows := sqlmock.NewRows([]string{
+			"id", "conversation_id", "sender_id", "recipient_id", "exchange_type", "public_key", "signature", "nonce", "created_at", "expires_at",
+		}).AddRow(messageID, uuid.NewString(), uuid.NewString(), uuid.NewString(), "dh_key_exchange", "pub_key", "sig", "nonce", now, now.Add(1*time.Hour))
+
+		mock.ExpectQuery(`(?s)SELECT id, conversation_id, sender_id, recipient_id, exchange_type`).
+			WithArgs(messageID).
+			WillReturnRows(rows)
+
+		msg, err := repo.GetKeyExchangeMessage(ctx, messageID)
+		require.NoError(t, err)
+		require.NotNil(t, msg)
+		assert.Equal(t, messageID, msg.ID)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("not found", func(t *testing.T) {
+		repo, mock, cleanup := newCryptoRepo(t)
+		defer cleanup()
+
+		mock.ExpectQuery(`(?s)SELECT id, conversation_id, sender_id, recipient_id, exchange_type`).
+			WithArgs(messageID).
+			WillReturnError(sql.ErrNoRows)
+
+		msg, err := repo.GetKeyExchangeMessage(ctx, messageID)
+		require.Nil(t, msg)
+		require.NoError(t, err)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+}
+
+func TestCryptoRepository_Unit_KeyExchangeMessage_GetPending(t *testing.T) {
+	ctx := context.Background()
+	userID := uuid.NewString()
+	now := time.Now()
+
+	t.Run("success", func(t *testing.T) {
+		repo, mock, cleanup := newCryptoRepo(t)
+		defer cleanup()
+
+		rows := sqlmock.NewRows([]string{
+			"id", "conversation_id", "sender_id", "recipient_id", "exchange_type", "public_key", "signature", "nonce", "created_at", "expires_at",
+		}).AddRow(uuid.NewString(), uuid.NewString(), uuid.NewString(), userID, "dh_key_exchange", "pub_key", "sig", "nonce", now, now.Add(1*time.Hour))
+
+		mock.ExpectQuery(`(?s)SELECT id, conversation_id, sender_id, recipient_id, exchange_type.*WHERE recipient_id`).
+			WithArgs(userID).
+			WillReturnRows(rows)
+
+		msgs, err := repo.GetPendingKeyExchanges(ctx, userID)
+		require.NoError(t, err)
+		require.Len(t, msgs, 1)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("query failure", func(t *testing.T) {
+		repo, mock, cleanup := newCryptoRepo(t)
+		defer cleanup()
+
+		mock.ExpectQuery(`(?s)SELECT id, conversation_id, sender_id, recipient_id, exchange_type.*WHERE recipient_id`).
+			WithArgs(userID).
+			WillReturnError(errors.New("query failed"))
+
+		msgs, err := repo.GetPendingKeyExchanges(ctx, userID)
+		require.Nil(t, msgs)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to get pending key exchanges")
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+}
+
+func TestCryptoRepository_Unit_KeyExchangeMessage_Delete(t *testing.T) {
+	ctx := context.Background()
+	messageID := uuid.NewString()
+
+	t.Run("success", func(t *testing.T) {
+		repo, mock, cleanup := newCryptoRepo(t)
+		defer cleanup()
+
+		mock.ExpectExec(regexp.QuoteMeta(`DELETE FROM key_exchange_messages WHERE id = $1`)).
+			WithArgs(messageID).
+			WillReturnResult(sqlmock.NewResult(0, 1))
+
+		err := repo.DeleteKeyExchangeMessage(ctx, nil, messageID)
+		require.NoError(t, err)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("delete failure", func(t *testing.T) {
+		repo, mock, cleanup := newCryptoRepo(t)
+		defer cleanup()
+
+		mock.ExpectExec(regexp.QuoteMeta(`DELETE FROM key_exchange_messages WHERE id = $1`)).
+			WithArgs(messageID).
+			WillReturnError(errors.New("delete failed"))
+
+		err := repo.DeleteKeyExchangeMessage(ctx, nil, messageID)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to delete key exchange message")
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+}
+
+func TestCryptoRepository_Unit_KeyExchangeMessage_Cleanup(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("success", func(t *testing.T) {
+		repo, mock, cleanup := newCryptoRepo(t)
+		defer cleanup()
+
+		mock.ExpectExec(regexp.QuoteMeta(`DELETE FROM key_exchange_messages WHERE expires_at <= NOW()`)).
+			WillReturnResult(sqlmock.NewResult(0, 42))
+
+		count, err := repo.CleanupExpiredKeyExchanges(ctx)
+		require.NoError(t, err)
+		assert.Equal(t, int64(42), count)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("delete failure", func(t *testing.T) {
+		repo, mock, cleanup := newCryptoRepo(t)
+		defer cleanup()
+
+		mock.ExpectExec(regexp.QuoteMeta(`DELETE FROM key_exchange_messages WHERE expires_at <= NOW()`)).
+			WillReturnError(errors.New("delete failed"))
+
+		count, err := repo.CleanupExpiredKeyExchanges(ctx)
+		assert.Equal(t, int64(0), count)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to cleanup expired key exchanges")
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+}
+
+func TestCryptoRepository_Unit_UserSigningKey_CRUD(t *testing.T) {
+	ctx := context.Background()
+	userID := uuid.NewString()
+
+	t.Run("create success", func(t *testing.T) {
+		repo, mock, cleanup := newCryptoRepo(t)
+		defer cleanup()
+
+		key := &domain.UserSigningKey{
+			UserID:              userID,
+			EncryptedPrivateKey: "enc_priv",
+			PublicKey:           "pub_key",
+			KeyVersion:          1,
+		}
+
+		mock.ExpectExec(`(?s)INSERT INTO user_signing_keys`).
+			WithArgs(userID, "enc_priv", "pub_key", 1).
+			WillReturnResult(sqlmock.NewResult(0, 1))
+
+		err := repo.CreateUserSigningKey(ctx, nil, key)
+		require.NoError(t, err)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("get success", func(t *testing.T) {
+		repo, mock, cleanup := newCryptoRepo(t)
+		defer cleanup()
+
+		rows := sqlmock.NewRows([]string{
+			"user_id", "encrypted_private_key", "public_key", "key_version", "created_at",
+		}).AddRow(userID, "enc_priv", "pub_key", 1, time.Now())
+
+		mock.ExpectQuery(`(?s)SELECT user_id, encrypted_private_key, public_key, key_version, created_at`).
+			WithArgs(userID).
+			WillReturnRows(rows)
+
+		key, err := repo.GetUserSigningKey(ctx, userID)
+		require.NoError(t, err)
+		require.NotNil(t, key)
+		assert.Equal(t, userID, key.UserID)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("get public key success", func(t *testing.T) {
+		repo, mock, cleanup := newCryptoRepo(t)
+		defer cleanup()
+
+		mock.ExpectQuery(regexp.QuoteMeta(`SELECT public_key FROM user_signing_keys WHERE user_id = $1`)).
+			WithArgs(userID).
+			WillReturnRows(sqlmock.NewRows([]string{"public_key"}).AddRow("pub_key"))
+
+		pubKey, err := repo.GetUserPublicSigningKey(ctx, userID)
+		require.NoError(t, err)
+		assert.Equal(t, "pub_key", pubKey)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("delete success", func(t *testing.T) {
+		repo, mock, cleanup := newCryptoRepo(t)
+		defer cleanup()
+
+		mock.ExpectExec(regexp.QuoteMeta(`DELETE FROM user_signing_keys WHERE user_id = $1`)).
+			WithArgs(userID).
+			WillReturnResult(sqlmock.NewResult(0, 1))
+
+		err := repo.DeleteUserSigningKey(ctx, nil, userID)
+		require.NoError(t, err)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+}
+
+func TestCryptoRepository_Unit_AuditLog(t *testing.T) {
+	ctx := context.Background()
+	userID := uuid.NewString()
+
+	t.Run("create audit log success", func(t *testing.T) {
+		repo, mock, cleanup := newCryptoRepo(t)
+		defer cleanup()
+
+		clientIP := "192.168.1.1"
+		userAgent := "test-agent"
+		auditLog := &domain.CryptoAuditLog{
+			ID:             uuid.NewString(),
+			UserID:         userID,
+			Operation:      "key_created",
+			Success:        true,
+			ConversationID: nil,
+			ClientIP:       &clientIP,
+			UserAgent:      &userAgent,
+		}
+
+		mock.ExpectExec(`(?s)INSERT INTO crypto_audit_log`).
+			WithArgs(auditLog.ID, userID, nil, "key_created", true, nil, &clientIP, &userAgent).
+			WillReturnResult(sqlmock.NewResult(0, 1))
+
+		err := repo.CreateAuditLog(ctx, auditLog)
+		require.NoError(t, err)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("get audit logs success", func(t *testing.T) {
+		repo, mock, cleanup := newCryptoRepo(t)
+		defer cleanup()
+
+		now := time.Now()
+		clientIP := "192.168.1.1"
+		userAgent := "agent"
+		rows := sqlmock.NewRows([]string{
+			"id", "user_id", "conversation_id", "operation", "success", "error_message", "client_ip", "user_agent", "created_at",
+		}).AddRow(uuid.NewString(), userID, nil, "key_created", true, nil, &clientIP, &userAgent, now)
+
+		mock.ExpectQuery(`(?s)SELECT id, user_id, conversation_id, operation, success.*WHERE user_id.*ORDER BY created_at DESC`).
+			WithArgs(userID, 10, 0).
+			WillReturnRows(rows)
+
+		logs, err := repo.GetAuditLogs(ctx, userID, 10, 0)
+		require.NoError(t, err)
+		require.Len(t, logs, 1)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("cleanup old audit logs success", func(t *testing.T) {
+		repo, mock, cleanup := newCryptoRepo(t)
+		defer cleanup()
+
+		mock.ExpectExec(`(?s)DELETE FROM crypto_audit_log WHERE created_at < NOW\(\) - \$1::INTERVAL`).
+			WithArgs((30 * 24 * time.Hour).String()).
+			WillReturnResult(sqlmock.NewResult(0, 100))
+
+		count, err := repo.CleanupOldAuditLogs(ctx, 30*24*time.Hour)
+		require.NoError(t, err)
+		assert.Equal(t, int64(100), count)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+}
+
+func TestCryptoRepository_Unit_WithTransaction(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("success", func(t *testing.T) {
+		repo, mock, cleanup := newCryptoRepo(t)
+		defer cleanup()
+
+		mock.ExpectBegin()
+		mock.ExpectCommit()
+
+		err := repo.WithTransaction(ctx, func(tx *sqlx.Tx) error {
+			return nil
+		})
+		require.NoError(t, err)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("rollback on error", func(t *testing.T) {
+		repo, mock, cleanup := newCryptoRepo(t)
+		defer cleanup()
+
+		mock.ExpectBegin()
+		mock.ExpectRollback()
+
+		err := repo.WithTransaction(ctx, func(tx *sqlx.Tx) error {
+			return errors.New("test error")
+		})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "test error")
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+}
