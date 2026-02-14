@@ -18,10 +18,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// ---------------------------------------------------------------------------
-// helpers
-// ---------------------------------------------------------------------------
-
 func setupViewsMockDB(t *testing.T) (*sqlx.DB, sqlmock.Sqlmock) {
 	t.Helper()
 	mockDB, mock, err := sqlmock.New()
@@ -93,10 +89,6 @@ func sampleTrendingVideo() *domain.TrendingVideo {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// CreateUserView
-// ---------------------------------------------------------------------------
-
 func TestViewsRepository_Unit_CreateUserView(t *testing.T) {
 	ctx := context.Background()
 
@@ -105,7 +97,7 @@ func TestViewsRepository_Unit_CreateUserView(t *testing.T) {
 		defer cleanup()
 
 		view := sampleUserView()
-		view.ID = "" // let repo generate
+		view.ID = ""
 
 		mock.ExpectExec(`(?s)INSERT INTO user_views`).
 			WillReturnResult(sqlmock.NewResult(1, 1))
@@ -131,10 +123,6 @@ func TestViewsRepository_Unit_CreateUserView(t *testing.T) {
 		require.NoError(t, mock.ExpectationsWereMet())
 	})
 }
-
-// ---------------------------------------------------------------------------
-// UpdateUserView
-// ---------------------------------------------------------------------------
 
 func TestViewsRepository_Unit_UpdateUserView(t *testing.T) {
 	ctx := context.Background()
@@ -169,10 +157,6 @@ func TestViewsRepository_Unit_UpdateUserView(t *testing.T) {
 		require.NoError(t, mock.ExpectationsWereMet())
 	})
 }
-
-// ---------------------------------------------------------------------------
-// GetUserViewBySessionAndVideo
-// ---------------------------------------------------------------------------
 
 func TestViewsRepository_Unit_GetUserViewBySessionAndVideo(t *testing.T) {
 	ctx := context.Background()
@@ -255,10 +239,6 @@ func TestViewsRepository_Unit_GetUserViewBySessionAndVideo(t *testing.T) {
 	})
 }
 
-// ---------------------------------------------------------------------------
-// GetDailyVideoStats
-// ---------------------------------------------------------------------------
-
 func TestViewsRepository_Unit_GetDailyVideoStats(t *testing.T) {
 	ctx := context.Background()
 	videoID := uuid.New().String()
@@ -315,10 +295,6 @@ func TestViewsRepository_Unit_GetDailyVideoStats(t *testing.T) {
 	})
 }
 
-// ---------------------------------------------------------------------------
-// GetUserEngagementStats
-// ---------------------------------------------------------------------------
-
 func TestViewsRepository_Unit_GetUserEngagementStats(t *testing.T) {
 	ctx := context.Background()
 	userID := uuid.New().String()
@@ -374,10 +350,6 @@ func TestViewsRepository_Unit_GetUserEngagementStats(t *testing.T) {
 		require.NoError(t, mock.ExpectationsWereMet())
 	})
 }
-
-// ---------------------------------------------------------------------------
-// GetTrendingVideos
-// ---------------------------------------------------------------------------
 
 func TestViewsRepository_Unit_GetTrendingVideos(t *testing.T) {
 	ctx := context.Background()
@@ -448,10 +420,6 @@ func TestViewsRepository_Unit_GetTrendingVideos(t *testing.T) {
 	})
 }
 
-// ---------------------------------------------------------------------------
-// UpdateTrendingVideo
-// ---------------------------------------------------------------------------
-
 func TestViewsRepository_Unit_UpdateTrendingVideo(t *testing.T) {
 	ctx := context.Background()
 
@@ -482,10 +450,6 @@ func TestViewsRepository_Unit_UpdateTrendingVideo(t *testing.T) {
 		require.NoError(t, mock.ExpectationsWereMet())
 	})
 }
-
-// ---------------------------------------------------------------------------
-// GetBatchTrendingStats
-// ---------------------------------------------------------------------------
 
 func TestViewsRepository_Unit_GetBatchTrendingStats(t *testing.T) {
 	ctx := context.Background()
@@ -540,10 +504,6 @@ func TestViewsRepository_Unit_GetBatchTrendingStats(t *testing.T) {
 	})
 }
 
-// ---------------------------------------------------------------------------
-// BatchUpdateTrendingVideos
-// ---------------------------------------------------------------------------
-
 func TestViewsRepository_Unit_BatchUpdateTrendingVideos(t *testing.T) {
 	ctx := context.Background()
 
@@ -594,10 +554,6 @@ func TestViewsRepository_Unit_BatchUpdateTrendingVideos(t *testing.T) {
 	})
 }
 
-// ---------------------------------------------------------------------------
-// IncrementVideoViews
-// ---------------------------------------------------------------------------
-
 func TestViewsRepository_Unit_IncrementVideoViews(t *testing.T) {
 	ctx := context.Background()
 	videoID := uuid.New().String()
@@ -629,10 +585,6 @@ func TestViewsRepository_Unit_IncrementVideoViews(t *testing.T) {
 		require.NoError(t, mock.ExpectationsWereMet())
 	})
 }
-
-// ---------------------------------------------------------------------------
-// GetUniqueViews
-// ---------------------------------------------------------------------------
 
 func TestViewsRepository_Unit_GetUniqueViews(t *testing.T) {
 	ctx := context.Background()
@@ -670,10 +622,6 @@ func TestViewsRepository_Unit_GetUniqueViews(t *testing.T) {
 	})
 }
 
-// ---------------------------------------------------------------------------
-// CalculateEngagementScore
-// ---------------------------------------------------------------------------
-
 func TestViewsRepository_Unit_CalculateEngagementScore(t *testing.T) {
 	ctx := context.Background()
 	videoID := uuid.New().String()
@@ -708,10 +656,6 @@ func TestViewsRepository_Unit_CalculateEngagementScore(t *testing.T) {
 	})
 }
 
-// ---------------------------------------------------------------------------
-// AggregateDailyStats
-// ---------------------------------------------------------------------------
-
 func TestViewsRepository_Unit_AggregateDailyStats(t *testing.T) {
 	ctx := context.Background()
 	date := time.Now().Truncate(24 * time.Hour)
@@ -744,10 +688,6 @@ func TestViewsRepository_Unit_AggregateDailyStats(t *testing.T) {
 	})
 }
 
-// ---------------------------------------------------------------------------
-// CleanupOldViews
-// ---------------------------------------------------------------------------
-
 func TestViewsRepository_Unit_CleanupOldViews(t *testing.T) {
 	ctx := context.Background()
 
@@ -779,14 +719,9 @@ func TestViewsRepository_Unit_CleanupOldViews(t *testing.T) {
 	})
 }
 
-// ---------------------------------------------------------------------------
-// GetViewsByDateRange
-// ---------------------------------------------------------------------------
-
 func TestViewsRepository_Unit_GetViewsByDateRange(t *testing.T) {
 	ctx := context.Background()
 
-	// Full set of columns returned by SELECT * FROM user_views
 	userViewColumns := []string{
 		"id", "video_id", "user_id", "session_id", "fingerprint_hash",
 		"watch_duration", "video_duration", "completion_percentage", "is_completed",
@@ -881,10 +816,6 @@ func TestViewsRepository_Unit_GetViewsByDateRange(t *testing.T) {
 	})
 }
 
-// ---------------------------------------------------------------------------
-// GetTopVideos
-// ---------------------------------------------------------------------------
-
 func TestViewsRepository_Unit_GetTopVideos(t *testing.T) {
 	ctx := context.Background()
 	start := time.Now().AddDate(0, 0, -7)
@@ -927,10 +858,6 @@ func TestViewsRepository_Unit_GetTopVideos(t *testing.T) {
 	})
 }
 
-// ---------------------------------------------------------------------------
-// GetViewCountsByVideo
-// ---------------------------------------------------------------------------
-
 func TestViewsRepository_Unit_GetViewCountsByVideo(t *testing.T) {
 	ctx := context.Background()
 
@@ -943,26 +870,42 @@ func TestViewsRepository_Unit_GetViewCountsByVideo(t *testing.T) {
 		assert.Empty(t, counts)
 	})
 
-	// NOTE: The source code passes []string directly to QueryContext without
-	// pq.Array(), which causes a type conversion error at the database/sql
-	// layer. This test documents the current behaviour. If the source is
-	// fixed to use pq.Array(videoIDs), these tests should be updated to
-	// match the corrected happy-path and error-path expectations.
-	t.Run("raw slice arg causes type error", func(t *testing.T) {
-		repo, _, cleanup := newViewsRepo(t)
+	t.Run("success - multiple videos with counts", func(t *testing.T) {
+		repo, mock, cleanup := newViewsRepo(t)
 		defer cleanup()
 
 		ids := []string{"vid-1", "vid-2"}
+		rows := sqlmock.NewRows([]string{"video_id", "view_count"}).
+			AddRow("vid-1", int64(10)).
+			AddRow("vid-2", int64(5))
+
+		mock.ExpectQuery(`SELECT video_id, COUNT\(\*\) as view_count FROM user_views WHERE video_id = ANY\(\$1\) GROUP BY video_id`).
+			WithArgs(pq.Array(ids)).
+			WillReturnRows(rows)
+
+		counts, err := repo.GetViewCountsByVideo(ctx, ids)
+		require.NoError(t, err)
+		assert.Len(t, counts, 2)
+		assert.Equal(t, int64(10), counts["vid-1"])
+		assert.Equal(t, int64(5), counts["vid-2"])
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("database error", func(t *testing.T) {
+		repo, mock, cleanup := newViewsRepo(t)
+		defer cleanup()
+
+		ids := []string{"vid-1"}
+		mock.ExpectQuery(`SELECT video_id, COUNT\(\*\) as view_count FROM user_views WHERE video_id = ANY\(\$1\) GROUP BY video_id`).
+			WithArgs(pq.Array(ids)).
+			WillReturnError(assert.AnError)
+
 		counts, err := repo.GetViewCountsByVideo(ctx, ids)
 		require.Error(t, err)
 		assert.Nil(t, counts)
-		assert.Contains(t, err.Error(), "unsupported type []string")
+		assert.NoError(t, mock.ExpectationsWereMet())
 	})
 }
-
-// ---------------------------------------------------------------------------
-// GetRecentViews
-// ---------------------------------------------------------------------------
 
 func TestViewsRepository_Unit_GetRecentViews(t *testing.T) {
 	ctx := context.Background()
@@ -1032,10 +975,6 @@ func TestViewsRepository_Unit_GetRecentViews(t *testing.T) {
 	})
 }
 
-// ---------------------------------------------------------------------------
-// BatchCreateUserViews
-// ---------------------------------------------------------------------------
-
 func TestViewsRepository_Unit_BatchCreateUserViews(t *testing.T) {
 	ctx := context.Background()
 
@@ -1052,7 +991,7 @@ func TestViewsRepository_Unit_BatchCreateUserViews(t *testing.T) {
 		defer cleanup()
 
 		view := sampleUserView()
-		view.ID = "" // let repo generate
+		view.ID = ""
 
 		mock.ExpectBegin()
 		mock.ExpectExec(`(?s)INSERT INTO user_views`).
@@ -1116,10 +1055,6 @@ func TestViewsRepository_Unit_BatchCreateUserViews(t *testing.T) {
 	})
 }
 
-// ---------------------------------------------------------------------------
-// GetVideoAnalytics (composite method)
-// ---------------------------------------------------------------------------
-
 func TestViewsRepository_Unit_GetVideoAnalytics(t *testing.T) {
 	ctx := context.Background()
 
@@ -1129,7 +1064,6 @@ func TestViewsRepository_Unit_GetVideoAnalytics(t *testing.T) {
 
 		filter := &domain.ViewAnalyticsFilter{VideoID: "vid-1"}
 
-		// 1. Aggregate stats query
 		mock.ExpectQuery(`(?s)SELECT.*COUNT\(\*\) as total_views.*FROM \(SELECT \* FROM user_views WHERE 1=1 AND video_id`).
 			WithArgs("vid-1").
 			WillReturnRows(sqlmock.NewRows([]string{
@@ -1137,21 +1071,18 @@ func TestViewsRepository_Unit_GetVideoAnalytics(t *testing.T) {
 				"completion", "avg_completion_rate", "completed_views", "total_watch_time",
 			}).AddRow(int64(100), int64(80), 120.0, 120.0, 65.0, 65.0, int64(30), int64(12000)))
 
-		// 2. Device stats (grouped by device_type)
 		mock.ExpectQuery(`(?s)SELECT.*COALESCE\(device_type.*GROUP BY device_type`).
 			WithArgs("vid-1").
 			WillReturnRows(sqlmock.NewRows([]string{"field", "count"}).
 				AddRow("mobile", int64(60)).
 				AddRow("desktop", int64(40)))
 
-		// 3. Geo stats (grouped by country_code)
 		mock.ExpectQuery(`(?s)SELECT.*COALESCE\(country_code.*GROUP BY country_code`).
 			WithArgs("vid-1").
 			WillReturnRows(sqlmock.NewRows([]string{"field", "count"}).
 				AddRow("US", int64(70)).
 				AddRow("CA", int64(30)))
 
-		// 4. Hourly stats
 		mock.ExpectQuery(`(?s)SELECT.*view_hour.*GROUP BY view_hour`).
 			WithArgs("vid-1").
 			WillReturnRows(sqlmock.NewRows([]string{"view_hour", "count"}).
@@ -1167,15 +1098,12 @@ func TestViewsRepository_Unit_GetVideoAnalytics(t *testing.T) {
 		assert.Equal(t, int64(30), analytics.CompletedViews)
 		assert.Equal(t, int64(12000), analytics.TotalWatchTime)
 
-		// Device breakdown
 		assert.Equal(t, int64(60), analytics.DeviceBreakdown["mobile"])
 		assert.Equal(t, int64(40), analytics.DeviceBreakdown["desktop"])
 
-		// Country breakdown
 		assert.Equal(t, int64(70), analytics.CountryBreakdown["US"])
 		assert.Equal(t, int64(30), analytics.CountryBreakdown["CA"])
 
-		// Hourly stats
 		assert.Equal(t, int64(20), analytics.HourlyStats[10])
 		assert.Equal(t, int64(30), analytics.HourlyStats[14])
 
@@ -1205,7 +1133,6 @@ func TestViewsRepository_Unit_GetVideoAnalytics(t *testing.T) {
 
 		filter := &domain.ViewAnalyticsFilter{VideoID: "vid-1"}
 
-		// Aggregate passes
 		mock.ExpectQuery(`(?s)SELECT.*COUNT\(\*\) as total_views`).
 			WithArgs("vid-1").
 			WillReturnRows(sqlmock.NewRows([]string{
@@ -1213,7 +1140,6 @@ func TestViewsRepository_Unit_GetVideoAnalytics(t *testing.T) {
 				"completion", "avg_completion_rate", "completed_views", "total_watch_time",
 			}).AddRow(int64(10), int64(8), 60.0, 60.0, 50.0, 50.0, int64(3), int64(600)))
 
-		// Device stats fails
 		mock.ExpectQuery(`(?s)SELECT.*COALESCE\(device_type`).
 			WithArgs("vid-1").
 			WillReturnError(errors.New("device query failed"))
@@ -1231,7 +1157,6 @@ func TestViewsRepository_Unit_GetVideoAnalytics(t *testing.T) {
 
 		filter := &domain.ViewAnalyticsFilter{VideoID: "vid-1"}
 
-		// Aggregate passes
 		mock.ExpectQuery(`(?s)SELECT.*COUNT\(\*\) as total_views`).
 			WithArgs("vid-1").
 			WillReturnRows(sqlmock.NewRows([]string{
@@ -1239,12 +1164,10 @@ func TestViewsRepository_Unit_GetVideoAnalytics(t *testing.T) {
 				"completion", "avg_completion_rate", "completed_views", "total_watch_time",
 			}).AddRow(int64(10), int64(8), 60.0, 60.0, 50.0, 50.0, int64(3), int64(600)))
 
-		// Device stats passes
 		mock.ExpectQuery(`(?s)SELECT.*COALESCE\(device_type`).
 			WithArgs("vid-1").
 			WillReturnRows(sqlmock.NewRows([]string{"field", "count"}).AddRow("mobile", int64(10)))
 
-		// Geo stats fails
 		mock.ExpectQuery(`(?s)SELECT.*COALESCE\(country_code`).
 			WithArgs("vid-1").
 			WillReturnError(errors.New("geo query failed"))
@@ -1262,7 +1185,6 @@ func TestViewsRepository_Unit_GetVideoAnalytics(t *testing.T) {
 
 		filter := &domain.ViewAnalyticsFilter{VideoID: "vid-1"}
 
-		// Aggregate passes
 		mock.ExpectQuery(`(?s)SELECT.*COUNT\(\*\) as total_views`).
 			WithArgs("vid-1").
 			WillReturnRows(sqlmock.NewRows([]string{
@@ -1270,17 +1192,14 @@ func TestViewsRepository_Unit_GetVideoAnalytics(t *testing.T) {
 				"completion", "avg_completion_rate", "completed_views", "total_watch_time",
 			}).AddRow(int64(10), int64(8), 60.0, 60.0, 50.0, 50.0, int64(3), int64(600)))
 
-		// Device stats passes
 		mock.ExpectQuery(`(?s)SELECT.*COALESCE\(device_type`).
 			WithArgs("vid-1").
 			WillReturnRows(sqlmock.NewRows([]string{"field", "count"}).AddRow("mobile", int64(10)))
 
-		// Geo stats passes
 		mock.ExpectQuery(`(?s)SELECT.*COALESCE\(country_code`).
 			WithArgs("vid-1").
 			WillReturnRows(sqlmock.NewRows([]string{"field", "count"}).AddRow("US", int64(10)))
 
-		// Hourly stats fails
 		mock.ExpectQuery(`(?s)SELECT.*view_hour.*GROUP BY view_hour`).
 			WithArgs("vid-1").
 			WillReturnError(errors.New("hourly query failed"))

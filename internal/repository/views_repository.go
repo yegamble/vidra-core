@@ -13,17 +13,14 @@ import (
 	"athena/internal/domain"
 )
 
-// ViewsRepository implements the views repository interface
 type ViewsRepository struct {
 	db *sqlx.DB
 }
 
-// NewViewsRepository creates a new views repository
 func NewViewsRepository(db *sqlx.DB) *ViewsRepository {
 	return &ViewsRepository{db: db}
 }
 
-// CreateUserView creates a new user view record
 func (r *ViewsRepository) CreateUserView(ctx context.Context, view *domain.UserView) error {
 	query := `
 		INSERT INTO user_views (
@@ -62,7 +59,6 @@ func (r *ViewsRepository) CreateUserView(ctx context.Context, view *domain.UserV
 	return err
 }
 
-// UpdateUserView updates an existing user view record
 func (r *ViewsRepository) UpdateUserView(ctx context.Context, view *domain.UserView) error {
 	query := `
 		UPDATE user_views SET
@@ -84,7 +80,6 @@ func (r *ViewsRepository) UpdateUserView(ctx context.Context, view *domain.UserV
 	return err
 }
 
-// GetUserViewBySessionAndVideo finds a view by session ID and video ID
 func (r *ViewsRepository) GetUserViewBySessionAndVideo(ctx context.Context, sessionID, videoID string) (*domain.UserView, error) {
 	query := `
 		SELECT
@@ -127,7 +122,6 @@ func (r *ViewsRepository) GetUserViewBySessionAndVideo(ctx context.Context, sess
 	return &view, nil
 }
 
-// buildAnalyticsQuery builds the base query with filters
 func (r *ViewsRepository) buildAnalyticsQuery(filter *domain.ViewAnalyticsFilter) (string, []interface{}) {
 	baseQuery := `SELECT * FROM user_views WHERE 1=1`
 	args := []interface{}{}
@@ -168,33 +162,28 @@ func (r *ViewsRepository) buildAnalyticsQuery(filter *domain.ViewAnalyticsFilter
 	return baseQuery, args
 }
 
-// GetVideoAnalytics retrieves analytics for a video with filters
 func (r *ViewsRepository) GetVideoAnalytics(ctx context.Context, filter *domain.ViewAnalyticsFilter) (*domain.ViewAnalyticsResponse, error) {
 	baseQuery, args := r.buildAnalyticsQuery(filter)
 
-	// Get aggregate stats
 	response, err := r.getAggregateStats(ctx, baseQuery, args)
 	if err != nil {
 		return nil, err
 	}
 
-	// Get device stats
 	deviceStats, err := r.getGroupedStats(ctx, baseQuery, args, "device_type")
 	if err != nil {
 		return nil, err
 	}
 	response.DeviceStats = deviceStats
-	response.DeviceBreakdown = deviceStats // Same data for now
+	response.DeviceBreakdown = deviceStats
 
-	// Get geo stats
 	geoStats, err := r.getGroupedStats(ctx, baseQuery, args, "country_code")
 	if err != nil {
 		return nil, err
 	}
 	response.GeoStats = geoStats
-	response.CountryBreakdown = geoStats // Same data for now
+	response.CountryBreakdown = geoStats
 
-	// Get hourly stats
 	hourlyStats, err := r.getHourlyStats(ctx, baseQuery, args)
 	if err != nil {
 		return nil, err
@@ -204,7 +193,6 @@ func (r *ViewsRepository) GetVideoAnalytics(ctx context.Context, filter *domain.
 	return response, nil
 }
 
-// getAggregateStats retrieves aggregate statistics
 func (r *ViewsRepository) getAggregateStats(ctx context.Context, baseQuery string, args []interface{}) (*domain.ViewAnalyticsResponse, error) {
 	statsQuery := fmt.Sprintf(`
 		SELECT
@@ -234,12 +222,10 @@ func (r *ViewsRepository) getAggregateStats(ctx context.Context, baseQuery strin
 		return nil, fmt.Errorf("failed to get video analytics: %w", err)
 	}
 
-	// Initialize daily stats slice
 	response.DailyStats = make([]domain.DailyViewStats, 0)
 	return &response, nil
 }
 
-// getGroupedStats retrieves stats grouped by a field
 func (r *ViewsRepository) getGroupedStats(ctx context.Context, baseQuery string, args []interface{}, groupField string) (map[string]int64, error) {
 	query := fmt.Sprintf(`
 		SELECT
@@ -274,7 +260,6 @@ func (r *ViewsRepository) getGroupedStats(ctx context.Context, baseQuery string,
 	return stats, nil
 }
 
-// getHourlyStats retrieves hourly statistics
 func (r *ViewsRepository) getHourlyStats(ctx context.Context, baseQuery string, args []interface{}) (map[int]int64, error) {
 	hourlyQuery := fmt.Sprintf(`
 		SELECT
@@ -310,7 +295,6 @@ func (r *ViewsRepository) getHourlyStats(ctx context.Context, baseQuery string, 
 	return stats, nil
 }
 
-// GetDailyVideoStats retrieves daily stats for a video
 func (r *ViewsRepository) GetDailyVideoStats(ctx context.Context, videoID string, startDate, endDate time.Time) ([]domain.DailyVideoStats, error) {
 	query := `
 		SELECT * FROM daily_video_stats
@@ -327,7 +311,6 @@ func (r *ViewsRepository) GetDailyVideoStats(ctx context.Context, videoID string
 	return stats, nil
 }
 
-// GetUserEngagementStats retrieves engagement stats for a user
 func (r *ViewsRepository) GetUserEngagementStats(ctx context.Context, userID string, startDate, endDate time.Time) ([]domain.UserEngagementStats, error) {
 	query := `
 		SELECT * FROM user_engagement_stats
@@ -344,7 +327,6 @@ func (r *ViewsRepository) GetUserEngagementStats(ctx context.Context, userID str
 	return stats, nil
 }
 
-// GetTrendingVideos retrieves trending videos
 func (r *ViewsRepository) GetTrendingVideos(ctx context.Context, limit int) ([]domain.TrendingVideo, error) {
 	query := `
 		SELECT * FROM trending_videos
@@ -361,7 +343,6 @@ func (r *ViewsRepository) GetTrendingVideos(ctx context.Context, limit int) ([]d
 	return trending, nil
 }
 
-// UpdateTrendingVideo updates trending data for a video
 func (r *ViewsRepository) UpdateTrendingVideo(ctx context.Context, trending *domain.TrendingVideo) error {
 	query := `
 		INSERT INTO trending_videos (
@@ -390,7 +371,6 @@ func (r *ViewsRepository) UpdateTrendingVideo(ctx context.Context, trending *dom
 	return err
 }
 
-// GetBatchTrendingStats retrieves trending statistics for multiple videos in a single query
 func (r *ViewsRepository) GetBatchTrendingStats(ctx context.Context, videoIDs []string) ([]domain.VideoTrendingStats, error) {
 	if len(videoIDs) == 0 {
 		return []domain.VideoTrendingStats{}, nil
@@ -416,13 +396,11 @@ func (r *ViewsRepository) GetBatchTrendingStats(ctx context.Context, videoIDs []
 	return stats, nil
 }
 
-// BatchUpdateTrendingVideos updates trending data for multiple videos in a single query
 func (r *ViewsRepository) BatchUpdateTrendingVideos(ctx context.Context, videos []*domain.TrendingVideo) error {
 	if len(videos) == 0 {
 		return nil
 	}
 
-	// Prepare data for UNNEST
 	count := len(videos)
 	videoIDs := make([]string, count)
 	viewsLastHour := make([]int64, count)
@@ -491,14 +469,12 @@ func (r *ViewsRepository) BatchUpdateTrendingVideos(ctx context.Context, videos 
 	return err
 }
 
-// IncrementVideoViews calls the database function to increment view count
 func (r *ViewsRepository) IncrementVideoViews(ctx context.Context, videoID string) error {
 	query := `SELECT increment_video_views($1)`
 	_, err := r.db.ExecContext(ctx, query, videoID)
 	return err
 }
 
-// GetUniqueViews calls the database function to get unique view count
 func (r *ViewsRepository) GetUniqueViews(ctx context.Context, videoID string, startDate, endDate time.Time) (int64, error) {
 	query := `SELECT get_unique_views($1, $2, $3)`
 	var count int64
@@ -509,7 +485,6 @@ func (r *ViewsRepository) GetUniqueViews(ctx context.Context, videoID string, st
 	return count, nil
 }
 
-// CalculateEngagementScore calls the database function to calculate engagement score
 func (r *ViewsRepository) CalculateEngagementScore(ctx context.Context, videoID string, hoursBack int) (float64, error) {
 	query := `SELECT calculate_engagement_score($1, $2)`
 	var score float64
@@ -520,21 +495,18 @@ func (r *ViewsRepository) CalculateEngagementScore(ctx context.Context, videoID 
 	return score, nil
 }
 
-// AggregateDailyStats calls the database function to aggregate daily stats
 func (r *ViewsRepository) AggregateDailyStats(ctx context.Context, date time.Time) error {
 	query := `SELECT aggregate_daily_stats($1)`
 	_, err := r.db.ExecContext(ctx, query, date)
 	return err
 }
 
-// CleanupOldViews calls the database function to cleanup old views
 func (r *ViewsRepository) CleanupOldViews(ctx context.Context, daysToKeep int) error {
 	query := `SELECT cleanup_old_views($1)`
 	_, err := r.db.ExecContext(ctx, query, daysToKeep)
 	return err
 }
 
-// GetViewsByDateRange retrieves views filtered by date range
 func (r *ViewsRepository) GetViewsByDateRange(ctx context.Context, filter *domain.ViewAnalyticsFilter) ([]domain.UserView, error) {
 	baseQuery := `SELECT * FROM user_views WHERE 1=1`
 	args := []interface{}{}
@@ -580,7 +552,6 @@ func (r *ViewsRepository) GetViewsByDateRange(ctx context.Context, filter *domai
 	return views, nil
 }
 
-// GetTopVideos retrieves top videos by views
 func (r *ViewsRepository) GetTopVideos(ctx context.Context, startDate, endDate time.Time, limit int) ([]struct {
 	VideoID     string  `db:"video_id"`
 	TotalViews  int64   `db:"total_views"`
@@ -614,14 +585,10 @@ func (r *ViewsRepository) GetTopVideos(ctx context.Context, startDate, endDate t
 	return results, nil
 }
 
-// Helper function to generate UUID
 func generateUUID() string {
 	return uuid.New().String()
 }
 
-// Additional helper methods for repository operations
-
-// GetViewCountsByVideo gets view counts grouped by video
 func (r *ViewsRepository) GetViewCountsByVideo(ctx context.Context, videoIDs []string) (map[string]int64, error) {
 	if len(videoIDs) == 0 {
 		return make(map[string]int64), nil
@@ -633,13 +600,12 @@ func (r *ViewsRepository) GetViewCountsByVideo(ctx context.Context, videoIDs []s
 		WHERE video_id = ANY($1)
 		GROUP BY video_id`
 
-	rows, err := r.db.QueryContext(ctx, query, videoIDs)
+	rows, err := r.db.QueryContext(ctx, query, pq.Array(videoIDs))
 	if err != nil {
 		return nil, fmt.Errorf("failed to get view counts: %w", err)
 	}
 	defer func() {
 		if err := rows.Close(); err != nil {
-			// Log error but don't override return value
 			_ = err
 		}
 	}()
@@ -660,7 +626,6 @@ func (r *ViewsRepository) GetViewCountsByVideo(ctx context.Context, videoIDs []s
 	return counts, nil
 }
 
-// GetRecentViews gets recent views for a user
 func (r *ViewsRepository) GetRecentViews(ctx context.Context, userID string, limit int) ([]domain.UserView, error) {
 	query := `
 		SELECT * FROM user_views
@@ -677,7 +642,6 @@ func (r *ViewsRepository) GetRecentViews(ctx context.Context, userID string, lim
 	return views, nil
 }
 
-// BatchCreateUserViews creates multiple user views in a single transaction
 func (r *ViewsRepository) BatchCreateUserViews(ctx context.Context, views []*domain.UserView) error {
 	if len(views) == 0 {
 		return nil
@@ -689,8 +653,6 @@ func (r *ViewsRepository) BatchCreateUserViews(ctx context.Context, views []*dom
 	}
 	defer func() {
 		if rollbackErr := tx.Rollback(); rollbackErr != nil {
-			// Rollback errors are usually not critical since the transaction
-			// might have already been committed or rolled back
 			_ = rollbackErr
 		}
 	}()

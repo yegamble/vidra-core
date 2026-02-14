@@ -1007,6 +1007,110 @@ func TestActivityPubRepository_Unit_GetRemoteActors_Empty(t *testing.T) {
 	assert.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestActivityPubRepository_Unit_GetRemoteActors(t *testing.T) {
+	ctx := context.Background()
+	tests := []struct {
+		name      string
+		actorURIs []string
+		setupMock func(sqlmock.Sqlmock)
+		wantCount int
+		wantErr   bool
+	}{
+		{
+			name:      "success - single actor",
+			actorURIs: []string{"https://example.com/users/alice"},
+			setupMock: func(mock sqlmock.Sqlmock) {
+				rows := sqlmock.NewRows([]string{
+					"id", "actor_uri", "type", "username", "domain", "display_name", "summary",
+					"inbox_url", "outbox_url", "shared_inbox", "followers_url", "following_url",
+					"public_key_id", "public_key_pem", "icon_url", "image_url", "last_fetched_at",
+					"created_at", "updated_at",
+				}).AddRow(
+					"actor-1", "https://example.com/users/alice", "Person", "alice", "example.com",
+					stringPtr("Alice"), stringPtr("Bio"), "https://example.com/inbox", nil,
+					nil, nil, nil, "https://example.com/users/alice#main-key", "-----BEGIN PUBLIC KEY-----",
+					nil, nil, nil, time.Now(), time.Now(),
+				)
+				mock.ExpectQuery(`SELECT \* FROM ap_remote_actors WHERE actor_uri IN \(\?\)`).
+					WithArgs("https://example.com/users/alice").
+					WillReturnRows(rows)
+			},
+			wantCount: 1,
+			wantErr:   false,
+		},
+		{
+			name:      "success - multiple actors",
+			actorURIs: []string{"https://example.com/users/alice", "https://example.com/users/bob"},
+			setupMock: func(mock sqlmock.Sqlmock) {
+				rows := sqlmock.NewRows([]string{
+					"id", "actor_uri", "type", "username", "domain", "display_name", "summary",
+					"inbox_url", "outbox_url", "shared_inbox", "followers_url", "following_url",
+					"public_key_id", "public_key_pem", "icon_url", "image_url", "last_fetched_at",
+					"created_at", "updated_at",
+				}).AddRow(
+					"actor-1", "https://example.com/users/alice", "Person", "alice", "example.com",
+					stringPtr("Alice"), nil, "https://example.com/inbox", nil,
+					nil, nil, nil, "key-1", "pub-key-1", nil, nil, nil, time.Now(), time.Now(),
+				).AddRow(
+					"actor-2", "https://example.com/users/bob", "Person", "bob", "example.com",
+					stringPtr("Bob"), nil, "https://example.com/inbox2", nil,
+					nil, nil, nil, "key-2", "pub-key-2", nil, nil, nil, time.Now(), time.Now(),
+				)
+				mock.ExpectQuery(`SELECT \* FROM ap_remote_actors WHERE actor_uri IN \(\?, \?\)`).
+					WithArgs("https://example.com/users/alice", "https://example.com/users/bob").
+					WillReturnRows(rows)
+			},
+			wantCount: 2,
+			wantErr:   false,
+		},
+		{
+			name:      "success - no actors found",
+			actorURIs: []string{"https://example.com/users/nonexistent"},
+			setupMock: func(mock sqlmock.Sqlmock) {
+				rows := sqlmock.NewRows([]string{
+					"id", "actor_uri", "type", "username", "domain", "display_name", "summary",
+					"inbox_url", "outbox_url", "shared_inbox", "followers_url", "following_url",
+					"public_key_id", "public_key_pem", "icon_url", "image_url", "last_fetched_at",
+					"created_at", "updated_at",
+				})
+				mock.ExpectQuery(`SELECT \* FROM ap_remote_actors WHERE actor_uri IN \(\?\)`).
+					WithArgs("https://example.com/users/nonexistent").
+					WillReturnRows(rows)
+			},
+			wantCount: 0,
+			wantErr:   false,
+		},
+		{
+			name:      "database error",
+			actorURIs: []string{"https://example.com/users/alice"},
+			setupMock: func(mock sqlmock.Sqlmock) {
+				mock.ExpectQuery(`SELECT \* FROM ap_remote_actors WHERE actor_uri IN \(\?\)`).
+					WithArgs("https://example.com/users/alice").
+					WillReturnError(assert.AnError)
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db, mock := setupAPMockDB(t)
+			defer db.Close()
+			repo := NewActivityPubRepository(db, nil)
+			tt.setupMock(mock)
+
+			actors, err := repo.GetRemoteActors(ctx, tt.actorURIs)
+			if tt.wantErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+				assert.Len(t, actors, tt.wantCount)
+			}
+			assert.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
+}
+
 func TestActivityPubRepository_Unit_GetActivity(t *testing.T) {
 	ctx := context.Background()
 	tests := []struct {
