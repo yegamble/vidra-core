@@ -837,3 +837,84 @@ func TestVideoAnalyticsRepo_Unit_CreateEventsBatch(t *testing.T) {
 		})
 	}
 }
+
+func TestVideoAnalyticsRepository_GetEventsByVideoID(t *testing.T) {
+	ctx := context.Background()
+	videoID := uuid.New()
+	startDate := time.Now().Add(-24 * time.Hour)
+	endDate := time.Now()
+
+	t.Run("success with events", func(t *testing.T) {
+		_, mock, repo := setupMockDB(t)
+
+		rows := sqlmock.NewRows([]string{
+			"id", "video_id", "event_type", "user_id", "session_id", "timestamp_seconds",
+			"watch_duration_seconds", "ip_address", "user_agent", "country_code", "region",
+			"city", "device_type", "browser", "os", "referrer", "quality", "player_version", "created_at",
+		}).AddRow(
+			uuid.New(), videoID, domain.EventTypeView, (*uuid.UUID)(nil), "session1", 0,
+			60, "10.0.0.1", "browser", "US", "CA", "SF", "desktop", "chrome", "mac", "ref", "1080p", "1.0", time.Now(),
+		)
+
+		mock.ExpectQuery(`SELECT .* FROM video_analytics_events WHERE video_id`).
+			WithArgs(videoID, sqlmock.AnyArg(), sqlmock.AnyArg(), 10, 0).
+			WillReturnRows(rows)
+
+		events, err := repo.GetEventsByVideoID(ctx, videoID, startDate, endDate, 10, 0)
+		assert.NoError(t, err)
+		assert.Len(t, events, 1)
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("database error", func(t *testing.T) {
+		_, mock, repo := setupMockDB(t)
+
+		mock.ExpectQuery(`SELECT .* FROM video_analytics_events WHERE video_id`).
+			WillReturnError(assert.AnError)
+
+		events, err := repo.GetEventsByVideoID(ctx, videoID, startDate, endDate, 10, 0)
+		assert.Error(t, err)
+		assert.Nil(t, events)
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+}
+
+func TestVideoAnalyticsRepository_GetEventsBySessionID(t *testing.T) {
+	ctx := context.Background()
+	sessionID := "test-session-123"
+
+	t.Run("success with events", func(t *testing.T) {
+		_, mock, repo := setupMockDB(t)
+
+		rows := sqlmock.NewRows([]string{
+			"id", "video_id", "event_type", "user_id", "session_id", "timestamp_seconds",
+			"watch_duration_seconds", "ip_address", "user_agent", "country_code", "region",
+			"city", "device_type", "browser", "os", "referrer", "quality", "player_version", "created_at",
+		}).AddRow(
+			uuid.New(), uuid.New(), domain.EventTypeView, (*uuid.UUID)(nil), sessionID, 0,
+			30, "10.0.0.1", "ua", "US", "", "", "mobile", "safari", "ios", "", "720p", "1.0", time.Now(),
+		)
+
+		mock.ExpectQuery(`SELECT .* FROM video_analytics_events WHERE session_id`).
+			WithArgs(sessionID).
+			WillReturnRows(rows)
+
+		events, err := repo.GetEventsBySessionID(ctx, sessionID)
+		assert.NoError(t, err)
+		assert.Len(t, events, 1)
+		assert.Equal(t, sessionID, events[0].SessionID)
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("database error", func(t *testing.T) {
+		_, mock, repo := setupMockDB(t)
+
+		mock.ExpectQuery(`SELECT .* FROM video_analytics_events WHERE session_id`).
+			WillReturnError(assert.AnError)
+
+		events, err := repo.GetEventsBySessionID(ctx, sessionID)
+		assert.Error(t, err)
+		assert.Nil(t, events)
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+}
