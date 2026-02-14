@@ -21,8 +21,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// -- Mocks --
-
 type MockUploadRepository struct {
 	mock.Mock
 }
@@ -77,13 +75,11 @@ type MockVideoRepository struct {
 	mock.Mock
 }
 
-// Implement minimal required methods for the test
 func (m *MockVideoRepository) Create(ctx context.Context, video *domain.Video) error {
 	args := m.Called(ctx, video)
 	return args.Error(0)
 }
 
-// Add other methods as stubs if needed, but Create is mostly what we need for InitiateUpload
 func (m *MockVideoRepository) GetByID(ctx context.Context, id string) (*domain.Video, error) {
 	args := m.Called(ctx, id)
 	if args.Get(0) == nil {
@@ -100,9 +96,12 @@ func (m *MockVideoRepository) GetByIDs(ctx context.Context, ids []string) ([]*do
 	return args.Get(0).([]*domain.Video), args.Error(1)
 }
 
-// Stub out the rest to satisfy interface
 func (m *MockVideoRepository) GetByUserID(ctx context.Context, userID string, limit, offset int) ([]*domain.Video, int64, error) {
-	return nil, 0, nil
+	args := m.Called(ctx, userID, limit, offset)
+	if args.Get(0) == nil {
+		return nil, args.Get(1).(int64), args.Error(2)
+	}
+	return args.Get(0).([]*domain.Video), args.Get(1).(int64), args.Error(2)
 }
 func (m *MockVideoRepository) Update(ctx context.Context, video *domain.Video) error      { return nil }
 func (m *MockVideoRepository) Delete(ctx context.Context, id string, userID string) error { return nil }
@@ -133,7 +132,6 @@ type MockEncodingRepoUpload struct {
 	mock.Mock
 }
 
-// Stubs for encoding repo
 func (m *MockEncodingRepoUpload) CreateJob(ctx context.Context, job *domain.EncodingJob) error {
 	return nil
 }
@@ -180,14 +178,13 @@ func TestInitiateUpload_Security_FileSizeLimit(t *testing.T) {
 	mockVideoRepo := new(MockVideoRepository)
 	mockEncodingRepo := new(MockEncodingRepoUpload)
 
-	cfg := &config.Config{} // Defaults are fine
+	cfg := &config.Config{}
 	tempDir := t.TempDir()
 
 	uploadService := usecase.NewUploadService(mockUploadRepo, mockEncodingRepo, mockVideoRepo, tempDir, cfg)
 
 	userID := "user-123"
 
-	// 10GB + 1 byte
 	const tooLargeSize = 10*1024*1024*1024 + 1
 	req := domain.InitiateUploadRequest{
 		FileName:  "large_video.mp4",
@@ -226,10 +223,6 @@ func TestInitiateUpload_Security_InvalidExtension(t *testing.T) {
 
 	userID := "user-123"
 
-	// Mock video creation (should be called if validation passes, but we expect it to fail)
-	// If validation is loose (current state), Create will be called.
-	// We set up the mock to allow it, so we can assert failure based on return code,
-	// OR if the test fails because it *succeeded* (201 Created), that confirms the security gap.
 	mockVideoRepo.On("Create", mock.Anything, mock.Anything).Return(nil).Maybe()
 	mockUploadRepo.On("CreateSession", mock.Anything, mock.Anything).Return(nil).Maybe()
 
@@ -259,8 +252,6 @@ func TestInitiateUpload_Security_InvalidExtension(t *testing.T) {
 			handler := InitiateUploadHandler(uploadService, mockVideoRepo)
 			handler(w, httpReq)
 
-			// Current behavior: validation is loose, so this likely returns 201 Created.
-			// We assert 400 Bad Request to demonstrate the test failure (the "bug").
 			assert.Equal(t, http.StatusBadRequest, w.Code, "Should reject %s", filename)
 
 			var envelope Response
@@ -290,7 +281,6 @@ func TestUploadChunk_Security_BoundsCheck(t *testing.T) {
 
 	uploadService := usecase.NewUploadService(mockUploadRepo, mockEncodingRepo, mockVideoRepo, tempDir, cfg)
 
-	// Mock session
 	sessionID := uuid.NewString()
 	session := &domain.UploadSession{
 		ID:          sessionID,

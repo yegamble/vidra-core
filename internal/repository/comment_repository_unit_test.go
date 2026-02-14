@@ -278,6 +278,32 @@ func TestCommentRepository_Unit_UpdateDelete(t *testing.T) {
 		require.ErrorIs(t, err, domain.ErrNotFound)
 		require.NoError(t, mock.ExpectationsWereMet())
 	})
+
+	t.Run("delete exec failure", func(t *testing.T) {
+		repo, mock, cleanup := newCommentRepo(t)
+		defer cleanup()
+
+		mock.ExpectExec(`(?s)UPDATE comments\s+SET status = 'deleted', updated_at = \$1`).
+			WillReturnError(sql.ErrConnDone)
+
+		err := repo.Delete(ctx, commentID)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to delete comment")
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("delete rows affected error", func(t *testing.T) {
+		repo, mock, cleanup := newCommentRepo(t)
+		defer cleanup()
+
+		mock.ExpectExec(`(?s)UPDATE comments\s+SET status = 'deleted', updated_at = \$1`).
+			WillReturnResult(sqlmock.NewErrorResult(sql.ErrConnDone))
+
+		err := repo.Delete(ctx, commentID)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to get rows affected")
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
 }
 
 func TestCommentRepository_Unit_Listing(t *testing.T) {

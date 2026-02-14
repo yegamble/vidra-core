@@ -8,76 +8,63 @@ import (
 	"github.com/google/uuid"
 )
 
-// StreamAnalytics represents time-series analytics data for a stream
 type StreamAnalytics struct {
 	ID          uuid.UUID `json:"id" db:"id"`
 	StreamID    uuid.UUID `json:"stream_id" db:"stream_id"`
 	CollectedAt time.Time `json:"collected_at" db:"collected_at"`
 
-	// Viewer metrics
 	ViewerCount      int `json:"viewer_count" db:"viewer_count"`
 	PeakViewerCount  int `json:"peak_viewer_count" db:"peak_viewer_count"`
 	UniqueViewers    int `json:"unique_viewers" db:"unique_viewers"`
-	AverageWatchTime int `json:"average_watch_time" db:"average_watch_time"` // seconds
+	AverageWatchTime int `json:"average_watch_time" db:"average_watch_time"`
 
-	// Engagement metrics
 	ChatMessagesCount int `json:"chat_messages_count" db:"chat_messages_count"`
 	ChatParticipants  int `json:"chat_participants" db:"chat_participants"`
 	LikesCount        int `json:"likes_count" db:"likes_count"`
 	SharesCount       int `json:"shares_count" db:"shares_count"`
 
-	// Technical metrics
-	Bitrate        *int     `json:"bitrate,omitempty" db:"bitrate"`                 // kbps
-	Framerate      *float64 `json:"framerate,omitempty" db:"framerate"`             // fps
-	Resolution     string   `json:"resolution,omitempty" db:"resolution"`           // e.g., "1920x1080"
-	BufferingRatio *float64 `json:"buffering_ratio,omitempty" db:"buffering_ratio"` // 0-1
-	AvgLatency     *int     `json:"avg_latency,omitempty" db:"avg_latency"`         // milliseconds
+	Bitrate        *int     `json:"bitrate,omitempty" db:"bitrate"`
+	Framerate      *float64 `json:"framerate,omitempty" db:"framerate"`
+	Resolution     string   `json:"resolution,omitempty" db:"resolution"`
+	BufferingRatio *float64 `json:"buffering_ratio,omitempty" db:"buffering_ratio"`
+	AvgLatency     *int     `json:"avg_latency,omitempty" db:"avg_latency"`
 
-	// Geographic distribution
-	ViewerCountries json.RawMessage `json:"viewer_countries" db:"viewer_countries"` // {"US": 45, "UK": 20}
+	ViewerCountries json.RawMessage `json:"viewer_countries" db:"viewer_countries"`
 
-	// Device/Platform breakdown
-	ViewerDevices  json.RawMessage `json:"viewer_devices" db:"viewer_devices"`   // {"desktop": 60, "mobile": 30}
-	ViewerBrowsers json.RawMessage `json:"viewer_browsers" db:"viewer_browsers"` // {"chrome": 50, "firefox": 25}
+	ViewerDevices  json.RawMessage `json:"viewer_devices" db:"viewer_devices"`
+	ViewerBrowsers json.RawMessage `json:"viewer_browsers" db:"viewer_browsers"`
 
 	CreatedAt time.Time `json:"created_at" db:"created_at"`
 	UpdatedAt time.Time `json:"updated_at" db:"updated_at"`
 }
 
-// StreamStatsSummary represents aggregated statistics for a stream
 type StreamStatsSummary struct {
 	ID       uuid.UUID `json:"id" db:"id"`
 	StreamID uuid.UUID `json:"stream_id" db:"stream_id"`
 
-	// Aggregate metrics
 	TotalViewers          int   `json:"total_viewers" db:"total_viewers"`
 	PeakConcurrentViewers int   `json:"peak_concurrent_viewers" db:"peak_concurrent_viewers"`
 	AverageViewers        int   `json:"average_viewers" db:"average_viewers"`
-	TotalWatchTime        int64 `json:"total_watch_time" db:"total_watch_time"`             // seconds
-	AverageWatchDuration  int   `json:"average_watch_duration" db:"average_watch_duration"` // seconds
+	TotalWatchTime        int64 `json:"total_watch_time" db:"total_watch_time"`
+	AverageWatchDuration  int   `json:"average_watch_duration" db:"average_watch_duration"`
 
-	// Engagement totals
 	TotalChatMessages   int     `json:"total_chat_messages" db:"total_chat_messages"`
 	TotalUniqueChatters int     `json:"total_unique_chatters" db:"total_unique_chatters"`
 	TotalLikes          int     `json:"total_likes" db:"total_likes"`
 	TotalShares         int     `json:"total_shares" db:"total_shares"`
-	EngagementRate      float64 `json:"engagement_rate" db:"engagement_rate"` // percentage
+	EngagementRate      float64 `json:"engagement_rate" db:"engagement_rate"`
 
-	// Stream quality metrics
 	AverageBitrate   *int     `json:"average_bitrate,omitempty" db:"average_bitrate"`
 	AverageFramerate *float64 `json:"average_framerate,omitempty" db:"average_framerate"`
-	QualityScore     float64  `json:"quality_score" db:"quality_score"` // 0-100
+	QualityScore     float64  `json:"quality_score" db:"quality_score"`
 
-	// Time-based metrics
-	StreamDuration      int        `json:"stream_duration" db:"stream_duration"` // seconds
+	StreamDuration      int        `json:"stream_duration" db:"stream_duration"`
 	FirstViewerJoinedAt *time.Time `json:"first_viewer_joined_at,omitempty" db:"first_viewer_joined_at"`
 	PeakTime            *time.Time `json:"peak_time,omitempty" db:"peak_time"`
 
-	// Geographic summary
-	TopCountries   json.RawMessage `json:"top_countries" db:"top_countries"` // [{"country": "US", "viewers": 100}]
+	TopCountries   json.RawMessage `json:"top_countries" db:"top_countries"`
 	CountriesCount int             `json:"countries_count" db:"countries_count"`
 
-	// Platform summary
 	TopDevices  json.RawMessage `json:"top_devices" db:"top_devices"`
 	TopBrowsers json.RawMessage `json:"top_browsers" db:"top_browsers"`
 
@@ -85,7 +72,6 @@ type StreamStatsSummary struct {
 	UpdatedAt time.Time `json:"updated_at" db:"updated_at"`
 }
 
-// AnalyticsViewerSession represents an individual viewer session for analytics
 type AnalyticsViewerSession struct {
 	ID        uuid.UUID  `json:"id" db:"id"`
 	StreamID  uuid.UUID  `json:"stream_id" db:"stream_id"`
@@ -94,9 +80,8 @@ type AnalyticsViewerSession struct {
 
 	JoinedAt      time.Time  `json:"joined_at" db:"joined_at"`
 	LeftAt        *time.Time `json:"left_at,omitempty" db:"left_at"`
-	WatchDuration *int       `json:"watch_duration,omitempty" db:"watch_duration"` // seconds (computed)
+	WatchDuration *int       `json:"watch_duration,omitempty" db:"watch_duration"`
 
-	// Session details
 	IPAddress       string `json:"ip_address,omitempty" db:"ip_address"`
 	CountryCode     string `json:"country_code,omitempty" db:"country_code"`
 	City            string `json:"city,omitempty" db:"city"`
@@ -104,7 +89,6 @@ type AnalyticsViewerSession struct {
 	Browser         string `json:"browser,omitempty" db:"browser"`
 	OperatingSystem string `json:"operating_system,omitempty" db:"operating_system"`
 
-	// Engagement during session
 	MessagesSent int  `json:"messages_sent" db:"messages_sent"`
 	Liked        bool `json:"liked" db:"liked"`
 	Shared       bool `json:"shared" db:"shared"`
@@ -113,14 +97,12 @@ type AnalyticsViewerSession struct {
 	UpdatedAt time.Time `json:"updated_at" db:"updated_at"`
 }
 
-// AnalyticsTimeRange represents a time range for analytics queries
 type AnalyticsTimeRange struct {
 	StartTime time.Time `json:"start_time"`
 	EndTime   time.Time `json:"end_time"`
-	Interval  int       `json:"interval_minutes"` // aggregation interval in minutes
+	Interval  int       `json:"interval_minutes"`
 }
 
-// AnalyticsDataPoint represents a single data point in time-series analytics
 type AnalyticsDataPoint struct {
 	Time       time.Time `json:"time" db:"time_bucket"`
 	AvgViewers int       `json:"avg_viewers" db:"avg_viewers"`
@@ -129,7 +111,6 @@ type AnalyticsDataPoint struct {
 	AvgBitrate *int      `json:"avg_bitrate,omitempty" db:"avg_bitrate"`
 }
 
-// NewStreamAnalytics creates a new StreamAnalytics instance
 func NewStreamAnalytics(streamID uuid.UUID) *StreamAnalytics {
 	now := time.Now()
 	return &StreamAnalytics{
@@ -144,7 +125,6 @@ func NewStreamAnalytics(streamID uuid.UUID) *StreamAnalytics {
 	}
 }
 
-// NewAnalyticsViewerSession creates a new viewer session for analytics
 func NewAnalyticsViewerSession(streamID uuid.UUID, userID *uuid.UUID, sessionID string) *AnalyticsViewerSession {
 	now := time.Now()
 	return &AnalyticsViewerSession{
@@ -158,19 +138,15 @@ func NewAnalyticsViewerSession(streamID uuid.UUID, userID *uuid.UUID, sessionID 
 	}
 }
 
-// EndSession marks the session as ended and calculates duration
 func (vs *AnalyticsViewerSession) EndSession() {
 	now := time.Now()
 	vs.LeftAt = &now
-	// WatchDuration is computed by the database, no need to set it manually
 }
 
-// IsActive returns true if the session is still active
 func (vs *AnalyticsViewerSession) IsActive() bool {
 	return vs.LeftAt == nil
 }
 
-// CalculateEngagementRate calculates the engagement rate as a percentage
 func (s *StreamStatsSummary) CalculateEngagementRate() {
 	if s.TotalViewers == 0 {
 		s.EngagementRate = 0
@@ -191,11 +167,9 @@ func (s *StreamStatsSummary) CalculateEngagementRate() {
 	s.EngagementRate = (float64(engagedUsers) / float64(s.TotalViewers)) * 100
 }
 
-// CalculateQualityScore calculates a quality score based on technical metrics
 func (s *StreamStatsSummary) CalculateQualityScore() {
 	score := 100.0
 
-	// Deduct points for low bitrate
 	if s.AverageBitrate != nil {
 		if *s.AverageBitrate < 1000 {
 			score -= 30
@@ -206,7 +180,6 @@ func (s *StreamStatsSummary) CalculateQualityScore() {
 		}
 	}
 
-	// Deduct points for low framerate
 	if s.AverageFramerate != nil {
 		if *s.AverageFramerate < 24 {
 			score -= 20
@@ -222,7 +195,6 @@ func (s *StreamStatsSummary) CalculateQualityScore() {
 	s.QualityScore = score
 }
 
-// GetDuration returns the duration of the viewer session
 func (vs *AnalyticsViewerSession) GetDuration() time.Duration {
 	if vs.LeftAt == nil {
 		return time.Since(vs.JoinedAt)
@@ -230,23 +202,15 @@ func (vs *AnalyticsViewerSession) GetDuration() time.Duration {
 	return vs.LeftAt.Sub(vs.JoinedAt)
 }
 
-// CountryViewers represents viewer count by country
 type CountryViewers struct {
 	Country string `json:"country"`
 	Viewers int    `json:"viewers"`
 }
 
-// DeviceBreakdown represents viewer device distribution
 type DeviceBreakdown map[string]int
 
-// BrowserBreakdown represents viewer browser distribution
 type BrowserBreakdown map[string]int
 
-// ======================================================================
-// Video Analytics (VOD) Models
-// ======================================================================
-
-// Video analytics domain errors
 var (
 	ErrInvalidEventType       = errors.New("invalid event type")
 	ErrInvalidDeviceType      = errors.New("invalid device type")
@@ -263,7 +227,6 @@ var (
 	ErrInvalidChannelID       = errors.New("invalid channel ID")
 )
 
-// EventType represents the type of analytics event
 type EventType string
 
 const (
@@ -276,7 +239,6 @@ const (
 	EventTypeError    EventType = "error"
 )
 
-// VideoDeviceType represents the type of device used
 type VideoDeviceType string
 
 const (
@@ -287,7 +249,6 @@ const (
 	VideoDeviceTypeUnknown VideoDeviceType = "unknown"
 )
 
-// AnalyticsEvent represents a raw analytics event
 type AnalyticsEvent struct {
 	ID                uuid.UUID       `db:"id" json:"id"`
 	VideoID           uuid.UUID       `db:"video_id" json:"video_id"`
@@ -310,7 +271,6 @@ type AnalyticsEvent struct {
 	CreatedAt         time.Time       `db:"created_at" json:"created_at"`
 }
 
-// Validate validates an analytics event
 func (e *AnalyticsEvent) Validate() error {
 	if e.VideoID == uuid.Nil {
 		return ErrInvalidVideoID
@@ -339,7 +299,6 @@ func (e *AnalyticsEvent) Validate() error {
 	return nil
 }
 
-// IsValid checks if an event type is valid
 func (et EventType) IsValid() bool {
 	switch et {
 	case EventTypeView, EventTypePlay, EventTypePause, EventTypeSeek,
@@ -349,7 +308,6 @@ func (et EventType) IsValid() bool {
 	return false
 }
 
-// IsValid checks if a device type is valid
 func (dt VideoDeviceType) IsValid() bool {
 	switch dt {
 	case VideoDeviceTypeDesktop, VideoDeviceTypeMobile, VideoDeviceTypeTablet,
@@ -359,7 +317,6 @@ func (dt VideoDeviceType) IsValid() bool {
 	return false
 }
 
-// DailyAnalytics represents aggregated daily analytics for a video
 type DailyAnalytics struct {
 	ID                       uuid.UUID       `db:"id" json:"id"`
 	VideoID                  uuid.UUID       `db:"video_id" json:"video_id"`
@@ -387,7 +344,6 @@ type DailyAnalytics struct {
 	UpdatedAt                time.Time       `db:"updated_at" json:"updated_at"`
 }
 
-// Validate validates daily analytics
 func (d *DailyAnalytics) Validate() error {
 	if d.VideoID == uuid.Nil {
 		return ErrInvalidVideoID
@@ -412,7 +368,6 @@ func (d *DailyAnalytics) Validate() error {
 	return nil
 }
 
-// GetCountries returns the countries map
 func (d *DailyAnalytics) GetCountries() (map[string]int, error) {
 	if len(d.Countries) == 0 {
 		return make(map[string]int), nil
@@ -424,7 +379,6 @@ func (d *DailyAnalytics) GetCountries() (map[string]int, error) {
 	return countries, nil
 }
 
-// GetDevices returns the devices map
 func (d *DailyAnalytics) GetDevices() (map[string]int, error) {
 	if len(d.Devices) == 0 {
 		return make(map[string]int), nil
@@ -436,7 +390,6 @@ func (d *DailyAnalytics) GetDevices() (map[string]int, error) {
 	return devices, nil
 }
 
-// GetBrowsers returns the browsers map
 func (d *DailyAnalytics) GetBrowsers() (map[string]int, error) {
 	if len(d.Browsers) == 0 {
 		return make(map[string]int), nil
@@ -448,7 +401,6 @@ func (d *DailyAnalytics) GetBrowsers() (map[string]int, error) {
 	return browsers, nil
 }
 
-// GetTrafficSources returns the traffic sources map
 func (d *DailyAnalytics) GetTrafficSources() (map[string]int, error) {
 	if len(d.TrafficSources) == 0 {
 		return make(map[string]int), nil
@@ -460,7 +412,6 @@ func (d *DailyAnalytics) GetTrafficSources() (map[string]int, error) {
 	return sources, nil
 }
 
-// GetQualities returns the qualities map
 func (d *DailyAnalytics) GetQualities() (map[string]int, error) {
 	if len(d.Qualities) == 0 {
 		return make(map[string]int), nil
@@ -472,7 +423,6 @@ func (d *DailyAnalytics) GetQualities() (map[string]int, error) {
 	return qualities, nil
 }
 
-// RetentionData represents viewer retention at a specific timestamp
 type RetentionData struct {
 	ID               uuid.UUID `db:"id" json:"id"`
 	VideoID          uuid.UUID `db:"video_id" json:"video_id"`
@@ -483,7 +433,6 @@ type RetentionData struct {
 	UpdatedAt        time.Time `db:"updated_at" json:"updated_at"`
 }
 
-// Validate validates retention data
 func (r *RetentionData) Validate() error {
 	if r.VideoID == uuid.Nil {
 		return ErrInvalidVideoID
@@ -504,7 +453,6 @@ func (r *RetentionData) Validate() error {
 	return nil
 }
 
-// ChannelDailyAnalytics represents aggregated daily analytics for a channel
 type ChannelDailyAnalytics struct {
 	ID                uuid.UUID `db:"id" json:"id"`
 	ChannelID         uuid.UUID `db:"channel_id" json:"channel_id"`
@@ -523,7 +471,6 @@ type ChannelDailyAnalytics struct {
 	UpdatedAt         time.Time `db:"updated_at" json:"updated_at"`
 }
 
-// Validate validates channel daily analytics
 func (c *ChannelDailyAnalytics) Validate() error {
 	if c.ChannelID == uuid.Nil {
 		return ErrInvalidChannelID
@@ -540,7 +487,6 @@ func (c *ChannelDailyAnalytics) Validate() error {
 	return nil
 }
 
-// ActiveViewer represents a currently active viewer
 type ActiveViewer struct {
 	ID            uuid.UUID  `db:"id" json:"id"`
 	VideoID       uuid.UUID  `db:"video_id" json:"video_id"`
@@ -550,7 +496,6 @@ type ActiveViewer struct {
 	CreatedAt     time.Time  `db:"created_at" json:"created_at"`
 }
 
-// Validate validates an active viewer
 func (a *ActiveViewer) Validate() error {
 	if a.VideoID == uuid.Nil {
 		return ErrInvalidVideoID
@@ -563,25 +508,23 @@ func (a *ActiveViewer) Validate() error {
 	return nil
 }
 
-// IsActiveViewer checks if the viewer is still active (heartbeat within 30 seconds)
 func (a *ActiveViewer) IsActiveViewer() bool {
 	return time.Since(a.LastHeartbeat) < 30*time.Second
 }
 
-// AnalyticsSummary represents a summary of analytics for a video
 type AnalyticsSummary struct {
-	VideoID               uuid.UUID        `json:"video_id"`
-	TotalViews            int              `json:"total_views"`
-	TotalUniqueViewers    int              `json:"total_unique_viewers"`
-	TotalWatchTimeSeconds int64            `json:"total_watch_time_seconds"`
-	AvgWatchPercentage    float64          `json:"avg_watch_percentage"`
-	AvgCompletionRate     float64          `json:"avg_completion_rate"`
-	TotalLikes            int              `json:"total_likes"`
-	TotalDislikes         int              `json:"total_dislikes"`
-	TotalComments         int              `json:"total_comments"`
-	TotalShares           int              `json:"total_shares"`
-	CurrentViewers        int              `json:"current_viewers"`
-	PeakViewers           int              `json:"peak_viewers"`
+	VideoID               uuid.UUID        `db:"video_id" json:"video_id"`
+	TotalViews            int              `db:"total_views" json:"total_views"`
+	TotalUniqueViewers    int              `db:"total_unique_viewers" json:"total_unique_viewers"`
+	TotalWatchTimeSeconds int64            `db:"total_watch_time_seconds" json:"total_watch_time_seconds"`
+	AvgWatchPercentage    float64          `db:"avg_watch_percentage" json:"avg_watch_percentage"`
+	AvgCompletionRate     float64          `db:"avg_completion_rate" json:"avg_completion_rate"`
+	TotalLikes            int              `db:"total_likes" json:"total_likes"`
+	TotalDislikes         int              `db:"total_dislikes" json:"total_dislikes"`
+	TotalComments         int              `db:"total_comments" json:"total_comments"`
+	TotalShares           int              `db:"total_shares" json:"total_shares"`
+	CurrentViewers        int              `db:"current_viewers" json:"current_viewers"`
+	PeakViewers           int              `db:"peak_viewers" json:"peak_viewers"`
 	TopCountries          []CountryStat    `json:"top_countries"`
 	DeviceBreakdown       []DeviceStat     `json:"device_breakdown"`
 	QualityBreakdown      []QualityStat    `json:"quality_breakdown"`
@@ -589,43 +532,36 @@ type AnalyticsSummary struct {
 	RetentionCurve        []RetentionPoint `json:"retention_curve,omitempty"`
 }
 
-// CountryStat represents analytics for a country
 type CountryStat struct {
 	Country string `json:"country"`
 	Views   int    `json:"views"`
 }
 
-// DeviceStat represents analytics for a device type
 type DeviceStat struct {
 	Device string `json:"device"`
 	Views  int    `json:"views"`
 }
 
-// QualityStat represents analytics for a quality level
 type QualityStat struct {
 	Quality string `json:"quality"`
 	Views   int    `json:"views"`
 }
 
-// TrafficSource represents a traffic source
 type TrafficSource struct {
 	Source string `json:"source"`
 	Views  int    `json:"views"`
 }
 
-// RetentionPoint represents a point on the retention curve
 type RetentionPoint struct {
 	Timestamp int `json:"timestamp"`
 	Viewers   int `json:"viewers"`
 }
 
-// DateRange represents a date range for analytics queries
 type DateRange struct {
 	StartDate time.Time
 	EndDate   time.Time
 }
 
-// Validate validates a date range
 func (dr *DateRange) Validate() error {
 	if dr.StartDate.IsZero() || dr.EndDate.IsZero() {
 		return ErrInvalidDate
@@ -638,7 +574,6 @@ func (dr *DateRange) Validate() error {
 	return nil
 }
 
-// Days returns the number of days in the range
 func (dr *DateRange) Days() int {
 	return int(dr.EndDate.Sub(dr.StartDate).Hours()/24) + 1
 }

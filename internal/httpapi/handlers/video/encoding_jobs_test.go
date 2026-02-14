@@ -3,6 +3,7 @@ package video
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -17,7 +18,6 @@ import (
 	"github.com/stretchr/testify/mock"
 )
 
-// Mock repositories
 type MockEncodingRepository struct {
 	mock.Mock
 }
@@ -237,15 +237,12 @@ func TestGetEncodingJobHandler_Authorization(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Setup mocks
 			encodingRepo := new(MockEncodingRepository)
 			videoRepo := new(MockVideoRepository)
 			tt.setupMocks(encodingRepo, videoRepo)
 
-			// Create handler
 			handler := GetEncodingJobHandler(encodingRepo, videoRepo)
 
-			// Create request
 			req := httptest.NewRequest("GET", "/api/v1/encoding/jobs/"+tt.jobID, nil)
 			if tt.jobID != "" {
 				rctx := chi.NewRouteContext()
@@ -253,20 +250,16 @@ func TestGetEncodingJobHandler_Authorization(t *testing.T) {
 				req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 			}
 
-			// Add user context - preserve existing context values
 			ctx := req.Context()
 			ctx = context.WithValue(ctx, middleware.UserIDKey, tt.userID.String())
 			ctx = context.WithValue(ctx, middleware.UserRoleKey, tt.userRole)
 			req = req.WithContext(ctx)
 
-			// Execute request
 			rr := httptest.NewRecorder()
 			handler.ServeHTTP(rr, req)
 
-			// Assert status
 			assert.Equal(t, tt.expectedStatus, rr.Code)
 
-			// Assert error message if expected
 			if tt.expectedError != "" {
 				var response map[string]interface{}
 				err := json.Unmarshal(rr.Body.Bytes(), &response)
@@ -276,17 +269,14 @@ func TestGetEncodingJobHandler_Authorization(t *testing.T) {
 				assert.Contains(t, errorInfo["message"], tt.expectedError)
 			}
 
-			// If success, verify response structure
 			if tt.expectedStatus == http.StatusOK {
 				var response map[string]interface{}
 				err := json.Unmarshal(rr.Body.Bytes(), &response)
 				assert.NoError(t, err)
 
-				// Extract data field
 				data, ok := response["data"].(map[string]interface{})
 				assert.True(t, ok, "Expected data field in response")
 
-				// Verify job ID exists
 				assert.NotEmpty(t, data["id"])
 			}
 
@@ -332,13 +322,12 @@ func TestGetEncodingJobsByVideoHandler(t *testing.T) {
 				err := json.Unmarshal(body, &resp)
 				assert.NoError(t, err)
 
-				// Extract data field
 				data, ok := resp["data"].(map[string]interface{})
 				assert.True(t, ok, "Expected data field in response")
 
 				assert.Equal(t, float64(3), data["total"])
-				assert.Equal(t, float64(2), data["active_count"])      // pending + processing
-				assert.Equal(t, float64(22), data["overall_progress"]) // (45 + 0) / 2
+				assert.Equal(t, float64(2), data["active_count"])
+				assert.Equal(t, float64(22), data["overall_progress"])
 			},
 		},
 		{
@@ -366,13 +355,12 @@ func TestGetEncodingJobsByVideoHandler(t *testing.T) {
 				err := json.Unmarshal(body, &resp)
 				assert.NoError(t, err)
 
-				// Extract data field
 				data, ok := resp["data"].(map[string]interface{})
 				assert.True(t, ok, "Expected data field in response")
 
 				assert.Equal(t, float64(2), data["total"])
 				assert.Equal(t, float64(2), data["active_count"])
-				assert.Equal(t, float64(30), data["overall_progress"]) // (60 + 0) / 2
+				assert.Equal(t, float64(30), data["overall_progress"])
 			},
 		},
 		{
@@ -401,7 +389,7 @@ func TestGetEncodingJobsByVideoHandler(t *testing.T) {
 			setupMocks: func(er *MockEncodingRepository, vr *MockVideoRepository) {
 				video := &domain.Video{
 					ID:     "11111111-1111-1111-1111-111111111111",
-					UserID: "22222222-2222-2222-2222-222222222222", // Different owner
+					UserID: "22222222-2222-2222-2222-222222222222",
 				}
 				vr.On("GetByID", mock.Anything, "11111111-1111-1111-1111-111111111111").Return(video, nil)
 			},
@@ -430,7 +418,6 @@ func TestGetEncodingJobsByVideoHandler(t *testing.T) {
 				err := json.Unmarshal(body, &resp)
 				assert.NoError(t, err)
 
-				// Extract data field
 				data, ok := resp["data"].(map[string]interface{})
 				assert.True(t, ok, "Expected data field in response")
 
@@ -441,34 +428,27 @@ func TestGetEncodingJobsByVideoHandler(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Setup mocks
 			encodingRepo := new(MockEncodingRepository)
 			videoRepo := new(MockVideoRepository)
 			tt.setupMocks(encodingRepo, videoRepo)
 
-			// Create handler
 			handler := GetEncodingJobsByVideoHandler(encodingRepo, videoRepo)
 
-			// Create request
 			req := httptest.NewRequest("GET", "/api/v1/videos/"+tt.videoID+"/encoding-jobs"+tt.queryParams, nil)
 			rctx := chi.NewRouteContext()
 			rctx.URLParams.Add("id", tt.videoID)
 			req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
-			// Add user context - preserve existing context values
 			ctx := req.Context()
 			ctx = context.WithValue(ctx, middleware.UserIDKey, tt.userID.String())
 			ctx = context.WithValue(ctx, middleware.UserRoleKey, tt.userRole)
 			req = req.WithContext(ctx)
 
-			// Execute request
 			rr := httptest.NewRecorder()
 			handler.ServeHTTP(rr, req)
 
-			// Assert status
 			assert.Equal(t, tt.expectedStatus, rr.Code)
 
-			// Validate response if provided
 			if tt.validateResp != nil {
 				tt.validateResp(t, rr.Body.Bytes())
 			}
@@ -477,4 +457,302 @@ func TestGetEncodingJobsByVideoHandler(t *testing.T) {
 			videoRepo.AssertExpectations(t)
 		})
 	}
+}
+
+func TestGetMyEncodingJobsHandler(t *testing.T) {
+	userID := uuid.MustParse("11111111-1111-1111-1111-111111111111")
+	video1ID := "video1"
+	video2ID := "video2"
+
+	tests := []struct {
+		name           string
+		queryParams    string
+		setupMocks     func(*MockEncodingRepository, *MockVideoRepository)
+		expectedStatus int
+		expectedTotal  int
+		expectedJobs   int
+	}{
+		{
+			name:        "success - returns all jobs for user's videos",
+			queryParams: "",
+			setupMocks: func(er *MockEncodingRepository, vr *MockVideoRepository) {
+				videos := []*domain.Video{
+					{ID: video1ID, UserID: userID.String()},
+					{ID: video2ID, UserID: userID.String()},
+				}
+				vr.On("GetByUserID", mock.Anything, userID.String(), 50, 0).
+					Return(videos, int64(2), nil)
+
+				job1 := &domain.EncodingJob{
+					ID:      "job1",
+					VideoID: video1ID,
+					Status:  domain.EncodingStatusProcessing,
+				}
+				job2 := &domain.EncodingJob{
+					ID:      "job2",
+					VideoID: video2ID,
+					Status:  domain.EncodingStatusCompleted,
+				}
+				er.On("GetJobsByVideoID", mock.Anything, video1ID).
+					Return([]*domain.EncodingJob{job1}, nil)
+				er.On("GetJobsByVideoID", mock.Anything, video2ID).
+					Return([]*domain.EncodingJob{job2}, nil)
+			},
+			expectedStatus: http.StatusOK,
+			expectedTotal:  2,
+			expectedJobs:   2,
+		},
+		{
+			name:        "success - filters by status",
+			queryParams: "?status=processing",
+			setupMocks: func(er *MockEncodingRepository, vr *MockVideoRepository) {
+				videos := []*domain.Video{
+					{ID: video1ID, UserID: userID.String()},
+					{ID: video2ID, UserID: userID.String()},
+				}
+				vr.On("GetByUserID", mock.Anything, userID.String(), 50, 0).
+					Return(videos, int64(2), nil)
+
+				job1 := &domain.EncodingJob{
+					ID:      "job1",
+					VideoID: video1ID,
+					Status:  domain.EncodingStatusProcessing,
+				}
+				job2 := &domain.EncodingJob{
+					ID:      "job2",
+					VideoID: video2ID,
+					Status:  domain.EncodingStatusCompleted,
+				}
+				er.On("GetJobsByVideoID", mock.Anything, video1ID).
+					Return([]*domain.EncodingJob{job1}, nil)
+				er.On("GetJobsByVideoID", mock.Anything, video2ID).
+					Return([]*domain.EncodingJob{job2}, nil)
+			},
+			expectedStatus: http.StatusOK,
+			expectedTotal:  1,
+			expectedJobs:   1,
+		},
+		{
+			name:        "success - no videos",
+			queryParams: "",
+			setupMocks: func(er *MockEncodingRepository, vr *MockVideoRepository) {
+				vr.On("GetByUserID", mock.Anything, userID.String(), 50, 0).
+					Return([]*domain.Video{}, int64(0), nil)
+			},
+			expectedStatus: http.StatusOK,
+			expectedTotal:  0,
+			expectedJobs:   0,
+		},
+		{
+			name:        "error - get videos fails",
+			queryParams: "",
+			setupMocks: func(er *MockEncodingRepository, vr *MockVideoRepository) {
+				vr.On("GetByUserID", mock.Anything, userID.String(), 50, 0).
+					Return(nil, int64(0), errors.New("database error"))
+			},
+			expectedStatus: http.StatusInternalServerError,
+		},
+		{
+			name:        "success - skip videos with job errors",
+			queryParams: "",
+			setupMocks: func(er *MockEncodingRepository, vr *MockVideoRepository) {
+				videos := []*domain.Video{
+					{ID: video1ID, UserID: userID.String()},
+					{ID: video2ID, UserID: userID.String()},
+				}
+				vr.On("GetByUserID", mock.Anything, userID.String(), 50, 0).
+					Return(videos, int64(2), nil)
+
+				job1 := &domain.EncodingJob{
+					ID:      "job1",
+					VideoID: video1ID,
+					Status:  domain.EncodingStatusProcessing,
+				}
+				er.On("GetJobsByVideoID", mock.Anything, video1ID).
+					Return([]*domain.EncodingJob{job1}, nil)
+				er.On("GetJobsByVideoID", mock.Anything, video2ID).
+					Return(nil, errors.New("job fetch error"))
+			},
+			expectedStatus: http.StatusOK,
+			expectedTotal:  1,
+			expectedJobs:   1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			encodingRepo := new(MockEncodingRepository)
+			videoRepo := new(MockVideoRepository)
+			tt.setupMocks(encodingRepo, videoRepo)
+
+			handler := GetMyEncodingJobsHandler(encodingRepo, videoRepo)
+
+			req := httptest.NewRequest("GET", "/api/v1/encoding/my-jobs"+tt.queryParams, nil)
+			ctx := context.WithValue(req.Context(), middleware.UserIDKey, userID.String())
+			req = req.WithContext(ctx)
+
+			rr := httptest.NewRecorder()
+			handler.ServeHTTP(rr, req)
+
+			assert.Equal(t, tt.expectedStatus, rr.Code)
+
+			if tt.expectedStatus == http.StatusOK {
+				var response map[string]interface{}
+				err := json.Unmarshal(rr.Body.Bytes(), &response)
+				assert.NoError(t, err)
+
+				data, ok := response["data"].(map[string]interface{})
+				assert.True(t, ok, "Expected data field in response")
+
+				assert.Equal(t, float64(tt.expectedTotal), data["total"])
+				jobs, ok := data["jobs"].([]interface{})
+				assert.True(t, ok)
+				assert.Equal(t, tt.expectedJobs, len(jobs))
+			}
+
+			encodingRepo.AssertExpectations(t)
+			videoRepo.AssertExpectations(t)
+		})
+	}
+}
+
+func TestGetMyEncodingJobsHandler_Unauthorized(t *testing.T) {
+	encodingRepo := new(MockEncodingRepository)
+	videoRepo := new(MockVideoRepository)
+
+	handler := GetMyEncodingJobsHandler(encodingRepo, videoRepo)
+
+	req := httptest.NewRequest("GET", "/api/v1/encoding/my-jobs", nil)
+	rr := httptest.NewRecorder()
+
+	handler.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusUnauthorized, rr.Code)
+}
+
+func TestGetEncodingJobHandler_ErrorPaths(t *testing.T) {
+	userID := uuid.MustParse("11111111-1111-1111-1111-111111111111")
+
+	tests := []struct {
+		name           string
+		jobID          string
+		setupMocks     func(*MockEncodingRepository, *MockVideoRepository)
+		expectedStatus int
+		description    string
+	}{
+		{
+			name:  "job not found - ErrNotFound",
+			jobID: "job-123",
+			setupMocks: func(er *MockEncodingRepository, vr *MockVideoRepository) {
+				er.On("GetJob", mock.Anything, "job-123").Return(nil, domain.ErrNotFound)
+			},
+			expectedStatus: http.StatusNotFound,
+			description:    "should return 404 when job not found with ErrNotFound",
+		},
+		{
+			name:  "job fetch error",
+			jobID: "job-123",
+			setupMocks: func(er *MockEncodingRepository, vr *MockVideoRepository) {
+				er.On("GetJob", mock.Anything, "job-123").Return(nil, errors.New("database error"))
+			},
+			expectedStatus: http.StatusInternalServerError,
+			description:    "should return 500 when job fetch fails",
+		},
+		{
+			name:  "video not found - domain error",
+			jobID: "job-123",
+			setupMocks: func(er *MockEncodingRepository, vr *MockVideoRepository) {
+				job := &domain.EncodingJob{
+					ID:      "job-123",
+					VideoID: "video-456",
+				}
+				er.On("GetJob", mock.Anything, "job-123").Return(job, nil)
+				vr.On("GetByID", mock.Anything, "video-456").
+					Return(nil, domain.NewDomainError("VIDEO_NOT_FOUND", "Video not found"))
+			},
+			expectedStatus: http.StatusNotFound,
+			description:    "should return 404 when video not found with domain error",
+		},
+		{
+			name:  "video not found - ErrVideoNotFound",
+			jobID: "job-123",
+			setupMocks: func(er *MockEncodingRepository, vr *MockVideoRepository) {
+				job := &domain.EncodingJob{
+					ID:      "job-123",
+					VideoID: "video-456",
+				}
+				er.On("GetJob", mock.Anything, "job-123").Return(job, nil)
+				vr.On("GetByID", mock.Anything, "video-456").Return(nil, domain.ErrVideoNotFound)
+			},
+			expectedStatus: http.StatusNotFound,
+			description:    "should return 404 when video not found with ErrVideoNotFound",
+		},
+		{
+			name:  "video fetch error",
+			jobID: "job-123",
+			setupMocks: func(er *MockEncodingRepository, vr *MockVideoRepository) {
+				job := &domain.EncodingJob{
+					ID:      "job-123",
+					VideoID: "video-456",
+				}
+				er.On("GetJob", mock.Anything, "job-123").Return(job, nil)
+				vr.On("GetByID", mock.Anything, "video-456").Return(nil, errors.New("database error"))
+			},
+			expectedStatus: http.StatusInternalServerError,
+			description:    "should return 500 when video fetch fails",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			encodingRepo := new(MockEncodingRepository)
+			videoRepo := new(MockVideoRepository)
+			tt.setupMocks(encodingRepo, videoRepo)
+
+			handler := GetEncodingJobHandler(encodingRepo, videoRepo)
+
+			req := httptest.NewRequest("GET", "/api/v1/encoding/jobs/"+tt.jobID, nil)
+			rctx := chi.NewRouteContext()
+			rctx.URLParams.Add("jobID", tt.jobID)
+			req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+
+			ctx := req.Context()
+			ctx = context.WithValue(ctx, middleware.UserIDKey, userID.String())
+			ctx = context.WithValue(ctx, middleware.UserRoleKey, "user")
+			req = req.WithContext(ctx)
+
+			rr := httptest.NewRecorder()
+			handler.ServeHTTP(rr, req)
+
+			assert.Equal(t, tt.expectedStatus, rr.Code, tt.description)
+
+			encodingRepo.AssertExpectations(t)
+			videoRepo.AssertExpectations(t)
+		})
+	}
+}
+
+func TestGetEncodingJobHandler_Unauthorized(t *testing.T) {
+	encodingRepo := new(MockEncodingRepository)
+	videoRepo := new(MockVideoRepository)
+
+	job := &domain.EncodingJob{
+		ID:      "job-123",
+		VideoID: "video-456",
+	}
+	encodingRepo.On("GetJob", mock.Anything, "job-123").Return(job, nil)
+
+	handler := GetEncodingJobHandler(encodingRepo, videoRepo)
+
+	req := httptest.NewRequest("GET", "/api/v1/encoding/jobs/job-123", nil)
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("jobID", "job-123")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	// No user ID in context
+
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusUnauthorized, rr.Code)
+	encodingRepo.AssertExpectations(t)
 }

@@ -10,29 +10,21 @@ import (
 
 	"athena/internal/domain"
 	"athena/internal/middleware"
-	"athena/internal/usecase/analytics"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 )
 
-// VideoAnalyticsHandler handles video analytics HTTP requests
 type VideoAnalyticsHandler struct {
-	analyticsService *analytics.Service
+	analyticsService VideoAnalyticsService
 }
 
-// NewVideoAnalyticsHandler creates a new video analytics handler
-func NewVideoAnalyticsHandler(analyticsService *analytics.Service) *VideoAnalyticsHandler {
+func NewVideoAnalyticsHandler(analyticsService VideoAnalyticsService) *VideoAnalyticsHandler {
 	return &VideoAnalyticsHandler{
 		analyticsService: analyticsService,
 	}
 }
 
-// ======================================================================
-// Event Tracking Endpoints
-// ======================================================================
-
-// TrackEventRequest represents a single analytics event
 type TrackEventRequest struct {
 	VideoID           string `json:"video_id"`
 	EventType         string `json:"event_type"`
@@ -44,12 +36,10 @@ type TrackEventRequest struct {
 	Referrer          string `json:"referrer,omitempty"`
 }
 
-// TrackBatchRequest represents a batch of analytics events
 type TrackBatchRequest struct {
 	Events []TrackEventRequest `json:"events"`
 }
 
-// TrackEvent handles POST /api/v1/analytics/events
 func (h *VideoAnalyticsHandler) TrackEvent(w http.ResponseWriter, r *http.Request) {
 	var req TrackEventRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -57,14 +47,12 @@ func (h *VideoAnalyticsHandler) TrackEvent(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Parse video ID
 	videoID, err := uuid.Parse(req.VideoID)
 	if err != nil {
 		respondWithError(w, http.StatusBadRequest, "Invalid video ID", nil)
 		return
 	}
 
-	// Build event
 	event := &domain.AnalyticsEvent{
 		VideoID:           videoID,
 		EventType:         domain.EventType(req.EventType),
@@ -77,16 +65,13 @@ func (h *VideoAnalyticsHandler) TrackEvent(w http.ResponseWriter, r *http.Reques
 		UserAgent:         r.Header.Get("User-Agent"),
 	}
 
-	// Extract IP address
 	ipAddr := r.RemoteAddr
 	event.IPAddress = &ipAddr
 
-	// Get user ID from context if authenticated
 	if userID := getUserIDFromContext(r.Context()); userID != nil {
 		event.UserID = userID
 	}
 
-	// Track the event
 	if err := h.analyticsService.TrackEvent(r.Context(), event); err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Failed to track event", nil)
 		return
@@ -95,7 +80,6 @@ func (h *VideoAnalyticsHandler) TrackEvent(w http.ResponseWriter, r *http.Reques
 	respondWithJSON(w, http.StatusCreated, map[string]string{"status": "ok"})
 }
 
-// TrackEventsBatch handles POST /api/v1/analytics/events/batch
 func (h *VideoAnalyticsHandler) TrackEventsBatch(w http.ResponseWriter, r *http.Request) {
 	var req TrackBatchRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -113,7 +97,6 @@ func (h *VideoAnalyticsHandler) TrackEventsBatch(w http.ResponseWriter, r *http.
 		return
 	}
 
-	// Build events
 	events := make([]*domain.AnalyticsEvent, len(req.Events))
 	for i, eventReq := range req.Events {
 		videoID, err := uuid.Parse(eventReq.VideoID)
@@ -141,7 +124,6 @@ func (h *VideoAnalyticsHandler) TrackEventsBatch(w http.ResponseWriter, r *http.
 		}
 	}
 
-	// Track events
 	if err := h.analyticsService.TrackEventsBatch(r.Context(), events); err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Failed to track events", nil)
 		return
@@ -150,7 +132,6 @@ func (h *VideoAnalyticsHandler) TrackEventsBatch(w http.ResponseWriter, r *http.
 	respondWithJSON(w, http.StatusCreated, map[string]string{"status": "ok", "count": strconv.Itoa(len(events))})
 }
 
-// TrackHeartbeat handles POST /api/v1/analytics/videos/:videoID/heartbeat
 func (h *VideoAnalyticsHandler) TrackHeartbeat(w http.ResponseWriter, r *http.Request) {
 	videoIDStr := chi.URLParam(r, "videoID")
 	videoID, err := uuid.Parse(videoIDStr)
@@ -179,7 +160,6 @@ func (h *VideoAnalyticsHandler) TrackHeartbeat(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	// Return current viewer count
 	count, _ := h.analyticsService.GetActiveViewerCount(r.Context(), videoID)
 
 	respondWithJSON(w, http.StatusOK, map[string]interface{}{
@@ -188,11 +168,6 @@ func (h *VideoAnalyticsHandler) TrackHeartbeat(w http.ResponseWriter, r *http.Re
 	})
 }
 
-// ======================================================================
-// Analytics Retrieval Endpoints
-// ======================================================================
-
-// GetVideoAnalytics handles GET /api/v1/videos/:videoID/analytics
 func (h *VideoAnalyticsHandler) GetVideoAnalytics(w http.ResponseWriter, r *http.Request) {
 	videoIDStr := chi.URLParam(r, "videoID")
 	videoID, err := uuid.Parse(videoIDStr)
@@ -201,14 +176,12 @@ func (h *VideoAnalyticsHandler) GetVideoAnalytics(w http.ResponseWriter, r *http
 		return
 	}
 
-	// Parse date range
 	startDate, endDate, err := parseDateRange(r)
 	if err != nil {
 		respondWithError(w, http.StatusBadRequest, err.Error(), nil)
 		return
 	}
 
-	// Get analytics summary
 	summary, err := h.analyticsService.GetVideoAnalyticsSummary(r.Context(), videoID, startDate, endDate)
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Failed to get analytics summary", nil)
@@ -218,7 +191,6 @@ func (h *VideoAnalyticsHandler) GetVideoAnalytics(w http.ResponseWriter, r *http
 	respondWithJSON(w, http.StatusOK, summary)
 }
 
-// GetDailyAnalytics handles GET /api/v1/videos/:videoID/analytics/daily
 func (h *VideoAnalyticsHandler) GetDailyAnalytics(w http.ResponseWriter, r *http.Request) {
 	videoIDStr := chi.URLParam(r, "videoID")
 	videoID, err := uuid.Parse(videoIDStr)
@@ -227,14 +199,12 @@ func (h *VideoAnalyticsHandler) GetDailyAnalytics(w http.ResponseWriter, r *http
 		return
 	}
 
-	// Parse date range
 	startDate, endDate, err := parseDateRange(r)
 	if err != nil {
 		respondWithError(w, http.StatusBadRequest, err.Error(), nil)
 		return
 	}
 
-	// Get daily analytics
 	dailyAnalytics, err := h.analyticsService.GetDailyAnalyticsRange(r.Context(), videoID, startDate, endDate)
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Failed to get daily analytics", nil)
@@ -244,7 +214,6 @@ func (h *VideoAnalyticsHandler) GetDailyAnalytics(w http.ResponseWriter, r *http
 	respondWithJSON(w, http.StatusOK, dailyAnalytics)
 }
 
-// GetRetentionCurve handles GET /api/v1/videos/:videoID/analytics/retention
 func (h *VideoAnalyticsHandler) GetRetentionCurve(w http.ResponseWriter, r *http.Request) {
 	videoIDStr := chi.URLParam(r, "videoID")
 	videoID, err := uuid.Parse(videoIDStr)
@@ -253,7 +222,6 @@ func (h *VideoAnalyticsHandler) GetRetentionCurve(w http.ResponseWriter, r *http
 		return
 	}
 
-	// Parse date from query param (default to today)
 	dateStr := r.URL.Query().Get("date")
 	var date time.Time
 	if dateStr != "" {
@@ -266,7 +234,6 @@ func (h *VideoAnalyticsHandler) GetRetentionCurve(w http.ResponseWriter, r *http
 		date = time.Now()
 	}
 
-	// Get retention curve
 	retention, err := h.analyticsService.GetRetentionCurve(r.Context(), videoID, date)
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Failed to get retention curve", nil)
@@ -276,7 +243,6 @@ func (h *VideoAnalyticsHandler) GetRetentionCurve(w http.ResponseWriter, r *http
 	respondWithJSON(w, http.StatusOK, retention)
 }
 
-// GetActiveViewers handles GET /api/v1/videos/:videoID/analytics/active-viewers
 func (h *VideoAnalyticsHandler) GetActiveViewers(w http.ResponseWriter, r *http.Request) {
 	videoIDStr := chi.URLParam(r, "videoID")
 	videoID, err := uuid.Parse(videoIDStr)
@@ -303,11 +269,6 @@ func (h *VideoAnalyticsHandler) GetActiveViewers(w http.ResponseWriter, r *http.
 	})
 }
 
-// ======================================================================
-// Channel Analytics Endpoints
-// ======================================================================
-
-// GetChannelAnalytics handles GET /api/v1/channels/:channelID/analytics
 func (h *VideoAnalyticsHandler) GetChannelAnalytics(w http.ResponseWriter, r *http.Request) {
 	channelIDStr := chi.URLParam(r, "channelID")
 	channelID, err := uuid.Parse(channelIDStr)
@@ -316,21 +277,18 @@ func (h *VideoAnalyticsHandler) GetChannelAnalytics(w http.ResponseWriter, r *ht
 		return
 	}
 
-	// Parse date range
 	startDate, endDate, err := parseDateRange(r)
 	if err != nil {
 		respondWithError(w, http.StatusBadRequest, err.Error(), nil)
 		return
 	}
 
-	// Get channel analytics
 	analytics, err := h.analyticsService.GetChannelDailyAnalyticsRange(r.Context(), channelID, startDate, endDate)
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Failed to get channel analytics", nil)
 		return
 	}
 
-	// Get total views
 	totalViews, _ := h.analyticsService.GetChannelTotalViews(r.Context(), channelID)
 
 	respondWithJSON(w, http.StatusOK, map[string]interface{}{
@@ -339,11 +297,6 @@ func (h *VideoAnalyticsHandler) GetChannelAnalytics(w http.ResponseWriter, r *ht
 	})
 }
 
-// ======================================================================
-// Helper Functions
-// ======================================================================
-
-// getUserIDFromContext extracts the authenticated user ID from the request context using the middleware.
 func getUserIDFromContext(ctx context.Context) *uuid.UUID {
 	userID, ok := middleware.GetUserIDFromContext(ctx)
 	if !ok {
@@ -352,8 +305,6 @@ func getUserIDFromContext(ctx context.Context) *uuid.UUID {
 	return &userID
 }
 
-// parseDateRange parses start and end dates from query parameters
-// Returns default range of last 30 days if not specified
 func parseDateRange(r *http.Request) (startDate, endDate time.Time, err error) {
 	startDateStr := r.URL.Query().Get("start_date")
 	endDateStr := r.URL.Query().Get("end_date")
@@ -364,7 +315,6 @@ func parseDateRange(r *http.Request) (startDate, endDate time.Time, err error) {
 			return time.Time{}, time.Time{}, fmt.Errorf("invalid start_date format (use YYYY-MM-DD)")
 		}
 	} else {
-		// Default to last 30 days
 		startDate = time.Now().AddDate(0, 0, -30)
 	}
 

@@ -367,3 +367,331 @@ func TestCaptionGenerationRepository_Unit_StatusAndCounters(t *testing.T) {
 
 	require.NoError(t, mock.ExpectationsWereMet())
 }
+
+func TestCaptionGenerationRepository_Unit_DeleteOldCompletedJobs_DatabaseError(t *testing.T) {
+	db, mock := setupCaptionGenerationMockDB(t)
+	defer db.Close()
+
+	repo := NewCaptionGenerationRepository(db).(*captionGenerationRepository)
+	ctx := context.Background()
+
+	mock.ExpectExec(regexp.QuoteMeta(`DELETE FROM caption_generation_jobs
+		WHERE status IN ($1, $2)
+		  AND completed_at < NOW() - INTERVAL '1 day' * $3`)).
+		WithArgs(domain.CaptionGenStatusCompleted, domain.CaptionGenStatusFailed, 30).
+		WillReturnError(sql.ErrConnDone)
+
+	_, err := repo.DeleteOldCompletedJobs(ctx, 30)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to delete old completed jobs")
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestCaptionGenerationRepository_Unit_DeleteOldCompletedJobs_RowsAffectedError(t *testing.T) {
+	db, mock := setupCaptionGenerationMockDB(t)
+	defer db.Close()
+
+	repo := NewCaptionGenerationRepository(db).(*captionGenerationRepository)
+	ctx := context.Background()
+
+	mock.ExpectExec(regexp.QuoteMeta(`DELETE FROM caption_generation_jobs
+		WHERE status IN ($1, $2)
+		  AND completed_at < NOW() - INTERVAL '1 day' * $3`)).
+		WithArgs(domain.CaptionGenStatusCompleted, domain.CaptionGenStatusFailed, 30).
+		WillReturnResult(sqlmock.NewErrorResult(sql.ErrConnDone))
+
+	_, err := repo.DeleteOldCompletedJobs(ctx, 30)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to get rows affected")
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestCaptionGenerationRepository_Unit_UpdateProgress_DatabaseError(t *testing.T) {
+	db, mock := setupCaptionGenerationMockDB(t)
+	defer db.Close()
+
+	repo := NewCaptionGenerationRepository(db).(*captionGenerationRepository)
+	ctx := context.Background()
+
+	jobID := uuid.New()
+	progress := 75
+
+	mock.ExpectExec(`UPDATE caption_generation_jobs SET progress.*updated_at.*WHERE id`).
+		WithArgs(jobID, progress).
+		WillReturnError(sql.ErrConnDone)
+
+	err := repo.UpdateProgress(ctx, jobID, progress)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to update job progress")
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestCaptionGenerationRepository_Unit_UpdateProgress_NotFound(t *testing.T) {
+	db, mock := setupCaptionGenerationMockDB(t)
+	defer db.Close()
+
+	repo := NewCaptionGenerationRepository(db).(*captionGenerationRepository)
+	ctx := context.Background()
+
+	jobID := uuid.New()
+	progress := 75
+
+	mock.ExpectExec(`UPDATE caption_generation_jobs SET progress.*updated_at.*WHERE id`).
+		WithArgs(jobID, progress).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+
+	err := repo.UpdateProgress(ctx, jobID, progress)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, domain.ErrNotFound)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestCaptionGenerationRepository_Unit_MarkFailed_DatabaseError(t *testing.T) {
+	db, mock := setupCaptionGenerationMockDB(t)
+	defer db.Close()
+
+	repo := NewCaptionGenerationRepository(db).(*captionGenerationRepository)
+	ctx := context.Background()
+
+	jobID := uuid.New()
+	errorMessage := "transcription service unavailable"
+
+	mock.ExpectExec(`UPDATE caption_generation_jobs SET status.*error_message.*completed_at.*WHERE id`).
+		WithArgs(jobID, domain.CaptionGenStatusFailed, errorMessage).
+		WillReturnError(sql.ErrConnDone)
+
+	err := repo.MarkFailed(ctx, jobID, errorMessage)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to mark job as failed")
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestCaptionGenerationRepository_Unit_MarkFailed_NotFound(t *testing.T) {
+	db, mock := setupCaptionGenerationMockDB(t)
+	defer db.Close()
+
+	repo := NewCaptionGenerationRepository(db).(*captionGenerationRepository)
+	ctx := context.Background()
+
+	jobID := uuid.New()
+	errorMessage := "transcription service unavailable"
+
+	mock.ExpectExec(`UPDATE caption_generation_jobs SET status.*error_message.*completed_at.*WHERE id`).
+		WithArgs(jobID, domain.CaptionGenStatusFailed, errorMessage).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+
+	err := repo.MarkFailed(ctx, jobID, errorMessage)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, domain.ErrNotFound)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestCaptionGenerationRepository_Unit_MarkCompleted_DatabaseError(t *testing.T) {
+	db, mock := setupCaptionGenerationMockDB(t)
+	defer db.Close()
+
+	repo := NewCaptionGenerationRepository(db).(*captionGenerationRepository)
+	ctx := context.Background()
+
+	jobID := uuid.New()
+	captionID := uuid.New()
+	detectedLang := "en"
+	transcriptionTime := 120
+
+	mock.ExpectExec(`UPDATE caption_generation_jobs SET status.*generated_caption_id.*detected_language.*transcription_time_seconds.*progress.*completed_at.*WHERE id`).
+		WithArgs(jobID, domain.CaptionGenStatusCompleted, captionID, detectedLang, transcriptionTime).
+		WillReturnError(sql.ErrConnDone)
+
+	err := repo.MarkCompleted(ctx, jobID, captionID, detectedLang, transcriptionTime)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to mark job as completed")
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestCaptionGenerationRepository_Unit_MarkCompleted_NotFound(t *testing.T) {
+	db, mock := setupCaptionGenerationMockDB(t)
+	defer db.Close()
+
+	repo := NewCaptionGenerationRepository(db).(*captionGenerationRepository)
+	ctx := context.Background()
+
+	jobID := uuid.New()
+	captionID := uuid.New()
+	detectedLang := "en"
+	transcriptionTime := 120
+
+	mock.ExpectExec(`UPDATE caption_generation_jobs SET status.*generated_caption_id.*detected_language.*transcription_time_seconds.*progress.*completed_at.*WHERE id`).
+		WithArgs(jobID, domain.CaptionGenStatusCompleted, captionID, detectedLang, transcriptionTime).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+
+	err := repo.MarkCompleted(ctx, jobID, captionID, detectedLang, transcriptionTime)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, domain.ErrNotFound)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestCaptionGenerationRepository_Unit_GetByID_DatabaseError(t *testing.T) {
+	db, mock := setupCaptionGenerationMockDB(t)
+	defer db.Close()
+
+	repo := NewCaptionGenerationRepository(db).(*captionGenerationRepository)
+	ctx := context.Background()
+	jobID := uuid.New()
+
+	mock.ExpectQuery(`SELECT .* FROM caption_generation_jobs WHERE id`).
+		WithArgs(jobID).
+		WillReturnError(sql.ErrConnDone)
+
+	_, err := repo.GetByID(ctx, jobID)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to get caption generation job")
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestCaptionGenerationRepository_Unit_Update_DatabaseError(t *testing.T) {
+	db, mock := setupCaptionGenerationMockDB(t)
+	defer db.Close()
+
+	repo := NewCaptionGenerationRepository(db).(*captionGenerationRepository)
+	ctx := context.Background()
+
+	targetLang := "en"
+	job := &domain.CaptionGenerationJob{
+		ID:             uuid.New(),
+		VideoID:        uuid.New(),
+		UserID:         uuid.New(),
+		TargetLanguage: &targetLang,
+		Status:         domain.CaptionGenStatusProcessing,
+	}
+
+	mock.ExpectExec(`UPDATE caption_generation_jobs SET`).
+		WillReturnError(sql.ErrConnDone)
+
+	err := repo.Update(ctx, job)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to update caption generation job")
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestCaptionGenerationRepository_Unit_Delete_DatabaseError(t *testing.T) {
+	db, mock := setupCaptionGenerationMockDB(t)
+	defer db.Close()
+
+	repo := NewCaptionGenerationRepository(db).(*captionGenerationRepository)
+	ctx := context.Background()
+	jobID := uuid.New()
+
+	mock.ExpectExec(`DELETE FROM caption_generation_jobs WHERE id`).
+		WithArgs(jobID).
+		WillReturnError(sql.ErrConnDone)
+
+	err := repo.Delete(ctx, jobID)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to delete caption generation job")
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestCaptionGenerationRepository_Unit_UpdateStatus_DatabaseError(t *testing.T) {
+	db, mock := setupCaptionGenerationMockDB(t)
+	defer db.Close()
+
+	repo := NewCaptionGenerationRepository(db).(*captionGenerationRepository)
+	ctx := context.Background()
+	jobID := uuid.New()
+
+	mock.ExpectExec(`UPDATE caption_generation_jobs SET status`).
+		WithArgs(jobID, domain.CaptionGenStatusProcessing).
+		WillReturnError(sql.ErrConnDone)
+
+	err := repo.UpdateStatus(ctx, jobID, domain.CaptionGenStatusProcessing)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to update job status")
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestCaptionGenerationRepository_Unit_GetNextPendingJob_DatabaseError(t *testing.T) {
+	db, mock := setupCaptionGenerationMockDB(t)
+	defer db.Close()
+
+	repo := NewCaptionGenerationRepository(db).(*captionGenerationRepository)
+	ctx := context.Background()
+
+	mock.ExpectQuery(`SELECT .* FROM caption_generation_jobs WHERE status`).
+		WithArgs(domain.CaptionGenStatusPending).
+		WillReturnError(sql.ErrConnDone)
+
+	_, err := repo.GetNextPendingJob(ctx)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to get next pending job")
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestCaptionGenerationRepository_Unit_GetPendingJobs_DatabaseError(t *testing.T) {
+	db, mock := setupCaptionGenerationMockDB(t)
+	defer db.Close()
+
+	repo := NewCaptionGenerationRepository(db).(*captionGenerationRepository)
+	ctx := context.Background()
+
+	mock.ExpectQuery(`SELECT .* FROM caption_generation_jobs WHERE status`).
+		WithArgs(domain.CaptionGenStatusPending, 10).
+		WillReturnError(sql.ErrConnDone)
+
+	_, err := repo.GetPendingJobs(ctx, 10)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to get pending jobs")
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestCaptionGenerationRepository_Unit_CountByStatus_DatabaseError(t *testing.T) {
+	db, mock := setupCaptionGenerationMockDB(t)
+	defer db.Close()
+
+	repo := NewCaptionGenerationRepository(db).(*captionGenerationRepository)
+	ctx := context.Background()
+
+	mock.ExpectQuery(`SELECT COUNT.*FROM caption_generation_jobs WHERE status`).
+		WithArgs(domain.CaptionGenStatusPending).
+		WillReturnError(sql.ErrConnDone)
+
+	_, err := repo.CountByStatus(ctx, domain.CaptionGenStatusPending)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to count jobs by status")
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestCaptionGenerationRepository_Unit_GetByVideoID_DatabaseError(t *testing.T) {
+	db, mock := setupCaptionGenerationMockDB(t)
+	defer db.Close()
+
+	repo := NewCaptionGenerationRepository(db).(*captionGenerationRepository)
+	ctx := context.Background()
+	videoID := uuid.New()
+
+	mock.ExpectQuery(`SELECT .* FROM caption_generation_jobs WHERE video_id`).
+		WithArgs(videoID).
+		WillReturnError(sql.ErrConnDone)
+
+	_, err := repo.GetByVideoID(ctx, videoID)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to get jobs by video ID")
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestCaptionGenerationRepository_Unit_GetByUserID_DatabaseError(t *testing.T) {
+	db, mock := setupCaptionGenerationMockDB(t)
+	defer db.Close()
+
+	repo := NewCaptionGenerationRepository(db).(*captionGenerationRepository)
+	ctx := context.Background()
+	userID := uuid.New()
+
+	mock.ExpectQuery(`SELECT .* FROM caption_generation_jobs WHERE user_id`).
+		WithArgs(userID, 10, 0).
+		WillReturnError(sql.ErrConnDone)
+
+	_, err := repo.GetByUserID(ctx, userID, 10, 0)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to get jobs by user ID")
+	require.NoError(t, mock.ExpectationsWereMet())
+}

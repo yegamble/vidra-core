@@ -7,23 +7,18 @@ import (
 	"athena/internal/domain"
 	"athena/internal/httpapi/shared"
 	"athena/internal/middleware"
-	"athena/internal/usecase"
 )
 
-// TwoFAHandlers handles two-factor authentication HTTP endpoints
 type TwoFAHandlers struct {
-	twoFAService *usecase.TwoFAService
+	twoFAService TwoFAServiceInterface
 }
 
-// NewTwoFAHandlers creates a new TwoFAHandlers instance
-func NewTwoFAHandlers(twoFAService *usecase.TwoFAService) *TwoFAHandlers {
+func NewTwoFAHandlers(twoFAService TwoFAServiceInterface) *TwoFAHandlers {
 	return &TwoFAHandlers{
 		twoFAService: twoFAService,
 	}
 }
 
-// SetupTwoFA initiates 2FA setup for the current user
-// POST /api/v1/auth/2fa/setup
 func (h *TwoFAHandlers) SetupTwoFA(w http.ResponseWriter, r *http.Request) {
 	userID, ok := r.Context().Value(middleware.UserIDKey).(string)
 	if !ok || userID == "" {
@@ -31,7 +26,6 @@ func (h *TwoFAHandlers) SetupTwoFA(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Generate secret and backup codes
 	setup, err := h.twoFAService.GenerateSecret(r.Context(), userID)
 	if err != nil {
 		if err == domain.ErrTwoFAAlreadyEnabled {
@@ -45,8 +39,6 @@ func (h *TwoFAHandlers) SetupTwoFA(w http.ResponseWriter, r *http.Request) {
 	shared.WriteJSON(w, http.StatusOK, setup)
 }
 
-// VerifyTwoFASetup verifies the TOTP code and enables 2FA
-// POST /api/v1/auth/2fa/verify-setup
 func (h *TwoFAHandlers) VerifyTwoFASetup(w http.ResponseWriter, r *http.Request) {
 	userID, ok := r.Context().Value(middleware.UserIDKey).(string)
 	if !ok || userID == "" {
@@ -65,7 +57,6 @@ func (h *TwoFAHandlers) VerifyTwoFASetup(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Verify and enable 2FA
 	err := h.twoFAService.VerifySetup(r.Context(), userID, req.Code)
 	if err != nil {
 		if err == domain.ErrTwoFAInvalidCode {
@@ -92,8 +83,6 @@ func (h *TwoFAHandlers) VerifyTwoFASetup(w http.ResponseWriter, r *http.Request)
 	shared.WriteJSON(w, http.StatusOK, response)
 }
 
-// DisableTwoFA disables 2FA for the current user
-// POST /api/v1/auth/2fa/disable
 func (h *TwoFAHandlers) DisableTwoFA(w http.ResponseWriter, r *http.Request) {
 	userID, ok := r.Context().Value(middleware.UserIDKey).(string)
 	if !ok || userID == "" {
@@ -112,7 +101,6 @@ func (h *TwoFAHandlers) DisableTwoFA(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Disable 2FA
 	err := h.twoFAService.Disable(r.Context(), userID, req.Password, req.Code)
 	if err != nil {
 		if err == domain.ErrInvalidCredentials {
@@ -139,8 +127,6 @@ func (h *TwoFAHandlers) DisableTwoFA(w http.ResponseWriter, r *http.Request) {
 	shared.WriteJSON(w, http.StatusOK, response)
 }
 
-// RegenerateBackupCodes regenerates backup codes for the current user
-// POST /api/v1/auth/2fa/regenerate-backup-codes
 func (h *TwoFAHandlers) RegenerateBackupCodes(w http.ResponseWriter, r *http.Request) {
 	userID, ok := r.Context().Value(middleware.UserIDKey).(string)
 	if !ok || userID == "" {
@@ -159,7 +145,6 @@ func (h *TwoFAHandlers) RegenerateBackupCodes(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	// Regenerate backup codes
 	backupCodes, err := h.twoFAService.RegenerateBackupCodes(r.Context(), userID, req.Code)
 	if err != nil {
 		if err == domain.ErrTwoFAInvalidCode {
@@ -181,8 +166,6 @@ func (h *TwoFAHandlers) RegenerateBackupCodes(w http.ResponseWriter, r *http.Req
 	shared.WriteJSON(w, http.StatusOK, response)
 }
 
-// GetTwoFAStatus returns the 2FA status for the current user
-// GET /api/v1/auth/2fa/status
 func (h *TwoFAHandlers) GetTwoFAStatus(w http.ResponseWriter, r *http.Request) {
 	userID, ok := r.Context().Value(middleware.UserIDKey).(string)
 	if !ok || userID == "" {
@@ -190,7 +173,6 @@ func (h *TwoFAHandlers) GetTwoFAStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get the 2FA status from the service
 	status, err := h.twoFAService.GetStatus(r.Context(), userID)
 	if err != nil {
 		shared.WriteError(w, http.StatusInternalServerError, domain.NewDomainError("INTERNAL_ERROR", "Failed to get two-factor authentication status"))

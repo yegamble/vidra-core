@@ -247,6 +247,52 @@ func TestImportRepository_UpdateProgress(t *testing.T) {
 	assert.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestImportRepository_UpdateProgress_DatabaseError(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+
+	sqlxDB := sqlx.NewDb(db, "postgres")
+	repo := NewImportRepository(sqlxDB)
+
+	ctx := context.Background()
+	importID := "import-123"
+	progress := 75
+	downloadedBytes := int64(75000000)
+
+	mock.ExpectExec(`UPDATE video_imports SET progress.*downloaded_bytes.*updated_at.*WHERE id`).
+		WithArgs(importID, progress, downloadedBytes).
+		WillReturnError(sql.ErrConnDone)
+
+	err = repo.UpdateProgress(ctx, importID, progress, downloadedBytes)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to update import progress")
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestImportRepository_UpdateProgress_NotFound(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+
+	sqlxDB := sqlx.NewDb(db, "postgres")
+	repo := NewImportRepository(sqlxDB)
+
+	ctx := context.Background()
+	importID := "nonexistent"
+	progress := 75
+	downloadedBytes := int64(75000000)
+
+	mock.ExpectExec(`UPDATE video_imports SET progress.*downloaded_bytes.*updated_at.*WHERE id`).
+		WithArgs(importID, progress, downloadedBytes).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+
+	err = repo.UpdateProgress(ctx, importID, progress, downloadedBytes)
+	assert.Error(t, err)
+	assert.ErrorIs(t, err, domain.ErrImportNotFound)
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestImportRepository_MarkFailed(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
@@ -268,6 +314,50 @@ func TestImportRepository_MarkFailed(t *testing.T) {
 	assert.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestImportRepository_MarkFailed_DatabaseError(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+
+	sqlxDB := sqlx.NewDb(db, "postgres")
+	repo := NewImportRepository(sqlxDB)
+
+	ctx := context.Background()
+	importID := "import-123"
+	errorMessage := "download failed: connection timeout"
+
+	mock.ExpectExec(`UPDATE video_imports SET status.*error_message.*updated_at.*WHERE id`).
+		WithArgs(importID, domain.ImportStatusFailed, errorMessage).
+		WillReturnError(sql.ErrConnDone)
+
+	err = repo.MarkFailed(ctx, importID, errorMessage)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to mark import as failed")
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestImportRepository_MarkFailed_NotFound(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+
+	sqlxDB := sqlx.NewDb(db, "postgres")
+	repo := NewImportRepository(sqlxDB)
+
+	ctx := context.Background()
+	importID := "nonexistent"
+	errorMessage := "download failed"
+
+	mock.ExpectExec(`UPDATE video_imports SET status.*error_message.*updated_at.*WHERE id`).
+		WithArgs(importID, domain.ImportStatusFailed, errorMessage).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+
+	err = repo.MarkFailed(ctx, importID, errorMessage)
+	assert.Error(t, err)
+	assert.ErrorIs(t, err, domain.ErrImportNotFound)
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestImportRepository_MarkCompleted(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
@@ -286,6 +376,50 @@ func TestImportRepository_MarkCompleted(t *testing.T) {
 
 	err = repo.MarkCompleted(ctx, importID, videoID)
 	assert.NoError(t, err)
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestImportRepository_MarkCompleted_DatabaseError(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+
+	sqlxDB := sqlx.NewDb(db, "postgres")
+	repo := NewImportRepository(sqlxDB)
+
+	ctx := context.Background()
+	importID := "import-123"
+	videoID := "video-456"
+
+	mock.ExpectExec(`UPDATE video_imports SET status.*video_id.*progress.*completed_at.*WHERE id`).
+		WithArgs(importID, domain.ImportStatusCompleted, videoID).
+		WillReturnError(sql.ErrConnDone)
+
+	err = repo.MarkCompleted(ctx, importID, videoID)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to mark import as completed")
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestImportRepository_MarkCompleted_NotFound(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+
+	sqlxDB := sqlx.NewDb(db, "postgres")
+	repo := NewImportRepository(sqlxDB)
+
+	ctx := context.Background()
+	importID := "nonexistent"
+	videoID := "video-456"
+
+	mock.ExpectExec(`UPDATE video_imports SET status.*video_id.*progress.*completed_at.*WHERE id`).
+		WithArgs(importID, domain.ImportStatusCompleted, videoID).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+
+	err = repo.MarkCompleted(ctx, importID, videoID)
+	assert.Error(t, err)
+	assert.ErrorIs(t, err, domain.ErrImportNotFound)
 	assert.NoError(t, mock.ExpectationsWereMet())
 }
 
@@ -377,6 +511,173 @@ func TestImportRepository_CleanupOldImports(t *testing.T) {
 	deleted, err := repo.CleanupOldImports(ctx, daysOld)
 	assert.NoError(t, err)
 	assert.Equal(t, int64(15), deleted)
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestImportRepository_CleanupOldImports_DatabaseError(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+
+	sqlxDB := sqlx.NewDb(db, "postgres")
+	repo := NewImportRepository(sqlxDB)
+
+	ctx := context.Background()
+	daysOld := 30
+
+	mock.ExpectExec(`DELETE FROM video_imports WHERE status IN.*AND updated_at`).
+		WithArgs(domain.ImportStatusCompleted, domain.ImportStatusFailed, domain.ImportStatusCancelled, daysOld).
+		WillReturnError(sql.ErrConnDone)
+
+	_, err = repo.CleanupOldImports(ctx, daysOld)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to cleanup old imports")
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestImportRepository_CleanupOldImports_RowsAffectedError(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+
+	sqlxDB := sqlx.NewDb(db, "postgres")
+	repo := NewImportRepository(sqlxDB)
+
+	ctx := context.Background()
+	daysOld := 30
+
+	mock.ExpectExec(`DELETE FROM video_imports WHERE status IN.*AND updated_at`).
+		WithArgs(domain.ImportStatusCompleted, domain.ImportStatusFailed, domain.ImportStatusCancelled, daysOld).
+		WillReturnResult(sqlmock.NewErrorResult(sql.ErrConnDone))
+
+	_, err = repo.CleanupOldImports(ctx, daysOld)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to get rows affected")
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestImportRepository_GetByUserID_DatabaseError(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+
+	sqlxDB := sqlx.NewDb(db, "postgres")
+	repo := NewImportRepository(sqlxDB)
+
+	ctx := context.Background()
+	userID := "user-123"
+
+	mock.ExpectQuery(`SELECT .* FROM video_imports WHERE user_id`).
+		WithArgs(userID, 10, 0).
+		WillReturnError(sql.ErrConnDone)
+
+	_, err = repo.GetByUserID(ctx, userID, 10, 0)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to get imports by user")
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestImportRepository_CountByUserID_DatabaseError(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+
+	sqlxDB := sqlx.NewDb(db, "postgres")
+	repo := NewImportRepository(sqlxDB)
+
+	ctx := context.Background()
+	userID := "user-123"
+
+	mock.ExpectQuery(`SELECT COUNT.*FROM video_imports WHERE user_id`).
+		WithArgs(userID).
+		WillReturnError(sql.ErrConnDone)
+
+	_, err = repo.CountByUserID(ctx, userID)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to count imports")
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestImportRepository_CountByUserIDAndStatus_DatabaseError(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+
+	sqlxDB := sqlx.NewDb(db, "postgres")
+	repo := NewImportRepository(sqlxDB)
+
+	ctx := context.Background()
+	userID := "user-123"
+	status := domain.ImportStatusCompleted
+
+	mock.ExpectQuery(`SELECT COUNT.*FROM video_imports WHERE user_id.*AND status`).
+		WithArgs(userID, status).
+		WillReturnError(sql.ErrConnDone)
+
+	_, err = repo.CountByUserIDAndStatus(ctx, userID, status)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to count imports by status")
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestImportRepository_CountByUserIDToday_DatabaseError(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+
+	sqlxDB := sqlx.NewDb(db, "postgres")
+	repo := NewImportRepository(sqlxDB)
+
+	ctx := context.Background()
+	userID := "user-123"
+
+	mock.ExpectQuery(`SELECT COUNT.*FROM video_imports WHERE user_id.*AND created_at`).
+		WithArgs(userID).
+		WillReturnError(sql.ErrConnDone)
+
+	_, err = repo.CountByUserIDToday(ctx, userID)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to count today's imports")
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestImportRepository_GetPending_DatabaseError(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+
+	sqlxDB := sqlx.NewDb(db, "postgres")
+	repo := NewImportRepository(sqlxDB)
+
+	ctx := context.Background()
+
+	mock.ExpectQuery(`SELECT .* FROM video_imports WHERE status`).
+		WithArgs(domain.ImportStatusPending, 10).
+		WillReturnError(sql.ErrConnDone)
+
+	_, err = repo.GetPending(ctx, 10)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to get pending imports")
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestImportRepository_GetStuckImports_DatabaseError(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+
+	sqlxDB := sqlx.NewDb(db, "postgres")
+	repo := NewImportRepository(sqlxDB)
+
+	ctx := context.Background()
+
+	mock.ExpectQuery(`SELECT .* FROM video_imports WHERE status IN.*AND updated_at`).
+		WithArgs(domain.ImportStatusDownloading, domain.ImportStatusProcessing, 24).
+		WillReturnError(sql.ErrConnDone)
+
+	_, err = repo.GetStuckImports(ctx, 24)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to get stuck imports")
 	assert.NoError(t, mock.ExpectationsWereMet())
 }
 
@@ -637,4 +938,97 @@ func TestImportRepository_Delete(t *testing.T) {
 
 func strPtr(s string) *string {
 	return &s
+}
+
+func TestImportRepository_Create_DatabaseError(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+
+	sqlxDB := sqlx.NewDb(db, "postgres")
+	repo := NewImportRepository(sqlxDB)
+
+	ctx := context.Background()
+	imp := &domain.VideoImport{
+		UserID:        "user-123",
+		SourceURL:     "https://youtube.com/watch?v=test",
+		Status:        domain.ImportStatusPending,
+		TargetPrivacy: "private",
+	}
+
+	mock.ExpectQuery(regexp.QuoteMeta(`INSERT INTO video_imports`)).
+		WillReturnError(sql.ErrConnDone)
+
+	err = repo.Create(ctx, imp)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to create import")
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestImportRepository_Update_DatabaseError(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+
+	sqlxDB := sqlx.NewDb(db, "postgres")
+	repo := NewImportRepository(sqlxDB)
+
+	ctx := context.Background()
+	imp := &domain.VideoImport{
+		ID:     "import-123",
+		Status: domain.ImportStatusDownloading,
+	}
+
+	mock.ExpectExec(`UPDATE video_imports SET`).
+		WillReturnError(sql.ErrConnDone)
+
+	err = repo.Update(ctx, imp)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to update import")
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestImportRepository_Update_NotFound(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+
+	sqlxDB := sqlx.NewDb(db, "postgres")
+	repo := NewImportRepository(sqlxDB)
+
+	ctx := context.Background()
+	imp := &domain.VideoImport{
+		ID:     "nonexistent",
+		Status: domain.ImportStatusDownloading,
+	}
+
+	mock.ExpectExec(`UPDATE video_imports SET`).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+
+	err = repo.Update(ctx, imp)
+	assert.Error(t, err)
+	assert.ErrorIs(t, err, domain.ErrImportNotFound)
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestImportRepository_GetByID_DatabaseError(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+
+	sqlxDB := sqlx.NewDb(db, "postgres")
+	repo := NewImportRepository(sqlxDB)
+
+	ctx := context.Background()
+	importID := "import-123"
+
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT id, user_id, channel_id, source_url, status, video_id, error_message`)).
+		WithArgs(importID).
+		WillReturnError(sql.ErrConnDone)
+
+	imp, err := repo.GetByID(ctx, importID)
+	assert.Error(t, err)
+	assert.Nil(t, imp)
+	assert.Contains(t, err.Error(), "failed to get import")
+	assert.NoError(t, mock.ExpectationsWereMet())
 }

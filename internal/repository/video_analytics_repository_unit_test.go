@@ -2,6 +2,7 @@ package repository_test
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"regexp"
 	"testing"
@@ -915,6 +916,513 @@ func TestVideoAnalyticsRepository_GetEventsBySessionID(t *testing.T) {
 		events, err := repo.GetEventsBySessionID(ctx, sessionID)
 		assert.Error(t, err)
 		assert.Nil(t, events)
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+}
+
+func TestVideoAnalyticsRepository_GetDailyAnalytics(t *testing.T) {
+	ctx := context.Background()
+	videoID := uuid.New()
+	testDate := time.Date(2024, 1, 15, 0, 0, 0, 0, time.UTC)
+
+	t.Run("success", func(t *testing.T) {
+		_, mock, repo := setupMockDB(t)
+
+		expectedAnalytics := &domain.DailyAnalytics{
+			ID:                       uuid.New(),
+			VideoID:                  videoID,
+			Date:                     testDate,
+			Views:                    1000,
+			UniqueViewers:            750,
+			WatchTimeSeconds:         15000,
+			AvgWatchPercentage:       func() *float64 { v := 75.5; return &v }(),
+			CompletionRate:           func() *float64 { v := 65.2; return &v }(),
+			Likes:                    50,
+			Dislikes:                 5,
+			Comments:                 25,
+			Shares:                   10,
+			Downloads:                3,
+			Countries:                json.RawMessage(`{}`),
+			Devices:                  json.RawMessage(`{}`),
+			Browsers:                 json.RawMessage(`{}`),
+			TrafficSources:           json.RawMessage(`{}`),
+			Qualities:                json.RawMessage(`{}`),
+			PeakConcurrentViewers:    120,
+			Errors:                   2,
+			BufferingEvents:          8,
+			AvgBufferingDurationSecs: func() *float64 { v := 1.5; return &v }(),
+			CreatedAt:                time.Now(),
+			UpdatedAt:                time.Now(),
+		}
+
+		rows := sqlmock.NewRows([]string{
+			"id", "video_id", "date", "views", "unique_viewers", "watch_time_seconds",
+			"avg_watch_percentage", "completion_rate", "likes", "dislikes", "comments",
+			"shares", "downloads", "countries", "devices", "browsers", "traffic_sources",
+			"qualities", "peak_concurrent_viewers", "errors", "buffering_events",
+			"avg_buffering_duration_seconds", "created_at", "updated_at",
+		}).AddRow(
+			expectedAnalytics.ID, expectedAnalytics.VideoID, expectedAnalytics.Date,
+			expectedAnalytics.Views, expectedAnalytics.UniqueViewers, expectedAnalytics.WatchTimeSeconds,
+			expectedAnalytics.AvgWatchPercentage, expectedAnalytics.CompletionRate,
+			expectedAnalytics.Likes, expectedAnalytics.Dislikes, expectedAnalytics.Comments,
+			expectedAnalytics.Shares, expectedAnalytics.Downloads,
+			expectedAnalytics.Countries, expectedAnalytics.Devices, expectedAnalytics.Browsers,
+			expectedAnalytics.TrafficSources, expectedAnalytics.Qualities,
+			expectedAnalytics.PeakConcurrentViewers, expectedAnalytics.Errors,
+			expectedAnalytics.BufferingEvents, expectedAnalytics.AvgBufferingDurationSecs,
+			expectedAnalytics.CreatedAt, expectedAnalytics.UpdatedAt,
+		)
+
+		mock.ExpectQuery(regexp.QuoteMeta(`SELECT id, video_id, date, views, unique_viewers, watch_time_seconds`)).
+			WithArgs(videoID, testDate.Format("2006-01-02")).
+			WillReturnRows(rows)
+
+		result, err := repo.GetDailyAnalytics(ctx, videoID, testDate)
+		require.NoError(t, err)
+		assert.Equal(t, expectedAnalytics.ID, result.ID)
+		assert.Equal(t, expectedAnalytics.VideoID, result.VideoID)
+		assert.Equal(t, expectedAnalytics.Views, result.Views)
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("not found", func(t *testing.T) {
+		_, mock, repo := setupMockDB(t)
+
+		mock.ExpectQuery(regexp.QuoteMeta(`SELECT id, video_id, date, views, unique_viewers, watch_time_seconds`)).
+			WithArgs(videoID, testDate.Format("2006-01-02")).
+			WillReturnError(sql.ErrNoRows)
+
+		result, err := repo.GetDailyAnalytics(ctx, videoID, testDate)
+		assert.Error(t, err)
+		assert.Equal(t, domain.ErrAnalyticsDailyNotFound, err)
+		assert.Nil(t, result)
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("database error", func(t *testing.T) {
+		_, mock, repo := setupMockDB(t)
+
+		mock.ExpectQuery(regexp.QuoteMeta(`SELECT id, video_id, date, views, unique_viewers, watch_time_seconds`)).
+			WithArgs(videoID, testDate.Format("2006-01-02")).
+			WillReturnError(assert.AnError)
+
+		result, err := repo.GetDailyAnalytics(ctx, videoID, testDate)
+		assert.Error(t, err)
+		assert.Nil(t, result)
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+}
+
+func TestVideoAnalyticsRepository_GetDailyAnalyticsRange(t *testing.T) {
+	ctx := context.Background()
+	videoID := uuid.New()
+	startDate := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	endDate := time.Date(2024, 1, 7, 0, 0, 0, 0, time.UTC)
+
+	t.Run("success with multiple records", func(t *testing.T) {
+		_, mock, repo := setupMockDB(t)
+
+		rows := sqlmock.NewRows([]string{
+			"id", "video_id", "date", "views", "unique_viewers", "watch_time_seconds",
+			"avg_watch_percentage", "completion_rate", "likes", "dislikes", "comments",
+			"shares", "downloads", "countries", "devices", "browsers", "traffic_sources",
+			"qualities", "peak_concurrent_viewers", "errors", "buffering_events",
+			"avg_buffering_duration_seconds", "created_at", "updated_at",
+		}).
+			AddRow(uuid.New(), videoID, startDate, 100, 75, 1500, 70.0, 60.0, 5, 1, 2, 1, 0,
+				json.RawMessage(`{}`), json.RawMessage(`{}`), json.RawMessage(`{}`),
+				json.RawMessage(`{}`), json.RawMessage(`{}`), 10, 0, 1, 0.5, time.Now(), time.Now()).
+			AddRow(uuid.New(), videoID, startDate.AddDate(0, 0, 1), 150, 100, 2000, 75.0, 65.0, 8, 0, 3, 2, 1,
+				json.RawMessage(`{}`), json.RawMessage(`{}`), json.RawMessage(`{}`),
+				json.RawMessage(`{}`), json.RawMessage(`{}`), 15, 0, 2, 0.7, time.Now(), time.Now())
+
+		mock.ExpectQuery(regexp.QuoteMeta(`SELECT id, video_id, date, views, unique_viewers, watch_time_seconds`)).
+			WithArgs(videoID, startDate.Format("2006-01-02"), endDate.Format("2006-01-02")).
+			WillReturnRows(rows)
+
+		result, err := repo.GetDailyAnalyticsRange(ctx, videoID, startDate, endDate)
+		require.NoError(t, err)
+		assert.Len(t, result, 2)
+		assert.Equal(t, videoID, result[0].VideoID)
+		assert.Equal(t, 100, result[0].Views)
+		assert.Equal(t, 150, result[1].Views)
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("empty result", func(t *testing.T) {
+		_, mock, repo := setupMockDB(t)
+
+		rows := sqlmock.NewRows([]string{
+			"id", "video_id", "date", "views", "unique_viewers", "watch_time_seconds",
+			"avg_watch_percentage", "completion_rate", "likes", "dislikes", "comments",
+			"shares", "downloads", "countries", "devices", "browsers", "traffic_sources",
+			"qualities", "peak_concurrent_viewers", "errors", "buffering_events",
+			"avg_buffering_duration_seconds", "created_at", "updated_at",
+		})
+
+		mock.ExpectQuery(regexp.QuoteMeta(`SELECT id, video_id, date, views, unique_viewers, watch_time_seconds`)).
+			WithArgs(videoID, startDate.Format("2006-01-02"), endDate.Format("2006-01-02")).
+			WillReturnRows(rows)
+
+		result, err := repo.GetDailyAnalyticsRange(ctx, videoID, startDate, endDate)
+		require.NoError(t, err)
+		assert.Empty(t, result)
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("database error", func(t *testing.T) {
+		_, mock, repo := setupMockDB(t)
+
+		mock.ExpectQuery(regexp.QuoteMeta(`SELECT id, video_id, date, views, unique_viewers, watch_time_seconds`)).
+			WithArgs(videoID, startDate.Format("2006-01-02"), endDate.Format("2006-01-02")).
+			WillReturnError(assert.AnError)
+
+		result, err := repo.GetDailyAnalyticsRange(ctx, videoID, startDate, endDate)
+		assert.Error(t, err)
+		assert.Nil(t, result)
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+}
+
+func TestVideoAnalyticsRepository_GetRetentionData(t *testing.T) {
+	ctx := context.Background()
+	videoID := uuid.New()
+	testDate := time.Date(2024, 1, 15, 0, 0, 0, 0, time.UTC)
+
+	t.Run("success with retention data", func(t *testing.T) {
+		_, mock, repo := setupMockDB(t)
+
+		rows := sqlmock.NewRows([]string{
+			"id", "video_id", "timestamp_seconds", "viewer_count", "date", "created_at", "updated_at",
+		}).
+			AddRow(uuid.New(), videoID, 0, 100, testDate, time.Now(), time.Now()).
+			AddRow(uuid.New(), videoID, 30, 85, testDate, time.Now(), time.Now()).
+			AddRow(uuid.New(), videoID, 60, 70, testDate, time.Now(), time.Now())
+
+		mock.ExpectQuery(regexp.QuoteMeta(`SELECT id, video_id, timestamp_seconds, viewer_count, date, created_at, updated_at`)).
+			WithArgs(videoID, testDate.Format("2006-01-02")).
+			WillReturnRows(rows)
+
+		result, err := repo.GetRetentionData(ctx, videoID, testDate)
+		require.NoError(t, err)
+		assert.Len(t, result, 3)
+		assert.Equal(t, 0, result[0].TimestampSeconds)
+		assert.Equal(t, 100, result[0].ViewerCount)
+		assert.Equal(t, 30, result[1].TimestampSeconds)
+		assert.Equal(t, 85, result[1].ViewerCount)
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("empty result", func(t *testing.T) {
+		_, mock, repo := setupMockDB(t)
+
+		rows := sqlmock.NewRows([]string{
+			"id", "video_id", "timestamp_seconds", "viewer_count", "date", "created_at", "updated_at",
+		})
+
+		mock.ExpectQuery(regexp.QuoteMeta(`SELECT id, video_id, timestamp_seconds, viewer_count, date, created_at, updated_at`)).
+			WithArgs(videoID, testDate.Format("2006-01-02")).
+			WillReturnRows(rows)
+
+		result, err := repo.GetRetentionData(ctx, videoID, testDate)
+		require.NoError(t, err)
+		assert.Empty(t, result)
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("database error", func(t *testing.T) {
+		_, mock, repo := setupMockDB(t)
+
+		mock.ExpectQuery(regexp.QuoteMeta(`SELECT id, video_id, timestamp_seconds, viewer_count, date, created_at, updated_at`)).
+			WithArgs(videoID, testDate.Format("2006-01-02")).
+			WillReturnError(assert.AnError)
+
+		result, err := repo.GetRetentionData(ctx, videoID, testDate)
+		assert.Error(t, err)
+		assert.Nil(t, result)
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+}
+
+func TestVideoAnalyticsRepository_GetChannelDailyAnalytics(t *testing.T) {
+	ctx := context.Background()
+	channelID := uuid.New()
+	testDate := time.Date(2024, 1, 15, 0, 0, 0, 0, time.UTC)
+
+	t.Run("success", func(t *testing.T) {
+		_, mock, repo := setupMockDB(t)
+
+		expectedAnalytics := &domain.ChannelDailyAnalytics{
+			ID:                channelID,
+			ChannelID:         channelID,
+			Date:              testDate,
+			Views:             5000,
+			UniqueViewers:     3500,
+			WatchTimeSeconds:  75000,
+			SubscribersGained: 50,
+			SubscribersLost:   10,
+			TotalSubscribers:  10000,
+			Likes:             250,
+			Comments:          120,
+			Shares:            45,
+			VideosPublished:   3,
+			CreatedAt:         time.Now(),
+			UpdatedAt:         time.Now(),
+		}
+
+		rows := sqlmock.NewRows([]string{
+			"id", "channel_id", "date", "views", "unique_viewers", "watch_time_seconds",
+			"subscribers_gained", "subscribers_lost", "total_subscribers", "likes",
+			"comments", "shares", "videos_published", "created_at", "updated_at",
+		}).AddRow(
+			expectedAnalytics.ID, expectedAnalytics.ChannelID, expectedAnalytics.Date,
+			expectedAnalytics.Views, expectedAnalytics.UniqueViewers, expectedAnalytics.WatchTimeSeconds,
+			expectedAnalytics.SubscribersGained, expectedAnalytics.SubscribersLost,
+			expectedAnalytics.TotalSubscribers, expectedAnalytics.Likes,
+			expectedAnalytics.Comments, expectedAnalytics.Shares, expectedAnalytics.VideosPublished,
+			expectedAnalytics.CreatedAt, expectedAnalytics.UpdatedAt,
+		)
+
+		mock.ExpectQuery(regexp.QuoteMeta(`SELECT id, channel_id, date, views, unique_viewers, watch_time_seconds`)).
+			WithArgs(channelID, testDate.Format("2006-01-02")).
+			WillReturnRows(rows)
+
+		result, err := repo.GetChannelDailyAnalytics(ctx, channelID, testDate)
+		require.NoError(t, err)
+		assert.Equal(t, expectedAnalytics.ChannelID, result.ChannelID)
+		assert.Equal(t, expectedAnalytics.Views, result.Views)
+		assert.Equal(t, expectedAnalytics.SubscribersGained, result.SubscribersGained)
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("not found", func(t *testing.T) {
+		_, mock, repo := setupMockDB(t)
+
+		mock.ExpectQuery(regexp.QuoteMeta(`SELECT id, channel_id, date, views, unique_viewers, watch_time_seconds`)).
+			WithArgs(channelID, testDate.Format("2006-01-02")).
+			WillReturnError(sql.ErrNoRows)
+
+		result, err := repo.GetChannelDailyAnalytics(ctx, channelID, testDate)
+		assert.Error(t, err)
+		assert.Equal(t, domain.ErrAnalyticsDailyNotFound, err)
+		assert.Nil(t, result)
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("database error", func(t *testing.T) {
+		_, mock, repo := setupMockDB(t)
+
+		mock.ExpectQuery(regexp.QuoteMeta(`SELECT id, channel_id, date, views, unique_viewers, watch_time_seconds`)).
+			WithArgs(channelID, testDate.Format("2006-01-02")).
+			WillReturnError(assert.AnError)
+
+		result, err := repo.GetChannelDailyAnalytics(ctx, channelID, testDate)
+		assert.Error(t, err)
+		assert.Nil(t, result)
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+}
+
+func TestVideoAnalyticsRepository_GetChannelDailyAnalyticsRange(t *testing.T) {
+	ctx := context.Background()
+	channelID := uuid.New()
+	startDate := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	endDate := time.Date(2024, 1, 7, 0, 0, 0, 0, time.UTC)
+
+	t.Run("success with multiple records", func(t *testing.T) {
+		_, mock, repo := setupMockDB(t)
+
+		rows := sqlmock.NewRows([]string{
+			"id", "channel_id", "date", "views", "unique_viewers", "watch_time_seconds",
+			"subscribers_gained", "subscribers_lost", "total_subscribers", "likes",
+			"comments", "shares", "videos_published", "created_at", "updated_at",
+		}).
+			AddRow(uuid.New(), channelID, startDate, 1000, 700, 15000, 10, 2, 5000, 50, 20, 10, 1, time.Now(), time.Now()).
+			AddRow(uuid.New(), channelID, startDate.AddDate(0, 0, 1), 1200, 850, 18000, 15, 3, 5012, 60, 25, 12, 2, time.Now(), time.Now())
+
+		mock.ExpectQuery(regexp.QuoteMeta(`SELECT id, channel_id, date, views, unique_viewers, watch_time_seconds`)).
+			WithArgs(channelID, startDate.Format("2006-01-02"), endDate.Format("2006-01-02")).
+			WillReturnRows(rows)
+
+		result, err := repo.GetChannelDailyAnalyticsRange(ctx, channelID, startDate, endDate)
+		require.NoError(t, err)
+		assert.Len(t, result, 2)
+		assert.Equal(t, channelID, result[0].ChannelID)
+		assert.Equal(t, 1000, result[0].Views)
+		assert.Equal(t, 1200, result[1].Views)
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("empty result", func(t *testing.T) {
+		_, mock, repo := setupMockDB(t)
+
+		rows := sqlmock.NewRows([]string{
+			"id", "channel_id", "date", "views", "unique_viewers", "watch_time_seconds",
+			"subscribers_gained", "subscribers_lost", "total_subscribers", "likes",
+			"comments", "shares", "videos_published", "created_at", "updated_at",
+		})
+
+		mock.ExpectQuery(regexp.QuoteMeta(`SELECT id, channel_id, date, views, unique_viewers, watch_time_seconds`)).
+			WithArgs(channelID, startDate.Format("2006-01-02"), endDate.Format("2006-01-02")).
+			WillReturnRows(rows)
+
+		result, err := repo.GetChannelDailyAnalyticsRange(ctx, channelID, startDate, endDate)
+		require.NoError(t, err)
+		assert.Empty(t, result)
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("database error", func(t *testing.T) {
+		_, mock, repo := setupMockDB(t)
+
+		mock.ExpectQuery(regexp.QuoteMeta(`SELECT id, channel_id, date, views, unique_viewers, watch_time_seconds`)).
+			WithArgs(channelID, startDate.Format("2006-01-02"), endDate.Format("2006-01-02")).
+			WillReturnError(assert.AnError)
+
+		result, err := repo.GetChannelDailyAnalyticsRange(ctx, channelID, startDate, endDate)
+		assert.Error(t, err)
+		assert.Nil(t, result)
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+}
+
+func TestVideoAnalyticsRepository_GetActiveViewersForVideo(t *testing.T) {
+	ctx := context.Background()
+	videoID := uuid.New()
+
+	t.Run("success with active viewers", func(t *testing.T) {
+		_, mock, repo := setupMockDB(t)
+
+		userID1 := uuid.New()
+		userID2 := uuid.New()
+
+		rows := sqlmock.NewRows([]string{
+			"id", "video_id", "session_id", "user_id", "last_heartbeat", "created_at",
+		}).
+			AddRow(uuid.New(), videoID, "session-1", &userID1, time.Now(), time.Now()).
+			AddRow(uuid.New(), videoID, "session-2", &userID2, time.Now(), time.Now()).
+			AddRow(uuid.New(), videoID, "session-3", (*uuid.UUID)(nil), time.Now(), time.Now())
+
+		mock.ExpectQuery(regexp.QuoteMeta(`SELECT id, video_id, session_id, user_id, last_heartbeat, created_at`)).
+			WithArgs(videoID).
+			WillReturnRows(rows)
+
+		result, err := repo.GetActiveViewersForVideo(ctx, videoID)
+		require.NoError(t, err)
+		assert.Len(t, result, 3)
+		assert.Equal(t, videoID, result[0].VideoID)
+		assert.Equal(t, "session-1", result[0].SessionID)
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("empty result", func(t *testing.T) {
+		_, mock, repo := setupMockDB(t)
+
+		rows := sqlmock.NewRows([]string{
+			"id", "video_id", "session_id", "user_id", "last_heartbeat", "created_at",
+		})
+
+		mock.ExpectQuery(regexp.QuoteMeta(`SELECT id, video_id, session_id, user_id, last_heartbeat, created_at`)).
+			WithArgs(videoID).
+			WillReturnRows(rows)
+
+		result, err := repo.GetActiveViewersForVideo(ctx, videoID)
+		require.NoError(t, err)
+		assert.Empty(t, result)
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("database error", func(t *testing.T) {
+		_, mock, repo := setupMockDB(t)
+
+		mock.ExpectQuery(regexp.QuoteMeta(`SELECT id, video_id, session_id, user_id, last_heartbeat, created_at`)).
+			WithArgs(videoID).
+			WillReturnError(assert.AnError)
+
+		result, err := repo.GetActiveViewersForVideo(ctx, videoID)
+		assert.Error(t, err)
+		assert.Nil(t, result)
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+}
+
+func TestVideoAnalyticsRepository_GetVideoAnalyticsSummary(t *testing.T) {
+	ctx := context.Background()
+	videoID := uuid.New()
+	startDate := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	endDate := time.Date(2024, 1, 7, 0, 0, 0, 0, time.UTC)
+
+	t.Run("success", func(t *testing.T) {
+		_, mock, repo := setupMockDB(t)
+
+		summaryRows := sqlmock.NewRows([]string{
+			"video_id", "total_views", "total_unique_viewers", "total_watch_time_seconds",
+			"avg_watch_percentage", "avg_completion_rate", "total_likes", "total_dislikes",
+			"total_comments", "total_shares", "peak_viewers",
+		}).AddRow(
+			videoID, 10000, 7500, 150000, 72.5, 63.2, 500, 50, 250, 100, 150,
+		)
+
+		mock.ExpectQuery(regexp.QuoteMeta(`SELECT`)).
+			WithArgs(videoID, startDate.Format("2006-01-02"), endDate.Format("2006-01-02")).
+			WillReturnRows(summaryRows)
+
+		countRows := sqlmock.NewRows([]string{"count"}).AddRow(25)
+		mock.ExpectQuery(regexp.QuoteMeta(`SELECT COUNT(*) FROM video_active_viewers`)).
+			WithArgs(videoID).
+			WillReturnRows(countRows)
+
+		result, err := repo.GetVideoAnalyticsSummary(ctx, videoID, startDate, endDate)
+		require.NoError(t, err)
+		assert.Equal(t, videoID, result.VideoID)
+		assert.Equal(t, 10000, result.TotalViews)
+		assert.Equal(t, 7500, result.TotalUniqueViewers)
+		assert.Equal(t, int64(150000), result.TotalWatchTimeSeconds)
+		assert.Equal(t, 25, result.CurrentViewers)
+		assert.NotNil(t, result.TopCountries)
+		assert.NotNil(t, result.DeviceBreakdown)
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("database error on summary", func(t *testing.T) {
+		_, mock, repo := setupMockDB(t)
+
+		mock.ExpectQuery(regexp.QuoteMeta(`SELECT`)).
+			WithArgs(videoID, startDate.Format("2006-01-02"), endDate.Format("2006-01-02")).
+			WillReturnError(assert.AnError)
+
+		result, err := repo.GetVideoAnalyticsSummary(ctx, videoID, startDate, endDate)
+		assert.Error(t, err)
+		assert.Nil(t, result)
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("success with zero values", func(t *testing.T) {
+		_, mock, repo := setupMockDB(t)
+
+		summaryRows := sqlmock.NewRows([]string{
+			"video_id", "total_views", "total_unique_viewers", "total_watch_time_seconds",
+			"avg_watch_percentage", "avg_completion_rate", "total_likes", "total_dislikes",
+			"total_comments", "total_shares", "peak_viewers",
+		}).AddRow(
+			videoID, 0, 0, 0, 0.0, 0.0, 0, 0, 0, 0, 0,
+		)
+
+		mock.ExpectQuery(regexp.QuoteMeta(`SELECT`)).
+			WithArgs(videoID, startDate.Format("2006-01-02"), endDate.Format("2006-01-02")).
+			WillReturnRows(summaryRows)
+
+		countRows := sqlmock.NewRows([]string{"count"}).AddRow(0)
+		mock.ExpectQuery(regexp.QuoteMeta(`SELECT COUNT(*) FROM video_active_viewers`)).
+			WithArgs(videoID).
+			WillReturnRows(countRows)
+
+		result, err := repo.GetVideoAnalyticsSummary(ctx, videoID, startDate, endDate)
+		require.NoError(t, err)
+		assert.Equal(t, videoID, result.VideoID)
+		assert.Equal(t, 0, result.TotalViews)
+		assert.Equal(t, 0, result.CurrentViewers)
 		assert.NoError(t, mock.ExpectationsWereMet())
 	})
 }

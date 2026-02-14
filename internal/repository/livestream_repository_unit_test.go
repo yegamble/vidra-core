@@ -1097,3 +1097,94 @@ func TestViewerSessionRepositoryUnit_GetActiveByStream(t *testing.T) {
 		})
 	}
 }
+
+func TestStreamKeyRepositoryUnit_GetByChannelID(t *testing.T) {
+	ctx := context.Background()
+	channelID := uuid.New()
+
+	t.Run("success", func(t *testing.T) {
+		mockDB, mock, err := sqlmock.New()
+		require.NoError(t, err)
+		defer mockDB.Close()
+
+		db := sqlx.NewDb(mockDB, "sqlmock")
+		repo := NewStreamKeyRepository(db)
+
+		expectedKey := &domain.StreamKey{
+			ID:        uuid.New(),
+			ChannelID: channelID,
+			KeyHash:   "$2a$10$hashedkey",
+			IsActive:  true,
+			CreatedAt: time.Now(),
+		}
+
+		rows := sqlmock.NewRows([]string{"id", "channel_id", "key_hash", "last_used_at", "is_active", "created_at", "expires_at"}).
+			AddRow(expectedKey.ID, expectedKey.ChannelID, expectedKey.KeyHash, nil, expectedKey.IsActive, expectedKey.CreatedAt, nil)
+
+		mock.ExpectQuery("SELECT \\* FROM stream_keys WHERE channel_id").
+			WithArgs(channelID).
+			WillReturnRows(rows)
+
+		result, err := repo.GetByChannelID(ctx, channelID)
+		require.NoError(t, err)
+		assert.Equal(t, expectedKey.ID, result.ID)
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("not found", func(t *testing.T) {
+		mockDB, mock, err := sqlmock.New()
+		require.NoError(t, err)
+		defer mockDB.Close()
+
+		db := sqlx.NewDb(mockDB, "sqlmock")
+		repo := NewStreamKeyRepository(db)
+
+		mock.ExpectQuery("SELECT \\* FROM stream_keys WHERE channel_id").
+			WithArgs(channelID).
+			WillReturnError(sql.ErrNoRows)
+
+		result, err := repo.GetByChannelID(ctx, channelID)
+		assert.Error(t, err)
+		assert.Nil(t, result)
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+}
+
+func TestStreamKeyRepositoryUnit_DeactivateAllForChannel(t *testing.T) {
+	ctx := context.Background()
+	channelID := uuid.New()
+
+	t.Run("success", func(t *testing.T) {
+		mockDB, mock, err := sqlmock.New()
+		require.NoError(t, err)
+		defer mockDB.Close()
+
+		db := sqlx.NewDb(mockDB, "sqlmock")
+		repo := NewStreamKeyRepository(db)
+
+		mock.ExpectExec("UPDATE stream_keys SET is_active").
+			WithArgs(channelID).
+			WillReturnResult(sqlmock.NewResult(0, 2))
+
+		err = repo.DeactivateAllForChannel(ctx, channelID)
+		require.NoError(t, err)
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("database error", func(t *testing.T) {
+		mockDB, mock, err := sqlmock.New()
+		require.NoError(t, err)
+		defer mockDB.Close()
+
+		db := sqlx.NewDb(mockDB, "sqlmock")
+		repo := NewStreamKeyRepository(db)
+
+		mock.ExpectExec("UPDATE stream_keys SET is_active").
+			WithArgs(channelID).
+			WillReturnError(assert.AnError)
+
+		err = repo.DeactivateAllForChannel(ctx, channelID)
+		assert.Error(t, err)
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+}

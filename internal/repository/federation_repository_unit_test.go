@@ -122,6 +122,35 @@ func TestFederationRepository_Unit_Jobs(t *testing.T) {
 		require.NoError(t, mock.ExpectationsWereMet())
 	})
 
+	t.Run("delete job not found", func(t *testing.T) {
+		repo, mock, cleanup := newFederationRepo(t)
+		defer cleanup()
+
+		jobID := uuid.NewString()
+		mock.ExpectExec(`(?s)DELETE FROM federation_jobs WHERE id\s*=\s*\$1`).
+			WithArgs(jobID).
+			WillReturnResult(sqlmock.NewResult(0, 0))
+
+		err := repo.DeleteJob(ctx, jobID)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "NOT_FOUND")
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("delete job error", func(t *testing.T) {
+		repo, mock, cleanup := newFederationRepo(t)
+		defer cleanup()
+
+		jobID := uuid.NewString()
+		mock.ExpectExec(`(?s)DELETE FROM federation_jobs WHERE id\s*=\s*\$1`).
+			WithArgs(jobID).
+			WillReturnError(errors.New("delete failed"))
+
+		err := repo.DeleteJob(ctx, jobID)
+		require.Error(t, err)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
 	t.Run("list jobs success", func(t *testing.T) {
 		repo, mock, cleanup := newFederationRepo(t)
 		defer cleanup()
@@ -335,6 +364,33 @@ func TestFederationRepository_Unit_Actors(t *testing.T) {
 
 		err := repo.DeleteActor(ctx, actor)
 		require.NoError(t, err)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("delete actor not found", func(t *testing.T) {
+		repo, mock, cleanup := newFederationRepo(t)
+		defer cleanup()
+
+		mock.ExpectExec(`(?s)DELETE FROM federation_actors WHERE actor\s*=\s*\$1`).
+			WithArgs(actor).
+			WillReturnResult(sqlmock.NewResult(0, 0))
+
+		err := repo.DeleteActor(ctx, actor)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "NOT_FOUND")
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("delete actor error", func(t *testing.T) {
+		repo, mock, cleanup := newFederationRepo(t)
+		defer cleanup()
+
+		mock.ExpectExec(`(?s)DELETE FROM federation_actors WHERE actor\s*=\s*\$1`).
+			WithArgs(actor).
+			WillReturnError(errors.New("delete failed"))
+
+		err := repo.DeleteActor(ctx, actor)
+		require.Error(t, err)
 		require.NoError(t, mock.ExpectationsWereMet())
 	})
 
@@ -665,4 +721,27 @@ func TestFederationRepository_GetPostDuplicates(t *testing.T) {
 	assert.Len(t, posts, 1)
 	assert.Equal(t, "post-789", posts[0].ID)
 	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestJsonRawToDBValue(t *testing.T) {
+	t.Run("empty raw returns nil", func(t *testing.T) {
+		result := jsonRawToDBValue(nil)
+		assert.Nil(t, result)
+
+		result = jsonRawToDBValue([]byte{})
+		assert.Nil(t, result)
+	})
+
+	t.Run("valid JSON returns string", func(t *testing.T) {
+		raw := []byte(`{"key":"value"}`)
+		result := jsonRawToDBValue(raw)
+		assert.Equal(t, `{"key":"value"}`, result)
+	})
+
+	t.Run("invalid JSON gets marshaled", func(t *testing.T) {
+		raw := []byte(`invalid json`)
+		result := jsonRawToDBValue(raw)
+		assert.NotNil(t, result)
+		assert.Contains(t, result.(string), "invalid json")
+	})
 }

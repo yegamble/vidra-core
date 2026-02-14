@@ -15,7 +15,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestTorrentRepository tests torrent repository operations
 func TestTorrentRepository(t *testing.T) {
 	t.Run("CreateTorrent", func(t *testing.T) {
 		db, mock, err := sqlmock.New()
@@ -120,6 +119,48 @@ func TestTorrentRepository(t *testing.T) {
 		assert.NoError(t, mock.ExpectationsWereMet())
 	})
 
+	t.Run("GetTorrentByVideoID_NotFound", func(t *testing.T) {
+		db, mock, err := sqlmock.New()
+		require.NoError(t, err)
+		defer db.Close()
+
+		sqlxDB := sqlx.NewDb(db, "postgres")
+		repo := NewTorrentRepository(sqlxDB)
+
+		videoID := uuid.New()
+
+		mock.ExpectQuery("SELECT .+ FROM video_torrents WHERE video_id").
+			WithArgs(videoID).
+			WillReturnError(sql.ErrNoRows)
+
+		torrent, err := repo.GetTorrentByVideoID(context.Background(), videoID)
+		assert.Error(t, err)
+		assert.Nil(t, torrent)
+		assert.Contains(t, err.Error(), "torrent not found")
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("GetTorrentByVideoID_DatabaseError", func(t *testing.T) {
+		db, mock, err := sqlmock.New()
+		require.NoError(t, err)
+		defer db.Close()
+
+		sqlxDB := sqlx.NewDb(db, "postgres")
+		repo := NewTorrentRepository(sqlxDB)
+
+		videoID := uuid.New()
+
+		mock.ExpectQuery("SELECT .+ FROM video_torrents WHERE video_id").
+			WithArgs(videoID).
+			WillReturnError(sql.ErrConnDone)
+
+		torrent, err := repo.GetTorrentByVideoID(context.Background(), videoID)
+		assert.Error(t, err)
+		assert.Nil(t, torrent)
+		assert.Contains(t, err.Error(), "failed to get torrent")
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
 	t.Run("GetTorrentByInfoHash", func(t *testing.T) {
 		db, mock, err := sqlmock.New()
 		require.NoError(t, err)
@@ -171,6 +212,48 @@ func TestTorrentRepository(t *testing.T) {
 		assert.NoError(t, mock.ExpectationsWereMet())
 	})
 
+	t.Run("GetTorrentByInfoHash_NotFound", func(t *testing.T) {
+		db, mock, err := sqlmock.New()
+		require.NoError(t, err)
+		defer db.Close()
+
+		sqlxDB := sqlx.NewDb(db, "postgres")
+		repo := NewTorrentRepository(sqlxDB)
+
+		infoHash := "nonexistent_hash"
+
+		mock.ExpectQuery("SELECT .+ FROM video_torrents WHERE info_hash").
+			WithArgs(infoHash).
+			WillReturnError(sql.ErrNoRows)
+
+		torrent, err := repo.GetTorrentByInfoHash(context.Background(), infoHash)
+		assert.Error(t, err)
+		assert.Nil(t, torrent)
+		assert.Contains(t, err.Error(), "torrent not found")
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("GetTorrentByInfoHash_DatabaseError", func(t *testing.T) {
+		db, mock, err := sqlmock.New()
+		require.NoError(t, err)
+		defer db.Close()
+
+		sqlxDB := sqlx.NewDb(db, "postgres")
+		repo := NewTorrentRepository(sqlxDB)
+
+		infoHash := "1234567890abcdef1234567890abcdef12345678"
+
+		mock.ExpectQuery("SELECT .+ FROM video_torrents WHERE info_hash").
+			WithArgs(infoHash).
+			WillReturnError(sql.ErrConnDone)
+
+		torrent, err := repo.GetTorrentByInfoHash(context.Background(), infoHash)
+		assert.Error(t, err)
+		assert.Nil(t, torrent)
+		assert.Contains(t, err.Error(), "failed to get torrent")
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
 	t.Run("UpdateTorrentStats", func(t *testing.T) {
 		db, mock, err := sqlmock.New()
 		require.NoError(t, err)
@@ -189,6 +272,50 @@ func TestTorrentRepository(t *testing.T) {
 
 		err = repo.UpdateTorrentStats(context.Background(), infoHash, seeders, leechers)
 		assert.NoError(t, err)
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("UpdateTorrentStats_DatabaseError", func(t *testing.T) {
+		db, mock, err := sqlmock.New()
+		require.NoError(t, err)
+		defer db.Close()
+
+		sqlxDB := sqlx.NewDb(db, "postgres")
+		repo := NewTorrentRepository(sqlxDB)
+
+		infoHash := "1234567890abcdef1234567890abcdef12345678"
+		seeders := 10
+		leechers := 20
+
+		mock.ExpectExec("UPDATE video_torrents SET seeders").
+			WithArgs(infoHash, seeders, leechers, sqlmock.AnyArg()).
+			WillReturnError(sql.ErrConnDone)
+
+		err = repo.UpdateTorrentStats(context.Background(), infoHash, seeders, leechers)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to update torrent stats")
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("UpdateTorrentStats_NotFound", func(t *testing.T) {
+		db, mock, err := sqlmock.New()
+		require.NoError(t, err)
+		defer db.Close()
+
+		sqlxDB := sqlx.NewDb(db, "postgres")
+		repo := NewTorrentRepository(sqlxDB)
+
+		infoHash := "nonexistent_hash"
+		seeders := 10
+		leechers := 20
+
+		mock.ExpectExec("UPDATE video_torrents SET seeders").
+			WithArgs(infoHash, seeders, leechers, sqlmock.AnyArg()).
+			WillReturnResult(sqlmock.NewResult(0, 0))
+
+		err = repo.UpdateTorrentStats(context.Background(), infoHash, seeders, leechers)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "torrent not found")
 		assert.NoError(t, mock.ExpectationsWereMet())
 	})
 
@@ -211,6 +338,46 @@ func TestTorrentRepository(t *testing.T) {
 		assert.NoError(t, mock.ExpectationsWereMet())
 	})
 
+	t.Run("IncrementCompletedDownloads_DatabaseError", func(t *testing.T) {
+		db, mock, err := sqlmock.New()
+		require.NoError(t, err)
+		defer db.Close()
+
+		sqlxDB := sqlx.NewDb(db, "postgres")
+		repo := NewTorrentRepository(sqlxDB)
+
+		infoHash := "1234567890abcdef1234567890abcdef12345678"
+
+		mock.ExpectExec("UPDATE video_torrents SET completed_downloads").
+			WithArgs(infoHash, sqlmock.AnyArg()).
+			WillReturnError(sql.ErrConnDone)
+
+		err = repo.IncrementCompletedDownloads(context.Background(), infoHash)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to increment completed downloads")
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("IncrementCompletedDownloads_NotFound", func(t *testing.T) {
+		db, mock, err := sqlmock.New()
+		require.NoError(t, err)
+		defer db.Close()
+
+		sqlxDB := sqlx.NewDb(db, "postgres")
+		repo := NewTorrentRepository(sqlxDB)
+
+		infoHash := "nonexistent_hash"
+
+		mock.ExpectExec("UPDATE video_torrents SET completed_downloads").
+			WithArgs(infoHash, sqlmock.AnyArg()).
+			WillReturnResult(sqlmock.NewResult(0, 0))
+
+		err = repo.IncrementCompletedDownloads(context.Background(), infoHash)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "torrent not found")
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
 	t.Run("SetSeedingStatus", func(t *testing.T) {
 		db, mock, err := sqlmock.New()
 		require.NoError(t, err)
@@ -227,6 +394,46 @@ func TestTorrentRepository(t *testing.T) {
 
 		err = repo.SetSeedingStatus(context.Background(), videoID, true)
 		assert.NoError(t, err)
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("SetSeedingStatus_DatabaseError", func(t *testing.T) {
+		db, mock, err := sqlmock.New()
+		require.NoError(t, err)
+		defer db.Close()
+
+		sqlxDB := sqlx.NewDb(db, "postgres")
+		repo := NewTorrentRepository(sqlxDB)
+
+		videoID := uuid.New()
+
+		mock.ExpectExec("UPDATE video_torrents SET is_seeding").
+			WithArgs(videoID, true, sqlmock.AnyArg()).
+			WillReturnError(sql.ErrConnDone)
+
+		err = repo.SetSeedingStatus(context.Background(), videoID, true)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to update seeding status")
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("SetSeedingStatus_NotFound", func(t *testing.T) {
+		db, mock, err := sqlmock.New()
+		require.NoError(t, err)
+		defer db.Close()
+
+		sqlxDB := sqlx.NewDb(db, "postgres")
+		repo := NewTorrentRepository(sqlxDB)
+
+		videoID := uuid.New()
+
+		mock.ExpectExec("UPDATE video_torrents SET is_seeding").
+			WithArgs(videoID, true, sqlmock.AnyArg()).
+			WillReturnResult(sqlmock.NewResult(0, 0))
+
+		err = repo.SetSeedingStatus(context.Background(), videoID, true)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "torrent not found")
 		assert.NoError(t, mock.ExpectationsWereMet())
 	})
 
@@ -297,7 +504,6 @@ func TestTorrentRepository(t *testing.T) {
 	})
 }
 
-// TestTorrentPeerRepository tests peer repository operations
 func TestTorrentPeerRepository(t *testing.T) {
 	t.Run("UpsertPeer_Insert", func(t *testing.T) {
 		db, mock, err := sqlmock.New()
@@ -434,7 +640,6 @@ func TestTorrentPeerRepository(t *testing.T) {
 	})
 }
 
-// TestTorrentTrackerRepository tests tracker repository operations
 func TestTorrentTrackerRepository(t *testing.T) {
 	t.Run("GetActiveTrackers", func(t *testing.T) {
 		db, mock, err := sqlmock.New()
@@ -511,9 +716,48 @@ func TestTorrentTrackerRepository(t *testing.T) {
 		assert.NoError(t, err)
 		assert.NoError(t, mock.ExpectationsWereMet())
 	})
+
+	t.Run("SetTrackerActive_DatabaseError", func(t *testing.T) {
+		db, mock, err := sqlmock.New()
+		require.NoError(t, err)
+		defer db.Close()
+
+		sqlxDB := sqlx.NewDb(db, "postgres")
+		repo := NewTorrentTrackerRepository(sqlxDB)
+
+		announceURL := "wss://tracker.com"
+
+		mock.ExpectExec("UPDATE torrent_trackers SET is_active").
+			WithArgs(announceURL, false).
+			WillReturnError(sql.ErrConnDone)
+
+		err = repo.SetTrackerActive(context.Background(), announceURL, false)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to update tracker status")
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("SetTrackerActive_NotFound", func(t *testing.T) {
+		db, mock, err := sqlmock.New()
+		require.NoError(t, err)
+		defer db.Close()
+
+		sqlxDB := sqlx.NewDb(db, "postgres")
+		repo := NewTorrentTrackerRepository(sqlxDB)
+
+		announceURL := "wss://nonexistent.com"
+
+		mock.ExpectExec("UPDATE torrent_trackers SET is_active").
+			WithArgs(announceURL, false).
+			WillReturnResult(sqlmock.NewResult(0, 0))
+
+		err = repo.SetTrackerActive(context.Background(), announceURL, false)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "tracker not found")
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
 }
 
-// TestTorrentWebSeedRepository tests web seed repository operations
 func TestTorrentWebSeedRepository(t *testing.T) {
 	t.Run("AddWebSeed", func(t *testing.T) {
 		db, mock, err := sqlmock.New()
@@ -575,7 +819,6 @@ func TestTorrentWebSeedRepository(t *testing.T) {
 	})
 }
 
-// TestTorrentStatsRepository tests statistics repository operations
 func TestTorrentStatsRepository(t *testing.T) {
 	t.Run("RecordStats", func(t *testing.T) {
 		db, mock, err := sqlmock.New()
@@ -601,8 +844,8 @@ func TestTorrentStatsRepository(t *testing.T) {
 				stats.ID,
 				stats.VideoTorrentID,
 				stats.Hour,
-				stats.TotalSeeds,                  // seeders_avg
-				stats.TotalPeers-stats.TotalSeeds, // leechers_avg
+				stats.TotalSeeds,
+				stats.TotalPeers-stats.TotalSeeds,
 				stats.BytesDownloaded,
 				stats.BytesUploaded,
 				stats.CompletedDownloads,

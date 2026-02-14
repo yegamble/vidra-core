@@ -90,6 +90,20 @@ func TestAtprotoRepository_Unit_SaveSession(t *testing.T) {
 		assert.NoError(t, mock.ExpectationsWereMet())
 	})
 
+	t.Run("encryption error - invalid key length", func(t *testing.T) {
+		db, mock := setupAtprotoMockDB(t)
+		defer func() { _ = db.Close() }()
+
+		repo := NewAtprotoRepository(db)
+
+		invalidKey := make([]byte, 16)
+
+		err := repo.SaveSession(ctx, invalidKey, "access", "refresh", "did")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "invalid key size")
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
 	t.Run("exec error", func(t *testing.T) {
 		db, mock := setupAtprotoMockDB(t)
 		defer func() { _ = db.Close() }()

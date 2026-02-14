@@ -7,30 +7,23 @@ import (
 	"os"
 	"path/filepath"
 
-	"athena/internal/torrent"
-
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 )
 
-// TorrentHandlers handles HTTP requests for torrent operations
 type TorrentHandlers struct {
-	manager *torrent.Manager
-	tracker *torrent.Tracker
+	manager TorrentManagerInterface
+	tracker TorrentTrackerInterface
 }
 
-// NewTorrentHandlers creates a new torrent handlers instance
-func NewTorrentHandlers(manager *torrent.Manager, tracker *torrent.Tracker) *TorrentHandlers {
+func NewTorrentHandlers(manager TorrentManagerInterface, tracker TorrentTrackerInterface) *TorrentHandlers {
 	return &TorrentHandlers{
 		manager: manager,
 		tracker: tracker,
 	}
 }
 
-// GetVideoTorrentFile serves the .torrent file for a video
-// GET /api/v1/videos/:id/torrent
 func (h *TorrentHandlers) GetVideoTorrentFile(w http.ResponseWriter, r *http.Request) {
-	// Get video ID from URL
 	videoIDStr := chi.URLParam(r, "id")
 	videoID, err := uuid.Parse(videoIDStr)
 	if err != nil {
@@ -38,44 +31,35 @@ func (h *TorrentHandlers) GetVideoTorrentFile(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	// Get the torrent file path from database
 	torrentData, err := h.manager.GetVideoTorrent(r.Context(), videoID)
 	if err != nil {
 		http.Error(w, "Torrent not found", http.StatusNotFound)
 		return
 	}
 
-	// Check if file exists
 	if _, err := os.Stat(torrentData.TorrentFilePath); os.IsNotExist(err) {
 		http.Error(w, "Torrent file not found", http.StatusNotFound)
 		return
 	}
 
-	// Read torrent file
 	data, err := os.ReadFile(torrentData.TorrentFilePath)
 	if err != nil {
 		http.Error(w, "Failed to read torrent file", http.StatusInternalServerError)
 		return
 	}
 
-	// Set headers for torrent download
 	filename := filepath.Base(torrentData.TorrentFilePath)
 	w.Header().Set("Content-Type", "application/x-bittorrent")
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filename))
 	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(data)))
 
-	// Write torrent file
 	w.WriteHeader(http.StatusOK)
 	if _, err := w.Write(data); err != nil {
-		// Log error but can't change response at this point
 		return
 	}
 }
 
-// GetVideoMagnetURI returns the magnet URI for a video
-// GET /api/v1/videos/:id/magnet
 func (h *TorrentHandlers) GetVideoMagnetURI(w http.ResponseWriter, r *http.Request) {
-	// Get video ID from URL
 	videoIDStr := chi.URLParam(r, "id")
 	videoID, err := uuid.Parse(videoIDStr)
 	if err != nil {
@@ -86,7 +70,6 @@ func (h *TorrentHandlers) GetVideoMagnetURI(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// Get torrent from database
 	torrentData, err := h.manager.GetVideoTorrent(r.Context(), videoID)
 	if err != nil {
 		shared.WriteJSON(w, http.StatusNotFound, ErrorResponse{
@@ -96,7 +79,6 @@ func (h *TorrentHandlers) GetVideoMagnetURI(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// Return magnet URI
 	shared.WriteJSON(w, http.StatusOK, map[string]interface{}{
 		"video_id":   videoID,
 		"info_hash":  torrentData.InfoHash,
@@ -104,10 +86,7 @@ func (h *TorrentHandlers) GetVideoMagnetURI(w http.ResponseWriter, r *http.Reque
 	})
 }
 
-// GetTorrentStats returns global torrent statistics
-// GET /api/v1/torrents/stats
 func (h *TorrentHandlers) GetTorrentStats(w http.ResponseWriter, r *http.Request) {
-	// Get manager stats
 	stats, err := h.manager.GetGlobalStats(r.Context())
 	if err != nil {
 		shared.WriteJSON(w, http.StatusInternalServerError, ErrorResponse{
@@ -117,7 +96,6 @@ func (h *TorrentHandlers) GetTorrentStats(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Get tracker stats
 	var trackerStats map[string]interface{}
 	if h.tracker != nil {
 		tStats := h.tracker.GetStats()
@@ -133,7 +111,6 @@ func (h *TorrentHandlers) GetTorrentStats(w http.ResponseWriter, r *http.Request
 		}
 	}
 
-	// Combine stats
 	response := map[string]interface{}{
 		"manager": stats,
 		"tracker": trackerStats,
@@ -142,10 +119,7 @@ func (h *TorrentHandlers) GetTorrentStats(w http.ResponseWriter, r *http.Request
 	shared.WriteJSON(w, http.StatusOK, response)
 }
 
-// GetSwarmInfo returns information about a specific torrent swarm
-// GET /api/v1/torrents/:infoHash/swarm
 func (h *TorrentHandlers) GetSwarmInfo(w http.ResponseWriter, r *http.Request) {
-	// Get info hash from URL
 	infoHash := chi.URLParam(r, "infoHash")
 	if infoHash == "" {
 		shared.WriteJSON(w, http.StatusBadRequest, ErrorResponse{
@@ -155,7 +129,6 @@ func (h *TorrentHandlers) GetSwarmInfo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get swarm info from tracker
 	if h.tracker == nil {
 		shared.WriteJSON(w, http.StatusServiceUnavailable, ErrorResponse{
 			Error:   "tracker_unavailable",
@@ -176,8 +149,6 @@ func (h *TorrentHandlers) GetSwarmInfo(w http.ResponseWriter, r *http.Request) {
 	shared.WriteJSON(w, http.StatusOK, info)
 }
 
-// HandleTrackerWebSocket handles WebSocket connections for WebTorrent tracker
-// WS /api/v1/tracker
 func (h *TorrentHandlers) HandleTrackerWebSocket(w http.ResponseWriter, r *http.Request) {
 	if h.tracker == nil {
 		http.Error(w, "Tracker not enabled", http.StatusServiceUnavailable)
@@ -187,8 +158,6 @@ func (h *TorrentHandlers) HandleTrackerWebSocket(w http.ResponseWriter, r *http.
 	h.tracker.HandleWebSocket(w, r)
 }
 
-// GetTrackerStats returns tracker-specific statistics
-// GET /api/v1/tracker/stats
 func (h *TorrentHandlers) GetTrackerStats(w http.ResponseWriter, r *http.Request) {
 	if h.tracker == nil {
 		shared.WriteJSON(w, http.StatusServiceUnavailable, ErrorResponse{
@@ -212,7 +181,6 @@ func (h *TorrentHandlers) GetTrackerStats(w http.ResponseWriter, r *http.Request
 	})
 }
 
-// VideoTorrentResponse represents a video torrent API response
 type VideoTorrentResponse struct {
 	VideoID            uuid.UUID `json:"video_id"`
 	InfoHash           string    `json:"info_hash"`

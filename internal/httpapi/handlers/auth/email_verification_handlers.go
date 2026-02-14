@@ -8,22 +8,18 @@ import (
 	"athena/internal/domain"
 	"athena/internal/httpapi/shared"
 	"athena/internal/middleware"
-	"athena/internal/usecase"
 )
 
-// EmailVerificationHandlers contains handlers for email verification
 type EmailVerificationHandlers struct {
-	verificationService *usecase.EmailVerificationService
+	verificationService EmailVerificationServiceInterface
 }
 
-// NewEmailVerificationHandlers creates new email verification handlers
-func NewEmailVerificationHandlers(verificationService *usecase.EmailVerificationService) *EmailVerificationHandlers {
+func NewEmailVerificationHandlers(verificationService EmailVerificationServiceInterface) *EmailVerificationHandlers {
 	return &EmailVerificationHandlers{
 		verificationService: verificationService,
 	}
 }
 
-// VerifyEmail handles email verification with token or code
 func (h *EmailVerificationHandlers) VerifyEmail(w http.ResponseWriter, r *http.Request) {
 	var req domain.VerifyEmailRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -31,7 +27,6 @@ func (h *EmailVerificationHandlers) VerifyEmail(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	// If token is provided, verify with token
 	if req.Token != "" {
 		if err := h.verificationService.VerifyEmailWithToken(r.Context(), req.Token); err != nil {
 			switch err {
@@ -52,7 +47,6 @@ func (h *EmailVerificationHandlers) VerifyEmail(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	// If code is provided, verify with code (requires authentication)
 	if req.Code != "" {
 		userID, ok := r.Context().Value(middleware.UserIDKey).(string)
 		if !ok || userID == "" {
@@ -82,7 +76,6 @@ func (h *EmailVerificationHandlers) VerifyEmail(w http.ResponseWriter, r *http.R
 	shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("MISSING_CREDENTIALS", "Either token or code is required"))
 }
 
-// ResendVerification resends the verification email
 func (h *EmailVerificationHandlers) ResendVerification(w http.ResponseWriter, r *http.Request) {
 	var req domain.ResendVerificationRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -100,14 +93,12 @@ func (h *EmailVerificationHandlers) ResendVerification(w http.ResponseWriter, r 
 		case domain.ErrEmailAlreadyVerified:
 			shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("ALREADY_VERIFIED", "Email is already verified"))
 		case domain.ErrUserNotFound:
-			// Don't reveal if email doesn't exist for security
 			shared.WriteJSON(w, http.StatusOK, map[string]interface{}{
 				"message": "If the email exists, a verification email has been sent",
 				"success": true,
 			})
 		default:
 			if errors.Is(err, domain.ErrUserNotFound) {
-				// Keep response behavior consistent when the service wraps ErrUserNotFound.
 				shared.WriteJSON(w, http.StatusOK, map[string]interface{}{
 					"message": "If the email exists, a verification email has been sent",
 					"success": true,
@@ -125,7 +116,6 @@ func (h *EmailVerificationHandlers) ResendVerification(w http.ResponseWriter, r 
 	})
 }
 
-// GetVerificationStatus returns the current user's email verification status
 func (h *EmailVerificationHandlers) GetVerificationStatus(w http.ResponseWriter, r *http.Request) {
 	userID, ok := r.Context().Value(middleware.UserIDKey).(string)
 	if !ok || userID == "" {
@@ -133,8 +123,6 @@ func (h *EmailVerificationHandlers) GetVerificationStatus(w http.ResponseWriter,
 		return
 	}
 
-	// This would normally get the user from the repository
-	// For now, we'll return a placeholder
 	shared.WriteJSON(w, http.StatusOK, map[string]interface{}{
 		"email_verified": false,
 		"message":        "Email verification status retrieved",

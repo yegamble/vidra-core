@@ -30,7 +30,6 @@ func setupChatRepoTest(t *testing.T) (*chatRepository, sqlmock.Sqlmock, func()) 
 	return repo.(*chatRepository), mock, cleanup
 }
 
-// Test CreateMessage
 func TestChatRepository_CreateMessage(t *testing.T) {
 	repo, mock, cleanup := setupChatRepoTest(t)
 	defer cleanup()
@@ -55,7 +54,7 @@ func TestChatRepository_CreateMessage(t *testing.T) {
 			msg.Type,
 			metadataJSON,
 			msg.Deleted,
-			sqlmock.AnyArg(), // created_at
+			sqlmock.AnyArg(),
 		).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
@@ -71,7 +70,7 @@ func TestChatRepository_CreateMessage_ValidationError(t *testing.T) {
 	ctx := context.Background()
 	msg := &domain.ChatMessage{
 		ID:       uuid.New(),
-		StreamID: uuid.Nil, // Invalid
+		StreamID: uuid.Nil,
 		UserID:   uuid.New(),
 		Message:  "test",
 		Type:     domain.ChatMessageTypeRegular,
@@ -101,7 +100,6 @@ func TestChatRepository_CreateMessage_DBError(t *testing.T) {
 	assert.Error(t, err)
 }
 
-// Test GetMessages
 func TestChatRepository_GetMessages(t *testing.T) {
 	repo, mock, cleanup := setupChatRepoTest(t)
 	defer cleanup()
@@ -158,7 +156,6 @@ func TestChatRepository_GetMessages_Empty(t *testing.T) {
 	assert.NoError(t, mock.ExpectationsWereMet())
 }
 
-// Test GetMessagesSince
 func TestChatRepository_GetMessagesSince(t *testing.T) {
 	repo, mock, cleanup := setupChatRepoTest(t)
 	defer cleanup()
@@ -187,7 +184,6 @@ func TestChatRepository_GetMessagesSince(t *testing.T) {
 	assert.NoError(t, mock.ExpectationsWereMet())
 }
 
-// Test DeleteMessage
 func TestChatRepository_DeleteMessage(t *testing.T) {
 	repo, mock, cleanup := setupChatRepoTest(t)
 	defer cleanup()
@@ -220,7 +216,6 @@ func TestChatRepository_DeleteMessage_NotFound(t *testing.T) {
 	assert.NoError(t, mock.ExpectationsWereMet())
 }
 
-// Test GetMessageByID
 func TestChatRepository_GetMessageByID(t *testing.T) {
 	repo, mock, cleanup := setupChatRepoTest(t)
 	defer cleanup()
@@ -267,7 +262,6 @@ func TestChatRepository_GetMessageByID_NotFound(t *testing.T) {
 	assert.NoError(t, mock.ExpectationsWereMet())
 }
 
-// Test AddModerator
 func TestChatRepository_AddModerator(t *testing.T) {
 	repo, mock, cleanup := setupChatRepoTest(t)
 	defer cleanup()
@@ -291,15 +285,13 @@ func TestChatRepository_AddModerator_AlreadyExists(t *testing.T) {
 	ctx := context.Background()
 	mod := domain.NewChatModerator(uuid.New(), uuid.New(), uuid.New())
 
-	// Simulate unique constraint violation (PostgreSQL error code 23505)
 	mock.ExpectExec("INSERT INTO chat_moderators").
-		WillReturnError(sql.ErrNoRows) // Simplified error for test
+		WillReturnError(sql.ErrNoRows)
 
 	err := repo.AddModerator(ctx, mod)
 	assert.Error(t, err)
 }
 
-// Test RemoveModerator
 func TestChatRepository_RemoveModerator(t *testing.T) {
 	repo, mock, cleanup := setupChatRepoTest(t)
 	defer cleanup()
@@ -334,7 +326,6 @@ func TestChatRepository_RemoveModerator_NotFound(t *testing.T) {
 	assert.NoError(t, mock.ExpectationsWereMet())
 }
 
-// Test IsModerator
 func TestChatRepository_IsModerator(t *testing.T) {
 	repo, mock, cleanup := setupChatRepoTest(t)
 	defer cleanup()
@@ -375,7 +366,6 @@ func TestChatRepository_IsModerator_NotModerator(t *testing.T) {
 	assert.NoError(t, mock.ExpectationsWereMet())
 }
 
-// Test GetModerators
 func TestChatRepository_GetModerators(t *testing.T) {
 	repo, mock, cleanup := setupChatRepoTest(t)
 	defer cleanup()
@@ -399,7 +389,6 @@ func TestChatRepository_GetModerators(t *testing.T) {
 	assert.NoError(t, mock.ExpectationsWereMet())
 }
 
-// Test BanUser
 func TestChatRepository_BanUser(t *testing.T) {
 	repo, mock, cleanup := setupChatRepoTest(t)
 	defer cleanup()
@@ -438,7 +427,7 @@ func TestChatRepository_BanUser_Permanent(t *testing.T) {
 			ban.UserID,
 			ban.BannedBy,
 			ban.Reason,
-			nil, // Permanent ban
+			nil,
 			sqlmock.AnyArg(),
 		).
 		WillReturnResult(sqlmock.NewResult(1, 1))
@@ -448,7 +437,6 @@ func TestChatRepository_BanUser_Permanent(t *testing.T) {
 	assert.NoError(t, mock.ExpectationsWereMet())
 }
 
-// Test UnbanUser
 func TestChatRepository_UnbanUser(t *testing.T) {
 	repo, mock, cleanup := setupChatRepoTest(t)
 	defer cleanup()
@@ -483,7 +471,6 @@ func TestChatRepository_UnbanUser_NotFound(t *testing.T) {
 	assert.NoError(t, mock.ExpectationsWereMet())
 }
 
-// Test IsUserBanned
 func TestChatRepository_IsUserBanned(t *testing.T) {
 	repo, mock, cleanup := setupChatRepoTest(t)
 	defer cleanup()
@@ -524,7 +511,6 @@ func TestChatRepository_IsUserBanned_NotBanned(t *testing.T) {
 	assert.NoError(t, mock.ExpectationsWereMet())
 }
 
-// Test GetBans
 func TestChatRepository_GetBans(t *testing.T) {
 	repo, mock, cleanup := setupChatRepoTest(t)
 	defer cleanup()
@@ -551,7 +537,6 @@ func TestChatRepository_GetBans(t *testing.T) {
 	assert.NoError(t, mock.ExpectationsWereMet())
 }
 
-// Test GetBanByID
 func TestChatRepository_GetBanByID(t *testing.T) {
 	repo, mock, cleanup := setupChatRepoTest(t)
 	defer cleanup()
@@ -592,7 +577,6 @@ func TestChatRepository_GetBanByID_NotFound(t *testing.T) {
 	assert.NoError(t, mock.ExpectationsWereMet())
 }
 
-// Test CleanupExpiredBans
 func TestChatRepository_CleanupExpiredBans(t *testing.T) {
 	repo, mock, cleanup := setupChatRepoTest(t)
 	defer cleanup()
@@ -627,7 +611,6 @@ func TestChatRepository_CleanupExpiredBans_None(t *testing.T) {
 	assert.NoError(t, mock.ExpectationsWereMet())
 }
 
-// Test GetStreamStats
 func TestChatRepository_GetStreamStats(t *testing.T) {
 	repo, mock, cleanup := setupChatRepoTest(t)
 	defer cleanup()
@@ -677,7 +660,6 @@ func TestChatRepository_GetStreamStats_NotFound(t *testing.T) {
 	assert.NoError(t, mock.ExpectationsWereMet())
 }
 
-// Test GetMessageCount
 func TestChatRepository_GetMessageCount(t *testing.T) {
 	repo, mock, cleanup := setupChatRepoTest(t)
 	defer cleanup()
@@ -716,7 +698,24 @@ func TestChatRepository_GetMessageCount_Zero(t *testing.T) {
 	assert.NoError(t, mock.ExpectationsWereMet())
 }
 
-// Test metadata JSON handling
+func TestChatRepository_GetMessageCount_DatabaseError(t *testing.T) {
+	repo, mock, cleanup := setupChatRepoTest(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	streamID := uuid.New()
+
+	mock.ExpectQuery("SELECT get_chat_message_count").
+		WithArgs(streamID).
+		WillReturnError(sql.ErrConnDone)
+
+	count, err := repo.GetMessageCount(ctx, streamID)
+	assert.Error(t, err)
+	assert.Equal(t, 0, count)
+	assert.Contains(t, err.Error(), "failed to get message count")
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestChatRepository_CreateMessage_WithMetadata(t *testing.T) {
 	repo, mock, cleanup := setupChatRepoTest(t)
 	defer cleanup()
@@ -752,5 +751,285 @@ func TestChatRepository_CreateMessage_WithMetadata(t *testing.T) {
 
 	err := repo.CreateMessage(ctx, msg)
 	assert.NoError(t, err)
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestChatRepository_BanUser_ValidationError(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+
+	sqlxDB := sqlx.NewDb(db, "postgres")
+	repo := NewChatRepository(sqlxDB)
+	ctx := context.Background()
+
+	ban := &domain.ChatBan{
+		ID:       uuid.New(),
+		StreamID: uuid.Nil,
+		UserID:   uuid.New(),
+	}
+
+	err = repo.BanUser(ctx, ban)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid ban")
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestChatRepository_BanUser_DatabaseError(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+
+	sqlxDB := sqlx.NewDb(db, "postgres")
+	repo := NewChatRepository(sqlxDB)
+	ctx := context.Background()
+
+	ban := &domain.ChatBan{
+		ID:        uuid.New(),
+		StreamID:  uuid.New(),
+		UserID:    uuid.New(),
+		BannedBy:  uuid.New(),
+		Reason:    "spam",
+		ExpiresAt: nil,
+		CreatedAt: time.Now(),
+	}
+
+	mock.ExpectExec("INSERT INTO chat_bans").
+		WithArgs(ban.ID, ban.StreamID, ban.UserID, ban.BannedBy, ban.Reason, ban.ExpiresAt, sqlmock.AnyArg()).
+		WillReturnError(sql.ErrConnDone)
+
+	err = repo.BanUser(ctx, ban)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to ban user")
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestChatRepository_UnbanUser_DatabaseError(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+
+	sqlxDB := sqlx.NewDb(db, "postgres")
+	repo := NewChatRepository(sqlxDB)
+	ctx := context.Background()
+
+	streamID := uuid.New()
+	userID := uuid.New()
+
+	mock.ExpectExec("DELETE FROM chat_bans WHERE stream_id").
+		WithArgs(streamID, userID).
+		WillReturnError(sql.ErrConnDone)
+
+	err = repo.UnbanUser(ctx, streamID, userID)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to unban user")
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestChatRepository_DeleteMessage_DatabaseError(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+
+	sqlxDB := sqlx.NewDb(db, "postgres")
+	repo := NewChatRepository(sqlxDB)
+	ctx := context.Background()
+
+	messageID := uuid.New()
+
+	mock.ExpectExec("UPDATE chat_messages SET deleted").
+		WithArgs(messageID).
+		WillReturnError(sql.ErrConnDone)
+
+	err = repo.DeleteMessage(ctx, messageID)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to delete message")
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestChatRepository_RemoveModerator_DatabaseError(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+
+	sqlxDB := sqlx.NewDb(db, "postgres")
+	repo := NewChatRepository(sqlxDB)
+	ctx := context.Background()
+
+	streamID := uuid.New()
+	userID := uuid.New()
+
+	mock.ExpectExec("DELETE FROM chat_moderators WHERE stream_id").
+		WithArgs(streamID, userID).
+		WillReturnError(sql.ErrConnDone)
+
+	err = repo.RemoveModerator(ctx, streamID, userID)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to remove moderator")
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestChatRepository_GetModerators_DatabaseError(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+
+	sqlxDB := sqlx.NewDb(db, "postgres")
+	repo := NewChatRepository(sqlxDB)
+	ctx := context.Background()
+
+	streamID := uuid.New()
+
+	mock.ExpectQuery("SELECT id, stream_id, user_id, granted_by, created_at FROM chat_moderators").
+		WithArgs(streamID).
+		WillReturnError(sql.ErrConnDone)
+
+	mods, err := repo.GetModerators(ctx, streamID)
+	assert.Error(t, err)
+	assert.Nil(t, mods)
+	assert.Contains(t, err.Error(), "failed to get moderators")
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestChatRepository_GetMessages_DatabaseError(t *testing.T) {
+	repo, mock, cleanup := setupChatRepoTest(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	streamID := uuid.New()
+
+	mock.ExpectQuery(`SELECT (.+) FROM chat_messages WHERE stream_id`).
+		WithArgs(streamID, 50, 0).
+		WillReturnError(sql.ErrConnDone)
+
+	messages, err := repo.GetMessages(ctx, streamID, 50, 0)
+	assert.Error(t, err)
+	assert.Nil(t, messages)
+	assert.Contains(t, err.Error(), "failed to get chat messages")
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestChatRepository_GetMessagesSince_DatabaseError(t *testing.T) {
+	repo, mock, cleanup := setupChatRepoTest(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	streamID := uuid.New()
+	since := time.Now().Add(-1 * time.Hour)
+
+	mock.ExpectQuery(`SELECT (.+) FROM chat_messages WHERE stream_id = (.+) AND created_at`).
+		WithArgs(streamID, since).
+		WillReturnError(sql.ErrConnDone)
+
+	messages, err := repo.GetMessagesSince(ctx, streamID, since)
+	assert.Error(t, err)
+	assert.Nil(t, messages)
+	assert.Contains(t, err.Error(), "failed to get messages since")
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestChatRepository_GetMessageByID_DatabaseError(t *testing.T) {
+	repo, mock, cleanup := setupChatRepoTest(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	messageID := uuid.New()
+
+	mock.ExpectQuery(`SELECT (.+) FROM chat_messages WHERE id`).
+		WithArgs(messageID).
+		WillReturnError(sql.ErrConnDone)
+
+	message, err := repo.GetMessageByID(ctx, messageID)
+	assert.Error(t, err)
+	assert.Nil(t, message)
+	assert.Contains(t, err.Error(), "failed to get message")
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestChatRepository_AddModerator_DatabaseError(t *testing.T) {
+	repo, mock, cleanup := setupChatRepoTest(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	mod := domain.NewChatModerator(uuid.New(), uuid.New(), uuid.New())
+
+	mock.ExpectExec(`INSERT INTO chat_moderators`).
+		WillReturnError(sql.ErrConnDone)
+
+	err := repo.AddModerator(ctx, mod)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to add moderator")
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestChatRepository_IsModerator_DatabaseError(t *testing.T) {
+	repo, mock, cleanup := setupChatRepoTest(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	streamID := uuid.New()
+	userID := uuid.New()
+
+	mock.ExpectQuery(`SELECT is_chat_moderator`).
+		WithArgs(streamID, userID).
+		WillReturnError(sql.ErrConnDone)
+
+	isMod, err := repo.IsModerator(ctx, streamID, userID)
+	assert.Error(t, err)
+	assert.False(t, isMod)
+	assert.Contains(t, err.Error(), "failed to check moderator status")
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestChatRepository_IsUserBanned_DatabaseError(t *testing.T) {
+	repo, mock, cleanup := setupChatRepoTest(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	streamID := uuid.New()
+	userID := uuid.New()
+
+	mock.ExpectQuery(`SELECT is_user_banned`).
+		WithArgs(streamID, userID).
+		WillReturnError(sql.ErrConnDone)
+
+	isBanned, err := repo.IsUserBanned(ctx, streamID, userID)
+	assert.Error(t, err)
+	assert.False(t, isBanned)
+	assert.Contains(t, err.Error(), "failed to check ban status")
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestChatRepository_GetBans_DatabaseError(t *testing.T) {
+	repo, mock, cleanup := setupChatRepoTest(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	streamID := uuid.New()
+
+	mock.ExpectQuery(`SELECT .* FROM chat_bans WHERE stream_id`).
+		WithArgs(streamID).
+		WillReturnError(sql.ErrConnDone)
+
+	bans, err := repo.GetBans(ctx, streamID)
+	assert.Error(t, err)
+	assert.Nil(t, bans)
+	assert.Contains(t, err.Error(), "failed to get bans")
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestChatRepository_CleanupExpiredBans_DatabaseError(t *testing.T) {
+	repo, mock, cleanup := setupChatRepoTest(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	mock.ExpectQuery(`SELECT cleanup_expired_bans`).
+		WillReturnError(sql.ErrConnDone)
+
+	count, err := repo.CleanupExpiredBans(ctx)
+	assert.Error(t, err)
+	assert.Equal(t, 0, count)
+	assert.Contains(t, err.Error(), "failed to cleanup expired bans")
 	assert.NoError(t, mock.ExpectationsWereMet())
 }

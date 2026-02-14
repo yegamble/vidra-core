@@ -7,18 +7,22 @@ import (
 	"athena/internal/usecase"
 )
 
-// compositeAuthRepository delegates refresh tokens to a DB-backed repo
-// and sessions to a Redis-backed repo.
-type compositeAuthRepository struct {
-	dbRepo    usecase.AuthRepository
-	redisRepo *redisSessionRepository
+type sessionRepository interface {
+	CreateSession(ctx context.Context, sessionID, userID string, expiresAt time.Time) error
+	GetSession(ctx context.Context, sessionID string) (string, error)
+	DeleteSession(ctx context.Context, sessionID string) error
+	DeleteAllUserSessions(ctx context.Context, userID string) error
 }
 
-func NewCompositeAuthRepository(dbRepo usecase.AuthRepository, redisRepo *redisSessionRepository) usecase.AuthRepository {
+type compositeAuthRepository struct {
+	dbRepo    usecase.AuthRepository
+	redisRepo sessionRepository
+}
+
+func NewCompositeAuthRepository(dbRepo usecase.AuthRepository, redisRepo sessionRepository) usecase.AuthRepository {
 	return &compositeAuthRepository{dbRepo: dbRepo, redisRepo: redisRepo}
 }
 
-// Refresh token management delegates to dbRepo
 func (c *compositeAuthRepository) CreateRefreshToken(ctx context.Context, token *usecase.RefreshToken) error {
 	return c.dbRepo.CreateRefreshToken(ctx, token)
 }
@@ -39,7 +43,6 @@ func (c *compositeAuthRepository) CleanExpiredTokens(ctx context.Context) error 
 	return c.dbRepo.CleanExpiredTokens(ctx)
 }
 
-// Session management delegates to redisRepo
 func (c *compositeAuthRepository) CreateSession(ctx context.Context, sessionID, userID string, expiresAt time.Time) error {
 	return c.redisRepo.CreateSession(ctx, sessionID, userID, expiresAt)
 }

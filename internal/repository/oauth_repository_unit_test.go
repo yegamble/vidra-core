@@ -308,3 +308,75 @@ func TestOAuthRepository_Unit_AccessTokenOps(t *testing.T) {
 
 	require.NoError(t, mock.ExpectationsWereMet())
 }
+
+func TestOAuthRepository_Unit_GetAuthorizationCode_NotFound(t *testing.T) {
+	ctx := context.Background()
+	repo, mock, cleanup := newOAuthRepo(t)
+	defer cleanup()
+
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT id, code, client_id, user_id, redirect_uri, scope, state, code_challenge, code_challenge_method, expires_at, used_at, created_at
+		FROM oauth_authorization_codes
+		WHERE code = $1`)).
+		WithArgs("nonexistent_code").
+		WillReturnError(sql.ErrNoRows)
+
+	gotCode, err := repo.GetAuthorizationCode(ctx, "nonexistent_code")
+	require.Error(t, err)
+	assert.Nil(t, gotCode)
+	assert.Contains(t, err.Error(), "authorization code not found")
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestOAuthRepository_Unit_GetAuthorizationCode_DatabaseError(t *testing.T) {
+	ctx := context.Background()
+	repo, mock, cleanup := newOAuthRepo(t)
+	defer cleanup()
+
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT id, code, client_id, user_id, redirect_uri, scope, state, code_challenge, code_challenge_method, expires_at, used_at, created_at
+		FROM oauth_authorization_codes
+		WHERE code = $1`)).
+		WithArgs("some_code").
+		WillReturnError(sql.ErrConnDone)
+
+	gotCode, err := repo.GetAuthorizationCode(ctx, "some_code")
+	require.Error(t, err)
+	assert.Nil(t, gotCode)
+	assert.Contains(t, err.Error(), "get authorization code")
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestOAuthRepository_Unit_GetAccessToken_NotFound(t *testing.T) {
+	ctx := context.Background()
+	repo, mock, cleanup := newOAuthRepo(t)
+	defer cleanup()
+
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT id, token_hash, client_id, user_id, scope, expires_at, created_at, revoked_at
+		FROM oauth_access_tokens
+		WHERE token_hash = $1`)).
+		WithArgs("nonexistent_token").
+		WillReturnError(sql.ErrNoRows)
+
+	gotToken, err := repo.GetAccessToken(ctx, "nonexistent_token")
+	require.Error(t, err)
+	assert.Nil(t, gotToken)
+	assert.Contains(t, err.Error(), "access token not found")
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestOAuthRepository_Unit_GetAccessToken_DatabaseError(t *testing.T) {
+	ctx := context.Background()
+	repo, mock, cleanup := newOAuthRepo(t)
+	defer cleanup()
+
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT id, token_hash, client_id, user_id, scope, expires_at, created_at, revoked_at
+		FROM oauth_access_tokens
+		WHERE token_hash = $1`)).
+		WithArgs("some_token").
+		WillReturnError(sql.ErrConnDone)
+
+	gotToken, err := repo.GetAccessToken(ctx, "some_token")
+	require.Error(t, err)
+	assert.Nil(t, gotToken)
+	assert.Contains(t, err.Error(), "get access token")
+	require.NoError(t, mock.ExpectationsWereMet())
+}
