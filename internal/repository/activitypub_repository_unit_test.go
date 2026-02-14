@@ -1006,3 +1006,526 @@ func TestActivityPubRepository_Unit_GetRemoteActors_Empty(t *testing.T) {
 	assert.Nil(t, actors)
 	assert.NoError(t, mock.ExpectationsWereMet())
 }
+
+func TestActivityPubRepository_Unit_GetActivity(t *testing.T) {
+	ctx := context.Background()
+	tests := []struct {
+		name        string
+		activityURI string
+		setupMock   func(sqlmock.Sqlmock)
+		wantNil     bool
+		wantErr     bool
+	}{
+		{
+			name:        "success - activity found",
+			activityURI: "https://example.com/activity/123",
+			setupMock: func(mock sqlmock.Sqlmock) {
+				rows := sqlmock.NewRows([]string{"id", "activity_uri", "actor_id", "type", "object_id", "object_type", "target_id", "published", "activity_json", "local", "created_at"}).
+					AddRow("act-1", "https://example.com/activity/123", "actor-1", "Create", "obj-1", "Note", nil, time.Now(), json.RawMessage(`{"type":"Create"}`), true, time.Now())
+				mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM ap_activities WHERE activity_uri = $1`)).
+					WithArgs("https://example.com/activity/123").
+					WillReturnRows(rows)
+			},
+			wantNil: false,
+			wantErr: false,
+		},
+		{
+			name:        "not found - returns nil without error",
+			activityURI: "https://example.com/activity/nonexistent",
+			setupMock: func(mock sqlmock.Sqlmock) {
+				mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM ap_activities WHERE activity_uri = $1`)).
+					WithArgs("https://example.com/activity/nonexistent").
+					WillReturnError(sql.ErrNoRows)
+			},
+			wantNil: true,
+			wantErr: false,
+		},
+		{
+			name:        "database error",
+			activityURI: "https://example.com/activity/123",
+			setupMock: func(mock sqlmock.Sqlmock) {
+				mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM ap_activities WHERE activity_uri = $1`)).
+					WithArgs("https://example.com/activity/123").
+					WillReturnError(assert.AnError)
+			},
+			wantNil: false,
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db, mock := setupAPMockDB(t)
+			defer db.Close()
+			repo := NewActivityPubRepository(db, nil)
+			tt.setupMock(mock)
+
+			activity, err := repo.GetActivity(ctx, tt.activityURI)
+			if tt.wantErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+				if tt.wantNil {
+					assert.Nil(t, activity)
+				} else {
+					assert.NotNil(t, activity)
+					assert.Equal(t, "act-1", activity.ID)
+					assert.Equal(t, tt.activityURI, activity.ActivityURI)
+					assert.Equal(t, "Create", activity.Type)
+				}
+			}
+			assert.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
+}
+
+func TestActivityPubRepository_Unit_GetActivitiesByActor(t *testing.T) {
+	ctx := context.Background()
+	tests := []struct {
+		name      string
+		actorID   string
+		limit     int
+		offset    int
+		setupMock func(sqlmock.Sqlmock)
+		wantCount int
+		wantTotal int
+		wantErr   bool
+	}{
+		{
+			name:    "success - multiple activities",
+			actorID: "actor-1",
+			limit:   10,
+			offset:  0,
+			setupMock: func(mock sqlmock.Sqlmock) {
+				rows := sqlmock.NewRows([]string{"id", "activity_uri", "actor_id", "type", "object_id", "object_type", "target_id", "published", "activity_json", "local", "created_at"}).
+					AddRow("act-1", "https://ex.com/act/1", "actor-1", "Create", "obj-1", "Note", nil, time.Now(), json.RawMessage(`{}`), true, time.Now()).
+					AddRow("act-2", "https://ex.com/act/2", "actor-1", "Update", "obj-2", "Note", nil, time.Now(), json.RawMessage(`{}`), true, time.Now())
+				mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM ap_activities WHERE actor_id = $1 ORDER BY published DESC LIMIT $2 OFFSET $3`)).
+					WithArgs("actor-1", 10, 0).
+					WillReturnRows(rows)
+				mock.ExpectQuery(regexp.QuoteMeta(`SELECT COUNT(*) FROM ap_activities WHERE actor_id = $1`)).
+					WithArgs("actor-1").
+					WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(5))
+			},
+			wantCount: 2,
+			wantTotal: 5,
+			wantErr:   false,
+		},
+		{
+			name:    "success - no activities",
+			actorID: "actor-2",
+			limit:   10,
+			offset:  0,
+			setupMock: func(mock sqlmock.Sqlmock) {
+				mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM ap_activities WHERE actor_id = $1 ORDER BY published DESC LIMIT $2 OFFSET $3`)).
+					WithArgs("actor-2", 10, 0).
+					WillReturnRows(sqlmock.NewRows([]string{"id", "activity_uri", "actor_id", "type", "object_id", "object_type", "target_id", "published", "activity_json", "local", "created_at"}))
+				mock.ExpectQuery(regexp.QuoteMeta(`SELECT COUNT(*) FROM ap_activities WHERE actor_id = $1`)).
+					WithArgs("actor-2").
+					WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+			},
+			wantCount: 0,
+			wantTotal: 0,
+			wantErr:   false,
+		},
+		{
+			name:    "database error on select",
+			actorID: "actor-1",
+			limit:   10,
+			offset:  0,
+			setupMock: func(mock sqlmock.Sqlmock) {
+				mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM ap_activities WHERE actor_id = $1 ORDER BY published DESC LIMIT $2 OFFSET $3`)).
+					WithArgs("actor-1", 10, 0).
+					WillReturnError(assert.AnError)
+			},
+			wantErr: true,
+		},
+		{
+			name:    "database error on count",
+			actorID: "actor-1",
+			limit:   10,
+			offset:  0,
+			setupMock: func(mock sqlmock.Sqlmock) {
+				rows := sqlmock.NewRows([]string{"id", "activity_uri", "actor_id", "type", "object_id", "object_type", "target_id", "published", "activity_json", "local", "created_at"}).
+					AddRow("act-1", "https://ex.com/act/1", "actor-1", "Create", "obj-1", "Note", nil, time.Now(), json.RawMessage(`{}`), true, time.Now())
+				mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM ap_activities WHERE actor_id = $1 ORDER BY published DESC LIMIT $2 OFFSET $3`)).
+					WithArgs("actor-1", 10, 0).
+					WillReturnRows(rows)
+				mock.ExpectQuery(regexp.QuoteMeta(`SELECT COUNT(*) FROM ap_activities WHERE actor_id = $1`)).
+					WithArgs("actor-1").
+					WillReturnError(assert.AnError)
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db, mock := setupAPMockDB(t)
+			defer db.Close()
+			repo := NewActivityPubRepository(db, nil)
+			tt.setupMock(mock)
+
+			activities, total, err := repo.GetActivitiesByActor(ctx, tt.actorID, tt.limit, tt.offset)
+			if tt.wantErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+				assert.Len(t, activities, tt.wantCount)
+				assert.Equal(t, tt.wantTotal, total)
+			}
+			assert.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
+}
+
+func TestActivityPubRepository_Unit_GetFollower(t *testing.T) {
+	ctx := context.Background()
+	tests := []struct {
+		name       string
+		actorID    string
+		followerID string
+		setupMock  func(sqlmock.Sqlmock)
+		wantNil    bool
+		wantErr    bool
+	}{
+		{
+			name:       "success - follower found",
+			actorID:    "actor-1",
+			followerID: "follower-1",
+			setupMock: func(mock sqlmock.Sqlmock) {
+				rows := sqlmock.NewRows([]string{"id", "actor_id", "follower_id", "state", "created_at", "updated_at"}).
+					AddRow("fol-1", "actor-1", "follower-1", "accepted", time.Now(), time.Now())
+				mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM ap_followers WHERE actor_id = $1 AND follower_id = $2`)).
+					WithArgs("actor-1", "follower-1").
+					WillReturnRows(rows)
+			},
+			wantNil: false,
+			wantErr: false,
+		},
+		{
+			name:       "not found - returns nil without error",
+			actorID:    "actor-1",
+			followerID: "nonexistent",
+			setupMock: func(mock sqlmock.Sqlmock) {
+				mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM ap_followers WHERE actor_id = $1 AND follower_id = $2`)).
+					WithArgs("actor-1", "nonexistent").
+					WillReturnError(sql.ErrNoRows)
+			},
+			wantNil: true,
+			wantErr: false,
+		},
+		{
+			name:       "database error",
+			actorID:    "actor-1",
+			followerID: "follower-1",
+			setupMock: func(mock sqlmock.Sqlmock) {
+				mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM ap_followers WHERE actor_id = $1 AND follower_id = $2`)).
+					WithArgs("actor-1", "follower-1").
+					WillReturnError(assert.AnError)
+			},
+			wantNil: false,
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db, mock := setupAPMockDB(t)
+			defer db.Close()
+			repo := NewActivityPubRepository(db, nil)
+			tt.setupMock(mock)
+
+			follower, err := repo.GetFollower(ctx, tt.actorID, tt.followerID)
+			if tt.wantErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+				if tt.wantNil {
+					assert.Nil(t, follower)
+				} else {
+					assert.NotNil(t, follower)
+					assert.Equal(t, tt.actorID, follower.ActorID)
+					assert.Equal(t, tt.followerID, follower.FollowerID)
+				}
+			}
+			assert.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
+}
+
+func TestActivityPubRepository_Unit_GetFollowers(t *testing.T) {
+	ctx := context.Background()
+	tests := []struct {
+		name      string
+		actorID   string
+		state     string
+		limit     int
+		offset    int
+		setupMock func(sqlmock.Sqlmock)
+		wantCount int
+		wantTotal int
+		wantErr   bool
+	}{
+		{
+			name:    "success - multiple followers",
+			actorID: "actor-1",
+			state:   "accepted",
+			limit:   10,
+			offset:  0,
+			setupMock: func(mock sqlmock.Sqlmock) {
+				rows := sqlmock.NewRows([]string{"id", "actor_id", "follower_id", "state", "created_at", "updated_at"}).
+					AddRow("fol-1", "actor-1", "follower-1", "accepted", time.Now(), time.Now()).
+					AddRow("fol-2", "actor-1", "follower-2", "accepted", time.Now(), time.Now())
+				mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM ap_followers WHERE actor_id = $1 AND state = $2 ORDER BY created_at DESC LIMIT $3 OFFSET $4`)).
+					WithArgs("actor-1", "accepted", 10, 0).
+					WillReturnRows(rows)
+				mock.ExpectQuery(regexp.QuoteMeta(`SELECT COUNT(*) FROM ap_followers WHERE actor_id = $1 AND state = $2`)).
+					WithArgs("actor-1", "accepted").
+					WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(10))
+			},
+			wantCount: 2,
+			wantTotal: 10,
+			wantErr:   false,
+		},
+		{
+			name:    "success - no followers",
+			actorID: "actor-2",
+			state:   "accepted",
+			limit:   10,
+			offset:  0,
+			setupMock: func(mock sqlmock.Sqlmock) {
+				mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM ap_followers WHERE actor_id = $1 AND state = $2 ORDER BY created_at DESC LIMIT $3 OFFSET $4`)).
+					WithArgs("actor-2", "accepted", 10, 0).
+					WillReturnRows(sqlmock.NewRows([]string{"id", "actor_id", "follower_id", "state", "created_at", "updated_at"}))
+				mock.ExpectQuery(regexp.QuoteMeta(`SELECT COUNT(*) FROM ap_followers WHERE actor_id = $1 AND state = $2`)).
+					WithArgs("actor-2", "accepted").
+					WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+			},
+			wantCount: 0,
+			wantTotal: 0,
+			wantErr:   false,
+		},
+		{
+			name:    "database error on select",
+			actorID: "actor-1",
+			state:   "accepted",
+			limit:   10,
+			offset:  0,
+			setupMock: func(mock sqlmock.Sqlmock) {
+				mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM ap_followers WHERE actor_id = $1 AND state = $2 ORDER BY created_at DESC LIMIT $3 OFFSET $4`)).
+					WithArgs("actor-1", "accepted", 10, 0).
+					WillReturnError(assert.AnError)
+			},
+			wantErr: true,
+		},
+		{
+			name:    "database error on count",
+			actorID: "actor-1",
+			state:   "accepted",
+			limit:   10,
+			offset:  0,
+			setupMock: func(mock sqlmock.Sqlmock) {
+				rows := sqlmock.NewRows([]string{"id", "actor_id", "follower_id", "state", "created_at", "updated_at"}).
+					AddRow("fol-1", "actor-1", "follower-1", "accepted", time.Now(), time.Now())
+				mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM ap_followers WHERE actor_id = $1 AND state = $2 ORDER BY created_at DESC LIMIT $3 OFFSET $4`)).
+					WithArgs("actor-1", "accepted", 10, 0).
+					WillReturnRows(rows)
+				mock.ExpectQuery(regexp.QuoteMeta(`SELECT COUNT(*) FROM ap_followers WHERE actor_id = $1 AND state = $2`)).
+					WithArgs("actor-1", "accepted").
+					WillReturnError(assert.AnError)
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db, mock := setupAPMockDB(t)
+			defer db.Close()
+			repo := NewActivityPubRepository(db, nil)
+			tt.setupMock(mock)
+
+			followers, total, err := repo.GetFollowers(ctx, tt.actorID, tt.state, tt.limit, tt.offset)
+			if tt.wantErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+				assert.Len(t, followers, tt.wantCount)
+				assert.Equal(t, tt.wantTotal, total)
+			}
+			assert.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
+}
+
+func TestActivityPubRepository_Unit_GetFollowing(t *testing.T) {
+	ctx := context.Background()
+	tests := []struct {
+		name       string
+		followerID string
+		state      string
+		limit      int
+		offset     int
+		setupMock  func(sqlmock.Sqlmock)
+		wantCount  int
+		wantTotal  int
+		wantErr    bool
+	}{
+		{
+			name:       "success - multiple following",
+			followerID: "follower-1",
+			state:      "accepted",
+			limit:      10,
+			offset:     0,
+			setupMock: func(mock sqlmock.Sqlmock) {
+				rows := sqlmock.NewRows([]string{"id", "actor_id", "follower_id", "state", "created_at", "updated_at"}).
+					AddRow("fol-1", "actor-1", "follower-1", "accepted", time.Now(), time.Now()).
+					AddRow("fol-2", "actor-2", "follower-1", "accepted", time.Now(), time.Now())
+				mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM ap_followers WHERE follower_id = $1 AND state = $2 ORDER BY created_at DESC LIMIT $3 OFFSET $4`)).
+					WithArgs("follower-1", "accepted", 10, 0).
+					WillReturnRows(rows)
+				mock.ExpectQuery(regexp.QuoteMeta(`SELECT COUNT(*) FROM ap_followers WHERE follower_id = $1 AND state = $2`)).
+					WithArgs("follower-1", "accepted").
+					WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(5))
+			},
+			wantCount: 2,
+			wantTotal: 5,
+			wantErr:   false,
+		},
+		{
+			name:       "success - no following",
+			followerID: "follower-2",
+			state:      "accepted",
+			limit:      10,
+			offset:     0,
+			setupMock: func(mock sqlmock.Sqlmock) {
+				mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM ap_followers WHERE follower_id = $1 AND state = $2 ORDER BY created_at DESC LIMIT $3 OFFSET $4`)).
+					WithArgs("follower-2", "accepted", 10, 0).
+					WillReturnRows(sqlmock.NewRows([]string{"id", "actor_id", "follower_id", "state", "created_at", "updated_at"}))
+				mock.ExpectQuery(regexp.QuoteMeta(`SELECT COUNT(*) FROM ap_followers WHERE follower_id = $1 AND state = $2`)).
+					WithArgs("follower-2", "accepted").
+					WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+			},
+			wantCount: 0,
+			wantTotal: 0,
+			wantErr:   false,
+		},
+		{
+			name:       "database error on select",
+			followerID: "follower-1",
+			state:      "accepted",
+			limit:      10,
+			offset:     0,
+			setupMock: func(mock sqlmock.Sqlmock) {
+				mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM ap_followers WHERE follower_id = $1 AND state = $2 ORDER BY created_at DESC LIMIT $3 OFFSET $4`)).
+					WithArgs("follower-1", "accepted", 10, 0).
+					WillReturnError(assert.AnError)
+			},
+			wantErr: true,
+		},
+		{
+			name:       "database error on count",
+			followerID: "follower-1",
+			state:      "accepted",
+			limit:      10,
+			offset:     0,
+			setupMock: func(mock sqlmock.Sqlmock) {
+				rows := sqlmock.NewRows([]string{"id", "actor_id", "follower_id", "state", "created_at", "updated_at"}).
+					AddRow("fol-1", "actor-1", "follower-1", "accepted", time.Now(), time.Now())
+				mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM ap_followers WHERE follower_id = $1 AND state = $2 ORDER BY created_at DESC LIMIT $3 OFFSET $4`)).
+					WithArgs("follower-1", "accepted", 10, 0).
+					WillReturnRows(rows)
+				mock.ExpectQuery(regexp.QuoteMeta(`SELECT COUNT(*) FROM ap_followers WHERE follower_id = $1 AND state = $2`)).
+					WithArgs("follower-1", "accepted").
+					WillReturnError(assert.AnError)
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db, mock := setupAPMockDB(t)
+			defer db.Close()
+			repo := NewActivityPubRepository(db, nil)
+			tt.setupMock(mock)
+
+			following, total, err := repo.GetFollowing(ctx, tt.followerID, tt.state, tt.limit, tt.offset)
+			if tt.wantErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+				assert.Len(t, following, tt.wantCount)
+				assert.Equal(t, tt.wantTotal, total)
+			}
+			assert.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
+}
+
+func TestActivityPubRepository_Unit_GetPendingDeliveries(t *testing.T) {
+	ctx := context.Background()
+	now := time.Now()
+	tests := []struct {
+		name      string
+		limit     int
+		setupMock func(sqlmock.Sqlmock)
+		wantCount int
+		wantErr   bool
+	}{
+		{
+			name:  "success - multiple pending deliveries",
+			limit: 10,
+			setupMock: func(mock sqlmock.Sqlmock) {
+				rows := sqlmock.NewRows([]string{"id", "activity_id", "inbox_url", "actor_id", "attempts", "max_attempts", "next_attempt", "last_error", "status", "created_at", "updated_at"}).
+					AddRow("del-1", "act-1", "https://inbox1.com", "actor-1", 0, 3, now.Add(-1*time.Hour), nil, "pending", now, now).
+					AddRow("del-2", "act-2", "https://inbox2.com", "actor-1", 1, 3, now.Add(-30*time.Minute), stringPtr("error"), "pending", now, now)
+				mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM ap_delivery_queue WHERE status = 'pending' AND next_attempt <= $1 ORDER BY next_attempt ASC LIMIT $2`)).
+					WithArgs(sqlmock.AnyArg(), 10).
+					WillReturnRows(rows)
+			},
+			wantCount: 2,
+			wantErr:   false,
+		},
+		{
+			name:  "success - no pending deliveries",
+			limit: 10,
+			setupMock: func(mock sqlmock.Sqlmock) {
+				mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM ap_delivery_queue WHERE status = 'pending' AND next_attempt <= $1 ORDER BY next_attempt ASC LIMIT $2`)).
+					WithArgs(sqlmock.AnyArg(), 10).
+					WillReturnRows(sqlmock.NewRows([]string{"id", "activity_id", "inbox_url", "actor_id", "attempts", "max_attempts", "next_attempt", "last_error", "status", "created_at", "updated_at"}))
+			},
+			wantCount: 0,
+			wantErr:   false,
+		},
+		{
+			name:  "database error",
+			limit: 10,
+			setupMock: func(mock sqlmock.Sqlmock) {
+				mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM ap_delivery_queue WHERE status = 'pending' AND next_attempt <= $1 ORDER BY next_attempt ASC LIMIT $2`)).
+					WithArgs(sqlmock.AnyArg(), 10).
+					WillReturnError(assert.AnError)
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db, mock := setupAPMockDB(t)
+			defer db.Close()
+			repo := NewActivityPubRepository(db, nil)
+			tt.setupMock(mock)
+
+			deliveries, err := repo.GetPendingDeliveries(ctx, tt.limit)
+			if tt.wantErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+				assert.Len(t, deliveries, tt.wantCount)
+			}
+			assert.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
+}

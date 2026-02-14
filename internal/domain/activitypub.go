@@ -5,14 +5,12 @@ import (
 	"time"
 )
 
-// ActivityPub context constants
 const (
 	ActivityStreamsContext = "https://www.w3.org/ns/activitystreams"
 	SecurityContext        = "https://w3id.org/security/v1"
 	PeerTubeContext        = "https://joinpeertube.org/ns"
 )
 
-// ActivityPub Activity Types
 const (
 	ActivityTypeCreate   = "Create"
 	ActivityTypeUpdate   = "Update"
@@ -28,7 +26,6 @@ const (
 	ActivityTypeView     = "View"
 )
 
-// ActivityPub Object Types
 const (
 	ObjectTypePerson                = "Person"
 	ObjectTypeGroup                 = "Group"
@@ -42,7 +39,6 @@ const (
 	ObjectTypeCollectionPage        = "CollectionPage"
 )
 
-// Actor represents an ActivityPub Actor (User, Channel, etc.)
 type Actor struct {
 	Context                   interface{} `json:"@context,omitempty"`
 	Type                      string      `json:"type"`
@@ -63,19 +59,16 @@ type Actor struct {
 	Endpoints                 *Endpoints  `json:"endpoints,omitempty"`
 }
 
-// PublicKey represents an actor's public key for HTTP signatures
 type PublicKey struct {
 	ID           string `json:"id"`
 	Owner        string `json:"owner"`
 	PublicKeyPem string `json:"publicKeyPem"`
 }
 
-// Endpoints represents additional ActivityPub endpoints
 type Endpoints struct {
 	SharedInbox string `json:"sharedInbox,omitempty"`
 }
 
-// Image represents an image object
 type Image struct {
 	Type      string `json:"type"`
 	MediaType string `json:"mediaType,omitempty"`
@@ -84,7 +77,6 @@ type Image struct {
 	Height    int    `json:"height,omitempty"`
 }
 
-// Activity represents a generic ActivityPub activity
 type Activity struct {
 	Context   interface{} `json:"@context,omitempty"`
 	Type      string      `json:"type"`
@@ -99,13 +91,12 @@ type Activity struct {
 	BCc       []string    `json:"bcc,omitempty"`
 }
 
-// VideoObject represents a video in ActivityPub format
 type VideoObject struct {
 	Context         interface{}    `json:"@context,omitempty"`
 	Type            string         `json:"type"`
 	ID              string         `json:"id"`
 	Name            string         `json:"name,omitempty"`
-	Duration        string         `json:"duration,omitempty"` // ISO 8601 duration
+	Duration        string         `json:"duration,omitempty"`
 	UUID            string         `json:"uuid,omitempty"`
 	Category        *APCategory    `json:"category,omitempty"`
 	Licence         *APLicence     `json:"licence,omitempty"`
@@ -150,7 +141,6 @@ type NoteObject struct {
 	Tag          []APTag     `json:"tag,omitempty"`
 }
 
-// APUrl represents a URL with additional metadata
 type APUrl struct {
 	Type      string `json:"type"`
 	MediaType string `json:"mediaType"`
@@ -161,32 +151,27 @@ type APUrl struct {
 	FPS       int    `json:"fps,omitempty"`
 }
 
-// APTag represents a hashtag
 type APTag struct {
 	Type string `json:"type"`
 	Name string `json:"name"`
 	Href string `json:"href,omitempty"`
 }
 
-// APCategory represents a video category
 type APCategory struct {
 	Identifier string `json:"identifier"`
 	Name       string `json:"name,omitempty"`
 }
 
-// APLicence represents a video licence
 type APLicence struct {
 	Identifier string `json:"identifier"`
 	Name       string `json:"name,omitempty"`
 }
 
-// APLanguage represents a language
 type APLanguage struct {
 	Identifier string `json:"identifier"`
 	Name       string `json:"name,omitempty"`
 }
 
-// APAttachment represents an attachment (subtitles, etc.)
 type APAttachment struct {
 	Type      string `json:"type"`
 	MediaType string `json:"mediaType"`
@@ -194,7 +179,6 @@ type APAttachment struct {
 	Name      string `json:"name,omitempty"`
 }
 
-// OrderedCollection represents an ActivityPub OrderedCollection
 type OrderedCollection struct {
 	Context      interface{} `json:"@context,omitempty"`
 	Type         string      `json:"type"`
@@ -205,7 +189,6 @@ type OrderedCollection struct {
 	OrderedItems interface{} `json:"orderedItems,omitempty"`
 }
 
-// OrderedCollectionPage represents a page of an OrderedCollection
 type OrderedCollectionPage struct {
 	Context      interface{} `json:"@context,omitempty"`
 	Type         string      `json:"type"`
@@ -217,19 +200,18 @@ type OrderedCollectionPage struct {
 	OrderedItems interface{} `json:"orderedItems"`
 }
 
-// APFollower represents a follower relationship in the database
 type APFollower struct {
 	ID         string    `json:"id" db:"id"`
 	ActorID    string    `json:"actor_id" db:"actor_id"`
 	FollowerID string    `json:"follower_id" db:"follower_id"`
-	State      string    `json:"state" db:"state"` // pending, accepted, rejected
+	State      string    `json:"state" db:"state"`
 	CreatedAt  time.Time `json:"created_at" db:"created_at"`
 	UpdatedAt  time.Time `json:"updated_at" db:"updated_at"`
 }
 
-// APActivity represents an activity stored in the database
 type APActivity struct {
 	ID           string          `json:"id" db:"id"`
+	ActivityURI  string          `json:"activity_uri" db:"activity_uri"`
 	ActorID      string          `json:"actor_id" db:"actor_id"`
 	Type         string          `json:"type" db:"type"`
 	ObjectID     *string         `json:"object_id,omitempty" db:"object_id"`
@@ -241,7 +223,6 @@ type APActivity struct {
 	CreatedAt    time.Time       `json:"created_at" db:"created_at"`
 }
 
-// APRemoteActor represents a cached remote actor
 type APRemoteActor struct {
 	ID            string     `json:"id" db:"id"`
 	ActorURI      string     `json:"actor_uri" db:"actor_uri"`
@@ -264,7 +245,6 @@ type APRemoteActor struct {
 	UpdatedAt     time.Time  `json:"updated_at" db:"updated_at"`
 }
 
-// APDeliveryQueue represents a queued activity for delivery
 type APDeliveryQueue struct {
 	ID          string    `json:"id" db:"id"`
 	ActivityID  string    `json:"activity_id" db:"activity_id"`
@@ -274,26 +254,23 @@ type APDeliveryQueue struct {
 	MaxAttempts int       `json:"max_attempts" db:"max_attempts"`
 	NextAttempt time.Time `json:"next_attempt" db:"next_attempt"`
 	LastError   *string   `json:"last_error,omitempty" db:"last_error"`
-	Status      string    `json:"status" db:"status"` // pending, processing, completed, failed
+	Status      string    `json:"status" db:"status"`
 	CreatedAt   time.Time `json:"created_at" db:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at" db:"updated_at"`
 }
 
-// WebFingerLink represents a WebFinger link
 type WebFingerLink struct {
 	Rel  string `json:"rel"`
 	Type string `json:"type,omitempty"`
 	Href string `json:"href"`
 }
 
-// WebFingerResponse represents a WebFinger response
 type WebFingerResponse struct {
 	Subject string          `json:"subject"`
 	Aliases []string        `json:"aliases,omitempty"`
 	Links   []WebFingerLink `json:"links"`
 }
 
-// NodeInfo represents NodeInfo 2.0 metadata
 type NodeInfo struct {
 	Version           string                 `json:"version"`
 	Software          NodeInfoSoftware       `json:"software"`
@@ -304,7 +281,6 @@ type NodeInfo struct {
 	Metadata          map[string]interface{} `json:"metadata,omitempty"`
 }
 
-// NodeInfoSoftware represents software information
 type NodeInfoSoftware struct {
 	Name       string `json:"name"`
 	Version    string `json:"version"`
@@ -312,20 +288,17 @@ type NodeInfoSoftware struct {
 	Homepage   string `json:"homepage,omitempty"`
 }
 
-// NodeInfoServices represents service integrations
 type NodeInfoServices struct {
 	Inbound  []string `json:"inbound"`
 	Outbound []string `json:"outbound"`
 }
 
-// NodeInfoUsage represents instance usage statistics
 type NodeInfoUsage struct {
 	Users         NodeInfoUsers `json:"users"`
 	LocalPosts    int           `json:"localPosts,omitempty"`
 	LocalComments int           `json:"localComments,omitempty"`
 }
 
-// NodeInfoUsers represents user statistics
 type NodeInfoUsers struct {
 	Total          int `json:"total,omitempty"`
 	ActiveHalfyear int `json:"activeHalfyear,omitempty"`
