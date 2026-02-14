@@ -18,10 +18,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// ---------------------------------------------------------------------------
-// helpers
-// ---------------------------------------------------------------------------
-
 func setupEncodingMockDB(t *testing.T) (*sqlx.DB, sqlmock.Sqlmock) {
 	t.Helper()
 	mockDB, mock, err := sqlmock.New()
@@ -37,17 +33,17 @@ func newEncodingRepo(t *testing.T) (usecase_EncodingRepo, sqlmock.Sqlmock, func(
 	return repo, mock, cleanup
 }
 
-// usecase_EncodingRepo is a local alias so we do not import the usecase
-// package just for a type assertion – the interface returned by
-// NewEncodingRepository already satisfies it.
 type usecase_EncodingRepo = interface {
 	CreateJob(ctx context.Context, job *domain.EncodingJob) error
 	GetJob(ctx context.Context, jobID string) (*domain.EncodingJob, error)
 	GetJobByVideoID(ctx context.Context, videoID string) (*domain.EncodingJob, error)
+	GetJobsByVideoID(ctx context.Context, videoID string) ([]*domain.EncodingJob, error)
+	GetActiveJobsByVideoID(ctx context.Context, videoID string) ([]*domain.EncodingJob, error)
 	UpdateJob(ctx context.Context, job *domain.EncodingJob) error
 	DeleteJob(ctx context.Context, jobID string) error
 	GetPendingJobs(ctx context.Context, limit int) ([]*domain.EncodingJob, error)
 	GetNextJob(ctx context.Context) (*domain.EncodingJob, error)
+	ResetStaleJobs(ctx context.Context, olderThan time.Duration) (int64, error)
 	UpdateJobStatus(ctx context.Context, jobID string, status domain.EncodingStatus) error
 	UpdateJobProgress(ctx context.Context, jobID string, progress int) error
 	SetJobError(ctx context.Context, jobID string, errorMsg string) error
@@ -72,8 +68,6 @@ func sampleEncodingJob() *domain.EncodingJob {
 	}
 }
 
-// encodingJobColumns is the column list returned by all SELECT queries in the
-// encoding repository.
 var encodingJobColumns = []string{
 	"id", "video_id", "source_file_path", "source_resolution",
 	"target_resolutions", "status", "progress", "error_message",
@@ -87,10 +81,6 @@ func makeEncodingJobRows(job *domain.EncodingJob) *sqlmock.Rows {
 		job.StartedAt, job.CompletedAt, job.CreatedAt, job.UpdatedAt,
 	)
 }
-
-// ---------------------------------------------------------------------------
-// CreateJob
-// ---------------------------------------------------------------------------
 
 func TestEncodingRepository_Unit_CreateJob(t *testing.T) {
 	ctx := context.Background()
@@ -136,10 +126,6 @@ func TestEncodingRepository_Unit_CreateJob(t *testing.T) {
 		require.NoError(t, mock.ExpectationsWereMet())
 	})
 }
-
-// ---------------------------------------------------------------------------
-// GetJob
-// ---------------------------------------------------------------------------
 
 func TestEncodingRepository_Unit_GetJob(t *testing.T) {
 	ctx := context.Background()
@@ -196,10 +182,6 @@ func TestEncodingRepository_Unit_GetJob(t *testing.T) {
 	})
 }
 
-// ---------------------------------------------------------------------------
-// GetJobByVideoID
-// ---------------------------------------------------------------------------
-
 func TestEncodingRepository_Unit_GetJobByVideoID(t *testing.T) {
 	ctx := context.Background()
 
@@ -253,10 +235,6 @@ func TestEncodingRepository_Unit_GetJobByVideoID(t *testing.T) {
 		require.NoError(t, mock.ExpectationsWereMet())
 	})
 }
-
-// ---------------------------------------------------------------------------
-// UpdateJob
-// ---------------------------------------------------------------------------
 
 func TestEncodingRepository_Unit_UpdateJob(t *testing.T) {
 	ctx := context.Background()
@@ -344,10 +322,6 @@ func TestEncodingRepository_Unit_UpdateJob(t *testing.T) {
 	})
 }
 
-// ---------------------------------------------------------------------------
-// DeleteJob
-// ---------------------------------------------------------------------------
-
 func TestEncodingRepository_Unit_DeleteJob(t *testing.T) {
 	ctx := context.Background()
 	jobID := uuid.NewString()
@@ -412,10 +386,6 @@ func TestEncodingRepository_Unit_DeleteJob(t *testing.T) {
 	})
 }
 
-// ---------------------------------------------------------------------------
-// GetPendingJobs
-// ---------------------------------------------------------------------------
-
 func TestEncodingRepository_Unit_GetPendingJobs(t *testing.T) {
 	ctx := context.Background()
 
@@ -466,7 +436,6 @@ func TestEncodingRepository_Unit_GetPendingJobs(t *testing.T) {
 		repo, mock, cleanup := newEncodingRepo(t)
 		defer cleanup()
 
-		// limit <= 0 defaults to 10
 		mock.ExpectQuery(regexp.QuoteMeta(
 			`SELECT id, video_id, source_file_path, source_resolution,`)).
 			WithArgs(10).
@@ -513,7 +482,6 @@ func TestEncodingRepository_Unit_GetPendingJobs(t *testing.T) {
 		repo, mock, cleanup := newEncodingRepo(t)
 		defer cleanup()
 
-		// Return a row with wrong number of columns to trigger scan error
 		badRows := sqlmock.NewRows([]string{"id"}).AddRow("only-one-col")
 		mock.ExpectQuery(regexp.QuoteMeta(
 			`SELECT id, video_id, source_file_path, source_resolution,`)).
@@ -527,10 +495,6 @@ func TestEncodingRepository_Unit_GetPendingJobs(t *testing.T) {
 		require.NoError(t, mock.ExpectationsWereMet())
 	})
 }
-
-// ---------------------------------------------------------------------------
-// GetNextJob
-// ---------------------------------------------------------------------------
 
 func TestEncodingRepository_Unit_GetNextJob(t *testing.T) {
 	ctx := context.Background()
@@ -652,10 +616,6 @@ func TestEncodingRepository_Unit_GetNextJob(t *testing.T) {
 	})
 }
 
-// ---------------------------------------------------------------------------
-// UpdateJobStatus
-// ---------------------------------------------------------------------------
-
 func TestEncodingRepository_Unit_UpdateJobStatus(t *testing.T) {
 	ctx := context.Background()
 	jobID := uuid.NewString()
@@ -719,10 +679,6 @@ func TestEncodingRepository_Unit_UpdateJobStatus(t *testing.T) {
 		require.NoError(t, mock.ExpectationsWereMet())
 	})
 }
-
-// ---------------------------------------------------------------------------
-// UpdateJobProgress
-// ---------------------------------------------------------------------------
 
 func TestEncodingRepository_Unit_UpdateJobProgress(t *testing.T) {
 	ctx := context.Background()
@@ -788,10 +744,6 @@ func TestEncodingRepository_Unit_UpdateJobProgress(t *testing.T) {
 	})
 }
 
-// ---------------------------------------------------------------------------
-// GetJobCounts
-// ---------------------------------------------------------------------------
-
 func TestEncodingRepository_Unit_GetJobCounts(t *testing.T) {
 	ctx := context.Background()
 
@@ -823,7 +775,6 @@ func TestEncodingRepository_Unit_GetJobCounts(t *testing.T) {
 		repo, mock, cleanup := newEncodingRepo(t)
 		defer cleanup()
 
-		// Only pending exists; processing, completed, failed should stay 0
 		rows := sqlmock.NewRows([]string{"status", "count"}).
 			AddRow("pending", 3)
 
@@ -880,7 +831,6 @@ func TestEncodingRepository_Unit_GetJobCounts(t *testing.T) {
 		repo, mock, cleanup := newEncodingRepo(t)
 		defer cleanup()
 
-		// Return a row with wrong type to trigger scan error
 		badRows := sqlmock.NewRows([]string{"status", "count"}).
 			AddRow("pending", "not-an-int")
 
@@ -895,10 +845,6 @@ func TestEncodingRepository_Unit_GetJobCounts(t *testing.T) {
 		require.NoError(t, mock.ExpectationsWereMet())
 	})
 }
-
-// ---------------------------------------------------------------------------
-// SetJobError
-// ---------------------------------------------------------------------------
 
 func TestEncodingRepository_Unit_SetJobError(t *testing.T) {
 	ctx := context.Background()
@@ -960,6 +906,184 @@ func TestEncodingRepository_Unit_SetJobError(t *testing.T) {
 		err := repo.SetJobError(ctx, jobID, "error msg")
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to get rows affected")
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+}
+
+func TestEncodingRepository_Unit_GetJobsByVideoID(t *testing.T) {
+	ctx := context.Background()
+	videoID := "video-123"
+
+	t.Run("success with multiple jobs", func(t *testing.T) {
+		repo, mock, cleanup := newEncodingRepo(t)
+		defer cleanup()
+
+		rows := sqlmock.NewRows([]string{
+			"id", "video_id", "source_file_path", "source_resolution",
+			"target_resolutions", "status", "progress", "error_message",
+			"started_at", "completed_at", "created_at", "updated_at",
+		}).
+			AddRow("job1", videoID, "/path/1", "1080p", pq.StringArray{"720p", "480p"}, "completed", 100, "", time.Now(), time.Now(), time.Now(), time.Now()).
+			AddRow("job2", videoID, "/path/2", "720p", pq.StringArray{"480p"}, "pending", 0, "", nil, nil, time.Now(), time.Now())
+
+		mock.ExpectQuery(regexp.QuoteMeta(`SELECT id, video_id, source_file_path, source_resolution, target_resolutions, status, progress, error_message, started_at, completed_at, created_at, updated_at FROM encoding_jobs WHERE video_id = $1 ORDER BY created_at DESC`)).
+			WithArgs(videoID).
+			WillReturnRows(rows)
+
+		jobs, err := repo.GetJobsByVideoID(ctx, videoID)
+		require.NoError(t, err)
+		require.Len(t, jobs, 2)
+		assert.Equal(t, "job1", jobs[0].ID)
+		assert.Equal(t, "job2", jobs[1].ID)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("success with no jobs", func(t *testing.T) {
+		repo, mock, cleanup := newEncodingRepo(t)
+		defer cleanup()
+
+		rows := sqlmock.NewRows([]string{
+			"id", "video_id", "source_file_path", "source_resolution",
+			"target_resolutions", "status", "progress", "error_message",
+			"started_at", "completed_at", "created_at", "updated_at",
+		})
+
+		mock.ExpectQuery(regexp.QuoteMeta(`SELECT id, video_id, source_file_path, source_resolution, target_resolutions, status, progress, error_message, started_at, completed_at, created_at, updated_at FROM encoding_jobs WHERE video_id = $1 ORDER BY created_at DESC`)).
+			WithArgs(videoID).
+			WillReturnRows(rows)
+
+		jobs, err := repo.GetJobsByVideoID(ctx, videoID)
+		require.NoError(t, err)
+		require.Len(t, jobs, 0)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("query error", func(t *testing.T) {
+		repo, mock, cleanup := newEncodingRepo(t)
+		defer cleanup()
+
+		mock.ExpectQuery(regexp.QuoteMeta(`SELECT id, video_id, source_file_path, source_resolution, target_resolutions, status, progress, error_message, started_at, completed_at, created_at, updated_at FROM encoding_jobs WHERE video_id = $1 ORDER BY created_at DESC`)).
+			WithArgs(videoID).
+			WillReturnError(errors.New("query failed"))
+
+		jobs, err := repo.GetJobsByVideoID(ctx, videoID)
+		require.Error(t, err)
+		require.Nil(t, jobs)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+}
+
+func TestEncodingRepository_Unit_GetActiveJobsByVideoID(t *testing.T) {
+	ctx := context.Background()
+	videoID := "video-456"
+
+	t.Run("success with active jobs", func(t *testing.T) {
+		repo, mock, cleanup := newEncodingRepo(t)
+		defer cleanup()
+
+		rows := sqlmock.NewRows([]string{
+			"id", "video_id", "source_file_path", "source_resolution",
+			"target_resolutions", "status", "progress", "error_message",
+			"started_at", "completed_at", "created_at", "updated_at",
+		}).
+			AddRow("job1", videoID, "/path/1", "1080p", pq.StringArray{"720p"}, "processing", 50, "", time.Now(), nil, time.Now(), time.Now()).
+			AddRow("job2", videoID, "/path/2", "720p", pq.StringArray{"480p"}, "pending", 0, "", nil, nil, time.Now(), time.Now())
+
+		mock.ExpectQuery(regexp.QuoteMeta(`SELECT id, video_id, source_file_path, source_resolution, target_resolutions, status, progress, error_message, started_at, completed_at, created_at, updated_at FROM encoding_jobs WHERE video_id = $1 AND status IN ('pending', 'processing') ORDER BY created_at DESC`)).
+			WithArgs(videoID).
+			WillReturnRows(rows)
+
+		jobs, err := repo.GetActiveJobsByVideoID(ctx, videoID)
+		require.NoError(t, err)
+		require.Len(t, jobs, 2)
+		assert.Equal(t, domain.EncodingStatusProcessing, jobs[0].Status)
+		assert.Equal(t, domain.EncodingStatusPending, jobs[1].Status)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("success with no active jobs", func(t *testing.T) {
+		repo, mock, cleanup := newEncodingRepo(t)
+		defer cleanup()
+
+		rows := sqlmock.NewRows([]string{
+			"id", "video_id", "source_file_path", "source_resolution",
+			"target_resolutions", "status", "progress", "error_message",
+			"started_at", "completed_at", "created_at", "updated_at",
+		})
+
+		mock.ExpectQuery(regexp.QuoteMeta(`SELECT id, video_id, source_file_path, source_resolution, target_resolutions, status, progress, error_message, started_at, completed_at, created_at, updated_at FROM encoding_jobs WHERE video_id = $1 AND status IN ('pending', 'processing') ORDER BY created_at DESC`)).
+			WithArgs(videoID).
+			WillReturnRows(rows)
+
+		jobs, err := repo.GetActiveJobsByVideoID(ctx, videoID)
+		require.NoError(t, err)
+		require.Len(t, jobs, 0)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("database error", func(t *testing.T) {
+		repo, mock, cleanup := newEncodingRepo(t)
+		defer cleanup()
+
+		mock.ExpectQuery(regexp.QuoteMeta(`SELECT id, video_id, source_file_path, source_resolution, target_resolutions, status, progress, error_message, started_at, completed_at, created_at, updated_at FROM encoding_jobs WHERE video_id = $1 AND status IN ('pending', 'processing') ORDER BY created_at DESC`)).
+			WithArgs(videoID).
+			WillReturnError(sql.ErrConnDone)
+
+		jobs, err := repo.GetActiveJobsByVideoID(ctx, videoID)
+		require.Error(t, err)
+		require.Nil(t, jobs)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+}
+
+func TestEncodingRepository_Unit_ResetStaleJobs(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("success with stale jobs reset", func(t *testing.T) {
+		repo, mock, cleanup := newEncodingRepo(t)
+		defer cleanup()
+
+		duration := 30 * time.Minute
+
+		mock.ExpectExec(regexp.QuoteMeta(`UPDATE encoding_jobs SET status = 'pending', progress = 0, started_at = NULL, error_message = '' WHERE status = 'processing' AND updated_at < $1`)).
+			WithArgs(sqlmock.AnyArg()).
+			WillReturnResult(sqlmock.NewResult(0, 5))
+
+		count, err := repo.ResetStaleJobs(ctx, duration)
+		require.NoError(t, err)
+		assert.Equal(t, int64(5), count)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("success with no stale jobs", func(t *testing.T) {
+		repo, mock, cleanup := newEncodingRepo(t)
+		defer cleanup()
+
+		duration := 1 * time.Hour
+
+		mock.ExpectExec(regexp.QuoteMeta(`UPDATE encoding_jobs SET status = 'pending', progress = 0, started_at = NULL, error_message = '' WHERE status = 'processing' AND updated_at < $1`)).
+			WithArgs(sqlmock.AnyArg()).
+			WillReturnResult(sqlmock.NewResult(0, 0))
+
+		count, err := repo.ResetStaleJobs(ctx, duration)
+		require.NoError(t, err)
+		assert.Equal(t, int64(0), count)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("exec error", func(t *testing.T) {
+		repo, mock, cleanup := newEncodingRepo(t)
+		defer cleanup()
+
+		duration := 30 * time.Minute
+
+		mock.ExpectExec(regexp.QuoteMeta(`UPDATE encoding_jobs SET status = 'pending', progress = 0, started_at = NULL, error_message = '' WHERE status = 'processing' AND updated_at < $1`)).
+			WithArgs(sqlmock.AnyArg()).
+			WillReturnError(sql.ErrConnDone)
+
+		count, err := repo.ResetStaleJobs(ctx, duration)
+		require.Error(t, err)
+		assert.Equal(t, int64(0), count)
 		require.NoError(t, mock.ExpectationsWereMet())
 	})
 }
