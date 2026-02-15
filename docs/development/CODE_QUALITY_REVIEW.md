@@ -42,7 +42,7 @@ The project adheres closely to the specified architecture in CLAUDE.md with seve
 /internal/repository/   ✅ SQLX repositories
 /internal/storage/      ✅ Hybrid storage (local/IPFS/S3)
 /internal/worker/       ✅ Async job processors
-/migrations/            ✅ SQL migrations (55 files, Go-Atlas)
+/migrations/            ✅ SQL migrations (61 files, Goose)
 ```
 
 **Valuable Additions Beyond CLAUDE.md:**

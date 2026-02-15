@@ -77,16 +77,18 @@ See [peertube_compatibility.md](./peertube_compatibility.md) for:
 - **[SPRINT16_COMPLETE.md](./SPRINT16_COMPLETE.md)** - API contract reproducibility (CI enforcement, Postman smoke tests)
 - **[SPRINT17_COMPLETE.md](./SPRINT17_COMPLETE.md)** - Coverage uplift I: Core services (all usecase packages at 80%+)
 - **[SPRINT18_COMPLETE.md](./SPRINT18_COMPLETE.md)** - Coverage uplift II: Handlers & repositories (repository 90%, handlers 80%+)
+- **[SPRINT19_COMPLETE.md](./SPRINT19_COMPLETE.md)** - Documentation accuracy (zero broken links, runbook validation, source-of-truth map)
 - **[QUALITY_PROGRAMME.md](./QUALITY_PROGRAMME.md)** - Full Quality Programme roadmap
 
 ## Project Metrics
 
-### Overall Statistics
-- **Total Sprints:** 14 (100% complete)
-- **Total Code:** ~151,000+ lines (75K production + 76K tests)
-- **Automated Tests:** 750+ passing
-- **Code Coverage:** >85%
+### Feature Parity Statistics (Sprints 1-14)
+- **Feature Sprints:** 14 (100% complete)
+- **Total Code at Sprint 14:** ~151,000+ lines (75K production + 76K tests)
+- **Tests at Sprint 14:** 750+ passing
 - **Development Time:** ~7 months (28 weeks)
+
+> **Current project metrics:** See [README.md](../../README.md) for up-to-date counts (618 Go files, 3,752 tests, 313 test files).
 
 ### Feature Breakdown by Lines of Code
 - Sprint 1 (Video Import): ~3,200 lines + 23 tests

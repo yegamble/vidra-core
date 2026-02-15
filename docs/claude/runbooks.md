@@ -9,9 +9,6 @@
 # Development
 docker compose up -d
 
-# Production
-docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
-
 # Specific services
 docker compose up -d postgres redis ipfs
 ```
@@ -44,8 +41,8 @@ docker compose logs --tail=100 server
 
 #### Connect to Database
 ```bash
-# Direct connection
-psql postgres://user:password@localhost:5432/athena
+# Direct connection (use credentials from .env or docker-compose.yml)
+psql postgres://athena_user:athena_password@localhost:5432/athena
 
 # Via Docker
 docker compose exec postgres psql -U athena_user -d athena
@@ -57,20 +54,19 @@ DATABASE_URL="postgres://test_user:test_password@localhost:5433/athena_test?sslm
 #### Run Migrations
 ```bash
 # Apply pending migrations
-atlas migrate apply \
-  --dir "file://migrations" \
-  --url "postgres://user:password@localhost:5432/athena?sslmode=disable"
+make migrate-up
+# Or manually:
+# goose -dir migrations postgres "$DATABASE_URL" up
 
 # Check migration status
-atlas migrate status \
-  --dir "file://migrations" \
-  --url "postgres://user:password@localhost:5432/athena?sslmode=disable"
+make migrate-status
+# Or manually:
+# goose -dir migrations postgres "$DATABASE_URL" status
 
 # Create new migration
-atlas migrate diff add_feature \
-  --dir "file://migrations" \
-  --to "file://schema.hcl" \
-  --dev-url "postgres://test_user:test_password@localhost:5433/athena_test?sslmode=disable"
+make migrate-create NAME=add_feature
+# Or manually:
+# goose -dir migrations create add_feature sql
 ```
 
 #### Database Queries
@@ -235,11 +231,8 @@ curl http://localhost:8080/health
 # Readiness probe
 curl http://localhost:8080/ready
 
-# Metrics endpoint
+# Metrics endpoint (separate port)
 curl http://localhost:9090/metrics
-
-# API status
-curl http://localhost:8080/api/v1/status
 ```
 
 ### Video Processing

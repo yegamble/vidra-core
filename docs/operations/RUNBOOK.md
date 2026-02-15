@@ -2,6 +2,8 @@
 
 This runbook provides operational procedures for monitoring, troubleshooting, and maintaining the Athena video platform in production.
 
+For detailed monitoring setup instructions, see the [Monitoring Guide](MONITORING.md).
+
 ## Table of Contents
 
 1. [Health Monitoring](#health-monitoring)
@@ -15,8 +17,6 @@ This runbook provides operational procedures for monitoring, troubleshooting, an
 ---
 
 ## Health Monitoring
-
-For detailed setup instructions for Prometheus and Grafana, see the [Monitoring Guide](MONITORING.md).
 
 ### Health Check Endpoints
 
@@ -327,15 +327,15 @@ df -h /app/processed
 **Manual Backup**:
 ```bash
 # Full database dump
-pg_dump -h localhost -U athena -d athena_prod \
+pg_dump -h localhost -U athena_user -d athena \
   -F c -b -v -f backup_$(date +%Y%m%d_%H%M%S).dump
 
 # Compressed backup
-pg_dump -h localhost -U athena -d athena_prod \
+pg_dump -h localhost -U athena_user -d athena \
   | gzip > backup_$(date +%Y%m%d_%H%M%S).sql.gz
 
 # Schema-only backup
-pg_dump -h localhost -U athena -d athena_prod \
+pg_dump -h localhost -U athena_user -d athena \
   --schema-only > schema_$(date +%Y%m%d).sql
 ```
 
@@ -362,13 +362,13 @@ dropdb test_restore
 systemctl stop athena
 
 # Drop existing database (CAUTION!)
-dropdb athena_prod
+dropdb athena
 
 # Recreate database
-createdb athena_prod
+createdb athena
 
 # Restore from dump
-pg_restore -d athena_prod backup_20250117.dump
+pg_restore -d athena backup_20250117.dump
 
 # Verify migrations
 goose -dir migrations postgres "$DATABASE_URL" status
@@ -546,8 +546,8 @@ spec:
 
 **Diagnosis**:
 ```bash
-# Check stuck videos
-psql -U athena -c "SELECT id, title, processing_status, created_at
+# Check stuck videos (use docker exec or psql with DATABASE_URL)
+psql -U athena_user -d athena -c "SELECT id, title, processing_status, created_at
   FROM videos WHERE processing_status = 'processing'
   AND created_at < now() - interval '1 hour';"
 
@@ -561,7 +561,7 @@ docker logs athena-transcode-worker-1 --tail 100
 **Resolution**:
 ```bash
 # Reset stuck video
-psql -U athena -c "UPDATE videos
+psql -U athena_user -d athena -c "UPDATE videos
   SET processing_status = 'pending'
   WHERE id = '{video_id}';"
 
@@ -634,13 +634,13 @@ curl -I http://cdn.example.com/videos/{id}/playlist.m3u8 | grep X-Cache
 **Vacuum & Analyze** (Weekly):
 ```bash
 # Vacuum all tables
-psql -U athena -c "VACUUM ANALYZE;"
+psql -U athena_user -d athena -c "VACUUM ANALYZE;"
 
 # Vacuum specific table
-psql -U athena -c "VACUUM ANALYZE videos;"
+psql -U athena_user -d athena -c "VACUUM ANALYZE videos;"
 
 # Check bloat
-psql -U athena -c "SELECT schemaname, tablename,
+psql -U athena_user -d athena -c "SELECT schemaname, tablename,
   pg_size_pretty(pg_total_relation_size(schemaname||'.'||tablename)) AS size
   FROM pg_tables ORDER BY pg_total_relation_size(schemaname||'.'||tablename) DESC LIMIT 10;"
 ```
@@ -648,10 +648,10 @@ psql -U athena -c "SELECT schemaname, tablename,
 **Reindex** (Monthly):
 ```bash
 # Reindex all indexes
-psql -U athena -c "REINDEX DATABASE athena_prod;"
+psql -U athena_user -d athena -c "REINDEX DATABASE athena;"
 
 # Reindex specific index
-psql -U athena -c "REINDEX INDEX idx_videos_processing_status;"
+psql -U athena_user -d athena -c "REINDEX INDEX idx_videos_processing_status;"
 ```
 
 ### Redis Maintenance
@@ -755,7 +755,7 @@ journalctl -u athena -f
 du -sh /app/uploads /app/processed /app/ipfs
 
 # Database connection count
-psql -U athena -c "SELECT count(*) FROM pg_stat_activity;"
+psql -U athena_user -d athena -c "SELECT count(*) FROM pg_stat_activity;"
 
 # Redis memory usage
 redis-cli INFO memory | grep used_memory_human

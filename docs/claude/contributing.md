@@ -87,24 +87,20 @@ func TestVideoUpload_Integration(t *testing.T) {
 
 ## Database Migrations
 
-### Using Go-Atlas
+### Using Goose
 
 ```bash
-# Generate migration
-atlas migrate diff add_column \
-  --dir "file://migrations" \
-  --to "file://schema.hcl" \
-  --dev-url "postgres://test_user:test_password@localhost:5433/athena_test?sslmode=disable"
+# Create new migration
+make migrate-create NAME=add_column
 
-# Apply migration
-atlas migrate apply \
-  --dir "file://migrations" \
-  --url "postgres://user:pass@localhost:5432/athena?sslmode=disable"
+# Apply all pending migrations
+make migrate-up
 
-# Lint migrations
-atlas migrate lint \
-  --dir "file://migrations" \
-  --dev-url "postgres://test_user:test_password@localhost:5433/athena_test?sslmode=disable"
+# Rollback last migration
+make migrate-down
+
+# Check migration status
+make migrate-status
 ```
 
 ### Migration Rules
@@ -172,7 +168,7 @@ atlas migrate lint \
 
 ### Modifying Database Schema
 
-1. Create migration with Atlas
+1. Create migration with Goose (`make migrate-create NAME=...`)
 2. Update domain models
 3. Update repository interfaces
 4. Modify repository implementations

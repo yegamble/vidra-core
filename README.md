@@ -18,14 +18,14 @@ See [VALIDATION_REQUIRED.md](docs/development/VALIDATION_REQUIRED.md) for comple
 
 | Metric | Count | Description |
 |--------|-------|-------------|
-| **Go Files** | 516 | Total Go files (284 source, 232 test) |
-| **Test Files** | 232 | Test files across unit, integration, and E2E suites |
-| **Lines of Code** | 185,654 | 76,034 source + 109,620 test code |
+| **Go Files** | 618 | Total Go files (305 non-test) |
+| **Test Files** | 313 | Test files across unit, integration, and E2E suites |
+| **Lines of Code** | 245,541+ | ~78,328 source + ~167,213 test code |
 | **Database Migrations** | 61 | Goose SQL migrations |
 | **API Endpoints** | ~184 | RESTful + WebSocket + Federation (OpenAPI-documented) |
-| **Coverage** | 54.1% | Full-repo short baseline (2026-02-15, up from 52.9%) |
-| **Security Tests** | 50+ | Including SSRF, virus scanning, CORS, auth |
-| **Automated Tests** | 3,715 | `func Test*` count across `*_test.go` files |
+| **Coverage Baseline** | 23.8% | Latest full-repo baseline (`docs/development/TEST_BASELINE_REPORT.md`, 2025-11-16) |
+| **Security Tests** | 50+ | Including SSRF, virus scanning, auth |
+| **Automated Tests** | 3,752 | `func Test*` count across `*_test.go` files |
 
 ## Features
 
@@ -179,7 +179,7 @@ See the full documentation index at [docs/README.md](docs/README.md).
 
 ### API Documentation
 
-- **[OpenAPI Specifications](api/README.md)** - Comprehensive OpenAPI 3.0 API documentation (98%+ coverage)
+- **OpenAPI Specifications** - Comprehensive OpenAPI 3.0 API documentation (98%+ coverage)
   - [Authentication & 2FA](api/openapi_auth_2fa.yaml) - Two-factor authentication (TOTP + backup codes)
   - [Uploads & Encoding](api/openapi_uploads.yaml) - Chunked uploads, resume, encoding status
   - [Analytics & Views](api/openapi_analytics.yaml) - View tracking, analytics, trending
@@ -261,10 +261,10 @@ See the full documentation index at [docs/README.md](docs/README.md).
 - 200+ API endpoints
 - Full ActivityPub federation
 
-**Sprint 18** (Current): Handlers & Repositories Coverage Uplift
-- Repository package at 90.0% coverage (from 59.6%)
-- Handler packages at 80%+ coverage per sub-package
-- 1,100+ new tests added (600 repository + 400 handler + 156 shared)
+**Sprint 19** (Complete): Documentation Accuracy
+- All living documentation validated against implementation
+- Broken links fixed, runbook commands verified, metrics updated
+- Source-of-truth map and test infrastructure docs created
 
 ### Feature Completion by Category
 
@@ -279,7 +279,7 @@ See the full documentation index at [docs/README.md](docs/README.md).
 | **Analytics** | 100% | ✅ Complete | Video analytics, retention curves, channel stats |
 | **Plugin System** | 100% | ✅ Complete | Hook architecture, Ed25519 signatures, 17 permissions |
 | **Video Redundancy** | 100% | ✅ Complete | Cross-instance replication, health monitoring |
-| **Quality Programme** | 50% | 🔄 Sprint 18/20 | API contract, coverage uplift, release hardening |
+| **Quality Programme** | 83% | 🔄 Sprint 20 | API contract, coverage uplift, docs accuracy, release hardening |
 
 ### Quality Programme (Sprints 15-20)
 
@@ -289,7 +289,7 @@ See the full documentation index at [docs/README.md](docs/README.md).
 | **Sprint 16** | API contract reproducibility | ✅ Complete |
 | **Sprint 17** | Core services 80%+ coverage | ✅ Complete |
 | **Sprint 18** | Handlers/repos 90%+ coverage | ✅ Complete |
-| **Sprint 19** | Documentation accuracy pass | Planned |
+| **Sprint 19** | Documentation accuracy pass | ✅ Complete |
 | **Sprint 20** | Release hardening | Planned |
 
 See [Quality Programme](docs/sprints/QUALITY_PROGRAMME.md) for full details.
@@ -298,14 +298,14 @@ See [Quality Programme](docs/sprints/QUALITY_PROGRAMME.md) for full details.
 
 | Metric | Count | Description |
 |--------|-------|-------------|
-| **Go Files** | 516 | Total Go files (284 source, 232 test) |
-| **Test Files** | 232 | Test files across unit, integration, and E2E suites |
-| **Lines of Code** | 185,654 | 76,034 source + 109,620 test code |
+| **Go Files** | 618 | Total Go files (305 non-test) |
+| **Test Files** | 313 | Test files across unit, integration, and E2E suites |
+| **Lines of Code** | 245,541+ | ~78,328 source + ~167,213 test code |
 | **Database Migrations** | 61 | Goose SQL migrations |
 | **API Endpoints** | ~184 | RESTful + WebSocket + Federation (OpenAPI-documented) |
-| **Coverage** | 54.1% | Full-repo short baseline (target: 90%+ core) |
-| **Security Tests** | 50+ | SSRF, virus scanning, auth, CORS, input validation |
-| **Automated Tests** | 3,715 | `func Test*` count across `*_test.go` files |
+| **Test Coverage** | 23.8% baseline | Latest full-repo baseline (`docs/development/TEST_BASELINE_REPORT.md`, 2025-11-16) |
+| **Security Tests** | 50+ | SSRF, virus scanning, auth, input validation |
+| **Automated Tests** | 3,752 | `func Test*` count across `*_test.go` files |
 
 See [Project Management Documentation](docs/project-management/README.md), [Sprint History](docs/sprints/README.md), and [Quality Programme](docs/sprints/QUALITY_PROGRAMME.md) for detailed progress tracking.
 

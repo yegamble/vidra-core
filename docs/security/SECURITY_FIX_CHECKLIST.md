@@ -59,8 +59,7 @@
 
 - [ ] **Verify Migration Applied**
   ```bash
-  atlas migrate status --dir "file://migrations" \
-    --url "postgres://user:pass@localhost:5432/athena?sslmode=disable"
+  make migrate-status
   ```
   - [ ] Confirm `virus_scan_log` table exists
   - [ ] Confirm indexes created
@@ -94,10 +93,10 @@
 - [ ] **Verify ClamAV Health**
   ```bash
   # Check ClamAV is running
-  docker-compose ps clamav
+  docker compose ps clamav
 
   # Check ClamAV signatures updated
-  docker-compose exec clamav freshclam
+  docker compose exec clamav freshclam
 
   # Test ClamAV connection
   echo "PING" | nc localhost 3310
@@ -234,8 +233,7 @@ curl https://staging.example.com/metrics | grep virus_scan
 kubectl scale deployment/athena-api --replicas=0 -n production
 
 # Apply database migration
-atlas migrate apply --dir "file://migrations" \
-  --url "postgres://user:pass@prod-db:5432/athena?sslmode=disable"
+make migrate-up
 
 # Deploy new version
 kubectl set image deployment/athena-api athena-api=registry.example.com/athena-api:security-fix-v1 -n production

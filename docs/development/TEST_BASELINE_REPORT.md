@@ -272,7 +272,7 @@ TestSendMessageHandler_Unauthorized_...         (SKIP - DB not available)
 
 2. **Set Up Test Database** (for 2 failing packages)
    - Run PostgreSQL in Docker: `docker-compose up -d postgres`
-   - Apply migrations: `atlas migrate apply`
+   - Apply migrations: `make migrate-up`
    - Update test helpers to use test database URL
 
 3. **Establish CI/CD Baseline**

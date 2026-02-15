@@ -4,6 +4,7 @@ This directory contains development guides, code quality reports, and testing do
 
 ## Testing Documentation
 
+- **[TEST_INFRASTRUCTURE.md](TEST_INFRASTRUCTURE.md)** - Test infrastructure, patterns, and CI configuration
 - **[TEST_EXECUTION_GUIDE.md](TEST_EXECUTION_GUIDE.md)** - Comprehensive testing guide
 - **[TEST_BASELINE_REPORT.md](TEST_BASELINE_REPORT.md)** - Test coverage baseline and metrics
 - **[VIRUS_SCANNER_TEST_REPORT.md](VIRUS_SCANNER_TEST_REPORT.md)** - Virus scanner test report
@@ -31,6 +32,7 @@ This directory contains development guides, code quality reports, and testing do
 ## Quick Links
 
 - [Main README](../../README.md)
+- [Documentation Map](../DOCUMENTATION_MAP.md) - Source of truth for each topic area
 - [Architecture Documentation](../architecture/)
 - [API Examples](../API_EXAMPLES.md)
 - [Sprint Documentation](../project-management/sprints/)
@@ -45,7 +47,7 @@ This directory contains development guides, code quality reports, and testing do
 
 ## Test Coverage Metrics
 
-- **Total Test Files**: 156
-- **Code Coverage**: 85%+
+- **Total Test Files**: 313
+- **Code Coverage**: 62.3% average across 72 packages (2026-02-15)
 - **Security Tests**: 50+
-- **Integration Tests**: Comprehensive
+- **Automated Tests**: 3,752

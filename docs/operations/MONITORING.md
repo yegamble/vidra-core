@@ -1,7 +1,7 @@
 # Monitoring Setup Guide
 
 This guide explains how to set up monitoring for the Athena Video Platform using Prometheus and Grafana.
-For operational procedures and incident response, see the [Operations Runbook](OPERATIONS_RUNBOOK.md).
+For operational procedures and incident response, see the [Operations Runbook](RUNBOOK.md).
 
 ## Prerequisites
 
@@ -12,13 +12,15 @@ For operational procedures and incident response, see the [Operations Runbook](O
 
 1. **Ensure the main application is running:**
    ```bash
-   docker-compose up -d
+   docker compose up -d
    ```
 
-2. **Start the monitoring stack:**
+2. **Start the monitoring stack (if available):**
    ```bash
+   # Note: monitoring stack configuration is project-specific
+   # Check docs/deployment/monitoring/ for docker compose files
    cd docs/deployment/monitoring
-   docker-compose -f docker-compose.monitoring.yml up -d
+   docker compose -f docker-compose.monitoring.yml up -d
    ```
 
 3. **Access the dashboards:**
@@ -53,7 +55,7 @@ The configuration is in `prometheus.yml`. It is configured to scrape:
     - Change the Grafana admin password immediately.
     - Put Grafana behind a reverse proxy (Nginx) with SSL.
     - Restrict access to port 9090 (Prometheus) if not needed externally.
-- **Network:** The monitoring stack expects to attach to the `athena_athena-network`. You may need to adjust the network name in `docker-compose.monitoring.yml` if your main project folder is not named `athena` or if you customized the network name. Check `docker network ls` to find the correct network name.
+- **Network:** The monitoring stack expects to attach to the default network. The main application uses the `athena-network` network (see `docker-compose.yml`). You may need to configure the monitoring stack to connect to this network. Check `docker network ls` to find the correct network name.
 
 ## Troubleshooting
 
