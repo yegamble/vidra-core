@@ -78,7 +78,8 @@ See [peertube_compatibility.md](./peertube_compatibility.md) for:
 - **[SPRINT17_COMPLETE.md](./SPRINT17_COMPLETE.md)** - Coverage uplift I: Core services (all usecase packages at 80%+)
 - **[SPRINT18_COMPLETE.md](./SPRINT18_COMPLETE.md)** - Coverage uplift II: Handlers & repositories (repository 90%, handlers 80%+)
 - **[SPRINT19_COMPLETE.md](./SPRINT19_COMPLETE.md)** - Documentation accuracy (zero broken links, runbook validation, source-of-truth map)
-- **[QUALITY_PROGRAMME.md](./QUALITY_PROGRAMME.md)** - Full Quality Programme roadmap
+- **[SPRINT20_COMPLETE.md](./SPRINT20_COMPLETE.md)** - Release hardening (full regression, coverage sign-off, CHANGELOG.md, maintenance plan, release checklist)
+- **[QUALITY_PROGRAMME.md](./QUALITY_PROGRAMME.md)** - Full Quality Programme roadmap (100% complete)
 
 ## Project Metrics
 

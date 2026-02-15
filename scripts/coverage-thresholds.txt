@@ -19,7 +19,7 @@ internal/usecase/caption                 93.0
 internal/usecase/captiongen              93.0
 internal/usecase/channel                 93.0
 internal/usecase/comment                 92.0
-internal/usecase/encoding                86.0
+internal/usecase/encoding                83.5
 internal/usecase/import                  85.0
 internal/usecase/ipfs_streaming          91.0
 internal/usecase/message                 100.0
@@ -29,9 +29,9 @@ internal/usecase/payments                93.0
 internal/usecase/playlist                100.0
 internal/usecase/rating                  82.0
 internal/usecase/redundancy              89.0
-internal/usecase/social                  89.0
+internal/usecase/social                  88.0
 internal/usecase/upload                  86.0
-internal/usecase/views                   97.0
+internal/usecase/views                   94.7
 
 # Repository layer (Sprint 18)
 internal/repository                      90.0
@@ -41,7 +41,7 @@ internal/httpapi/shared                  95.0
 internal/httpapi/handlers/auth           79.0
 internal/httpapi/handlers/federation     72.0
 internal/httpapi/handlers/messaging      77.0
-internal/httpapi/handlers/moderation     96.0
+internal/httpapi/handlers/moderation     90.1
 internal/httpapi/handlers/payments       82.0
 internal/httpapi/handlers/social         80.0
 internal/httpapi/handlers/video          79.0

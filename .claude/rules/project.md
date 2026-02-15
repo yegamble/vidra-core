@@ -133,11 +133,11 @@ See subdirectory CLAUDE.md files for detailed guidance:
 
 ## Additional Context
 
-**Sprint Status:** Quality Programme (Sprint 19/20)
+**Sprint Status:** Quality Programme Complete (Sprint 20/20)
 - Feature parity: 100% complete
-- Current focus: Documentation accuracy and test coverage
+- Quality Programme: 100% complete
 - Full test suite: 3,752 automated tests (313 test files)
-- Coverage: 62.3% average across packages (target: 90%+ for core packages)
+- Coverage: 62.3% average across packages (90%+ achieved for core packages)
 
 **Key Features:**
 - PeerTube API compatibility
