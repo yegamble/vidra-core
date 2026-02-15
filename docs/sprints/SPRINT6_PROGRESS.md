@@ -1,3 +1,5 @@
+> **Historical Document:** This file tracked in-progress work during Sprint 6. For the final summary, see `SPRINT6_COMPLETE.md` or `CHANGELOG.md`.
+
 # Sprint 6: HLS Transcoding - ✅ COMPLETE
 
 **Status**: ✅ All Phases Complete (Core + Serving + VOD + Tests)

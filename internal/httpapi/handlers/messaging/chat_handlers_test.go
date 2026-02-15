@@ -24,7 +24,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// MockChatRepository implements repository.ChatRepository for testing
 type MockChatRepository struct {
 	mock.Mock
 }
@@ -135,7 +134,6 @@ func (m *MockChatRepository) GetMessageCount(ctx context.Context, streamID uuid.
 	return args.Int(0), args.Error(1)
 }
 
-// MockUserRepository implements usecase.UserRepository for testing
 type MockUserRepository struct {
 	mock.Mock
 }
@@ -189,6 +187,59 @@ func (m *MockUserRepository) UpdatePassword(ctx context.Context, userID, passwor
 	return args.Error(0)
 }
 
+type MockSubscriptionRepository struct {
+	mock.Mock
+}
+
+func (m *MockSubscriptionRepository) IsSubscribed(ctx context.Context, subscriberID, channelID uuid.UUID) (bool, error) {
+	args := m.Called(ctx, subscriberID, channelID)
+	return args.Bool(0), args.Error(1)
+}
+
+func (m *MockSubscriptionRepository) SubscribeToChannel(ctx context.Context, subscriberID, channelID uuid.UUID) error {
+	return nil
+}
+
+func (m *MockSubscriptionRepository) UnsubscribeFromChannel(ctx context.Context, subscriberID, channelID uuid.UUID) error {
+	return nil
+}
+
+func (m *MockSubscriptionRepository) ListUserSubscriptions(ctx context.Context, subscriberID uuid.UUID, limit, offset int) (*domain.SubscriptionResponse, error) {
+	return nil, nil
+}
+
+func (m *MockSubscriptionRepository) ListChannelSubscribers(ctx context.Context, channelID uuid.UUID, limit, offset int) (*domain.SubscriptionResponse, error) {
+	return nil, nil
+}
+
+func (m *MockSubscriptionRepository) GetSubscriptionVideos(ctx context.Context, subscriberID uuid.UUID, limit, offset int) ([]domain.Video, int, error) {
+	return nil, 0, nil
+}
+
+func (m *MockSubscriptionRepository) Subscribe(ctx context.Context, subscriberID, channelID string) error {
+	return nil
+}
+
+func (m *MockSubscriptionRepository) Unsubscribe(ctx context.Context, subscriberID, channelID string) error {
+	return nil
+}
+
+func (m *MockSubscriptionRepository) ListSubscriptions(ctx context.Context, subscriberID string, limit, offset int) ([]*domain.User, int64, error) {
+	return nil, 0, nil
+}
+
+func (m *MockSubscriptionRepository) ListSubscriptionVideos(ctx context.Context, subscriberID string, limit, offset int) ([]*domain.Video, int64, error) {
+	return nil, 0, nil
+}
+
+func (m *MockSubscriptionRepository) CountSubscribers(ctx context.Context, channelID string) (int64, error) {
+	return 0, nil
+}
+
+func (m *MockSubscriptionRepository) GetSubscribers(ctx context.Context, channelID string) ([]*domain.Subscription, error) {
+	return nil, nil
+}
+
 func (m *MockUserRepository) List(ctx context.Context, limit, offset int) ([]*domain.User, error) {
 	args := m.Called(ctx, limit, offset)
 	if args.Get(0) == nil {
@@ -212,25 +263,23 @@ func (m *MockUserRepository) MarkEmailAsVerified(ctx context.Context, userID str
 	return args.Error(0)
 }
 
-// Helper function to add user context
 func withUserContext(ctx context.Context, userID uuid.UUID) context.Context {
 	return context.WithValue(ctx, middleware.UserIDKey, userID.String())
 }
 
-// setupChatHandlerTest creates test dependencies
 func setupChatHandlerTest(t *testing.T) (*ChatHandlers, *MockChatRepository, *MockLiveStreamRepository, *MockUserRepository, *chat.ChatServer) {
 	mockChatRepo := new(MockChatRepository)
 	mockStreamRepo := new(MockLiveStreamRepository)
 	mockUserRepo := new(MockUserRepository)
+	mockSubscriptionRepo := new(MockSubscriptionRepository)
 
-	// Create a real ChatServer with mocked repositories
 	cfg := &config.Config{}
 	redisClient := redis.NewClient(&redis.Options{Addr: "localhost:6379"})
 	logger := logrus.New()
 
 	chatServer := chat.NewChatServer(cfg, mockChatRepo, mockStreamRepo, redisClient, logger)
 
-	handlers := NewChatHandlers(chatServer, mockChatRepo, mockStreamRepo, mockUserRepo)
+	handlers := NewChatHandlers(chatServer, mockChatRepo, mockStreamRepo, mockUserRepo, mockSubscriptionRepo)
 
 	return handlers, mockChatRepo, mockStreamRepo, mockUserRepo, chatServer
 }
@@ -305,22 +354,18 @@ func TestChatHandlers_DeleteMessage_AsModerator(t *testing.T) {
 	moderatorID := uuid.New()
 	ownerID := uuid.New()
 
-	// Mock stream owner check (called by ChatServer.DeleteMessage)
 	mockStreamRepo.On("GetByID", mock.Anything, streamID).Return(&domain.LiveStream{
 		ID:     streamID,
 		UserID: ownerID,
 	}, nil)
 
-	// Mock moderator check
 	mockChatRepo.On("IsModerator", mock.Anything, streamID, moderatorID).Return(true, nil)
 
-	// Mock message lookup (now required)
 	mockChatRepo.On("GetMessageByID", mock.Anything, messageID).Return(&domain.ChatMessage{
 		ID:       messageID,
 		StreamID: streamID,
 	}, nil)
 
-	// Mock delete
 	mockChatRepo.On("DeleteMessage", mock.Anything, messageID).Return(nil)
 
 	req := httptest.NewRequest("DELETE", "/api/v1/streams/"+streamID.String()+"/chat/messages/"+messageID.String(), nil)
@@ -420,13 +465,11 @@ func TestChatHandlers_BanUser_AsModerator(t *testing.T) {
 	bannedUserID := uuid.New()
 	ownerID := uuid.New()
 
-	// Mock stream owner check (called by ChatServer.BanUser)
 	mockStreamRepo.On("GetByID", mock.Anything, streamID).Return(&domain.LiveStream{
 		ID:     streamID,
 		UserID: ownerID,
 	}, nil)
 
-	// ChatServer.BanUser calls IsModerator and BanUser
 	mockChatRepo.On("IsModerator", mock.Anything, streamID, moderatorID).Return(true, nil)
 	mockChatRepo.On("BanUser", mock.Anything, mock.MatchedBy(func(ban *domain.ChatBan) bool {
 		return ban.StreamID == streamID && ban.UserID == bannedUserID && ban.BannedBy == moderatorID
@@ -435,7 +478,7 @@ func TestChatHandlers_BanUser_AsModerator(t *testing.T) {
 	reqBody := map[string]interface{}{
 		"user_id":  bannedUserID.String(),
 		"reason":   "spam",
-		"duration": 600, // 10 minutes
+		"duration": 600,
 	}
 	body, _ := json.Marshal(reqBody)
 
@@ -487,7 +530,6 @@ func TestChatHandlers_GetChatStats(t *testing.T) {
 	err := json.NewDecoder(w.Body).Decode(&response)
 	require.NoError(t, err)
 
-	// Response is wrapped in {"data": ..., "success": true}
 	assert.True(t, response["success"].(bool))
 	data := response["data"].(map[string]interface{})
 
@@ -515,4 +557,82 @@ func TestChatHandlers_InvalidStreamID(t *testing.T) {
 	handlers.GetChatMessages(w, req)
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestChatHandlers_GetChatMessages_PrivateStreamSubscriberAuthorized(t *testing.T) {
+	handlers, mockChatRepo, mockStreamRepo, _, _ := setupChatHandlerTest(t)
+
+	streamID := uuid.New()
+	ownerID := uuid.New()
+	subscriberID := uuid.New()
+	channelID := uuid.New()
+
+	messages := []*domain.ChatMessage{
+		domain.NewChatMessage(streamID, uuid.New(), "user1", "Hello"),
+	}
+
+	mockStreamRepo.On("GetByID", mock.Anything, streamID).Return(&domain.LiveStream{
+		ID:        streamID,
+		UserID:    ownerID,
+		Privacy:   "private",
+		ChannelID: channelID,
+	}, nil)
+
+	mockSubscriptionRepo := new(MockSubscriptionRepository)
+	mockSubscriptionRepo.On("IsSubscribed", mock.Anything, subscriberID, channelID).Return(true, nil)
+	handlers.subscriptionRepo = mockSubscriptionRepo
+
+	mockChatRepo.On("GetMessages", mock.Anything, streamID, 50, 0).Return(messages, nil)
+	mockChatRepo.On("GetMessageCount", mock.Anything, streamID).Return(1, nil)
+
+	req := httptest.NewRequest("GET", "/api/v1/streams/"+streamID.String()+"/chat/messages", nil)
+	w := httptest.NewRecorder()
+
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("streamId", streamID.String())
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(withUserContext(req.Context(), subscriberID))
+
+	handlers.GetChatMessages(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	mockStreamRepo.AssertExpectations(t)
+	mockSubscriptionRepo.AssertExpectations(t)
+	mockChatRepo.AssertExpectations(t)
+}
+
+func TestChatHandlers_GetChatMessages_PrivateStreamNonSubscriberDenied(t *testing.T) {
+	handlers, _, mockStreamRepo, _, _ := setupChatHandlerTest(t)
+
+	streamID := uuid.New()
+	ownerID := uuid.New()
+	nonSubscriberID := uuid.New()
+	channelID := uuid.New()
+
+	mockStreamRepo.On("GetByID", mock.Anything, streamID).Return(&domain.LiveStream{
+		ID:        streamID,
+		UserID:    ownerID,
+		Privacy:   "private",
+		ChannelID: channelID,
+	}, nil)
+
+	mockSubscriptionRepo := new(MockSubscriptionRepository)
+	mockSubscriptionRepo.On("IsSubscribed", mock.Anything, nonSubscriberID, channelID).Return(false, nil)
+	handlers.subscriptionRepo = mockSubscriptionRepo
+
+	req := httptest.NewRequest("GET", "/api/v1/streams/"+streamID.String()+"/chat/messages", nil)
+	w := httptest.NewRecorder()
+
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("streamId", streamID.String())
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(withUserContext(req.Context(), nonSubscriberID))
+
+	handlers.GetChatMessages(w, req)
+
+	assert.Equal(t, http.StatusForbidden, w.Code)
+
+	mockStreamRepo.AssertExpectations(t)
+	mockSubscriptionRepo.AssertExpectations(t)
 }

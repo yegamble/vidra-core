@@ -1,3 +1,5 @@
+> **Historical Document:** This file tracked in-progress work during Sprint 7. For the final summary, see `SPRINT7_COMPLETE.md` or `CHANGELOG.md`.
+
 # Sprint 7: Enhanced Live Streaming Features - Progress
 
 **Status**: ✅ COMPLETE (100%)

@@ -708,12 +708,18 @@ func TestChatHandlers_GetChatMessages_PrivateStreamForbidden(t *testing.T) {
 	streamID := uuid.New()
 	ownerID := uuid.New()
 	otherUser := uuid.New()
+	channelID := uuid.New()
 
 	mockStreamRepo.On("GetByID", mock.Anything, streamID).Return(&domain.LiveStream{
-		ID:      streamID,
-		UserID:  ownerID,
-		Privacy: "private",
+		ID:        streamID,
+		UserID:    ownerID,
+		Privacy:   "private",
+		ChannelID: channelID,
 	}, nil)
+
+	mockSubscriptionRepo := new(MockSubscriptionRepository)
+	mockSubscriptionRepo.On("IsSubscribed", mock.Anything, otherUser, channelID).Return(false, nil)
+	handlers.subscriptionRepo = mockSubscriptionRepo
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req = withChiParam(req, "streamId", streamID.String())
@@ -722,6 +728,8 @@ func TestChatHandlers_GetChatMessages_PrivateStreamForbidden(t *testing.T) {
 
 	handlers.GetChatMessages(rr, req)
 	assert.Equal(t, http.StatusForbidden, rr.Code)
+
+	mockSubscriptionRepo.AssertExpectations(t)
 }
 
 func TestChatHandlers_GetChatMessages_MessagesError(t *testing.T) {

@@ -18,14 +18,14 @@ See [VALIDATION_REQUIRED.md](docs/development/VALIDATION_REQUIRED.md) for comple
 
 | Metric | Count | Description |
 |--------|-------|-------------|
-| **Go Files** | 618 | Total Go files (305 non-test) |
-| **Test Files** | 313 | Test files across unit, integration, and E2E suites |
-| **Lines of Code** | 245,541+ | ~78,328 source + ~167,213 test code |
+| **Go Files** | 630 | Total Go files (318 non-test) |
+| **Test Files** | 312 | Test files across unit, integration, and E2E suites |
+| **Lines of Code** | 244,463+ | ~77,959 source + ~166,504 test code |
 | **Database Migrations** | 61 | Goose SQL migrations |
 | **API Endpoints** | ~184 | RESTful + WebSocket + Federation (OpenAPI-documented) |
 | **Test Coverage** | 62.3% avg | Per-package average across 72 packages (per-package thresholds in `scripts/coverage-thresholds.txt`) |
 | **Security Tests** | 50+ | Including SSRF, virus scanning, auth |
-| **Automated Tests** | 3,752 | `func Test*` count across `*_test.go` files |
+| **Automated Tests** | 3,740 | `func Test*` count across `*_test.go` files |
 
 ## Features
 
@@ -39,7 +39,7 @@ Status legend:
 #### Core Video Platform
 - **PeerTube API Compatibility** - Channels, subscriptions, comments, ratings, playlists, and captions
 - **Video Import System** - Import from external platforms via `yt-dlp` integration
-- **Transcoding + HLS** - FFmpeg processing with adaptive streaming outputs, heartbeat-based stale job recovery on server restart
+- **Transcoding + HLS** - FFmpeg processing with H.264/VP9/AV1 multi-codec encoding, adaptive streaming, heartbeat-based stale job recovery on server restart
 - **User Messaging** - Direct messaging with optional end-to-end encryption (E2EE)
 - **Notifications System** - Real-time notifications with automatic triggers and delivery controls
 - **Social Features** - Follow/unfollow, timelines, likes, shares, and activity feeds
@@ -71,17 +71,19 @@ Status legend:
 - **Plugin System** - Hook-based plugin architecture and plugin upload APIs
 - **Observability** - Structured logging, metrics, and health endpoints
 
+#### Deployment
+- **Kubernetes + Blue/Green** - Kustomize base/overlay manifests, blue/green deployment overlays, pre-switch validation jobs, smoke tests, Prometheus monitoring, Grafana dashboards
+
 ### Implemented Beta Features (`🧪`)
 
-- **ATProto Integration (BETA)** - Optional Bluesky syndication and interoperability workflows
+- **ATProto Integration (BETA)** - Bluesky syndication via AT Protocol: video publishing, session management, blob uploads, `.well-known/atproto-did` endpoint
+- **IOTA Payments (BETA)** - Wallet creation, payment intents, transaction history API (feature-flagged via `EnableIOTA`); node communication layer is stubbed pending real IOTA node integration
 
 ### Planned / In-Progress Roadmap (`🛣️`)
 
 - **ATProto Stabilization** - Move ATProto integration from beta to stable production profile
-- **Codec Matrix Expansion** - Additional codec and container expansion beyond current baseline defaults
-- **Payments Integration** - IOTA-based payments features
+- **IOTA Node Integration** - Replace stubbed IOTA node client with real Hornet/Bee HTTP client for live network transactions
 - **Advanced Analytics Enhancements** - Additional analytics/reporting depth
-- **Kubernetes + Blue/Green Hardening** - Expanded production deployment automation
 
 See the detailed status section in [Project Status](#project-status) and planning docs in [Project Management](docs/project-management/README.md).
 
@@ -258,14 +260,14 @@ See the full documentation index at [docs/README.md](docs/README.md).
 **Current Phase**: Quality Programme (Sprints 15-20) - **100% COMPLETE** - Stabilization, coverage uplift, and release hardening.
 
 **Sprints 1-14**: PeerTube Feature Parity - **100% COMPLETE**
-- 78,328+ lines of production code
-- 3,752 automated tests
+- 77,959+ lines of production code
+- 3,740 automated tests
 - 61 database migrations
 - ~184 API endpoints
 - Full ActivityPub federation
 
 **Sprint 20** (Complete): Release Hardening
-- Full regression and security validation (3,752 tests passing, zero critical vulnerabilities)
+- Full regression and security validation (3,740 tests passing, zero critical vulnerabilities)
 - Coverage sign-off (all 30 per-package thresholds met)
 - CHANGELOG.md and maintenance plan finalized
 - Final Release Checklist completed (12/14 items verified)
@@ -302,14 +304,14 @@ See [Quality Programme](docs/sprints/QUALITY_PROGRAMME.md) for full details.
 
 | Metric | Count | Description |
 |--------|-------|-------------|
-| **Go Files** | 618 | Total Go files (305 non-test) |
-| **Test Files** | 313 | Test files across unit, integration, and E2E suites |
-| **Lines of Code** | 245,541+ | ~78,328 source + ~167,213 test code |
+| **Go Files** | 630 | Total Go files (318 non-test) |
+| **Test Files** | 312 | Test files across unit, integration, and E2E suites |
+| **Lines of Code** | 244,463+ | ~77,959 source + ~166,504 test code |
 | **Database Migrations** | 61 | Goose SQL migrations |
 | **API Endpoints** | ~184 | RESTful + WebSocket + Federation (OpenAPI-documented) |
 | **Test Coverage** | 62.3% avg | Per-package average across 72 packages (per-package thresholds in `scripts/coverage-thresholds.txt`) |
 | **Security Tests** | 50+ | SSRF, virus scanning, auth, input validation |
-| **Automated Tests** | 3,752 | `func Test*` count across `*_test.go` files |
+| **Automated Tests** | 3,740 | `func Test*` count across `*_test.go` files |
 
 See [Project Management Documentation](docs/project-management/README.md), [Sprint History](docs/sprints/README.md), and [Quality Programme](docs/sprints/QUALITY_PROGRAMME.md) for detailed progress tracking.
 

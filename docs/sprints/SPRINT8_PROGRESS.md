@@ -1,3 +1,5 @@
+> **Historical Document:** This file tracked in-progress work during Sprint 8. For the final summary, see `SPRINT8_COMPLETE.md` or `CHANGELOG.md`.
+
 # Sprint 8: Torrent Support with IPFS Hybrid - COMPLETE ✅
 
 **Status**: ✅ IMPLEMENTATION COMPLETE

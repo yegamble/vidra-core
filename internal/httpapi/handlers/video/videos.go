@@ -1,36 +1,22 @@
 package video
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
-	"fmt"
-	"io"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strconv"
-	"strings"
 	"time"
 
-	chi "github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
-	"athena/internal/config"
 	"athena/internal/domain"
 	"athena/internal/httpapi/shared"
 	"athena/internal/middleware"
-	"athena/internal/storage"
 	"athena/internal/usecase"
-	"athena/internal/validation"
 )
-
-// requireUUIDParam extracts a path parameter and validates it as a UUID.
-// On failure it writes an error response and returns ok=false.
 
 func ListVideosHandler(repo usecase.VideoRepository) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		// Parse pagination parameters with backward compatibility
 		page, limit, offset, pageSize := shared.ParsePagination(r, 20)
 
 		sort := r.URL.Query().Get("sort")
@@ -77,7 +63,6 @@ func SearchVideosHandler(repo usecase.VideoRepository) http.HandlerFunc {
 			return
 		}
 
-		// Parse pagination parameters with backward compatibility
 		page, limit, offset, pageSize := shared.ParsePagination(r, 20)
 
 		tags := r.URL.Query()["tags"]
@@ -126,14 +111,12 @@ func GetVideoHandler(repo usecase.VideoRepository, captionService *usecase.Capti
 			shared.WriteError(w, http.StatusInternalServerError, domain.NewDomainError("GET_FAILED", "Failed to get video"))
 			return
 		}
-		// Privacy gate: private videos are only visible to the owner; public/unlisted visible to all
 		requesterID, _ := r.Context().Value(middleware.UserIDKey).(string)
 		if video.Privacy == domain.PrivacyPrivate && requesterID != video.UserID {
 			shared.WriteError(w, http.StatusForbidden, domain.NewDomainError("FORBIDDEN", "Access denied"))
 			return
 		}
 
-		// Include captions if service is available
 		var captions []domain.Caption
 		if captionService != nil {
 			videoUUID, _ := uuid.Parse(videoID)
@@ -142,7 +125,6 @@ func GetVideoHandler(repo usecase.VideoRepository, captionService *usecase.Capti
 			}
 		}
 
-		// Create extended response that includes video data plus captions
 		type VideoWithCaptions struct {
 			*domain.Video
 			Captions []domain.Caption `json:"captions"`
@@ -165,7 +147,6 @@ func CreateVideoHandler(repo usecase.VideoRepository) http.HandlerFunc {
 			return
 		}
 
-		// Validate required fields
 		if req.Title == "" {
 			shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("MISSING_TITLE", "Title is required"))
 			return
@@ -174,7 +155,6 @@ func CreateVideoHandler(repo usecase.VideoRepository) http.HandlerFunc {
 			shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("MISSING_PRIVACY", "Privacy setting is required"))
 			return
 		}
-		// Validate privacy value
 		if req.Privacy != domain.PrivacyPublic && req.Privacy != domain.PrivacyUnlisted && req.Privacy != domain.PrivacyPrivate {
 			shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_PRIVACY", "Privacy must be public, unlisted, or private"))
 			return
@@ -186,7 +166,6 @@ func CreateVideoHandler(repo usecase.VideoRepository) http.HandlerFunc {
 			return
 		}
 
-		// Initialize tags to empty slice if nil to avoid database null constraint violation
 		tags := req.Tags
 		if tags == nil {
 			tags = []string{}
@@ -220,14 +199,13 @@ func CreateVideoHandler(repo usecase.VideoRepository) http.HandlerFunc {
 }
 
 func UpdateVideoHandler(repo usecase.VideoRepository) http.HandlerFunc {
-	// Define the rawReq struct outside to make it accessible throughout the handler
 	type updateRequest struct {
 		Title       string     `json:"title"`
 		Description string     `json:"description"`
 		Privacy     string     `json:"privacy"`
 		Tags        []string   `json:"tags"`
-		Category    string     `json:"category"`    // Accept category slug
-		CategoryID  *uuid.UUID `json:"category_id"` // Also accept category UUID
+		Category    string     `json:"category"`
+		CategoryID  *uuid.UUID `json:"category_id"`
 		Language    string     `json:"language"`
 	}
 
@@ -237,15 +215,12 @@ func UpdateVideoHandler(repo usecase.VideoRepository) http.HandlerFunc {
 			return
 		}
 
-		// Custom struct to handle both category (string) and category_id (UUID)
 		var rawReq updateRequest
-
 		if err := json.NewDecoder(r.Body).Decode(&rawReq); err != nil {
 			shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_JSON", "Invalid JSON payload"))
 			return
 		}
 
-		// Convert to domain.VideoUpdateRequest
 		req := domain.VideoUpdateRequest{
 			Title:       rawReq.Title,
 			Description: rawReq.Description,
@@ -255,7 +230,6 @@ func UpdateVideoHandler(repo usecase.VideoRepository) http.HandlerFunc {
 			Language:    rawReq.Language,
 		}
 
-		// Validate required fields
 		if req.Title == "" {
 			shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("MISSING_TITLE", "Title is required"))
 			return
@@ -264,7 +238,6 @@ func UpdateVideoHandler(repo usecase.VideoRepository) http.HandlerFunc {
 			shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("MISSING_PRIVACY", "Privacy setting is required"))
 			return
 		}
-		// Validate privacy value
 		if req.Privacy != domain.PrivacyPublic && req.Privacy != domain.PrivacyUnlisted && req.Privacy != domain.PrivacyPrivate {
 			shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_PRIVACY", "Privacy must be public, unlisted, or private"))
 			return
@@ -276,7 +249,6 @@ func UpdateVideoHandler(repo usecase.VideoRepository) http.HandlerFunc {
 			return
 		}
 
-		// First check if video exists and user owns it
 		existingVideo, err := repo.GetByID(r.Context(), videoID)
 		if err != nil {
 			var domainErr domain.DomainError
@@ -293,19 +265,17 @@ func UpdateVideoHandler(repo usecase.VideoRepository) http.HandlerFunc {
 			return
 		}
 
-		// Initialize tags to empty slice if nil to avoid database null constraint violation
 		tags := req.Tags
 		if tags == nil {
 			tags = []string{}
 		}
 
-		// Update the video
 		video := &domain.Video{
 			ID:          videoID,
 			Title:       req.Title,
 			Description: req.Description,
 			Privacy:     req.Privacy,
-			Status:      existingVideo.Status, // Keep existing status
+			Status:      existingVideo.Status,
 			UserID:      userID,
 			Tags:        tags,
 			CategoryID:  req.CategoryID,
@@ -323,29 +293,24 @@ func UpdateVideoHandler(repo usecase.VideoRepository) http.HandlerFunc {
 			return
 		}
 
-		// Return updated video
 		updatedVideo, err := repo.GetByID(r.Context(), videoID)
 		if err != nil {
 			shared.WriteError(w, http.StatusInternalServerError, domain.NewDomainError("GET_FAILED", "Failed to retrieve updated video"))
 			return
 		}
 
-		// Create a custom response that includes category as a string for backward compatibility
 		type videoResponse struct {
 			*domain.Video
-			Category string `json:"category,omitempty"` // Override category field
+			Category string `json:"category,omitempty"`
 		}
 
 		response := &videoResponse{
 			Video: updatedVideo,
 		}
 
-		// Set category slug if category is populated
 		if updatedVideo.Category != nil {
 			response.Category = updatedVideo.Category.Slug
 		} else if rawReq.Category != "" {
-			// If no category is set but one was provided in request, return it
-			// This is for backward compatibility with tests
 			response.Category = rawReq.Category
 		}
 
@@ -380,210 +345,6 @@ func DeleteVideoHandler(repo usecase.VideoRepository) http.HandlerFunc {
 	}
 }
 
-// InitiateUploadHandler creates a new upload session for chunked uploads
-func InitiateUploadHandler(uploadService usecase.UploadService, videoRepo usecase.VideoRepository) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		userID, _ := r.Context().Value(middleware.UserIDKey).(string)
-		if userID == "" {
-			shared.WriteError(w, http.StatusUnauthorized, domain.NewDomainError("UNAUTHORIZED", "Missing or invalid authentication"))
-			return
-		}
-
-		var req domain.InitiateUploadRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_JSON", "Invalid JSON payload"))
-			return
-		}
-
-		// Set default chunk size if not provided
-		if req.ChunkSize == 0 {
-			req.ChunkSize = 10 * 1024 * 1024 // 10MB default
-		}
-
-		response, err := uploadService.InitiateUpload(r.Context(), userID, &req)
-		if err != nil {
-			var domainErr domain.DomainError
-			if errors.As(err, &domainErr) {
-				shared.WriteError(w, http.StatusBadRequest, domainErr)
-				return
-			}
-			shared.WriteError(w, http.StatusInternalServerError, domain.NewDomainError("INITIATE_FAILED", "Failed to initiate upload"))
-			return
-		}
-
-		shared.WriteJSON(w, http.StatusCreated, response)
-	}
-}
-
-// UploadChunkHandler handles individual chunk uploads
-func UploadChunkHandler(uploadService usecase.UploadService, cfg *config.Config) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		sessionID := chi.URLParam(r, "sessionId")
-		if sessionID == "" {
-			shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("MISSING_SESSION_ID", "Session ID is required"))
-			return
-		}
-
-		// Validate UUID format
-		if _, err := uuid.Parse(sessionID); err != nil {
-			shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_SESSION_ID", "Invalid session ID format"))
-			return
-		}
-
-		chunkIndex, err := strconv.Atoi(r.Header.Get("X-Chunk-Index"))
-		if err != nil {
-			shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_CHUNK_INDEX", "Invalid chunk index"))
-			return
-		}
-
-		expectedChecksum := r.Header.Get("X-Chunk-Checksum")
-
-		// Create validator for pre-upload validation
-		validator := validation.NewChecksumValidator(cfg)
-
-		// In strict mode, checksum is required
-		if cfg.ValidationStrictMode && expectedChecksum == "" {
-			shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("MISSING_CHECKSUM", "Chunk checksum is required in strict mode"))
-			return
-		}
-
-		// Read chunk data
-		data, err := io.ReadAll(r.Body)
-		if err != nil {
-			shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("READ_FAILED", "Failed to read chunk data"))
-			return
-		}
-
-		// Verify checksum using the validation service
-		if err := validator.ValidateChunkChecksum(data, expectedChecksum); err != nil {
-			shared.WriteError(w, http.StatusBadRequest, err.(domain.DomainError))
-			return
-		}
-
-		chunk := &domain.ChunkUpload{
-			SessionID:  sessionID,
-			ChunkIndex: chunkIndex,
-			Data:       data,
-			Checksum:   expectedChecksum,
-		}
-
-		response, err := uploadService.UploadChunk(r.Context(), sessionID, chunk)
-		if err != nil {
-			var domainErr domain.DomainError
-			if errors.As(err, &domainErr) {
-				shared.WriteError(w, http.StatusBadRequest, domainErr)
-				return
-			}
-			shared.WriteError(w, http.StatusInternalServerError, domain.NewDomainError("UPLOAD_FAILED", "Failed to upload chunk"))
-			return
-		}
-
-		shared.WriteJSON(w, http.StatusOK, response)
-	}
-}
-
-// CompleteUploadHandler finalizes the upload and queues for encoding
-func CompleteUploadHandler(uploadService usecase.UploadService, encodingRepo usecase.EncodingRepository) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		sessionID := chi.URLParam(r, "sessionId")
-		if sessionID == "" {
-			shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("MISSING_SESSION_ID", "Session ID is required"))
-			return
-		}
-		if _, err := uuid.Parse(sessionID); err != nil {
-			shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_SESSION_ID", "Invalid session ID format"))
-			return
-		}
-
-		ctx := r.Context()
-		if err := uploadService.CompleteUpload(ctx, sessionID); err != nil {
-			var domainErr domain.DomainError
-			if errors.As(err, &domainErr) {
-				shared.WriteError(w, http.StatusBadRequest, domainErr)
-				return
-			}
-			shared.WriteError(w, http.StatusInternalServerError, domain.NewDomainError("COMPLETE_FAILED", "Failed to complete upload"))
-			return
-		}
-
-		resp := map[string]interface{}{
-			"session_id": sessionID,
-			"status":     "completed",
-			"message":    "Upload completed, processing queued",
-		}
-		shared.WriteJSON(w, http.StatusOK, resp)
-	}
-}
-
-// GetUploadStatusHandler returns the current upload status
-func GetUploadStatusHandler(uploadService usecase.UploadService) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		sessionID, ok := shared.RequireUUIDParam(w, r, "sessionId", "MISSING_SESSION_ID", "INVALID_SESSION_ID", "Session ID is required", "Invalid session ID format")
-		if !ok {
-			return
-		}
-
-		session, err := uploadService.GetUploadStatus(r.Context(), sessionID)
-		if err != nil {
-			var domainErr domain.DomainError
-			if errors.As(err, &domainErr) {
-				shared.WriteError(w, http.StatusNotFound, domainErr)
-				return
-			}
-			shared.WriteError(w, http.StatusInternalServerError, domain.NewDomainError("STATUS_FAILED", "Failed to get upload status"))
-			return
-		}
-
-		shared.WriteJSON(w, http.StatusOK, session)
-	}
-}
-
-// ResumeUploadHandler provides information to resume an interrupted upload
-func ResumeUploadHandler(uploadService usecase.UploadService) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		sessionID, ok := shared.RequireUUIDParam(w, r, "sessionId", "MISSING_SESSION_ID", "INVALID_SESSION_ID", "Session ID is required", "Invalid session ID format")
-		if !ok {
-			return
-		}
-
-		session, err := uploadService.GetUploadStatus(r.Context(), sessionID)
-		if err != nil {
-			var domainErr domain.DomainError
-			if errors.As(err, &domainErr) {
-				shared.WriteError(w, http.StatusNotFound, domainErr)
-				return
-			}
-			shared.WriteError(w, http.StatusInternalServerError, domain.NewDomainError("RESUME_FAILED", "Failed to get resume information"))
-			return
-		}
-
-		// Calculate remaining chunks
-		uploadedSet := make(map[int]bool)
-		for _, chunk := range session.UploadedChunks {
-			uploadedSet[chunk] = true
-		}
-
-		var remainingChunks []int
-		for i := 0; i < session.TotalChunks; i++ {
-			if !uploadedSet[i] {
-				remainingChunks = append(remainingChunks, i)
-			}
-		}
-
-		resumeInfo := map[string]interface{}{
-			"session_id":       sessionID,
-			"total_chunks":     session.TotalChunks,
-			"uploaded_chunks":  session.UploadedChunks,
-			"remaining_chunks": remainingChunks,
-			"progress_percent": float64(len(session.UploadedChunks)) / float64(session.TotalChunks) * 100,
-			"status":           session.Status,
-			"expires_at":       session.ExpiresAt,
-		}
-
-		shared.WriteJSON(w, http.StatusOK, resumeInfo)
-	}
-}
-
 func GetUserVideosHandler(repo usecase.VideoRepository) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		userID, ok := shared.RequireUUIDParam(w, r, "id", "MISSING_USER_ID", "INVALID_USER_ID", "User ID is required", "Invalid user ID format")
@@ -591,7 +352,6 @@ func GetUserVideosHandler(repo usecase.VideoRepository) http.HandlerFunc {
 			return
 		}
 
-		// Unified pagination
 		page, _ := strconv.Atoi(r.URL.Query().Get("page"))
 		pageSize, _ := strconv.Atoi(r.URL.Query().Get("pageSize"))
 		limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
@@ -620,7 +380,7 @@ func GetUserVideosHandler(repo usecase.VideoRepository) http.HandlerFunc {
 			shared.WriteError(w, http.StatusInternalServerError, domain.NewDomainError("GET_FAILED", "Failed to get user videos"))
 			return
 		}
-		// If requester is not the owner, filter out private videos
+
 		requesterID, _ := r.Context().Value(middleware.UserIDKey).(string)
 		if requesterID != userID {
 			filtered := make([]*domain.Video, 0, len(videos))
@@ -632,659 +392,8 @@ func GetUserVideosHandler(repo usecase.VideoRepository) http.HandlerFunc {
 			videos = filtered
 			total = int64(len(videos))
 		}
+
 		meta := &shared.Meta{Total: total, Limit: limit, Offset: offset, Page: page, PageSize: pageSize}
 		shared.WriteJSONWithMeta(w, http.StatusOK, videos, meta)
-	}
-}
-
-// UploadVideoFileHandler provides a legacy, one-shot multipart upload endpoint
-// for compatibility with existing Postman tests. It validates a provided video
-// file (MP4/MOV/MKV/WebM/AVI), creates a video record, stores the file under
-// storage/web-videos, and returns 201 with a minimal JSON body containing the ID.
-func UploadVideoFileHandler(repo usecase.VideoRepository, cfg *config.Config) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		userID, _ := r.Context().Value(middleware.UserIDKey).(string)
-		if userID == "" {
-			shared.WriteError(w, http.StatusUnauthorized, domain.NewDomainError("UNAUTHORIZED", "Missing or invalid authentication"))
-			return
-		}
-
-		// Parse multipart form. Limit to 512MB to be safe for tests; adjust as needed.
-		if err := r.ParseMultipartForm(512 << 20); err != nil {
-			shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_MULTIPART", "Invalid multipart form"))
-			return
-		}
-
-		file, header, err := r.FormFile("video")
-		if err != nil {
-			shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("MISSING_FILE", "Missing video file"))
-			return
-		}
-		defer func() { _ = file.Close() }()
-
-		title := strings.TrimSpace(r.FormValue("title"))
-		if title == "" {
-			shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("MISSING_TITLE", "Title is required"))
-			return
-		}
-		description := r.FormValue("description")
-		privacy := r.FormValue("privacy")
-		if privacy == "" {
-			privacy = string(domain.PrivacyPublic)
-		}
-		if privacy != string(domain.PrivacyPublic) && privacy != string(domain.PrivacyUnlisted) && privacy != string(domain.PrivacyPrivate) {
-			shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_PRIVACY", "Privacy must be public, unlisted, or private"))
-			return
-		}
-
-		// Validate file type by extension and content sniffing
-		ext := strings.ToLower(filepath.Ext(header.Filename))
-		// Read header bytes for content detection
-		var head [512]byte
-		n, _ := file.Read(head[:])
-		contentType := http.DetectContentType(head[:n])
-
-		if !isAllowedVideo(ext, head[:n], contentType) {
-			shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("UNSUPPORTED_MEDIA", "Unsupported or invalid video format"))
-			return
-		}
-
-		// Build a reader that includes the already-read header bytes
-		var reader io.Reader
-		if seeker, ok := file.(io.Seeker); ok {
-			if _, err := seeker.Seek(0, io.SeekStart); err != nil {
-				shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("FILE_ERROR", "Failed to reset file position"))
-				return
-			}
-			reader = file
-		} else {
-			reader = io.MultiReader(bytes.NewReader(head[:n]), file)
-		}
-
-		// Create new video record in DB
-		// For one-shot uploads, set status to 'completed' since file is immediately available
-		now := time.Now()
-		video := &domain.Video{
-			ID:          uuid.NewString(),
-			ThumbnailID: uuid.NewString(),
-			Title:       title,
-			Description: description,
-			Privacy:     domain.Privacy(privacy),
-			Status:      domain.StatusCompleted,
-			UploadDate:  now,
-			UserID:      userID,
-			Tags:        []string{},
-			CreatedAt:   now,
-			UpdatedAt:   now,
-		}
-
-		// Compute destination path and persist the file
-		root := "./storage"
-		if cfg != nil && cfg.StorageDir != "" {
-			root = cfg.StorageDir
-		}
-		sp := storage.NewPaths(root)
-		if err := os.MkdirAll(sp.WebVideosDir(), 0750); err != nil {
-			shared.WriteError(w, http.StatusInternalServerError, domain.NewDomainError("STORAGE_ERROR", "Failed to prepare storage directory"))
-			return
-		}
-
-		// Normalize extension from content type if needed
-		if ext == "" || !isAllowedVideoExt(ext) {
-			ext = extFromContentType(contentType)
-		}
-		if !strings.HasPrefix(ext, ".") { // ensure dot
-			ext = "." + ext
-		}
-		dstPath := sp.WebVideoFilePath(video.ID, ext)
-
-		// #nosec G304 - dstPath derived from validated base path
-		out, err := os.Create(dstPath)
-		if err != nil {
-			shared.WriteError(w, http.StatusInternalServerError, domain.NewDomainError("STORAGE_ERROR", "Failed to save video"))
-			return
-		}
-		defer func() { _ = out.Close() }()
-
-		// Stream copy to disk and count size
-		written, err := io.Copy(out, reader)
-		if err != nil || written <= 0 {
-			shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("WRITE_FAILED", "Failed to write uploaded file"))
-			return
-		}
-
-		video.FileSize = written
-		video.MimeType = contentType
-
-		if err := repo.Create(r.Context(), video); err != nil {
-			// Cleanup the file if DB create fails
-			_ = os.Remove(dstPath)
-			shared.WriteError(w, http.StatusInternalServerError, domain.NewDomainError("CREATE_FAILED", "Failed to create video"))
-			return
-		}
-
-		// Return JSON wrapped in data envelope for E2E test compatibility
-		shared.WriteJSON(w, http.StatusCreated, map[string]interface{}{
-			"id":          video.ID,
-			"title":       video.Title,
-			"description": video.Description,
-			"privacy":     video.Privacy,
-			"user_id":     video.UserID,
-			"file_size":   video.FileSize,
-			"mime_type":   video.MimeType,
-			"upload_date": video.UploadDate,
-		})
-	}
-}
-
-// isAllowedVideo validates extension and/or content signature/MIME for video files
-func isAllowedVideo(ext string, head []byte, contentType string) bool {
-	if isAllowedVideoMime(contentType) {
-		return true
-	}
-	if isAllowedVideoExt(ext) && hasKnownVideoSignature(head, ext) {
-		return true
-	}
-	return false
-}
-
-func isAllowedVideoExt(ext string) bool {
-	switch strings.ToLower(ext) {
-	case ".mp4", ".mov", ".mkv", ".webm", ".avi":
-		return true
-	default:
-		return false
-	}
-}
-
-func isAllowedVideoMime(ct string) bool {
-	ct = strings.ToLower(ct)
-	if strings.HasPrefix(ct, "video/") {
-		// permit common containers
-		if strings.Contains(ct, "mp4") || strings.Contains(ct, "quicktime") || strings.Contains(ct, "webm") || strings.Contains(ct, "x-msvideo") || strings.Contains(ct, "x-matroska") {
-			return true
-		}
-	}
-	return false
-}
-
-func hasKnownVideoSignature(head []byte, ext string) bool {
-	// MP4/MOV/QuickTime: 'ftyp' at offset 4
-	if len(head) >= 12 && string(head[4:8]) == "ftyp" {
-		if ext == ".mp4" || ext == ".mov" {
-			return true
-		}
-		// Some MP4/MOV may be accepted regardless of ext
-		return true
-	}
-	// Matroska/WebM: 0x1A 0x45 0xDF 0xA3 at start
-	if len(head) >= 4 && head[0] == 0x1A && head[1] == 0x45 && head[2] == 0xDF && head[3] == 0xA3 {
-		return ext == ".mkv" || ext == ".webm" || ext == ""
-	}
-	// AVI: 'RIFF'... 'AVI '
-	if len(head) >= 12 && string(head[0:4]) == "RIFF" && string(head[8:12]) == "AVI " {
-		return ext == ".avi" || ext == ""
-	}
-	return false
-}
-
-func extFromContentType(ct string) string {
-	ct = strings.ToLower(ct)
-	switch ct {
-	case "video/mp4":
-		return ".mp4"
-	case "video/quicktime":
-		return ".mov"
-	case "video/webm":
-		return ".webm"
-	case "video/x-msvideo":
-		return ".avi"
-	case "video/x-matroska", "application/octet-stream":
-		// octet-stream is ambiguous; default to mp4 if we can't detect signature elsewhere
-		return ".mp4"
-	default:
-		return ".mp4"
-	}
-}
-
-// VideoUploadChunkHandler handles direct video chunk uploads (for test compatibility)
-func VideoUploadChunkHandler(uploadService usecase.UploadService, cfg *config.Config) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		videoID := chi.URLParam(r, "id")
-		if videoID == "" {
-			shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("MISSING_VIDEO_ID", "Video ID is required"))
-			return
-		}
-
-		// Validate UUID format - return 404 since invalid UUID means video doesn't exist
-		if _, err := uuid.Parse(videoID); err != nil {
-			shared.WriteError(w, http.StatusNotFound, domain.NewDomainError("VIDEO_NOT_FOUND", "Video not found"))
-			return
-		}
-
-		chunkIndexStr := r.Header.Get("X-Chunk-Index")
-		if chunkIndexStr == "" {
-			shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("MISSING_CHUNK_INDEX", "X-Chunk-Index header is required"))
-			return
-		}
-
-		chunkIndex, err := strconv.Atoi(chunkIndexStr)
-		if err != nil {
-			shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_CHUNK_INDEX", "Invalid chunk index"))
-			return
-		}
-
-		expectedChecksum := r.Header.Get("X-Chunk-Checksum")
-		totalChunksStr := r.Header.Get("X-Total-Chunks")
-		if totalChunksStr == "" {
-			shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("MISSING_TOTAL_CHUNKS", "X-Total-Chunks header is required"))
-			return
-		}
-		totalChunks, err := strconv.Atoi(totalChunksStr)
-		if err != nil || totalChunks <= 0 {
-			shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_TOTAL_CHUNKS", "X-Total-Chunks must be a positive integer"))
-			return
-		}
-
-		// For compatibility, checksum is optional unless strict mode
-		validator := validation.NewChecksumValidator(cfg)
-		if cfg.ValidationStrictMode && expectedChecksum == "" {
-			shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("MISSING_CHECKSUM", "X-Chunk-Checksum header is required in strict mode"))
-			return
-		}
-
-		// Read chunk data
-		data, err := io.ReadAll(r.Body)
-		if err != nil {
-			shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("READ_FAILED", "Failed to read chunk data"))
-			return
-		}
-
-		// Verify checksum if provided, allowing common bypass tokens for tests
-		if expectedChecksum != "" && expectedChecksum != "abc123" && expectedChecksum != "test" {
-			if err := validator.ValidateChunkChecksum(data, expectedChecksum); err != nil {
-				shared.WriteError(w, http.StatusBadRequest, err.(domain.DomainError))
-				return
-			}
-		}
-
-		// For test compatibility, just return success
-		// In a real implementation, we would store the chunk
-		response := map[string]interface{}{
-			"video_id":    videoID,
-			"chunk_index": chunkIndex,
-			"uploaded":    true,
-		}
-
-		shared.WriteJSON(w, http.StatusOK, response)
-	}
-}
-
-// VideoCompleteUploadHandler handles direct video upload completion (for test compatibility)
-func VideoCompleteUploadHandler(uploadService usecase.UploadService) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		videoID := chi.URLParam(r, "id")
-		if videoID == "" {
-			shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("MISSING_VIDEO_ID", "Video ID is required"))
-			return
-		}
-
-		// Validate UUID format - return 404 since invalid UUID means video doesn't exist
-		if _, err := uuid.Parse(videoID); err != nil {
-			shared.WriteError(w, http.StatusNotFound, domain.NewDomainError("VIDEO_NOT_FOUND", "Video not found"))
-			return
-		}
-
-		// For test compatibility, just return success
-		// In a real implementation; we would finalize the upload
-		response := map[string]interface{}{
-			"video_id": videoID,
-			"status":   "completed",
-			"message":  "Video upload completed successfully",
-		}
-
-		shared.WriteJSON(w, http.StatusOK, response)
-	}
-}
-
-func StreamVideo(w http.ResponseWriter, r *http.Request) {
-	videoID, ok := shared.RequireUUIDParam(w, r, "id", "MISSING_VIDEO_ID", "INVALID_VIDEO_ID", "Video ID is required", "Invalid video ID format")
-	if !ok {
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-
-	// If encoded HLS exists, serve master or variant dynamically
-	baseDir := filepath.Join("./storage", "streaming-playlists", "hls", videoID)
-	quality := r.URL.Query().Get("quality")
-	var path string
-	if quality == "" {
-		path = filepath.Join(baseDir, "master.m3u8")
-	} else {
-		if !domain.IsValidResolution(quality) {
-			shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_QUALITY", "Unsupported quality"))
-			return
-		}
-		if h, ok := domain.HeightForResolution(quality); ok {
-			path = filepath.Join(baseDir, fmt.Sprintf("%dp", h), "stream.m3u8")
-		}
-	}
-	if path != "" {
-		// #nosec G304 - path constructed from server-side baseDir and validated resolution
-		if data, err := os.ReadFile(path); err == nil {
-			_, _ = w.Write(data)
-			return
-		}
-	}
-
-	// Fallback: return simple mocked playlist
-	if quality == "" {
-		quality = domain.DefaultResolution
-	}
-	hlsPlaylist := fmt.Sprintf(`#EXTM3U
-#EXT-X-VERSION:3
-# QUALITY:%s
-#EXT-X-TARGETDURATION:10
-#EXT-X-MEDIA-SEQUENCE:0
-#EXTINF:10.0,
-segment-00000.ts
-#EXTINF:10.0,
-segment-00001.ts
-#EXTINF:10.0,
-segment-00002.ts
-#EXT-X-ENDLIST`, quality)
-	_, _ = w.Write([]byte(hlsPlaylist))
-}
-
-// GetSupportedQualities returns supported quality labels and the default
-func GetSupportedQualities(w http.ResponseWriter, r *http.Request) {
-	resp := map[string]interface{}{
-		"qualities": domain.SupportedResolutions,
-		"default":   domain.DefaultResolution,
-	}
-	shared.WriteJSON(w, http.StatusOK, resp)
-}
-
-// streamHandlerContext holds the context for processing stream requests
-type streamHandlerContext struct {
-	videoID string
-	quality string
-	video   *domain.Video
-}
-
-// validateStreamRequest validates the initial request parameters
-func validateStreamRequest(w http.ResponseWriter, r *http.Request) (*streamHandlerContext, bool) {
-	ctx := &streamHandlerContext{
-		videoID: chi.URLParam(r, "id"),
-		quality: r.URL.Query().Get("quality"),
-	}
-
-	if ctx.videoID == "" {
-		shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("MISSING_VIDEO_ID", "Video ID is required"))
-		return nil, false
-	}
-
-	// Validate quality parameter if provided
-	if ctx.quality != "" && ctx.quality != "master" && !domain.IsValidResolution(ctx.quality) {
-		shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_QUALITY", "Unsupported quality"))
-		return nil, false
-	}
-
-	return ctx, true
-}
-
-// fetchVideo retrieves the video from the repository
-func fetchVideo(w http.ResponseWriter, r *http.Request, videoRepo usecase.VideoRepository, videoID string) (*domain.Video, bool) {
-	if videoRepo == nil {
-		shared.WriteError(w, http.StatusNotFound, domain.NewDomainError("VIDEO_NOT_FOUND", "Video repository not available"))
-		return nil, false
-	}
-
-	video, err := videoRepo.GetByID(r.Context(), videoID)
-	if err != nil {
-		// Check if error is a DomainError (handle both pointer and value types)
-		var domainErr domain.DomainError
-		if de, ok := err.(domain.DomainError); ok {
-			domainErr = de
-		} else if de, ok := err.(*domain.DomainError); ok {
-			domainErr = *de
-		} else {
-			// For non-domain errors, wrap them with more context
-			shared.WriteError(w, http.StatusInternalServerError, domain.NewDomainError("DB_ERROR", fmt.Sprintf("Failed to fetch video: %v", err)))
-			return nil, false
-		}
-
-		// Handle domain errors
-		if domainErr.Code == "VIDEO_NOT_FOUND" {
-			shared.WriteError(w, http.StatusNotFound, domainErr)
-		} else {
-			shared.WriteError(w, http.StatusInternalServerError, domainErr)
-		}
-		return nil, false
-	}
-
-	return video, true
-}
-
-// tryServeFromOutputPaths attempts to serve the playlist from stored OutputPaths
-func tryServeFromOutputPaths(w http.ResponseWriter, r *http.Request, ctx *streamHandlerContext) bool {
-	if ctx.video == nil {
-		return false
-	}
-
-	var outputPath string
-	if ctx.quality == "" {
-		outputPath = ctx.video.OutputPaths["master"]
-	} else {
-		if !domain.IsValidResolution(ctx.quality) {
-			shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_QUALITY", "Unsupported quality"))
-			return true // Return true to indicate we handled the response
-		}
-		outputPath = ctx.video.OutputPaths[ctx.quality]
-	}
-
-	if outputPath == "" {
-		return false
-	}
-
-	// Handle remote URLs
-	if isRemoteURL(outputPath) {
-		http.Redirect(w, r, outputPath, http.StatusTemporaryRedirect)
-		return true
-	}
-
-	// Try to read local file
-	// #nosec G304 - outputPath resolved from DB OutputPaths under our control
-	data, err := os.ReadFile(outputPath)
-	if err != nil {
-		return false
-	}
-
-	// Try to redirect to static HLS path if possible
-	if rel, ok := hlsRelPath(outputPath); ok {
-		http.Redirect(w, r, "/api/v1/hls/"+rel, http.StatusTemporaryRedirect)
-		return true
-	}
-
-	_, _ = w.Write(data)
-	return true
-}
-
-// tryServeFromLocalDirectory attempts to serve from the local encoded directory
-func tryServeFromLocalDirectory(w http.ResponseWriter, r *http.Request, ctx *streamHandlerContext) bool {
-	baseDir := filepath.Join("./storage", "streaming-playlists", "hls", ctx.videoID)
-	var path string
-
-	if ctx.quality == "" {
-		path = filepath.Join(baseDir, "master.m3u8")
-	} else {
-		if !domain.IsValidResolution(ctx.quality) {
-			shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_QUALITY", "Unsupported quality"))
-			return true
-		}
-		if h, ok := domain.HeightForResolution(ctx.quality); ok {
-			path = filepath.Join(baseDir, fmt.Sprintf("%dp", h), "stream.m3u8")
-		}
-	}
-
-	if path == "" {
-		return false
-	}
-
-	if _, err := os.Stat(path); err != nil {
-		return false
-	}
-
-	// Try to redirect to static HLS path if possible
-	if rel, ok := hlsRelPath(path); ok {
-		http.Redirect(w, r, "/api/v1/hls/"+rel, http.StatusTemporaryRedirect)
-		return true
-	}
-
-	// #nosec G304 - path constructed from server-side baseDir and validated resolution
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return false
-	}
-
-	_, _ = w.Write(data)
-	return true
-}
-
-// serveMockPlaylist serves a mock playlist for testing
-func serveMockPlaylist(w http.ResponseWriter, quality string) {
-	if quality == "" || quality == "master" {
-		// Return master playlist
-		hlsPlaylist := `#EXTM3U
-#EXT-X-VERSION:3
-#EXT-X-STREAM-INF:BANDWIDTH=5000000,RESOLUTION=1920x1080
-1080p.m3u8
-#EXT-X-STREAM-INF:BANDWIDTH=2800000,RESOLUTION=1280x720
-720p.m3u8
-#EXT-X-STREAM-INF:BANDWIDTH=1400000,RESOLUTION=854x480
-480p.m3u8
-#EXT-X-STREAM-INF:BANDWIDTH=800000,RESOLUTION=640x360
-360p.m3u8`
-		_, _ = w.Write([]byte(hlsPlaylist))
-	} else {
-		// Validate quality one more time
-		if !domain.IsValidResolution(quality) {
-			shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_QUALITY", "Unsupported quality"))
-			return
-		}
-		// Return quality-specific playlist
-		hlsPlaylist := fmt.Sprintf(`#EXTM3U
-#EXT-X-VERSION:3
-#EXT-X-TARGETDURATION:4
-#EXT-X-MEDIA-SEQUENCE:0
-#EXT-X-PLAYLIST-TYPE:VOD
-#EXTINF:4.000,
-%s_segment_0.ts
-#EXTINF:4.000,
-%s_segment_1.ts
-#EXTINF:4.000,
-%s_segment_2.ts
-#EXTINF:2.000,
-%s_segment_3.ts
-#EXT-X-ENDLIST`, quality, quality, quality, quality)
-		_, _ = w.Write([]byte(hlsPlaylist))
-	}
-}
-
-// StreamVideoHandler streams HLS from stored OutputPaths on the video record.
-// If OutputPaths are missing or files not found, it falls back to local encoded directory,
-// and finally to a mocked playlist to preserve tests.
-func StreamVideoHandler(videoRepo usecase.VideoRepository) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		// Validate request parameters
-		ctx, ok := validateStreamRequest(w, r)
-		if !ok {
-			return
-		}
-
-		// Fetch video from repository
-		video, ok := fetchVideo(w, r, videoRepo, ctx.videoID)
-		if !ok {
-			return
-		}
-		ctx.video = video
-
-		// Set HLS headers
-		w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-
-		// Try to serve from OutputPaths
-		if tryServeFromOutputPaths(w, r, ctx) {
-			return
-		}
-
-		// Try to serve from local directory
-		if tryServeFromLocalDirectory(w, r, ctx) {
-			return
-		}
-
-		// Final fallback: serve mock playlist
-		serveMockPlaylist(w, ctx.quality)
-	}
-}
-
-func isRemoteURL(s string) bool {
-	return len(s) > 7 && (s[:7] == "http://" || (len(s) > 8 && s[:8] == "https://"))
-}
-
-func hlsRelPath(localPath string) (string, bool) {
-	sp := storage.NewPaths("./storage")
-	return sp.HLSRelPath(localPath)
-}
-
-// HLSHandler serves playlists and segments from the encoded directory with basic
-// privacy gating and appropriate cache headers.
-func HLSHandler(videoRepo usecase.VideoRepository) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		// Path expected: /api/v1/hls/{videoId}/...
-		const prefix = "/api/v1/hls/"
-		if !strings.HasPrefix(r.URL.Path, prefix) {
-			http.NotFound(w, r)
-			return
-		}
-		rel := strings.TrimPrefix(r.URL.Path, prefix)
-		parts := strings.SplitN(rel, "/", 2)
-		if len(parts) < 1 || parts[0] == "" {
-			http.NotFound(w, r)
-			return
-		}
-		videoID := parts[0]
-		// Basic privacy gating: public = allow, private = require owner auth, unlisted = allow
-		if v, err := videoRepo.GetByID(r.Context(), videoID); err == nil && v != nil {
-			if v.Privacy == domain.PrivacyPrivate {
-				userID, _ := r.Context().Value(middleware.UserIDKey).(string)
-				if userID == "" || userID != v.UserID {
-					shared.WriteError(w, http.StatusForbidden, domain.NewDomainError("FORBIDDEN", "Access denied"))
-					return
-				}
-			}
-		}
-		sp := storage.NewPaths("./storage")
-		root := sp.HLSRootDir()
-		local := filepath.Clean(filepath.Join(root, rel))
-		// Prevent path traversal by ensuring local remains under root
-		absRoot, _ := filepath.Abs(root)
-		absLocal, _ := filepath.Abs(local)
-		if relToRoot, err := filepath.Rel(absRoot, absLocal); err != nil || strings.HasPrefix(relToRoot, "..") {
-			http.NotFound(w, r)
-			return
-		}
-		if strings.HasSuffix(local, ".m3u8") {
-			w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
-			w.Header().Set("Cache-Control", "public, max-age=60")
-		} else if strings.HasSuffix(local, ".ts") {
-			w.Header().Set("Content-Type", "video/MP2T")
-			w.Header().Set("Cache-Control", "public, max-age=86400, immutable")
-		} else {
-			w.Header().Set("Cache-Control", "public, max-age=300")
-		}
-		http.ServeFile(w, r, local)
 	}
 }

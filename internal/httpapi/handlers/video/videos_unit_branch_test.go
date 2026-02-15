@@ -527,7 +527,7 @@ func TestCompleteUploadHandler_UnitBranches(t *testing.T) {
 
 	t.Run("missing session ID", func(t *testing.T) {
 		rr := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/uploads//complete", nil)
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/uploads/complete", nil)
 		req = withChiURLParam(req, "sessionId", "")
 		CompleteUploadHandler(&unitUploadServiceStub{}, nil).ServeHTTP(rr, req)
 
@@ -640,7 +640,6 @@ func TestVideoUploadCompatibilityHandlers_UnitBranches(t *testing.T) {
 		req := baseReq()
 		req.Header.Set("X-Chunk-Index", "1")
 		req.Header.Set("X-Total-Chunks", "3")
-		req.Header.Set("X-Chunk-Checksum", "test") // bypass token accepted in compatibility handler
 
 		rr := httptest.NewRecorder()
 		VideoUploadChunkHandler(&unitUploadServiceStub{}, cfg).ServeHTTP(rr, req)
@@ -952,7 +951,6 @@ func TestVideoUploadChunkHandler_MissingAndInvalidHeaders(t *testing.T) {
 	t.Run("missing chunk index", func(t *testing.T) {
 		req := makeReq()
 		req.Header.Set("X-Total-Chunks", "2")
-		req.Header.Set("X-Chunk-Checksum", "test")
 		rr := httptest.NewRecorder()
 		VideoUploadChunkHandler(&unitUploadServiceStub{}, cfg).ServeHTTP(rr, req)
 		require.Equal(t, http.StatusBadRequest, rr.Code)
@@ -965,7 +963,6 @@ func TestVideoUploadChunkHandler_MissingAndInvalidHeaders(t *testing.T) {
 		req := makeReq()
 		req.Header.Set("X-Chunk-Index", "0")
 		req.Header.Set("X-Total-Chunks", "0")
-		req.Header.Set("X-Chunk-Checksum", "test")
 		rr := httptest.NewRecorder()
 		VideoUploadChunkHandler(&unitUploadServiceStub{}, cfg).ServeHTTP(rr, req)
 		require.Equal(t, http.StatusBadRequest, rr.Code)

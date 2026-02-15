@@ -1,3 +1,5 @@
+> **Historical Document:** This file tracked in-progress work during Sprint 1. For the final summary, see `SPRINT1_COMPLETE.md` or `CHANGELOG.md`.
+
 # Sprint 1 Progress: Video Import System
 
 ## Completed Components ✓

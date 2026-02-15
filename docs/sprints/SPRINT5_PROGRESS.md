@@ -1,3 +1,5 @@
+> **Historical Document:** This file tracked in-progress work during Sprint 5. For the final summary, see `SPRINT5_COMPLETE.md` or `CHANGELOG.md`.
+
 # Sprint 5: Live Streaming - RTMP Server & Stream Ingestion - COMPLETE ✅
 
 **Status**: ✅ 100% Complete

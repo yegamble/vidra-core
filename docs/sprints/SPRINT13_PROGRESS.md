@@ -1,3 +1,5 @@
+> **Historical Document:** This file tracked in-progress work during Sprint 13. For the final summary, see `SPRINT13_COMPLETE.md` or `CHANGELOG.md`.
+
 # Sprint 13: Plugin Security & Marketplace - Progress Update
 
 **Date:** 2025-10-23

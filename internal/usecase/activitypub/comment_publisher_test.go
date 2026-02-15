@@ -15,7 +15,6 @@ import (
 	"athena/internal/domain"
 )
 
-// TestBuildNoteObject_Basic tests converting domain.Comment to ActivityPub Note
 func TestBuildNoteObject_Basic(t *testing.T) {
 	mockAPRepo := new(MockActivityPubRepository)
 	mockUserRepo := new(MockUserRepository)
@@ -124,7 +123,6 @@ func TestBuildNoteObject_Basic(t *testing.T) {
 	})
 }
 
-// TestBuildNoteObject_NestedReplies tests nested comment handling
 func TestBuildNoteObject_NestedReplies(t *testing.T) {
 	mockAPRepo := new(MockActivityPubRepository)
 	mockUserRepo := new(MockUserRepository)
@@ -174,7 +172,6 @@ func TestBuildNoteObject_NestedReplies(t *testing.T) {
 		noteObject, err := service.BuildNoteObject(ctx, comment)
 		require.NoError(t, err)
 
-		// For nested comments, inReplyTo should point to parent comment
 		assert.Equal(t, fmt.Sprintf("https://video.example/comments/%s", parentCommentID.String()), noteObject.InReplyTo)
 
 		mockUserRepo.AssertExpectations(t)
@@ -195,7 +192,6 @@ func TestBuildNoteObject_NestedReplies(t *testing.T) {
 	})
 }
 
-// TestBuildNoteObject_Audience tests audience targeting
 func TestBuildNoteObject_Audience(t *testing.T) {
 	mockAPRepo := new(MockActivityPubRepository)
 	mockUserRepo := new(MockUserRepository)
@@ -270,7 +266,6 @@ func TestBuildNoteObject_Audience(t *testing.T) {
 		noteObject, err := service.BuildNoteObject(ctx, comment)
 		require.NoError(t, err)
 
-		// Should CC the video owner
 		assert.Contains(t, noteObject.Cc, "https://video.example/users/videoowner")
 
 		mockUserRepo.AssertExpectations(t)
@@ -300,7 +295,6 @@ func TestBuildNoteObject_Audience(t *testing.T) {
 	})
 }
 
-// TestCreateCommentActivity tests Create activity for comments
 func TestCreateCommentActivity(t *testing.T) {
 	mockAPRepo := new(MockActivityPubRepository)
 	mockUserRepo := new(MockUserRepository)
@@ -372,7 +366,6 @@ func TestCreateCommentActivity(t *testing.T) {
 	})
 }
 
-// TestPublishComment tests comment delivery
 func TestPublishComment(t *testing.T) {
 	mockAPRepo := new(MockActivityPubRepository)
 	mockUserRepo := new(MockUserRepository)
@@ -434,10 +427,9 @@ func TestPublishComment(t *testing.T) {
 	t.Run("Delivers comment to video owner", func(t *testing.T) {
 		mockCommentRepo.On("GetByID", ctx, commentID).Return(comment, nil).Once()
 		mockUserRepo.On("GetByID", ctx, userID.String()).Return(user, nil).Times(2)
-		mockVideoRepo.On("GetByID", ctx, videoID.String()).Return(video, nil).Times(2) // Called in BuildNoteObject and PublishComment
+		mockVideoRepo.On("GetByID", ctx, videoID.String()).Return(video, nil).Times(2)
 		mockUserRepo.On("GetByID", ctx, videoOwnerID.String()).Return(videoOwner, nil).Once()
 
-		// Should deliver to video owner's inbox
 		mockAPRepo.On("GetFollowers", ctx, videoOwnerID.String(), "accepted", mock.Anything, mock.Anything).Return([]*domain.APFollower{}, 0, nil).Once()
 		mockAPRepo.On("GetRemoteActors", ctx, mock.Anything).Return([]*domain.APRemoteActor{}, nil).Maybe()
 		mockAPRepo.On("StoreActivity", ctx, mock.AnythingOfType("*domain.APActivity")).Return(nil).Once()
@@ -452,7 +444,6 @@ func TestPublishComment(t *testing.T) {
 	})
 
 	t.Run("Delivers comment to video followers", func(t *testing.T) {
-		// Create fresh mocks for this subtest to avoid state pollution
 		mockAPRepo := new(MockActivityPubRepository)
 		mockUserRepo := new(MockUserRepository)
 		mockVideoRepo := new(MockVideoRepository)
@@ -462,7 +453,7 @@ func TestPublishComment(t *testing.T) {
 
 		mockCommentRepo.On("GetByID", ctx, commentID).Return(comment, nil).Once()
 		mockUserRepo.On("GetByID", ctx, userID.String()).Return(user, nil).Times(2)
-		mockVideoRepo.On("GetByID", ctx, videoID.String()).Return(video, nil).Times(2) // Called in BuildNoteObject and PublishComment
+		mockVideoRepo.On("GetByID", ctx, videoID.String()).Return(video, nil).Times(2)
 		mockUserRepo.On("GetByID", ctx, videoOwnerID.String()).Return(videoOwner, nil).Once()
 		mockAPRepo.On("GetFollowers", ctx, videoOwnerID.String(), "accepted", mock.Anything, mock.Anything).Return(videoOwnerFollowers, 1, nil).Once()
 		mockAPRepo.On("GetRemoteActors", ctx, mock.Anything).Return([]*domain.APRemoteActor{remoteActor}, nil).Once()
@@ -478,50 +469,6 @@ func TestPublishComment(t *testing.T) {
 		mockAPRepo.AssertExpectations(t)
 	})
 
-	t.Run("Delivers to parent comment author for nested replies", func(t *testing.T) {
-		t.Skip("TODO: Parent comment author delivery not yet implemented - test is placeholder")
-		parentCommentID := uuid.New()
-		parentAuthorID := uuid.New()
-
-		nestedComment := &domain.Comment{
-			ID:        commentID,
-			VideoID:   videoID,
-			UserID:    userID,
-			ParentID:  &parentCommentID,
-			Body:      "Reply to comment",
-			Status:    domain.CommentStatusActive,
-			CreatedAt: time.Now(),
-		}
-
-		parentAuthor := &domain.User{
-			ID:       parentAuthorID.String(),
-			Username: "parentauthor",
-		}
-
-		mockCommentRepo.On("GetByID", ctx, commentID).Return(nestedComment, nil).Once()
-		mockUserRepo.On("GetByID", ctx, userID.String()).Return(user, nil).Times(2)
-		mockVideoRepo.On("GetByID", ctx, videoID.String()).Return(video, nil).Times(2) // Called in BuildNoteObject and PublishComment
-		mockUserRepo.On("GetByID", ctx, videoOwnerID.String()).Return(videoOwner, nil).Once()
-		mockUserRepo.On("GetByID", ctx, parentAuthorID.String()).Return(parentAuthor, nil).Once()
-
-		// Mock fetching parent comment to get its author
-		mockAPRepo.On("GetFollowers", ctx, videoOwnerID.String(), "accepted", mock.Anything, mock.Anything).Return([]*domain.APFollower{}, 0, nil).Once()
-		mockAPRepo.On("StoreActivity", ctx, mock.AnythingOfType("*domain.APActivity")).Return(nil).Once()
-
-		err := service.PublishComment(ctx, commentID.String())
-
-		// Note: The actual implementation should fetch parent comment and deliver to its author
-		// This test will need adjustment once implementation exists
-
-		mockCommentRepo.AssertExpectations(t)
-		mockUserRepo.AssertExpectations(t)
-		mockVideoRepo.AssertExpectations(t)
-		mockAPRepo.AssertExpectations(t)
-
-		// For now, just verify no error
-		require.NoError(t, err)
-	})
-
 	t.Run("Does not publish deleted comments", func(t *testing.T) {
 		deletedComment := &domain.Comment{
 			ID:        commentID,
@@ -534,10 +481,8 @@ func TestPublishComment(t *testing.T) {
 
 		mockCommentRepo.On("GetByID", ctx, commentID).Return(deletedComment, nil).Once()
 
-		// Should return error or skip
 		err := service.PublishComment(ctx, commentID.String())
 
-		// Implementation should handle this - for now we expect it to return an error
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "cannot publish deleted comment")
 
@@ -545,7 +490,6 @@ func TestPublishComment(t *testing.T) {
 	})
 }
 
-// TestUpdateComment tests Update activity for edited comments
 func TestUpdateComment(t *testing.T) {
 	mockAPRepo := new(MockActivityPubRepository)
 	mockUserRepo := new(MockUserRepository)
@@ -598,7 +542,7 @@ func TestUpdateComment(t *testing.T) {
 	t.Run("Sends Update activity when comment is edited", func(t *testing.T) {
 		mockCommentRepo.On("GetByID", ctx, commentID).Return(comment, nil).Once()
 		mockUserRepo.On("GetByID", ctx, userID.String()).Return(user, nil).Times(2)
-		mockVideoRepo.On("GetByID", ctx, videoID.String()).Return(video, nil).Times(2) // Called in BuildNoteObject and UpdateComment
+		mockVideoRepo.On("GetByID", ctx, videoID.String()).Return(video, nil).Times(2)
 		mockUserRepo.On("GetByID", ctx, videoOwnerID.String()).Return(videoOwner, nil).Once()
 		mockAPRepo.On("GetFollowers", ctx, videoOwnerID.String(), "accepted", mock.Anything, mock.Anything).Return([]*domain.APFollower{}, 0, nil).Once()
 		mockAPRepo.On("StoreActivity", ctx, mock.MatchedBy(func(activity *domain.APActivity) bool {
@@ -617,7 +561,7 @@ func TestUpdateComment(t *testing.T) {
 	t.Run("Update activity includes updated timestamp", func(t *testing.T) {
 		mockCommentRepo.On("GetByID", ctx, commentID).Return(comment, nil).Once()
 		mockUserRepo.On("GetByID", ctx, userID.String()).Return(user, nil).Times(2)
-		mockVideoRepo.On("GetByID", ctx, videoID.String()).Return(video, nil).Times(2) // Called in BuildNoteObject and UpdateComment
+		mockVideoRepo.On("GetByID", ctx, videoID.String()).Return(video, nil).Times(2)
 		mockUserRepo.On("GetByID", ctx, videoOwnerID.String()).Return(videoOwner, nil).Once()
 		mockAPRepo.On("GetFollowers", ctx, videoOwnerID.String(), "accepted", mock.Anything, mock.Anything).Return([]*domain.APFollower{}, 0, nil).Once()
 		mockAPRepo.On("StoreActivity", ctx, mock.AnythingOfType("*domain.APActivity")).Return(nil).Once()
@@ -632,7 +576,6 @@ func TestUpdateComment(t *testing.T) {
 	})
 }
 
-// TestDeleteComment tests Delete activity for removed comments
 func TestDeleteComment(t *testing.T) {
 	cfg := &config.Config{
 		PublicBaseURL: "https://video.example",
@@ -667,7 +610,6 @@ func TestDeleteComment(t *testing.T) {
 	}
 
 	t.Run("Sends Delete activity when comment is deleted", func(t *testing.T) {
-		// Create fresh mocks for this subtest
 		mockAPRepo := new(MockActivityPubRepository)
 		mockUserRepo := new(MockUserRepository)
 		mockVideoRepo := new(MockVideoRepository)
@@ -693,7 +635,6 @@ func TestDeleteComment(t *testing.T) {
 	})
 
 	t.Run("Delete activity object is comment URI", func(t *testing.T) {
-		// Create fresh mocks for this subtest
 		mockAPRepo := new(MockActivityPubRepository)
 		mockUserRepo := new(MockUserRepository)
 		mockVideoRepo := new(MockVideoRepository)

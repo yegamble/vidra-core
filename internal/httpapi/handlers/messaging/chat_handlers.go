@@ -15,70 +15,62 @@ import (
 	"athena/internal/chat"
 	"athena/internal/domain"
 	"athena/internal/middleware"
+	"athena/internal/port"
 	"athena/internal/repository"
 	"athena/internal/usecase"
 )
 
-// ChatHandlers handles chat-related HTTP requests
 type ChatHandlers struct {
-	chatServer *chat.ChatServer
-	chatRepo   repository.ChatRepository
-	streamRepo repository.LiveStreamRepository
-	userRepo   usecase.UserRepository
+	chatServer       *chat.ChatServer
+	chatRepo         repository.ChatRepository
+	streamRepo       repository.LiveStreamRepository
+	userRepo         usecase.UserRepository
+	subscriptionRepo port.SubscriptionRepository
 }
 
-// NewChatHandlers creates new chat handlers
 func NewChatHandlers(
 	chatServer *chat.ChatServer,
 	chatRepo repository.ChatRepository,
 	streamRepo repository.LiveStreamRepository,
 	userRepo usecase.UserRepository,
+	subscriptionRepo port.SubscriptionRepository,
 ) *ChatHandlers {
 	return &ChatHandlers{
-		chatServer: chatServer,
-		chatRepo:   chatRepo,
-		streamRepo: streamRepo,
-		userRepo:   userRepo,
+		chatServer:       chatServer,
+		chatRepo:         chatRepo,
+		streamRepo:       streamRepo,
+		userRepo:         userRepo,
+		subscriptionRepo: subscriptionRepo,
 	}
 }
 
-// RegisterRoutes registers chat routes
 func (h *ChatHandlers) RegisterRoutes(r chi.Router) {
 	r.Route("/streams/{streamId}/chat", func(r chi.Router) {
-		// WebSocket endpoint (requires authentication)
 		r.With(middleware.RequireAuth).Get("/ws", h.HandleWebSocketConnection)
 
-		// Chat history (public for public streams, auth for private)
 		r.Get("/messages", h.GetChatMessages)
 
-		// Moderation endpoints (require authentication and moderator role)
 		r.Group(func(r chi.Router) {
 			r.Use(middleware.RequireAuth)
 
-			// Delete message
 			r.Delete("/messages/{messageId}", h.DeleteMessage)
 
-			// Moderator management
 			r.Post("/moderators", h.AddModerator)
 			r.Delete("/moderators/{userId}", h.RemoveModerator)
 			r.Get("/moderators", h.GetModerators)
 
-			// Ban management
 			r.Post("/bans", h.BanUser)
 			r.Delete("/bans/{userId}", h.UnbanUser)
 			r.Get("/bans", h.GetBans)
 
-			// Statistics
 			r.Get("/stats", h.GetChatStats)
 		})
 	})
 }
 
-// HandleWebSocketConnection upgrades HTTP to WebSocket for chat
 func (h *ChatHandlers) HandleWebSocketConnection(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
-	// Get stream ID from URL
 	streamIDStr := chi.URLParam(r, "streamId")
 	streamID, err := uuid.Parse(streamIDStr)
 	if err != nil {
@@ -86,21 +78,18 @@ func (h *ChatHandlers) HandleWebSocketConnection(w http.ResponseWriter, r *http.
 		return
 	}
 
-	// Get authenticated user
 	userID, ok := middleware.GetUserIDFromContext(ctx)
 	if !ok {
 		shared.WriteError(w, http.StatusUnauthorized, errors.New("authentication required"))
 		return
 	}
 
-	// Get user details
 	user, err := h.userRepo.GetByID(ctx, userID.String())
 	if err != nil {
 		shared.WriteError(w, http.StatusInternalServerError, errors.New("failed to get user details"))
 		return
 	}
 
-	// Verify stream exists and is live
 	stream, err := h.streamRepo.GetByID(ctx, streamID)
 	if err != nil {
 		if err == domain.ErrNotFound {
@@ -116,31 +105,24 @@ func (h *ChatHandlers) HandleWebSocketConnection(w http.ResponseWriter, r *http.
 		return
 	}
 
-	// Check if chat is enabled for this stream
 	if !stream.ChatEnabled {
 		shared.WriteError(w, http.StatusForbidden, errors.New("chat is disabled for this stream"))
 		return
 	}
 
-	// Upgrade to WebSocket
 	conn, err := h.chatServer.Upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		// Upgrade already writes response
 		return
 	}
 
-	// Handle the WebSocket connection
 	if err := h.chatServer.HandleWebSocket(ctx, conn, streamID, userID, user.Username); err != nil {
-		// Connection already closed by HandleWebSocket
 		return
 	}
 }
 
-// GetChatMessages retrieves chat message history
 func (h *ChatHandlers) GetChatMessages(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
-	// Get stream ID
 	streamIDStr := chi.URLParam(r, "streamId")
 	streamID, err := uuid.Parse(streamIDStr)
 	if err != nil {
@@ -148,7 +130,6 @@ func (h *ChatHandlers) GetChatMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Verify stream exists
 	stream, err := h.streamRepo.GetByID(ctx, streamID)
 	if err != nil {
 		if err == domain.ErrNotFound {
@@ -159,7 +140,6 @@ func (h *ChatHandlers) GetChatMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check privacy (if private, require authentication and authorization)
 	if stream.Privacy == "private" {
 		userID, authenticated := middleware.GetUserIDFromContext(ctx)
 		if !authenticated {
@@ -167,15 +147,19 @@ func (h *ChatHandlers) GetChatMessages(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// Check if user is owner or has access
 		if stream.UserID != userID {
-			// TODO: Check if user is subscriber or has been granted access
-			shared.WriteError(w, http.StatusForbidden, errors.New("access denied"))
-			return
+			isSubscribed, err := h.subscriptionRepo.IsSubscribed(ctx, userID, stream.ChannelID)
+			if err != nil {
+				shared.WriteError(w, http.StatusInternalServerError, errors.New("failed to check subscription status"))
+				return
+			}
+			if !isSubscribed {
+				shared.WriteError(w, http.StatusForbidden, errors.New("access denied"))
+				return
+			}
 		}
 	}
 
-	// Parse pagination parameters
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
 	if limit <= 0 || limit > 100 {
 		limit = 50
@@ -186,14 +170,12 @@ func (h *ChatHandlers) GetChatMessages(w http.ResponseWriter, r *http.Request) {
 		offset = 0
 	}
 
-	// Get messages
 	messages, err := h.chatRepo.GetMessages(ctx, streamID, limit, offset)
 	if err != nil {
 		shared.WriteError(w, http.StatusInternalServerError, errors.New("failed to get messages"))
 		return
 	}
 
-	// Get total count
 	totalCount, err := h.chatRepo.GetMessageCount(ctx, streamID)
 	if err != nil {
 		shared.WriteError(w, http.StatusInternalServerError, errors.New("failed to get message count"))
@@ -210,11 +192,9 @@ func (h *ChatHandlers) GetChatMessages(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// DeleteMessage deletes a chat message (moderator action)
 func (h *ChatHandlers) DeleteMessage(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
-	// Get stream ID and message ID
 	streamIDStr := chi.URLParam(r, "streamId")
 	streamID, err := uuid.Parse(streamIDStr)
 	if err != nil {
@@ -229,14 +209,12 @@ func (h *ChatHandlers) DeleteMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get authenticated user
 	userID, ok := middleware.GetUserIDFromContext(ctx)
 	if !ok {
 		shared.WriteError(w, http.StatusUnauthorized, errors.New("authentication required"))
 		return
 	}
 
-	// Delete the message (this checks permissions internally)
 	if err := h.chatServer.DeleteMessage(ctx, streamID, messageID, userID); err != nil {
 		if err == domain.ErrNotModerator {
 			shared.WriteError(w, http.StatusForbidden, errors.New("moderator privileges required"))
@@ -255,16 +233,13 @@ func (h *ChatHandlers) DeleteMessage(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// AddModeratorRequest is the request body for adding a moderator
 type AddModeratorRequest struct {
 	UserID string `json:"user_id"`
 }
 
-// AddModerator adds a moderator to a stream chat
 func (h *ChatHandlers) AddModerator(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
-	// Get stream ID
 	streamIDStr := chi.URLParam(r, "streamId")
 	streamID, err := uuid.Parse(streamIDStr)
 	if err != nil {
@@ -272,14 +247,12 @@ func (h *ChatHandlers) AddModerator(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get authenticated user (must be stream owner)
 	ownerID, ok := middleware.GetUserIDFromContext(ctx)
 	if !ok {
 		shared.WriteError(w, http.StatusUnauthorized, errors.New("authentication required"))
 		return
 	}
 
-	// Verify stream ownership
 	stream, err := h.streamRepo.GetByID(ctx, streamID)
 	if err != nil {
 		shared.WriteError(w, http.StatusNotFound, errors.New("stream not found"))
@@ -291,7 +264,6 @@ func (h *ChatHandlers) AddModerator(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Parse request
 	var req AddModeratorRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		shared.WriteError(w, http.StatusBadRequest, errors.New("invalid request body"))
@@ -304,14 +276,12 @@ func (h *ChatHandlers) AddModerator(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Verify user exists
 	_, err = h.userRepo.GetByID(ctx, modUserID.String())
 	if err != nil {
 		shared.WriteError(w, http.StatusNotFound, errors.New("user not found"))
 		return
 	}
 
-	// Add moderator
 	moderator := domain.NewChatModerator(streamID, modUserID, ownerID)
 	if err := h.chatRepo.AddModerator(ctx, moderator); err != nil {
 		shared.WriteError(w, http.StatusInternalServerError, errors.New("failed to add moderator"))
@@ -321,11 +291,9 @@ func (h *ChatHandlers) AddModerator(w http.ResponseWriter, r *http.Request) {
 	shared.WriteJSON(w, http.StatusOK, moderator)
 }
 
-// RemoveModerator removes a moderator from a stream chat
 func (h *ChatHandlers) RemoveModerator(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
-	// Get stream ID
 	streamIDStr := chi.URLParam(r, "streamId")
 	streamID, err := uuid.Parse(streamIDStr)
 	if err != nil {
@@ -333,7 +301,6 @@ func (h *ChatHandlers) RemoveModerator(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get user ID to remove
 	userIDStr := chi.URLParam(r, "userId")
 	userID, err := uuid.Parse(userIDStr)
 	if err != nil {
@@ -341,14 +308,12 @@ func (h *ChatHandlers) RemoveModerator(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get authenticated user (must be stream owner)
 	ownerID, ok := middleware.GetUserIDFromContext(ctx)
 	if !ok {
 		shared.WriteError(w, http.StatusUnauthorized, errors.New("authentication required"))
 		return
 	}
 
-	// Verify stream ownership
 	stream, err := h.streamRepo.GetByID(ctx, streamID)
 	if err != nil {
 		shared.WriteError(w, http.StatusNotFound, errors.New("stream not found"))
@@ -360,7 +325,6 @@ func (h *ChatHandlers) RemoveModerator(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Remove moderator
 	if err := h.chatRepo.RemoveModerator(ctx, streamID, userID); err != nil {
 		if err == domain.ErrNotFound {
 			shared.WriteError(w, http.StatusNotFound, errors.New("moderator not found"))
@@ -375,11 +339,9 @@ func (h *ChatHandlers) RemoveModerator(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// GetModerators gets all moderators for a stream
 func (h *ChatHandlers) GetModerators(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
-	// Get stream ID
 	streamIDStr := chi.URLParam(r, "streamId")
 	streamID, err := uuid.Parse(streamIDStr)
 	if err != nil {
@@ -387,7 +349,6 @@ func (h *ChatHandlers) GetModerators(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get moderators
 	moderators, err := h.chatRepo.GetModerators(ctx, streamID)
 	if err != nil {
 		shared.WriteError(w, http.StatusInternalServerError, errors.New("failed to get moderators"))
@@ -397,18 +358,15 @@ func (h *ChatHandlers) GetModerators(w http.ResponseWriter, r *http.Request) {
 	shared.WriteJSON(w, http.StatusOK, moderators)
 }
 
-// BanUserRequest is the request body for banning a user
 type BanUserRequest struct {
 	UserID   string `json:"user_id"`
 	Reason   string `json:"reason"`
-	Duration int    `json:"duration"` // Duration in seconds, 0 for permanent
+	Duration int    `json:"duration"`
 }
 
-// BanUser bans a user from chat
 func (h *ChatHandlers) BanUser(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
-	// Get stream ID
 	streamIDStr := chi.URLParam(r, "streamId")
 	streamID, err := uuid.Parse(streamIDStr)
 	if err != nil {
@@ -416,14 +374,12 @@ func (h *ChatHandlers) BanUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get authenticated user (moderator)
 	moderatorID, ok := middleware.GetUserIDFromContext(ctx)
 	if !ok {
 		shared.WriteError(w, http.StatusUnauthorized, errors.New("authentication required"))
 		return
 	}
 
-	// Parse request
 	var req BanUserRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		shared.WriteError(w, http.StatusBadRequest, errors.New("invalid request body"))
@@ -436,13 +392,11 @@ func (h *ChatHandlers) BanUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Convert duration to time.Duration
 	var duration time.Duration
 	if req.Duration > 0 {
 		duration = time.Duration(req.Duration) * time.Second
 	}
 
-	// Ban the user (this checks permissions internally)
 	if err := h.chatServer.BanUser(ctx, streamID, userID, moderatorID, req.Reason, duration); err != nil {
 		if err == domain.ErrNotModerator {
 			shared.WriteError(w, http.StatusForbidden, errors.New("moderator privileges required"))
@@ -457,11 +411,9 @@ func (h *ChatHandlers) BanUser(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// UnbanUser unbans a user from chat
 func (h *ChatHandlers) UnbanUser(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
-	// Get stream ID
 	streamIDStr := chi.URLParam(r, "streamId")
 	streamID, err := uuid.Parse(streamIDStr)
 	if err != nil {
@@ -469,7 +421,6 @@ func (h *ChatHandlers) UnbanUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get user ID to unban
 	userIDStr := chi.URLParam(r, "userId")
 	userID, err := uuid.Parse(userIDStr)
 	if err != nil {
@@ -477,19 +428,16 @@ func (h *ChatHandlers) UnbanUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get authenticated user (moderator)
 	moderatorID, ok := middleware.GetUserIDFromContext(ctx)
 	if !ok {
 		shared.WriteError(w, http.StatusUnauthorized, errors.New("authentication required"))
 		return
 	}
 
-	// Check if user is moderator or stream owner
 	if !h.verifyModeratorOrOwner(w, ctx, streamID, moderatorID) {
 		return
 	}
 
-	// Unban the user
 	if err := h.chatRepo.UnbanUser(ctx, streamID, userID); err != nil {
 		if err == domain.ErrNotFound {
 			shared.WriteError(w, http.StatusNotFound, errors.New("ban not found"))
@@ -504,11 +452,9 @@ func (h *ChatHandlers) UnbanUser(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// GetBans gets all bans for a stream
 func (h *ChatHandlers) GetBans(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
-	// Get stream ID
 	streamIDStr := chi.URLParam(r, "streamId")
 	streamID, err := uuid.Parse(streamIDStr)
 	if err != nil {
@@ -516,19 +462,16 @@ func (h *ChatHandlers) GetBans(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get authenticated user (moderator)
 	moderatorID, ok := middleware.GetUserIDFromContext(ctx)
 	if !ok {
 		shared.WriteError(w, http.StatusUnauthorized, errors.New("authentication required"))
 		return
 	}
 
-	// Check if user is moderator or stream owner
 	if !h.verifyModeratorOrOwner(w, ctx, streamID, moderatorID) {
 		return
 	}
 
-	// Get bans
 	bans, err := h.chatRepo.GetBans(ctx, streamID)
 	if err != nil {
 		shared.WriteError(w, http.StatusInternalServerError, errors.New("failed to get bans"))
@@ -538,11 +481,9 @@ func (h *ChatHandlers) GetBans(w http.ResponseWriter, r *http.Request) {
 	shared.WriteJSON(w, http.StatusOK, bans)
 }
 
-// GetChatStats gets chat statistics for a stream
 func (h *ChatHandlers) GetChatStats(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
-	// Get stream ID
 	streamIDStr := chi.URLParam(r, "streamId")
 	streamID, err := uuid.Parse(streamIDStr)
 	if err != nil {
@@ -550,14 +491,12 @@ func (h *ChatHandlers) GetChatStats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get chat statistics
 	stats, err := h.chatRepo.GetStreamStats(ctx, streamID)
 	if err != nil {
 		shared.WriteError(w, http.StatusInternalServerError, errors.New("failed to get chat stats"))
 		return
 	}
 
-	// Get connected users count
 	connectedUsers := h.chatServer.GetConnectedUsers(streamID)
 
 	shared.WriteJSON(w, http.StatusOK, map[string]interface{}{
@@ -566,8 +505,6 @@ func (h *ChatHandlers) GetChatStats(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// verifyModeratorOrOwner checks if the user is a moderator or the owner of the stream
-// It writes the appropriate error response if the check fails and returns false
 func (h *ChatHandlers) verifyModeratorOrOwner(w http.ResponseWriter, ctx context.Context, streamID, userID uuid.UUID) bool {
 	isMod, err := h.chatRepo.IsModerator(ctx, streamID, userID)
 	if err != nil {

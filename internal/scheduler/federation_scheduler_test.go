@@ -5,6 +5,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 type mockFederationService struct {
@@ -106,20 +108,13 @@ func TestFederationScheduler_StartStop(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Start scheduler
 	go scheduler.Start(ctx)
 
-	// Wait for a few ticks
-	time.Sleep(200 * time.Millisecond)
+	require.Eventually(t, func() bool {
+		return svc.GetProcessedCount() > 0
+	}, 400*time.Millisecond, 10*time.Millisecond, "Expected at least some items to be processed")
 
-	// Stop scheduler
 	scheduler.Stop()
-
-	// Verify some items were processed
-	count := svc.GetProcessedCount()
-	if count == 0 {
-		t.Error("Expected at least some items to be processed")
-	}
 }
 
 func TestFederationScheduler_Snapshot(t *testing.T) {
@@ -128,26 +123,17 @@ func TestFederationScheduler_Snapshot(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Start scheduler
 	go scheduler.Start(ctx)
 
-	// Wait for processing
-	time.Sleep(150 * time.Millisecond)
+	require.Eventually(t, func() bool {
+		status := scheduler.Snapshot()
+		return !status.LastTick.IsZero() && status.LastProcessed > 0
+	}, 300*time.Millisecond, 10*time.Millisecond, "Expected scheduler to process items")
 
-	// Get snapshot
 	status := scheduler.Snapshot()
 
-	// Verify snapshot has data
 	if status.Burst != 3 {
 		t.Errorf("Expected burst 3, got %d", status.Burst)
-	}
-
-	if status.LastTick.IsZero() {
-		t.Error("Expected LastTick to be set")
-	}
-
-	if status.LastProcessed == 0 {
-		t.Error("Expected LastProcessed to be non-zero")
 	}
 
 	scheduler.Stop()
@@ -159,16 +145,12 @@ func TestFederationScheduler_NoWorkAvailable(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Start scheduler
 	go scheduler.Start(ctx)
 
-	// Wait for a few ticks
 	time.Sleep(200 * time.Millisecond)
 
-	// Stop scheduler
 	scheduler.Stop()
 
-	// Verify no items were processed
 	count := svc.GetProcessedCount()
 	if count != 0 {
 		t.Errorf("Expected no items to be processed, got %d", count)
@@ -181,23 +163,18 @@ func TestFederationScheduler_ContextCancellation(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	// Start scheduler
 	done := make(chan struct{})
 	go func() {
 		scheduler.Start(ctx)
 		close(done)
 	}()
 
-	// Wait for processing
 	time.Sleep(150 * time.Millisecond)
 
-	// Cancel context
 	cancel()
 
-	// Wait for scheduler to stop
 	select {
 	case <-done:
-		// Good, scheduler stopped
 	case <-time.After(1 * time.Second):
 		t.Error("Scheduler did not stop after context cancellation")
 	}
@@ -210,19 +187,12 @@ func TestFederationScheduler_BurstLimit(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Start scheduler
 	go scheduler.Start(ctx)
 
-	// Wait for exactly one tick
-	time.Sleep(150 * time.Millisecond)
+	require.Eventually(t, func() bool {
+		status := scheduler.Snapshot()
+		return status.LastProcessed == burst
+	}, 300*time.Millisecond, 10*time.Millisecond, "Expected exactly %d items processed", burst)
 
 	scheduler.Stop()
-
-	// Get snapshot to check last processed
-	status := scheduler.Snapshot()
-
-	// Should have processed exactly burst items in the last tick
-	if status.LastProcessed != burst {
-		t.Errorf("Expected LastProcessed to be %d, got %d", burst, status.LastProcessed)
-	}
 }

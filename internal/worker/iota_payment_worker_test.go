@@ -13,7 +13,6 @@ import (
 	"github.com/stretchr/testify/mock"
 )
 
-// MockIOTAPaymentRepository mocks the IOTA repository for worker
 type MockIOTAPaymentRepository struct {
 	mock.Mock
 }
@@ -78,7 +77,6 @@ func (m *MockIOTAPaymentRepository) UpdateWalletBalance(ctx context.Context, wal
 	return args.Error(0)
 }
 
-// MockIOTAPaymentClient mocks the IOTA client for worker
 type MockIOTAPaymentClient struct {
 	mock.Mock
 }
@@ -96,14 +94,12 @@ func (m *MockIOTAPaymentClient) GetTransactionStatus(ctx context.Context, txHash
 	return args.Get(0).(*TransactionStatus), args.Error(1)
 }
 
-// Stub type for transaction status
 type TransactionStatus struct {
 	TxHash        string
 	Confirmations int
 	IsConfirmed   bool
 }
 
-// TestNewIOTAPaymentWorker tests worker initialization
 func TestNewIOTAPaymentWorker(t *testing.T) {
 	mockRepo := new(MockIOTAPaymentRepository)
 	mockClient := new(MockIOTAPaymentClient)
@@ -114,7 +110,6 @@ func TestNewIOTAPaymentWorker(t *testing.T) {
 	assert.NotNil(t, worker.done)
 }
 
-// TestIOTAPaymentWorker_CheckPaymentIntent tests processing a single payment intent
 func TestIOTAPaymentWorker_CheckPaymentIntent(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -176,9 +171,8 @@ func TestIOTAPaymentWorker_CheckPaymentIntent(t *testing.T) {
 			},
 			setupMocks: func(repo *MockIOTAPaymentRepository, client *MockIOTAPaymentClient) {
 				client.On("GetBalance", mock.Anything, "iota1qpayment333").Return(int64(500000), nil)
-				// Should not create transaction or update status
 			},
-			wantErr: false, // Not an error, just incomplete
+			wantErr: false,
 		},
 		{
 			name: "network error checking balance",
@@ -204,7 +198,6 @@ func TestIOTAPaymentWorker_CheckPaymentIntent(t *testing.T) {
 			mockClient := new(MockIOTAPaymentClient)
 			tt.setupMocks(mockRepo, mockClient)
 
-			// Create a test worker with access to internal methods
 			w := &IOTAPaymentWorker{
 				repo:   mockRepo,
 				client: mockClient,
@@ -225,7 +218,6 @@ func TestIOTAPaymentWorker_CheckPaymentIntent(t *testing.T) {
 	}
 }
 
-// TestIOTAPaymentWorker_ProcessPayments tests processing multiple intents
 func TestIOTAPaymentWorker_ProcessPayments(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -256,17 +248,14 @@ func TestIOTAPaymentWorker_ProcessPayments(t *testing.T) {
 
 				repo.On("GetActivePaymentIntents", mock.Anything).Return(intents, nil)
 
-				// First intent - paid
 				client.On("GetBalance", mock.Anything, "iota1qpayment111").Return(int64(1000000), nil)
 				repo.On("GetWalletByUserID", mock.Anything, mock.Anything).Return(&domain.IOTAWallet{ID: "wallet-1"}, nil).Once()
 				repo.On("CreateTransaction", mock.Anything, mock.Anything).Return(nil).Once()
 				repo.On("UpdatePaymentIntentStatus", mock.Anything, intents[0].ID,
 					domain.PaymentIntentStatusPaid, mock.Anything).Return(nil)
 
-				// Second intent - not paid yet
 				client.On("GetBalance", mock.Anything, "iota1qpayment222").Return(int64(0), nil)
 
-				// Mock expired intents check
 				repo.On("GetExpiredPaymentIntents", mock.Anything).Return([]*domain.IOTAPaymentIntent{}, nil)
 			},
 			wantErr: false,
@@ -317,7 +306,6 @@ func TestIOTAPaymentWorker_ProcessPayments(t *testing.T) {
 	}
 }
 
-// TestIOTAPaymentWorker_ExpireOldIntents tests expiring old payment intents
 func TestIOTAPaymentWorker_ExpireOldIntents(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -383,13 +371,6 @@ func TestIOTAPaymentWorker_ExpireOldIntents(t *testing.T) {
 	}
 }
 
-// TestIOTAPaymentWorker_TrackConfirmations tests transaction confirmation tracking
-func TestIOTAPaymentWorker_TrackConfirmations(t *testing.T) {
-	// Skip this test - trackConfirmation method not yet implemented in production
-	t.Skip("trackConfirmation method not implemented in IOTAPaymentWorker")
-}
-
-// TestIOTAPaymentWorker_ErrorHandling tests error handling and retry logic
 func TestIOTAPaymentWorker_ErrorHandling(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -410,14 +391,12 @@ func TestIOTAPaymentWorker_ErrorHandling(t *testing.T) {
 
 				repo.On("GetActivePaymentIntents", mock.Anything).Return([]*domain.IOTAPaymentIntent{intent}, nil)
 
-				// First attempt fails
 				client.On("GetBalance", mock.Anything, intent.PaymentAddress).
 					Return(int64(0), errors.New("network timeout")).Once()
 
-				// Mock expired intents check
 				repo.On("GetExpiredPaymentIntents", mock.Anything).Return([]*domain.IOTAPaymentIntent{}, nil)
 			},
-			wantErr: false, // processPayments logs errors but doesn't return them
+			wantErr: false,
 		},
 		{
 			name: "handle database error gracefully",
@@ -455,12 +434,10 @@ func TestIOTAPaymentWorker_ErrorHandling(t *testing.T) {
 	}
 }
 
-// TestIOTAPaymentWorker_StartStop tests worker lifecycle
 func TestIOTAPaymentWorker_StartStop(t *testing.T) {
 	mockRepo := new(MockIOTAPaymentRepository)
 	mockClient := new(MockIOTAPaymentClient)
 
-	// Setup minimal mocks for the worker loop
 	mockRepo.On("GetActivePaymentIntents", mock.Anything).
 		Return([]*domain.IOTAPaymentIntent{}, nil).Maybe()
 	mockRepo.On("GetExpiredPaymentIntents", mock.Anything).
@@ -469,20 +446,15 @@ func TestIOTAPaymentWorker_StartStop(t *testing.T) {
 	worker := NewIOTAPaymentWorker(mockRepo, mockClient)
 	ctx := context.Background()
 
-	// Start worker
 	worker.Start(ctx, 100*time.Millisecond)
 
-	// Let it run for a bit
 	time.Sleep(300 * time.Millisecond)
 
-	// Stop worker
 	worker.Stop()
 
-	// Give it time to stop
 	time.Sleep(100 * time.Millisecond)
 }
 
-// TestIOTAPaymentWorker_ContextCancellation tests context cancellation
 func TestIOTAPaymentWorker_ContextCancellation(t *testing.T) {
 	mockRepo := new(MockIOTAPaymentRepository)
 	mockClient := new(MockIOTAPaymentClient)
@@ -497,31 +469,8 @@ func TestIOTAPaymentWorker_ContextCancellation(t *testing.T) {
 
 	worker.Start(ctx, 100*time.Millisecond)
 
-	// Cancel context
 	cancel()
 
-	// Worker should stop gracefully
 	time.Sleep(200 * time.Millisecond)
 	worker.Stop()
-}
-
-// TestIOTAPaymentWorker_Concurrency tests worker handles concurrent operations safely
-func TestIOTAPaymentWorker_Concurrency(t *testing.T) {
-	t.Skip("Concurrency test - requires more complex setup")
-}
-
-// TestIOTAPaymentWorker_ExponentialBackoff tests backoff on repeated errors
-func TestIOTAPaymentWorker_ExponentialBackoff(t *testing.T) {
-	t.Skip("Backoff strategy test - requires time-based testing")
-}
-
-// TestIOTAPaymentWorker_MaxRetries tests max retry limit
-func TestIOTAPaymentWorker_MaxRetries(t *testing.T) {
-	// Skip this test - maxRetries and processPaymentIntent not part of current worker implementation
-	t.Skip("maxRetries mechanism not implemented in current IOTAPaymentWorker")
-}
-
-// TestIOTAPaymentWorker_Metrics tests that worker reports metrics
-func TestIOTAPaymentWorker_Metrics(t *testing.T) {
-	t.Skip("Metrics collection test - requires metrics infrastructure")
 }

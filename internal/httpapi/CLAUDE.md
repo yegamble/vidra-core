@@ -109,8 +109,8 @@ type ErrorResponse struct {
 
 ### Chunked Upload Flow
 
-1. `POST /api/v1/uploads` - Initialize session, get `sessionId`
-2. `PUT /api/v1/uploads/{sessionId}/chunks/{index}` - Upload 32MB chunks
+1. `POST /api/v1/uploads/initiate` - Initialize session, get `sessionId`
+2. `POST /api/v1/uploads/{sessionId}/chunks` - Upload 32MB chunks
 3. `POST /api/v1/uploads/{sessionId}/complete` - Finalize and process
 
 ### Security Requirements
