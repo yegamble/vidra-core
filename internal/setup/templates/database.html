@@ -1,0 +1,102 @@
+{{define "content"}}
+<h2 style="margin-bottom: 20px;">Database Configuration</h2>
+
+<p style="margin-bottom: 20px; color: #6b7280;">
+    Athena requires PostgreSQL 13+ for data storage.
+</p>
+
+{{if .Error}}
+<div class="alert alert-error">{{.Error}}</div>
+{{end}}
+
+{{if .Success}}
+<div class="alert alert-success">{{.Success}}</div>
+{{end}}
+
+<form id="wizardForm" action="/setup/database" method="POST">
+    <div class="form-group">
+        <label>Database Mode</label>
+        <div class="toggle-group" data-service="postgres">
+            <div class="toggle-btn {{if eq .PostgresMode "docker"}}active{{end}}" data-mode="docker">
+                <strong>Local Docker</strong>
+                <p style="font-size: 12px; margin-top: 5px; opacity: 0.8;">Managed PostgreSQL container</p>
+            </div>
+            <div class="toggle-btn {{if eq .PostgresMode "external"}}active{{end}}" data-mode="external">
+                <strong>External Service</strong>
+                <p style="font-size: 12px; margin-top: 5px; opacity: 0.8;">Connect to existing PostgreSQL</p>
+            </div>
+        </div>
+        <input type="hidden" name="POSTGRES_MODE" value="{{or .PostgresMode "docker"}}">
+    </div>
+
+    <div class="external-fields {{if eq .PostgresMode "external"}}show{{end}}">
+        <div class="form-group">
+            <label for="database_url">Database URL</label>
+            <input type="text" id="database_url" name="DATABASE_URL"
+                   value="{{.DatabaseURL}}"
+                   placeholder="postgres://user:password@localhost:5432/athena?sslmode=disable">
+            <div class="help-text">
+                Format: postgres://username:password@host:port/database
+            </div>
+        </div>
+
+        <div class="form-group">
+            <label>
+                <input type="checkbox" name="create_db" value="true" {{if .CreateDB}}checked{{end}}>
+                Create database if it doesn't exist
+            </label>
+        </div>
+    </div>
+
+    {{if eq .PostgresMode "docker"}}
+    <div class="alert alert-info">
+        <strong>Default Configuration</strong>
+        <ul style="margin-top: 10px; margin-left: 20px;">
+            <li>User: athena</li>
+            <li>Password: Auto-generated</li>
+            <li>Database: athena</li>
+            <li>Port: 5432 (internal)</li>
+        </ul>
+    </div>
+    {{end}}
+
+    <button type="button" class="btn btn-secondary" onclick="testConnection()" style="margin-top: 10px;">
+        Test Connection
+    </button>
+    <div id="testResult" style="margin-top: 10px;"></div>
+</form>
+
+<script>
+function testConnection() {
+    const mode = document.querySelector('input[name="POSTGRES_MODE"]').value;
+    if (mode === 'docker') {
+        document.getElementById('testResult').innerHTML =
+            '<div class="alert alert-info">Docker mode will be validated during startup</div>';
+        return;
+    }
+
+    const url = document.getElementById('database_url').value;
+    document.getElementById('testResult').innerHTML = '<p>Testing connection...</p>';
+
+    fetch('/setup/test-database', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({url: url})
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.success) {
+            document.getElementById('testResult').innerHTML =
+                '<div class="alert alert-success">✓ Connection successful</div>';
+        } else {
+            document.getElementById('testResult').innerHTML =
+                '<div class="alert alert-error">✗ ' + data.error + '</div>';
+        }
+    })
+    .catch(e => {
+        document.getElementById('testResult').innerHTML =
+            '<div class="alert alert-error">✗ Connection failed</div>';
+    });
+}
+</script>
+{{end}}

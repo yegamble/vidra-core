@@ -34,15 +34,17 @@ RUN : "${BUILD_TIME:=$(date -u +%Y%m%d.%H%M%S)}" && \
 # Runtime stage
 FROM alpine:3.18
 
-RUN apk --no-cache add ca-certificates curl ffmpeg
+# Install runtime dependencies including tools for backup/restore
+RUN apk --no-cache add ca-certificates curl ffmpeg postgresql-client redis wget
 
 WORKDIR /app
 
 # Copy the binary from builder stage
 COPY --from=builder /app/server .
 
-# Copy SQL initialization files (for reference)
-COPY --from=builder /app/init-shared-db.sql .
+# Copy entrypoint script
+COPY scripts/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
 # Create necessary directories
 RUN mkdir -p storage/avatars storage/cache storage/captions storage/logs storage/previews storage/streaming-playlists/hls storage/thumbnails storage/torrents storage/web-videos storage/storyboards processed
@@ -57,4 +59,4 @@ EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
   CMD curl -f http://localhost:8080/health || exit 1
 
-CMD ["./server"]
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]

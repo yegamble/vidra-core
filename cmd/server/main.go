@@ -16,9 +16,9 @@ import (
 	"athena/internal/app"
 	"athena/internal/config"
 	appMiddleware "athena/internal/middleware"
+	"athena/internal/setup"
 )
 
-// Populated via -ldflags at build time in Dockerfile
 var (
 	version   = "dev"
 	buildTime = ""
@@ -30,7 +30,15 @@ func main() {
 		log.Fatalf("Failed to load config: %v", err)
 	}
 
-	// Initialize the application with all dependencies
+	if cfg.SetupMode {
+		log.Println("Application is in setup mode")
+		setupServer := setup.NewServer(fmt.Sprintf("%d", cfg.Port))
+		if err := setupServer.Start(); err != nil {
+			log.Fatalf("Setup server failed: %v", err)
+		}
+		return
+	}
+
 	application, err := app.New(cfg)
 	if err != nil {
 		log.Fatalf("Failed to initialize application: %v", err)
@@ -41,31 +49,23 @@ func main() {
 		}
 	}()
 
-	// Get the application router with all routes registered,
-	// then mount it under a parent router where we apply global middleware.
 	appRouter := application.GetRouter()
 	root := chi.NewRouter()
 
-	// Apply global middleware on the root BEFORE mounting routes, per chi requirements
-	// Security middleware - should be first
 	root.Use(appMiddleware.SecurityHeaders())
 	root.Use(appMiddleware.RequestID())
 
-	// Standard Chi middleware
 	root.Use(middleware.RealIP)
 	root.Use(middleware.Logger)
 	root.Use(middleware.Recoverer)
 	root.Use(middleware.Timeout(60 * time.Second))
 	root.Use(middleware.Compress(5))
 
-	// CORS and request size limiting
 	root.Use(appMiddleware.CORS(cfg.CORSAllowedOrigins))
-	root.Use(appMiddleware.SizeLimiter(100 * 1024 * 1024)) // 100MB default, override for upload endpoints
+	root.Use(appMiddleware.SizeLimiter(100 * 1024 * 1024))
 
-	// Mount the pre-registered application routes
 	root.Mount("/", appRouter)
 
-	// Start background schedulers and workers managed by the app
 	backgroundCtx, backgroundCancel := context.WithCancel(context.Background())
 	defer backgroundCancel()
 
@@ -106,7 +106,6 @@ func main() {
 
 	log.Println("Shutting down server...")
 
-	// Cancel background services
 	backgroundCancel()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)

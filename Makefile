@@ -328,6 +328,9 @@ logs: ## Tail app logs
 build: ## Build the server binary
 	go build -o bin/athena-server ./cmd/server
 
+build-cli: ## Build the CLI tool
+	go build -o bin/athena-cli ./cmd/cli
+
 docker: ## Build Docker image
 	docker build -t athena-server:latest .
 

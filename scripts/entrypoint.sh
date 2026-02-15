@@ -1,8 +1,7 @@
 #!/bin/sh
 set -e
 
-echo "Running database migrations..."
-atlas migrate apply --dir file://migrations --url "$DATABASE_URL"
-
+# Auto-migration is handled by the Go app on startup
+# Set AUTO_MIGRATE=false to disable if needed
 echo "Starting server..."
 exec ./server

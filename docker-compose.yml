@@ -13,7 +13,6 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./init-shared-db.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U athena_user -d athena"]
       interval: 10s
@@ -40,6 +39,7 @@ services:
       - athena-network
 
   ipfs:
+    profiles: ["full", "ipfs"]
     image: ipfs/kubo:v0.32.1
     restart: unless-stopped
     environment:
@@ -58,9 +58,29 @@ services:
     networks:
       - athena-network
 
+  clamav:
+    profiles: ["full", "media"]
+    image: clamav/clamav:stable
+    platform: linux/amd64
+    restart: unless-stopped
+    ports:
+      - "3310:3310"
+    volumes:
+      - clamav_signatures:/var/lib/clamav
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/clamdcheck.sh"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 180s
+    mem_limit: 2g
+    networks:
+      - athena-network
+
   whisper:
-    # Note: This image may not publish versioned tags; using latest-gpu as most stable available
-    image: onerahmet/openai-whisper-asr-webservice:latest-gpu
+    profiles: ["full", "media"]
+    # Using CPU-compatible image by default; use whisper-gpu profile for GPU variant
+    image: onerahmet/openai-whisper-asr-webservice:latest
     restart: unless-stopped
     environment:
       - ASR_MODEL=base
@@ -92,24 +112,39 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      ipfs:
-        condition: service_healthy
-      whisper:
-        condition: service_healthy
     ports:
       - "8080:8080"
     environment:
-      DATABASE_URL: postgres://athena_user:athena_password@postgres:5432/athena?sslmode=disable
-      REDIS_URL: redis://redis:6379/0
+      # Service modes (docker or external)
+      POSTGRES_MODE: ${POSTGRES_MODE:-docker}
+      REDIS_MODE: ${REDIS_MODE:-docker}
+      IPFS_MODE: ${IPFS_MODE:-docker}
+
+      # Database
+      DATABASE_URL: ${DATABASE_URL:-postgres://athena_user:athena_password@postgres:5432/athena?sslmode=disable}
+
+      # Redis
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+
+      # Security
       JWT_SECRET: ${JWT_SECRET:-your-super-secret-jwt-key-change-in-production}
-      IPFS_API: http://ipfs:5001
+
+      # Optional services
+      ENABLE_IPFS: ${ENABLE_IPFS:-false}
+      IPFS_API: ${IPFS_API:-http://ipfs:5001}
       REQUIRE_IPFS: ${REQUIRE_IPFS:-false}
-      PORT: 8080
-      ENABLE_CAPTION_GENERATION: ${ENABLE_CAPTION_GENERATION:-true}
+
+      ENABLE_CLAMAV: ${ENABLE_CLAMAV:-false}
+
+      ENABLE_WHISPER: ${ENABLE_WHISPER:-false}
+      ENABLE_CAPTION_GENERATION: ${ENABLE_CAPTION_GENERATION:-false}
       WHISPER_PROVIDER: ${WHISPER_PROVIDER:-local}
       WHISPER_API_URL: ${WHISPER_API_URL:-http://whisper:9000}
       WHISPER_MODEL_SIZE: ${WHISPER_MODEL_SIZE:-base}
       CAPTION_GENERATION_WORKERS: ${CAPTION_GENERATION_WORKERS:-2}
+
+      # Server
+      PORT: 8080
     volumes:
       - storage:/app/storage
       - processed:/app/processed
@@ -345,6 +380,8 @@ volumes:
   ipfs_data:
     driver: local
   whisper_models:
+    driver: local
+  clamav_signatures:
     driver: local
   clamav-test-signatures:
     driver: local

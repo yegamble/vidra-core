@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	chi "github.com/go-chi/chi/v5"
@@ -52,7 +53,6 @@ type Application struct {
 	federationScheduler *scheduler.FederationScheduler
 	firehosePoller      *scheduler.FirehosePoller
 
-	// lifecycle-managed components
 	metricsServer      *http.Server
 	rtmpServer         *livestream.RTMPServer
 	hlsTranscoder      *livestream.HLSTranscoder
@@ -100,7 +100,7 @@ type Dependencies struct {
 	FederationService    usecase.FederationService
 	HardeningService     *usecase.FederationHardeningService
 	EncodingService      ucenc.Service
-	ImportService        any // ucimport.Service
+	ImportService        any
 	PaymentService       *ucpayments.PaymentService
 	StreamManager        *livestream.StreamManager
 	IPFSStreamingService *ucipfs.Service
@@ -145,7 +145,19 @@ func (app *Application) initializeDatabase() error {
 		return fmt.Errorf("failed to connect to database: %w", err)
 	}
 
-	// Configure connection pool per CLAUDE.md
+	autoMigrate := strings.ToLower(os.Getenv("AUTO_MIGRATE"))
+	if autoMigrate != "false" && autoMigrate != "0" {
+		log.Println("Running database migrations...")
+		if err := database.RunMigrations(context.Background(), db); err != nil {
+			if cerr := db.Close(); cerr != nil {
+				log.Printf("failed to close DB after migration error: %v", cerr)
+			}
+			return fmt.Errorf("database migration failed: %w", err)
+		}
+	} else {
+		log.Println("AUTO_MIGRATE=false, skipping migrations")
+	}
+
 	pool, err := database.NewPool(db, database.DefaultPoolConfig())
 	if err != nil {
 		if cerr := db.Close(); cerr != nil {
@@ -154,7 +166,7 @@ func (app *Application) initializeDatabase() error {
 		return fmt.Errorf("failed to configure connection pool: %w", err)
 	}
 
-	app.DB = pool.GetDB() // Maintain compatibility
+	app.DB = pool.GetDB()
 	return nil
 }
 
@@ -243,7 +255,6 @@ func (app *Application) initializeDependencies() *Dependencies {
 		ViewerSessionRepo: repository.NewViewerSessionRepository(app.DB),
 	}
 
-	// Initialize IOTA repository if enabled
 	if app.Config.EnableIOTA {
 		deps.IOTARepo = repository.NewIOTARepository(app.DB)
 	}
@@ -274,11 +285,10 @@ func (app *Application) initializeDependencies() *Dependencies {
 		app.atprotoService = deps.AtprotoService
 	}
 
-	// Create IPFS client for video uploads and pinning
 	deps.IPFSClient = ipfs.NewClient(
 		app.Config.IPFSApi,
 		app.Config.IPFSCluster,
-		120*time.Second, // Timeout for IPFS operations (longer for large files)
+		120*time.Second,
 	)
 
 	deps.EncodingService = ucenc.NewService(
@@ -305,9 +315,7 @@ func (app *Application) initializeDependencies() *Dependencies {
 	deps.HardeningService = usecase.NewFederationHardeningService(deps.HardeningRepo, deps.FederationService, app.Config)
 	_ = deps.HardeningService.Initialize(context.Background())
 
-	// Initialize ActivityPub service if enabled
 	if app.Config.EnableActivityPub {
-		// Create encryption for ActivityPub private keys
 		encryption, err := security.NewActivityPubKeyEncryption(app.Config.ActivityPubKeyEncryptionKey)
 		if err != nil {
 			log.Fatalf("Failed to initialize ActivityPub key encryption: %v", err)
@@ -323,10 +331,8 @@ func (app *Application) initializeDependencies() *Dependencies {
 		)
 	}
 
-	// Initialize IPFS streaming service
 	deps.IPFSStreamingService = ucipfs.NewService(app.Config)
 
-	// Initialize livestream manager
 	logger := logrus.New()
 	logger.SetLevel(logrus.InfoLevel)
 	deps.StreamManager = livestream.NewStreamManager(
@@ -336,7 +342,6 @@ func (app *Application) initializeDependencies() *Dependencies {
 		logger,
 	)
 
-	// Initialize HLS transcoder and RTMP server for live streaming (if enabled)
 	if app.Config.EnableLiveStreaming {
 		log.Println("Initializing HLS transcoder...")
 		hlsTranscoder := livestream.NewHLSTranscoder(
@@ -345,14 +350,13 @@ func (app *Application) initializeDependencies() *Dependencies {
 			logger,
 		)
 
-		// Initialize VOD converter (2 workers by default)
 		log.Println("Initializing VOD converter...")
 		vodConverter := livestream.NewVODConverter(
 			app.Config,
 			deps.LiveStreamRepo,
 			deps.VideoRepo,
 			logger,
-			2, // 2 concurrent VOD conversion workers
+			2,
 		)
 
 		log.Println("Initializing RTMP server for live streaming...")
@@ -366,43 +370,34 @@ func (app *Application) initializeDependencies() *Dependencies {
 			logger,
 		)
 
-		// Store transcoder and converter in app for later use (e.g., handlers, shutdown)
 		app.hlsTranscoder = hlsTranscoder
 		app.vodConverter = vodConverter
 	}
 
-	// Wire up import service dependencies
 	app.WireImportDependencies(deps)
 
-	// Initialize Payment Service if IOTA is enabled
 	if app.Config.EnableIOTA && deps.IOTARepo != nil {
-		// Create IOTA client
 		iotaClient := payments.NewIOTAClient(app.Config.IOTANodeURL)
 
-		// Parse encryption key if provided
 		var encKey []byte
 		if app.Config.IOTAWalletEncryptionKey != "" {
 			if k, err := repository.DecodeTokenKey(app.Config.IOTAWalletEncryptionKey); err == nil {
 				encKey = k
 			} else {
 				log.Printf("Warning: Failed to decode IOTA wallet encryption key, using default")
-				// Use a default key derived from JWT secret as fallback
-				encKey = []byte(app.Config.JWTSecret)[:32] // Take first 32 bytes for AES-256
+				encKey = []byte(app.Config.JWTSecret)[:32]
 			}
 		} else {
-			// Use JWT secret as default encryption key
 			encKey = []byte(app.Config.JWTSecret)
 			if len(encKey) > 32 {
-				encKey = encKey[:32] // Ensure it's 32 bytes for AES-256
+				encKey = encKey[:32]
 			} else if len(encKey) < 32 {
-				// Pad with zeros if too short
 				padded := make([]byte, 32)
 				copy(padded, encKey)
 				encKey = padded
 			}
 		}
 
-		// Create payment service
 		deps.PaymentService = ucpayments.NewPaymentService(
 			deps.IOTARepo,
 			iotaClient,
@@ -494,7 +489,6 @@ func (app *Application) Start(ctx context.Context) error {
 		go s.Start(ctx)
 	}
 
-	// Start RTMP server if enabled
 	if app.Config.EnableLiveStreaming && app.rtmpServer != nil {
 		go func() {
 			log.Printf("Starting RTMP server on %s:%d...", app.Config.RTMPHost, app.Config.RTMPPort)
@@ -504,7 +498,6 @@ func (app *Application) Start(ctx context.Context) error {
 		}()
 	}
 
-	// Optionally start encoding workers within the app lifecycle
 	if app.Config.EnableEncoding && app.Dependencies != nil && app.Dependencies.EncodingService != nil {
 		workers := app.Config.EncodingWorkers
 		encSvc := app.Dependencies.EncodingService
@@ -515,7 +508,6 @@ func (app *Application) Start(ctx context.Context) error {
 			}
 		}()
 
-		// Start a lightweight metrics server if configured
 		if app.Config.MetricsAddr != "" {
 			mux := http.NewServeMux()
 			mux.HandleFunc("/metrics", metrics.Handler)
@@ -539,7 +531,6 @@ func (app *Application) Start(ctx context.Context) error {
 }
 
 func (app *Application) Shutdown(ctx context.Context) error {
-	// Shutdown rate limiters first (graceful, allows requests to continue)
 	if app.rateLimiterManager != nil {
 		log.Println("Shutting down rate limiters...")
 		if err := app.rateLimiterManager.Shutdown(ctx); err != nil {
@@ -551,7 +542,6 @@ func (app *Application) Shutdown(ctx context.Context) error {
 		s.Stop()
 	}
 
-	// Stop VOD converter if running (before stopping RTMP/HLS to allow queue processing)
 	if app.vodConverter != nil {
 		log.Println("Stopping VOD converter...")
 		if err := app.vodConverter.Shutdown(ctx); err != nil {
@@ -559,7 +549,6 @@ func (app *Application) Shutdown(ctx context.Context) error {
 		}
 	}
 
-	// Stop HLS transcoder if running
 	if app.hlsTranscoder != nil {
 		log.Println("Stopping HLS transcoder...")
 		if err := app.hlsTranscoder.Shutdown(ctx); err != nil {
@@ -567,7 +556,6 @@ func (app *Application) Shutdown(ctx context.Context) error {
 		}
 	}
 
-	// Stop RTMP server if running
 	if app.rtmpServer != nil {
 		log.Println("Stopping RTMP server...")
 		if err := app.rtmpServer.Shutdown(ctx); err != nil {
@@ -575,7 +563,6 @@ func (app *Application) Shutdown(ctx context.Context) error {
 		}
 	}
 
-	// Stop StreamManager if running
 	if app.Dependencies != nil && app.Dependencies.StreamManager != nil {
 		log.Println("Stopping StreamManager...")
 		if err := app.Dependencies.StreamManager.Shutdown(ctx); err != nil {
@@ -583,7 +570,6 @@ func (app *Application) Shutdown(ctx context.Context) error {
 		}
 	}
 
-	// Stop metrics server if running
 	if app.metricsServer != nil {
 		if err := app.metricsServer.Shutdown(ctx); err != nil {
 			log.Printf("Failed to shutdown metrics server: %v", err)

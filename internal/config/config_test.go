@@ -14,7 +14,6 @@ func setMinimumLoadEnv(t *testing.T, jwtSecret string) {
 	t.Setenv("REQUIRE_IPFS", "true")
 	t.Setenv("JWT_SECRET", jwtSecret)
 
-	// Keep environment explicit in tests so production checks are deterministic.
 	t.Setenv("ENV", "")
 	t.Setenv("APP_ENV", "")
 	t.Setenv("ENVIRONMENT", "")
@@ -23,7 +22,6 @@ func setMinimumLoadEnv(t *testing.T, jwtSecret string) {
 	t.Setenv("KUBERNETES_SERVICE_HOST", "")
 }
 
-// Test that scheduler defaults are set and Load() succeeds with minimal env.
 func TestLoad_SchedulerDefaults(t *testing.T) {
 	setMinimumLoadEnv(t, "test-secret")
 
@@ -109,5 +107,126 @@ func TestParsePortFromArgs(t *testing.T) {
 				t.Fatalf("parsePortFromArgs(%v) = %d, want %d", tc.args, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestLoad_SetupModeAllowsPartialConfig(t *testing.T) {
+	tests := []struct {
+		name          string
+		envVars       map[string]string
+		wantSetupMode bool
+		wantErr       bool
+	}{
+		{
+			name: "missing DATABASE_URL with setup not completed - should allow setup mode",
+			envVars: map[string]string{
+				"PORT": "8080",
+			},
+			wantSetupMode: true,
+			wantErr:       false,
+		},
+		{
+			name: "missing REDIS_URL with setup not completed - should allow setup mode",
+			envVars: map[string]string{
+				"PORT":         "8080",
+				"DATABASE_URL": "postgres://user:pass@localhost/db",
+			},
+			wantSetupMode: true,
+			wantErr:       false,
+		},
+		{
+			name: "missing JWT_SECRET with setup not completed - should allow setup mode",
+			envVars: map[string]string{
+				"PORT":         "8080",
+				"DATABASE_URL": "postgres://user:pass@localhost/db",
+				"REDIS_URL":    "redis://localhost:6379",
+			},
+			wantSetupMode: true,
+			wantErr:       false,
+		},
+		{
+			name: "all required fields with SETUP_COMPLETED=true - should be normal mode",
+			envVars: map[string]string{
+				"PORT":            "8080",
+				"DATABASE_URL":    "postgres://user:pass@localhost/db",
+				"REDIS_URL":       "redis://localhost:6379",
+				"JWT_SECRET":      "this-is-a-very-long-secret-key-at-least-32-characters-long",
+				"SETUP_COMPLETED": "true",
+				"REQUIRE_IPFS":    "false",
+			},
+			wantSetupMode: false,
+			wantErr:       false,
+		},
+		{
+			name: "all required fields but SETUP_COMPLETED=false - should be setup mode",
+			envVars: map[string]string{
+				"PORT":            "8080",
+				"DATABASE_URL":    "postgres://user:pass@localhost/db",
+				"REDIS_URL":       "redis://localhost:6379",
+				"JWT_SECRET":      "this-is-a-very-long-secret-key-at-least-32-characters-long",
+				"SETUP_COMPLETED": "false",
+				"REQUIRE_IPFS":    "false",
+			},
+			wantSetupMode: true,
+			wantErr:       false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			for key, value := range tt.envVars {
+				t.Setenv(key, value)
+			}
+
+			cfg, err := Load()
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Load() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+
+			if !tt.wantErr && cfg == nil {
+				t.Errorf("Load() returned nil config without error")
+				return
+			}
+
+			if !tt.wantErr && cfg.SetupMode != tt.wantSetupMode {
+				t.Errorf("Load() SetupMode = %v, want %v", cfg.SetupMode, tt.wantSetupMode)
+			}
+		})
+	}
+}
+
+func TestLoad_NormalModeRequiresAllFields(t *testing.T) {
+	t.Setenv("SETUP_COMPLETED", "true")
+	t.Setenv("PORT", "8080")
+	t.Setenv("REQUIRE_IPFS", "false")
+
+	_, err := Load()
+	if err == nil {
+		t.Error("Load() should error when DATABASE_URL is missing in normal mode")
+	}
+
+	t.Setenv("DATABASE_URL", "postgres://user:pass@localhost/db")
+	_, err = Load()
+	if err == nil {
+		t.Error("Load() should error when REDIS_URL is missing in normal mode")
+	}
+
+	t.Setenv("REDIS_URL", "redis://localhost:6379")
+	_, err = Load()
+	if err == nil {
+		t.Error("Load() should error when JWT_SECRET is missing in normal mode")
+	}
+
+	t.Setenv("JWT_SECRET", "this-is-a-very-long-secret-key-at-least-32-characters-long")
+	cfg, err := Load()
+	if err != nil {
+		t.Errorf("Load() should succeed with all required fields in normal mode: %v", err)
+	}
+	if cfg == nil {
+		t.Error("Load() returned nil config")
+	}
+	if cfg.SetupMode {
+		t.Error("Load() should not be in setup mode when all fields are present")
 	}
 }
