@@ -4,7 +4,6 @@ import (
 	"athena/internal/domain"
 	"athena/internal/httpapi/shared"
 	"athena/internal/middleware"
-	"athena/internal/usecase"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -15,16 +14,15 @@ import (
 )
 
 type PlaylistHandlers struct {
-	playlistService *usecase.PlaylistService
+	playlistService PlaylistServiceInterface
 }
 
-func NewPlaylistHandlers(playlistService *usecase.PlaylistService) *PlaylistHandlers {
+func NewPlaylistHandlers(playlistService PlaylistServiceInterface) *PlaylistHandlers {
 	return &PlaylistHandlers{
 		playlistService: playlistService,
 	}
 }
 
-// CreatePlaylist handles POST /api/v1/playlists
 func (h *PlaylistHandlers) CreatePlaylist(w http.ResponseWriter, r *http.Request) {
 	userID, ok := middleware.GetUserIDFromContext(r.Context())
 	if !ok {
@@ -47,7 +45,6 @@ func (h *PlaylistHandlers) CreatePlaylist(w http.ResponseWriter, r *http.Request
 	shared.WriteJSON(w, http.StatusCreated, playlist)
 }
 
-// GetPlaylist handles GET /api/v1/playlists/{id}
 func (h *PlaylistHandlers) GetPlaylist(w http.ResponseWriter, r *http.Request) {
 	playlistIDStr := chi.URLParam(r, "id")
 	playlistID, err := uuid.Parse(playlistIDStr)
@@ -56,7 +53,6 @@ func (h *PlaylistHandlers) GetPlaylist(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get current user if authenticated
 	var userID *uuid.UUID
 	if uid, ok := middleware.GetUserIDFromContext(r.Context()); ok {
 		userID = &uid
@@ -79,7 +75,6 @@ func (h *PlaylistHandlers) GetPlaylist(w http.ResponseWriter, r *http.Request) {
 	shared.WriteJSON(w, http.StatusOK, playlist)
 }
 
-// UpdatePlaylist handles PUT /api/v1/playlists/{id}
 func (h *PlaylistHandlers) UpdatePlaylist(w http.ResponseWriter, r *http.Request) {
 	userID, ok := middleware.GetUserIDFromContext(r.Context())
 	if !ok {
@@ -118,7 +113,6 @@ func (h *PlaylistHandlers) UpdatePlaylist(w http.ResponseWriter, r *http.Request
 	})
 }
 
-// DeletePlaylist handles DELETE /api/v1/playlists/{id}
 func (h *PlaylistHandlers) DeletePlaylist(w http.ResponseWriter, r *http.Request) {
 	userID, ok := middleware.GetUserIDFromContext(r.Context())
 	if !ok {
@@ -151,14 +145,12 @@ func (h *PlaylistHandlers) DeletePlaylist(w http.ResponseWriter, r *http.Request
 	})
 }
 
-// ListPlaylists handles GET /api/v1/playlists
 func (h *PlaylistHandlers) ListPlaylists(w http.ResponseWriter, r *http.Request) {
 	opts := domain.PlaylistListOptions{
 		Limit:  20,
 		Offset: 0,
 	}
 
-	// Parse query params
 	if userIDStr := r.URL.Query().Get("user_id"); userIDStr != "" {
 		if uid, err := uuid.Parse(userIDStr); err == nil {
 			opts.UserID = &uid
@@ -197,7 +189,6 @@ func (h *PlaylistHandlers) ListPlaylists(w http.ResponseWriter, r *http.Request)
 	shared.WriteJSON(w, http.StatusOK, response)
 }
 
-// AddVideoToPlaylist handles POST /api/v1/playlists/{id}/items
 func (h *PlaylistHandlers) AddVideoToPlaylist(w http.ResponseWriter, r *http.Request) {
 	userID, ok := middleware.GetUserIDFromContext(r.Context())
 	if !ok {
@@ -236,7 +227,6 @@ func (h *PlaylistHandlers) AddVideoToPlaylist(w http.ResponseWriter, r *http.Req
 	})
 }
 
-// RemoveVideoFromPlaylist handles DELETE /api/v1/playlists/{id}/items/{itemId}
 func (h *PlaylistHandlers) RemoveVideoFromPlaylist(w http.ResponseWriter, r *http.Request) {
 	userID, ok := middleware.GetUserIDFromContext(r.Context())
 	if !ok {
@@ -276,7 +266,6 @@ func (h *PlaylistHandlers) RemoveVideoFromPlaylist(w http.ResponseWriter, r *htt
 	})
 }
 
-// GetPlaylistItems handles GET /api/v1/playlists/{id}/items
 func (h *PlaylistHandlers) GetPlaylistItems(w http.ResponseWriter, r *http.Request) {
 	playlistIDStr := chi.URLParam(r, "id")
 	playlistID, err := uuid.Parse(playlistIDStr)
@@ -285,7 +274,6 @@ func (h *PlaylistHandlers) GetPlaylistItems(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// Get current user if authenticated
 	var userID *uuid.UUID
 	if uid, ok := middleware.GetUserIDFromContext(r.Context()); ok {
 		userID = &uid
@@ -325,7 +313,6 @@ func (h *PlaylistHandlers) GetPlaylistItems(w http.ResponseWriter, r *http.Reque
 	})
 }
 
-// ReorderPlaylistItem handles PUT /api/v1/playlists/{id}/items/{itemId}/reorder
 func (h *PlaylistHandlers) ReorderPlaylistItem(w http.ResponseWriter, r *http.Request) {
 	userID, ok := middleware.GetUserIDFromContext(r.Context())
 	if !ok {
@@ -373,7 +360,6 @@ func (h *PlaylistHandlers) ReorderPlaylistItem(w http.ResponseWriter, r *http.Re
 	})
 }
 
-// GetWatchLater handles GET /api/v1/users/me/watch-later
 func (h *PlaylistHandlers) GetWatchLater(w http.ResponseWriter, r *http.Request) {
 	userID, ok := middleware.GetUserIDFromContext(r.Context())
 	if !ok {
@@ -390,7 +376,6 @@ func (h *PlaylistHandlers) GetWatchLater(w http.ResponseWriter, r *http.Request)
 	shared.WriteJSON(w, http.StatusOK, playlist)
 }
 
-// AddToWatchLater handles POST /api/v1/videos/{id}/watch-later
 func (h *PlaylistHandlers) AddToWatchLater(w http.ResponseWriter, r *http.Request) {
 	userID, ok := middleware.GetUserIDFromContext(r.Context())
 	if !ok {

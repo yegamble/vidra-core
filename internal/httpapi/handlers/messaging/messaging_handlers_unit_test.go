@@ -19,18 +19,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-// withChiParam injects chi URL params into the request context.
 func withChiParam(r *http.Request, key, value string) *http.Request {
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add(key, value)
 	return r.WithContext(context.WithValue(r.Context(), chi.RouteCtxKey, rctx))
 }
 
-// withChiParams injects multiple chi URL params into the request context.
 func withChiParams(r *http.Request, params map[string]string) *http.Request {
 	rctx := chi.NewRouteContext()
 	for k, v := range params {
@@ -39,22 +33,16 @@ func withChiParams(r *http.Request, params map[string]string) *http.Request {
 	return r.WithContext(context.WithValue(r.Context(), chi.RouteCtxKey, rctx))
 }
 
-// withAuth adds a user ID to the request context matching the auth middleware key.
 func withAuth(r *http.Request, userID uuid.UUID) *http.Request {
 	return r.WithContext(context.WithValue(r.Context(), middleware.UserIDKey, userID.String()))
 }
 
-// decodeBody is a generic JSON decoder for response bodies.
 func decodeBody(t *testing.T, rr *httptest.ResponseRecorder) map[string]interface{} {
 	t.Helper()
 	var body map[string]interface{}
 	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &body))
 	return body
 }
-
-// ---------------------------------------------------------------------------
-// ChatHandlers: RemoveModerator (0% coverage)
-// ---------------------------------------------------------------------------
 
 func TestChatHandlers_RemoveModerator_Success(t *testing.T) {
 	handlers, mockChatRepo, mockStreamRepo, _, _ := setupChatHandlerTest(t)
@@ -120,7 +108,6 @@ func TestChatHandlers_RemoveModerator_Unauthorized(t *testing.T) {
 		"streamId": uuid.NewString(),
 		"userId":   uuid.NewString(),
 	})
-	// No auth context
 	rr := httptest.NewRecorder()
 
 	handlers.RemoveModerator(rr, req)
@@ -204,10 +191,6 @@ func TestChatHandlers_RemoveModerator_InternalError(t *testing.T) {
 	assert.Equal(t, http.StatusInternalServerError, rr.Code)
 }
 
-// ---------------------------------------------------------------------------
-// ChatHandlers: GetModerators (0% coverage)
-// ---------------------------------------------------------------------------
-
 func TestChatHandlers_GetModerators_Success(t *testing.T) {
 	handlers, mockChatRepo, _, _, _ := setupChatHandlerTest(t)
 
@@ -255,10 +238,6 @@ func TestChatHandlers_GetModerators_InternalError(t *testing.T) {
 	mockChatRepo.AssertExpectations(t)
 }
 
-// ---------------------------------------------------------------------------
-// ChatHandlers: UnbanUser (0% coverage)
-// ---------------------------------------------------------------------------
-
 func TestChatHandlers_UnbanUser_Success_AsOwner(t *testing.T) {
 	handlers, mockChatRepo, mockStreamRepo, _, _ := setupChatHandlerTest(t)
 
@@ -266,7 +245,6 @@ func TestChatHandlers_UnbanUser_Success_AsOwner(t *testing.T) {
 	ownerID := uuid.New()
 	bannedUser := uuid.New()
 
-	// verifyModeratorOrOwner: IsModerator returns false, then GetByID returns owner match
 	mockChatRepo.On("IsModerator", mock.Anything, streamID, ownerID).Return(false, nil)
 	mockStreamRepo.On("GetByID", mock.Anything, streamID).Return(&domain.LiveStream{
 		ID:     streamID,
@@ -425,10 +403,6 @@ func TestChatHandlers_UnbanUser_InternalError(t *testing.T) {
 	assert.Equal(t, http.StatusInternalServerError, rr.Code)
 }
 
-// ---------------------------------------------------------------------------
-// ChatHandlers: GetBans (0% coverage)
-// ---------------------------------------------------------------------------
-
 func TestChatHandlers_GetBans_Success(t *testing.T) {
 	handlers, mockChatRepo, _, _, _ := setupChatHandlerTest(t)
 
@@ -514,10 +488,6 @@ func TestChatHandlers_GetBans_InternalError(t *testing.T) {
 	assert.Equal(t, http.StatusInternalServerError, rr.Code)
 }
 
-// ---------------------------------------------------------------------------
-// ChatHandlers: verifyModeratorOrOwner (0% coverage - exercised via GetBans/UnbanUser)
-// ---------------------------------------------------------------------------
-
 func TestChatHandlers_VerifyModeratorOrOwner_IsModCheckError(t *testing.T) {
 	handlers, mockChatRepo, _, _, _ := setupChatHandlerTest(t)
 
@@ -526,7 +496,6 @@ func TestChatHandlers_VerifyModeratorOrOwner_IsModCheckError(t *testing.T) {
 
 	mockChatRepo.On("IsModerator", mock.Anything, streamID, userID).Return(false, errors.New("db error"))
 
-	// We exercise verifyModeratorOrOwner through GetBans which calls it
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req = withChiParam(req, "streamId", streamID.String())
 	req = withAuth(req, userID)
@@ -572,10 +541,6 @@ func TestChatHandlers_VerifyModeratorOrOwner_StreamGetError(t *testing.T) {
 	assert.Equal(t, http.StatusInternalServerError, rr.Code)
 }
 
-// ---------------------------------------------------------------------------
-// ChatHandlers: GetChatStats additional paths (covers 33.3% gap)
-// ---------------------------------------------------------------------------
-
 func TestChatHandlers_GetChatStats_InvalidStreamID(t *testing.T) {
 	handlers, _, _, _, _ := setupChatHandlerTest(t)
 
@@ -600,10 +565,6 @@ func TestChatHandlers_GetChatStats_InternalError(t *testing.T) {
 	handlers.GetChatStats(rr, req)
 	assert.Equal(t, http.StatusInternalServerError, rr.Code)
 }
-
-// ---------------------------------------------------------------------------
-// ChatHandlers: DeleteMessage additional paths (covers gaps)
-// ---------------------------------------------------------------------------
 
 func TestChatHandlers_DeleteMessage_InvalidStreamID(t *testing.T) {
 	handlers, _, _, _, _ := setupChatHandlerTest(t)
@@ -641,16 +602,11 @@ func TestChatHandlers_DeleteMessage_Unauthorized(t *testing.T) {
 		"streamId":  uuid.NewString(),
 		"messageId": uuid.NewString(),
 	})
-	// No auth context
 	rr := httptest.NewRecorder()
 
 	handlers.DeleteMessage(rr, req)
 	assert.Equal(t, http.StatusUnauthorized, rr.Code)
 }
-
-// ---------------------------------------------------------------------------
-// ChatHandlers: AddModerator additional edge cases
-// ---------------------------------------------------------------------------
 
 func TestChatHandlers_AddModerator_InvalidStreamID(t *testing.T) {
 	handlers, _, _, _, _ := setupChatHandlerTest(t)
@@ -668,16 +624,11 @@ func TestChatHandlers_AddModerator_Unauthorized(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/", nil)
 	req = withChiParam(req, "streamId", uuid.NewString())
-	// No auth
 	rr := httptest.NewRecorder()
 
 	handlers.AddModerator(rr, req)
 	assert.Equal(t, http.StatusUnauthorized, rr.Code)
 }
-
-// ---------------------------------------------------------------------------
-// ChatHandlers: BanUser additional edge cases
-// ---------------------------------------------------------------------------
 
 func TestChatHandlers_BanUser_InvalidStreamID(t *testing.T) {
 	handlers, _, _, _, _ := setupChatHandlerTest(t)
@@ -695,16 +646,11 @@ func TestChatHandlers_BanUser_Unauthorized(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/", nil)
 	req = withChiParam(req, "streamId", uuid.NewString())
-	// No auth
 	rr := httptest.NewRecorder()
 
 	handlers.BanUser(rr, req)
 	assert.Equal(t, http.StatusUnauthorized, rr.Code)
 }
-
-// ---------------------------------------------------------------------------
-// ChatHandlers: GetChatMessages additional paths (covers stream error + count error)
-// ---------------------------------------------------------------------------
 
 func TestChatHandlers_GetChatMessages_StreamNotFound(t *testing.T) {
 	handlers, _, mockStreamRepo, _, _ := setupChatHandlerTest(t)
@@ -793,10 +739,6 @@ func TestChatHandlers_GetChatMessages_CountError(t *testing.T) {
 	assert.Equal(t, http.StatusInternalServerError, rr.Code)
 }
 
-// ---------------------------------------------------------------------------
-// NotificationHandlers: GetUnreadCount (0% coverage)
-// ---------------------------------------------------------------------------
-
 func TestNotificationHandlers_GetUnreadCount_Success(t *testing.T) {
 	svc := &mockNotificationService{}
 	h := NewNotificationHandlers(svc)
@@ -843,10 +785,6 @@ func TestNotificationHandlers_GetUnreadCount_InvalidUserID(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, rr.Code)
 }
 
-// ---------------------------------------------------------------------------
-// NotificationHandlers: GetNotificationStats (0% coverage)
-// ---------------------------------------------------------------------------
-
 func TestNotificationHandlers_GetNotificationStats_Success(t *testing.T) {
 	svc := &mockNotificationService{}
 	h := NewNotificationHandlers(svc)
@@ -892,10 +830,6 @@ func TestNotificationHandlers_GetNotificationStats_InvalidUserID(t *testing.T) {
 
 	assert.Equal(t, http.StatusBadRequest, rr.Code)
 }
-
-// ---------------------------------------------------------------------------
-// NotificationHandlers: MarkAsRead error paths (covers 50% gap)
-// ---------------------------------------------------------------------------
 
 func TestNotificationHandlers_MarkAsRead_Unauthorized(t *testing.T) {
 	svc := &mockNotificationService{}
@@ -958,10 +892,6 @@ func TestNotificationHandlers_MarkAsRead_InternalError(t *testing.T) {
 	assert.Equal(t, http.StatusInternalServerError, rr.Code)
 }
 
-// ---------------------------------------------------------------------------
-// NotificationHandlers: MarkAllAsRead error paths (covers 46.2% gap)
-// ---------------------------------------------------------------------------
-
 func TestNotificationHandlers_MarkAllAsRead_Unauthorized(t *testing.T) {
 	svc := &mockNotificationService{}
 	h := NewNotificationHandlers(svc)
@@ -1005,10 +935,6 @@ func TestNotificationHandlers_MarkAllAsRead_InternalError(t *testing.T) {
 
 	assert.Equal(t, http.StatusInternalServerError, rr.Code)
 }
-
-// ---------------------------------------------------------------------------
-// NotificationHandlers: DeleteNotification error paths (covers 50% gap)
-// ---------------------------------------------------------------------------
 
 func TestNotificationHandlers_DeleteNotification_Unauthorized(t *testing.T) {
 	svc := &mockNotificationService{}
@@ -1071,13 +997,14 @@ func TestNotificationHandlers_DeleteNotification_InternalError(t *testing.T) {
 	assert.Equal(t, http.StatusInternalServerError, rr.Code)
 }
 
-// ---------------------------------------------------------------------------
-// Secure messages helpers (0% coverage for all)
-// ---------------------------------------------------------------------------
-
 func TestGetUserIDFromContext(t *testing.T) {
 	result := GetUserIDFromContext(context.Background())
-	assert.Equal(t, "user-id-placeholder", result)
+	assert.Equal(t, "", result)
+
+	userID := uuid.New()
+	ctx := context.WithValue(context.Background(), middleware.UserIDKey, userID.String())
+	result = GetUserIDFromContext(ctx)
+	assert.Equal(t, userID.String(), result)
 }
 
 func TestGetClientIP_XForwardedFor(t *testing.T) {
@@ -1169,7 +1096,6 @@ func TestWriteValidationErrorResponse_NonValidationError(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &body))
 	errObj := body["error"].(map[string]interface{})
 	assert.Equal(t, "validation_failed", errObj["code"])
-	// details should be null for non-validation errors
 	assert.Nil(t, errObj["details"])
 }
 
@@ -1220,16 +1146,7 @@ func TestGetValidationErrorMessage_AllTags(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// messages.go: GetUnreadCountHandler (0% coverage) - uses messageService
-// We cannot easily inject a mock because it takes *usecase.MessageService
-// (a concrete type alias). Instead, we test the unauthorized path which
-// exercises getUserID and the early return without needing a real service.
-// ---------------------------------------------------------------------------
-
 func TestGetUnreadCountHandler_Unauthorized(t *testing.T) {
-	// Passing nil will panic if the handler reaches messageService calls,
-	// but the unauthorized path returns before that.
 	handler := GetUnreadCountHandler(nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/conversations/unread-count", nil)
@@ -1238,10 +1155,6 @@ func TestGetUnreadCountHandler_Unauthorized(t *testing.T) {
 
 	assert.Equal(t, http.StatusUnauthorized, rr.Code)
 }
-
-// ---------------------------------------------------------------------------
-// messages.go: GetMessagesHandler missing conversation_with param
-// ---------------------------------------------------------------------------
 
 func TestGetMessagesHandler_MissingConversationWith(t *testing.T) {
 	handler := GetMessagesHandler(nil)
@@ -1254,10 +1167,6 @@ func TestGetMessagesHandler_MissingConversationWith(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, rr.Code)
 }
 
-// ---------------------------------------------------------------------------
-// messages.go: GetConversationsHandler unauthorized
-// ---------------------------------------------------------------------------
-
 func TestGetConversationsHandler_Unauthorized(t *testing.T) {
 	handler := GetConversationsHandler(nil)
 
@@ -1268,10 +1177,6 @@ func TestGetConversationsHandler_Unauthorized(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, rr.Code)
 }
 
-// ---------------------------------------------------------------------------
-// messages.go: SendMessageHandler unauthorized
-// ---------------------------------------------------------------------------
-
 func TestSendMessageHandler_Unauthorized(t *testing.T) {
 	handler := SendMessageHandler(nil)
 
@@ -1281,10 +1186,6 @@ func TestSendMessageHandler_Unauthorized(t *testing.T) {
 
 	assert.Equal(t, http.StatusUnauthorized, rr.Code)
 }
-
-// ---------------------------------------------------------------------------
-// NotificationHandlers: GetNotifications unauthorized and error paths
-// ---------------------------------------------------------------------------
 
 func TestNotificationHandlers_GetNotifications_Unauthorized(t *testing.T) {
 	svc := &mockNotificationService{}
@@ -1314,10 +1215,6 @@ func TestNotificationHandlers_GetNotifications_InvalidUserID(t *testing.T) {
 
 	assert.Equal(t, http.StatusBadRequest, rr.Code)
 }
-
-// ---------------------------------------------------------------------------
-// mockNotificationServiceErr: a notification service mock that returns errors
-// ---------------------------------------------------------------------------
 
 type mockNotificationServiceErr struct {
 	markReadErr error

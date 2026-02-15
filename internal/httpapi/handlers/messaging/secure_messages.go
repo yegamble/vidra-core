@@ -13,24 +13,21 @@ import (
 	"github.com/go-playground/validator/v10"
 
 	"athena/internal/domain"
-	"athena/internal/usecase"
+	"athena/internal/middleware"
 )
 
-// SecureMessagesHandler handles E2EE messaging endpoints
 type SecureMessagesHandler struct {
-	e2eeService *usecase.E2EEService
+	e2eeService E2EEServiceInterface
 	validator   *validator.Validate
 }
 
-// NewSecureMessagesHandler creates a new secure messages handler
-func NewSecureMessagesHandler(e2eeService *usecase.E2EEService, validator *validator.Validate) *SecureMessagesHandler {
+func NewSecureMessagesHandler(e2eeService E2EEServiceInterface, validator *validator.Validate) *SecureMessagesHandler {
 	return &SecureMessagesHandler{
 		e2eeService: e2eeService,
 		validator:   validator,
 	}
 }
 
-// SetupE2EE sets up E2EE for a user
 func (h *SecureMessagesHandler) SetupE2EE(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	userID := GetUserIDFromContext(ctx)
@@ -46,7 +43,6 @@ func (h *SecureMessagesHandler) SetupE2EE(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Get client info for audit logging
 	clientIP := GetClientIP(r)
 	userAgent := r.UserAgent()
 
@@ -65,7 +61,6 @@ func (h *SecureMessagesHandler) SetupE2EE(w http.ResponseWriter, r *http.Request
 	})
 }
 
-// UnlockE2EE unlocks a user's E2EE session
 func (h *SecureMessagesHandler) UnlockE2EE(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	userID := GetUserIDFromContext(ctx)
@@ -81,7 +76,6 @@ func (h *SecureMessagesHandler) UnlockE2EE(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Get client info for audit logging
 	clientIP := GetClientIP(r)
 	userAgent := r.UserAgent()
 
@@ -104,7 +98,6 @@ func (h *SecureMessagesHandler) UnlockE2EE(w http.ResponseWriter, r *http.Reques
 	})
 }
 
-// LockE2EE locks a user's E2EE session
 func (h *SecureMessagesHandler) LockE2EE(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	userID := GetUserIDFromContext(ctx)
@@ -116,7 +109,6 @@ func (h *SecureMessagesHandler) LockE2EE(w http.ResponseWriter, r *http.Request)
 	})
 }
 
-// GetE2EEStatus returns the E2EE status for a user
 func (h *SecureMessagesHandler) GetE2EEStatus(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	userID := GetUserIDFromContext(ctx)
@@ -130,7 +122,6 @@ func (h *SecureMessagesHandler) GetE2EEStatus(w http.ResponseWriter, r *http.Req
 	WriteJSONResponse(w, http.StatusOK, status)
 }
 
-// InitiateKeyExchange initiates E2EE key exchange for a conversation
 func (h *SecureMessagesHandler) InitiateKeyExchange(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	userID := GetUserIDFromContext(ctx)
@@ -146,13 +137,11 @@ func (h *SecureMessagesHandler) InitiateKeyExchange(w http.ResponseWriter, r *ht
 		return
 	}
 
-	// Prevent self-messaging
 	if req.RecipientID == userID {
 		WriteErrorResponse(w, http.StatusBadRequest, "invalid_recipient", "Cannot initiate key exchange with yourself")
 		return
 	}
 
-	// Get client info for audit logging
 	clientIP := GetClientIP(r)
 	userAgent := r.UserAgent()
 
@@ -179,7 +168,6 @@ func (h *SecureMessagesHandler) InitiateKeyExchange(w http.ResponseWriter, r *ht
 	WriteJSONResponse(w, http.StatusCreated, response)
 }
 
-// AcceptKeyExchange accepts an E2EE key exchange
 func (h *SecureMessagesHandler) AcceptKeyExchange(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	userID := GetUserIDFromContext(ctx)
@@ -195,7 +183,6 @@ func (h *SecureMessagesHandler) AcceptKeyExchange(w http.ResponseWriter, r *http
 		return
 	}
 
-	// Get client info for audit logging
 	clientIP := GetClientIP(r)
 	userAgent := r.UserAgent()
 
@@ -229,7 +216,6 @@ func (h *SecureMessagesHandler) AcceptKeyExchange(w http.ResponseWriter, r *http
 	})
 }
 
-// GetPendingKeyExchanges returns pending key exchanges for a user
 func (h *SecureMessagesHandler) GetPendingKeyExchanges(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	userID := GetUserIDFromContext(ctx)
@@ -246,7 +232,6 @@ func (h *SecureMessagesHandler) GetPendingKeyExchanges(w http.ResponseWriter, r 
 	})
 }
 
-// SendSecureMessage sends an encrypted message
 func (h *SecureMessagesHandler) SendSecureMessage(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	userID := GetUserIDFromContext(ctx)
@@ -262,24 +247,15 @@ func (h *SecureMessagesHandler) SendSecureMessage(w http.ResponseWriter, r *http
 		return
 	}
 
-	// Prevent self-messaging
 	if req.RecipientID == userID {
 		WriteErrorResponse(w, http.StatusBadRequest, "invalid_recipient", "Cannot send message to yourself")
 		return
 	}
 
-	// Get client info for audit logging
 	clientIP := GetClientIP(r)
 	userAgent := r.UserAgent()
 
-	// For secure messages, we need to decrypt the client-side encrypted content
-	// and re-encrypt it with our shared secret
-	// The client sends the message encrypted with the recipient's public key
-	// We decrypt it and then encrypt it with the conversation shared secret
-
 	// Note: This is a simplified flow. In a full implementation, you might want
-	// to have the client directly encrypt with the shared secret they computed
-	// from their local key exchange
 
 	message, err := h.e2eeService.EncryptMessage(ctx, userID, req.RecipientID, req.EncryptedContent, clientIP, userAgent)
 	if err != nil {
@@ -299,7 +275,6 @@ func (h *SecureMessagesHandler) SendSecureMessage(w http.ResponseWriter, r *http
 		}
 	}
 
-	// Save encrypted message to database
 	err = h.e2eeService.SaveSecureMessage(ctx, message)
 	if err != nil {
 		WriteErrorResponse(w, http.StatusInternalServerError, "save_failed", "Failed to save secure message")
@@ -313,7 +288,6 @@ func (h *SecureMessagesHandler) SendSecureMessage(w http.ResponseWriter, r *http
 	WriteJSONResponse(w, http.StatusCreated, response)
 }
 
-// DecryptMessage decrypts a secure message for the authenticated user
 func (h *SecureMessagesHandler) DecryptMessage(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	userID := GetUserIDFromContext(ctx)
@@ -324,14 +298,12 @@ func (h *SecureMessagesHandler) DecryptMessage(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	// Get message from repository
 	message, err := h.e2eeService.GetMessage(ctx, messageID)
 	if err != nil {
 		WriteErrorResponse(w, http.StatusNotFound, "message_not_found", "Message not found")
 		return
 	}
 
-	// Verify user can decrypt this message
 	if message.SenderID != userID && message.RecipientID != userID {
 		WriteErrorResponse(w, http.StatusForbidden, "unauthorized", "Unauthorized to decrypt this message")
 		return
@@ -342,11 +314,9 @@ func (h *SecureMessagesHandler) DecryptMessage(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	// Get client info for audit logging
 	clientIP := GetClientIP(r)
 	userAgent := r.UserAgent()
 
-	// Decrypt message
 	plaintext, err := h.e2eeService.DecryptMessage(ctx, message, userID, clientIP, userAgent)
 	if err != nil {
 		switch err.Error() {
@@ -376,32 +346,26 @@ func (h *SecureMessagesHandler) DecryptMessage(w http.ResponseWriter, r *http.Re
 	})
 }
 
-// Helper functions (these would typically be in a separate utilities file)
-
-// GetUserIDFromContext extracts user ID from request context
 func GetUserIDFromContext(ctx context.Context) string {
-	// This should be implemented based on your authentication middleware
-	// For now, returning a placeholder
-	return "user-id-placeholder"
+	userID, ok := middleware.GetUserIDFromContext(ctx)
+	if !ok {
+		return ""
+	}
+	return userID.String()
 }
 
-// GetClientIP extracts client IP from request
 func GetClientIP(r *http.Request) string {
-	// Check X-Forwarded-For header first
 	if xForwardedFor := r.Header.Get("X-Forwarded-For"); xForwardedFor != "" {
-		// X-Forwarded-For can contain multiple IPs, take the first one
 		if commaIndex := strings.Index(xForwardedFor, ","); commaIndex != -1 {
 			return strings.TrimSpace(xForwardedFor[:commaIndex])
 		}
 		return strings.TrimSpace(xForwardedFor)
 	}
 
-	// Check X-Real-IP header
 	if xRealIP := r.Header.Get("X-Real-IP"); xRealIP != "" {
 		return strings.TrimSpace(xRealIP)
 	}
 
-	// Fall back to RemoteAddr
 	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
 		return host
 	}
@@ -409,7 +373,6 @@ func GetClientIP(r *http.Request) string {
 	return r.RemoteAddr
 }
 
-// WriteJSONResponse writes a JSON response
 func WriteJSONResponse(w http.ResponseWriter, statusCode int, data interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)
@@ -419,7 +382,6 @@ func WriteJSONResponse(w http.ResponseWriter, statusCode int, data interface{}) 
 	}
 }
 
-// WriteErrorResponse writes an error response
 func WriteErrorResponse(w http.ResponseWriter, statusCode int, errorCode, message string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)
@@ -434,7 +396,6 @@ func WriteErrorResponse(w http.ResponseWriter, statusCode int, errorCode, messag
 	}
 }
 
-// WriteValidationErrorResponse writes a validation error response
 func WriteValidationErrorResponse(w http.ResponseWriter, err error) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusBadRequest)
@@ -464,7 +425,6 @@ func WriteValidationErrorResponse(w http.ResponseWriter, err error) {
 	}
 }
 
-// getValidationErrorMessage returns user-friendly validation error messages
 func getValidationErrorMessage(fe validator.FieldError) string {
 	switch fe.Tag() {
 	case "required":
