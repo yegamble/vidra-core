@@ -69,7 +69,7 @@ Status legend:
 - **Content Moderation** - Abuse reporting and blocklist moderation tooling
 - **Rate Limiting + Virus Scanning** - Endpoint limits and ClamAV-backed scanning pipeline
 - **Plugin System** - Hook-based plugin architecture and plugin upload APIs
-- **Observability** - Structured logging, metrics, and health endpoints
+- **Observability** - OpenTelemetry tracing, Prometheus metrics, Grafana dashboards, structured logging, and health endpoints
 
 #### Deployment
 - **Kubernetes + Blue/Green** - Kustomize base/overlay manifests, blue/green deployment overlays, pre-switch validation jobs, smoke tests, Prometheus monitoring, Grafana dashboards
