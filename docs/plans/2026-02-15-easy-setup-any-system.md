@@ -876,6 +876,109 @@ Worktree: No
 
 ---
 
+## Iteration 2 Tasks (Verification Findings)
+
+### Task 20: [SECURITY] Critical security fixes across backup, wizard, and Docker
+
+**Objective:** Fix all must_fix security vulnerabilities found during code review.
+
+**Dependencies:** None
+
+**Files:**
+- Modify: `internal/setup/wizard_db.go` (SQL injection fix — use `pq.QuoteIdentifier()` for CREATE DATABASE)
+- Modify: `internal/httpapi/handlers/backup/backup_handlers.go` (validate backup ID — reject path separators/traversal in `extractBackupID`)
+- Modify: `internal/setup/wizard.go` (render templates to buffer first; log error server-side, return generic 500; handle JWT generation error in `NewWizard`)
+- Modify: `docker-compose.yml` (remove hardcoded JWT secret default — use `${JWT_SECRET:?JWT_SECRET must be set}`)
+- Modify: `internal/backup/sftp.go` (log warning when accepting unverified host key via TOFU)
+
+**Definition of Done:**
+- [ ] `CreateDatabaseIfNotExists` uses `pq.QuoteIdentifier()` — no string interpolation of user input into SQL
+- [ ] `extractBackupID` rejects IDs containing `/`, `..`, `\`, or other path-unsafe characters
+- [ ] `renderTemplate` renders to `bytes.Buffer` first; errors logged server-side, generic 500 returned to client
+- [ ] `NewWizard` handles `GenerateJWTSecret()` error (log.Fatal if crypto/rand fails)
+- [ ] `docker-compose.yml` JWT_SECRET uses `${JWT_SECRET:?...}` — no hardcoded default
+- [ ] SFTP TOFU logs `log.Printf("WARNING: accepting unverified host key...")` on first connection
+
+---
+
+### Task 21: [BUGS] Critical bugs — broken handlers, wizard POST, scheduler, restore stubs
+
+**Objective:** Fix all must_fix bugs found during code review.
+
+**Dependencies:** None
+
+**Files:**
+- Modify: `internal/usecase/backup/service.go` (implement `TriggerBackup` to call `BackupManager.CreateBackup`; fix `StartRestore` to log errors and track state)
+- Modify: `internal/setup/wizard.go` (add POST dispatch in `HandleReview`)
+- Modify: `internal/setup/server.go` (register POST route for `/setup/review`)
+- Modify: `internal/backup/scheduler.go` (sort backups by `ModTime` before retention delete)
+- Modify: `internal/backup/restore.go` (implement `runForwardMigrations` using `database.RunMigrationsWithDB`)
+- Modify: `internal/backup/restore.go` and all restore callers (set `CreatePreBackup=true` by default)
+- Modify: `internal/setup/wizard.go` (add `sync.Mutex` to protect shared `WizardConfig`)
+
+**Definition of Done:**
+- [ ] `TriggerBackup` creates actual backup via `BackupManager.CreateBackup` in goroutine, returns job ID
+- [ ] `StartRestore` logs errors from goroutine, `GetRestoreStatus` returns actual state
+- [ ] `HandleReview` dispatches POST to `processReviewForm`; `/setup/review` POST route registered in server.go
+- [ ] `applyRetention` sorts backups by `ModTime` ascending before deleting oldest
+- [ ] `runForwardMigrations` calls `database.RunMigrationsWithDB(ctx, db)` when manifest schema < current
+- [ ] All restore callers set `CreatePreBackup=true` unless user explicitly passes `--no-pre-backup`
+- [ ] Wizard config protected by `sync.Mutex` for concurrent request safety
+
+---
+
+### Task 22: [INCOMPLETE] Wire wizard completion, CLI commands, backup Redis/storage, scheduler registration
+
+**Objective:** Complete all partially-implemented features found during verification.
+
+**Dependencies:** Task 20, Task 21
+
+**Files:**
+- Modify: `internal/setup/wizard_forms.go` (call `ValidateDatabaseURL` and `ValidateJWTSecret` before saving)
+- Modify: `internal/setup/wizard_forms.go` or `wizard.go` (call `CreateDatabaseIfNotExists` and `CreateAdminUser` on wizard completion)
+- Modify: `cmd/cli/main.go` (implement `handleRestore` and `handleSetup` using internal packages)
+- Modify: `internal/backup/manager.go` (add Redis BGSAVE + storage tar to `CreateBackup`)
+- Modify: `internal/backup/restore.go` (implement Redis and storage restore stages)
+- Modify: `internal/app/app.go` (register backup scheduler in `initializeSchedulers`)
+- Modify: `internal/backup/manager.go` and `internal/backup/restore.go` (add context timeout for pg_dump/psql)
+- Modify: `internal/backup/restore.go` (add `io.LimitReader` for archive extraction)
+
+**Definition of Done:**
+- [ ] Wizard calls `ValidateDatabaseURL` for external DB URLs and `ValidateJWTSecret` for custom secrets
+- [ ] Wizard completion calls `CreateDatabaseIfNotExists` then `CreateAdminUser` with bcrypt-hashed password
+- [ ] `athena-cli backup restore` calls `RestoreManager.Restore` with real target
+- [ ] `athena-cli setup` runs interactive prompts and writes valid `.env`
+- [ ] Backup archive includes `database.sql`, `redis.rdb` (via BGSAVE), `storage/` (via tar), and `manifest.json`
+- [ ] Restore extracts and applies Redis RDB and storage files
+- [ ] Backup scheduler registered in `app.go` startup with config from `BACKUP_SCHEDULE`/`BACKUP_RETENTION`
+- [ ] `pg_dump`/`psql` wrapped with 30-minute context timeout
+- [ ] Archive extraction uses `io.LimitReader` to prevent decompression bombs
+
+---
+
+### Task 23: [TESTS] Remove all t.Skip stubs — S3/SFTP/FTP/handler/wizard_db/CLI tests
+
+**Objective:** Replace all `t.Skip()` stubs with real mock-based tests.
+
+**Dependencies:** Task 20, Task 21, Task 22
+
+**Files:**
+- Modify: `internal/backup/s3_test.go` (mock S3 client interface, test Upload/Download/List/Delete)
+- Modify: `internal/backup/sftp_test.go` (mock SFTP client, test all methods)
+- Modify: `internal/backup/ftp_test.go` (mock FTP connection, test all methods)
+- Modify: `internal/httpapi/handlers/backup/backup_handlers_test.go` (mock service interface, test all HTTP handlers)
+- Modify: `internal/setup/wizard_db_test.go` (use sqlmock, test CreateDatabaseIfNotExists and CreateAdminUser)
+- Create: `cmd/cli/main_test.go` (test extractable command logic)
+
+**Definition of Done:**
+- [ ] Zero `t.Skip()` in any backup test file
+- [ ] S3/SFTP/FTP each have tests for Upload, Download, List, Delete with mocked clients
+- [ ] Handler tests cover all 4 endpoints with mock service (success + error paths)
+- [ ] `wizard_db_test.go` tests CreateDatabaseIfNotExists and CreateAdminUser with sqlmock
+- [ ] CLI has basic test coverage for command parsing and config loading
+
+---
+
 ## Open Questions
 
 _(None remaining -- all resolved during planning)_
