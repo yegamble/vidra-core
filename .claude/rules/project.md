@@ -133,7 +133,7 @@ See subdirectory CLAUDE.md files for detailed guidance:
 
 ## Additional Context
 
-**Sprint Status:** Quality Programme (Sprint 17/20)
+**Sprint Status:** Quality Programme (Sprint 18/20)
 - Feature parity: 100% complete
 - Current focus: Core services 100% test coverage
 - Full test suite: 2,364 automated tests

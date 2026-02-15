@@ -1,9 +1,11 @@
 package messaging
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -42,6 +44,26 @@ func decodeBody(t *testing.T, rr *httptest.ResponseRecorder) map[string]interfac
 	var body map[string]interface{}
 	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &body))
 	return body
+}
+
+type MockMessageService struct {
+	mock.Mock
+}
+
+func (m *MockMessageService) SendMessage(ctx context.Context, senderID string, req *domain.SendMessageRequest) (*domain.Message, error) {
+	args := m.Called(ctx, senderID, req)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*domain.Message), args.Error(1)
+}
+
+func (m *MockMessageService) GetMessages(ctx context.Context, userID string, req *domain.GetMessagesRequest) (*domain.MessagesResponse, error) {
+	args := m.Called(ctx, userID, req)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*domain.MessagesResponse), args.Error(1)
 }
 
 func TestChatHandlers_RemoveModerator_Success(t *testing.T) {
@@ -1187,6 +1209,147 @@ func TestSendMessageHandler_Unauthorized(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, rr.Code)
 }
 
+func TestSendMessageHandler_InvalidJSON(t *testing.T) {
+	mockService := &MockMessageService{}
+	handler := SendMessageHandler(mockService)
+
+	req := httptest.NewRequest(http.MethodPost, "/messages", bytes.NewBufferString("invalid json"))
+	req = req.WithContext(context.WithValue(req.Context(), middleware.UserIDKey, uuid.NewString()))
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusBadRequest, rr.Code)
+}
+
+func TestSendMessageHandler_ValidationError(t *testing.T) {
+	mockService := &MockMessageService{}
+	handler := SendMessageHandler(mockService)
+
+	body := `{"recipient_id":"","content":"test"}`
+	req := httptest.NewRequest(http.MethodPost, "/messages", bytes.NewBufferString(body))
+	req = req.WithContext(context.WithValue(req.Context(), middleware.UserIDKey, uuid.NewString()))
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusBadRequest, rr.Code)
+}
+
+func TestSendMessageHandler_ServiceError(t *testing.T) {
+	mockService := &MockMessageService{}
+	mockService.On("SendMessage", mock.Anything, mock.AnythingOfType("string"), mock.Anything).
+		Return(nil, errors.New("service error"))
+	handler := SendMessageHandler(mockService)
+
+	recipientID := uuid.New().String()
+	body := fmt.Sprintf(`{"recipient_id":"%s","content":"test"}`, recipientID)
+	req := httptest.NewRequest(http.MethodPost, "/messages", bytes.NewBufferString(body))
+	req = req.WithContext(context.WithValue(req.Context(), middleware.UserIDKey, uuid.NewString()))
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusInternalServerError, rr.Code)
+	mockService.AssertExpectations(t)
+}
+
+func TestSendMessageHandler_Success(t *testing.T) {
+	mockService := &MockMessageService{}
+	messageID := uuid.New()
+	senderID := uuid.New().String()
+	recipientID := uuid.New().String()
+
+	mockService.On("SendMessage", mock.Anything, senderID, mock.Anything).
+		Return(&domain.Message{
+			ID:          messageID.String(),
+			SenderID:    senderID,
+			RecipientID: recipientID,
+			Content:     "test",
+		}, nil)
+	handler := SendMessageHandler(mockService)
+
+	body := fmt.Sprintf(`{"recipient_id":"%s","content":"test"}`, recipientID)
+	req := httptest.NewRequest(http.MethodPost, "/messages", bytes.NewBufferString(body))
+	req = req.WithContext(context.WithValue(req.Context(), middleware.UserIDKey, senderID))
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusCreated, rr.Code)
+	mockService.AssertExpectations(t)
+}
+
+func TestGetMessagesHandler_Unauthorized(t *testing.T) {
+	handler := GetMessagesHandler(nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/messages?conversation_with="+uuid.NewString(), nil)
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusUnauthorized, rr.Code)
+}
+
+func TestGetMessagesHandler_ServiceError(t *testing.T) {
+	mockService := &MockMessageService{}
+	mockService.On("GetMessages", mock.Anything, mock.AnythingOfType("string"), mock.Anything).
+		Return(nil, errors.New("service error"))
+	handler := GetMessagesHandler(mockService)
+
+	req := httptest.NewRequest(http.MethodGet, "/messages?conversation_with="+uuid.NewString(), nil)
+	req = req.WithContext(context.WithValue(req.Context(), middleware.UserIDKey, uuid.NewString()))
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusInternalServerError, rr.Code)
+	mockService.AssertExpectations(t)
+}
+
+func TestGetMessagesHandler_Success(t *testing.T) {
+	mockService := &MockMessageService{}
+	userID := uuid.New().String()
+	conversationWith := uuid.New().String()
+
+	mockService.On("GetMessages", mock.Anything, userID, mock.Anything).
+		Return(&domain.MessagesResponse{
+			Messages: []domain.Message{
+				{ID: uuid.NewString(), SenderID: userID, RecipientID: conversationWith, Content: "test"},
+			},
+			Total:   1,
+			HasMore: false,
+		}, nil)
+	handler := GetMessagesHandler(mockService)
+
+	req := httptest.NewRequest(http.MethodGet, "/messages?conversation_with="+conversationWith, nil)
+	req = req.WithContext(context.WithValue(req.Context(), middleware.UserIDKey, userID))
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusOK, rr.Code)
+	mockService.AssertExpectations(t)
+}
+
+func TestGetUserID_UUIDType(t *testing.T) {
+	userID := uuid.New()
+	ctx := context.WithValue(context.Background(), middleware.UserIDKey, userID)
+	result := getUserID(ctx)
+	assert.Equal(t, userID.String(), result)
+}
+
+func TestGetUserID_EmptyString(t *testing.T) {
+	ctx := context.WithValue(context.Background(), middleware.UserIDKey, "")
+	result := getUserID(ctx)
+	assert.Equal(t, "", result)
+}
+
+func TestGetUserID_NilUUID(t *testing.T) {
+	ctx := context.WithValue(context.Background(), middleware.UserIDKey, uuid.Nil)
+	result := getUserID(ctx)
+	assert.Equal(t, "", result)
+}
+
+func TestGetUserID_BackwardCompatibleFallback(t *testing.T) {
+	ctx := context.WithValue(context.Background(), "userID", "legacy-user-id")
+	result := getUserID(ctx)
+	assert.Equal(t, "legacy-user-id", result)
+}
+
 func TestNotificationHandlers_GetNotifications_Unauthorized(t *testing.T) {
 	svc := &mockNotificationService{}
 	h := NewNotificationHandlers(svc)
@@ -1216,10 +1379,77 @@ func TestNotificationHandlers_GetNotifications_InvalidUserID(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, rr.Code)
 }
 
+func TestNotificationHandlers_GetNotifications_InvalidType(t *testing.T) {
+	svc := &mockNotificationService{}
+	h := NewNotificationHandlers(svc)
+
+	userID := uuid.New().String()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/notifications?types=invalid_type", nil)
+	req = req.WithContext(context.WithValue(req.Context(), middleware.UserIDKey, userID))
+	rr := httptest.NewRecorder()
+
+	router := chi.NewRouter()
+	router.Get("/api/v1/notifications", h.GetNotifications)
+	router.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusBadRequest, rr.Code)
+}
+
+func TestNotificationHandlers_GetNotifications_ServiceError(t *testing.T) {
+	svc := &mockNotificationServiceErr{getNotificationsErr: errors.New("db error")}
+	h := NewNotificationHandlers(svc)
+
+	userID := uuid.New().String()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/notifications", nil)
+	req = req.WithContext(context.WithValue(req.Context(), middleware.UserIDKey, userID))
+	rr := httptest.NewRecorder()
+
+	router := chi.NewRouter()
+	router.Get("/api/v1/notifications", h.GetNotifications)
+	router.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusInternalServerError, rr.Code)
+}
+
+func TestNotificationHandlers_GetUnreadCount_ServiceError(t *testing.T) {
+	svc := &mockNotificationServiceErr{getUnreadCountErr: errors.New("db error")}
+	h := NewNotificationHandlers(svc)
+
+	userID := uuid.New().String()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/notifications/unread-count", nil)
+	req = req.WithContext(context.WithValue(req.Context(), middleware.UserIDKey, userID))
+	rr := httptest.NewRecorder()
+
+	router := chi.NewRouter()
+	router.Get("/api/v1/notifications/unread-count", h.GetUnreadCount)
+	router.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusInternalServerError, rr.Code)
+}
+
+func TestNotificationHandlers_GetNotificationStats_ServiceError(t *testing.T) {
+	svc := &mockNotificationServiceErr{getStatsErr: errors.New("db error")}
+	h := NewNotificationHandlers(svc)
+
+	userID := uuid.New().String()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/notifications/stats", nil)
+	req = req.WithContext(context.WithValue(req.Context(), middleware.UserIDKey, userID))
+	rr := httptest.NewRecorder()
+
+	router := chi.NewRouter()
+	router.Get("/api/v1/notifications/stats", h.GetNotificationStats)
+	router.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusInternalServerError, rr.Code)
+}
+
 type mockNotificationServiceErr struct {
-	markReadErr error
-	markAllErr  error
-	deleteErr   error
+	markReadErr         error
+	markAllErr          error
+	deleteErr           error
+	getNotificationsErr error
+	getUnreadCountErr   error
+	getStatsErr         error
 }
 
 func (m *mockNotificationServiceErr) CreateVideoNotificationForSubscribers(context.Context, *domain.Video, string) error {
@@ -1232,7 +1462,7 @@ func (m *mockNotificationServiceErr) CreateMessageReadNotification(context.Conte
 	return nil
 }
 func (m *mockNotificationServiceErr) GetUserNotifications(_ context.Context, _ uuid.UUID, _ domain.NotificationFilter) ([]domain.Notification, error) {
-	return nil, nil
+	return nil, m.getNotificationsErr
 }
 func (m *mockNotificationServiceErr) MarkAsRead(_ context.Context, _, _ uuid.UUID) error {
 	return m.markReadErr
@@ -1244,8 +1474,11 @@ func (m *mockNotificationServiceErr) DeleteNotification(_ context.Context, _, _ 
 	return m.deleteErr
 }
 func (m *mockNotificationServiceErr) GetUnreadCount(context.Context, uuid.UUID) (int, error) {
-	return 0, nil
+	return 0, m.getUnreadCountErr
 }
 func (m *mockNotificationServiceErr) GetStats(context.Context, uuid.UUID) (*domain.NotificationStats, error) {
+	if m.getStatsErr != nil {
+		return nil, m.getStatsErr
+	}
 	return &domain.NotificationStats{TotalCount: 0}, nil
 }

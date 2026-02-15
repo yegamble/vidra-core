@@ -26,7 +26,7 @@ type mockPlaylistService struct {
 	listPlaylistsFn           func(ctx context.Context, opts domain.PlaylistListOptions) (*domain.PlaylistListResponse, error)
 	addVideoToPlaylistFn      func(ctx context.Context, userID uuid.UUID, playlistID uuid.UUID, videoID uuid.UUID, position *int) error
 	removeVideoFromPlaylistFn func(ctx context.Context, userID uuid.UUID, playlistID uuid.UUID, itemID uuid.UUID) error
-	getPlaylistItemsFn        func(ctx context.Context, playlistID uuid.UUID, userID *uuid.UUID, limit, offset int) ([]domain.PlaylistItem, error)
+	getPlaylistItemsFn        func(ctx context.Context, playlistID uuid.UUID, userID *uuid.UUID, limit, offset int) ([]*domain.PlaylistItem, error)
 	reorderPlaylistItemFn     func(ctx context.Context, userID uuid.UUID, playlistID uuid.UUID, itemID uuid.UUID, newPosition int) error
 	getOrCreateWatchLaterFn   func(ctx context.Context, userID uuid.UUID) (*domain.Playlist, error)
 	addToWatchLaterFn         func(ctx context.Context, userID uuid.UUID, videoID uuid.UUID) error
@@ -60,7 +60,7 @@ func (m *mockPlaylistService) RemoveVideoFromPlaylist(ctx context.Context, userI
 	return m.removeVideoFromPlaylistFn(ctx, userID, playlistID, itemID)
 }
 
-func (m *mockPlaylistService) GetPlaylistItems(ctx context.Context, playlistID uuid.UUID, userID *uuid.UUID, limit, offset int) ([]domain.PlaylistItem, error) {
+func (m *mockPlaylistService) GetPlaylistItems(ctx context.Context, playlistID uuid.UUID, userID *uuid.UUID, limit, offset int) ([]*domain.PlaylistItem, error) {
 	return m.getPlaylistItemsFn(ctx, playlistID, userID, limit, offset)
 }
 
@@ -440,12 +440,12 @@ func TestRemoveVideoFromPlaylist_Success(t *testing.T) {
 
 func TestGetPlaylistItems_Success(t *testing.T) {
 	playlistID := uuid.New()
-	expectedItems := []domain.PlaylistItem{
+	expectedItems := []*domain.PlaylistItem{
 		{ID: uuid.New(), PlaylistID: playlistID},
 	}
 
 	mockService := &mockPlaylistService{
-		getPlaylistItemsFn: func(ctx context.Context, pid uuid.UUID, uid *uuid.UUID, limit, offset int) ([]domain.PlaylistItem, error) {
+		getPlaylistItemsFn: func(ctx context.Context, pid uuid.UUID, uid *uuid.UUID, limit, offset int) ([]*domain.PlaylistItem, error) {
 			assert.Equal(t, playlistID, pid)
 			return expectedItems, nil
 		},

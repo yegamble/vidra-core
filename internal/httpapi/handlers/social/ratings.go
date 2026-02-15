@@ -6,6 +6,7 @@ import (
 	"athena/internal/middleware"
 	ucrt "athena/internal/usecase/rating"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 
@@ -14,7 +15,7 @@ import (
 )
 
 type RatingHandlers struct {
-	ratingService *ucrt.Service
+	ratingService RatingServiceInterface
 }
 
 func NewRatingHandlers(ratingService *ucrt.Service) *RatingHandlers {
@@ -23,7 +24,6 @@ func NewRatingHandlers(ratingService *ucrt.Service) *RatingHandlers {
 	}
 }
 
-// SetRating handles PUT /api/v1/videos/{id}/rating
 func (h *RatingHandlers) SetRating(w http.ResponseWriter, r *http.Request) {
 	userID, ok := middleware.GetUserIDFromContext(r.Context())
 	if !ok {
@@ -53,7 +53,7 @@ func (h *RatingHandlers) SetRating(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.ratingService.SetRating(r.Context(), userID, videoID, rating); err != nil {
-		if err == domain.ErrNotFound {
+		if errors.Is(err, domain.ErrNotFound) {
 			shared.WriteError(w, http.StatusNotFound, err)
 			return
 		}
@@ -66,7 +66,6 @@ func (h *RatingHandlers) SetRating(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// GetRating handles GET /api/v1/videos/{id}/rating
 func (h *RatingHandlers) GetRating(w http.ResponseWriter, r *http.Request) {
 	videoIDStr := chi.URLParam(r, "id")
 	videoID, err := uuid.Parse(videoIDStr)
@@ -75,7 +74,6 @@ func (h *RatingHandlers) GetRating(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get current user if authenticated
 	var userID *uuid.UUID
 	if uid, ok := middleware.GetUserIDFromContext(r.Context()); ok {
 		userID = &uid
@@ -90,7 +88,6 @@ func (h *RatingHandlers) GetRating(w http.ResponseWriter, r *http.Request) {
 	shared.WriteJSON(w, http.StatusOK, stats)
 }
 
-// RemoveRating handles DELETE /api/v1/videos/{id}/rating
 func (h *RatingHandlers) RemoveRating(w http.ResponseWriter, r *http.Request) {
 	userID, ok := middleware.GetUserIDFromContext(r.Context())
 	if !ok {
@@ -115,7 +112,6 @@ func (h *RatingHandlers) RemoveRating(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// GetUserRatings handles GET /api/v1/users/me/ratings
 func (h *RatingHandlers) GetUserRatings(w http.ResponseWriter, r *http.Request) {
 	userID, ok := middleware.GetUserIDFromContext(r.Context())
 	if !ok {

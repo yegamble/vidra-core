@@ -424,3 +424,340 @@ func TestDecryptMessage_NotEncrypted(t *testing.T) {
 
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
 }
+
+func TestAcceptKeyExchange_InvalidJSON(t *testing.T) {
+	handler := NewSecureMessagesHandler(&mockE2EEService{}, validator.New())
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/e2ee/key-exchange/accept", bytes.NewBufferString("invalid json"))
+	rec := httptest.NewRecorder()
+
+	handler.AcceptKeyExchange(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+func TestAcceptKeyExchange_MissingKeyExchangeID(t *testing.T) {
+	userID := uuid.New().String()
+	handler := NewSecureMessagesHandler(&mockE2EEService{}, validator.New())
+
+	body := `{"public_key":"key","signature":"sig"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/e2ee/key-exchange/accept", bytes.NewBufferString(body))
+	ctx := context.WithValue(req.Context(), middleware.UserIDKey, userID)
+	req = req.WithContext(ctx)
+	rec := httptest.NewRecorder()
+
+	handler.AcceptKeyExchange(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+func TestAcceptKeyExchange_ServiceError(t *testing.T) {
+	userID := uuid.New().String()
+	keyExchangeID := uuid.New().String()
+
+	mockService := &mockE2EEService{
+		acceptKeyExchangeFn: func(ctx context.Context, keid string, uid string, clientIP string, userAgent string) error {
+			return errors.New("key exchange not found")
+		},
+	}
+
+	handler := NewSecureMessagesHandler(mockService, validator.New())
+
+	body := fmt.Sprintf(`{"key_exchange_id":"%s","public_key":"key","signature":"sig"}`, keyExchangeID)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/e2ee/key-exchange/accept", bytes.NewBufferString(body))
+	ctx := context.WithValue(req.Context(), middleware.UserIDKey, userID)
+	req = req.WithContext(ctx)
+	rec := httptest.NewRecorder()
+
+	handler.AcceptKeyExchange(rec, req)
+
+	assert.Equal(t, http.StatusInternalServerError, rec.Code)
+}
+
+func TestSendSecureMessage_InvalidJSON(t *testing.T) {
+	handler := NewSecureMessagesHandler(&mockE2EEService{}, validator.New())
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/messages/secure", bytes.NewBufferString("invalid json"))
+	rec := httptest.NewRecorder()
+
+	handler.SendSecureMessage(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+func TestSendSecureMessage_MissingRecipient(t *testing.T) {
+	senderID := uuid.New().String()
+	handler := NewSecureMessagesHandler(&mockE2EEService{}, validator.New())
+
+	body := `{"encrypted_content":"encrypted","pgp_signature":"sig"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/messages/secure", bytes.NewBufferString(body))
+	ctx := context.WithValue(req.Context(), middleware.UserIDKey, senderID)
+	req = req.WithContext(ctx)
+	rec := httptest.NewRecorder()
+
+	handler.SendSecureMessage(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+func TestSendSecureMessage_EncryptionError(t *testing.T) {
+	senderID := uuid.New().String()
+	recipientID := uuid.New().String()
+
+	mockService := &mockE2EEService{
+		encryptMessageFn: func(ctx context.Context, sid string, rid string, encryptedContent string, clientIP string, userAgent string) (*domain.Message, error) {
+			return nil, errors.New("encryption key not found")
+		},
+	}
+
+	handler := NewSecureMessagesHandler(mockService, validator.New())
+
+	body := fmt.Sprintf(`{"recipient_id":"%s","encrypted_content":"encrypted","pgp_signature":"sig"}`, recipientID)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/messages/secure", bytes.NewBufferString(body))
+	ctx := context.WithValue(req.Context(), middleware.UserIDKey, senderID)
+	req = req.WithContext(ctx)
+	rec := httptest.NewRecorder()
+
+	handler.SendSecureMessage(rec, req)
+
+	assert.Equal(t, http.StatusInternalServerError, rec.Code)
+}
+
+func TestSendSecureMessage_SaveError(t *testing.T) {
+	senderID := uuid.New().String()
+	recipientID := uuid.New().String()
+
+	mockService := &mockE2EEService{
+		encryptMessageFn: func(ctx context.Context, sid string, rid string, encryptedContent string, clientIP string, userAgent string) (*domain.Message, error) {
+			return &domain.Message{
+				ID:          "msg-123",
+				SenderID:    sid,
+				RecipientID: rid,
+				Content:     encryptedContent,
+			}, nil
+		},
+		saveSecureMessageFn: func(ctx context.Context, message *domain.Message) error {
+			return errors.New("database error")
+		},
+	}
+
+	handler := NewSecureMessagesHandler(mockService, validator.New())
+
+	body := fmt.Sprintf(`{"recipient_id":"%s","encrypted_content":"encrypted","pgp_signature":"sig"}`, recipientID)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/messages/secure", bytes.NewBufferString(body))
+	ctx := context.WithValue(req.Context(), middleware.UserIDKey, senderID)
+	req = req.WithContext(ctx)
+	rec := httptest.NewRecorder()
+
+	handler.SendSecureMessage(rec, req)
+
+	assert.Equal(t, http.StatusInternalServerError, rec.Code)
+}
+
+func TestDecryptMessage_MessageNotFound(t *testing.T) {
+	recipientID := uuid.New().String()
+
+	mockService := &mockE2EEService{
+		getMessageFn: func(ctx context.Context, messageID string) (*domain.Message, error) {
+			return nil, domain.ErrNotFound
+		},
+	}
+
+	handler := NewSecureMessagesHandler(mockService, validator.New())
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/messages/msg-123/decrypt", nil)
+
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("messageId", "msg-123")
+	ctx := context.WithValue(req.Context(), chi.RouteCtxKey, rctx)
+	ctx = context.WithValue(ctx, middleware.UserIDKey, recipientID)
+	req = req.WithContext(ctx)
+
+	rec := httptest.NewRecorder()
+
+	handler.DecryptMessage(rec, req)
+
+	assert.Equal(t, http.StatusNotFound, rec.Code)
+}
+
+func TestDecryptMessage_Unauthorized(t *testing.T) {
+	recipientID := uuid.New().String()
+	wrongUserID := uuid.New().String()
+
+	mockService := &mockE2EEService{
+		getMessageFn: func(ctx context.Context, messageID string) (*domain.Message, error) {
+			return &domain.Message{
+				ID:          messageID,
+				SenderID:    uuid.New().String(),
+				RecipientID: recipientID,
+				IsEncrypted: true,
+			}, nil
+		},
+	}
+
+	handler := NewSecureMessagesHandler(mockService, validator.New())
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/messages/msg-123/decrypt", nil)
+
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("messageId", "msg-123")
+	ctx := context.WithValue(req.Context(), chi.RouteCtxKey, rctx)
+	ctx = context.WithValue(ctx, middleware.UserIDKey, wrongUserID)
+	req = req.WithContext(ctx)
+
+	rec := httptest.NewRecorder()
+
+	handler.DecryptMessage(rec, req)
+
+	assert.Equal(t, http.StatusForbidden, rec.Code)
+}
+
+func TestDecryptMessage_DecryptionError(t *testing.T) {
+	recipientID := uuid.New().String()
+
+	mockService := &mockE2EEService{
+		getMessageFn: func(ctx context.Context, messageID string) (*domain.Message, error) {
+			return &domain.Message{
+				ID:          messageID,
+				SenderID:    uuid.New().String(),
+				RecipientID: recipientID,
+				IsEncrypted: true,
+			}, nil
+		},
+		decryptMessageFn: func(ctx context.Context, message *domain.Message, userID string, clientIP string, userAgent string) (string, error) {
+			return "", errors.New("decryption failed")
+		},
+	}
+
+	handler := NewSecureMessagesHandler(mockService, validator.New())
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/messages/msg-123/decrypt", nil)
+
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("messageId", "msg-123")
+	ctx := context.WithValue(req.Context(), chi.RouteCtxKey, rctx)
+	ctx = context.WithValue(ctx, middleware.UserIDKey, recipientID)
+	req = req.WithContext(ctx)
+
+	rec := httptest.NewRecorder()
+
+	handler.DecryptMessage(rec, req)
+
+	assert.Equal(t, http.StatusInternalServerError, rec.Code)
+}
+
+func TestInitiateKeyExchange_InvalidJSON(t *testing.T) {
+	handler := NewSecureMessagesHandler(&mockE2EEService{}, validator.New())
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/e2ee/key-exchange/initiate", bytes.NewBufferString("invalid json"))
+	rec := httptest.NewRecorder()
+
+	handler.InitiateKeyExchange(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+func TestInitiateKeyExchange_MissingRecipient(t *testing.T) {
+	senderID := uuid.New().String()
+	handler := NewSecureMessagesHandler(&mockE2EEService{}, validator.New())
+
+	body := `{"public_key":"key","signature":"sig"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/e2ee/key-exchange/initiate", bytes.NewBufferString(body))
+	ctx := context.WithValue(req.Context(), middleware.UserIDKey, senderID)
+	req = req.WithContext(ctx)
+	rec := httptest.NewRecorder()
+
+	handler.InitiateKeyExchange(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+func TestInitiateKeyExchange_ServiceError(t *testing.T) {
+	senderID := uuid.New().String()
+	recipientID := uuid.New().String()
+
+	mockService := &mockE2EEService{
+		initiateKeyExchangeFn: func(ctx context.Context, sid string, rid string, clientIP string, userAgent string) (*domain.KeyExchangeMessage, error) {
+			return nil, errors.New("recipient not found")
+		},
+	}
+
+	handler := NewSecureMessagesHandler(mockService, validator.New())
+
+	body := fmt.Sprintf(`{"recipient_id":"%s","public_key":"key","signature":"sig"}`, recipientID)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/e2ee/key-exchange/initiate", bytes.NewBufferString(body))
+	ctx := context.WithValue(req.Context(), middleware.UserIDKey, senderID)
+	req = req.WithContext(ctx)
+	rec := httptest.NewRecorder()
+
+	handler.InitiateKeyExchange(rec, req)
+
+	assert.Equal(t, http.StatusInternalServerError, rec.Code)
+}
+
+func TestUnlockE2EE_InvalidJSON(t *testing.T) {
+	handler := NewSecureMessagesHandler(&mockE2EEService{}, validator.New())
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/e2ee/unlock", bytes.NewBufferString("invalid json"))
+	rec := httptest.NewRecorder()
+
+	handler.UnlockE2EE(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+func TestUnlockE2EE_ServiceError(t *testing.T) {
+	mockService := &mockE2EEService{
+		unlockE2EEFn: func(ctx context.Context, userID string, password string, clientIP string, userAgent string) error {
+			return errors.New("database error")
+		},
+	}
+
+	handler := NewSecureMessagesHandler(mockService, validator.New())
+
+	body := `{"password":"test-password"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/e2ee/unlock", bytes.NewBufferString(body))
+	rec := httptest.NewRecorder()
+
+	handler.UnlockE2EE(rec, req)
+
+	assert.Equal(t, http.StatusInternalServerError, rec.Code)
+}
+
+func TestGetE2EEStatus_ServiceError(t *testing.T) {
+	mockService := &mockE2EEService{
+		getE2EEStatusFn: func(ctx context.Context, userID string) (*domain.E2EEStatusResponse, error) {
+			return nil, errors.New("database error")
+		},
+	}
+
+	handler := NewSecureMessagesHandler(mockService, validator.New())
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/e2ee/status", nil)
+	rec := httptest.NewRecorder()
+
+	handler.GetE2EEStatus(rec, req)
+
+	assert.Equal(t, http.StatusInternalServerError, rec.Code)
+}
+
+func TestGetPendingKeyExchanges_ServiceError(t *testing.T) {
+	userID := uuid.New().String()
+
+	mockService := &mockE2EEService{
+		getPendingKeyExchangesFn: func(ctx context.Context, uid string) ([]*domain.KeyExchangeMessage, error) {
+			return nil, errors.New("database error")
+		},
+	}
+
+	handler := NewSecureMessagesHandler(mockService, validator.New())
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/e2ee/key-exchanges", nil)
+	ctx := context.WithValue(req.Context(), middleware.UserIDKey, userID)
+	req = req.WithContext(ctx)
+	rec := httptest.NewRecorder()
+
+	handler.GetPendingKeyExchanges(rec, req)
+
+	assert.Equal(t, http.StatusInternalServerError, rec.Code)
+}

@@ -32,3 +32,16 @@ internal/usecase/redundancy              89.0
 internal/usecase/social                  89.0
 internal/usecase/upload                  86.0
 internal/usecase/views                   97.0
+
+# Repository layer (Sprint 18)
+internal/repository                      90.0
+
+# HTTP API handlers (Sprint 18)
+internal/httpapi/shared                  95.0
+internal/httpapi/handlers/auth           79.0
+internal/httpapi/handlers/federation     72.0
+internal/httpapi/handlers/messaging      77.0
+internal/httpapi/handlers/moderation     96.0
+internal/httpapi/handlers/payments       82.0
+internal/httpapi/handlers/social         80.0
+internal/httpapi/handlers/video          79.0

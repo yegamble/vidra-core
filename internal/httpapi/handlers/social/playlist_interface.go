@@ -16,7 +16,7 @@ type PlaylistServiceInterface interface {
 	ListPlaylists(ctx context.Context, opts domain.PlaylistListOptions) (*domain.PlaylistListResponse, error)
 	AddVideoToPlaylist(ctx context.Context, userID uuid.UUID, playlistID uuid.UUID, videoID uuid.UUID, position *int) error
 	RemoveVideoFromPlaylist(ctx context.Context, userID uuid.UUID, playlistID uuid.UUID, itemID uuid.UUID) error
-	GetPlaylistItems(ctx context.Context, playlistID uuid.UUID, userID *uuid.UUID, limit, offset int) ([]domain.PlaylistItem, error)
+	GetPlaylistItems(ctx context.Context, playlistID uuid.UUID, userID *uuid.UUID, limit, offset int) ([]*domain.PlaylistItem, error)
 	ReorderPlaylistItem(ctx context.Context, userID uuid.UUID, playlistID uuid.UUID, itemID uuid.UUID, newPosition int) error
 	GetOrCreateWatchLater(ctx context.Context, userID uuid.UUID) (*domain.Playlist, error)
 	AddToWatchLater(ctx context.Context, userID uuid.UUID, videoID uuid.UUID) error

@@ -75,6 +75,8 @@ See [peertube_compatibility.md](./peertube_compatibility.md) for:
 
 - **[SPRINT15_COMPLETE.md](./SPRINT15_COMPLETE.md)** - Stabilize mainline; integrate PR queue
 - **[SPRINT16_COMPLETE.md](./SPRINT16_COMPLETE.md)** - API contract reproducibility (CI enforcement, Postman smoke tests)
+- **[SPRINT17_COMPLETE.md](./SPRINT17_COMPLETE.md)** - Coverage uplift I: Core services (all usecase packages at 80%+)
+- **[SPRINT18_COMPLETE.md](./SPRINT18_COMPLETE.md)** - Coverage uplift II: Handlers & repositories (repository 90%, handlers 80%+)
 - **[QUALITY_PROGRAMME.md](./QUALITY_PROGRAMME.md)** - Full Quality Programme roadmap
 
 ## Project Metrics

@@ -34,15 +34,13 @@ func getUserID(ctx context.Context) string {
 		}
 	}
 
-	// Backward-compatible fallback for tests or legacy middleware that used plain string keys.
 	if v, ok := ctx.Value("userID").(string); ok && v != "" {
 		return v
 	}
 	return ""
 }
 
-// SendMessageHandler handles sending a new message
-func SendMessageHandler(messageService *usecase.MessageService) http.HandlerFunc {
+func SendMessageHandler(messageService MessageServiceInterface) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		userID := getUserID(r.Context())
 		if userID == "" {
@@ -72,8 +70,7 @@ func SendMessageHandler(messageService *usecase.MessageService) http.HandlerFunc
 	}
 }
 
-// GetMessagesHandler handles retrieving messages in a conversation
-func GetMessagesHandler(messageService *usecase.MessageService) http.HandlerFunc {
+func GetMessagesHandler(messageService MessageServiceInterface) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		userID := getUserID(r.Context())
 		if userID == "" {
@@ -114,7 +111,6 @@ func GetMessagesHandler(messageService *usecase.MessageService) http.HandlerFunc
 	}
 }
 
-// messageActionHandler is a helper to reduce duplication in message handlers
 func messageActionHandler(w http.ResponseWriter, r *http.Request, action func(ctx context.Context, userID, messageID string) error, errorCode string) {
 	userID := getUserID(r.Context())
 	if userID == "" {
@@ -138,7 +134,6 @@ func messageActionHandler(w http.ResponseWriter, r *http.Request, action func(ct
 	shared.WriteJSON(w, http.StatusOK, map[string]string{"status": "success"})
 }
 
-// MarkMessageReadHandler handles marking a message as read
 func MarkMessageReadHandler(messageService *usecase.MessageService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		messageActionHandler(w, r, func(ctx context.Context, userID, messageID string) error {
@@ -151,7 +146,6 @@ func MarkMessageReadHandler(messageService *usecase.MessageService) http.Handler
 	}
 }
 
-// DeleteMessageHandler handles deleting a message
 func DeleteMessageHandler(messageService *usecase.MessageService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		messageActionHandler(w, r, func(ctx context.Context, userID, messageID string) error {
@@ -164,7 +158,6 @@ func DeleteMessageHandler(messageService *usecase.MessageService) http.HandlerFu
 	}
 }
 
-// GetConversationsHandler handles retrieving user's conversations
 func GetConversationsHandler(messageService *usecase.MessageService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		userID := getUserID(r.Context())
@@ -197,7 +190,6 @@ func GetConversationsHandler(messageService *usecase.MessageService) http.Handle
 	}
 }
 
-// GetUnreadCountHandler handles retrieving the user's unread message count
 func GetUnreadCountHandler(messageService *usecase.MessageService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		userID := getUserID(r.Context())
