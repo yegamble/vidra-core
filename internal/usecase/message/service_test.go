@@ -189,6 +189,57 @@ func TestSendMessage_TooLong(t *testing.T) {
 	assert.ErrorIs(t, err, domain.ErrMessageTooLong)
 }
 
+func TestSendMessage_XSSSanitization(t *testing.T) {
+	msgRepo := new(mockMessageRepo)
+	userRepo := new(mockUserRepo)
+	svc := NewService(msgRepo, userRepo)
+
+	sender := &domain.User{ID: "user-1", Username: "alice"}
+	recipient := &domain.User{ID: "user-2", Username: "bob"}
+
+	userRepo.On("GetByID", mock.Anything, "user-1").Return(sender, nil)
+	userRepo.On("GetByID", mock.Anything, "user-2").Return(recipient, nil)
+	msgRepo.On("CreateMessage", mock.Anything, mock.MatchedBy(func(m *domain.Message) bool {
+		return !strings.Contains(m.Content, "<script>") && !strings.Contains(m.Content, "onerror")
+	})).Return(nil)
+
+	testCases := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "Script tag",
+			input:    "Hello <script>alert('xss')</script>Bob",
+			expected: "Hello alert('xss')Bob",
+		},
+		{
+			name:     "Img with onerror",
+			input:    "Check this <img src=x onerror=alert(1)>",
+			expected: "Check this ",
+		},
+		{
+			name:     "HTML elements",
+			input:    "<b>Bold</b> <i>Italic</i>",
+			expected: "Bold Italic",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := &domain.SendMessageRequest{
+				RecipientID: "user-2",
+				Content:     tc.input,
+			}
+
+			msg, err := svc.SendMessage(context.Background(), "user-1", req)
+			assert.NoError(t, err)
+			assert.NotNil(t, msg)
+			assert.Equal(t, tc.expected, msg.Content)
+		})
+	}
+}
+
 func TestGetMessages_Success(t *testing.T) {
 	msgRepo := new(mockMessageRepo)
 	userRepo := new(mockUserRepo)
