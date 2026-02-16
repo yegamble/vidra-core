@@ -15,11 +15,20 @@ rules:
     allowed-values: ['true', 'false', 'yes', 'no', 'on', 'off']
   indentation:
     spaces: 2
-    indent-sequences: true
+    indent-sequences: whatever
     check-multi-line-strings: false
+  braces:
+    max-spaces-inside: -1
+  brackets:
+    max-spaces-inside: -1
+  commas: disable
+  trailing-spaces: disable
+  new-line-at-end-of-file: enable
+  key-duplicates: enable
 
 ignore: |
   vendor/
   .git/
   node_modules/
   testdata/
+  api/openapi_channels.yaml

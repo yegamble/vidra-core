@@ -10,10 +10,6 @@ servers:
   - url: https://api.example.com
     description: Production server
 
-tags:
-  - name: PeerTube-Compat
-    description: Endpoints intended to match PeerTube-style resource contracts.
-
 paths:
   /.well-known/atproto-did:
     get:
@@ -1517,6 +1513,8 @@ components:
             type: string
 
 tags:
+  - name: PeerTube-Compat
+    description: Endpoints intended to match PeerTube-style resource contracts.
   - name: Federation
     description: ATProto federation endpoints
   - name: ActivityPub
