@@ -32,6 +32,17 @@ jobs:
   # ============================================================================
   # FAST TESTS - Run in parallel
   # ============================================================================
+  shell-tests:
+    name: Shell Script Tests
+    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run install.sh tests
+        run: bash scripts/install_test.sh
+
   unit:
     name: Unit Tests
     runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}

@@ -170,10 +170,132 @@ func TestLoad_SetupModeAllowsPartialConfig(t *testing.T) {
 			wantSetupMode: true,
 			wantErr:       false,
 		},
+		{
+			name: "all fields unset - should be setup mode",
+			envVars: map[string]string{
+				"PORT": "8080",
+			},
+			wantSetupMode: true,
+			wantErr:       false,
+		},
+		{
+			name: "all required fields with SETUP_COMPLETED unset - should be normal mode",
+			envVars: map[string]string{
+				"PORT":         "8080",
+				"DATABASE_URL": "postgres://user:pass@localhost/db",
+				"REDIS_URL":    "redis://localhost:6379",
+				"JWT_SECRET":   "this-is-a-very-long-secret-key-at-least-32-characters-long",
+				"REQUIRE_IPFS": "false",
+			},
+			wantSetupMode: false,
+			wantErr:       false,
+		},
+		{
+			name: "SETUP_COMPLETED=0 with all fields - should be setup mode",
+			envVars: map[string]string{
+				"PORT":            "8080",
+				"DATABASE_URL":    "postgres://user:pass@localhost/db",
+				"REDIS_URL":       "redis://localhost:6379",
+				"JWT_SECRET":      "this-is-a-very-long-secret-key-at-least-32-characters-long",
+				"SETUP_COMPLETED": "0",
+				"REQUIRE_IPFS":    "false",
+			},
+			wantSetupMode: true,
+			wantErr:       false,
+		},
+		{
+			name: "SETUP_COMPLETED=1 with all fields - should be normal mode",
+			envVars: map[string]string{
+				"PORT":            "8080",
+				"DATABASE_URL":    "postgres://user:pass@localhost/db",
+				"REDIS_URL":       "redis://localhost:6379",
+				"JWT_SECRET":      "this-is-a-very-long-secret-key-at-least-32-characters-long",
+				"SETUP_COMPLETED": "1",
+				"REQUIRE_IPFS":    "false",
+			},
+			wantSetupMode: false,
+			wantErr:       false,
+		},
+		{
+			name: "SETUP_COMPLETED=true with missing DATABASE_URL - should error",
+			envVars: map[string]string{
+				"PORT":            "8080",
+				"REDIS_URL":       "redis://localhost:6379",
+				"JWT_SECRET":      "this-is-a-very-long-secret-key-at-least-32-characters-long",
+				"SETUP_COMPLETED": "true",
+				"REQUIRE_IPFS":    "false",
+			},
+			wantSetupMode: false,
+			wantErr:       true,
+		},
+		{
+			name: "SETUP_COMPLETED=true with missing REDIS_URL - should error",
+			envVars: map[string]string{
+				"PORT":            "8080",
+				"DATABASE_URL":    "postgres://user:pass@localhost/db",
+				"JWT_SECRET":      "this-is-a-very-long-secret-key-at-least-32-characters-long",
+				"SETUP_COMPLETED": "true",
+				"REQUIRE_IPFS":    "false",
+			},
+			wantSetupMode: false,
+			wantErr:       true,
+		},
+		{
+			name: "SETUP_COMPLETED=true with missing JWT_SECRET - should error",
+			envVars: map[string]string{
+				"PORT":            "8080",
+				"DATABASE_URL":    "postgres://user:pass@localhost/db",
+				"REDIS_URL":       "redis://localhost:6379",
+				"SETUP_COMPLETED": "true",
+				"REQUIRE_IPFS":    "false",
+			},
+			wantSetupMode: false,
+			wantErr:       true,
+		},
+		{
+			name: "SETUP_COMPLETED with whitespace ' false ' - should be setup mode",
+			envVars: map[string]string{
+				"PORT":            "8080",
+				"DATABASE_URL":    "postgres://user:pass@localhost/db",
+				"REDIS_URL":       "redis://localhost:6379",
+				"JWT_SECRET":      "this-is-a-very-long-secret-key-at-least-32-characters-long",
+				"SETUP_COMPLETED": "  false  ",
+				"REQUIRE_IPFS":    "false",
+			},
+			wantSetupMode: true,
+			wantErr:       false,
+		},
+		{
+			name: "SETUP_COMPLETED=FALSE (uppercase) - should be setup mode",
+			envVars: map[string]string{
+				"PORT":            "8080",
+				"DATABASE_URL":    "postgres://user:pass@localhost/db",
+				"REDIS_URL":       "redis://localhost:6379",
+				"JWT_SECRET":      "this-is-a-very-long-secret-key-at-least-32-characters-long",
+				"SETUP_COMPLETED": "FALSE",
+				"REQUIRE_IPFS":    "false",
+			},
+			wantSetupMode: true,
+			wantErr:       false,
+		},
+		{
+			name: "SETUP_COMPLETED=True (mixed case) - should be normal mode",
+			envVars: map[string]string{
+				"PORT":            "8080",
+				"DATABASE_URL":    "postgres://user:pass@localhost/db",
+				"REDIS_URL":       "redis://localhost:6379",
+				"JWT_SECRET":      "this-is-a-very-long-secret-key-at-least-32-characters-long",
+				"SETUP_COMPLETED": "True",
+				"REQUIRE_IPFS":    "false",
+			},
+			wantSetupMode: false,
+			wantErr:       false,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("ENVIRONMENT", "")
 			for key, value := range tt.envVars {
 				t.Setenv(key, value)
 			}
