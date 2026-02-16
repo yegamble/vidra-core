@@ -201,6 +201,44 @@ func TestShouldExcludePath(t *testing.T) {
 	}
 }
 
+func TestShouldExcludePath_TraversalEdgeCases(t *testing.T) {
+	excludeDirs := []string{"videos", "thumbnails"}
+
+	tests := []struct {
+		name     string
+		path     string
+		excluded bool
+	}{
+		{"dot-slash videos still excluded", "./videos", true},
+		{"dot-slash nested still excluded", "./videos/file.mp4", true},
+		{"trailing slash excluded", "videos/", true},
+		{"double dot does not escape to parent", "../videos", false},
+		{"traversal through excluded dir", "videos/../secrets", false},
+
+		{"deeply nested in excluded dir", "videos/sub/deep/file.mp4", true},
+		{"deeply nested in thumbnails", "thumbnails/2026/02/thumb.jpg", true},
+
+		{"prefix match is not excluded", "videos2", false},
+		{"suffix match is not excluded", "myvideos", false},
+		{"substring match is not excluded", "old-videos-backup", false},
+
+		{"empty path not excluded", "", false},
+		{"dot path not excluded", ".", false},
+		{"empty exclude list", "videos", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dirs := excludeDirs
+			if tt.name == "empty exclude list" {
+				dirs = []string{}
+			}
+			result := shouldExcludePath(tt.path, dirs)
+			assert.Equal(t, tt.excluded, result, "path: %q", tt.path)
+		})
+	}
+}
+
 func TestBackupManager_ComponentsDefaultValues(t *testing.T) {
 	target := NewLocalBackend(t.TempDir())
 	manager := NewBackupManager(target, "1.0.0", 61, "postgres://localhost/test", "", "")

@@ -11,6 +11,7 @@ import (
 	"athena/internal/repository"
 	"athena/internal/scheduler"
 	"athena/internal/usecase"
+	ucbackup "athena/internal/usecase/backup"
 	ucchannel "athena/internal/usecase/channel"
 	uccmt "athena/internal/usecase/comment"
 	"athena/internal/usecase/encoding"
@@ -66,7 +67,7 @@ type HandlerDependencies struct {
 	StreamManager        *livestream.StreamManager
 	HLSTranscoder        *livestream.HLSTranscoder
 	IPFSStreamingService *ucipfs.Service
-	BackupService        any
+	BackupService        *ucbackup.Service
 
 	EncodingScheduler *scheduler.EncodingScheduler
 

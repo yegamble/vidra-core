@@ -23,7 +23,6 @@ import (
 	"athena/internal/config"
 	"athena/internal/domain"
 	"athena/internal/middleware"
-	ucbackup "athena/internal/usecase/backup"
 	importuc "athena/internal/usecase/import"
 )
 
@@ -464,7 +463,7 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 			})
 
 			if deps.BackupService != nil {
-				backupHandler := backuphandlers.NewHandler(deps.BackupService.(*ucbackup.Service))
+				backupHandler := backuphandlers.NewHandler(deps.BackupService)
 				r.Route("/backups", func(r chi.Router) {
 					r.Get("/", backupHandler.ListBackups)
 					r.Post("/", backupHandler.TriggerBackup)

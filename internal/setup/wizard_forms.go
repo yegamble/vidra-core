@@ -10,6 +10,9 @@ func (w *Wizard) processDatabaseForm(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
 	w.config.PostgresMode = r.FormValue("POSTGRES_MODE")
 	w.config.DatabaseURL = r.FormValue("DATABASE_URL")
 	w.config.CreateDB = r.FormValue("create_db") == "true"
@@ -30,6 +33,9 @@ func (w *Wizard) processServicesForm(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
 	w.config.RedisMode = r.FormValue("REDIS_MODE")
 	w.config.RedisURL = r.FormValue("REDIS_URL")
 	w.config.EnableIPFS = r.FormValue("ENABLE_IPFS") == "true"
@@ -47,6 +53,9 @@ func (w *Wizard) processStorageForm(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
 	w.config.StoragePath = r.FormValue("STORAGE_PATH")
 	w.config.BackupEnabled = r.FormValue("BACKUP_ENABLED") == "true"
 	w.config.BackupTarget = r.FormValue("BACKUP_TARGET")
@@ -62,6 +71,9 @@ func (w *Wizard) processSecurityForm(rw http.ResponseWriter, r *http.Request) {
 		http.Error(rw, "Invalid form data", http.StatusBadRequest)
 		return
 	}
+
+	w.mu.Lock()
+	defer w.mu.Unlock()
 
 	customSecret := r.FormValue("JWT_SECRET_CUSTOM")
 	if customSecret != "" {
@@ -83,6 +95,9 @@ func (w *Wizard) processReviewForm(rw http.ResponseWriter, r *http.Request) {
 		http.Error(rw, "Invalid form data", http.StatusBadRequest)
 		return
 	}
+
+	w.mu.Lock()
+	defer w.mu.Unlock()
 
 	adminPassword := r.FormValue("ADMIN_PASSWORD")
 	if adminPassword == "" {
