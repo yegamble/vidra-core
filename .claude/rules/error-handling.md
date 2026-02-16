@@ -6,7 +6,7 @@ Project-specific error conventions for Athena.
 
 Use predefined sentinel errors from `internal/domain/errors.go` for common cases.
 
-**Standard errors:**
+**Standard errors** (`internal/domain/errors.go`):
 ```go
 import "athena/internal/domain"
 
@@ -22,6 +22,11 @@ domain.ErrForbidden          // Forbidden
 domain.ErrValidation         // Validation error
 domain.ErrBadRequest         // Bad request
 domain.ErrConflict           // Resource already exists
+domain.ErrInternalServer     // Internal server error
+domain.ErrTooManyRequests    // Too many requests
+domain.ErrServiceUnavailable // Service unavailable
+domain.ErrInvalidInput       // Invalid input
+domain.ErrDuplicateEntry     // Duplicate entry
 ```
 
 **Domain-specific errors:**
@@ -42,6 +47,9 @@ domain.ErrVideoProcessing
 domain.ErrVideoFailed
 domain.ErrInvalidFormat
 domain.ErrFileTooLarge
+domain.ErrChunkMissing
+domain.ErrInvalidChunk
+domain.ErrInvalidVideoID
 ```
 
 Storage errors:
@@ -56,7 +64,28 @@ Message errors:
 domain.ErrMessageNotFound
 domain.ErrConversationNotFound
 domain.ErrCannotMessageSelf
+domain.ErrMessageTooLong
+domain.ErrInvalidMessageType
 ```
+
+Notification errors:
+```go
+domain.ErrNotificationNotFound
+```
+
+**Additional domain-specific errors** are defined alongside their domain models:
+
+| File | Error domains |
+|------|--------------|
+| `domain/analytics.go` | Analytics events, sessions, retention |
+| `domain/livestream.go` | Stream keys, status, viewers |
+| `domain/twofa.go` | 2FA setup, codes, backup codes |
+| `domain/chat.go` | Chat messages, bans, moderators |
+| `domain/email_verification.go` | Email verification tokens |
+| `domain/import.go` | Video import, download, quota |
+| `domain/plugin.go` | Plugin lifecycle, permissions |
+| `domain/torrent.go` | Info hash, peers, trackers |
+| `domain/redundancy.go` | Instance peers, sync, policies |
 
 ## DomainError
 
@@ -109,25 +138,33 @@ if err := processVideo(ctx, video); err != nil {
 
 ## HTTP Status Mapping
 
-Map domain errors to HTTP status codes in handlers:
+Use `shared.MapDomainErrorToHTTP()` from `internal/httpapi/shared/response.go`. It uses a two-level mapping:
+
+1. **DomainError codes** — Checks `DomainError.Code` against a code-to-status map
+2. **Sentinel errors** — Falls through to `errors.Is()` matching
 
 ```go
-func mapErrorToHTTP(err error) int {
-    switch {
-    case errors.Is(err, domain.ErrNotFound):
-        return http.StatusNotFound
-    case errors.Is(err, domain.ErrUnauthorized):
-        return http.StatusUnauthorized
-    case errors.Is(err, domain.ErrForbidden):
-        return http.StatusForbidden
-    case errors.Is(err, domain.ErrValidation), errors.Is(err, domain.ErrBadRequest):
-        return http.StatusBadRequest
-    case errors.Is(err, domain.ErrConflict):
-        return http.StatusConflict
-    default:
-        return http.StatusInternalServerError
-    }
-}
+// In handlers, use the shared mapper:
+status := shared.MapDomainErrorToHTTP(err)
+shared.WriteError(w, status, err)
+
+// Response envelope: { success, data, error, meta }
+shared.WriteJSON(w, http.StatusOK, data)
+shared.WriteJSONWithMeta(w, http.StatusOK, data, &shared.Meta{Total: count, Limit: limit, Offset: offset})
+```
+
+**Sentinel error → HTTP status mappings:**
+
+| Errors | HTTP Status |
+|--------|------------|
+| `ErrNotFound`, `ErrUserNotFound`, `ErrVideoNotFound`, `ErrMessageNotFound` | 404 |
+| `ErrUnauthorized`, `ErrInvalidCredentials`, `ErrInvalidToken`, `ErrTokenExpired` | 401 |
+| `ErrForbidden` | 403 |
+| `ErrValidation`, `ErrBadRequest`, `ErrInvalidFormat`, `ErrCannotMessageSelf` | 400 |
+| `ErrConflict`, `ErrUserAlreadyExists` | 409 |
+| `ErrTooManyRequests` | 429 |
+| `ErrServiceUnavailable`, `ErrIPFSUnavailable` | 503 |
+| `ErrFileTooLarge` | 413 |
 ```
 
 ## When to Use What

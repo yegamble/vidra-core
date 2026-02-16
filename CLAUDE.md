@@ -21,17 +21,24 @@ This runs: `gofmt`, `goimports`, `golangci-lint` (with gosec), unit tests, and b
 ```
 /cmd/server         → main entry point
 /internal/
+  activitypub/      → Federation (see internal/activitypub/CLAUDE.md)
+  app/              → application wiring and lifecycle
+  backup/           → backup/restore system
+  chat/             → live stream chat (WebSocket)
   config/           → environment, flags, validation
+  domain/           → core models, no infra dependencies
   httpapi/          → Chi routes, handlers (see internal/httpapi/CLAUDE.md)
   middleware/       → auth, rate-limit, cors, tracing
-  domain/           → core models, no infra dependencies
-  usecase/          → business logic with interfaces
+  plugin/           → plugin system with hooks
   repository/       → SQLX repos for Postgres
   security/         → SSRF, virus scanning, crypto (see internal/security/CLAUDE.md)
-  activitypub/      → Federation support (see internal/activitypub/CLAUDE.md)
-  worker/           → async jobs (ffmpeg, GC, pins)
+  setup/            → setup wizard (first-run config)
   storage/          → hybrid local/IPFS/S3
+  usecase/          → business logic with interfaces
+  worker/           → async jobs (ffmpeg, GC, pins)
 /migrations/        → Goose SQL migrations (see migrations/CLAUDE.md)
+/scripts/           → build, validation, install scripts
+/terraform/         → infrastructure as code
 ```
 
 ## Key Principles
@@ -39,7 +46,7 @@ This runs: `gofmt`, `goimports`, `golangci-lint` (with gosec), unit tests, and b
 1. **DI via constructors** - No global state
 2. **Context-first APIs** - `context.Context` as first parameter
 3. **Error wrapping** - `fmt.Errorf("operation: %w", err)`
-4. **Small interfaces** - Define in usecase, implement in repository
+4. **Small interfaces** - Repository interfaces in `internal/port/`, service interfaces in `usecase/`
 5. **Table-driven tests** - Standard pattern for all unit tests
 
 ## Common Commands

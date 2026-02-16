@@ -1,6 +1,6 @@
 # Project: Athena
 
-**Last Updated:** 2026-02-15
+**Last Updated:** 2026-02-16
 
 ## Overview
 
@@ -25,21 +25,48 @@ High-performance PeerTube-compatible backend in Go with P2P distribution, live s
 ```
 /cmd/server         → Main application entry point
 /internal/          → Application code
+  activitypub/      → Federation support (ActivityPub, WebFinger)
+  app/              → Application wiring and lifecycle
+  backup/           → Backup/restore system
+  chat/             → Live stream chat (WebSocket)
   config/           → Environment and configuration
-  httpapi/          → Chi routes and HTTP handlers
-  middleware/       → Auth, rate limiting, CORS, tracing
+  crypto/           → Cryptographic utilities
+  database/         → Database connection and pooling
   domain/           → Core models (no infrastructure deps)
-  usecase/          → Business logic with interfaces
+  email/            → Email sending and verification
+  generated/        → Auto-generated code (OpenAPI types)
+  health/           → Health check endpoints
+  httpapi/          → Chi routes and HTTP handlers
+  importer/         → Video import from external platforms
+  ipfs/             → IPFS client and pinning
+  livestream/       → Live streaming (RTMP/HLS)
+  metrics/          → Prometheus metrics
+  middleware/       → Auth, rate limiting, CORS, tracing
+  obs/              → Observability (logging, tracing)
+  payments/         → IOTA payment integration
+  plugin/           → Plugin system with hooks
+  port/             → Interface definitions (ports)
   repository/       → SQLX repositories for PostgreSQL
+  scheduler/        → Cron and scheduled jobs
   security/         → SSRF protection, virus scanning, crypto
-  activitypub/      → Federation support
-  worker/           → Async jobs (FFmpeg, GC, pins)
+  setup/            → Setup wizard (first-run configuration)
   storage/          → Hybrid storage (local/IPFS/S3)
+  sysinfo/          → System information reporting
   testutil/         → Test helpers and utilities
+  torrent/          → WebTorrent tracker and P2P
+  usecase/          → Business logic with interfaces
+  validation/       → Input validation utilities
+  whisper/          → Audio transcription (Whisper)
+  worker/           → Async jobs (FFmpeg, GC, pins)
 /migrations/        → Goose SQL migrations
 /api/               → OpenAPI 3.0 specifications
 /docs/              → Documentation
-/scripts/           → Build and validation scripts
+/k8s/               → Kubernetes manifests
+/pkg/               → Public packages
+/postman/           → Postman collections for API testing
+/scripts/           → Build, validation, and install scripts
+/terraform/         → Infrastructure as code
+/tests/             → E2E and integration test suites
 ```
 
 ## Key Files
@@ -47,7 +74,7 @@ High-performance PeerTube-compatible backend in Go with P2P distribution, live s
 - **Configuration:** `.env.example` (template), `internal/config/`
 - **Entry Point:** `cmd/server/main.go`
 - **Migrations:** `migrations/*.sql` (Goose)
-- **Tests:** `**/*_test.go` (313 test files)
+- **Tests:** `**/*_test.go` (335 test files)
 - **Build:** `Makefile`
 
 ## Development Commands
@@ -105,7 +132,12 @@ make coverage-per-package     # Per-package coverage report
 
 **Dependency Injection:**
 - Constructor-based DI, no globals
-- Interfaces defined in usecase, implemented in repository
+- Wiring centralized in `internal/app/app.go`
+- Usecase packages aliased as `uc*` (e.g., `ucbackup`, `ucchannel`)
+
+**Interface Locations:**
+- Repository interfaces: `internal/port/` (20 files)
+- Service interfaces: `internal/usecase/` (co-located with implementations)
 
 **Context Propagation:**
 - `context.Context` as first parameter in all functions
@@ -136,7 +168,7 @@ See subdirectory CLAUDE.md files for detailed guidance:
 **Sprint Status:** Quality Programme Complete (Sprint 20/20)
 - Feature parity: 100% complete
 - Quality Programme: 100% complete
-- Full test suite: 3,752 automated tests (313 test files)
+- Full test suite: ~3,900 test functions (335 test files)
 - Coverage: 62.3% average across packages (90%+ achieved for core packages)
 
 **Key Features:**
@@ -147,3 +179,8 @@ See subdirectory CLAUDE.md files for detailed guidance:
 - ActivityPub federation
 - OAuth2 + 2FA authentication
 - Plugin system with hooks
+- Setup wizard (first-run web configuration)
+- Backup/restore system with CLI
+- Video import from external platforms
+- Audio transcription (Whisper)
+- Kubernetes and Terraform deployment

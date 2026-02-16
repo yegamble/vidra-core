@@ -80,17 +80,22 @@ type CreateVideoRequest struct {
 }
 ```
 
-## Error Responses
+## Response Envelope
 
-### JSON Problem Details (RFC 7807)
+All responses use the `shared.Response` envelope:
 
 ```go
-type ErrorResponse struct {
-    Type    string `json:"type"`
-    Title   string `json:"title"`
-    Status  int    `json:"status"`
-    Detail  string `json:"detail,omitempty"`
-    TraceID string `json:"trace_id,omitempty"`
+type Response struct {
+    Data    interface{} `json:"data,omitempty"`
+    Error   *ErrorInfo  `json:"error,omitempty"`
+    Success bool        `json:"success"`
+    Meta    *Meta       `json:"meta,omitempty"`
+}
+
+type ErrorInfo struct {
+    Code    string `json:"code"`
+    Message string `json:"message"`
+    Details string `json:"details,omitempty"`
 }
 ```
 
