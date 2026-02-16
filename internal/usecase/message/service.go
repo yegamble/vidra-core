@@ -7,6 +7,7 @@ import (
 
 	"athena/internal/domain"
 	"athena/internal/port"
+	"athena/internal/security"
 
 	"github.com/google/uuid"
 )
@@ -59,13 +60,16 @@ func (s *Service) SendMessage(ctx context.Context, senderID string, req *domain.
 		}
 	}
 
+	// Sanitize content
+	sanitizedContent := security.SanitizeStrictText(req.Content)
+
 	// Create the message
 	now := time.Now()
 	message := &domain.Message{
 		ID:                   uuid.New().String(),
 		SenderID:             senderID,
 		RecipientID:          req.RecipientID,
-		Content:              req.Content,
+		Content:              sanitizedContent,
 		MessageType:          domain.MessageTypeText,
 		IsRead:               false,
 		IsDeletedBySender:    false,
