@@ -1,6 +1,8 @@
 package config
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -153,7 +155,7 @@ func loadCommonFields(cfg *Config, setupMode bool) {
 	cfg.WhisperAPIURL = getEnvOrDefault("WHISPER_API_URL", "")
 	cfg.WhisperModelsDir = getEnvOrDefault("WHISPER_MODELS_DIR", "/var/lib/whisper/models")
 	cfg.WhisperOpenAIAPIKey = getEnvOrDefault("WHISPER_OPENAI_API_KEY", "")
-	cfg.WhisperTempDir = getEnvOrDefault("WHISPER_TEMP_DIR", "/tmp/whisper")
+	cfg.WhisperTempDir = getEnvOrDefault("WHISPER_TEMP_DIR", filepath.Join(os.TempDir(), "whisper"))
 	cfg.CaptionGenerationWorkers = getIntEnv("CAPTION_GENERATION_WORKERS", 2)
 	cfg.AutoCaptionFormat = getEnvOrDefault("AUTO_CAPTION_FORMAT", "vtt")
 	cfg.AutoCaptionLanguage = getEnvOrDefault("AUTO_CAPTION_LANGUAGE", "")

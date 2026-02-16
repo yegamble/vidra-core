@@ -1,6 +1,8 @@
 package config
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -350,5 +352,23 @@ func TestLoad_NormalModeRequiresAllFields(t *testing.T) {
 	}
 	if cfg.SetupMode {
 		t.Error("Load() should not be in setup mode when all fields are present")
+	}
+}
+
+func TestLoad_WhisperTempDirDefault(t *testing.T) {
+	setMinimumLoadEnv(t, "test-secret")
+	// Ensure the environment variable is not set to test the default value
+	t.Setenv("WHISPER_TEMP_DIR", "")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() failed: %v", err)
+	}
+
+	expectedBase := os.TempDir()
+	expectedPath := filepath.Join(expectedBase, "whisper")
+
+	if cfg.WhisperTempDir != expectedPath {
+		t.Errorf("expected WhisperTempDir to be %s, got %s", expectedPath, cfg.WhisperTempDir)
 	}
 }
