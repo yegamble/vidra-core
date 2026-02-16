@@ -91,3 +91,148 @@ func TestWriteEnvFileWithExternalServices(t *testing.T) {
 	assert.Contains(t, contentStr, "IPFS_MODE=external")
 	assert.Contains(t, contentStr, "IPFS_API_URL=http://localhost:5001")
 }
+
+func TestWriteEnvFileWithNginxHTTP(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping file I/O test in short mode")
+	}
+
+	tmpDir := t.TempDir()
+	envPath := filepath.Join(tmpDir, ".env")
+
+	config := &WizardConfig{
+		PostgresMode:  "docker",
+		RedisMode:     "docker",
+		StoragePath:   "./data/storage",
+		JWTSecret:     "test-secret-32chars-long-here",
+		NginxDomain:   "localhost",
+		NginxPort:     80,
+		NginxProtocol: "http",
+		NginxTLSMode:  "",
+		NginxEmail:    "",
+		AdminUsername: "admin",
+		AdminEmail:    "admin@example.com",
+	}
+
+	err := WriteEnvFile(envPath, config)
+	require.NoError(t, err)
+
+	content, err := os.ReadFile(envPath)
+	require.NoError(t, err)
+
+	contentStr := string(content)
+	assert.Contains(t, contentStr, "NGINX_ENABLED=true")
+	assert.Contains(t, contentStr, "NGINX_DOMAIN=localhost")
+	assert.Contains(t, contentStr, "NGINX_PORT=80")
+	assert.Contains(t, contentStr, "NGINX_PROTOCOL=http")
+	assert.Contains(t, contentStr, "NGINX_TLS_MODE=")
+	assert.Contains(t, contentStr, "PUBLIC_BASE_URL=http://localhost")
+}
+
+func TestWriteEnvFileWithNginxHTTPSSelfsigned(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping file I/O test in short mode")
+	}
+
+	tmpDir := t.TempDir()
+	envPath := filepath.Join(tmpDir, ".env")
+
+	config := &WizardConfig{
+		PostgresMode:  "docker",
+		RedisMode:     "docker",
+		StoragePath:   "./data/storage",
+		JWTSecret:     "test-secret-32chars-long-here",
+		NginxDomain:   "videos.example.com",
+		NginxPort:     443,
+		NginxProtocol: "https",
+		NginxTLSMode:  "self-signed",
+		NginxEmail:    "",
+		AdminUsername: "admin",
+		AdminEmail:    "admin@example.com",
+	}
+
+	err := WriteEnvFile(envPath, config)
+	require.NoError(t, err)
+
+	content, err := os.ReadFile(envPath)
+	require.NoError(t, err)
+
+	contentStr := string(content)
+	assert.Contains(t, contentStr, "NGINX_ENABLED=true")
+	assert.Contains(t, contentStr, "NGINX_DOMAIN=videos.example.com")
+	assert.Contains(t, contentStr, "NGINX_PORT=443")
+	assert.Contains(t, contentStr, "NGINX_PROTOCOL=https")
+	assert.Contains(t, contentStr, "NGINX_TLS_MODE=self-signed")
+	assert.Contains(t, contentStr, "PUBLIC_BASE_URL=https://videos.example.com")
+}
+
+func TestWriteEnvFileWithNginxHTTPSLetsencrypt(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping file I/O test in short mode")
+	}
+
+	tmpDir := t.TempDir()
+	envPath := filepath.Join(tmpDir, ".env")
+
+	config := &WizardConfig{
+		PostgresMode:  "docker",
+		RedisMode:     "docker",
+		StoragePath:   "./data/storage",
+		JWTSecret:     "test-secret-32chars-long-here",
+		NginxDomain:   "videos.example.com",
+		NginxPort:     443,
+		NginxProtocol: "https",
+		NginxTLSMode:  "letsencrypt",
+		NginxEmail:    "admin@example.com",
+		AdminUsername: "admin",
+		AdminEmail:    "admin@example.com",
+	}
+
+	err := WriteEnvFile(envPath, config)
+	require.NoError(t, err)
+
+	content, err := os.ReadFile(envPath)
+	require.NoError(t, err)
+
+	contentStr := string(content)
+	assert.Contains(t, contentStr, "NGINX_ENABLED=true")
+	assert.Contains(t, contentStr, "NGINX_DOMAIN=videos.example.com")
+	assert.Contains(t, contentStr, "NGINX_PORT=443")
+	assert.Contains(t, contentStr, "NGINX_PROTOCOL=https")
+	assert.Contains(t, contentStr, "NGINX_TLS_MODE=letsencrypt")
+	assert.Contains(t, contentStr, "NGINX_LETSENCRYPT_EMAIL=admin@example.com")
+	assert.Contains(t, contentStr, "PUBLIC_BASE_URL=https://videos.example.com")
+}
+
+func TestWriteEnvFileWithNginxCustomPort(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping file I/O test in short mode")
+	}
+
+	tmpDir := t.TempDir()
+	envPath := filepath.Join(tmpDir, ".env")
+
+	config := &WizardConfig{
+		PostgresMode:  "docker",
+		RedisMode:     "docker",
+		StoragePath:   "./data/storage",
+		JWTSecret:     "test-secret-32chars-long-here",
+		NginxDomain:   "example.com",
+		NginxPort:     8080,
+		NginxProtocol: "http",
+		NginxTLSMode:  "",
+		NginxEmail:    "",
+		AdminUsername: "admin",
+		AdminEmail:    "admin@example.com",
+	}
+
+	err := WriteEnvFile(envPath, config)
+	require.NoError(t, err)
+
+	content, err := os.ReadFile(envPath)
+	require.NoError(t, err)
+
+	contentStr := string(content)
+	assert.Contains(t, contentStr, "NGINX_PORT=8080")
+	assert.Contains(t, contentStr, "PUBLIC_BASE_URL=http://example.com:8080")
+}

@@ -40,6 +40,17 @@ func TestWizardFullFlowDocker(t *testing.T) {
 	w = httptest.NewRecorder()
 	wizard.HandleServices(w, req)
 	require.Equal(t, http.StatusSeeOther, w.Code)
+	assert.Equal(t, "/setup/networking", w.Header().Get("Location"))
+
+	form = url.Values{}
+	form.Set("NGINX_DOMAIN", "localhost")
+	form.Set("NGINX_PORT", "80")
+	form.Set("NGINX_PROTOCOL", "http")
+	req = httptest.NewRequest(http.MethodPost, "/setup/networking", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w = httptest.NewRecorder()
+	wizard.HandleNetworking(w, req)
+	require.Equal(t, http.StatusSeeOther, w.Code)
 	assert.Equal(t, "/setup/storage", w.Header().Get("Location"))
 
 	form = url.Values{}
@@ -117,6 +128,27 @@ func TestWizardFullFlowExternal(t *testing.T) {
 	assert.Equal(t, "postgres://user:pass@external.host:5432/athena?sslmode=disable", wizard.config.DatabaseURL)
 	assert.Equal(t, "external", wizard.config.RedisMode)
 	assert.Equal(t, "redis://external.host:6379/0", wizard.config.RedisURL)
+	wizard.mu.Unlock()
+
+	form = url.Values{}
+	form.Set("NGINX_DOMAIN", "videos.example.com")
+	form.Set("NGINX_PORT", "443")
+	form.Set("NGINX_PROTOCOL", "https")
+	form.Set("NGINX_TLS_MODE", "letsencrypt")
+	form.Set("NGINX_LETSENCRYPT_EMAIL", "admin@example.com")
+	req = httptest.NewRequest(http.MethodPost, "/setup/networking", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w = httptest.NewRecorder()
+	wizard.HandleNetworking(w, req)
+	require.Equal(t, http.StatusSeeOther, w.Code)
+	assert.Equal(t, "/setup/storage", w.Header().Get("Location"))
+
+	wizard.mu.Lock()
+	assert.Equal(t, "videos.example.com", wizard.config.NginxDomain)
+	assert.Equal(t, 443, wizard.config.NginxPort)
+	assert.Equal(t, "https", wizard.config.NginxProtocol)
+	assert.Equal(t, "letsencrypt", wizard.config.NginxTLSMode)
+	assert.Equal(t, "admin@example.com", wizard.config.NginxEmail)
 	wizard.mu.Unlock()
 
 	form = url.Values{}

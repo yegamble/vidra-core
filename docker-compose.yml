@@ -157,6 +157,62 @@ services:
       retries: 20
       start_period: 5s
 
+  nginx:
+    build:
+      context: ./nginx
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      app:
+        condition: service_healthy
+    ports:
+      - "${NGINX_HTTP_PORT:-80}:80"
+      - "${NGINX_HTTPS_PORT:-443}:443"
+    environment:
+      NGINX_DOMAIN: ${NGINX_DOMAIN:-localhost}
+      NGINX_PROTOCOL: ${NGINX_PROTOCOL:-http}
+      NGINX_TLS_MODE: ${NGINX_TLS_MODE:-self-signed}
+    volumes:
+      - ./nginx/conf:/etc/nginx/conf.d:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+      - storage:/app/storage:ro
+      - processed:/app/processed:ro
+      - certbot_conf:/etc/letsencrypt:ro
+      - certbot_www:/var/www/certbot:ro
+    networks:
+      - athena-network
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost/nginx-health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+
+  certbot:
+    profiles: ["letsencrypt"]
+    image: certbot/certbot:latest
+    restart: unless-stopped
+    environment:
+      NGINX_DOMAIN: ${NGINX_DOMAIN:-localhost}
+      NGINX_LETSENCRYPT_EMAIL: ${NGINX_LETSENCRYPT_EMAIL:-}
+    volumes:
+      - certbot_conf:/etc/letsencrypt
+      - certbot_www:/var/www/certbot
+    command: >
+      sh -c "
+      if [ ! -f /etc/letsencrypt/live/$NGINX_DOMAIN/fullchain.pem ]; then
+        echo 'Acquiring Let'\''s Encrypt certificate for $NGINX_DOMAIN...';
+        certbot certonly --webroot -w /var/www/certbot -d $NGINX_DOMAIN --email $NGINX_LETSENCRYPT_EMAIL --agree-tos --non-interactive || echo 'WARNING: Certificate acquisition failed. Check that domain points to this server.';
+      fi;
+      trap exit TERM;
+      while :; do
+        certbot renew --webroot -w /var/www/certbot --post-hook 'nginx -s reload' || true;
+        sleep 12h & wait $!;
+      done
+      "
+    networks:
+      - athena-network
+
   # ---------------------------------------------------------------------------
   # Local test stack (profile: test)
   # ---------------------------------------------------------------------------
@@ -384,6 +440,14 @@ volumes:
   clamav_signatures:
     driver: local
   clamav-test-signatures:
+    driver: local
+  nginx_conf:
+    driver: local
+  nginx_ssl:
+    driver: local
+  certbot_conf:
+    driver: local
+  certbot_www:
     driver: local
 
 networks:

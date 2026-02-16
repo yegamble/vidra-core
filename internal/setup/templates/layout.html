@@ -257,6 +257,8 @@
                 <li class="breadcrumb-separator">&gt;</li>
                 <li class="breadcrumb-item {{if eq .CurrentStep "services"}}current{{else if .CompletedSteps.services}}completed{{else}}pending{{end}}">Services</li>
                 <li class="breadcrumb-separator">&gt;</li>
+                <li class="breadcrumb-item {{if eq .CurrentStep "networking"}}current{{else if .CompletedSteps.networking}}completed{{else}}pending{{end}}">Networking</li>
+                <li class="breadcrumb-separator">&gt;</li>
                 <li class="breadcrumb-item {{if eq .CurrentStep "storage"}}current{{else if .CompletedSteps.storage}}completed{{else}}pending{{end}}">Storage</li>
                 <li class="breadcrumb-separator">&gt;</li>
                 <li class="breadcrumb-item {{if eq .CurrentStep "security"}}current{{else if .CompletedSteps.security}}completed{{else}}pending{{end}}">Security</li>

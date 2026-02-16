@@ -9,6 +9,8 @@ var (
 	ErrInvalidURL     = errors.New("invalid URL")
 	ErrShellMetachars = errors.New("input contains shell metacharacters")
 	ErrWeakSecret     = errors.New("JWT secret is too weak or too short")
+	ErrInvalidDomain  = errors.New("invalid domain")
+	ErrInvalidPort    = errors.New("invalid port")
 )
 
 func ValidateDatabaseURL(url string) error {
@@ -54,6 +56,30 @@ func ValidateJWTSecret(secret string) error {
 		if strings.Contains(lowerSecret, weak) {
 			return ErrWeakSecret
 		}
+	}
+
+	return nil
+}
+
+func ValidateDomain(domain string) error {
+	if domain == "" {
+		return ErrInvalidDomain
+	}
+
+	if containsShellMetachars(domain) {
+		return ErrShellMetachars
+	}
+
+	return nil
+}
+
+func ValidatePort(port int) error {
+	if port < 1 || port > 65535 {
+		return ErrInvalidPort
+	}
+
+	if port < 1024 && port != 80 && port != 443 {
+		return ErrInvalidPort
 	}
 
 	return nil

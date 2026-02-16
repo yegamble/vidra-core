@@ -357,7 +357,6 @@ func TestLoad_NormalModeRequiresAllFields(t *testing.T) {
 
 func TestLoad_WhisperTempDirDefault(t *testing.T) {
 	setMinimumLoadEnv(t, "test-secret")
-	// Ensure the environment variable is not set to test the default value
 	t.Setenv("WHISPER_TEMP_DIR", "")
 
 	cfg, err := Load()
@@ -370,5 +369,114 @@ func TestLoad_WhisperTempDirDefault(t *testing.T) {
 
 	if cfg.WhisperTempDir != expectedPath {
 		t.Errorf("expected WhisperTempDir to be %s, got %s", expectedPath, cfg.WhisperTempDir)
+	}
+}
+
+func TestLoad_NginxDefaults(t *testing.T) {
+	setMinimumLoadEnv(t, "test-secret")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() failed: %v", err)
+	}
+
+	if cfg.NginxEnabled {
+		t.Error("expected NginxEnabled default false")
+	}
+	if cfg.NginxDomain != "localhost" {
+		t.Errorf("expected NginxDomain default 'localhost', got %s", cfg.NginxDomain)
+	}
+	if cfg.NginxPort != 80 {
+		t.Errorf("expected NginxPort default 80, got %d", cfg.NginxPort)
+	}
+	if cfg.NginxProtocol != "http" {
+		t.Errorf("expected NginxProtocol default 'http', got %s", cfg.NginxProtocol)
+	}
+	if cfg.NginxTLSMode != "" {
+		t.Errorf("expected NginxTLSMode default '', got %s", cfg.NginxTLSMode)
+	}
+	if cfg.NginxLetsEncryptEmail != "" {
+		t.Errorf("expected NginxLetsEncryptEmail default '', got %s", cfg.NginxLetsEncryptEmail)
+	}
+}
+
+func TestLoad_NginxHTTPConfig(t *testing.T) {
+	setMinimumLoadEnv(t, "test-secret")
+	t.Setenv("NGINX_ENABLED", "true")
+	t.Setenv("NGINX_DOMAIN", "videos.local")
+	t.Setenv("NGINX_PORT", "8080")
+	t.Setenv("NGINX_PROTOCOL", "http")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() failed: %v", err)
+	}
+
+	if !cfg.NginxEnabled {
+		t.Error("expected NginxEnabled true")
+	}
+	if cfg.NginxDomain != "videos.local" {
+		t.Errorf("expected NginxDomain 'videos.local', got %s", cfg.NginxDomain)
+	}
+	if cfg.NginxPort != 8080 {
+		t.Errorf("expected NginxPort 8080, got %d", cfg.NginxPort)
+	}
+	if cfg.NginxProtocol != "http" {
+		t.Errorf("expected NginxProtocol 'http', got %s", cfg.NginxProtocol)
+	}
+}
+
+func TestLoad_NginxHTTPSSelfsigned(t *testing.T) {
+	setMinimumLoadEnv(t, "test-secret")
+	t.Setenv("NGINX_ENABLED", "true")
+	t.Setenv("NGINX_DOMAIN", "videos.example.com")
+	t.Setenv("NGINX_PORT", "443")
+	t.Setenv("NGINX_PROTOCOL", "https")
+	t.Setenv("NGINX_TLS_MODE", "self-signed")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() failed: %v", err)
+	}
+
+	if !cfg.NginxEnabled {
+		t.Error("expected NginxEnabled true")
+	}
+	if cfg.NginxDomain != "videos.example.com" {
+		t.Errorf("expected NginxDomain 'videos.example.com', got %s", cfg.NginxDomain)
+	}
+	if cfg.NginxPort != 443 {
+		t.Errorf("expected NginxPort 443, got %d", cfg.NginxPort)
+	}
+	if cfg.NginxProtocol != "https" {
+		t.Errorf("expected NginxProtocol 'https', got %s", cfg.NginxProtocol)
+	}
+	if cfg.NginxTLSMode != "self-signed" {
+		t.Errorf("expected NginxTLSMode 'self-signed', got %s", cfg.NginxTLSMode)
+	}
+}
+
+func TestLoad_NginxHTTPSLetsencrypt(t *testing.T) {
+	setMinimumLoadEnv(t, "test-secret")
+	t.Setenv("NGINX_ENABLED", "true")
+	t.Setenv("NGINX_DOMAIN", "videos.example.com")
+	t.Setenv("NGINX_PORT", "443")
+	t.Setenv("NGINX_PROTOCOL", "https")
+	t.Setenv("NGINX_TLS_MODE", "letsencrypt")
+	t.Setenv("NGINX_LETSENCRYPT_EMAIL", "admin@example.com")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() failed: %v", err)
+	}
+
+	if !cfg.NginxEnabled {
+		t.Error("expected NginxEnabled true")
+	}
+	if cfg.NginxTLSMode != "letsencrypt" {
+		t.Errorf("expected NginxTLSMode 'letsencrypt', got %s", cfg.NginxTLSMode)
+	}
+	if cfg.NginxLetsEncryptEmail != "admin@example.com" {
+		t.Errorf("expected NginxLetsEncryptEmail 'admin@example.com', got %s", cfg.NginxLetsEncryptEmail)
 	}
 }

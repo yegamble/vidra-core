@@ -44,6 +44,8 @@ func (s *Server) Handler() http.Handler {
 	r.Post("/setup/database", wizard.HandleDatabase)
 	r.Get("/setup/services", wizard.HandleServices)
 	r.Post("/setup/services", wizard.HandleServices)
+	r.Get("/setup/networking", wizard.HandleNetworking)
+	r.Post("/setup/networking", wizard.HandleNetworking)
 	r.Get("/setup/storage", wizard.HandleStorage)
 	r.Post("/setup/storage", wizard.HandleStorage)
 	r.Get("/setup/security", wizard.HandleSecurity)

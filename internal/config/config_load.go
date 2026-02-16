@@ -169,6 +169,14 @@ func loadCommonFields(cfg *Config, setupMode bool) {
 	cfg.ATProtoRefreshIntervalSeconds = getIntEnv("ATPROTO_REFRESH_INTERVAL_SECONDS", 2700)
 	cfg.ATProtoUseImageEmbed = getBoolEnv("ATPROTO_USE_IMAGE_EMBED", false)
 	cfg.ATProtoImageAltField = getEnvOrDefault("ATPROTO_IMAGE_ALT_FIELD", "description")
+
+	cfg.NginxEnabled = getBoolEnv("NGINX_ENABLED", false)
+	cfg.NginxDomain = getEnvOrDefault("NGINX_DOMAIN", "localhost")
+	cfg.NginxPort = getIntEnv("NGINX_PORT", 80)
+	cfg.NginxProtocol = getEnvOrDefault("NGINX_PROTOCOL", "http")
+	cfg.NginxTLSMode = getEnvOrDefault("NGINX_TLS_MODE", "")
+	cfg.NginxLetsEncryptEmail = getEnvOrDefault("NGINX_LETSENCRYPT_EMAIL", "")
+
 	cfg.PublicBaseURL = getEnvOrDefault("PUBLIC_BASE_URL", "")
 
 	cfg.EnableFederationScheduler = getBoolEnv("ENABLE_FEDERATION_SCHEDULER", prodDefault(setupMode, true, false))

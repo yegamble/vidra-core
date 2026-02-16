@@ -1,6 +1,7 @@
 package setup
 
 import (
+	"fmt"
 	"net/http"
 )
 
@@ -43,6 +44,44 @@ func (w *Wizard) processServicesForm(rw http.ResponseWriter, r *http.Request) {
 	w.config.IPFSAPIUrl = r.FormValue("IPFS_API_URL")
 	w.config.EnableClamAV = r.FormValue("ENABLE_CLAMAV") == "true"
 	w.config.EnableWhisper = r.FormValue("ENABLE_WHISPER") == "true"
+
+	http.Redirect(rw, r, "/setup/networking", http.StatusSeeOther)
+}
+
+func (w *Wizard) processNetworkingForm(rw http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(rw, "Invalid form data", http.StatusBadRequest)
+		return
+	}
+
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	domain := r.FormValue("NGINX_DOMAIN")
+	protocol := r.FormValue("NGINX_PROTOCOL")
+	tlsMode := r.FormValue("NGINX_TLS_MODE")
+	email := r.FormValue("NGINX_LETSENCRYPT_EMAIL")
+
+	if err := ValidateDomain(domain); err != nil {
+		http.Error(rw, "Invalid domain: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	var port int
+	if _, err := fmt.Sscanf(r.FormValue("NGINX_PORT"), "%d", &port); err != nil {
+		http.Error(rw, "Invalid port number", http.StatusBadRequest)
+		return
+	}
+	if err := ValidatePort(port); err != nil {
+		http.Error(rw, "Invalid port: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	w.config.NginxDomain = domain
+	w.config.NginxPort = port
+	w.config.NginxProtocol = protocol
+	w.config.NginxTLSMode = tlsMode
+	w.config.NginxEmail = email
 
 	http.Redirect(rw, r, "/setup/storage", http.StatusSeeOther)
 }

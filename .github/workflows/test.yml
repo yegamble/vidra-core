@@ -40,8 +40,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Validate Docker Compose config
+        run: docker compose config --quiet
+
       - name: Run install.sh tests
         run: bash scripts/install_test.sh
+
+      - name: Run nginx script tests
+        run: bash nginx/scripts/nginx_test.sh
 
   unit:
     name: Unit Tests

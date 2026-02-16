@@ -84,6 +84,17 @@ func TestWizardHandlerServices(t *testing.T) {
 	assert.Contains(t, w.Body.String(), "Services")
 }
 
+func TestWizardHandlerNetworking(t *testing.T) {
+	wizard := NewWizard()
+	req := httptest.NewRequest(http.MethodGet, "/setup/networking", nil)
+	w := httptest.NewRecorder()
+
+	wizard.HandleNetworking(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Contains(t, w.Body.String(), "Networking")
+}
+
 func TestWizardHandlerStorage(t *testing.T) {
 	wizard := NewWizard()
 	req := httptest.NewRequest(http.MethodGet, "/setup/storage", nil)

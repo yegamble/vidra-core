@@ -149,6 +149,13 @@ type Config struct {
 
 	PublicBaseURL string
 
+	NginxEnabled          bool
+	NginxDomain           string
+	NginxPort             int
+	NginxProtocol         string
+	NginxTLSMode          string
+	NginxLetsEncryptEmail string
+
 	EnableFederationScheduler          bool
 	FederationSchedulerIntervalSeconds int
 	FederationSchedulerBurst           int

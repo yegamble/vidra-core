@@ -46,6 +46,12 @@ type WizardConfig struct {
 	AdminUsername string
 	AdminEmail    string
 
+	NginxDomain   string
+	NginxPort     int
+	NginxProtocol string
+	NginxTLSMode  string
+	NginxEmail    string
+
 	SystemResources *sysinfo.Resources
 }
 
@@ -168,6 +174,40 @@ func (w *Wizard) HandleServices(rw http.ResponseWriter, r *http.Request) {
 	w.renderTemplate(rw, "layout.html", "services.html", data)
 }
 
+func (w *Wizard) HandleNetworking(rw http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodPost {
+		w.processNetworkingForm(rw, r)
+		return
+	}
+
+	w.mu.Lock()
+	if w.config.NginxDomain == "" {
+		w.config.NginxDomain = "localhost"
+	}
+	if w.config.NginxPort == 0 {
+		w.config.NginxPort = 80
+	}
+	if w.config.NginxProtocol == "" {
+		w.config.NginxProtocol = "http"
+	}
+	w.mu.Unlock()
+
+	data := &TemplateData{
+		Title:           "Networking Configuration",
+		CurrentStep:     "networking",
+		ShowBreadcrumb:  true,
+		ShowActions:     true,
+		ShowBack:        true,
+		ShowContinue:    true,
+		BackURL:         "/setup/services",
+		Config:          w.config,
+		SystemResources: w.config.SystemResources,
+		CompletedSteps:  map[string]bool{"welcome": true, "database": true, "services": true},
+	}
+
+	w.renderTemplate(rw, "layout.html", "networking.html", data)
+}
+
 func (w *Wizard) HandleStorage(rw http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodPost {
 		w.processStorageForm(rw, r)
@@ -181,10 +221,10 @@ func (w *Wizard) HandleStorage(rw http.ResponseWriter, r *http.Request) {
 		ShowActions:     true,
 		ShowBack:        true,
 		ShowContinue:    true,
-		BackURL:         "/setup/services",
+		BackURL:         "/setup/networking",
 		Config:          w.config,
 		SystemResources: w.config.SystemResources,
-		CompletedSteps:  map[string]bool{"welcome": true, "database": true, "services": true},
+		CompletedSteps:  map[string]bool{"welcome": true, "database": true, "services": true, "networking": true},
 	}
 
 	w.renderTemplate(rw, "layout.html", "storage.html", data)
@@ -206,7 +246,7 @@ func (w *Wizard) HandleSecurity(rw http.ResponseWriter, r *http.Request) {
 		BackURL:         "/setup/storage",
 		Config:          w.config,
 		SystemResources: w.config.SystemResources,
-		CompletedSteps:  map[string]bool{"welcome": true, "database": true, "services": true, "storage": true},
+		CompletedSteps:  map[string]bool{"welcome": true, "database": true, "services": true, "networking": true, "storage": true},
 	}
 
 	w.renderTemplate(rw, "layout.html", "security.html", data)
@@ -228,7 +268,7 @@ func (w *Wizard) HandleReview(rw http.ResponseWriter, r *http.Request) {
 		BackURL:         "/setup/security",
 		Config:          w.config,
 		SystemResources: w.config.SystemResources,
-		CompletedSteps:  map[string]bool{"welcome": true, "database": true, "services": true, "storage": true, "security": true},
+		CompletedSteps:  map[string]bool{"welcome": true, "database": true, "services": true, "networking": true, "storage": true, "security": true},
 	}
 
 	w.renderTemplate(rw, "layout.html", "review.html", data)

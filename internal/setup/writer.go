@@ -7,6 +7,17 @@ import (
 	"strings"
 )
 
+func computePublicBaseURL(domain string, port int, protocol string) string {
+	// Build PUBLIC_BASE_URL: {protocol}://{domain}[:{port}]
+	baseURL := fmt.Sprintf("%s://%s", protocol, domain)
+
+	if (protocol == "http" && port != 80) || (protocol == "https" && port != 443) {
+		baseURL = fmt.Sprintf("%s:%d", baseURL, port)
+	}
+
+	return baseURL
+}
+
 func WriteEnvFile(path string, config *WizardConfig) error {
 	var lines []string
 
@@ -56,6 +67,22 @@ func WriteEnvFile(path string, config *WizardConfig) error {
 		lines = append(lines, fmt.Sprintf("BACKUP_LOCAL_PATH=%s", config.BackupLocalPath))
 		lines = append(lines, "")
 	}
+
+	lines = append(lines, "# Nginx Configuration")
+	lines = append(lines, "NGINX_ENABLED=true")
+	lines = append(lines, fmt.Sprintf("NGINX_DOMAIN=%s", config.NginxDomain))
+	lines = append(lines, fmt.Sprintf("NGINX_PORT=%d", config.NginxPort))
+	lines = append(lines, fmt.Sprintf("NGINX_PROTOCOL=%s", config.NginxProtocol))
+	lines = append(lines, fmt.Sprintf("NGINX_TLS_MODE=%s", config.NginxTLSMode))
+	if config.NginxEmail != "" {
+		lines = append(lines, fmt.Sprintf("NGINX_LETSENCRYPT_EMAIL=%s", config.NginxEmail))
+	}
+	lines = append(lines, "")
+
+	lines = append(lines, "# Public URL")
+	publicURL := computePublicBaseURL(config.NginxDomain, config.NginxPort, config.NginxProtocol)
+	lines = append(lines, fmt.Sprintf("PUBLIC_BASE_URL=%s", publicURL))
+	lines = append(lines, "")
 
 	lines = append(lines, "# Security Configuration")
 	lines = append(lines, fmt.Sprintf("JWT_SECRET=%s", config.JWTSecret))
