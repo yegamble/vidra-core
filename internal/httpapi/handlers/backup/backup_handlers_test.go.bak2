@@ -1,0 +1,322 @@
+package backup
+
+import (
+	"context"
+	"errors"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+
+	"athena/internal/backup"
+	backupUsecase "athena/internal/usecase/backup"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+type mockService struct {
+	listBackupsFunc   func(ctx context.Context) ([]backup.BackupEntry, error)
+	triggerBackupFunc func(ctx context.Context) error
+	deleteBackupFunc  func(ctx context.Context, id string) error
+	startRestoreFunc  func(ctx context.Context, backupPath string) error
+}
+
+func (m *mockService) ListBackups(ctx context.Context) ([]backup.BackupEntry, error) {
+	if m.listBackupsFunc != nil {
+		return m.listBackupsFunc(ctx)
+	}
+	return nil, nil
+}
+
+func (m *mockService) TriggerBackup(ctx context.Context) error {
+	if m.triggerBackupFunc != nil {
+		return m.triggerBackupFunc(ctx)
+	}
+	return nil
+}
+
+func (m *mockService) DeleteBackup(ctx context.Context, id string) error {
+	if m.deleteBackupFunc != nil {
+		return m.deleteBackupFunc(ctx, id)
+	}
+	return nil
+}
+
+func (m *mockService) StartRestore(ctx context.Context, backupPath string) error {
+	if m.startRestoreFunc != nil {
+		return m.startRestoreFunc(ctx, backupPath)
+	}
+	return nil
+}
+
+func (m *mockService) GetRestoreStatus(ctx context.Context) (*backupUsecase.RestoreStatus, error) {
+	return &backupUsecase.RestoreStatus{Status: "no active restore"}, nil
+}
+
+func TestListBackupsHandler(t *testing.T) {
+	t.Run("returns backup list on success", func(t *testing.T) {
+		mock := &mockService{
+			listBackupsFunc: func(ctx context.Context) ([]backup.BackupEntry, error) {
+				return []backup.BackupEntry{
+					{Path: "backup1.tar.gz", Size: 1024},
+					{Path: "backup2.tar.gz", Size: 2048},
+				}, nil
+			},
+		}
+
+		h := NewHandler(mock)
+		req := httptest.NewRequest("GET", "/api/v1/admin/backups", nil)
+		w := httptest.NewRecorder()
+
+		h.ListBackups(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		assert.Contains(t, w.Body.String(), "backup1.tar.gz")
+		assert.Contains(t, w.Body.String(), "backup2.tar.gz")
+	})
+
+	t.Run("returns 500 on service error", func(t *testing.T) {
+		mock := &mockService{
+			listBackupsFunc: func(ctx context.Context) ([]backup.BackupEntry, error) {
+				return nil, errors.New("service error")
+			},
+		}
+
+		h := NewHandler(mock)
+		req := httptest.NewRequest("GET", "/api/v1/admin/backups", nil)
+		w := httptest.NewRecorder()
+
+		h.ListBackups(w, req)
+
+		assert.Equal(t, http.StatusInternalServerError, w.Code)
+	})
+}
+
+func TestTriggerBackupHandler(t *testing.T) {
+	t.Run("triggers backup successfully", func(t *testing.T) {
+		mock := &mockService{
+			triggerBackupFunc: func(ctx context.Context) error {
+				return nil
+			},
+		}
+
+		h := NewHandler(mock)
+		req := httptest.NewRequest("POST", "/api/v1/admin/backups", nil)
+		w := httptest.NewRecorder()
+
+		h.TriggerBackup(w, req)
+
+		assert.Equal(t, http.StatusAccepted, w.Code)
+		assert.Contains(t, w.Body.String(), "backup started")
+	})
+
+	t.Run("returns 500 on service error", func(t *testing.T) {
+		mock := &mockService{
+			triggerBackupFunc: func(ctx context.Context) error {
+				return errors.New("backup failed")
+			},
+		}
+
+		h := NewHandler(mock)
+		req := httptest.NewRequest("POST", "/api/v1/admin/backups", nil)
+		w := httptest.NewRecorder()
+
+		h.TriggerBackup(w, req)
+
+		assert.Equal(t, http.StatusInternalServerError, w.Code)
+	})
+}
+
+func TestDeleteBackupHandler(t *testing.T) {
+	t.Run("deletes backup successfully", func(t *testing.T) {
+		mock := &mockService{
+			deleteBackupFunc: func(ctx context.Context, id string) error {
+				assert.Equal(t, "backup-123", id)
+				return nil
+			},
+		}
+
+		h := NewHandler(mock)
+		req := httptest.NewRequest("DELETE", "/api/v1/admin/backups/backup-123", nil)
+		rctx := chi.NewRouteContext()
+		rctx.URLParams.Add("id", "backup-123")
+		ctx := context.WithValue(req.Context(), chi.RouteCtxKey, rctx)
+		req = req.WithContext(ctx)
+
+		w := httptest.NewRecorder()
+
+		h.DeleteBackup(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		assert.Contains(t, w.Body.String(), "deleted")
+	})
+
+	t.Run("returns 400 when ID missing", func(t *testing.T) {
+		h := NewHandler(&mockService{})
+		req := httptest.NewRequest("DELETE", "/api/v1/admin/backups/", nil)
+		w := httptest.NewRecorder()
+
+		h.DeleteBackup(w, req)
+
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+	})
+
+	t.Run("returns 500 on service error", func(t *testing.T) {
+		mock := &mockService{
+			deleteBackupFunc: func(ctx context.Context, id string) error {
+				return errors.New("delete failed")
+			},
+		}
+
+		h := NewHandler(mock)
+		req := httptest.NewRequest("DELETE", "/api/v1/admin/backups/backup-123", nil)
+		rctx := chi.NewRouteContext()
+		rctx.URLParams.Add("id", "backup-123")
+		ctx := context.WithValue(req.Context(), chi.RouteCtxKey, rctx)
+		req = req.WithContext(ctx)
+
+		w := httptest.NewRecorder()
+
+		h.DeleteBackup(w, req)
+
+		assert.Equal(t, http.StatusInternalServerError, w.Code)
+	})
+}
+
+func TestRestoreBackupHandler(t *testing.T) {
+	t.Run("starts restore successfully", func(t *testing.T) {
+		mock := &mockService{
+			startRestoreFunc: func(ctx context.Context, backupPath string) error {
+				assert.Equal(t, "backup-123", backupPath)
+				return nil
+			},
+		}
+
+		h := NewHandler(mock)
+		req := httptest.NewRequest("POST", "/api/v1/admin/backups/backup-123/restore", nil)
+		rctx := chi.NewRouteContext()
+		rctx.URLParams.Add("id", "backup-123")
+		ctx := context.WithValue(req.Context(), chi.RouteCtxKey, rctx)
+		req = req.WithContext(ctx)
+
+		w := httptest.NewRecorder()
+
+		h.RestoreBackup(w, req)
+
+		assert.Equal(t, http.StatusAccepted, w.Code)
+		assert.Contains(t, w.Body.String(), "restore started")
+	})
+
+	t.Run("returns 400 when ID missing", func(t *testing.T) {
+		h := NewHandler(&mockService{})
+		req := httptest.NewRequest("POST", "/api/v1/admin/backups//restore", nil)
+		w := httptest.NewRecorder()
+
+		h.RestoreBackup(w, req)
+
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+	})
+
+	t.Run("returns 500 on service error", func(t *testing.T) {
+		mock := &mockService{
+			startRestoreFunc: func(ctx context.Context, backupPath string) error {
+				return errors.New("restore failed")
+			},
+		}
+
+		h := NewHandler(mock)
+		req := httptest.NewRequest("POST", "/api/v1/admin/backups/backup-123/restore", nil)
+		rctx := chi.NewRouteContext()
+		rctx.URLParams.Add("id", "backup-123")
+		ctx := context.WithValue(req.Context(), chi.RouteCtxKey, rctx)
+		req = req.WithContext(ctx)
+
+		w := httptest.NewRecorder()
+
+		h.RestoreBackup(w, req)
+
+		assert.Equal(t, http.StatusInternalServerError, w.Code)
+	})
+}
+
+func TestHandler_respondJSON(t *testing.T) {
+	h := &Handler{}
+	w := httptest.NewRecorder()
+
+	data := map[string]string{"status": "ok"}
+	h.respondJSON(w, http.StatusOK, data)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Contains(t, w.Header().Get("Content-Type"), "application/json")
+}
+
+func TestHandler_extractBackupID(t *testing.T) {
+	tests := []struct {
+		name   string
+		path   string
+		want   string
+		wantOK bool
+	}{
+		{
+			name:   "valid ID",
+			path:   "/api/v1/admin/backups/backup-123",
+			want:   "backup-123",
+			wantOK: true,
+		},
+		{
+			name:   "missing ID",
+			path:   "/api/v1/admin/backups/",
+			want:   "",
+			wantOK: false,
+		},
+		{
+			name:   "path traversal with ../",
+			path:   "/api/v1/admin/backups/../etc/passwd",
+			want:   "",
+			wantOK: false,
+		},
+		{
+			name:   "path traversal with absolute path",
+			path:   "/api/v1/admin/backups
+			want:   "",
+			wantOK: false,
+		},
+		{
+			name:   "path traversal with backslash",
+			path:   "/api/v1/admin/backups/..\\windows\\system32",
+			want:   "",
+			wantOK: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest("GET", tt.path, nil)
+			rctx := chi.NewRouteContext()
+
+			var idParam string
+			if tt.wantOK {
+				idParam = tt.want
+			} else if tt.path != "/api/v1/admin/backups/" {
+				parts := tt.path[len("/api/v1/admin/backups/"):]
+				idParam = parts
+			}
+
+			if idParam != "" {
+				rctx.URLParams.Add("id", idParam)
+			}
+
+			ctx := context.WithValue(req.Context(), chi.RouteCtxKey, rctx)
+			req = req.WithContext(ctx)
+
+			h := &Handler{}
+			got, ok := h.extractBackupID(req)
+
+			assert.Equal(t, tt.wantOK, ok)
+			if tt.wantOK {
+				assert.Equal(t, tt.want, got)
+			}
+		})
+	}
+}

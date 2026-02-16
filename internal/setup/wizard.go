@@ -1,11 +1,14 @@
 package setup
 
 import (
+	"bytes"
 	"crypto/rand"
 	"embed"
 	"encoding/base64"
 	"html/template"
+	"log"
 	"net/http"
+	"sync"
 
 	"athena/internal/sysinfo"
 )
@@ -16,6 +19,7 @@ var templatesFS embed.FS
 type Wizard struct {
 	templates *template.Template
 	config    *WizardConfig
+	mu        sync.Mutex
 }
 
 type WizardConfig struct {
@@ -69,7 +73,10 @@ func NewWizard() *Wizard {
 
 	sysInfo := sysinfo.DetectResources()
 
-	jwtSecret, _ := GenerateJWTSecret()
+	jwtSecret, err := GenerateJWTSecret()
+	if err != nil {
+		log.Fatalf("Failed to generate JWT secret: %v", err)
+	}
 
 	return &Wizard{
 		templates: tmpl,
@@ -120,15 +127,16 @@ func (w *Wizard) HandleDatabase(rw http.ResponseWriter, r *http.Request) {
 	}
 
 	data := &TemplateData{
-		Title:          "Database Configuration",
-		CurrentStep:    "database",
-		ShowBreadcrumb: true,
-		ShowActions:    true,
-		ShowBack:       true,
-		ShowContinue:   true,
-		BackURL:        "/setup/welcome",
-		Config:         w.config,
-		CompletedSteps: map[string]bool{"welcome": true},
+		Title:           "Database Configuration",
+		CurrentStep:     "database",
+		ShowBreadcrumb:  true,
+		ShowActions:     true,
+		ShowBack:        true,
+		ShowContinue:    true,
+		BackURL:         "/setup/welcome",
+		Config:          w.config,
+		SystemResources: w.config.SystemResources,
+		CompletedSteps:  map[string]bool{"welcome": true},
 	}
 
 	w.renderTemplate(rw, "layout.html", "database.html", data)
@@ -167,15 +175,16 @@ func (w *Wizard) HandleStorage(rw http.ResponseWriter, r *http.Request) {
 	}
 
 	data := &TemplateData{
-		Title:          "Storage Configuration",
-		CurrentStep:    "storage",
-		ShowBreadcrumb: true,
-		ShowActions:    true,
-		ShowBack:       true,
-		ShowContinue:   true,
-		BackURL:        "/setup/services",
-		Config:         w.config,
-		CompletedSteps: map[string]bool{"welcome": true, "database": true, "services": true},
+		Title:           "Storage Configuration",
+		CurrentStep:     "storage",
+		ShowBreadcrumb:  true,
+		ShowActions:     true,
+		ShowBack:        true,
+		ShowContinue:    true,
+		BackURL:         "/setup/services",
+		Config:          w.config,
+		SystemResources: w.config.SystemResources,
+		CompletedSteps:  map[string]bool{"welcome": true, "database": true, "services": true},
 	}
 
 	w.renderTemplate(rw, "layout.html", "storage.html", data)
@@ -188,31 +197,38 @@ func (w *Wizard) HandleSecurity(rw http.ResponseWriter, r *http.Request) {
 	}
 
 	data := &TemplateData{
-		Title:          "Security Configuration",
-		CurrentStep:    "security",
-		ShowBreadcrumb: true,
-		ShowActions:    true,
-		ShowBack:       true,
-		ShowContinue:   true,
-		BackURL:        "/setup/storage",
-		Config:         w.config,
-		CompletedSteps: map[string]bool{"welcome": true, "database": true, "services": true, "storage": true},
+		Title:           "Security Configuration",
+		CurrentStep:     "security",
+		ShowBreadcrumb:  true,
+		ShowActions:     true,
+		ShowBack:        true,
+		ShowContinue:    true,
+		BackURL:         "/setup/storage",
+		Config:          w.config,
+		SystemResources: w.config.SystemResources,
+		CompletedSteps:  map[string]bool{"welcome": true, "database": true, "services": true, "storage": true},
 	}
 
 	w.renderTemplate(rw, "layout.html", "security.html", data)
 }
 
 func (w *Wizard) HandleReview(rw http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodPost {
+		w.processReviewForm(rw, r)
+		return
+	}
+
 	data := &TemplateData{
-		Title:          "Review Configuration",
-		CurrentStep:    "review",
-		ShowBreadcrumb: true,
-		ShowActions:    true,
-		ShowBack:       true,
-		ShowContinue:   true,
-		BackURL:        "/setup/security",
-		Config:         w.config,
-		CompletedSteps: map[string]bool{"welcome": true, "database": true, "services": true, "storage": true, "security": true},
+		Title:           "Review Configuration",
+		CurrentStep:     "review",
+		ShowBreadcrumb:  true,
+		ShowActions:     true,
+		ShowBack:        true,
+		ShowContinue:    true,
+		BackURL:         "/setup/security",
+		Config:          w.config,
+		SystemResources: w.config.SystemResources,
+		CompletedSteps:  map[string]bool{"welcome": true, "database": true, "services": true, "storage": true, "security": true},
 	}
 
 	w.renderTemplate(rw, "layout.html", "review.html", data)
@@ -220,13 +236,14 @@ func (w *Wizard) HandleReview(rw http.ResponseWriter, r *http.Request) {
 
 func (w *Wizard) HandleComplete(rw http.ResponseWriter, r *http.Request) {
 	data := &TemplateData{
-		Title:          "Setup Complete",
-		CurrentStep:    "complete",
-		ShowBreadcrumb: false,
-		ShowActions:    false,
-		Config:         w.config,
-		MigrationCount: 61,
-		Port:           "8080",
+		Title:           "Setup Complete",
+		CurrentStep:     "complete",
+		ShowBreadcrumb:  false,
+		ShowActions:     false,
+		Config:          w.config,
+		SystemResources: w.config.SystemResources,
+		MigrationCount:  61,
+		Port:            "8080",
 	}
 
 	w.renderTemplate(rw, "layout.html", "complete.html", data)
@@ -235,8 +252,15 @@ func (w *Wizard) HandleComplete(rw http.ResponseWriter, r *http.Request) {
 func (w *Wizard) renderTemplate(rw http.ResponseWriter, layout, content string, data *TemplateData) {
 	rw.Header().Set("Content-Type", "text/html; charset=utf-8")
 
-	if err := w.templates.ExecuteTemplate(rw, layout, data); err != nil {
-		http.Error(rw, "Template error: "+err.Error(), http.StatusInternalServerError)
+	var buf bytes.Buffer
+	if err := w.templates.ExecuteTemplate(&buf, layout, data); err != nil {
+		log.Printf("Template rendering error: %v", err)
+		http.Error(rw, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	if _, err := buf.WriteTo(rw); err != nil {
+		log.Printf("Failed to write template response: %v", err)
 	}
 }
 

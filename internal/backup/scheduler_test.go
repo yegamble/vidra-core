@@ -11,7 +11,7 @@ import (
 func TestNewScheduler(t *testing.T) {
 	tempDir := t.TempDir()
 	target := NewLocalBackend(tempDir)
-	manager := NewBackupManager(target, "1.0.0", 61, "postgres://localhost/test", "redis://localhost")
+	manager := NewBackupManager(target, "1.0.0", 61, "postgres://localhost/test", "redis://localhost", "/tmp/storage")
 
 	scheduler := NewScheduler(manager, "0 2 * * *", 7)
 
@@ -23,7 +23,7 @@ func TestNewScheduler(t *testing.T) {
 func TestSchedulerStartStop(t *testing.T) {
 	tempDir := t.TempDir()
 	target := NewLocalBackend(tempDir)
-	manager := NewBackupManager(target, "1.0.0", 61, "postgres://localhost/test", "redis://localhost")
+	manager := NewBackupManager(target, "1.0.0", 61, "postgres://localhost/test", "redis://localhost", "/tmp/storage")
 
 	scheduler := NewScheduler(manager, "0 2 * * *", 7)
 
@@ -42,6 +42,16 @@ func TestSchedulerStartStop(t *testing.T) {
 }
 
 func TestSchedulerRetention(t *testing.T) {
-	t.Skip("Integration test - requires actual backup files")
+	if testing.Short() {
+		t.Skip("Integration test - requires actual backup files and pg_dump")
+	}
 
+	tempDir := t.TempDir()
+	target := NewLocalBackend(tempDir)
+	manager := NewBackupManager(target, "1.0.0", 61, "postgres://localhost/test", "redis://localhost", "/tmp/storage")
+
+	scheduler := NewScheduler(manager, "0 2 * * *", 3)
+
+	assert.Equal(t, 3, scheduler.retention)
+	assert.NotNil(t, scheduler.manager)
 }

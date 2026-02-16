@@ -104,6 +104,11 @@ func TestExtractDatabaseName(t *testing.T) {
 			url:  "invalid",
 			want: "",
 		},
+		{
+			name: "SQL injection attempt with semicolon",
+			url:  "postgres://user:pass@localhost:5432/test; DROP TABLE users--",
+			want: "test; DROP TABLE users--",
+		},
 	}
 
 	for _, tt := range tests {

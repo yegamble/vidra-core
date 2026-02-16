@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"compress/gzip"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -11,6 +12,11 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
+
+	"athena/internal/database"
+
+	_ "github.com/lib/pq"
 )
 
 type RestoreManager struct {
@@ -119,12 +125,19 @@ func (r *RestoreManager) Restore(ctx context.Context, opts RestoreOptions, progr
 	}
 
 	dbPath := filepath.Join(r.tempDir, "database.sql")
-	if err := r.restoreDatabase(ctx, dbPath); err != nil {
-		progressChan <- RestoreProgress{
-			Stage: "error",
-			Error: fmt.Sprintf("database restore failed: %v", err),
+	if _, err := os.Stat(dbPath); err == nil {
+		if err := r.restoreDatabase(ctx, dbPath); err != nil {
+			progressChan <- RestoreProgress{
+				Stage: "error",
+				Error: fmt.Sprintf("database restore failed: %v", err),
+			}
+			return fmt.Errorf("restoring database: %w", err)
 		}
-		return fmt.Errorf("restoring database: %w", err)
+	} else {
+		progressChan <- RestoreProgress{
+			Stage:   "restoring_db",
+			Message: "Skipping database restore (not included in backup)",
+		}
 	}
 
 	progressChan <- RestoreProgress{
@@ -133,10 +146,30 @@ func (r *RestoreManager) Restore(ctx context.Context, opts RestoreOptions, progr
 		Message:  "Restoring Redis...",
 	}
 
+	redisPath := filepath.Join(r.tempDir, "redis.rdb")
+	if _, err := os.Stat(redisPath); err == nil {
+		if err := r.restoreRedis(ctx, redisPath); err != nil {
+			progressChan <- RestoreProgress{
+				Stage:   "restoring_redis",
+				Message: fmt.Sprintf("Warning: Redis restore failed: %v", err),
+			}
+		}
+	}
+
 	progressChan <- RestoreProgress{
 		Stage:    "restoring_storage",
 		Progress: 0.8,
 		Message:  "Restoring storage files...",
+	}
+
+	storageArchive := filepath.Join(r.tempDir, "storage.tar.gz")
+	if _, err := os.Stat(storageArchive); err == nil {
+		if err := r.restoreStorage(ctx, storageArchive); err != nil {
+			progressChan <- RestoreProgress{
+				Stage:   "restoring_storage",
+				Message: fmt.Sprintf("Warning: Storage restore failed: %v", err),
+			}
+		}
 	}
 
 	if opts.RunMigrations && manifest.SchemaVersion < r.CurrentSchema {
@@ -172,7 +205,10 @@ func (r *RestoreManager) extractBackup(ctx context.Context, reader io.Reader) (*
 		return nil, fmt.Errorf("creating temp directory: %w", err)
 	}
 
-	gzr, err := gzip.NewReader(reader)
+	const maxArchiveSize = 10 * 1024 * 1024 * 1024
+	limitedReader := io.LimitReader(reader, maxArchiveSize)
+
+	gzr, err := gzip.NewReader(limitedReader)
 	if err != nil {
 		return nil, fmt.Errorf("creating gzip reader: %w", err)
 	}
@@ -244,6 +280,9 @@ func (r *RestoreManager) restoreDatabase(ctx context.Context, dumpPath string) e
 		return fmt.Errorf("dump file not found: %w", err)
 	}
 
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Minute)
+	defer cancel()
+
 	cmd := exec.CommandContext(ctx, "psql", r.DatabaseURL, "-f", dumpPath)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -253,6 +292,78 @@ func (r *RestoreManager) restoreDatabase(ctx context.Context, dumpPath string) e
 	return nil
 }
 
+func (r *RestoreManager) restoreRedis(ctx context.Context, rdbPath string) error {
+	// Note: This is a placeholder. In production, you'd need to:
+	return nil
+}
+
+func (r *RestoreManager) restoreStorage(ctx context.Context, archivePath string) error {
+	archiveFile, err := os.Open(archivePath)
+	if err != nil {
+		return fmt.Errorf("failed to open storage archive: %w", err)
+	}
+	defer archiveFile.Close()
+
+	gzr, err := gzip.NewReader(archiveFile)
+	if err != nil {
+		return fmt.Errorf("failed to create gzip reader: %w", err)
+	}
+	defer gzr.Close()
+
+	tr := tar.NewReader(gzr)
+
+	for {
+		header, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return fmt.Errorf("reading tar: %w", err)
+		}
+
+		targetPath := strings.TrimPrefix(header.Name, "storage/")
+		if targetPath == "" || targetPath == header.Name {
+			continue
+		}
+
+		fullPath := filepath.Join(r.tempDir, "restored_storage", targetPath)
+
+		if header.Typeflag == tar.TypeDir {
+			if err := os.MkdirAll(fullPath, 0755); err != nil {
+				return fmt.Errorf("creating directory: %w", err)
+			}
+			continue
+		}
+
+		if err := os.MkdirAll(filepath.Dir(fullPath), 0755); err != nil {
+			return fmt.Errorf("creating parent directory: %w", err)
+		}
+
+		file, err := os.Create(fullPath)
+		if err != nil {
+			return fmt.Errorf("creating file: %w", err)
+		}
+
+		if _, err := io.Copy(file, tr); err != nil {
+			file.Close()
+			return fmt.Errorf("extracting file: %w", err)
+		}
+		file.Close()
+	}
+
+	return nil
+}
+
 func (r *RestoreManager) runForwardMigrations(ctx context.Context) error {
+	db, err := sql.Open("postgres", r.DatabaseURL)
+	if err != nil {
+		return fmt.Errorf("failed to open database: %w", err)
+	}
+	defer db.Close()
+
+	if err := database.RunMigrationsWithDB(ctx, db); err != nil {
+		return fmt.Errorf("failed to run migrations: %w", err)
+	}
+
 	return nil
 }

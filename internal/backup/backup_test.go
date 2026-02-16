@@ -75,3 +75,107 @@ func TestBackupEntryComparison(t *testing.T) {
 	assert.NotEqual(t, entry1.Path, entry2.Path)
 	assert.Less(t, entry1.Size, entry2.Size)
 }
+
+func TestBackupComponents_Defaults(t *testing.T) {
+	components := NewBackupComponents()
+
+	assert.True(t, components.IncludeDatabase, "Database should be included by default")
+	assert.True(t, components.IncludeRedis, "Redis should be included by default")
+	assert.True(t, components.IncludeStorage, "Storage should be included by default")
+	assert.Empty(t, components.ExcludeDirs, "No directories should be excluded by default")
+}
+
+func TestBackupComponents_SelectiveBackup(t *testing.T) {
+	tests := []struct {
+		name           string
+		components     BackupComponents
+		expectDatabase bool
+		expectRedis    bool
+		expectStorage  bool
+		excludeDirs    []string
+	}{
+		{
+			name: "database only",
+			components: BackupComponents{
+				IncludeDatabase: true,
+				IncludeRedis:    false,
+				IncludeStorage:  false,
+			},
+			expectDatabase: true,
+			expectRedis:    false,
+			expectStorage:  false,
+		},
+		{
+			name: "exclude videos directory",
+			components: BackupComponents{
+				IncludeDatabase: true,
+				IncludeRedis:    true,
+				IncludeStorage:  true,
+				ExcludeDirs:     []string{"videos", "thumbnails"},
+			},
+			expectDatabase: true,
+			expectRedis:    true,
+			expectStorage:  true,
+			excludeDirs:    []string{"videos", "thumbnails"},
+		},
+		{
+			name: "no redis",
+			components: BackupComponents{
+				IncludeDatabase: true,
+				IncludeRedis:    false,
+				IncludeStorage:  true,
+			},
+			expectDatabase: true,
+			expectRedis:    false,
+			expectStorage:  true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expectDatabase, tt.components.IncludeDatabase)
+			assert.Equal(t, tt.expectRedis, tt.components.IncludeRedis)
+			assert.Equal(t, tt.expectStorage, tt.components.IncludeStorage)
+			assert.Equal(t, tt.excludeDirs, tt.components.ExcludeDirs)
+		})
+	}
+}
+
+func TestBackupComponents_GetIncludedComponents(t *testing.T) {
+	tests := []struct {
+		name       string
+		components BackupComponents
+		expected   []string
+	}{
+		{
+			name:       "all components",
+			components: NewBackupComponents(),
+			expected:   []string{"database", "redis", "storage"},
+		},
+		{
+			name: "database only",
+			components: BackupComponents{
+				IncludeDatabase: true,
+				IncludeRedis:    false,
+				IncludeStorage:  false,
+			},
+			expected: []string{"database"},
+		},
+		{
+			name: "database and storage",
+			components: BackupComponents{
+				IncludeDatabase: true,
+				IncludeRedis:    false,
+				IncludeStorage:  true,
+			},
+			expected: []string{"database", "storage"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := tt.components.GetIncludedComponents()
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}

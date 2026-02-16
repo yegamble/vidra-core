@@ -22,7 +22,6 @@ import (
 )
 
 type HandlerDependencies struct {
-	// Repositories
 	UserRepo          usecase.UserRepository
 	VideoRepo         usecase.VideoRepository
 	UploadRepo        usecase.UploadRepository
@@ -47,7 +46,6 @@ type HandlerDependencies struct {
 	StreamKeyRepo     repository.StreamKeyRepository
 	ViewerSessionRepo repository.ViewerSessionRepository
 
-	// Services
 	UploadService        ucup.Service
 	MessageService       *usecase.MessageService
 	ViewsService         *ucviews.Service
@@ -58,21 +56,20 @@ type HandlerDependencies struct {
 	PlaylistService      *usecase.PlaylistService
 	CaptionService       *usecase.CaptionService
 	TwoFAService         *usecase.TwoFAService
-	PaymentService       payments.PaymentService // Payment service for IOTA payments (optional)
+	PaymentService       payments.PaymentService
 	AtprotoService       usecase.AtprotoPublisher
 	FederationService    usecase.FederationService
 	HardeningService     *usecase.FederationHardeningService
 	EncodingService      encoding.Service
-	ActivityPubService   port.ActivityPubService // ActivityPub federation service
-	ImportService        any                     // Import service for video imports
+	ActivityPubService   port.ActivityPubService
+	ImportService        any
 	StreamManager        *livestream.StreamManager
 	HLSTranscoder        *livestream.HLSTranscoder
 	IPFSStreamingService *ucipfs.Service
+	BackupService        any
 
-	// Schedulers
 	EncodingScheduler *scheduler.EncodingScheduler
 
-	// Infrastructure
 	Redis            *redis.Client
 	JWTSecret        string
 	RedisPingTimeout time.Duration

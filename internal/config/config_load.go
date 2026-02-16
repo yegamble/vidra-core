@@ -1,6 +1,9 @@
 package config
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 func prodDefault(setupMode, prodVal, setupVal bool) bool {
 	if setupMode {
@@ -62,6 +65,19 @@ func loadCommonFields(cfg *Config, setupMode bool) {
 	cfg.BackupSFTPPath = getEnvOrDefault("BACKUP_SFTP_PATH", "/backups")
 	cfg.BackupSFTPHostKey = getEnvOrDefault("BACKUP_SFTP_HOST_KEY", "")
 	cfg.BackupTarget = getEnvOrDefault("BACKUP_TARGET", "local")
+	cfg.BackupEnabled = getBoolEnv("BACKUP_ENABLED", false)
+	cfg.BackupSchedule = getEnvOrDefault("BACKUP_SCHEDULE", "0 2 * * *")
+	cfg.BackupRetention = getIntEnv("BACKUP_RETENTION", 7)
+	cfg.BackupIncludeDB = getBoolEnv("BACKUP_INCLUDE_DB", true)
+	cfg.BackupIncludeRedis = getBoolEnv("BACKUP_INCLUDE_REDIS", true)
+	cfg.BackupIncludeStorage = getBoolEnv("BACKUP_INCLUDE_STORAGE", true)
+	excludeDirsStr := getEnvOrDefault("BACKUP_EXCLUDE_DIRS", "")
+	if excludeDirsStr != "" {
+		cfg.BackupExcludeDirs = strings.Split(excludeDirsStr, ",")
+		for i := range cfg.BackupExcludeDirs {
+			cfg.BackupExcludeDirs[i] = strings.TrimSpace(cfg.BackupExcludeDirs[i])
+		}
+	}
 
 	cfg.MaxUploadSize = getInt64Env("MAX_UPLOAD_SIZE", 5*1024*1024*1024)
 	cfg.ChunkSize = getInt64Env("CHUNK_SIZE", 32*1024*1024)

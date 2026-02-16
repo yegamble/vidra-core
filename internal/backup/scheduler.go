@@ -3,6 +3,7 @@ package backup
 import (
 	"context"
 	"log"
+	"sort"
 	"time"
 )
 
@@ -84,6 +85,10 @@ func (s *Scheduler) applyRetention(ctx context.Context) error {
 	if len(backups) <= s.retention {
 		return nil
 	}
+
+	sort.Slice(backups, func(i, j int) bool {
+		return backups[i].ModTime.Before(backups[j].ModTime)
+	})
 
 	toDelete := len(backups) - s.retention
 	for i := 0; i < toDelete; i++ {

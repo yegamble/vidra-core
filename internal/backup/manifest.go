@@ -10,14 +10,15 @@ var (
 )
 
 type Manifest struct {
-	Version         int       `json:"version"`
-	AppVersion      string    `json:"app_version"`
-	SchemaVersion   int64     `json:"schema_version"`
-	GooseVersion    string    `json:"goose_version"`
-	CreatedAt       time.Time `json:"created_at"`
-	Contents        []string  `json:"contents"`
-	PostgresVersion string    `json:"postgres_version,omitempty"`
-	Checksum        string    `json:"checksum,omitempty"`
+	Version            int       `json:"version"`
+	AppVersion         string    `json:"app_version"`
+	SchemaVersion      int64     `json:"schema_version"`
+	GooseVersion       string    `json:"goose_version"`
+	CreatedAt          time.Time `json:"created_at"`
+	Contents           []string  `json:"contents"`
+	ComponentsIncluded []string  `json:"components_included"`
+	PostgresVersion    string    `json:"postgres_version,omitempty"`
+	Checksum           string    `json:"checksum,omitempty"`
 }
 
 func NewManifest(appVersion string, schemaVersion int64) *Manifest {

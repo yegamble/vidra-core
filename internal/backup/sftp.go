@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"os"
 	"path/filepath"
@@ -111,6 +112,8 @@ func (s *SFTPBackend) buildHostKeyCallback() (ssh.HostKeyCallback, error) {
 	return func(hostname string, remote net.Addr, key ssh.PublicKey) error {
 		marshaledKey := string(ssh.MarshalAuthorizedKey(key))
 		if s.knownHostKey == "" {
+			log.Printf("WARNING: accepting unverified host key for %s on first connection (TOFU)", hostname)
+			log.Printf("Host key fingerprint: %s", marshaledKey)
 			s.knownHostKey = marshaledKey
 			return nil
 		}

@@ -49,6 +49,7 @@ func (s *Server) Handler() http.Handler {
 	r.Get("/setup/security", wizard.HandleSecurity)
 	r.Post("/setup/security", wizard.HandleSecurity)
 	r.Get("/setup/review", wizard.HandleReview)
+	r.Post("/setup/review", wizard.HandleReview)
 	r.Get("/setup/complete", wizard.HandleComplete)
 
 	r.Get("/", func(w http.ResponseWriter, r *http.Request) {

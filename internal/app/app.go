@@ -16,6 +16,7 @@ import (
 	redis "github.com/redis/go-redis/v9"
 	"github.com/sirupsen/logrus"
 
+	"athena/internal/backup"
 	"athena/internal/config"
 	"athena/internal/database"
 	"athena/internal/httpapi"
@@ -30,6 +31,7 @@ import (
 	"athena/internal/security"
 	"athena/internal/usecase"
 	ucactivitypub "athena/internal/usecase/activitypub"
+	ucbackup "athena/internal/usecase/backup"
 	ucchannel "athena/internal/usecase/channel"
 	uccmt "athena/internal/usecase/comment"
 	ucenc "athena/internal/usecase/encoding"
@@ -52,6 +54,9 @@ type Application struct {
 	encodingScheduler   *scheduler.EncodingScheduler
 	federationScheduler *scheduler.FederationScheduler
 	firehosePoller      *scheduler.FirehosePoller
+	backupScheduler     *backup.Scheduler
+	backupManager       *backup.BackupManager
+	backupService       *ucbackup.Service
 
 	metricsServer      *http.Server
 	rtmpServer         *livestream.RTMPServer
@@ -430,6 +435,45 @@ func (app *Application) initializeSchedulers(deps *Dependencies) {
 		app.firehosePoller = scheduler.NewFirehosePoller(deps.FederationService, fhInterval, 3)
 		app.schedulers = append(app.schedulers, app.firehosePoller)
 	}
+
+	if app.Config.BackupEnabled {
+		var target backup.BackupTarget
+		switch app.Config.BackupTarget {
+		case "local":
+			target = backup.NewLocalBackend("./backups")
+		case "s3":
+			target = backup.NewS3Backend(app.Config.BackupS3Bucket, app.Config.BackupS3Prefix,
+				app.Config.BackupS3Endpoint, app.Config.BackupS3AccessKey,
+				app.Config.BackupS3SecretKey, app.Config.BackupS3Region)
+		case "sftp":
+			sftpBackend := backup.NewSFTPBackend(app.Config.BackupSFTPHost, app.Config.BackupSFTPPort,
+				app.Config.BackupSFTPUser, app.Config.BackupSFTPPassword,
+				app.Config.BackupSFTPKeyPath, app.Config.BackupSFTPPath)
+			// TODO: Set known host key if provided
+			target = sftpBackend
+		default:
+			target = backup.NewLocalBackend("./backups")
+		}
+
+		schemaVersion, _ := database.CurrentVersion(app.DB)
+		storagePath := "./storage"
+		app.backupManager = backup.NewBackupManager(target, "server", schemaVersion,
+			app.Config.DatabaseURL, app.Config.RedisURL, storagePath)
+
+		app.backupManager.Components = backup.BackupComponents{
+			IncludeDatabase: app.Config.BackupIncludeDB,
+			IncludeRedis:    app.Config.BackupIncludeRedis,
+			IncludeStorage:  app.Config.BackupIncludeStorage,
+			ExcludeDirs:     app.Config.BackupExcludeDirs,
+		}
+
+		app.backupScheduler = backup.NewScheduler(app.backupManager,
+			app.Config.BackupSchedule, app.Config.BackupRetention)
+		app.schedulers = append(app.schedulers, app.backupScheduler)
+
+		tempDir := filepath.Join(os.TempDir(), "athena-backup")
+		app.backupService = ucbackup.NewService(target, tempDir, app.backupManager)
+	}
 }
 
 func (app *Application) registerRoutes(deps *Dependencies) {
@@ -475,6 +519,7 @@ func (app *Application) registerRoutes(deps *Dependencies) {
 		HLSTranscoder:        app.hlsTranscoder,
 		IPFSStreamingService: deps.IPFSStreamingService,
 		EncodingScheduler:    app.encodingScheduler,
+		BackupService:        app.backupService,
 		Redis:                app.Redis,
 		JWTSecret:            app.Config.JWTSecret,
 		RedisPingTimeout:     time.Duration(app.Config.RedisPingTimeout) * time.Second,

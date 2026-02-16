@@ -12,7 +12,12 @@ import (
 
 func TestNewService(t *testing.T) {
 	target := backup.NewLocalBackend("./backups")
-	svc := NewService(target, "./temp")
+	manager := &backup.BackupManager{
+		Target:        target,
+		AppVersion:    "test",
+		SchemaVersion: 1,
+	}
+	svc := NewService(target, "./temp", manager)
 
 	assert.NotNil(t, svc)
 }
@@ -23,7 +28,12 @@ func TestService_ListBackups(t *testing.T) {
 	}
 
 	target := backup.NewLocalBackend("./test-backups")
-	svc := NewService(target, "./temp")
+	manager := &backup.BackupManager{
+		Target:        target,
+		AppVersion:    "test",
+		SchemaVersion: 1,
+	}
+	svc := NewService(target, "./temp", manager)
 
 	ctx := context.Background()
 	backups, err := svc.ListBackups(ctx)

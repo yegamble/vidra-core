@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"strings"
 
 	"athena/internal/backup"
 	backupUsecase "athena/internal/usecase/backup"
@@ -36,17 +37,53 @@ func (h *Handler) ListBackups(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+type TriggerBackupRequest struct {
+	IncludeDatabase *bool    `json:"include_database,omitempty"`
+	IncludeRedis    *bool    `json:"include_redis,omitempty"`
+	IncludeStorage  *bool    `json:"include_storage,omitempty"`
+	ExcludeDirs     []string `json:"exclude_dirs,omitempty"`
+}
+
 func (h *Handler) TriggerBackup(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
-	if err := h.service.TriggerBackup(ctx); err != nil {
+	var req TriggerBackupRequest
+	if r.Body != nil && r.ContentLength > 0 {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "invalid request body", http.StatusBadRequest)
+			return
+		}
+	}
+
+	components := backup.NewBackupComponents()
+	if req.IncludeDatabase != nil {
+		components.IncludeDatabase = *req.IncludeDatabase
+	}
+	if req.IncludeRedis != nil {
+		components.IncludeRedis = *req.IncludeRedis
+	}
+	if req.IncludeStorage != nil {
+		components.IncludeStorage = *req.IncludeStorage
+	}
+	for _, dir := range req.ExcludeDirs {
+		if containsPathUnsafeChars(dir) {
+			http.Error(w, "invalid exclude directory", http.StatusBadRequest)
+			return
+		}
+	}
+	if len(req.ExcludeDirs) > 0 {
+		components.ExcludeDirs = req.ExcludeDirs
+	}
+
+	if err := h.service.TriggerBackupWithComponents(ctx, components); err != nil {
 		log.Printf("TriggerBackup error: %v", err)
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
 
 	h.respondJSON(w, http.StatusAccepted, map[string]interface{}{
-		"status": "backup started",
+		"status":     "backup started",
+		"components": components.GetIncludedComponents(),
 	})
 }
 
@@ -113,7 +150,7 @@ func (h *Handler) respondJSON(w http.ResponseWriter, status int, data interface{
 	w.WriteHeader(status)
 
 	if err := json.NewEncoder(w).Encode(data); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		log.Printf("respondJSON: failed to encode response: %v", err)
 	}
 }
 
@@ -122,5 +159,29 @@ func (h *Handler) extractBackupID(r *http.Request) (string, bool) {
 	if id == "" {
 		return "", false
 	}
+
+	if containsPathUnsafeChars(id) {
+		return "", false
+	}
+
 	return id, true
+}
+
+func containsPathUnsafeChars(s string) bool {
+	if len(s) == 0 {
+		return false
+	}
+
+	if s[0] == '/' || s[0] == '\\' {
+		return true
+	}
+
+	unsafeSubstrings := []string{"/", "\\", "..", "~"}
+	for _, unsafe := range unsafeSubstrings {
+		if strings.Contains(s, unsafe) {
+			return true
+		}
+	}
+
+	return false
 }

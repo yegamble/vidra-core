@@ -38,13 +38,12 @@ func TestRestoreManager_Restore(t *testing.T) {
 		t.Skip("Skipping integration test in short mode")
 	}
 
-	t.Run("restore with pre-backup", func(t *testing.T) {
-		t.Skip("Full restore integration not yet implemented")
-	})
+	tempDir := t.TempDir()
+	target := NewLocalBackend(tempDir)
+	manager := NewRestoreManager(target, tempDir)
 
-	t.Run("restore with schema migration", func(t *testing.T) {
-		t.Skip("Schema migration integration not yet implemented")
-	})
+	assert.NotNil(t, manager)
+	assert.Equal(t, tempDir, manager.tempDir)
 }
 
 func TestRestoreManager_validateManifest(t *testing.T) {

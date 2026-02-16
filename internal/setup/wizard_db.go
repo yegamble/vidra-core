@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	_ "github.com/lib/pq"
+	"github.com/lib/pq"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -30,7 +30,8 @@ func CreateDatabaseIfNotExists(ctx context.Context, databaseURL string) error {
 	}
 
 	if !exists {
-		createQuery := fmt.Sprintf("CREATE DATABASE %s", dbName)
+		quotedDBName := pq.QuoteIdentifier(dbName)
+		createQuery := fmt.Sprintf("CREATE DATABASE %s", quotedDBName)
 		if _, err := db.ExecContext(ctx, createQuery); err != nil {
 			return fmt.Errorf("failed to create database: %w", err)
 		}

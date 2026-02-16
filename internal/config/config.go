@@ -187,7 +187,14 @@ type Config struct {
 	BackupSFTPPath     string
 	BackupSFTPHostKey  string
 
-	BackupTarget string
+	BackupTarget         string
+	BackupEnabled        bool
+	BackupSchedule       string
+	BackupRetention      int
+	BackupIncludeDB      bool
+	BackupIncludeRedis   bool
+	BackupIncludeStorage bool
+	BackupExcludeDirs    []string
 
 	EnableLiveStreaming bool
 	RTMPHost            string

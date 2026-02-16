@@ -34,5 +34,35 @@ type BackupEntry struct {
 	Checksum string    `json:"checksum,omitempty"`
 }
 
+type BackupComponents struct {
+	IncludeDatabase bool     `json:"include_database"`
+	IncludeRedis    bool     `json:"include_redis"`
+	IncludeStorage  bool     `json:"include_storage"`
+	ExcludeDirs     []string `json:"exclude_dirs,omitempty"`
+}
+
+func NewBackupComponents() BackupComponents {
+	return BackupComponents{
+		IncludeDatabase: true,
+		IncludeRedis:    true,
+		IncludeStorage:  true,
+		ExcludeDirs:     []string{},
+	}
+}
+
+func (c BackupComponents) GetIncludedComponents() []string {
+	var components []string
+	if c.IncludeDatabase {
+		components = append(components, "database")
+	}
+	if c.IncludeRedis {
+		components = append(components, "redis")
+	}
+	if c.IncludeStorage {
+		components = append(components, "storage")
+	}
+	return components
+}
+
 type BackupJob = domain.BackupJob
 type BackupResult = domain.BackupResult
