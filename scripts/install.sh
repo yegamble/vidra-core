@@ -2,12 +2,22 @@
 set -e
 
 # Athena One-Command Install Script
-# Usage: curl -sSL https://raw.githubusercontent.com/.../install.sh | bash
+# Usage: curl -sSL https://raw.githubusercontent.com/yegamble/athena/main/scripts/install.sh | bash
 # Or safer: curl -O https://... && less install.sh && bash install.sh
+# From an existing clone: INSTALL_DIR=. bash scripts/install.sh
 
 VERSION="${VERSION:-latest}"
-INSTALL_DIR="${INSTALL_DIR:-$HOME/athena}"
 MODE="${1:-docker}"
+
+# If run from inside the repo (e.g., scripts/install.sh), use the repo root
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+if [ -z "${INSTALL_DIR:-}" ]; then
+    if [ -f "$SCRIPT_DIR/../docker-compose.yml" ]; then
+        INSTALL_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+    else
+        INSTALL_DIR="$HOME/athena"
+    fi
+fi
 
 # Colors for output
 RED='\033[0;31m'
@@ -102,11 +112,23 @@ setup_athena() {
     mkdir -p "$INSTALL_DIR"
     cd "$INSTALL_DIR"
 
-    # Clone or download Athena
-    if [ ! -f "docker-compose.yml" ]; then
+    # Clone or update Athena
+    if [ -f "docker-compose.yml" ]; then
+        log_info "Athena files already present, skipping download"
+    elif [ -d ".git" ]; then
+        log_info "Existing git repository detected, pulling latest..."
+        git pull --ff-only || {
+            log_warn "git pull failed — continuing with existing files"
+        }
+    elif [ "$(ls -A .)" ]; then
+        log_error "Directory $INSTALL_DIR is not empty and is not an Athena checkout"
+        log_error "Please use an empty directory or set INSTALL_DIR to a different path:"
+        log_error "  INSTALL_DIR=/path/to/athena bash install.sh"
+        exit 1
+    else
         log_info "Downloading Athena..."
         if command -v git >/dev/null 2>&1; then
-            git clone https://github.com/yourusername/athena.git .
+            git clone https://github.com/yegamble/athena.git .
         else
             log_error "Git not found. Please install git or download Athena manually"
             exit 1

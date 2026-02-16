@@ -89,38 +89,100 @@ See the detailed status section in [Project Status](#project-status) and plannin
 
 ## Quick Start
 
-### Development
+### Option 1: Fresh Install (Docker)
 
-**Prerequisites:**
-To run integration tests that pull Docker images, you must be authenticated with Docker Hub to avoid rate limits.
+For new deployments on a server or clean machine:
+
 ```bash
-docker login
+# One-command install — clones repo, creates .env, starts services
+curl -sSL https://raw.githubusercontent.com/yegamble/athena/main/scripts/install.sh | bash
+
+# Or inspect before running
+curl -O https://raw.githubusercontent.com/yegamble/athena/main/scripts/install.sh
+less install.sh
+bash install.sh
 ```
 
+This installs Docker if needed, clones Athena to `~/athena`, starts all services, and opens the **Setup Wizard** at `http://localhost:8080/setup/welcome`.
+
+### Option 2: From an Existing Clone
+
+If you already have the repository:
+
 ```bash
-# Clone the repository
-git clone https://github.com/yegamble/athena.git
 cd athena
 
-# Copy environment template
+# Run the install script (auto-detects repo root, skips clone)
+bash scripts/install.sh
+
+# Or do it manually:
 cp .env.example .env
-
-# Run with Docker Compose
-# Note: Ensure you are authenticated with Docker Hub to avoid rate limits
 docker compose up --build
+```
 
-# Or run locally
+Then open `http://localhost:8080/setup/welcome` to configure.
+
+### Option 3: Local Development (No Docker)
+
+```bash
+git clone https://github.com/yegamble/athena.git
+cd athena
 make deps
 
-# Install Goose migration tool
-go install github.com/pressly/goose/v3/cmd/goose@latest
+# Start Postgres and Redis (Docker or local installs)
+docker compose up -d postgres redis
 
 # Apply database migrations
-make migrate-up    # Apply all pending migrations
-# or manually:
-# goose -dir migrations postgres "$DATABASE_URL" up
+go install github.com/pressly/goose/v3/cmd/goose@latest
+make migrate-up
 
+# Copy and edit environment
+cp .env.example .env
+
+# Run the server
 make run
+```
+
+Without `DATABASE_URL`, `REDIS_URL`, or `JWT_SECRET` set, the server starts in **setup mode** automatically.
+
+### Setup Wizard
+
+On first run (or when required config is missing), Athena serves a web-based wizard at `http://localhost:8080/setup/welcome`:
+
+1. **Welcome** — System resource detection and deployment overview
+2. **Database** — Choose "Local Docker" (auto-provisioned) or "External Service" (provide your own Postgres URL). Tests connectivity.
+3. **Services** — Configure Redis, IPFS, ClamAV, and Whisper with "Local Docker" / "External Service" toggles.
+4. **Storage** — Set the storage path and configure backup settings (local, S3, or SFTP).
+5. **Security** — Auto-generated JWT secret (or provide your own, minimum 32 chars). Create the initial admin account.
+6. **Review** — Summary of all settings with edit links per section.
+7. **Complete** — Configuration saved. Restart the server to apply.
+
+The wizard writes a `.env` file and sets `SETUP_COMPLETED=true`. After restart, Athena boots normally.
+
+#### CLI Alternative
+
+```bash
+# Interactive setup
+./athena-cli setup
+
+# Non-interactive setup from template
+./athena-cli setup --from-env .env.example
+```
+
+### Docker Compose Profiles
+
+```bash
+# Minimal (Postgres + Redis + App) — works on any machine
+docker compose up --build
+
+# Full (adds IPFS, ClamAV, Whisper)
+docker compose --profile full up --build
+
+# Media processing only (ClamAV + Whisper, no IPFS)
+docker compose --profile media up --build
+
+# External services — skip local containers for services you provide
+POSTGRES_MODE=external REDIS_MODE=external docker compose up --build
 ```
 
 ### Database Migrations
