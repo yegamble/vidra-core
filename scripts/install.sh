@@ -135,38 +135,17 @@ setup_athena() {
         fi
     fi
 
-    # Create .env from template
+    # Create minimal .env for setup mode (wizard handles full configuration)
     if [ ! -f .env ]; then
-        log_info "Creating .env file..."
-        if [ -f .env.example ]; then
-            cp .env.example .env
-        else
-            # Create minimal .env if .env.example doesn't exist
-            cat > .env <<EOF
+        log_info "Creating .env for setup mode..."
+        cat > .env <<EOF
+# Athena Setup Mode
+# The setup wizard at http://localhost:8080/setup/welcome will configure these.
+SETUP_COMPLETED=false
 PORT=8080
-DATABASE_URL=postgresql://athena:athena@postgres:5432/athena?sslmode=disable
-REDIS_URL=redis://redis:6379
-JWT_SECRET=$(generate_jwt_secret)
-STORAGE_DIR=./storage
-LOG_LEVEL=info
+REQUIRE_IPFS=false
 EOF
-        fi
-
-        # Generate JWT secret
-        JWT_SECRET=$(generate_jwt_secret)
-        if grep -q "JWT_SECRET=" .env; then
-            # Replace existing JWT_SECRET
-            if [ "$(uname)" = "Darwin" ]; then
-                sed -i '' "s|JWT_SECRET=.*|JWT_SECRET=$JWT_SECRET|" .env
-            else
-                sed -i "s|JWT_SECRET=.*|JWT_SECRET=$JWT_SECRET|" .env
-            fi
-        else
-            # Add JWT_SECRET
-            echo "JWT_SECRET=$JWT_SECRET" >> .env
-        fi
-
-        log_info "JWT secret generated and saved to .env"
+        log_info "Setup wizard will run on first access"
     else
         log_info ".env file already exists, skipping creation"
     fi
