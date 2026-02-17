@@ -62,8 +62,22 @@ func (w *Wizard) processNetworkingForm(rw http.ResponseWriter, r *http.Request) 
 	tlsMode := r.FormValue("NGINX_TLS_MODE")
 	email := r.FormValue("NGINX_LETSENCRYPT_EMAIL")
 
+	if protocol != "http" && protocol != "https" {
+		http.Error(rw, "Invalid protocol: must be http or https", http.StatusBadRequest)
+		return
+	}
+	if protocol == "https" && tlsMode != "self-signed" && tlsMode != "letsencrypt" {
+		http.Error(rw, "Invalid TLS mode: must be self-signed or letsencrypt", http.StatusBadRequest)
+		return
+	}
+
 	if err := ValidateDomain(domain); err != nil {
 		http.Error(rw, "Invalid domain: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if tlsMode == "letsencrypt" && (domain == "localhost" || domain == "127.0.0.1" || domain == "::1") {
+		http.Error(rw, "Let's Encrypt requires a real domain name, not localhost or loopback addresses", http.StatusBadRequest)
 		return
 	}
 
@@ -148,6 +162,13 @@ func (w *Wizard) processReviewForm(rw http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
 		if err := CreateDatabaseIfNotExists(ctx, w.config.DatabaseURL); err != nil {
 			http.Error(rw, "Failed to create database: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
+
+	if w.config.NginxProtocol == "http" || w.config.NginxProtocol == "https" {
+		if err := GenerateNginxConfig(w.config, "nginx/conf"); err != nil {
+			http.Error(rw, "Failed to generate nginx config: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
 	}

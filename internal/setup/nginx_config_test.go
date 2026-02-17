@@ -10,10 +10,6 @@ import (
 )
 
 func TestGenerateNginxConfigHTTP(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping file I/O test in short mode")
-	}
-
 	tmpDir := t.TempDir()
 	outputDir := filepath.Join(tmpDir, "nginx-conf")
 
@@ -57,10 +53,6 @@ func TestGenerateNginxConfigHTTP(t *testing.T) {
 }
 
 func TestGenerateNginxConfigHTTPSSelfsigned(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping file I/O test in short mode")
-	}
-
 	tmpDir := t.TempDir()
 	outputDir := filepath.Join(tmpDir, "nginx-conf")
 
@@ -91,10 +83,6 @@ func TestGenerateNginxConfigHTTPSSelfsigned(t *testing.T) {
 }
 
 func TestGenerateNginxConfigHTTPSLetsencrypt(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping file I/O test in short mode")
-	}
-
 	tmpDir := t.TempDir()
 	outputDir := filepath.Join(tmpDir, "nginx-conf")
 
@@ -126,10 +114,6 @@ func TestGenerateNginxConfigHTTPSLetsencrypt(t *testing.T) {
 }
 
 func TestGenerateNginxConfigCreatesOutputDir(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping file I/O test in short mode")
-	}
-
 	tmpDir := t.TempDir()
 	outputDir := filepath.Join(tmpDir, "nested", "output", "dir")
 
@@ -152,10 +136,6 @@ func TestGenerateNginxConfigCreatesOutputDir(t *testing.T) {
 }
 
 func TestGenerateNginxConfigInvalidMode(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping file I/O test in short mode")
-	}
-
 	tmpDir := t.TempDir()
 	outputDir := filepath.Join(tmpDir, "nginx-conf")
 
@@ -172,10 +152,6 @@ func TestGenerateNginxConfigInvalidMode(t *testing.T) {
 }
 
 func TestGenerateNginxConfigPlaceholderReplacement(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping file I/O test in short mode")
-	}
-
 	tmpDir := t.TempDir()
 	outputDir := filepath.Join(tmpDir, "nginx-conf")
 

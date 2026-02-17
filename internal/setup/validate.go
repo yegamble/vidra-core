@@ -2,6 +2,8 @@ package setup
 
 import (
 	"errors"
+	"net"
+	"regexp"
 	"strings"
 )
 
@@ -61,6 +63,8 @@ func ValidateJWTSecret(secret string) error {
 	return nil
 }
 
+var validHostnameRegex = regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?)*$`)
+
 func ValidateDomain(domain string) error {
 	if domain == "" {
 		return ErrInvalidDomain
@@ -68,6 +72,14 @@ func ValidateDomain(domain string) error {
 
 	if containsShellMetachars(domain) {
 		return ErrShellMetachars
+	}
+
+	if net.ParseIP(domain) != nil {
+		return nil
+	}
+
+	if !validHostnameRegex.MatchString(domain) || len(domain) > 253 {
+		return ErrInvalidDomain
 	}
 
 	return nil

@@ -233,6 +233,36 @@ func TestValidateDomain(t *testing.T) {
 			domain:  "example.com|whoami",
 			wantErr: true,
 		},
+		{
+			name:    "path traversal",
+			domain:  "../../../etc/passwd",
+			wantErr: true,
+		},
+		{
+			name:    "wildcard",
+			domain:  "*",
+			wantErr: true,
+		},
+		{
+			name:    "spaces in domain",
+			domain:  "example .com",
+			wantErr: true,
+		},
+		{
+			name:    "valid IPv6 address",
+			domain:  "::1",
+			wantErr: false,
+		},
+		{
+			name:    "domain too long",
+			domain:  "a." + string(make([]byte, 254)),
+			wantErr: true,
+		},
+		{
+			name:    "hyphenated subdomain",
+			domain:  "my-video-server.example.com",
+			wantErr: false,
+		},
 	}
 
 	for _, tt := range tests {

@@ -94,14 +94,13 @@ func WriteEnvFile(path string, config *WizardConfig) error {
 
 	content := strings.Join(lines, "\n")
 
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return fmt.Errorf("creating directory: %w", err)
+	}
+
 	tmpPath := path + ".tmp"
 	if err := os.WriteFile(tmpPath, []byte(content), 0600); err != nil {
 		return fmt.Errorf("writing temp file: %w", err)
-	}
-
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		os.Remove(tmpPath)
-		return fmt.Errorf("creating directory: %w", err)
 	}
 
 	if err := os.Rename(tmpPath, path); err != nil {
