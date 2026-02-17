@@ -281,6 +281,10 @@ type Config struct {
 	SMTPFromAddress     string
 	SMTPFromName        string
 
+	ObjectStorageConfig    ObjectStorageConfig
+	CSPConfig              CSPConfig
+	StaticFilesPrivateAuth bool
+
 	SetupMode bool
 }
 

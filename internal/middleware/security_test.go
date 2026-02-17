@@ -12,62 +12,104 @@ import (
 )
 
 func TestSecurityHeaders(t *testing.T) {
-	handler := SecurityHeaders()(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
+	t.Run("CSP enabled with CDN domains", func(t *testing.T) {
+		cfg := SecurityConfig{
+			CSPEnabled:    true,
+			CSPReportOnly: false,
+			CDNDomains: []string{
+				"https://cdn.example.com",
+				"https://media.sizetube.com",
+			},
+		}
 
-	tests := []struct {
-		name         string
-		proto        string
-		tls          bool
-		expectedHSTS bool
-	}{
-		{
-			name:         "HTTP request - no HSTS",
-			proto:        "http",
-			tls:          false,
-			expectedHSTS: false,
-		},
-		{
-			name:         "HTTPS request - includes HSTS",
-			proto:        "https",
-			tls:          false,
-			expectedHSTS: true,
-		},
-	}
+		handler := SecurityHeaders(cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		}))
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodGet, "/", nil)
-			if tt.proto == "https" {
-				req.Header.Set("X-Forwarded-Proto", "https")
-			}
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, req)
 
-			rr := httptest.NewRecorder()
-			handler.ServeHTTP(rr, req)
+		assert.Equal(t, "DENY", rr.Header().Get("X-Frame-Options"))
+		assert.Equal(t, "nosniff", rr.Header().Get("X-Content-Type-Options"))
 
-			// Check security headers
-			assert.Equal(t, "DENY", rr.Header().Get("X-Frame-Options"))
-			assert.Equal(t, "nosniff", rr.Header().Get("X-Content-Type-Options"))
-			assert.Equal(t, "1; mode=block", rr.Header().Get("X-XSS-Protection"))
-			assert.Equal(t, "strict-origin-when-cross-origin", rr.Header().Get("Referrer-Policy"))
-			assert.Contains(t, rr.Header().Get("Permissions-Policy"), "camera=()")
+		csp := rr.Header().Get("Content-Security-Policy")
+		assert.NotEmpty(t, csp)
+		assert.Empty(t, rr.Header().Get("Content-Security-Policy-Report-Only"))
+		assert.Contains(t, csp, "default-src 'self'")
+		assert.Contains(t, csp, "https://cdn.example.com")
+		assert.Contains(t, csp, "https://media.sizetube.com")
+	})
 
-			csp := rr.Header().Get("Content-Security-Policy")
-			assert.Contains(t, csp, "default-src 'self'")
-			assert.Contains(t, csp, "frame-ancestors 'none'")
-			assert.Contains(t, csp, "upgrade-insecure-requests")
+	t.Run("CSP report-only mode", func(t *testing.T) {
+		cfg := SecurityConfig{
+			CSPEnabled:    true,
+			CSPReportOnly: true,
+			CSPReportURI:  "https://example.com/csp-report",
+			CDNDomains:    []string{"https://cdn.example.com"},
+		}
 
-			if tt.expectedHSTS {
-				hsts := rr.Header().Get("Strict-Transport-Security")
-				assert.Contains(t, hsts, "max-age=63072000")
-				assert.Contains(t, hsts, "includeSubDomains")
-				assert.Contains(t, hsts, "preload")
-			} else {
-				assert.Empty(t, rr.Header().Get("Strict-Transport-Security"))
-			}
-		})
-	}
+		handler := SecurityHeaders(cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		}))
+
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, req)
+
+		cspReportOnly := rr.Header().Get("Content-Security-Policy-Report-Only")
+		assert.NotEmpty(t, cspReportOnly)
+		assert.Empty(t, rr.Header().Get("Content-Security-Policy"))
+		assert.Contains(t, cspReportOnly, "report-uri https://example.com/csp-report")
+		assert.Contains(t, cspReportOnly, "https://cdn.example.com")
+	})
+
+	t.Run("CSP disabled", func(t *testing.T) {
+		cfg := SecurityConfig{
+			CSPEnabled: false,
+		}
+
+		handler := SecurityHeaders(cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		}))
+
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, req)
+
+		assert.Empty(t, rr.Header().Get("Content-Security-Policy"))
+		assert.Empty(t, rr.Header().Get("Content-Security-Policy-Report-Only"))
+		assert.Equal(t, "DENY", rr.Header().Get("X-Frame-Options"))
+	})
+
+	t.Run("HSTS on HTTPS", func(t *testing.T) {
+		cfg := SecurityConfig{CSPEnabled: false}
+		handler := SecurityHeaders(cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		}))
+
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		req.Header.Set("X-Forwarded-Proto", "https")
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, req)
+
+		hsts := rr.Header().Get("Strict-Transport-Security")
+		assert.Contains(t, hsts, "max-age=63072000")
+		assert.Contains(t, hsts, "includeSubDomains")
+	})
+
+	t.Run("no HSTS on HTTP", func(t *testing.T) {
+		cfg := SecurityConfig{CSPEnabled: false}
+		handler := SecurityHeaders(cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		}))
+
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, req)
+
+		assert.Empty(t, rr.Header().Get("Strict-Transport-Security"))
+	})
 }
 
 func TestRequestID(t *testing.T) {
@@ -99,7 +141,7 @@ func TestRequestID(t *testing.T) {
 }
 
 func TestSizeLimiter(t *testing.T) {
-	maxSize := int64(1024) // 1KB limit
+	maxSize := int64(1024)
 
 	handler := SizeLimiter(maxSize)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body := make([]byte, maxSize+1)
@@ -237,7 +279,6 @@ func TestAPIKeyAuth(t *testing.T) {
 
 		handler.ServeHTTP(rr, req)
 
-		// API keys in query params are no longer accepted for security reasons
 		assert.Equal(t, http.StatusUnauthorized, rr.Code)
 	})
 

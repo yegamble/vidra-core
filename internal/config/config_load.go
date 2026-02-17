@@ -278,4 +278,8 @@ func loadCommonFields(cfg *Config, setupMode bool) {
 	cfg.VirusScanMaxRetries = getIntEnv("CLAMAV_MAX_RETRIES", 3)
 	cfg.VirusScanRetryDelay = getIntEnv("CLAMAV_RETRY_DELAY", 1)
 	cfg.FileTypeBlockingEnabled = getBoolEnv("FILE_TYPE_BLOCKING_ENABLED", prodDefault(setupMode, true, false))
+
+	cfg.ObjectStorageConfig = loadObjectStorageConfig()
+	cfg.CSPConfig = loadCSPConfig()
+	cfg.StaticFilesPrivateAuth = getBoolEnv("STATIC_FILES_PRIVATE_AUTH", true)
 }

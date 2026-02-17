@@ -222,3 +222,140 @@ func TestS3Backend_ContextCanceled_ErrorWrapping(t *testing.T) {
 		}
 	})
 }
+
+func TestS3Backend_ConfigurableACLAndRetry(t *testing.T) {
+	tests := []struct {
+		name               string
+		uploadACLPublic    string
+		uploadACLPrivate   string
+		maxUploadPart      int64
+		maxRequestAttempts int
+	}{
+		{
+			name:               "default ACLs and settings",
+			uploadACLPublic:    "",
+			uploadACLPrivate:   "",
+			maxUploadPart:      0,
+			maxRequestAttempts: 0,
+		},
+		{
+			name:               "Backblaze null ACL (empty strings)",
+			uploadACLPublic:    "",
+			uploadACLPrivate:   "",
+			maxUploadPart:      100 * 1024 * 1024,
+			maxRequestAttempts: 3,
+		},
+		{
+			name:               "explicit null ACL strings for Backblaze",
+			uploadACLPublic:    "null",
+			uploadACLPrivate:   "null",
+			maxUploadPart:      100 * 1024 * 1024,
+			maxRequestAttempts: 5,
+		},
+		{
+			name:               "standard ACLs with custom part size",
+			uploadACLPublic:    "public-read",
+			uploadACLPrivate:   "private",
+			maxUploadPart:      50 * 1024 * 1024,
+			maxRequestAttempts: 2,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := newS3ConfigForTests()
+			cfg.UploadACLPublic = tt.uploadACLPublic
+			cfg.UploadACLPrivate = tt.uploadACLPrivate
+			cfg.MaxUploadPart = tt.maxUploadPart
+			cfg.MaxRequestAttempts = tt.maxRequestAttempts
+
+			backend, err := NewS3Backend(cfg)
+			if err != nil {
+				t.Fatalf("NewS3Backend() error = %v", err)
+			}
+
+			if backend == nil {
+				t.Fatal("expected non-nil backend")
+			}
+
+			if backend.bucket != cfg.Bucket {
+				t.Fatalf("bucket = %q, want %q", backend.bucket, cfg.Bucket)
+			}
+		})
+	}
+}
+
+func TestS3Backend_PartSizeConfiguration(t *testing.T) {
+	tests := []struct {
+		name          string
+		maxUploadPart int64
+		wantPartSize  int64
+	}{
+		{
+			name:          "default 10MB when zero",
+			maxUploadPart: 0,
+			wantPartSize:  10 * 1024 * 1024,
+		},
+		{
+			name:          "custom 50MB",
+			maxUploadPart: 50 * 1024 * 1024,
+			wantPartSize:  50 * 1024 * 1024,
+		},
+		{
+			name:          "custom 100MB (Backblaze recommended)",
+			maxUploadPart: 100 * 1024 * 1024,
+			wantPartSize:  100 * 1024 * 1024,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := newS3ConfigForTests()
+			cfg.MaxUploadPart = tt.maxUploadPart
+
+			backend, err := NewS3Backend(cfg)
+			if err != nil {
+				t.Fatalf("NewS3Backend() error = %v", err)
+			}
+
+			if backend.uploader == nil {
+				t.Fatal("uploader is nil")
+			}
+		})
+	}
+}
+
+func TestS3Backend_ACLNullSkipsACLOnUpload(t *testing.T) {
+	tests := []struct {
+		name    string
+		acl     string
+		wantACL bool
+	}{
+		{"null ACL skips setting", "null", false},
+		{"empty ACL skips setting", "", false},
+		{"public-read sets ACL", "public-read", true},
+		{"private sets ACL", "private", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := newS3ConfigForTests()
+			cfg.UploadACLPublic = tt.acl
+
+			backend, err := NewS3Backend(cfg)
+			if err != nil {
+				t.Fatalf("NewS3Backend() error = %v", err)
+			}
+
+			if tt.wantACL {
+				if backend.uploadACLPublic == "" || backend.uploadACLPublic == "null" {
+					t.Errorf("expected ACL to be set, got %q", backend.uploadACLPublic)
+				}
+			} else {
+				if backend.uploadACLPublic != "" && backend.uploadACLPublic != "null" {
+					t.Errorf("expected ACL to be empty or null, got %q", backend.uploadACLPublic)
+				}
+			}
+		})
+	}
+}

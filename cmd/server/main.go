@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"syscall"
@@ -52,7 +53,35 @@ func main() {
 	appRouter := application.GetRouter()
 	root := chi.NewRouter()
 
-	root.Use(appMiddleware.SecurityHeaders())
+	cdnDomains := []string{}
+	seen := make(map[string]bool)
+	for _, rawURL := range []string{
+		cfg.ObjectStorageConfig.StreamingPlaylistsBaseURL,
+		cfg.ObjectStorageConfig.WebVideosBaseURL,
+		cfg.ObjectStorageConfig.UserExportsBaseURL,
+		cfg.ObjectStorageConfig.OriginalVideoFilesBaseURL,
+		cfg.ObjectStorageConfig.CaptionsBaseURL,
+	} {
+		if rawURL == "" {
+			continue
+		}
+		if u, err := url.Parse(rawURL); err == nil && u.Host != "" {
+			origin := u.Scheme + "://" + u.Host
+			if !seen[origin] {
+				cdnDomains = append(cdnDomains, origin)
+				seen[origin] = true
+			}
+		}
+	}
+
+	securityCfg := appMiddleware.SecurityConfig{
+		CSPEnabled:    cfg.CSPConfig.Enabled,
+		CSPReportOnly: cfg.CSPConfig.ReportOnly,
+		CSPReportURI:  cfg.CSPConfig.ReportURI,
+		CDNDomains:    cdnDomains,
+	}
+
+	root.Use(appMiddleware.SecurityHeaders(securityCfg))
 	root.Use(appMiddleware.RequestID())
 
 	root.Use(middleware.RealIP)

@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -33,6 +34,7 @@ type mockHLSS3Backend struct {
 	storage.StorageBackend
 	getURLFunc       func(key string) string
 	getSignedURLFunc func(ctx context.Context, key string, expiration time.Duration) (string, error)
+	downloadFunc     func(ctx context.Context, key string) (io.ReadCloser, error)
 }
 
 func (m *mockHLSS3Backend) GetURL(key string) string {
@@ -53,6 +55,9 @@ func (m *mockHLSS3Backend) Upload(ctx context.Context, key string, data io.Reade
 	return errors.New("not implemented")
 }
 func (m *mockHLSS3Backend) Download(ctx context.Context, key string) (io.ReadCloser, error) {
+	if m.downloadFunc != nil {
+		return m.downloadFunc(ctx, key)
+	}
 	return nil, errors.New("not implemented")
 }
 func (m *mockHLSS3Backend) GetMetadata(ctx context.Context, key string) (*storage.FileMetadata, error) {
@@ -362,4 +367,76 @@ func TestHLSHandlerWithS3_FallbackToLocal(t *testing.T) {
 			assert.Empty(t, rec.Header().Get("Location"), tt.description+" - should not have Location header")
 		})
 	}
+}
+
+func TestHLSHandlerWithS3_ProxifyPrivateFiles(t *testing.T) {
+	now := time.Now()
+	videoRepo := &mockHLSVideoRepo{
+		getByIDFunc: func(ctx context.Context, id string) (*domain.Video, error) {
+			return &domain.Video{
+				ID:           id,
+				Privacy:      domain.PrivacyPrivate,
+				UserID:       "owner123",
+				StorageTier:  "cold",
+				S3MigratedAt: &now,
+			}, nil
+		},
+	}
+
+	t.Run("proxify enabled - streams from S3", func(t *testing.T) {
+		cfg := &config.Config{
+			EnableS3: true,
+			ObjectStorageConfig: config.ObjectStorageConfig{
+				ProxifyPrivateFiles: true,
+			},
+		}
+		s3Backend := &mockHLSS3Backend{
+			downloadFunc: func(ctx context.Context, key string) (io.ReadCloser, error) {
+				return io.NopCloser(strings.NewReader("mock data")), nil
+			},
+		}
+
+		handler := HLSHandlerWithS3(videoRepo, cfg, s3Backend)
+
+		req := httptest.NewRequest("GET", "/api/v1/hls/video123/master.m3u8", nil)
+		ctx := context.WithValue(req.Context(), middleware.UserIDKey, "owner123")
+		req = req.WithContext(ctx)
+		rec := httptest.NewRecorder()
+
+		handler.ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusOK, rec.Code)
+		assert.Empty(t, rec.Header().Get("Location"))
+		assert.Equal(t, "application/vnd.apple.mpegurl", rec.Header().Get("Content-Type"))
+		assert.Contains(t, rec.Header().Get("Cache-Control"), "private")
+	})
+
+	t.Run("proxify disabled - redirects with signed URL", func(t *testing.T) {
+		cfg := &config.Config{
+			EnableS3: true,
+			ObjectStorageConfig: config.ObjectStorageConfig{
+				ProxifyPrivateFiles: false,
+			},
+		}
+		s3Backend := &mockHLSS3Backend{
+			getURLFunc: func(key string) string {
+				return "https://s3.example.com/" + key
+			},
+			getSignedURLFunc: func(ctx context.Context, key string, expiration time.Duration) (string, error) {
+				return "https://s3.example.com/signed", nil
+			},
+		}
+
+		handler := HLSHandlerWithS3(videoRepo, cfg, s3Backend)
+
+		req := httptest.NewRequest("GET", "/api/v1/hls/video123/master.m3u8", nil)
+		ctx := context.WithValue(req.Context(), middleware.UserIDKey, "owner123")
+		req = req.WithContext(ctx)
+		rec := httptest.NewRecorder()
+
+		handler.ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusFound, rec.Code)
+		assert.Equal(t, "https://s3.example.com/signed", rec.Header().Get("Location"))
+	})
 }
