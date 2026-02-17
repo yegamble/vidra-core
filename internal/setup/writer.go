@@ -69,19 +69,25 @@ func WriteEnvFile(path string, config *WizardConfig) error {
 	}
 
 	lines = append(lines, "# Nginx Configuration")
-	lines = append(lines, "NGINX_ENABLED=true")
-	lines = append(lines, fmt.Sprintf("NGINX_DOMAIN=%s", config.NginxDomain))
-	lines = append(lines, fmt.Sprintf("NGINX_PORT=%d", config.NginxPort))
-	lines = append(lines, fmt.Sprintf("NGINX_PROTOCOL=%s", config.NginxProtocol))
-	lines = append(lines, fmt.Sprintf("NGINX_TLS_MODE=%s", config.NginxTLSMode))
-	if config.NginxEmail != "" {
-		lines = append(lines, fmt.Sprintf("NGINX_LETSENCRYPT_EMAIL=%s", config.NginxEmail))
+	lines = append(lines, fmt.Sprintf("NGINX_ENABLED=%t", config.NginxEnabled))
+	if config.NginxEnabled {
+		lines = append(lines, fmt.Sprintf("NGINX_DOMAIN=%s", config.NginxDomain))
+		lines = append(lines, fmt.Sprintf("NGINX_PORT=%d", config.NginxPort))
+		lines = append(lines, fmt.Sprintf("NGINX_PROTOCOL=%s", config.NginxProtocol))
+		lines = append(lines, fmt.Sprintf("NGINX_TLS_MODE=%s", config.NginxTLSMode))
+		if config.NginxEmail != "" {
+			lines = append(lines, fmt.Sprintf("NGINX_LETSENCRYPT_EMAIL=%s", config.NginxEmail))
+		}
 	}
 	lines = append(lines, "")
 
 	lines = append(lines, "# Public URL")
-	publicURL := computePublicBaseURL(config.NginxDomain, config.NginxPort, config.NginxProtocol)
-	lines = append(lines, fmt.Sprintf("PUBLIC_BASE_URL=%s", publicURL))
+	if config.NginxEnabled {
+		publicURL := computePublicBaseURL(config.NginxDomain, config.NginxPort, config.NginxProtocol)
+		lines = append(lines, fmt.Sprintf("PUBLIC_BASE_URL=%s", publicURL))
+	} else {
+		lines = append(lines, "PUBLIC_BASE_URL=http://localhost:8080")
+	}
 	lines = append(lines, "")
 
 	lines = append(lines, "# Security Configuration")

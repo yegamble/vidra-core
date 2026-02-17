@@ -158,3 +158,12 @@ func TestGenerateJWTSecret(t *testing.T) {
 		})
 	}
 }
+
+func TestNewWizardNginxDefaults(t *testing.T) {
+	wizard := NewWizard()
+
+	assert.Equal(t, true, wizard.config.NginxEnabled, "NginxEnabled should default to true")
+	assert.Equal(t, "localhost", wizard.config.NginxDomain, "NginxDomain should default to localhost")
+	assert.Equal(t, 80, wizard.config.NginxPort, "NginxPort should default to 80")
+	assert.Equal(t, "http", wizard.config.NginxProtocol, "NginxProtocol should default to http")
+}

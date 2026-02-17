@@ -105,6 +105,7 @@ func TestWriteEnvFileWithNginxHTTP(t *testing.T) {
 		RedisMode:     "docker",
 		StoragePath:   "./data/storage",
 		JWTSecret:     "test-secret-32chars-long-here",
+		NginxEnabled:  true,
 		NginxDomain:   "localhost",
 		NginxPort:     80,
 		NginxProtocol: "http",
@@ -142,6 +143,7 @@ func TestWriteEnvFileWithNginxHTTPSSelfsigned(t *testing.T) {
 		RedisMode:     "docker",
 		StoragePath:   "./data/storage",
 		JWTSecret:     "test-secret-32chars-long-here",
+		NginxEnabled:  true,
 		NginxDomain:   "videos.example.com",
 		NginxPort:     443,
 		NginxProtocol: "https",
@@ -179,6 +181,7 @@ func TestWriteEnvFileWithNginxHTTPSLetsencrypt(t *testing.T) {
 		RedisMode:     "docker",
 		StoragePath:   "./data/storage",
 		JWTSecret:     "test-secret-32chars-long-here",
+		NginxEnabled:  true,
 		NginxDomain:   "videos.example.com",
 		NginxPort:     443,
 		NginxProtocol: "https",
@@ -217,6 +220,7 @@ func TestWriteEnvFileWithNginxCustomPort(t *testing.T) {
 		RedisMode:     "docker",
 		StoragePath:   "./data/storage",
 		JWTSecret:     "test-secret-32chars-long-here",
+		NginxEnabled:  true,
 		NginxDomain:   "example.com",
 		NginxPort:     8080,
 		NginxProtocol: "http",
@@ -235,4 +239,32 @@ func TestWriteEnvFileWithNginxCustomPort(t *testing.T) {
 	contentStr := string(content)
 	assert.Contains(t, contentStr, "NGINX_PORT=8080")
 	assert.Contains(t, contentStr, "PUBLIC_BASE_URL=http://example.com:8080")
+}
+
+func TestWriteEnvFileNginxDisabled(t *testing.T) {
+	tmpDir := t.TempDir()
+	envPath := filepath.Join(tmpDir, ".env")
+
+	config := &WizardConfig{
+		PostgresMode:  "docker",
+		RedisMode:     "docker",
+		StoragePath:   "./data/storage",
+		JWTSecret:     "test-secret-32chars-long-here",
+		NginxEnabled:  false,
+		AdminUsername: "admin",
+		AdminEmail:    "admin@example.com",
+	}
+
+	err := WriteEnvFile(envPath, config)
+	require.NoError(t, err)
+
+	content, err := os.ReadFile(envPath)
+	require.NoError(t, err)
+
+	contentStr := string(content)
+	assert.Contains(t, contentStr, "NGINX_ENABLED=false")
+	assert.NotContains(t, contentStr, "NGINX_DOMAIN=")
+	assert.NotContains(t, contentStr, "NGINX_PORT=")
+	assert.NotContains(t, contentStr, "NGINX_PROTOCOL=")
+	assert.Contains(t, contentStr, "PUBLIC_BASE_URL=http://localhost:8080")
 }

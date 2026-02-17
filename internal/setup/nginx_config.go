@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"text/template"
+
+	"athena/nginx"
 )
 
 type nginxTemplateData struct {
@@ -13,34 +15,9 @@ type nginxTemplateData struct {
 	UpstreamAddr string
 }
 
-func findProjectRoot() (string, error) {
-	dir, err := os.Getwd()
-	if err != nil {
-		return "", err
-	}
-
-	for {
-		templatesDir := filepath.Join(dir, "nginx", "templates")
-		if _, err := os.Stat(templatesDir); err == nil {
-			return dir, nil
-		}
-
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			return "", fmt.Errorf("could not find project root")
-		}
-		dir = parent
-	}
-}
-
 func GenerateNginxConfig(config *WizardConfig, outputDir string) error {
 	if err := os.MkdirAll(outputDir, 0755); err != nil {
 		return fmt.Errorf("creating output directory: %w", err)
-	}
-
-	root, err := findProjectRoot()
-	if err != nil {
-		return fmt.Errorf("finding project root: %w", err)
 	}
 
 	data := nginxTemplateData{
@@ -52,19 +29,18 @@ func GenerateNginxConfig(config *WizardConfig, outputDir string) error {
 	var templateName string
 	switch {
 	case config.NginxProtocol == "http":
-		templateName = "nginx-http.conf.tmpl"
+		templateName = "templates/nginx-http.conf.tmpl"
 	case config.NginxProtocol == "https" && config.NginxTLSMode == "self-signed":
-		templateName = "nginx-https-selfsigned.conf.tmpl"
+		templateName = "templates/nginx-https-selfsigned.conf.tmpl"
 	case config.NginxProtocol == "https" && config.NginxTLSMode == "letsencrypt":
-		templateName = "nginx-https-letsencrypt.conf.tmpl"
+		templateName = "templates/nginx-https-letsencrypt.conf.tmpl"
 	default:
 		return fmt.Errorf("unknown nginx protocol/TLS mode: %s/%s", config.NginxProtocol, config.NginxTLSMode)
 	}
 
-	templatePath := filepath.Join(root, "nginx", "templates", templateName)
-	tmpl, err := template.ParseFiles(templatePath)
+	tmpl, err := template.ParseFS(nginx.TemplatesFS, templateName)
 	if err != nil {
-		return fmt.Errorf("parsing template %s: %w", templatePath, err)
+		return fmt.Errorf("parsing template %s: %w", templateName, err)
 	}
 
 	mainConfPath := filepath.Join(outputDir, "default.conf")
@@ -79,15 +55,14 @@ func GenerateNginxConfig(config *WizardConfig, outputDir string) error {
 	}
 
 	includes := map[string]string{
-		"common-security.conf": "security.conf",
-		"common-proxy.conf":    "proxy.conf",
+		"templates/common-security.conf": "security.conf",
+		"templates/common-proxy.conf":    "proxy.conf",
 	}
 
 	for srcName, dstName := range includes {
-		srcPath := filepath.Join(root, "nginx", "templates", srcName)
-		content, err := os.ReadFile(srcPath)
+		content, err := nginx.TemplatesFS.ReadFile(srcName)
 		if err != nil {
-			return fmt.Errorf("reading include file %s: %w", srcPath, err)
+			return fmt.Errorf("reading include file %s: %w", srcName, err)
 		}
 
 		dstPath := filepath.Join(outputDir, dstName)

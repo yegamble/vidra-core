@@ -46,6 +46,7 @@ type WizardConfig struct {
 	AdminUsername string
 	AdminEmail    string
 
+	NginxEnabled  bool
 	NginxDomain   string
 	NginxPort     int
 	NginxProtocol string
@@ -97,6 +98,10 @@ func NewWizard() *Wizard {
 			BackupRetention: "7",
 			BackupLocalPath: "./backups",
 			JWTSecret:       jwtSecret,
+			NginxEnabled:    true,
+			NginxDomain:     "localhost",
+			NginxPort:       80,
+			NginxProtocol:   "http",
 			SystemResources: sysInfo,
 		},
 	}
@@ -179,18 +184,6 @@ func (w *Wizard) HandleNetworking(rw http.ResponseWriter, r *http.Request) {
 		w.processNetworkingForm(rw, r)
 		return
 	}
-
-	w.mu.Lock()
-	if w.config.NginxDomain == "" {
-		w.config.NginxDomain = "localhost"
-	}
-	if w.config.NginxPort == 0 {
-		w.config.NginxPort = 80
-	}
-	if w.config.NginxProtocol == "" {
-		w.config.NginxProtocol = "http"
-	}
-	w.mu.Unlock()
 
 	data := &TemplateData{
 		Title:           "Networking Configuration",
