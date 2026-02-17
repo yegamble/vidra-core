@@ -14,7 +14,6 @@ import (
 	"time"
 )
 
-// localClient implements the Client interface using whisper.cpp
 type localClient struct {
 	config *Config
 }
@@ -27,18 +26,15 @@ func (c *localClient) GetProvider() domain.WhisperProvider {
 	return domain.WhisperProviderLocal
 }
 
-// Transcribe transcribes an audio file using whisper.cpp
 func (c *localClient) Transcribe(ctx context.Context, audioPath string, targetLanguage *string) (*TranscriptionResult, error) {
 	modelPath := GetModelPath(c.config.ModelsDir, c.config.ModelSize)
 	if _, err := os.Stat(modelPath); os.IsNotExist(err) {
 		return nil, fmt.Errorf("whisper model not found: %s (download it first)", modelPath)
 	}
 
-	// Create a temporary file for JSON output
 	outputFile := filepath.Join(c.config.TempDir, fmt.Sprintf("whisper_%d.json", time.Now().Unix()))
 	defer func() { _ = os.Remove(outputFile) }()
 
-	// Build whisper.cpp command
 	args := []string{
 		"-m", modelPath,
 		"-f", audioPath,
@@ -47,32 +43,27 @@ func (c *localClient) Transcribe(ctx context.Context, audioPath string, targetLa
 		"--print-progress",
 	}
 
-	// Add language hint if provided
 	if targetLanguage != nil && *targetLanguage != "" {
 		args = append(args, "-l", *targetLanguage)
 	}
 
-	// Execute whisper.cpp
 	cmd := exec.CommandContext(ctx, c.config.WhisperCppPath, args...)
-	cmd.Stderr = os.Stderr // Show progress in logs
+	cmd.Stderr = os.Stderr
 
 	if err := cmd.Run(); err != nil {
 		return nil, fmt.Errorf("whisper.cpp execution failed: %w", err)
 	}
 
-	// Read JSON output
 	jsonData, err := os.ReadFile(outputFile)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read whisper output: %w", err)
 	}
 
-	// Parse whisper.cpp JSON format
 	var whisperOutput WhisperCppOutput
 	if err := json.Unmarshal(jsonData, &whisperOutput); err != nil {
 		return nil, fmt.Errorf("failed to parse whisper output: %w", err)
 	}
 
-	// Convert to our format
 	result := &TranscriptionResult{
 		Text:             whisperOutput.GetFullText(),
 		DetectedLanguage: whisperOutput.GetDetectedLanguage(),
@@ -83,7 +74,7 @@ func (c *localClient) Transcribe(ctx context.Context, audioPath string, targetLa
 	for i, segment := range whisperOutput.Transcription {
 		result.Segments = append(result.Segments, TranscriptionSegment{
 			Index:      i,
-			Start:      float64(segment.Timestamps.From) / 100.0, // Convert centiseconds to seconds
+			Start:      float64(segment.Timestamps.From) / 100.0,
 			End:        float64(segment.Timestamps.To) / 100.0,
 			Text:       strings.TrimSpace(segment.Text),
 			Confidence: segment.GetConfidence(),
@@ -97,21 +88,18 @@ func (c *localClient) Transcribe(ctx context.Context, audioPath string, targetLa
 	return result, nil
 }
 
-// ExtractAudioFromVideo extracts audio track from video using FFmpeg
 func (c *localClient) ExtractAudioFromVideo(ctx context.Context, videoPath string, outputPath string) error {
-	// Ensure output directory exists
 	if err := os.MkdirAll(filepath.Dir(outputPath), 0750); err != nil {
 		return fmt.Errorf("failed to create output directory: %w", err)
 	}
 
-	// FFmpeg command to extract audio as 16kHz mono WAV (Whisper's preferred format)
 	args := []string{
 		"-i", videoPath,
-		"-vn",                  // No video
-		"-acodec", "pcm_s16le", // PCM 16-bit
-		"-ar", "16000", // 16kHz sample rate
-		"-ac", "1", // Mono
-		"-y", // Overwrite output
+		"-vn",
+		"-acodec", "pcm_s16le",
+		"-ar", "16000",
+		"-ac", "1",
+		"-y",
 		outputPath,
 	}
 
@@ -124,20 +112,15 @@ func (c *localClient) ExtractAudioFromVideo(ctx context.Context, videoPath strin
 	return nil
 }
 
-// FormatToVTT converts transcription result to WebVTT format
 func (c *localClient) FormatToVTT(result *TranscriptionResult) (string, error) {
 	var sb strings.Builder
 
-	// WebVTT header
 	sb.WriteString("WEBVTT\n\n")
 
-	// Add cues
 	for i, segment := range result.Segments {
-		// Format timestamps (HH:MM:SS.mmm)
 		start := formatVTTTimestamp(segment.Start)
 		end := formatVTTTimestamp(segment.End)
 
-		// Write cue
 		sb.WriteString(fmt.Sprintf("%d\n", i+1))
 		sb.WriteString(fmt.Sprintf("%s --> %s\n", start, end))
 		sb.WriteString(segment.Text)
@@ -147,16 +130,13 @@ func (c *localClient) FormatToVTT(result *TranscriptionResult) (string, error) {
 	return sb.String(), nil
 }
 
-// FormatToSRT converts transcription result to SRT format
 func (c *localClient) FormatToSRT(result *TranscriptionResult) (string, error) {
 	var sb strings.Builder
 
 	for i, segment := range result.Segments {
-		// Format timestamps (HH:MM:SS,mmm)
 		start := formatSRTTimestamp(segment.Start)
 		end := formatSRTTimestamp(segment.End)
 
-		// Write subtitle entry
 		sb.WriteString(fmt.Sprintf("%d\n", i+1))
 		sb.WriteString(fmt.Sprintf("%s --> %s\n", start, end))
 		sb.WriteString(segment.Text)
@@ -166,25 +146,22 @@ func (c *localClient) FormatToSRT(result *TranscriptionResult) (string, error) {
 	return sb.String(), nil
 }
 
-// formatVTTTimestamp formats seconds to WebVTT timestamp (HH:MM:SS.mmm)
+func formatTimestamp(seconds float64, separator string) string {
+	hours := int(seconds) / 3600
+	minutes := (int(seconds) % 3600) / 60
+	secs := int(seconds) % 60
+	millis := int((seconds - float64(int(seconds))) * 1000)
+	return fmt.Sprintf("%02d:%02d:%02d%s%03d", hours, minutes, secs, separator, millis)
+}
+
 func formatVTTTimestamp(seconds float64) string {
-	hours := int(seconds) / 3600
-	minutes := (int(seconds) % 3600) / 60
-	secs := int(seconds) % 60
-	millis := int((seconds - float64(int(seconds))) * 1000)
-	return fmt.Sprintf("%02d:%02d:%02d.%03d", hours, minutes, secs, millis)
+	return formatTimestamp(seconds, ".")
 }
 
-// formatSRTTimestamp formats seconds to SRT timestamp (HH:MM:SS,mmm)
 func formatSRTTimestamp(seconds float64) string {
-	hours := int(seconds) / 3600
-	minutes := (int(seconds) % 3600) / 60
-	secs := int(seconds) % 60
-	millis := int((seconds - float64(int(seconds))) * 1000)
-	return fmt.Sprintf("%02d:%02d:%02d,%03d", hours, minutes, secs, millis)
+	return formatTimestamp(seconds, ",")
 }
 
-// WhisperCppOutput represents the JSON output format from whisper.cpp
 type WhisperCppOutput struct {
 	SystemInfo struct {
 		Model       string `json:"model"`
@@ -196,8 +173,8 @@ type WhisperCppOutput struct {
 
 type WhisperSegment struct {
 	Timestamps struct {
-		From int `json:"from"` // Centiseconds
-		To   int `json:"to"`   // Centiseconds
+		From int `json:"from"`
+		To   int `json:"to"`
 	} `json:"timestamps"`
 	Offsets struct {
 		From int `json:"from"`
@@ -231,7 +208,7 @@ func (o *WhisperCppOutput) GetDetectedLanguage() string {
 	if o.SystemInfo.Language != "" {
 		return o.SystemInfo.Language
 	}
-	return "en" // Default to English
+	return "en"
 }
 
 func (o *WhisperCppOutput) GetAverageConfidence() float64 {
@@ -249,7 +226,7 @@ func (o *WhisperCppOutput) GetAverageConfidence() float64 {
 
 func (s *WhisperSegment) GetConfidence() float64 {
 	if len(s.Tokens) == 0 {
-		return 1.0 // Default if no token data
+		return 1.0
 	}
 
 	totalProb := 0.0
@@ -260,7 +237,6 @@ func (s *WhisperSegment) GetConfidence() float64 {
 	return totalProb / float64(len(s.Tokens))
 }
 
-// ParseWhisperCppLog parses progress from whisper.cpp stderr output
 func ParseWhisperCppLog(reader *bufio.Reader) (int, error) {
 	for {
 		line, err := reader.ReadString('\n')
@@ -268,7 +244,6 @@ func ParseWhisperCppLog(reader *bufio.Reader) (int, error) {
 			return 0, err
 		}
 
-		// Look for progress indicators like "[ 50%]"
 		if strings.Contains(line, "[") && strings.Contains(line, "%]") {
 			start := strings.Index(line, "[") + 1
 			end := strings.Index(line, "%]")

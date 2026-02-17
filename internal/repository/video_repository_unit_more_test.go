@@ -235,10 +235,15 @@ func TestVideoRepository_Unit_GetByID_Branches(t *testing.T) {
 		require.NoError(t, mock.ExpectationsWereMet())
 	})
 
-	t.Run("fallback query when S3 columns are missing", func(t *testing.T) {
+	t.Run("simple query when hasChannelID is false", func(t *testing.T) {
 		db, mock := setupVideoMockDB(t)
 		defer db.Close()
-		repo := NewVideoRepository(db)
+		repo := &videoRepository{db: db, tm: NewTransactionManager(db)}
+
+		repo.schemaOnce.Do(func() {
+			repo.hasChannelID = false
+			repo.checkedSchema = true
+		})
 
 		videoID := uuid.New().String()
 		userID := uuid.New().String()
@@ -247,10 +252,7 @@ func TestVideoRepository_Unit_GetByID_Branches(t *testing.T) {
 		metadataJSON, _ := json.Marshal(domain.VideoMetadata{Width: 1280, Height: 720})
 		outputPathsJSON, _ := json.Marshal(map[string]string{"hls": "/fallback/hls"})
 
-		mock.ExpectQuery(selectVideoAliasRegex).WithArgs(videoID).
-			WillReturnError(errors.New(`column "s3_urls" does not exist`))
-
-		fallbackRows := sqlmock.NewRows([]string{
+		simpleRows := sqlmock.NewRows([]string{
 			"id", "thumbnail_id", "title", "description", "duration", "views",
 			"privacy", "status", "upload_date", "user_id", "channel_id",
 			"original_cid", "processed_cids", "thumbnail_cid",
@@ -258,20 +260,20 @@ func TestVideoRepository_Unit_GetByID_Branches(t *testing.T) {
 			"created_at", "updated_at", "output_paths", "thumbnail_path", "preview_path",
 			"cat_id", "cat_name", "cat_slug", "cat_desc", "cat_icon", "cat_color", "cat_order", "cat_active",
 		}).AddRow(
-			videoID, uuid.New().String(), "fallback-title", "fallback-desc", 140, int64(7),
+			videoID, uuid.New().String(), "simple-title", "simple-desc", 140, int64(7),
 			domain.PrivacyPublic, domain.StatusCompleted, now, userID, uuid.New(),
 			"orig-cid", processedCIDsJSON, "thumb-cid",
-			pq.Array([]string{"fallback"}), nil, "en", int64(4096), "video/mp4", metadataJSON,
+			pq.Array([]string{"tag1"}), nil, "en", int64(4096), "video/mp4", metadataJSON,
 			now, now, outputPathsJSON, "/thumb.jpg", "/preview.jpg",
 			nil, nil, nil, nil, nil, nil, nil, nil,
 		)
 
-		mock.ExpectQuery(selectVideoAliasRegex).WithArgs(videoID).WillReturnRows(fallbackRows)
+		mock.ExpectQuery(selectVideoAliasRegex).WithArgs(videoID).WillReturnRows(simpleRows)
 
 		video, err := repo.GetByID(context.Background(), videoID)
 		require.NoError(t, err)
 		require.NotNil(t, video)
-		assert.Equal(t, "fallback-title", video.Title)
+		assert.Equal(t, "simple-title", video.Title)
 		assert.Equal(t, "hot", video.StorageTier)
 		assert.False(t, video.LocalDeleted)
 		require.NoError(t, mock.ExpectationsWereMet())

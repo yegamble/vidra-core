@@ -826,3 +826,24 @@ func TestImportService_moveToUploads_NoExtension(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Contains(t, destPath, ".mp4")
 }
+
+func TestServiceLifecycle_HasManagedContext(t *testing.T) {
+	svc := NewService(nil, nil, nil, nil, &config.Config{}, t.TempDir())
+	concreteSvc := svc.(*service)
+
+	require.NotNil(t, concreteSvc.ctx)
+	require.NotNil(t, concreteSvc.cancel)
+
+	select {
+	case <-concreteSvc.ctx.Done():
+		t.Fatal("service context should not be cancelled at startup")
+	default:
+	}
+
+	concreteSvc.cancel()
+	select {
+	case <-concreteSvc.ctx.Done():
+	default:
+		t.Fatal("service context should be cancelled after calling cancel()")
+	}
+}

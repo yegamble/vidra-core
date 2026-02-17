@@ -3,6 +3,7 @@ package captiongen
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -362,7 +363,7 @@ func (s *service) processJob(ctx context.Context, job *domain.CaptionGenerationJ
 		video.Language = result.DetectedLanguage
 		if err := s.videoRepo.Update(ctx, video); err != nil {
 			// Non-fatal: log but don't fail the job
-			fmt.Printf("Warning: failed to update video language: %v\n", err)
+			slog.Warn("failed to update video language", "error", err)
 		}
 	}
 

@@ -2,6 +2,7 @@ package video
 
 import (
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -111,7 +112,7 @@ func fetchVideo(w http.ResponseWriter, r *http.Request, videoRepo usecase.VideoR
 		} else if de, ok := err.(*domain.DomainError); ok {
 			domainErr = *de
 		} else {
-			fmt.Printf("stream handler: failed to fetch video %s: %v\n", videoID, err)
+			slog.Error("stream handler: failed to fetch video", "id", videoID, "error", err)
 			shared.WriteError(w, http.StatusInternalServerError, domain.NewDomainError("DB_ERROR", "Failed to fetch video"))
 			return nil, false
 		}

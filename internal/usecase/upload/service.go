@@ -17,6 +17,7 @@ import (
 	"athena/internal/config"
 	"athena/internal/domain"
 	"athena/internal/port"
+	"athena/internal/security"
 	"athena/internal/storage"
 	"athena/internal/validation"
 )
@@ -62,10 +63,14 @@ func (s *service) InitiateUpload(ctx context.Context, userID string, req *domain
 	}
 	totalChunks := int((req.FileSize + req.ChunkSize - 1) / req.ChunkSize)
 	now := time.Now()
+	safeFileName := security.SanitizeStrictText(req.FileName)
+	if safeFileName == "" {
+		safeFileName = "Untitled Upload"
+	}
 	video := &domain.Video{
 		ID:            uuid.NewString(),
 		ThumbnailID:   uuid.NewString(),
-		Title:         fmt.Sprintf("Uploading: %s", req.FileName),
+		Title:         fmt.Sprintf("Uploading: %s", safeFileName),
 		Description:   "Upload in progress",
 		Privacy:       domain.PrivacyPrivate,
 		Status:        domain.StatusUploading,

@@ -193,7 +193,11 @@ func (r *videoRepository) Create(ctx context.Context, v *domain.Video) error {
 }
 
 func (r *videoRepository) GetByID(ctx context.Context, id string) (*domain.Video, error) {
-	query := `
+	r.ensureSchemaChecked(ctx)
+
+	var query string
+	if r.hasChannelID {
+		query = `
         SELECT v.id, v.thumbnail_id, v.title, v.description, v.duration, v.views,
                v.privacy, v.status, v.upload_date, v.user_id, v.channel_id,
                v.original_cid, v.processed_cids, v.thumbnail_cid,
@@ -207,6 +211,18 @@ func (r *videoRepository) GetByID(ctx context.Context, id string) (*domain.Video
         FROM videos v
         LEFT JOIN video_categories c ON v.category_id = c.id
         WHERE v.id = $1`
+	} else {
+		query = `
+        SELECT v.id, v.thumbnail_id, v.title, v.description, v.duration, v.views,
+               v.privacy, v.status, v.upload_date, v.user_id, v.channel_id,
+               v.original_cid, v.processed_cids, v.thumbnail_cid,
+               v.tags, v.category_id, v.language, v.file_size, v.mime_type, v.metadata,
+               v.created_at, v.updated_at, v.output_paths, v.thumbnail_path, v.preview_path,
+               c.id, c.name, c.slug, c.description, c.icon, c.color, c.display_order, c.is_active
+        FROM videos v
+        LEFT JOIN video_categories c ON v.category_id = c.id
+        WHERE v.id = $1`
+	}
 
 	var v domain.Video
 	var processedCIDsJSON, metadataJSON, outputPathsJSON, s3URLsJSON []byte
@@ -218,15 +234,30 @@ func (r *videoRepository) GetByID(ctx context.Context, id string) (*domain.Video
 	var categoryActive sql.NullBool
 	var thumbnailPath, previewPath sql.NullString
 
-	err := r.db.QueryRowContext(ctx, query, id).Scan(
-		&v.ID, &v.ThumbnailID, &v.Title, &v.Description, &v.Duration, &v.Views,
-		&v.Privacy, &v.Status, &v.UploadDate, &v.UserID, &v.ChannelID,
-		&v.OriginalCID, &processedCIDsJSON, &v.ThumbnailCID,
-		&tags, &v.CategoryID, &v.Language, &v.FileSize, &v.MimeType, &metadataJSON,
-		&v.CreatedAt, &v.UpdatedAt, &outputPathsJSON, &thumbnailPath, &previewPath,
-		&s3URLsJSON, &v.StorageTier, &v.S3MigratedAt, &v.LocalDeleted,
-		&v.CategoryID, &categoryName, &categorySlug, &categoryDesc, &categoryIcon, &categoryColor, &categoryOrder, &categoryActive,
-	)
+	var err error
+	if r.hasChannelID {
+		err = r.db.QueryRowContext(ctx, query, id).Scan(
+			&v.ID, &v.ThumbnailID, &v.Title, &v.Description, &v.Duration, &v.Views,
+			&v.Privacy, &v.Status, &v.UploadDate, &v.UserID, &v.ChannelID,
+			&v.OriginalCID, &processedCIDsJSON, &v.ThumbnailCID,
+			&tags, &v.CategoryID, &v.Language, &v.FileSize, &v.MimeType, &metadataJSON,
+			&v.CreatedAt, &v.UpdatedAt, &outputPathsJSON, &thumbnailPath, &previewPath,
+			&s3URLsJSON, &v.StorageTier, &v.S3MigratedAt, &v.LocalDeleted,
+			&v.CategoryID, &categoryName, &categorySlug, &categoryDesc, &categoryIcon, &categoryColor, &categoryOrder, &categoryActive,
+		)
+	} else {
+		err = r.db.QueryRowContext(ctx, query, id).Scan(
+			&v.ID, &v.ThumbnailID, &v.Title, &v.Description, &v.Duration, &v.Views,
+			&v.Privacy, &v.Status, &v.UploadDate, &v.UserID, &v.ChannelID,
+			&v.OriginalCID, &processedCIDsJSON, &v.ThumbnailCID,
+			&tags, &v.CategoryID, &v.Language, &v.FileSize, &v.MimeType, &metadataJSON,
+			&v.CreatedAt, &v.UpdatedAt, &outputPathsJSON, &thumbnailPath, &previewPath,
+			&v.CategoryID, &categoryName, &categorySlug, &categoryDesc, &categoryIcon, &categoryColor, &categoryOrder, &categoryActive,
+		)
+		v.StorageTier = "hot"
+		v.LocalDeleted = false
+	}
+
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, domain.ErrNotFound
@@ -236,40 +267,7 @@ func (r *videoRepository) GetByID(ctx context.Context, id string) (*domain.Video
 			strings.Contains(errStr, "invalid UUID") {
 			return nil, domain.ErrNotFound
 		}
-
-		if strings.Contains(errStr, "column") && strings.Contains(errStr, "does not exist") {
-			simpleQuery := `
-				SELECT v.id, v.thumbnail_id, v.title, v.description, v.duration, v.views,
-					   v.privacy, v.status, v.upload_date, v.user_id, v.channel_id,
-					   v.original_cid, v.processed_cids, v.thumbnail_cid,
-					   v.tags, v.category_id, v.language, v.file_size, v.mime_type, v.metadata,
-					   v.created_at, v.updated_at, v.output_paths, v.thumbnail_path, v.preview_path,
-					   c.id, c.name, c.slug, c.description, c.icon, c.color, c.display_order, c.is_active
-				FROM videos v
-				LEFT JOIN video_categories c ON v.category_id = c.id
-				WHERE v.id = $1`
-
-			err = r.db.QueryRowContext(ctx, simpleQuery, id).Scan(
-				&v.ID, &v.ThumbnailID, &v.Title, &v.Description, &v.Duration, &v.Views,
-				&v.Privacy, &v.Status, &v.UploadDate, &v.UserID, &v.ChannelID,
-				&v.OriginalCID, &processedCIDsJSON, &v.ThumbnailCID,
-				&tags, &v.CategoryID, &v.Language, &v.FileSize, &v.MimeType, &metadataJSON,
-				&v.CreatedAt, &v.UpdatedAt, &outputPathsJSON, &thumbnailPath, &previewPath,
-				&v.CategoryID, &categoryName, &categorySlug, &categoryDesc, &categoryIcon, &categoryColor, &categoryOrder, &categoryActive,
-			)
-
-			if err != nil {
-				if err == sql.ErrNoRows {
-					return nil, domain.ErrNotFound
-				}
-				return nil, domain.NewDomainError("GET_FAILED", "Failed to get video")
-			}
-
-			v.StorageTier = "hot"
-			v.LocalDeleted = false
-		} else {
-			return nil, domain.NewDomainError("GET_FAILED", "Failed to get video")
-		}
+		return nil, domain.NewDomainError("GET_FAILED", "Failed to get video")
 	}
 
 	if len(processedCIDsJSON) > 0 {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
@@ -177,7 +178,7 @@ func (s *Service) PublishComment(ctx context.Context, commentID string) error {
 		}
 
 		if err := s.repo.BulkEnqueueDelivery(ctx, deliveries); err != nil {
-			fmt.Printf("failed to bulk enqueue deliveries for comment %s: %v\n", commentID, err)
+			slog.Warn("failed to bulk enqueue deliveries for comment", "id", commentID, "error", err)
 		}
 	}
 
@@ -281,7 +282,7 @@ func (s *Service) UpdateComment(ctx context.Context, commentID string) error {
 		}
 
 		if err := s.repo.BulkEnqueueDelivery(ctx, deliveries); err != nil {
-			fmt.Printf("failed to bulk enqueue update deliveries for comment %s: %v\n", commentID, err)
+			slog.Warn("failed to bulk enqueue update deliveries for comment", "id", commentID, "error", err)
 		}
 	}
 
@@ -375,7 +376,7 @@ func (s *Service) DeleteComment(ctx context.Context, commentID string) error {
 		}
 
 		if err := s.repo.BulkEnqueueDelivery(ctx, deliveries); err != nil {
-			fmt.Printf("failed to bulk enqueue delete deliveries for comment %s: %v\n", commentID, err)
+			slog.Warn("failed to bulk enqueue delete deliveries for comment", "id", commentID, "error", err)
 		}
 	}
 

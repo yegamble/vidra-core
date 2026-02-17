@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -98,7 +99,7 @@ func (m *BackupManager) CreateBackupWithComponents(ctx context.Context, componen
 	if components.IncludeRedis && m.RedisURL != "" {
 		redisDumpPath := filepath.Join(tempDir, "redis.rdb")
 		if err := m.dumpRedis(ctx, redisDumpPath); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: Redis backup failed: %v\n", err)
+			slog.Warn("Redis backup failed", "error", err)
 		} else {
 			filesToArchive = append(filesToArchive, "redis.rdb")
 		}
@@ -107,7 +108,7 @@ func (m *BackupManager) CreateBackupWithComponents(ctx context.Context, componen
 	if components.IncludeStorage && m.StoragePath != "" {
 		storageArchivePath := filepath.Join(tempDir, "storage.tar.gz")
 		if err := m.archiveStorage(ctx, storageArchivePath, components.ExcludeDirs); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: Storage backup failed: %v\n", err)
+			slog.Warn("Storage backup failed", "error", err)
 		} else {
 			filesToArchive = append(filesToArchive, "storage.tar.gz")
 		}
@@ -180,18 +181,18 @@ func (m *BackupManager) dumpRedis(ctx context.Context, outputPath string) error 
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Minute)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "redis-cli", "-u", m.RedisURL, "BGSAVE")
+	cmd := exec.CommandContext(ctx, "redis-cli", "-u", m.RedisURL, "--rdb", outputPath)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("redis BGSAVE failed: %w, output: %s", err, string(output))
+		return fmt.Errorf("redis RDB dump failed: %w, output: %s", err, string(output))
 	}
 
-	time.Sleep(2 * time.Second)
-
-	// Note: This is a simplified approach. In production, you'd need to:
-
-	if err := os.WriteFile(outputPath, []byte{}, 0644); err != nil {
-		return fmt.Errorf("failed to create Redis dump placeholder: %w", err)
+	stat, err := os.Stat(outputPath)
+	if err != nil {
+		return fmt.Errorf("redis dump file not created: %w", err)
+	}
+	if stat.Size() == 0 {
+		return fmt.Errorf("redis dump file is empty")
 	}
 
 	return nil

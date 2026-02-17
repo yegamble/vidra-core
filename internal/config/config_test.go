@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -478,5 +479,95 @@ func TestLoad_NginxHTTPSLetsencrypt(t *testing.T) {
 	}
 	if cfg.NginxLetsEncryptEmail != "admin@example.com" {
 		t.Errorf("expected NginxLetsEncryptEmail 'admin@example.com', got %s", cfg.NginxLetsEncryptEmail)
+	}
+}
+
+func TestValidateJWTSecret(t *testing.T) {
+	const prodEnvKey = "ENV"
+
+	tests := []struct {
+		name        string
+		secret      string
+		production  bool
+		wantErr     bool
+		errContains string
+	}{
+		{
+			name:       "non-prod: short secret is accepted",
+			secret:     "short",
+			production: false,
+			wantErr:    false,
+		},
+		{
+			name:       "non-prod: placeholder is accepted",
+			secret:     "change-me",
+			production: false,
+			wantErr:    false,
+		},
+		{
+			name:        "prod: secret shorter than 32 chars is rejected",
+			secret:      "tooshort",
+			production:  true,
+			wantErr:     true,
+			errContains: "minimum length is 32 characters",
+		},
+		{
+			name:       "prod: 32-char strong secret is accepted",
+			secret:     "a-very-long-and-unguessable-key!",
+			production: false,
+			wantErr:    false,
+		},
+		{
+			name:        "prod: short placeholder 'change-me' is rejected for length",
+			secret:      "change-me",
+			production:  true,
+			wantErr:     true,
+			errContains: "minimum length is 32 characters",
+		},
+		{
+			name:        "prod: canonical placeholder is rejected",
+			secret:      "your-super-secret-jwt-key-change-in-production",
+			production:  true,
+			wantErr:     true,
+			errContains: "replace placeholder/default value",
+		},
+		{
+			name:        "prod: secret containing 'change-in-production' is rejected",
+			secret:      "my-app-jwt-key-change-in-production-please",
+			production:  true,
+			wantErr:     true,
+			errContains: "replace placeholder/default value",
+		},
+		{
+			name:       "prod: strong random secret is accepted",
+			secret:     fmt.Sprintf("strong-random-secret-%s", strings.Repeat("x", 20)),
+			production: true,
+			wantErr:    false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.production {
+				t.Setenv(prodEnvKey, "production")
+			} else {
+				t.Setenv(prodEnvKey, "development")
+			}
+
+			err := validateJWTSecret(tt.secret)
+			if tt.wantErr {
+				if err == nil {
+					t.Errorf("expected error but got nil")
+					return
+				}
+				if tt.errContains != "" && !strings.Contains(err.Error(), tt.errContains) {
+					t.Errorf("expected error containing %q, got %q", tt.errContains, err.Error())
+				}
+			} else {
+				if err != nil {
+					t.Errorf("expected no error but got: %v", err)
+				}
+			}
+		})
 	}
 }

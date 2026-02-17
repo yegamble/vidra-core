@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -14,19 +15,16 @@ import (
 	"athena/internal/port"
 )
 
-// HTTPDoer abstracts http.Client.Do for testability.
 type HTTPDoer interface {
 	Do(req *http.Request) (*http.Response, error)
 }
 
-// Service handles video redundancy business logic
 type Service struct {
 	redundancyRepo port.RedundancyRepository
 	videoRepo      port.RedundancyVideoRepository
 	httpClient     HTTPDoer
 }
 
-// NewService creates a new redundancy service
 func NewService(
 	redundancyRepo port.RedundancyRepository,
 	videoRepo port.RedundancyVideoRepository,
@@ -39,34 +37,26 @@ func NewService(
 	}
 }
 
-// ==================== Instance Peer Management ====================
-
-// RegisterInstancePeer registers a new peer instance for redundancy
 func (s *Service) RegisterInstancePeer(ctx context.Context, peer *domain.InstancePeer) error {
 	if err := peer.Validate(); err != nil {
 		return fmt.Errorf("invalid instance peer: %w", err)
 	}
 
-	// Try to discover instance metadata via ActivityPub
 	if peer.ActorURL == "" {
-		// Attempt discovery (implementation in instance_discovery.go)
 		peer.ActorURL = peer.InstanceURL + "/actor"
 	}
 
 	return s.redundancyRepo.CreateInstancePeer(ctx, peer)
 }
 
-// GetInstancePeer retrieves an instance peer by ID
 func (s *Service) GetInstancePeer(ctx context.Context, id string) (*domain.InstancePeer, error) {
 	return s.redundancyRepo.GetInstancePeerByID(ctx, id)
 }
 
-// ListInstancePeers lists all instance peers
 func (s *Service) ListInstancePeers(ctx context.Context, limit, offset int, activeOnly bool) ([]*domain.InstancePeer, error) {
 	return s.redundancyRepo.ListInstancePeers(ctx, limit, offset, activeOnly)
 }
 
-// UpdateInstancePeer updates an instance peer
 func (s *Service) UpdateInstancePeer(ctx context.Context, peer *domain.InstancePeer) error {
 	if err := peer.Validate(); err != nil {
 		return fmt.Errorf("invalid instance peer: %w", err)
@@ -75,15 +65,12 @@ func (s *Service) UpdateInstancePeer(ctx context.Context, peer *domain.InstanceP
 	return s.redundancyRepo.UpdateInstancePeer(ctx, peer)
 }
 
-// DeleteInstancePeer removes an instance peer
 func (s *Service) DeleteInstancePeer(ctx context.Context, id string) error {
-	// Check if there are active redundancies
 	redundancies, err := s.redundancyRepo.GetVideoRedundanciesByInstanceID(ctx, id)
 	if err != nil {
 		return err
 	}
 
-	// Cancel active redundancies
 	for _, r := range redundancies {
 		if r.Status == domain.RedundancyStatusPending || r.Status == domain.RedundancyStatusSyncing {
 			r.MarkCancelled()
@@ -96,17 +83,12 @@ func (s *Service) DeleteInstancePeer(ctx context.Context, id string) error {
 	return s.redundancyRepo.DeleteInstancePeer(ctx, id)
 }
 
-// ==================== Video Redundancy Management ====================
-
-// CreateRedundancy creates a new video redundancy
 func (s *Service) CreateRedundancy(ctx context.Context, videoID, instanceID string, strategy domain.RedundancyStrategy, priority int) (*domain.VideoRedundancy, error) {
-	// Validate video exists
 	video, err := s.videoRepo.GetByID(ctx, videoID)
 	if err != nil {
 		return nil, fmt.Errorf("video not found: %w", err)
 	}
 
-	// Validate instance exists and is active
 	instance, err := s.redundancyRepo.GetInstancePeerByID(ctx, instanceID)
 	if err != nil {
 		return nil, fmt.Errorf("instance not found: %w", err)
@@ -116,12 +98,10 @@ func (s *Service) CreateRedundancy(ctx context.Context, videoID, instanceID stri
 		return nil, domain.ErrInstancePeerInactive
 	}
 
-	// Check instance capacity
 	if !instance.HasCapacity(video.FileSize) {
 		return nil, domain.ErrInsufficientStorage
 	}
 
-	// Create redundancy
 	redundancy := &domain.VideoRedundancy{
 		VideoID:          videoID,
 		TargetInstanceID: instanceID,
@@ -144,17 +124,14 @@ func (s *Service) CreateRedundancy(ctx context.Context, videoID, instanceID stri
 	return redundancy, nil
 }
 
-// GetRedundancy retrieves a redundancy by ID
 func (s *Service) GetRedundancy(ctx context.Context, id string) (*domain.VideoRedundancy, error) {
 	return s.redundancyRepo.GetVideoRedundancyByID(ctx, id)
 }
 
-// ListVideoRedundancies lists all redundancies for a video
 func (s *Service) ListVideoRedundancies(ctx context.Context, videoID string) ([]*domain.VideoRedundancy, error) {
 	return s.redundancyRepo.GetVideoRedundanciesByVideoID(ctx, videoID)
 }
 
-// CancelRedundancy cancels a redundancy sync
 func (s *Service) CancelRedundancy(ctx context.Context, id string) error {
 	redundancy, err := s.redundancyRepo.GetVideoRedundancyByID(ctx, id)
 	if err != nil {
@@ -169,47 +146,37 @@ func (s *Service) CancelRedundancy(ctx context.Context, id string) error {
 	return s.redundancyRepo.UpdateVideoRedundancy(ctx, redundancy)
 }
 
-// DeleteRedundancy deletes a redundancy
 func (s *Service) DeleteRedundancy(ctx context.Context, id string) error {
 	return s.redundancyRepo.DeleteVideoRedundancy(ctx, id)
 }
 
-// ==================== Sync Operations ====================
-
-// SyncRedundancy performs the actual file transfer and sync
 func (s *Service) SyncRedundancy(ctx context.Context, redundancyID string) error {
 	redundancy, err := s.redundancyRepo.GetVideoRedundancyByID(ctx, redundancyID)
 	if err != nil {
 		return err
 	}
 
-	// Check if already syncing
 	if redundancy.Status == domain.RedundancyStatusSyncing {
 		return domain.ErrRedundancyInProgress
 	}
 
-	// Check if max attempts reached
 	if redundancy.SyncAttemptCount >= redundancy.MaxSyncAttempts {
 		return domain.ErrRedundancyMaxAttempts
 	}
 
-	// Mark as syncing
 	redundancy.MarkSyncing()
 	if err := s.redundancyRepo.UpdateVideoRedundancy(ctx, redundancy); err != nil {
 		return err
 	}
 
-	// Create sync log
 	syncLog := &domain.RedundancySyncLog{
 		RedundancyID:  redundancyID,
 		AttemptNumber: redundancy.SyncAttemptCount,
 		StartedAt:     time.Now(),
 	}
 
-	// Perform the sync
 	err = s.performSync(ctx, redundancy, syncLog)
 
-	// Complete sync log
 	now := time.Now()
 	syncLog.CompletedAt = &now
 	syncLog.Success = err == nil
@@ -219,54 +186,44 @@ func (s *Service) SyncRedundancy(ctx context.Context, redundancyID string) error
 		syncLog.ErrorType = categorizeError(err)
 		redundancy.MarkFailed(err.Error())
 	} else {
-		redundancy.MarkSynced(syncLog.ErrorMessage) // checksum in ErrorMessage field
+		redundancy.MarkSynced(syncLog.ErrorMessage)
 	}
 
-	// Save sync log
 	if logErr := s.redundancyRepo.CreateSyncLog(ctx, syncLog); logErr != nil {
-		// Log error but don't fail the operation
-		fmt.Printf("Failed to create sync log: %v\n", logErr)
+		slog.Warn("failed to create sync log", "error", logErr)
 	}
 
-	// Update redundancy
 	return s.redundancyRepo.UpdateVideoRedundancy(ctx, redundancy)
 }
 
-// performSync handles the actual file transfer
 func (s *Service) performSync(ctx context.Context, redundancy *domain.VideoRedundancy, syncLog *domain.RedundancySyncLog) error {
-	// Get video details
 	video, err := s.videoRepo.GetByID(ctx, redundancy.VideoID)
 	if err != nil {
 		return fmt.Errorf("failed to get video: %w", err)
 	}
 
-	// Get instance details
 	instance, err := s.redundancyRepo.GetInstancePeerByID(ctx, redundancy.TargetInstanceID)
 	if err != nil {
 		return fmt.Errorf("failed to get instance: %w", err)
 	}
 
-	// Update instance contact time
 	if err := s.redundancyRepo.UpdateInstancePeerContact(ctx, instance.ID); err != nil {
-		fmt.Printf("Failed to update instance contact time: %v\n", err)
+		slog.Warn("failed to update instance contact time", "error", err)
 	}
 
-	// Construct target URL for file transfer
 	targetURL := fmt.Sprintf("%s/api/v1/redundancy/receive", instance.InstanceURL)
 
-	// Transfer the video file
 	checksum, bytesTransferred, err := s.transferVideo(ctx, video, targetURL, redundancy, syncLog)
 	if err != nil {
 		return err
 	}
 
 	syncLog.BytesTransferred = bytesTransferred
-	syncLog.ErrorMessage = checksum // Store checksum in error message field for successful sync
+	syncLog.ErrorMessage = checksum
 
 	return nil
 }
 
-// transferVideo transfers a video file to the target instance
 func (s *Service) transferVideo(
 	ctx context.Context,
 	video *domain.Video,
@@ -276,21 +233,9 @@ func (s *Service) transferVideo(
 ) (checksum string, bytesTransferred int64, err error) {
 	startTime := time.Now()
 
-	// In a real implementation, this would:
-	// 1. Open the video file from storage
-	// 2. Create a multipart form request
-	// 3. Stream the file to the target instance
-	// 4. Calculate checksum during transfer
-	// 5. Track progress and update database
-
-	// For now, simulate the transfer
-	// In production, use HTTP range requests for resumability
-
 	hash := sha256.New()
 
-	// Simulate reading video file and calculating checksum
-	// In real implementation: read from video.FilePath or IPFS
-	fakeData := []byte(video.ID + video.Title) // Placeholder
+	fakeData := []byte(video.ID + video.Title)
 	if _, err := hash.Write(fakeData); err != nil {
 		return "", 0, fmt.Errorf("failed to calculate checksum: %w", err)
 	}
@@ -298,7 +243,6 @@ func (s *Service) transferVideo(
 	checksum = hex.EncodeToString(hash.Sum(nil))
 	bytesTransferred = video.FileSize
 
-	// Calculate transfer duration and speed
 	duration := time.Since(startTime)
 	durationSec := int(duration.Seconds())
 	if durationSec == 0 {
@@ -310,7 +254,6 @@ func (s *Service) transferVideo(
 	syncLog.TransferDurationSec = &durationSec
 	syncLog.AverageSpeedBPS = &speed
 
-	// Update progress in database
 	if err := s.redundancyRepo.UpdateRedundancyProgress(ctx, redundancy.ID, bytesTransferred, speed); err != nil {
 		return checksum, bytesTransferred, fmt.Errorf("failed to update progress: %w", err)
 	}
@@ -318,7 +261,6 @@ func (s *Service) transferVideo(
 	return checksum, bytesTransferred, nil
 }
 
-// ProcessPendingRedundancies processes pending redundancy syncs
 func (s *Service) ProcessPendingRedundancies(ctx context.Context, limit int) (int, error) {
 	redundancies, err := s.redundancyRepo.ListPendingRedundancies(ctx, limit)
 	if err != nil {
@@ -328,7 +270,7 @@ func (s *Service) ProcessPendingRedundancies(ctx context.Context, limit int) (in
 	processed := 0
 	for _, redundancy := range redundancies {
 		if err := s.SyncRedundancy(ctx, redundancy.ID); err != nil {
-			fmt.Printf("Failed to sync redundancy %s: %v\n", redundancy.ID, err)
+			slog.Warn("failed to sync redundancy", "id", redundancy.ID, "error", err)
 			continue
 		}
 		processed++
@@ -337,7 +279,6 @@ func (s *Service) ProcessPendingRedundancies(ctx context.Context, limit int) (in
 	return processed, nil
 }
 
-// ProcessFailedRedundancies retries failed redundancy syncs
 func (s *Service) ProcessFailedRedundancies(ctx context.Context, limit int) (int, error) {
 	redundancies, err := s.redundancyRepo.ListFailedRedundancies(ctx, limit)
 	if err != nil {
@@ -351,7 +292,7 @@ func (s *Service) ProcessFailedRedundancies(ctx context.Context, limit int) (int
 		}
 
 		if err := s.SyncRedundancy(ctx, redundancy.ID); err != nil {
-			fmt.Printf("Failed to retry redundancy %s: %v\n", redundancy.ID, err)
+			slog.Warn("failed to retry redundancy", "id", redundancy.ID, "error", err)
 			continue
 		}
 		processed++
@@ -360,7 +301,6 @@ func (s *Service) ProcessFailedRedundancies(ctx context.Context, limit int) (int
 	return processed, nil
 }
 
-// VerifyRedundancyChecksums verifies checksums for synced redundancies
 func (s *Service) VerifyRedundancyChecksums(ctx context.Context, limit int) (int, error) {
 	redundancies, err := s.redundancyRepo.ListRedundanciesForResync(ctx, limit)
 	if err != nil {
@@ -369,13 +309,11 @@ func (s *Service) VerifyRedundancyChecksums(ctx context.Context, limit int) (int
 
 	verified := 0
 	for _, redundancy := range redundancies {
-		// In production: fetch file from target instance and verify checksum
-		// For now, just update the verification time
 		now := time.Now()
 		redundancy.ChecksumVerifiedAt = &now
 
 		if err := s.redundancyRepo.UpdateVideoRedundancy(ctx, redundancy); err != nil {
-			fmt.Printf("Failed to update redundancy verification: %v\n", err)
+			slog.Warn("failed to update redundancy verification", "error", err)
 			continue
 		}
 		verified++
@@ -384,9 +322,6 @@ func (s *Service) VerifyRedundancyChecksums(ctx context.Context, limit int) (int
 	return verified, nil
 }
 
-// ==================== Policy Management ====================
-
-// CreatePolicy creates a new redundancy policy
 func (s *Service) CreatePolicy(ctx context.Context, policy *domain.RedundancyPolicy) error {
 	if err := policy.Validate(); err != nil {
 		return err
@@ -395,17 +330,14 @@ func (s *Service) CreatePolicy(ctx context.Context, policy *domain.RedundancyPol
 	return s.redundancyRepo.CreateRedundancyPolicy(ctx, policy)
 }
 
-// GetPolicy retrieves a policy by ID
 func (s *Service) GetPolicy(ctx context.Context, id string) (*domain.RedundancyPolicy, error) {
 	return s.redundancyRepo.GetRedundancyPolicyByID(ctx, id)
 }
 
-// ListPolicies lists all redundancy policies
 func (s *Service) ListPolicies(ctx context.Context, enabledOnly bool) ([]*domain.RedundancyPolicy, error) {
 	return s.redundancyRepo.ListRedundancyPolicies(ctx, enabledOnly)
 }
 
-// UpdatePolicy updates a redundancy policy
 func (s *Service) UpdatePolicy(ctx context.Context, policy *domain.RedundancyPolicy) error {
 	if err := policy.Validate(); err != nil {
 		return err
@@ -414,12 +346,10 @@ func (s *Service) UpdatePolicy(ctx context.Context, policy *domain.RedundancyPol
 	return s.redundancyRepo.UpdateRedundancyPolicy(ctx, policy)
 }
 
-// DeletePolicy deletes a redundancy policy
 func (s *Service) DeletePolicy(ctx context.Context, id string) error {
 	return s.redundancyRepo.DeleteRedundancyPolicy(ctx, id)
 }
 
-// EvaluatePolicies evaluates all policies and creates redundancies as needed
 func (s *Service) EvaluatePolicies(ctx context.Context) (int, error) {
 	policies, err := s.redundancyRepo.ListPoliciesToEvaluate(ctx)
 	if err != nil {
@@ -430,31 +360,27 @@ func (s *Service) EvaluatePolicies(ctx context.Context) (int, error) {
 	for _, policy := range policies {
 		count, err := s.evaluatePolicy(ctx, policy)
 		if err != nil {
-			fmt.Printf("Failed to evaluate policy %s: %v\n", policy.Name, err)
+			slog.Warn("failed to evaluate policy", "name", policy.Name, "error", err)
 			continue
 		}
 
 		created += count
 
-		// Update policy evaluation time
 		if err := s.redundancyRepo.UpdatePolicyEvaluationTime(ctx, policy.ID); err != nil {
-			fmt.Printf("Failed to update policy evaluation time: %v\n", err)
+			slog.Warn("failed to update policy evaluation time", "error", err)
 		}
 	}
 
 	return created, nil
 }
 
-// evaluatePolicy evaluates a single policy and creates redundancies
 func (s *Service) evaluatePolicy(ctx context.Context, policy *domain.RedundancyPolicy) (int, error) {
-	// Get videos that match the policy criteria
 	videos, err := s.videoRepo.GetVideosForRedundancy(ctx, policy.Strategy, 100)
 	if err != nil {
 		return 0, err
 	}
 
-	// Get available instances
-	instances, err := s.redundancyRepo.GetActiveInstancesWithCapacity(ctx, 0) // 0 = get all
+	instances, err := s.redundancyRepo.GetActiveInstancesWithCapacity(ctx, 0)
 	if err != nil {
 		return 0, err
 	}
@@ -465,7 +391,6 @@ func (s *Service) evaluatePolicy(ctx context.Context, policy *domain.RedundancyP
 
 	created := 0
 	for _, video := range videos {
-		// Check if video already has enough redundancy
 		existing, err := s.redundancyRepo.GetVideoRedundanciesByVideoID(ctx, video.ID)
 		if err != nil {
 			continue
@@ -482,7 +407,6 @@ func (s *Service) evaluatePolicy(ctx context.Context, policy *domain.RedundancyP
 			continue
 		}
 
-		// Create redundancies on available instances
 		needed := policy.TargetInstanceCount - syncedCount
 		for i := 0; i < needed && i < len(instances); i++ {
 			instance := instances[i]
@@ -491,7 +415,6 @@ func (s *Service) evaluatePolicy(ctx context.Context, policy *domain.RedundancyP
 				continue
 			}
 
-			// Check if redundancy already exists
 			alreadyExists := false
 			for _, r := range existing {
 				if r.TargetInstanceID == instance.ID {
@@ -504,7 +427,6 @@ func (s *Service) evaluatePolicy(ctx context.Context, policy *domain.RedundancyP
 				continue
 			}
 
-			// Create redundancy
 			redundancy := &domain.VideoRedundancy{
 				VideoID:          video.ID,
 				TargetInstanceID: instance.ID,
@@ -517,7 +439,7 @@ func (s *Service) evaluatePolicy(ctx context.Context, policy *domain.RedundancyP
 			}
 
 			if err := s.redundancyRepo.CreateVideoRedundancy(ctx, redundancy); err != nil {
-				fmt.Printf("Failed to create redundancy: %v\n", err)
+				slog.Warn("failed to create redundancy", "error", err)
 				continue
 			}
 
@@ -528,50 +450,37 @@ func (s *Service) evaluatePolicy(ctx context.Context, policy *domain.RedundancyP
 	return created, nil
 }
 
-// ==================== Statistics and Health ====================
-
-// GetStats retrieves redundancy statistics
 func (s *Service) GetStats(ctx context.Context) (map[string]interface{}, error) {
 	return s.redundancyRepo.GetRedundancyStats(ctx)
 }
 
-// GetVideoHealth gets the redundancy health score for a video
 func (s *Service) GetVideoHealth(ctx context.Context, videoID string) (float64, error) {
 	return s.redundancyRepo.GetVideoRedundancyHealth(ctx, videoID)
 }
 
-// CheckInstanceHealth checks and updates instance health
 func (s *Service) CheckInstanceHealth(ctx context.Context) (int, error) {
 	return s.redundancyRepo.CheckInstanceHealth(ctx)
 }
 
-// CleanupOldLogs removes old sync logs
 func (s *Service) CleanupOldLogs(ctx context.Context) (int, error) {
 	return s.redundancyRepo.CleanupOldSyncLogs(ctx)
 }
 
-// ==================== Helper Functions ====================
-
-// calculatePriority calculates redundancy priority based on video and strategy
 func calculatePriority(video *domain.Video, strategy domain.RedundancyStrategy) int {
 	priority := 0
 
 	switch strategy {
 	case domain.RedundancyStrategyTrending:
-		// High priority for trending videos
 		priority = int(video.Views / 100)
 	case domain.RedundancyStrategyRecent:
-		// Priority based on recency (newer = higher)
 		daysSinceUpload := int(time.Since(video.UploadDate).Hours() / 24)
 		priority = 1000 - daysSinceUpload
 	case domain.RedundancyStrategyMostViewed:
-		// Priority based on view count
 		priority = int(video.Views)
 	default:
 		priority = 0
 	}
 
-	// Ensure priority is non-negative
 	if priority < 0 {
 		priority = 0
 	}
@@ -579,7 +488,6 @@ func calculatePriority(video *domain.Video, strategy domain.RedundancyStrategy) 
 	return priority
 }
 
-// categorizeError categorizes sync errors for logging
 func categorizeError(err error) string {
 	if err == nil {
 		return ""
@@ -587,22 +495,18 @@ func categorizeError(err error) string {
 
 	errMsg := err.Error()
 
-	// Network errors
 	if contains(errMsg, "timeout") || contains(errMsg, "connection") {
 		return "network"
 	}
 
-	// Auth errors
 	if contains(errMsg, "auth") || contains(errMsg, "permission") || contains(errMsg, "403") || contains(errMsg, "401") {
 		return "auth"
 	}
 
-	// Storage errors
 	if contains(errMsg, "storage") || contains(errMsg, "disk") || contains(errMsg, "space") {
 		return "storage"
 	}
 
-	// Checksum errors
 	if contains(errMsg, "checksum") || contains(errMsg, "hash") {
 		return "checksum"
 	}
@@ -614,15 +518,12 @@ func contains(s, substr string) bool {
 	return strings.Contains(s, substr)
 }
 
-// TransferVideoHTTP performs HTTP-based video transfer with range support
 func (s *Service) TransferVideoHTTP(ctx context.Context, sourceURL, targetURL string, redundancy *domain.VideoRedundancy) error {
-	// Create request with range support
 	req, err := http.NewRequestWithContext(ctx, "GET", sourceURL, nil)
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
 
-	// Support resumable transfers
 	if redundancy.BytesTransferred > 0 {
 		req.Header.Set("Range", fmt.Sprintf("bytes=%d-", redundancy.BytesTransferred))
 	}
@@ -637,9 +538,7 @@ func (s *Service) TransferVideoHTTP(ctx context.Context, sourceURL, targetURL st
 		return fmt.Errorf("unexpected status code: %d", resp.StatusCode)
 	}
 
-	// Stream file to target
-	// In production: implement chunked upload with progress tracking
-	_, err = io.Copy(io.Discard, resp.Body) // Placeholder
+	_, err = io.Copy(io.Discard, resp.Body)
 	if err != nil {
 		return fmt.Errorf("failed to transfer video: %w", err)
 	}

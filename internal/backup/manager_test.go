@@ -248,3 +248,53 @@ func TestBackupManager_ComponentsDefaultValues(t *testing.T) {
 	assert.True(t, manager.Components.IncludeStorage)
 	assert.Empty(t, manager.Components.ExcludeDirs)
 }
+
+func TestDumpRedis_FailsWithoutRedis(t *testing.T) {
+	tmpDir := t.TempDir()
+	outputPath := filepath.Join(tmpDir, "dump.rdb")
+
+	manager := &BackupManager{
+		RedisURL: "redis://127.0.0.1:19999", // port nobody listens on
+	}
+	ctx := context.Background()
+	err := manager.dumpRedis(ctx, outputPath)
+
+	assert.Error(t, err, "dumpRedis should fail when Redis is unreachable")
+
+	if info, statErr := os.Stat(outputPath); statErr == nil {
+		assert.Greater(t, info.Size(), int64(0),
+			"output file must not be an empty placeholder; size was %d", info.Size())
+	}
+}
+
+func TestDumpRedis_UsesRDBFlag(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	fakeScript := "#!/bin/sh\n" +
+		"prev=\"\"\n" +
+		"for arg in \"$@\"; do\n" +
+		"  if [ \"$prev\" = \"--rdb\" ]; then\n" +
+		"    printf 'REDIS' > \"$arg\"\n" +
+		"    exit 0\n" +
+		"  fi\n" +
+		"  prev=\"$arg\"\n" +
+		"done\n" +
+		"echo 'error: --rdb flag not provided' >&2\n" +
+		"exit 1\n"
+
+	fakeBin := filepath.Join(tmpDir, "redis-cli")
+	require.NoError(t, os.WriteFile(fakeBin, []byte(fakeScript), 0755))
+
+	origPath := os.Getenv("PATH")
+	t.Setenv("PATH", tmpDir+":"+origPath)
+
+	outputPath := filepath.Join(tmpDir, "dump.rdb")
+	manager := &BackupManager{RedisURL: "redis://localhost:6379"}
+
+	err := manager.dumpRedis(context.Background(), outputPath)
+	require.NoError(t, err)
+
+	data, readErr := os.ReadFile(outputPath)
+	require.NoError(t, readErr)
+	assert.Greater(t, len(data), 0, "RDB file must not be empty after a successful dump")
+}

@@ -6,7 +6,9 @@ import (
 	"database/sql"
 	"encoding/json"
 	"net/http"
+	"net/mail"
 	"time"
+	"unicode"
 
 	jwt "github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
@@ -21,7 +23,6 @@ import (
 	"athena/internal/usecase"
 )
 
-// Server implements the generated ServerInterface
 type Server struct {
 	userRepo            usecase.UserRepository
 	authRepo            usecase.AuthRepository
@@ -37,8 +38,6 @@ type Server struct {
 	cfg                 *config.Config
 }
 
-// NewServer creates a new server instance
-// NewServer preserves the original signature for tests/backward compatibility.
 func NewServer(userRepo usecase.UserRepository, authRepo usecase.AuthRepository, jwtSecret string, redisClient *redis.Client, redisPingTimeout time.Duration, ipfsAPI string, ipfsClusterAPI string, ipfsPingTimeout time.Duration, cfg *config.Config) *Server {
 	return &Server{
 		userRepo:         userRepo,
@@ -54,26 +53,21 @@ func NewServer(userRepo usecase.UserRepository, authRepo usecase.AuthRepository,
 	}
 }
 
-// NewServerWithOAuth sets an OAuth repository in addition to the usual deps.
 func NewServerWithOAuth(userRepo usecase.UserRepository, authRepo usecase.AuthRepository, oauthRepo usecase.OAuthRepository, jwtSecret string, redisClient *redis.Client, redisPingTimeout time.Duration, ipfsAPI string, ipfsClusterAPI string, ipfsPingTimeout time.Duration, cfg *config.Config) *Server {
 	s := NewServer(userRepo, authRepo, jwtSecret, redisClient, redisPingTimeout, ipfsAPI, ipfsClusterAPI, ipfsPingTimeout, cfg)
 	s.oauthRepo = oauthRepo
 	return s
 }
 
-// SetVerificationService sets the email verification service
 func (s *Server) SetVerificationService(service *usecase.EmailVerificationService) {
 	s.verificationService = service
 }
 
-// SetTwoFAService sets the two-factor authentication service
 func (s *Server) SetTwoFAService(service *usecase.TwoFAService) {
 	s.twoFAService = service
 }
 
-// Login implements ServerInterface.Login
 func (s *Server) Login(w http.ResponseWriter, r *http.Request) {
-	// Extended login request to support 2FA
 	var reqData map[string]interface{}
 	if err := json.NewDecoder(r.Body).Decode(&reqData); err != nil {
 		shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_JSON", "Invalid JSON payload"))
@@ -89,7 +83,6 @@ func (s *Server) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Lookup user and verify password
 	dUser, err := s.userRepo.GetByEmail(r.Context(), email)
 	if err != nil {
 		shared.WriteError(w, http.StatusUnauthorized, domain.ErrInvalidCredentials)
@@ -105,28 +98,23 @@ func (s *Server) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check if 2FA is enabled
 	if dUser.TwoFAEnabled {
-		// If 2FA is enabled but no code provided, return error indicating 2FA is required
 		if twoFACode == "" {
 			shared.WriteError(w, http.StatusForbidden, domain.ErrTwoFARequired)
 			return
 		}
 
-		// Verify 2FA code using the service
 		if s.twoFAService != nil {
 			if err := s.twoFAService.VerifyCode(r.Context(), dUser.ID, twoFACode); err != nil {
 				shared.WriteError(w, http.StatusUnauthorized, domain.NewDomainError("INVALID_TWOFA_CODE", "Invalid two-factor authentication code"))
 				return
 			}
 		} else {
-			// If service is not available, deny login for safety
 			shared.WriteError(w, http.StatusInternalServerError, domain.NewDomainError("INTERNAL_ERROR", "Two-factor authentication service not available"))
 			return
 		}
 	}
 
-	// Issue tokens with role claim
 	access := s.generateJWTWithRole(dUser.ID, string(dUser.Role), 15*time.Minute)
 	refresh := uuid.NewString()
 	refreshExpires := time.Now().Add(7 * 24 * time.Hour)
@@ -143,14 +131,12 @@ func (s *Server) Login(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// Create corresponding session in Redis (sessionID == refresh token)
 		if err := s.authRepo.CreateSession(r.Context(), refresh, dUser.ID, refreshExpires); err != nil {
 			shared.WriteError(w, http.StatusInternalServerError, domain.NewDomainError("SESSION_CREATE_FAILED", "Failed to create session"))
 			return
 		}
 	}
 
-	// Map to generated.User
 	var dispPtr *string
 	if dUser.DisplayName != "" {
 		disp := dUser.DisplayName
@@ -184,7 +170,6 @@ func (s *Server) Login(w http.ResponseWriter, r *http.Request) {
 	shared.WriteJSON(w, http.StatusOK, response)
 }
 
-// Register implements ServerInterface.Register
 func (s *Server) Register(w http.ResponseWriter, r *http.Request) {
 	var req generated.RegisterRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -197,7 +182,16 @@ func (s *Server) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Optional pre-check for clearer 409s
+	if _, err := mail.ParseAddress(string(req.Email)); err != nil {
+		shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_EMAIL", "Invalid email format"))
+		return
+	}
+
+	if err := validatePassword(req.Password); err != nil {
+		shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("WEAK_PASSWORD", err.Error()))
+		return
+	}
+
 	if s.userRepo != nil {
 		if _, err := s.userRepo.GetByEmail(r.Context(), string(req.Email)); err == nil {
 			shared.WriteError(w, http.StatusConflict, domain.NewDomainError("USER_EXISTS", "Email already in use"))
@@ -226,7 +220,6 @@ func (s *Server) Register(w http.ResponseWriter, r *http.Request) {
 			UpdatedAt:   now,
 		}
 
-		// Hash password
 		hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
 		if err != nil {
 			shared.WriteError(w, http.StatusInternalServerError, domain.NewDomainError("INTERNAL_ERROR", "Failed to process password"))
@@ -239,7 +232,6 @@ func (s *Server) Register(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// Map to generated.User
 		var dispPtr *string
 		if dUser.DisplayName != "" {
 			disp := dUser.DisplayName
@@ -263,10 +255,8 @@ func (s *Server) Register(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		// Set Location header to new resource
 		w.Header().Set("Location", "/api/v1/users/"+gUser.Id)
 
-		// Create refresh token + session for new user
 		refresh := uuid.NewString()
 		refreshExpires := time.Now().Add(7 * 24 * time.Hour)
 		if s.authRepo != nil {
@@ -287,14 +277,11 @@ func (s *Server) Register(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		// Send verification email (non-blocking)
 		if s.verificationService != nil {
 			go func() {
 				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 				defer cancel()
 				_ = s.verificationService.SendVerificationEmail(ctx, dUser.ID)
-				// Errors are intentionally ignored here to not block registration
-				// In production, errors should be logged for monitoring
 			}()
 		}
 
@@ -309,11 +296,9 @@ func (s *Server) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Fallback if repo not set (shouldn't happen in production wiring)
 	shared.WriteError(w, http.StatusInternalServerError, domain.NewDomainError("INTERNAL_ERROR", "User repository not configured"))
 }
 
-// RefreshToken implements ServerInterface.RefreshToken
 func (s *Server) RefreshToken(w http.ResponseWriter, r *http.Request) {
 	var req generated.RefreshTokenRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -331,14 +316,12 @@ func (s *Server) RefreshToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate existing token
 	existing, err := s.authRepo.GetRefreshToken(r.Context(), req.RefreshToken)
 	if err != nil {
 		shared.WriteError(w, http.StatusUnauthorized, domain.ErrInvalidToken)
 		return
 	}
 
-	// Rotate: revoke old and issue new
 	_ = s.authRepo.RevokeRefreshToken(r.Context(), req.RefreshToken)
 
 	newRefresh := uuid.NewString()
@@ -355,14 +338,12 @@ func (s *Server) RefreshToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Rotate session in Redis (sessionID == refresh token)
 	_ = s.authRepo.DeleteSession(r.Context(), req.RefreshToken)
 	if err := s.authRepo.CreateSession(r.Context(), newRefresh, existing.UserID, refreshExpires); err != nil {
 		shared.WriteError(w, http.StatusInternalServerError, domain.NewDomainError("SESSION_CREATE_FAILED", "Failed to create session"))
 		return
 	}
 
-	// Fetch user to include role in token
 	var role string
 	if s.userRepo != nil {
 		if u, err := s.userRepo.GetByID(r.Context(), existing.UserID); err == nil {
@@ -378,7 +359,6 @@ func (s *Server) RefreshToken(w http.ResponseWriter, r *http.Request) {
 	shared.WriteJSON(w, http.StatusOK, response)
 }
 
-// Logout implements ServerInterface.Logout
 func (s *Server) Logout(w http.ResponseWriter, r *http.Request) {
 	userID := r.Context().Value(middleware.UserIDKey).(string)
 
@@ -395,7 +375,6 @@ func (s *Server) Logout(w http.ResponseWriter, r *http.Request) {
 	shared.WriteJSON(w, http.StatusOK, response)
 }
 
-// HealthCheck implements ServerInterface.HealthCheck
 func (s *Server) HealthCheck(w http.ResponseWriter, r *http.Request) {
 	response := generated.HealthResponse{
 		Status:    generated.HealthResponseStatusHealthy,
@@ -405,12 +384,9 @@ func (s *Server) HealthCheck(w http.ResponseWriter, r *http.Request) {
 	shared.WriteJSON(w, http.StatusOK, response)
 }
 
-// ReadinessCheck implements ServerInterface.ReadinessCheck
 func (s *Server) ReadinessCheck(w http.ResponseWriter, r *http.Request) {
-	// Probe dependent services
-	dbStatus := generated.ReadinessResponseChecksDatabaseHealthy // DB connectivity not probed here
+	dbStatus := generated.ReadinessResponseChecksDatabaseHealthy
 	ipfsStatus := generated.ReadinessResponseChecksIpfsHealthy
-	// Redis ping
 	redisStatus := generated.ReadinessResponseChecksRedisHealthy
 	if s.redis != nil {
 		to := s.redisPingTimeout
@@ -424,7 +400,6 @@ func (s *Server) ReadinessCheck(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// IPFS ping if configured
 	if s.ipfsAPI != "" {
 		to := s.ipfsPingTimeout
 		if to <= 0 {
@@ -458,14 +433,13 @@ func (s *Server) ReadinessCheck(w http.ResponseWriter, r *http.Request) {
 	shared.WriteJSON(w, http.StatusOK, response)
 }
 
-// generateJWTWithRole creates a signed JWT including optional role claim
 func (s *Server) generateJWTWithRole(userID string, role string, duration time.Duration) string {
 	now := time.Now()
 	claims := jwt.MapClaims{
 		"sub": userID,
 		"iat": now.Unix(),
 		"exp": now.Add(duration).Unix(),
-		"jti": uuid.NewString(), // Unique JWT ID to ensure each token is unique
+		"jti": uuid.NewString(),
 	}
 	if role != "" {
 		claims["role"] = role
@@ -478,34 +452,10 @@ func (s *Server) generateJWTWithRole(userID string, role string, duration time.D
 	return sgn
 }
 
-// GenerateJWTForTests is a public wrapper for tests to generate JWT tokens
 func (s *Server) GenerateJWTForTests(userID string, role string, duration time.Duration) string {
 	return s.generateJWTWithRole(userID, role, duration)
 }
 
-// generateJWTWithRoleAndScope creates a signed JWT including role and scope claims
-// func (s *Server) generateJWTWithRoleAndScope(userID, role, scope string, duration time.Duration) string {
-// 	now := time.Now()
-// 	claims := jwt.MapClaims{
-// 		"sub": userID,
-// 		"iat": now.Unix(),
-// 		"exp": now.Add(duration).Unix(),
-// 	}
-// 	if role != "" {
-// 		claims["role"] = role
-// 	}
-// 	if scope != "" {
-// 		claims["scope"] = scope
-// 	}
-// 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-// 	sgn, err := token.SignedString([]byte(s.jwtSecret))
-// 	if err != nil {
-// 		return ""
-// 	}
-// 	return sgn
-// }
-
-// nullStringToPtr converts sql.NullString to *string for JSON marshaling
 func nullStringToPtr(ns sql.NullString) *string {
 	if !ns.Valid {
 		return nil
@@ -522,4 +472,31 @@ func stringToUUIDPtr(s string) *oapitypes.UUID {
 		return nil
 	}
 	return &u
+}
+
+func validatePassword(password string) error {
+	if len(password) < 8 {
+		return domain.NewDomainError("WEAK_PASSWORD", "Password must be at least 8 characters")
+	}
+	var hasUpper, hasLower, hasDigit bool
+	for _, ch := range password {
+		switch {
+		case unicode.IsUpper(ch):
+			hasUpper = true
+		case unicode.IsLower(ch):
+			hasLower = true
+		case unicode.IsDigit(ch):
+			hasDigit = true
+		}
+	}
+	if !hasUpper {
+		return domain.NewDomainError("WEAK_PASSWORD", "Password must contain at least one uppercase letter")
+	}
+	if !hasLower {
+		return domain.NewDomainError("WEAK_PASSWORD", "Password must contain at least one lowercase letter")
+	}
+	if !hasDigit {
+		return domain.NewDomainError("WEAK_PASSWORD", "Password must contain at least one digit")
+	}
+	return nil
 }

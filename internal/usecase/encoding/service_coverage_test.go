@@ -540,7 +540,7 @@ func TestTranscodeHLS_InvalidBinaryPath(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	err := svc.transcodeHLS(ctx, "/input.mp4", 720, "/out.m3u8", "/seg_%05d.ts", "")
+	err := svc.transcodeHLS(ctx, "/input.mp4", 720, "/out.m3u8", "/seg_%05d.ts", 0, nil)
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid ffmpeg binary path")
@@ -584,25 +584,25 @@ func TestExecFFmpegWithProgress_InvalidBinaryPath(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	err := svc.execFFmpegWithProgress(ctx, []string{"-i", "test.mp4"}, "job1", "720p")
+	err := svc.execFFmpegWithProgress(ctx, []string{"-i", "test.mp4"}, 60*time.Second, "720p", func(int) {})
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid ffmpeg binary path")
 }
 
-func TestExecFFmpegWithProgress_NoInputFile(t *testing.T) {
+func TestExecFFmpegWithProgress_ZeroDurationSkipsProgress(t *testing.T) {
 	svc := &service{
 		cfg: &config.Config{
-			FFMPEGPath:         "ffmpeg",
+			FFMPEGPath:         "/path/ffmpeg;evil",
 			HLSSegmentDuration: 4,
 		},
 	}
 
 	ctx := context.Background()
-	err := svc.execFFmpegWithProgress(ctx, []string{"-version"}, "job1", "720p")
+	err := svc.execFFmpegWithProgress(ctx, []string{"-i", "test.mp4"}, 0, "720p", func(int) {})
 
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "no input file found")
+	assert.Contains(t, err.Error(), "invalid ffmpeg binary path")
 }
 
 func TestValidateBinaryPath_DirectoryTraversal(t *testing.T) {

@@ -25,7 +25,6 @@ func NewCommentRepository(db *sqlx.DB) usecase.CommentRepository {
 }
 
 func (r *commentRepository) Create(ctx context.Context, comment *domain.Comment) error {
-	// Get executor (either transaction from context or DB)
 	exec := GetExecutor(ctx, r.db)
 
 	query := `
@@ -157,7 +156,6 @@ func (r *commentRepository) ListByVideo(ctx context.Context, opts domain.Comment
 	args := []interface{}{opts.VideoID}
 	argCount := 1
 
-	// Add parent_id filter for threading
 	if opts.ParentID == nil {
 		query += " AND c.parent_id IS NULL"
 	} else {
@@ -166,14 +164,12 @@ func (r *commentRepository) ListByVideo(ctx context.Context, opts domain.Comment
 		args = append(args, *opts.ParentID)
 	}
 
-	// Add ordering
 	if opts.OrderBy == "oldest" {
 		query += " ORDER BY c.created_at ASC"
 	} else {
 		query += " ORDER BY c.created_at DESC"
 	}
 
-	// Add pagination
 	argCount++
 	query += fmt.Sprintf(" LIMIT $%d", argCount)
 	args = append(args, opts.Limit)
@@ -210,6 +206,51 @@ func (r *commentRepository) ListReplies(ctx context.Context, parentID uuid.UUID,
 	}
 
 	return comments, nil
+}
+
+func (r *commentRepository) ListRepliesBatch(ctx context.Context, parentIDs []uuid.UUID, limit int) (map[uuid.UUID][]*domain.CommentWithUser, error) {
+	result := make(map[uuid.UUID][]*domain.CommentWithUser, len(parentIDs))
+	if len(parentIDs) == 0 {
+		return result, nil
+	}
+
+	ids := make([]interface{}, len(parentIDs))
+	for i, id := range parentIDs {
+		ids[i] = id
+	}
+	query, args, err := sqlx.In(`
+		SELECT c.id, c.video_id, c.user_id, c.parent_id, c.body, c.status,
+		       c.flag_count, c.edited_at, c.created_at, c.updated_at,
+		       u.username, ua.webp_ipfs_cid as avatar
+		FROM comments c
+		JOIN users u ON c.user_id = u.id
+		LEFT JOIN user_avatars ua ON u.id = ua.user_id
+		WHERE c.parent_id IN (?) AND c.status = 'active'
+		ORDER BY c.parent_id, c.created_at ASC
+		LIMIT ?`, append(ids, limit*len(parentIDs))...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build batch replies query: %w", err)
+	}
+	query = r.db.Rebind(query)
+
+	var rows []*domain.CommentWithUser
+	if err := r.db.SelectContext(ctx, &rows, query, args...); err != nil {
+		return nil, fmt.Errorf("failed to fetch batch replies: %w", err)
+	}
+
+	counts := make(map[uuid.UUID]int, len(parentIDs))
+	for _, row := range rows {
+		if row.ParentID == nil {
+			continue
+		}
+		pid := *row.ParentID
+		if counts[pid] >= limit {
+			continue
+		}
+		result[pid] = append(result[pid], row)
+		counts[pid]++
+	}
+	return result, nil
 }
 
 func (r *commentRepository) CountByVideo(ctx context.Context, videoID uuid.UUID, activeOnly bool) (int, error) {

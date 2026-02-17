@@ -14,11 +14,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// ======================================================================
-// Mock Repository
-// ======================================================================
-
-// MockVideoAnalyticsRepository is a mock implementation of port.VideoAnalyticsRepository
 type MockVideoAnalyticsRepository struct {
 	mock.Mock
 }
@@ -150,13 +145,9 @@ func (m *MockVideoAnalyticsRepository) GetTotalViewsForChannel(ctx context.Conte
 	return args.Get(0).(int), args.Error(1)
 }
 
-// ======================================================================
-// Test Helpers
-// ======================================================================
-
 func newTestService() (*Service, *MockVideoAnalyticsRepository) {
 	mockRepo := new(MockVideoAnalyticsRepository)
-	svc := NewService(mockRepo)
+	svc := NewService(mockRepo, nil)
 	return svc, mockRepo
 }
 
@@ -168,10 +159,6 @@ func validEvent(videoID uuid.UUID, eventType domain.EventType, sessionID string)
 		SessionID: sessionID,
 	}
 }
-
-// ======================================================================
-// TrackEvent Tests
-// ======================================================================
 
 func TestTrackEvent(t *testing.T) {
 	videoID := uuid.New()
@@ -341,10 +328,6 @@ func TestTrackEvent_EmptyUserAgentSkipsEnrichment(t *testing.T) {
 	mockRepo.AssertExpectations(t)
 }
 
-// ======================================================================
-// TrackEventsBatch Tests
-// ======================================================================
-
 func TestTrackEventsBatch(t *testing.T) {
 	videoID := uuid.New()
 
@@ -371,7 +354,7 @@ func TestTrackEventsBatch(t *testing.T) {
 			setupMock: func(m *MockVideoAnalyticsRepository) {
 				m.On("CreateEventsBatch", mock.Anything, mock.AnythingOfType("[]*domain.AnalyticsEvent")).Return(nil)
 				m.On("UpsertActiveViewersBatch", mock.Anything, mock.MatchedBy(func(viewers []*domain.ActiveViewer) bool {
-					return len(viewers) == 2 // only view events
+					return len(viewers) == 2
 				})).Return(nil)
 			},
 			wantErr: false,
@@ -443,10 +426,6 @@ func TestTrackEventsBatch(t *testing.T) {
 	}
 }
 
-// ======================================================================
-// TrackViewerHeartbeat Tests
-// ======================================================================
-
 func TestTrackViewerHeartbeat(t *testing.T) {
 	videoID := uuid.New()
 	userID := uuid.New()
@@ -515,10 +494,6 @@ func TestTrackViewerHeartbeat(t *testing.T) {
 	}
 }
 
-// ======================================================================
-// GetActiveViewerCount Tests
-// ======================================================================
-
 func TestGetActiveViewerCount(t *testing.T) {
 	videoID := uuid.New()
 
@@ -563,10 +538,6 @@ func TestGetActiveViewerCount(t *testing.T) {
 		})
 	}
 }
-
-// ======================================================================
-// GetActiveViewers Tests
-// ======================================================================
 
 func TestGetActiveViewers(t *testing.T) {
 	videoID := uuid.New()
@@ -618,10 +589,6 @@ func TestGetActiveViewers(t *testing.T) {
 		})
 	}
 }
-
-// ======================================================================
-// AggregateDailyAnalytics Tests
-// ======================================================================
 
 func TestAggregateDailyAnalytics(t *testing.T) {
 	videoID := uuid.New()
@@ -677,10 +644,6 @@ func TestAggregateDailyAnalytics(t *testing.T) {
 		})
 	}
 }
-
-// ======================================================================
-// GetDailyAnalytics Tests
-// ======================================================================
 
 func TestGetDailyAnalytics(t *testing.T) {
 	videoID := uuid.New()
@@ -739,10 +702,6 @@ func TestGetDailyAnalytics(t *testing.T) {
 	}
 }
 
-// ======================================================================
-// GetDailyAnalyticsRange Tests
-// ======================================================================
-
 func TestGetDailyAnalyticsRange(t *testing.T) {
 	videoID := uuid.New()
 	startDate := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -799,10 +758,6 @@ func TestGetDailyAnalyticsRange(t *testing.T) {
 	}
 }
 
-// ======================================================================
-// GetRetentionCurve Tests
-// ======================================================================
-
 func TestGetRetentionCurve(t *testing.T) {
 	videoID := uuid.New()
 	date := time.Date(2025, 1, 15, 0, 0, 0, 0, time.UTC)
@@ -858,10 +813,6 @@ func TestGetRetentionCurve(t *testing.T) {
 		})
 	}
 }
-
-// ======================================================================
-// GetVideoAnalyticsSummary Tests
-// ======================================================================
 
 func TestGetVideoAnalyticsSummary(t *testing.T) {
 	videoID := uuid.New()
@@ -964,10 +915,6 @@ func TestGetVideoAnalyticsSummary(t *testing.T) {
 	}
 }
 
-// ======================================================================
-// GetTotalViews Tests
-// ======================================================================
-
 func TestGetTotalViews(t *testing.T) {
 	videoID := uuid.New()
 
@@ -1012,10 +959,6 @@ func TestGetTotalViews(t *testing.T) {
 		})
 	}
 }
-
-// ======================================================================
-// GetChannelDailyAnalytics Tests
-// ======================================================================
 
 func TestGetChannelDailyAnalytics(t *testing.T) {
 	channelID := uuid.New()
@@ -1074,10 +1017,6 @@ func TestGetChannelDailyAnalytics(t *testing.T) {
 	}
 }
 
-// ======================================================================
-// GetChannelDailyAnalyticsRange Tests
-// ======================================================================
-
 func TestGetChannelDailyAnalyticsRange(t *testing.T) {
 	channelID := uuid.New()
 	startDate := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -1134,10 +1073,6 @@ func TestGetChannelDailyAnalyticsRange(t *testing.T) {
 	}
 }
 
-// ======================================================================
-// GetChannelTotalViews Tests
-// ======================================================================
-
 func TestGetChannelTotalViews(t *testing.T) {
 	channelID := uuid.New()
 
@@ -1182,10 +1117,6 @@ func TestGetChannelTotalViews(t *testing.T) {
 		})
 	}
 }
-
-// ======================================================================
-// CleanupOldEvents Tests
-// ======================================================================
 
 func TestCleanupOldEvents(t *testing.T) {
 	tests := []struct {
@@ -1237,10 +1168,6 @@ func TestCleanupOldEvents(t *testing.T) {
 	}
 }
 
-// ======================================================================
-// CleanupInactiveViewers Tests
-// ======================================================================
-
 func TestCleanupInactiveViewers(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -1287,10 +1214,6 @@ func TestCleanupInactiveViewers(t *testing.T) {
 		})
 	}
 }
-
-// ======================================================================
-// GetEventsBySession Tests
-// ======================================================================
 
 func TestGetEventsBySession(t *testing.T) {
 	videoID := uuid.New()
@@ -1348,10 +1271,6 @@ func TestGetEventsBySession(t *testing.T) {
 		})
 	}
 }
-
-// ======================================================================
-// GetEventsByVideo Tests
-// ======================================================================
 
 func TestGetEventsByVideo(t *testing.T) {
 	videoID := uuid.New()
@@ -1424,26 +1343,140 @@ func TestGetEventsByVideo(t *testing.T) {
 	}
 }
 
-// ======================================================================
-// AggregateAllVideosForDate Tests
-// ======================================================================
+type MockVideoRepository struct {
+	mock.Mock
+}
+
+func (m *MockVideoRepository) List(ctx context.Context, req *domain.VideoSearchRequest) ([]*domain.Video, int64, error) {
+	args := m.Called(ctx, req)
+	if args.Get(0) == nil {
+		return nil, args.Get(1).(int64), args.Error(2)
+	}
+	return args.Get(0).([]*domain.Video), args.Get(1).(int64), args.Error(2)
+}
+
+func (m *MockVideoRepository) Create(ctx context.Context, video *domain.Video) error {
+	return m.Called(ctx, video).Error(0)
+}
+func (m *MockVideoRepository) GetByID(ctx context.Context, id string) (*domain.Video, error) {
+	args := m.Called(ctx, id)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*domain.Video), args.Error(1)
+}
+func (m *MockVideoRepository) GetByIDs(ctx context.Context, ids []string) ([]*domain.Video, error) {
+	args := m.Called(ctx, ids)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*domain.Video), args.Error(1)
+}
+func (m *MockVideoRepository) GetByUserID(ctx context.Context, userID string, limit, offset int) ([]*domain.Video, int64, error) {
+	args := m.Called(ctx, userID, limit, offset)
+	if args.Get(0) == nil {
+		return nil, args.Get(1).(int64), args.Error(2)
+	}
+	return args.Get(0).([]*domain.Video), args.Get(1).(int64), args.Error(2)
+}
+func (m *MockVideoRepository) Update(ctx context.Context, video *domain.Video) error {
+	return m.Called(ctx, video).Error(0)
+}
+func (m *MockVideoRepository) Delete(ctx context.Context, id string, userID string) error {
+	return m.Called(ctx, id, userID).Error(0)
+}
+func (m *MockVideoRepository) Search(ctx context.Context, req *domain.VideoSearchRequest) ([]*domain.Video, int64, error) {
+	args := m.Called(ctx, req)
+	if args.Get(0) == nil {
+		return nil, args.Get(1).(int64), args.Error(2)
+	}
+	return args.Get(0).([]*domain.Video), args.Get(1).(int64), args.Error(2)
+}
+func (m *MockVideoRepository) UpdateProcessingInfo(ctx context.Context, videoID string, status domain.ProcessingStatus, outputPaths map[string]string, thumbnailPath, previewPath string) error {
+	return m.Called(ctx, videoID, status, outputPaths, thumbnailPath, previewPath).Error(0)
+}
+func (m *MockVideoRepository) UpdateProcessingInfoWithCIDs(ctx context.Context, videoID string, status domain.ProcessingStatus, outputPaths map[string]string, thumbnailPath, previewPath string, processedCIDs map[string]string, thumbnailCID, previewCID string) error {
+	return m.Called(ctx, videoID, status, outputPaths, thumbnailPath, previewPath, processedCIDs, thumbnailCID, previewCID).Error(0)
+}
+func (m *MockVideoRepository) Count(ctx context.Context) (int64, error) {
+	args := m.Called(ctx)
+	return args.Get(0).(int64), args.Error(1)
+}
+func (m *MockVideoRepository) GetVideosForMigration(ctx context.Context, limit int) ([]*domain.Video, error) {
+	args := m.Called(ctx, limit)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*domain.Video), args.Error(1)
+}
+func (m *MockVideoRepository) GetByRemoteURI(ctx context.Context, remoteURI string) (*domain.Video, error) {
+	args := m.Called(ctx, remoteURI)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*domain.Video), args.Error(1)
+}
+func (m *MockVideoRepository) CreateRemoteVideo(ctx context.Context, video *domain.Video) error {
+	return m.Called(ctx, video).Error(0)
+}
 
 func TestAggregateAllVideosForDate(t *testing.T) {
 	svc, _ := newTestService()
 	date := time.Date(2025, 1, 15, 0, 0, 0, 0, time.UTC)
 
-	// Currently a placeholder that returns nil
 	err := svc.AggregateAllVideosForDate(context.Background(), date)
 	require.NoError(t, err)
 }
 
-// ======================================================================
-// NewService Tests
-// ======================================================================
+func TestAggregateAllVideosForDate_WithVideos(t *testing.T) {
+	mockAnalytics := new(MockVideoAnalyticsRepository)
+	mockVideos := new(MockVideoRepository)
+	svc := NewService(mockAnalytics, mockVideos)
+
+	date := time.Date(2025, 1, 15, 0, 0, 0, 0, time.UTC)
+	ctx := context.Background()
+
+	vid1 := &domain.Video{ID: uuid.New().String()}
+	vid2 := &domain.Video{ID: uuid.New().String()}
+
+	mockVideos.On("List", ctx, &domain.VideoSearchRequest{Limit: aggregateBatchSize, Offset: 0}).
+		Return([]*domain.Video{vid1, vid2}, int64(2), nil)
+	mockVideos.On("List", ctx, &domain.VideoSearchRequest{Limit: aggregateBatchSize, Offset: aggregateBatchSize}).
+		Return([]*domain.Video{}, int64(2), nil)
+
+	vid1UUID, _ := uuid.Parse(vid1.ID)
+	vid2UUID, _ := uuid.Parse(vid2.ID)
+	mockAnalytics.On("AggregateDailyAnalytics", ctx, vid1UUID, date).Return(nil)
+	mockAnalytics.On("CalculateRetentionCurve", ctx, vid1UUID, date).Return(nil)
+	mockAnalytics.On("AggregateDailyAnalytics", ctx, vid2UUID, date).Return(nil)
+	mockAnalytics.On("CalculateRetentionCurve", ctx, vid2UUID, date).Return(nil)
+
+	err := svc.AggregateAllVideosForDate(ctx, date)
+	require.NoError(t, err)
+	mockVideos.AssertExpectations(t)
+	mockAnalytics.AssertExpectations(t)
+}
+
+func TestAggregateAllVideosForDate_EmptyLibrary(t *testing.T) {
+	mockAnalytics := new(MockVideoAnalyticsRepository)
+	mockVideos := new(MockVideoRepository)
+	svc := NewService(mockAnalytics, mockVideos)
+
+	date := time.Date(2025, 1, 15, 0, 0, 0, 0, time.UTC)
+	ctx := context.Background()
+
+	mockVideos.On("List", ctx, &domain.VideoSearchRequest{Limit: aggregateBatchSize, Offset: 0}).
+		Return([]*domain.Video{}, int64(0), nil)
+
+	err := svc.AggregateAllVideosForDate(ctx, date)
+	require.NoError(t, err)
+	mockVideos.AssertExpectations(t)
+	mockAnalytics.AssertNotCalled(t, "AggregateDailyAnalytics")
+}
 
 func TestNewService(t *testing.T) {
 	mockRepo := new(MockVideoAnalyticsRepository)
-	svc := NewService(mockRepo)
+	svc := NewService(mockRepo, nil)
 
 	require.NotNil(t, svc)
 	assert.Equal(t, mockRepo, svc.repo)

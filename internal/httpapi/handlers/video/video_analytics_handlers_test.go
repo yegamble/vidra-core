@@ -22,12 +22,10 @@ import (
 func TestVideoAnalyticsHandler_TrackEvent_WithUser(t *testing.T) {
 	testDB := testutil.SetupTestDB(t)
 	analyticsRepo := repository.NewVideoAnalyticsRepository(testDB.DB)
-	analyticsService := analytics.NewService(analyticsRepo)
+	analyticsService := analytics.NewService(analyticsRepo, nil)
 	handler := NewVideoAnalyticsHandler(analyticsService)
 
-	// Create test video
 	userID := uuid.New().String()
-	// createTestViewsVideo is defined in views_handlers_test.go which is in the same package
 	video := createTestViewsVideo(t, testDB, userID)
 
 	t.Run("successful event tracking with authenticated user", func(t *testing.T) {
@@ -43,10 +41,7 @@ func TestVideoAnalyticsHandler_TrackEvent_WithUser(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/analytics/events", bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 
-		// Add user to context
 		userUUID := uuid.MustParse(userID)
-		// We can inject the user directly via middleware.UserIDKey as a string because
-		// middleware.GetUserIDFromContext expects the raw value from context to be string
 		ctx := context.WithValue(req.Context(), middleware.UserIDKey, userID)
 		req = req.WithContext(ctx)
 
@@ -57,7 +52,6 @@ func TestVideoAnalyticsHandler_TrackEvent_WithUser(t *testing.T) {
 
 		assert.Equal(t, http.StatusCreated, rr.Code)
 
-		// Verify event was created with correct UserID
 		events, err := analyticsRepo.GetEventsBySessionID(context.Background(), reqBody.SessionID)
 		require.NoError(t, err)
 		require.Len(t, events, 1)
@@ -78,8 +72,6 @@ func TestVideoAnalyticsHandler_TrackEvent_WithUser(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/analytics/events", bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 
-		// No user in context
-
 		rr := httptest.NewRecorder()
 		router := chi.NewRouter()
 		router.Post("/api/v1/analytics/events", handler.TrackEvent)
@@ -87,7 +79,6 @@ func TestVideoAnalyticsHandler_TrackEvent_WithUser(t *testing.T) {
 
 		assert.Equal(t, http.StatusCreated, rr.Code)
 
-		// Verify event was created with nil UserID
 		events, err := analyticsRepo.GetEventsBySessionID(context.Background(), reqBody.SessionID)
 		require.NoError(t, err)
 		require.Len(t, events, 1)
@@ -117,7 +108,6 @@ func TestVideoAnalyticsHandler_TrackEvent_WithUser(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/analytics/events/batch", bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 
-		// Add user to context
 		userUUID := uuid.MustParse(userID)
 		ctx := context.WithValue(req.Context(), middleware.UserIDKey, userID)
 		req = req.WithContext(ctx)
@@ -129,7 +119,6 @@ func TestVideoAnalyticsHandler_TrackEvent_WithUser(t *testing.T) {
 
 		assert.Equal(t, http.StatusCreated, rr.Code)
 
-		// Verify events were created with correct UserID
 		events, err := analyticsRepo.GetEventsBySessionID(context.Background(), sessionID)
 		require.NoError(t, err)
 		require.Len(t, events, 2)

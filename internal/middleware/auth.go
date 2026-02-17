@@ -13,14 +13,57 @@ import (
 	"github.com/google/uuid"
 )
 
-// ctxKey is an unexported context key type for auth middleware
-// Renamed from contextKey to avoid conflicts with test helpers
 type ctxKey string
 
 const (
 	UserIDKey   ctxKey = "userID"
 	UserRoleKey ctxKey = "userRole"
 )
+
+type UserLookupFunc func(ctx context.Context, userID string) (*domain.User, error)
+
+func AuthWithUserLookup(jwtSecret string, lookup UserLookupFunc) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			authHeader := r.Header.Get("Authorization")
+			if authHeader == "" {
+				writeError(w, http.StatusUnauthorized, domain.NewDomainError("MISSING_AUTH", "Missing authorization header"))
+				return
+			}
+
+			tokenString := strings.TrimPrefix(authHeader, "Bearer ")
+			if tokenString == authHeader {
+				writeError(w, http.StatusUnauthorized, domain.NewDomainError("INVALID_AUTH_FORMAT", "Invalid authorization header format"))
+				return
+			}
+
+			userID, role, err := validateJWT(tokenString, jwtSecret)
+			if err != nil {
+				writeError(w, http.StatusUnauthorized, domain.NewDomainError("INVALID_TOKEN", "Invalid token"))
+				return
+			}
+
+			if lookup != nil {
+				dbUser, lookupErr := lookup(r.Context(), userID)
+				if lookupErr != nil {
+					writeError(w, http.StatusUnauthorized, domain.NewDomainError("USER_NOT_FOUND", "User no longer exists"))
+					return
+				}
+				if !dbUser.IsActive {
+					writeError(w, http.StatusUnauthorized, domain.NewDomainError("USER_INACTIVE", "Account is inactive"))
+					return
+				}
+				role = string(dbUser.Role)
+			}
+
+			ctx := context.WithValue(r.Context(), UserIDKey, userID)
+			if role != "" {
+				ctx = context.WithValue(ctx, UserRoleKey, role)
+			}
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	}
+}
 
 func Auth(jwtSecret string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
@@ -78,7 +121,6 @@ func OptionalAuth(jwtSecret string) func(http.Handler) http.Handler {
 }
 
 func validateJWT(tokenString, jwtSecret string) (string, string, error) {
-	// Parse and validate token
 	token, err := jwt.Parse(tokenString, func(t *jwt.Token) (interface{}, error) {
 		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, jwt.ErrTokenSignatureInvalid
@@ -89,10 +131,9 @@ func validateJWT(tokenString, jwtSecret string) (string, string, error) {
 		return "", "", err
 	}
 
-	// Extract subject and role
 	if claims, ok := token.Claims.(jwt.MapClaims); ok {
 		sub, subOk := claims["sub"].(string)
-		role, _ := claims["role"].(string) // role might not be present
+		role, _ := claims["role"].(string)
 		if subOk {
 			return sub, role, nil
 		}
@@ -133,7 +174,6 @@ func writeError(w http.ResponseWriter, statusCode int, err error) {
 	_ = json.NewEncoder(w).Encode(response)
 }
 
-// GetUserIDFromContext retrieves the user ID from the request context
 func GetUserIDFromContext(ctx context.Context) (uuid.UUID, bool) {
 	userIDStr, ok := ctx.Value(UserIDKey).(string)
 	if !ok {
@@ -148,7 +188,6 @@ func GetUserIDFromContext(ctx context.Context) (uuid.UUID, bool) {
 	return userID, true
 }
 
-// RequireAuth is a middleware that requires authentication
 func RequireAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		userID := r.Context().Value(UserIDKey)
@@ -160,31 +199,21 @@ func RequireAuth(next http.Handler) http.Handler {
 	})
 }
 
-// RequireRole returns a middleware that requires one of the specified user roles.
-// It must be used AFTER the Auth middleware which sets the user context
 func RequireRole(roles ...string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// Get user ID from context (set by Auth middleware)
 			userIDStr, ok := r.Context().Value(UserIDKey).(string)
 			if !ok || userIDStr == "" {
 				writeError(w, http.StatusUnauthorized, domain.NewDomainError("UNAUTHORIZED", "Authentication required"))
 				return
 			}
 
-			// Get user role from JWT claims
-			// The role should be included in the JWT token claims
-			// For now, we'll need to pass the role through context or re-validate the token
-			// to extract the role claim
-
-			// Extract role from request context (should be set by Auth middleware)
 			userRole, ok := r.Context().Value(UserRoleKey).(string)
 			if !ok || userRole == "" {
 				writeError(w, http.StatusForbidden, domain.NewDomainError("FORBIDDEN", "Access denied"))
 				return
 			}
 
-			// Check if user has one of the required roles
 			if len(roles) > 0 {
 				authorized := false
 				for _, role := range roles {

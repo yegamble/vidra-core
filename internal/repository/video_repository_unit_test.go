@@ -168,6 +168,9 @@ func TestVideoRepository_Unit_GetByID(t *testing.T) {
 		expectedVideo.Category.ID, expectedVideo.Category.Name, expectedVideo.Category.Slug, nil, nil, nil, expectedVideo.Category.DisplayOrder, expectedVideo.Category.IsActive,
 	)
 
+	mock.ExpectQuery(`SELECT EXISTS`).
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
+
 	mock.ExpectQuery(regexp.QuoteMeta(`SELECT v.id, v.thumbnail_id, v.title`)).
 		WithArgs(videoID).
 		WillReturnRows(rows)

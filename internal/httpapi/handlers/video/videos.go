@@ -12,6 +12,7 @@ import (
 	"athena/internal/domain"
 	"athena/internal/httpapi/shared"
 	"athena/internal/middleware"
+	"athena/internal/security"
 	"athena/internal/usecase"
 )
 
@@ -171,12 +172,19 @@ func CreateVideoHandler(repo usecase.VideoRepository) http.HandlerFunc {
 			tags = []string{}
 		}
 
+		sanitizedTitle := security.SanitizeStrictText(req.Title)
+		if sanitizedTitle == "" {
+			shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_TITLE", "Title contains only disallowed content"))
+			return
+		}
+		sanitizedDescription := security.SanitizeCommentHTML(req.Description)
+
 		now := time.Now()
 		video := &domain.Video{
 			ID:          uuid.NewString(),
 			ThumbnailID: uuid.NewString(),
-			Title:       req.Title,
-			Description: req.Description,
+			Title:       sanitizedTitle,
+			Description: sanitizedDescription,
 			Privacy:     req.Privacy,
 			Status:      domain.StatusUploading,
 			UploadDate:  now,
@@ -265,6 +273,13 @@ func UpdateVideoHandler(repo usecase.VideoRepository) http.HandlerFunc {
 			return
 		}
 
+		sanitizedTitle := security.SanitizeStrictText(req.Title)
+		if sanitizedTitle == "" {
+			shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_TITLE", "Title contains only disallowed content"))
+			return
+		}
+		sanitizedDescription := security.SanitizeCommentHTML(req.Description)
+
 		tags := req.Tags
 		if tags == nil {
 			tags = []string{}
@@ -272,8 +287,8 @@ func UpdateVideoHandler(repo usecase.VideoRepository) http.HandlerFunc {
 
 		video := &domain.Video{
 			ID:          videoID,
-			Title:       req.Title,
-			Description: req.Description,
+			Title:       sanitizedTitle,
+			Description: sanitizedDescription,
 			Privacy:     req.Privacy,
 			Status:      existingVideo.Status,
 			UserID:      userID,

@@ -469,7 +469,7 @@ func (app *Application) initializeSchedulers(deps *Dependencies) {
 			sftpBackend := backup.NewSFTPBackend(app.Config.BackupSFTPHost, app.Config.BackupSFTPPort,
 				app.Config.BackupSFTPUser, app.Config.BackupSFTPPassword,
 				app.Config.BackupSFTPKeyPath, app.Config.BackupSFTPPath)
-			// TODO: Set known host key if provided
+			sftpBackend.HostKey = app.Config.BackupSFTPHostKey
 			target = sftpBackend
 		default:
 			target = backup.NewLocalBackend("./backups")

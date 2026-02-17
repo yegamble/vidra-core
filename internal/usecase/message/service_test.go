@@ -211,7 +211,7 @@ func TestSendMessage_XSSSanitization(t *testing.T) {
 		{
 			name:     "Script tag",
 			input:    "Hello <script>alert('xss')</script>Bob",
-			expected: "Hello alert('xss')Bob",
+			expected: "Hello Bob",
 		},
 		{
 			name:     "Img with onerror",

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -94,7 +95,7 @@ func (s *Service) enqueueFollowerDeliveries(ctx context.Context, userID string, 
 		}
 
 		if err := s.repo.BulkEnqueueDelivery(ctx, deliveries); err != nil {
-			fmt.Printf("failed to bulk enqueue deliveries for %s: %v\n", resourceDesc, err)
+			slog.Warn("failed to bulk enqueue deliveries", "resource", resourceDesc, "error", err)
 		}
 	}
 

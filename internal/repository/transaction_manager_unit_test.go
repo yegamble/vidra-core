@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
@@ -409,7 +410,7 @@ func TestContains(t *testing.T) {
 			name:   "empty substring",
 			s:      "test",
 			substr: "",
-			want:   false,
+			want:   true,
 		},
 		{
 			name:   "empty string",
@@ -427,7 +428,7 @@ func TestContains(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := contains(tt.s, tt.substr)
+			result := strings.Contains(tt.s, tt.substr)
 			assert.Equal(t, tt.want, result)
 		})
 	}

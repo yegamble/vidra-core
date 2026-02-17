@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/base64"
 	"errors"
 	"mime/multipart"
 	"net/http"
@@ -1511,11 +1512,9 @@ func TestUploadAvatar_MissingAvatarField(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
 }
 
-// IPFS avatar handler tests (targeted for 80% coverage)
-
 func TestIPFSAdd_NotConfigured(t *testing.T) {
 	h := &AuthHandlers{
-		ipfsAPI: "", // Not configured
+		ipfsAPI: "",
 	}
 
 	cid, err := h.ipfsAdd("/tmp/test.jpg")
@@ -1530,7 +1529,6 @@ func TestIPFSAdd_InvalidPath(t *testing.T) {
 		ipfsAPI: "http://localhost:5001",
 	}
 
-	// Path traversal attempt
 	cid, err := h.ipfsAdd("../../etc/passwd")
 
 	assert.Error(t, err)
@@ -1551,7 +1549,7 @@ func TestIPFSAdd_FileNotFound(t *testing.T) {
 
 func TestIPFSClusterAdd_NotConfigured(t *testing.T) {
 	h := &AuthHandlers{
-		ipfsClusterAPI: "", // Not configured
+		ipfsClusterAPI: "",
 	}
 
 	cid, err := h.ipfsClusterAdd("/tmp/test.jpg")
@@ -1563,7 +1561,7 @@ func TestIPFSClusterAdd_NotConfigured(t *testing.T) {
 
 func TestIPFSPin_NotConfigured(t *testing.T) {
 	h := &AuthHandlers{
-		ipfsAPI: "", // Not configured
+		ipfsAPI: "",
 	}
 
 	err := h.ipfsPin("QmTest123")
@@ -1573,7 +1571,6 @@ func TestIPFSPin_NotConfigured(t *testing.T) {
 }
 
 func TestParseIPFSAddResponse_ValidNDJSON(t *testing.T) {
-	// IPFS returns NDJSON (newline-delimited JSON)
 	ndjson := `{"Name":"file1.jpg","Hash":"QmFirst","Size":"1234"}
 {"Name":"file2.jpg","Hash":"QmSecond","Size":"5678"}
 {"Name":"final.jpg","Hash":"QmFinalCID","Size":"9999"}
@@ -1605,7 +1602,6 @@ func TestIPFSClusterAdd_InvalidPath(t *testing.T) {
 		ipfsClusterAPI: "http://localhost:9094",
 	}
 
-	// Path traversal attempt
 	cid, err := h.ipfsClusterAdd("../../etc/passwd")
 
 	assert.Error(t, err)
@@ -1622,4 +1618,105 @@ func TestIPFSClusterAdd_FileNotFound(t *testing.T) {
 
 	assert.Error(t, err)
 	assert.Empty(t, cid)
+}
+
+func TestParseClientAuth(t *testing.T) {
+	tests := []struct {
+		name             string
+		setupRequest     func() *http.Request
+		wantClientID     string
+		wantClientSecret string
+		wantOK           bool
+	}{
+		{
+			name: "valid Basic auth header",
+			setupRequest: func() *http.Request {
+				req := httptest.NewRequest(http.MethodPost, "/token", nil)
+				creds := base64.StdEncoding.EncodeToString([]byte("myclient:mysecret"))
+				req.Header.Set("Authorization", "Basic "+creds)
+				return req
+			},
+			wantClientID:     "myclient",
+			wantClientSecret: "mysecret",
+			wantOK:           true,
+		},
+		{
+			name: "Basic auth header case-insensitive prefix",
+			setupRequest: func() *http.Request {
+				req := httptest.NewRequest(http.MethodPost, "/token", nil)
+				creds := base64.StdEncoding.EncodeToString([]byte("client2:secret2"))
+				req.Header.Set("Authorization", "BASIC "+creds)
+				return req
+			},
+			wantClientID:     "client2",
+			wantClientSecret: "secret2",
+			wantOK:           true,
+		},
+		{
+			name: "Basic auth with colon in secret",
+			setupRequest: func() *http.Request {
+				req := httptest.NewRequest(http.MethodPost, "/token", nil)
+				creds := base64.StdEncoding.EncodeToString([]byte("client3:sec:ret:with:colons"))
+				req.Header.Set("Authorization", "Basic "+creds)
+				return req
+			},
+			wantClientID:     "client3",
+			wantClientSecret: "sec:ret:with:colons",
+			wantOK:           true,
+		},
+		{
+			name: "fallback to form values when no Authorization header",
+			setupRequest: func() *http.Request {
+				req := httptest.NewRequest(http.MethodPost, "/token",
+					strings.NewReader("client_id=formclient&client_secret=formsecret"))
+				req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+				return req
+			},
+			wantClientID:     "formclient",
+			wantClientSecret: "formsecret",
+			wantOK:           true,
+		},
+		{
+			name: "form value with empty secret is still ok",
+			setupRequest: func() *http.Request {
+				req := httptest.NewRequest(http.MethodPost, "/token",
+					strings.NewReader("client_id=myid"))
+				req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+				return req
+			},
+			wantClientID:     "myid",
+			wantClientSecret: "",
+			wantOK:           true,
+		},
+		{
+			name: "no credentials at all returns not ok",
+			setupRequest: func() *http.Request {
+				return httptest.NewRequest(http.MethodPost, "/token", nil)
+			},
+			wantClientID:     "",
+			wantClientSecret: "",
+			wantOK:           false,
+		},
+		{
+			name: "invalid base64 in Basic auth falls back to form",
+			setupRequest: func() *http.Request {
+				req := httptest.NewRequest(http.MethodPost, "/token", nil)
+				req.Header.Set("Authorization", "Basic not-valid-base64!!!")
+				return req
+			},
+			wantClientID:     "",
+			wantClientSecret: "",
+			wantOK:           false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := tt.setupRequest()
+			clientID, clientSecret, ok := parseClientAuth(req)
+			assert.Equal(t, tt.wantOK, ok)
+			assert.Equal(t, tt.wantClientID, clientID)
+			assert.Equal(t, tt.wantClientSecret, clientSecret)
+		})
+	}
 }

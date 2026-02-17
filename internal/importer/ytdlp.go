@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -42,7 +43,7 @@ func (y *YtDlp) ValidateURL(ctx context.Context, url string) error {
 
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "ERROR: yt-dlp validation failed: %v, output: %s\n", err, string(output))
+		slog.Error("yt-dlp validation failed", "error", err, "output", string(output))
 		return fmt.Errorf("video URL validation failed: unable to access or parse the video")
 	}
 
@@ -180,7 +181,7 @@ func (y *YtDlp) Download(ctx context.Context, url string, importID string, progr
 
 	<-progressDone
 	if err := cmd.Wait(); err != nil {
-		fmt.Fprintf(os.Stderr, "ERROR: yt-dlp download failed: %v, stderr: %s\n", err, stderrBuf.String())
+		slog.Error("yt-dlp download failed", "error", err, "stderr", stderrBuf.String())
 		return "", fmt.Errorf("video download failed: unable to complete the download")
 	}
 

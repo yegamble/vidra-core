@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -209,7 +210,7 @@ func (h *CaptionHandlers) GetCaptionContent(w http.ResponseWriter, r *http.Reque
 	w.Header().Set("Cache-Control", "public, max-age=3600")
 
 	if _, err := io.Copy(w, content); err != nil {
-		fmt.Printf("Error streaming caption content: %v\n", err)
+		slog.Error("error streaming caption content", "error", err)
 	}
 }
 

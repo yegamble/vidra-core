@@ -233,7 +233,6 @@ func TestValidateJWT(t *testing.T) {
 	})
 
 	t.Run("wrong signing method", func(t *testing.T) {
-		// This would require RSA keys, but we can test malformed token
 		_, _, err := validateJWT("eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.test.test", jwtSecret)
 		if err == nil {
 			t.Error("Expected error for wrong signing method")
@@ -482,7 +481,6 @@ func TestWriteError(t *testing.T) {
 	})
 }
 
-// Helper function to generate a valid JWT token for testing
 func generateValidToken(jwtSecret string) string {
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
 		"sub": uuid.New().String(),
@@ -491,4 +489,119 @@ func generateValidToken(jwtSecret string) string {
 
 	tokenString, _ := token.SignedString([]byte(jwtSecret))
 	return "Bearer " + tokenString
+}
+
+func generateTokenWithRole(jwtSecret, sub, role string) string {
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+		"sub":  sub,
+		"role": role,
+		"exp":  time.Now().Add(time.Hour).Unix(),
+	})
+	tokenString, _ := token.SignedString([]byte(jwtSecret))
+	return "Bearer " + tokenString
+}
+
+func TestAuth_WithUserLookup(t *testing.T) {
+	jwtSecret := "test-secret-key"
+	userIDStr := uuid.New().String()
+
+	t.Run("nil lookup falls back to JWT role", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/test", nil)
+		req.Header.Set("Authorization", generateTokenWithRole(jwtSecret, userIDStr, "admin"))
+		w := httptest.NewRecorder()
+
+		var gotRole string
+		next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			gotRole, _ = r.Context().Value(UserRoleKey).(string)
+			w.WriteHeader(http.StatusOK)
+		})
+
+		handler := AuthWithUserLookup(jwtSecret, nil)(next)
+		handler.ServeHTTP(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Errorf("Expected 200, got %d", w.Code)
+		}
+		if gotRole != "admin" {
+			t.Errorf("Expected role=admin, got %q", gotRole)
+		}
+	})
+
+	t.Run("lookup returns DB role overriding JWT role", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/test", nil)
+		req.Header.Set("Authorization", generateTokenWithRole(jwtSecret, userIDStr, "admin"))
+		w := httptest.NewRecorder()
+
+		lookup := func(_ context.Context, id string) (*domain.User, error) {
+			return &domain.User{ID: id, Role: domain.RoleUser, IsActive: true}, nil
+		}
+
+		var gotRole string
+		next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			gotRole, _ = r.Context().Value(UserRoleKey).(string)
+			w.WriteHeader(http.StatusOK)
+		})
+
+		handler := AuthWithUserLookup(jwtSecret, lookup)(next)
+		handler.ServeHTTP(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Errorf("Expected 200, got %d", w.Code)
+		}
+		if gotRole != string(domain.RoleUser) {
+			t.Errorf("Expected DB role %q, got %q", domain.RoleUser, gotRole)
+		}
+	})
+
+	t.Run("banned user rejected with 401", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/test", nil)
+		req.Header.Set("Authorization", generateTokenWithRole(jwtSecret, userIDStr, "user"))
+		w := httptest.NewRecorder()
+
+		lookup := func(_ context.Context, id string) (*domain.User, error) {
+			return &domain.User{ID: id, Role: domain.RoleUser, IsActive: false}, nil
+		}
+
+		handlerCalled := false
+		next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			handlerCalled = true
+			w.WriteHeader(http.StatusOK)
+		})
+
+		handler := AuthWithUserLookup(jwtSecret, lookup)(next)
+		handler.ServeHTTP(w, req)
+
+		if w.Code != http.StatusUnauthorized {
+			t.Errorf("Expected 401 for banned user, got %d", w.Code)
+		}
+		if handlerCalled {
+			t.Error("Expected next handler not to be called for banned user")
+		}
+	})
+
+	t.Run("user not found in DB rejected with 401", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/test", nil)
+		req.Header.Set("Authorization", generateTokenWithRole(jwtSecret, userIDStr, "user"))
+		w := httptest.NewRecorder()
+
+		lookup := func(_ context.Context, id string) (*domain.User, error) {
+			return nil, domain.ErrUserNotFound
+		}
+
+		handlerCalled := false
+		next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			handlerCalled = true
+			w.WriteHeader(http.StatusOK)
+		})
+
+		handler := AuthWithUserLookup(jwtSecret, lookup)(next)
+		handler.ServeHTTP(w, req)
+
+		if w.Code != http.StatusUnauthorized {
+			t.Errorf("Expected 401 for missing user, got %d", w.Code)
+		}
+		if handlerCalled {
+			t.Error("Expected next handler not to be called for missing user")
+		}
+	})
 }

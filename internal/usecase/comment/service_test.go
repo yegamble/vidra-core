@@ -13,8 +13,6 @@ import (
 	"github.com/stretchr/testify/mock"
 )
 
-// --- Mocks ---
-
 type mockCommentRepo struct{ mock.Mock }
 
 func (m *mockCommentRepo) Create(ctx context.Context, comment *domain.Comment) error {
@@ -53,6 +51,13 @@ func (m *mockCommentRepo) ListReplies(ctx context.Context, parentID uuid.UUID, l
 		return nil, args.Error(1)
 	}
 	return args.Get(0).([]*domain.CommentWithUser), args.Error(1)
+}
+func (m *mockCommentRepo) ListRepliesBatch(ctx context.Context, parentIDs []uuid.UUID, limit int) (map[uuid.UUID][]*domain.CommentWithUser, error) {
+	args := m.Called(ctx, parentIDs, limit)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(map[uuid.UUID][]*domain.CommentWithUser), args.Error(1)
 }
 func (m *mockCommentRepo) CountByVideo(ctx context.Context, videoID uuid.UUID, activeOnly bool) (int, error) {
 	args := m.Called(ctx, videoID, activeOnly)
@@ -265,8 +270,6 @@ func (m *mockChannelRepo) CheckOwnership(ctx context.Context, channelID, userID 
 	return args.Bool(0), args.Error(1)
 }
 
-// --- Tests ---
-
 func TestCreateComment_Success(t *testing.T) {
 	commentRepo := new(mockCommentRepo)
 	videoRepo := new(mockVideoRepo)
@@ -356,7 +359,6 @@ func TestCreateComment_XSSSanitization(t *testing.T) {
 		ID: videoID.String(), Privacy: domain.PrivacyPublic,
 	}, nil)
 	commentRepo.On("Create", mock.Anything, mock.MatchedBy(func(c *domain.Comment) bool {
-		// Sanitized body should not contain script tags
 		return c.Body != "" && c.Body != "<script>alert('xss')</script>"
 	})).Return(nil)
 
@@ -669,8 +671,6 @@ func TestUnflagComment_Error(t *testing.T) {
 	assert.Error(t, err)
 }
 
-// --- GetCommentFlags tests ---
-
 func TestGetCommentFlags_AdminSuccess(t *testing.T) {
 	commentRepo := new(mockCommentRepo)
 	videoRepo := new(mockVideoRepo)
@@ -798,8 +798,6 @@ func TestGetCommentFlags_EmptyFlags(t *testing.T) {
 	assert.Empty(t, flags)
 }
 
-// --- FlagComment additional edge cases ---
-
 func TestFlagComment_CommentNotFound(t *testing.T) {
 	commentRepo := new(mockCommentRepo)
 	videoRepo := new(mockVideoRepo)
@@ -869,7 +867,6 @@ func TestFlagComment_AutoHideHighFlagCount(t *testing.T) {
 	commentAuthor := uuid.New()
 	commentID := uuid.New()
 
-	// Comment already has 5 flags, so flagging should trigger auto-hide
 	commentRepo.On("GetByID", mock.Anything, commentID).Return(&domain.Comment{
 		ID: commentID, UserID: commentAuthor, Status: domain.CommentStatusActive, FlagCount: 5,
 	}, nil)
@@ -901,8 +898,6 @@ func TestFlagComment_RepoError(t *testing.T) {
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to flag comment")
 }
-
-// --- DeleteComment additional edge cases ---
 
 func TestDeleteComment_IsOwnerCheckError(t *testing.T) {
 	commentRepo := new(mockCommentRepo)
@@ -997,8 +992,6 @@ func TestDeleteComment_RepoDeleteError(t *testing.T) {
 	assert.Contains(t, err.Error(), "failed to delete comment")
 }
 
-// --- UpdateComment additional edge cases ---
-
 func TestUpdateComment_IsOwnerCheckError(t *testing.T) {
 	commentRepo := new(mockCommentRepo)
 	videoRepo := new(mockVideoRepo)
@@ -1065,8 +1058,6 @@ func TestUpdateComment_RepoError(t *testing.T) {
 	assert.Contains(t, err.Error(), "failed to update comment")
 }
 
-// --- ListComments additional tests ---
-
 func TestListComments_VideoNotFound(t *testing.T) {
 	commentRepo := new(mockCommentRepo)
 	videoRepo := new(mockVideoRepo)
@@ -1110,7 +1101,7 @@ func TestListComments_LimitCapped(t *testing.T) {
 	videoID := uuid.New()
 	videoRepo.On("GetByID", mock.Anything, videoID.String()).Return(&domain.Video{ID: videoID.String()}, nil)
 	commentRepo.On("ListByVideo", mock.Anything, mock.MatchedBy(func(opts domain.CommentListOptions) bool {
-		return opts.Limit == 20 // 200 should be capped to 20
+		return opts.Limit == 20
 	})).Return([]*domain.CommentWithUser{}, nil)
 
 	comments, err := svc.ListComments(context.Background(), videoID, nil, 200, 0, "newest")
@@ -1156,7 +1147,10 @@ func TestListComments_WithReplies(t *testing.T) {
 		Username: "replyuser",
 	}
 
-	commentRepo.On("ListReplies", mock.Anything, commentID, 3, 0).Return([]*domain.CommentWithUser{replyComment}, nil)
+	batchResult := map[uuid.UUID][]*domain.CommentWithUser{
+		commentID: {replyComment},
+	}
+	commentRepo.On("ListRepliesBatch", mock.Anything, []uuid.UUID{commentID}, 3).Return(batchResult, nil)
 
 	comments, err := svc.ListComments(context.Background(), videoID, nil, 20, 0, "newest")
 	assert.NoError(t, err)
@@ -1180,11 +1174,9 @@ func TestListComments_WithParentID(t *testing.T) {
 		return opts.ParentID != nil && *opts.ParentID == parentID
 	})).Return([]*domain.CommentWithUser{}, nil)
 
-	// When parentID is provided, replies should NOT be fetched (only top-level triggers reply fetch)
 	comments, err := svc.ListComments(context.Background(), videoID, &parentID, 20, 0, "newest")
 	assert.NoError(t, err)
 	assert.Empty(t, comments)
-	// ListReplies should NOT be called when parentID is set
 	commentRepo.AssertNotCalled(t, "ListReplies", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 }
 
@@ -1205,8 +1197,6 @@ func TestListComments_RepoError(t *testing.T) {
 	assert.Contains(t, err.Error(), "failed to list comments")
 }
 
-// --- GetComment additional tests ---
-
 func TestGetComment_RepoError(t *testing.T) {
 	commentRepo := new(mockCommentRepo)
 	videoRepo := new(mockVideoRepo)
@@ -1221,8 +1211,6 @@ func TestGetComment_RepoError(t *testing.T) {
 	assert.Error(t, err)
 	assert.Nil(t, comment)
 }
-
-// --- ModerateComment additional tests ---
 
 func TestModerateComment_ChannelOwnerAllowed(t *testing.T) {
 	commentRepo := new(mockCommentRepo)
@@ -1265,8 +1253,6 @@ func TestModerateComment_UpdateStatusError(t *testing.T) {
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to update comment status")
 }
-
-// --- CreateComment additional tests ---
 
 func TestCreateComment_ReplyToNonExistentParent(t *testing.T) {
 	commentRepo := new(mockCommentRepo)
@@ -1350,4 +1336,37 @@ func TestCreateComment_RepoCreateError(t *testing.T) {
 	assert.Error(t, err)
 	assert.Nil(t, comment)
 	assert.Contains(t, err.Error(), "failed to create comment")
+}
+
+func TestListComments_BatchFetchReplies(t *testing.T) {
+	commentRepo := new(mockCommentRepo)
+	videoRepo := new(mockVideoRepo)
+	userRepo := new(mockUserRepo)
+	channelRepo := new(mockChannelRepo)
+	svc := NewService(commentRepo, videoRepo, userRepo, channelRepo)
+
+	videoID := uuid.New()
+	id1 := uuid.New()
+	id2 := uuid.New()
+
+	videoRepo.On("GetByID", mock.Anything, videoID.String()).Return(&domain.Video{ID: videoID.String()}, nil)
+
+	comment1 := &domain.CommentWithUser{Comment: domain.Comment{ID: id1, VideoID: videoID, Body: "first", Status: domain.CommentStatusActive}, Username: "u1"}
+	comment2 := &domain.CommentWithUser{Comment: domain.Comment{ID: id2, VideoID: videoID, Body: "second", Status: domain.CommentStatusActive}, Username: "u2"}
+	commentRepo.On("ListByVideo", mock.Anything, mock.Anything).Return([]*domain.CommentWithUser{comment1, comment2}, nil)
+
+	batchResult := map[uuid.UUID][]*domain.CommentWithUser{
+		id1: {},
+		id2: {},
+	}
+	commentRepo.On("ListRepliesBatch", mock.Anything, mock.MatchedBy(func(ids []uuid.UUID) bool {
+		return len(ids) == 2
+	}), 3).Return(batchResult, nil)
+
+	comments, err := svc.ListComments(context.Background(), videoID, nil, 20, 0, "newest")
+	assert.NoError(t, err)
+	assert.Len(t, comments, 2)
+
+	commentRepo.AssertNotCalled(t, "ListReplies", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+	commentRepo.AssertCalled(t, "ListRepliesBatch", mock.Anything, mock.Anything, 3)
 }

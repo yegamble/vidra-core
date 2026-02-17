@@ -6,6 +6,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
@@ -108,7 +109,7 @@ func (r *ratingRepository) GetVideoRatingStats(ctx context.Context, videoID uuid
 		rating, err := r.GetRating(ctx, *userID, videoID)
 		if err != nil {
 			// Log error but don't fail the whole request
-			fmt.Printf("failed to get user rating: %v\n", err)
+			slog.Warn("failed to get user rating", "error", err)
 		} else {
 			stats.UserRating = rating
 		}
@@ -198,7 +199,7 @@ func (r *ratingRepository) BatchGetVideoStats(ctx context.Context, videoIDs []uu
 		userRows, err := r.db.QueryContext(ctx, userRatingsQuery, *userID, videoIDs)
 		if err != nil {
 			// Log error but don't fail the whole request
-			fmt.Printf("failed to get user ratings batch: %v\n", err)
+			slog.Warn("failed to get user ratings batch", "error", err)
 		} else {
 			defer func() { _ = userRows.Close() }()
 
@@ -216,7 +217,7 @@ func (r *ratingRepository) BatchGetVideoStats(ctx context.Context, videoIDs []uu
 			}
 
 			if err := userRows.Err(); err != nil {
-				fmt.Printf("error iterating user ratings: %v\n", err)
+				slog.Warn("error iterating user ratings", "error", err)
 			}
 		}
 	}

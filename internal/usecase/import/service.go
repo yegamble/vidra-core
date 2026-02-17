@@ -64,6 +64,8 @@ type service struct {
 	storageDir    string
 	mu            sync.Mutex
 	activeImports map[string]*importContext
+	ctx           context.Context
+	cancel        context.CancelFunc
 }
 
 type importContext struct {
@@ -78,6 +80,7 @@ func NewService(
 	cfg *config.Config,
 	storageDir string,
 ) Service {
+	ctx, cancel := context.WithCancel(context.Background())
 	return &service{
 		importRepo:    importRepo,
 		videoRepo:     videoRepo,
@@ -86,6 +89,8 @@ func NewService(
 		cfg:           cfg,
 		storageDir:    storageDir,
 		activeImports: make(map[string]*importContext),
+		ctx:           ctx,
+		cancel:        cancel,
 	}
 }
 
@@ -140,7 +145,7 @@ func (s *service) ImportVideo(ctx context.Context, req *ImportRequest) (*domain.
 		return nil, fmt.Errorf("failed to create import: %w", err)
 	}
 
-	go s.processImport(context.Background(), imp.ID)
+	go s.processImport(s.ctx, imp.ID)
 
 	return imp, nil
 }
@@ -381,7 +386,7 @@ func (s *service) ProcessPendingImports(ctx context.Context) error {
 		s.mu.Unlock()
 
 		if !exists {
-			go s.processImport(context.Background(), imp.ID)
+			go s.processImport(s.ctx, imp.ID)
 		}
 	}
 

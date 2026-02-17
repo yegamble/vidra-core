@@ -187,6 +187,25 @@ func TestPluginHandlers_BodyValidationBranches(t *testing.T) {
 		require.Equal(t, http.StatusOK, rr.Code)
 	})
 
+	t.Run("trigger hook uses request context not background", func(t *testing.T) {
+		type ctxKey struct{}
+		ctxWithVal := context.WithValue(context.Background(), ctxKey{}, "sentinel-value")
+		var receivedCtxVal any
+
+		manager.GetHookManager().Register(coreplugin.EventVideoUploaded, "test-plugin", func(ctx context.Context, data any) error {
+			receivedCtxVal = ctx.Value(ctxKey{})
+			return nil
+		})
+
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/plugins/hooks/trigger",
+			strings.NewReader(`{"event_type":"video.uploaded","data":{"id":"v1"}}`))
+		req = req.WithContext(ctxWithVal)
+		rr := httptest.NewRecorder()
+		h.TriggerHook(rr, req)
+		require.Equal(t, http.StatusOK, rr.Code)
+		assert.Equal(t, "sentinel-value", receivedCtxVal)
+	})
+
 	t.Run("get hooks success", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/plugins/hooks", nil)
 		rr := httptest.NewRecorder()

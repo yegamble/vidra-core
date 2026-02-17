@@ -4,7 +4,6 @@ import (
 	"archive/zip"
 	"athena/internal/httpapi/shared"
 	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -21,15 +20,13 @@ import (
 	"github.com/google/uuid"
 )
 
-// PluginHandler handles plugin-related HTTP requests
 type PluginHandler struct {
 	pluginRepo        *repository.PluginRepository
 	pluginManager     *plugin.Manager
 	signatureVerifier *plugin.SignatureVerifier
-	requireSignatures bool // Whether to require signatures for all plugins
+	requireSignatures bool
 }
 
-// NewPluginHandler creates a new plugin handler
 func NewPluginHandler(pluginRepo *repository.PluginRepository, pluginManager *plugin.Manager, signatureVerifier *plugin.SignatureVerifier, requireSignatures bool) *PluginHandler {
 	return &PluginHandler{
 		pluginRepo:        pluginRepo,
@@ -39,13 +36,7 @@ func NewPluginHandler(pluginRepo *repository.PluginRepository, pluginManager *pl
 	}
 }
 
-// ======================================================================
-// Plugin Management Endpoints
-// ======================================================================
-
-// ListPlugins handles GET /api/v1/admin/plugins
 func (h *PluginHandler) ListPlugins(w http.ResponseWriter, r *http.Request) {
-	// Optional status filter
 	statusParam := r.URL.Query().Get("status")
 
 	var status *domain.PluginStatus
@@ -54,17 +45,14 @@ func (h *PluginHandler) ListPlugins(w http.ResponseWriter, r *http.Request) {
 		status = &s
 	}
 
-	// Get plugins from database
 	plugins, err := h.pluginRepo.List(r.Context(), status)
 	if err != nil {
 		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to list plugins: %w", err))
 		return
 	}
 
-	// Also get statistics for each plugin
 	result := make([]map[string]any, len(plugins))
 
-	// Collect plugin IDs for bulk statistics fetch
 	pluginIDs := make([]uuid.UUID, len(plugins))
 	for i, p := range plugins {
 		pluginIDs[i] = p.ID
@@ -109,7 +97,6 @@ func (h *PluginHandler) ListPlugins(w http.ResponseWriter, r *http.Request) {
 	shared.WriteJSON(w, http.StatusOK, result)
 }
 
-// GetPlugin handles GET /api/v1/admin/plugins/:id
 func (h *PluginHandler) GetPlugin(w http.ResponseWriter, r *http.Request) {
 	pluginIDStr := chi.URLParam(r, "id")
 	pluginID, err := uuid.Parse(pluginIDStr)
@@ -128,10 +115,8 @@ func (h *PluginHandler) GetPlugin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get statistics
 	stats, _ := h.pluginRepo.GetStatistics(r.Context(), plugin.ID)
 
-	// Get health
 	health, _ := h.pluginRepo.GetPluginHealth(r.Context(), plugin.ID)
 
 	result := map[string]any{
@@ -170,17 +155,14 @@ func (h *PluginHandler) GetPlugin(w http.ResponseWriter, r *http.Request) {
 	shared.WriteJSON(w, http.StatusOK, result)
 }
 
-// EnablePlugin handles PUT /api/v1/admin/plugins/:id/enable
 func (h *PluginHandler) EnablePlugin(w http.ResponseWriter, r *http.Request) {
 	h.togglePluginStatus(w, r, true)
 }
 
-// DisablePlugin handles PUT /api/v1/admin/plugins/:id/disable
 func (h *PluginHandler) DisablePlugin(w http.ResponseWriter, r *http.Request) {
 	h.togglePluginStatus(w, r, false)
 }
 
-// togglePluginStatus is a helper function to enable or disable a plugin
 func (h *PluginHandler) togglePluginStatus(w http.ResponseWriter, r *http.Request, enable bool) {
 	pluginIDStr := chi.URLParam(r, "id")
 	pluginID, err := uuid.Parse(pluginIDStr)
@@ -189,7 +171,6 @@ func (h *PluginHandler) togglePluginStatus(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Get plugin from database
 	plugin, err := h.pluginRepo.GetByID(r.Context(), pluginID)
 	if err == domain.ErrPluginNotFound {
 		shared.WriteError(w, http.StatusNotFound, domain.NewDomainError("NOT_FOUND", "Plugin not found"))
@@ -200,7 +181,6 @@ func (h *PluginHandler) togglePluginStatus(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Check current state
 	if enable {
 		if plugin.IsEnabled() {
 			shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("ALREADY_ENABLED", "Plugin already enabled"))
@@ -213,7 +193,6 @@ func (h *PluginHandler) togglePluginStatus(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
-	// Toggle plugin in manager
 	var managerErr error
 	if enable {
 		managerErr = h.pluginManager.EnablePlugin(r.Context(), plugin.Name)
@@ -229,7 +208,6 @@ func (h *PluginHandler) togglePluginStatus(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Update status in database
 	var statusErr error
 	if enable {
 		statusErr = plugin.Enable()
@@ -256,7 +234,6 @@ func (h *PluginHandler) togglePluginStatus(w http.ResponseWriter, r *http.Reques
 	})
 }
 
-// UpdatePluginConfig handles PUT /api/v1/admin/plugins/:id/config
 func (h *PluginHandler) UpdatePluginConfig(w http.ResponseWriter, r *http.Request) {
 	pluginIDStr := chi.URLParam(r, "id")
 	pluginID, err := uuid.Parse(pluginIDStr)
@@ -279,7 +256,6 @@ func (h *PluginHandler) UpdatePluginConfig(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Get plugin from database
 	plugin, err := h.pluginRepo.GetByID(r.Context(), pluginID)
 	if err == domain.ErrPluginNotFound {
 		shared.WriteError(w, http.StatusNotFound, domain.NewDomainError("NOT_FOUND", "Plugin not found"))
@@ -290,13 +266,11 @@ func (h *PluginHandler) UpdatePluginConfig(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Update config in manager (will reinitialize if enabled)
 	if err := h.pluginManager.UpdatePluginConfig(r.Context(), plugin.Name, req.Config); err != nil {
 		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to update plugin config: %w", err))
 		return
 	}
 
-	// Update config in database
 	if err := plugin.UpdateConfig(req.Config); err != nil {
 		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to update config: %w", err))
 		return
@@ -313,7 +287,6 @@ func (h *PluginHandler) UpdatePluginConfig(w http.ResponseWriter, r *http.Reques
 	})
 }
 
-// UninstallPlugin handles DELETE /api/v1/admin/plugins/:id
 func (h *PluginHandler) UninstallPlugin(w http.ResponseWriter, r *http.Request) {
 	pluginIDStr := chi.URLParam(r, "id")
 	pluginID, err := uuid.Parse(pluginIDStr)
@@ -322,7 +295,6 @@ func (h *PluginHandler) UninstallPlugin(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Get plugin from database
 	plugin, err := h.pluginRepo.GetByID(r.Context(), pluginID)
 	if err == domain.ErrPluginNotFound {
 		shared.WriteError(w, http.StatusNotFound, domain.NewDomainError("NOT_FOUND", "Plugin not found"))
@@ -333,7 +305,6 @@ func (h *PluginHandler) UninstallPlugin(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Disable plugin first if enabled
 	if plugin.IsEnabled() {
 		if err := h.pluginManager.DisablePlugin(r.Context(), plugin.Name); err != nil {
 			shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to disable plugin before uninstall: %w", err))
@@ -341,7 +312,6 @@ func (h *PluginHandler) UninstallPlugin(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
-	// Delete from database
 	if err := h.pluginRepo.Delete(r.Context(), pluginID); err != nil {
 		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to uninstall plugin: %w", err))
 		return
@@ -353,11 +323,6 @@ func (h *PluginHandler) UninstallPlugin(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
-// ======================================================================
-// Plugin Statistics & Monitoring Endpoints
-// ======================================================================
-
-// GetPluginStatistics handles GET /api/v1/admin/plugins/:id/statistics
 func (h *PluginHandler) GetPluginStatistics(w http.ResponseWriter, r *http.Request) {
 	pluginIDStr := chi.URLParam(r, "id")
 	pluginID, err := uuid.Parse(pluginIDStr)
@@ -387,7 +352,6 @@ func (h *PluginHandler) GetPluginStatistics(w http.ResponseWriter, r *http.Reque
 	shared.WriteJSON(w, http.StatusOK, result)
 }
 
-// GetAllStatistics handles GET /api/v1/admin/plugins/statistics
 func (h *PluginHandler) GetAllStatistics(w http.ResponseWriter, r *http.Request) {
 	statistics, err := h.pluginRepo.GetAllStatistics(r.Context())
 	if err != nil {
@@ -413,7 +377,6 @@ func (h *PluginHandler) GetAllStatistics(w http.ResponseWriter, r *http.Request)
 	shared.WriteJSON(w, http.StatusOK, result)
 }
 
-// GetExecutionHistory handles GET /api/v1/admin/plugins/:id/executions
 func (h *PluginHandler) GetExecutionHistory(w http.ResponseWriter, r *http.Request) {
 	pluginIDStr := chi.URLParam(r, "id")
 	pluginID, err := uuid.Parse(pluginIDStr)
@@ -422,7 +385,6 @@ func (h *PluginHandler) GetExecutionHistory(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// Default limit
 	limit := 100
 
 	executions, err := h.pluginRepo.GetExecutionHistory(r.Context(), pluginID, limit)
@@ -434,7 +396,6 @@ func (h *PluginHandler) GetExecutionHistory(w http.ResponseWriter, r *http.Reque
 	shared.WriteJSON(w, http.StatusOK, executions)
 }
 
-// GetPluginHealth handles GET /api/v1/admin/plugins/:id/health
 func (h *PluginHandler) GetPluginHealth(w http.ResponseWriter, r *http.Request) {
 	pluginIDStr := chi.URLParam(r, "id")
 	pluginID, err := uuid.Parse(pluginIDStr)
@@ -452,11 +413,6 @@ func (h *PluginHandler) GetPluginHealth(w http.ResponseWriter, r *http.Request) 
 	shared.WriteJSON(w, http.StatusOK, health)
 }
 
-// ======================================================================
-// Hook Management Endpoints
-// ======================================================================
-
-// GetHooks handles GET /api/v1/admin/plugins/hooks
 func (h *PluginHandler) GetHooks(w http.ResponseWriter, r *http.Request) {
 	hookManager := h.pluginManager.GetHookManager()
 
@@ -475,7 +431,6 @@ func (h *PluginHandler) GetHooks(w http.ResponseWriter, r *http.Request) {
 	shared.WriteJSON(w, http.StatusOK, result)
 }
 
-// TriggerHook handles POST /api/v1/admin/plugins/hooks/trigger
 func (h *PluginHandler) TriggerHook(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		EventType plugin.EventType `json:"event_type"`
@@ -492,8 +447,7 @@ func (h *PluginHandler) TriggerHook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Trigger the hook
-	if err := h.pluginManager.TriggerEvent(context.Background(), req.EventType, req.Data); err != nil {
+	if err := h.pluginManager.TriggerEvent(r.Context(), req.EventType, req.Data); err != nil {
 		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to trigger hook: %w", err))
 		return
 	}
@@ -504,19 +458,12 @@ func (h *PluginHandler) TriggerHook(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// ======================================================================
-// Plugin Upload & Installation
-// ======================================================================
-
-// UploadPlugin handles POST /api/v1/admin/plugins
 func (h *PluginHandler) UploadPlugin(w http.ResponseWriter, r *http.Request) {
-	// Parse multipart form (max 50MB)
 	if err := r.ParseMultipartForm(50 << 20); err != nil {
 		shared.WriteError(w, http.StatusBadRequest, fmt.Errorf("failed to parse multipart form: %w", err))
 		return
 	}
 
-	// Get file from form
 	file, header, err := r.FormFile("plugin")
 	if err != nil {
 		shared.WriteError(w, http.StatusBadRequest, fmt.Errorf("plugin file is required: %w", err))
@@ -524,27 +471,23 @@ func (h *PluginHandler) UploadPlugin(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() { _ = file.Close() }()
 
-	// Validate file extension
 	if !strings.HasSuffix(header.Filename, ".zip") {
 		shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("ERROR", "Plugin must be a ZIP file"))
 		return
 	}
 
-	// Read file content
 	fileBytes, err := io.ReadAll(file)
 	if err != nil {
 		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to read plugin file: %w", err))
 		return
 	}
 
-	// Extract and validate manifest
 	manifest, err := h.extractManifest(fileBytes)
 	if err != nil {
 		shared.WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid plugin manifest: %v", err))
 		return
 	}
 
-	// Verify signature if provided or required
 	signatureFile, _, err := r.FormFile("signature")
 	var signatureBytes []byte
 	if err == nil {
@@ -556,39 +499,32 @@ func (h *PluginHandler) UploadPlugin(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Check signature verification
 	if h.signatureVerifier != nil {
 		if len(signatureBytes) > 0 {
-			// Signature provided - verify it
 			if err := h.signatureVerifier.VerifySignature(fileBytes, signatureBytes, manifest.Author); err != nil {
 				shared.WriteError(w, http.StatusUnauthorized, fmt.Errorf("invalid signature: %v", err))
 				return
 			}
 		} else if h.requireSignatures {
-			// No signature but signatures are required
 			shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("ERROR", "Plugin signature is required"))
 			return
 		} else if !h.signatureVerifier.IsAuthorTrusted(manifest.Author) {
-			// Author not trusted and no signature
 			shared.WriteError(w, http.StatusUnauthorized, fmt.Errorf("author %s is not trusted; please provide a valid signature or add author to trusted list", manifest.Author))
 			return
 		}
 	}
 
-	// Validate permissions
 	if err := plugin.ValidatePermissions(manifest.Permissions); err != nil {
 		shared.WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid permissions: %v", err))
 		return
 	}
 
-	// Check if plugin already exists
 	existing, err := h.pluginRepo.GetByName(r.Context(), manifest.Name)
 	if err == nil && existing != nil {
 		shared.WriteError(w, http.StatusConflict, fmt.Errorf("plugin %s is already installed", manifest.Name))
 		return
 	}
 
-	// Create temp directory for extraction
 	tempDir, err := os.MkdirTemp("", "plugin-install-*")
 	if err != nil {
 		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to create temp directory: %w", err))
@@ -596,14 +532,12 @@ func (h *PluginHandler) UploadPlugin(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() { _ = os.RemoveAll(tempDir) }()
 
-	// Extract plugin files
 	pluginDir, err := h.extractPlugin(fileBytes, tempDir, manifest.Name)
 	if err != nil {
 		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to extract plugin: %v", err))
 		return
 	}
 
-	// Move to plugins directory
 	finalPath := filepath.Join(h.pluginManager.GetPluginDir(), manifest.Name)
 	if err := os.RemoveAll(finalPath); err != nil && !os.IsNotExist(err) {
 		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to prepare installation path: %w", err))
@@ -614,7 +548,6 @@ func (h *PluginHandler) UploadPlugin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Create plugin record in database
 	pluginRecord := &domain.PluginRecord{
 		ID:          uuid.New(),
 		Name:        manifest.Name,
@@ -629,7 +562,6 @@ func (h *PluginHandler) UploadPlugin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.pluginRepo.Create(r.Context(), pluginRecord); err != nil {
-		// Rollback: remove installed files
 		_ = os.RemoveAll(finalPath)
 		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to register plugin: %w", err))
 		return
@@ -646,14 +578,12 @@ func (h *PluginHandler) UploadPlugin(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// extractManifest extracts and parses plugin.json from the ZIP file
 func (h *PluginHandler) extractManifest(zipData []byte) (*plugin.PluginInfo, error) {
 	zipReader, err := zip.NewReader(bytes.NewReader(zipData), int64(len(zipData)))
 	if err != nil {
 		return nil, fmt.Errorf("failed to read ZIP: %w", err)
 	}
 
-	// Find plugin.json
 	for _, f := range zipReader.File {
 		if f.Name == "plugin.json" || strings.HasSuffix(f.Name, "/plugin.json") {
 			rc, err := f.Open()
@@ -667,7 +597,6 @@ func (h *PluginHandler) extractManifest(zipData []byte) (*plugin.PluginInfo, err
 				return nil, fmt.Errorf("failed to parse plugin.json: %w", err)
 			}
 
-			// Validate required fields
 			if manifest.Name == "" {
 				return nil, fmt.Errorf("plugin name is required")
 			}
@@ -685,7 +614,6 @@ func (h *PluginHandler) extractManifest(zipData []byte) (*plugin.PluginInfo, err
 	return nil, fmt.Errorf("plugin.json not found in ZIP")
 }
 
-// extractPlugin extracts all files from the ZIP to the specified directory
 func (h *PluginHandler) extractPlugin(zipData []byte, destDir, pluginName string) (string, error) {
 	zipReader, err := zip.NewReader(bytes.NewReader(zipData), int64(len(zipData)))
 	if err != nil {
@@ -698,7 +626,6 @@ func (h *PluginHandler) extractPlugin(zipData []byte, destDir, pluginName string
 	}
 
 	for _, f := range zipReader.File {
-		// Security: prevent path traversal
 		if strings.Contains(f.Name, "..") {
 			return "", fmt.Errorf("invalid file path: %s", f.Name)
 		}
@@ -712,12 +639,10 @@ func (h *PluginHandler) extractPlugin(zipData []byte, destDir, pluginName string
 			continue
 		}
 
-		// Create parent directory if needed
 		if err := os.MkdirAll(filepath.Dir(destPath), 0750); err != nil {
 			return "", fmt.Errorf("failed to create parent directory: %w", err)
 		}
 
-		// Extract file
 		rc, err := f.Open()
 		if err != nil {
 			return "", fmt.Errorf("failed to open file in ZIP: %w", err)
@@ -742,7 +667,6 @@ func (h *PluginHandler) extractPlugin(zipData []byte, destDir, pluginName string
 	return pluginDir, nil
 }
 
-// convertEventTypesToStrings converts EventType slice to string slice
 func convertEventTypesToStrings(events []plugin.EventType) []string {
 	result := make([]string, len(events))
 	for i, e := range events {
@@ -751,11 +675,6 @@ func convertEventTypesToStrings(events []plugin.EventType) []string {
 	return result
 }
 
-// ======================================================================
-// Utility Endpoints
-// ======================================================================
-
-// CleanupExecutions handles POST /api/v1/admin/plugins/cleanup
 func (h *PluginHandler) CleanupExecutions(w http.ResponseWriter, r *http.Request) {
 	count, err := h.pluginRepo.CleanupOldExecutions(r.Context())
 	if err != nil {

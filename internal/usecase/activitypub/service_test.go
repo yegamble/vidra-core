@@ -19,7 +19,6 @@ import (
 	"athena/internal/domain"
 )
 
-// MockActivityPubRepository is a mock for ActivityPubRepository
 type MockActivityPubRepository struct {
 	mock.Mock
 }
@@ -154,7 +153,6 @@ func (m *MockActivityPubRepository) UpdateDeliveryStatus(ctx context.Context, de
 	return args.Error(0)
 }
 
-// MockUserRepository is a mock for UserRepository
 type MockUserRepository struct {
 	mock.Mock
 }
@@ -175,7 +173,6 @@ func (m *MockUserRepository) GetByID(ctx context.Context, id string) (*domain.Us
 	return args.Get(0).(*domain.User), args.Error(1)
 }
 
-// Implement remaining port.UserRepository methods (not used in tests but required by interface)
 func (m *MockUserRepository) Create(ctx context.Context, user *domain.User, passwordHash string) error {
 	args := m.Called(ctx, user, passwordHash)
 	return args.Error(0)
@@ -232,12 +229,10 @@ func (m *MockUserRepository) MarkEmailAsVerified(ctx context.Context, userID str
 	return args.Error(0)
 }
 
-// MockVideoRepository is a mock for VideoRepository
 type MockVideoRepository struct {
 	mock.Mock
 }
 
-// Implement port.VideoRepository methods (not used in tests but required by interface)
 func (m *MockVideoRepository) Create(ctx context.Context, video *domain.Video) error {
 	args := m.Called(ctx, video)
 	return args.Error(0)
@@ -391,10 +386,8 @@ func TestGetLocalActor(t *testing.T) {
 			Username: "bob",
 		}, nil).Once()
 
-		// First call returns error (no keys)
 		mockAPRepo.On("GetActorKeys", ctx, "user-456").Return("", "", assert.AnError).Once()
 
-		// Keys should be generated and stored
 		mockAPRepo.On("StoreActorKeys", ctx, "user-456", mock.AnythingOfType("string"), mock.AnythingOfType("string")).Return(nil).Once()
 
 		actor, err := service.GetLocalActor(ctx, "bob")
@@ -421,17 +414,10 @@ func TestFetchRemoteActor(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("Fetch and cache remote actor", func(t *testing.T) {
-		// Use a proper external URL instead of localhost to avoid SSRF protection
 		actorURI := "https://mastodon.example/users/alice"
 
-		// Mock cache miss
 		mockAPRepo.On("GetRemoteActor", ctx, actorURI).Return(nil, nil).Once()
 
-		// Since we can't make real HTTP requests and SSRF protection blocks localhost,
-		// we'll test the caching behavior instead
-		// The actual HTTP fetching is integration tested elsewhere
-
-		// For unit tests, we can test by providing a cached actor
 		cachedTime := time.Now().Add(-1 * time.Hour)
 		cachedActor := &domain.APRemoteActor{
 			ActorURI:      actorURI,
@@ -442,7 +428,6 @@ func TestFetchRemoteActor(t *testing.T) {
 			LastFetchedAt: &cachedTime,
 		}
 
-		// Reset the mock and test with cached actor
 		mockAPRepo.ExpectedCalls = nil
 		mockAPRepo.On("GetRemoteActor", ctx, actorURI).Return(cachedActor, nil).Once()
 
@@ -483,9 +468,7 @@ func TestHandleFollow(t *testing.T) {
 	mockVideoRepo := new(MockVideoRepository)
 	mockCommentRepo := new(MockCommentRepository)
 
-	// Create a mock HTTP server to receive the Accept activity
 	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Accept the delivery
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer mockServer.Close()
@@ -509,7 +492,7 @@ func TestHandleFollow(t *testing.T) {
 		ActorURI: "https://mastodon.example/users/alice",
 		Username: "alice",
 		Domain:   "mastodon.example",
-		InboxURL: mockServer.URL + "/inbox", // Use mock server URL
+		InboxURL: mockServer.URL + "/inbox",
 	}
 
 	localUser := &domain.User{
@@ -517,23 +500,18 @@ func TestHandleFollow(t *testing.T) {
 		Username: "bob",
 	}
 
-	// Generate valid keys for testing
 	publicKey, privateKey, err := activitypub.GenerateKeyPair()
 	require.NoError(t, err)
 
 	t.Run("Auto-accept follow request", func(t *testing.T) {
-		// Mock getting local user by username
 		mockUserRepo.On("GetByUsername", ctx, "bob").Return(localUser, nil).Once()
 
-		// Mock upserting follower
 		mockAPRepo.On("UpsertFollower", ctx, mock.MatchedBy(func(f *domain.APFollower) bool {
 			return f.ActorID == localUser.ID && f.FollowerID == remoteActor.ActorURI && f.State == "accepted"
 		})).Return(nil).Once()
 
-		// Mock getting actor keys for signing the Accept activity
 		mockAPRepo.On("GetActorKeys", ctx, localUser.ID).Return(publicKey, privateKey, nil).Once()
 
-		// Mock getting user by ID for building the key ID
 		mockUserRepo.On("GetByID", ctx, localUser.ID).Return(localUser, nil).Once()
 
 		err := service.handleFollow(ctx, activity, remoteActor)
@@ -554,7 +532,7 @@ func TestHandleFollow(t *testing.T) {
 		err := service.handleFollow(ctx, activity, remoteActor)
 		require.NoError(t, err)
 
-		service.cfg.ActivityPubAcceptFollowAutomatic = true // reset
+		service.cfg.ActivityPubAcceptFollowAutomatic = true
 		mockUserRepo.AssertExpectations(t)
 		mockAPRepo.AssertExpectations(t)
 	})
@@ -599,7 +577,7 @@ func TestHandleLike(t *testing.T) {
 		invalidActivity := map[string]interface{}{
 			"type":   "Like",
 			"actor":  "https://mastodon.example/users/alice",
-			"object": 123, // Invalid type
+			"object": 123,
 		}
 
 		err := service.handleLike(ctx, invalidActivity, remoteActor)
@@ -914,7 +892,6 @@ func TestExtractVideoIDFromURI(t *testing.T) {
 	}
 }
 
-// Additional mock methods for comment repository
 type MockCommentRepository struct {
 	mock.Mock
 }
@@ -966,6 +943,14 @@ func (m *MockCommentRepository) ListReplies(ctx context.Context, parentID uuid.U
 	return args.Get(0).([]*domain.CommentWithUser), args.Error(1)
 }
 
+func (m *MockCommentRepository) ListRepliesBatch(ctx context.Context, parentIDs []uuid.UUID, limit int) (map[uuid.UUID][]*domain.CommentWithUser, error) {
+	args := m.Called(ctx, parentIDs, limit)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(map[uuid.UUID][]*domain.CommentWithUser), args.Error(1)
+}
+
 func (m *MockCommentRepository) CountByVideo(ctx context.Context, videoID uuid.UUID, activeOnly bool) (int, error) {
 	args := m.Called(ctx, videoID, activeOnly)
 	return args.Int(0), args.Error(1)
@@ -999,11 +984,6 @@ func (m *MockCommentRepository) IsOwner(ctx context.Context, commentID, userID u
 	return args.Bool(0), args.Error(1)
 }
 
-// ============================================================================
-// NEW TESTS FOR VIDEO AND COMMENT FEDERATION
-// ============================================================================
-
-// TestServicePublishVideo tests the PublishVideo service method
 func TestServicePublishVideo(t *testing.T) {
 	mockAPRepo := new(MockActivityPubRepository)
 	mockUserRepo := new(MockUserRepository)
@@ -1090,7 +1070,6 @@ func TestServicePublishVideo(t *testing.T) {
 	})
 }
 
-// TestServiceUpdateVideo tests the UpdateVideo service method
 func TestServiceUpdateVideo(t *testing.T) {
 	mockAPRepo := new(MockActivityPubRepository)
 	mockUserRepo := new(MockUserRepository)
@@ -1161,7 +1140,6 @@ func TestServiceUpdateVideo(t *testing.T) {
 	})
 }
 
-// TestServiceDeleteVideo tests the DeleteVideo service method
 func TestServiceDeleteVideo(t *testing.T) {
 	mockAPRepo := new(MockActivityPubRepository)
 	mockUserRepo := new(MockUserRepository)
@@ -1222,7 +1200,6 @@ func TestServiceDeleteVideo(t *testing.T) {
 	})
 }
 
-// TestServicePublishComment tests the PublishComment service method
 func TestServicePublishComment(t *testing.T) {
 	mockAPRepo := new(MockActivityPubRepository)
 	mockUserRepo := new(MockUserRepository)
@@ -1238,19 +1215,13 @@ func TestServicePublishComment(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("PublishComment delivers to video owner and followers", func(t *testing.T) {
-		// This test verifies the method exists and has correct signature
-		// Full implementation will be added in the next phase
 
-		// Placeholder: verify method can be called
 		err := service.PublishComment(ctx, "comment-123")
 
-		// For now, we expect this to fail since it's not implemented
-		// Once implemented, this will pass
 		_ = err
 	})
 }
 
-// TestServiceBuildVideoObject tests the BuildVideoObject service method
 func TestServiceBuildVideoObject(t *testing.T) {
 	mockAPRepo := new(MockActivityPubRepository)
 	mockUserRepo := new(MockUserRepository)
@@ -1285,11 +1256,6 @@ func TestServiceBuildVideoObject(t *testing.T) {
 
 		videoObject, err := service.BuildVideoObject(ctx, video)
 
-		// For now, we expect this to fail since it's not implemented
-		// Once implemented, this will verify:
-		// - VideoObject type is "Video"
-		// - All required fields are present
-		// - Privacy is correctly set
 		_ = videoObject
 		_ = err
 
@@ -1297,7 +1263,6 @@ func TestServiceBuildVideoObject(t *testing.T) {
 	})
 }
 
-// TestServiceBuildNoteObject tests the BuildNoteObject service method
 func TestServiceBuildNoteObject(t *testing.T) {
 	mockAPRepo := new(MockActivityPubRepository)
 	mockUserRepo := new(MockUserRepository)
@@ -1313,20 +1278,15 @@ func TestServiceBuildNoteObject(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("BuildNoteObject creates valid Note", func(t *testing.T) {
-		// This test verifies the method exists and has correct signature
-		// Full implementation will be added in the next phase
 
-		// Placeholder: verify method can be called
 		var comment *domain.Comment
 		noteObject, err := service.BuildNoteObject(ctx, comment)
 
-		// For now, we expect this to fail since it's not implemented
 		_ = noteObject
 		_ = err
 	})
 }
 
-// TestServiceCreateVideoActivity tests the CreateVideoActivity service method
 func TestServiceCreateVideoActivity(t *testing.T) {
 	mockAPRepo := new(MockActivityPubRepository)
 	mockUserRepo := new(MockUserRepository)
@@ -1359,11 +1319,6 @@ func TestServiceCreateVideoActivity(t *testing.T) {
 
 		activity, err := service.CreateVideoActivity(ctx, video)
 
-		// For now, we expect this to fail since it's not implemented
-		// Once implemented, this will verify:
-		// - Activity type is "Create"
-		// - Object is a VideoObject
-		// - Actor is correct
 		_ = activity
 		_ = err
 
@@ -1371,7 +1326,6 @@ func TestServiceCreateVideoActivity(t *testing.T) {
 	})
 }
 
-// TestServiceCreateCommentActivity tests the CreateCommentActivity service method
 func TestServiceCreateCommentActivity(t *testing.T) {
 	mockAPRepo := new(MockActivityPubRepository)
 	mockUserRepo := new(MockUserRepository)
@@ -1387,21 +1341,14 @@ func TestServiceCreateCommentActivity(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("CreateCommentActivity wraps Note in Create", func(t *testing.T) {
-		// This test verifies the method exists and has correct signature
-		// Full implementation will be added in the next phase
 
 		var comment *domain.Comment
 		activity, err := service.CreateCommentActivity(ctx, comment)
 
-		// For now, we expect this to fail since it's not implemented
 		_ = activity
 		_ = err
 	})
 }
-
-// ============================================================================
-// TESTS FOR PURE HELPER FUNCTIONS (parseDuration, extractVideoURL, etc.)
-// ============================================================================
 
 func TestParseDuration(t *testing.T) {
 	tests := []struct {
@@ -1724,10 +1671,6 @@ func TestExtractTags(t *testing.T) {
 	}
 }
 
-// ============================================================================
-// TESTS FOR HANDLER FUNCTIONS
-// ============================================================================
-
 func TestHandleAccept(t *testing.T) {
 	ctx := context.Background()
 
@@ -1958,7 +1901,7 @@ func TestHandleAnnounce(t *testing.T) {
 			"type":   "Announce",
 			"id":     "https://mastodon.example/activities/announce-1",
 			"actor":  remoteActor.ActorURI,
-			"object": 123, // Invalid type
+			"object": 123,
 		}
 
 		err := service.handleAnnounce(ctx, activity, remoteActor)
@@ -2202,7 +2145,7 @@ func TestHandleDelete(t *testing.T) {
 			"type":   "Delete",
 			"id":     "https://peertube.example/activities/delete-1",
 			"actor":  remoteActor.ActorURI,
-			"object": 123, // invalid type
+			"object": 123,
 		}
 
 		err := service.handleDelete(ctx, activity, remoteActor)
@@ -2210,10 +2153,6 @@ func TestHandleDelete(t *testing.T) {
 		assert.Contains(t, err.Error(), "invalid object in delete")
 	})
 }
-
-// ============================================================================
-// TESTS FOR COLLECTION COUNT METHODS
-// ============================================================================
 
 func TestGetFollowing(t *testing.T) {
 	ctx := context.Background()
@@ -2397,10 +2336,6 @@ func TestGetFollowingCount(t *testing.T) {
 	})
 }
 
-// ============================================================================
-// TESTS FOR REMOTE VIDEO INGESTION
-// ============================================================================
-
 func TestIngestRemoteVideo(t *testing.T) {
 	ctx := context.Background()
 
@@ -2542,10 +2477,6 @@ func TestUpdateRemoteVideo(t *testing.T) {
 	})
 }
 
-// ============================================================================
-// ADDITIONAL TESTS FOR HANDLEUNDO EDGE CASES
-// ============================================================================
-
 func TestHandleUndoEdgeCases(t *testing.T) {
 	ctx := context.Background()
 
@@ -2619,10 +2550,6 @@ func TestHandleUndoEdgeCases(t *testing.T) {
 	})
 }
 
-// ============================================================================
-// TESTS FOR FETCHREMOTEACTOR EDGE CASES
-// ============================================================================
-
 func TestFetchRemoteActorEdgeCases(t *testing.T) {
 	ctx := context.Background()
 
@@ -2656,7 +2583,7 @@ func TestFetchRemoteActorEdgeCases(t *testing.T) {
 		service := NewService(mockAPRepo, mockUserRepo, mockVideoRepo, mockCommentRepo, cfg)
 
 		actorURI := "https://mastodon.example/users/bob"
-		recentTime := time.Now().Add(-1 * time.Hour) // 1 hour ago (within 24h)
+		recentTime := time.Now().Add(-1 * time.Hour)
 
 		cachedActor := &domain.APRemoteActor{
 			ActorURI:      actorURI,
@@ -2684,7 +2611,7 @@ func TestFetchRemoteActorEdgeCases(t *testing.T) {
 		service := NewService(mockAPRepo, mockUserRepo, mockVideoRepo, mockCommentRepo, cfg)
 
 		actorURI := "https://mastodon.example/users/stale"
-		staleTime := time.Now().Add(-48 * time.Hour) // 48 hours ago
+		staleTime := time.Now().Add(-48 * time.Hour)
 
 		staleActor := &domain.APRemoteActor{
 			ActorURI:      actorURI,
@@ -2695,20 +2622,13 @@ func TestFetchRemoteActorEdgeCases(t *testing.T) {
 
 		mockAPRepo.On("GetRemoteActor", ctx, actorURI).Return(staleActor, nil).Once()
 
-		// The SSRF validator will reject the URL since mastodon.example is not resolvable,
-		// which is expected. We just verify that it doesn't return the stale cache.
 		actor, err := service.FetchRemoteActor(ctx, actorURI)
-		// Expected to fail on HTTP fetch since we can't reach mastodon.example
 		assert.Error(t, err)
 		assert.Nil(t, actor)
 
 		mockAPRepo.AssertExpectations(t)
 	})
 }
-
-// ============================================================================
-// TESTS FOR HANDLEFOLLOW EDGE CASES
-// ============================================================================
 
 func TestHandleFollowEdgeCases(t *testing.T) {
 	ctx := context.Background()
@@ -2727,7 +2647,7 @@ func TestHandleFollowEdgeCases(t *testing.T) {
 		activity := map[string]interface{}{
 			"type":   "Follow",
 			"actor":  remoteActor.ActorURI,
-			"object": 123, // Invalid type
+			"object": 123,
 		}
 
 		err := service.handleFollow(ctx, activity, remoteActor)

@@ -15,6 +15,7 @@ type CommentRepository interface {
 	Delete(ctx context.Context, id uuid.UUID) error
 	ListByVideo(ctx context.Context, opts domain.CommentListOptions) ([]*domain.CommentWithUser, error)
 	ListReplies(ctx context.Context, parentID uuid.UUID, limit, offset int) ([]*domain.CommentWithUser, error)
+	ListRepliesBatch(ctx context.Context, parentIDs []uuid.UUID, limit int) (map[uuid.UUID][]*domain.CommentWithUser, error)
 	CountByVideo(ctx context.Context, videoID uuid.UUID, activeOnly bool) (int, error)
 	FlagComment(ctx context.Context, flag *domain.CommentFlag) error
 	UnflagComment(ctx context.Context, commentID, userID uuid.UUID) error
