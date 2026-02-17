@@ -225,6 +225,7 @@ func TestPaymentService_DetectPayment_BalanceCheckError(t *testing.T) {
 		ExpiresAt:      time.Now().Add(1 * time.Hour),
 	}
 	repo.On("GetPaymentIntentByID", ctx, intentID).Return(intent, nil)
+	repo.On("GetWalletByUserID", ctx, intent.UserID).Return(nil, domain.ErrWalletNotFound)
 	client.On("GetBalance", ctx, "iota1qpay").Return(int64(0), errors.New("network down"))
 
 	err := svc.DetectPayment(ctx, intentID)
@@ -283,8 +284,9 @@ func TestPaymentService_DetectPayment_UpdateStatusError(t *testing.T) {
 		UserID: userID,
 	}
 	repo.On("GetPaymentIntentByID", ctx, intentID).Return(intent, nil)
-	client.On("GetBalance", ctx, "iota1qpay").Return(int64(2000), nil)
 	repo.On("GetWalletByUserID", ctx, userID).Return(wallet, nil)
+	client.On("GetBalance", ctx, "iota1qpay").Return(int64(2000), nil)
+	repo.On("UpdateWalletBalance", ctx, walletID, int64(2000)).Return(nil)
 	repo.On("CreateTransaction", ctx, mock.AnythingOfType("*domain.IOTATransaction")).Return(nil)
 	repo.On("UpdatePaymentIntentStatus", ctx, intentID, domain.PaymentIntentStatusPaid, mock.Anything).
 		Return(errors.New("update err"))
@@ -376,13 +378,13 @@ func TestPaymentService_CreateWallet_CheckExistingError(t *testing.T) {
 	assert.Contains(t, err.Error(), "failed to check existing wallet")
 }
 
-func TestPaymentService_DecryptSeed_WrongNonce(t *testing.T) {
+func TestPaymentService_DecryptPrivateKey_WrongNonce(t *testing.T) {
 	svc := NewPaymentService(nil, nil, testEncryptionKey)
 
-	encrypted, _, err := svc.EncryptSeed("test-seed-value")
+	encrypted, _, err := svc.EncryptPrivateKey("test-seed-value")
 	require.NoError(t, err)
 
 	wrongNonce := make([]byte, 12)
-	_, err = svc.DecryptSeed(encrypted, wrongNonce)
+	_, err = svc.DecryptPrivateKey(encrypted, wrongNonce)
 	require.Error(t, err)
 }

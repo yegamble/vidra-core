@@ -1,6 +1,8 @@
 package setup
 
 import (
+	cryptoRand "crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -46,6 +48,32 @@ func WriteEnvFile(path string, config *WizardConfig) error {
 		if config.IPFSMode == "external" && config.IPFSAPIUrl != "" {
 			lines = append(lines, fmt.Sprintf("IPFS_API_URL=%s", config.IPFSAPIUrl))
 		}
+	}
+	lines = append(lines, "")
+
+	lines = append(lines, "# IOTA Payments Configuration")
+	lines = append(lines, fmt.Sprintf("ENABLE_IOTA=%t", config.EnableIOTA))
+	if config.EnableIOTA {
+		iotaMode := config.IOTAMode
+		if iotaMode == "" {
+			iotaMode = "docker"
+		}
+		lines = append(lines, fmt.Sprintf("IOTA_MODE=%s", iotaMode))
+		iotaNetwork := config.IOTANetwork
+		if iotaNetwork == "" {
+			iotaNetwork = "testnet"
+		}
+		lines = append(lines, fmt.Sprintf("IOTA_NETWORK=%s", iotaNetwork))
+		if iotaMode == "external" && config.IOTANodeURL != "" {
+			lines = append(lines, fmt.Sprintf("IOTA_NODE_URL=%s", config.IOTANodeURL))
+		} else {
+			lines = append(lines, "IOTA_NODE_URL=http://iota-node:9000")
+		}
+		walletKey := make([]byte, 32)
+		if _, err := cryptoRand.Read(walletKey); err != nil {
+			return fmt.Errorf("generating IOTA wallet encryption key: %w", err)
+		}
+		lines = append(lines, fmt.Sprintf("IOTA_WALLET_ENCRYPTION_KEY=%s", hex.EncodeToString(walletKey)))
 	}
 	lines = append(lines, "")
 

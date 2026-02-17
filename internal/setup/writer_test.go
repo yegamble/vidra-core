@@ -374,3 +374,93 @@ func TestWriteEnvFileEmailDisabled(t *testing.T) {
 	assert.Contains(t, contentStr, "ENABLE_EMAIL=false")
 	assert.NotContains(t, contentStr, "SMTP_HOST=")
 }
+
+func TestWriteEnvFileIOTADocker(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping file I/O test in short mode")
+	}
+
+	tmpDir := t.TempDir()
+	envPath := filepath.Join(tmpDir, ".env")
+
+	config := &WizardConfig{
+		PostgresMode: "docker",
+		RedisMode:    "docker",
+		JWTSecret:    "test-jwt-secret-32chars-long",
+		EnableIOTA:   true,
+		IOTAMode:     "docker",
+		IOTANetwork:  "testnet",
+	}
+
+	err := WriteEnvFile(envPath, config)
+	require.NoError(t, err)
+
+	content, err := os.ReadFile(envPath)
+	require.NoError(t, err)
+	contentStr := string(content)
+
+	assert.Contains(t, contentStr, "ENABLE_IOTA=true")
+	assert.Contains(t, contentStr, "IOTA_MODE=docker")
+	assert.Contains(t, contentStr, "IOTA_NETWORK=testnet")
+	assert.Contains(t, contentStr, "IOTA_NODE_URL=http://iota-node:9000")
+	assert.Contains(t, contentStr, "IOTA_WALLET_ENCRYPTION_KEY=")
+	assert.NotContains(t, contentStr, "IOTA_WALLET_ENCRYPTION_KEY=\n")
+}
+
+func TestWriteEnvFileIOTAExternal(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping file I/O test in short mode")
+	}
+
+	tmpDir := t.TempDir()
+	envPath := filepath.Join(tmpDir, ".env")
+
+	config := &WizardConfig{
+		PostgresMode: "docker",
+		RedisMode:    "docker",
+		JWTSecret:    "test-jwt-secret-32chars-long",
+		EnableIOTA:   true,
+		IOTAMode:     "external",
+		IOTANodeURL:  "http://my-iota-node.example.com:14265",
+		IOTANetwork:  "mainnet",
+	}
+
+	err := WriteEnvFile(envPath, config)
+	require.NoError(t, err)
+
+	content, err := os.ReadFile(envPath)
+	require.NoError(t, err)
+	contentStr := string(content)
+
+	assert.Contains(t, contentStr, "ENABLE_IOTA=true")
+	assert.Contains(t, contentStr, "IOTA_MODE=external")
+	assert.Contains(t, contentStr, "IOTA_NODE_URL=http://my-iota-node.example.com:14265")
+	assert.Contains(t, contentStr, "IOTA_NETWORK=mainnet")
+}
+
+func TestWriteEnvFileIOTADisabled(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping file I/O test in short mode")
+	}
+
+	tmpDir := t.TempDir()
+	envPath := filepath.Join(tmpDir, ".env")
+
+	config := &WizardConfig{
+		PostgresMode: "docker",
+		RedisMode:    "docker",
+		JWTSecret:    "test-jwt-secret-32chars-long",
+		EnableIOTA:   false,
+	}
+
+	err := WriteEnvFile(envPath, config)
+	require.NoError(t, err)
+
+	content, err := os.ReadFile(envPath)
+	require.NoError(t, err)
+	contentStr := string(content)
+
+	assert.Contains(t, contentStr, "ENABLE_IOTA=false")
+	assert.NotContains(t, contentStr, "IOTA_NODE_URL=")
+	assert.NotContains(t, contentStr, "IOTA_WALLET_ENCRYPTION_KEY=")
+}

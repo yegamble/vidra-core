@@ -571,3 +571,49 @@ func TestValidateJWTSecret(t *testing.T) {
 		})
 	}
 }
+
+func TestLoad_IOTADefaults(t *testing.T) {
+	setMinimumLoadEnv(t, "test-secret")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() failed: %v", err)
+	}
+
+	if cfg.EnableIOTA {
+		t.Errorf("expected EnableIOTA default false, got true")
+	}
+	if cfg.IOTAMode != "docker" {
+		t.Errorf("expected IOTAMode default 'docker', got %q", cfg.IOTAMode)
+	}
+	if cfg.IOTANetwork != "testnet" {
+		t.Errorf("expected IOTANetwork default 'testnet', got %q", cfg.IOTANetwork)
+	}
+}
+
+func TestLoad_IOTAFromEnv(t *testing.T) {
+	setMinimumLoadEnv(t, "test-secret")
+	t.Setenv("ENABLE_IOTA", "true")
+	t.Setenv("IOTA_NODE_URL", "http://my-node:14265")
+	t.Setenv("IOTA_MODE", "external")
+	t.Setenv("IOTA_NETWORK", "mainnet")
+	t.Setenv("IOTA_WALLET_ENCRYPTION_KEY", "test-key-32-chars-long-padding!!")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() failed: %v", err)
+	}
+
+	if !cfg.EnableIOTA {
+		t.Errorf("expected EnableIOTA true")
+	}
+	if cfg.IOTANodeURL != "http://my-node:14265" {
+		t.Errorf("expected IOTANodeURL 'http://my-node:14265', got %q", cfg.IOTANodeURL)
+	}
+	if cfg.IOTAMode != "external" {
+		t.Errorf("expected IOTAMode 'external', got %q", cfg.IOTAMode)
+	}
+	if cfg.IOTANetwork != "mainnet" {
+		t.Errorf("expected IOTANetwork 'mainnet', got %q", cfg.IOTANetwork)
+	}
+}

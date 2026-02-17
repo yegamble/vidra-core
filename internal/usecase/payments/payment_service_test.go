@@ -133,6 +133,11 @@ func (m *MockIOTAClient) GetBalance(ctx context.Context, address string) (int64,
 	return args.Get(0).(int64), args.Error(1)
 }
 
+func (m *MockIOTAClient) GetNodeStatus(ctx context.Context) error {
+	args := m.Called(ctx)
+	return args.Error(0)
+}
+
 func TestPaymentService_CreateWallet(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -335,10 +340,6 @@ func TestPaymentService_CreatePaymentIntent(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if tt.name == "successful intent creation" {
-				t.Skip("TODO: Requires proper seed decryption mocking - complex refactoring needed")
-			}
-
 			mockRepo := new(MockIOTARepository)
 			mockClient := new(MockIOTAClient)
 			tt.setupMocks(mockRepo, mockClient)
@@ -453,8 +454,9 @@ func TestPaymentService_DetectPayment(t *testing.T) {
 					Address: "iota1qwallet",
 				}
 				repo.On("GetPaymentIntentByID", mock.Anything, mock.Anything).Return(intent, nil)
-				client.On("GetBalance", mock.Anything, intent.PaymentAddress).Return(int64(1000000), nil)
 				repo.On("GetWalletByUserID", mock.Anything, intent.UserID).Return(wallet, nil)
+				client.On("GetBalance", mock.Anything, intent.PaymentAddress).Return(int64(1000000), nil)
+				repo.On("UpdateWalletBalance", mock.Anything, wallet.ID, int64(1000000)).Return(nil)
 				repo.On("CreateTransaction", mock.Anything, mock.Anything).Return(nil)
 				repo.On("UpdatePaymentIntentStatus", mock.Anything, mock.Anything,
 					domain.PaymentIntentStatusPaid, mock.Anything).Return(nil)
@@ -478,8 +480,9 @@ func TestPaymentService_DetectPayment(t *testing.T) {
 					Address: "iota1qwallet",
 				}
 				repo.On("GetPaymentIntentByID", mock.Anything, mock.Anything).Return(intent, nil)
-				client.On("GetBalance", mock.Anything, intent.PaymentAddress).Return(int64(1500000), nil)
 				repo.On("GetWalletByUserID", mock.Anything, intent.UserID).Return(wallet, nil)
+				client.On("GetBalance", mock.Anything, intent.PaymentAddress).Return(int64(1500000), nil)
+				repo.On("UpdateWalletBalance", mock.Anything, wallet.ID, int64(1500000)).Return(nil)
 				repo.On("CreateTransaction", mock.Anything, mock.Anything).Return(nil)
 				repo.On("UpdatePaymentIntentStatus", mock.Anything, mock.Anything,
 					domain.PaymentIntentStatusPaid, mock.Anything).Return(nil)
@@ -498,6 +501,7 @@ func TestPaymentService_DetectPayment(t *testing.T) {
 					ExpiresAt:      time.Now().Add(1 * time.Hour),
 				}
 				repo.On("GetPaymentIntentByID", mock.Anything, mock.Anything).Return(intent, nil)
+				repo.On("GetWalletByUserID", mock.Anything, intent.UserID).Return(nil, domain.ErrWalletNotFound)
 				client.On("GetBalance", mock.Anything, intent.PaymentAddress).Return(int64(500000), nil)
 			},
 			wantErr: false,
@@ -630,13 +634,13 @@ func TestPaymentService_SeedEncryption(t *testing.T) {
 
 	plainSeed := repeatString("a", 64)
 
-	encrypted, nonce, err := service.EncryptSeed(plainSeed)
+	encrypted, nonce, err := service.EncryptPrivateKey(plainSeed)
 	require.NoError(t, err)
 	assert.NotEmpty(t, encrypted)
 	assert.NotEmpty(t, nonce)
 	assert.NotEqual(t, []byte(plainSeed), encrypted)
 
-	decrypted, err := service.DecryptSeed(encrypted, nonce)
+	decrypted, err := service.DecryptPrivateKey(encrypted, nonce)
 	require.NoError(t, err)
 	assert.Equal(t, plainSeed, decrypted)
 }
@@ -650,20 +654,20 @@ func TestPaymentService_SeedEncryption_DifferentNonces(t *testing.T) {
 
 	plainSeed := repeatString("a", 64)
 
-	encrypted1, nonce1, err := service.EncryptSeed(plainSeed)
+	encrypted1, nonce1, err := service.EncryptPrivateKey(plainSeed)
 	require.NoError(t, err)
 
-	encrypted2, nonce2, err := service.EncryptSeed(plainSeed)
+	encrypted2, nonce2, err := service.EncryptPrivateKey(plainSeed)
 	require.NoError(t, err)
 
 	assert.NotEqual(t, nonce1, nonce2)
 	assert.NotEqual(t, encrypted1, encrypted2)
 
-	decrypted1, err := service.DecryptSeed(encrypted1, nonce1)
+	decrypted1, err := service.DecryptPrivateKey(encrypted1, nonce1)
 	require.NoError(t, err)
 	assert.Equal(t, plainSeed, decrypted1)
 
-	decrypted2, err := service.DecryptSeed(encrypted2, nonce2)
+	decrypted2, err := service.DecryptPrivateKey(encrypted2, nonce2)
 	require.NoError(t, err)
 	assert.Equal(t, plainSeed, decrypted2)
 }

@@ -111,6 +111,17 @@ func (c *IOTAClient) GetNodeInfo(ctx context.Context) (*NodeInfo, error) {
 	return c.nodeClient.GetNodeInfo(ctx)
 }
 
+func (c *IOTAClient) GetNodeStatus(ctx context.Context) error {
+	info, err := c.nodeClient.GetNodeInfo(ctx)
+	if err != nil {
+		return err
+	}
+	if !info.IsHealthy {
+		return fmt.Errorf("IOTA node is not healthy")
+	}
+	return nil
+}
+
 func (c *IOTAClient) WaitForConfirmation(ctx context.Context, txDigest string, requiredConfirms int, pollInterval time.Duration) (int, error) {
 	ticker := time.NewTicker(pollInterval)
 	defer ticker.Stop()

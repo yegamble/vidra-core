@@ -8,6 +8,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"fmt"
+	"log"
 	"time"
 
 	"athena/internal/domain"
@@ -36,6 +37,7 @@ type IOTAClient interface {
 	DeriveAddress(publicKey []byte) (string, error)
 	ValidateAddress(address string) bool
 	GetBalance(ctx context.Context, address string) (int64, error)
+	GetNodeStatus(ctx context.Context) error
 }
 
 type PaymentService struct {
@@ -71,7 +73,7 @@ func (s *PaymentService) CreateWallet(ctx context.Context, userID string) (*doma
 		return nil, fmt.Errorf("failed to derive address: %w", err)
 	}
 
-	encryptedKey, nonce, err := s.EncryptSeed(hex.EncodeToString(privateKey))
+	encryptedKey, nonce, err := s.EncryptPrivateKey(hex.EncodeToString(privateKey))
 	if err != nil {
 		return nil, fmt.Errorf("failed to encrypt private key: %w", err)
 	}
@@ -166,7 +168,7 @@ func (s *PaymentService) GetTransactionHistory(ctx context.Context, userID strin
 	return s.repo.GetTransactionsByWalletID(ctx, wallet.ID, limit, offset)
 }
 
-func (s *PaymentService) EncryptSeed(seed string) ([]byte, []byte, error) {
+func (s *PaymentService) EncryptPrivateKey(seed string) ([]byte, []byte, error) {
 	block, err := aes.NewCipher(s.encryptionKey)
 	if err != nil {
 		return nil, nil, err
@@ -186,7 +188,7 @@ func (s *PaymentService) EncryptSeed(seed string) ([]byte, []byte, error) {
 	return encrypted, nonce, nil
 }
 
-func (s *PaymentService) DecryptSeed(encryptedSeed, nonce []byte) (string, error) {
+func (s *PaymentService) DecryptPrivateKey(encryptedSeed, nonce []byte) (string, error) {
 	block, err := aes.NewCipher(s.encryptionKey)
 	if err != nil {
 		return "", err
@@ -219,13 +221,26 @@ func (s *PaymentService) DetectPayment(ctx context.Context, intentID string) err
 		return domain.ErrPaymentIntentExpired
 	}
 
+	wallet, walletErr := s.repo.GetWalletByUserID(ctx, intent.UserID)
+	if walletErr != nil {
+		log.Printf("WARNING: failed to find wallet for payment intent %s: %v", intent.ID, walletErr)
+	}
+	var previousBalance int64
+	if wallet != nil {
+		previousBalance = wallet.BalanceIOTA
+	}
+
 	balance, err := s.client.GetBalance(ctx, intent.PaymentAddress)
 	if err != nil {
 		return fmt.Errorf("failed to get balance: %w", err)
 	}
 
-	if balance >= intent.AmountIOTA {
-		wallet, _ := s.repo.GetWalletByUserID(ctx, intent.UserID)
+	// TODO(phase2): Switch to transaction-based detection via iota_getTransactionBlock
+	delta := balance - previousBalance
+	if delta >= intent.AmountIOTA {
+		if wallet != nil {
+			_ = s.repo.UpdateWalletBalance(ctx, wallet.ID, balance)
+		}
 
 		txDigest := fmt.Sprintf("iota-payment-%s-%d", intent.ID, time.Now().Unix())
 		tx := &domain.IOTATransaction{

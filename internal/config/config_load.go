@@ -37,6 +37,8 @@ func loadCommonFields(cfg *Config, setupMode bool) {
 	cfg.IPFSStreamingBufferSize = getIntEnv("IPFS_STREAMING_BUFFER_SIZE", 32768)
 
 	cfg.IOTANodeURL = getEnvOrDefault("IOTA_NODE_URL", "")
+	cfg.IOTAMode = getEnvOrDefault("IOTA_MODE", "docker")
+	cfg.IOTANetwork = getEnvOrDefault("IOTA_NETWORK", "testnet")
 	cfg.IOTAWalletEncryptionKey = getEnvOrDefault("IOTA_WALLET_ENCRYPTION_KEY", "")
 	cfg.FFMPEGPath = getEnvOrDefault("FFMPEG_PATH", "ffmpeg")
 	cfg.JWTSecret = getEnvOrDefault("JWT_SECRET", "")

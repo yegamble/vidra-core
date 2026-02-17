@@ -460,3 +460,51 @@ func TestGetDBStats(t *testing.T) {
 		t.Fatalf("stats.Idle = %d, want >= 0", stats.Idle)
 	}
 }
+
+func TestIOTAChecker_Check(t *testing.T) {
+	t.Run("healthy node returns checkpoint sequence number", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":"12345"}`))
+		}))
+		defer server.Close()
+
+		checker := NewIOTAChecker(server.URL)
+		err := checker.Check(context.Background())
+		if err != nil {
+			t.Fatalf("expected nil error, got: %v", err)
+		}
+	})
+
+	t.Run("node returns error response", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"Method not found"}}`))
+		}))
+		defer server.Close()
+
+		checker := NewIOTAChecker(server.URL)
+		err := checker.Check(context.Background())
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+		if !strings.Contains(err.Error(), "IOTA node") {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("node unreachable", func(t *testing.T) {
+		checker := NewIOTAChecker("http://localhost:59999")
+		err := checker.Check(context.Background())
+		if err == nil {
+			t.Fatal("expected error for unreachable node, got nil")
+		}
+	})
+
+	t.Run("Name returns iota", func(t *testing.T) {
+		checker := NewIOTAChecker("http://localhost:14265")
+		if checker.Name() != "iota" {
+			t.Fatalf("expected Name() = 'iota', got %q", checker.Name())
+		}
+	})
+}

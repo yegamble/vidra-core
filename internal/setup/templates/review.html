@@ -33,6 +33,13 @@
             <p><strong>IPFS:</strong> {{if .Config.EnableIPFS}}Enabled ({{.Config.IPFSMode}}){{else}}Disabled{{end}}</p>
             <p><strong>ClamAV:</strong> {{if .Config.EnableClamAV}}Enabled{{else}}Disabled{{end}}</p>
             <p><strong>Whisper:</strong> {{if .Config.EnableWhisper}}Enabled{{else}}Disabled{{end}}</p>
+            <p><strong>IOTA Payments:</strong> {{if .Config.EnableIOTA}}Enabled ({{.Config.IOTAMode}}, {{.Config.IOTANetwork}}){{else}}Disabled{{end}}</p>
+            {{if .Config.EnableIOTA}}
+            {{if eq .Config.IOTAMode "external"}}
+            <p><strong>IOTA Node URL:</strong> {{.Config.IOTANodeURL}}</p>
+            {{end}}
+            <p><strong>IOTA Wallet Encryption Key:</strong> <em>(auto-generated, will be written to .env)</em></p>
+            {{end}}
         </div>
     </div>
 

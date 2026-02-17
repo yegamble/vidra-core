@@ -23,17 +23,15 @@ type HealthResponse struct {
 
 var startTime = time.Now()
 
-// HealthHandlers manages health check endpoints
 type HealthHandlers struct {
-	checkers []health.Checker
-	db       *sqlx.DB
-	redis    *redis.Client
-	ipfsAPI  string
+	checkers    []health.Checker
+	db          *sqlx.DB
+	redis       *redis.Client
+	ipfsAPI     string
+	iotaNodeURL string
 }
 
-// NewHealthHandlers creates a new health handlers instance
-func NewHealthHandlers(db *sqlx.DB, redisClient *redis.Client, ipfsAPI string) *HealthHandlers {
-	// Initialize checkers
+func NewHealthHandlers(db *sqlx.DB, redisClient *redis.Client, ipfsAPI string, iotaNodeURL string) *HealthHandlers {
 	checkers := []health.Checker{
 		health.NewDatabaseChecker(db),
 		health.NewRedisChecker(redisClient),
@@ -44,11 +42,16 @@ func NewHealthHandlers(db *sqlx.DB, redisClient *redis.Client, ipfsAPI string) *
 		),
 	}
 
+	if iotaNodeURL != "" {
+		checkers = append(checkers, health.NewIOTAChecker(iotaNodeURL))
+	}
+
 	return &HealthHandlers{
-		checkers: checkers,
-		db:       db,
-		redis:    redisClient,
-		ipfsAPI:  ipfsAPI,
+		checkers:    checkers,
+		db:          db,
+		redis:       redisClient,
+		ipfsAPI:     ipfsAPI,
+		iotaNodeURL: iotaNodeURL,
 	}
 }
 
@@ -63,18 +66,15 @@ func HealthCheck(w http.ResponseWriter, r *http.Request) {
 	shared.WriteJSON(w, http.StatusOK, health)
 }
 
-// ReadinessCheckHandler is a method on HealthHandlers that performs readiness checks
 func (h *HealthHandlers) ReadinessCheck(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	checks := make(map[string]string)
 	overallStatus := "ok"
 	statusCode := http.StatusOK
 
-	// Perform all health checks
 	for _, checker := range h.checkers {
 		err := checker.Check(ctx)
 		if err != nil {
-			// SECURITY FIX: Log detailed errors server-side, return generic status to client
 			log.Printf("ERROR: %s health check failed: %v", checker.Name(), err)
 			checks[checker.Name()] = "fail"
 			overallStatus = "fail"
@@ -95,15 +95,12 @@ func (h *HealthHandlers) ReadinessCheck(w http.ResponseWriter, r *http.Request) 
 	shared.WriteJSON(w, statusCode, readiness)
 }
 
-// ReadinessCheck is a standalone function for backward compatibility
 func ReadinessCheck(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	checks := make(map[string]string)
 	overallStatus := "ok"
 	statusCode := http.StatusOK
 
-	// Create temporary checkers for backward compatibility
-	// This should be replaced with proper dependency injection
 	if err := checkDatabase(); err != nil {
 		log.Printf("ERROR: Database health check failed: %v", err)
 		checks["database"] = "fail"
@@ -140,7 +137,7 @@ func ReadinessCheck(w http.ResponseWriter, r *http.Request) {
 		checks["queue"] = "ok"
 	}
 
-	_ = ctx // Suppress unused warning
+	_ = ctx
 
 	readiness := HealthResponse{
 		Status:    overallStatus,

@@ -416,3 +416,99 @@ func TestWizardStateIsolation(t *testing.T) {
 	assert.Equal(t, "external", wizard1Config)
 	assert.Equal(t, "docker", wizard2Config)
 }
+
+func TestWizardIOTADockerMode(t *testing.T) {
+	wizard := NewWizard()
+
+	form := url.Values{}
+	form.Set("REDIS_MODE", "docker")
+	form.Set("ENABLE_IOTA", "true")
+	form.Set("IOTA_MODE", "docker")
+	form.Set("IOTA_NETWORK", "testnet")
+	req := httptest.NewRequest(http.MethodPost, "/setup/services", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	wizard.HandleServices(w, req)
+
+	require.Equal(t, http.StatusSeeOther, w.Code)
+
+	wizard.mu.Lock()
+	assert.True(t, wizard.config.EnableIOTA)
+	assert.Equal(t, "docker", wizard.config.IOTAMode)
+	assert.Equal(t, "testnet", wizard.config.IOTANetwork)
+	wizard.mu.Unlock()
+}
+
+func TestWizardIOTAExternalMode(t *testing.T) {
+	wizard := NewWizard()
+
+	form := url.Values{}
+	form.Set("REDIS_MODE", "docker")
+	form.Set("ENABLE_IOTA", "true")
+	form.Set("IOTA_MODE", "external")
+	form.Set("IOTA_NODE_URL", "http://iota-node.example.com:14265")
+	form.Set("IOTA_NETWORK", "mainnet")
+	req := httptest.NewRequest(http.MethodPost, "/setup/services", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	wizard.HandleServices(w, req)
+
+	require.Equal(t, http.StatusSeeOther, w.Code)
+
+	wizard.mu.Lock()
+	assert.True(t, wizard.config.EnableIOTA)
+	assert.Equal(t, "external", wizard.config.IOTAMode)
+	assert.Equal(t, "http://iota-node.example.com:14265", wizard.config.IOTANodeURL)
+	assert.Equal(t, "mainnet", wizard.config.IOTANetwork)
+	wizard.mu.Unlock()
+}
+
+func TestWizardIOTAExternalModeInvalidURL(t *testing.T) {
+	wizard := NewWizard()
+
+	form := url.Values{}
+	form.Set("REDIS_MODE", "docker")
+	form.Set("ENABLE_IOTA", "true")
+	form.Set("IOTA_MODE", "external")
+	form.Set("IOTA_NODE_URL", "not-a-url")
+	form.Set("IOTA_NETWORK", "testnet")
+	req := httptest.NewRequest(http.MethodPost, "/setup/services", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	wizard.HandleServices(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestWizardIOTAInvalidNetwork(t *testing.T) {
+	wizard := NewWizard()
+
+	form := url.Values{}
+	form.Set("REDIS_MODE", "docker")
+	form.Set("ENABLE_IOTA", "true")
+	form.Set("IOTA_MODE", "docker")
+	form.Set("IOTA_NETWORK", "devnet")
+	req := httptest.NewRequest(http.MethodPost, "/setup/services", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	wizard.HandleServices(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestWizardIOTADisabled(t *testing.T) {
+	wizard := NewWizard()
+
+	form := url.Values{}
+	form.Set("REDIS_MODE", "docker")
+	req := httptest.NewRequest(http.MethodPost, "/setup/services", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	wizard.HandleServices(w, req)
+
+	require.Equal(t, http.StatusSeeOther, w.Code)
+
+	wizard.mu.Lock()
+	assert.False(t, wizard.config.EnableIOTA)
+	wizard.mu.Unlock()
+}

@@ -3,6 +3,7 @@ package health
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -13,50 +14,40 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// CheckResult contains the result of a health check
 type CheckResult struct {
 	Name     string        `json:"name"`
-	Status   string        `json:"status"` // "ok" or "fail"
+	Status   string        `json:"status"`
 	Duration time.Duration `json:"duration"`
 	Error    string        `json:"error,omitempty"`
 	Details  interface{}   `json:"details,omitempty"`
 }
 
-// Checker is the interface for health check components
 type Checker interface {
-	// Check performs the health check and returns an error if unhealthy
 	Check(ctx context.Context) error
-	// Name returns the name of the component being checked
 	Name() string
 }
 
-// DatabaseChecker checks database health
 type DatabaseChecker struct {
 	DB               *sqlx.DB
 	MaxPingTime      time.Duration
 	CheckConnections bool
 }
 
-// Check verifies database connectivity and optional connection pool status
 func (d *DatabaseChecker) Check(ctx context.Context) error {
-	// Apply timeout if not already set in context
 	if d.MaxPingTime > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, d.MaxPingTime)
 		defer cancel()
 	} else {
-		// Default 2 second timeout
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, 2*time.Second)
 		defer cancel()
 	}
 
-	// 1. Ping the database
 	if err := d.DB.PingContext(ctx); err != nil {
 		return fmt.Errorf("database ping failed: %w", err)
 	}
 
-	// 2. Check if database is read-only (PostgreSQL specific)
 	var isReadOnly bool
 	err := d.DB.GetContext(ctx, &isReadOnly, "SELECT pg_is_in_recovery()")
 	if err != nil {
@@ -66,17 +57,14 @@ func (d *DatabaseChecker) Check(ctx context.Context) error {
 		return fmt.Errorf("database is in read-only mode")
 	}
 
-	// 3. Check connection pool stats if enabled
 	if d.CheckConnections {
 		stats := d.DB.Stats()
 
-		// Check for connection pool exhaustion
 		if stats.InUse >= stats.MaxOpenConnections && stats.MaxOpenConnections > 0 {
 			return fmt.Errorf("connection pool exhausted: %d/%d connections in use",
 				stats.InUse, stats.MaxOpenConnections)
 		}
 
-		// Warn if connection usage is high (>80%)
 		if stats.MaxOpenConnections > 0 {
 			usagePercent := float64(stats.InUse) / float64(stats.MaxOpenConnections)
 			if usagePercent > 0.8 {
@@ -89,12 +77,10 @@ func (d *DatabaseChecker) Check(ctx context.Context) error {
 	return nil
 }
 
-// Name returns the checker name
 func (d *DatabaseChecker) Name() string {
 	return "database"
 }
 
-// NewDatabaseChecker creates a new database health checker
 func NewDatabaseChecker(db *sqlx.DB) *DatabaseChecker {
 	return &DatabaseChecker{
 		DB:               db,
@@ -103,41 +89,34 @@ func NewDatabaseChecker(db *sqlx.DB) *DatabaseChecker {
 	}
 }
 
-// RedisChecker checks Redis health
 type RedisChecker struct {
 	Client         *redis.Client
 	MaxPingTime    time.Duration
 	CheckMemory    bool
-	MaxMemoryUsage float64 // percentage, e.g., 0.90 for 90%
+	MaxMemoryUsage float64
 }
 
-// Check verifies Redis connectivity and optional memory status
 func (r *RedisChecker) Check(ctx context.Context) error {
-	// Apply timeout if not already set
 	if r.MaxPingTime > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, r.MaxPingTime)
 		defer cancel()
 	} else {
-		// Default 1 second timeout
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, 1*time.Second)
 		defer cancel()
 	}
 
-	// 1. PING Redis
 	if err := r.Client.Ping(ctx).Err(); err != nil {
 		return fmt.Errorf("redis ping failed: %w", err)
 	}
 
-	// 2. Check memory usage if enabled
 	if r.CheckMemory {
 		info, err := r.Client.Info(ctx, "memory").Result()
 		if err != nil {
 			return fmt.Errorf("failed to get redis info: %w", err)
 		}
 
-		// Parse memory info
 		var usedMemory int64
 		var maxMemory int64
 
@@ -157,7 +136,6 @@ func (r *RedisChecker) Check(ctx context.Context) error {
 			}
 		}
 
-		// Check memory usage percentage if maxmemory is set
 		if maxMemory > 0 && usedMemory > 0 {
 			usagePercent := float64(usedMemory) / float64(maxMemory)
 			if usagePercent > r.MaxMemoryUsage {
@@ -167,7 +145,6 @@ func (r *RedisChecker) Check(ctx context.Context) error {
 		}
 	}
 
-	// 3. Check if Redis is responding to basic commands
 	_, err := r.Client.Set(ctx, "health:check", "ok", 1*time.Second).Result()
 	if err != nil {
 		return fmt.Errorf("redis write test failed: %w", err)
@@ -176,22 +153,19 @@ func (r *RedisChecker) Check(ctx context.Context) error {
 	return nil
 }
 
-// Name returns the checker name
 func (r *RedisChecker) Name() string {
 	return "redis"
 }
 
-// NewRedisChecker creates a new Redis health checker
 func NewRedisChecker(client *redis.Client) *RedisChecker {
 	return &RedisChecker{
 		Client:         client,
 		MaxPingTime:    1 * time.Second,
 		CheckMemory:    true,
-		MaxMemoryUsage: 0.9, // 90%
+		MaxMemoryUsage: 0.9,
 	}
 }
 
-// IPFSChecker checks IPFS node health
 type IPFSChecker struct {
 	APIEndpoint     string
 	ClusterEndpoint string
@@ -199,9 +173,7 @@ type IPFSChecker struct {
 	CheckCluster    bool
 }
 
-// Check verifies IPFS API and optional cluster connectivity
 func (i *IPFSChecker) Check(ctx context.Context) error {
-	// Apply timeout
 	timeout := i.MaxResponseTime
 	if timeout <= 0 {
 		timeout = 5 * time.Second
@@ -209,7 +181,6 @@ func (i *IPFSChecker) Check(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	// 1. Check IPFS API version endpoint
 	start := time.Now()
 	req, err := http.NewRequestWithContext(ctx, "GET", i.APIEndpoint+"/api/v0/version", nil)
 	if err != nil {
@@ -236,7 +207,6 @@ func (i *IPFSChecker) Check(ctx context.Context) error {
 			responseTime, i.MaxResponseTime)
 	}
 
-	// 2. Check IPFS Cluster if enabled
 	if i.CheckCluster && i.ClusterEndpoint != "" {
 		clusterStart := time.Now()
 		clusterReq, err := http.NewRequestWithContext(ctx, "GET", i.ClusterEndpoint+"/id", nil)
@@ -264,12 +234,10 @@ func (i *IPFSChecker) Check(ctx context.Context) error {
 	return nil
 }
 
-// Name returns the checker name
 func (i *IPFSChecker) Name() string {
 	return "ipfs"
 }
 
-// NewIPFSChecker creates a new IPFS health checker
 func NewIPFSChecker(apiEndpoint string) *IPFSChecker {
 	return &IPFSChecker{
 		APIEndpoint:     apiEndpoint,
@@ -278,7 +246,6 @@ func NewIPFSChecker(apiEndpoint string) *IPFSChecker {
 	}
 }
 
-// NewIPFSCheckerWithCluster creates a new IPFS health checker with cluster support
 func NewIPFSCheckerWithCluster(apiEndpoint, clusterEndpoint string) *IPFSChecker {
 	return &IPFSChecker{
 		APIEndpoint:     apiEndpoint,
@@ -288,18 +255,15 @@ func NewIPFSCheckerWithCluster(apiEndpoint, clusterEndpoint string) *IPFSChecker
 	}
 }
 
-// QueueDepthChecker checks queue depth thresholds
 type QueueDepthChecker struct {
 	GetEncodingQueueDepth func() (int, error)
 	GetActivityQueueDepth func() (int, error)
 	MaxEncodingQueue      int
 	MaxActivityQueue      int
-	WarningThreshold      float64 // percentage, e.g., 0.80 for 80%
+	WarningThreshold      float64
 }
 
-// Check verifies queue depths are within acceptable limits
 func (q *QueueDepthChecker) Check(ctx context.Context) error {
-	// Check encoding queue depth
 	if q.GetEncodingQueueDepth != nil {
 		encodingDepth, err := q.GetEncodingQueueDepth()
 		if err != nil {
@@ -311,7 +275,6 @@ func (q *QueueDepthChecker) Check(ctx context.Context) error {
 				encodingDepth, q.MaxEncodingQueue)
 		}
 
-		// Warn if above threshold
 		if q.WarningThreshold > 0 {
 			thresholdDepth := int(float64(q.MaxEncodingQueue) * q.WarningThreshold)
 			if encodingDepth >= thresholdDepth {
@@ -322,7 +285,6 @@ func (q *QueueDepthChecker) Check(ctx context.Context) error {
 		}
 	}
 
-	// Check activity queue depth
 	if q.GetActivityQueueDepth != nil {
 		activityDepth, err := q.GetActivityQueueDepth()
 		if err != nil {
@@ -334,7 +296,6 @@ func (q *QueueDepthChecker) Check(ctx context.Context) error {
 				activityDepth, q.MaxActivityQueue)
 		}
 
-		// Warn if above threshold
 		if q.WarningThreshold > 0 {
 			thresholdDepth := int(float64(q.MaxActivityQueue) * q.WarningThreshold)
 			if activityDepth >= thresholdDepth {
@@ -348,12 +309,10 @@ func (q *QueueDepthChecker) Check(ctx context.Context) error {
 	return nil
 }
 
-// Name returns the checker name
 func (q *QueueDepthChecker) Name() string {
 	return "queue"
 }
 
-// NewQueueDepthChecker creates a new queue depth health checker
 func NewQueueDepthChecker(
 	getEncodingDepth func() (int, error),
 	getActivityDepth func() (int, error),
@@ -363,11 +322,10 @@ func NewQueueDepthChecker(
 		GetActivityQueueDepth: getActivityDepth,
 		MaxEncodingQueue:      1000,
 		MaxActivityQueue:      5000,
-		WarningThreshold:      0.8, // 80%
+		WarningThreshold:      0.8,
 	}
 }
 
-// HealthService manages all health checks
 type HealthService struct {
 	checkers        []Checker
 	startTime       time.Time
@@ -375,7 +333,6 @@ type HealthService struct {
 	readinessProbes map[string]Checker
 }
 
-// NewHealthService creates a new health service
 func NewHealthService(version string, checkers ...Checker) *HealthService {
 	probes := make(map[string]Checker)
 	for _, checker := range checkers {
@@ -390,7 +347,6 @@ func NewHealthService(version string, checkers ...Checker) *HealthService {
 	}
 }
 
-// CheckLiveness performs basic liveness check (always returns ok if server is running)
 func (h *HealthService) CheckLiveness() CheckResult {
 	return CheckResult{
 		Name:     "liveness",
@@ -403,7 +359,6 @@ func (h *HealthService) CheckLiveness() CheckResult {
 	}
 }
 
-// CheckReadiness performs comprehensive readiness checks
 func (h *HealthService) CheckReadiness(ctx context.Context) ([]CheckResult, bool) {
 	results := make([]CheckResult, 0, len(h.checkers))
 	allHealthy := true
@@ -432,7 +387,6 @@ func (h *HealthService) CheckReadiness(ctx context.Context) ([]CheckResult, bool
 	return results, allHealthy
 }
 
-// MockChecker for testing
 type MockChecker struct {
 	CheckFunc func(ctx context.Context) error
 	NameValue string
@@ -449,7 +403,6 @@ func (m *MockChecker) Name() string {
 	return m.NameValue
 }
 
-// ConnectionPoolStats represents database connection pool statistics
 type ConnectionPoolStats struct {
 	MaxOpenConnections int `json:"max_open_connections"`
 	OpenConnections    int `json:"open_connections"`
@@ -457,7 +410,6 @@ type ConnectionPoolStats struct {
 	Idle               int `json:"idle"`
 }
 
-// GetDBStats retrieves database connection pool statistics
 func GetDBStats(db *sql.DB) ConnectionPoolStats {
 	stats := db.Stats()
 	return ConnectionPoolStats{
@@ -468,11 +420,72 @@ func GetDBStats(db *sql.DB) ConnectionPoolStats {
 	}
 }
 
-// RedisInfo represents Redis server information
 type RedisInfo struct {
 	UsedMemory        int64   `json:"used_memory"`
 	UsedMemoryPeak    int64   `json:"used_memory_peak"`
 	UsedMemoryPercent float64 `json:"used_memory_percent"`
 	ConnectedClients  int     `json:"connected_clients"`
-	Role              string  `json:"role"` // master or slave
+	Role              string  `json:"role"`
+}
+
+type IOTAChecker struct {
+	NodeURL         string
+	MaxResponseTime time.Duration
+	client          *http.Client
+}
+
+func NewIOTAChecker(nodeURL string) *IOTAChecker {
+	return &IOTAChecker{
+		NodeURL:         nodeURL,
+		MaxResponseTime: 5 * time.Second,
+		client:          &http.Client{Timeout: 30 * time.Second},
+	}
+}
+
+func (c *IOTAChecker) Check(ctx context.Context) error {
+	timeout := c.MaxResponseTime
+	if timeout <= 0 {
+		timeout = 5 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	body := strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"iota_getLatestCheckpointSequenceNumber","params":[]}`)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.NodeURL, body)
+	if err != nil {
+		return fmt.Errorf("IOTA node request creation failed: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("IOTA node unreachable at %s: %w", c.NodeURL, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("IOTA node returned HTTP %d", resp.StatusCode)
+	}
+
+	var result struct {
+		Error *struct {
+			Code    int    `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+		Result interface{} `json:"result"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return fmt.Errorf("IOTA node returned invalid JSON: %w", err)
+	}
+	if result.Error != nil {
+		return fmt.Errorf("IOTA node JSON-RPC error %d: %s", result.Error.Code, result.Error.Message)
+	}
+	if result.Result == nil {
+		return fmt.Errorf("IOTA node returned null result for checkpoint query")
+	}
+	return nil
+}
+
+func (c *IOTAChecker) Name() string {
+	return "iota"
 }

@@ -35,6 +35,8 @@ type Config struct {
 	IPFSStreamingBufferSize        int
 
 	IOTANodeURL             string
+	IOTAMode                string
+	IOTANetwork             string
 	IOTAWalletEncryptionKey string
 
 	FFMPEGPath string

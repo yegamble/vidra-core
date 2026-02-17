@@ -72,6 +72,47 @@
         </div>
     </div>
 
+    <!-- IOTA -->
+    <h3 style="margin-top: 30px; margin-bottom: 15px;">IOTA Payments (Optional)</h3>
+    <div class="form-group">
+        <label>
+            <input type="checkbox" name="ENABLE_IOTA" value="true" {{if .Config.EnableIOTA}}checked{{end}}>
+            Enable IOTA payment processing
+        </label>
+        <div class="help-text">Accept IOTA cryptocurrency payments. Requires an IOTA Rebased node.</div>
+    </div>
+
+    <div id="iota-config" style="{{if not .Config.EnableIOTA}}display:none{{end}}">
+        <div class="form-group">
+            <label>Network</label>
+            <select name="IOTA_NETWORK">
+                <option value="testnet" {{if eq .Config.IOTANetwork "testnet"}}selected{{end}}>Testnet (recommended for development)</option>
+                <option value="mainnet" {{if eq .Config.IOTANetwork "mainnet"}}selected{{end}}>Mainnet (production)</option>
+            </select>
+        </div>
+        <div class="form-group">
+            <div class="toggle-group" data-service="iota">
+                <div class="toggle-btn {{if eq .Config.IOTAMode "docker"}}active{{end}}" data-mode="docker">
+                    <strong>Local Docker</strong>
+                </div>
+                <div class="toggle-btn {{if eq .Config.IOTAMode "external"}}active{{end}}" data-mode="external">
+                    <strong>External Node</strong>
+                </div>
+            </div>
+            <input type="hidden" name="IOTA_MODE" value="{{or .Config.IOTAMode "docker"}}">
+        </div>
+
+        <div class="external-fields {{if eq .Config.IOTAMode "external"}}show{{end}}">
+            <div class="form-group">
+                <label for="iota_node_url">IOTA Node URL</label>
+                <input type="text" id="iota_node_url" name="IOTA_NODE_URL"
+                       value="{{.Config.IOTANodeURL}}"
+                       placeholder="http://localhost:14265">
+                <div class="help-text">JSON-RPC endpoint of your IOTA Rebased fullnode.</div>
+            </div>
+        </div>
+    </div>
+
     <!-- ClamAV -->
     <h3 style="margin-top: 30px; margin-bottom: 15px;">ClamAV (Optional - Virus Scanning)</h3>
     <div class="form-group">
@@ -96,6 +137,9 @@
 <script>
 document.querySelector('input[name="ENABLE_IPFS"]').addEventListener('change', function(e) {
     document.getElementById('ipfs-config').style.display = e.target.checked ? 'block' : 'none';
+});
+document.querySelector('input[name="ENABLE_IOTA"]').addEventListener('change', function(e) {
+    document.getElementById('iota-config').style.display = e.target.checked ? 'block' : 'none';
 });
 </script>
 {{end}}

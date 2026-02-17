@@ -122,6 +122,33 @@ services:
         reservations:
           memory: 2G
 
+  # IOTA Rebased fullnode (testnet). Pinned to v1.16.2 on 2026-02-17.
+  # JSON-RPC API version: Rebased v1.16.x (iota_ and iotax_ prefixes).
+  # Host port 14265 avoids collision with Whisper which binds host port 9000.
+  # Container-to-container: http://iota-node:9000  |  Host access: http://localhost:14265
+  # GraphQL API port 9125 — expose when GraphQL support is added in Phase 2
+  iota-node:
+    profiles: ["iota", "full"]
+    image: iotaledger/iota-node:v1.16.2
+    restart: unless-stopped
+    entrypoint: ["/entrypoint.sh"]
+    ports:
+      - "14265:9000"    # JSON-RPC (host:container)
+    volumes:
+      - iota_data:/opt/iota/db
+      - ./docker/iota/fullnode.yaml:/opt/iota/config/fullnode.yaml:ro
+      - ./docker/iota/entrypoint.sh:/entrypoint.sh:ro
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "-X", "POST", "-H", "Content-Type: application/json",
+             "-d", "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"iota_getLatestCheckpointSequenceNumber\",\"params\":[]}",
+             "http://localhost:9000"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+    networks:
+      - athena-network
+
   app:
     build: .
     restart: unless-stopped
@@ -151,6 +178,12 @@ services:
       ENABLE_IPFS: ${ENABLE_IPFS:-false}
       IPFS_API: ${IPFS_API:-http://ipfs:5001}
       REQUIRE_IPFS: ${REQUIRE_IPFS:-false}
+
+      # IOTA Rebased node (container-to-container uses port 9000; host access uses 14265)
+      ENABLE_IOTA: ${ENABLE_IOTA:-false}
+      IOTA_MODE: ${IOTA_MODE:-docker}
+      IOTA_NETWORK: ${IOTA_NETWORK:-testnet}
+      IOTA_NODE_URL: ${IOTA_NODE_URL:-http://iota-node:9000}
 
       ENABLE_CLAMAV: ${ENABLE_CLAMAV:-false}
 
@@ -303,6 +336,28 @@ services:
       timeout: 5s
       retries: 10
       start_period: 45s
+    networks:
+      - test-network
+
+  iota-node-test:
+    profiles: ["test"]
+    image: iotaledger/iota-node:v1.16.2
+    entrypoint: ["/entrypoint.sh"]
+    tmpfs:
+      - /opt/iota/db
+    ports:
+      - "19000:9000"    # JSON-RPC (host:container) — test port
+    volumes:
+      - ./docker/iota/fullnode.yaml:/opt/iota/config/fullnode.yaml:ro
+      - ./docker/iota/entrypoint.sh:/entrypoint.sh:ro
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "-X", "POST", "-H", "Content-Type: application/json",
+             "-d", "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"iota_getLatestCheckpointSequenceNumber\",\"params\":[]}",
+             "http://localhost:9000"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
     networks:
       - test-network
 
@@ -468,6 +523,8 @@ volumes:
   ipfs_data:
     driver: local
   whisper_models:
+    driver: local
+  iota_data:
     driver: local
   clamav_signatures:
     driver: local

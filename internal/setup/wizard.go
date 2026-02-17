@@ -41,6 +41,11 @@ type WizardConfig struct {
 	EnableClamAV  bool
 	EnableWhisper bool
 
+	EnableIOTA  bool
+	IOTAMode    string
+	IOTANodeURL string
+	IOTANetwork string
+
 	EnableEmail         bool
 	SMTPMode            string
 	SMTPHost            string
@@ -109,6 +114,8 @@ func NewWizard() *Wizard {
 			PostgresMode:    "docker",
 			RedisMode:       "docker",
 			IPFSMode:        "docker",
+			IOTAMode:        "docker",
+			IOTANetwork:     "testnet",
 			EnableEmail:     true,
 			SMTPMode:        "docker",
 			SMTPHost:        "localhost",

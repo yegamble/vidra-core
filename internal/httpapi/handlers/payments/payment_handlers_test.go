@@ -487,13 +487,13 @@ func TestGetTransactionHistory(t *testing.T) {
 			setupMocks: func(svc *MockPaymentService) {
 				transactions := []*domain.IOTATransaction{
 					{
-						ID:              uuid.New().String(),
-						TransactionHash: "0x1234567890abcdef",
-						AmountIOTA:      1000000,
-						TxType:          domain.TransactionTypeDeposit,
-						Status:          domain.TransactionStatusConfirmed,
-						Confirmations:   15,
-						CreatedAt:       time.Now(),
+						ID:                uuid.New().String(),
+						TransactionDigest: "0x1234567890abcdef",
+						AmountIOTA:        1000000,
+						TxType:            domain.TransactionTypeDeposit,
+						Status:            domain.TransactionStatusConfirmed,
+						Confirmations:     15,
+						CreatedAt:         time.Now(),
 					},
 				}
 				svc.On("GetTransactionHistory", mock.Anything, mock.Anything, 10, 0).
