@@ -479,3 +479,103 @@ func TestAcceptKeyExchange_Expired_410(t *testing.T) {
 
 	assert.Equal(t, http.StatusGone, rec.Code)
 }
+
+func TestRegisterIdentityKey_NoAuth_401(t *testing.T) {
+	body, _ := json.Marshal(domain.RegisterIdentityKeyRequest{
+		PublicIdentityKey: "base64-x25519-pubkey",
+		PublicSigningKey:  "base64-ed25519-pubkey",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/e2ee/keys", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+
+	newTestHandler(&mockE2EEService{}).RegisterIdentityKey(rec, req)
+
+	assert.Equal(t, http.StatusUnauthorized, rec.Code)
+}
+
+func TestGetE2EEStatus_NoAuth_401(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/e2ee/status", nil)
+	rec := httptest.NewRecorder()
+
+	newTestHandler(&mockE2EEService{}).GetE2EEStatus(rec, req)
+
+	assert.Equal(t, http.StatusUnauthorized, rec.Code)
+}
+
+func TestInitiateKeyExchange_NoAuth_401(t *testing.T) {
+	body, _ := json.Marshal(domain.InitiateKeyExchangeRequest{
+		RecipientID:     uuid.New().String(),
+		SenderPublicKey: "pub-key",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/e2ee/key-exchange/initiate", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+
+	newTestHandler(&mockE2EEService{}).InitiateKeyExchange(rec, req)
+
+	assert.Equal(t, http.StatusUnauthorized, rec.Code)
+}
+
+func TestAcceptKeyExchange_NoAuth_401(t *testing.T) {
+	body, _ := json.Marshal(domain.AcceptKeyExchangeRequest{
+		KeyExchangeID: uuid.New().String(),
+		PublicKey:     "pub-key",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/e2ee/key-exchange/accept", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+
+	newTestHandler(&mockE2EEService{}).AcceptKeyExchange(rec, req)
+
+	assert.Equal(t, http.StatusUnauthorized, rec.Code)
+}
+
+func TestGetPendingKeyExchanges_NoAuth_401(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/e2ee/key-exchange/pending", nil)
+	rec := httptest.NewRecorder()
+
+	newTestHandler(&mockE2EEService{}).GetPendingKeyExchanges(rec, req)
+
+	assert.Equal(t, http.StatusUnauthorized, rec.Code)
+}
+
+func TestStoreEncryptedMessage_NoAuth_401(t *testing.T) {
+	body, _ := json.Marshal(domain.StoreEncryptedMessageRequest{
+		RecipientID:      uuid.New().String(),
+		EncryptedContent: "ciphertext",
+		ContentNonce:     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdef",
+		Signature:        "sig",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/e2ee/messages", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+
+	newTestHandler(&mockE2EEService{}).StoreEncryptedMessage(rec, req)
+
+	assert.Equal(t, http.StatusUnauthorized, rec.Code)
+}
+
+func TestGetEncryptedMessages_NoAuth_401(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/e2ee/messages/conv-123", nil)
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("conversationId", uuid.New().String())
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	rec := httptest.NewRecorder()
+
+	newTestHandler(&mockE2EEService{}).GetEncryptedMessages(rec, req)
+
+	assert.Equal(t, http.StatusUnauthorized, rec.Code)
+}
+
+func TestGetPublicKeys_InvalidUUID_400(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/e2ee/keys/not-a-uuid", nil)
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("userId", "not-a-uuid")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	rec := httptest.NewRecorder()
+
+	newTestHandler(&mockE2EEService{}).GetPublicKeys(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+	var resp map[string]interface{}
+	_ = json.Unmarshal(rec.Body.Bytes(), &resp)
+	errObj := resp["error"].(map[string]interface{})
+	assert.Equal(t, "invalid_user_id", errObj["code"])
+}

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net"
 	"net/http"
 	"strconv"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-playground/validator/v10"
+	"github.com/google/uuid"
 
 	"athena/internal/domain"
 	"athena/internal/middleware"
@@ -32,6 +34,10 @@ func NewSecureMessagesHandler(e2eeService E2EEServiceInterface, validator *valid
 func (h *SecureMessagesHandler) RegisterIdentityKey(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	userID := GetUserIDFromContext(ctx)
+	if userID == "" {
+		WriteErrorResponse(w, http.StatusUnauthorized, "unauthorized", "Authentication required")
+		return
+	}
 
 	var req domain.RegisterIdentityKeyRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -70,6 +76,10 @@ func (h *SecureMessagesHandler) GetPublicKeys(w http.ResponseWriter, r *http.Req
 		WriteErrorResponse(w, http.StatusBadRequest, "missing_user_id", "User ID is required")
 		return
 	}
+	if _, err := uuid.Parse(targetUserID); err != nil {
+		WriteErrorResponse(w, http.StatusBadRequest, "invalid_user_id", "Invalid user ID format")
+		return
+	}
 
 	bundle, err := h.e2eeService.GetPublicKeys(ctx, targetUserID)
 	if err != nil {
@@ -87,6 +97,10 @@ func (h *SecureMessagesHandler) GetPublicKeys(w http.ResponseWriter, r *http.Req
 func (h *SecureMessagesHandler) GetE2EEStatus(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	userID := GetUserIDFromContext(ctx)
+	if userID == "" {
+		WriteErrorResponse(w, http.StatusUnauthorized, "unauthorized", "Authentication required")
+		return
+	}
 
 	status, err := h.e2eeService.GetE2EEStatus(ctx, userID)
 	if err != nil {
@@ -100,6 +114,10 @@ func (h *SecureMessagesHandler) GetE2EEStatus(w http.ResponseWriter, r *http.Req
 func (h *SecureMessagesHandler) InitiateKeyExchange(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	userID := GetUserIDFromContext(ctx)
+	if userID == "" {
+		WriteErrorResponse(w, http.StatusUnauthorized, "unauthorized", "Authentication required")
+		return
+	}
 
 	var req domain.InitiateKeyExchangeRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -141,6 +159,10 @@ func (h *SecureMessagesHandler) InitiateKeyExchange(w http.ResponseWriter, r *ht
 func (h *SecureMessagesHandler) AcceptKeyExchange(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	userID := GetUserIDFromContext(ctx)
+	if userID == "" {
+		WriteErrorResponse(w, http.StatusUnauthorized, "unauthorized", "Authentication required")
+		return
+	}
 
 	var req domain.AcceptKeyExchangeRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -183,6 +205,10 @@ func (h *SecureMessagesHandler) AcceptKeyExchange(w http.ResponseWriter, r *http
 func (h *SecureMessagesHandler) GetPendingKeyExchanges(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	userID := GetUserIDFromContext(ctx)
+	if userID == "" {
+		WriteErrorResponse(w, http.StatusUnauthorized, "unauthorized", "Authentication required")
+		return
+	}
 
 	keyExchanges, err := h.e2eeService.GetPendingKeyExchanges(ctx, userID)
 	if err != nil {
@@ -199,6 +225,10 @@ func (h *SecureMessagesHandler) GetPendingKeyExchanges(w http.ResponseWriter, r 
 func (h *SecureMessagesHandler) StoreEncryptedMessage(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	userID := GetUserIDFromContext(ctx)
+	if userID == "" {
+		WriteErrorResponse(w, http.StatusUnauthorized, "unauthorized", "Authentication required")
+		return
+	}
 
 	var req domain.StoreEncryptedMessageRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -239,6 +269,10 @@ func (h *SecureMessagesHandler) StoreEncryptedMessage(w http.ResponseWriter, r *
 func (h *SecureMessagesHandler) GetEncryptedMessages(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	userID := GetUserIDFromContext(ctx)
+	if userID == "" {
+		WriteErrorResponse(w, http.StatusUnauthorized, "unauthorized", "Authentication required")
+		return
+	}
 	conversationID := chi.URLParam(r, "conversationId")
 
 	if conversationID == "" {
@@ -331,23 +365,21 @@ func isPrivateIP(ip string) bool {
 func WriteJSONResponse(w http.ResponseWriter, statusCode int, data interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)
-	err := json.NewEncoder(w).Encode(data)
-	if err != nil {
-		http.Error(w, `{"error": {"code": "internal_error", "message": "Failed to encode response"}}`, http.StatusInternalServerError)
+	if err := json.NewEncoder(w).Encode(data); err != nil {
+		log.Printf("ERROR: failed to encode JSON response: %v", err)
 	}
 }
 
 func WriteErrorResponse(w http.ResponseWriter, statusCode int, errorCode, message string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)
-	err := json.NewEncoder(w).Encode(map[string]interface{}{
+	if err := json.NewEncoder(w).Encode(map[string]interface{}{
 		"error": map[string]interface{}{
 			"code":    errorCode,
 			"message": message,
 		},
-	})
-	if err != nil {
-		http.Error(w, `{"error": {"code": "internal_error", "message": "Failed to encode error response"}}`, http.StatusInternalServerError)
+	}); err != nil {
+		log.Printf("ERROR: failed to encode error response: %v", err)
 	}
 }
 
@@ -368,15 +400,14 @@ func WriteValidationErrorResponse(w http.ResponseWriter, err error) {
 		}
 	}
 
-	err = json.NewEncoder(w).Encode(map[string]interface{}{
+	if err := json.NewEncoder(w).Encode(map[string]interface{}{
 		"error": map[string]interface{}{
 			"code":    "validation_failed",
 			"message": "Validation failed",
 			"details": validationErrors,
 		},
-	})
-	if err != nil {
-		http.Error(w, `{"error": {"code": "internal_error", "message": "Failed to encode validation error response"}}`, http.StatusInternalServerError)
+	}); err != nil {
+		log.Printf("ERROR: failed to encode validation error response: %v", err)
 	}
 }
 

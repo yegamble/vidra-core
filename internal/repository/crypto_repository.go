@@ -57,7 +57,7 @@ func (r *CryptoRepository) GetConversationKey(ctx context.Context, conversationI
 	err := r.db.GetContext(ctx, &key, query, conversationID, userID, keyVersion)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			return nil, nil
+			return nil, domain.ErrNotFound
 		}
 		return nil, fmt.Errorf("failed to get conversation key: %w", err)
 	}
@@ -79,7 +79,7 @@ func (r *CryptoRepository) GetActiveConversationKey(ctx context.Context, convers
 	err := r.db.GetContext(ctx, &key, query, conversationID, userID)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			return nil, nil
+			return nil, domain.ErrNotFound
 		}
 		return nil, fmt.Errorf("failed to get active conversation key: %w", err)
 	}

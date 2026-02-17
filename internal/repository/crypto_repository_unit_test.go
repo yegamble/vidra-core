@@ -116,7 +116,7 @@ func TestCryptoRepository_Unit_ConversationKey_Get(t *testing.T) {
 
 		key, err := repo.GetConversationKey(ctx, conversationID, userID, keyVersion)
 		require.Nil(t, key)
-		require.NoError(t, err)
+		require.ErrorIs(t, err, domain.ErrNotFound)
 		require.NoError(t, mock.ExpectationsWereMet())
 	})
 
@@ -174,7 +174,7 @@ func TestCryptoRepository_Unit_ConversationKey_GetActive(t *testing.T) {
 
 		key, err := repo.GetActiveConversationKey(ctx, conversationID, userID)
 		require.Nil(t, key)
-		require.NoError(t, err)
+		require.ErrorIs(t, err, domain.ErrNotFound)
 		require.NoError(t, mock.ExpectationsWereMet())
 	})
 }
