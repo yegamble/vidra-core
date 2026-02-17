@@ -19,6 +19,7 @@ import (
 	"athena/internal/backup"
 	"athena/internal/config"
 	"athena/internal/database"
+	"athena/internal/email"
 	"athena/internal/httpapi"
 	"athena/internal/httpapi/shared"
 	"athena/internal/ipfs"
@@ -66,50 +67,53 @@ type Application struct {
 }
 
 type Dependencies struct {
-	UserRepo          usecase.UserRepository
-	VideoRepo         usecase.VideoRepository
-	UploadRepo        usecase.UploadRepository
-	EncodingRepo      usecase.EncodingRepository
-	MessageRepo       usecase.MessageRepository
-	AuthRepo          usecase.AuthRepository
-	OAuthRepo         usecase.OAuthRepository
-	SubRepo           usecase.SubscriptionRepository
-	ViewsRepo         *repository.ViewsRepository
-	NotificationRepo  *repository.NotificationRepository
-	ChannelRepo       *repository.ChannelRepository
-	CommentRepo       usecase.CommentRepository
-	RatingRepo        usecase.RatingRepository
-	PlaylistRepo      usecase.PlaylistRepository
-	CaptionRepo       usecase.CaptionRepository
-	ModerationRepo    *repository.ModerationRepository
-	FederationRepo    *repository.FederationRepository
-	HardeningRepo     *repository.FederationHardeningRepository
-	ImportRepo        *repository.ImportRepository
-	SessionRepo       usecase.AuthRepository
-	LiveStreamRepo    repository.LiveStreamRepository
-	StreamKeyRepo     repository.StreamKeyRepository
-	ViewerSessionRepo repository.ViewerSessionRepository
-	IOTARepo          *repository.IOTARepository
+	UserRepo              usecase.UserRepository
+	VideoRepo             usecase.VideoRepository
+	UploadRepo            usecase.UploadRepository
+	EncodingRepo          usecase.EncodingRepository
+	MessageRepo           usecase.MessageRepository
+	AuthRepo              usecase.AuthRepository
+	OAuthRepo             usecase.OAuthRepository
+	SubRepo               usecase.SubscriptionRepository
+	ViewsRepo             *repository.ViewsRepository
+	NotificationRepo      *repository.NotificationRepository
+	ChannelRepo           *repository.ChannelRepository
+	CommentRepo           usecase.CommentRepository
+	RatingRepo            usecase.RatingRepository
+	PlaylistRepo          usecase.PlaylistRepository
+	CaptionRepo           usecase.CaptionRepository
+	ModerationRepo        *repository.ModerationRepository
+	FederationRepo        *repository.FederationRepository
+	HardeningRepo         *repository.FederationHardeningRepository
+	ImportRepo            *repository.ImportRepository
+	SessionRepo           usecase.AuthRepository
+	LiveStreamRepo        repository.LiveStreamRepository
+	StreamKeyRepo         repository.StreamKeyRepository
+	ViewerSessionRepo     repository.ViewerSessionRepository
+	IOTARepo              *repository.IOTARepository
+	EmailVerificationRepo usecase.EmailVerificationRepository
 
-	UploadService        ucup.Service
-	MessageService       *usecase.MessageService
-	ViewsService         *ucviews.Service
-	NotificationService  ucn.Service
-	ChannelService       *ucchannel.Service
-	CommentService       *uccmt.Service
-	RatingService        *ucrt.Service
-	PlaylistService      *usecase.PlaylistService
-	CaptionService       *usecase.CaptionService
-	ActivityPubService   *ucactivitypub.Service
-	AtprotoService       usecase.AtprotoPublisher
-	FederationService    usecase.FederationService
-	HardeningService     *usecase.FederationHardeningService
-	EncodingService      ucenc.Service
-	ImportService        any
-	PaymentService       *ucpayments.PaymentService
-	StreamManager        *livestream.StreamManager
-	IPFSStreamingService *ucipfs.Service
-	IPFSClient           *ipfs.Client
+	UploadService            ucup.Service
+	EmailService             email.EmailService
+	EmailVerificationService *usecase.EmailVerificationService
+	MessageService           *usecase.MessageService
+	ViewsService             *ucviews.Service
+	NotificationService      ucn.Service
+	ChannelService           *ucchannel.Service
+	CommentService           *uccmt.Service
+	RatingService            *ucrt.Service
+	PlaylistService          *usecase.PlaylistService
+	CaptionService           *usecase.CaptionService
+	ActivityPubService       *ucactivitypub.Service
+	AtprotoService           usecase.AtprotoPublisher
+	FederationService        usecase.FederationService
+	HardeningService         *usecase.FederationHardeningService
+	EncodingService          ucenc.Service
+	ImportService            any
+	PaymentService           *ucpayments.PaymentService
+	StreamManager            *livestream.StreamManager
+	IPFSStreamingService     *ucipfs.Service
+	IPFSClient               *ipfs.Client
 }
 
 func New(cfg *config.Config) (*Application, error) {
@@ -236,32 +240,48 @@ func (app *Application) verifyIPFSConnection() error {
 
 func (app *Application) initializeDependencies() *Dependencies {
 	deps := &Dependencies{
-		UserRepo:          repository.NewUserRepository(app.DB),
-		VideoRepo:         repository.NewVideoRepository(app.DB),
-		UploadRepo:        repository.NewUploadRepository(app.DB),
-		EncodingRepo:      repository.NewEncodingRepository(app.DB),
-		MessageRepo:       repository.NewMessageRepository(app.DB),
-		AuthRepo:          repository.NewAuthRepository(app.DB),
-		OAuthRepo:         repository.NewOAuthRepository(app.DB),
-		SubRepo:           repository.NewSubscriptionRepository(app.DB),
-		ViewsRepo:         repository.NewViewsRepository(app.DB),
-		NotificationRepo:  repository.NewNotificationRepository(app.DB),
-		ChannelRepo:       repository.NewChannelRepository(app.DB),
-		CommentRepo:       repository.NewCommentRepository(app.DB),
-		RatingRepo:        repository.NewRatingRepository(app.DB),
-		PlaylistRepo:      repository.NewPlaylistRepository(app.DB),
-		CaptionRepo:       repository.NewCaptionRepository(app.DB),
-		ModerationRepo:    repository.NewModerationRepository(app.DB),
-		FederationRepo:    repository.NewFederationRepository(app.DB),
-		HardeningRepo:     repository.NewFederationHardeningRepository(app.DB),
-		ImportRepo:        repository.NewImportRepository(app.DB),
-		LiveStreamRepo:    repository.NewLiveStreamRepository(app.DB),
-		StreamKeyRepo:     repository.NewStreamKeyRepository(app.DB),
-		ViewerSessionRepo: repository.NewViewerSessionRepository(app.DB),
+		UserRepo:              repository.NewUserRepository(app.DB),
+		VideoRepo:             repository.NewVideoRepository(app.DB),
+		UploadRepo:            repository.NewUploadRepository(app.DB),
+		EncodingRepo:          repository.NewEncodingRepository(app.DB),
+		MessageRepo:           repository.NewMessageRepository(app.DB),
+		AuthRepo:              repository.NewAuthRepository(app.DB),
+		OAuthRepo:             repository.NewOAuthRepository(app.DB),
+		SubRepo:               repository.NewSubscriptionRepository(app.DB),
+		ViewsRepo:             repository.NewViewsRepository(app.DB),
+		NotificationRepo:      repository.NewNotificationRepository(app.DB),
+		ChannelRepo:           repository.NewChannelRepository(app.DB),
+		CommentRepo:           repository.NewCommentRepository(app.DB),
+		RatingRepo:            repository.NewRatingRepository(app.DB),
+		PlaylistRepo:          repository.NewPlaylistRepository(app.DB),
+		CaptionRepo:           repository.NewCaptionRepository(app.DB),
+		ModerationRepo:        repository.NewModerationRepository(app.DB),
+		FederationRepo:        repository.NewFederationRepository(app.DB),
+		HardeningRepo:         repository.NewFederationHardeningRepository(app.DB),
+		ImportRepo:            repository.NewImportRepository(app.DB),
+		LiveStreamRepo:        repository.NewLiveStreamRepository(app.DB),
+		StreamKeyRepo:         repository.NewStreamKeyRepository(app.DB),
+		ViewerSessionRepo:     repository.NewViewerSessionRepository(app.DB),
+		EmailVerificationRepo: repository.NewEmailVerificationRepository(app.DB),
 	}
 
 	if app.Config.EnableIOTA {
 		deps.IOTARepo = repository.NewIOTARepository(app.DB)
+	}
+
+	if app.Config.EnableEmail {
+		emailConfig := email.NewConfigFromAppConfig(app.Config)
+		deps.EmailService = email.NewService(emailConfig)
+
+		if emailConfig.SMTPHost == "" {
+			log.Println("WARNING: Email enabled but SMTP_HOST is empty - email functionality will not work")
+		}
+
+		deps.EmailVerificationService = usecase.NewEmailVerificationService(
+			deps.UserRepo,
+			deps.EmailVerificationRepo,
+			deps.EmailService,
+		)
 	}
 
 	redisSessionRepo := repository.NewRedisSessionRepository(app.Redis)

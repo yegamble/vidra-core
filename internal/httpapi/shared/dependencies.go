@@ -5,6 +5,7 @@ import (
 
 	redis "github.com/redis/go-redis/v9"
 
+	"athena/internal/email"
 	"athena/internal/httpapi/handlers/payments"
 	"athena/internal/livestream"
 	"athena/internal/port"
@@ -23,51 +24,54 @@ import (
 )
 
 type HandlerDependencies struct {
-	UserRepo          usecase.UserRepository
-	VideoRepo         usecase.VideoRepository
-	UploadRepo        usecase.UploadRepository
-	EncodingRepo      usecase.EncodingRepository
-	MessageRepo       usecase.MessageRepository
-	AuthRepo          usecase.AuthRepository
-	OAuthRepo         usecase.OAuthRepository
-	SubRepo           usecase.SubscriptionRepository
-	ViewsRepo         *repository.ViewsRepository
-	NotificationRepo  *repository.NotificationRepository
-	ChannelRepo       *repository.ChannelRepository
-	CommentRepo       usecase.CommentRepository
-	RatingRepo        usecase.RatingRepository
-	PlaylistRepo      usecase.PlaylistRepository
-	CaptionRepo       usecase.CaptionRepository
-	ModerationRepo    *repository.ModerationRepository
-	FederationRepo    *repository.FederationRepository
-	HardeningRepo     *repository.FederationHardeningRepository
-	ActivityPubRepo   *repository.ActivityPubRepository
-	SessionRepo       usecase.AuthRepository
-	LiveStreamRepo    repository.LiveStreamRepository
-	StreamKeyRepo     repository.StreamKeyRepository
-	ViewerSessionRepo repository.ViewerSessionRepository
+	UserRepo              usecase.UserRepository
+	VideoRepo             usecase.VideoRepository
+	UploadRepo            usecase.UploadRepository
+	EncodingRepo          usecase.EncodingRepository
+	MessageRepo           usecase.MessageRepository
+	AuthRepo              usecase.AuthRepository
+	OAuthRepo             usecase.OAuthRepository
+	SubRepo               usecase.SubscriptionRepository
+	ViewsRepo             *repository.ViewsRepository
+	NotificationRepo      *repository.NotificationRepository
+	ChannelRepo           *repository.ChannelRepository
+	CommentRepo           usecase.CommentRepository
+	RatingRepo            usecase.RatingRepository
+	PlaylistRepo          usecase.PlaylistRepository
+	CaptionRepo           usecase.CaptionRepository
+	ModerationRepo        *repository.ModerationRepository
+	FederationRepo        *repository.FederationRepository
+	HardeningRepo         *repository.FederationHardeningRepository
+	ActivityPubRepo       *repository.ActivityPubRepository
+	SessionRepo           usecase.AuthRepository
+	LiveStreamRepo        repository.LiveStreamRepository
+	StreamKeyRepo         repository.StreamKeyRepository
+	ViewerSessionRepo     repository.ViewerSessionRepository
+	EmailVerificationRepo usecase.EmailVerificationRepository
 
-	UploadService        ucup.Service
-	MessageService       *usecase.MessageService
-	ViewsService         *ucviews.Service
-	NotificationService  ucn.Service
-	ChannelService       *ucchannel.Service
-	CommentService       *uccmt.Service
-	RatingService        *ucrt.Service
-	PlaylistService      *usecase.PlaylistService
-	CaptionService       *usecase.CaptionService
-	TwoFAService         *usecase.TwoFAService
-	PaymentService       payments.PaymentService
-	AtprotoService       usecase.AtprotoPublisher
-	FederationService    usecase.FederationService
-	HardeningService     *usecase.FederationHardeningService
-	EncodingService      encoding.Service
-	ActivityPubService   port.ActivityPubService
-	ImportService        any
-	StreamManager        *livestream.StreamManager
-	HLSTranscoder        *livestream.HLSTranscoder
-	IPFSStreamingService *ucipfs.Service
-	BackupService        *ucbackup.Service
+	UploadService            ucup.Service
+	EmailService             email.EmailService
+	EmailVerificationService *usecase.EmailVerificationService
+	MessageService           *usecase.MessageService
+	ViewsService             *ucviews.Service
+	NotificationService      ucn.Service
+	ChannelService           *ucchannel.Service
+	CommentService           *uccmt.Service
+	RatingService            *ucrt.Service
+	PlaylistService          *usecase.PlaylistService
+	CaptionService           *usecase.CaptionService
+	TwoFAService             *usecase.TwoFAService
+	PaymentService           payments.PaymentService
+	AtprotoService           usecase.AtprotoPublisher
+	FederationService        usecase.FederationService
+	HardeningService         *usecase.FederationHardeningService
+	EncodingService          encoding.Service
+	ActivityPubService       port.ActivityPubService
+	ImportService            any
+	StreamManager            *livestream.StreamManager
+	HLSTranscoder            *livestream.HLSTranscoder
+	IPFSStreamingService     *ucipfs.Service
+	BackupService            *ucbackup.Service
 
 	EncodingScheduler *scheduler.EncodingScheduler
 

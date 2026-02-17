@@ -257,6 +257,19 @@ func loadCommonFields(cfg *Config, setupMode bool) {
 	cfg.HybridPreferIPFS = getBoolEnv("HYBRID_PREFER_IPFS", false)
 	cfg.HybridFallbackTimeout = time.Duration(getIntEnv("HYBRID_FALLBACK_TIMEOUT", 10)) * time.Second
 
+	cfg.EnableEmail = getBoolEnv("ENABLE_EMAIL", false)
+	cfg.SMTPTransport = getEnvOrDefault("SMTP_TRANSPORT", "smtp")
+	cfg.SMTPSendmailPath = getEnvOrDefault("SMTP_SENDMAIL_PATH", "/usr/sbin/sendmail")
+	cfg.SMTPHost = getEnvOrDefault("SMTP_HOST", "localhost")
+	cfg.SMTPPort = getIntEnv("SMTP_PORT", 1025)
+	cfg.SMTPUsername = getEnvOrDefault("SMTP_USERNAME", "")
+	cfg.SMTPPassword = getEnvOrDefault("SMTP_PASSWORD", "")
+	cfg.SMTPTLS = getBoolEnv("SMTP_TLS", false)
+	cfg.SMTPDisableSTARTTLS = getBoolEnv("SMTP_DISABLE_STARTTLS", false)
+	cfg.SMTPCAFile = getEnvOrDefault("SMTP_CA_FILE", "")
+	cfg.SMTPFromAddress = getEnvOrDefault("SMTP_FROM", "noreply@localhost")
+	cfg.SMTPFromName = getEnvOrDefault("SMTP_FROM_NAME", "Athena")
+
 	cfg.VirusScanEnabled = getBoolEnv("VIRUS_SCAN_ENABLED", prodDefault(setupMode, true, false))
 	cfg.ClamAVAddress = getEnvOrDefault("CLAMAV_ADDRESS", "localhost:3310")
 	cfg.VirusScanTimeout = getIntEnv("VIRUS_SCAN_TIMEOUT", 300)

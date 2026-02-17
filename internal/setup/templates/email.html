@@ -1,0 +1,148 @@
+{{define "content"}}
+<h2 style="margin-bottom: 20px;">Email Configuration</h2>
+
+<p style="margin-bottom: 20px; color: #6b7280;">
+    Configure email delivery for user verification, password resets, and notifications.
+</p>
+
+<form id="wizardForm" action="/setup/email" method="POST">
+    <h3 style="margin-top: 30px; margin-bottom: 15px;">Email Mode</h3>
+    <div class="form-group">
+        <div class="toggle-group" data-service="email">
+            <div class="toggle-btn {{if eq .Config.SMTPMode "docker"}}active{{end}}" data-mode="docker">
+                <strong>Built-in (Mailpit)</strong>
+                <div style="font-size: 12px; color: #6b7280;">Development/Testing</div>
+            </div>
+            <div class="toggle-btn {{if eq .Config.SMTPMode "external"}}active{{end}}" data-mode="external">
+                <strong>External SMTP</strong>
+                <div style="font-size: 12px; color: #6b7280;">Production (SES, Mailgun, etc.)</div>
+            </div>
+            <div class="toggle-btn {{if eq .Config.SMTPMode "disabled"}}active{{end}}" data-mode="disabled">
+                <strong>Disabled</strong>
+                <div style="font-size: 12px; color: #6b7280;">No email functionality</div>
+            </div>
+        </div>
+        <input type="hidden" name="SMTP_MODE" value="{{or .Config.SMTPMode "docker"}}">
+        <input type="hidden" name="ENABLE_EMAIL" value="{{if .Config.EnableEmail}}true{{else}}false{{end}}">
+    </div>
+
+    <div id="docker-info" class="alert alert-info" style="{{if ne .Config.SMTPMode "docker"}}display:none{{end}}">
+        <strong>Built-in Mail Server (Mailpit)</strong>
+        <p style="margin-top: 10px;">For development and testing. All emails are captured locally.</p>
+        <ul style="margin-top: 10px; margin-left: 20px;">
+            <li>No configuration required</li>
+            <li>View all emails at <code>http://localhost:8025</code></li>
+            <li>No emails are actually sent to recipients</li>
+        </ul>
+    </div>
+
+    <div class="external-fields" style="{{if ne .Config.SMTPMode "external"}}display:none{{end}}">
+        <h4 style="margin-top: 30px; margin-bottom: 15px;">SMTP Server Settings</h4>
+
+        <div class="form-group">
+            <label for="smtp_host">SMTP Host *</label>
+            <input type="text" id="smtp_host" name="SMTP_HOST"
+                   value="{{.Config.SMTPHost}}"
+                   placeholder="smtp.mailgun.org">
+            <div class="help-text">Your SMTP relay hostname</div>
+        </div>
+
+        <div class="form-group">
+            <label for="smtp_port">SMTP Port</label>
+            <input type="number" id="smtp_port" name="SMTP_PORT"
+                   value="{{.Config.SMTPPort}}"
+                   placeholder="587">
+            <div class="help-text">Port 587 (STARTTLS) or 465 (Implicit TLS)</div>
+        </div>
+
+        <div class="form-group">
+            <label for="smtp_username">SMTP Username</label>
+            <input type="text" id="smtp_username" name="SMTP_USERNAME"
+                   value="{{.Config.SMTPUsername}}"
+                   placeholder="username or email">
+        </div>
+
+        <div class="form-group">
+            <label for="smtp_password">SMTP Password</label>
+            <input type="password" id="smtp_password" name="SMTP_PASSWORD"
+                   value="{{.Config.SMTPPassword}}"
+                   placeholder="password or API key">
+        </div>
+
+        <h4 style="margin-top: 30px; margin-bottom: 15px;">TLS Configuration</h4>
+
+        <div class="form-group">
+            <label>
+                <input type="checkbox" name="SMTP_TLS" value="true" {{if .Config.SMTPTLS}}checked{{end}}>
+                Force TLS connection (for port 465)
+            </label>
+            <div class="help-text">Enable for implicit TLS on port 465</div>
+        </div>
+
+        <div class="form-group">
+            <label>
+                <input type="checkbox" name="SMTP_DISABLE_STARTTLS" value="true" {{if .Config.SMTPDisableSTARTTLS}}checked{{end}}>
+                Disable STARTTLS (for local dev servers only)
+            </label>
+            <div class="help-text">Only check for unencrypted local testing</div>
+        </div>
+    </div>
+
+    <div style="{{if eq .Config.SMTPMode "disabled"}}display:block{{else}}display:none{{end}}" id="disabled-info" class="alert alert-warning">
+        <strong>Email Disabled</strong>
+        <p style="margin-top: 10px;">Users will not be able to:</p>
+        <ul style="margin-top: 10px; margin-left: 20px;">
+            <li>Verify their email addresses</li>
+            <li>Reset forgotten passwords</li>
+            <li>Receive notifications</li>
+        </ul>
+    </div>
+
+    <div style="{{if eq .Config.SMTPMode "disabled"}}display:none{{end}}" id="from-fields">
+        <h4 style="margin-top: 30px; margin-bottom: 15px;">Sender Configuration</h4>
+
+        <div class="form-group">
+            <label for="smtp_from">From Email Address *</label>
+            <input type="email" id="smtp_from" name="SMTP_FROM_ADDRESS"
+                   value="{{.Config.SMTPFromAddress}}"
+                   placeholder="noreply@yourdomain.com">
+            <div class="help-text">Email address that appears as the sender</div>
+        </div>
+
+        <div class="form-group">
+            <label for="smtp_from_name">From Name</label>
+            <input type="text" id="smtp_from_name" name="SMTP_FROM_NAME"
+                   value="{{or .Config.SMTPFromName "Athena"}}"
+                   placeholder="Athena">
+            <div class="help-text">Display name for the sender</div>
+        </div>
+    </div>
+</form>
+
+<script>
+// Toggle mode selection
+document.querySelectorAll('.toggle-group[data-service="email"] .toggle-btn').forEach(btn => {
+    btn.addEventListener('click', function() {
+        const mode = this.dataset.mode;
+        const group = this.closest('.toggle-group');
+
+        // Update active state
+        group.querySelectorAll('.toggle-btn').forEach(b => b.classList.remove('active'));
+        this.classList.add('active');
+
+        // Update hidden input
+        group.parentElement.querySelector('input[name="SMTP_MODE"]').value = mode;
+
+        // Update ENABLE_EMAIL based on mode
+        const enableEmailInput = group.parentElement.querySelector('input[name="ENABLE_EMAIL"]');
+        enableEmailInput.value = mode !== 'disabled' ? 'true' : 'false';
+
+        // Show/hide relevant sections
+        document.querySelector('.external-fields').style.display = mode === 'external' ? 'block' : 'none';
+        document.getElementById('docker-info').style.display = mode === 'docker' ? 'block' : 'none';
+        document.getElementById('disabled-info').style.display = mode === 'disabled' ? 'block' : 'none';
+        document.getElementById('from-fields').style.display = mode === 'disabled' ? 'none' : 'block';
+    });
+});
+</script>
+{{end}}

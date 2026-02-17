@@ -268,3 +268,109 @@ func TestWriteEnvFileNginxDisabled(t *testing.T) {
 	assert.NotContains(t, contentStr, "NGINX_PROTOCOL=")
 	assert.Contains(t, contentStr, "PUBLIC_BASE_URL=http://localhost:8080")
 }
+
+func TestWriteEnvFileWithEmailDocker(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping file I/O test in short mode")
+	}
+
+	tmpDir := t.TempDir()
+	envPath := filepath.Join(tmpDir, ".env")
+
+	config := &WizardConfig{
+		PostgresMode:    "docker",
+		RedisMode:       "docker",
+		EnableEmail:     true,
+		SMTPHost:        "localhost",
+		SMTPPort:        1025,
+		SMTPFromAddress: "noreply@localhost",
+		SMTPFromName:    "Athena",
+		StoragePath:     "./data/storage",
+		JWTSecret:       "test-secret-at-least-32-characters",
+		NginxEnabled:    false,
+	}
+
+	err := WriteEnvFile(envPath, config)
+	require.NoError(t, err)
+
+	content, err := os.ReadFile(envPath)
+	require.NoError(t, err)
+
+	contentStr := string(content)
+	assert.Contains(t, contentStr, "ENABLE_EMAIL=true")
+	assert.Contains(t, contentStr, "SMTP_TRANSPORT=smtp")
+	assert.Contains(t, contentStr, "SMTP_HOST=localhost")
+	assert.Contains(t, contentStr, "SMTP_PORT=1025")
+	assert.Contains(t, contentStr, "SMTP_FROM=noreply@localhost")
+	assert.Contains(t, contentStr, "SMTP_FROM_NAME=Athena")
+	assert.Contains(t, contentStr, "SMTP_TLS=false")
+}
+
+func TestWriteEnvFileWithEmailExternal(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping file I/O test in short mode")
+	}
+
+	tmpDir := t.TempDir()
+	envPath := filepath.Join(tmpDir, ".env")
+
+	config := &WizardConfig{
+		PostgresMode:        "docker",
+		RedisMode:           "docker",
+		EnableEmail:         true,
+		SMTPHost:            "smtp.mailgun.org",
+		SMTPPort:            587,
+		SMTPUsername:        "postmaster@example.com",
+		SMTPPassword:        "secret",
+		SMTPTLS:             false,
+		SMTPDisableSTARTTLS: false,
+		SMTPFromAddress:     "noreply@example.com",
+		SMTPFromName:        "My Platform",
+		StoragePath:         "./data/storage",
+		JWTSecret:           "test-secret-at-least-32-characters",
+		NginxEnabled:        false,
+	}
+
+	err := WriteEnvFile(envPath, config)
+	require.NoError(t, err)
+
+	content, err := os.ReadFile(envPath)
+	require.NoError(t, err)
+
+	contentStr := string(content)
+	assert.Contains(t, contentStr, "ENABLE_EMAIL=true")
+	assert.Contains(t, contentStr, "SMTP_HOST=smtp.mailgun.org")
+	assert.Contains(t, contentStr, "SMTP_PORT=587")
+	assert.Contains(t, contentStr, "SMTP_USERNAME=postmaster@example.com")
+	assert.Contains(t, contentStr, "SMTP_PASSWORD=secret")
+	assert.Contains(t, contentStr, "SMTP_FROM=noreply@example.com")
+	assert.Contains(t, contentStr, "SMTP_FROM_NAME=My Platform")
+}
+
+func TestWriteEnvFileEmailDisabled(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping file I/O test in short mode")
+	}
+
+	tmpDir := t.TempDir()
+	envPath := filepath.Join(tmpDir, ".env")
+
+	config := &WizardConfig{
+		PostgresMode: "docker",
+		RedisMode:    "docker",
+		EnableEmail:  false,
+		StoragePath:  "./data/storage",
+		JWTSecret:    "test-secret-at-least-32-characters",
+		NginxEnabled: false,
+	}
+
+	err := WriteEnvFile(envPath, config)
+	require.NoError(t, err)
+
+	content, err := os.ReadFile(envPath)
+	require.NoError(t, err)
+
+	contentStr := string(content)
+	assert.Contains(t, contentStr, "ENABLE_EMAIL=false")
+	assert.NotContains(t, contentStr, "SMTP_HOST=")
+}

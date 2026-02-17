@@ -72,7 +72,7 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 		deps.UserRepo,
 		deps.SessionRepo,
 		deps.OAuthRepo,
-		nil,
+		deps.EmailVerificationService,
 		deps.JWTSecret,
 		deps.Redis,
 		deps.RedisPingTimeout,
@@ -95,6 +95,12 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 		r.Post("/regenerate-backup-codes", twoFAHandlers.RegenerateBackupCodes)
 		r.Get("/status", twoFAHandlers.GetTwoFAStatus)
 	})
+
+	if deps.EmailVerificationService != nil {
+		emailVerificationHandlers := auth.NewEmailVerificationHandlers(deps.EmailVerificationService)
+		r.Post("/auth/email/verify", emailVerificationHandlers.VerifyEmail)
+		r.Post("/auth/email/resend", emailVerificationHandlers.ResendVerification)
+	}
 
 	r.Post("/oauth/token", authHandlers.OAuthToken)
 	r.HandleFunc("/oauth/authorize", authHandlers.OAuthAuthorize)

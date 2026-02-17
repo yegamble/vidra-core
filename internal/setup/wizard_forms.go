@@ -3,6 +3,7 @@ package setup
 import (
 	"fmt"
 	"net/http"
+	"strconv"
 )
 
 func (w *Wizard) processDatabaseForm(rw http.ResponseWriter, r *http.Request) {
@@ -44,6 +45,63 @@ func (w *Wizard) processServicesForm(rw http.ResponseWriter, r *http.Request) {
 	w.config.IPFSAPIUrl = r.FormValue("IPFS_API_URL")
 	w.config.EnableClamAV = r.FormValue("ENABLE_CLAMAV") == "true"
 	w.config.EnableWhisper = r.FormValue("ENABLE_WHISPER") == "true"
+
+	http.Redirect(rw, r, "/setup/email", http.StatusSeeOther)
+}
+
+func (w *Wizard) processEmailForm(rw http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(rw, "Invalid form data", http.StatusBadRequest)
+		return
+	}
+
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	smtpMode := r.FormValue("SMTP_MODE")
+	w.config.SMTPMode = smtpMode
+	w.config.EnableEmail = smtpMode != "disabled"
+
+	switch smtpMode {
+	case "disabled":
+		http.Redirect(rw, r, "/setup/networking", http.StatusSeeOther)
+		return
+	case "docker":
+		w.config.SMTPHost = "localhost"
+		w.config.SMTPPort = 1025
+		w.config.SMTPUsername = ""
+		w.config.SMTPPassword = ""
+		w.config.SMTPTLS = false
+		w.config.SMTPDisableSTARTTLS = false
+	case "external":
+		w.config.SMTPHost = r.FormValue("SMTP_HOST")
+		portStr := r.FormValue("SMTP_PORT")
+		if portStr != "" {
+			port, err := strconv.Atoi(portStr)
+			if err != nil || port <= 0 || port > 65535 {
+				http.Error(rw, "Invalid SMTP port number", http.StatusBadRequest)
+				return
+			}
+			w.config.SMTPPort = port
+		}
+		w.config.SMTPUsername = r.FormValue("SMTP_USERNAME")
+		w.config.SMTPPassword = r.FormValue("SMTP_PASSWORD")
+		w.config.SMTPTLS = r.FormValue("SMTP_TLS") == "true"
+		w.config.SMTPDisableSTARTTLS = r.FormValue("SMTP_DISABLE_STARTTLS") == "true"
+
+		if w.config.SMTPHost == "" {
+			http.Error(rw, "SMTP host is required for external mode", http.StatusBadRequest)
+			return
+		}
+	}
+
+	w.config.SMTPFromAddress = r.FormValue("SMTP_FROM_ADDRESS")
+	w.config.SMTPFromName = r.FormValue("SMTP_FROM_NAME")
+
+	if w.config.SMTPFromAddress == "" {
+		http.Error(rw, "From address is required", http.StatusBadRequest)
+		return
+	}
 
 	http.Redirect(rw, r, "/setup/networking", http.StatusSeeOther)
 }

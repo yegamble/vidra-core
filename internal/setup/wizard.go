@@ -5,11 +5,16 @@ import (
 	"crypto/rand"
 	"embed"
 	"encoding/base64"
+	"encoding/json"
 	"html/template"
 	"log"
+	"net"
 	"net/http"
+	"strings"
 	"sync"
+	"time"
 
+	"athena/internal/email"
 	"athena/internal/sysinfo"
 )
 
@@ -17,9 +22,10 @@ import (
 var templatesFS embed.FS
 
 type Wizard struct {
-	templates *template.Template
-	config    *WizardConfig
-	mu        sync.Mutex
+	templates      *template.Template
+	config         *WizardConfig
+	mu             sync.Mutex
+	testEmailLimit map[string][]int64
 }
 
 type WizardConfig struct {
@@ -34,6 +40,17 @@ type WizardConfig struct {
 	IPFSAPIUrl    string
 	EnableClamAV  bool
 	EnableWhisper bool
+
+	EnableEmail         bool
+	SMTPMode            string
+	SMTPHost            string
+	SMTPPort            int
+	SMTPUsername        string
+	SMTPPassword        string
+	SMTPFromAddress     string
+	SMTPFromName        string
+	SMTPTLS             bool
+	SMTPDisableSTARTTLS bool
 
 	StoragePath     string
 	BackupEnabled   bool
@@ -86,11 +103,18 @@ func NewWizard() *Wizard {
 	}
 
 	return &Wizard{
-		templates: tmpl,
+		templates:      tmpl,
+		testEmailLimit: make(map[string][]int64),
 		config: &WizardConfig{
 			PostgresMode:    "docker",
 			RedisMode:       "docker",
 			IPFSMode:        "docker",
+			EnableEmail:     true,
+			SMTPMode:        "docker",
+			SMTPHost:        "localhost",
+			SMTPPort:        1025,
+			SMTPFromAddress: "noreply@localhost",
+			SMTPFromName:    "Athena",
 			StoragePath:     "./data/storage",
 			BackupEnabled:   true,
 			BackupTarget:    "local",
@@ -179,6 +203,28 @@ func (w *Wizard) HandleServices(rw http.ResponseWriter, r *http.Request) {
 	w.renderTemplate(rw, "layout.html", "services.html", data)
 }
 
+func (w *Wizard) HandleEmail(rw http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodPost {
+		w.processEmailForm(rw, r)
+		return
+	}
+
+	data := &TemplateData{
+		Title:           "Email Configuration",
+		CurrentStep:     "email",
+		ShowBreadcrumb:  true,
+		ShowActions:     true,
+		ShowBack:        true,
+		ShowContinue:    true,
+		BackURL:         "/setup/services",
+		Config:          w.config,
+		SystemResources: w.config.SystemResources,
+		CompletedSteps:  map[string]bool{"welcome": true, "database": true, "services": true},
+	}
+
+	w.renderTemplate(rw, "layout.html", "email.html", data)
+}
+
 func (w *Wizard) HandleNetworking(rw http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodPost {
 		w.processNetworkingForm(rw, r)
@@ -192,10 +238,10 @@ func (w *Wizard) HandleNetworking(rw http.ResponseWriter, r *http.Request) {
 		ShowActions:     true,
 		ShowBack:        true,
 		ShowContinue:    true,
-		BackURL:         "/setup/services",
+		BackURL:         "/setup/email",
 		Config:          w.config,
 		SystemResources: w.config.SystemResources,
-		CompletedSteps:  map[string]bool{"welcome": true, "database": true, "services": true},
+		CompletedSteps:  map[string]bool{"welcome": true, "database": true, "services": true, "email": true},
 	}
 
 	w.renderTemplate(rw, "layout.html", "networking.html", data)
@@ -217,7 +263,7 @@ func (w *Wizard) HandleStorage(rw http.ResponseWriter, r *http.Request) {
 		BackURL:         "/setup/networking",
 		Config:          w.config,
 		SystemResources: w.config.SystemResources,
-		CompletedSteps:  map[string]bool{"welcome": true, "database": true, "services": true, "networking": true},
+		CompletedSteps:  map[string]bool{"welcome": true, "database": true, "services": true, "email": true, "networking": true},
 	}
 
 	w.renderTemplate(rw, "layout.html", "storage.html", data)
@@ -239,7 +285,7 @@ func (w *Wizard) HandleSecurity(rw http.ResponseWriter, r *http.Request) {
 		BackURL:         "/setup/storage",
 		Config:          w.config,
 		SystemResources: w.config.SystemResources,
-		CompletedSteps:  map[string]bool{"welcome": true, "database": true, "services": true, "networking": true, "storage": true},
+		CompletedSteps:  map[string]bool{"welcome": true, "database": true, "services": true, "email": true, "networking": true, "storage": true},
 	}
 
 	w.renderTemplate(rw, "layout.html", "security.html", data)
@@ -261,10 +307,83 @@ func (w *Wizard) HandleReview(rw http.ResponseWriter, r *http.Request) {
 		BackURL:         "/setup/security",
 		Config:          w.config,
 		SystemResources: w.config.SystemResources,
-		CompletedSteps:  map[string]bool{"welcome": true, "database": true, "services": true, "networking": true, "storage": true, "security": true},
+		CompletedSteps:  map[string]bool{"welcome": true, "database": true, "services": true, "email": true, "networking": true, "storage": true, "security": true},
 	}
 
 	w.renderTemplate(rw, "layout.html", "review.html", data)
+}
+
+func (w *Wizard) HandleTestEmail(rw http.ResponseWriter, r *http.Request) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	var req struct {
+		Email string `json:"email"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(rw, "Invalid request", http.StatusBadRequest)
+		return
+	}
+
+	if req.Email == "" || !strings.Contains(req.Email, "@") {
+		http.Error(rw, "Valid email address required", http.StatusBadRequest)
+		return
+	}
+
+	clientIP, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		clientIP = r.RemoteAddr
+	}
+
+	if len(w.testEmailLimit) > 1000 {
+		w.testEmailLimit = make(map[string][]int64)
+	}
+
+	now := time.Now().Unix()
+	w.testEmailLimit[clientIP] = append(w.testEmailLimit[clientIP], now)
+	recent := []int64{}
+	for _, t := range w.testEmailLimit[clientIP] {
+		if now-t < 300 {
+			recent = append(recent, t)
+		}
+	}
+	w.testEmailLimit[clientIP] = recent
+
+	if len(recent) > 3 {
+		http.Error(rw, "Too many test emails. Please wait 5 minutes.", http.StatusTooManyRequests)
+		return
+	}
+
+	emailConfig := &email.Config{
+		SMTPHost:        w.config.SMTPHost,
+		SMTPPort:        w.config.SMTPPort,
+		SMTPUsername:    w.config.SMTPUsername,
+		SMTPPassword:    w.config.SMTPPassword,
+		TLS:             w.config.SMTPTLS,
+		DisableSTARTTLS: w.config.SMTPDisableSTARTTLS,
+		FromAddress:     w.config.SMTPFromAddress,
+		FromName:        w.config.SMTPFromName,
+	}
+
+	emailService := email.NewService(emailConfig)
+	sendErr := emailService.SendTestEmail(r.Context(), req.Email)
+
+	response := make(map[string]interface{})
+	if sendErr != nil {
+		log.Printf("SMTP test email failed: %v", sendErr)
+		response["success"] = false
+		response["message"] = "Failed to send test email. Check your SMTP settings."
+	} else {
+		response["success"] = true
+		if w.config.SMTPMode == "docker" {
+			response["message"] = "Test email sent! Check Mailpit UI at http://localhost:8025"
+		} else {
+			response["message"] = "Test email sent successfully to " + req.Email
+		}
+	}
+
+	rw.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(rw).Encode(response)
 }
 
 func (w *Wizard) HandleComplete(rw http.ResponseWriter, r *http.Request) {

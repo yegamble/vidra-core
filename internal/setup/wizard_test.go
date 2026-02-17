@@ -3,6 +3,7 @@ package setup
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -82,6 +83,74 @@ func TestWizardHandlerServices(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, w.Code)
 	assert.Contains(t, w.Body.String(), "Services")
+}
+
+func TestWizardHandlerEmail(t *testing.T) {
+	wizard := NewWizard()
+	req := httptest.NewRequest(http.MethodGet, "/setup/email", nil)
+	w := httptest.NewRecorder()
+
+	wizard.HandleEmail(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Contains(t, w.Body.String(), "Email")
+}
+
+func TestHandleTestEmail_InvalidJSON(t *testing.T) {
+	wizard := NewWizard()
+	req := httptest.NewRequest(http.MethodPost, "/setup/test-email", strings.NewReader("not json"))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	wizard.HandleTestEmail(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestHandleTestEmail_EmptyEmail(t *testing.T) {
+	wizard := NewWizard()
+	req := httptest.NewRequest(http.MethodPost, "/setup/test-email", strings.NewReader(`{"email":""}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	wizard.HandleTestEmail(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, w.Body.String(), "Valid email address required")
+}
+
+func TestHandleTestEmail_InvalidEmail(t *testing.T) {
+	wizard := NewWizard()
+	req := httptest.NewRequest(http.MethodPost, "/setup/test-email", strings.NewReader(`{"email":"notanemail"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	wizard.HandleTestEmail(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, w.Body.String(), "Valid email address required")
+}
+
+func TestHandleTestEmail_RateLimit(t *testing.T) {
+	wizard := NewWizard()
+
+	for i := 0; i < 3; i++ {
+		req := httptest.NewRequest(http.MethodPost, "/setup/test-email",
+			strings.NewReader(`{"email":"test@example.com"}`))
+		req.Header.Set("Content-Type", "application/json")
+		req.RemoteAddr = "192.168.1.1:12345"
+		w := httptest.NewRecorder()
+		wizard.HandleTestEmail(w, req)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/setup/test-email",
+		strings.NewReader(`{"email":"test@example.com"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.RemoteAddr = "192.168.1.1:54321"
+	w := httptest.NewRecorder()
+	wizard.HandleTestEmail(w, req)
+
+	assert.Equal(t, http.StatusTooManyRequests, w.Code)
 }
 
 func TestWizardHandlerNetworking(t *testing.T) {

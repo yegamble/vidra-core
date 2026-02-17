@@ -2,6 +2,7 @@ package email
 
 import (
 	"bytes"
+	"context"
 	"strings"
 	"testing"
 
@@ -48,18 +49,16 @@ func TestBuildMIMEMessage_ContainsBothParts(t *testing.T) {
 	msg := buildMIMEMessage(from, to, subject, plain, html)
 
 	s := string(msg)
-	// Basic headers
 	assert.Contains(t, s, "From: "+from)
 	assert.Contains(t, s, "To: "+to)
 	assert.Contains(t, s, "Subject: "+subject)
 
-	// Multipart with both alternatives
-	assert.Contains(t, s, "Content-Type: multipart/alternative; boundary=\"boundary123\"")
-	assert.True(t, strings.Count(s, "--boundary123") >= 2)
+	assert.Contains(t, s, "Content-Type: multipart/alternative; boundary=\"boundary_")
+	assert.Contains(t, s, "Content-Type: text/plain")
+	assert.True(t, strings.Count(s, "--boundary_") >= 2)
 	assert.Contains(t, s, "Content-Type: text/plain; charset=\"UTF-8\"")
 	assert.Contains(t, s, "Content-Type: text/html; charset=\"UTF-8\"")
 
-	// Bodies are present trimmed
 	assert.True(t, bytes.Contains(msg, []byte(plain)))
 	assert.True(t, bytes.Contains(msg, []byte(html)))
 }
@@ -90,4 +89,16 @@ func TestComposePasswordResetEmail_Body(t *testing.T) {
 	assert.Contains(t, html, "href=\""+link+"\"")
 	assert.Contains(t, html, "Reset Password")
 	assert.Contains(t, html, "Hi bob,")
+}
+
+func TestSendTestEmail(t *testing.T) {
+	cfg := testConfig()
+	fs := &fakeSender{}
+	svc := NewServiceWithSender(cfg, fs)
+
+	err := svc.SendTestEmail(context.Background(), "test@example.com")
+	assert.NoError(t, err)
+	assert.Equal(t, []string{"test@example.com"}, fs.to)
+	assert.True(t, bytes.Contains(fs.msg, []byte("Subject: Test Email")))
+	assert.True(t, bytes.Contains(fs.msg, []byte("SMTP configuration is working")))
 }

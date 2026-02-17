@@ -40,6 +40,17 @@ func TestWizardFullFlowDocker(t *testing.T) {
 	w = httptest.NewRecorder()
 	wizard.HandleServices(w, req)
 	require.Equal(t, http.StatusSeeOther, w.Code)
+	assert.Equal(t, "/setup/email", w.Header().Get("Location"))
+
+	form = url.Values{}
+	form.Set("SMTP_MODE", "docker")
+	form.Set("SMTP_FROM_ADDRESS", "noreply@localhost")
+	form.Set("SMTP_FROM_NAME", "Athena")
+	req = httptest.NewRequest(http.MethodPost, "/setup/email", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w = httptest.NewRecorder()
+	wizard.HandleEmail(w, req)
+	require.Equal(t, http.StatusSeeOther, w.Code)
 	assert.Equal(t, "/setup/networking", w.Header().Get("Location"))
 
 	form = url.Values{}
@@ -129,6 +140,20 @@ func TestWizardFullFlowExternal(t *testing.T) {
 	assert.Equal(t, "external", wizard.config.RedisMode)
 	assert.Equal(t, "redis://external.host:6379/0", wizard.config.RedisURL)
 	wizard.mu.Unlock()
+
+	form = url.Values{}
+	form.Set("SMTP_MODE", "external")
+	form.Set("SMTP_HOST", "smtp.example.com")
+	form.Set("SMTP_PORT", "587")
+	form.Set("SMTP_USERNAME", "noreply")
+	form.Set("SMTP_PASSWORD", "secret")
+	form.Set("SMTP_FROM_ADDRESS", "noreply@example.com")
+	form.Set("SMTP_FROM_NAME", "Athena Videos")
+	req = httptest.NewRequest(http.MethodPost, "/setup/email", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w = httptest.NewRecorder()
+	wizard.HandleEmail(w, req)
+	require.Equal(t, http.StatusSeeOther, w.Code)
 
 	form = url.Values{}
 	form.Set("NGINX_DOMAIN", "videos.example.com")

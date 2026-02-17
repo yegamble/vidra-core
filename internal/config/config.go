@@ -268,6 +268,19 @@ type Config struct {
 
 	FileTypeBlockingEnabled bool
 
+	EnableEmail         bool
+	SMTPTransport       string
+	SMTPSendmailPath    string
+	SMTPHost            string
+	SMTPPort            int
+	SMTPUsername        string
+	SMTPPassword        string
+	SMTPTLS             bool
+	SMTPDisableSTARTTLS bool
+	SMTPCAFile          string
+	SMTPFromAddress     string
+	SMTPFromName        string
+
 	SetupMode bool
 }
 

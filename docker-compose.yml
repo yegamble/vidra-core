@@ -77,6 +77,24 @@ services:
     networks:
       - athena-network
 
+  mailpit:
+    profiles: ["full", "mail"]
+    image: axllent/mailpit:latest
+    restart: unless-stopped
+    ports:
+      - "1025:1025"   # SMTP
+      - "8025:8025"   # Web UI
+    environment:
+      MP_SMTP_AUTH_ACCEPT_ANY: 1
+      MP_SMTP_AUTH_ALLOW_INSECURE: 1
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8025/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - athena-network
+
   whisper:
     profiles: ["full", "media"]
     # Using CPU-compatible image by default; use whisper-gpu profile for GPU variant
@@ -138,6 +156,20 @@ services:
 
       ENABLE_WHISPER: ${ENABLE_WHISPER:-false}
       ENABLE_CAPTION_GENERATION: ${ENABLE_CAPTION_GENERATION:-false}
+
+      # Email / SMTP
+      ENABLE_EMAIL: ${ENABLE_EMAIL:-false}
+      SMTP_TRANSPORT: ${SMTP_TRANSPORT:-smtp}
+      SMTP_SENDMAIL_PATH: ${SMTP_SENDMAIL_PATH:-/usr/sbin/sendmail}
+      SMTP_HOST: ${SMTP_HOST:-mailpit}
+      SMTP_PORT: ${SMTP_PORT:-1025}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_TLS: ${SMTP_TLS:-false}
+      SMTP_DISABLE_STARTTLS: ${SMTP_DISABLE_STARTTLS:-false}
+      SMTP_CA_FILE: ${SMTP_CA_FILE:-}
+      SMTP_FROM: ${SMTP_FROM:-noreply@localhost}
+      SMTP_FROM_NAME: ${SMTP_FROM_NAME:-Athena}
       WHISPER_PROVIDER: ${WHISPER_PROVIDER:-local}
       WHISPER_API_URL: ${WHISPER_API_URL:-http://whisper:9000}
       WHISPER_MODEL_SIZE: ${WHISPER_MODEL_SIZE:-base}

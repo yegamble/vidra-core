@@ -54,6 +54,25 @@ func WriteEnvFile(path string, config *WizardConfig) error {
 	lines = append(lines, fmt.Sprintf("ENABLE_WHISPER=%t", config.EnableWhisper))
 	lines = append(lines, "")
 
+	lines = append(lines, "# Email Configuration")
+	lines = append(lines, fmt.Sprintf("ENABLE_EMAIL=%t", config.EnableEmail))
+	if config.EnableEmail {
+		lines = append(lines, "SMTP_TRANSPORT=smtp")
+		lines = append(lines, fmt.Sprintf("SMTP_HOST=%s", config.SMTPHost))
+		lines = append(lines, fmt.Sprintf("SMTP_PORT=%d", config.SMTPPort))
+		if config.SMTPUsername != "" {
+			lines = append(lines, fmt.Sprintf("SMTP_USERNAME=%s", config.SMTPUsername))
+		}
+		if config.SMTPPassword != "" {
+			lines = append(lines, fmt.Sprintf("SMTP_PASSWORD=%s", config.SMTPPassword))
+		}
+		lines = append(lines, fmt.Sprintf("SMTP_TLS=%t", config.SMTPTLS))
+		lines = append(lines, fmt.Sprintf("SMTP_DISABLE_STARTTLS=%t", config.SMTPDisableSTARTTLS))
+		lines = append(lines, fmt.Sprintf("SMTP_FROM=%s", config.SMTPFromAddress))
+		lines = append(lines, fmt.Sprintf("SMTP_FROM_NAME=%s", config.SMTPFromName))
+	}
+	lines = append(lines, "")
+
 	lines = append(lines, "# Storage Configuration")
 	lines = append(lines, fmt.Sprintf("STORAGE_PATH=%s", config.StoragePath))
 	lines = append(lines, "")
