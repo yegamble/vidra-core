@@ -277,7 +277,6 @@ variable "cloudwatch_log_retention_days" {
 variable "allowed_cidr_blocks" {
   description = "CIDR blocks allowed to access the application"
   type        = list(string)
-  default     = ["0.0.0.0/0"] # Restrict in production
 }
 
 variable "enable_waf" {

@@ -150,7 +150,7 @@ nano terraform.tfvars  # Edit with your values
 Required changes:
 - `owner_email`: Your email
 - `domain_name`: Your domain (or use example.com)
-- `allowed_cidr_blocks`: Your IP ranges (or leave as 0.0.0.0/0 initially)
+- `allowed_cidr_blocks`: Your IP ranges (strictly restricted for production)
 - `cloudfront_aliases`: Your CDN domain (optional)
 - `acm_certificate_arn`: Your ACM certificate ARN (optional)
 
