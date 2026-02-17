@@ -43,18 +43,18 @@ func TestIOTARepository_Unit_CreateWallet(t *testing.T) {
 
 		now := time.Now()
 		wallet := &domain.IOTAWallet{
-			ID:            uuid.New().String(),
-			UserID:        uuid.New().String(),
-			EncryptedSeed: []byte("encrypted-seed"),
-			SeedNonce:     []byte("nonce"),
-			Address:       "iota1address",
-			BalanceIOTA:   0,
+			ID:                  uuid.New().String(),
+			UserID:              uuid.New().String(),
+			EncryptedPrivateKey: []byte("encrypted-seed"),
+			PrivateKeyNonce:     []byte("nonce"),
+			Address:             "iota1address",
+			BalanceIOTA:         0,
 		}
 
 		rows := sqlmock.NewRows([]string{"created_at", "updated_at"}).AddRow(now, now)
 
-		mock.ExpectQuery(regexp.QuoteMeta(`INSERT INTO iota_wallets (id, user_id, encrypted_seed, seed_nonce, address, balance_iota, created_at, updated_at)`)).
-			WithArgs(wallet.ID, wallet.UserID, wallet.EncryptedSeed, wallet.SeedNonce, wallet.Address, wallet.BalanceIOTA).
+		mock.ExpectQuery(regexp.QuoteMeta(`INSERT INTO iota_wallets (id, user_id, encrypted_private_key, private_key_nonce, public_key, address, balance_iota, created_at, updated_at)`)).
+			WithArgs(wallet.ID, wallet.UserID, wallet.EncryptedPrivateKey, wallet.PrivateKeyNonce, wallet.Address, wallet.BalanceIOTA).
 			WillReturnRows(rows)
 
 		err := repo.CreateWallet(ctx, wallet)
@@ -69,12 +69,12 @@ func TestIOTARepository_Unit_CreateWallet(t *testing.T) {
 		defer cleanup()
 
 		wallet := &domain.IOTAWallet{
-			ID:            uuid.New().String(),
-			UserID:        uuid.New().String(),
-			EncryptedSeed: []byte("seed"),
-			SeedNonce:     []byte("nonce"),
-			Address:       "address",
-			BalanceIOTA:   0,
+			ID:                  uuid.New().String(),
+			UserID:              uuid.New().String(),
+			EncryptedPrivateKey: []byte("seed"),
+			PrivateKeyNonce:     []byte("nonce"),
+			Address:             "address",
+			BalanceIOTA:         0,
 		}
 
 		mock.ExpectQuery(regexp.QuoteMeta(`INSERT INTO iota_wallets`)).
@@ -97,7 +97,7 @@ func TestIOTARepository_Unit_GetWalletByUserID(t *testing.T) {
 		now := time.Now()
 
 		rows := sqlmock.NewRows([]string{
-			"id", "user_id", "encrypted_seed", "seed_nonce", "address", "balance_iota", "created_at", "updated_at",
+			"id", "user_id", "encrypted_private_key", "private_key_nonce", "public_key", "address", "balance_iota", "created_at", "updated_at",
 		}).AddRow(walletID, userID, []byte("seed"), []byte("nonce"), "address", int64(100), now, now)
 
 		mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM iota_wallets WHERE user_id = $1`)).
@@ -157,7 +157,7 @@ func TestIOTARepository_Unit_GetWalletByID(t *testing.T) {
 		now := time.Now()
 
 		rows := sqlmock.NewRows([]string{
-			"id", "user_id", "encrypted_seed", "seed_nonce", "address", "balance_iota", "created_at", "updated_at",
+			"id", "user_id", "encrypted_private_key", "private_key_nonce", "public_key", "address", "balance_iota", "created_at", "updated_at",
 		}).AddRow(walletID, userID, []byte("seed"), []byte("nonce"), "address", int64(200), now, now)
 
 		mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM iota_wallets WHERE id = $1`)).
@@ -473,23 +473,23 @@ func TestIOTARepository_Unit_CreateTransaction(t *testing.T) {
 
 		now := time.Now()
 		tx := &domain.IOTATransaction{
-			ID:              uuid.New().String(),
-			WalletID:        sql.NullString{String: uuid.New().String(), Valid: true},
-			TransactionHash: "hash123",
-			AmountIOTA:      100,
-			TxType:          "deposit",
-			Status:          "pending",
-			Confirmations:   0,
-			FromAddress:     sql.NullString{String: "from-addr", Valid: true},
-			ToAddress:       sql.NullString{String: "to-addr", Valid: true},
-			Metadata:        []byte(`{"note":"test"}`),
+			ID:                uuid.New().String(),
+			WalletID:          sql.NullString{String: uuid.New().String(), Valid: true},
+			TransactionDigest: "hash123",
+			AmountIOTA:        100,
+			TxType:            "deposit",
+			Status:            "pending",
+			Confirmations:     0,
+			FromAddress:       sql.NullString{String: "from-addr", Valid: true},
+			ToAddress:         sql.NullString{String: "to-addr", Valid: true},
+			Metadata:          []byte(`{"note":"test"}`),
 		}
 
 		rows := sqlmock.NewRows([]string{"created_at"}).AddRow(now)
 
 		mock.ExpectQuery(regexp.QuoteMeta(`INSERT INTO iota_transactions`)).
 			WithArgs(
-				tx.ID, tx.WalletID, tx.TransactionHash, tx.AmountIOTA, tx.TxType,
+				tx.ID, tx.WalletID, tx.TransactionDigest, tx.AmountIOTA, tx.TxType,
 				tx.Status, tx.Confirmations, tx.FromAddress, tx.ToAddress, string(tx.Metadata),
 			).
 			WillReturnRows(rows)
@@ -505,21 +505,21 @@ func TestIOTARepository_Unit_CreateTransaction(t *testing.T) {
 
 		now := time.Now()
 		tx := &domain.IOTATransaction{
-			ID:              uuid.New().String(),
-			WalletID:        sql.NullString{},
-			TransactionHash: "hash",
-			AmountIOTA:      50,
-			TxType:          "withdrawal",
-			Status:          "pending",
-			Confirmations:   0,
-			Metadata:        []byte{},
+			ID:                uuid.New().String(),
+			WalletID:          sql.NullString{},
+			TransactionDigest: "hash",
+			AmountIOTA:        50,
+			TxType:            "withdrawal",
+			Status:            "pending",
+			Confirmations:     0,
+			Metadata:          []byte{},
 		}
 
 		rows := sqlmock.NewRows([]string{"created_at"}).AddRow(now)
 
 		mock.ExpectQuery(regexp.QuoteMeta(`INSERT INTO iota_transactions`)).
 			WithArgs(
-				tx.ID, tx.WalletID, tx.TransactionHash, tx.AmountIOTA, tx.TxType,
+				tx.ID, tx.WalletID, tx.TransactionDigest, tx.AmountIOTA, tx.TxType,
 				tx.Status, tx.Confirmations, tx.FromAddress, tx.ToAddress, nil,
 			).
 			WillReturnRows(rows)
@@ -541,21 +541,21 @@ func TestIOTARepository_Unit_GetTransactionByHash(t *testing.T) {
 		now := time.Now()
 
 		rows := sqlmock.NewRows([]string{
-			"id", "wallet_id", "transaction_hash", "amount_iota", "tx_type", "status",
+			"id", "wallet_id", "transaction_digest", "amount_iota", "tx_type", "status",
 			"confirmations", "from_address", "to_address", "metadata", "confirmed_at", "created_at",
 		}).AddRow(
 			txID, sql.NullString{}, txHash, int64(100), "deposit", "confirmed",
 			10, sql.NullString{}, sql.NullString{}, []byte{}, sql.NullTime{}, now,
 		)
 
-		mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM iota_transactions WHERE transaction_hash = $1`)).
+		mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM iota_transactions WHERE transaction_digest = $1`)).
 			WithArgs(txHash).
 			WillReturnRows(rows)
 
 		tx, err := repo.GetTransactionByHash(ctx, txHash)
 		require.NoError(t, err)
 		require.NotNil(t, tx)
-		assert.Equal(t, txHash, tx.TransactionHash)
+		assert.Equal(t, txHash, tx.TransactionDigest)
 		assert.Equal(t, int64(100), tx.AmountIOTA)
 		assert.NoError(t, mock.ExpectationsWereMet())
 	})
@@ -621,7 +621,7 @@ func TestIOTARepository_Unit_GetTransactionsByWalletID(t *testing.T) {
 		now := time.Now()
 
 		rows := sqlmock.NewRows([]string{
-			"id", "wallet_id", "transaction_hash", "amount_iota", "tx_type", "status",
+			"id", "wallet_id", "transaction_digest", "amount_iota", "tx_type", "status",
 			"confirmations", "from_address", "to_address", "metadata", "confirmed_at", "created_at",
 		}).
 			AddRow(uuid.New().String(), sql.NullString{String: walletID, Valid: true}, "hash1", int64(100), "deposit", "confirmed", 10, sql.NullString{}, sql.NullString{}, []byte{}, sql.NullTime{}, now).
@@ -634,7 +634,7 @@ func TestIOTARepository_Unit_GetTransactionsByWalletID(t *testing.T) {
 		txs, err := repo.GetTransactionsByWalletID(ctx, walletID, 10, 0)
 		require.NoError(t, err)
 		require.Len(t, txs, 2)
-		assert.Equal(t, "hash1", txs[0].TransactionHash)
+		assert.Equal(t, "hash1", txs[0].TransactionDigest)
 		assert.NoError(t, mock.ExpectationsWereMet())
 	})
 

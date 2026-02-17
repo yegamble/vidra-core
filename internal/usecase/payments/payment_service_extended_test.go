@@ -334,8 +334,8 @@ func TestPaymentService_CreateWallet_DeriveAddressError(t *testing.T) {
 	userID := uuid.New().String()
 
 	repo.On("GetWalletByUserID", ctx, userID).Return(nil, domain.ErrWalletNotFound)
-	client.On("GenerateSeed").Return(repeatString("b", 64), nil)
-	client.On("DeriveAddress", mock.Anything, uint32(0)).Return("", errors.New("derive err"))
+	client.On("GenerateKeypair").Return(make([]byte, 32), make([]byte, 32), nil)
+	client.On("DeriveAddress", mock.Anything).Return("", errors.New("derive err"))
 
 	_, err := svc.CreateWallet(ctx, userID)
 
@@ -351,8 +351,8 @@ func TestPaymentService_CreateWallet_RepoError(t *testing.T) {
 	userID := uuid.New().String()
 
 	repo.On("GetWalletByUserID", ctx, userID).Return(nil, domain.ErrWalletNotFound)
-	client.On("GenerateSeed").Return(repeatString("b", 64), nil)
-	client.On("DeriveAddress", mock.Anything, uint32(0)).Return("iota1qaddr", nil)
+	client.On("GenerateKeypair").Return(make([]byte, 32), make([]byte, 32), nil)
+	client.On("DeriveAddress", mock.Anything).Return("0x"+repeatString("a", 64), nil)
 	repo.On("CreateWallet", ctx, mock.Anything).Return(errors.New("insert err"))
 
 	_, err := svc.CreateWallet(ctx, userID)

@@ -1,16 +1,25 @@
 package payments
 
 import (
+	"bytes"
 	"context"
+	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"net/http"
+	"strconv"
 	"time"
+
+	"golang.org/x/crypto/blake2b"
 
 	"athena/internal/domain"
 )
 
-// IOTANodeClient defines the interface for IOTA node operations
+var ErrNotImplemented = errors.New("not implemented: requires Programmable Transaction Block construction (Task 2)")
+
 type IOTANodeClient interface {
 	GetNodeInfo(ctx context.Context) (*NodeInfo, error)
 	GetAddressBalance(ctx context.Context, address string) (int64, error)
@@ -18,21 +27,22 @@ type IOTANodeClient interface {
 	SubmitTransaction(ctx context.Context, tx *SignedTransaction) (string, error)
 }
 
-// IOTAClient handles interactions with the IOTA network
 type IOTAClient struct {
 	nodeURL    string
 	nodeClient IOTANodeClient
 }
 
-// NewIOTAClient creates a new IOTA client
 func NewIOTAClient(nodeURL string) *IOTAClient {
 	return &IOTAClient{
-		nodeURL:    nodeURL,
-		nodeClient: nil, // Will use real HTTP client in production
+		nodeURL: nodeURL,
+		nodeClient: &jsonRPCClient{
+			nodeURL:    nodeURL,
+			httpClient: &http.Client{Timeout: 10 * time.Second},
+			maxRetries: 3,
+		},
 	}
 }
 
-// NewIOTAClientWithMock creates a new IOTA client with a mock node client for testing
 func NewIOTAClientWithMock(nodeClient IOTANodeClient) *IOTAClient {
 	return &IOTAClient{
 		nodeURL:    "mock://test",
@@ -40,226 +50,68 @@ func NewIOTAClientWithMock(nodeClient IOTANodeClient) *IOTAClient {
 	}
 }
 
-// GenerateSeed generates a new cryptographically secure seed
-func (c *IOTAClient) GenerateSeed() (string, error) {
-	// Generate 32 bytes (256 bits) of random data
-	seedBytes := make([]byte, 32)
-	_, err := rand.Read(seedBytes)
+func (c *IOTAClient) GenerateKeypair() ([]byte, []byte, error) {
+	pubKey, privKey, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
-		return "", fmt.Errorf("failed to generate random seed: %w", err)
+		return nil, nil, fmt.Errorf("failed to generate Ed25519 keypair: %w", err)
 	}
-
-	// Convert to hex string (64 characters)
-	return hex.EncodeToString(seedBytes), nil
+	return privKey.Seed(), pubKey, nil
 }
 
-// DeriveAddress derives an address from a seed at a specific index
-func (c *IOTAClient) DeriveAddress(seed string, index uint32) (string, error) {
-	// This is a stub implementation
-	// In a real implementation, this would use IOTA's address derivation algorithm
-	// For now, we'll generate a deterministic address-like string
-
-	// Validate seed format
-	if len(seed) != 64 {
-		return "", fmt.Errorf("%w: expected 64 characters, got %d", domain.ErrInvalidSeed, len(seed))
+func (c *IOTAClient) DeriveAddress(publicKey []byte) (string, error) {
+	if len(publicKey) == 0 {
+		return "", fmt.Errorf("%w: public key cannot be empty", domain.ErrInvalidAddress)
 	}
 
-	// Validate seed is valid hex
-	if _, err := hex.DecodeString(seed); err != nil {
-		return "", fmt.Errorf("%w: invalid hex encoding", domain.ErrInvalidSeed)
-	}
+	input := make([]byte, 1+len(publicKey))
+	input[0] = 0x00
+	copy(input[1:], publicKey)
 
-	// Generate a mock IOTA address (Bech32 format)
-	// Real addresses start with "iota1" followed by Bech32-encoded data
-	return fmt.Sprintf("iota1q%059d", index), nil
+	hasher, err := blake2b.New256(nil)
+	if err != nil {
+		return "", fmt.Errorf("creating blake2b hasher: %w", err)
+	}
+	hasher.Write(input)
+	addrBytes := hasher.Sum(nil)
+
+	return "0x" + hex.EncodeToString(addrBytes), nil
 }
 
-// ValidateAddress validates an IOTA address format
 func (c *IOTAClient) ValidateAddress(address string) bool {
-	// Basic validation: IOTA addresses should start with "iota1" and be at least 10 characters
-	if len(address) < 10 {
+	if len(address) != 66 {
 		return false
 	}
-	if address[:5] != "iota1" {
+	if address[:2] != "0x" {
 		return false
 	}
-
-	// Validate character set - Bech32 uses only lowercase alphanumeric except 1, b, i, o
-	// For simplicity, we'll check for valid alphanumeric characters only
-	validChars := "0123456789abcdefghijklmnopqrstuvwxyz"
-	for i := 5; i < len(address); i++ {
-		char := address[i]
-		isValid := false
-		for j := 0; j < len(validChars); j++ {
-			if char == validChars[j] {
-				isValid = true
-				break
-			}
-		}
-		if !isValid {
-			return false
-		}
-	}
-
-	return true
+	_, err := hex.DecodeString(address[2:])
+	return err == nil
 }
 
-// GetBalance retrieves the balance of an IOTA address
 func (c *IOTAClient) GetBalance(ctx context.Context, address string) (int64, error) {
-	// Validate address format first
-	if !c.ValidateAddress(address) {
-		return 0, fmt.Errorf("%w: %s", domain.ErrInvalidAddress, address)
-	}
-
-	// If we have a mock node client, use it
-	if c.nodeClient != nil {
-		balance, err := c.nodeClient.GetAddressBalance(ctx, address)
-		if err != nil {
-			// Check if it's a context error
-			if err == context.Canceled || err == context.DeadlineExceeded {
-				return 0, err
-			}
-			return 0, fmt.Errorf("%w: %v", domain.ErrIOTANodeUnavailable, err)
-		}
-		return balance, nil
-	}
-
-	// Real implementation would query the IOTA node here
-	// For now, return 0 balance
-	return 0, nil
-}
-
-// UnsignedTransaction represents an unsigned IOTA transaction
-type UnsignedTransaction struct {
-	FromAddress string
-	ToAddress   string
-	Amount      int64
-	Nonce       int64
-}
-
-// SignedTransaction represents a signed IOTA transaction
-type SignedTransaction struct {
-	FromAddress string
-	ToAddress   string
-	Amount      int64
-	Signature   []byte
-	Nonce       int64
-}
-
-// BuildTransaction creates an unsigned transaction
-func (c *IOTAClient) BuildTransaction(fromAddress, toAddress string, amount int64) (*UnsignedTransaction, error) {
-	// Validate addresses
-	if !c.ValidateAddress(fromAddress) {
-		return nil, fmt.Errorf("%w: invalid from address", domain.ErrInvalidAddress)
-	}
-	if !c.ValidateAddress(toAddress) {
-		return nil, fmt.Errorf("%w: invalid to address", domain.ErrInvalidAddress)
-	}
-
-	// Validate amount
-	if amount <= 0 {
-		return nil, fmt.Errorf("%w: amount must be positive", domain.ErrInvalidAmount)
-	}
-
-	// Create unsigned transaction
-	return &UnsignedTransaction{
-		FromAddress: fromAddress,
-		ToAddress:   toAddress,
-		Amount:      amount,
-		Nonce:       time.Now().UnixNano(),
-	}, nil
-}
-
-// SignTransaction signs an unsigned transaction with the given seed
-func (c *IOTAClient) SignTransaction(seed string, tx interface{}) (*SignedTransaction, error) {
-	// Validate seed
-	if len(seed) != 64 {
-		return nil, fmt.Errorf("%w: expected 64 characters, got %d", domain.ErrInvalidSeed, len(seed))
-	}
-	if _, err := hex.DecodeString(seed); err != nil {
-		return nil, fmt.Errorf("%w: invalid hex encoding", domain.ErrInvalidSeed)
-	}
-
-	// Validate transaction
-	if tx == nil {
-		return nil, fmt.Errorf("transaction cannot be nil")
-	}
-
-	unsignedTx, ok := tx.(*UnsignedTransaction)
-	if !ok {
-		return nil, fmt.Errorf("invalid transaction type")
-	}
-
-	// In a real implementation, this would use cryptographic signing
-	// For now, create a mock signature
-	signatureData := fmt.Sprintf("%s:%s:%d:%d:%s",
-		unsignedTx.FromAddress,
-		unsignedTx.ToAddress,
-		unsignedTx.Amount,
-		unsignedTx.Nonce,
-		seed[:8], // Use first 8 chars of seed in signature data
-	)
-	signature := []byte(hex.EncodeToString([]byte(signatureData)))
-
-	return &SignedTransaction{
-		FromAddress: unsignedTx.FromAddress,
-		ToAddress:   unsignedTx.ToAddress,
-		Amount:      unsignedTx.Amount,
-		Signature:   signature,
-		Nonce:       unsignedTx.Nonce,
-	}, nil
-}
-
-// SubmitTransaction submits a signed transaction to the IOTA network
-func (c *IOTAClient) SubmitTransaction(ctx context.Context, tx *SignedTransaction) (string, error) {
-	// Validate transaction
-	if tx == nil {
-		return "", fmt.Errorf("transaction cannot be nil")
-	}
-
-	// If we have a mock node client, use it
-	if c.nodeClient != nil {
-		txHash, err := c.nodeClient.SubmitTransaction(ctx, tx)
-		if err != nil {
-			return "", fmt.Errorf("%w: %v", domain.ErrTransactionBroadcast, err)
-		}
-		return txHash, nil
-	}
-
-	// Real implementation would submit to the IOTA node here
-	// For now, generate a mock transaction hash
-	txHashBytes := make([]byte, 32)
-	_, err := rand.Read(txHashBytes)
+	balance, err := c.nodeClient.GetAddressBalance(ctx, address)
 	if err != nil {
-		return "", fmt.Errorf("%w: failed to generate transaction hash", domain.ErrTransactionBroadcast)
-	}
-
-	return "0x" + hex.EncodeToString(txHashBytes), nil
-}
-
-// GetTransactionStatus checks the status of a transaction
-func (c *IOTAClient) GetTransactionStatus(ctx context.Context, txHash string) (*TransactionStatus, error) {
-	// If we have a mock node client, use it
-	if c.nodeClient != nil {
-		status, err := c.nodeClient.GetTransactionStatus(ctx, txHash)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get transaction status: %w", err)
+		if err == context.Canceled || err == context.DeadlineExceeded {
+			return 0, err
 		}
-		return status, nil
+		return 0, fmt.Errorf("%w: %v", domain.ErrIOTANodeUnavailable, err)
 	}
-
-	// Real implementation would query the node for transaction status
-	// For now, return a stub status
-	return &TransactionStatus{
-		TxHash:        txHash,
-		Confirmations: 0,
-		IsConfirmed:   false,
-		BlockID:       "",
-	}, nil
+	return balance, nil
 }
 
-// WaitForConfirmation waits for a transaction to reach the required number of confirmations
-func (c *IOTAClient) WaitForConfirmation(ctx context.Context, txHash string, requiredConfirms int, pollInterval time.Duration) (int, error) {
+func (c *IOTAClient) GetTransactionStatus(ctx context.Context, txDigest string) (*TransactionStatus, error) {
+	status, err := c.nodeClient.GetTransactionStatus(ctx, txDigest)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get transaction status: %w", err)
+	}
+	return status, nil
+}
+
+func (c *IOTAClient) GetNodeInfo(ctx context.Context) (*NodeInfo, error) {
+	return c.nodeClient.GetNodeInfo(ctx)
+}
+
+func (c *IOTAClient) WaitForConfirmation(ctx context.Context, txDigest string, requiredConfirms int, pollInterval time.Duration) (int, error) {
 	ticker := time.NewTicker(pollInterval)
 	defer ticker.Stop()
 
@@ -268,11 +120,10 @@ func (c *IOTAClient) WaitForConfirmation(ctx context.Context, txHash string, req
 		case <-ctx.Done():
 			return 0, ctx.Err()
 		case <-ticker.C:
-			status, err := c.GetTransactionStatus(ctx, txHash)
+			status, err := c.GetTransactionStatus(ctx, txDigest)
 			if err != nil {
 				return 0, fmt.Errorf("failed to check transaction status: %w", err)
 			}
-
 			if status.Confirmations >= requiredConfirms {
 				return status.Confirmations, nil
 			}
@@ -280,23 +131,178 @@ func (c *IOTAClient) WaitForConfirmation(ctx context.Context, txHash string, req
 	}
 }
 
-// GetNodeInfo retrieves information about the IOTA node
-func (c *IOTAClient) GetNodeInfo(ctx context.Context) (*NodeInfo, error) {
-	// If we have a mock node client, use it
-	if c.nodeClient != nil {
-		return c.nodeClient.GetNodeInfo(ctx)
+// TODO Task 2 Phase 2: implement as Programmable Transaction Block for IOTA Rebased.
+func (c *IOTAClient) BuildTransaction(fromAddress, toAddress string, amount int64) (*UnsignedTransaction, error) {
+	return nil, fmt.Errorf("BuildTransaction: %w", ErrNotImplemented)
+}
+
+// TODO Task 2 Phase 2: implement Ed25519 signing for IOTA Rebased PTBs.
+func (c *IOTAClient) SignTransaction(privateKeyHex string, tx interface{}) (*SignedTransaction, error) {
+	return nil, fmt.Errorf("SignTransaction: %w", ErrNotImplemented)
+}
+
+// TODO Task 2 Phase 2: implement via JSON-RPC iota_executeTransactionBlock.
+func (c *IOTAClient) SubmitTransaction(ctx context.Context, tx *SignedTransaction) (string, error) {
+	return "", fmt.Errorf("SubmitTransaction: %w", ErrNotImplemented)
+}
+
+type jsonRPCClient struct {
+	nodeURL    string
+	httpClient *http.Client
+	maxRetries int
+}
+
+type rpcRequest struct {
+	JSONRPC string        `json:"jsonrpc"`
+	ID      int           `json:"id"`
+	Method  string        `json:"method"`
+	Params  []interface{} `json:"params"`
+}
+
+type rpcResponse struct {
+	JSONRPC string          `json:"jsonrpc"`
+	ID      int             `json:"id"`
+	Result  json.RawMessage `json:"result,omitempty"`
+	Error   *rpcError       `json:"error,omitempty"`
+}
+
+type rpcError struct {
+	Code    int    `json:"code"`
+	Message string `json:"message"`
+}
+
+func (c *jsonRPCClient) callRPC(ctx context.Context, method string, params []interface{}, result interface{}) error {
+	reqBody := rpcRequest{
+		JSONRPC: "2.0",
+		ID:      1,
+		Method:  method,
+		Params:  params,
 	}
 
-	// Real implementation would query the node
-	// For now, return a stub node info
+	data, err := json.Marshal(reqBody)
+	if err != nil {
+		return fmt.Errorf("marshaling RPC request: %w", err)
+	}
+
+	var lastErr error
+	for attempt := 0; attempt <= c.maxRetries; attempt++ {
+		if attempt > 0 {
+			delay := time.Duration(1<<uint(attempt-1)) * 200 * time.Millisecond
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(delay):
+			}
+		}
+
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.nodeURL, bytes.NewReader(data))
+		if err != nil {
+			return fmt.Errorf("creating HTTP request: %w", err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+
+		if resp.StatusCode >= 500 {
+			resp.Body.Close()
+			lastErr = fmt.Errorf("server error: HTTP %d", resp.StatusCode)
+			continue
+		}
+
+		var rpcResp rpcResponse
+		if decErr := json.NewDecoder(resp.Body).Decode(&rpcResp); decErr != nil {
+			resp.Body.Close()
+			return fmt.Errorf("decoding RPC response: %w", decErr)
+		}
+		resp.Body.Close()
+
+		if rpcResp.Error != nil {
+			return fmt.Errorf("RPC error %d: %s", rpcResp.Error.Code, rpcResp.Error.Message)
+		}
+
+		return json.Unmarshal(rpcResp.Result, result)
+	}
+	return fmt.Errorf("RPC call %q failed after %d attempts: %w", method, c.maxRetries+1, lastErr)
+}
+
+func (c *jsonRPCClient) GetNodeInfo(ctx context.Context) (*NodeInfo, error) {
+	var seqStr string
+	if err := c.callRPC(ctx, "iota_getLatestCheckpointSequenceNumber", nil, &seqStr); err != nil {
+		return nil, fmt.Errorf("getting node info: %w", err)
+	}
 	return &NodeInfo{
-		NetworkID: "testnet",
-		Version:   "2.0.0",
+		NetworkID: "iota",
+		Version:   seqStr,
 		IsHealthy: true,
 	}, nil
 }
 
-// TransactionStatus represents the status of an IOTA transaction
+type balanceResult struct {
+	CoinType     string `json:"coinType"`
+	TotalBalance string `json:"totalBalance"`
+}
+
+func (c *jsonRPCClient) GetAddressBalance(ctx context.Context, address string) (int64, error) {
+	params := []interface{}{address, "0x2::iota::IOTA"}
+	var result balanceResult
+	if err := c.callRPC(ctx, "iotax_getBalance", params, &result); err != nil {
+		return 0, fmt.Errorf("getting balance for %s: %w", address, err)
+	}
+	balance, err := strconv.ParseInt(result.TotalBalance, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("parsing balance %q: %w", result.TotalBalance, err)
+	}
+	return balance, nil
+}
+
+type txBlockResult struct {
+	Digest     string `json:"digest"`
+	Checkpoint string `json:"checkpoint,omitempty"`
+}
+
+func (c *jsonRPCClient) GetTransactionStatus(ctx context.Context, txDigest string) (*TransactionStatus, error) {
+	params := []interface{}{txDigest, map[string]bool{"showEffects": true}}
+	var result txBlockResult
+	if err := c.callRPC(ctx, "iota_getTransactionBlock", params, &result); err != nil {
+		return nil, fmt.Errorf("getting transaction block %s: %w", txDigest, err)
+	}
+
+	confirmations := 0
+	if result.Checkpoint != "" {
+		confirmations = 1
+	}
+	return &TransactionStatus{
+		TxHash:        result.Digest,
+		Confirmations: confirmations,
+		IsConfirmed:   confirmations > 0,
+		BlockID:       result.Checkpoint,
+	}, nil
+}
+
+// TODO Task 2 Phase 2: implement via iota_executeTransactionBlock.
+func (c *jsonRPCClient) SubmitTransaction(ctx context.Context, tx *SignedTransaction) (string, error) {
+	return "", fmt.Errorf("SubmitTransaction: %w", ErrNotImplemented)
+}
+
+type UnsignedTransaction struct {
+	FromAddress string
+	ToAddress   string
+	Amount      int64
+	Nonce       int64
+}
+
+type SignedTransaction struct {
+	FromAddress string
+	ToAddress   string
+	Amount      int64
+	Signature   []byte
+	Nonce       int64
+}
+
 type TransactionStatus struct {
 	TxHash        string
 	Confirmations int
@@ -304,7 +310,6 @@ type TransactionStatus struct {
 	BlockID       string
 }
 
-// NodeInfo represents information about an IOTA node
 type NodeInfo struct {
 	NetworkID string
 	Version   string

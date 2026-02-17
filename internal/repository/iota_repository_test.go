@@ -39,36 +39,36 @@ func TestIOTARepository_CreateWallet(t *testing.T) {
 		{
 			name: "valid wallet",
 			wallet: &domain.IOTAWallet{
-				ID:            uuid.New().String(),
-				UserID:        userID,
-				EncryptedSeed: []byte("encrypted_seed_data_32_bytes__"),
-				SeedNonce:     []byte("nonce_12bytes"),
-				Address:       "iota1qpg7xkj9pq7xkj9pq7xkj9pq7xkj9pq7xkj9pq7xkj9pq7xkj9pq7xkj9",
-				BalanceIOTA:   0,
+				ID:                  uuid.New().String(),
+				UserID:              userID,
+				EncryptedPrivateKey: []byte("encrypted_seed_data_32_bytes__"),
+				PrivateKeyNonce:     []byte("nonce_12bytes"),
+				Address:             "iota1qpg7xkj9pq7xkj9pq7xkj9pq7xkj9pq7xkj9pq7xkj9pq7xkj9pq7xkj9",
+				BalanceIOTA:         0,
 			},
 			wantErr: nil,
 		},
 		{
 			name: "duplicate wallet for same user",
 			wallet: &domain.IOTAWallet{
-				ID:            uuid.New().String(),
-				UserID:        userID,
-				EncryptedSeed: []byte("another_encrypted_seed_data___"),
-				SeedNonce:     []byte("nonce2______"),
-				Address:       "iota1qpg7xkj9pq7xkj9pq7xkj9pq7xkj9pq7xkj9pq7xkj9pq7xkj9pq7abc",
-				BalanceIOTA:   0,
+				ID:                  uuid.New().String(),
+				UserID:              userID,
+				EncryptedPrivateKey: []byte("another_encrypted_seed_data___"),
+				PrivateKeyNonce:     []byte("nonce2______"),
+				Address:             "iota1qpg7xkj9pq7xkj9pq7xkj9pq7xkj9pq7xkj9pq7xkj9pq7xkj9pq7abc",
+				BalanceIOTA:         0,
 			},
 			wantErr: domain.ErrWalletAlreadyExists,
 		},
 		{
 			name: "wallet with non-existent user",
 			wallet: &domain.IOTAWallet{
-				ID:            uuid.New().String(),
-				UserID:        uuid.New().String(), // non-existent user
-				EncryptedSeed: []byte("encrypted_seed_data_32_bytes__"),
-				SeedNonce:     []byte("nonce_12bytes"),
-				Address:       "iota1qpg7xkj9pq7xkj9pq7xkj9pq7xkj9pq7xkj9pq7xkj9pq7xkj9pq7def",
-				BalanceIOTA:   0,
+				ID:                  uuid.New().String(),
+				UserID:              uuid.New().String(), // non-existent user
+				EncryptedPrivateKey: []byte("encrypted_seed_data_32_bytes__"),
+				PrivateKeyNonce:     []byte("nonce_12bytes"),
+				Address:             "iota1qpg7xkj9pq7xkj9pq7xkj9pq7xkj9pq7xkj9pq7xkj9pq7xkj9pq7def",
+				BalanceIOTA:         0,
 			},
 			wantErr: domain.ErrUserNotFound,
 		},
@@ -109,12 +109,12 @@ func TestIOTARepository_GetWalletByUserID(t *testing.T) {
 
 	// Create wallet
 	wallet := &domain.IOTAWallet{
-		ID:            uuid.New().String(),
-		UserID:        userID,
-		EncryptedSeed: []byte("encrypted_seed_data_32_bytes__"),
-		SeedNonce:     []byte("nonce_12bytes"),
-		Address:       "iota1qpg7xkj9pq7xkj9pq7xkj9pq7xkj9pq7xkj9pq7xkj9pq7xkj9pq7xkj9",
-		BalanceIOTA:   1000000,
+		ID:                  uuid.New().String(),
+		UserID:              userID,
+		EncryptedPrivateKey: []byte("encrypted_seed_data_32_bytes__"),
+		PrivateKeyNonce:     []byte("nonce_12bytes"),
+		Address:             "iota1qpg7xkj9pq7xkj9pq7xkj9pq7xkj9pq7xkj9pq7xkj9pq7xkj9pq7xkj9",
+		BalanceIOTA:         1000000,
 	}
 	err := repo.CreateWallet(ctx, wallet)
 	require.NoError(t, err)
@@ -149,8 +149,8 @@ func TestIOTARepository_GetWalletByUserID(t *testing.T) {
 			assert.Equal(t, wallet.Address, found.Address)
 			assert.Equal(t, wallet.BalanceIOTA, found.BalanceIOTA)
 			// Verify encrypted seed is retrieved
-			assert.Equal(t, wallet.EncryptedSeed, found.EncryptedSeed)
-			assert.Equal(t, wallet.SeedNonce, found.SeedNonce)
+			assert.Equal(t, wallet.EncryptedPrivateKey, found.EncryptedPrivateKey)
+			assert.Equal(t, wallet.PrivateKeyNonce, found.PrivateKeyNonce)
 		})
 	}
 }
@@ -172,12 +172,12 @@ func TestIOTARepository_GetWalletByID(t *testing.T) {
 	userID := createTestUserForIOTA(t, testDB)
 
 	wallet := &domain.IOTAWallet{
-		ID:            uuid.New().String(),
-		UserID:        userID,
-		EncryptedSeed: []byte("encrypted_seed_data_32_bytes__"),
-		SeedNonce:     []byte("nonce_12bytes"),
-		Address:       "iota1qpg7xkj9pq7xkj9pq7xkj9pq7xkj9pq7xkj9pq7xkj9pq7xkj9pq7xkj9",
-		BalanceIOTA:   500000,
+		ID:                  uuid.New().String(),
+		UserID:              userID,
+		EncryptedPrivateKey: []byte("encrypted_seed_data_32_bytes__"),
+		PrivateKeyNonce:     []byte("nonce_12bytes"),
+		Address:             "iota1qpg7xkj9pq7xkj9pq7xkj9pq7xkj9pq7xkj9pq7xkj9pq7xkj9pq7xkj9",
+		BalanceIOTA:         500000,
 	}
 	err := repo.CreateWallet(ctx, wallet)
 	require.NoError(t, err)
@@ -209,12 +209,12 @@ func TestIOTARepository_UpdateWalletBalance(t *testing.T) {
 	userID := createTestUserForIOTA(t, testDB)
 
 	wallet := &domain.IOTAWallet{
-		ID:            uuid.New().String(),
-		UserID:        userID,
-		EncryptedSeed: []byte("encrypted_seed_data_32_bytes__"),
-		SeedNonce:     []byte("nonce_12bytes"),
-		Address:       "iota1qpg7xkj9pq7xkj9pq7xkj9pq7xkj9pq7xkj9pq7xkj9pq7xkj9pq7xkj9",
-		BalanceIOTA:   1000000,
+		ID:                  uuid.New().String(),
+		UserID:              userID,
+		EncryptedPrivateKey: []byte("encrypted_seed_data_32_bytes__"),
+		PrivateKeyNonce:     []byte("nonce_12bytes"),
+		Address:             "iota1qpg7xkj9pq7xkj9pq7xkj9pq7xkj9pq7xkj9pq7xkj9pq7xkj9pq7xkj9",
+		BalanceIOTA:         1000000,
 	}
 	err := repo.CreateWallet(ctx, wallet)
 	require.NoError(t, err)
@@ -603,12 +603,12 @@ func TestIOTARepository_CreateTransaction(t *testing.T) {
 
 	// Create wallet for transaction
 	wallet := &domain.IOTAWallet{
-		ID:            uuid.New().String(),
-		UserID:        userID,
-		EncryptedSeed: []byte("encrypted_seed_data_32_bytes__"),
-		SeedNonce:     []byte("nonce_12bytes"),
-		Address:       "iota1qwallet111111111111111111111111111111111111111111111111111",
-		BalanceIOTA:   0,
+		ID:                  uuid.New().String(),
+		UserID:              userID,
+		EncryptedPrivateKey: []byte("encrypted_seed_data_32_bytes__"),
+		PrivateKeyNonce:     []byte("nonce_12bytes"),
+		Address:             "iota1qwallet111111111111111111111111111111111111111111111111111",
+		BalanceIOTA:         0,
 	}
 	err := repo.CreateWallet(ctx, wallet)
 	require.NoError(t, err)
@@ -621,31 +621,31 @@ func TestIOTARepository_CreateTransaction(t *testing.T) {
 		{
 			name: "deposit transaction",
 			tx: &domain.IOTATransaction{
-				ID:              uuid.New().String(),
-				WalletID:        sql.NullString{String: wallet.ID, Valid: true},
-				TransactionHash: "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
-				AmountIOTA:      1000000,
-				TxType:          domain.TransactionTypeDeposit,
-				Status:          domain.TransactionStatusPending,
-				Confirmations:   0,
-				FromAddress:     sql.NullString{String: "iota1qsender1111", Valid: true},
-				ToAddress:       sql.NullString{String: wallet.Address, Valid: true},
-				Metadata:        []byte(`{"note":"test deposit"}`),
+				ID:                uuid.New().String(),
+				WalletID:          sql.NullString{String: wallet.ID, Valid: true},
+				TransactionDigest: "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
+				AmountIOTA:        1000000,
+				TxType:            domain.TransactionTypeDeposit,
+				Status:            domain.TransactionStatusPending,
+				Confirmations:     0,
+				FromAddress:       sql.NullString{String: "iota1qsender1111", Valid: true},
+				ToAddress:         sql.NullString{String: wallet.Address, Valid: true},
+				Metadata:          []byte(`{"note":"test deposit"}`),
 			},
 			wantErr: false,
 		},
 		{
 			name: "payment transaction",
 			tx: &domain.IOTATransaction{
-				ID:              uuid.New().String(),
-				WalletID:        sql.NullString{String: wallet.ID, Valid: true},
-				TransactionHash: "0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890",
-				AmountIOTA:      500000,
-				TxType:          domain.TransactionTypePayment,
-				Status:          domain.TransactionStatusPending,
-				Confirmations:   0,
-				FromAddress:     sql.NullString{String: wallet.Address, Valid: true},
-				ToAddress:       sql.NullString{String: "iota1qrecipient1", Valid: true},
+				ID:                uuid.New().String(),
+				WalletID:          sql.NullString{String: wallet.ID, Valid: true},
+				TransactionDigest: "0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890",
+				AmountIOTA:        500000,
+				TxType:            domain.TransactionTypePayment,
+				Status:            domain.TransactionStatusPending,
+				Confirmations:     0,
+				FromAddress:       sql.NullString{String: wallet.Address, Valid: true},
+				ToAddress:         sql.NullString{String: "iota1qrecipient1", Valid: true},
 			},
 			wantErr: false,
 		},
@@ -682,32 +682,32 @@ func TestIOTARepository_GetTransactionByHash(t *testing.T) {
 	userID := createTestUserForIOTA(t, testDB)
 
 	wallet := &domain.IOTAWallet{
-		ID:            uuid.New().String(),
-		UserID:        userID,
-		EncryptedSeed: []byte("encrypted_seed_data_32_bytes__"),
-		SeedNonce:     []byte("nonce_12bytes"),
-		Address:       "iota1qwallet111111111111111111111111111111111111111111111111111",
-		BalanceIOTA:   0,
+		ID:                  uuid.New().String(),
+		UserID:              userID,
+		EncryptedPrivateKey: []byte("encrypted_seed_data_32_bytes__"),
+		PrivateKeyNonce:     []byte("nonce_12bytes"),
+		Address:             "iota1qwallet111111111111111111111111111111111111111111111111111",
+		BalanceIOTA:         0,
 	}
 	err := repo.CreateWallet(ctx, wallet)
 	require.NoError(t, err)
 
 	tx := &domain.IOTATransaction{
-		ID:              uuid.New().String(),
-		WalletID:        sql.NullString{String: wallet.ID, Valid: true},
-		TransactionHash: "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
-		AmountIOTA:      1000000,
-		TxType:          domain.TransactionTypeDeposit,
-		Status:          domain.TransactionStatusPending,
-		Confirmations:   0,
+		ID:                uuid.New().String(),
+		WalletID:          sql.NullString{String: wallet.ID, Valid: true},
+		TransactionDigest: "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
+		AmountIOTA:        1000000,
+		TxType:            domain.TransactionTypeDeposit,
+		Status:            domain.TransactionStatusPending,
+		Confirmations:     0,
 	}
 	err = repo.CreateTransaction(ctx, tx)
 	require.NoError(t, err)
 
-	found, err := repo.GetTransactionByHash(ctx, tx.TransactionHash)
+	found, err := repo.GetTransactionByHash(ctx, tx.TransactionDigest)
 	require.NoError(t, err)
 	assert.Equal(t, tx.ID, found.ID)
-	assert.Equal(t, tx.TransactionHash, found.TransactionHash)
+	assert.Equal(t, tx.TransactionDigest, found.TransactionDigest)
 	assert.Equal(t, tx.AmountIOTA, found.AmountIOTA)
 
 	// Non-existent transaction
@@ -732,24 +732,24 @@ func TestIOTARepository_UpdateTransactionStatus(t *testing.T) {
 	userID := createTestUserForIOTA(t, testDB)
 
 	wallet := &domain.IOTAWallet{
-		ID:            uuid.New().String(),
-		UserID:        userID,
-		EncryptedSeed: []byte("encrypted_seed_data_32_bytes__"),
-		SeedNonce:     []byte("nonce_12bytes"),
-		Address:       "iota1qwallet111111111111111111111111111111111111111111111111111",
-		BalanceIOTA:   0,
+		ID:                  uuid.New().String(),
+		UserID:              userID,
+		EncryptedPrivateKey: []byte("encrypted_seed_data_32_bytes__"),
+		PrivateKeyNonce:     []byte("nonce_12bytes"),
+		Address:             "iota1qwallet111111111111111111111111111111111111111111111111111",
+		BalanceIOTA:         0,
 	}
 	err := repo.CreateWallet(ctx, wallet)
 	require.NoError(t, err)
 
 	tx := &domain.IOTATransaction{
-		ID:              uuid.New().String(),
-		WalletID:        sql.NullString{String: wallet.ID, Valid: true},
-		TransactionHash: "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
-		AmountIOTA:      1000000,
-		TxType:          domain.TransactionTypeDeposit,
-		Status:          domain.TransactionStatusPending,
-		Confirmations:   0,
+		ID:                uuid.New().String(),
+		WalletID:          sql.NullString{String: wallet.ID, Valid: true},
+		TransactionDigest: "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
+		AmountIOTA:        1000000,
+		TxType:            domain.TransactionTypeDeposit,
+		Status:            domain.TransactionStatusPending,
+		Confirmations:     0,
 	}
 	err = repo.CreateTransaction(ctx, tx)
 	require.NoError(t, err)
@@ -758,7 +758,7 @@ func TestIOTARepository_UpdateTransactionStatus(t *testing.T) {
 	err = repo.UpdateTransactionStatus(ctx, tx.ID, domain.TransactionStatusConfirmed, 10)
 	require.NoError(t, err)
 
-	updated, err := repo.GetTransactionByHash(ctx, tx.TransactionHash)
+	updated, err := repo.GetTransactionByHash(ctx, tx.TransactionDigest)
 	require.NoError(t, err)
 	assert.Equal(t, domain.TransactionStatusConfirmed, updated.Status)
 	assert.Equal(t, 10, updated.Confirmations)
@@ -782,12 +782,12 @@ func TestIOTARepository_GetTransactionsByWalletID(t *testing.T) {
 	userID := createTestUserForIOTA(t, testDB)
 
 	wallet := &domain.IOTAWallet{
-		ID:            uuid.New().String(),
-		UserID:        userID,
-		EncryptedSeed: []byte("encrypted_seed_data_32_bytes__"),
-		SeedNonce:     []byte("nonce_12bytes"),
-		Address:       "iota1qwallet111111111111111111111111111111111111111111111111111",
-		BalanceIOTA:   0,
+		ID:                  uuid.New().String(),
+		UserID:              userID,
+		EncryptedPrivateKey: []byte("encrypted_seed_data_32_bytes__"),
+		PrivateKeyNonce:     []byte("nonce_12bytes"),
+		Address:             "iota1qwallet111111111111111111111111111111111111111111111111111",
+		BalanceIOTA:         0,
 	}
 	err := repo.CreateWallet(ctx, wallet)
 	require.NoError(t, err)
@@ -795,13 +795,13 @@ func TestIOTARepository_GetTransactionsByWalletID(t *testing.T) {
 	// Create multiple transactions
 	for i := 0; i < 5; i++ {
 		tx := &domain.IOTATransaction{
-			ID:              uuid.New().String(),
-			WalletID:        sql.NullString{String: wallet.ID, Valid: true},
-			TransactionHash: uuid.New().String(),
-			AmountIOTA:      int64(1000000 * (i + 1)),
-			TxType:          domain.TransactionTypeDeposit,
-			Status:          domain.TransactionStatusPending,
-			Confirmations:   i,
+			ID:                uuid.New().String(),
+			WalletID:          sql.NullString{String: wallet.ID, Valid: true},
+			TransactionDigest: uuid.New().String(),
+			AmountIOTA:        int64(1000000 * (i + 1)),
+			TxType:            domain.TransactionTypeDeposit,
+			Status:            domain.TransactionStatusPending,
+			Confirmations:     i,
 		}
 		err = repo.CreateTransaction(ctx, tx)
 		require.NoError(t, err)
@@ -838,12 +838,12 @@ func TestIOTARepository_EncryptedSeedNotExposed(t *testing.T) {
 	userID := createTestUserForIOTA(t, testDB)
 
 	wallet := &domain.IOTAWallet{
-		ID:            uuid.New().String(),
-		UserID:        userID,
-		EncryptedSeed: []byte("super_secret_encrypted_seed___"),
-		SeedNonce:     []byte("secret_nonce"),
-		Address:       "iota1qwallet111111111111111111111111111111111111111111111111111",
-		BalanceIOTA:   0,
+		ID:                  uuid.New().String(),
+		UserID:              userID,
+		EncryptedPrivateKey: []byte("super_secret_encrypted_seed___"),
+		PrivateKeyNonce:     []byte("secret_nonce"),
+		Address:             "iota1qwallet111111111111111111111111111111111111111111111111111",
+		BalanceIOTA:         0,
 	}
 
 	// When wallet is created or retrieved, seed should never be in logs
@@ -855,8 +855,8 @@ func TestIOTARepository_EncryptedSeedNotExposed(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify seed is retrieved but should never be logged
-	assert.Equal(t, wallet.EncryptedSeed, retrieved.EncryptedSeed)
-	assert.Equal(t, wallet.SeedNonce, retrieved.SeedNonce)
+	assert.Equal(t, wallet.EncryptedPrivateKey, retrieved.EncryptedPrivateKey)
+	assert.Equal(t, wallet.PrivateKeyNonce, retrieved.PrivateKeyNonce)
 }
 
 // Helper functions

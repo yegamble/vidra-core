@@ -6,6 +6,7 @@ import (
 	"crypto/cipher"
 	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
 	"fmt"
 	"time"
 
@@ -14,7 +15,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// IOTARepository defines the interface for IOTA data persistence
 type IOTARepository interface {
 	CreateWallet(ctx context.Context, wallet *domain.IOTAWallet) error
 	GetWalletByUserID(ctx context.Context, userID string) (*domain.IOTAWallet, error)
@@ -31,22 +31,19 @@ type IOTARepository interface {
 	GetTransactionsByWalletID(ctx context.Context, walletID string, limit, offset int) ([]*domain.IOTATransaction, error)
 }
 
-// IOTAClient defines the interface for IOTA network operations
 type IOTAClient interface {
-	GenerateSeed() (string, error)
-	DeriveAddress(seed string, index uint32) (string, error)
+	GenerateKeypair() (privateKey []byte, publicKey []byte, err error)
+	DeriveAddress(publicKey []byte) (string, error)
 	ValidateAddress(address string) bool
 	GetBalance(ctx context.Context, address string) (int64, error)
 }
 
-// PaymentService handles payment-related business logic
 type PaymentService struct {
 	repo          IOTARepository
 	client        IOTAClient
 	encryptionKey []byte
 }
 
-// NewPaymentService creates a new payment service
 func NewPaymentService(repo IOTARepository, client IOTAClient, encryptionKey []byte) *PaymentService {
 	return &PaymentService{
 		repo:          repo,
@@ -55,9 +52,7 @@ func NewPaymentService(repo IOTARepository, client IOTAClient, encryptionKey []b
 	}
 }
 
-// CreateWallet creates a new IOTA wallet for a user
 func (s *PaymentService) CreateWallet(ctx context.Context, userID string) (*domain.IOTAWallet, error) {
-	// Check if wallet already exists
 	existing, err := s.repo.GetWalletByUserID(ctx, userID)
 	if err != nil && err != domain.ErrWalletNotFound {
 		return nil, fmt.Errorf("failed to check existing wallet: %w", err)
@@ -66,34 +61,31 @@ func (s *PaymentService) CreateWallet(ctx context.Context, userID string) (*doma
 		return nil, domain.ErrWalletAlreadyExists
 	}
 
-	// Generate new seed
-	seed, err := s.client.GenerateSeed()
+	privateKey, publicKey, err := s.client.GenerateKeypair()
 	if err != nil {
-		return nil, fmt.Errorf("failed to generate seed: %w", err)
+		return nil, fmt.Errorf("failed to generate keypair: %w", err)
 	}
 
-	// Derive address from seed
-	address, err := s.client.DeriveAddress(seed, 0)
+	address, err := s.client.DeriveAddress(publicKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to derive address: %w", err)
 	}
 
-	// Encrypt seed
-	encryptedSeed, nonce, err := s.EncryptSeed(seed)
+	encryptedKey, nonce, err := s.EncryptSeed(hex.EncodeToString(privateKey))
 	if err != nil {
-		return nil, fmt.Errorf("failed to encrypt seed: %w", err)
+		return nil, fmt.Errorf("failed to encrypt private key: %w", err)
 	}
 
-	// Create wallet
 	wallet := &domain.IOTAWallet{
-		ID:            uuid.New().String(),
-		UserID:        userID,
-		EncryptedSeed: encryptedSeed,
-		SeedNonce:     nonce,
-		Address:       address,
-		BalanceIOTA:   0,
-		CreatedAt:     time.Now(),
-		UpdatedAt:     time.Now(),
+		ID:                  uuid.New().String(),
+		UserID:              userID,
+		EncryptedPrivateKey: encryptedKey,
+		PrivateKeyNonce:     nonce,
+		PublicKey:           hex.EncodeToString(publicKey),
+		Address:             address,
+		BalanceIOTA:         0,
+		CreatedAt:           time.Now(),
+		UpdatedAt:           time.Now(),
 	}
 
 	if err := s.repo.CreateWallet(ctx, wallet); err != nil {
@@ -103,28 +95,23 @@ func (s *PaymentService) CreateWallet(ctx context.Context, userID string) (*doma
 	return wallet, nil
 }
 
-// GetWallet retrieves a wallet by user ID
 func (s *PaymentService) GetWallet(ctx context.Context, userID string) (*domain.IOTAWallet, error) {
 	return s.repo.GetWalletByUserID(ctx, userID)
 }
 
-// GetWalletBalance retrieves the current balance for a user's wallet
 func (s *PaymentService) GetWalletBalance(ctx context.Context, userID string) (int64, error) {
 	wallet, err := s.repo.GetWalletByUserID(ctx, userID)
 	if err != nil {
 		return 0, err
 	}
 
-	// Query the IOTA network for the latest balance
 	balance, err := s.client.GetBalance(ctx, wallet.Address)
 	if err != nil {
 		return 0, fmt.Errorf("failed to get balance from network: %w", err)
 	}
 
-	// Update stored balance if it changed
 	if balance != wallet.BalanceIOTA {
 		if err := s.repo.UpdateWalletBalance(ctx, wallet.ID, balance); err != nil {
-			// Log error but return the balance anyway
 			return balance, nil
 		}
 	}
@@ -132,22 +119,18 @@ func (s *PaymentService) GetWalletBalance(ctx context.Context, userID string) (i
 	return balance, nil
 }
 
-// CreatePaymentIntent creates a new payment intent
 func (s *PaymentService) CreatePaymentIntent(ctx context.Context, userID string, videoID *string, amount int64) (*domain.IOTAPaymentIntent, error) {
 	if amount <= 0 {
 		return nil, domain.ErrInvalidAmount
 	}
 
-	// Verify user has a wallet
 	wallet, err := s.repo.GetWalletByUserID(ctx, userID)
 	if err != nil {
 		return nil, err
 	}
 
-	// Generate a unique payment address (for this simplified version, use the wallet address)
 	paymentAddress := wallet.Address
 
-	// Create payment intent
 	intent := &domain.IOTAPaymentIntent{
 		ID:             uuid.New().String(),
 		UserID:         userID,
@@ -170,24 +153,19 @@ func (s *PaymentService) CreatePaymentIntent(ctx context.Context, userID string,
 	return intent, nil
 }
 
-// GetPaymentIntent retrieves a payment intent by ID
 func (s *PaymentService) GetPaymentIntent(ctx context.Context, intentID string) (*domain.IOTAPaymentIntent, error) {
 	return s.repo.GetPaymentIntentByID(ctx, intentID)
 }
 
-// GetTransactionHistory retrieves transaction history for a user
 func (s *PaymentService) GetTransactionHistory(ctx context.Context, userID string, limit, offset int) ([]*domain.IOTATransaction, error) {
-	// Get user's wallet
 	wallet, err := s.repo.GetWalletByUserID(ctx, userID)
 	if err != nil {
 		return nil, err
 	}
 
-	// Get transactions for the wallet
 	return s.repo.GetTransactionsByWalletID(ctx, wallet.ID, limit, offset)
 }
 
-// EncryptSeed encrypts the IOTA seed using AES-GCM
 func (s *PaymentService) EncryptSeed(seed string) ([]byte, []byte, error) {
 	block, err := aes.NewCipher(s.encryptionKey)
 	if err != nil {
@@ -208,7 +186,6 @@ func (s *PaymentService) EncryptSeed(seed string) ([]byte, []byte, error) {
 	return encrypted, nonce, nil
 }
 
-// DecryptSeed decrypts an encrypted IOTA seed
 func (s *PaymentService) DecryptSeed(encryptedSeed, nonce []byte) (string, error) {
 	block, err := aes.NewCipher(s.encryptionKey)
 	if err != nil {
@@ -228,59 +205,49 @@ func (s *PaymentService) DecryptSeed(encryptedSeed, nonce []byte) (string, error
 	return string(plaintext), nil
 }
 
-// DetectPayment checks if payment has been received for a payment intent
 func (s *PaymentService) DetectPayment(ctx context.Context, intentID string) error {
-	// Get the payment intent
 	intent, err := s.repo.GetPaymentIntentByID(ctx, intentID)
 	if err != nil {
 		return err
 	}
 
-	// Check if already paid
 	if intent.Status == domain.PaymentIntentStatusPaid {
 		return domain.ErrPaymentAlreadyPaid
 	}
 
-	// Check if expired
 	if time.Now().After(intent.ExpiresAt) {
 		return domain.ErrPaymentIntentExpired
 	}
 
-	// Check the balance of the payment address
 	balance, err := s.client.GetBalance(ctx, intent.PaymentAddress)
 	if err != nil {
 		return fmt.Errorf("failed to get balance: %w", err)
 	}
 
-	// If balance is greater than or equal to the expected amount, mark as paid
 	if balance >= intent.AmountIOTA {
-		// Get user's wallet to associate the transaction
 		wallet, _ := s.repo.GetWalletByUserID(ctx, intent.UserID)
 
-		// Create a transaction record
-		txHash := fmt.Sprintf("iota-payment-%s-%d", intent.ID, time.Now().Unix())
+		txDigest := fmt.Sprintf("iota-payment-%s-%d", intent.ID, time.Now().Unix())
 		tx := &domain.IOTATransaction{
-			ID:              uuid.New().String(),
-			TransactionHash: txHash,
-			AmountIOTA:      intent.AmountIOTA,
-			TxType:          domain.TransactionTypePayment,
-			Status:          domain.TransactionStatusConfirmed,
-			Confirmations:   10,
-			ToAddress:       sql.NullString{String: intent.PaymentAddress, Valid: true},
-			CreatedAt:       time.Now(),
+			ID:                uuid.New().String(),
+			TransactionDigest: txDigest,
+			AmountIOTA:        intent.AmountIOTA,
+			TxType:            domain.TransactionTypePayment,
+			Status:            domain.TransactionStatusConfirmed,
+			Confirmations:     10,
+			ToAddress:         sql.NullString{String: intent.PaymentAddress, Valid: true},
+			CreatedAt:         time.Now(),
 		}
 
 		if wallet != nil {
 			tx.WalletID = sql.NullString{String: wallet.ID, Valid: true}
 		}
 
-		// Create transaction
 		if err := s.repo.CreateTransaction(ctx, tx); err != nil {
 			return fmt.Errorf("failed to create transaction: %w", err)
 		}
 
-		// Update payment intent status
-		if err := s.repo.UpdatePaymentIntentStatus(ctx, intent.ID, domain.PaymentIntentStatusPaid, &txHash); err != nil {
+		if err := s.repo.UpdatePaymentIntentStatus(ctx, intent.ID, domain.PaymentIntentStatusPaid, &txDigest); err != nil {
 			return fmt.Errorf("failed to update payment intent: %w", err)
 		}
 	}
@@ -288,7 +255,6 @@ func (s *PaymentService) DetectPayment(ctx context.Context, intentID string) err
 	return nil
 }
 
-// ExpirePaymentIntents marks expired payment intents as expired
 func (s *PaymentService) ExpirePaymentIntents(ctx context.Context) error {
 	expiredIntents, err := s.repo.GetExpiredPaymentIntents(ctx)
 	if err != nil {

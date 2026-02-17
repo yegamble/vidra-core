@@ -5,19 +5,18 @@ import (
 	"time"
 )
 
-// IOTAWallet represents a user's IOTA wallet
 type IOTAWallet struct {
-	ID            string    `json:"id" db:"id"`
-	UserID        string    `json:"user_id" db:"user_id"`
-	EncryptedSeed []byte    `json:"-" db:"encrypted_seed"` // Never expose in JSON
-	SeedNonce     []byte    `json:"-" db:"seed_nonce"`     // Never expose in JSON
-	Address       string    `json:"address" db:"address"`
-	BalanceIOTA   int64     `json:"balance_iota" db:"balance_iota"`
-	CreatedAt     time.Time `json:"created_at" db:"created_at"`
-	UpdatedAt     time.Time `json:"updated_at" db:"updated_at"`
+	ID                  string    `json:"id" db:"id"`
+	UserID              string    `json:"user_id" db:"user_id"`
+	EncryptedPrivateKey []byte    `json:"-" db:"encrypted_private_key"`
+	PrivateKeyNonce     []byte    `json:"-" db:"private_key_nonce"`
+	PublicKey           string    `json:"-" db:"public_key"`
+	Address             string    `json:"address" db:"address"`
+	BalanceIOTA         int64     `json:"balance_iota" db:"balance_iota"`
+	CreatedAt           time.Time `json:"created_at" db:"created_at"`
+	UpdatedAt           time.Time `json:"updated_at" db:"updated_at"`
 }
 
-// PaymentIntentStatus represents the status of a payment intent
 type PaymentIntentStatus string
 
 const (
@@ -27,7 +26,6 @@ const (
 	PaymentIntentStatusRefunded PaymentIntentStatus = "refunded"
 )
 
-// IOTAPaymentIntent represents a payment request
 type IOTAPaymentIntent struct {
 	ID             string              `json:"id" db:"id"`
 	UserID         string              `json:"user_id" db:"user_id"`
@@ -38,12 +36,11 @@ type IOTAPaymentIntent struct {
 	ExpiresAt      time.Time           `json:"expires_at" db:"expires_at"`
 	PaidAt         sql.NullTime        `json:"paid_at,omitempty" db:"paid_at"`
 	TransactionID  sql.NullString      `json:"transaction_id,omitempty" db:"transaction_id"`
-	Metadata       []byte              `json:"metadata,omitempty" db:"metadata"` // JSONB
+	Metadata       []byte              `json:"metadata,omitempty" db:"metadata"`
 	CreatedAt      time.Time           `json:"created_at" db:"created_at"`
 	UpdatedAt      time.Time           `json:"updated_at" db:"updated_at"`
 }
 
-// TransactionType represents the type of IOTA transaction
 type TransactionType string
 
 const (
@@ -52,7 +49,6 @@ const (
 	TransactionTypePayment    TransactionType = "payment"
 )
 
-// TransactionStatus represents the status of a transaction
 type TransactionStatus string
 
 const (
@@ -61,23 +57,23 @@ const (
 	TransactionStatusFailed    TransactionStatus = "failed"
 )
 
-// IOTATransaction represents a blockchain transaction
 type IOTATransaction struct {
-	ID              string            `json:"id" db:"id"`
-	WalletID        sql.NullString    `json:"wallet_id,omitempty" db:"wallet_id"`
-	TransactionHash string            `json:"transaction_hash" db:"transaction_hash"`
-	AmountIOTA      int64             `json:"amount_iota" db:"amount_iota"`
-	TxType          TransactionType   `json:"tx_type" db:"tx_type"`
-	Status          TransactionStatus `json:"status" db:"status"`
-	Confirmations   int               `json:"confirmations" db:"confirmations"`
-	FromAddress     sql.NullString    `json:"from_address,omitempty" db:"from_address"`
-	ToAddress       sql.NullString    `json:"to_address,omitempty" db:"to_address"`
-	Metadata        []byte            `json:"metadata,omitempty" db:"metadata"` // JSONB
-	ConfirmedAt     sql.NullTime      `json:"confirmed_at,omitempty" db:"confirmed_at"`
-	CreatedAt       time.Time         `json:"created_at" db:"created_at"`
+	ID                string            `json:"id" db:"id"`
+	WalletID          sql.NullString    `json:"wallet_id,omitempty" db:"wallet_id"`
+	TransactionDigest string            `json:"transaction_digest" db:"transaction_digest"`
+	AmountIOTA        int64             `json:"amount_iota" db:"amount_iota"`
+	TxType            TransactionType   `json:"tx_type" db:"tx_type"`
+	Status            TransactionStatus `json:"status" db:"status"`
+	Confirmations     int               `json:"confirmations" db:"confirmations"`
+	GasBudget         int64             `json:"gas_budget" db:"gas_budget"`
+	GasUsed           int64             `json:"gas_used" db:"gas_used"`
+	FromAddress       sql.NullString    `json:"from_address,omitempty" db:"from_address"`
+	ToAddress         sql.NullString    `json:"to_address,omitempty" db:"to_address"`
+	Metadata          []byte            `json:"metadata,omitempty" db:"metadata"`
+	ConfirmedAt       sql.NullTime      `json:"confirmed_at,omitempty" db:"confirmed_at"`
+	CreatedAt         time.Time         `json:"created_at" db:"created_at"`
 }
 
-// Payment errors using DomainError
 var (
 	ErrWalletNotFound        = NewDomainError("WALLET_NOT_FOUND", "Wallet not found")
 	ErrWalletAlreadyExists   = NewDomainError("WALLET_ALREADY_EXISTS", "Wallet already exists for this user")
@@ -89,9 +85,11 @@ var (
 	ErrInvalidAddress        = NewDomainError("INVALID_ADDRESS", "Invalid IOTA address")
 	ErrPaymentAlreadyPaid    = NewDomainError("PAYMENT_ALREADY_PAID", "Payment intent already paid")
 	ErrInvalidSeed           = NewDomainError("INVALID_SEED", "Invalid wallet seed")
-	ErrEncryptionFailed      = NewDomainError("ENCRYPTION_FAILED", "Failed to encrypt wallet seed")
-	ErrDecryptionFailed      = NewDomainError("DECRYPTION_FAILED", "Failed to decrypt wallet seed")
+	ErrEncryptionFailed      = NewDomainError("ENCRYPTION_FAILED", "Failed to encrypt wallet data")
+	ErrDecryptionFailed      = NewDomainError("DECRYPTION_FAILED", "Failed to decrypt wallet data")
 	ErrIOTANodeUnavailable   = NewDomainError("IOTA_NODE_UNAVAILABLE", "IOTA node is unavailable")
+	ErrIOTANodeSyncing       = NewDomainError("IOTA_NODE_SYNCING", "IOTA node is still syncing")
+	ErrInsufficientGas       = NewDomainError("INSUFFICIENT_GAS", "Insufficient gas for transaction")
 	ErrTransactionBroadcast  = NewDomainError("TRANSACTION_BROADCAST_FAILED", "Failed to broadcast transaction")
 	ErrRateLimitExceeded     = NewDomainError("RATE_LIMIT_EXCEEDED", "Rate limit exceeded for wallet operations")
 )

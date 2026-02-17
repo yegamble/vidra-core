@@ -2,7 +2,12 @@ package payments
 
 import (
 	"context"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -13,7 +18,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// MockIOTANodeClient mocks the IOTA node HTTP client
 type MockIOTANodeClient struct {
 	mock.Mock
 }
@@ -44,85 +48,62 @@ func (m *MockIOTANodeClient) SubmitTransaction(ctx context.Context, tx *SignedTr
 	return args.String(0), args.Error(1)
 }
 
-// TestIOTAClient_GenerateSeed tests secure seed generation
-func TestIOTAClient_GenerateSeed(t *testing.T) {
-	tests := []struct {
-		name    string
-		wantErr bool
-	}{
-		{
-			name:    "successful seed generation",
-			wantErr: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			client := NewIOTAClient("https://api.testnet.iota.org")
-
-			seed, err := client.GenerateSeed()
-			if tt.wantErr {
-				assert.Error(t, err)
-				return
-			}
-			require.NoError(t, err)
-
-			// Verify seed properties
-			assert.NotEmpty(t, seed)
-			assert.Len(t, seed, 64) // 256-bit seed as hex string
-			// Verify it's hex
-			assert.Regexp(t, "^[a-f0-9]{64}$", seed)
-		})
-	}
-}
-
-// TestIOTAClient_GenerateSeed_UniqueSeeds tests that seeds are unique
-func TestIOTAClient_GenerateSeed_UniqueSeeds(t *testing.T) {
+func TestIOTAClient_GenerateKeypair(t *testing.T) {
 	client := NewIOTAClient("https://api.testnet.iota.org")
 
-	seeds := make(map[string]bool)
+	privKey, pubKey, err := client.GenerateKeypair()
+
+	require.NoError(t, err)
+	assert.Len(t, privKey, 32, "Ed25519 seed/private key should be 32 bytes")
+	assert.Len(t, pubKey, 32, "Ed25519 public key should be 32 bytes")
+	assert.NotEmpty(t, privKey)
+	assert.NotEmpty(t, pubKey)
+}
+
+func TestIOTAClient_GenerateKeypair_Unique(t *testing.T) {
+	client := NewIOTAClient("https://api.testnet.iota.org")
+
+	seen := make(map[string]bool)
 	for i := 0; i < 100; i++ {
-		seed, err := client.GenerateSeed()
+		privKey, _, err := client.GenerateKeypair()
 		require.NoError(t, err)
-		assert.False(t, seeds[seed], "Generated duplicate seed")
-		seeds[seed] = true
+		keyHex := hex.EncodeToString(privKey)
+		assert.False(t, seen[keyHex], "Generated duplicate keypair at iteration %d", i)
+		seen[keyHex] = true
 	}
 }
 
-// TestIOTAClient_DeriveAddress tests address derivation from seed
 func TestIOTAClient_DeriveAddress(t *testing.T) {
 	tests := []struct {
-		name    string
-		seed    string
-		index   uint32
-		wantErr bool
-		errType error
+		name      string
+		publicKey []byte
+		wantErr   bool
+		errType   error
 	}{
 		{
-			name:    "valid seed and index",
-			seed:    repeatString("a", 64), // Valid 64-char hex seed
-			index:   0,
+			name:      "valid 32-byte public key",
+			publicKey: make([]byte, 32),
+			wantErr:   false,
+		},
+		{
+			name: "non-zero public key",
+			publicKey: []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+				0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10,
+				0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18,
+				0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f, 0x20},
 			wantErr: false,
 		},
 		{
-			name:    "different index",
-			seed:    repeatString("b", 64),
-			index:   1,
-			wantErr: false,
+			name:      "empty public key",
+			publicKey: []byte{},
+			wantErr:   true,
+			errType:   domain.ErrInvalidAddress,
 		},
 		{
-			name:    "invalid seed length",
-			seed:    "abc",
-			index:   0,
-			wantErr: true,
-			errType: domain.ErrInvalidSeed,
-		},
-		{
-			name:    "invalid seed characters",
-			seed:    repeatString("g", 64), // 'g' is not hex
-			index:   0,
-			wantErr: true,
-			errType: domain.ErrInvalidSeed,
+			name:      "nil public key",
+			publicKey: nil,
+			wantErr:   true,
+			errType:   domain.ErrInvalidAddress,
 		},
 	}
 
@@ -130,7 +111,7 @@ func TestIOTAClient_DeriveAddress(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			client := NewIOTAClient("https://api.testnet.iota.org")
 
-			address, err := client.DeriveAddress(tt.seed, tt.index)
+			address, err := client.DeriveAddress(tt.publicKey)
 			if tt.wantErr {
 				assert.Error(t, err)
 				if tt.errType != nil {
@@ -140,49 +121,46 @@ func TestIOTAClient_DeriveAddress(t *testing.T) {
 			}
 			require.NoError(t, err)
 
-			// Verify address format (IOTA Bech32 format)
 			assert.NotEmpty(t, address)
-			assert.True(t, len(address) > 10)
-			assert.True(t, address[:5] == "iota1", "Address should start with iota1")
+			assert.Equal(t, 66, len(address), "Address should be 66 chars (0x + 64 hex)")
+			assert.True(t, strings.HasPrefix(address, "0x"), "Address should start with 0x")
+			_, hexErr := hex.DecodeString(address[2:])
+			assert.NoError(t, hexErr, "Address hex portion should be valid")
 		})
 	}
 }
 
-// TestIOTAClient_DeriveAddress_Deterministic tests that derivation is deterministic
 func TestIOTAClient_DeriveAddress_Deterministic(t *testing.T) {
 	client := NewIOTAClient("https://api.testnet.iota.org")
 
-	seed := repeatString("a", 64)
-	index := uint32(0)
+	pubKey := make([]byte, 32)
+	pubKey[0] = 0xab
 
-	// Generate address twice
-	addr1, err := client.DeriveAddress(seed, index)
+	addr1, err := client.DeriveAddress(pubKey)
 	require.NoError(t, err)
 
-	addr2, err := client.DeriveAddress(seed, index)
+	addr2, err := client.DeriveAddress(pubKey)
 	require.NoError(t, err)
 
-	// Should be identical
-	assert.Equal(t, addr1, addr2)
+	assert.Equal(t, addr1, addr2, "Same public key should always derive the same address")
 }
 
-// TestIOTAClient_DeriveAddress_DifferentIndexes tests different indexes produce different addresses
-func TestIOTAClient_DeriveAddress_DifferentIndexes(t *testing.T) {
+func TestIOTAClient_DeriveAddress_DifferentKeys(t *testing.T) {
 	client := NewIOTAClient("https://api.testnet.iota.org")
 
-	seed := repeatString("a", 64)
+	pubKey1 := make([]byte, 32)
+	pubKey2 := make([]byte, 32)
+	pubKey2[0] = 0xff
 
-	addr0, err := client.DeriveAddress(seed, 0)
+	addr1, err := client.DeriveAddress(pubKey1)
 	require.NoError(t, err)
 
-	addr1, err := client.DeriveAddress(seed, 1)
+	addr2, err := client.DeriveAddress(pubKey2)
 	require.NoError(t, err)
 
-	// Should be different
-	assert.NotEqual(t, addr0, addr1)
+	assert.NotEqual(t, addr1, addr2, "Different public keys should produce different addresses")
 }
 
-// TestIOTAClient_ValidateAddress tests address validation
 func TestIOTAClient_ValidateAddress(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -190,8 +168,13 @@ func TestIOTAClient_ValidateAddress(t *testing.T) {
 		want    bool
 	}{
 		{
-			name:    "valid bech32 address",
-			address: "iota1qpg7xkj9pq7xkj9pq7xkj9pq7xkj9pq7xkj9pq7xkj9pq7xkj9pq7xkj9",
+			name:    "valid hex address with 0x prefix",
+			address: "0x" + repeatString("a", 64),
+			want:    true,
+		},
+		{
+			name:    "valid hex address mixed case",
+			address: "0x" + repeatString("f", 64),
 			want:    true,
 		},
 		{
@@ -200,18 +183,28 @@ func TestIOTAClient_ValidateAddress(t *testing.T) {
 			want:    false,
 		},
 		{
-			name:    "wrong prefix",
-			address: "btc1qpg7xkj9pq7xkj9pq7xkj9pq7xkj9pq7xkj9pq7xkj9pq7xkj9pq7xkj9",
+			name:    "old bech32 iota1 format",
+			address: "iota1qpg7xkj9pq7xkj9pq7xkj9pq7xkj9pq7xkj9pq7xkj9pq7xkj9pq7xkj9",
 			want:    false,
 		},
 		{
 			name:    "too short",
-			address: "iota1abc",
+			address: "0x1234abcd",
 			want:    false,
 		},
 		{
-			name:    "invalid characters",
-			address: "iota1@#$%^&*()_+",
+			name:    "correct length but invalid hex chars",
+			address: "0x" + repeatString("g", 64),
+			want:    false,
+		},
+		{
+			name:    "no 0x prefix",
+			address: repeatString("a", 64),
+			want:    false,
+		},
+		{
+			name:    "too long",
+			address: "0x" + repeatString("a", 65),
 			want:    false,
 		},
 	}
@@ -226,7 +219,6 @@ func TestIOTAClient_ValidateAddress(t *testing.T) {
 	}
 }
 
-// TestIOTAClient_GetBalance tests balance query
 func TestIOTAClient_GetBalance(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -238,33 +230,25 @@ func TestIOTAClient_GetBalance(t *testing.T) {
 	}{
 		{
 			name:        "successful balance query",
-			address:     "iota1qpg7xkj9pq7xkj9pq7xkj9pq7xkj9pq7xkj9pq7xkj9pq7xkj9pq7xkj9",
+			address:     "0x" + repeatString("a", 64),
 			mockBalance: 1000000,
 			mockError:   nil,
 			wantErr:     false,
 		},
 		{
 			name:        "zero balance",
-			address:     "iota1qpg7xkj9pq7xkj9pq7xkj9pq7xkj9pq7xkj9pq7xkj9pq7xkj9pq7abc",
+			address:     "0x" + repeatString("b", 64),
 			mockBalance: 0,
 			mockError:   nil,
 			wantErr:     false,
 		},
 		{
 			name:        "network error",
-			address:     "iota1qpg7xkj9pq7xkj9pq7xkj9pq7xkj9pq7xkj9pq7xkj9pq7xkj9pq7def",
+			address:     "0x" + repeatString("c", 64),
 			mockBalance: 0,
 			mockError:   errors.New("connection timeout"),
 			wantErr:     true,
 			errType:     domain.ErrIOTANodeUnavailable,
-		},
-		{
-			name:        "invalid address",
-			address:     "invalid",
-			mockBalance: 0,
-			mockError:   nil,
-			wantErr:     true,
-			errType:     domain.ErrInvalidAddress,
 		},
 	}
 
@@ -274,9 +258,7 @@ func TestIOTAClient_GetBalance(t *testing.T) {
 			client := NewIOTAClientWithMock(mockNodeClient)
 			ctx := context.Background()
 
-			if tt.address != "invalid" {
-				mockNodeClient.On("GetAddressBalance", ctx, tt.address).Return(tt.mockBalance, tt.mockError)
-			}
+			mockNodeClient.On("GetAddressBalance", ctx, tt.address).Return(tt.mockBalance, tt.mockError)
 
 			balance, err := client.GetBalance(ctx, tt.address)
 			if tt.wantErr {
@@ -294,195 +276,39 @@ func TestIOTAClient_GetBalance(t *testing.T) {
 	}
 }
 
-// TestIOTAClient_BuildTransaction tests transaction building
-func TestIOTAClient_BuildTransaction(t *testing.T) {
-	tests := []struct {
-		name        string
-		fromAddress string
-		toAddress   string
-		amount      int64
-		wantErr     bool
-		errType     error
-	}{
-		{
-			name:        "valid transaction",
-			fromAddress: "iota1qsender111111111111111111111111111111111111111111111111111",
-			toAddress:   "iota1qrecipient111111111111111111111111111111111111111111111111",
-			amount:      1000000,
-			wantErr:     false,
-		},
-		{
-			name:        "zero amount",
-			fromAddress: "iota1qsender111111111111111111111111111111111111111111111111111",
-			toAddress:   "iota1qrecipient111111111111111111111111111111111111111111111111",
-			amount:      0,
-			wantErr:     true,
-			errType:     domain.ErrInvalidAmount,
-		},
-		{
-			name:        "negative amount",
-			fromAddress: "iota1qsender111111111111111111111111111111111111111111111111111",
-			toAddress:   "iota1qrecipient111111111111111111111111111111111111111111111111",
-			amount:      -1000,
-			wantErr:     true,
-			errType:     domain.ErrInvalidAmount,
-		},
-		{
-			name:        "invalid from address",
-			fromAddress: "invalid",
-			toAddress:   "iota1qrecipient111111111111111111111111111111111111111111111111",
-			amount:      1000000,
-			wantErr:     true,
-			errType:     domain.ErrInvalidAddress,
-		},
-		{
-			name:        "invalid to address",
-			fromAddress: "iota1qsender111111111111111111111111111111111111111111111111111",
-			toAddress:   "invalid",
-			amount:      1000000,
-			wantErr:     true,
-			errType:     domain.ErrInvalidAddress,
-		},
-	}
+func TestIOTAClient_BuildTransaction_NotImplemented(t *testing.T) {
+	client := NewIOTAClient("https://api.testnet.iota.org")
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			client := NewIOTAClient("https://api.testnet.iota.org")
+	_, err := client.BuildTransaction("from", "to", 1000000)
 
-			tx, err := client.BuildTransaction(tt.fromAddress, tt.toAddress, tt.amount)
-			if tt.wantErr {
-				assert.Error(t, err)
-				if tt.errType != nil {
-					assert.ErrorIs(t, err, tt.errType)
-				}
-				return
-			}
-			require.NoError(t, err)
-			assert.NotNil(t, tx)
-		})
-	}
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrNotImplemented)
 }
 
-// TestIOTAClient_SignTransaction tests transaction signing
-func TestIOTAClient_SignTransaction(t *testing.T) {
-	tests := []struct {
-		name    string
-		seed    string
-		tx      interface{}
-		wantErr bool
-		errType error
-	}{
-		{
-			name:    "valid signing",
-			seed:    repeatString("a", 64),
-			tx:      &UnsignedTransaction{},
-			wantErr: false,
-		},
-		{
-			name:    "invalid seed",
-			seed:    "invalid",
-			tx:      &UnsignedTransaction{},
-			wantErr: true,
-			errType: domain.ErrInvalidSeed,
-		},
-		{
-			name:    "nil transaction",
-			seed:    repeatString("a", 64),
-			tx:      nil,
-			wantErr: true,
-		},
-	}
+func TestIOTAClient_SignTransaction_NotImplemented(t *testing.T) {
+	client := NewIOTAClient("https://api.testnet.iota.org")
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			client := NewIOTAClient("https://api.testnet.iota.org")
+	_, err := client.SignTransaction("privkey", &UnsignedTransaction{})
 
-			signed, err := client.SignTransaction(tt.seed, tt.tx)
-			if tt.wantErr {
-				assert.Error(t, err)
-				if tt.errType != nil {
-					assert.ErrorIs(t, err, tt.errType)
-				}
-				return
-			}
-			require.NoError(t, err)
-			assert.NotNil(t, signed)
-			assert.NotEmpty(t, signed.Signature)
-		})
-	}
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrNotImplemented)
 }
 
-// TestIOTAClient_SubmitTransaction tests transaction submission
-func TestIOTAClient_SubmitTransaction(t *testing.T) {
-	tests := []struct {
-		name       string
-		tx         *SignedTransaction
-		mockTxHash string
-		mockError  error
-		wantErr    bool
-		errType    error
-	}{
-		{
-			name: "successful submission",
-			tx: &SignedTransaction{
-				FromAddress: "iota1qsender",
-				ToAddress:   "iota1qrecipient",
-				Amount:      1000000,
-				Signature:   []byte("signature"),
-			},
-			mockTxHash: "0x1234567890abcdef",
-			mockError:  nil,
-			wantErr:    false,
-		},
-		{
-			name: "network error",
-			tx: &SignedTransaction{
-				FromAddress: "iota1qsender",
-				ToAddress:   "iota1qrecipient",
-				Amount:      1000000,
-				Signature:   []byte("signature"),
-			},
-			mockTxHash: "",
-			mockError:  errors.New("network timeout"),
-			wantErr:    true,
-			errType:    domain.ErrTransactionBroadcast,
-		},
-		{
-			name:    "nil transaction",
-			tx:      nil,
-			wantErr: true,
-		},
-	}
+func TestIOTAClient_SubmitTransaction_NotImplemented(t *testing.T) {
+	client := NewIOTAClient("https://api.testnet.iota.org")
+	ctx := context.Background()
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			mockNodeClient := new(MockIOTANodeClient)
-			client := NewIOTAClientWithMock(mockNodeClient)
-			ctx := context.Background()
+	_, err := client.SubmitTransaction(ctx, &SignedTransaction{
+		FromAddress: "from",
+		ToAddress:   "to",
+		Amount:      1000000,
+		Signature:   []byte("sig"),
+	})
 
-			if tt.tx != nil {
-				mockNodeClient.On("SubmitTransaction", ctx, tt.tx).Return(tt.mockTxHash, tt.mockError)
-			}
-
-			txHash, err := client.SubmitTransaction(ctx, tt.tx)
-			if tt.wantErr {
-				assert.Error(t, err)
-				if tt.errType != nil {
-					assert.ErrorIs(t, err, tt.errType)
-				}
-				return
-			}
-			require.NoError(t, err)
-			assert.Equal(t, tt.mockTxHash, txHash)
-
-			if tt.tx != nil {
-				mockNodeClient.AssertExpectations(t)
-			}
-		})
-	}
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrNotImplemented)
 }
 
-// TestIOTAClient_GetTransactionStatus tests transaction status queries
 func TestIOTAClient_GetTransactionStatus(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -545,7 +371,6 @@ func TestIOTAClient_GetTransactionStatus(t *testing.T) {
 	}
 }
 
-// TestIOTAClient_WaitForConfirmation tests waiting for transaction confirmation
 func TestIOTAClient_WaitForConfirmation(t *testing.T) {
 	tests := []struct {
 		name             string
@@ -585,9 +410,7 @@ func TestIOTAClient_WaitForConfirmation(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 			defer cancel()
 
-			// Mock multiple status calls
 			for i, status := range tt.mockStatuses {
-				// For timeout scenarios, the last status should be returnable indefinitely
 				if tt.wantErr && i == len(tt.mockStatuses)-1 {
 					mockNodeClient.On("GetTransactionStatus", mock.Anything, tt.txHash).
 						Return(status, nil).Maybe()
@@ -608,24 +431,174 @@ func TestIOTAClient_WaitForConfirmation(t *testing.T) {
 	}
 }
 
-// TestIOTAClient_ContextTimeout tests that operations respect context timeouts
 func TestIOTAClient_ContextTimeout(t *testing.T) {
 	mockNodeClient := new(MockIOTANodeClient)
 	client := NewIOTAClientWithMock(mockNodeClient)
 
-	// Create a context that's already cancelled
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
+	testAddr := "0x" + repeatString("a", 64)
 	mockNodeClient.On("GetAddressBalance", ctx, mock.Anything).
 		Return(int64(0), context.Canceled)
 
-	_, err := client.GetBalance(ctx, "iota1qtest")
+	_, err := client.GetBalance(ctx, testAddr)
 	assert.Error(t, err)
 	assert.ErrorIs(t, err, context.Canceled)
 }
 
-// Helper to repeat string
+func TestIOTAClient_DeriveAddress_Blake2b(t *testing.T) {
+	client := NewIOTAClient("https://api.testnet.iota.org")
+
+	pubKey := make([]byte, 32)
+	pubKey[0] = 0x42
+
+	addr, err := client.DeriveAddress(pubKey)
+	require.NoError(t, err)
+
+	copyAddr := "0x" + hex.EncodeToString(pubKey)
+	assert.NotEqual(t, copyAddr, addr, "Address must be Blake2b hash, not a direct copy of the public key")
+	assert.Equal(t, 66, len(addr))
+	assert.True(t, strings.HasPrefix(addr, "0x"))
+}
+
+func TestIOTAClient_JSONRPC_GetBalance_CallsServer(t *testing.T) {
+	called := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		var req map[string]interface{}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		assert.Equal(t, "iotax_getBalance", req["method"])
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"jsonrpc": "2.0",
+			"id":      1,
+			"result": map[string]interface{}{
+				"coinType":        "0x2::iota::IOTA",
+				"coinObjectCount": 1,
+				"totalBalance":    "1500000",
+				"lockedBalance":   map[string]interface{}{},
+			},
+		})
+	}))
+	defer server.Close()
+
+	client := NewIOTAClient(server.URL)
+	balance, err := client.GetBalance(context.Background(), "0x"+repeatString("a", 64))
+
+	require.NoError(t, err)
+	assert.True(t, called, "Expected HTTP call to server")
+	assert.Equal(t, int64(1500000), balance)
+}
+
+func TestIOTAClient_JSONRPC_GetNodeInfo_CallsServer(t *testing.T) {
+	called := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		var req map[string]interface{}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		assert.Equal(t, "iota_getLatestCheckpointSequenceNumber", req["method"])
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"jsonrpc": "2.0",
+			"id":      1,
+			"result":  "99999",
+		})
+	}))
+	defer server.Close()
+
+	client := NewIOTAClient(server.URL)
+	info, err := client.GetNodeInfo(context.Background())
+
+	require.NoError(t, err)
+	assert.True(t, called, "Expected HTTP call to server")
+	assert.True(t, info.IsHealthy)
+}
+
+func TestIOTAClient_JSONRPC_GetTransactionStatus_CallsServer(t *testing.T) {
+	txDigest := "Bx7mFpVYhSFpFMGGVeVRVTqDjDFNPQmB6YEjCX2HuUV"
+	called := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		var req map[string]interface{}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		assert.Equal(t, "iota_getTransactionBlock", req["method"])
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"jsonrpc": "2.0",
+			"id":      1,
+			"result": map[string]interface{}{
+				"digest":     txDigest,
+				"checkpoint": "12345",
+			},
+		})
+	}))
+	defer server.Close()
+
+	client := NewIOTAClient(server.URL)
+	status, err := client.GetTransactionStatus(context.Background(), txDigest)
+
+	require.NoError(t, err)
+	assert.True(t, called, "Expected HTTP call to server")
+	assert.Equal(t, txDigest, status.TxHash)
+	assert.True(t, status.IsConfirmed)
+	assert.Equal(t, "12345", status.BlockID)
+}
+
+func TestIOTAClient_JSONRPC_RetryOnServerError(t *testing.T) {
+	callCount := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		if callCount < 3 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"jsonrpc": "2.0",
+			"id":      1,
+			"result": map[string]interface{}{
+				"coinType":     "0x2::iota::IOTA",
+				"totalBalance": "500000",
+			},
+		})
+	}))
+	defer server.Close()
+
+	client := NewIOTAClient(server.URL)
+	balance, err := client.GetBalance(context.Background(), "0x"+repeatString("a", 64))
+
+	require.NoError(t, err, "Should succeed after retries")
+	assert.Equal(t, int64(500000), balance)
+	assert.GreaterOrEqual(t, callCount, 3, "Should have retried at least 3 times")
+}
+
+func TestIOTAClient_JSONRPC_NoRetryOnRPCError(t *testing.T) {
+	callCount := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"jsonrpc": "2.0",
+			"id":      1,
+			"error": map[string]interface{}{
+				"code":    -32602,
+				"message": "Invalid params",
+			},
+		})
+	}))
+	defer server.Close()
+
+	client := NewIOTAClient(server.URL)
+	_, err := client.GetBalance(context.Background(), "0x"+repeatString("a", 64))
+
+	require.Error(t, err)
+	assert.Equal(t, 1, callCount, "RPC errors should not be retried")
+}
+
 func repeatString(s string, n int) string {
 	result := ""
 	for i := 0; i < n; i++ {

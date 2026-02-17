@@ -113,14 +113,14 @@ func (w *IOTAPaymentWorker) checkPaymentIntent(ctx context.Context, intent *doma
 		// Create a transaction record
 		txHash := fmt.Sprintf("iota-payment-%s", intent.ID)
 		tx := &domain.IOTATransaction{
-			ID:              fmt.Sprintf("tx-%s", intent.ID),
-			TransactionHash: txHash,
-			AmountIOTA:      intent.AmountIOTA,
-			TxType:          domain.TransactionTypePayment,
-			Status:          domain.TransactionStatusConfirmed,
-			Confirmations:   10,
-			ToAddress:       sql.NullString{String: intent.PaymentAddress, Valid: true},
-			CreatedAt:       time.Now(),
+			ID:                fmt.Sprintf("tx-%s", intent.ID),
+			TransactionDigest: txHash,
+			AmountIOTA:        intent.AmountIOTA,
+			TxType:            domain.TransactionTypePayment,
+			Status:            domain.TransactionStatusConfirmed,
+			Confirmations:     10,
+			ToAddress:         sql.NullString{String: intent.PaymentAddress, Valid: true},
+			CreatedAt:         time.Now(),
 		}
 
 		if intent.UserID != "" {

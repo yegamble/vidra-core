@@ -83,9 +83,11 @@ func TestPaymentDomainErrors(t *testing.T) {
 		{"ErrInvalidAddress", ErrInvalidAddress, "INVALID_ADDRESS", "Invalid IOTA address"},
 		{"ErrPaymentAlreadyPaid", ErrPaymentAlreadyPaid, "PAYMENT_ALREADY_PAID", "Payment intent already paid"},
 		{"ErrInvalidSeed", ErrInvalidSeed, "INVALID_SEED", "Invalid wallet seed"},
-		{"ErrEncryptionFailed", ErrEncryptionFailed, "ENCRYPTION_FAILED", "Failed to encrypt wallet seed"},
-		{"ErrDecryptionFailed", ErrDecryptionFailed, "DECRYPTION_FAILED", "Failed to decrypt wallet seed"},
+		{"ErrEncryptionFailed", ErrEncryptionFailed, "ENCRYPTION_FAILED", "Failed to encrypt wallet data"},
+		{"ErrDecryptionFailed", ErrDecryptionFailed, "DECRYPTION_FAILED", "Failed to decrypt wallet data"},
 		{"ErrIOTANodeUnavailable", ErrIOTANodeUnavailable, "IOTA_NODE_UNAVAILABLE", "IOTA node is unavailable"},
+		{"ErrIOTANodeSyncing", ErrIOTANodeSyncing, "IOTA_NODE_SYNCING", "IOTA node is still syncing"},
+		{"ErrInsufficientGas", ErrInsufficientGas, "INSUFFICIENT_GAS", "Insufficient gas for transaction"},
 	}
 
 	for _, tt := range tests {
@@ -98,7 +100,6 @@ func TestPaymentDomainErrors(t *testing.T) {
 }
 
 func TestPaymentDomainErrorsCount(t *testing.T) {
-	// Verify we have all 15 payment domain errors accounted for
 	errors := []DomainError{
 		ErrWalletNotFound,
 		ErrWalletAlreadyExists,
@@ -113,13 +114,14 @@ func TestPaymentDomainErrorsCount(t *testing.T) {
 		ErrEncryptionFailed,
 		ErrDecryptionFailed,
 		ErrIOTANodeUnavailable,
+		ErrIOTANodeSyncing,
+		ErrInsufficientGas,
 		ErrTransactionBroadcast,
 		ErrRateLimitExceeded,
 	}
 
-	assert.Len(t, errors, 15)
+	assert.Len(t, errors, 17)
 
-	// Verify all have non-empty codes
 	for _, err := range errors {
 		assert.NotEmpty(t, err.Code, "Every DomainError must have a non-empty Code")
 		assert.NotEmpty(t, err.Message, "Every DomainError must have a non-empty Message")
@@ -141,6 +143,8 @@ func TestPaymentDomainErrorsAreDistinct(t *testing.T) {
 		ErrEncryptionFailed,
 		ErrDecryptionFailed,
 		ErrIOTANodeUnavailable,
+		ErrIOTANodeSyncing,
+		ErrInsufficientGas,
 		ErrTransactionBroadcast,
 		ErrRateLimitExceeded,
 	}
@@ -152,31 +156,48 @@ func TestPaymentDomainErrorsAreDistinct(t *testing.T) {
 	}
 }
 
-func TestIOTAWalletJSONSeedHidden(t *testing.T) {
+func TestIOTAWalletJSONPrivateKeyHidden(t *testing.T) {
 	now := time.Now().Truncate(time.Second)
 	wallet := IOTAWallet{
-		ID:            "wallet-123",
-		UserID:        "user-456",
-		EncryptedSeed: []byte("secret-seed-data"),
-		SeedNonce:     []byte("nonce-data"),
-		Address:       "iota1qp2test...",
-		BalanceIOTA:   1000000,
-		CreatedAt:     now,
-		UpdatedAt:     now,
+		ID:                  "wallet-123",
+		UserID:              "user-456",
+		EncryptedPrivateKey: []byte("secret-key-data"),
+		PrivateKeyNonce:     []byte("nonce-data"),
+		PublicKey:           "0xabcdef1234",
+		Address:             "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef12",
+		BalanceIOTA:         1000000,
+		CreatedAt:           now,
+		UpdatedAt:           now,
 	}
 
 	data, err := json.Marshal(wallet)
 	assert.NoError(t, err)
 
-	// Verify that EncryptedSeed and SeedNonce are NOT in JSON output (json:"-" tag)
 	var raw map[string]interface{}
 	err = json.Unmarshal(data, &raw)
 	assert.NoError(t, err)
 
-	assert.Nil(t, raw["encrypted_seed"], "EncryptedSeed should not appear in JSON")
-	assert.Nil(t, raw["seed_nonce"], "SeedNonce should not appear in JSON")
+	assert.Nil(t, raw["encrypted_private_key"], "EncryptedPrivateKey should not appear in JSON")
+	assert.Nil(t, raw["private_key_nonce"], "PrivateKeyNonce should not appear in JSON")
+	assert.Nil(t, raw["public_key"], "PublicKey should not appear in JSON")
 	assert.Equal(t, "wallet-123", raw["id"])
-	assert.Equal(t, "iota1qp2test...", raw["address"])
+	assert.Equal(t, "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef12", raw["address"])
+}
+
+func TestIOTATransactionDigestField(t *testing.T) {
+	tx := IOTATransaction{
+		ID:                "tx-123",
+		TransactionDigest: "0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890ab",
+		AmountIOTA:        500000,
+		TxType:            TransactionTypePayment,
+		Status:            TransactionStatusConfirmed,
+		GasBudget:         1000,
+		GasUsed:           750,
+	}
+
+	assert.Equal(t, "0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890ab", tx.TransactionDigest)
+	assert.Equal(t, int64(1000), tx.GasBudget)
+	assert.Equal(t, int64(750), tx.GasUsed)
 }
 
 func TestTransactionBroadcastError(t *testing.T) {
@@ -187,4 +208,9 @@ func TestTransactionBroadcastError(t *testing.T) {
 func TestRateLimitExceededError(t *testing.T) {
 	assert.Equal(t, "RATE_LIMIT_EXCEEDED", ErrRateLimitExceeded.Code)
 	assert.Equal(t, "Rate limit exceeded for wallet operations", ErrRateLimitExceeded.Message)
+}
+
+func TestNewErrors(t *testing.T) {
+	assert.Equal(t, "IOTA_NODE_SYNCING", ErrIOTANodeSyncing.Code)
+	assert.Equal(t, "INSUFFICIENT_GAS", ErrInsufficientGas.Code)
 }
