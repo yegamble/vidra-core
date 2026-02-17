@@ -23,7 +23,7 @@ require (
 	github.com/jlaffaye/ftp v0.2.0
 	github.com/jmoiron/sqlx v1.4.0
 	github.com/joho/godotenv v1.5.1
-	github.com/lib/pq v1.10.9
+	github.com/lib/pq v1.11.2
 	github.com/microcosm-cc/bluemonday v1.0.27
 	github.com/mssola/user_agent v0.6.0
 	github.com/nareix/joy4 v0.0.0-20200507095837-05a4ffbb5369
