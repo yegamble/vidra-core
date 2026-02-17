@@ -193,7 +193,7 @@ variable "cloudwatch_log_retention_days" {
 }
 
 variable "allowed_cidr_blocks" {
-  description = "Allowed CIDR blocks"
+  description = "List of allowed CIDR blocks for external access. DO NOT use 0.0.0.0/0 in production for security reasons."
   type        = list(string)
 }
 

@@ -131,7 +131,7 @@ cloudwatch_log_retention_days    = 30
 
 # Security Configuration
 allowed_cidr_blocks = [
-  "0.0.0.0/0" # TODO: Restrict to your IP ranges
+  "10.0.0.0/8" # Example: Internal network only. TODO: Restrict to your specific trusted IP ranges (e.g., Office VPN, CI/CD runners)
 ]
 
 enable_waf            = true
