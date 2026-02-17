@@ -2,39 +2,26 @@ package usecase
 
 import (
 	"context"
-	"crypto/ed25519"
+	"errors"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
+	"github.com/lib/pq"
 
-	"athena/internal/crypto"
 	"athena/internal/domain"
 )
 
-// E2EEService provides end-to-end encryption services for messaging
 type E2EEService struct {
 	cryptoRepo       CryptoRepository
 	messageRepo      E2EEMessageRepository
 	conversationRepo ConversationRepository
-	cryptoService    *crypto.CryptoService
 	db               *sqlx.DB
 }
 
-// CryptoRepository interface for crypto operations
 type CryptoRepository interface {
-	CreateUserMasterKey(ctx context.Context, tx *sqlx.Tx, masterKey *domain.UserMasterKey) error
-	GetUserMasterKey(ctx context.Context, userID string) (*domain.UserMasterKey, error)
-	UpdateUserMasterKey(ctx context.Context, tx *sqlx.Tx, masterKey *domain.UserMasterKey) error
-	DeleteUserMasterKey(ctx context.Context, tx *sqlx.Tx, userID string) error
-
-	CreateConversationKey(ctx context.Context, tx *sqlx.Tx, key *domain.ConversationKey) error
-	GetActiveConversationKey(ctx context.Context, conversationID, userID string) (*domain.ConversationKey, error)
-	ListConversationKeys(ctx context.Context, conversationID string) ([]*domain.ConversationKey, error)
-	UpdateConversationKey(ctx context.Context, tx *sqlx.Tx, key *domain.ConversationKey) error
-	DeactivateConversationKeys(ctx context.Context, tx *sqlx.Tx, conversationID string, excludeKeyVersion int) error
-
 	CreateKeyExchangeMessage(ctx context.Context, tx *sqlx.Tx, msg *domain.KeyExchangeMessage) error
 	GetKeyExchangeMessage(ctx context.Context, messageID string) (*domain.KeyExchangeMessage, error)
 	GetPendingKeyExchanges(ctx context.Context, userID string) ([]*domain.KeyExchangeMessage, error)
@@ -42,28 +29,25 @@ type CryptoRepository interface {
 
 	CreateUserSigningKey(ctx context.Context, tx *sqlx.Tx, key *domain.UserSigningKey) error
 	GetUserSigningKey(ctx context.Context, userID string) (*domain.UserSigningKey, error)
-	GetUserPublicSigningKey(ctx context.Context, userID string) (string, error)
 	UpdateUserSigningKey(ctx context.Context, tx *sqlx.Tx, key *domain.UserSigningKey) error
 
 	CreateAuditLog(ctx context.Context, auditLog *domain.CryptoAuditLog) error
+
 	WithTransaction(ctx context.Context, fn func(*sqlx.Tx) error) error
 }
 
-// E2EEMessageRepository interface for E2EE message operations (separate from main MessageRepository)
 type E2EEMessageRepository interface {
-	Create(ctx context.Context, tx *sqlx.Tx, message *domain.Message) error
-	GetByID(ctx context.Context, messageID string) (*domain.Message, error)
-	Update(ctx context.Context, tx *sqlx.Tx, message *domain.Message) error
+	CreateEncryptedMessage(ctx context.Context, message *domain.Message) error
+	GetEncryptedMessages(ctx context.Context, participantOneID, participantTwoID string, limit, offset int) ([]*domain.Message, error)
+	GetMessage(ctx context.Context, messageID string, userID string) (*domain.Message, error)
 }
 
-// ConversationRepository interface for conversation operations
 type ConversationRepository interface {
-	GetByParticipants(ctx context.Context, participantOneID, participantTwoID string) (*domain.Conversation, error)
-	Create(ctx context.Context, tx *sqlx.Tx, conversation *domain.Conversation) error
-	Update(ctx context.Context, tx *sqlx.Tx, conversation *domain.Conversation) error
+	GetOrCreateConversation(ctx context.Context, tx *sqlx.Tx, participantOneID, participantTwoID string) (*domain.Conversation, error)
+	GetConversation(ctx context.Context, conversationID string) (*domain.Conversation, error)
+	UpdateEncryptionStatus(ctx context.Context, tx *sqlx.Tx, conversationID string, status string) error
 }
 
-// NewE2EEService creates a new E2EE service
 func NewE2EEService(
 	cryptoRepo CryptoRepository,
 	messageRepo E2EEMessageRepository,
@@ -74,830 +58,265 @@ func NewE2EEService(
 		cryptoRepo:       cryptoRepo,
 		messageRepo:      messageRepo,
 		conversationRepo: conversationRepo,
-		cryptoService:    crypto.NewCryptoService(),
 		db:               db,
 	}
 }
 
-// UserE2EESession represents a user's E2EE session state
-type UserE2EESession struct {
-	UserID        string
-	MasterKey     []byte
-	IsUnlocked    bool
-	UnlockedAt    time.Time
-	SessionExpiry time.Time
-}
-
-// In-memory session cache (in production, use Redis)
-var userSessions = make(map[string]*UserE2EESession)
-
-// SetupE2EE initializes E2EE for a user with master key
-func (s *E2EEService) SetupE2EE(ctx context.Context, userID, password string, clientIP, userAgent string) error {
-	// Check if user already has E2EE setup
-	existingKey, err := s.cryptoRepo.GetUserMasterKey(ctx, userID)
-	if err != nil {
-		s.auditLog(ctx, userID, "", domain.CryptoOpKeyGeneration, false, fmt.Sprintf("Failed to check existing key: %v", err), clientIP, userAgent)
-		return fmt.Errorf("failed to check existing E2EE setup: %w", err)
-	}
-
-	if existingKey != nil {
-		s.auditLog(ctx, userID, "", domain.CryptoOpKeyGeneration, false, "User already has E2EE setup", clientIP, userAgent)
-		return fmt.Errorf("user already has E2EE setup")
-	}
-
-	return s.cryptoRepo.WithTransaction(ctx, func(tx *sqlx.Tx) error {
-		// Generate master key
-		masterKey := make([]byte, crypto.ChaCha20KeySize)
-		if _, err := crypto.SecureRandom(masterKey); err != nil {
-			return fmt.Errorf("failed to generate master key: %w", err)
+func (s *E2EEService) RegisterIdentityKey(
+	ctx context.Context,
+	userID, publicIdentityKey, publicSigningKey string,
+	clientIP, userAgent string,
+) error {
+	err := s.cryptoRepo.WithTransaction(ctx, func(tx *sqlx.Tx) error {
+		existing, err := s.cryptoRepo.GetUserSigningKey(ctx, userID)
+		if err == nil {
+			existing.PublicKey = publicSigningKey
+			existing.PublicIdentityKey = &publicIdentityKey
+			existing.KeyVersion++
+			return s.cryptoRepo.UpdateUserSigningKey(ctx, tx, existing)
+		}
+		if !errors.Is(err, domain.ErrNotFound) {
+			return fmt.Errorf("check existing key: %w", err)
 		}
 
-		// Generate salt and derive key from password
-		salt, err := s.cryptoService.GenerateSalt()
-		if err != nil {
-			return fmt.Errorf("failed to generate salt: %w", err)
+		key := &domain.UserSigningKey{
+			UserID:            userID,
+			PublicKey:         publicSigningKey,
+			PublicIdentityKey: &publicIdentityKey,
+			KeyVersion:        1,
+			CreatedAt:         time.Now(),
 		}
-
-		passwordDerivedKey, err := s.cryptoService.DeriveKeyFromPassword(password, salt)
-		if err != nil {
-			return fmt.Errorf("failed to derive key from password: %w", err)
-		}
-
-		// Encrypt master key with password-derived key
-		encryptedMasterKeyData, err := s.cryptoService.EncryptWithMasterKey(masterKey, passwordDerivedKey)
-		if err != nil {
-			return fmt.Errorf("failed to encrypt master key: %w", err)
-		}
-
-		// Combine nonce + ciphertext for storage (nonce is 24 bytes, prepend to ciphertext)
-		combinedData := make([]byte, len(encryptedMasterKeyData.Nonce)+len(encryptedMasterKeyData.Ciphertext))
-		copy(combinedData[:len(encryptedMasterKeyData.Nonce)], encryptedMasterKeyData.Nonce)
-		copy(combinedData[len(encryptedMasterKeyData.Nonce):], encryptedMasterKeyData.Ciphertext)
-
-		// Create user master key record
-		userMasterKey := &domain.UserMasterKey{
-			UserID:             userID,
-			EncryptedMasterKey: s.cryptoService.Base64Encode(combinedData),
-			Argon2Salt:         s.cryptoService.Base64Encode(salt),
-			Argon2Memory:       crypto.Argon2Memory,
-			Argon2Time:         crypto.Argon2Time,
-			Argon2Parallelism:  crypto.Argon2Parallelism,
-			KeyVersion:         1,
-		}
-
-		err = s.cryptoRepo.CreateUserMasterKey(ctx, tx, userMasterKey)
-		if err != nil {
-			return fmt.Errorf("failed to create user master key: %w", err)
-		}
-
-		// Generate signing key pair
-		signingKeyPair, err := s.cryptoService.GenerateEd25519KeyPair()
-		if err != nil {
-			return fmt.Errorf("failed to generate signing key pair: %w", err)
-		}
-
-		// Encrypt signing private key with master key
-		encryptedSigningKey, err := s.cryptoService.EncryptWithMasterKey(signingKeyPair.PrivateKey, masterKey)
-		if err != nil {
-			return fmt.Errorf("failed to encrypt signing private key: %w", err)
-		}
-
-		// Combine nonce + ciphertext for signing key storage
-		signingKeyCombined := make([]byte, len(encryptedSigningKey.Nonce)+len(encryptedSigningKey.Ciphertext))
-		copy(signingKeyCombined[:len(encryptedSigningKey.Nonce)], encryptedSigningKey.Nonce)
-		copy(signingKeyCombined[len(encryptedSigningKey.Nonce):], encryptedSigningKey.Ciphertext)
-
-		userSigningKey := &domain.UserSigningKey{
-			UserID:              userID,
-			EncryptedPrivateKey: s.cryptoService.Base64Encode(signingKeyCombined),
-			PublicKey:           s.cryptoService.Base64Encode(signingKeyPair.PublicKey),
-			KeyVersion:          1,
-		}
-
-		err = s.cryptoRepo.CreateUserSigningKey(ctx, tx, userSigningKey)
-		if err != nil {
-			return fmt.Errorf("failed to create user signing key: %w", err)
-		}
-
-		// Clear sensitive data
-		s.cryptoService.ZeroMemory(masterKey)
-		s.cryptoService.ZeroMemory(passwordDerivedKey)
-		s.cryptoService.ZeroMemory(signingKeyPair.PrivateKey)
-
-		s.auditLog(ctx, userID, "", domain.CryptoOpKeyGeneration, true, "", clientIP, userAgent)
-		return nil
+		return s.cryptoRepo.CreateUserSigningKey(ctx, tx, key)
 	})
-}
-
-// UnlockE2EE unlocks a user's E2EE keys with password
-func (s *E2EEService) UnlockE2EE(ctx context.Context, userID, password string, clientIP, userAgent string) error {
-	// Get user master key
-	userMasterKey, err := s.cryptoRepo.GetUserMasterKey(ctx, userID)
 	if err != nil {
-		s.auditLog(ctx, userID, "", domain.CryptoOpDecryption, false, fmt.Sprintf("Failed to get master key: %v", err), clientIP, userAgent)
-		return fmt.Errorf("failed to get user master key: %w", err)
+		var pqErr *pq.Error
+		if errors.As(err, &pqErr) && pqErr.Code == "23505" {
+			return domain.ErrConflict
+		}
+		s.logAudit(ctx, userID, nil, domain.CryptoOpRegisterKey, false, err.Error(), clientIP, userAgent)
+		return fmt.Errorf("register identity key: %w", err)
 	}
 
-	if userMasterKey == nil {
-		s.auditLog(ctx, userID, "", domain.CryptoOpDecryption, false, "No E2EE setup found", clientIP, userAgent)
-		return fmt.Errorf("user has no E2EE setup")
-	}
-
-	// Derive key from password
-	salt, err := s.cryptoService.Base64Decode(userMasterKey.Argon2Salt)
-	if err != nil {
-		return fmt.Errorf("failed to decode salt: %w", err)
-	}
-
-	passwordDerivedKey, err := s.cryptoService.DeriveKeyFromPassword(password, salt)
-	if err != nil {
-		return fmt.Errorf("failed to derive key from password: %w", err)
-	}
-
-	// Decrypt master key - split nonce and ciphertext
-	combinedData, err := s.cryptoService.Base64Decode(userMasterKey.EncryptedMasterKey)
-	if err != nil {
-		return fmt.Errorf("failed to decode encrypted master key: %w", err)
-	}
-
-	// XChaCha20 nonce is 24 bytes
-	const nonceSize = 24
-	if len(combinedData) < nonceSize {
-		return fmt.Errorf("invalid encrypted master key: too short")
-	}
-
-	nonce := combinedData[:nonceSize]
-	ciphertext := combinedData[nonceSize:]
-
-	encryptedData := &crypto.EncryptedData{
-		Ciphertext: ciphertext,
-		Nonce:      nonce,
-		Version:    1,
-	}
-
-	masterKey, err := s.cryptoService.DecryptWithMasterKey(encryptedData, passwordDerivedKey)
-	if err != nil {
-		s.auditLog(ctx, userID, "", domain.CryptoOpDecryption, false, "Invalid password", clientIP, userAgent)
-		s.cryptoService.ZeroMemory(passwordDerivedKey)
-		return fmt.Errorf("invalid password")
-	}
-
-	// Create or update user session
-	session := &UserE2EESession{
-		UserID:        userID,
-		MasterKey:     masterKey,
-		IsUnlocked:    true,
-		UnlockedAt:    time.Now(),
-		SessionExpiry: time.Now().Add(24 * time.Hour), // 24 hour session
-	}
-
-	userSessions[userID] = session
-
-	// Clear password-derived key
-	s.cryptoService.ZeroMemory(passwordDerivedKey)
-
-	s.auditLog(ctx, userID, "", domain.CryptoOpDecryption, true, "", clientIP, userAgent)
+	s.logAudit(ctx, userID, nil, domain.CryptoOpRegisterKey, true, "", clientIP, userAgent)
 	return nil
 }
 
-// LockE2EE locks a user's E2EE session
-func (s *E2EEService) LockE2EE(ctx context.Context, userID string) {
-	if session, exists := userSessions[userID]; exists {
-		s.cryptoService.ZeroMemory(session.MasterKey)
-		delete(userSessions, userID)
-	}
-}
-
-// IsUnlocked checks if user's E2EE is unlocked
-func (s *E2EEService) IsUnlocked(userID string) bool {
-	session, exists := userSessions[userID]
-	if !exists {
-		return false
-	}
-
-	// Check session expiry
-	if time.Now().After(session.SessionExpiry) {
-		s.LockE2EE(context.Background(), userID)
-		return false
-	}
-
-	return session.IsUnlocked
-}
-
-// InitiateKeyExchange initiates E2EE key exchange for a conversation
-func (s *E2EEService) InitiateKeyExchange(ctx context.Context, senderID, recipientID string, clientIP, userAgent string) (*domain.KeyExchangeMessage, error) {
-	// Verify sender is unlocked
-	if !s.IsUnlocked(senderID) {
-		return nil, fmt.Errorf("sender E2EE session not unlocked")
-	}
-
-	// Get or create conversation
-	conversation, err := s.getOrCreateConversation(ctx, senderID, recipientID)
+func (s *E2EEService) GetPublicKeys(ctx context.Context, userID string) (*domain.PublicKeyBundle, error) {
+	key, err := s.cryptoRepo.GetUserSigningKey(ctx, userID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get conversation: %w", err)
+		if errors.Is(err, domain.ErrNotFound) {
+			return nil, domain.ErrNotFound
+		}
+		return nil, fmt.Errorf("get public keys: %w", err)
 	}
 
-	// Check if key exchange already in progress
-	if conversation.IsEncrypted && conversation.KeyExchangeComplete {
-		return nil, fmt.Errorf("conversation already has E2EE enabled")
+	bundle := &domain.PublicKeyBundle{
+		PublicSigningKey: key.PublicKey,
+		KeyVersion:       key.KeyVersion,
+	}
+	if key.PublicIdentityKey != nil {
+		bundle.PublicIdentityKey = *key.PublicIdentityKey
 	}
 
-	var keyExchange *domain.KeyExchangeMessage
-	err = s.cryptoRepo.WithTransaction(ctx, func(tx *sqlx.Tx) error {
-		// Generate key pair for this conversation
-		keyPair, err := s.cryptoService.GenerateX25519KeyPair()
+	return bundle, nil
+}
+
+func (s *E2EEService) GetE2EEStatus(ctx context.Context, userID string) (*domain.E2EEStatusResponse, error) {
+	key, err := s.cryptoRepo.GetUserSigningKey(ctx, userID)
+	if err != nil {
+		if errors.Is(err, domain.ErrNotFound) {
+			return &domain.E2EEStatusResponse{HasIdentityKey: false}, nil
+		}
+		return nil, fmt.Errorf("get e2ee status: %w", err)
+	}
+
+	hasIdentityKey := key.PublicIdentityKey != nil && *key.PublicIdentityKey != ""
+	return &domain.E2EEStatusResponse{
+		HasIdentityKey: hasIdentityKey,
+		KeyVersion:     key.KeyVersion,
+	}, nil
+}
+
+func (s *E2EEService) InitiateKeyExchange(
+	ctx context.Context,
+	senderID, recipientID, senderPublicKey string,
+	clientIP, userAgent string,
+) (*domain.KeyExchangeMessage, error) {
+	var kex *domain.KeyExchangeMessage
+
+	err := s.cryptoRepo.WithTransaction(ctx, func(tx *sqlx.Tx) error {
+		conv, err := s.conversationRepo.GetOrCreateConversation(ctx, tx, senderID, recipientID)
 		if err != nil {
-			return fmt.Errorf("failed to generate key pair: %w", err)
+			return fmt.Errorf("get or create conversation: %w", err)
 		}
 
-		// Encrypt private key with user's master key
-		session := userSessions[senderID]
-		encryptedPrivateKey, err := s.cryptoService.EncryptWithMasterKey(keyPair.PrivateKey, session.MasterKey)
-		if err != nil {
-			return fmt.Errorf("failed to encrypt private key: %w", err)
-		}
-
-		// Combine nonce + ciphertext for conversation key storage
-		conversationKeyCombined := make([]byte, len(encryptedPrivateKey.Nonce)+len(encryptedPrivateKey.Ciphertext))
-		copy(conversationKeyCombined[:len(encryptedPrivateKey.Nonce)], encryptedPrivateKey.Nonce)
-		copy(conversationKeyCombined[len(encryptedPrivateKey.Nonce):], encryptedPrivateKey.Ciphertext)
-
-		// Create conversation key record
-		conversationKey := &domain.ConversationKey{
-			ID:                  uuid.New().String(),
-			ConversationID:      conversation.ID,
-			UserID:              senderID,
-			EncryptedPrivateKey: s.cryptoService.Base64Encode(conversationKeyCombined),
-			PublicKey:           s.cryptoService.Base64Encode(keyPair.PublicKey),
-			KeyVersion:          1,
-			IsActive:            true,
-		}
-
-		err = s.cryptoRepo.CreateConversationKey(ctx, tx, conversationKey)
-		if err != nil {
-			return fmt.Errorf("failed to create conversation key: %w", err)
-		}
-
-		// Get sender's signing key
-		signingKey, err := s.getUserSigningKey(ctx, senderID)
-		if err != nil {
-			return fmt.Errorf("failed to get signing key: %w", err)
-		}
-
-		// Create key exchange message
-		keyExchangeMsg := &domain.KeyExchangeMessage{
+		now := time.Now()
+		kex = &domain.KeyExchangeMessage{
 			ID:             uuid.New().String(),
-			ConversationID: conversation.ID,
+			ConversationID: conv.ID,
 			SenderID:       senderID,
 			RecipientID:    recipientID,
 			ExchangeType:   domain.KeyExchangeTypeOffer,
-			PublicKey:      s.cryptoService.Base64Encode(keyPair.PublicKey),
-			Nonce:          s.cryptoService.Base64Encode([]byte(fmt.Sprintf("%s:%s:%d", senderID, recipientID, time.Now().Unix()))),
-			ExpiresAt:      time.Now().Add(1 * time.Hour),
+			PublicKey:      senderPublicKey,
+			Nonce:          uuid.New().String(),
+			CreatedAt:      now,
+			ExpiresAt:      now.Add(1 * time.Hour),
 		}
 
-		// Sign the key exchange message
-		signatureData := fmt.Sprintf("%s:%s:%s:%s", keyExchangeMsg.ConversationID, keyExchangeMsg.ExchangeType, keyExchangeMsg.PublicKey, keyExchangeMsg.Nonce)
-		signature, err := s.cryptoService.SignMessage([]byte(signatureData), signingKey)
-		if err != nil {
-			return fmt.Errorf("failed to sign key exchange: %w", err)
+		if err := s.cryptoRepo.CreateKeyExchangeMessage(ctx, tx, kex); err != nil {
+			return err
 		}
 
-		keyExchangeMsg.Signature = s.cryptoService.Base64Encode(signature)
-
-		err = s.cryptoRepo.CreateKeyExchangeMessage(ctx, tx, keyExchangeMsg)
-		if err != nil {
-			return fmt.Errorf("failed to create key exchange message: %w", err)
-		}
-
-		// Update conversation to indicate E2EE initiation
-		conversation.IsEncrypted = true
-		conversation.KeyExchangeComplete = false
-		conversation.EncryptionVersion = 1
-		err = s.conversationRepo.Update(ctx, tx, conversation)
-		if err != nil {
-			return fmt.Errorf("failed to update conversation: %w", err)
-		}
-
-		// Set the key exchange for return
-		keyExchange = keyExchangeMsg
-
-		// Clear sensitive data
-		s.cryptoService.ZeroMemory(keyPair.PrivateKey)
-		s.cryptoService.ZeroMemory(signingKey)
-
-		s.auditLog(ctx, senderID, conversation.ID, domain.CryptoOpKeyExchange, true, "", clientIP, userAgent)
-		return nil
+		return s.conversationRepo.UpdateEncryptionStatus(ctx, tx, conv.ID, domain.EncryptionStatusPending)
 	})
 
 	if err != nil {
-		return nil, err
+		var pqErr *pq.Error
+		if errors.As(err, &pqErr) && pqErr.Code == "23505" {
+			return nil, domain.ErrConflict
+		}
+		s.logAudit(ctx, senderID, nil, domain.CryptoOpKeyExchange, false, err.Error(), clientIP, userAgent)
+		return nil, fmt.Errorf("initiate key exchange: %w", err)
 	}
 
-	return keyExchange, nil
+	s.logAudit(ctx, senderID, &kex.ConversationID, domain.CryptoOpKeyExchange, true, "", clientIP, userAgent)
+	return kex, nil
 }
 
-// AcceptKeyExchange accepts an E2EE key exchange
-func (s *E2EEService) AcceptKeyExchange(ctx context.Context, keyExchangeID, userID string, clientIP, userAgent string) error {
-	// Verify user is unlocked
-	if !s.IsUnlocked(userID) {
-		return fmt.Errorf("user E2EE session not unlocked")
-	}
-
-	// Get key exchange message
-	keyExchange, err := s.cryptoRepo.GetKeyExchangeMessage(ctx, keyExchangeID)
+func (s *E2EEService) AcceptKeyExchange(
+	ctx context.Context,
+	keyExchangeID, userID, recipientPublicKey string,
+	clientIP, userAgent string,
+) error {
+	kex, err := s.cryptoRepo.GetKeyExchangeMessage(ctx, keyExchangeID)
 	if err != nil {
-		return fmt.Errorf("failed to get key exchange: %w", err)
-	}
-
-	if keyExchange == nil {
-		return fmt.Errorf("key exchange not found or expired")
-	}
-
-	if keyExchange.RecipientID != userID {
-		return fmt.Errorf("unauthorized to accept this key exchange")
-	}
-
-	if keyExchange.ExchangeType != domain.KeyExchangeTypeOffer {
-		return fmt.Errorf("invalid key exchange type for acceptance")
-	}
-
-	return s.cryptoRepo.WithTransaction(ctx, func(tx *sqlx.Tx) error {
-		// Verify sender's signature
-		senderPublicKey, err := s.cryptoRepo.GetUserPublicSigningKey(ctx, keyExchange.SenderID)
-		if err != nil {
-			return fmt.Errorf("failed to get sender's public key: %w", err)
+		if errors.Is(err, domain.ErrNotFound) {
+			return domain.ErrNotFound
 		}
-
-		senderPubKeyBytes, err := s.cryptoService.Base64Decode(senderPublicKey)
-		if err != nil {
-			return fmt.Errorf("failed to decode sender public key: %w", err)
-		}
-
-		signatureData := fmt.Sprintf("%s:%s:%s:%s", keyExchange.ConversationID, keyExchange.ExchangeType, keyExchange.PublicKey, keyExchange.Nonce)
-		signature, err := s.cryptoService.Base64Decode(keyExchange.Signature)
-		if err != nil {
-			return fmt.Errorf("failed to decode signature: %w", err)
-		}
-
-		if !s.cryptoService.VerifySignature([]byte(signatureData), signature, ed25519.PublicKey(senderPubKeyBytes)) {
-			s.auditLog(ctx, userID, keyExchange.ConversationID, domain.CryptoOpKeyExchange, false, "Invalid signature", clientIP, userAgent)
-			return fmt.Errorf("invalid key exchange signature")
-		}
-
-		// Generate recipient's key pair
-		recipientKeyPair, err := s.cryptoService.GenerateX25519KeyPair()
-		if err != nil {
-			return fmt.Errorf("failed to generate recipient key pair: %w", err)
-		}
-
-		// Compute shared secret
-		senderPublicKeyBytes, err := s.cryptoService.Base64Decode(keyExchange.PublicKey)
-		if err != nil {
-			return fmt.Errorf("failed to decode sender public key: %w", err)
-		}
-
-		sharedSecret, err := s.cryptoService.ComputeSharedSecret(recipientKeyPair.PrivateKey, senderPublicKeyBytes)
-		if err != nil {
-			return fmt.Errorf("failed to compute shared secret: %w", err)
-		}
-
-		// Encrypt keys with user's master key
-		session := userSessions[userID]
-		encryptedPrivateKey, err := s.cryptoService.EncryptWithMasterKey(recipientKeyPair.PrivateKey, session.MasterKey)
-		if err != nil {
-			return fmt.Errorf("failed to encrypt private key: %w", err)
-		}
-
-		encryptedSharedSecret, err := s.cryptoService.EncryptWithMasterKey(sharedSecret, session.MasterKey)
-		if err != nil {
-			return fmt.Errorf("failed to encrypt shared secret: %w", err)
-		}
-
-		// Combine nonce + ciphertext for recipient conversation key storage
-		recipientKeyCombined := make([]byte, len(encryptedPrivateKey.Nonce)+len(encryptedPrivateKey.Ciphertext))
-		copy(recipientKeyCombined[:len(encryptedPrivateKey.Nonce)], encryptedPrivateKey.Nonce)
-		copy(recipientKeyCombined[len(encryptedPrivateKey.Nonce):], encryptedPrivateKey.Ciphertext)
-
-		// Combine nonce + ciphertext for shared secret storage
-		sharedSecretCombined := make([]byte, len(encryptedSharedSecret.Nonce)+len(encryptedSharedSecret.Ciphertext))
-		copy(sharedSecretCombined[:len(encryptedSharedSecret.Nonce)], encryptedSharedSecret.Nonce)
-		copy(sharedSecretCombined[len(encryptedSharedSecret.Nonce):], encryptedSharedSecret.Ciphertext)
-
-		// Create recipient's conversation key
-		recipientConversationKey := &domain.ConversationKey{
-			ID:                    uuid.New().String(),
-			ConversationID:        keyExchange.ConversationID,
-			UserID:                userID,
-			EncryptedPrivateKey:   s.cryptoService.Base64Encode(recipientKeyCombined),
-			PublicKey:             s.cryptoService.Base64Encode(recipientKeyPair.PublicKey),
-			EncryptedSharedSecret: &[]string{s.cryptoService.Base64Encode(sharedSecretCombined)}[0],
-			KeyVersion:            1,
-			IsActive:              true,
-		}
-
-		err = s.cryptoRepo.CreateConversationKey(ctx, tx, recipientConversationKey)
-		if err != nil {
-			return fmt.Errorf("failed to create recipient conversation key: %w", err)
-		}
-
-		// Update sender's conversation key with shared secret
-		senderKey, err := s.cryptoRepo.GetActiveConversationKey(ctx, keyExchange.ConversationID, keyExchange.SenderID)
-		if err != nil {
-			return fmt.Errorf("failed to get sender's conversation key: %w", err)
-		}
-
-		senderKey.EncryptedSharedSecret = &[]string{s.cryptoService.Base64Encode(encryptedSharedSecret.Ciphertext)}[0]
-		err = s.cryptoRepo.UpdateConversationKey(ctx, tx, senderKey)
-		if err != nil {
-			return fmt.Errorf("failed to update sender's conversation key: %w", err)
-		}
-
-		// Mark key exchange as complete
-		conversation, err := s.conversationRepo.GetByParticipants(ctx, keyExchange.SenderID, keyExchange.RecipientID)
-		if err != nil {
-			return fmt.Errorf("failed to get conversation: %w", err)
-		}
-
-		conversation.KeyExchangeComplete = true
-		err = s.conversationRepo.Update(ctx, tx, conversation)
-		if err != nil {
-			return fmt.Errorf("failed to update conversation: %w", err)
-		}
-
-		// Delete key exchange message
-		err = s.cryptoRepo.DeleteKeyExchangeMessage(ctx, tx, keyExchangeID)
-		if err != nil {
-			return fmt.Errorf("failed to delete key exchange message: %w", err)
-		}
-
-		// Clear sensitive data
-		s.cryptoService.ZeroMemory(recipientKeyPair.PrivateKey)
-		s.cryptoService.ZeroMemory(sharedSecret)
-
-		s.auditLog(ctx, userID, keyExchange.ConversationID, domain.CryptoOpKeyExchange, true, "", clientIP, userAgent)
-		return nil
-	})
-}
-
-// EncryptMessage encrypts a message for secure transmission
-func (s *E2EEService) EncryptMessage(ctx context.Context, senderID, recipientID, plaintext string, clientIP, userAgent string) (*domain.Message, error) {
-	// Verify sender is unlocked
-	if !s.IsUnlocked(senderID) {
-		return nil, fmt.Errorf("sender E2EE session not unlocked")
+		return fmt.Errorf("get key exchange: %w", err)
 	}
 
-	// Get conversation
-	conversation, err := s.conversationRepo.GetByParticipants(ctx, senderID, recipientID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get conversation: %w", err)
+	if kex.RecipientID != userID {
+		return domain.ErrForbidden
 	}
 
-	if conversation == nil || !conversation.IsEncrypted || !conversation.KeyExchangeComplete {
-		return nil, fmt.Errorf("conversation not ready for E2EE")
-	}
-
-	// Get sender's conversation key
-	senderKey, err := s.cryptoRepo.GetActiveConversationKey(ctx, conversation.ID, senderID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get sender's conversation key: %w", err)
-	}
-
-	if senderKey == nil || senderKey.EncryptedSharedSecret == nil {
-		return nil, fmt.Errorf("no shared secret available")
-	}
-
-	// Decrypt shared secret - split nonce and ciphertext
-	session := userSessions[senderID]
-	combinedData, err := s.cryptoService.Base64Decode(*senderKey.EncryptedSharedSecret)
-	if err != nil {
-		return nil, fmt.Errorf("failed to decode encrypted shared secret: %w", err)
-	}
-
-	// XChaCha20 nonce is 24 bytes
-	const nonceSize = 24
-	if len(combinedData) < nonceSize {
-		return nil, fmt.Errorf("invalid encrypted shared secret: too short")
-	}
-
-	decryptNonce := combinedData[:nonceSize]
-	decryptCiphertext := combinedData[nonceSize:]
-
-	encryptedData := &crypto.EncryptedData{
-		Ciphertext: decryptCiphertext,
-		Nonce:      decryptNonce,
-		Version:    1,
-	}
-
-	sharedSecret, err := s.cryptoService.DecryptWithMasterKey(encryptedData, session.MasterKey)
-	if err != nil {
-		return nil, fmt.Errorf("failed to decrypt shared secret: %w", err)
-	}
-
-	// Generate nonce and encrypt message
-	nonce, err := s.cryptoService.GenerateNonce()
-	if err != nil {
-		s.cryptoService.ZeroMemory(sharedSecret)
-		return nil, fmt.Errorf("failed to generate nonce: %w", err)
-	}
-
-	ciphertext, err := s.cryptoService.Encrypt([]byte(plaintext), sharedSecret, nonce)
-	if err != nil {
-		s.cryptoService.ZeroMemory(sharedSecret)
-		return nil, fmt.Errorf("failed to encrypt message: %w", err)
-	}
-
-	// Sign the encrypted message
-	signingKey, err := s.getUserSigningKey(ctx, senderID)
-	if err != nil {
-		s.cryptoService.ZeroMemory(sharedSecret)
-		return nil, fmt.Errorf("failed to get signing key: %w", err)
-	}
-
-	messageToSign := fmt.Sprintf("%s:%s:%s", s.cryptoService.Base64Encode(ciphertext), s.cryptoService.Base64Encode(nonce), recipientID)
-	signature, err := s.cryptoService.SignMessage([]byte(messageToSign), signingKey)
-	if err != nil {
-		s.cryptoService.ZeroMemory(sharedSecret)
-		s.cryptoService.ZeroMemory(signingKey)
-		return nil, fmt.Errorf("failed to sign message: %w", err)
-	}
-
-	// Create encrypted message
-	message := &domain.Message{
-		ID:                uuid.New().String(),
-		SenderID:          senderID,
-		RecipientID:       recipientID,
-		EncryptedContent:  &[]string{s.cryptoService.Base64Encode(ciphertext)}[0],
-		ContentNonce:      &[]string{s.cryptoService.Base64Encode(nonce)}[0],
-		PGPSignature:      &[]string{s.cryptoService.Base64Encode(signature)}[0],
-		IsEncrypted:       true,
-		EncryptionVersion: 1,
-		MessageType:       domain.MessageTypeSecure,
-		CreatedAt:         time.Now(),
-		UpdatedAt:         time.Now(),
-	}
-
-	// Clear sensitive data
-	s.cryptoService.ZeroMemory(sharedSecret)
-	s.cryptoService.ZeroMemory(signingKey)
-
-	s.auditLog(ctx, senderID, conversation.ID, domain.CryptoOpEncryption, true, "", clientIP, userAgent)
-	return message, nil
-}
-
-// DecryptMessage decrypts a secure message
-func (s *E2EEService) DecryptMessage(ctx context.Context, message *domain.Message, userID string, clientIP, userAgent string) (string, error) {
-	// Verify user is unlocked
-	if !s.IsUnlocked(userID) {
-		return "", fmt.Errorf("user E2EE session not unlocked")
-	}
-
-	if !message.IsEncrypted || message.EncryptedContent == nil || message.ContentNonce == nil || message.PGPSignature == nil {
-		return "", fmt.Errorf("message is not encrypted")
-	}
-
-	// Verify user is authorized to decrypt (sender or recipient)
-	if message.SenderID != userID && message.RecipientID != userID {
-		return "", fmt.Errorf("unauthorized to decrypt message")
-	}
-
-	// Get conversation
-	conversation, err := s.conversationRepo.GetByParticipants(ctx, message.SenderID, message.RecipientID)
-	if err != nil {
-		return "", fmt.Errorf("failed to get conversation: %w", err)
-	}
-
-	// Get user's conversation key
-	userKey, err := s.cryptoRepo.GetActiveConversationKey(ctx, conversation.ID, userID)
-	if err != nil {
-		return "", fmt.Errorf("failed to get user's conversation key: %w", err)
-	}
-
-	if userKey == nil || userKey.EncryptedSharedSecret == nil {
-		return "", fmt.Errorf("no shared secret available for decryption")
-	}
-
-	// Decrypt shared secret - split nonce and ciphertext
-	session := userSessions[userID]
-	combinedData, err := s.cryptoService.Base64Decode(*userKey.EncryptedSharedSecret)
-	if err != nil {
-		return "", fmt.Errorf("failed to decode encrypted shared secret: %w", err)
-	}
-
-	// XChaCha20 nonce is 24 bytes
-	const nonceSize = 24
-	if len(combinedData) < nonceSize {
-		return "", fmt.Errorf("invalid encrypted shared secret: too short")
-	}
-
-	decryptNonce := combinedData[:nonceSize]
-	decryptCiphertext := combinedData[nonceSize:]
-
-	encryptedData := &crypto.EncryptedData{
-		Ciphertext: decryptCiphertext,
-		Nonce:      decryptNonce,
-		Version:    1,
-	}
-
-	sharedSecret, err := s.cryptoService.DecryptWithMasterKey(encryptedData, session.MasterKey)
-	if err != nil {
-		return "", fmt.Errorf("failed to decrypt shared secret: %w", err)
-	}
-
-	// Verify message signature
-	senderPublicKey, err := s.cryptoRepo.GetUserPublicSigningKey(ctx, message.SenderID)
-	if err != nil {
-		s.cryptoService.ZeroMemory(sharedSecret)
-		return "", fmt.Errorf("failed to get sender's public key: %w", err)
-	}
-
-	senderPubKeyBytes, err := s.cryptoService.Base64Decode(senderPublicKey)
-	if err != nil {
-		s.cryptoService.ZeroMemory(sharedSecret)
-		return "", fmt.Errorf("failed to decode sender public key: %w", err)
-	}
-
-	messageToVerify := fmt.Sprintf("%s:%s:%s", *message.EncryptedContent, *message.ContentNonce, message.RecipientID)
-	signature, err := s.cryptoService.Base64Decode(*message.PGPSignature)
-	if err != nil {
-		s.cryptoService.ZeroMemory(sharedSecret)
-		return "", fmt.Errorf("failed to decode signature: %w", err)
-	}
-
-	if !s.cryptoService.VerifySignature([]byte(messageToVerify), signature, ed25519.PublicKey(senderPubKeyBytes)) {
-		s.cryptoService.ZeroMemory(sharedSecret)
-		s.auditLog(ctx, userID, conversation.ID, domain.CryptoOpDecryption, false, "Invalid message signature", clientIP, userAgent)
-		return "", fmt.Errorf("invalid message signature")
-	}
-
-	// Decrypt message content
-	messageCiphertext, err := s.cryptoService.Base64Decode(*message.EncryptedContent)
-	if err != nil {
-		s.cryptoService.ZeroMemory(sharedSecret)
-		return "", fmt.Errorf("failed to decode ciphertext: %w", err)
-	}
-
-	messageNonce, err := s.cryptoService.Base64Decode(*message.ContentNonce)
-	if err != nil {
-		s.cryptoService.ZeroMemory(sharedSecret)
-		return "", fmt.Errorf("failed to decode nonce: %w", err)
-	}
-
-	plaintext, err := s.cryptoService.Decrypt(messageCiphertext, sharedSecret, messageNonce)
-	if err != nil {
-		s.cryptoService.ZeroMemory(sharedSecret)
-		s.auditLog(ctx, userID, conversation.ID, domain.CryptoOpDecryption, false, "Decryption failed", clientIP, userAgent)
-		return "", fmt.Errorf("failed to decrypt message: %w", err)
-	}
-
-	// Clear sensitive data
-	s.cryptoService.ZeroMemory(sharedSecret)
-
-	s.auditLog(ctx, userID, conversation.ID, domain.CryptoOpDecryption, true, "", clientIP, userAgent)
-	return string(plaintext), nil
-}
-
-// Helper methods
-
-func (s *E2EEService) getOrCreateConversation(ctx context.Context, participantOneID, participantTwoID string) (*domain.Conversation, error) {
-	conversation, err := s.conversationRepo.GetByParticipants(ctx, participantOneID, participantTwoID)
-	if err != nil {
-		return nil, err
-	}
-
-	if conversation != nil {
-		return conversation, nil
-	}
-
-	// Create new conversation
-	newConversation := &domain.Conversation{
-		ID:               uuid.New().String(),
-		ParticipantOneID: participantOneID,
-		ParticipantTwoID: participantTwoID,
-		LastMessageAt:    time.Now(),
-		CreatedAt:        time.Now(),
-		UpdatedAt:        time.Now(),
+	if time.Now().After(kex.ExpiresAt) {
+		return domain.ErrKeyExchangeExpired
 	}
 
 	err = s.cryptoRepo.WithTransaction(ctx, func(tx *sqlx.Tx) error {
-		return s.conversationRepo.Create(ctx, tx, newConversation)
+		kex.ExchangeType = domain.KeyExchangeTypeAccept
+		kex.Signature = recipientPublicKey
+		if err := s.cryptoRepo.DeleteKeyExchangeMessage(ctx, tx, keyExchangeID); err != nil {
+			return err
+		}
+		if err := s.cryptoRepo.CreateKeyExchangeMessage(ctx, tx, kex); err != nil {
+			return err
+		}
+		return s.conversationRepo.UpdateEncryptionStatus(ctx, tx, kex.ConversationID, domain.EncryptionStatusActive)
 	})
 
 	if err != nil {
-		return nil, err
+		s.logAudit(ctx, userID, &kex.ConversationID, domain.CryptoOpKeyExchange, false, err.Error(), clientIP, userAgent)
+		return fmt.Errorf("accept key exchange: %w", err)
 	}
 
-	return newConversation, nil
+	s.logAudit(ctx, userID, &kex.ConversationID, domain.CryptoOpKeyExchange, true, "", clientIP, userAgent)
+	return nil
 }
 
-func (s *E2EEService) getUserSigningKey(ctx context.Context, userID string) (ed25519.PrivateKey, error) {
-	session, exists := userSessions[userID]
-	if !exists {
-		return nil, fmt.Errorf("user session not found")
-	}
-
-	userSigningKey, err := s.cryptoRepo.GetUserSigningKey(ctx, userID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get user signing key: %w", err)
-	}
-
-	if userSigningKey == nil {
-		return nil, fmt.Errorf("user signing key not found")
-	}
-
-	// Decrypt signing private key - split nonce and ciphertext
-	combinedData, err := s.cryptoService.Base64Decode(userSigningKey.EncryptedPrivateKey)
-	if err != nil {
-		return nil, fmt.Errorf("failed to decode encrypted private key: %w", err)
-	}
-
-	// XChaCha20 nonce is 24 bytes
-	const nonceSize = 24
-	if len(combinedData) < nonceSize {
-		return nil, fmt.Errorf("invalid encrypted private key: too short")
-	}
-
-	nonce := combinedData[:nonceSize]
-	ciphertext := combinedData[nonceSize:]
-
-	encryptedData := &crypto.EncryptedData{
-		Ciphertext: ciphertext,
-		Nonce:      nonce,
-		Version:    1,
-	}
-
-	privateKey, err := s.cryptoService.DecryptWithMasterKey(encryptedData, session.MasterKey)
-	if err != nil {
-		return nil, fmt.Errorf("failed to decrypt private key: %w", err)
-	}
-
-	return ed25519.PrivateKey(privateKey), nil
-}
-
-func (s *E2EEService) auditLog(ctx context.Context, userID, conversationID, operation string, success bool, errorMsg, clientIP, userAgent string) {
-	auditLog := &domain.CryptoAuditLog{
-		ID:        uuid.New().String(),
-		UserID:    userID,
-		Operation: operation,
-		Success:   success,
-		CreatedAt: time.Now(),
-	}
-
-	if conversationID != "" {
-		auditLog.ConversationID = &conversationID
-	}
-
-	if errorMsg != "" {
-		auditLog.ErrorMessage = &errorMsg
-	}
-
-	if clientIP != "" {
-		auditLog.ClientIP = &clientIP
-	}
-
-	if userAgent != "" {
-		auditLog.UserAgent = &userAgent
-	}
-
-	// Fire and forget audit logging
-	go func() {
-		ctx := context.Background()
-		_ = s.cryptoRepo.CreateAuditLog(ctx, auditLog)
-	}()
-}
-
-// GetE2EEStatus returns the E2EE status for a user
-func (s *E2EEService) GetE2EEStatus(ctx context.Context, userID string) (*domain.E2EEStatusResponse, error) {
-	masterKey, err := s.cryptoRepo.GetUserMasterKey(ctx, userID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get master key: %w", err)
-	}
-
-	status := &domain.E2EEStatusResponse{
-		HasMasterKey: masterKey != nil,
-		IsUnlocked:   s.IsUnlocked(userID),
-	}
-
-	if masterKey != nil {
-		status.KeyVersion = masterKey.KeyVersion
-	}
-
-	return status, nil
-}
-
-// GetPendingKeyExchanges returns pending key exchanges for a user
 func (s *E2EEService) GetPendingKeyExchanges(ctx context.Context, userID string) ([]*domain.KeyExchangeMessage, error) {
 	return s.cryptoRepo.GetPendingKeyExchanges(ctx, userID)
 }
 
-// SaveSecureMessage saves an encrypted message to the database
-func (s *E2EEService) SaveSecureMessage(ctx context.Context, message *domain.Message) error {
-	return s.cryptoRepo.WithTransaction(ctx, func(tx *sqlx.Tx) error {
-		return s.messageRepo.Create(ctx, tx, message)
-	})
+func (s *E2EEService) StoreEncryptedMessage(
+	ctx context.Context,
+	senderID string,
+	req *domain.StoreEncryptedMessageRequest,
+	clientIP, userAgent string,
+) (*domain.Message, error) {
+	conv, err := s.conversationRepo.GetOrCreateConversation(ctx, nil, senderID, req.RecipientID)
+	if err != nil {
+		return nil, fmt.Errorf("get conversation: %w", err)
+	}
+	if conv.EncryptionStatus != domain.EncryptionStatusActive {
+		return nil, domain.ErrKeyExchangeNotComplete
+	}
+
+	now := time.Now()
+	msg := &domain.Message{
+		ID:                uuid.New().String(),
+		SenderID:          senderID,
+		RecipientID:       req.RecipientID,
+		Content:           nil,
+		MessageType:       domain.MessageTypeSecure,
+		IsEncrypted:       true,
+		EncryptedContent:  &req.EncryptedContent,
+		ContentNonce:      &req.ContentNonce,
+		PGPSignature:      &req.Signature,
+		EncryptionVersion: 1,
+		CreatedAt:         now,
+		UpdatedAt:         now,
+		ParentMessageID:   req.ParentMessageID,
+	}
+
+	if err := s.messageRepo.CreateEncryptedMessage(ctx, msg); err != nil {
+		s.logAudit(ctx, senderID, &conv.ID, domain.CryptoOpStoreMessage, false, err.Error(), clientIP, userAgent)
+		return nil, fmt.Errorf("store encrypted message: %w", err)
+	}
+
+	s.logAudit(ctx, senderID, &conv.ID, domain.CryptoOpStoreMessage, true, "", clientIP, userAgent)
+	return msg, nil
 }
 
-// GetMessage retrieves a message by ID
-func (s *E2EEService) GetMessage(ctx context.Context, messageID string) (*domain.Message, error) {
-	return s.messageRepo.GetByID(ctx, messageID)
+func (s *E2EEService) GetEncryptedMessages(
+	ctx context.Context,
+	conversationID, userID string,
+	limit, offset int,
+) ([]*domain.Message, error) {
+	conv, err := s.conversationRepo.GetConversation(ctx, conversationID)
+	if err != nil {
+		return nil, fmt.Errorf("get conversation: %w", err)
+	}
+
+	if conv.ParticipantOneID != userID && conv.ParticipantTwoID != userID {
+		return nil, domain.ErrForbidden
+	}
+
+	if limit <= 0 || limit > 100 {
+		limit = 50
+	}
+
+	return s.messageRepo.GetEncryptedMessages(ctx, conv.ParticipantOneID, conv.ParticipantTwoID, limit, offset)
+}
+
+func (s *E2EEService) logAudit(
+	ctx context.Context,
+	userID string,
+	conversationID *string,
+	operation string,
+	success bool,
+	errMsg string,
+	clientIP, userAgent string,
+) {
+	entry := &domain.CryptoAuditLog{
+		ID:             uuid.New().String(),
+		UserID:         userID,
+		ConversationID: conversationID,
+		Operation:      operation,
+		Success:        success,
+		CreatedAt:      time.Now(),
+	}
+	if clientIP != "" {
+		entry.ClientIP = &clientIP
+	}
+	if userAgent != "" {
+		entry.UserAgent = &userAgent
+	}
+	if errMsg != "" {
+		entry.ErrorMessage = &errMsg
+	}
+	if err := s.cryptoRepo.CreateAuditLog(ctx, entry); err != nil {
+		log.Printf("WARNING: failed to write crypto audit log for user %s operation %s: %v", userID, operation, err)
+	}
 }

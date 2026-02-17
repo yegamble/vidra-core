@@ -19,23 +19,17 @@ import (
 )
 
 const (
-	// Time allowed to write a message to the peer
 	writeWait = 10 * time.Second
 
-	// Time allowed to read the next pong message from the peer
 	pongWait = 60 * time.Second
 
-	// Send pings to peer with this period (must be less than pongWait)
 	pingPeriod = (pongWait * 9) / 10
 
-	// Maximum message size allowed from peer
 	maxMessageSize = 512
 
-	// Buffer size for client send channel
 	clientSendBuffer = 256
 )
 
-// ChatServer manages WebSocket connections for live stream chat
 type ChatServer struct {
 	cfg        *config.Config
 	chatRepo   repository.ChatRepository
@@ -43,17 +37,14 @@ type ChatServer struct {
 	redis      *redis.Client
 	logger     *logrus.Logger
 
-	// Connection management
 	mu          sync.RWMutex
-	connections map[uuid.UUID]map[*ChatClient]bool // streamID -> clients
+	connections map[uuid.UUID]map[*ChatClient]bool
 	Upgrader    websocket.Upgrader
 
-	// Shutdown
 	shutdownChan chan struct{}
 	wg           sync.WaitGroup
 }
 
-// ChatClient represents a connected chat user
 type ChatClient struct {
 	server   *ChatServer
 	conn     *websocket.Conn
@@ -63,9 +54,8 @@ type ChatClient struct {
 	Username string
 }
 
-// ChatMessage represents a WebSocket message
 type ChatMessage struct {
-	Type      string                 `json:"type"` // message, system, join, leave, delete, ban
+	Type      string                 `json:"type"`
 	ID        uuid.UUID              `json:"id,omitempty"`
 	StreamID  uuid.UUID              `json:"stream_id"`
 	UserID    uuid.UUID              `json:"user_id,omitempty"`
@@ -75,7 +65,6 @@ type ChatMessage struct {
 	Metadata  map[string]interface{} `json:"metadata,omitempty"`
 }
 
-// NewChatServer creates a new chat server
 func NewChatServer(
 	cfg *config.Config,
 	chatRepo repository.ChatRepository,
@@ -93,7 +82,6 @@ func NewChatServer(
 		shutdownChan: make(chan struct{}),
 	}
 
-	// Initialize upgrader with checkOrigin that references the server
 	s.Upgrader = websocket.Upgrader{
 		ReadBufferSize:  1024,
 		WriteBufferSize: 1024,
@@ -103,30 +91,24 @@ func NewChatServer(
 	return s
 }
 
-// checkWebSocketOrigin validates the WebSocket origin to prevent CSRF attacks
 func (s *ChatServer) checkWebSocketOrigin(r *http.Request) bool {
 	origin := r.Header.Get("Origin")
 	if origin == "" {
-		// No origin header - allow (some clients don't send it)
 		return true
 	}
 
-	// Build list of allowed origins
 	allowedOrigins := make(map[string]bool)
 
-	// Add public base URL from config
 	if s.cfg.PublicBaseURL != "" {
 		allowedOrigins[s.cfg.PublicBaseURL] = true
 	}
 
-	// Check if we're in development/test mode by looking at config indicators
 	isDevelopment := s.cfg.ValidationTestMode ||
 		s.cfg.LogLevel == "debug" ||
 		(s.cfg.PublicBaseURL != "" &&
 			((len(s.cfg.PublicBaseURL) >= 16 && s.cfg.PublicBaseURL[:16] == "http://localhost") ||
 				(len(s.cfg.PublicBaseURL) >= 14 && s.cfg.PublicBaseURL[:14] == "http://127.0.0")))
 
-	// Add localhost for development
 	if isDevelopment {
 		allowedOrigins["http://localhost:3000"] = true
 		allowedOrigins["http://localhost:8080"] = true
@@ -134,12 +116,10 @@ func (s *ChatServer) checkWebSocketOrigin(r *http.Request) bool {
 		allowedOrigins["http://127.0.0.1:8080"] = true
 	}
 
-	// Check if origin is allowed
 	if allowedOrigins[origin] {
 		return true
 	}
 
-	// Log rejected origin for security monitoring
 	s.logger.WithFields(logrus.Fields{
 		"origin":     origin,
 		"remote_ip":  r.RemoteAddr,
@@ -149,9 +129,7 @@ func (s *ChatServer) checkWebSocketOrigin(r *http.Request) bool {
 	return false
 }
 
-// HandleWebSocket handles a new WebSocket connection
 func (s *ChatServer) HandleWebSocket(ctx context.Context, conn *websocket.Conn, streamID, userID uuid.UUID, username string) error {
-	// Check if user is banned
 	banned, err := s.chatRepo.IsUserBanned(ctx, streamID, userID)
 	if err != nil {
 		s.logger.WithError(err).Error("Failed to check ban status")
@@ -167,7 +145,6 @@ func (s *ChatServer) HandleWebSocket(ctx context.Context, conn *websocket.Conn, 
 		return domain.ErrUserBanned
 	}
 
-	// Create client
 	client := &ChatClient{
 		server:   s,
 		conn:     conn,
@@ -177,22 +154,18 @@ func (s *ChatServer) HandleWebSocket(ctx context.Context, conn *websocket.Conn, 
 		Username: username,
 	}
 
-	// Register client
 	s.registerClient(client)
 	defer s.unregisterClient(client)
 
-	// Send join message
 	s.broadcastSystemMessage(streamID, fmt.Sprintf("%s joined the chat", username))
 
-	// Start goroutines
 	s.wg.Add(2)
 	go s.writePump(client)
-	s.readPump(client) // Blocking call
+	s.readPump(client)
 
 	return nil
 }
 
-// registerClient adds a client to the connections map
 func (s *ChatServer) registerClient(client *ChatClient) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -209,9 +182,7 @@ func (s *ChatServer) registerClient(client *ChatClient) {
 	}).Info("Client connected to chat")
 }
 
-// unregisterClient removes a client from the connections map
 func (s *ChatServer) unregisterClient(client *ChatClient) {
-	// We need to release the lock before calling broadcast to avoid deadlock
 	var shouldSendLeaveMessage bool
 	var username string
 	var streamID uuid.UUID
@@ -222,7 +193,6 @@ func (s *ChatServer) unregisterClient(client *ChatClient) {
 			delete(clients, client)
 			close(client.send)
 
-			// Clean up empty stream maps
 			if len(clients) == 0 {
 				delete(s.connections, client.StreamID)
 			}
@@ -240,13 +210,11 @@ func (s *ChatServer) unregisterClient(client *ChatClient) {
 	}
 	s.mu.Unlock()
 
-	// Send leave message after releasing the lock
 	if shouldSendLeaveMessage {
 		s.broadcastSystemMessage(streamID, fmt.Sprintf("%s left the chat", username))
 	}
 }
 
-// readPump pumps messages from the WebSocket connection to the server
 func (s *ChatServer) readPump(client *ChatClient) {
 	defer func() {
 		s.wg.Done()
@@ -283,12 +251,10 @@ func (s *ChatServer) readPump(client *ChatClient) {
 			break
 		}
 
-		// Handle the message
 		s.handleMessage(client, &msg)
 	}
 }
 
-// writePump pumps messages from the server to the WebSocket connection
 func (s *ChatServer) writePump(client *ChatClient) {
 	ticker := time.NewTicker(pingPeriod)
 	defer func() {
@@ -307,7 +273,6 @@ func (s *ChatServer) writePump(client *ChatClient) {
 				return
 			}
 			if !ok {
-				// Channel closed
 				if err := client.conn.WriteMessage(websocket.CloseMessage, []byte{}); err != nil {
 					s.logger.WithError(err).Debug("Failed to write close message")
 				}
@@ -334,11 +299,9 @@ func (s *ChatServer) writePump(client *ChatClient) {
 	}
 }
 
-// handleMessage processes an incoming message
 func (s *ChatServer) handleMessage(client *ChatClient, msg *ChatMessage) {
 	ctx := context.Background()
 
-	// Check rate limit
 	if !s.checkRateLimit(ctx, client.UserID, client.StreamID) {
 		s.sendToClient(client, &ChatMessage{
 			Type:      "error",
@@ -349,7 +312,6 @@ func (s *ChatServer) handleMessage(client *ChatClient, msg *ChatMessage) {
 		return
 	}
 
-	// Check if user is still not banned (ban could happen mid-stream)
 	banned, err := s.chatRepo.IsUserBanned(ctx, client.StreamID, client.UserID)
 	if err != nil {
 		s.logger.WithError(err).Error("Failed to check ban status")
@@ -365,7 +327,6 @@ func (s *ChatServer) handleMessage(client *ChatClient, msg *ChatMessage) {
 		return
 	}
 
-	// Create domain message
 	domainMsg := domain.NewChatMessage(
 		client.StreamID,
 		client.UserID,
@@ -373,7 +334,6 @@ func (s *ChatServer) handleMessage(client *ChatClient, msg *ChatMessage) {
 		msg.Message,
 	)
 
-	// Validate message
 	if err := domainMsg.Validate(); err != nil {
 		s.sendToClient(client, &ChatMessage{
 			Type:      "error",
@@ -384,7 +344,6 @@ func (s *ChatServer) handleMessage(client *ChatClient, msg *ChatMessage) {
 		return
 	}
 
-	// Save to database
 	if err := s.chatRepo.CreateMessage(ctx, domainMsg); err != nil {
 		s.logger.WithError(err).Error("Failed to save message")
 		s.sendToClient(client, &ChatMessage{
@@ -396,7 +355,6 @@ func (s *ChatServer) handleMessage(client *ChatClient, msg *ChatMessage) {
 		return
 	}
 
-	// Broadcast to all clients
 	wsMsg := &ChatMessage{
 		Type:      "message",
 		ID:        domainMsg.ID,
@@ -410,7 +368,6 @@ func (s *ChatServer) handleMessage(client *ChatClient, msg *ChatMessage) {
 	s.broadcast(client.StreamID, wsMsg)
 }
 
-// broadcast sends a message to all clients in a stream
 func (s *ChatServer) broadcast(streamID uuid.UUID, message *ChatMessage) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -424,7 +381,6 @@ func (s *ChatServer) broadcast(streamID uuid.UUID, message *ChatMessage) {
 		select {
 		case client.send <- message:
 		default:
-			// Client's send buffer is full, skip
 			s.logger.WithFields(logrus.Fields{
 				"stream_id": streamID,
 				"user_id":   client.UserID,
@@ -433,7 +389,6 @@ func (s *ChatServer) broadcast(streamID uuid.UUID, message *ChatMessage) {
 	}
 }
 
-// broadcastSystemMessage sends a system message to all clients
 func (s *ChatServer) broadcastSystemMessage(streamID uuid.UUID, message string) {
 	wsMsg := &ChatMessage{
 		Type:      "system",
@@ -445,7 +400,6 @@ func (s *ChatServer) broadcastSystemMessage(streamID uuid.UUID, message string) 
 	s.broadcast(streamID, wsMsg)
 }
 
-// sendToClient sends a message to a specific client
 func (s *ChatServer) sendToClient(client *ChatClient, message *ChatMessage) {
 	select {
 	case client.send <- message:
@@ -457,15 +411,12 @@ func (s *ChatServer) sendToClient(client *ChatClient, message *ChatMessage) {
 	}
 }
 
-// checkRateLimit checks if user has exceeded rate limit
 func (s *ChatServer) checkRateLimit(ctx context.Context, userID, streamID uuid.UUID) bool {
-	// Check if user is moderator (moderators get higher limits)
 	isMod, err := s.chatRepo.IsModerator(ctx, streamID, userID)
 	if err != nil {
 		s.logger.WithError(err).Error("Failed to check moderator status")
 	}
 
-	// Different limits for moderators
 	limit := 5
 	window := 10 * time.Second
 	if isMod {
@@ -475,41 +426,33 @@ func (s *ChatServer) checkRateLimit(ctx context.Context, userID, streamID uuid.U
 
 	key := fmt.Sprintf("chat:ratelimit:%s:%s", streamID, userID)
 
-	// Use Redis for rate limiting (sliding window)
 	pipe := s.redis.Pipeline()
 	now := time.Now().Unix()
 
-	// Remove old entries
 	pipe.ZRemRangeByScore(ctx, key, "0", fmt.Sprintf("%d", now-int64(window.Seconds())))
 
-	// Count current entries
 	countCmd := pipe.ZCard(ctx, key)
 
-	// Add current timestamp
-	pipe.ZAdd(ctx, key, redis.Z{Score: float64(now), Member: now})
+	pipe.ZAdd(ctx, key, redis.Z{Score: float64(now), Member: rateLimitMember()})
 
-	// Set expiration
 	pipe.Expire(ctx, key, window)
 
 	_, err = pipe.Exec(ctx)
 	if err != nil {
 		s.logger.WithError(err).Error("Failed to check rate limit")
-		return true // Allow on error
+		return true
 	}
 
 	count := countCmd.Val()
 	return count < int64(limit)
 }
 
-// DeleteMessage deletes a message (moderator action)
 func (s *ChatServer) DeleteMessage(ctx context.Context, streamID, messageID uuid.UUID, moderatorID uuid.UUID) error {
-	// Check if user is moderator or stream owner
 	isMod, err := s.chatRepo.IsModerator(ctx, streamID, moderatorID)
 	if err != nil {
 		return fmt.Errorf("failed to check moderator status: %w", err)
 	}
 
-	// Check if moderatorID is stream owner
 	isOwner := false
 	if s.streamRepo != nil {
 		stream, err := s.streamRepo.GetByID(ctx, streamID)
@@ -522,7 +465,6 @@ func (s *ChatServer) DeleteMessage(ctx context.Context, streamID, messageID uuid
 		return domain.ErrNotModerator
 	}
 
-	// Verify message exists and belongs to this stream
 	msg, err := s.chatRepo.GetMessageByID(ctx, messageID)
 	if err != nil {
 		return fmt.Errorf("failed to get message: %w", err)
@@ -531,12 +473,10 @@ func (s *ChatServer) DeleteMessage(ctx context.Context, streamID, messageID uuid
 		return fmt.Errorf("message does not belong to this stream")
 	}
 
-	// Delete the message
 	if err := s.chatRepo.DeleteMessage(ctx, messageID); err != nil {
 		return fmt.Errorf("failed to delete message: %w", err)
 	}
 
-	// Broadcast deletion to all clients
 	wsMsg := &ChatMessage{
 		Type:      "delete",
 		ID:        messageID,
@@ -554,15 +494,12 @@ func (s *ChatServer) DeleteMessage(ctx context.Context, streamID, messageID uuid
 	return nil
 }
 
-// BanUser bans a user from chat (moderator action)
 func (s *ChatServer) BanUser(ctx context.Context, streamID, userID, moderatorID uuid.UUID, reason string, duration time.Duration) error {
-	// Check if user is moderator or stream owner
 	isMod, err := s.chatRepo.IsModerator(ctx, streamID, moderatorID)
 	if err != nil {
 		return fmt.Errorf("failed to check moderator status: %w", err)
 	}
 
-	// Check if moderatorID is stream owner
 	isOwner := false
 	if s.streamRepo != nil {
 		stream, err := s.streamRepo.GetByID(ctx, streamID)
@@ -575,16 +512,13 @@ func (s *ChatServer) BanUser(ctx context.Context, streamID, userID, moderatorID 
 		return domain.ErrNotModerator
 	}
 
-	// Create ban
 	ban := domain.NewChatBan(streamID, userID, moderatorID, reason, duration)
 	if err := s.chatRepo.BanUser(ctx, ban); err != nil {
 		return fmt.Errorf("failed to ban user: %w", err)
 	}
 
-	// Disconnect the user if they're connected
 	s.disconnectUser(streamID, userID)
 
-	// Broadcast ban message
 	banType := "timeout"
 	if duration == 0 {
 		banType = "ban"
@@ -613,7 +547,6 @@ func (s *ChatServer) BanUser(ctx context.Context, streamID, userID, moderatorID 
 	return nil
 }
 
-// disconnectUser forcibly disconnects a user from chat
 func (s *ChatServer) disconnectUser(streamID, userID uuid.UUID) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -625,7 +558,6 @@ func (s *ChatServer) disconnectUser(streamID, userID uuid.UUID) {
 
 	for client := range clients {
 		if client.UserID == userID {
-			// Send disconnect message
 			client.send <- &ChatMessage{
 				Type:      "disconnect",
 				StreamID:  streamID,
@@ -633,7 +565,6 @@ func (s *ChatServer) disconnectUser(streamID, userID uuid.UUID) {
 				Timestamp: time.Now(),
 			}
 
-			// Close connection
 			if err := client.conn.Close(); err != nil {
 				s.logger.WithError(err).Debug("Failed to close connection when disconnecting user")
 			}
@@ -649,7 +580,6 @@ func (s *ChatServer) disconnectUser(streamID, userID uuid.UUID) {
 	}
 }
 
-// GetConnectedUsers returns the count of connected users for a stream
 func (s *ChatServer) GetConnectedUsers(streamID uuid.UUID) int {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -662,14 +592,11 @@ func (s *ChatServer) GetConnectedUsers(streamID uuid.UUID) int {
 	return len(clients)
 }
 
-// Shutdown gracefully shuts down the chat server
 func (s *ChatServer) Shutdown(ctx context.Context) error {
 	s.logger.Info("Shutting down chat server...")
 
-	// Signal shutdown
 	close(s.shutdownChan)
 
-	// Disconnect all clients
 	s.mu.Lock()
 	for streamID, clients := range s.connections {
 		for client := range clients {
@@ -687,7 +614,6 @@ func (s *ChatServer) Shutdown(ctx context.Context) error {
 	}
 	s.mu.Unlock()
 
-	// Wait for all goroutines with timeout
 	done := make(chan struct{})
 	go func() {
 		s.wg.Wait()
@@ -702,4 +628,8 @@ func (s *ChatServer) Shutdown(ctx context.Context) error {
 		s.logger.Warn("Chat server shutdown timeout")
 		return ctx.Err()
 	}
+}
+
+func rateLimitMember() string {
+	return fmt.Sprintf("%d:%s", time.Now().UnixNano(), uuid.New().String())
 }

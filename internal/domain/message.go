@@ -6,7 +6,7 @@ type Message struct {
 	ID                   string     `json:"id" db:"id"`
 	SenderID             string     `json:"sender_id" db:"sender_id"`
 	RecipientID          string     `json:"recipient_id" db:"recipient_id"`
-	Content              string     `json:"content" db:"content"`
+	Content              *string    `json:"content,omitempty" db:"content"`
 	MessageType          string     `json:"message_type" db:"message_type"`
 	IsRead               bool       `json:"is_read" db:"is_read"`
 	IsDeletedBySender    bool       `json:"is_deleted_by_sender" db:"is_deleted_by_sender"`
@@ -16,14 +16,12 @@ type Message struct {
 	UpdatedAt            time.Time  `json:"updated_at" db:"updated_at"`
 	ReadAt               *time.Time `json:"read_at,omitempty" db:"read_at"`
 
-	// E2EE fields
 	EncryptedContent  *string `json:"encrypted_content,omitempty" db:"encrypted_content"`
 	ContentNonce      *string `json:"content_nonce,omitempty" db:"content_nonce"`
 	PGPSignature      *string `json:"pgp_signature,omitempty" db:"pgp_signature"`
 	IsEncrypted       bool    `json:"is_encrypted" db:"is_encrypted"`
 	EncryptionVersion int     `json:"encryption_version" db:"encryption_version"`
 
-	// Populated fields for API responses
 	Sender        *User    `json:"sender,omitempty"`
 	Recipient     *User    `json:"recipient,omitempty"`
 	ParentMessage *Message `json:"parent_message,omitempty"`
@@ -38,20 +36,19 @@ type Conversation struct {
 	CreatedAt        time.Time `json:"created_at" db:"created_at"`
 	UpdatedAt        time.Time `json:"updated_at" db:"updated_at"`
 
-	// E2EE fields
+	EncryptionStatus string `json:"encryption_status" db:"encryption_status"`
+
 	IsEncrypted         bool       `json:"is_encrypted" db:"is_encrypted"`
 	KeyExchangeComplete bool       `json:"key_exchange_complete" db:"key_exchange_complete"`
 	EncryptionVersion   int        `json:"encryption_version" db:"encryption_version"`
 	LastKeyRotation     *time.Time `json:"last_key_rotation,omitempty" db:"last_key_rotation"`
 
-	// Populated fields for API responses
 	ParticipantOne *User    `json:"participant_one,omitempty"`
 	ParticipantTwo *User    `json:"participant_two,omitempty"`
 	LastMessage    *Message `json:"last_message,omitempty"`
 	UnreadCount    int      `json:"unread_count,omitempty"`
 }
 
-// Message type constants
 const (
 	MessageTypeText        = "text"
 	MessageTypeSystem      = "system"
@@ -59,7 +56,12 @@ const (
 	MessageTypeSecure      = "secure"
 )
 
-// Request/Response DTOs
+const (
+	EncryptionStatusNone    = "none"
+	EncryptionStatusPending = "pending"
+	EncryptionStatusActive  = "active"
+)
+
 type SendMessageRequest struct {
 	RecipientID     string  `json:"recipient_id" validate:"required,uuid"`
 	Content         string  `json:"content" validate:"required,max=2000"`
@@ -103,22 +105,6 @@ type ConversationsResponse struct {
 	HasMore       bool           `json:"has_more"`
 }
 
-// E2EE Domain Models
-
-// UserMasterKey represents a user's master encryption key
-type UserMasterKey struct {
-	UserID             string    `json:"user_id" db:"user_id"`
-	EncryptedMasterKey string    `json:"encrypted_master_key" db:"encrypted_master_key"`
-	Argon2Salt         string    `json:"argon2_salt" db:"argon2_salt"`
-	Argon2Memory       int       `json:"argon2_memory" db:"argon2_memory"`
-	Argon2Time         int       `json:"argon2_time" db:"argon2_time"`
-	Argon2Parallelism  int       `json:"argon2_parallelism" db:"argon2_parallelism"`
-	KeyVersion         int       `json:"key_version" db:"key_version"`
-	CreatedAt          time.Time `json:"created_at" db:"created_at"`
-	UpdatedAt          time.Time `json:"updated_at" db:"updated_at"`
-}
-
-// ConversationKey represents encryption keys for a conversation
 type ConversationKey struct {
 	ID                    string     `json:"id" db:"id"`
 	ConversationID        string     `json:"conversation_id" db:"conversation_id"`
@@ -132,7 +118,6 @@ type ConversationKey struct {
 	ExpiresAt             *time.Time `json:"expires_at,omitempty" db:"expires_at"`
 }
 
-// KeyExchangeMessage represents key exchange handshake messages
 type KeyExchangeMessage struct {
 	ID             string    `json:"id" db:"id"`
 	ConversationID string    `json:"conversation_id" db:"conversation_id"`
@@ -146,16 +131,21 @@ type KeyExchangeMessage struct {
 	ExpiresAt      time.Time `json:"expires_at" db:"expires_at"`
 }
 
-// UserSigningKey represents Ed25519 signing keys for message authenticity
 type UserSigningKey struct {
 	UserID              string    `json:"user_id" db:"user_id"`
-	EncryptedPrivateKey string    `json:"encrypted_private_key" db:"encrypted_private_key"`
+	EncryptedPrivateKey *string   `json:"encrypted_private_key,omitempty" db:"encrypted_private_key"`
 	PublicKey           string    `json:"public_key" db:"public_key"`
+	PublicIdentityKey   *string   `json:"public_identity_key,omitempty" db:"public_identity_key"`
 	KeyVersion          int       `json:"key_version" db:"key_version"`
 	CreatedAt           time.Time `json:"created_at" db:"created_at"`
 }
 
-// CryptoAuditLog represents cryptographic operations audit log
+type PublicKeyBundle struct {
+	PublicIdentityKey string `json:"public_identity_key"`
+	PublicSigningKey  string `json:"public_signing_key"`
+	KeyVersion        int    `json:"key_version"`
+}
+
 type CryptoAuditLog struct {
 	ID             string    `json:"id" db:"id"`
 	UserID         string    `json:"user_id" db:"user_id"`
@@ -168,66 +158,52 @@ type CryptoAuditLog struct {
 	CreatedAt      time.Time `json:"created_at" db:"created_at"`
 }
 
-// Key exchange type constants
 const (
 	KeyExchangeTypeOffer   = "offer"
 	KeyExchangeTypeAccept  = "accept"
 	KeyExchangeTypeConfirm = "confirm"
 )
 
-// Crypto audit operation constants
 const (
 	CryptoOpKeyGeneration = "key_generation"
 	CryptoOpKeyExchange   = "key_exchange"
 	CryptoOpEncryption    = "encryption"
 	CryptoOpDecryption    = "decryption"
 	CryptoOpKeyRotation   = "key_rotation"
+	CryptoOpRegisterKey   = "register_identity_key"
+	CryptoOpStoreMessage  = "store_encrypted_message"
 )
 
-// E2EE Request/Response DTOs
-
-// InitiateKeyExchangeRequest initiates E2EE for a conversation
-type InitiateKeyExchangeRequest struct {
-	RecipientID string `json:"recipient_id" validate:"required,uuid"`
-	PublicKey   string `json:"public_key" validate:"required"`
-	Signature   string `json:"signature" validate:"required"`
+type RegisterIdentityKeyRequest struct {
+	PublicIdentityKey string `json:"public_identity_key" validate:"required,max=256"`
+	PublicSigningKey  string `json:"public_signing_key" validate:"required,max=256"`
 }
 
-// AcceptKeyExchangeRequest accepts E2EE key exchange
+type InitiateKeyExchangeRequest struct {
+	RecipientID     string `json:"recipient_id" validate:"required,uuid"`
+	SenderPublicKey string `json:"sender_public_key" validate:"required,max=256"`
+}
+
 type AcceptKeyExchangeRequest struct {
 	KeyExchangeID string `json:"key_exchange_id" validate:"required,uuid"`
-	PublicKey     string `json:"public_key" validate:"required"`
-	Signature     string `json:"signature" validate:"required"`
+	PublicKey     string `json:"public_key" validate:"required,max=256"`
 }
 
-// SendSecureMessageRequest sends encrypted message
-type SendSecureMessageRequest struct {
+type StoreEncryptedMessageRequest struct {
 	RecipientID      string  `json:"recipient_id" validate:"required,uuid"`
-	EncryptedContent string  `json:"encrypted_content" validate:"required"`
-	PGPSignature     string  `json:"pgp_signature" validate:"required"`
+	EncryptedContent string  `json:"encrypted_content" validate:"required,max=8192"`
+	ContentNonce     string  `json:"content_nonce" validate:"required,len=32"`
+	Signature        string  `json:"signature" validate:"required,max=128"`
 	ParentMessageID  *string `json:"parent_message_id,omitempty" validate:"omitempty,uuid"`
 }
 
-// SetupE2EERequest sets up user's master key for E2EE
-type SetupE2EERequest struct {
-	Password string `json:"password" validate:"required,min=8,max=128"`
-}
-
-// UnlockE2EERequest unlocks user's E2EE keys
-type UnlockE2EERequest struct {
-	Password string `json:"password" validate:"required"`
-}
-
-// KeyExchangeResponse returns key exchange status
 type KeyExchangeResponse struct {
 	KeyExchange KeyExchangeMessage `json:"key_exchange"`
 	Status      string             `json:"status"`
 }
 
-// E2EEStatusResponse returns E2EE status for user
 type E2EEStatusResponse struct {
-	HasMasterKey    bool       `json:"has_master_key"`
-	IsUnlocked      bool       `json:"is_unlocked"`
+	HasIdentityKey  bool       `json:"has_identity_key"`
 	KeyVersion      int        `json:"key_version"`
 	LastKeyRotation *time.Time `json:"last_key_rotation,omitempty"`
 }

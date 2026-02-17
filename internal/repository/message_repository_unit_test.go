@@ -50,7 +50,7 @@ func TestMessageRepository_Unit_CreateMessage(t *testing.T) {
 			ID:                   msgID,
 			SenderID:             senderID,
 			RecipientID:          recipientID,
-			Content:              "test message",
+			Content:              strPtr("test message"),
 			MessageType:          domain.MessageTypeText,
 			IsRead:               false,
 			IsDeletedBySender:    false,
@@ -115,7 +115,7 @@ func TestMessageRepository_Unit_CreateMessage(t *testing.T) {
 			ID:          uuid.New().String(),
 			SenderID:    uuid.New().String(),
 			RecipientID: uuid.New().String(),
-			Content:     "test",
+			Content:     strPtr("test"),
 			MessageType: domain.MessageTypeText,
 			CreatedAt:   time.Now(),
 			UpdatedAt:   time.Now(),
@@ -139,7 +139,7 @@ func TestMessageRepository_Unit_CreateMessage(t *testing.T) {
 			ID:          uuid.New().String(),
 			SenderID:    uuid.New().String(),
 			RecipientID: uuid.New().String(),
-			Content:     "test",
+			Content:     strPtr("test"),
 			MessageType: domain.MessageTypeText,
 			CreatedAt:   time.Now(),
 			UpdatedAt:   time.Now(),
@@ -195,7 +195,8 @@ func TestMessageRepository_Unit_GetMessage(t *testing.T) {
 		assert.Equal(t, msgID, message.ID)
 		assert.Equal(t, senderID, message.SenderID)
 		assert.Equal(t, recipientID, message.RecipientID)
-		assert.Equal(t, "test content", message.Content)
+		require.NotNil(t, message.Content)
+		assert.Equal(t, "test content", *message.Content)
 		assert.True(t, message.IsRead)
 		require.NotNil(t, message.Sender)
 		assert.Equal(t, "sender_user", message.Sender.Username)
@@ -460,7 +461,8 @@ func TestMessageRepository_Unit_GetConversations(t *testing.T) {
 		assert.Equal(t, p2ID, conv.ParticipantTwoID)
 		assert.Equal(t, 3, conv.UnreadCount)
 		require.NotNil(t, conv.LastMessage)
-		assert.Equal(t, "last message", conv.LastMessage.Content)
+		require.NotNil(t, conv.LastMessage.Content)
+		assert.Equal(t, "last message", *conv.LastMessage.Content)
 		require.NotNil(t, conv.ParticipantOne)
 		assert.Equal(t, "user1", conv.ParticipantOne.Username)
 		assert.NoError(t, mock.ExpectationsWereMet())

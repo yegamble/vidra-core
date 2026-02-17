@@ -129,7 +129,9 @@ func TestSendMessage_Success(t *testing.T) {
 	assert.NotNil(t, msg)
 	assert.Equal(t, "user-1", msg.SenderID)
 	assert.Equal(t, "user-2", msg.RecipientID)
-	assert.Equal(t, "Hello Bob!", msg.Content)
+	if assert.NotNil(t, msg.Content) {
+		assert.Equal(t, "Hello Bob!", *msg.Content)
+	}
 	assert.False(t, msg.IsRead)
 }
 
@@ -200,7 +202,10 @@ func TestSendMessage_XSSSanitization(t *testing.T) {
 	userRepo.On("GetByID", mock.Anything, "user-1").Return(sender, nil)
 	userRepo.On("GetByID", mock.Anything, "user-2").Return(recipient, nil)
 	msgRepo.On("CreateMessage", mock.Anything, mock.MatchedBy(func(m *domain.Message) bool {
-		return !strings.Contains(m.Content, "<script>") && !strings.Contains(m.Content, "onerror")
+		if m.Content == nil {
+			return true
+		}
+		return !strings.Contains(*m.Content, "<script>") && !strings.Contains(*m.Content, "onerror")
 	})).Return(nil)
 
 	testCases := []struct {
@@ -235,7 +240,9 @@ func TestSendMessage_XSSSanitization(t *testing.T) {
 			msg, err := svc.SendMessage(context.Background(), "user-1", req)
 			assert.NoError(t, err)
 			assert.NotNil(t, msg)
-			assert.Equal(t, tc.expected, msg.Content)
+			if msg != nil && msg.Content != nil {
+				assert.Equal(t, tc.expected, *msg.Content)
+			}
 		})
 	}
 }
@@ -246,8 +253,9 @@ func TestGetMessages_Success(t *testing.T) {
 	svc := NewService(msgRepo, userRepo)
 
 	userRepo.On("GetByID", mock.Anything, "user-2").Return(&domain.User{ID: "user-2"}, nil)
+	helloMsg := "Hello"
 	msgRepo.On("GetMessages", mock.Anything, "user-1", "user-2", 51, 0).Return([]*domain.Message{
-		{ID: "msg-1", Content: "Hello"},
+		{ID: "msg-1", Content: &helloMsg},
 	}, nil)
 
 	req := &domain.GetMessagesRequest{ConversationWith: "user-2"}

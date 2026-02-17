@@ -11,111 +11,16 @@ import (
 	"athena/internal/domain"
 )
 
-// CryptoRepository handles E2EE cryptographic data persistence
 type CryptoRepository struct {
 	db *sqlx.DB
 }
 
-// NewCryptoRepository creates a new crypto repository
 func NewCryptoRepository(db *sqlx.DB) *CryptoRepository {
 	return &CryptoRepository{
 		db: db,
 	}
 }
 
-// UserMasterKey operations
-
-// CreateUserMasterKey creates a new user master key
-func (r *CryptoRepository) CreateUserMasterKey(ctx context.Context, tx *sqlx.Tx, masterKey *domain.UserMasterKey) error {
-	query := `
-		INSERT INTO user_master_keys (
-			user_id, encrypted_master_key, argon2_salt, argon2_memory,
-			argon2_time, argon2_parallelism, key_version
-		) VALUES (
-			:user_id, :encrypted_master_key, :argon2_salt, :argon2_memory,
-			:argon2_time, :argon2_parallelism, :key_version
-		)`
-
-	var err error
-	if tx != nil {
-		_, err = tx.NamedExecContext(ctx, query, masterKey)
-	} else {
-		_, err = r.db.NamedExecContext(ctx, query, masterKey)
-	}
-
-	if err != nil {
-		return fmt.Errorf("failed to create user master key: %w", err)
-	}
-
-	return nil
-}
-
-// GetUserMasterKey retrieves a user's master key
-func (r *CryptoRepository) GetUserMasterKey(ctx context.Context, userID string) (*domain.UserMasterKey, error) {
-	var masterKey domain.UserMasterKey
-
-	query := `
-		SELECT user_id, encrypted_master_key, argon2_salt, argon2_memory,
-			   argon2_time, argon2_parallelism, key_version, created_at, updated_at
-		FROM user_master_keys
-		WHERE user_id = $1`
-
-	err := r.db.GetContext(ctx, &masterKey, query, userID)
-	if err != nil {
-		if err == sql.ErrNoRows {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("failed to get user master key: %w", err)
-	}
-
-	return &masterKey, nil
-}
-
-// UpdateUserMasterKey updates a user's master key (for key rotation)
-func (r *CryptoRepository) UpdateUserMasterKey(ctx context.Context, tx *sqlx.Tx, masterKey *domain.UserMasterKey) error {
-	query := `
-		UPDATE user_master_keys
-		SET encrypted_master_key = :encrypted_master_key,
-			argon2_salt = :argon2_salt,
-			key_version = :key_version,
-			updated_at = NOW()
-		WHERE user_id = :user_id`
-
-	var err error
-	if tx != nil {
-		_, err = tx.NamedExecContext(ctx, query, masterKey)
-	} else {
-		_, err = r.db.NamedExecContext(ctx, query, masterKey)
-	}
-
-	if err != nil {
-		return fmt.Errorf("failed to update user master key: %w", err)
-	}
-
-	return nil
-}
-
-// DeleteUserMasterKey deletes a user's master key
-func (r *CryptoRepository) DeleteUserMasterKey(ctx context.Context, tx *sqlx.Tx, userID string) error {
-	query := `DELETE FROM user_master_keys WHERE user_id = $1`
-
-	var err error
-	if tx != nil {
-		_, err = tx.ExecContext(ctx, query, userID)
-	} else {
-		_, err = r.db.ExecContext(ctx, query, userID)
-	}
-
-	if err != nil {
-		return fmt.Errorf("failed to delete user master key: %w", err)
-	}
-
-	return nil
-}
-
-// ConversationKey operations
-
-// CreateConversationKey creates a new conversation key
 func (r *CryptoRepository) CreateConversationKey(ctx context.Context, tx *sqlx.Tx, key *domain.ConversationKey) error {
 	query := `
 		INSERT INTO conversation_keys (
@@ -140,7 +45,6 @@ func (r *CryptoRepository) CreateConversationKey(ctx context.Context, tx *sqlx.T
 	return nil
 }
 
-// GetConversationKey retrieves a conversation key for a user
 func (r *CryptoRepository) GetConversationKey(ctx context.Context, conversationID, userID string, keyVersion int) (*domain.ConversationKey, error) {
 	var key domain.ConversationKey
 
@@ -161,7 +65,6 @@ func (r *CryptoRepository) GetConversationKey(ctx context.Context, conversationI
 	return &key, nil
 }
 
-// GetActiveConversationKey retrieves the active conversation key for a user
 func (r *CryptoRepository) GetActiveConversationKey(ctx context.Context, conversationID, userID string) (*domain.ConversationKey, error) {
 	var key domain.ConversationKey
 
@@ -184,7 +87,6 @@ func (r *CryptoRepository) GetActiveConversationKey(ctx context.Context, convers
 	return &key, nil
 }
 
-// ListConversationKeys lists all keys for a conversation
 func (r *CryptoRepository) ListConversationKeys(ctx context.Context, conversationID string) ([]*domain.ConversationKey, error) {
 	var keys []*domain.ConversationKey
 
@@ -203,7 +105,6 @@ func (r *CryptoRepository) ListConversationKeys(ctx context.Context, conversatio
 	return keys, nil
 }
 
-// UpdateConversationKey updates a conversation key
 func (r *CryptoRepository) UpdateConversationKey(ctx context.Context, tx *sqlx.Tx, key *domain.ConversationKey) error {
 	query := `
 		UPDATE conversation_keys
@@ -226,7 +127,6 @@ func (r *CryptoRepository) UpdateConversationKey(ctx context.Context, tx *sqlx.T
 	return nil
 }
 
-// DeactivateConversationKeys deactivates old keys for rotation
 func (r *CryptoRepository) DeactivateConversationKeys(ctx context.Context, tx *sqlx.Tx, conversationID string, excludeKeyVersion int) error {
 	query := `
 		UPDATE conversation_keys
@@ -247,9 +147,6 @@ func (r *CryptoRepository) DeactivateConversationKeys(ctx context.Context, tx *s
 	return nil
 }
 
-// KeyExchangeMessage operations
-
-// CreateKeyExchangeMessage creates a new key exchange message
 func (r *CryptoRepository) CreateKeyExchangeMessage(ctx context.Context, tx *sqlx.Tx, msg *domain.KeyExchangeMessage) error {
 	query := `
 		INSERT INTO key_exchange_messages (
@@ -274,7 +171,6 @@ func (r *CryptoRepository) CreateKeyExchangeMessage(ctx context.Context, tx *sql
 	return nil
 }
 
-// GetKeyExchangeMessage retrieves a key exchange message
 func (r *CryptoRepository) GetKeyExchangeMessage(ctx context.Context, messageID string) (*domain.KeyExchangeMessage, error) {
 	var msg domain.KeyExchangeMessage
 
@@ -287,7 +183,7 @@ func (r *CryptoRepository) GetKeyExchangeMessage(ctx context.Context, messageID 
 	err := r.db.GetContext(ctx, &msg, query, messageID)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			return nil, nil
+			return nil, domain.ErrNotFound
 		}
 		return nil, fmt.Errorf("failed to get key exchange message: %w", err)
 	}
@@ -295,7 +191,6 @@ func (r *CryptoRepository) GetKeyExchangeMessage(ctx context.Context, messageID 
 	return &msg, nil
 }
 
-// GetPendingKeyExchanges retrieves pending key exchanges for a user
 func (r *CryptoRepository) GetPendingKeyExchanges(ctx context.Context, userID string) ([]*domain.KeyExchangeMessage, error) {
 	var messages []*domain.KeyExchangeMessage
 
@@ -314,7 +209,6 @@ func (r *CryptoRepository) GetPendingKeyExchanges(ctx context.Context, userID st
 	return messages, nil
 }
 
-// DeleteKeyExchangeMessage deletes a key exchange message
 func (r *CryptoRepository) DeleteKeyExchangeMessage(ctx context.Context, tx *sqlx.Tx, messageID string) error {
 	query := `DELETE FROM key_exchange_messages WHERE id = $1`
 
@@ -332,7 +226,6 @@ func (r *CryptoRepository) DeleteKeyExchangeMessage(ctx context.Context, tx *sql
 	return nil
 }
 
-// CleanupExpiredKeyExchanges removes expired key exchange messages
 func (r *CryptoRepository) CleanupExpiredKeyExchanges(ctx context.Context) (int64, error) {
 	query := `DELETE FROM key_exchange_messages WHERE expires_at <= NOW()`
 
@@ -349,15 +242,12 @@ func (r *CryptoRepository) CleanupExpiredKeyExchanges(ctx context.Context) (int6
 	return rowsAffected, nil
 }
 
-// UserSigningKey operations
-
-// CreateUserSigningKey creates a new user signing key
 func (r *CryptoRepository) CreateUserSigningKey(ctx context.Context, tx *sqlx.Tx, key *domain.UserSigningKey) error {
 	query := `
 		INSERT INTO user_signing_keys (
-			user_id, encrypted_private_key, public_key, key_version
+			user_id, encrypted_private_key, public_key, public_identity_key, key_version
 		) VALUES (
-			:user_id, :encrypted_private_key, :public_key, :key_version
+			:user_id, :encrypted_private_key, :public_key, :public_identity_key, :key_version
 		)`
 
 	var err error
@@ -374,12 +264,11 @@ func (r *CryptoRepository) CreateUserSigningKey(ctx context.Context, tx *sqlx.Tx
 	return nil
 }
 
-// GetUserSigningKey retrieves a user's signing key
 func (r *CryptoRepository) GetUserSigningKey(ctx context.Context, userID string) (*domain.UserSigningKey, error) {
 	var key domain.UserSigningKey
 
 	query := `
-		SELECT user_id, encrypted_private_key, public_key, key_version, created_at
+		SELECT user_id, encrypted_private_key, public_key, public_identity_key, key_version, created_at
 		FROM user_signing_keys
 		WHERE user_id = $1
 		ORDER BY key_version DESC
@@ -388,7 +277,7 @@ func (r *CryptoRepository) GetUserSigningKey(ctx context.Context, userID string)
 	err := r.db.GetContext(ctx, &key, query, userID)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			return nil, nil
+			return nil, domain.ErrNotFound
 		}
 		return nil, fmt.Errorf("failed to get user signing key: %w", err)
 	}
@@ -396,7 +285,6 @@ func (r *CryptoRepository) GetUserSigningKey(ctx context.Context, userID string)
 	return &key, nil
 }
 
-// GetUserPublicSigningKey retrieves a user's public signing key
 func (r *CryptoRepository) GetUserPublicSigningKey(ctx context.Context, userID string) (string, error) {
 	var publicKey string
 
@@ -418,12 +306,12 @@ func (r *CryptoRepository) GetUserPublicSigningKey(ctx context.Context, userID s
 	return publicKey, nil
 }
 
-// UpdateUserSigningKey updates a user's signing key
 func (r *CryptoRepository) UpdateUserSigningKey(ctx context.Context, tx *sqlx.Tx, key *domain.UserSigningKey) error {
 	query := `
 		UPDATE user_signing_keys
 		SET encrypted_private_key = :encrypted_private_key,
 			public_key = :public_key,
+			public_identity_key = :public_identity_key,
 			key_version = :key_version
 		WHERE user_id = :user_id`
 
@@ -441,7 +329,6 @@ func (r *CryptoRepository) UpdateUserSigningKey(ctx context.Context, tx *sqlx.Tx
 	return nil
 }
 
-// DeleteUserSigningKey deletes a user's signing key
 func (r *CryptoRepository) DeleteUserSigningKey(ctx context.Context, tx *sqlx.Tx, userID string) error {
 	query := `DELETE FROM user_signing_keys WHERE user_id = $1`
 
@@ -459,9 +346,6 @@ func (r *CryptoRepository) DeleteUserSigningKey(ctx context.Context, tx *sqlx.Tx
 	return nil
 }
 
-// CryptoAuditLog operations
-
-// CreateAuditLog creates a new crypto audit log entry
 func (r *CryptoRepository) CreateAuditLog(ctx context.Context, auditLog *domain.CryptoAuditLog) error {
 	query := `
 		INSERT INTO crypto_audit_log (
@@ -480,7 +364,6 @@ func (r *CryptoRepository) CreateAuditLog(ctx context.Context, auditLog *domain.
 	return nil
 }
 
-// GetAuditLogs retrieves audit logs for a user
 func (r *CryptoRepository) GetAuditLogs(ctx context.Context, userID string, limit, offset int) ([]*domain.CryptoAuditLog, error) {
 	var logs []*domain.CryptoAuditLog
 
@@ -500,7 +383,6 @@ func (r *CryptoRepository) GetAuditLogs(ctx context.Context, userID string, limi
 	return logs, nil
 }
 
-// GetAuditLogsByConversation retrieves audit logs for a conversation
 func (r *CryptoRepository) GetAuditLogsByConversation(ctx context.Context, conversationID string, limit, offset int) ([]*domain.CryptoAuditLog, error) {
 	var logs []*domain.CryptoAuditLog
 
@@ -520,7 +402,6 @@ func (r *CryptoRepository) GetAuditLogsByConversation(ctx context.Context, conve
 	return logs, nil
 }
 
-// CleanupOldAuditLogs removes audit logs older than specified duration
 func (r *CryptoRepository) CleanupOldAuditLogs(ctx context.Context, olderThan time.Duration) (int64, error) {
 	query := `DELETE FROM crypto_audit_log WHERE created_at < NOW() - $1::INTERVAL`
 
@@ -537,9 +418,6 @@ func (r *CryptoRepository) CleanupOldAuditLogs(ctx context.Context, olderThan ti
 	return rowsAffected, nil
 }
 
-// Helper methods for transactions
-
-// WithTransaction executes a function within a database transaction
 func (r *CryptoRepository) WithTransaction(ctx context.Context, fn func(*sqlx.Tx) error) error {
 	tx, err := r.db.BeginTxx(ctx, nil)
 	if err != nil {

@@ -171,6 +171,7 @@ func TestSendMessageRequestWithoutParent(t *testing.T) {
 func TestMessageJSONRoundTrip(t *testing.T) {
 	now := time.Now().Truncate(time.Second)
 	readAt := now.Add(5 * time.Minute)
+	content := "plaintext message"
 	encryptedContent := "encrypted-base64-data"
 	nonce := "nonce-value"
 	signature := "pgp-sig-abc"
@@ -179,7 +180,7 @@ func TestMessageJSONRoundTrip(t *testing.T) {
 		ID:                   "msg-001",
 		SenderID:             "user-1",
 		RecipientID:          "user-2",
-		Content:              "plaintext message",
+		Content:              &content,
 		MessageType:          MessageTypeText,
 		IsRead:               true,
 		IsDeletedBySender:    false,
@@ -219,10 +220,12 @@ func TestMessageJSONRoundTrip(t *testing.T) {
 }
 
 func TestMessagesResponseJSON(t *testing.T) {
+	hello := "Hello"
+	world := "World"
 	resp := MessagesResponse{
 		Messages: []Message{
-			{ID: "msg-1", Content: "Hello"},
-			{ID: "msg-2", Content: "World"},
+			{ID: "msg-1", Content: &hello},
+			{ID: "msg-2", Content: &world},
 		},
 		Total:   10,
 		HasMore: true,
@@ -260,4 +263,144 @@ func TestConversationsResponseJSON(t *testing.T) {
 	assert.Len(t, decoded.Conversations, 1)
 	assert.Equal(t, 1, decoded.Total)
 	assert.False(t, decoded.HasMore)
+}
+
+func TestConversationHasEncryptionStatus(t *testing.T) {
+	conv := Conversation{
+		ID:               "conv-test",
+		ParticipantOneID: "user-1",
+		ParticipantTwoID: "user-2",
+		EncryptionStatus: EncryptionStatusNone,
+	}
+	assert.Equal(t, "none", conv.EncryptionStatus)
+
+	conv.EncryptionStatus = EncryptionStatusPending
+	assert.Equal(t, "pending", conv.EncryptionStatus)
+
+	conv.EncryptionStatus = EncryptionStatusActive
+	assert.Equal(t, "active", conv.EncryptionStatus)
+}
+
+func TestEncryptionStatusConstants(t *testing.T) {
+	assert.Equal(t, "none", EncryptionStatusNone)
+	assert.Equal(t, "pending", EncryptionStatusPending)
+	assert.Equal(t, "active", EncryptionStatusActive)
+}
+
+func TestRegisterIdentityKeyRequestJSON(t *testing.T) {
+	req := RegisterIdentityKeyRequest{
+		PublicIdentityKey: "base64-x25519-pubkey",
+		PublicSigningKey:  "base64-ed25519-pubkey",
+	}
+
+	data, err := json.Marshal(req)
+	assert.NoError(t, err)
+
+	var decoded RegisterIdentityKeyRequest
+	err = json.Unmarshal(data, &decoded)
+	assert.NoError(t, err)
+
+	assert.Equal(t, req.PublicIdentityKey, decoded.PublicIdentityKey)
+	assert.Equal(t, req.PublicSigningKey, decoded.PublicSigningKey)
+}
+
+func TestStoreEncryptedMessageRequestJSON(t *testing.T) {
+	req := StoreEncryptedMessageRequest{
+		RecipientID:      "recipient-uuid",
+		EncryptedContent: "base64ciphertext",
+		ContentNonce:     "base64nonce24bytes",
+		Signature:        "base64ed25519sig",
+	}
+
+	data, err := json.Marshal(req)
+	assert.NoError(t, err)
+
+	var decoded StoreEncryptedMessageRequest
+	err = json.Unmarshal(data, &decoded)
+	assert.NoError(t, err)
+
+	assert.Equal(t, req.RecipientID, decoded.RecipientID)
+	assert.Equal(t, req.EncryptedContent, decoded.EncryptedContent)
+	assert.Equal(t, req.ContentNonce, decoded.ContentNonce)
+	assert.Equal(t, req.Signature, decoded.Signature)
+}
+
+func TestPublicKeyBundleJSON(t *testing.T) {
+	bundle := PublicKeyBundle{
+		PublicIdentityKey: "x25519-pubkey",
+		PublicSigningKey:  "ed25519-pubkey",
+		KeyVersion:        1,
+	}
+
+	data, err := json.Marshal(bundle)
+	assert.NoError(t, err)
+
+	var decoded PublicKeyBundle
+	err = json.Unmarshal(data, &decoded)
+	assert.NoError(t, err)
+
+	assert.Equal(t, bundle.PublicIdentityKey, decoded.PublicIdentityKey)
+	assert.Equal(t, bundle.PublicSigningKey, decoded.PublicSigningKey)
+	assert.Equal(t, 1, decoded.KeyVersion)
+}
+
+func TestE2EEStatusResponseClientSideModel(t *testing.T) {
+	resp := E2EEStatusResponse{
+		HasIdentityKey: true,
+		KeyVersion:     1,
+	}
+
+	data, err := json.Marshal(resp)
+	assert.NoError(t, err)
+
+	var decoded E2EEStatusResponse
+	err = json.Unmarshal(data, &decoded)
+	assert.NoError(t, err)
+
+	assert.True(t, decoded.HasIdentityKey)
+	assert.Equal(t, 1, decoded.KeyVersion)
+}
+
+func TestUserSigningKeyHasPublicIdentityKey(t *testing.T) {
+	pubIdentKey := "x25519-pub-key-value"
+	key := UserSigningKey{
+		UserID:            "user-1",
+		PublicKey:         "ed25519-signing-key",
+		PublicIdentityKey: &pubIdentKey,
+		KeyVersion:        1,
+	}
+
+	assert.NotNil(t, key.PublicIdentityKey)
+	assert.Equal(t, pubIdentKey, *key.PublicIdentityKey)
+}
+
+func TestMessageContentNullable(t *testing.T) {
+	encContent := "base64ciphertext"
+	nonce := "base64nonce"
+	msg := Message{
+		ID:               "msg-001",
+		SenderID:         "user-1",
+		RecipientID:      "user-2",
+		Content:          nil,
+		MessageType:      MessageTypeSecure,
+		IsEncrypted:      true,
+		EncryptedContent: &encContent,
+		ContentNonce:     &nonce,
+	}
+
+	assert.Nil(t, msg.Content)
+	assert.NotNil(t, msg.EncryptedContent)
+
+	plainContent := "hello world"
+	plainMsg := Message{
+		ID:          "msg-002",
+		SenderID:    "user-1",
+		RecipientID: "user-2",
+		Content:     &plainContent,
+		MessageType: MessageTypeText,
+		IsEncrypted: false,
+	}
+
+	assert.NotNil(t, plainMsg.Content)
+	assert.Equal(t, "hello world", *plainMsg.Content)
 }

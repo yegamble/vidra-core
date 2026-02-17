@@ -15,7 +15,6 @@ import (
 	"athena/internal/domain"
 )
 
-// Mock repositories
 type MockChatRepository struct {
 	mock.Mock
 }
@@ -205,14 +204,12 @@ func (m *MockStreamRepository) EndStream(ctx context.Context, id uuid.UUID) erro
 	return args.Error(0)
 }
 
-// Setup helper
 func setupChatServerTest(t *testing.T) (*ChatServer, *MockChatRepository, *MockStreamRepository) {
 	mockChatRepo := new(MockChatRepository)
 	mockStreamRepo := new(MockStreamRepository)
 
 	cfg := &config.Config{}
 
-	// Use a mock Redis client (nil for unit tests, but we'll skip rate limit tests)
 	var redisClient *redis.Client
 
 	logger := logrus.New()
@@ -223,7 +220,6 @@ func setupChatServerTest(t *testing.T) (*ChatServer, *MockChatRepository, *MockS
 	return server, mockChatRepo, mockStreamRepo
 }
 
-// Test NewChatServer
 func TestNewChatServer(t *testing.T) {
 	cfg := &config.Config{}
 	mockChatRepo := new(MockChatRepository)
@@ -238,7 +234,6 @@ func TestNewChatServer(t *testing.T) {
 	assert.NotNil(t, server.connections)
 }
 
-// Test registerClient and unregisterClient
 func TestChatServer_RegisterUnregisterClient(t *testing.T) {
 	server, _, _ := setupChatServerTest(t)
 
@@ -251,7 +246,6 @@ func TestChatServer_RegisterUnregisterClient(t *testing.T) {
 		Username: "testuser",
 	}
 
-	// Register client
 	server.registerClient(client)
 
 	server.mu.RLock()
@@ -261,7 +255,6 @@ func TestChatServer_RegisterUnregisterClient(t *testing.T) {
 	assert.NotNil(t, clients)
 	assert.True(t, clients[client])
 
-	// Unregister client
 	server.unregisterClient(client)
 
 	server.mu.RLock()
@@ -271,13 +264,11 @@ func TestChatServer_RegisterUnregisterClient(t *testing.T) {
 	assert.False(t, clients[client])
 }
 
-// Test broadcast
 func TestChatServer_Broadcast(t *testing.T) {
 	server, _, _ := setupChatServerTest(t)
 
 	streamID := uuid.New()
 
-	// Create two clients
 	client1 := &ChatClient{
 		server:   server,
 		send:     make(chan *ChatMessage, clientSendBuffer),
@@ -306,10 +297,8 @@ func TestChatServer_Broadcast(t *testing.T) {
 		Timestamp: time.Now(),
 	}
 
-	// Broadcast message
 	server.broadcast(streamID, msg)
 
-	// Both clients should receive the message
 	select {
 	case received := <-client1.send:
 		assert.Equal(t, "Hello!", received.Message)
@@ -325,7 +314,6 @@ func TestChatServer_Broadcast(t *testing.T) {
 	}
 }
 
-// Test broadcast to non-existent stream
 func TestChatServer_Broadcast_NoClients(t *testing.T) {
 	server, _, _ := setupChatServerTest(t)
 
@@ -337,11 +325,9 @@ func TestChatServer_Broadcast_NoClients(t *testing.T) {
 		Timestamp: time.Now(),
 	}
 
-	// Should not panic
 	server.broadcast(streamID, msg)
 }
 
-// Test broadcastSystemMessage
 func TestChatServer_BroadcastSystemMessage(t *testing.T) {
 	server, _, _ := setupChatServerTest(t)
 
@@ -367,7 +353,6 @@ func TestChatServer_BroadcastSystemMessage(t *testing.T) {
 	}
 }
 
-// Test sendToClient
 func TestChatServer_SendToClient(t *testing.T) {
 	server, _, _ := setupChatServerTest(t)
 
@@ -395,13 +380,12 @@ func TestChatServer_SendToClient(t *testing.T) {
 	}
 }
 
-// Test sendToClient with full buffer
 func TestChatServer_SendToClient_FullBuffer(t *testing.T) {
 	server, _, _ := setupChatServerTest(t)
 
 	client := &ChatClient{
 		server:   server,
-		send:     make(chan *ChatMessage, 1), // Small buffer
+		send:     make(chan *ChatMessage, 1),
 		StreamID: uuid.New(),
 		UserID:   uuid.New(),
 		Username: "user1",
@@ -413,14 +397,11 @@ func TestChatServer_SendToClient_FullBuffer(t *testing.T) {
 		Timestamp: time.Now(),
 	}
 
-	// Fill the buffer
 	client.send <- msg
 
-	// This should not block
 	server.sendToClient(client, msg)
 }
 
-// Test DeleteMessage
 func TestChatServer_DeleteMessage(t *testing.T) {
 	server, mockChatRepo, mockStreamRepo := setupChatServerTest(t)
 
@@ -429,25 +410,20 @@ func TestChatServer_DeleteMessage(t *testing.T) {
 	messageID := uuid.New()
 	ownerID := uuid.New()
 
-	// Mock stream owner check
 	mockStreamRepo.On("GetByID", ctx, streamID).Return(&domain.LiveStream{
 		ID:     streamID,
 		UserID: ownerID,
 	}, nil)
 
-	// Mock moderator check (called even for owner)
 	mockChatRepo.On("IsModerator", ctx, streamID, ownerID).Return(false, nil)
 
-	// Mock message lookup
 	mockChatRepo.On("GetMessageByID", ctx, messageID).Return(&domain.ChatMessage{
 		ID:       messageID,
 		StreamID: streamID,
 	}, nil)
 
-	// Mock delete
 	mockChatRepo.On("DeleteMessage", ctx, messageID).Return(nil)
 
-	// Test as stream owner
 	err := server.DeleteMessage(ctx, streamID, messageID, ownerID)
 	assert.NoError(t, err)
 
@@ -455,7 +431,6 @@ func TestChatServer_DeleteMessage(t *testing.T) {
 	mockStreamRepo.AssertExpectations(t)
 }
 
-// Test DeleteMessage as moderator
 func TestChatServer_DeleteMessage_AsModerator(t *testing.T) {
 	server, mockChatRepo, mockStreamRepo := setupChatServerTest(t)
 
@@ -465,22 +440,18 @@ func TestChatServer_DeleteMessage_AsModerator(t *testing.T) {
 	userID := uuid.New()
 	ownerID := uuid.New()
 
-	// Mock stream owner check
 	mockStreamRepo.On("GetByID", ctx, streamID).Return(&domain.LiveStream{
 		ID:     streamID,
 		UserID: ownerID,
 	}, nil)
 
-	// Mock moderator check
 	mockChatRepo.On("IsModerator", ctx, streamID, userID).Return(true, nil)
 
-	// Mock message lookup
 	mockChatRepo.On("GetMessageByID", ctx, messageID).Return(&domain.ChatMessage{
 		ID:       messageID,
 		StreamID: streamID,
 	}, nil)
 
-	// Mock delete
 	mockChatRepo.On("DeleteMessage", ctx, messageID).Return(nil)
 
 	err := server.DeleteMessage(ctx, streamID, messageID, userID)
@@ -490,7 +461,6 @@ func TestChatServer_DeleteMessage_AsModerator(t *testing.T) {
 	mockStreamRepo.AssertExpectations(t)
 }
 
-// Test DeleteMessage unauthorized
 func TestChatServer_DeleteMessage_Unauthorized(t *testing.T) {
 	server, mockChatRepo, mockStreamRepo := setupChatServerTest(t)
 
@@ -500,13 +470,11 @@ func TestChatServer_DeleteMessage_Unauthorized(t *testing.T) {
 	userID := uuid.New()
 	ownerID := uuid.New()
 
-	// Mock stream owner check
 	mockStreamRepo.On("GetByID", ctx, streamID).Return(&domain.LiveStream{
 		ID:     streamID,
 		UserID: ownerID,
 	}, nil)
 
-	// Mock moderator check (not a moderator)
 	mockChatRepo.On("IsModerator", ctx, streamID, userID).Return(false, nil)
 
 	err := server.DeleteMessage(ctx, streamID, messageID, userID)
@@ -516,7 +484,6 @@ func TestChatServer_DeleteMessage_Unauthorized(t *testing.T) {
 	mockStreamRepo.AssertExpectations(t)
 }
 
-// Test BanUser
 func TestChatServer_BanUser(t *testing.T) {
 	server, mockChatRepo, mockStreamRepo := setupChatServerTest(t)
 
@@ -527,16 +494,13 @@ func TestChatServer_BanUser(t *testing.T) {
 	reason := "spam"
 	duration := 10 * time.Minute
 
-	// Mock stream owner check
 	mockStreamRepo.On("GetByID", ctx, streamID).Return(&domain.LiveStream{
 		ID:     streamID,
 		UserID: ownerID,
 	}, nil)
 
-	// Mock moderator check (called even for owner)
 	mockChatRepo.On("IsModerator", ctx, streamID, ownerID).Return(false, nil)
 
-	// Test as owner
 	mockChatRepo.On("BanUser", ctx, mock.MatchedBy(func(ban *domain.ChatBan) bool {
 		return ban.StreamID == streamID &&
 			ban.UserID == userID &&
@@ -551,7 +515,6 @@ func TestChatServer_BanUser(t *testing.T) {
 	mockStreamRepo.AssertExpectations(t)
 }
 
-// Test BanUser as moderator
 func TestChatServer_BanUser_AsModerator(t *testing.T) {
 	server, mockChatRepo, mockStreamRepo := setupChatServerTest(t)
 
@@ -561,16 +524,13 @@ func TestChatServer_BanUser_AsModerator(t *testing.T) {
 	moderatorID := uuid.New()
 	ownerID := uuid.New()
 
-	// Mock stream owner check
 	mockStreamRepo.On("GetByID", ctx, streamID).Return(&domain.LiveStream{
 		ID:     streamID,
 		UserID: ownerID,
 	}, nil)
 
-	// Mock moderator check
 	mockChatRepo.On("IsModerator", ctx, streamID, moderatorID).Return(true, nil)
 
-	// Mock ban
 	mockChatRepo.On("BanUser", ctx, mock.AnythingOfType("*domain.ChatBan")).Return(nil)
 
 	err := server.BanUser(ctx, streamID, userID, moderatorID, "spam", 10*time.Minute)
@@ -580,7 +540,6 @@ func TestChatServer_BanUser_AsModerator(t *testing.T) {
 	mockStreamRepo.AssertExpectations(t)
 }
 
-// Test BanUser unauthorized
 func TestChatServer_BanUser_Unauthorized(t *testing.T) {
 	server, mockChatRepo, mockStreamRepo := setupChatServerTest(t)
 
@@ -590,13 +549,11 @@ func TestChatServer_BanUser_Unauthorized(t *testing.T) {
 	moderatorID := uuid.New()
 	ownerID := uuid.New()
 
-	// Mock stream owner check
 	mockStreamRepo.On("GetByID", ctx, streamID).Return(&domain.LiveStream{
 		ID:     streamID,
 		UserID: ownerID,
 	}, nil)
 
-	// Mock moderator check (not a moderator)
 	mockChatRepo.On("IsModerator", ctx, streamID, moderatorID).Return(false, nil)
 
 	err := server.BanUser(ctx, streamID, userID, moderatorID, "spam", 10*time.Minute)
@@ -606,17 +563,14 @@ func TestChatServer_BanUser_Unauthorized(t *testing.T) {
 	mockStreamRepo.AssertExpectations(t)
 }
 
-// Test GetConnectedUsers
 func TestChatServer_GetConnectedUsers(t *testing.T) {
 	server, _, _ := setupChatServerTest(t)
 
 	streamID := uuid.New()
 
-	// No clients initially
 	count := server.GetConnectedUsers(streamID)
 	assert.Equal(t, 0, count)
 
-	// Add two clients
 	client1 := &ChatClient{
 		server:   server,
 		send:     make(chan *ChatMessage, clientSendBuffer),
@@ -640,7 +594,18 @@ func TestChatServer_GetConnectedUsers(t *testing.T) {
 	assert.Equal(t, 2, count)
 }
 
-// Test Shutdown
+func TestRateLimitMemberUniqueness(t *testing.T) {
+	const calls = 100
+	seen := make(map[string]struct{}, calls)
+	for i := range calls {
+		m := rateLimitMember()
+		if _, dup := seen[m]; dup {
+			t.Fatalf("duplicate rateLimitMember on call %d: %q", i, m)
+		}
+		seen[m] = struct{}{}
+	}
+}
+
 func TestChatServer_Shutdown(t *testing.T) {
 	server, _, _ := setupChatServerTest(t)
 

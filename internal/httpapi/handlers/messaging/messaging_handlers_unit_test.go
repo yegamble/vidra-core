@@ -1037,22 +1037,25 @@ func TestGetUserIDFromContext(t *testing.T) {
 	assert.Equal(t, userID.String(), result)
 }
 
-func TestGetClientIP_XForwardedFor(t *testing.T) {
+func TestGetClientIP_XForwardedFor_Ignored(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.RemoteAddr = "192.0.2.1:9999"
 	req.Header.Set("X-Forwarded-For", "1.2.3.4, 5.6.7.8")
-	assert.Equal(t, "1.2.3.4", GetClientIP(req))
+	assert.Equal(t, "192.0.2.1", GetClientIP(req))
 }
 
-func TestGetClientIP_XForwardedFor_Single(t *testing.T) {
+func TestGetClientIP_XForwardedFor_Single_Ignored(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.RemoteAddr = "192.0.2.1:9999"
 	req.Header.Set("X-Forwarded-For", "10.0.0.1")
-	assert.Equal(t, "10.0.0.1", GetClientIP(req))
+	assert.Equal(t, "192.0.2.1", GetClientIP(req))
 }
 
-func TestGetClientIP_XRealIP(t *testing.T) {
+func TestGetClientIP_XRealIP_Ignored(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	req.Header.Set("X-Real-IP", "  9.8.7.6  ")
-	assert.Equal(t, "9.8.7.6", GetClientIP(req))
+	req.RemoteAddr = "192.0.2.1:9999"
+	req.Header.Set("X-Real-IP", "9.8.7.6")
+	assert.Equal(t, "192.0.2.1", GetClientIP(req))
 }
 
 func TestGetClientIP_RemoteAddr(t *testing.T) {
@@ -1270,7 +1273,7 @@ func TestSendMessageHandler_Success(t *testing.T) {
 			ID:          messageID.String(),
 			SenderID:    senderID,
 			RecipientID: recipientID,
-			Content:     "test",
+			Content:     strPtr("test"),
 		}, nil)
 	handler := SendMessageHandler(mockService)
 
@@ -1317,7 +1320,7 @@ func TestGetMessagesHandler_Success(t *testing.T) {
 	mockService.On("GetMessages", mock.Anything, userID, mock.Anything).
 		Return(&domain.MessagesResponse{
 			Messages: []domain.Message{
-				{ID: uuid.NewString(), SenderID: userID, RecipientID: conversationWith, Content: "test"},
+				{ID: uuid.NewString(), SenderID: userID, RecipientID: conversationWith, Content: strPtr("test")},
 			},
 			Total:   1,
 			HasMore: false,

@@ -27,7 +27,6 @@ func (r *messageRepository) CreateMessage(ctx context.Context, message *domain.M
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	// Insert the message
 	query := `
 		INSERT INTO messages (id, sender_id, recipient_id, content, message_type,
 			is_read, is_deleted_by_sender, is_deleted_by_recipient, parent_message_id,
@@ -43,7 +42,6 @@ func (r *messageRepository) CreateMessage(ctx context.Context, message *domain.M
 		return fmt.Errorf("failed to create message: %w", err)
 	}
 
-	// Upsert conversation record
 	err = r.upsertConversation(ctx, tx, message.SenderID, message.RecipientID, message.ID, message.CreatedAt)
 	if err != nil {
 		return fmt.Errorf("failed to upsert conversation: %w", err)
@@ -184,7 +182,6 @@ func (r *messageRepository) MarkMessageAsRead(ctx context.Context, messageID str
 }
 
 func (r *messageRepository) DeleteMessage(ctx context.Context, messageID string, userID string) error {
-	// Soft delete by marking as deleted for the user
 	query := `
 		UPDATE messages
 		SET is_deleted_by_sender = CASE WHEN sender_id = $2 THEN true ELSE is_deleted_by_sender END,
@@ -276,7 +273,9 @@ func (r *messageRepository) GetConversations(ctx context.Context, userID string,
 
 		if lastMessageID.Valid {
 			lastMessage.ID = lastMessageID.String
-			lastMessage.Content = lastMessageContent.String
+			if lastMessageContent.Valid {
+				lastMessage.Content = &lastMessageContent.String
+			}
 			lastMessage.SenderID = lastMessageSenderID.String
 			lastMessage.CreatedAt = lastMessageCreatedAt.Time
 			conv.LastMessage = &lastMessage
@@ -308,7 +307,6 @@ func (r *messageRepository) GetUnreadCount(ctx context.Context, userID string) (
 }
 
 func (r *messageRepository) upsertConversation(ctx context.Context, tx *sqlx.Tx, userID1, userID2, lastMessageID string, lastMessageAt time.Time) error {
-	// Ensure consistent ordering of participant IDs
 	participantOne := userID1
 	participantTwo := userID2
 	if userID1 > userID2 {

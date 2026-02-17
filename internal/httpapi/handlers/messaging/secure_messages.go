@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -28,11 +29,11 @@ func NewSecureMessagesHandler(e2eeService E2EEServiceInterface, validator *valid
 	}
 }
 
-func (h *SecureMessagesHandler) SetupE2EE(w http.ResponseWriter, r *http.Request) {
+func (h *SecureMessagesHandler) RegisterIdentityKey(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	userID := GetUserIDFromContext(ctx)
 
-	var req domain.SetupE2EERequest
+	var req domain.RegisterIdentityKeyRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		WriteErrorResponse(w, http.StatusBadRequest, "invalid_request", "Invalid request body")
 		return
@@ -46,67 +47,41 @@ func (h *SecureMessagesHandler) SetupE2EE(w http.ResponseWriter, r *http.Request
 	clientIP := GetClientIP(r)
 	userAgent := r.UserAgent()
 
-	err := h.e2eeService.SetupE2EE(ctx, userID, req.Password, clientIP, userAgent)
+	err := h.e2eeService.RegisterIdentityKey(ctx, userID, req.PublicIdentityKey, req.PublicSigningKey, clientIP, userAgent)
 	if err != nil {
-		if err.Error() == "user already has E2EE setup" {
-			WriteErrorResponse(w, http.StatusConflict, "already_setup", "E2EE already setup for this user")
+		if errors.Is(err, domain.ErrConflict) {
+			WriteErrorResponse(w, http.StatusConflict, "key_conflict", "Identity key already registered for this user")
 			return
 		}
-		WriteErrorResponse(w, http.StatusInternalServerError, "setup_failed", "Failed to setup E2EE")
+		WriteErrorResponse(w, http.StatusInternalServerError, "register_failed", "Failed to register identity key")
 		return
 	}
 
 	WriteJSONResponse(w, http.StatusOK, map[string]interface{}{
-		"message": "E2EE setup completed successfully",
+		"message": "Identity key registered successfully",
 	})
 }
 
-func (h *SecureMessagesHandler) UnlockE2EE(w http.ResponseWriter, r *http.Request) {
+func (h *SecureMessagesHandler) GetPublicKeys(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	userID := GetUserIDFromContext(ctx)
+	targetUserID := chi.URLParam(r, "userId")
 
-	var req domain.UnlockE2EERequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		WriteErrorResponse(w, http.StatusBadRequest, "invalid_request", "Invalid request body")
+	if targetUserID == "" {
+		WriteErrorResponse(w, http.StatusBadRequest, "missing_user_id", "User ID is required")
 		return
 	}
 
-	if err := h.validator.Struct(req); err != nil {
-		WriteValidationErrorResponse(w, err)
-		return
-	}
-
-	clientIP := GetClientIP(r)
-	userAgent := r.UserAgent()
-
-	err := h.e2eeService.UnlockE2EE(ctx, userID, req.Password, clientIP, userAgent)
+	bundle, err := h.e2eeService.GetPublicKeys(ctx, targetUserID)
 	if err != nil {
-		if err.Error() == "invalid password" {
-			WriteErrorResponse(w, http.StatusUnauthorized, "invalid_password", "Invalid password")
+		if errors.Is(err, domain.ErrNotFound) {
+			WriteErrorResponse(w, http.StatusNotFound, "keys_not_found", "No keys registered for this user")
 			return
 		}
-		if err.Error() == "user has no E2EE setup" {
-			WriteErrorResponse(w, http.StatusNotFound, "no_setup", "User has no E2EE setup")
-			return
-		}
-		WriteErrorResponse(w, http.StatusInternalServerError, "unlock_failed", "Failed to unlock E2EE")
+		WriteErrorResponse(w, http.StatusInternalServerError, "fetch_failed", "Failed to get public keys")
 		return
 	}
 
-	WriteJSONResponse(w, http.StatusOK, map[string]interface{}{
-		"message": "E2EE session unlocked successfully",
-	})
-}
-
-func (h *SecureMessagesHandler) LockE2EE(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	userID := GetUserIDFromContext(ctx)
-
-	h.e2eeService.LockE2EE(ctx, userID)
-
-	WriteJSONResponse(w, http.StatusOK, map[string]interface{}{
-		"message": "E2EE session locked successfully",
-	})
+	WriteJSONResponse(w, http.StatusOK, bundle)
 }
 
 func (h *SecureMessagesHandler) GetE2EEStatus(w http.ResponseWriter, r *http.Request) {
@@ -145,19 +120,14 @@ func (h *SecureMessagesHandler) InitiateKeyExchange(w http.ResponseWriter, r *ht
 	clientIP := GetClientIP(r)
 	userAgent := r.UserAgent()
 
-	keyExchange, err := h.e2eeService.InitiateKeyExchange(ctx, userID, req.RecipientID, clientIP, userAgent)
+	keyExchange, err := h.e2eeService.InitiateKeyExchange(ctx, userID, req.RecipientID, req.SenderPublicKey, clientIP, userAgent)
 	if err != nil {
-		switch err.Error() {
-		case "sender E2EE session not unlocked":
-			WriteErrorResponse(w, http.StatusUnauthorized, "session_locked", "E2EE session not unlocked")
-			return
-		case "conversation already has E2EE enabled":
+		if errors.Is(err, domain.ErrConflict) {
 			WriteErrorResponse(w, http.StatusConflict, "already_encrypted", "Conversation already has E2EE enabled")
 			return
-		default:
-			WriteErrorResponse(w, http.StatusInternalServerError, "key_exchange_failed", "Failed to initiate key exchange")
-			return
 		}
+		WriteErrorResponse(w, http.StatusInternalServerError, "key_exchange_failed", "Failed to initiate key exchange")
+		return
 	}
 
 	response := &domain.KeyExchangeResponse{
@@ -186,33 +156,27 @@ func (h *SecureMessagesHandler) AcceptKeyExchange(w http.ResponseWriter, r *http
 	clientIP := GetClientIP(r)
 	userAgent := r.UserAgent()
 
-	err := h.e2eeService.AcceptKeyExchange(ctx, req.KeyExchangeID, userID, clientIP, userAgent)
+	err := h.e2eeService.AcceptKeyExchange(ctx, req.KeyExchangeID, userID, req.PublicKey, clientIP, userAgent)
 	if err != nil {
-		switch err.Error() {
-		case "user E2EE session not unlocked":
-			WriteErrorResponse(w, http.StatusUnauthorized, "session_locked", "E2EE session not unlocked")
-			return
-		case "key exchange not found or expired":
+		if errors.Is(err, domain.ErrNotFound) {
 			WriteErrorResponse(w, http.StatusNotFound, "key_exchange_not_found", "Key exchange not found or expired")
 			return
-		case "unauthorized to accept this key exchange":
+		}
+		if errors.Is(err, domain.ErrForbidden) {
 			WriteErrorResponse(w, http.StatusForbidden, "unauthorized", "Unauthorized to accept this key exchange")
 			return
-		case "invalid key exchange type for acceptance":
-			WriteErrorResponse(w, http.StatusBadRequest, "invalid_exchange_type", "Invalid key exchange type for acceptance")
-			return
-		case "invalid key exchange signature":
-			WriteErrorResponse(w, http.StatusBadRequest, "invalid_signature", "Invalid key exchange signature")
-			return
-		default:
-			WriteErrorResponse(w, http.StatusInternalServerError, "accept_failed", "Failed to accept key exchange")
+		}
+		if errors.Is(err, domain.ErrKeyExchangeExpired) {
+			WriteErrorResponse(w, http.StatusGone, "key_exchange_expired", "Key exchange has expired")
 			return
 		}
+		WriteErrorResponse(w, http.StatusInternalServerError, "accept_failed", "Failed to accept key exchange")
+		return
 	}
 
 	WriteJSONResponse(w, http.StatusOK, map[string]interface{}{
 		"message": "Key exchange accepted successfully",
-		"status":  "completed",
+		"status":  "active",
 	})
 }
 
@@ -232,11 +196,11 @@ func (h *SecureMessagesHandler) GetPendingKeyExchanges(w http.ResponseWriter, r 
 	})
 }
 
-func (h *SecureMessagesHandler) SendSecureMessage(w http.ResponseWriter, r *http.Request) {
+func (h *SecureMessagesHandler) StoreEncryptedMessage(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	userID := GetUserIDFromContext(ctx)
 
-	var req domain.SendSecureMessageRequest
+	var req domain.StoreEncryptedMessageRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		WriteErrorResponse(w, http.StatusBadRequest, "invalid_request", "Invalid request body")
 		return
@@ -255,29 +219,13 @@ func (h *SecureMessagesHandler) SendSecureMessage(w http.ResponseWriter, r *http
 	clientIP := GetClientIP(r)
 	userAgent := r.UserAgent()
 
-	// Note: This is a simplified flow. In a full implementation, you might want
-
-	message, err := h.e2eeService.EncryptMessage(ctx, userID, req.RecipientID, req.EncryptedContent, clientIP, userAgent)
+	message, err := h.e2eeService.StoreEncryptedMessage(ctx, userID, &req, clientIP, userAgent)
 	if err != nil {
-		switch err.Error() {
-		case "sender E2EE session not unlocked":
-			WriteErrorResponse(w, http.StatusUnauthorized, "session_locked", "E2EE session not unlocked")
-			return
-		case "conversation not ready for E2EE":
-			WriteErrorResponse(w, http.StatusPreconditionFailed, "not_ready", "Conversation not ready for E2EE")
-			return
-		case "no shared secret available":
-			WriteErrorResponse(w, http.StatusPreconditionFailed, "no_shared_secret", "No shared secret available")
-			return
-		default:
-			WriteErrorResponse(w, http.StatusInternalServerError, "encryption_failed", "Failed to encrypt message")
+		if errors.Is(err, domain.ErrKeyExchangeNotComplete) {
+			WriteErrorResponse(w, http.StatusPreconditionFailed, "key_exchange_required", "Key exchange not complete for this conversation")
 			return
 		}
-	}
-
-	err = h.e2eeService.SaveSecureMessage(ctx, message)
-	if err != nil {
-		WriteErrorResponse(w, http.StatusInternalServerError, "save_failed", "Failed to save secure message")
+		WriteErrorResponse(w, http.StatusInternalServerError, "store_failed", "Failed to store encrypted message")
 		return
 	}
 
@@ -288,61 +236,48 @@ func (h *SecureMessagesHandler) SendSecureMessage(w http.ResponseWriter, r *http
 	WriteJSONResponse(w, http.StatusCreated, response)
 }
 
-func (h *SecureMessagesHandler) DecryptMessage(w http.ResponseWriter, r *http.Request) {
+func (h *SecureMessagesHandler) GetEncryptedMessages(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	userID := GetUserIDFromContext(ctx)
-	messageID := chi.URLParam(r, "messageId")
+	conversationID := chi.URLParam(r, "conversationId")
 
-	if messageID == "" {
-		WriteErrorResponse(w, http.StatusBadRequest, "missing_message_id", "Message ID is required")
+	if conversationID == "" {
+		WriteErrorResponse(w, http.StatusBadRequest, "missing_conversation_id", "Conversation ID is required")
 		return
 	}
 
-	message, err := h.e2eeService.GetMessage(ctx, messageID)
-	if err != nil {
-		WriteErrorResponse(w, http.StatusNotFound, "message_not_found", "Message not found")
-		return
+	limit := 50
+	offset := 0
+	if l := r.URL.Query().Get("limit"); l != "" {
+		if parsed, err := strconv.Atoi(l); err == nil && parsed > 0 {
+			limit = parsed
+		}
 	}
-
-	if message.SenderID != userID && message.RecipientID != userID {
-		WriteErrorResponse(w, http.StatusForbidden, "unauthorized", "Unauthorized to decrypt this message")
-		return
-	}
-
-	if !message.IsEncrypted {
-		WriteErrorResponse(w, http.StatusBadRequest, "not_encrypted", "Message is not encrypted")
-		return
-	}
-
-	clientIP := GetClientIP(r)
-	userAgent := r.UserAgent()
-
-	plaintext, err := h.e2eeService.DecryptMessage(ctx, message, userID, clientIP, userAgent)
-	if err != nil {
-		switch err.Error() {
-		case "user E2EE session not unlocked":
-			WriteErrorResponse(w, http.StatusUnauthorized, "session_locked", "E2EE session not unlocked")
-			return
-		case "unauthorized to decrypt message":
-			WriteErrorResponse(w, http.StatusForbidden, "unauthorized", "Unauthorized to decrypt message")
-			return
-		case "message is not encrypted":
-			WriteErrorResponse(w, http.StatusBadRequest, "not_encrypted", "Message is not encrypted")
-			return
-		case "invalid message signature":
-			WriteErrorResponse(w, http.StatusBadRequest, "invalid_signature", "Invalid message signature")
-			return
-		default:
-			WriteErrorResponse(w, http.StatusInternalServerError, "decryption_failed", "Failed to decrypt message")
-			return
+	if o := r.URL.Query().Get("offset"); o != "" {
+		if parsed, err := strconv.Atoi(o); err == nil && parsed >= 0 {
+			offset = parsed
 		}
 	}
 
+	messages, err := h.e2eeService.GetEncryptedMessages(ctx, conversationID, userID, limit, offset)
+	if err != nil {
+		if errors.Is(err, domain.ErrForbidden) {
+			WriteErrorResponse(w, http.StatusForbidden, "unauthorized", "You are not a participant in this conversation")
+			return
+		}
+		if errors.Is(err, domain.ErrNotFound) {
+			WriteErrorResponse(w, http.StatusNotFound, "conversation_not_found", "Conversation not found")
+			return
+		}
+		WriteErrorResponse(w, http.StatusInternalServerError, "fetch_failed", "Failed to get encrypted messages")
+		return
+	}
+
 	WriteJSONResponse(w, http.StatusOK, map[string]interface{}{
-		"message_id": messageID,
-		"content":    plaintext,
-		"sender_id":  message.SenderID,
-		"created_at": message.CreatedAt,
+		"messages": messages,
+		"total":    len(messages),
+		"limit":    limit,
+		"offset":   offset,
 	})
 }
 
@@ -355,22 +290,42 @@ func GetUserIDFromContext(ctx context.Context) string {
 }
 
 func GetClientIP(r *http.Request) string {
-	if xForwardedFor := r.Header.Get("X-Forwarded-For"); xForwardedFor != "" {
-		if commaIndex := strings.Index(xForwardedFor, ","); commaIndex != -1 {
-			return strings.TrimSpace(xForwardedFor[:commaIndex])
+	host := r.RemoteAddr
+	if h, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+		host = h
+	}
+
+	if isPrivateIP(host) {
+		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+			if first, _, ok := strings.Cut(xff, ","); ok {
+				return strings.TrimSpace(first)
+			}
+			return strings.TrimSpace(xff)
 		}
-		return strings.TrimSpace(xForwardedFor)
+		if realIP := r.Header.Get("X-Real-IP"); realIP != "" {
+			return strings.TrimSpace(realIP)
+		}
 	}
 
-	if xRealIP := r.Header.Get("X-Real-IP"); xRealIP != "" {
-		return strings.TrimSpace(xRealIP)
-	}
+	return host
+}
 
-	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
-		return host
+func isPrivateIP(ip string) bool {
+	parsed := net.ParseIP(ip)
+	if parsed == nil {
+		return false
 	}
-
-	return r.RemoteAddr
+	privateRanges := []string{"127.0.0.0/8", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "::1/128"}
+	for _, cidr := range privateRanges {
+		_, network, err := net.ParseCIDR(cidr)
+		if err != nil {
+			continue
+		}
+		if network.Contains(parsed) {
+			return true
+		}
+	}
+	return false
 }
 
 func WriteJSONResponse(w http.ResponseWriter, statusCode int, data interface{}) {

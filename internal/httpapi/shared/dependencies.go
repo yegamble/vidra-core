@@ -53,6 +53,7 @@ type HandlerDependencies struct {
 	EmailService             email.EmailService
 	EmailVerificationService *usecase.EmailVerificationService
 	MessageService           *usecase.MessageService
+	E2EEService              *usecase.E2EEService
 	ViewsService             *ucviews.Service
 	NotificationService      ucn.Service
 	ChannelService           *ucchannel.Service

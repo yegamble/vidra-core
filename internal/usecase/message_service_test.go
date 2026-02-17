@@ -13,7 +13,6 @@ import (
 	testifymock "github.com/stretchr/testify/mock"
 )
 
-// MockMessageRepository is a mock implementation of MessageRepository
 type MockMessageRepository struct {
 	testifymock.Mock
 }
@@ -53,7 +52,6 @@ func (m *MockMessageRepository) GetUnreadCount(ctx context.Context, userID strin
 	return args.Int(0), args.Error(1)
 }
 
-// MockUserRepository is a mock implementation of UserRepository for testing
 type MockUserRepository struct {
 	testifymock.Mock
 }
@@ -158,7 +156,9 @@ func TestMessageService_SendMessage(t *testing.T) {
 		assert.NotNil(t, message)
 		assert.Equal(t, senderID, message.SenderID)
 		assert.Equal(t, recipientID, message.RecipientID)
-		assert.Equal(t, req.Content, message.Content)
+		if assert.NotNil(t, message.Content) {
+			assert.Equal(t, req.Content, *message.Content)
+		}
 		assert.Equal(t, domain.MessageTypeText, message.MessageType)
 		assert.False(t, message.IsRead)
 
@@ -181,7 +181,7 @@ func TestMessageService_SendMessage(t *testing.T) {
 	t.Run("message too long", func(t *testing.T) {
 		req := &domain.SendMessageRequest{
 			RecipientID: recipientID,
-			Content:     string(make([]byte, 2001)), // Exceeds 2000 character limit
+			Content:     string(make([]byte, 2001)),
 		}
 
 		mockUserRepo.On("GetByID", ctx, senderID).Return(sender, nil)
@@ -196,7 +196,6 @@ func TestMessageService_SendMessage(t *testing.T) {
 	})
 
 	t.Run("sender not found", func(t *testing.T) {
-		// Reset mocks for this test
 		mockUserRepo = new(MockUserRepository)
 		mockMessageRepo = new(MockMessageRepository)
 		service = NewMessageService(mockMessageRepo, mockUserRepo)
@@ -217,7 +216,6 @@ func TestMessageService_SendMessage(t *testing.T) {
 	})
 
 	t.Run("recipient not found", func(t *testing.T) {
-		// Reset mocks for this test
 		mockUserRepo = new(MockUserRepository)
 		mockMessageRepo = new(MockMessageRepository)
 		service = NewMessageService(mockMessageRepo, mockUserRepo)
@@ -266,7 +264,7 @@ func TestMessageService_GetMessages(t *testing.T) {
 				ID:          uuid.New().String(),
 				SenderID:    userID,
 				RecipientID: otherUserID,
-				Content:     "Hello!",
+				Content:     strPtrE2EE("Hello!"),
 				CreatedAt:   time.Now(),
 			},
 		}
@@ -287,7 +285,6 @@ func TestMessageService_GetMessages(t *testing.T) {
 	})
 
 	t.Run("conversation partner not found", func(t *testing.T) {
-		// Reset mocks for this test
 		mockUserRepo = new(MockUserRepository)
 		mockMessageRepo = new(MockMessageRepository)
 		service = NewMessageService(mockMessageRepo, mockUserRepo)

@@ -114,6 +114,7 @@ type Dependencies struct {
 	StreamManager            *livestream.StreamManager
 	IPFSStreamingService     *ucipfs.Service
 	IPFSClient               *ipfs.Client
+	E2EEService              *usecase.E2EEService
 }
 
 func New(cfg *config.Config) (*Application, error) {
@@ -289,6 +290,11 @@ func (app *Application) initializeDependencies() *Dependencies {
 
 	deps.UploadService = ucup.NewService(deps.UploadRepo, deps.EncodingRepo, deps.VideoRepo, app.Config.StorageDir, app.Config)
 	deps.MessageService = usecase.NewMessageService(deps.MessageRepo, deps.UserRepo)
+
+	cryptoRepo := repository.NewCryptoRepository(app.DB)
+	e2eeMessageRepo := repository.NewE2EEMessageRepository(app.DB)
+	e2eeConversationRepo := repository.NewE2EEConversationRepository(app.DB)
+	deps.E2EEService = usecase.NewE2EEService(cryptoRepo, e2eeMessageRepo, e2eeConversationRepo, app.DB)
 	deps.ViewsService = ucviews.NewService(deps.ViewsRepo, deps.VideoRepo)
 	deps.NotificationService = ucn.NewService(deps.NotificationRepo, deps.SubRepo, deps.UserRepo)
 	deps.ChannelService = ucchannel.NewService(deps.ChannelRepo, deps.UserRepo)
@@ -522,6 +528,7 @@ func (app *Application) registerRoutes(deps *Dependencies) {
 		ViewerSessionRepo:    deps.ViewerSessionRepo,
 		UploadService:        deps.UploadService,
 		MessageService:       deps.MessageService,
+		E2EEService:          deps.E2EEService,
 		ViewsService:         deps.ViewsService,
 		NotificationService:  deps.NotificationService,
 		ChannelService:       deps.ChannelService,

@@ -2,6 +2,7 @@ package usecase
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -11,72 +12,15 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
-	"athena/internal/crypto"
 	"athena/internal/domain"
 )
 
-// Mock repositories for testing
 type MockCryptoRepository struct {
 	mock.Mock
 }
 
-func (m *MockCryptoRepository) CreateUserMasterKey(ctx context.Context, tx *sqlx.Tx, masterKey *domain.UserMasterKey) error {
-	args := m.Called(ctx, tx, masterKey)
-	return args.Error(0)
-}
-
-func (m *MockCryptoRepository) GetUserMasterKey(ctx context.Context, userID string) (*domain.UserMasterKey, error) {
-	args := m.Called(ctx, userID)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(*domain.UserMasterKey), args.Error(1)
-}
-
-func (m *MockCryptoRepository) UpdateUserMasterKey(ctx context.Context, tx *sqlx.Tx, masterKey *domain.UserMasterKey) error {
-	args := m.Called(ctx, tx, masterKey)
-	return args.Error(0)
-}
-
-func (m *MockCryptoRepository) DeleteUserMasterKey(ctx context.Context, tx *sqlx.Tx, userID string) error {
-	args := m.Called(ctx, tx, userID)
-	return args.Error(0)
-}
-
-func (m *MockCryptoRepository) CreateConversationKey(ctx context.Context, tx *sqlx.Tx, key *domain.ConversationKey) error {
-	args := m.Called(ctx, tx, key)
-	return args.Error(0)
-}
-
-func (m *MockCryptoRepository) GetActiveConversationKey(ctx context.Context, conversationID, userID string) (*domain.ConversationKey, error) {
-	args := m.Called(ctx, conversationID, userID)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(*domain.ConversationKey), args.Error(1)
-}
-
-func (m *MockCryptoRepository) ListConversationKeys(ctx context.Context, conversationID string) ([]*domain.ConversationKey, error) {
-	args := m.Called(ctx, conversationID)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).([]*domain.ConversationKey), args.Error(1)
-}
-
-func (m *MockCryptoRepository) UpdateConversationKey(ctx context.Context, tx *sqlx.Tx, key *domain.ConversationKey) error {
-	args := m.Called(ctx, tx, key)
-	return args.Error(0)
-}
-
-func (m *MockCryptoRepository) DeactivateConversationKeys(ctx context.Context, tx *sqlx.Tx, conversationID string, excludeKeyVersion int) error {
-	args := m.Called(ctx, tx, conversationID, excludeKeyVersion)
-	return args.Error(0)
-}
-
 func (m *MockCryptoRepository) CreateKeyExchangeMessage(ctx context.Context, tx *sqlx.Tx, msg *domain.KeyExchangeMessage) error {
-	args := m.Called(ctx, tx, msg)
-	return args.Error(0)
+	return m.Called(ctx, tx, msg).Error(0)
 }
 
 func (m *MockCryptoRepository) GetKeyExchangeMessage(ctx context.Context, messageID string) (*domain.KeyExchangeMessage, error) {
@@ -96,13 +40,11 @@ func (m *MockCryptoRepository) GetPendingKeyExchanges(ctx context.Context, userI
 }
 
 func (m *MockCryptoRepository) DeleteKeyExchangeMessage(ctx context.Context, tx *sqlx.Tx, messageID string) error {
-	args := m.Called(ctx, tx, messageID)
-	return args.Error(0)
+	return m.Called(ctx, tx, messageID).Error(0)
 }
 
 func (m *MockCryptoRepository) CreateUserSigningKey(ctx context.Context, tx *sqlx.Tx, key *domain.UserSigningKey) error {
-	args := m.Called(ctx, tx, key)
-	return args.Error(0)
+	return m.Called(ctx, tx, key).Error(0)
 }
 
 func (m *MockCryptoRepository) GetUserSigningKey(ctx context.Context, userID string) (*domain.UserSigningKey, error) {
@@ -113,681 +55,450 @@ func (m *MockCryptoRepository) GetUserSigningKey(ctx context.Context, userID str
 	return args.Get(0).(*domain.UserSigningKey), args.Error(1)
 }
 
-func (m *MockCryptoRepository) GetUserPublicSigningKey(ctx context.Context, userID string) (string, error) {
-	args := m.Called(ctx, userID)
-	return args.String(0), args.Error(1)
-}
-
 func (m *MockCryptoRepository) UpdateUserSigningKey(ctx context.Context, tx *sqlx.Tx, key *domain.UserSigningKey) error {
-	args := m.Called(ctx, tx, key)
-	return args.Error(0)
+	return m.Called(ctx, tx, key).Error(0)
 }
 
 func (m *MockCryptoRepository) CreateAuditLog(ctx context.Context, auditLog *domain.CryptoAuditLog) error {
-	args := m.Called(ctx, auditLog)
-	return args.Error(0)
+	return m.Called(ctx, auditLog).Error(0)
 }
 
 func (m *MockCryptoRepository) WithTransaction(ctx context.Context, fn func(*sqlx.Tx) error) error {
-	args := m.Called(ctx, fn)
-	// Always execute the function with nil tx for testing
-	if err := fn(nil); err != nil {
-		return err
-	}
-	return args.Error(0)
+	return fn(nil)
 }
 
 type MockE2EEMessageRepository struct {
 	mock.Mock
 }
 
-func (m *MockE2EEMessageRepository) Create(ctx context.Context, tx *sqlx.Tx, message *domain.Message) error {
-	args := m.Called(ctx, tx, message)
-	return args.Error(0)
+func (m *MockE2EEMessageRepository) CreateEncryptedMessage(ctx context.Context, message *domain.Message) error {
+	return m.Called(ctx, message).Error(0)
 }
 
-func (m *MockE2EEMessageRepository) GetByID(ctx context.Context, messageID string) (*domain.Message, error) {
-	args := m.Called(ctx, messageID)
+func (m *MockE2EEMessageRepository) GetEncryptedMessages(ctx context.Context, p1, p2 string, limit, offset int) ([]*domain.Message, error) {
+	args := m.Called(ctx, p1, p2, limit, offset)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*domain.Message), args.Error(1)
+}
+
+func (m *MockE2EEMessageRepository) GetMessage(ctx context.Context, messageID string, userID string) (*domain.Message, error) {
+	args := m.Called(ctx, messageID, userID)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
 	return args.Get(0).(*domain.Message), args.Error(1)
 }
 
-func (m *MockE2EEMessageRepository) Update(ctx context.Context, tx *sqlx.Tx, message *domain.Message) error {
-	args := m.Called(ctx, tx, message)
-	return args.Error(0)
-}
-
 type MockConversationRepository struct {
 	mock.Mock
 }
 
-func (m *MockConversationRepository) GetByParticipants(ctx context.Context, participantOneID, participantTwoID string) (*domain.Conversation, error) {
-	args := m.Called(ctx, participantOneID, participantTwoID)
+func (m *MockConversationRepository) GetOrCreateConversation(ctx context.Context, tx *sqlx.Tx, p1, p2 string) (*domain.Conversation, error) {
+	args := m.Called(ctx, tx, p1, p2)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
 	return args.Get(0).(*domain.Conversation), args.Error(1)
 }
 
-func (m *MockConversationRepository) Create(ctx context.Context, tx *sqlx.Tx, conversation *domain.Conversation) error {
-	args := m.Called(ctx, tx, conversation)
-	return args.Error(0)
+func (m *MockConversationRepository) GetConversation(ctx context.Context, conversationID string) (*domain.Conversation, error) {
+	args := m.Called(ctx, conversationID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*domain.Conversation), args.Error(1)
 }
 
-func (m *MockConversationRepository) Update(ctx context.Context, tx *sqlx.Tx, conversation *domain.Conversation) error {
-	args := m.Called(ctx, tx, conversation)
-	return args.Error(0)
+func (m *MockConversationRepository) UpdateEncryptionStatus(ctx context.Context, tx *sqlx.Tx, conversationID string, status string) error {
+	return m.Called(ctx, tx, conversationID, status).Error(0)
 }
 
-// Test helper functions
-func setupE2EEService() (*E2EEService, *MockCryptoRepository, *MockE2EEMessageRepository, *MockConversationRepository) {
-	mockCryptoRepo := new(MockCryptoRepository)
-	mockMessageRepo := new(MockE2EEMessageRepository)
-	mockConversationRepo := new(MockConversationRepository)
+func newTestE2EEService() (*E2EEService, *MockCryptoRepository, *MockE2EEMessageRepository, *MockConversationRepository) {
+	cryptoRepo := &MockCryptoRepository{}
+	msgRepo := &MockE2EEMessageRepository{}
+	convRepo := &MockConversationRepository{}
+	svc := NewE2EEService(cryptoRepo, msgRepo, convRepo, nil)
+	return svc, cryptoRepo, msgRepo, convRepo
+}
 
-	service := &E2EEService{
-		cryptoRepo:       mockCryptoRepo,
-		messageRepo:      mockMessageRepo,
-		conversationRepo: mockConversationRepo,
-		cryptoService:    crypto.NewCryptoService(),
-		db:               nil, // Not needed for unit tests
+func strPtrE2EE(s string) *string { return &s }
+
+func TestE2EEService_RegisterIdentityKey_CreatesNew(t *testing.T) {
+	svc, cryptoRepo, _, _ := newTestE2EEService()
+	ctx := context.Background()
+	userID := uuid.New().String()
+
+	cryptoRepo.On("GetUserSigningKey", ctx, userID).Return(nil, domain.ErrNotFound)
+	cryptoRepo.On("CreateUserSigningKey", ctx, mock.Anything, mock.MatchedBy(func(k *domain.UserSigningKey) bool {
+		return k.UserID == userID && k.KeyVersion == 1
+	})).Return(nil)
+	cryptoRepo.On("CreateAuditLog", ctx, mock.AnythingOfType("*domain.CryptoAuditLog")).Return(nil)
+
+	err := svc.RegisterIdentityKey(ctx, userID, "pub-identity-key", "pub-signing-key", "127.0.0.1", "test-agent")
+	require.NoError(t, err)
+	cryptoRepo.AssertExpectations(t)
+}
+
+func TestE2EEService_RegisterIdentityKey_UpdatesExisting(t *testing.T) {
+	svc, cryptoRepo, _, _ := newTestE2EEService()
+	ctx := context.Background()
+	userID := uuid.New().String()
+	identityKey := "old-identity-key"
+
+	existing := &domain.UserSigningKey{
+		UserID:            userID,
+		PublicKey:         "old-signing-key",
+		PublicIdentityKey: &identityKey,
+		KeyVersion:        1,
+	}
+	cryptoRepo.On("GetUserSigningKey", ctx, userID).Return(existing, nil)
+	cryptoRepo.On("UpdateUserSigningKey", ctx, mock.Anything, mock.MatchedBy(func(k *domain.UserSigningKey) bool {
+		return k.KeyVersion == 2
+	})).Return(nil)
+	cryptoRepo.On("CreateAuditLog", ctx, mock.AnythingOfType("*domain.CryptoAuditLog")).Return(nil)
+
+	err := svc.RegisterIdentityKey(ctx, userID, "new-identity-key", "new-signing-key", "127.0.0.1", "agent")
+	require.NoError(t, err)
+	cryptoRepo.AssertExpectations(t)
+}
+
+func TestE2EEService_RegisterIdentityKey_RepoError(t *testing.T) {
+	svc, cryptoRepo, _, _ := newTestE2EEService()
+	ctx := context.Background()
+	userID := uuid.New().String()
+
+	cryptoRepo.On("GetUserSigningKey", ctx, userID).Return(nil, errors.New("connection error"))
+	cryptoRepo.On("CreateUserSigningKey", ctx, mock.Anything, mock.Anything).Return(errors.New("db error"))
+	cryptoRepo.On("CreateAuditLog", ctx, mock.AnythingOfType("*domain.CryptoAuditLog")).Return(nil)
+
+	err := svc.RegisterIdentityKey(ctx, userID, "pub-identity-key", "pub-signing-key", "127.0.0.1", "agent")
+	assert.Error(t, err)
+}
+
+func TestE2EEService_GetPublicKeys_Success(t *testing.T) {
+	svc, cryptoRepo, _, _ := newTestE2EEService()
+	ctx := context.Background()
+	userID := uuid.New().String()
+	identityKey := "identity-pub"
+
+	sigKey := &domain.UserSigningKey{
+		UserID:            userID,
+		PublicKey:         "signing-pub",
+		PublicIdentityKey: &identityKey,
+		KeyVersion:        2,
+		CreatedAt:         time.Now(),
+	}
+	cryptoRepo.On("GetUserSigningKey", ctx, userID).Return(sigKey, nil)
+
+	bundle, err := svc.GetPublicKeys(ctx, userID)
+	require.NoError(t, err)
+	assert.Equal(t, "identity-pub", bundle.PublicIdentityKey)
+	assert.Equal(t, "signing-pub", bundle.PublicSigningKey)
+	assert.Equal(t, 2, bundle.KeyVersion)
+}
+
+func TestE2EEService_GetPublicKeys_NotFound(t *testing.T) {
+	svc, cryptoRepo, _, _ := newTestE2EEService()
+	ctx := context.Background()
+	userID := uuid.New().String()
+
+	cryptoRepo.On("GetUserSigningKey", ctx, userID).Return(nil, domain.ErrNotFound)
+
+	_, err := svc.GetPublicKeys(ctx, userID)
+	assert.Error(t, err)
+}
+
+func TestE2EEService_GetE2EEStatus_KeysRegistered(t *testing.T) {
+	svc, cryptoRepo, _, _ := newTestE2EEService()
+	ctx := context.Background()
+	userID := uuid.New().String()
+	identityKey := "identity-pub"
+
+	sigKey := &domain.UserSigningKey{
+		UserID:            userID,
+		PublicIdentityKey: &identityKey,
+		KeyVersion:        1,
+		CreatedAt:         time.Now(),
+	}
+	cryptoRepo.On("GetUserSigningKey", ctx, userID).Return(sigKey, nil)
+
+	status, err := svc.GetE2EEStatus(ctx, userID)
+	require.NoError(t, err)
+	assert.True(t, status.HasIdentityKey)
+	assert.Equal(t, 1, status.KeyVersion)
+}
+
+func TestE2EEService_GetE2EEStatus_NoKeys(t *testing.T) {
+	svc, cryptoRepo, _, _ := newTestE2EEService()
+	ctx := context.Background()
+	userID := uuid.New().String()
+
+	cryptoRepo.On("GetUserSigningKey", ctx, userID).Return(nil, domain.ErrNotFound)
+
+	status, err := svc.GetE2EEStatus(ctx, userID)
+	require.NoError(t, err)
+	assert.False(t, status.HasIdentityKey)
+}
+
+func TestE2EEService_InitiateKeyExchange_Success(t *testing.T) {
+	svc, cryptoRepo, _, convRepo := newTestE2EEService()
+	ctx := context.Background()
+	senderID := uuid.New().String()
+	recipientID := uuid.New().String()
+	convID := uuid.New().String()
+
+	conv := &domain.Conversation{ID: convID}
+	convRepo.On("GetOrCreateConversation", ctx, mock.Anything, senderID, recipientID).Return(conv, nil)
+	convRepo.On("UpdateEncryptionStatus", ctx, mock.Anything, convID, domain.EncryptionStatusPending).Return(nil)
+	cryptoRepo.On("CreateKeyExchangeMessage", ctx, mock.Anything, mock.MatchedBy(func(km *domain.KeyExchangeMessage) bool {
+		return km.SenderID == senderID &&
+			km.RecipientID == recipientID &&
+			km.ConversationID == convID &&
+			km.ExchangeType == domain.KeyExchangeTypeOffer
+	})).Return(nil)
+	cryptoRepo.On("CreateAuditLog", ctx, mock.AnythingOfType("*domain.CryptoAuditLog")).Return(nil)
+
+	km, err := svc.InitiateKeyExchange(ctx, senderID, recipientID, "sender-pub-key", "127.0.0.1", "agent")
+	require.NoError(t, err)
+	assert.Equal(t, senderID, km.SenderID)
+	assert.Equal(t, recipientID, km.RecipientID)
+	assert.Equal(t, "sender-pub-key", km.PublicKey)
+}
+
+func TestE2EEService_InitiateKeyExchange_ConversationError(t *testing.T) {
+	svc, cryptoRepo, _, convRepo := newTestE2EEService()
+	ctx := context.Background()
+
+	convRepo.On("GetOrCreateConversation", ctx, mock.Anything, mock.Anything, mock.Anything).
+		Return(nil, errors.New("db error"))
+	cryptoRepo.On("CreateAuditLog", ctx, mock.AnythingOfType("*domain.CryptoAuditLog")).Return(nil)
+
+	_, err := svc.InitiateKeyExchange(ctx, uuid.New().String(), uuid.New().String(), "pub-key", "127.0.0.1", "agent")
+	assert.Error(t, err)
+}
+
+func TestE2EEService_AcceptKeyExchange_Success(t *testing.T) {
+	svc, cryptoRepo, _, convRepo := newTestE2EEService()
+	ctx := context.Background()
+	recipientID := uuid.New().String()
+	exchangeID := uuid.New().String()
+	convID := uuid.New().String()
+
+	km := &domain.KeyExchangeMessage{
+		ID:             exchangeID,
+		RecipientID:    recipientID,
+		ConversationID: convID,
+		ExchangeType:   domain.KeyExchangeTypeOffer,
+		ExpiresAt:      time.Now().Add(time.Hour),
+	}
+	cryptoRepo.On("GetKeyExchangeMessage", ctx, exchangeID).Return(km, nil)
+	cryptoRepo.On("DeleteKeyExchangeMessage", ctx, mock.Anything, exchangeID).Return(nil)
+	cryptoRepo.On("CreateKeyExchangeMessage", ctx, mock.Anything, mock.Anything).Return(nil)
+	convRepo.On("UpdateEncryptionStatus", ctx, mock.Anything, convID, domain.EncryptionStatusActive).Return(nil)
+	cryptoRepo.On("CreateAuditLog", ctx, mock.AnythingOfType("*domain.CryptoAuditLog")).Return(nil)
+
+	err := svc.AcceptKeyExchange(ctx, exchangeID, recipientID, "recipient-pub-key", "127.0.0.1", "agent")
+	require.NoError(t, err)
+}
+
+func TestE2EEService_AcceptKeyExchange_NotFound(t *testing.T) {
+	svc, cryptoRepo, _, _ := newTestE2EEService()
+	ctx := context.Background()
+
+	cryptoRepo.On("GetKeyExchangeMessage", ctx, "bad-id").Return(nil, domain.ErrNotFound)
+
+	err := svc.AcceptKeyExchange(ctx, "bad-id", uuid.New().String(), "key", "127.0.0.1", "agent")
+	assert.Error(t, err)
+}
+
+func TestE2EEService_AcceptKeyExchange_WrongRecipient_Forbidden(t *testing.T) {
+	svc, cryptoRepo, _, _ := newTestE2EEService()
+	ctx := context.Background()
+	exchangeID := uuid.New().String()
+
+	km := &domain.KeyExchangeMessage{
+		ID:          exchangeID,
+		RecipientID: uuid.New().String(),
+		ExpiresAt:   time.Now().Add(time.Hour),
+	}
+	cryptoRepo.On("GetKeyExchangeMessage", ctx, exchangeID).Return(km, nil)
+
+	err := svc.AcceptKeyExchange(ctx, exchangeID, "not-the-recipient", "key", "127.0.0.1", "agent")
+	assert.ErrorIs(t, err, domain.ErrForbidden)
+}
+
+func TestE2EEService_AcceptKeyExchange_Expired(t *testing.T) {
+	svc, cryptoRepo, _, _ := newTestE2EEService()
+	ctx := context.Background()
+	recipientID := uuid.New().String()
+	exchangeID := uuid.New().String()
+
+	km := &domain.KeyExchangeMessage{
+		ID:          exchangeID,
+		RecipientID: recipientID,
+		ExpiresAt:   time.Now().Add(-time.Hour),
+	}
+	cryptoRepo.On("GetKeyExchangeMessage", ctx, exchangeID).Return(km, nil)
+
+	err := svc.AcceptKeyExchange(ctx, exchangeID, recipientID, "key", "127.0.0.1", "agent")
+	assert.Error(t, err)
+}
+
+func TestE2EEService_GetPendingKeyExchanges_ReturnsList(t *testing.T) {
+	svc, cryptoRepo, _, _ := newTestE2EEService()
+	ctx := context.Background()
+	userID := uuid.New().String()
+
+	exchanges := []*domain.KeyExchangeMessage{
+		{ID: uuid.New().String(), RecipientID: userID},
+		{ID: uuid.New().String(), RecipientID: userID},
+	}
+	cryptoRepo.On("GetPendingKeyExchanges", ctx, userID).Return(exchanges, nil)
+
+	result, err := svc.GetPendingKeyExchanges(ctx, userID)
+	require.NoError(t, err)
+	assert.Len(t, result, 2)
+}
+
+func TestE2EEService_GetPendingKeyExchanges_RepoError(t *testing.T) {
+	svc, cryptoRepo, _, _ := newTestE2EEService()
+	ctx := context.Background()
+	userID := uuid.New().String()
+
+	cryptoRepo.On("GetPendingKeyExchanges", ctx, userID).Return(nil, errors.New("db error"))
+
+	_, err := svc.GetPendingKeyExchanges(ctx, userID)
+	assert.Error(t, err)
+}
+
+func TestE2EEService_StoreEncryptedMessage_Success(t *testing.T) {
+	svc, cryptoRepo, msgRepo, convRepo := newTestE2EEService()
+	ctx := context.Background()
+	senderID := uuid.New().String()
+	recipientID := uuid.New().String()
+	convID := uuid.New().String()
+
+	conv := &domain.Conversation{
+		ID:               convID,
+		EncryptionStatus: domain.EncryptionStatusActive,
+	}
+	convRepo.On("GetOrCreateConversation", ctx, (*sqlx.Tx)(nil), senderID, recipientID).Return(conv, nil)
+	msgRepo.On("CreateEncryptedMessage", ctx, mock.AnythingOfType("*domain.Message")).Return(nil)
+	cryptoRepo.On("CreateAuditLog", ctx, mock.AnythingOfType("*domain.CryptoAuditLog")).Return(nil)
+
+	req := &domain.StoreEncryptedMessageRequest{
+		RecipientID:      recipientID,
+		EncryptedContent: "base64-ciphertext",
+		ContentNonce:     "nonce123",
+		Signature:        "sig456",
 	}
 
-	return service, mockCryptoRepo, mockMessageRepo, mockConversationRepo
+	msg, err := svc.StoreEncryptedMessage(ctx, senderID, req, "127.0.0.1", "agent")
+	require.NoError(t, err)
+	assert.Equal(t, senderID, msg.SenderID)
+	assert.Equal(t, recipientID, msg.RecipientID)
+	assert.True(t, msg.IsEncrypted)
+	assert.Equal(t, "base64-ciphertext", *msg.EncryptedContent)
 }
 
-func TestE2EEService_SetupE2EE(t *testing.T) {
+func TestE2EEService_StoreEncryptedMessage_ConversationNotEncrypted(t *testing.T) {
+	svc, _, _, convRepo := newTestE2EEService()
 	ctx := context.Background()
-	userID := "test-user-id"
-	password := "test-password-123"
-	clientIP := "127.0.0.1"
-	userAgent := "test-agent"
+	recipientID := uuid.New().String()
 
-	t.Run("successful setup", func(t *testing.T) {
-		service, mockCryptoRepo, _, _ := setupE2EEService()
+	conv := &domain.Conversation{
+		ID:               uuid.New().String(),
+		EncryptionStatus: domain.EncryptionStatusPending,
+	}
+	convRepo.On("GetOrCreateConversation", ctx, (*sqlx.Tx)(nil), mock.Anything, recipientID).Return(conv, nil)
 
-		// Mock no existing key
-		mockCryptoRepo.On("GetUserMasterKey", ctx, userID).Return(nil, nil)
-
-		// Mock successful transaction execution
-		mockCryptoRepo.On("WithTransaction", ctx, mock.Anything).Return(nil)
-
-		// Mock audit log creation
-		mockCryptoRepo.On("CreateAuditLog", mock.Anything, mock.AnythingOfType("*domain.CryptoAuditLog")).Return(nil).Maybe().Maybe()
-
-		// Mock key creation calls within transaction
-		mockCryptoRepo.On("CreateUserMasterKey", ctx, (*sqlx.Tx)(nil), mock.AnythingOfType("*domain.UserMasterKey")).Return(nil)
-		mockCryptoRepo.On("CreateUserSigningKey", ctx, (*sqlx.Tx)(nil), mock.AnythingOfType("*domain.UserSigningKey")).Return(nil)
-
-		err := service.SetupE2EE(ctx, userID, password, clientIP, userAgent)
-		assert.NoError(t, err)
-
-		mockCryptoRepo.AssertExpectations(t)
-	})
-
-	t.Run("user already has E2EE setup", func(t *testing.T) {
-		service, mockCryptoRepo, _, _ := setupE2EEService()
-
-		existingKey := &domain.UserMasterKey{
-			UserID:     userID,
-			KeyVersion: 1,
-		}
-
-		mockCryptoRepo.On("GetUserMasterKey", ctx, userID).Return(existingKey, nil)
-		mockCryptoRepo.On("CreateAuditLog", mock.Anything, mock.AnythingOfType("*domain.CryptoAuditLog")).Return(nil).Maybe()
-
-		err := service.SetupE2EE(ctx, userID, password, clientIP, userAgent)
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "user already has E2EE setup")
-
-		mockCryptoRepo.AssertExpectations(t)
-	})
-}
-
-func TestE2EEService_UnlockE2EE(t *testing.T) {
-	ctx := context.Background()
-	userID := "test-user-id"
-	password := "test-password-123"
-	clientIP := "127.0.0.1"
-	userAgent := "test-agent"
-
-	t.Run("successful unlock", func(t *testing.T) {
-		service, mockCryptoRepo, _, _ := setupE2EEService()
-
-		// Create test master key with known salt and encrypted key
-		cryptoService := crypto.NewCryptoService()
-		salt, _ := cryptoService.GenerateSalt()
-		passwordDerivedKey, _ := cryptoService.DeriveKeyFromPassword(password, salt)
-
-		masterKey := make([]byte, crypto.ChaCha20KeySize)
-		crypto.SecureRandom(masterKey)
-
-		encryptedMasterKey, _ := cryptoService.EncryptWithMasterKey(masterKey, passwordDerivedKey)
-
-		// Combine nonce + ciphertext for storage (same as in the actual service)
-		combinedData := make([]byte, len(encryptedMasterKey.Nonce)+len(encryptedMasterKey.Ciphertext))
-		copy(combinedData[:len(encryptedMasterKey.Nonce)], encryptedMasterKey.Nonce)
-		copy(combinedData[len(encryptedMasterKey.Nonce):], encryptedMasterKey.Ciphertext)
-
-		userMasterKey := &domain.UserMasterKey{
-			UserID:             userID,
-			EncryptedMasterKey: cryptoService.Base64Encode(combinedData),
-			Argon2Salt:         cryptoService.Base64Encode(salt),
-			Argon2Memory:       crypto.Argon2Memory,
-			Argon2Time:         crypto.Argon2Time,
-			Argon2Parallelism:  crypto.Argon2Parallelism,
-			KeyVersion:         1,
-		}
-
-		mockCryptoRepo.On("GetUserMasterKey", ctx, userID).Return(userMasterKey, nil)
-		mockCryptoRepo.On("CreateAuditLog", mock.Anything, mock.AnythingOfType("*domain.CryptoAuditLog")).Return(nil).Maybe()
-
-		err := service.UnlockE2EE(ctx, userID, password, clientIP, userAgent)
-		assert.NoError(t, err)
-		assert.True(t, service.IsUnlocked(userID))
-
-		mockCryptoRepo.AssertExpectations(t)
-	})
-
-	t.Run("user has no E2EE setup", func(t *testing.T) {
-		service, mockCryptoRepo, _, _ := setupE2EEService()
-
-		mockCryptoRepo.On("GetUserMasterKey", ctx, userID).Return(nil, nil)
-		mockCryptoRepo.On("CreateAuditLog", mock.Anything, mock.AnythingOfType("*domain.CryptoAuditLog")).Return(nil).Maybe()
-
-		err := service.UnlockE2EE(ctx, userID, password, clientIP, userAgent)
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "user has no E2EE setup")
-
-		mockCryptoRepo.AssertExpectations(t)
-	})
-
-	t.Run("invalid password", func(t *testing.T) {
-		service, mockCryptoRepo, _, _ := setupE2EEService()
-
-		// Create test master key with different password
-		cryptoService := crypto.NewCryptoService()
-		salt, _ := cryptoService.GenerateSalt()
-		correctPassword := "correct-password"
-		wrongPassword := "wrong-password"
-
-		passwordDerivedKey, _ := cryptoService.DeriveKeyFromPassword(correctPassword, salt)
-		masterKey := make([]byte, crypto.ChaCha20KeySize)
-		crypto.SecureRandom(masterKey)
-		encryptedMasterKey, _ := cryptoService.EncryptWithMasterKey(masterKey, passwordDerivedKey)
-
-		// Combine nonce + ciphertext for storage (same as in the actual service)
-		combinedData := make([]byte, len(encryptedMasterKey.Nonce)+len(encryptedMasterKey.Ciphertext))
-		copy(combinedData[:len(encryptedMasterKey.Nonce)], encryptedMasterKey.Nonce)
-		copy(combinedData[len(encryptedMasterKey.Nonce):], encryptedMasterKey.Ciphertext)
-
-		userMasterKey := &domain.UserMasterKey{
-			UserID:             userID,
-			EncryptedMasterKey: cryptoService.Base64Encode(combinedData),
-			Argon2Salt:         cryptoService.Base64Encode(salt),
-			KeyVersion:         1,
-		}
-
-		mockCryptoRepo.On("GetUserMasterKey", ctx, userID).Return(userMasterKey, nil)
-		mockCryptoRepo.On("CreateAuditLog", mock.Anything, mock.AnythingOfType("*domain.CryptoAuditLog")).Return(nil).Maybe()
-
-		err := service.UnlockE2EE(ctx, userID, wrongPassword, clientIP, userAgent)
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "invalid password")
-
-		mockCryptoRepo.AssertExpectations(t)
-	})
-}
-
-func TestE2EEService_LockE2EE(t *testing.T) {
-	ctx := context.Background()
-	userID := "test-user-id"
-
-	service, _, _, _ := setupE2EEService()
-
-	// Setup session
-	masterKey := make([]byte, crypto.ChaCha20KeySize)
-	crypto.SecureRandom(masterKey)
-
-	session := &UserE2EESession{
-		UserID:        userID,
-		MasterKey:     masterKey,
-		IsUnlocked:    true,
-		UnlockedAt:    time.Now(),
-		SessionExpiry: time.Now().Add(24 * time.Hour),
+	req := &domain.StoreEncryptedMessageRequest{
+		RecipientID:      recipientID,
+		EncryptedContent: "ciphertext",
+		ContentNonce:     "nonce",
+		Signature:        "sig",
 	}
 
-	userSessions[userID] = session
-
-	assert.True(t, service.IsUnlocked(userID))
-
-	service.LockE2EE(ctx, userID)
-
-	assert.False(t, service.IsUnlocked(userID))
+	_, err := svc.StoreEncryptedMessage(ctx, uuid.New().String(), req, "127.0.0.1", "agent")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "key exchange not complete")
 }
 
-func TestE2EEService_InitiateKeyExchange(t *testing.T) {
+func TestE2EEService_GetEncryptedMessages_Success(t *testing.T) {
+	svc, _, msgRepo, convRepo := newTestE2EEService()
 	ctx := context.Background()
-	senderID := "sender-user-id"
-	recipientID := "recipient-user-id"
-	clientIP := "127.0.0.1"
-	userAgent := "test-agent"
+	userID := uuid.New().String()
+	otherID := uuid.New().String()
+	convID := uuid.New().String()
 
-	t.Run("successful key exchange initiation", func(t *testing.T) {
-		service, mockCryptoRepo, _, mockConversationRepo := setupE2EEService()
-
-		// Setup unlocked session
-		masterKey := make([]byte, crypto.ChaCha20KeySize)
-		crypto.SecureRandom(masterKey)
-
-		session := &UserE2EESession{
-			UserID:        senderID,
-			MasterKey:     masterKey,
-			IsUnlocked:    true,
-			UnlockedAt:    time.Now(),
-			SessionExpiry: time.Now().Add(24 * time.Hour),
-		}
-		userSessions[senderID] = session
-
-		// Mock conversation
-		conversation := &domain.Conversation{
-			ID:                  uuid.New().String(),
-			ParticipantOneID:    senderID,
-			ParticipantTwoID:    recipientID,
-			IsEncrypted:         false,
-			KeyExchangeComplete: false,
-		}
-
-		mockConversationRepo.On("GetByParticipants", ctx, senderID, recipientID).Return(conversation, nil)
-
-		// Mock transaction and operations
-		mockCryptoRepo.On("WithTransaction", ctx, mock.Anything).Return(nil)
-
-		// Setup signing key for sender
-		cryptoService := crypto.NewCryptoService()
-		signingKeyPair, _ := cryptoService.GenerateEd25519KeyPair()
-		encryptedSigningKey, _ := cryptoService.EncryptWithMasterKey(signingKeyPair.PrivateKey, masterKey)
-
-		// Combine nonce + ciphertext for signing key storage too
-		signingKeyCombined := make([]byte, len(encryptedSigningKey.Nonce)+len(encryptedSigningKey.Ciphertext))
-		copy(signingKeyCombined[:len(encryptedSigningKey.Nonce)], encryptedSigningKey.Nonce)
-		copy(signingKeyCombined[len(encryptedSigningKey.Nonce):], encryptedSigningKey.Ciphertext)
-
-		userSigningKey := &domain.UserSigningKey{
-			UserID:              senderID,
-			EncryptedPrivateKey: cryptoService.Base64Encode(signingKeyCombined),
-			PublicKey:           cryptoService.Base64Encode(signingKeyPair.PublicKey),
-			KeyVersion:          1,
-		}
-
-		mockCryptoRepo.On("GetUserSigningKey", ctx, senderID).Return(userSigningKey, nil)
-		mockCryptoRepo.On("CreateConversationKey", ctx, (*sqlx.Tx)(nil), mock.AnythingOfType("*domain.ConversationKey")).Return(nil)
-		mockCryptoRepo.On("CreateKeyExchangeMessage", ctx, (*sqlx.Tx)(nil), mock.AnythingOfType("*domain.KeyExchangeMessage")).Return(nil)
-		mockConversationRepo.On("Update", ctx, (*sqlx.Tx)(nil), mock.AnythingOfType("*domain.Conversation")).Return(nil)
-		mockCryptoRepo.On("CreateAuditLog", mock.Anything, mock.AnythingOfType("*domain.CryptoAuditLog")).Return(nil).Maybe()
-
-		keyExchange, err := service.InitiateKeyExchange(ctx, senderID, recipientID, clientIP, userAgent)
-		assert.NoError(t, err)
-		assert.NotNil(t, keyExchange)
-
-		mockCryptoRepo.AssertExpectations(t)
-		mockConversationRepo.AssertExpectations(t)
-	})
-
-	t.Run("sender not unlocked", func(t *testing.T) {
-		service, _, _, _ := setupE2EEService()
-
-		// Clear any existing sessions from previous tests
-		userSessions = make(map[string]*UserE2EESession)
-
-		// No session setup - user not unlocked
-		keyExchange, err := service.InitiateKeyExchange(ctx, senderID, recipientID, clientIP, userAgent)
-		assert.Error(t, err)
-		assert.Nil(t, keyExchange)
-		assert.Contains(t, err.Error(), "sender E2EE session not unlocked")
-	})
-}
-
-func TestE2EEService_EncryptDecryptMessage(t *testing.T) {
-	ctx := context.Background()
-	senderID := "sender-user-id"
-	recipientID := "recipient-user-id"
-	plaintext := "This is a secret message for testing encryption"
-	clientIP := "127.0.0.1"
-	userAgent := "test-agent"
-
-	t.Run("successful encrypt and decrypt", func(t *testing.T) {
-		service, mockCryptoRepo, _, mockConversationRepo := setupE2EEService()
-
-		// Setup crypto service and shared secret
-		cryptoService := crypto.NewCryptoService()
-		sharedSecret := make([]byte, crypto.ChaCha20KeySize)
-		crypto.SecureRandom(sharedSecret)
-
-		// Setup sender session
-		senderMasterKey := make([]byte, crypto.ChaCha20KeySize)
-		crypto.SecureRandom(senderMasterKey)
-
-		senderSession := &UserE2EESession{
-			UserID:        senderID,
-			MasterKey:     senderMasterKey,
-			IsUnlocked:    true,
-			UnlockedAt:    time.Now(),
-			SessionExpiry: time.Now().Add(24 * time.Hour),
-		}
-		userSessions[senderID] = senderSession
-
-		// Setup recipient session
-		recipientMasterKey := make([]byte, crypto.ChaCha20KeySize)
-		crypto.SecureRandom(recipientMasterKey)
-
-		recipientSession := &UserE2EESession{
-			UserID:        recipientID,
-			MasterKey:     recipientMasterKey,
-			IsUnlocked:    true,
-			UnlockedAt:    time.Now(),
-			SessionExpiry: time.Now().Add(24 * time.Hour),
-		}
-		userSessions[recipientID] = recipientSession
-
-		// Setup conversation
-		conversation := &domain.Conversation{
-			ID:                  uuid.New().String(),
-			ParticipantOneID:    senderID,
-			ParticipantTwoID:    recipientID,
-			IsEncrypted:         true,
-			KeyExchangeComplete: true,
-		}
-
-		mockConversationRepo.On("GetByParticipants", ctx, senderID, recipientID).Return(conversation, nil)
-
-		// Setup conversation keys with encrypted shared secret
-		encryptedSharedSecretSender, _ := cryptoService.EncryptWithMasterKey(sharedSecret, senderMasterKey)
-		encryptedSharedSecretRecipient, _ := cryptoService.EncryptWithMasterKey(sharedSecret, recipientMasterKey)
-
-		// Combine nonce + ciphertext for sender shared secret
-		senderSecretCombined := make([]byte, len(encryptedSharedSecretSender.Nonce)+len(encryptedSharedSecretSender.Ciphertext))
-		copy(senderSecretCombined[:len(encryptedSharedSecretSender.Nonce)], encryptedSharedSecretSender.Nonce)
-		copy(senderSecretCombined[len(encryptedSharedSecretSender.Nonce):], encryptedSharedSecretSender.Ciphertext)
-
-		senderConversationKey := &domain.ConversationKey{
-			ID:                    uuid.New().String(),
-			ConversationID:        conversation.ID,
-			UserID:                senderID,
-			EncryptedSharedSecret: &[]string{cryptoService.Base64Encode(senderSecretCombined)}[0],
-			KeyVersion:            1,
-			IsActive:              true,
-		}
-
-		// Combine nonce + ciphertext for recipient shared secret
-		recipientSecretCombined := make([]byte, len(encryptedSharedSecretRecipient.Nonce)+len(encryptedSharedSecretRecipient.Ciphertext))
-		copy(recipientSecretCombined[:len(encryptedSharedSecretRecipient.Nonce)], encryptedSharedSecretRecipient.Nonce)
-		copy(recipientSecretCombined[len(encryptedSharedSecretRecipient.Nonce):], encryptedSharedSecretRecipient.Ciphertext)
-
-		recipientConversationKey := &domain.ConversationKey{
-			ID:                    uuid.New().String(),
-			ConversationID:        conversation.ID,
-			UserID:                recipientID,
-			EncryptedSharedSecret: &[]string{cryptoService.Base64Encode(recipientSecretCombined)}[0],
-			KeyVersion:            1,
-			IsActive:              true,
-		}
-
-		mockCryptoRepo.On("GetActiveConversationKey", ctx, conversation.ID, senderID).Return(senderConversationKey, nil)
-		mockCryptoRepo.On("GetActiveConversationKey", ctx, conversation.ID, recipientID).Return(recipientConversationKey, nil)
-
-		// Setup sender signing key
-		signingKeyPair, _ := cryptoService.GenerateEd25519KeyPair()
-		encryptedSigningKey, _ := cryptoService.EncryptWithMasterKey(signingKeyPair.PrivateKey, senderMasterKey)
-
-		// Combine nonce + ciphertext for signing key
-		signingKeyCombined := make([]byte, len(encryptedSigningKey.Nonce)+len(encryptedSigningKey.Ciphertext))
-		copy(signingKeyCombined[:len(encryptedSigningKey.Nonce)], encryptedSigningKey.Nonce)
-		copy(signingKeyCombined[len(encryptedSigningKey.Nonce):], encryptedSigningKey.Ciphertext)
-
-		senderSigningKey := &domain.UserSigningKey{
-			UserID:              senderID,
-			EncryptedPrivateKey: cryptoService.Base64Encode(signingKeyCombined),
-			PublicKey:           cryptoService.Base64Encode(signingKeyPair.PublicKey),
-			KeyVersion:          1,
-		}
-
-		mockCryptoRepo.On("GetUserSigningKey", ctx, senderID).Return(senderSigningKey, nil)
-		mockCryptoRepo.On("GetUserPublicSigningKey", ctx, senderID).Return(cryptoService.Base64Encode(signingKeyPair.PublicKey), nil)
-		mockCryptoRepo.On("CreateAuditLog", mock.Anything, mock.AnythingOfType("*domain.CryptoAuditLog")).Return(nil).Maybe()
-
-		// Test encryption
-		encryptedMessage, err := service.EncryptMessage(ctx, senderID, recipientID, plaintext, clientIP, userAgent)
-		require.NoError(t, err)
-		require.NotNil(t, encryptedMessage)
-		assert.True(t, encryptedMessage.IsEncrypted)
-		assert.NotNil(t, encryptedMessage.EncryptedContent)
-		assert.NotNil(t, encryptedMessage.ContentNonce)
-		assert.NotNil(t, encryptedMessage.PGPSignature)
-
-		// Test decryption
-		decryptedText, err := service.DecryptMessage(ctx, encryptedMessage, recipientID, clientIP, userAgent)
-		require.NoError(t, err)
-		assert.Equal(t, plaintext, decryptedText)
-
-		mockCryptoRepo.AssertExpectations(t)
-		mockConversationRepo.AssertExpectations(t)
-	})
-
-	t.Run("encrypt with unlocked session", func(t *testing.T) {
-		service, _, _, _ := setupE2EEService()
-
-		// Clear any existing sessions from previous tests
-		userSessions = make(map[string]*UserE2EESession)
-
-		// No session setup - user not unlocked
-		encryptedMessage, err := service.EncryptMessage(ctx, senderID, recipientID, plaintext, clientIP, userAgent)
-		assert.Error(t, err)
-		assert.Nil(t, encryptedMessage)
-		assert.Contains(t, err.Error(), "sender E2EE session not unlocked")
-	})
-}
-
-func TestE2EEService_GetE2EEStatus(t *testing.T) {
-	ctx := context.Background()
-	userID := "test-user-id"
-
-	t.Run("user with E2EE setup and unlocked", func(t *testing.T) {
-		service, mockCryptoRepo, _, _ := setupE2EEService()
-
-		// Setup master key
-		userMasterKey := &domain.UserMasterKey{
-			UserID:     userID,
-			KeyVersion: 2,
-		}
-
-		mockCryptoRepo.On("GetUserMasterKey", ctx, userID).Return(userMasterKey, nil)
-
-		// Setup session
-		masterKey := make([]byte, crypto.ChaCha20KeySize)
-		crypto.SecureRandom(masterKey)
-
-		session := &UserE2EESession{
-			UserID:        userID,
-			MasterKey:     masterKey,
-			IsUnlocked:    true,
-			UnlockedAt:    time.Now(),
-			SessionExpiry: time.Now().Add(24 * time.Hour),
-		}
-		userSessions[userID] = session
-
-		status, err := service.GetE2EEStatus(ctx, userID)
-		require.NoError(t, err)
-		assert.True(t, status.HasMasterKey)
-		assert.True(t, status.IsUnlocked)
-		assert.Equal(t, 2, status.KeyVersion)
-
-		mockCryptoRepo.AssertExpectations(t)
-	})
-
-	t.Run("user without E2EE setup", func(t *testing.T) {
-		service, mockCryptoRepo, _, _ := setupE2EEService()
-
-		// Clear any existing sessions from previous tests
-		userSessions = make(map[string]*UserE2EESession)
-
-		mockCryptoRepo.On("GetUserMasterKey", ctx, userID).Return(nil, nil)
-
-		status, err := service.GetE2EEStatus(ctx, userID)
-		require.NoError(t, err)
-		assert.False(t, status.HasMasterKey)
-		assert.False(t, status.IsUnlocked)
-		assert.Equal(t, 0, status.KeyVersion)
-
-		mockCryptoRepo.AssertExpectations(t)
-	})
-}
-
-func TestE2EEService_SessionExpiry(t *testing.T) {
-	userID := "test-user-id"
-	service, _, _, _ := setupE2EEService()
-
-	// Setup expired session
-	masterKey := make([]byte, crypto.ChaCha20KeySize)
-	crypto.SecureRandom(masterKey)
-
-	expiredSession := &UserE2EESession{
-		UserID:        userID,
-		MasterKey:     masterKey,
-		IsUnlocked:    true,
-		UnlockedAt:    time.Now().Add(-25 * time.Hour), // 25 hours ago
-		SessionExpiry: time.Now().Add(-1 * time.Hour),  // Expired 1 hour ago
+	conv := &domain.Conversation{
+		ID:               convID,
+		ParticipantOneID: userID,
+		ParticipantTwoID: otherID,
+		EncryptionStatus: domain.EncryptionStatusActive,
 	}
-	userSessions[userID] = expiredSession
+	convRepo.On("GetConversation", ctx, convID).Return(conv, nil)
 
-	// Session should be considered expired and automatically locked
-	isUnlocked := service.IsUnlocked(userID)
-	assert.False(t, isUnlocked)
+	msgs := []*domain.Message{
+		{
+			ID:               uuid.New().String(),
+			SenderID:         otherID,
+			RecipientID:      userID,
+			EncryptedContent: strPtrE2EE("cipher1"),
+		},
+	}
+	msgRepo.On("GetEncryptedMessages", ctx, userID, otherID, 50, 0).Return(msgs, nil)
 
-	// Session should be removed from memory
-	_, exists := userSessions[userID]
-	assert.False(t, exists)
+	result, err := svc.GetEncryptedMessages(ctx, convID, userID, 50, 0)
+	require.NoError(t, err)
+	assert.Len(t, result, 1)
 }
 
-// Security-focused tests
+func TestE2EEService_GetEncryptedMessages_NotParticipant(t *testing.T) {
+	svc, _, _, convRepo := newTestE2EEService()
+	ctx := context.Background()
+	outsiderID := uuid.New().String()
+	convID := uuid.New().String()
 
-func TestE2EEService_SecurityValidation(t *testing.T) {
-	cryptoService := crypto.NewCryptoService()
+	conv := &domain.Conversation{
+		ID:               convID,
+		ParticipantOneID: uuid.New().String(),
+		ParticipantTwoID: uuid.New().String(),
+	}
+	convRepo.On("GetConversation", ctx, convID).Return(conv, nil)
 
-	t.Run("key validation", func(t *testing.T) {
-		// Test weak key rejection
-		weakKey := make([]byte, crypto.X25519PublicKeySize) // All zeros
-		err := cryptoService.ValidatePublicKey(weakKey)
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "weak public key")
+	_, err := svc.GetEncryptedMessages(ctx, convID, outsiderID, 50, 0)
+	assert.ErrorIs(t, err, domain.ErrForbidden)
+}
 
-		// Test valid key acceptance
-		keyPair, _ := cryptoService.GenerateX25519KeyPair()
-		err = cryptoService.ValidatePublicKey(keyPair.PublicKey)
-		assert.NoError(t, err)
-	})
+func TestE2EEService_GetEncryptedMessages_ConversationNotFound(t *testing.T) {
+	svc, _, _, convRepo := newTestE2EEService()
+	ctx := context.Background()
 
-	t.Run("signature validation", func(t *testing.T) {
-		// Generate key pair and test message
-		keyPair, err := cryptoService.GenerateEd25519KeyPair()
-		require.NoError(t, err)
+	convRepo.On("GetConversation", ctx, "bad-id").Return(nil, domain.ErrNotFound)
 
-		message := []byte("test message for signature validation")
+	_, err := svc.GetEncryptedMessages(ctx, "bad-id", uuid.New().String(), 50, 0)
+	assert.Error(t, err)
+}
 
-		// Test valid signature
-		signature, err := cryptoService.SignMessage(message, keyPair.PrivateKey)
-		require.NoError(t, err)
+func TestE2EEService_GetEncryptedMessages_LimitClamping(t *testing.T) {
+	svc, _, msgRepo, convRepo := newTestE2EEService()
+	ctx := context.Background()
+	userID := uuid.New().String()
+	otherID := uuid.New().String()
+	convID := uuid.New().String()
 
-		valid := cryptoService.VerifySignature(message, signature, keyPair.PublicKey)
-		assert.True(t, valid)
+	conv := &domain.Conversation{
+		ID:               convID,
+		ParticipantOneID: userID,
+		ParticipantTwoID: otherID,
+	}
+	convRepo.On("GetConversation", ctx, convID).Return(conv, nil)
+	msgRepo.On("GetEncryptedMessages", ctx, userID, otherID, 50, 0).Return([]*domain.Message{}, nil)
 
-		// Test invalid signature with wrong key
-		wrongKeyPair, _ := cryptoService.GenerateEd25519KeyPair()
-		valid = cryptoService.VerifySignature(message, signature, wrongKeyPair.PublicKey)
-		assert.False(t, valid)
-
-		// Test tampered message
-		tamperedMessage := []byte("tampered message for signature validation")
-		valid = cryptoService.VerifySignature(tamperedMessage, signature, keyPair.PublicKey)
-		assert.False(t, valid)
-
-		// Test tampered signature
-		tamperedSignature := make([]byte, len(signature))
-		copy(tamperedSignature, signature)
-		tamperedSignature[0] ^= 1 // Flip a bit
-		valid = cryptoService.VerifySignature(message, tamperedSignature, keyPair.PublicKey)
-		assert.False(t, valid)
-	})
-
-	t.Run("encryption parameter validation", func(t *testing.T) {
-		plaintext := []byte("test plaintext")
-		key := make([]byte, crypto.ChaCha20KeySize)
-		crypto.SecureRandom(key)
-		nonce, _ := cryptoService.GenerateNonce()
-
-		// Valid encryption
-		ciphertext, err := cryptoService.Encrypt(plaintext, key, nonce)
-		assert.NoError(t, err)
-
-		// Test invalid key size
-		invalidKey := make([]byte, 16) // Wrong size
-		_, err = cryptoService.Encrypt(plaintext, invalidKey, nonce)
-		assert.Error(t, err)
-
-		// Test invalid nonce size
-		invalidNonce := make([]byte, 12) // Wrong size
-		_, err = cryptoService.Encrypt(plaintext, key, invalidNonce)
-		assert.Error(t, err)
-
-		// Test successful decryption
-		decryptedText, err := cryptoService.Decrypt(ciphertext, key, nonce)
-		assert.NoError(t, err)
-		assert.Equal(t, plaintext, decryptedText)
-
-		// Test decryption with wrong key
-		wrongKey := make([]byte, crypto.ChaCha20KeySize)
-		crypto.SecureRandom(wrongKey)
-		_, err = cryptoService.Decrypt(ciphertext, wrongKey, nonce)
-		assert.Error(t, err)
-
-		// Test decryption with wrong nonce
-		wrongNonce, _ := cryptoService.GenerateNonce()
-		_, err = cryptoService.Decrypt(ciphertext, key, wrongNonce)
-		assert.Error(t, err)
-	})
-
-	t.Run("memory security", func(t *testing.T) {
-		// Test secure memory zeroing
-		sensitiveData := []byte("very sensitive data that must be cleared")
-		originalData := make([]byte, len(sensitiveData))
-		copy(originalData, sensitiveData)
-
-		cryptoService.ZeroMemory(sensitiveData)
-
-		// All bytes should be zero
-		for i, b := range sensitiveData {
-			assert.Equal(t, byte(0), b, "Byte at index %d should be zero", i)
-		}
-
-		// Should be different from original
-		assert.NotEqual(t, originalData, sensitiveData)
-	})
-
-	t.Run("constant time comparison", func(t *testing.T) {
-		data1 := []byte("same data")
-		data2 := []byte("same data")
-		data3 := []byte("different data")
-
-		// Same data should compare equal
-		assert.True(t, cryptoService.SecureCompare(data1, data2))
-
-		// Different data should not compare equal
-		assert.False(t, cryptoService.SecureCompare(data1, data3))
-
-		// Different lengths should not compare equal
-		data4 := []byte("same")
-		assert.False(t, cryptoService.SecureCompare(data1, data4))
-	})
+	_, err := svc.GetEncryptedMessages(ctx, convID, userID, 0, 0)
+	require.NoError(t, err)
+	msgRepo.AssertExpectations(t)
 }

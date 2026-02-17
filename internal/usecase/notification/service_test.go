@@ -15,6 +15,8 @@ import (
 	"github.com/stretchr/testify/mock"
 )
 
+func strPtr(s string) *string { return &s }
+
 type mockNotificationRepo struct{ mock.Mock }
 
 func (m *mockNotificationRepo) Create(ctx context.Context, notification *domain.Notification) error {
@@ -372,7 +374,7 @@ func TestCreateMessageNotification_Success(t *testing.T) {
 		ID:          msgID.String(),
 		SenderID:    senderID.String(),
 		RecipientID: recipientID.String(),
-		Content:     "Hello there",
+		Content:     strPtr("Hello there"),
 		MessageType: "text",
 	}
 
@@ -394,7 +396,7 @@ func TestCreateMessageNotification_InvalidRecipientID(t *testing.T) {
 		ID:          uuid.New().String(),
 		SenderID:    uuid.New().String(),
 		RecipientID: "not-a-uuid",
-		Content:     "Hello",
+		Content:     strPtr("Hello"),
 		MessageType: "text",
 	}
 
@@ -471,7 +473,7 @@ func TestCreateMessageNotification_InvalidSenderID(t *testing.T) {
 		ID:          uuid.New().String(),
 		SenderID:    "not-a-uuid",
 		RecipientID: uuid.New().String(),
-		Content:     "Hello",
+		Content:     strPtr("Hello"),
 		MessageType: "text",
 	}
 
@@ -490,7 +492,7 @@ func TestCreateMessageNotification_InvalidMessageID(t *testing.T) {
 		ID:          "not-a-uuid",
 		SenderID:    uuid.New().String(),
 		RecipientID: uuid.New().String(),
-		Content:     "Hello",
+		Content:     strPtr("Hello"),
 		MessageType: "text",
 	}
 
@@ -510,7 +512,7 @@ func TestCreateMessageNotification_LookupSenderName(t *testing.T) {
 		ID:          uuid.New().String(),
 		SenderID:    senderID.String(),
 		RecipientID: uuid.New().String(),
-		Content:     "Hello",
+		Content:     strPtr("Hello"),
 		MessageType: "text",
 	}
 
@@ -533,7 +535,7 @@ func TestCreateMessageNotification_LookupSenderNameError(t *testing.T) {
 		ID:          uuid.New().String(),
 		SenderID:    senderID.String(),
 		RecipientID: uuid.New().String(),
-		Content:     "Hello",
+		Content:     strPtr("Hello"),
 		MessageType: "text",
 	}
 
@@ -555,7 +557,7 @@ func TestCreateMessageNotification_LongContent(t *testing.T) {
 		ID:          uuid.New().String(),
 		SenderID:    uuid.New().String(),
 		RecipientID: uuid.New().String(),
-		Content:     longContent,
+		Content:     &longContent,
 		MessageType: "text",
 	}
 
@@ -577,7 +579,7 @@ func TestCreateMessageNotification_CreateError(t *testing.T) {
 		ID:          uuid.New().String(),
 		SenderID:    uuid.New().String(),
 		RecipientID: uuid.New().String(),
-		Content:     "Hello",
+		Content:     strPtr("Hello"),
 		MessageType: "text",
 	}
 

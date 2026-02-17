@@ -23,13 +23,13 @@ import (
 	"athena/internal/usecase"
 )
 
+func strPtr(s string) *string { return &s }
+
 func TestMessageNotificationWorkflow(t *testing.T) {
-	// Skip in short mode (CI load tests)
 	if testing.Short() {
 		t.Skip("Skipping integration test in short mode")
 	}
 
-	// Setup test database - use environment variable if available (for CI)
 	dbURL := os.Getenv("DATABASE_URL")
 	if dbURL == "" {
 		dbURL = "postgres://test_user:test_password@localhost:5433/athena_test?sslmode=disable"
@@ -46,7 +46,6 @@ func TestMessageNotificationWorkflow(t *testing.T) {
 		return
 	}
 
-	// Clean up test data
 	t.Cleanup(func() {
 		_, _ = db.Exec("DELETE FROM notifications")
 		_, _ = db.Exec("DELETE FROM messages")
@@ -54,18 +53,14 @@ func TestMessageNotificationWorkflow(t *testing.T) {
 		db.Close()
 	})
 
-	// Setup router
 	r := chi.NewRouter()
 
-	// Initialize repositories
 	userRepo := repository.NewUserRepository(db)
 	notificationRepo := repository.NewNotificationRepository(db)
 	subRepo := repository.NewSubscriptionRepository(db)
 
-	// Initialize services
 	notificationService := usecase.NewNotificationService(notificationRepo, subRepo, userRepo)
 
-	// Setup routes
 	r.Route("/api/v1/notifications", func(r chi.Router) {
 		r.Use(middleware.Auth(cfg.JWTSecret))
 		handlers := NewNotificationHandlers(notificationService)
@@ -79,7 +74,6 @@ func TestMessageNotificationWorkflow(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("Message notification workflow", func(t *testing.T) {
-		// Create test users
 		sender := &domain.User{
 			ID:          uuid.New().String(),
 			Username:    "message_sender",
@@ -107,19 +101,17 @@ func TestMessageNotificationWorkflow(t *testing.T) {
 		err = userRepo.Create(ctx, recipient, passwordHash)
 		require.NoError(t, err)
 
-		// Create a message
 		message := &domain.Message{
 			ID:          uuid.New().String(),
 			SenderID:    sender.ID,
 			RecipientID: recipient.ID,
-			Content:     "Hello! This is a test message.",
+			Content:     strPtr("Hello! This is a test message."),
 			MessageType: "text",
 			IsRead:      false,
 			CreatedAt:   time.Now(),
 			UpdatedAt:   time.Now(),
 		}
 
-		// Insert message directly (simulating message creation)
 		_, err = db.ExecContext(ctx, `
 			INSERT INTO messages (id, sender_id, recipient_id, content, message_type, is_read, created_at, updated_at)
 			VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
@@ -127,8 +119,6 @@ func TestMessageNotificationWorkflow(t *testing.T) {
 			message.MessageType, message.IsRead, message.CreatedAt, message.UpdatedAt)
 		require.NoError(t, err)
 
-		// The database trigger should have created a notification
-		// Let's check recipient's notifications
 		recipientUUID, _ := uuid.Parse(recipient.ID)
 		notifications, err := notificationService.GetUserNotifications(ctx, recipientUUID, domain.NotificationFilter{
 			UserID: recipientUUID,
@@ -140,16 +130,14 @@ func TestMessageNotificationWorkflow(t *testing.T) {
 		notification := notifications[0]
 		assert.Equal(t, domain.NotificationNewMessage, notification.Type)
 		assert.Equal(t, fmt.Sprintf("New message from %s", sender.Username), notification.Title)
-		assert.Equal(t, message.Content, notification.Message)
+		assert.Equal(t, *message.Content, notification.Message)
 		assert.False(t, notification.Read)
 
-		// Verify notification data
 		assert.Equal(t, message.ID, notification.Data["message_id"])
 		assert.Equal(t, sender.ID, notification.Data["sender_id"])
 		assert.Equal(t, sender.Username, notification.Data["sender_name"])
-		assert.Equal(t, message.Content, notification.Data["message_preview"])
+		assert.Equal(t, *message.Content, notification.Data["message_preview"])
 
-		// Test API endpoint to get notifications
 		token := generateTestJWT(cfg.JWTSecret, recipient.ID)
 		req := httptest.NewRequest("GET", "/api/v1/notifications", nil)
 		req.Header.Set("Authorization", "Bearer "+token)
@@ -166,7 +154,6 @@ func TestMessageNotificationWorkflow(t *testing.T) {
 		assert.Len(t, notificationsResp.Data, 1)
 		assert.Equal(t, domain.NotificationNewMessage, notificationsResp.Data[0].Type)
 
-		// Test unread count
 		req = httptest.NewRequest("GET", "/api/v1/notifications/unread-count", nil)
 		req.Header.Set("Authorization", "Bearer "+token)
 		w = httptest.NewRecorder()
@@ -181,7 +168,6 @@ func TestMessageNotificationWorkflow(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, 1, unreadResponse.Data["unread_count"])
 
-		// Test stats endpoint
 		req = httptest.NewRequest("GET", "/api/v1/notifications/stats", nil)
 		req.Header.Set("Authorization", "Bearer "+token)
 		w = httptest.NewRecorder()
@@ -198,7 +184,6 @@ func TestMessageNotificationWorkflow(t *testing.T) {
 		assert.Equal(t, 1, statsResponse.Data.UnreadCount)
 		assert.Equal(t, 1, statsResponse.Data.ByType[domain.NotificationNewMessage])
 
-		// Mark notification as read
 		req = httptest.NewRequest("PUT", fmt.Sprintf("/api/v1/notifications/%s/read", notification.ID), nil)
 		req.Header.Set("Authorization", "Bearer "+token)
 		w = httptest.NewRecorder()
@@ -206,7 +191,6 @@ func TestMessageNotificationWorkflow(t *testing.T) {
 		r.ServeHTTP(w, req)
 		assert.Equal(t, http.StatusOK, w.Code)
 
-		// Verify notification is marked as read
 		notifications, err = notificationService.GetUserNotifications(ctx, recipientUUID, domain.NotificationFilter{
 			UserID: recipientUUID,
 			Limit:  10,
@@ -217,7 +201,6 @@ func TestMessageNotificationWorkflow(t *testing.T) {
 	})
 
 	t.Run("Long message preview truncation", func(t *testing.T) {
-		// Create test users
 		sender := &domain.User{
 			ID:          uuid.New().String(),
 			Username:    "long_sender",
@@ -245,7 +228,6 @@ func TestMessageNotificationWorkflow(t *testing.T) {
 		err = userRepo.Create(ctx, recipient, passwordHash)
 		require.NoError(t, err)
 
-		// Create a message with very long content
 		longContent := "This is a very long message that should be truncated in the notification preview. " +
 			"It contains more than 100 characters to test the truncation logic. " +
 			"The notification should only show the first 100 characters with ellipsis."
@@ -254,14 +236,13 @@ func TestMessageNotificationWorkflow(t *testing.T) {
 			ID:          uuid.New().String(),
 			SenderID:    sender.ID,
 			RecipientID: recipient.ID,
-			Content:     longContent,
+			Content:     &longContent,
 			MessageType: "text",
 			IsRead:      false,
 			CreatedAt:   time.Now(),
 			UpdatedAt:   time.Now(),
 		}
 
-		// Insert message
 		_, err = db.ExecContext(ctx, `
 			INSERT INTO messages (id, sender_id, recipient_id, content, message_type, is_read, created_at, updated_at)
 			VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
@@ -269,7 +250,6 @@ func TestMessageNotificationWorkflow(t *testing.T) {
 			message.MessageType, message.IsRead, message.CreatedAt, message.UpdatedAt)
 		require.NoError(t, err)
 
-		// Check notification
 		recipientUUID, _ := uuid.Parse(recipient.ID)
 		notifications, err := notificationService.GetUserNotifications(ctx, recipientUUID, domain.NotificationFilter{
 			UserID: recipientUUID,
@@ -279,13 +259,11 @@ func TestMessageNotificationWorkflow(t *testing.T) {
 		assert.Len(t, notifications, 1)
 
 		notification := notifications[0]
-		// Check that message preview is truncated
 		assert.Equal(t, longContent[:97]+"...", notification.Message)
 		assert.Equal(t, longContent[:97]+"...", notification.Data["message_preview"])
 	})
 
 	t.Run("System messages don't create notifications", func(t *testing.T) {
-		// Create test users
 		sender := &domain.User{
 			ID:          uuid.New().String(),
 			Username:    "system",
@@ -313,19 +291,17 @@ func TestMessageNotificationWorkflow(t *testing.T) {
 		err = userRepo.Create(ctx, recipient, passwordHash)
 		require.NoError(t, err)
 
-		// Create a system message
 		message := &domain.Message{
 			ID:          uuid.New().String(),
 			SenderID:    sender.ID,
 			RecipientID: recipient.ID,
-			Content:     "This is a system message.",
+			Content:     strPtr("This is a system message."),
 			MessageType: "system",
 			IsRead:      false,
 			CreatedAt:   time.Now(),
 			UpdatedAt:   time.Now(),
 		}
 
-		// Insert system message
 		_, err = db.ExecContext(ctx, `
 			INSERT INTO messages (id, sender_id, recipient_id, content, message_type, is_read, created_at, updated_at)
 			VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
@@ -333,7 +309,6 @@ func TestMessageNotificationWorkflow(t *testing.T) {
 			message.MessageType, message.IsRead, message.CreatedAt, message.UpdatedAt)
 		require.NoError(t, err)
 
-		// Check that no notification was created
 		recipientUUID, _ := uuid.Parse(recipient.ID)
 		notifications, err := notificationService.GetUserNotifications(ctx, recipientUUID, domain.NotificationFilter{
 			UserID: recipientUUID,
@@ -344,7 +319,6 @@ func TestMessageNotificationWorkflow(t *testing.T) {
 	})
 
 	t.Run("Multiple messages create multiple notifications", func(t *testing.T) {
-		// Create test users
 		sender := &domain.User{
 			ID:          uuid.New().String(),
 			Username:    "multi_sender",
@@ -372,13 +346,13 @@ func TestMessageNotificationWorkflow(t *testing.T) {
 		err = userRepo.Create(ctx, recipient, passwordHash)
 		require.NoError(t, err)
 
-		// Create multiple messages
 		for i := 0; i < 3; i++ {
+			msgContent := fmt.Sprintf("Message %d", i+1)
 			message := &domain.Message{
 				ID:          uuid.New().String(),
 				SenderID:    sender.ID,
 				RecipientID: recipient.ID,
-				Content:     fmt.Sprintf("Message %d", i+1),
+				Content:     &msgContent,
 				MessageType: "text",
 				IsRead:      false,
 				CreatedAt:   time.Now().Add(time.Duration(i) * time.Second),
@@ -393,7 +367,6 @@ func TestMessageNotificationWorkflow(t *testing.T) {
 			require.NoError(t, err)
 		}
 
-		// Check that 3 notifications were created
 		recipientUUID, _ := uuid.Parse(recipient.ID)
 		notifications, err := notificationService.GetUserNotifications(ctx, recipientUUID, domain.NotificationFilter{
 			UserID: recipientUUID,
@@ -402,7 +375,6 @@ func TestMessageNotificationWorkflow(t *testing.T) {
 		require.NoError(t, err)
 		assert.Len(t, notifications, 3, "Should have 3 notifications for 3 messages")
 
-		// Verify all are message notifications
 		for _, notif := range notifications {
 			assert.Equal(t, domain.NotificationNewMessage, notif.Type)
 			assert.False(t, notif.Read)
@@ -411,14 +383,11 @@ func TestMessageNotificationWorkflow(t *testing.T) {
 }
 
 func TestMessageNotificationService(t *testing.T) {
-	// Unit tests for the notification service message methods
 
-	// Skip in short mode
 	if testing.Short() {
 		t.Skip("Skipping unit test in short mode")
 	}
 
-	// Setup test database
 	dbURL := os.Getenv("DATABASE_URL")
 	if dbURL == "" {
 		dbURL = "postgres://test_user:test_password@localhost:5433/athena_test?sslmode=disable"
@@ -431,24 +400,20 @@ func TestMessageNotificationService(t *testing.T) {
 	}
 	defer db.Close()
 
-	// Clean up test data
 	t.Cleanup(func() {
 		_, _ = db.Exec("DELETE FROM notifications")
 		_, _ = db.Exec("DELETE FROM users")
 	})
 
-	// Initialize repositories
 	userRepo := repository.NewUserRepository(db)
 	notificationRepo := repository.NewNotificationRepository(db)
 	subRepo := repository.NewSubscriptionRepository(db)
 
-	// Initialize service
 	notificationService := usecase.NewNotificationService(notificationRepo, subRepo, userRepo)
 
 	ctx := context.Background()
 
 	t.Run("CreateMessageNotification", func(t *testing.T) {
-		// Create test users
 		sender := &domain.User{
 			ID:          uuid.New().String(),
 			Username:    "test_sender",
@@ -475,20 +440,17 @@ func TestMessageNotificationService(t *testing.T) {
 		err = userRepo.Create(ctx, recipient, "password_hash")
 		require.NoError(t, err)
 
-		// Create a message
 		message := &domain.Message{
 			ID:          uuid.New().String(),
 			SenderID:    sender.ID,
 			RecipientID: recipient.ID,
-			Content:     "Test message content",
+			Content:     strPtr("Test message content"),
 			MessageType: "text",
 		}
 
-		// Call the service method directly
 		err = notificationService.CreateMessageNotification(ctx, message, sender.Username)
 		require.NoError(t, err)
 
-		// Verify notification was created
 		recipientUUID, _ := uuid.Parse(recipient.ID)
 		notifications, err := notificationService.GetUserNotifications(ctx, recipientUUID, domain.NotificationFilter{
 			UserID: recipientUUID,
@@ -500,7 +462,6 @@ func TestMessageNotificationService(t *testing.T) {
 	})
 
 	t.Run("CreateMessageNotification with unknown sender", func(t *testing.T) {
-		// Create only recipient
 		recipient := &domain.User{
 			ID:          uuid.New().String(),
 			Username:    "test_recipient2",
@@ -514,20 +475,17 @@ func TestMessageNotificationService(t *testing.T) {
 		err := userRepo.Create(ctx, recipient, "password_hash")
 		require.NoError(t, err)
 
-		// Create a message from non-existent sender
 		message := &domain.Message{
 			ID:          uuid.New().String(),
-			SenderID:    uuid.New().String(), // Non-existent sender
+			SenderID:    uuid.New().String(),
 			RecipientID: recipient.ID,
-			Content:     "Message from unknown",
+			Content:     strPtr("Message from unknown"),
 			MessageType: "text",
 		}
 
-		// Call the service method without sender name (should fetch and fail gracefully)
 		err = notificationService.CreateMessageNotification(ctx, message, "")
 		require.NoError(t, err)
 
-		// Verify notification was created with "Unknown" sender
 		recipientUUID, _ := uuid.Parse(recipient.ID)
 		notifications, err := notificationService.GetUserNotifications(ctx, recipientUUID, domain.NotificationFilter{
 			UserID: recipientUUID,
@@ -539,7 +497,6 @@ func TestMessageNotificationService(t *testing.T) {
 	})
 
 	t.Run("System messages don't create notifications", func(t *testing.T) {
-		// Create test user
 		recipient := &domain.User{
 			ID:          uuid.New().String(),
 			Username:    "sys_test_recipient",
@@ -553,20 +510,17 @@ func TestMessageNotificationService(t *testing.T) {
 		err := userRepo.Create(ctx, recipient, "password_hash")
 		require.NoError(t, err)
 
-		// Create a system message
 		message := &domain.Message{
 			ID:          uuid.New().String(),
 			SenderID:    uuid.New().String(),
 			RecipientID: recipient.ID,
-			Content:     "System message",
+			Content:     strPtr("System message"),
 			MessageType: "system",
 		}
 
-		// Call the service method
 		err = notificationService.CreateMessageNotification(ctx, message, "System")
 		require.NoError(t, err)
 
-		// Verify no notification was created
 		recipientUUID, _ := uuid.Parse(recipient.ID)
 		notifications, err := notificationService.GetUserNotifications(ctx, recipientUUID, domain.NotificationFilter{
 			UserID: recipientUUID,

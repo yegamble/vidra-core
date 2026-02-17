@@ -1567,40 +1567,52 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
-  /api/v1/e2ee/setup:
+  # -----------------------------------------------------------------------
+  # E2EE — true client-side encryption (ciphertext transport model)
+  # Server stores public keys and ciphertext blobs; it never sees plaintext.
+  # All cryptographic operations (ECDH, encryption, signing) happen on the
+  # client. MSG-SEC-001/002/006 remediation.
+  # -----------------------------------------------------------------------
+
+  /api/v1/e2ee/keys:
     post:
       tags:
         - E2EE
-      summary: Setup E2EE for user
-      description: Initialize end-to-end encryption by creating a master key encrypted with user's password
-      operationId: setupE2EE
+      summary: Register identity key
+      description: |
+        Register or update the caller's X25519 identity key and Ed25519 signing
+        key. Both keys are generated on the client — the server stores only the
+        public halves. Requires authentication.
+      operationId: registerIdentityKey
+      security:
+        - BearerAuth: []
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/E2EESetupRequest'
+              $ref: '#/components/schemas/RegisterIdentityKeyRequest'
             examples:
-              setup:
-                summary: Setup E2EE
+              register:
+                summary: Register identity key
                 value:
-                  password: "strong-password-123"
+                  public_identity_key: "base64url-encoded-x25519-public-key"
+                  public_signing_key: "base64url-encoded-ed25519-public-key"
       responses:
         '200':
-          description: E2EE setup successful
+          description: Identity key registered
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/E2EESetupResponse'
-              examples:
-                success:
-                  summary: E2EE setup success
-                  value:
-                    message: "E2EE setup completed successfully"
-                    public_key: "base64-encoded-public-key"
-                    signing_public_key: "base64-encoded-signing-key"
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "Identity key registered"
+                  key_version:
+                    type: integer
         '400':
-          description: Invalid request or E2EE already setup
+          description: Invalid request
           content:
             application/json:
               schema:
@@ -1612,43 +1624,64 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
-  /api/v1/e2ee/unlock:
-    post:
+  /api/v1/e2ee/keys/{userId}:
+    get:
       tags:
         - E2EE
-      summary: Unlock E2EE session
-      description: Unlock E2EE session with password (15-minute timeout)
-      operationId: unlockE2EE
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/E2EEUnlockRequest'
-            examples:
-              unlock:
-                summary: Unlock E2EE session
-                value:
-                  password: "strong-password-123"
+      summary: Get user public keys
+      description: |
+        Fetch the public identity and signing keys for any user. Clients use
+        these keys to establish a shared secret via X25519 ECDH without the
+        server ever learning the private keys.
+      operationId: getUserPublicKeys
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
       responses:
         '200':
-          description: E2EE session unlocked
+          description: Public key bundle
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/E2EEUnlockResponse'
-              examples:
-                success:
-                  summary: E2EE unlock success
-                  value:
-                    message: "E2EE session unlocked"
-                    expires_at: "2024-01-01T12:15:00Z"
-        '400':
-          description: Invalid password or E2EE not setup
+                $ref: '#/components/schemas/PublicKeyBundle'
+        '404':
+          description: User not found or no keys registered
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/e2ee/status:
+    get:
+      tags:
+        - E2EE
+      summary: Get E2EE status
+      description: |
+        Returns whether the authenticated user has registered identity keys and
+        their current key version. Clients use this to decide whether to prompt
+        the user to generate and register keys.
+      operationId: getE2EEStatus
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: E2EE status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/E2EEStatusResponse'
         '401':
           description: Unauthorized
           content:
@@ -1660,35 +1693,36 @@ paths:
     post:
       tags:
         - E2EE
-      summary: Exchange keys for conversation
-      description: Initiate or complete key exchange with recipient for secure conversation
-      operationId: exchangeKeys
+      summary: Initiate key exchange
+      description: |
+        Client sends its ephemeral X25519 public key to initiate a key exchange
+        with a recipient. The server relays the public key — it does not
+        participate in the ECDH derivation. The shared secret is derived and
+        held entirely on each client device.
+      operationId: initiateKeyExchange
+      security:
+        - BearerAuth: []
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/KeyExchangeRequest'
+              $ref: '#/components/schemas/InitiateKeyExchangeRequest'
             examples:
-              exchange:
+              initiate:
                 summary: Initiate key exchange
                 value:
                   recipient_id: "550e8400-e29b-41d4-a716-446655440000"
+                  sender_public_key: "base64url-encoded-x25519-ephemeral-public-key"
       responses:
         '200':
-          description: Key exchange successful
+          description: Key exchange initiated; relay message created for recipient
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/KeyExchangeResponse'
-              examples:
-                success:
-                  summary: Key exchange success
-                  value:
-                    message: "Key exchange completed"
-                    conversation_id: "660f9500-f39c-52e5-b827-557766551111"
         '400':
-          description: Invalid request or E2EE session locked
+          description: Invalid request
           content:
             application/json:
               schema:
@@ -1700,41 +1734,174 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
-  /api/v1/messages/secure:
+  /api/v1/e2ee/key-exchange/accept:
     post:
       tags:
         - E2EE
-      summary: Send encrypted message
-      description: Send an end-to-end encrypted message with digital signature
-      operationId: sendSecureMessage
+      summary: Accept key exchange
+      description: |
+        Recipient sends its own ephemeral X25519 public key in response to a
+        pending key exchange. Both parties can now independently derive the same
+        shared secret using ECDH — the server stores neither secret.
+      operationId: acceptKeyExchange
+      security:
+        - BearerAuth: []
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/SecureMessageRequest'
+              $ref: '#/components/schemas/AcceptKeyExchangeRequest'
             examples:
-              secure_message:
-                summary: Send encrypted message
+              accept:
+                summary: Accept key exchange
                 value:
-                  recipient_id: "550e8400-e29b-41d4-a716-446655440000"
-                  encrypted_content: "[Encrypted]Hello, this is a secure message!"
-                  pgp_signature: "base64-encoded-ed25519-signature"
+                  key_exchange_id: "660f9500-f39c-52e5-b827-557766551111"
+                  public_key: "base64url-encoded-x25519-ephemeral-public-key"
       responses:
-        '201':
-          description: Encrypted message sent successfully
+        '200':
+          description: Key exchange accepted; conversation ready for encrypted messages
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/MessageResponse'
+                $ref: '#/components/schemas/KeyExchangeResponse'
         '400':
-          description: Invalid request, E2EE session locked, or no shared key
+          description: Invalid request or key exchange not found
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         '401':
           description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/e2ee/key-exchange/pending:
+    get:
+      tags:
+        - E2EE
+      summary: List pending key exchanges
+      description: |
+        Returns key exchange relay messages addressed to the authenticated user
+        that have not yet been accepted.
+      operationId: getPendingKeyExchanges
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: List of pending key exchange messages
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  key_exchanges:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/KeyExchangeMessage'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/e2ee/messages:
+    post:
+      tags:
+        - E2EE
+      summary: Store encrypted message
+      description: |
+        Client uploads a ciphertext blob (encrypted with the shared secret
+        derived via ECDH). The server stores and forwards the blob without
+        decrypting it. The `content_nonce` is an XChaCha20-Poly1305 nonce
+        chosen by the sender; `signature` is an Ed25519 signature over the
+        ciphertext, allowing the recipient to verify authenticity.
+      operationId: storeEncryptedMessage
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StoreEncryptedMessageRequest'
+            examples:
+              store:
+                summary: Store encrypted message
+                value:
+                  recipient_id: "550e8400-e29b-41d4-a716-446655440000"
+                  encrypted_content: "base64url-encoded-ciphertext"
+                  content_nonce: "base64url-encoded-xchacha20-nonce"
+                  signature: "base64url-encoded-ed25519-signature"
+      responses:
+        '201':
+          description: Encrypted message stored and queued for recipient
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+        '400':
+          description: Invalid request or key exchange not completed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/e2ee/messages/{conversationId}:
+    get:
+      tags:
+        - E2EE
+      summary: Get encrypted messages
+      description: |
+        Returns ciphertext blobs for a conversation. Clients decrypt each blob
+        locally using their copy of the shared secret. The server returns
+        `encrypted_content`, `content_nonce`, and `signature` fields; the
+        `content` field is always null for encrypted messages.
+      operationId: getEncryptedMessages
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: conversationId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+            maximum: 100
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+      responses:
+        '200':
+          description: Encrypted message list (ciphertext only, never plaintext)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessagesResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Conversation not found
           content:
             application/json:
               schema:
@@ -4116,118 +4283,196 @@ components:
           format: uri
           maxLength: 200
 
-    # E2EE Schemas
-    E2EESetupRequest:
+    # E2EE Schemas (true client-side encryption model — server is ciphertext transport only)
+    RegisterIdentityKeyRequest:
       type: object
+      description: >
+        Register the caller's long-term identity key bundle. Keys are generated
+        client-side; the server stores only public material.
       properties:
-        password:
+        public_identity_key:
           type: string
-          description: Master password for E2EE key derivation
-          minLength: 8
-          maxLength: 128
+          description: Base64-encoded X25519 public identity key (client-generated)
+          maxLength: 256
+        public_signing_key:
+          type: string
+          description: Base64-encoded Ed25519 public signing key (client-generated)
+          maxLength: 256
       required:
-        - password
+        - public_identity_key
+        - public_signing_key
 
-    E2EESetupResponse:
+    PublicKeyBundle:
       type: object
+      description: Public key material for a user, returned by GET /api/v1/e2ee/keys/{userId}
       properties:
-        message:
+        public_identity_key:
           type: string
-          description: Success message
-          example: "E2EE setup completed successfully"
-        public_key:
+          description: Base64-encoded X25519 public identity key
+        public_signing_key:
           type: string
-          description: Base64-encoded X25519 public key for key exchange
-        signing_public_key:
-          type: string
-          description: Base64-encoded Ed25519 public key for signatures
-        success:
+          description: Base64-encoded Ed25519 public signing key
+        key_version:
+          type: integer
+          description: Monotonically increasing version, incremented on each key rotation
+          example: 1
+      required:
+        - public_identity_key
+        - public_signing_key
+        - key_version
+
+    E2EEStatusResponse:
+      type: object
+      description: E2EE status for the authenticated user
+      properties:
+        has_identity_key:
           type: boolean
-          example: true
-      required:
-        - message
-        - public_key
-        - signing_public_key
-        - success
-
-    E2EEUnlockRequest:
-      type: object
-      properties:
-        password:
-          type: string
-          description: Master password to unlock E2EE session
-          minLength: 8
-          maxLength: 128
-      required:
-        - password
-
-    E2EEUnlockResponse:
-      type: object
-      properties:
-        message:
-          type: string
-          description: Success message
-          example: "E2EE session unlocked"
-        expires_at:
+          description: Whether the user has registered an identity key
+        key_version:
+          type: integer
+          description: Current key version (0 if no key registered)
+          example: 1
+        last_key_rotation:
           type: string
           format: date-time
-          description: When the unlocked session expires
-        success:
-          type: boolean
-          example: true
-      required:
-        - message
-        - expires_at
-        - success
+          description: Timestamp of the last key rotation (omitted if no key registered)
+          nullable: true
 
-    KeyExchangeRequest:
+    InitiateKeyExchangeRequest:
       type: object
+      description: >
+        Sender initiates an out-of-band key exchange by uploading their ephemeral
+        public key. The server relays this to the recipient without decrypting it.
       properties:
         recipient_id:
           type: string
           format: uuid
-          description: Recipient user ID to exchange keys with
+          description: UUID of the user to exchange keys with
+        sender_public_key:
+          type: string
+          description: Base64-encoded ephemeral X25519 public key for this session
+          maxLength: 256
       required:
         - recipient_id
+        - sender_public_key
 
-    KeyExchangeResponse:
+    AcceptKeyExchangeRequest:
       type: object
+      description: >
+        Recipient accepts a pending key exchange by uploading their own ephemeral
+        public key. Both sides then derive the shared secret independently on their
+        devices.
       properties:
-        message:
+        key_exchange_id:
           type: string
-          description: Success message
-          example: "Key exchange completed"
+          format: uuid
+          description: ID of the pending key exchange to accept
+        public_key:
+          type: string
+          description: Base64-encoded ephemeral X25519 public key of the accepting party
+          maxLength: 256
+      required:
+        - key_exchange_id
+        - public_key
+
+    KeyExchangeMessage:
+      type: object
+      description: A single key exchange relay record stored by the server
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Unique key exchange record ID
         conversation_id:
           type: string
           format: uuid
-          description: Conversation ID for the key exchange
-        success:
-          type: boolean
-          example: true
+          description: Conversation this key exchange belongs to
+        sender_id:
+          type: string
+          format: uuid
+          description: User who initiated the key exchange
+        recipient_id:
+          type: string
+          format: uuid
+          description: User who should respond to the key exchange
+        exchange_type:
+          type: string
+          enum: [offer, accept, confirm]
+          description: Stage of the key exchange handshake
+        public_key:
+          type: string
+          description: Base64-encoded ephemeral public key for this exchange step
+        signature:
+          type: string
+          description: Base64-encoded signature over the public key
+        nonce:
+          type: string
+          description: Base64-encoded random nonce for this exchange step
+        created_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+          description: After this time the offer expires and must be re-initiated
       required:
-        - message
+        - id
         - conversation_id
-        - success
+        - sender_id
+        - recipient_id
+        - exchange_type
+        - public_key
+        - created_at
+        - expires_at
 
-    SecureMessageRequest:
+    KeyExchangeResponse:
       type: object
+      description: Response returned after initiating or accepting a key exchange
+      properties:
+        key_exchange:
+          $ref: '#/components/schemas/KeyExchangeMessage'
+        status:
+          type: string
+          description: Current status of the key exchange (e.g. "pending", "accepted")
+          example: "pending"
+      required:
+        - key_exchange
+        - status
+
+    StoreEncryptedMessageRequest:
+      type: object
+      description: >
+        Store a ciphertext message. All encryption happens client-side; the server
+        never sees plaintext. `encrypted_content` is an opaque blob from the client.
       properties:
         recipient_id:
           type: string
           format: uuid
-          description: Recipient user ID
+          description: UUID of the message recipient
         encrypted_content:
           type: string
-          description: Client-side encrypted message content
-          minLength: 1
-        pgp_signature:
+          description: >
+            Base64-encoded ciphertext produced by the client using the shared session
+            key derived during key exchange. Server stores and relays without decrypting.
+          maxLength: 8192
+        content_nonce:
           type: string
-          description: Base64-encoded Ed25519 signature of the message
-          minLength: 1
+          description: Base64-encoded nonce used when encrypting this message (required for decryption)
+          maxLength: 128
+        signature:
+          type: string
+          description: Base64-encoded Ed25519 signature over `encrypted_content + content_nonce`
+          maxLength: 128
+        parent_message_id:
+          type: string
+          format: uuid
+          description: Optional ID of the message being replied to
+          nullable: true
       required:
         - recipient_id
         - encrypted_content
-        - pgp_signature
+        - content_nonce
+        - signature
 
     # Video Category Schemas
     VideoCategory:

@@ -19,6 +19,7 @@ import (
 	"time"
 
 	chi "github.com/go-chi/chi/v5"
+	govalidator "github.com/go-playground/validator/v10"
 
 	"athena/internal/config"
 	"athena/internal/domain"
@@ -255,6 +256,21 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 			r.Get("/", messaging.GetConversationsHandler(deps.MessageService))
 			r.Get("/unread-count", messaging.GetUnreadCountHandler(deps.MessageService))
 		})
+
+		if deps.E2EEService != nil {
+			e2eeHandler := messaging.NewSecureMessagesHandler(deps.E2EEService, govalidator.New())
+			r.Route("/e2ee", func(r chi.Router) {
+				r.Use(middleware.Auth(cfg.JWTSecret))
+				r.Post("/keys", e2eeHandler.RegisterIdentityKey)
+				r.Get("/keys/{userId}", e2eeHandler.GetPublicKeys)
+				r.Get("/status", e2eeHandler.GetE2EEStatus)
+				r.Post("/key-exchange", e2eeHandler.InitiateKeyExchange)
+				r.Post("/key-exchange/accept", e2eeHandler.AcceptKeyExchange)
+				r.Get("/key-exchange/pending", e2eeHandler.GetPendingKeyExchanges)
+				r.Post("/messages", e2eeHandler.StoreEncryptedMessage)
+				r.Get("/messages/{conversationId}", e2eeHandler.GetEncryptedMessages)
+			})
+		}
 
 		r.Get("/trending", viewsHandler.GetTrendingVideos)
 

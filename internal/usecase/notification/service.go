@@ -33,7 +33,6 @@ func NewService(notificationRepo port.NotificationRepository, subscriptionRepo p
 }
 
 func (s *service) CreateVideoNotificationForSubscribers(ctx context.Context, video *domain.Video, channelName string) error {
-	// Only create notifications for public completed videos
 	if video.Status != domain.StatusCompleted || video.Privacy != domain.PrivacyPublic {
 		return nil
 	}
@@ -41,7 +40,6 @@ func (s *service) CreateVideoNotificationForSubscribers(ctx context.Context, vid
 	if video.ChannelID != uuid.Nil {
 		channelID = video.ChannelID.String()
 	}
-	// Get all subscribers for this channel
 	subscribers, err := s.subscriptionRepo.GetSubscribers(ctx, channelID)
 	if err != nil {
 		return fmt.Errorf("failed to get subscribers: %w", err)
@@ -49,7 +47,6 @@ func (s *service) CreateVideoNotificationForSubscribers(ctx context.Context, vid
 	if len(subscribers) == 0 {
 		return nil
 	}
-	// If channel name not provided, fetch it
 	if channelName == "" {
 		user, err := s.userRepo.GetByID(ctx, video.UserID)
 		if err != nil {
@@ -57,7 +54,6 @@ func (s *service) CreateVideoNotificationForSubscribers(ctx context.Context, vid
 		}
 		channelName = user.Username
 	}
-	// Create notifications for all subscribers
 	notifications := make([]domain.Notification, len(subscribers))
 	for i, subscriber := range subscribers {
 		notifications[i] = domain.Notification{
@@ -107,11 +103,9 @@ func (s *service) GetStats(ctx context.Context, userID uuid.UUID) (*domain.Notif
 }
 
 func (s *service) CreateMessageNotification(ctx context.Context, message *domain.Message, senderName string) error {
-	// Don't create notification for system messages
 	if message.MessageType == "system" {
 		return nil
 	}
-	// Parse IDs
 	recipientID, err := uuid.Parse(message.RecipientID)
 	if err != nil {
 		return fmt.Errorf("invalid recipient ID: %w", err)
@@ -132,9 +126,12 @@ func (s *service) CreateMessageNotification(ctx context.Context, message *domain
 			senderName = user.Username
 		}
 	}
-	messagePreview := message.Content
-	if len(messagePreview) > 100 {
-		messagePreview = messagePreview[:97] + "..."
+	var messagePreview string
+	if message.Content != nil {
+		messagePreview = *message.Content
+		if len(messagePreview) > 100 {
+			messagePreview = messagePreview[:97] + "..."
+		}
 	}
 	notification := domain.Notification{
 		UserID:  recipientID,
@@ -156,6 +153,5 @@ func (s *service) CreateMessageNotification(ctx context.Context, message *domain
 }
 
 func (s *service) CreateMessageReadNotification(ctx context.Context, messageID uuid.UUID, readerID uuid.UUID, readerName string) error {
-	// No-op (optional feature)
 	return nil
 }
