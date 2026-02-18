@@ -24,6 +24,7 @@ type SocialRepository interface {
 	RevokeFollow(ctx context.Context, uri string) error
 	GetFollowers(ctx context.Context, did string, limit, offset int) ([]domain.Follow, error)
 	GetFollowing(ctx context.Context, did string, limit, offset int) ([]domain.Follow, error)
+	GetFollow(ctx context.Context, followerDID, followingDID string) (*domain.Follow, error)
 	IsFollowing(ctx context.Context, followerDID, followingDID string) (bool, error)
 	CreateLike(ctx context.Context, like *domain.Like) error
 	DeleteLike(ctx context.Context, uri string) error
@@ -157,22 +158,15 @@ func (s *Service) Unfollow(ctx context.Context, followerDID, targetHandle string
 	}
 
 	// Get follow record URI
-	follows, err := s.socialRepo.GetFollowing(ctx, followerDID, 1000, 0)
+	follow, err := s.socialRepo.GetFollow(ctx, followerDID, targetActor.DID)
 	if err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			return fmt.Errorf("not following")
+		}
 		return err
 	}
 
-	var followURI string
-	for _, f := range follows {
-		if f.FollowingDID == targetActor.DID {
-			followURI = f.URI
-			break
-		}
-	}
-
-	if followURI == "" {
-		return fmt.Errorf("not following")
-	}
+	followURI := follow.URI
 
 	// Delete record from ATProto
 	if err := s.deleteRecord(ctx, followURI); err != nil {
