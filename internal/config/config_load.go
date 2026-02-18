@@ -168,7 +168,7 @@ func loadCommonFields(cfg *Config, setupMode bool) {
 	cfg.ATProtoHandle = GetEnvOrDefault("ATPROTO_HANDLE", "")
 	cfg.ATProtoAppPassword = GetEnvOrDefault("ATPROTO_APP_PASSWORD", "")
 	cfg.ATProtoTokenKey = GetEnvOrDefault("ATPROTO_TOKEN_KEY", "")
-	cfg.ATProtoRefreshIntervalSeconds = GetIntEnv("ATPROTO_REFRESH_INTERVAL_SECONDS", 2700)
+	cfg.ATProtoRefreshIntervalSeconds = GetIntEnv("ATPROTO_REFRESH_INTERVAL_SECONDS", int(ATProtoDefaultRefreshInterval.Seconds()))
 	cfg.ATProtoUseImageEmbed = GetBoolEnv("ATPROTO_USE_IMAGE_EMBED", false)
 	cfg.ATProtoImageAltField = GetEnvOrDefault("ATPROTO_IMAGE_ALT_FIELD", "description")
 
