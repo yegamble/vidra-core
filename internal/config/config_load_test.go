@@ -43,13 +43,13 @@ func TestLoadCommonFields(t *testing.T) {
 			name:      "overriding values with env vars",
 			setupMode: false,
 			envVars: map[string]string{
-				"REQUIRE_IPFS":         "false",
-				"STORAGE_DIR":          "/tmp/athena",
-				"IPFS_API":             "http://ipfs:5001",
-				"MAX_UPLOAD_SIZE":      "1048576", // 1MB
-				"VIDEO_QUALITIES":      "360p,720p",
+				"REQUIRE_IPFS":            "false",
+				"STORAGE_DIR":             "/tmp/athena",
+				"IPFS_API":                "http://ipfs:5001",
+				"MAX_UPLOAD_SIZE":         "1048576", // 1MB
+				"VIDEO_QUALITIES":         "360p,720p",
 				"PINNING_SCORE_THRESHOLD": "0.5",
-				"BACKUP_EXCLUDE_DIRS":  " /dir1, dir2 ",
+				"BACKUP_EXCLUDE_DIRS":     " /dir1, dir2 ",
 			},
 			verify: func(t *testing.T, cfg *Config) {
 				if cfg.RequireIPFS != false {
@@ -82,7 +82,7 @@ func TestLoadCommonFields(t *testing.T) {
 			setupMode: false,
 			envVars: map[string]string{
 				"IPFS_STREAMING_TIMEOUT": "60",
-				"RTMP_READ_TIMEOUT":     "45",
+				"RTMP_READ_TIMEOUT":      "45",
 			},
 			verify: func(t *testing.T, cfg *Config) {
 				if cfg.IPFSStreamingTimeout != 60*time.Second {

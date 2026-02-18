@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"errors"
 	"regexp"
 	"testing"
@@ -993,10 +994,14 @@ func TestViewsRepository_Unit_BatchCreateUserViews(t *testing.T) {
 		view := sampleUserView()
 		view.ID = ""
 
-		mock.ExpectBegin()
+		args := make([]driver.Value, 39)
+		for i := 0; i < 39; i++ {
+			args[i] = sqlmock.AnyArg()
+		}
+
 		mock.ExpectExec(`(?s)INSERT INTO user_views`).
+			WithArgs(args...).
 			WillReturnResult(sqlmock.NewResult(1, 1))
-		mock.ExpectCommit()
 
 		err := repo.BatchCreateUserViews(ctx, []*domain.UserView{view})
 		require.NoError(t, err)
@@ -1013,12 +1018,14 @@ func TestViewsRepository_Unit_BatchCreateUserViews(t *testing.T) {
 		v1.ID = ""
 		v2.ID = ""
 
-		mock.ExpectBegin()
+		args := make([]driver.Value, 39)
+		for i := 0; i < 39; i++ {
+			args[i] = sqlmock.AnyArg()
+		}
+
 		mock.ExpectExec(`(?s)INSERT INTO user_views`).
-			WillReturnResult(sqlmock.NewResult(1, 1))
-		mock.ExpectExec(`(?s)INSERT INTO user_views`).
-			WillReturnResult(sqlmock.NewResult(1, 1))
-		mock.ExpectCommit()
+			WithArgs(args...).
+			WillReturnResult(sqlmock.NewResult(1, 2))
 
 		err := repo.BatchCreateUserViews(ctx, []*domain.UserView{v1, v2})
 		require.NoError(t, err)
@@ -1027,30 +1034,16 @@ func TestViewsRepository_Unit_BatchCreateUserViews(t *testing.T) {
 		require.NoError(t, mock.ExpectationsWereMet())
 	})
 
-	t.Run("begin failure", func(t *testing.T) {
+	t.Run("exec failure", func(t *testing.T) {
 		repo, mock, cleanup := newViewsRepo(t)
 		defer cleanup()
 
-		mock.ExpectBegin().WillReturnError(errors.New("begin failed"))
-
-		err := repo.BatchCreateUserViews(ctx, []*domain.UserView{sampleUserView()})
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to begin transaction")
-		require.NoError(t, mock.ExpectationsWereMet())
-	})
-
-	t.Run("insert failure rolls back", func(t *testing.T) {
-		repo, mock, cleanup := newViewsRepo(t)
-		defer cleanup()
-
-		mock.ExpectBegin()
 		mock.ExpectExec(`(?s)INSERT INTO user_views`).
 			WillReturnError(errors.New("insert failed"))
-		mock.ExpectRollback()
 
 		err := repo.BatchCreateUserViews(ctx, []*domain.UserView{sampleUserView()})
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to insert view")
+		assert.Contains(t, err.Error(), "insert failed")
 		require.NoError(t, mock.ExpectationsWereMet())
 	})
 }

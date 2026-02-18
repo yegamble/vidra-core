@@ -107,7 +107,7 @@ func (m *mockSocialRepo) GetFollow(ctx context.Context, followerDID, followingDI
 	if m.getFollowFn != nil {
 		return m.getFollowFn(ctx, followerDID, followingDID)
 	}
-	return nil, nil
+	return nil, errors.New("not found")
 }
 
 func (m *mockSocialRepo) IsFollowing(ctx context.Context, followerDID, followingDID string) (bool, error) {

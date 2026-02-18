@@ -39,7 +39,7 @@ type TestDB struct {
 	Redis *redis.Client
 }
 
-func SetupTestDB(t *testing.T) *TestDB {
+func SetupTestDB(t testing.TB) *TestDB {
 	t.Helper()
 
 	if testing.Short() {
@@ -978,7 +978,7 @@ func setupRedis() (*redis.Client, error) {
 	return client, nil
 }
 
-func cleanupTestDB(t *testing.T, testDB *TestDB) {
+func cleanupTestDB(t testing.TB, testDB *TestDB) {
 	t.Helper()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -1020,7 +1020,7 @@ func cleanupTestDB(t *testing.T, testDB *TestDB) {
 	}
 }
 
-func (tdb *TestDB) TruncateTables(t *testing.T, tables ...string) {
+func (tdb *TestDB) TruncateTables(t testing.TB, tables ...string) {
 	t.Helper()
 
 	for _, table := range tables {
@@ -1042,7 +1042,7 @@ func (tdb *TestDB) TruncateTables(t *testing.T, tables ...string) {
 	}
 }
 
-func (tdb *TestDB) WithTx(t *testing.T, fn func(*sqlx.Tx)) {
+func (tdb *TestDB) WithTx(t testing.TB, fn func(*sqlx.Tx)) {
 	t.Helper()
 
 	tx, err := tdb.DB.Beginx()
