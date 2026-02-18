@@ -69,14 +69,14 @@ func isProductionEnvironment() bool {
 	return os.Getenv("KUBERNETES_SERVICE_HOST") != ""
 }
 
-func getEnvOrDefault(key, defaultValue string) string {
+func GetEnvOrDefault(key, defaultValue string) string {
 	if value := os.Getenv(key); value != "" {
 		return value
 	}
 	return defaultValue
 }
 
-func getBoolEnv(key string, defaultValue bool) bool {
+func GetBoolEnv(key string, defaultValue bool) bool {
 	value := os.Getenv(key)
 	if value == "" {
 		return defaultValue
@@ -84,7 +84,7 @@ func getBoolEnv(key string, defaultValue bool) bool {
 	return strings.ToLower(value) == "true" || value == "1"
 }
 
-func getIntEnv(key string, defaultValue int) int {
+func GetIntEnv(key string, defaultValue int) int {
 	value := os.Getenv(key)
 	if value == "" {
 		return defaultValue
@@ -95,7 +95,7 @@ func getIntEnv(key string, defaultValue int) int {
 	return defaultValue
 }
 
-func getInt64Env(key string, defaultValue int64) int64 {
+func GetInt64Env(key string, defaultValue int64) int64 {
 	value := os.Getenv(key)
 	if value == "" {
 		return defaultValue
@@ -106,7 +106,7 @@ func getInt64Env(key string, defaultValue int64) int64 {
 	return defaultValue
 }
 
-func getFloat64Env(key string, defaultValue float64) float64 {
+func GetFloat64Env(key string, defaultValue float64) float64 {
 	value := os.Getenv(key)
 	if value == "" {
 		return defaultValue
@@ -117,7 +117,7 @@ func getFloat64Env(key string, defaultValue float64) float64 {
 	return defaultValue
 }
 
-func getStringSliceEnv(key string, defaultValue []string) []string {
+func GetStringSliceEnv(key string, defaultValue []string) []string {
 	value := os.Getenv(key)
 	if value == "" {
 		return defaultValue

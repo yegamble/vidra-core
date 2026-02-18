@@ -8,10 +8,11 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"athena/internal/config"
 
 	"github.com/dutchcoders/go-clamd"
 	"github.com/rs/zerolog/log"
@@ -705,33 +706,33 @@ func (s *VirusScanner) CleanupQuarantine(ctx context.Context) (int, error) {
 
 // LoadVirusScannerConfigFromEnv loads configuration from environment variables
 func LoadVirusScannerConfigFromEnv() (VirusScannerConfig, error) {
-	config := VirusScannerConfig{
-		Address:             os.Getenv("CLAMAV_ADDRESS"),
-		Timeout:             parseDurationEnv("CLAMAV_TIMEOUT", 300) * time.Second,
-		MaxRetries:          parseIntEnv("CLAMAV_MAX_RETRIES", 3),
-		RetryDelay:          parseDurationEnv("CLAMAV_RETRY_DELAY", 1) * time.Second,
-		QuarantineDir:       os.Getenv("QUARANTINE_DIR"),
-		AutoQuarantine:      parseBoolEnv("CLAMAV_AUTO_QUARANTINE", true),
-		AuditLogPath:        os.Getenv("CLAMAV_AUDIT_LOG"),
-		QuarantineRetention: parseDurationEnv("QUARANTINE_RETENTION_DAYS", 30*24) * time.Hour,
-		MaxStreamSize:       int64(parseIntEnv("CLAMAV_MAX_STREAM_SIZE_MB", 100)) * 1024 * 1024,
-		TempDir:             os.Getenv("CLAMAV_TEMP_DIR"),
+	configVal := VirusScannerConfig{
+		Address:             config.GetEnvOrDefault("CLAMAV_ADDRESS", ""),
+		Timeout:             time.Duration(config.GetIntEnv("CLAMAV_TIMEOUT", 300)) * time.Second,
+		MaxRetries:          config.GetIntEnv("CLAMAV_MAX_RETRIES", 3),
+		RetryDelay:          time.Duration(config.GetIntEnv("CLAMAV_RETRY_DELAY", 1)) * time.Second,
+		QuarantineDir:       config.GetEnvOrDefault("QUARANTINE_DIR", ""),
+		AutoQuarantine:      config.GetBoolEnv("CLAMAV_AUTO_QUARANTINE", true),
+		AuditLogPath:        config.GetEnvOrDefault("CLAMAV_AUDIT_LOG", ""),
+		QuarantineRetention: time.Duration(config.GetIntEnv("QUARANTINE_RETENTION_DAYS", 30*24)) * time.Hour,
+		MaxStreamSize:       int64(config.GetIntEnv("CLAMAV_MAX_STREAM_SIZE_MB", 100)) * 1024 * 1024,
+		TempDir:             config.GetEnvOrDefault("CLAMAV_TEMP_DIR", ""),
 	}
 
 	// Parse fallback mode
 	fallbackModeStr := strings.ToLower(os.Getenv("CLAMAV_FALLBACK_MODE"))
 	switch fallbackModeStr {
 	case "strict":
-		config.FallbackMode = FallbackModeStrict
+		configVal.FallbackMode = FallbackModeStrict
 	case "warn":
-		config.FallbackMode = FallbackModeWarn
+		configVal.FallbackMode = FallbackModeWarn
 	case "allow":
-		config.FallbackMode = FallbackModeAllow
+		configVal.FallbackMode = FallbackModeAllow
 	default:
-		config.FallbackMode = FallbackModeStrict
+		configVal.FallbackMode = FallbackModeStrict
 	}
 
-	return config, nil
+	return configVal, nil
 }
 
 // Helper functions
@@ -780,36 +781,4 @@ func copyFile(src, dst string) error {
 	}
 
 	return destFile.Sync()
-}
-
-func parseDurationEnv(key string, defaultValue int) time.Duration {
-	value := os.Getenv(key)
-	if value == "" {
-		return time.Duration(defaultValue)
-	}
-	parsed, err := strconv.Atoi(value)
-	if err != nil {
-		return time.Duration(defaultValue)
-	}
-	return time.Duration(parsed)
-}
-
-func parseIntEnv(key string, defaultValue int) int {
-	value := os.Getenv(key)
-	if value == "" {
-		return defaultValue
-	}
-	parsed, err := strconv.Atoi(value)
-	if err != nil {
-		return defaultValue
-	}
-	return parsed
-}
-
-func parseBoolEnv(key string, defaultValue bool) bool {
-	value := strings.ToLower(os.Getenv(key))
-	if value == "" {
-		return defaultValue
-	}
-	return value == "true" || value == "1"
 }

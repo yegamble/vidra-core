@@ -304,14 +304,14 @@ func Load() (*Config, error) {
 		}
 	}
 
-	setupCompleted := getEnvOrDefault("SETUP_COMPLETED", "")
+	setupCompleted := GetEnvOrDefault("SETUP_COMPLETED", "")
 	setupCompleted = strings.ToLower(strings.TrimSpace(setupCompleted))
 	isSetupCompleted := setupCompleted == "true" || setupCompleted == "1"
 	setupExplicitlyDisabled := setupCompleted == "false" || setupCompleted == "0"
 
-	cfg.DatabaseURL = getEnvOrDefault("DATABASE_URL", "")
-	cfg.RedisURL = getEnvOrDefault("REDIS_URL", "")
-	jwtSecret := getEnvOrDefault("JWT_SECRET", "")
+	cfg.DatabaseURL = GetEnvOrDefault("DATABASE_URL", "")
+	cfg.RedisURL = GetEnvOrDefault("REDIS_URL", "")
+	jwtSecret := GetEnvOrDefault("JWT_SECRET", "")
 
 	if setupExplicitlyDisabled || (!isSetupCompleted && (cfg.DatabaseURL == "" || cfg.RedisURL == "" || jwtSecret == "")) {
 		cfg.SetupMode = true

@@ -10,8 +10,8 @@ type CSPConfig struct {
 
 func loadCSPConfig() CSPConfig {
 	return CSPConfig{
-		Enabled:    getBoolEnv("CSP_ENABLED", true),
-		ReportOnly: getBoolEnv("CSP_REPORT_ONLY", false),
-		ReportURI:  getEnvOrDefault("CSP_REPORT_URI", ""),
+		Enabled:    GetBoolEnv("CSP_ENABLED", true),
+		ReportOnly: GetBoolEnv("CSP_REPORT_ONLY", false),
+		ReportURI:  GetEnvOrDefault("CSP_REPORT_URI", ""),
 	}
 }
