@@ -32,6 +32,7 @@ type mockSocialRepo struct {
 	revokeFollowFn func(ctx context.Context, uri string) error
 	getFollowersFn func(ctx context.Context, did string, limit, offset int) ([]domain.Follow, error)
 	getFollowingFn func(ctx context.Context, did string, limit, offset int) ([]domain.Follow, error)
+	getFollowFn    func(ctx context.Context, followerDID, followingDID string) (*domain.Follow, error)
 	isFollowingFn  func(ctx context.Context, followerDID, followingDID string) (bool, error)
 
 	createLikeFn func(ctx context.Context, like *domain.Like) error
@@ -99,6 +100,13 @@ func (m *mockSocialRepo) GetFollowing(ctx context.Context, did string, limit, of
 		return m.getFollowingFn(ctx, did, limit, offset)
 	}
 	return nil, nil
+}
+
+func (m *mockSocialRepo) GetFollow(ctx context.Context, followerDID, followingDID string) (*domain.Follow, error) {
+	if m.getFollowFn != nil {
+		return m.getFollowFn(ctx, followerDID, followingDID)
+	}
+	return nil, errors.New("not found")
 }
 
 func (m *mockSocialRepo) IsFollowing(ctx context.Context, followerDID, followingDID string) (bool, error) {
