@@ -6,8 +6,10 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -18,6 +20,8 @@ import (
 
 	_ "github.com/lib/pq"
 )
+
+var ErrRedisCLINotFound = errors.New("redis-cli not found in PATH")
 
 type RestoreManager struct {
 	target        BackupTarget
@@ -293,7 +297,47 @@ func (r *RestoreManager) restoreDatabase(ctx context.Context, dumpPath string) e
 }
 
 func (r *RestoreManager) restoreRedis(ctx context.Context, rdbPath string) error {
-	// Note: This is a placeholder. In production, you'd need to:
+	if _, err := exec.LookPath("redis-cli"); err != nil {
+		return ErrRedisCLINotFound
+	}
+
+	redisURL := ""
+	if r.BackupMgr != nil {
+		redisURL = r.BackupMgr.RedisURL
+	}
+
+	out, err := exec.CommandContext(ctx, "redis-cli", "-u", redisURL, "CONFIG", "GET", "dir").Output()
+	if err != nil {
+		return fmt.Errorf("failed to query Redis data directory: %w", err)
+	}
+
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	if len(lines) < 2 {
+		return fmt.Errorf("unexpected output from CONFIG GET dir: %q", string(out))
+	}
+	redisDataDir := strings.TrimSpace(lines[len(lines)-1])
+	if redisDataDir == "" {
+		return fmt.Errorf("redis CONFIG GET dir returned empty directory")
+	}
+
+	src, err := os.Open(rdbPath)
+	if err != nil {
+		return fmt.Errorf("failed to open RDB file: %w", err)
+	}
+	defer src.Close()
+
+	destPath := filepath.Join(redisDataDir, "dump.rdb")
+	dst, err := os.Create(destPath)
+	if err != nil {
+		return fmt.Errorf("failed to create destination RDB file %s: %w", destPath, err)
+	}
+	defer dst.Close()
+
+	if _, err := io.Copy(dst, src); err != nil {
+		return fmt.Errorf("failed to copy RDB file to %s: %w", destPath, err)
+	}
+
+	log.Printf("WARNING: RDB file copied to %s — restart Redis to load the snapshot (e.g. systemctl restart redis)", destPath)
 	return nil
 }
 

@@ -15,10 +15,7 @@ import (
 	"athena/internal/domain"
 )
 
-// TestWebFingerWithAcctResource tests WebFinger with acct: resource
 func TestWebFingerWithAcctResource(t *testing.T) {
-	// This is a unit test that only tests the handler logic
-	// It doesn't require a full service setup
 
 	cfg := &config.Config{
 		PublicBaseURL:     "https://video.example",
@@ -26,7 +23,7 @@ func TestWebFingerWithAcctResource(t *testing.T) {
 	}
 
 	handlers := &ActivityPubHandlers{
-		service: nil, // We're not testing the service layer here
+		service: nil,
 		cfg:     cfg,
 	}
 
@@ -45,7 +42,6 @@ func TestWebFingerWithAcctResource(t *testing.T) {
 	assert.Equal(t, "acct:alice@video.example", response.Subject)
 	assert.NotEmpty(t, response.Links)
 
-	// Check for self link
 	var selfLink *domain.WebFingerLink
 	for _, link := range response.Links {
 		if link.Rel == "self" {
@@ -84,7 +80,6 @@ func TestWebFingerWithHTTPSResource(t *testing.T) {
 	assert.Equal(t, "acct:bob@video.example", response.Subject)
 }
 
-// TestWebFingerMissingResource tests WebFinger without resource parameter
 func TestWebFingerMissingResource(t *testing.T) {
 	cfg := &config.Config{}
 	handlers := &ActivityPubHandlers{cfg: cfg}
@@ -97,7 +92,6 @@ func TestWebFingerMissingResource(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
-// TestWebFingerInvalidResource tests WebFinger with invalid resource format
 func TestWebFingerInvalidResource(t *testing.T) {
 	cfg := &config.Config{}
 	handlers := &ActivityPubHandlers{cfg: cfg}
@@ -110,7 +104,6 @@ func TestWebFingerInvalidResource(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
-// TestNodeInfo tests the NodeInfo discovery endpoint
 func TestNodeInfo(t *testing.T) {
 	cfg := &config.Config{
 		PublicBaseURL: "https://video.example",
@@ -139,7 +132,6 @@ func TestNodeInfo(t *testing.T) {
 	assert.Equal(t, "https://video.example/nodeinfo/2.0", firstLink["href"])
 }
 
-// TestNodeInfo20 tests the NodeInfo 2.0 endpoint
 func TestNodeInfo20(t *testing.T) {
 	cfg := &config.Config{
 		PublicBaseURL:                  "https://video.example",
@@ -166,7 +158,6 @@ func TestNodeInfo20(t *testing.T) {
 	assert.Equal(t, "A test instance", nodeInfo.Metadata["nodeDescription"])
 }
 
-// TestHostMeta tests the host-meta endpoint
 func TestHostMeta(t *testing.T) {
 	cfg := &config.Config{
 		PublicBaseURL: "https://video.example",
@@ -188,8 +179,7 @@ func TestHostMeta(t *testing.T) {
 	assert.Contains(t, body, `https://video.example/.well-known/webfinger?resource={uri}`)
 }
 
-// TestGetInboxNotImplemented tests that inbox GET returns not implemented
-func TestGetInboxNotImplemented(t *testing.T) {
+func TestGetInboxReturnsEmptyCollection(t *testing.T) {
 	handlers := &ActivityPubHandlers{}
 
 	req := httptest.NewRequest("GET", "/users/alice/inbox", nil)
@@ -197,10 +187,10 @@ func TestGetInboxNotImplemented(t *testing.T) {
 
 	handlers.GetInbox(w, req)
 
-	assert.Equal(t, http.StatusNotImplemented, w.Code)
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Contains(t, w.Header().Get("Content-Type"), "application/activity+json")
 }
 
-// TestPostInboxMissingUsername tests posting to inbox without username
 func TestPostInboxMissingUsername(t *testing.T) {
 	handlers := &ActivityPubHandlers{}
 
@@ -212,7 +202,6 @@ func TestPostInboxMissingUsername(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
-// TestPostInboxInvalidJSON tests posting invalid JSON to inbox
 func TestPostInboxInvalidJSON(t *testing.T) {
 	handlers := &ActivityPubHandlers{}
 
@@ -228,7 +217,6 @@ func TestPostInboxInvalidJSON(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
-// TestContentTypeNegotiation tests that handlers set correct content type
 func TestContentTypeNegotiation(t *testing.T) {
 	tests := []struct {
 		name         string

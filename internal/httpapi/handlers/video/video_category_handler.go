@@ -23,14 +23,12 @@ func NewVideoCategoryHandler(categoryUseCase usecase.VideoCategoryUseCase) *Vide
 	}
 }
 
-func (h *VideoCategoryHandler) RegisterRoutes(r chi.Router) {
-	// Public routes
+func (h *VideoCategoryHandler) RegisterRoutes(r chi.Router, jwtSecret string) {
 	r.Get("/api/v1/categories", h.ListCategories)
 	r.Get("/api/v1/categories/{id}", h.GetCategory)
 
-	// Admin routes
 	r.Route("/api/v1/admin/categories", func(r chi.Router) {
-		r.Use(middleware.RequireAuth)
+		r.Use(middleware.Auth(jwtSecret))
 		r.Use(middleware.RequireRole("admin"))
 
 		r.Post("/", h.CreateCategory)
@@ -39,7 +37,6 @@ func (h *VideoCategoryHandler) RegisterRoutes(r chi.Router) {
 	})
 }
 
-// ListCategories handles GET /api/v1/categories
 func (h *VideoCategoryHandler) ListCategories(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -49,7 +46,6 @@ func (h *VideoCategoryHandler) ListCategories(w http.ResponseWriter, r *http.Req
 		OrderDir:   "asc",
 	}
 
-	// Parse query parameters
 	if activeOnly := r.URL.Query().Get("active_only"); activeOnly != "" {
 		opts.ActiveOnly = activeOnly == "true"
 	}
@@ -62,7 +58,6 @@ func (h *VideoCategoryHandler) ListCategories(w http.ResponseWriter, r *http.Req
 		opts.OrderDir = orderDir
 	}
 
-	// Preferred pagination: page/pageSize with fallback to limit/offset
 	pageStr := r.URL.Query().Get("page")
 	pageSizeStr := r.URL.Query().Get("pageSize")
 	limitStr := r.URL.Query().Get("limit")
@@ -101,12 +96,10 @@ func (h *VideoCategoryHandler) ListCategories(w http.ResponseWriter, r *http.Req
 	respondWithJSON(w, http.StatusOK, categories)
 }
 
-// GetCategory handles GET /api/v1/categories/{id}
 func (h *VideoCategoryHandler) GetCategory(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	idStr := chi.URLParam(r, "id")
 
-	// Try to parse as UUID first
 	if id, err := uuid.Parse(idStr); err == nil {
 		category, err := h.categoryUseCase.GetCategoryByID(ctx, id)
 		if err != nil {
@@ -117,7 +110,6 @@ func (h *VideoCategoryHandler) GetCategory(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Otherwise, treat as slug
 	category, err := h.categoryUseCase.GetCategoryBySlug(ctx, idStr)
 	if err != nil {
 		respondWithError(w, http.StatusNotFound, "Category not found", err)
@@ -127,11 +119,9 @@ func (h *VideoCategoryHandler) GetCategory(w http.ResponseWriter, r *http.Reques
 	respondWithJSON(w, http.StatusOK, category)
 }
 
-// CreateCategory handles POST /api/v1/admin/categories
 func (h *VideoCategoryHandler) CreateCategory(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
-	// Get user ID from context
 	userID, ok := middleware.GetUserIDFromContext(ctx)
 	if !ok {
 		respondWithError(w, http.StatusUnauthorized, "Unauthorized", nil)
@@ -144,7 +134,6 @@ func (h *VideoCategoryHandler) CreateCategory(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	// Auto-generate slug if not provided
 	if req.Slug == "" && req.Name != "" {
 		req.Slug = usecase.GenerateSlug(req.Name)
 	}
@@ -158,18 +147,15 @@ func (h *VideoCategoryHandler) CreateCategory(w http.ResponseWriter, r *http.Req
 	respondWithJSON(w, http.StatusCreated, category)
 }
 
-// UpdateCategory handles PUT /api/v1/admin/categories/{id}
 func (h *VideoCategoryHandler) UpdateCategory(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
-	// Get user ID from context
 	userID, ok := middleware.GetUserIDFromContext(ctx)
 	if !ok {
 		respondWithError(w, http.StatusUnauthorized, "Unauthorized", nil)
 		return
 	}
 
-	// Parse category ID
 	categoryIDStr := chi.URLParam(r, "id")
 	categoryID, err := uuid.Parse(categoryIDStr)
 	if err != nil {
@@ -188,7 +174,6 @@ func (h *VideoCategoryHandler) UpdateCategory(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	// Fetch updated category
 	category, err := h.categoryUseCase.GetCategoryByID(ctx, categoryID)
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Failed to fetch updated category", err)
@@ -198,18 +183,15 @@ func (h *VideoCategoryHandler) UpdateCategory(w http.ResponseWriter, r *http.Req
 	respondWithJSON(w, http.StatusOK, category)
 }
 
-// DeleteCategory handles DELETE /api/v1/admin/categories/{id}
 func (h *VideoCategoryHandler) DeleteCategory(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
-	// Get user ID from context
 	userID, ok := middleware.GetUserIDFromContext(ctx)
 	if !ok {
 		respondWithError(w, http.StatusUnauthorized, "Unauthorized", nil)
 		return
 	}
 
-	// Parse category ID
 	categoryIDStr := chi.URLParam(r, "id")
 	categoryID, err := uuid.Parse(categoryIDStr)
 	if err != nil {
@@ -225,14 +207,11 @@ func (h *VideoCategoryHandler) DeleteCategory(w http.ResponseWriter, r *http.Req
 	respondWithJSON(w, http.StatusNoContent, nil)
 }
 
-// Helper functions for response
 func respondWithJSON(w http.ResponseWriter, code int, payload interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 	if payload != nil {
 		if err := json.NewEncoder(w).Encode(payload); err != nil {
-			// Log encoding error but response is already committed
-			// In production, this should be logged properly
 			_ = err
 		}
 	}

@@ -3,6 +3,7 @@ package views
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -75,6 +76,11 @@ func (m *MockViewsRepository) BatchUpdateTrendingVideos(ctx context.Context, vid
 
 func (m *MockViewsRepository) IncrementVideoViews(ctx context.Context, videoID string) error {
 	args := m.Called(ctx, videoID)
+	return args.Error(0)
+}
+
+func (m *MockViewsRepository) BatchIncrementVideoViews(ctx context.Context, counts map[string]int64) error {
+	args := m.Called(ctx, counts)
 	return args.Error(0)
 }
 
@@ -223,7 +229,7 @@ func TestTrackView_Success(t *testing.T) {
 
 	viewsRepo.On("GetUserViewBySessionAndVideo", mock.Anything, "sess-1", "vid-1").Return(nil, nil)
 	viewsRepo.On("CreateUserView", mock.Anything, mock.AnythingOfType("*domain.UserView")).Return(nil)
-	viewsRepo.On("IncrementVideoViews", mock.Anything, "vid-1").Return(nil)
+	viewsRepo.On("BatchIncrementVideoViews", mock.Anything, mock.Anything).Return(nil)
 
 	req := &domain.ViewTrackingRequest{
 		VideoID:         "vid-1",
@@ -301,7 +307,7 @@ func TestProcessViewTask_NewView(t *testing.T) {
 
 	viewsRepo.On("GetUserViewBySessionAndVideo", mock.Anything, "sess-1", "vid-1").Return(nil, nil)
 	viewsRepo.On("CreateUserView", mock.Anything, mock.AnythingOfType("*domain.UserView")).Return(nil)
-	viewsRepo.On("IncrementVideoViews", mock.Anything, "vid-1").Return(nil)
+	viewsRepo.On("BatchIncrementVideoViews", mock.Anything, map[string]int64{"vid-1": 1}).Return(nil)
 
 	userID := "user-1"
 	task := viewTask{
@@ -319,10 +325,11 @@ func TestProcessViewTask_NewView(t *testing.T) {
 	}
 
 	svc.processViewTask(task)
+	svc.flushViewCounts()
 
 	viewsRepo.AssertExpectations(t)
 	viewsRepo.AssertCalled(t, "CreateUserView", mock.Anything, mock.AnythingOfType("*domain.UserView"))
-	viewsRepo.AssertCalled(t, "IncrementVideoViews", mock.Anything, "vid-1")
+	viewsRepo.AssertCalled(t, "BatchIncrementVideoViews", mock.Anything, map[string]int64{"vid-1": 1})
 }
 
 func TestProcessViewTask_UpdateExistingView(t *testing.T) {
@@ -408,7 +415,9 @@ func TestTrackViewAndWorkerProcesses(t *testing.T) {
 	videoRepo.On("GetByID", mock.Anything, "vid-1").Return(video, nil)
 	viewsRepo.On("GetUserViewBySessionAndVideo", mock.Anything, "sess-1", "vid-1").Return(nil, nil)
 	viewsRepo.On("CreateUserView", mock.Anything, mock.AnythingOfType("*domain.UserView")).Return(nil)
-	viewsRepo.On("IncrementVideoViews", mock.Anything, "vid-1").Return(nil)
+	viewsRepo.On("BatchIncrementVideoViews", mock.Anything, mock.MatchedBy(func(counts map[string]int64) bool {
+		return counts["vid-1"] == 1
+	})).Return(nil)
 
 	req := &domain.ViewTrackingRequest{
 		VideoID:         "vid-1",
@@ -422,7 +431,9 @@ func TestTrackViewAndWorkerProcesses(t *testing.T) {
 	svc.Close()
 
 	viewsRepo.AssertCalled(t, "CreateUserView", mock.Anything, mock.AnythingOfType("*domain.UserView"))
-	viewsRepo.AssertCalled(t, "IncrementVideoViews", mock.Anything, "vid-1")
+	viewsRepo.AssertCalled(t, "BatchIncrementVideoViews", mock.Anything, mock.MatchedBy(func(counts map[string]int64) bool {
+		return counts["vid-1"] == 1
+	}))
 }
 
 func TestGetVideoAnalytics_Success(t *testing.T) {
@@ -1030,4 +1041,60 @@ func TestUpdateTrendingMetrics_Performance(t *testing.T) {
 	mockViewsRepo.AssertNumberOfCalls(t, "CalculateEngagementScore", 0)
 	mockViewsRepo.AssertNumberOfCalls(t, "GetUniqueViews", 0)
 	mockViewsRepo.AssertNumberOfCalls(t, "UpdateTrendingVideo", 0)
+}
+
+func TestViewCountBatching_FlushesOnClose(t *testing.T) {
+	viewsRepo := new(MockViewsRepository)
+	videoRepo := new(MockVideoRepository)
+	svc := NewService(viewsRepo, videoRepo)
+
+	viewsRepo.On("GetUserViewBySessionAndVideo", mock.Anything, "sess-1", "vid-1").Return(nil, nil)
+	viewsRepo.On("CreateUserView", mock.Anything, mock.AnythingOfType("*domain.UserView")).Return(nil)
+	viewsRepo.On("BatchIncrementVideoViews", mock.Anything, map[string]int64{"vid-1": 1}).Return(nil)
+
+	task := viewTask{
+		request: &domain.ViewTrackingRequest{
+			VideoID:         "vid-1",
+			SessionID:       "sess-1",
+			FingerprintHash: "fp-hash",
+		},
+	}
+	svc.processViewTask(task)
+
+	svc.Close()
+
+	viewsRepo.AssertCalled(t, "BatchIncrementVideoViews", mock.Anything, map[string]int64{"vid-1": 1})
+}
+
+func TestViewCountBatching_AggregatesMultipleViews(t *testing.T) {
+	viewsRepo := new(MockViewsRepository)
+	videoRepo := new(MockVideoRepository)
+	svc := NewService(viewsRepo, videoRepo)
+	defer svc.Close()
+
+	for i := range 3 {
+		sid := fmt.Sprintf("sess-%d", i)
+		viewsRepo.On("GetUserViewBySessionAndVideo", mock.Anything, sid, "vid-1").Return(nil, nil)
+	}
+	viewsRepo.On("CreateUserView", mock.Anything, mock.AnythingOfType("*domain.UserView")).Return(nil)
+	viewsRepo.On("BatchIncrementVideoViews", mock.Anything, mock.MatchedBy(func(counts map[string]int64) bool {
+		return counts["vid-1"] == 3
+	})).Return(nil)
+
+	for i := range 3 {
+		task := viewTask{
+			request: &domain.ViewTrackingRequest{
+				VideoID:         "vid-1",
+				SessionID:       fmt.Sprintf("sess-%d", i),
+				FingerprintHash: "fp-hash",
+			},
+		}
+		svc.processViewTask(task)
+	}
+
+	svc.flushViewCounts()
+
+	viewsRepo.AssertCalled(t, "BatchIncrementVideoViews", mock.Anything, mock.MatchedBy(func(counts map[string]int64) bool {
+		return counts["vid-1"] == 3
+	}))
 }

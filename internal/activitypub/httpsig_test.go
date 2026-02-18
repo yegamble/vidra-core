@@ -2,6 +2,9 @@ package activitypub
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"crypto/sha512"
+	"encoding/base64"
 	"io"
 	"net/http"
 	"testing"
@@ -24,7 +27,6 @@ func TestGenerateKeyPair(t *testing.T) {
 		t.Error("Private key is empty")
 	}
 
-	// Verify keys can be parsed
 	parsedPublicKey, err := parsePublicKey(publicKey)
 	if err != nil {
 		t.Errorf("Failed to parse generated public key: %v", err)
@@ -35,14 +37,12 @@ func TestGenerateKeyPair(t *testing.T) {
 		t.Errorf("Failed to parse generated private key: %v", err)
 	}
 
-	// CRITICAL SECURITY TEST: Verify key size is 3072 bits (NIST standard)
 	keySize := parsedPrivateKey.N.BitLen()
 	expectedKeySize := 3072
 	if keySize != expectedKeySize {
 		t.Errorf("SECURITY: RSA key size is %d bits, expected %d bits per NIST SP 800-57", keySize, expectedKeySize)
 	}
 
-	// Also verify the public key has the same size
 	publicKeySize := parsedPublicKey.N.BitLen()
 	if publicKeySize != expectedKeySize {
 		t.Errorf("SECURITY: RSA public key size is %d bits, expected %d bits", publicKeySize, expectedKeySize)
@@ -50,13 +50,11 @@ func TestGenerateKeyPair(t *testing.T) {
 }
 
 func TestSignAndVerifyRequest(t *testing.T) {
-	// Generate a key pair
 	publicKey, privateKey, err := GenerateKeyPair()
 	if err != nil {
 		t.Fatalf("Failed to generate key pair: %v", err)
 	}
 
-	// Create a test request
 	body := []byte(`{"type":"Follow","actor":"https://example.com/users/alice"}`)
 	req, err := http.NewRequest("POST", "https://mastodon.example/users/bob/inbox", bytes.NewReader(body))
 	if err != nil {
@@ -66,19 +64,16 @@ func TestSignAndVerifyRequest(t *testing.T) {
 	req.Header.Set("Host", "mastodon.example")
 	req.Header.Set("Content-Type", "application/activity+json")
 
-	// Sign the request
 	keyID := "https://example.com/users/alice#main-key"
 	err = SignRequest(req, privateKey, keyID)
 	if err != nil {
 		t.Fatalf("Failed to sign request: %v", err)
 	}
 
-	// Verify the signature header exists
 	if req.Header.Get("Signature") == "" {
 		t.Error("Signature header not set")
 	}
 
-	// Verify the request
 	verifier := NewHTTPSignatureVerifier()
 	err = verifier.VerifyRequest(req, publicKey)
 	if err != nil {
@@ -87,7 +82,6 @@ func TestSignAndVerifyRequest(t *testing.T) {
 }
 
 func TestVerifyRequestWithInvalidSignature(t *testing.T) {
-	// Generate two different key pairs
 	publicKey1, _, err := GenerateKeyPair()
 	if err != nil {
 		t.Fatalf("Failed to generate key pair 1: %v", err)
@@ -98,7 +92,6 @@ func TestVerifyRequestWithInvalidSignature(t *testing.T) {
 		t.Fatalf("Failed to generate key pair 2: %v", err)
 	}
 
-	// Create and sign request with privateKey2
 	body := []byte(`{"type":"Follow"}`)
 	req, err := http.NewRequest("POST", "https://mastodon.example/users/bob/inbox", bytes.NewReader(body))
 	if err != nil {
@@ -112,7 +105,6 @@ func TestVerifyRequestWithInvalidSignature(t *testing.T) {
 		t.Fatalf("Failed to sign request: %v", err)
 	}
 
-	// Try to verify with publicKey1 (should fail)
 	verifier := NewHTTPSignatureVerifier()
 	err = verifier.VerifyRequest(req, publicKey1)
 	if err == nil {
@@ -174,7 +166,6 @@ func TestSignRequestAddsDateHeader(t *testing.T) {
 		t.Fatalf("Failed to create request: %v", err)
 	}
 
-	// Set Host header but don't set Date header
 	req.Header.Set("Host", "example.com")
 	keyID := "https://example.com/users/test#main-key"
 	err = SignRequest(req, privateKey, keyID)
@@ -182,13 +173,10 @@ func TestSignRequestAddsDateHeader(t *testing.T) {
 		t.Fatalf("Failed to sign request: %v", err)
 	}
 
-	// Check that Date header was added
 	if req.Header.Get("Date") == "" {
 		t.Error("Date header was not added by SignRequest")
 	}
 }
-
-// Edge Case Tests
 
 func TestSignRequestWithMissingHost(t *testing.T) {
 	_, privateKey, err := GenerateKeyPair()
@@ -201,11 +189,9 @@ func TestSignRequestWithMissingHost(t *testing.T) {
 		t.Fatalf("Failed to create request: %v", err)
 	}
 
-	// Don't set Host header
 	keyID := "https://example.com/users/test#main-key"
 	err = SignRequest(req, privateKey, keyID)
 
-	// Should fail because host header is required
 	assert.Error(t, err)
 }
 
@@ -215,7 +201,6 @@ func TestVerifyRequestWithTamperedBody(t *testing.T) {
 		t.Fatalf("Failed to generate key pair: %v", err)
 	}
 
-	// Create and sign request
 	originalBody := []byte(`{"type":"Follow","actor":"https://example.com/users/alice"}`)
 	req, err := http.NewRequest("POST", "https://mastodon.example/users/bob/inbox", bytes.NewReader(originalBody))
 	if err != nil {
@@ -229,16 +214,11 @@ func TestVerifyRequestWithTamperedBody(t *testing.T) {
 		t.Fatalf("Failed to sign request: %v", err)
 	}
 
-	// Tamper with the body (in practice, we'd need to modify the Digest header)
 	tamperedBody := []byte(`{"type":"Delete","actor":"https://example.com/users/alice"}`)
 	req.Body = io.NopCloser(bytes.NewReader(tamperedBody))
 
-	// Verification should still pass because we're not verifying Digest in this implementation
-	// This demonstrates a limitation - we should verify Digest header in production
 	verifier := NewHTTPSignatureVerifier()
 	_ = verifier.VerifyRequest(req, publicKey)
-	// This might pass or fail depending on implementation details
-	// In production, you'd want to verify the Digest header
 }
 
 func TestSignRequestWithNonStandardHeaders(t *testing.T) {
@@ -279,7 +259,6 @@ func TestVerifyRequestWithExpiredSignature(t *testing.T) {
 		t.Fatalf("Failed to create request: %v", err)
 	}
 
-	// Set date far in the past
 	req.Header.Set("Date", "Mon, 01 Jan 2020 00:00:00 GMT")
 	req.Header.Set("Host", "example.com")
 
@@ -292,8 +271,6 @@ func TestVerifyRequestWithExpiredSignature(t *testing.T) {
 	verifier := NewHTTPSignatureVerifier()
 	err = verifier.VerifyRequest(req, publicKey)
 
-	// Signature should be rejected because the date is too old (expired)
-	// The implementation checks for signature expiration
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "signature expired")
 }
@@ -325,9 +302,7 @@ func TestParseSignatureHeaderWithMalformedInput(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			params, err := parseSignatureHeader(tt.header)
 
-			// Should not error but may return incomplete params
 			assert.NoError(t, err)
-			// The quality of parsing depends on implementation
 			_ = params
 		})
 	}
@@ -340,12 +315,10 @@ func TestBuildSigningStringWithMissingHeader(t *testing.T) {
 	}
 
 	req.Header.Set("Host", "example.com")
-	// Don't set Date header
 
 	headers := []string{"(request-target)", "host", "date"}
 	_, err = buildSigningString(req, headers)
 
-	// Should error because date header is missing
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "date")
 }
@@ -398,7 +371,6 @@ func TestSignatureHeaderFormat(t *testing.T) {
 	sigHeader := req.Header.Get("Signature")
 	assert.NotEmpty(t, sigHeader)
 
-	// Verify format
 	assert.Contains(t, sigHeader, `keyId="`)
 	assert.Contains(t, sigHeader, `algorithm="rsa-sha256"`)
 	assert.Contains(t, sigHeader, `headers="`)
@@ -485,4 +457,42 @@ func BenchmarkVerifyRequest(b *testing.B) {
 			b.Fatal(err)
 		}
 	}
+}
+
+func TestVerifyDigest_SHA256(t *testing.T) {
+	body := []byte(`{"type":"Follow"}`)
+	hash := sha256.Sum256(body)
+	digest := "SHA-256=" + base64.StdEncoding.EncodeToString(hash[:])
+	err := verifyDigest(body, digest)
+	assert.NoError(t, err, "SHA-256 digest should verify correctly")
+}
+
+func TestVerifyDigest_SHA512(t *testing.T) {
+	body := []byte(`{"type":"Follow"}`)
+	hash := sha512.Sum512(body)
+	digest := "SHA-512=" + base64.StdEncoding.EncodeToString(hash[:])
+	err := verifyDigest(body, digest)
+	assert.NoError(t, err, "SHA-512 digest should verify correctly")
+}
+
+func TestVerifyDigest_SHA512_RejectsSHA256Hash(t *testing.T) {
+	body := []byte(`{"type":"Follow"}`)
+	hash := sha256.Sum256(body)
+	digest := "SHA-512=" + base64.StdEncoding.EncodeToString(hash[:])
+	err := verifyDigest(body, digest)
+	assert.Error(t, err, "SHA-512 header with SHA-256 hash should fail")
+}
+
+func TestVerifyDigest_Mismatch(t *testing.T) {
+	body := []byte(`{"type":"Follow"}`)
+	hash := sha256.Sum256([]byte("different body"))
+	digest := "SHA-256=" + base64.StdEncoding.EncodeToString(hash[:])
+	err := verifyDigest(body, digest)
+	assert.Error(t, err, "mismatched digest should fail")
+}
+
+func TestVerifyDigest_UnsupportedAlgorithm(t *testing.T) {
+	body := []byte(`{"type":"Follow"}`)
+	err := verifyDigest(body, "MD5=abc123")
+	assert.Error(t, err)
 }

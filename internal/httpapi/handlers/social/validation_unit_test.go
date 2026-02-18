@@ -510,19 +510,20 @@ func TestSocialHandler_ValidationPaths(t *testing.T) {
 		{
 			name: "follow invalid body",
 			req: func() *http.Request {
-				return httptest.NewRequest(http.MethodPost, "/api/v1/social/follow", bytes.NewBufferString(`{`))
+				req := httptest.NewRequest(http.MethodPost, "/api/v1/social/follow", bytes.NewBufferString(`{`))
+				return withSocialAuthUser(req)
 			},
 			call:   h.Follow,
 			status: http.StatusBadRequest,
 		},
 		{
-			name: "unfollow missing follower did",
+			name: "unfollow missing auth",
 			req: func() *http.Request {
 				req := httptest.NewRequest(http.MethodDelete, "/api/v1/social/follow/alice", nil)
 				return withSocialRouteParams(req, map[string]string{"handle": "alice"})
 			},
 			call:   h.Unfollow,
-			status: http.StatusBadRequest,
+			status: http.StatusUnauthorized,
 		},
 		{
 			name: "like invalid body",

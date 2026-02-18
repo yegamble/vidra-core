@@ -475,6 +475,18 @@ func (r *ViewsRepository) IncrementVideoViews(ctx context.Context, videoID strin
 	return err
 }
 
+func (r *ViewsRepository) BatchIncrementVideoViews(ctx context.Context, counts map[string]int64) error {
+	for videoID, count := range counts {
+		_, err := r.db.ExecContext(ctx,
+			`UPDATE videos SET views = views + $2, updated_at = NOW() WHERE id = $1::uuid`,
+			videoID, count)
+		if err != nil {
+			return fmt.Errorf("batch increment views for %s: %w", videoID, err)
+		}
+	}
+	return nil
+}
+
 func (r *ViewsRepository) GetUniqueViews(ctx context.Context, videoID string, startDate, endDate time.Time) (int64, error) {
 	query := `SELECT get_unique_views($1, $2, $3)`
 	var count int64

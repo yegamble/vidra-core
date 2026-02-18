@@ -16,13 +16,11 @@ import (
 	"athena/internal/middleware"
 )
 
-// WaitingRoomHandler handles waiting room operations
 type WaitingRoomHandler struct {
 	streamRepo StreamRepository
 	userRepo   UserRepository
 }
 
-// NewWaitingRoomHandler creates a new waiting room handler
 func NewWaitingRoomHandler(streamRepo StreamRepository, userRepo UserRepository) *WaitingRoomHandler {
 	return &WaitingRoomHandler{
 		streamRepo: streamRepo,
@@ -30,7 +28,6 @@ func NewWaitingRoomHandler(streamRepo StreamRepository, userRepo UserRepository)
 	}
 }
 
-// WaitingRoomInfo represents waiting room information
 type WaitingRoomInfo struct {
 	StreamID           uuid.UUID  `json:"stream_id"`
 	Title              string     `json:"title"`
@@ -45,7 +42,6 @@ type WaitingRoomInfo struct {
 	ViewerCount        int        `json:"viewer_count"`
 }
 
-// ScheduleStreamRequest represents a request to schedule a stream
 type ScheduleStreamRequest struct {
 	ScheduledStart     time.Time  `json:"scheduled_start" validate:"required"`
 	ScheduledEnd       *time.Time `json:"scheduled_end,omitempty"`
@@ -53,29 +49,26 @@ type ScheduleStreamRequest struct {
 	WaitingRoomMessage string     `json:"waiting_room_message,omitempty" validate:"max=500"`
 }
 
-// UpdateWaitingRoomRequest represents a request to update waiting room settings
 type UpdateWaitingRoomRequest struct {
 	WaitingRoomEnabled bool   `json:"waiting_room_enabled"`
 	WaitingRoomMessage string `json:"waiting_room_message,omitempty" validate:"max=500"`
 }
 
-// RegisterWaitingRoomRoutes registers waiting room routes
-func (h *WaitingRoomHandler) RegisterWaitingRoomRoutes(r chi.Router) {
+func (h *WaitingRoomHandler) RegisterWaitingRoomRoutes(r chi.Router, jwtSecret string) {
 	r.Route("/api/v1/streams/{streamId}/waiting-room", func(r chi.Router) {
 		r.Get("/", h.GetWaitingRoom)
-		r.With(middleware.RequireAuth).Put("/", h.UpdateWaitingRoom)
+		r.With(middleware.Auth(jwtSecret)).Put("/", h.UpdateWaitingRoom)
 	})
 
 	r.Route("/api/v1/streams/{streamId}/schedule", func(r chi.Router) {
-		r.With(middleware.RequireAuth).Post("/", h.ScheduleStream)
-		r.With(middleware.RequireAuth).Delete("/", h.CancelSchedule)
+		r.With(middleware.Auth(jwtSecret)).Post("/", h.ScheduleStream)
+		r.With(middleware.Auth(jwtSecret)).Delete("/", h.CancelSchedule)
 	})
 
 	r.Get("/api/v1/streams/scheduled", h.GetScheduledStreams)
 	r.Get("/api/v1/streams/upcoming", h.GetUpcomingStreams)
 }
 
-// GetWaitingRoom gets waiting room information for a stream
 func (h *WaitingRoomHandler) GetWaitingRoom(w http.ResponseWriter, r *http.Request) {
 	streamIDStr := chi.URLParam(r, "streamId")
 	streamID, err := uuid.Parse(streamIDStr)
@@ -84,7 +77,6 @@ func (h *WaitingRoomHandler) GetWaitingRoom(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// Get stream information
 	stream, err := h.streamRepo.GetByID(r.Context(), streamIDStr)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -95,20 +87,17 @@ func (h *WaitingRoomHandler) GetWaitingRoom(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// Check if stream is in waiting room or scheduled status
 	if stream.Status != "waiting_room" && stream.Status != "scheduled" {
 		shared.WriteError(w, http.StatusBadRequest, fmt.Errorf("stream is not in waiting room or scheduled status"))
 		return
 	}
 
-	// Get channel information
 	channel, err := h.streamRepo.GetChannelByID(r.Context(), stream.ChannelID)
 	if err != nil {
 		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to get channel information"))
 		return
 	}
 
-	// Calculate time until start
 	var timeUntilStart *string
 	if stream.ScheduledStart != nil && stream.ScheduledStart.After(time.Now()) {
 		duration := time.Until(*stream.ScheduledStart)
@@ -116,11 +105,8 @@ func (h *WaitingRoomHandler) GetWaitingRoom(w http.ResponseWriter, r *http.Reque
 		timeUntilStart = &formatted
 	}
 
-	// Get viewer count if stream is in waiting room
 	viewerCount := 0
 	if stream.Status == "waiting_room" {
-		// This would typically come from a WebSocket server or cache
-		// For now, we'll return 0
 		viewerCount = 0
 	}
 
@@ -141,7 +127,6 @@ func (h *WaitingRoomHandler) GetWaitingRoom(w http.ResponseWriter, r *http.Reque
 	shared.WriteJSON(w, http.StatusOK, response)
 }
 
-// UpdateWaitingRoom updates waiting room settings for a stream
 func (h *WaitingRoomHandler) UpdateWaitingRoom(w http.ResponseWriter, r *http.Request) {
 	streamIDStr := chi.URLParam(r, "streamId")
 	streamID, err := uuid.Parse(streamIDStr)
@@ -150,14 +135,12 @@ func (h *WaitingRoomHandler) UpdateWaitingRoom(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	// Get user ID from context
 	userID, ok := middleware.GetUserIDFromContext(r.Context())
 	if !ok || userID == uuid.Nil {
 		shared.WriteError(w, http.StatusUnauthorized, fmt.Errorf("unauthorized"))
 		return
 	}
 
-	// Get stream to verify ownership
 	stream, err := h.streamRepo.GetByID(r.Context(), streamIDStr)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -168,7 +151,6 @@ func (h *WaitingRoomHandler) UpdateWaitingRoom(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	// Verify the user owns the channel
 	channel, err := h.streamRepo.GetChannelByID(r.Context(), stream.ChannelID)
 	if err != nil {
 		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to get channel"))
@@ -180,14 +162,12 @@ func (h *WaitingRoomHandler) UpdateWaitingRoom(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	// Parse request body
 	var req UpdateWaitingRoomRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		shared.WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid request body"))
 		return
 	}
 
-	// Update waiting room settings
 	err = h.streamRepo.UpdateWaitingRoom(r.Context(), streamID, req.WaitingRoomEnabled, req.WaitingRoomMessage)
 	if err != nil {
 		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to update waiting room settings"))
@@ -197,7 +177,6 @@ func (h *WaitingRoomHandler) UpdateWaitingRoom(w http.ResponseWriter, r *http.Re
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// ScheduleStream schedules a stream
 func (h *WaitingRoomHandler) ScheduleStream(w http.ResponseWriter, r *http.Request) {
 	streamIDStr := chi.URLParam(r, "streamId")
 	streamID, err := uuid.Parse(streamIDStr)
@@ -206,21 +185,18 @@ func (h *WaitingRoomHandler) ScheduleStream(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// Get user ID from context
 	userID, ok := middleware.GetUserIDFromContext(r.Context())
 	if !ok || userID == uuid.Nil {
 		shared.WriteError(w, http.StatusUnauthorized, fmt.Errorf("unauthorized"))
 		return
 	}
 
-	// Parse request body
 	var req ScheduleStreamRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		shared.WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid request body"))
 		return
 	}
 
-	// Validate scheduled times
 	if req.ScheduledStart.Before(time.Now()) {
 		shared.WriteError(w, http.StatusBadRequest, fmt.Errorf("scheduled start time must be in the future"))
 		return
@@ -231,7 +207,6 @@ func (h *WaitingRoomHandler) ScheduleStream(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// Get stream to verify ownership
 	stream, err := h.streamRepo.GetByID(r.Context(), streamIDStr)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -242,7 +217,6 @@ func (h *WaitingRoomHandler) ScheduleStream(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// Verify the user owns the channel
 	channel, err := h.streamRepo.GetChannelByID(r.Context(), stream.ChannelID)
 	if err != nil {
 		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to get channel"))
@@ -254,7 +228,6 @@ func (h *WaitingRoomHandler) ScheduleStream(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// Update stream scheduling
 	err = h.streamRepo.ScheduleStream(r.Context(), streamID, &req.ScheduledStart, req.ScheduledEnd,
 		req.WaitingRoomEnabled, req.WaitingRoomMessage)
 	if err != nil {
@@ -271,7 +244,6 @@ func (h *WaitingRoomHandler) ScheduleStream(w http.ResponseWriter, r *http.Reque
 	})
 }
 
-// CancelSchedule cancels a scheduled stream
 func (h *WaitingRoomHandler) CancelSchedule(w http.ResponseWriter, r *http.Request) {
 	streamIDStr := chi.URLParam(r, "streamId")
 	streamID, err := uuid.Parse(streamIDStr)
@@ -280,14 +252,12 @@ func (h *WaitingRoomHandler) CancelSchedule(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// Get user ID from context
 	userID, ok := middleware.GetUserIDFromContext(r.Context())
 	if !ok || userID == uuid.Nil {
 		shared.WriteError(w, http.StatusUnauthorized, fmt.Errorf("unauthorized"))
 		return
 	}
 
-	// Get stream to verify ownership
 	stream, err := h.streamRepo.GetByID(r.Context(), streamIDStr)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -298,7 +268,6 @@ func (h *WaitingRoomHandler) CancelSchedule(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// Verify the user owns the channel
 	channel, err := h.streamRepo.GetChannelByID(r.Context(), stream.ChannelID)
 	if err != nil {
 		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to get channel"))
@@ -310,7 +279,6 @@ func (h *WaitingRoomHandler) CancelSchedule(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// Cancel the schedule
 	err = h.streamRepo.CancelSchedule(r.Context(), streamID)
 	if err != nil {
 		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to cancel scheduled stream"))
@@ -320,13 +288,10 @@ func (h *WaitingRoomHandler) CancelSchedule(w http.ResponseWriter, r *http.Reque
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// GetScheduledStreams gets all scheduled streams
 func (h *WaitingRoomHandler) GetScheduledStreams(w http.ResponseWriter, r *http.Request) {
-	// Get pagination parameters
 	limit := 20
 	offset := 0
 
-	// Get scheduled streams
 	streams, err := h.streamRepo.GetScheduledStreams(r.Context(), limit, offset)
 	if err != nil {
 		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to get scheduled streams"))
@@ -336,12 +301,9 @@ func (h *WaitingRoomHandler) GetScheduledStreams(w http.ResponseWriter, r *http.
 	shared.WriteJSON(w, http.StatusOK, streams)
 }
 
-// GetUpcomingStreams gets upcoming streams for the authenticated user
 func (h *WaitingRoomHandler) GetUpcomingStreams(w http.ResponseWriter, r *http.Request) {
-	// Get user ID from context (optional - can work without auth)
 	userID, _ := middleware.GetUserIDFromContext(r.Context())
 
-	// Get upcoming streams
 	streams, err := h.streamRepo.GetUpcomingStreams(r.Context(), userID, 10)
 	if err != nil {
 		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to get upcoming streams"))
@@ -351,7 +313,6 @@ func (h *WaitingRoomHandler) GetUpcomingStreams(w http.ResponseWriter, r *http.R
 	shared.WriteJSON(w, http.StatusOK, streams)
 }
 
-// StreamRepository interface extension for waiting room operations
 type StreamRepository interface {
 	GetByID(ctx context.Context, id string) (*domain.LiveStream, error)
 	GetChannelByID(ctx context.Context, id uuid.UUID) (*domain.Channel, error)
@@ -362,12 +323,10 @@ type StreamRepository interface {
 	GetUpcomingStreams(ctx context.Context, userID uuid.UUID, limit int) ([]*domain.LiveStream, error)
 }
 
-// UserRepository interface for user operations
 type UserRepository interface {
 	GetByID(ctx context.Context, id string) (*domain.User, error)
 }
 
-// formatDuration formats a duration into a human-readable string
 func formatDuration(d time.Duration) string {
 	d = d.Round(time.Second)
 

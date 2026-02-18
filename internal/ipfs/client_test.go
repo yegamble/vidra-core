@@ -2,6 +2,9 @@ package ipfs
 
 import (
 	"context"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -52,7 +55,6 @@ func TestClient_AddDirectory_Disabled(t *testing.T) {
 }
 
 func TestClient_AddDirectory_NotADirectory(t *testing.T) {
-	// Create a temp file
 	tmpFile, err := os.CreateTemp("", "test-*.txt")
 	if err != nil {
 		t.Fatal(err)
@@ -79,14 +81,11 @@ func TestClient_AddDirectory_NonExistent(t *testing.T) {
 	}
 }
 
-// TestClient_AddFile_Integration tests file upload to a real IPFS node
-// This test is skipped by default and requires a running IPFS node
 func TestClient_AddFile_Integration(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test")
 	}
 
-	// Create a temporary test file
 	tmpDir := t.TempDir()
 	testFile := filepath.Join(tmpDir, "test.txt")
 	content := []byte("Hello IPFS!")
@@ -109,20 +108,17 @@ func TestClient_AddFile_Integration(t *testing.T) {
 	t.Logf("Uploaded file with CID: %s", cid)
 }
 
-// TestClient_AddDirectory_Integration tests directory upload to a real IPFS node
 func TestClient_AddDirectory_Integration(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test")
 	}
 
-	// Create a temporary test directory with files
 	tmpDir := t.TempDir()
 	testDir := filepath.Join(tmpDir, "testdir")
 	if err := os.Mkdir(testDir, 0755); err != nil {
 		t.Fatal(err)
 	}
 
-	// Create some test files
 	files := map[string]string{
 		"file1.txt":        "Content 1",
 		"file2.txt":        "Content 2",
@@ -152,6 +148,184 @@ func TestClient_AddDirectory_Integration(t *testing.T) {
 	}
 
 	t.Logf("Uploaded directory with CID: %s", cid)
+}
+
+func TestClient_Cat_Disabled(t *testing.T) {
+	client := NewClient("", "", time.Second)
+	_, err := client.Cat(context.Background(), "QmTest")
+	if err == nil {
+		t.Fatal("expected error when IPFS is disabled")
+	}
+	if !strings.Contains(err.Error(), "IPFS not enabled") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestClient_Cat_Success(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v0/cat" && r.URL.Query().Get("arg") == "QmTestCID" {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("hello ipfs content"))
+		} else {
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL, "", time.Second)
+	rc, err := client.Cat(context.Background(), "QmTestCID")
+	if err != nil {
+		t.Fatalf("Cat() error = %v", err)
+	}
+	defer rc.Close()
+
+	data, err := io.ReadAll(rc)
+	if err != nil {
+		t.Fatalf("ReadAll() error = %v", err)
+	}
+	if string(data) != "hello ipfs content" {
+		t.Fatalf("Cat() content = %q, want %q", string(data), "hello ipfs content")
+	}
+}
+
+func TestClient_Cat_ServerError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte("dag node not found"))
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL, "", time.Second)
+	_, err := client.Cat(context.Background(), "QmNotFound")
+	if err == nil {
+		t.Fatal("expected error on server error")
+	}
+}
+
+func TestClient_Unpin_Disabled(t *testing.T) {
+	client := NewClient("", "", time.Second)
+	err := client.Unpin(context.Background(), "QmTest")
+	if err == nil {
+		t.Fatal("expected error when IPFS is disabled")
+	}
+	if !strings.Contains(err.Error(), "IPFS not enabled") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestClient_Unpin_Success(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v0/pin/rm" && r.URL.Query().Get("arg") == "QmTestCID" {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"Pins":["QmTestCID"]}`))
+		} else {
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL, "", time.Second)
+	if err := client.Unpin(context.Background(), "QmTestCID"); err != nil {
+		t.Fatalf("Unpin() error = %v", err)
+	}
+}
+
+func TestClient_Unpin_NotPinned(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`not pinned or pinned indirectly`))
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL, "", time.Second)
+	err := client.Unpin(context.Background(), "QmNotPinned")
+	if err != nil {
+		t.Fatalf("Unpin() should succeed for not-pinned CID, got error: %v", err)
+	}
+}
+
+func TestClient_IsPinned_Disabled(t *testing.T) {
+	client := NewClient("", "", time.Second)
+	pinned, err := client.IsPinned(context.Background(), "QmTest")
+	if err == nil {
+		t.Fatal("expected error when IPFS is disabled")
+	}
+	if !strings.Contains(err.Error(), "IPFS not enabled") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if pinned {
+		t.Fatal("expected pinned=false when disabled")
+	}
+}
+
+func TestClient_IsPinned_True(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v0/pin/ls" && r.URL.Query().Get("arg") == "QmTestCID" {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"Keys":{"QmTestCID":{"Type":"recursive"}}}`))
+		} else {
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL, "", time.Second)
+	pinned, err := client.IsPinned(context.Background(), "QmTestCID")
+	if err != nil {
+		t.Fatalf("IsPinned() error = %v", err)
+	}
+	if !pinned {
+		t.Fatal("IsPinned() = false, want true")
+	}
+}
+
+func TestClient_IsPinned_False(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`path 'QmNotPinned' is not pinned`))
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL, "", time.Second)
+	pinned, err := client.IsPinned(context.Background(), "QmNotPinned")
+	if err != nil {
+		t.Fatalf("IsPinned() error = %v", err)
+	}
+	if pinned {
+		t.Fatal("IsPinned() = true, want false")
+	}
+}
+
+func TestClient_AddReader_Disabled(t *testing.T) {
+	client := NewClient("", "", time.Second)
+	_, err := client.AddReader(context.Background(), "test.txt", strings.NewReader("data"))
+	if err == nil {
+		t.Fatal("expected error when IPFS is disabled")
+	}
+	if !strings.Contains(err.Error(), "IPFS not enabled") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestClient_AddReader_Success(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v0/add" {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"Name":"test.txt","Hash":"QmResultCID","Size":"9"}`))
+		} else {
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL, "", time.Second)
+	cid, err := client.AddReader(context.Background(), "test.txt", strings.NewReader("some data"))
+	if err != nil {
+		t.Fatalf("AddReader() error = %v", err)
+	}
+	if cid != "QmResultCID" {
+		t.Fatalf("AddReader() CID = %q, want %q", cid, "QmResultCID")
+	}
 }
 
 func TestParseIPFSAddResponse(t *testing.T) {

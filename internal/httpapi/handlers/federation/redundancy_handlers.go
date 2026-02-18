@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	"athena/internal/domain"
+	"athena/internal/middleware"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -23,8 +24,10 @@ func NewRedundancyHandler(service RedundancyServiceInterface, discovery Instance
 	}
 }
 
-func (h *RedundancyHandler) RegisterRoutes(r chi.Router) {
+func (h *RedundancyHandler) RegisterRoutes(r chi.Router, jwtSecret string) {
 	r.Route("/api/v1/admin/redundancy", func(r chi.Router) {
+		r.Use(middleware.Auth(jwtSecret))
+		r.Use(middleware.RequireRole("admin"))
 		r.Get("/instances", h.ListInstancePeers)
 		r.Post("/instances", h.RegisterInstancePeer)
 		r.Get("/instances/{id}", h.GetInstancePeer)

@@ -7,12 +7,14 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	chi "github.com/go-chi/chi/v5"
 	jwt "github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
+	"golang.org/x/crypto/bcrypt"
 
 	"athena/internal/config"
 	"athena/internal/domain"
@@ -20,13 +22,16 @@ import (
 	"athena/internal/middleware"
 )
 
-// mockUserRepo implementation
 type mockUserRepo struct {
-	users map[string]*domain.User
+	users     map[string]*domain.User
+	passwords map[string]string
 }
 
 func newMockUserRepo() *mockUserRepo {
-	return &mockUserRepo{users: map[string]*domain.User{}}
+	return &mockUserRepo{
+		users:     map[string]*domain.User{},
+		passwords: map[string]string{},
+	}
 }
 
 func (m *mockUserRepo) Create(ctx context.Context, user *domain.User, passwordHash string) error {
@@ -71,6 +76,9 @@ func (m *mockUserRepo) Delete(ctx context.Context, id string) error {
 }
 
 func (m *mockUserRepo) GetPasswordHash(ctx context.Context, userID string) (string, error) {
+	if h, ok := m.passwords[userID]; ok {
+		return h, nil
+	}
 	return "", nil
 }
 
@@ -111,7 +119,6 @@ func generateTestJWT(secret, userID, role string) string {
 }
 
 func TestPrivilegeEscalation_CreateUser(t *testing.T) {
-	// Setup
 	jwtSecret := "test-secret-123"
 	cfg := &config.Config{
 		JWTSecret:         jwtSecret,
@@ -130,11 +137,9 @@ func TestPrivilegeEscalation_CreateUser(t *testing.T) {
 	rlManager := middleware.NewRateLimiterManager()
 	RegisterRoutesWithDependencies(r, cfg, rlManager, deps)
 
-	// Create a regular user token
 	userID := uuid.NewString()
 	token := generateTestJWT(jwtSecret, userID, "user")
 
-	// Prepare request to create an admin user
 	reqBody := map[string]interface{}{
 		"username": "hacker",
 		"email":    "hacker@example.com",
@@ -149,17 +154,84 @@ func TestPrivilegeEscalation_CreateUser(t *testing.T) {
 
 	rr := httptest.NewRecorder()
 
-	// Execute
 	r.ServeHTTP(rr, req)
 
-	// Assert - Expect 403 Forbidden (vulnerability fixed)
 	if rr.Code != http.StatusForbidden {
 		t.Fatalf("Expected 403 Forbidden (vulnerability fixed), but got %d. Body: %s", rr.Code, rr.Body.String())
 	}
 
-	// Verify user was NOT created
 	_, err := repo.GetByUsername(context.Background(), "hacker")
 	if err == nil {
 		t.Fatal("Expected user NOT to be created, but it was found in repo")
+	}
+}
+
+func TestLogin_BannedUserBlocked(t *testing.T) {
+	const testSecret = "test-jwt-secret"
+	const password = "password123"
+
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.MinCost)
+	if err != nil {
+		t.Fatalf("bcrypt: %v", err)
+	}
+
+	repo := newMockUserRepo()
+	userID := uuid.NewString()
+	repo.users[userID] = &domain.User{
+		ID:        userID,
+		Username:  "banneduser",
+		Email:     "banned@example.com",
+		Role:      domain.RoleUser,
+		IsActive:  false,
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+	repo.passwords[userID] = string(hash)
+
+	cfg := &config.Config{JWTSecret: testSecret}
+	s := NewServer(repo, nil, testSecret, nil, time.Second, "", "", time.Second, cfg)
+
+	body := `{"email":"banned@example.com","password":"password123"}`
+	req := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(body))
+	rr := httptest.NewRecorder()
+	s.Login(rr, req)
+
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("banned user: expected 403, got %d; body: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestLogin_ActiveUserAllowed(t *testing.T) {
+	const testSecret = "test-jwt-secret"
+	const password = "password123"
+
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.MinCost)
+	if err != nil {
+		t.Fatalf("bcrypt: %v", err)
+	}
+
+	repo := newMockUserRepo()
+	userID := uuid.NewString()
+	repo.users[userID] = &domain.User{
+		ID:        userID,
+		Username:  "activeuser",
+		Email:     "active@example.com",
+		Role:      domain.RoleUser,
+		IsActive:  true,
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+	repo.passwords[userID] = string(hash)
+
+	cfg := &config.Config{JWTSecret: testSecret}
+	s := NewServer(repo, nil, testSecret, nil, time.Second, "", "", time.Second, cfg)
+
+	body := `{"email":"active@example.com","password":"password123"}`
+	req := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(body))
+	rr := httptest.NewRecorder()
+	s.Login(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("active user: expected 200, got %d; body: %s", rr.Code, rr.Body.String())
 	}
 }

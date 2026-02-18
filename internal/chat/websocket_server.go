@@ -30,6 +30,11 @@ const (
 	clientSendBuffer = 256
 )
 
+type moderatorCacheEntry struct {
+	isMod    bool
+	cachedAt time.Time
+}
+
 type ChatServer struct {
 	cfg        *config.Config
 	chatRepo   repository.ChatRepository
@@ -40,6 +45,8 @@ type ChatServer struct {
 	mu          sync.RWMutex
 	connections map[uuid.UUID]map[*ChatClient]bool
 	Upgrader    websocket.Upgrader
+
+	moderatorCache sync.Map
 
 	shutdownChan chan struct{}
 	wg           sync.WaitGroup
@@ -411,11 +418,26 @@ func (s *ChatServer) sendToClient(client *ChatClient, message *ChatMessage) {
 	}
 }
 
-func (s *ChatServer) checkRateLimit(ctx context.Context, userID, streamID uuid.UUID) bool {
+const moderatorCacheTTL = 60 * time.Second
+
+func (s *ChatServer) isModerator(ctx context.Context, streamID, userID uuid.UUID) bool {
+	cacheKey := streamID.String() + ":" + userID.String()
+	if v, ok := s.moderatorCache.Load(cacheKey); ok {
+		entry := v.(moderatorCacheEntry)
+		if time.Since(entry.cachedAt) < moderatorCacheTTL {
+			return entry.isMod
+		}
+	}
 	isMod, err := s.chatRepo.IsModerator(ctx, streamID, userID)
 	if err != nil {
 		s.logger.WithError(err).Error("Failed to check moderator status")
 	}
+	s.moderatorCache.Store(cacheKey, moderatorCacheEntry{isMod: isMod, cachedAt: time.Now()})
+	return isMod
+}
+
+func (s *ChatServer) checkRateLimit(ctx context.Context, userID, streamID uuid.UUID) bool {
+	isMod := s.isModerator(ctx, streamID, userID)
 
 	limit := 5
 	window := 10 * time.Second
@@ -437,9 +459,9 @@ func (s *ChatServer) checkRateLimit(ctx context.Context, userID, streamID uuid.U
 
 	pipe.Expire(ctx, key, window)
 
-	_, err = pipe.Exec(ctx)
-	if err != nil {
-		s.logger.WithError(err).Error("Failed to check rate limit")
+	_, execErr := pipe.Exec(ctx)
+	if execErr != nil {
+		s.logger.WithError(execErr).Error("Failed to check rate limit")
 		return true
 	}
 

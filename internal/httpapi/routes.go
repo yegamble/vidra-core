@@ -356,13 +356,13 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 		if deps.ChatServer != nil && deps.ChatRepo != nil {
 			log.Printf("Registering chat routes...")
 			chatHandlers := messaging.NewChatHandlers(deps.ChatServer, deps.ChatRepo, deps.LiveStreamRepo, deps.UserRepo, deps.SubRepo)
-			chatHandlers.RegisterRoutes(r)
+			chatHandlers.RegisterRoutes(r, cfg.JWTSecret)
 		}
 
 		if deps.SocialService != nil {
 			log.Printf("Registering social routes...")
 			socialHandler := social.NewSocialHandler(deps.SocialService)
-			socialHandler.RegisterRoutes(r)
+			socialHandler.RegisterRoutes(r, cfg.JWTSecret)
 		}
 
 		r.Route("/comments", func(r chi.Router) {
@@ -541,7 +541,7 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 		})
 	})
 
-	registerExternalFeatureRoutes(r, deps)
+	registerExternalFeatureRoutes(r, deps, cfg.JWTSecret)
 
 	r.Get("/oembed", admin.NewInstanceHandlers(deps.ModerationRepo, deps.UserRepo, deps.VideoRepo).OEmbed)
 
@@ -564,14 +564,14 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 	}
 }
 
-func registerExternalFeatureRoutes(r chi.Router, deps *shared.HandlerDependencies) {
+func registerExternalFeatureRoutes(r chi.Router, deps *shared.HandlerDependencies, jwtSecret string) {
 	if deps.LiveStreamRepo != nil {
 		log.Printf("Registering waiting room routes...")
 		waitingRoomHandlers := livestream.NewWaitingRoomHandler(
 			newWaitingRoomAdapter(deps.LiveStreamRepo, deps.ChannelRepo),
 			deps.UserRepo,
 		)
-		waitingRoomHandlers.RegisterWaitingRoomRoutes(r)
+		waitingRoomHandlers.RegisterWaitingRoomRoutes(r, jwtSecret)
 	}
 
 	if deps.RedundancyService != nil {
@@ -580,14 +580,14 @@ func registerExternalFeatureRoutes(r chi.Router, deps *shared.HandlerDependencie
 		discoverySvc, _ := deps.InstanceDiscovery.(federation.InstanceDiscoveryInterface)
 		if redundancySvc != nil {
 			rh := federation.NewRedundancyHandler(redundancySvc, discoverySvc)
-			rh.RegisterRoutes(r)
+			rh.RegisterRoutes(r, jwtSecret)
 		}
 	}
 
 	if deps.VideoCategoryUseCase != nil {
 		log.Printf("Registering video category routes...")
 		categoryHandler := video.NewVideoCategoryHandler(deps.VideoCategoryUseCase)
-		categoryHandler.RegisterRoutes(r)
+		categoryHandler.RegisterRoutes(r, jwtSecret)
 	}
 
 	if deps.AnalyticsRepo != nil && deps.LiveStreamRepo != nil {
@@ -598,7 +598,7 @@ func registerExternalFeatureRoutes(r chi.Router, deps *shared.HandlerDependencie
 			deps.AnalyticsRepo,
 			analyticsCollector,
 		)
-		analyticsHandler.RegisterRoutes(r)
+		analyticsHandler.RegisterRoutes(r, jwtSecret)
 	}
 }
 

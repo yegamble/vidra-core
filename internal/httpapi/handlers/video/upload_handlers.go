@@ -238,7 +238,7 @@ func UploadVideoFileHandler(repo usecase.VideoRepository, cfg *config.Config) ht
 			return
 		}
 
-		if err := r.ParseMultipartForm(512 << 20); err != nil {
+		if err := r.ParseMultipartForm(32 << 20); err != nil {
 			shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_MULTIPART", "Invalid multipart form"))
 			return
 		}

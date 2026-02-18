@@ -2,6 +2,7 @@ package config
 
 import (
 	"os"
+	"strings"
 	"testing"
 
 	"athena/internal/storage"
@@ -169,27 +170,11 @@ func TestLoadObjectStorageConfig(t *testing.T) {
 
 func clearObjectStorageEnvVars(t *testing.T) {
 	t.Helper()
-	envVars := []string{
-		"S3_UPLOAD_ACL_PUBLIC",
-		"S3_UPLOAD_ACL_PRIVATE",
-		"S3_PROXIFY_PRIVATE_FILES",
-		"S3_MAX_UPLOAD_PART",
-		"S3_MAX_REQUEST_ATTEMPTS",
-		"S3_PATH_STYLE",
-		"S3_STREAMING_PLAYLISTS_PREFIX",
-		"S3_STREAMING_PLAYLISTS_BASE_URL",
-		"S3_WEB_VIDEOS_PREFIX",
-		"S3_WEB_VIDEOS_BASE_URL",
-		"S3_USER_EXPORTS_PREFIX",
-		"S3_USER_EXPORTS_BASE_URL",
-		"S3_ORIGINAL_VIDEO_FILES_PREFIX",
-		"S3_ORIGINAL_VIDEO_FILES_BASE_URL",
-		"S3_CAPTIONS_PREFIX",
-		"S3_CAPTIONS_BASE_URL",
-		"S3_STORE_LIVE_STREAMS",
-	}
-	for _, key := range envVars {
-		os.Unsetenv(key)
+	for _, entry := range os.Environ() {
+		key, _, found := strings.Cut(entry, "=")
+		if found && strings.HasPrefix(key, "S3_") {
+			os.Unsetenv(key)
+		}
 	}
 }
 

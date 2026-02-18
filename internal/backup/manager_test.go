@@ -249,6 +249,38 @@ func TestBackupManager_ComponentsDefaultValues(t *testing.T) {
 	assert.Empty(t, manager.Components.ExcludeDirs)
 }
 
+func TestRunDumpCommand_Success(t *testing.T) {
+	tmpDir := t.TempDir()
+	outputPath := filepath.Join(tmpDir, "out.txt")
+
+	fakeScript := "#!/bin/sh\nprintf 'data' > \"$1\"\nexit 0\n"
+	fakeBin := filepath.Join(tmpDir, "fake-dump")
+	require.NoError(t, os.WriteFile(fakeBin, []byte(fakeScript), 0755))
+	origPath := os.Getenv("PATH")
+	t.Setenv("PATH", tmpDir+":"+origPath)
+
+	err := runDumpCommand(context.Background(), fakeBin, []string{outputPath}, outputPath, 5)
+	require.NoError(t, err)
+
+	info, statErr := os.Stat(outputPath)
+	require.NoError(t, statErr)
+	assert.Greater(t, info.Size(), int64(0))
+}
+
+func TestRunDumpCommand_CommandFails(t *testing.T) {
+	tmpDir := t.TempDir()
+	outputPath := filepath.Join(tmpDir, "out.txt")
+
+	fakeScript := "#!/bin/sh\necho 'simulated failure' >&2\nexit 1\n"
+	fakeBin := filepath.Join(tmpDir, "fail-cmd")
+	require.NoError(t, os.WriteFile(fakeBin, []byte(fakeScript), 0755))
+	origPath := os.Getenv("PATH")
+	t.Setenv("PATH", tmpDir+":"+origPath)
+
+	err := runDumpCommand(context.Background(), fakeBin, []string{}, outputPath, 5)
+	assert.Error(t, err)
+}
+
 func TestDumpRedis_FailsWithoutRedis(t *testing.T) {
 	tmpDir := t.TempDir()
 	outputPath := filepath.Join(tmpDir, "dump.rdb")

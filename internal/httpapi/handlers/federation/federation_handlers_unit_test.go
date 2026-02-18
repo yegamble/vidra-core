@@ -23,10 +23,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// ---------------------------------------------------------------------------
-// helpers
-// ---------------------------------------------------------------------------
-
 func withURLParam(r *http.Request, key, value string) *http.Request {
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add(key, value)
@@ -45,12 +41,7 @@ func withAdminAndParam(r *http.Request, key, value string) *http.Request {
 	return r.WithContext(ctx)
 }
 
-// ---------------------------------------------------------------------------
-// Mock HardeningRepository for FederationHardeningService tests
-// ---------------------------------------------------------------------------
-
 type mockHardeningRepo struct {
-	// Dashboard / health
 	getConfigFn         func(ctx context.Context) (*domain.FederationSecurityConfig, error)
 	getHealthSummaryFn  func(ctx context.Context) ([]domain.FederationHealthSummary, error)
 	refreshHealthFn     func(ctx context.Context) error
@@ -69,7 +60,6 @@ type mockHardeningRepo struct {
 	updateAbuseReportFn func(ctx context.Context, id, status, resolution, resolvedBy string) error
 	cleanupFn           func(ctx context.Context) error
 
-	// Stubs for remaining interface methods
 	checkIdempotencyFn     func(ctx context.Context, key string) (*domain.IdempotencyRecord, error)
 	recordIdempotencyFn    func(ctx context.Context, record *domain.IdempotencyRecord) error
 	updateJobWithBackoffFn func(ctx context.Context, jobID string, attempts int, lastError string) error
@@ -224,23 +214,16 @@ func (m *mockHardeningRepo) CleanupExpired(ctx context.Context) error {
 	return nil
 }
 
-// mockFedSvc satisfies the usecase.FederationService interface.
 type mockFedSvc struct{}
 
 func (m *mockFedSvc) ProcessNext(context.Context) (bool, error) { return false, nil }
 
-// newHardeningHandler constructs a FederationHardeningHandler backed by mock repos.
 func newHardeningHandler(repo *mockHardeningRepo) *FederationHardeningHandler {
 	cfg := &config.Config{JWTSecret: "test-secret"}
 	svc := usecase.NewFederationHardeningService(repo, &mockFedSvc{}, cfg)
-	// Initialize so service.config is set (needed by many handlers).
 	_ = svc.Initialize(context.Background())
 	return NewFederationHardeningHandler(svc)
 }
-
-// ---------------------------------------------------------------------------
-// Mock user and video repos for ActivityPub NodeInfo20 tests
-// ---------------------------------------------------------------------------
 
 type mockUserRepo struct {
 	countFn func(ctx context.Context) (int64, error)
@@ -311,10 +294,6 @@ func (m *mockVideoRepo) GetByChannelID(_ context.Context, _ string, _, _ int) ([
 	return nil, 0, nil
 }
 
-// ===========================================================================
-// Test: requireAdmin helper
-// ===========================================================================
-
 func TestRequireAdmin_Unit(t *testing.T) {
 	t.Run("no role in context returns forbidden", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -342,12 +321,7 @@ func TestRequireAdmin_Unit(t *testing.T) {
 	})
 }
 
-// ===========================================================================
-// Tests: AdminFederationHandlers (ListJobs, GetJob, RetryJob, DeleteJob)
-// ===========================================================================
-
 func TestAdminFederationHandlers_Forbidden_Unit(t *testing.T) {
-	// All admin handlers must reject non-admin users.
 	handlers := NewAdminFederationHandlers(nil)
 
 	endpoints := []struct {
@@ -371,10 +345,6 @@ func TestAdminFederationHandlers_Forbidden_Unit(t *testing.T) {
 		})
 	}
 }
-
-// ===========================================================================
-// Tests: AdminFederationActorsHandlers (ListActors, UpsertActor, UpdateActor, DeleteActor)
-// ===========================================================================
 
 func TestAdminFederationActorsHandlers_Forbidden_Unit(t *testing.T) {
 	handlers := NewAdminFederationActorsHandlers(nil)
@@ -433,10 +403,6 @@ func TestUpdateActor_BadRequest_Unit(t *testing.T) {
 	})
 }
 
-// ===========================================================================
-// Tests: FederationHardeningHandler (all endpoints)
-// ===========================================================================
-
 func TestHardeningHandler_GetDashboard_Unit(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
 		repo := &mockHardeningRepo{}
@@ -459,7 +425,6 @@ func TestHardeningHandler_GetDashboard_Unit(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/federation/hardening/dashboard", nil)
 		rr := httptest.NewRecorder()
 		h.GetDashboard(rr, req)
-		// Dashboard swallows internal errors and returns partial data
 		require.Equal(t, http.StatusOK, rr.Code)
 	})
 }
@@ -912,10 +877,6 @@ func TestHardeningHandler_RunCleanup_Unit(t *testing.T) {
 	})
 }
 
-// ===========================================================================
-// Tests: FederationMiddleware
-// ===========================================================================
-
 func TestFederationMiddleware_Unit(t *testing.T) {
 	repo := &mockHardeningRepo{
 		isInstanceBlockedFn: func(_ context.Context, d string) (bool, error) {
@@ -945,10 +906,6 @@ func TestFederationMiddleware_Unit(t *testing.T) {
 		assert.False(t, nextCalled)
 	})
 }
-
-// ===========================================================================
-// Tests: ActivityPub handlers - additional unit tests for uncovered paths
-// ===========================================================================
 
 func TestActivityPub_NodeInfo20_WithRepos_Unit(t *testing.T) {
 	cfg := &config.Config{
@@ -1079,7 +1036,6 @@ func TestActivityPub_GetActor_MissingUsername_Unit(t *testing.T) {
 	handlers := &ActivityPubHandlers{}
 
 	req := httptest.NewRequest(http.MethodGet, "/users/", nil)
-	// No chi route context => username will be empty
 	rr := httptest.NewRecorder()
 	handlers.GetActor(rr, req)
 	require.Equal(t, http.StatusBadRequest, rr.Code)
@@ -1093,7 +1049,7 @@ func TestActivityPub_GetOutbox_MissingUsername_Unit(t *testing.T) {
 	}
 	handlers := NewActivityPubHandlers(mockSvc, cfg, nil, nil)
 
-	req := httptest.NewRequest(http.MethodGet, "/users//outbox", nil)
+	req := httptest.NewRequest(http.MethodGet, "/users/", nil)
 	rr := httptest.NewRecorder()
 	handlers.GetOutbox(rr, req)
 	require.Equal(t, http.StatusBadRequest, rr.Code)
@@ -1107,7 +1063,7 @@ func TestActivityPub_GetFollowers_MissingUsername_Unit(t *testing.T) {
 	}
 	handlers := NewActivityPubHandlers(mockSvc, cfg, nil, nil)
 
-	req := httptest.NewRequest(http.MethodGet, "/users//followers", nil)
+	req := httptest.NewRequest(http.MethodGet, "/users/", nil)
 	rr := httptest.NewRecorder()
 	handlers.GetFollowers(rr, req)
 	require.Equal(t, http.StatusBadRequest, rr.Code)
@@ -1121,7 +1077,7 @@ func TestActivityPub_GetFollowing_MissingUsername_Unit(t *testing.T) {
 	}
 	handlers := NewActivityPubHandlers(mockSvc, cfg, nil, nil)
 
-	req := httptest.NewRequest(http.MethodGet, "/users//following", nil)
+	req := httptest.NewRequest(http.MethodGet, "/users/", nil)
 	rr := httptest.NewRecorder()
 	handlers.GetFollowing(rr, req)
 	require.Equal(t, http.StatusBadRequest, rr.Code)
@@ -1134,7 +1090,6 @@ func TestActivityPub_WebFinger_InvalidAcctFormat_Unit(t *testing.T) {
 	}
 	handlers := &ActivityPubHandlers{cfg: cfg}
 
-	// acct: with no @ sign
 	req := httptest.NewRequest(http.MethodGet, "/.well-known/webfinger?resource=acct:justname", nil)
 	rr := httptest.NewRecorder()
 	handlers.WebFinger(rr, req)
@@ -1148,7 +1103,6 @@ func TestActivityPub_WebFinger_HTTPResource_InvalidPath_Unit(t *testing.T) {
 	}
 	handlers := &ActivityPubHandlers{cfg: cfg}
 
-	// URL that doesn't have /users/ path
 	req := httptest.NewRequest(http.MethodGet, "/.well-known/webfinger?resource=https://video.example/profiles/alice", nil)
 	rr := httptest.NewRecorder()
 	handlers.WebFinger(rr, req)
@@ -1158,7 +1112,6 @@ func TestActivityPub_WebFinger_HTTPResource_InvalidPath_Unit(t *testing.T) {
 func TestActivityPub_PostInbox_EmptyBody_Unit(t *testing.T) {
 	handlers := &ActivityPubHandlers{}
 
-	// Empty body is valid bytes but parses to no JSON => invalid JSON
 	req := httptest.NewRequest(http.MethodPost, "/users/alice/inbox", strings.NewReader(""))
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("username", "alice")
@@ -1187,21 +1140,15 @@ func TestActivityPub_GetOutbox_CountError_Unit(t *testing.T) {
 	mockSvc.On("GetOutboxCount", req.Context(), "alice").Return(0, errors.New("user not found")).Once()
 	handlers.GetOutbox(rr, req)
 
-	// When count fails, handler returns 404 Not Found
 	require.Equal(t, http.StatusNotFound, rr.Code)
 	mockSvc.AssertExpectations(t)
 }
-
-// ===========================================================================
-// Tests: RegisterRoutes smoke test
-// ===========================================================================
 
 func TestHardeningHandler_RegisterRoutes_Unit(t *testing.T) {
 	repo := &mockHardeningRepo{}
 	h := newHardeningHandler(repo)
 
 	r := chi.NewRouter()
-	// Should not panic
 	h.RegisterRoutes(r)
 }
 
@@ -1220,6 +1167,30 @@ func TestNewAdminFederationActorsHandlers_Unit(t *testing.T) {
 	require.NotNil(t, h)
 }
 
+func TestActivityPub_GetInbox_ReturnsEmptyOrderedCollection_Unit(t *testing.T) {
+	handlers := &ActivityPubHandlers{}
+
+	req := httptest.NewRequest(http.MethodGet, "/users/alice/inbox", nil)
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("username", "alice")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+
+	rr := httptest.NewRecorder()
+	handlers.GetInbox(rr, req)
+
+	require.Equal(t, http.StatusOK, rr.Code)
+
+	contentType := rr.Header().Get("Content-Type")
+	require.Contains(t, contentType, "application/activity+json")
+
+	var body map[string]interface{}
+	err := json.NewDecoder(rr.Body).Decode(&body)
+	require.NoError(t, err)
+
+	require.Equal(t, "OrderedCollection", body["type"])
+	require.EqualValues(t, 0, body["totalItems"])
+}
+
 func TestNewRedundancyHandler_Unit(t *testing.T) {
 	h := NewRedundancyHandler(nil, nil)
 	require.NotNil(t, h)
@@ -1228,13 +1199,8 @@ func TestNewRedundancyHandler_Unit(t *testing.T) {
 func TestRedundancyHandler_RegisterRoutes_Unit(t *testing.T) {
 	h := NewRedundancyHandler(nil, nil)
 	r := chi.NewRouter()
-	// Should not panic
-	h.RegisterRoutes(r)
+	h.RegisterRoutes(r, "test-secret")
 }
-
-// ===========================================================================
-// Tests: RedundancyHandler input validation paths
-// ===========================================================================
 
 func TestRedundancyHandler_RegisterInstancePeer_BadRequest_Unit(t *testing.T) {
 	h := NewRedundancyHandler(nil, nil)

@@ -14,7 +14,6 @@ import (
 	"athena/internal/domain"
 )
 
-// Mock implementations
 type MockViewsRepository struct {
 	mock.Mock
 }
@@ -89,6 +88,11 @@ func (m *MockViewsRepository) BatchUpdateTrendingVideos(ctx context.Context, vid
 
 func (m *MockViewsRepository) IncrementVideoViews(ctx context.Context, videoID string) error {
 	args := m.Called(ctx, videoID)
+	return args.Error(0)
+}
+
+func (m *MockViewsRepository) BatchIncrementVideoViews(ctx context.Context, counts map[string]int64) error {
+	args := m.Called(ctx, counts)
 	return args.Error(0)
 }
 
@@ -248,7 +252,6 @@ func TestViewsService_TrackView_NewView(t *testing.T) {
 	videoID := uuid.New().String()
 	sessionID := uuid.New().String()
 
-	// Mock video exists
 	video := &domain.Video{
 		ID:     videoID,
 		Title:  "Test Video",
@@ -256,14 +259,11 @@ func TestViewsService_TrackView_NewView(t *testing.T) {
 	}
 	mockVideoRepo.On("GetByID", ctx, videoID).Return(video, nil)
 
-	// Mock no existing view (new view)
 	mockViewsRepo.On("GetUserViewBySessionAndVideo", mock.Anything, sessionID, videoID).Return(nil, nil)
 
-	// Mock successful view creation
 	mockViewsRepo.On("CreateUserView", mock.Anything, mock.AnythingOfType("*domain.UserView")).Return(nil)
 
-	// Mock successful view count increment
-	mockViewsRepo.On("IncrementVideoViews", mock.Anything, videoID).Return(nil)
+	mockViewsRepo.On("BatchIncrementVideoViews", mock.Anything, mock.Anything).Return(nil)
 
 	request := &domain.ViewTrackingRequest{
 		VideoID:              videoID,
@@ -281,14 +281,11 @@ func TestViewsService_TrackView_NewView(t *testing.T) {
 	err := service.TrackView(ctx, &userID, request)
 	require.NoError(t, err)
 
-	// Wait for worker to process
 	service.Close()
 
-	// Verify all mocks were called
 	mockVideoRepo.AssertExpectations(t)
 	mockViewsRepo.AssertExpectations(t)
 
-	// Verify CreateUserView was called with correct data
 	foundCreate := false
 	for _, call := range mockViewsRepo.Calls {
 		if call.Method == "CreateUserView" {
@@ -316,7 +313,6 @@ func TestViewsService_TrackView_UpdateExistingView(t *testing.T) {
 	videoID := uuid.New().String()
 	sessionID := uuid.New().String()
 
-	// Mock video exists
 	video := &domain.Video{
 		ID:     videoID,
 		Title:  "Test Video",
@@ -324,7 +320,6 @@ func TestViewsService_TrackView_UpdateExistingView(t *testing.T) {
 	}
 	mockVideoRepo.On("GetByID", ctx, videoID).Return(video, nil)
 
-	// Mock existing view
 	existingView := &domain.UserView{
 		ID:                   uuid.New().String(),
 		VideoID:              videoID,
@@ -337,18 +332,17 @@ func TestViewsService_TrackView_UpdateExistingView(t *testing.T) {
 	}
 	mockViewsRepo.On("GetUserViewBySessionAndVideo", mock.Anything, sessionID, videoID).Return(existingView, nil)
 
-	// Mock successful view update
 	mockViewsRepo.On("UpdateUserView", mock.Anything, mock.AnythingOfType("*domain.UserView")).Return(nil)
 
 	request := &domain.ViewTrackingRequest{
 		VideoID:              videoID,
 		SessionID:            sessionID,
 		FingerprintHash:      "test_hash",
-		WatchDuration:        120, // Updated duration
+		WatchDuration:        120,
 		VideoDuration:        300,
-		CompletionPercentage: 40.0, // Updated completion
+		CompletionPercentage: 40.0,
 		IsCompleted:          false,
-		SeekCount:            2, // Updated seek count
+		SeekCount:            2,
 	}
 
 	err := service.TrackView(ctx, &userID, request)
@@ -359,7 +353,6 @@ func TestViewsService_TrackView_UpdateExistingView(t *testing.T) {
 	mockVideoRepo.AssertExpectations(t)
 	mockViewsRepo.AssertExpectations(t)
 
-	// Verify UpdateUserView was called and not CreateUserView
 	assert.NotContains(t, getMethodNames(mockViewsRepo.Calls), "CreateUserView")
 	assert.Contains(t, getMethodNames(mockViewsRepo.Calls), "UpdateUserView")
 }
@@ -374,7 +367,6 @@ func TestViewsService_TrackView_VideoNotFound(t *testing.T) {
 	userID := uuid.New().String()
 	videoID := uuid.New().String()
 
-	// Mock video not found
 	mockVideoRepo.On("GetByID", ctx, videoID).Return(nil, nil)
 
 	request := &domain.ViewTrackingRequest{
@@ -388,7 +380,6 @@ func TestViewsService_TrackView_VideoNotFound(t *testing.T) {
 	assert.Contains(t, err.Error(), "video not found")
 
 	mockVideoRepo.AssertExpectations(t)
-	// ViewsRepository should not be called if video doesn't exist
 	mockViewsRepo.AssertNotCalled(t, "GetUserViewBySessionAndVideo")
 }
 
@@ -402,18 +393,14 @@ func TestViewsService_TrackView_AnonymousUser(t *testing.T) {
 	videoID := uuid.New().String()
 	sessionID := uuid.New().String()
 
-	// Mock video exists
 	video := &domain.Video{ID: videoID, Title: "Test Video"}
 	mockVideoRepo.On("GetByID", ctx, videoID).Return(video, nil)
 
-	// Mock no existing view
 	mockViewsRepo.On("GetUserViewBySessionAndVideo", mock.Anything, sessionID, videoID).Return(nil, nil)
 
-	// Mock successful view creation
 	mockViewsRepo.On("CreateUserView", mock.Anything, mock.AnythingOfType("*domain.UserView")).Return(nil)
 
-	// Mock successful view count increment
-	mockViewsRepo.On("IncrementVideoViews", mock.Anything, videoID).Return(nil)
+	mockViewsRepo.On("BatchIncrementVideoViews", mock.Anything, mock.Anything).Return(nil)
 
 	request := &domain.ViewTrackingRequest{
 		VideoID:         videoID,
@@ -422,13 +409,11 @@ func TestViewsService_TrackView_AnonymousUser(t *testing.T) {
 		IsAnonymous:     true,
 	}
 
-	// Pass nil for userID (anonymous)
 	err := service.TrackView(ctx, nil, request)
 	require.NoError(t, err)
 
 	service.Close()
 
-	// Verify CreateUserView was called with nil user_id
 	foundCreate := false
 	for _, call := range mockViewsRepo.Calls {
 		if call.Method == "CreateUserView" {
@@ -526,10 +511,10 @@ func TestViewsService_GetTrendingVideos_LimitValidation(t *testing.T) {
 		inputLimit    int
 		expectedLimit int
 	}{
-		{0, 50},   // Zero should default to 50
-		{-1, 50},  // Negative should default to 50
-		{150, 50}, // Over 100 should default to 50
-		{25, 25},  // Valid limit should be preserved
+		{0, 50},
+		{-1, 50},
+		{150, 50},
+		{25, 25},
 	}
 
 	for _, tc := range testCases {
@@ -588,7 +573,6 @@ func TestViewsService_UpdateTrendingMetrics(t *testing.T) {
 	ctx := context.Background()
 	videoIDs := []string{uuid.New().String(), uuid.New().String()}
 
-	// Mock batch trending stats retrieval
 	stats := []domain.VideoTrendingStats{
 		{
 			VideoID:       videoIDs[0],
@@ -612,7 +596,6 @@ func TestViewsService_UpdateTrendingMetrics(t *testing.T) {
 
 	mockViewsRepo.On("GetBatchTrendingStats", ctx, videoIDs).Return(stats, nil)
 
-	// Mock batch update of trending videos
 	mockViewsRepo.On("BatchUpdateTrendingVideos", ctx, mock.MatchedBy(func(videos []*domain.TrendingVideo) bool {
 		if len(videos) != 2 {
 			return false
@@ -641,7 +624,6 @@ func TestViewsService_GetTopVideos(t *testing.T) {
 	days := 7
 	limit := 10
 
-	// Repository returns data with db tags
 	repoResults := []struct {
 		VideoID     string  `db:"video_id"`
 		TotalViews  int64   `db:"total_views"`
@@ -652,7 +634,6 @@ func TestViewsService_GetTopVideos(t *testing.T) {
 		{VideoID: uuid.New().String(), TotalViews: 3500, UniqueViews: 2800, AvgDuration: 180.2},
 	}
 
-	// Service returns data with json tags (what we expect back)
 	expectedTopVideos := []struct {
 		VideoID     string `json:"video_id"`
 		TotalViews  int64  `json:"total_views"`
@@ -662,7 +643,6 @@ func TestViewsService_GetTopVideos(t *testing.T) {
 		{VideoID: repoResults[1].VideoID, TotalViews: repoResults[1].TotalViews, UniqueViews: repoResults[1].UniqueViews},
 	}
 
-	// Calculate expected date range
 	endDate := time.Now()
 	startDate := endDate.AddDate(0, 0, -days)
 
@@ -686,7 +666,6 @@ func TestViewsService_AggregateStats(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Test with default date (yesterday)
 	mockViewsRepo.On("AggregateDailyStats", ctx,
 		mock.MatchedBy(func(t time.Time) bool {
 			yesterday := time.Now().AddDate(0, 0, -1)
@@ -696,7 +675,6 @@ func TestViewsService_AggregateStats(t *testing.T) {
 	err := service.AggregateStats(ctx, nil)
 	require.NoError(t, err)
 
-	// Test with specific date
 	specificDate := time.Date(2024, 1, 15, 0, 0, 0, 0, time.UTC)
 	mockViewsRepo.On("AggregateDailyStats", ctx, specificDate).Return(nil)
 
@@ -718,10 +696,10 @@ func TestViewsService_CleanupOldData(t *testing.T) {
 		inputDays    int
 		expectedDays int
 	}{
-		{0, 365},     // Zero should default to 365
-		{-1, 365},    // Negative should default to 365
-		{90, 90},     // Valid input should be preserved
-		{1000, 1000}, // Large valid input should be preserved
+		{0, 365},
+		{-1, 365},
+		{90, 90},
+		{1000, 1000},
 	}
 
 	for _, tc := range testCases {
@@ -735,23 +713,19 @@ func TestViewsService_CleanupOldData(t *testing.T) {
 }
 
 func TestGenerateFingerprint(t *testing.T) {
-	// Test basic fingerprint generation
 	ip := "192.168.1.1"
 	userAgent := "Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X)"
 
 	fingerprint1 := GenerateFingerprint(ip, userAgent)
 	fingerprint2 := GenerateFingerprint(ip, userAgent)
 
-	// Same input should generate same fingerprint
 	assert.Equal(t, fingerprint1, fingerprint2)
 	assert.NotEmpty(t, fingerprint1)
-	assert.Equal(t, 32, len(fingerprint1)) // 16 bytes * 2 hex chars per byte
+	assert.Equal(t, 32, len(fingerprint1))
 
-	// Different input should generate different fingerprint
 	differentFingerprint := GenerateFingerprint("192.168.1.2", userAgent)
 	assert.NotEqual(t, fingerprint1, differentFingerprint)
 
-	// Test with different user agent
 	differentUserAgent := "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
 	differentFingerprint2 := GenerateFingerprint(ip, differentUserAgent)
 	assert.NotEqual(t, fingerprint1, differentFingerprint2)
@@ -772,11 +746,9 @@ func TestValidateTrackingRequest(t *testing.T) {
 		BufferEvents:         0,
 	}
 
-	// Valid request should pass
 	err := ValidateTrackingRequest(validRequest)
 	assert.NoError(t, err)
 
-	// Test missing required fields
 	testCases := []struct {
 		name    string
 		modify  func(*domain.ViewTrackingRequest)
@@ -836,7 +808,6 @@ func TestValidateTrackingRequest(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			// Create a copy of the valid request
 			request := *validRequest
 			tc.modify(&request)
 
@@ -848,8 +819,6 @@ func TestValidateTrackingRequest(t *testing.T) {
 }
 
 func TestViewsService_ConcurrentViewTracking(t *testing.T) {
-	// This test verifies that the service can handle multiple concurrent
-	// view tracking requests without rate limiting legitimate traffic
 	mockViewsRepo := &MockViewsRepository{}
 	mockVideoRepo := &MockVideoRepository{}
 	service := NewViewsService(mockViewsRepo, mockVideoRepo)
@@ -859,30 +828,25 @@ func TestViewsService_ConcurrentViewTracking(t *testing.T) {
 	videoID := uuid.New().String()
 	userID := uuid.New().String()
 
-	// Mock video exists
 	video := &domain.Video{ID: videoID, Title: "Test Video"}
 	mockVideoRepo.On("GetByID", ctx, videoID).Return(video, nil).Times(50)
 
-	// Mock no existing views (all are new)
 	mockViewsRepo.On("GetUserViewBySessionAndVideo", mock.Anything, mock.AnythingOfType("string"), videoID).Return(nil, nil).Times(50)
 
-	// Mock successful view creations
 	mockViewsRepo.On("CreateUserView", mock.Anything, mock.AnythingOfType("*domain.UserView")).Return(nil).Times(50)
 
-	// Mock successful view count increments
-	mockViewsRepo.On("IncrementVideoViews", mock.Anything, videoID).Return(nil).Times(50)
+	mockViewsRepo.On("BatchIncrementVideoViews", mock.Anything, mock.Anything).Return(nil)
 
 	concurrency := 50
 	results := make(chan error, concurrency)
 
-	// Launch concurrent operations
 	for i := 0; i < concurrency; i++ {
 		go func(index int) {
 			request := &domain.ViewTrackingRequest{
 				VideoID:              videoID,
-				SessionID:            uuid.New().String(), // Unique session per request
+				SessionID:            uuid.New().String(),
 				FingerprintHash:      fmt.Sprintf("hash_%d", index),
-				WatchDuration:        60 + index, // Vary the data
+				WatchDuration:        60 + index,
 				VideoDuration:        300,
 				CompletionPercentage: float64(20 + index%80),
 				DeviceType:           "mobile",
@@ -894,7 +858,6 @@ func TestViewsService_ConcurrentViewTracking(t *testing.T) {
 		}(i)
 	}
 
-	// Collect results
 	var errors []error
 	for i := 0; i < concurrency; i++ {
 		if err := <-results; err != nil {
@@ -902,17 +865,13 @@ func TestViewsService_ConcurrentViewTracking(t *testing.T) {
 		}
 	}
 
-	// All concurrent operations should succeed
 	assert.Empty(t, errors, "Concurrent view tracking should not fail")
 
 	service.Close()
 
-	// Verify all mocks were satisfied
 	mockVideoRepo.AssertExpectations(t)
 	mockViewsRepo.AssertExpectations(t)
 }
-
-// Helper functions
 
 func getMethodNames(calls []mock.Call) []string {
 	var names []string

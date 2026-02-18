@@ -7,17 +7,18 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"athena/internal/domain"
 	"athena/internal/middleware"
 
 	"github.com/go-chi/chi/v5"
+	jwt "github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 )
 
-// Mock VideoCategoryUseCase
 type mockVideoCategoryUseCase struct {
 	mock.Mock
 }
@@ -130,7 +131,6 @@ func TestGetCategory_ByID_Success(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/categories/"+categoryID.String(), nil)
 	rr := httptest.NewRecorder()
 
-	// Set up chi context with URL params
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("id", categoryID.String())
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
@@ -164,7 +164,6 @@ func TestGetCategory_BySlug_Success(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/categories/music", nil)
 	rr := httptest.NewRecorder()
 
-	// Set up chi context with URL params
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("id", "music")
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
@@ -216,7 +215,6 @@ func TestCreateCategory_AdminOnly_Success(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/categories", bytes.NewBuffer(body))
 	req.Header.Set("Content-Type", "application/json")
 
-	// Simulate admin authentication
 	ctx := context.WithValue(req.Context(), middleware.UserIDKey, adminUserID.String())
 	ctx = context.WithValue(ctx, middleware.UserRoleKey, "admin")
 	req = req.WithContext(ctx)
@@ -245,7 +243,6 @@ func TestCreateCategory_NonAdmin_Forbidden(t *testing.T) {
 		Slug: "podcasts",
 	}
 
-	// Simulate that the usecase returns an error for non-admin
 	mockUseCase.On("CreateCategory", mock.Anything, userID, mock.Anything).
 		Return(nil, domain.NewDomainError("FORBIDDEN", "unauthorized: only admins can create categories"))
 
@@ -253,7 +250,6 @@ func TestCreateCategory_NonAdmin_Forbidden(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/categories", bytes.NewBuffer(body))
 	req.Header.Set("Content-Type", "application/json")
 
-	// Simulate regular user authentication (not admin)
 	ctx := context.WithValue(req.Context(), middleware.UserIDKey, userID.String())
 	ctx = context.WithValue(ctx, middleware.UserRoleKey, "user")
 	req = req.WithContext(ctx)
@@ -284,8 +280,6 @@ func TestCreateCategory_NoAuth_Unauthorized(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/categories", bytes.NewBuffer(body))
 	req.Header.Set("Content-Type", "application/json")
 
-	// No authentication context
-
 	rr := httptest.NewRecorder()
 	handler.CreateCategory(rr, req)
 
@@ -296,7 +290,6 @@ func TestCreateCategory_NoAuth_Unauthorized(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, "Unauthorized", response["error"])
 
-	// No usecase calls should be made
 	mockUseCase.AssertNotCalled(t, "CreateCategory")
 }
 
@@ -326,11 +319,9 @@ func TestUpdateCategory_AdminOnly_Success(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPut, "/api/v1/admin/categories/"+categoryID.String(), bytes.NewBuffer(body))
 	req.Header.Set("Content-Type", "application/json")
 
-	// Simulate admin authentication
 	ctx := context.WithValue(req.Context(), middleware.UserIDKey, adminUserID.String())
 	ctx = context.WithValue(ctx, middleware.UserRoleKey, "admin")
 
-	// Set up chi context with URL params
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("id", categoryID.String())
 	ctx = context.WithValue(ctx, chi.RouteCtxKey, rctx)
@@ -368,11 +359,9 @@ func TestUpdateCategory_NonAdmin_Forbidden(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPut, "/api/v1/admin/categories/"+categoryID.String(), bytes.NewBuffer(body))
 	req.Header.Set("Content-Type", "application/json")
 
-	// Simulate regular user authentication
 	ctx := context.WithValue(req.Context(), middleware.UserIDKey, userID.String())
 	ctx = context.WithValue(ctx, middleware.UserRoleKey, "user")
 
-	// Set up chi context with URL params
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("id", categoryID.String())
 	ctx = context.WithValue(ctx, chi.RouteCtxKey, rctx)
@@ -403,11 +392,9 @@ func TestDeleteCategory_AdminOnly_Success(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/v1/admin/categories/"+categoryID.String(), nil)
 
-	// Simulate admin authentication
 	ctx := context.WithValue(req.Context(), middleware.UserIDKey, adminUserID.String())
 	ctx = context.WithValue(ctx, middleware.UserRoleKey, "admin")
 
-	// Set up chi context with URL params
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("id", categoryID.String())
 	ctx = context.WithValue(ctx, chi.RouteCtxKey, rctx)
@@ -434,11 +421,9 @@ func TestDeleteCategory_NonAdmin_Forbidden(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/v1/admin/categories/"+categoryID.String(), nil)
 
-	// Simulate regular user authentication
 	ctx := context.WithValue(req.Context(), middleware.UserIDKey, userID.String())
 	ctx = context.WithValue(ctx, middleware.UserRoleKey, "user")
 
-	// Set up chi context with URL params
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("id", categoryID.String())
 	ctx = context.WithValue(ctx, chi.RouteCtxKey, rctx)
@@ -470,11 +455,9 @@ func TestDeleteCategory_DefaultCategory_Error(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/v1/admin/categories/"+categoryID.String(), nil)
 
-	// Simulate admin authentication
 	ctx := context.WithValue(req.Context(), middleware.UserIDKey, adminUserID.String())
 	ctx = context.WithValue(ctx, middleware.UserRoleKey, "admin")
 
-	// Set up chi context with URL params
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("id", categoryID.String())
 	ctx = context.WithValue(ctx, chi.RouteCtxKey, rctx)
@@ -494,7 +477,73 @@ func TestDeleteCategory_DefaultCategory_Error(t *testing.T) {
 	mockUseCase.AssertExpectations(t)
 }
 
-// Helper functions
+func TestCategoryAdminRoutes_AuthMiddlewareWiring(t *testing.T) {
+	const testSecret = "test-jwt-secret"
+
+	makeToken := func(userID uuid.UUID, role string) string {
+		claims := jwt.MapClaims{
+			"sub":  userID.String(),
+			"role": role,
+			"exp":  time.Now().Add(time.Hour).Unix(),
+		}
+		tok := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+		signed, _ := tok.SignedString([]byte(testSecret))
+		return signed
+	}
+
+	t.Run("admin route rejects request with no JWT", func(t *testing.T) {
+		mockUseCase := new(mockVideoCategoryUseCase)
+		handler := NewVideoCategoryHandler(mockUseCase)
+
+		r := chi.NewRouter()
+		handler.RegisterRoutes(r, testSecret)
+
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/categories", nil)
+		rr := httptest.NewRecorder()
+		r.ServeHTTP(rr, req)
+
+		assert.Equal(t, http.StatusUnauthorized, rr.Code)
+		mockUseCase.AssertNotCalled(t, "CreateCategory")
+	})
+
+	t.Run("admin route accepts request with valid admin JWT", func(t *testing.T) {
+		mockUseCase := new(mockVideoCategoryUseCase)
+		handler := NewVideoCategoryHandler(mockUseCase)
+
+		adminID := uuid.New()
+		mockUseCase.On("CreateCategory", mock.Anything, adminID, mock.Anything).
+			Return(&domain.VideoCategory{ID: uuid.New(), Name: "Test"}, nil)
+
+		r := chi.NewRouter()
+		handler.RegisterRoutes(r, testSecret)
+
+		body, _ := json.Marshal(map[string]string{"name": "Test", "slug": "test"})
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/categories", bytes.NewBuffer(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+makeToken(adminID, "admin"))
+		rr := httptest.NewRecorder()
+		r.ServeHTTP(rr, req)
+
+		assert.NotEqual(t, http.StatusUnauthorized, rr.Code)
+	})
+
+	t.Run("public list route works without JWT", func(t *testing.T) {
+		mockUseCase := new(mockVideoCategoryUseCase)
+		handler := NewVideoCategoryHandler(mockUseCase)
+		mockUseCase.On("ListCategories", mock.Anything, mock.Anything).
+			Return([]*domain.VideoCategory{}, nil)
+
+		r := chi.NewRouter()
+		handler.RegisterRoutes(r, testSecret)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/categories", nil)
+		rr := httptest.NewRecorder()
+		r.ServeHTTP(rr, req)
+
+		assert.Equal(t, http.StatusOK, rr.Code)
+	})
+}
+
 func stringPtr(s string) *string {
 	return &s
 }

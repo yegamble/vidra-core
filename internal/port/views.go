@@ -18,6 +18,7 @@ type ViewsRepository interface {
 	UpdateTrendingVideo(ctx context.Context, trending *domain.TrendingVideo) error
 	BatchUpdateTrendingVideos(ctx context.Context, videos []*domain.TrendingVideo) error
 	IncrementVideoViews(ctx context.Context, videoID string) error
+	BatchIncrementVideoViews(ctx context.Context, counts map[string]int64) error
 	GetUniqueViews(ctx context.Context, videoID string, startDate, endDate time.Time) (int64, error)
 	CalculateEngagementScore(ctx context.Context, videoID string, hoursBack int) (float64, error)
 	AggregateDailyStats(ctx context.Context, date time.Time) error

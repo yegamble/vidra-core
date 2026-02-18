@@ -44,14 +44,14 @@ func NewChatHandlers(
 	}
 }
 
-func (h *ChatHandlers) RegisterRoutes(r chi.Router) {
+func (h *ChatHandlers) RegisterRoutes(r chi.Router, jwtSecret string) {
 	r.Route("/streams/{streamId}/chat", func(r chi.Router) {
-		r.With(middleware.RequireAuth).Get("/ws", h.HandleWebSocketConnection)
+		r.With(middleware.Auth(jwtSecret)).Get("/ws", h.HandleWebSocketConnection)
 
 		r.Get("/messages", h.GetChatMessages)
 
 		r.Group(func(r chi.Router) {
-			r.Use(middleware.RequireAuth)
+			r.Use(middleware.Auth(jwtSecret))
 
 			r.Delete("/messages/{messageId}", h.DeleteMessage)
 

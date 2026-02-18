@@ -17,30 +17,87 @@ type viewTask struct {
 }
 
 type Service struct {
-	viewsRepo port.ViewsRepository
-	videoRepo port.VideoRepository
-	viewQueue chan viewTask
-	workerWG  sync.WaitGroup
-	closeOnce sync.Once
+	viewsRepo    port.ViewsRepository
+	videoRepo    port.VideoRepository
+	viewQueue    chan viewTask
+	workerWG     sync.WaitGroup
+	closeOnce    sync.Once
+	viewCounts   map[string]int64
+	viewCountsMu sync.Mutex
+	flushStop    chan struct{}
+	flushWG      sync.WaitGroup
 }
 
+const defaultViewWorkers = 4
+const viewFlushInterval = 10 * time.Second
+
 func NewService(viewsRepo port.ViewsRepository, videoRepo port.VideoRepository) *Service {
-	s := &Service{
-		viewsRepo: viewsRepo,
-		videoRepo: videoRepo,
-		viewQueue: make(chan viewTask, 1000), // Buffer size 1000
+	return NewServiceWithWorkers(viewsRepo, videoRepo, defaultViewWorkers)
+}
+
+func NewServiceWithWorkers(viewsRepo port.ViewsRepository, videoRepo port.VideoRepository, numWorkers int) *Service {
+	if numWorkers < 1 {
+		numWorkers = defaultViewWorkers
 	}
-	s.workerWG.Add(1)
-	go s.worker()
+	s := &Service{
+		viewsRepo:  viewsRepo,
+		videoRepo:  videoRepo,
+		viewQueue:  make(chan viewTask, 1000),
+		viewCounts: make(map[string]int64),
+		flushStop:  make(chan struct{}),
+	}
+	s.workerWG.Add(numWorkers)
+	for i := 0; i < numWorkers; i++ {
+		go s.worker()
+	}
+	s.flushWG.Add(1)
+	go s.periodicFlush()
 	return s
 }
 
-// Close gracefully shuts down the service, waiting for pending tasks
 func (s *Service) Close() {
 	s.closeOnce.Do(func() {
+		close(s.flushStop)
 		close(s.viewQueue)
 	})
 	s.workerWG.Wait()
+	s.flushWG.Wait()
+	s.flushViewCounts()
+}
+
+func (s *Service) periodicFlush() {
+	defer s.flushWG.Done()
+	ticker := time.NewTicker(viewFlushInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			s.flushViewCounts()
+		case <-s.flushStop:
+			return
+		}
+	}
+}
+
+func (s *Service) flushViewCounts() {
+	s.viewCountsMu.Lock()
+	if len(s.viewCounts) == 0 {
+		s.viewCountsMu.Unlock()
+		return
+	}
+	counts := s.viewCounts
+	s.viewCounts = make(map[string]int64)
+	s.viewCountsMu.Unlock()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	_ = s.viewsRepo.BatchIncrementVideoViews(ctx, counts)
+}
+
+func (s *Service) bufferViewIncrement(videoID string) {
+	s.viewCountsMu.Lock()
+	s.viewCounts[videoID]++
+	s.viewCountsMu.Unlock()
 }
 
 func (s *Service) worker() {
@@ -51,24 +108,20 @@ func (s *Service) worker() {
 }
 
 func (s *Service) processViewTask(task viewTask) {
-	// Use a background context with timeout for worker operations
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Minute)
 	defer cancel()
 
 	request := task.request
 	userID := task.userID
 
-	// Check if this is an existing view session
 	existingView, err := s.viewsRepo.GetUserViewBySessionAndVideo(ctx, request.SessionID, request.VideoID)
 	if err != nil {
-		// In a real application, we should log this error
 		return
 	}
 
 	now := time.Now()
 
 	if existingView != nil {
-		// Update existing view session
 		existingView.WatchDuration = request.WatchDuration
 		existingView.CompletionPercentage = request.CompletionPercentage
 		existingView.IsCompleted = request.IsCompleted
@@ -82,57 +135,48 @@ func (s *Service) processViewTask(task viewTask) {
 		return
 	}
 
-	// Create new view record
 	view := &domain.UserView{
 		VideoID:         request.VideoID,
 		UserID:          userID,
 		SessionID:       request.SessionID,
 		FingerprintHash: request.FingerprintHash,
 
-		// Engagement metrics
 		WatchDuration:        request.WatchDuration,
 		VideoDuration:        request.VideoDuration,
 		CompletionPercentage: request.CompletionPercentage,
 		IsCompleted:          request.IsCompleted,
 
-		// Interaction metrics
 		SeekCount:      request.SeekCount,
 		PauseCount:     request.PauseCount,
 		ReplayCount:    request.ReplayCount,
 		QualityChanges: request.QualityChanges,
 
-		// Technical metrics
 		InitialLoadTime: request.InitialLoadTime,
 		BufferEvents:    request.BufferEvents,
 		ConnectionType:  request.ConnectionType,
 		VideoQuality:    stringPtrIfNotEmpty(request.VideoQuality),
 
-		// Context and attribution
 		ReferrerURL:  request.ReferrerURL,
 		ReferrerType: request.ReferrerType,
 		UTMSource:    request.UTMSource,
 		UTMMedium:    request.UTMMedium,
 		UTMCampaign:  request.UTMCampaign,
 
-		// Device and environment
 		DeviceType:       request.DeviceType,
 		OSName:           request.OSName,
 		BrowserName:      request.BrowserName,
 		ScreenResolution: request.ScreenResolution,
 		IsMobile:         request.IsMobile,
 
-		// Geographic data
 		CountryCode: request.CountryCode,
 		RegionCode:  request.RegionCode,
 		CityName:    request.CityName,
 		Timezone:    request.Timezone,
 
-		// Privacy and consent
 		IsAnonymous:     request.IsAnonymous,
 		TrackingConsent: request.TrackingConsent,
 		GDPRConsent:     request.GDPRConsent,
 
-		// Temporal data
 		ViewDate: now.Truncate(24 * time.Hour),
 		ViewHour: now.Hour(),
 		Weekday:  int(now.Weekday()),
@@ -141,17 +185,13 @@ func (s *Service) processViewTask(task viewTask) {
 		UpdatedAt: now,
 	}
 
-	// Create the view record
 	if err := s.viewsRepo.CreateUserView(ctx, view); err != nil {
 		return
 	}
-	// Increment the video's total view count (best-effort)
-	_ = s.viewsRepo.IncrementVideoViews(ctx, request.VideoID)
+	s.bufferViewIncrement(request.VideoID)
 }
 
-// TrackView tracks a user view with deduplication and session management
 func (s *Service) TrackView(ctx context.Context, userID *string, request *domain.ViewTrackingRequest) error {
-	// Validate that the video exists
 	video, err := s.videoRepo.GetByID(ctx, request.VideoID)
 	if err != nil {
 		return fmt.Errorf("failed to verify video exists: %w", err)
@@ -160,7 +200,6 @@ func (s *Service) TrackView(ctx context.Context, userID *string, request *domain
 		return fmt.Errorf("video not found: %s", request.VideoID)
 	}
 
-	// Submit task to background worker
 	select {
 	case s.viewQueue <- viewTask{userID: userID, request: request}:
 		return nil
@@ -169,26 +208,22 @@ func (s *Service) TrackView(ctx context.Context, userID *string, request *domain
 	}
 }
 
-// GetVideoAnalytics gets comprehensive analytics for a video
 func (s *Service) GetVideoAnalytics(ctx context.Context, filter *domain.ViewAnalyticsFilter) (*domain.ViewAnalyticsResponse, error) {
 	return s.viewsRepo.GetVideoAnalytics(ctx, filter)
 }
 
-// GetDailyStats gets pre-aggregated daily statistics for a video
 func (s *Service) GetDailyStats(ctx context.Context, videoID string, days int) ([]domain.DailyVideoStats, error) {
 	endDate := time.Now()
 	startDate := endDate.AddDate(0, 0, -days)
 	return s.viewsRepo.GetDailyVideoStats(ctx, videoID, startDate, endDate)
 }
 
-// GetUserEngagement gets user-level engagement statistics
 func (s *Service) GetUserEngagement(ctx context.Context, userID string, days int) ([]domain.UserEngagementStats, error) {
 	endDate := time.Now()
 	startDate := endDate.AddDate(0, 0, -days)
 	return s.viewsRepo.GetUserEngagementStats(ctx, userID, startDate, endDate)
 }
 
-// GetTrendingVideos gets current trending videos
 func (s *Service) GetTrendingVideos(ctx context.Context, limit int) ([]domain.TrendingVideo, error) {
 	if limit <= 0 || limit > 100 {
 		limit = 50
@@ -196,7 +231,6 @@ func (s *Service) GetTrendingVideos(ctx context.Context, limit int) ([]domain.Tr
 	return s.viewsRepo.GetTrendingVideos(ctx, limit)
 }
 
-// GetTrendingVideosWithDetails gets trending videos with full video details
 func (s *Service) GetTrendingVideosWithDetails(ctx context.Context, limit int) (*domain.TrendingVideosResponse, error) {
 	trendingVideos, err := s.GetTrendingVideos(ctx, limit)
 	if err != nil {
@@ -241,7 +275,6 @@ func (s *Service) GetTrendingVideosWithDetails(ctx context.Context, limit int) (
 	return response, nil
 }
 
-// UpdateTrendingMetrics calculates and updates trending metrics for videos
 func (s *Service) UpdateTrendingMetrics(ctx context.Context, videoIDs []string) error {
 	now := time.Now()
 

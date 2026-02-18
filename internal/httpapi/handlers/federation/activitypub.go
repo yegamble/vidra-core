@@ -16,7 +16,6 @@ import (
 	"athena/internal/port"
 )
 
-// ActivityPubHandlers handles ActivityPub protocol endpoints
 type ActivityPubHandlers struct {
 	service   port.ActivityPubService
 	cfg       *config.Config
@@ -24,7 +23,6 @@ type ActivityPubHandlers struct {
 	videoRepo port.VideoRepository
 }
 
-// NewActivityPubHandlers creates a new ActivityPub handlers instance
 func NewActivityPubHandlers(service port.ActivityPubService, cfg *config.Config, userRepo port.UserRepository, videoRepo port.VideoRepository) *ActivityPubHandlers {
 	return &ActivityPubHandlers{
 		service:   service,
@@ -34,7 +32,6 @@ func NewActivityPubHandlers(service port.ActivityPubService, cfg *config.Config,
 	}
 }
 
-// WebFinger handles /.well-known/webfinger requests
 func (h *ActivityPubHandlers) WebFinger(w http.ResponseWriter, r *http.Request) {
 	resource := r.URL.Query().Get("resource")
 	if resource == "" {
@@ -45,7 +42,6 @@ func (h *ActivityPubHandlers) WebFinger(w http.ResponseWriter, r *http.Request) 
 	// Parse resource (acct:username@domain or https://domain/users/username)
 	var username string
 	if strings.HasPrefix(resource, "acct:") {
-		// acct:username@domain
 		acct := strings.TrimPrefix(resource, "acct:")
 		parts := strings.Split(acct, "@")
 		if len(parts) != 2 {
@@ -54,7 +50,6 @@ func (h *ActivityPubHandlers) WebFinger(w http.ResponseWriter, r *http.Request) 
 		}
 		username = parts[0]
 	} else if strings.HasPrefix(resource, "http://") || strings.HasPrefix(resource, "https://") {
-		// Extract username from URL
 		parts := strings.Split(strings.TrimSuffix(resource, "/"), "/")
 		if len(parts) >= 2 && parts[len(parts)-2] == "users" {
 			username = parts[len(parts)-1]
@@ -67,7 +62,6 @@ func (h *ActivityPubHandlers) WebFinger(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Build WebFinger response
 	actorURL := fmt.Sprintf("%s/users/%s", h.cfg.PublicBaseURL, username)
 
 	response := domain.WebFingerResponse{
@@ -91,7 +85,6 @@ func (h *ActivityPubHandlers) WebFinger(w http.ResponseWriter, r *http.Request) 
 	_ = json.NewEncoder(w).Encode(response)
 }
 
-// NodeInfo handles /.well-known/nodeinfo requests
 func (h *ActivityPubHandlers) NodeInfo(w http.ResponseWriter, r *http.Request) {
 	response := map[string]interface{}{
 		"links": []map[string]string{
@@ -106,20 +99,16 @@ func (h *ActivityPubHandlers) NodeInfo(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(response)
 }
 
-// NodeInfo20 handles /nodeinfo/2.0 requests
 func (h *ActivityPubHandlers) NodeInfo20(w http.ResponseWriter, r *http.Request) {
-	// Fetch real statistics from the database
 	var userCount int64
 	if h.userRepo != nil {
 		var err error
 		userCount, err = h.userRepo.Count(r.Context())
 		if err != nil {
-			// Log error but don't fail the request, use 0 as fallback
 			userCount = 0
 		}
 	}
 
-	// Count local videos as posts
 	var videoCount int64
 	if h.videoRepo != nil {
 		var err error
@@ -155,7 +144,6 @@ func (h *ActivityPubHandlers) NodeInfo20(w http.ResponseWriter, r *http.Request)
 	_ = json.NewEncoder(w).Encode(nodeInfo)
 }
 
-// GetActor handles GET /users/:username (ActivityPub actor)
 func (h *ActivityPubHandlers) GetActor(w http.ResponseWriter, r *http.Request) {
 	username := chi.URLParam(r, "username")
 	if username == "" {
@@ -173,7 +161,6 @@ func (h *ActivityPubHandlers) GetActor(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(actor)
 }
 
-// getOrderedCollectionHandler is a helper to handle ordered collection endpoints (outbox, followers, following)
 func (h *ActivityPubHandlers) getOrderedCollectionHandler(
 	w http.ResponseWriter, r *http.Request,
 	collectionType string,
@@ -188,7 +175,6 @@ func (h *ActivityPubHandlers) getOrderedCollectionHandler(
 
 	pageStr := r.URL.Query().Get("page")
 	if pageStr == "" {
-		// Return collection overview
 		actorURL := fmt.Sprintf("%s/users/%s", h.cfg.PublicBaseURL, username)
 		collectionURL := actorURL + "/" + collectionType
 
@@ -211,7 +197,6 @@ func (h *ActivityPubHandlers) getOrderedCollectionHandler(
 		return
 	}
 
-	// Return paginated collection
 	page, _ := strconv.Atoi(pageStr)
 	limit := h.cfg.ActivityPubMaxActivitiesPerPage
 
@@ -225,18 +210,27 @@ func (h *ActivityPubHandlers) getOrderedCollectionHandler(
 	_ = json.NewEncoder(w).Encode(collectionPage)
 }
 
-// GetOutbox handles GET /users/:username/outbox
 func (h *ActivityPubHandlers) GetOutbox(w http.ResponseWriter, r *http.Request) {
 	h.getOrderedCollectionHandler(w, r, "outbox", h.service.GetOutbox, h.service.GetOutboxCount)
 }
 
-// GetInbox handles GET /users/:username/inbox
 func (h *ActivityPubHandlers) GetInbox(w http.ResponseWriter, r *http.Request) {
-	// Inbox GET is typically not implemented or returns empty for privacy
-	http.Error(w, "not implemented", http.StatusNotImplemented)
+	username := chi.URLParam(r, "username")
+	baseURL := ""
+	if h.cfg != nil {
+		baseURL = h.cfg.PublicBaseURL
+	}
+	collection := map[string]interface{}{
+		"@context":     "https://www.w3.org/ns/activitystreams",
+		"id":           fmt.Sprintf("%s/users/%s/inbox", baseURL, username),
+		"type":         "OrderedCollection",
+		"totalItems":   0,
+		"orderedItems": []interface{}{},
+	}
+	w.Header().Set("Content-Type", "application/activity+json; charset=utf-8")
+	_ = json.NewEncoder(w).Encode(collection)
 }
 
-// PostInbox handles POST /users/:username/inbox
 func (h *ActivityPubHandlers) PostInbox(w http.ResponseWriter, r *http.Request) {
 	username := chi.URLParam(r, "username")
 	if username == "" {
@@ -244,7 +238,6 @@ func (h *ActivityPubHandlers) PostInbox(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Read body
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		http.Error(w, "failed to read body", http.StatusBadRequest)
@@ -252,14 +245,12 @@ func (h *ActivityPubHandlers) PostInbox(w http.ResponseWriter, r *http.Request) 
 	}
 	defer func() { _ = r.Body.Close() }()
 
-	// Parse activity
 	var activity map[string]interface{}
 	if err := json.Unmarshal(body, &activity); err != nil {
 		http.Error(w, "invalid JSON", http.StatusBadRequest)
 		return
 	}
 
-	// Handle the activity
 	if err := h.service.HandleInboxActivity(r.Context(), activity, r); err != nil {
 		http.Error(w, fmt.Sprintf("failed to process activity: %v", err), http.StatusInternalServerError)
 		return
@@ -268,9 +259,7 @@ func (h *ActivityPubHandlers) PostInbox(w http.ResponseWriter, r *http.Request) 
 	w.WriteHeader(http.StatusAccepted)
 }
 
-// PostSharedInbox handles POST /inbox (shared inbox)
 func (h *ActivityPubHandlers) PostSharedInbox(w http.ResponseWriter, r *http.Request) {
-	// Read body
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		http.Error(w, "failed to read body", http.StatusBadRequest)
@@ -278,14 +267,12 @@ func (h *ActivityPubHandlers) PostSharedInbox(w http.ResponseWriter, r *http.Req
 	}
 	defer func() { _ = r.Body.Close() }()
 
-	// Parse activity
 	var activity map[string]interface{}
 	if err := json.Unmarshal(body, &activity); err != nil {
 		http.Error(w, "invalid JSON", http.StatusBadRequest)
 		return
 	}
 
-	// Handle the activity (same as PostInbox but for shared inbox)
 	if err := h.service.HandleInboxActivity(r.Context(), activity, r); err != nil {
 		http.Error(w, fmt.Sprintf("failed to process activity: %v", err), http.StatusInternalServerError)
 		return
@@ -294,17 +281,14 @@ func (h *ActivityPubHandlers) PostSharedInbox(w http.ResponseWriter, r *http.Req
 	w.WriteHeader(http.StatusAccepted)
 }
 
-// GetFollowers handles GET /users/:username/followers
 func (h *ActivityPubHandlers) GetFollowers(w http.ResponseWriter, r *http.Request) {
 	h.getOrderedCollectionHandler(w, r, "followers", h.service.GetFollowers, h.service.GetFollowersCount)
 }
 
-// GetFollowing handles GET /users/:username/following
 func (h *ActivityPubHandlers) GetFollowing(w http.ResponseWriter, r *http.Request) {
 	h.getOrderedCollectionHandler(w, r, "following", h.service.GetFollowing, h.service.GetFollowingCount)
 }
 
-// HostMeta handles /.well-known/host-meta requests
 func (h *ActivityPubHandlers) HostMeta(w http.ResponseWriter, r *http.Request) {
 	xml := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
 <XRD xmlns="http://docs.oasis-open.org/ns/xri/xrd-1.0">

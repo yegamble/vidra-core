@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"sort"
+	"sync/atomic"
 	"time"
 )
 
@@ -14,6 +15,7 @@ type Scheduler struct {
 	stopChan     chan struct{}
 	doneChan     chan struct{}
 	tickInterval time.Duration
+	running      atomic.Bool
 }
 
 func NewScheduler(manager *BackupManager, schedule string, retention int) *Scheduler {
@@ -53,7 +55,14 @@ func (s *Scheduler) run(ctx context.Context) {
 			log.Println("Backup scheduler stopped")
 			return
 		case <-ticker.C:
-			s.runBackup(ctx)
+			if s.running.CompareAndSwap(false, true) {
+				go func() {
+					defer s.running.Store(false)
+					s.runBackup(ctx)
+				}()
+			} else {
+				log.Println("Backup scheduler: skipping tick, previous backup still running")
+			}
 		}
 	}
 }

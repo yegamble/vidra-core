@@ -156,14 +156,14 @@ func (m *BackupManager) CreateBackupWithComponents(ctx context.Context, componen
 	}, nil
 }
 
-func (m *BackupManager) dumpDatabase(ctx context.Context, outputPath string) error {
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Minute)
+func runDumpCommand(ctx context.Context, cmdName string, args []string, outputPath string, timeoutMinutes int) error {
+	ctx, cancel := context.WithTimeout(ctx, time.Duration(timeoutMinutes)*time.Minute)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "pg_dump", m.DatabaseURL, "-f", outputPath)
+	cmd := exec.CommandContext(ctx, cmdName, args...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("pg_dump failed: %w, output: %s", err, string(output))
+		return fmt.Errorf("%s failed: %w, output: %s", cmdName, err, string(output))
 	}
 
 	stat, err := os.Stat(outputPath)
@@ -177,25 +177,12 @@ func (m *BackupManager) dumpDatabase(ctx context.Context, outputPath string) err
 	return nil
 }
 
+func (m *BackupManager) dumpDatabase(ctx context.Context, outputPath string) error {
+	return runDumpCommand(ctx, "pg_dump", []string{m.DatabaseURL, "-f", outputPath}, outputPath, 30)
+}
+
 func (m *BackupManager) dumpRedis(ctx context.Context, outputPath string) error {
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Minute)
-	defer cancel()
-
-	cmd := exec.CommandContext(ctx, "redis-cli", "-u", m.RedisURL, "--rdb", outputPath)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("redis RDB dump failed: %w, output: %s", err, string(output))
-	}
-
-	stat, err := os.Stat(outputPath)
-	if err != nil {
-		return fmt.Errorf("redis dump file not created: %w", err)
-	}
-	if stat.Size() == 0 {
-		return fmt.Errorf("redis dump file is empty")
-	}
-
-	return nil
+	return runDumpCommand(ctx, "redis-cli", []string{"-u", m.RedisURL, "--rdb", outputPath}, outputPath, 30)
 }
 
 func (m *BackupManager) archiveStorage(ctx context.Context, outputPath string, excludeDirs []string) error {

@@ -184,3 +184,40 @@ func TestReadinessCheck_StubLimitations(t *testing.T) {
 	t.Log("  - IPFS API version check with timeout")
 	t.Log("  - Real queue depth monitoring")
 }
+
+func TestServerReadinessCheck_Returns503WhenDBUnhealthy(t *testing.T) {
+	db, mock, err := sqlmock.New(sqlmock.MonitorPingsOption(true))
+	if err != nil {
+		t.Fatalf("Failed to create sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	mock.ExpectPing().WillReturnError(fmt.Errorf("connection refused"))
+
+	server := NewServer(nil, nil, "test", nil, 0, "", "", 0, nil)
+	server.SetDB(db)
+
+	req := httptest.NewRequest("GET", "/ready", nil)
+	w := httptest.NewRecorder()
+
+	server.ReadinessCheck(w, req)
+
+	if w.Code != http.StatusServiceUnavailable {
+		t.Errorf("Expected 503 when DB is unhealthy, got %d", w.Code)
+	}
+
+	_ = mock.ExpectationsWereMet()
+}
+
+func TestServerReadinessCheck_Returns200WhenHealthy(t *testing.T) {
+	server := NewServer(nil, nil, "test", nil, 0, "", "", 0, nil)
+
+	req := httptest.NewRequest("GET", "/ready", nil)
+	w := httptest.NewRecorder()
+
+	server.ReadinessCheck(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("Expected 200 when all components healthy (nil = not configured), got %d", w.Code)
+	}
+}

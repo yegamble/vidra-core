@@ -2,6 +2,9 @@ package storage
 
 import (
 	"context"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -56,13 +59,10 @@ func TestIPFSBackend_Methods(t *testing.T) {
 		t.Fatalf("NewIPFSBackend() error = %v", err)
 	}
 
-	t.Run("Upload unsupported", func(t *testing.T) {
+	t.Run("Upload error from client when not running", func(t *testing.T) {
 		err := backend.Upload(context.Background(), "k", strings.NewReader("data"), "text/plain")
 		if err == nil {
-			t.Fatal("expected error, got nil")
-		}
-		if !strings.Contains(err.Error(), "not supported for IPFS") {
-			t.Fatalf("unexpected error: %v", err)
+			t.Fatal("expected error when IPFS not running, got nil")
 		}
 	})
 
@@ -76,16 +76,13 @@ func TestIPFSBackend_Methods(t *testing.T) {
 		}
 	})
 
-	t.Run("Download not implemented", func(t *testing.T) {
+	t.Run("Download error from client", func(t *testing.T) {
 		body, err := backend.Download(context.Background(), "cid123")
 		if err == nil {
-			t.Fatal("expected error, got nil")
+			t.Fatal("expected error when IPFS not running, got nil")
 		}
 		if body != nil {
 			t.Fatal("expected nil body on error")
-		}
-		if !strings.Contains(err.Error(), "download not implemented") {
-			t.Fatalf("unexpected error: %v", err)
 		}
 	})
 
@@ -104,14 +101,16 @@ func TestIPFSBackend_Methods(t *testing.T) {
 		}
 	})
 
-	t.Run("Delete and Exists stubs", func(t *testing.T) {
+	t.Run("Delete error from client when not running", func(t *testing.T) {
 		if err := backend.Delete(context.Background(), "cid123"); err == nil {
-			t.Fatal("expected delete error, got nil")
+			t.Fatal("expected delete error when IPFS not running, got nil")
 		}
+	})
 
+	t.Run("Exists error from client when not running", func(t *testing.T) {
 		exists, err := backend.Exists(context.Background(), "cid123")
 		if err == nil {
-			t.Fatal("expected exists error, got nil")
+			t.Fatal("expected exists error when IPFS not running, got nil")
 		}
 		if exists {
 			t.Fatal("exists = true, want false")
@@ -140,6 +139,72 @@ func TestIPFSBackend_Methods(t *testing.T) {
 		}
 		if meta.LastModified.IsZero() {
 			t.Fatal("meta.LastModified is zero")
+		}
+	})
+}
+
+func TestIPFSBackend_WithMockServer(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v0/cat":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("file content here"))
+		case "/api/v0/pin/rm":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"Pins":["QmTestCID"]}`))
+		case "/api/v0/pin/ls":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"Keys":{"QmTestCID":{"Type":"recursive"}}}`))
+		case "/api/v0/add":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"Name":"data.bin","Hash":"QmNewCID","Size":"17"}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	client := ipfs.NewClient(server.URL, "", time.Second)
+	backend, err := NewIPFSBackend(IPFSConfig{Client: client, GatewayURL: "https://gateway.example.com"})
+	if err != nil {
+		t.Fatalf("NewIPFSBackend() error = %v", err)
+	}
+
+	t.Run("Upload via reader succeeds", func(t *testing.T) {
+		err := backend.Upload(context.Background(), "key", strings.NewReader("some content"), "text/plain")
+		if err != nil {
+			t.Fatalf("Upload() error = %v", err)
+		}
+	})
+
+	t.Run("Download returns content", func(t *testing.T) {
+		rc, err := backend.Download(context.Background(), "QmTestCID")
+		if err != nil {
+			t.Fatalf("Download() error = %v", err)
+		}
+		defer rc.Close()
+		data, err := io.ReadAll(rc)
+		if err != nil {
+			t.Fatalf("ReadAll() error = %v", err)
+		}
+		if string(data) != "file content here" {
+			t.Fatalf("Download() content = %q, want %q", string(data), "file content here")
+		}
+	})
+
+	t.Run("Delete unpins CID", func(t *testing.T) {
+		if err := backend.Delete(context.Background(), "QmTestCID"); err != nil {
+			t.Fatalf("Delete() error = %v", err)
+		}
+	})
+
+	t.Run("Exists returns true for pinned CID", func(t *testing.T) {
+		exists, err := backend.Exists(context.Background(), "QmTestCID")
+		if err != nil {
+			t.Fatalf("Exists() error = %v", err)
+		}
+		if !exists {
+			t.Fatal("Exists() = false, want true")
 		}
 	})
 }

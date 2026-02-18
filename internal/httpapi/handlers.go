@@ -103,6 +103,11 @@ func (s *Server) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !dUser.IsActive {
+		shared.WriteError(w, http.StatusForbidden, domain.NewDomainError("ACCOUNT_DEACTIVATED", "account deactivated"))
+		return
+	}
+
 	if dUser.TwoFAEnabled {
 		if twoFACode == "" {
 			shared.WriteError(w, http.StatusForbidden, domain.ErrTwoFARequired)
@@ -327,6 +332,19 @@ func (s *Server) RefreshToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var role string
+	if s.userRepo != nil {
+		u, err := s.userRepo.GetByID(r.Context(), existing.UserID)
+		if err == nil {
+			if !u.IsActive {
+				_ = s.authRepo.RevokeRefreshToken(r.Context(), req.RefreshToken)
+				shared.WriteError(w, http.StatusForbidden, domain.NewDomainError("ACCOUNT_DEACTIVATED", "account deactivated"))
+				return
+			}
+			role = string(u.Role)
+		}
+	}
+
 	_ = s.authRepo.RevokeRefreshToken(r.Context(), req.RefreshToken)
 
 	newRefresh := uuid.NewString()
@@ -347,13 +365,6 @@ func (s *Server) RefreshToken(w http.ResponseWriter, r *http.Request) {
 	if err := s.authRepo.CreateSession(r.Context(), newRefresh, existing.UserID, refreshExpires); err != nil {
 		shared.WriteError(w, http.StatusInternalServerError, domain.NewDomainError("SESSION_CREATE_FAILED", "Failed to create session"))
 		return
-	}
-
-	var role string
-	if s.userRepo != nil {
-		if u, err := s.userRepo.GetByID(r.Context(), existing.UserID); err == nil {
-			role = string(u.Role)
-		}
 	}
 	response := generated.TokenResponse{
 		AccessToken:  s.generateJWTWithRole(existing.UserID, role, 15*time.Minute),
@@ -429,8 +440,17 @@ func (s *Server) ReadinessCheck(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	overallStatus := generated.Ready
+	httpStatus := http.StatusOK
+	if dbStatus == generated.ReadinessResponseChecksDatabaseUnhealthy ||
+		redisStatus == generated.ReadinessResponseChecksRedisUnhealthy ||
+		ipfsStatus == generated.ReadinessResponseChecksIpfsUnhealthy {
+		overallStatus = generated.NotReady
+		httpStatus = http.StatusServiceUnavailable
+	}
+
 	response := generated.ReadinessResponse{
-		Status: generated.Ready,
+		Status: overallStatus,
 		Checks: struct {
 			Database *generated.ReadinessResponseChecksDatabase `json:"database,omitempty"`
 			Ipfs     *generated.ReadinessResponseChecksIpfs     `json:"ipfs,omitempty"`
@@ -443,7 +463,7 @@ func (s *Server) ReadinessCheck(w http.ResponseWriter, r *http.Request) {
 		Timestamp: time.Now(),
 	}
 
-	shared.WriteJSON(w, http.StatusOK, response)
+	shared.WriteJSON(w, httpStatus, response)
 }
 
 func (s *Server) generateJWTWithRole(userID string, role string, duration time.Duration) string {

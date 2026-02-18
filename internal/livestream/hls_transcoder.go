@@ -18,19 +18,17 @@ import (
 	"athena/internal/repository"
 )
 
-// QualityVariant defines a video quality preset for HLS transcoding
 type QualityVariant struct {
-	Name         string // "1080p", "720p", "480p", "360p"
+	Name         string
 	Width        int
 	Height       int
-	VideoBitrate int // Video bitrate in kbps
-	AudioBitrate int // Audio bitrate in kbps
-	MaxBitrate   int // Max bitrate for buffer calculation
-	BufferSize   int // Buffer size in kbps
-	Framerate    int // Target framerate
+	VideoBitrate int
+	AudioBitrate int
+	MaxBitrate   int
+	BufferSize   int
+	Framerate    int
 }
 
-// GetQualityVariants returns the standard quality variants for HLS transcoding
 func GetQualityVariants() []QualityVariant {
 	return []QualityVariant{
 		{
@@ -76,20 +74,17 @@ func GetQualityVariants() []QualityVariant {
 	}
 }
 
-// FilterVariantsByConfig filters quality variants based on configuration
 func FilterVariantsByConfig(cfg *config.Config) []QualityVariant {
 	allVariants := GetQualityVariants()
 	if cfg.HLSVariants == "" || cfg.HLSVariants == "all" {
 		return allVariants
 	}
 
-	// Parse comma-separated list
 	enabled := make(map[string]bool)
 	for _, v := range strings.Split(cfg.HLSVariants, ",") {
 		enabled[strings.TrimSpace(v)] = true
 	}
 
-	// Filter variants
 	filtered := []QualityVariant{}
 	for _, v := range allVariants {
 		if enabled[v.Name] {
@@ -100,7 +95,6 @@ func FilterVariantsByConfig(cfg *config.Config) []QualityVariant {
 	return filtered
 }
 
-// TranscodeSession represents an active HLS transcoding session
 type TranscodeSession struct {
 	StreamID      uuid.UUID
 	FFmpegProcess *exec.Cmd
@@ -113,7 +107,6 @@ type TranscodeSession struct {
 	RTMPUrl       string
 }
 
-// HLSTranscoder manages HLS transcoding for live streams
 type HLSTranscoder struct {
 	cfg           *config.Config
 	streamRepo    repository.LiveStreamRepository
@@ -124,7 +117,6 @@ type HLSTranscoder struct {
 	wg            sync.WaitGroup
 }
 
-// NewHLSTranscoder creates a new HLS transcoder
 func NewHLSTranscoder(
 	cfg *config.Config,
 	streamRepo repository.LiveStreamRepository,
@@ -139,29 +131,24 @@ func NewHLSTranscoder(
 	}
 }
 
-// StartTranscoding starts HLS transcoding for a stream
 func (t *HLSTranscoder) StartTranscoding(ctx context.Context, stream *domain.LiveStream, rtmpURL string) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
-	// Check if already transcoding
 	if _, exists := t.activeStreams[stream.ID]; exists {
 		return fmt.Errorf("stream %s is already being transcoded", stream.ID)
 	}
 
-	// Create output directory
 	outputDir := filepath.Join(t.cfg.HLSOutputDir, stream.ID.String())
 	if err := os.MkdirAll(outputDir, 0750); err != nil {
 		return fmt.Errorf("failed to create output directory: %w", err)
 	}
 
-	// Get enabled variants
 	variants := FilterVariantsByConfig(t.cfg)
 	if len(variants) == 0 {
 		return fmt.Errorf("no quality variants enabled")
 	}
 
-	// Create variant directories
 	for _, v := range variants {
 		variantDir := filepath.Join(outputDir, v.Name)
 		if err := os.MkdirAll(variantDir, 0750); err != nil {
@@ -169,13 +156,10 @@ func (t *HLSTranscoder) StartTranscoding(ctx context.Context, stream *domain.Liv
 		}
 	}
 
-	// Build FFmpeg command
 	cmd := t.buildFFmpegCommand(rtmpURL, outputDir, variants)
 
-	// Create session context
 	sessionCtx, cancel := context.WithCancel(ctx)
 
-	// Create session
 	session := &TranscodeSession{
 		StreamID:      stream.ID,
 		FFmpegProcess: cmd,
@@ -187,10 +171,8 @@ func (t *HLSTranscoder) StartTranscoding(ctx context.Context, stream *domain.Liv
 		RTMPUrl:       rtmpURL,
 	}
 
-	// Store session
 	t.activeStreams[stream.ID] = session
 
-	// Start FFmpeg process
 	t.wg.Add(1)
 	go func() {
 		defer t.wg.Done()
@@ -206,7 +188,6 @@ func (t *HLSTranscoder) StartTranscoding(ctx context.Context, stream *domain.Liv
 	return nil
 }
 
-// buildFFmpegCommand builds the FFmpeg command for HLS transcoding
 func (t *HLSTranscoder) buildFFmpegCommand(rtmpURL, outputDir string, variants []QualityVariant) *exec.Cmd {
 	args := []string{
 		"-i", rtmpURL,
@@ -224,16 +205,13 @@ func (t *HLSTranscoder) buildFFmpegCommand(rtmpURL, outputDir string, variants [
 		"-master_pl_name", "master.m3u8",
 	}
 
-	// Build variant stream map
 	variantMap := []string{}
 	for i := range variants {
 		variantMap = append(variantMap, fmt.Sprintf("v:%d,a:%d", i, i))
 	}
 	args = append(args, "-var_stream_map", strings.Join(variantMap, " "))
 
-	// Add per-variant encoding parameters
 	for i, v := range variants {
-		// Video encoding
 		args = append(args,
 			fmt.Sprintf("-s:v:%d", i), fmt.Sprintf("%dx%d", v.Width, v.Height),
 			fmt.Sprintf("-b:v:%d", i), fmt.Sprintf("%dk", v.VideoBitrate),
@@ -242,13 +220,11 @@ func (t *HLSTranscoder) buildFFmpegCommand(rtmpURL, outputDir string, variants [
 			fmt.Sprintf("-r:v:%d", i), fmt.Sprintf("%d", v.Framerate),
 		)
 
-		// Audio encoding
 		args = append(args,
 			fmt.Sprintf("-b:a:%d", i), fmt.Sprintf("%dk", v.AudioBitrate),
 		)
 	}
 
-	// Output pattern
 	args = append(args, filepath.Join(outputDir, "%v", "index.m3u8"))
 
 	cmd := exec.Command(t.cfg.FFmpegPath, args...)
@@ -257,9 +233,7 @@ func (t *HLSTranscoder) buildFFmpegCommand(rtmpURL, outputDir string, variants [
 	return cmd
 }
 
-// runFFmpegProcess runs the FFmpeg process and handles its lifecycle
 func (t *HLSTranscoder) runFFmpegProcess(session *TranscodeSession) {
-	// Capture output for logging
 	session.FFmpegProcess.Stdout = os.Stdout
 	session.FFmpegProcess.Stderr = os.Stderr
 
@@ -268,13 +242,11 @@ func (t *HLSTranscoder) runFFmpegProcess(session *TranscodeSession) {
 		"command":   session.FFmpegProcess.String(),
 	}).Debug("Starting FFmpeg process")
 
-	// Start process
 	if err := session.FFmpegProcess.Start(); err != nil {
 		t.logger.WithError(err).WithField("stream_id", session.StreamID).Error("Failed to start FFmpeg")
 		return
 	}
 
-	// Wait for process to complete or be cancelled
 	done := make(chan error, 1)
 	go func() {
 		done <- session.FFmpegProcess.Wait()
@@ -282,15 +254,13 @@ func (t *HLSTranscoder) runFFmpegProcess(session *TranscodeSession) {
 
 	select {
 	case <-session.Ctx.Done():
-		// Context cancelled - kill process
 		t.logger.WithField("stream_id", session.StreamID).Info("Stopping FFmpeg process")
 		if err := session.FFmpegProcess.Process.Kill(); err != nil {
 			t.logger.WithError(err).WithField("stream_id", session.StreamID).Warn("Failed to kill FFmpeg process")
 		}
-		<-done // Wait for process to exit
+		<-done
 
 	case err := <-done:
-		// Process exited
 		if err != nil {
 			t.logger.WithError(err).WithField("stream_id", session.StreamID).Error("FFmpeg process failed")
 		} else {
@@ -298,13 +268,11 @@ func (t *HLSTranscoder) runFFmpegProcess(session *TranscodeSession) {
 		}
 	}
 
-	// Clean up session
 	t.mu.Lock()
 	delete(t.activeStreams, session.StreamID)
 	t.mu.Unlock()
 }
 
-// StopTranscoding stops HLS transcoding for a stream
 func (t *HLSTranscoder) StopTranscoding(streamID uuid.UUID) error {
 	t.mu.Lock()
 	session, exists := t.activeStreams[streamID]
@@ -314,14 +282,12 @@ func (t *HLSTranscoder) StopTranscoding(streamID uuid.UUID) error {
 	}
 	t.mu.Unlock()
 
-	// Cancel session context to stop FFmpeg
 	session.Cancel()
 
 	t.logger.WithField("stream_id", streamID).Info("Stopped HLS transcoding")
 	return nil
 }
 
-// GetSession returns the transcoding session for a stream
 func (t *HLSTranscoder) GetSession(streamID uuid.UUID) (*TranscodeSession, bool) {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
@@ -329,7 +295,6 @@ func (t *HLSTranscoder) GetSession(streamID uuid.UUID) (*TranscodeSession, bool)
 	return session, exists
 }
 
-// IsTranscoding checks if a stream is currently being transcoded
 func (t *HLSTranscoder) IsTranscoding(streamID uuid.UUID) bool {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
@@ -337,18 +302,15 @@ func (t *HLSTranscoder) IsTranscoding(streamID uuid.UUID) bool {
 	return exists
 }
 
-// GetActiveStreamCount returns the number of streams being transcoded
 func (t *HLSTranscoder) GetActiveStreamCount() int {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 	return len(t.activeStreams)
 }
 
-// Shutdown gracefully stops all transcoding sessions
 func (t *HLSTranscoder) Shutdown(ctx context.Context) error {
 	close(t.shutdownChan)
 
-	// Stop all active sessions
 	t.mu.Lock()
 	sessions := make([]*TranscodeSession, 0, len(t.activeStreams))
 	for _, session := range t.activeStreams {
@@ -356,12 +318,10 @@ func (t *HLSTranscoder) Shutdown(ctx context.Context) error {
 	}
 	t.mu.Unlock()
 
-	// Cancel all sessions
 	for _, session := range sessions {
 		session.Cancel()
 	}
 
-	// Wait for all processes to stop (with timeout)
 	done := make(chan struct{})
 	go func() {
 		t.wg.Wait()
@@ -378,20 +338,6 @@ func (t *HLSTranscoder) Shutdown(ctx context.Context) error {
 	}
 }
 
-// CleanupOldSegments removes old HLS segments based on the DVR window
-func (t *HLSTranscoder) CleanupOldSegments(streamID uuid.UUID) error {
-	_, exists := t.GetSession(streamID)
-	if !exists {
-		return fmt.Errorf("stream %s not found", streamID)
-	}
-
-	// FFmpeg handles segment deletion with the delete_segments flag
-	// This is a no-op since we're using FFmpeg's automatic deletion
-	t.logger.WithField("stream_id", streamID).Debug("Segment cleanup handled by FFmpeg")
-	return nil
-}
-
-// GetHLSPlaylistURL returns the master playlist URL for a stream
 func (t *HLSTranscoder) GetHLSPlaylistURL(streamID uuid.UUID) string {
 	return fmt.Sprintf("/api/v1/streams/%s/hls/master.m3u8", streamID)
 }

@@ -21,6 +21,8 @@ import (
 
 const version = "dev"
 
+const defaultBackupPath = "./backups"
+
 func main() {
 	if len(os.Args) < 2 {
 		printUsage()
@@ -131,7 +133,7 @@ func handleBackup(args []string) {
 func createBackup(ctx context.Context, cfg *config.Config, components backup.BackupComponents, jsonOutput bool) {
 	backupPath := os.Getenv("BACKUP_LOCAL_PATH")
 	if backupPath == "" {
-		backupPath = "./backups"
+		backupPath = defaultBackupPath
 	}
 	target := backup.NewLocalBackend(backupPath)
 
@@ -166,7 +168,7 @@ func createBackup(ctx context.Context, cfg *config.Config, components backup.Bac
 func listBackups(ctx context.Context, cfg *config.Config, jsonOutput bool) {
 	backupPath := os.Getenv("BACKUP_LOCAL_PATH")
 	if backupPath == "" {
-		backupPath = "./backups"
+		backupPath = defaultBackupPath
 	}
 	target := backup.NewLocalBackend(backupPath)
 
@@ -222,7 +224,7 @@ func handleRestore(args []string) {
 
 	backupPath := os.Getenv("BACKUP_LOCAL_PATH")
 	if backupPath == "" {
-		backupPath = "./backups"
+		backupPath = defaultBackupPath
 	}
 	target := backup.NewLocalBackend(backupPath)
 

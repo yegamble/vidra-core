@@ -54,25 +54,32 @@ func (s *service) CreateVideoNotificationForSubscribers(ctx context.Context, vid
 		}
 		channelName = user.Username
 	}
-	notifications := make([]domain.Notification, len(subscribers))
-	for i, subscriber := range subscribers {
-		notifications[i] = domain.Notification{
-			UserID:  subscriber.SubscriberID,
-			Type:    domain.NotificationNewVideo,
-			Title:   fmt.Sprintf("New video from %s", channelName),
-			Message: fmt.Sprintf("%s uploaded: %s", channelName, video.Title),
-			Data: map[string]interface{}{
-				"video_id":      video.ID,
-				"channel_id":    channelID,
-				"channel_name":  channelName,
-				"video_title":   video.Title,
-				"thumbnail_cid": video.ThumbnailCID,
-			},
-			Read: false,
+	const batchSize = 500
+	for start := 0; start < len(subscribers); start += batchSize {
+		end := start + batchSize
+		if end > len(subscribers) {
+			end = len(subscribers)
 		}
-	}
-	if err := s.notificationRepo.CreateBatch(ctx, notifications); err != nil {
-		return fmt.Errorf("failed to create notifications: %w", err)
+		batch := make([]domain.Notification, 0, end-start)
+		for _, subscriber := range subscribers[start:end] {
+			batch = append(batch, domain.Notification{
+				UserID:  subscriber.SubscriberID,
+				Type:    domain.NotificationNewVideo,
+				Title:   fmt.Sprintf("New video from %s", channelName),
+				Message: fmt.Sprintf("%s uploaded: %s", channelName, video.Title),
+				Data: map[string]interface{}{
+					"video_id":      video.ID,
+					"channel_id":    channelID,
+					"channel_name":  channelName,
+					"video_title":   video.Title,
+					"thumbnail_cid": video.ThumbnailCID,
+				},
+				Read: false,
+			})
+		}
+		if err := s.notificationRepo.CreateBatch(ctx, batch); err != nil {
+			return fmt.Errorf("failed to create notifications (batch %d-%d): %w", start, end, err)
+		}
 	}
 	return nil
 }

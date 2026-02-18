@@ -46,9 +46,9 @@ func NewAnalyticsHandler(
 	}
 }
 
-func (h *AnalyticsHandler) RegisterRoutes(r chi.Router) {
+func (h *AnalyticsHandler) RegisterRoutes(r chi.Router, jwtSecret string) {
 	r.Route("/api/v1/streams/{streamId}/analytics", func(r chi.Router) {
-		r.Use(middleware.RequireAuth)
+		r.Use(middleware.Auth(jwtSecret))
 		r.Get("/", h.GetStreamAnalytics)
 		r.Get("/summary", h.GetStreamSummary)
 		r.Get("/chart", h.GetAnalyticsChart)

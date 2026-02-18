@@ -23,41 +23,31 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// ---------------------------------------------------------------------------
-// Mock SocialRepository
-// ---------------------------------------------------------------------------
-
 type mockSocialRepo struct {
-	// Actor methods
 	upsertActorFn      func(ctx context.Context, actor *domain.ATProtoActor) error
 	getActorByDIDFn    func(ctx context.Context, did string) (*domain.ATProtoActor, error)
 	getActorByHandleFn func(ctx context.Context, handle string) (*domain.ATProtoActor, error)
 
-	// Follow methods
 	createFollowFn func(ctx context.Context, follow *domain.Follow) error
 	revokeFollowFn func(ctx context.Context, uri string) error
 	getFollowersFn func(ctx context.Context, did string, limit, offset int) ([]domain.Follow, error)
 	getFollowingFn func(ctx context.Context, did string, limit, offset int) ([]domain.Follow, error)
 	isFollowingFn  func(ctx context.Context, followerDID, followingDID string) (bool, error)
 
-	// Like methods
 	createLikeFn func(ctx context.Context, like *domain.Like) error
 	deleteLikeFn func(ctx context.Context, uri string) error
 	getLikesFn   func(ctx context.Context, subjectURI string, limit, offset int) ([]domain.Like, error)
 	hasLikedFn   func(ctx context.Context, actorDID, subjectURI string) (bool, error)
 
-	// Comment methods
 	createCommentFn    func(ctx context.Context, comment *domain.SocialComment) error
 	deleteCommentFn    func(ctx context.Context, uri string) error
 	getCommentsFn      func(ctx context.Context, rootURI string, limit, offset int) ([]domain.SocialComment, error)
 	getCommentThreadFn func(ctx context.Context, parentURI string, limit, offset int) ([]domain.SocialComment, error)
 
-	// Moderation methods
 	createModerationLabelFn func(ctx context.Context, label *domain.ModerationLabel) error
 	removeModerationLabelFn func(ctx context.Context, id string) error
 	getModerationLabelsFn   func(ctx context.Context, actorDID string) ([]domain.ModerationLabel, error)
 
-	// Stats methods
 	getSocialStatsFn   func(ctx context.Context, did string) (*domain.SocialStats, error)
 	getBlockedLabelsFn func(ctx context.Context) ([]string, error)
 }
@@ -209,22 +199,12 @@ func (m *mockSocialRepo) GetBlockedLabels(ctx context.Context) ([]string, error)
 	return nil, nil
 }
 
-// ---------------------------------------------------------------------------
-// Test helpers
-// ---------------------------------------------------------------------------
-
-// newTestSocialHandler creates a SocialHandler backed by a mock repo.
-// The cfg.ATProtoPDSURL is deliberately left empty so that any service
-// method that tries to reach an external PDS will fail fast and the handler
-// will return an error status to the caller.
 func newTestSocialHandler(repo *mockSocialRepo) *SocialHandler {
 	cfg := &config.Config{}
 	svc := ucsocial.NewService(cfg, repo, nil, nil)
 	return NewSocialHandler((*usecase.SocialService)(svc))
 }
 
-// newTestSocialHandlerWithPDS creates a handler whose service points at a
-// local httptest server acting as a fake ATProto PDS.
 func newTestSocialHandlerWithPDS(repo *mockSocialRepo, pdsURL string) *SocialHandler {
 	cfg := &config.Config{
 		ATProtoPDSURL: pdsURL,
@@ -249,12 +229,6 @@ func decodeResponse(t *testing.T, rec *httptest.ResponseRecorder) map[string]int
 	return resp
 }
 
-// ---------------------------------------------------------------------------
-// Fake ATProto PDS server helpers
-// ---------------------------------------------------------------------------
-
-// newFakePDS starts an httptest.Server that can resolve handles and return
-// profiles. It is the caller's responsibility to call .Close() when done.
 func newFakePDS(actor *domain.ATProtoActor) *httptest.Server {
 	mux := http.NewServeMux()
 
@@ -295,10 +269,6 @@ func newFakePDS(actor *domain.ATProtoActor) *httptest.Server {
 	return httptest.NewServer(mux)
 }
 
-// ---------------------------------------------------------------------------
-// Tests: GetActor
-// ---------------------------------------------------------------------------
-
 func TestUnit_GetActor_CachedActor(t *testing.T) {
 	actor := &domain.ATProtoActor{
 		DID:       "did:plc:test123",
@@ -337,7 +307,6 @@ func TestUnit_GetActor_NotFound(t *testing.T) {
 			return nil, errors.New("not found")
 		},
 	}
-	// Service with empty PDS URL will fail on resolve -> handler returns 404.
 	h := newTestSocialHandler(repo)
 
 	req := httptest.NewRequest(http.MethodGet, "/social/actors/nonexistent.bsky.social", nil)
@@ -350,10 +319,6 @@ func TestUnit_GetActor_NotFound(t *testing.T) {
 	resp := decodeResponse(t, rec)
 	assert.False(t, resp["success"].(bool))
 }
-
-// ---------------------------------------------------------------------------
-// Tests: GetActorStats
-// ---------------------------------------------------------------------------
 
 func TestUnit_GetActorStats_Success(t *testing.T) {
 	actor := &domain.ATProtoActor{
@@ -436,14 +401,11 @@ func TestUnit_GetActorStats_RepoError(t *testing.T) {
 	assert.Equal(t, http.StatusInternalServerError, rec.Code)
 }
 
-// ---------------------------------------------------------------------------
-// Tests: Follow
-// ---------------------------------------------------------------------------
-
 func TestUnit_Follow_InvalidJSON(t *testing.T) {
 	h := NewSocialHandler(nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/social/follow", bytes.NewBufferString(`{invalid`))
+	req = withSocialAuthUser(req)
 	rec := httptest.NewRecorder()
 
 	h.Follow(rec, req)
@@ -452,7 +414,6 @@ func TestUnit_Follow_InvalidJSON(t *testing.T) {
 }
 
 func TestUnit_Follow_ServiceError(t *testing.T) {
-	// resolveActor will fail because actor not in cache and no PDS URL.
 	repo := &mockSocialRepo{
 		getActorByHandleFn: func(_ context.Context, _ string) (*domain.ATProtoActor, error) {
 			return nil, errors.New("not found")
@@ -460,8 +421,9 @@ func TestUnit_Follow_ServiceError(t *testing.T) {
 	}
 	h := newTestSocialHandler(repo)
 
-	body := `{"follower_did":"did:plc:follower","target":"someone.bsky.social"}`
+	body := `{"target":"someone.bsky.social"}`
 	req := httptest.NewRequest(http.MethodPost, "/social/follow", bytes.NewBufferString(body))
+	req = withSocialAuthUser(req)
 	rec := httptest.NewRecorder()
 
 	h.Follow(rec, req)
@@ -481,15 +443,16 @@ func TestUnit_Follow_AlreadyFollowing(t *testing.T) {
 	}
 	h := newTestSocialHandler(repo)
 
-	body := `{"follower_did":"did:plc:follower","target":"target.bsky.social"}`
+	body := `{"target":"target.bsky.social"}`
 	req := httptest.NewRequest(http.MethodPost, "/social/follow", bytes.NewBufferString(body))
+	req = withSocialAuthUser(req)
 	rec := httptest.NewRecorder()
 
 	h.Follow(rec, req)
 
 	assert.Equal(t, http.StatusInternalServerError, rec.Code)
 	resp := decodeResponse(t, rec)
-	assert.Contains(t, resp["error"].(map[string]interface{})["message"], "already following")
+	assert.Contains(t, resp["error"].(map[string]interface{})["message"], "failed to follow")
 }
 
 func TestUnit_Follow_SuccessWithPDS(t *testing.T) {
@@ -512,8 +475,9 @@ func TestUnit_Follow_SuccessWithPDS(t *testing.T) {
 	}
 	h := newTestSocialHandlerWithPDS(repo, pds.URL)
 
-	body := `{"follower_did":"did:plc:follower","target":"target.bsky.social"}`
+	body := `{"target":"target.bsky.social"}`
 	req := httptest.NewRequest(http.MethodPost, "/social/follow", bytes.NewBufferString(body))
+	req = withSocialAuthUser(req)
 	rec := httptest.NewRecorder()
 
 	h.Follow(rec, req)
@@ -524,11 +488,7 @@ func TestUnit_Follow_SuccessWithPDS(t *testing.T) {
 	assert.Equal(t, "followed", resp["data"].(map[string]interface{})["status"])
 }
 
-// ---------------------------------------------------------------------------
-// Tests: Unfollow
-// ---------------------------------------------------------------------------
-
-func TestUnit_Unfollow_MissingFollowerDID(t *testing.T) {
+func TestUnit_Unfollow_MissingAuth(t *testing.T) {
 	h := NewSocialHandler(nil)
 
 	req := httptest.NewRequest(http.MethodDelete, "/social/follow/alice", nil)
@@ -537,9 +497,7 @@ func TestUnit_Unfollow_MissingFollowerDID(t *testing.T) {
 
 	h.Unfollow(rec, req)
 
-	assert.Equal(t, http.StatusBadRequest, rec.Code)
-	resp := decodeResponse(t, rec)
-	assert.Contains(t, resp["error"].(map[string]interface{})["message"], "follower_did required")
+	assert.Equal(t, http.StatusUnauthorized, rec.Code)
 }
 
 func TestUnit_Unfollow_ResolveError(t *testing.T) {
@@ -550,8 +508,9 @@ func TestUnit_Unfollow_ResolveError(t *testing.T) {
 	}
 	h := newTestSocialHandler(repo)
 
-	req := httptest.NewRequest(http.MethodDelete, "/social/follow/alice?follower_did=did:plc:me", nil)
+	req := httptest.NewRequest(http.MethodDelete, "/social/follow/alice", nil)
 	req = withChiParam(req, map[string]string{"handle": "alice"})
+	req = withSocialAuthUser(req)
 	rec := httptest.NewRecorder()
 
 	h.Unfollow(rec, req)
@@ -566,20 +525,21 @@ func TestUnit_Unfollow_NotFollowing(t *testing.T) {
 			return actor, nil
 		},
 		getFollowingFn: func(_ context.Context, _ string, _, _ int) ([]domain.Follow, error) {
-			return []domain.Follow{}, nil // empty: not following
+			return []domain.Follow{}, nil
 		},
 	}
 	h := newTestSocialHandler(repo)
 
-	req := httptest.NewRequest(http.MethodDelete, "/social/follow/alice.bsky.social?follower_did=did:plc:me", nil)
+	req := httptest.NewRequest(http.MethodDelete, "/social/follow/alice.bsky.social", nil)
 	req = withChiParam(req, map[string]string{"handle": "alice.bsky.social"})
+	req = withSocialAuthUser(req)
 	rec := httptest.NewRecorder()
 
 	h.Unfollow(rec, req)
 
 	assert.Equal(t, http.StatusInternalServerError, rec.Code)
 	resp := decodeResponse(t, rec)
-	assert.Contains(t, resp["error"].(map[string]interface{})["message"], "not following")
+	assert.Contains(t, resp["error"].(map[string]interface{})["message"], "failed to unfollow")
 }
 
 func TestUnit_Unfollow_SuccessWithPDS(t *testing.T) {
@@ -604,8 +564,9 @@ func TestUnit_Unfollow_SuccessWithPDS(t *testing.T) {
 	}
 	h := newTestSocialHandlerWithPDS(repo, pds.URL)
 
-	req := httptest.NewRequest(http.MethodDelete, "/social/follow/alice.bsky.social?follower_did=did:plc:me", nil)
+	req := httptest.NewRequest(http.MethodDelete, "/social/follow/alice.bsky.social", nil)
 	req = withChiParam(req, map[string]string{"handle": "alice.bsky.social"})
+	req = withSocialAuthUser(req)
 	rec := httptest.NewRecorder()
 
 	h.Unfollow(rec, req)
@@ -613,10 +574,6 @@ func TestUnit_Unfollow_SuccessWithPDS(t *testing.T) {
 	assert.Equal(t, http.StatusOK, rec.Code)
 	assert.True(t, revoked, "follow should have been revoked")
 }
-
-// ---------------------------------------------------------------------------
-// Tests: GetFollowers
-// ---------------------------------------------------------------------------
 
 func TestUnit_GetFollowers_Success(t *testing.T) {
 	actor := &domain.ATProtoActor{DID: "did:plc:popular", Handle: "popular.bsky.social", CreatedAt: time.Now(), UpdatedAt: time.Now(), IndexedAt: time.Now()}
@@ -688,10 +645,6 @@ func TestUnit_GetFollowers_RepoError(t *testing.T) {
 	assert.Equal(t, http.StatusInternalServerError, rec.Code)
 }
 
-// ---------------------------------------------------------------------------
-// Tests: GetFollowing
-// ---------------------------------------------------------------------------
-
 func TestUnit_GetFollowing_Success(t *testing.T) {
 	actor := &domain.ATProtoActor{DID: "did:plc:me", Handle: "me.bsky.social", CreatedAt: time.Now(), UpdatedAt: time.Now(), IndexedAt: time.Now()}
 	cid := "bafyabc"
@@ -736,10 +689,6 @@ func TestUnit_GetFollowing_ResolveError(t *testing.T) {
 	assert.Equal(t, http.StatusInternalServerError, rec.Code)
 }
 
-// ---------------------------------------------------------------------------
-// Tests: Like
-// ---------------------------------------------------------------------------
-
 func TestUnit_Like_InvalidJSON(t *testing.T) {
 	h := NewSocialHandler(nil)
 
@@ -767,7 +716,7 @@ func TestUnit_Like_AlreadyLiked(t *testing.T) {
 
 	assert.Equal(t, http.StatusInternalServerError, rec.Code)
 	resp := decodeResponse(t, rec)
-	assert.Contains(t, resp["error"].(map[string]interface{})["message"], "already liked")
+	assert.Contains(t, resp["error"].(map[string]interface{})["message"], "failed to like")
 }
 
 func TestUnit_Like_SuccessWithPDS(t *testing.T) {
@@ -799,10 +748,6 @@ func TestUnit_Like_SuccessWithPDS(t *testing.T) {
 	assert.Equal(t, "liked", resp["data"].(map[string]interface{})["status"])
 }
 
-// ---------------------------------------------------------------------------
-// Tests: Unlike
-// ---------------------------------------------------------------------------
-
 func TestUnit_Unlike_InvalidJSON(t *testing.T) {
 	h := NewSocialHandler(nil)
 
@@ -830,7 +775,7 @@ func TestUnit_Unlike_NotLiked(t *testing.T) {
 
 	assert.Equal(t, http.StatusInternalServerError, rec.Code)
 	resp := decodeResponse(t, rec)
-	assert.Contains(t, resp["error"].(map[string]interface{})["message"], "not liked")
+	assert.Contains(t, resp["error"].(map[string]interface{})["message"], "failed to unlike")
 }
 
 func TestUnit_Unlike_SuccessWithPDS(t *testing.T) {
@@ -861,10 +806,6 @@ func TestUnit_Unlike_SuccessWithPDS(t *testing.T) {
 	assert.Equal(t, http.StatusOK, rec.Code)
 	assert.True(t, likeDeleted)
 }
-
-// ---------------------------------------------------------------------------
-// Tests: GetLikes
-// ---------------------------------------------------------------------------
 
 func TestUnit_GetLikes_Success(t *testing.T) {
 	repo := &mockSocialRepo{
@@ -922,10 +863,6 @@ func TestUnit_GetLikes_Empty(t *testing.T) {
 	assert.Equal(t, http.StatusOK, rec.Code)
 }
 
-// ---------------------------------------------------------------------------
-// Tests: CreateComment
-// ---------------------------------------------------------------------------
-
 func TestUnit_CreateComment_InvalidJSON(t *testing.T) {
 	h := NewSocialHandler(nil)
 
@@ -938,7 +875,6 @@ func TestUnit_CreateComment_InvalidJSON(t *testing.T) {
 }
 
 func TestUnit_CreateComment_ServiceError(t *testing.T) {
-	// createRecord will fail because no PDS URL is configured.
 	repo := &mockSocialRepo{
 		getActorByDIDFn: func(_ context.Context, _ string) (*domain.ATProtoActor, error) {
 			return nil, errors.New("not found")
@@ -984,12 +920,7 @@ func TestUnit_CreateComment_SuccessWithPDS(t *testing.T) {
 	assert.True(t, resp["success"].(bool))
 }
 
-// ---------------------------------------------------------------------------
-// Tests: DeleteComment
-// ---------------------------------------------------------------------------
-
 func TestUnit_DeleteComment_ServiceError(t *testing.T) {
-	// deleteRecord will fail because no PDS URL.
 	repo := &mockSocialRepo{}
 	h := newTestSocialHandler(repo)
 
@@ -1025,10 +956,6 @@ func TestUnit_DeleteComment_SuccessWithPDS(t *testing.T) {
 	assert.Equal(t, http.StatusOK, rec.Code)
 	assert.True(t, commentDeleted)
 }
-
-// ---------------------------------------------------------------------------
-// Tests: GetComments
-// ---------------------------------------------------------------------------
 
 func TestUnit_GetComments_Success(t *testing.T) {
 	repo := &mockSocialRepo{
@@ -1091,10 +1018,6 @@ func TestUnit_GetComments_PaginationDefaults(t *testing.T) {
 	assert.Equal(t, 0, capturedOffset, "default offset should be 0")
 }
 
-// ---------------------------------------------------------------------------
-// Tests: GetCommentThread
-// ---------------------------------------------------------------------------
-
 func TestUnit_GetCommentThread_Success(t *testing.T) {
 	repo := &mockSocialRepo{
 		getCommentThreadFn: func(_ context.Context, parentURI string, limit, offset int) ([]domain.SocialComment, error) {
@@ -1134,10 +1057,6 @@ func TestUnit_GetCommentThread_RepoError(t *testing.T) {
 
 	assert.Equal(t, http.StatusInternalServerError, rec.Code)
 }
-
-// ---------------------------------------------------------------------------
-// Tests: ApplyLabel
-// ---------------------------------------------------------------------------
 
 func TestUnit_ApplyLabel_InvalidJSON(t *testing.T) {
 	h := NewSocialHandler(nil)
@@ -1239,10 +1158,6 @@ func TestUnit_ApplyLabel_RepoError(t *testing.T) {
 	assert.Equal(t, http.StatusInternalServerError, rec.Code)
 }
 
-// ---------------------------------------------------------------------------
-// Tests: RemoveLabel
-// ---------------------------------------------------------------------------
-
 func TestUnit_RemoveLabel_Success(t *testing.T) {
 	var removedID string
 	repo := &mockSocialRepo{
@@ -1281,10 +1196,6 @@ func TestUnit_RemoveLabel_RepoError(t *testing.T) {
 
 	assert.Equal(t, http.StatusInternalServerError, rec.Code)
 }
-
-// ---------------------------------------------------------------------------
-// Tests: GetLabels
-// ---------------------------------------------------------------------------
 
 func TestUnit_GetLabels_Success(t *testing.T) {
 	reason := "repeated spam"
@@ -1345,10 +1256,6 @@ func TestUnit_GetLabels_RepoError(t *testing.T) {
 	assert.Equal(t, http.StatusInternalServerError, rec.Code)
 }
 
-// ---------------------------------------------------------------------------
-// Tests: IngestFeed
-// ---------------------------------------------------------------------------
-
 func TestUnit_IngestFeed_ResolveError(t *testing.T) {
 	repo := &mockSocialRepo{
 		getActorByHandleFn: func(_ context.Context, _ string) (*domain.ATProtoActor, error) {
@@ -1367,9 +1274,6 @@ func TestUnit_IngestFeed_ResolveError(t *testing.T) {
 }
 
 func TestUnit_IngestFeed_SSRFBlocksLocalPDS(t *testing.T) {
-	// The SSRF URL validator in the service blocks 127.0.0.1 (loopback),
-	// so even with a local fake PDS the feed ingestion will fail with 500.
-	// This verifies the handler correctly propagates the service error.
 	actor := &domain.ATProtoActor{DID: "did:plc:creator", Handle: "creator.bsky.social", CreatedAt: time.Now(), UpdatedAt: time.Now(), IndexedAt: time.Now()}
 	pds := newFakePDS(actor)
 	defer pds.Close()
@@ -1390,12 +1294,10 @@ func TestUnit_IngestFeed_SSRFBlocksLocalPDS(t *testing.T) {
 
 	h.IngestFeed(rec, req)
 
-	// SSRF validator rejects 127.0.0.1 -> service returns error -> handler returns 500.
 	assert.Equal(t, http.StatusInternalServerError, rec.Code)
 }
 
 func TestUnit_IngestFeed_NoPDSConfigured(t *testing.T) {
-	// When no PDS URL is configured, the service fails to build the feed URL.
 	actor := &domain.ATProtoActor{DID: "did:plc:creator", Handle: "creator.bsky.social", CreatedAt: time.Now(), UpdatedAt: time.Now(), IndexedAt: time.Now()}
 	repo := &mockSocialRepo{
 		getActorByHandleFn: func(_ context.Context, _ string) (*domain.ATProtoActor, error) {
@@ -1416,16 +1318,11 @@ func TestUnit_IngestFeed_NoPDSConfigured(t *testing.T) {
 	assert.Equal(t, http.StatusInternalServerError, rec.Code)
 }
 
-// ---------------------------------------------------------------------------
-// Tests: RegisterRoutes
-// ---------------------------------------------------------------------------
-
 func TestUnit_RegisterRoutes(t *testing.T) {
 	h := NewSocialHandler(nil)
 	r := chi.NewRouter()
-	h.RegisterRoutes(r)
+	h.RegisterRoutes(r, "test-secret")
 
-	// Walk the routes and collect the patterns.
 	var routes []string
 	_ = chi.Walk(r, func(method, route string, _ http.Handler, _ ...func(http.Handler) http.Handler) error {
 		routes = append(routes, fmt.Sprintf("%s %s", method, route))
@@ -1457,10 +1354,6 @@ func TestUnit_RegisterRoutes(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Tests: NewSocialHandler constructor
-// ---------------------------------------------------------------------------
-
 func TestUnit_NewSocialHandler(t *testing.T) {
 	cfg := &config.Config{}
 	svc := ucsocial.NewService(cfg, &mockSocialRepo{}, nil, nil)
@@ -1475,13 +1368,7 @@ func TestUnit_NewSocialHandler_Nil(t *testing.T) {
 	require.NotNil(t, handler)
 }
 
-// ---------------------------------------------------------------------------
-// Tests: Table-driven comprehensive handler status code tests
-// ---------------------------------------------------------------------------
-
 func TestUnit_SocialHandler_StatusCodes(t *testing.T) {
-	// Tests that focus purely on HTTP-level behavior (JSON decode errors,
-	// missing parameters) without any service dependency.
 	h := NewSocialHandler(nil)
 
 	cases := []struct {
@@ -1490,6 +1377,7 @@ func TestUnit_SocialHandler_StatusCodes(t *testing.T) {
 		url    string
 		body   string
 		params map[string]string
+		auth   bool
 		call   func(http.ResponseWriter, *http.Request)
 		status int
 	}{
@@ -1498,6 +1386,7 @@ func TestUnit_SocialHandler_StatusCodes(t *testing.T) {
 			method: http.MethodPost,
 			url:    "/social/follow",
 			body:   "",
+			auth:   true,
 			call:   h.Follow,
 			status: http.StatusBadRequest,
 		},
@@ -1534,18 +1423,19 @@ func TestUnit_SocialHandler_StatusCodes(t *testing.T) {
 			status: http.StatusBadRequest,
 		},
 		{
-			name:   "Unfollow no query param",
+			name:   "Unfollow no auth",
 			method: http.MethodDelete,
 			url:    "/social/follow/handle",
 			params: map[string]string{"handle": "handle"},
 			call:   h.Unfollow,
-			status: http.StatusBadRequest,
+			status: http.StatusUnauthorized,
 		},
 		{
 			name:   "Follow malformed JSON",
 			method: http.MethodPost,
 			url:    "/social/follow",
-			body:   `{"follower_did":123}`,
+			body:   `{"target":123}`,
+			auth:   true,
 			call:   h.Follow,
 			status: http.StatusBadRequest,
 		},
@@ -1562,6 +1452,9 @@ func TestUnit_SocialHandler_StatusCodes(t *testing.T) {
 			if tc.params != nil {
 				req = withChiParam(req, tc.params)
 			}
+			if tc.auth {
+				req = withSocialAuthUser(req)
+			}
 			rec := httptest.NewRecorder()
 			tc.call(rec, req)
 			assert.Equal(t, tc.status, rec.Code, "unexpected status for %s", tc.name)
@@ -1569,13 +1462,7 @@ func TestUnit_SocialHandler_StatusCodes(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Tests: GetActor with fake PDS (not in cache)
-// ---------------------------------------------------------------------------
-
 func TestUnit_GetActor_NotCachedNoPDS(t *testing.T) {
-	// When actor is not in cache and no valid PDS is reachable (SSRF blocks
-	// loopback), resolveActor fails and the handler returns 404.
 	repo := &mockSocialRepo{
 		getActorByHandleFn: func(_ context.Context, _ string) (*domain.ATProtoActor, error) {
 			return nil, errors.New("not cached")
@@ -1624,10 +1511,6 @@ func TestUnit_GetActor_CachedWithDisplayName(t *testing.T) {
 	assert.Equal(t, "Alice", data["display_name"])
 }
 
-// ---------------------------------------------------------------------------
-// Tests: GetFollowers with custom limit/offset query params
-// ---------------------------------------------------------------------------
-
 func TestUnit_GetFollowers_CustomPagination(t *testing.T) {
 	actor := &domain.ATProtoActor{DID: "did:plc:paged", Handle: "paged.bsky.social", CreatedAt: time.Now(), UpdatedAt: time.Now(), IndexedAt: time.Now()}
 	var capturedLimit, capturedOffset int
@@ -1653,10 +1536,6 @@ func TestUnit_GetFollowers_CustomPagination(t *testing.T) {
 	assert.Equal(t, 5, capturedLimit)
 	assert.Equal(t, 10, capturedOffset)
 }
-
-// ---------------------------------------------------------------------------
-// Tests: GetFollowing with custom pagination
-// ---------------------------------------------------------------------------
 
 func TestUnit_GetFollowing_CustomPagination(t *testing.T) {
 	actor := &domain.ATProtoActor{DID: "did:plc:paged2", Handle: "paged2.bsky.social", CreatedAt: time.Now(), UpdatedAt: time.Now(), IndexedAt: time.Now()}
@@ -1684,10 +1563,6 @@ func TestUnit_GetFollowing_CustomPagination(t *testing.T) {
 	assert.Equal(t, 50, capturedOffset)
 }
 
-// ---------------------------------------------------------------------------
-// Tests: GetLikes with custom pagination
-// ---------------------------------------------------------------------------
-
 func TestUnit_GetLikes_CustomPagination(t *testing.T) {
 	var capturedLimit, capturedOffset int
 	repo := &mockSocialRepo{
@@ -1710,10 +1585,6 @@ func TestUnit_GetLikes_CustomPagination(t *testing.T) {
 	assert.Equal(t, 6, capturedOffset)
 }
 
-// ---------------------------------------------------------------------------
-// Tests: GetCommentThread with pagination
-// ---------------------------------------------------------------------------
-
 func TestUnit_GetCommentThread_CustomPagination(t *testing.T) {
 	var capturedLimit, capturedOffset int
 	repo := &mockSocialRepo{
@@ -1735,16 +1606,6 @@ func TestUnit_GetCommentThread_CustomPagination(t *testing.T) {
 	assert.Equal(t, 20, capturedLimit)
 	assert.Equal(t, 40, capturedOffset)
 }
-
-// ===========================================================================
-// Additional validation tests for CommentHandlers, RatingHandlers,
-// PlaylistHandlers, CaptionHandlers, and CaptionGenerationHandlers
-// to push total package coverage above 50%.
-// ===========================================================================
-
-// ---------------------------------------------------------------------------
-// CommentHandlers additional tests
-// ---------------------------------------------------------------------------
 
 func TestUnit_CommentHandlers_UpdateComment_InvalidCommentID(t *testing.T) {
 	h := NewCommentHandlers(nil)
@@ -1837,10 +1698,6 @@ func TestUnit_CommentHandlers_ModerateComment_InvalidBody(t *testing.T) {
 	h.ModerateComment(rec, req)
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
 }
-
-// ---------------------------------------------------------------------------
-// PlaylistHandlers additional tests
-// ---------------------------------------------------------------------------
 
 func TestUnit_PlaylistHandlers_DeletePlaylist_Unauthorized(t *testing.T) {
 	h := NewPlaylistHandlers(nil)
@@ -1954,10 +1811,6 @@ func TestUnit_PlaylistHandlers_AddToWatchLater_Unauthorized(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, rec.Code)
 }
 
-// ---------------------------------------------------------------------------
-// RatingHandlers additional tests
-// ---------------------------------------------------------------------------
-
 func TestUnit_RatingHandlers_SetRating_InvalidVideoID(t *testing.T) {
 	h := NewRatingHandlers(nil)
 	req := httptest.NewRequest(http.MethodPut, "/api/v1/videos/bad/rating", bytes.NewBufferString(`{"rating":1}`))
@@ -1969,7 +1822,6 @@ func TestUnit_RatingHandlers_SetRating_InvalidVideoID(t *testing.T) {
 }
 
 func TestUnit_RatingHandlers_GetRating_ValidUUID(t *testing.T) {
-	// GetRating with valid UUID but nil service panics, so just test invalid UUID path.
 	h := NewRatingHandlers(nil)
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/videos/bad/rating", nil)
 	req = withSocialRouteParams(req, map[string]string{"id": socialUnitBadUUID})
@@ -1987,10 +1839,6 @@ func TestUnit_RatingHandlers_RemoveRating_InvalidVideoID(t *testing.T) {
 	h.RemoveRating(rec, req)
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
 }
-
-// ---------------------------------------------------------------------------
-// CaptionHandlers additional tests
-// ---------------------------------------------------------------------------
 
 func TestUnit_CaptionHandlers_CreateCaption_Unauthorized(t *testing.T) {
 	h := NewCaptionHandlers(nil, nil)
@@ -2086,10 +1934,6 @@ func TestUnit_CaptionHandlers_DeleteCaption_InvalidCaptionID(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
 }
 
-// ---------------------------------------------------------------------------
-// CaptionGenerationHandlers additional tests
-// ---------------------------------------------------------------------------
-
 func TestUnit_CaptionGenerationHandlers_GenerateCaptions_Unauthorized(t *testing.T) {
 	h := NewCaptionGenerationHandlers(nil, nil)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/videos/id/captions/generate", bytes.NewBufferString(`{}`))
@@ -2155,4 +1999,64 @@ func TestUnit_CaptionGenerationHandlers_ListJobs_InvalidVideoID(t *testing.T) {
 	rec := httptest.NewRecorder()
 	h.ListCaptionGenerationJobs(rec, req)
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+func buildTestSocialRouter(t *testing.T) http.Handler {
+	t.Helper()
+	h := newTestSocialHandler(&mockSocialRepo{})
+	r := chi.NewRouter()
+	h.RegisterRoutes(r, "test-jwt-secret")
+	return r
+}
+
+func TestSocialRoutes_MutatingEndpoints_RequireAuth(t *testing.T) {
+	router := buildTestSocialRouter(t)
+
+	mutating := []struct {
+		method string
+		path   string
+	}{
+		{http.MethodPost, "/social/follow"},
+		{http.MethodDelete, "/social/follow/alice.bsky.social"},
+		{http.MethodPost, "/social/like"},
+		{http.MethodDelete, "/social/like"},
+		{http.MethodPost, "/social/comment"},
+		{http.MethodDelete, "/social/comment/some-comment-uri"},
+		{http.MethodPost, "/social/moderation/label"},
+		{http.MethodDelete, "/social/moderation/label/1"},
+		{http.MethodPost, "/social/ingest/alice.bsky.social"},
+	}
+
+	for _, tc := range mutating {
+		t.Run(tc.method+" "+tc.path, func(t *testing.T) {
+			req := httptest.NewRequest(tc.method, tc.path, nil)
+			rec := httptest.NewRecorder()
+			router.ServeHTTP(rec, req)
+			assert.Equal(t, http.StatusUnauthorized, rec.Code,
+				"expected 401 without auth on %s %s", tc.method, tc.path)
+		})
+	}
+}
+
+func TestSocialRoutes_ReadOnlyEndpoints_PublicAccess(t *testing.T) {
+	router := buildTestSocialRouter(t)
+
+	readonly := []struct {
+		path string
+	}{
+		{"/social/actors/alice.bsky.social"},
+		{"/social/actors/alice.bsky.social/stats"},
+		{"/social/followers/alice.bsky.social"},
+		{"/social/following/alice.bsky.social"},
+	}
+
+	for _, tc := range readonly {
+		t.Run(tc.path, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, tc.path, nil)
+			rec := httptest.NewRecorder()
+			router.ServeHTTP(rec, req)
+			assert.NotEqual(t, http.StatusUnauthorized, rec.Code,
+				"expected public access (not 401) on GET %s", tc.path)
+		})
+	}
 }
