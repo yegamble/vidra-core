@@ -11,15 +11,15 @@ func TestGetEnvOrDefault(t *testing.T) {
 
 	// Case 1: Variable not set
 	t.Setenv(key, "")
-	if got := getEnvOrDefault(key, defaultValue); got != defaultValue {
-		t.Errorf("getEnvOrDefault(%q, %q) = %q, want %q", key, defaultValue, got, defaultValue)
+	if got := GetEnvOrDefault(key, defaultValue); got != defaultValue {
+		t.Errorf("GetEnvOrDefault(%q, %q) = %q, want %q", key, defaultValue, got, defaultValue)
 	}
 
 	// Case 2: Variable set
 	const val = "actual"
 	t.Setenv(key, val)
-	if got := getEnvOrDefault(key, defaultValue); got != val {
-		t.Errorf("getEnvOrDefault(%q, %q) = %q, want %q", key, defaultValue, got, val)
+	if got := GetEnvOrDefault(key, defaultValue); got != val {
+		t.Errorf("GetEnvOrDefault(%q, %q) = %q, want %q", key, defaultValue, got, val)
 	}
 }
 
@@ -44,8 +44,8 @@ func TestGetBoolEnv(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.envVal, func(t *testing.T) {
 			t.Setenv(key, tt.envVal)
-			if got := getBoolEnv(key, tt.defVal); got != tt.expected {
-				t.Errorf("getBoolEnv(%q, %v) with ENV=%q = %v, want %v", key, tt.defVal, tt.envVal, got, tt.expected)
+			if got := GetBoolEnv(key, tt.defVal); got != tt.expected {
+				t.Errorf("GetBoolEnv(%q, %v) with ENV=%q = %v, want %v", key, tt.defVal, tt.envVal, got, tt.expected)
 			}
 		})
 	}
@@ -67,8 +67,8 @@ func TestGetIntEnv(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.envVal, func(t *testing.T) {
 			t.Setenv(key, tt.envVal)
-			if got := getIntEnv(key, tt.defVal); got != tt.expected {
-				t.Errorf("getIntEnv(%q, %v) with ENV=%q = %v, want %v", key, tt.defVal, tt.envVal, got, tt.expected)
+			if got := GetIntEnv(key, tt.defVal); got != tt.expected {
+				t.Errorf("GetIntEnv(%q, %v) with ENV=%q = %v, want %v", key, tt.defVal, tt.envVal, got, tt.expected)
 			}
 		})
 	}
@@ -90,8 +90,8 @@ func TestGetInt64Env(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.envVal, func(t *testing.T) {
 			t.Setenv(key, tt.envVal)
-			if got := getInt64Env(key, tt.defVal); got != tt.expected {
-				t.Errorf("getInt64Env(%q, %v) with ENV=%q = %v, want %v", key, tt.defVal, tt.envVal, got, tt.expected)
+			if got := GetInt64Env(key, tt.defVal); got != tt.expected {
+				t.Errorf("GetInt64Env(%q, %v) with ENV=%q = %v, want %v", key, tt.defVal, tt.envVal, got, tt.expected)
 			}
 		})
 	}
@@ -113,8 +113,8 @@ func TestGetFloat64Env(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.envVal, func(t *testing.T) {
 			t.Setenv(key, tt.envVal)
-			if got := getFloat64Env(key, tt.defVal); got != tt.expected {
-				t.Errorf("getFloat64Env(%q, %v) with ENV=%q = %v, want %v", key, tt.defVal, tt.envVal, got, tt.expected)
+			if got := GetFloat64Env(key, tt.defVal); got != tt.expected {
+				t.Errorf("GetFloat64Env(%q, %v) with ENV=%q = %v, want %v", key, tt.defVal, tt.envVal, got, tt.expected)
 			}
 		})
 	}
@@ -136,9 +136,9 @@ func TestGetStringSliceEnv(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.envVal, func(t *testing.T) {
 			t.Setenv(key, tt.envVal)
-			got := getStringSliceEnv(key, defaultVal)
+			got := GetStringSliceEnv(key, defaultVal)
 			if !reflect.DeepEqual(got, tt.expected) {
-				t.Errorf("getStringSliceEnv(%q, %v) with ENV=%q = %v, want %v", key, defaultVal, tt.envVal, got, tt.expected)
+				t.Errorf("GetStringSliceEnv(%q, %v) with ENV=%q = %v, want %v", key, defaultVal, tt.envVal, got, tt.expected)
 			}
 		})
 	}

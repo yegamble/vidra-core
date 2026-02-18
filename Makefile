@@ -140,6 +140,9 @@ test-unit-race: ## Run unit tests with race detection (requires CGO_ENABLED=1 an
 	echo "Running unit tests with race detection in: $$PKGS"; \
 	CGO_ENABLED=1 $(GO_ENV) go test -v -race -parallel=8 -short $$PKGS
 
+test-webp: ## Run unit tests for native webp encoder
+	$(GO_ENV) go test -v -tags=webp ./pkg/imageutil/...
+
 test-ci: ## Run tests for CI environment
 	$(GO_ENV) go test -v -coverprofile=coverage.out ./...
 
