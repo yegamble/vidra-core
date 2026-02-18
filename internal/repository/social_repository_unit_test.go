@@ -1683,3 +1683,61 @@ func TestSocialRepository_Unit_GetVideoURI(t *testing.T) {
 		require.NoError(t, mock.ExpectationsWereMet())
 	})
 }
+
+// ---------------------------------------------------------------------------
+// GetLike
+// ---------------------------------------------------------------------------
+
+func TestSocialRepository_Unit_GetLike(t *testing.T) {
+	ctx := context.Background()
+	actorDID := "did:plc:liker"
+	subjectURI := "at://subject"
+
+	t.Run("success", func(t *testing.T) {
+		repo, mock, cleanup := newSocialRepo(t)
+		defer cleanup()
+
+		l := sampleLike()
+		mock.ExpectQuery(regexp.QuoteMeta(
+			`SELECT * FROM atproto_likes`)).
+			WithArgs(actorDID, subjectURI).
+			WillReturnRows(likeRow(l))
+
+		got, err := repo.GetLike(ctx, actorDID, subjectURI)
+		require.NoError(t, err)
+		require.NotNil(t, got)
+		assert.Equal(t, l.URI, got.URI)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("not found", func(t *testing.T) {
+		repo, mock, cleanup := newSocialRepo(t)
+		defer cleanup()
+
+		mock.ExpectQuery(regexp.QuoteMeta(
+			`SELECT * FROM atproto_likes`)).
+			WithArgs(actorDID, subjectURI).
+			WillReturnError(sql.ErrNoRows)
+
+		got, err := repo.GetLike(ctx, actorDID, subjectURI)
+		require.Error(t, err)
+		assert.Nil(t, got)
+		assert.Contains(t, err.Error(), "like not found")
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("db error", func(t *testing.T) {
+		repo, mock, cleanup := newSocialRepo(t)
+		defer cleanup()
+
+		mock.ExpectQuery(regexp.QuoteMeta(
+			`SELECT * FROM atproto_likes`)).
+			WithArgs(actorDID, subjectURI).
+			WillReturnError(errors.New("connection failed"))
+
+		got, err := repo.GetLike(ctx, actorDID, subjectURI)
+		require.Error(t, err)
+		assert.Nil(t, got)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+}

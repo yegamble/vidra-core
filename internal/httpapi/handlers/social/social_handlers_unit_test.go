@@ -38,6 +38,7 @@ type mockSocialRepo struct {
 	createLikeFn func(ctx context.Context, like *domain.Like) error
 	deleteLikeFn func(ctx context.Context, uri string) error
 	getLikesFn   func(ctx context.Context, subjectURI string, limit, offset int) ([]domain.Like, error)
+	getLikeFn    func(ctx context.Context, actorDID, subjectURI string) (*domain.Like, error)
 	hasLikedFn   func(ctx context.Context, actorDID, subjectURI string) (bool, error)
 
 	createCommentFn    func(ctx context.Context, comment *domain.SocialComment) error
@@ -133,6 +134,13 @@ func (m *mockSocialRepo) DeleteLike(ctx context.Context, uri string) error {
 func (m *mockSocialRepo) GetLikes(ctx context.Context, subjectURI string, limit, offset int) ([]domain.Like, error) {
 	if m.getLikesFn != nil {
 		return m.getLikesFn(ctx, subjectURI, limit, offset)
+	}
+	return nil, nil
+}
+
+func (m *mockSocialRepo) GetLike(ctx context.Context, actorDID, subjectURI string) (*domain.Like, error) {
+	if m.getLikeFn != nil {
+		return m.getLikeFn(ctx, actorDID, subjectURI)
 	}
 	return nil, nil
 }
@@ -767,8 +775,8 @@ func TestUnit_Unlike_InvalidJSON(t *testing.T) {
 
 func TestUnit_Unlike_NotLiked(t *testing.T) {
 	repo := &mockSocialRepo{
-		getLikesFn: func(_ context.Context, _ string, _, _ int) ([]domain.Like, error) {
-			return []domain.Like{}, nil
+		getLikeFn: func(_ context.Context, _, _ string) (*domain.Like, error) {
+			return nil, errors.New("not found")
 		},
 	}
 	h := newTestSocialHandler(repo)
@@ -791,10 +799,8 @@ func TestUnit_Unlike_SuccessWithPDS(t *testing.T) {
 
 	var likeDeleted bool
 	repo := &mockSocialRepo{
-		getLikesFn: func(_ context.Context, _ string, _, _ int) ([]domain.Like, error) {
-			return []domain.Like{
-				{ActorDID: "did:plc:me", URI: "at://did:plc:me/app.bsky.feed.like/xyz"},
-			}, nil
+		getLikeFn: func(_ context.Context, _, _ string) (*domain.Like, error) {
+			return &domain.Like{ActorDID: "did:plc:me", URI: "at://did:plc:me/app.bsky.feed.like/xyz"}, nil
 		},
 		deleteLikeFn: func(_ context.Context, _ string) error {
 			likeDeleted = true

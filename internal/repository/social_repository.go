@@ -199,6 +199,22 @@ func (r *SocialRepository) GetLikes(ctx context.Context, subjectURI string, limi
 	return likes, err
 }
 
+// GetLike retrieves a specific like
+func (r *SocialRepository) GetLike(ctx context.Context, actorDID, subjectURI string) (*domain.Like, error) {
+	query := `
+		SELECT * FROM atproto_likes
+		WHERE actor_did = $1 AND subject_uri = $2`
+	var like domain.Like
+	err := r.db.GetContext(ctx, &like, query, actorDID, subjectURI)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("like not found")
+		}
+		return nil, err
+	}
+	return &like, nil
+}
+
 // HasLiked checks if an actor has liked a subject
 func (r *SocialRepository) HasLiked(ctx context.Context, actorDID, subjectURI string) (bool, error) {
 	query := `

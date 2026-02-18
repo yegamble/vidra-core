@@ -29,6 +29,7 @@ type SocialRepository interface {
 	CreateLike(ctx context.Context, like *domain.Like) error
 	DeleteLike(ctx context.Context, uri string) error
 	GetLikes(ctx context.Context, subjectURI string, limit, offset int) ([]domain.Like, error)
+	GetLike(ctx context.Context, actorDID, subjectURI string) (*domain.Like, error)
 	HasLiked(ctx context.Context, actorDID, subjectURI string) (bool, error)
 	CreateComment(ctx context.Context, comment *domain.SocialComment) error
 	DeleteComment(ctx context.Context, uri string) error
@@ -228,22 +229,15 @@ func (s *Service) Like(ctx context.Context, actorDID, subjectURI, subjectCID str
 // Unlike removes a like from a post/video
 func (s *Service) Unlike(ctx context.Context, actorDID, subjectURI string) error {
 	// Get like record
-	likes, err := s.socialRepo.GetLikes(ctx, subjectURI, 1000, 0)
+	like, err := s.socialRepo.GetLike(ctx, actorDID, subjectURI)
 	if err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			return fmt.Errorf("not liked")
+		}
 		return err
 	}
 
-	var likeURI string
-	for _, l := range likes {
-		if l.ActorDID == actorDID {
-			likeURI = l.URI
-			break
-		}
-	}
-
-	if likeURI == "" {
-		return fmt.Errorf("not liked")
-	}
+	likeURI := like.URI
 
 	// Delete record from ATProto
 	if err := s.deleteRecord(ctx, likeURI); err != nil {

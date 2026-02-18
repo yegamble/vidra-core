@@ -96,6 +96,57 @@ func BenchmarkUnfollow_New(b *testing.B) {
 	}
 }
 
+// BenchmarkUnlike_Old measures the performance of fetching 1000 likes and filtering in memory.
+// This simulates the logic previously present in Service.Unlike before optimization.
+func BenchmarkUnlike_Old(b *testing.B) {
+	svc, repo, _ := newBenchmarkService(b)
+
+	// Setup context
+	ctx := context.Background()
+	actorDID := "did:plc:actor"
+	subjectURI := "at://subject/uri"
+
+	// Create a list of 1000 likes, where the actor's like is at the end (worst case)
+	likes := make([]domain.Like, 1000)
+	for i := 0; i < 999; i++ {
+		likes[i] = domain.Like{
+			ActorDID: "did:plc:other",
+			URI:      "at://other/like",
+		}
+	}
+	likes[999] = domain.Like{
+		ActorDID: actorDID,
+		URI:      "at://actor/like",
+	}
+
+	// Prepare mocks for the benchmark loop
+	repo.On("GetLikes", mock.Anything, subjectURI, 1000, 0).Return(likes, nil)
+	repo.On("DeleteLike", mock.Anything, "at://actor/like").Return(nil)
+
+	// Mock HTTP transport for deleteRecord call inside Unlike
+	svc.client.Transport = &mockTransport{}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		// Manual implementation of old logic
+		foundLikes, _ := repo.GetLikes(ctx, subjectURI, 1000, 0)
+
+		var likeURI string
+		for _, l := range foundLikes {
+			if l.ActorDID == actorDID {
+				likeURI = l.URI
+				break
+			}
+		}
+
+		if likeURI != "" {
+			// Simulate deleteRecord call
+			_ = svc.deleteRecord(ctx, likeURI)
+			_ = repo.DeleteLike(ctx, likeURI)
+		}
+	}
+}
+
 type benchMockAtprotoPublisher struct{ mock.Mock }
 
 func (m *benchMockAtprotoPublisher) PublishVideo(ctx context.Context, v *domain.Video) error {
@@ -194,6 +245,13 @@ func (m *benchMockSocialRepo) GetLikes(ctx context.Context, subjectURI string, l
 	}
 	return args.Get(0).([]domain.Like), args.Error(1)
 }
+func (m *benchMockSocialRepo) GetLike(ctx context.Context, actorDID, subjectURI string) (*domain.Like, error) {
+	args := m.Called(ctx, actorDID, subjectURI)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*domain.Like), args.Error(1)
+}
 func (m *benchMockSocialRepo) HasLiked(ctx context.Context, actorDID, subjectURI string) (bool, error) {
 	args := m.Called(ctx, actorDID, subjectURI)
 	return args.Bool(0), args.Error(1)
@@ -244,4 +302,30 @@ func (m *benchMockSocialRepo) GetBlockedLabels(ctx context.Context) ([]string, e
 		return nil, args.Error(1)
 	}
 	return args.Get(0).([]string), args.Error(1)
+}
+
+// BenchmarkUnlike_New measures the performance of the optimized Unlike method.
+func BenchmarkUnlike_New(b *testing.B) {
+	svc, repo, _ := newBenchmarkService(b)
+
+	// Setup context
+	ctx := context.Background()
+	actorDID := "did:plc:actor"
+	subjectURI := "at://subject/uri"
+
+	// Prepare mocks
+	like := &domain.Like{
+		ActorDID: actorDID,
+		URI:      "at://actor/like",
+	}
+	repo.On("GetLike", mock.Anything, actorDID, subjectURI).Return(like, nil)
+	repo.On("DeleteLike", mock.Anything, "at://actor/like").Return(nil)
+
+	// Mock HTTP transport for deleteRecord call inside Unlike
+	svc.client.Transport = &mockTransport{}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = svc.Unlike(ctx, actorDID, subjectURI)
+	}
 }
