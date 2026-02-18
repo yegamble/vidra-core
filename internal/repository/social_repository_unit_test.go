@@ -574,6 +574,64 @@ func TestSocialRepository_Unit_GetFollowing(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// GetFollow
+// ---------------------------------------------------------------------------
+
+func TestSocialRepository_Unit_GetFollow(t *testing.T) {
+	ctx := context.Background()
+	followerDID := "did:plc:follower"
+	followingDID := "did:plc:following"
+
+	t.Run("success", func(t *testing.T) {
+		repo, mock, cleanup := newSocialRepo(t)
+		defer cleanup()
+
+		f := sampleFollow()
+		mock.ExpectQuery(regexp.QuoteMeta(
+			`SELECT * FROM atproto_follows`)).
+			WithArgs(followerDID, followingDID).
+			WillReturnRows(followRow(f))
+
+		got, err := repo.GetFollow(ctx, followerDID, followingDID)
+		require.NoError(t, err)
+		require.NotNil(t, got)
+		assert.Equal(t, f.URI, got.URI)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("not found", func(t *testing.T) {
+		repo, mock, cleanup := newSocialRepo(t)
+		defer cleanup()
+
+		mock.ExpectQuery(regexp.QuoteMeta(
+			`SELECT * FROM atproto_follows`)).
+			WithArgs(followerDID, followingDID).
+			WillReturnError(sql.ErrNoRows)
+
+		got, err := repo.GetFollow(ctx, followerDID, followingDID)
+		require.Error(t, err)
+		assert.Nil(t, got)
+		assert.Contains(t, err.Error(), "follow not found")
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("db error", func(t *testing.T) {
+		repo, mock, cleanup := newSocialRepo(t)
+		defer cleanup()
+
+		mock.ExpectQuery(regexp.QuoteMeta(
+			`SELECT * FROM atproto_follows`)).
+			WithArgs(followerDID, followingDID).
+			WillReturnError(errors.New("connection failed"))
+
+		got, err := repo.GetFollow(ctx, followerDID, followingDID)
+		require.Error(t, err)
+		assert.Nil(t, got)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+}
+
+// ---------------------------------------------------------------------------
 // IsFollowing
 // ---------------------------------------------------------------------------
 

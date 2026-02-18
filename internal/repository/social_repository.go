@@ -130,6 +130,22 @@ func (r *SocialRepository) GetFollowing(ctx context.Context, did string, limit, 
 	return follows, err
 }
 
+// GetFollow retrieves a specific follow relationship
+func (r *SocialRepository) GetFollow(ctx context.Context, followerDID, followingDID string) (*domain.Follow, error) {
+	query := `
+		SELECT * FROM atproto_follows
+		WHERE follower_did = $1 AND following_did = $2 AND revoked_at IS NULL`
+	var follow domain.Follow
+	err := r.db.GetContext(ctx, &follow, query, followerDID, followingDID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("follow not found")
+		}
+		return nil, err
+	}
+	return &follow, nil
+}
+
 // IsFollowing checks if one actor follows another
 func (r *SocialRepository) IsFollowing(ctx context.Context, followerDID, followingDID string) (bool, error) {
 	query := `

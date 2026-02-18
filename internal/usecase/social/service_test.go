@@ -60,6 +60,13 @@ func (m *mockSocialRepo) GetFollowing(ctx context.Context, did string, limit, of
 	}
 	return args.Get(0).([]domain.Follow), args.Error(1)
 }
+func (m *mockSocialRepo) GetFollow(ctx context.Context, followerDID, followingDID string) (*domain.Follow, error) {
+	args := m.Called(ctx, followerDID, followingDID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*domain.Follow), args.Error(1)
+}
 func (m *mockSocialRepo) IsFollowing(ctx context.Context, followerDID, followingDID string) (bool, error) {
 	args := m.Called(ctx, followerDID, followingDID)
 	return args.Bool(0), args.Error(1)
@@ -465,9 +472,7 @@ func TestUnfollow_NotFollowing(t *testing.T) {
 
 	actor := &domain.ATProtoActor{DID: "did:plc:target", Handle: "bob.bsky.social"}
 	repo.On("GetActorByHandle", mock.Anything, "bob.bsky.social").Return(actor, nil)
-	repo.On("GetFollowing", mock.Anything, "did:plc:follower", 1000, 0).Return([]domain.Follow{
-		{FollowingDID: "did:plc:other", URI: "at://follow/1"},
-	}, nil)
+	repo.On("GetFollow", mock.Anything, "did:plc:follower", "did:plc:target").Return(nil, errors.New("follow not found"))
 
 	err := svc.Unfollow(context.Background(), "did:plc:follower", "bob.bsky.social")
 	assert.Error(t, err)
@@ -723,14 +728,14 @@ func TestUnlike_GetLikesError(t *testing.T) {
 	assert.Contains(t, err.Error(), "db error")
 }
 
-// --- Unfollow GetFollowing error path ---
+// --- Unfollow GetFollow error path ---
 
-func TestUnfollow_GetFollowingError(t *testing.T) {
+func TestUnfollow_GetFollowError(t *testing.T) {
 	svc, repo, _ := newTestService(t)
 
 	actor := &domain.ATProtoActor{DID: "did:plc:target", Handle: "bob.bsky.social"}
 	repo.On("GetActorByHandle", mock.Anything, "bob.bsky.social").Return(actor, nil)
-	repo.On("GetFollowing", mock.Anything, "did:plc:follower", 1000, 0).Return(nil, errors.New("db error"))
+	repo.On("GetFollow", mock.Anything, "did:plc:follower", "did:plc:target").Return(nil, errors.New("db error"))
 
 	err := svc.Unfollow(context.Background(), "did:plc:follower", "bob.bsky.social")
 	assert.Error(t, err)
@@ -870,8 +875,9 @@ func TestUnfollow_Success_WithHTTP(t *testing.T) {
 
 	actor := &domain.ATProtoActor{DID: "did:plc:target", Handle: "bob.test"}
 	repo.On("GetActorByHandle", mock.Anything, "bob.test").Return(actor, nil)
-	repo.On("GetFollowing", mock.Anything, "did:plc:follower", 1000, 0).Return([]domain.Follow{
-		{FollowingDID: "did:plc:target", URI: "at://did:plc:follower/app.bsky.graph.follow/abc123"},
+	repo.On("GetFollow", mock.Anything, "did:plc:follower", "did:plc:target").Return(&domain.Follow{
+		FollowingDID: "did:plc:target",
+		URI:          "at://did:plc:follower/app.bsky.graph.follow/abc123",
 	}, nil)
 	repo.On("RevokeFollow", mock.Anything, "at://did:plc:follower/app.bsky.graph.follow/abc123").Return(nil)
 
@@ -892,8 +898,9 @@ func TestUnfollow_DeleteRecordFails(t *testing.T) {
 
 	actor := &domain.ATProtoActor{DID: "did:plc:target", Handle: "bob.test"}
 	repo.On("GetActorByHandle", mock.Anything, "bob.test").Return(actor, nil)
-	repo.On("GetFollowing", mock.Anything, "did:plc:follower", 1000, 0).Return([]domain.Follow{
-		{FollowingDID: "did:plc:target", URI: "at://did:plc:follower/app.bsky.graph.follow/abc123"},
+	repo.On("GetFollow", mock.Anything, "did:plc:follower", "did:plc:target").Return(&domain.Follow{
+		FollowingDID: "did:plc:target",
+		URI:          "at://did:plc:follower/app.bsky.graph.follow/abc123",
 	}, nil)
 
 	err := svc.Unfollow(context.Background(), "did:plc:follower", "bob.test")
