@@ -659,15 +659,97 @@ func (r *ViewsRepository) BatchCreateUserViews(ctx context.Context, views []*dom
 		return nil
 	}
 
-	tx, err := r.db.BeginTxx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
-	}
-	defer func() {
-		if rollbackErr := tx.Rollback(); rollbackErr != nil {
-			_ = rollbackErr
+	count := len(views)
+	ids := make([]string, count)
+	videoIDs := make([]string, count)
+	userIDs := make([]*string, count)
+	sessionIDs := make([]string, count)
+	fingerprintHashes := make([]string, count)
+	watchDurations := make([]int, count)
+	videoDurations := make([]int, count)
+	completionPercentages := make([]float64, count)
+	isCompleteds := make([]bool, count)
+	seekCounts := make([]int, count)
+	pauseCounts := make([]int, count)
+	replayCounts := make([]int, count)
+	qualityChanges := make([]int, count)
+	initialLoadTimes := make([]*int, count)
+	bufferEvents := make([]int, count)
+	connectionTypes := make([]*string, count)
+	videoQualities := make([]*string, count)
+	referrerURLs := make([]string, count)
+	referrerTypes := make([]string, count)
+	utmSources := make([]string, count)
+	utmMediums := make([]string, count)
+	utmCampaigns := make([]string, count)
+	deviceTypes := make([]string, count)
+	osNames := make([]string, count)
+	browserNames := make([]string, count)
+	screenResolutions := make([]string, count)
+	isMobiles := make([]bool, count)
+	countryCodes := make([]string, count)
+	regionCodes := make([]string, count)
+	cityNames := make([]string, count)
+	timezones := make([]string, count)
+	isAnonymouss := make([]bool, count)
+	trackingConsents := make([]bool, count)
+	gdprConsents := make([]*bool, count)
+	viewDates := make([]time.Time, count)
+	viewHours := make([]int, count)
+	weekdays := make([]int, count)
+	createdAts := make([]time.Time, count)
+	updatedAts := make([]time.Time, count)
+
+	now := time.Now()
+
+	for i, view := range views {
+		if view.ID == "" {
+			view.ID = generateUUID()
 		}
-	}()
+		view.CreatedAt = now
+		view.UpdatedAt = now
+		view.SetViewDate(now)
+
+		ids[i] = view.ID
+		videoIDs[i] = view.VideoID
+		userIDs[i] = view.UserID
+		sessionIDs[i] = view.SessionID
+		fingerprintHashes[i] = view.FingerprintHash
+		watchDurations[i] = view.WatchDuration
+		videoDurations[i] = view.VideoDuration
+		completionPercentages[i] = view.CompletionPercentage
+		isCompleteds[i] = view.IsCompleted
+		seekCounts[i] = view.SeekCount
+		pauseCounts[i] = view.PauseCount
+		replayCounts[i] = view.ReplayCount
+		qualityChanges[i] = view.QualityChanges
+		initialLoadTimes[i] = view.InitialLoadTime
+		bufferEvents[i] = view.BufferEvents
+		connectionTypes[i] = view.ConnectionType
+		videoQualities[i] = view.VideoQuality
+		referrerURLs[i] = view.ReferrerURL
+		referrerTypes[i] = view.ReferrerType
+		utmSources[i] = view.UTMSource
+		utmMediums[i] = view.UTMMedium
+		utmCampaigns[i] = view.UTMCampaign
+		deviceTypes[i] = view.DeviceType
+		osNames[i] = view.OSName
+		browserNames[i] = view.BrowserName
+		screenResolutions[i] = view.ScreenResolution
+		isMobiles[i] = view.IsMobile
+		countryCodes[i] = view.CountryCode
+		regionCodes[i] = view.RegionCode
+		cityNames[i] = view.CityName
+		timezones[i] = view.Timezone
+		isAnonymouss[i] = view.IsAnonymous
+		trackingConsents[i] = view.TrackingConsent
+		gdprConsents[i] = view.GDPRConsent
+		viewDates[i] = view.ViewDate
+		viewHours[i] = view.ViewHour
+		weekdays[i] = view.Weekday
+		createdAts[i] = view.CreatedAt
+		updatedAts[i] = view.UpdatedAt
+	}
 
 	query := `
 		INSERT INTO user_views (
@@ -681,32 +763,53 @@ func (r *ViewsRepository) BatchCreateUserViews(ctx context.Context, views []*dom
 			is_anonymous, tracking_consent, gdpr_consent,
 			view_date, view_hour, weekday,
 			created_at, updated_at
-		) VALUES (
-			:id, :video_id, :user_id, :session_id, :fingerprint_hash,
-			:watch_duration, :video_duration, :completion_percentage, :is_completed,
-			:seek_count, :pause_count, :replay_count, :quality_changes,
-			:initial_load_time, :buffer_events, :connection_type, :video_quality,
-			:referrer_url, :referrer_type, :utm_source, :utm_medium, :utm_campaign,
-			:device_type, :os_name, :browser_name, :screen_resolution, :is_mobile,
-			:country_code, :region_code, :city_name, :timezone,
-			:is_anonymous, :tracking_consent, :gdpr_consent,
-			:view_date, :view_hour, :weekday,
-			:created_at, :updated_at
+		)
+		SELECT
+			v.id::uuid, v.video_id::uuid, v.user_id::uuid, v.session_id::uuid, v.fingerprint_hash,
+			v.watch_duration, v.video_duration, v.completion_percentage, v.is_completed,
+			v.seek_count, v.pause_count, v.replay_count, v.quality_changes,
+			v.initial_load_time, v.buffer_events, v.connection_type, v.video_quality,
+			v.referrer_url, v.referrer_type, v.utm_source, v.utm_medium, v.utm_campaign,
+			v.device_type, v.os_name, v.browser_name, v.screen_resolution, v.is_mobile,
+			v.country_code, v.region_code, v.city_name, v.timezone,
+			v.is_anonymous, v.tracking_consent, v.gdpr_consent,
+			v.view_date, v.view_hour, v.weekday,
+			v.created_at, v.updated_at
+		FROM UNNEST(
+			$1::text[], $2::text[], $3::text[], $4::text[], $5::text[],
+			$6::int[], $7::int[], $8::decimal[], $9::boolean[],
+			$10::int[], $11::int[], $12::int[], $13::int[],
+			$14::int[], $15::int[], $16::text[], $17::text[],
+			$18::text[], $19::text[], $20::text[], $21::text[], $22::text[],
+			$23::text[], $24::text[], $25::text[], $26::text[], $27::boolean[],
+			$28::char(2)[], $29::text[], $30::text[], $31::text[],
+			$32::boolean[], $33::boolean[], $34::boolean[],
+			$35::date[], $36::int[], $37::int[],
+			$38::timestamp[], $39::timestamp[]
+		) AS v(
+			id, video_id, user_id, session_id, fingerprint_hash,
+			watch_duration, video_duration, completion_percentage, is_completed,
+			seek_count, pause_count, replay_count, quality_changes,
+			initial_load_time, buffer_events, connection_type, video_quality,
+			referrer_url, referrer_type, utm_source, utm_medium, utm_campaign,
+			device_type, os_name, browser_name, screen_resolution, is_mobile,
+			country_code, region_code, city_name, timezone,
+			is_anonymous, tracking_consent, gdpr_consent,
+			view_date, view_hour, weekday,
+			created_at, updated_at
 		)`
 
-	for _, view := range views {
-		if view.ID == "" {
-			view.ID = generateUUID()
-		}
-		view.CreatedAt = time.Now()
-		view.UpdatedAt = view.CreatedAt
-		view.SetViewDate(view.CreatedAt)
-
-		_, err := tx.NamedExecContext(ctx, query, view)
-		if err != nil {
-			return fmt.Errorf("failed to insert view: %w", err)
-		}
-	}
-
-	return tx.Commit()
+	_, err := r.db.ExecContext(ctx, query,
+		pq.Array(ids), pq.Array(videoIDs), pq.Array(userIDs), pq.Array(sessionIDs), pq.Array(fingerprintHashes),
+		pq.Array(watchDurations), pq.Array(videoDurations), pq.Array(completionPercentages), pq.Array(isCompleteds),
+		pq.Array(seekCounts), pq.Array(pauseCounts), pq.Array(replayCounts), pq.Array(qualityChanges),
+		pq.Array(initialLoadTimes), pq.Array(bufferEvents), pq.Array(connectionTypes), pq.Array(videoQualities),
+		pq.Array(referrerURLs), pq.Array(referrerTypes), pq.Array(utmSources), pq.Array(utmMediums), pq.Array(utmCampaigns),
+		pq.Array(deviceTypes), pq.Array(osNames), pq.Array(browserNames), pq.Array(screenResolutions), pq.Array(isMobiles),
+		pq.Array(countryCodes), pq.Array(regionCodes), pq.Array(cityNames), pq.Array(timezones),
+		pq.Array(isAnonymouss), pq.Array(trackingConsents), pq.Array(gdprConsents),
+		pq.Array(viewDates), pq.Array(viewHours), pq.Array(weekdays),
+		pq.Array(createdAts), pq.Array(updatedAts),
+	)
+	return err
 }

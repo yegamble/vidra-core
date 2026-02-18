@@ -32,6 +32,7 @@ type mockSocialRepo struct {
 	revokeFollowFn func(ctx context.Context, uri string) error
 	getFollowersFn func(ctx context.Context, did string, limit, offset int) ([]domain.Follow, error)
 	getFollowingFn func(ctx context.Context, did string, limit, offset int) ([]domain.Follow, error)
+	getFollowFn    func(ctx context.Context, followerDID, followingDID string) (*domain.Follow, error)
 	isFollowingFn  func(ctx context.Context, followerDID, followingDID string) (bool, error)
 
 	createLikeFn func(ctx context.Context, like *domain.Like) error
@@ -99,6 +100,13 @@ func (m *mockSocialRepo) GetFollowing(ctx context.Context, did string, limit, of
 		return m.getFollowingFn(ctx, did, limit, offset)
 	}
 	return nil, nil
+}
+
+func (m *mockSocialRepo) GetFollow(ctx context.Context, followerDID, followingDID string) (*domain.Follow, error) {
+	if m.getFollowFn != nil {
+		return m.getFollowFn(ctx, followerDID, followingDID)
+	}
+	return nil, errors.New("not found")
 }
 
 func (m *mockSocialRepo) IsFollowing(ctx context.Context, followerDID, followingDID string) (bool, error) {
@@ -524,8 +532,8 @@ func TestUnit_Unfollow_NotFollowing(t *testing.T) {
 		getActorByHandleFn: func(_ context.Context, _ string) (*domain.ATProtoActor, error) {
 			return actor, nil
 		},
-		getFollowingFn: func(_ context.Context, _ string, _, _ int) ([]domain.Follow, error) {
-			return []domain.Follow{}, nil
+		getFollowFn: func(_ context.Context, _, _ string) (*domain.Follow, error) {
+			return nil, errors.New("not found")
 		},
 	}
 	h := newTestSocialHandler(repo)
@@ -552,10 +560,8 @@ func TestUnit_Unfollow_SuccessWithPDS(t *testing.T) {
 		getActorByHandleFn: func(_ context.Context, _ string) (*domain.ATProtoActor, error) {
 			return actor, nil
 		},
-		getFollowingFn: func(_ context.Context, _ string, _, _ int) ([]domain.Follow, error) {
-			return []domain.Follow{
-				{FollowingDID: "did:plc:alice", URI: "at://did:plc:me/app.bsky.graph.follow/abc123"},
-			}, nil
+		getFollowFn: func(_ context.Context, _, _ string) (*domain.Follow, error) {
+			return &domain.Follow{FollowingDID: "did:plc:alice", URI: "at://did:plc:me/app.bsky.graph.follow/abc123"}, nil
 		},
 		revokeFollowFn: func(_ context.Context, _ string) error {
 			revoked = true
