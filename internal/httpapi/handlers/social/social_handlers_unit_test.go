@@ -532,8 +532,8 @@ func TestUnit_Unfollow_NotFollowing(t *testing.T) {
 		getActorByHandleFn: func(_ context.Context, _ string) (*domain.ATProtoActor, error) {
 			return actor, nil
 		},
-		getFollowingFn: func(_ context.Context, _ string, _, _ int) ([]domain.Follow, error) {
-			return []domain.Follow{}, nil
+		getFollowFn: func(_ context.Context, _, _ string) (*domain.Follow, error) {
+			return nil, errors.New("not found")
 		},
 	}
 	h := newTestSocialHandler(repo)
@@ -560,10 +560,8 @@ func TestUnit_Unfollow_SuccessWithPDS(t *testing.T) {
 		getActorByHandleFn: func(_ context.Context, _ string) (*domain.ATProtoActor, error) {
 			return actor, nil
 		},
-		getFollowingFn: func(_ context.Context, _ string, _, _ int) ([]domain.Follow, error) {
-			return []domain.Follow{
-				{FollowingDID: "did:plc:alice", URI: "at://did:plc:me/app.bsky.graph.follow/abc123"},
-			}, nil
+		getFollowFn: func(_ context.Context, _, _ string) (*domain.Follow, error) {
+			return &domain.Follow{FollowingDID: "did:plc:alice", URI: "at://did:plc:me/app.bsky.graph.follow/abc123"}, nil
 		},
 		revokeFollowFn: func(_ context.Context, _ string) error {
 			revoked = true
