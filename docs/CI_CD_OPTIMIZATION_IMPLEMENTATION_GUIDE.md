@@ -56,6 +56,7 @@ git push
 
 3. **Adjust if needed:**
    - If runner capacity is exceeded, reduce parallelism:
+
      ```yaml
      strategy:
        max-parallel: 4  # Reduce from unlimited
@@ -70,6 +71,7 @@ git push
 **Why:** Self-hosted runners already have Docker installed. This check wastes 5-10 seconds per job.
 
 **Files to modify:**
+
 - `.github/workflows/test.yml`
 - `.github/workflows/e2e-tests.yml`
 - `.github/workflows/virus-scanner-tests.yml`
@@ -77,6 +79,7 @@ git push
 - `.github/workflows/goose-migrate.yml`
 
 **Change:**
+
 ```yaml
 # REMOVE this entire step:
 - name: Install Docker
@@ -140,6 +143,7 @@ git push
 **Why:** Skip CI runs for documentation-only changes.
 
 **Update `test.yml`:**
+
 ```yaml
 on:
   push:
@@ -164,6 +168,7 @@ on:
 **Why:** Self-hosted runners likely have common packages pre-installed.
 
 **Change:**
+
 ```yaml
 # BEFORE:
 - name: Install system dependencies
@@ -187,12 +192,14 @@ on:
 ### 2.1 Parallelize Main Test Suite
 
 **Current dependency graph:**
+
 ```
 changes → unit → integration → build
          unit → lint
 ```
 
 **Optimized graph:**
+
 ```
 ┌─ unit ────────┐
 ├─ integration ─┼─→ build
@@ -203,6 +210,7 @@ changes → unit → integration → build
 **Implementation:** See `.github/workflows/test-optimized.yml`
 
 **Key changes:**
+
 1. Remove `needs: [unit, changes]` from `integration` job
 2. Remove `needs: changes` from multiple jobs
 3. Add final gate job to verify all tests passed
@@ -219,6 +227,7 @@ changes → unit → integration → build
 **Implementation:** See `.github/workflows/security-tests-optimized.yml`
 
 **Key changes:**
+
 ```yaml
 jobs:
   security-tests:
@@ -351,6 +360,7 @@ runs:
 ```
 
 **Usage:**
+
 ```yaml
 - uses: ./.github/actions/setup-node-tools
   with:
@@ -407,6 +417,7 @@ runs:
 ```
 
 **Usage:**
+
 ```yaml
 - name: Install dependencies
   uses: ./.github/actions/retry-command
@@ -507,6 +518,7 @@ sudo systemctl restart docker
 ```
 
 **Pre-pull common images:**
+
 ```bash
 docker pull postgres:15-alpine
 docker pull redis:7-alpine
@@ -520,6 +532,7 @@ docker push localhost:5000/postgres:15-alpine
 ```
 
 **Update workflows to use local registry:**
+
 ```yaml
 services:
   postgres:
@@ -537,14 +550,15 @@ Optimize individual test execution:
 ```bash
 # Update Makefile
 test-unit:
-	@PKGS=$$(go list ./... | grep -v repository | grep -v integration); \
-	go test -v -race -parallel=16 -short $$PKGS
+ @PKGS=$$(go list ./... | grep -v repository | grep -v integration); \
+ go test -v -race -parallel=16 -short $$PKGS
 
 test-integration-ci:
-	@go test -v -short -race -parallel=16 ./...
+ @go test -v -short -race -parallel=16 ./...
 ```
 
 **Key changes:**
+
 - Increase `-parallel` from 8 to 16 (if runner has 16+ cores)
 - Use `-short` flag to skip long-running tests in CI
 
@@ -600,6 +614,7 @@ gh run list --workflow=test.yml --limit 100 --json createdAt,updatedAt \
 ### Monitor Cache Hit Rates
 
 Add to workflows:
+
 ```yaml
 - name: Report cache statistics
   run: |
@@ -662,6 +677,7 @@ print(f"  P95: {stats['p95']:.1f} min")
 If optimizations cause issues:
 
 ### Quick Rollback
+
 ```bash
 # Restore backed up workflows
 cp .github/workflows/test-backup.yml .github/workflows/test.yml
@@ -675,6 +691,7 @@ git push
 ### Gradual Rollout Strategy
 
 1. **Test on feature branch first:**
+
    ```bash
    git checkout -b optimize/ci-improvements
    # Make changes
@@ -683,6 +700,7 @@ git push
    ```
 
 2. **Enable for specific branches:**
+
    ```yaml
    on:
      push:
@@ -719,6 +737,7 @@ After implementing optimizations, verify:
 ## Support
 
 For questions or issues:
+
 - Review the [full optimization report](./CI_CD_OPTIMIZATION_REPORT.md)
 - Check GitHub Actions documentation
 - Analyze failed runs using GitHub Actions Timeline view

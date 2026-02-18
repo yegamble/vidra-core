@@ -18,17 +18,20 @@ I've identified and prepared fixes for the E2E test failures. The fixes are read
 **Root Cause:** E2E test helper calls wrong API endpoint
 
 **Details:**
+
 - Test sends multipart form data to `POST /api/v1/videos`
 - That endpoint expects JSON (for metadata-only video creation)
 - Correct endpoint is `POST /api/v1/videos/upload` (for file uploads)
 
 **Fix:** Change line 219 in `tests/e2e/helpers.go`:
+
 ```diff
 - req, err := http.NewRequest("POST", c.BaseURL+"/api/v1/videos", &buf)
 + req, err := http.NewRequest("POST", c.BaseURL+"/api/v1/videos/upload", &buf)
 ```
 
 **Impact:**
+
 - Fixes TestVideoUploadWorkflow
 - Fixes TestVideoSearchFunctionality
 
@@ -39,15 +42,18 @@ I've identified and prepared fixes for the E2E test failures. The fixes are read
 **Root Cause:** Unknown - authentication failing after registration
 
 **Details:**
+
 - User registration succeeds (201)
 - Immediate login with same credentials fails (401)
 - Error changed from 400 → 401 (progress - email field now parsed correctly)
 
 **Fix:** Added comprehensive diagnostic logging to identify root cause:
+
 - Registration: logs credentials, success/failure, user ID
 - Login: logs credentials, error codes, failure details
 
 **Impact:**
+
 - Will reveal why authentication is failing
 - No functional changes, only logging
 
@@ -82,11 +88,13 @@ git commit -m "fix(e2e): Correct video upload endpoint and add auth diagnostics"
 Edit `tests/e2e/helpers.go`:
 
 **Change 1 (Line 90):** Add registration logging
+
 ```go
 t.Logf("Registering user: username=%s, email=%s", username, email)
 ```
 
 **Change 2 (Lines 96-99):** Add registration failure diagnostics
+
 ```go
 if resp.StatusCode != http.StatusCreated {
     respBody, _ := io.ReadAll(resp.Body)
@@ -95,16 +103,19 @@ if resp.StatusCode != http.StatusCreated {
 ```
 
 **Change 3 (Line 117):** Add registration success logging
+
 ```go
 t.Logf("Registration succeeded: userID=%s", envelope.Data.User.ID)
 ```
 
 **Change 4 (Line 134):** Add login attempt logging
+
 ```go
 t.Logf("Login attempt: username=%s, email=%s", username, email)
 ```
 
 **Change 5 (Lines 148-167):** Add login failure diagnostics
+
 ```go
 if resp.StatusCode != http.StatusOK {
     respBody, _ := io.ReadAll(resp.Body)
@@ -129,11 +140,13 @@ if resp.StatusCode != http.StatusOK {
 ```
 
 **Change 6 (Line 185):** Add login success logging
+
 ```go
 t.Logf("Login succeeded: userID=%s", envelope.Data.User.ID)
 ```
 
 **Change 7 (Line 219) - THE CRITICAL FIX:** Fix video upload endpoint
+
 ```go
 - req, err := http.NewRequest("POST", c.BaseURL+"/api/v1/videos", &buf)
 + req, err := http.NewRequest("POST", c.BaseURL+"/api/v1/videos/upload", &buf)
@@ -152,6 +165,7 @@ These issues exist on the main branch and are NOT caused by the E2E fixes:
 **Issue:** Octal IP encoding validation failing
 
 **To verify:**
+
 ```bash
 git stash  # Stash E2E changes
 make test-unit 2>&1 | grep "octal_IP"
@@ -166,11 +180,13 @@ git stash pop  # Restore E2E changes
 **Issue:** Schema validation error - unknown variable access to `secrets`
 
 **Error message:**
+
 ```
 Line: 446 Column 9: Failed to match run-step: Line: 447 Column 13: Unknown Variable Access secrets
 ```
 
 **To verify:**
+
 ```bash
 act workflow-validation -W .github/workflows/blue-green-deploy.yml
 ```
@@ -192,6 +208,7 @@ Once the pre-existing failures are fixed:
 ### Separate Track: Fix Pre-existing Issues
 
 **Fix 1: Validation Test**
+
 ```bash
 # Find the failing test
 grep -r "octal_IP" internal/validation/
@@ -201,6 +218,7 @@ grep -r "octal_IP" internal/validation/
 ```
 
 **Fix 2: Workflow Schema**
+
 ```bash
 # Review the workflow file
 vim .github/workflows/blue-green-deploy.yml
@@ -237,14 +255,17 @@ grep -A5 "Registering user\|Login attempt\|Login failed" e2e-test-output.log
 ### Expected Test Results
 
 **TestVideoUploadWorkflow:**
+
 - Before: ❌ 400 Bad Request on video upload
 - After: ✅ Should progress past upload (may still fail on login with diagnostics)
 
 **TestUserAuthenticationFlow:**
+
 - Before: ❌ 401 Unauthorized on login (no details)
 - After: 🔍 Shows detailed diagnostic logs revealing why authentication fails
 
 **TestVideoSearchFunctionality:**
+
 - Before: ❌ 400 Bad Request on video upload
 - After: ✅ Should progress past upload (may still fail on login with diagnostics)
 
@@ -266,6 +287,7 @@ Comprehensive analysis documents have been created:
 The Athena API has two distinct video creation endpoints:
 
 ### POST /api/v1/videos (JSON)
+
 - **Handler:** `CreateVideoHandler`
 - **Purpose:** Create video metadata only (for chunked upload workflow)
 - **Request:** JSON `{"title": "...", "description": "...", "privacy": "..."}`
@@ -273,6 +295,7 @@ The Athena API has two distinct video creation endpoints:
 - **Use case:** Initiate chunked upload, then upload chunks separately
 
 ### POST /api/v1/videos/upload (Multipart)
+
 - **Handler:** `UploadVideoFileHandler`
 - **Purpose:** Legacy one-shot upload with file
 - **Request:** Multipart form with video file + metadata fields
@@ -288,18 +311,21 @@ The Athena API has two distinct video creation endpoints:
 ### ✅ Changes Preserve Business Logic
 
 **Video Upload Endpoints:**
+
 - Both endpoints remain functional and unchanged
 - No API behavior modifications
 - No authentication requirement changes
 - Tests now use the correct endpoint for their use case
 
 **Authentication Flow:**
+
 - No changes to registration logic
 - No changes to login logic
 - Only diagnostic logging added
 - Business rules unchanged
 
 **Impact Assessment:**
+
 - ✅ Zero production code changes
 - ✅ Zero API contract changes
 - ✅ Zero business logic changes
@@ -322,24 +348,29 @@ go test -v ./tests/e2e/scenarios/... 2>&1 | tee e2e-output.log
 Look for patterns in the logs:
 
 **If registration fails:**
+
 ```
 Registering user: username=e2e_abc123_1234567890, email=e2e_abc123_1234567890@example.com
 User registration failed with 400: {"error":{"code":"...", "message":"..."}}
 ```
+
 → Database constraint or validation issue
 
 **If registration succeeds but login fails:**
+
 ```
 Registration succeeded: userID=550e8400-e29b-41d4-a716-446655440000
 Login attempt: username=e2e_abc123_1234567890, email=e2e_abc123_1234567890@example.com
 Login failed with 401: {"error":{"code":"INVALID_CREDENTIALS", "message":"Invalid credentials"}}
 Error code: INVALID_CREDENTIALS, Message: Invalid credentials
 ```
+
 → Password mismatch or user not in database
 
 ### 3. Additional Debugging (If Needed)
 
 **Check database state:**
+
 ```bash
 docker compose -f tests/e2e/docker-compose.yml exec postgres-e2e \
   psql -U athena_test -d athena_e2e -c \
@@ -349,6 +380,7 @@ docker compose -f tests/e2e/docker-compose.yml exec postgres-e2e \
 ```
 
 **Check if registration token works:**
+
 ```go
 // Add to test after registration
 resp, err := client.Get("/api/v1/users/me")
@@ -360,17 +392,20 @@ require.Equal(t, http.StatusOK, resp.StatusCode, "Token from registration should
 ## Success Criteria
 
 ### Phase 1: Video Upload Fix
+
 - ✅ TestVideoUploadWorkflow progresses past upload
 - ✅ TestVideoSearchFunctionality progresses past upload
 - ✅ No more 400 errors on video upload
 
 ### Phase 2: Login Diagnostics
+
 - ✅ Detailed logs show registration credentials
 - ✅ Detailed logs show login credentials
 - ✅ Error codes and messages captured
 - ✅ Root cause of 401 identified
 
 ### Phase 3: Full Success
+
 - ✅ All E2E tests pass completely
 - ✅ Authentication flows work correctly
 - ✅ Video operations work correctly
@@ -382,6 +417,7 @@ require.Equal(t, http.StatusOK, resp.StatusCode, "Token from registration should
 **Risk Level:** VERY LOW ✅
 
 **Why:**
+
 - Test code only
 - No production changes
 - No API modifications
@@ -397,15 +433,18 @@ require.Equal(t, http.StatusOK, resp.StatusCode, "Token from registration should
 ## Files Reference
 
 **Modified:**
+
 - `tests/e2e/helpers.go` - E2E test helpers
 
 **Created:**
+
 - `e2e-helpers-fix.patch` - Patch file with all changes
 - `E2E_FAILURE_ANALYSIS.md` - Technical analysis
 - `E2E_FIX_SUMMARY.md` - Implementation guide
 - `E2E_FIX_READY_TO_APPLY.md` - This file
 
 **Pre-existing Issues:**
+
 - `internal/validation/*` - Octal IP test failure
 - `.github/workflows/blue-green-deploy.yml` - Schema validation error
 

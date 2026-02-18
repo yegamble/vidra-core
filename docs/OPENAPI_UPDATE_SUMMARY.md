@@ -26,6 +26,7 @@ The Athena backend OpenAPI specifications have been comprehensively updated to e
 ## ✨ New OpenAPI Specification Files
 
 ### 0. **openapi_auth_2fa.yaml** (NEW - 2025-01-06) ⭐⭐⭐
+
 **Location:** `/api/openapi_auth_2fa.yaml`
 **Endpoints:** 5
 **Priority:** CRITICAL - Security feature
@@ -39,6 +40,7 @@ Complete specification for two-factor authentication (2FA) system:
 - `GET /api/v1/auth/2fa/status` - Check 2FA status
 
 **Features:**
+
 - **TOTP (RFC 6238):** Time-based One-Time Password with 30-second time step, 6 digits
 - **Backup Codes:** 10 one-time recovery codes (8 characters, base32 encoded)
 - **QR Code Generation:** otpauth:// URI for authenticator app scanning
@@ -47,6 +49,7 @@ Complete specification for two-factor authentication (2FA) system:
 - **Login Integration:** Seamless integration with existing auth flow
 
 **Authentication Flow:**
+
 1. **Setup Phase:**
    - User calls `/setup` → receives TOTP secret, QR code URI, 10 backup codes
    - User scans QR in authenticator app (Google Authenticator, Authy, 1Password, etc.)
@@ -63,6 +66,7 @@ Complete specification for two-factor authentication (2FA) system:
    - User can regenerate all backup codes with valid TOTP code
 
 **Schemas:**
+
 - `TwoFASetupResponse` - Setup response with secret, QR URI, and backup codes
 - `TwoFAVerifySetupRequest` - TOTP code verification request
 - `TwoFADisableRequest` - Password + code for disable
@@ -71,6 +75,7 @@ Complete specification for two-factor authentication (2FA) system:
 - `TwoFAStatusResponse` - Enabled status and confirmation timestamp
 
 **Security Features:**
+
 - All endpoints require JWT authentication (except login)
 - Backup codes shown in plaintext only at generation time
 - Code cleanup: spaces/dashes removed, case-insensitive matching
@@ -78,6 +83,7 @@ Complete specification for two-factor authentication (2FA) system:
 - TOTP verification uses SHA-1 (RFC 6238 standard)
 
 **Error Codes:**
+
 - `2FA_REQUIRED` - Login requires 2FA code
 - `INVALID_2FA_CODE` - Code verification failed
 - `2FA_ALREADY_ENABLED` - Attempted setup when already enabled
@@ -87,6 +93,7 @@ Complete specification for two-factor authentication (2FA) system:
 
 **Compatibility:**
 Compatible with all RFC 6238 TOTP authenticator apps:
+
 - Google Authenticator
 - Microsoft Authenticator
 - Authy
@@ -98,6 +105,7 @@ Compatible with all RFC 6238 TOTP authenticator apps:
 ---
 
 ### 1. **openapi_captions.yaml** (NEW) ⭐
+
 **Location:** `/api/openapi_captions.yaml`
 **Endpoints:** 6
 **Priority:** HIGH - User-facing feature
@@ -111,6 +119,7 @@ Complete specification for video caption/subtitle management:
 - `DELETE /api/v1/videos/{id}/captions/{captionId}` - Delete caption
 
 **Features:**
+
 - Multipart form upload support for caption files
 - VTT and SRT format support
 - Auto-detection of format from file extension
@@ -119,6 +128,7 @@ Complete specification for video caption/subtitle management:
 - Auto-generated caption flagging
 
 **Schemas:**
+
 - `Caption` - Caption entity with IPFS support
 - `CaptionListResponse` - Paginated caption list
 - `UpdateCaptionRequest` - Metadata update DTO
@@ -127,6 +137,7 @@ Complete specification for video caption/subtitle management:
 ---
 
 ### 2. **openapi_federation_hardening.yaml** (NEW) ⭐
+
 **Location:** `/api/openapi_federation_hardening.yaml`
 **Endpoints:** 12
 **Priority:** HIGH - Critical admin tooling
@@ -134,30 +145,37 @@ Complete specification for video caption/subtitle management:
 Complete specification for federation hardening and abuse prevention:
 
 #### Dashboard & Monitoring (2)
+
 - `GET /api/v1/admin/federation/hardening/dashboard` - Comprehensive health dashboard
 - `GET /api/v1/admin/federation/hardening/health` - Health metrics with percentiles
 
 #### Dead Letter Queue (2)
+
 - `GET /api/v1/admin/federation/hardening/dlq` - List failed jobs (limit, can_retry filters)
 - `POST /api/v1/admin/federation/hardening/dlq/{id}/retry` - Retry DLQ job
 
 #### Instance Blocklist (3)
+
 - `GET /api/v1/admin/federation/hardening/blocklist/instances` - List blocked instances
 - `POST /api/v1/admin/federation/hardening/blocklist/instances` - Block instance with duration
 - `DELETE /api/v1/admin/federation/hardening/blocklist/instances/{domain}` - Unblock
 
 #### Actor Blocklist (2)
+
 - `POST /api/v1/admin/federation/hardening/blocklist/actors` - Block actor
 - `GET /api/v1/admin/federation/hardening/blocklist/check` - Check block status
 
 #### Abuse Management (2)
+
 - `GET /api/v1/admin/federation/hardening/abuse/reports` - List abuse reports
 - `POST /api/v1/admin/federation/hardening/abuse/reports/{id}/resolve` - Resolve report
 
 #### Maintenance (1)
+
 - `POST /api/v1/admin/federation/hardening/cleanup` - Manual cleanup trigger
 
 **Features:**
+
 - Block severity levels: `block`, `shadowban`, `quarantine`, `mute`
 - Temporary blocks with Go duration format (e.g., "24h", "72h", "168h")
 - DLQ retry management with configurable limits
@@ -166,6 +184,7 @@ Complete specification for federation hardening and abuse prevention:
 - Health percentiles (p50, p95, p99 latency)
 
 **Schemas:**
+
 - `DeadLetterJob` - Failed job tracking
 - `InstanceBlock` - Instance blocklist entry
 - `ActorBlock` - Actor blocklist entry
@@ -178,10 +197,12 @@ Complete specification for federation hardening and abuse prevention:
 ## 📝 Updated OpenAPI Specification Files
 
 ### 3. **openapi.yaml** (UPDATED)
+
 **New Endpoints:** 4
 **Updated Endpoints:** 1
 
 #### OAuth2 Extended Flows (NEW)
+
 - `GET/POST /oauth/authorize` - Authorization code flow with PKCE support
   - GET: Display authorization form to user
   - POST: Process approval/denial, issue authorization code
@@ -189,12 +210,14 @@ Complete specification for federation hardening and abuse prevention:
 - `POST /oauth/introspect` - Token introspection (RFC 7662)
 
 **Updates:**
+
 - `/oauth/token` - Added `authorization_code` grant type support
   - New parameters: `code`, `redirect_uri`, `code_verifier`
   - PKCE support (S256 and plain methods)
   - Enhanced documentation with all three grant types
 
 #### View Deduplication (NEW)
+
 - `POST /api/v1/views/fingerprint` - Generate privacy-compliant fingerprint
   - SHA-256 hash of IP + user agent
   - Used for view deduplication without PII storage
@@ -202,9 +225,11 @@ Complete specification for federation hardening and abuse prevention:
 ---
 
 ### 4. **openapi_federation.yaml** (UPDATED)
+
 **New Endpoints:** 8
 
 #### Federation Jobs Management (4)
+
 - `GET /api/v1/admin/federation/jobs` - List all federation sync jobs
   - Filters: status (pending/running/completed/failed)
   - Pagination: page, pageSize (max 100)
@@ -214,6 +239,7 @@ Complete specification for federation hardening and abuse prevention:
 - `DELETE /api/v1/admin/federation/jobs/{id}` - Delete job from queue
 
 #### Federation Actors Management (4)
+
 - `GET /api/v1/admin/federation/actors` - List tracked ATProto actors
   - Pagination: up to 200 items per page
 - `POST /api/v1/admin/federation/actors` - Add/update actor tracking
@@ -223,12 +249,14 @@ Complete specification for federation hardening and abuse prevention:
 - `DELETE /api/v1/admin/federation/actors/{actor}` - Stop tracking actor
 
 **New Schemas:**
+
 - `FederationJob` - Sync job entity (type, status, payload, retry tracking)
 - `FederationActor` - Tracked actor with cursor and rate limiting
 
 ---
 
 ### 5. **openapi_ratings_playlists.yaml** (UPDATED)
+
 **New Endpoints:** 1
 
 - `GET /api/v1/users/me/watch-later` - Get user's watch later playlist
@@ -240,6 +268,7 @@ Complete specification for federation hardening and abuse prevention:
 ## 🎯 Key Improvements by Feature Area
 
 ### 🔐 Authentication & Authorization
+
 - **Two-Factor Authentication (2FA):** Complete TOTP + backup codes implementation (5 endpoints) ⭐ NEW
 - **OAuth2 Compliance:** Full RFC 6749, RFC 7009, RFC 7662 support
 - **Authorization Code Flow:** With PKCE for secure mobile/SPA apps
@@ -247,20 +276,24 @@ Complete specification for federation hardening and abuse prevention:
 - **Coverage:** 100% (13/13 endpoints)
 
 ### 🎬 Video Features
+
 - **Captions:** Complete CRUD with file uploads (VTT/SRT)
 - **View Analytics:** Fingerprinting for privacy-compliant deduplication
 - **Coverage:** 95% (20/21 endpoints)
 
 ### 👥 User Features
+
 - **Watch Later:** Convenient playlist access endpoint
 - **Coverage:** 100% (12/12 endpoints)
 
 ### 🌐 Federation
+
 - **Admin Tools:** Jobs and actors management
 - **Hardening:** Complete abuse prevention and monitoring suite
 - **Coverage:** 100% (20/20 endpoints documented)
 
 ### 🛡️ Moderation
+
 - **Abuse Reports:** Federated abuse handling
 - **Blocklists:** Instance and actor blocking with severity levels
 - **DLQ:** Dead letter queue for failed federation jobs
@@ -271,6 +304,7 @@ Complete specification for federation hardening and abuse prevention:
 ## 📋 Schema Additions
 
 ### New Comprehensive Schemas
+
 1. **Caption** - Video subtitle with IPFS support
 2. **CaptionFormat** - VTT/SRT enum
 3. **FederationJob** - Sync job tracking
@@ -287,6 +321,7 @@ Complete specification for federation hardening and abuse prevention:
 ## 🔍 Validation & Quality
 
 ### Request Validation
+
 - All required fields properly marked
 - Min/max constraints on integers and strings
 - Enum validation for status fields
@@ -294,12 +329,14 @@ Complete specification for federation hardening and abuse prevention:
 - File upload size limits documented
 
 ### Response Documentation
+
 - All status codes documented (200, 201, 400, 401, 403, 404, 500)
 - Examples for success and error cases
 - Pagination response formats standardized
 - Error response schema consistent across all endpoints
 
 ### Security
+
 - All admin endpoints require `bearerAuth` + admin role
 - Public vs authenticated endpoints clearly marked
 - Privacy controls documented (public/private video access)
@@ -310,19 +347,25 @@ Complete specification for federation hardening and abuse prevention:
 ## 🚀 Frontend Development Ready
 
 ### Client SDK Generation
+
 All specifications are ready for client code generation using:
+
 - **OpenAPI Generator** - Generate TypeScript/JavaScript clients
 - **Swagger Codegen** - Alternative code generation
 - **oapi-codegen** - Go client generation (for testing)
 
 ### API Documentation
+
 Can be rendered using:
+
 - **Swagger UI** - Interactive API explorer
 - **ReDoc** - Clean, responsive documentation
 - **Stoplight** - Enhanced API design platform
 
 ### Contract Testing
+
 Ready for API contract testing with:
+
 - **Pact** - Consumer-driven contract testing
 - **Postman** - Collection generation from OpenAPI
 - **Dredd** - API blueprint testing
@@ -332,12 +375,14 @@ Ready for API contract testing with:
 ## 📁 Files Modified/Created
 
 ### Created (2 files)
+
 ```
 /api/openapi_captions.yaml                    (NEW) 630 lines
 /api/openapi_federation_hardening.yaml        (NEW) 1,157 lines
 ```
 
 ### Updated (3 files)
+
 ```
 /api/openapi.yaml                             (+290 lines)
 /api/openapi_federation.yaml                  (+457 lines)
@@ -345,6 +390,7 @@ Ready for API contract testing with:
 ```
 
 ### Total Changes
+
 - **Lines Added:** ~2,552 lines
 - **New Endpoints Documented:** 34
 - **New Schemas:** 10
@@ -354,6 +400,7 @@ Ready for API contract testing with:
 ## ✅ Remaining Gaps (Minor)
 
 ### Low Priority Items
+
 1. **Direct Video Upload Endpoints** (2 routes)
    - `POST /api/v1/videos/{id}/upload` - Chunked upload (legacy)
    - `POST /api/v1/videos/{id}/complete` - Complete upload (legacy)
@@ -382,6 +429,7 @@ The OpenAPI specifications are now comprehensive and production-ready for fronte
 ✅ Ready for client SDK generation
 
 **Next Steps:**
+
 1. Set up OpenAPI validation in CI/CD pipeline
 2. Generate and test TypeScript client SDK
 3. Configure Swagger UI for interactive API documentation
@@ -393,6 +441,7 @@ The OpenAPI specifications are now comprehensive and production-ready for fronte
 ## 📞 Questions & Support
 
 For questions about the OpenAPI specifications or to report issues:
+
 - Review specifications in `/api/` directory
 - Check implementation in `/internal/httpapi/`
 - Report issues on GitHub

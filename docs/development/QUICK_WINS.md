@@ -5,6 +5,7 @@ This document provides a prioritized list of quick, low-risk improvements you ca
 ## Immediate Actions (< 1 hour)
 
 ### 1. Remove Test Binaries from Repository ⚡
+
 **Time:** 5 minutes | **Risk:** None | **Impact:** High
 
 ```bash
@@ -20,6 +21,7 @@ git commit -m "chore: remove test binaries from version control"
 ---
 
 ### 2. Remove Temporary Directories 🧹
+
 **Time:** 15 minutes | **Risk:** None | **Impact:** Medium
 
 ```bash
@@ -38,6 +40,7 @@ git commit -m "chore: clean up temporary and misplaced files"
 ---
 
 ### 3. Move Test Fixtures to Proper Location 📁 ✅ COMPLETED
+
 **Time:** 30 minutes | **Risk:** Low | **Impact:** Medium
 
 **Status:** Resolved - `/internal/httpapi/storage/` has been removed. Tests now correctly use `/storage/` at the project root, which is properly managed via `.gitignore` and `config.StorageDir`.
@@ -47,6 +50,7 @@ git commit -m "chore: clean up temporary and misplaced files"
 ## Short-term Improvements (1-4 hours)
 
 ### 4. Archive Sprint Documentation 📚
+
 **Time:** 30 minutes | **Risk:** None | **Impact:** Low
 
 ```bash
@@ -68,14 +72,17 @@ git commit -m "docs: archive historical sprint documentation"
 ---
 
 ### 5. Consolidate Architecture Documentation 📖
+
 **Time:** 1 hour | **Risk:** None | **Impact:** Medium
 
 **Current Issues:**
+
 - `docs/architecture.md` - Main architecture doc
 - `docs/claude/architecture.md` - Duplicate/variant
 - `docs/architecture/README.md` - Another variant
 
 **Action Plan:**
+
 1. Compare all three architecture documents
 2. Merge unique content into `docs/architecture/README.md`
 3. Remove duplicates
@@ -92,6 +99,7 @@ git commit -m "docs: consolidate architecture documentation"
 ---
 
 ### 6. Create Documentation Index 📑
+
 **Time:** 45 minutes | **Risk:** None | **Impact:** High
 
 Create a comprehensive `docs/README.md` that serves as the master index:
@@ -137,9 +145,11 @@ Create a comprehensive `docs/README.md` that serves as the master index:
 ## Medium-term Improvements (4-8 hours)
 
 ### 7. Organize HTTP Handlers into Subdirectories 🗂️
+
 **Time:** 3-4 hours | **Risk:** Low | **Impact:** High
 
 **Before:**
+
 ```
 internal/httpapi/
 ├── videos.go (1,293 lines)
@@ -149,6 +159,7 @@ internal/httpapi/
 ```
 
 **After:**
+
 ```
 internal/httpapi/
 ├── handlers/
@@ -172,12 +183,14 @@ internal/httpapi/
 **Implementation Steps:**
 
 1. Create handler subdirectories:
+
 ```bash
 cd internal/httpapi
 mkdir -p handlers/{auth,video,channel,livestream,social,moderation,federation,admin}
 ```
 
 2. Move handlers by domain (example):
+
 ```bash
 # Auth handlers
 mv oauth.go handlers/auth/
@@ -192,6 +205,7 @@ mv encoding.go handlers/video/
 ```
 
 3. Update package declarations in moved files:
+
 ```go
 // Change from:
 package httpapi
@@ -201,6 +215,7 @@ package auth  // or video, channel, etc.
 ```
 
 4. Update imports in routes.go:
+
 ```go
 import (
     "athena/internal/httpapi/handlers/auth"
@@ -210,6 +225,7 @@ import (
 ```
 
 5. Run tests to verify:
+
 ```bash
 go test ./internal/httpapi/...
 ```
@@ -217,11 +233,13 @@ go test ./internal/httpapi/...
 ---
 
 ### 8. Consolidate Integration Tests 🧪
+
 **Time:** 3-4 hours | **Risk:** Low | **Impact:** Medium
 
 **Current:** 19 integration tests scattered in `/internal/httpapi/`
 
 **Target:**
+
 ```
 tests/
 ├── integration/
@@ -241,17 +259,20 @@ tests/
 **Steps:**
 
 1. Create structure:
+
 ```bash
 mkdir -p tests/integration
 mkdir -p tests/fixtures/{videos,images,data}
 ```
 
 2. Move integration tests:
+
 ```bash
 mv internal/httpapi/*_integration_test.go tests/integration/
 ```
 
 3. Update package declarations:
+
 ```go
 package integration_test
 ```
@@ -259,6 +280,7 @@ package integration_test
 4. Update imports and test helpers
 
 5. Run integration tests:
+
 ```bash
 go test ./tests/integration/...
 ```
@@ -266,18 +288,21 @@ go test ./tests/integration/...
 ---
 
 ### 9. Improve Repository Test Coverage 📈
+
 **Time:** 4-6 hours | **Risk:** Low | **Impact:** High
 
 **Current:** 10% coverage (very low)
 **Target:** 40-50% coverage
 
 **Focus Areas:**
+
 1. User repository (authentication paths)
 2. Video repository (CRUD operations)
 3. Auth repository (session management)
 4. Notification repository
 
 **Template for table-driven tests:**
+
 ```go
 func TestUserRepository_Create(t *testing.T) {
     tests := []struct {
@@ -329,12 +354,14 @@ func TestUserRepository_Create(t *testing.T) {
 ## Metrics to Track
 
 **Before:**
+
 - httpapi package: 92 files, 13MB
 - Integration tests: 19 files scattered
 - Documentation: 55 files across 10+ directories
 - Repository test coverage: 10%
 
 **After (Target):**
+
 - httpapi package: Organized into 8 subdirectories
 - Integration tests: Consolidated in `/tests/integration/`
 - Documentation: Clear structure with master index

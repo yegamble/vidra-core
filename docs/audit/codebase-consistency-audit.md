@@ -91,14 +91,18 @@ Production code files must be under 300 lines (500 is the hard limit). These fil
 ## Low: Architecture Observations
 
 ### Health Check Hardcoded Values
+
 `internal/httpapi/health.go:42-43` returns hardcoded queue depth values:
+
 ```go
 func() (int, error) { return 5, nil },  // TODO: Replace with real queue service
 func() (int, error) { return 10, nil }, // TODO: Replace with real queue service
 ```
+
 This means the health endpoint always reports healthy queue state regardless of actual conditions.
 
 ### IPFS Backend Stub Pattern
+
 The IPFS backend at `internal/storage/ipfs_backend.go` implements the storage interface but has 3 of its methods returning "not implemented" errors. This is acceptable for upload-only workflows but means the storage interface contract is not fully satisfied.
 
 ---
@@ -115,6 +119,7 @@ The IPFS backend at `internal/storage/ipfs_backend.go` implements the storage in
 | Architecture concerns | 2 | Low |
 
 **Recommended Priority:**
+
 1. Split the top 5 largest files (activitypub/service.go, videos.go, video_repository.go, e2ee_service.go, encoding/service.go)
 2. Fix access control TODO in chat_handlers.go (security gap)
 3. Implement or remove placeholder E2E tests

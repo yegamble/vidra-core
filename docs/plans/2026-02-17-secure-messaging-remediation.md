@@ -337,6 +337,7 @@ Worktree: No
 **Key Decisions / Notes:**
 
 - Add new route group under `/api/v1/e2ee`:
+
   ```
   POST   /api/v1/e2ee/keys              → RegisterKeys
   GET    /api/v1/e2ee/keys/{userId}     → GetUserPublicKeys
@@ -347,6 +348,7 @@ Worktree: No
   POST   /api/v1/e2ee/messages          → SendSecureMessage
   GET    /api/v1/e2ee/messages/{conversationId} → GetEncryptedMessages (NEW)
   ```
+
 - All routes require `middleware.Auth(cfg.JWTSecret)`
 - Follow the pattern at `routes.go:245` for route grouping
 - **Major wiring task in `app.go`:** The Dependencies struct (lines 69-117) has NO E2EEService field. Requires:

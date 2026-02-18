@@ -6,7 +6,7 @@ SQL migrations managed by Goose v3. All schema changes MUST go through migration
 
 ## Tool: Goose
 
-- **Repository**: https://github.com/pressly/goose
+- **Repository**: <https://github.com/pressly/goose>
 - **Directory**: `/migrations/`
 - **Format**: Sequential numbered SQL files
 
@@ -54,18 +54,22 @@ DROP TABLE IF EXISTS videos;
 ## Best Practices
 
 ### 1. Forward-Only Policy
+
 - Prefer forward-only migrations in production
 - Rollbacks require careful review (data loss risk)
 - Use compensating migrations instead of rollbacks when possible
 
 ### 2. Atomic Changes
+
 - Each migration should be a single logical change
 - Don't combine unrelated schema changes
 - Keep migrations small and focused
 
 ### 3. Index Considerations
+
 - Add indexes in same migration as table creation
 - For large tables, consider `CONCURRENTLY` (separate migration):
+
   ```sql
   -- +goose Up
   -- +goose StatementBegin
@@ -74,6 +78,7 @@ DROP TABLE IF EXISTS videos;
   ```
 
 ### 4. Backwards Compatibility
+
 - Add columns as nullable or with defaults first
 - Deploy code that handles both old/new schema
 - Then add NOT NULL constraint in follow-up migration
@@ -81,6 +86,7 @@ DROP TABLE IF EXISTS videos;
 ### 5. Required Extensions
 
 Ensure these are enabled (usually in migration 001):
+
 ```sql
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE EXTENSION IF NOT EXISTS "pg_trgm";
@@ -153,6 +159,7 @@ psql $DATABASE_URL -c "\d+ videos"
 ## Troubleshooting
 
 ### Migration Stuck
+
 ```sql
 -- Check goose version table
 SELECT * FROM goose_db_version ORDER BY id DESC LIMIT 5;
@@ -162,6 +169,7 @@ INSERT INTO goose_db_version (version_id, is_applied) VALUES (42, true);
 ```
 
 ### Concurrent Index Creation Failed
+
 ```sql
 -- Check for invalid indexes
 SELECT * FROM pg_indexes WHERE indexdef LIKE '%INVALID%';

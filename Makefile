@@ -664,4 +664,3 @@ migrate-reset:  ## Reset database to version 0 and re-run all migrations
 	@sleep 5
 	@goose -dir migrations postgres "$${DATABASE_URL}" reset
 	@goose -dir migrations postgres "$${DATABASE_URL}" up
-

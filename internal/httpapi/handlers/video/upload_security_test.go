@@ -127,6 +127,9 @@ func (m *MockVideoRepository) GetByRemoteURI(ctx context.Context, remoteURI stri
 func (m *MockVideoRepository) CreateRemoteVideo(ctx context.Context, video *domain.Video) error {
 	return nil
 }
+func (m *MockVideoRepository) GetByChannelID(_ context.Context, _ string, _, _ int) ([]*domain.Video, int64, error) {
+	return nil, 0, nil
+}
 
 type MockEncodingRepoUpload struct {
 	mock.Mock

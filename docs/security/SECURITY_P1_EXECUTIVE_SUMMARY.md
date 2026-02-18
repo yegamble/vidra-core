@@ -55,12 +55,14 @@ False Clean Result → Malware Stored → Distributed via IPFS → Platform Comp
 ### Business Impact
 
 **Immediate Risks**:
+
 - Platform becomes malware distribution network
 - User data at risk (ransomware, data theft)
 - IPFS content poisoning (impossible to fully remove)
 - Compliance violations (GDPR, PCI-DSS)
 
 **Financial Exposure**:
+
 - Regulatory fines: $50K - $20M (GDPR)
 - Legal fees: $25K - $500K
 - Incident response: $25K - $100K
@@ -95,6 +97,7 @@ for attempt := 0; attempt <= retries; attempt++ {
 ```
 
 **Key Improvements**:
+
 1. ✅ Buffer streams before scanning (enables retries)
 2. ✅ Calculate SHA256 hash for integrity verification
 3. ✅ Create fresh reader for each retry attempt
@@ -138,27 +141,32 @@ for attempt := 0; attempt <= retries; attempt++ {
 Beyond fixing this vulnerability, we've identified several architectural improvements:
 
 ### Layer 1: Network Security
+
 - ✅ TLS 1.3 enforcement
 - ✅ Rate limiting (IP, user, global)
 - ⏳ ClamAV connection pooling with circuit breaker
 
 ### Layer 2: Application Security
+
 - ✅ Multi-stage MIME validation
 - ✅ File type blocking (executables, scripts)
 - ⏳ Archive bomb protection (zip bomb detection)
 - ⏳ Polyglot file detection
 
 ### Layer 3: Processing Security
+
 - ⏳ FFmpeg sandboxing (seccomp, AppArmor)
 - ⏳ Process monitoring (CPU, memory, syscalls)
 - ⏳ Network isolation for processing
 
 ### Layer 4: Storage Security
+
 - ⏳ IPFS content validation before pinning
 - ⏳ CID blocklist management
 - ⏳ Content disarm & reconstruction (CDR)
 
 ### Layer 5: Detection & Response
+
 - ✅ Security event logging
 - ⏳ Anomaly detection (excessive scan failures)
 - ⏳ Threat intelligence integration (VirusTotal)
@@ -180,6 +188,7 @@ Beyond fixing this vulnerability, we've identified several architectural improve
 ### Audit Trail Improvements
 
 **New Capabilities**:
+
 - All virus scans logged to database (`virus_scan_log` table)
 - Scan failures captured with stream hash for forensics
 - Malware detections trigger security alerts
@@ -210,6 +219,7 @@ quarantine_operations_total       - Isolation actions
 ### Incident Response
 
 **Automated Actions**:
+
 - Malware detection → Quarantine file, alert security team
 - Excessive failures → Temporary user ban, require CAPTCHA
 - Scanner down → Reject all uploads (fail-closed)
@@ -230,6 +240,7 @@ quarantine_operations_total       - Isolation actions
 ### Risk Mitigation Value
 
 **Avoided Costs** (if breach occurs):
+
 - GDPR fines: $50K - $20M
 - Legal/forensics: $75K - $750K
 - Reputation damage: $100K - $10M
@@ -325,11 +336,13 @@ quarantine_operations_total       - Isolation actions
 ### Internal Communication
 
 **Engineering Team**:
+
 - Technical briefing on vulnerability
 - Training on secure stream handling
 - Updated best practices documentation
 
 **Leadership**:
+
 - Executive summary (this document)
 - Regular status updates during deployment
 - Post-deployment retrospective
@@ -337,11 +350,13 @@ quarantine_operations_total       - Isolation actions
 ### External Communication
 
 **Customers**:
+
 - No notification required (no evidence of exploitation)
 - Proactive security update (if asked)
 - Enhanced protection messaging
 
 **Regulators**:
+
 - No breach notification required (proactive fix)
 - Document remediation for audit trail
 - Prepare for potential inquiry
@@ -465,6 +480,7 @@ The security team has high confidence in this fix and recommends proceeding with
 ---
 
 **Document Control**:
+
 - Version: 1.0
 - Classification: CONFIDENTIAL
 - Distribution: Leadership, Security Team
@@ -472,6 +488,7 @@ The security team has high confidence in this fix and recommends proceeding with
 - Retention: 7 years (compliance requirement)
 
 **Emergency Contact**:
-- Security Team: security@example.com
+
+- Security Team: <security@example.com>
 - On-call Engineer: +1-XXX-XXX-XXXX
-- Incident Response: incident@example.com
+- Incident Response: <incident@example.com>

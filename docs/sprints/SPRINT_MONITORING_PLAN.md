@@ -393,6 +393,7 @@ func RegisterMetricsRoutes(r chi.Router) {
 ### 1.4 Instrumentation
 
 **Files to Modify**:
+
 1. `internal/livestream/rtmp_server.go` - Add RTMP metrics
 2. `internal/livestream/hls_transcoder.go` - Add HLS metrics
 3. `internal/livestream/vod_converter.go` - Add VOD metrics
@@ -406,6 +407,7 @@ func RegisterMetricsRoutes(r chi.Router) {
 **File**: `deployments/grafana/dashboards/athena-overview.json`
 
 **Panels**:
+
 1. **System Overview**
    - Total requests/sec (HTTP + RTMP)
    - Active live streams
@@ -445,6 +447,7 @@ func RegisterMetricsRoutes(r chi.Router) {
 **File**: `deployments/grafana/dashboards/athena-live-streams.json`
 
 **Panels**:
+
 1. **Stream Health**
    - Bitrate over time
    - Dropped frames
@@ -947,6 +950,7 @@ SMTP_PASSWORD=your-smtp-password
 ## Files Created
 
 ### Production Code (~800 lines)
+
 1. `internal/metrics/prometheus.go` (~300 lines)
 2. `internal/middleware/metrics.go` (~100 lines)
 3. `internal/middleware/request_id.go` (~50 lines)
@@ -954,6 +958,7 @@ SMTP_PASSWORD=your-smtp-password
 5. `internal/httpapi/metrics_handlers.go` (~50 lines)
 
 ### Configuration (~600 lines)
+
 6. `deployments/prometheus/prometheus.yml` (~50 lines)
 7. `deployments/prometheus/alerts/athena.yml` (~300 lines)
 8. `deployments/prometheus/alertmanager.yml` (~50 lines)
@@ -964,6 +969,7 @@ SMTP_PASSWORD=your-smtp-password
 13. `docker-compose.monitoring.yml` (~80 lines)
 
 ### Documentation
+
 14. `SPRINT8_PLAN.md` - This file
 15. `SPRINT8_PROGRESS.md` - Progress tracking
 16. `SPRINT8_COMPLETE.md` - Completion summary
@@ -985,6 +991,7 @@ SMTP_PASSWORD=your-smtp-password
 ## Next Steps
 
 After Sprint 8 completion:
+
 - Performance tuning based on metrics
 - Capacity planning using historical data
 - Advanced alerting rules (anomaly detection)

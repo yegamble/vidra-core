@@ -2,7 +2,7 @@
 
 ## Reporting Security Vulnerabilities
 
-If you discover a security vulnerability in Athena, please report it by creating a private security advisory on GitHub or by contacting the maintainers directly at security@athena-project.com.
+If you discover a security vulnerability in Athena, please report it by creating a private security advisory on GitHub or by contacting the maintainers directly at <security@athena-project.com>.
 
 **Do not** disclose security vulnerabilities in public issues or pull requests.
 
@@ -92,6 +92,7 @@ if scanErr != nil {
 **Changes**:
 
 1. Added explicit nil check after retry loop exhaustion:
+
 ```go
 // After retry loop
 result.ScanDuration = time.Since(start)
@@ -123,6 +124,7 @@ if response == nil {
 **Testing**:
 
 Added comprehensive test coverage in `virus_scanner_test.go`:
+
 - TestVirusScanner_ConnectionFallback: Verifies fallback mode behavior
 - TestVirusScanner_DetectEICAR: Ensures infected files always rejected
 - TestVirusScanner_ScanTimeout: Tests timeout handling
@@ -134,6 +136,7 @@ Added comprehensive test coverage in `virus_scanner_test.go`:
 
 1. **Immediate**: Update to patched version
 2. **Audit**: Review `virus_scan_log` table for suspicious entries:
+
 ```sql
 SELECT * FROM virus_scan_log
 WHERE scan_result = 'warning'
@@ -142,6 +145,7 @@ ORDER BY scanned_at DESC;
 ```
 
 3. **Re-scan**: Quarantine and re-scan files uploaded during vulnerability window:
+
 ```sql
 -- Identify potentially affected uploads
 SELECT vsl.*, v.title, v.file_path
@@ -152,12 +156,14 @@ WHERE vsl.scan_result IN ('warning', 'error')
 ```
 
 4. **Configuration**: Ensure production uses strict mode:
+
 ```bash
 # /etc/athena/.env or environment variables
 CLAMAV_FALLBACK_MODE=strict
 ```
 
 5. **Monitoring**: Enable alerts for scan failures:
+
 ```sql
 -- Monitor for increased scan failures
 SELECT DATE(scanned_at) as date,
@@ -172,6 +178,7 @@ ORDER BY date DESC;
 **For Developers**:
 
 1. Update local development environment:
+
 ```bash
 git pull origin main
 make deps
@@ -179,6 +186,7 @@ make migrate
 ```
 
 2. Verify ClamAV configuration:
+
 ```bash
 # Ensure ClamAV is running
 docker compose ps clamav
@@ -188,6 +196,7 @@ curl -X POST http://localhost:3310/scan
 ```
 
 3. Run security test suite:
+
 ```bash
 make test-security
 # or
@@ -208,6 +217,7 @@ The following factors reduce the exploitability and impact:
 #### Recommended Security Hardening
 
 1. **Production Configuration**:
+
 ```bash
 # .env.production
 CLAMAV_FALLBACK_MODE=strict       # Never bypass scanning
@@ -220,6 +230,7 @@ CLAMAV_AUDIT_LOG=/var/log/athena/virus_scan.log  # Dedicated audit log
 ```
 
 2. **ClamAV Service Hardening**:
+
 ```yaml
 # docker-compose.yml
 services:
@@ -244,6 +255,7 @@ services:
 ```
 
 3. **Monitoring & Alerting**:
+
 ```yaml
 # prometheus alerts
 - alert: ClamAVDown
@@ -271,10 +283,10 @@ services:
 
 #### References
 
-- **ClamAV Documentation**: https://docs.clamav.net/
-- **go-clamd Library**: https://github.com/dutchcoders/go-clamd
-- **EICAR Test Files**: https://www.eicar.org/download-anti-malware-testfile/
-- **OWASP File Upload Cheat Sheet**: https://cheatsheetseries.owasp.org/cheatsheets/File_Upload_Cheat_Sheet.html
+- **ClamAV Documentation**: <https://docs.clamav.net/>
+- **go-clamd Library**: <https://github.com/dutchcoders/go-clamd>
+- **EICAR Test Files**: <https://www.eicar.org/download-anti-malware-testfile/>
+- **OWASP File Upload Cheat Sheet**: <https://cheatsheetseries.owasp.org/cheatsheets/File_Upload_Cheat_Sheet.html>
 
 #### Timeline
 
@@ -378,7 +390,7 @@ Athena follows security best practices aligned with:
 
 For security-related inquiries:
 
-- **Email**: security@athena-project.com (for vulnerability reports)
+- **Email**: <security@athena-project.com> (for vulnerability reports)
 - **GitHub Security Advisories**: [Create Private Advisory](https://github.com/yegamble/athena/security/advisories/new)
 - **Public Discussions**: [GitHub Discussions](https://github.com/yegamble/athena/discussions) (non-sensitive topics only)
 

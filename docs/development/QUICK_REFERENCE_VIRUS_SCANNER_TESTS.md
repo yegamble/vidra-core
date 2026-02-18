@@ -3,18 +3,21 @@
 ## Critical Commands
 
 ### Before Fix (Should FAIL)
+
 ```bash
 go test -v ./internal/security -run TestVirusScanner_ExhaustedReaderVulnerability
 # Expected: FAIL with "CRITICAL SECURITY VULNERABILITY"
 ```
 
 ### After Fix (Should PASS)
+
 ```bash
 go test -v ./internal/security -run TestVirusScanner
 # Expected: All 70 tests PASS
 ```
 
 ### Race Detection
+
 ```bash
 go test -race -v ./internal/security -run TestVirusScanner_Concurrent
 # Expected: No race conditions detected
@@ -85,18 +88,21 @@ go tool cover -func=coverage.out | grep ScanStream
 ## Expected Outcomes
 
 ### Before Fix
+
 ```
 FAIL: TestVirusScanner_ExhaustedReaderVulnerability
   CRITICAL SECURITY VULNERABILITY: Infected EICAR file marked as CLEAN!
 ```
 
 ### After Fix (Option A - Detection)
+
 ```
 PASS: TestVirusScanner_ExhaustedReaderVulnerability
   Expected behavior: virus detected correctly
 ```
 
 ### After Fix (Option B - Safe Failure)
+
 ```
 PASS: TestVirusScanner_ExhaustedReaderVulnerability
   Expected behavior: scan failed with error (safe)

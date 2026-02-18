@@ -45,12 +45,14 @@ appendfsync everysec              # fsync every second (good balance)
 ### 1. OS Limits
 
 **File Descriptors (`/etc/security/limits.conf`):**
+
 ```bash
 * soft nofile 65536
 * hard nofile 65536
 ```
 
 **Sysctl Tuning (`/etc/sysctl.conf`):**
+
 ```bash
 # Networking
 net.core.somaxconn = 65535

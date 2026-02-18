@@ -130,6 +130,10 @@ func (m *mockVideoRepo) CreateRemoteVideo(ctx context.Context, video *domain.Vid
 	return m.Called(ctx, video).Error(0)
 }
 
+func (m *mockVideoRepo) GetByChannelID(_ context.Context, _ string, _, _ int) ([]*domain.Video, int64, error) {
+	return nil, 0, nil
+}
+
 func newTestService(t *testing.T) (*Service, *mockCaptionRepo, *mockVideoRepo) {
 	t.Helper()
 	capRepo := new(mockCaptionRepo)

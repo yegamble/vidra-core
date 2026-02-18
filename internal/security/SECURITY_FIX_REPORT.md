@@ -9,20 +9,25 @@ A **critical P1 security vulnerability** has been identified and fixed in the vi
 ## Vulnerability Details
 
 ### Description
+
 The `ScanStream` method's retry logic had a critical flaw where it would repeatedly attempt to scan the same `io.Reader` without buffering or rewinding the stream. After the first failed scan attempt (e.g., due to network error), the reader would be exhausted, causing subsequent retry attempts to scan empty data and potentially return a "clean" (RES_OK) result for infected content.
 
 ### Impact
+
 - **Severity**: CRITICAL (P1)
 - **CVSS Score**: 9.8 (Critical)
 - **Attack Vector**: Network failures during virus scanning
 - **Impact**: Complete bypass of virus scanning, allowing malware into the system
 
 ### Affected Code
+
 File: `/internal/security/virus_scanner.go`
 Method: `ScanStream` (lines 254-352 in original code)
 
 ### Root Cause
+
 The retry loop called `s.client.ScanStream(reader, ...)` directly on the provided `io.Reader` without:
+
 1. Checking if the reader was seekable
 2. Buffering non-seekable readers for retry capability
 3. Resetting the reader position between retry attempts
@@ -30,6 +35,7 @@ The retry loop called `s.client.ScanStream(reader, ...)` directly on the provide
 ## The Fix
 
 ### Implementation Strategy
+
 The fix implements a robust buffering strategy that:
 
 1. **Detects Reader Type**: Checks if the reader implements `io.ReadSeeker`
@@ -41,6 +47,7 @@ The fix implements a robust buffering strategy that:
 ### Key Security Improvements
 
 #### 1. Stream Type Detection (Lines 272-279)
+
 ```go
 if seeker, ok := reader.(io.ReadSeeker); ok {
     scanReader = seeker
@@ -51,12 +58,14 @@ if seeker, ok := reader.(io.ReadSeeker); ok {
 ```
 
 #### 2. Secure Buffering (Lines 280-372)
+
 - Creates temporary files with restrictive permissions (0600)
 - Implements size limits to prevent memory exhaustion
 - Ensures cleanup even on panic
 - Validates buffer integrity
 
 #### 3. Retry Safety (Lines 394-409)
+
 ```go
 if _, err := scanReader.Seek(0, 0); err != nil {
     // Cannot retry safely, must fail
@@ -65,6 +74,7 @@ if _, err := scanReader.Seek(0, 0); err != nil {
 ```
 
 #### 4. Fail-Safe Defaults (Lines 467-484)
+
 - Strict mode by default: rejects files on scan failure
 - Never returns "clean" status without successful scan
 - Comprehensive error logging
@@ -72,6 +82,7 @@ if _, err := scanReader.Seek(0, 0); err != nil {
 ### Configuration Enhancements
 
 New configuration options added:
+
 - `MaxStreamSize`: Limit stream buffer size (default: 100MB)
 - `TempDir`: Secure location for temporary buffers
 - Environment variables: `CLAMAV_MAX_STREAM_SIZE_MB`, `CLAMAV_TEMP_DIR`
@@ -79,6 +90,7 @@ New configuration options added:
 ## Testing & Validation
 
 ### Critical Security Tests
+
 The fix includes comprehensive test coverage in `virus_scanner_test.go`:
 
 1. **TestVirusScanner_ExhaustedReaderVulnerability** (Lines 230-275)
@@ -95,6 +107,7 @@ The fix includes comprehensive test coverage in `virus_scanner_test.go`:
    - Ensures fail-safe behavior on I/O errors
 
 ### Performance Considerations
+
 - Memory usage remains reasonable (<50MB for 100MB files)
 - Temporary files automatically cleaned up
 - Concurrent scanning supported without race conditions
@@ -111,11 +124,13 @@ The fix includes comprehensive test coverage in `virus_scanner_test.go`:
 ## Deployment Recommendations
 
 ### Immediate Actions Required
+
 1. Deploy this fix to all production systems immediately
 2. Review logs for any suspicious "clean" results during network issues
 3. Re-scan any files uploaded during periods of network instability
 
 ### Configuration Guidelines
+
 ```bash
 # Recommended production settings
 CLAMAV_FALLBACK_MODE=strict        # Never allow unscanned files
@@ -125,7 +140,9 @@ CLAMAV_AUDIT_LOG=/var/log/clamav_audit.log  # Enable audit trail
 ```
 
 ### Monitoring
+
 Monitor for:
+
 - Scan failures with retry attempts
 - Temporary buffer creation events
 - Files exceeding size limits

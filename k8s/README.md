@@ -101,11 +101,13 @@ data:
 ### Secrets
 
 **Required secrets:**
+
 - `database-url`: PostgreSQL connection string
 - `redis-url`: Redis connection string
 - `jwt-secret`: JWT signing key
 
 **Optional secrets:**
+
 - `hls-signing-secret`: For private streaming
 - `s3-access-key` / `s3-secret-key`: For S3 storage
 - `iota-encryption-key`: For IOTA payments
@@ -294,6 +296,7 @@ kubectl patch service athena-api -n athena -p '{"spec":{"selector":{"version":"g
 ```
 
 **Learn more:**
+
 - [Blue/Green Strategy](../docs/deployment/BLUE_GREEN_DEPLOYMENT_STRATEGY.md) - Architecture and design
 - [Implementation Guide](../docs/deployment/BLUE_GREEN_IMPLEMENTATION_GUIDE.md) - Step-by-step setup
 - [Quick Start](../docs/deployment/BLUE_GREEN_QUICK_START.md) - Get running in 30 minutes
@@ -301,6 +304,7 @@ kubectl patch service athena-api -n athena -p '{"spec":{"selector":{"version":"g
 - [Rollback Script](../scripts/rollback-deployment.sh) - Emergency rollback
 
 **Key Features:**
+
 - Zero downtime (< 1 second switchover)
 - Instant rollback (< 30 seconds)
 - Gradual traffic shifting (canary deployments)
@@ -320,5 +324,6 @@ kubectl patch service athena-api -n athena -p '{"spec":{"selector":{"version":"g
 ## Support
 
 For issues or questions:
-- GitHub Issues: https://github.com/yegamble/athena/issues
-- Documentation: https://github.com/yegamble/athena/docs
+
+- GitHub Issues: <https://github.com/yegamble/athena/issues>
+- Documentation: <https://github.com/yegamble/athena/docs>

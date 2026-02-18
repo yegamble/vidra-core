@@ -5,6 +5,7 @@ This guide explains how to set up and configure ATProto (Authenticated Transfer 
 ## Status
 
 **Current Implementation**: 75% complete, BETA
+
 - ✅ PDS (Personal Data Server) client implementation
 - ✅ BlueSky account linking
 - ✅ Basic content syndication (video posts)
@@ -13,6 +14,7 @@ This guide explains how to set up and configure ATProto (Authenticated Transfer 
 - ❌ Federation discovery incomplete
 
 **Production Readiness**: NOT RECOMMENDED for production use
+
 - Use for testing and experimentation only
 - Known limitations and breaking changes expected
 - Limited error handling and retry logic
@@ -33,6 +35,7 @@ Athena Video Platform
 ```
 
 **Components**:
+
 1. **ATProto Client** (`/internal/atproto/client.go`) - HTTP client for AT Protocol
 2. **PDS Connector** (`/internal/atproto/pds.go`) - Connects to Personal Data Server
 3. **Account Service** (`/internal/usecase/atproto/account_service.go`) - Manages Bluesky accounts
@@ -47,12 +50,14 @@ Athena Video Platform
 You need a Bluesky account to use ATProto integration.
 
 **Get Invite Code**:
+
 - Request invite at [bsky.app](https://bsky.app)
 - Or get invite from existing Bluesky user
 - Invite codes are limited during beta
 
 **Create Account**:
-1. Go to https://bsky.app/signup
+
+1. Go to <https://bsky.app/signup>
 2. Enter invite code
 3. Choose handle (e.g., `@yourname.bsky.social`)
 4. Create password
@@ -63,6 +68,7 @@ You need a Bluesky account to use ATProto integration.
 Generate an app-specific password for API access.
 
 **Steps**:
+
 1. Log into Bluesky
 2. Go to Settings → App Passwords
 3. Click "Add App Password"
@@ -74,10 +80,12 @@ Generate an app-specific password for API access.
 ### 3. Personal Data Server (PDS)
 
 **Default PDS**: `https://bsky.social`
+
 - Most users use the default Bluesky PDS
 - No setup required for default PDS
 
 **Self-Hosted PDS** (Advanced):
+
 - See [ATProto PDS Documentation](https://atproto.com/guides/self-hosting)
 - Requires domain name and SSL certificate
 - Not recommended for most users
@@ -107,6 +115,7 @@ ATPROTO_TIMEOUT=30                           # Request timeout (seconds)
 ### Configuration Validation
 
 **Test Configuration**:
+
 ```bash
 # Verify ATProto client
 curl -X POST http://localhost:8080/api/v1/admin/atproto/test-connection
@@ -121,6 +130,7 @@ curl -X POST http://localhost:8080/api/v1/admin/atproto/test-connection
 ```
 
 **Check Account Linking**:
+
 ```bash
 # Get linked Bluesky account
 curl -H "Authorization: Bearer $TOKEN" \
@@ -144,6 +154,7 @@ curl -H "Authorization: Bearer $TOKEN" \
 **API Endpoint**: `POST /api/v1/atproto/link`
 
 **Request**:
+
 ```bash
 curl -X POST http://localhost:8080/api/v1/atproto/link \
   -H "Authorization: Bearer $TOKEN" \
@@ -155,6 +166,7 @@ curl -X POST http://localhost:8080/api/v1/atproto/link \
 ```
 
 **Response**:
+
 ```json
 {
   "did": "did:plc:abcd1234efgh5678ijkl9012mnop3456",
@@ -165,6 +177,7 @@ curl -X POST http://localhost:8080/api/v1/atproto/link \
 ```
 
 **What Happens**:
+
 1. Authenticates with Bluesky PDS
 2. Retrieves DID (Decentralized Identifier)
 3. Stores account credentials securely
@@ -177,6 +190,7 @@ curl -X POST http://localhost:8080/api/v1/atproto/link \
 **API Endpoint**: `POST /api/v1/atproto/videos/{videoId}/syndicate`
 
 **Request**:
+
 ```bash
 curl -X POST http://localhost:8080/api/v1/atproto/videos/{videoId}/syndicate \
   -H "Authorization: Bearer $TOKEN" \
@@ -188,6 +202,7 @@ curl -X POST http://localhost:8080/api/v1/atproto/videos/{videoId}/syndicate \
 ```
 
 **Response**:
+
 ```json
 {
   "uri": "at://did:plc:abcd.../app.bsky.feed.post/3k2...",
@@ -198,6 +213,7 @@ curl -X POST http://localhost:8080/api/v1/atproto/videos/{videoId}/syndicate \
 ```
 
 **What Gets Syndi cated**:
+
 - Video title
 - Video description (truncated to 300 chars)
 - Thumbnail image (if `include_thumbnail: true`)
@@ -207,12 +223,14 @@ curl -X POST http://localhost:8080/api/v1/atproto/videos/{videoId}/syndicate \
 **Automatic Syndication** (BETA, disabled by default):
 
 Enable via config:
+
 ```bash
 ATPROTO_SYNC_ENABLED=true
 ATPROTO_SYNC_PUBLIC_ONLY=true
 ```
 
 When enabled:
+
 - New public videos automatically posted to Bluesky
 - Processing delay: ~30 seconds after video finishes processing
 - Only videos with `privacy=public` are synced
@@ -223,12 +241,14 @@ When enabled:
 **API Endpoint**: `DELETE /api/v1/atproto/unlink`
 
 **Request**:
+
 ```bash
 curl -X DELETE http://localhost:8080/api/v1/atproto/unlink \
   -H "Authorization: Bearer $TOKEN"
 ```
 
 **Response**:
+
 ```json
 {
   "status": "unlinked",
@@ -243,23 +263,27 @@ curl -X DELETE http://localhost:8080/api/v1/atproto/unlink \
 ### ATProto Concepts
 
 **DID (Decentralized Identifier)**:
+
 - Unique identifier for Bluesky account
 - Format: `did:plc:abc123...` or `did:web:example.com`
 - Portable across PDS instances
 - Used for all API operations
 
 **PDS (Personal Data Server)**:
+
 - Hosts user's data and content
 - Default: `bsky.social`
 - Can be self-hosted
 - Handles authentication and authorization
 
 **Lexicons**:
+
 - Schema definitions for AT Protocol records
 - Video posts use `app.bsky.feed.post` lexicon
 - Images use `app.bsky.embed.images` lexicon
 
 **Records**:
+
 - JSON documents stored in PDS
 - Each record has a URI: `at://{did}/{collection}/{rkey}`
 - Content-addressed via CID (Content Identifier)
@@ -339,6 +363,7 @@ func SyndicateVideo(ctx context.Context, videoID uuid.UUID) error {
 ```
 
 **Limitations**:
+
 - No support for comments/replies (yet)
 - No support for video uploads to Bluesky (only links)
 - No automatic updates when video is edited
@@ -383,12 +408,14 @@ func SyndicateVideo(ctx context.Context, videoID uuid.UUID) error {
 ### Planned Improvements (Roadmap)
 
 **Phase 2** (Target: Q2 2025):
+
 - [ ] Automatic video upload to Bluesky (if < 1 min)
 - [ ] Comment synchronization (bidirectional)
 - [ ] Improved error handling and retries
 - [ ] Batch syndication support
 
 **Phase 3** (Target: Q3 2025):
+
 - [ ] Federation discovery
 - [ ] Follow Bluesky users from Athena
 - [ ] Real-time webhook support
@@ -401,17 +428,20 @@ func SyndicateVideo(ctx context.Context, videoID uuid.UUID) error {
 ### Issue: Authentication Failed
 
 **Symptoms**:
+
 ```
 Error: authentication failed: invalid credentials
 ```
 
 **Solutions**:
+
 1. Verify app password (not main password)
 2. Regenerate app password in Bluesky settings
 3. Check handle is correct (include `.bsky.social`)
 4. Verify PDS URL is correct
 
 **Debug**:
+
 ```bash
 # Test authentication manually
 curl -X POST https://bsky.social/xrpc/com.atproto.server.createSession \
@@ -425,17 +455,20 @@ curl -X POST https://bsky.social/xrpc/com.atproto.server.createSession \
 ### Issue: Syndication Failed
 
 **Symptoms**:
+
 ```
 Error: failed to create record: invalid post
 ```
 
 **Solutions**:
+
 1. Check video is public (private videos can't be syndicated)
 2. Verify video has title and description
 3. Check thumbnail is accessible
 4. Ensure text length is within limits
 
 **Debug**:
+
 ```bash
 # Check video details
 curl http://localhost:8080/api/v1/videos/{videoId}
@@ -447,11 +480,13 @@ docker logs athena | grep "atproto"
 ### Issue: Token Expired
 
 **Symptoms**:
+
 ```
 Error: token expired
 ```
 
 **Solutions**:
+
 1. Tokens refresh automatically every 2 hours
 2. If manual refresh needed:
 
@@ -463,17 +498,20 @@ curl -X POST http://localhost:8080/api/v1/atproto/refresh \
 ### Issue: PDS Unreachable
 
 **Symptoms**:
+
 ```
 Error: dial tcp: lookup bsky.social: no such host
 ```
 
 **Solutions**:
+
 1. Check internet connectivity
 2. Verify PDS URL in config
 3. Check DNS resolution
 4. Verify firewall rules
 
 **Debug**:
+
 ```bash
 # Test PDS connectivity
 curl https://bsky.social/xrpc/_health
@@ -488,12 +526,14 @@ curl https://bsky.social/xrpc/_health
 ### App Password Storage
 
 **Current Implementation**:
+
 - App passwords encrypted at rest (AES-256)
 - Stored in `atproto_accounts` table
 - Encryption key from environment variable
 - Tokens refreshed automatically
 
 **Best Practices**:
+
 1. Use app passwords, never main password
 2. Rotate app passwords regularly (every 90 days)
 3. Revoke unused app passwords
@@ -502,12 +542,14 @@ curl https://bsky.social/xrpc/_health
 ### Privacy
 
 **What's Shared**:
+
 - Public video metadata (title, description, tags)
 - Thumbnail images
 - Link to video on Athena instance
 - User's Bluesky handle
 
 **What's NOT Shared**:
+
 - Private/unlisted videos
 - User's main Bluesky password
 - Email addresses
@@ -517,11 +559,13 @@ curl https://bsky.social/xrpc/_health
 ### Rate Limiting
 
 **Bluesky Rate Limits** (as of January 2025):
+
 - 1000 requests/hour per account
 - 100 posts/hour per account
 - 50 images/hour per account
 
 **Athena Protection**:
+
 - Internal rate limiting (300 req/hour)
 - Exponential backoff on errors
 - Circuit breaker on repeated failures
@@ -627,13 +671,16 @@ func (m *MockATProtoClient) CreateRecord(ctx context.Context, req *CreateRecordR
 ## Support & Feedback
 
 **Report Issues**:
+
 - GitHub Issues: Tag with `atproto` label
-- Security Issues: security@athena.com
+- Security Issues: <security@athena.com>
 
 **Feature Requests**:
+
 - Discuss in GitHub Discussions
 - Tag with `federation` and `enhancement`
 
 **Community**:
+
 - Discord: #federation channel
 - Matrix: #athena-federation:matrix.org

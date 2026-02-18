@@ -2906,7 +2906,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
-  
+
 
   /api/v1/users/{id}:
     get:

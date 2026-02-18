@@ -85,6 +85,7 @@ Federation well-known endpoints follow external specifications and have stricter
 | `/nodeinfo/2.0` | NodeInfo 2.0 (Diaspora) | Must match schema |
 
 Changes to federation endpoints require extra care:
+
 - Must remain compatible with PeerTube, Mastodon, and other ActivityPub implementations
 - Must follow the relevant RFC or protocol specification
 - Should be tested against real federation peers when possible

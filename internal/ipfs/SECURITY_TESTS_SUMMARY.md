@@ -13,11 +13,13 @@ Comprehensive security test suite created following TDD (Test-Driven Development
 ## Deliverables
 
 ### 1. CID Validation Test Suite
+
 **File:** `/home/user/athena/internal/ipfs/cid_validation_test.go`
 **Test Cases:** 22 (exceeds requirement of 15)
 **Lines of Code:** 620+
 
 ### 2. Cluster Authentication Test Suite
+
 **File:** `/home/user/athena/internal/ipfs/cluster_auth_test.go`
 **Test Cases:** 22 (exceeds requirement of 10)
 **Lines of Code:** 730+
@@ -27,6 +29,7 @@ Comprehensive security test suite created following TDD (Test-Driven Development
 ## CID Validation Tests (22 Tests)
 
 ### Format Validation Tests (5)
+
 1. **TestValidateCID_ValidCIDv1Base32** - Validates CIDv1 base32 format acceptance
    - Tests raw codec (0x55)
    - Tests dag-pb codec (0x70)
@@ -315,6 +318,7 @@ Comprehensive security test suite created following TDD (Test-Driven Development
 ### Required Functions (Not Yet Implemented)
 
 #### CID Validation
+
 ```go
 // ValidateCID validates an IPFS CID according to security requirements
 // Returns error if CID is invalid, nil if valid
@@ -322,6 +326,7 @@ func ValidateCID(cid string) error
 ```
 
 **Validation Rules:**
+
 - CIDv1 only (reject CIDv0 with Qm prefix)
 - Base32 or Base58 encoding
 - Allowed codecs: raw (0x55), dag-pb (0x70), dag-cbor (0x71)
@@ -373,6 +378,7 @@ type ClusterPinStatus struct {
 ## Dependencies Required
 
 Add to `go.mod`:
+
 ```go
 require (
     github.com/ipfs/go-cid v0.4.1
@@ -386,34 +392,41 @@ require (
 ## Test Execution
 
 ### Run All Tests
+
 ```bash
 go test -v ./internal/ipfs
 ```
 
 ### Run CID Validation Tests Only
+
 ```bash
 go test -v ./internal/ipfs -run TestValidateCID
 ```
 
 ### Run Cluster Auth Tests Only
+
 ```bash
 go test -v ./internal/ipfs -run TestClusterAuth
 ```
 
 ### Run Fuzzing Tests
+
 ```bash
 go test -v ./internal/ipfs -run TestFuzz
 ```
 
 ### Run with Race Detection
+
 ```bash
 go test -race -v ./internal/ipfs
 ```
 
 ### Expected Current Status
+
 **ALL TESTS FAIL** ✓ (This is correct for TDD!)
 
 Expected errors:
+
 ```
 undefined: ValidateCID
 undefined: NewClientWithAuth
@@ -438,6 +451,7 @@ undefined: ClusterAuthConfig
 ## Test Quality Metrics
 
 ### Coverage Targets
+
 - **Format Validation:** 5 tests
 - **Security Attacks:** 6 tests
 - **Codec Validation:** 2 tests
@@ -448,6 +462,7 @@ undefined: ClusterAuthConfig
 - **Performance:** 2 tests
 
 ### Security Focus Areas
+
 1. **Path Traversal Prevention** - Highest priority
 2. **Injection Attack Prevention** - SQL, command, null byte
 3. **DoS Prevention** - Length, complexity, fuzzing
@@ -456,6 +471,7 @@ undefined: ClusterAuthConfig
 6. **Performance Bounds** - Sub-millisecond validation
 
 ### Test Isolation
+
 - All tests use `httptest.NewServer` for mocking
 - No external dependencies (IPFS node not required)
 - Thread-safe concurrent tests
@@ -467,12 +483,14 @@ undefined: ClusterAuthConfig
 ## Next Steps (Implementation Phase)
 
 ### Task 1.5: Implement CID Validation
+
 1. Add `github.com/ipfs/go-cid` dependency
 2. Implement `ValidateCID()` function
 3. Add CID validation to `Pin()`, `ClusterPin()`, `AddFile()`, `AddDirectory()`
 4. Run tests and achieve 100% pass rate
 
 ### Task 1.6: Implement Cluster Authentication
+
 1. Implement `ClusterAuthConfig` struct
 2. Add Bearer token support to HTTP client
 3. Implement mTLS with client certificates
@@ -481,6 +499,7 @@ undefined: ClusterAuthConfig
 6. Run tests and achieve 100% pass rate
 
 ### Task 1.7: Security Audit
+
 1. Review implementation against tests
 2. Run fuzzing tests for extended periods
 3. Perform penetration testing
@@ -494,27 +513,32 @@ undefined: ClusterAuthConfig
 ### Defense in Depth Layers
 
 **Layer 1: Input Validation**
+
 - CID format validation
 - Length limits
 - Character whitelisting
 - Codec restriction
 
 **Layer 2: Encoding Prevention**
+
 - URL encoding rejection
 - Path traversal blocking
 - Null byte injection prevention
 
 **Layer 3: Authentication**
+
 - Bearer token verification
 - mTLS mutual authentication
 - HTTPS-only for sensitive operations
 
 **Layer 4: Resource Protection**
+
 - Performance bounds
 - DoS prevention
 - Concurrent access safety
 
 **Layer 5: Cryptographic Integrity**
+
 - Multihash validation
 - Certificate chain validation
 - TLS version enforcement
@@ -550,6 +574,7 @@ undefined: ClusterAuthConfig
 ## Documentation References
 
 ### Standards Compliance
+
 - **IPFS Specification:** CIDv1 format per IPLD spec
 - **HTTP Signatures:** RFC 7235 (Authorization header)
 - **TLS:** RFC 5246 (TLS 1.2), RFC 8446 (TLS 1.3)
@@ -557,6 +582,7 @@ undefined: ClusterAuthConfig
 - **OWASP Top 10:** Input validation, authentication, injection prevention
 
 ### CLAUDE.md Requirements
+
 - ✓ CIDv1 with raw leaves (line 75)
 - ✓ 256 KiB chunker (implicit in spec)
 - ✓ Cluster replication ≥3 (tested in status)
@@ -583,6 +609,7 @@ undefined: ClusterAuthConfig
 Comprehensive TDD security test suite successfully created, exceeding all acceptance criteria. Tests establish rigorous security specifications for IPFS CID validation and Cluster authentication. All tests currently fail as expected, providing clear implementation targets.
 
 **Key Achievements:**
+
 - 147% of required CID validation tests (22 vs 15)
 - 220% of required Cluster auth tests (22 vs 10)
 - Comprehensive attack vector coverage
@@ -591,6 +618,7 @@ Comprehensive TDD security test suite successfully created, exceeding all accept
 - Thread-safe, isolated, fast-running tests
 
 **Security Posture:**
+
 - Zero-trust input validation
 - Defense-in-depth architecture
 - Fail-secure design

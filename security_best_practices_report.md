@@ -10,6 +10,7 @@ Current production messaging is **not Messenger-style secure messaging**. Plain 
 ## Critical Findings
 
 ### [MSG-SEC-001] E2EE endpoints are documented but not registered in production routes
+
 - Severity: Critical
 - Location: `internal/httpapi/routes.go:245`, `internal/httpapi/routes.go:253`, `api/openapi.yaml:1570`, `api/openapi.yaml:1703`, `internal/httpapi/handlers/messaging/secure_messages.go:24`
 - Evidence: Runtime routes register `/api/v1/messages` and `/api/v1/conversations`, but there is no `/api/v1/e2ee/*` or `/api/v1/messages/secure` route wiring. E2EE handler constructor appears only in unit tests.
@@ -18,6 +19,7 @@ Current production messaging is **not Messenger-style secure messaging**. Plain 
 - Mitigation: Remove/flag E2EE endpoints in OpenAPI until implemented end-to-end.
 
 ### [MSG-SEC-002] Server-side decryption model is not end-to-end encryption
+
 - Severity: Critical
 - Location: `internal/usecase/e2ee_service.go:95`, `internal/usecase/e2ee_service.go:193`, `internal/usecase/e2ee_service.go:649`, `internal/httpapi/handlers/messaging/secure_messages.go:291`
 - Evidence: Server derives keys from user password, stores master key material (encrypted at rest), holds decrypted master key in server session memory, and exposes a decrypt endpoint returning plaintext.
@@ -26,6 +28,7 @@ Current production messaging is **not Messenger-style secure messaging**. Plain 
 - Mitigation: Clearly label current model as “server-mediated encryption” if retained temporarily.
 
 ### [MSG-SEC-003] Message schema constraints are internally contradictory for encrypted messages
+
 - Severity: Critical
 - Location: `migrations/015_create_messages_table.sql:8`, `migrations/015_create_messages_table.sql:9`, `migrations/016_add_e2ee_messaging.sql:116`, `migrations/016_add_e2ee_messaging.sql:117`, `internal/usecase/e2ee_service.go:635`
 - Evidence:
@@ -37,6 +40,7 @@ Current production messaging is **not Messenger-style secure messaging**. Plain 
 - Mitigation: Block E2EE writes until migration/schema contract is corrected.
 
 ### [MSG-SEC-004] Conversation E2EE state transition violates DB constraint
+
 - Severity: Critical
 - Location: `migrations/016_add_e2ee_messaging.sql:145`, `internal/usecase/e2ee_service.go:374`, `internal/usecase/e2ee_service.go:375`
 - Evidence: DB constraint requires `is_encrypted=true` => `key_exchange_complete=true`; initiation sets `is_encrypted=true` and `key_exchange_complete=false`.
@@ -47,6 +51,7 @@ Current production messaging is **not Messenger-style secure messaging**. Plain 
 ## High Findings
 
 ### [MSG-SEC-005] Shared secret storage bug breaks one side of key exchange
+
 - Severity: High
 - Location: `internal/usecase/e2ee_service.go:483`, `internal/usecase/e2ee_service.go:510`, `internal/usecase/e2ee_service.go:570`
 - Evidence: Recipient path stores `nonce+ciphertext`, but sender update stores only `ciphertext` (nonce dropped). Later decrypt path assumes `nonce+ciphertext` format.
@@ -55,6 +60,7 @@ Current production messaging is **not Messenger-style secure messaging**. Plain 
 - Mitigation: Add integration test for full handshake from both sender/recipient encryption/decryption paths.
 
 ### [MSG-SEC-006] Client-provided secure messaging fields are ignored or reinterpreted
+
 - Severity: High
 - Location: `internal/httpapi/handlers/messaging/secure_messages.go:129`, `internal/httpapi/handlers/messaging/secure_messages.go:148`, `internal/httpapi/handlers/messaging/secure_messages.go:175`, `internal/httpapi/handlers/messaging/secure_messages.go:189`, `internal/httpapi/handlers/messaging/secure_messages.go:239`, `internal/httpapi/handlers/messaging/secure_messages.go:260`
 - Evidence:
@@ -66,6 +72,7 @@ Current production messaging is **not Messenger-style secure messaging**. Plain 
 - Mitigation: Reject unused crypto fields until semantics are implemented.
 
 ### [MSG-SEC-007] E2EE session cache is process-local and concurrency-unsafe
+
 - Severity: High
 - Location: `internal/usecase/e2ee_service.go:92`, `internal/usecase/e2ee_service.go:254`, `internal/usecase/e2ee_service.go:265`, `internal/usecase/e2ee_service.go:273`
 - Evidence: Global mutable map `userSessions` is accessed across handlers without mutex; code comment notes production should use Redis.
@@ -76,6 +83,7 @@ Current production messaging is **not Messenger-style secure messaging**. Plain 
 ## Medium Findings
 
 ### [MSG-SEC-008] Chat WebSocket rate limiting can be bypassed with same-second bursts
+
 - Severity: Medium
 - Location: `internal/chat/websocket_server.go:480`, `internal/chat/websocket_server.go:489`, `internal/chat/websocket_server.go:500`
 - Evidence: Redis ZSET member uses second-resolution timestamp (`Member: now`), so multiple messages in one second can overwrite same member and undercount.
@@ -84,6 +92,7 @@ Current production messaging is **not Messenger-style secure messaging**. Plain 
 - Mitigation: Lower max message size and add server-side flood detection by per-connection counters.
 
 ### [MSG-SEC-009] Client IP in crypto audit logs can be spoofed
+
 - Severity: Medium
 - Location: `internal/httpapi/handlers/messaging/secure_messages.go:357`, `internal/httpapi/handlers/messaging/secure_messages.go:365`
 - Evidence: `X-Forwarded-For` and `X-Real-IP` are trusted directly without trusted-proxy validation.
@@ -92,6 +101,7 @@ Current production messaging is **not Messenger-style secure messaging**. Plain 
 - Mitigation: Prefer `RemoteAddr` unless proxy trust is configured.
 
 ### [MSG-SEC-010] Session lifetime mismatch between docs and implementation
+
 - Severity: Medium
 - Location: `api/openapi.yaml:1620`, `internal/usecase/e2ee_service.go:251`
 - Evidence: OpenAPI says unlock timeout is 15 minutes, service uses 24 hours.

@@ -82,32 +82,32 @@ ok  	athena/internal/chat	0.026s
 ok  	athena/internal/config	0.012s
 ok  	athena/internal/crypto	0.350s
 --- FAIL: TestNewPool_Success (0.00s)
-    pool_test.go:123: 
+    pool_test.go:123:
         	Error Trace:	/home/user/athena/internal/database/pool_test.go:123
-        	Error:      	Not equal: 
+        	Error:      	Not equal:
         	            	expected: 0
         	            	actual  : 1
         	Test:       	TestNewPool_Success
         	Messages:   	Initial Idle should be 0
 --- FAIL: TestPool_ConnectionReuse (0.10s)
-    pool_test.go:274: 
+    pool_test.go:274:
         	Error Trace:	/home/user/athena/internal/database/pool_test.go:274
-        	Error:      	Not equal: 
+        	Error:      	Not equal:
         	            	expected: 1
         	            	actual  : 2
         	Test:       	TestPool_ConnectionReuse
         	Messages:   	Connection should be reused from pool
 --- FAIL: TestPool_Stats (0.05s)
-    pool_test.go:497: 
+    pool_test.go:497:
         	Error Trace:	/home/user/athena/internal/database/pool_test.go:497
-        	Error:      	Not equal: 
+        	Error:      	Not equal:
         	            	expected: 0
         	            	actual  : 1
         	Test:       	TestPool_Stats
         	Messages:   	Initial Idle should be 0
-    pool_test.go:498: 
+    pool_test.go:498:
         	Error Trace:	/home/user/athena/internal/database/pool_test.go:498
-        	Error:      	Not equal: 
+        	Error:      	Not equal:
         	            	expected: 0
         	            	actual  : 1
         	Test:       	TestPool_Stats
@@ -473,7 +473,7 @@ ok  	athena/internal/httpapi/handlers/messaging	0.030s
 ok  	athena/internal/httpapi/handlers/moderation	0.021s
 --- FAIL: TestValidateInputSanitization (0.00s)
     --- FAIL: TestValidateInputSanitization/SQL_injection_attempt_in_video_id (0.00s)
-panic: 
+panic:
 	assert: mock: I don't know what to return because the method call was unexpected.
 		Either do Mock.On("CreatePaymentIntent").Return(...) first, or remove the CreatePaymentIntent() call.
 		This method was unexpected:
@@ -483,7 +483,7 @@ panic:
 			2: (*string)(0xc0001c0840)
 			3: 1000000
 		at: [/home/user/athena/internal/httpapi/handlers/payments/payment_handlers_test.go:50 /home/user/athena/internal/httpapi/handlers/payments/payment_handlers.go:101 /home/user/athena/internal/httpapi/handlers/payments/payment_handlers_test.go:599] [recovered]
-	panic: 
+	panic:
 	assert: mock: I don't know what to return because the method call was unexpected.
 		Either do Mock.On("CreatePaymentIntent").Return(...) first, or remove the CreatePaymentIntent() call.
 		This method was unexpected:
@@ -524,7 +524,7 @@ ok  	athena/internal/httpapi/handlers/social	0.023s
 ?   	athena/internal/importer	[no test files]
 --- FAIL: TestValidateCID_ValidCIDv1Base58 (0.00s)
     --- FAIL: TestValidateCID_ValidCIDv1Base58/valid_CIDv1_base58_raw (0.00s)
-        cid_validation_test.go:64: 
+        cid_validation_test.go:64:
             	Error Trace:	/home/user/athena/internal/ipfs/cid_validation_test.go:64
             	Error:      	Received unexpected error:
             	            	invalid CID format: invalid cid: Invalid base58 digit ('l')
@@ -532,36 +532,36 @@ ok  	athena/internal/httpapi/handlers/social	0.023s
             	Messages:   	Valid CIDv1 base58 should be accepted
 --- FAIL: TestValidateCID_ErrorMessages (0.00s)
     --- FAIL: TestValidateCID_ErrorMessages/CIDv0 (0.00s)
-        cid_validation_test.go:569: 
+        cid_validation_test.go:569:
             	Error Trace:	/home/user/athena/internal/ipfs/cid_validation_test.go:569
             	Error:      	"cidv0 not supported, only cidv1 allowed" does not contain "CIDv0"
             	Test:       	TestValidateCID_ErrorMessages/CIDv0
             	Messages:   	Error message should be informative
 --- FAIL: TestClusterAuth_BearerToken (0.00s)
-    cluster_auth_test.go:48: 
+    cluster_auth_test.go:48:
         	Error Trace:	/home/user/athena/internal/ipfs/cluster_auth_test.go:48
         	Error:      	Should be true
         	Test:       	TestClusterAuth_BearerToken
         	Messages:   	Bearer token should be sent in Authorization header
 --- FAIL: TestClusterAuth_TokenFromEnvironment (0.00s)
-    cluster_auth_test.go:77: 
+    cluster_auth_test.go:77:
         	Error Trace:	/home/user/athena/internal/ipfs/cluster_auth_test.go:77
         	Error:      	Should be true
         	Test:       	TestClusterAuth_TokenFromEnvironment
         	Messages:   	Token from environment should be used
 --- FAIL: TestClusterAuth_TokenFromConfig (0.00s)
-    cluster_auth_test.go:105: 
+    cluster_auth_test.go:105:
         	Error Trace:	/home/user/athena/internal/ipfs/cluster_auth_test.go:105
         	Error:      	Should be true
         	Test:       	TestClusterAuth_TokenFromConfig
         	Messages:   	Token from config should be used
 --- FAIL: TestClusterAuth_TokenRotation (0.00s)
-    cluster_auth_test.go:335: 
+    cluster_auth_test.go:335:
         	Error Trace:	/home/user/athena/internal/ipfs/cluster_auth_test.go:335
-        	Error:      	Not equal: 
+        	Error:      	Not equal:
         	            	expected: "token-v1"
         	            	actual  : ""
-        	            	
+
         	            	Diff:
         	            	--- Expected
         	            	+++ Actual
@@ -570,12 +570,12 @@ ok  	athena/internal/httpapi/handlers/social	0.023s
         	            	+
         	Test:       	TestClusterAuth_TokenRotation
         	Messages:   	Should use initial token
-    cluster_auth_test.go:343: 
+    cluster_auth_test.go:343:
         	Error Trace:	/home/user/athena/internal/ipfs/cluster_auth_test.go:343
-        	Error:      	Not equal: 
+        	Error:      	Not equal:
         	            	expected: "token-v2"
         	            	actual  : ""
-        	            	
+
         	            	Diff:
         	            	--- Expected
         	            	+++ Actual
@@ -585,13 +585,13 @@ ok  	athena/internal/httpapi/handlers/social	0.023s
         	Test:       	TestClusterAuth_TokenRotation
         	Messages:   	Should use rotated token
 --- FAIL: TestClusterAuth_Pin_Authenticated (0.00s)
-    cluster_auth_test.go:456: 
+    cluster_auth_test.go:456:
         	Error Trace:	/home/user/athena/internal/ipfs/cluster_auth_test.go:456
         	Error:      	Should be true
         	Test:       	TestClusterAuth_Pin_Authenticated
         	Messages:   	Authenticated pin should succeed
 --- FAIL: TestClusterAuth_Unpin_Authenticated (0.00s)
-    cluster_auth_test.go:493: 
+    cluster_auth_test.go:493:
         	Error Trace:	/home/user/athena/internal/ipfs/cluster_auth_test.go:493
         	Error:      	Should be true
         	Test:       	TestClusterAuth_Unpin_Authenticated
@@ -602,7 +602,7 @@ ok  	athena/internal/livestream	0.911s
 ok  	athena/internal/metrics	0.023s
 ok  	athena/internal/payments	3.024s
 --- FAIL: TestManager_TriggerEvent (0.00s)
-    manager_test.go:433: 
+    manager_test.go:433:
         	Error Trace:	/home/user/athena/internal/plugin/manager_test.go:433
         	Error:      	Received unexpected error:
         	            	hook execution errors: [hook timeout in plugin video-plugin: context canceled]
@@ -717,13 +717,13 @@ ok  	athena/internal/scheduler	1.839s
 {"level":"error","time":"2025-11-17T04:30:20Z","message":"SECURITY WARNING: Allowing unscanned stream due to FallbackModeAllow"}
 --- FAIL: TestValidateSeedStrength (0.00s)
     --- FAIL: TestValidateSeedStrength/valid_64_character_seed (0.00s)
-        wallet_encryption_test.go:339: 
+        wallet_encryption_test.go:339:
             	Error Trace:	/home/user/athena/internal/security/wallet_encryption_test.go:339
             	Error:      	Received unexpected error:
             	            	weak seed: all characters are the same
             	Test:       	TestValidateSeedStrength/valid_64_character_seed
     --- FAIL: TestValidateSeedStrength/valid_81_character_seed_(IOTA_legacy) (0.00s)
-        wallet_encryption_test.go:339: 
+        wallet_encryption_test.go:339:
             	Error Trace:	/home/user/athena/internal/security/wallet_encryption_test.go:339
             	Error:      	Received unexpected error:
             	            	weak seed: all characters are the same
@@ -748,46 +748,46 @@ ok  	athena/internal/usecase	2.584s
             	at: [/home/user/athena/internal/usecase/activitypub/comment_publisher_test.go:295]
 --- FAIL: TestCreateCommentActivity (0.00s)
     --- FAIL: TestCreateCommentActivity/Wraps_Note_in_Create_activity (0.00s)
-panic: 
-	
+panic:
+
 	mock: Unexpected Method Call
 	-----------------------------
-	
+
 	GetByID(context.backgroundCtx,string)
 			0: context.backgroundCtx{emptyCtx:context.emptyCtx{}}
 			1: "video-owner-123"
-	
-	The closest call I have is: 
-	
+
+	The closest call I have is:
+
 	GetByID(context.backgroundCtx,string)
 			0: context.backgroundCtx{emptyCtx:context.emptyCtx{}}
 			1: "d592eade-800c-429c-b9a4-0615b10045e1"
-	
-	
+
+
 	Diff: 0: PASS:  (context.backgroundCtx=context.Background) == (context.backgroundCtx=context.Background)
 		1: FAIL:  (string=video-owner-123) != (string=d592eade-800c-429c-b9a4-0615b10045e1)
 	at: [/home/user/athena/internal/usecase/activitypub/service_test.go:157 /home/user/athena/internal/usecase/activitypub/service.go:829 /home/user/athena/internal/usecase/activitypub/service.go:842 /home/user/athena/internal/usecase/activitypub/comment_publisher_test.go:343]
 	 [recovered]
-	panic: 
-	
+	panic:
+
 	mock: Unexpected Method Call
 	-----------------------------
-	
+
 	GetByID(context.backgroundCtx,string)
 			0: context.backgroundCtx{emptyCtx:context.emptyCtx{}}
 			1: "video-owner-123"
-	
-	The closest call I have is: 
-	
+
+	The closest call I have is:
+
 	GetByID(context.backgroundCtx,string)
 			0: context.backgroundCtx{emptyCtx:context.emptyCtx{}}
 			1: "d592eade-800c-429c-b9a4-0615b10045e1"
-	
-	
+
+
 	Diff: 0: PASS:  (context.backgroundCtx=context.Background) == (context.backgroundCtx=context.Background)
 		1: FAIL:  (string=video-owner-123) != (string=d592eade-800c-429c-b9a4-0615b10045e1)
 	at: [/home/user/athena/internal/usecase/activitypub/service_test.go:157 /home/user/athena/internal/usecase/activitypub/service.go:829 /home/user/athena/internal/usecase/activitypub/service.go:842 /home/user/athena/internal/usecase/activitypub/comment_publisher_test.go:343]
-	
+
 
 goroutine 22 [running]:
 testing.tRunner.func1.2({0x7d8040, 0xc0001dbb10})

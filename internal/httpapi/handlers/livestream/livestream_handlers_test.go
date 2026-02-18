@@ -20,7 +20,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// Mock repositories
 type MockLiveStreamRepository struct {
 	mock.Mock
 }
@@ -98,6 +97,24 @@ func (m *MockLiveStreamRepository) UpdateStatus(ctx context.Context, id uuid.UUI
 func (m *MockLiveStreamRepository) Delete(ctx context.Context, id uuid.UUID) error {
 	args := m.Called(ctx, id)
 	return args.Error(0)
+}
+func (m *MockLiveStreamRepository) GetChannelByStreamID(_ context.Context, _ uuid.UUID) (*domain.Channel, error) {
+	return nil, nil
+}
+func (m *MockLiveStreamRepository) UpdateWaitingRoom(_ context.Context, _ uuid.UUID, _ bool, _ string) error {
+	return nil
+}
+func (m *MockLiveStreamRepository) ScheduleStream(_ context.Context, _ uuid.UUID, _ *time.Time, _ *time.Time, _ bool, _ string) error {
+	return nil
+}
+func (m *MockLiveStreamRepository) CancelSchedule(_ context.Context, _ uuid.UUID) error {
+	return nil
+}
+func (m *MockLiveStreamRepository) GetScheduledStreams(_ context.Context, _, _ int) ([]*domain.LiveStream, error) {
+	return nil, nil
+}
+func (m *MockLiveStreamRepository) GetUpcomingStreams(_ context.Context, _ uuid.UUID, _ int) ([]*domain.LiveStream, error) {
+	return nil, nil
 }
 
 type MockStreamKeyRepository struct {
@@ -244,7 +261,6 @@ func (m *MockStreamManager) GetActiveStreamCount() int {
 	return args.Int(0)
 }
 
-// MockChannelRepository is a mock implementation of ChannelRepository
 type MockChannelRepository struct {
 	mock.Mock
 }
@@ -339,7 +355,6 @@ func TestCreateStream(t *testing.T) {
 		router := chi.NewRouter()
 		router.Post("/api/v1/channels/{channelId}/streams", handlers.CreateStream)
 
-		// Mock stream key creation
 		streamKeyRepo.On("Create", mock.Anything, channelID, mock.AnythingOfType("string"), (*time.Time)(nil)).
 			Return(&domain.StreamKey{
 				ID:        uuid.New(),
@@ -348,10 +363,8 @@ func TestCreateStream(t *testing.T) {
 				CreatedAt: time.Now(),
 			}, nil)
 
-		// Mock stream creation
 		streamRepo.On("Create", mock.Anything, mock.AnythingOfType("*domain.LiveStream")).Return(nil)
 
-		// Mock update last used
 		streamKeyRepo.On("MarkUsed", mock.Anything, mock.AnythingOfType("uuid.UUID")).Return(nil)
 
 		router.ServeHTTP(rr, req)
@@ -367,7 +380,7 @@ func TestCreateStream(t *testing.T) {
 		assert.Equal(t, "Test Stream", responseData["title"])
 		assert.Equal(t, "Test Description", responseData["description"])
 		assert.Equal(t, domain.StreamStatusWaiting, responseData["status"])
-		assert.NotEmpty(t, responseData["stream_key"]) // Stream key included on creation
+		assert.NotEmpty(t, responseData["stream_key"])
 
 		streamRepo.AssertExpectations(t)
 		streamKeyRepo.AssertExpectations(t)
@@ -547,7 +560,7 @@ func TestUpdateStream(t *testing.T) {
 		existingStream := &domain.LiveStream{
 			ID:        streamID,
 			ChannelID: uuid.New(),
-			UserID:    differentUserID, // Different user
+			UserID:    differentUserID,
 			Status:    domain.StreamStatusWaiting,
 			Title:     "Old Title",
 			CreatedAt: time.Now(),
@@ -670,8 +683,6 @@ func TestEndStream(t *testing.T) {
 
 func TestGetStreamStats(t *testing.T) {
 	t.Run("Active Stream - From Manager", func(t *testing.T) {
-		// This test would need a real stream manager, but since we made it optional,
-		// we'll test the database fallback path instead
 		streamRepo := new(MockLiveStreamRepository)
 		handlers := NewLiveStreamHandlers(streamRepo, nil, nil, nil, nil, nil)
 
@@ -763,16 +774,19 @@ func TestGetStreamStats(t *testing.T) {
 
 func TestRotateStreamKey(t *testing.T) {
 	t.Run("Success - No Existing Key", func(t *testing.T) {
+		streamRepo := new(MockLiveStreamRepository)
 		streamKeyRepo := new(MockStreamKeyRepository)
-		handlers := NewLiveStreamHandlers(nil, streamKeyRepo, nil, nil, nil, nil)
+		handlers := NewLiveStreamHandlers(streamRepo, streamKeyRepo, nil, nil, nil, nil)
 
+		streamID := uuid.New()
 		channelID := uuid.New()
 		userID := uuid.New()
 
-		// No existing key
+		streamRepo.On("GetByID", mock.Anything, streamID).Return(&domain.LiveStream{
+			ID:        streamID,
+			ChannelID: channelID,
+		}, nil)
 		streamKeyRepo.On("GetActiveByChannelID", mock.Anything, channelID).Return(nil, domain.ErrNotFound)
-
-		// Create new key
 		streamKeyRepo.On("Create", mock.Anything, channelID, mock.AnythingOfType("string"), (*time.Time)(nil)).
 			Return(&domain.StreamKey{
 				ID:        uuid.New(),
@@ -781,13 +795,13 @@ func TestRotateStreamKey(t *testing.T) {
 				CreatedAt: time.Now(),
 			}, nil)
 
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/channels/"+channelID.String()+"/stream-keys/rotate", nil)
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/streams/"+streamID.String()+"/rotate-key", nil)
 		ctx := context.WithValue(req.Context(), middleware.UserIDKey, userID.String())
 		req = req.WithContext(ctx)
 		rr := httptest.NewRecorder()
 
 		router := chi.NewRouter()
-		router.Post("/api/v1/channels/{channelId}/stream-keys/rotate", handlers.RotateStreamKey)
+		router.Post("/api/v1/streams/{id}/rotate-key", handlers.RotateStreamKey)
 		router.ServeHTTP(rr, req)
 
 		assert.Equal(t, http.StatusOK, rr.Code)
@@ -800,15 +814,23 @@ func TestRotateStreamKey(t *testing.T) {
 		assert.Contains(t, responseData, "stream_key")
 		assert.NotEmpty(t, responseData["stream_key"])
 
+		streamRepo.AssertExpectations(t)
 		streamKeyRepo.AssertExpectations(t)
 	})
 
 	t.Run("Success - Deactivates Existing Key", func(t *testing.T) {
+		streamRepo := new(MockLiveStreamRepository)
 		streamKeyRepo := new(MockStreamKeyRepository)
-		handlers := NewLiveStreamHandlers(nil, streamKeyRepo, nil, nil, nil, nil)
+		handlers := NewLiveStreamHandlers(streamRepo, streamKeyRepo, nil, nil, nil, nil)
 
+		streamID := uuid.New()
 		channelID := uuid.New()
 		userID := uuid.New()
+
+		streamRepo.On("GetByID", mock.Anything, streamID).Return(&domain.LiveStream{
+			ID:        streamID,
+			ChannelID: channelID,
+		}, nil)
 
 		existingKey := &domain.StreamKey{
 			ID:        uuid.New(),
@@ -827,17 +849,18 @@ func TestRotateStreamKey(t *testing.T) {
 				CreatedAt: time.Now(),
 			}, nil)
 
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/channels/"+channelID.String()+"/stream-keys/rotate", nil)
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/streams/"+streamID.String()+"/rotate-key", nil)
 		ctx := context.WithValue(req.Context(), middleware.UserIDKey, userID.String())
 		req = req.WithContext(ctx)
 		rr := httptest.NewRecorder()
 
 		router := chi.NewRouter()
-		router.Post("/api/v1/channels/{channelId}/stream-keys/rotate", handlers.RotateStreamKey)
+		router.Post("/api/v1/streams/{id}/rotate-key", handlers.RotateStreamKey)
 		router.ServeHTTP(rr, req)
 
 		assert.Equal(t, http.StatusOK, rr.Code)
 
+		streamRepo.AssertExpectations(t)
 		streamKeyRepo.AssertExpectations(t)
 	})
 }
@@ -891,7 +914,6 @@ func TestGetActiveStreams(t *testing.T) {
 		require.NoError(t, err)
 
 		responseData := wrapper["data"].(map[string]interface{})
-		// Total will be len(streams) since streamManager is nil
 		assert.Equal(t, float64(2), responseData["total"])
 		assert.Equal(t, float64(1), responseData["page"])
 
@@ -899,5 +921,108 @@ func TestGetActiveStreams(t *testing.T) {
 		assert.Len(t, data, 2)
 
 		streamRepo.AssertExpectations(t)
+	})
+}
+
+func TestCreateStreamCorrectRoute(t *testing.T) {
+	t.Run("Success - channelID from body only", func(t *testing.T) {
+		streamRepo := new(MockLiveStreamRepository)
+		streamKeyRepo := new(MockStreamKeyRepository)
+		viewerRepo := new(MockViewerSessionRepository)
+
+		handlers := NewLiveStreamHandlers(streamRepo, streamKeyRepo, viewerRepo, nil, nil, nil)
+
+		channelID := uuid.New()
+		userID := uuid.New()
+
+		reqBody := CreateStreamRequest{
+			ChannelID:   channelID,
+			Title:       "Test Stream",
+			Description: "Test Description",
+			Privacy:     "public",
+		}
+		body, _ := json.Marshal(reqBody)
+
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/streams", bytes.NewReader(body))
+		ctx := context.WithValue(req.Context(), middleware.UserIDKey, userID.String())
+		req = req.WithContext(ctx)
+		rr := httptest.NewRecorder()
+
+		router := chi.NewRouter()
+		router.Post("/api/v1/streams", handlers.CreateStream)
+
+		streamKeyRepo.On("Create", mock.Anything, channelID, mock.AnythingOfType("string"), (*time.Time)(nil)).
+			Return(&domain.StreamKey{
+				ID:        uuid.New(),
+				ChannelID: channelID,
+				IsActive:  true,
+				CreatedAt: time.Now(),
+			}, nil)
+		streamRepo.On("Create", mock.Anything, mock.AnythingOfType("*domain.LiveStream")).Return(nil)
+		streamKeyRepo.On("MarkUsed", mock.Anything, mock.AnythingOfType("uuid.UUID")).Return(nil)
+
+		router.ServeHTTP(rr, req)
+
+		assert.Equal(t, http.StatusCreated, rr.Code)
+
+		var wrapper map[string]interface{}
+		err := json.NewDecoder(rr.Body).Decode(&wrapper)
+		require.NoError(t, err)
+
+		responseData := wrapper["data"].(map[string]interface{})
+		assert.Equal(t, channelID.String(), responseData["channel_id"])
+		assert.Equal(t, "Test Stream", responseData["title"])
+
+		streamRepo.AssertExpectations(t)
+		streamKeyRepo.AssertExpectations(t)
+	})
+}
+
+func TestRotateStreamKeyCorrectRoute(t *testing.T) {
+	t.Run("Success - stream ID from URL, lookup channelID", func(t *testing.T) {
+		streamRepo := new(MockLiveStreamRepository)
+		streamKeyRepo := new(MockStreamKeyRepository)
+
+		handlers := NewLiveStreamHandlers(streamRepo, streamKeyRepo, nil, nil, nil, nil)
+
+		streamID := uuid.New()
+		channelID := uuid.New()
+		userID := uuid.New()
+
+		streamRepo.On("GetByID", mock.Anything, streamID).Return(&domain.LiveStream{
+			ID:        streamID,
+			ChannelID: channelID,
+		}, nil)
+
+		streamKeyRepo.On("GetActiveByChannelID", mock.Anything, channelID).Return(nil, domain.ErrNotFound)
+		streamKeyRepo.On("Create", mock.Anything, channelID, mock.AnythingOfType("string"), (*time.Time)(nil)).
+			Return(&domain.StreamKey{
+				ID:        uuid.New(),
+				ChannelID: channelID,
+				IsActive:  true,
+				CreatedAt: time.Now(),
+			}, nil)
+
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/streams/"+streamID.String()+"/rotate-key", nil)
+		ctx := context.WithValue(req.Context(), middleware.UserIDKey, userID.String())
+		req = req.WithContext(ctx)
+		rr := httptest.NewRecorder()
+
+		router := chi.NewRouter()
+		router.Post("/api/v1/streams/{id}/rotate-key", handlers.RotateStreamKey)
+		router.ServeHTTP(rr, req)
+
+		assert.Equal(t, http.StatusOK, rr.Code)
+
+		var wrapper map[string]interface{}
+		err := json.NewDecoder(rr.Body).Decode(&wrapper)
+		require.NoError(t, err)
+
+		responseData := wrapper["data"].(map[string]interface{})
+		assert.Contains(t, responseData, "stream_key")
+		assert.NotEmpty(t, responseData["stream_key"])
+
+		streamRepo.AssertExpectations(t)
+		streamKeyRepo.AssertExpectations(t)
 	})
 }

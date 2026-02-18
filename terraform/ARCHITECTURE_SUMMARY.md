@@ -9,6 +9,7 @@ This Terraform infrastructure provides a production-ready, highly available, and
 **Recommended Cloud Provider**: AWS
 
 **Reasoning**:
+
 1. EKS provides best-in-class Kubernetes with excellent autoscaling
 2. EFS supports ReadWriteMany access mode required for shared storage
 3. S3 + CloudFront offers lowest egress costs for video delivery
@@ -37,17 +38,20 @@ AWS is 16% cheaper than GCP and 20% cheaper than Azure for this workload.
 ### Cost Optimization Opportunities
 
 #### Immediate (0-1 month)
+
 1. **Spot Instances for Encoding Workers**: $525/month → $157/month (70% savings)
 2. **Reserved Instances for API Nodes** (1-year): $450/month → $315/month (30% savings)
 3. **Single NAT Gateway for Dev**: $97/month → $32/month (67% savings for dev only)
 
 #### Short-term (1-3 months)
+
 4. **S3 Lifecycle Policies**: Move old videos to Glacier after 90 days (50% storage savings)
 5. **RDS Reserved Instances** (1-year): $520/month → $364/month (30% savings)
 6. **ElastiCache Reserved Nodes** (1-year): $180/month → $126/month (30% savings)
 7. **Right-size Instances**: Analyze CloudWatch metrics, potentially save 10-20%
 
 #### Long-term (3-6 months)
+
 8. **Savings Plans** for predictable workload: Additional 10% savings
 9. **EFS Intelligent Tiering**: Automatic cost optimization for infrequent access
 10. **CloudFront Reserved Capacity**: For predictable high-traffic patterns
@@ -57,12 +61,14 @@ AWS is 16% cheaper than GCP and 20% cheaper than Azure for this workload.
 ## Architecture Decisions
 
 ### 1. Multi-AZ Deployment
+
 - **Decision**: Deploy across 3 availability zones
 - **Reasoning**: High availability, fault tolerance, Netflix-style resilience
 - **Trade-off**: 2x cost for databases, 3x NAT Gateway cost
 - **Mitigation**: Use single AZ for dev/staging environments
 
 ### 2. EFS for Shared Storage
+
 - **Decision**: Use EFS instead of S3 for video processing storage
 - **Reasoning**:
   - Kubernetes requires ReadWriteMany volumes
@@ -72,6 +78,7 @@ AWS is 16% cheaper than GCP and 20% cheaper than Azure for this workload.
 - **Trade-off**: $0.30/GB/month vs S3's $0.023/GB/month
 
 ### 3. Spot Instances for Encoding Workers
+
 - **Decision**: Use EC2 Spot instances for encoding workload
 - **Reasoning**:
   - 70% cost reduction
@@ -83,6 +90,7 @@ AWS is 16% cheaper than GCP and 20% cheaper than Azure for this workload.
   - Job retry logic in application
 
 ### 4. Separate Node Groups
+
 - **Decision**: Three node groups (API, Encoding, System)
 - **Reasoning**:
   - API pods need reliability (on-demand instances)
@@ -91,6 +99,7 @@ AWS is 16% cheaper than GCP and 20% cheaper than Azure for this workload.
 - **Benefits**: Cost optimization + reliability where needed
 
 ### 5. CloudFront Price Class 100
+
 - **Decision**: Use PriceClass_100 (US, Canada, Europe)
 - **Reasoning**:
   - 50% cheaper than PriceClass_All
@@ -99,6 +108,7 @@ AWS is 16% cheaper than GCP and 20% cheaper than Azure for this workload.
 - **Trade-off**: Higher latency for Asia/Australia/South America
 
 ### 6. RDS Multi-AZ with Read Replicas
+
 - **Decision**: Multi-AZ primary, no read replicas initially
 - **Reasoning**:
   - Multi-AZ for high availability (automatic failover)
@@ -107,6 +117,7 @@ AWS is 16% cheaper than GCP and 20% cheaper than Azure for this workload.
 - **Monitoring**: Watch for slow SELECT queries, connection pool exhaustion
 
 ### 7. Secrets in AWS Secrets Manager
+
 - **Decision**: Store DB/Redis credentials in Secrets Manager, not Kubernetes secrets
 - **Reasoning**:
   - Automatic rotation
@@ -115,6 +126,7 @@ AWS is 16% cheaper than GCP and 20% cheaper than Azure for this workload.
 - **Alternative Considered**: HashiCorp Vault (more features, more complexity)
 
 ### 8. IRSA for AWS Permissions
+
 - **Decision**: Use IAM Roles for Service Accounts (IRSA)
 - **Reasoning**:
   - No long-lived credentials in pods
@@ -123,6 +135,7 @@ AWS is 16% cheaper than GCP and 20% cheaper than Azure for this workload.
 - **Implementation**: Pods assume IAM roles via OIDC provider
 
 ### 9. KMS Encryption for All Data
+
 - **Decision**: Encrypt EBS, RDS, S3, EFS with KMS
 - **Reasoning**:
   - Security best practice
@@ -132,6 +145,7 @@ AWS is 16% cheaper than GCP and 20% cheaper than Azure for this workload.
 - **Cost**: $1/month per key + $0.03 per 10,000 requests
 
 ### 10. VPC Flow Logs Enabled
+
 - **Decision**: Enable VPC Flow Logs in production
 - **Reasoning**:
   - Security analysis and threat detection
@@ -237,6 +251,7 @@ AWS is 16% cheaper than GCP and 20% cheaper than Azure for this workload.
 ### Capacity Planning
 
 **Current Configuration Handles**:
+
 - 1,000 concurrent API users
 - 500 concurrent video uploads
 - 50 concurrent video encodings
@@ -245,6 +260,7 @@ AWS is 16% cheaper than GCP and 20% cheaper than Azure for this workload.
 - 50TB CDN bandwidth/month
 
 **To Scale to 10x**:
+
 1. Increase EKS node group max sizes
 2. Upgrade RDS to db.r6g.2xlarge
 3. Add RDS read replica
@@ -285,6 +301,7 @@ Three pre-configured dashboards:
 ### CloudWatch Alarms
 
 Critical alarms (SNS notifications):
+
 - EKS nodes CPU >80% for 10 minutes
 - RDS CPU >80% for 5 minutes
 - RDS free storage <10GB
@@ -308,6 +325,7 @@ All logs centralized in CloudWatch Logs:
 ```
 
 Retention:
+
 - Production: 30 days
 - Staging: 7 days
 - Development: 3 days
@@ -335,22 +353,26 @@ Retention:
 ### Disaster Scenarios
 
 #### Scenario 1: Single AZ Failure
+
 - **Impact**: No downtime (Multi-AZ deployment)
 - **Action**: Monitor, pods/database automatically failover
 - **Recovery**: Automatic
 
 #### Scenario 2: Region Failure
+
 - **Impact**: Complete outage
 - **Action**: Terraform apply in new region, restore RDS from snapshot
 - **Recovery**: 2-4 hours
 - **Prevention**: Enable RDS cross-region replication (adds cost)
 
 #### Scenario 3: Accidental Data Deletion
+
 - **Impact**: Varies (single video vs. entire database)
 - **Action**: Restore from RDS snapshot or S3 versioning
 - **Recovery**: 15 minutes - 2 hours
 
 #### Scenario 4: Security Breach
+
 - **Impact**: Potential data leak
 - **Action**: Rotate all credentials, patch vulnerability, analyze CloudTrail logs
 - **Recovery**: 1-4 hours
@@ -360,17 +382,20 @@ Retention:
 If you have existing Kubernetes infrastructure:
 
 ### Step 1: Deploy Terraform Infrastructure
+
 ```bash
 cd terraform/environments/production
 terraform apply
 ```
 
 ### Step 2: Dual-Run Period
+
 - Keep existing infrastructure running
 - Deploy new infrastructure in parallel
 - Configure DNS for gradual traffic shift
 
 ### Step 3: Data Migration
+
 ```bash
 # Export from old database
 pg_dump -h old-db.example.com -U postgres athena > dump.sql
@@ -381,6 +406,7 @@ kubectl exec -i $POD -- psql $DATABASE_URL < dump.sql
 ```
 
 ### Step 4: Storage Migration
+
 ```bash
 # Sync videos to S3
 aws s3 sync /old/storage s3://athena-production-videos-xxxxx/
@@ -391,6 +417,7 @@ kubectl run -it sync --image=alpine --restart=Never -- sh
 ```
 
 ### Step 5: Traffic Cutover
+
 ```bash
 # Update DNS to point to new infrastructure
 # Monitor for 24-48 hours
@@ -400,18 +427,21 @@ kubectl run -it sync --image=alpine --restart=Never -- sh
 ## Future Enhancements
 
 ### Short-term (Next 3 months)
+
 1. **GitOps with ArgoCD**: Automated Kubernetes deployments
 2. **Service Mesh (Istio)**: Advanced traffic management, observability
 3. **Horizontal Pod Autoscaler**: Custom metrics (queue depth, encoding jobs)
 4. **Karpenter**: Advanced node autoscaling, better spot management
 
 ### Medium-term (3-6 months)
+
 5. **Multi-Region Deployment**: DR in second region
 6. **GPU Nodes for Encoding**: NVIDIA T4 for faster encoding
 7. **Lambda for Thumbnail Generation**: Serverless, pay-per-use
 8. **ElastiCache Global Datastore**: Cross-region replication
 
 ### Long-term (6-12 months)
+
 9. **Fargate for API Pods**: Serverless containers
 10. **Aurora Serverless v2**: Auto-scaling database
 11. **Step Functions for Workflows**: Complex encoding pipelines
@@ -464,21 +494,25 @@ module "my_rds" {
 ## Comparison with Alternatives
 
 ### Alternative 1: Managed Services (AWS Amplify, Firebase)
+
 **Pros**: Less infrastructure management, faster initial setup
 **Cons**: Vendor lock-in, limited customization, higher long-term cost, no GPU encoding
 **Verdict**: Not suitable for video platform with encoding requirements
 
 ### Alternative 2: Kubernetes on DigitalOcean
+
 **Pros**: 40% cheaper control plane ($12/month)
 **Cons**: Less mature managed services, limited instance types, no spot instances, weaker CDN
 **Verdict**: Good for small/medium scale, not recommended for production video platform
 
 ### Alternative 3: Self-Managed Kubernetes (kubeadm)
+
 **Pros**: Full control, potentially cheaper
 **Cons**: Significant operational overhead, need dedicated DevOps team, no managed services
 **Verdict**: Only if you have expert Kubernetes team and compliance requirements
 
 ### Alternative 4: Serverless (Lambda, API Gateway, Step Functions)
+
 **Pros**: No server management, pay-per-use, auto-scaling
 **Cons**: 15-minute Lambda timeout insufficient for encoding, cold starts, higher cost at scale
 **Verdict**: Good for API layer, not suitable for video encoding
@@ -494,6 +528,7 @@ This Terraform infrastructure provides:
 5. **Cloud-Agnostic Design**: Modules can be adapted to GCP/Azure with minimal changes
 
 **Recommended Next Steps**:
+
 1. Review terraform.tfvars.example and customize for your environment
 2. Run ./scripts/bootstrap-backend.sh to create state backend
 3. Run terraform plan to preview infrastructure

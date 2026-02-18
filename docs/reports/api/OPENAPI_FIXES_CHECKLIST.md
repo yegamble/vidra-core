@@ -23,6 +23,7 @@
 ### 2. Add Response Wrapper Schema (30 minutes)
 
 - [ ] Create `api/schemas/common.yaml` with:
+
   ```yaml
   SuccessResponse:
     type: object
@@ -76,6 +77,7 @@
 ### 3. Update User Schema (30 minutes)
 
 - [ ] **openapi.yaml** - Add missing User fields:
+
   ```yaml
   User:
     properties:
@@ -108,6 +110,7 @@
 ### 4. Update Video Schema (1 hour)
 
 - [ ] **openapi.yaml** - Add federation fields:
+
   ```yaml
   Video:
     properties:
@@ -136,6 +139,7 @@
   ```
 
 - [ ] Add S3 storage fields:
+
   ```yaml
       s3_urls:
         type: object
@@ -152,6 +156,7 @@
   ```
 
 - [ ] Add nested objects:
+
   ```yaml
       channel:
         $ref: '#/components/schemas/Channel'
@@ -194,6 +199,7 @@ For each feature, decide: **Implement** or **Move to /api/planned/**
 ### 7. Document Missing Endpoints (20 minutes)
 
 - [ ] **openapi_livestreaming.yaml** - Add:
+
   ```yaml
   /api/v1/streams:
     post:
@@ -207,6 +213,7 @@ For each feature, decide: **Implement** or **Move to /api/planned/**
   ```
 
 - [ ] **openapi_comments.yaml** - Add:
+
   ```yaml
   /api/v1/comments/{commentId}/flag:
     delete:
@@ -228,6 +235,7 @@ For each feature, decide: **Implement** or **Move to /api/planned/**
 ### 9. Add Security Schemes (30 minutes)
 
 - [ ] Ensure all OpenAPI files have:
+
   ```yaml
   components:
     securitySchemes:
@@ -244,6 +252,7 @@ For each feature, decide: **Implement** or **Move to /api/planned/**
 - [ ] Verify `video_category_handler.go` implementation
 - [ ] Decision: [ ] Register routes OR [ ] Remove from OpenAPI
 - [ ] If registering, add to `routes.go`:
+
   ```go
   r.Get("/api/v1/categories", video.ListCategoriesHandler(...))
   r.Get("/api/v1/categories/{id}", video.GetCategoryHandler(...))
@@ -260,12 +269,14 @@ For each feature, decide: **Implement** or **Move to /api/planned/**
 After making fixes:
 
 - [ ] Run OpenAPI linter:
+
   ```bash
   npm install -g @stoplight/spectral-cli
   spectral lint api/*.yaml docs/*.yaml
   ```
 
 - [ ] Generate API client to test:
+
   ```bash
   npx @openapitools/openapi-generator-cli generate \
     -i api/openapi.yaml \
@@ -304,12 +315,14 @@ Mark files as you update them:
 ---
 
 **Total Estimated Time:**
+
 - Critical: ~2.5 hours
 - High Priority: ~2 hours
 - Medium Priority: ~2 hours
 - **Grand Total: ~6.5 hours**
 
 **Recommended Approach:**
+
 1. Start with Critical fixes (paths and schemas) - Day 1
 2. Make implementation decisions for missing features - Day 1
 3. Complete High Priority fixes - Day 2

@@ -114,6 +114,7 @@ REQUIRE_IPFS=true
 ## CID Format
 
 All CIDs use CIDv1 format with the following parameters:
+
 - **Version**: CIDv1 (modern format)
 - **Codec**: dag-pb (UnixFS)
 - **Hash**: sha256
@@ -139,23 +140,27 @@ Access via gateway: `https://ipfs.io/ipfs/{CID}/stream.m3u8`
 ## Benefits
 
 ### 1. Unique CIDs Per Resolution
+
 - Each resolution has different content → different CID
 - Content-addressable: same resolution variant always has same CID
 - Deduplication across the network
 - Integrity verification built-in
 
 ### 2. Decentralized Delivery
+
 - Content available through IPFS network
 - Not dependent on single server
 - Geographic distribution via IPFS gateways
 - Resilient to server failures
 
 ### 3. Bandwidth Optimization
+
 - Users can fetch only the resolution they need
 - HLS adaptive bitrate works seamlessly
 - Gateway caching reduces origin load
 
 ### 4. Hybrid Approach
+
 - Local files remain primary source
 - IPFS as backup/distribution layer
 - Gradual migration possible
@@ -193,6 +198,7 @@ go test ./internal/ipfs/... -v
 ### Metrics
 
 IPFS upload metrics are tracked:
+
 - Total uploads attempted
 - Successful uploads
 - Failed uploads
@@ -201,6 +207,7 @@ IPFS upload metrics are tracked:
 ### Logs
 
 The encoding service logs IPFS upload progress:
+
 ```
 INFO: Uploading variant 720p to IPFS...
 INFO: Successfully uploaded 720p to IPFS: bafybeig...
@@ -212,6 +219,7 @@ WARN: Failed to upload 1080p to IPFS: context deadline exceeded
 ### Upload Time
 
 Typical upload times per variant (depends on network and IPFS node):
+
 - **240p** (~50MB): 5-10 seconds
 - **480p** (~150MB): 15-30 seconds
 - **720p** (~300MB): 30-60 seconds
@@ -245,6 +253,7 @@ ERROR: Failed to connect to IPFS API at http://localhost:5001
 ```
 
 **Solution**:
+
 - Ensure IPFS daemon is running: `ipfs daemon`
 - Check IPFS_API configuration
 - Set `REQUIRE_IPFS=false` to continue without IPFS
@@ -256,6 +265,7 @@ WARN: Failed to upload variant to IPFS: context deadline exceeded
 ```
 
 **Solution**:
+
 - Increase timeout in `internal/app/app.go` (currently 120s)
 - Check network connectivity to IPFS node
 - Consider running IPFS locally
@@ -267,6 +277,7 @@ WARN: Failed to pin CID to cluster
 ```
 
 **Solution**:
+
 - Check IPFS Cluster health
 - Verify IPFS_CLUSTER configuration
 - Pinning to cluster is optional (local pin still succeeds)

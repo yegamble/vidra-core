@@ -58,7 +58,7 @@
 
 ### 1. Adding a New API Endpoint
 
-#### Steps:
+#### Steps
 
 1. **Implement handler** in `/root/athena/internal/httpapi/handlers/`
 2. **Register route** in `/root/athena/internal/httpapi/routes.go`
@@ -72,6 +72,7 @@
    - etc.
 
 4. **Add endpoint to OpenAPI spec**:
+
    ```yaml
    /api/v1/your/endpoint:
      get:
@@ -121,6 +122,7 @@
 #### Example: Adding a Comment Count Endpoint
 
 **Code:**
+
 ```go
 // routes.go
 r.Get("/{videoId}/comments/count", commentHandlers.GetCommentCount)
@@ -136,6 +138,7 @@ func (h *CommentHandlers) GetCommentCount(w http.ResponseWriter, r *http.Request
 ```
 
 **OpenAPI:**
+
 ```yaml
 # In openapi_comments.yaml
 /api/v1/videos/{videoId}/comments/count:
@@ -167,6 +170,7 @@ func (h *CommentHandlers) GetCommentCount(w http.ResponseWriter, r *http.Request
 ```
 
 **Postman:**
+
 ```json
 {
   "name": "Get Comment Count",
@@ -190,7 +194,7 @@ func (h *CommentHandlers) GetCommentCount(w http.ResponseWriter, r *http.Request
 
 ### 2. Modifying an Existing Endpoint
 
-#### Steps:
+#### Steps
 
 1. **Update handler implementation**
 2. **Update OpenAPI spec** to match new signature:
@@ -219,11 +223,12 @@ func (h *CommentHandlers) GetCommentCount(w http.ResponseWriter, r *http.Request
 
 **Examples:** Virus scanning, SSRF protection, rate limiting
 
-#### Steps:
+#### Steps
 
 1. **Implement security feature** in middleware or handler
 
 2. **Document in OpenAPI spec description**:
+
    ```yaml
    description: |
      This endpoint includes virus scanning for all uploads.
@@ -239,6 +244,7 @@ func (h *CommentHandlers) GetCommentCount(w http.ResponseWriter, r *http.Request
    ```
 
 3. **Add error response examples**:
+
    ```yaml
    '422':
      description: Virus detected
@@ -269,20 +275,23 @@ func (h *CommentHandlers) GetCommentCount(w http.ResponseWriter, r *http.Request
 
 ### 4. Changing Rate Limits
 
-#### Steps:
+#### Steps
 
 1. **Update code** in `routes.go`:
+
    ```go
    strictImportLimiter := rlManager.CreateRateLimiter(60*time.Second, 10) // 10 per minute
    ```
 
 2. **Update OpenAPI spec** (in relevant spec file):
+
    ```yaml
    description: |
      **Rate Limiting:** 10 requests per minute
    ```
 
 3. **Update OpenAPI responses** to include 429:
+
    ```yaml
    '429':
      description: Rate limit exceeded
@@ -306,7 +315,7 @@ func (h *CommentHandlers) GetCommentCount(w http.ResponseWriter, r *http.Request
 
 ### 5. Completing a Sprint with New Features
 
-#### Steps:
+#### Steps
 
 1. **Create sprint completion document** in `/root/athena/docs/sprints/`
    - Document all features added
@@ -460,7 +469,7 @@ Use this checklist when updating documentation:
 
 ## Common Pitfalls to Avoid
 
-### ❌ Don't:
+### ❌ Don't
 
 1. **Update code without updating OpenAPI**
    - Leads to client SDK generation failures
@@ -482,7 +491,7 @@ Use this checklist when updating documentation:
    - Confuses API consumers
    - Breaks automated tooling
 
-### ✅ Do:
+### ✅ Do
 
 1. **Update OpenAPI and Postman together**
    - Ensures consistency
@@ -538,15 +547,16 @@ make docs-coverage
 
 ## Contact and Support
 
-### For Documentation Issues:
+### For Documentation Issues
 
 1. **File an issue** with label `documentation`
 2. **Check existing docs** in `/docs/` before asking
 3. **Review audit report** at `/docs/API_DOCUMENTATION_AUDIT_REPORT.md`
 
-### For Claude AI Agents:
+### For Claude AI Agents
 
 When making code changes:
+
 1. Always read this guide first
 2. Update documentation in the same commit
 3. Run validation scripts before committing

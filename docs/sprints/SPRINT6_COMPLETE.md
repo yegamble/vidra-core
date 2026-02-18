@@ -14,6 +14,7 @@ Sprint 6 successfully implements real-time HLS (HTTP Live Streaming) transcoding
 ### Phase 1: Core Transcoding ✅
 
 #### 1. Configuration ✅
+
 - **File**: `internal/config/config.go` (added 11 fields)
 - **HLS Settings**:
   - `HLS_OUTPUT_DIR`: Output directory for live HLS segments
@@ -33,6 +34,7 @@ Sprint 6 successfully implements real-time HLS (HTTP Live Streaming) transcoding
   - `REPLAY_RETENTION_DAYS`: Retention period (0 = forever)
 
 #### 2. Quality Variant Definitions ✅
+
 - **File**: `internal/livestream/hls_transcoder.go`
 - **Variants**: 1080p, 720p, 480p, 360p
 - **Configurable**: Via `HLS_VARIANTS` environment variable
@@ -52,6 +54,7 @@ Sprint 6 successfully implements real-time HLS (HTTP Live Streaming) transcoding
 | 360p    | 640x360    | 800 kbps      | 128 kbps      | Low bandwidth |
 
 #### 3. HLS Transcoder Service ✅
+
 - **File**: `internal/livestream/hls_transcoder.go` (~400 lines)
 - **Features**:
   - FFmpeg process management with context cancellation
@@ -62,6 +65,7 @@ Sprint 6 successfully implements real-time HLS (HTTP Live Streaming) transcoding
   - Session state tracking (stream ID, process, output directory)
 
 **Key Methods**:
+
 - `StartTranscoding(ctx, stream, rtmpURL)`: Spawn FFmpeg with multiple quality variants
 - `StopTranscoding(streamID)`: Graceful process termination
 - `GetSession(streamID)`: Retrieve session information
@@ -70,6 +74,7 @@ Sprint 6 successfully implements real-time HLS (HTTP Live Streaming) transcoding
 - `GetHLSPlaylistURL(streamID)`: Generate playlist URL for viewers
 
 **FFmpeg Command**:
+
 ```bash
 ffmpeg -i rtmp://localhost:1935/{streamKey} \
   -c:v libx264 -preset veryfast -tune zerolatency \
@@ -85,6 +90,7 @@ ffmpeg -i rtmp://localhost:1935/{streamKey} \
 ### Phase 2: HLS Serving ✅
 
 #### 4. HLS Handlers ✅
+
 - **File**: `internal/httpapi/hls_handlers.go` (~300 lines)
 - **Endpoints**:
   - `GET /api/v1/streams/{id}/hls/master.m3u8` - Master playlist with all variants
@@ -93,18 +99,21 @@ ffmpeg -i rtmp://localhost:1935/{streamKey} \
   - `GET /api/v1/streams/{id}/hls-info` - HLS availability and info
 
 **Security Features**:
+
 - Privacy-aware access control (public/unlisted/private)
 - Path traversal protection with whitelist validation
 - Authentication required for private streams
 - Channel ownership verification
 
 **HTTP Headers**:
+
 - Playlists: `Cache-Control: no-cache, no-store` (always fresh)
 - Segments: `Cache-Control: public, max-age=86400, immutable`
 - CORS enabled for cross-origin playback
 - Proper MIME types: `application/vnd.apple.mpegurl`, `video/MP2T`
 
 #### 5. RTMP Integration ✅
+
 - **Modified**: `internal/livestream/rtmp_server.go`
 - **Features**:
   - Automatic HLS transcoding start on stream connection
@@ -114,6 +123,7 @@ ffmpeg -i rtmp://localhost:1935/{streamKey} \
   - VOD conversion trigger on stream end
 
 #### 6. Application Wiring ✅
+
 - **Modified**: `internal/app/app.go`
 - **Features**:
   - HLS transcoder initialization with proper dependencies
@@ -123,6 +133,7 @@ ffmpeg -i rtmp://localhost:1935/{streamKey} \
   - Passed to HTTP handlers via dependency injection
 
 #### 7. Route Registration ✅
+
 - **Modified**: `internal/httpapi/routes_refactored.go`, `routes.go`
 - **Features**:
   - HLS endpoints under `/api/v1/streams/{id}/hls/`
@@ -131,6 +142,7 @@ ffmpeg -i rtmp://localhost:1935/{streamKey} \
   - Dependency injection pattern
 
 #### 8. Dependencies Structure ✅
+
 - **Modified**: `internal/httpapi/dependencies.go`
 - **Added**: `HLSTranscoder` field to `HandlerDependencies`
 - **Pattern**: Proper dependency injection throughout the stack
@@ -138,6 +150,7 @@ ffmpeg -i rtmp://localhost:1935/{streamKey} \
 ### Phase 3: VOD Conversion ✅
 
 #### 9. VOD Converter Service ✅
+
 - **File**: `internal/livestream/vod_converter.go` (~450 lines)
 - **Architecture**: Worker pool with configurable concurrency
 - **Features**:
@@ -150,6 +163,7 @@ ffmpeg -i rtmp://localhost:1935/{streamKey} \
   - Job status tracking (pending → processing → completed/failed)
 
 **Key Methods**:
+
 - `ConvertStreamToVOD(ctx, stream)`: Queue conversion job after stream ends
 - `processJob(job)`: Multi-step conversion process
 - `concatenateSegments(ctx, job)`: FFmpeg concatenation from HLS playlist
@@ -159,6 +173,7 @@ ffmpeg -i rtmp://localhost:1935/{streamKey} \
 - `Shutdown(ctx)`: Graceful worker pool shutdown with job completion
 
 **FFmpeg Commands**:
+
 ```bash
 # Step 1: Segment concatenation
 ffmpeg -allowed_extensions ALL \
@@ -176,12 +191,14 @@ ffmpeg -i {output}.tmp \
 ```
 
 **Error Handling**:
+
 - Failed jobs logged with full error context
 - Partial output files cleaned up on failure
 - Job status tracked in memory for monitoring
 - Non-critical errors (IPFS, DB) logged but don't fail conversion
 
 #### 10. RTMP Integration ✅
+
 - **Modified**: `internal/livestream/rtmp_server.go`
 - **Features**:
   - Automatic VOD conversion trigger on stream end
@@ -190,6 +207,7 @@ ffmpeg -i {output}.tmp \
   - Structured logging for VOD lifecycle
 
 #### 11. Application Wiring ✅
+
 - **Modified**: `internal/app/app.go`
 - **Features**:
   - VOD converter initialization with 2 workers by default
@@ -200,6 +218,7 @@ ffmpeg -i {output}.tmp \
 ### Phase 4: Testing & Polish ✅
 
 #### 12. HLS Transcoder Tests ✅
+
 - **File**: `internal/livestream/hls_transcoder_test.go` (~480 lines, 14 tests)
 - **Test Coverage**:
   - `TestGetQualityVariants`: Verify 4 quality presets with correct parameters
@@ -216,6 +235,7 @@ ffmpeg -i {output}.tmp \
 **Mock Repository**: `MockLiveStreamRepository` with all required interface methods
 
 #### 13. VOD Converter Tests ✅
+
 - **File**: `internal/livestream/vod_converter_test.go` (~450 lines, 11 tests)
 - **Test Coverage**:
   - `TestNewVODConverter`: Verify initialization with custom workers
@@ -237,6 +257,7 @@ ffmpeg -i {output}.tmp \
 ### Phase 5: Deferred Items ✅
 
 #### 14. Full IPFS Integration ✅
+
 - **Modified**: `internal/livestream/vod_converter.go` (~90 additional lines)
 - **Implementation**: Complete IPFS upload using Kubo HTTP API
 - **Features**:
@@ -250,6 +271,7 @@ ffmpeg -i {output}.tmp \
   - Graceful error handling (logs warning but doesn't fail VOD)
 
 **IPFS Request**:
+
 ```http
 POST /api/v0/add?pin=true&cid-version=1&raw-leaves=true
 Content-Type: multipart/form-data; boundary=...
@@ -263,11 +285,13 @@ Content-Type: application/octet-stream
 ```
 
 **IPFS Response** (NDJSON):
+
 ```json
 {"Name":"stream.mp4","Hash":"bafybeiabc123...","Size":"1234567"}
 ```
 
 #### 15. Video Database Creation ✅
+
 - **Modified**: `internal/livestream/vod_converter.go` (~70 additional lines)
 - **Implementation**: Complete video entry creation from streams
 - **Features**:
@@ -280,6 +304,7 @@ Content-Type: application/octet-stream
   - Sets appropriate status (completed) and privacy (public)
 
 **Video Fields Populated**:
+
 - `id`: Generated UUID
 - `title`: From stream title
 - `description`: Auto-generated ("Recording of live stream: {title}")
@@ -296,6 +321,7 @@ Content-Type: application/octet-stream
 - `status`: "completed"
 
 #### 16. Linting & Error Handling ✅
+
 - **Modified**: `internal/livestream/vod_converter.go`
 - **Fixed**: All `errcheck` linting errors for Close() calls
 - **Pattern**:
@@ -304,6 +330,7 @@ Content-Type: application/octet-stream
   - Proper cleanup in error paths
 
 **Error Handling Examples**:
+
 ```go
 // Deferred close with logging
 defer func() {
@@ -394,6 +421,7 @@ Stream Ends
 ## Test Results
 
 ### Unit Tests
+
 ```bash
 === HLS Transcoder Tests ===
 ok      athena/internal/livestream      0.951s
@@ -427,6 +455,7 @@ ok      athena/internal/livestream      0.951s
 **Total**: 25 tests (24 passing, 1 skipped), ~930 test lines
 
 ### Build Verification
+
 ```bash
 $ go build -o /dev/null ./cmd/server
 # Success - no errors
@@ -438,7 +467,9 @@ $ golangci-lint run --timeout=5m ./internal/...
 ## Files Created/Modified
 
 ### New Files (5 files, ~2,080 lines)
+
 **Production Code** (3 files, ~1,150 lines):
+
 1. `internal/livestream/hls_transcoder.go` - HLS transcoding service (~400 lines)
 2. `internal/httpapi/hls_handlers.go` - HLS HTTP handlers (~300 lines)
 3. `internal/livestream/vod_converter.go` - VOD conversion service (~450 lines)
@@ -448,6 +479,7 @@ $ golangci-lint run --timeout=5m ./internal/...
 5. `internal/livestream/vod_converter_test.go` - VOD converter tests (~450 lines, 11 tests)
 
 ### Modified Files (8 files, ~100 additional lines)
+
 1. `internal/config/config.go` - Added 11 HLS/FFmpeg/VOD config fields
 2. `internal/livestream/vod_converter.go` - IPFS upload & video creation (~100 additional lines with error handling)
 3. `internal/livestream/rtmp_server.go` - Integrated HLS transcoding & VOD conversion
@@ -458,6 +490,7 @@ $ golangci-lint run --timeout=5m ./internal/...
 8. `internal/httpapi/routes.go` - Added HLS transcoder initialization
 
 ### Documentation Files (3 files)
+
 1. `SPRINT6_PLAN.md` - Implementation plan
 2. `SPRINT6_PROGRESS.md` - Progress tracking
 3. `SPRINT6_COMPLETE.md` - This completion summary
@@ -467,6 +500,7 @@ $ golangci-lint run --timeout=5m ./internal/...
 ## Technical Highlights
 
 ### Performance Optimizations
+
 1. **Single FFmpeg Process**: All variants transcoded in one process (efficient CPU usage)
 2. **Fast Encoding**: `veryfast` preset for low latency (~2-3 seconds)
 3. **Zero Latency Tuning**: Optimized for live streaming
@@ -476,6 +510,7 @@ $ golangci-lint run --timeout=5m ./internal/...
 7. **Job Queue**: 100-capacity channel buffer for bursts
 
 ### Security Features
+
 1. **Privacy-Aware**: Respects stream privacy settings
 2. **Path Traversal Protection**: Whitelist validation for variants and segments
 3. **Authentication**: Required for private streams
@@ -484,6 +519,7 @@ $ golangci-lint run --timeout=5m ./internal/...
 6. **Error Handling**: Safe error messages without sensitive information
 
 ### Reliability
+
 1. **Graceful Shutdown**: Proper cleanup of FFmpeg processes and VOD workers
 2. **Context Cancellation**: Clean termination on stream end
 3. **Non-Blocking Failures**: RTMP/HLS continues if VOD fails
@@ -493,6 +529,7 @@ $ golangci-lint run --timeout=5m ./internal/...
 7. **Nil Safety**: Proper nil checks throughout (e.g., job.Ctx, job.Cancel)
 
 ### IPFS Integration
+
 1. **CIDv1 Format**: Better compatibility with modern IPFS tools
 2. **Raw Leaves**: Efficient chunking for large video files
 3. **Automatic Pinning**: Files pinned on upload
@@ -501,6 +538,7 @@ $ golangci-lint run --timeout=5m ./internal/...
 6. **Non-Critical**: IPFS errors logged but don't fail VOD conversion
 
 ### Database Integration
+
 1. **Metadata Extraction**: ffprobe integration for video duration
 2. **Complete Video Records**: All required fields populated
 3. **Searchability**: Tags for discovery ("livestream", "recording", "replay")
@@ -511,6 +549,7 @@ $ golangci-lint run --timeout=5m ./internal/...
 ## Usage Examples
 
 ### 1. Enable HLS Transcoding
+
 ```bash
 # Environment variables
 export ENABLE_LIVE_STREAMING=true
@@ -526,6 +565,7 @@ export REPLAY_RETENTION_DAYS=30
 ```
 
 ### 2. Start Streaming (OBS)
+
 ```
 Server: rtmp://your-server:1935
 Stream Key: {your-stream-key}
@@ -534,6 +574,7 @@ Stream Key: {your-stream-key}
 ### 3. Watch in Browser
 
 **Option 1: Native HTML5 (Safari)**
+
 ```html
 <video controls>
   <source src="https://your-server/api/v1/streams/{id}/hls/master.m3u8"
@@ -542,6 +583,7 @@ Stream Key: {your-stream-key}
 ```
 
 **Option 2: Video.js (All Browsers)**
+
 ```html
 <link href="https://vjs.zencdn.net/7.20.3/video-js.css" rel="stylesheet">
 <script src="https://vjs.zencdn.net/7.20.3/video.min.js"></script>
@@ -562,6 +604,7 @@ Stream Key: {your-stream-key}
 ```
 
 ### 4. Check HLS Availability
+
 ```bash
 curl https://your-server/api/v1/streams/{id}/hls-info
 
@@ -579,6 +622,7 @@ curl https://your-server/api/v1/streams/{id}/hls-info
 ### 5. VOD Conversion (Automatic)
 
 When you end your stream:
+
 1. ✅ HLS transcoding stops gracefully
 2. ✅ VOD job queued automatically
 3. ✅ Best quality variant selected (1080p → 720p → 480p → 360p)
@@ -624,6 +668,7 @@ IPFS_API=http://localhost:5001          # IPFS Kubo API endpoint
 ## Known Limitations & Future Work
 
 ### Current Limitations
+
 1. **FFmpeg Required**: Must have FFmpeg 4.4+ installed on server
 2. **CPU Intensive**: Each stream uses ~1 CPU core for transcoding
 3. **Disk I/O**: Each stream writes ~1-2 MB/s during live streaming
@@ -631,6 +676,7 @@ IPFS_API=http://localhost:5001          # IPFS Kubo API endpoint
 5. **Large IPFS Uploads**: VOD files can be 100MB-1GB+, may take minutes
 
 ### Future Enhancements (Sprint 7+)
+
 - [ ] Integration tests for full live → HLS → VOD flow
 - [ ] Load testing with multiple concurrent streams
 - [ ] GPU acceleration (NVENC/VAAPI) for better performance
@@ -640,6 +686,7 @@ IPFS_API=http://localhost:5001          # IPFS Kubo API endpoint
 - [ ] DVR seek controls (programmatic seeking)
 
 ### Sprint 7 - Enhanced Features
+
 - Live chat integration
 - Stream scheduling and waiting rooms
 - Stream recording options (start/stop)
@@ -648,6 +695,7 @@ IPFS_API=http://localhost:5001          # IPFS Kubo API endpoint
 - Peak viewer tracking
 
 ### Sprint 8 - Monitoring & Observability
+
 - Prometheus metrics for HLS/VOD
 - Grafana dashboards
 - Alerting on transcoding failures
@@ -658,6 +706,7 @@ IPFS_API=http://localhost:5001          # IPFS Kubo API endpoint
 ## Success Metrics ✅
 
 ### All Achieved
+
 - ✅ Live streams automatically transcode to HLS
 - ✅ Multiple quality variants generated (1080p, 720p, 480p, 360p)
 - ✅ Browser playback via HTML5 video
@@ -691,6 +740,7 @@ Sprint 6 is **100% complete** with production-ready HLS streaming and VOD conver
 The system enables real-time browser-based playback of live streams with automatic VOD preservation and discoverability. All code follows Go best practices with proper error handling, graceful shutdown, and concurrent-safe design.
 
 **Next Steps**:
+
 - Sprint 7: Enhanced live streaming features (chat, scheduling, analytics)
 - Sprint 8: Monitoring and observability (Prometheus, Grafana, alerts)
 

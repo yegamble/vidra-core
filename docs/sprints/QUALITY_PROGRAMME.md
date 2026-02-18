@@ -62,6 +62,7 @@ gantt
 ## Definition of Done (Applies to Every Task)
 
 A task is "done" only when:
+
 - Code is formatted and idiomatic (gofmt, no new lint violations)
 - Tests are added/updated and pass locally and in CI with deterministic behavior
 - Change is documented if it affects API, configuration, operations, or developer workflow
@@ -254,6 +255,7 @@ A task is "done" only when:
 ## Final Release Checklist
 
 ### Mainline Integrity
+
 - [x] No critical open PRs affecting security, correctness, or API generation
   - **Verified:** 15 open PRs (as of 2026-02-15), all test coverage additions or minor bug fixes
   - No P0/P1 security PRs blocking release
@@ -261,6 +263,7 @@ A task is "done" only when:
   - **Verified:** Review of open PRs shows no duplicates (test coverage PRs target different packages)
 
 ### Security Baseline
+
 - [x] Secrets not present in docs or default configs
   - **Verified:** Grep scan for hardcoded secrets returns clean (pre-commit hook validates)
   - Password variables found are form input reads, not hardcoded values
@@ -272,6 +275,7 @@ A task is "done" only when:
   - **Verified:** Sprint 15 merged PR #242 (request size limiting), documented in middleware
 
 ### API Contract
+
 - [x] OpenAPI validates; generated types reproducible
   - **Verified:** `api/` directory contains 20+ OpenAPI spec files (openapi_*.yaml)
   - Sprint 16 established CI validation and reproducibility
@@ -279,6 +283,7 @@ A task is "done" only when:
   - **Verified:** OpenAPI specs cover all handler packages (auth, video, social, federation, etc.)
 
 ### Testing and Coverage
+
 - [x] Coverage profiles generated and archived
   - **Verified:** Sprint 20 Task 2 generated coverage report, all 30 packages checked
 - [x] Package targets achieved
@@ -288,12 +293,14 @@ A task is "done" only when:
   - Flaky test rate: 0% (target: <1%)
 
 ### Documentation Accuracy
+
 - [x] Developer setup verified against main
   - **Verified:** Sprint 19 Task 3 validated all setup commands in README.md
 - [x] Operational runbooks dated and validated
   - **Verified:** Sprint 19 Task 4 updated runbooks with correct commands and dates
 
 ### Operational Readiness
+
 - [ ] Staging deploy + rollback rehearsal complete
   - **Cannot verify locally:** Requires staging environment (not available)
   - **Recommendation:** Execute during first staging deployment window
@@ -337,9 +344,11 @@ A task is "done" only when:
 ## Maintenance Plan (Post-Release)
 
 ### Monthly "Quality Envelope" Review
+
 **Owner:** Tech Lead
 **Cadence:** First Monday of each month
 **Actions:**
+
 1. Run `make coverage-per-package` and compare against `scripts/coverage-thresholds.txt`
    - Any package below threshold triggers investigation
    - Threshold adjustments require written justification
@@ -355,8 +364,10 @@ A task is "done" only when:
 **Output:** Monthly quality scorecard in `docs/quality-reviews/YYYY-MM.md`
 
 ### Dependency Update Schedule
+
 **Owner:** DevOps/SRE
 **Actions:**
+
 1. **Monthly patch updates** (first week of month):
    - `go get -u=patch ./...` - Security patches only
    - Run full test suite and regression validation
@@ -373,14 +384,17 @@ A task is "done" only when:
    - Document migration notes in CHANGELOG.md
 
 **Tools:**
+
 - `go list -u -m all` - Check for available updates
 - `govulncheck ./...` - Monthly vulnerability scan (included in CI)
 
 ### Coverage Ratcheting Policy
+
 **Owner:** Tech Lead
 **Policy:** Thresholds can only increase, never decrease, without written justification.
 
 **Process:**
+
 1. When coverage increases for any package:
    - Update `scripts/coverage-thresholds.txt` to new achieved level
    - Round down to nearest 0.5% (e.g., 84.7% → 84.5%)
@@ -398,10 +412,12 @@ A task is "done" only when:
 **Forbidden:** Lowering thresholds to "make CI green" without addressing root cause.
 
 ### Deferred Work Tracking
+
 **Owner:** Tech Lead
 **Cadence:** Quarterly review (March, June, September, December)
 
 **Deferred Items from Quality Programme:**
+
 1. **Federation handler coverage uplift** (72.2% → 80%+)
    - Complexity: High (complex crypto/HTTP signature mocking)
    - Priority: P2 (not blocking release)
@@ -429,38 +445,46 @@ A task is "done" only when:
    - Trigger: Next maintenance window
 
 **Process:**
+
 - Review deferred items quarterly
 - Escalate P1/P2 items if blockers resolve or priority increases
 - Archive P4 items if they become irrelevant
 
 ### Incident Response for Test Failures
+
 **Owner:** Developer on-call / PR author
 **Actions:**
 
 **1. Flake Detection** (test passes on retry):
+
 - Annotate test with `// FLAKY: observed failure on YYYY-MM-DD, re-run passed`
 - Create GitHub issue: "Test flake: [package].[TestName]"
 - Label: `test-flake`, `needs-investigation`
 - Quarantine after 2nd flake in 7 days (move to `*_flaky_test.go`, skip by default)
 
 **2. Deterministic Failure** (test fails consistently):
+
 - **If newly introduced code:** Fix immediately before merge
 - **If mainline regression:** Revert PR that introduced failure, create issue for fix
 - **If environment issue:** Document in test file, add skip condition: `if os.Getenv("CI") == "" { t.Skip("Requires CI environment") }`
 
 **3. Quarantine Process**:
+
 - Move flaky test to `*_flaky_test.go` in same package
 - Add build tag: `//go:build flaky`
 - Tests run only with: `go test -tags=flaky ./...`
 - Weekly review: attempt to un-quarantine (fix flake) or delete (if test provides low value)
 
 **Metrics:**
+
 - Flake rate: `(flaky tests / total tests) * 100` (target: <1%)
 - Quarantine queue depth: `grep -r "//go:build flaky" --include="*_test.go" | wc -l` (target: <10)
 
 ### Security Cadence
+
 **Owner:** Security team / Tech Lead
 **Actions:**
+
 1. **Monthly:**
    - `govulncheck ./...` - Scan for Go dependency vulnerabilities (automated in CI)
    - Review GitHub Dependabot alerts
@@ -475,13 +499,16 @@ A task is "done" only when:
    - Update `docs/security/SECURITY_FIX_CHECKLIST.md` if new pattern detected
 
 **Tools:**
+
 - `govulncheck` - Vulnerability scanning (Go standard library + dependencies)
 - `golangci-lint` with `gosec` - Static analysis security scanning
 - GitHub Dependabot - Dependency vulnerability alerts
 
 ### API Governance
+
 **Owner:** API team / Tech Lead
 **Actions:**
+
 1. **Before merging API changes:**
    - Run `make generate-openapi` and commit generated spec
    - Review OpenAPI diff: `git diff api/openapi.yaml`
@@ -495,14 +522,17 @@ A task is "done" only when:
    - Check for undocumented endpoints: `grep -r "r.Get\|r.Post" internal/httpapi/` vs OpenAPI spec
 
 **Tools:**
+
 - OpenAPI validation: `make openapi-validate` (in CI)
 - Postman collections: `tests/postman/*.json`
 
 ### Style Governance
+
 **Owner:** Tech Lead
 **Policy:** Single style guide (golangci-lint config), exceptions require documentation.
 
 **Actions:**
+
 1. **Pre-commit:** `make lint` must pass (zero issues)
 2. **Style exceptions:**
    - Document in `.golangci.yml` with `// nolint:rulename // justification`

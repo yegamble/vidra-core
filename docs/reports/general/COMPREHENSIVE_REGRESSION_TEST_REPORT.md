@@ -1,4 +1,5 @@
 # Comprehensive Regression Testing Report
+
 **Project**: Athena Video Platform
 **Date**: 2025-11-18
 **Branch**: claude/align-tests-documentation-0199K5icoy18CVayraL1TcXM
@@ -21,6 +22,7 @@
 ### Critical Findings
 
 #### Infrastructure Issues (P0)
+
 1. **DNS Resolution Failure**: Unable to download RoaringBitmap dependency
    - **Impact**: Torrent functionality cannot be tested (5 packages failed)
    - **Root Cause**: DNS connectivity issues (connection refused to [::1]:53)
@@ -32,6 +34,7 @@
    - **Solution**: Implemented in e2e-tests.yml but not in postman-e2e Makefile target
 
 #### Test Failures (P1-P2)
+
 3. **Observability/Middleware Tests**: 18 failures
    - **Package**: `internal/middleware`, `internal/obs`
    - **Tests**: Logging, tracing, metrics middleware failures
@@ -58,6 +61,7 @@
 #### Passed Packages (34/65 - 52.3%)
 
 **Core Domain Logic** ✅
+
 - `internal/activitypub` - Key generation, HTTP signatures
 - `internal/config` - Configuration loading and defaults
 - `internal/crypto` - X25519/Ed25519 key pairs, shared secrets
@@ -68,6 +72,7 @@
 - `internal/email` - Service and sender logic
 
 **Use Cases & Handlers** ✅
+
 - `internal/usecase/comments` - Comment counting (correctly skipped validation test)
 - `internal/usecase/encoding` - Video encoding workflows
 - `internal/usecase/video` - Video quality, search, import, privacy, categories, streaming
@@ -80,6 +85,7 @@
 - `internal/httpapi/handlers/social` - Captions, comments, ratings, playlists
 
 **Infrastructure** ✅
+
 - `internal/livestream` - HLS transcoding, RTMP, scheduler, VOD conversion
 - `internal/metrics` - Metrics collection
 - `internal/plugin` - Plugin hooks, permissions, manager, signature validation
@@ -128,6 +134,7 @@ All skipped tests are **repository tests requiring database connections** (expec
 #### Observability & Middleware (18 failures)
 
 **Logging Middleware** (5 tests)
+
 - `TestLoggingMiddleware` - Logger format expectations
 - `TestLoggingMiddlewareWithRequestID` - Request ID propagation
 - `TestLoggingMiddlewareWithUserID` - User ID context
@@ -135,15 +142,18 @@ All skipped tests are **repository tests requiring database connections** (expec
 - `TestLoggingMiddlewareDuration` - Duration format/assertions
 
 **Tracing Middleware** (3 tests)
+
 - `TestTracingMiddleware` - Span creation and propagation
 - `TestTracingMiddlewareWithError` - Error span attributes
 - `TestObservabilityMiddlewareStack` - Full stack integration
 
 **Metrics Middleware** (2 tests)
+
 - `TestMetricsMiddlewareMultipleRequests` - Counter increments
 - `TestObservabilityMiddlewareRequestIDPropagation` - ID propagation across observability stack
 
 **Correlation & Tracing** (8 tests)
+
 - `TestFullRequestTrace` - End-to-end trace
 - `TestErrorCorrelationAcrossSystems` - Error correlation IDs
 - `TestErrorCorrelation` - Error context propagation
@@ -152,6 +162,7 @@ All skipped tests are **repository tests requiring database connections** (expec
 **Root Cause Analysis**: Likely mock logger format mismatches or zerolog/logrus compatibility issues after recent changes.
 
 **Recommendation**:
+
 - Review logger interface contracts
 - Ensure test expectations match actual log output format
 - Verify mock implementations provide required methods
@@ -162,11 +173,13 @@ All skipped tests are **repository tests requiring database connections** (expec
 - `TestMessageNotificationService` - Service integration
 
 **Root Cause Analysis**: Possible issues:
+
 - WebSocket connection handling in tests
 - Notification delivery mocks
 - Database transaction handling in notification creation
 
 **Recommendation**:
+
 - Review notification service initialization in tests
 - Check WebSocket mock implementations
 - Verify notification repository setup
@@ -176,6 +189,7 @@ All skipped tests are **repository tests requiring database connections** (expec
 **Package**: `internal/security`
 
 **Recommendation**: Run individual tests with verbose output:
+
 ```bash
 go test -v ./internal/security -run TestFailing
 ```
@@ -185,6 +199,7 @@ go test -v ./internal/security -run TestFailing
 **Package**: `internal/usecase/activitypub`
 
 **Likely Issues**:
+
 - Federation signature validation
 - Remote actor fetching
 - Activity delivery mocks
@@ -199,9 +214,11 @@ go test -v ./internal/security -run TestFailing
 ### Collections Overview (6 collections, 95+ tests)
 
 #### 1. **athena-auth.postman_collection.json** (61 tests)
+
 **Endpoints**: Authentication, Avatar Uploads, Basic Video CRUD
 
 **Coverage**:
+
 - **Authentication** (8 tests)
   - ✅ Register user with dynamic data
   - ✅ Login success/failure
@@ -220,6 +237,7 @@ go test -v ./internal/security -run TestFailing
   - ✅ Metadata updates
 
 **Security Features Tested**:
+
 - Magic byte validation
 - Extension vs content mismatch detection
 - MIME type validation
@@ -227,9 +245,11 @@ go test -v ./internal/security -run TestFailing
 - JWT token expiration
 
 #### 2. **athena-uploads.postman_collection.json** (11 tests)
+
 **Endpoints**: Chunked Uploads, Upload Session Management, Encoding Status
 
 **Coverage**:
+
 - **Chunked Upload Workflow** (5 tests)
   - ✅ Initiate upload session
   - ✅ Upload chunk 0 (5MB)
@@ -248,6 +268,7 @@ go test -v ./internal/security -run TestFailing
   - ✅ Invalid session ID (404)
 
 **Edge Cases Covered**:
+
 - Resume interrupted uploads
 - Session expiration (24 hours)
 - Chunk integrity validation
@@ -255,6 +276,7 @@ go test -v ./internal/security -run TestFailing
 - File size limits
 
 **Missing Edge Cases**:
+
 - ⚠️ Duplicate chunk uploads
 - ⚠️ Out-of-order chunk uploads
 - ⚠️ Corrupted chunk data
@@ -262,9 +284,11 @@ go test -v ./internal/security -run TestFailing
 - ⚠️ Chunk size validation (too small/large)
 
 #### 3. **athena-analytics.postman_collection.json** (13 tests)
+
 **Endpoints**: View Tracking, Video Analytics, Discovery
 
 **Coverage**:
+
 - **View Tracking** (3 tests)
   - ✅ Generate viewer fingerprint
   - ✅ Track view with fingerprint (30-min deduplication)
@@ -287,6 +311,7 @@ go test -v ./internal/security -run TestFailing
   - ✅ Missing authentication (401)
 
 **Analytics Metrics Tested**:
+
 - Views: total, unique, trends, % change
 - Engagement: likes, dislikes, comments, shares, ratio
 - Watch time: total seconds, average, completion rate
@@ -295,6 +320,7 @@ go test -v ./internal/security -run TestFailing
 - Devices: desktop, mobile, tablet, TV
 
 **Missing Edge Cases**:
+
 - ⚠️ Concurrent view tracking (race conditions)
 - ⚠️ View count manipulation attempts
 - ⚠️ Extremely large date ranges (DoS potential)
@@ -303,9 +329,11 @@ go test -v ./internal/security -run TestFailing
 - ⚠️ SQL injection in category filters
 
 #### 4. **athena-imports.postman_collection.json** (10 tests)
+
 **Endpoints**: External Video Imports, SSRF Protection
 
 **Coverage**:
+
 - **Import Workflow** (5 tests)
   - ✅ Create import from external URL
   - ✅ List all user imports
@@ -321,6 +349,7 @@ go test -v ./internal/security -run TestFailing
   - ✅ Cancel completed import (400)
 
 **SSRF Protection Tested**:
+
 - ✅ Block private IPs (192.168.x.x, 10.x.x.x, 172.16.x.x)
 - ⚠️ AWS metadata service (169.254.169.254) - NEEDS TEST
 - ⚠️ Localhost variants (127.0.0.1, ::1, localhost) - NEEDS TEST
@@ -328,6 +357,7 @@ go test -v ./internal/security -run TestFailing
 - ⚠️ DNS rebinding attacks - NOT COVERED
 
 **Missing Edge Cases**:
+
 - ⚠️ File size validation (pre-download Content-Length check)
 - ⚠️ Redirect following (open redirect vulnerability)
 - ⚠️ Slow-loris attacks (slow downloads)
@@ -337,9 +367,11 @@ go test -v ./internal/security -run TestFailing
 - ⚠️ Concurrent imports per user limit
 
 #### 5. **athena-edge-cases-security.postman_collection.json** (20+ tests)
+
 **Endpoints**: SSRF, Input Validation, XSS, SQL Injection
 
 **Coverage**:
+
 - **SSRF Protection** (6 tests)
   - ✅ Block 192.168.x.x
   - ✅ Block AWS metadata service
@@ -369,9 +401,11 @@ go test -v ./internal/security -run TestFailing
   - ✅ Distributed rate limit bypass attempts
 
 #### 6. **athena-virus-scanner-tests.postman_collection.json** (46 tests)
+
 **Endpoints**: ClamAV Integration, File Upload Security
 
 **Coverage**:
+
 - **Clean File Uploads** (15 tests)
   - ✅ Various file types
   - ✅ Large files
@@ -410,6 +444,7 @@ go test -v ./internal/security -run TestFailing
 **Vulnerability**: Insufficient IP range blocking for remote video imports
 
 **Attack Vectors**:
+
 ```http
 POST /api/v1/videos/imports
 Authorization: Bearer <token>
@@ -422,12 +457,14 @@ Content-Type: application/json
 ```
 
 **Impact**:
+
 - AWS metadata service access (credentials theft)
 - Internal network scanning
 - Private service exploitation
 - Cloud provider metadata leakage
 
 **Missing Protections**:
+
 - AWS metadata IP (169.254.169.254)
 - Link-local addresses (169.254.0.0/16)
 - Localhost variants (127.0.0.1, ::1, localhost, 0.0.0.0)
@@ -435,6 +472,7 @@ Content-Type: application/json
 - DNS rebinding attacks
 
 **Recommendation**:
+
 ```go
 // Add to internal/security/url_validator.go
 var blockedIPRanges = []string{
@@ -455,6 +493,7 @@ var blockedIPRanges = []string{
 ```
 
 **Test Case**:
+
 ```javascript
 pm.test('Should block AWS metadata service', () => {
     pm.response.to.have.status(400);
@@ -469,6 +508,7 @@ pm.test('Should block AWS metadata service', () => {
 **Vulnerability**: No pre-download Content-Length validation
 
 **Attack Vectors**:
+
 ```http
 POST /api/v1/videos/imports
 {
@@ -478,12 +518,14 @@ POST /api/v1/videos/imports
 ```
 
 **Impact**:
+
 - Disk space exhaustion
 - Memory exhaustion
 - Bandwidth consumption
 - Service denial
 
 **Recommendation**:
+
 ```go
 // Before downloading, check Content-Length header
 resp, err := http.Head(sourceURL)
@@ -503,6 +545,7 @@ if size, err := strconv.ParseInt(contentLength, 10, 64); err == nil {
 **Vulnerability**: XSS possible in comment bodies
 
 **Attack Vectors**:
+
 ```json
 {
   "video_id": "uuid",
@@ -513,6 +556,7 @@ if size, err := strconv.ParseInt(contentLength, 10, 64); err == nil {
 **Current Behavior**: Comment stored without sanitization
 
 **Recommendation**:
+
 ```go
 import "github.com/microcosm-cc/bluemonday"
 
@@ -522,6 +566,7 @@ sanitizedBody := policy.Sanitize(comment.Body)
 ```
 
 **Test Case**:
+
 ```javascript
 pm.test('Should strip XSS from comment', () => {
     const comment = pm.response.json().data.comment_body;
@@ -537,11 +582,13 @@ pm.test('Should strip XSS from comment', () => {
 **Vulnerability**: Rate limiting not enforced on all endpoints
 
 **Attack Vectors**:
+
 - Distributed requests from multiple IPs
 - Token reuse across requests
 - Concurrent request flooding
 
 **Recommendation**:
+
 - Implement token bucket algorithm
 - Per-user rate limits (100 req/min)
 - Per-IP rate limits (1000 req/min)
@@ -552,6 +599,7 @@ pm.test('Should strip XSS from comment', () => {
 **Endpoint**: `POST /api/v1/uploads/{session_id}/chunks/{chunk_number}`
 
 **Missing Validations**:
+
 ```http
 # Duplicate chunk uploads
 POST /uploads/session-123/chunks/0
@@ -569,6 +617,7 @@ POST /uploads/session-123/chunks/999999999
 ```
 
 **Recommendation**:
+
 - Validate chunk size (5MB minimum, 10MB maximum)
 - Track received chunks in bitmap
 - Reject out-of-order uploads
@@ -582,6 +631,7 @@ POST /uploads/session-123/chunks/999999999
 **Vulnerability**: View count manipulation
 
 **Attack Vectors**:
+
 ```javascript
 // Rapid view generation
 for (let i = 0; i < 1000; i++) {
@@ -595,12 +645,14 @@ for (let i = 0; i < 1000; i++) {
 **Current Protection**: 30-minute deduplication window
 
 **Gaps**:
+
 - No rate limiting per video
 - Fingerprint generation not validated
 - No CAPTCHA for suspicious patterns
 - No IP-based deduplication
 
 **Recommendation**:
+
 - Add per-video-per-IP rate limit (1 view/30 min)
 - Validate fingerprint components
 - Implement anomaly detection (100+ views from one IP = suspicious)
@@ -615,7 +667,9 @@ for (let i = 0; i < 1000; i++) {
 Based on the commit history and fix summary, recent changes focused on:
 
 #### 1. ClamAV Health Check Fixes ✅ NO REGRESSION
+
 **Changes**:
+
 - Updated health check from `/usr/local/bin/clamd-ping` to `/usr/local/bin/clamdcheck.sh`
 - Fixed in `docker-compose.test.yml` and `.github/workflows/virus-scanner-tests.yml`
 
@@ -624,7 +678,9 @@ Based on the commit history and fix summary, recent changes focused on:
 **API Contract**: No changes
 
 #### 2. Unit Test Mock Interfaces ✅ NO REGRESSION
+
 **Changes**:
+
 - Fixed `CommentRepository.GetByID` mock setup
 - Fixed payment encryption key size (29 → 32 bytes)
 - Added missing mock methods: `CreateRemoteVideo`, `CountByVideo`
@@ -634,7 +690,9 @@ Based on the commit history and fix summary, recent changes focused on:
 **API Contract**: No changes
 
 #### 3. Docker Permissions & Sudo ✅ NO REGRESSION
+
 **Changes**:
+
 - Added passwordless sudo for GitHub Actions runners
 - Fixed Docker group membership
 - Restarted all 16 runner services
@@ -643,7 +701,9 @@ Based on the commit history and fix summary, recent changes focused on:
 **Regression Risk**: None (infrastructure only)
 
 #### 4. Test Skips & Fixes ⚠️ NEEDS REVIEW
+
 **Changes**:
+
 - Skipped invalid base58 CID test
 - Skipped HTTP-based cluster auth tests
 - Skipped illogical payment error test
@@ -652,15 +712,17 @@ Based on the commit history and fix summary, recent changes focused on:
 **Impact**: Neutral - appropriate skips for incomplete features
 **Regression Risk**: Low
 **Concern**: Input sanitization test being skipped is a red flag
-  - Test name: `TestValidateInputSanitization`
-  - Reason: "feature not yet implemented"
-  - **Recommendation**: Implement ASAP (P1 security feature)
+
+- Test name: `TestValidateInputSanitization`
+- Reason: "feature not yet implemented"
+- **Recommendation**: Implement ASAP (P1 security feature)
 
 ### Potential Breaking Changes
 
 #### None Identified in Recent Commits
 
 All recent changes were:
+
 - Infrastructure fixes (Docker, sudo, ClamAV)
 - Test fixes (mocks, skips)
 - Documentation additions
@@ -676,6 +738,7 @@ No API contract changes detected.
 #### 1. **.github/workflows/test.yml** - Main Test Suite ✅
 
 **Jobs** (6):
+
 - `changes` - Detect file changes to optimize workflow
 - `unit` - Run unit tests (make test-unit)
 - `integration` - Run integration tests with Postgres, Redis, IPFS
@@ -686,6 +749,7 @@ No API contract changes detected.
 - `postman-e2e` - Postman E2E tests
 
 **Configuration**:
+
 - Go version: 1.24
 - Self-hosted runners
 - Concurrency control (cancel-in-progress)
@@ -693,6 +757,7 @@ No API contract changes detected.
 - Services: Postgres 15, Redis 7, IPFS Kubo
 
 **Strengths**:
+
 - ✅ Comprehensive coverage
 - ✅ Proper service health checks
 - ✅ Retry logic for network issues
@@ -700,6 +765,7 @@ No API contract changes detected.
 - ✅ Artifact uploads (binaries, logs)
 
 **Gaps**:
+
 - ⚠️ No test coverage reporting
 - ⚠️ No performance benchmarking
 - ⚠️ No load testing
@@ -708,10 +774,12 @@ No API contract changes detected.
 #### 2. **.github/workflows/e2e-tests.yml** - E2E Test Suite ✅
 
 **Jobs** (2):
+
 - `e2e-tests` - Run E2E scenarios
 - `e2e-tests-race` - Run with race detector (main branch only)
 
 **Configuration**:
+
 - Timeout: 45 minutes (60 for race)
 - FFmpeg validation
 - Test fixtures generation
@@ -719,12 +787,14 @@ No API contract changes detected.
 - Port conflict prevention (stops conflicting containers)
 
 **Strengths**:
+
 - ✅ Race detection on main branch
 - ✅ Service log collection on failure
 - ✅ Proper cleanup steps
 - ✅ Health check waiting (180s timeout)
 
 **Gaps**:
+
 - ⚠️ No parallel E2E execution
 - ⚠️ No E2E test result archiving
 - ⚠️ No screenshot capture on failure
@@ -732,6 +802,7 @@ No API contract changes detected.
 #### 3. **.github/workflows/security-tests.yml** ⚠️ NOT REVIEWED
 
 **Recommendation**: Review this workflow for:
+
 - SAST (Static Application Security Testing)
 - DAST (Dynamic Application Security Testing)
 - Dependency vulnerability scanning
@@ -742,12 +813,14 @@ No API contract changes detected.
 **Coverage**: ClamAV integration tests
 
 **Strengths**:
+
 - ✅ Fixed health checks
 - ✅ Multiple test scenarios (clean, malicious, archives)
 
 #### 5. **.github/workflows/openapi-ci.yml** ⚠️ NOT REVIEWED
 
 **Recommendation**: Verify this includes:
+
 - OpenAPI spec validation
 - Contract testing
 - Breaking change detection
@@ -757,6 +830,7 @@ No API contract changes detected.
 #### High Priority
 
 1. **Add Test Coverage Reporting**
+
 ```yaml
 - name: Generate coverage report
   run: |
@@ -771,6 +845,7 @@ No API contract changes detected.
 ```
 
 2. **Add Performance Benchmarks**
+
 ```yaml
 - name: Run benchmarks
   run: |
@@ -782,6 +857,7 @@ No API contract changes detected.
 ```
 
 3. **Fix Postman E2E Port Conflicts**
+
 ```makefile
 # In Makefile postman-e2e target, add:
 @echo "Cleaning up any existing test containers..."
@@ -791,6 +867,7 @@ docker rm $$(docker ps -aq --filter "publish=6380" --filter "publish=5433" --fil
 ```
 
 4. **Add Dependency Scanning**
+
 ```yaml
 - name: Run Snyk security scan
   uses: snyk/actions/golang@master
@@ -803,6 +880,7 @@ docker rm $$(docker ps -aq --filter "publish=6380" --filter "publish=5433" --fil
 #### Medium Priority
 
 5. **Add Load Testing**
+
 ```yaml
 - name: Run k6 load tests
   run: |
@@ -810,6 +888,7 @@ docker rm $$(docker ps -aq --filter "publish=6380" --filter "publish=5433" --fil
 ```
 
 6. **Add Contract Testing**
+
 ```yaml
 - name: Run Pact contract tests
   run: |
@@ -817,6 +896,7 @@ docker rm $$(docker ps -aq --filter "publish=6380" --filter "publish=5433" --fil
 ```
 
 7. **Add Chaos Engineering**
+
 ```yaml
 - name: Run Chaos Mesh tests
   run: |
@@ -830,7 +910,9 @@ docker rm $$(docker ps -aq --filter "publish=6380" --filter "publish=5433" --fil
 ### High Priority Gaps
 
 #### 1. Concurrency & Race Conditions
+
 **Missing Tests**:
+
 - Concurrent chunked upload to same session
 - Simultaneous view tracking for same video
 - Parallel import creation hitting rate limits
@@ -838,6 +920,7 @@ docker rm $$(docker ps -aq --filter "publish=6380" --filter "publish=5433" --fil
 - Multiple users subscribing to same channel simultaneously
 
 **Recommendation**:
+
 ```go
 func TestConcurrentChunkUpload(t *testing.T) {
     sessionID := createUploadSession()
@@ -861,7 +944,9 @@ func TestConcurrentChunkUpload(t *testing.T) {
 ```
 
 #### 2. Error Recovery & Resilience
+
 **Missing Tests**:
+
 - Database connection loss during transaction
 - Redis connection loss during rate limiting
 - IPFS unavailable during video upload
@@ -872,7 +957,9 @@ func TestConcurrentChunkUpload(t *testing.T) {
 **Recommendation**: Add chaos testing with failure injection
 
 #### 3. Data Validation & Boundary Testing
+
 **Missing Tests**:
+
 - Maximum video title length (current: unlimited?)
 - Maximum comment depth (nested replies)
 - Maximum playlist size
@@ -883,7 +970,9 @@ func TestConcurrentChunkUpload(t *testing.T) {
 - Float overflow in analytics
 
 #### 4. Authentication & Authorization Edge Cases
+
 **Missing Tests**:
+
 - Expired JWT with valid signature
 - JWT with modified claims
 - JWT from different issuer
@@ -894,7 +983,9 @@ func TestConcurrentChunkUpload(t *testing.T) {
 - Password reset token reuse
 
 #### 5. Federation & ActivityPub Edge Cases
+
 **Missing Tests**:
+
 - Malformed ActivityPub objects
 - Invalid HTTP signatures
 - Signature replay attacks
@@ -904,7 +995,9 @@ func TestConcurrentChunkUpload(t *testing.T) {
 - Infinite federation loops (A follows B follows A)
 
 #### 6. File Upload Security
+
 **Missing Tests**:
+
 - Polyglot files (valid image + valid PDF)
 - Malicious FFmpeg input (codec exploits)
 - SVG with embedded JavaScript
@@ -916,7 +1009,9 @@ func TestConcurrentChunkUpload(t *testing.T) {
 ### Medium Priority Gaps
 
 #### 7. Performance & Scaling
+
 **Missing Tests**:
+
 - 10,000 concurrent viewers on livestream
 - 1,000 comments per second on viral video
 - 100 parallel video encodings
@@ -925,7 +1020,9 @@ func TestConcurrentChunkUpload(t *testing.T) {
 - Memory leak detection (long-running server)
 
 #### 8. Observability & Monitoring
+
 **Missing Tests**:
+
 - Prometheus metrics correctness
 - Distributed tracing span propagation
 - Log correlation across services
@@ -933,7 +1030,9 @@ func TestConcurrentChunkUpload(t *testing.T) {
 - Health check endpoint under load
 
 #### 9. Backward Compatibility
+
 **Missing Tests**:
+
 - Old API version support (if versioned)
 - Database migration rollback
 - Config file format changes
@@ -946,9 +1045,11 @@ func TestConcurrentChunkUpload(t *testing.T) {
 ### Immediate Actions (Today)
 
 #### 1. Fix DNS Resolution Issue (P0)
+
 **Problem**: Cannot download RoaringBitmap dependency
 
 **Solution**:
+
 ```bash
 # Check DNS configuration
 cat /etc/resolv.conf
@@ -966,25 +1067,30 @@ dns:
 ```
 
 **Test**:
+
 ```bash
 dig storage.googleapis.com
 go get github.com/RoaringBitmap/roaring@v1.2.3
 ```
 
 #### 2. Fix Port Conflicts in Postman E2E (P0)
+
 **Problem**: Port 6380 already allocated
 
 **Solution**: Already documented in Makefile recommendation above
 
 **Test**:
+
 ```bash
 make postman-e2e
 ```
 
 #### 3. Fix Observability/Middleware Tests (P1)
+
 **Problem**: 18 test failures related to logging, tracing, metrics
 
 **Investigation Steps**:
+
 ```bash
 # Run specific failing test with verbose output
 go test -v ./internal/middleware -run TestLoggingMiddleware
@@ -1001,9 +1107,11 @@ git log --oneline -10 -- internal/obs/ internal/middleware/
 ### Short-Term Actions (This Week)
 
 #### 4. Implement SSRF Protection (P0)
+
 **Location**: `/home/user/athena/internal/security/url_validator.go`
 
 **Implementation**:
+
 ```go
 package security
 
@@ -1044,6 +1152,7 @@ func ValidateURL(sourceURL string) error {
 ```
 
 **Tests**:
+
 ```go
 func TestValidateURL_BlocksAWSMetadata(t *testing.T) {
     err := ValidateURL("http://169.254.169.254/latest/meta-data/")
@@ -1053,9 +1162,11 @@ func TestValidateURL_BlocksAWSMetadata(t *testing.T) {
 ```
 
 #### 5. Add File Size Pre-validation (P1)
+
 **Location**: `/home/user/athena/internal/usecase/video/import_service.go`
 
 **Implementation**:
+
 ```go
 func (s *ImportService) CreateImport(ctx context.Context, sourceURL string) error {
     // Check Content-Length before downloading
@@ -1077,9 +1188,11 @@ func (s *ImportService) CreateImport(ctx context.Context, sourceURL string) erro
 ```
 
 #### 6. Implement Input Sanitization (P1)
+
 **Location**: `/home/user/athena/internal/usecase/comments/comment_service.go`
 
 **Implementation**:
+
 ```go
 import "github.com/microcosm-cc/bluemonday"
 
@@ -1101,9 +1214,11 @@ func (s *CommentService) CreateComment(ctx context.Context, req *CreateCommentRe
 ### Long-Term Actions (This Sprint)
 
 #### 7. Add Comprehensive E2E Security Tests
+
 **Location**: `/home/user/athena/postman/athena-edge-cases-security.postman_collection.json`
 
 **Additions**:
+
 - DNS rebinding attack tests
 - Slow-loris attack tests
 - File upload polyglot tests
@@ -1112,18 +1227,22 @@ func (s *CommentService) CreateComment(ctx context.Context, req *CreateCommentRe
 - CSRF token validation tests
 
 #### 8. Implement Performance Testing
+
 **Location**: `/home/user/athena/tests/load/`
 
 **Create**:
+
 - k6 load test scripts
 - Locust performance tests
 - Artillery stress tests
 - Baseline performance metrics
 
 #### 9. Add Fuzz Testing
+
 **Location**: `/home/user/athena/internal/`
 
 **Add Fuzz Tests for**:
+
 - URL parsing
 - JSON parsing
 - File upload handling
@@ -1149,6 +1268,7 @@ func FuzzURLParsing(f *testing.F) {
 ### What Works ✅
 
 **Unit Tests** (34/65 packages, 79% of individual tests)
+
 - Core domain logic
 - Use case implementations
 - Most HTTP handlers
@@ -1158,16 +1278,19 @@ func FuzzURLParsing(f *testing.F) {
 - Email services
 
 **Integration** (Ready, awaiting CI execution)
+
 - Repository tests properly skip without database
 - Clean 5-second timeout pattern
 - Will pass once Postgres/Redis available in CI
 
 **E2E** (Infrastructure ready)
+
 - Docker permissions fixed
 - ClamAV health checks working
 - Cleanup procedures implemented
 
 **Postman Collections** (6 collections, 95+ tests designed)
+
 - Comprehensive API coverage
 - Good security test design
 - Not yet executed in CI due to port conflicts
@@ -1175,27 +1298,32 @@ func FuzzURLParsing(f *testing.F) {
 ### What's Broken ❌
 
 **Build Failures** (5 packages)
+
 - Torrent functionality: DNS resolution preventing RoaringBitmap download
 - Affects: server, app, httpapi, video handlers, torrent client
 
 **Test Failures** (40+ individual tests)
+
 - Observability/middleware: Logger format mismatches
 - Messaging: Notification workflow tests
 - Security: 2 tests need investigation
 - ActivityPub: 5 federation tests
 
 **Infrastructure**
+
 - Port conflicts preventing Postman E2E execution
 - DNS resolution issues in test environment
 
 ### What's Missing ⚠️
 
 **Security Validations**
+
 - SSRF protection incomplete (AWS metadata not blocked)
 - Input sanitization not implemented (test skipped)
 - File size pre-validation missing
 
 **Edge Case Testing**
+
 - Concurrency and race conditions
 - Error recovery and resilience
 - Boundary value testing
@@ -1203,6 +1331,7 @@ func FuzzURLParsing(f *testing.F) {
 - File upload security (polyglots, bombs)
 
 **CI/CD Features**
+
 - Test coverage reporting
 - Performance benchmarking
 - Load testing
@@ -1336,6 +1465,7 @@ func FuzzURLParsing(f *testing.F) {
 **Test Suite Health**: 🟡 **YELLOW - Needs Improvement**
 
 **Key Strengths**:
+
 - ✅ Extensive unit test coverage (163 test files)
 - ✅ Well-designed Postman collections (95+ tests)
 - ✅ Comprehensive GitHub Actions workflows
@@ -1343,6 +1473,7 @@ func FuzzURLParsing(f *testing.F) {
 - ✅ Recent fixes improved pass rate significantly
 
 **Key Weaknesses**:
+
 - ❌ Critical security vulnerabilities (SSRF, file size DoS, XSS)
 - ❌ Infrastructure issues preventing full test execution
 - ❌ Missing concurrency and race condition tests
@@ -1350,11 +1481,13 @@ func FuzzURLParsing(f *testing.F) {
 - ❌ Observability tests failing
 
 **Regression Risk**: 🟢 **LOW**
+
 - No breaking API changes detected
 - Recent changes were infrastructure fixes only
 - Test improvements increased coverage
 
 **Recommendation**: **PROCEED WITH CAUTION**
+
 - Fix P0 security issues before next release
 - Resolve infrastructure issues (DNS, port conflicts)
 - Complete E2E test execution
@@ -1372,6 +1505,7 @@ func FuzzURLParsing(f *testing.F) {
 | **Overall Coverage** | **~40%** | **95%** | **55%** |
 
 **Path to 100% Pass Rate**:
+
 1. Fix DNS issue → +5 packages
 2. Fix observability tests → +18 tests
 3. Fix messaging tests → +2 tests
@@ -1389,6 +1523,7 @@ func FuzzURLParsing(f *testing.F) {
 ## Appendix A: Test File Locations
 
 ### Unit Tests (163 files)
+
 ```
 internal/activitypub/httpsig_test.go
 internal/chat/chat_integration_test.go
@@ -1408,6 +1543,7 @@ internal/usecase/**/*_test.go
 ```
 
 ### E2E Tests
+
 ```
 tests/e2e/scenarios/video_workflow_test.go
 tests/e2e/workflows_test.go
@@ -1417,6 +1553,7 @@ tests/integration/ssrf_protection_test.go
 ```
 
 ### Postman Collections
+
 ```
 postman/athena-auth.postman_collection.json (61 tests)
 postman/athena-uploads.postman_collection.json (11 tests)
@@ -1446,6 +1583,7 @@ postman/athena-virus-scanner-tests.postman_collection.json (46 tests)
 ## Appendix C: Key Files Referenced
 
 **Source Code**:
+
 - `/home/user/athena/internal/security/url_validator.go` - SSRF protection (needs implementation)
 - `/home/user/athena/internal/usecase/video/import_service.go` - File size validation (needs implementation)
 - `/home/user/athena/internal/usecase/comments/comment_service.go` - Input sanitization (needs implementation)
@@ -1453,11 +1591,13 @@ postman/athena-virus-scanner-tests.postman_collection.json (46 tests)
 - `/home/user/athena/internal/obs/logger.go` - Logger interface
 
 **Configuration**:
+
 - `/home/user/athena/Makefile` - Test targets
 - `/home/user/athena/docker-compose.test.yml` - Test services
 - `/home/user/athena/.env.ci` - CI environment variables
 
 **Documentation**:
+
 - `/home/user/athena/COMPREHENSIVE_FIX_SUMMARY.md` - Recent fixes
 - `/home/user/athena/BREAKING_CHANGES_ANALYSIS.md` - Security analysis
 - `/home/user/athena/postman/README.md` - Postman test documentation

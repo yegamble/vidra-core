@@ -8,6 +8,7 @@
 ## Mandatory Validation
 
 **Before claiming ANY code change is complete, run:**
+
 ```bash
 make validate-all   # or ./scripts/validate-all.sh
 ```
@@ -63,6 +64,7 @@ make docker         # Build Docker image
 ## Domain-Specific Documentation
 
 For detailed guidance in specific areas, see:
+
 - **Security**: `internal/security/CLAUDE.md` (SSRF, virus scanning, encryption)
 - **API/HTTP**: `internal/httpapi/CLAUDE.md` (routes, handlers, validation)
 - **Federation**: `internal/activitypub/CLAUDE.md` (ActivityPub, WebFinger)
@@ -73,18 +75,21 @@ For detailed guidance in specific areas, see:
 ## Best Practices
 
 ### Go Patterns
+
 - Use `defer` for cleanup
 - Recover panics in goroutines
 - Set timeouts on all network/DB calls
 - Use context for cancellation
 
 ### Security (Critical)
+
 - Validate all user inputs
 - Use parameterized queries (no string concatenation)
 - No secrets in logs or code
 - See `internal/security/CLAUDE.md` for SSRF, virus scanning
 
 ### Testing
+
 - Unit tests per package
 - Use `sqlmock` for DB mocking
 - Integration tests with `docker-compose.yml` (`--profile test`)

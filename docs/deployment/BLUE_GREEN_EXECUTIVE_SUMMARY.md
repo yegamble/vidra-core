@@ -16,6 +16,7 @@ Athena is a **federated video platform** competing with PeerTube and integrating
 - **Fear of deploying** leads to batched releases and slower innovation
 
 **Business Impact:**
+
 - Lost user sessions during deployments
 - Federation reputation damage (unreliable instance)
 - Developer velocity slowed by deployment anxiety
@@ -52,30 +53,35 @@ Athena is a **federated video platform** competing with PeerTube and integrating
 ## Business Benefits
 
 ### 1. Zero Downtime
+
 - **Current:** 5-15 minutes downtime per deployment
 - **With Blue/Green:** < 1 second switchover (imperceptible to users)
 - **Federation Impact:** External instances never see downtime
 - **User Experience:** No interrupted sessions, no login redirects
 
 ### 2. Instant Rollback
+
 - **Current:** 10-30 minutes to rollback (rebuild, redeploy)
 - **With Blue/Green:** 30 seconds (just switch traffic back)
 - **Risk Reduction:** Failed deployments don't affect users
 - **Confidence:** Deploy during business hours, not midnight
 
 ### 3. Gradual Rollout (Canary Testing)
+
 - **Strategy:** Route 10% → 50% → 100% of traffic to new version
 - **Validation:** Detect issues before full rollout
 - **Safety:** Automated rollback if error rates spike
 - **A/B Testing:** Test new features with subset of users
 
 ### 4. Increased Deployment Frequency
+
 - **Current:** 1-2 deployments per week (due to risk)
 - **Target:** Multiple deployments per day (continuous delivery)
 - **Developer Velocity:** Ship features faster
 - **Bug Fixes:** Critical fixes deployed in minutes, not days
 
 ### 5. Cost Efficiency
+
 - **Overhead:** < 0.1% monthly infrastructure cost
 - **Optimization:** Blue environment scaled down immediately after switch
 - **Savings:** No need for expensive "maintenance windows"
@@ -124,30 +130,35 @@ Athena is a **federated video platform** competing with PeerTube and integrating
 ### Timeline: 5 Weeks (Part-Time)
 
 **Week 1: Infrastructure Preparation**
+
 - Create Blue/Green Kubernetes manifests
 - Configure service label selectors
 - Set up canary ingress resources
 - Create validation jobs
 
 **Week 2: CI/CD Integration**
+
 - Implement GitHub Actions workflow
 - Configure secrets and approval gates
 - Add automated rollback logic
 - Set up notifications (Slack/PagerDuty)
 
 **Week 3: Database Migration Strategy**
+
 - Document expand-contract pattern
 - Create migration validation scripts
 - Test backward-compatible migrations
 - Create migration runbook
 
 **Week 4: Testing & Validation**
+
 - Test in staging environment
 - Run load tests during switchover
 - Validate federation during deployment
 - Test rollback procedures
 
 **Week 5: Production Rollout**
+
 - Execute first production blue/green deployment
 - Monitor for 24 hours
 - Document lessons learned
@@ -188,18 +199,21 @@ Athena is a **federated video platform** competing with PeerTube and integrating
 ### Key Performance Indicators
 
 **Deployment Metrics:**
+
 - Downtime per deployment: **0 seconds** (target)
 - Deployment frequency: **Multiple per day** (from 1-2/week)
 - Rollback time: **< 30 seconds** (from 10-30 minutes)
 - Failed deployments affecting users: **0%** (from ~5%)
 
 **Business Metrics:**
+
 - Developer velocity: **+50%** (faster feature releases)
 - Federation reliability: **99.99%** uptime (from 99.8%)
 - User session interruptions: **0** (from dozens per week)
 - Deployment confidence: **High** (deploy during business hours)
 
 **Cost Metrics:**
+
 - Infrastructure overhead: **< 0.1%** monthly
 - Developer time saved: **~10 hours/week** (no deployment anxiety)
 - Wasted compute (interrupted encodes): **0%** (from ~5%)
@@ -209,6 +223,7 @@ Athena is a **federated video platform** competing with PeerTube and integrating
 ## Comparison with Alternatives
 
 ### Rolling Updates (Current Approach)
+
 - **Downtime:** 5-15 minutes
 - **Rollback:** 10-30 minutes (rebuild)
 - **Risk:** High (in-place updates)
@@ -216,6 +231,7 @@ Athena is a **federated video platform** competing with PeerTube and integrating
 - **Verdict:** ❌ Unacceptable for federated platform
 
 ### Blue/Green (Proposed)
+
 - **Downtime:** < 1 second
 - **Rollback:** 30 seconds
 - **Risk:** Very low (parallel environments)
@@ -223,6 +239,7 @@ Athena is a **federated video platform** competing with PeerTube and integrating
 - **Verdict:** ✅ Recommended
 
 ### Canary Deployments Only
+
 - **Downtime:** 0 seconds
 - **Rollback:** 1-2 minutes
 - **Risk:** Medium (gradual rollout)
@@ -230,6 +247,7 @@ Athena is a **federated video platform** competing with PeerTube and integrating
 - **Verdict:** ⚠️ Good, but Blue/Green includes canary + instant rollback
 
 ### Red/Black (Cloud Provider Managed)
+
 - **Downtime:** 0 seconds
 - **Rollback:** Instant
 - **Risk:** Low
@@ -281,6 +299,7 @@ Athena is a **federated video platform** competing with PeerTube and integrating
 **Recommendation:** Proceed with blue/green deployment implementation.
 
 **Justification:**
+
 - Minimal cost (< 0.1% overhead)
 - Massive risk reduction (zero user-facing downtime)
 - Competitive necessity (PeerTube has this, we need it)
@@ -288,11 +307,13 @@ Athena is a **federated video platform** competing with PeerTube and integrating
 - Developer velocity gain (deploy with confidence)
 
 **Alternatives Considered:**
+
 - Rolling updates: Rejected (downtime unacceptable)
 - Canary-only: Considered but Blue/Green provides instant rollback
 - Cloud-managed: Rejected (cost, vendor lock-in)
 
 **Next Steps:**
+
 1. Approve budget/resources
 2. Kick off Week 1 implementation
 3. Schedule weekly progress reviews

@@ -93,6 +93,7 @@ The action respects the following priority order:
 ### Why GOPROXY Fallback?
 
 The default Go proxy (`proxy.golang.org`) redirects to Google Cloud Storage (`storage.googleapis.com`), which may:
+
 - Be blocked in corporate networks
 - Experience DNS resolution issues in certain CI environments
 - Be unavailable in restricted network zones
@@ -199,11 +200,13 @@ steps:
 ### Module Download Failures
 
 If you see errors like:
+
 ```
 go: downloading ... failed: dial tcp: lookup storage.googleapis.com: no such host
 ```
 
 **Solutions:**
+
 1. Set `GOPROXY` environment variable to use a different proxy
 2. Configure `goproxy-fallback` input to use an accessible proxy
 3. Use vendored modules (`go mod vendor` + `go build -mod=vendor`)
@@ -211,17 +214,20 @@ go: downloading ... failed: dial tcp: lookup storage.googleapis.com: no such hos
 ### Module Download Timeouts
 
 If downloads hang or timeout:
+
 ```
 Error: The operation was canceled.
 ```
 
 **Built-in Protection**:
+
 - Per-attempt timeout: 5 minutes
 - Total step timeout: 10 minutes
 - Automatic retries: 3 attempts
 - Proxy fallback chain: goproxy.io → proxy.golang.org → direct
 
 **Additional Solutions**:
+
 1. Check network connectivity to proxy servers
 2. Use a faster proxy via `goproxy-fallback` input
 3. Pre-vendor large dependencies
@@ -242,6 +248,7 @@ env:
 ### Cache Not Working
 
 Verify:
+
 1. `go.sum` file exists and is committed
 2. `cache-dependency-path` points to correct location
 3. Runner has sufficient disk space
@@ -249,6 +256,7 @@ Verify:
 ### GOPROXY Not Applied
 
 Check priority:
+
 1. Is `GOPROXY` env var already set? (takes precedence)
 2. Is `goproxy-fallback` input empty? (disables fallback)
 3. Check action logs for "Using existing GOPROXY" message
@@ -258,17 +266,20 @@ Check priority:
 ### Cache Locations
 
 The action configures caching for:
+
 - `GOMODCACHE`: Go module cache (typically `~/go/pkg/mod`)
 - `GOCACHE`: Go build cache (typically `~/.cache/go-build`)
 
 ### Proxy Fallback Chain
 
 When `goproxy-fallback` is enabled (default), GOPROXY is set to:
+
 ```
 https://goproxy.io,https://proxy.golang.org,direct
 ```
 
 **Behavior**:
+
 1. Try `goproxy.io` first (fast Chinese CDN)
 2. Fall back to `proxy.golang.org` (official Go proxy)
 3. Fall back to `direct` (fetch from source)
@@ -278,14 +289,17 @@ This ensures module downloads succeed even if one proxy is slow or unavailable.
 ### Timeout Protection
 
 **Per-Attempt Timeout**: 5 minutes
+
 - Prevents individual module downloads from hanging
 - Exit code 124 indicates timeout
 
 **Step-Level Timeout**: 10 minutes
+
 - Prevents entire step from running indefinitely
 - Accounts for 3 retry attempts (3 × 5min = 15min theoretical max)
 
 **Retry Logic**:
+
 ```
 Attempt 1: timeout 5m go mod download
   → Success: Done
@@ -303,6 +317,7 @@ Attempt 3: timeout 5m go mod download
 ### Environment Detection
 
 The action automatically detects:
+
 - Container vs bare-metal execution
 - Available cache directories
 - Existing GOPROXY configuration

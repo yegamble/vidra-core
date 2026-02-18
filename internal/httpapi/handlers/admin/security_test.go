@@ -11,7 +11,6 @@ import (
 	"testing"
 )
 
-// Mock repositories
 type MockVideoRepo struct {
 	Video *domain.Video
 }
@@ -23,7 +22,6 @@ func (m *MockVideoRepo) GetByID(ctx context.Context, id string) (*domain.Video, 
 	return nil, domain.NewDomainError("NOT_FOUND", "Video not found")
 }
 
-// Implement other methods as stubs to satisfy interface
 func (m *MockVideoRepo) Create(ctx context.Context, video *domain.Video) error { return nil }
 func (m *MockVideoRepo) GetByUserID(ctx context.Context, userID string, limit, offset int) ([]*domain.Video, int64, error) {
 	return nil, 0, nil
@@ -55,6 +53,9 @@ func (m *MockVideoRepo) CreateRemoteVideo(ctx context.Context, video *domain.Vid
 func (m *MockVideoRepo) GetByIDs(ctx context.Context, ids []string) ([]*domain.Video, error) {
 	return nil, nil
 }
+func (m *MockVideoRepo) GetByChannelID(ctx context.Context, channelID string, limit, offset int) ([]*domain.Video, int64, error) {
+	return nil, 0, nil
+}
 
 type MockUserRepo struct {
 	User *domain.User
@@ -67,7 +68,6 @@ func (m *MockUserRepo) GetByID(ctx context.Context, id string) (*domain.User, er
 	return nil, domain.NewDomainError("NOT_FOUND", "User not found")
 }
 
-// Implement other methods as stubs
 func (m *MockUserRepo) Create(ctx context.Context, user *domain.User, password string) error {
 	return nil
 }
@@ -95,7 +95,6 @@ func (m *MockUserRepo) SetAvatarFields(ctx context.Context, userID string, ipfsC
 func (m *MockUserRepo) MarkEmailAsVerified(ctx context.Context, userID string) error { return nil }
 
 func TestOEmbed_XMLInjection(t *testing.T) {
-	// Setup mocks
 	maliciousTitle := "Test Video</title><script>alert('XSS')</script><title>"
 	videoID := "v123"
 	userID := "u123"
@@ -119,7 +118,6 @@ func TestOEmbed_XMLInjection(t *testing.T) {
 
 	h := NewInstanceHandlers(&repository.ModerationRepository{}, mockUserRepo, mockVideoRepo)
 
-	// Create request
 	req, err := http.NewRequest("GET", "/oembed?url=http://example.com/videos/"+videoID+"&format=xml", nil)
 	if err != nil {
 		t.Fatal(err)
@@ -130,22 +128,16 @@ func TestOEmbed_XMLInjection(t *testing.T) {
 
 	handler.ServeHTTP(rr, req)
 
-	// Check response code
 	if status := rr.Code; status != http.StatusOK {
 		t.Errorf("handler returned wrong status code: got %v want %v",
 			status, http.StatusOK)
 	}
 
-	// Check response body for injection
-	// The injection should be escaped now, so it should NOT contain the raw script tag
 	rawInjection := "<script>alert('XSS')</script>"
 	if strings.Contains(rr.Body.String(), rawInjection) {
 		t.Errorf("Vulnerability still exists! Response contains raw injection: %s", rawInjection)
 	}
 
-	// It SHOULD contain the escaped version.
-	// encoding/xml escapes < as &lt; and > as &gt;.
-	// We check for the starting tag at least.
 	if !strings.Contains(rr.Body.String(), "&lt;script&gt;") {
 		t.Errorf("Expected escaped script tag not found. Response: %s", rr.Body.String())
 	} else {

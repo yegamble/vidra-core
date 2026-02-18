@@ -22,30 +22,35 @@
 ## Top 5 Critical Issues
 
 ### 1. Path Prefix Missing (CRITICAL)
+
 **Files:** `openapi_payments.yaml`, `docs/openapi_notifications.yaml`
 **Fix:** Add `/api/v1` prefix to all paths
 **Impact:** Documentation shows wrong URLs, breaking API client generation
 **Time to Fix:** 10 minutes
 
 ### 2. Response Wrapper Not Documented (CRITICAL)
+
 **All Files**
 **Issue:** Actual API wraps all responses in `{data, success, meta}` but OpenAPI shows direct responses
 **Impact:** Generated clients have wrong response types
 **Time to Fix:** 30 minutes
 
 ### 3. Video Schema Outdated (CRITICAL)
+
 **File:** `openapi.yaml`
 **Missing:** 13+ fields (federation fields, S3 storage fields)
 **Impact:** Frontend can't access new video features
 **Time to Fix:** 1 hour
 
 ### 4. User Schema Incomplete (CRITICAL)
+
 **File:** `openapi.yaml`
 **Missing:** `subscriber_count`, `twofa_enabled`, `email_verified`, `avatar` structure
 **Impact:** User profile features undocumented
 **Time to Fix:** 30 minutes
 
 ### 5. Uncertain Feature Status (HIGH)
+
 **Files:** `openapi_plugins.yaml`, `openapi_chat.yaml`, `openapi_redundancy.yaml`
 **Issue:** Extensively documented but routes not registered in `routes.go`
 **Impact:** Confusion about what's implemented vs planned
@@ -56,13 +61,16 @@
 ## Undocumented Endpoints
 
 ### Live Streams
+
 - ❌ `POST /api/v1/streams` (create stream)
 - ❌ `GET /api/v1/streams/active` (list active)
 
 ### Comments
+
 - ❌ `DELETE /api/v1/comments/{commentId}/flag` (unflag comment)
 
 ### Channels
+
 - ❌ `GET /api/v1/users/me/channels` (user's channels)
 
 ---
@@ -95,7 +103,9 @@ These are documented but routes not found in `routes.go`:
 ## Schema Updates Needed
 
 ### User Model
+
 Missing in OpenAPI but in `internal/domain/user.go`:
+
 - `subscriber_count: int64`
 - `twofa_enabled: bool`
 - `email_verified: bool`
@@ -103,9 +113,11 @@ Missing in OpenAPI but in `internal/domain/user.go`:
 - `avatar: { id, ipfs_cid, webp_ipfs_cid }`
 
 ### Video Model
+
 Missing in OpenAPI but in `internal/domain/video.go`:
 
 **Federation Fields:**
+
 - `is_remote: bool`
 - `remote_uri: string`
 - `remote_actor_uri: string`
@@ -115,12 +127,14 @@ Missing in OpenAPI but in `internal/domain/video.go`:
 - `remote_last_synced_at: timestamp`
 
 **S3 Storage Fields:**
+
 - `s3_urls: map[string]string`
 - `storage_tier: string`
 - `s3_migrated_at: timestamp`
 - `local_deleted: bool`
 
 **Nested Objects:**
+
 - `channel: Channel`
 - `category: VideoCategory`
 - `metadata: VideoMetadata`
@@ -130,18 +144,21 @@ Missing in OpenAPI but in `internal/domain/video.go`:
 ## Recommended Action Plan
 
 ### Day 1: Critical Fixes (2.5 hours)
+
 1. ✅ Fix path prefixes in payments and notifications specs
 2. ✅ Add response wrapper schema
 3. ✅ Update User schema
 4. ✅ Update Video schema (start)
 
 ### Day 2: High Priority (2 hours)
+
 5. ✅ Decide on plugin/chat/redundancy/E2EE implementation
 6. ✅ Fix path mismatches (user ratings, watch-later)
 7. ✅ Document missing live stream endpoints
 8. ✅ Update Video schema (complete)
 
 ### Day 3: Medium Priority (2 hours)
+
 9. ✅ Standardize pagination parameters
 10. ✅ Add security schemes to all files
 11. ✅ Verify/implement category endpoints
@@ -186,6 +203,7 @@ cd /tmp/athena-api-client && npm install && npm run build
 ### File Organization
 
 Current structure:
+
 ```
 api/
   ├── openapi.yaml (main spec)
@@ -212,6 +230,7 @@ docs/
 ```
 
 Recommended improvement:
+
 ```
 api/
   ├── openapi.yaml (combined or main entry point)
@@ -244,12 +263,14 @@ api/
 The Athena API has a solid foundation, but documentation has drifted from implementation. The main issues are:
 
 ✅ **Good:**
+
 - Well-structured codebase
 - Extensive OpenAPI coverage
 - Clear separation of concerns
 - Good handler organization
 
 ⚠️ **Needs Work:**
+
 - Path prefix consistency
 - Response wrapper documentation
 - Schema drift (User, Video models)
@@ -260,6 +281,7 @@ The Athena API has a solid foundation, but documentation has drifted from implem
 ---
 
 **Next Steps:**
+
 1. Review this summary with the team
 2. Decide on unimplemented features (implement vs defer)
 3. Work through OPENAPI_FIXES_CHECKLIST.md

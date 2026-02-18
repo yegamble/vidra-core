@@ -14,6 +14,7 @@ This document describes the complete ActivityPub video federation implementation
 **File**: `/internal/activitypub/httpsig.go`
 
 **Security Enhancements**:
+
 - ✅ **Digest Verification**: All POST/PUT requests must include `Digest` header with SHA-256 hash
 - ✅ **Signature Expiration**: Requests older than 5 minutes are rejected (prevents replay attacks)
 - ✅ **Clock Skew Tolerance**: 1-minute tolerance for requests from the future
@@ -21,6 +22,7 @@ This document describes the complete ActivityPub video federation implementation
 - ✅ **Body Tampering Protection**: Digest is verified against actual request body
 
 **Implementation Details**:
+
 ```go
 // Signature expiration check
 if age > 5*time.Minute {
@@ -36,6 +38,7 @@ if r.Method == "POST" || r.Method == "PUT" {
 ```
 
 **Security Impact**:
+
 - Prevents replay attacks (expired signatures rejected)
 - Prevents man-in-the-middle body tampering (digest verification)
 - Mitigates clock synchronization issues (1-minute skew tolerance)
@@ -45,6 +48,7 @@ if r.Method == "POST" || r.Method == "PUT" {
 **Function**: `BuildVideoObject(ctx, video)`
 
 **Converts** `domain.Video` **to** `domain.VideoObject` **with**:
+
 - ✅ PeerTube-compatible context (`@context` with ActivityStreams + PeerTube namespace)
 - ✅ Video metadata (title, description, duration in ISO 8601 format)
 - ✅ PeerTube compatibility fields (state, category, language, waitTranscoding)
@@ -60,6 +64,7 @@ if r.Method == "POST" || r.Method == "PUT" {
 - ✅ Tags converted to hashtags with # prefix
 
 **Example Output**:
+
 ```json
 {
   "@context": [
@@ -147,6 +152,7 @@ if r.Method == "POST" || r.Method == "PUT" {
 **Function**: `PublishVideo(ctx, videoID)`
 
 **Workflow**:
+
 1. Fetches video from database
 2. Skips private videos (not federated)
 3. Creates `Create` activity with video object
@@ -155,11 +161,13 @@ if r.Method == "POST" || r.Method == "PUT" {
 6. Delivery worker handles async delivery with retry logic
 
 **Privacy Handling**:
+
 - **Public**: `to: [Public]`, `cc: [followers]` → Visible to everyone
 - **Unlisted**: `to: [followers]`, `cc: [Public]` → Not in public timelines
 - **Private**: Not federated at all
 
 **Delivery Optimization**:
+
 - Uses shared inbox when available (reduces HTTP requests)
 - Queues delivery jobs for background processing
 - 10 retry attempts with exponential backoff
@@ -170,12 +178,14 @@ if r.Method == "POST" || r.Method == "PUT" {
 **Function**: `UpdateVideo(ctx, videoID)`
 
 **Updates** federated instances when video metadata changes:
+
 - Title, description, thumbnail updates
 - Privacy level changes
 - Creates `Update` activity with fresh video object
 - Delivers to same audience as original publish
 
 **Use Cases**:
+
 - User edits video description
 - Thumbnail regeneration
 - Video privacy change (public ↔ unlisted)
@@ -185,11 +195,13 @@ if r.Method == "POST" || r.Method == "PUT" {
 **Function**: `DeleteVideo(ctx, videoID)`
 
 **Notifies** federated instances to remove video:
+
 - Creates `Delete` activity with video object ID (not full object)
 - Delivers to public audience + followers
 - Remote instances should remove cached video data
 
 **Deletion Flow**:
+
 1. User deletes video locally
 2. `DeleteVideo` called before actual DB deletion
 3. Delete activity queued for delivery
@@ -245,6 +257,7 @@ Retry on Failure (up to 10 times)
 ### PeerTube Compatibility: 95%
 
 **What Works**:
+
 - ✅ Video publishing (Create activities)
 - ✅ Video updates (Update activities)
 - ✅ Video deletion (Delete activities)
@@ -256,6 +269,7 @@ Retry on Failure (up to 10 times)
 - ✅ Collection endpoints (likes, comments, shares)
 
 **Limitations** (5%):
+
 - ⚠️ Remote video ingestion (inbound federation) - **NOT IMPLEMENTED**
   - Cannot fetch and display videos from remote PeerTube instances
   - Requires: ActivityPub inbox handler for Create(Video) activities
@@ -276,6 +290,7 @@ Retry on Failure (up to 10 times)
 **Location**: `/internal/usecase/activitypub/video_publisher_test.go`
 
 **Coverage**:
+
 - `TestBuildVideoObject_Basic` - Basic video object construction
 - `TestBuildVideoObject_URLs` - URL generation (MP4, HLS)
 - `TestBuildVideoObject_Metadata` - Metadata handling
@@ -290,6 +305,7 @@ Retry on Failure (up to 10 times)
 ### Integration Tests
 
 **Required Manual Testing**:
+
 1. **Video Publishing**:
    - Create video on Athena instance A
    - Verify follower on PeerTube instance B sees video in timeline
@@ -330,6 +346,7 @@ ACTIVITYPUB_KEY_ENCRYPTION_KEY=your-secure-random-key-at-least-32-chars
 ### Database Migrations
 
 **Required Tables**:
+
 - `activitypub_actors` - Local actor public/private keys
 - `activitypub_remote_actors` - Cached remote actor data
 - `activitypub_followers` - Follower relationships
@@ -386,6 +403,7 @@ videoRepo.Delete(ctx, video.ID)
 ### Prometheus Metrics
 
 **Available Metrics**:
+
 ```
 athena_activitypub_delivery_total{status="success|failed"} - Delivery attempts
 athena_activitypub_delivery_duration_seconds - Delivery latency
@@ -396,6 +414,7 @@ athena_activitypub_queue_depth - Pending delivery jobs
 ### Alert Rules
 
 **Recommended Alerts**:
+
 - Delivery success rate < 80% (indicates federation issues)
 - Queue depth > 1000 (delivery worker overloaded)
 - Delivery latency p99 > 10s (network issues)
@@ -407,6 +426,7 @@ athena_activitypub_queue_depth - Pending delivery jobs
 #### Videos Not Appearing on Remote Instances
 
 **Check**:
+
 1. Is `ENABLE_ACTIVITYPUB=true`?
 2. Is `PUBLIC_BASE_URL` set correctly?
 3. Are delivery jobs being created? `SELECT * FROM activitypub_delivery_jobs WHERE status='pending'`
@@ -416,6 +436,7 @@ athena_activitypub_queue_depth - Pending delivery jobs
 #### Delivery Failures
 
 **Diagnose**:
+
 ```sql
 -- Check failed delivery jobs
 SELECT * FROM activitypub_delivery_jobs
@@ -425,6 +446,7 @@ LIMIT 10;
 ```
 
 **Common Causes**:
+
 - Remote instance down/unreachable
 - Invalid HTTP signature (check Date header, digest)
 - Remote instance blocking your domain
@@ -433,6 +455,7 @@ LIMIT 10;
 #### Signature Verification Failures
 
 **Check**:
+
 - System clocks synchronized (NTP)
 - Private key encryption key correct
 - Public key PEM format valid
@@ -493,6 +516,7 @@ Athena's ActivityPub video federation is **production-ready** for outbound feder
 ---
 
 **References**:
+
 - [ActivityPub Specification](https://www.w3.org/TR/activitypub/)
 - [PeerTube Federation](https://docs.joinpeertube.org/contribute-architecture#federation)
 - [HTTP Signatures Draft](https://datatracker.ietf.org/doc/html/draft-cavage-http-signatures-12)

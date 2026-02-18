@@ -86,6 +86,7 @@ CREATE TABLE goose_db_version (
 ### 1. Create Goose Configuration File
 
 Create `goose.env`:
+
 ```bash
 GOOSE_DRIVER=postgres
 GOOSE_MIGRATION_DIR=./migrations
@@ -99,22 +100,22 @@ Replace Atlas commands with Goose equivalents:
 ```makefile
 # Goose migration commands
 migrate-up:
-	@goose -dir migrations postgres "$(DATABASE_URL)" up
+ @goose -dir migrations postgres "$(DATABASE_URL)" up
 
 migrate-down:
-	@goose -dir migrations postgres "$(DATABASE_URL)" down
+ @goose -dir migrations postgres "$(DATABASE_URL)" down
 
 migrate-status:
-	@goose -dir migrations postgres "$(DATABASE_URL)" status
+ @goose -dir migrations postgres "$(DATABASE_URL)" status
 
 migrate-create:
-	@goose -dir migrations create $(name) sql
+ @goose -dir migrations create $(name) sql
 
 migrate-validate:
-	@goose -dir migrations postgres "$(DATABASE_URL)" validate
+ @goose -dir migrations postgres "$(DATABASE_URL)" validate
 
 migrate-reset:
-	@goose -dir migrations postgres "$(DATABASE_URL)" reset
+ @goose -dir migrations postgres "$(DATABASE_URL)" reset
 ```
 
 ### 3. CI/CD Updates
@@ -168,6 +169,7 @@ CMD goose -dir /app/migrations postgres "$DATABASE_URL" up && /app/server
 ## Rollback Plan
 
 If issues arise, we can:
+
 1. Keep original migration files as backup
 2. Atlas migrations don't modify the SQL files themselves
 3. Can switch back to Atlas if needed (but unlikely)

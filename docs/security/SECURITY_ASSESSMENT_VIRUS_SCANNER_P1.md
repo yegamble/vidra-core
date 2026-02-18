@@ -46,6 +46,7 @@ func (s *VirusScanner) ScanStream(ctx context.Context, reader io.Reader) (*ScanR
 ```
 
 **Technical Explanation**:
+
 - An `io.Reader` is a forward-only stream that is consumed as data is read
 - After the first `ScanStream()` call reads the entire stream, the reader is at EOF
 - Subsequent retry attempts read from an empty stream (0 bytes)
@@ -74,6 +75,7 @@ for attempt := 0; attempt <= s.config.MaxRetries; attempt++ {
 ### 2. Attack Scenarios
 
 #### Scenario A: Network-Based Attack
+
 1. Attacker uploads malware-infected file
 2. Attacker simultaneously floods ClamAV with requests or triggers network disruption
 3. Initial scan attempt fails due to network error
@@ -82,12 +84,14 @@ for attempt := 0; attempt <= s.config.MaxRetries; attempt++ {
 6. Malware is stored, processed, and potentially distributed via IPFS
 
 #### Scenario B: Resource Exhaustion
+
 1. Attacker uploads large infected file (approaching size limits)
 2. ClamAV daemon experiences timeout or resource exhaustion during first scan
 3. Retry logic kicks in with exhausted stream
 4. Empty scan returns clean → malware bypasses detection
 
 #### Scenario C: Timing Attack
+
 1. Attacker monitors system load and ClamAV responsiveness
 2. During high-load periods, uploads infected files knowing scan failures are likely
 3. Exploits retry logic to bypass scanning
@@ -104,6 +108,7 @@ for attempt := 0; attempt <= s.config.MaxRetries; attempt++ {
 | **Reputation** | CRITICAL | Platform becomes malware distribution network, permanent brand damage |
 
 **Affected Components**:
+
 - Video uploads (primary attack surface)
 - User avatar uploads
 - Message attachments
@@ -118,24 +123,29 @@ for attempt := 0; attempt <= s.config.MaxRetries; attempt++ {
 ### Current Security Posture (INADEQUATE)
 
 **Layer 1: File Type Validation** ✅ IMPLEMENTED
+
 - Extension validation via `file_type_blocker.go`
 - MIME type sniffing
 - **Weakness**: Does not protect against polyglot files or valid file types with embedded malware (e.g., macro-enabled documents disguised as PDFs)
 
 **Layer 2: Virus Scanning** ❌ BROKEN (THIS VULNERABILITY)
+
 - ClamAV integration via `virus_scanner.go`
 - Retry logic with fatal flaw
 - **Weakness**: Stream exhaustion bypass; fallback modes may allow files when scanner unavailable
 
 **Layer 3: Sandboxed Processing** ⚠️ PARTIAL
+
 - FFmpeg processing in containers (per CLAUDE.md)
 - **Weakness**: If malware bypasses Layer 2, it reaches processing pipeline; no mention of seccomp/AppArmor in actual implementation
 
 **Layer 4: Content Delivery** ⚠️ PARTIAL
+
 - IPFS distribution
 - **Weakness**: No content sanitization after scanning; infected files permanently pinned to IPFS
 
 **Layer 5: Monitoring & Detection** ❌ MISSING
+
 - No audit trail for scan failures
 - No alerting on repeated scan errors
 - No anomaly detection for suspicious upload patterns
@@ -166,11 +176,13 @@ for attempt := 0; attempt <= s.config.MaxRetries; attempt++ {
 ### Attack Vectors
 
 **Primary Vector: Direct Upload Exploitation**
+
 - Upload infected files during network instability
 - Trigger ClamAV resource exhaustion
 - Exploit retry logic to bypass scanning
 
 **Secondary Vectors**:
+
 1. **Chain Exploitation**: Combine with path traversal, deserialization bugs
 2. **Social Engineering**: Trick admins into disabling scanning during "maintenance"
 3. **Supply Chain**: Compromise upstream dependencies (FFmpeg, ClamAV signatures)
@@ -337,6 +349,7 @@ func (s *VirusScanner) ScanStream(ctx context.Context, reader io.Reader) (*ScanR
 ```
 
 **Key Security Improvements**:
+
 1. ✅ Buffer entire stream before scanning (enables retries)
 2. ✅ Calculate SHA256 hash for integrity verification and audit trail
 3. ✅ Create fresh reader for each retry attempt
@@ -804,6 +817,7 @@ func (m *MLDetector) ScoreFile(data []byte) (float64, error) {
 | **NIST CSF** | Protective technology | ⚠️ PARTIAL | Compliance gap identified |
 
 **Legal Exposure**:
+
 - Class-action lawsuits from affected users
 - Regulatory penalties from data protection authorities
 - Breach notification costs (GDPR requires notification within 72 hours)
@@ -1101,24 +1115,28 @@ log.Error().
 ## Rollout Plan
 
 ### Phase 1: Emergency Patch (Day 1)
+
 - ✅ Deploy buffered stream scanning fix
 - ✅ Enable database audit logging
 - ✅ Set FallbackMode to Strict in production
 - ✅ Deploy monitoring alerts
 
 ### Phase 2: Enhanced Security (Week 1)
+
 - ✅ Implement checksum verification
 - ✅ Add memory limits
 - ✅ Deploy quarantine on scan failure
 - ✅ Enable anomaly detection
 
 ### Phase 3: Advanced Hardening (Month 1)
+
 - ⏳ Multi-engine scanning (YARA integration)
 - ⏳ Behavioral analysis sandbox
 - ⏳ Content sanitization pipeline
 - ⏳ ML-based anomaly detection
 
 ### Phase 4: Compliance & Audit (Month 2)
+
 - ⏳ External security audit
 - ⏳ Penetration testing
 - ⏳ SOC 2 compliance review
@@ -1189,6 +1207,7 @@ This vulnerability represents a **CRITICAL (P1)** security flaw that could allow
    - Annual security audits
 
 **Sign-off Required**:
+
 - [ ] Engineering Lead approval
 - [ ] Security Team approval
 - [ ] Legal/Compliance review
@@ -1199,6 +1218,7 @@ This vulnerability represents a **CRITICAL (P1)** security flaw that could allow
 ---
 
 **Document Control**:
+
 - Version: 1.0
 - Author: Security Architecture Team
 - Date: 2025-11-16

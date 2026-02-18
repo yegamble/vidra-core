@@ -7,7 +7,9 @@ Comprehensive Test-Driven Development (TDD) tests for IOTA payment functionality
 ## Test Files Created
 
 ### 1. Domain Models
+
 **File:** `/home/user/athena/internal/domain/payment.go`
+
 - `IOTAWallet` - User wallet with encrypted seed storage
 - `IOTAPaymentIntent` - Payment request tracking
 - `IOTATransaction` - Blockchain transaction records
@@ -15,10 +17,12 @@ Comprehensive Test-Driven Development (TDD) tests for IOTA payment functionality
 - Security: Seeds never exposed in JSON serialization
 
 ### 2. Repository Tests (Database Layer)
+
 **File:** `/home/user/athena/internal/repository/iota_repository_test.go`
 **Test Count:** 20+ test cases
 
-#### Wallet CRUD Tests:
+#### Wallet CRUD Tests
+
 - ✓ Create wallet with encrypted seed
 - ✓ Retrieve wallet by user_id
 - ✓ Retrieve wallet by wallet ID
@@ -27,7 +31,8 @@ Comprehensive Test-Driven Development (TDD) tests for IOTA payment functionality
 - ✓ Handle non-existent user references
 - ✓ Verify encrypted seed is retrieved (never plaintext)
 
-#### Payment Intent Tests:
+#### Payment Intent Tests
+
 - ✓ Create payment intent with/without video reference
 - ✓ Retrieve payment intent by ID
 - ✓ Update payment intent status (pending → paid/expired)
@@ -35,22 +40,26 @@ Comprehensive Test-Driven Development (TDD) tests for IOTA payment functionality
 - ✓ Get active payment intents (pending + not expired)
 - ✓ Get expired payment intents
 
-#### Transaction Tests:
+#### Transaction Tests
+
 - ✓ Create transaction (deposit/withdrawal/payment types)
 - ✓ Retrieve transaction by hash (unique constraint)
 - ✓ Update transaction status with confirmations
 - ✓ Get transaction history with pagination
 - ✓ Track confirmation progress
 
-#### Security Tests:
+#### Security Tests
+
 - ✓ Encrypted seed never exposed in logs or responses
 - ✓ Seed storage uses AES-256-GCM encryption
 
 ### 3. IOTA Client Tests (Node Interaction)
+
 **File:** `/home/user/athena/internal/payments/iota_client_test.go`
 **Test Count:** 25+ test cases
 
-#### Wallet Generation Tests:
+#### Wallet Generation Tests
+
 - ✓ Generate cryptographically secure 256-bit seed
 - ✓ Verify seeds are unique (100 iterations)
 - ✓ Derive deterministic addresses from seed
@@ -58,14 +67,16 @@ Comprehensive Test-Driven Development (TDD) tests for IOTA payment functionality
 - ✓ Validate address format (Bech32 with iota1 prefix)
 - ✓ Reject invalid seed length/characters
 
-#### Transaction Building Tests:
+#### Transaction Building Tests
+
 - ✓ Build valid transaction
 - ✓ Reject zero/negative amounts
 - ✓ Validate from/to addresses
 - ✓ Sign transaction with seed
 - ✓ Reject invalid seeds for signing
 
-#### Network Operations Tests:
+#### Network Operations Tests
+
 - ✓ Query address balance
 - ✓ Submit signed transaction
 - ✓ Get transaction status (confirmations)
@@ -76,10 +87,12 @@ Comprehensive Test-Driven Development (TDD) tests for IOTA payment functionality
 **Mocking:** All IOTA node interactions are mocked - NO actual network calls in tests.
 
 ### 4. Payment Service Tests (Business Logic)
+
 **File:** `/home/user/athena/internal/usecase/payments/payment_service_test.go`
 **Test Count:** 20+ test cases
 
-#### Wallet Management Tests:
+#### Wallet Management Tests
+
 - ✓ Create wallet for user
 - ✓ Prevent duplicate wallet creation
 - ✓ Get wallet balance
@@ -87,14 +100,16 @@ Comprehensive Test-Driven Development (TDD) tests for IOTA payment functionality
 - ✓ Encrypt seed with AES-256-GCM before storage
 - ✓ Different nonces produce different ciphertexts
 
-#### Payment Intent Tests:
+#### Payment Intent Tests
+
 - ✓ Create intent with amount and optional video ID
 - ✓ Generate unique payment address per intent
 - ✓ Set expiration (default 1 hour)
 - ✓ Reject invalid amounts (zero/negative)
 - ✓ Get payment intent by ID
 
-#### Payment Detection Tests:
+#### Payment Detection Tests
+
 - ✓ Detect exact payment amount
 - ✓ Accept overpayments
 - ✓ Handle partial payments (incomplete)
@@ -102,38 +117,45 @@ Comprehensive Test-Driven Development (TDD) tests for IOTA payment functionality
 - ✓ Reject expired intents
 - ✓ Create transaction record on payment
 
-#### Payment Expiration Tests:
+#### Payment Expiration Tests
+
 - ✓ Expire intents after timeout
 - ✓ Update status to expired
 - ✓ Handle multiple expired intents
 
-#### Security Tests:
+#### Security Tests
+
 - ✓ Seed encryption/decryption roundtrip
 - ✓ Seed NEVER logged or exposed (verified in mocks)
 - ✓ Different encryptions of same seed produce different ciphertexts
 
-#### Transaction History Tests:
+#### Transaction History Tests
+
 - ✓ Get transaction history with pagination
 - ✓ Handle wallet not found
 
 ### 5. API Handler Tests (HTTP Layer)
+
 **File:** `/home/user/athena/internal/httpapi/handlers/payments/payment_handlers_test.go`
 **Test Count:** 20+ test cases
 
-#### Endpoint Tests:
+#### Endpoint Tests
 
 **POST /api/v1/payments/wallet**
+
 - ✓ Create wallet (201 Created)
 - ✓ Wallet already exists (409 Conflict)
 - ✓ Unauthenticated request (401 Unauthorized)
 - ✓ Verify encrypted seed NOT in response
 
 **GET /api/v1/payments/wallet**
+
 - ✓ Get existing wallet (200 OK)
 - ✓ Wallet not found (404 Not Found)
 - ✓ Unauthenticated (401)
 
 **POST /api/v1/payments/intent**
+
 - ✓ Create intent (201 Created)
 - ✓ Invalid amount - zero (400 Bad Request)
 - ✓ Invalid amount - negative (400)
@@ -141,17 +163,20 @@ Comprehensive Test-Driven Development (TDD) tests for IOTA payment functionality
 - ✓ Unauthenticated (401)
 
 **GET /api/v1/payments/intent/:id**
+
 - ✓ Get existing intent (200 OK)
 - ✓ Intent not found (404)
 - ✓ Unauthenticated (401)
 
 **GET /api/v1/payments/transactions**
+
 - ✓ Get transaction history (200 OK)
 - ✓ Pagination support
 - ✓ Wallet not found (404)
 - ✓ Unauthenticated (401)
 
-#### Security Tests:
+#### Security Tests
+
 - ✓ Input validation (reject invalid amounts)
 - ✓ SQL injection prevention (video_id validation)
 - ✓ XSS prevention (metadata sanitization)
@@ -159,10 +184,12 @@ Comprehensive Test-Driven Development (TDD) tests for IOTA payment functionality
 - ✓ Security headers verification
 
 ### 6. Worker Tests (Background Processing)
+
 **File:** `/home/user/athena/internal/worker/iota_payment_worker_test.go`
 **Test Count:** 15+ test cases
 
-#### Payment Monitoring Tests:
+#### Payment Monitoring Tests
+
 - ✓ Poll active payment intents
 - ✓ Check balance on payment addresses
 - ✓ Detect exact payment amount
@@ -171,24 +198,28 @@ Comprehensive Test-Driven Development (TDD) tests for IOTA payment functionality
 - ✓ Update intent status on payment detection
 - ✓ Create transaction record
 
-#### Confirmation Tracking Tests:
+#### Confirmation Tracking Tests
+
 - ✓ Track transaction confirmations
 - ✓ Update confirmation count
 - ✓ Mark as confirmed after threshold (10 confirmations)
 - ✓ Handle pending confirmations
 
-#### Expiration Tests:
+#### Expiration Tests
+
 - ✓ Expire old payment intents
 - ✓ Update multiple expired intents
 - ✓ Handle no expired intents gracefully
 
-#### Error Handling Tests:
+#### Error Handling Tests
+
 - ✓ Retry on network errors
 - ✓ Handle database errors
 - ✓ Exponential backoff (design)
 - ✓ Max retry limit enforcement
 
-#### Worker Lifecycle Tests:
+#### Worker Lifecycle Tests
+
 - ✓ Start worker
 - ✓ Stop worker gracefully
 - ✓ Handle context cancellation
@@ -281,7 +312,8 @@ CREATE TABLE iota_transactions (
 
 ## Test Execution
 
-### Run All Tests:
+### Run All Tests
+
 ```bash
 go test ./internal/repository -run TestIOTARepository
 go test ./internal/payments -run TestIOTAClient
@@ -290,7 +322,8 @@ go test ./internal/httpapi/handlers/payments -run Test
 go test ./internal/worker -run TestIOTAPaymentWorker
 ```
 
-### Run with Coverage:
+### Run with Coverage
+
 ```bash
 go test -cover ./internal/repository/iota_repository_test.go
 go test -cover ./internal/payments/iota_client_test.go
@@ -299,7 +332,8 @@ go test -cover ./internal/httpapi/handlers/payments/payment_handlers_test.go
 go test -cover ./internal/worker/iota_payment_worker_test.go
 ```
 
-### Run Specific Test:
+### Run Specific Test
+
 ```bash
 go test -v ./internal/repository -run TestIOTARepository_CreateWallet
 ```
@@ -307,6 +341,7 @@ go test -v ./internal/repository -run TestIOTARepository_CreateWallet
 ## Current State: RED Phase ✗
 
 All tests are designed to **FAIL** currently because:
+
 - ✗ No repository implementation exists
 - ✗ No IOTA client implementation exists
 - ✗ No payment service implementation exists

@@ -17,6 +17,7 @@ Achieve 80%+ unit coverage for all core business logic packages (domain and usec
 ### 1. All 20 Usecase Packages Above 80% Coverage
 
 **Before Sprint 17:**
+
 - 12 packages below 80% threshold
 - Lowest: caption (43%), import (48.6%), encoding (52.4%)
 
@@ -52,6 +53,7 @@ Updated `scripts/coverage-thresholds.txt` to lock in current coverage levels. Al
 ### 3. Encoding Package: IPFS and FFmpeg Coverage
 
 Added comprehensive tests for:
+
 - `uploadVariantsToIPFS` (8.3% -> covered): mock IPFS HTTP server tests for success, error, disabled client
 - `uploadMediaToIPFS` (15.4% -> covered): file existence checks, upload errors, disabled client
 - `ProcessNext` error paths: database errors, validation failures
@@ -74,9 +76,11 @@ Added comprehensive tests for:
 ## Files Changed
 
 ### New Test Files
+
 - `internal/usecase/encoding/service_coverage_test.go` - 30 new tests covering IPFS uploads, FFmpeg execution, codec encoding, and error paths
 
 ### Modified Files
+
 - `scripts/coverage-thresholds.txt` - Ratcheted all thresholds to current coverage levels
 - `docs/sprints/QUALITY_PROGRAMME.md` - Marked Sprint 17 acceptance criteria complete
 

@@ -37,18 +37,20 @@ clientConfig.NoDHT = !cfg.EnableDHT
 ```
 
 **Default Bootstrap Nodes:**
+
 - `router.bittorrent.com:6881`
 - `dht.transmissionbt.com:6881`
 - `router.utorrent.com:6881`
 
-#### Features:
+#### Features
+
 - ✅ Trackerless peer discovery
 - ✅ Automatic DHT bootstrapping
 - ✅ Configurable via `ENABLE_DHT` environment variable
 - ✅ Fallback to tracker-based discovery when DHT unavailable
 - ✅ Logging of DHT status and peer discovery events
 
-#### Configuration:
+#### Configuration
 
 ```bash
 # Enable DHT (default: true)
@@ -61,7 +63,8 @@ DHT_ANNOUNCE_INTERVAL=1800
 DHT_MAX_PEERS=500
 ```
 
-#### Benefits:
+#### Benefits
+
 - **Decentralization**: No dependency on central trackers
 - **Censorship Resistance**: Harder to block torrent discovery
 - **Reliability**: Peers can find each other even if trackers go down
@@ -80,21 +83,23 @@ DHT_MAX_PEERS=500
 clientConfig.DisablePEX = !cfg.EnablePEX
 ```
 
-#### Features:
+#### Features
+
 - ✅ Peer-to-peer swarm information exchange
 - ✅ Faster swarm growth and peer discovery
 - ✅ Reduced tracker load
 - ✅ Configurable via `ENABLE_PEX` environment variable
 - ✅ Automatic peer list maintenance
 
-#### Configuration:
+#### Configuration
 
 ```bash
 # Enable PEX (default: true)
 ENABLE_PEX=true
 ```
 
-#### Benefits:
+#### Benefits
+
 - **Faster Downloads**: Discover more peers quickly
 - **Swarm Health**: Better peer distribution
 - **Bandwidth Efficiency**: Less tracker communication overhead
@@ -124,6 +129,7 @@ func (p *PopularityPrioritizer) CalculatePriorities(torrents []TorrentPriority) 
 ```
 
 **Algorithm:**
+
 - 70% weight on swarm need (leechers/seeders)
 - 30% weight on upload contribution
 - Prioritizes torrents with poor seeder/leecher ratios
@@ -139,7 +145,7 @@ func (p *FIFOPrioritizer) CalculatePriorities(torrents []TorrentPriority) map[st
 }
 ```
 
-#### Configuration:
+#### Configuration
 
 ```bash
 # Enable smart seeding (default: true)
@@ -155,7 +161,8 @@ SMART_SEEDING_MAX_TORRENTS=100
 SMART_SEEDING_PRIORITIZE_VIEWS=true
 ```
 
-#### Benefits:
+#### Benefits
+
 - **Bandwidth Efficiency**: Seed where it's most needed
 - **Better User Experience**: Popular/new content gets priority
 - **Cost Optimization**: Reduce storage and bandwidth for less-popular content
@@ -179,7 +186,7 @@ if cfg.TorrentUploadRateLimit > 0 || cfg.TorrentDownloadRateLimit > 0 {
 }
 ```
 
-#### Configuration:
+#### Configuration
 
 ```bash
 # Upload rate limit (bytes per second, 0 = unlimited)
@@ -195,7 +202,8 @@ TORRENT_SEED_RATIO=2.0
 TORRENT_MAX_CONNECTIONS=200
 ```
 
-#### Features:
+#### Features
+
 - ✅ Per-client rate limiting
 - ✅ Separate upload/download limits
 - ✅ Seed ratio enforcement
@@ -229,13 +237,14 @@ ENABLE_IPFS=true
 ENABLE_TORRENTS=true
 ```
 
-#### Planned Distribution Strategy:
+#### Planned Distribution Strategy
 
 1. **Primary**: WebTorrent for browser-compatible P2P
 2. **Secondary**: IPFS for long-term storage and decentralized CDN
 3. **Fallback**: HTTP direct from server
 
-#### Benefits:
+#### Benefits
+
 - **Redundancy**: Multiple distribution methods
 - **Browser Compatibility**: WebTorrent works in browsers
 - **Long-term Storage**: IPFS ensures content persistence
@@ -256,12 +265,13 @@ clientConfig.DisableWebtorrent = !cfg.EnableWebTorrent
 **File:** `internal/torrent/tracker.go` (WebSocket tracker - 758 lines)
 
 The WebSocket tracker implements the full WebTorrent protocol:
+
 - WebRTC signaling (offer/answer passing)
 - Peer discovery and swarm management
 - Real-time statistics tracking
 - CORS support for browser clients
 
-#### Configuration:
+#### Configuration
 
 ```bash
 # Enable WebTorrent (default: true)
@@ -271,7 +281,8 @@ ENABLE_WEBTORRENT=true
 WEBTORRENT_TRACKER_PORT=8000
 ```
 
-#### Features:
+#### Features
+
 - ✅ Browser-based P2P video streaming
 - ✅ WebRTC data channels for peer connections
 - ✅ WebSocket tracker for signaling
@@ -617,13 +628,17 @@ While Sprint 9 is complete, these enhancements could be added in future sprints:
 **Problem**: No peers found via DHT after 5+ minutes
 
 **Solutions**:
+
 1. Check firewall allows UDP traffic on port 6881
 2. Verify `ENABLE_DHT=true` in configuration
 3. Check bootstrap nodes are reachable:
+
    ```bash
    nc -u -v router.bittorrent.com 6881
    ```
+
 4. Review logs for DHT errors:
+
    ```bash
    grep "DHT" application.log
    ```
@@ -633,6 +648,7 @@ While Sprint 9 is complete, these enhancements could be added in future sprints:
 **Problem**: PEX exchanges not happening
 
 **Solutions**:
+
 1. Verify `ENABLE_PEX=true`
 2. Ensure at least one peer is connected
 3. Wait 60 seconds for first exchange
@@ -643,6 +659,7 @@ While Sprint 9 is complete, these enhancements could be added in future sprints:
 **Problem**: Upload/download exceeding configured limits
 
 **Solutions**:
+
 1. Verify rate limit values are >0
 2. Check units (bytes per second, not bits)
 3. Review `rateLimiter` initialization in logs
@@ -653,6 +670,7 @@ While Sprint 9 is complete, these enhancements could be added in future sprints:
 **Problem**: All torrents have equal priority
 
 **Solutions**:
+
 1. Ensure `SMART_SEEDING_ENABLED=true`
 2. Check `PopularityPrioritizer` is in use (not `FIFOPrioritizer`)
 3. Verify torrent statistics are being updated

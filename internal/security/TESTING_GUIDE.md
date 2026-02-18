@@ -203,6 +203,7 @@ The comprehensive test suite runs automatically on:
 **Workflow File**: `.github/workflows/virus-scanner-tests.yml`
 
 **Jobs**:
+
 1. **Unit Tests** - Fast unit tests without ClamAV
 2. **Integration Tests** - Full tests with ClamAV service
 3. **Edge Case Tests** - Newman E2E tests with edge cases
@@ -211,6 +212,7 @@ The comprehensive test suite runs automatically on:
 6. **Security Audit** - gosec security scanner
 
 **Viewing Results**:
+
 ```bash
 # View workflow runs
 gh workflow view "Virus Scanner Security Tests"
@@ -274,7 +276,7 @@ The EICAR test file is **NOT real malware**. It's a standard test file:
 - Contains no executable code
 - Simply triggers AV pattern matching
 
-**Reference**: https://www.eicar.org/download-anti-malware-testfile/
+**Reference**: <https://www.eicar.org/download-anti-malware-testfile/>
 
 ---
 
@@ -315,6 +317,7 @@ The EICAR test file is **NOT real malware**. It's a standard test file:
 **Symptom**: `dial tcp 127.0.0.1:3310: connect: connection refused`
 
 **Solutions**:
+
 1. Check if ClamAV is running: `docker ps | grep clamav`
 2. Check port binding: `netstat -tlnp | grep 3310`
 3. View ClamAV logs: `docker logs <clamav-container-id>`
@@ -326,6 +329,7 @@ The EICAR test file is **NOT real malware**. It's a standard test file:
 **Symptom**: `panic: test timed out after 10m0s`
 
 **Solutions**:
+
 1. Increase timeout: `go test -timeout 20m`
 2. Check ClamAV is responding: `echo PING | nc localhost 3310`
 3. Reduce test file sizes for faster execution
@@ -336,6 +340,7 @@ The EICAR test file is **NOT real malware**. It's a standard test file:
 **Symptom**: EICAR test file not detected as virus
 
 **Solutions**:
+
 1. Update ClamAV signatures: `docker exec <clamav> freshclam`
 2. Verify ClamAV version: `docker exec <clamav> clamdscan --version`
 3. Test manually: `docker exec <clamav> clamdscan /path/to/eicar.txt`
@@ -346,6 +351,7 @@ The EICAR test file is **NOT real malware**. It's a standard test file:
 **Symptom**: Scan times exceed thresholds
 
 **Solutions**:
+
 1. Check CPU/memory: `docker stats`
 2. Update ClamAV signatures: Old signatures slow down scans
 3. Tune ClamAV settings: Adjust `MaxThreads`, `MaxQueue`
@@ -357,6 +363,7 @@ The EICAR test file is **NOT real malware**. It's a standard test file:
 **Symptom**: Clean files incorrectly flagged as infected
 
 **Solutions**:
+
 1. Update ClamAV signatures: `freshclam`
 2. Check file integrity: Verify file isn't actually infected
 3. Add to whitelist: Configure ClamAV whitelist if needed
@@ -369,6 +376,7 @@ The EICAR test file is **NOT real malware**. It's a standard test file:
 ### Key Metrics to Monitor
 
 1. **Scan Success Rate**
+
    ```sql
    SELECT
      COUNT(CASE WHEN scan_result = 'clean' THEN 1 END)::float / COUNT(*) * 100 as success_rate
@@ -377,6 +385,7 @@ The EICAR test file is **NOT real malware**. It's a standard test file:
    ```
 
 2. **Scan Failures**
+
    ```sql
    SELECT COUNT(*) as failures
    FROM virus_scan_log
@@ -385,6 +394,7 @@ The EICAR test file is **NOT real malware**. It's a standard test file:
    ```
 
 3. **Infected Files**
+
    ```sql
    SELECT file_path, virus_name, user_id, scanned_at
    FROM virus_scan_log
@@ -394,6 +404,7 @@ The EICAR test file is **NOT real malware**. It's a standard test file:
    ```
 
 4. **Average Scan Duration**
+
    ```sql
    SELECT AVG(scan_duration_ms) as avg_duration_ms
    FROM virus_scan_log
@@ -443,7 +454,7 @@ The EICAR test file is **NOT real malware**. It's a standard test file:
 - **Project Security**: [CLAUDE.md](/CLAUDE.md)
 - **Vulnerability Assessment**: [VULNERABILITY_ASSESSMENT.md](VULNERABILITY_ASSESSMENT.md)
 - **Testing Documentation**: [TESTING.md](TESTING.md)
-- **ClamAV Docs**: https://docs.clamav.net/
-- **EICAR Test File**: https://www.eicar.org/
-- **Newman CLI**: https://learning.postman.com/docs/running-collections/using-newman-cli/
-- **Go Testing**: https://golang.org/pkg/testing/
+- **ClamAV Docs**: <https://docs.clamav.net/>
+- **EICAR Test File**: <https://www.eicar.org/>
+- **Newman CLI**: <https://learning.postman.com/docs/running-collections/using-newman-cli/>
+- **Go Testing**: <https://golang.org/pkg/testing/>

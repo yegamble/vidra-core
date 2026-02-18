@@ -16,7 +16,7 @@ Current CI Pipeline (Per Workflow Run):
 Total wasted time: 60 minutes on duplicate downloads
 ```
 
-##Solution: Shared Setup with Reusable Workflows
+## Solution: Shared Setup with Reusable Workflows
 
 **Optimized Architecture**: Download once, share via cache
 
@@ -48,6 +48,7 @@ Time saved: 45-48 minutes per workflow run (75% reduction)
 **Purpose**: Single source of truth for Go environment setup
 
 **Features**:
+
 - Checkout code (shared)
 - Setup Go (shared)
 - Download modules (shared)
@@ -55,12 +56,14 @@ Time saved: 45-48 minutes per workflow run (75% reduction)
 - Configurable inputs
 
 **Benefits**:
+
 - ✅ No duplicate checkouts across jobs
 - ✅ No duplicate module downloads
 - ✅ Consistent environment setup
 - ✅ Single place to update Go version or caching strategy
 
 **Usage**:
+
 ```yaml
 jobs:
   setup:
@@ -73,6 +76,7 @@ jobs:
 ### 2. Optimized Test Workflow: `test-v2.yml`
 
 **Job Dependency Graph**:
+
 ```
 setup (10 min)
   ├─→ unit (3 min)          ─┬─→ build (2 min)
@@ -87,27 +91,32 @@ setup (10 min)
 **Critical Path**: setup → integration → integration-race = ~30 min total
 
 **Parallel Execution**:
+
 - unit, lint, format-check run simultaneously (wall clock: 3 min)
 - Fast feedback: Basic tests complete in 13 minutes
 
 ### 3. Cache Strategy
 
 **Cache Key Format**:
+
 ```
 go-mod-{OS}-{Go-Version}-{go.sum-hash}
 ```
 
 **Cache Contents**:
+
 - `~/go/pkg/mod` - Downloaded modules (~200MB)
 - `~/.cache/go-build` - Build cache (~100MB)
 
 **Cache Behavior**:
+
 - **setup job**: Creates cache if not found
 - **other jobs**: Restore cache (read-only)
 - **cache hit**: Skip download entirely (0 seconds)
 - **cache miss**: Download takes 10 minutes
 
 **Cache Invalidation**:
+
 - Automatic when `go.sum` changes
 - Automatic when Go version changes
 - Manual via `actions/cache/delete` if needed
@@ -155,6 +164,7 @@ go-mod-{OS}-{Go-Version}-{go.sum-hash}
 ### Phase 1: Test Optimized Workflow (No Risk)
 
 1. **Deploy new workflow alongside old**:
+
    ```bash
    # New workflow runs on feature branches only
    git checkout -b test/optimized-ci
@@ -175,6 +185,7 @@ go-mod-{OS}-{Go-Version}-{go.sum-hash}
 ### Phase 2: Gradual Rollout (Low Risk)
 
 1. **Update trigger conditions**:
+
    ```yaml
    # test.yml - current workflow
    on:
@@ -203,6 +214,7 @@ go-mod-{OS}-{Go-Version}-{go.sum-hash}
 ### Phase 3: Full Migration (After Validation)
 
 1. **Replace old workflow**:
+
    ```bash
    mv .github/workflows/test.yml .github/workflows/test-old.yml.bak
    mv .github/workflows/test-v2.yml .github/workflows/test.yml
@@ -215,6 +227,7 @@ go-mod-{OS}-{Go-Version}-{go.sum-hash}
    - `video-import.yml` → use reusable setup
 
 3. **Clean up**:
+
    ```bash
    rm .github/workflows/test-old.yml.bak
    rm .github/workflows/test-optimized.yml
@@ -225,11 +238,13 @@ go-mod-{OS}-{Go-Version}-{go.sum-hash}
 If issues arise:
 
 1. **Immediate rollback**:
+
    ```bash
    mv .github/workflows/test.yml.bak .github/workflows/test.yml
    ```
 
 2. **Clear caches** (if corruption suspected):
+
    ```bash
    gh cache delete --all
    ```
@@ -244,12 +259,14 @@ If issues arise:
 ### 1. Cache Management
 
 **Do**:
+
 - ✅ Use unique cache keys (include go.sum hash)
 - ✅ Restore cache read-only in downstream jobs
 - ✅ Monitor cache size (~300MB typical)
 - ✅ Delete old caches automatically (7 day retention)
 
 **Don't**:
+
 - ❌ Share cache between different projects
 - ❌ Cache vendor directory (use modules instead)
 - ❌ Write to cache from multiple jobs
@@ -257,12 +274,14 @@ If issues arise:
 ### 2. Job Dependencies
 
 **Do**:
+
 - ✅ Run fast tests first (unit, lint)
 - ✅ Run slow tests last (race detection)
 - ✅ Fail fast (stop on first failure)
 - ✅ Parallelize independent jobs
 
 **Don't**:
+
 - ❌ Make all jobs depend on each other (serial execution)
 - ❌ Run slow tests before fast tests
 - ❌ Continue on failure for critical tests
@@ -270,11 +289,13 @@ If issues arise:
 ### 3. Container Usage
 
 **Do**:
+
 - ✅ Use containers for isolation (integration tests)
 - ✅ Mount cache read-only in containers
 - ✅ Use specific image tags (golang:1.24, not :latest)
 
 **Don't**:
+
 - ❌ Download modules inside containers (use cache)
 - ❌ Use heavy containers for fast tests
 - ❌ Pull images on every run (cache them)
@@ -284,6 +305,7 @@ If issues arise:
 ### 1. Test Sharding (Future)
 
 For large test suites (1000+ tests):
+
 ```yaml
 strategy:
   matrix:
@@ -296,6 +318,7 @@ run: go test -run "TestShard${{ matrix.shard }}" ./...
 ### 2. Selective Testing
 
 Run only tests affected by changes:
+
 ```bash
 # Get changed packages
 CHANGED=$(git diff --name-only HEAD^ HEAD | grep '\.go$' | xargs dirname | sort -u)
@@ -311,6 +334,7 @@ done
 ### 3. Build Cache
 
 Cache compiled binaries:
+
 ```yaml
 - name: Cache built binaries
   uses: actions/cache@v4
@@ -355,6 +379,7 @@ Cache compiled binaries:
 ```
 
 Send to monitoring:
+
 - GitHub Actions dashboard
 - Prometheus/Grafana
 - Custom analytics
@@ -372,6 +397,7 @@ Send to monitoring:
 ---
 
 **Next Steps**:
+
 1. Test `test-v2.yml` with `workflow_dispatch`
 2. Compare run times (current vs optimized)
 3. Validate all tests pass

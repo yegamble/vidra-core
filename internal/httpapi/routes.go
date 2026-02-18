@@ -10,9 +10,12 @@ import (
 	"athena/internal/httpapi/handlers/messaging"
 	"athena/internal/httpapi/handlers/moderation"
 	"athena/internal/httpapi/handlers/payments"
+	pluginhandlers "athena/internal/httpapi/handlers/plugin"
 	"athena/internal/httpapi/handlers/social"
 	"athena/internal/httpapi/handlers/video"
 	"athena/internal/httpapi/shared"
+	"athena/internal/repository"
+	"context"
 	"log"
 	"net/http"
 	"strings"
@@ -20,6 +23,7 @@ import (
 
 	chi "github.com/go-chi/chi/v5"
 	govalidator "github.com/go-playground/validator/v10"
+	"github.com/google/uuid"
 
 	"athena/internal/config"
 	"athena/internal/domain"
@@ -67,6 +71,9 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 
 	if deps.TwoFAService != nil {
 		server.SetTwoFAService(deps.TwoFAService)
+	}
+	if deps.DB != nil {
+		server.SetDB(deps.DB)
 	}
 
 	authHandlers := auth.NewAuthHandlers(
@@ -181,6 +188,12 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 					r.With(middleware.Auth(cfg.JWTSecret)).Put("/", captionHandlers.UpdateCaption)
 					r.With(middleware.Auth(cfg.JWTSecret)).Delete("/", captionHandlers.DeleteCaption)
 				})
+
+				if deps.CaptionGenService != nil {
+					captionGenHandlers := social.NewCaptionGenerationHandlers(deps.CaptionGenService, deps.VideoRepo)
+					r.With(middleware.Auth(cfg.JWTSecret)).Post("/generate", captionGenHandlers.GenerateCaptions)
+					r.With(middleware.Auth(cfg.JWTSecret)).Get("/jobs", captionGenHandlers.ListCaptionGenerationJobs)
+				}
 			})
 		})
 
@@ -340,6 +353,18 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 			})
 		}
 
+		if deps.ChatServer != nil && deps.ChatRepo != nil {
+			log.Printf("Registering chat routes...")
+			chatHandlers := messaging.NewChatHandlers(deps.ChatServer, deps.ChatRepo, deps.LiveStreamRepo, deps.UserRepo, deps.SubRepo)
+			chatHandlers.RegisterRoutes(r)
+		}
+
+		if deps.SocialService != nil {
+			log.Printf("Registering social routes...")
+			socialHandler := social.NewSocialHandler(deps.SocialService)
+			socialHandler.RegisterRoutes(r)
+		}
+
 		r.Route("/comments", func(r chi.Router) {
 			commentHandlers := social.NewCommentHandlers(deps.CommentService)
 			r.Get("/{commentId}", commentHandlers.GetComment)
@@ -494,12 +519,29 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 					r.Get("/restore/status", backupHandler.GetRestoreStatus)
 				})
 			}
+
+			if deps.PluginManager != nil && deps.PluginRepo != nil {
+				log.Printf("Registering plugin admin routes...")
+				ph := pluginhandlers.NewPluginHandler(deps.PluginRepo, deps.PluginManager, nil, false)
+				r.Route("/plugins", func(r chi.Router) {
+					r.Get("/", ph.ListPlugins)
+					r.Get("/{name}", ph.GetPlugin)
+					r.Post("/{name}/enable", ph.EnablePlugin)
+					r.Post("/{name}/disable", ph.DisablePlugin)
+					r.Put("/{name}/config", ph.UpdatePluginConfig)
+					r.Delete("/{name}", ph.UninstallPlugin)
+					r.Get("/statistics", ph.GetAllStatistics)
+					r.Post("/upload", ph.UploadPlugin)
+				})
+			}
 		})
 
 		r.Route("/instance", func(r chi.Router) {
 			r.Get("/about", instanceHandlers.GetInstanceAbout)
 		})
 	})
+
+	registerExternalFeatureRoutes(r, deps)
 
 	r.Get("/oembed", admin.NewInstanceHandlers(deps.ModerationRepo, deps.UserRepo, deps.VideoRepo).OEmbed)
 
@@ -520,4 +562,86 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 			return nil
 		})
 	}
+}
+
+func registerExternalFeatureRoutes(r chi.Router, deps *shared.HandlerDependencies) {
+	if deps.LiveStreamRepo != nil {
+		log.Printf("Registering waiting room routes...")
+		waitingRoomHandlers := livestream.NewWaitingRoomHandler(
+			newWaitingRoomAdapter(deps.LiveStreamRepo, deps.ChannelRepo),
+			deps.UserRepo,
+		)
+		waitingRoomHandlers.RegisterWaitingRoomRoutes(r)
+	}
+
+	if deps.RedundancyService != nil {
+		log.Printf("Registering redundancy admin routes...")
+		redundancySvc, _ := deps.RedundancyService.(federation.RedundancyServiceInterface)
+		discoverySvc, _ := deps.InstanceDiscovery.(federation.InstanceDiscoveryInterface)
+		if redundancySvc != nil {
+			rh := federation.NewRedundancyHandler(redundancySvc, discoverySvc)
+			rh.RegisterRoutes(r)
+		}
+	}
+
+	if deps.VideoCategoryUseCase != nil {
+		log.Printf("Registering video category routes...")
+		categoryHandler := video.NewVideoCategoryHandler(deps.VideoCategoryUseCase)
+		categoryHandler.RegisterRoutes(r)
+	}
+
+	if deps.AnalyticsRepo != nil && deps.LiveStreamRepo != nil {
+		log.Printf("Registering analytics routes...")
+		analyticsCollector, _ := deps.AnalyticsCollector.(video.AnalyticsCollectorInterface)
+		analyticsHandler := video.NewAnalyticsHandler(
+			newWaitingRoomAdapter(deps.LiveStreamRepo, deps.ChannelRepo),
+			deps.AnalyticsRepo,
+			analyticsCollector,
+		)
+		analyticsHandler.RegisterRoutes(r)
+	}
+}
+
+type waitingRoomAdapter struct {
+	ls repository.LiveStreamRepository
+	ch *repository.ChannelRepository
+}
+
+func newWaitingRoomAdapter(ls repository.LiveStreamRepository, ch *repository.ChannelRepository) *waitingRoomAdapter {
+	return &waitingRoomAdapter{ls: ls, ch: ch}
+}
+
+func (a *waitingRoomAdapter) GetByID(ctx context.Context, id string) (*domain.LiveStream, error) {
+	uid, err := uuid.Parse(id)
+	if err != nil {
+		return nil, domain.ErrBadRequest
+	}
+	return a.ls.GetByID(ctx, uid)
+}
+
+func (a *waitingRoomAdapter) GetChannelByID(ctx context.Context, id uuid.UUID) (*domain.Channel, error) {
+	if a.ch == nil {
+		return nil, domain.ErrNotFound
+	}
+	return a.ch.GetByID(ctx, id)
+}
+
+func (a *waitingRoomAdapter) UpdateWaitingRoom(ctx context.Context, streamID uuid.UUID, enabled bool, message string) error {
+	return a.ls.UpdateWaitingRoom(ctx, streamID, enabled, message)
+}
+
+func (a *waitingRoomAdapter) ScheduleStream(ctx context.Context, streamID uuid.UUID, scheduledStart *time.Time, scheduledEnd *time.Time, waitingRoomEnabled bool, waitingRoomMessage string) error {
+	return a.ls.ScheduleStream(ctx, streamID, scheduledStart, scheduledEnd, waitingRoomEnabled, waitingRoomMessage)
+}
+
+func (a *waitingRoomAdapter) CancelSchedule(ctx context.Context, streamID uuid.UUID) error {
+	return a.ls.CancelSchedule(ctx, streamID)
+}
+
+func (a *waitingRoomAdapter) GetScheduledStreams(ctx context.Context, limit, offset int) ([]*domain.LiveStream, error) {
+	return a.ls.GetScheduledStreams(ctx, limit, offset)
+}
+
+func (a *waitingRoomAdapter) GetUpcomingStreams(ctx context.Context, userID uuid.UUID, limit int) ([]*domain.LiveStream, error) {
+	return a.ls.GetUpcomingStreams(ctx, userID, limit)
 }

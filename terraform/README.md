@@ -70,21 +70,25 @@ terraform/
 ## Prerequisites
 
 1. **AWS CLI** configured with appropriate credentials
+
    ```bash
    aws configure
    ```
 
 2. **Terraform** >= 1.6.0
+
    ```bash
    terraform version
    ```
 
 3. **kubectl** for Kubernetes management
+
    ```bash
    kubectl version --client
    ```
 
 4. **helm** for installing Kubernetes operators
+
    ```bash
    helm version
    ```
@@ -143,6 +147,7 @@ kubectl apply -k ../../k8s/monitoring/
 ## Environment Management
 
 ### Development Environment
+
 - Single-AZ deployment
 - Smaller instance types (t3.medium)
 - No Multi-AZ for RDS/ElastiCache
@@ -154,6 +159,7 @@ terraform apply
 ```
 
 ### Staging Environment
+
 - Multi-AZ deployment
 - Production-like configuration
 - Reduced capacity
@@ -164,6 +170,7 @@ terraform apply
 ```
 
 ### Production Environment
+
 - Full Multi-AZ deployment
 - High availability configuration
 - Auto-scaling enabled
@@ -177,45 +184,58 @@ terraform apply
 ## Cost Optimization Strategies
 
 ### 1. Spot Instances for Encoding Workers
+
 Encoding workers are configured to use EC2 Spot instances (70% cost reduction):
+
 - Tolerates interruptions
 - Graceful shutdown handling
 - Queue-based workload
 
 ### 2. Graviton2 Instances
+
 API pods run on ARM-based Graviton2 instances (20% cost savings):
+
 - Better performance per dollar
 - Lower power consumption
 
 ### 3. RDS Storage Autoscaling
+
 PostgreSQL storage automatically scales:
+
 - Start with minimal capacity
 - Grows as needed
 - Max limit prevents runaway costs
 
 ### 4. S3 Lifecycle Policies
+
 Automated data tiering:
+
 - Infrequent Access after 30 days
 - Glacier after 90 days
 - Delete after 365 days (configurable)
 
 ### 5. ElastiCache Reserved Nodes
+
 1-year or 3-year commitments for 30-50% savings on Redis cache.
 
 ### 6. EKS Fargate for Auxiliary Services
+
 IPFS and ClamAV run on Fargate (pay-per-pod):
+
 - No EC2 overhead
 - Auto-scaling without node management
 
 ## Security Best Practices
 
 ### Network Security
+
 - Private subnets for all workloads
 - NAT Gateways for egress
 - Security groups with least privilege
 - Network ACLs for additional defense
 
 ### Encryption
+
 - EBS volumes encrypted (KMS)
 - RDS encryption at rest (KMS)
 - S3 server-side encryption
@@ -223,12 +243,14 @@ IPFS and ClamAV run on Fargate (pay-per-pod):
 - TLS 1.3 for all traffic
 
 ### IAM & RBAC
+
 - IRSA (IAM Roles for Service Accounts)
 - Least privilege IAM policies
 - Kubernetes RBAC
 - Pod Security Standards
 
 ### Monitoring & Auditing
+
 - CloudWatch Logs aggregation
 - CloudTrail for API auditing
 - VPC Flow Logs
@@ -266,12 +288,14 @@ terraform output cloudfront_distribution_domain
 ## Disaster Recovery
 
 ### Backup Strategy
+
 - RDS automated backups (7-day retention)
 - RDS snapshots before changes
 - S3 versioning enabled
 - EFS automated backups
 
 ### Recovery Procedure
+
 1. Restore RDS from snapshot
 2. Recover S3 objects from versioning
 3. Redeploy EKS cluster from Terraform
@@ -280,16 +304,21 @@ terraform output cloudfront_distribution_domain
 ## Troubleshooting
 
 ### EKS Node Group Fails to Launch
+
 Check security groups and ensure EC2 instances can reach EKS control plane.
 
 ### RDS Connection Issues
+
 Verify security groups allow traffic from EKS nodes on port 5432.
 
 ### S3 Upload Failures
+
 Check IAM roles for service accounts (IRSA) configuration.
 
 ### High Costs
+
 Review CloudWatch cost allocation tags and check for:
+
 - Over-provisioned instances
 - Unused EBS volumes
 - Excessive data transfer
@@ -299,12 +328,14 @@ Review CloudWatch cost allocation tags and check for:
 While AWS is recommended, the modules are designed to be cloud-agnostic with minor modifications:
 
 ### Google Cloud Platform (GCP)
+
 - Replace `modules/eks` with `modules/gke`
 - Replace `modules/rds` with `modules/cloud-sql`
 - Replace `modules/elasticache` with `modules/memorystore`
 - Replace `modules/efs` with `modules/filestore`
 
 ### Azure
+
 - Replace `modules/eks` with `modules/aks`
 - Replace `modules/rds` with `modules/azure-database`
 - Replace `modules/elasticache` with `modules/azure-cache`
@@ -313,6 +344,7 @@ While AWS is recommended, the modules are designed to be cloud-agnostic with min
 ## Support & Contributions
 
 For issues or questions:
+
 1. Check existing Terraform state: `terraform show`
 2. Review CloudWatch logs
 3. Validate with `terraform validate`

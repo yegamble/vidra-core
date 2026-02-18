@@ -112,11 +112,13 @@ func (s *VirusScanner) ScanStream(ctx context.Context, reader io.Reader) (*ScanR
 ```
 
 **Pros**:
+
 - Enables retries for non-seekable streams
 - Maintains current API contract
 - Transparent to callers
 
 **Cons**:
+
 - Memory usage (mitigated: already tested up to 100MB)
 - Slight latency (acceptable for security)
 
@@ -139,10 +141,12 @@ if err != nil && attempt < s.config.MaxRetries {
 ```
 
 **Pros**:
+
 - Only buffers on retry (optimization)
 - Lower memory for success path
 
 **Cons**:
+
 - More complex logic
 - First attempt still reads full stream
 
@@ -158,9 +162,11 @@ if seeker, ok := reader.(io.Seeker); !ok {
 ```
 
 **Pros**:
+
 - Simple, explicit
 
 **Cons**:
+
 - Breaks API contract
 - Breaks existing uploads
 - Doesn't solve the problem
@@ -338,11 +344,13 @@ Merged Chunks → ScanStream → [VULNERABLE] → Processing
 ### Immediate (P0)
 
 1. **Disable `ScanStream` retries** until fix deployed:
+
    ```go
    MaxRetries: 0  // Temporary: prevent exhausted reader retries
    ```
 
 2. **Force file-based scanning** for uploads:
+
    ```go
    // Save to temp file first, then scan
    tmpFile := saveToTemp(reader)
@@ -374,6 +382,7 @@ Merged Chunks → ScanStream → [VULNERABLE] → Processing
 ### 2. Upload Size Limits
 
 Per CLAUDE.md, enforce:
+
 - Max file size: 25-150MB (already configured)
 - Prevents memory exhaustion from buffering
 

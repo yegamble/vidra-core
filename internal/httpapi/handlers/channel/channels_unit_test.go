@@ -223,7 +223,7 @@ func newUnitChannelHandlers(channelRepo *unitChannelRepoStub, userRepo *unitUser
 	if subRepo == nil {
 		subRepo = &unitSubscriptionRepoStub{}
 	}
-	return NewChannelHandlers(ucchannel.NewService(channelRepo, userRepo), subRepo)
+	return NewChannelHandlers(ucchannel.NewService(channelRepo, userRepo, nil), subRepo)
 }
 
 func TestChannelHandlers_ListAndGet_Unit(t *testing.T) {

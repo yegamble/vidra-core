@@ -5,6 +5,7 @@ This document describes the test-driven development (TDD) approach for the virus
 ## Overview
 
 The security module implements two critical security features:
+
 1. **Virus Scanning**: ClamAV integration for malware detection
 2. **File Type Blocking**: Extension and magic byte validation
 
@@ -186,6 +187,7 @@ This module follows strict TDD principles:
 ### Current State: RED Phase
 
 All tests are currently **FAILING** because:
+
 - `VirusScanner` struct not implemented
 - `FileTypeBlocker` struct not implemented
 - Mock implementations return nil/empty values
@@ -210,6 +212,7 @@ import (
 ```
 
 Install:
+
 ```bash
 go get github.com/dutchcoders/go-clamd
 go get github.com/stretchr/testify
@@ -236,6 +239,7 @@ Based on test requirements:
 ### EICAR Test File
 
 The EICAR test file (`eicar.txt`) is NOT real malware. It's a standard test file:
+
 - Developed by EICAR (European Institute for Computer Antivirus Research)
 - Detected by all antivirus software as "EICAR-Test-File"
 - Safe to store in version control
@@ -264,6 +268,7 @@ Error: dial tcp 127.0.0.1:3310: connect: connection refused
 ```
 
 **Solutions:**
+
 - Ensure ClamAV daemon is running: `systemctl status clamav-daemon`
 - Check port binding: `netstat -tlnp | grep 3310`
 - Use Docker container: `docker compose --profile test up clamav-test`
@@ -276,6 +281,7 @@ Error: Can't connect to clamd: No such file or directory
 ```
 
 **Solutions:**
+
 - Update virus signatures: `sudo freshclam`
 - Wait for Docker container initialization (2-3 minutes)
 - Check ClamAV logs: `docker compose --profile test logs clamav-test`
@@ -287,6 +293,7 @@ panic: test timed out after 10m0s
 ```
 
 **Solutions:**
+
 - Increase test timeout: `go test -timeout 20m`
 - Check ClamAV is responding: `docker compose --profile test ps`
 - Verify network connectivity to ClamAV
@@ -301,6 +308,7 @@ go tool cover -html=coverage.out -o coverage.html
 ```
 
 **Coverage Targets:**
+
 - Overall: > 80%
 - Critical paths (scanning, blocking): > 95%
 - Error handling: > 90%

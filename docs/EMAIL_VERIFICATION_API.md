@@ -26,6 +26,7 @@ Either `token` or `code` must be provided, not both.
 #### Response
 
 **Success (200 OK)**
+
 ```json
 {
   "message": "Email verified successfully",
@@ -34,6 +35,7 @@ Either `token` or `code` must be provided, not both.
 ```
 
 **Error Responses**
+
 - `400 Bad Request` - Invalid or expired token/code
 - `401 Unauthorized` - Authentication required when using code
 
@@ -54,6 +56,7 @@ Sends a new verification email to the specified address.
 #### Response
 
 **Success (200 OK)**
+
 ```json
 {
   "message": "Verification email sent successfully",
@@ -62,6 +65,7 @@ Sends a new verification email to the specified address.
 ```
 
 **Error Responses**
+
 - `400 Bad Request` - Email already verified
 - `429 Too Many Requests` - Rate limit exceeded (max 1 request per 5 minutes)
 
@@ -74,6 +78,7 @@ Returns the current user's email verification status (requires authentication).
 #### Response
 
 **Success (200 OK)**
+
 ```json
 {
   "email_verified": false,
@@ -82,6 +87,7 @@ Returns the current user's email verification status (requires authentication).
 ```
 
 **Error Response**
+
 - `401 Unauthorized` - Authentication required
 
 ## Email Verification Flow
@@ -97,12 +103,14 @@ Returns the current user's email verification status (requires authentication).
 ### Verification Options
 
 #### Option 1: Link Verification
+
 1. User clicks verification link in email
 2. Frontend extracts token from URL
 3. Frontend calls `/api/v1/auth/verify-email` with token
 4. Email is marked as verified
 
 #### Option 2: Code Verification
+
 1. User logs into account
 2. User enters 6-digit code from email
 3. Frontend calls `/api/v1/auth/verify-email` with code (authenticated request)
@@ -119,6 +127,7 @@ The following endpoints require email verification:
 - **PUT** `/api/v1/users/profile` - Update profile
 
 Unverified users receive:
+
 ```json
 {
   "error": {
@@ -167,6 +176,7 @@ ALTER TABLE users ADD COLUMN email_verified_at TIMESTAMP WITH TIME ZONE;
 Subject: "Verify Your Email Address"
 
 The email contains:
+
 - Personalized greeting with username
 - Verification link button
 - 6-digit verification code
@@ -182,12 +192,14 @@ Similar to initial email but acknowledges this is a resend request.
 ## Testing
 
 ### Unit Tests
+
 - Token generation and validation
 - Code verification logic
 - Expiry handling
 - Rate limiting
 
 ### Integration Tests
+
 - Complete registration and verification flow
 - Unverified user restrictions
 - Token expiry scenarios

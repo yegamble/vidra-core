@@ -3,6 +3,7 @@
 **Audit Date:** 2025-11-18
 **Audit Focus:** Consistency between codebase and API documentation
 **Recent Changes Reviewed:**
+
 - ClamAV virus scanner integration and health checks
 - CI/CD infrastructure improvements
 - Comment and video repository interface updates
@@ -63,11 +64,13 @@ The Athena API documentation is **98%+ complete and well-maintained**. The recen
 **Status:** Not a bug, by design
 
 **Finding:**
+
 - Repository has `CountByVideo(ctx, videoID, activeOnly)` method
 - No dedicated `/api/v1/videos/{videoId}/comments/count` endpoint exists
 - Comment counts returned via GET comments pagination response
 
 **Recommendation:**
+
 - **No action needed** - current design is RESTful and efficient
 - Count available in pagination metadata: `{"data": [...], "pagination": {"total": 42}}`
 - If explicit count endpoint desired, add to `/root/athena/api/openapi_comments.yaml`:
@@ -105,12 +108,14 @@ The Athena API documentation is **98%+ complete and well-maintained**. The recen
 **Status:** Already tracked in API README, low priority
 
 **Finding:**
+
 - Endpoints implemented in `/root/athena/internal/httpapi/routes.go` (lines 106-123)
 - Not documented in `/root/athena/api/openapi_federation.yaml`
 - Endpoints: `/.well-known/webfinger`, `/.well-known/nodeinfo`, `/.well-known/host-meta`, `/nodeinfo/2.0`
 - User actor endpoints: `/users/{username}`, `/users/{username}/inbox`, `/users/{username}/outbox`, etc.
 
 **Recommendation:**
+
 - Add to `/root/athena/api/openapi_federation.yaml` when federation is actively used
 - Already tracked in `/root/athena/api/README.md` lines 160-173 ✅
 
@@ -119,10 +124,12 @@ The Athena API documentation is **98%+ complete and well-maintained**. The recen
 **Status:** Already tracked in API README
 
 **Finding:**
+
 - Some user profile endpoints not in OpenAPI specs
 - Tracked in `/root/athena/api/README.md` lines 135-143
 
 **Recommendation:**
+
 - Follow existing README tracker ✅
 
 ---
@@ -132,12 +139,14 @@ The Athena API documentation is **98%+ complete and well-maintained**. The recen
 ### ✅ ClamAV/Virus Scanner Integration
 
 **Commits Reviewed:**
+
 - `1ac73f9` - Update ClamAV health check to use correct script path
 - `1ff1de3` - Correct ClamAV health check and cleanup containers
 
 **Documentation Status:** CURRENT ✅
 
 **Evidence:**
+
 1. **OpenAPI Specification** (`/root/athena/api/openapi_uploads.yaml`)
    - Lines 26-29: Overview of virus scanning behavior
    - Lines 189-204: 422 error with virus detection example
@@ -160,6 +169,7 @@ The Athena API documentation is **98%+ complete and well-maintained**. The recen
 ### ✅ CI/CD Configuration Documentation
 
 **Recent Addition:**
+
 - `/root/athena/docs/development/CI_CD_CONFIGURATION.md` created (commit `55f36e4`)
 
 **Status:** Documentation is comprehensive ✅
@@ -218,6 +228,7 @@ The Athena API documentation is **98%+ complete and well-maintained**. The recen
 ### Verified Interfaces
 
 #### VideoRepository.CreateRemoteVideo
+
 - **Location:** `/root/athena/internal/port/video.go` line 22
 - **Implementation:** `/root/athena/internal/repository/video_repository.go` line 779
 - **Usage:** ActivityPub federation (internal, not user-facing API)
@@ -225,6 +236,7 @@ The Athena API documentation is **98%+ complete and well-maintained**. The recen
 - **API Exposure:** Not exposed as REST endpoint (by design)
 
 #### CommentRepository.CountByVideo
+
 - **Location:** `/root/athena/internal/port/comment.go` line 18
 - **Implementation:** `/root/athena/internal/repository/comment_repository.go` line 215
 - **Usage:** Internal for pagination, not standalone endpoint
@@ -232,6 +244,7 @@ The Athena API documentation is **98%+ complete and well-maintained**. The recen
 - **API Exposure:** Data included in pagination response, not separate endpoint
 
 #### CaptionRepository.CountByVideoID
+
 - **Location:** `/root/athena/internal/port/caption.go` line 19
 - **Implementation:** `/root/athena/internal/repository/caption_repository.go` line 194
 - **Usage:** Internal statistics
@@ -246,6 +259,7 @@ The Athena API documentation is **98%+ complete and well-maintained**. The recen
 ### Recent Test Changes Reviewed
 
 **Files Analyzed:**
+
 - `/root/athena/internal/usecase/activitypub/service_test.go`
 - `/root/athena/internal/httpapi/handlers/social/comments_integration_test.go`
 - `/root/athena/internal/httpapi/handlers/video/import_integration_test.go`
@@ -253,6 +267,7 @@ The Athena API documentation is **98%+ complete and well-maintained**. The recen
 **Finding:** Test expectations align with documented API behavior ✅
 
 **Evidence:**
+
 1. Import tests expect documented error codes (`INVALID_URL`, `BLOCKED_DOMAIN`, `RATE_LIMIT_EXCEEDED`)
 2. Comment tests validate documented response structure (pagination, comment fields)
 3. Remote video tests use internal `CreateRemoteVideo` (correctly not in API docs)
@@ -264,6 +279,7 @@ The Athena API documentation is **98%+ complete and well-maintained**. The recen
 **E2E Test Location:** `/root/athena/tests/e2e/`
 
 **Postman E2E Collections:**
+
 - Virus scanner tests align with upload documentation ✅
 - Import tests align with import OpenAPI spec ✅
 - Auth flows match documented OAuth2 and 2FA specifications ✅
@@ -304,6 +320,7 @@ The Athena API documentation is **98%+ complete and well-maintained**. The recen
 ## Recommendations
 
 ### Immediate Actions (None Required)
+
 No critical documentation inconsistencies found. Current state is excellent.
 
 ### Optional Enhancements (Low Priority)
@@ -360,6 +377,7 @@ The minor gaps identified (ActivityPub endpoints, user profiles) are already tra
 ## Appendix: Files Reviewed
 
 ### OpenAPI Specifications (18 files)
+
 - /root/athena/api/openapi.yaml
 - /root/athena/api/openapi_auth_2fa.yaml
 - /root/athena/api/openapi_uploads.yaml
@@ -380,6 +398,7 @@ The minor gaps identified (ActivityPub endpoints, user profiles) are already tra
 - /root/athena/api/openapi_federation_hardening.yaml
 
 ### Postman Collections (5 files)
+
 - /root/athena/postman/athena-auth.postman_collection.json
 - /root/athena/postman/athena-uploads.postman_collection.json
 - /root/athena/postman/athena-imports.postman_collection.json
@@ -387,6 +406,7 @@ The minor gaps identified (ActivityPub endpoints, user profiles) are already tra
 - /root/athena/postman/athena-analytics.postman_collection.json
 
 ### Implementation Files
+
 - /root/athena/internal/httpapi/routes.go
 - /root/athena/internal/httpapi/handlers/social/comments.go
 - /root/athena/internal/httpapi/handlers/video/import_handlers.go
@@ -397,6 +417,7 @@ The minor gaps identified (ActivityPub endpoints, user profiles) are already tra
 - /root/athena/internal/usecase/activitypub/service.go
 
 ### Documentation Files
+
 - /root/athena/api/README.md
 - /root/athena/docs/architecture/CLAUDE.md
 - /root/athena/docs/sprints/SPRINT13_COMPLETE.md

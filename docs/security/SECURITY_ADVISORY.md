@@ -13,11 +13,13 @@ A `.env` file containing sensitive credentials was accidentally committed to the
 The committed `.env` file contained the following sensitive information:
 
 ### 1. Database Credentials
+
 - **Database Password:** `athena_password`
 - **Database Connection String:** Full PostgreSQL connection URL
 - **Action Required:** Change database password immediately
 
 ### 2. S3/Backblaze B2 Credentials
+
 - **S3 Access Key:** `005552b994877250000000009`
 - **S3 Secret Key:** `K005bVFj899WnCZ61liiumVwa8Epwco`
 - **Bucket:** `athena-videos`
@@ -25,12 +27,14 @@ The committed `.env` file contained the following sensitive information:
 - **Action Required:** Rotate S3 access keys immediately via Backblaze B2 console
 
 ### 3. SMTP/Email Credentials
+
 - **SMTP Host:** `smtp.improvmx.com`
 - **SMTP Username:** `athena-test@sizetube.com`
 - **SMTP Password:** `Po5kZMd9dBLE`
 - **Action Required:** Change SMTP password immediately
 
 ### 4. JWT Secret
+
 - **JWT Secret:** `your-super-secret-jwt-key-change-in-production` (default value)
 - **Action Required:** Generate and deploy new JWT secret
 
@@ -65,6 +69,7 @@ ALTER USER athena_user WITH PASSWORD 'NEW_SECURE_PASSWORD_HERE';
 ```
 
 Update `.env`:
+
 ```bash
 DATABASE_URL=postgres://athena_user:NEW_SECURE_PASSWORD_HERE@localhost:5432/athena?sslmode=disable
 ```
@@ -113,6 +118,7 @@ git push origin --force --tags
 ### 6. Revoke Exposed Tokens/Sessions (If Applicable)
 
 If JWT secret has been in use:
+
 - All existing JWT tokens will become invalid once the secret is changed
 - Users will need to log in again
 - Consider this when scheduling the deployment
@@ -135,6 +141,7 @@ fi
 ```
 
 Make it executable:
+
 ```bash
 chmod +x .git/hooks/pre-commit
 ```
@@ -163,6 +170,7 @@ git secrets --add 'api[_-]?key.*=.*'
 ### 3. GitHub Secret Scanning
 
 If using GitHub:
+
 1. Enable secret scanning in repository settings
 2. Enable push protection to prevent future commits
 3. Review any alerts in Security → Secret scanning

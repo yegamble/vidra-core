@@ -98,6 +98,7 @@
 5. **Run `make validate-all`** before claiming done
 
 ### Validation Command
+
 ```bash
 make validate-all   # or ./scripts/validate-all.sh
 ```

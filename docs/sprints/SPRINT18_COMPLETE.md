@@ -21,10 +21,12 @@ Close handler and repository test coverage gaps. Target: repository package at 9
 **Delta:** +30.4 percentage points
 
 **Coverage Growth by Session:**
+
 - Session 1: 59.6% → 69.2% (+9.6%) - 5 untested repositories
 - Sessions 2-13: 69.2% → 90.0% (+20.8%) - Coverage gaps in existing repos
 
 **Key Accomplishments:**
+
 - Added unit tests for 5 previously untested repositories (crypto, federation, federation_hardening, redundancy, twofa_backup_code)
 - Expanded coverage for partially-tested repositories (activitypub, atproto, federation, redundancy, livestream, import, message, auth, iota, transaction_manager, video_analytics)
 - Comprehensive error path testing across all repository methods
@@ -42,6 +44,7 @@ Close handler and repository test coverage gaps. Target: repository package at 9
 | shared | 0.0% | 95.9% | +95.9 | ✅ Excellent coverage |
 
 **Notes:**
+
 - **Video (79.8%)**: Comprehensive analytics handler tests, HLS handler tests, torrent handler tests. Remaining gaps are file-serving handlers requiring testdata fixtures.
 - **Auth (79.8%)**: Full OAuth flow tests (authorization code grant, PKCE), 2FA handler tests, email verification tests, IPFS avatar handler tests. Remaining gaps in complex OAuth edge cases.
 - **Social (80.0%)**: Target precisely achieved. Playlist, caption, comment, and rating handler tests added.
@@ -52,6 +55,7 @@ Close handler and repository test coverage gaps. Target: repository package at 9
 ### 3. Handler Test Files Added (Task 3-6)
 
 **Video package (Task 3):**
+
 - `analytics_handlers_unit_test.go` - Live stream analytics tests (7 tests)
 - `video_analytics_handlers_unit_test.go` - Video analytics error path tests (25 tests)
 - `hls_handlers_unit_test.go` - HLS handler tests (32 tests)
@@ -60,6 +64,7 @@ Close handler and repository test coverage gaps. Target: repository package at 9
 - `encoding_handlers_unit_test.go` - Encoding job handler tests (13 tests)
 
 **Auth package (Task 4):**
+
 - `oauth_unit_test.go` - OAuth flow tests (22 tests: authorization, token exchange, PKCE)
 - `email_verification_unit_test.go` - Email verification tests (20 tests)
 - `twofa_handlers_unit_test.go` - 2FA error path tests (12 tests)
@@ -68,10 +73,12 @@ Close handler and repository test coverage gaps. Target: repository package at 9
 - `ipfs_helpers_unit_test.go` - IPFS helper tests (11 tests)
 
 **Federation package (Task 5):**
+
 - `admin_federation_unit_test.go` - Federation admin tests (16 tests)
 - `redundancy_handlers_unit_test.go` - Redundancy handler tests (10 tests)
 
 **Social package (Task 6):**
+
 - `playlists_unit_test.go` - Playlist handler tests (18 tests)
 - `caption_generation_unit_test.go` - Caption generation tests (9 tests)
 - `captions_unit_test.go` - Caption handler tests (26 tests)
@@ -79,11 +86,13 @@ Close handler and repository test coverage gaps. Target: repository package at 9
 - `ratings_unit_test.go` - Rating handler tests (20 tests)
 
 **Messaging package (Task 6):**
+
 - `secure_messages_unit_test.go` - Secure messaging tests (28 tests)
 - `messaging_handlers_unit_test.go` - Message handler tests (10 tests)
 - `notification_handlers_unit_test.go` - Notification handler tests (5 tests)
 
 **Shared package (Task 7):**
+
 - `helpers_unit_test.go` - Helper function tests (94 tests: pagination, UUID validation, role checking, context helpers)
 - `response_unit_test.go` - Response helper tests (62 tests: JSON responses, error mapping, domain error handling)
 
@@ -111,24 +120,29 @@ internal/httpapi/handlers/video          79.0
 ## Files Changed
 
 ### Repository Tests (Task 1 & 2)
+
 - Created 5 new test files for untested repositories: `crypto_repository_unit_test.go`, `federation_hardening_repository_unit_test.go`, `federation_repository_unit_test.go`, `redundancy_repository_unit_test.go`, `twofa_backup_code_repository_unit_test.go`
 - Expanded ~15 existing test files with error path coverage
 - Created `auth_composite_unit_test.go` (19 tests for composite delegator pattern)
 - Total: ~600 new repository tests
 
 ### Handler Tests (Tasks 3-6)
+
 - Created 25+ new handler test files
 - Total: ~400 new handler tests
 
 ### Shared Package Tests (Task 7)
+
 - Created 2 new test files: `helpers_unit_test.go` (94 tests), `response_unit_test.go` (62 tests)
 
 ### Infrastructure Changes
+
 - Extracted interfaces for testability in social and messaging handlers: `playlist_interface.go`, `caption_interface.go`, `comment_interface.go`, `rating_interface.go`, `message_interface.go`
 - Extracted interfaces for testability in video handlers: `video_analytics_interface.go`, `analytics_handlers.go` (AnalyticsCollectorInterface), `torrent_interface.go`, `hls_interface.go`
 - Updated `scripts/coverage-thresholds.txt` with repository and handler thresholds
 
 ### Documentation (Task 8)
+
 - Created `docs/sprints/SPRINT18_COMPLETE.md` (this file)
 - Updated `docs/sprints/QUALITY_PROGRAMME.md` - Marked Sprint 18 acceptance criteria complete
 - Updated `docs/sprints/README.md` - Added Sprint 18 entry

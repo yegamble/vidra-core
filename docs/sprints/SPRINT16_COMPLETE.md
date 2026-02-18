@@ -19,6 +19,7 @@ Make the API contract stable and reproducible with CI enforcement, Postman smoke
 **Problem:** Developers could change `api/openapi.yaml` without regenerating `internal/generated/types.go`, causing drift between spec and code.
 
 **Solution:**
+
 - Created `scripts/verify-openapi.sh` - Regenerates types and fails if the result differs from what is committed
 - Added `verify-codegen` job to `openapi-ci.yml` workflow - Runs after spec validation, installs `oapi-codegen`, and calls `make verify-openapi`
 - Added `make verify-openapi` Makefile target for local use
@@ -26,6 +27,7 @@ Make the API contract stable and reproducible with CI enforcement, Postman smoke
 - Extended path triggers to also watch `internal/generated/`, `scripts/gen-openapi.sh`, and `scripts/verify-openapi.sh`
 
 **Files Changed:**
+
 - `scripts/gen-openapi.sh` - Fixed duplicate shebang
 - `scripts/verify-openapi.sh` - New: drift detection script
 - `.github/workflows/openapi-ci.yml` - Added `verify-codegen` job and GO_VERSION env
@@ -36,6 +38,7 @@ Make the API contract stable and reproducible with CI enforcement, Postman smoke
 **Problem:** No automated API smoke testing on pull requests. Postman collections existed but were only runnable locally via `make postman-e2e`.
 
 **Solution:**
+
 - Created `.github/workflows/postman-smoke.yml` - Full CI workflow that:
   - Builds the Docker image
   - Starts test services (postgres-test, redis-test, app-test) via docker compose
@@ -48,6 +51,7 @@ Make the API contract stable and reproducible with CI enforcement, Postman smoke
 - 15-minute timeout to bound runtime
 
 **Files Changed:**
+
 - `.github/workflows/postman-smoke.yml` - New: Postman smoke test workflow
 
 ### 3. Federation Endpoints Documented (5 pts)
@@ -69,6 +73,7 @@ Plus ActivityPub actor, inbox, outbox, followers, following, and shared inbox en
 **Problem:** No PR template existed, so contributors had no standard checklist for API changes.
 
 **Solution:**
+
 - Created `.github/PULL_REQUEST_TEMPLATE.md` with sections:
   - **Summary** - What changed and why
   - **General checklist** - Tests, lint, format, no secrets, build
@@ -78,6 +83,7 @@ Plus ActivityPub actor, inbox, outbox, followers, following, and shared inbox en
   - **Test Plan** - Steps to reproduce/verify
 
 **Files Changed:**
+
 - `.github/PULL_REQUEST_TEMPLATE.md` - New: PR template with API review checklist
 
 ### 5. API Contract Policy Document (3 pts)
@@ -85,6 +91,7 @@ Plus ActivityPub actor, inbox, outbox, followers, following, and shared inbox en
 **Problem:** No documented source of truth for how API contracts are managed and changed.
 
 **Solution:**
+
 - Created `docs/API_CONTRACT_POLICY.md` covering:
   - **Source of truth** - OpenAPI specs in `api/` with file-to-scope mapping
   - **Change process** - Spec-first workflow (update spec, regenerate, implement, test, verify)
@@ -95,6 +102,7 @@ Plus ActivityPub actor, inbox, outbox, followers, following, and shared inbox en
   - **Review checklist** - Cross-references PR template
 
 **Files Changed:**
+
 - `docs/API_CONTRACT_POLICY.md` - New: API contract governance document
 
 ---
@@ -138,6 +146,7 @@ Plus ActivityPub actor, inbox, outbox, followers, following, and shared inbox en
 ## Next: Sprint 17 - Core Services 100% Coverage
 
 Focus areas:
+
 1. Establish per-package coverage thresholds in CI
 2. Add missing domain model tests (target: 100%)
 3. Add missing usecase service tests (target: 100%)

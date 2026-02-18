@@ -16,6 +16,7 @@ This occurred at lines 199-207 where we attempted to configure GOPROXY using `go
 ### Why `go env -w` Failed
 
 The `go env -w` command writes persistent configuration to a file, which requires either:
+
 - `$HOME` to be defined (config location: `~/.config/go/env`)
 - `$XDG_CONFIG_HOME` to be defined (config location: `$XDG_CONFIG_HOME/go/env`)
 
@@ -37,6 +38,7 @@ The `go env -w` command was **redundant** for our use case because:
 **File**: `.github/actions/setup-go-cached/action.yml`
 
 **Before** (lines 199-207):
+
 ```yaml
     # Configure Go proxy to avoid storage.googleapis.com DNS issues
     - name: Configure Go proxy
@@ -50,6 +52,7 @@ The `go env -w` command was **redundant** for our use case because:
 ```
 
 **After**:
+
 ```yaml
     # Configure Go proxy to avoid storage.googleapis.com DNS issues
     - name: Configure Go proxy
@@ -63,6 +66,7 @@ The `go env -w` command was **redundant** for our use case because:
 
 **Additional Verification** (lines 208-215):
 Added verification in the next step to confirm GOPROXY is active:
+
 ```yaml
     # Ensure module files are tidy and dependencies are downloadable
     - name: Tidy and download modules
@@ -88,6 +92,7 @@ Added verification in the next step to confirm GOPROXY is active:
 ### Testing Methodology
 
 Created a test script that demonstrates:
+
 1. `go env -w` fails without `$HOME` (original problem)
 2. Setting `GOPROXY` as environment variable works without `$HOME`
 3. Go actually uses the proxy from the environment variable
@@ -125,6 +130,7 @@ Running 'go mod download -x' to see proxy usage...
 ### Go Environment Variable Resolution Order
 
 Go resolves `GOPROXY` in the following order:
+
 1. **Environment variable** `GOPROXY` (highest priority)
 2. **Config file** (`~/.config/go/env` or `$XDG_CONFIG_HOME/go/env`)
 3. **Default value** (`https://proxy.golang.org,direct`)
@@ -134,11 +140,13 @@ Since we set the environment variable, steps 2 and 3 are never needed.
 ### GitHub Actions `$GITHUB_ENV` Mechanism
 
 When you write to `$GITHUB_ENV`:
+
 ```bash
 echo "GOPROXY=https://goproxy.io,direct" >> "$GITHUB_ENV"
 ```
 
 GitHub Actions:
+
 1. Appends the line to a special file
 2. Processes this file after the step completes
 3. Exports the variable to the environment of all subsequent steps
@@ -147,7 +155,9 @@ GitHub Actions:
 ## Impact Assessment
 
 ### Workflows Affected
+
 This fix improves reliability for all workflows using the `setup-go-cached` action:
+
 - `.github/workflows/e2e-tests.yml`
 - `.github/workflows/goose-migrate.yml`
 - `.github/workflows/security-tests.yml`
@@ -156,6 +166,7 @@ This fix improves reliability for all workflows using the `setup-go-cached` acti
 - `.github/workflows/virus-scanner-tests.yml`
 
 ### Benefits
+
 1. **Reliability**: No longer dependent on `$HOME` being set
 2. **Simplicity**: Fewer commands, clearer intent
 3. **Performance**: Slightly faster (one fewer command)
@@ -163,7 +174,9 @@ This fix improves reliability for all workflows using the `setup-go-cached` acti
 5. **Clarity**: More obvious what's happening
 
 ### Risks
+
 None. The new approach is strictly better:
+
 - More reliable (fewer dependencies)
 - Same functionality (Go still uses goproxy.io)
 - Better error handling (no silent failures)
@@ -171,6 +184,7 @@ None. The new approach is strictly better:
 ## Why Use goproxy.io?
 
 We configure GOPROXY to use `https://goproxy.io,direct` to avoid DNS issues with the default proxy:
+
 - Default: `https://proxy.golang.org,direct` → redirects to `storage.googleapis.com`
 - Problem: DNS resolution issues with `storage.googleapis.com` in certain CI environments
 - Solution: `https://goproxy.io,direct` → reliable alternative proxy

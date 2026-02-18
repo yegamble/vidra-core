@@ -109,4 +109,4 @@ Recommended sequence:
 
 - Treat this as an execution framework; production migrations should include scripted ETL and dry-run rehearsals.
 - For upstream migration context and operational background, see:
-  - https://docs.joinpeertube.org/maintain/migration
+  - <https://docs.joinpeertube.org/maintain/migration>

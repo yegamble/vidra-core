@@ -7,6 +7,7 @@ Project-specific error conventions for Athena.
 Use predefined sentinel errors from `internal/domain/errors.go` for common cases.
 
 **Standard errors** (`internal/domain/errors.go`):
+
 ```go
 import "athena/internal/domain"
 
@@ -32,6 +33,7 @@ domain.ErrDuplicateEntry     // Duplicate entry
 **Domain-specific errors:**
 
 User errors:
+
 ```go
 domain.ErrUserNotFound
 domain.ErrUserAlreadyExists
@@ -41,6 +43,7 @@ domain.ErrTokenExpired
 ```
 
 Video errors:
+
 ```go
 domain.ErrVideoNotFound
 domain.ErrVideoProcessing
@@ -53,6 +56,7 @@ domain.ErrInvalidVideoID
 ```
 
 Storage errors:
+
 ```go
 domain.ErrIPFSUnavailable
 domain.ErrStorageError
@@ -60,6 +64,7 @@ domain.ErrProcessingError
 ```
 
 Message errors:
+
 ```go
 domain.ErrMessageNotFound
 domain.ErrConversationNotFound
@@ -69,6 +74,7 @@ domain.ErrInvalidMessageType
 ```
 
 Notification errors:
+
 ```go
 domain.ErrNotificationNotFound
 ```
@@ -92,6 +98,7 @@ domain.ErrNotificationNotFound
 For errors needing structured details (code, message, context).
 
 **Basic usage:**
+
 ```go
 import "athena/internal/domain"
 
@@ -107,6 +114,7 @@ err := domain.NewDomainErrorWithDetails(
 ```
 
 **Structure:**
+
 ```go
 type DomainError struct {
     Code    string `json:"code"`    // Error code (e.g., "VIDEO_NOT_FOUND")
@@ -165,6 +173,7 @@ shared.WriteJSONWithMeta(w, http.StatusOK, data, &shared.Meta{Total: count, Limi
 | `ErrTooManyRequests` | 429 |
 | `ErrServiceUnavailable`, `ErrIPFSUnavailable` | 503 |
 | `ErrFileTooLarge` | 413 |
+
 ```
 
 ## When to Use What
@@ -197,6 +206,7 @@ func (h *VideoHandler) GetVideo(w http.ResponseWriter, r *http.Request) {
 ```
 
 **Service with wrapped errors:**
+
 ```go
 func (s *VideoService) GetVideo(ctx context.Context, id string) (*domain.Video, error) {
     video, err := s.repo.GetByID(ctx, id)
@@ -216,6 +226,7 @@ func (s *VideoService) GetVideo(ctx context.Context, id string) (*domain.Video, 
 ```
 
 **Repository with DomainError:**
+
 ```go
 func (r *VideoRepository) GetByID(ctx context.Context, id string) (*domain.Video, error) {
     var video domain.Video

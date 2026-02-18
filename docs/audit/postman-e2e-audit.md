@@ -9,6 +9,7 @@
 Based on `internal/httpapi/routes.go`, the API has the following endpoint groups:
 
 ### Authentication & Users (~15 endpoints)
+
 - `POST /auth/register`
 - `POST /auth/login`
 - `POST /auth/refresh`
@@ -27,6 +28,7 @@ Based on `internal/httpapi/routes.go`, the API has the following endpoint groups
 - `POST /api/v1/users/me/avatar`
 
 ### Videos (~12 endpoints)
+
 - `GET /api/v1/videos`
 - `GET /api/v1/videos/search`
 - `GET /api/v1/videos/qualities`
@@ -41,6 +43,7 @@ Based on `internal/httpapi/routes.go`, the API has the following endpoint groups
 - `POST /api/v1/videos/{id}/complete`
 
 ### Uploads (~4 endpoints)
+
 - `POST /api/v1/uploads/initiate`
 - `POST /api/v1/uploads/{sessionId}/chunks`
 - `POST /api/v1/uploads/{sessionId}/complete`
@@ -48,6 +51,7 @@ Based on `internal/httpapi/routes.go`, the API has the following endpoint groups
 - `GET /api/v1/uploads/{sessionId}/resume`
 
 ### Views & Analytics (~6 endpoints)
+
 - `POST /api/v1/videos/{id}/views`
 - `GET /api/v1/videos/{id}/analytics`
 - `GET /api/v1/videos/{id}/stats/daily`
@@ -55,6 +59,7 @@ Based on `internal/httpapi/routes.go`, the API has the following endpoint groups
 - `POST /api/v1/views/fingerprint`
 
 ### Comments (~7 endpoints)
+
 - `GET /api/v1/videos/{videoId}/comments`
 - `POST /api/v1/videos/{videoId}/comments`
 - `GET /api/v1/comments/{commentId}`
@@ -64,11 +69,13 @@ Based on `internal/httpapi/routes.go`, the API has the following endpoint groups
 - `POST /api/v1/comments/{commentId}/moderate`
 
 ### Ratings (~3 endpoints)
+
 - `PUT /api/v1/videos/{id}/rating`
 - `GET /api/v1/videos/{id}/rating`
 - `DELETE /api/v1/videos/{id}/rating`
 
 ### Channels (~8 endpoints)
+
 - `GET /api/v1/channels`
 - `GET /api/v1/channels/{id}`
 - `POST /api/v1/channels`
@@ -80,6 +87,7 @@ Based on `internal/httpapi/routes.go`, the API has the following endpoint groups
 - `DELETE /api/v1/channels/{id}/subscribe`
 
 ### Playlists (~7 endpoints)
+
 - `GET /api/v1/playlists`
 - `GET /api/v1/playlists/{id}`
 - `POST /api/v1/playlists`
@@ -90,16 +98,19 @@ Based on `internal/httpapi/routes.go`, the API has the following endpoint groups
 - `PUT /api/v1/playlists/{id}/items/{itemId}/reorder`
 
 ### Messaging (~4 endpoints)
+
 - `POST /api/v1/messages`
 - `GET /api/v1/messages`
 - `PUT /api/v1/messages/{messageId}/read`
 - `DELETE /api/v1/messages/{messageId}`
 
 ### Conversations (~2 endpoints)
+
 - `GET /api/v1/conversations`
 - `GET /api/v1/conversations/unread-count`
 
 ### Notifications (~6 endpoints)
+
 - `GET /api/v1/notifications`
 - `GET /api/v1/notifications/unread-count`
 - `GET /api/v1/notifications/stats`
@@ -108,6 +119,7 @@ Based on `internal/httpapi/routes.go`, the API has the following endpoint groups
 - `DELETE /api/v1/notifications/{id}`
 
 ### Live Streams (~10+ endpoints)
+
 - `POST /api/v1/streams`
 - `GET /api/v1/streams/active`
 - `GET /api/v1/streams/{id}`
@@ -120,11 +132,13 @@ Based on `internal/httpapi/routes.go`, the API has the following endpoint groups
 - `GET /api/v1/streams/{id}/hls/{variant}/{segment}`
 
 ### Encoding (~3 endpoints)
+
 - `GET /api/v1/encoding/status`
 - `GET /api/v1/encoding/jobs/{jobID}`
 - `GET /api/v1/encoding/my-jobs`
 
 ### Payments (~5 endpoints)
+
 - `POST /api/v1/payments/wallet`
 - `GET /api/v1/payments/wallet`
 - `POST /api/v1/payments/intents`
@@ -132,6 +146,7 @@ Based on `internal/httpapi/routes.go`, the API has the following endpoint groups
 - `GET /api/v1/payments/transactions`
 
 ### Captions (~5 endpoints)
+
 - `GET /api/v1/videos/{id}/captions`
 - `POST /api/v1/videos/{id}/captions`
 - `GET /api/v1/videos/{id}/captions/{captionId}/content`
@@ -139,6 +154,7 @@ Based on `internal/httpapi/routes.go`, the API has the following endpoint groups
 - `DELETE /api/v1/videos/{id}/captions/{captionId}`
 
 ### Moderation/Admin (~15+ endpoints)
+
 - `POST /api/v1/abuse-reports`
 - `GET /api/v1/admin/abuse-reports`
 - `GET /api/v1/admin/abuse-reports/{id}`
@@ -149,12 +165,14 @@ Based on `internal/httpapi/routes.go`, the API has the following endpoint groups
 - And 8+ more admin endpoints
 
 ### Federation (~20+ endpoints)
+
 - ActivityPub well-known endpoints (5)
 - Federation hardening (12+)
 - Admin federation jobs/actors (8+)
 - Federation timeline (1)
 
 ### Health (~2 endpoints)
+
 - `GET /health`
 - `GET /ready`
 
@@ -222,6 +240,7 @@ Based on `internal/httpapi/routes.go`, the API has the following endpoint groups
 ### Priority 1: Authentication & Authorization
 
 **2FA Endpoint Edge Cases (No collection exists):**
+
 - Setup 2FA with invalid TOTP token
 - Verify setup with expired code
 - Disable 2FA without valid backup code
@@ -230,6 +249,7 @@ Based on `internal/httpapi/routes.go`, the API has the following endpoint groups
 - Status check with expired session
 
 **OAuth Edge Cases:**
+
 - Token request with revoked client
 - Authorization with invalid redirect_uri
 - Token introspection with expired token
@@ -238,6 +258,7 @@ Based on `internal/httpapi/routes.go`, the API has the following endpoint groups
 ### Priority 2: Data Mutation Endpoints
 
 **Video CRUD (No collection exists):**
+
 - Create video with missing required fields
 - Create video with excessively long title (>200 chars)
 - Update video owned by different user (403)
@@ -249,6 +270,7 @@ Based on `internal/httpapi/routes.go`, the API has the following endpoint groups
 - Search with XSS payload in query
 
 **Comments (No collection exists):**
+
 - Create comment on non-existent video
 - Create comment with empty body
 - Update comment owned by different user
@@ -257,6 +279,7 @@ Based on `internal/httpapi/routes.go`, the API has the following endpoint groups
 - Nested comment depth limit test
 
 **Channels (No collection exists):**
+
 - Create channel with duplicate name
 - Delete channel with active videos
 - Subscribe to own channel
@@ -265,18 +288,21 @@ Based on `internal/httpapi/routes.go`, the API has the following endpoint groups
 ### Priority 3: Complex Workflows
 
 **Notifications (No collection exists):**
+
 - Get notifications without auth
 - Mark non-existent notification as read
 - Delete already-deleted notification
 - Mark all as read with empty list
 
 **Playlists (No collection exists):**
+
 - Add non-existent video to playlist
 - Reorder item to invalid position
 - Delete item from non-owned playlist
 - Watch Later concurrent additions
 
 **Messaging (No collection exists):**
+
 - Send message to self
 - Send message to non-existent user
 - Read message from another conversation
@@ -285,6 +311,7 @@ Based on `internal/httpapi/routes.go`, the API has the following endpoint groups
 ### Priority 4: Live Streaming & Media
 
 **Live Streams (No collection exists):**
+
 - Create stream without channel
 - End already-ended stream
 - Access HLS for non-live stream
@@ -292,6 +319,7 @@ Based on `internal/httpapi/routes.go`, the API has the following endpoint groups
 - Get stats for non-existent stream
 
 **Captions (No collection exists):**
+
 - Upload caption with invalid format
 - Upload duplicate language caption
 - Get caption content with invalid captionId
@@ -299,11 +327,13 @@ Based on `internal/httpapi/routes.go`, the API has the following endpoint groups
 ### Priority 5: Admin & Federation
 
 **Admin (No collection exists):**
+
 - Access admin endpoints as regular user (403)
 - Abuse report lifecycle (create -> list -> update -> delete)
 - Blocklist management
 
 **Federation (No collection exists):**
+
 - WebFinger for non-existent user
 - NodeInfo endpoint validation
 - Invalid HTTP signature

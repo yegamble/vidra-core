@@ -17,6 +17,7 @@ This document outlines the comprehensive E2EE (End-to-End Encryption) implementa
 ### Threat Model
 
 **Protected Against:**
+
 - Passive network eavesdropping
 - Server-side data breaches
 - Man-in-the-middle attacks (with proper key verification)
@@ -26,6 +27,7 @@ This document outlines the comprehensive E2EE (End-to-End Encryption) implementa
 - Side-channel attacks (constant-time operations)
 
 **Not Protected Against:**
+
 - Endpoint compromise (malware on user devices)
 - Social engineering attacks
 - Physical access to unlocked devices
@@ -147,6 +149,7 @@ messages:
 ### 1. Pre-Test Setup
 
 **Test Environment:**
+
 ```bash
 # Setup isolated test environment
 docker compose --profile test up -d postgres-test redis-test ipfs-test clamav-test app-test
@@ -162,6 +165,7 @@ openssl req -x509 -newkey rsa:4096 -nodes -keyout test-key.pem -out test-cert.pe
 ### 2. Cryptographic Testing
 
 #### Key Generation Testing
+
 ```bash
 # Test key generation randomness
 for i in {1..1000}; do
@@ -173,6 +177,7 @@ done | sort | uniq -c | sort -n
 ```
 
 #### Encryption Testing
+
 ```bash
 # Test encryption uniqueness (same plaintext should produce different ciphertext)
 MESSAGE="Hello World"
@@ -186,6 +191,7 @@ done | sort | uniq -c | sort -n
 ```
 
 #### Key Exchange Testing
+
 ```bash
 # Test ECDH shared secret consistency
 USER1_TOKEN="..."
@@ -210,6 +216,7 @@ curl -X POST http://localhost:8080/api/v1/messages/secure \
 ### 3. Protocol Security Testing
 
 #### Message Tampering Tests
+
 ```python
 import requests
 import json
@@ -240,6 +247,7 @@ def test_replay_attack():
 ```
 
 #### Signature Verification Tests
+
 ```python
 def test_signature_forgery():
     # Create message with invalid signature
@@ -257,6 +265,7 @@ def test_signature_forgery():
 ### 4. Side-Channel Attack Testing
 
 #### Timing Attack Tests
+
 ```python
 import time
 import statistics
@@ -302,6 +311,7 @@ def test_timing_attacks():
 ### 5. Memory Security Testing
 
 #### Memory Leak Tests
+
 ```bash
 # Test for cryptographic material in memory dumps
 valgrind --tool=memcheck --leak-check=full \
@@ -321,6 +331,7 @@ strings core.dump | grep -i "test123\|private.*key\|master.*key"
 ### 6. Key Management Testing
 
 #### Key Rotation Tests
+
 ```python
 def test_key_rotation():
     # Setup initial E2EE
@@ -348,6 +359,7 @@ def test_key_rotation():
 ```
 
 #### Session Management Tests
+
 ```python
 def test_session_expiry():
     # Setup E2EE session
@@ -369,6 +381,7 @@ def test_session_expiry():
 ### 7. Input Validation Testing
 
 #### Malformed Data Tests
+
 ```python
 def test_malformed_inputs():
     # Test invalid base64 in keys
@@ -397,6 +410,7 @@ def test_malformed_inputs():
 ### 8. Authentication & Authorization Testing
 
 #### Privilege Escalation Tests
+
 ```python
 def test_unauthorized_access():
     # User A tries to decrypt User B's message
@@ -530,18 +544,22 @@ pprof -http=:8080 http://localhost:6060/debug/pprof/heap
 The following vulnerabilities were discovered during the comprehensive penetration test and must be addressed:
 
 #### 1. WebSocket CORS Bypass (CRITICAL)
+
 **File:** `internal/chat/websocket_server.go:96-99`
 **Issue:** CheckOrigin always returns true, allowing any website to connect
 **Fix:** Implement origin whitelist validation
 
 #### 2. Server-Side Request Forgery (SSRF) (HIGH)
+
 **Files:**
+
 - `internal/domain/import.go:98-118` (URL validation)
 - `internal/usecase/redundancy/instance_discovery.go`
 
 **Issue:** No validation against private IPs, localhost, or cloud metadata endpoints
 **Impact:** Attackers can access internal services and cloud metadata APIs
 **Fix:** Implement private IP range blocking:
+
 ```go
 func isPrivateIP(ip net.IP) bool {
     private := []string{
@@ -554,16 +572,19 @@ func isPrivateIP(ip net.IP) bool {
 ```
 
 #### 3. API Key in Query Parameters (HIGH)
+
 **File:** `internal/middleware/security.go:92-93`
 **Issue:** API keys logged in access logs and browser history
 **Fix:** Remove query parameter support, require X-API-Key header only
 
 #### 4. Content Security Policy Too Permissive (HIGH)
+
 **File:** `internal/middleware/security.go:33`
 **Issue:** unsafe-inline and unsafe-eval enabled
 **Fix:** Use nonces for inline scripts/styles
 
 #### 5. HTTP Signature Digest Placeholder (HIGH)
+
 **File:** `internal/activitypub/httpsig.go:111`
 **Issue:** ActivityPub signatures don't validate body integrity
 **Fix:** Calculate real SHA-256 digests of request bodies
@@ -674,6 +695,7 @@ This E2EE implementation provides military-grade security for private messaging 
 **However, the platform-wide security audit revealed critical vulnerabilities that must be addressed before production deployment.** See SECURITY_PENTEST_REPORT.md for complete findings.
 
 **Current Security Status:**
+
 - **E2EE Messaging**: 9.5/10 (Military-grade)
 - **Platform Overall**: 6.5/10 (Requires fixes before production)
 - **Target Rating**: 8.5/10 (After implementing critical fixes)

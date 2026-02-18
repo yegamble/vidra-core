@@ -5,6 +5,7 @@ Comprehensive guide to running, writing, and debugging tests for Athena.
 ## Test Categories
 
 ### Unit Tests (`*_test.go`, `*_unit_test.go`)
+
 - **Location**: Alongside source files
 - **Require infrastructure**: No (except `internal/repository/` tests)
 - **Run with**: `make test-unit` or `go test -short ./...`
@@ -13,12 +14,14 @@ Comprehensive guide to running, writing, and debugging tests for Athena.
 **Note**: Test file naming is inconsistent - both `*_test.go` and `*_unit_test.go` exist. The Makefile `test-unit` target excludes the repository package (requires DB) rather than relying on naming.
 
 ### Integration Tests (`*_integration_test.go`, `tests/integration/`)
+
 - **Location**: `tests/integration/` directory
 - **Require infrastructure**: PostgreSQL, Redis, IPFS, ClamAV (Docker)
 - **Run with**: `make test-integration` or `go test -tags=integration ./tests/integration`
 - **Speed**: Moderate (~2-5 minutes)
 
 ### E2E Tests (`tests/e2e/`)
+
 - **Location**: `tests/e2e/` directory
 - **Require infrastructure**: Full stack (app + all services)
 - **Run with**: `go test ./tests/e2e/...` (skipped with `-short`)
@@ -27,6 +30,7 @@ Comprehensive guide to running, writing, and debugging tests for Athena.
 ## Infrastructure Requirements
 
 ### Local Development
+
 ```bash
 # Start required services
 docker compose up -d postgres redis ipfs
@@ -38,6 +42,7 @@ curl http://localhost:5001/api/v0/version
 ```
 
 ### Test Stack (Isolated Ports)
+
 ```bash
 # Start test services
 docker compose --profile test up -d postgres-test redis-test ipfs-test clamav-test
@@ -46,6 +51,7 @@ docker compose --profile test up -d postgres-test redis-test ipfs-test clamav-te
 ```
 
 ### CI Environment
+
 - Uses Docker Compose with `ci` profile
 - Services run on standard ports (5432, 6379, 5001, 3310)
 - Configured in `.github/workflows/`
@@ -53,6 +59,7 @@ docker compose --profile test up -d postgres-test redis-test ipfs-test clamav-te
 ## Running Tests
 
 ### Common Commands
+
 ```bash
 # Fast: Unit tests only (exclude repository, skip integration)
 make test-unit
@@ -81,6 +88,7 @@ go test -run TestCreateVideo ./internal/httpapi
 ```
 
 ### Local Fast Paths
+
 ```bash
 # Skip long-running tests
 go test -short ./...
@@ -98,6 +106,7 @@ go clean -testcache
 ## Test Patterns
 
 ### Table-Driven Tests
+
 ```go
 func TestValidateEmail(t *testing.T) {
     tests := []struct {
@@ -122,6 +131,7 @@ func TestValidateEmail(t *testing.T) {
 ```
 
 ### Repository Tests (sqlmock)
+
 ```go
 func TestGetVideo(t *testing.T) {
     db, mock, err := sqlmock.New()
@@ -141,6 +151,7 @@ func TestGetVideo(t *testing.T) {
 ```
 
 ### HTTP Handler Tests (httptest)
+
 ```go
 func TestCreateVideo(t *testing.T) {
     handler := NewVideoHandler(mockService)
@@ -156,6 +167,7 @@ func TestCreateVideo(t *testing.T) {
 ```
 
 ### Test Helpers (testutil)
+
 ```go
 import "athena/internal/testutil"
 
@@ -174,6 +186,7 @@ func TestWithDB(t *testing.T) {
 ## Coverage
 
 ### Check Coverage
+
 ```bash
 # Overall coverage (with threshold check)
 make coverage-check
@@ -189,9 +202,11 @@ make coverage-report
 ```
 
 ### Coverage Thresholds
+
 See `scripts/coverage-thresholds.txt` for per-package targets. Core packages target 80-90% coverage.
 
 Current status (as of Sprint 19):
+
 - **Total coverage**: 62.3% average across 72 packages
 - **Test files**: 313
 - **Test functions**: 3,752
@@ -199,6 +214,7 @@ Current status (as of Sprint 19):
 ## CI Configuration
 
 ### GitHub Actions Workflows
+
 | Workflow | Runs | Services |
 |----------|------|----------|
 | `unit-tests.yml` | `make test-unit` | None (short mode) |
@@ -207,6 +223,7 @@ Current status (as of Sprint 19):
 | `security-tests.yml` | gosec, SARIF upload | None |
 
 ### CI Test Command
+
 ```bash
 # Integration tests in CI (with services)
 make test-integration-ci
@@ -214,6 +231,7 @@ make test-integration-ci
 ```
 
 ### Reproducing CI Locally
+
 ```bash
 # Install act (GitHub Actions runner)
 # See: https://github.com/nektos/act
@@ -240,6 +258,7 @@ make test-race
 ## Troubleshooting
 
 ### Port Conflicts
+
 ```bash
 # Check for conflicting services
 make test-ports-check
@@ -249,6 +268,7 @@ make test-cleanup
 ```
 
 ### Database Connection Errors
+
 ```bash
 # Ensure services are running
 docker compose ps
@@ -261,6 +281,7 @@ pg_isready -h localhost -p 5433 -U test_user
 ```
 
 ### Stale Test Cache
+
 ```bash
 # Clear cache and re-run
 go clean -testcache
@@ -268,6 +289,7 @@ go test ./package
 ```
 
 ### Tests Pass Locally, Fail in CI
+
 - Check environment variables (CI uses `TEST_DATABASE_URL`, etc.)
 - Verify service startup order (healthchecks in docker-compose.yml)
 - Check for timing dependencies (add retries or longer timeouts)

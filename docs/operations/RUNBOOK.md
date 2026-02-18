@@ -21,18 +21,21 @@ For detailed monitoring setup instructions, see the [Monitoring Guide](MONITORIN
 ### Health Check Endpoints
 
 **Liveness Probe**: `/health`
+
 - **Purpose**: Verify service is responsive
 - **Expected Response**: 200 OK
 - **Timeout**: 5 seconds
 - **Action on Failure**: Restart container/pod
 
 **Readiness Probe**: `/ready`
+
 - **Purpose**: Verify service can handle traffic
 - **Expected Response**: 200 OK with dependency status
 - **Timeout**: 10 seconds
 - **Action on Failure**: Remove from load balancer
 
 **Example Response**:
+
 ```json
 {
   "status": "healthy",
@@ -86,6 +89,7 @@ rate(video_transcode_success_total[5m])
 ### Log Aggregation
 
 **Log Levels**:
+
 - **DEBUG**: Development only
 - **INFO**: Normal operations
 - **WARN**: Potential issues (fallback modes, retries)
@@ -93,6 +97,7 @@ rate(video_transcode_success_total[5m])
 - **FATAL**: Service cannot continue
 
 **Critical Log Patterns**:
+
 ```bash
 # Database connection failures
 level=error msg="database connection failed"
@@ -117,21 +122,25 @@ level=warn msg="authentication failed"
 ### Severity Levels
 
 **P0 - Critical** (Response: Immediate, Notification: All)
+
 - Service completely down
 - Data loss occurring
 - Security breach active
 
 **P1 - High** (Response: 15 minutes, Notification: On-call)
+
 - Partial service outage
 - Major feature unavailable
 - High error rate (> 5%)
 
 **P2 - Medium** (Response: 2 hours, Notification: Team)
+
 - Degraded performance
 - Single component failure with fallback
 - Non-critical feature broken
 
 **P3 - Low** (Response: Next business day, Notification: Slack)
+
 - Cosmetic issues
 - Minor performance degradation
 - Low-impact bugs
@@ -177,11 +186,13 @@ level=warn msg="authentication failed"
 #### Scenario 1: Database Connection Pool Exhausted
 
 **Symptoms**:
+
 - `503 Service Unavailable` errors
 - `database connection pool exhausted` logs
 - High request latency
 
 **Diagnosis**:
+
 ```sql
 -- Check active connections
 SELECT count(*) FROM pg_stat_activity WHERE state = 'active';
@@ -194,11 +205,13 @@ ORDER BY duration DESC;
 ```
 
 **Mitigation**:
+
 1. Increase connection pool size (emergency)
 2. Kill long-running queries
 3. Restart application (if severe)
 
 **Resolution**:
+
 1. Optimize slow queries
 2. Review connection leak in code
 3. Tune pool settings
@@ -207,11 +220,13 @@ ORDER BY duration DESC;
 #### Scenario 2: IPFS Gateway Degradation
 
 **Symptoms**:
+
 - Slow video loading
 - Timeout errors on `/videos/{id}/stream`
 - `ipfs gateway timeout` logs
 
 **Diagnosis**:
+
 ```bash
 # Check IPFS daemon health
 curl http://localhost:5001/api/v0/id
@@ -224,11 +239,13 @@ curl http://localhost:9094/peers
 ```
 
 **Mitigation**:
+
 1. Enable fallback to local delivery
 2. Add temporary gateway to pool
 3. Reduce IPFS timeout (fail faster)
 
 **Resolution**:
+
 1. Restart IPFS daemon
 2. Clear gateway cache
 3. Verify network connectivity
@@ -237,11 +254,13 @@ curl http://localhost:9094/peers
 #### Scenario 3: ClamAV Scanner Unavailable
 
 **Symptoms**:
+
 - Upload failures (if `CLAMAV_FALLBACK_MODE=strict`)
 - `virus scanner unavailable` warnings
 - Quarantine directory not updating
 
 **Diagnosis**:
+
 ```bash
 # Check ClamAV daemon
 systemctl status clamav-daemon
@@ -254,11 +273,13 @@ freshclam --show-progress
 ```
 
 **Mitigation**:
+
 1. **Strict Mode**: Switch to `warn` temporarily (security review required)
 2. Restart ClamAV daemon
 3. Verify signature database
 
 **Resolution**:
+
 1. Fix ClamAV configuration
 2. Allocate more memory (if OOM)
 3. Update signatures
@@ -268,11 +289,13 @@ freshclam --show-progress
 #### Scenario 4: Queue Backup
 
 **Symptoms**:
+
 - High queue depth (> 1000)
 - Videos stuck in processing
 - Slow transcoding
 
 **Diagnosis**:
+
 ```bash
 # Check queue depth
 curl http://localhost:8080/metrics | grep queue_depth
@@ -285,11 +308,13 @@ df -h /app/processed
 ```
 
 **Mitigation**:
+
 1. Scale up transcode workers
 2. Pause non-critical jobs
 3. Reject new uploads temporarily
 
 **Resolution**:
+
 1. Identify stuck jobs
 2. Clear failed jobs
 3. Optimize worker efficiency
@@ -302,22 +327,26 @@ df -h /app/processed
 ### Backup Schedule
 
 **Database (PostgreSQL)**:
+
 - **Full Backup**: Daily at 02:00 UTC
 - **Incremental**: Every 6 hours
 - **WAL Archiving**: Continuous
 - **Retention**: 30 days
 
 **Redis**:
+
 - **RDB Snapshot**: Every 15 minutes
 - **AOF**: Continuous
 - **Retention**: 7 days
 
 **IPFS**:
+
 - **Pinset Export**: Daily
 - **Retention**: 30 days
 - **External Pins**: Pinata, Infura
 
 **Application Data**:
+
 - **Uploads**: Synced to S3 hourly
 - **Processed Videos**: Synced to S3 daily
 - **Retention**: 90 days
@@ -325,6 +354,7 @@ df -h /app/processed
 ### Database Backup
 
 **Manual Backup**:
+
 ```bash
 # Full database dump
 pg_dump -h localhost -U athena_user -d athena \
@@ -340,12 +370,14 @@ pg_dump -h localhost -U athena_user -d athena \
 ```
 
 **Automated Backup** (via cron):
+
 ```bash
 # /etc/cron.d/athena-backup
 0 2 * * * postgres /usr/local/bin/backup-athena-db.sh
 ```
 
 **Verify Backup**:
+
 ```bash
 # Test restore to temporary database
 createdb test_restore
@@ -357,6 +389,7 @@ dropdb test_restore
 ### Database Restore
 
 **Full Restore**:
+
 ```bash
 # Stop application
 systemctl stop athena
@@ -378,6 +411,7 @@ systemctl start athena
 ```
 
 **Point-in-Time Recovery** (PITR):
+
 ```bash
 # Stop PostgreSQL
 systemctl stop postgresql
@@ -404,6 +438,7 @@ sudo -u postgres psql -c "SELECT pg_wal_replay_resume();"
 ### IPFS Backup & Restore
 
 **Export Pinset**:
+
 ```bash
 # List all pins
 ipfs pin ls --type=recursive > pinset_$(date +%Y%m%d).txt
@@ -415,6 +450,7 @@ done > pinset_metadata_$(date +%Y%m%d).csv
 ```
 
 **Restore Pinset**:
+
 ```bash
 # Pin all CIDs from export
 cat pinset_20250117.txt | awk '{print $1}' | while read cid; do
@@ -426,6 +462,7 @@ ipfs pin ls --type=recursive | wc -l
 ```
 
 **External Pinning** (Pinata):
+
 ```bash
 # Pin to Pinata
 curl -X POST "https://api.pinata.cloud/pinning/pinByHash" \
@@ -442,6 +479,7 @@ curl -X POST "https://api.pinata.cloud/pinning/pinByHash" \
 ### Horizontal Scaling
 
 **Application Servers**:
+
 - **Current**: 2 instances
 - **Scale Up When**: CPU > 70% or Request latency > 1s
 - **Scale Down When**: CPU < 30% for 15 minutes
@@ -449,6 +487,7 @@ curl -X POST "https://api.pinata.cloud/pinning/pinByHash" \
 - **Min Instances**: 2
 
 **Transcode Workers**:
+
 - **Current**: 4 workers
 - **Scale Up When**: Queue depth > 100 or CPU idle
 - **Scale Down When**: Queue depth < 10
@@ -456,6 +495,7 @@ curl -X POST "https://api.pinata.cloud/pinning/pinByHash" \
 - **Min Workers**: 2
 
 **IPFS Cluster**:
+
 - **Current**: 3 peers
 - **Scale Up When**: Storage > 85% or throughput degraded
 - **Recommended**: Odd number of peers (3, 5, 7)
@@ -464,16 +504,19 @@ curl -X POST "https://api.pinata.cloud/pinning/pinByHash" \
 ### Vertical Scaling
 
 **Database**:
+
 - **Current**: 4 vCPU, 8GB RAM
 - **Indicators**: High CPU, slow queries, connection waits
 - **Upgrade Path**: 8 vCPU, 16GB RAM → 16 vCPU, 32GB RAM
 
 **Redis**:
+
 - **Current**: 2GB RAM
 - **Indicators**: Memory > 90%, evictions occurring
 - **Upgrade Path**: 4GB → 8GB → 16GB
 
 **Transcode Workers**:
+
 - **Current**: 4 vCPU, 8GB RAM each
 - **Indicators**: Transcoding time increasing
 - **Upgrade Path**: 8 vCPU, 16GB RAM
@@ -481,6 +524,7 @@ curl -X POST "https://api.pinata.cloud/pinning/pinByHash" \
 ### Kubernetes Scaling
 
 **Horizontal Pod Autoscaler** (HPA):
+
 ```yaml
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
@@ -510,6 +554,7 @@ spec:
 ```
 
 **Vertical Pod Autoscaler** (VPA):
+
 ```yaml
 apiVersion: autoscaling.k8s.io/v1
 kind: VerticalPodAutoscaler
@@ -540,11 +585,13 @@ spec:
 ### Issue: Videos Stuck in "Processing"
 
 **Symptoms**:
+
 - Videos remain in `processing` status indefinitely
 - Transcode workers idle
 - No error logs
 
 **Diagnosis**:
+
 ```bash
 # Check stuck videos (use docker exec or psql with DATABASE_URL)
 psql -U athena_user -d athena -c "SELECT id, title, processing_status, created_at
@@ -559,6 +606,7 @@ docker logs athena-transcode-worker-1 --tail 100
 ```
 
 **Resolution**:
+
 ```bash
 # Reset stuck video
 psql -U athena_user -d athena -c "UPDATE videos
@@ -572,11 +620,13 @@ curl -X POST http://localhost:8080/api/v1/admin/videos/{video_id}/reprocess
 ### Issue: High Memory Usage
 
 **Symptoms**:
+
 - OOM kills
 - Slow performance
 - Swap usage increasing
 
 **Diagnosis**:
+
 ```bash
 # Check memory usage
 free -h
@@ -589,6 +639,7 @@ pprof -http=:8081 http://localhost:8080/debug/pprof/heap
 ```
 
 **Resolution**:
+
 ```bash
 # Restart service
 systemctl restart athena
@@ -603,11 +654,13 @@ docker run --memory=4g athena
 ### Issue: Slow Video Playback
 
 **Symptoms**:
+
 - Buffering during playback
 - High HLS segment load time
 - CDN cache misses
 
 **Diagnosis**:
+
 ```bash
 # Test HLS delivery
 time curl -o /dev/null http://localhost:8080/videos/{id}/master.m3u8
@@ -620,6 +673,7 @@ curl -I http://cdn.example.com/videos/{id}/playlist.m3u8 | grep X-Cache
 ```
 
 **Resolution**:
+
 1. Verify CDN configuration
 2. Enable local caching
 3. Add IPFS gateway to pool
@@ -632,6 +686,7 @@ curl -I http://cdn.example.com/videos/{id}/playlist.m3u8 | grep X-Cache
 ### Database Maintenance
 
 **Vacuum & Analyze** (Weekly):
+
 ```bash
 # Vacuum all tables
 psql -U athena_user -d athena -c "VACUUM ANALYZE;"
@@ -646,6 +701,7 @@ psql -U athena_user -d athena -c "SELECT schemaname, tablename,
 ```
 
 **Reindex** (Monthly):
+
 ```bash
 # Reindex all indexes
 psql -U athena_user -d athena -c "REINDEX DATABASE athena;"
@@ -657,6 +713,7 @@ psql -U athena_user -d athena -c "REINDEX INDEX idx_videos_processing_status;"
 ### Redis Maintenance
 
 **Clear Expired Keys**:
+
 ```bash
 # Scan for expired sessions
 redis-cli --scan --pattern "session:*" | while read key; do
@@ -670,6 +727,7 @@ redis-cli CONFIG SET maxmemory-policy allkeys-lru
 ### IPFS Maintenance
 
 **Garbage Collection** (Weekly):
+
 ```bash
 # Run GC
 ipfs repo gc
@@ -682,6 +740,7 @@ ipfs pin ls --type=recursive | wc -l
 ```
 
 **Cluster Health Check**:
+
 ```bash
 # Check cluster peers
 ipfs-cluster-ctl peers ls
@@ -696,6 +755,7 @@ ipfs-cluster-ctl pin recover --all
 ### ClamAV Maintenance
 
 **Update Signatures** (Daily):
+
 ```bash
 # Update virus definitions
 freshclam
@@ -718,8 +778,8 @@ clamscan eicar.txt
 |------|---------|-----------|
 | **Backend** | +1-555-0100 | +1-555-0101 |
 | **DevOps** | +1-555-0200 | +1-555-0201 |
-| **Security** | +1-555-0300 | security@athena.com |
-| **Product** | +1-555-0400 | product@athena.com |
+| **Security** | +1-555-0300 | <security@athena.com> |
+| **Product** | +1-555-0400 | <product@athena.com> |
 
 ### Escalation Path
 
@@ -732,8 +792,8 @@ clamscan eicar.txt
 
 - **AWS Support**: +1-800-AWS-SUPPORT (P1 support plan)
 - **Cloudflare Support**: Enterprise dashboard
-- **Database DBA**: dba@athena.com
-- **Security Team**: security@athena.com (PGP key available)
+- **Database DBA**: <dba@athena.com>
+- **Security Team**: <security@athena.com> (PGP key available)
 
 ---
 

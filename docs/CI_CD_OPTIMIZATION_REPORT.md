@@ -11,12 +11,14 @@
 **Current State:** Your CI/CD pipeline has 8 workflows with significant redundancy and inefficiencies. Estimated average pipeline duration: **15-25 minutes** for full test suite.
 
 **Optimization Potential:**
+
 - **Expected Time Savings:** 40-60% reduction in total execution time
 - **Estimated Optimized Duration:** 6-12 minutes for full test suite
 - **Resource Savings:** 50%+ reduction in redundant operations
 - **Parallel Execution:** Enable 5-8 concurrent jobs (currently 2-3)
 
 **Critical Issues Identified:**
+
 1. Duplicate Docker installations across 7 workflows (unnecessary on self-hosted)
 2. Go module downloads repeated 12+ times per run
 3. Sequential job execution preventing parallelization
@@ -31,6 +33,7 @@
 ### 1. **test.yml** - Main Test Suite (HIGHEST PRIORITY)
 
 **Current Issues:**
+
 - ✗ 7 jobs with dependencies that could be parallelized
 - ✗ Redundant Docker installations in 5 jobs
 - ✗ Go module downloads happen 4 times
@@ -40,6 +43,7 @@
 - ✗ Heavy `Check formatting` step duplicates module downloads
 
 **Bottlenecks:**
+
 1. **Line 84-103:** Install dependencies with complex retry logic (runs 4x)
 2. **Line 105-134:** Format checking downloads modules again
 3. **Line 141:** Integration waits for unit (should run in parallel)
@@ -49,6 +53,7 @@
 **Estimated Current Duration:** 12-18 minutes (sequential)
 
 **Optimization Opportunities:**
+
 - **Cache Go modules globally** - Save 3-5 min per run
 - **Run unit/integration/lint in parallel** - Save 5-8 min
 - **Remove Docker installation steps** (self-hosted has Docker) - Save 2 min
@@ -62,6 +67,7 @@
 ### 2. **security-tests.yml** - Security Test Suite
 
 **Current Issues:**
+
 - ✗ 6 sequential jobs that could use matrix strategy
 - ✗ Each job sets up Go separately (6x overhead)
 - ✗ Duplicate tool installation (govulncheck, gosec, staticcheck)
@@ -69,6 +75,7 @@
 - ✗ Manual retry logic duplicated in 3 jobs (lines 173-188, 209-225, 230-246)
 
 **Bottlenecks:**
+
 1. **Sequential execution:** Jobs run one after another
 2. **Tool installation:** Each job installs tools independently
 3. **No result caching:** Security scans re-run on identical code
@@ -76,6 +83,7 @@
 **Estimated Current Duration:** 15-20 minutes (sequential)
 
 **Optimization Opportunities:**
+
 - **Matrix strategy** for test categories - Save 10-12 min
 - **Cache security tools** (govulncheck, gosec, staticcheck) - Save 2-3 min
 - **Parallel execution** of independent test suites - Save 8-10 min
@@ -88,6 +96,7 @@
 ### 3. **virus-scanner-tests.yml** - Virus Scanner Tests
 
 **Current Issues:**
+
 - ✗ 6 jobs with complex dependencies
 - ✗ ClamAV service startup repeated with 300s timeout (lines 159-190)
 - ✗ Same wait logic duplicated 4 times
@@ -96,6 +105,7 @@
 - ✗ Test file generation duplicated across jobs
 
 **Bottlenecks:**
+
 1. **ClamAV startup time:** 2-5 minutes per job (runs 4x)
 2. **Service dependencies:** Complex retry logic
 3. **File fixture generation:** Repeated in multiple jobs
@@ -103,6 +113,7 @@
 **Estimated Current Duration:** 25-35 minutes
 
 **Optimization Opportunities:**
+
 - **Shared ClamAV service** across jobs - Save 8-12 min
 - **Fixture caching** - Save 2-3 min
 - **Parallel job execution** - Save 10-15 min
@@ -115,6 +126,7 @@
 ### 4. **e2e-tests.yml** - End-to-End Tests
 
 **Current Issues:**
+
 - ✗ Two nearly identical jobs (`e2e-tests` and `e2e-tests-race`)
 - ✗ Duplicate setup code (lines 23-88 vs 156-209)
 - ✗ Race detector job runs on all PRs (should be main/manual only)
@@ -122,6 +134,7 @@
 - ✗ FFmpeg installation might be cached on self-hosted
 
 **Bottlenecks:**
+
 1. **Test environment setup:** 5-8 minutes
 2. **Race detector overhead:** 2-3x slower than normal tests
 3. **Docker Compose operations:** Repeated cleanup/startup
@@ -129,6 +142,7 @@
 **Estimated Current Duration:** 20-30 minutes (with race detector)
 
 **Optimization Opportunities:**
+
 - **Conditional race detector** (already partially implemented) - Save 15-20 min on PRs
 - **Reuse Docker images** - Save 3-5 min
 - **Parallel E2E test scenarios** - Save 5-8 min
@@ -140,16 +154,19 @@
 ### 5. **openapi-ci.yml** - OpenAPI Validation
 
 **Current Issues:**
+
 - ✗ Node.js tool installation with retry logic (4 separate installations)
 - ✗ Simple validation could be faster
 - ✗ No caching of npm global packages
 
 **Bottlenecks:**
+
 1. **npm install with retry logic:** Runs twice per workflow
 
 **Estimated Current Duration:** 3-5 minutes
 
 **Optimization Opportunities:**
+
 - **Cache npm global packages** - Save 1-2 min
 - **Combine validate + generate-docs** for PRs - Save 1 min
 
@@ -160,18 +177,21 @@
 ### 6. **video-import.yml** - Video Import Tests
 
 **Current Issues:**
+
 - ✗ Similar structure to test.yml with same redundancies
 - ✗ Migration application using psql directly (lines 189-192)
 - ✗ Duplicate Docker installation
 - ✗ No proper migration tool (uses raw SQL loop)
 
 **Bottlenecks:**
+
 1. **Migration application:** Manual SQL execution
 2. **Duplicate setup:** Similar to main test suite
 
 **Estimated Current Duration:** 10-15 minutes
 
 **Optimization Opportunities:**
+
 - **Share setup with test.yml** - Save 3-5 min
 - **Use Goose for migrations** - Improve reliability
 - **Parallel unit/integration** - Save 4-6 min
@@ -183,6 +203,7 @@
 ### 7. **goose-migrate.yml** - Database Migration Validation
 
 **Current Issues:**
+
 - ✗ Goose installation with complex retry logic
 - ✗ Could benefit from caching Goose binary
 
@@ -197,6 +218,7 @@
 ### 8. **blue-green-deploy.yml** - Production Deployment
 
 **Current Issues:**
+
 - ✗ Manual approval steps (intentional, but could be improved)
 - ✗ Sequential deployment stages
 - ✗ Long monitoring periods (30 min hardcoded)
@@ -237,6 +259,7 @@
 **Issue:** `go mod download` runs 12+ times with complex retry logic
 
 **Current Strategy:**
+
 - Some jobs use `cache: true` in setup-go
 - Others manually run `go mod download` with retry logic
 - No shared cache key strategy
@@ -261,6 +284,7 @@
 ### 3. **Parallel Job Execution**
 
 **Current Dependency Graph:**
+
 ```
 test.yml:
   changes → unit → integration → build
@@ -268,6 +292,7 @@ test.yml:
 ```
 
 **Optimized Dependency Graph:**
+
 ```
 test.yml:
   ┌─ unit ────────┐
@@ -282,6 +307,7 @@ test.yml:
 ### 4. **Create Composite Actions for Common Operations**
 
 **Recommended Structure:**
+
 ```
 .github/actions/
 ├── setup-go-cached/action.yml       # Go setup with optimal caching
@@ -291,6 +317,7 @@ test.yml:
 ```
 
 **Impact:**
+
 - Reduce workflow file size by 40%
 - Eliminate 200+ lines of duplicate code
 - Improve maintainability
@@ -300,6 +327,7 @@ test.yml:
 ### 5. **Matrix Strategy for Security Tests**
 
 **Current:**
+
 ```yaml
 jobs:
   ssrf-protection-tests: ...
@@ -310,6 +338,7 @@ jobs:
 ```
 
 **Optimized:**
+
 ```yaml
 jobs:
   security-tests:
@@ -334,6 +363,7 @@ jobs:
 **Current:** Many workflows trigger on all code changes
 
 **Recommendation:**
+
 ```yaml
 on:
   push:
@@ -357,6 +387,7 @@ on:
 **Current:** Limited use of Go build cache
 
 **Recommendation:**
+
 ```yaml
 - name: Set up Go
   uses: actions/setup-go@v5
@@ -371,6 +402,7 @@ on:
 ```
 
 **Additional for Docker:**
+
 ```yaml
 - name: Build Docker image
   uses: docker/build-push-action@v6
@@ -388,6 +420,7 @@ on:
 **Current:** Workflows assume fresh environment
 
 **Recommendations:**
+
 1. **Remove apt-get update** - Maintain base image with common packages
 2. **Cache tool binaries** - Store in runner's cache directory
 3. **Use local Docker registry** - Cache frequently used images
@@ -400,6 +433,7 @@ on:
 ## Performance Benchmarks
 
 ### Before Optimization (Current)
+
 | Workflow | Duration | Parallel Jobs | Total Time |
 |----------|----------|---------------|------------|
 | test.yml | 12-18 min | 2-3 | 12-18 min |
@@ -409,6 +443,7 @@ on:
 | **Total (worst case)** | - | - | **~75 min** |
 
 ### After Optimization (Projected)
+
 | Workflow | Duration | Parallel Jobs | Total Time |
 |----------|----------|---------------|------------|
 | test.yml | 5-8 min | 6-8 | 5-8 min |
@@ -426,16 +461,19 @@ on:
 ### Self-Hosted Runner Resource Usage
 
 **Current:**
+
 - Average run time: 45-60 minutes per PR
 - Redundant operations: 40%
 - Parallel capacity utilization: 30%
 
 **Optimized:**
+
 - Average run time: 20-25 minutes per PR
 - Redundant operations: <10%
 - Parallel capacity utilization: 70%
 
 **Savings:**
+
 - **Time:** 55% reduction in wall-clock time
 - **CPU hours:** 40% reduction
 - **Developer productivity:** Faster feedback loop
@@ -445,22 +483,26 @@ on:
 ## Implementation Priority
 
 ### Phase 1: Quick Wins (1-2 hours, 30% improvement)
+
 1. ✅ Remove Docker installation steps from all workflows
 2. ✅ Enable Go module caching in all jobs
 3. ✅ Remove duplicate apt-get updates
 4. ✅ Add paths filters to workflows
 
 ### Phase 2: Parallelization (2-4 hours, 25% improvement)
+
 1. ✅ Modify test.yml to run unit/integration/lint in parallel
 2. ✅ Convert security-tests.yml to matrix strategy
 3. ✅ Parallelize virus-scanner-tests.yml jobs
 
 ### Phase 3: Composite Actions (4-6 hours, 15% improvement)
+
 1. ✅ Create setup-go-cached composite action
 2. ✅ Create retry-command composite action
 3. ✅ Refactor all workflows to use composite actions
 
 ### Phase 4: Advanced Optimizations (6-8 hours, 10% improvement)
+
 1. ✅ Implement build cache warming
 2. ✅ Set up local Docker registry for self-hosted
 3. ✅ Optimize test parallelization within Go tests
@@ -470,6 +512,7 @@ on:
 ## Best Practices for Go CI/CD on GitHub Actions
 
 ### 1. **Go Module Caching**
+
 ```yaml
 - uses: actions/setup-go@v5
   with:
@@ -479,11 +522,13 @@ on:
 ```
 
 ### 2. **Parallel Test Execution**
+
 ```yaml
 - run: go test -parallel=8 -race ./...
 ```
 
 ### 3. **Build Cache**
+
 ```yaml
 - run: go build -buildmode=default -o bin/app ./cmd/server
   env:
@@ -491,6 +536,7 @@ on:
 ```
 
 ### 4. **Skip Tests for Docs Changes**
+
 ```yaml
 on:
   push:
@@ -500,6 +546,7 @@ on:
 ```
 
 ### 5. **Matrix Testing for Multiple Go Versions**
+
 ```yaml
 strategy:
   matrix:
@@ -507,12 +554,14 @@ strategy:
 ```
 
 ### 6. **Fail Fast**
+
 ```yaml
 strategy:
   fail-fast: true
 ```
 
 ### 7. **Concurrency Control**
+
 ```yaml
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -520,6 +569,7 @@ concurrency:
 ```
 
 ### 8. **Optimize golangci-lint**
+
 ```yaml
 - uses: golangci/golangci-lint-action@v7
   with:
@@ -559,6 +609,7 @@ concurrency:
 ### GitHub Actions Insights
 
 Use GitHub's built-in metrics:
+
 - Actions → Workflows → Select workflow → View runs
 - Analyze "Billable time" for each job
 - Identify slowest steps using Timeline view
@@ -568,26 +619,34 @@ Use GitHub's built-in metrics:
 ## Risks & Mitigations
 
 ### Risk 1: Parallel Jobs Exceeding Runner Capacity
+
 **Mitigation:** Limit max parallel jobs using `max-parallel`:
+
 ```yaml
 strategy:
   max-parallel: 4
 ```
 
 ### Risk 2: Cache Invalidation Issues
+
 **Mitigation:**
+
 - Use `go.sum` as cache key
 - Add version to cache key for breaking changes
 - Implement cache warming strategy
 
 ### Risk 3: Flaky Tests in Parallel Execution
+
 **Mitigation:**
+
 - Implement retry logic for flaky tests
 - Use test isolation strategies
 - Monitor test flakiness metrics
 
 ### Risk 4: Breaking Changes in Dependencies
+
 **Mitigation:**
+
 - Pin action versions (use @v5, not @main)
 - Test workflow changes in separate branch
 - Implement gradual rollout
@@ -604,6 +663,7 @@ Your CI/CD pipeline has significant optimization potential. By implementing the 
 - **Faster feedback** for developers (12-18 min → 5-8 min for test.yml)
 
 **Recommended First Steps:**
+
 1. Implement Phase 1 quick wins (2 hours, 30% improvement)
 2. Monitor results for one week
 3. Proceed with Phase 2 parallelization (4 hours, 25% additional improvement)
@@ -618,6 +678,7 @@ Your CI/CD pipeline has significant optimization potential. By implementing the 
 ## Appendix: Specific Code Issues
 
 ### Duplicate Retry Logic (appears 15+ times)
+
 **Location:** test.yml:86-103, security-tests.yml:173-188, virus-scanner-tests.yml:69-88, etc.
 
 **Problem:** 200+ lines of duplicate exponential backoff logic
@@ -625,6 +686,7 @@ Your CI/CD pipeline has significant optimization potential. By implementing the 
 **Solution:** Create composite action `.github/actions/retry-command/action.yml`
 
 ### Unnecessary Docker Checks (appears 7 times)
+
 **Location:** test.yml:187-198, e2e-tests.yml:26-37, etc.
 
 **Problem:** Self-hosted runners already have Docker installed
@@ -632,6 +694,7 @@ Your CI/CD pipeline has significant optimization potential. By implementing the 
 **Solution:** Remove all Docker installation steps
 
 ### Go Module Downloads (appears 12+ times)
+
 **Location:** Multiple workflows manually download modules
 
 **Problem:** setup-go@v5 with `cache: true` handles this automatically

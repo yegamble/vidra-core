@@ -1,4 +1,5 @@
 # Defense-in-Depth Security Recommendations
+
 ## Beyond Virus Scanning: Comprehensive Upload Security Architecture
 
 **Date**: 2025-11-16
@@ -22,6 +23,7 @@ While fixing the P1 virus scanner vulnerability is critical, this document addre
 **Current Gap**: Standard TLS may be vulnerable to downgrade attacks
 
 **Recommendation**:
+
 ```nginx
 # NGINX configuration for upload endpoints
 ssl_protocols TLSv1.3 TLSv1.2;
@@ -1072,6 +1074,7 @@ var SecureDefaults = &Config{
 ## Summary & Roadmap
 
 ### Immediate Actions (Week 1)
+
 - ✅ Fix virus scanner stream retry vulnerability
 - ✅ Enable strict fallback mode
 - ✅ Implement rate limiting on uploads
@@ -1079,6 +1082,7 @@ var SecureDefaults = &Config{
 - ✅ Deploy monitoring alerts
 
 ### Short-term (Month 1)
+
 - ⏳ FFmpeg sandboxing with seccomp/AppArmor
 - ⏳ Archive bomb protection
 - ⏳ IPFS content validation
@@ -1086,6 +1090,7 @@ var SecureDefaults = &Config{
 - ⏳ Threat intelligence integration
 
 ### Medium-term (Quarter 1)
+
 - ⏳ Multi-engine virus scanning
 - ⏳ Behavioral analysis sandbox
 - ⏳ Content sanitization pipeline
@@ -1093,6 +1098,7 @@ var SecureDefaults = &Config{
 - ⏳ SIEM integration
 
 ### Long-term (Year 1)
+
 - ⏳ Zero-trust architecture
 - ⏳ Hardware security modules for key management
 - ⏳ Automated incident response

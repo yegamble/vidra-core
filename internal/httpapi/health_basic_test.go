@@ -2,13 +2,15 @@ package httpapi
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/DATA-DOG/go-sqlmock"
 )
 
-// Basic test to verify test structure works
 func TestHealthCheck_BasicStructure(t *testing.T) {
 	req := httptest.NewRequest("GET", "/health", nil)
 	w := httptest.NewRecorder()
@@ -19,7 +21,6 @@ func TestHealthCheck_BasicStructure(t *testing.T) {
 		t.Errorf("Expected status 200, got %d", w.Code)
 	}
 
-	// Response is wrapped in shared.Response envelope
 	var envelope struct {
 		Data    HealthResponse `json:"data"`
 		Success bool           `json:"success"`
@@ -41,19 +42,16 @@ func TestHealthCheck_BasicStructure(t *testing.T) {
 		envelope.Data.Status, envelope.Data.Version)
 }
 
-// Test readiness check structure
 func TestReadinessCheck_BasicStructure(t *testing.T) {
 	req := httptest.NewRequest("GET", "/ready", nil)
 	w := httptest.NewRecorder()
 
 	ReadinessCheck(w, req)
 
-	// Current stub implementation should return 200
 	if w.Code != http.StatusOK {
 		t.Errorf("Expected status 200, got %d", w.Code)
 	}
 
-	// Response is wrapped in shared.Response envelope
 	var envelope struct {
 		Data    HealthResponse `json:"data"`
 		Success bool           `json:"success"`
@@ -63,7 +61,6 @@ func TestReadinessCheck_BasicStructure(t *testing.T) {
 		t.Errorf("Failed to unmarshal response: %v", err)
 	}
 
-	// Verify all expected components are present
 	expectedComponents := []string{"database", "redis", "ipfs", "queue"}
 	for _, component := range expectedComponents {
 		if status, exists := envelope.Data.Checks[component]; !exists {
@@ -78,10 +75,80 @@ func TestReadinessCheck_BasicStructure(t *testing.T) {
 		len(envelope.Data.Checks))
 }
 
-// Test that demonstrates stub limitations
+func TestServerReadinessCheck_DBUnhealthy(t *testing.T) {
+	db, mock, err := sqlmock.New(sqlmock.MonitorPingsOption(true))
+	if err != nil {
+		t.Fatalf("Failed to create sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	mock.ExpectPing().WillReturnError(fmt.Errorf("connection refused"))
+
+	server := NewServer(nil, nil, "test", nil, 0, "", "", 0, nil)
+	server.SetDB(db)
+
+	req := httptest.NewRequest("GET", "/ready", nil)
+	w := httptest.NewRecorder()
+
+	server.ReadinessCheck(w, req)
+
+	var envelope struct {
+		Data struct {
+			Checks struct {
+				Database *string `json:"database"`
+			} `json:"checks"`
+		} `json:"data"`
+		Success bool `json:"success"`
+	}
+	err = json.Unmarshal(w.Body.Bytes(), &envelope)
+	if err != nil {
+		t.Fatalf("Failed to unmarshal response: %v", err)
+	}
+
+	if envelope.Data.Checks.Database == nil {
+		t.Fatal("Expected database check in response")
+	}
+	if *envelope.Data.Checks.Database != "unhealthy" {
+		t.Errorf("Expected database status 'unhealthy' when DB ping fails, got '%s'",
+			*envelope.Data.Checks.Database)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("Unfulfilled sqlmock expectations: %v", err)
+	}
+}
+
+func TestServerReadinessCheck_NilDB(t *testing.T) {
+	server := NewServer(nil, nil, "test", nil, 0, "", "", 0, nil)
+
+	req := httptest.NewRequest("GET", "/ready", nil)
+	w := httptest.NewRecorder()
+
+	server.ReadinessCheck(w, req)
+
+	var envelope struct {
+		Data struct {
+			Checks struct {
+				Database *string `json:"database"`
+			} `json:"checks"`
+		} `json:"data"`
+		Success bool `json:"success"`
+	}
+	err := json.Unmarshal(w.Body.Bytes(), &envelope)
+	if err != nil {
+		t.Fatalf("Failed to unmarshal response: %v", err)
+	}
+
+	if envelope.Data.Checks.Database == nil {
+		t.Fatal("Expected database check in response")
+	}
+	if *envelope.Data.Checks.Database != "healthy" {
+		t.Errorf("Expected database status 'healthy' when no DB configured, got '%s'",
+			*envelope.Data.Checks.Database)
+	}
+}
+
 func TestReadinessCheck_StubLimitations(t *testing.T) {
-	// This test demonstrates that current implementation is just stubs
-	// All checks always return "ok" regardless of actual component state
 
 	req := httptest.NewRequest("GET", "/ready", nil)
 	w := httptest.NewRecorder()
@@ -90,14 +157,12 @@ func TestReadinessCheck_StubLimitations(t *testing.T) {
 	ReadinessCheck(w, req)
 	duration := time.Since(start)
 
-	// Stub implementation should be very fast (no real checks)
 	if duration > 10*time.Millisecond {
 		t.Logf("Warning: Readiness check took %v, which might indicate real checks are happening", duration)
 	} else {
 		t.Logf("Readiness check completed in %v (indicates stub implementation)", duration)
 	}
 
-	// Stub always returns 200 OK
 	if w.Code != http.StatusOK {
 		t.Errorf("Stub should always return 200, got %d", w.Code)
 	}
@@ -105,7 +170,6 @@ func TestReadinessCheck_StubLimitations(t *testing.T) {
 	var response HealthResponse
 	json.Unmarshal(w.Body.Bytes(), &response)
 
-	// All components should be "ok" in stub
 	for component, status := range response.Checks {
 		if status != "ok" {
 			t.Errorf("Stub implementation: component %s should always be 'ok', got '%s'",

@@ -7,6 +7,7 @@ This document provides comprehensive architectural context. For quick reference,
 PeerTube-compatible backend in Go with decentralized storage (IPFS), hybrid delivery, and federation support.
 
 **Core Technologies**:
+
 - **Router**: Chi with middleware stack
 - **Database**: PostgreSQL (SQLX) with extensions: `pg_trgm`, `unaccent`, `uuid-ossp`, `btree_gin`
 - **Cache**: Redis (sessions, rate limiting, job state)
@@ -23,6 +24,7 @@ MaxOpen=25, MaxIdle=5, ConnMaxLifetime=5m, ConnMaxIdleTime=2m
 ```
 
 ### Key Indexes
+
 - `processing_status`, `privacy`, `upload_date` on videos
 - GIN indexes on `title`, `description`, `tags`, `metadata`
 - Composite indexes for notification queries
@@ -45,12 +47,14 @@ Upload → Virus Scan → Chunk Merge → FFmpeg → IPFS Pin → Ready
 ```
 
 ### FFmpeg Configuration
+
 - Variants: 2160p → 360p (auto subset based on source)
 - Codec: H.264/AAC with `+faststart`
 - HLS: 4s segments, VOD playlists
 - Worker pool with bounded channel and per-job deadlines
 
 ### Encoding Job Resilience & Progress Tracking
+
 - **Heartbeat**: Active encoding jobs emit a heartbeat every 5 minutes (updates `updated_at`), keeping long-running encodes (e.g., 4K on low-spec hardware) alive
 - **Stale Job Recovery**: On worker startup, `ResetStaleJobs` resets orphaned `processing` jobs (no heartbeat for 30+ minutes) back to `pending` for automatic re-processing
 - **Safety margin**: 6x ratio (5-min heartbeat vs 30-min threshold) prevents false resets of active jobs
@@ -79,12 +83,14 @@ Hot (local cache) → Warm (IPFS) → Cold (S3-compatible)
 ## Pinning Strategy
 
 Score-based with factors:
+
 - Views: 40%
 - Recency: 30%
 - Age: 20%
 - Size efficiency: 10%
 
 Actions:
+
 - Unpin when score < 0.3 and storage > 90%
 - Replicate when score > 0.7
 
@@ -98,16 +104,20 @@ Actions:
 ## Observability Stack
 
 ### Logging (slog)
+
 Request-scoped fields: `request_id`, `user_id`, `ip`, `route`, `duration_ms`
 
 ### Metrics (Prometheus)
+
 Key metrics:
+
 - `http_request_duration_seconds`
 - `video_encoding_queue_depth`
 - `video_processing_errors_total{error_type}`
 - `iota_payment_confirmation_duration_seconds`
 
 ### Tracing (OpenTelemetry)
+
 - W3C Trace Context propagation
 - Spans: ingest → processing → IPFS → DB
 
@@ -116,6 +126,7 @@ Key metrics:
 Types: `new_video`, `video_processed`, `video_failed`, `new_subscriber`, `comment`, `mention`, `new_message`, `system`
 
 Database triggers:
+
 - `notify_subscribers_on_video_upload()` - Auto-notify on public video
 - `notify_on_new_message()` - Notify on new messages
 
@@ -130,6 +141,7 @@ See `internal/security/CLAUDE.md` for blocked file types and security measures.
 ## Docker/K8s Deployment
 
 ### Resource Guidelines
+
 | Service | vCPU | Memory |
 |---------|------|--------|
 | App | 2 | 4GB |
@@ -139,6 +151,7 @@ See `internal/security/CLAUDE.md` for blocked file types and security measures.
 | IPFS | 2 | 2GB |
 
 ### K8s Considerations
+
 - Probes: `/health` (liveness), `/ready` (readiness)
 - HPA: CPU + custom QPS metric
 - VPA for FFmpeg workers
@@ -149,11 +162,13 @@ See `internal/security/CLAUDE.md` for blocked file types and security measures.
 **Authentication**: JWT access (15min) + refresh (7d), optional OAuth2 with PKCE, TOTP 2FA
 
 **Cryptography** (see `internal/security/CLAUDE.md`):
+
 - HSM interface with software fallback
 - AES-256-GCM for data at rest
 - Argon2id for key derivation
 
 **Input Validation**:
+
 - MIME sniff + extension match
 - Virus scanning (ClamAV)
 - HTML sanitization (bluemonday)

@@ -12,21 +12,16 @@ import (
 	"github.com/stretchr/testify/mock"
 )
 
-// Response is an alias for shared.Response for tests
 type Response = shared.Response
 
-// ErrorInfo is an alias for shared.ErrorInfo for tests
 type ErrorInfo = shared.ErrorInfo
 
-// Meta is an alias for shared.Meta for tests
 type Meta = shared.Meta
 
-// MockLiveStreamRepository is a mock implementation for tests using testify
 type MockLiveStreamRepository struct {
 	mock.Mock
 }
 
-// Placeholder methods for MockLiveStreamRepository
 func (m *MockLiveStreamRepository) GetByID(ctx context.Context, id uuid.UUID) (*domain.LiveStream, error) {
 	args := m.Called(ctx, id)
 	if args.Get(0) == nil {
@@ -102,9 +97,25 @@ func (m *MockLiveStreamRepository) EndStream(ctx context.Context, id uuid.UUID) 
 	return args.Error(0)
 }
 
-// createTestUser is a helper to create test users (stub version)
-// This is a simplified version for tests that need to create users in the database
-//
+func (m *MockLiveStreamRepository) GetChannelByStreamID(_ context.Context, _ uuid.UUID) (*domain.Channel, error) {
+	return nil, nil
+}
+func (m *MockLiveStreamRepository) UpdateWaitingRoom(_ context.Context, _ uuid.UUID, _ bool, _ string) error {
+	return nil
+}
+func (m *MockLiveStreamRepository) ScheduleStream(_ context.Context, _ uuid.UUID, _ *time.Time, _ *time.Time, _ bool, _ string) error {
+	return nil
+}
+func (m *MockLiveStreamRepository) CancelSchedule(_ context.Context, _ uuid.UUID) error {
+	return nil
+}
+func (m *MockLiveStreamRepository) GetScheduledStreams(_ context.Context, _, _ int) ([]*domain.LiveStream, error) {
+	return nil, nil
+}
+func (m *MockLiveStreamRepository) GetUpcomingStreams(_ context.Context, _ uuid.UUID, _ int) ([]*domain.LiveStream, error) {
+	return nil, nil
+}
+
 //nolint:unused // used in test files
 func createTestUser(t interface{}, userRepo interface{}, ctx context.Context, username, email string) *domain.User {
 	user := &domain.User{
@@ -120,7 +131,6 @@ func createTestUser(t interface{}, userRepo interface{}, ctx context.Context, us
 	if repo, ok := userRepo.(interface {
 		Create(context.Context, *domain.User, string) error
 	}); ok {
-		// Use a deterministic bcrypt-compatible dummy hash for tests.
 		if err := repo.Create(ctx, user, "$2a$10$abcdefghijklmnopqrstuvwxabcdefghijklmnopqrstuvwxabcdefghij"); err != nil {
 			if tb, ok := t.(interface {
 				Fatalf(string, ...interface{})
@@ -133,8 +143,6 @@ func createTestUser(t interface{}, userRepo interface{}, ctx context.Context, us
 	return user
 }
 
-// withUserID adds a user ID to the context (test helper)
-//
 //nolint:unused // used in test files
 func withUserID(ctx context.Context, id string) context.Context {
 	return context.WithValue(ctx, middleware.UserIDKey, id)

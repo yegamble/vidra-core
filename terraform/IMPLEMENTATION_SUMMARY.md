@@ -5,6 +5,7 @@
 A complete, production-ready Terraform infrastructure for deploying the Athena video platform to AWS. This implementation includes:
 
 ### Core Infrastructure Modules (6 modules)
+
 1. **networking**: VPC, subnets, NAT gateways, security groups
 2. **eks**: Amazon EKS cluster with managed node groups and IRSA
 3. **rds**: PostgreSQL 15 database with Multi-AZ, automated backups
@@ -13,21 +14,25 @@ A complete, production-ready Terraform infrastructure for deploying the Athena v
 6. **s3**: Object storage with CloudFront CDN for video delivery
 
 ### Environment Configuration
+
 - **Production environment** fully configured and ready to deploy
 - Staging and dev environments prepared (templates ready)
 
 ### Automation Scripts
+
 - `bootstrap-backend.sh`: One-command backend setup
 - `deploy-k8s.sh`: Automated Kubernetes deployment
 - `Makefile`: 40+ convenient commands for operations
 
 ### Documentation
+
 - **README.md**: Overview and quick start
 - **DEPLOYMENT_GUIDE.md**: Complete step-by-step deployment (50+ pages)
 - **ARCHITECTURE_SUMMARY.md**: Architecture decisions and comparisons
 - **FILE_STRUCTURE.md**: Complete file structure reference
 
 ### Total Files Created
+
 - **30 Terraform files** (.tf)
 - **4 documentation files** (.md)
 - **2 shell scripts** (.sh)
@@ -37,6 +42,7 @@ A complete, production-ready Terraform infrastructure for deploying the Athena v
 ## Infrastructure Capabilities
 
 ### Production Environment
+
 - **High Availability**: Multi-AZ deployment across 3 availability zones
 - **Auto-Scaling**: 3-20 API pods, 2-10 encoding workers
 - **Compute**: Mix of on-demand (API) and spot instances (encoding workers)
@@ -48,13 +54,16 @@ A complete, production-ready Terraform infrastructure for deploying the Athena v
 - **Monitoring**: CloudWatch logs, alarms, and metrics
 
 ### Cost Optimization
+
 - **70% savings** on encoding workers via spot instances
 - **30% savings** potential with reserved instances
 - **28% total savings** vs. naive deployment
 - **Estimated cost**: $2,215/month production, $1,600/month optimized
 
 ### Scalability
+
 Can handle:
+
 - 1,000 concurrent API users
 - 500 concurrent video uploads
 - 50 concurrent video encodings
@@ -121,6 +130,7 @@ Scale to 10x with instance upgrades: ~$5,000/month
 ## Quick Start Guide
 
 ### Prerequisites (5 minutes)
+
 ```bash
 # Install required tools
 aws configure                    # Configure AWS credentials
@@ -130,17 +140,20 @@ helm version                    # Verify helm installed
 ```
 
 ### Step 1: Bootstrap Backend (2 minutes)
+
 ```bash
 cd /home/user/athena/terraform
 make bootstrap ENV=production REGION=us-east-1
 ```
 
 Creates:
+
 - S3 bucket: `athena-terraform-state-production`
 - DynamoDB table: `athena-terraform-locks`
 - Backend config: `environments/production/backend.hcl`
 
 ### Step 2: Configure Variables (5 minutes)
+
 ```bash
 cd environments/production
 cp terraform.tfvars.example terraform.tfvars
@@ -148,6 +161,7 @@ nano terraform.tfvars  # Edit with your values
 ```
 
 Required changes:
+
 - `owner_email`: Your email
 - `domain_name`: Your domain (or use example.com)
 - `allowed_cidr_blocks`: Your IP ranges (strictly restricted for production)
@@ -155,21 +169,25 @@ Required changes:
 - `acm_certificate_arn`: Your ACM certificate ARN (optional)
 
 ### Step 3: Plan Infrastructure (3 minutes)
+
 ```bash
 make plan ENV=production
 ```
 
 Review output:
+
 - ~95 resources to be created
 - Estimated cost: $2,215/month
 - No errors or warnings
 
 ### Step 4: Deploy Infrastructure (30-40 minutes)
+
 ```bash
 make apply ENV=production
 ```
 
 Deployment time breakdown:
+
 - VPC and networking: 2-3 minutes
 - EKS cluster: 15-20 minutes
 - RDS database: 10-15 minutes
@@ -177,11 +195,13 @@ Deployment time breakdown:
 - EFS, S3, IAM: 2-3 minutes
 
 ### Step 5: Deploy Kubernetes (5 minutes)
+
 ```bash
 make deploy-k8s ENV=production
 ```
 
 This script:
+
 1. Configures kubectl
 2. Creates namespace
 3. Fetches secrets from AWS Secrets Manager
@@ -192,6 +212,7 @@ This script:
 8. Deploys monitoring
 
 ### Step 6: Verify Deployment (2 minutes)
+
 ```bash
 # Configure kubectl
 make kubectl-config ENV=production
@@ -211,6 +232,7 @@ make outputs ENV=production
 ## Key Features
 
 ### 1. Security
+
 - ✓ All data encrypted at rest (KMS)
 - ✓ All traffic encrypted in transit (TLS 1.3)
 - ✓ Secrets in AWS Secrets Manager (auto-generated passwords)
@@ -221,6 +243,7 @@ make outputs ENV=production
 - ✓ CloudWatch logging for all services
 
 ### 2. High Availability
+
 - ✓ Multi-AZ deployment (3 availability zones)
 - ✓ RDS Multi-AZ with automatic failover
 - ✓ ElastiCache Multi-AZ with automatic failover
@@ -230,6 +253,7 @@ make outputs ENV=production
 - ✓ Health checks and self-healing
 
 ### 3. Cost Optimization
+
 - ✓ Spot instances for encoding workers (70% savings)
 - ✓ Graviton2 instances for API (20% savings)
 - ✓ S3 lifecycle policies (Glacier after 90 days)
@@ -240,6 +264,7 @@ make outputs ENV=production
 - ✓ Configurable resource sizes per environment
 
 ### 4. Observability
+
 - ✓ CloudWatch logs for all services
 - ✓ CloudWatch alarms (CPU, memory, storage, connections)
 - ✓ VPC Flow Logs
@@ -249,6 +274,7 @@ make outputs ENV=production
 - ✓ Grafana dashboards (via existing k8s/monitoring/)
 
 ### 5. Disaster Recovery
+
 - ✓ RDS automated backups (30-day retention)
 - ✓ RDS point-in-time recovery
 - ✓ EFS automated backups (AWS Backup)
@@ -257,6 +283,7 @@ make outputs ENV=production
 - ✓ Infrastructure as Code (rebuild in <1 hour)
 
 ### 6. Developer Experience
+
 - ✓ Makefile with 40+ commands
 - ✓ One-command deployment
 - ✓ Automated Kubernetes setup
@@ -269,6 +296,7 @@ make outputs ENV=production
 The Terraform infrastructure integrates seamlessly with your existing Kubernetes manifests:
 
 ### Existing Manifests (from k8s/base/)
+
 - `deployment.yaml`: API and encoding worker deployments
 - `service.yaml`: ClusterIP services
 - `hpa.yaml`: Horizontal Pod Autoscaler
@@ -277,6 +305,7 @@ The Terraform infrastructure integrates seamlessly with your existing Kubernetes
 - `pvc.yaml`: Persistent volume claims
 
 ### Terraform Enhancements
+
 1. **Storage**: Replaces local PVCs with EFS-backed PVs (ReadWriteMany)
 2. **Secrets**: Fetches from AWS Secrets Manager instead of hardcoded
 3. **ServiceAccounts**: Adds IRSA for S3 and Secrets Manager access
@@ -284,6 +313,7 @@ The Terraform infrastructure integrates seamlessly with your existing Kubernetes
 5. **Namespace**: Creates environment-specific namespace
 
 ### Deployment Flow
+
 ```
 Terraform (Infrastructure)
     ↓
@@ -351,6 +381,7 @@ Application Running
 ### Development Environment (Monthly)
 
 Smaller configuration: ~$450/month
+
 - t3.medium instances
 - db.t3.medium RDS
 - cache.t3.medium Redis
@@ -365,24 +396,28 @@ Smaller configuration: ~$450/month
 All alarms send notifications to SNS topic (configure in terraform.tfvars):
 
 **RDS Alarms**:
+
 - High CPU (>80% for 5 min)
 - Low memory (<512MB)
 - Low storage (<10GB)
 - High connections (>400)
 
 **ElastiCache Alarms**:
+
 - High CPU (>75% for 5 min)
 - High memory usage (>90%)
 - High evictions (>1000 per 5 min)
 - High connections (>65,000)
 
 **EFS Alarms**:
+
 - Low burst credits (<1TB)
 - High I/O percentage (>95%)
 
 ### Log Aggregation
 
 All logs centralized in CloudWatch Log Groups:
+
 - `/aws/eks/{cluster}/cluster`: EKS control plane
 - `/aws/rds/instance/{db}/postgresql`: Database logs
 - `/aws/elasticache/{redis}/slow-log`: Redis slow queries
@@ -390,12 +425,14 @@ All logs centralized in CloudWatch Log Groups:
 - `/aws/vpc/{vpc}`: VPC Flow Logs
 
 Retention:
+
 - Production: 30 days
 - Others: 7 days
 
 ## Next Steps
 
 ### Immediate (Day 1)
+
 1. ✓ Review this summary
 2. ✓ Follow Quick Start Guide
 3. ☐ Deploy to AWS
@@ -405,6 +442,7 @@ Retention:
 7. ☐ Test video upload and encoding
 
 ### Short-term (Week 1)
+
 8. ☐ Set up Grafana dashboards
 9. ☐ Configure backups verification
 10. ☐ Load testing
@@ -413,6 +451,7 @@ Retention:
 13. ☐ Documentation for your team
 
 ### Medium-term (Month 1)
+
 14. ☐ Deploy staging environment
 15. ☐ Set up CI/CD pipeline
 16. ☐ Implement GitOps (ArgoCD)
@@ -421,6 +460,7 @@ Retention:
 19. ☐ Right-size instances based on usage
 
 ### Long-term (Quarter 1)
+
 20. ☐ Multi-region deployment
 21. ☐ Advanced monitoring (Datadog, New Relic)
 22. ☐ Service mesh (Istio)
@@ -430,18 +470,21 @@ Retention:
 ## Common Operations
 
 ### View Infrastructure Status
+
 ```bash
 make status ENV=production
 make outputs ENV=production
 ```
 
 ### Retrieve Secrets
+
 ```bash
 make get-rds-password ENV=production
 make get-redis-password ENV=production
 ```
 
 ### Access Services
+
 ```bash
 # Database
 POD=$(kubectl get pod -l app=athena,component=api -o jsonpath='{.items[0].metadata.name}')
@@ -455,6 +498,7 @@ kubectl logs -f deployment/athena-api -n athena-production
 ```
 
 ### Update Infrastructure
+
 ```bash
 # Edit terraform.tfvars
 nano environments/production/terraform.tfvars
@@ -467,6 +511,7 @@ make apply ENV=production
 ```
 
 ### Disaster Recovery
+
 ```bash
 # Restore from RDS snapshot
 aws rds restore-db-instance-from-db-snapshot \
@@ -480,6 +525,7 @@ aws backup start-restore-job \
 ```
 
 ### Clean Up (Warning: Destructive)
+
 ```bash
 # Destroy everything
 make destroy ENV=production
@@ -496,6 +542,7 @@ make destroy ENV=production
 ## Troubleshooting
 
 ### Issue: Terraform apply fails
+
 ```bash
 # Check AWS credentials
 aws sts get-caller-identity
@@ -506,6 +553,7 @@ make apply ENV=production
 ```
 
 ### Issue: Pods not starting
+
 ```bash
 # Check pod status
 kubectl describe pod <pod-name> -n athena-production
@@ -518,6 +566,7 @@ kubectl get events -n athena-production --sort-by='.lastTimestamp'
 ```
 
 ### Issue: Can't connect to database
+
 ```bash
 # Verify security groups
 aws ec2 describe-security-groups --group-ids <rds-sg-id>
@@ -530,12 +579,14 @@ psql -h <rds-endpoint> -U athenaadmin -d athena
 ## Support
 
 ### Documentation
+
 - `/home/user/athena/terraform/README.md`: Main documentation
 - `/home/user/athena/terraform/DEPLOYMENT_GUIDE.md`: Step-by-step guide
 - `/home/user/athena/terraform/ARCHITECTURE_SUMMARY.md`: Architecture details
 - `/home/user/athena/terraform/FILE_STRUCTURE.md`: File reference
 
 ### Getting Help
+
 1. Check DEPLOYMENT_GUIDE.md troubleshooting section
 2. Review CloudWatch logs
 3. Check Terraform state: `make state-list ENV=production`

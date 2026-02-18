@@ -1,27 +1,27 @@
 package social
 
 import (
-	"athena/internal/domain"
-	"athena/internal/httpapi/shared"
-	"athena/internal/middleware"
-	"athena/internal/usecase/captiongen"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+
+	"athena/internal/domain"
+	"athena/internal/httpapi/shared"
+	"athena/internal/middleware"
+	"athena/internal/usecase/captiongen"
 )
 
-// CaptionGenerationHandlers handles caption generation API requests
 type CaptionGenerationHandlers struct {
 	captionGenService captiongen.Service
 	videoRepo         VideoRepository
 }
 
-// VideoRepository interface for video operations
 type VideoRepository interface {
-	GetByID(ctx interface{}, videoID string) (*domain.Video, error)
+	GetByID(ctx context.Context, videoID string) (*domain.Video, error)
 }
 
 func NewCaptionGenerationHandlers(captionGenService captiongen.Service, videoRepo VideoRepository) *CaptionGenerationHandlers {
@@ -31,8 +31,6 @@ func NewCaptionGenerationHandlers(captionGenService captiongen.Service, videoRep
 	}
 }
 
-// GenerateCaptions handles POST /api/v1/videos/{id}/captions/generate
-// Triggers automatic caption generation for a video
 func (h *CaptionGenerationHandlers) GenerateCaptions(w http.ResponseWriter, r *http.Request) {
 	userID, ok := middleware.GetUserIDFromContext(r.Context())
 	if !ok {
@@ -47,14 +45,13 @@ func (h *CaptionGenerationHandlers) GenerateCaptions(w http.ResponseWriter, r *h
 		return
 	}
 
-	// Verify user owns the video
 	video, err := h.videoRepo.GetByID(r.Context(), videoIDStr)
 	if err != nil {
 		if err == domain.ErrNotFound {
 			shared.WriteError(w, http.StatusNotFound, fmt.Errorf("video not found"))
 			return
 		}
-		shared.WriteError(w, http.StatusInternalServerError, err)
+		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to retrieve video"))
 		return
 	}
 
@@ -63,23 +60,18 @@ func (h *CaptionGenerationHandlers) GenerateCaptions(w http.ResponseWriter, r *h
 		return
 	}
 
-	// Check if video is fully processed
 	if video.Status != domain.StatusCompleted {
 		shared.WriteError(w, http.StatusBadRequest, fmt.Errorf("video must be fully processed before generating captions"))
 		return
 	}
 
-	// Parse request body
 	var req GenerateCaptionsRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		// Allow empty body (use defaults)
 		req = GenerateCaptionsRequest{}
 	}
 
-	// Validate target language if provided
 	var targetLang *string
 	if req.TargetLanguage != "" {
-		// Validate language code (2-letter ISO 639-1)
 		if len(req.TargetLanguage) != 2 {
 			shared.WriteError(w, http.StatusBadRequest, fmt.Errorf("target_language must be a 2-letter ISO 639-1 code (e.g., 'en', 'es')"))
 			return
@@ -87,7 +79,6 @@ func (h *CaptionGenerationHandlers) GenerateCaptions(w http.ResponseWriter, r *h
 		targetLang = &req.TargetLanguage
 	}
 
-	// Set defaults
 	modelSize := domain.WhisperModelBase
 	if req.ModelSize != "" {
 		modelSize = domain.WhisperModelSize(req.ModelSize)
@@ -106,7 +97,6 @@ func (h *CaptionGenerationHandlers) GenerateCaptions(w http.ResponseWriter, r *h
 		}
 	}
 
-	// Create caption generation job
 	userUUID, err := uuid.Parse(userID.String())
 	if err != nil {
 		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("invalid user ID"))
@@ -122,11 +112,10 @@ func (h *CaptionGenerationHandlers) GenerateCaptions(w http.ResponseWriter, r *h
 
 	job, err := h.captionGenService.CreateJob(r.Context(), videoID, userUUID, jobReq)
 	if err != nil {
-		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to create caption generation job: %w", err))
+		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to create caption generation job"))
 		return
 	}
 
-	// Return job details
 	response := GenerateCaptionsResponse{
 		JobID:     job.ID,
 		VideoID:   job.VideoID,
@@ -139,8 +128,6 @@ func (h *CaptionGenerationHandlers) GenerateCaptions(w http.ResponseWriter, r *h
 	shared.WriteJSON(w, http.StatusAccepted, response)
 }
 
-// GetCaptionGenerationJob handles GET /api/v1/videos/{id}/captions/jobs/{jobId}
-// Retrieves the status of a caption generation job
 func (h *CaptionGenerationHandlers) GetCaptionGenerationJob(w http.ResponseWriter, r *http.Request) {
 	userID, ok := middleware.GetUserIDFromContext(r.Context())
 	if !ok {
@@ -162,14 +149,13 @@ func (h *CaptionGenerationHandlers) GetCaptionGenerationJob(w http.ResponseWrite
 		return
 	}
 
-	// Verify user owns the video
 	video, err := h.videoRepo.GetByID(r.Context(), videoIDStr)
 	if err != nil {
 		if err == domain.ErrNotFound {
 			shared.WriteError(w, http.StatusNotFound, fmt.Errorf("video not found"))
 			return
 		}
-		shared.WriteError(w, http.StatusInternalServerError, err)
+		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to retrieve video"))
 		return
 	}
 
@@ -178,18 +164,16 @@ func (h *CaptionGenerationHandlers) GetCaptionGenerationJob(w http.ResponseWrite
 		return
 	}
 
-	// Get job
 	job, err := h.captionGenService.GetJobStatus(r.Context(), jobID)
 	if err != nil {
 		if err == domain.ErrNotFound {
 			shared.WriteError(w, http.StatusNotFound, fmt.Errorf("job not found"))
 			return
 		}
-		shared.WriteError(w, http.StatusInternalServerError, err)
+		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to retrieve job status"))
 		return
 	}
 
-	// Verify job belongs to this video
 	if job.VideoID != videoID {
 		shared.WriteError(w, http.StatusForbidden, fmt.Errorf("job does not belong to this video"))
 		return
@@ -198,8 +182,6 @@ func (h *CaptionGenerationHandlers) GetCaptionGenerationJob(w http.ResponseWrite
 	shared.WriteJSON(w, http.StatusOK, job)
 }
 
-// ListCaptionGenerationJobs handles GET /api/v1/videos/{id}/captions/jobs
-// Lists all caption generation jobs for a video
 func (h *CaptionGenerationHandlers) ListCaptionGenerationJobs(w http.ResponseWriter, r *http.Request) {
 	userID, ok := middleware.GetUserIDFromContext(r.Context())
 	if !ok {
@@ -214,14 +196,13 @@ func (h *CaptionGenerationHandlers) ListCaptionGenerationJobs(w http.ResponseWri
 		return
 	}
 
-	// Verify user owns the video
 	video, err := h.videoRepo.GetByID(r.Context(), videoIDStr)
 	if err != nil {
 		if err == domain.ErrNotFound {
 			shared.WriteError(w, http.StatusNotFound, fmt.Errorf("video not found"))
 			return
 		}
-		shared.WriteError(w, http.StatusInternalServerError, err)
+		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to retrieve video"))
 		return
 	}
 
@@ -230,10 +211,9 @@ func (h *CaptionGenerationHandlers) ListCaptionGenerationJobs(w http.ResponseWri
 		return
 	}
 
-	// Get jobs
 	jobs, err := h.captionGenService.GetJobsByVideo(r.Context(), videoID)
 	if err != nil {
-		shared.WriteError(w, http.StatusInternalServerError, err)
+		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to retrieve caption jobs"))
 		return
 	}
 
@@ -245,12 +225,10 @@ func (h *CaptionGenerationHandlers) ListCaptionGenerationJobs(w http.ResponseWri
 	shared.WriteJSON(w, http.StatusOK, response)
 }
 
-// Request/Response DTOs
-
 type GenerateCaptionsRequest struct {
-	TargetLanguage string `json:"target_language,omitempty"` // Optional: 2-letter ISO 639-1 code (e.g., 'en', 'es'). If not provided, auto-detect.
-	ModelSize      string `json:"model_size,omitempty"`      // Optional: 'tiny', 'base', 'small', 'medium', 'large'. Default: 'base'
-	OutputFormat   string `json:"output_format,omitempty"`   // Optional: 'vtt' or 'srt'. Default: 'vtt'
+	TargetLanguage string `json:"target_language,omitempty"`
+	ModelSize      string `json:"model_size,omitempty"`
+	OutputFormat   string `json:"output_format,omitempty"`
 }
 
 type GenerateCaptionsResponse struct {

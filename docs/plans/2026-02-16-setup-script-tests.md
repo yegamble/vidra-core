@@ -21,6 +21,7 @@ Worktree: No
 **Goal:** Create a comprehensive test suite for `scripts/install.sh` and the setup wizard HTTP flow, covering all user personas — from zero-config beginner ("script kiddie") to power user with pre-set credentials and custom `INSTALL_DIR`.
 
 **Architecture:** Two test layers:
+
 1. **Shell script tests** (`scripts/install_test.sh`) — Tests `install.sh` logic by sourcing individual functions in isolated temp directories, verifying .env generation, directory detection, error handling.
 2. **Go integration tests** (`internal/setup/integration_test.go`) — Tests the full wizard HTTP flow end-to-end: POST through all wizard steps, verify .env output, check config mode detection with various env var combinations.
 

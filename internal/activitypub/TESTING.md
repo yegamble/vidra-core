@@ -9,6 +9,7 @@ This document provides a comprehensive overview of the test coverage for the Act
 **Coverage: ~95%**
 
 #### Basic Functionality
+
 - ✅ Key pair generation (2048-bit RSA)
 - ✅ Request signing with private key
 - ✅ Signature verification with public key
@@ -16,6 +17,7 @@ This document provides a comprehensive overview of the test coverage for the Act
 - ✅ Signing string construction
 
 #### Edge Cases
+
 - ✅ Missing host header handling
 - ✅ Tampered request detection
 - ✅ Non-standard headers support
@@ -25,11 +27,13 @@ This document provides a comprehensive overview of the test coverage for the Act
 - ✅ Request target generation (GET, POST, with query params)
 
 #### Performance Tests
+
 - ✅ Key generation benchmark
 - ✅ Request signing benchmark
 - ✅ Signature verification benchmark
 
 #### Concurrency Tests
+
 - ✅ Concurrent key generation (10 goroutines)
 
 ### 2. Service Layer Tests (`usecase/activitypub/service_test.go`)
@@ -37,6 +41,7 @@ This document provides a comprehensive overview of the test coverage for the Act
 **Coverage: ~90%**
 
 #### Actor Management
+
 - ✅ Get local actor successfully
 - ✅ User not found error handling
 - ✅ Generate keys on first access
@@ -44,6 +49,7 @@ This document provides a comprehensive overview of the test coverage for the Act
 - ✅ Use cached actors (with TTL)
 
 #### Activity Handling
+
 - ✅ Handle Follow activities (auto-accept)
 - ✅ Handle Follow activities (pending when auto-accept disabled)
 - ✅ Handle Like activities
@@ -53,11 +59,13 @@ This document provides a comprehensive overview of the test coverage for the Act
 - ✅ Handle Undo Announce (unshare)
 
 #### Collections
+
 - ✅ Get outbox page successfully
 - ✅ Outbox pagination with next page
 - ✅ Get followers page successfully
 
 #### URI Parsing
+
 - ✅ Extract username from valid URIs
 - ✅ Extract username with trailing slash
 - ✅ Invalid URI format handling
@@ -69,21 +77,25 @@ This document provides a comprehensive overview of the test coverage for the Act
 **Coverage: ~85%**
 
 #### WebFinger Discovery
+
 - ✅ WebFinger with acct: resource
 - ✅ WebFinger with https:// resource
 - ✅ WebFinger missing resource
 - ✅ WebFinger invalid resource format
 
 #### NodeInfo
+
 - ✅ NodeInfo discovery endpoint
 - ✅ NodeInfo 2.0 metadata
 - ✅ Host-meta endpoint
 
 #### Actor Endpoints
+
 - ✅ Get outbox collection (non-paginated)
 - ✅ Inbox GET returns not implemented
 
 #### Content Type Negotiation
+
 - ✅ WebFinger returns application/jrd+json
 - ✅ NodeInfo returns application/json
 - ✅ Actor returns application/activity+json
@@ -94,6 +106,7 @@ This document provides a comprehensive overview of the test coverage for the Act
 **Coverage: ~90%**
 
 #### Complete Request/Response Cycles
+
 - ✅ Get actor with ActivityPub content type
 - ✅ Get actor not found
 - ✅ Post valid Follow activity to inbox
@@ -105,6 +118,7 @@ This document provides a comprehensive overview of the test coverage for the Act
 - ✅ Get followers collection page
 
 #### Activity Type Support
+
 - ✅ Follow Activity
 - ✅ Like Activity
 - ✅ Announce Activity
@@ -113,11 +127,13 @@ This document provides a comprehensive overview of the test coverage for the Act
 - ✅ Delete Activity
 
 #### Pagination
+
 - ✅ Outbox pagination with next and prev links
 - ✅ Followers pagination
 - ✅ Following pagination
 
 #### Error Handling
+
 - ✅ Missing username parameter
 - ✅ Service error propagation
 - ✅ Invalid JSON handling
@@ -127,43 +143,51 @@ This document provides a comprehensive overview of the test coverage for the Act
 **Coverage: ~80% (requires database)**
 
 #### Actor Keys
+
 - ✅ Store and retrieve actor keys
 - ✅ Update existing actor keys
 - ✅ Get non-existent actor keys
 
 #### Remote Actors
+
 - ✅ Upsert and retrieve remote actor
 - ✅ Update existing remote actor
 - ✅ Get non-existent remote actor
 
 #### Followers
+
 - ✅ Create follower relationship
 - ✅ Update follower state
 - ✅ List followers with pagination
 - ✅ Delete follower
 
 #### Activities
+
 - ✅ Store and retrieve activities
 - ✅ Get activities by actor with pagination
 
 #### Deduplication
+
 - ✅ Check non-received activity
 - ✅ Mark activity as received
 - ✅ Idempotent marking
 
 #### Video Reactions
+
 - ✅ Add like reaction
 - ✅ Add dislike reaction
 - ✅ Delete reaction
 - ✅ Get reaction statistics
 
 #### Video Shares
+
 - ✅ Add share
 - ✅ Add multiple shares
 - ✅ Delete share
 - ✅ Get share count
 
 #### Delivery Queue
+
 - ✅ Enqueue delivery
 - ✅ Get pending deliveries
 - ✅ Update delivery status
@@ -173,6 +197,7 @@ This document provides a comprehensive overview of the test coverage for the Act
 **Coverage: ~95%**
 
 #### Basic Operations
+
 - ✅ Worker creation
 - ✅ Successful delivery
 - ✅ Failed delivery with retry
@@ -182,11 +207,13 @@ This document provides a comprehensive overview of the test coverage for the Act
 - ✅ Start and stop worker
 
 #### Error Handling
+
 - ✅ Activity not found
 - ✅ Invalid activity JSON
 - ✅ Delivery service errors
 
 #### Retry Logic
+
 - ✅ Calculate next attempt with exponential backoff
 - ✅ First retry (60s)
 - ✅ Second retry (120s)
@@ -195,11 +222,13 @@ This document provides a comprehensive overview of the test coverage for the Act
 - ✅ Exponential backoff increases correctly
 
 #### Concurrency
+
 - ✅ Multiple workers processing queue
 
 ## Running Tests
 
 ### Run All ActivityPub Tests
+
 ```bash
 go test ./internal/activitypub/... -v
 go test ./internal/usecase/activitypub/... -v
@@ -209,6 +238,7 @@ go test ./internal/worker -run ActivityPub -v
 ```
 
 ### Run with Coverage
+
 ```bash
 go test ./internal/activitypub/... -cover
 go test ./internal/usecase/activitypub/... -cover
@@ -217,6 +247,7 @@ go test ./internal/worker -run ActivityPub -cover
 ```
 
 ### Generate Coverage Report
+
 ```bash
 go test ./internal/activitypub/... -coverprofile=coverage_httpsig.out
 go test ./internal/usecase/activitypub/... -coverprofile=coverage_service.out
@@ -230,6 +261,7 @@ go tool cover -html=coverage_worker.out -o coverage_worker.html
 ```
 
 ### Run Benchmarks
+
 ```bash
 go test ./internal/activitypub/... -bench=. -benchmem
 ```
@@ -249,13 +281,17 @@ go test ./internal/activitypub/... -bench=. -benchmem
 ## Test Patterns
 
 ### 1. Mocking
+
 We use `testify/mock` for all external dependencies:
+
 - Repository interfaces
 - Service interfaces
 - HTTP clients (via httptest)
 
 ### 2. Table-Driven Tests
+
 Complex scenarios use table-driven tests for clarity:
+
 ```go
 tests := []struct {
     name     string
@@ -266,10 +302,13 @@ tests := []struct {
 ```
 
 ### 3. Integration Tests
+
 Integration tests use `httptest` to test full HTTP request/response cycles without network calls.
 
 ### 4. Edge Case Testing
+
 Every public function has tests for:
+
 - Happy path
 - Error conditions
 - Boundary conditions
@@ -287,6 +326,7 @@ Every public function has tests for:
 ## CI/CD Integration
 
 These tests run on every commit:
+
 ```bash
 # In .github/workflows/test.yml
 - name: Run ActivityPub Tests

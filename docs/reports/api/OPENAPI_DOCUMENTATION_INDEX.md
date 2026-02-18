@@ -256,6 +256,7 @@ Run the validation script:
 ```
 
 This checks for:
+
 - OpenAPI 3.0 compliance
 - Path prefix consistency
 - Security scheme definitions
@@ -265,6 +266,7 @@ This checks for:
 ### Manual Testing
 
 1. **Generate API Client:**
+
    ```bash
    npx @openapitools/openapi-generator-cli generate \
      -i api/openapi.yaml \
@@ -277,6 +279,7 @@ This checks for:
    - Test endpoints with generated examples
 
 3. **Lint with Spectral:**
+
    ```bash
    npx @stoplight/spectral-cli lint api/*.yaml
    ```
@@ -290,6 +293,7 @@ This checks for:
 **Problem:** Paths documented as `/payments/wallet` instead of `/api/v1/payments/wallet`
 
 **Files Affected:**
+
 - openapi_payments.yaml
 - docs/openapi_notifications.yaml
 
@@ -308,6 +312,7 @@ This checks for:
 **Problem:** Go domain models have more fields than OpenAPI schemas
 
 **Models Affected:**
+
 - User (missing 5+ fields)
 - Video (missing 13+ fields)
 
@@ -318,6 +323,7 @@ This checks for:
 **Problem:** Endpoints documented but routes not registered
 
 **Features Affected:**
+
 - Plugins (12 endpoints)
 - Chat (8 endpoints)
 - Redundancy (11 endpoints)
@@ -354,6 +360,7 @@ This checks for:
 5. **Remove in Next Major** version
 
 Example:
+
 ```yaml
 /api/v1/old-endpoint:
   get:
@@ -369,21 +376,25 @@ Example:
 ## Maintenance Checklist
 
 ### Weekly
+
 - [ ] Check for new endpoints without OpenAPI docs
 - [ ] Review pull requests for API changes
 
 ### Monthly
+
 - [ ] Run full validation suite
 - [ ] Update examples with realistic data
 - [ ] Review and update error response documentation
 
 ### Quarterly
+
 - [ ] Full audit (like this one)
 - [ ] Schema synchronization with domain models
 - [ ] Review deprecated endpoints
 - [ ] Update Postman collections
 
 ### Annually
+
 - [ ] Major OpenAPI version updates
 - [ ] Restructure documentation if needed
 - [ ] Review and consolidate specification files
@@ -418,16 +429,19 @@ When contributing to OpenAPI documentation:
 ## Tools & Resources
 
 ### Validation Tools
+
 - [Spectral](https://stoplight.io/open-source/spectral) - OpenAPI linter
 - [OpenAPI Generator](https://openapi-generator.tech/) - Client/server code generation
 - [Swagger Editor](https://editor.swagger.io/) - Online OpenAPI editor
 
 ### Documentation Tools
+
 - [Redoc](https://redocly.github.io/redoc/) - API documentation viewer
 - [Swagger UI](https://swagger.io/tools/swagger-ui/) - Interactive API explorer
 - [Postman](https://www.postman.com/) - API testing and documentation
 
 ### Reference
+
 - [OpenAPI 3.0 Specification](https://spec.openapis.org/oas/v3.0.3)
 - [OpenAPI Style Guide](https://apistylebook.com/design/topics/openapi)
 - [REST API Best Practices](https://restfulapi.net/)

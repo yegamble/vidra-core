@@ -31,6 +31,7 @@ cd postman && ./run-virus-scanner-tests.sh
 ## 🧪 Common Test Commands
 
 ### Unit Tests
+
 ```bash
 # All unit tests
 go test -v ./internal/security/virus_scanner_test.go -short
@@ -41,6 +42,7 @@ go tool cover -html=coverage.out
 ```
 
 ### Integration Tests (Requires ClamAV)
+
 ```bash
 # Start ClamAV
 docker run -d --name clamav -p 3310:3310 clamav/clamav
@@ -50,6 +52,7 @@ CLAMAV_ADDRESS=localhost:3310 go test -v ./internal/security/virus_scanner_test.
 ```
 
 ### E2E Tests
+
 ```bash
 # Full automated suite
 ./postman/run-virus-scanner-tests.sh
@@ -60,6 +63,7 @@ newman run postman/athena-virus-scanner-tests.postman_collection.json \
 ```
 
 ### Performance Benchmarks
+
 ```bash
 go test -bench=. -benchmem -benchtime=10s ./internal/security/virus_scanner_test.go
 ```
@@ -69,6 +73,7 @@ go test -bench=. -benchmem -benchtime=10s ./internal/security/virus_scanner_test
 ## 🔒 Breaking Scenario Tests (P1 Vulnerability)
 
 ### Test 1: Network Interruption
+
 ```bash
 # Upload EICAR test file
 curl -X POST http://localhost:8080/api/v1/uploads/direct \
@@ -82,6 +87,7 @@ curl -X POST http://localhost:8080/api/v1/uploads/direct \
 ```
 
 ### Test 2: ClamAV Unavailable
+
 ```bash
 # Stop ClamAV
 docker stop clamav
@@ -117,6 +123,7 @@ docker start clamav
 ## 🎯 Test Success Criteria
 
 ### Security
+
 - ✅ EICAR test virus detected and rejected
 - ✅ Infected files rejected even with network errors
 - ✅ No fallback mode bypass possible
@@ -124,6 +131,7 @@ docker start clamav
 - ✅ No race conditions in concurrent uploads
 
 ### Performance
+
 - ✅ Small file scan (< 1KB): < 10ms
 - ✅ Medium file scan (10MB): < 2s
 - ✅ Large file scan (100MB): < 5s
@@ -131,6 +139,7 @@ docker start clamav
 - ✅ Concurrent scans: No deadlocks
 
 ### API Contract
+
 - ✅ Virus detected: 403 Forbidden
 - ✅ Scan failure: 500/503 with Retry-After
 - ✅ Blocked file: 400/415
@@ -142,6 +151,7 @@ docker start clamav
 ## 🔍 Monitoring Queries
 
 ### Recent Scan Failures
+
 ```sql
 SELECT * FROM virus_scan_log
 WHERE scan_result = 'error'
@@ -150,6 +160,7 @@ ORDER BY scanned_at DESC;
 ```
 
 ### Infected Files Detected
+
 ```sql
 SELECT user_id, file_path, virus_name, scanned_at
 FROM virus_scan_log
@@ -159,6 +170,7 @@ ORDER BY scanned_at DESC;
 ```
 
 ### Scan Success Rate
+
 ```sql
 SELECT
   COUNT(CASE WHEN scan_result = 'clean' THEN 1 END)::float / COUNT(*) * 100 as success_rate
@@ -182,6 +194,7 @@ WHERE scanned_at > NOW() - INTERVAL '5 minutes';
 ## 🛠️ Troubleshooting
 
 ### ClamAV Connection Failed
+
 ```bash
 # Check if running
 docker ps | grep clamav
@@ -197,6 +210,7 @@ timeout 300 bash -c 'until docker exec <clamav-id> clamdscan --version; do sleep
 ```
 
 ### Tests Timeout
+
 ```bash
 # Increase timeout
 go test -timeout 20m
@@ -209,6 +223,7 @@ go test -run TestVirusScanner_ScanCleanFile
 ```
 
 ### EICAR Not Detected
+
 ```bash
 # Update signatures
 docker exec <clamav-id> freshclam
@@ -233,6 +248,7 @@ echo $CLAMAV_FALLBACK_MODE  # Should be 'strict'
 | `clean-small.txt` | < 1KB | Clean file test |
 
 **Generate**:
+
 ```bash
 # EICAR (standard test virus - NOT real malware)
 echo 'X5O!P%@AP[4\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*' > eicar.txt
@@ -247,6 +263,7 @@ dd if=/dev/urandom of=100mb-test.bin bs=1M count=100
 ## 🔐 Security Configuration
 
 ### Production Settings (REQUIRED)
+
 ```bash
 VIRUS_SCAN_ENABLED=true
 CLAMAV_FALLBACK_MODE=strict  # CRITICAL!
@@ -257,6 +274,7 @@ CLAMAV_TIMEOUT=300
 ```
 
 ### Test Settings
+
 ```bash
 CLAMAV_ADDRESS=localhost:3310
 QUARANTINE_DIR=/tmp/quarantine
@@ -268,12 +286,14 @@ CLAMAV_AUDIT_LOG=/var/log/virus-scans.log
 ## 🎭 CI/CD
 
 ### GitHub Actions Workflow
+
 - **Trigger**: Push to main/develop, PRs, manual dispatch
 - **Jobs**: Unit → Integration → Edge Cases → Breaking → Performance → Audit
 - **Runtime**: ~25 minutes
 - **View**: `gh workflow view "Virus Scanner Security Tests"`
 
 ### Run Locally (Same as CI)
+
 ```bash
 docker compose --profile test up --abort-on-container-exit
 ```
@@ -311,6 +331,7 @@ docker compose --profile test up --abort-on-container-exit
 ### If Infected File Accepted
 
 1. **Immediate**:
+
    ```bash
    # Stop uploads
    export VIRUS_SCAN_ENABLED=false
@@ -318,6 +339,7 @@ docker compose --profile test up --abort-on-container-exit
    ```
 
 2. **Investigate**:
+
    ```sql
    SELECT * FROM virus_scan_log
    WHERE scan_result IN ('warning', 'clean')
@@ -325,6 +347,7 @@ docker compose --profile test up --abort-on-container-exit
    ```
 
 3. **Quarantine**:
+
    ```bash
    ./scripts/emergency-quarantine.sh
    ```
@@ -337,7 +360,7 @@ docker compose --profile test up --abort-on-container-exit
 
 ## 📞 Contacts
 
-- **Security Team**: security@example.com
+- **Security Team**: <security@example.com>
 - **On-Call**: See PagerDuty rotation
 - **Docs**: See links above
 - **Support**: Slack #security-incidents

@@ -142,6 +142,7 @@ Worktree: No
 **Dependencies:** None
 
 **Files:**
+
 - Create: `internal/database/migrate.go`
 - Create: `internal/database/migrate_test.go`
 - Create: `migrations/embed.go` (uses `//go:embed *.sql`)
@@ -152,6 +153,7 @@ Worktree: No
 - Delete: `init-shared-db.sql` (replaced by Goose migrations; migration 001 must create extensions)
 
 **Key Decisions / Notes:**
+
 - Use `goose.Up()` programmatically with `embed.FS` to bundle migration SQL files into the binary
 - Create `migrations/embed.go` that uses `//go:embed *.sql` to embed all migration files
 - Migration runs inside a transaction; if it fails, app exits with clear error message
@@ -161,6 +163,7 @@ Worktree: No
 - **CRITICAL: Eliminate dual migration paths.** Remove `init-shared-db.sql` from `docker-compose.yml` volume mount (`./init-shared-db.sql:/docker-entrypoint-initdb.d/init.sql`). Ensure Goose migration 001 creates all required extensions (`CREATE EXTENSION IF NOT EXISTS ...`). Goose becomes the SOLE schema management path -- no `docker-entrypoint-initdb.d` scripts. This prevents "relation already exists" errors on fresh Docker setups where both `init-shared-db.sql` and Goose migration 002 try to create the `users` table
 
 **Definition of Done:**
+
 - [ ] All tests pass (unit, integration if applicable)
 - [ ] No diagnostics errors (linting, type checking)
 - [ ] Fresh database gets all 61 migrations applied on first startup
@@ -170,6 +173,7 @@ Worktree: No
 - [ ] `migrate.go` exports a `CurrentVersion(db) (int64, error)` function for backup manifests
 
 **Verify:**
+
 - `go test ./internal/database/... -short -run TestMigrate` -- migration tests pass
 - `go build ./cmd/server` -- binary builds with embedded migrations
 
@@ -182,12 +186,14 @@ Worktree: No
 **Dependencies:** Task 1
 
 **Files:**
+
 - Create: `internal/setup/detect.go`
 - Create: `internal/setup/detect_test.go`
 - Modify: `cmd/server/main.go` (check setup state before normal boot)
 - Modify: `internal/config/config.go` (add setup-mode awareness, allow partial config)
 
 **Key Decisions / Notes:**
+
 - First-run detection checks: (1) Does `.env` file exist? (2) Can we connect to the configured database? (3) Is a `SETUP_COMPLETED` flag set?
 - If any check fails, app enters "setup mode" -- a minimal HTTP server on the same port serving only the setup wizard routes
 - Setup mode does NOT require database/Redis to be running (chicken-and-egg problem)
@@ -196,6 +202,7 @@ Worktree: No
 - Follow the pattern of `config.Load()` returning partial config with a `SetupRequired bool` field
 
 **Definition of Done:**
+
 - [ ] All tests pass (unit, integration if applicable)
 - [ ] No diagnostics errors (linting, type checking)
 - [ ] Missing `.env` file triggers setup mode (serves HTTP on configured port)
@@ -203,6 +210,7 @@ Worktree: No
 - [ ] Setup mode serves a minimal health endpoint at `/health` returning `{"status":"setup_required"}`
 
 **Verify:**
+
 - `go test ./internal/setup/... -short` -- detection tests pass
 - `go test ./cmd/server/... -short` -- main tests pass
 - `go build ./cmd/server` -- builds clean
@@ -216,12 +224,14 @@ Worktree: No
 **Dependencies:** None
 
 **Files:**
+
 - Create: `internal/sysinfo/detect.go`
 - Create: `internal/sysinfo/detect_test.go`
 - Create: `internal/sysinfo/recommend.go`
 - Create: `internal/sysinfo/recommend_test.go`
 
 **Key Decisions / Notes:**
+
 - Use Go `runtime.NumCPU()` for CPU cores
 - Use OS-specific approaches for RAM: parse `/proc/meminfo` on Linux, use `sysctl hw.memsize` on macOS
 - In containers: read cgroup limits (`/sys/fs/cgroup/memory.max` for cgroups v2, `/sys/fs/cgroup/memory/memory.limit_in_bytes` for v1) to get actual container memory, not host memory
@@ -233,6 +243,7 @@ Worktree: No
 - This module has no external dependencies -- pure Go stdlib
 
 **Definition of Done:**
+
 - [ ] All tests pass (unit, integration if applicable)
 - [ ] No diagnostics errors (linting, type checking)
 - [ ] `detect.go` correctly reports RAM and CPU on Linux and macOS
@@ -242,6 +253,7 @@ Worktree: No
 - [ ] Recommendations include human-readable explanation strings (e.g., "ClamAV disabled: requires 2GB+ RAM")
 
 **Verify:**
+
 - `go test ./internal/sysinfo/... -short` -- all tests pass
 - `go build ./cmd/server` -- builds clean
 
@@ -254,6 +266,7 @@ Worktree: No
 **Dependencies:** Task 2, Task 3
 
 **Files:**
+
 - Create: `internal/setup/wizard.go` (HTTP handlers for wizard pages)
 - Create: `internal/setup/wizard_test.go`
 - Create: `internal/setup/templates/` directory with HTML templates:
@@ -271,6 +284,7 @@ Worktree: No
 - Modify: `cmd/server/main.go` (wire setup wizard routes in setup mode)
 
 **Key Decisions / Notes:**
+
 - Templates are embedded via `//go:embed templates/*` for single-binary distribution
 - Wizard is a multi-step form: Welcome -> Database -> Services -> Storage -> Security -> Review -> Complete
 - **UX best practices applied:**
@@ -285,12 +299,13 @@ Worktree: No
 - CSS uses a minimal, clean design (no external CSS frameworks). Inline in `layout.html`
 - The wizard writes `.env` atomically (write to temp file, then rename)
 - **Database validation chicken-and-egg:** When validating DB connection in the wizard, the target database (`athena`) may not exist yet. The wizard must: (1) Connect to the `postgres` default database first to verify credentials, (2) Check if the `athena` database exists, (3) If not, offer to create it (`CREATE DATABASE athena`), (4) Connect to `athena` and create required extensions (`CREATE EXTENSION IF NOT EXISTS ...`). This way the wizard handles fresh Postgres instances where only the default database exists
-- **Input validation:** Reject config values containing shell metacharacters (`;|&$\``), validate DATABASE_URL matches `postgres://` schema, validate Redis URL matches `redis://` schema, test connections are reachable before saving
+- **Input validation:** Reject config values containing shell metacharacters (`;|&$\``), validate DATABASE_URL matches`postgres://` schema, validate Redis URL matches `redis://` schema, test connections are reachable before saving
 - **Initial admin account creation:** The Security step collects admin username, email, and password. On wizard completion (after `.env` is written and DB is reachable), the wizard creates the first admin user in the database with role `admin`. Password is hashed using bcrypt (matching existing user registration flow in `internal/usecase/`). If the admin user already exists (re-run scenario), skip creation and log a warning. This admin account is required -- the wizard does not complete without it.
 - On completion, set `SETUP_COMPLETED=true` in `.env` and show "Restart the server to apply settings"
 - Follow the existing handler pattern from `internal/httpapi/` but keep setup handlers in their own package
 
 **Definition of Done:**
+
 - [ ] All tests pass (unit, integration if applicable)
 - [ ] No diagnostics errors (linting, type checking)
 - [ ] Wizard serves multi-step form in setup mode with breadcrumb navigation
@@ -308,6 +323,7 @@ Worktree: No
 - [ ] Generated `.env` file passes `config.Load()` validation
 
 **Verify:**
+
 - `go test ./internal/setup/... -short` -- all tests pass
 - `go build ./cmd/server` -- builds with embedded templates
 
@@ -320,12 +336,14 @@ Worktree: No
 **Dependencies:** Task 1, Task 3
 
 **Files:**
+
 - Create: `scripts/docker-entrypoint.sh` (new smart entrypoint replacing `scripts/entrypoint.sh`)
 - Modify: `docker-compose.yml` (add profiles for optional services, update app entrypoint)
 - Modify: `Dockerfile` (copy new entrypoint, add `postgresql-client` for backup/restore, embed migrations)
 - Create: `docker-compose.override.yml.example` (template for custom overrides)
 
 **Key Decisions / Notes:**
+
 - New entrypoint flow: (1) Detect available RAM/CPU, (2) Log recommendations, (3) Read `<SERVICE>_MODE` env vars to determine which services are external, (4) Wait only for services that are NOT marked external (e.g., skip waiting for Postgres if `POSTGRES_MODE=external`), (5) Run auto-migration (via the app binary itself, not external tool), (6) Start the server
 - **Per-service conditional startup:** The entrypoint reads `POSTGRES_MODE`, `REDIS_MODE`, `IPFS_MODE`, `CLAMAV_MODE`, `WHISPER_MODE` from `.env`. If a service is `external`, the entrypoint: (a) skips starting the local Docker container for that service, (b) skips the health-check wait for it, (c) logs that it's using external service at the configured URL. Docker Compose uses `docker compose` CLI with `--scale <service>=0` or conditional service depends_on to skip containers for external services.
 - **CRITICAL: Remove hard `depends_on` for optional services.** Current `docker-compose.yml` has `app: depends_on: ipfs: condition: service_healthy` and similar for whisper. These hard dependencies prevent minimal mode from working -- Docker Compose tries to start IPFS/Whisper even without profiles. Fix: Remove `depends_on` entries for optional services from the app service. Use `depends_on: <service>: condition: service_healthy; required: false` (Docker Compose 2.20+) or move optional services to profile-gated entries that the app doesn't depend on. The app's existing feature flags (`EnableIPFS`, `EnableCaptionGeneration`) already handle graceful degradation when services are unavailable.
@@ -342,6 +360,7 @@ Worktree: No
 - Add `postgresql-client` and `redis` to Dockerfile runtime stage for backup/restore commands
 
 **Definition of Done:**
+
 - [ ] All tests pass (unit, integration if applicable)
 - [ ] No diagnostics errors (linting, type checking)
 - [ ] `docker compose up` starts Postgres + Redis + App without requiring IPFS/ClamAV/Whisper
@@ -356,6 +375,7 @@ Worktree: No
 - [ ] Entrypoint logs clearly indicate which services are local Docker vs external
 
 **Verify:**
+
 - `docker compose config --profiles` -- shows available profiles
 - `docker compose build app` -- builds successfully with new entrypoint
 
@@ -368,6 +388,7 @@ Worktree: No
 **Dependencies:** Task 1
 
 **Files:**
+
 - Create: `internal/backup/backup.go` (core interfaces: `BackupTarget`, `BackupJob`, `BackupResult`)
 - Create: `internal/backup/backup_test.go`
 - Create: `internal/backup/manifest.go` (backup manifest: schema version, app version, timestamps, contents list)
@@ -381,8 +402,10 @@ Worktree: No
 - Create: `internal/domain/backup.go` (backup domain models)
 
 **Key Decisions / Notes:**
+
 - `BackupTarget` interface: `Upload(ctx, reader, path) error`, `Download(ctx, path) (io.ReadCloser, error)`, `List(ctx, prefix) ([]BackupEntry, error)`, `Delete(ctx, path) error`
 - **Backup manifest** (JSON file inside each backup archive):
+
   ```json
   {
     "version": 1,
@@ -395,6 +418,7 @@ Worktree: No
     "checksum": "sha256:..."
   }
   ```
+
 - `schema_version` is the Goose migration version at backup time (from Task 1's `CurrentVersion()`)
 - On restore, if `schema_version` < current, Goose auto-migrates after restore to bring DB to current version
 - This makes older backups forward-compatible with newer Athena versions
@@ -408,6 +432,7 @@ Worktree: No
 - Config additions: `BACKUP_ENABLED`, `BACKUP_SCHEDULE`, `BACKUP_RETENTION`, `BACKUP_LOCAL_PATH`
 
 **Definition of Done:**
+
 - [ ] All tests pass (unit, integration if applicable)
 - [ ] No diagnostics errors (linting, type checking)
 - [ ] `BackupTarget` interface is defined with Upload/Download/List/Delete methods
@@ -420,6 +445,7 @@ Worktree: No
 - [ ] Retention policy deletes old backups beyond the configured limit
 
 **Verify:**
+
 - `go test ./internal/backup/... -short` -- all tests pass
 - `go build ./cmd/server` -- builds clean
 
@@ -432,11 +458,13 @@ Worktree: No
 **Dependencies:** Task 6
 
 **Files:**
+
 - Create: `internal/backup/s3.go`
 - Create: `internal/backup/s3_test.go`
 - Modify: `internal/config/config.go` (add `BACKUP_S3_*` config vars)
 
 **Key Decisions / Notes:**
+
 - Reuse the existing `aws-sdk-go-v2` already in `go.mod` (used for S3 storage)
 - Implement the `BackupTarget` interface for S3 (including `Download` for restore)
 - Config additions: `BACKUP_S3_BUCKET`, `BACKUP_S3_PREFIX`, `BACKUP_S3_ENDPOINT`, `BACKUP_S3_ACCESS_KEY`, `BACKUP_S3_SECRET_KEY`, `BACKUP_S3_REGION`
@@ -446,6 +474,7 @@ Worktree: No
 - Follow the S3 patterns already established in `internal/storage/`
 
 **Definition of Done:**
+
 - [ ] All tests pass (unit, integration if applicable)
 - [ ] No diagnostics errors (linting, type checking)
 - [ ] S3 backend implements `BackupTarget` interface (including Download)
@@ -456,6 +485,7 @@ Worktree: No
 - [ ] Works with custom S3 endpoints (MinIO, Backblaze B2)
 
 **Verify:**
+
 - `go test ./internal/backup/... -short -run TestS3` -- S3 tests pass (with mocked S3 client)
 - `go build ./cmd/server` -- builds clean
 
@@ -468,12 +498,14 @@ Worktree: No
 **Dependencies:** Task 6
 
 **Files:**
+
 - Create: `internal/backup/sftp.go`
 - Create: `internal/backup/sftp_test.go`
 - Modify: `go.mod` (add `github.com/pkg/sftp` and `golang.org/x/crypto/ssh`)
 - Modify: `internal/config/config.go` (add `BACKUP_SFTP_*` config vars)
 
 **Key Decisions / Notes:**
+
 - Use `github.com/pkg/sftp` for SFTP (well-maintained, widely used)
 - SFTP supports password and SSH key authentication
 - Config additions: `BACKUP_SFTP_HOST`, `BACKUP_SFTP_PORT`, `BACKUP_SFTP_USER`, `BACKUP_SFTP_PASSWORD`, `BACKUP_SFTP_KEY_PATH`, `BACKUP_SFTP_PATH`, `BACKUP_SFTP_HOST_KEY` (optional SSH host key fingerprint for MITM prevention)
@@ -483,6 +515,7 @@ Worktree: No
 - Implement the same `BackupTarget` interface as local and S3 (including Download for restore)
 
 **Definition of Done:**
+
 - [ ] All tests pass (unit, integration if applicable)
 - [ ] No diagnostics errors (linting, type checking)
 - [ ] SFTP backend implements `BackupTarget` interface (including Download)
@@ -494,6 +527,7 @@ Worktree: No
 - [ ] FTP backend also implements `BackupTarget` interface
 
 **Verify:**
+
 - `go test ./internal/backup/... -short -run TestSFTP` -- SFTP tests pass (with mocked SFTP server)
 - `go build ./cmd/server` -- builds clean
 
@@ -506,6 +540,7 @@ Worktree: No
 **Dependencies:** Task 6, Task 1
 
 **Files:**
+
 - Create: `internal/backup/restore.go` (restore orchestrator)
 - Create: `internal/backup/restore_test.go`
 - Create: `internal/setup/templates/restore.html` (restore UI page)
@@ -513,6 +548,7 @@ Worktree: No
 - Modify: `internal/setup/wizard.go` (add restore route handlers)
 
 **Key Decisions / Notes:**
+
 - Restore flow:
   1. List available backups from configured target
   2. User selects backup to restore
@@ -531,6 +567,7 @@ Worktree: No
 - The same restore logic is used by both web UI and CLI (Task 11)
 
 **Definition of Done:**
+
 - [ ] All tests pass (unit, integration if applicable)
 - [ ] No diagnostics errors (linting, type checking)
 - [ ] Restore from local backup completes successfully and app serves normally after restart
@@ -540,6 +577,7 @@ Worktree: No
 - [ ] Restore progress is visible to the user (not a blank screen)
 
 **Verify:**
+
 - `go test ./internal/backup/... -short -run TestRestore` -- restore tests pass
 - `go build ./cmd/server` -- builds clean
 
@@ -552,6 +590,7 @@ Worktree: No
 **Dependencies:** Task 6, Task 7, Task 8, Task 9
 
 **Files:**
+
 - Create: `internal/httpapi/handlers/backup/backup_handlers.go`
 - Create: `internal/httpapi/handlers/backup/backup_handlers_test.go`
 - Create: `internal/usecase/backup/service.go`
@@ -561,6 +600,7 @@ Worktree: No
 - Modify: `internal/config/config.go` (add `BACKUP_TARGET` config to select active backend)
 
 **Key Decisions / Notes:**
+
 - All backup/restore endpoints require admin role authentication
 - API endpoints:
   - `POST /api/v1/admin/backups` -- Trigger manual backup
@@ -577,6 +617,7 @@ Worktree: No
 - Follow the existing route registration pattern from `internal/httpapi/routes.go:117+`
 
 **Definition of Done:**
+
 - [ ] All tests pass (unit, integration if applicable)
 - [ ] No diagnostics errors (linting, type checking)
 - [ ] `POST /api/v1/admin/backups` triggers a backup and returns job status
@@ -586,6 +627,7 @@ Worktree: No
 - [ ] Non-admin users receive 403 Forbidden on backup/restore endpoints
 
 **Verify:**
+
 - `go test ./internal/httpapi/handlers/backup/... -short` -- handler tests pass
 - `go test ./internal/usecase/backup/... -short` -- service tests pass
 - `go build ./cmd/server` -- builds clean
@@ -599,6 +641,7 @@ Worktree: No
 **Dependencies:** Task 1, Task 2, Task 6, Task 9
 
 **Files:**
+
 - Create: `cmd/cli/main.go` (CLI entry point)
 - Create: `cmd/cli/setup.go` (interactive setup command)
 - Create: `cmd/cli/backup.go` (backup commands)
@@ -608,6 +651,7 @@ Worktree: No
 - Modify: `Dockerfile` (include CLI binary)
 
 **Key Decisions / Notes:**
+
 - CLI commands:
   - `athena-cli setup` -- Interactive terminal setup (prompts for DB URL, Redis, etc.)
   - `athena-cli setup --from-env .env.example` -- Non-interactive setup from env template
@@ -625,6 +669,7 @@ Worktree: No
 - CLI binary is separate from the server binary (`cmd/cli/` vs `cmd/server/`)
 
 **Definition of Done:**
+
 - [ ] All tests pass (unit, integration if applicable)
 - [ ] No diagnostics errors (linting, type checking)
 - [ ] `athena-cli setup` runs interactive setup and writes valid `.env`
@@ -635,6 +680,7 @@ Worktree: No
 - [ ] `--json` flag produces machine-readable output for all commands
 
 **Verify:**
+
 - `go build ./cmd/cli` -- CLI binary builds
 - `go test ./cmd/cli/... -short` -- CLI tests pass
 
@@ -647,10 +693,12 @@ Worktree: No
 **Dependencies:** Task 1, Task 5
 
 **Files:**
+
 - Create: `scripts/install.sh` (main install script)
 - Modify: `README.md` (add one-liner install instructions)
 
 **Key Decisions / Notes:**
+
 - Script detects OS and package manager (apt, yum/dnf, brew)
 - Two installation modes:
   - **Docker mode** (default): Installs Docker if missing, runs `docker compose up -d`
@@ -670,6 +718,7 @@ Worktree: No
 - The script should be POSIX-compatible (`#!/bin/sh`) for maximum portability
 
 **Definition of Done:**
+
 - [ ] Script runs successfully on Ubuntu 22.04+ (Docker mode)
 - [ ] Script runs successfully on macOS (Docker mode)
 - [ ] Script detects and installs Docker if missing
@@ -678,6 +727,7 @@ Worktree: No
 - [ ] README updated with one-liner install command
 
 **Verify:**
+
 - `shellcheck scripts/install.sh` -- no warnings
 - `bash -n scripts/install.sh` -- syntax check passes
 
@@ -703,7 +753,7 @@ Worktree: No
 |------|-----------|--------|------------|
 | Goose embedded migrations break on specific Postgres versions | Low | High | Test against Postgres 13, 14, 15 in CI. Pin Goose v3 version in go.mod. |
 | Resource detection gives wrong values in containers (cgroups v1 vs v2) | Med | Med | Read cgroup limits (`/sys/fs/cgroup/memory.max` for v2, `memory.limit_in_bytes` for v1) in containers, fallback to host values. |
-| Setup wizard XSS via user-input config values | Low | High | Go `html/template` auto-escapes by default. Additionally reject config values containing shell metacharacters (`;|&$\``), validate DATABASE_URL matches `postgres://` schema, test Redis/IPFS URLs are reachable before saving. |
+| Setup wizard XSS via user-input config values | Low | High | Go `html/template` auto-escapes by default. Additionally reject config values containing shell metacharacters (`;|&$\``), validate DATABASE_URL matches`postgres://` schema, test Redis/IPFS URLs are reachable before saving. |
 | pg_dump/pg_restore not available in Docker runtime image | Med | Med | Install `postgresql-client` in Dockerfile runtime stage via `apk add postgresql-client`. |
 | Large backups exceed available disk/memory during tar creation | Med | Med | Stream backup to target (pipe pg_dump directly to archive writer). Don't buffer entire backup in memory. |
 | SFTP library introduces security vulnerabilities | Low | Med | Use well-maintained `pkg/sftp` with pinned version. Validate host keys. |
@@ -720,9 +770,11 @@ Worktree: No
 **Dependencies:** Task 6
 
 **Files:**
+
 - Modify: `internal/backup/manager.go` (implement CreateBackup with pg_dump, redis-cli, tar/gzip, manifest)
 
 **Key Decisions / Notes:**
+
 - Use `exec.CommandContext()` for pg_dump and redis-cli
 - Write pg_dump to temp file first, verify exit code 0, then include in archive (per plan Risk #5)
 - Create tar.gz archive streaming to avoid buffering entire backup in memory
@@ -730,6 +782,7 @@ Worktree: No
 - BackupManager needs DatabaseURL and RedisURL fields for pg_dump/redis-cli commands
 
 **Definition of Done:**
+
 - [ ] CreateBackup runs pg_dump and verifies exit code before archiving
 - [ ] Backup archive contains database.sql, manifest.json (and redis.rdb, storage/ when applicable)
 - [ ] Failed pg_dump does not produce partial backup files
@@ -744,9 +797,11 @@ Worktree: No
 **Dependencies:** Task 13, Task 1
 
 **Files:**
+
 - Modify: `internal/backup/restore.go` (implement actual restore stages)
 
 **Key Decisions / Notes:**
+
 - After extracting archive, run `psql < database.sql` or `pg_restore` to restore DB
 - Compare manifest.SchemaVersion with database.CurrentVersion()
 - If manifest version < current, call database.RunMigrations() for forward compatibility
@@ -754,6 +809,7 @@ Worktree: No
 - Pre-restore backup: call BackupManager.CreateBackup() before overwriting
 
 **Definition of Done:**
+
 - [ ] Restore actually executes psql/pg_restore with the extracted database dump
 - [ ] Forward migrations run automatically when schema_version < current
 - [ ] Pre-restore backup is created when CreatePreBackup=true
@@ -768,15 +824,18 @@ Worktree: No
 **Dependencies:** Task 4
 
 **Files:**
+
 - Modify: `internal/setup/wizard.go` or new `internal/setup/wizard_db.go`
 - Modify: `internal/setup/wizard_forms.go` (add validation calls)
 
 **Key Decisions / Notes:**
+
 - Database validation: connect to `postgres` default DB, check if `athena` exists, create if not, create extensions
 - Admin user: after .env is written, hash password with bcrypt, INSERT into users table with role=admin
 - Handle re-run scenario (admin exists → skip with warning)
 
 **Definition of Done:**
+
 - [ ] Wizard creates `athena` database when it doesn't exist
 - [ ] Wizard creates extensions in the new database
 - [ ] Admin user is created in DB on wizard completion with bcrypt-hashed password
@@ -791,9 +850,11 @@ Worktree: No
 **Dependencies:** Task 13, Task 14
 
 **Files:**
+
 - Modify: `cmd/cli/main.go` (implement all command handlers using internal packages)
 
 **Key Decisions / Notes:**
+
 - `backup create`: load config, create BackupManager, call CreateBackup
 - `backup list`: load config, create target, call List
 - `restore`: load config, create RestoreManager, call Restore
@@ -803,6 +864,7 @@ Worktree: No
 - Support `--json` flag for machine-readable output
 
 **Definition of Done:**
+
 - [ ] `athena-cli backup create` produces a backup archive
 - [ ] `athena-cli backup list` shows available backups
 - [ ] `athena-cli status` shows DB connection and migration version
@@ -818,12 +880,14 @@ Worktree: No
 **Dependencies:** Task 13
 
 **Files:**
+
 - Modify: `internal/backup/s3_test.go`
 - Modify: `internal/backup/sftp_test.go`
 - Modify: `internal/backup/ftp_test.go`
 - Modify: `internal/httpapi/handlers/backup/backup_handlers_test.go`
 
 **Key Decisions / Notes:**
+
 - S3: use interface-based mock or httptest server
 - SFTP: mock the sftp.Client calls
 - FTP: mock the ftp.ServerConn calls
@@ -831,6 +895,7 @@ Worktree: No
 - Test both success and error paths
 
 **Definition of Done:**
+
 - [ ] No t.Skip() remains in backup test files
 - [ ] Each backend has tests for Upload, Download, List, Delete (mocked)
 - [ ] Handler tests verify HTTP status codes and response bodies
@@ -845,11 +910,13 @@ Worktree: No
 **Dependencies:** None
 
 **Files:**
+
 - Modify: `internal/setup/wizard_forms.go` (call validation functions before saving config)
 - Modify: `internal/database/migrate.go` (use goose.UpContext, sync.Once for SetBaseFS)
 - Modify: `internal/setup/detect_test.go` (use t.Setenv)
 
 **Definition of Done:**
+
 - [ ] processDatabaseForm validates DATABASE_URL via ValidateDatabaseURL when mode is external
 - [ ] processSecurityForm validates custom JWT secret via ValidateJWTSecret
 - [ ] RunMigrations uses goose.UpContext for context cancellation support
@@ -865,17 +932,20 @@ Worktree: No
 **Dependencies:** Task 13
 
 **Files:**
+
 - Create: `internal/backup/scheduler.go`
 - Create: `internal/backup/scheduler_test.go`
 - Create: `internal/domain/backup.go` (move BackupJob, BackupResult, BackupStatus from internal/backup/)
 - Modify: `internal/app/app.go` (register scheduler)
 
 **Key Decisions / Notes:**
+
 - Scheduler uses time.Ticker or cron expression parsing
-- Config: BACKUP_SCHEDULE (default "0 2 * * *"), BACKUP_RETENTION (default 7)
+- Config: BACKUP_SCHEDULE (default "0 2 ** *"), BACKUP_RETENTION (default 7)
 - Retention: after each backup, delete backups beyond limit
 
 **Definition of Done:**
+
 - [ ] Scheduler runs backups on configured schedule
 - [ ] Retention policy deletes old backups beyond limit
 - [ ] Domain types moved to internal/domain/backup.go
@@ -892,6 +962,7 @@ Worktree: No
 **Dependencies:** None
 
 **Files:**
+
 - Modify: `internal/setup/wizard_db.go` (SQL injection fix — use `pq.QuoteIdentifier()` for CREATE DATABASE)
 - Modify: `internal/httpapi/handlers/backup/backup_handlers.go` (validate backup ID — reject path separators/traversal in `extractBackupID`)
 - Modify: `internal/setup/wizard.go` (render templates to buffer first; log error server-side, return generic 500; handle JWT generation error in `NewWizard`)
@@ -899,6 +970,7 @@ Worktree: No
 - Modify: `internal/backup/sftp.go` (log warning when accepting unverified host key via TOFU)
 
 **Definition of Done:**
+
 - [ ] `CreateDatabaseIfNotExists` uses `pq.QuoteIdentifier()` — no string interpolation of user input into SQL
 - [ ] `extractBackupID` rejects IDs containing `/`, `..`, `\`, or other path-unsafe characters
 - [ ] `renderTemplate` renders to `bytes.Buffer` first; errors logged server-side, generic 500 returned to client
@@ -915,6 +987,7 @@ Worktree: No
 **Dependencies:** None
 
 **Files:**
+
 - Modify: `internal/usecase/backup/service.go` (implement `TriggerBackup` to call `BackupManager.CreateBackup`; fix `StartRestore` to log errors and track state)
 - Modify: `internal/setup/wizard.go` (add POST dispatch in `HandleReview`)
 - Modify: `internal/setup/server.go` (register POST route for `/setup/review`)
@@ -924,6 +997,7 @@ Worktree: No
 - Modify: `internal/setup/wizard.go` (add `sync.Mutex` to protect shared `WizardConfig`)
 
 **Definition of Done:**
+
 - [ ] `TriggerBackup` creates actual backup via `BackupManager.CreateBackup` in goroutine, returns job ID
 - [ ] `StartRestore` logs errors from goroutine, `GetRestoreStatus` returns actual state
 - [ ] `HandleReview` dispatches POST to `processReviewForm`; `/setup/review` POST route registered in server.go
@@ -941,6 +1015,7 @@ Worktree: No
 **Dependencies:** Task 20, Task 21
 
 **Files:**
+
 - Modify: `internal/setup/wizard_forms.go` (call `ValidateDatabaseURL` and `ValidateJWTSecret` before saving)
 - Modify: `internal/setup/wizard_forms.go` or `wizard.go` (call `CreateDatabaseIfNotExists` and `CreateAdminUser` on wizard completion)
 - Modify: `cmd/cli/main.go` (implement `handleRestore` and `handleSetup` using internal packages)
@@ -951,6 +1026,7 @@ Worktree: No
 - Modify: `internal/backup/restore.go` (add `io.LimitReader` for archive extraction)
 
 **Definition of Done:**
+
 - [ ] Wizard calls `ValidateDatabaseURL` for external DB URLs and `ValidateJWTSecret` for custom secrets
 - [ ] Wizard completion calls `CreateDatabaseIfNotExists` then `CreateAdminUser` with bcrypt-hashed password
 - [ ] `athena-cli backup restore` calls `RestoreManager.Restore` with real target
@@ -970,6 +1046,7 @@ Worktree: No
 **Dependencies:** Task 20, Task 21, Task 22
 
 **Files:**
+
 - Modify: `internal/backup/s3_test.go` (mock S3 client interface, test Upload/Download/List/Delete)
 - Modify: `internal/backup/sftp_test.go` (mock SFTP client, test all methods)
 - Modify: `internal/backup/ftp_test.go` (mock FTP connection, test all methods)
@@ -978,6 +1055,7 @@ Worktree: No
 - Create: `cmd/cli/main_test.go` (test extractable command logic)
 
 **Definition of Done:**
+
 - [ ] Zero `t.Skip()` in any backup test file
 - [ ] S3/SFTP/FTP each have tests for Upload, Download, List, Delete with mocked clients
 - [ ] Handler tests cover all 4 endpoints with mock service (success + error paths)
@@ -995,17 +1073,20 @@ Worktree: No
 **Dependencies:** None
 
 **Files:**
+
 - Modify: `internal/httpapi/routes.go` (add backup routes under `/api/v1/admin/backups` with admin auth middleware)
 - Modify: `internal/app/app.go` (create backup usecase Service and Handler, pass to route registration)
 - Modify: `internal/setup/server.go` (add `r.Post("/setup/review", wizard.HandleReview)`)
 
 **Key Decisions / Notes:**
+
 - Backup routes must be behind admin auth middleware (existing `middleware.RequireAdmin` or equivalent)
 - Follow existing route registration pattern from `internal/httpapi/routes.go:117+`
 - Service needs BackupTarget, BackupManager, temp dir — reuse from scheduler initialization
 - The wizard HandleReview already dispatches POST internally (line 213-216), just needs the route
 
 **Definition of Done:**
+
 - [ ] `POST /api/v1/admin/backups` triggers backup (returns 202)
 - [ ] `GET /api/v1/admin/backups` lists backups
 - [ ] `DELETE /api/v1/admin/backups/{id}` deletes a backup
@@ -1023,12 +1104,14 @@ Worktree: No
 **Dependencies:** Task 24
 
 **Files:**
+
 - Modify: `internal/backup/restore.go` (implement runForwardMigrations using database.RunMigrationsWithDB; implement restoreRedis and restoreStorage; add io.LimitReader for archive extraction)
 - Modify: `internal/backup/manager.go` (add storage directory archiving to CreateBackup)
 - Modify: `internal/setup/wizard.go` (add sync.Mutex to protect WizardConfig)
 - Modify: `internal/backup/scheduler.go` (sort backups by ModTime before retention delete)
 
 **Key Decisions / Notes:**
+
 - `runForwardMigrations`: open DB connection from DatabaseURL, call `database.RunMigrationsWithDB(ctx, db)`
 - Restore Redis: copy extracted redis.rdb to Redis data dir (if present in archive)
 - Restore storage: extract storage/ tar to configured storage path (if present in archive)
@@ -1038,6 +1121,7 @@ Worktree: No
 - Scheduler sort: `sort.Slice(backups, func(i, j int) bool { return backups[i].ModTime.Before(backups[j].ModTime) })`
 
 **Definition of Done:**
+
 - [ ] `runForwardMigrations` calls `database.RunMigrationsWithDB` when schema version mismatch
 - [ ] Restore extracts and applies Redis RDB and storage files when present in archive
 - [ ] Backup archive includes storage directory when configured
@@ -1055,12 +1139,14 @@ Worktree: No
 **Dependencies:** Task 24, Task 25
 
 **Files:**
+
 - Modify: `internal/httpapi/handlers/backup/backup_handlers_test.go` (define mock service interface, test all 4 endpoints)
 - Modify: `internal/backup/s3_test.go` (mock S3 client, test Upload/Download/List/Delete)
 - Modify: `internal/backup/sftp_test.go` (mock SFTP client, test all methods)
 - Modify: `internal/backup/ftp_test.go` (mock FTP client, test all methods)
 
 **Key Decisions / Notes:**
+
 - Handler tests: define `ServiceInterface` extracted from Handler's usage of Service, create mock, inject
 - S3: define interface over s3.Client methods used (PutObject, GetObject, ListObjectsV2, DeleteObject)
 - SFTP: mock sftp.Client with in-memory file operations
@@ -1069,6 +1155,7 @@ Worktree: No
 - Legitimate `testing.Short()` skips for integration tests that need real infrastructure are OK
 
 **Definition of Done:**
+
 - [ ] Zero t.Skip("...not yet implemented") in any backup test file
 - [ ] Handler tests cover ListBackups, TriggerBackup, DeleteBackup, RestoreBackup with mock service
 - [ ] S3 tests cover Upload, Download, List, Delete with mocked S3 client
@@ -1086,6 +1173,7 @@ Worktree: No
 **Dependencies:** Task 25
 
 **Files:**
+
 - Modify: `internal/backup/backup.go` (add BackupComponents struct with Include flags)
 - Modify: `internal/backup/manager.go` (respect component selection in CreateBackup)
 - Modify: `internal/backup/manifest.go` (record which components were included)
@@ -1096,6 +1184,7 @@ Worktree: No
 - Modify: `cmd/cli/main.go` (add --include-db, --include-redis, --include-storage, --exclude-dir flags)
 
 **Key Decisions / Notes:**
+
 - Default: include everything (DB + Redis + storage) for backward compatibility
 - `BackupComponents` struct: `IncludeDatabase bool`, `IncludeRedis bool`, `IncludeStorage bool`, `ExcludeDirs []string`
 - `ExcludeDirs` allows excluding specific storage subdirs (e.g., `videos/`, `thumbnails/`) while keeping others
@@ -1106,6 +1195,7 @@ Worktree: No
 - Env vars for scheduled backups: `BACKUP_INCLUDE_DB=true`, `BACKUP_INCLUDE_REDIS=true`, `BACKUP_INCLUDE_STORAGE=true`, `BACKUP_EXCLUDE_DIRS=videos,thumbnails`
 
 **Definition of Done:**
+
 - [ ] `BackupComponents` struct defined with include flags and exclude dirs
 - [ ] `CreateBackup` respects component selection — skips DB/Redis/storage when excluded
 - [ ] `ExcludeDirs` prevents specific storage subdirectories from being archived

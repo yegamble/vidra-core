@@ -187,6 +187,7 @@ func (c *TestClient) Login(t *testing.T, username, password string) (userID, tok
 **Analysis:**
 
 The email conversion logic should work correctly:
+
 - Registration: `email = "e2e_abc123_1234567890@example.com"`
 - Login: `username = "e2e_abc123_1234567890"` → `email = username + "@example.com"` → `"e2e_abc123_1234567890@example.com"`
 - Emails **match** ✅
@@ -210,6 +211,7 @@ The password is the same constant `"SecurePass123!"` in both cases, so it should
 **Diagnostic Steps Needed:**
 
 1. Check if registration actually succeeds:
+
    ```go
    userID, token := client.RegisterUser(t, username, email, password)
    assert.NotEmpty(t, userID, "Registration should return user ID")
@@ -217,6 +219,7 @@ The password is the same constant `"SecurePass123!"` in both cases, so it should
    ```
 
 2. Verify user exists in database after registration:
+
    ```sql
    SELECT id, username, email, password_hash IS NOT NULL as has_password
    FROM users
@@ -224,6 +227,7 @@ The password is the same constant `"SecurePass123!"` in both cases, so it should
    ```
 
 3. Check if registration token works:
+
    ```go
    // After registration
    resp, err := client.Get("/api/v1/users/me")
@@ -231,6 +235,7 @@ The password is the same constant `"SecurePass123!"` in both cases, so it should
    ```
 
 4. Add debug logging to login helper:
+
    ```go
    func (c *TestClient) Login(t *testing.T, username, password string) (userID, token string) {
        email := username
@@ -320,6 +325,7 @@ func (c *TestClient) UploadVideo(t *testing.T, videoPath, title, description str
 **Expected Result:** Video upload will succeed with 201 Created instead of failing with 400 Bad Request.
 
 **Impact:**
+
 - ✅ Fixes TestVideoUploadWorkflow
 - ✅ Fixes TestVideoSearchFunctionality
 - ⚠️ Does NOT fix TestUserAuthenticationFlow (different root cause)
@@ -447,6 +453,7 @@ func (c *TestClient) Login(t *testing.T, username, password string) (userID, tok
 ```
 
 **Expected Result:** When tests run, you'll see detailed logging showing:
+
 - What credentials are being used for registration
 - Whether registration actually succeeds
 - What credentials are being used for login
@@ -511,65 +518,77 @@ go test -v -timeout 30m ./tests/e2e/scenarios/...
 Look for patterns in the logs:
 
 **If registration fails:**
+
 ```
 Registration failed with 400: {"error":{"code":"...", "message":"..."},"success":false}
 ```
+
 → Database constraint violation or validation error
 
 **If registration succeeds but login fails:**
+
 ```
 Registering user: username=e2e_abc123_1234567890, email=e2e_abc123_1234567890@example.com
 Registration succeeded: userID=550e8400-e29b-41d4-a716-446655440000
 Login attempt: username=e2e_abc123_1234567890, email=e2e_abc123_1234567890@example.com
 Login failed with 401: {"error":{"code":"INVALID_CREDENTIALS", "message":"Invalid credentials"},"success":false}
 ```
+
 → Password mismatch or user not actually in database
 
 **If both succeed:**
+
 ```
 Registration succeeded: userID=550e8400-e29b-41d4-a716-446655440000
 Login succeeded: userID=550e8400-e29b-41d4-a716-446655440000
 ```
+
 → Authentication working correctly!
 
 ---
 
 ## Expected Outcomes
 
-### After Fix #1 Only:
+### After Fix #1 Only
+
 - ✅ TestVideoUploadWorkflow: Should progress further (may still fail on login)
 - ❌ TestUserAuthenticationFlow: Still fails with 401
 - ✅ TestVideoSearchFunctionality: Should progress further (may still fail on login)
 
-### After Fix #1 + Fix #2 (Diagnostics):
+### After Fix #1 + Fix #2 (Diagnostics)
+
 - Same test results, but with detailed logging showing:
   - Exact point of failure
   - Error codes and messages
   - Credential values being used
   - Whether registration is actually succeeding
 
-### If Additional Issues Found:
+### If Additional Issues Found
 
 Based on diagnostic logs, you may need to:
 
 1. **Check database constraints:**
+
    ```sql
    \d users  -- Show users table structure
    SELECT * FROM users WHERE email LIKE 'e2e_%';  -- Check test users
    ```
 
 2. **Verify password hashing:**
+
    ```go
    // In RegisterUser, log the password being sent
    t.Logf("Sending password: %s (length: %d)", password, len(password))
    ```
 
 3. **Check if 2FA is being enabled unexpectedly:**
+
    ```sql
    SELECT id, username, email, twofa_enabled FROM users WHERE email LIKE 'e2e_%';
    ```
 
 4. **Verify API is using correct database:**
+
    ```bash
    docker compose -f tests/e2e/docker-compose.yml logs athena-api-e2e | grep DATABASE_URL
    ```
@@ -581,6 +600,7 @@ Based on diagnostic logs, you may need to:
 ### CreateVideoHandler vs UploadVideoFileHandler
 
 **CreateVideoHandler (POST /api/v1/videos):**
+
 - Purpose: Create video metadata record only
 - Use case: Initiate chunked upload workflow
 - Request: JSON with title, description, privacy
@@ -588,6 +608,7 @@ Based on diagnostic logs, you may need to:
 - Business logic: Creates video record in "uploading" status
 
 **UploadVideoFileHandler (POST /api/v1/videos/upload):**
+
 - Purpose: Legacy one-shot upload for backward compatibility
 - Use case: Simple file upload (Postman tests, simple clients)
 - Request: Multipart form with video file + metadata
@@ -595,6 +616,7 @@ Based on diagnostic logs, you may need to:
 - Business logic: Validates file, stores to disk, creates video record
 
 **API Contract:**
+
 - Both endpoints require authentication (Bearer token)
 - Both return 201 Created on success
 - Both return video ID in response
@@ -605,6 +627,7 @@ Based on diagnostic logs, you may need to:
 The E2E test wants to upload a complete video file in one request, which aligns with `UploadVideoFileHandler` business logic, not `CreateVideoHandler`.
 
 **Impact of Fix:**
+
 - ✅ No change to API behavior
 - ✅ No change to business logic
 - ✅ Tests will use the correct endpoint for their use case
@@ -614,6 +637,7 @@ The E2E test wants to upload a complete video file in one request, which aligns 
 ### Authentication Flow
 
 **Registration Business Logic:**
+
 1. Validate username, email, password
 2. Check for existing user (409 Conflict if exists)
 3. Hash password with bcrypt
@@ -624,6 +648,7 @@ The E2E test wants to upload a complete video file in one request, which aligns 
 8. Return user + tokens
 
 **Login Business Logic:**
+
 1. Look up user by email
 2. Get password hash from database
 3. Compare provided password with hash
@@ -635,12 +660,14 @@ The E2E test wants to upload a complete video file in one request, which aligns 
 9. Return user + tokens
 
 **Critical Invariant:**
+
 - Password must be hashed the same way in registration and verification
 - Email must match exactly
 - User must exist in database
 - Password hash must be stored in database
 
 **Potential Business Logic Issues:**
+
 1. If bcrypt cost differs between registration and login → passwords won't match
 2. If user record is created but password hash fails to store → login will fail
 3. If email normalization differs → user lookup will fail
@@ -661,6 +688,7 @@ The E2E test wants to upload a complete video file in one request, which aligns 
 ## Risk Assessment
 
 ### Fix #1 Risk: **VERY LOW**
+
 - Changes only test code
 - Fixes clear endpoint mismatch
 - No production code changes
@@ -668,6 +696,7 @@ The E2E test wants to upload a complete video file in one request, which aligns 
 - Easy to revert if needed
 
 ### Fix #2 Risk: **VERY LOW**
+
 - Changes only test code
 - Adds logging, no logic changes
 - Helps with debugging
@@ -675,6 +704,7 @@ The E2E test wants to upload a complete video file in one request, which aligns 
 - Can be removed after issue is resolved
 
 ### Overall Confidence: **HIGH**
+
 - Video upload fix will definitely work (endpoint mismatch is clear)
 - Login fix requires more investigation but diagnostics will reveal the issue
 - No risk to production systems

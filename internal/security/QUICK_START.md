@@ -19,11 +19,13 @@
 ## Quick Commands
 
 ### Run Tests (Docker - Recommended)
+
 ```bash
 ./scripts/run-security-tests.sh
 ```
 
 ### Run Tests (Manual)
+
 ```bash
 # Start ClamAV
 docker compose --profile test up -d clamav-test
@@ -39,17 +41,20 @@ go test -v ./internal/security/file_type_blocker_test.go
 ```
 
 ### Run Without ClamAV
+
 ```bash
 go test -short ./internal/security/...
 ```
 
 ### Generate Coverage
+
 ```bash
 ./scripts/run-security-tests.sh -c
 open coverage.html
 ```
 
 ### Run Benchmarks
+
 ```bash
 ./scripts/run-security-tests.sh -b
 ```
@@ -72,6 +77,7 @@ open coverage.html
 ## What Gets Tested
 
 ### Virus Scanner
+
 - ✅ ClamAV connection & initialization
 - ✅ Clean file scanning
 - ✅ EICAR test virus detection
@@ -83,6 +89,7 @@ open coverage.html
 - ✅ Integration with upload/FFmpeg/IPFS
 
 ### File Type Blocker
+
 - ✅ Block executables (.exe, .dll, .so, etc.)
 - ✅ Block scripts (.bat, .sh, .ps1, .py, etc.)
 - ✅ Block macro documents (.docm, .xlsm, etc.)
@@ -123,17 +130,21 @@ This is **correct** in TDD! Tests first, implementation next.
 ## Key Test Files
 
 ### Clean Files (Should Pass)
+
 - `testdata/virus_scanner/clean_file.txt`
 - `testdata/virus_scanner/clean_video.mp4`
 - `testdata/virus_scanner/large_clean.bin`
 
 ### Infected Files (Should Detect)
+
 - `testdata/virus_scanner/eicar.txt` (EICAR test virus)
 
 ### Blocked Files (Should Reject)
+
 - `testdata/virus_scanner/blocked_types/*.exe|.bat|.ps1|.sh|.py`
 
 ### Archive Tests (Should Validate)
+
 - `testdata/virus_scanner/nested.zip` (excessive nesting)
 
 ---
@@ -161,15 +172,19 @@ go get github.com/stretchr/testify
 ## Troubleshooting
 
 ### "connection refused" on port 3310
+
 ClamAV isn't running. Start it:
+
 ```bash
 docker compose --profile test up -d clamav-test
 ```
 
 ### "test timed out"
+
 ClamAV is still loading signatures. Wait 2-3 minutes.
 
 ### Tests skip in -short mode
+
 This is expected. Use Docker for full integration tests.
 
 ---

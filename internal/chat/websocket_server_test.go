@@ -204,6 +204,23 @@ func (m *MockStreamRepository) EndStream(ctx context.Context, id uuid.UUID) erro
 	return args.Error(0)
 }
 
+func (m *MockStreamRepository) GetChannelByStreamID(_ context.Context, _ uuid.UUID) (*domain.Channel, error) {
+	return nil, nil
+}
+func (m *MockStreamRepository) UpdateWaitingRoom(_ context.Context, _ uuid.UUID, _ bool, _ string) error {
+	return nil
+}
+func (m *MockStreamRepository) ScheduleStream(_ context.Context, _ uuid.UUID, _ *time.Time, _ *time.Time, _ bool, _ string) error {
+	return nil
+}
+func (m *MockStreamRepository) CancelSchedule(_ context.Context, _ uuid.UUID) error { return nil }
+func (m *MockStreamRepository) GetScheduledStreams(_ context.Context, _, _ int) ([]*domain.LiveStream, error) {
+	return nil, nil
+}
+func (m *MockStreamRepository) GetUpcomingStreams(_ context.Context, _ uuid.UUID, _ int) ([]*domain.LiveStream, error) {
+	return nil, nil
+}
+
 func setupChatServerTest(t *testing.T) (*ChatServer, *MockChatRepository, *MockStreamRepository) {
 	mockChatRepo := new(MockChatRepository)
 	mockStreamRepo := new(MockStreamRepository)

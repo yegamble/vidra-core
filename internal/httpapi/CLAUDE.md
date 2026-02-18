@@ -7,6 +7,7 @@ Chi-based HTTP API layer with middleware stack, request validation, and structur
 ## Router Architecture
 
 ### Middleware Stack (Order Matters)
+
 1. `RequestID` - Generate/propagate X-Request-ID
 2. `RealIP` - Extract client IP from proxies
 3. `Logger` - Structured request logging
@@ -129,6 +130,7 @@ type ErrorInfo struct {
 ## Idempotency
 
 Support `Idempotency-Key` header for:
+
 - POST requests that create resources
 - Upload operations
 - Payment operations
@@ -182,6 +184,7 @@ func TestCreateVideo(t *testing.T) {
 ## Observability
 
 Each request automatically gets:
+
 - Request ID (X-Request-ID header)
 - Structured log entry with duration
 - Prometheus metrics (latency, status codes)

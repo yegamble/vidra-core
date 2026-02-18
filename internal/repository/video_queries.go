@@ -487,3 +487,39 @@ func (r *videoRepository) GetByRemoteURI(ctx context.Context, remoteURI string) 
 
 	return &v, nil
 }
+
+func (r *videoRepository) GetByChannelID(ctx context.Context, channelID string, limit, offset int) ([]*domain.Video, int64, error) {
+	countQuery := `SELECT COUNT(*) FROM videos WHERE channel_id = $1`
+	var total int64
+	if err := r.db.QueryRowContext(ctx, countQuery, channelID).Scan(&total); err != nil {
+		return nil, 0, domain.NewDomainError("COUNT_FAILED", "Failed to count channel videos")
+	}
+
+	query := `
+        SELECT id, thumbnail_id, title, description, duration, views,
+               privacy, status, upload_date, user_id,
+               original_cid, processed_cids, thumbnail_cid,
+               tags, category_id, language, file_size, mime_type, metadata,
+               created_at, updated_at, output_paths, thumbnail_path, preview_path
+        FROM videos
+        WHERE channel_id = $1
+        ORDER BY upload_date DESC
+        LIMIT $2 OFFSET $3`
+
+	rows, err := r.db.QueryContext(ctx, query, channelID, limit, offset)
+	if err != nil {
+		return nil, 0, domain.NewDomainError("QUERY_FAILED", "Failed to get videos by channel id")
+	}
+	defer func() { _ = rows.Close() }()
+
+	var videos []*domain.Video
+	for rows.Next() {
+		v, err := scanVideoRow(rows)
+		if err != nil {
+			return nil, 0, err
+		}
+		videos = append(videos, v)
+	}
+
+	return videos, total, nil
+}

@@ -23,6 +23,7 @@ The E2E tests are failing with HTTP 400 errors due to:
 **File:** `/Users/yosefgamble/github/athena/tests/e2e/helpers.go`
 
 **Change Line 119:**
+
 ```diff
 func (c *TestClient) Login(t *testing.T, username, password string) (userID, token string) {
     payload := map[string]interface{}{
@@ -33,6 +34,7 @@ func (c *TestClient) Login(t *testing.T, username, password string) (userID, tok
 ```
 
 **OR** change function signature to accept email:
+
 ```diff
 -func (c *TestClient) Login(t *testing.T, username, password string) (userID, token string) {
 +func (c *TestClient) Login(t *testing.T, email, password string) (userID, token string) {
@@ -44,6 +46,7 @@ func (c *TestClient) Login(t *testing.T, username, password string) (userID, tok
 ```
 
 **Also update test calls** in `/Users/yosefgamble/github/athena/tests/e2e/scenarios/video_workflow_test.go` line 132:
+
 ```diff
 - userID2, token2 := client2.Login(t, username, password)
 + userID2, token2 := client2.Login(t, email, password)
@@ -56,6 +59,7 @@ func (c *TestClient) Login(t *testing.T, username, password string) (userID, tok
 **File:** `/Users/yosefgamble/github/athena/internal/httpapi/handlers.go`
 
 **Change Lines 82-89:**
+
 ```diff
 func (s *Server) Login(w http.ResponseWriter, r *http.Request) {
     var reqData map[string]interface{}
@@ -93,11 +97,13 @@ func (s *Server) Login(w http.ResponseWriter, r *http.Request) {
 ```
 
 **Pros of Option B:**
+
 - More user-friendly (accept email OR username)
 - No test changes needed
 - Better UX for end users
 
 **Cons of Option B:**
+
 - More code changes
 - Need to ensure GetByUsername method exists
 
@@ -195,6 +201,7 @@ go test -v ./tests/e2e/scenarios/...
 ```
 
 **Expected Output:**
+
 ```
 === RUN   TestVideoUploadWorkflow
     video_workflow_test.go:49: Registered user: e2e_abc123_1732396800 (ID: ...)
@@ -232,7 +239,7 @@ Fixes E2E test failures with HTTP 400 errors."
 git push origin HEAD
 ```
 
-**Monitor:** https://github.com/yegamble/athena/actions
+**Monitor:** <https://github.com/yegamble/athena/actions>
 
 ---
 
@@ -269,18 +276,23 @@ git push origin HEAD
 ## Common Issues
 
 ### Issue: "table users does not exist"
+
 **Fix:** Ensure `init-shared-db.sql` is mounted in docker-compose (already done)
 
 ### Issue: "MISSING_CREDENTIALS" on login
+
 **Fix:** Ensure test sends "email" field, not "username"
 
 ### Issue: "CHECKSUM_REQUIRED" on chunk upload
+
 **Fix:** Set `VALIDATION_STRICT_MODE: "false"` or `VALIDATION_TEST_MODE: "true"`
 
 ### Issue: ClamAV not ready, uploads fail
+
 **Fix:** Set `CLAMAV_FALLBACK_MODE: "warn"` in E2E environment
 
 ### Issue: Rate limit exceeded
+
 **Fix:** Increase `RATE_LIMIT_REQUESTS` in E2E environment
 
 ---
@@ -313,6 +325,7 @@ git push origin HEAD
 ## Contact
 
 For questions or issues:
+
 - See full analysis: `E2E_API_EDGE_CASE_ANALYSIS.md`
 - See Postman scenarios: `POSTMAN_E2E_TEST_SCENARIOS.md`
 - See investigation report: `E2E_TEST_INVESTIGATION_REPORT.md`

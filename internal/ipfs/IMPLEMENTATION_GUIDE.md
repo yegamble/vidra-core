@@ -7,12 +7,14 @@
 ## Required Imports
 
 Add to `go.mod`:
+
 ```bash
 go get github.com/ipfs/go-cid@v0.4.1
 go get github.com/multiformats/go-multibase@v0.2.0
 ```
 
 Already present:
+
 - `github.com/multiformats/go-multihash v0.2.3`
 
 ---
@@ -450,12 +452,14 @@ type ClusterPinStatus struct {
 ## 3. Security Considerations
 
 ### Token Storage
+
 - NEVER log authentication tokens
 - NEVER include tokens in error messages
 - NEVER commit tokens to version control
 - Use environment variables or secret management systems
 
 ### HTTPS Enforcement
+
 ```go
 // Check if using auth over HTTP
 if c.authConfig != nil && c.authConfig.Token != "" {
@@ -467,6 +471,7 @@ if c.authConfig != nil && c.authConfig.Token != "" {
 ```
 
 ### String() Method (Prevent Token Leakage)
+
 ```go
 // String returns string representation without exposing secrets
 func (c *Client) String() string {
@@ -502,6 +507,7 @@ go test -bench=. ./internal/ipfs
 ### Expected Results After Implementation
 
 All tests should PASS:
+
 ```
 PASS: TestValidateCID_ValidCIDv1Base32
 PASS: TestValidateCID_RejectsPathTraversal
@@ -603,7 +609,7 @@ err := client.ClusterPin(ctx, cid)
 
 ## 8. Migration Path
 
-### Update existing code:
+### Update existing code
 
 ```go
 // BEFORE (insecure)

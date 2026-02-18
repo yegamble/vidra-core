@@ -36,6 +36,7 @@ Athena is a PeerTube backend implementation in Go following clean architecture p
 ### HTTP API (Chi Router)
 
 Middleware stack (in order):
+
 1. `RequestID` - Unique request tracking
 2. `RealIP` - Client IP extraction
 3. `Logger` - Structured logging
@@ -109,6 +110,7 @@ Middleware stack (in order):
 ## Key Interfaces
 
 ### Repository Pattern
+
 ```go
 type VideoRepository interface {
     Create(ctx context.Context, video *domain.Video) error
@@ -119,6 +121,7 @@ type VideoRepository interface {
 ```
 
 ### UseCase Pattern
+
 ```go
 type VideoUseCase interface {
     UploadVideo(ctx context.Context, req UploadRequest) (*domain.Video, error)

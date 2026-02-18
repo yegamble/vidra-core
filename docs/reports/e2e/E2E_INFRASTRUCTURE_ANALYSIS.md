@@ -15,6 +15,7 @@
 **Infrastructure File**: `docker-compose.ci.yml`
 
 **Characteristics**:
+
 - Services run on **standard ports** (5432, 6379, 5001, 3310)
 - Tests execute **from host**, connecting to `localhost`
 - Uses **GitHub Actions services** pattern
@@ -22,6 +23,7 @@
 - Simple, predictable service discovery
 
 **Service Configuration**:
+
 ```yaml
 Services:
   - postgres-ci: 5432:5432
@@ -32,6 +34,7 @@ Network: ci-network (bridge)
 ```
 
 **Test Execution Pattern**:
+
 ```bash
 # Services start
 docker compose -f docker-compose.ci.yml up -d
@@ -46,6 +49,7 @@ docker compose -f docker-compose.ci.yml down -v
 ```
 
 **Success Factors**:
+
 1. Host-to-container networking (no container-to-container dependencies)
 2. Standard ports (no conflicts)
 3. Simple healthchecks
@@ -59,6 +63,7 @@ docker compose -f docker-compose.ci.yml down -v
 **Infrastructure File**: `docker-compose.test.yml`
 
 **Characteristics**:
+
 - Services run on **non-standard ports** (5433, 6380, 15001, 18080)
 - Application runs **inside Docker** (app-test container)
 - Newman runs **inside Docker network**
@@ -66,6 +71,7 @@ docker compose -f docker-compose.ci.yml down -v
 - All tests containerized
 
 **Service Configuration**:
+
 ```yaml
 Services:
   - postgres-test: 5433:5432
@@ -78,6 +84,7 @@ Network: test-network (bridge)
 ```
 
 **Test Execution Pattern**:
+
 ```bash
 # Unique project name for isolation
 COMPOSE_PROJECT_NAME=athena-test docker compose -f docker-compose.test.yml up -d
@@ -90,6 +97,7 @@ COMPOSE_PROJECT_NAME=athena-test docker compose -f docker-compose.test.yml down 
 ```
 
 **Success Factors**:
+
 1. Full isolation via COMPOSE_PROJECT_NAME
 2. Container-to-container communication (no host involvement)
 3. Non-standard ports prevent conflicts
@@ -106,12 +114,14 @@ COMPOSE_PROJECT_NAME=athena-test docker compose -f docker-compose.test.yml down 
 **Infrastructure File**: `tests/e2e/docker-compose.yml`
 
 **Characteristics**:
+
 - Services run on **non-standard ports** (5433, 6380, 9000/9001, 3311, 8080)
 - Application runs **inside Docker** (athena-api-e2e)
 - Tests run **from host**, connecting to `localhost:8080`
 - **Hybrid pattern**: Some services containerized, tests on host
 
 **Service Configuration**:
+
 ```yaml
 Services:
   - postgres-e2e: 5433:5432
@@ -124,6 +134,7 @@ Volumes: Named volumes (persistent)
 ```
 
 **Test Execution Pattern**:
+
 ```bash
 # Start environment
 cd tests/e2e
@@ -165,17 +176,20 @@ COMPOSE_PROJECT_NAME=athena-e2e-${RUN_ID} docker compose down -v
 **Issue**: E2E tests expect to run from `tests/e2e/` subdirectory
 
 **Evidence**:
+
 ```go
 // tests/e2e/scenarios/video_workflow_test.go:203
 testVideoPath = "../../postman/test-files/videos/test-video.mp4"
 ```
 
 **Impact**:
+
 - Relative paths may fail if test runner is in wrong directory
 - Video file lookup fails
 - Docker Compose context may be incorrect
 
 **Recommendation**:
+
 - Use absolute paths or E2E_TEST_VIDEO_PATH environment variable
 - Ensure CI workflow sets correct working directory
 
@@ -186,6 +200,7 @@ testVideoPath = "../../postman/test-files/videos/test-video.mp4"
 **Issue**: E2E tests use port 8080 (same as dev environment)
 
 **Evidence**:
+
 ```yaml
 # tests/e2e/docker-compose.yml
 athena-api-e2e:
@@ -194,6 +209,7 @@ athena-api-e2e:
 ```
 
 **Working Pattern (Postman)**:
+
 ```yaml
 # docker-compose.test.yml
 app-test:
@@ -202,6 +218,7 @@ app-test:
 ```
 
 **Recommendation**:
+
 - Change E2E API port to `18080:8080` or similar
 - Update E2E_BASE_URL default to `http://localhost:18080`
 - Align with Postman test pattern
@@ -213,6 +230,7 @@ app-test:
 **Issue**: E2E tests use named volumes, may retain state between runs
 
 **Evidence**:
+
 ```yaml
 # tests/e2e/docker-compose.yml
 volumes:
@@ -222,6 +240,7 @@ volumes:
 ```
 
 **Working Pattern (Integration & Postman)**:
+
 ```yaml
 # docker-compose.test.yml
 postgres-test:
@@ -230,11 +249,13 @@ postgres-test:
 ```
 
 **Impact**:
+
 - Tests may not be idempotent
 - Previous test data can interfere
 - Database migrations may fail due to existing schema
 
 **Recommendation**:
+
 - Use tmpfs for Postgres and Redis (like other tests)
 - Keep named volume only for ClamAV signatures (optimization)
 - Ensures clean state per test run
@@ -246,16 +267,19 @@ postgres-test:
 **Issue**: E2E docker-compose.yml is in subdirectory `tests/e2e/`
 
 **Working Patterns**:
+
 - Integration: `docker-compose.ci.yml` (root)
 - Postman: `docker-compose.test.yml` (root)
 - E2E: `tests/e2e/docker-compose.yml` (subdirectory)
 
 **Impact**:
+
 - Different build context (affects Dockerfile path)
 - Relative volume mounts may break
 - Harder to maintain consistency
 
 **Recommendation**:
+
 - Consider moving to root as `docker-compose.e2e.yml`
 - Or ensure build context points to repo root: `context: ../..`
 
@@ -266,6 +290,7 @@ postgres-test:
 **Issue**: Test video path uses relative path from test file location
 
 **Current Implementation**:
+
 ```go
 // tests/e2e/scenarios/video_workflow_test.go
 testVideoPath := os.Getenv("E2E_TEST_VIDEO_PATH")
@@ -275,14 +300,17 @@ if testVideoPath == "" {
 ```
 
 **Risk**:
+
 - Path resolution depends on where `go test` is executed
 - Breaks if run from root vs `tests/e2e/` directory
 
 **Working Pattern (Postman)**:
+
 - Tests run from repo root
 - Paths are relative to root: `./postman/test-files/videos/test-video.mp4`
 
 **Recommendation**:
+
 ```go
 // Option 1: Use absolute path via environment variable
 testVideoPath := os.Getenv("E2E_TEST_VIDEO_PATH")
@@ -326,6 +354,7 @@ steps:
 ```
 
 **Success Pattern**:
+
 1. Clear service startup
 2. Explicit readiness checks
 3. Environment variables in workflow (not in compose)
@@ -375,6 +404,7 @@ steps:
 ```
 
 **Potential Issues**:
+
 1. Multiple `cd tests/e2e` commands (state management)
 2. Working directory inconsistency
 3. Relative paths in test code may break
@@ -497,21 +527,25 @@ athena-api-e2e:
 **Recommendation**: Follow `postman-e2e` Makefile target pattern
 
 **Current E2E Pattern**:
+
 ```
 Host → localhost:8080 → Container (athena-api-e2e)
 ```
 
 **Consider**:
+
 ```
 Host → Go tests → API calls → Container
 ```
 
 **OR (Postman Pattern)**:
+
 ```
 Container (test runner) → Container (API) [same network]
 ```
 
 **Tradeoffs**:
+
 - Host-based: Easier debugging, simpler setup
 - Container-based: Full isolation, matches production
 
@@ -522,11 +556,13 @@ Container (test runner) → Container (API) [same network]
 #### Consider: Unified Test Compose File
 
 **Current State**:
+
 - `docker-compose.ci.yml` - Integration tests
 - `docker-compose.test.yml` - Postman E2E
 - `tests/e2e/docker-compose.yml` - Go E2E tests
 
 **Recommendation**:
+
 - Move `tests/e2e/docker-compose.yml` to root as `docker-compose.e2e.yml`
 - Ensures consistent patterns across all test types
 - Easier maintenance and documentation
@@ -536,18 +572,21 @@ Container (test runner) → Container (API) [same network]
 ## 7. Implementation Priority
 
 ### Phase 1: Critical Fixes (Week 1)
+
 1. ✅ Fix working directory issues
 2. ✅ Change port from 8080 to 18080
 3. ✅ Set E2E_TEST_VIDEO_PATH environment variable
 4. ✅ Fix build context in docker-compose.yml
 
 ### Phase 2: Stability Improvements (Week 2)
+
 1. ✅ Convert named volumes to tmpfs
 2. ✅ Add pre-flight cleanup like postman-e2e
 3. ✅ Improve health check reliability
 4. ✅ Add better error logging
 
 ### Phase 3: Pattern Alignment (Week 3)
+
 1. Consider moving docker-compose.e2e.yml to root
 2. Align test execution pattern with Postman or Integration tests
 3. Document chosen pattern in README
@@ -569,6 +608,7 @@ Container (test runner) → Container (API) [same network]
 ## 9. Reference Commands
 
 ### Integration Tests (Working ✅)
+
 ```bash
 # Start services
 docker compose -f docker-compose.ci.yml up -d
@@ -583,6 +623,7 @@ docker compose -f docker-compose.ci.yml down -v
 ```
 
 ### Postman E2E Tests (Working ✅)
+
 ```bash
 make postman-e2e
 # This handles:
@@ -594,6 +635,7 @@ make postman-e2e
 ```
 
 ### E2E Tests (Current)
+
 ```bash
 # Generate fixtures
 cd tests/e2e && make fixtures
@@ -611,6 +653,7 @@ COMPOSE_PROJECT_NAME=athena-e2e docker compose down -v
 ```
 
 ### E2E Tests (Recommended)
+
 ```bash
 # From repo root
 E2E_TEST_VIDEO_PATH=$(pwd)/postman/test-files/videos/test-video.mp4 \
@@ -623,6 +666,7 @@ go test -v -timeout 30m ./tests/e2e/scenarios/...
 ## 10. Appendix: File Structure Comparison
 
 ### Working Test Files
+
 ```
 /home/user/athena/
 ├── docker-compose.ci.yml          # Integration tests ✅
@@ -639,6 +683,7 @@ go test -v -timeout 30m ./tests/e2e/scenarios/...
 ```
 
 ### E2E Test Files
+
 ```
 /home/user/athena/tests/e2e/
 ├── docker-compose.yml             # E2E environment
@@ -669,6 +714,7 @@ The E2E test infrastructure follows similar patterns to working tests but has se
 The **Postman E2E tests** provide the best working reference for full-stack E2E testing. Recommendations align E2E tests with proven patterns while maintaining Go test runner flexibility.
 
 **Next Steps**:
+
 1. Apply Phase 1 critical fixes
 2. Verify tests pass consistently
 3. Document final pattern

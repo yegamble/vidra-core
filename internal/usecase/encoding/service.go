@@ -67,7 +67,7 @@ func (s *service) WithFederationEnqueuer(enq JobEnqueuer) *service {
 	return s
 }
 
-func (s *service) WithCaptionGenerator(gen CaptionGenerator) *service {
+func (s *service) WithCaptionGenerator(gen CaptionGenerator) Service {
 	s.captionGen = gen
 	return s
 }

@@ -127,6 +127,7 @@ Improvement: 70-75% faster
 ### Docker Installation (Removed from 7 workflows)
 
 **BEFORE (18 lines per workflow × 7):**
+
 ```yaml
 - name: Install Docker
   run: |
@@ -143,6 +144,7 @@ Improvement: 70-75% faster
 ```
 
 **AFTER:**
+
 ```yaml
 # Removed entirely (0 lines)
 ```
@@ -154,6 +156,7 @@ Improvement: 70-75% faster
 ### Go Setup and Module Download
 
 **BEFORE (40+ lines per workflow):**
+
 ```yaml
 - name: Set up Go
   uses: actions/setup-go@v5
@@ -183,6 +186,7 @@ Improvement: 70-75% faster
 ```
 
 **AFTER (4 lines):**
+
 ```yaml
 - name: Set up Go with caching
   uses: actions/setup-go@v5
@@ -200,6 +204,7 @@ Improvement: 70-75% faster
 ### Format Checking
 
 **BEFORE (65 lines with duplicate module download):**
+
 ```yaml
 - name: Check formatting
   run: |
@@ -231,6 +236,7 @@ Improvement: 70-75% faster
 ```
 
 **AFTER (2 lines):**
+
 ```yaml
 - name: Check formatting
   run: make fmt-check
@@ -245,6 +251,7 @@ Improvement: 70-75% faster
 ### Cache Utilization
 
 **BEFORE:**
+
 ```
 Go Module Cache Hit Rate: 20-30%
 Build Cache Hit Rate: 10-20%
@@ -252,6 +259,7 @@ Docker Layer Cache: Not used
 ```
 
 **AFTER:**
+
 ```
 Go Module Cache Hit Rate: 85-95%
 Build Cache Hit Rate: 70-80%
@@ -263,6 +271,7 @@ Docker Layer Cache: 80-90%
 ### Parallel Job Execution
 
 **BEFORE:**
+
 ```
 Max Concurrent Jobs: 2-3
 Runner Utilization: 30-40%
@@ -270,6 +279,7 @@ Waiting Time: 60-70% of total time
 ```
 
 **AFTER:**
+
 ```
 Max Concurrent Jobs: 6-8
 Runner Utilization: 70-85%
@@ -343,12 +353,14 @@ Waiting Time: 15-25% of total time
 ## Cost Savings Estimate
 
 ### Assumptions
+
 - Self-hosted runner cost: $50/month base + compute costs
 - Developer time saved: $100/hour value
 - Average PRs per week: 20
 - Average commits per PR: 3
 
 ### Time Savings per PR
+
 ```
 Before: 45-60 minutes total CI time
 After: 20-25 minutes total CI time
@@ -360,6 +372,7 @@ Annual savings: ~480 hours
 ```
 
 ### Developer Productivity Impact
+
 ```
 Faster feedback loop:
 - Before: 45 min wait for CI results
@@ -374,6 +387,7 @@ Annual value: ~528 hours = $52,800 (at $100/hour)
 ```
 
 ### Infrastructure Cost Reduction
+
 ```
 Runner CPU/memory usage:
 - Before: 45 min × 100% CPU per PR
@@ -397,12 +411,14 @@ If using cloud-hosted runners:
 ## Migration Checklist
 
 ### Pre-Migration
+
 - [ ] Review current workflow run times (benchmark)
 - [ ] Identify bottleneck jobs
 - [ ] Check runner capacity (CPU, memory, disk)
 - [ ] Backup all workflow files
 
 ### Phase 1: Quick Wins
+
 - [ ] Remove Docker installation steps
 - [ ] Enable Go module caching
 - [ ] Add path filters
@@ -410,6 +426,7 @@ If using cloud-hosted runners:
 - [ ] Test on feature branch
 
 ### Phase 2: Parallelization
+
 - [ ] Update test.yml dependencies
 - [ ] Convert security-tests.yml to matrix
 - [ ] Parallelize virus-scanner jobs
@@ -417,6 +434,7 @@ If using cloud-hosted runners:
 - [ ] Monitor resource usage
 
 ### Phase 3: Composite Actions
+
 - [ ] Create setup-go-cached action
 - [ ] Create setup-postgres-test action
 - [ ] Create install-security-tools action
@@ -424,6 +442,7 @@ If using cloud-hosted runners:
 - [ ] Test on feature branch
 
 ### Phase 4: Advanced
+
 - [ ] Pre-install tools on runners
 - [ ] Set up local Docker registry
 - [ ] Optimize test parallelization
@@ -431,6 +450,7 @@ If using cloud-hosted runners:
 - [ ] Monitor and tune
 
 ### Post-Migration
+
 - [ ] Verify all tests passing
 - [ ] Compare run times (vs benchmark)
 - [ ] Monitor cache hit rates
@@ -445,6 +465,7 @@ If using cloud-hosted runners:
 Track these metrics weekly:
 
 ### CI Performance Metrics
+
 ```
 Metric                    | Target | Current
 --------------------------|--------|--------
@@ -456,6 +477,7 @@ PR feedback time          | < 25m  | ?
 ```
 
 ### Resource Utilization
+
 ```
 Metric                    | Target | Current
 --------------------------|--------|--------
@@ -466,6 +488,7 @@ Concurrent jobs           | 6-8    | ?
 ```
 
 ### Quality Metrics
+
 ```
 Metric                    | Target | Current
 --------------------------|--------|--------
@@ -480,6 +503,7 @@ Time to fix broken build  | < 30m  | ?
 ## Conclusion
 
 **Summary:**
+
 - **Time savings:** 55-75% reduction in CI duration
 - **Code reduction:** 29% fewer lines in workflows
 - **Maintainability:** Composite actions eliminate duplication
@@ -487,12 +511,14 @@ Time to fix broken build  | < 30m  | ?
 - **ROI:** Positive within first month
 
 **Key Success Factors:**
+
 1. Parallel execution of independent jobs
 2. Optimal caching strategies
 3. Elimination of redundant operations
 4. Self-hosted runner optimizations
 
 **Next Steps:**
+
 1. Start with Phase 1 quick wins
 2. Monitor results for one week
 3. Gradually roll out remaining phases

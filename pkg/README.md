@@ -7,12 +7,14 @@ This directory contains reusable utility packages that have **no dependencies** 
 ### `strutil` - String Utilities
 
 Provides common string manipulation and conversion functions:
+
 - SQL null string conversions (`NullStringToPtr`, `PtrToNullString`)
 - String pointer helpers (`StringPtr`, `StringValue`)
 - Text processing (`TruncateWithEllipsis`, `NormalizeWhitespace`)
 - Slice operations (`Contains`, `Filter`, `Map`, `TrimNonEmpty`)
 
 **Example**:
+
 ```go
 import "athena/pkg/strutil"
 

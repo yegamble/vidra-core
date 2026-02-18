@@ -28,6 +28,7 @@ Comprehensive configuration with four environments:
 | `prod`      | No           | Block               | Required  | Production deployments |
 
 **Features:**
+
 - Environment-specific lint rules
 - Destructive operation protection
 - Shadow database validation
@@ -41,10 +42,12 @@ Comprehensive configuration with four environments:
 Added 17 new Atlas commands:
 
 **Installation & Setup:**
+
 - `make atlas-install` - Install Atlas CLI
 - `make atlas-version` - Show version
 
 **Migration Management:**
+
 - `make migrate-diff NAME=<name>` - Generate migration from schema diff
 - `make atlas-migrate-new NAME=<name>` - Create new migration file
 - `make atlas-migrate-apply ENV=<env>` - Apply migrations
@@ -53,19 +56,23 @@ Added 17 new Atlas commands:
 - `make atlas-migrate-hash` - Rehash migration directory
 
 **Validation & Linting:**
+
 - `make atlas-migrate-lint` - Lint new migrations (CI rules)
 - `make atlas-migrate-lint-all` - Lint all migrations
 - `make atlas-migrate-validate ENV=<env>` - Validate integrity
 
 **Schema Operations:**
+
 - `make atlas-schema-inspect ENV=<env>` - View current schema
 - `make atlas-schema-inspect-file` - Save schema to file
 - `make atlas-schema-apply ENV=<env>` - Apply declarative schema
 
 **Help:**
+
 - `make atlas-help` - Show Atlas-specific help
 
 **Backward Compatibility:**
+
 - Existing `make migrate-dev`, `make migrate-test` commands remain functional
 - Legacy shell script migrations still supported
 
@@ -76,10 +83,12 @@ Added 17 new Atlas commands:
 Automated CI/CD validation pipeline:
 
 **Triggers:**
+
 - Pull requests modifying `migrations/**`, `atlas.hcl`, `schema.sql`
 - Pushes to main/master/develop branches
 
 **Workflow Steps:**
+
 1. Checkout code (full history for diff analysis)
 2. Install Atlas CLI
 3. Create shadow database
@@ -92,6 +101,7 @@ Automated CI/CD validation pipeline:
 10. Upload logs as artifacts (7-day retention)
 
 **PR Comments:**
+
 - ✅ Success: Confirmation all checks passed
 - ❌ Failure: Detailed error guide with local debugging commands
 
@@ -116,6 +126,7 @@ Automated CI/CD validation pipeline:
 - Advanced topics (multi-env, drift detection, custom rules)
 
 **Sections:**
+
 - Quick start
 - Daily development workflow
 - Production deployment workflow
@@ -163,6 +174,7 @@ SHADOW_DATABASE_URL=postgres://athena_user:athena_password@localhost:5433/athena
 ```
 
 **Documentation:**
+
 - Inline comments explaining purpose
 - Example connection string
 - Notes on same-host configuration
@@ -172,6 +184,7 @@ SHADOW_DATABASE_URL=postgres://athena_user:athena_password@localhost:5433/athena
 ### 1. Multi-Environment Support
 
 Four pre-configured environments with appropriate safety levels:
+
 - **Dev:** Permissive for rapid iteration
 - **Test:** Automated for testing workflows
 - **CI:** Strict for pull request validation
@@ -180,16 +193,19 @@ Four pre-configured environments with appropriate safety levels:
 ### 2. Safety Mechanisms
 
 **Destructive Change Protection:**
+
 - DROP TABLE blocked in prod/ci
 - DROP COLUMN requires review
 - DROP INDEX requires justification
 
 **Migration Integrity:**
+
 - SHA256 checksums (atlas.sum)
 - Tamper detection
 - Modification prevention for applied migrations
 
 **Validation:**
+
 - SQL syntax checking
 - Shadow database testing
 - Dependency verification
@@ -197,12 +213,14 @@ Four pre-configured environments with appropriate safety levels:
 ### 3. CI/CD Integration
 
 **Automated Checks:**
+
 - Lint new migrations on every PR
 - Validate integrity before merge
 - Test-apply to CI database
 - PR comments with results
 
 **Protection:**
+
 - Blocks PR merge on lint failures
 - Prevents broken migrations in main branch
 - Enforces migration quality standards
@@ -210,17 +228,20 @@ Four pre-configured environments with appropriate safety levels:
 ### 4. Developer Experience
 
 **Ease of Use:**
+
 - Simple `make` commands
 - Clear error messages
 - Helpful documentation
 - Quick start guide
 
 **Flexibility:**
+
 - Schema-based workflow (recommended)
 - Manual SQL migrations (when needed)
 - Legacy script compatibility
 
 **Visibility:**
+
 - Migration status checking
 - Schema inspection
 - Diff generation
@@ -273,6 +294,7 @@ curl https://api.example.com/health
 ### PostgreSQL Extensions
 
 All environments support:
+
 - `uuid-ossp` - UUID generation
 - `pg_trgm` - Trigram text search
 - `unaccent` - Accent-insensitive search
@@ -283,12 +305,14 @@ All environments support:
 **Purpose:** Safe migration testing without affecting main database
 
 **Configuration:**
+
 - Separate database on same/different host
 - Same extensions as production
 - Temporary (destroyed after validation)
 - No persistent data
 
 **Usage:**
+
 - Schema diff generation
 - Migration validation
 - Destructive change testing
@@ -319,6 +343,7 @@ athena/
 ### Legacy Migration Support
 
 Existing commands **still work**:
+
 ```bash
 make migrate-dev        # Legacy shell script
 make migrate-test       # Legacy shell script
@@ -328,6 +353,7 @@ make migrate-custom     # Legacy shell script
 ### Migration Path
 
 Teams can choose:
+
 1. **Immediate adoption:** Use Atlas commands exclusively
 2. **Gradual migration:** Use both systems during transition
 3. **Hybrid approach:** Legacy for existing, Atlas for new migrations
@@ -339,12 +365,14 @@ No breaking changes to existing workflows.
 ### Developer Productivity
 
 **Before (Shell Scripts):**
+
 - Manual migration creation
 - No validation before deployment
 - Production failures discovered at runtime
 - Difficult rollback process
 
 **After (Atlas):**
+
 - Automated migration generation
 - Pre-deployment validation (local + CI)
 - Errors caught in development
@@ -392,6 +420,7 @@ make atlas-migrate-lint
 ### CI Testing
 
 Automatically tested on every PR via GitHub Actions:
+
 - Lint validation
 - Integrity checks
 - Test database application
@@ -448,8 +477,9 @@ make atlas-version
 ```
 
 **Internal Support:**
+
 - Engineering Slack: `#engineering`
-- DevOps Team: devops@example.com
+- DevOps Team: <devops@example.com>
 
 ## Future Enhancements
 
@@ -483,6 +513,7 @@ make atlas-version
 ### Atlas Platform Integration
 
 Consider Atlas Cloud for:
+
 - Hosted shadow databases
 - Team collaboration
 - Migration history
@@ -500,6 +531,7 @@ Successfully implemented professional database migration management with:
 ✅ **Zero breaking changes** to existing workflows
 
 The team now has enterprise-grade migration tooling with:
+
 - Automated validation
 - Safety guardrails
 - Comprehensive documentation

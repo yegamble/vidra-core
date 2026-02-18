@@ -83,6 +83,7 @@ go test -v -timeout 30m ./tests/e2e/scenarios/...
 ```
 
 Expected output:
+
 ```
 === RUN   TestVideoUploadWorkflow
 --- PASS: TestVideoUploadWorkflow (5.23s)
@@ -112,6 +113,7 @@ git push
 ```
 
 Check the workflow logs for:
+
 ```
 ✓ API is ready
 Running E2E tests...
@@ -165,6 +167,7 @@ Add after the "Wait for services to be ready" step:
 ### Why It Worked Locally
 
 Developers were either:
+
 - Using `docker-compose.test.yml` (has init script)
 - Running migrations manually with `make migrate-test`
 - Reusing persistent Docker volumes from previous runs
@@ -193,6 +196,7 @@ CI always started fresh with tmpfs (in-memory) storage, exposing the issue.
 ```
 
 **Why not recommended:**
+
 - Adds dependency on goose in CI
 - Slower than init script
 - Doesn't match other test environments
@@ -203,6 +207,7 @@ CI always started fresh with tmpfs (in-memory) storage, exposing the issue.
 Make the app run migrations on startup when `ENVIRONMENT=test`.
 
 **Why not recommended:**
+
 - Changes application behavior
 - Risk of running migrations in wrong environment
 - Production anti-pattern
@@ -213,17 +218,20 @@ Make the app run migrations on startup when `ENVIRONMENT=test`.
 ## Impact Assessment
 
 ### What Changes
+
 ✅ E2E test environment now initializes database schema
 ✅ E2E tests can actually run successfully
 ✅ CI/CD pipeline can validate E2E workflows
 
 ### What Doesn't Change
+
 ❌ No production code changes
 ❌ No API behavior changes
 ❌ No migration files modified
 ❌ No test logic changes
 
 ### Risks
+
 - **Very Low:** This is a test environment configuration change only
 - Same script used successfully in `docker-compose.test.yml`
 - Easy to rollback if any issues arise
@@ -244,6 +252,7 @@ The initial hypothesis was that tests were failing due to duplicate usernames/em
 ### No Test Isolation Issues
 
 Current test design is **correct**:
+
 - Each test creates unique users
 - Tests don't share state
 - Proper cleanup procedures exist
@@ -314,16 +323,19 @@ A: Yes, but it adds complexity. The init script is fast enough (< 5 seconds).
 ## Follow-up Tasks
 
 ### Immediate (Post-Fix)
+
 - [ ] Monitor first successful CI run
 - [ ] Verify all 3 E2E tests pass
 - [ ] Check execution time (should be < 10 minutes total)
 
 ### Short-term
+
 - [ ] Add database schema verification step to CI (shown above)
 - [ ] Document E2E setup in README more clearly
 - [ ] Consider adding more E2E test scenarios
 
 ### Long-term
+
 - [ ] Keep init-shared-db.sql in sync with migrations
 - [ ] Consider automating schema file generation from migrations
 - [ ] Expand E2E test coverage (federation, encoding, etc.)
@@ -333,6 +345,7 @@ A: Yes, but it adds complexity. The init script is fast enough (< 5 seconds).
 ## Contact
 
 For questions about this fix:
+
 - See full investigation: `E2E_TEST_INVESTIGATION_REPORT.md`
 - Check E2E documentation: `tests/e2e/README.md`
 - Review migration system: `Makefile` (search for "migrate")

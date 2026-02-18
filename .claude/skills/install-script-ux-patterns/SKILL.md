@@ -14,6 +14,7 @@ version: 1.0.0
 ## Problem
 
 Installation scripts often fail for beginners due to:
+
 - Requiring manual path configuration
 - Cryptic error messages when run from wrong directory
 - Missing configuration files blocking setup
@@ -22,6 +23,7 @@ Installation scripts often fail for beginners due to:
 ## Context / Trigger Conditions
 
 Use these patterns when:
+
 - Creating `install.sh`, `setup.sh`, or similar automation scripts
 - Supporting both Docker and native installation modes
 - Designing setup wizards or first-run experiences

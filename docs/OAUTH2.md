@@ -9,6 +9,7 @@ This adds a minimal OAuth2 token endpoint compatible with password and refresh_t
   - `grant_type=refresh_token` with `refresh_token`.
 
 Response:
+
 ```
 {
   "access_token": "...",

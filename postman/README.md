@@ -51,6 +51,7 @@ newman run athena-imports.postman_collection.json -e athena.local.postman_enviro
 #### Test Categories
 
 ##### **Authentication** (8 tests)
+
 - Register user
 - Login (success and failure cases)
 - Token refresh (success and error cases)
@@ -65,6 +66,7 @@ The collection includes comprehensive avatar upload tests covering multiple imag
 The following test files are used for avatar upload testing:
 
 #### **Valid Image Formats**
+
 - `avatar.png` - PNG format (original test file)
 - `avatar.jpg` - JPEG format
 - `avatar.webp` - WebP format (modern format)
@@ -73,6 +75,7 @@ The following test files are used for avatar upload testing:
 - `avatar.heic` - HEIC format (Apple's modern format)
 
 #### **Security Test Files**
+
 - `document.pdf` - PDF file (should be rejected - invalid extension)
 - `malware.png` - Executable disguised as PNG (should be rejected - invalid content)
 
@@ -81,6 +84,7 @@ The following test files are used for avatar upload testing:
 The avatar upload tests cover:
 
 #### **✅ Positive Test Cases:**
+
 1. **PNG Upload** - Basic PNG image upload with WebP conversion
 2. **JPEG Upload** - JPEG image upload with WebP conversion
 3. **WebP Upload** - Direct WebP image upload (no conversion needed)
@@ -89,6 +93,7 @@ The avatar upload tests cover:
 6. **TIFF Upload** - TIFF image upload with WebP conversion
 
 #### **❌ Negative Test Cases:**
+
 1. **Invalid Extension** - PDF file upload (should return 400)
 2. **Malicious File** - Executable disguised as image (should return 400)
 3. **Missing File** - No file provided (should return 400)
@@ -97,6 +102,7 @@ The avatar upload tests cover:
 ### Expected Responses
 
 #### **Successful Upload (200)**
+
 ```json
 {
   "data": {
@@ -110,9 +116,11 @@ The avatar upload tests cover:
 ```
 
 #### **IPFS Unavailable (503)**
+
 Tests gracefully handle IPFS service unavailability and continue with warnings.
 
 #### **Security Rejection (400)**
+
 ```json
 {
   "error": {
@@ -123,6 +131,7 @@ Tests gracefully handle IPFS service unavailability and continue with warnings.
 ```
 
 #### **Authentication Error (401)**
+
 ```json
 {
   "error": {
@@ -151,11 +160,13 @@ Validate all test files are present and have correct signatures:
 ## Usage
 
 1. **Install Newman** (Postman CLI):
+
    ```bash
    npm install -g newman
    ```
 
 2. **Run Avatar Upload Tests**:
+
    ```bash
    newman run athena-auth.postman_collection.json \
      -e athena.local.postman_environment.json \
@@ -165,6 +176,7 @@ Validate all test files are present and have correct signatures:
    ```
 
 3. **Run Specific Avatar Tests**:
+
    ```bash
    newman run athena-auth.postman_collection.json \
      -e athena.local.postman_environment.json \
@@ -195,6 +207,7 @@ These tests ensure the avatar upload system is both functional and secure agains
 #### Features Tested
 
 ##### **Chunked Upload Workflow** (5 tests)
+
 1. **Initiate Upload** - Create upload session with metadata
 2. **Upload Chunk 0** - Upload first 5MB chunk
 3. **Get Upload Status** - Check progress and received chunks
@@ -202,22 +215,26 @@ These tests ensure the avatar upload system is both functional and secure agains
 5. **Complete Upload** - Finalize and trigger encoding
 
 ##### **Encoding Status Tracking** (3 tests)
+
 - Get encoding status by video ID
 - Get encoding status by job ID
 - Filter encoding jobs by status (pending, processing, completed, failed)
 
 ##### **Error Cases** (3 tests)
+
 - Missing authentication (401)
 - Complete with missing chunks (400)
 - Invalid session ID (404)
 
 #### Key Features
+
 - ✅ Resume capability for interrupted uploads
 - ✅ Progress tracking (percentage, chunks received)
 - ✅ Real-time encoding status with variant information
 - ✅ Session expiration handling (24 hours)
 
 #### Environment Variables Used
+
 - `upload_session_id` - Set automatically after initiate
 - `upload_video_id` - Video UUID for the upload
 - `encoding_job_id` - Encoding job identifier
@@ -232,27 +249,32 @@ These tests ensure the avatar upload system is both functional and secure agains
 #### Features Tested
 
 ##### **View Tracking** (3 tests)
+
 1. **Generate Fingerprint** - Create unique viewer fingerprint
 2. **Track View with Fingerprint** - Record view with deduplication
 3. **Track View without Fingerprint** - Server-side fingerprint generation
 
 ##### **Video Analytics** (3 tests)
+
 - Get analytics for monthly period (views, engagement, watch time, traffic sources)
 - Get analytics for custom date range
 - Get daily statistics for time-series charts
 
 ##### **Discovery** (4 tests)
+
 - Get top videos (this week)
 - Get top videos (all time)
 - Get trending videos
 - Get trending videos by category
 
 ##### **Error Cases** (3 tests)
+
 - Track view for non-existent video (404)
 - Get analytics without ownership (403)
 - Get analytics without authentication (401)
 
 #### Key Features
+
 - ✅ Fingerprint-based view deduplication (30-minute window)
 - ✅ Geographic distribution and device breakdown
 - ✅ Traffic source analysis
@@ -260,6 +282,7 @@ These tests ensure the avatar upload system is both functional and secure agains
 - ✅ Watch time and completion rate metrics
 
 #### Analytics Includes
+
 - **Views**: Total, unique, trends, percent change
 - **Engagement**: Likes, dislikes, comments, shares, like ratio
 - **Watch Time**: Total seconds, average, completion rate
@@ -268,6 +291,7 @@ These tests ensure the avatar upload system is both functional and secure agains
 - **Devices**: Desktop, mobile, tablet, TV breakdown
 
 #### Environment Variables Used
+
 - `viewer_fingerprint` - Set after fingerprint generation
 - `test_video_id` - Video UUID for testing (set manually or from upload)
 
@@ -280,6 +304,7 @@ These tests ensure the avatar upload system is both functional and secure agains
 #### Features Tested
 
 ##### **Import Workflow** (5 tests)
+
 1. **Create Import** - Start import from external URL
 2. **List All Imports** - View all user's import jobs
 3. **List Imports by Status** - Filter by pending/downloading/completed/failed
@@ -287,6 +312,7 @@ These tests ensure the avatar upload system is both functional and secure agains
 5. **Cancel Import** - Cancel pending or in-progress job
 
 ##### **Error Cases** (5 tests)
+
 - Create import without authentication (401)
 - Create import with invalid URL (400)
 - Create import with private IP - SSRF protection (400)
@@ -294,6 +320,7 @@ These tests ensure the avatar upload system is both functional and secure agains
 - Cancel already-completed import (400)
 
 #### Key Features
+
 - ✅ Progress tracking (download percentage, bytes transferred)
 - ✅ SSRF protection (blocks private IPs, localhost, RFC1918)
 - ✅ Rate limiting (10 imports/minute)
@@ -301,6 +328,7 @@ These tests ensure the avatar upload system is both functional and secure agains
 - ✅ Automatic privacy settings and metadata
 
 #### Import Status Values
+
 - `pending` - Waiting to start
 - `downloading` - Downloading from source
 - `processing` - Processing/transcoding video
@@ -309,6 +337,7 @@ These tests ensure the avatar upload system is both functional and secure agains
 - `cancelled` - Cancelled by user
 
 #### Environment Variables Used
+
 - `import_job_id` - Set after creating import
 - `access_token` - JWT token (required for all import operations)
 
@@ -391,6 +420,7 @@ echo "All collections completed!"
 ## Security Testing Highlights
 
 ### Auth Collection
+
 - ✅ Magic byte validation for image uploads
 - ✅ Extension vs content mismatch detection
 - ✅ Executable file rejection
@@ -398,17 +428,20 @@ echo "All collections completed!"
 - ✅ Unauthorized access prevention
 
 ### Uploads Collection
+
 - ✅ Session expiration (24 hours)
 - ✅ Chunk integrity validation
 - ✅ Authentication requirements
 - ✅ File size limits enforcement
 
 ### Analytics Collection
+
 - ✅ View deduplication with fingerprinting
 - ✅ Owner-only analytics access (403 for non-owners)
 - ✅ Anonymous access for public endpoints
 
 ### Imports Collection
+
 - ✅ **SSRF Protection** - Blocks private IPs, localhost, link-local
 - ✅ **Rate Limiting** - 10 imports per minute
 - ✅ URL validation and sanitization

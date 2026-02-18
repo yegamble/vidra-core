@@ -21,6 +21,7 @@ openssl rand -base64 32  # For database passwords
 ### Environment Variables
 
 Never commit secrets to version control. Use:
+
 - Environment files (`.env`) with restricted permissions
 - Secret management systems (Vault, AWS Secrets Manager)
 - Kubernetes secrets
@@ -274,6 +275,7 @@ ls -lh /var/quarantine/
 **Critical**: Always use `CLAMAV_FALLBACK_MODE=strict` in production to prevent infected file uploads during scanner outages.
 
 **CVE-ATHENA-2025-001 Mitigation**:
+
 - Ensure ClamAV version is up-to-date
 - Monitor scanner availability with health checks
 - Set up alerts for scan failures or fallback mode activations

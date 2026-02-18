@@ -307,6 +307,9 @@ func (m *mockVideoRepo) GetByRemoteURI(context.Context, string) (*domain.Video, 
 	return nil, nil
 }
 func (m *mockVideoRepo) CreateRemoteVideo(context.Context, *domain.Video) error { return nil }
+func (m *mockVideoRepo) GetByChannelID(_ context.Context, _ string, _, _ int) ([]*domain.Video, int64, error) {
+	return nil, 0, nil
+}
 
 // ===========================================================================
 // Test: requireAdmin helper

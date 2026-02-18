@@ -30,6 +30,7 @@ This report identifies breaking changes, test coverage gaps, and security vulner
 **Purpose:** Support ActivityPub federation by creating video records from remote instances
 
 **Implementation Status:**
+
 - ✅ Repository implementation: `/root/athena/internal/repository/video_repository.go:779-812`
 - ✅ Mock implementations in tests:
   - `/root/athena/internal/usecase/import/service_test.go:190-193`
@@ -40,6 +41,7 @@ This report identifies breaking changes, test coverage gaps, and security vulner
   - `/root/athena/internal/usecase/encoding/encoding_resolution_test.go:391-393`
 
 **Usage Analysis:**
+
 - Primary consumer: `/root/athena/internal/usecase/activitypub/service.go:1682`
 - Used in federation video ingestion workflow
 - Called after validating remote video metadata
@@ -53,13 +55,16 @@ This report identifies breaking changes, test coverage gaps, and security vulner
 **Purpose:** Retrieve comment count for videos with filtering for active/all comments
 
 **Implementation Status:**
+
 - ✅ Repository implementation: `/root/athena/internal/repository/comment_repository.go:215-229`
 - ✅ Mock implementation: `/root/athena/internal/usecase/activitypub/service_test.go` (confirmed with CountByVideo method)
 
 **SQL Query Security:**
+
 ```sql
 SELECT COUNT(*) FROM comments WHERE video_id = $1 AND status = 'active'
 ```
+
 ✅ Uses parameterized queries - protected against SQL injection
 
 ---
@@ -71,6 +76,7 @@ SELECT COUNT(*) FROM comments WHERE video_id = $1 AND status = 'active'
 **Status:** ✅ BACKWARD COMPATIBLE
 
 **Rationale:**
+
 - New methods are additive, not modifications
 - Existing methods unchanged
 - All existing mock implementations updated
@@ -92,6 +98,7 @@ All mock repositories properly implement new interface methods:
 | `encoding/encoding_resolution_test.go` | ✅ | N/A |
 
 **Verification Command:**
+
 ```bash
 go test ./internal/usecase/... -v 2>&1 | grep -E "missing method|undefined"
 ```
@@ -107,6 +114,7 @@ go test ./internal/usecase/... -v 2>&1 | grep -E "missing method|undefined"
 **Rate Limit:** 10 requests per minute (line 39)
 
 **Request Structure:**
+
 ```json
 {
   "source_url": "string",
@@ -117,6 +125,7 @@ go test ./internal/usecase/... -v 2>&1 | grep -E "missing method|undefined"
 ```
 
 **Validation Implemented:**
+
 - ✅ Source URL required
 - ✅ Default privacy to private
 - ✅ User authentication required
@@ -137,6 +146,7 @@ go test ./internal/usecase/... -v 2>&1 | grep -E "missing method|undefined"
 ### 3.2 Comment Endpoints
 
 **Primary Endpoints:**
+
 - `POST /api/v1/videos/{videoId}/comments` - Create comment
 - `GET /api/v1/videos/{videoId}/comments` - List comments
 
@@ -147,6 +157,7 @@ go test ./internal/usecase/... -v 2>&1 | grep -E "missing method|undefined"
 The `CountByVideo` method is implemented but NOT exposed as a public API endpoint. Current implementation only returns counts as part of listing responses.
 
 **Recommendation:** Consider adding dedicated endpoint:
+
 ```
 GET /api/v1/videos/{videoId}/comments/count
 ```
@@ -162,34 +173,42 @@ GET /api/v1/videos/{videoId}/comments/count
 **Vulnerability:** Server-Side Request Forgery via import URL
 
 **Attack Vectors:**
+
 1. **Private IP Access:**
+
    ```json
    {
      "source_url": "http://169.254.169.254/latest/meta-data/",
      "target_privacy": "private"
    }
    ```
+
    **Impact:** AWS metadata service access, cloud credentials theft
 
 2. **Internal Network Scanning:**
+
    ```json
    {
      "source_url": "http://192.168.1.1:22/",
      "target_privacy": "private"
    }
    ```
+
    **Impact:** Internal network reconnaissance
 
 3. **DNS Rebinding:**
+
    ```json
    {
      "source_url": "http://malicious-domain-that-rebinds.com/video.mp4",
      "target_privacy": "private"
    }
    ```
+
    **Impact:** Bypass IP blacklists via time-of-check-time-of-use
 
 **Current Protection:** ⚠️ MENTIONED IN DOCS BUT NOT VERIFIED IN CODE
+
 - Documentation claims "SSRF protection: Private IPs blocked" (import collection line 11)
 - Implementation location unknown - needs verification
 
@@ -198,6 +217,7 @@ GET /api/v1/videos/{videoId}/comments/count
 **Vulnerability:** No file size validation before download
 
 **Attack Vector:**
+
 ```json
 {
   "source_url": "https://malicious.com/100GB-file.mp4",
@@ -206,6 +226,7 @@ GET /api/v1/videos/{videoId}/comments/count
 ```
 
 **Missing Validations:**
+
 - Content-Length header check before download
 - Streaming download with size limit enforcement
 - Disk space availability check
@@ -215,6 +236,7 @@ GET /api/v1/videos/{videoId}/comments/count
 **Edge Cases Not Tested:**
 
 1. **Malformed URLs:**
+
    ```json
    {"source_url": "not-a-url"}
    {"source_url": "ftp://example.com/video.mp4"}
@@ -223,19 +245,23 @@ GET /api/v1/videos/{videoId}/comments/count
    ```
 
 2. **URL Injection:**
+
    ```json
    {"source_url": "https://example.com/video.mp4?param=value&redirect=http://internal-service/"}
    ```
 
 3. **Extremely Long URLs:**
+
    ```json
    {"source_url": "https://example.com/" + "A"*100000}
    ```
 
 4. **Unicode/IDN Homograph Attacks:**
+
    ```json
    {"source_url": "https://еxample.com/video.mp4"}
    ```
+
    (Cyrillic 'е' instead of Latin 'e')
 
 #### 🟡 MEDIUM - Concurrent Import Limits
@@ -243,6 +269,7 @@ GET /api/v1/videos/{videoId}/comments/count
 **Current Implementation:** Max 5 concurrent imports per user (error handling line 217)
 
 **Edge Cases:**
+
 1. Race condition on concurrent limit check
 2. Stuck imports not counted correctly
 3. Quota bypass via rapid parallel requests
@@ -254,17 +281,21 @@ GET /api/v1/videos/{videoId}/comments/count
 **Scenarios Not Tested:**
 
 1. **Non-existent Video:**
+
    ```bash
    GET /api/v1/videos/00000000-0000-0000-0000-000000000000/comments
    ```
+
    Expected: 404 or empty response with count:0
    Actual behavior: Unknown
 
 2. **Deleted Comments Count:**
+
    ```sql
    -- Current query for activeOnly=false
    SELECT COUNT(*) FROM comments WHERE video_id = $1
    ```
+
    Question: Should deleted comments be counted?
 
 3. **Extremely High Comment Counts:**
@@ -1010,6 +1041,7 @@ echo "Pre-commit checks passed!"
 ### 9.1 Comment Count Optimization
 
 **Current Implementation:**
+
 ```sql
 SELECT COUNT(*) FROM comments WHERE video_id = $1 AND status = 'active'
 ```
@@ -1158,6 +1190,7 @@ func (r *ImportRateLimiter) Allow(userID string) bool {
 **Review Required By:** Security Team, Backend Team, QA Team
 
 **Related Files:**
+
 - `/root/athena/internal/port/video.go` - VideoRepository interface
 - `/root/athena/internal/port/comment.go` - CommentRepository interface
 - `/root/athena/internal/repository/video_repository.go` - CreateRemoteVideo implementation
@@ -1166,9 +1199,10 @@ func (r *ImportRateLimiter) Allow(userID string) bool {
 - `/root/athena/internal/httpapi/handlers/social/comments.go` - Comment API endpoints
 
 **External References:**
-- OWASP SSRF Prevention: https://cheatsheetseries.owasp.org/cheatsheets/Server_Side_Request_Forgery_Prevention_Cheat_Sheet.html
-- CWE-918: Server-Side Request Forgery (SSRF): https://cwe.mitre.org/data/definitions/918.html
-- Postman Collection Format: https://schema.getpostman.com/
+
+- OWASP SSRF Prevention: <https://cheatsheetseries.owasp.org/cheatsheets/Server_Side_Request_Forgery_Prevention_Cheat_Sheet.html>
+- CWE-918: Server-Side Request Forgery (SSRF): <https://cwe.mitre.org/data/definitions/918.html>
+- Postman Collection Format: <https://schema.getpostman.com/>
 
 ---
 

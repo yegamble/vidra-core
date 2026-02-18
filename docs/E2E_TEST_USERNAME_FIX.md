@@ -35,12 +35,14 @@ username := fmt.Sprintf("u_%s_%d", testName, shortTimestamp)
 | `searchtest_TestVideoSearchFunctionality_1732157256774459700` (58) | `u_TestVideoSearchFunctionality_4459700` (39) | ✅ 39 |
 
 ### Pros
+
 - Maintains readability
 - Keeps test name in username
 - Still unique (10-digit timestamp + test name)
 - Works with existing test infrastructure
 
 ### Cons
+
 - Slightly less readable than current format
 - Need to update all test files
 
@@ -59,11 +61,13 @@ username := fmt.Sprintf("test_%s", uuid.New().String()[:8])
 ```
 
 ### Pros
+
 - Very short (13 chars)
 - Guaranteed unique
 - No collision risk
 
 ### Cons
+
 - Less readable in logs
 - Can't identify which test created the user
 - Need to import uuid package
@@ -89,11 +93,13 @@ func generateTestUsername(t *testing.T) string {
 ```
 
 ### Pros
+
 - Deterministic ordering
 - Easy to debug
 - Short usernames
 
 ### Cons
+
 - Requires shared counter state
 - Counter resets between test runs
 - More complex implementation
@@ -121,11 +127,13 @@ func generateTestUsername(t *testing.T) string {
 ```
 
 ### Pros
+
 - Always same length (17 chars)
 - Derived from test name (deterministic for same test+time)
 - No collision risk
 
 ### Cons
+
 - Not human-readable
 - Requires crypto/sha256 import
 
@@ -194,42 +202,42 @@ username := fmt.Sprintf("testuser_%s_%d", t.Name(), timestamp)
 username := e2e.GenerateTestUsername(t, "test")
 ```
 
-### Complete diff for video_workflow_test.go:
+### Complete diff for video_workflow_test.go
 
 ```diff
 --- a/tests/e2e/scenarios/video_workflow_test.go
 +++ b/tests/e2e/scenarios/video_workflow_test.go
 @@ -34,9 +34,7 @@ func TestVideoUploadWorkflow(t *testing.T) {
- 	client := e2e.NewTestClient(cfg.BaseURL)
+  client := e2e.NewTestClient(cfg.BaseURL)
 
--	// Step 1: Register a new user with unique username (test name + nanosecond timestamp)
--	timestamp := time.Now().UnixNano()
--	username := fmt.Sprintf("testuser_%s_%d", t.Name(), timestamp)
-+	username := e2e.GenerateTestUsername(t, "test")
- 	email := username + "@example.com"
- 	password := "SecurePass123!"
+- // Step 1: Register a new user with unique username (test name + nanosecond timestamp)
+- timestamp := time.Now().UnixNano()
+- username := fmt.Sprintf("testuser_%s_%d", t.Name(), timestamp)
++ username := e2e.GenerateTestUsername(t, "test")
+  email := username + "@example.com"
+  password := "SecurePass123!"
 
 @@ -111,9 +109,7 @@ func TestUserAuthenticationFlow(t *testing.T) {
 
- 	client := e2e.NewTestClient(cfg.BaseURL)
+  client := e2e.NewTestClient(cfg.BaseURL)
 
--	// Step 1: Register a new user with unique username (test name + nanosecond timestamp)
--	timestamp := time.Now().UnixNano()
--	username := fmt.Sprintf("authtest_%s_%d", t.Name(), timestamp)
-+	username := e2e.GenerateTestUsername(t, "auth")
- 	email := username + "@example.com"
- 	password := "SecurePass123!"
+- // Step 1: Register a new user with unique username (test name + nanosecond timestamp)
+- timestamp := time.Now().UnixNano()
+- username := fmt.Sprintf("authtest_%s_%d", t.Name(), timestamp)
++ username := e2e.GenerateTestUsername(t, "auth")
+  email := username + "@example.com"
+  password := "SecurePass123!"
 
 @@ -160,9 +156,7 @@ func TestVideoSearchFunctionality(t *testing.T) {
 
- 	client := e2e.NewTestClient(cfg.BaseURL)
+  client := e2e.NewTestClient(cfg.BaseURL)
 
--	// Register user with unique username (test name + nanosecond timestamp)
--	timestamp := time.Now().UnixNano()
--	username := fmt.Sprintf("searchtest_%s_%d", t.Name(), timestamp)
-+	username := e2e.GenerateTestUsername(t, "search")
- 	email := username + "@example.com"
- 	client.RegisterUser(t, username, email, "SecurePass123!")
+- // Register user with unique username (test name + nanosecond timestamp)
+- timestamp := time.Now().UnixNano()
+- username := fmt.Sprintf("searchtest_%s_%d", t.Name(), timestamp)
++ username := e2e.GenerateTestUsername(t, "search")
+  email := username + "@example.com"
+  client.RegisterUser(t, username, email, "SecurePass123!")
 ```
 
 ---
@@ -271,54 +279,54 @@ if req.DisplayName != nil && len(*req.DisplayName) > MaxDisplayNameLength {
 }
 ```
 
-### Complete diff for handlers.go:
+### Complete diff for handlers.go
 
 ```diff
 --- a/internal/httpapi/handlers.go
 +++ b/internal/httpapi/handlers.go
 @@ -3,6 +3,7 @@ package httpapi
  import (
- 	"encoding/json"
- 	"net/http"
-+	"regexp"
- 	"time"
+  "encoding/json"
+  "net/http"
++ "regexp"
+  "time"
 
- 	"github.com/google/uuid"
+  "github.com/google/uuid"
 @@ -186,6 +187,8 @@ func (s *Server) Login(w http.ResponseWriter, r *http.Request) {
  // Register implements ServerInterface.Register
  func (s *Server) Register(w http.ResponseWriter, r *http.Request) {
-+	const MaxUsernameLength = 50
-+	const MaxDisplayNameLength = 100
- 	var req generated.RegisterRequest
- 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
- 		shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_JSON", "Invalid JSON payload"))
++ const MaxUsernameLength = 50
++ const MaxDisplayNameLength = 100
+  var req generated.RegisterRequest
+  if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+   shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_JSON", "Invalid JSON payload"))
 @@ -197,6 +200,25 @@ func (s *Server) Register(w http.ResponseWriter, r *http.Request) {
- 		return
- 	}
+   return
+  }
 
-+	// Validate username length
-+	if len(req.Username) > MaxUsernameLength {
-+		shared.WriteError(w, http.StatusBadRequest,
-+			domain.NewDomainError("INVALID_USERNAME",
-+				fmt.Sprintf("Username must be %d characters or less (got %d)", MaxUsernameLength, len(req.Username))))
-+		return
-+	}
++ // Validate username length
++ if len(req.Username) > MaxUsernameLength {
++  shared.WriteError(w, http.StatusBadRequest,
++   domain.NewDomainError("INVALID_USERNAME",
++    fmt.Sprintf("Username must be %d characters or less (got %d)", MaxUsernameLength, len(req.Username))))
++  return
++ }
 +
-+	// Validate username format
-+	if !regexp.MustCompile(`^[a-zA-Z0-9_-]+$`).MatchString(req.Username) {
-+		shared.WriteError(w, http.StatusBadRequest,
-+			domain.NewDomainError("INVALID_USERNAME",
-+				"Username can only contain letters, numbers, underscores, and hyphens"))
-+		return
-+	}
++ // Validate username format
++ if !regexp.MustCompile(`^[a-zA-Z0-9_-]+$`).MatchString(req.Username) {
++  shared.WriteError(w, http.StatusBadRequest,
++   domain.NewDomainError("INVALID_USERNAME",
++    "Username can only contain letters, numbers, underscores, and hyphens"))
++  return
++ }
 +
-+	// Additional validations can be added here:
-+	// - Email format validation
-+	// - Password strength requirements
++ // Additional validations can be added here:
++ // - Email format validation
++ // - Password strength requirements
 +
- 	// Optional pre-check for clearer 409s
- 	if s.userRepo != nil {
- 		if _, err := s.userRepo.GetByEmail(r.Context(), req.Email); err == nil {
+  // Optional pre-check for clearer 409s
+  if s.userRepo != nil {
+   if _, err := s.userRepo.GetByEmail(r.Context(), req.Email); err == nil {
 ```
 
 ---
@@ -446,11 +454,13 @@ curl -X POST http://localhost:18080/auth/register \
 ## Migration Strategy
 
 ### Phase 1: Immediate (Hot Fix)
+
 1. ✅ Add API-level validation for username length (blocks bad requests)
 2. ✅ Update E2E tests to use GenerateTestUsername helper
 3. ✅ Deploy to staging and verify
 
 ### Phase 2: Short Term
+
 1. Add comprehensive unit tests for all validation rules
 2. Add email format validation
 3. Add password strength requirements
@@ -458,6 +468,7 @@ curl -X POST http://localhost:18080/auth/register \
 5. Add monitoring for validation failures
 
 ### Phase 3: Long Term
+
 1. Implement username normalization (case-insensitive)
 2. Add CAPTCHA for public registration
 3. Implement progressive rate limiting
@@ -503,6 +514,7 @@ rate(registration_errors_total{code="USER_EXISTS"}[5m])
 If the fix causes issues:
 
 1. **Revert API validation** (allow long usernames temporarily)
+
    ```bash
    git revert <commit-hash>
    git push

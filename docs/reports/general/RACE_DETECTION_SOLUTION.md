@@ -22,6 +22,7 @@ The Go race detector (`-race` flag) requires CGO, but CGO was disabled to avoid 
 Created separate targets for race and non-race tests:
 
 **Without race detection (fast, default):**
+
 - `make test` - Full test suite without race detection
 - `make test-unit` - Unit tests only
 - `make test-integration` - Integration tests only
@@ -29,6 +30,7 @@ Created separate targets for race and non-race tests:
 - `make test-local` - Local Docker tests
 
 **With race detection (slower, thorough):**
+
 - `make test-race` - Full test suite WITH race detection
 - `make test-unit-race` - Unit tests with race detection
 - `make test-integration-race` - Integration tests with race detection
@@ -42,6 +44,7 @@ All `-race` targets automatically set `CGO_ENABLED=1` internally.
 Created `/home/user/athena/.github/actions/install-gcc/action.yml`:
 
 **Features:**
+
 - Detects if gcc is already installed (skips if present)
 - Supports Debian/Ubuntu (apt-get) and Alpine (apk)
 - Installs `build-essential` for complete toolchain
@@ -109,12 +112,14 @@ Created `/home/user/athena/.github/actions/install-gcc/action.yml`:
 ### Performance Optimization
 
 **GCC Installation:**
+
 - Cached within job (setup once, use for all tests)
 - Non-interactive mode (DEBIAN_FRONTEND=noninteractive)
 - Minimal package set (build-essential + libc6-dev)
 - Skip installation if already present
 
 **Race Detection Triggers:**
+
 - Main workflow: Always run race tests
 - Other workflows: Only on main branch, schedule, or manual dispatch
 - Balances thoroughness with CI resource usage
@@ -122,16 +127,19 @@ Created `/home/user/athena/.github/actions/install-gcc/action.yml`:
 ### CGO Environment Variables
 
 **Fast tests (default):**
+
 ```bash
 CGO_ENABLED=0  # Set at workflow level
 ```
 
 **Race tests:**
+
 ```bash
 CGO_ENABLED=1  # Set at step level when running race tests
 ```
 
 **Makefile targets:**
+
 ```makefile
 # Non-race targets use inherited CGO_ENABLED (defaults to 0 in CI)
 test-unit:
@@ -147,6 +155,7 @@ test-unit-race:
 ### Local Development
 
 **Fast tests (no CGO required):**
+
 ```bash
 make test-unit              # Unit tests without race detection
 make test-integration       # Integration tests without race detection
@@ -154,6 +163,7 @@ make test                   # Full test suite without race detection
 ```
 
 **Race detection (requires gcc):**
+
 ```bash
 # Install gcc if not present (macOS):
 brew install gcc
@@ -170,16 +180,19 @@ make test-race              # Full test suite with race detection
 ### CI/CD Behavior
 
 **Pull Requests:**
+
 - Fast tests always run (CGO_ENABLED=0)
 - Race tests run for main workflow
 - Other workflows: race tests only if labeled or on main branch
 
 **Main Branch:**
+
 - All fast tests run (CGO_ENABLED=0)
 - All race tests run (CGO_ENABLED=1 with gcc)
 - Full coverage of concurrency bugs
 
 **Scheduled/Manual:**
+
 - Complete test suite with race detection
 - Maximum thoroughness
 
@@ -188,17 +201,20 @@ make test-race              # Full test suite with race detection
 ### For Developers
 
 **No changes needed for most developers:**
+
 - `make test` continues to work (now faster!)
 - `make test-unit` continues to work (now faster!)
 - Race detection is automatic in CI
 
 **To run race detection locally:**
+
 - Install gcc once: `brew install gcc` (macOS) or `sudo apt-get install build-essential` (Linux)
 - Use `-race` targets: `make test-unit-race`
 
 ### For CI/CD
 
 **Workflows automatically:**
+
 - Detect container vs. bare metal
 - Install gcc when needed
 - Enable CGO for race tests
@@ -208,14 +224,14 @@ make test-race              # Full test suite with race detection
 
 ## Performance Benchmarks
 
-### Before (All tests with race detection):
+### Before (All tests with race detection)
 
 - ❌ Unit tests: FAILED (no gcc)
 - ❌ Integration tests: FAILED (no gcc)
 - ❌ Security tests: FAILED (no gcc)
 - ❌ Total CI time: N/A (all failed)
 
-### After (Dual-track strategy):
+### After (Dual-track strategy)
 
 - ✅ Fast unit tests: ~5 minutes (CGO_ENABLED=0)
 - ✅ Fast integration tests: ~10 minutes (CGO_ENABLED=0)
@@ -260,6 +276,7 @@ make test-race              # Full test suite with race detection
 ### 1. Default to Fast Tests
 
 For rapid iteration:
+
 ```bash
 make test-unit              # Quick feedback
 make test-unit-race         # Before pushing to main
@@ -268,6 +285,7 @@ make test-unit-race         # Before pushing to main
 ### 2. Race Detection Before Merge
 
 Always run race tests on main branch:
+
 - Catches concurrency bugs before production
 - Automated in CI for main branch
 - Manual trigger available for testing
@@ -275,6 +293,7 @@ Always run race tests on main branch:
 ### 3. Local Race Detection
 
 Install gcc once, use forever:
+
 ```bash
 # macOS
 brew install gcc
@@ -291,6 +310,7 @@ Then use `-race` targets freely.
 ### 4. CI Resource Management
 
 Race tests are expensive:
+
 - Run on main branch (always)
 - Run on schedule (nightly)
 - Run on manual trigger (testing)
@@ -303,6 +323,7 @@ Race tests are expensive:
 **Cause:** Using race detection without CGO enabled
 
 **Solution:**
+
 ```bash
 # Option 1: Use race-specific target (recommended)
 make test-unit-race
@@ -316,6 +337,7 @@ CGO_ENABLED=1 go test -race ./...
 **Cause:** GCC not installed for race detection
 
 **Solution:**
+
 ```bash
 # macOS
 brew install gcc
@@ -332,6 +354,7 @@ apk add gcc musl-dev
 ### Issue: Race tests too slow
 
 **Solution:** Use fast tests for iteration, race tests for verification:
+
 ```bash
 # During development (fast)
 make test-unit
@@ -343,6 +366,7 @@ make test-unit-race
 ### Issue: Want to skip race tests in CI
 
 **Solution:** Race tests are already conditional:
+
 - Main workflow: Always runs (important for production)
 - Other workflows: Only on main branch or manual trigger
 - Can label PR to force race tests if needed
@@ -370,12 +394,14 @@ make test-unit-race
 ## Files Modified
 
 ### Makefile
+
 - `/home/user/athena/Makefile`
   - Added: `test-race`, `test-unit-race`, `test-integration-race`, etc.
   - Modified: Removed `-race` from default targets
   - Fixed: Cleaned up orphaned test commands in `logs` target
 
 ### Workflows
+
 - `/home/user/athena/.github/workflows/test.yml`
   - Added: `unit-race` and `integration-race` jobs
   - Modified: Job names to indicate fast vs. race tests
@@ -397,6 +423,7 @@ make test-unit-race
   - Updated: `e2e-tests-race` to install gcc and enable CGO
 
 ### Actions
+
 - `/home/user/athena/.github/actions/install-gcc/action.yml` (NEW)
   - Composite action to install GCC in CI containers
   - Supports Debian/Ubuntu and Alpine
@@ -416,6 +443,6 @@ The dual-track strategy ensures you get quick feedback from fast tests while mai
 
 ## References
 
-- Go Race Detector: https://go.dev/doc/articles/race_detector
-- CGO Documentation: https://pkg.go.dev/cmd/cgo
-- GitHub Actions Containers: https://docs.github.com/en/actions/using-jobs/running-jobs-in-a-container
+- Go Race Detector: <https://go.dev/doc/articles/race_detector>
+- CGO Documentation: <https://pkg.go.dev/cmd/cgo>
+- GitHub Actions Containers: <https://docs.github.com/en/actions/using-jobs/running-jobs-in-a-container>

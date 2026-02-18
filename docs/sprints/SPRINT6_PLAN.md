@@ -112,6 +112,7 @@ type QualityVariant struct {
 ```
 
 **Key Methods**:
+
 - `StartTranscoding(streamID, rtmpURL)` - Spawn FFmpeg process
 - `StopTranscoding(streamID)` - Gracefully stop FFmpeg
 - `GetStreamHealth(streamID)` - Check transcoding status
@@ -122,6 +123,7 @@ type QualityVariant struct {
 **Approach**: Use FFmpeg with multiple outputs for adaptive bitrate streaming
 
 **Command Template**:
+
 ```bash
 ffmpeg -i rtmp://localhost:1935/{streamKey} \
   -c:v libx264 -preset veryfast -tune zerolatency \
@@ -137,6 +139,7 @@ ffmpeg -i rtmp://localhost:1935/{streamKey} \
 ```
 
 **Features**:
+
 - Multiple quality variants in single FFmpeg process
 - Low-latency tuning (`zerolatency`)
 - Fast encoding preset (`veryfast`)
@@ -159,11 +162,13 @@ r.Route("/streams/{id}/hls", func(r chi.Router) {
 ```
 
 **Handlers**:
+
 - `GetMasterPlaylist` - Serve master.m3u8 with variant list
 - `GetVariantPlaylist` - Serve quality-specific index.m3u8
 - `GetSegment` - Serve .ts segment files with proper headers
 
 **Cache Headers**:
+
 - Master playlist: `Cache-Control: max-age=2`
 - Variant playlists: `Cache-Control: max-age=2`
 - Segments: `Cache-Control: max-age=86400` (immutable)
@@ -171,6 +176,7 @@ r.Route("/streams/{id}/hls", func(r chi.Router) {
 ### 4. Segment Management
 
 **Cleanup Strategy**:
+
 - Keep last N segments per variant (configurable, default 10)
 - Delete segments older than DVR window
 - Run cleanup every 10 seconds
@@ -178,6 +184,7 @@ r.Route("/streams/{id}/hls", func(r chi.Router) {
 - Archive or delete on stream end
 
 **Storage Structure**:
+
 ```
 ./storage/live/
 ├── {stream-id-1}/
@@ -203,6 +210,7 @@ r.Route("/streams/{id}/hls", func(r chi.Router) {
 **File**: `internal/livestream/vod_converter.go`
 
 **Workflow**:
+
 1. Stream ends → trigger VOD conversion (if `save_replay=true`)
 2. Select best quality variant (1080p or highest available)
 3. Concatenate all segments into single video file
@@ -213,6 +221,7 @@ r.Route("/streams/{id}/hls", func(r chi.Router) {
 8. Clean up live segments
 
 **FFmpeg Command**:
+
 ```bash
 # Create file list
 for f in ./storage/live/{streamId}/1080p/segment_*.ts; do
@@ -251,6 +260,7 @@ ReplayRetentionDays     int           // Keep replays for N days (0=forever)
 ```
 
 **Environment Variables**:
+
 ```bash
 # HLS
 HLS_OUTPUT_DIR=./storage/live
@@ -401,11 +411,13 @@ REPLAY_RETENTION_DAYS=30
 ## Dependencies
 
 ### External
+
 - **FFmpeg 4.4+**: Required for transcoding
   - Installation: `apt install ffmpeg` (Ubuntu) or `brew install ffmpeg` (macOS)
   - Verify: `ffmpeg -version`
 
 ### Internal
+
 - Sprint 5 RTMP server (complete) ✅
 - Stream manager (complete) ✅
 - Video repository (for VOD) ✅
@@ -442,12 +454,14 @@ REPLAY_RETENTION_DAYS=30
 ## Example Usage
 
 ### 1. Start Streaming (OBS)
+
 ```
 Server: rtmp://your-server:1935
 Stream Key: {your-stream-key}
 ```
 
 ### 2. Watch in Browser
+
 ```html
 <video controls>
   <source src="https://your-server/api/v1/streams/{id}/hls/master.m3u8" type="application/x-mpegURL">
@@ -461,6 +475,7 @@ Stream Key: {your-stream-key}
 ```
 
 ### 3. Get Replay After Stream
+
 ```bash
 GET /api/v1/videos/{replay_video_id}
 ```

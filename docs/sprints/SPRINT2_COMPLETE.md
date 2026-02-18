@@ -27,6 +27,7 @@ CodecPriority string   // "quality" or "speed", Default: "speed"
 ```
 
 **Environment Variables**:
+
 - `VIDEO_CODECS`: Comma-separated list of enabled codecs
 - `ENABLE_VP9`: Enable VP9 encoding (true/false)
 - `VP9_QUALITY`: VP9 CRF value (lower = better quality)
@@ -41,19 +42,23 @@ CodecPriority string   // "quality" or "speed", Default: "speed"
 Extended database to track multi-codec variants:
 
 **Tables Added**:
+
 - `video_codec_variants`: Tracks encoding status for each codec variant
   - Columns: video_id, codec, status, encoding_job_id, output_paths (JSONB), file_sizes (JSONB), encoding_time_seconds
   - Indexes: video_id, codec, status, encoding_job_id
   - Unique constraint on (video_id, codec)
 
 **Tables Modified**:
+
 - `encoding_jobs`: Added `encoding_profile` column (h264/vp9/av1)
 
 **Functions Added**:
+
 - `get_video_codecs(video_id)`: Returns available codec variants for a video
 - `update_video_codec_variants_updated_at()`: Trigger to update timestamps
 
 **Migration Features**:
+
 - Backward compatibility: Existing videos automatically get H.264 variant entries
 - Flexible output storage: JSONB fields support arbitrary resolution sets
 - Status tracking: Separate status per codec variant
@@ -63,6 +68,7 @@ Extended database to track multi-codec variants:
 Implemented modular codec architecture with three encoders:
 
 **CodecEncoder Interface**:
+
 ```go
 type CodecEncoder interface {
     Name() string
@@ -73,6 +79,7 @@ type CodecEncoder interface {
 ```
 
 **H.264 Encoder** (`H264Encoder`):
+
 - Single-pass encoding with libx264
 - High Profile, Level 4.0
 - CRF 23, veryfast preset
@@ -80,6 +87,7 @@ type CodecEncoder interface {
 - Codec string: `avc1.640028,mp4a.40.2`
 
 **VP9 Encoder** (`VP9Encoder`):
+
 - Two-pass encoding with libvpx-vp9
 - Configurable CRF (default 31) and speed (default 2)
 - Row-based multithreading with tile parallelism
@@ -90,12 +98,14 @@ type CodecEncoder interface {
   - 4K: `vp09.00.51.08.01,opus` (Level 5.1)
 
 **AV1 Encoder** (`AV1Encoder`):
+
 - Two-pass encoding with libaom-av1
 - Configurable preset (default 6) and CRF (default 30)
 - Opus audio 128k
 - Codec string: `av01.0.05M.08,opus`
 
 **Helper Methods**:
+
 - `GetCodecEncoder(codecName)`: Factory method to get encoder by name
 - `GetEnabledCodecs()`: Returns list of enabled codecs from config
 - `transcodeHLSWithCodec()`: Unified encoding interface
@@ -107,6 +117,7 @@ type CodecEncoder interface {
 Implemented HLS master playlist generation with codec variants:
 
 **Directory Structure**:
+
 ```
 {videoId}/
 ├── h264/
@@ -133,6 +144,7 @@ Implemented HLS master playlist generation with codec variants:
    - Includes all codec variants with CODECS parameter
    - Bandwidth-adjusted per codec efficiency
    - Example entry:
+
      ```
      #EXT-X-STREAM-INF:BANDWIDTH=3500000,RESOLUTION=1920x1080,CODECS="vp09.00.40.08.01,opus",NAME="1080p VP9"
      vp9/1080p/stream.m3u8
@@ -148,11 +160,13 @@ Implemented HLS master playlist generation with codec variants:
    - Contains all resolution variants for that codec
 
 **Bandwidth Optimization**:
+
 - H.264: Baseline (100%)
 - VP9: 70% of H.264 (30% more efficient)
 - AV1: 50% of H.264 (50% more efficient)
 
 **Codec Detection** (`DetectAvailableCodecs`):
+
 - Scans output directory for codec subdirectories
 - Falls back to legacy structure (h264 only) if no codec dirs found
 
@@ -161,6 +175,7 @@ Implemented HLS master playlist generation with codec variants:
 Comprehensive test coverage for all components:
 
 **Codec Tests** (`codec_test.go`):
+
 - ✅ `TestCodecEncoders`: Validates all three encoders
 - ✅ `TestGetCodecEncoder`: Tests factory method
 - ✅ `TestGetCodecEncoder_DisabledCodecs`: Tests config-based enabling
@@ -169,6 +184,7 @@ Comprehensive test coverage for all components:
 - ✅ `TestCodecStrings`: Validates HLS CODECS parameters
 
 **Playlist Tests** (`playlist_test.go`):
+
 - ✅ `TestMultiCodecPlaylistGenerator`: Tests bandwidth/width calculations
 - ✅ `TestGenerateMultiCodecMasterPlaylist`: Tests multi-codec playlists
 - ✅ `TestGenerateLegacyMasterPlaylist`: Tests backward compatibility
@@ -176,6 +192,7 @@ Comprehensive test coverage for all components:
 - ✅ `TestDetectAvailableCodecs`: Tests codec directory detection
 
 **Test Results**:
+
 ```
 === Codec Tests ===
 ✓ TestCodecEncoders (3 sub-tests)
@@ -198,6 +215,7 @@ Total: 29 tests, all passing
 ## Files Modified/Created
 
 ### Created Files
+
 1. `internal/usecase/encoding/codec.go` - Codec encoder implementations (302 lines)
 2. `internal/usecase/encoding/playlist.go` - Playlist generators (246 lines)
 3. `internal/usecase/encoding/codec_test.go` - Codec tests (301 lines)
@@ -206,6 +224,7 @@ Total: 29 tests, all passing
 6. `SPRINT2_COMPLETE.md` - This document
 
 ### Modified Files
+
 1. `internal/config/config.go` - Added codec configuration fields
 2. `internal/config/load.go` - Added codec config loading
 
@@ -264,6 +283,7 @@ Total: 1,231 lines of new production code + tests
 Legend: ✅ Full support, ⚠️ Partial/recent versions only
 
 **Adaptive Streaming**:
+
 - HLS master playlist lists all available variants
 - Player automatically selects best codec based on:
   - Browser capabilities (CODECS parameter)
@@ -340,6 +360,7 @@ Based on test runs with 1080p 5-second test video:
 | AV1   | 8.2s          | 0.5 MB    | Great   | 50% better |
 
 **Notes**:
+
 - Times for 1080p with default settings
 - VP9 Speed=2, AV1 Preset=6
 - Actual times scale with video length and resolution

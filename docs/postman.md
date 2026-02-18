@@ -1,10 +1,12 @@
 Postman: Athena Auth API
 
 Overview
+
 - Collection: `postman/athena-auth.postman_collection.json`
 - Environment (template): `postman/athena.local.postman_environment.json`
 
 Usage
+
 - Import the collection and the environment into Postman.
 - Select the `Athena Local` environment. Ensure `baseUrl` points to your running server (default `http://localhost:8080`).
 - Run requests in order for a happy-path flow:
@@ -19,6 +21,7 @@ Videos API
 The collection includes comprehensive tests for the video CRUD API:
 
 ## Video Listing & Search
+
 - **List Videos**: `GET {{baseUrl}}/api/v1/videos` - Lists public videos with pagination and filtering
   - Query params: `limit`, `offset`, `sort`, `order`, `category`, `language`
   - Supports sorting by `upload_date`, `views`, `duration`, `title`
@@ -30,6 +33,7 @@ The collection includes comprehensive tests for the video CRUD API:
 - **Search Videos - Missing Query (400)**: Validates search query requirement
 
 ## Video CRUD Operations
+
 - **Get Video by ID**: `GET {{baseUrl}}/api/v1/videos/{{video_id}}` - Retrieves video details
 - **Get Video - Not Found (404)**: Tests non-existent video handling
 - **Create Video**: `POST {{baseUrl}}/api/v1/videos` with `Authorization: Bearer {{access_token}}`
@@ -51,12 +55,14 @@ The collection includes comprehensive tests for the video CRUD API:
 - **Delete Video - Missing Token (401)**: Verifies auth requirement
 
 ## User Videos
+
 - **Get User Videos**: `GET {{baseUrl}}/api/v1/users/{{user_id}}/videos` - Lists videos by user
   - Supports pagination with `limit` and `offset`
   - Validates all returned videos belong to the specified user
 - **Get User Videos - Nonexistent User**: Tests behavior for non-existent users
 
 ## Video Streaming & Upload
+
 - **Video Streaming Endpoint**: `GET {{baseUrl}}/api/v1/videos/{{video_id}}/stream` - HLS streaming
   - Query params: `quality` (optional, defaults to 720p). Supported values: 240p, 360p, 480p, 720p, 1080p, 1440p, 2160p, 4320p
   - Returns HLS playlist with proper Content-Type header
@@ -73,11 +79,13 @@ The collection includes comprehensive tests for the video CRUD API:
   - Queues video for processing after all chunks are uploaded
 
 Notes
+
 - Register pre-request script auto-generates a unique `username` and `email` if not set.
 - Tests capture `access_token`, `refresh_token`, and `user_id` into environment variables for reuse.
 - Logout uses `Authorization: Bearer {{access_token}}`.
 
 Run with Newman
+
 - Prereqs: Docker with `docker compose` support installed.
 - Quick run against an already-running server:
   - `make postman-newman` (uses `BASE_URL=http://localhost:8080` by default)

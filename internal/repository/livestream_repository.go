@@ -13,7 +13,6 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-// LiveStreamRepository handles database operations for live streams
 type LiveStreamRepository interface {
 	Create(ctx context.Context, stream *domain.LiveStream) error
 	GetByID(ctx context.Context, id uuid.UUID) (*domain.LiveStream, error)
@@ -27,13 +26,18 @@ type LiveStreamRepository interface {
 	UpdateViewerCount(ctx context.Context, id uuid.UUID, count int) error
 	Delete(ctx context.Context, id uuid.UUID) error
 	EndStream(ctx context.Context, id uuid.UUID) error
+	GetChannelByStreamID(ctx context.Context, streamID uuid.UUID) (*domain.Channel, error)
+	UpdateWaitingRoom(ctx context.Context, streamID uuid.UUID, enabled bool, message string) error
+	ScheduleStream(ctx context.Context, streamID uuid.UUID, scheduledStart *time.Time, scheduledEnd *time.Time, waitingRoomEnabled bool, waitingRoomMessage string) error
+	CancelSchedule(ctx context.Context, streamID uuid.UUID) error
+	GetScheduledStreams(ctx context.Context, limit, offset int) ([]*domain.LiveStream, error)
+	GetUpcomingStreams(ctx context.Context, userID uuid.UUID, limit int) ([]*domain.LiveStream, error)
 }
 
 type liveStreamRepository struct {
 	db *sqlx.DB
 }
 
-// NewLiveStreamRepository creates a new live stream repository
 func NewLiveStreamRepository(db *sqlx.DB) LiveStreamRepository {
 	return &liveStreamRepository{db: db}
 }
@@ -273,7 +277,116 @@ func (r *liveStreamRepository) EndStream(ctx context.Context, id uuid.UUID) erro
 	return nil
 }
 
-// StreamKeyRepository handles database operations for stream keys
+func (r *liveStreamRepository) GetChannelByStreamID(ctx context.Context, streamID uuid.UUID) (*domain.Channel, error) {
+	query := `
+		SELECT c.* FROM channels c
+		JOIN live_streams ls ON ls.channel_id = c.id
+		WHERE ls.id = $1
+	`
+	var channel domain.Channel
+	if err := r.db.GetContext(ctx, &channel, query, streamID); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, domain.ErrNotFound
+		}
+		return nil, fmt.Errorf("failed to get channel by stream ID: %w", err)
+	}
+	return &channel, nil
+}
+
+func (r *liveStreamRepository) UpdateWaitingRoom(ctx context.Context, streamID uuid.UUID, enabled bool, message string) error {
+	query := `
+		UPDATE live_streams
+		SET waiting_room_enabled = $2, waiting_room_message = $3
+		WHERE id = $1
+	`
+	result, err := r.db.ExecContext(ctx, query, streamID, enabled, message)
+	if err != nil {
+		return fmt.Errorf("failed to update waiting room: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to get rows affected: %w", err)
+	}
+	if rows == 0 {
+		return domain.ErrStreamNotFound
+	}
+	return nil
+}
+
+func (r *liveStreamRepository) ScheduleStream(ctx context.Context, streamID uuid.UUID, scheduledStart *time.Time, scheduledEnd *time.Time, waitingRoomEnabled bool, waitingRoomMessage string) error {
+	query := `
+		UPDATE live_streams
+		SET scheduled_start = $2, scheduled_end = $3,
+		    waiting_room_enabled = $4, waiting_room_message = $5,
+		    status = 'scheduled'
+		WHERE id = $1
+	`
+	result, err := r.db.ExecContext(ctx, query, streamID, scheduledStart, scheduledEnd, waitingRoomEnabled, waitingRoomMessage)
+	if err != nil {
+		return fmt.Errorf("failed to schedule stream: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to get rows affected: %w", err)
+	}
+	if rows == 0 {
+		return domain.ErrStreamNotFound
+	}
+	return nil
+}
+
+func (r *liveStreamRepository) CancelSchedule(ctx context.Context, streamID uuid.UUID) error {
+	query := `
+		UPDATE live_streams
+		SET scheduled_start = NULL, scheduled_end = NULL,
+		    waiting_room_enabled = false, status = 'waiting'
+		WHERE id = $1
+	`
+	result, err := r.db.ExecContext(ctx, query, streamID)
+	if err != nil {
+		return fmt.Errorf("failed to cancel schedule: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to get rows affected: %w", err)
+	}
+	if rows == 0 {
+		return domain.ErrStreamNotFound
+	}
+	return nil
+}
+
+func (r *liveStreamRepository) GetScheduledStreams(ctx context.Context, limit, offset int) ([]*domain.LiveStream, error) {
+	query := `
+		SELECT * FROM live_streams
+		WHERE status = 'scheduled'
+		ORDER BY scheduled_start ASC
+		LIMIT $1 OFFSET $2
+	`
+	var streams []*domain.LiveStream
+	if err := r.db.SelectContext(ctx, &streams, query, limit, offset); err != nil {
+		return nil, fmt.Errorf("failed to get scheduled streams: %w", err)
+	}
+	return streams, nil
+}
+
+func (r *liveStreamRepository) GetUpcomingStreams(ctx context.Context, userID uuid.UUID, limit int) ([]*domain.LiveStream, error) {
+	query := `
+		SELECT ls.* FROM live_streams ls
+		JOIN channels c ON c.id = ls.channel_id
+		WHERE ls.status = 'scheduled'
+		  AND ls.scheduled_start > NOW()
+		  AND c.account_id = $1
+		ORDER BY ls.scheduled_start ASC
+		LIMIT $2
+	`
+	var streams []*domain.LiveStream
+	if err := r.db.SelectContext(ctx, &streams, query, userID, limit); err != nil {
+		return nil, fmt.Errorf("failed to get upcoming streams: %w", err)
+	}
+	return streams, nil
+}
+
 type StreamKeyRepository interface {
 	Create(ctx context.Context, channelID uuid.UUID, keyPlaintext string, expiresAt *time.Time) (*domain.StreamKey, error)
 	GetByChannelID(ctx context.Context, channelID uuid.UUID) (*domain.StreamKey, error)
@@ -289,13 +402,11 @@ type streamKeyRepository struct {
 	db *sqlx.DB
 }
 
-// NewStreamKeyRepository creates a new stream key repository
 func NewStreamKeyRepository(db *sqlx.DB) StreamKeyRepository {
 	return &streamKeyRepository{db: db}
 }
 
 func (r *streamKeyRepository) Create(ctx context.Context, channelID uuid.UUID, keyPlaintext string, expiresAt *time.Time) (*domain.StreamKey, error) {
-	// Hash the key using bcrypt
 	hash, err := bcrypt.GenerateFromPassword([]byte(keyPlaintext), bcrypt.DefaultCost)
 	if err != nil {
 		return nil, fmt.Errorf("failed to hash stream key: %w", err)
@@ -366,12 +477,10 @@ func (r *streamKeyRepository) ValidateKey(ctx context.Context, channelID uuid.UU
 		return nil, err
 	}
 
-	// Check if key can be used (active and not expired)
 	if err := key.CanUse(); err != nil {
 		return nil, err
 	}
 
-	// Verify the key hash
 	if err := bcrypt.CompareHashAndPassword([]byte(key.KeyHash), []byte(keyPlaintext)); err != nil {
 		return nil, domain.ErrStreamKeyInvalid
 	}
@@ -447,7 +556,6 @@ func (r *streamKeyRepository) DeleteExpired(ctx context.Context) (int, error) {
 	return int(rows), nil
 }
 
-// ViewerSessionRepository handles database operations for viewer sessions
 type ViewerSessionRepository interface {
 	Create(ctx context.Context, session *domain.ViewerSession) error
 	GetByID(ctx context.Context, id uuid.UUID) (*domain.ViewerSession, error)
@@ -463,7 +571,6 @@ type viewerSessionRepository struct {
 	db *sqlx.DB
 }
 
-// NewViewerSessionRepository creates a new viewer session repository
 func NewViewerSessionRepository(db *sqlx.DB) ViewerSessionRepository {
 	return &viewerSessionRepository{db: db}
 }

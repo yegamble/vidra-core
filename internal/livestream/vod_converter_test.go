@@ -16,7 +16,6 @@ import (
 	"athena/internal/domain"
 )
 
-// MockVideoRepository implements a mock for testing
 type MockVideoRepository struct{}
 
 func (m *MockVideoRepository) Create(ctx context.Context, video *domain.Video) error {
@@ -75,6 +74,10 @@ func (m *MockVideoRepository) GetVideosForMigration(ctx context.Context, limit i
 	return []*domain.Video{}, nil
 }
 
+func (m *MockVideoRepository) GetByChannelID(_ context.Context, _ string, _, _ int) ([]*domain.Video, int64, error) {
+	return nil, 0, nil
+}
+
 func TestNewVODConverter(t *testing.T) {
 	cfg := &config.Config{
 		HLSOutputDir:           "/tmp/test-vod",
@@ -109,7 +112,6 @@ func TestNewVODConverter_DefaultWorkers(t *testing.T) {
 	logger := logrus.New()
 	logger.SetOutput(os.Stderr)
 
-	// Pass 0 workers, should default to 2
 	converter := NewVODConverter(cfg, streamRepo, videoRepo, logger, 0)
 
 	assert.Equal(t, 2, converter.workers)
@@ -117,7 +119,7 @@ func TestNewVODConverter_DefaultWorkers(t *testing.T) {
 
 func TestVODConverter_ConvertStreamToVOD_Disabled(t *testing.T) {
 	cfg := &config.Config{
-		EnableReplayConversion: false, // Disabled
+		EnableReplayConversion: false,
 	}
 
 	streamRepo := &MockLiveStreamRepository{}
@@ -136,11 +138,9 @@ func TestVODConverter_ConvertStreamToVOD_Disabled(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Should return nil (no-op) when disabled
 	err := converter.ConvertStreamToVOD(ctx, stream)
 	assert.NoError(t, err)
 
-	// No jobs should be created
 	assert.Equal(t, 0, converter.GetActiveJobCount())
 }
 
@@ -175,10 +175,8 @@ func TestVODConverter_ConvertStreamToVOD_Success(t *testing.T) {
 	err := converter.ConvertStreamToVOD(ctx, stream)
 	assert.NoError(t, err)
 
-	// Job should be queued
 	assert.Equal(t, 1, converter.GetActiveJobCount())
 
-	// Check job exists
 	job, exists := converter.GetJob(stream.ID)
 	assert.True(t, exists)
 	assert.NotNil(t, job)
@@ -214,11 +212,9 @@ func TestVODConverter_ConvertStreamToVOD_Duplicate(t *testing.T) {
 
 	ctx := context.Background()
 
-	// First conversion
 	err := converter.ConvertStreamToVOD(ctx, stream)
 	assert.NoError(t, err)
 
-	// Try to convert same stream again - should fail
 	err = converter.ConvertStreamToVOD(ctx, stream)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "already exists")
@@ -243,18 +239,15 @@ func TestVODConverter_GetJob(t *testing.T) {
 
 	streamID := uuid.New()
 
-	// Job doesn't exist yet
 	job, exists := converter.GetJob(streamID)
 	assert.False(t, exists)
 	assert.Nil(t, job)
 
-	// Create a job manually
 	converter.jobs[streamID] = &VODConversionJob{
 		StreamID: streamID,
 		Status:   "pending",
 	}
 
-	// Now it should exist
 	job, exists = converter.GetJob(streamID)
 	assert.True(t, exists)
 	assert.NotNil(t, job)
@@ -276,12 +269,10 @@ func TestVODConverter_CancelJob(t *testing.T) {
 
 	streamID := uuid.New()
 
-	// Try to cancel non-existent job
 	err := converter.CancelJob(streamID)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "not found")
 
-	// Create a job
 	ctx, cancel := context.WithCancel(context.Background())
 	converter.jobs[streamID] = &VODConversionJob{
 		StreamID: streamID,
@@ -290,7 +281,6 @@ func TestVODConverter_CancelJob(t *testing.T) {
 		Cancel:   cancel,
 	}
 
-	// Cancel should succeed
 	err = converter.CancelJob(streamID)
 	assert.NoError(t, err)
 }
@@ -306,10 +296,8 @@ func TestVODConverter_GetActiveJobCount(t *testing.T) {
 	converter := NewVODConverter(cfg, streamRepo, videoRepo, logger, 2)
 	defer converter.Shutdown(context.Background())
 
-	// Initially 0
 	assert.Equal(t, 0, converter.GetActiveJobCount())
 
-	// Add some jobs
 	converter.jobs[uuid.New()] = &VODConversionJob{Status: "pending"}
 	converter.jobs[uuid.New()] = &VODConversionJob{Status: "processing"}
 
@@ -324,7 +312,6 @@ func TestVODConverter_GetQueueLength(t *testing.T) {
 	logger := logrus.New()
 	logger.SetOutput(os.Stderr)
 
-	// Create converter without starting workers
 	converter := &VODConverter{
 		cfg:          cfg,
 		streamRepo:   streamRepo,
@@ -332,14 +319,12 @@ func TestVODConverter_GetQueueLength(t *testing.T) {
 		logger:       logger,
 		jobs:         make(map[uuid.UUID]*VODConversionJob),
 		jobQueue:     make(chan *VODConversionJob, 100),
-		workers:      0, // No workers
+		workers:      0,
 		shutdownChan: make(chan struct{}),
 	}
 
-	// Initially 0
 	assert.Equal(t, 0, converter.GetQueueLength())
 
-	// Add jobs to queue (no workers to pick them up)
 	converter.jobQueue <- &VODConversionJob{StreamID: uuid.New()}
 	converter.jobQueue <- &VODConversionJob{StreamID: uuid.New()}
 
@@ -397,11 +382,9 @@ func TestVODConverter_FindBestVariant(t *testing.T) {
 			os.MkdirAll(testDir, 0750)
 			defer os.RemoveAll(testDir)
 
-			// Create variant directories with dummy files
 			for _, variant := range tt.variantsToCreate {
 				variantDir := filepath.Join(testDir, variant)
 				os.MkdirAll(variantDir, 0750)
-				// Create a dummy segment file
 				os.WriteFile(filepath.Join(variantDir, "segment_000.ts"), []byte("test"), 0644)
 			}
 
@@ -435,7 +418,6 @@ func TestVODConverter_Shutdown(t *testing.T) {
 
 	converter := NewVODConverter(cfg, streamRepo, videoRepo, logger, 2)
 
-	// Queue some jobs
 	stream1 := &domain.LiveStream{
 		ID:        uuid.New(),
 		UserID:    uuid.New(),
@@ -453,10 +435,8 @@ func TestVODConverter_Shutdown(t *testing.T) {
 	converter.ConvertStreamToVOD(context.Background(), stream1)
 	converter.ConvertStreamToVOD(context.Background(), stream2)
 
-	// Wait a bit for workers to start processing
 	time.Sleep(200 * time.Millisecond)
 
-	// Shutdown with timeout
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -491,22 +471,18 @@ func TestVODConverter_JobStateTransitions(t *testing.T) {
 
 	converter.jobs[streamID] = job
 
-	// Test pending state
 	assert.Equal(t, "pending", job.Status)
 	assert.Nil(t, job.CompletedAt)
 	assert.Empty(t, job.Error)
 
-	// Test processing state
 	job.Status = "processing"
 	assert.Equal(t, "processing", job.Status)
 
-	// Test completed state
 	converter.completeJob(job)
 	assert.Equal(t, "completed", job.Status)
 	assert.NotNil(t, job.CompletedAt)
 	assert.Empty(t, job.Error)
 
-	// Test failed state
 	job2 := &VODConversionJob{
 		StreamID: uuid.New(),
 		Status:   "processing",
@@ -551,7 +527,6 @@ func TestVODConverter_CreateOutputDirectory(t *testing.T) {
 	err := converter.ConvertStreamToVOD(ctx, stream)
 	require.NoError(t, err)
 
-	// Replay directory should be created
 	_, err = os.Stat(cfg.ReplayStorageDir)
 	assert.NoError(t, err, "Replay storage directory should be created")
 }

@@ -19,7 +19,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// LiveStreamHandlers handles live stream-related HTTP requests
 type LiveStreamHandlers struct {
 	streamRepo    repository.LiveStreamRepository
 	streamKeyRepo repository.StreamKeyRepository
@@ -29,7 +28,6 @@ type LiveStreamHandlers struct {
 	config        *config.Config
 }
 
-// NewLiveStreamHandlers creates new live stream handlers
 func NewLiveStreamHandlers(
 	streamRepo repository.LiveStreamRepository,
 	streamKeyRepo repository.StreamKeyRepository,
@@ -48,7 +46,6 @@ func NewLiveStreamHandlers(
 	}
 }
 
-// CreateStreamRequest represents the request to create a live stream
 type CreateStreamRequest struct {
 	ChannelID   uuid.UUID `json:"channel_id"`
 	Title       string    `json:"title"`
@@ -57,14 +54,12 @@ type CreateStreamRequest struct {
 	SaveReplay  *bool     `json:"save_replay,omitempty"`
 }
 
-// UpdateStreamRequest represents the request to update a live stream
 type UpdateStreamRequest struct {
 	Title       *string `json:"title,omitempty"`
 	Description *string `json:"description,omitempty"`
 	Privacy     *string `json:"privacy,omitempty"`
 }
 
-// StreamResponse represents a live stream response
 type StreamResponse struct {
 	ID              uuid.UUID  `json:"id"`
 	ChannelID       uuid.UUID  `json:"channel_id"`
@@ -82,10 +77,9 @@ type StreamResponse struct {
 	CreatedAt       time.Time  `json:"created_at"`
 	UpdatedAt       time.Time  `json:"updated_at"`
 	RTMPUrl         string     `json:"rtmp_url,omitempty"`
-	StreamKey       string     `json:"stream_key,omitempty"` // Only included on creation
+	StreamKey       string     `json:"stream_key,omitempty"`
 }
 
-// StreamStatsResponse represents real-time stream statistics
 type StreamStatsResponse struct {
 	StreamID        uuid.UUID  `json:"stream_id"`
 	Status          string     `json:"status"`
@@ -96,20 +90,10 @@ type StreamStatsResponse struct {
 	LastUpdate      time.Time  `json:"last_update"`
 }
 
-// CreateStream handles POST /api/v1/channels/{channelId}/streams
 func (h *LiveStreamHandlers) CreateStream(w http.ResponseWriter, r *http.Request) {
-	// Get user ID from context
 	userID, ok := middleware.GetUserIDFromContext(r.Context())
 	if !ok {
 		shared.WriteError(w, http.StatusUnauthorized, domain.ErrUnauthorized)
-		return
-	}
-
-	// Get channel ID from URL
-	channelIDStr := chi.URLParam(r, "channelId")
-	channelID, err := uuid.Parse(channelIDStr)
-	if err != nil {
-		shared.WriteError(w, http.StatusBadRequest, errors.New("invalid channel ID"))
 		return
 	}
 
@@ -119,13 +103,13 @@ func (h *LiveStreamHandlers) CreateStream(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Validate channel ID matches request
-	if req.ChannelID != channelID {
-		shared.WriteError(w, http.StatusBadRequest, errors.New("channel ID mismatch"))
+	if req.ChannelID == uuid.Nil {
+		shared.WriteError(w, http.StatusBadRequest, errors.New("channel_id is required"))
 		return
 	}
 
-	// Verify user owns the channel
+	channelID := req.ChannelID
+
 	if h.channelRepo != nil {
 		channel, err := h.channelRepo.GetByID(r.Context(), channelID)
 		if err != nil {
@@ -137,28 +121,24 @@ func (h *LiveStreamHandlers) CreateStream(w http.ResponseWriter, r *http.Request
 			return
 		}
 
-		// Check if user owns the channel
 		if channel.AccountID != userID {
 			shared.WriteError(w, http.StatusForbidden, errors.New("you do not own this channel"))
 			return
 		}
 	}
 
-	// Generate stream key
 	streamKeyPlaintext, err := domain.GenerateStreamKey()
 	if err != nil {
 		shared.WriteError(w, http.StatusInternalServerError, errors.New("failed to generate stream key"))
 		return
 	}
 
-	// Create stream key in database
 	streamKey, err := h.streamKeyRepo.Create(r.Context(), channelID, streamKeyPlaintext, nil)
 	if err != nil {
 		shared.WriteError(w, http.StatusInternalServerError, errors.New("failed to create stream key"))
 		return
 	}
 
-	// Set defaults
 	privacy := req.Privacy
 	if privacy == "" {
 		privacy = "public"
@@ -168,12 +148,11 @@ func (h *LiveStreamHandlers) CreateStream(w http.ResponseWriter, r *http.Request
 		saveReplay = *req.SaveReplay
 	}
 
-	// Create live stream
 	stream := &domain.LiveStream{
 		ID:          uuid.New(),
 		ChannelID:   channelID,
 		UserID:      userID,
-		StreamKey:   streamKeyPlaintext, // Will not be returned in response
+		StreamKey:   streamKeyPlaintext,
 		Status:      domain.StreamStatusWaiting,
 		Title:       req.Title,
 		Description: req.Description,
@@ -188,7 +167,6 @@ func (h *LiveStreamHandlers) CreateStream(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Build RTMP URL (without exposing full stream key in URL, key is separate)
 	var rtmpURL string
 	if h.config != nil {
 		rtmpURL = fmt.Sprintf("rtmp://%s:%d/live", h.config.RTMPHost, h.config.RTMPPort)
@@ -210,18 +188,15 @@ func (h *LiveStreamHandlers) CreateStream(w http.ResponseWriter, r *http.Request
 		CreatedAt:       stream.CreatedAt,
 		UpdatedAt:       stream.UpdatedAt,
 		RTMPUrl:         rtmpURL,
-		StreamKey:       streamKeyPlaintext, // Only shown on creation
+		StreamKey:       streamKeyPlaintext,
 	}
 
-	// Update last used for stream key
 	_ = h.streamKeyRepo.MarkUsed(r.Context(), streamKey.ID)
 
 	shared.WriteJSON(w, http.StatusCreated, response)
 }
 
-// ListChannelStreams handles GET /api/v1/channels/{channelId}/streams
 func (h *LiveStreamHandlers) ListChannelStreams(w http.ResponseWriter, r *http.Request) {
-	// Get channel ID from URL
 	channelIDStr := chi.URLParam(r, "channelId")
 	channelID, err := uuid.Parse(channelIDStr)
 	if err != nil {
@@ -229,7 +204,6 @@ func (h *LiveStreamHandlers) ListChannelStreams(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	// Parse pagination
 	page := 1
 	pageSize := 20
 	if pageStr := r.URL.Query().Get("page"); pageStr != "" {
@@ -245,21 +219,18 @@ func (h *LiveStreamHandlers) ListChannelStreams(w http.ResponseWriter, r *http.R
 
 	offset := (page - 1) * pageSize
 
-	// Get streams for channel
 	streams, err := h.streamRepo.GetByChannelID(r.Context(), channelID, pageSize, offset)
 	if err != nil {
 		shared.WriteError(w, http.StatusInternalServerError, errors.New("failed to get streams"))
 		return
 	}
 
-	// Get total count
 	total, err := h.streamRepo.CountByChannelID(r.Context(), channelID)
 	if err != nil {
 		shared.WriteError(w, http.StatusInternalServerError, errors.New("failed to count streams"))
 		return
 	}
 
-	// Convert to response format (without stream keys)
 	responseStreams := make([]StreamResponse, len(streams))
 	for i, stream := range streams {
 		var duration *int
@@ -297,7 +268,6 @@ func (h *LiveStreamHandlers) ListChannelStreams(w http.ResponseWriter, r *http.R
 	shared.WriteJSON(w, http.StatusOK, response)
 }
 
-// GetStream handles GET /api/v1/streams/{id}
 func (h *LiveStreamHandlers) GetStream(w http.ResponseWriter, r *http.Request) {
 	streamIDStr := chi.URLParam(r, "id")
 	streamID, err := uuid.Parse(streamIDStr)
@@ -343,9 +313,7 @@ func (h *LiveStreamHandlers) GetStream(w http.ResponseWriter, r *http.Request) {
 	shared.WriteJSON(w, http.StatusOK, response)
 }
 
-// UpdateStream handles PUT /api/v1/streams/{id}
 func (h *LiveStreamHandlers) UpdateStream(w http.ResponseWriter, r *http.Request) {
-	// Get user ID from context
 	userID, ok := middleware.GetUserIDFromContext(r.Context())
 	if !ok {
 		shared.WriteError(w, http.StatusUnauthorized, domain.ErrUnauthorized)
@@ -365,7 +333,6 @@ func (h *LiveStreamHandlers) UpdateStream(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Get existing stream
 	stream, err := h.streamRepo.GetByID(r.Context(), streamID)
 	if err != nil {
 		if err == domain.ErrNotFound {
@@ -376,13 +343,11 @@ func (h *LiveStreamHandlers) UpdateStream(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Verify ownership
 	if stream.UserID != userID {
 		shared.WriteError(w, http.StatusForbidden, domain.ErrUnauthorized)
 		return
 	}
 
-	// Update fields
 	if req.Title != nil {
 		stream.Title = *req.Title
 	}
@@ -426,9 +391,7 @@ func (h *LiveStreamHandlers) UpdateStream(w http.ResponseWriter, r *http.Request
 	shared.WriteJSON(w, http.StatusOK, response)
 }
 
-// EndStream handles POST /api/v1/streams/{id}/end
 func (h *LiveStreamHandlers) EndStream(w http.ResponseWriter, r *http.Request) {
-	// Get user ID from context
 	userID, ok := middleware.GetUserIDFromContext(r.Context())
 	if !ok {
 		shared.WriteError(w, http.StatusUnauthorized, domain.ErrUnauthorized)
@@ -442,7 +405,6 @@ func (h *LiveStreamHandlers) EndStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get stream to verify ownership
 	stream, err := h.streamRepo.GetByID(r.Context(), streamID)
 	if err != nil {
 		if err == domain.ErrNotFound {
@@ -453,19 +415,16 @@ func (h *LiveStreamHandlers) EndStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Verify ownership
 	if stream.UserID != userID {
 		shared.WriteError(w, http.StatusForbidden, domain.ErrUnauthorized)
 		return
 	}
 
-	// Check if stream is live
 	if !stream.IsLive() {
 		shared.WriteError(w, http.StatusBadRequest, errors.New("stream is not live"))
 		return
 	}
 
-	// End the stream via stream manager
 	if h.streamManager != nil {
 		if err := h.streamManager.EndStream(r.Context(), streamID); err != nil {
 			shared.WriteError(w, http.StatusInternalServerError, errors.New("failed to end stream"))
@@ -473,7 +432,6 @@ func (h *LiveStreamHandlers) EndStream(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Get updated stream
 	stream, err = h.streamRepo.GetByID(r.Context(), streamID)
 	if err != nil {
 		shared.WriteError(w, http.StatusInternalServerError, errors.New("failed to get updated stream"))
@@ -507,7 +465,6 @@ func (h *LiveStreamHandlers) EndStream(w http.ResponseWriter, r *http.Request) {
 	shared.WriteJSON(w, http.StatusOK, response)
 }
 
-// GetStreamStats handles GET /api/v1/streams/{id}/stats
 func (h *LiveStreamHandlers) GetStreamStats(w http.ResponseWriter, r *http.Request) {
 	streamIDStr := chi.URLParam(r, "id")
 	streamID, err := uuid.Parse(streamIDStr)
@@ -516,7 +473,6 @@ func (h *LiveStreamHandlers) GetStreamStats(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// Check if stream is active in stream manager (real-time data)
 	if h.streamManager != nil {
 		if state, exists := h.streamManager.GetStreamState(streamID); exists {
 			var duration *int
@@ -540,7 +496,6 @@ func (h *LiveStreamHandlers) GetStreamStats(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
-	// Fall back to database if not in memory
 	stream, err := h.streamRepo.GetByID(r.Context(), streamID)
 	if err != nil {
 		if err == domain.ErrNotFound {
@@ -570,24 +525,32 @@ func (h *LiveStreamHandlers) GetStreamStats(w http.ResponseWriter, r *http.Reque
 	shared.WriteJSON(w, http.StatusOK, response)
 }
 
-// RotateStreamKey handles POST /api/v1/channels/{channelId}/stream-keys/rotate
 func (h *LiveStreamHandlers) RotateStreamKey(w http.ResponseWriter, r *http.Request) {
-	// Get user ID from context
 	userID, ok := middleware.GetUserIDFromContext(r.Context())
 	if !ok {
 		shared.WriteError(w, http.StatusUnauthorized, domain.ErrUnauthorized)
 		return
 	}
 
-	// Get channel ID from URL
-	channelIDStr := chi.URLParam(r, "channelId")
-	channelID, err := uuid.Parse(channelIDStr)
+	streamIDStr := chi.URLParam(r, "id")
+	streamID, err := uuid.Parse(streamIDStr)
 	if err != nil {
-		shared.WriteError(w, http.StatusBadRequest, errors.New("invalid channel ID"))
+		shared.WriteError(w, http.StatusBadRequest, errors.New("invalid stream ID"))
 		return
 	}
 
-	// Verify user owns the channel
+	stream, err := h.streamRepo.GetByID(r.Context(), streamID)
+	if err != nil {
+		if err == domain.ErrNotFound {
+			shared.WriteError(w, http.StatusNotFound, errors.New("stream not found"))
+			return
+		}
+		shared.WriteError(w, http.StatusInternalServerError, errors.New("failed to get stream"))
+		return
+	}
+
+	channelID := stream.ChannelID
+
 	if h.channelRepo != nil {
 		channel, err := h.channelRepo.GetByID(r.Context(), channelID)
 		if err != nil {
@@ -599,21 +562,18 @@ func (h *LiveStreamHandlers) RotateStreamKey(w http.ResponseWriter, r *http.Requ
 			return
 		}
 
-		// Check if user owns the channel
 		if channel.AccountID != userID {
 			shared.WriteError(w, http.StatusForbidden, errors.New("you do not own this channel"))
 			return
 		}
 	}
 
-	// Get existing active key
 	existingKey, err := h.streamKeyRepo.GetActiveByChannelID(r.Context(), channelID)
 	if err != nil && err != domain.ErrNotFound {
 		shared.WriteError(w, http.StatusInternalServerError, errors.New("failed to get stream key"))
 		return
 	}
 
-	// Deactivate existing key if it exists
 	if existingKey != nil {
 		if err := h.streamKeyRepo.DeactivateAllForChannel(r.Context(), channelID); err != nil {
 			shared.WriteError(w, http.StatusInternalServerError, errors.New("failed to deactivate old keys"))
@@ -621,14 +581,12 @@ func (h *LiveStreamHandlers) RotateStreamKey(w http.ResponseWriter, r *http.Requ
 		}
 	}
 
-	// Generate new stream key
 	newKeyPlaintext, err := domain.GenerateStreamKey()
 	if err != nil {
 		shared.WriteError(w, http.StatusInternalServerError, errors.New("failed to generate stream key"))
 		return
 	}
 
-	// Create new stream key
 	streamKey, err := h.streamKeyRepo.Create(r.Context(), channelID, newKeyPlaintext, nil)
 	if err != nil {
 		shared.WriteError(w, http.StatusInternalServerError, errors.New("failed to create stream key"))
@@ -639,7 +597,7 @@ func (h *LiveStreamHandlers) RotateStreamKey(w http.ResponseWriter, r *http.Requ
 		"message":    "Stream key rotated successfully",
 		"channel_id": channelID,
 		"key_id":     streamKey.ID,
-		"stream_key": newKeyPlaintext, // Only shown on rotation
+		"stream_key": newKeyPlaintext,
 		"created_at": streamKey.CreatedAt,
 		"expires_at": streamKey.ExpiresAt,
 	}
@@ -647,9 +605,7 @@ func (h *LiveStreamHandlers) RotateStreamKey(w http.ResponseWriter, r *http.Requ
 	shared.WriteJSON(w, http.StatusOK, response)
 }
 
-// GetActiveStreams handles GET /api/v1/streams/active
 func (h *LiveStreamHandlers) GetActiveStreams(w http.ResponseWriter, r *http.Request) {
-	// Parse pagination
 	page := 1
 	pageSize := 20
 	if pageStr := r.URL.Query().Get("page"); pageStr != "" {
@@ -665,14 +621,12 @@ func (h *LiveStreamHandlers) GetActiveStreams(w http.ResponseWriter, r *http.Req
 
 	offset := (page - 1) * pageSize
 
-	// Get active streams from database
 	streams, err := h.streamRepo.GetActiveStreams(r.Context(), pageSize, offset)
 	if err != nil {
 		shared.WriteError(w, http.StatusInternalServerError, errors.New("failed to get active streams"))
 		return
 	}
 
-	// Enhance with real-time data from stream manager
 	responseStreams := make([]StreamResponse, len(streams))
 	for i, stream := range streams {
 		var duration *int
@@ -681,7 +635,6 @@ func (h *LiveStreamHandlers) GetActiveStreams(w http.ResponseWriter, r *http.Req
 			duration = &d
 		}
 
-		// Try to get real-time viewer count from stream manager
 		viewerCount := stream.ViewerCount
 		peakViewers := stream.PeakViewerCount
 		if h.streamManager != nil {
@@ -710,7 +663,6 @@ func (h *LiveStreamHandlers) GetActiveStreams(w http.ResponseWriter, r *http.Req
 		}
 	}
 
-	// Get total count of active streams
 	total := len(streams)
 	if h.streamManager != nil {
 		total = h.streamManager.GetActiveStreamCount()

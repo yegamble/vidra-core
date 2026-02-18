@@ -68,11 +68,13 @@ postgres-test:
 **Investigation:** The Athena application server does NOT run migrations on startup.
 
 **Files Checked:**
+
 - `/Users/yosefgamble/github/athena/cmd/server/main.go` - No migration logic
 - `/Users/yosefgamble/github/athena/internal/app/app.go` - No migration runner in `initializeDatabase()`
 - `/Users/yosefgamble/github/athena/Dockerfile` - No migration step in CMD
 
 **Migration System:** The project uses **Goose** for database migrations:
+
 - Migrations are in `/Users/yosefgamble/github/athena/migrations/*.sql` (63 migration files)
 - Migrations must be run manually via `make migrate-*` commands or initialization scripts
 - No automatic migration on application startup
@@ -166,6 +168,7 @@ migrations/063_add_remote_video_support.sql
 ```
 
 Critical tables needed for E2E tests:
+
 - `users` - User accounts (registration/login)
 - `videos` - Video metadata
 - `upload_sessions` - Chunked upload tracking
@@ -190,6 +193,7 @@ email := username + "@example.com"
 ```
 
 **Analysis:** ✅ This design is **correct and proper**:
+
 - Unique username per test run
 - No hardcoded credentials
 - Prevents test interdependencies
@@ -233,6 +237,7 @@ concurrency:
 ```bash
 make postman-e2e  # Uses docker-compose.test.yml with init-test-db.sql
 ```
+
 ✅ Schema initialized automatically
 
 ### Scenario 2: Persistent Database
@@ -242,6 +247,7 @@ docker-compose -f tests/e2e/docker-compose.yml up -d
 # Database schema persists in Docker volume from previous runs
 go test ./tests/e2e/scenarios/...
 ```
+
 ✅ Works if you've previously run migrations
 
 ### Scenario 3: Manual Migration
@@ -251,11 +257,13 @@ docker-compose -f tests/e2e/docker-compose.yml up -d
 make migrate-test  # Manually apply migrations
 go test ./tests/e2e/scenarios/...
 ```
+
 ✅ Explicitly run migrations
 
 ### Why CI Always Fails
 
 GitHub Actions runs with:
+
 1. Fresh tmpfs storage (no persistence)
 2. No initialization script
 3. No manual migration step
@@ -294,6 +302,7 @@ func createTestVideoFile(t *testing.T) string {
 **File:** `/Users/yosefgamble/github/athena/tests/e2e/fixtures/data/users.json`
 
 Contains predefined users:
+
 ```json
 [
   {
@@ -377,6 +386,7 @@ func (app *Application) initializeDatabase() error {
 ```
 
 **Recommendation:** Use **Option A** (init script) for E2E tests. It's:
+
 - Simple
 - Explicit
 - Matches existing `docker-compose.test.yml` pattern
@@ -725,6 +735,7 @@ strategy:
 **Current:** ClamAV initialized for every test run
 
 **Options:**
+
 1. Mock ClamAV in E2E tests (test virus scanning separately)
 2. Cache virus signatures
 3. Use lightweight alternative for E2E
@@ -738,6 +749,7 @@ strategy:
 ### 1. Test Execution Metrics
 
 Track in CI/CD:
+
 - Test duration (target: < 5 minutes)
 - Failure rate (target: < 5%)
 - Flaky test detection (same test fails intermittently)
@@ -745,6 +757,7 @@ Track in CI/CD:
 ### 2. Database Health Metrics
 
 Log during tests:
+
 - Connection pool size
 - Query execution time
 - Lock contention
@@ -753,6 +766,7 @@ Log during tests:
 ### 3. Resource Usage
 
 Monitor:
+
 - Memory usage (PostgreSQL, Redis, API)
 - Disk I/O (tmpfs performance)
 - Network latency
@@ -761,6 +775,7 @@ Monitor:
 ### 4. Failure Analysis
 
 Capture on test failure:
+
 - Full service logs
 - Database schema state
 - Environment variables
@@ -930,7 +945,7 @@ E2E_BASE_URL=http://localhost:18080 go test -v ./tests/e2e/scenarios/...
 
 ### Migration System
 
-- Tool: Goose (https://github.com/pressly/goose)
+- Tool: Goose (<https://github.com/pressly/goose>)
 - Commands: `make migrate-*` in Makefile
 - Format: Versioned SQL files with up/down migrations
 - Location: `/Users/yosefgamble/github/athena/migrations/`

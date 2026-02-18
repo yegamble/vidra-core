@@ -82,12 +82,14 @@ This document outlines a comprehensive blue/green deployment strategy for the At
 ### Stateless Components (Duplicated for Blue/Green)
 
 **API Servers:**
+
 - Deployment: `athena-api-blue` and `athena-api-green`
 - Fully independent
 - Can run simultaneously without conflict
 - Tagged with version labels
 
 **Encoding Workers:**
+
 - Deployment: `athena-encoding-worker-blue` and `athena-encoding-worker-green`
 - Special handling: Blue workers complete existing jobs, Green starts new jobs
 - Coordinated via Redis job queue with version tagging
@@ -95,26 +97,31 @@ This document outlines a comprehensive blue/green deployment strategy for the At
 ### Stateful Components (Shared)
 
 **PostgreSQL:**
+
 - Single instance (managed RDS/Cloud SQL recommended)
 - Schema migrations applied before traffic switch
 - Backward-compatible migrations required
 - Connection pooling via PgBouncer (if needed)
 
 **Redis:**
+
 - Single cluster (ElastiCache/MemoryStore recommended)
 - Session data shared between Blue/Green
 - Queue job versioning to route to correct workers
 
 **IPFS Cluster:**
+
 - Shared cluster (content-addressed, immutable)
 - No duplication needed
 - Metadata updates handled via database
 
 **Object Storage (MinIO/S3):**
+
 - Shared bucket
 - No duplication needed
 
 **ClamAV:**
+
 - Shared service
 - Stateless but expensive to duplicate (virus definitions)
 
@@ -127,6 +134,7 @@ This document outlines a comprehensive blue/green deployment strategy for the At
 **Mechanism:** Update Service selector to switch between Blue and Green
 
 **Advantages:**
+
 - Native Kubernetes feature
 - Instant switch (no external dependencies)
 - Works with existing HPA
@@ -154,6 +162,7 @@ spec:
 ```
 
 **Switch command:**
+
 ```bash
 kubectl patch service athena-api -p '{"spec":{"selector":{"version":"green"}}}'
 ```
@@ -163,6 +172,7 @@ kubectl patch service athena-api -p '{"spec":{"selector":{"version":"green"}}}'
 **Mechanism:** Use NGINX Ingress canary annotations for gradual rollout
 
 **Advantages:**
+
 - Gradual traffic shifting (10%, 50%, 100%)
 - A/B testing capabilities
 - Automatic weight-based routing
@@ -193,6 +203,7 @@ spec:
 ```
 
 **Gradual rollout:**
+
 ```bash
 # 10% traffic to green
 kubectl patch ingress athena-ingress-green --type=merge -p '{"metadata":{"annotations":{"nginx.ingress.kubernetes.io/canary-weight":"10"}}}'
@@ -210,12 +221,14 @@ kubectl delete ingress athena-ingress-green
 **Mechanism:** Use external LB (AWS ALB, GCP LB, Cloudflare) for traffic splitting
 
 **Advantages:**
+
 - Independent of Kubernetes
 - Advanced routing rules (geography, headers, etc.)
 - DDoS protection
 - CDN integration
 
 **Disadvantages:**
+
 - Additional cost
 - More complex setup
 - External dependency
@@ -229,6 +242,7 @@ kubectl delete ingress athena-ingress-green
 ### Challenge: Zero-Downtime Schema Changes
 
 Video platforms require continuous uptime. Database migrations must be:
+
 1. **Backward-compatible** with the Blue version
 2. **Forward-compatible** with the Green version
 3. **Non-blocking** (no table locks)
@@ -236,16 +250,19 @@ Video platforms require continuous uptime. Database migrations must be:
 ### Strategy: Expand-Contract Pattern
 
 #### Phase 1: Expand (Add New Schema)
+
 - Add new columns/tables (nullable or with defaults)
 - Blue version ignores new schema
 - Green version uses new schema
 
 #### Phase 2: Migration Window
+
 - Both Blue and Green write to old AND new schema
 - Backfill data if needed
 - Validate data consistency
 
 #### Phase 3: Contract (Remove Old Schema)
+
 - After traffic fully on Green
 - Remove old columns/tables in next deployment
 - Clean up migration code
@@ -253,6 +270,7 @@ Video platforms require continuous uptime. Database migrations must be:
 ### Example: Renaming a Column
 
 **Migration 1 (Expand):**
+
 ```sql
 -- Up
 ALTER TABLE videos ADD COLUMN new_status TEXT;
@@ -264,6 +282,7 @@ ALTER TABLE videos DROP COLUMN new_status;
 ```
 
 **Application Code (Green version):**
+
 ```go
 // Write to BOTH columns during migration
 func UpdateVideoStatus(videoID, status string) error {
@@ -277,6 +296,7 @@ func UpdateVideoStatus(videoID, status string) error {
 ```
 
 **Migration 2 (Contract - next release):**
+
 ```sql
 -- Up
 ALTER TABLE videos DROP COLUMN old_status;
@@ -314,6 +334,7 @@ kubectl apply -f k8s/overlays/green/
 ### Migration Validation
 
 **Pre-flight checks:**
+
 ```sql
 -- Check for blocking locks
 SELECT pid, usename, query, state, wait_event_type, wait_event
@@ -328,6 +349,7 @@ goose -dir migrations postgres "$TEST_DATABASE_URL" up
 ```
 
 **Post-migration validation:**
+
 ```bash
 # Health check includes database connectivity
 curl http://athena-api-green/ready | jq '.checks.database'
@@ -344,6 +366,7 @@ kubectl run smoke-test --image=curlimages/curl -i --rm --restart=Never -- \
 ### Pre-Deployment Phase
 
 1. **Build and Push Docker Image**
+
    ```bash
    docker build -t ghcr.io/yegamble/athena:v1.3.0 .
    docker push ghcr.io/yegamble/athena:v1.3.0
@@ -648,33 +671,43 @@ spec:
 **Key metrics to monitor after traffic switch:**
 
 1. **Error Rate**
+
    ```promql
    rate(athena_http_requests_total{status=~"5.."}[5m]) > 0.01
    ```
+
    **Alert threshold:** > 1% error rate
 
 2. **Response Latency**
+
    ```promql
    histogram_quantile(0.99, rate(athena_http_request_duration_seconds_bucket[5m])) > 2.0
    ```
+
    **Alert threshold:** p99 > 2 seconds
 
 3. **Federation Delivery Success**
+
    ```promql
    rate(athena_activitypub_delivery_total{status="failed"}[5m]) / rate(athena_activitypub_delivery_total[5m]) > 0.05
    ```
+
    **Alert threshold:** > 5% failure rate
 
 4. **Database Connection Pool**
+
    ```promql
    athena_database_connections_in_use / athena_database_connections_max > 0.9
    ```
+
    **Alert threshold:** > 90% utilization
 
 5. **Encoding Queue Depth**
+
    ```promql
    athena_encoding_queue_depth > 1000
    ```
+
    **Alert threshold:** > 1000 jobs
 
 ### Automated Rollback Triggers
@@ -765,6 +798,7 @@ Blue/green deployments temporarily double compute costs. For a video platform wi
 - Use fast rollout strategy (canary 10% → 100%)
 
 **Cost Savings:** If deployment takes 30 minutes vs 2 hours:
+
 - **Savings:** 75% reduction in dual-environment runtime
 - **Example:** $500/month infrastructure = $5/deployment saved
 
@@ -781,6 +815,7 @@ kubectl scale deployment athena-api-blue --replicas=0 -n athena
 ```
 
 **Cost Savings:**
+
 - API servers: ~60% reduction (3 replicas → 1 → 0)
 - Encoding workers: ~90% reduction (pause immediately)
 
@@ -837,6 +872,7 @@ spec:
 ```
 
 **Cost Savings:**
+
 - Avoid interrupting in-progress encoding jobs
 - No need to re-encode videos (saves compute + time)
 - Can scale down Blue workers immediately after last job completes
@@ -844,6 +880,7 @@ spec:
 #### 5. Shared Stateful Components
 
 **Already optimized:**
+
 - PostgreSQL: Single instance (not duplicated)
 - Redis: Single cluster (not duplicated)
 - IPFS: Shared cluster (not duplicated)
@@ -855,6 +892,7 @@ spec:
 ### Cost Comparison
 
 **Traditional Blue/Green (2 hours overlap):**
+
 ```
 Blue: 3 API + 2 Workers = 100% cost for 2 hours
 Green: 3 API + 2 Workers = 100% cost for 2 hours
@@ -862,6 +900,7 @@ Total: 200% cost for 2 hours = 0.33% monthly increase
 ```
 
 **Optimized Blue/Green (30 min overlap):**
+
 ```
 Blue: 3 API + 2 Workers = 100% cost for 30 min
 Green: 3 API + 2 Workers = 100% cost for 30 min
@@ -932,6 +971,7 @@ PAGERDUTY_API_KEY: PagerDuty API key for critical alerts (optional)
 ```
 
 **Setup:**
+
 ```bash
 # Encode kubeconfig
 cat ~/.kube/config | base64 | pbcopy
@@ -1117,6 +1157,7 @@ This blue/green deployment strategy enables Athena to achieve:
 By leveraging Kubernetes native features (service label selectors, HPA, ingress annotations) and implementing careful database migration patterns, Athena can deploy multiple times per day without user-visible downtime or federation disruption.
 
 **Next Steps:**
+
 1. Review this strategy with the engineering team
 2. Create Kubernetes manifests (see next file)
 3. Implement GitHub Actions workflow
@@ -1126,4 +1167,5 @@ By leveraging Kubernetes native features (service label selectors, HPA, ingress 
 ---
 
 **Document History:**
+
 - 2025-11-17: Initial strategic plan created

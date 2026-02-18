@@ -109,6 +109,7 @@ make migrate-status
 ```
 
 Example output:
+
 ```
 $ make migrate-status
     Applied At                  Migration
@@ -142,17 +143,18 @@ Run `make migrate-up` to apply the new migrations from the codebase.
 
 **Solution:**
 Reset the database (Data will be lost!):
+
 ```bash
 make migrate-reset
 ```
 
 ## Best Practices
 
-1.  **Always Provide Down Migrations**: Ensure every `+goose Up` has a corresponding `+goose Down` to allow rollbacks.
-2.  **Test Locally**: Always run `make migrate-up` and `make migrate-down` locally before pushing to ensure your SQL is correct.
-3.  **Don't Modify Applied Migrations**: Once a migration is merged and applied to production, never edit it. Create a new migration to fix or change things.
-4.  **Use Transactions**: Goose runs migrations in a transaction by default. Avoid `COMMIT` or `ROLLBACK` inside your migration unless you explicitly disable transactions (not recommended).
-5.  **Review Schema Changes**: For high-traffic tables, consider the impact of locking (e.g., `CREATE INDEX CONCURRENTLY` cannot run inside a transaction blocks, so it might need special handling or be run separately).
+1. **Always Provide Down Migrations**: Ensure every `+goose Up` has a corresponding `+goose Down` to allow rollbacks.
+2. **Test Locally**: Always run `make migrate-up` and `make migrate-down` locally before pushing to ensure your SQL is correct.
+3. **Don't Modify Applied Migrations**: Once a migration is merged and applied to production, never edit it. Create a new migration to fix or change things.
+4. **Use Transactions**: Goose runs migrations in a transaction by default. Avoid `COMMIT` or `ROLLBACK` inside your migration unless you explicitly disable transactions (not recommended).
+5. **Review Schema Changes**: For high-traffic tables, consider the impact of locking (e.g., `CREATE INDEX CONCURRENTLY` cannot run inside a transaction blocks, so it might need special handling or be run separately).
 
 ## Resources
 

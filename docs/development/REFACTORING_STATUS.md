@@ -8,19 +8,22 @@
 ### ✅ Phase 1: Directory Reorganization (90% Complete)
 
 **File Movement - COMPLETE:**
+
 - ✅ Created 10 handler subdirectories
 - ✅ Moved all 88 handler files from flat structure to organized packages
 - ✅ Moved response.go and helpers.go to shared/ package
 - ✅ Moved dependencies.go to shared/ package
 
 **Package Updates - COMPLETE:**
+
 - ✅ Updated all package declarations (httpapi → domain-specific names)
-- ✅ Updated method receivers (*Server → *DomainHandlers)
+- ✅ Updated method receivers (*Server →*DomainHandlers)
 - ✅ Updated field references (s. → h.)
 - ✅ Added shared package imports to all handlers
 - ✅ Updated WriteJSON, WriteError calls to use shared prefix
 
 **Handler Structs Created:**
+
 - ✅ AuthHandlers (auth/)
 - ✅ VideoHandlers (video/)
 - ⚠️ ChannelHandlers, SocialHandlers, LivestreamHandlers, etc. (structs created but need dependency review)
@@ -58,15 +61,19 @@ internal/httpapi/
 **Current State:** routes_refactored.go renamed to routes.go but still uses old Server struct
 
 **Required Changes:**
+
 1. Remove dependency on old Server struct
 2. Instantiate all new handler structs:
+
    ```go
    authHandlers := auth.NewAuthHandlers(...)
    videoHandlers := video.NewVideoHandlers(...)
    channelHandlers := channel.NewChannelHandlers(...)
    // etc.
    ```
+
 3. Update all route registrations to use new handlers:
+
    ```go
    // Old:
    r.Post("/auth/login", server.Login)
@@ -76,16 +83,19 @@ internal/httpapi/
    ```
 
 **Files to Update:**
+
 - `internal/httpapi/routes.go` - Complete rewrite needed
 
 #### 2. Review and Fix Handler Constructors
 
 Some handler structs may have incorrect dependencies. Need to:
+
 - Review each handlers.go file in subdirectories
 - Ensure all required dependencies are included
 - Match constructor parameters to actual handler method usage
 
 **Files to Review:**
+
 - `handlers/channel/handlers.go`
 - `handlers/social/handlers.go`
 - `handlers/livestream/handlers.go`
@@ -98,6 +108,7 @@ Some handler structs may have incorrect dependencies. Need to:
 #### 3. Fix Method Signatures
 
 Some handlers may have methods that don't match handler struct:
+
 - Search for remaining `*Server` receivers
 - Update to use correct handler struct
 - Ensure field names match struct definition
@@ -109,6 +120,7 @@ go build ./internal/httpapi/...
 ```
 
 Expected errors:
+
 - Import cycle errors (if any)
 - Missing fields in handler structs
 - Undefined methods/functions
@@ -132,6 +144,7 @@ Expected errors:
 ## Quick Reference: Handler Methods
 
 ### AuthHandlers
+
 - Login, Register, Logout
 - RefreshToken
 - OAuthToken, OAuthAuthorize, OAuthRevoke, OAuthIntrospect
@@ -139,6 +152,7 @@ Expected errors:
 - User CRUD (from users.go, avatar.go)
 
 ### VideoHandlers
+
 - ListVideos, GetVideo, CreateVideo, UpdateVideo, DeleteVideo
 - SearchVideos
 - UploadVideoFile, VideoUploadChunk, VideoCompleteUpload
@@ -149,40 +163,48 @@ Expected errors:
 - Categories
 
 ### ChannelHandlers
+
 - Channel CRUD
 - Subscriptions
 
 ### SocialHandlers
+
 - Comments
 - Ratings
 - Playlists
 - Captions
 
 ### LivestreamHandlers
+
 - RTMP ingestion
 - HLS transcoding
 - Waiting rooms
 - VOD conversion
 
 ### FederationHandlers
+
 - ActivityPub endpoints (WebFinger, NodeInfo, Actor, Inbox, Outbox)
 - Federation management
 - Redundancy
 
 ### ModerationHandlers
+
 - Content moderation
 - Abuse reports
 
 ### MessagingHandlers
+
 - Direct messages
 - Secure messages
 - Chat
 - Notifications
 
 ### PluginHandlers
+
 - Plugin upload/management
 
 ### AdminHandlers
+
 - Instance configuration
 
 ## Next Steps (Priority Order)

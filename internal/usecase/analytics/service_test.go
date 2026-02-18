@@ -1420,6 +1420,10 @@ func (m *MockVideoRepository) CreateRemoteVideo(ctx context.Context, video *doma
 	return m.Called(ctx, video).Error(0)
 }
 
+func (m *MockVideoRepository) GetByChannelID(_ context.Context, _ string, _, _ int) ([]*domain.Video, int64, error) {
+	return nil, 0, nil
+}
+
 func TestAggregateAllVideosForDate(t *testing.T) {
 	svc, _ := newTestService()
 	date := time.Date(2025, 1, 15, 0, 0, 0, 0, time.UTC)

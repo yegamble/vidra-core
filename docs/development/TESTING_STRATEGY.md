@@ -5,6 +5,7 @@ This document outlines the comprehensive testing strategy for the Athena video p
 ## Overview
 
 **Current Test Metrics**:
+
 - **Total Test Files**: 191
 - **Code Coverage Baseline**: 23.8% (latest full-package report)
 - **Near-Term Coverage Target**: >=60%
@@ -15,6 +16,7 @@ This document outlines the comprehensive testing strategy for the Athena video p
 - **Usecase Unit Tests**: analytics (42 subtests), redundancy (53 subtests) — mock-based, no DB required
 
 **Testing Philosophy**:
+
 1. **Test Pyramid**: Many unit tests, fewer integration tests, minimal E2E tests
 2. **Fast Feedback**: Unit tests run in < 5s, integration tests in < 30s
 3. **Isolation**: Tests don't depend on external services (use mocks/fakes)
@@ -32,12 +34,14 @@ This document outlines the comprehensive testing strategy for the Athena video p
 **Location**: `*_test.go` files alongside source code
 
 **Characteristics**:
+
 - No external dependencies (database, Redis, IPFS)
 - Use mocks/stubs for dependencies
 - Fast execution (< 1s per test)
 - High coverage target (> 90%)
 
 **Example**:
+
 ```go
 // internal/usecase/video_service_test.go
 func TestVideoService_Create(t *testing.T) {
@@ -57,6 +61,7 @@ func TestVideoService_Create(t *testing.T) {
 ```
 
 **Best Practices**:
+
 - Test happy path and error cases
 - Use table-driven tests for multiple scenarios
 - Mock only direct dependencies
@@ -70,6 +75,7 @@ func TestVideoService_Create(t *testing.T) {
 **Location**: `*_integration_test.go` or `integration_test/` directory
 
 **Characteristics**:
+
 - Use real database (dockerized PostgreSQL)
 - Use real Redis (dockerized)
 - May use real IPFS (optional)
@@ -77,6 +83,7 @@ func TestVideoService_Create(t *testing.T) {
 - Coverage target (> 80%)
 
 **Setup**:
+
 ```go
 // integration_test/setup.go
 func SetupTestDB(t *testing.T) *sqlx.DB {
@@ -91,6 +98,7 @@ func TeardownTestDB(t *testing.T, db *sqlx.DB) {
 ```
 
 **Example**:
+
 ```go
 // internal/repository/video_repository_integration_test.go
 func TestVideoRepository_Create_Integration(t *testing.T) {
@@ -110,6 +118,7 @@ func TestVideoRepository_Create_Integration(t *testing.T) {
 ```
 
 **Best Practices**:
+
 - Use `testing.Short()` flag to skip in CI
 - Clean up test data after each test
 - Use transactions for isolation
@@ -123,6 +132,7 @@ func TestVideoRepository_Create_Integration(t *testing.T) {
 **Location**: `e2e_test/` directory
 
 **Characteristics**:
+
 - Full stack testing (HTTP → DB → IPFS)
 - Real HTTP requests to API
 - Verify entire flow
@@ -130,6 +140,7 @@ func TestVideoRepository_Create_Integration(t *testing.T) {
 - Coverage target (critical paths only)
 
 **Example**:
+
 ```go
 // e2e_test/video_upload_test.go
 func TestVideoUploadFlow(t *testing.T) {
@@ -156,6 +167,7 @@ func TestVideoUploadFlow(t *testing.T) {
 ```
 
 **Best Practices**:
+
 - Test critical user journeys
 - Use realistic test data
 - Handle async operations (polling/webhooks)
@@ -169,6 +181,7 @@ func TestVideoUploadFlow(t *testing.T) {
 **Location**: `security_test/` or alongside feature tests
 
 **Characteristics**:
+
 - Test authentication/authorization
 - Verify input validation
 - Test virus scanning
@@ -176,6 +189,7 @@ func TestVideoUploadFlow(t *testing.T) {
 - Test SSRF prevention
 
 **Example**:
+
 ```go
 // internal/security/virus_scanner_test.go
 func TestVirusScanner_EICAR_Detection(t *testing.T) {
@@ -202,6 +216,7 @@ func TestVirusScanner_RetryLogic_CVE_ATHENA_2025_001(t *testing.T) {
 ```
 
 **Critical Security Tests**:
+
 - ✅ CVE-ATHENA-2025-001 (Virus scanner retry bypass)
 - ✅ SQL injection prevention
 - ✅ CSRF token validation
@@ -218,6 +233,7 @@ func TestVirusScanner_RetryLogic_CVE_ATHENA_2025_001(t *testing.T) {
 **Location**: `*_bench_test.go` or `perf_test/` directory
 
 **Characteristics**:
+
 - Benchmark critical code paths
 - Load testing (concurrent users)
 - Stress testing (resource limits)
@@ -225,6 +241,7 @@ func TestVirusScanner_RetryLogic_CVE_ATHENA_2025_001(t *testing.T) {
 - Throughput measurements
 
 **Benchmark Example**:
+
 ```go
 // internal/repository/video_repository_bench_test.go
 func BenchmarkVideoRepository_List(b *testing.B) {
@@ -242,6 +259,7 @@ func BenchmarkVideoRepository_List(b *testing.B) {
 ```
 
 **Load Test Example**:
+
 ```bash
 # k6 load test
 k6 run --vus 100 --duration 5m scripts/load_test.js
@@ -299,6 +317,7 @@ Highest-coverage packages in the same baseline:
 ### Local Development
 
 **Run All Tests**:
+
 ```bash
 make test
 # Or manually:
@@ -306,11 +325,13 @@ go test ./... -race -coverprofile=coverage.out
 ```
 
 **Run Specific Test**:
+
 ```bash
 go test ./internal/usecase -run TestVideoService_Create
 ```
 
 **Run Encoding Resilience Tests**:
+
 ```bash
 # Unit tests (mock-based, no DB required)
 go test ./internal/usecase/encoding/... -v -run "Recovery|ResetStale"
@@ -320,22 +341,26 @@ go test ./internal/repository/... -v -run "ResetStaleJobs"
 ```
 
 **Run with Coverage**:
+
 ```bash
 go test ./... -coverprofile=coverage.out
 go tool cover -html=coverage.out -o coverage.html
 ```
 
 **Run Only Unit Tests** (skip integration):
+
 ```bash
 go test -short ./...
 ```
 
 **Run Only Integration Tests**:
+
 ```bash
 go test ./... -run Integration
 ```
 
 **Run Benchmarks**:
+
 ```bash
 go test -bench=. -benchmem ./...
 ```
@@ -343,6 +368,7 @@ go test -bench=. -benchmem ./...
 ### CI/CD Pipeline
 
 **GitHub Actions Workflow**:
+
 ```yaml
 name: Test
 on: [push, pull_request]
@@ -387,11 +413,13 @@ jobs:
 ### Pre-commit Hooks
 
 **Install hooks**:
+
 ```bash
 make install-hooks
 ```
 
 **Hook runs**:
+
 - `gofmt` - Format code
 - `golangci-lint` - Lint code
 - `go test -short` - Run unit tests
@@ -406,6 +434,7 @@ make install-hooks
 **Location**: `testdata/` directory
 
 **Structure**:
+
 ```
 testdata/
 ├── videos/
@@ -424,6 +453,7 @@ testdata/
 ```
 
 **Loading Fixtures**:
+
 ```go
 func LoadUserFixtures(t *testing.T, db *sqlx.DB) []domain.User {
     data, err := os.ReadFile("testdata/fixtures/users.json")
@@ -444,6 +474,7 @@ func LoadUserFixtures(t *testing.T, db *sqlx.DB) []domain.User {
 ### Test Database Seeding
 
 **Seed Script**:
+
 ```sql
 -- testdata/seed.sql
 INSERT INTO users (id, username, email) VALUES
@@ -455,6 +486,7 @@ INSERT INTO videos (id, user_id, title, privacy) VALUES
 ```
 
 **Apply Seed**:
+
 ```bash
 psql -U athena -d athena_test -f testdata/seed.sql
 ```
@@ -468,6 +500,7 @@ psql -U athena -d athena_test -f testdata/seed.sql
 **Convention**: `Test<Function>_<Scenario>_<ExpectedResult>`
 
 **Examples**:
+
 - ✅ `TestVideoService_Create_ValidInput_ReturnsVideo`
 - ✅ `TestVideoRepository_List_WithPagination_ReturnsLimitedResults`
 - ✅ `TestVirusScanner_EICAR_DetectsVirus`
@@ -477,6 +510,7 @@ psql -U athena -d athena_test -f testdata/seed.sql
 ### 2. Table-Driven Tests
 
 **Pattern**:
+
 ```go
 func TestVideoService_Create(t *testing.T) {
     tests := []struct {
@@ -524,6 +558,7 @@ func TestVideoService_Create(t *testing.T) {
 ### 3. Test Isolation
 
 **Use t.Cleanup()**:
+
 ```go
 func TestWithDatabase(t *testing.T) {
     db := setupTestDB(t)
@@ -536,6 +571,7 @@ func TestWithDatabase(t *testing.T) {
 ```
 
 **Use subtests**:
+
 ```go
 func TestVideoWorkflow(t *testing.T) {
     db := setupTestDB(t)
@@ -554,6 +590,7 @@ func TestVideoWorkflow(t *testing.T) {
 ### 4. Mocking
 
 **Use interfaces**:
+
 ```go
 // Define interface in production code
 type VideoRepository interface {
@@ -566,6 +603,7 @@ type VideoRepository interface {
 ```
 
 **Use mock in tests**:
+
 ```go
 func TestVideoService_Create(t *testing.T) {
     mockRepo := new(MockVideoRepository)
@@ -582,6 +620,7 @@ func TestVideoService_Create(t *testing.T) {
 ### 5. Error Testing
 
 **Test all error paths**:
+
 ```go
 func TestVideoRepository_Create_DatabaseError(t *testing.T) {
     db := setupFailingDB(t)
@@ -597,11 +636,13 @@ func TestVideoRepository_Create_DatabaseError(t *testing.T) {
 ### 6. Concurrency Testing
 
 **Use -race flag**:
+
 ```bash
 go test -race ./...
 ```
 
 **Test concurrent access**:
+
 ```go
 func TestVideoService_ConcurrentCreate(t *testing.T) {
     service := setupService(t)
@@ -629,12 +670,14 @@ func TestVideoService_ConcurrentCreate(t *testing.T) {
 ### Coverage Reports
 
 **Generate HTML report**:
+
 ```bash
 go test -coverprofile=coverage.out ./...
 go tool cover -html=coverage.out -o coverage.html
 ```
 
 **Check coverage threshold**:
+
 ```bash
 go test -coverprofile=coverage.out ./...
 go tool cover -func=coverage.out | grep total | awk '{print $3}' | sed 's/%//' | awk '{if ($1 < 60) exit 1}'
@@ -643,6 +686,7 @@ go tool cover -func=coverage.out | grep total | awk '{print $3}' | sed 's/%//' |
 ### Test Reports in CI
 
 **Use gotestsum** for better output:
+
 ```bash
 gotestsum --junitfile report.xml --format testname -- -coverprofile=coverage.out ./...
 ```
@@ -656,16 +700,19 @@ gotestsum --junitfile report.xml --format testname -- -coverprofile=coverage.out
 **Feature**: Real-time FFmpeg encoding progress tracking with authorization-based access control.
 
 **Implementation**:
+
 - Added `Progress` field (0-100) to `EncodingJob` domain model
 - Enhanced encoding service to parse FFmpeg stderr output in real-time
 - Created new API endpoints with role-based authorization
 - Added Postman E2E test collection for comprehensive testing
 
 **New Endpoints**:
+
 - `GET /api/v1/encoding/jobs/{jobID}` - Get individual job details
 - `GET /api/v1/videos/{id}/encoding-jobs` - Get all jobs for a video
 
 **Test Coverage**:
+
 - **Unit Tests**:
   - Progress parser utility (`internal/usecase/encoding/progress_test.go`)
   - Authorization scenarios (owner, admin, moderator, unauthorized)
@@ -689,6 +736,7 @@ gotestsum --junitfile report.xml --format testname -- -coverprofile=coverage.out
 | Other User | ❌ | ❌ |
 
 **Run Progress Tracking Tests**:
+
 ```bash
 # Unit tests for progress parsing
 go test ./internal/usecase/encoding -v -run "Progress"

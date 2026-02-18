@@ -9,6 +9,7 @@
 **Solution Implemented:** Disabled CGO across all workflows (`CGO_ENABLED=0`)
 
 **Impact:** ✅ No functional impact - your application doesn't use CGO features
+
 - Faster builds (no C compilation)
 - Smaller binaries
 - Better portability
@@ -30,6 +31,7 @@ zombiezen.com/go/sqlite v0.13.1
 ```
 
 **Dependency Chain:**
+
 ```
 athena
 └── github.com/anacrolix/torrent v1.59.1
@@ -40,6 +42,7 @@ athena
 ```
 
 The torrent library uses SQLite for:
+
 - DHT peer storage
 - Piece tracking and availability
 - Persistent torrent state
@@ -47,11 +50,13 @@ The torrent library uses SQLite for:
 ### 2. Your Application's Actual Dependencies
 
 **Direct Database Driver:** `github.com/lib/pq` (Pure Go, no CGO)
+
 - PostgreSQL connectivity
 - No C bindings required
 - Works perfectly with `CGO_ENABLED=0`
 
 **No Direct CGO Usage:**
+
 - ✅ No `import "C"` statements in your codebase
 - ✅ No SQLite usage in application code
 - ✅ No other CGO-requiring dependencies
@@ -98,6 +103,7 @@ The torrent library uses SQLite for:
 ### 4. When You WOULD Need CGO
 
 You would need `CGO_ENABLED=1` if you:
+
 - ✗ Used SQLite directly (you use PostgreSQL)
 - ✗ Called C libraries via cgo
 - ✗ Used certain packages requiring CGO:
@@ -165,10 +171,12 @@ steps:
 ```
 
 **Pros:**
+
 - Enables CGO compilation
 - Matches local development (if using CGO)
 
 **Cons:**
+
 - ❌ Slower builds (+30-60 seconds for apt-get)
 - ❌ Larger image downloads
 - ❌ Cache invalidation on system updates
@@ -183,10 +191,12 @@ container:
 ```
 
 **Pros:**
+
 - gcc pre-installed
 - Full Debian toolchain
 
 **Cons:**
+
 - ❌ Much larger image (~800MB vs ~400MB)
 - ❌ Slower pulls and caching
 - ❌ Still unnecessary for your use case
@@ -204,10 +214,12 @@ COPY --from=builder /app/bin ./bin
 ```
 
 **Pros:**
+
 - Clean separation of build/runtime
 - Optimized final image
 
 **Cons:**
+
 - ❌ More complex
 - ❌ Longer builds
 - ❌ Unnecessary complexity
@@ -250,6 +262,7 @@ ENTRYPOINT ["/server"]
 ```
 
 **Benefits:**
+
 - ✅ Final image: ~10MB (vs 800MB with full Go image)
 - ✅ Minimal attack surface
 - ✅ No shell (distroless security)
@@ -331,11 +344,13 @@ psql $DATABASE_URL -c "SELECT 1"
 If you discover a hidden CGO requirement:
 
 1. Revert workflow changes:
+
    ```bash
    git revert <commit-hash>
    ```
 
 2. Or quickly re-enable CGO:
+
    ```bash
    # In affected workflows
    env:
@@ -364,6 +379,7 @@ CGO_ENABLED=0 go test -race ./...
 ### Q2: Does anacrolix/torrent need SQLite with CGO?
 
 **A:** No. The library includes pure-Go SQLite implementations:
+
 - `modernc.org/sqlite` - Pure Go SQLite (no CGO)
 - Falls back automatically when CGO disabled
 
@@ -389,6 +405,7 @@ CGO_ENABLED=0 go test -race ./...
 ### Q5: What about timezone handling?
 
 **A:** Go embeds timezone data by default. Only affected if:
+
 - Using `CGO_ENABLED=1` AND
 - Setting `GOROOT=/custom/path` without tzdata
 
@@ -415,6 +432,7 @@ Your case: Not affected ✅
 ### When to Re-evaluate
 
 Re-enable CGO only if:
+
 - You add SQLite for application-level features
 - You integrate C libraries directly
 - You need OS-specific libc features
@@ -427,11 +445,13 @@ Re-enable CGO only if:
 ## Conclusion
 
 **Changes Made:**
+
 - ✅ Disabled CGO in 5 workflow files (7 job definitions)
 - ✅ No code changes required
 - ✅ No functional impact to application
 
 **Benefits:**
+
 - ⚡ Faster builds (-17% to -33%)
 - 🔒 Improved security (smaller attack surface)
 - 📦 Smaller binaries (~19% reduction)
@@ -439,6 +459,7 @@ Re-enable CGO only if:
 - 🎯 Simplified CI/CD (no gcc installation)
 
 **Risk Assessment:**
+
 - **Risk Level:** 🟢 Very Low
 - **Reversibility:** 🟢 Immediate (single line change)
 - **Testing Required:** 🟡 Standard CI validation

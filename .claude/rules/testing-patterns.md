@@ -27,6 +27,7 @@ func TestMyFunction(t *testing.T) {
 ### Test Data Generators
 
 **Images:**
+
 ```go
 pngData := testutil.CreateTestPNG()
 jpegData := testutil.CreateTestJPEG()
@@ -91,6 +92,7 @@ func TestValidateInput(t *testing.T) {
 ```
 
 **Benefits:**
+
 - Clear separation of test cases
 - Easy to add new cases
 - Descriptive test names in output
@@ -98,11 +100,13 @@ func TestValidateInput(t *testing.T) {
 ## Test Organization
 
 **File naming:**
+
 - `*_test.go` - Unit tests
 - `*_integration_test.go` - Integration tests (require infrastructure)
 - `*_fuzz_test.go` - Fuzz tests
 
 **Package naming:**
+
 - Test files in same package: `package mypackage`
 - Black-box tests: `package mypackage_test` (tests exported API only)
 

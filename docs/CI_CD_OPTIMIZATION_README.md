@@ -33,6 +33,7 @@ This optimization package includes:
 ### Option 2: Manual Quick Wins
 
 1. **Enable optimized test workflow:**
+
    ```bash
    cp .github/workflows/test-optimized.yml .github/workflows/test.yml
    git add .github/workflows/test.yml
@@ -41,6 +42,7 @@ This optimization package includes:
    ```
 
 2. **Enable optimized security tests:**
+
    ```bash
    cp .github/workflows/security-tests-optimized.yml .github/workflows/security-tests.yml
    git add .github/workflows/security-tests.yml
@@ -82,9 +84,11 @@ This optimization package includes:
 ## 📚 Documentation Overview
 
 ### 1. Optimization Report
+
 **File:** [CI_CD_OPTIMIZATION_REPORT.md](./CI_CD_OPTIMIZATION_REPORT.md)
 
 **Contents:**
+
 - Executive summary with key findings
 - Detailed analysis of each workflow
 - Performance benchmarks
@@ -97,9 +101,11 @@ This optimization package includes:
 ---
 
 ### 2. Implementation Guide
+
 **File:** [CI_CD_OPTIMIZATION_IMPLEMENTATION_GUIDE.md](./CI_CD_OPTIMIZATION_IMPLEMENTATION_GUIDE.md)
 
 **Contents:**
+
 - Phase-by-phase implementation plan
 - Code examples for each optimization
 - Composite action creation
@@ -112,9 +118,11 @@ This optimization package includes:
 ---
 
 ### 3. Before/After Comparison
+
 **File:** [CI_CD_BEFORE_AFTER_COMPARISON.md](./CI_CD_BEFORE_AFTER_COMPARISON.md)
 
 **Contents:**
+
 - Visual workflow diagrams
 - Line-by-line code comparisons
 - Timing breakdowns
@@ -128,6 +136,7 @@ This optimization package includes:
 ## 🎯 Implementation Phases
 
 ### Phase 1: Quick Wins (2 hours, 30% improvement)
+
 - ✅ Remove Docker installation steps
 - ✅ Enable Go module caching
 - ✅ Add path filters
@@ -138,6 +147,7 @@ This optimization package includes:
 ---
 
 ### Phase 2: Parallelization (4 hours, 25% additional improvement)
+
 - ✅ Parallelize test.yml jobs
 - ✅ Convert security tests to matrix
 - ✅ Optimize job dependencies
@@ -147,6 +157,7 @@ This optimization package includes:
 ---
 
 ### Phase 3: Composite Actions (6 hours, 15% improvement)
+
 - ✅ Create reusable composite actions
 - ✅ Eliminate code duplication
 - ✅ Improve maintainability
@@ -156,6 +167,7 @@ This optimization package includes:
 ---
 
 ### Phase 4: Advanced Optimizations (8 hours, 10% improvement)
+
 - ✅ Optimize self-hosted runners
 - ✅ Set up local Docker registry
 - ✅ Implement cache warming
@@ -169,11 +181,13 @@ This optimization package includes:
 ### 1. Parallel Job Execution
 
 **Before:**
+
 ```
 unit (5m) → integration (8m) → build (3m) = 16 minutes
 ```
 
 **After:**
+
 ```
 unit (5m) ┐
           ├→ build (3m) = 8 minutes
@@ -204,6 +218,7 @@ strategy:
 ### 3. Optimized Caching
 
 **Before:**
+
 ```yaml
 - uses: actions/setup-go@v5
   with:
@@ -212,6 +227,7 @@ strategy:
 ```
 
 **After:**
+
 ```yaml
 - uses: actions/setup-go@v5
   with:
@@ -230,6 +246,7 @@ strategy:
 **Before:** 40 lines of Go setup repeated in 8 workflows
 
 **After:**
+
 ```yaml
 - uses: ./.github/actions/setup-go-cached
 ```
@@ -271,6 +288,7 @@ strategy:
 ### Before You Start
 
 1. **Verify runner capacity:**
+
    ```bash
    # Check CPU cores
    nproc
@@ -286,11 +304,13 @@ strategy:
    - Disk: 50+ GB free
 
 2. **Backup current workflows:**
+
    ```bash
    cp -r .github/workflows .github/workflows-backup
    ```
 
 3. **Test on feature branch first:**
+
    ```bash
    git checkout -b optimize/ci-improvements
    # Make changes
@@ -305,6 +325,7 @@ strategy:
 **Issue:** Jobs fail due to resource contention
 
 **Solution:**
+
 ```yaml
 strategy:
   max-parallel: 4  # Limit concurrent jobs
@@ -315,6 +336,7 @@ strategy:
 **Issue:** Cache misses are high
 
 **Solution:**
+
 - Verify cache key uses go.sum
 - Check runner disk space
 - Monitor cache size (should be < 2GB)
@@ -324,6 +346,7 @@ strategy:
 **Issue:** Tests are flaky in parallel
 
 **Solution:**
+
 - Add test isolation
 - Use `-failfast=false`
 - Investigate race conditions with `-race` flag
@@ -355,6 +378,7 @@ python3 scripts/analyze-workflow-performance.py
 ### Track Metrics
 
 Monitor these weekly:
+
 - Average workflow duration
 - Cache hit rate
 - Test pass rate
@@ -423,21 +447,25 @@ After implementation, verify:
 ## 🎉 Expected Impact Summary
 
 **Time Savings:**
+
 - 25-35 minutes saved per PR
 - 600 minutes saved per week (20 PRs)
 - ~40 hours saved per month
 
 **Developer Experience:**
+
 - 56% faster feedback loops
 - Reduced context switching
 - Earlier detection of issues
 
 **Infrastructure:**
+
 - 62% reduction in compute usage
 - Better runner utilization (70-85%)
 - Lower operational costs
 
 **Code Quality:**
+
 - Same test coverage
 - Better organized workflows
 - Easier to maintain

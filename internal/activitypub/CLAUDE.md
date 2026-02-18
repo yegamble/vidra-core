@@ -53,17 +53,20 @@ if err := verifier.Verify(req); err != nil {
 ## Endpoints
 
 ### Discovery
+
 - `GET /.well-known/webfinger?resource={uri}` - Actor lookup
 - `GET /.well-known/nodeinfo` - NodeInfo discovery
 - `GET /nodeinfo/2.0` - Instance metadata
 
 ### Actor
+
 - `GET /users/{username}` - Actor profile (Accept: application/activity+json)
 - `GET /users/{username}/outbox` - Public activities
 - `GET /users/{username}/followers` - Follower collection
 - `GET /users/{username}/following` - Following collection
 
 ### Inbox
+
 - `POST /inbox` - Shared inbox (optimized)
 - `POST /users/{username}/inbox` - Per-user inbox
 
@@ -148,6 +151,7 @@ PUBLIC_BASE_URL=https://video.example.com
 ## Interoperability Testing
 
 Test federation with:
+
 - **Mastodon**: `docker run -p 3000:3000 tootsuite/mastodon`
 - **PeerTube**: Official test instance
 - **ActivityPub.rocks**: Validation suite

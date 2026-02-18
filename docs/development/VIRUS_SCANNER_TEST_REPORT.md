@@ -28,6 +28,7 @@ A critical P1 security vulnerability in the virus scanning retry logic has been 
 **Attack Vector**: Network interruption during virus scan → Infected file accepted
 
 **Impact**:
+
 - Malware distribution to users
 - IPFS network pollution
 - Platform reputation damage
@@ -40,6 +41,7 @@ A critical P1 security vulnerability in the virus scanning retry logic has been 
 **Solution**: Strict retry logic with mandatory scanning before acceptance
 
 **Key Changes**:
+
 1. Explicit error tracking across retry attempts
 2. Context-aware timeout enforcement
 3. Strict fallback mode as production default
@@ -234,6 +236,7 @@ Success Rate: 100%
 ### Deployment Configuration
 
 **Required Environment Variables**:
+
 ```bash
 VIRUS_SCAN_ENABLED=true
 CLAMAV_ADDRESS=localhost:3310
@@ -246,6 +249,7 @@ REJECT_ON_SCAN_WARNING=true
 ```
 
 **Database Migration**:
+
 ```bash
 # Apply migration 057_add_virus_scan_log.sql
 make migrate
@@ -254,6 +258,7 @@ make migrate
 ### Post-Deployment Validation
 
 **Health Checks**:
+
 ```bash
 # 1. Check ClamAV connectivity
 curl http://localhost:8080/api/v1/health/clamav
@@ -317,18 +322,22 @@ ORDER BY infected_count DESC;
 ### If P1 Vulnerability Resurfaces
 
 **Indicators**:
+
 - Infected files in virus_scan_log with `scan_result = 'clean'`
 - Files accepted during ClamAV outages
 - Scan failures not properly rejected
 
 **Immediate Actions**:
+
 1. **Stop Processing**: Pause all uploads immediately
+
    ```bash
    export VIRUS_SCAN_ENABLED=false
    docker compose restart app
    ```
 
 2. **Identify Affected Files**:
+
    ```sql
    SELECT * FROM virus_scan_log
    WHERE scan_result = 'warning' OR scan_result = 'clean'
@@ -336,6 +345,7 @@ ORDER BY infected_count DESC;
    ```
 
 3. **Quarantine Suspicious Files**:
+
    ```bash
    # Move to quarantine and rescan
    ./scripts/emergency-quarantine.sh
@@ -407,6 +417,7 @@ All test data used is documented in `/postman/test-files/security/README.md`
 ### Appendix B: Performance Baseline
 
 Pre-fix baseline measurements for comparison:
+
 - Small file scan: 7ms (vs 8ms post-fix)
 - Large file scan: 3.9s (vs 4.1s post-fix)
 - Memory overhead: 28MB (vs 32MB post-fix)

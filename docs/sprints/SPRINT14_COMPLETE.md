@@ -295,6 +295,7 @@ type ActivityPubActor struct {
 #### Endpoints (20 total)
 
 **Instance Peer Management (6 endpoints)**
+
 - `GET /api/v1/admin/redundancy/instances` - List instance peers
 - `POST /api/v1/admin/redundancy/instances` - Register instance peer
 - `GET /api/v1/admin/redundancy/instances/{id}` - Get instance peer
@@ -303,6 +304,7 @@ type ActivityPubActor struct {
 - `POST /api/v1/admin/redundancy/instances/discover` - Discover and register instance
 
 **Redundancy Management (6 endpoints)**
+
 - `POST /api/v1/admin/redundancy/create` - Create redundancy
 - `GET /api/v1/admin/redundancy/redundancies/{id}` - Get redundancy
 - `DELETE /api/v1/admin/redundancy/redundancies/{id}` - Delete redundancy
@@ -311,6 +313,7 @@ type ActivityPubActor struct {
 - `GET /api/v1/redundancy/videos/{id}/redundancies` - List video redundancies (public)
 
 **Policy Management (6 endpoints)**
+
 - `GET /api/v1/admin/redundancy/policies` - List policies
 - `POST /api/v1/admin/redundancy/policies` - Create policy
 - `GET /api/v1/admin/redundancy/policies/{id}` - Get policy
@@ -319,6 +322,7 @@ type ActivityPubActor struct {
 - `POST /api/v1/admin/redundancy/policies/evaluate` - Evaluate policies
 
 **Statistics (2 endpoints)**
+
 - `GET /api/v1/admin/redundancy/stats` - Get statistics
 - `GET /api/v1/redundancy/videos/{id}/health` - Get video health (public)
 
@@ -339,11 +343,13 @@ type ActivityPubActor struct {
 #### Test Coverage
 
 **InstancePeer Tests (11 tests)**
+
 - `TestInstancePeer_Validate` - 5 test cases
 - `TestInstancePeer_CalculateHealthScore` - 6 test cases
 - `TestInstancePeer_HasCapacity` - 4 test cases
 
 **VideoRedundancy Tests (20 tests)**
+
 - `TestVideoRedundancy_Validate` - 6 test cases
 - `TestVideoRedundancy_CalculateProgress` - 4 test cases
 - `TestVideoRedundancy_CanRetry` - 4 test cases
@@ -351,11 +357,13 @@ type ActivityPubActor struct {
 - `TestVideoRedundancy_StateTransitions` - 4 test cases (MarkSyncing, MarkSynced, MarkFailed, MarkCancelled)
 
 **RedundancyPolicy Tests (7 tests)**
+
 - `TestRedundancyPolicy_Validate` - 4 test cases
 - `TestRedundancyPolicy_ShouldEvaluate` - 4 test cases
 - `TestRedundancyPolicy_CalculateNextEvaluation` - 1 test case
 
 **Validation Tests (4 tests)**
+
 - `TestValidateRedundancyStatus` - 7 test cases (all statuses + invalid)
 - `TestValidateRedundancyStrategy` - 7 test cases (all strategies + invalid)
 

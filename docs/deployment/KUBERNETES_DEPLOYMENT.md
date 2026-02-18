@@ -24,6 +24,7 @@ This guide covers deploying Athena to a Kubernetes cluster with full production 
 ### Cluster Requirements
 
 **Minimum Resources:**
+
 - 3 worker nodes (t3.xlarge or equivalent)
 - 12 CPU cores total
 - 24GB RAM total
@@ -31,6 +32,7 @@ This guide covers deploying Athena to a Kubernetes cluster with full production 
 - LoadBalancer support or Ingress controller
 
 **Recommended for Production:**
+
 - 5+ worker nodes (t3.2xlarge or equivalent)
 - 32+ CPU cores total
 - 64GB+ RAM total
@@ -89,12 +91,14 @@ vim k8s/base/secret.yaml
 ```
 
 **Critical secrets to change:**
+
 - `database-url`: PostgreSQL connection string
 - `redis-url`: Redis connection string
 - `jwt-secret`: JWT signing key (minimum 32 characters)
 - `activitypub-key-encryption-key`: For encrypting federation keys
 
 **Optional secrets:**
+
 - `hls-signing-secret`: For private video streaming
 - `s3-access-key` / `s3-secret-key`: For S3 storage
 - `iota-encryption-key`: For IOTA payment wallet encryption
@@ -128,6 +132,7 @@ spec:
 ```
 
 **Storage class options by provider:**
+
 - **AWS EKS**: `gp3`, `gp2`, `io1`, `efs-sc`
 - **GKE**: `standard`, `ssd`, `balanced`
 - **Azure AKS**: `default`, `managed-premium`

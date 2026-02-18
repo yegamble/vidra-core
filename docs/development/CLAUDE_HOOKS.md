@@ -25,12 +25,14 @@ Claude Code hooks are automated scripts that run at specific points in the devel
 **Trigger**: Automatically runs after any code changes are made.
 
 **Purpose**:
+
 - Run linters and formatters
 - Execute affected tests
 - Validate code quality
 - Check for common issues
 
 **Typical Actions**:
+
 ```bash
 # Format code
 gofmt -w .
@@ -47,6 +49,7 @@ git secrets --scan
 
 **Configuration**:
 Set environment variables to customize behavior:
+
 ```bash
 CLAUDE_SKIP_LINT=false       # Skip linting
 CLAUDE_SKIP_TESTS=false      # Skip tests
@@ -58,12 +61,14 @@ CLAUDE_VERBOSE=true          # Verbose output
 **Trigger**: Runs before submitting a user prompt to Claude Code.
 
 **Purpose**:
+
 - Gather context about current state
 - Run pre-checks
 - Prepare environment
 - Validate prerequisites
 
 **Typical Actions**:
+
 ```bash
 # Check git status
 git status --short
@@ -85,6 +90,7 @@ make check-env
 **Purpose**: Automated code review for Go backend changes.
 
 **Capabilities**:
+
 - Architectural consistency checks
 - Security vulnerability scanning
 - Performance optimization suggestions
@@ -92,6 +98,7 @@ make check-env
 - Dependency analysis
 
 **Invocation**:
+
 ```bash
 # Automatic via hooks
 post-code-change.sh → go-backend-reviewer
@@ -101,6 +108,7 @@ claude agent run go-backend-reviewer
 ```
 
 **Review Criteria**:
+
 1. **Architecture Compliance**
    - Layered architecture adherence (domain → usecase → repository)
    - Dependency injection patterns
@@ -129,6 +137,7 @@ claude agent run go-backend-reviewer
 **Purpose**: Comprehensive test coverage analysis and gap identification.
 
 **Capabilities**:
+
 - Test coverage calculation
 - Missing test identification
 - Test quality assessment
@@ -136,6 +145,7 @@ claude agent run go-backend-reviewer
 - Edge case detection
 
 **Invocation**:
+
 ```bash
 # Automatic via hooks
 post-code-change.sh → golang-test-guardian
@@ -145,6 +155,7 @@ claude agent run golang-test-guardian
 ```
 
 **Analysis Features**:
+
 - **Coverage by Package**: Package-level test coverage metrics
 - **Critical Gaps**: Untested security-critical code paths
 - **Edge Cases**: Missing boundary condition tests
@@ -269,6 +280,7 @@ hooks:
 **Issue**: Hook doesn't execute after code changes.
 
 **Solutions**:
+
 1. Check hook is executable: `chmod +x .claude/hooks/*.sh`
 2. Verify git hooks are installed: `ls -la .git/hooks/`
 3. Check CLAUDE_SKIP_* environment variables
@@ -278,6 +290,7 @@ hooks:
 **Issue**: Agent runs but reports errors.
 
 **Solutions**:
+
 1. Update agents: `claude agent update`
 2. Check agent logs: `~/.claude/logs/agents/`
 3. Verify required tools installed:
@@ -290,6 +303,7 @@ hooks:
 **Issue**: Hooks slow down development workflow.
 
 **Solutions**:
+
 1. Limit scope: Only run tests for changed packages
 2. Parallelize: Run agents concurrently
 3. Cache: Enable Go build cache
@@ -313,6 +327,7 @@ git secrets --scan
 ### 2. Use Hooks for Rapid Feedback
 
 Let hooks catch issues early:
+
 - Format issues → Fixed automatically
 - Lint issues → Caught before commit
 - Test failures → Prevented from CI
@@ -321,6 +336,7 @@ Let hooks catch issues early:
 ### 3. Customize for Your Workflow
 
 Adjust hook behavior based on context:
+
 ```bash
 # Quick iteration (skip tests)
 CLAUDE_SKIP_TESTS=true vim internal/usecase/video_service.go
@@ -332,6 +348,7 @@ CLAUDE_SECURITY_MODE=strict git commit
 ### 4. Review Agent Suggestions
 
 Agents provide suggestions, not requirements:
+
 - ✅ Review each suggestion
 - ✅ Understand the reasoning
 - ✅ Apply if beneficial
@@ -342,18 +359,21 @@ Agents provide suggestions, not requirements:
 Hooks complement CI/CD pipelines:
 
 **Local (Hooks)**:
+
 - Fast feedback (seconds)
 - Subset of checks
 - Developer experience
 - Rapid iteration
 
 **CI/CD (GitHub Actions)**:
+
 - Comprehensive checks (minutes)
 - Full test suite
 - Cross-platform validation
 - Deployment gates
 
 **Example CI/CD Integration**:
+
 ```yaml
 # .github/workflows/test.yml
 name: Test

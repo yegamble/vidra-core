@@ -9,6 +9,7 @@ All 14 planned sprints have been successfully completed, delivering a full-featu
 ## Quick Reference
 
 ### High-Level Overview
+
 - **[SPRINT_PLAN.md](./SPRINT_PLAN.md)** - Comprehensive sprint plan with all 14 sprints, timelines, and acceptance criteria
 - **[PROJECT_COMPLETE.md](./PROJECT_COMPLETE.md)** - 100% completion summary and final project metrics
 - **[peertube_compatibility.md](./peertube_compatibility.md)** - PeerTube API compatibility tracking (Sprints A-K)
@@ -17,7 +18,9 @@ All 14 planned sprints have been successfully completed, delivering a full-featu
 ## Sprint Completion Documentation
 
 ### Core Platform (Sprints A-G)
+
 See [peertube_compatibility.md](./peertube_compatibility.md) for:
+
 - **Sprint A:** Channels (Foundations)
 - **Sprint B:** Subscriptions → Channels
 - **Sprint C:** Comments (Threads) + Moderation
@@ -27,7 +30,9 @@ See [peertube_compatibility.md](./peertube_compatibility.md) for:
 - **Sprint G:** Admin + Instance Info + oEmbed
 
 ### Federation (Sprints H-K)
+
 See [peertube_compatibility.md](./peertube_compatibility.md) for:
+
 - **Sprint H:** ATProto Foundations
 - **Sprint I:** ATProto Videos (Publish/Consume)
 - **Sprint J:** ATProto Social (Follows, Likes, Comments)
@@ -36,39 +41,48 @@ See [peertube_compatibility.md](./peertube_compatibility.md) for:
 ### Advanced Features (Sprints 1-14)
 
 #### Sprint 1-2: Video Import & Transcoding
+
 - **[SPRINT1_COMPLETE.md](./SPRINT1_COMPLETE.md)** - Video import system (yt-dlp, 1000+ platforms)
 - **[SPRINT2_COMPLETE.md](./SPRINT2_COMPLETE.md)** - Advanced transcoding (VP9, AV1, multi-codec)
 
 **Progress Files:**
+
 - [SPRINT1_PROGRESS.md](./SPRINT1_PROGRESS.md)
 - [SPRINT1_TEST_SUMMARY.md](./SPRINT1_TEST_SUMMARY.md)
 
 #### Sprint 5-7: Live Streaming
+
 - **[SPRINT5_COMPLETE.md](./SPRINT5_COMPLETE.md)** - RTMP server & stream ingestion
 - **[SPRINT6_COMPLETE.md](./SPRINT6_COMPLETE.md)** - HLS transcoding & playback
 - **[SPRINT7_COMPLETE.md](./SPRINT7_COMPLETE.md)** - Enhanced live streaming (chat, scheduling, analytics)
 
 **Progress & Planning Files:**
+
 - [SPRINT5_PROGRESS.md](./SPRINT5_PROGRESS.md)
 - [SPRINT6_PLAN.md](./SPRINT6_PLAN.md) | [SPRINT6_PROGRESS.md](./SPRINT6_PROGRESS.md)
 - [SPRINT7_PLAN.md](./SPRINT7_PLAN.md) | [SPRINT7_PROGRESS.md](./SPRINT7_PROGRESS.md)
 
 #### Sprint 8-9: P2P Distribution
+
 - **[SPRINT8_COMPLETE.md](./SPRINT8_COMPLETE.md)** - WebTorrent P2P distribution
 - **[SPRINT9_COMPLETE.md](./SPRINT9_COMPLETE.md)** - Advanced P2P (DHT, PEX, smart seeding)
 
 **Progress & Planning Files:**
+
 - [SPRINT8_PLAN.md](./SPRINT8_PLAN.md) | [SPRINT8_PROGRESS.md](./SPRINT8_PROGRESS.md)
 
 #### Sprint 10-11: Analytics
+
 - **[SPRINT10_COMPLETE.md](./SPRINT10_COMPLETE.md)** - Video analytics system with retention curves
 
 #### Sprint 12-14: Plugins & Redundancy
+
 - **[SPRINT12_COMPLETE.md](./SPRINT12_COMPLETE.md)** - Plugin system architecture
 - **[SPRINT13_COMPLETE.md](./SPRINT13_COMPLETE.md)** - Plugin security & marketplace
 - **[SPRINT14_COMPLETE.md](./SPRINT14_COMPLETE.md)** - Video redundancy system
 
 **Progress Files:**
+
 - [SPRINT13_PROGRESS.md](./SPRINT13_PROGRESS.md)
 
 ### Quality Programme (Sprints 15-20)
@@ -84,6 +98,7 @@ See [peertube_compatibility.md](./peertube_compatibility.md) for:
 ## Project Metrics
 
 ### Feature Parity Statistics (Sprints 1-14)
+
 - **Feature Sprints:** 14 (100% complete)
 - **Total Code at Sprint 14:** ~151,000+ lines (75K production + 76K tests)
 - **Tests at Sprint 14:** 750+ passing
@@ -92,6 +107,7 @@ See [peertube_compatibility.md](./peertube_compatibility.md) for:
 > **Current project metrics:** See [README.md](../../README.md) for up-to-date counts (618 Go files, 3,752 tests, 313 test files).
 
 ### Feature Breakdown by Lines of Code
+
 - Sprint 1 (Video Import): ~3,200 lines + 23 tests
 - Sprint 2 (Transcoding): ~1,231 lines + 29 tests
 - Sprint 5 (RTMP): ~3,000 lines + 63 tests
@@ -107,6 +123,7 @@ See [peertube_compatibility.md](./peertube_compatibility.md) for:
 ## Navigation
 
 ### By Topic
+
 - **Video Platform:** Sprints A-G, 1-2
 - **Live Streaming:** Sprints 5-7
 - **P2P & Distribution:** Sprints 8-9, 14
@@ -115,6 +132,7 @@ See [peertube_compatibility.md](./peertube_compatibility.md) for:
 - **Extensibility:** Sprints 12-13
 
 ### By Development Phase
+
 - **Foundation (Sprints A-G):** Basic PeerTube features
 - **Advanced Video (1-2):** Import and transcoding
 - **Live Streaming (5-7):** Real-time capabilities
@@ -126,11 +144,13 @@ See [peertube_compatibility.md](./peertube_compatibility.md) for:
 ## Quick Links
 
 ### Starting Points
+
 - New to the project? Start with [SPRINT_PLAN.md](./SPRINT_PLAN.md)
 - Want completion summary? See [PROJECT_COMPLETE.md](./PROJECT_COMPLETE.md)
 - Need API compatibility info? Check [peertube_compatibility.md](./peertube_compatibility.md)
 
 ### Deep Dives
+
 - Live Streaming: [SPRINT7_COMPLETE.md](./SPRINT7_COMPLETE.md)
 - P2P Distribution: [SPRINT8_COMPLETE.md](./SPRINT8_COMPLETE.md) + [SPRINT9_COMPLETE.md](./SPRINT9_COMPLETE.md)
 - Plugin System: [SPRINT12_COMPLETE.md](./SPRINT12_COMPLETE.md) + [SPRINT13_COMPLETE.md](./SPRINT13_COMPLETE.md)
@@ -139,21 +159,27 @@ See [peertube_compatibility.md](./peertube_compatibility.md) for:
 ## Document Types
 
 ### Complete (✅ Final)
+
 Files ending in `_COMPLETE.md` represent finished sprints with:
+
 - ✅ All acceptance criteria met
 - ✅ Full test coverage
 - ✅ Production-ready code
 - ✅ Complete documentation
 
 ### Progress (📝 Historical)
+
 Files ending in `_PROGRESS.md` show historical development tracking:
+
 - Work-in-progress snapshots
 - Issue tracking
 - Intermediate milestones
 - Now superseded by completion docs
 
 ### Plan (📋 Historical)
+
 Files ending in `_PLAN.md` show original sprint planning:
+
 - Initial scope and estimates
 - Task breakdowns
 - Design decisions
@@ -162,6 +188,7 @@ Files ending in `_PLAN.md` show original sprint planning:
 ## Contributing
 
 When adding new sprint documentation:
+
 1. Create `SPRINT{N}_COMPLETE.md` for final documentation
 2. Include acceptance criteria, test results, and code metrics
 3. Update this README with navigation links

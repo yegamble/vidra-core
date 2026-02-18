@@ -17,12 +17,14 @@ Complete the Quality Programme with final security validation, coverage sign-off
 ### 1. Full Regression and Security Validation (Task 1)
 
 **Regression Suite:**
+
 - ✅ **Tests:** All 3,752 tests passing (zero failures)
 - ✅ **Lint:** golangci-lint with gosec - 0 issues
 - ✅ **Race Detector:** Zero data races detected
 - ✅ **Build:** Clean build with no errors
 
 **Security Validation:**
+
 - ✅ **gosec:** Zero security issues (integrated in golangci-lint)
 - ⚠️  **govulncheck:** 1 known vulnerability documented
   - **GO-2026-4337** - Unexpected session resumption in crypto/tls@go1.25.6
@@ -38,6 +40,7 @@ Complete the Quality Programme with final security validation, coverage sign-off
 **Status:** All 30 per-package coverage thresholds met
 
 **Threshold Adjustments:**
+
 - `internal/usecase/encoding`: 86.0% → 83.5% (adjusted to actual achieved coverage)
 - `internal/usecase/social`: 89.0% → 88.0% (adjusted to actual achieved coverage)
 - `internal/usecase/views`: 97.0% → 94.7% (adjusted to actual achieved coverage)
@@ -47,6 +50,7 @@ Complete the Quality Programme with final security validation, coverage sign-off
 **Rationale:** Thresholds were aspirational rather than ratcheted to actual coverage. Sprint 20 adjusted to match reality per plan guidance. Coverage ratcheting policy documented in maintenance plan to prevent future drift.
 
 **Final Coverage Report:**
+
 - Repository package: 90.0% (30.4 percentage point increase from Sprint 18)
 - Core usecase packages: 80%+ across all subpackages
 - Handler packages: 72.2%-95.9% coverage
@@ -57,6 +61,7 @@ Complete the Quality Programme with final security validation, coverage sign-off
 ### 3. Remove Atlas Targets from Makefile (Task 3)
 
 **Removed:**
+
 - Atlas Migration Management section (lines 623-638)
 - `atlas-install` and `atlas-version` targets
 - `migrate-diff` target (used Atlas CLI)
@@ -65,10 +70,12 @@ Complete the Quality Programme with final security validation, coverage sign-off
 - Default ENV and AUTO_APPROVE variables (Atlas-specific)
 
 **Preserved:**
+
 - All Goose migration targets (`migrate-up`, `migrate-down`, `migrate-status`, `migrate-create`, `migrate-reset`, etc.)
 - Migration section renamed to "Goose Migration Management"
 
 **Verification:**
+
 - `grep -i atlas Makefile` → 0 results ✅
 - `make help | grep -i atlas` → 0 results ✅
 - `make build` → Success ✅
@@ -80,6 +87,7 @@ Complete the Quality Programme with final security validation, coverage sign-off
 **Created:** `CHANGELOG.md` (252 lines) at project root
 
 **Structure:**
+
 - **Overview:** Development timeline, final status (3,752 tests, 62.3% coverage, zero critical vulns)
 - **Feature Parity Programme (Sprints 1-14):** One-line summaries per sprint
   - Sprint 1: Video Import System
@@ -104,6 +112,7 @@ Complete the Quality Programme with final security validation, coverage sign-off
 **Expanded:** `docs/sprints/QUALITY_PROGRAMME.md` Maintenance Plan section
 
 **Added Sections:**
+
 1. **Monthly "Quality Envelope" Review**
    - Coverage drift tracking with specific actions
    - CI runtime regression monitoring (>20% slower flagged)
@@ -157,29 +166,35 @@ Complete the Quality Programme with final security validation, coverage sign-off
 **Verified:** 12 out of 14 checklist items (85.7%)
 
 **Mainline Integrity:**
+
 - ✅ No critical open PRs (15 open PRs, all test coverage or minor bugs, no P0/P1 blocking)
 - ✅ No duplicate PRs
 
 **Security Baseline:**
+
 - ✅ Secrets not present in docs/configs (grep scan clean)
 - ✅ Production refuses insecure defaults (Sprint 15 PR #229)
 - ✅ Command execution protected against injection (Sprint 15 PR #235)
 - ✅ Request size limits enforced (Sprint 15 PR #242)
 
 **API Contract:**
+
 - ✅ OpenAPI validates (20+ spec files in `api/`, CI-validated per Sprint 16)
 - ✅ Endpoints documented (all handler packages covered)
 
 **Testing and Coverage:**
+
 - ✅ Coverage profiles generated (Sprint 20 Task 2)
 - ✅ Package targets achieved (30 packages, all thresholds met)
 - ✅ Flaky tests eliminated (zero `*_flaky_test.go` files, 0% flake rate)
 
 **Documentation Accuracy:**
+
 - ✅ Developer setup verified (Sprint 19)
 - ✅ Runbooks validated (Sprint 19)
 
 **Operational Readiness:**
+
 - ⚠️  Staging deploy + rollback rehearsal (requires staging environment - not available locally)
 - ⚠️  Monitoring alerts validated (requires production monitoring infrastructure)
 
@@ -188,15 +203,18 @@ Complete the Quality Programme with final security validation, coverage sign-off
 ### 7. Sprint 20 Completion Documentation (Task 7)
 
 **Created:**
+
 - `docs/sprints/SPRINT20_COMPLETE.md` (this file)
 
 **Updated Sprint Status:**
+
 1. **QUALITY_PROGRAMME.md:**
    - Sprint 20 acceptance criteria marked ✅
    - Last Updated: 2026-02-15
 
 2. **docs/sprints/README.md:**
    - Added Sprint 20 entry:
+
      ```
      - **[SPRINT20_COMPLETE.md](./SPRINT20_COMPLETE.md)** - Release hardening (full regression, coverage sign-off, CHANGELOG.md, maintenance plan, release checklist)
      ```
@@ -210,6 +228,7 @@ Complete the Quality Programme with final security validation, coverage sign-off
    - Last Updated: 2026-02-15
 
 **Final Metrics:**
+
 - Run `make update-readme-metrics` (no changes - metrics current from Sprint 19)
 - Go Files: 618 (final count)
 - Test Files: 313 (final count)
@@ -266,10 +285,12 @@ Complete the Quality Programme with final security validation, coverage sign-off
 ## Files Modified This Sprint
 
 **Created:**
+
 - `CHANGELOG.md` (252 lines)
 - `docs/sprints/SPRINT20_COMPLETE.md` (this file)
 
 **Modified:**
+
 - `Makefile` (removed Atlas targets, renamed section to "Goose Migration Management")
 - `scripts/coverage-thresholds.txt` (4 threshold adjustments)
 - `docs/sprints/QUALITY_PROGRAMME.md` (maintenance plan expansion, Final Release Checklist updates, Last Updated date)
@@ -282,6 +303,7 @@ Complete the Quality Programme with final security validation, coverage sign-off
 ## Verification Commands
 
 **Regression:**
+
 ```bash
 go test -short -count=1 ./...           # All 3,752 tests pass
 make lint                                # 0 issues
@@ -290,18 +312,21 @@ make build                               # Clean build
 ```
 
 **Security:**
+
 ```bash
 govulncheck ./...                        # 1 standard library vuln (GO-2026-4337)
 # Result: crypto/tls@go1.25.6 → upgrade to go1.25.7 recommended
 ```
 
 **Coverage:**
+
 ```bash
 make coverage-per-package                # All 30 packages meet thresholds
 # Result: 30 checked, 0 failed
 ```
 
 **Makefile:**
+
 ```bash
 grep -i atlas Makefile                   # 0 results (Atlas removed)
 make help | grep -i atlas               # 0 results

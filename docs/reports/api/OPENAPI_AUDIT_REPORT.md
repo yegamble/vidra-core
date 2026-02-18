@@ -1,4 +1,5 @@
 # OpenAPI Documentation Audit Report
+
 **Date:** 2025-11-30
 **Project:** Athena Backend API (PeerTube-Inspired)
 **Auditor:** Claude (Documentation Engineer)
@@ -29,6 +30,7 @@ This audit systematically compared the OpenAPI/Swagger documentation against the
 The following endpoints are **implemented in code but NOT documented** in any OpenAPI specification:
 
 ### 1.1 Live Stream Endpoints
+
 **Location:** `/Users/yosefgamble/github/athena/internal/httpapi/routes.go:293-342`
 
 | Method | Endpoint | Handler | Status |
@@ -39,6 +41,7 @@ The following endpoints are **implemented in code but NOT documented** in any Op
 **Issue:** While `/api/v1/streams/{id}` and related HLS endpoints ARE documented in `openapi_livestreaming.yaml`, the create and list endpoints are missing.
 
 **Recommendation:** Add to `openapi_livestreaming.yaml`:
+
 ```yaml
 /api/v1/streams:
   post:
@@ -89,9 +92,11 @@ The following endpoints are **implemented in code but NOT documented** in any Op
 ```
 
 ### 1.2 Plugin Management Endpoints
+
 **Location:** Documented in `openapi_plugins.yaml` but implementation status unclear
 
 These endpoints are documented but may not be fully implemented:
+
 - `GET /api/v1/admin/plugins`
 - `POST /api/v1/admin/plugins`
 - `PUT /api/v1/admin/plugins/{id}/config`
@@ -101,10 +106,12 @@ These endpoints are documented but may not be fully implemented:
 **Issue:** No corresponding routes found in `routes.go`. The plugin system may be planned but not yet implemented.
 
 **Recommendation:** Either:
+
 1. Implement these endpoints as documented, OR
 2. Move `openapi_plugins.yaml` to a `/api/planned/` directory and add a note that these are future features
 
 ### 1.3 Video Category Endpoints
+
 **Location:** `/Users/yosefgamble/github/athena/api/openapi.yaml:2018-2270`
 
 These endpoints ARE documented in the main `openapi.yaml` but their implementation in handlers needs verification:
@@ -120,10 +127,12 @@ These endpoints ARE documented in the main `openapi.yaml` but their implementati
 **Issue:** No category routes found in `routes.go`. Handler exists at `/Users/yosefgamble/github/athena/internal/httpapi/handlers/video/video_category_handler.go` but routes may not be registered.
 
 **Recommendation:**
+
 1. Add category routes to `routes.go` in the `/api/v1` section
 2. If categories are not yet supported, remove from OpenAPI spec or mark as "planned"
 
 ### 1.4 Chat Endpoints (Stream Chat)
+
 **Location:** Documented in `openapi_chat.yaml`
 
 | Method | Endpoint | Status |
@@ -140,14 +149,17 @@ These endpoints ARE documented in the main `openapi.yaml` but their implementati
 **Issue:** Extensive chat API is documented but no routes are registered in `routes.go`.
 
 **Recommendation:**
+
 1. If chat is planned but not implemented, move to `/api/planned/`
 2. If chat is implemented via WebSocket only, update documentation to clarify this
 3. Add routes if handlers exist but routes were forgotten
 
 ### 1.5 Redundancy Endpoints
+
 **Location:** Documented in `openapi_redundancy.yaml`
 
 All redundancy endpoints are documented but not found in `routes.go`:
+
 - `/api/v1/admin/redundancy/policies`
 - `/api/v1/admin/redundancy/instances`
 - `/api/v1/admin/redundancy/create`
@@ -159,6 +171,7 @@ All redundancy endpoints are documented but not found in `routes.go`:
 **Recommendation:** Move to `/api/planned/` or implement the feature.
 
 ### 1.6 E2EE Messaging Endpoints
+
 **Location:** Documented in main `openapi.yaml:1570-1703`
 
 | Method | Endpoint | Status |
@@ -171,6 +184,7 @@ All redundancy endpoints are documented but not found in `routes.go`:
 **Issue:** End-to-end encryption endpoints documented but not implemented.
 
 **Recommendation:**
+
 1. Handler exists at `/Users/yosefgamble/github/athena/internal/httpapi/handlers/messaging/secure_messages.go`
 2. Add routes to `routes.go` or remove from OpenAPI spec if not ready
 
@@ -179,9 +193,11 @@ All redundancy endpoints are documented but not found in `routes.go`:
 ## 2. Documented but Non-Existent Endpoints
 
 ### 2.1 Payments Endpoints Path Mismatch
+
 **Location:** `openapi_payments.yaml`
 
 **Documented paths:**
+
 ```
 /payments/wallet
 /payments/intents
@@ -189,6 +205,7 @@ All redundancy endpoints are documented but not found in `routes.go`:
 ```
 
 **Actual implementation** (from `routes.go:369-383`):
+
 ```
 /api/v1/payments/wallet
 /api/v1/payments/intents
@@ -200,9 +217,11 @@ All redundancy endpoints are documented but not found in `routes.go`:
 **Fix Required:** Update `openapi_payments.yaml` to use `/api/v1/payments/*` paths.
 
 ### 2.2 Notifications Path Mismatch
+
 **Location:** `docs/openapi_notifications.yaml`
 
 **Documented paths:**
+
 ```
 /notifications
 /notifications/{id}
@@ -210,6 +229,7 @@ All redundancy endpoints are documented but not found in `routes.go`:
 ```
 
 **Actual implementation** (from `routes.go:357-366`):
+
 ```
 /api/v1/notifications
 /api/v1/notifications/{id}
@@ -221,6 +241,7 @@ All redundancy endpoints are documented but not found in `routes.go`:
 **Fix Required:** Update `docs/openapi_notifications.yaml` to use `/api/v1/notifications/*` paths.
 
 ### 2.3 User Ratings Endpoint
+
 **Documented:** `/api/v1/user/ratings` in `openapi_ratings_playlists.yaml`
 **Actual:** `/api/v1/users/me/ratings` in `routes.go:243`
 
@@ -229,6 +250,7 @@ All redundancy endpoints are documented but not found in `routes.go`:
 **Fix Required:** Update OpenAPI to use `/api/v1/users/me/ratings`
 
 ### 2.4 Watch Later Endpoint
+
 **Documented:** `/api/v1/playlists/watch-later` in `openapi_ratings_playlists.yaml`
 **Actual:** `/api/v1/users/me/watch-later` in `routes.go:248`
 
@@ -241,6 +263,7 @@ All redundancy endpoints are documented but not found in `routes.go`:
 ## 3. Schema Mismatches
 
 ### 3.1 User Schema
+
 **OpenAPI Location:** `api/openapi.yaml` (components/schemas/User)
 **Domain Model:** `/Users/yosefgamble/github/athena/internal/domain/user.go:9-29`
 
@@ -255,6 +278,7 @@ All redundancy endpoints are documented but not found in `routes.go`:
 | `avatar` | ❓ Needs verification | ✅ Custom nested structure | May need update |
 
 **Recommendation:** Review and add these fields to the User schema in OpenAPI:
+
 ```yaml
 User:
   type: object
@@ -309,6 +333,7 @@ User:
 ```
 
 ### 3.2 Video Schema
+
 **OpenAPI Location:** `api/openapi.yaml` (components/schemas/Video)
 **Domain Model:** `/Users/yosefgamble/github/athena/internal/domain/video.go:43-83`
 
@@ -471,9 +496,11 @@ VideoMetadata:
 ```
 
 ### 3.3 Response Wrapper Schema
+
 **Implementation:** `/Users/yosefgamble/github/athena/internal/httpapi/shared/response.go:11-30`
 
 All API responses use a standard wrapper:
+
 ```go
 type Response struct {
     Data    interface{} `json:"data,omitempty"`
@@ -486,6 +513,7 @@ type Response struct {
 **Issue:** Most OpenAPI specs show responses WITHOUT this wrapper, directly returning the data objects.
 
 **Example from `openapi.yaml`:**
+
 ```yaml
 /api/v1/videos:
   get:
@@ -500,6 +528,7 @@ type Response struct {
 ```
 
 **Actual response:**
+
 ```json
 {
   "data": [/* array of videos */],
@@ -579,6 +608,7 @@ Then update all endpoint responses to use this wrapper.
 ### 4.1 Missing Security Schemes in Specialized Specs
 
 **Issue:** Several OpenAPI files don't define the `bearerAuth` security scheme:
+
 - `openapi_payments.yaml`
 - `openapi_chat.yaml`
 - `openapi_redundancy.yaml`
@@ -599,11 +629,13 @@ components:
 **Issue:** Some endpoints that require authentication don't have `security` defined in their OpenAPI specs.
 
 **Example from routes.go:**
+
 ```go
 r.With(middleware.Auth(cfg.JWTSecret)).Post("/api/v1/videos", video.CreateVideoHandler(deps.VideoRepo))
 ```
 
 But OpenAPI may not show:
+
 ```yaml
 security:
   - bearerAuth: []
@@ -616,6 +648,7 @@ security:
 ## 5. HTTP Method Discrepancies
 
 ### 5.1 Comment Flagging
+
 **Documented:** `POST /api/v1/comments/{commentId}/flag`
 **Implemented:** `POST /api/v1/comments/{commentId}/flag` ✅ Matches
 
@@ -625,6 +658,7 @@ security:
 **Issue:** DELETE method for unflagging exists but not documented.
 
 **Fix:** Add to `openapi_comments.yaml`:
+
 ```yaml
 /api/v1/comments/{commentId}/flag:
   delete:
@@ -642,11 +676,13 @@ security:
 ### 6.1 Inconsistent Pagination Parameters
 
 **Implementation** (from `shared` package):
+
 - Supports both `page`/`pageSize` AND `limit`/`offset`
 - Default limit: 20
 - Max limit: 100 (in most handlers)
 
 **OpenAPI Documentation:**
+
 - Some specs use `page`/`pageSize`
 - Some use `limit`/`offset`
 - Some use both
@@ -695,9 +731,11 @@ Add note: "Both pagination styles are supported for backward compatibility."
 ## 7. Missing Features in Documentation
 
 ### 7.1 Two-Factor Authentication
+
 **Status:** ✅ Well documented in `openapi_auth_2fa.yaml`
 
 Endpoints match implementation in `routes.go:82-90`:
+
 - `POST /auth/2fa/setup`
 - `POST /auth/2fa/verify-setup`
 - `POST /auth/2fa/disable`
@@ -707,21 +745,26 @@ Endpoints match implementation in `routes.go:82-90`:
 **Note:** Paths missing `/api/v1` prefix in some docs. Actual routes are under `/auth/2fa/*` (not `/api/v1/auth/2fa/*`).
 
 ### 7.2 Video Imports
+
 **Status:** ✅ Documented in `openapi_imports.yaml`
 
 Implementation matches (from `routes.go:193-208`):
+
 - `POST /api/v1/videos/imports/`
 - `GET /api/v1/videos/imports/`
 - `GET /api/v1/videos/imports/{id}`
 - `DELETE /api/v1/videos/imports/{id}`
 
 ### 7.3 Channels
+
 **Status:** ⚠️ Partially documented in `openapi_channels.yaml`
 
 Missing endpoints:
+
 - `GET /api/v1/users/me/channels` (routes.go:240)
 
 Documented but need verification:
+
 - All other channel endpoints appear to match
 
 ---
@@ -729,7 +772,9 @@ Documented but need verification:
 ## 8. Federation (ActivityPub) Documentation
 
 ### 8.1 Well-Known Endpoints
+
 **Implementation** (from `routes.go:103-124`):
+
 ```
 GET /.well-known/webfinger
 GET /.well-known/nodeinfo
@@ -749,12 +794,15 @@ GET /users/{username}/following
 **Issue:** ActivityPub endpoints should be documented separately or with clear notes that they follow ActivityPub spec.
 
 **Recommendation:**
+
 1. Create `openapi_activitypub.yaml` for well-known endpoints
 2. Reference ActivityPub specification
 3. Document how these interact with native API
 
 ### 8.2 Federation Admin Endpoints
+
 **Implementation** (routes.go:465-507):
+
 ```
 GET /api/v1/admin/federation/jobs
 GET /api/v1/admin/federation/jobs/{id}
@@ -819,6 +867,7 @@ DELETE /api/v1/admin/federation/actors/{actor}
 ### 10.2 Use OpenAPI Linting
 
 Install and configure Spectral or similar linter:
+
 ```bash
 npm install -g @stoplight/spectral-cli
 spectral lint api/*.yaml
@@ -827,6 +876,7 @@ spectral lint api/*.yaml
 ### 10.3 Automated Schema Validation
 
 Create a test that:
+
 1. Parses all Go structs with JSON tags
 2. Parses all OpenAPI schemas
 3. Compares them and reports mismatches
@@ -836,6 +886,7 @@ Example location: `/Users/yosefgamble/github/athena/test/openapi_validation_test
 ### 10.4 Documentation Standards Document
 
 Create `/Users/yosefgamble/github/athena/api/README.md` with:
+
 - When to create a new OpenAPI file vs extending existing
 - Naming conventions for operationIds
 - Required fields for all endpoint definitions
@@ -905,6 +956,7 @@ The Athena API implementation is generally well-structured, but the OpenAPI docu
 5. **Inconsistent response format documentation** (missing wrapper schema)
 
 **Next Steps:**
+
 1. Fix the 5 critical issues (total ~2.5 hours)
 2. Decide whether to implement or remove the 4 uncertain feature sets (plugins, chat, redundancy, E2EE)
 3. Update schemas to match domain models
@@ -916,6 +968,7 @@ With these fixes, the OpenAPI documentation will accurately reflect the API impl
 
 **Report Generated:** 2025-11-30
 **Files Analyzed:**
+
 - `/Users/yosefgamble/github/athena/internal/httpapi/routes.go`
 - `/Users/yosefgamble/github/athena/api/*.yaml` (17 files)
 - `/Users/yosefgamble/github/athena/docs/openapi_notifications.yaml`

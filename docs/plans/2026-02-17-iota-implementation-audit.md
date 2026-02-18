@@ -49,7 +49,7 @@ Worktree: No
 ## Prerequisites
 
 - Docker available for running `iotaledger/iota-node` images
-- Understanding of IOTA Rebased JSON-RPC API (documented at https://docs.iota.org/developer/references/iota-api)
+- Understanding of IOTA Rebased JSON-RPC API (documented at <https://docs.iota.org/developer/references/iota-api>)
 
 ## Context for Implementer
 

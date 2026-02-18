@@ -283,7 +283,7 @@ Worktree: No
 - If `SMTPMode == "docker"`, use Mailpit defaults (host=localhost, port=1025, no auth)
 - The test email button is optional UX — SMTP config saves even without testing
 - Include a text field for "recipient email" in the template
-- For docker mode, add a note: "Check Mailpit UI at http://localhost:8025 to see the test email"
+- For docker mode, add a note: "Check Mailpit UI at <http://localhost:8025> to see the test email"
 
 **Definition of Done:**
 
@@ -349,6 +349,7 @@ Worktree: No
 ## Runtime Environment
 
 **Dev Mode (Mailpit):**
+
 ```bash
 docker compose --profile mail up -d   # Start Mailpit
 go run cmd/server/main.go             # Start Athena (enters setup mode if not configured)
@@ -357,6 +358,7 @@ go run cmd/server/main.go             # Start Athena (enters setup mode if not c
 ```
 
 **Verification checklist:**
+
 - Setup wizard email step renders with 3 mode options (Built-in Mailpit / External SMTP / Disabled)
 - Test email button sends to Mailpit (visible in Mailpit UI at :8025)
 - Email verification routes respond when `ENABLE_EMAIL=true`

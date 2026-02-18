@@ -8,7 +8,8 @@ Successfully implemented comprehensive transaction management across all critica
 
 ### 1. Missing Transaction Management in Repositories
 
-#### Issues Found:
+#### Issues Found
+
 - **user_repository.go**: Create method performed two separate operations (user creation + default channel creation) without atomic guarantees
 - **subscription_repository.go**: Check-then-insert pattern susceptible to race conditions
 - **upload_repository.go**: RecordChunk method had non-atomic check-then-update logic
@@ -18,23 +19,28 @@ Successfully implemented comprehensive transaction management across all critica
 
 ### 2. Specific Operations Needing Transactions
 
-#### User Repository:
+#### User Repository
+
 - **Create()**: User + default channel creation must be atomic
 - **Update()**: Complex multi-field updates need consistency
 - **Delete()**: Cascade deletions require transaction boundaries
 
-#### Subscription Repository:
+#### Subscription Repository
+
 - **SubscribeToChannel()**: Check ownership then insert subscription atomically
 
-#### Upload Repository:
+#### Upload Repository
+
 - **RecordChunk()**: Check if chunk exists then update atomically
 
-#### Video Repository:
+#### Video Repository
+
 - **Create()**: Complex insert with channel assignment
 - **Update()**: Multi-field updates including S3 migration data
 - **Delete()**: Ensure related data consistency
 
-#### Comment & Rating Repositories:
+#### Comment & Rating Repositories
+
 - Support for being part of larger transactional workflows
 
 ## Implementation Details
@@ -42,9 +48,11 @@ Successfully implemented comprehensive transaction management across all critica
 ### Core Transaction Infrastructure
 
 #### `/home/user/athena/internal/repository/transaction_manager.go`
+
 Created comprehensive transaction management system with:
 
 **Key Features:**
+
 - Context-aware transaction propagation
 - Multiple isolation levels (Read Committed, Serializable, Read-Only)
 - Automatic rollback on errors and panics
@@ -52,6 +60,7 @@ Created comprehensive transaction management system with:
 - Transaction context passing via Go context
 
 **Core Functions:**
+
 ```go
 // Main transaction execution
 WithTransaction(ctx, opts, func(tx *sqlx.Tx) error)
@@ -70,33 +79,40 @@ GetExecutor(ctx, db) Executor
 ### Repository Updates
 
 #### 1. User Repository (`/home/user/athena/internal/repository/user_repository.go`)
+
 - Added TransactionManager field
 - Create method now wraps user + channel creation in transaction
 - Update/Delete methods support transaction context via GetExecutor
 
 #### 2. Subscription Repository (`/home/user/athena/internal/repository/subscription_repository.go`)
+
 - SubscribeToChannel now atomic (check ownership + insert)
 - Prevents race conditions in concurrent subscriptions
 
 #### 3. Upload Repository (`/home/user/athena/internal/repository/upload_repository.go`)
+
 - RecordChunk atomic check-then-update prevents duplicate chunks
 - Ensures upload session consistency
 
 #### 4. Video Repository (`/home/user/athena/internal/repository/video_repository.go`)
+
 - All CRUD operations support transaction context
 - Complex channel assignment logic protected by transactions
 
 #### 5. Comment Repository (`/home/user/athena/internal/repository/comment_repository.go`)
+
 - Create method supports transaction context
 - Enables atomic comment creation with other operations
 
 #### 6. Rating Repository (`/home/user/athena/internal/repository/rating_repository.go`)
+
 - SetRating supports transaction context
 - Enables atomic rating updates with video statistics
 
 ## Transaction Management Patterns Implemented
 
 ### 1. Begin/Commit/Rollback Pattern
+
 ```go
 func (tm *TransactionManager) WithTransaction(ctx context.Context, opts *TxOptions, fn func(*sqlx.Tx) error) error {
     tx, err := tm.db.BeginTxx(ctx, sqlOpts)
@@ -123,6 +139,7 @@ func (tm *TransactionManager) WithTransaction(ctx context.Context, opts *TxOptio
 ```
 
 ### 2. Context-Aware Transactions
+
 ```go
 // Repository methods check context for existing transaction
 exec := GetExecutor(ctx, r.db)
@@ -130,6 +147,7 @@ result, err := exec.ExecContext(ctx, query, args...)
 ```
 
 ### 3. Error Handling and Rollback
+
 - Automatic rollback on any error
 - Panic recovery with rollback
 - Detailed error messages for debugging
@@ -137,6 +155,7 @@ result, err := exec.ExecContext(ctx, query, args...)
 ## Test Coverage Added
 
 ### Transaction Tests (`/home/user/athena/internal/repository/transaction_test.go`)
+
 - Basic transaction commit/rollback
 - Panic recovery and rollback
 - User repository transaction tests
@@ -147,6 +166,7 @@ result, err := exec.ExecContext(ctx, query, args...)
 - Comment/Rating transaction support
 
 ### Integration Tests (`/home/user/athena/internal/repository/transaction_integration_test.go`)
+
 - Multi-repository transactions
 - Complex workflow atomicity
 - Concurrent transaction handling
@@ -156,49 +176,59 @@ result, err := exec.ExecContext(ctx, query, args...)
 ## ACID Properties Ensured
 
 ### Atomicity
+
 - All multi-step operations now execute completely or not at all
 - User + channel creation is atomic
 - Complex video operations maintain consistency
 
 ### Consistency
+
 - Database constraints enforced within transaction boundaries
 - Foreign key relationships maintained
 - Business logic invariants preserved
 
 ### Isolation
+
 - Configurable isolation levels
 - Serializable transactions for critical operations
 - Read-only transactions for queries
 
 ### Durability
+
 - Committed transactions persist despite failures
 - Proper error handling ensures data integrity
 
 ## Edge Cases and Concerns Addressed
 
 ### 1. Schema Evolution
+
 - Video repository detects channel_id column presence
 - Backward compatibility with legacy schemas
 
 ### 2. Idempotent Operations
+
 - Upload chunk recording handles duplicates gracefully
 - Subscription creation uses ON CONFLICT DO NOTHING
 
 ### 3. Concurrent Access
+
 - Proper locking via transaction isolation
 - Retry logic for deadlock resolution
 
 ### 4. Cross-Repository Transactions
+
 - Context propagation enables multi-repository atomicity
 - GetExecutor pattern allows flexible transaction usage
 
 ### 5. Performance Considerations
+
 - Read-only transactions for better performance
 - Configurable isolation levels balance consistency vs performance
 
 ## Migration Guide for Developers
 
 ### Using Transactions in Service Layer
+
 ```go
 // Single repository transaction
 err := userRepo.Create(ctx, user, passwordHash)
@@ -220,6 +250,7 @@ err := tm.WithTransaction(ctx, nil, func(tx *sqlx.Tx) error {
 ```
 
 ### Repository Method Pattern
+
 ```go
 func (r *repository) Method(ctx context.Context, args...) error {
     // Get executor (transaction if in context, otherwise DB)
@@ -234,11 +265,13 @@ func (r *repository) Method(ctx context.Context, args...) error {
 ## Recommendations
 
 ### Immediate Actions
+
 1. ✅ All critical repositories now have transaction support
 2. ✅ Test coverage demonstrates transaction behavior
 3. ✅ Documentation provided for transaction usage
 
 ### Future Enhancements
+
 1. Add metrics for transaction duration and retry counts
 2. Implement distributed transaction support for microservices
 3. Add transaction middleware for HTTP handlers

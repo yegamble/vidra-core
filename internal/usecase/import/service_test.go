@@ -206,6 +206,10 @@ func (m *MockVideoRepository) GetVideosForMigration(ctx context.Context, limit i
 	return args.Get(0).([]*domain.Video), args.Error(1)
 }
 
+func (m *MockVideoRepository) GetByChannelID(_ context.Context, _ string, _, _ int) ([]*domain.Video, int64, error) {
+	return nil, 0, nil
+}
+
 type MockEncodingRepository struct {
 	mock.Mock
 }

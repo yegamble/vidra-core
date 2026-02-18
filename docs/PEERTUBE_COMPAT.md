@@ -42,15 +42,19 @@ A compatibility tag is now present across these specs for matching operations:
 These are current intentional differences from strict PeerTube shape parity:
 
 1. Pagination style is mixed by endpoint family.
+
 - Some endpoints use `page/pageSize`; others use `limit/offset`.
 
 2. Response envelope conventions differ by handler family.
+
 - Many handlers return wrapped payloads (for example `data`, `pagination`, `success`) rather than a single global envelope standard.
 
 3. Legacy compatibility routes are retained.
+
 - User-based subscription routes remain available while channel-based subscriptions are canonical.
 
 4. Federation is multi-protocol.
+
 - Athena includes ATProto in addition to ActivityPub; this extends beyond strict PeerTube scope.
 
 ## Test Verification

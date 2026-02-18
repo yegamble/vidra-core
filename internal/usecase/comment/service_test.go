@@ -158,6 +158,10 @@ func (m *mockVideoRepo) CreateRemoteVideo(ctx context.Context, video *domain.Vid
 	return m.Called(ctx, video).Error(0)
 }
 
+func (m *mockVideoRepo) GetByChannelID(_ context.Context, _ string, _, _ int) ([]*domain.Video, int64, error) {
+	return nil, 0, nil
+}
+
 type mockUserRepo struct{ mock.Mock }
 
 func (m *mockUserRepo) GetByID(ctx context.Context, id string) (*domain.User, error) {

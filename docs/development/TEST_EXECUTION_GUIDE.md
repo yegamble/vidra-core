@@ -15,6 +15,7 @@ This guide provides instructions for running the comprehensive security test sui
 ### Prerequisites
 
 1. **ClamAV Server Running** (for integration tests):
+
    ```bash
    docker run -d -p 3310:3310 --name clamav clamav/clamav:latest
 
@@ -50,6 +51,7 @@ go test -v ./internal/security -run "TestVirusScanner_(Exhausted|NonSeekable|See
 ```
 
 **Tests Executed**:
+
 - `TestVirusScanner_ExhaustedReaderVulnerability` (PRIMARY)
 - `TestVirusScanner_NonSeekableReaderRetry`
 - `TestVirusScanner_SeekableReaderRetrySuccess`
@@ -67,11 +69,13 @@ go test -v ./internal/security -run "TestVirusScanner_BusinessLogic"
 ```
 
 **Tests Executed**:
+
 - `TestVirusScanner_BusinessLogic_CleanFilesPassthrough`
 - `TestVirusScanner_BusinessLogic_InfectedFilesBlocked`
 - `TestVirusScanner_BusinessLogic_ErrorHandlingConsistency`
 
 **Success Criteria**:
+
 - Clean files still pass ✓
 - Infected files still blocked ✓
 - Error handling unchanged ✓
@@ -87,6 +91,7 @@ go test -v ./internal/security -run "TestVirusScanner_(ZeroByte|FailsMid|Differe
 ```
 
 **Tests Executed**:
+
 - `TestVirusScanner_ZeroByteStream`
 - `TestVirusScanner_StreamFailsMidRead`
 - `TestVirusScanner_DifferentErrorTypes`
@@ -104,11 +109,13 @@ go test -v ./internal/security -run "TestVirusScanner_(Concurrent.*Stream|.*Stre
 ```
 
 **Tests Executed**:
+
 - `TestVirusScanner_ConcurrentStreamScans`
 - `TestVirusScanner_LargeStreamMemoryUsage`
 - `TestVirusScanner_NetworkErrorRetry`
 
 **Success Criteria**:
+
 - No race conditions
 - Memory usage < 50MB for 10MB file
 - Network retries work or fail safely
@@ -151,6 +158,7 @@ open coverage.html
 ```
 
 **Target Coverage**:
+
 - `ScanStream` method: 100%
 - Retry logic: 100%
 - Error handling: 100%
@@ -164,17 +172,20 @@ open coverage.html
 **Test**: `TestVirusScanner_ExhaustedReaderVulnerability`
 
 **What it tests**:
+
 - Simulates non-seekable reader (HTTP body) that fails on first attempt
 - Reader becomes exhausted after initial read
 - Retry logic attempts to scan exhausted reader
 - **CRITICAL**: Infected EICAR file must NEVER be marked clean
 
 **Expected Behavior BEFORE Fix**:
+
 ```
 FAIL: CRITICAL SECURITY VULNERABILITY: Infected EICAR file marked as CLEAN!
 ```
 
 **Expected Behavior AFTER Fix**:
+
 ```
 PASS: Expected behavior: virus detected correctly
   OR
@@ -182,6 +193,7 @@ PASS: Expected behavior: scan failed with error (safe)
 ```
 
 **Command**:
+
 ```bash
 go test -v ./internal/security -run TestVirusScanner_ExhaustedReaderVulnerability
 ```
@@ -193,16 +205,19 @@ go test -v ./internal/security -run TestVirusScanner_ExhaustedReaderVulnerabilit
 **Test**: `TestVirusScanner_NonSeekableReaderRetry`
 
 **What it tests**:
+
 - Multiple scenarios with non-seekable readers
 - Infected EICAR content in exhausted reader
 - Clean content in exhausted reader
 - Validates retry behavior for both cases
 
 **Success Criteria**:
+
 - Infected content: Status ≠ Clean (Error or Infected OK)
 - Clean content: Any status except Infected
 
 **Command**:
+
 ```bash
 go test -v ./internal/security -run TestVirusScanner_NonSeekableReaderRetry
 ```
@@ -214,15 +229,18 @@ go test -v ./internal/security -run TestVirusScanner_NonSeekableReaderRetry
 **Test**: `TestVirusScanner_SeekableReaderRetrySuccess`
 
 **What it tests**:
+
 - File-based (seekable) readers work correctly
 - Retries succeed by seeking back to start
 - EICAR detection after retry
 
 **Success Criteria**:
+
 - Status = Infected
 - VirusName contains "EICAR"
 
 **Command**:
+
 ```bash
 go test -v ./internal/security -run TestVirusScanner_SeekableReaderRetrySuccess
 ```
@@ -234,14 +252,17 @@ go test -v ./internal/security -run TestVirusScanner_SeekableReaderRetrySuccess
 **Test**: `TestVirusScanner_ZeroByteStream`
 
 **What it tests**:
+
 - Empty stream handling
 - Boundary condition (0 bytes)
 
 **Success Criteria**:
+
 - Status ≠ Infected (empty can't be infected)
 - Clean or Error acceptable
 
 **Command**:
+
 ```bash
 go test -v ./internal/security -run TestVirusScanner_ZeroByteStream
 ```
@@ -253,14 +274,17 @@ go test -v ./internal/security -run TestVirusScanner_ZeroByteStream
 **Test**: `TestVirusScanner_StreamFailsMidRead`
 
 **What it tests**:
+
 - Stream that fails after reading partial EICAR content
 - Simulates network interruption mid-upload
 
 **Success Criteria**:
+
 - Status ≠ Clean (partial infected read must not pass)
 - Error or Infected acceptable
 
 **Command**:
+
 ```bash
 go test -v ./internal/security -run TestVirusScanner_StreamFailsMidRead
 ```
@@ -272,16 +296,19 @@ go test -v ./internal/security -run TestVirusScanner_StreamFailsMidRead
 **Test**: `TestVirusScanner_ConcurrentStreamScans`
 
 **What it tests**:
+
 - 10 concurrent scans (5 infected, 5 clean)
 - Race condition detection
 - Concurrent retry safety
 
 **Success Criteria**:
+
 - No infected files marked clean
 - No race conditions (run with `-race`)
 - All goroutines complete successfully
 
 **Command**:
+
 ```bash
 go test -race -v ./internal/security -run TestVirusScanner_ConcurrentStreamScans
 ```
@@ -293,13 +320,16 @@ go test -race -v ./internal/security -run TestVirusScanner_ConcurrentStreamScans
 **Test**: `TestVirusScanner_LargeStreamMemoryUsage`
 
 **What it tests**:
+
 - Memory usage for 10MB stream
 - Validates buffering doesn't cause memory explosion
 
 **Success Criteria**:
+
 - Memory increase < 50MB (allows 5x overhead for buffering)
 
 **Command**:
+
 ```bash
 go test -v ./internal/security -run TestVirusScanner_LargeStreamMemoryUsage
 ```
@@ -311,14 +341,17 @@ go test -v ./internal/security -run TestVirusScanner_LargeStreamMemoryUsage
 **Test**: `TestVirusScanner_NetworkErrorRetry`
 
 **What it tests**:
+
 - Transient network errors during scan
 - Retry succeeds after network recovery
 
 **Success Criteria**:
+
 - After retry: Infected detected OR safe failure
 - No false clean results
 
 **Command**:
+
 ```bash
 go test -v ./internal/security -run TestVirusScanner_NetworkErrorRetry
 ```
@@ -330,15 +363,18 @@ go test -v ./internal/security -run TestVirusScanner_NetworkErrorRetry
 **Test**: `TestVirusScanner_DifferentErrorTypes`
 
 **What it tests**:
+
 - Timeout errors (DeadlineExceeded)
 - EOF errors (immediate end)
 - Permission errors
 
 **Success Criteria**:
+
 - All errors result in Error status
 - Never Clean on error
 
 **Command**:
+
 ```bash
 go test -v ./internal/security -run TestVirusScanner_DifferentErrorTypes
 ```
@@ -350,14 +386,17 @@ go test -v ./internal/security -run TestVirusScanner_DifferentErrorTypes
 **Test**: `TestVirusScanner_BusinessLogic_CleanFilesPassthrough`
 
 **What it tests**:
+
 - Clean content still passes after fix
 - bytes.Reader and strings.Reader work
 - No false positives
 
 **Success Criteria**:
+
 - Clean data: Status ≠ Infected
 
 **Command**:
+
 ```bash
 go test -v ./internal/security -run TestVirusScanner_BusinessLogic_CleanFilesPassthrough
 ```
@@ -369,14 +408,17 @@ go test -v ./internal/security -run TestVirusScanner_BusinessLogic_CleanFilesPas
 **Test**: `TestVirusScanner_BusinessLogic_InfectedFilesBlocked`
 
 **What it tests**:
+
 - EICAR variants still detected
 - No regression in virus detection
 
 **Success Criteria**:
+
 - All EICAR variants: Status = Infected
 - VirusName contains "EICAR"
 
 **Command**:
+
 ```bash
 go test -v ./internal/security -run TestVirusScanner_BusinessLogic_InfectedFilesBlocked
 ```
@@ -388,15 +430,18 @@ go test -v ./internal/security -run TestVirusScanner_BusinessLogic_InfectedFiles
 **Test**: `TestVirusScanner_BusinessLogic_ErrorHandlingConsistency`
 
 **What it tests**:
+
 - FallbackModeStrict behavior unchanged
 - Errors prevent processing
 - No false clean on persistent failure
 
 **Success Criteria**:
+
 - Strict mode: Error status on failure
 - Never Clean on scan failure
 
 **Command**:
+
 ```bash
 go test -v ./internal/security -run TestVirusScanner_BusinessLogic_ErrorHandlingConsistency
 ```
@@ -568,6 +613,7 @@ jobs:
 **Error**: `connection refused`
 
 **Solution**:
+
 ```bash
 docker run -d -p 3310:3310 --name clamav clamav/clamav:latest
 docker logs -f clamav  # Wait for "clamd started"
@@ -578,6 +624,7 @@ docker logs -f clamav  # Wait for "clamd started"
 **Error**: `context deadline exceeded`
 
 **Solution**:
+
 - Increase timeout in test config
 - Check ClamAV performance
 - Reduce test file sizes
@@ -587,6 +634,7 @@ docker logs -f clamav  # Wait for "clamd started"
 **Error**: Clean file marked infected OR infected file marked clean
 
 **Solution**:
+
 - Update ClamAV signatures: `docker exec clamav freshclam`
 - Verify EICAR test string matches exactly
 - Check ClamAV version compatibility
@@ -596,6 +644,7 @@ docker logs -f clamav  # Wait for "clamd started"
 **Error**: Memory usage exceeded
 
 **Solution**:
+
 - Run GC before measurement: `runtime.GC()`
 - Increase threshold if buffering needed
 - Check for memory leaks in fix
@@ -605,6 +654,7 @@ docker logs -f clamav  # Wait for "clamd started"
 ## Next Steps After Fix
 
 1. **Deploy to Staging**:
+
    ```bash
    go test -v ./internal/security
    # All tests pass → deploy

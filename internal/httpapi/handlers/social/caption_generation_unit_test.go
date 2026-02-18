@@ -72,10 +72,10 @@ func (m *mockCaptionGenService) RegenerateCaption(ctx context.Context, videoID u
 }
 
 type mockVideoRepository struct {
-	getByIDFn func(ctx interface{}, videoID string) (*domain.Video, error)
+	getByIDFn func(ctx context.Context, videoID string) (*domain.Video, error)
 }
 
-func (m *mockVideoRepository) GetByID(ctx interface{}, videoID string) (*domain.Video, error) {
+func (m *mockVideoRepository) GetByID(ctx context.Context, videoID string) (*domain.Video, error) {
 	if m.getByIDFn != nil {
 		return m.getByIDFn(ctx, videoID)
 	}
@@ -101,7 +101,7 @@ func TestGenerateCaptions_Success(t *testing.T) {
 	}
 
 	mockVideoRepo := &mockVideoRepository{
-		getByIDFn: func(ctx interface{}, vid string) (*domain.Video, error) {
+		getByIDFn: func(ctx context.Context, vid string) (*domain.Video, error) {
 			assert.Equal(t, videoID.String(), vid)
 			return &domain.Video{
 				ID:     videoID.String(),
@@ -162,7 +162,7 @@ func TestGenerateCaptions_VideoNotFound(t *testing.T) {
 	videoID := uuid.New()
 
 	mockVideoRepo := &mockVideoRepository{
-		getByIDFn: func(ctx interface{}, vid string) (*domain.Video, error) {
+		getByIDFn: func(ctx context.Context, vid string) (*domain.Video, error) {
 			return nil, domain.ErrNotFound
 		},
 	}
@@ -189,7 +189,7 @@ func TestGenerateCaptions_NotOwner(t *testing.T) {
 	videoID := uuid.New()
 
 	mockVideoRepo := &mockVideoRepository{
-		getByIDFn: func(ctx interface{}, vid string) (*domain.Video, error) {
+		getByIDFn: func(ctx context.Context, vid string) (*domain.Video, error) {
 			return &domain.Video{
 				ID:     videoID.String(),
 				UserID: otherUserID.String(),
@@ -219,7 +219,7 @@ func TestGenerateCaptions_VideoNotProcessed(t *testing.T) {
 	videoID := uuid.New()
 
 	mockVideoRepo := &mockVideoRepository{
-		getByIDFn: func(ctx interface{}, vid string) (*domain.Video, error) {
+		getByIDFn: func(ctx context.Context, vid string) (*domain.Video, error) {
 			return &domain.Video{
 				ID:     videoID.String(),
 				UserID: userID.String(),
@@ -263,7 +263,7 @@ func TestGetCaptionGenerationJob_Success(t *testing.T) {
 	}
 
 	mockVideoRepo := &mockVideoRepository{
-		getByIDFn: func(ctx interface{}, vid string) (*domain.Video, error) {
+		getByIDFn: func(ctx context.Context, vid string) (*domain.Video, error) {
 			return &domain.Video{
 				ID:     videoID.String(),
 				UserID: userID.String(),
@@ -301,7 +301,7 @@ func TestGetCaptionGenerationJob_JobNotFound(t *testing.T) {
 	}
 
 	mockVideoRepo := &mockVideoRepository{
-		getByIDFn: func(ctx interface{}, vid string) (*domain.Video, error) {
+		getByIDFn: func(ctx context.Context, vid string) (*domain.Video, error) {
 			return &domain.Video{
 				ID:     videoID.String(),
 				UserID: userID.String(),
@@ -344,7 +344,7 @@ func TestListCaptionGenerationJobs_Success(t *testing.T) {
 	}
 
 	mockVideoRepo := &mockVideoRepository{
-		getByIDFn: func(ctx interface{}, vid string) (*domain.Video, error) {
+		getByIDFn: func(ctx context.Context, vid string) (*domain.Video, error) {
 			return &domain.Video{
 				ID:     videoID.String(),
 				UserID: userID.String(),

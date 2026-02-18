@@ -1,4 +1,5 @@
 # Federation Documentation Audit Report
+
 **Date:** 2025-11-30
 **Project:** Athena Video Platform
 **Auditor:** Federation Protocol Auditor
@@ -34,15 +35,18 @@ This audit compares federation-related documentation against the actual codebase
 ### 1.1 Implementation Completeness (Updated)
 
 **Previous Audit Status (from FEDERATION_AUDIT_REPORT.md):**
+
 - Video Publishing: CLAIMED "NOT IMPLEMENTED (0%)"
 - Status: "BLOCKING for PeerTube compatibility"
 
 **ACTUAL CURRENT STATUS:**
+
 - **Video Publishing: FULLY IMPLEMENTED** (100%)
 - **Video Updating: FULLY IMPLEMENTED** (100%)
 - **Video Deletion: FULLY IMPLEMENTED** (100%)
 
 **Evidence:**
+
 ```
 File: /Users/yosefgamble/github/athena/internal/usecase/activitypub/service.go
 Line Count: 1,954 lines (up from claimed 1,193)
@@ -61,6 +65,7 @@ Key Methods Implemented:
 **Documentation Location:** `/Users/yosefgamble/github/athena/FEDERATION_AUDIT_REPORT.md`
 
 **Claimed (Lines 232-241):**
+
 ```
 | Method | Status | Implementation |
 |--------|--------|----------------|
@@ -71,6 +76,7 @@ Key Methods Implemented:
 ```
 
 **Actual Implementation:**
+
 ```go
 // BuildVideoObject - FULLY IMPLEMENTED
 func (s *Service) BuildVideoObject(ctx context.Context, video *domain.Video) (*domain.VideoObject, error) {
@@ -108,12 +114,14 @@ func (s *Service) PublishVideo(ctx context.Context, videoID string) error {
 **Documentation Location:** `/Users/yosefgamble/github/athena/FEDERATION_AUDIT_REPORT.md` (Line 1108)
 
 **Claimed:**
+
 ```
 **For Video Federation:** ❌ NOT READY (Video publishing missing)
 **Recommendation:** **DO NOT deploy for PeerTube federation** until video publishing implemented
 ```
 
 **Actual Status:**
+
 - Video publishing: IMPLEMENTED
 - Remote video ingestion: IMPLEMENTED (see commit cf69e47 "feat: Implement remote video ingestion for ActivityPub federation")
 - Load testing completed: YES (see commit cf69e47)
@@ -127,12 +135,14 @@ func (s *Service) PublishVideo(ctx context.Context, videoID string) error {
 **Documentation Location:** `/Users/yosefgamble/github/athena/docs/federation/ACTIVITYPUB_TEST_COVERAGE.md` (Line 5)
 
 **Claimed:**
+
 ```
 115+ test cases and 450+ assertions
 Total: 6 test files
 ```
 
 **Actual Status:**
+
 ```bash
 Total ActivityPub test lines: 2,657 lines
 Test files found:
@@ -158,6 +168,7 @@ Test files found:
 **Critical Gap:** NO OpenAPI documentation for ActivityPub endpoints
 
 **Missing Endpoints:**
+
 ```yaml
 /.well-known/webfinger          # IMPLEMENTED but NOT DOCUMENTED
 /.well-known/nodeinfo           # IMPLEMENTED but NOT DOCUMENTED
@@ -173,6 +184,7 @@ Test files found:
 ```
 
 **Evidence:**
+
 ```bash
 # Routes registered in routes.go:
 r.Get("/.well-known/webfinger", apHandlers.WebFinger)
@@ -190,6 +202,7 @@ grep -r "webfinger|nodeinfo" api/*.yaml
 ```
 
 **Current OpenAPI Status:**
+
 - `api/openapi_federation.yaml` (1,114 lines) - ONLY covers AT Protocol
 - NO ActivityPub endpoints documented
 - References to "ActivityPub-based instance discovery" in redundancy spec only
@@ -203,6 +216,7 @@ grep -r "webfinger|nodeinfo" api/*.yaml
 **Issue:** Title claims "ATProto federation" but includes generic "Federation API" endpoints
 
 **Line 3-4:**
+
 ```yaml
 title: Athena Federation API
 description: ATProto federation endpoints for cross-platform content syndication
@@ -211,6 +225,7 @@ description: ATProto federation endpoints for cross-platform content syndication
 **Problem:** Misleading - implies ATProto-only but routes like `/api/v1/federation/status` are protocol-agnostic
 
 **Recommended Fix:**
+
 ```yaml
 title: Athena Federation API
 description: |
@@ -229,6 +244,7 @@ description: |
 **Documentation Location:** `/Users/yosefgamble/github/athena/docs/federation/README.md` (Lines 42-50)
 
 **Documented Configuration:**
+
 ```bash
 ENABLE_ACTIVITYPUB=true
 ACTIVITYPUB_DOMAIN=video.example.com
@@ -239,6 +255,7 @@ PUBLIC_BASE_URL=https://video.example.com
 ```
 
 **Actual Configuration (from config.go):**
+
 ```go
 // DOCUMENTED:
 cfg.EnableActivityPub                   // ✓ Documented
@@ -258,6 +275,7 @@ cfg.ActivityPubKeyEncryptionKey         // ❌ NOT DOCUMENTED (CRITICAL!)
 **Missing Critical Documentation:**
 
 #### UNDOCUMENTED #1: ActivityPub Key Encryption (SECURITY)
+
 ```go
 // From config.go:
 cfg.ActivityPubKeyEncryptionKey = getEnvOrDefault("ACTIVITYPUB_KEY_ENCRYPTION_KEY", "")
@@ -271,6 +289,7 @@ if cfg.EnableActivityPub && cfg.ActivityPubKeyEncryptionKey == "" {
 **Impact:** CRITICAL - Setup will fail without this env var, but it's not documented anywhere
 
 **Correction Needed:**
+
 ```markdown
 ## Configuration (Updated)
 
@@ -291,6 +310,7 @@ ACTIVITYPUB_INSTANCE_DESCRIPTION="A PeerTube-compatible video platform"
 ACTIVITYPUB_INSTANCE_CONTACT_EMAIL=admin@example.com
 ACTIVITYPUB_MAX_ACTIVITIES_PER_PAGE=20
 ```
+
 ```
 
 ---
@@ -314,6 +334,7 @@ ATPROTO_TIMEOUT=30
 ```
 
 **Actual Configuration (from config.go):**
+
 ```go
 // DOCUMENTED:
 cfg.EnableATProto                       // ✓ Documented
@@ -351,6 +372,7 @@ cfg.EnableATProtoLabeler                // ❌ NOT DOCUMENTED
 **Documentation Location:** `/Users/yosefgamble/github/athena/docs/PEERTUBE_COMPAT.md`
 
 **File Analysis:**
+
 ```bash
 Line Count: 196 lines
 Last Modified: (check git log for date)
@@ -360,7 +382,9 @@ Status: Contains outdated roadmap and "missing" features
 **Claimed Missing Features (that are now implemented):**
 
 #### CLAIM #1: Videos List/Search/Get (Lines 12-17)
+
 **Documented Status:**
+
 ```
 - Athena: GET /api/v1/videos → list public videos (Covered/Partial: payload shape likely differs)
 - Athena: GET /api/v1/videos/search → search videos (Covered/Partial)
@@ -371,13 +395,16 @@ Status: Contains outdated roadmap and "missing" features
 ---
 
 #### CLAIM #2: Accounts/Channels Model (Lines 77-79)
+
 **Documented Status:**
+
 ```
 Accounts / Channels Model
 - Missing: Distinct Channel and Account resources
 ```
 
 **Actual Status:**
+
 - Channels implemented (see commit history)
 - `api/openapi_channels.yaml` exists (not mentioned in PeerTube compat doc)
 - Channel handlers in `internal/httpapi/handlers/channel/`
@@ -387,13 +414,16 @@ Accounts / Channels Model
 ---
 
 #### CLAIM #3: Comments (Lines 82-84)
+
 **Documented Status:**
+
 ```
 Comments
 - Missing: Threaded comments, list/create/delete, moderation, mentions.
 ```
 
 **Actual Status:**
+
 - Comments implemented (see `api/openapi_comments.yaml`)
 - ActivityPub comment federation implemented (PublishComment, UpdateComment, DeleteComment in service.go)
 - Test coverage exists (comment_publisher_test.go)
@@ -407,6 +437,7 @@ Comments
 **Documentation Location:** `/Users/yosefgamble/github/athena/docs/federation/README.md` (Lines 11-16)
 
 **Claimed ActivityPub Features:**
+
 ```markdown
 **Features:**
 - Follow/Accept/Reject (follower management)
@@ -419,6 +450,7 @@ Comments
 **Issue:** "View (analytics)" is claimed but not actually implemented
 
 **Evidence:**
+
 ```go
 // From service.go - handleActivity() switch statement:
 case domain.ActivityTypeView:
@@ -426,6 +458,7 @@ case domain.ActivityTypeView:
 ```
 
 **Correction Needed:**
+
 ```markdown
 **Features:**
 - Follow/Accept/Reject (follower management)
@@ -446,6 +479,7 @@ case domain.ActivityTypeView:
 **Claimed:** "Full PeerTube-compatible federation"
 
 **Actual Implementation (from service.go):**
+
 ```go
 func (s *Service) handleActivity(ctx context.Context, activity *domain.Activity) error {
     switch activity.Type {
@@ -468,6 +502,7 @@ func (s *Service) handleActivity(ctx context.Context, activity *domain.Activity)
 ```
 
 **Undocumented Limitation:** Create/Update/Delete handlers exist but have incomplete implementations:
+
 ```go
 // From comment_publisher_test.go TODOs:
 t.Skip("TODO: Follower delivery implementation incomplete")
@@ -485,6 +520,7 @@ t.Skip("TODO: Parent comment author delivery not yet implemented")
 **Documentation Location:** `/Users/yosefgamble/github/athena/docs/federation/README.md` (Lines 59-66)
 
 **Claimed:**
+
 ```markdown
 Compatible with:
 - **Mastodon** - Full bidirectional federation
@@ -497,6 +533,7 @@ Compatible with:
 **Issue:** These claims are untested and unverified
 
 **Evidence:**
+
 ```bash
 # Search for interoperability tests:
 grep -r "Mastodon\|PeerTube\|Pleroma\|Pixelfed" internal/**/*test.go
@@ -504,11 +541,13 @@ grep -r "Mastodon\|PeerTube\|Pleroma\|Pixelfed" internal/**/*test.go
 ```
 
 **Test Coverage Reality:**
+
 - Unit tests: Extensive (2,657 lines)
 - Integration tests: Internal only (mocked responses)
 - Real federation tests: NONE
 
 **Correction Needed:**
+
 ```markdown
 Designed to be compatible with:
 - **Mastodon** - Expected to work (untested)
@@ -529,6 +568,7 @@ Note: Real-world federation testing with production instances is pending.
 **Documentation Location:** `/Users/yosefgamble/github/athena/docs/federation/README.md` (Lines 18-24)
 
 **Documented Endpoints:**
+
 ```markdown
 **Endpoints:**
 - `/.well-known/webfinger` - Actor discovery
@@ -539,6 +579,7 @@ Note: Real-world federation testing with production instances is pending.
 ```
 
 **Actual Implementation (from routes.go):**
+
 ```go
 r.Get("/.well-known/webfinger", apHandlers.WebFinger)       // ✓ Documented
 r.Get("/.well-known/nodeinfo", apHandlers.NodeInfo)         // ✓ Documented
@@ -553,6 +594,7 @@ r.Get("/users/{username}/following", ...)                   // ❌ NOT DOCUMENTE
 ```
 
 **Missing from Documentation:**
+
 1. `/.well-known/host-meta` (RFC 6415)
 2. `/nodeinfo/2.0` (NodeInfo 2.0 spec endpoint)
 3. `/users/{username}/outbox` (Required by ActivityPub spec)
@@ -569,6 +611,7 @@ r.Get("/users/{username}/following", ...)                   // ❌ NOT DOCUMENTE
 **Documentation Location:** `/Users/yosefgamble/github/athena/docs/federation/ACTIVITYPUB_TEST_COVERAGE.md` (Lines 208-217)
 
 **Documented Limitations:**
+
 ```markdown
 ### HTTP Signatures ✅ 95%
 - [ ] Digest verification (documented limitation)
@@ -577,6 +620,7 @@ r.Get("/users/{username}/following", ...)                   // ❌ NOT DOCUMENTE
 **Issue:** Limitation is acknowledged but not explained
 
 **Actual Security Impact:**
+
 ```go
 // From httpsig.go - VerifyRequest():
 // MISSING: Digest header verification
@@ -588,6 +632,7 @@ r.Get("/users/{username}/following", ...)                   // ❌ NOT DOCUMENTE
 ```
 
 **Previous Audit Recommendation (FEDERATION_AUDIT_REPORT.md Lines 654-701):**
+
 ```markdown
 **Identified Issues:**
 
@@ -611,6 +656,7 @@ r.Get("/users/{username}/following", ...)                   // ❌ NOT DOCUMENTE
 **Critical Finding:** Private key encryption is REQUIRED but not documented
 
 **Implementation:**
+
 ```go
 // From config.go:
 if cfg.EnableActivityPub && cfg.ActivityPubKeyEncryptionKey == "" {
@@ -619,6 +665,7 @@ if cfg.EnableActivityPub && cfg.ActivityPubKeyEncryptionKey == "" {
 ```
 
 **Documentation Status:**
+
 - Migration 061: `encrypt_activitypub_private_keys.sql` exists
 - Security implementation: `/Users/yosefgamble/github/athena/internal/security/activitypub_key_encryption.go` exists
 - User documentation: MISSING
@@ -626,6 +673,7 @@ if cfg.EnableActivityPub && cfg.ActivityPubKeyEncryptionKey == "" {
 **Impact:** Users cannot start ActivityPub without this undocumented env var
 
 **Correction Needed:** Add to setup documentation:
+
 ```markdown
 ## Security Requirements
 
@@ -638,12 +686,14 @@ openssl rand -hex 32
 ```
 
 Set the environment variable:
+
 ```bash
 export ACTIVITYPUB_KEY_ENCRYPTION_KEY=<generated-key>
 ```
 
 **WARNING:** If you lose this key, all ActivityPub actor keys will be unrecoverable.
 Store it securely (e.g., in your secrets management system).
+
 ```
 
 ---
@@ -660,6 +710,7 @@ The ActivityPub implementation now has **extensive test coverage** with **115+ t
 ```
 
 **Actual Status:**
+
 ```bash
 Total test lines: 2,657 (was: ~2,400 claimed)
 Test files: 9 (was: 6 documented)
@@ -685,6 +736,7 @@ UNDOCUMENTED test files:
 ### 9.2 Known Test Gaps
 
 **Found in Code:**
+
 ```go
 // From comment_publisher_test.go:
 t.Skip("TODO: Follower delivery implementation incomplete")
@@ -705,6 +757,7 @@ _ = comment // TODO: Use in test implementation
 ### 10.1 Git History vs. Documentation
 
 **Recent Commits (2024+):**
+
 ```
 cf69e47 feat: Implement remote video ingestion for ActivityPub federation
 cf69e47 feat: Implement ActivityPub video federation and load testing
@@ -715,6 +768,7 @@ a7e4436 fix: Update ActivityPub federation delivery pattern to async queue
 **Issue:** Major features added but documentation not updated
 
 **Examples:**
+
 1. Remote video ingestion (cf69e47) - NOT mentioned in README.md features list
 2. Key encryption (63f3a55) - NOT mentioned in configuration docs
 3. Load testing completion (cf69e47) - Not reflected in production readiness assessment
@@ -726,9 +780,11 @@ a7e4436 fix: Update ActivityPub federation delivery pattern to async queue
 ### 11.1 Priority 1: Critical Documentation Fixes
 
 #### FIX #1: Add ActivityPub OpenAPI Specification
+
 **File to Create:** `/Users/yosefgamble/github/athena/api/openapi_activitypub.yaml`
 
 **Required Content:**
+
 ```yaml
 openapi: 3.0.3
 info:
@@ -767,9 +823,11 @@ paths:
 ---
 
 #### FIX #2: Update Configuration Documentation
+
 **File to Update:** `/Users/yosefgamble/github/athena/docs/federation/README.md`
 
 **Add Section:**
+
 ```markdown
 ## Complete Configuration Reference
 
@@ -784,6 +842,7 @@ PUBLIC_BASE_URL=https://video.example.com          # Public-facing URL
 ```
 
 #### Optional
+
 ```bash
 ACTIVITYPUB_DELIVERY_WORKERS=5                     # Concurrent delivery workers
 ACTIVITYPUB_DELIVERY_RETRIES=10                    # Max retry attempts
@@ -797,6 +856,7 @@ ACTIVITYPUB_MAX_ACTIVITIES_PER_PAGE=20             # Pagination size
 ### AT Protocol Configuration
 
 #### Required
+
 ```bash
 ENABLE_ATPROTO=true
 ATPROTO_PDS_URL=https://bsky.social
@@ -805,6 +865,7 @@ ATPROTO_APP_PASSWORD=xxxx-xxxx-xxxx-xxxx
 ```
 
 #### Optional (Undocumented)
+
 ```bash
 ATPROTO_AUTH_TOKEN=<token>                         # Alternative to handle/password
 ATPROTO_TOKEN_KEY=<key>                            # Token encryption key
@@ -821,6 +882,7 @@ FEDERATION_INGEST_MAX_ITEMS=40                     # Items per ingest
 FEDERATION_INGEST_MAX_PAGES=2                      # Pages per ingest
 ENABLE_ATPROTO_LABELER=false                       # Content labeling
 ```
+
 ```
 
 **Estimated Effort:** 2-3 hours
@@ -886,6 +948,7 @@ The current implementation has the following known limitations:
 **File to Create:** `/Users/yosefgamble/github/athena/docs/federation/ACTIVITYPUB_ENDPOINTS.md`
 
 **Content:**
+
 ```markdown
 # ActivityPub Endpoint Reference
 
@@ -1000,6 +1063,7 @@ The current implementation has the following known limitations:
 **Changes:**
 
 **Line 77-79 (Channels):**
+
 ```markdown
 # BEFORE:
 Accounts / Channels Model
@@ -1013,6 +1077,7 @@ Accounts / Channels Model
 ```
 
 **Line 82-84 (Comments):**
+
 ```markdown
 # BEFORE:
 Comments
@@ -1027,6 +1092,7 @@ Comments
 ```
 
 **Line 162-175 (Checklist):**
+
 ```markdown
 # UPDATE all completed items:
 - [x] OAuth2 token endpoint (password + refresh)
@@ -1078,13 +1144,16 @@ Comments
 ```
 
 ### 9. `/internal/security/activitypub_key_encryption_test.go` (NEW)
+
 **Key Security Tests**
 
-#### Coverage:
+#### Coverage
+
 - ✅ AES-256 encryption/decryption
 - ✅ Key generation
 - ✅ Error handling
 - ✅ Invalid key detection
+
 ```
 
 **Update Summary Section:**
@@ -1133,6 +1202,7 @@ Comments
 ### 12.2 Critical Findings Summary
 
 **RESOLVED ISSUES (Previously Claimed Missing):**
+
 1. ✅ Video Publishing - NOW IMPLEMENTED (service.go lines 1203-1954)
 2. ✅ Remote Video Ingestion - NOW IMPLEMENTED (commit cf69e47)
 3. ✅ Channels - NOW IMPLEMENTED (api/openapi_channels.yaml exists)
@@ -1140,6 +1210,7 @@ Comments
 5. ✅ Key Encryption - NOW IMPLEMENTED (migration 061, security/activitypub_key_encryption.go)
 
 **DOCUMENTATION GAPS:**
+
 1. ❌ ActivityPub endpoints not in OpenAPI specification (CRITICAL)
 2. ❌ 14 undocumented AT Protocol configuration options (HIGH)
 3. ❌ 5 undocumented ActivityPub configuration options (HIGH)
@@ -1148,6 +1219,7 @@ Comments
 6. ❌ 3 new test files not documented in coverage report (LOW)
 
 **INACCURATE DOCUMENTATION:**
+
 1. ❌ FEDERATION_AUDIT_REPORT.md claims video publishing "NOT IMPLEMENTED" (FALSE)
 2. ❌ PEERTUBE_COMPAT.md claims channels "Missing" (FALSE)
 3. ❌ PEERTUBE_COMPAT.md claims comments "Missing" (FALSE)
@@ -1160,24 +1232,28 @@ Comments
 ### 12.3 Recommended Action Plan
 
 **Week 1: Critical OpenAPI Documentation**
+
 - [ ] Create `api/openapi_activitypub.yaml` with all endpoints
 - [ ] Update `api/openapi_federation.yaml` description
 - [ ] Document key encryption requirement in README.md
 - [ ] Add all undocumented configuration options
 
 **Week 2: Audit Report Corrections**
+
 - [ ] Update FEDERATION_AUDIT_REPORT.md video publishing status
 - [ ] Revise production readiness assessment
 - [ ] Add implementation completion dates
 - [ ] Update recommendations to reflect current state
 
 **Week 3: Documentation Enhancements**
+
 - [ ] Create ACTIVITYPUB_ENDPOINTS.md reference
 - [ ] Add security considerations section
 - [ ] Update PEERTUBE_COMPAT.md with implemented features
 - [ ] Update test coverage documentation
 
 **Week 4: Verification**
+
 - [ ] Cross-reference all config options against code
 - [ ] Verify all OpenAPI paths match routes.go
 - [ ] Test setup instructions with fresh environment
@@ -1189,7 +1265,7 @@ Comments
 
 This audit revealed a significant discrepancy between documentation and implementation: **major features claimed as "missing" or "not implemented" are actually fully implemented**, while the OpenAPI specification and configuration documentation have critical gaps.
 
-### Key Takeaways:
+### Key Takeaways
 
 1. **Implementation is more complete than documented** - Video publishing, channels, comments, and key encryption are all implemented but poorly documented or incorrectly reported as missing.
 
@@ -1201,19 +1277,22 @@ This audit revealed a significant discrepancy between documentation and implemen
 
 5. **Audit reports should be regularly updated** - FEDERATION_AUDIT_REPORT.md contains stale information that contradicts current implementation.
 
-### Priority Actions:
+### Priority Actions
 
 **CRITICAL (Do First):**
+
 1. Create ActivityPub OpenAPI specification
 2. Document key encryption requirement
 3. Update FEDERATION_AUDIT_REPORT.md to reflect actual status
 
 **HIGH (Do Soon):**
+
 1. Complete configuration reference documentation
 2. Update PeerTube compatibility claims
 3. Add security considerations section
 
 **MEDIUM (Do Eventually):**
+
 1. Create comprehensive endpoint reference
 2. Update test coverage documentation
 3. Add real-world interoperability test results

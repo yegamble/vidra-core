@@ -68,6 +68,7 @@ Encoding (HLS segments)
 ### Day 1-2: Database Schema & Dependencies
 
 **Database Migration (`049_create_torrent_tables.sql`):**
+
 ```sql
 CREATE TABLE video_torrents (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -123,6 +124,7 @@ INSERT INTO torrent_trackers (announce_url, is_websocket, priority) VALUES
 ```
 
 **Dependencies:**
+
 ```bash
 go get github.com/anacrolix/torrent
 go get github.com/anacrolix/torrent/metainfo
@@ -132,11 +134,13 @@ go get github.com/anacrolix/torrent/bencode
 ### Day 3-4: Torrent Generator Implementation
 
 **Files to Create:**
+
 - `internal/domain/torrent.go` - Domain models
 - `internal/torrent/generator.go` - Torrent file creation
 - `internal/repository/torrent_repository.go` - Database operations
 
 **Key Features:**
+
 - Generate torrent from video files
 - Support multi-file torrents (all HLS segments)
 - WebTorrent-compatible announce URLs
@@ -146,11 +150,13 @@ go get github.com/anacrolix/torrent/bencode
 ### Day 5-6: Torrent Seeder & Client
 
 **Files to Create:**
+
 - `internal/torrent/seeder.go` - Backend seeding service
 - `internal/torrent/client.go` - Torrent client wrapper
 - `internal/torrent/manager.go` - Lifecycle management
 
 **Key Features:**
+
 - Auto-seed all videos with torrents
 - Configurable upload/download limits
 - Connection limits per torrent
@@ -160,10 +166,12 @@ go get github.com/anacrolix/torrent/bencode
 ### Day 7: WebSocket Tracker
 
 **Files to Create:**
+
 - `internal/torrent/tracker.go` - Tracker server
 - `internal/torrent/websocket_handler.go` - WebSocket handling
 
 **Key Features:**
+
 - WebTorrent protocol support
 - Announce/scrape endpoints
 - Peer list management
@@ -172,9 +180,11 @@ go get github.com/anacrolix/torrent/bencode
 ### Day 8: API Integration
 
 **Files to Create:**
+
 - `internal/httpapi/torrent_handlers.go` - HTTP handlers
 
 **Endpoints:**
+
 ```
 GET /api/v1/videos/:id/torrent - Download .torrent file
 GET /api/v1/videos/:id/magnet - Get magnet URI
@@ -190,6 +200,7 @@ POST /api/v1/torrents/:infoHash/announce - Tracker announce
 ### Unit Tests (Target: >85% coverage)
 
 **1. Generator Tests** (`torrent/generator_test.go`):
+
 - Test torrent file creation with single file
 - Test torrent file creation with multiple files
 - Test piece length calculation
@@ -201,6 +212,7 @@ POST /api/v1/torrents/:infoHash/announce - Tracker announce
 - Edge cases: empty files, large files, special characters
 
 **2. Domain Model Tests** (`domain/torrent_test.go`):
+
 - Test torrent validation
 - Test info hash validation
 - Test magnet URI parsing
@@ -208,6 +220,7 @@ POST /api/v1/torrents/:infoHash/announce - Tracker announce
 - Test tracker validation
 
 **3. Repository Tests** (`repository/torrent_repository_test.go`):
+
 - Test CRUD operations for torrents
 - Test peer management
 - Test tracker management
@@ -215,6 +228,7 @@ POST /api/v1/torrents/:infoHash/announce - Tracker announce
 - Test transaction handling
 
 **4. Seeder Tests** (`torrent/seeder_test.go`):
+
 - Test seeding start/stop
 - Test bandwidth limiting
 - Test connection limiting
@@ -222,6 +236,7 @@ POST /api/v1/torrents/:infoHash/announce - Tracker announce
 - Test graceful shutdown
 
 **5. Tracker Tests** (`torrent/tracker_test.go`):
+
 - Test announce handling
 - Test scrape handling
 - Test peer discovery
@@ -231,6 +246,7 @@ POST /api/v1/torrents/:infoHash/announce - Tracker announce
 ### Integration Tests
 
 **1. End-to-End Torrent Flow** (`torrent/torrent_integration_test.go`):
+
 ```go
 func TestTorrentE2EFlow(t *testing.T) {
     // 1. Upload video
@@ -243,6 +259,7 @@ func TestTorrentE2EFlow(t *testing.T) {
 ```
 
 **2. WebTorrent Browser Test** (`torrent/webtorrent_integration_test.go`):
+
 ```go
 func TestWebTorrentIntegration(t *testing.T) {
     // 1. Create torrent with WebSocket tracker
@@ -254,6 +271,7 @@ func TestWebTorrentIntegration(t *testing.T) {
 ```
 
 **3. Hybrid Distribution Test** (`storage/hybrid_integration_test.go`):
+
 ```go
 func TestHybridDistribution(t *testing.T) {
     // 1. Upload video with HTTP, WebTorrent, and IPFS
@@ -265,6 +283,7 @@ func TestHybridDistribution(t *testing.T) {
 ```
 
 **4. Federation Integration** (`federation/torrent_federation_test.go`):
+
 ```go
 func TestTorrentFederation(t *testing.T) {
     // 1. Create video with torrent
@@ -277,18 +296,21 @@ func TestTorrentFederation(t *testing.T) {
 ### Load Tests
 
 **1. Seeding Capacity Test**:
+
 - Seed 100 videos simultaneously
 - Monitor CPU, memory, bandwidth
 - Verify all torrents remain active
 - Test with 1000 peers total
 
 **2. Tracker Stress Test**:
+
 - 10,000 announce requests/second
 - 1,000 concurrent WebSocket connections
 - Verify peer list accuracy
 - Monitor response times
 
 **3. Bandwidth Management Test**:
+
 - Set upload limit to 10MB/s
 - Connect 50 peers
 - Verify bandwidth is fairly distributed

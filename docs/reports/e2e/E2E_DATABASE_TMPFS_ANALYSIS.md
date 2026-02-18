@@ -6,6 +6,7 @@
 ## Executive Summary
 
 **CRITICAL FINDINGS:**
+
 1. **tmpfs IS properly configured** for PostgreSQL data directory
 2. **Container names are HARDCODED**, breaking `COMPOSE_PROJECT_NAME` isolation
 3. **Database migrations are NEVER run** during E2E container startup
@@ -27,6 +28,7 @@ postgres-e2e:
 **Verdict:** tmpfs is CORRECTLY configured. PostgreSQL data is stored in-memory and will be completely lost when the container is removed.
 
 **Verification:**
+
 - No persistent volume mounts on `/var/lib/postgresql/data`
 - No named volumes in the docker-compose.yml
 - tmpfs directive properly targets PostgreSQL data directory
@@ -55,6 +57,7 @@ Line 134: COMPOSE_PROJECT_NAME=athena-e2e-${{ github.run_id }} docker compose do
 ```
 
 **Impact:**
+
 - `COMPOSE_PROJECT_NAME` is used but **INEFFECTIVE** due to hardcoded names
 - All test runs share the same container names regardless of run_id
 - All test runs share the same network name (athena-e2e-network)
@@ -73,16 +76,19 @@ CMD ["./server"]
 **Finding:** No migration runner is executed during container startup.
 
 **Migration Files Examined:**
+
 - `/home/user/athena/migrations/002_create_users_table.sql` - No seed data
 - All 63 migration files checked - No INSERT statements found
 - Migrations only contain table definitions, indexes, and schema changes
 
 **Migration Runners Found:**
+
 1. `scripts/entrypoint.sh` - Uses Atlas migrate but NOT used in Dockerfile
 2. `internal/testutil/helpers.go::RunMigrations()` - Only for unit tests
 3. `scripts/run_test_migrations.sh` - Manual script, not automated
 
 **Conclusion:** The application startup does NOT run migrations. Database schema must either:
+
 - Be pre-applied to the PostgreSQL image
 - Run automatically on first connection (not implemented)
 - Be run manually before tests (not documented)
@@ -92,11 +98,13 @@ CMD ["./server"]
 ### 4. Database Ephemeral Nature - VERIFIED ✓
 
 **When cleanup works correctly:**
+
 - tmpfs ensures data is in-memory only
 - `docker compose down -v` removes all volumes
 - Database is completely fresh for next run
 
 **Current State Check:**
+
 ```bash
 $ docker volume ls --filter "name=athena"
 # Result: No volumes found
@@ -115,6 +123,7 @@ $ docker network ls --filter "name=athena"
 **File:** `/home/user/athena/tests/e2e/scenarios/video_workflow_test.go`
 
 Lines 36-40:
+
 ```go
 timestamp := time.Now().UnixNano()
 username := fmt.Sprintf("testuser_%s_%d", t.Name(), timestamp)
@@ -123,11 +132,13 @@ password := "SecurePass123!"
 ```
 
 **Verdict:** Tests correctly generate unique usernames using:
+
 - Test name (e.g., "TestVideoUploadWorkflow")
 - Nanosecond timestamp
 - This ensures uniqueness even within milliseconds
 
 **Similar pattern in all test functions:**
+
 - Line 114: `authtest_{testname}_{timestamp}`
 - Line 164: `searchtest_{testname}_{timestamp}`
 
@@ -136,6 +147,7 @@ password := "SecurePass123!"
 **File:** `/home/user/athena/.github/workflows/e2e-tests.yml`
 
 **Cleanup Steps:**
+
 ```bash
 # Pre-test cleanup (lines 66-73)
 docker compose -f tests/e2e/docker-compose.yml down -v 2>/dev/null || true
@@ -148,6 +160,7 @@ COMPOSE_PROJECT_NAME=athena-e2e-${{ github.run_id }} docker compose down -v
 ```
 
 **Issues:**
+
 1. Pre-test cleanup does NOT use `COMPOSE_PROJECT_NAME` (line 68)
 2. This is actually GOOD - it cleans up ALL E2E containers regardless of project name
 3. However, race condition jobs might start while cleanup is running
@@ -163,10 +176,12 @@ concurrency:
 ```
 
 **Two concurrent jobs:**
+
 1. `e2e-tests` (line 24)
 2. `e2e-tests-race` (line 147)
 
 **Both jobs:**
+
 - Run on `self-hosted` runner
 - May run concurrently if conditions met
 - Use same hardcoded container names
@@ -177,6 +192,7 @@ concurrency:
 The 409 "user already exists" errors occur due to a **perfect storm** of issues:
 
 ### Primary Cause: Container Name Collision
+
 1. Hardcoded container names prevent proper isolation
 2. If cleanup fails or is incomplete, containers persist
 3. Next test run reuses existing containers with old data
@@ -184,12 +200,14 @@ The 409 "user already exists" errors occur due to a **perfect storm** of issues:
 5. New test attempts to register same username → 409 error
 
 ### Secondary Cause: Missing Migrations
+
 1. Containers start without running migrations
 2. If this is the first run, database has no schema
 3. User registration would fail (different error)
 4. Suggests migrations are being cached from previous runs
 
 ### Tertiary Cause: Concurrent Job Potential
+
 1. Two test jobs might run simultaneously
 2. Both try to use same hardcoded container names
 3. Port conflicts or container conflicts occur
@@ -228,6 +246,7 @@ networks:
 ```
 
 **Impact:**
+
 - Each CI run gets unique container names: `athena-e2e-{run_id}_postgres-e2e_1`
 - Each CI run gets unique network: `athena-e2e-{run_id}_default`
 - No container reuse between runs
@@ -259,6 +278,7 @@ CMD ["./entrypoint.sh"]
 **Solution:** Already correct - global cleanup is safer
 
 **Additional Safety:**
+
 ```bash
 # Add after existing cleanup
 docker system prune -f --volumes --filter "label=com.docker.compose.project=athena-e2e*"
@@ -280,6 +300,7 @@ concurrency:
 To verify the fix works:
 
 1. **Check container names are dynamic:**
+
    ```bash
    COMPOSE_PROJECT_NAME=test-123 docker compose up -d
    docker ps --format "{{.Names}}"
@@ -287,18 +308,21 @@ To verify the fix works:
    ```
 
 2. **Verify tmpfs is mounted:**
+
    ```bash
    docker inspect test-123_postgres-e2e_1 | grep -A 5 Tmpfs
    # Should show: /var/lib/postgresql/data
    ```
 
 3. **Confirm migrations run:**
+
    ```bash
    docker logs test-123_athena-api-e2e_1 | grep -i migrate
    # Should show: "Running database migrations..."
    ```
 
 4. **Test cleanup:**
+
    ```bash
    COMPOSE_PROJECT_NAME=test-123 docker compose down -v
    docker ps -a | grep test-123
@@ -308,16 +332,19 @@ To verify the fix works:
 ## Costs and Risks
 
 ### Removing container_name
+
 - **Risk:** LOW - Standard Docker Compose practice
 - **Cost:** Container names become longer but more explicit
 - **Benefit:** Complete isolation, no state leakage
 
 ### Adding migrations to entrypoint
+
 - **Risk:** MEDIUM - Startup time increases slightly
 - **Cost:** Additional dependencies (goose or atlas) in container
 - **Benefit:** Guaranteed schema consistency
 
 ### Cleanup improvements
+
 - **Risk:** LOW - More aggressive cleanup
 - **Cost:** Negligible
 - **Benefit:** More reliable test environments

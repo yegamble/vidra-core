@@ -13,7 +13,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// MockViewsRepository is a mock implementation of port.ViewsRepository
 type MockViewsRepository struct {
 	mock.Mock
 }
@@ -119,7 +118,6 @@ func (m *MockViewsRepository) GetTopVideos(ctx context.Context, startDate, endDa
 	}), args.Error(1)
 }
 
-// MockVideoRepository
 type MockVideoRepository struct {
 	mock.Mock
 }
@@ -167,7 +165,10 @@ func (m *MockVideoRepository) CreateRemoteVideo(ctx context.Context, video *doma
 	return nil
 }
 
-// newTestService creates a service with fresh mocks and ensures cleanup on test end.
+func (m *MockVideoRepository) GetByChannelID(_ context.Context, _ string, _, _ int) ([]*domain.Video, int64, error) {
+	return nil, 0, nil
+}
+
 func newTestService(t *testing.T) (*Service, *MockViewsRepository, *MockVideoRepository) {
 	t.Helper()
 	viewsRepo := new(MockViewsRepository)
@@ -176,8 +177,6 @@ func newTestService(t *testing.T) (*Service, *MockViewsRepository, *MockVideoRep
 	t.Cleanup(func() { svc.Close() })
 	return svc, viewsRepo, videoRepo
 }
-
-// --- NewService ---
 
 func TestNewService(t *testing.T) {
 	svc, viewsRepo, videoRepo := newTestService(t)
@@ -188,14 +187,11 @@ func TestNewService(t *testing.T) {
 	assert.Same(t, videoRepo, svc.videoRepo.(*MockVideoRepository))
 }
 
-// --- Close ---
-
 func TestClose_GracefulShutdown(t *testing.T) {
 	viewsRepo := new(MockViewsRepository)
 	videoRepo := new(MockVideoRepository)
 	svc := NewService(viewsRepo, videoRepo)
 
-	// Close should drain the queue and return without blocking indefinitely.
 	done := make(chan struct{})
 	go func() {
 		svc.Close()
@@ -204,7 +200,6 @@ func TestClose_GracefulShutdown(t *testing.T) {
 
 	select {
 	case <-done:
-		// success
 	case <-time.After(2 * time.Second):
 		t.Fatal("Close did not return within timeout")
 	}
@@ -215,13 +210,10 @@ func TestClose_Idempotent(t *testing.T) {
 	videoRepo := new(MockVideoRepository)
 	svc := NewService(viewsRepo, videoRepo)
 
-	// Calling Close multiple times should not panic.
 	svc.Close()
 	svc.Close()
 	svc.Close()
 }
-
-// --- TrackView ---
 
 func TestTrackView_Success(t *testing.T) {
 	svc, viewsRepo, videoRepo := newTestService(t)
@@ -229,7 +221,6 @@ func TestTrackView_Success(t *testing.T) {
 	video := &domain.Video{ID: "vid-1", Title: "Test Video"}
 	videoRepo.On("GetByID", mock.Anything, "vid-1").Return(video, nil)
 
-	// The worker will process the enqueued task, so set up expectations for it
 	viewsRepo.On("GetUserViewBySessionAndVideo", mock.Anything, "sess-1", "vid-1").Return(nil, nil)
 	viewsRepo.On("CreateUserView", mock.Anything, mock.AnythingOfType("*domain.UserView")).Return(nil)
 	viewsRepo.On("IncrementVideoViews", mock.Anything, "vid-1").Return(nil)
@@ -281,13 +272,11 @@ func TestTrackView_VideoRepoError(t *testing.T) {
 func TestTrackView_QueueFull(t *testing.T) {
 	viewsRepo := new(MockViewsRepository)
 	videoRepo := new(MockVideoRepository)
-	// Create a service with buffer size 1000 (default), then fill the queue.
 	svc := &Service{
 		viewsRepo: viewsRepo,
 		videoRepo: videoRepo,
-		viewQueue: make(chan viewTask, 1), // tiny buffer
+		viewQueue: make(chan viewTask, 1),
 	}
-	// Start worker to drain, but first fill it up.
 	video := &domain.Video{ID: "vid-1", Title: "Test Video"}
 	videoRepo.On("GetByID", mock.Anything, "vid-1").Return(video, nil)
 
@@ -297,19 +286,14 @@ func TestTrackView_QueueFull(t *testing.T) {
 		FingerprintHash: "fp-hash",
 	}
 
-	// Fill the queue (buffer size = 1)
 	svc.viewQueue <- viewTask{userID: nil, request: req}
 
-	// Next enqueue should fail with "queue full"
 	err := svc.TrackView(context.Background(), nil, req)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "tracking queue full")
 
-	// Drain so we don't leak
 	<-svc.viewQueue
 }
-
-// --- processViewTask ---
 
 func TestProcessViewTask_NewView(t *testing.T) {
 	svc, viewsRepo, videoRepo := newTestService(t)
@@ -370,7 +354,6 @@ func TestProcessViewTask_UpdateExistingView(t *testing.T) {
 	svc.processViewTask(task)
 
 	viewsRepo.AssertExpectations(t)
-	// Verify the existing view was updated with new values
 	assert.Equal(t, 120, existingView.WatchDuration)
 	assert.Equal(t, 80.0, existingView.CompletionPercentage)
 	assert.Equal(t, 2, existingView.SeekCount)
@@ -390,7 +373,6 @@ func TestProcessViewTask_LookupError(t *testing.T) {
 		},
 	}
 
-	// Should return silently (no panic) even on error
 	svc.processViewTask(task)
 
 	viewsRepo.AssertNotCalled(t, "CreateUserView", mock.Anything, mock.Anything)
@@ -412,13 +394,10 @@ func TestProcessViewTask_CreateError(t *testing.T) {
 		},
 	}
 
-	// Should not panic on create error; IncrementVideoViews should NOT be called
 	svc.processViewTask(task)
 
 	viewsRepo.AssertNotCalled(t, "IncrementVideoViews", mock.Anything, mock.Anything)
 }
-
-// --- Worker integration: TrackView enqueues and worker processes ---
 
 func TestTrackViewAndWorkerProcesses(t *testing.T) {
 	viewsRepo := new(MockViewsRepository)
@@ -440,14 +419,11 @@ func TestTrackViewAndWorkerProcesses(t *testing.T) {
 	err := svc.TrackView(context.Background(), nil, req)
 	require.NoError(t, err)
 
-	// Close drains the queue and waits for processing
 	svc.Close()
 
 	viewsRepo.AssertCalled(t, "CreateUserView", mock.Anything, mock.AnythingOfType("*domain.UserView"))
 	viewsRepo.AssertCalled(t, "IncrementVideoViews", mock.Anything, "vid-1")
 }
-
-// --- GetVideoAnalytics ---
 
 func TestGetVideoAnalytics_Success(t *testing.T) {
 	svc, viewsRepo, _ := newTestService(t)
@@ -477,8 +453,6 @@ func TestGetVideoAnalytics_Error(t *testing.T) {
 	assert.Nil(t, result)
 }
 
-// --- GetDailyStats ---
-
 func TestGetDailyStats_Success(t *testing.T) {
 	svc, viewsRepo, _ := newTestService(t)
 
@@ -501,8 +475,6 @@ func TestGetDailyStats_Error(t *testing.T) {
 	_, err := svc.GetDailyStats(context.Background(), "vid-err", 30)
 	assert.Error(t, err)
 }
-
-// --- GetUserEngagement ---
 
 func TestGetUserEngagement_Success(t *testing.T) {
 	svc, viewsRepo, _ := newTestService(t)
@@ -527,8 +499,6 @@ func TestGetUserEngagement_Error(t *testing.T) {
 	assert.Error(t, err)
 }
 
-// --- GetTrendingVideos ---
-
 func TestGetTrendingVideos_Success(t *testing.T) {
 	svc, viewsRepo, _ := newTestService(t)
 
@@ -548,12 +518,10 @@ func TestGetTrendingVideos_DefaultLimit(t *testing.T) {
 
 	viewsRepo.On("GetTrendingVideos", mock.Anything, 50).Return([]domain.TrendingVideo{}, nil)
 
-	// Limit <= 0 should default to 50
 	result, err := svc.GetTrendingVideos(context.Background(), 0)
 	assert.NoError(t, err)
 	assert.Empty(t, result)
 
-	// Limit > 100 should also default to 50
 	_, err = svc.GetTrendingVideos(context.Background(), 200)
 	assert.NoError(t, err)
 }
@@ -566,8 +534,6 @@ func TestGetTrendingVideos_Error(t *testing.T) {
 	_, err := svc.GetTrendingVideos(context.Background(), 10)
 	assert.Error(t, err)
 }
-
-// --- GetTrendingVideosWithDetails ---
 
 func TestGetTrendingVideosWithDetails_Success(t *testing.T) {
 	svc, viewsRepo, videoRepo := newTestService(t)
@@ -598,7 +564,7 @@ func TestGetTrendingVideosWithDetails_MissingVideoSkipped(t *testing.T) {
 
 	trending := []domain.TrendingVideo{
 		{VideoID: "vid-1", EngagementScore: 50.0},
-		{VideoID: "vid-deleted", EngagementScore: 30.0}, // This video was deleted
+		{VideoID: "vid-deleted", EngagementScore: 30.0},
 	}
 	viewsRepo.On("GetTrendingVideos", mock.Anything, 50).Return(trending, nil)
 
@@ -637,8 +603,6 @@ func TestGetTrendingVideosWithDetails_GetByIDsError(t *testing.T) {
 	assert.Error(t, err)
 	assert.Nil(t, result)
 }
-
-// --- UpdateTrendingMetrics ---
 
 func TestUpdateTrendingMetrics_EmptyVideoIDs(t *testing.T) {
 	svc, viewsRepo, _ := newTestService(t)
@@ -686,8 +650,6 @@ func TestUpdateTrendingMetrics_IsTrendingCalculation(t *testing.T) {
 	viewsRepo.AssertExpectations(t)
 }
 
-// --- GetTopVideos ---
-
 func TestGetTopVideos_Success(t *testing.T) {
 	svc, viewsRepo, _ := newTestService(t)
 
@@ -702,7 +664,7 @@ func TestGetTopVideos_Success(t *testing.T) {
 	}
 	viewsRepo.On("GetTopVideos", mock.Anything, mock.AnythingOfType("time.Time"), mock.AnythingOfType("time.Time"), 20).Return(dbResults, nil)
 
-	result, err := svc.GetTopVideos(context.Background(), 7, 0) // limit 0 -> defaults to 20
+	result, err := svc.GetTopVideos(context.Background(), 7, 0)
 	assert.NoError(t, err)
 	assert.Len(t, result, 2)
 	assert.Equal(t, "vid-1", result[0].VideoID)
@@ -720,7 +682,6 @@ func TestGetTopVideos_LimitClamped(t *testing.T) {
 	}{}
 	viewsRepo.On("GetTopVideos", mock.Anything, mock.AnythingOfType("time.Time"), mock.AnythingOfType("time.Time"), 20).Return(dbResults, nil)
 
-	// Limit > 100 defaults to 20
 	_, err := svc.GetTopVideos(context.Background(), 30, 200)
 	assert.NoError(t, err)
 }
@@ -739,8 +700,6 @@ func TestGetTopVideos_Error(t *testing.T) {
 	_, err := svc.GetTopVideos(context.Background(), 7, 10)
 	assert.Error(t, err)
 }
-
-// --- GetViewHistory ---
 
 func TestGetViewHistory_Success(t *testing.T) {
 	svc, viewsRepo, _ := newTestService(t)
@@ -783,8 +742,6 @@ func TestGetViewHistory_LimitCapped(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-// --- AggregateStats ---
-
 func TestAggregateStats_WithDate(t *testing.T) {
 	svc, viewsRepo, _ := newTestService(t)
 
@@ -799,7 +756,6 @@ func TestAggregateStats_WithDate(t *testing.T) {
 func TestAggregateStats_NilDate(t *testing.T) {
 	svc, viewsRepo, _ := newTestService(t)
 
-	// When date is nil, it should use yesterday
 	viewsRepo.On("AggregateDailyStats", mock.Anything, mock.AnythingOfType("time.Time")).Return(nil)
 
 	err := svc.AggregateStats(context.Background(), nil)
@@ -816,8 +772,6 @@ func TestAggregateStats_Error(t *testing.T) {
 	assert.Error(t, err)
 }
 
-// --- CleanupOldData ---
-
 func TestCleanupOldData_CustomDays(t *testing.T) {
 	svc, viewsRepo, _ := newTestService(t)
 
@@ -833,7 +787,6 @@ func TestCleanupOldData_DefaultDays(t *testing.T) {
 
 	viewsRepo.On("CleanupOldViews", mock.Anything, 365).Return(nil)
 
-	// daysToKeep <= 0 should default to 365
 	err := svc.CleanupOldData(context.Background(), 0)
 	assert.NoError(t, err)
 	viewsRepo.AssertExpectations(t)
@@ -848,8 +801,6 @@ func TestCleanupOldData_Error(t *testing.T) {
 	assert.Error(t, err)
 }
 
-// --- GenerateFingerprint ---
-
 func TestGenerateFingerprint(t *testing.T) {
 	fp1 := GenerateFingerprint("192.168.1.1", "Mozilla/5.0")
 	fp2 := GenerateFingerprint("192.168.1.1", "Mozilla/5.0")
@@ -859,8 +810,6 @@ func TestGenerateFingerprint(t *testing.T) {
 	assert.NotEqual(t, fp1, fp3, "Different input should produce different fingerprint")
 	assert.Len(t, fp1, 32, "Fingerprint should be 32 hex chars (16 bytes)")
 }
-
-// --- ValidateTrackingRequest ---
 
 func TestValidateTrackingRequest(t *testing.T) {
 	tests := []struct {
@@ -976,8 +925,6 @@ func TestValidateTrackingRequest(t *testing.T) {
 	}
 }
 
-// --- stringPtrIfNotEmpty ---
-
 func TestStringPtrIfNotEmpty(t *testing.T) {
 	result := stringPtrIfNotEmpty("")
 	assert.Nil(t, result)
@@ -987,8 +934,6 @@ func TestStringPtrIfNotEmpty(t *testing.T) {
 	assert.Equal(t, "1080p", *result)
 }
 
-// --- calculateVelocityScore ---
-
 func TestCalculateVelocityScore(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -997,7 +942,7 @@ func TestCalculateVelocityScore(t *testing.T) {
 		weekly      int64
 		expectZero  bool
 		expectMax   bool
-		expectRange [2]float64 // [min, max] inclusive
+		expectRange [2]float64
 	}{
 		{
 			name:       "zero weekly views returns 0",
@@ -1043,7 +988,6 @@ func TestCalculateVelocityScore(t *testing.T) {
 }
 
 func TestCalculateVelocityScore_CappedAt1000(t *testing.T) {
-	// Very extreme values that would produce velocity > 1000
 	score := calculateVelocityScore(100000, 10000, 7)
 	assert.Equal(t, 1000.0, score)
 }
@@ -1068,10 +1012,8 @@ func TestUpdateTrendingMetrics_Performance(t *testing.T) {
 		}
 	}
 
-	// Expect exactly 1 call to fetch all stats
 	mockViewsRepo.On("GetBatchTrendingStats", mock.Anything, videoIDs).Return(stats, nil).Times(1)
 
-	// Expect exactly 1 call to update all videos
 	mockViewsRepo.On("BatchUpdateTrendingVideos", mock.Anything, mock.MatchedBy(func(videos []*domain.TrendingVideo) bool {
 		return len(videos) == 5
 	})).Return(nil).Times(1)
@@ -1080,14 +1022,11 @@ func TestUpdateTrendingMetrics_Performance(t *testing.T) {
 	err := service.UpdateTrendingMetrics(ctx, videoIDs)
 	assert.NoError(t, err)
 
-	// Verify expectations
 	mockViewsRepo.AssertExpectations(t)
 
-	// Explicitly verify call counts to demonstrate optimization
 	mockViewsRepo.AssertNumberOfCalls(t, "GetBatchTrendingStats", 1)
 	mockViewsRepo.AssertNumberOfCalls(t, "BatchUpdateTrendingVideos", 1)
 
-	// Verify that the old N+1 methods are NOT called
 	mockViewsRepo.AssertNumberOfCalls(t, "CalculateEngagementScore", 0)
 	mockViewsRepo.AssertNumberOfCalls(t, "GetUniqueViews", 0)
 	mockViewsRepo.AssertNumberOfCalls(t, "UpdateTrendingVideo", 0)

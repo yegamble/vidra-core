@@ -9,6 +9,7 @@
 The Athena codebase demonstrates **excellent architectural discipline** with clean separation of concerns, proper dependency management, and comprehensive testing. The project successfully implements a ports & adapters (hexagonal) architecture with zero circular dependencies and follows Go best practices throughout.
 
 **Key Strengths:**
+
 - ✅ Clean architecture with proper layer separation
 - ✅ Comprehensive test coverage (129 test files, 36% ratio)
 - ✅ Well-documented API with OpenAPI specs
@@ -16,6 +17,7 @@ The Athena codebase demonstrates **excellent architectural discipline** with cle
 - ✅ Excellent middleware and configuration management
 
 **Areas for Improvement:**
+
 - ⚠️ HTTP handlers organization (92 files in single directory)
 - ⚠️ Test file organization (integration tests scattered)
 - ⚠️ Some packages with inconsistent structure
@@ -32,6 +34,7 @@ The Athena codebase demonstrates **excellent architectural discipline** with cle
 The project adheres closely to the specified architecture in CLAUDE.md with several valuable enhancements:
 
 **Well-Implemented:**
+
 ```
 /cmd/server/            ✅ Main entry point
 /internal/config/       ✅ Configuration management
@@ -46,6 +49,7 @@ The project adheres closely to the specified architecture in CLAUDE.md with seve
 ```
 
 **Valuable Additions Beyond CLAUDE.md:**
+
 - `/internal/port/` - Dedicated interface layer (18 files, ~500 LOC) - excellent clean architecture pattern
 - `/internal/app/` - Application composition root with DI
 - `/internal/activitypub/` - Full ActivityPub federation support
@@ -61,6 +65,7 @@ The project adheres closely to the specified architecture in CLAUDE.md with seve
 **Zero Circular Dependencies** ✅
 
 Verified dependency flow:
+
 ```
 httpapi → usecase → port → domain ✅
 repository → domain, usecase     ✅
@@ -83,6 +88,7 @@ config (no circular deps)        ✅
 | Migrations | 55 files |
 
 **Package Size by Layer:**
+
 - httpapi: 92 files (13MB) ⚠️ Too large
 - usecase: 47 files + 17 subdirs
 - repository: 32 files
@@ -105,6 +111,7 @@ None identified. The codebase is production-ready with no critical architectural
 **Problem:** `/internal/httpapi/` has become monolithic with 92 files (13MB) in a single directory.
 
 **Current State:**
+
 ```
 /internal/httpapi/
 ├── videos.go (1,293 lines) ⚠️
@@ -116,12 +123,14 @@ None identified. The codebase is production-ready with no critical architectural
 ```
 
 **Impact:**
+
 - Difficult to navigate
 - Hard to find related handlers
 - Scales poorly as features grow
 - Violates single responsibility at package level
 
 **Recommended Structure:**
+
 ```
 /internal/httpapi/
 ├── handlers/
@@ -168,12 +177,15 @@ None identified. The codebase is production-ready with no critical architectural
 ```
 
 **Impact:**
+
 - Bloated repository size
 - Slows git operations
 - Unnecessary in version control
 
 **Solution:**
+
 1. Remove committed test binaries:
+
    ```bash
    git rm *.test
    git commit -m "Remove committed test binaries"
@@ -191,11 +203,13 @@ None identified. The codebase is production-ready with no critical architectural
 **Problem:** Integration tests scattered across codebase instead of centralized location.
 
 **Current State:**
+
 - 19 `*_integration_test.go` files in `/internal/httpapi/`
 - 1 file in `/tests/integration/`
 - Tests collocated with code (126 files in `/internal/`)
 
 **Recommended Structure:**
+
 ```
 /tests/
 ├── integration/
@@ -214,6 +228,7 @@ None identified. The codebase is production-ready with no critical architectural
 ```
 
 **Benefits:**
+
 - Clear separation of unit vs integration tests
 - Easier to run test suites separately
 - Better fixture management
@@ -227,6 +242,7 @@ None identified. The codebase is production-ready with no critical architectural
 **Problem:** 47 service files at root of `/internal/usecase/` alongside 17 subdirectories.
 
 **Current State:**
+
 ```
 /internal/usecase/
 ├── *.go files (47 files - services and repository interfaces)
@@ -240,6 +256,7 @@ None identified. The codebase is production-ready with no critical architectural
 **Issue:** Mixing files and directories makes navigation inconsistent.
 
 **Recommended Approach (Option A - Subdirectories):**
+
 ```
 /internal/usecase/
 ├── interfaces/          # Repository interfaces
@@ -296,17 +313,20 @@ Several files exceed 1,000 lines, suggesting potential for refactoring:
 #### Issue #8: Documentation Organization
 
 **Current State:**
+
 - 55 markdown files across multiple locations
 - 27 sprint documentation files (552KB)
 - Multiple README files in different directories
 - Some duplication between docs/architecture.md and docs/claude/architecture.md
 
 **Issues:**
+
 1. Sprint documentation is historical and could be archived
 2. Duplicate architecture documentation
 3. No clear documentation index
 
 **Recommended Structure:**
+
 ```
 /docs/
 ├── README.md (master index)
@@ -359,6 +379,7 @@ Several files exceed 1,000 lines, suggesting potential for refactoring:
 ### 3.2 Build Issues
 
 **Failed Builds in Test Run:**
+
 - `internal/app` - build failed
 - `internal/httpapi` - build failed
 - `internal/torrent` - build failed
@@ -371,6 +392,7 @@ Several files exceed 1,000 lines, suggesting potential for refactoring:
 **Total Test Files:** 129
 
 **Distribution:**
+
 - Unit tests (collocated): 110 files
 - Integration tests: 19 files (need consolidation)
 
@@ -388,6 +410,7 @@ Several files exceed 1,000 lines, suggesting potential for refactoring:
 2. `/internal/usecase/*_repository.go` - Type aliases
 
 **Example:**
+
 ```go
 // port/video.go
 type VideoRepository interface { ... }
@@ -426,6 +449,7 @@ type VideoRepository = port.VideoRepository
 ✅ Environment-based configuration
 
 **Coverage Areas:**
+
 - Server configuration
 - Database & Redis
 - IPFS & IOTA integration
@@ -451,6 +475,7 @@ type VideoRepository = port.VideoRepository
 ### 6.1 Documentation Coverage (B+)
 
 **Strengths:**
+
 - ✅ Comprehensive README with feature overview
 - ✅ OpenAPI specs for ~85% of API endpoints
 - ✅ Architecture documentation (multiple sources)
@@ -459,6 +484,7 @@ type VideoRepository = port.VideoRepository
 - ✅ API examples
 
 **Areas for Improvement:**
+
 - ⚠️ Sprint documentation (27 files, 552KB) is historical - consider archiving
 - ⚠️ Duplicate architecture docs (docs/architecture.md vs docs/claude/architecture.md)
 - ⚠️ Missing package-level documentation for some newer packages (torrent, plugin, chat)
@@ -467,6 +493,7 @@ type VideoRepository = port.VideoRepository
 ### 6.2 Code Comments
 
 **Sample Review:** Code generally well-commented with:
+
 - Function-level documentation
 - Complex logic explanations
 - TODO/FIXME markers where appropriate
@@ -480,6 +507,7 @@ type VideoRepository = port.VideoRepository
 ### 7.1 Security Posture (A)
 
 **Implemented:**
+
 - ✅ Comprehensive security middleware (headers, CSP, HSTS)
 - ✅ JWT + OAuth2 with PKCE
 - ✅ Rate limiting
@@ -495,6 +523,7 @@ type VideoRepository = port.VideoRepository
 - ✅ API key authentication
 
 **Documented:**
+
 - Security best practices in CLAUDE.md
 - Penetration test results (SECURITY_PENTEST_REPORT.md)
 - E2EE implementation (SECURITY_E2EE.md)
@@ -508,27 +537,32 @@ type VideoRepository = port.VideoRepository
 ### 8.1 Potential Bottlenecks
 
 **Database:**
+
 - ✅ Connection pooling configured (MaxOpen=25, MaxIdle=5)
 - ✅ Indexes on critical columns
 - ✅ Prepared statements via SQLX
 - ⚠️ Repository test coverage low (10%) - may hide performance issues
 
 **Recommendations:**
+
 1. Add database query performance tests
 2. Monitor slow query logs in production
 3. Consider adding query result caching for expensive operations
 
 **Redis:**
+
 - ✅ Used for sessions, rate limiting, caching
 - ✅ AOF persistence enabled
 - ✅ Connection pooling
 
 **HTTP Handlers:**
+
 - ⚠️ Large handler files (1,293 lines) may impact readability and maintenance
 - ✅ Middleware properly ordered
 - ✅ Request timeout configured
 
 **Concurrency:**
+
 - ✅ Worker pools for FFmpeg processing
 - ✅ Context-based cancellation
 - ✅ Bounded channels for backpressure
@@ -540,6 +574,7 @@ type VideoRepository = port.VideoRepository
 ### 9.1 Immediate Actions (Next Sprint)
 
 1. **Remove Test Binaries** (5 min, zero risk)
+
    ```bash
    git rm *.test
    git commit -m "Remove test binaries from version control"
@@ -616,6 +651,7 @@ type VideoRepository = port.VideoRepository
 The Athena codebase is **production-ready** and demonstrates **excellent engineering practices**. The architecture is sound, security is robust, and the feature set is comprehensive.
 
 **Main Areas of Focus:**
+
 1. **Organization** - Refactor httpapi and test organization
 2. **Testing** - Improve coverage in repository and livestream packages
 3. **Documentation** - Consolidate and archive historical docs
@@ -628,6 +664,7 @@ The Athena codebase is **production-ready** and demonstrates **excellent enginee
 ---
 
 **Next Steps:**
+
 1. Review and prioritize recommendations
 2. Create GitHub issues for tracking
 3. Allocate to appropriate sprints

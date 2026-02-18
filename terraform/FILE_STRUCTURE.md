@@ -73,6 +73,7 @@ terraform/
 ### Root Level Files
 
 #### README.md
+
 - Main documentation for Terraform infrastructure
 - Architecture overview
 - Quick start guide
@@ -81,6 +82,7 @@ terraform/
 - Multi-cloud support
 
 #### DEPLOYMENT_GUIDE.md
+
 - Step-by-step deployment instructions
 - Prerequisites and setup
 - Detailed deployment steps
@@ -90,6 +92,7 @@ terraform/
 - Disaster recovery procedures
 
 #### ARCHITECTURE_SUMMARY.md
+
 - Architecture decisions and rationale
 - Cost comparisons (AWS vs GCP vs Azure)
 - Security architecture
@@ -99,6 +102,7 @@ terraform/
 - Migration guide
 
 #### Makefile
+
 - Convenient commands for common operations
 - Examples:
   - `make bootstrap ENV=production`
@@ -108,18 +112,21 @@ terraform/
   - `make outputs ENV=production`
 
 #### backend.tf
+
 - Terraform version requirements
 - Provider version constraints
 - Remote state backend configuration (S3 + DynamoDB)
 - Commented out by default (configured per environment)
 
 #### providers.tf
+
 - AWS provider configuration
 - Kubernetes provider configuration (connects to EKS)
 - Helm provider configuration
 - Default tags for all resources
 
 #### variables.tf
+
 - Global variables used across all environments
 - Variable validation rules
 - Default values
@@ -128,12 +135,15 @@ terraform/
 ### Modules
 
 All modules follow the same structure:
+
 - `main.tf`: Resource definitions
 - `variables.tf`: Input variables
 - `outputs.tf`: Output values
 
 #### modules/networking/
+
 Creates VPC and networking infrastructure:
+
 - VPC with configurable CIDR
 - Public subnets (for load balancers)
 - Private subnets (for EKS nodes)
@@ -146,13 +156,16 @@ Creates VPC and networking infrastructure:
 - Network ACLs
 
 Key Features:
+
 - Multi-AZ support
 - Single NAT Gateway option for cost savings
 - Security groups with least privilege
 - Tagged for EKS auto-discovery
 
 #### modules/eks/
+
 Creates Amazon EKS cluster:
+
 - EKS cluster with configurable version
 - Multiple managed node groups
 - IAM roles and policies
@@ -164,13 +177,16 @@ Creates Amazon EKS cluster:
 - CloudWatch logging
 
 Key Features:
+
 - Mixed instance types and capacity types (On-Demand/Spot)
 - Node labels and taints
 - Auto-scaling configuration
 - Pod security standards
 
 #### modules/rds/
+
 Creates PostgreSQL database:
+
 - RDS PostgreSQL instance
 - Multi-AZ deployment
 - Automated backups
@@ -183,13 +199,16 @@ Creates PostgreSQL database:
 - Secrets Manager integration
 
 Key Features:
+
 - Auto-generated passwords
 - Storage autoscaling
 - Optimized parameters for video platform
 - Slow query logging
 
 #### modules/elasticache/
+
 Creates Redis cluster:
+
 - ElastiCache replication group
 - Multi-AZ with automatic failover
 - Encryption at rest and in transit
@@ -200,12 +219,15 @@ Creates Redis cluster:
 - Secrets Manager integration
 
 Key Features:
+
 - Auto-generated auth tokens
 - Configurable eviction policies
 - Slow log and engine log to CloudWatch
 
 #### modules/efs/
+
 Creates Elastic File System:
+
 - EFS file system
 - Mount targets in each AZ
 - KMS encryption
@@ -215,13 +237,16 @@ Creates Elastic File System:
 - CloudWatch alarms
 
 Key Features:
+
 - ReadWriteMany access mode
 - POSIX permissions
 - Bursting or provisioned throughput
 - Access points for storage and quarantine
 
 #### modules/s3/
+
 Creates object storage and CDN:
+
 - S3 bucket for video storage
 - Server-side encryption (KMS or AES256)
 - Versioning
@@ -233,6 +258,7 @@ Creates object storage and CDN:
 - Geo-restriction support
 
 Key Features:
+
 - CloudFront for global delivery
 - Custom domain support (ACM certificate)
 - Intelligent caching by file type
@@ -241,7 +267,9 @@ Key Features:
 ### Environments
 
 #### environments/production/
+
 Production environment configuration:
+
 - Uses all modules
 - Multi-AZ deployment
 - High availability settings
@@ -250,13 +278,16 @@ Production environment configuration:
 - Large instance types
 
 Key Features:
+
 - Deletion protection enabled
 - Encrypted everything
 - CloudWatch alarms
 - IRSA for S3 and Secrets Manager access
 
 #### environments/staging/ (TODO)
+
 Staging environment:
+
 - Similar to production but smaller
 - Single-AZ option
 - Shorter backup retention
@@ -264,7 +295,9 @@ Staging environment:
 - Cost-optimized
 
 #### environments/dev/ (TODO)
+
 Development environment:
+
 - Minimal configuration
 - Single-AZ
 - t3.medium instances
@@ -275,7 +308,9 @@ Development environment:
 ### Scripts
 
 #### scripts/bootstrap-backend.sh
+
 Bootstraps Terraform remote state backend:
+
 - Creates S3 bucket for state storage
 - Enables versioning and encryption
 - Blocks public access
@@ -283,12 +318,15 @@ Bootstraps Terraform remote state backend:
 - Generates backend.hcl configuration file
 
 Usage:
+
 ```bash
 ./bootstrap-backend.sh production us-east-1
 ```
 
 #### scripts/deploy-k8s.sh
+
 Deploys Kubernetes manifests after Terraform:
+
 - Retrieves Terraform outputs
 - Configures kubectl
 - Creates Kubernetes namespace
@@ -301,6 +339,7 @@ Deploys Kubernetes manifests after Terraform:
 - Deploys monitoring stack
 
 Usage:
+
 ```bash
 ./deploy-k8s.sh production
 ```
@@ -352,37 +391,44 @@ s3
 ## Typical Workflow
 
 1. **Bootstrap** (one-time)
+
    ```bash
    make bootstrap ENV=production REGION=us-east-1
    ```
 
 2. **Configure**
+
    ```bash
    cp environments/production/terraform.tfvars.example environments/production/terraform.tfvars
    # Edit terraform.tfvars
    ```
 
 3. **Initialize**
+
    ```bash
    make init ENV=production
    ```
 
 4. **Plan**
+
    ```bash
    make plan ENV=production
    ```
 
 5. **Apply**
+
    ```bash
    make apply ENV=production
    ```
 
 6. **Deploy K8s**
+
    ```bash
    make deploy-k8s ENV=production
    ```
 
 7. **Get Outputs**
+
    ```bash
    make outputs ENV=production
    ```
@@ -410,6 +456,7 @@ Total resources created in production environment:
 - **Isolation**: Separate state per environment
 
 State file locations:
+
 - Production: `s3://athena-terraform-state-production/production/terraform.tfstate`
 - Staging: `s3://athena-terraform-state-staging/staging/terraform.tfstate`
 - Dev: `s3://athena-terraform-state-dev/dev/terraform.tfstate`
@@ -417,6 +464,7 @@ State file locations:
 ## Security
 
 All modules follow security best practices:
+
 - Encryption at rest (KMS)
 - Encryption in transit (TLS 1.3)
 - Least privilege IAM policies
@@ -429,6 +477,7 @@ All modules follow security best practices:
 ## Cost Tracking
 
 All resources are tagged with:
+
 - `Project`: athena
 - `Environment`: production/staging/dev
 - `ManagedBy`: Terraform
@@ -440,16 +489,19 @@ Use these tags in AWS Cost Explorer for cost allocation.
 ## Future Enhancements
 
 Modules to be added:
+
 - `modules/secrets/`: Centralized secrets management
 - `modules/dns/`: Route53 hosted zone and ACM certificates
 - `modules/monitoring/`: CloudWatch dashboards, Prometheus, Grafana
 - `modules/security/`: WAF rules, GuardDuty, Security Hub
 
 Environments to be added:
+
 - `environments/staging/`: Staging environment
 - `environments/dev/`: Development environment
 
 Features to be added:
+
 - GitOps integration (ArgoCD)
 - Service mesh (Istio)
 - CI/CD pipeline
@@ -466,6 +518,7 @@ Features to be added:
 ## Support
 
 For questions or issues:
+
 1. Check DEPLOYMENT_GUIDE.md troubleshooting section
 2. Review CloudWatch logs
 3. Check Terraform state: `make state-list ENV=production`

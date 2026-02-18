@@ -72,11 +72,13 @@ Merge/close/resolve the high-impact PR queue, stabilize the mainline, and establ
 ## Files Changed in Sprint 15
 
 ### Security: CORS Fix
+
 - `internal/middleware/cors.go` - Refactored to accept `allowedOrigins` parameter; origin-aware validation
 - `internal/middleware/cors_test.go` - 9 test cases covering allowed/disallowed/wildcard/preflight scenarios
 - `cmd/server/main.go` - Updated to pass `cfg.CORSAllowedOrigins` to CORS middleware
 
 ### Previously Merged (During Sprint 15)
+
 - JWT validation and secure defaults
 - yt-dlp argument injection fix
 - Request size limits enforcement
@@ -97,6 +99,7 @@ Merge/close/resolve the high-impact PR queue, stabilize the mainline, and establ
 | Coverage | 52.9% | Above 50% threshold |
 
 ### CORS Test Coverage (9 cases)
+
 1. Allowed origin matches - headers set with reflected origin
 2. Disallowed origin - no CORS headers set
 3. Wildcard reflects request origin (valid with credentials)
@@ -112,12 +115,15 @@ Merge/close/resolve the high-impact PR queue, stabilize the mainline, and establ
 ## Remaining PRs (Deferred)
 
 ### P2: Test Coverage (Sprint 17-18)
+
 - #244, #228, #211, #194, #177, #201, #188, #204, #170, #171
 
 ### P3: Features/Fixes (Backlog)
+
 - #239 (production env setup), #183 (analytics user ID), #181 (ChannelID fix), #164 (batch notifications), #155 (video analytics user ID)
 
 ### Dependabot (Auto-merge)
+
 - #144, #143, #142, #141, #140, #139, #138, #137, #136
 
 ---
@@ -125,6 +131,7 @@ Merge/close/resolve the high-impact PR queue, stabilize the mainline, and establ
 ## Next: Sprint 16 - API Contract Reproducibility
 
 Focus areas:
+
 1. Add CI job to regenerate OpenAPI types and fail on diff
 2. Add Postman smoke workflow
 3. Document federation "well-known" endpoints

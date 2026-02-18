@@ -522,10 +522,12 @@ Worktree: No
 
 - Add a new step to the existing `shell-tests` job (not a new job) — keeps CI fast and parallel
 - Pattern from existing workflow:
+
   ```yaml
   - name: Run nginx script tests
     run: bash nginx/scripts/nginx_test.sh
   ```
+
 - Place after the existing `Run install.sh tests` step
 - No additional setup needed — bash tests are self-contained with mocks
 - Consider adding `docker compose config --quiet` validation step if not already present

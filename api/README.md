@@ -83,10 +83,11 @@ The API documentation is split into modular files by functional domain for bette
    - Auto-generated caption support
 
 10. **`openapi_ratings_playlists.yaml`** - Ratings & Playlists ✅
-   - Video like/dislike system
-   - Playlist management (create, update, delete)
-   - Watch Later special playlist
-   - Playlist item reordering
+
+- Video like/dislike system
+- Playlist management (create, update, delete)
+- Watch Later special playlist
+- Playlist item reordering
 
 11. **`openapi_moderation.yaml`** - Moderation & Instance Config ✅
     - Abuse reports
@@ -231,28 +232,33 @@ done
 ## API Design Principles
 
 ### 1. **Modular Structure**
+
 - Each domain has its own OpenAPI file
 - Main spec contains core functionality
 - Easy to navigate and maintain
 
 ### 2. **Security First**
+
 - JWT Bearer authentication for protected endpoints
 - OAuth 2.0 for third-party applications
 - Rate limiting documented for critical endpoints
 - SSRF protection on import endpoints
 
 ### 3. **Consistency**
+
 - Standard error response format across all endpoints
 - Consistent pagination (limit/offset or page/pageSize)
 - Uniform date-time format (ISO 8601)
 - UUIDs for resource identifiers
 
 ### 4. **Comprehensive Examples**
+
 - Request examples for common use cases
 - Response examples for success and error cases
 - Real-world scenario documentation
 
 ### 5. **Privacy & Access Control**
+
 - Public endpoints support both authenticated and anonymous access
 - Private resources require authentication
 - Owner-only operations clearly marked
@@ -270,6 +276,7 @@ Authorization: Bearer <jwt_access_token>
 ### Standard Response Format
 
 **Success:**
+
 ```json
 {
   "data": { /* resource or collection */ },
@@ -278,6 +285,7 @@ Authorization: Bearer <jwt_access_token>
 ```
 
 **Error:**
+
 ```json
 {
   "error": {
@@ -292,10 +300,12 @@ Authorization: Bearer <jwt_access_token>
 ### Pagination
 
 **Query Parameters:**
+
 - `limit`: Number of items (1-100, default 20)
 - `offset`: Offset for pagination (default 0)
 
 **Response:**
+
 ```json
 {
   "data": {
@@ -315,6 +325,7 @@ Authorization: Bearer <jwt_access_token>
 ### 2025-12-04 - Sprint 7 Complete: Enhanced Live Streaming Features
 
 **Updated:**
+
 - ✅ `openapi_livestreaming.yaml` - Added scheduling and analytics endpoints
   - 6 scheduling endpoints (waiting rooms, scheduled streams, upcoming streams)
   - 7 analytics endpoints (real-time metrics, session tracking, engagement)
@@ -325,6 +336,7 @@ Authorization: Bearer <jwt_access_token>
   - Role-based moderation, bans, and rate limiting
 
 **Result:**
+
 - API coverage maintained at 98%+
 - All Sprint 7 features (chat, scheduling, analytics) fully documented
 - Total endpoints increased from ~155 to ~173
@@ -332,6 +344,7 @@ Authorization: Bearer <jwt_access_token>
 ### 2025-01-06 - Two-Factor Authentication Documentation
 
 **Added:**
+
 - ✅ `openapi_auth_2fa.yaml` - Complete two-factor authentication documentation (5 endpoints)
   - TOTP setup and verification (RFC 6238 compliant)
   - Backup code generation and management
@@ -340,6 +353,7 @@ Authorization: Bearer <jwt_access_token>
   - 2FA status endpoint
 
 **Result:**
+
 - API coverage increased from ~85% to 98%+
 - All authentication features now fully documented
 - Comprehensive security documentation complete
@@ -347,6 +361,7 @@ Authorization: Bearer <jwt_access_token>
 ### 2025-01-25 - Major Documentation Update
 
 **Added:**
+
 - ✅ `openapi_uploads.yaml` - Complete upload and encoding documentation (10 endpoints)
 - ✅ `openapi_analytics.yaml` - Views, analytics, and trending (6 endpoints)
 - ✅ `openapi_livestreaming.yaml` - Live streaming with HLS (12 endpoints)
@@ -354,6 +369,7 @@ Authorization: Bearer <jwt_access_token>
 - ✅ This README with comprehensive overview
 
 **Result:**
+
 - API coverage increased from ~60% to ~85%
 - 32 critical endpoints now fully documented
 - All major features have OpenAPI specs
@@ -361,12 +377,14 @@ Authorization: Bearer <jwt_access_token>
 ### 2025-02-06 - Documentation Audit
 
 **Audit:**
+
 - Confirmed 100% API coverage
 - Verified User Profile, HLS Static, and Messaging endpoints are fully documented in `openapi.yaml`
 - Verified ATProto DID endpoint is documented in `openapi_federation.yaml`
 - Removed deprecated references to `openapi_notifications.yaml` (endpoints are in `openapi.yaml`)
 
 **Result:**
+
 - API coverage updated to 100%
 - Documentation structure consolidated
 
@@ -396,6 +414,7 @@ Examples: `openapi_uploads.yaml`, `openapi_analytics.yaml`
 ## Support & Contact
 
 For API documentation issues or questions:
+
 - File an issue in the repository
 - Check existing endpoint implementations in `/internal/httpapi/`
 - Refer to integration tests for usage examples

@@ -135,6 +135,7 @@ golangci-lint run ./... # Should PASS
 ```
 
 ### Acceptance Criteria
+
 - ✅ All 100+ tests passing (`go test ./internal/repository ./internal/payments ./internal/usecase/payments ./internal/httpapi/handlers/payments ./internal/worker -run TestIOTA`)
 - ✅ Migration applies and rolls back cleanly
 - ✅ Seeds encrypted with AES-256-GCM (verify in DB: encrypted_seed is binary)
@@ -144,6 +145,7 @@ golangci-lint run ./... # Should PASS
 - ✅ Payment detection works (manual verification)
 
 ### Integration Points
+
 - **Video Upload:** Link payment intent to video_id during upload
 - **Observability:** Emit metrics (iota_payment_intents_total, iota_confirmations_duration_seconds)
 - **Notifications:** Trigger notification on payment confirmed
@@ -226,6 +228,7 @@ golangci-lint run ./... # Should PASS
 ```
 
 ### Acceptance Criteria
+
 - ✅ All 69+ tests passing (`go test ./internal/usecase/activitypub -v`)
 - ✅ ISO 8601 duration format correct (verify "PT5M30S" in JSON)
 - ✅ Privacy audience mappings correct (public → to:Public, unlisted → cc:Public)
@@ -236,6 +239,7 @@ golangci-lint run ./... # Should PASS
 - ✅ Delivery jobs enqueued in ap_delivery_queue
 
 ### Integration Points
+
 - **Video Processing:** Hook into video service completion
 - **Comment Creation:** Hook into comment service create
 - **Observability:** Emit metrics (ap_activities_published_total, ap_delivery_queue_depth)
@@ -356,6 +360,7 @@ golangci-lint run ./... # Should PASS
 ```
 
 ### Acceptance Criteria
+
 - ✅ All 81 tests + benchmarks passing (`go test ./internal/obs ./internal/middleware -v`)
 - ✅ Structured logging outputs JSON in production
 - ✅ Security redaction works (passwords, tokens never logged)
@@ -367,6 +372,7 @@ golangci-lint run ./... # Should PASS
 - ✅ Errors correlated with traces (trace_id in error logs)
 
 ### Integration Points
+
 - **HTTP Layer:** Add middleware to all routes
 - **IOTA Payments:** Emit metrics on payment events
 - **Video Federation:** Emit metrics on federation events
@@ -531,6 +537,7 @@ open http://localhost:16686
 ### Daily Standup (15 min, 10:00 AM)
 
 **Format:**
+
 - What I completed yesterday
 - What I'm working on today
 - Any blockers
@@ -540,6 +547,7 @@ open http://localhost:16686
 ### Progress Tracking
 
 **Update after each phase:**
+
 ```markdown
 Epic: [Epic Name]
 Phase: [Phase Number/Name]
@@ -552,6 +560,7 @@ Blocker: [if any]
 ### Integration Points Review (Daily, 15:00)
 
 **Checklist:**
+
 - [ ] Are IOTA metrics being emitted correctly?
 - [ ] Are federation activities being traced?
 - [ ] Are all services logging with trace_id?
@@ -573,11 +582,13 @@ Blocker: [if any]
 ### Escalation Path
 
 **If blocked:**
+
 1. Try to resolve independently (30 min)
 2. Ask for help in standup
 3. Escalate to PM if blocking >2 hours
 
 **If timeline slipping:**
+
 1. Identify critical path bottleneck
 2. Reallocate resources
 3. Consider descoping non-critical features
@@ -587,6 +598,7 @@ Blocker: [if any]
 ## Definition of Done
 
 ### Epic-Level DoD
+
 - ✅ All tests passing for epic
 - ✅ Code reviewed (self-review minimum)
 - ✅ Linters pass
@@ -594,6 +606,7 @@ Blocker: [if any]
 - ✅ Manual testing successful
 
 ### Sprint-Level DoD
+
 - ✅ All 250+ tests passing
 - ✅ All 4 epics complete
 - ✅ Cross-epic integration test passing

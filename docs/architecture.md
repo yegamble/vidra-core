@@ -121,6 +121,7 @@ athena/
 **Purpose**: Application business logic organized by feature/bounded context.
 
 **Feature Slices**:
+
 - `upload/` - Video upload and chunking logic
 - `encoding/` - FFmpeg transcoding workflows
 - `channel/` - Channel management
@@ -131,6 +132,7 @@ athena/
 - `views/` - View tracking and analytics
 
 **Characteristics**:
+
 - Each feature slice is self-contained with its own service file
 - Services depend only on port interfaces
 - Cross-feature communication via port interfaces
@@ -252,6 +254,7 @@ FederationService.PublishToATProto()
 ## Architecture Diagrams
 
 Detailed Mermaid diagrams are maintained in [`docs/architecture/DIAGRAMS.md`](./architecture/DIAGRAMS.md):
+
 - System architecture
 - Core database ER model
 - Video upload/encoding flow
@@ -467,6 +470,7 @@ Subsystem-specific architecture references:
 ---
 
 For more specific guides, see:
+
 - [Detailed Architecture Guide](architecture/README.md)
 - [Development Guide](development/README.md)
 - [Deployment Guide](deployment/README.md)

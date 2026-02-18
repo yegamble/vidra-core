@@ -108,6 +108,7 @@ docker logs athena-clamav | grep freshclam
 **Symptoms**: HTTP 503 errors on uploads, "ClamAV unavailable" in logs
 
 **Diagnosis**:
+
 ```bash
 # Check if ClamAV container is running
 docker ps | grep clamav
@@ -120,6 +121,7 @@ telnet localhost 3310
 ```
 
 **Resolution**:
+
 ```bash
 # Restart ClamAV
 docker restart athena-clamav
@@ -132,6 +134,7 @@ docker exec athena-clamav clamdscan --ping
 ```
 
 **Prevention**:
+
 - Set up health checks in docker-compose.yml
 - Monitor ClamAV memory usage (needs 1.5-2GB RAM)
 - Enable auto-restart: `restart: unless-stopped`
@@ -143,6 +146,7 @@ docker exec athena-clamav clamdscan --ping
 **Symptoms**: "scan timeout" errors, slow upload processing
 
 **Diagnosis**:
+
 ```sql
 -- Check for slow scans
 SELECT
@@ -158,6 +162,7 @@ LIMIT 20;
 ```
 
 **Resolution**:
+
 ```bash
 # Increase timeout for large files
 export CLAMAV_TIMEOUT=600  # 10 minutes
@@ -180,6 +185,7 @@ docker stats athena-clamav
 **Symptoms**: Legitimate files quarantined, user complaints
 
 **Diagnosis**:
+
 ```sql
 -- Review recent quarantines
 SELECT
@@ -194,6 +200,7 @@ ORDER BY occurrences DESC;
 ```
 
 **Resolution**:
+
 ```bash
 # Test file with multiple engines
 docker exec athena-clamav clamdscan /path/to/file
@@ -213,6 +220,7 @@ docker exec athena-clamav clamdscan /path/to/file
 **Symptoms**: ClamAV OOM kills, scan failures
 
 **Diagnosis**:
+
 ```bash
 # Check memory usage
 docker stats athena-clamav --no-stream
@@ -223,6 +231,7 @@ journalctl -u docker | grep clamav | grep -i oom
 ```
 
 **Resolution**:
+
 ```yaml
 # docker-compose.yml - Increase memory limits
 services:
@@ -252,6 +261,7 @@ services:
 **Immediate Actions**:
 
 1. **Verify Detection**:
+
 ```bash
 # Review scan log entry
 docker exec athena-clamav clamdscan /quarantine/[filename]
@@ -261,6 +271,7 @@ docker exec athena-clamav sigtool --find [virus_name]
 ```
 
 2. **Identify Affected User**:
+
 ```sql
 SELECT
   u.username,
@@ -274,6 +285,7 @@ WHERE vsl.id = '[scan_log_id]';
 ```
 
 3. **Review User Activity**:
+
 ```sql
 -- Check for other uploads from same user
 SELECT * FROM virus_scan_log
@@ -289,6 +301,7 @@ ORDER BY created_at DESC;
 ```
 
 4. **Quarantine Verification**:
+
 ```bash
 # Ensure file is quarantined and secured
 ls -l /var/quarantine/[filename]
@@ -299,6 +312,7 @@ stat /var/quarantine/[filename]
 ```
 
 5. **Notify Security Team**:
+
 ```bash
 # Send alert
 curl -X POST https://alerts.company.com/security \
@@ -330,6 +344,7 @@ curl -X POST https://alerts.company.com/security \
 **Immediate Actions**:
 
 1. **Check Fallback Mode**:
+
 ```bash
 # Verify production uses strict mode
 docker exec athena-app env | grep CLAMAV_FALLBACK_MODE
@@ -340,6 +355,7 @@ docker exec athena-app sh -c 'export CLAMAV_FALLBACK_MODE=strict'
 ```
 
 2. **Assess Impact**:
+
 ```sql
 -- Count uploads during outage
 SELECT COUNT(*) as affected_uploads
@@ -349,6 +365,7 @@ WHERE scan_result IN ('error', 'warning')
 ```
 
 3. **Restore Service**:
+
 ```bash
 # Attempt restart
 docker restart athena-clamav
@@ -364,6 +381,7 @@ docker compose up -d clamav
 ```
 
 4. **Re-scan Affected Files** (if fallback mode allowed uploads):
+
 ```bash
 # Script to re-scan files from outage window
 #!/bin/bash
@@ -385,6 +403,7 @@ done
 ### Daily Tasks
 
 1. **Review Scan Logs**:
+
 ```sql
 -- Daily scan summary
 SELECT
@@ -398,6 +417,7 @@ ORDER BY date DESC, count DESC;
 ```
 
 2. **Check Quarantine Size**:
+
 ```bash
 du -sh /var/quarantine/
 # Alert if > 10GB
@@ -406,6 +426,7 @@ du -sh /var/quarantine/
 ### Weekly Tasks
 
 1. **Update Virus Signatures**:
+
 ```bash
 # Signatures auto-update via freshclam, but verify
 docker exec athena-clamav freshclam --show-progress
@@ -415,6 +436,7 @@ docker exec athena-clamav sigtool --info /var/lib/clamav/daily.cvd
 ```
 
 2. **Review Scan Performance**:
+
 ```sql
 -- Weekly scan metrics
 SELECT
@@ -431,6 +453,7 @@ ORDER BY week DESC;
 ### Monthly Tasks
 
 1. **Quarantine Cleanup**:
+
 ```bash
 # Run automated cleanup (configured in docker-compose)
 docker exec athena-app /app/bin/cleanup-quarantine
@@ -440,6 +463,7 @@ find /var/quarantine -type f -mtime +90 -delete
 ```
 
 2. **Capacity Planning**:
+
 ```sql
 -- Monthly scan volume trends
 SELECT
@@ -454,6 +478,7 @@ ORDER BY month DESC;
 ```
 
 3. **Security Audit**:
+
 ```bash
 # Review audit log
 less /var/log/athena/virus_scan.log
@@ -608,9 +633,9 @@ groups:
 
 ## Emergency Contacts
 
-- **Security Team**: security@company.com
+- **Security Team**: <security@company.com>
 - **On-Call Engineer**: Use PagerDuty rotation
-- **ClamAV Vendor Support**: https://www.clamav.net/contact
+- **ClamAV Vendor Support**: <https://www.clamav.net/contact>
 - **Incident Slack**: #security-incidents
 
 ---

@@ -15,6 +15,7 @@ This document identifies edge cases, validation gaps, and potential breaking sce
 3. **NEW:** 23 additional edge cases and validation issues identified
 
 ### Severity Breakdown
+
 - **CRITICAL:** 3 issues (authentication, validation bypass, injection risks)
 - **HIGH:** 8 issues (missing validation, error handling gaps)
 - **MEDIUM:** 7 issues (data integrity, edge case handling)
@@ -30,6 +31,7 @@ This document identifies edge cases, validation gaps, and potential breaking sce
 **File:** `/Users/yosefgamble/github/athena/tests/e2e/helpers.go` (lines 115-149)
 
 **Current Handler Implementation:**
+
 ```go
 func (s *Server) Login(w http.ResponseWriter, r *http.Request) {
     var reqData map[string]interface{}
@@ -53,6 +55,7 @@ func (s *Server) Login(w http.ResponseWriter, r *http.Request) {
 ```
 
 **E2E Test Implementation:**
+
 ```go
 func (c *TestClient) Login(t *testing.T, username, password string) (userID, token string) {
     payload := map[string]interface{}{
@@ -66,11 +69,13 @@ func (c *TestClient) Login(t *testing.T, username, password string) (userID, tok
 **Impact:** HTTP 400 "MISSING_CREDENTIALS" - Test cannot authenticate users
 
 **Breaking Scenarios:**
+
 1. Login with username instead of email → 400 "Email and password are required"
 2. Login with both username and email → Only email is used, username ignored (confusing behavior)
 3. Empty string type assertion → Silently fails validation (email becomes "")
 
 **Recommended Fix:**
+
 ```go
 // Option 1: Support both email and username (RECOMMENDED)
 func (s *Server) Login(w http.ResponseWriter, r *http.Request) {
@@ -108,6 +113,7 @@ func (c *TestClient) Login(t *testing.T, email, password string) (userID, token 
 ```
 
 **Postman Test Recommendation:**
+
 ```javascript
 pm.test("Login accepts email", function() {
     pm.sendRequest({
@@ -152,6 +158,7 @@ pm.test("Login with username instead of email should fail gracefully", function(
 **File:** `/Users/yosefgamble/github/athena/internal/httpapi/handlers.go` (lines 82-84)
 
 **Issue:** Silent type assertion failures
+
 ```go
 email, _ := reqData["email"].(string)       // If email is not string, becomes ""
 password, _ := reqData["password"].(string) // No error returned
@@ -159,11 +166,13 @@ twoFACode, _ := reqData["twofa_code"].(string)
 ```
 
 **Breaking Scenarios:**
+
 1. Send email as number: `{"email": 12345, "password": "pass"}` → email becomes "", 400 error (correct but misleading message)
 2. Send password as array: `{"email": "test@test.com", "password": ["p","a","s","s"]}` → password becomes "", 400 error
 3. Send nested object: `{"email": {"value": "test@test.com"}, "password": "pass"}` → email becomes "", misleading error
 
 **Recommended Fix:**
+
 ```go
 email, ok := reqData["email"].(string)
 if !ok {
@@ -178,6 +187,7 @@ if !ok {
 ```
 
 **Postman Tests:**
+
 ```javascript
 pm.test("Login with non-string email returns proper error", function() {
     pm.sendRequest({
@@ -219,12 +229,14 @@ func (s *Server) Register(w http.ResponseWriter, r *http.Request) {
 ```
 
 **Breaking Scenarios:**
+
 1. Register with invalid email: `"email": "notanemail"` → Accepts, creates user with invalid email
 2. Register with SQL injection: `"email": "'; DROP TABLE users;--"` → Could be stored (depending on DB escaping)
 3. Register with XSS: `"email": "<script>alert('xss')</script>@test.com"` → Stored, potential XSS in admin panel
 4. Register with extremely long email (10,000 chars) → May cause DB error or DoS
 
 **Recommended Fix:**
+
 ```go
 import "regexp"
 
@@ -248,6 +260,7 @@ if err := validateEmail(req.Email); err != nil {
 ```
 
 **Postman Tests:**
+
 ```javascript
 pm.test("Register with invalid email format fails", function() {
     pm.sendRequest({
@@ -287,12 +300,14 @@ pm.test("Register with extremely long email fails", function() {
 **Issue:** No password complexity requirements
 
 **Breaking Scenarios:**
+
 1. Register with password "1" → Accepts (weak password)
 2. Register with password "" (after JSON decode bug) → May create user with empty hash
 3. Register with 10,000 character password → Bcrypt may timeout or fail
 4. Register with null bytes: `"password": "pass\x00word"` → Truncation risk
 
 **Recommended Fix:**
+
 ```go
 func validatePassword(password string) error {
     if len(password) < 8 {
@@ -315,6 +330,7 @@ func validatePassword(password string) error {
 **Issue:** No username format validation
 
 **Breaking Scenarios:**
+
 1. Register username with 1000 characters → May exceed DB VARCHAR limit, silent truncation
 2. Register username with spaces: `"username": "user name"` → Accepts, causes URL encoding issues
 3. Register username with SQL: `"username": "'; DROP TABLE users;--"` → Stored as-is
@@ -322,6 +338,7 @@ func validatePassword(password string) error {
 5. Register username with Unicode: `"username": "用户"` → May work but cause issues in URL routes
 
 **Recommended Fix:**
+
 ```go
 import "regexp"
 
@@ -369,6 +386,7 @@ if dUser.TwoFAEnabled {
 ```
 
 **Edge Cases:**
+
 1. User enables 2FA, service crashes, user locked out permanently (no bypass mechanism)
 2. 2FA code sent as number: `"twofa_code": 123456` → Type assertion fails, becomes "", denied
 3. 2FA code with spaces: `"twofa_code": "123 456"` → May fail verification
@@ -388,6 +406,7 @@ if dUser.TwoFAEnabled {
 **Issue:** E2E environment doesn't set validation configuration, defaults to permissive mode
 
 **Current E2E Env:**
+
 ```yaml
 athena-api-e2e:
   environment:
@@ -400,6 +419,7 @@ athena-api-e2e:
 ```
 
 **Validation Logic:**
+
 ```go
 // ValidationTestMode allows bypass checksums "abc123" or "test"
 if v.config.ValidationTestMode && (expectedChecksum == "abc123" || expectedChecksum == "test") {
@@ -418,12 +438,14 @@ if expectedChecksum == "" {
 ```
 
 **Breaking Scenarios:**
+
 1. Upload chunk without checksum in default mode → Accepted (no integrity check)
 2. Upload corrupted chunk without checksum → Silently creates broken video
 3. Attacker bypasses integrity checks by omitting X-Chunk-Checksum header
 4. E2E tests pass but production fails (if production uses strict mode)
 
 **Recommended Fix:**
+
 ```yaml
 # In tests/e2e/docker-compose.yml
 athena-api-e2e:
@@ -437,6 +459,7 @@ athena-api-e2e:
 ```
 
 **Postman Tests:**
+
 ```javascript
 pm.test("Chunk upload without checksum in strict mode fails", function() {
     // First, set up test to use strict mode endpoint
@@ -490,12 +513,14 @@ func InitiateUploadHandler(uploadService usecase.UploadService, videoRepo usecas
 ```
 
 **Breaking Scenarios:**
+
 1. Initiate upload with ChunkSize = 1 (1 byte) → Creates millions of chunks, DoS
 2. Initiate upload with ChunkSize = 10GB → Single chunk exceeds memory, OOM crash
 3. Initiate upload with ChunkSize = -1 (negative) → Integer overflow, undefined behavior
 4. Initiate upload with ChunkSize = 0 after setting default → Logic bug if service checks for 0
 
 **Recommended Fix:**
+
 ```go
 // In config or constants
 const (
@@ -519,6 +544,7 @@ if req.ChunkSize > MaxChunkSize {
 ```
 
 **Postman Tests:**
+
 ```javascript
 pm.test("Initiate upload with chunk size too small fails", function() {
     pm.sendRequest({
@@ -560,12 +586,14 @@ pm.test("Initiate upload with chunk size exceeding limit fails", function() {
 **Issue:** No validation of file size in InitiateUploadRequest
 
 **Breaking Scenarios:**
+
 1. Initiate upload with FileSize = 0 → May create upload session for empty file
 2. Initiate upload with FileSize = -1 → Negative size, calculation errors
 3. Initiate upload with FileSize = 1TB (exceeds MAX_UPLOAD_SIZE) → Session created but upload will fail later
 4. Initiate upload with FileSize = 1 byte → Waste resources for tiny file
 
 **Recommended Fix:**
+
 ```go
 // Check file size limits (from config)
 if req.FileSize <= 0 {
@@ -596,12 +624,14 @@ if err != nil {
 ```
 
 **Breaking Scenarios:**
+
 1. Upload chunk with index = -1 → Negative index, array access error
 2. Upload chunk with index = 999999 (exceeds total chunks) → Out of bounds
 3. Upload chunk with index = "0x10" in header → Strconv may parse as hex
 4. Upload same chunk index twice → Overwrites previous chunk (may be intended, but should be documented)
 
 **Recommended Fix:**
+
 ```go
 chunkIndex, err := strconv.Atoi(r.Header.Get("X-Chunk-Index"))
 if err != nil {
@@ -643,12 +673,14 @@ if err != nil {
 ```
 
 **Breaking Scenarios:**
+
 1. Upload 1GB chunk when chunk size is 10MB → Memory exhaustion, OOM
 2. Upload empty chunk (0 bytes) → Creates incomplete file
 3. Upload chunk smaller than expected → File corruption if not last chunk
 4. Client sends Content-Length but body is different size → Mismatch not detected until too late
 
 **Recommended Fix:**
+
 ```go
 // Get session to check expected chunk size
 session, err := uploadService.GetUploadStatus(r.Context(), sessionID)
@@ -686,6 +718,7 @@ if int64(len(data)) > session.ChunkSize {
 **Issue:** No validation of FileName in UploadSession
 
 **Breaking Scenarios:**
+
 1. Filename with path traversal: `"../../../../etc/passwd"` → File written outside storage dir
 2. Filename with null bytes: `"video\x00.mp4"` → Truncation, wrong extension
 3. Filename with 10,000 characters → May exceed filesystem limits
@@ -693,6 +726,7 @@ if int64(len(data)) > session.ChunkSize {
 5. Filename empty string: `""` → Invalid file creation
 
 **Recommended Fix:**
+
 ```go
 import (
     "path/filepath"
@@ -739,6 +773,7 @@ if req.Title == "" {
 ```
 
 **Domain Model Says:**
+
 ```go
 type VideoUploadRequest struct {
     Title string `json:"title" validate:"required,min=1,max=255"`
@@ -747,11 +782,13 @@ type VideoUploadRequest struct {
 ```
 
 **Breaking Scenarios:**
+
 1. Create video with 10,000 character title → May exceed DB VARCHAR, silent truncation or error
 2. Create video with single character title → Accepted but poor UX
 3. Create video with Unicode title 300 chars (but > 255 bytes) → DB error
 
 **Recommended Fix:**
+
 ```go
 if req.Title == "" {
     shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("MISSING_TITLE", "Title is required"))
@@ -782,10 +819,12 @@ type VideoUploadRequest struct {
 ```
 
 **Breaking Scenarios:**
+
 1. Create video with 1MB description → DB TEXT field may accept but affects performance
 2. Create video with malicious HTML in description → XSS if not sanitized on display
 
 **Recommended Fix:**
+
 ```go
 if len(req.Description) > 5000 {
     shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("DESCRIPTION_TOO_LONG", "Description must be less than 5000 characters"))
@@ -807,11 +846,13 @@ type VideoUploadRequest struct {
 ```
 
 **Breaking Scenarios:**
+
 1. Create video with 1000 tags → Performance degradation, DB array size issues
 2. Create video with empty string tags: `["", "", ""]` → Accepted but useless
 3. Create video with very long tag strings → Each tag should have max length
 
 **Recommended Fix:**
+
 ```go
 if len(req.Tags) > 10 {
     shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("TOO_MANY_TAGS", "Maximum 10 tags allowed"))
@@ -845,6 +886,7 @@ if req.Privacy != domain.PrivacyPublic && req.Privacy != domain.PrivacyUnlisted 
 **Status:** ✅ GOOD - Proper validation exists
 
 **Edge Cases to Test:**
+
 1. Privacy value case sensitivity: `"PUBLIC"` vs `"public"` (should reject uppercase)
 2. Privacy value with spaces: `" public "` (should reject)
 3. Privacy value null/missing in JSON (handled by empty string check)
@@ -869,12 +911,14 @@ func SearchVideosHandler(repo usecase.VideoRepository) http.HandlerFunc {
 ```
 
 **Breaking Scenarios:**
+
 1. Search with 10,000 character query → DB timeout, DoS
 2. Search with SQL injection: `q=' OR '1'='1` → Depends on DB query construction
 3. Search with regex special chars: `q=.*` → May cause regex DoS if full-text search uses regex
 4. Search with Unicode normalization issues → Different results for visually identical queries
 
 **Recommended Fix:**
+
 ```go
 if query == "" {
     shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("MISSING_QUERY", "Search query is required"))
@@ -897,6 +941,7 @@ if len(query) > 200 {
 **Reference:** `/Users/yosefgamble/github/athena/.env.example`
 
 **Currently Set in E2E:**
+
 ```yaml
 athena-api-e2e:
   environment:
@@ -914,6 +959,7 @@ athena-api-e2e:
 ```
 
 **Missing from E2E (Present in .env.example):**
+
 ```yaml
 # Upload Configuration (uses defaults)
 MAX_UPLOAD_SIZE: ❌ (defaults to 5GB in code)
@@ -946,12 +992,14 @@ FFMPEG_PATH: ❌ (defaults to "ffmpeg")
 ```
 
 **Impact:**
+
 1. Tests may behave differently than production if defaults differ
 2. Background integrity jobs may run during E2E tests (VALIDATION_ENABLE_INTEGRITY_JOBS)
 3. Rate limiting may trigger if E2E tests run too fast
 4. Storage directory not explicitly set for E2E isolation
 
 **Recommended Fix:**
+
 ```yaml
 athena-api-e2e:
   environment:
@@ -993,6 +1041,7 @@ athena-api-e2e:
 **File:** `/Users/yosefgamble/github/athena/tests/e2e/docker-compose.yml` (lines 54-66)
 
 **Current Configuration:**
+
 ```yaml
 clamav-e2e:
   image: clamav/clamav:latest
@@ -1005,17 +1054,20 @@ clamav-e2e:
 ```
 
 **Issues:**
+
 1. ClamAV signature download takes 2+ minutes (start_period: 120s)
 2. If E2E tests start before ClamAV ready, uploads may fail
 3. E2E env sets `CLAMAV_ADDRESS: "clamav-e2e:3310"` but no fallback mode
 4. E2E env doesn't set `CLAMAV_FALLBACK_MODE` (defaults to "strict" per .env.example)
 
 **Breaking Scenarios:**
+
 1. ClamAV not ready after 2 minutes → Health check fails, E2E tests skip/fail
 2. File upload before ClamAV ready → Strict mode blocks upload, test fails
 3. ClamAV crashes mid-test → All subsequent uploads fail
 
 **Recommended Fix:**
+
 ```yaml
 # In tests/e2e/docker-compose.yml
 athena-api-e2e:
@@ -1040,6 +1092,7 @@ athena-api-e2e:
 **Issue:** No mutex or transaction around upload session creation
 
 **Breaking Scenarios:**
+
 1. Same user initiates two uploads simultaneously with same filename → Race condition, both may succeed or one may overwrite
 2. User initiates upload, immediately initiates another → Previous session may be orphaned
 3. Multiple users upload same video simultaneously → Sessions interleaved
@@ -1047,6 +1100,7 @@ athena-api-e2e:
 **Impact:** Medium - Could cause storage leaks or session conflicts
 
 **Recommended Test:**
+
 ```javascript
 pm.test("Concurrent upload initiations don't conflict", function() {
     // Use Promise.all to send multiple requests simultaneously
@@ -1093,6 +1147,7 @@ pm.test("Concurrent upload initiations don't conflict", function() {
 **Issue:** No explicit handling of duplicate chunk uploads
 
 **Breaking Scenarios:**
+
 1. Upload chunk index 0, then upload chunk index 0 again → Overwrites previous chunk (may be intended)
 2. Network retry sends same chunk twice → Duplicate write, wasted bandwidth
 3. Malicious client sends chunk 0 repeatedly → DoS via storage exhaustion
@@ -1100,6 +1155,7 @@ pm.test("Concurrent upload initiations don't conflict", function() {
 **Expected Behavior:** Should this be idempotent (upload same chunk twice = no error) or reject duplicates?
 
 **Recommended Fix:**
+
 ```go
 // In UploadChunkHandler, check if chunk already uploaded
 session, err := uploadService.GetUploadStatus(r.Context(), sessionID)
@@ -1133,11 +1189,13 @@ for _, uploadedIdx := range session.UploadedChunks {
 **Issue:** Need to verify error responses don't leak internal details
 
 **Breaking Scenarios:**
+
 1. Cause DB error → Stack trace reveals DB schema, table names
 2. Cause panic → Stack trace reveals file paths, internal structure
 3. Invalid SQL → Error message reveals SQL query structure
 
 **Recommended Check:**
+
 ```go
 // In shared.WriteError
 func WriteError(w http.ResponseWriter, statusCode int, err domain.DomainError) {
@@ -1188,6 +1246,7 @@ if _, err := s.userRepo.GetByUsername(r.Context(), req.Username); err == nil {
 **Security Impact:** Low - Attacker can enumerate registered emails/usernames
 
 **Mitigation Options:**
+
 1. Return generic "User may already exist" message (obscures which field conflicts)
 2. Rate limit registration attempts
 3. Add CAPTCHA for registration
@@ -1210,11 +1269,13 @@ if req.DisplayName != nil {
 ```
 
 **Breaking Scenarios:**
+
 1. Register with display_name: `<script>alert('xss')</script>` → Stored XSS if displayed without escaping
 2. Register with display_name containing SQL: `'; DROP TABLE users;--` → Stored but likely escaped by DB
 3. Register with 10,000 character display_name → May exceed DB limits
 
 **Recommended Fix:**
+
 ```go
 import "html"
 
@@ -1238,6 +1299,7 @@ if req.DisplayName != nil {
 **File:** `.github/workflows/e2e-tests.yml`
 
 **Add Pre-flight Validation:**
+
 ```yaml
 - name: Validate E2E environment configuration
   run: |
@@ -1490,11 +1552,13 @@ func SecurityHeaders(next http.Handler) http.Handler {
 ## Summary of Findings
 
 ### Critical Issues (3)
+
 1. Login expects "email" but E2E test sends "username" → 400 errors
 2. Type assertion without validation → Silent failures, misleading errors
 3. Validation strict mode not configured in E2E → Tests pass but bypass security
 
 ### High Issues (8)
+
 1. Missing email format validation → Invalid emails accepted
 2. No password strength enforcement → Weak passwords accepted
 3. ChunkSize validation missing → DoS via tiny/huge chunks
@@ -1505,6 +1569,7 @@ func SecurityHeaders(next http.Handler) http.Handler {
 8. No filename validation → Path traversal, XSS risks
 
 ### Medium Issues (7)
+
 1. Username format validation missing → SQL, XSS, path traversal risks
 2. 2FA service nil check → Users locked out permanently
 3. Chunk index validation missing → Out of bounds errors
@@ -1514,6 +1579,7 @@ func SecurityHeaders(next http.Handler) http.Handler {
 7. Concurrent upload session creation → Race conditions
 
 ### Low Issues (5)
+
 1. Search query length not validated → DB timeout DoS
 2. User enumeration via registration → Privacy leak
 3. ClamAV configuration edge cases → Upload failures
@@ -1525,11 +1591,13 @@ func SecurityHeaders(next http.Handler) http.Handler {
 ## Next Steps
 
 ### Immediate (Critical)
+
 1. Fix E2E test to send "email" instead of "username" in Login
 2. Add VALIDATION_STRICT_MODE and other validation env vars to docker-compose.yml
 3. Add type assertion validation to Login handler
 
 ### Short-term (High Priority)
+
 1. Add email format validation
 2. Add password strength validation
 3. Add chunk size, file size, and filename validation
@@ -1537,12 +1605,14 @@ func SecurityHeaders(next http.Handler) http.Handler {
 5. Audit and set all required environment variables in E2E
 
 ### Medium-term (Improving Test Coverage)
+
 1. Create comprehensive Postman collection covering all edge cases
 2. Add Newman to CI/CD pipeline
 3. Implement concurrent test scenarios
 4. Add security-focused test cases (injection, XSS, etc.)
 
 ### Long-term (Hardening)
+
 1. Implement per-endpoint rate limiting
 2. Add request size limiting middleware
 3. Use validation library consistently across all handlers
@@ -1556,15 +1626,18 @@ func SecurityHeaders(next http.Handler) http.Handler {
 ### Immediate Fixes
 
 **1. `/Users/yosefgamble/github/athena/tests/e2e/helpers.go`**
+
 - Line 119: Change `"username": username` to `"email": email` in Login function
 - OR update handler to accept both email and username
 
 **2. `/Users/yosefgamble/github/athena/tests/e2e/docker-compose.yml`**
+
 - Add validation environment variables
 - Add missing upload configuration
 - Add rate limiting configuration
 
 **3. `/Users/yosefgamble/github/athena/internal/httpapi/handlers.go`**
+
 - Add type assertion validation (lines 82-84)
 - Add email format validation (line 201)
 - Add password strength validation (line 229)
@@ -1572,6 +1645,7 @@ func SecurityHeaders(next http.Handler) http.Handler {
 ### High Priority
 
 **4. `/Users/yosefgamble/github/athena/internal/httpapi/handlers/video/videos.go`**
+
 - Add chunk size validation (line 399)
 - Add file size validation (line 392)
 - Add filename validation
@@ -1582,6 +1656,7 @@ func SecurityHeaders(next http.Handler) http.Handler {
 - Add tags array validation (line 189)
 
 **5. Create new file: `/Users/yosefgamble/github/athena/internal/validation/input.go`**
+
 - Centralized validation functions (email, password, username, etc.)
 
 ---
@@ -1591,17 +1666,20 @@ func SecurityHeaders(next http.Handler) http.Handler {
 This analysis identified **23 edge cases and validation issues** beyond the already-known problems. The most critical finding is the login endpoint field mismatch combined with missing validation environment variables in E2E tests.
 
 **Risk Assessment:**
+
 - **Production Impact:** HIGH if validation strict mode is not enabled in production
 - **E2E Test Reliability:** MEDIUM due to environment configuration mismatches
 - **Security Posture:** MEDIUM with multiple input validation gaps
 
 **Recommended Priority:**
+
 1. Fix login field mismatch (blocks all E2E tests)
 2. Configure validation settings in E2E environment
 3. Add comprehensive input validation across all endpoints
 4. Expand Postman test coverage with Newman CI/CD integration
 
 **Estimated Effort:**
+
 - Critical fixes: 2-4 hours
 - High priority validation: 1-2 days
 - Comprehensive Postman collection: 2-3 days

@@ -596,7 +596,7 @@ func TestVideoRepository_Unit_MigrationRemoteAndCount(t *testing.T) {
 		userID := uuid.New().String()
 		remoteURI := "https://remote.example/videos/abc"
 
-		mock.ExpectQuery(regexp.QuoteMeta(`SELECT 
+		mock.ExpectQuery(regexp.QuoteMeta(`SELECT
 			id, thumbnail_id, title, description, duration, views, privacy, status`)).
 			WithArgs(remoteURI).
 			WillReturnError(sql.ErrNoRows)
@@ -605,7 +605,7 @@ func TestVideoRepository_Unit_MigrationRemoteAndCount(t *testing.T) {
 		require.NoError(t, err)
 		require.Nil(t, video)
 
-		mock.ExpectQuery(regexp.QuoteMeta(`SELECT 
+		mock.ExpectQuery(regexp.QuoteMeta(`SELECT
 			id, thumbnail_id, title, description, duration, views, privacy, status`)).
 			WithArgs(remoteURI).
 			WillReturnRows(newRemoteVideoRow(now, userID, remoteURI))

@@ -24,17 +24,21 @@ All validation scripts are written in portable Bash and work on any platform wit
 ### 2. Multiple Validation Levels
 
 #### Quick Validation
+
 ```bash
 make validate-quick
 ```
+
 - Code formatting check
 - Linting
 - ~30 seconds
 
 #### Full Validation
+
 ```bash
 make validate-all
 ```
+
 - Code formatting check
 - Import sorting check
 - Comprehensive linting
@@ -45,6 +49,7 @@ make validate-all
 - ~2-5 minutes
 
 #### Individual Checks
+
 ```bash
 make fmt-check   # Formatting only
 make lint        # Linting only
@@ -67,11 +72,13 @@ Unlike pre-commit hooks that only work in git environments, this system:
 The system includes special documentation and requirements for Claude AI instances:
 
 **For Claude Code (CLI)**:
+
 - Must run validations before claiming success
 - Must include validation results in response
 - Must fix failures before completing
 
 **For Claude Web**:
+
 - Must instruct user to run validations
 - Must provide exact commands
 - Must not claim work is complete without user confirmation
@@ -108,6 +115,7 @@ athena/
 **Purpose**: Primary documentation for all users and Claude instances
 **Audience**: Developers, AI assistants, contributors
 **Content**:
+
 - Mandatory validation requirements
 - Platform-specific instructions
 - Commands to run
@@ -119,6 +127,7 @@ athena/
 
 **Purpose**: Main validation script
 **Features**:
+
 - Portable Bash (works on Mac, Linux, Windows)
 - No hardcoded paths
 - Colored output (with TTY detection)
@@ -127,6 +136,7 @@ athena/
 - Exit codes (0 = pass, 1 = fail)
 
 **Checks**:
+
 1. Go installation (version check)
 2. Dependency validation (go mod verify)
 3. Code formatting (gofmt)
@@ -141,12 +151,14 @@ athena/
 
 **Purpose**: Interactive setup for new machines
 **Features**:
+
 - Checks for required tools
 - Optionally installs missing tools
 - Configures Git hooks
 - Runs initial validation
 
 **What it sets up**:
+
 - golangci-lint installation
 - goimports installation
 - pre-commit installation (optional)
@@ -158,17 +170,20 @@ athena/
 **Purpose**: Git pre-commit hook (backup/additional validation)
 **When it runs**: Before each `git commit`
 **What it does**:
+
 - Runs `make fmt-check`
 - Runs `make lint`
 - Runs `pre-commit run --all-files` (if available)
 - Blocks commit if any check fails
 
 **Setup**:
+
 ```bash
 git config core.hooksPath .githooks
 ```
 
 **Bypass** (emergency only):
+
 ```bash
 git commit --no-verify
 ```
@@ -413,6 +428,7 @@ pip3 install --user pre-commit  # optional
 #### "Go version too old"
 
 **Solution**: Update Go to 1.23.4 or later
+
 ```bash
 # macOS
 brew upgrade go
@@ -424,6 +440,7 @@ brew upgrade go
 #### "golangci-lint not installed"
 
 **Solution**: Install golangci-lint
+
 ```bash
 # macOS
 brew install golangci-lint
@@ -435,6 +452,7 @@ curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/insta
 #### "Permission denied" on scripts
 
 **Solution**: Make scripts executable
+
 ```bash
 chmod +x scripts/*.sh
 chmod +x .githooks/*
@@ -443,11 +461,13 @@ chmod +x .githooks/*
 #### "Command not found: make"
 
 **Solution**: Run script directly
+
 ```bash
 ./scripts/validate-all.sh
 ```
 
 Or install make:
+
 ```bash
 # macOS
 xcode-select --install
@@ -481,6 +501,7 @@ make build
 #### Skip Optional Checks
 
 Pre-commit is optional. If it's causing issues:
+
 1. Check `.pre-commit-config.yaml` is valid
 2. Run `pre-commit run --all-files` separately
 3. Or skip it (validation will continue)
@@ -506,16 +527,19 @@ Pre-commit is optional. If it's causing issues:
 ### Optimization Tips
 
 1. **Quick validation** for rapid iteration:
+
    ```bash
    make validate-quick  # Just format + lint (~30s)
    ```
 
 2. **Parallel tests** (if supported):
+
    ```bash
    go test -parallel 8 ...
    ```
 
 3. **Incremental linting**:
+
    ```bash
    golangci-lint run --new-from-rev=HEAD~1
    ```
@@ -582,6 +606,7 @@ RUN make validate-all
 ### 1. Run Before Commit
 
 Always run validations before committing:
+
 ```bash
 make validate-all
 git commit
@@ -590,6 +615,7 @@ git commit
 ### 2. Use Git Hooks
 
 Enable pre-commit hooks for automatic validation:
+
 ```bash
 ./scripts/setup-validation.sh
 ```
@@ -597,6 +623,7 @@ Enable pre-commit hooks for automatic validation:
 ### 3. Fix Issues Promptly
 
 Don't accumulate validation failures. Fix them as you go:
+
 ```bash
 # Auto-fix what's possible
 make fmt
@@ -613,6 +640,7 @@ Use validation in CI/CD as a quality gate. Don't merge if validation fails.
 ### 5. Document Custom Checks
 
 If you add custom validation checks, document them in:
+
 - `scripts/validate-all.sh`
 - `scripts/README_VALIDATION.md`
 - This file

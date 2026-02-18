@@ -17,6 +17,7 @@ import (
 	"github.com/sirupsen/logrus"
 
 	"athena/internal/backup"
+	"athena/internal/chat"
 	"athena/internal/config"
 	"athena/internal/database"
 	"athena/internal/email"
@@ -27,12 +28,14 @@ import (
 	"athena/internal/metrics"
 	"athena/internal/middleware"
 	"athena/internal/payments"
+	"athena/internal/plugin"
 	"athena/internal/repository"
 	"athena/internal/scheduler"
 	"athena/internal/security"
 	"athena/internal/usecase"
 	ucactivitypub "athena/internal/usecase/activitypub"
 	ucbackup "athena/internal/usecase/backup"
+	"athena/internal/usecase/captiongen"
 	ucchannel "athena/internal/usecase/channel"
 	uccmt "athena/internal/usecase/comment"
 	ucenc "athena/internal/usecase/encoding"
@@ -40,8 +43,10 @@ import (
 	ucn "athena/internal/usecase/notification"
 	ucpayments "athena/internal/usecase/payments"
 	ucrt "athena/internal/usecase/rating"
+	ucredundancy "athena/internal/usecase/redundancy"
 	ucup "athena/internal/usecase/upload"
 	ucviews "athena/internal/usecase/views"
+	"athena/internal/worker"
 )
 
 type Application struct {
@@ -63,6 +68,8 @@ type Application struct {
 	rtmpServer         *livestream.RTMPServer
 	hlsTranscoder      *livestream.HLSTranscoder
 	vodConverter       *livestream.VODConverter
+	streamScheduler    *livestream.StreamScheduler
+	iotaPaymentWorker  *worker.IOTAPaymentWorker
 	rateLimiterManager *middleware.RateLimiterManager
 }
 
@@ -104,7 +111,9 @@ type Dependencies struct {
 	RatingService            *ucrt.Service
 	PlaylistService          *usecase.PlaylistService
 	CaptionService           *usecase.CaptionService
+	CaptionGenService        captiongen.Service
 	ActivityPubService       *ucactivitypub.Service
+	SocialService            *usecase.SocialService
 	AtprotoService           usecase.AtprotoPublisher
 	FederationService        usecase.FederationService
 	HardeningService         *usecase.FederationHardeningService
@@ -113,8 +122,16 @@ type Dependencies struct {
 	PaymentService           *ucpayments.PaymentService
 	StreamManager            *livestream.StreamManager
 	IPFSStreamingService     *ucipfs.Service
+	ChatServer               *chat.ChatServer
+	ChatRepo                 repository.ChatRepository
+	PluginRepo               *repository.PluginRepository
+	PluginManager            *plugin.Manager
 	IPFSClient               *ipfs.Client
 	E2EEService              *usecase.E2EEService
+	RedundancyService        any
+	InstanceDiscovery        any
+	VideoCategoryUseCase     usecase.VideoCategoryUseCase
+	AnalyticsRepo            repository.AnalyticsRepository
 }
 
 func New(cfg *config.Config) (*Application, error) {
@@ -297,11 +314,17 @@ func (app *Application) initializeDependencies() *Dependencies {
 	deps.E2EEService = usecase.NewE2EEService(cryptoRepo, e2eeMessageRepo, e2eeConversationRepo, app.DB)
 	deps.ViewsService = ucviews.NewService(deps.ViewsRepo, deps.VideoRepo)
 	deps.NotificationService = ucn.NewService(deps.NotificationRepo, deps.SubRepo, deps.UserRepo)
-	deps.ChannelService = ucchannel.NewService(deps.ChannelRepo, deps.UserRepo)
+	deps.ChannelService = ucchannel.NewService(deps.ChannelRepo, deps.UserRepo, deps.VideoRepo)
 	deps.CommentService = uccmt.NewService(deps.CommentRepo, deps.VideoRepo, deps.UserRepo, deps.ChannelRepo)
 	deps.RatingService = ucrt.NewService(deps.RatingRepo, deps.VideoRepo)
 	deps.PlaylistService = usecase.NewPlaylistService(deps.PlaylistRepo, deps.VideoRepo)
 	deps.CaptionService = usecase.NewCaptionService(deps.CaptionRepo, deps.VideoRepo, app.Config)
+
+	if app.Config.EnableCaptionGeneration {
+		captionGenRepo := repository.NewCaptionGenerationRepository(app.DB)
+		deps.CaptionGenService = captiongen.NewService(captionGenRepo, deps.CaptionRepo, deps.VideoRepo, nil, app.Config.StorageDir)
+		log.Println("Caption generation service created")
+	}
 
 	if app.Config.EnableATProto {
 		var encKey []byte
@@ -333,6 +356,15 @@ func (app *Application) initializeDependencies() *Dependencies {
 		deps.IPFSClient,
 	)
 
+	if app.Config.EnableCaptionGeneration && deps.CaptionGenService != nil {
+		type captionConfigurable interface {
+			WithCaptionGenerator(gen ucenc.CaptionGenerator) ucenc.Service
+		}
+		if cc, ok := deps.EncodingService.(captionConfigurable); ok {
+			deps.EncodingService = cc.WithCaptionGenerator(deps.CaptionGenService)
+		}
+	}
+
 	if app.Config.EnableATProto {
 		deps.FederationService = usecase.NewFederationService(
 			deps.FederationRepo,
@@ -341,6 +373,10 @@ func (app *Application) initializeDependencies() *Dependencies {
 			app.Config,
 			deps.HardeningRepo,
 		)
+
+		socialRepo := repository.NewSocialRepository(app.DB)
+		deps.SocialService = usecase.NewSocialService(app.Config, socialRepo, deps.AtprotoService, nil)
+		log.Println("Social service created")
 	}
 
 	deps.HardeningService = usecase.NewFederationHardeningService(deps.HardeningRepo, deps.FederationService, app.Config)
@@ -364,6 +400,25 @@ func (app *Application) initializeDependencies() *Dependencies {
 
 	deps.IPFSStreamingService = ucipfs.NewService(app.Config)
 
+	chatRepo := repository.NewChatRepository(app.DB)
+	deps.ChatRepo = chatRepo
+
+	deps.PluginRepo = repository.NewPluginRepository(app.DB)
+	deps.PluginManager = plugin.NewManager(filepath.Join(app.Config.StorageDir, "plugins"))
+	log.Println("Plugin manager created")
+
+	redundancyRepo := repository.NewRedundancyRepository(app.DB)
+	deps.RedundancyService = ucredundancy.NewService(redundancyRepo, nil, &http.Client{Timeout: 30 * time.Second})
+	deps.InstanceDiscovery = ucredundancy.NewInstanceDiscovery(&http.Client{Timeout: 30 * time.Second})
+	log.Println("Redundancy service created")
+
+	videoCategoryRepo := repository.NewVideoCategoryRepository(app.DB)
+	deps.VideoCategoryUseCase = usecase.NewVideoCategoryUseCase(videoCategoryRepo, deps.UserRepo)
+	log.Println("Video category use case created")
+
+	deps.AnalyticsRepo = repository.NewAnalyticsRepository(app.DB)
+	log.Println("Analytics repository created")
+
 	logger := logrus.New()
 	logger.SetLevel(logrus.InfoLevel)
 	deps.StreamManager = livestream.NewStreamManager(
@@ -372,6 +427,8 @@ func (app *Application) initializeDependencies() *Dependencies {
 		app.Redis,
 		logger,
 	)
+
+	deps.ChatServer = chat.NewChatServer(app.Config, chatRepo, deps.LiveStreamRepo, app.Redis, logger)
 
 	if app.Config.EnableLiveStreaming {
 		log.Println("Initializing HLS transcoder...")
@@ -436,6 +493,9 @@ func (app *Application) initializeDependencies() *Dependencies {
 		)
 
 		log.Println("IOTA payment service initialized")
+
+		app.iotaPaymentWorker = worker.NewIOTAPaymentWorker(deps.IOTARepo, iotaClient)
+		log.Println("IOTA payment worker created")
 	}
 
 	return deps
@@ -460,6 +520,12 @@ func (app *Application) initializeSchedulers(deps *Dependencies) {
 		fhInterval := time.Duration(app.Config.ATProtoFirehosePollIntervalSeconds) * time.Second
 		app.firehosePoller = scheduler.NewFirehosePoller(deps.FederationService, fhInterval, 3)
 		app.schedulers = append(app.schedulers, app.firehosePoller)
+	}
+
+	if app.DB != nil && deps.LiveStreamRepo != nil {
+		streamSchedCfg := livestream.DefaultSchedulerConfig()
+		app.streamScheduler = livestream.NewStreamScheduler(app.DB, nil, streamSchedCfg)
+		log.Println("Stream scheduler created")
 	}
 
 	if app.Config.BackupEnabled {
@@ -536,6 +602,8 @@ func (app *Application) registerRoutes(deps *Dependencies) {
 		RatingService:        deps.RatingService,
 		PlaylistService:      deps.PlaylistService,
 		CaptionService:       deps.CaptionService,
+		CaptionGenService:    deps.CaptionGenService,
+		SocialService:        deps.SocialService,
 		AtprotoService:       deps.AtprotoService,
 		FederationService:    deps.FederationService,
 		HardeningService:     deps.HardeningService,
@@ -543,10 +611,19 @@ func (app *Application) registerRoutes(deps *Dependencies) {
 		ImportService:        deps.ImportService,
 		PaymentService:       deps.PaymentService,
 		StreamManager:        deps.StreamManager,
+		ChatServer:           deps.ChatServer,
+		ChatRepo:             deps.ChatRepo,
+		PluginRepo:           deps.PluginRepo,
+		PluginManager:        deps.PluginManager,
+		RedundancyService:    deps.RedundancyService,
+		InstanceDiscovery:    deps.InstanceDiscovery,
+		VideoCategoryUseCase: deps.VideoCategoryUseCase,
+		AnalyticsRepo:        deps.AnalyticsRepo,
 		HLSTranscoder:        app.hlsTranscoder,
 		IPFSStreamingService: deps.IPFSStreamingService,
 		EncodingScheduler:    app.encodingScheduler,
 		BackupService:        app.backupService,
+		DB:                   app.DB.DB,
 		Redis:                app.Redis,
 		JWTSecret:            app.Config.JWTSecret,
 		RedisPingTimeout:     time.Duration(app.Config.RedisPingTimeout) * time.Second,
@@ -568,6 +645,19 @@ func (app *Application) Start(ctx context.Context) error {
 				log.Printf("RTMP server stopped: %v", err)
 			}
 		}()
+	}
+
+	if app.streamScheduler != nil {
+		go func() {
+			if err := app.streamScheduler.Start(ctx); err != nil {
+				log.Printf("Stream scheduler start error: %v", err)
+			}
+		}()
+	}
+
+	if app.iotaPaymentWorker != nil {
+		app.iotaPaymentWorker.Start(ctx, 30*time.Second)
+		log.Println("IOTA payment worker started")
 	}
 
 	if app.Config.EnableEncoding && app.Dependencies != nil && app.Dependencies.EncodingService != nil {
@@ -612,6 +702,14 @@ func (app *Application) Shutdown(ctx context.Context) error {
 
 	for _, s := range app.schedulers {
 		s.Stop()
+	}
+
+	if app.streamScheduler != nil {
+		app.streamScheduler.Stop()
+	}
+
+	if app.iotaPaymentWorker != nil {
+		app.iotaPaymentWorker.Stop()
 	}
 
 	if app.vodConverter != nil {

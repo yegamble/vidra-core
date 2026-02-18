@@ -25,6 +25,7 @@ This directory contains project management documentation, sprint reports, and co
 ### Sprint Documentation
 
 See the [sprints/](sprints/) directory for detailed sprint documentation including:
+
 - Sprint plans and execution briefs
 - Sprint completion reports
 - Sprint validation and progress tracking
@@ -57,12 +58,14 @@ See the [sprints/](sprints/) directory for detailed sprint documentation includi
 ## Next Steps
 
 ### Phase 1 (1-2 weeks)
+
 1. Complete credential rotation
 2. Finalize K8s deployment configs
 3. Production environment setup
 4. Performance testing
 
 ### Phase 2 (Future)
+
 1. IOTA payments integration (strategic decision pending)
 2. ATProto enhancements (move from BETA to stable)
 3. Advanced analytics features

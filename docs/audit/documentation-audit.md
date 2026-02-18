@@ -23,6 +23,7 @@
 | Project layout paths | All exist | Yes |
 
 **Issues Found:**
+
 - None. Root CLAUDE.md is concise and accurate.
 
 ### `internal/httpapi/CLAUDE.md`
@@ -121,6 +122,7 @@ The CHANGELOG.md was created in Sprint 20 and contains the most up-to-date infor
 ### Missing Sprint Completion Docs
 
 The following sprints don't have completion docs in `docs/sprints/`:
+
 - Sprint 3 (no SPRINT3_COMPLETE.md)
 - Sprint 4 (no SPRINT4_COMPLETE.md)
 - Sprint 11 (no SPRINT11_COMPLETE.md)
@@ -136,6 +138,7 @@ The Quality Programme sprints (15-20) are documented in CHANGELOG.md but don't h
 ### Stale Sprint Progress Files
 
 These files reference in-progress work that was completed long ago:
+
 - `SPRINT1_PROGRESS.md`
 - `SPRINT5_PROGRESS.md`
 - `SPRINT6_PROGRESS.md`
@@ -175,6 +178,7 @@ These files reference in-progress work that was completed long ago:
 **Potential Issue:** Two 2FA specs (`openapi_2fa.yaml` and `openapi_auth_2fa.yaml`) may be duplicative. Verify and consolidate.
 
 **Missing specs for routes in routes.go:**
+
 - `/api/v1/trending` - Not in any spec
 - `/api/v1/views/fingerprint` - Not in any spec
 - `/api/v1/messages/*` - Not in any spec

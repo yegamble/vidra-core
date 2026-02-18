@@ -29,6 +29,7 @@ CREATE TABLE users (
 ```
 
 **Critical Constraints:**
+
 - `username VARCHAR(50)` - Maximum 50 characters
 - `UNIQUE NOT NULL` - No duplicates allowed
 - `email VARCHAR(255) UNIQUE NOT NULL` - Email also unique
@@ -57,12 +58,14 @@ username := fmt.Sprintf("testuser_%s_%d", t.Name(), timestamp)
 When a string exceeds `VARCHAR(N)`, PostgreSQL's behavior depends on version and `standard_conforming_strings`:
 
 **PostgreSQL 16+ (default):**
+
 ```sql
 INSERT INTO users (username, ...) VALUES ('testuser_TestVideoUploadWorkflow_1732157256893097400', ...);
 -- Error: value too long for type character varying(50)
 ```
 
 **But the Go `pq` driver may silently truncate in some scenarios:**
+
 ```
 Full:      testuser_TestVideoUploadWorkflow_1732157256893097400  (52 chars)
 Truncated: testuser_TestVideoUploadWorkflow_17321572568930974    (50 chars)
@@ -91,18 +94,23 @@ Test 2: testuser_TestVideoUploadWorkflow_17321572568930974
 ### Request Path: `POST /auth/register`
 
 **Handler Chain:**
+
 1. Route: `/home/user/athena/internal/httpapi/routes.go:76`
+
    ```go
    r.With(strictAuthLimiter.Limit).Post("/auth/register", server.Register)
    ```
+
    - Rate limit: **5 requests per 60 seconds**
 
 2. Handler: `/home/user/athena/internal/httpapi/handlers.go:187`
+
    ```go
    func (s *Server) Register(w http.ResponseWriter, r *http.Request)
    ```
 
 3. Repository: `/home/user/athena/internal/repository/user_repository.go:27`
+
    ```go
    func (r *userRepository) Create(ctx context.Context, user *domain.User, passwordHash string)
    ```
@@ -110,6 +118,7 @@ Test 2: testuser_TestVideoUploadWorkflow_17321572568930974
 ### Validation Rules
 
 **Request Schema:**
+
 ```go
 type RegisterRequest struct {
     Username    string  `json:"username"`     // ⚠️ NO LENGTH VALIDATION
@@ -120,7 +129,9 @@ type RegisterRequest struct {
 ```
 
 **Current Validation:**
+
 1. **Required Fields Check** (Line 194)
+
    ```go
    if req.Username == "" || req.Email == "" || req.Password == "" {
        return 400 "MISSING_FIELDS"
@@ -128,6 +139,7 @@ type RegisterRequest struct {
    ```
 
 2. **Email Uniqueness Check** (Line 201-204)
+
    ```go
    if _, err := s.userRepo.GetByEmail(r.Context(), req.Email); err == nil {
        return 409 "USER_EXISTS: Email already in use"
@@ -135,6 +147,7 @@ type RegisterRequest struct {
    ```
 
 3. **Username Uniqueness Check** (Line 205-208)
+
    ```go
    if _, err := s.userRepo.GetByUsername(r.Context(), req.Username); err == nil {
        return 409 "USER_EXISTS: Username already in use"
@@ -150,9 +163,10 @@ type RegisterRequest struct {
 
 ## What Triggers 409 Conflict?
 
-### Confirmed Triggers:
+### Confirmed Triggers
 
 1. **Duplicate Username** (after truncation or exact match)
+
    ```json
    {
        "error": {
@@ -163,6 +177,7 @@ type RegisterRequest struct {
    ```
 
 2. **Duplicate Email**
+
    ```json
    {
        "error": {
@@ -173,6 +188,7 @@ type RegisterRequest struct {
    ```
 
 3. **Database-Level UNIQUE Constraint** (if pre-checks pass but DB insertion fails)
+
    ```json
    {
        "error": {
@@ -182,9 +198,10 @@ type RegisterRequest struct {
    }
    ```
 
-### Response Format:
+### Response Format
 
 **Success (201 Created):**
+
 ```json
 {
     "data": {
@@ -201,6 +218,7 @@ type RegisterRequest struct {
 ```
 
 **Failure (409 Conflict):**
+
 ```json
 {
     "error": {
@@ -214,7 +232,7 @@ type RegisterRequest struct {
 
 ## Missing Validation Rules
 
-### Critical Gaps:
+### Critical Gaps
 
 1. **No Username Length Validation**
    - Database: `VARCHAR(50)`
@@ -305,6 +323,7 @@ email := username + "@example.com"
 ### 1. Username Enumeration
 
 **Attack Vector:**
+
 ```bash
 curl -X POST /auth/register -d '{"username":"admin","email":"test@test.com","password":"pass"}'
 # Response: 409 "Username already in use"
@@ -316,6 +335,7 @@ curl -X POST /auth/register -d '{"username":"admin","email":"test@test.com","pas
 ### 2. Resource Exhaustion
 
 **Attack Vector:**
+
 ```bash
 for i in {1..1000}; do
   curl -X POST /auth/register -d "{\"username\":\"user$i\",\"email\":\"user$i@test.com\",\"password\":\"pass\"}"
@@ -323,16 +343,19 @@ done
 ```
 
 **Current Protection:**
+
 - Rate limit: 5 requests per 60 seconds
 - **Status**: ✅ Adequate
 
 ### 3. Collision-Based DoS
 
 **Attack Vector:**
+
 - Register usernames that truncate to common prefixes
 - Block legitimate users from registering
 
 **Example:**
+
 ```
 Attacker: "testuser_TestVideoUploadWorkflow_1111111111111111111"
 Victim:   "testuser_TestVideoUploadWorkflow_2222222222222222222"
@@ -348,6 +371,7 @@ Both truncate to: "testuser_TestVideoUploadWorkflow_11111111111111111"
 ### Immediate (High Priority)
 
 1. **Add Username Length Validation**
+
    ```go
    const MaxUsernameLength = 50
 
@@ -360,6 +384,7 @@ Both truncate to: "testuser_TestVideoUploadWorkflow_11111111111111111"
    ```
 
 2. **Fix E2E Test Username Generation**
+
    ```go
    // Option A: Shorten prefix and test name
    timestamp := time.Now().UnixNano()
@@ -379,6 +404,7 @@ Both truncate to: "testuser_TestVideoUploadWorkflow_11111111111111111"
 ### Short Term (Medium Priority)
 
 3. **Add Username Character Validation**
+
    ```go
    var validUsernameRegex = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 
@@ -388,6 +414,7 @@ Both truncate to: "testuser_TestVideoUploadWorkflow_11111111111111111"
    ```
 
 4. **Add Email Format Validation**
+
    ```go
    var emailRegex = regexp.MustCompile(`^[^@]+@[^@]+\.[^@]+$`)
 
@@ -397,6 +424,7 @@ Both truncate to: "testuser_TestVideoUploadWorkflow_11111111111111111"
    ```
 
 5. **Add Password Strength Validation**
+
    ```go
    if len(req.Password) < 8 {
        return 400 "WEAK_PASSWORD: Password must be at least 8 characters"
@@ -406,12 +434,14 @@ Both truncate to: "testuser_TestVideoUploadWorkflow_11111111111111111"
 ### Long Term (Low Priority)
 
 6. **Username Normalization**
+
    ```go
    normalizedUsername := strings.ToLower(strings.TrimSpace(req.Username))
    // Store normalized version, but preserve original case for display
    ```
 
 7. **Rate Limit Per IP**
+
    ```go
    // Already implemented: 5 requests per 60 seconds
    // Consider: Dynamic rate limiting based on IP reputation
@@ -467,6 +497,7 @@ func TestRegister_TruncationCollision(t *testing.T) {
 See: `/home/user/athena/postman/athena-registration-edge-cases.postman_collection.json`
 
 **Test Scenarios:**
+
 1. Valid registration (baseline)
 2. Username at exactly 50 characters
 3. Username at 51 characters (should fail validation)
@@ -487,11 +518,13 @@ See: `/home/user/athena/postman/athena-registration-edge-cases.postman_collectio
 **File**: `/home/user/athena/.github/workflows/e2e-tests.yml`
 
 **Current Behavior:**
+
 - Tests run sequentially or in parallel
 - Username collisions cause intermittent failures
 - 409 errors are treated as test failures
 
 **Required Changes:**
+
 1. Fix E2E test username generation
 2. Add pre-test database cleanup
 3. Implement test isolation
@@ -504,18 +537,21 @@ See: `/home/user/athena/postman/athena-registration-edge-cases.postman_collectio
 ### Recommended Alerts
 
 1. **High 409 Rate**
+
    ```
    Alert: registration_409_rate > 10% of total registrations
    Action: Investigate for attacks or bugs
    ```
 
 2. **Username Length Distribution**
+
    ```
    Metric: histogram of username lengths
    Alert: Any username > 45 chars (approaching limit)
    ```
 
 3. **Failed Registration Reasons**
+
    ```
    Metric: Count by error code (USER_EXISTS, INVALID_USERNAME, etc.)
    Alert: Spike in specific error type
@@ -526,15 +562,18 @@ See: `/home/user/athena/postman/athena-registration-edge-cases.postman_collectio
 ## Conclusion
 
 The 409 Conflict errors in E2E tests are caused by:
+
 1. **Usernames exceeding 50-character database limit**
 2. **Silent truncation** by PostgreSQL or driver
 3. **Timestamp collision** after truncation removes uniqueness
 
 **Immediate Action Required:**
+
 - Add username length validation (≤50 chars) at API level
 - Fix E2E test username generation to stay within limits
 - Add comprehensive input validation for all registration fields
 
 **Risk Assessment:**
+
 - **Current State**: HIGH - Tests fail intermittently, no input validation
 - **After Fix**: LOW - Proper validation prevents collisions and attacks

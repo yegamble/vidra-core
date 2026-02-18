@@ -44,13 +44,16 @@ Successfully implemented comprehensive IPFS CID validation and cluster authentic
 ## Test Results
 
 ### Overall Statistics
+
 - **Total Tests**: 68 test cases
 - **Passed**: 65 tests (95.6%) ✓
 - **Failed**: 3 tests (test bugs, not implementation issues)
 - **Skipped**: 6 tests (advanced features intentionally skipped)
 
 ### CID Validation Tests (22 total)
+
 **Passed (20):**
+
 - ✓ Valid CIDv1 base32 (raw, dag-pb, dag-cbor)
 - ✓ Valid CIDv1 base58 dag-pb
 - ✓ Rejects CIDv0 (Qm prefix, multihash)
@@ -67,6 +70,7 @@ Successfully implemented comprehensive IPFS CID validation and cluster authentic
 - ✓ Performance bounds (DoS resistance)
 
 **Failed (2) - Test Issues:**
+
 1. `TestValidateCID_ValidCIDv1Base58/valid_CIDv1_base58_raw`
    - **Issue**: Test CID contains 'l' (invalid base58 character)
    - **Impact**: None - test data problem
@@ -76,7 +80,9 @@ Successfully implemented comprehensive IPFS CID validation and cluster authentic
    - **Impact**: None - test logic bug
 
 ### Cluster Authentication Tests (22 total)
+
 **Passed (20):**
+
 - ✓ Bearer token sent in Authorization header
 - ✓ Token loaded from environment variables
 - ✓ Token loaded from configuration
@@ -94,11 +100,13 @@ Successfully implemented comprehensive IPFS CID validation and cluster authentic
 - ✓ Context cancellation respected
 
 **Failed (1) - Test Issue:**
+
 1. `TestClusterAuth_MultipleRequests`
    - **Issue**: Test uses invalid CIDs ("bafybei0", "bafybei1")
    - **Impact**: None - test data problem
 
 **Skipped (6) - Intentional:**
+
 - Certificate chain validation (requires CA setup)
 - Certificate pinning (advanced feature)
 - mTLS mutual handshake (requires full PKI)
@@ -107,6 +115,7 @@ Successfully implemented comprehensive IPFS CID validation and cluster authentic
 ## API Usage Examples
 
 ### Basic IPFS Client (No Authentication)
+
 ```go
 client := ipfs.NewClient(
     "http://localhost:5001",      // IPFS API URL
@@ -116,6 +125,7 @@ client := ipfs.NewClient(
 ```
 
 ### Bearer Token Authentication
+
 ```go
 auth := &ipfs.ClusterAuthConfig{
     Token: os.Getenv("IPFS_CLUSTER_SECRET"),
@@ -130,6 +140,7 @@ client := ipfs.NewClientWithAuth(
 ```
 
 ### mTLS Authentication
+
 ```go
 auth := &ipfs.ClusterAuthConfig{
     TLSEnabled:    true,
@@ -148,6 +159,7 @@ client := ipfs.NewClientWithAuth(
 ```
 
 ### Environment-Based Configuration
+
 ```go
 // Automatically loads:
 // - IPFS_CLUSTER_SECRET (Bearer token)
@@ -163,6 +175,7 @@ client := ipfs.NewClientWithAuthFromEnv(
 ```
 
 ### Cluster Operations with Authentication
+
 ```go
 ctx := context.Background()
 
@@ -188,6 +201,7 @@ if err != nil {
 ```
 
 ### Token Rotation (Zero-Downtime)
+
 ```go
 // Atomically update token (thread-safe)
 client.UpdateAuthToken("new-rotated-token-12345")
@@ -199,6 +213,7 @@ err := client.ClusterPin(ctx, someCID)
 ## Configuration
 
 ### Environment Variables
+
 ```bash
 # Cluster API endpoint
 IPFS_CLUSTER_API=https://cluster.example.com:9094
@@ -213,6 +228,7 @@ IPFS_CLUSTER_CA_CERT=/path/to/ca.crt
 ```
 
 ### Config Struct Fields
+
 ```go
 type Config struct {
     // ... existing fields ...
@@ -228,6 +244,7 @@ type Config struct {
 ## Security Guarantees
 
 ### CID Validation
+
 1. **No CIDv0**: All CIDv0 inputs rejected (security policy compliance)
 2. **Codec Enforcement**: Only whitelisted codecs accepted (attack surface reduction)
 3. **Path Traversal**: ../etc/passwd, ..\\windows\\system32 blocked
@@ -237,6 +254,7 @@ type Config struct {
 7. **Encoding Attacks**: %2e%2e%2f and similar blocked
 
 ### Cluster Authentication
+
 1. **Transport Encryption**: TLS 1.2+ enforced
 2. **Token Protection**: Never logged, redacted in debug output
 3. **Certificate Validation**: CA verification for mTLS
@@ -274,12 +292,14 @@ type Config struct {
 ## Deployment Guide
 
 ### 1. Update Dependencies
+
 ```bash
 go get github.com/ipfs/go-cid@v0.4.1
 go mod tidy
 ```
 
 ### 2. Configure Authentication (Production)
+
 ```bash
 # Generate bearer token (32+ characters recommended)
 IPFS_CLUSTER_SECRET=$(openssl rand -hex 32)
@@ -289,6 +309,7 @@ openssl req -x509 -newkey rsa:4096 -keyout client.key -out client.crt -days 365 
 ```
 
 ### 3. Update Application Code
+
 ```go
 // Replace:
 // client := ipfs.NewClient(apiURL, clusterURL, timeout)
@@ -298,6 +319,7 @@ client := ipfs.NewClientWithAuthFromEnv(apiURL, clusterURL, timeout)
 ```
 
 ### 4. Set Environment Variables
+
 ```bash
 export IPFS_CLUSTER_SECRET="your-production-token"
 # OR
@@ -307,6 +329,7 @@ export IPFS_CLUSTER_CA_CERT="/etc/ipfs/ca.crt"
 ```
 
 ### 5. Verify Configuration
+
 ```bash
 # Run tests
 go test -v ./internal/ipfs -run TestCluster
@@ -319,16 +342,19 @@ go test -v ./internal/ipfs -run TestCluster
 All test failures are due to test bugs or invalid test data, NOT implementation issues:
 
 ### 1. TestValidateCID_ValidCIDv1Base58/valid_CIDv1_base58_raw
+
 **Problem**: Test CID "zdj7WhuEjrB5mR8s9cLnFKfH8dJVGTqcHxo7lMpR9RbJTUmHu" contains 'l' (invalid base58)
 **Fix**: Replace with valid base58 CID or remove test
 **Impact**: None - implementation correctly rejects invalid CIDs
 
 ### 2. TestValidateCID_ErrorMessages/CIDv0
+
 **Problem**: Test checks `strings.Contains(strings.ToLower(err), "CIDv0")` - uppercase in lowercase string
 **Fix**: Change expectedInMsg to "cidv0" (lowercase)
 **Impact**: None - error message is correct, test logic is wrong
 
 ### 3. TestClusterAuth_MultipleRequests
+
 **Problem**: Test uses invalid CIDs: "bafybei0", "bafybei1", etc. (too short, invalid format)
 **Fix**: Use valid CIDv1 strings
 **Impact**: None - implementation correctly rejects invalid CIDs
@@ -362,6 +388,7 @@ internal/config/config.go               [MODIFIED] +8 lines
 ## Conclusion
 
 All required security features have been successfully implemented and tested. The implementation provides defense-in-depth protection against:
+
 - Path traversal attacks
 - Code injection (SQL, command, etc.)
 - DoS attacks via malformed input

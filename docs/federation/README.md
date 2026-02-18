@@ -9,6 +9,7 @@ This directory contains documentation for federated protocols and integrations.
 Full PeerTube-compatible federation with WebFinger, NodeInfo, and HTTP Signatures.
 
 **Features:**
+
 - Follow/Accept/Reject (follower management)
 - Create/Update/Delete (content lifecycle)
 - Like/Undo (reactions)
@@ -16,6 +17,7 @@ Full PeerTube-compatible federation with WebFinger, NodeInfo, and HTTP Signature
 - View (analytics)
 
 **Endpoints:**
+
 - `/.well-known/webfinger` - Actor discovery
 - `/.well-known/nodeinfo` - Instance metadata
 - `/users/{username}` - Actor profiles
@@ -27,6 +29,7 @@ Full PeerTube-compatible federation with WebFinger, NodeInfo, and HTTP Signature
 Optional Bluesky integration for cross-platform content syndication.
 
 **Status:** 75% complete, BETA
+
 - PDS configuration
 - BlueSky account linking
 - Content syndication
@@ -59,6 +62,7 @@ PUBLIC_BASE_URL=https://video.example.com
 ## Interoperability
 
 Compatible with:
+
 - **Mastodon** - Full bidirectional federation
 - **PeerTube** - Video federation, comments, follows
 - **Pleroma** - Activity interchange
@@ -68,6 +72,7 @@ Compatible with:
 ## Federation Flow
 
 **Outbound (Publishing):**
+
 1. Local activity triggers activity creation
 2. Activity stored with `local=true`
 3. Followers fetched from database
@@ -76,6 +81,7 @@ Compatible with:
 6. Activities signed with HTTP Signatures
 
 **Inbound (Receiving):**
+
 1. Activity arrives at inbox
 2. HTTP Signature verified
 3. Activity deduplicated

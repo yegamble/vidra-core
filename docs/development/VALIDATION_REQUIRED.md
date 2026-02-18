@@ -11,6 +11,7 @@ This file exists to ensure that **EVERY Claude instance** (web interface, CLI, o
 ### YOU MUST RUN VALIDATIONS BEFORE CLAIMING SUCCESS
 
 **This applies to:**
+
 - Claude Code CLI
 - Claude web interface
 - Claude API
@@ -78,27 +79,32 @@ make build
 ## WHAT GETS VALIDATED
 
 ### 1. Code Formatting
+
 - Go formatting (gofmt)
 - Import sorting (goimports)
 - No formatting violations allowed
 
 ### 2. Linting
+
 - golangci-lint checks
 - Security vulnerabilities (gosec)
 - Code quality issues
 - Dead code detection
 
 ### 3. YAML Files
+
 - YAML syntax validation
 - Indentation and formatting
 - Schema validation where applicable
 
 ### 4. Tests
+
 - Unit tests must pass
 - No race conditions
 - Test coverage requirements
 
 ### 5. Build
+
 - Code must compile successfully
 - No build errors
 - Dependencies must resolve
@@ -138,6 +144,7 @@ The web interface does not have access to shell/terminal, so you cannot run vali
 1. **Make your code changes** as requested
 2. **Tell the user**: "I've made the changes, but validations are required"
 3. **Provide exact commands**:
+
    ```
    Please run these commands to validate:
 
@@ -150,6 +157,7 @@ The web interface does not have access to shell/terminal, so you cannot run vali
    make test-unit
    make build
    ```
+
 4. **Explain**: What each validation checks and why it's important
 5. **Do NOT say**: "The changes are complete and tested" (they are not tested until validations pass)
 
@@ -229,6 +237,7 @@ git config core.hooksPath .githooks
 ### What the Hook Does
 
 Before each `git commit`:
+
 1. Runs `make fmt-check` (formatting)
 2. Runs `make lint` (linting)
 3. Runs `pre-commit run --all-files` (YAML, etc.)

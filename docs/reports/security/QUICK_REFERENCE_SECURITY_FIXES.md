@@ -338,7 +338,7 @@ Before committing your changes:
 
 ## Common Pitfalls
 
-### ❌ DON'T DO THIS:
+### ❌ DON'T DO THIS
 
 ```go
 // Bad: Only checking protocol, not IP
@@ -347,7 +347,7 @@ if !strings.HasPrefix(url, "https://") {
 }
 ```
 
-### ✅ DO THIS:
+### ✅ DO THIS
 
 ```go
 // Good: Parse, validate protocol, AND resolve IP
@@ -360,7 +360,7 @@ if parsedURL.Scheme != "https" {
 
 ---
 
-### ❌ DON'T DO THIS:
+### ❌ DON'T DO THIS
 
 ```go
 // Bad: Checking hostname, but not resolved IP
@@ -369,7 +369,7 @@ if hostname == "localhost" {
 }
 ```
 
-### ✅ DO THIS:
+### ✅ DO THIS
 
 ```go
 // Good: Check hostname AND resolve to IP
@@ -414,6 +414,7 @@ WHERE error LIKE '%file size%'
 ```
 
 Set up alerts if:
+
 - More than 10 SSRF attempts per hour (possible attack)
 - More than 100 size rejections per hour (possible DoS)
 

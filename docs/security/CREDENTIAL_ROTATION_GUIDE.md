@@ -80,6 +80,7 @@ systemctl restart athena
 ```
 
 **User Impact:**
+
 - All active sessions invalidated
 - Users must re-authenticate
 - Consider scheduling during maintenance window
@@ -223,11 +224,13 @@ git secrets --add-provider -- cat .gitignore  # Prevents patterns in .gitignore
 ### 3. Environment Variable Management
 
 **Development:**
+
 - Use `.env.local` (git-ignored)
 - Copy from `.env.example` and customize
 - Never commit `.env.local`
 
 **Production:**
+
 - Use secret management systems:
   - **AWS:** AWS Secrets Manager / Parameter Store
   - **Kubernetes:** Sealed Secrets / External Secrets Operator
@@ -237,6 +240,7 @@ git secrets --add-provider -- cat .gitignore  # Prevents patterns in .gitignore
 ### 4. CI/CD Secrets
 
 **GitHub Actions:**
+
 ```yaml
 # Use repository secrets
 steps:
@@ -247,6 +251,7 @@ steps:
 ```
 
 **GitLab CI:**
+
 ```yaml
 # Use CI/CD variables (masked)
 variables:
@@ -273,17 +278,20 @@ After rotation, verify:
 ## Timeline for Rotation
 
 **Immediate (Within 24 hours):**
+
 - [ ] Assess impact (production vs development credentials)
 - [ ] Generate new credentials
 - [ ] Plan rotation schedule
 
 **Short-term (Within 7 days):**
+
 - [ ] Rotate all database credentials
 - [ ] Rotate JWT secrets (during maintenance window)
 - [ ] Clean git history with BFG
 - [ ] Install pre-commit hooks
 
 **Long-term (Within 30 days):**
+
 - [ ] Implement secret management system (AWS Secrets Manager)
 - [ ] Automate credential rotation (90-day policy)
 - [ ] Security audit of all credential storage
@@ -320,10 +328,12 @@ After rotation, monitor for:
 ## Support and Questions
 
 **Security Team Contact:**
-- Email: security@athena.example.com
+
+- Email: <security@athena.example.com>
 - Slack: #security-incidents
 
 **Escalation:**
+
 - P0 (Critical): Page on-call engineer
 - P1 (High): 4-hour response SLA
 

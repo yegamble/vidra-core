@@ -5,6 +5,7 @@
 ## Completed Components ✓
 
 ### 1. Database Migration ✓
+
 **File:** `migrations/043_create_video_imports_table.sql`
 
 - Created `import_status` enum type
@@ -15,14 +16,17 @@
 - Added comprehensive comments for documentation
 
 ### 2. Domain Models ✓
+
 **File:** `internal/domain/import.go`
 
 **Structures:**
+
 - `ImportStatus` enum with 6 states
 - `VideoImport` struct with full field mapping
 - `ImportMetadata` struct for yt-dlp metadata
 
 **Methods:**
+
 - `Validate()` - Input validation
 - `CanTransition()` - State machine validation
 - `Start()`, `MarkProcessing()`, `Complete()`, `Fail()`, `Cancel()` - State transitions
@@ -31,12 +35,15 @@
 - `GetSourcePlatform()` - Platform detection
 
 **Errors:**
+
 - 10 domain-specific errors (ErrImportNotFound, ErrImportQuotaExceeded, etc.)
 
 ### 3. Repository Layer ✓
+
 **File:** `internal/repository/import_repository.go`
 
 **CRUD Operations:**
+
 - `Create()` - Create new import
 - `GetByID()` - Retrieve by ID
 - `GetByUserID()` - List user imports (paginated)
@@ -45,6 +52,7 @@
 - `Delete()` - Delete import
 
 **Specialized Methods:**
+
 - `CountByUserID()` - Total imports per user
 - `CountByUserIDAndStatus()` - Status-specific count
 - `CountByUserIDToday()` - Daily quota checking
@@ -56,9 +64,11 @@
 - `GetStuckImports()` - Find stuck/hanging imports
 
 ### 4. yt-dlp Wrapper ✓
+
 **File:** `internal/importer/ytdlp.go`
 
 **Core Functionality:**
+
 - `ValidateURL()` - Dry-run validation
 - `ExtractMetadata()` - Extract video info without downloading
 - `Download()` - Download with progress callback
@@ -66,6 +76,7 @@
 - `CheckAvailability()` - Installation verification
 
 **Features:**
+
 - Real-time progress parsing (percentage, bytes)
 - Support for all yt-dlp formats (YouTube, Vimeo, etc.)
 - Context-based cancellation
@@ -75,9 +86,11 @@
 ## Remaining Components
 
 ### 5. Import Service (Usecase Layer) - TODO
+
 **File:** `internal/usecase/import/service.go`
 
 **Planned Methods:**
+
 - `ImportVideo()` - Orchestrate import flow
 - `CancelImport()` - Cancel with cleanup
 - `GetImportStatus()` - Status check
@@ -85,6 +98,7 @@
 - Background worker for queue processing
 
 **Features to Implement:**
+
 - Rate limiting (5 concurrent per user)
 - Quota enforcement (100/day per user)
 - Integration with encoding service
@@ -92,9 +106,11 @@
 - Notification on completion
 
 ### 6. API Handlers - TODO
+
 **File:** `internal/httpapi/import_handlers.go`
 
 **Endpoints:**
+
 - `POST /api/v1/videos/imports` - Start import
 - `GET /api/v1/videos/imports/:id` - Get status
 - `GET /api/v1/videos/imports` - List imports
@@ -103,15 +119,18 @@
 ### 7. Testing - TODO
 
 **Unit Tests:**
+
 - `internal/repository/import_repository_test.go`
 - `internal/importer/ytdlp_test.go`
 - `internal/usecase/import/service_test.go`
 - `internal/httpapi/import_handlers_test.go`
 
 **Integration Tests:**
+
 - `tests/integration/import_test.go`
 
 **E2E Tests:**
+
 - Full import flow with real yt-dlp
 
 ## Next Steps
@@ -146,18 +165,21 @@
 ## Testing Strategy
 
 ### Unit Tests (Target: >80% coverage)
+
 - Repository: Mock database with sqlmock
 - YtDlp: Mock exec.Command
 - Service: Mock repository and yt-dlp
 - Handlers: Mock service with httptest
 
 ### Integration Tests
+
 - Real PostgreSQL database (Docker)
 - Real Redis for rate limiting
 - Mock yt-dlp (test binary)
 - Test full flow: create → download → encode → complete
 
 ### E2E Tests
+
 - Test with actual yt-dlp on test videos
 - Test YouTube, Vimeo imports
 - Test error scenarios (geo-block, invalid URL)
@@ -166,6 +188,7 @@
 ## Configuration Required
 
 Add to `.env` or environment:
+
 ```bash
 # Video Import Configuration
 ENABLE_VIDEO_IMPORT=true
@@ -180,12 +203,14 @@ IMPORT_CLEANUP_DAYS=30
 ## Database Migration
 
 Run migration:
+
 ```bash
 atlas migrate apply --dir "file://migrations" \
   --url "postgres://user:pass@localhost:5432/athena?sslmode=disable"
 ```
 
 Or with make:
+
 ```bash
 make migrate
 ```
@@ -193,11 +218,13 @@ make migrate
 ## Dependencies
 
 Add to `go.mod` (no new dependencies required):
+
 - Uses standard library `os/exec` for yt-dlp
 - Uses existing `jmoiron/sqlx` for database
 - Uses existing Chi for routing
 
 External dependency (system-level):
+
 ```bash
 # Install yt-dlp
 pip install yt-dlp

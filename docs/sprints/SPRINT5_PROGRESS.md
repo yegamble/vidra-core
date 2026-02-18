@@ -95,6 +95,7 @@ Sprint 5 implements live streaming infrastructure, enabling Athena to accept RTM
 ### 1. Database Schema
 
 **live_streams Table**:
+
 ```sql
 CREATE TABLE IF NOT EXISTS live_streams (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -116,6 +117,7 @@ CREATE TABLE IF NOT EXISTS live_streams (
 ```
 
 **stream_keys Table**:
+
 ```sql
 CREATE TABLE IF NOT EXISTS stream_keys (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -129,6 +131,7 @@ CREATE TABLE IF NOT EXISTS stream_keys (
 ```
 
 **viewer_sessions Table**:
+
 ```sql
 CREATE TABLE IF NOT EXISTS viewer_sessions (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -145,11 +148,13 @@ CREATE TABLE IF NOT EXISTS viewer_sessions (
 ```
 
 **Indexes**:
+
 - `live_streams`: status, channel_id, user_id, started_at, ended_at
 - `stream_keys`: channel_id, is_active, expires_at
 - `viewer_sessions`: live_stream_id, session_id, user_id, left_at, last_heartbeat_at
 
 **Helper Functions**:
+
 - `get_live_viewer_count(stream_id)`: Returns count of active viewers (heartbeat within 30s)
 - `end_live_stream(stream_id)`: Ends stream and all viewer sessions
 - `cleanup_stale_viewer_sessions()`: Removes sessions without heartbeat for 5 minutes
@@ -157,6 +162,7 @@ CREATE TABLE IF NOT EXISTS viewer_sessions (
 ### 2. Domain Models
 
 **LiveStream**:
+
 ```go
 type LiveStream struct {
     ID              uuid.UUID
@@ -185,6 +191,7 @@ func (ls *LiveStream) Duration() time.Duration
 ```
 
 **StreamKey**:
+
 ```go
 type StreamKey struct {
     ID         uuid.UUID
@@ -201,6 +208,7 @@ func (sk *StreamKey) CanUse() error      // Validates active status and expirati
 ```
 
 **ViewerSession**:
+
 ```go
 type ViewerSession struct {
     ID              uuid.UUID
@@ -222,6 +230,7 @@ func (vs *ViewerSession) IsActive() bool       // True if not left and recent he
 ### 3. RTMP Server Architecture
 
 **RTMPServer**:
+
 ```go
 type RTMPServer struct {
     cfg             *config.Config
@@ -243,6 +252,7 @@ func (s *RTMPServer) handleStreamSession(ctx, session)
 ```
 
 **Stream Authentication Flow**:
+
 1. Client connects with RTMP URL: `rtmp://server:1935/{streamKey}`
 2. Server extracts stream key from URL path
 3. Looks up stream by key in database
@@ -252,6 +262,7 @@ func (s *RTMPServer) handleStreamSession(ctx, session)
 7. Updates stream to "ended" and cleans up
 
 **Concurrent Connection Handling**:
+
 - Each connection spawns a goroutine
 - Connection acceptance loop with 1s timeout for graceful shutdown
 - Active streams tracked in map with RWMutex
@@ -260,6 +271,7 @@ func (s *RTMPServer) handleStreamSession(ctx, session)
 ### 4. Stream Manager
 
 **StreamManager**:
+
 ```go
 type StreamManager struct {
     streamRepo       repository.LiveStreamRepository
@@ -305,6 +317,7 @@ type StreamState struct {
    - Logs cleanup statistics
 
 **Redis Caching**:
+
 - Active stream flags: `stream:active:{streamID}`
 - Fast lookups for "is stream live?" checks
 - Invalidated on stream end
@@ -312,6 +325,7 @@ type StreamState struct {
 ### 5. Configuration
 
 **Environment Variables**:
+
 ```bash
 # Live Streaming Toggle
 ENABLE_LIVE_STREAMING=false         # Enable live streaming features
@@ -332,6 +346,7 @@ LIVE_HLS_WINDOW_SIZE=10             # Number of segments in window
 ```
 
 **Defaults**:
+
 - Port 1935 (standard RTMP)
 - 100 max connections
 - 4KB chunk size
@@ -343,6 +358,7 @@ LIVE_HLS_WINDOW_SIZE=10             # Number of segments in window
 ### 6. Test Coverage
 
 **Domain Tests** (39 tests):
+
 - ✅ LiveStream validation (5 sub-tests)
 - ✅ Stream state transitions (Start/End)
 - ✅ Duration calculation (3 scenarios)
@@ -352,6 +368,7 @@ LIVE_HLS_WINDOW_SIZE=10             # Number of segments in window
 - ✅ Viewer session active status
 
 **Repository Tests** (24 tests):
+
 - ✅ LiveStream CRUD operations
 - ✅ Stream key creation with bcrypt
 - ✅ Stream key validation with bcrypt
@@ -363,6 +380,7 @@ LIVE_HLS_WINDOW_SIZE=10             # Number of segments in window
 - ✅ Stream ending with cascading session cleanup
 
 **Test Results**:
+
 ```
 === Domain Tests ===
 ok      athena/internal/domain  0.234s
@@ -378,6 +396,7 @@ Total: 63 tests, all passing
 ## Files Created/Modified
 
 ### Created Files
+
 1. `migrations/045_create_live_streams_table.sql` - Database schema (172 lines)
 2. `internal/domain/livestream.go` - Domain models (280 lines)
 3. `internal/domain/livestream_test.go` - Domain tests (360 lines, 39 tests)
@@ -388,6 +407,7 @@ Total: 63 tests, all passing
 8. `SPRINT5_PROGRESS.md` - This document
 
 ### Modified Files
+
 1. `internal/config/config.go` - Added RTMP configuration (12 new fields)
 
 **Total**: ~2,640 lines of new code + tests
@@ -633,6 +653,7 @@ Sprint 6 will add **HLS Transcoding for Live Streams**:
 Sprint 5 is **100% complete** with all components fully implemented and tested:
 
 ### ✅ Core Infrastructure (100%)
+
 - ✅ Database schema with helper functions and constraints
 - ✅ Domain models with comprehensive tests (39 tests)
 - ✅ Repository layer with full test coverage (24 tests)
@@ -641,12 +662,14 @@ Sprint 5 is **100% complete** with all components fully implemented and tested:
 - ✅ Configuration system with environment variable support
 
 ### ✅ API Layer (100%)
+
 - ✅ 10 REST endpoints for stream management
 - ✅ Authorization middleware for channel ownership
 - ✅ Request validation and structured error responses
 - ✅ Integration with existing routes in `routes_refactored.go`
 
 ### ✅ Wiring & Integration (100%)
+
 - ✅ RTMP server initialized in `app.go` (conditional on `ENABLE_LIVE_STREAMING`)
 - ✅ StreamManager initialized with proper logger
 - ✅ All repositories wired in both `app.go` and `routes.go`
@@ -654,13 +677,16 @@ Sprint 5 is **100% complete** with all components fully implemented and tested:
 - ✅ Routes registered with proper middleware
 
 ### ✅ Testing & Quality (100%)
+
 - ✅ All unit tests passing (domain, repository, handlers)
 - ✅ Integration tests for RTMP protocol (5 scenarios)
 - ✅ Build verified successfully
 - ✅ Migrations tested and ready for all environments
 
 ### 📋 Files Created/Modified
+
 **New Files** (10 files, ~3,400 lines):
+
 1. `migrations/045_create_live_streams_table.sql` - Database schema (173 lines)
 2. `internal/domain/livestream.go` - Domain models (282 lines)
 3. `internal/domain/livestream_test.go` - Domain tests (360 lines, 39 tests)
@@ -673,12 +699,14 @@ Sprint 5 is **100% complete** with all components fully implemented and tested:
 10. `internal/livestream/rtmp_integration_test.go` - Integration tests (~500 lines)
 
 **Modified Files** (4 files):
+
 1. `internal/config/config.go` - Added RTMP configuration (12 new fields)
 2. `internal/testutil/helpers.go` - Added RedisTestURL helper
 3. `internal/app/app.go` - Wired RTMP server and StreamManager with graceful shutdown
 4. `internal/httpapi/routes.go` - Initialized livestream repositories and StreamManager
 
 ### 🎯 Next Steps
+
 - **Sprint 6**: HLS Transcoding for Live Streams with FFmpeg
 - **Future Enhancements**:
   - Stream recording and VOD conversion

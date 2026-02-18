@@ -1,4 +1,5 @@
 # Test Baseline Status Report
+
 **Generated**: 2025-11-16
 **Branch**: claude/code-review-quality-security-01Qv4Ue6jRRvxyQVLcZEFzdi
 **Command**: `go test ./... -v -coverprofile=coverage.out -covermode=atomic`
@@ -43,8 +44,10 @@ athena/internal/torrent                    [setup failed]
 Two packages have failing integration tests due to missing database connectivity:
 
 #### `athena/internal/httpapi/handlers/auth` (Coverage: 21.9%)
+
 **Duration**: 85.286s
 **Failed Tests**:
+
 - `TestUnverifiedUserRestrictions`
 - `TestEmailVerificationWorkflow`
 - `TestResendVerificationLimits`
@@ -56,14 +59,17 @@ Two packages have failing integration tests due to missing database connectivity
 ---
 
 #### `athena/internal/httpapi/handlers/messaging` (Coverage: N/A)
+
 **Duration**: 50.097s
 **Failed Tests**:
+
 - `TestMessageNotificationWorkflow`
 - `TestMessageNotificationService`
 - `TestNotificationWorkflow`
 - `TestMultipleSubscribersNotification`
 
 **Skipped Tests** (due to DB unavailability):
+
 - `TestSendMessageHandler_SuccessAndSafety`
 - `TestSendMessageHandler_Unauthorized_InvalidJSON_Validation`
 - `TestChannelNotifications_Integration`
@@ -146,6 +152,7 @@ The test environment has the following limitations that affect test execution:
 ## Coverage Highlights by Domain
 
 ### ActivityPub Federation (Strong)
+
 - **internal/activitypub**: 82.4% ✓
 - **internal/usecase/activitypub**: 48.7%
 - **internal/httpapi/handlers/federation**: 14.8% ⚠️
@@ -153,24 +160,28 @@ The test environment has the following limitations that affect test execution:
 **Assessment**: HTTP signature cryptography well-tested, but federation API handlers need more coverage.
 
 ### Authentication & Authorization (Incomplete)
+
 - **internal/httpapi/handlers/auth**: 21.9% (with failures) ⚠️
 - **internal/middleware**: 95.4% ✓ (Auth middleware excellent)
 
 **Assessment**: Middleware layer solid, but auth handlers need database to test properly.
 
 ### Messaging & Notifications (Incomplete)
+
 - **internal/httpapi/handlers/messaging**: FAILED (DB required)
 - Tests depend heavily on PostgreSQL triggers and database state
 
 **Assessment**: Cannot establish baseline without database. Tests appear comprehensive but environment-dependent.
 
 ### Live Streaming (Medium)
+
 - **internal/livestream**: 35.9%
 - **internal/httpapi/handlers/livestream**: 57.1%
 
 **Assessment**: Domain models better tested than handlers.
 
 ### Storage & Media (Weak)
+
 - **internal/repository**: 9.6% ⚠️
 - **internal/storage**: 16.8% ⚠️
 - **internal/ipfs**: 46.0%
@@ -179,6 +190,7 @@ The test environment has the following limitations that affect test execution:
 **Assessment**: Critical infrastructure components have low coverage. High risk area.
 
 ### Infrastructure & Core (Strong)
+
 - **internal/middleware**: 95.4% ✓
 - **internal/scheduler**: 90.6% ✓
 - **internal/worker**: 86.9% ✓
@@ -203,6 +215,7 @@ TestSendMessageHandler_Unauthorized_...         (SKIP - DB not available)
 ## Test Execution Performance
 
 **Slowest Packages**:
+
 1. `athena/internal/repository` - 330.813s (5.5 minutes)
 2. `athena/internal/httpapi/handlers/auth` - 85.286s
 3. `athena/internal/usecase` - 62.689s
@@ -212,6 +225,7 @@ TestSendMessageHandler_Unauthorized_...         (SKIP - DB not available)
 **Total Test Duration**: ~620 seconds (~10.3 minutes)
 
 **Performance Concerns**:
+
 - Repository tests are extremely slow (330s for 9.6% coverage)
 - Many integration tests have 5-second database connection timeouts
 - Consider parallel test execution optimization
@@ -314,6 +328,7 @@ TestSendMessageHandler_Unauthorized_...         (SKIP - DB not available)
 **Current Overall Coverage**: 23.8%
 
 **Recommended Targets**:
+
 - **Critical Paths** (auth, payments, data persistence): 80%+
 - **Business Logic** (use cases, domain): 70%+
 - **Infrastructure** (middleware, config, scheduler): 90%+ ✓ (achieved)
@@ -323,6 +338,7 @@ TestSendMessageHandler_Unauthorized_...         (SKIP - DB not available)
 **Gap Analysis**: Need to increase coverage by 36.2 percentage points to reach 60% target.
 
 **Focus Areas** (biggest impact):
+
 1. Repository layer (+71% to reach 80%)
 2. API handlers (+53% average to reach 60%)
 3. Use cases (+11% to reach 60%)
@@ -334,6 +350,7 @@ TestSendMessageHandler_Unauthorized_...         (SKIP - DB not available)
 The test suite demonstrates **good foundational testing** in infrastructure components (middleware, config, scheduler, workers) with excellent coverage >85%. However, **critical business logic and data access layers are undertested**, with the repository layer at only 9.6% and several handler packages below 20%.
 
 The test environment limitations (no database, no network) prevent ~20% of the codebase from being tested in this run. In a properly configured CI/CD environment, expect:
+
 - 5 additional packages to build successfully
 - 2 failing packages to have database access
 - Overall coverage to reflect actual test coverage

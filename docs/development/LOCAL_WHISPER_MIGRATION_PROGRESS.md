@@ -1,11 +1,13 @@
 # Local Whisper Migration Progress
 
 ## Objective
+
 Migrate from OpenAI Whisper API to a local Whisper service with comprehensive multi-language caption support.
 
 ## Completed Work
 
 ### 1. Docker Service Setup ✅
+
 - Added Whisper service to `docker-compose.yml`
 - Using `onerahmet/openai-whisper-asr-webservice:latest-gpu` image
 - Configured with base model, 4G memory limit
@@ -13,6 +15,7 @@ Migrate from OpenAI Whisper API to a local Whisper service with comprehensive mu
 - Service port: 9000
 
 ### 2. HTTP Whisper Client Implementation ✅
+
 - Created `internal/whisper/http_client.go`
 - Implements the Whisper Client interface
 - Communicates with HTTP Whisper service via REST API
@@ -20,12 +23,14 @@ Migrate from OpenAI Whisper API to a local Whisper service with comprehensive mu
 - Handles VTT and SRT caption formatting
 
 ### 3. Configuration Updates ✅
+
 - Added `WHISPER_API_URL` configuration parameter
 - Updated `internal/config/config.go` with new field
 - Updated `internal/whisper/client.go` to support HTTP-based provider
 - Modified validation logic to handle HTTP API URL
 
 ### 4. Multi-Language Caption Support ✅
+
 - Improved caption regeneration logic in `internal/usecase/captiongen/service.go`
 - **Language-Specific Deletion**: When regenerating a caption for a specific language (e.g., English), only the caption for that language is deleted
 - **Multi-Language Preservation**: Other language captions (e.g., Spanish, French) remain untouched during regeneration
@@ -33,6 +38,7 @@ Migrate from OpenAI Whisper API to a local Whisper service with comprehensive mu
 - Comprehensive documentation added to explain the behavior
 
 ### 5. Comprehensive Tests ✅
+
 - Created `internal/usecase/captiongen/service_test.go`
 - Test Coverage:
   - `TestRegenerateCaptionWithSpecificLanguage`: Verifies only specified language is deleted
@@ -45,14 +51,17 @@ Migrate from OpenAI Whisper API to a local Whisper service with comprehensive mu
   - `TestGetLanguageLabel`: Tests language code to label mapping
 
 ### 6. Bug Fixes ✅
+
 - Fixed type conversion in `internal/whisper/local_client.go` (int to float64 conversion for timestamps)
 
 ## Remaining Work
 
 ### 1. Type Compatibility Issues 🔴 CRITICAL
+
 The caption generation service has type mismatches with the domain model:
 
 **Issues to Fix:**
+
 - `Video.ID` is `string`, not `uuid.UUID` - need to convert appropriately
 - `Video.Status` is the field name, not `Video.ProcessingStatus`
 - `Video.Language` is `string`, not `*string` (pointer)
@@ -61,19 +70,23 @@ The caption generation service has type mismatches with the domain model:
   - Example: `sp := storage.NewPaths(s.uploadsDir); path := sp.WebVideoFilePath(video.ID, ext)`
 
 **Files Needing Updates:**
+
 - `internal/usecase/captiongen/service.go` (lines 159, 164-169, 174-175, 265, 274, 311, 356-362)
 
 ### 2. Integration Testing 🟡
+
 - Wire up caption generation service in app initialization
 - Test end-to-end caption generation with Docker Whisper service
 - Verify multi-language caption scenarios work in practice
 
 ### 3. CI/CD Pipeline 🟡
+
 - Ensure Whisper service is available in CI environment (or mock it)
 - Add Whisper service to `docker-compose.yml` under the `test` profile if needed
 - Update test configuration to handle Whisper dependency
 
 ### 4. Documentation 🟢
+
 - Update README with local Whisper setup instructions
 - Document environment variables for Whisper configuration
 - Add troubleshooting guide for Whisper service issues
@@ -130,6 +143,7 @@ whisper:
 ## Testing Multi-Language Caption Support
 
 ### Scenario 1: Generate English Caption
+
 ```bash
 POST /api/v1/videos/{id}/captions/generate
 {
@@ -138,9 +152,11 @@ POST /api/v1/videos/{id}/captions/generate
   "output_format": "vtt"
 }
 ```
+
 **Expected**: English caption is generated.
 
 ### Scenario 2: Generate Spanish Caption (English exists)
+
 ```bash
 POST /api/v1/videos/{id}/captions/generate
 {
@@ -149,9 +165,11 @@ POST /api/v1/videos/{id}/captions/generate
   "output_format": "vtt"
 }
 ```
+
 **Expected**: Spanish caption is generated. English caption remains untouched.
 
 ### Scenario 3: Regenerate English Caption (English and Spanish exist)
+
 ```bash
 POST /api/v1/videos/{id}/captions/generate
 {
@@ -160,9 +178,11 @@ POST /api/v1/videos/{id}/captions/generate
   "output_format": "vtt"
 }
 ```
+
 **Expected**: English caption is replaced with new version. Spanish caption remains untouched.
 
 ### Scenario 4: Auto-Detect Language (Multiple captions exist)
+
 ```bash
 POST /api/v1/videos/{id}/captions/generate
 {
@@ -170,7 +190,9 @@ POST /api/v1/videos/{id}/captions/generate
   "output_format": "vtt"
 }
 ```
+
 **Expected**:
+
 - Audio is transcribed, language is auto-detected (e.g., "en")
 - Only the caption for the detected language ("en") is replaced
 - Other language captions ("es", "fr", etc.) remain untouched
@@ -224,6 +246,6 @@ go build -o bin/athena ./cmd/server
 
 ## References
 
-- Whisper Docker Image: https://github.com/ahmetoner/whisper-asr-webservice
-- OpenAI Whisper: https://github.com/openai/whisper
-- Whisper.cpp: https://github.com/ggerganov/whisper.cpp
+- Whisper Docker Image: <https://github.com/ahmetoner/whisper-asr-webservice>
+- OpenAI Whisper: <https://github.com/openai/whisper>
+- Whisper.cpp: <https://github.com/ggerganov/whisper.cpp>

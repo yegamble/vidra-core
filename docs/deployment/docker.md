@@ -210,6 +210,7 @@ chmod 600 athena/secrets/*
 ### 2. Configure Environment
 
 Create `.env.production`:
+
 ```bash
 # Application
 NODE_ENV=production
@@ -245,6 +246,7 @@ PROCESSING_TIMEOUT=3600s
 ### 3. Initialize Database
 
 Create `init-db.sql`:
+
 ```sql
 -- Create extensions
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
@@ -409,6 +411,7 @@ docker compose restart ipfs
 ### Common Issues
 
 #### Container Won't Start
+
 ```bash
 # Check logs
 docker compose logs app
@@ -421,6 +424,7 @@ df -h
 ```
 
 #### Database Connection Issues
+
 ```bash
 # Test connection
 docker compose exec app psql $DATABASE_URL -c "SELECT 1"
@@ -430,6 +434,7 @@ docker compose logs postgres
 ```
 
 #### High Memory Usage
+
 ```bash
 # Check memory limits
 docker compose exec app cat /proc/meminfo

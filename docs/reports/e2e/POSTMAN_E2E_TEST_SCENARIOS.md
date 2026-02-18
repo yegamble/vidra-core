@@ -27,6 +27,7 @@
 ## 01 - Pre-flight & Health Checks
 
 ### Test 1.1: Health Check
+
 ```javascript
 pm.test("API is healthy", function() {
     pm.response.to.have.status(200);
@@ -40,6 +41,7 @@ pm.test("Response time is acceptable", function() {
 ```
 
 ### Test 1.2: Readiness Check - All Services
+
 ```javascript
 pm.test("All services are ready", function() {
     pm.response.to.have.status(200);
@@ -61,6 +63,7 @@ pm.test("Critical services are present", function() {
 ## 02 - Authentication Edge Cases
 
 ### Test 2.1: Register - Valid User
+
 ```javascript
 // Request
 POST {{baseUrl}}/auth/register
@@ -103,6 +106,7 @@ pm.test("Response has security headers", function() {
 ```
 
 ### Test 2.2: Register - Duplicate Email
+
 ```javascript
 // Request (same email as 2.1)
 POST {{baseUrl}}/auth/register
@@ -127,6 +131,7 @@ pm.test("Error message indicates conflict", function() {
 ```
 
 ### Test 2.3: Register - Invalid Email Format
+
 ```javascript
 // Request
 POST {{baseUrl}}/auth/register
@@ -150,6 +155,7 @@ pm.test("Error code indicates invalid email", function() {
 ```
 
 ### Test 2.4: Register - Email as Number (Type Validation)
+
 ```javascript
 // Request
 POST {{baseUrl}}/auth/register
@@ -174,6 +180,7 @@ pm.test("Error indicates type mismatch", function() {
 ```
 
 ### Test 2.5: Register - Weak Password
+
 ```javascript
 // Request
 POST {{baseUrl}}/auth/register
@@ -198,6 +205,7 @@ pm.test("Weak password is rejected (if validation exists)", function() {
 ```
 
 ### Test 2.6: Register - Username with Special Characters
+
 ```javascript
 // Request
 POST {{baseUrl}}/auth/register
@@ -221,6 +229,7 @@ pm.test("Path traversal in username is rejected (if validation exists)", functio
 ```
 
 ### Test 2.7: Register - XSS in Display Name
+
 ```javascript
 // Request
 POST {{baseUrl}}/auth/register
@@ -248,6 +257,7 @@ pm.test("XSS in display name is sanitized or rejected", function() {
 ```
 
 ### Test 2.8: Register - Extremely Long Fields
+
 ```javascript
 // Request
 POST {{baseUrl}}/auth/register
@@ -271,6 +281,7 @@ pm.test("Error indicates length violation", function() {
 ```
 
 ### Test 2.9: Login - With Email (Correct Field)
+
 ```javascript
 // Request
 POST {{baseUrl}}/auth/login
@@ -299,6 +310,7 @@ pm.test("User data matches registration", function() {
 ```
 
 ### Test 2.10: Login - With Username (Wrong Field - Should Fail)
+
 ```javascript
 // Request
 POST {{baseUrl}}/auth/login
@@ -322,6 +334,7 @@ pm.test("Error indicates missing credentials", function() {
 ```
 
 ### Test 2.11: Login - Wrong Password
+
 ```javascript
 // Request
 POST {{baseUrl}}/auth/login
@@ -345,6 +358,7 @@ pm.test("Error is generic to prevent enumeration", function() {
 ```
 
 ### Test 2.12: Login - Non-existent User
+
 ```javascript
 // Request
 POST {{baseUrl}}/auth/login
@@ -368,6 +382,7 @@ pm.test("Error message is same as wrong password", function() {
 ```
 
 ### Test 2.13: Protected Endpoint - No Token
+
 ```javascript
 // Request
 GET {{baseUrl}}/api/v1/users/me
@@ -380,6 +395,7 @@ pm.test("Protected endpoint rejects missing token", function() {
 ```
 
 ### Test 2.14: Protected Endpoint - Invalid Token
+
 ```javascript
 // Request
 GET {{baseUrl}}/api/v1/users/me
@@ -396,6 +412,7 @@ pm.test("Protected endpoint rejects invalid token", function() {
 ## 03 - Video Upload Validation
 
 ### Test 3.1: Initiate Upload - Valid Request
+
 ```javascript
 // Request
 POST {{baseUrl}}/api/v1/upload/initiate
@@ -428,6 +445,7 @@ pm.test("Total chunks calculation is correct", function() {
 ```
 
 ### Test 3.2: Initiate Upload - Missing Filename
+
 ```javascript
 // Request
 POST {{baseUrl}}/api/v1/upload/initiate
@@ -446,6 +464,7 @@ pm.test("Missing filename is rejected", function() {
 ```
 
 ### Test 3.3: Initiate Upload - Zero File Size
+
 ```javascript
 // Request
 POST {{baseUrl}}/api/v1/upload/initiate
@@ -470,6 +489,7 @@ pm.test("Zero file size is rejected (if validation exists)", function() {
 ```
 
 ### Test 3.4: Initiate Upload - Negative File Size
+
 ```javascript
 // Request
 POST {{baseUrl}}/api/v1/upload/initiate
@@ -489,6 +509,7 @@ pm.test("Negative file size is rejected", function() {
 ```
 
 ### Test 3.5: Initiate Upload - File Size Exceeds Limit
+
 ```javascript
 // Request
 POST {{baseUrl}}/api/v1/upload/initiate
@@ -514,6 +535,7 @@ pm.test("File size exceeding limit is rejected (if validation exists)", function
 ```
 
 ### Test 3.6: Initiate Upload - Chunk Size Too Small
+
 ```javascript
 // Request
 POST {{baseUrl}}/api/v1/upload/initiate
@@ -538,6 +560,7 @@ pm.test("Chunk size too small is rejected (if validation exists)", function() {
 ```
 
 ### Test 3.7: Initiate Upload - Chunk Size Too Large
+
 ```javascript
 // Request
 POST {{baseUrl}}/api/v1/upload/initiate
@@ -562,6 +585,7 @@ pm.test("Chunk size too large is rejected (if validation exists)", function() {
 ```
 
 ### Test 3.8: Initiate Upload - Path Traversal in Filename
+
 ```javascript
 // Request
 POST {{baseUrl}}/api/v1/upload/initiate
@@ -590,6 +614,7 @@ pm.test("Path traversal in filename is rejected (if validation exists)", functio
 ## 04 - Chunked Upload Edge Cases
 
 ### Test 4.1: Upload Chunk - Valid Chunk with Checksum
+
 ```javascript
 // Pre-request Script
 const crypto = require('crypto-js');
@@ -619,6 +644,7 @@ pm.test("Response confirms chunk acceptance", function() {
 ```
 
 ### Test 4.2: Upload Chunk - Without Checksum (Permissive Mode)
+
 ```javascript
 // Request
 POST {{baseUrl}}/api/v1/upload/session/{{testSessionId}}/chunk
@@ -641,6 +667,7 @@ pm.test("Chunk upload without checksum (depends on mode)", function() {
 ```
 
 ### Test 4.3: Upload Chunk - Invalid Checksum
+
 ```javascript
 // Request
 POST {{baseUrl}}/api/v1/upload/session/{{testSessionId}}/chunk
@@ -663,6 +690,7 @@ pm.test("Error indicates checksum mismatch", function() {
 ```
 
 ### Test 4.4: Upload Chunk - Negative Index
+
 ```javascript
 // Request
 POST {{baseUrl}}/api/v1/upload/session/{{testSessionId}}/chunk
@@ -684,6 +712,7 @@ pm.test("Error indicates invalid index", function() {
 ```
 
 ### Test 4.5: Upload Chunk - Index Out of Bounds
+
 ```javascript
 // Request
 POST {{baseUrl}}/api/v1/upload/session/{{testSessionId}}/chunk
@@ -705,6 +734,7 @@ pm.test("Chunk index out of bounds is rejected (if validation exists)", function
 ```
 
 ### Test 4.6: Upload Chunk - Invalid Session ID
+
 ```javascript
 // Request
 POST {{baseUrl}}/api/v1/upload/session/invalid-session-id/chunk
@@ -726,6 +756,7 @@ pm.test("Error indicates invalid session", function() {
 ```
 
 ### Test 4.7: Upload Chunk - Duplicate Chunk (Idempotency Test)
+
 ```javascript
 // Request (upload same chunk twice)
 POST {{baseUrl}}/api/v1/upload/session/{{testSessionId}}/chunk
@@ -750,6 +781,7 @@ pm.test("If rejected, error is clear", function() {
 ```
 
 ### Test 4.8: Get Upload Status
+
 ```javascript
 // Request
 GET {{baseUrl}}/api/v1/upload/session/{{testSessionId}}/status
@@ -773,6 +805,7 @@ pm.test("Status shows uploaded chunks", function() {
 ## 05 - Video CRUD Edge Cases
 
 ### Test 5.1: Create Video - Valid Metadata
+
 ```javascript
 // Request
 POST {{baseUrl}}/api/v1/videos
@@ -806,6 +839,7 @@ pm.test("Video metadata matches request", function() {
 ```
 
 ### Test 5.2: Create Video - Missing Title
+
 ```javascript
 // Request
 POST {{baseUrl}}/api/v1/videos
@@ -829,6 +863,7 @@ pm.test("Error indicates missing title", function() {
 ```
 
 ### Test 5.3: Create Video - Title Too Long
+
 ```javascript
 // Request
 POST {{baseUrl}}/api/v1/videos
@@ -853,6 +888,7 @@ pm.test("Title exceeding length is rejected (if validation exists)", function() 
 ```
 
 ### Test 5.4: Create Video - Description Too Long
+
 ```javascript
 // Request
 POST {{baseUrl}}/api/v1/videos
@@ -877,6 +913,7 @@ pm.test("Description exceeding limit is rejected (if validation exists)", functi
 ```
 
 ### Test 5.5: Create Video - Invalid Privacy Value
+
 ```javascript
 // Request
 POST {{baseUrl}}/api/v1/videos
@@ -902,6 +939,7 @@ pm.test("Error indicates invalid privacy", function() {
 ```
 
 ### Test 5.6: Create Video - Too Many Tags
+
 ```javascript
 // Request
 POST {{baseUrl}}/api/v1/videos
@@ -927,6 +965,7 @@ pm.test("Too many tags are rejected (if validation exists)", function() {
 ```
 
 ### Test 5.7: Get Video - By ID
+
 ```javascript
 // Request
 GET {{baseUrl}}/api/v1/videos/{{testVideoId}}
@@ -946,6 +985,7 @@ pm.test("Video data is complete", function() {
 ```
 
 ### Test 5.8: Get Video - Non-existent ID
+
 ```javascript
 // Request
 GET {{baseUrl}}/api/v1/videos/00000000-0000-0000-0000-000000000000
@@ -958,6 +998,7 @@ pm.test("Non-existent video returns 404", function() {
 ```
 
 ### Test 5.9: Delete Video - Owner
+
 ```javascript
 // Request
 DELETE {{baseUrl}}/api/v1/videos/{{testVideoId}}
@@ -970,6 +1011,7 @@ pm.test("Video deletion succeeds", function() {
 ```
 
 ### Test 5.10: Delete Video - Already Deleted (Idempotency)
+
 ```javascript
 // Request (try to delete same video again)
 DELETE {{baseUrl}}/api/v1/videos/{{testVideoId}}
@@ -986,6 +1028,7 @@ pm.test("Deleting already-deleted video returns 404", function() {
 ## 06 - Search Edge Cases
 
 ### Test 6.1: Search - Valid Query
+
 ```javascript
 // Request
 GET {{baseUrl}}/api/v1/videos/search?q=test
@@ -1003,6 +1046,7 @@ pm.test("Search results are in array", function() {
 ```
 
 ### Test 6.2: Search - Empty Query
+
 ```javascript
 // Request
 GET {{baseUrl}}/api/v1/videos/search?q=
@@ -1020,6 +1064,7 @@ pm.test("Error indicates missing query", function() {
 ```
 
 ### Test 6.3: Search - Very Long Query
+
 ```javascript
 // Request
 GET {{baseUrl}}/api/v1/videos/search?q={{"a".repeat(1000)}}
@@ -1037,6 +1082,7 @@ pm.test("Very long query is handled (rejected or truncated)", function() {
 ```
 
 ### Test 6.4: Search - Special Characters
+
 ```javascript
 // Request
 GET {{baseUrl}}/api/v1/videos/search?q=%3Cscript%3Ealert('xss')%3C/script%3E
@@ -1053,6 +1099,7 @@ pm.test("Search with special characters doesn't break", function() {
 ## 07 - Concurrency Tests
 
 ### Test 7.1: Concurrent Upload Initiations
+
 ```javascript
 // Script to run 10 simultaneous upload initiation requests
 const requests = [];
@@ -1106,6 +1153,7 @@ Promise.all(requests).then(responses => {
 ## 08 - Performance & Load Tests
 
 ### Test 8.1: Response Time Baseline
+
 ```javascript
 pm.test("API response time is acceptable", function() {
     pm.expect(pm.response.responseTime).to.be.below(500);
@@ -1119,6 +1167,7 @@ pm.test("No slow query detected", function() {
 ```
 
 ### Test 8.2: Pagination - Large Offset
+
 ```javascript
 // Request
 GET {{baseUrl}}/api/v1/videos?limit=100&offset=10000
@@ -1139,6 +1188,7 @@ pm.test("Response time acceptable even with large offset", function() {
 ## 09 - Cleanup
 
 ### Test 9.1: Delete All Test Videos
+
 ```javascript
 // Request (in loop)
 DELETE {{baseUrl}}/api/v1/videos/{{testVideoId}}
@@ -1155,6 +1205,7 @@ pm.test("Cleanup successful", function() {
 ## Newman CLI Commands
 
 ### Run Full Collection
+
 ```bash
 newman run Athena_E2E.postman_collection.json \\
   --environment E2E_Environment.postman_environment.json \\
@@ -1164,6 +1215,7 @@ newman run Athena_E2E.postman_collection.json \\
 ```
 
 ### Run Specific Folder (Auth Tests Only)
+
 ```bash
 newman run Athena_E2E.postman_collection.json \\
   --environment E2E_Environment.postman_environment.json \\
@@ -1172,6 +1224,7 @@ newman run Athena_E2E.postman_collection.json \\
 ```
 
 ### Run with Retry on Failure
+
 ```bash
 newman run Athena_E2E.postman_collection.json \\
   --environment E2E_Environment.postman_environment.json \\
@@ -1182,6 +1235,7 @@ newman run Athena_E2E.postman_collection.json \\
 ```
 
 ### Run with JSON Output (for CI/CD)
+
 ```bash
 newman run Athena_E2E.postman_collection.json \\
   --environment E2E_Environment.postman_environment.json \\
@@ -1194,6 +1248,7 @@ newman run Athena_E2E.postman_collection.json \\
 ## CI/CD Integration
 
 ### Parse Newman JSON Results
+
 ```bash
 #!/bin/bash
 # parse-newman-results.sh

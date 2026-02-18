@@ -48,12 +48,14 @@ sudo yum install -y jq      # RHEL/CentOS
 
 1. **Create AWS Account** or use existing account
 2. **Configure AWS credentials**:
+
    ```bash
    aws configure
    # Enter your AWS Access Key ID, Secret Access Key, default region, and output format
    ```
 
 3. **Verify credentials**:
+
    ```bash
    aws sts get-caller-identity
    ```
@@ -72,11 +74,13 @@ sudo yum install -y jq      # RHEL/CentOS
 
 1. **Register a domain** or use existing domain
 2. **Create Route53 hosted zone**:
+
    ```bash
    aws route53 create-hosted-zone --name athena.example.com --caller-reference $(date +%s)
    ```
 
 3. **Request ACM certificate** in us-east-1 (for CloudFront):
+
    ```bash
    aws acm request-certificate \
      --domain-name "*.athena.example.com" \
@@ -142,6 +146,7 @@ sudo yum install -y jq      # RHEL/CentOS
 All resources follow the pattern: `{project}-{environment}-{resource}`
 
 Example:
+
 - VPC: `athena-production-vpc`
 - EKS: `athena-production-eks`
 - RDS: `athena-production-postgres`
@@ -176,6 +181,7 @@ Example:
 ### Development Environment (Monthly)
 
 Much smaller footprint: **~$400-600/month**
+
 - Smaller instances (t3.medium)
 - Single-AZ deployment
 - No Multi-AZ for databases
@@ -193,6 +199,7 @@ cd terraform/scripts
 ```
 
 This creates:
+
 - S3 bucket: `athena-terraform-state-production`
 - DynamoDB table: `athena-terraform-locks`
 - Backend config file: `environments/production/backend.hcl`
@@ -232,6 +239,7 @@ terraform init -backend-config=backend.hcl
 ```
 
 Expected output:
+
 ```
 Initializing modules...
 Initializing the backend...
@@ -247,6 +255,7 @@ terraform plan -out=tfplan
 ```
 
 Review the output carefully. You should see:
+
 - ~80-100 resources to be created
 - VPC with 9 subnets (3 public, 3 private, 3 database)
 - EKS cluster with node groups
@@ -269,6 +278,7 @@ terraform apply tfplan
 This will take approximately **30-40 minutes** to complete.
 
 Breakdown:
+
 - VPC and networking: 2-3 minutes
 - EKS cluster: 15-20 minutes
 - RDS database: 10-15 minutes
@@ -284,6 +294,7 @@ terraform output
 ```
 
 Important outputs:
+
 ```
 eks_cluster_name = "athena-production-eks"
 rds_endpoint = "athena-production-postgres.xxxxx.us-east-1.rds.amazonaws.com"
@@ -302,6 +313,7 @@ kubectl get nodes
 ```
 
 You should see your EKS nodes:
+
 ```
 NAME                          STATUS   ROLES    AGE   VERSION
 ip-10-0-1-123.ec2.internal    Ready    <none>   5m    v1.28.x
@@ -319,6 +331,7 @@ cd ../../scripts
 ```
 
 This script:
+
 1. Retrieves Terraform outputs
 2. Configures kubectl
 3. Creates Kubernetes namespace
@@ -338,6 +351,7 @@ kubectl get pods -n athena-production
 ```
 
 Expected output:
+
 ```
 NAME                                    READY   STATUS    RESTARTS   AGE
 athena-api-xxxxx                        1/1     Running   0          2m
@@ -428,7 +442,8 @@ Access Grafana:
 kubectl port-forward -n athena-production svc/grafana 3000:80
 ```
 
-Navigate to http://localhost:3000
+Navigate to <http://localhost:3000>
+
 - Default credentials: admin/admin (change immediately)
 - Import dashboards from `k8s/monitoring/dashboards/`
 
@@ -489,18 +504,21 @@ terraform apply
 ### Regular Maintenance Tasks
 
 #### Weekly
+
 - Review CloudWatch alarms
 - Check pod logs for errors
 - Review cost reports
 - Verify backups are running
 
 #### Monthly
+
 - Update Kubernetes manifests
 - Review and optimize instance types
 - Clean up old EBS snapshots
 - Review security group rules
 
 #### Quarterly
+
 - Update Terraform modules
 - Review IAM policies
 - Update EKS cluster version
@@ -560,6 +578,7 @@ terraform apply
 
 **Symptom**: Terraform apply fails with error
 **Solution**:
+
 ```bash
 # Check AWS credentials
 aws sts get-caller-identity
@@ -579,6 +598,7 @@ terraform apply
 
 **Symptom**: Nodes show in EC2 but not in `kubectl get nodes`
 **Solution**:
+
 ```bash
 # Check node instance profile has correct permissions
 aws iam get-instance-profile --instance-profile-name athena-production-eks-*
@@ -594,6 +614,7 @@ aws ec2 get-console-output --instance-id i-xxxxx
 
 **Symptom**: Pods can't connect to RDS
 **Solution**:
+
 ```bash
 # Verify security group allows traffic from EKS nodes
 aws ec2 describe-security-groups --group-ids sg-rds
@@ -607,6 +628,7 @@ psql -h athena-production-postgres.xxxxx.rds.amazonaws.com -U athenaadmin -d ath
 
 **Symptom**: AWS bill higher than expected
 **Solution**:
+
 ```bash
 # Check for running resources
 aws ec2 describe-instances --query 'Reservations[].Instances[?State.Name==`running`]'
@@ -626,6 +648,7 @@ aws rds describe-db-instances --query 'DBInstances[?DBInstanceStatus==`available
 
 **Symptom**: Pods restarting frequently
 **Solution**:
+
 ```bash
 # Check pod status and events
 kubectl describe pod athena-api-xxxxx -n athena-production
@@ -643,6 +666,7 @@ kubectl edit deployment athena-api -n athena-production
 ## Support and Contributing
 
 For issues or questions:
+
 1. Check this guide
 2. Review CloudWatch logs
 3. Check Kubernetes events
@@ -652,6 +676,7 @@ For issues or questions:
 ## Security Considerations
 
 1. **Rotate credentials regularly**
+
    ```bash
    # Rotate RDS password
    aws rds modify-db-instance --db-instance-identifier athena-production-postgres \
@@ -663,11 +688,13 @@ For issues or questions:
    ```
 
 2. **Enable GuardDuty**
+
    ```bash
    aws guardduty create-detector --enable
    ```
 
 3. **Enable CloudTrail**
+
    ```bash
    aws cloudtrail create-trail --name athena-production-trail \
      --s3-bucket-name athena-cloudtrail-logs

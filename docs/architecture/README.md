@@ -9,33 +9,39 @@ For canonical architecture diagrams, see [`docs/architecture/DIAGRAMS.md`](./DIA
 ## Core Architecture Layers
 
 ### 1. Domain Layer (`/internal/domain`)
+
 - Pure business entities and rules
 - No external dependencies
 - Defines core types: Video, User, Channel, Comment, etc.
 - Contains domain-specific errors
 
 ### 2. Use Case Layer (`/internal/usecase`)
+
 - Business logic orchestration by feature (e.g., `usecase/channel`, `usecase/comment`, `usecase/views`)
 - Backward-compatible aliases are kept under `internal/usecase` during migration
 - Transaction coordination, validation, and rule enforcement
 
 ### Ports (`/internal/port`)
+
 - Repository contracts and inbound/outbound interfaces shared across features
 - Decouples services from concrete implementations in `internal/repository`
 
 ### 3. Interface Layer (`/internal/httpapi`)
+
 - HTTP handlers and routing (Chi framework)
 - Request/response DTOs
 - Input validation and error mapping
 - OpenAPI specification compliance
 
 ### 4. Bootstrap Layer (`/internal/app`)
+
 - Application initialization and dependency wiring (central DI)
 - Lifecycle management (DB, Redis, IPFS), graceful start/stop
 - Background schedulers and workers (encoding, federation, firehose)
 - Exposes a `Router` with routes pre-registered; `httpapi` is registration-only
 
 ### 5. Infrastructure Layer
+
 - **Repository** (`/internal/repository`) - Database access with SQLX
 - **Ports** (`/internal/port`) - Interfaces implemented by repositories/services
 - **Storage** (`/internal/storage`) - Hybrid file storage (local/IPFS/S3)
@@ -44,13 +50,16 @@ For canonical architecture diagrams, see [`docs/architecture/DIAGRAMS.md`](./DIA
 - **Worker** (`/internal/worker`) - Background job processing
 
 ### 6. Shared Packages (`/pkg`)
+
 - Utilities intended for reuse (e.g., `pkg/imageutil`) that have no `internal` dependencies
 - Keeps external imports possible without exposing app internals
 
 ## Key Design Patterns
 
 ### Repository Pattern
+
 Abstracts data access behind interfaces:
+
 ```go
 type VideoRepository interface {
     Create(ctx context.Context, video *domain.Video) error
@@ -61,9 +70,11 @@ type VideoRepository interface {
 ```
 
 ### Dependency Injection
+
 Constructor-based DI with centralized bootstrap:
 
 **Bootstrap Package (`internal/app`):**
+
 ```go
 // Application holds all dependencies and manages lifecycle
 type Application struct {
@@ -85,6 +96,7 @@ func New(cfg *config.Config) (*Application, error) {
 ```
 
 **Clean Separation:**
+
 ```go
 // Routes only handle HTTP concerns
 func RegisterRoutesWithDependencies(
@@ -97,7 +109,9 @@ func RegisterRoutesWithDependencies(
 ```
 
 ### Context Pattern
+
 All operations accept context for cancellation and tracing:
+
 ```go
 func (u *VideoUseCase) GetVideo(ctx context.Context, id uuid.UUID) (*domain.Video, error) {
     // Context flows through all layers
@@ -145,6 +159,7 @@ graph TD
 ### Database Layer
 
 **PostgreSQL Configuration:**
+
 - Connection pooling (25 max connections)
 - Read replica support
 - Full-text search with pg_trgm
@@ -152,6 +167,7 @@ graph TD
 - UUID primary keys
 
 **Key Tables:**
+
 - `users` - User accounts and profiles
 - `channels` - Content channels
 - `videos` - Video metadata and status
@@ -162,6 +178,7 @@ graph TD
 ### Caching Layer
 
 **Redis Usage:**
+
 - Session storage (24h TTL)
 - Rate limiting (sliding window)
 - Upload chunk tracking
@@ -190,12 +207,14 @@ graph TD
 ### Federation Architecture
 
 **ATProto Integration:**
+
 - Instance DID document
 - XRPC endpoint handlers
 - Bluesky firehose subscription
 - Social graph synchronization
 
 **Federation Flow:**
+
 1. Subscribe to remote instance events
 2. Queue events for processing
 3. Validate signatures and content
@@ -241,6 +260,7 @@ graph TD
 ### Monitoring & Observability
 
 **Metrics (Prometheus):**
+
 - Request latency (p50, p95, p99)
 - Error rates by endpoint
 - Database connection pool stats
@@ -248,12 +268,14 @@ graph TD
 - IPFS pin success rates
 
 **Logging (Structured):**
+
 - Request/response logging
 - Error tracking with stack traces
 - Performance timing
 - Federation event logs
 
 **Tracing (OpenTelemetry):**
+
 - Distributed request tracing
 - Cross-service correlation
 - Performance bottleneck identification
@@ -298,6 +320,7 @@ make test
 ### Environment Variables
 
 Configuration follows precedence:
+
 1. Command-line flags
 2. Environment variables
 3. `.env` file
@@ -306,6 +329,7 @@ Configuration follows precedence:
 ### Feature Flags
 
 Runtime toggles for gradual rollout:
+
 - `FEDERATION_ENABLED` - ATProto federation
 - `IPFS_ENABLED` - Distributed storage
 - `TRANSCODING_ENABLED` - Video processing
@@ -316,11 +340,13 @@ Runtime toggles for gradual rollout:
 ### Container Orchestration
 
 **Docker Compose (Development):**
+
 - Single-node deployment
 - Volume persistence
 - Service discovery
 
 **Kubernetes (Production):**
+
 - Multi-node cluster
 - Auto-scaling (HPA/VPA)
 - Service mesh (optional)

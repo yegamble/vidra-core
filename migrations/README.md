@@ -20,6 +20,7 @@ migrations/
 ```
 
 Examples:
+
 - `001_initial_schema.sql`
 - `002_add_users_table.sql`
 - `20240315120000_add_video_analytics.sql`
@@ -147,11 +148,13 @@ ALTER TABLE users DROP COLUMN deprecated_field;
 **Important:** Always commit `atlas.sum` with your migration files.
 
 This file contains:
+
 - SHA256 checksums of each migration
 - Integrity verification data
 - Atlas migration metadata
 
 If you get checksum errors:
+
 ```bash
 make atlas-migrate-hash
 git add migrations/atlas.sum
@@ -160,6 +163,7 @@ git add migrations/atlas.sum
 ### Migration Verification
 
 Atlas automatically verifies:
+
 - File integrity (checksums match)
 - No modifications to applied migrations
 - SQL syntax validity
@@ -193,6 +197,7 @@ git commit -m "Add migration for my_feature"
 ### CI/CD
 
 GitHub Actions automatically:
+
 1. Lints new migrations
 2. Validates integrity
 3. Test-applies to CI database
@@ -207,6 +212,7 @@ See `.github/workflows/atlas-lint.yml`
 **Error:** `migration hash mismatch`
 
 **Solution:**
+
 ```bash
 make atlas-migrate-hash
 ```
@@ -222,6 +228,7 @@ make atlas-migrate-hash
 **Error:** `SQL execution failed`
 
 **Solution:**
+
 1. Check SQL syntax
 2. Verify dependencies (tables, columns exist)
 3. Test in fresh database

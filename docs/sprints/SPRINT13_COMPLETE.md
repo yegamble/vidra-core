@@ -196,7 +196,7 @@ if h.signatureVerifier != nil {
 === RUN   TestSignPluginInvalidPrivateKey
 --- PASS: TestSignPluginInvalidPrivateKey (0.00s)
 PASS
-ok  	command-line-arguments	0.190s
+ok   command-line-arguments 0.190s
 ```
 
 #### Security Test Scenarios
@@ -247,6 +247,7 @@ ok  	command-line-arguments	0.190s
 #### Example Responses
 
 **Successful Installation:**
+
 ```json
 {
   "id": "123e4567-e89b-12d3-a456-426614174000",
@@ -260,6 +261,7 @@ ok  	command-line-arguments	0.190s
 ```
 
 **Invalid Signature:**
+
 ```json
 {
   "error": {
@@ -278,36 +280,44 @@ ok  	command-line-arguments	0.190s
 17 permission types across all major operations:
 
 #### Video Permissions
+
 - `read_videos` - View video metadata
 - `write_videos` - Create/update videos
 - `delete_videos` - Remove videos
 
 #### User Permissions
+
 - `read_users` - View user profiles
 - `write_users` - Create/update users
 - `delete_users` - Remove user accounts
 
 #### Channel Permissions
+
 - `read_channels` - View channels
 - `write_channels` - Create/update channels
 - `delete_channels` - Remove channels
 
 #### Storage Permissions
+
 - `read_storage` - Access stored files
 - `write_storage` - Upload files
 - `delete_storage` - Remove files
 
 #### Analytics Permissions
+
 - `read_analytics` - View analytics data
 - `write_analytics` - Create analytics events
 
 #### Moderation Permissions
+
 - `moderate_content` - Moderate user content
 
 #### Admin Permissions
+
 - `admin_access` - Full administrative access
 
 #### API Permissions
+
 - `register_api_routes` - Register custom API endpoints
 
 ### Security Features Summary
@@ -342,7 +352,7 @@ ok  	command-line-arguments	0.190s
 
 ```bash
 $ go test -short ./internal/plugin/...
-ok  	athena/internal/plugin	0.291s
+ok   athena/internal/plugin 0.291s
 ```
 
 ### Test Coverage
@@ -402,6 +412,7 @@ $ golangci-lint run ./internal/plugin/... ./internal/httpapi/plugin_handlers.go
 **Decision:** Use Ed25519 for signature verification instead of GPG.
 
 **Rationale:**
+
 - **Simplicity**: Single-file signatures, no keyring complexity
 - **Performance**: Faster verification (< 1ms per signature)
 - **Modern**: Current best practice for digital signatures
@@ -409,6 +420,7 @@ $ golangci-lint run ./internal/plugin/... ./internal/httpapi/plugin_handlers.go
 - **Security**: Collision-resistant, 128-bit security level
 
 **Trade-offs:**
+
 - GPG offers broader tooling ecosystem
 - GPG supports key expiration and revocation natively
 - Ed25519 requires custom tooling for signing
@@ -418,12 +430,14 @@ $ golangci-lint run ./internal/plugin/... ./internal/httpapi/plugin_handlers.go
 **Decision:** Store trusted keys in JSON format.
 
 **Rationale:**
+
 - **Readability**: Human-readable and easily auditable
 - **Portability**: Cross-platform compatible
 - **Flexibility**: Easy to add metadata (comments, timestamps)
 - **Integration**: Native Go support with `encoding/json`
 
 **Format:**
+
 ```json
 [
   {
@@ -440,11 +454,13 @@ $ golangci-lint run ./internal/plugin/... ./internal/httpapi/plugin_handlers.go
 **Decision:** Support both strict and flexible verification modes.
 
 **Rationale:**
+
 - **Development**: Flexible mode allows trusted developers without signatures
 - **Production**: Strict mode enforces signatures on all plugins
 - **Migration**: Gradual adoption path for existing plugins
 
 **Configuration:**
+
 ```go
 handler := NewPluginHandler(
     repo,
@@ -459,6 +475,7 @@ handler := NewPluginHandler(
 **Decision:** Use standard multipart/form-data for upload.
 
 **Rationale:**
+
 - **Standards Compliance**: HTTP standard for file uploads
 - **Tool Support**: Works with `curl`, Postman, web forms
 - **Optional Signature**: Easy to include signature as separate field
@@ -653,11 +670,13 @@ REQUIRE_PLUGIN_SIGNATURES=true  # or false for development
 ### Security Recommendations
 
 1. **Enable Signature Requirement in Production**
+
    ```bash
    REQUIRE_PLUGIN_SIGNATURES=true
    ```
 
 2. **Restrict Plugin Directory Permissions**
+
    ```bash
    chmod 750 /var/lib/athena/plugins
    chown athena:athena /var/lib/athena/plugins

@@ -1,4 +1,5 @@
 # Security Audit Report: SSRF Protection for Athena Video Platform
+
 **Date:** November 17, 2025
 **Auditor:** Claude Security Testing Agent
 **Focus:** Server-Side Request Forgery (SSRF) Protection for Link Previews and External URL Fetching
@@ -35,12 +36,14 @@ req, err := http.NewRequestWithContext(ctx, "GET", actorURI, nil)
 
 **Attack Scenario:**
 An attacker could submit malicious ActivityPub follow requests with actor URIs pointing to:
+
 - AWS EC2 metadata: `http://169.254.169.254/latest/meta-data/iam/security-credentials/`
 - Internal Redis: `http://127.0.0.1:6379/`
 - Private network services: `http://192.168.1.1/admin`
 - Kubernetes API: `http://10.96.0.1:443/`
 
 **Impact:**
+
 - **Severity:** CRITICAL (CVSS 9.1)
 - Potential access to cloud provider metadata (credentials, API keys)
 - Internal service enumeration and exploitation
@@ -70,17 +73,20 @@ req, err := http.NewRequestWithContext(ctx, "GET", actorURI, nil)
 
 **Vulnerability Description:**
 The social service makes HTTP requests to ATProto PDS (Personal Data Server) URLs without SSRF validation in three locations:
+
 1. `resolveActor()` - Line 488
 2. `getProfile()` - Line 517
 3. `getActorFeed()` - Line 663
 
 **Attack Scenario:**
 If an attacker can control the `ATProtoPDSURL` configuration or manipulate handle resolution, they could:
+
 - Point requests to internal services
 - Scan internal network
 - Access cloud metadata endpoints
 
 **Impact:**
+
 - **Severity:** CRITICAL (CVSS 8.6)
 - Configuration-dependent vulnerability
 - Potential for internal service access if PDS URL is user-controllable
@@ -130,10 +136,12 @@ This service was already protected with `domain.ValidateURLWithSSRFCheck(instanc
 A comprehensive URL validator that blocks:
 
 #### Protocol Restrictions
+
 - ✅ Only allows `http://` and `https://` schemes
 - ❌ Blocks: `file://`, `ftp://`, `gopher://`, `dict://`, `ldap://`, `javascript:`, `data:`
 
 #### IPv4 Private/Reserved Ranges Blocked
+
 - `10.0.0.0/8` - RFC1918 private network
 - `172.16.0.0/12` - RFC1918 private network
 - `192.168.0.0/16` - RFC1918 private network
@@ -151,6 +159,7 @@ A comprehensive URL validator that blocks:
 - `255.255.255.255/32` - Broadcast
 
 #### IPv6 Private/Reserved Ranges Blocked
+
 - `::1/128` - Loopback
 - `fc00::/7` - Unique local addresses
 - `fe80::/10` - Link-local addresses
@@ -160,6 +169,7 @@ A comprehensive URL validator that blocks:
 - `2001:db8::/32` - Documentation
 
 #### DNS Resolution Validation
+
 - Resolves hostnames to IP addresses using `net.LookupIP()`
 - Checks all resolved IPs against blocklist
 - Prevents DNS rebinding attacks by validating at request time
@@ -179,6 +189,7 @@ Provides `ValidateURLWithSSRFCheck()` function used by import and redundancy ser
 **Location:** `/home/user/athena/internal/security/url_validator_test.go`
 
 **Tests:** 14 test functions covering:
+
 - ✅ Valid URLs (public domains, public IPs)
 - ✅ Invalid schemes (file, ftp, javascript, etc.)
 - ✅ SSRF protection (all private IP ranges)
@@ -193,6 +204,7 @@ Provides `ValidateURLWithSSRFCheck()` function used by import and redundancy ser
 - ✅ Performance benchmarks
 
 **Sample Test Results:**
+
 ```
 ✓ Correctly blocked http://127.0.0.1 (IPv4 loopback)
 ✓ Correctly blocked http://169.254.169.254 (AWS EC2 metadata)
@@ -207,6 +219,7 @@ Provides `ValidateURLWithSSRFCheck()` function used by import and redundancy ser
 **Location:** `/home/user/athena/tests/integration/ssrf_protection_test.go`
 
 **Tests:** 10 comprehensive test functions covering:
+
 - ✅ Video import SSRF protection
 - ✅ Instance discovery SSRF protection
 - ✅ URLValidator comprehensive tests
@@ -218,6 +231,7 @@ Provides `ValidateURLWithSSRFCheck()` function used by import and redundancy ser
 - ✅ Performance benchmarks
 
 **Attack Vectors Tested:**
+
 - AWS EC2 metadata endpoint
 - GCP metadata endpoint
 - Localhost and loopback addresses
@@ -233,6 +247,7 @@ Provides `ValidateURLWithSSRFCheck()` function used by import and redundancy ser
 **Location:** `/home/user/athena/.github/workflows/security-tests.yml`
 
 Automated security testing pipeline with:
+
 - ✅ SSRF protection unit tests
 - ✅ SSRF integration tests
 - ✅ URL validation tests
@@ -267,6 +282,7 @@ Automated security testing pipeline with:
    - **Risk:** Even with URL validation, HTTP redirects could bypass protection
    - **Recommendation:** Configure `http.Client` with custom `CheckRedirect` function
    - **Implementation:**
+
    ```go
    client := &http.Client{
        CheckRedirect: func(req *http.Request, via []*http.Request) error {
@@ -328,6 +344,7 @@ BenchmarkSSRFValidation_PrivateIP-8    100000   15234 ns/op
 ```
 
 **Analysis:**
+
 - URL validation adds ~15-25μs overhead per request
 - DNS resolution is the primary cost (when not cached)
 - Negligible impact on overall request latency
@@ -462,18 +479,22 @@ The platform now has **robust SSRF protection** for all external URL fetching op
 ## Appendix A: Files Modified
 
 ### Security Implementations
+
 1. `/home/user/athena/internal/security/url_validator.go` (existing, enhanced)
 2. `/home/user/athena/internal/usecase/activitypub/service.go` (SSRF protection added)
 3. `/home/user/athena/internal/usecase/social/service.go` (SSRF protection added)
 
 ### Test Files Created
+
 4. `/home/user/athena/internal/security/url_validator_test.go` (new)
 5. `/home/user/athena/tests/integration/ssrf_protection_test.go` (new)
 
 ### CI/CD Configuration
+
 6. `/home/user/athena/.github/workflows/security-tests.yml` (new)
 
 ### Documentation
+
 7. `/home/user/athena/SECURITY_AUDIT_REPORT.md` (this file)
 
 ---

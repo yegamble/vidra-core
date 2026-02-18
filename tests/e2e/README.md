@@ -5,6 +5,7 @@ This directory contains the end-to-end testing framework for the Athena video pl
 ## Overview
 
 The E2E testing framework tests:
+
 - Complete user workflows (register, login, upload, view, delete)
 - API endpoint interactions
 - Database persistence
@@ -36,22 +37,26 @@ tests/e2e/
 ### Required Tools
 
 1. **Docker & Docker Compose** (v2.0+)
+
    ```bash
    docker --version
    docker-compose --version
    ```
 
 2. **Go** (1.24+)
+
    ```bash
    go version
    ```
 
 3. **FFmpeg** (for generating test video files)
+
    ```bash
    ffmpeg -version
    ```
 
 4. **Make** (optional, for convenience commands)
+
    ```bash
    make --version
    ```
@@ -353,6 +358,7 @@ k6 run -e BASE_URL=http://localhost:8080 tests/loadtest/k6-video-platform.js
 ### Common Issues
 
 **Services not starting:**
+
 ```bash
 # Check Docker resources
 docker system df
@@ -362,15 +368,18 @@ docker system prune -a --volumes
 ```
 
 **ClamAV taking too long:**
+
 - ClamAV requires 2-3 minutes to initialize on first start (downloading virus definitions)
 - Increase `start_period` in docker-compose health check if needed
 
 **Tests timing out:**
+
 - Increase test timeout: `go test -timeout 60m`
 - Check service logs for errors
 - Ensure adequate system resources (4GB+ RAM recommended)
 
 **Database migration errors:**
+
 - Ensure migrations are run before tests
 - Check database connectivity
 - Verify DATABASE_URL environment variable

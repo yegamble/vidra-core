@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -61,6 +62,24 @@ func (m *mockStreamRepoForHLS) EndStream(ctx context.Context, id uuid.UUID) erro
 }
 func (m *mockStreamRepoForHLS) CountByChannelID(ctx context.Context, channelID uuid.UUID) (int, error) {
 	return 0, errors.New("not implemented")
+}
+func (m *mockStreamRepoForHLS) GetChannelByStreamID(_ context.Context, _ uuid.UUID) (*domain.Channel, error) {
+	return nil, nil
+}
+func (m *mockStreamRepoForHLS) UpdateWaitingRoom(_ context.Context, _ uuid.UUID, _ bool, _ string) error {
+	return nil
+}
+func (m *mockStreamRepoForHLS) ScheduleStream(_ context.Context, _ uuid.UUID, _ *time.Time, _ *time.Time, _ bool, _ string) error {
+	return nil
+}
+func (m *mockStreamRepoForHLS) CancelSchedule(_ context.Context, _ uuid.UUID) error {
+	return nil
+}
+func (m *mockStreamRepoForHLS) GetScheduledStreams(_ context.Context, _, _ int) ([]*domain.LiveStream, error) {
+	return nil, nil
+}
+func (m *mockStreamRepoForHLS) GetUpcomingStreams(_ context.Context, _ uuid.UUID, _ int) ([]*domain.LiveStream, error) {
+	return nil, nil
 }
 
 type mockHLSTranscoder struct {

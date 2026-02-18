@@ -1,18 +1,22 @@
 package shared
 
 import (
+	"database/sql"
 	"time"
 
 	redis "github.com/redis/go-redis/v9"
 
+	"athena/internal/chat"
 	"athena/internal/email"
 	"athena/internal/httpapi/handlers/payments"
 	"athena/internal/livestream"
+	"athena/internal/plugin"
 	"athena/internal/port"
 	"athena/internal/repository"
 	"athena/internal/scheduler"
 	"athena/internal/usecase"
 	ucbackup "athena/internal/usecase/backup"
+	"athena/internal/usecase/captiongen"
 	ucchannel "athena/internal/usecase/channel"
 	uccmt "athena/internal/usecase/comment"
 	"athena/internal/usecase/encoding"
@@ -61,8 +65,10 @@ type HandlerDependencies struct {
 	RatingService            *ucrt.Service
 	PlaylistService          *usecase.PlaylistService
 	CaptionService           *usecase.CaptionService
+	CaptionGenService        captiongen.Service
 	TwoFAService             *usecase.TwoFAService
 	PaymentService           payments.PaymentService
+	SocialService            *usecase.SocialService
 	AtprotoService           usecase.AtprotoPublisher
 	FederationService        usecase.FederationService
 	HardeningService         *usecase.FederationHardeningService
@@ -74,8 +80,22 @@ type HandlerDependencies struct {
 	IPFSStreamingService     *ucipfs.Service
 	BackupService            *ucbackup.Service
 
+	ChatServer *chat.ChatServer
+	ChatRepo   repository.ChatRepository
+
+	PluginRepo    *repository.PluginRepository
+	PluginManager *plugin.Manager
+
+	RedundancyService any
+	InstanceDiscovery any
+
+	VideoCategoryUseCase usecase.VideoCategoryUseCase
+	AnalyticsRepo        repository.AnalyticsRepository
+	AnalyticsCollector   any
+
 	EncodingScheduler *scheduler.EncodingScheduler
 
+	DB               *sql.DB
 	Redis            *redis.Client
 	JWTSecret        string
 	RedisPingTimeout time.Duration

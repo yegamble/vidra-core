@@ -3,6 +3,7 @@
 ## 🚀 Production Checklist
 
 ### Prerequisites
+
 - [ ] Linux server (Ubuntu 22.04 LTS recommended)
 - [ ] Docker & Docker Compose installed
 - [ ] Domain name with SSL certificate
@@ -314,6 +315,7 @@ scrape_configs:
 ```
 
 Key metrics to monitor:
+
 - Request latency (p50, p95, p99)
 - Request rate and error rate
 - Database connection pool stats
@@ -540,6 +542,7 @@ See [Performance Tuning Guide](../operations/PERFORMANCE.md) for detailed config
 ### 2. Monitoring Alerts
 
 Configure alerts for:
+
 - High error rate (>1%)
 - High latency (p95 > 1s)
 - Database connection pool exhaustion
@@ -605,6 +608,7 @@ docker-compose stop
 ## 📞 Support
 
 For production support:
-- Create an issue: https://github.com/yegamble/athena/issues
-- Security issues: security@yourdomain.com
-- Documentation: https://docs.yourdomain.com
+
+- Create an issue: <https://github.com/yegamble/athena/issues>
+- Security issues: <security@yourdomain.com>
+- Documentation: <https://docs.yourdomain.com>

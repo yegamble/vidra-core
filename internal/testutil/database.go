@@ -26,7 +26,7 @@ import (
 var (
 	infraCheckOnce   sync.Once
 	infraReady       bool
-	schemaMigrations sync.Map // map[string]*schemaMigrationState
+	schemaMigrations sync.Map
 )
 
 type schemaMigrationState struct {
@@ -78,18 +78,15 @@ func SetupTestDB(t *testing.T) *TestDB {
 
 func verifyInfra() bool {
 	infraCheckOnce.Do(func() {
-		// Load envs
 		_ = godotenv.Load("../../.env.test")
 		_ = godotenv.Load(".env.test")
 		_ = godotenv.Load("../../.env")
 		_ = godotenv.Load(".env")
 
-		// Check Postgres (Fail Fast via TCP)
 		if !checkTCP(getPostgresDSN(), "5432") {
 			return
 		}
 
-		// Check Redis (Fail Fast via TCP)
 		if !checkTCP(getRedisURL(), "6379") {
 			return
 		}
@@ -123,13 +120,11 @@ func checkTCP(urlStr, defaultPort string) bool {
 }
 
 func getPostgresDSN() string {
-	// Prefer an explicit test URL if provided
 	dbURL := os.Getenv("TEST_DATABASE_URL")
 	if dbURL == "" {
 		dbURL = os.Getenv("DATABASE_URL")
 	}
 	if dbURL == "" {
-		// Assemble from granular TEST_DB_* envs if provided
 		host := getEnvDefault("TEST_DB_HOST", "localhost")
 		defaultPort := "5432"
 		port := getEnvDefault("TEST_DB_PORT", defaultPort)
@@ -154,19 +149,14 @@ func getRedisURL() string {
 }
 
 func setupPostgres() (*sqlx.DB, error) {
-	// Try loading env files commonly used in tests from multiple locations
-	// Load .env.test first (overrides), then .env if present; ignore errors silently
 	_ = godotenv.Load("../../.env.test")
 	_ = godotenv.Load(".env.test")
 	_ = godotenv.Load("../../.env")
 	_ = godotenv.Load(".env")
 
 	dbURL := getPostgresDSN()
-	// Derive an isolated schema per calling test package to avoid cross-package interference
 	schema := deriveTestSchema()
 
-	// First connect without custom search_path to create the schema if needed
-	// Use a short deadline so tests skip fast when DB isn't available locally
 	db, err := connectWithRetry(dbURL, 5*time.Second)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to test database: %w", err)
@@ -179,14 +169,11 @@ func setupPostgres() (*sqlx.DB, error) {
 		return nil, fmt.Errorf("failed to ping test database: %w", err)
 	}
 
-	// Create schema if needed
 	if _, err := db.ExecContext(ctx, fmt.Sprintf("CREATE SCHEMA IF NOT EXISTS %s", pqQuoteIdent(schema))); err != nil {
 		return nil, fmt.Errorf("failed to create test schema: %w", err)
 	}
-	// Close and reconnect with search_path set to the schema for all pooled conns
 	_ = db.Close()
 
-	// Append search_path to the DSN (lib/pq honors search_path param in URL form)
 	dbURL = withSearchPath(dbURL, schema)
 
 	db, err = connectWithRetry(dbURL, 5*time.Second)
@@ -194,7 +181,6 @@ func setupPostgres() (*sqlx.DB, error) {
 		return nil, fmt.Errorf("failed to reconnect to test database with schema: %w", err)
 	}
 
-	// Set connection pool settings
 	db.SetMaxOpenConns(10)
 	db.SetMaxIdleConns(5)
 	db.SetConnMaxLifetime(5 * time.Minute)
@@ -209,19 +195,15 @@ func setupPostgres() (*sqlx.DB, error) {
 	return db, nil
 }
 
-// deriveTestSchema attempts to create a stable, package-specific schema name
 func deriveTestSchema() string {
 	if v := os.Getenv("TEST_SCHEMA"); v != "" {
 		return sanitizeSchema(v)
 	}
-	// Walk up the call stack to find first test file outside testutil
 	for i := 1; i < 15; i++ {
 		if _, file, _, ok := runtime.Caller(i); ok {
 			base := filepath.Base(file)
 			if strings.HasSuffix(base, "_test.go") && !strings.Contains(file, filepath.Join("internal", "testutil")) {
-				// Use directory name as package differentiator
 				dir := filepath.Dir(file)
-				// e.g., internal/repository or internal/httpapi
 				parts := strings.Split(dir, string(filepath.Separator))
 				if len(parts) >= 2 {
 					pkg := strings.Join(parts[len(parts)-2:], "_")
@@ -236,7 +218,6 @@ func deriveTestSchema() string {
 
 func sanitizeSchema(s string) string {
 	s = strings.ToLower(s)
-	// Replace any non [a-z0-9_] with underscore
 	var b strings.Builder
 	for _, r := range s {
 		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '_' {
@@ -245,21 +226,16 @@ func sanitizeSchema(s string) string {
 			b.WriteRune('_')
 		}
 	}
-	// Ensure it starts with a letter
 	if b.Len() == 0 || (b.String()[0] < 'a' || b.String()[0] > 'z') {
 		return "t_" + b.String()
 	}
 	return b.String()
 }
 
-// pqQuoteIdent quotes an identifier minimally for CREATE SCHEMA
 func pqQuoteIdent(id string) string {
-	// Very simple quote for safety; our sanitize already removed bad chars
 	return `"` + strings.ReplaceAll(id, `"`, `""`) + `"`
 }
 
-// ensureTestSchema creates required tables/extensions for integration tests if missing.
-// It is safe to run multiple times.
 func ensureTestSchema(db *sqlx.DB) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
@@ -291,7 +267,6 @@ func ensureTestSchema(db *sqlx.DB) error {
 		`ALTER TABLE users ADD COLUMN IF NOT EXISTS subscriber_count BIGINT NOT NULL DEFAULT 0`,
 		`ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified BOOLEAN NOT NULL DEFAULT false`,
 		`ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified_at TIMESTAMP WITH TIME ZONE`,
-		// Subscriptions table
 		`CREATE TABLE IF NOT EXISTS subscriptions (
 		    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
 		    subscriber_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -310,7 +285,6 @@ func ensureTestSchema(db *sqlx.DB) error {
 		`CREATE INDEX IF NOT EXISTS idx_users_email_verified ON users(email_verified)`,
 		`DROP TRIGGER IF EXISTS update_users_updated_at ON users`,
 		`CREATE TRIGGER update_users_updated_at BEFORE UPDATE ON users FOR EACH ROW EXECUTE FUNCTION update_updated_at_column()`,
-		// Email verification tokens table
 		`CREATE TABLE IF NOT EXISTS email_verification_tokens (
 		    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
 		    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -324,7 +298,6 @@ func ensureTestSchema(db *sqlx.DB) error {
 		`CREATE INDEX IF NOT EXISTS idx_email_verification_tokens_token ON email_verification_tokens(token)`,
 		`CREATE INDEX IF NOT EXISTS idx_email_verification_tokens_code_user ON email_verification_tokens(code, user_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_email_verification_tokens_expires_at ON email_verification_tokens(expires_at)`,
-		// User avatars table
 		`CREATE TABLE IF NOT EXISTS user_avatars (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
             user_id UUID NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
@@ -358,7 +331,6 @@ func ensureTestSchema(db *sqlx.DB) error {
 		`CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions(expires_at)`,
 		`DROP INDEX IF EXISTS idx_sessions_active`,
 		`CREATE INDEX IF NOT EXISTS idx_sessions_active ON sessions(user_id, expires_at)`,
-		// Video categories table (must be created before videos table for foreign key)
 		`CREATE TABLE IF NOT EXISTS video_categories (
 		    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
 		    name VARCHAR(100) NOT NULL UNIQUE,
@@ -375,7 +347,6 @@ func ensureTestSchema(db *sqlx.DB) error {
 		`CREATE INDEX IF NOT EXISTS idx_video_categories_slug ON video_categories(slug)`,
 		`CREATE INDEX IF NOT EXISTS idx_video_categories_is_active ON video_categories(is_active)`,
 		`CREATE INDEX IF NOT EXISTS idx_video_categories_display_order ON video_categories(display_order)`,
-		// Insert default categories
 		`INSERT INTO video_categories (name, slug, description, icon, color, display_order, is_active) VALUES
 		    ('Music', 'music', 'Music videos, concerts, and audio content', '🎵', '#FF0000', 1, true),
 		    ('Gaming', 'gaming', 'Gaming videos, walkthroughs, and streams', '🎮', '#00FF00', 2, true),
@@ -393,7 +364,6 @@ func ensureTestSchema(db *sqlx.DB) error {
 		    ('Nonprofits & Activism', 'nonprofits-activism', 'Charity and social cause content', '🤝', '#339966', 14, true),
 		    ('Other', 'other', 'Uncategorized content', '📁', '#999999', 999, true)
 		ON CONFLICT (slug) DO NOTHING`,
-		// Videos table
 		`CREATE TABLE IF NOT EXISTS videos (
 	            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
 	            thumbnail_id UUID NOT NULL,
@@ -428,7 +398,6 @@ func ensureTestSchema(db *sqlx.DB) error {
 		`CREATE INDEX IF NOT EXISTS idx_videos_category_id ON videos(category_id)`,
 		`DROP TRIGGER IF EXISTS update_videos_updated_at ON videos`,
 		`CREATE TRIGGER update_videos_updated_at BEFORE UPDATE ON videos FOR EACH ROW EXECUTE FUNCTION update_updated_at_column()`,
-		// Upload sessions table
 		`CREATE TABLE IF NOT EXISTS upload_sessions (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
             video_id UUID NOT NULL REFERENCES videos(id) ON DELETE CASCADE,
@@ -450,7 +419,6 @@ func ensureTestSchema(db *sqlx.DB) error {
 		`CREATE INDEX IF NOT EXISTS idx_upload_sessions_expires_at ON upload_sessions(expires_at)`,
 		`DROP TRIGGER IF EXISTS update_upload_sessions_updated_at ON upload_sessions`,
 		`CREATE TRIGGER update_upload_sessions_updated_at BEFORE UPDATE ON upload_sessions FOR EACH ROW EXECUTE FUNCTION update_updated_at_column()`,
-		// Encoding jobs table
 		`CREATE TABLE IF NOT EXISTS encoding_jobs (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
             video_id UUID NOT NULL REFERENCES videos(id) ON DELETE CASCADE,
@@ -471,22 +439,29 @@ func ensureTestSchema(db *sqlx.DB) error {
 		`CREATE INDEX IF NOT EXISTS idx_encoding_jobs_status_created ON encoding_jobs(status, created_at)`,
 		`DROP TRIGGER IF EXISTS update_encoding_jobs_updated_at ON encoding_jobs`,
 		`CREATE TRIGGER update_encoding_jobs_updated_at BEFORE UPDATE ON encoding_jobs FOR EACH ROW EXECUTE FUNCTION update_updated_at_column()`,
-		// Unique active job per video (avoid duplicate concurrent encodes)
 		`CREATE UNIQUE INDEX IF NOT EXISTS uq_encoding_jobs_active_video ON encoding_jobs (video_id) WHERE status IN ('pending','processing')`,
-		// Messages table for user messaging
 		`CREATE TABLE IF NOT EXISTS messages (
 		    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
 		    sender_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
 		    recipient_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-		    content TEXT NOT NULL,
-		    message_type VARCHAR(20) NOT NULL DEFAULT 'text' CHECK (message_type IN ('text','system')),
+		    content TEXT,
+		    message_type VARCHAR(20) NOT NULL DEFAULT 'text' CHECK (message_type IN ('text','system','secure','key_exchange')),
 		    is_read BOOLEAN NOT NULL DEFAULT false,
 		    is_deleted_by_sender BOOLEAN NOT NULL DEFAULT false,
 		    is_deleted_by_recipient BOOLEAN NOT NULL DEFAULT false,
 		    parent_message_id UUID REFERENCES messages(id) ON DELETE SET NULL,
+		    encrypted_content TEXT,
+		    content_nonce TEXT,
+		    pgp_signature TEXT,
+		    is_encrypted BOOLEAN NOT NULL DEFAULT false,
+		    encryption_version INTEGER DEFAULT 1,
 		    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
 		    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
-		    read_at TIMESTAMP WITH TIME ZONE
+		    read_at TIMESTAMP WITH TIME ZONE,
+		    CONSTRAINT check_encrypted_content CHECK (
+		        (is_encrypted = true AND encrypted_content IS NOT NULL AND content_nonce IS NOT NULL) OR
+		        (is_encrypted = false AND content IS NOT NULL AND encrypted_content IS NULL AND content_nonce IS NULL)
+		    )
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_messages_sender_id ON messages(sender_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_messages_recipient_id ON messages(recipient_id)`,
@@ -496,13 +471,17 @@ func ensureTestSchema(db *sqlx.DB) error {
 		`CREATE INDEX IF NOT EXISTS idx_messages_parent_id ON messages(parent_message_id)`,
 		`DROP TRIGGER IF EXISTS update_messages_updated_at ON messages`,
 		`CREATE TRIGGER update_messages_updated_at BEFORE UPDATE ON messages FOR EACH ROW EXECUTE FUNCTION update_updated_at_column()`,
-		// Conversations table to track threads
 		`CREATE TABLE IF NOT EXISTS conversations (
 		    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
 		    participant_one_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
 		    participant_two_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
 		    last_message_id UUID REFERENCES messages(id) ON DELETE SET NULL,
 		    last_message_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+		    is_encrypted BOOLEAN NOT NULL DEFAULT false,
+		    key_exchange_complete BOOLEAN NOT NULL DEFAULT false,
+		    encryption_version INTEGER DEFAULT 1,
+		    last_key_rotation TIMESTAMP WITH TIME ZONE,
+		    encryption_status VARCHAR(20) NOT NULL DEFAULT 'none' CHECK (encryption_status IN ('none','pending','active')),
 		    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
 		    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
 		    UNIQUE(participant_one_id, participant_two_id)
@@ -513,7 +492,6 @@ func ensureTestSchema(db *sqlx.DB) error {
 		`CREATE INDEX IF NOT EXISTS idx_conversations_participants ON conversations(participant_one_id, participant_two_id)`,
 		`DROP TRIGGER IF EXISTS update_conversations_updated_at ON conversations`,
 		`CREATE TRIGGER update_conversations_updated_at BEFORE UPDATE ON conversations FOR EACH ROW EXECUTE FUNCTION update_updated_at_column()`,
-		// Ensure participant ordering consistency
 		`CREATE OR REPLACE FUNCTION ensure_conversation_order() RETURNS TRIGGER AS $$
 		DECLARE temp_id UUID; BEGIN
 		    IF NEW.participant_one_id > NEW.participant_two_id THEN
@@ -523,7 +501,72 @@ func ensureTestSchema(db *sqlx.DB) error {
 		    END IF; RETURN NEW; END; $$ language 'plpgsql'`,
 		`DROP TRIGGER IF EXISTS ensure_conversation_order_trigger ON conversations`,
 		`CREATE TRIGGER ensure_conversation_order_trigger BEFORE INSERT OR UPDATE ON conversations FOR EACH ROW EXECUTE FUNCTION ensure_conversation_order()`,
-		// User views tracking tables
+		`CREATE TABLE IF NOT EXISTS user_master_keys (
+		    user_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+		    encrypted_master_key TEXT NOT NULL,
+		    argon2_salt TEXT NOT NULL,
+		    argon2_memory INTEGER NOT NULL DEFAULT 65536,
+		    argon2_time INTEGER NOT NULL DEFAULT 3,
+		    argon2_parallelism INTEGER NOT NULL DEFAULT 4,
+		    key_version INTEGER NOT NULL DEFAULT 1,
+		    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+		    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+		    CONSTRAINT check_argon2_params CHECK (argon2_memory >= 32768 AND argon2_time >= 2 AND argon2_parallelism >= 1)
+		)`,
+		`DROP TRIGGER IF EXISTS update_user_master_keys_updated_at ON user_master_keys`,
+		`CREATE TRIGGER update_user_master_keys_updated_at BEFORE UPDATE ON user_master_keys FOR EACH ROW EXECUTE FUNCTION update_updated_at_column()`,
+		`CREATE TABLE IF NOT EXISTS conversation_keys (
+		    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+		    conversation_id UUID NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+		    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		    encrypted_private_key TEXT NOT NULL,
+		    public_key TEXT NOT NULL,
+		    encrypted_shared_secret TEXT,
+		    key_version INTEGER NOT NULL DEFAULT 1,
+		    is_active BOOLEAN NOT NULL DEFAULT true,
+		    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+		    expires_at TIMESTAMP WITH TIME ZONE,
+		    UNIQUE(conversation_id, user_id, key_version)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_conversation_keys_conversation_user ON conversation_keys(conversation_id, user_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_conversation_keys_active ON conversation_keys(is_active) WHERE is_active = true`,
+		`CREATE TABLE IF NOT EXISTS key_exchange_messages (
+		    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+		    conversation_id UUID NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+		    sender_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		    recipient_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		    exchange_type VARCHAR(20) NOT NULL CHECK (exchange_type IN ('offer','accept','confirm')),
+		    public_key TEXT NOT NULL,
+		    signature TEXT NOT NULL,
+		    nonce TEXT NOT NULL,
+		    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+		    expires_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT (NOW() + INTERVAL '1 hour')
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_key_exchange_conversation ON key_exchange_messages(conversation_id)`,
+		`CREATE TABLE IF NOT EXISTS user_signing_keys (
+		    user_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+		    encrypted_private_key TEXT,
+		    public_key TEXT NOT NULL,
+		    public_identity_key TEXT,
+		    key_version INTEGER NOT NULL DEFAULT 1,
+		    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+		)`,
+		`CREATE TABLE IF NOT EXISTS crypto_audit_log (
+		    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+		    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		    conversation_id UUID REFERENCES conversations(id) ON DELETE CASCADE,
+		    operation VARCHAR(50) NOT NULL,
+		    success BOOLEAN NOT NULL,
+		    error_message TEXT,
+		    client_ip INET,
+		    user_agent TEXT,
+		    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_crypto_audit_user ON crypto_audit_log(user_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_crypto_audit_conversation ON crypto_audit_log(conversation_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_messages_encrypted ON messages(is_encrypted) WHERE is_encrypted = true`,
+		`CREATE INDEX IF NOT EXISTS idx_conversations_encrypted ON conversations(is_encrypted) WHERE is_encrypted = true`,
+		`CREATE INDEX IF NOT EXISTS idx_conversations_encryption_status ON conversations(encryption_status) WHERE encryption_status != 'none'`,
 		`CREATE TABLE IF NOT EXISTS user_views (
 		    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
 		    video_id UUID NOT NULL REFERENCES videos(id) ON DELETE CASCADE,
@@ -579,7 +622,6 @@ func ensureTestSchema(db *sqlx.DB) error {
 		`CREATE INDEX IF NOT EXISTS idx_user_views_analytics ON user_views(video_id, view_date, completion_percentage, watch_duration)`,
 		`DROP TRIGGER IF EXISTS update_user_views_updated_at ON user_views`,
 		`CREATE TRIGGER update_user_views_updated_at BEFORE UPDATE ON user_views FOR EACH ROW EXECUTE FUNCTION update_updated_at_column()`,
-		// Daily video stats aggregation table
 		`CREATE TABLE IF NOT EXISTS daily_video_stats (
 		    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
 		    video_id UUID NOT NULL REFERENCES videos(id) ON DELETE CASCADE,
@@ -610,7 +652,6 @@ func ensureTestSchema(db *sqlx.DB) error {
 		`CREATE INDEX IF NOT EXISTS idx_daily_video_stats_date ON daily_video_stats(stat_date)`,
 		`DROP TRIGGER IF EXISTS update_daily_video_stats_updated_at ON daily_video_stats`,
 		`CREATE TRIGGER update_daily_video_stats_updated_at BEFORE UPDATE ON daily_video_stats FOR EACH ROW EXECUTE FUNCTION update_updated_at_column()`,
-		// User engagement stats table
 		`CREATE TABLE IF NOT EXISTS user_engagement_stats (
 		    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
 		    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -636,7 +677,6 @@ func ensureTestSchema(db *sqlx.DB) error {
 		`CREATE INDEX IF NOT EXISTS idx_user_engagement_user_date ON user_engagement_stats(user_id, stat_date)`,
 		`DROP TRIGGER IF EXISTS update_user_engagement_stats_updated_at ON user_engagement_stats`,
 		`CREATE TRIGGER update_user_engagement_stats_updated_at BEFORE UPDATE ON user_engagement_stats FOR EACH ROW EXECUTE FUNCTION update_updated_at_column()`,
-		// Trending videos table
 		`CREATE TABLE IF NOT EXISTS trending_videos (
 		    video_id UUID PRIMARY KEY REFERENCES videos(id) ON DELETE CASCADE,
 		    views_last_hour BIGINT NOT NULL DEFAULT 0,
@@ -651,7 +691,6 @@ func ensureTestSchema(db *sqlx.DB) error {
 		    is_trending BOOLEAN NOT NULL DEFAULT false
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_trending_videos_scores ON trending_videos(engagement_score DESC, velocity_score DESC)`,
-		// Utility functions for view tracking
 		`CREATE OR REPLACE FUNCTION increment_video_views(p_video_id UUID)
 		RETURNS void AS $$
 		BEGIN
@@ -741,27 +780,19 @@ func applyPostMigrationCompatibility(db *sqlx.DB) error {
 	defer cancel()
 
 	compatStmts := []string{
-		// Some legacy triggers insert notifications without title/message fields.
-		// Keep tests compatible by allowing nullable title in test schemas.
 		`ALTER TABLE notifications ALTER COLUMN title DROP NOT NULL`,
-		// Repository code still reads subscriber_count while migrations may not define it yet.
 		`ALTER TABLE users ADD COLUMN IF NOT EXISTS subscriber_count BIGINT NOT NULL DEFAULT 0`,
-		// Some repository queries still filter by deleted_at soft-delete semantics.
 		`ALTER TABLE videos ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP WITH TIME ZONE`,
-		// Legacy repository integration tests insert users/videos with minimal columns.
 		`ALTER TABLE users ALTER COLUMN password_hash DROP NOT NULL`,
 		`ALTER TABLE videos ALTER COLUMN channel_id DROP NOT NULL`,
-		// Local videos typically have NULL remote_uri; allow multiple NULL rows in tests.
 		`ALTER TABLE videos DROP CONSTRAINT IF EXISTS unique_remote_uri`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_videos_remote_uri_unique_nonnull
             ON videos(remote_uri) WHERE remote_uri IS NOT NULL`,
-		// Repository tests may set payment intent transaction IDs before transaction rows exist.
 		`ALTER TABLE iota_payment_intents DROP CONSTRAINT IF EXISTS fk_iota_payment_intents_transaction`,
 	}
 
 	for _, stmt := range compatStmts {
 		if _, err := db.ExecContext(ctx, stmt); err != nil {
-			// Ignore when target table/column does not exist in a given schema.
 			msg := strings.ToLower(err.Error())
 			if strings.Contains(msg, "does not exist") {
 				continue
@@ -773,7 +804,7 @@ func applyPostMigrationCompatibility(db *sqlx.DB) error {
 }
 
 func runSchemaMigrations(db *sqlx.DB, schema string) error {
-	_ = db // migrations are applied via psql CLI
+	_ = db
 
 	_, thisFile, _, ok := runtime.Caller(0)
 	if !ok {
@@ -794,7 +825,6 @@ func runSchemaMigrations(db *sqlx.DB, schema string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 
-	// Reset the package-specific schema once.
 	resetCmd := exec.CommandContext(ctx, "psql",
 		baseDSN,
 		"-v", "ON_ERROR_STOP=1",
@@ -806,7 +836,6 @@ func runSchemaMigrations(db *sqlx.DB, schema string) error {
 		return fmt.Errorf("failed to reset schema %s: %w\n%s", schema, err, string(resetOut))
 	}
 
-	// Build a single SQL script containing only Goose Up sections.
 	var script strings.Builder
 	script.WriteString(fmt.Sprintf("SET search_path TO %s,public;\n\n", pqQuoteIdent(schema)))
 	for _, file := range migrationFiles {
@@ -885,7 +914,6 @@ func extractGooseUpSQL(content string) string {
 		return b.String()
 	}
 
-	// Fallback for non-goose files: apply entire file.
 	return content
 }
 
@@ -899,12 +927,9 @@ func withSearchPath(dbURL, schema string) string {
 			return u.String()
 		}
 	}
-	// Fallback DSN key/value form
 	return dbURL + fmt.Sprintf(" search_path='%s,public'", schema)
 }
 
-// connectWithRetry attempts to connect and ping the database until the deadline,
-// returning the first successful connection or the last error.
 func connectWithRetry(dsn string, deadline time.Duration) (*sqlx.DB, error) {
 	start := time.Now()
 	var last error
@@ -959,7 +984,6 @@ func cleanupTestDB(t *testing.T, testDB *TestDB) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	// Clean Redis
 	if testDB.Redis != nil {
 		if err := testDB.Redis.FlushDB(ctx).Err(); err != nil {
 			t.Logf("Failed to flush Redis: %v", err)
@@ -970,7 +994,6 @@ func cleanupTestDB(t *testing.T, testDB *TestDB) {
 		}
 	}
 
-	// Clean Postgres tables
 	if testDB.DB != nil {
 		var tables []string
 		if err := testDB.DB.SelectContext(ctx, &tables, `
@@ -1003,7 +1026,6 @@ func (tdb *TestDB) TruncateTables(t *testing.T, tables ...string) {
 	for _, table := range tables {
 		stmt := fmt.Sprintf("TRUNCATE TABLE %s CASCADE", table)
 
-		// Use a fresh timeout per table so one slow truncate does not poison the rest.
 		var err error
 		for attempt := 0; attempt < 2; attempt++ {
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

@@ -60,6 +60,7 @@ kubectl get service athena-api -n athena -o jsonpath='{.spec.selector}' | jq
 ```
 
 **Expected Output:**
+
 ```json
 {
   "app": "athena",
@@ -199,6 +200,7 @@ ALTER TABLE videos DROP COLUMN new_column_name;
 ```
 
 Next release migration (contract phase):
+
 ```sql
 -- migrations/065_example_contract.sql
 -- +goose Up
@@ -499,12 +501,14 @@ Monitor these metrics during deployment:
 ### Troubleshooting Guide
 
 **Pods stuck in Pending:**
+
 ```bash
 kubectl describe pod <pod-name> -n athena
 # Check: Resource quotas, PVC availability, node capacity
 ```
 
 **High error rate after switchover:**
+
 ```bash
 # Immediate rollback
 ./scripts/rollback-deployment.sh
@@ -514,6 +518,7 @@ kubectl logs -l version=green -n athena --tail=500 | grep ERROR
 ```
 
 **Database connection pool exhausted:**
+
 ```bash
 # Check active connections
 psql "$DATABASE_URL" -c "SELECT count(*) FROM pg_stat_activity WHERE state = 'active';"
@@ -525,6 +530,7 @@ kubectl set env deployment/athena-api-green \
 ```
 
 **Encoding jobs stuck:**
+
 ```bash
 # Check Redis queue
 redis-cli -u "$REDIS_URL" LLEN encoding:queue
@@ -605,4 +611,5 @@ After successful implementation:
 ---
 
 **Document History:**
+
 - 2025-11-17: Initial implementation guide created

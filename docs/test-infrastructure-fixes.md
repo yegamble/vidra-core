@@ -1,6 +1,7 @@
 # Test Infrastructure Fixes - Implementation Report
 
 ## Overview
+
 This document describes the fixes implemented to resolve DNS resolution issues and port conflicts in the Athena test infrastructure.
 
 ## Issues Resolved
@@ -14,24 +15,32 @@ This document describes the fixes implemented to resolve DNS resolution issues a
 **Solutions Implemented**:
 
 #### A. Test Helper with Mocked DHT Configuration
+
 Created `/home/user/athena/internal/torrent/test_helper.go`:
+
 - `SetupTestDNS()`: Configures DNS resolver to use Google's public DNS (8.8.8.8)
 - `MockedDHTConfig()`: Returns a torrent client config with DHT disabled for unit tests
 - Avoids external network calls during testing
 
 #### B. Client Code Improvements
+
 Updated `/home/user/athena/internal/torrent/client.go`:
+
 - Added logic to skip setting ListenHost for test addresses
 - Prevents DNS lookups for localhost addresses
 
 #### C. Test Main Function
+
 Created `/home/user/athena/internal/torrent/main_test.go`:
+
 - Sets up test environment before running tests
 - Disables DHT, PEX, and trackers through environment variables
 - Cleans up test directories after tests complete
 
 #### D. DNS Fix Script
+
 Created `/home/user/athena/scripts/fix-dns.sh`:
+
 - Provides system-level DNS configuration options
 - Suggests using GOPROXY=direct for Go module downloads
 
@@ -44,6 +53,7 @@ Created `/home/user/athena/scripts/fix-dns.sh`:
 #### A. Enhanced Makefile Targets
 
 **Updated `postman-e2e` target** with:
+
 1. Pre-flight cleanup phase to remove existing containers
 2. Port availability checking with automatic cleanup attempts
 3. Proper health checks for all services
@@ -51,12 +61,15 @@ Created `/home/user/athena/scripts/fix-dns.sh`:
 5. Error logging on failure (saves to `postman-e2e-failure.log`)
 
 **New helper targets added**:
+
 - `test-cleanup`: Comprehensive cleanup of all test containers and ports
 - `test-ports-check`: Verifies test port availability
 - `test-setup`: Runs the test setup script
 
 #### B. Test Environment Setup Script
+
 Created `/home/user/athena/scripts/test-setup.sh`:
+
 - Checks DNS resolution
 - Verifies port availability
 - Frees blocked ports automatically
@@ -66,6 +79,7 @@ Created `/home/user/athena/scripts/test-setup.sh`:
 ### 3. Test Environment Isolation
 
 **Improvements**:
+
 - All test services use the `athena-test` COMPOSE_PROJECT_NAME
 - Test containers are properly namespaced
 - Networks are isolated with `test-network`
@@ -74,6 +88,7 @@ Created `/home/user/athena/scripts/test-setup.sh`:
 ## Files Modified/Created
 
 ### Created Files
+
 1. `/home/user/athena/internal/torrent/test_helper.go` - Test helpers for torrent tests
 2. `/home/user/athena/internal/torrent/main_test.go` - Test main function for setup/teardown
 3. `/home/user/athena/scripts/test-setup.sh` - Test environment setup script
@@ -81,6 +96,7 @@ Created `/home/user/athena/scripts/test-setup.sh`:
 5. `/home/user/athena/docs/test-infrastructure-fixes.md` - This documentation
 
 ### Modified Files
+
 1. `/home/user/athena/internal/torrent/client_test.go` - Added DNS setup and new mocked tests
 2. `/home/user/athena/internal/torrent/client.go` - Fixed ListenHost handling for tests
 3. `/home/user/athena/Makefile` - Enhanced test targets with comprehensive cleanup
@@ -90,6 +106,7 @@ Created `/home/user/athena/scripts/test-setup.sh`:
 ### Running Tests
 
 #### Quick Test Setup
+
 ```bash
 # Setup test environment (checks DNS and ports)
 make test-setup
@@ -102,6 +119,7 @@ make test-cleanup
 ```
 
 #### Running Different Test Suites
+
 ```bash
 # Unit tests only (no external dependencies)
 make test-unit
@@ -116,7 +134,9 @@ make postman-e2e
 ### Troubleshooting
 
 #### DNS Issues
+
 If you encounter DNS resolution errors:
+
 ```bash
 # Use direct GOPROXY to bypass Google storage proxy
 export GOPROXY=direct
@@ -126,7 +146,9 @@ export GOPROXY=direct
 ```
 
 #### Port Conflicts
+
 If tests fail due to port conflicts:
+
 ```bash
 # Check which ports are in use
 make test-ports-check
@@ -179,6 +201,7 @@ steps:
 ## Conclusion
 
 The test infrastructure now has:
+
 - Robust DNS resolution handling
 - Automatic port conflict resolution
 - Comprehensive cleanup procedures

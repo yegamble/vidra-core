@@ -22,6 +22,7 @@ The project uses self-hosted GitHub Actions runners with the following configura
 The runners are configured with passwordless sudo to allow dynamic dependency installation:
 
 **File**: `/etc/sudoers.d/91-github-runner`
+
 ```bash
 # GitHub Actions Runner - Passwordless sudo configuration
 runner ALL=(ALL) NOPASSWD:ALL
@@ -83,11 +84,13 @@ clamav:
 ### Why ClamAV Takes Time to Start
 
 ClamAV containers need significant startup time because they:
+
 1. Download virus signature databases (daily.cld, main.cvd, bytecode.cvd)
 2. Load signatures into memory
 3. Start the clamd daemon
 
 **Recommendation**: Use persistent volumes to cache signatures:
+
 ```yaml
 volumes:
   clamav-signatures:/var/lib/clamav
@@ -98,6 +101,7 @@ volumes:
 ### Test Suite Workflow (.github/workflows/test.yml)
 
 **Jobs:**
+
 - `unit`: Unit tests with Go
 - `integration`: Integration tests with PostgreSQL, Redis, IPFS
 - `lint`: Code linting with golangci-lint
@@ -107,6 +111,7 @@ volumes:
 - `postman-e2e`: End-to-end API tests with Newman
 
 **Key Features:**
+
 - Retry logic for network operations
 - Exponential backoff for dependency downloads
 - Proper cleanup of containers before starting tests
@@ -114,6 +119,7 @@ volumes:
 ### Virus Scanner Security Tests (.github/workflows/virus-scanner-tests.yml)
 
 **Jobs:**
+
 - `unit-tests`: Virus scanner unit tests
 - `integration-tests`: ClamAV integration tests
 - `edge-case-tests`: Breaking scenarios and attack simulations
@@ -122,6 +128,7 @@ volumes:
 - `post-test-report`: Comprehensive test report generation
 
 **Security Features:**
+
 - EICAR test virus detection
 - Network interruption handling
 - Concurrent upload testing
@@ -130,6 +137,7 @@ volumes:
 ### Security Tests (.github/workflows/security-tests.yml)
 
 **Jobs:**
+
 - `ssrf-protection-tests`: SSRF attack prevention validation
 - `url-validation-tests`: URL and domain validation
 - `activitypub-security-tests`: Federation security
@@ -143,12 +151,14 @@ volumes:
 ### Issue: ClamAV Container Unhealthy
 
 **Symptoms:**
+
 ```
 Container athena_test_clamav is unhealthy
 dependency failed to start: container athena_test_clamav is unhealthy
 ```
 
 **Solution:**
+
 1. Verify health check command: `/usr/local/bin/clamdcheck.sh`
 2. Increase `start_period` to at least 120s
 3. Check ClamAV logs: `docker logs <container-id>`
@@ -156,6 +166,7 @@ dependency failed to start: container athena_test_clamav is unhealthy
 ### Issue: Stale Containers Blocking Tests
 
 **Symptoms:**
+
 ```
 Container already exists
 dependency failed to start
@@ -163,16 +174,18 @@ dependency failed to start
 
 **Solution:**
 Add cleanup step in Makefile:
+
 ```makefile
 postman-e2e:
-	@echo "Cleaning up any existing test containers..."
-	COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) -f docker-compose.test.yml down -v 2>/dev/null || true
-	# ... rest of target
+ @echo "Cleaning up any existing test containers..."
+ COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) -f docker-compose.test.yml down -v 2>/dev/null || true
+ # ... rest of target
 ```
 
 ### Issue: Sudo Permission Denied
 
 **Symptoms:**
+
 ```
 sudo: a terminal is required to read the password
 sudo: a password is required
@@ -186,6 +199,7 @@ Configure passwordless sudo as described in the "Self-Hosted Runner Configuratio
 ### Test Environment (docker-compose.test.yml)
 
 Services:
+
 - **postgres-test**: PostgreSQL 15 with test database
 - **redis-test**: Redis 7 for caching
 - **ipfs-test**: IPFS Kubo for decentralized storage
@@ -269,6 +283,7 @@ volumes:
 ### 5. Set Appropriate Timeouts
 
 Configure timeouts based on expected operation duration:
+
 - Unit tests: 5-15 minutes
 - Integration tests: 15-30 minutes
 - E2E tests: 20-45 minutes
@@ -365,6 +380,7 @@ go clean -cache -testcache -modcache
 ## Support
 
 For issues with CI/CD configuration:
+
 1. Check this documentation first
 2. Review workflow logs with `gh run view --log <run-id>`
 3. Check container logs if tests are failing

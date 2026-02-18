@@ -132,18 +132,21 @@ kubectl patch service athena-api -n athena -p '{"spec":{"selector":{"version":"b
 ## Common Issues
 
 **Pods stuck pending?**
+
 ```bash
 kubectl describe pod <pod-name> -n athena
 # Check PVC, resources, node capacity
 ```
 
 **Service selector not working?**
+
 ```bash
 kubectl get endpoints athena-api -n athena
 # Should show pods with matching labels
 ```
 
 **Can't access green directly?**
+
 ```bash
 # Port-forward for testing
 kubectl port-forward svc/athena-api-green 8080:80 -n athena
@@ -152,6 +155,6 @@ curl http://localhost:8080/health
 
 ## Support
 
-- GitHub Issues: https://github.com/yegamble/athena/issues
+- GitHub Issues: <https://github.com/yegamble/athena/issues>
 - Documentation: `docs/deployment/`
 - Slack: #athena-deployments

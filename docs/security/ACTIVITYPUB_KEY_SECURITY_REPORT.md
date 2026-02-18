@@ -11,11 +11,13 @@
 
 This report documents the successful resolution of a critical security vulnerability in the Athena decentralized video platform's ActivityPub implementation. The vulnerability involved the storage of ActivityPub private keys in plaintext within the database, and the use of inadequate RSA key sizes that did not meet current NIST cryptographic standards.
 
-### Critical Issues Addressed:
+### Critical Issues Addressed
+
 1. **Plaintext Private Key Storage** - Private keys were stored unencrypted in the database
 2. **Inadequate RSA Key Size** - Keys were generated at 2048 bits instead of the NIST-recommended 3072 bits
 
-### Security Improvements Implemented:
+### Security Improvements Implemented
+
 - ✅ **AES-256-GCM encryption** for all private keys at rest
 - ✅ **Upgraded to 3072-bit RSA keys** per NIST SP 800-57 Part 1 recommendations
 - ✅ **Automated encryption/decryption** transparent to application code
@@ -31,6 +33,7 @@ This report documents the successful resolution of a critical security vulnerabi
 **Location:** `/home/user/athena/migrations/041_add_activitypub_support.sql`
 
 **Vulnerable Code:**
+
 ```sql
 CREATE TABLE IF NOT EXISTS ap_actor_keys (
     actor_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
@@ -42,12 +45,14 @@ CREATE TABLE IF NOT EXISTS ap_actor_keys (
 ```
 
 **Risk Assessment:**
+
 - **Severity:** CRITICAL
 - **CVSS Score:** 9.8 (Critical)
 - **Impact:** Complete compromise of ActivityPub federation security
 - **Attack Vector:** Database access (SQL injection, backup exposure, insider threat)
 
 **Consequences of Exploitation:**
+
 - Attackers could impersonate any user in the fediverse
 - Malicious activities could be signed with legitimate user credentials
 - Complete loss of trust in the federation instance
@@ -58,18 +63,21 @@ CREATE TABLE IF NOT EXISTS ap_actor_keys (
 **Location:** `/home/user/athena/internal/activitypub/httpsig.go:250`
 
 **Vulnerable Code:**
+
 ```go
 // Generate a 2048-bit RSA key pair
 privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
 ```
 
 **Risk Assessment:**
+
 - **Severity:** HIGH
 - **CVSS Score:** 6.5 (Medium-High)
 - **Impact:** Potential cryptographic weakness over time
 - **Attack Vector:** Computational attacks, future quantum computing threats
 
 **Industry Standard Violation:**
+
 - NIST SP 800-57 Part 1 recommends 3072-bit RSA keys for security through 2030
 - 2048-bit keys provide only ~112-bit security level
 - 3072-bit keys provide ~128-bit security level (equivalent to AES-128)
@@ -83,18 +91,21 @@ privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
 **New Module:** `/home/user/athena/internal/security/activitypub_key_encryption.go`
 
 **Encryption Algorithm:**
+
 - **Cipher:** AES-256 (256-bit key)
 - **Mode:** GCM (Galois/Counter Mode)
 - **Authentication:** Built-in AEAD (Authenticated Encryption with Associated Data)
 - **Key Derivation:** PBKDF2-HMAC-SHA256 with 100,000 iterations
 
 **Security Properties:**
+
 - ✅ Confidentiality: AES-256 encryption
 - ✅ Integrity: GCM authentication tag
 - ✅ Uniqueness: Random nonce for each encryption (IND-CPA security)
 - ✅ Key stretching: PBKDF2 with high iteration count
 
 **Implementation Details:**
+
 ```go
 type ActivityPubKeyEncryption struct {
     encryptionKey []byte  // Derived 256-bit key
@@ -105,6 +116,7 @@ func (e *ActivityPubKeyEncryption) DecryptPrivateKey(encryptedData string) (stri
 ```
 
 **Key Features:**
+
 1. **Transparent Operation:** Encryption/decryption happens automatically in the repository layer
 2. **No Code Changes Required:** Existing application code works without modification
 3. **Nonce Randomization:** Each encryption produces different ciphertext (prevents replay attacks)
@@ -115,6 +127,7 @@ func (e *ActivityPubKeyEncryption) DecryptPrivateKey(encryptedData string) (stri
 **File Modified:** `/home/user/athena/internal/repository/activitypub_repository.go`
 
 **Changes:**
+
 ```go
 type ActivityPubRepository struct {
     db         *sqlx.DB
@@ -141,12 +154,14 @@ func (r *ActivityPubRepository) GetActorKeys(...) (publicKey, privateKey string,
 **File Modified:** `/home/user/athena/internal/activitypub/httpsig.go:249-252`
 
 **Old Code:**
+
 ```go
 // Generate a 2048-bit RSA key pair
 privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
 ```
 
 **New Code:**
+
 ```go
 // Generate a 3072-bit RSA key pair (NIST recommendation as of 2023+)
 // 3072-bit keys provide equivalent security to 128-bit symmetric keys
@@ -155,6 +170,7 @@ privateKey, err := rsa.GenerateKey(rand.Reader, 3072)
 ```
 
 **Security Improvement:**
+
 - **Previous:** 112-bit security level (2048-bit RSA)
 - **Current:** 128-bit security level (3072-bit RSA)
 - **Compliance:** Meets NIST SP 800-57 Part 1 Rev. 5 recommendations
@@ -164,23 +180,27 @@ privateKey, err := rsa.GenerateKey(rand.Reader, 3072)
 **File Modified:** `/home/user/athena/internal/config/config.go`
 
 **New Configuration Field:**
+
 ```go
 // ActivityPub Configuration
 ActivityPubKeyEncryptionKey string // Master key for encrypting ActivityPub private keys at rest
 ```
 
 **Environment Variable:**
+
 ```bash
 ACTIVITYPUB_KEY_ENCRYPTION_KEY=<strong-random-key-at-least-32-chars>
 ```
 
 **Security Requirements:**
+
 - ✅ Minimum 32 characters (enforced at initialization)
 - ✅ Required when ActivityPub is enabled
 - ✅ Should be generated with cryptographically secure random source
 - ✅ Must be stored securely (secrets manager recommended for production)
 
 **Recommended Generation:**
+
 ```bash
 openssl rand -base64 48
 ```
@@ -194,11 +214,13 @@ openssl rand -base64 48
 **File:** `/home/user/athena/migrations/058_encrypt_activitypub_private_keys.sql`
 
 **Changes:**
+
 1. Added `keys_encrypted` BOOLEAN column to track encryption status
 2. Added index for efficient migration queries
 3. Added table and column comments documenting encryption
 
 **Migration SQL:**
+
 ```sql
 ALTER TABLE ap_actor_keys ADD COLUMN IF NOT EXISTS keys_encrypted BOOLEAN DEFAULT FALSE;
 CREATE INDEX IF NOT EXISTS idx_ap_actor_keys_encrypted ON ap_actor_keys(keys_encrypted) WHERE keys_encrypted = FALSE;
@@ -212,6 +234,7 @@ COMMENT ON COLUMN ap_actor_keys.private_key_pem IS 'Encrypted private key (AES-2
 **Purpose:** Encrypt all existing plaintext private keys in the database
 
 **Features:**
+
 - ✅ Detects already-encrypted keys (idempotent)
 - ✅ Confirms migration with administrator
 - ✅ Provides detailed progress reporting
@@ -219,6 +242,7 @@ COMMENT ON COLUMN ap_actor_keys.private_key_pem IS 'Encrypted private key (AES-2
 - ✅ Marks keys as encrypted in database
 
 **Usage:**
+
 ```bash
 # Set encryption key
 export ACTIVITYPUB_KEY_ENCRYPTION_KEY="your-secure-key"
@@ -228,6 +252,7 @@ go run cmd/encrypt-activitypub-keys/main.go
 ```
 
 **Sample Output:**
+
 ```
 ActivityPub Private Key Encryption Migration Tool
 ==================================================
@@ -265,6 +290,7 @@ All private keys have been successfully encrypted!
 **File:** `/home/user/athena/internal/security/activitypub_key_encryption_test.go`
 
 **Test Cases:**
+
 - ✅ `TestNewActivityPubKeyEncryption` - Validates encryption initialization
 - ✅ `TestEncryptDecryptPrivateKey` - Verifies encryption roundtrip
 - ✅ `TestEncryptPrivateKey_EmptyInput` - Edge case validation
@@ -282,12 +308,14 @@ All private keys have been successfully encrypted!
 **File:** `/home/user/athena/internal/repository/activitypub_key_security_test.go`
 
 **Critical Security Tests:**
+
 - ✅ `TestActivityPubKeys_NoPlaintextStorage` - **CRITICAL:** Verifies keys are NEVER stored in plaintext
 - ✅ `TestActivityPubKeys_EncryptionRoundTrip` - End-to-end encryption validation
 - ✅ `TestActivityPubKeys_MultipleKeysIndependentEncryption` - Nonce uniqueness
 - ✅ `TestActivityPubKeys_WrongKeyCannotDecrypt` - Authentication validation
 
 **Regression Prevention:**
+
 ```go
 // CRITICAL: Verify the private key is NOT stored in plaintext in the database
 if storedPrivateKey == testPrivateKey {
@@ -305,6 +333,7 @@ if strings.Contains(storedPrivateKey, "BEGIN RSA PRIVATE KEY") {
 **File:** `/home/user/athena/internal/activitypub/httpsig_test.go`
 
 **Enhanced Test:**
+
 ```go
 // CRITICAL SECURITY TEST: Verify key size is 3072 bits (NIST standard)
 keySize := parsedPrivateKey.N.BitLen()
@@ -335,12 +364,14 @@ if keySize != expectedKeySize {
 ### Cryptographic Guarantees
 
 **AES-256-GCM Provides:**
+
 1. **Confidentiality:** Encrypted with AES-256 (256-bit key)
 2. **Integrity:** Authentication tag prevents tampering
 3. **Authenticity:** AEAD mode verifies data source
 4. **Semantic Security (IND-CPA):** Random nonce ensures different ciphertexts
 
 **3072-bit RSA Provides:**
+
 1. **Long-term Security:** Resistant to attacks through 2030+ (per NIST)
 2. **Quantum Resistance:** Better positioned against future quantum attacks than 2048-bit
 3. **Compliance:** Meets current cryptographic standards
@@ -348,23 +379,28 @@ if keySize != expectedKeySize {
 ### Security Best Practices Applied
 
 ✅ **Defense in Depth**
+
 - Encryption at rest (database layer)
 - Key separation (encryption key stored separately)
 - Access control (encryption key required)
 
 ✅ **Principle of Least Privilege**
+
 - Database administrators cannot read private keys without encryption key
 - Application code has minimal exposure to plaintext keys
 
 ✅ **Cryptographic Agility**
+
 - Encryption module can be updated independently
 - Algorithm selection documented and centralizable
 
 ✅ **Secure by Default**
+
 - Encryption is mandatory when ActivityPub is enabled
 - Application fails to start if encryption key is missing
 
 ✅ **Auditability**
+
 - `keys_encrypted` column tracks migration status
 - Comprehensive logging in migration tool
 - Test coverage prevents regression
@@ -376,12 +412,14 @@ if keySize != expectedKeySize {
 ### Encryption Performance
 
 **Benchmark Results:**
+
 ```
 BenchmarkEncryptPrivateKey-8    2000000    650 ns/op
 BenchmarkDecryptPrivateKey-8    2000000    580 ns/op
 ```
 
 **Analysis:**
+
 - Encryption adds ~650 nanoseconds per operation
 - Decryption adds ~580 nanoseconds per operation
 - Impact: Negligible for ActivityPub operations (occurs once per actor key generation/retrieval)
@@ -389,11 +427,13 @@ BenchmarkDecryptPrivateKey-8    2000000    580 ns/op
 ### RSA Key Generation Performance
 
 **Impact of 3072-bit keys:**
+
 - Key generation is ~3-4x slower than 2048-bit
 - **BUT:** Key generation is infrequent (only when creating new actors)
 - Signing/verification performance impact: <10% (acceptable for security gain)
 
 **Benchmark Results:**
+
 ```
 BenchmarkGenerateKeyPair-8 (2048-bit): 220ms per key pair
 BenchmarkGenerateKeyPair-8 (3072-bit): 950ms per key pair
@@ -408,11 +448,13 @@ BenchmarkGenerateKeyPair-8 (3072-bit): 950ms per key pair
 ### Prerequisites
 
 1. **Backup Database:**
+
    ```bash
    pg_dump -U athena_user -d athena > athena_backup_$(date +%Y%m%d).sql
    ```
 
 2. **Generate Encryption Key:**
+
    ```bash
    openssl rand -base64 48 > /secure/location/activitypub_encryption_key.txt
    chmod 600 /secure/location/activitypub_encryption_key.txt
@@ -421,26 +463,31 @@ BenchmarkGenerateKeyPair-8 (3072-bit): 950ms per key pair
 ### Deployment Steps
 
 **1. Apply Database Migration:**
+
 ```bash
 goose -dir migrations postgres "connection-string" up
 ```
 
 **2. Configure Encryption Key:**
+
 ```bash
 export ACTIVITYPUB_KEY_ENCRYPTION_KEY=$(cat /secure/location/activitypub_encryption_key.txt)
 ```
 
 Or in production (using secrets manager):
+
 ```bash
 export ACTIVITYPUB_KEY_ENCRYPTION_KEY=$(aws secretsmanager get-secret-value --secret-id activitypub-key --query SecretString --output text)
 ```
 
 **3. Run Key Migration Tool:**
+
 ```bash
 go run cmd/encrypt-activitypub-keys/main.go
 ```
 
 **4. Verify Encryption:**
+
 ```bash
 # Connect to database
 psql -U athena_user -d athena
@@ -457,6 +504,7 @@ FROM ap_actor_keys;
 ```
 
 **Expected Output:**
+
 ```
  actor_id | key_preview                                       | keys_encrypted | status
 ----------+---------------------------------------------------+----------------+---------------
@@ -464,11 +512,13 @@ FROM ap_actor_keys;
 ```
 
 **5. Restart Application:**
+
 ```bash
 systemctl restart athena
 ```
 
 **6. Verify Application:**
+
 ```bash
 # Check logs for encryption initialization
 journalctl -u athena | grep -i encryption
@@ -487,6 +537,7 @@ curl -H "Accept: application/activity+json" https://your-domain.com/users/testus
 
 1. **Ensure you have the encryption key backed up**
 2. **Decrypt all keys using the migration tool in reverse:**
+
    ```bash
    # This would require a new decryption tool (not implemented)
    # DO NOT rollback unless absolutely necessary
@@ -501,22 +552,27 @@ curl -H "Accept: application/activity+json" https://your-domain.com/users/testus
 ### Standards Compliance
 
 ✅ **NIST SP 800-57 Part 1 Rev. 5**
+
 - RSA key size: 3072 bits (128-bit security strength)
 - Valid through 2030 and beyond
 
 ✅ **FIPS 197** (AES)
+
 - AES-256 encryption for data at rest
 
 ✅ **NIST SP 800-38D** (GCM)
+
 - Galois/Counter Mode for authenticated encryption
 
 ✅ **OWASP Top 10 2021**
+
 - A02:2021 – Cryptographic Failures (mitigated)
 - A04:2021 – Insecure Design (improved)
 
 ### Regulatory Compliance
 
 Relevant for:
+
 - **GDPR** (EU): Encryption of personal data at rest
 - **CCPA** (California): Reasonable security measures for personal information
 - **SOC 2 Type II**: Encryption controls for confidentiality
@@ -528,6 +584,7 @@ Relevant for:
 ### Recommended Monitoring
 
 **1. Encryption Key Availability:**
+
 ```yaml
 alert: ActivityPubEncryptionKeyMissing
 expr: activitypub_encryption_initialized == 0
@@ -536,6 +593,7 @@ message: "ActivityPub encryption key not configured!"
 ```
 
 **2. Key Decryption Failures:**
+
 ```yaml
 alert: ActivityPubKeyDecryptionFailures
 expr: rate(activitypub_key_decryption_errors[5m]) > 0
@@ -544,6 +602,7 @@ message: "ActivityPub keys failing to decrypt - possible key rotation needed"
 ```
 
 **3. Unencrypted Keys:**
+
 ```sql
 -- Daily check for unencrypted keys
 SELECT COUNT(*) FROM ap_actor_keys WHERE keys_encrypted = FALSE;
@@ -601,12 +660,14 @@ SELECT COUNT(*) FROM ap_actor_keys WHERE keys_encrypted = FALSE;
 ### Risk Reduction
 
 **Before:**
+
 - ❌ Private keys stored in plaintext
 - ❌ 2048-bit RSA keys (below current standards)
 - ❌ High risk of key exposure
 - ❌ Non-compliant with modern cryptographic standards
 
 **After:**
+
 - ✅ Private keys encrypted with AES-256-GCM
 - ✅ 3072-bit RSA keys (NIST compliant)
 - ✅ Low risk of key exposure (requires encryption key)

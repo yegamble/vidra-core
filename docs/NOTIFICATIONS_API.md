@@ -29,11 +29,13 @@ Retrieve notifications for the authenticated user.
 **Authentication:** Required
 
 **Query Parameters:**
+
 - `limit` (integer, optional): Maximum results per page (1-100, default: 50)
 - `offset` (integer, optional): Pagination offset (default: 0)
 - `unread` (boolean, optional): Filter to unread notifications only
 
 **Response:**
+
 ```json
 [
   {
@@ -65,6 +67,7 @@ Get the count of unread notifications.
 **Authentication:** Required
 
 **Response:**
+
 ```json
 {
   "unread_count": 5
@@ -80,6 +83,7 @@ Get detailed statistics about user's notifications.
 **Authentication:** Required
 
 **Response:**
+
 ```json
 {
   "total_count": 150,
@@ -103,9 +107,11 @@ Mark a specific notification as read.
 **Authentication:** Required
 
 **Path Parameters:**
+
 - `id` (UUID): Notification ID
 
 **Response:**
+
 ```json
 {
   "success": true
@@ -121,6 +127,7 @@ Mark all notifications as read for the authenticated user.
 **Authentication:** Required
 
 **Response:**
+
 ```json
 {
   "success": true
@@ -136,6 +143,7 @@ Delete a specific notification.
 **Authentication:** Required
 
 **Path Parameters:**
+
 - `id` (UUID): Notification ID
 
 **Response:** `204 No Content`
@@ -145,6 +153,7 @@ Delete a specific notification.
 Each notification contains a flexible `data` field with type-specific information:
 
 ### Video Notification Data
+
 ```json
 {
   "video_id": "UUID",
@@ -156,6 +165,7 @@ Each notification contains a flexible `data` field with type-specific informatio
 ```
 
 ### Message Notification Data
+
 ```json
 {
   "message_id": "UUID",
@@ -167,6 +177,7 @@ Each notification contains a flexible `data` field with type-specific informatio
 ```
 
 ### Subscriber Notification Data
+
 ```json
 {
   "subscriber_id": "UUID",
@@ -176,6 +187,7 @@ Each notification contains a flexible `data` field with type-specific informatio
 ```
 
 ### Comment Notification Data
+
 ```json
 {
   "comment_id": "UUID",
@@ -209,16 +221,19 @@ Message previews are automatically truncated to 100 characters with ellipsis for
 ## Filtering and Pagination
 
 ### Filter by Unread Status
+
 ```bash
 GET /api/v1/notifications?unread=true
 ```
 
 ### Paginated Results
+
 ```bash
 GET /api/v1/notifications?limit=20&offset=40
 ```
 
 ### Combined Filters
+
 ```bash
 GET /api/v1/notifications?unread=true&limit=10
 ```
@@ -226,6 +241,7 @@ GET /api/v1/notifications?unread=true&limit=10
 ## Error Responses
 
 ### 401 Unauthorized
+
 ```json
 {
   "error": "UNAUTHORIZED",
@@ -234,6 +250,7 @@ GET /api/v1/notifications?unread=true&limit=10
 ```
 
 ### 404 Not Found
+
 ```json
 {
   "error": "NOT_FOUND",
@@ -242,6 +259,7 @@ GET /api/v1/notifications?unread=true&limit=10
 ```
 
 ### 400 Bad Request
+
 ```json
 {
   "error": "INVALID_REQUEST",
@@ -260,6 +278,7 @@ GET /api/v1/notifications?unread=true&limit=10
 ## WebSocket Support (Future)
 
 Future versions will support WebSocket connections for real-time notification delivery:
+
 - Subscribe to notification events
 - Receive instant updates without polling
 - Reduced server load and improved user experience
@@ -275,18 +294,21 @@ Future versions will support WebSocket connections for real-time notification de
 ### cURL Examples
 
 **Get unread notifications:**
+
 ```bash
 curl -H "Authorization: Bearer $TOKEN" \
   "https://api.example.com/api/v1/notifications?unread=true"
 ```
 
 **Mark notification as read:**
+
 ```bash
 curl -X PUT -H "Authorization: Bearer $TOKEN" \
   "https://api.example.com/api/v1/notifications/550e8400-e29b-41d4-a716-446655440000/read"
 ```
 
 **Get notification statistics:**
+
 ```bash
 curl -H "Authorization: Bearer $TOKEN" \
   "https://api.example.com/api/v1/notifications/stats"
@@ -377,6 +399,7 @@ The notification system includes comprehensive tests:
 - **API Tests**: Endpoint testing with authentication
 
 Run tests:
+
 ```bash
 go test ./internal/httpapi -run TestNotification
 go test ./internal/httpapi -run TestMessageNotification

@@ -14,7 +14,6 @@ import (
 	"athena/internal/middleware"
 )
 
-// mockStreamRepo reuses mockVideoRepo behavior for GetByID
 type mockStreamRepo struct{ vid *domain.Video }
 
 func (m *mockStreamRepo) Create(_ context.Context, _ *domain.Video) error { return nil }
@@ -53,10 +52,12 @@ func (m *mockStreamRepo) GetByRemoteURI(_ context.Context, _ string) (*domain.Vi
 func (m *mockStreamRepo) CreateRemoteVideo(_ context.Context, _ *domain.Video) error {
 	return nil
 }
+func (m *mockStreamRepo) GetByChannelID(_ context.Context, _ string, _, _ int) ([]*domain.Video, int64, error) {
+	return nil, 0, nil
+}
 
 func TestStreamVideoHandler_DBOutputMasterRedirectsToHLS(t *testing.T) {
 	videoID := "vid-stream-1"
-	// Prepare file under ./storage/streaming-playlists/hls/{id}/master.m3u8
 	base := filepath.Join("./storage", "streaming-playlists", "hls", videoID)
 	if err := os.MkdirAll(base, 0o750); err != nil {
 		t.Fatalf("mkdir: %v", err)
@@ -114,7 +115,6 @@ func TestHLSHandler_ServesPlaylist_WithContentType(t *testing.T) {
 }
 
 func TestHLSHandler_PathTraversalBlocked(t *testing.T) {
-	// Create a file outside of the HLS root that must never be served via traversal
 	outside := filepath.Join("./storage", "streaming-playlists", "secrets.m3u8")
 	if err := os.MkdirAll(filepath.Dir(outside), 0o750); err != nil {
 		t.Fatalf("mkdir: %v", err)
@@ -123,11 +123,9 @@ func TestHLSHandler_PathTraversalBlocked(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 
-	// Repo returns nil video; privacy check bypasses to path handling
 	repo := &mockStreamRepo{vid: nil}
 	h := HLSHandler(repo)
 
-	// Attempt traversal to "../secrets.m3u8"
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/hls/../secrets.m3u8", nil)
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
@@ -162,7 +160,6 @@ func TestHLSHandler_PrivateOwnerAllowed(t *testing.T) {
 	h := HLSHandler(repo)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/hls/"+videoID+"/master.m3u8", nil)
-	// Inject owner user id into context
 	req = req.WithContext(context.WithValue(req.Context(), middleware.UserIDKey, "owner"))
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)

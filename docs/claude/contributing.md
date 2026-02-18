@@ -13,13 +13,15 @@ This guide helps Claude AI assistants contribute effectively to the Athena codeb
 
 ## Directory Boundaries
 
-### DO modify:
+### DO modify
+
 - `/internal/*` - Core application code
 - `/cmd/server` - Main application entry
 - `/migrations` - Database migrations (forward-only)
 - `/docs` - Documentation updates
 
-### DO NOT modify without explicit request:
+### DO NOT modify without explicit request
+
 - `/vendor` - Dependency vendoring
 - `/.github` - CI/CD workflows
 - `/scripts` - Build and deployment scripts
@@ -55,18 +57,21 @@ go vet ./...
 ## Testing Requirements
 
 ### Unit Tests
+
 - Place in same package with `_test.go` suffix
 - Use table-driven tests for multiple cases
 - Mock external dependencies
 - Aim for >80% coverage of business logic
 
 ### Integration Tests
+
 - Use `//go:build integration` build tag
 - Require Docker test environment
 - Clean up test data after completion
 - Test actual database/Redis/IPFS interactions
 
 Example test structure:
+
 ```go
 //go:build integration
 
@@ -104,6 +109,7 @@ make migrate-status
 ```
 
 ### Migration Rules
+
 - Forward-only (no rollbacks)
 - No data loss without explicit approval
 - Test with sample data first
@@ -112,12 +118,14 @@ make migrate-status
 ## API Changes
 
 ### OpenAPI Updates
+
 1. Modify OpenAPI spec if changing API contracts
 2. Regenerate types: `make generate-api`
 3. Update tests to match new contracts
 4. Document breaking changes clearly
 
 ### Endpoint Patterns
+
 - RESTful naming: `/api/v1/resource/{id}/action`
 - Consistent error responses (problem details)
 - Support `Idempotency-Key` for mutations
@@ -126,12 +134,14 @@ make migrate-status
 ## Federation Code
 
 ### ATProto Handling
+
 - Validate signatures on incoming requests
 - Use exponential backoff for retries
 - Respect rate limits from remote instances
 - Log federation events for debugging
 
 ### Bluesky Integration
+
 - Check `BLUESKY_ENABLED` flag
 - Handle firehose disconnections gracefully
 - Queue failed operations for retry
@@ -139,14 +149,16 @@ make migrate-status
 
 ## Security Practices
 
-### NEVER:
+### NEVER
+
 - Log sensitive data (passwords, tokens, keys)
 - Commit secrets to repository
 - Trust user input without validation
 - Execute user-provided code/commands
 - Bypass authentication/authorization checks
 
-### ALWAYS:
+### ALWAYS
+
 - Validate and sanitize input
 - Use parameterized queries (SQLX)
 - Check file types before processing
@@ -222,6 +234,7 @@ docker compose logs -f server
 ## When to Ask for Help
 
 Request user guidance when:
+
 - Making breaking API changes
 - Modifying CI/CD pipelines
 - Adding new dependencies
@@ -232,6 +245,7 @@ Request user guidance when:
 ## Final Checklist
 
 Before completing any task:
+
 - [ ] Code compiles without warnings
 - [ ] All tests pass
 - [ ] Linter reports no issues

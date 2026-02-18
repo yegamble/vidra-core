@@ -38,10 +38,12 @@ Comprehensive validation script that checks:
 9. **Go Vet**: Runs static analysis
 
 **Exit Codes:**
+
 - `0`: All validations passed
 - `1`: One or more validations failed
 
 **Usage:**
+
 ```bash
 ./scripts/validate-all.sh
 ```
@@ -59,6 +61,7 @@ Interactive setup script that:
 4. Runs initial validation
 
 **Usage:**
+
 ```bash
 ./scripts/setup-validation.sh
 ```
@@ -74,15 +77,18 @@ All scripts are designed to work on:
 ### Platform-Specific Notes
 
 #### macOS
+
 - Can use Homebrew for tool installation (`brew install golangci-lint`)
 - Full support for all features
 
 #### Linux
+
 - Tools installed via curl or go install
 - Requires bash 4.0+
 - Full support for all features
 
 #### Windows
+
 - Requires WSL2, Git Bash, or MSYS2
 - Use forward slashes in paths
 - Some color output may not work in older terminals
@@ -90,11 +96,13 @@ All scripts are designed to work on:
 ## Dependencies
 
 ### Required
+
 - **Go 1.23.4+**: Core language runtime
 - **Git**: Version control
 - **Bash 4.0+**: Script execution
 
 ### Optional (Recommended)
+
 - **golangci-lint**: Code linting and analysis
 - **goimports**: Import sorting and formatting
 - **pre-commit**: YAML and config file validation
@@ -152,6 +160,7 @@ git config core.hooksPath .githooks
 ### What the Hook Does
 
 Before each `git commit`, it runs:
+
 1. `make fmt-check` - Formatting validation
 2. `make lint` - Code linting
 3. `pre-commit run --all-files` - YAML validation (if available)
@@ -174,7 +183,8 @@ Verifies Go is installed and meets minimum version requirements.
 **Required Version**: 1.23.4+
 
 **Failure Resolution**:
-- Install Go from https://golang.org/dl/
+
+- Install Go from <https://golang.org/dl/>
 - Update existing Go installation
 
 ### 2. Dependencies
@@ -182,10 +192,12 @@ Verifies Go is installed and meets minimum version requirements.
 Validates `go.mod` and `go.sum` integrity.
 
 **Checks**:
+
 - `go mod verify` passes
 - No missing or extra dependencies
 
 **Failure Resolution**:
+
 ```bash
 go mod tidy
 go mod verify
@@ -198,6 +210,7 @@ Ensures all Go code is formatted with `gofmt`.
 **Standard**: Official Go formatting
 
 **Failure Resolution**:
+
 ```bash
 make fmt
 # Or
@@ -211,6 +224,7 @@ Verifies imports are sorted and grouped correctly.
 **Tool**: goimports
 
 **Failure Resolution**:
+
 ```bash
 make fmt
 # Or
@@ -224,6 +238,7 @@ Runs comprehensive code quality checks.
 **Tool**: golangci-lint
 
 **Checks Include**:
+
 - Code style (gofmt, govet, staticcheck)
 - Security issues (gosec)
 - Code complexity (cyclop)
@@ -232,6 +247,7 @@ Runs comprehensive code quality checks.
 - And many more...
 
 **Failure Resolution**:
+
 ```bash
 # Auto-fix what's possible
 make lint
@@ -251,6 +267,7 @@ Validates YAML files for syntax and formatting.
 **Optional**: Skipped if pre-commit not installed
 
 **Failure Resolution**:
+
 - Fix YAML syntax errors
 - Ensure proper indentation
 - Check for duplicate keys
@@ -262,10 +279,12 @@ Runs unit tests (excluding integration tests).
 **Command**: `go test -v -race -short`
 
 **Excludes**:
+
 - `/internal/repository` (requires database)
 - `/tests/integration` (integration tests)
 
 **Failure Resolution**:
+
 - Debug failing tests
 - Fix code issues
 - Update test expectations
@@ -277,6 +296,7 @@ Ensures code compiles successfully.
 **Command**: `go build -o /tmp/athena-server-validate ./cmd/server`
 
 **Failure Resolution**:
+
 - Fix compilation errors
 - Resolve missing dependencies
 - Check import paths
@@ -288,12 +308,14 @@ Runs static analysis to find suspicious code.
 **Command**: `go vet ./...`
 
 **Checks**:
+
 - Printf format strings
 - Unreachable code
 - Struct tags
 - And more...
 
 **Failure Resolution**:
+
 - Address reported issues
 - Review suspicious code patterns
 
@@ -327,6 +349,7 @@ jobs:
 ### Environment Variables
 
 #### `CI`
+
 Set to `true` in CI environments to skip tests requiring services.
 
 ```bash
@@ -340,7 +363,8 @@ CI=true ./scripts/validate-all.sh
 **Problem**: Installed Go version is below 1.23.4
 
 **Solution**:
-1. Download latest Go from https://golang.org/dl/
+
+1. Download latest Go from <https://golang.org/dl/>
 2. Install and verify: `go version`
 3. Re-run validation
 
@@ -349,6 +373,7 @@ CI=true ./scripts/validate-all.sh
 **Problem**: golangci-lint not in PATH
 
 **Solution**:
+
 ```bash
 # macOS
 brew install golangci-lint
@@ -365,6 +390,7 @@ export PATH="$PATH:$(go env GOPATH)/bin"
 **Problem**: goimports not in PATH
 
 **Solution**:
+
 ```bash
 go install golang.org/x/tools/cmd/goimports@latest
 
@@ -377,6 +403,7 @@ export PATH="$PATH:$(go env GOPATH)/bin"
 **Problem**: Script not executable
 
 **Solution**:
+
 ```bash
 chmod +x scripts/validate-all.sh
 chmod +x scripts/setup-validation.sh
@@ -388,6 +415,7 @@ chmod +x .githooks/pre-commit
 **Problem**: pre-commit not installed (optional dependency)
 
 **Solution**:
+
 ```bash
 # macOS
 brew install pre-commit
@@ -403,6 +431,7 @@ Or skip this check (it's optional).
 **Problem**: Unit tests fail during validation
 
 **Solution**:
+
 1. Run tests individually: `make test-unit`
 2. Debug specific failing tests
 3. Ensure no database/service dependencies in unit tests
@@ -421,6 +450,7 @@ Typical validation times:
 See `/Users/yosefgamble/github/athena/VALIDATION_REQUIRED.md` for requirements specific to Claude AI assistants.
 
 **Key Points**:
+
 - Claude Code (CLI): MUST run validations
 - Claude Web: CANNOT run validations (instruct user)
 - All instances: Must ensure validations pass before claiming success

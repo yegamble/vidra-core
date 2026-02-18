@@ -7,12 +7,14 @@ This module contains all security-critical code: SSRF protection, virus scanning
 ## SSRF Protection
 
 ### Core Files
+
 - `url_validator.go` - URL validation with SSRF prevention
 - `validation.go` - Higher-level validation utilities
 
 ### Blocked IP Ranges
 
 All private/reserved ranges are blocked:
+
 - RFC1918: `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`
 - Loopback: `127.0.0.0/8`, `::1/128`
 - Link-local: `169.254.0.0/16`, `fe80::/10`
@@ -21,6 +23,7 @@ All private/reserved ranges are blocked:
 ### Obfuscation Detection
 
 The validator detects bypasses:
+
 - Octal IPs: `0177.0.0.1`
 - Hex IPs: `0x7f.0.0.1`
 - Integer IPs: `2130706433`
@@ -39,6 +42,7 @@ if err := validator.ValidateURL(rawURL); err != nil {
 ## Virus Scanning (ClamAV)
 
 ### Workflow
+
 1. File uploaded to temp location
 2. Stream to ClamAV daemon for scanning
 3. **Clean**: proceed to processing
@@ -46,6 +50,7 @@ if err := validator.ValidateURL(rawURL); err != nil {
 5. **Error**: reject (strict mode) or log warning
 
 ### Key Files
+
 - `virus_scanner.go` - ClamAV client with retry logic
 - Migration `057_add_virus_scan_log.sql` - Audit logging
 
@@ -59,6 +64,7 @@ QUARANTINE_DIR=/app/quarantine
 ```
 
 ### Fallback Modes
+
 - `strict`: Reject if scanner unavailable (recommended)
 - `warn`: Log warning, allow upload (dev only)
 - `allow`: Silent allow (NEVER in production)
@@ -66,6 +72,7 @@ QUARANTINE_DIR=/app/quarantine
 ## Cryptographic Operations
 
 ### Key Files
+
 - `hsm_interface.go` - HSM abstraction layer
 - `software_hsm.go` - Fallback with AES-256-GCM + Argon2id
 - `wallet_encryption.go` - Envelope encryption for seeds
@@ -93,6 +100,7 @@ Use `html_sanitizer.go` with appropriate policy:
 ## Blocked File Types
 
 Always reject (see `validation.go`):
+
 - Executables: `.exe`, `.msi`, `.dll`, `.so`, `.dylib`
 - Scripts: `.bat`, `.ps1`, `.sh`, `.py`, `.js`, `.jar`
 - App bundles: `.apk`, `.ipa`, `.app`, `.dmg`
@@ -115,6 +123,7 @@ go test ./internal/security/... -run VirusScanner
 ## Gosec Static Analysis
 
 Gosec is configured in three places (keep in sync):
+
 - `.golangci.yml` - Primary config for `make lint`
 - `.github/workflows/security-tests.yml` - CI workflow with SARIF upload
 - `.pre-commit-config.yaml` - Pre-commit hooks
@@ -140,6 +149,7 @@ Gosec is configured in three places (keep in sync):
 ### Inline Suppression
 
 Use `#nosec` with justification comment:
+
 ```go
 // #nosec G304 - path validated by validateFilePath()
 file, err := os.Open(path)

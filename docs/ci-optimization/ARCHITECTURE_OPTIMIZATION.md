@@ -9,18 +9,21 @@
 ## Executive Summary
 
 ### Current State
+
 - **Total CI jobs**: 25+ across 5 workflows
 - **Module downloads**: 304 modules × 10 minutes × 25 jobs = **250+ wasted minutes per run**
 - **Bottleneck**: Each job independently downloads all Go modules
 - **Average full CI time**: 60-90 minutes (with sequential dependencies)
 
 ### Optimized State (Expected)
+
 - **Module downloads**: 1 shared download = **10 minutes total**
 - **Time savings**: **240 minutes per run** on module downloads alone
 - **Total CI time**: **25-40 minutes** (40-60% reduction)
 - **Architecture**: Modular, maintainable, fail-fast design
 
 ### Key Optimizations
+
 1. **Shared Dependency Setup**: Single job downloads modules, shares via artifacts/cache
 2. **Reusable Workflows**: Core setup workflow called by all test workflows
 3. **Optimized Dependency Graph**: Maximum parallelization with strategic sequencing
@@ -69,6 +72,7 @@
 ```
 
 **Issues**:
+
 - Each job downloads modules independently (8 × 10min = 80min wasted)
 - Sequential race tests delay feedback (unit must finish before unit-race starts)
 - Build waits for lint unnecessarily (could run after unit only)
@@ -78,6 +82,7 @@
 ### Identified Inefficiencies
 
 #### 1. Module Download Duplication (Critical)
+
 ```yaml
 # CURRENT: Each job does this independently
 - name: Set up Go (cached)
@@ -88,6 +93,7 @@
 **Impact**: 250+ minutes wasted per workflow run
 
 #### 2. Sequential Test Execution
+
 ```yaml
 unit-race:
   needs: unit  # Waits 10 minutes even though it could run in parallel
@@ -96,6 +102,7 @@ unit-race:
 **Impact**: Delays feedback by 10-15 minutes
 
 #### 3. Service Duplication
+
 ```yaml
 # Both integration and integration-race define identical services
 services:
@@ -107,7 +114,9 @@ services:
 **Impact**: Slower startup, more resource usage
 
 #### 4. No Reusable Workflows
+
 Each workflow duplicates:
+
 - Go setup steps
 - Service configuration
 - Migration steps
@@ -116,7 +125,9 @@ Each workflow duplicates:
 **Impact**: Harder to maintain, inconsistent behavior
 
 #### 5. Suboptimal Caching
+
 Current cache strategy relies on `setup-go` built-in caching, but:
+
 - Cache not shared between jobs (each job has its own cache key)
 - No explicit GOMODCACHE artifact sharing
 - Build cache (GOCACHE) not fully leveraged
@@ -183,6 +194,7 @@ Current cache strategy relies on `setup-go` built-in caching, but:
 ```
 
 **Key Improvements**:
+
 - Setup runs once, all jobs restore from artifact (saves 240 minutes)
 - Fast tests run in parallel (lint + format + unit = 5min total, not 15min)
 - Race tests run in parallel with integration (not sequential)
@@ -216,14 +228,17 @@ Current cache strategy relies on `setup-go` built-in caching, but:
 **Purpose**: Download modules once, cache everything, share via artifacts
 
 **Jobs**:
+
 1. `setup-dependencies`: Download all modules, create artifact
 2. `cache-dependencies`: Save to GitHub Actions cache for future runs
 
 **Outputs**:
+
 - Artifact: `go-modules-${{ github.run_id }}` (GOMODCACHE contents)
 - Cache: `go-build-cache-${{ hashFiles('**/go.sum') }}` (GOCACHE)
 
 **Usage**:
+
 ```yaml
 jobs:
   setup:
@@ -244,12 +259,14 @@ jobs:
 **Purpose**: Execute any test suite with optimized setup
 
 **Parameters**:
+
 - `test-type`: unit | integration | e2e
 - `enable-race`: boolean
 - `enable-services`: boolean
 - `test-packages`: string (Go package paths)
 
 **Pattern**:
+
 ```yaml
 jobs:
   setup:
@@ -309,6 +326,7 @@ jobs:
 ### Cache Key Strategy
 
 #### Module Cache (GOMODCACHE)
+
 ```yaml
 cache-key: go-modules-${{ runner.os }}-${{ hashFiles('**/go.sum') }}-v2
 restore-keys: |
@@ -317,11 +335,13 @@ restore-keys: |
 ```
 
 **Rationale**:
+
 - Changes when dependencies change (go.sum hash)
 - OS-specific (different platforms may have different builds)
 - Versioned (v2) to allow manual cache busting
 
 #### Build Cache (GOCACHE)
+
 ```yaml
 cache-key: go-build-${{ runner.os }}-${{ github.ref }}-${{ hashFiles('**/*.go') }}-v2
 restore-keys: |
@@ -331,6 +351,7 @@ restore-keys: |
 ```
 
 **Rationale**:
+
 - Includes source code hash (rebuild when code changes)
 - Branch-specific (feature branches benefit from main branch cache)
 - Fallback to main branch cache (85% hit rate even on new branches)
@@ -359,6 +380,7 @@ restore-keys: |
 ```
 
 **Benefits**:
+
 - Guaranteed consistency (all jobs use exact same modules)
 - Fast restore (artifact download ~30 seconds for 304 modules)
 - No network dependency (no proxy timeouts)
@@ -396,6 +418,7 @@ test-unit:
 ```
 
 **Benefits**:
+
 - 4× speedup (40-minute test suite → 10 minutes)
 - Better resource utilization
 - Faster feedback
@@ -418,6 +441,7 @@ services:
 ```
 
 **Self-hosted optimization**:
+
 - Keep services running between jobs
 - Use connection pooling
 - Different DB per job (avoid conflicts)
@@ -453,12 +477,14 @@ strategy:
 ### Before vs After
 
 #### Before (test.yml)
+
 ```
 Total time: 10 (unit) + 15 (unit-race) + 15 (build) + 20 (postman) = 60 min
 └─ Sequential chain, poor parallelization
 ```
 
 #### After (Optimized)
+
 ```
 Total time: 10 (setup) + 5 (unit/lint parallel) + 15 (integration-race) = 30 min
 └─ 50% reduction, maximum parallelization
@@ -535,16 +561,19 @@ jobs:
 ### ROI Analysis
 
 **Self-hosted runners** (current setup):
+
 - Current: 250 minutes avg × 20 runs/day = 5,000 runner-minutes/day
 - Optimized: 100 minutes avg × 20 runs/day = 2,000 runner-minutes/day
 - **Savings**: 3,000 runner-minutes/day = **60% reduction**
 
 **Developer productivity**:
+
 - Faster feedback: 30 min vs 60 min = **2× faster**
 - More iterations per day: From 8 builds/day to 16 builds/day
 - **Value**: Significant developer satisfaction + velocity improvement
 
 **Cache storage cost increase**:
+
 - +3 GB cache storage × $0.008/GB/day = **$0.024/day**
 - **Annual**: ~$9/year (negligible)
 
@@ -568,11 +597,13 @@ jobs:
 ### Bottleneck Analysis
 
 #### Current Bottleneck: Module Downloads
+
 - **Time**: 10 minutes per job
 - **Frequency**: Every job
 - **Total impact**: 250 minutes wasted
 
 #### Optimized Bottleneck: Integration Tests
+
 - **Time**: 15 minutes (integration-race)
 - **Frequency**: Once per run
 - **Total impact**: 15 minutes (unavoidable)
@@ -608,6 +639,7 @@ setup(10) → unit(5) → integration-race(15) = 30 min
 ### Team Familiarity Considerations
 
 **Skills required**:
+
 - ✅ GitHub Actions basics (already demonstrated)
 - ✅ YAML syntax (current workflows are complex)
 - ⚠️ Reusable workflows (new pattern, well-documented)
@@ -615,6 +647,7 @@ setup(10) → unit(5) → integration-race(15) = 30 min
 - ✅ Go module system (team already expert)
 
 **Learning curve**: **Low to Medium**
+
 - Concepts are familiar (caching, artifacts, dependencies)
 - Patterns are well-established in industry
 - Documentation will provide clear examples
@@ -623,6 +656,7 @@ setup(10) → unit(5) → integration-race(15) = 30 min
 
 **Current**: 5 workflows × ~400 lines each = 2,000 lines of duplicated YAML
 **Optimized**:
+
 - 3 reusable workflows (~300 lines shared logic)
 - 5 caller workflows (~100 lines each, simplified)
 - **Total**: ~800 lines, 60% reduction
@@ -646,6 +680,7 @@ setup(10) → unit(5) → integration-race(15) = 30 min
 ### Rollback Strategy
 
 **Phase 1**: Implement in parallel (keep old workflows)
+
 ```yaml
 # New workflow
 ci-main-optimized.yml  # Test the new pattern
@@ -655,6 +690,7 @@ test.yml  # Keep running for safety
 ```
 
 **Phase 2**: A/B test (run both, compare)
+
 ```yaml
 # Both run on PR, compare metrics
 - New workflow should be faster
@@ -662,6 +698,7 @@ test.yml  # Keep running for safety
 ```
 
 **Phase 3**: Gradual cutover
+
 ```yaml
 # Week 1: New workflow on feature branches
 # Week 2: New workflow on develop branch
@@ -689,16 +726,19 @@ test.yml  # Keep running for safety
 ### Monitoring Plan
 
 **Week 1-2**: Intensive monitoring
+
 - Daily review of workflow run times
 - Cache hit rate analysis
 - Failure investigation (new vs old patterns)
 
 **Week 3-4**: Validation
+
 - Compare new vs old workflow metrics
 - Collect developer feedback
 - Identify edge cases
 
 **Ongoing**: Monthly reviews
+
 - Review cache storage usage
 - Optimize cache keys if needed
 - Update dependencies for performance
@@ -706,17 +746,20 @@ test.yml  # Keep running for safety
 ### Success Criteria
 
 ✅ **Must achieve**:
+
 - [ ] Total CI time reduced by ≥40%
 - [ ] Module downloads occur only once per run
 - [ ] No increase in failure rate
 - [ ] All tests pass with new architecture
 
 ✅ **Should achieve**:
+
 - [ ] Cache hit rate >85%
 - [ ] Fast test feedback <10 min
 - [ ] Code reduction >50%
 
 ✅ **Nice to have**:
+
 - [ ] Developer satisfaction improved (survey)
 - [ ] Fewer timeout issues
 - [ ] Better parallelization (>60% jobs run concurrently)
@@ -728,29 +771,34 @@ test.yml  # Keep running for safety
 ### Implementation Phases
 
 **Phase 0: Preparation** (1 day)
+
 - [ ] Review this document with team
 - [ ] Create implementation branch
 - [ ] Set up monitoring/metrics collection
 
 **Phase 1: Core Infrastructure** (2-3 days)
+
 - [ ] Create `_core-setup.yml` reusable workflow
 - [ ] Create `restore-dependencies` composite action
 - [ ] Test artifact sharing pattern
 - [ ] Validate cache strategy
 
 **Phase 2: Optimize Main CI** (2-3 days)
+
 - [ ] Refactor `test.yml` to use reusable workflow
 - [ ] Implement parallel test execution
 - [ ] Add dependency graph optimizations
 - [ ] Run A/B test vs old workflow
 
 **Phase 3: Optimize Other Workflows** (3-4 days)
+
 - [ ] Migrate `security-tests.yml`
 - [ ] Migrate `e2e-tests.yml`
 - [ ] Migrate `virus-scanner-tests.yml`
 - [ ] Migrate `video-import.yml`
 
 **Phase 4: Validation & Cutover** (1 week)
+
 - [ ] Run both old and new workflows in parallel
 - [ ] Compare metrics, collect feedback
 - [ ] Fix any issues

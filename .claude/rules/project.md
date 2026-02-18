@@ -80,6 +80,7 @@ High-performance PeerTube-compatible backend in Go with P2P distribution, live s
 ## Development Commands
 
 **Setup:**
+
 ```bash
 cp .env.example .env          # Copy environment template
 make deps                     # Download dependencies
@@ -87,6 +88,7 @@ make migrate-up               # Apply database migrations
 ```
 
 **Development:**
+
 ```bash
 make run                      # Run the server
 make test                     # Run all tests
@@ -97,18 +99,21 @@ make build                    # Build binary
 ```
 
 **Validation (CRITICAL):**
+
 ```bash
 make validate-all             # REQUIRED before claiming completion
 # Runs: gofmt, goimports, golangci-lint, tests, build
 ```
 
 **Docker:**
+
 ```bash
 docker compose up --build     # Start all services
 docker compose up postgres redis  # Infrastructure only
 ```
 
 **Migrations:**
+
 ```bash
 make migrate-up               # Apply all pending migrations
 make migrate-down             # Rollback last migration
@@ -117,6 +122,7 @@ make migrate-create NAME=add_feature  # Create new migration
 ```
 
 **Coverage:**
+
 ```bash
 make coverage-check           # Test with coverage threshold
 make coverage-per-package     # Per-package coverage report
@@ -125,29 +131,35 @@ make coverage-per-package     # Per-package coverage report
 ## Architecture Notes
 
 **Clean Architecture:**
+
 - Domain layer: Pure business models, no dependencies
 - Usecase layer: Business logic, defines interfaces
 - Repository layer: Implements data access
 - HTTP layer: Handlers, routes, middleware
 
 **Dependency Injection:**
+
 - Constructor-based DI, no globals
 - Wiring centralized in `internal/app/app.go`
 - Usecase packages aliased as `uc*` (e.g., `ucbackup`, `ucchannel`)
 
 **Interface Locations:**
+
 - Repository interfaces: `internal/port/` (20 files)
 - Service interfaces: `internal/usecase/` (co-located with implementations)
 
 **Context Propagation:**
+
 - `context.Context` as first parameter in all functions
 - Timeouts on network/DB calls
 
 **Error Handling:**
+
 - Wrap errors with `fmt.Errorf("operation: %w", err)`
 - Custom `DomainError` type for business errors
 
 **Testing:**
+
 - Table-driven tests preferred
 - `testutil` package for test helpers
 - `testing.Short()` to skip integration tests
@@ -156,6 +168,7 @@ make coverage-per-package     # Per-package coverage report
 ## Domain-Specific Documentation
 
 See subdirectory CLAUDE.md files for detailed guidance:
+
 - **Security:** `internal/security/CLAUDE.md`
 - **API/HTTP:** `internal/httpapi/CLAUDE.md`
 - **Federation:** `internal/activitypub/CLAUDE.md`
@@ -166,12 +179,14 @@ See subdirectory CLAUDE.md files for detailed guidance:
 ## Additional Context
 
 **Sprint Status:** Quality Programme Complete (Sprint 20/20)
+
 - Feature parity: 100% complete
 - Quality Programme: 100% complete
 - Full test suite: ~3,900 test functions (335 test files)
 - Coverage: 62.3% average across packages (90%+ achieved for core packages)
 
 **Key Features:**
+
 - PeerTube API compatibility
 - Live streaming (RTMP/HLS)
 - Video transcoding with FFmpeg

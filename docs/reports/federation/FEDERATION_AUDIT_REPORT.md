@@ -1,4 +1,5 @@
 # Federation Protocol Implementation Audit Report
+
 **Date:** 2025-11-17
 **Project:** Athena Video Platform
 **Auditor:** Federation Protocol Auditor Agent
@@ -27,12 +28,14 @@ The Athena video platform implements a **hybrid federation approach** supporting
 **Status:** PARTIALLY IMPLEMENTED (Production-ready for basic federation)
 
 **Implementation Files:**
+
 - `/home/user/athena/internal/usecase/activitypub/service.go` (1,193 lines)
 - `/home/user/athena/internal/activitypub/httpsig.go` (HTTP Signatures)
 - `/home/user/athena/internal/httpapi/handlers/federation/activitypub.go`
 - `/home/user/athena/internal/worker/activitypub_delivery.go`
 
 **Database Schema:**
+
 - `/home/user/athena/migrations/044_add_activitypub_support.sql`
 - 9 tables: `ap_actor_keys`, `ap_remote_actors`, `ap_activities`, `ap_followers`, `ap_delivery_queue`, `ap_received_activities`, `ap_video_reactions`, `ap_video_shares`
 
@@ -43,15 +46,18 @@ The Athena video platform implements a **hybrid federation approach** supporting
 **Status:** BETA (75% complete, NOT production-ready)
 
 **Implementation Files:**
+
 - `/home/user/athena/internal/usecase/atproto_service.go`
 - `/home/user/athena/internal/repository/atproto_repository.go`
 - `/home/user/athena/docs/federation/ATPROTO_SETUP.md`
 
 **Database Schema:**
+
 - `/home/user/athena/migrations/036_add_atproto_federation.sql`
 - Tables: `federation_jobs`, `federated_posts`, `federation_actors`, `atproto_sessions`
 
 **Limitations (Documented):**
+
 - No video upload to BlueSky (only external links)
 - Limited federation discovery
 - No real-time sync
@@ -74,6 +80,7 @@ The Athena video platform implements a **hybrid federation approach** supporting
 **Code Reference:** `/home/user/athena/internal/httpapi/handlers/federation/activitypub.go:37-156`
 
 **Strengths:**
+
 - Supports both `acct:` and `https:` resource formats in WebFinger
 - Proper Content-Type negotiation (`application/jrd+json`, `application/xrd+xml`)
 - Dynamic user count and video statistics in NodeInfo
@@ -96,6 +103,7 @@ The Athena video platform implements a **hybrid federation approach** supporting
 **Code Reference:** `/home/user/athena/internal/httpapi/handlers/federation/activitypub.go:158-298`
 
 **Actor Object Structure:**
+
 ```json
 {
   "@context": ["https://www.w3.org/ns/activitystreams", "https://w3id.org/security/v1"],
@@ -118,12 +126,14 @@ The Athena video platform implements a **hybrid federation approach** supporting
 ```
 
 **Strengths:**
+
 - Automatic RSA-2048 key pair generation per actor
 - Encrypted private key storage (AES-256, migration 061)
 - Proper JSON-LD context array
 - SharedInbox support for delivery efficiency
 
 **Issues:**
+
 - No `icon` or `image` fields populated for actor avatars
 - No `summary` (bio) field from user profile
 - Missing `manuallyApprovesFollowers` configuration
@@ -135,6 +145,7 @@ The Athena video platform implements a **hybrid federation approach** supporting
 **Compliance:** 95% (W3C HTTP Signatures draft-cavage-http-signatures-12)
 
 **Implemented Features:**
+
 - ✅ RSA-SHA256 signing algorithm
 - ✅ Request signing with `(request-target)`, `host`, `date`, `digest` headers
 - ✅ Signature verification with remote actor public keys
@@ -143,11 +154,13 @@ The Athena video platform implements a **hybrid federation approach** supporting
 - ✅ Key rotation support (regeneration possible)
 
 **Missing Features:**
+
 - ❌ Signature expiration validation (no time-based expiry check)
 - ❌ Digest header verification on received requests
 - ❌ hs2019 algorithm support (only rsa-sha256)
 
 **Security Considerations:**
+
 - Private keys encrypted at rest (migration 061: `encrypt_activitypub_private_keys.sql`)
 - SSRF protection via `security.URLValidator` when fetching remote actors
 - Remote actor caching (24-hour TTL) reduces fetching overhead
@@ -176,12 +189,14 @@ The Athena video platform implements a **hybrid federation approach** supporting
 **Code Reference:** `/home/user/athena/internal/usecase/activitypub/service.go:239-543`
 
 **Strengths:**
+
 - HTTP signature verification on all inbound activities
 - Activity deduplication using `ap_received_activities` table
 - Automatic Accept/Reject sending for Follow requests
 - Proper Undo handling for Follow, Like, Announce
 
 **Critical Gaps:**
+
 1. **Create/Update/Delete** handlers don't process remote content properly (just store JSON)
 2. **View activities** not tracked (no analytics federation)
 3. **Playlist operations** (Add/Remove) not supported
@@ -193,6 +208,7 @@ The Athena video platform implements a **hybrid federation approach** supporting
 **Code Reference:** `/home/user/athena/internal/worker/activitypub_delivery.go`
 
 **Features:**
+
 - ✅ Background delivery queue (`ap_delivery_queue` table)
 - ✅ Exponential backoff retry (configurable max attempts)
 - ✅ HTTP signature signing on delivery
@@ -201,12 +217,14 @@ The Athena video platform implements a **hybrid federation approach** supporting
 - ✅ Permanent failure tracking after max retries
 
 **Queue Processing:**
+
 - Poll interval: 5 seconds
 - Default max attempts: 10
 - Backoff formula: `baseDelay * 2^attempts` (capped at 24 hours)
 - Status tracking: pending → processing → completed/failed
 
 **Gaps:**
+
 - ❌ No exponential backoff for network errors vs HTTP errors
 - ❌ No dead-letter queue for permanently failed deliveries (implemented in hardening service but not integrated)
 - ❌ No delivery metrics/monitoring exposed
@@ -224,6 +242,7 @@ The Athena video platform implements a **hybrid federation approach** supporting
 | `CreateCommentActivity` | ✅ Complete | 100% | `service.go:841-870` |
 
 **Features:**
+
 - Builds `NoteObject` with proper `inReplyTo` for threaded comments
 - Publishes Create/Update/Delete activities to followers
 - Enqueues delivery to all followers' inboxes
@@ -273,6 +292,7 @@ Based on PeerTube specification and reference implementation:
 ### 3.2 PeerTube VideoObject Structure
 
 **Expected (PeerTube):**
+
 ```json
 {
   "@context": [
@@ -341,6 +361,7 @@ The `VideoObject` domain model exists (`/home/user/athena/internal/domain/activi
 8. **Magnet Links:** No magnet URI generation for federation
 
 **Torrent System:** ✅ EXISTS (not federated)
+
 - Files: `/home/user/athena/internal/torrent/generator.go`, `client.go`, `seeder.go`, `tracker.go`
 - Database: `torrent_repository.go`
 - **Gap:** Torrents not integrated into ActivityPub VideoObject URLs
@@ -352,10 +373,12 @@ The `VideoObject` domain model exists (`/home/user/athena/internal/domain/activi
 ### 4.1 Critical Missing Features (Blocking PeerTube Compatibility)
 
 #### 4.1.1 Video Publishing to Federation ❌ CRITICAL
+
 **Status:** NOT IMPLEMENTED
 **Impact:** BLOCKING - Core functionality missing
 
 **Required Work:**
+
 1. Implement `BuildVideoObject()` in `service.go`
 2. Generate multi-resolution `url` array from video files
 3. Include torrent and magnet links in `url` array
@@ -367,6 +390,7 @@ The `VideoObject` domain model exists (`/home/user/athena/internal/domain/activi
 **Estimated Effort:** 40-60 hours
 
 **Example Implementation (Pseudocode):**
+
 ```go
 func (s *Service) BuildVideoObject(ctx context.Context, video *domain.Video) (*domain.VideoObject, error) {
     user, _ := s.userRepo.GetByID(ctx, video.UserID)
@@ -427,10 +451,12 @@ func (s *Service) BuildVideoObject(ctx context.Context, video *domain.Video) (*d
 ```
 
 #### 4.1.2 Remote Video Ingestion ❌ CRITICAL
+
 **Status:** NOT IMPLEMENTED
 **Impact:** HIGH - Can't follow remote PeerTube instances
 
 **Required Work:**
+
 1. Handle incoming `Create{Video}` activities
 2. Parse and store remote `VideoObject` metadata
 3. Download or proxy remote video files (optional)
@@ -441,10 +467,12 @@ func (s *Service) BuildVideoObject(ctx context.Context, video *domain.Video) (*d
 **Estimated Effort:** 30-40 hours
 
 #### 4.1.3 View Activity Tracking ❌ HIGH PRIORITY
+
 **Status:** NOT IMPLEMENTED
 **Impact:** MEDIUM - Analytics not federated
 
 **Required Work:**
+
 1. Send `View` activity when video is watched
 2. Handle incoming `View` activities
 3. Update view counters from federation
@@ -455,15 +483,18 @@ func (s *Service) BuildVideoObject(ctx context.Context, video *domain.Video) (*d
 ### 4.2 Important Missing Features
 
 #### 4.2.1 Dislike Support ⚠️ PARTIAL
+
 **Status:** Database supports reactions but no "dislike" differentiation
 **Impact:** MEDIUM
 
 **Current State:**
+
 - Table `ap_video_reactions` has `reaction_type` field
 - Only "like" is handled in code
 - PeerTube uses separate `likes` and `dislikes` collections
 
 **Required Work:**
+
 1. Add `handleDislike` method
 2. Differentiate "like" vs "dislike" in `reaction_type`
 3. Expose `/videos/{uuid}/dislikes` collection endpoint
@@ -471,10 +502,12 @@ func (s *Service) BuildVideoObject(ctx context.Context, video *domain.Video) (*d
 **Estimated Effort:** 5-8 hours
 
 #### 4.2.2 Playlist Federation ❌
+
 **Status:** NOT IMPLEMENTED
 **Impact:** LOW-MEDIUM
 
 **Required Work:**
+
 1. Implement `Add` and `Remove` activity handlers
 2. Create playlist collection endpoints
 3. Federate playlist creation/updates
@@ -482,10 +515,12 @@ func (s *Service) BuildVideoObject(ctx context.Context, video *domain.Video) (*d
 **Estimated Effort:** 20-25 hours
 
 #### 4.2.3 Video Captions/Subtitles ❌
+
 **Status:** NOT IMPLEMENTED
 **Impact:** MEDIUM
 
 **Required Work:**
+
 1. Add caption files to `VideoObject.Attachment` array
 2. Support remote caption ingestion
 3. Serve captions via federation
@@ -493,9 +528,11 @@ func (s *Service) BuildVideoObject(ctx context.Context, video *domain.Video) (*d
 **Estimated Effort:** 15-20 hours
 
 #### 4.2.4 Redundancy Federation ⚠️ PARTIAL
+
 **Status:** Database tables exist, no federation logic
 
 **Existing:**
+
 - `/home/user/athena/internal/httpapi/handlers/federation/redundancy_handlers.go` (447 lines)
 - Redundancy repository and domain models
 
@@ -512,6 +549,7 @@ func (s *Service) BuildVideoObject(ctx context.Context, video *domain.Video) (*d
 **Documentation:** `/home/user/athena/docs/federation/ATPROTO_SETUP.md`
 
 **Implemented Features:**
+
 - ✅ PDS (Personal Data Server) client
 - ✅ BlueSky account linking via app passwords
 - ✅ Basic content syndication (video posts as external links)
@@ -519,6 +557,7 @@ func (s *Service) BuildVideoObject(ctx context.Context, video *domain.Video) (*d
 - ✅ Federation job queue
 
 **Database Schema:**
+
 - `federation_jobs` - Job queue for AT Protocol operations
 - `federated_posts` - Ingested posts from BlueSky
 - `federation_actors` - Tracked AT Protocol actors
@@ -527,6 +566,7 @@ func (s *Service) BuildVideoObject(ctx context.Context, video *domain.Video) (*d
 ### 5.2 AT Protocol Limitations (Per Documentation)
 
 **Documented Constraints:**
+
 1. ❌ No video upload to BlueSky (only external links, BlueSky limit: 1min/50MB)
 2. ❌ No automatic discovery of BlueSky users
 3. ❌ Cannot follow BlueSky users from Athena
@@ -538,6 +578,7 @@ func (s *Service) BuildVideoObject(ctx context.Context, video *domain.Video) (*d
 9. ⚠️ One-way syndication only
 
 **Architectural Issues:**
+
 - No DID resolution for federation discovery
 - No Lexicon definitions for video-specific schemas
 - No repository structure for video content
@@ -546,12 +587,14 @@ func (s *Service) BuildVideoObject(ctx context.Context, video *domain.Video) (*d
 ### 5.3 AT Protocol Roadmap (From Documentation)
 
 **Phase 2 (Target: Q2 2025):**
+
 - [ ] Automatic video upload to BlueSky (if < 1 min)
 - [ ] Comment synchronization (bidirectional)
 - [ ] Improved error handling and retries
 - [ ] Batch syndication support
 
 **Phase 3 (Target: Q3 2025):**
+
 - [ ] Federation discovery
 - [ ] Follow BlueSky users from Athena
 - [ ] Real-time webhook support
@@ -564,6 +607,7 @@ func (s *Service) BuildVideoObject(ctx context.Context, video *domain.Video) (*d
 **Issue:** No protocol-agnostic content model. ActivityPub and AT Protocol services are completely separate with no shared abstractions.
 
 **Recommended Architecture:**
+
 ```
 ┌─────────────────────────────────────┐
 │   Content Publishing Service        │
@@ -578,6 +622,7 @@ func (s *Service) BuildVideoObject(ctx context.Context, video *domain.Video) (*d
 ```
 
 **Current Reality:**
+
 ```
 ┌────────────┐      ┌────────────┐
 │ AP Service │      │ AT Service │
@@ -587,6 +632,7 @@ func (s *Service) BuildVideoObject(ctx context.Context, video *domain.Video) (*d
 ```
 
 **Required Work:**
+
 1. Create unified `FederationPublisher` interface
 2. Implement protocol-specific adapters
 3. Map ActivityPub activities to AT Protocol records
@@ -604,6 +650,7 @@ func (s *Service) BuildVideoObject(ctx context.Context, video *domain.Video) (*d
 #### 6.1.1 ActivityPub Compliance: GOOD (90%)
 
 **Compliant Areas:**
+
 - ✅ JSON-LD serialization
 - ✅ ActivityStreams vocabulary
 - ✅ HTTP Signatures (mostly)
@@ -612,6 +659,7 @@ func (s *Service) BuildVideoObject(ctx context.Context, video *domain.Video) (*d
 - ✅ Collection pagination
 
 **Non-Compliant Areas:**
+
 1. **Digest Verification:** Not verified on incoming signed requests (SECURITY)
 2. **Content-Type Negotiation:** Missing `application/ld+json; profile="https://www.w3.org/ns/activitystreams"`
 3. **Video Objects:** Not implemented (CRITICAL)
@@ -630,11 +678,13 @@ func (s *Service) BuildVideoObject(ctx context.Context, video *domain.Video) (*d
 #### 6.1.2 AT Protocol Compliance: PARTIAL (60%)
 
 **Compliant Areas:**
+
 - ✅ PDS authentication
 - ✅ Session management
 - ✅ Record creation (app.bsky.feed.post)
 
 **Non-Compliant Areas:**
+
 1. **DID Resolution:** Not implemented for discovery
 2. **Repository Sync:** No repo sync protocol implementation
 3. **Lexicon Validation:** No schema validation for records
@@ -667,6 +717,7 @@ func (s *Service) BuildVideoObject(ctx context.Context, video *domain.Video) (*d
    - **Recommendation:** Implement key rotation every 90-180 days
 
 **Code Reference:**
+
 ```go
 // Current implementation (INCOMPLETE)
 func (v *HTTPSignatureVerifier) VerifyRequest(r *http.Request, publicKeyPEM string) error {
@@ -677,6 +728,7 @@ func (v *HTTPSignatureVerifier) VerifyRequest(r *http.Request, publicKeyPEM stri
 ```
 
 **Recommended Fix:**
+
 ```go
 func (v *HTTPSignatureVerifier) VerifyRequest(r *http.Request, publicKeyPEM string) error {
     // Existing signature verification...
@@ -726,6 +778,7 @@ if err := s.urlValidator.ValidateURL(actorURI); err != nil {
 **Implementation:** `/home/user/athena/internal/security/activitypub_key_encryption.go`
 
 **Features:**
+
 - AES-256 encryption of private keys
 - Encryption key from environment variable
 - Secure key rotation support
@@ -737,17 +790,20 @@ if err := s.urlValidator.ValidateURL(actorURI); err != nil {
 #### 6.3.1 Delivery Queue Scalability
 
 **Current Design:**
+
 - Poll-based worker (5-second interval)
 - Configurable worker count
 - Batch size: 10 deliveries per poll
 
 **Concerns:**
+
 1. No priority queue (all deliveries equal priority)
 2. No rate limiting per remote instance
 3. Fixed batch size (no dynamic scaling)
 4. No circuit breaker for consistently failing instances
 
 **Recommendations:**
+
 1. Implement priority queue (urgent vs normal)
 2. Per-instance rate limiting (respect remote server load)
 3. Dynamic batch sizing based on queue depth
@@ -759,6 +815,7 @@ if err := s.urlValidator.ValidateURL(actorURI); err != nil {
 **Status:** GOOD
 
 **Potential Improvement:**
+
 - Implement stale-while-revalidate pattern
 - Background refresh for frequently accessed actors
 
@@ -774,11 +831,13 @@ if err := s.urlValidator.ValidateURL(actorURI); err != nil {
 **Spec:** Context should be array when multiple contexts needed
 
 **Current:**
+
 ```json
 {"@context": "https://www.w3.org/ns/activitystreams"}
 ```
 
 **Should Be:**
+
 ```json
 {"@context": [
   "https://www.w3.org/ns/activitystreams",
@@ -795,11 +854,13 @@ if err := s.urlValidator.ValidateURL(actorURI); err != nil {
 **Spec:** Should support `application/ld+json; profile="https://www.w3.org/ns/activitystreams"`
 
 **Current:**
+
 ```go
 w.Header().Set("Content-Type", "application/activity+json; charset=utf-8")
 ```
 
 **Should Support:**
+
 ```go
 // Accept both
 accept := r.Header.Get("Accept")
@@ -850,10 +911,12 @@ if strings.Contains(accept, "application/ld+json") {
 ### 8.1 Immediate Priorities (Next 2 Weeks)
 
 #### Priority 1: Implement Video Publishing (CRITICAL)
+
 **Effort:** 40-60 hours
 **Impact:** Enables core PeerTube compatibility
 
 **Tasks:**
+
 1. Implement `BuildVideoObject()` with all required fields
 2. Generate multi-resolution URL array
 3. Integrate torrent links into VideoObject
@@ -863,28 +926,34 @@ if strings.Contains(accept, "application/ld+json") {
 7. Add tests (integration + unit)
 
 **Files to Modify:**
+
 - `/home/user/athena/internal/usecase/activitypub/service.go`
 - `/home/user/athena/internal/domain/activitypub.go` (validation)
 - Add integration tests
 
 #### Priority 2: Fix HTTP Signature Security (HIGH)
+
 **Effort:** 8-10 hours
 **Impact:** Closes security vulnerabilities
 
 **Tasks:**
+
 1. Implement digest verification in `VerifyRequest()`
 2. Add signature expiration check (Date header)
 3. Add tests for malicious scenarios
 4. Document security considerations
 
 **File to Modify:**
+
 - `/home/user/athena/internal/activitypub/httpsig.go`
 
 #### Priority 3: Remote Video Ingestion (CRITICAL)
+
 **Effort:** 30-40 hours
 **Impact:** Enables following remote PeerTube instances
 
 **Tasks:**
+
 1. Parse incoming VideoObject in `handleCreate()`
 2. Store remote video metadata in database
 3. Add foreign video repository methods
@@ -892,15 +961,18 @@ if strings.Contains(accept, "application/ld+json") {
 5. Display federated videos in feeds
 
 **Files to Create/Modify:**
+
 - `/home/user/athena/internal/repository/remote_video_repository.go` (new)
 - `/home/user/athena/internal/usecase/activitypub/service.go`
 
 ### 8.2 Short-Term Goals (1-2 Months)
 
 #### Goal 1: Full PeerTube Compatibility
+
 **Effort:** 100-120 hours total
 
 **Remaining Work:**
+
 - [x] Discovery endpoints (DONE)
 - [x] Actor endpoints (DONE)
 - [x] Follow/Accept/Reject (DONE)
@@ -913,9 +985,11 @@ if strings.Contains(accept, "application/ld+json") {
 - [ ] Video captions (TODO)
 
 #### Goal 2: Improve AT Protocol Integration
+
 **Effort:** 80-100 hours
 
 **Tasks:**
+
 1. Implement DID resolution
 2. Add Lexicon validation
 3. Implement bidirectional comment sync
@@ -924,9 +998,11 @@ if strings.Contains(accept, "application/ld+json") {
 6. Create protocol abstraction layer
 
 #### Goal 3: Production Hardening
+
 **Effort:** 40-50 hours
 
 **Tasks:**
+
 1. Add delivery queue metrics/monitoring
 2. Implement circuit breaker for failing instances
 3. Add per-instance rate limiting
@@ -986,6 +1062,7 @@ if strings.Contains(accept, "application/ld+json") {
 **ActivityPub:** ✅ EXCELLENT (90% coverage)
 
 **Test Files:**
+
 - `/home/user/athena/internal/activitypub/httpsig_test.go` (373 lines, 25+ tests)
 - `/home/user/athena/internal/usecase/activitypub/service_test.go` (850+ lines, 20+ tests)
 - `/home/user/athena/internal/httpapi/handlers/federation/activitypub_test.go` (200+ lines)
@@ -1000,6 +1077,7 @@ if strings.Contains(accept, "application/ld+json") {
 **AT Protocol:** ⚠️ LIMITED
 
 **Test Files:**
+
 - `/home/user/athena/internal/usecase/atproto_service_test.go`
 - `/home/user/athena/internal/usecase/federation_service_test.go`
 
@@ -1008,9 +1086,11 @@ if strings.Contains(accept, "application/ld+json") {
 ### 9.2 Required Additional Tests
 
 #### 9.2.1 Video Publishing Tests (NEW)
+
 **Priority:** CRITICAL
 
 **Required Tests:**
+
 1. Test `BuildVideoObject()` generates correct structure
 2. Test video URL array includes all resolutions
 3. Test torrent links are included
@@ -1022,9 +1102,11 @@ if strings.Contains(accept, "application/ld+json") {
 **Estimated:** 40+ new test cases
 
 #### 9.2.2 Security Tests
+
 **Priority:** HIGH
 
 **Required Tests:**
+
 1. Test digest verification rejects tampered bodies
 2. Test signature expiration rejects old signatures
 3. Test SSRF protection blocks private IPs
@@ -1034,9 +1116,11 @@ if strings.Contains(accept, "application/ld+json") {
 **Estimated:** 20+ new test cases
 
 #### 9.2.3 Interoperability Tests
+
 **Priority:** MEDIUM
 
 **Required Tests:**
+
 1. Test federation with real Mastodon instance
 2. Test federation with real PeerTube instance
 3. Test federation with real Pleroma instance
@@ -1088,6 +1172,7 @@ if strings.Contains(accept, "application/ld+json") {
 ### 10.1 Summary of Findings
 
 **Strengths:**
+
 1. ✅ Solid ActivityPub foundation (discovery, actors, basic activities)
 2. ✅ Excellent test coverage (90% for implemented features)
 3. ✅ Strong security posture (SSRF protection, key encryption, deduplication)
@@ -1097,6 +1182,7 @@ if strings.Contains(accept, "application/ld+json") {
 7. ✅ AT Protocol basic integration (75% complete)
 
 **Critical Gaps:**
+
 1. ❌ **Video publishing completely missing** (BLOCKING for PeerTube compatibility)
 2. ❌ **Remote video ingestion not implemented** (Can't follow PeerTube instances)
 3. ❌ **No digest verification in HTTP signatures** (Security vulnerability)
@@ -1106,16 +1192,19 @@ if strings.Contains(accept, "application/ld+json") {
 ### 10.2 Production Readiness Assessment
 
 **ActivityPub:**
+
 - **For Social Features (Follow, Like, Comment):** ✅ PRODUCTION-READY
 - **For Video Federation:** ❌ NOT READY (Video publishing missing)
 - **Overall:** ⚠️ PARTIAL - Ready for basic federation, not for PeerTube compatibility
 
 **AT Protocol:**
+
 - **For Basic Syndication:** ⚠️ BETA (Works but limited)
 - **For Full Federation:** ❌ NOT READY (60% complete)
 - **Overall:** ❌ NOT PRODUCTION-READY
 
 **Combined Federation:**
+
 - **Readiness:** 65% complete
 - **Recommendation:** **DO NOT deploy for PeerTube federation** until video publishing implemented
 - **Safe Use Cases:** Social following, comment federation only
@@ -1123,17 +1212,20 @@ if strings.Contains(accept, "application/ld+json") {
 ### 10.3 Recommended Action Plan
 
 **Phase 1 (Immediate - 2 Weeks):**
+
 1. Implement video publishing to ActivityPub (40-60 hours)
 2. Fix HTTP signature security issues (8-10 hours)
 3. Add digest verification tests (4-6 hours)
 
 **Phase 2 (Short-Term - 1 Month):**
+
 1. Implement remote video ingestion (30-40 hours)
 2. Add view activity tracking (10-15 hours)
 3. Implement dislike support (5-8 hours)
 4. Add video publishing tests (8-10 hours)
 
 **Phase 3 (Medium-Term - 2 Months):**
+
 1. Improve AT Protocol to production-ready (80-100 hours)
 2. Create protocol abstraction layer (80-100 hours)
 3. Implement playlist federation (20-25 hours)
@@ -1144,16 +1236,19 @@ if strings.Contains(accept, "application/ld+json") {
 ### 10.4 Risk Assessment
 
 **HIGH RISK:**
+
 - Deploying as PeerTube replacement without video publishing
 - Security vulnerabilities from missing digest verification
 - AT Protocol integration breaking with spec changes
 
 **MEDIUM RISK:**
+
 - Performance issues with large federated networks
 - Interoperability issues with non-standard implementations
 - Protocol divergence without abstraction layer
 
 **LOW RISK:**
+
 - Comment federation (well-tested)
 - Basic social features (follow/like)
 - Discovery endpoints (spec-compliant)
@@ -1165,6 +1260,7 @@ if strings.Contains(accept, "application/ld+json") {
 ### Core Implementation Files
 
 **ActivityPub:**
+
 - `/home/user/athena/internal/usecase/activitypub/service.go` (1,193 lines) - Main service
 - `/home/user/athena/internal/activitypub/httpsig.go` (300+ lines) - HTTP signatures
 - `/home/user/athena/internal/httpapi/handlers/federation/activitypub.go` (310 lines) - HTTP handlers
@@ -1173,26 +1269,31 @@ if strings.Contains(accept, "application/ld+json") {
 - `/home/user/athena/internal/domain/activitypub.go` (334 lines) - Domain models
 
 **AT Protocol:**
+
 - `/home/user/athena/internal/usecase/atproto_service.go` - AT Protocol service
 - `/home/user/athena/internal/repository/atproto_repository.go` - Database layer
 - `/home/user/athena/internal/usecase/federation_service.go` (150+ lines) - Federation orchestration
 
 **Database Migrations:**
+
 - `/home/user/athena/migrations/044_add_activitypub_support.sql` (156 lines)
 - `/home/user/athena/migrations/036_add_atproto_federation.sql` (67 lines)
 - `/home/user/athena/migrations/037_create_federation_actors.sql` (26 lines)
 - `/home/user/athena/migrations/061_encrypt_activitypub_private_keys.sql`
 
 **Configuration:**
+
 - `/home/user/athena/internal/config/*.go` - Config structs
 - Environment variables: `ENABLE_ACTIVITYPUB`, `ACTIVITYPUB_DOMAIN`, etc.
 
 **Documentation:**
+
 - `/home/user/athena/docs/federation/README.md` - Federation overview
 - `/home/user/athena/docs/federation/ACTIVITYPUB_TEST_COVERAGE.md` - Test coverage report
 - `/home/user/athena/docs/federation/ATPROTO_SETUP.md` - AT Protocol setup guide
 
 **Tests:**
+
 - `/home/user/athena/internal/activitypub/httpsig_test.go` (373 lines)
 - `/home/user/athena/internal/usecase/activitypub/service_test.go` (850+ lines)
 - `/home/user/athena/internal/httpapi/handlers/federation/activitypub_test.go` (200+ lines)
@@ -1207,46 +1308,46 @@ if strings.Contains(accept, "application/ld+json") {
 ### ActivityPub Specifications
 
 1. **ActivityPub W3C Recommendation:**
-   - URL: https://www.w3.org/TR/activitypub/
+   - URL: <https://www.w3.org/TR/activitypub/>
    - Status: W3C Recommendation (23 January 2018)
 
 2. **ActivityStreams 2.0:**
-   - URL: https://www.w3.org/TR/activitystreams-core/
-   - Vocabulary: https://www.w3.org/TR/activitystreams-vocabulary/
+   - URL: <https://www.w3.org/TR/activitystreams-core/>
+   - Vocabulary: <https://www.w3.org/TR/activitystreams-vocabulary/>
 
 3. **HTTP Signatures:**
-   - Draft: https://datatracker.ietf.org/doc/html/draft-cavage-http-signatures-12
+   - Draft: <https://datatracker.ietf.org/doc/html/draft-cavage-http-signatures-12>
    - Status: Internet-Draft (not finalized)
 
 4. **WebFinger (RFC 7033):**
-   - URL: https://datatracker.ietf.org/doc/html/rfc7033
+   - URL: <https://datatracker.ietf.org/doc/html/rfc7033>
    - Status: RFC Standard
 
 5. **NodeInfo:**
-   - Spec: https://nodeinfo.diaspora.software/
+   - Spec: <https://nodeinfo.diaspora.software/>
    - Version: 2.0
 
 ### AT Protocol Specifications
 
 1. **AT Protocol:**
-   - URL: https://atproto.com/specs/atp
-   - Repo: https://github.com/bluesky-social/atproto
+   - URL: <https://atproto.com/specs/atp>
+   - Repo: <https://github.com/bluesky-social/atproto>
 
 2. **Lexicons:**
-   - URL: https://atproto.com/specs/lexicon
+   - URL: <https://atproto.com/specs/lexicon>
 
 3. **DID Methods:**
-   - did:plc: https://github.com/did-method-plc/did-method-plc
-   - did:web: https://w3c-ccg.github.io/did-method-web/
+   - did:plc: <https://github.com/did-method-plc/did-method-plc>
+   - did:web: <https://w3c-ccg.github.io/did-method-web/>
 
 ### PeerTube Federation
 
 1. **PeerTube ActivityPub Extensions:**
-   - Context: https://joinpeertube.org/ns
-   - Repo: https://github.com/Chocobozzz/PeerTube
+   - Context: <https://joinpeertube.org/ns>
+   - Repo: <https://github.com/Chocobozzz/PeerTube>
 
 2. **PeerTube API Documentation:**
-   - URL: https://docs.joinpeertube.org/api-rest-reference.html
+   - URL: <https://docs.joinpeertube.org/api-rest-reference.html>
 
 ---
 

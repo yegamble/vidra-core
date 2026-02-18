@@ -33,6 +33,7 @@ curl http://localhost:8080/health
 ### Production Deployment
 
 See detailed guides:
+
 - [Docker Deployment](docker.md) - Container-based deployment
 - [Kubernetes Deployment](KUBERNETES_DEPLOYMENT.md) - Cloud-native deployment
 - [Security Configuration](security.md) - Hardening guide
@@ -144,6 +145,7 @@ sudo systemctl enable certbot.timer
 ### Manual SSL Setup
 
 Place certificates in `/etc/nginx/ssl/`:
+
 - `cert.pem` - SSL certificate
 - `key.pem` - Private key
 - `chain.pem` - Certificate chain (optional)
@@ -261,6 +263,7 @@ cp /var/lib/redis/dump.rdb /backups/redis_$DATE.rdb
 ### Vertical Scaling
 
 Recommended resources:
+
 - **Application**: 2-4 vCPU, 4-8 GB RAM
 - **Database**: 4 vCPU, 8-16 GB RAM, SSD storage
 - **Redis**: 2 vCPU, 4 GB RAM
@@ -330,6 +333,7 @@ See [Performance Tuning Guide](../operations/PERFORMANCE.md) for detailed optimi
 ## Support
 
 For deployment issues:
+
 - Check [Troubleshooting Guide](#troubleshooting)
 - Review application logs
 - Open an issue on [GitHub](https://github.com/yegamble/athena/issues)

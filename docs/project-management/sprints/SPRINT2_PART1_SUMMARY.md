@@ -154,12 +154,14 @@ Sprint 2 Part 1 focused on writing comprehensive tests BEFORE implementation for
 ### Observability Features Tested
 
 **Structured Logging (slog):**
+
 - ✅ JSON format for production
 - ✅ Request ID, user ID, video ID in all logs
 - ✅ Security redaction (passwords, tokens)
 - ✅ Error logging with details
 
 **Prometheus Metrics:**
+
 - ✅ HTTP: requests, latency, request/response size
 - ✅ Database: connection pool, query duration
 - ✅ IPFS: pin duration, gateway requests
@@ -168,6 +170,7 @@ Sprint 2 Part 1 focused on writing comprehensive tests BEFORE implementation for
 - ✅ Video Processing: encoding duration, queue depth
 
 **OpenTelemetry Tracing:**
+
 - ✅ OTLP HTTP exporter
 - ✅ Span creation with attributes
 - ✅ W3C Trace Context propagation
@@ -257,6 +260,7 @@ Sprint 2 Part 1 focused on writing comprehensive tests BEFORE implementation for
 ### Current State: TDD RED Phase ✅
 
 **All tests are FAILING** - This is the expected state in Test-Driven Development:
+
 - ✅ Tests written BEFORE implementation
 - ✅ Tests define expected behavior
 - ✅ Implementation will make tests pass (GREEN phase)
@@ -267,6 +271,7 @@ Sprint 2 Part 1 focused on writing comprehensive tests BEFORE implementation for
 ## Next Steps: Sprint 2 Part 2 (Implementation)
 
 ### IOTA Payments Implementation (~6-8 hours)
+
 - Create database migration
 - Implement IOTA client
 - Implement payment service
@@ -275,6 +280,7 @@ Sprint 2 Part 1 focused on writing comprehensive tests BEFORE implementation for
 - Make all 100+ tests pass
 
 ### Video Federation Implementation (~4-6 hours)
+
 - Implement BuildVideoObject()
 - Implement BuildNoteObject()
 - Implement PublishVideo()
@@ -283,6 +289,7 @@ Sprint 2 Part 1 focused on writing comprehensive tests BEFORE implementation for
 - Make all 69+ tests pass
 
 ### Observability Implementation (~4-6 hours)
+
 - Implement slog logger
 - Implement Prometheus collectors
 - Implement OpenTelemetry tracer
@@ -291,6 +298,7 @@ Sprint 2 Part 1 focused on writing comprehensive tests BEFORE implementation for
 - Make all 81 tests pass
 
 ### Integration Testing (~2-3 hours)
+
 - End-to-end IOTA payment flow
 - End-to-end federation flow
 - Observability validation
@@ -332,16 +340,19 @@ Sprint 2 Part 1 focused on writing comprehensive tests BEFORE implementation for
 ## Risk Assessment
 
 ### Low Risk ✅
+
 - Go-Atlas configuration (already implemented and working)
 - Test infrastructure (comprehensive test coverage)
 - Documentation (extensive guides written)
 
 ### Medium Risk ⚠️
+
 - IOTA node availability (mitigation: use testnet, mock for tests)
 - OpenTelemetry backend (mitigation: optional, Jaeger for dev)
 - Performance overhead (mitigation: benchmarks show <5ms)
 
 ### Mitigated ✅
+
 - Test flakiness (all external calls mocked)
 - Breaking changes (comprehensive test suite)
 - Security vulnerabilities (security-focused testing)
@@ -351,6 +362,7 @@ Sprint 2 Part 1 focused on writing comprehensive tests BEFORE implementation for
 ## Success Criteria
 
 **Sprint 2 Part 1:** ✅ ACHIEVED
+
 - [x] 250+ tests written
 - [x] All critical features have test coverage
 - [x] Security features tested
@@ -359,6 +371,7 @@ Sprint 2 Part 1 focused on writing comprehensive tests BEFORE implementation for
 - [x] Go-Atlas configured
 
 **Sprint 2 Part 2 Goals:**
+
 - [ ] All 250+ tests passing (GREEN phase)
 - [ ] IOTA payments functional
 - [ ] Videos federating to Mastodon/PeerTube

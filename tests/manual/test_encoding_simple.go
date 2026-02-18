@@ -16,7 +16,6 @@ import (
 )
 
 func main() {
-	// Generate 360p test video
 	spec := testutil.TestVideoSpec{
 		Name:       "360p",
 		Width:      640,
@@ -28,27 +27,22 @@ func main() {
 		log.Fatalf("Failed to generate test video: %v", err)
 	}
 
-	// Create a temp directory for output
 	tempDir := "/tmp/encoding_test_" + uuid.NewString()
 	if err := os.MkdirAll(tempDir, 0750); err != nil {
 		log.Fatalf("Failed to create temp dir: %v", err)
 	}
 	defer func() { _ = os.RemoveAll(tempDir) }()
 
-	// Setup mock repositories
 	encodingRepo := &mockEncodingRepository{jobs: make(map[string]*domain.EncodingJob)}
 	videoRepo := &mockVideoRepository{videos: make(map[string]*domain.Video)}
 
-	// Setup config
 	cfg := &config.Config{
 		FFMPEGPath:         "/opt/homebrew/bin/ffmpeg",
 		HLSSegmentDuration: 4,
 	}
 
-	// Create encoding service (pass nil for notification service and IPFS client in test)
 	service := ucenc.NewService(encodingRepo, videoRepo, nil, tempDir, cfg, nil, nil, nil)
 
-	// Get video metadata
 	metadata, err := testutil.GetVideoMetadata(videoPath)
 	if err != nil {
 		log.Fatalf("Failed to get metadata: %v", err)
@@ -57,26 +51,23 @@ func main() {
 	fmt.Printf("Source video: %dx%d, codec: %s, duration: %.2f fps\n",
 		metadata.Width, metadata.Height, metadata.VideoCodec, metadata.Framerate)
 
-	// Create encoding job
 	videoID := uuid.NewString()
 	job := &domain.EncodingJob{
 		ID:                uuid.NewString(),
 		VideoID:           videoID,
 		SourceFilePath:    videoPath,
 		SourceResolution:  "360p",
-		TargetResolutions: []string{"360p", "240p"}, // Keep it simple
+		TargetResolutions: []string{"360p", "240p"},
 		Status:            domain.EncodingStatusPending,
 		Progress:          0,
 		CreatedAt:         time.Now(),
 		UpdatedAt:         time.Now(),
 	}
 
-	// Add job to repository first
 	if err := encodingRepo.CreateJob(context.Background(), job); err != nil {
 		log.Fatalf("Failed to create job: %v", err)
 	}
 
-	// Process encoding
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
@@ -96,16 +87,13 @@ func main() {
 
 	fmt.Printf("Encoding completed successfully in %v\n", elapsed)
 
-	// Verify outputs
 	fmt.Printf("Checking outputs in %s\n", tempDir)
 
-	// Check directories exist
 	hlsDir := fmt.Sprintf("%s/streaming-playlists/hls/%s", tempDir, videoID)
 	if _, err := os.Stat(hlsDir); err != nil {
 		log.Fatalf("HLS directory not created: %v", err)
 	}
 
-	// Check master playlist
 	masterPlaylist := fmt.Sprintf("%s/master.m3u8", hlsDir)
 	if _, err := os.Stat(masterPlaylist); err != nil {
 		log.Fatalf("Master playlist not created: %v", err)
@@ -113,7 +101,6 @@ func main() {
 
 	fmt.Printf("✅ Master playlist created: %s\n", masterPlaylist)
 
-	// Check resolution directories and playlists
 	for _, res := range []string{"360p", "240p"} {
 		height, _ := domain.HeightForResolution(res)
 		resDir := fmt.Sprintf("%s/%dp", hlsDir, height)
@@ -130,7 +117,6 @@ func main() {
 		fmt.Printf("✅ %s encoding created: %s\n", res, playlist)
 	}
 
-	// Check thumbnail and preview (note the filename format from storage paths)
 	thumbnailPath := fmt.Sprintf("%s/thumbnails/%s_thumb.jpg", tempDir, videoID)
 	if _, err := os.Stat(thumbnailPath); err != nil {
 		log.Fatalf("Thumbnail not created: %v", err)
@@ -146,7 +132,6 @@ func main() {
 	fmt.Println("\n🎉 All encoding outputs verified successfully!")
 }
 
-// Mock implementations
 type mockEncodingRepository struct {
 	jobs map[string]*domain.EncodingJob
 }
@@ -343,7 +328,6 @@ func (r *mockVideoRepository) Count(ctx context.Context) (int64, error) {
 }
 
 func (r *mockVideoRepository) GetByRemoteURI(ctx context.Context, remoteURI string) (*domain.Video, error) {
-	// Search for video by remote URI - not used in this test
 	return nil, nil
 }
 
@@ -356,7 +340,10 @@ func (r *mockVideoRepository) GetByIDs(ctx context.Context, ids []string) ([]*do
 	return nil, nil
 }
 
+func (r *mockVideoRepository) GetByChannelID(ctx context.Context, channelID string, limit, offset int) ([]*domain.Video, int64, error) {
+	return nil, 0, nil
+}
+
 func (r *mockVideoRepository) GetVideosForMigration(ctx context.Context, limit int) ([]*domain.Video, error) {
-	// Return empty list for mock - not used in this test
 	return []*domain.Video{}, nil
 }

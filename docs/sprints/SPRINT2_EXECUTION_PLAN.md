@@ -1,4 +1,5 @@
 # Sprint 2 Execution Plan
+
 **Sprint Duration:** 22-28 hours (3-4 days with 7 agents)
 **Sprint Goal:** Implement IOTA payments, complete ActivityPub video federation, establish observability, and configure Go-Atlas
 **Sprint Priority:** **CRITICAL** - Addresses core feature gaps and operational visibility
@@ -13,6 +14,7 @@
 4. **Go-Atlas Configuration** (2-3 hours) - Professional migration management
 
 **Success Criteria:**
+
 - ✅ IOTA wallet creation, payment processing, and transaction verification working
 - ✅ Videos federate to Mastodon/PeerTube on upload completion
 - ✅ Structured logging across all modules with request IDs
@@ -65,13 +67,16 @@ Implement IOTA payment integration for creator monetization, video purchases, an
 ### Tasks
 
 #### Task 1.1: Database Schema (1 hour)
+
 **Assignee:** Decentralized Systems Security Expert
 **Deliverable:** Migration file + domain models
 
 **Files to Create:**
+
 - `/home/user/athena/migrations/058_create_iota_payments_tables.sql`
 
 **Schema:**
+
 ```sql
 -- User wallets (one per user, HD derivation path)
 CREATE TABLE iota_wallets (
@@ -132,6 +137,7 @@ CREATE INDEX idx_iota_payment_intents_payment_address ON iota_payment_intents(pa
 ```
 
 **Domain Models:** `/home/user/athena/internal/domain/iota.go`
+
 ```go
 package domain
 
@@ -184,6 +190,7 @@ type IOTAPaymentIntent struct {
 ```
 
 **Acceptance Criteria:**
+
 - ✅ Migration applies cleanly with `atlas migrate apply`
 - ✅ All indexes created for query optimization
 - ✅ Foreign keys cascade properly
@@ -192,6 +199,7 @@ type IOTAPaymentIntent struct {
 ---
 
 #### Task 1.2: IOTA Client & Wallet Service (4-5 hours)
+
 **Assignee:** Decentralized Systems Security Expert
 **Reviewers:** Go Backend Reviewer (architecture), Golang Test Guardian (tests)
 
@@ -205,6 +213,7 @@ type IOTAPaymentIntent struct {
 6. `/home/user/athena/internal/usecase/payments/iota_service.go` - Business logic
 
 **IOTA Client:** `/home/user/athena/internal/iota/client.go`
+
 ```go
 package iota
 
@@ -252,6 +261,7 @@ func (c *Client) GetOutputsByAddress(ctx context.Context, address string) ([]iot
 ```
 
 **Wallet Service:** `/home/user/athena/internal/iota/wallet.go`
+
 ```go
 package iota
 
@@ -288,6 +298,7 @@ func BuildTransaction(inputs []iotago.Output, outputs []iotago.Output, privateKe
 ```
 
 **Encryption:** `/home/user/athena/internal/crypto/aes.go`
+
 ```go
 package crypto
 
@@ -350,6 +361,7 @@ func DecryptAES256GCM(ciphertext string, key []byte) ([]byte, error) {
 ```
 
 **Payment Service:** `/home/user/athena/internal/usecase/payments/iota_service.go`
+
 ```go
 package payments
 
@@ -403,6 +415,7 @@ func (s *IOTAService) SyncWallet(ctx context.Context, walletID string) error {
 ```
 
 **Acceptance Criteria:**
+
 - ✅ Wallet seed generated with crypto/rand (secure randomness)
 - ✅ Seed encrypted with AES-256-GCM before database storage
 - ✅ Address derivation follows IOTA standards (Bech32 encoding)
@@ -411,6 +424,7 @@ func (s *IOTAService) SyncWallet(ctx context.Context, walletID string) error {
 - ✅ Test coverage: 80%+ (unit tests with mocked IOTA client)
 
 **Security Requirements:**
+
 - ✅ Seed NEVER logged or exposed in API responses
 - ✅ AES key loaded from environment (IOTA_ENCRYPTION_KEY), never hardcoded
 - ✅ Rate limit wallet creation (max 1 per user)
@@ -419,13 +433,16 @@ func (s *IOTAService) SyncWallet(ctx context.Context, walletID string) error {
 ---
 
 #### Task 1.3: Background Payment Worker (2-3 hours)
+
 **Assignee:** Decentralized Systems Security Expert
 **Reviewers:** Infra Solutions Engineer (worker patterns)
 
 **Files to Create:**
+
 - `/home/user/athena/internal/worker/iota_payment_worker.go`
 
 **Implementation:**
+
 ```go
 package worker
 
@@ -483,6 +500,7 @@ func (w *IOTAPaymentWorker) Stop() {
 ```
 
 **Acceptance Criteria:**
+
 - ✅ Worker polls every 30 seconds (configurable via env)
 - ✅ Graceful shutdown on context cancellation
 - ✅ Expired intents marked as 'expired' after 1 hour
@@ -492,10 +510,12 @@ func (w *IOTAPaymentWorker) Stop() {
 ---
 
 #### Task 1.4: HTTP API Handlers (1-2 hours)
+
 **Assignee:** API Edge Tester
 **Reviewers:** Go Backend Reviewer
 
 **Files to Create:**
+
 - `/home/user/athena/internal/httpapi/handlers/payments/iota_handlers.go`
 - `/home/user/athena/internal/httpapi/handlers/payments/iota_handlers_test.go`
 
@@ -508,6 +528,7 @@ func (w *IOTAPaymentWorker) Stop() {
 5. **GET /api/v1/payments/transactions** - List user's transaction history
 
 **Example Handler:**
+
 ```go
 // POST /api/v1/payments/intent
 func (h *PaymentHandler) CreatePaymentIntent(w http.ResponseWriter, r *http.Request) {
@@ -534,6 +555,7 @@ func (h *PaymentHandler) CreatePaymentIntent(w http.ResponseWriter, r *http.Requ
 ```
 
 **Acceptance Criteria:**
+
 - ✅ All endpoints require authentication (JWT middleware)
 - ✅ Input validation with go-playground/validator
 - ✅ Consistent error responses (JSON problem details)
@@ -542,14 +564,17 @@ func (h *PaymentHandler) CreatePaymentIntent(w http.ResponseWriter, r *http.Requ
 ---
 
 #### Task 1.5: Integration Tests (1-2 hours)
+
 **Assignee:** Golang Test Guardian
 
 **Files to Create:**
+
 - `/home/user/athena/internal/usecase/payments/iota_service_test.go`
 - `/home/user/athena/internal/iota/client_test.go`
 - `/home/user/athena/internal/httpapi/handlers/payments/iota_integration_test.go`
 
 **Test Scenarios:**
+
 1. ✅ Wallet creation generates unique seed per user
 2. ✅ Address derivation is deterministic (same seed+index → same address)
 3. ✅ Payment intent creation increments address index
@@ -559,6 +584,7 @@ func (h *PaymentHandler) CreatePaymentIntent(w http.ResponseWriter, r *http.Requ
 7. ✅ Seed encryption/decryption roundtrip
 
 **Acceptance Criteria:**
+
 - ✅ All tests pass without external IOTA node (use mock client)
 - ✅ Test coverage: 80%+
 - ✅ No flaky tests (deterministic seed generation in tests)
@@ -571,12 +597,14 @@ func (h *PaymentHandler) CreatePaymentIntent(w http.ResponseWriter, r *http.Requ
 **Files Created:** 11 files
 **Tests Added:** ~45 tests
 **Metrics:**
+
 - `iota_wallets_created_total`
 - `iota_payments_confirmed_total`
 - `iota_payments_pending_count`
 - `iota_payment_worker_poll_duration_seconds`
 
 **Dependencies Added:**
+
 ```bash
 go get github.com/iotaledger/iota.go/v3
 go get github.com/iotaledger/iota.go/v3/nodeclient
@@ -606,13 +634,16 @@ Complete ActivityPub video federation by implementing VideoObject creation and C
 ### Tasks
 
 #### Task 2.1: VideoObject Builder (2 hours)
+
 **Assignee:** Federation Protocol Auditor
 
 **Files to Modify:**
+
 - `/home/user/athena/internal/usecase/activitypub/service.go` (add methods)
 - `/home/user/athena/internal/usecase/activitypub/video.go` (new file)
 
 **Implementation:** `/home/user/athena/internal/usecase/activitypub/video.go`
+
 ```go
 package activitypub
 
@@ -730,6 +761,7 @@ func truncate(s string, maxLen int) string {
 ```
 
 **Acceptance Criteria:**
+
 - ✅ VideoObject includes all required ActivityPub fields
 - ✅ PeerTube context added for compatibility
 - ✅ HLS variants mapped to APUrl array
@@ -742,14 +774,17 @@ func truncate(s string, maxLen int) string {
 ---
 
 #### Task 2.2: Create Activity Delivery (2-3 hours)
+
 **Assignee:** Federation Protocol Auditor
 **Reviewers:** Go Backend Reviewer
 
 **Files to Modify:**
+
 - `/home/user/athena/internal/usecase/activitypub/service.go` (add PublishVideo method)
 - `/home/user/athena/internal/usecase/encoding/service.go` (integrate PublishVideo call)
 
 **Implementation:** Add to `/home/user/athena/internal/usecase/activitypub/service.go`
+
 ```go
 // PublishVideo creates and delivers a Create activity for a video
 func (s *Service) PublishVideo(ctx context.Context, videoID string) error {
@@ -850,6 +885,7 @@ func (s *Service) enqueueDelivery(ctx context.Context, activityID, inboxURL, act
 ```
 
 **Integration:** Modify `/home/user/athena/internal/usecase/encoding/service.go`
+
 ```go
 // After video processing completes successfully
 if video.ProcessingStatus == "completed" {
@@ -869,6 +905,7 @@ if video.ProcessingStatus == "completed" {
 ```
 
 **Acceptance Criteria:**
+
 - ✅ Create activity generated on video processing completion
 - ✅ Only public videos federated (privacy='public')
 - ✅ Activity stored in `ap_activities` table
@@ -880,15 +917,19 @@ if video.ProcessingStatus == "completed" {
 ---
 
 #### Task 2.3: Comment Federation (1-2 hours)
+
 **Assignee:** Federation Protocol Auditor
 
 **Files to Create:**
+
 - `/home/user/athena/internal/usecase/activitypub/comment.go`
 
 **Files to Modify:**
+
 - `/home/user/athena/internal/usecase/comment/service.go` (trigger federation on comment creation)
 
 **Implementation:**
+
 ```go
 package activitypub
 
@@ -964,6 +1005,7 @@ func (s *Service) PublishComment(ctx context.Context, commentID string) error {
 ```
 
 **Acceptance Criteria:**
+
 - ✅ Comments federated as Note objects
 - ✅ inReplyTo points to video URI
 - ✅ Delivered to author's followers
@@ -972,13 +1014,16 @@ func (s *Service) PublishComment(ctx context.Context, commentID string) error {
 ---
 
 #### Task 2.4: Federation Integration Tests (1-2 hours)
+
 **Assignee:** Golang Test Guardian
 
 **Files to Create:**
+
 - `/home/user/athena/internal/usecase/activitypub/video_test.go`
 - `/home/user/athena/internal/usecase/activitypub/comment_test.go`
 
 **Test Scenarios:**
+
 1. ✅ BuildVideoObject includes all required fields
 2. ✅ PublishVideo creates activity and enqueues deliveries
 3. ✅ Private videos not federated
@@ -988,6 +1033,7 @@ func (s *Service) PublishComment(ctx context.Context, commentID string) error {
 7. ✅ Comment inReplyTo points to correct video
 
 **Acceptance Criteria:**
+
 - ✅ Test coverage: 85%+
 - ✅ No external network calls (mock HTTP client)
 - ✅ All tests pass in CI
@@ -1000,6 +1046,7 @@ func (s *Service) PublishComment(ctx context.Context, commentID string) error {
 **Files Created/Modified:** 7 files
 **Tests Added:** ~30 tests
 **Federation Coverage:**
+
 - ✅ Videos federate on upload completion
 - ✅ Comments federate on creation
 - ✅ Public videos visible on Mastodon/PeerTube
@@ -1027,13 +1074,16 @@ Implement production-grade observability with structured logging (slog), expande
 ### Tasks
 
 #### Task 3.1: Structured Logging with slog (2-3 hours)
+
 **Assignee:** Infra Solutions Engineer
 
 **Files to Create:**
+
 - `/home/user/athena/internal/obs/logger.go` - Centralized logger factory
 - `/home/user/athena/internal/obs/context.go` - Request-scoped logging
 
 **Implementation:** `/home/user/athena/internal/obs/logger.go`
+
 ```go
 package obs
 
@@ -1101,6 +1151,7 @@ func WithFields(fields ...any) *slog.Logger {
 ```
 
 **Context Integration:** `/home/user/athena/internal/obs/context.go`
+
 ```go
 package obs
 
@@ -1128,6 +1179,7 @@ func LoggerFromContext(ctx context.Context) *slog.Logger {
 ```
 
 **Middleware Integration:** Add to `/home/user/athena/internal/middleware/logging.go`
+
 ```go
 package middleware
 
@@ -1167,6 +1219,7 @@ func RequestLogger(next http.Handler) http.Handler {
 ```
 
 **Acceptance Criteria:**
+
 - ✅ All logs use slog (no log.Printf)
 - ✅ JSON format in production (LOG_FORMAT=json)
 - ✅ Request ID included in all request-scoped logs
@@ -1176,12 +1229,15 @@ func RequestLogger(next http.Handler) http.Handler {
 ---
 
 #### Task 3.2: Expanded Prometheus Metrics (2 hours)
+
 **Assignee:** Infra Solutions Engineer
 
 **Files to Modify:**
+
 - `/home/user/athena/internal/metrics/metrics.go` (expand metrics)
 
 **New Metrics to Add:**
+
 ```go
 package metrics
 
@@ -1264,6 +1320,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 ```
 
 **Acceptance Criteria:**
+
 - ✅ All critical paths instrumented (HTTP, DB, IPFS, IOTA)
 - ✅ Metrics follow Prometheus naming conventions
 - ✅ Histograms for durations (future: use prometheus/client_golang)
@@ -1272,13 +1329,16 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 ---
 
 #### Task 3.3: OpenTelemetry Distributed Tracing (2-3 hours)
+
 **Assignee:** Infra Solutions Engineer
 
 **Files to Create:**
+
 - `/home/user/athena/internal/obs/tracing.go` - Tracer initialization
 - `/home/user/athena/internal/middleware/tracing.go` - HTTP trace middleware
 
 **Dependencies:**
+
 ```bash
 go get go.opentelemetry.io/otel
 go get go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp
@@ -1287,6 +1347,7 @@ go get go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp
 ```
 
 **Implementation:** `/home/user/athena/internal/obs/tracing.go`
+
 ```go
 package obs
 
@@ -1338,6 +1399,7 @@ func Tracer() trace.Tracer {
 ```
 
 **Middleware:** `/home/user/athena/internal/middleware/tracing.go`
+
 ```go
 package middleware
 
@@ -1357,6 +1419,7 @@ func Tracing(next http.Handler) http.Handler {
 ```
 
 **Usage in Services:**
+
 ```go
 // Example: Trace video processing
 ctx, span := obs.Tracer().Start(ctx, "encode_video")
@@ -1374,6 +1437,7 @@ if err := encodeVideo(ctx, videoID); err != nil {
 ```
 
 **Acceptance Criteria:**
+
 - ✅ Traces exported to OTLP endpoint (Jaeger, Tempo)
 - ✅ End-to-end trace for video upload → processing → federation
 - ✅ Trace context propagated across service boundaries
@@ -1387,6 +1451,7 @@ if err := encodeVideo(ctx, videoID); err != nil {
 **Total Effort:** 6-8 hours
 **Files Created/Modified:** 8 files
 **Observability Coverage:**
+
 - ✅ Structured logging with slog (JSON format)
 - ✅ Request IDs in all logs
 - ✅ 30+ Prometheus metrics
@@ -1408,13 +1473,16 @@ Replace shell script-based migrations with Go-Atlas for professional schema mana
 ### Tasks
 
 #### Task 4.1: Atlas Configuration (1 hour)
+
 **Assignee:** Infra Solutions Engineer
 
 **Files to Create:**
+
 - `/home/user/athena/atlas.hcl` - Atlas configuration
 - `/home/user/athena/schema.hcl` - Declarative schema (optional, keep SQL migrations)
 
 **Implementation:** `/home/user/athena/atlas.hcl`
+
 ```hcl
 env "local" {
   src = "file://migrations"
@@ -1471,6 +1539,7 @@ env "production" {
 ```
 
 **Acceptance Criteria:**
+
 - ✅ Atlas config supports local, dev, production envs
 - ✅ Shadow DB for production migration testing
 - ✅ Lint checks prevent destructive changes
@@ -1479,12 +1548,15 @@ env "production" {
 ---
 
 #### Task 4.2: CI/CD Integration (1 hour)
+
 **Assignee:** Infra Solutions Engineer
 
 **Files to Create:**
+
 - `.github/workflows/atlas-lint.yml`
 
 **GitHub Actions Workflow:**
+
 ```yaml
 name: Atlas Migration Lint
 
@@ -1532,6 +1604,7 @@ jobs:
 ```
 
 **Acceptance Criteria:**
+
 - ✅ PR checks lint migrations before merge
 - ✅ Destructive changes blocked
 - ✅ Migration plan validated
@@ -1540,12 +1613,15 @@ jobs:
 ---
 
 #### Task 4.3: Documentation (30 min)
+
 **Assignee:** Infra Solutions Engineer
 
 **Files to Create:**
+
 - `/home/user/athena/docs/migrations.md`
 
 **Content:**
+
 ```markdown
 # Database Migrations with Atlas
 
@@ -1583,6 +1659,7 @@ atlas migrate apply \
 ```
 
 **Acceptance Criteria:**
+
 - ✅ Clear instructions for developers
 - ✅ Examples for common tasks
 - ✅ Production workflow documented
@@ -1594,6 +1671,7 @@ atlas migrate apply \
 **Total Effort:** 2-3 hours
 **Files Created:** 4 files
 **Benefits:**
+
 - ✅ Professional migration management
 - ✅ Automated lint checks in CI
 - ✅ Shadow DB testing for production
@@ -1643,11 +1721,13 @@ graph TD
 
 **Critical Path:** IOTA Schema → Client → Service (8 hours)
 **Parallel Tracks:**
+
 - ActivityPub (6 hours)
 - Observability (6 hours)
 - Atlas (2 hours)
 
 **Resource Allocation:**
+
 - Decentralized Systems Security Expert: IOTA (full sprint)
 - Federation Protocol Auditor: ActivityPub (full sprint)
 - Infra Solutions Engineer: Observability + Atlas (full sprint)
@@ -1663,6 +1743,7 @@ graph TD
 ### Sprint 2 Completion Criteria
 
 **Must Have (Blocking):**
+
 - ✅ IOTA wallet creation working
 - ✅ IOTA payment detection working
 - ✅ Videos federate to ActivityPub on upload
@@ -1673,12 +1754,14 @@ graph TD
 - ✅ Test coverage: 80%+
 
 **Should Have (Non-Blocking):**
+
 - ✅ IOTA payment worker deployed
 - ✅ Comment federation working
 - ✅ OpenTelemetry tracing configured
 - ✅ Atlas CI checks enabled
 
 **Nice to Have (Sprint 3):**
+
 - ⏭️ IOTA withdrawal functionality
 - ⏭️ Video Update activities (federation)
 - ⏭️ Video Delete activities (federation)
@@ -1710,23 +1793,27 @@ graph TD
 ### Sprint 2 KPIs
 
 **Feature Completeness:**
+
 - ✅ IOTA payments: 100% (wallet, payment, detection)
 - ✅ ActivityPub video federation: 100% (Create activity)
 - ✅ Observability: 90% (logging, metrics, tracing)
 - ✅ Atlas: 100% (config, CI, docs)
 
 **Test Coverage:**
+
 - Target: 80% overall
 - IOTA: 80%+
 - ActivityPub: 85%+
 - Observability: 70%+
 
 **Build Health:**
+
 - ✅ All builds passing
 - ✅ Zero critical lint errors
 - ✅ Migration lint passing
 
 **Integration:**
+
 - ✅ Videos appear on Mastodon/PeerTube
 - ✅ IOTA payments confirmed on testnet
 - ✅ Traces visible in Jaeger
@@ -1736,24 +1823,28 @@ graph TD
 ## Sprint 2 Execution Timeline
 
 **Day 1 (8 hours):**
+
 - IOTA schema + domain models (1h)
 - IOTA client + wallet (4h)
 - VideoObject builder (2h)
 - Atlas configuration (1h)
 
 **Day 2 (8 hours):**
+
 - IOTA service (3h)
 - Create activity delivery (2h)
 - Structured logging (2h)
 - Atlas CI integration (1h)
 
 **Day 3 (8 hours):**
+
 - IOTA payment worker (2h)
 - IOTA HTTP API (2h)
 - Comment federation (2h)
 - Metrics expansion (2h)
 
 **Day 4 (6 hours):**
+
 - OpenTelemetry tracing (3h)
 - Integration tests (2h)
 - Documentation (1h)
@@ -1774,6 +1865,7 @@ graph TD
 ### Sprint 3 Planning (Preview)
 
 **Potential Sprint 3 Objectives:**
+
 1. **IPFS Pinning Strategy** (4-6 hours) - Scoring algorithm, auto-unpin
 2. **Storage Tier Management** (4-6 hours) - Promotion/demotion logic
 3. **IOTA Withdrawals** (3-4 hours) - Creator payouts

@@ -36,6 +36,7 @@ type Server struct {
 	ipfsClusterAPI      string
 	ipfsPingTimeout     time.Duration
 	cfg                 *config.Config
+	db                  *sql.DB
 }
 
 func NewServer(userRepo usecase.UserRepository, authRepo usecase.AuthRepository, jwtSecret string, redisClient *redis.Client, redisPingTimeout time.Duration, ipfsAPI string, ipfsClusterAPI string, ipfsPingTimeout time.Duration, cfg *config.Config) *Server {
@@ -65,6 +66,10 @@ func (s *Server) SetVerificationService(service *usecase.EmailVerificationServic
 
 func (s *Server) SetTwoFAService(service *usecase.TwoFAService) {
 	s.twoFAService = service
+}
+
+func (s *Server) SetDB(db *sql.DB) {
+	s.db = db
 }
 
 func (s *Server) Login(w http.ResponseWriter, r *http.Request) {
@@ -386,6 +391,14 @@ func (s *Server) HealthCheck(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) ReadinessCheck(w http.ResponseWriter, r *http.Request) {
 	dbStatus := generated.ReadinessResponseChecksDatabaseHealthy
+	if s.db != nil {
+		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+		defer cancel()
+		if err := s.db.PingContext(ctx); err != nil {
+			dbStatus = generated.ReadinessResponseChecksDatabaseUnhealthy
+		}
+	}
+
 	ipfsStatus := generated.ReadinessResponseChecksIpfsHealthy
 	redisStatus := generated.ReadinessResponseChecksRedisHealthy
 	if s.redis != nil {
@@ -408,11 +421,11 @@ func (s *Server) ReadinessCheck(w http.ResponseWriter, r *http.Request) {
 		client := &http.Client{Timeout: to}
 		req, _ := http.NewRequestWithContext(r.Context(), http.MethodGet, s.ipfsAPI+"/api/v0/version", nil)
 		resp, err := client.Do(req)
-		if err != nil || resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			ipfsStatus = generated.ReadinessResponseChecksIpfsUnhealthy
-		}
 		if resp != nil && resp.Body != nil {
-			_ = resp.Body.Close()
+			defer resp.Body.Close()
+		}
+		if err != nil || resp == nil || resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			ipfsStatus = generated.ReadinessResponseChecksIpfsUnhealthy
 		}
 	}
 

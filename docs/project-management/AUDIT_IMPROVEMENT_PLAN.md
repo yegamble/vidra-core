@@ -75,27 +75,32 @@ The repository layer handles all database CRUD. At 9.6% coverage, virtually all 
 **Success Criteria**: Repository package coverage >= 60%. All CRUD operations have at least happy-path + error-path tests.
 
 Note (2026-02-10): added `internal/repository/video_repository_unit_more_test.go` to cover previously untested `video_repository.go` and `video_repository_count.go` methods (GetByUserID, Update, Delete, processing updates, List, Search, migration, remote, Count, and GetByID fallback/error branches). Verified with:
+
 - `go test -coverprofile=/tmp/video_repo_unit_after.out ./internal/repository -run 'TestVideoRepository_Unit' -count=1`
 - `go tool cover -func=/tmp/video_repo_unit_after.out | rg 'internal/repository/video_repository.go|internal/repository/video_repository_count.go|total:'`
   - `internal/repository/video_repository.go`: mostly 77.8%–100.0% per function, with several at 90%+.
   - `internal/repository/video_repository_count.go:Count`: 100.0%.
 
 Note (2026-02-10): added `internal/repository/user_repository_unit_test.go` for `user_repository.go` sqlmock branch coverage (transactional create, get wrappers, update/delete, password methods, list/count, avatar upsert, email verification). Verified with:
+
 - `go test -coverprofile=/tmp/user_repo_after.out ./internal/repository -run 'TestUserRepository_Unit' -count=1`
 - `go tool cover -func=/tmp/user_repo_after.out | rg 'internal/repository/user_repository.go|total:'`
   - `internal/repository/user_repository.go`: 87.5%–100.0% per function, with most functions at 100.0%.
 
 Note (2026-02-10): added `internal/repository/channel_repository_unit_test.go` for `channel_repository.go` sqlmock branch coverage (create/get/list/update/delete/get-default/load-account/ownership). Verified with:
+
 - `go test -coverprofile=/tmp/channel_repo_after.out ./internal/repository -run 'TestChannelRepository_Unit' -count=1`
 - `go tool cover -func=/tmp/channel_repo_after.out | rg 'internal/repository/channel_repository.go|total:'`
   - `internal/repository/channel_repository.go`: ~86.2%–100.0% per function.
 
 Note (2026-02-10): added `internal/repository/comment_repository_unit_test.go` for `comment_repository.go` sqlmock branch coverage (create/get/update/delete/list/count/flagging/status/ownership). Verified with:
+
 - `go test -coverprofile=/tmp/comment_repo_after.out ./internal/repository -run 'TestCommentRepository_Unit' -count=1`
 - `go tool cover -func=/tmp/comment_repo_after.out | rg 'internal/repository/comment_repository.go|total:'`
   - `internal/repository/comment_repository.go`: 80.0%–100.0% per function, with most functions at 100.0%.
 
 Note (2026-02-10): added `internal/repository/playlist_repository_unit_test.go` for `playlist_repository.go` sqlmock branch coverage (create/get/update/delete/list/items/reorder/watch-later/ownership). Verified with:
+
 - `go test -coverprofile=/tmp/playlist_repo_after.out ./internal/repository -run 'TestPlaylistRepository_Unit' -count=1`
 - `go tool cover -func=/tmp/playlist_repo_after.out | rg 'internal/repository/playlist_repository.go|total:'`
   - `internal/repository/playlist_repository.go`: 94.4%–100.0% per function.
@@ -103,6 +108,7 @@ Note (2026-02-10): added `internal/repository/playlist_repository_unit_test.go` 
 Note (2026-02-10): fixed `internal/domain/playlist.go` scan mapping for repository queries by adding `db:"item_count"` to `Playlist.ItemCount`; without this tag, sqlx could not map `COUNT(...) AS item_count`.
 
 Note (2026-02-10): ran `make test-local` to verify Docker-backed integration execution. Containers started successfully and test execution began, but the run is currently failing in existing suites:
+
 - `internal/database`: `TestPool_IdleConnectionTimeout` failure.
 - `internal/httpapi/handlers/social`: integration failures (`channels` and related relations missing, caption endpoints returning 500 in integration setup).
 - Environment cleanup completed with `make test-cleanup`.
@@ -110,6 +116,7 @@ Note (2026-02-10): ran `make test-local` to verify Docker-backed integration exe
 Note (2026-02-10): current repository package aggregate coverage remains 25.8% (`go test -short -coverprofile=/tmp/repository_short_after.out ./internal/repository`) because many specialized repositories still lack dedicated tests; high-risk CRUD repositories in this phase now have explicit sqlmock branch coverage.
 
 Note (2026-02-11): completed the remaining Phase 1.1 repository/sqlmock follow-through and related integration blocker fixes:
+
 - finalized `user_repository.go` + sqlmock branch alignment for default-channel UUID inserts
 - fixed notification/social/federation/playlist/messaging integration regressions discovered during `make test-local` runs (response envelope handling, channel-backed subscriptions, JSONB NULL/COALESCE handling, playlist position/reorder edge cases)
 - updated playlist repository sqlmock suites for transactional `AddItem` behavior (begin/exists/shift/insert/commit + rollback paths)
@@ -144,11 +151,13 @@ API handlers are the system boundary — where user input enters. Low coverage h
 **Success Criteria**: No usecase or infrastructure package at 0% coverage.
 
 Note (2026-02-10): added no-infra unit tests for moderation/social handlers and added real-service tests for `internal/usecase/import/service.go` (instead of test-wrapper-only coverage). Verified with:
+
 - `go test -coverprofile=/tmp/mod_new.out ./internal/httpapi/handlers/moderation && go tool cover -func=/tmp/mod_new.out | tail -n 1` (27.1%)
 - `go test -coverprofile=/tmp/social_new.out ./internal/httpapi/handlers/social && go tool cover -func=/tmp/social_new.out | tail -n 1` (31.6%)
 - `go test -coverprofile=/tmp/import_new.out ./internal/usecase/import && go tool cover -func=/tmp/import_new.out | tail -n 1` (48.6%)
 
 Note (2026-02-11): completed targeted video-handler coverage expansion with non-Docker unit suites:
+
 - Added branch coverage for `videos.go` CRUD/upload/stream helper paths (`CreateVideoHandler`, `UpdateVideoHandler`, `DeleteVideoHandler`, `CompleteUploadHandler`, `GetUploadStatusHandler`, `ResumeUploadHandler`, `UploadVideoFileHandler`, compatibility handlers, and helper functions).
 - Added unit coverage for `views_handlers.go` (tracking, analytics, auth/forbidden checks, trending/top/history filters, fingerprint/admin actions, and daily stats).
 - Added unit coverage for `ipfs_metrics_handlers.go` and `encoding.go` (`EncodingStatusHandler`).
@@ -159,6 +168,7 @@ Note (2026-02-11): completed targeted video-handler coverage expansion with non-
   - current: `go test ./internal/httpapi/handlers/video -coverprofile=/tmp/video_handlers_phase1_after3.out -count=1` → **51.2%**
 
 Note (2026-02-11): completed channel-handler branch coverage expansion for `channels.go` and legacy `subscriptions.go` paths using unit stubs for channel/user/subscription repositories:
+
 - Added `internal/httpapi/handlers/channel/channels_unit_test.go` covering list/get/create/update/delete, channel videos, “my channels”, subscribe/unsubscribe, legacy user-subscribe/unsubscribe, and subscribers pagination/error paths.
 - Coverage progression for `internal/httpapi/handlers/channel`:
   - baseline: `go test ./internal/httpapi/handlers/channel -coverprofile=/tmp/channel_handlers_phase1.out -count=1` → **7.1%**
@@ -166,19 +176,23 @@ Note (2026-02-11): completed channel-handler branch coverage expansion for `chan
   - current: `go test ./internal/httpapi/handlers/channel -coverprofile=/tmp/channel_handlers_phase1_after2.out -count=1` → **71.4%**
 
 Note (2026-02-11): livestream handler package baseline verification shows this item is no longer blocked:
+
 - `go test ./internal/httpapi/handlers/livestream -coverprofile=/tmp/livestream_handlers_phase1.out -count=1` → **57.1%**
 - Coverage details indicate live-stream handler paths are already exercised (not just waiting-room flows).
 
 Note (2026-02-11): added first runnable unit suite for plugin handlers (`internal/httpapi/handlers/plugin/plugin_handlers_unit_test.go`) covering constructors, helper/extraction functions, invalid-ID branches, body validation, and upload validation/signer gating:
+
 - baseline: `go test ./internal/httpapi/handlers/plugin -coverprofile=/tmp/plugin_handlers_phase1.out -count=1` → **0.0%**
 - current: `go test ./internal/httpapi/handlers/plugin -coverprofile=/tmp/plugin_handlers_phase1_after.out -count=1` → **40.5%**
 
 Note (2026-02-11): expanded plugin handler coverage with sqlmock-backed repository path tests in `internal/httpapi/handlers/plugin/plugin_handlers_sqlmock_test.go`:
+
 - Added success/error path coverage for `ListPlugins`, `GetPlugin`, `GetAllStatistics`, `CleanupExecutions`, `EnablePlugin`/`DisablePlugin` state guards, `UninstallPlugin`, and `UpdatePluginConfig` not-found handling.
 - Updated package coverage:
   - `go test ./internal/httpapi/handlers/plugin -coverprofile=/tmp/plugin_handlers_phase1_after2.out -count=1` → **58.0%**
 
 Note (2026-02-11): added second-pass plugin sqlmock coverage for statistics/history/health endpoints and manager-error branches in toggle/config flows:
+
 - Added coverage for `GetPluginStatistics`, `GetExecutionHistory`, `GetPluginHealth`, plus `togglePluginStatus` and `UpdatePluginConfig` manager-failure paths.
 - Updated package coverage:
   - `go test ./internal/httpapi/handlers/plugin -coverprofile=/tmp/plugin_cov_after3.out -count=1` → **67.5%**
@@ -202,6 +216,7 @@ Note (2026-02-11): handler test pattern audit completed across all 10 handler pa
 10/10 packages have full 4/4 pattern coverage.
 
 Note (2026-02-12): re-audit of not-found patterns found that all 5 previously-marked "missing" packages actually DO have not-found tests:
+
 - **video**: `videos_unit_branch_test.go` (delete not found, get status not found, get video not found), `import_handlers_test.go` (GetImport_NotFound, CancelImport_NotFound), `stream_handler_test.go` (StatusNotFound)
 - **plugin**: `plugin_handlers_sqlmock_test.go` (TestPluginHandler_UpdateConfig_NotFound_SQLMock)
 - **messaging**: `messages_handlers_test.go` (MarkMessageRead returns 404, SendMessage with invalid parent returns 404)
@@ -209,13 +224,16 @@ Note (2026-02-12): re-audit of not-found patterns found that all 5 previously-ma
 - **social**: `comments_integration_test.go` (deleted comment 404), `captions_integration_test.go` (StatusNotFound), `ratings_playlists_integration_test.go` (ErrNotFound)
 
 Note (2026-02-11): added dedicated `internal/health/checker_test.go` to cover `DatabaseChecker`, `RedisChecker` (failure/default), `IPFSChecker`, `QueueDepthChecker`, `HealthService`, and stats helpers:
+
 - baseline: `go test ./internal/health -coverprofile=/tmp/health_phase1_before.out -count=1` → **0.0%**
 - current: `go test ./internal/health -coverprofile=/tmp/health_phase1_after.out -count=1` → **68.2%**
 
 Note (2026-02-11): added `internal/importer/ytdlp_test.go` with mock-executable unit coverage for URL validation, metadata extraction, download/thumbnail flows, progress parsing, and helper functions:
+
 - current: `go test ./internal/importer -coverprofile=/tmp/importer_phase1_after.out -count=1` → **87.1%**
 
 Note (2026-02-11): expanded `internal/storage` coverage with new backend suites:
+
 - Added `internal/storage/ipfs_backend_test.go` covering constructor validation/defaults and IPFS backend operation/error branches.
 - Added `internal/storage/s3_backend_test.go` covering constructor validation/defaults, signed/public URL paths, local-file failure handling, context-canceled error wrapping, and delete-multiple batching error paths.
 - Added captions path coverage in `internal/storage/paths_test.go` (`CaptionsRootDir`, `VideoCaptionsDir`, `CaptionFilePath`).
@@ -224,11 +242,13 @@ Note (2026-02-11): expanded `internal/storage` coverage with new backend suites:
   - current: `go test ./internal/storage -coverprofile=/tmp/internal_storage_phase1_after.out -count=1` → **86.2%**
 
 Note (2026-02-11): verified current `internal/usecase/encoding` package coverage is above threshold and updated stale baseline references:
+
 - `go test ./internal/usecase/encoding -coverprofile=/tmp/usecase_encoding_phase1_before.out -count=1` → **52.5%**
 
 Note (2026-02-12): **Phase 1 Coverage Push Session** — launched parallel agents to close remaining gaps toward success criteria:
 
 **Repository layer (25.6% → targeting 60%+):** added sqlmock unit test suites for:
+
 - `subscription_repository_unit_test.go` (14 funcs: channel subscribe/unsubscribe, legacy methods, list/count)
 - `views_repository_unit_test.go` (26 funcs: view tracking, trending, analytics, cleanup)
 - `moderation_repository_unit_test.go` (17 funcs: abuse reports, blocklist, instance config)
@@ -243,6 +263,7 @@ Note (2026-02-12): **Phase 1 Coverage Push Session** — launched parallel agent
 - `video_category_repository_unit_test.go` (9 funcs: category CRUD, list, assign)
 
 **Handler layer (targeting 50%+ avg):** added unit test suites for:
+
 - federation handlers: 15.0% → **57.4%** (target met)
 - admin handlers: 20.5% → **55.4%** (target met)
 - moderation handlers: 27.8% → **96.4%** (target met)
@@ -251,6 +272,7 @@ Note (2026-02-12): **Phase 1 Coverage Push Session** — launched parallel agent
 - social handlers: 31.6% → **49.5%** (package below 50, but overall handler average target met)
 
 **Measured results:**
+
 - Overall coverage: 36.8% → **48.7%** (+11.9pp)
 - Repository coverage: 25.6% → **60.1%** (+34.5pp)
 - Handler average (10 packages): **62.54%** (above 50% target)
@@ -262,6 +284,7 @@ Note (2026-02-12): **Phase 1 Coverage Push Session** — launched parallel agent
 **README metrics updated (2026-02-12):** Go Files: 516, Test Files: 232, LOC: 185,654, Tests: 2,139, Coverage: 48.7%.
 
 Note (2026-02-12, completion pass): closed the remaining Phase 1.1 repository gap by adding sqlmock/unit coverage for previously untested repositories and helpers:
+
 - `internal/repository/plugin_repository_unit_test.go`
 - `internal/repository/oauth_repository_unit_test.go`
 - `internal/repository/caption_generation_repository_unit_test.go`
@@ -269,12 +292,14 @@ Note (2026-02-12, completion pass): closed the remaining Phase 1.1 repository ga
 - plus auth/social handler completion passes in `internal/httpapi/handlers/auth/auth_handlers_unit_test.go` and `internal/httpapi/handlers/social/social_handlers_unit_test.go`
 
 Validation:
+
 - `go test ./internal/repository -coverprofile=/tmp/repository_cov_after3.out -count=1` → **60.1%**
 - `go test -short -covermode=atomic -coverprofile=/tmp/coverage_short_after.out ./...` → **48.7%**
 - `go test ./internal/httpapi/handlers/auth -coverprofile=/tmp/auth_cov_after.out -count=1` → **62.2%**
 - `go test ./internal/httpapi/handlers/social -coverprofile=/tmp/social_cov_after.out -count=1` → **49.5%**
 
 Note (2026-02-13): **Usecase interface refactoring + unit test coverage** for analytics and redundancy:
+
 - Refactored `analytics` and `redundancy` usecase packages to depend on interfaces (`port.VideoAnalyticsRepository`, `port.RedundancyRepository`, `port.RedundancyVideoRepository`) instead of concrete repository structs
 - Added `HTTPDoer` interface in redundancy package to abstract `http.Client` for mock-based testing
 - Added `internal/usecase/analytics/service_test.go` (18 test functions, 42 subtests, ~98% coverage)
@@ -305,11 +330,13 @@ Note (2026-02-13): **Usecase interface refactoring + unit test coverage** for an
 ### 2.1 Fix .actrc Configuration
 
 - [x] **P2** Expand `.actrc` with proper configuration:
+
   ```
   -P self-hosted=catthehacker/ubuntu:act-latest
   -P ubuntu-latest=catthehacker/ubuntu:act-latest
   --container-daemon-socket /var/run/docker.sock
   ```
+
 - [x] **P2** Create `.secrets.example` template listing required secrets
 - [x] **P2** Verify `act -j unit` runs the main test workflow successfully
 - [x] **P2** Verify `act -j lint` runs formatting/linting checks
@@ -317,6 +344,7 @@ Note (2026-02-13): **Usecase interface refactoring + unit test coverage** for an
 Note (2026-02-10): `act -n -j unit` and `act -n -j lint` dry-runs pass with the updated `.actrc`; full non-dry execution is still pending.
 Note (2026-02-11): added repository-root `.secrets.example` with required local `act` variables (`DATABASE_URL`, `REDIS_URL`, `JWT_SECRET`) plus optional provider tokens.
 Note (2026-02-11): with Docker daemon available, ran full non-dry `act` checks with `.secrets.example`:
+
 - `act -j unit --secret-file .secrets.example`
 - `act -j lint --secret-file .secrets.example`
 Result:
@@ -339,6 +367,7 @@ Result:
 
 Note (2026-02-11): added `scripts/check-coverage-threshold.sh` and wired it into `.github/workflows/test.yml` unit job (`COVERAGE_OUT=coverage.out make test-unit` + threshold check at 23.8%).
 Note (2026-02-11): consolidated root compose definitions into profile-based `/docker-compose.yml`:
+
 - `test` profile: replaces former `docker-compose.test.yml` services (`postgres-test`, `redis-test`, `ipfs-test`, `clamav-test`, `app-test`, `newman`)
 - `ci` profile: replaces former `docker-compose.ci.yml` services (`postgres-ci`, `redis-ci`, `ipfs-ci`, `clamav-ci`)
 - removed obsolete split files (`docker-compose.test.yml`, `docker-compose.ci.yml`, and stale backup `docker-compose.test.yml.bak`)
@@ -474,6 +503,7 @@ The sprint documents show Sprints A-K ALL COMPLETE:
 - [x] **P3** Reference PeerTube's own migration guide for context
 
 Note (2026-02-10): verified by updating `docs/PEERTUBE_COMPAT.md`, adding `PeerTube-Compat` tags across OpenAPI specs, and running targeted compatibility tests:
+
 - `go test ./internal/httpapi/handlers/channel -run 'TestChannelSubscriptions_Integration|TestSubscriptionsBackwardCompatibility_Integration|TestListMySubscriptions_Pagination_PageParams|TestListSubscriptionVideos_Pagination_PageParams' -count=1`
 - `go test ./internal/httpapi/handlers/social -run 'TestComments_Integration|TestRatingsPlaylists_Integration|TestCaptionsIntegration' -count=1`
 - `go test ./internal/httpapi/handlers/moderation -run 'TestInstanceHandlers|TestOEmbed|TestInstanceConfigIntegration|TestInstanceAboutIntegration|TestOEmbedIntegration' -count=1`
@@ -493,6 +523,7 @@ Note (2026-02-10): verified by updating `docs/PEERTUBE_COMPAT.md`, adding `PeerT
 - [x] **P3** Remove or update any stale TODO comments
 
 Note (2026-02-11): ran `make validate-all` (after fixing `validate-all.sh` undefined `$GO_FILES` variable). Credential scan passed — no hardcoded secrets found. Additional fixes applied during validation:
+
 - Fixed `validate-all.sh` `$GO_FILES` undefined variable (replaced with `find . -name '*.go' ... -exec goimports -l {} +`)
 - Fixed YAML lint bracket spacing in `.github/workflows/test.yml`
 - Fixed go vet IPv6 format warning in `internal/livestream/rtmp_integration_test.go` (switched to `net.JoinHostPort`)
@@ -500,6 +531,7 @@ Note (2026-02-11): ran `make validate-all` (after fixing `validate-all.sh` undef
 - `go vet ./...` now passes clean across entire codebase
 
 Note (2026-02-11): TODO audit scanned entire codebase and found 6 TODO comments, all valid/actionable (none stale):
+
 1. `internal/httpapi/handlers/video/videos.go:590` — Feature gap: video preview generation
 2. `internal/httpapi/handlers/video/videos.go:601` — Feature gap: video preview generation
 3. `internal/livestream/rtmp_integration_test.go:247` — Test blocker: mock RTMP server needed

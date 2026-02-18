@@ -53,24 +53,23 @@ func (m *mockVideoRepoPrivacy) GetByRemoteURI(_ context.Context, _ string) (*dom
 func (m *mockVideoRepoPrivacy) CreateRemoteVideo(_ context.Context, _ *domain.Video) error {
 	return nil
 }
+func (m *mockVideoRepoPrivacy) GetByChannelID(_ context.Context, _ string, _, _ int) ([]*domain.Video, int64, error) {
+	return nil, 0, nil
+}
 
 func TestGetVideo_PrivacyGate(t *testing.T) {
 	ownerID := "owner-1"
 	mv := &mockVideoRepoPrivacy{v: &domain.Video{ID: "v1", UserID: ownerID, Privacy: domain.PrivacyPrivate}}
 	h := GetVideoHandler(mv, nil)
 
-	// Non-owner should get 403
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/videos/v1", nil)
 	rr := httptest.NewRecorder()
-	// Valid UUID not enforced here; handler expects UUID but repo returns video. Simulate valid by bypassing ID check via router? Not needed for privacy path unit.
-	// Inject URL param and context
 	req = withChiURLParam(req, "id", "123e4567-e89b-12d3-a456-426614174000")
 	h.ServeHTTP(rr, req)
 	if rr.Code != http.StatusForbidden {
 		t.Fatalf("expected 403 for non-owner private video, got %d", rr.Code)
 	}
 
-	// Owner should get 200
 	req2 := httptest.NewRequest(http.MethodGet, "/api/v1/videos/v1", nil)
 	req2 = withChiURLParam(req2, "id", "123e4567-e89b-12d3-a456-426614174000")
 	req2 = req2.WithContext(context.WithValue(req2.Context(), middleware.UserIDKey, ownerID))
@@ -82,7 +81,7 @@ func TestGetVideo_PrivacyGate(t *testing.T) {
 }
 
 func TestGetUserVideos_PrivacyFilterForNonOwner(t *testing.T) {
-	ownerID := "123e4567-e89b-12d3-a456-426614174001" // Use valid UUID
+	ownerID := "123e4567-e89b-12d3-a456-426614174001"
 	vids := []*domain.Video{
 		{ID: "pub", UserID: ownerID, Privacy: domain.PrivacyPublic, Title: "public"},
 		{ID: "prv", UserID: ownerID, Privacy: domain.PrivacyPrivate, Title: "private"},
@@ -90,10 +89,8 @@ func TestGetUserVideos_PrivacyFilterForNonOwner(t *testing.T) {
 	mv := &mockVideoRepoPrivacy{list: vids, total: int64(len(vids))}
 	h := GetUserVideosHandler(mv)
 
-	// Non-owner request
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/users/"+ownerID+"/videos?limit=10", nil)
 	req = withChiURLParam(req, "id", ownerID)
-	// no user in context = anonymous non-owner
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
@@ -110,7 +107,6 @@ func TestGetUserVideos_PrivacyFilterForNonOwner(t *testing.T) {
 		t.Fatalf("expected only public video, got %+v", got)
 	}
 
-	// Owner request returns all videos
 	req2 := httptest.NewRequest(http.MethodGet, "/api/v1/users/"+ownerID+"/videos?limit=10", nil)
 	req2 = withChiURLParam(req2, "id", ownerID)
 	req2 = req2.WithContext(context.WithValue(req2.Context(), middleware.UserIDKey, ownerID))
@@ -128,5 +124,3 @@ func TestGetUserVideos_PrivacyFilterForNonOwner(t *testing.T) {
 		t.Fatalf("expected 2 videos for owner, got %d", len(got2))
 	}
 }
-
-// (helper withChiURLParam is defined in messages_fuzz_test.go and reused here)

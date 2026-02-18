@@ -5,6 +5,7 @@
 ### Service Management
 
 #### Start Services
+
 ```bash
 # Development
 docker compose up -d
@@ -14,6 +15,7 @@ docker compose up -d postgres redis ipfs
 ```
 
 #### Stop Services
+
 ```bash
 # Graceful shutdown
 docker compose down
@@ -26,6 +28,7 @@ docker compose kill
 ```
 
 #### View Logs
+
 ```bash
 # All services
 docker compose logs -f
@@ -40,6 +43,7 @@ docker compose logs --tail=100 server
 ### Database Operations
 
 #### Connect to Database
+
 ```bash
 # Direct connection (use credentials from .env or docker-compose.yml)
 psql postgres://athena_user:athena_password@localhost:5432/athena
@@ -52,6 +56,7 @@ DATABASE_URL="postgres://test_user:test_password@localhost:5433/athena_test?sslm
 ```
 
 #### Run Migrations
+
 ```bash
 # Apply pending migrations
 make migrate-up
@@ -70,6 +75,7 @@ make migrate-create NAME=add_feature
 ```
 
 #### Database Queries
+
 ```sql
 -- Check video processing status
 SELECT id, title, processing_status, created_at
@@ -99,6 +105,7 @@ WHERE last_active_at > NOW() - INTERVAL '1 day';
 ### Redis Operations
 
 #### Connect to Redis
+
 ```bash
 # CLI access
 redis-cli -h localhost -p 6379
@@ -111,6 +118,7 @@ redis-cli -h localhost -p 6380
 ```
 
 #### Common Redis Commands
+
 ```bash
 # Check health
 ping
@@ -137,6 +145,7 @@ monitor
 ### IPFS Operations
 
 #### Check IPFS Status
+
 ```bash
 # API version
 curl http://localhost:5001/api/v0/version
@@ -152,6 +161,7 @@ curl http://localhost:5001/api/v0/repo/stat
 ```
 
 #### IPFS Content Management
+
 ```bash
 # Pin content
 ipfs pin add QmHash
@@ -172,6 +182,7 @@ ipfs pin ls --type=recursive | grep QmHash
 ### Testing Operations
 
 #### Run Tests
+
 ```bash
 # All tests (short mode for CI)
 go test -short -race ./...
@@ -191,6 +202,7 @@ go test -bench=. ./internal/processing
 ```
 
 #### Test Troubleshooting
+
 ```bash
 # Run with verbose output
 go test -v -run TestName ./package
@@ -208,6 +220,7 @@ go clean -testcache
 ### Building & Deployment
 
 #### Build Application
+
 ```bash
 # Local build
 go build -o bin/athena-server ./cmd/server
@@ -224,6 +237,7 @@ docker build --target production -t athena:prod .
 ```
 
 #### Health Checks
+
 ```bash
 # Liveness probe
 curl http://localhost:8080/health
@@ -238,6 +252,7 @@ curl http://localhost:9090/metrics
 ### Video Processing
 
 #### Check Processing Queue
+
 ```bash
 # View pending jobs
 redis-cli lrange video:processing:queue 0 -1
@@ -253,6 +268,7 @@ docker compose logs -f server | grep "ffmpeg"
 ```
 
 #### Manual Video Processing
+
 ```bash
 # Trigger reprocessing
 curl -X POST http://localhost:8080/api/v1/admin/videos/123/reprocess \
@@ -265,6 +281,7 @@ ffprobe -v quiet -print_format json -show_format -show_streams video.mp4
 ### Federation Operations
 
 #### Check Federation Status
+
 ```bash
 # Federation health
 curl http://localhost:8080/api/v1/federation/status
@@ -280,6 +297,7 @@ curl http://localhost:8080/api/v1/admin/federation/metrics
 ```
 
 #### Debug Federation Issues
+
 ```bash
 # Check federation logs
 docker compose logs -f server | grep "federation"
@@ -297,6 +315,7 @@ SELECT * FROM federation_blocklist;
 ### Monitoring & Debugging
 
 #### Application Metrics
+
 ```bash
 # Prometheus metrics
 curl http://localhost:9090/metrics | grep -E "(http_|db_|redis_)"
@@ -312,6 +331,7 @@ go tool pprof http://localhost:6060/debug/pprof/heap
 ```
 
 #### Debug Mode
+
 ```bash
 # Run with debug logging
 LOG_LEVEL=debug go run ./cmd/server
@@ -329,6 +349,7 @@ curl -H "X-Debug: true" http://localhost:8080/api/v1/videos
 ### Emergency Procedures
 
 #### High Load Response
+
 ```bash
 # Increase rate limits temporarily
 redis-cli set rate_limit:global 1000
@@ -344,6 +365,7 @@ redis-cli flushdb
 ```
 
 #### Data Recovery
+
 ```bash
 # Backup database
 pg_dump -h localhost -U user -d athena > backup.sql
@@ -359,6 +381,7 @@ redis-cli --pipe < dump.txt
 ```
 
 #### Service Recovery
+
 ```bash
 # Restart hung service
 docker compose restart server
@@ -377,6 +400,7 @@ psql -c "REINDEX INDEX CONCURRENTLY videos_search_idx;"
 ### Performance Tuning
 
 #### Database Optimization
+
 ```sql
 -- Analyze tables
 ANALYZE videos;
@@ -395,6 +419,7 @@ ORDER BY idx_scan;
 ```
 
 #### Cache Optimization
+
 ```bash
 # Check cache hit rate
 redis-cli info stats | grep keyspace_hits
@@ -409,6 +434,7 @@ redis-cli --bigkeys
 ### Useful Aliases
 
 Add to your shell profile:
+
 ```bash
 alias athena-logs='docker compose logs -f server'
 alias athena-db='docker compose exec postgres psql -U athena_user -d athena'

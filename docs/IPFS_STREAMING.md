@@ -70,6 +70,7 @@ IPFS_STREAMING_BUFFER_SIZE=32768
 ### Deployment Modes
 
 #### Mode 1: IPFS-First (Decentralized)
+
 Best for: Maximum decentralization, reduced bandwidth costs
 
 ```bash
@@ -81,6 +82,7 @@ IPFS_STREAMING_FALLBACK_TO_LOCAL=true
 **Behavior**: Always tries IPFS first, falls back to local if IPFS fails
 
 #### Mode 2: Local-First (Performance)
+
 Best for: Low latency, guaranteed performance
 
 ```bash
@@ -92,6 +94,7 @@ IPFS_STREAMING_FALLBACK_TO_LOCAL=true
 **Behavior**: Uses local filesystem when available, uses IPFS as backup
 
 #### Mode 3: IPFS-Only (Pure Decentralized)
+
 Best for: Testing, pure IPFS deployments
 
 ```bash
@@ -103,6 +106,7 @@ IPFS_STREAMING_FALLBACK_TO_LOCAL=false
 **Behavior**: Only uses IPFS, returns 503 if IPFS is unavailable
 
 #### Mode 4: Disabled (Local Only)
+
 Best for: Traditional deployments, maximum performance
 
 ```bash
@@ -141,15 +145,18 @@ The IPFS streaming service automatically handles:
 ### API Endpoints
 
 #### Get Master Playlist
+
 ```bash
 GET /api/v1/videos/livestream/{streamID}/master.m3u8
 ```
 
 If IPFS streaming is enabled and CID exists:
+
 1. Tries IPFS gateway delivery
 2. Falls back to local filesystem if IPFS fails
 
 #### Get Variant Playlist
+
 ```bash
 GET /api/v1/videos/livestream/{streamID}/{variant}/index.m3u8
 ```
@@ -157,6 +164,7 @@ GET /api/v1/videos/livestream/{streamID}/{variant}/index.m3u8
 Same IPFS → local fallback behavior.
 
 #### Get Segment
+
 ```bash
 GET /api/v1/videos/livestream/{streamID}/{variant}/{segment}.ts
 ```
@@ -164,11 +172,13 @@ GET /api/v1/videos/livestream/{streamID}/{variant}/{segment}.ts
 Supports HTTP range requests for efficient seeking.
 
 #### IPFS Metrics
+
 ```bash
 GET /api/v1/videos/ipfs/metrics
 ```
 
 Returns:
+
 ```json
 {
   "enabled": true,
@@ -189,11 +199,13 @@ Returns:
 ```
 
 #### Gateway Health
+
 ```bash
 GET /api/v1/videos/ipfs/gateways
 ```
 
 Returns:
+
 ```json
 {
   "enabled": true,
@@ -227,11 +239,13 @@ The service uses intelligent gateway selection:
 ## Performance Considerations
 
 ### Benefits
+
 - **CDN-like delivery**: Multiple gateways provide redundancy
 - **Bandwidth offloading**: Reduces server bandwidth usage
 - **Decentralization**: Content survives even if origin server is down
 
 ### Trade-offs
+
 - **Latency**: IPFS gateway requests may have higher latency than local
 - **Reliability**: Dependent on IPFS network and gateway availability
 - **Complexity**: Additional infrastructure to manage
@@ -239,12 +253,14 @@ The service uses intelligent gateway selection:
 ### Recommendations
 
 For **production deployments**:
+
 - Use `IPFS_STREAMING_PREFER_LOCAL=true` for guaranteed performance
 - Configure multiple reliable IPFS gateways
 - Monitor metrics via `/api/v1/videos/ipfs/metrics`
 - Set up alerts for high failure rates
 
 For **decentralized deployments**:
+
 - Use `IPFS_STREAMING_PREFER_LOCAL=false` to maximize IPFS usage
 - Use public gateways or run your own IPFS gateway cluster
 - Accept slightly higher latency for decentralization benefits
@@ -296,11 +312,13 @@ rate(local_streaming_requests_total[5m]) / (rate(ipfs_streaming_requests_total[5
 ## Testing
 
 ### Unit Tests
+
 ```bash
 go test ./internal/usecase/ipfs_streaming/...
 ```
 
 ### Integration Tests
+
 ```bash
 # Start test environment with IPFS
 docker compose up -d postgres redis ipfs
@@ -322,16 +340,19 @@ go test ./internal/httpapi/handlers/video/... -v
 ## Security Considerations
 
 ### Gateway Trust
+
 - Use trusted IPFS gateways (official or self-hosted)
 - Verify content integrity via CIDs
 - Consider rate limiting gateway requests
 
 ### Data Privacy
+
 - IPFS content is publicly accessible
 - Don't use IPFS for private/restricted content
 - Use local-only streaming for sensitive videos
 
 ### DDoS Protection
+
 - IPFS gateways provide natural DDoS protection
 - Fallback to local prevents complete outages
 - Monitor metrics for abuse patterns
@@ -339,6 +360,7 @@ go test ./internal/httpapi/handlers/video/... -v
 ## Future Enhancements
 
 Planned features:
+
 - [ ] Content-addressable caching layer
 - [ ] IPFS Cluster integration for pinning
 - [ ] Automatic CID generation on transcode

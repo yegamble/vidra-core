@@ -32,6 +32,7 @@ This map identifies the **canonical source** for each major topic area. When inf
 ## Document Categories
 
 ### Living Documentation (Actively Maintained)
+
 - All canonical sources in the table above
 - All module CLAUDE.md files
 - README files (`README.md`, `docs/*/README.md`)
@@ -39,6 +40,7 @@ This map identifies the **canonical source** for each major topic area. When inf
 - Current sprint docs (`docs/sprints/QUALITY_PROGRAMME.md`)
 
 ### Historical Documentation (Point-in-Time Records)
+
 - Sprint completion reports (`docs/sprints/SPRINT*_COMPLETE.md`)
 - Historical progress files (`docs/project-management/*_PROGRESS.md`)
 - Test baseline reports (`docs/development/TEST_BASELINE_REPORT.md`)
@@ -49,16 +51,19 @@ This map identifies the **canonical source** for each major topic area. When inf
 Some topics naturally appear in multiple places. Here's guidance on what each document should cover:
 
 ### Project Overview
+
 - **README.md**: Quick start, installation, key features, project metrics
 - **CLAUDE.md**: Claude-specific guidance, validation requirements
 - **.claude/rules/project.md**: Full context for Claude including sprint status
 
 ### Testing
+
 - **TEST_INFRASTRUCTURE.md**: How to run tests, infrastructure requirements, CI config
 - **TEST_EXECUTION_GUIDE.md**: Detailed test execution procedures
 - **.claude/rules/testing-patterns.md**: Test writing patterns for Claude
 
 ### Operations
+
 - **RUNBOOK.md**: Incident response, troubleshooting, maintenance procedures
 - **runbooks.md**: Day-to-day operational commands for development
 - **MONITORING.md**: Monitoring setup (Prometheus, Grafana)
@@ -67,6 +72,7 @@ Some topics naturally appear in multiple places. Here's guidance on what each do
 ## Maintenance
 
 **When updating this map:**
+
 1. Update the canonical source first
 2. Update all cross-references to match
 3. Add new rows for new topics

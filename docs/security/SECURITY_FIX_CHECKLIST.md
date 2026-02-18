@@ -58,14 +58,17 @@
 ### Database
 
 - [ ] **Verify Migration Applied**
+
   ```bash
   make migrate-status
   ```
+
   - [ ] Confirm `virus_scan_log` table exists
   - [ ] Confirm indexes created
   - [ ] Confirm constraints applied
 
 - [ ] **Test Database Logging**
+
   ```sql
   -- After running tests, verify logs captured
   SELECT * FROM virus_scan_log ORDER BY scanned_at DESC LIMIT 10;
@@ -77,6 +80,7 @@
 ### Configuration
 
 - [ ] **Update Environment Variables**
+
   ```bash
   # Production environment
   CLAMAV_ADDRESS=clamav:3310
@@ -91,6 +95,7 @@
   ```
 
 - [ ] **Verify ClamAV Health**
+
   ```bash
   # Check ClamAV is running
   docker compose ps clamav
@@ -113,6 +118,7 @@
   - [ ] `quarantine_operations_total` counter
 
 - [ ] **Configure Alerts**
+
   ```yaml
   # AlertManager rules
   - alert: HighMalwareDetectionRate
@@ -349,6 +355,7 @@ curl https://api.example.com/health
 ### Internal Communication
 
 **Engineering Team**:
+
 ```
 Subject: URGENT - Security Fix Deployment - Virus Scanner
 
@@ -368,6 +375,7 @@ Details: See SECURITY_ASSESSMENT_VIRUS_SCANNER_P1.md
 ```
 
 **Leadership**:
+
 ```
 Subject: Security Vulnerability Remediation - Status Update
 
@@ -392,6 +400,7 @@ Full report available on request.
 ### External Communication (If Required)
 
 **Customer Notice** (Only if evidence of exploitation):
+
 ```
 Subject: Security Update - Enhanced File Scanning
 

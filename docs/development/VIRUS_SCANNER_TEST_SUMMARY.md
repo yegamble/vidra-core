@@ -116,11 +116,13 @@ if result != nil && result.Status == ScanStatusClean {
 ```
 
 **Safe Failure Modes** (all acceptable):
+
 - `ScanStatusInfected` - Virus detected ✓ (optimal)
 - `ScanStatusError` - Scan failed, upload blocked ✓ (safe)
 - `ScanStatusWarning` - FallbackModeWarn ✓ (per config)
 
 **Unsafe Failure Mode** (NEVER acceptable):
+
 - `ScanStatusClean` for infected content ✗ (security violation)
 
 ---
@@ -130,6 +132,7 @@ if result != nil && result.Status == ScanStatusClean {
 **Location**: `/Users/yosefgamble/github/athena/internal/security/virus_scanner.go:286`
 
 **Problem**:
+
 ```go
 // Line 286 in ScanStream retry loop
 responses, err := s.client.ScanStream(reader, make(chan bool))
@@ -137,6 +140,7 @@ responses, err := s.client.ScanStream(reader, make(chan bool))
 ```
 
 **Compare to ScanFile** (correct):
+
 ```go
 // Line 169 in ScanFile retry loop
 if _, err := file.Seek(0, 0); err != nil {  // ✓ Resets reader position
@@ -146,6 +150,7 @@ if _, err := file.Seek(0, 0); err != nil {  // ✓ Resets reader position
 ```
 
 **Attack Scenario**:
+
 1. Upload infected file via HTTP (non-seekable stream)
 2. First scan attempt → network error
 3. Reader exhausted (at EOF)
@@ -159,6 +164,7 @@ if _, err := file.Seek(0, 0); err != nil {  // ✓ Resets reader position
 ### Quick Validation
 
 **Before Fix** (should FAIL):
+
 ```bash
 go test -v ./internal/security -run TestVirusScanner_ExhaustedReaderVulnerability
 ```
@@ -166,6 +172,7 @@ go test -v ./internal/security -run TestVirusScanner_ExhaustedReaderVulnerabilit
 **Expected**: Test FAILS with "CRITICAL SECURITY VULNERABILITY"
 
 **After Fix** (should PASS):
+
 ```bash
 go test -v ./internal/security -run TestVirusScanner
 ```
@@ -211,6 +218,7 @@ func (s *VirusScanner) ScanStream(ctx context.Context, reader io.Reader) (*ScanR
 ```
 
 **Why this fix**:
+
 - Enables retries for non-seekable streams ✓
 - Maintains API contract (no breaking changes) ✓
 - Memory tested up to 100MB (acceptable per CLAUDE.md) ✓
@@ -255,12 +263,14 @@ func (s *VirusScanner) ScanStream(ctx context.Context, reader io.Reader) (*ScanR
 ### Security Impact
 
 **Before Fix**:
+
 - ❌ Infected files can bypass scanning
 - ❌ Malware distributed via IPFS to users
 - ❌ Platform reputation damage
 - ❌ Regulatory compliance violations
 
 **After Fix**:
+
 - ✓ All infected files detected or blocked
 - ✓ Fail-safe behavior on errors
 - ✓ Comprehensive test coverage
@@ -289,10 +299,12 @@ func (s *VirusScanner) ScanStream(ctx context.Context, reader io.Reader) (*ScanR
 ## Key Files Reference
 
 ### Implementation
+
 - **Vulnerable Code**: `/Users/yosefgamble/github/athena/internal/security/virus_scanner.go:254-352`
 - **Test Coverage**: `/Users/yosefgamble/github/athena/internal/security/virus_scanner_test.go:167-871`
 
 ### Documentation
+
 - **Security Analysis**: `/Users/yosefgamble/github/athena/SECURITY_ANALYSIS_VIRUS_SCANNER.md`
 - **Test Execution Guide**: `/Users/yosefgamble/github/athena/TEST_EXECUTION_GUIDE.md`
 - **This Summary**: `/Users/yosefgamble/github/athena/VIRUS_SCANNER_TEST_SUMMARY.md`
@@ -304,9 +316,11 @@ func (s *VirusScanner) ScanStream(ctx context.Context, reader io.Reader) (*ScanR
 ### Immediate Actions
 
 1. **Review Test Coverage**:
+
    ```bash
    go test -v ./internal/security -run TestVirusScanner_ExhaustedReaderVulnerability
    ```
+
    Confirm test FAILS (exposes vulnerability)
 
 2. **Implement Fix**:
@@ -314,9 +328,11 @@ func (s *VirusScanner) ScanStream(ctx context.Context, reader io.Reader) (*ScanR
    - See `SECURITY_ANALYSIS_VIRUS_SCANNER.md` for implementation details
 
 3. **Validate Fix**:
+
    ```bash
    go test -v ./internal/security -run TestVirusScanner
    ```
+
    All tests must PASS
 
 ### Post-Fix Actions
@@ -348,12 +364,14 @@ func (s *VirusScanner) ScanStream(ctx context.Context, reader io.Reader) (*ScanR
 **Test Coverage**: ✓ Comprehensive (14 new tests covering all attack vectors)
 
 **Security Validation**:
+
 - ✓ Primary vulnerability test (exhausted reader)
 - ✓ Edge cases (zero-byte, mid-read failure, etc.)
 - ✓ Concurrency safety
 - ✓ Business logic integrity
 
 **Documentation**: ✓ Complete
+
 - Security analysis document (14KB)
 - Test execution guide (15KB)
 - Executive summary (this document)
@@ -365,12 +383,15 @@ func (s *VirusScanner) ScanStream(ctx context.Context, reader io.Reader) (*ScanR
 ## Questions & Support
 
 ### For Test Execution
+
 See: `/Users/yosefgamble/github/athena/TEST_EXECUTION_GUIDE.md`
 
 ### For Security Details
+
 See: `/Users/yosefgamble/github/athena/SECURITY_ANALYSIS_VIRUS_SCANNER.md`
 
 ### For Implementation
+
 Review: `/Users/yosefgamble/github/athena/internal/security/virus_scanner.go:254-352`
 
 ---
@@ -380,6 +401,7 @@ Review: `/Users/yosefgamble/github/athena/internal/security/virus_scanner.go:254
 **Test coverage for the P1 virus scanner vulnerability is complete and comprehensive.**
 
 The test suite:
+
 1. ✓ Exposes the vulnerability (before fix)
 2. ✓ Validates the fix (after implementation)
 3. ✓ Prevents regression (ongoing CI/CD)

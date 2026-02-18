@@ -3,11 +3,13 @@
 ## ✅ Completed Tasks
 
 ### 1. Storage Abstraction Layer
+
 - ✅ Created `internal/storage/backend.go` with `StorageBackend` interface
 - ✅ Supports multiple backends: Local, S3, IPFS
 - ✅ Defined `FileMetadata` and `StorageTier` types
 
 ### 2. S3 Backend Implementation
+
 - ✅ Full AWS SDK v2 integration (`internal/storage/s3_backend.go`)
 - ✅ Support for Backblaze B2, AWS S3, DigitalOcean Spaces
 - ✅ Features:
@@ -19,6 +21,7 @@
   - Proper error handling with `errors.As`
 
 ### 3. Database Schema Updates
+
 - ✅ Created migration `055_add_s3_storage_fields.sql`
 - ✅ Added fields to `videos` table:
   - `s3_urls` (JSONB) - Maps variants to S3 URLs
@@ -29,11 +32,13 @@
 - ✅ Updated domain model `internal/domain/video.go`
 
 ### 4. Video Repository Updates
+
 - ✅ Added `GetVideosForMigration()` method to `VideoRepository` interface
 - ✅ Updated `Update()` method to handle S3 fields
 - ✅ Implementation in `internal/repository/video_repository.go`
 
 ### 5. Migration Service
+
 - ✅ Created `internal/usecase/migration/s3_migration_service.go`
 - ✅ Features:
   - Individual video migration
@@ -45,6 +50,7 @@
   - Structured logging with logrus
 
 ### 6. S3-Aware Video Serving
+
 - ✅ Created `internal/httpapi/handlers/video/hls_s3_handler.go`
 - ✅ Features:
   - Automatic S3 redirection for migrated videos
@@ -54,6 +60,7 @@
   - Privacy enforcement
 
 ### 7. CLI Tools
+
 - ✅ **S3 Migration Tool** (`cmd/s3migrate/main.go`)
   - Test mode: `--test`
   - Single video: `--video-id=<UUID>`
@@ -66,11 +73,13 @@
   - Object listing
 
 ### 8. Configuration
+
 - ✅ Updated `.env` with Backblaze B2 credentials
 - ✅ Set `ENABLE_S3=true`
 - ✅ Configured endpoint, bucket, access key, secret key, region
 
 ### 9. Dependencies
+
 - ✅ Added AWS SDK v2 packages:
   - `github.com/aws/aws-sdk-go-v2` v1.39.6
   - `github.com/aws/aws-sdk-go-v2/config` v1.31.17
@@ -79,6 +88,7 @@
   - `github.com/aws/aws-sdk-go-v2/feature/s3/manager` v1.20.3
 
 ### 10. Documentation
+
 - ✅ Created comprehensive setup guide: `docs/S3_MIGRATION_SETUP.md`
 - ✅ Includes:
   - Architecture overview
@@ -89,6 +99,7 @@
   - Security considerations
 
 ### 11. Version Control
+
 - ✅ Committed all changes with detailed commit message
 - ✅ Pushed to branch: `claude/backblaze-s3-migration-011CUqHkhbxj6kJ88GfRVCw9`
 - ✅ Ready for pull request
@@ -96,25 +107,31 @@
 ## 🔧 Testing Results
 
 ### Build Status
+
 ✅ Both CLI tools built successfully:
+
 - `bin/s3migrate`
 - `bin/s3test`
 
 ### S3 Connection Test
+
 ⚠️ **Requires Action**: Bucket configuration needed
 
 **Current Status:**
+
 - Credentials are configured correctly
 - S3 client initializes successfully
 - **Issue**: Bucket "athena-videos" returns 403 Forbidden
 
 **Possible Causes:**
+
 1. Bucket doesn't exist in your Backblaze account
 2. Bucket name is incorrect or already taken globally
 3. Application key doesn't have permission to access the bucket
 
 **Next Steps:**
-1. Log into Backblaze B2: https://www.backblaze.com/b2/
+
+1. Log into Backblaze B2: <https://www.backblaze.com/b2/>
 2. Create bucket "athena-videos" OR find existing bucket name
 3. Update `.env` with correct bucket name
 4. Ensure application key has access to the bucket
@@ -123,15 +140,18 @@
 ## 📊 Code Statistics
 
 ### Files Created
+
 - 7 new Go files
 - 1 SQL migration
 - 2 documentation files
 
 ### Lines of Code
+
 - ~1,699 lines added
 - 9 lines modified
 
 ### Test Coverage
+
 - Unit tests can be added in next iteration
 - Integration tests for S3 operations
 - End-to-end migration tests
@@ -149,23 +169,28 @@
 ## ⏭️ Next Steps for Deployment
 
 ### Immediate (Before First Migration)
+
 1. **Create/Verify Backblaze Bucket**
    - Create bucket in Backblaze B2 console
    - Update `.env` with correct bucket name
    - Verify with `./bin/s3test`
 
 2. **Apply Database Migration**
+
    ```bash
    psql -h localhost -U athena_user -d athena -f migrations/055_add_s3_storage_fields.sql
    ```
 
 3. **Test S3 Connection**
+
    ```bash
    ./bin/s3migrate --test
    ```
 
 ### Integration with Main Application
+
 1. **Update Server Initialization** (`cmd/server/main.go`):
+
    ```go
    // Initialize S3 backend if enabled
    if cfg.EnableS3 {
@@ -175,11 +200,13 @@
    ```
 
 2. **Update HLS Routes**:
+
    ```go
    r.Get("/api/v1/hls/*", video.HLSHandlerWithS3(videoRepo, cfg, s3Backend))
    ```
 
 ### Production Deployment
+
 1. **Set up automatic migration**:
    - Cron job: `0 * * * * /app/bin/s3migrate --batch=10`
    - Or background worker in main application
@@ -198,12 +225,14 @@
 ## 🔒 Security Considerations
 
 ✅ **Implemented:**
+
 - Signed URLs for private videos (1-hour expiration)
 - HTTPS for all S3 communication
 - Credentials in environment variables (not in code)
 - Privacy enforcement in handlers
 
 ⚠️ **To Configure:**
+
 - Rotate access keys periodically
 - Set bucket policies in Backblaze
 - Enable access logging
@@ -212,11 +241,13 @@
 ## 💰 Cost Estimates
 
 **Backblaze B2 Pricing:**
+
 - Storage: $0.005/GB/month (first 10GB free)
 - Download: $0.01/GB (first 1GB/day free)
 - API calls: Free uploads, $0.004/10k downloads
 
 **Example for 1TB storage, 100GB/day downloads:**
+
 - Storage: ~$5/month
 - Bandwidth: ~$30/day (~$900/month)
 - **Recommendation**: Use CDN to reduce bandwidth costs
@@ -234,26 +265,31 @@
 ## 📝 How to Use
 
 ### Test S3 Connection
+
 ```bash
 ./bin/s3test
 ```
 
 ### Migrate a Specific Video
+
 ```bash
 ./bin/s3migrate --video-id=550e8400-e29b-41d4-a716-446655440000
 ```
 
 ### Batch Migration (Dry Run)
+
 ```bash
 ./bin/s3migrate --dry-run --batch=10
 ```
 
 ### Batch Migration (With Local Deletion)
+
 ```bash
 ./bin/s3migrate --batch=10 --delete-local
 ```
 
 ### Test S3 Upload/Download
+
 ```bash
 ./bin/s3migrate --test
 ```
@@ -280,6 +316,7 @@
 ## 🎉 Summary
 
 A complete, production-ready S3 migration system has been implemented for your PeerTube backend. The system includes:
+
 - Full S3 backend with Backblaze B2 support
 - Database schema for tracking migrations
 - Migration service for batch processing

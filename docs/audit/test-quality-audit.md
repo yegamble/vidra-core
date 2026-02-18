@@ -9,12 +9,14 @@
 ## Best Practices Reference (Go Testing)
 
 ### Why 100% Coverage Is Not a Good Goal
+
 - **Diminishing returns:** Going from 80% to 100% typically means testing trivial code paths (getters, error returns) that provide near-zero confidence gain
 - **False confidence:** 100% line coverage doesn't mean all behaviors are tested - you can hit every line without testing meaningful edge cases
 - **Maintenance cost:** Tests for trivial code become maintenance burden during refactoring, slowing down development
 - **Encourages bad tests:** Developers write tests to hit coverage numbers rather than to validate behavior
 
 ### What Matters More Than Coverage Percentage
+
 - **Behavior-driven tests:** Test what the code does, not how it does it
 - **Error path testing:** Verify error conditions, not just happy paths
 - **Boundary testing:** Test edge cases, nil inputs, empty collections, off-by-one
@@ -42,13 +44,16 @@ Found **100+ instances** of `time.Sleep` in test files. This is the #1 cause of 
 | `internal/livestream/analytics_collector_test.go` | 10 | 1ms | **Low** (very short) |
 
 ### Recommended Fixes
+
 Replace `time.Sleep` with:
+
 - **Channels/sync primitives:** Wait for actual events, not arbitrary durations
 - **`require.Eventually`:** Poll with timeout instead of sleeping
 - **Context with deadline:** Let context cancellation drive timing
 - **Test-specific clock:** Inject a controllable clock for time-dependent tests
 
 Example refactor:
+
 ```go
 // BAD: Flaky
 time.Sleep(200 * time.Millisecond)
@@ -67,6 +72,7 @@ require.Eventually(t, func() bool {
 ### E2E Placeholder Tests (Should Be Removed or Implemented)
 
 **`tests/e2e/workflows_test.go`** - 14 test functions, ALL are `t.Skip()` placeholders:
+
 - `TestUserRegistrationAndAuthenticationWorkflow` (3 subtests, all skip)
 - `TestVideoUploadAndProcessingWorkflow` (4 subtests, all skip)
 - `TestVideoPlaybackAndStreamingWorkflow` (4 subtests, all skip)
@@ -123,12 +129,14 @@ Most integration tests properly use `testing.Short()` but verify all do. Tests t
 ### 2. Timing-Dependent Assertions
 
 Tests in `internal/database/pool_test.go` use `time.Sleep(2 * time.Second)` - these are the most likely to flake in CI under load:
+
 - Line 341: 2-second sleep waiting for connection eviction
 - Line 397: 2-second sleep waiting for idle timeout
 
 ### 3. Random Data Without Seeds
 
 Check tests using `rand.Intn()` or similar without `rand.New(rand.NewSource(seed))` for reproducibility:
+
 - `internal/httpapi/handlers/video/views_load_test.go:157` uses `rand.Intn(100)` - acceptable in load tests but adds non-determinism
 
 ---
@@ -136,12 +144,14 @@ Check tests using `rand.Intn()` or similar without `rand.New(rand.NewSource(seed
 ## Test Coverage Quality Assessment
 
 ### Strong Areas
+
 - **Domain models:** Well-tested with table-driven tests and edge cases
 - **Repository layer:** Comprehensive sqlmock-based unit tests
 - **Handler layer:** Good HTTP test coverage with request/response validation
 - **Middleware:** Good coverage including edge cases and concurrency
 
 ### Coverage Gaps
+
 - **IPFS backend:** Only tests error returns from "not implemented" methods
 - **Worker package:** Payment worker has skipped tests for unimplemented features
 - **E2E tests:** Entirely placeholder - no real end-to-end coverage exists

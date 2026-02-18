@@ -30,6 +30,7 @@ See [VALIDATION_REQUIRED.md](docs/development/VALIDATION_REQUIRED.md) for comple
 ## Features
 
 Status legend:
+
 - `✅` Implemented and available
 - `🧪` Implemented but beta/experimental
 - `🛣️` Planned roadmap work
@@ -37,6 +38,7 @@ Status legend:
 ### Implemented Features (`✅`)
 
 #### Core Video Platform
+
 - **PeerTube API Compatibility** - Channels, subscriptions, comments, ratings, playlists, and captions
 - **Video Import System** - Import from external platforms via `yt-dlp` integration
 - **Transcoding + HLS** - FFmpeg processing with H.264/VP9/AV1 multi-codec encoding, adaptive streaming, heartbeat-based stale job recovery on server restart
@@ -47,6 +49,7 @@ Status legend:
 - **Auto-Captioning** - AI-powered caption generation via Whisper integration
 
 #### Live Streaming
+
 - **RTMP Server** - RTMP ingestion compatible with OBS/Streamlabs and similar tooling
 - **Real-time Chat** - WebSocket-based stream chat with moderation controls
 - **Stream Scheduling** - Waiting rooms, scheduled lifecycle transitions, and subscriber notifications
@@ -54,16 +57,19 @@ Status legend:
 - **VOD Conversion** - Conversion of live streams to on-demand videos
 
 #### P2P and Storage
+
 - **WebTorrent + IPFS Hybrid Distribution** - P2P delivery and decentralized storage options
 - **DHT and Peer Exchange** - Trackerless peer discovery capabilities
 - **Smart Seeding Controls** - Automated seeding behavior and fallback routing
 - **S3-Compatible Storage** - AWS S3, Backblaze B2, and DigitalOcean Spaces support
 
 #### Federation
+
 - **ActivityPub** - PeerTube-compatible federation with WebFinger, NodeInfo, and HTTP signatures
 - **Video Redundancy** - Cross-instance replication and sync workflows
 
 #### Security, Auth, and Extensibility
+
 - **Two-Factor Authentication (2FA)** - TOTP and backup codes
 - **OAuth2 with PKCE** - Authorization code and secure token flows
 - **Content Moderation** - Abuse reporting and blocklist moderation tooling
@@ -72,6 +78,7 @@ Status legend:
 - **Observability** - OpenTelemetry tracing, Prometheus metrics, Grafana dashboards, structured logging, and health endpoints
 
 #### Deployment
+
 - **Kubernetes + Blue/Green** - Kustomize base/overlay manifests, blue/green deployment overlays, pre-switch validation jobs, smoke tests, Prometheus monitoring, Grafana dashboards
 
 ### Implemented Beta Features (`🧪`)
@@ -211,6 +218,7 @@ The test suite includes both unit tests and integration tests.
 
 **Running Unit Tests (Fast):**
 Unit tests that do not require external infrastructure (Postgres/Redis) can be run quickly:
+
 ```bash
 make test-unit
 ```
@@ -219,15 +227,21 @@ make test-unit
 Integration tests require running Postgres and Redis instances. The test runner uses a "Fail Fast" mechanism: if infrastructure is not available, these tests will be skipped automatically to save time.
 
 To run full integration tests:
+
 1. Ensure you are logged into Docker Hub (to avoid rate limits):
+
    ```bash
    docker login
    ```
+
 2. Start the test infrastructure:
+
    ```bash
    docker compose up -d postgres redis
    ```
+
 3. Run the tests:
+
    ```bash
    make test
    ```
@@ -322,6 +336,7 @@ See the full documentation index at [docs/README.md](docs/README.md).
 **Current Phase**: Quality Programme (Sprints 15-20) - **100% COMPLETE** - Stabilization, coverage uplift, and release hardening.
 
 **Sprints 1-14**: PeerTube Feature Parity - **100% COMPLETE**
+
 - 77,959+ lines of production code
 - 3,740 automated tests
 - 61 database migrations
@@ -329,6 +344,7 @@ See the full documentation index at [docs/README.md](docs/README.md).
 - Full ActivityPub federation
 
 **Sprint 20** (Complete): Release Hardening
+
 - Full regression and security validation (3,740 tests passing, zero critical vulnerabilities)
 - Coverage sign-off (all 30 per-package thresholds met)
 - CHANGELOG.md and maintenance plan finalized
@@ -382,6 +398,7 @@ See [Project Management Documentation](docs/project-management/README.md), [Spri
 Configuration is managed through environment variables. See [.env.example](.env.example) for all available options.
 
 Key configuration areas:
+
 - **Database**: PostgreSQL with connection pooling and extensions (pg_trgm, uuid-ossp)
 - **Cache**: Redis for sessions, rate limiting, and video status
 - **Storage**: Local, IPFS, or S3-compatible backends (AWS, Backblaze B2, DigitalOcean Spaces)
@@ -410,6 +427,7 @@ ACTIVITYPUB_KEY_ENCRYPTION_KEY=         # 32-byte base64 key for encrypting AP p
 ```
 
 **Built-in Security Features:**
+
 - **SSRF Protection**: Blocks private IPs (RFC1918), metadata services (169.254.169.254), obfuscated IPs (octal/hex/integer), DNS rebinding
 - **File Type Blocking**: 40+ dangerous file types blocked, polyglot detection, ZIP bomb protection
 - **HTML Sanitization**: Multiple policies for XSS prevention using bluemonday
@@ -421,6 +439,7 @@ See [SECURITY.md](docs/security/SECURITY.md) for security advisories including C
 ## Contributing
 
 We welcome contributions! Please see our documentation for:
+
 - [Contributing Guide](CONTRIBUTING.md) - Setup, workflow, and PR requirements
 - [Code of Conduct](CODE_OF_CONDUCT.md) - Community participation expectations
 - [Architecture Guidelines](docs/architecture.md) - System design and patterns

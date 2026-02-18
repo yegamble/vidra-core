@@ -16,7 +16,6 @@ import (
 	"athena/internal/domain"
 )
 
-// MockLiveStreamRepository implements a mock for testing
 type MockLiveStreamRepository struct{}
 
 func (m *MockLiveStreamRepository) Create(ctx context.Context, stream *domain.LiveStream) error {
@@ -85,24 +84,38 @@ func (m *MockLiveStreamRepository) EndStream(ctx context.Context, id uuid.UUID) 
 	return nil
 }
 
+func (m *MockLiveStreamRepository) GetChannelByStreamID(_ context.Context, _ uuid.UUID) (*domain.Channel, error) {
+	return nil, nil
+}
+func (m *MockLiveStreamRepository) UpdateWaitingRoom(_ context.Context, _ uuid.UUID, _ bool, _ string) error {
+	return nil
+}
+func (m *MockLiveStreamRepository) ScheduleStream(_ context.Context, _ uuid.UUID, _ *time.Time, _ *time.Time, _ bool, _ string) error {
+	return nil
+}
+func (m *MockLiveStreamRepository) CancelSchedule(_ context.Context, _ uuid.UUID) error { return nil }
+func (m *MockLiveStreamRepository) GetScheduledStreams(_ context.Context, _, _ int) ([]*domain.LiveStream, error) {
+	return nil, nil
+}
+func (m *MockLiveStreamRepository) GetUpcomingStreams(_ context.Context, _ uuid.UUID, _ int) ([]*domain.LiveStream, error) {
+	return nil, nil
+}
+
 func TestGetQualityVariants(t *testing.T) {
 	variants := GetQualityVariants()
 
 	assert.Len(t, variants, 4, "Should have 4 quality variants")
 
-	// Check that variants are in expected order
 	assert.Equal(t, "1080p", variants[0].Name)
 	assert.Equal(t, "720p", variants[1].Name)
 	assert.Equal(t, "480p", variants[2].Name)
 	assert.Equal(t, "360p", variants[3].Name)
 
-	// Validate 1080p settings
 	assert.Equal(t, 1920, variants[0].Width)
 	assert.Equal(t, 1080, variants[0].Height)
 	assert.Equal(t, 5000, variants[0].VideoBitrate)
 	assert.Equal(t, 128, variants[0].AudioBitrate)
 
-	// Validate 360p settings
 	assert.Equal(t, 640, variants[3].Width)
 	assert.Equal(t, 360, variants[3].Height)
 	assert.Equal(t, 800, variants[3].VideoBitrate)
@@ -157,7 +170,6 @@ func TestFilterVariantsByConfig(t *testing.T) {
 
 			assert.Len(t, variants, tt.expectedCount)
 
-			// Check that expected variants are present
 			variantNames := make([]string, len(variants))
 			for i, v := range variants {
 				variantNames[i] = v.Name
@@ -214,14 +226,12 @@ func TestHLSTranscoder_SessionManagement(t *testing.T) {
 
 	streamID := uuid.New()
 
-	// Initially, no session exists
 	assert.False(t, transcoder.IsTranscoding(streamID))
 
 	session, exists := transcoder.GetSession(streamID)
 	assert.False(t, exists)
 	assert.Nil(t, session)
 
-	// Active stream count should be 0
 	assert.Equal(t, 0, transcoder.GetActiveStreamCount())
 }
 
@@ -262,9 +272,8 @@ func TestHLSTranscoder_BuildFFmpegCommand(t *testing.T) {
 	assert.NotNil(t, cmd)
 	assert.Equal(t, cfg.FFmpegPath, cmd.Path)
 
-	args := cmd.Args[1:] // Skip the command name itself
+	args := cmd.Args[1:]
 
-	// Verify key arguments
 	assert.Contains(t, args, "-i")
 	assert.Contains(t, args, rtmpURL)
 	assert.Contains(t, args, "-preset")
@@ -288,7 +297,7 @@ func TestHLSTranscoder_OutputDirectoryCreation(t *testing.T) {
 		LiveHLSSegmentLength: 2,
 		LiveHLSWindowSize:    10,
 		HLSVariants:          "720p,480p",
-		FFmpegPath:           "/bin/false", // Use /bin/false to prevent actual transcoding
+		FFmpegPath:           "/bin/false",
 		FFmpegPreset:         "veryfast",
 		FFmpegTune:           "zerolatency",
 	}
@@ -310,28 +319,22 @@ func TestHLSTranscoder_OutputDirectoryCreation(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	// Start transcoding (will fail quickly with /bin/false)
 	err := transcoder.StartTranscoding(ctx, stream, "rtmp://localhost:1935/test")
 
-	// Should not return error immediately (starts in background)
 	assert.NoError(t, err)
 
-	// Output directory should be created
 	outputDir := filepath.Join(tmpDir, stream.ID.String())
 	_, err = os.Stat(outputDir)
 	assert.NoError(t, err, "Output directory should be created")
 
-	// Variant directories should be created
 	_, err = os.Stat(filepath.Join(outputDir, "720p"))
 	assert.NoError(t, err, "720p directory should be created")
 
 	_, err = os.Stat(filepath.Join(outputDir, "480p"))
 	assert.NoError(t, err, "480p directory should be created")
 
-	// Wait a bit for process to start and fail
 	time.Sleep(500 * time.Millisecond)
 
-	// Stop transcoding
 	transcoder.StopTranscoding(stream.ID)
 }
 
@@ -344,7 +347,7 @@ func TestHLSTranscoder_DuplicateStart(t *testing.T) {
 		LiveHLSSegmentLength: 2,
 		LiveHLSWindowSize:    10,
 		HLSVariants:          "720p",
-		FFmpegPath:           "/bin/sleep", // Use sleep to keep process running
+		FFmpegPath:           "/bin/sleep",
 		FFmpegPreset:         "veryfast",
 		FFmpegTune:           "zerolatency",
 	}
@@ -365,16 +368,13 @@ func TestHLSTranscoder_DuplicateStart(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Start transcoding first time
 	err := transcoder.StartTranscoding(ctx, stream, "rtmp://localhost:1935/test")
 	assert.NoError(t, err)
 
-	// Try to start again - should fail
 	err = transcoder.StartTranscoding(ctx, stream, "rtmp://localhost:1935/test")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "already being transcoded")
 
-	// Cleanup
 	transcoder.StopTranscoding(stream.ID)
 	transcoder.Shutdown(context.Background())
 }
@@ -390,7 +390,7 @@ func TestHLSTranscoder_Shutdown(t *testing.T) {
 		LiveHLSSegmentLength: 2,
 		LiveHLSWindowSize:    10,
 		HLSVariants:          "720p",
-		FFmpegPath:           "/bin/cat", // Use cat which will wait for input
+		FFmpegPath:           "/bin/cat",
 		FFmpegPreset:         "veryfast",
 		FFmpegTune:           "zerolatency",
 	}
@@ -411,25 +411,20 @@ func TestHLSTranscoder_Shutdown(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Start transcoding
 	err := transcoder.StartTranscoding(ctx, stream, "rtmp://localhost:1935/test")
 	require.NoError(t, err)
 
-	// Wait a bit for process to start
 	time.Sleep(200 * time.Millisecond)
 
-	// Should be transcoding
 	assert.True(t, transcoder.IsTranscoding(stream.ID))
 	assert.Equal(t, 1, transcoder.GetActiveStreamCount())
 
-	// Shutdown with timeout
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
 	err = transcoder.Shutdown(shutdownCtx)
 	assert.NoError(t, err)
 
-	// All sessions should be stopped
 	assert.Equal(t, 0, transcoder.GetActiveStreamCount())
 	assert.False(t, transcoder.IsTranscoding(stream.ID))
 }
@@ -460,7 +455,7 @@ func TestHLSTranscoder_NoVariantsEnabled(t *testing.T) {
 		HLSOutputDir:         tmpDir,
 		LiveHLSSegmentLength: 2,
 		LiveHLSWindowSize:    10,
-		HLSVariants:          "invalid_variant", // No valid variants
+		HLSVariants:          "invalid_variant",
 		FFmpegPath:           "/usr/bin/ffmpeg",
 		FFmpegPreset:         "veryfast",
 		FFmpegTune:           "zerolatency",
@@ -482,7 +477,6 @@ func TestHLSTranscoder_NoVariantsEnabled(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Should fail because no valid variants
 	err := transcoder.StartTranscoding(ctx, stream, "rtmp://localhost:1935/test")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "no quality variants enabled")

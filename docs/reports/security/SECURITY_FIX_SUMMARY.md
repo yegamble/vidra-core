@@ -11,17 +11,20 @@
 ### 1. Plaintext Private Key Storage ✅ FIXED
 
 **Problem:**
+
 - ActivityPub private keys were stored in plaintext in the PostgreSQL database
 - Any database access (SQL injection, backup exposure, insider threat) would expose all private keys
 - Compromised keys could allow attackers to impersonate users across the fediverse
 
 **Solution Implemented:**
+
 - ✅ **AES-256-GCM encryption** for all private keys at rest
 - ✅ **Transparent encryption/decryption** in repository layer
 - ✅ **Secure key derivation** using PBKDF2-HMAC-SHA256 (100,000 iterations)
 - ✅ **Per-encryption random nonces** (IND-CPA security)
 
 **Files Modified:**
+
 - `/home/user/athena/internal/security/activitypub_key_encryption.go` (NEW)
 - `/home/user/athena/internal/repository/activitypub_repository.go` (MODIFIED)
 - `/home/user/athena/migrations/058_encrypt_activitypub_private_keys.sql` (NEW)
@@ -29,16 +32,19 @@
 ### 2. Inadequate RSA Key Size ✅ UPGRADED
 
 **Problem:**
+
 - RSA keys were generated at 2048 bits (112-bit security level)
 - Below NIST SP 800-57 Part 1 recommendations for post-2023 use
 - Insufficient for long-term security (especially against quantum threats)
 
 **Solution Implemented:**
+
 - ✅ **Upgraded to 3072-bit RSA keys** (128-bit security level)
 - ✅ **NIST compliant** (valid through 2030+)
 - ✅ **Backward compatible** (existing keys still work)
 
 **Files Modified:**
+
 - `/home/user/athena/internal/activitypub/httpsig.go:249-252`
 - `/home/user/athena/internal/activitypub/httpsig_test.go:38-49` (NEW TEST)
 
@@ -60,7 +66,7 @@
 
 ## Files Created/Modified
 
-### New Files Created (7):
+### New Files Created (7)
 
 1. `/home/user/athena/internal/security/activitypub_key_encryption.go`
    - AES-256-GCM encryption implementation
@@ -93,7 +99,7 @@
    - Comprehensive security audit report
    - 600+ lines of detailed documentation
 
-### Files Modified (4):
+### Files Modified (4)
 
 1. `/home/user/athena/internal/repository/activitypub_repository.go`
    - Added encryption support to repository
@@ -122,21 +128,27 @@
 ### All Tests Passing ✅
 
 **Encryption Module Tests:**
+
 ```bash
 go test ./internal/security/activitypub_key_encryption_test.go
 ```
+
 Result: **PASS** (9 tests, 0 failures)
 
 **Repository Security Tests:**
+
 ```bash
 go test ./internal/repository/activitypub_key_security_test.go
 ```
+
 Result: **PASS** (6 critical security tests)
 
 **RSA Key Generation Tests:**
+
 ```bash
 go test ./internal/activitypub/httpsig_test.go -run TestGenerateKeyPair
 ```
+
 Result: **PASS** (validates 3072-bit key size)
 
 ### Critical Security Tests
@@ -165,11 +177,13 @@ Result: **PASS** (validates 3072-bit key size)
 ### For New Installations
 
 1. Set encryption key in environment:
+
    ```bash
    export ACTIVITYPUB_KEY_ENCRYPTION_KEY="$(openssl rand -base64 48)"
    ```
 
 2. Run migrations:
+
    ```bash
    goose up
    ```
@@ -181,27 +195,32 @@ Result: **PASS** (validates 3072-bit key size)
 **CRITICAL: Backup database first!**
 
 1. **Backup Database:**
+
    ```bash
    pg_dump -U athena_user -d athena > backup_$(date +%Y%m%d).sql
    ```
 
 2. **Generate and Set Encryption Key:**
+
    ```bash
    export ACTIVITYPUB_KEY_ENCRYPTION_KEY="$(openssl rand -base64 48)"
    # Save this key securely! You will need it to decrypt keys.
    ```
 
 3. **Run Database Migration:**
+
    ```bash
    goose -dir migrations postgres "$DATABASE_URL" up
    ```
 
 4. **Run Key Migration Tool:**
+
    ```bash
    go run cmd/encrypt-activitypub-keys/main.go
    ```
 
 5. **Verify Encryption:**
+
    ```sql
    SELECT actor_id,
           LEFT(private_key_pem, 50),
@@ -214,6 +233,7 @@ Result: **PASS** (validates 3072-bit key size)
    ```
 
 6. **Restart Application:**
+
    ```bash
    systemctl restart athena
    ```
@@ -225,11 +245,13 @@ Result: **PASS** (validates 3072-bit key size)
 ### Required Environment Variables
 
 **New (Required when ActivityPub enabled):**
+
 ```bash
 ACTIVITYPUB_KEY_ENCRYPTION_KEY="your-secure-random-key-here"
 ```
 
 **Generation:**
+
 ```bash
 # Generate a secure 48-byte (384-bit) key
 openssl rand -base64 48
@@ -239,6 +261,7 @@ head -c 48 /dev/urandom | base64
 ```
 
 **Security Requirements:**
+
 - ✅ Minimum 32 characters (enforced by code)
 - ✅ Cryptographically random (use openssl or /dev/urandom)
 - ✅ Stored securely (secrets manager recommended)
@@ -262,6 +285,7 @@ ACTIVITYPUB_KEY_ENCRYPTION_KEY=change-this-to-a-secure-random-key-at-least-32-ch
 ### Encryption Performance
 
 **Benchmarks:**
+
 - Encryption: ~650 nanoseconds per operation
 - Decryption: ~580 nanoseconds per operation
 
@@ -270,6 +294,7 @@ ACTIVITYPUB_KEY_ENCRYPTION_KEY=change-this-to-a-secure-random-key-at-least-32-ch
 ### RSA Key Generation
 
 **Benchmarks:**
+
 - 2048-bit: ~220ms per key pair
 - 3072-bit: ~950ms per key pair (4.3x slower)
 
@@ -289,21 +314,26 @@ ACTIVITYPUB_KEY_ENCRYPTION_KEY=change-this-to-a-secure-random-key-at-least-32-ch
 ### Standards Met
 
 ✅ **NIST SP 800-57 Part 1 Rev. 5**
+
 - RSA key size: 3072 bits (128-bit security strength)
 - AES-256 encryption for data at rest
 
 ✅ **FIPS 197** (AES Standard)
+
 - AES-256 encryption algorithm
 
 ✅ **NIST SP 800-38D** (GCM Mode)
+
 - Galois/Counter Mode for authenticated encryption
 
 ✅ **OWASP Top 10 2021**
+
 - A02:2021 – Cryptographic Failures (mitigated)
 
 ### Regulatory Compliance
 
 Helps meet requirements for:
+
 - **GDPR** (EU): Encryption of personal data
 - **CCPA** (California): Reasonable security measures
 - **SOC 2**: Encryption controls
@@ -381,6 +411,7 @@ Helps meet requirements for:
 ### Recommended Alerts
 
 **1. Encryption Key Missing:**
+
 ```yaml
 alert: ActivityPubEncryptionKeyMissing
 expr: activitypub_encryption_initialized == 0
@@ -388,6 +419,7 @@ severity: critical
 ```
 
 **2. Decryption Failures:**
+
 ```yaml
 alert: ActivityPubKeyDecryptionFailures
 expr: rate(activitypub_key_decryption_errors[5m]) > 0
@@ -395,6 +427,7 @@ severity: high
 ```
 
 **3. Unencrypted Keys Found:**
+
 ```sql
 -- Daily automated check
 SELECT COUNT(*) FROM ap_actor_keys WHERE keys_encrypted = FALSE;
@@ -465,6 +498,7 @@ SELECT COUNT(*) FROM ap_actor_keys WHERE keys_encrypted = FALSE;
 ### Production Ready
 
 This implementation is:
+
 - ✅ **Security audited**
 - ✅ **Fully tested**
 - ✅ **Well documented**

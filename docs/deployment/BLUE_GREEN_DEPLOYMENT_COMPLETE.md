@@ -53,15 +53,18 @@ A comprehensive blue/green deployment strategy specifically designed for Athena'
 ### 🔧 Kubernetes Manifests
 
 **Blue Environment:**
+
 - `/home/user/athena/k8s/overlays/blue/kustomization.yaml`
 - `/home/user/athena/k8s/overlays/blue/deployment-patch.yaml`
 
 **Green Environment:**
+
 - `/home/user/athena/k8s/overlays/green/kustomization.yaml`
 - `/home/user/athena/k8s/overlays/green/deployment-patch.yaml`
 - `/home/user/athena/k8s/overlays/green/ingress-canary.yaml`
 
 **Validation Jobs:**
+
 - `/home/user/athena/k8s/jobs/pre-switch-validation.yaml` (comprehensive health checks)
 - `/home/user/athena/k8s/jobs/smoke-tests.yaml` (functional testing)
 
@@ -70,6 +73,7 @@ A comprehensive blue/green deployment strategy specifically designed for Athena'
 **File:** `/home/user/athena/.github/workflows/blue-green-deploy.yml`
 
 **Features:**
+
 - Automated blue/green deployment pipeline
 - Staging validation
 - Database migration handling
@@ -79,6 +83,7 @@ A comprehensive blue/green deployment strategy specifically designed for Athena'
 - Slack/PagerDuty notifications
 
 **Jobs:**
+
 1. validate-input - Detect current blue/green state
 2. staging-deployment - Deploy and test in staging
 3. database-migration - Apply migrations safely
@@ -92,6 +97,7 @@ A comprehensive blue/green deployment strategy specifically designed for Athena'
 ### 🔄 Operational Scripts
 
 **Rollback Script:** `/home/user/athena/scripts/rollback-deployment.sh`
+
 - Instant traffic switch back to previous environment
 - Health check validation
 - Automatic scaling if needed
@@ -110,11 +116,13 @@ A comprehensive blue/green deployment strategy specifically designed for Athena'
 ### Zero Downtime
 
 **Current State:**
+
 - 5-15 minutes downtime per deployment
 - User sessions interrupted
 - Federation sees 503 errors
 
 **With Blue/Green:**
+
 - < 1 second switchover
 - No session interruptions
 - Federation sees continuous uptime
@@ -123,11 +131,13 @@ A comprehensive blue/green deployment strategy specifically designed for Athena'
 ### Instant Rollback
 
 **Current State:**
+
 - 10-30 minutes to rollback
 - Requires rebuild and redeploy
 - High stress during incidents
 
 **With Blue/Green:**
+
 - 30 seconds to rollback
 - Single command: `./scripts/rollback-deployment.sh`
 - Low stress, high confidence
@@ -136,6 +146,7 @@ A comprehensive blue/green deployment strategy specifically designed for Athena'
 ### Gradual Rollout
 
 **New Capability:**
+
 - Route 10% → 50% → 100% traffic to new version
 - Detect issues before full rollout
 - Automated rollback if error rates spike
@@ -144,6 +155,7 @@ A comprehensive blue/green deployment strategy specifically designed for Athena'
 ### Cost Optimization
 
 **Cost Overhead:** < 0.1% monthly
+
 - Shared database, Redis, IPFS, storage
 - Only duplicate API servers and workers temporarily
 - Blue scaled down immediately after switch
@@ -153,6 +165,7 @@ A comprehensive blue/green deployment strategy specifically designed for Athena'
 ### Federation-Aware
 
 **Specific to Athena:**
+
 - ActivityPub endpoints remain accessible
 - BlueSky ATProto compatibility maintained
 - Webfinger lookups work continuously
@@ -162,6 +175,7 @@ A comprehensive blue/green deployment strategy specifically designed for Athena'
 ### Video Encoding Protection
 
 **Specific to Athena:**
+
 - Long-running encoding jobs complete on Blue
 - New jobs assigned to Green
 - Graceful worker shutdown (2-hour grace period)
@@ -184,6 +198,7 @@ spec:
 ```
 
 **Advantages:**
+
 - Native Kubernetes (no external dependencies)
 - Instant switch (< 1 second)
 - Works with existing HPA
@@ -196,15 +211,18 @@ spec:
 **Pattern:** Expand-Contract
 
 **Phase 1 - Expand (with new version):**
+
 - Add new columns/tables (nullable)
 - Blue ignores, Green uses
 - Both versions work
 
 **Phase 2 - Contract (next version):**
+
 - Remove old columns/tables
 - Safe cleanup after Blue retired
 
 **Example:**
+
 ```sql
 -- Expand migration (version N)
 ALTER TABLE videos ADD COLUMN new_status TEXT;
@@ -216,6 +234,7 @@ ALTER TABLE videos DROP COLUMN old_status;
 ### Shared vs Duplicated Components
 
 **Shared (Not Duplicated):**
+
 - PostgreSQL (single instance)
 - Redis (single cluster)
 - IPFS (shared cluster)
@@ -223,6 +242,7 @@ ALTER TABLE videos DROP COLUMN old_status;
 - ClamAV (shared service)
 
 **Duplicated (Blue/Green):**
+
 - API servers (stateless)
 - Encoding workers (with graceful shutdown)
 
@@ -233,6 +253,7 @@ ALTER TABLE videos DROP COLUMN old_status;
 ## Implementation Roadmap
 
 ### Week 1: Infrastructure Preparation
+
 - [ ] Create Blue/Green Kubernetes manifests ✅ COMPLETE
 - [ ] Configure service label selectors ✅ COMPLETE
 - [ ] Set up canary ingress resources ✅ COMPLETE
@@ -240,6 +261,7 @@ ALTER TABLE videos DROP COLUMN old_status;
 - [ ] Test in local/staging environment
 
 ### Week 2: CI/CD Integration
+
 - [ ] GitHub Actions workflow created ✅ COMPLETE
 - [ ] Configure GitHub secrets (KUBE_CONFIG, DATABASE_URL)
 - [ ] Set up deployment environments and approval gates
@@ -247,6 +269,7 @@ ALTER TABLE videos DROP COLUMN old_status;
 - [ ] Add Slack/PagerDuty notifications
 
 ### Week 3: Database Migration Strategy
+
 - [ ] Document expand-contract pattern ✅ COMPLETE
 - [ ] Create migration validation scripts
 - [ ] Test backward-compatible migrations
@@ -254,6 +277,7 @@ ALTER TABLE videos DROP COLUMN old_status;
 - [ ] Train team on migration patterns
 
 ### Week 4: Testing & Validation
+
 - [ ] Run blue/green in staging environment
 - [ ] Load test during switchover (k6)
 - [ ] Test rollback procedures
@@ -261,6 +285,7 @@ ALTER TABLE videos DROP COLUMN old_status;
 - [ ] Document lessons learned
 
 ### Week 5: Production Rollout
+
 - [ ] Schedule first production deployment
 - [ ] Execute blue/green deployment
 - [ ] Monitor for 24 hours
@@ -268,6 +293,7 @@ ALTER TABLE videos DROP COLUMN old_status;
 - [ ] Refine procedures
 
 **Total Effort:**
+
 - DevOps Engineer: ~100 hours (20 hours/week × 5 weeks)
 - Backend Engineer: ~50 hours (database migrations)
 - QA Engineer: ~25 hours (validation testing)
@@ -370,9 +396,10 @@ The pre-switch validation job checks:
 ✓ Queue health
 ✓ API endpoints respond
 ✓ Federation endpoints accessible:
-  - NodeInfo
-  - Webfinger
-  - Actor endpoints
+
+- NodeInfo
+- Webfinger
+- Actor endpoints
 ✓ Metrics endpoint accessible
 ✓ Response time < 1000ms
 
@@ -389,6 +416,7 @@ Monitor these metrics after traffic switch:
 ### Automated Rollback Triggers
 
 Prometheus alerting rules trigger automatic rollback if:
+
 - Error rate > 5% for 2 minutes
 - p99 latency > 3 seconds for 5 minutes
 - Database connection pool > 95% for 2 minutes
@@ -408,17 +436,21 @@ Prometheus alerting rules trigger automatic rollback if:
 - Storage (S3/EBS): $20/month (4% of total) - SHARED
 
 **During Blue/Green Deployment (30 minutes):**
+
 - Duplicate API + Workers: $350/month × 1/1440 hours = $0.24 per deployment
 - Shared components: $0 additional cost
 
 **Monthly Overhead (4 deployments/month):**
+
 - Cost: $0.24 × 4 = $0.96/month
 - Percentage: 0.19% of infrastructure cost
 
 **With Optimization (immediate Blue scale-down):**
+
 - Actual overhead: < 0.1% monthly
 
 **ROI:**
+
 - Cost: $1/month
 - Benefit: Zero downtime, instant rollback, deploy 10x more frequently
 - Developer time saved: ~10 hours/week (no deployment anxiety)
@@ -431,6 +463,7 @@ Prometheus alerting rules trigger automatic rollback if:
 ### Deployment KPIs
 
 **Target Metrics:**
+
 - Downtime per deployment: **0 seconds** (from 5-15 minutes)
 - Deployment frequency: **Multiple per day** (from 1-2 per week)
 - Rollback time: **< 30 seconds** (from 10-30 minutes)
@@ -438,6 +471,7 @@ Prometheus alerting rules trigger automatic rollback if:
 - Cost overhead: **< 0.1%** monthly
 
 **Business Metrics:**
+
 - Developer velocity: **+50%** (faster feature releases)
 - Federation reliability: **99.99%** uptime (from 99.8%)
 - User session interruptions: **0** (from dozens per week)
@@ -446,6 +480,7 @@ Prometheus alerting rules trigger automatic rollback if:
 ### Monitoring Dashboard
 
 Create Grafana dashboard with:
+
 1. Deployment timeline (annotations)
 2. Traffic split (Blue vs Green)
 3. Error rates (by version)
@@ -471,16 +506,19 @@ Create Grafana dashboard with:
 ### Rollback Strategy
 
 **Scenario 1: Immediate Issues (< 30 min)**
+
 - Rollback time: < 30 seconds
 - Method: Switch service selector back to Blue
 - Blue status: Active, scaled up
 
 **Scenario 2: Delayed Issues (30 min - 2 hours)**
+
 - Rollback time: 1-2 minutes
 - Method: Scale up Blue, switch traffic
 - Blue status: Scaled to 1 replica (standby)
 
 **Scenario 3: Late Discovery (> 2 hours)**
+
 - Rollback time: 5-10 minutes
 - Method: Redeploy Blue from scratch
 - Blue status: Deleted
@@ -538,21 +576,25 @@ Create Grafana dashboard with:
 ## File Locations
 
 ### Strategic Documentation
+
 - **Strategy:** `docs/deployment/BLUE_GREEN_DEPLOYMENT_STRATEGY.md`
 - **Implementation Guide:** `docs/deployment/BLUE_GREEN_IMPLEMENTATION_GUIDE.md`
 - **Quick Start:** `docs/deployment/BLUE_GREEN_QUICK_START.md`
 - **Executive Summary:** `docs/deployment/BLUE_GREEN_EXECUTIVE_SUMMARY.md`
 
 ### Infrastructure Code
+
 - **Blue Manifests:** `k8s/overlays/blue/`
 - **Green Manifests:** `k8s/overlays/green/`
 - **Validation Jobs:** `k8s/jobs/`
 
 ### Automation
+
 - **GitHub Workflow:** `.github/workflows/blue-green-deploy.yml`
 - **Rollback Script:** `scripts/rollback-deployment.sh`
 
 ### Updated Documentation
+
 - **Kubernetes README:** `k8s/README.md` (updated with blue/green section)
 
 ---
@@ -560,14 +602,17 @@ Create Grafana dashboard with:
 ## Support & Resources
 
 **Documentation:**
+
 - All docs in `docs/deployment/` directory
 - Kubernetes manifests in `k8s/overlays/` directory
 
 **Community:**
-- GitHub Issues: https://github.com/yegamble/athena/issues
+
+- GitHub Issues: <https://github.com/yegamble/athena/issues>
 - Slack: #athena-deployments (create channel)
 
 **On-Call:**
+
 - Set up PagerDuty rotation for deployments
 - Create incident response runbook
 

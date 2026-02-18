@@ -18,11 +18,13 @@ Fixed E2E test failures caused by incorrect API endpoint usage in test helpers. 
 **Root Cause:** Test helper was calling the wrong API endpoint.
 
 **What Was Happening:**
+
 - Test called: `POST /api/v1/videos` with multipart form data
 - This endpoint expects: JSON body (for metadata-only video creation)
 - Test should call: `POST /api/v1/videos/upload` (for file upload)
 
 **Fix Applied:**
+
 ```diff
 File: tests/e2e/helpers.go (line 185)
 
@@ -31,6 +33,7 @@ File: tests/e2e/helpers.go (line 185)
 ```
 
 **Impact:**
+
 - ✅ Fixes TestVideoUploadWorkflow
 - ✅ Fixes TestVideoSearchFunctionality
 - No production code changes
@@ -43,6 +46,7 @@ File: tests/e2e/helpers.go (line 185)
 **Root Cause:** Unknown - authentication is failing after successful registration.
 
 **What's Happening:**
+
 - User registration succeeds (returns 201 with token)
 - Immediate login with same credentials fails (returns 401)
 - Error changed from 400 → 401, indicating email field is now correctly parsed
@@ -50,12 +54,14 @@ File: tests/e2e/helpers.go (line 185)
 **Diagnostic Logging Added:**
 
 Added detailed logging to `RegisterUser()` and `Login()` helpers to capture:
+
 - Credentials being used (username, email)
 - Registration success/failure with full error response
 - Login success/failure with error codes and messages
 - User IDs returned from each operation
 
 **Example Log Output (Expected):**
+
 ```
 Registering user: username=e2e_abc123_1234567890, email=e2e_abc123_1234567890@example.com
 Registration succeeded: userID=550e8400-e29b-41d4-a716-446655440000
@@ -65,6 +71,7 @@ Error code: INVALID_CREDENTIALS, Message: Invalid credentials, Details:
 ```
 
 **Next Steps for Debugging:**
+
 1. Run tests and capture diagnostic logs
 2. Verify registration actually creates user in database
 3. Check if password hash is being stored correctly
@@ -80,11 +87,13 @@ Error code: INVALID_CREDENTIALS, Message: Invalid credentials, Details:
 **Changes:**
 
 1. **Line 90:** Added registration logging
+
    ```go
    t.Logf("Registering user: username=%s, email=%s", username, email)
    ```
 
 2. **Lines 96-99:** Added registration failure diagnostics
+
    ```go
    if resp.StatusCode != http.StatusCreated {
        respBody, _ := io.ReadAll(resp.Body)
@@ -93,16 +102,19 @@ Error code: INVALID_CREDENTIALS, Message: Invalid credentials, Details:
    ```
 
 3. **Line 117:** Added registration success logging
+
    ```go
    t.Logf("Registration succeeded: userID=%s", envelope.Data.User.ID)
    ```
 
 4. **Line 134:** Added login attempt logging
+
    ```go
    t.Logf("Login attempt: username=%s, email=%s", username, email)
    ```
 
 5. **Lines 148-167:** Added login failure diagnostics
+
    ```go
    if resp.StatusCode != http.StatusOK {
        respBody, _ := io.ReadAll(resp.Body)
@@ -126,12 +138,14 @@ Error code: INVALID_CREDENTIALS, Message: Invalid credentials, Details:
    ```
 
 6. **Line 185:** Fixed video upload endpoint (THE CRITICAL FIX)
+
    ```go
    - req, err := http.NewRequest("POST", c.BaseURL+"/api/v1/videos", &buf)
    + req, err := http.NewRequest("POST", c.BaseURL+"/api/v1/videos/upload", &buf)
    ```
 
 7. **Line 185:** Added login success logging
+
    ```go
    t.Logf("Login succeeded: userID=%s", envelope.Data.User.ID)
    ```
@@ -143,9 +157,11 @@ Error code: INVALID_CREDENTIALS, Message: Invalid credentials, Details:
 The Athena API has **two different video creation endpoints** with different purposes:
 
 ### POST /api/v1/videos (JSON)
+
 **Handler:** `CreateVideoHandler`
 **Purpose:** Create video metadata record only (for chunked upload workflow)
 **Request Format:** JSON
+
 ```json
 {
   "title": "My Video",
@@ -153,13 +169,16 @@ The Athena API has **two different video creation endpoints** with different pur
   "privacy": "public"
 }
 ```
+
 **Response:** 201 Created with video ID
 **Use Case:** Initiate chunked upload, then upload chunks separately
 
 ### POST /api/v1/videos/upload (Multipart)
+
 **Handler:** `UploadVideoFileHandler`
 **Purpose:** Legacy one-shot upload with file
 **Request Format:** Multipart form data
+
 ```
 Content-Type: multipart/form-data
 video: <file>
@@ -167,6 +186,7 @@ title: My Video
 description: Description
 privacy: public
 ```
+
 **Response:** 201 Created with video ID
 **Use Case:** Simple file upload (Postman tests, simple clients)
 
@@ -177,18 +197,21 @@ privacy: public
 ## Expected Test Results After Fixes
 
 ### TestVideoUploadWorkflow
+
 **Before:** 400 Bad Request on video upload (line 195)
 **After:** Should progress past upload (may still fail on login with 401)
 **Root Cause:** Fixed - wrong endpoint
 **Status:** ✅ Likely fixed
 
 ### TestUserAuthenticationFlow
+
 **Before:** 401 Unauthorized on login (line 137)
 **After:** Will show detailed diagnostic logs
 **Root Cause:** Under investigation
 **Status:** 🔍 Needs logs to diagnose
 
 ### TestVideoSearchFunctionality
+
 **Before:** 400 Bad Request on video upload
 **After:** Should progress past upload (may still fail on login with 401)
 **Root Cause:** Fixed - wrong endpoint
@@ -247,6 +270,7 @@ git push
 ```
 
 Then check GitHub Actions workflow for:
+
 - Detailed test logs
 - Registration and login diagnostic messages
 - Video upload success/failure
@@ -258,6 +282,7 @@ Then check GitHub Actions workflow for:
 ### ✅ Video Upload Endpoint Fix
 
 **API Contract Preserved:**
+
 - Both endpoints (`/videos` and `/videos/upload`) remain functional
 - No changes to endpoint behavior
 - No changes to authentication requirements
@@ -265,6 +290,7 @@ Then check GitHub Actions workflow for:
 - Tests now use the correct endpoint for their use case
 
 **Business Logic Preserved:**
+
 - `CreateVideoHandler` still creates metadata-only records
 - `UploadVideoFileHandler` still accepts file uploads
 - Both endpoints validate authentication
@@ -276,6 +302,7 @@ Then check GitHub Actions workflow for:
 ### 🔍 Authentication Flow Investigation Needed
 
 **Business Logic Requirements:**
+
 1. Registration must create user with hashed password
 2. Login must verify email and password
 3. Password hashing must be consistent
@@ -284,6 +311,7 @@ Then check GitHub Actions workflow for:
 6. 2FA must not be enabled by default
 
 **Potential Issues:**
+
 - Password hash not being stored (database constraint?)
 - Email normalization differs between registration/login
 - bcrypt cost differs between operations
@@ -328,6 +356,7 @@ BUSINESS LOGIC IMPACT:
 ### Alternative: Two Commits (for clarity)
 
 **Commit 1: Fix video upload**
+
 ```bash
 git add tests/e2e/helpers.go
 git commit -m "fix(e2e): Use correct endpoint for video upload
@@ -341,6 +370,7 @@ Fixes: TestVideoUploadWorkflow, TestVideoSearchFunctionality"
 ```
 
 **Commit 2: Add diagnostics**
+
 ```bash
 git add tests/e2e/helpers.go
 git commit -m "feat(e2e): Add diagnostic logging to auth helpers
@@ -359,11 +389,13 @@ Helps diagnose: TestUserAuthenticationFlow 401 error"
 ## Success Criteria
 
 ### Immediate Success (Video Upload)
+
 - ✅ TestVideoUploadWorkflow progresses past video upload step
 - ✅ TestVideoSearchFunctionality progresses past video upload step
 - ✅ No more 400 Bad Request errors on video upload
 
 ### Diagnostic Success (Login)
+
 - ✅ Detailed logs show registration credentials
 - ✅ Detailed logs show registration success/failure
 - ✅ Detailed logs show login credentials
@@ -371,6 +403,7 @@ Helps diagnose: TestUserAuthenticationFlow 401 error"
 - ✅ Can identify root cause of 401 error from logs
 
 ### Full Success (All Tests Pass)
+
 - ✅ TestVideoUploadWorkflow passes completely
 - ✅ TestUserAuthenticationFlow passes completely
 - ✅ TestVideoSearchFunctionality passes completely
@@ -384,6 +417,7 @@ Helps diagnose: TestUserAuthenticationFlow 401 error"
 ### Risk Level: VERY LOW ✅
 
 **Why:**
+
 1. Changes only affect test code
 2. No production code modifications
 3. No API behavior changes
@@ -401,18 +435,22 @@ Helps diagnose: TestUserAuthenticationFlow 401 error"
 ## Next Steps
 
 ### 1. Immediate (Applied ✅)
+
 - [x] Fix video upload endpoint
 - [x] Add diagnostic logging to auth helpers
 - [x] Document changes in this summary
 
 ### 2. After Commit & Push
+
 - [ ] Monitor CI workflow execution
 - [ ] Capture diagnostic logs from failed tests
 - [ ] Analyze login 401 error details
 - [ ] Identify authentication root cause
 
 ### 3. If Login Issue Persists
+
 Based on diagnostic logs, may need to:
+
 - [ ] Check database user records
 - [ ] Verify password hash storage
 - [ ] Check email normalization
@@ -421,6 +459,7 @@ Based on diagnostic logs, may need to:
 - [ ] Review transaction handling
 
 ### 4. After All Tests Pass
+
 - [ ] Remove or reduce diagnostic logging (optional)
 - [ ] Update E2E documentation
 - [ ] Add comments explaining endpoint differences
@@ -453,6 +492,7 @@ LIMIT 5;
 ### Password Hash Verification
 
 Add temporary logging to handlers.go (REMOVE AFTER DEBUGGING):
+
 ```go
 // In Register handler after hashing
 t.Logf("Password hash created, length: %d", len(string(hash)))
@@ -464,6 +504,7 @@ t.Logf("Comparing password with hash, hash length: %d", len(hash))
 ### Email Normalization Check
 
 Add to test helpers:
+
 ```go
 t.Logf("Registration email: %q (length: %d)", email, len(email))
 t.Logf("Login email: %q (length: %d)", email, len(email))
@@ -476,6 +517,7 @@ t.Logf("Login email: %q (length: %d)", email, len(email))
 ### 1. API Endpoint Design
 
 The Athena API separates video creation into two workflows:
+
 - **Metadata-only creation** (JSON) - for chunked uploads
 - **Complete file upload** (multipart) - for simple uploads
 
@@ -484,6 +526,7 @@ This is good API design, but requires tests to use the correct endpoint for thei
 ### 2. Test Helper Assumptions
 
 The E2E test helpers made an assumption about which endpoint to use for video uploads. This highlights the importance of:
+
 - Clear API documentation
 - Endpoint naming conventions
 - Test helper documentation
@@ -497,6 +540,7 @@ The original error "Video upload failed" with 400 status code didn't clearly ind
 ### 4. Authentication Complexity
 
 The authentication flow has multiple potential failure points:
+
 - User lookup by email
 - Password hash retrieval
 - Password comparison
@@ -531,5 +575,6 @@ A: Possible - could add helper methods like `UploadVideoFile()` vs `CreateVideoM
 **Status:** Changes applied, ready for testing
 **Confidence:** High for video upload fix, requires logs for login diagnosis
 **Estimated Time to Resolution:**
+
 - Video upload: Fixed now
 - Login issue: 1-2 hours after logs are available

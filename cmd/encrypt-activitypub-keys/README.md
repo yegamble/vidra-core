@@ -41,6 +41,7 @@ openssl rand -base64 48
 ```
 
 **Save this key securely!** You will need it to:
+
 - Decrypt keys in the future
 - Run the application with ActivityPub enabled
 - Recover from database restores
@@ -128,6 +129,7 @@ FROM ap_actor_keys;
 ```
 
 **Expected Output:**
+
 ```
                 actor_id                |                   key_preview                    | keys_encrypted | security_status
 ----------------------------------------+--------------------------------------------------+----------------+-----------------
@@ -149,6 +151,7 @@ This tool is **idempotent** - you can safely run it multiple times:
 ### Error: "ACTIVITYPUB_KEY_ENCRYPTION_KEY is not set"
 
 **Solution:** Set the encryption key environment variable:
+
 ```bash
 export ACTIVITYPUB_KEY_ENCRYPTION_KEY="your-key-here"
 ```
@@ -156,6 +159,7 @@ export ACTIVITYPUB_KEY_ENCRYPTION_KEY="your-key-here"
 ### Error: "Failed to connect to database"
 
 **Solution:** Check your DATABASE_URL:
+
 ```bash
 export DATABASE_URL="postgres://user:password@host:5432/database"
 ```
@@ -163,11 +167,13 @@ export DATABASE_URL="postgres://user:password@host:5432/database"
 ### Error: "Failed to encrypt private key"
 
 **Possible causes:**
+
 1. Invalid key format in database
 2. Corrupted data
 3. Insufficient permissions
 
 **Solution:**
+
 1. Check database integrity
 2. Verify the key data is valid PEM format
 3. Check application logs for details
@@ -175,11 +181,13 @@ export DATABASE_URL="postgres://user:password@host:5432/database"
 ### No keys found to encrypt
 
 **Possible causes:**
+
 1. All keys are already encrypted
 2. No ActivityPub actors exist yet
 3. Migration has already been run
 
 **Verification:**
+
 ```sql
 SELECT COUNT(*) FROM ap_actor_keys;
 SELECT COUNT(*) FROM ap_actor_keys WHERE keys_encrypted = TRUE;
@@ -190,6 +198,7 @@ SELECT COUNT(*) FROM ap_actor_keys WHERE keys_encrypted = TRUE;
 ### 1. Protect the Encryption Key
 
 **DO:**
+
 - ✅ Store in a secrets manager (AWS Secrets Manager, Vault, etc.)
 - ✅ Use environment variables (never hardcode)
 - ✅ Backup securely (encrypted backup)
@@ -197,6 +206,7 @@ SELECT COUNT(*) FROM ap_actor_keys WHERE keys_encrypted = TRUE;
 - ✅ Rotate periodically
 
 **DON'T:**
+
 - ❌ Commit to version control
 - ❌ Store in plaintext files
 - ❌ Share via email or chat
@@ -208,6 +218,7 @@ SELECT COUNT(*) FROM ap_actor_keys WHERE keys_encrypted = TRUE;
 **Important:** Encrypted keys in backups require the encryption key!
 
 When restoring from backup:
+
 1. Restore database
 2. Ensure encryption key is available
 3. Application will decrypt keys automatically
@@ -217,6 +228,7 @@ When restoring from backup:
 ### 3. Key Rotation (Future Enhancement)
 
 Currently, key rotation requires:
+
 1. Decrypt all keys with old key
 2. Re-encrypt with new key
 3. Update ACTIVITYPUB_KEY_ENCRYPTION_KEY
@@ -228,6 +240,7 @@ Currently, key rotation requires:
 ### Recommended Process
 
 **1. Test in Staging**
+
 ```bash
 # Use staging database
 export DATABASE_URL="postgres://...staging..."
@@ -235,6 +248,7 @@ go run cmd/encrypt-activitypub-keys/main.go
 ```
 
 **2. Verify Staging**
+
 ```bash
 # Run tests
 go test -v ./internal/repository/...activitypub...
@@ -244,12 +258,14 @@ go test -v ./internal/repository/...activitypub...
 ```
 
 **3. Schedule Production Migration**
+
 ```bash
 # Plan for maintenance window (optional - can run live)
 # Communicate with users if downtime expected
 ```
 
 **4. Execute Production Migration**
+
 ```bash
 # Backup first!
 pg_dump ... > production_backup.sql
@@ -260,6 +276,7 @@ go run cmd/encrypt-activitypub-keys/main.go
 ```
 
 **5. Verify Production**
+
 ```bash
 # Check encryption status (SQL query above)
 # Monitor application logs
@@ -271,11 +288,13 @@ go run cmd/encrypt-activitypub-keys/main.go
 **⚠️ There is no automatic rollback!**
 
 If you need to revert:
+
 1. You must have the encryption key
 2. Restore from database backup (before encryption)
 3. Contact security team for assistance
 
 **Prevention is better than rollback:**
+
 - Test in staging first
 - Backup before production
 - Verify encryption key is backed up
@@ -285,21 +304,25 @@ If you need to revert:
 After running this tool:
 
 1. **Set encryption key in production:**
+
    ```bash
    export ACTIVITYPUB_KEY_ENCRYPTION_KEY="your-key"
    ```
 
 2. **Restart application:**
+
    ```bash
    systemctl restart athena
    ```
 
 3. **Verify in logs:**
+
    ```bash
    journalctl -u athena | grep -i "activitypub.*encryption"
    ```
 
 The application will automatically:
+
 - Decrypt keys when needed
 - Encrypt new keys when created
 - Work transparently with encrypted storage
@@ -313,19 +336,20 @@ The application will automatically:
    - `/docs/security/` - Other security documentation
 
 2. **Check Logs:**
+
    ```bash
    journalctl -u athena -n 100
    ```
 
 3. **Contact Security Team:**
-   - Critical issues: security@athena.example
-   - General questions: support@athena.example
+   - Critical issues: <security@athena.example>
+   - General questions: <support@athena.example>
 
 ### Reporting Security Issues
 
 **Do NOT open public issues for security vulnerabilities!**
 
-Report security issues to: security@athena.example
+Report security issues to: <security@athena.example>
 
 ## License
 

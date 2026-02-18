@@ -13,6 +13,7 @@ This report documents comprehensive fixes to align API documentation with actual
 ### Completion Status
 
 **FIXED (7/10 Critical Issues)**:
+
 - ✅ Issue 2: 2FA Response Message Field
 - ✅ Issue 3: View Tracking API Schema Mismatch
 - ✅ Issue 4: View Tracking Response video_id Field
@@ -22,6 +23,7 @@ This report documents comprehensive fixes to align API documentation with actual
 - ✅ Global Response Envelope Pattern (partially implemented)
 
 **DEFERRED (3/10 Issues)**:
+
 - ⏸️ Issue 1: Complete response wrapper pattern across ALL OpenAPI files
 - ⏸️ Issue 5: Upload endpoints response envelope (examples already correct)
 - ⏸️ Issue 6: Chunk upload metadata method
@@ -34,10 +36,12 @@ This report documents comprehensive fixes to align API documentation with actual
 ### 1. Issue 2 & 10: 2FA Response Fields (FIXED)
 
 **Problem**:
+
 - `TwoFAVerifySetupResponse` missing `message` field
 - `TwoFADisableResponse` using `disabled: true` instead of `enabled: false`
 
 **Files Modified**:
+
 ```
 /home/user/athena/internal/domain/twofa.go
 /home/user/athena/internal/httpapi/handlers/auth/twofa_handlers.go
@@ -46,6 +50,7 @@ This report documents comprehensive fixes to align API documentation with actual
 **Changes**:
 
 **File**: `/home/user/athena/internal/domain/twofa.go`
+
 - **Lines 36-38**: Added `Message string` field to `TwoFAVerifySetupResponse`
 - **Lines 48-50**: Changed `TwoFADisableResponse` from `Disabled bool` to `Enabled bool` and added `Message string`
 
@@ -72,6 +77,7 @@ type TwoFADisableResponse struct {
 ```
 
 **File**: `/home/user/athena/internal/httpapi/handlers/auth/twofa_handlers.go`
+
 - **Lines 87-90**: Updated VerifyTwoFASetup handler to populate message field
 - **Lines 134-137**: Updated DisableTwoFA handler to use `Enabled: false` instead of `Disabled: true`
 
@@ -90,6 +96,7 @@ response := domain.TwoFADisableResponse{
 ```
 
 **OpenAPI Spec**: `/home/user/athena/api/openapi_auth_2fa.yaml`
+
 - Already correctly defined (no changes needed)
 - Lines 524-537: TwoFAVerifySetupResponse includes message field
 - Lines 560-573: TwoFADisableResponse uses `enabled: false`
@@ -101,6 +108,7 @@ response := domain.TwoFADisableResponse{
 **Problem**: OpenAPI spec showed only 3 fields (fingerprint, watch_time_seconds, referrer), but actual implementation uses 15+ comprehensive tracking fields.
 
 **Files Modified**:
+
 ```
 /home/user/athena/api/openapi_analytics.yaml
 ```
@@ -108,9 +116,11 @@ response := domain.TwoFADisableResponse{
 **Changes**:
 
 **File**: `/home/user/athena/api/openapi_analytics.yaml`
+
 - **Lines 582-685**: Completely rewrote `TrackViewRequest` schema to match implementation
 
 **Fields Added** (now matching `/home/user/athena/internal/domain/views.go` lines 298-349):
+
 ```yaml
 TrackViewRequest:
   properties:
@@ -169,6 +179,7 @@ TrackViewRequest:
 **Problem**: OpenAPI spec missing `video_id` field that handler returns.
 
 **Files Modified**:
+
 ```
 /home/user/athena/api/openapi_analytics.yaml
 ```
@@ -176,6 +187,7 @@ TrackViewRequest:
 **Changes**:
 
 **File**: `/home/user/athena/api/openapi_analytics.yaml`
+
 - **Lines 702-705**: Added `video_id` field to `TrackViewResponse` schema
 
 ```yaml
@@ -193,6 +205,7 @@ TrackViewResponse:
 ```
 
 **Verification**: Matches handler response in `/home/user/athena/internal/httpapi/handlers/video/views_handlers.go` lines 67-73:
+
 ```go
 response := map[string]interface{}{
     "success":  true,
@@ -208,6 +221,7 @@ response := map[string]interface{}{
 **Status**: No changes needed - already correctly implemented.
 
 **Verification**:
+
 - `/home/user/athena/api/openapi_analytics.yaml` lines 216-221: Analytics endpoint has 403 response
 - `/home/user/athena/api/openapi_analytics.yaml` lines 295-300: Daily stats endpoint has 403 response
 
@@ -216,10 +230,12 @@ response := map[string]interface{}{
 ### 5. Issue 9: Fingerprint Generation Endpoint Schema (FIXED)
 
 **Problem**:
+
 - OpenAPI spec showed `fingerprint` field, implementation returns `fingerprint_hash`
 - OpenAPI spec showed `expires_at`, implementation returns `created_at`
 
 **Files Modified**:
+
 ```
 /home/user/athena/api/openapi_analytics.yaml
 ```
@@ -229,6 +245,7 @@ response := map[string]interface{}{
 **File**: `/home/user/athena/api/openapi_analytics.yaml`
 
 **Lines 971-986**: Updated `FingerprintResponse` schema
+
 ```yaml
 # BEFORE
 FingerprintResponse:
@@ -249,6 +266,7 @@ FingerprintResponse:
 ```
 
 **Lines 505-506**: Updated example response
+
 ```yaml
 # BEFORE
 data:
@@ -262,6 +280,7 @@ data:
 ```
 
 **Verification**: Matches handler response in `/home/user/athena/internal/httpapi/handlers/video/views_handlers.go` lines 417-422:
+
 ```go
 response := map[string]interface{}{
     "fingerprint_hash": fingerprint,
@@ -276,6 +295,7 @@ response := map[string]interface{}{
 **Problem**: All APIs return `{success: bool, data: {}, error: {}}` wrapper, but OpenAPI specs showed unwrapped schemas.
 
 **Files Modified**:
+
 ```
 /home/user/athena/api/openapi_analytics.yaml
 /home/user/athena/api/openapi_auth_2fa.yaml
@@ -341,6 +361,7 @@ components:
 ```
 
 **Verification**: Matches shared response utilities in `/home/user/athena/internal/httpapi/shared/response.go` lines 11-30:
+
 ```go
 type Response struct {
     Data    interface{} `json:"data,omitempty"`
@@ -359,6 +380,7 @@ type Response struct {
 ### Issue 1: Complete Response Wrapper Pattern
 
 **Recommendation**: Apply the global response wrapper pattern to ALL remaining OpenAPI files:
+
 - openapi_uploads.yaml
 - openapi_channels.yaml
 - openapi_comments.yaml
@@ -375,11 +397,13 @@ type Response struct {
 **Problem**: Inconsistency between OpenAPI (form-data), unit tests (HTTP headers), and Postman (form-data).
 
 **Files Affected**:
+
 - `/home/user/athena/api/openapi_uploads.yaml` (lines 120-139)
 - `/home/user/athena/internal/httpapi/handlers/video/upload_handlers_test.go` (lines 159-168)
 - `/home/user/athena/postman/athena-uploads.postman_collection.json` (lines 159-174)
 
 **Recommendation**:
+
 1. Examine `/home/user/athena/internal/httpapi/handlers/video/upload_handlers.go` (not found in this session)
 2. Determine if handler uses headers (X-Chunk-Index, X-Chunk-Checksum) or form-data fields
 3. Update OpenAPI and Postman to match actual implementation
@@ -392,12 +416,14 @@ type Response struct {
 **Problem**: OpenAPI defines sessionId as plain string, but requirement states "unit tests validate it must be UUID".
 
 **Investigation Findings**:
+
 - `/home/user/athena/api/openapi_uploads.yaml` line 116: `type: string, example: "upload_sess_1234567890abcdef"`
 - `/home/user/athena/internal/httpapi/handlers/video/upload_handlers_test.go`: Tests only check `NotEmpty`, not UUID format
 
 **Contradiction**: The example "upload_sess_1234567890abcdef" is NOT a standard UUID format, and tests don't validate UUID format.
 
 **Recommendation**:
+
 1. Verify actual session ID generation code
 2. If using UUIDs: Add `format: uuid` constraint and update examples
 3. If using custom format: Document the actual format specification
@@ -408,6 +434,7 @@ type Response struct {
 ## OpenAPI Validation Results
 
 ### Validation Command
+
 ```bash
 npx @redocly/cli lint <file.yaml>
 ```
@@ -415,15 +442,18 @@ npx @redocly/cli lint <file.yaml>
 ### Results Summary
 
 **`/home/user/athena/api/openapi_analytics.yaml`**: ✅ Validated with minor warnings
+
 - ❌ 1 Error: Missing `servers` section (not critical)
 - ⚠️ 3 Warnings: Missing license, unused components, invalid media type examples
 - ✅ All schema structure issues fixed
 
 **`/home/user/athena/api/openapi_auth_2fa.yaml`**: ✅ Validated with minor warnings
+
 - ⚠️ Warnings: Missing license, example.com servers, unused ErrorResponse component
 - ✅ All schema structure issues fixed
 
 **Critical Schema Fixes Applied**:
+
 - Changed `type: "null"` to `type: object, nullable: true` (OpenAPI 3.0 compliant)
 - Removed duplicate ErrorResponse schemas
 
@@ -469,6 +499,7 @@ npx @redocly/cli lint <file.yaml>
 **Affected Endpoint**: `POST /api/v1/auth/2fa/disable`
 
 **Change**: Response field name standardization
+
 ```json
 // BEFORE (DEPRECATED)
 {
@@ -489,6 +520,7 @@ npx @redocly/cli lint <file.yaml>
 ```
 
 **Migration Required**:
+
 - Update client code checking `disabled` field to check `enabled === false`
 - Add handling for new `message` field
 - **Version**: Introduced in this commit on branch `claude/align-tests-documentation-0199K5icoy18CVayraL1TcXM`
@@ -498,6 +530,7 @@ npx @redocly/cli lint <file.yaml>
 **Affected Endpoint**: `POST /api/v1/auth/2fa/verify-setup`
 
 **Change**: Added message field (additive, non-breaking)
+
 ```json
 // BEFORE
 {
@@ -550,9 +583,11 @@ npx @redocly/cli lint <file.yaml>
 ### Quality Assurance
 
 5. **Run Full Integration Tests**
+
    ```bash
    go test ./internal/httpapi/handlers/... -v
    ```
+
    Verify no regressions from domain model changes.
 
 6. **Update API Client SDKs**
@@ -568,6 +603,7 @@ npx @redocly/cli lint <file.yaml>
 ### Long-Term Improvements
 
 8. **Automated Validation CI/CD**
+
    ```yaml
    # .github/workflows/validate-openapi.yml
    - name: Validate OpenAPI Specs
@@ -589,6 +625,7 @@ npx @redocly/cli lint <file.yaml>
 ## Testing Verification
 
 ### Unit Tests Status
+
 - ✅ 2FA handler changes tested via existing test suite
 - ✅ View tracking tests align with updated schemas
 - ⚠️ Upload handler tests need review (chunk metadata inconsistency)
@@ -609,18 +646,21 @@ npx @redocly/cli lint <file.yaml>
 ## Success Metrics
 
 ### Documentation Accuracy
+
 - ✅ 7/10 critical issues resolved
 - ✅ 100% of examined handlers match OpenAPI specs
 - ✅ Global response envelope pattern defined
 - ✅ OpenAPI validation passing (with minor warnings)
 
 ### Code Quality
+
 - ✅ Domain models updated consistently
 - ✅ Handler responses aligned with specs
 - ✅ No breaking changes to unrelated code
 - ✅ Backward compatibility maintained (except 2FA disable)
 
 ### Remaining Work
+
 - ⏸️ 3 issues require additional investigation
 - ⏸️ 16 OpenAPI files need global schema addition
 - ⏸️ Postman collections need synchronization
@@ -631,6 +671,7 @@ npx @redocly/cli lint <file.yaml>
 ## Appendix: Response Envelope Pattern Reference
 
 ### Standard Success Response
+
 ```json
 {
   "success": true,
@@ -649,6 +690,7 @@ npx @redocly/cli lint <file.yaml>
 ```
 
 ### Standard Error Response
+
 ```json
 {
   "success": false,
@@ -662,6 +704,7 @@ npx @redocly/cli lint <file.yaml>
 ```
 
 ### Implementation Reference
+
 - **Source**: `/home/user/athena/internal/httpapi/shared/response.go`
 - **Functions**: `WriteJSON()`, `WriteError()`, `WriteJSONWithMeta()`
 - **Usage**: All handlers use `shared.WriteJSON()` or `shared.WriteError()`
@@ -671,6 +714,7 @@ npx @redocly/cli lint <file.yaml>
 ## Contact & Support
 
 For questions or issues related to these changes:
+
 - **Branch**: `claude/align-tests-documentation-0199K5icoy18CVayraL1TcXM`
 - **Documentation Engineer**: Claude (Anthropic)
 - **Date**: 2025-11-18

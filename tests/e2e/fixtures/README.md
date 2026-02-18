@@ -58,6 +58,7 @@ convert -size 1280x720 xc:blue \
 ## JSON Test Data
 
 The `data/` subdirectory contains JSON files with test data:
+
 - `users.json` - Sample user profiles
 - `videos.json` - Sample video metadata
 - `comments.json` - Sample comments

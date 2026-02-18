@@ -21,9 +21,11 @@ The ActivityPub implementation now has **extensive test coverage** with **115+ t
 ## Test Files Created
 
 ### 1. `/internal/activitypub/httpsig_test.go` (373 lines)
+
 **Comprehensive HTTP Signature Testing**
 
-#### Coverage:
+#### Coverage
+
 - ✅ Key generation (RSA-2048)
 - ✅ Request signing & verification
 - ✅ Signature header parsing
@@ -33,7 +35,8 @@ The ActivityPub implementation now has **extensive test coverage** with **115+ t
 - ✅ Concurrent key generation
 - ✅ 3 benchmarks (generation, signing, verification)
 
-#### Example Tests:
+#### Example Tests
+
 ```go
 TestGenerateKeyPair()
 TestSignAndVerifyRequest()
@@ -45,9 +48,11 @@ BenchmarkGenerateKeyPair()
 ```
 
 ### 2. `/internal/usecase/activitypub/service_test.go` (850+ lines)
+
 **Service Layer Business Logic Testing**
 
-#### Coverage:
+#### Coverage
+
 - ✅ Actor management (local & remote)
 - ✅ Follow/Accept/Reject handling
 - ✅ Like/Unlike handling
@@ -58,12 +63,14 @@ BenchmarkGenerateKeyPair()
 - ✅ URI parsing & validation
 - ✅ Remote actor caching
 
-#### Mock Objects:
+#### Mock Objects
+
 - `MockActivityPubRepository` (20+ methods)
 - `MockUserRepository`
 - `MockVideoRepository`
 
-#### Example Tests:
+#### Example Tests
+
 ```go
 TestGetLocalActor()
 TestFetchRemoteActor()
@@ -76,9 +83,11 @@ TestExtractUsernameFromURI()
 ```
 
 ### 3. `/internal/httpapi/activitypub_test.go` (200+ lines)
+
 **HTTP Handler Unit Tests**
 
-#### Coverage:
+#### Coverage
+
 - ✅ WebFinger discovery (acct: and https: formats)
 - ✅ NodeInfo endpoints
 - ✅ Host-meta
@@ -86,7 +95,8 @@ TestExtractUsernameFromURI()
 - ✅ Error handling (missing params, invalid input)
 - ✅ Collection structure validation
 
-#### Example Tests:
+#### Example Tests
+
 ```go
 TestWebFingerWithAcctResource()
 TestWebFingerWithHTTPSResource()
@@ -97,9 +107,11 @@ TestContentTypeNegotiation()
 ```
 
 ### 4. `/internal/httpapi/activitypub_integration_test.go` (600+ lines)
+
 **Full Request/Response Integration Tests**
 
-#### Coverage:
+#### Coverage
+
 - ✅ Complete actor endpoint flow
 - ✅ Inbox activity processing (6 activity types)
 - ✅ Shared inbox
@@ -109,7 +121,8 @@ TestContentTypeNegotiation()
 - ✅ Error propagation
 - ✅ Pagination (next/prev links)
 
-#### Activity Types Tested:
+#### Activity Types Tested
+
 1. Follow
 2. Like
 3. Announce
@@ -117,7 +130,8 @@ TestContentTypeNegotiation()
 5. Update
 6. Delete
 
-#### Example Tests:
+#### Example Tests
+
 ```go
 TestGetActorIntegration()
 TestPostInboxIntegration()
@@ -128,9 +142,11 @@ TestPaginationIntegration()
 ```
 
 ### 5. `/internal/repository/activitypub_repository_test.go` (500+ lines)
+
 **Database Layer Tests**
 
-#### Coverage:
+#### Coverage
+
 - ✅ Actor key storage
 - ✅ Remote actor caching
 - ✅ Follower relationships
@@ -142,7 +158,8 @@ TestPaginationIntegration()
 
 **Note:** Tests are skipped by default (require PostgreSQL). Remove `t.Skip()` when database is available.
 
-#### Example Tests:
+#### Example Tests
+
 ```go
 TestActorKeys()
 TestRemoteActors()
@@ -155,9 +172,11 @@ TestDeliveryQueue()
 ```
 
 ### 6. `/internal/worker/activitypub_delivery_test.go` (650+ lines)
+
 **Background Worker Tests**
 
-#### Coverage:
+#### Coverage
+
 - ✅ Successful delivery
 - ✅ Failed delivery with retry
 - ✅ Permanent failure (max attempts)
@@ -168,13 +187,15 @@ TestDeliveryQueue()
 - ✅ Invalid JSON handling
 - ✅ Worker lifecycle (start/stop)
 
-#### Exponential Backoff Tests:
+#### Exponential Backoff Tests
+
 - 0 attempts → 60s delay
 - 1 attempt → 120s delay
 - 2 attempts → 240s delay
 - 15+ attempts → 24h max (capped)
 
-#### Example Tests:
+#### Example Tests
+
 ```go
 TestProcessDeliveriesSuccess()
 TestProcessDeliveriesRetry()
@@ -189,6 +210,7 @@ TestStartAndStopWorker()
 ## Test Coverage by Feature
 
 ### WebFinger Discovery ✅ 100%
+
 - [x] acct: resource format
 - [x] https: resource format
 - [x] Missing resource parameter
@@ -198,6 +220,7 @@ TestStartAndStopWorker()
 - [x] Alias handling
 
 ### NodeInfo ✅ 100%
+
 - [x] Discovery document
 - [x] NodeInfo 2.0 metadata
 - [x] Software information
@@ -206,6 +229,7 @@ TestStartAndStopWorker()
 - [x] Instance metadata
 
 ### HTTP Signatures ✅ 95%
+
 - [x] Key generation
 - [x] Request signing
 - [x] Signature verification
@@ -217,6 +241,7 @@ TestStartAndStopWorker()
 - [ ] Digest verification (documented limitation)
 
 ### Actor Endpoints ✅ 90%
+
 - [x] Get local actor
 - [x] Actor not found
 - [x] Key auto-generation
@@ -225,6 +250,7 @@ TestStartAndStopWorker()
 - [x] Content negotiation
 
 ### Inbox Processing ✅ 90%
+
 - [x] Follow activities
 - [x] Accept activities
 - [x] Reject activities
@@ -239,6 +265,7 @@ TestStartAndStopWorker()
 - [ ] Spam filtering (future)
 
 ### Collections ✅ 85%
+
 - [x] Outbox pagination
 - [x] Followers pagination
 - [x] Following pagination
@@ -247,6 +274,7 @@ TestStartAndStopWorker()
 - [x] Empty collections
 
 ### Delivery Worker ✅ 95%
+
 - [x] Queue processing
 - [x] Retry logic
 - [x] Exponential backoff
@@ -257,6 +285,7 @@ TestStartAndStopWorker()
 - [ ] Long-running stability (needs manual testing)
 
 ### Repository Layer ✅ 80%
+
 - [x] All CRUD operations
 - [x] Pagination
 - [x] Foreign key constraints
@@ -270,28 +299,36 @@ TestStartAndStopWorker()
 ## Testing Best Practices Applied
 
 ### 1. ✅ Comprehensive Mocking
+
 All external dependencies are mocked:
+
 - Database repositories
 - HTTP clients
 - User/Video services
 - Time-dependent operations
 
 ### 2. ✅ Table-Driven Tests
+
 Used extensively for:
+
 - URI parsing variants
 - Activity type handling
 - Error conditions
 - Content-type negotiation
 
 ### 3. ✅ Integration Testing
+
 Full request/response cycles tested:
+
 - HTTP server mocked with `httptest`
 - Real JSON serialization
 - Route parameter handling
 - Header validation
 
 ### 4. ✅ Error Path Coverage
+
 Every function tested for:
+
 - Success cases
 - Error cases
 - Edge cases
@@ -299,12 +336,15 @@ Every function tested for:
 - Missing data
 
 ### 5. ✅ Performance Testing
+
 Benchmarks for:
+
 - Key generation (expensive operation)
 - Request signing
 - Signature verification
 
 ### 6. ✅ Concurrency Testing
+
 - Concurrent key generation
 - Multiple workers
 - Race condition detection (use `-race` flag)
@@ -314,12 +354,14 @@ Benchmarks for:
 ## Running the Tests
 
 ### Quick Test
+
 ```bash
 # Run all ActivityPub tests
 go test ./internal/activitypub/... ./internal/usecase/activitypub/... ./internal/worker -run ActivityPub -v
 ```
 
 ### With Coverage
+
 ```bash
 # Generate coverage report
 go test ./internal/activitypub/... -coverprofile=coverage.out
@@ -327,6 +369,7 @@ go tool cover -html=coverage.out -o coverage.html
 ```
 
 ### With Race Detection
+
 ```bash
 # Check for race conditions
 go test ./internal/activitypub/... -race -v
@@ -335,12 +378,14 @@ go test ./internal/worker -run ActivityPub -race -v
 ```
 
 ### Benchmarks
+
 ```bash
 # Run performance benchmarks
 go test ./internal/activitypub/... -bench=. -benchmem
 ```
 
 Expected output:
+
 ```
 BenchmarkGenerateKeyPair-8      100    11234567 ns/op    12345 B/op    123 allocs/op
 BenchmarkSignRequest-8         5000      234567 ns/op     1234 B/op     12 allocs/op
@@ -352,6 +397,7 @@ BenchmarkVerifyRequest-8       3000      456789 ns/op     2345 B/op     23 alloc
 ## Known Limitations & Future Enhancements
 
 ### Current Limitations
+
 1. **Digest Header**: Not verified in current implementation (documented)
 2. **Signature Expiry**: No time-based expiry check (documented)
 3. **Database Tests**: Skipped by default (require PostgreSQL)
@@ -359,6 +405,7 @@ BenchmarkVerifyRequest-8       3000      456789 ns/op     2345 B/op     23 alloc
 5. **Load Testing**: No high-volume delivery testing
 
 ### Recommended Additions
+
 1. **Fuzzing**: Add fuzzing for HTTP signature parsing
 2. **E2E Tests**: Set up two instances and test real federation
 3. **Chaos Testing**: Test worker behavior with random failures
@@ -370,6 +417,7 @@ BenchmarkVerifyRequest-8       3000      456789 ns/op     2345 B/op     23 alloc
 ## CI/CD Integration
 
 ### GitHub Actions Workflow
+
 ```yaml
 - name: Test ActivityPub Implementation
   run: |
@@ -380,6 +428,7 @@ BenchmarkVerifyRequest-8       3000      456789 ns/op     2345 B/op     23 alloc
 ```
 
 ### Pre-commit Hook
+
 ```bash
 #!/bin/bash
 # Run ActivityPub tests before commit
@@ -392,7 +441,9 @@ go test ./internal/usecase/activitypub/... -short
 ## Test Maintenance
 
 ### Adding New Tests
+
 When adding features:
+
 1. Write tests first (TDD)
 2. Aim for >80% coverage
 3. Include error paths
@@ -400,6 +451,7 @@ When adding features:
 5. Update this document
 
 ### Test Naming Convention
+
 ```go
 // Unit tests
 Test<FunctionName>()
@@ -414,7 +466,9 @@ Benchmark<Operation>()
 ```
 
 ### Mock Updates
+
 When changing interfaces:
+
 1. Update mock definitions
 2. Update mock expectations in tests
 3. Verify all tests still pass

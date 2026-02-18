@@ -13,6 +13,87 @@ import (
 	"github.com/stretchr/testify/mock"
 )
 
+type mockVideoRepo struct{ mock.Mock }
+
+func (m *mockVideoRepo) Create(ctx context.Context, video *domain.Video) error {
+	return m.Called(ctx, video).Error(0)
+}
+func (m *mockVideoRepo) GetByID(ctx context.Context, id string) (*domain.Video, error) {
+	args := m.Called(ctx, id)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*domain.Video), args.Error(1)
+}
+func (m *mockVideoRepo) GetByIDs(ctx context.Context, ids []string) ([]*domain.Video, error) {
+	args := m.Called(ctx, ids)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*domain.Video), args.Error(1)
+}
+func (m *mockVideoRepo) GetByUserID(ctx context.Context, userID string, limit, offset int) ([]*domain.Video, int64, error) {
+	args := m.Called(ctx, userID, limit, offset)
+	if args.Get(0) == nil {
+		return nil, args.Get(1).(int64), args.Error(2)
+	}
+	return args.Get(0).([]*domain.Video), args.Get(1).(int64), args.Error(2)
+}
+func (m *mockVideoRepo) GetByChannelID(ctx context.Context, channelID string, limit, offset int) ([]*domain.Video, int64, error) {
+	args := m.Called(ctx, channelID, limit, offset)
+	if args.Get(0) == nil {
+		return nil, args.Get(1).(int64), args.Error(2)
+	}
+	return args.Get(0).([]*domain.Video), args.Get(1).(int64), args.Error(2)
+}
+func (m *mockVideoRepo) Update(ctx context.Context, video *domain.Video) error {
+	return m.Called(ctx, video).Error(0)
+}
+func (m *mockVideoRepo) Delete(ctx context.Context, id string, userID string) error {
+	return m.Called(ctx, id, userID).Error(0)
+}
+func (m *mockVideoRepo) List(ctx context.Context, req *domain.VideoSearchRequest) ([]*domain.Video, int64, error) {
+	args := m.Called(ctx, req)
+	if args.Get(0) == nil {
+		return nil, args.Get(1).(int64), args.Error(2)
+	}
+	return args.Get(0).([]*domain.Video), args.Get(1).(int64), args.Error(2)
+}
+func (m *mockVideoRepo) Search(ctx context.Context, req *domain.VideoSearchRequest) ([]*domain.Video, int64, error) {
+	args := m.Called(ctx, req)
+	if args.Get(0) == nil {
+		return nil, args.Get(1).(int64), args.Error(2)
+	}
+	return args.Get(0).([]*domain.Video), args.Get(1).(int64), args.Error(2)
+}
+func (m *mockVideoRepo) UpdateProcessingInfo(ctx context.Context, videoID string, status domain.ProcessingStatus, outputPaths map[string]string, thumbnailPath, previewPath string) error {
+	return m.Called(ctx, videoID, status, outputPaths, thumbnailPath, previewPath).Error(0)
+}
+func (m *mockVideoRepo) UpdateProcessingInfoWithCIDs(ctx context.Context, videoID string, status domain.ProcessingStatus, outputPaths map[string]string, thumbnailPath, previewPath string, processedCIDs map[string]string, thumbnailCID, previewCID string) error {
+	return m.Called(ctx, videoID, status, outputPaths, thumbnailPath, previewPath, processedCIDs, thumbnailCID, previewCID).Error(0)
+}
+func (m *mockVideoRepo) Count(ctx context.Context) (int64, error) {
+	args := m.Called(ctx)
+	return args.Get(0).(int64), args.Error(1)
+}
+func (m *mockVideoRepo) GetVideosForMigration(ctx context.Context, limit int) ([]*domain.Video, error) {
+	args := m.Called(ctx, limit)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*domain.Video), args.Error(1)
+}
+func (m *mockVideoRepo) GetByRemoteURI(ctx context.Context, remoteURI string) (*domain.Video, error) {
+	args := m.Called(ctx, remoteURI)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*domain.Video), args.Error(1)
+}
+func (m *mockVideoRepo) CreateRemoteVideo(ctx context.Context, video *domain.Video) error {
+	return m.Called(ctx, video).Error(0)
+}
+
 type mockChannelRepo struct{ mock.Mock }
 
 func (m *mockChannelRepo) Create(ctx context.Context, channel *domain.Channel) error {
@@ -128,7 +209,7 @@ func (m *mockUserRepo) MarkEmailAsVerified(ctx context.Context, userID string) e
 func TestCreateChannel_Success(t *testing.T) {
 	chRepo := new(mockChannelRepo)
 	userRepo := new(mockUserRepo)
-	svc := NewService(chRepo, userRepo)
+	svc := NewService(chRepo, userRepo, nil)
 
 	userID := uuid.New()
 	user := &domain.User{ID: userID.String(), Username: "testuser"}
@@ -153,7 +234,7 @@ func TestCreateChannel_Success(t *testing.T) {
 func TestCreateChannel_UserNotFound(t *testing.T) {
 	chRepo := new(mockChannelRepo)
 	userRepo := new(mockUserRepo)
-	svc := NewService(chRepo, userRepo)
+	svc := NewService(chRepo, userRepo, nil)
 
 	userID := uuid.New()
 	userRepo.On("GetByID", mock.Anything, userID.String()).Return(nil, domain.ErrNotFound)
@@ -171,7 +252,7 @@ func TestCreateChannel_UserNotFound(t *testing.T) {
 func TestGetChannel_Success(t *testing.T) {
 	chRepo := new(mockChannelRepo)
 	userRepo := new(mockUserRepo)
-	svc := NewService(chRepo, userRepo)
+	svc := NewService(chRepo, userRepo, nil)
 
 	id := uuid.New()
 	expected := &domain.Channel{ID: id, Handle: "test"}
@@ -185,7 +266,7 @@ func TestGetChannel_Success(t *testing.T) {
 func TestGetChannelByHandle_Success(t *testing.T) {
 	chRepo := new(mockChannelRepo)
 	userRepo := new(mockUserRepo)
-	svc := NewService(chRepo, userRepo)
+	svc := NewService(chRepo, userRepo, nil)
 
 	expected := &domain.Channel{Handle: "test_handle"}
 	chRepo.On("GetByHandle", mock.Anything, "test_handle").Return(expected, nil)
@@ -198,7 +279,7 @@ func TestGetChannelByHandle_Success(t *testing.T) {
 func TestUpdateChannel_Success(t *testing.T) {
 	chRepo := new(mockChannelRepo)
 	userRepo := new(mockUserRepo)
-	svc := NewService(chRepo, userRepo)
+	svc := NewService(chRepo, userRepo, nil)
 
 	userID := uuid.New()
 	channelID := uuid.New()
@@ -217,7 +298,7 @@ func TestUpdateChannel_Success(t *testing.T) {
 func TestUpdateChannel_NotOwner(t *testing.T) {
 	chRepo := new(mockChannelRepo)
 	userRepo := new(mockUserRepo)
-	svc := NewService(chRepo, userRepo)
+	svc := NewService(chRepo, userRepo, nil)
 
 	userID := uuid.New()
 	channelID := uuid.New()
@@ -234,7 +315,7 @@ func TestUpdateChannel_NotOwner(t *testing.T) {
 func TestDeleteChannel_Success(t *testing.T) {
 	chRepo := new(mockChannelRepo)
 	userRepo := new(mockUserRepo)
-	svc := NewService(chRepo, userRepo)
+	svc := NewService(chRepo, userRepo, nil)
 
 	userID := uuid.New()
 	channelID := uuid.New()
@@ -253,7 +334,7 @@ func TestDeleteChannel_Success(t *testing.T) {
 func TestDeleteChannel_LastChannel(t *testing.T) {
 	chRepo := new(mockChannelRepo)
 	userRepo := new(mockUserRepo)
-	svc := NewService(chRepo, userRepo)
+	svc := NewService(chRepo, userRepo, nil)
 
 	userID := uuid.New()
 	channelID := uuid.New()
@@ -271,7 +352,7 @@ func TestDeleteChannel_LastChannel(t *testing.T) {
 func TestDeleteChannel_NotOwner(t *testing.T) {
 	chRepo := new(mockChannelRepo)
 	userRepo := new(mockUserRepo)
-	svc := NewService(chRepo, userRepo)
+	svc := NewService(chRepo, userRepo, nil)
 
 	userID := uuid.New()
 	channelID := uuid.New()
@@ -285,7 +366,7 @@ func TestDeleteChannel_NotOwner(t *testing.T) {
 func TestEnsureDefaultChannel_ExistingChannel(t *testing.T) {
 	chRepo := new(mockChannelRepo)
 	userRepo := new(mockUserRepo)
-	svc := NewService(chRepo, userRepo)
+	svc := NewService(chRepo, userRepo, nil)
 
 	userID := uuid.New()
 	existing := &domain.Channel{ID: uuid.New(), Handle: "existing"}
@@ -300,7 +381,7 @@ func TestEnsureDefaultChannel_ExistingChannel(t *testing.T) {
 func TestEnsureDefaultChannel_CreatesNew(t *testing.T) {
 	chRepo := new(mockChannelRepo)
 	userRepo := new(mockUserRepo)
-	svc := NewService(chRepo, userRepo)
+	svc := NewService(chRepo, userRepo, nil)
 
 	userID := uuid.New()
 	user := &domain.User{ID: userID.String(), Username: "testuser", DisplayName: "Test User"}
@@ -318,7 +399,7 @@ func TestEnsureDefaultChannel_CreatesNew(t *testing.T) {
 func TestEnsureDefaultChannel_OtherError(t *testing.T) {
 	chRepo := new(mockChannelRepo)
 	userRepo := new(mockUserRepo)
-	svc := NewService(chRepo, userRepo)
+	svc := NewService(chRepo, userRepo, nil)
 
 	userID := uuid.New()
 	chRepo.On("GetDefaultChannelForAccount", mock.Anything, userID).Return(nil, errors.New("db error"))
@@ -328,21 +409,42 @@ func TestEnsureDefaultChannel_OtherError(t *testing.T) {
 	assert.Nil(t, ch)
 }
 
-func TestGetChannelVideos_ReturnsPlaceholder(t *testing.T) {
+func TestGetChannelVideos_NilVideoRepo(t *testing.T) {
 	chRepo := new(mockChannelRepo)
 	userRepo := new(mockUserRepo)
-	svc := NewService(chRepo, userRepo)
+	svc := NewService(chRepo, userRepo, nil)
 
 	resp, err := svc.GetChannelVideos(context.Background(), uuid.New(), 1, 20)
 	assert.NoError(t, err)
 	assert.NotNil(t, resp)
 	assert.Equal(t, 0, resp.Total)
+	assert.Empty(t, resp.Data)
+}
+
+func TestGetChannelVideos_WithVideoRepo(t *testing.T) {
+	chRepo := new(mockChannelRepo)
+	userRepo := new(mockUserRepo)
+	videoRepo := new(mockVideoRepo)
+	svc := NewService(chRepo, userRepo, videoRepo)
+
+	channelID := uuid.New()
+	expectedVideo := &domain.Video{ID: uuid.New().String(), Title: "Test Video"}
+	videoRepo.On("GetByChannelID", mock.Anything, channelID.String(), 20, 0).
+		Return([]*domain.Video{expectedVideo}, int64(1), nil)
+
+	resp, err := svc.GetChannelVideos(context.Background(), channelID, 1, 20)
+	assert.NoError(t, err)
+	assert.NotNil(t, resp)
+	assert.Equal(t, 1, resp.Total)
+	assert.Len(t, resp.Data, 1)
+	assert.Equal(t, "Test Video", resp.Data[0].Title)
+	videoRepo.AssertExpectations(t)
 }
 
 func TestListChannels_Success(t *testing.T) {
 	chRepo := new(mockChannelRepo)
 	userRepo := new(mockUserRepo)
-	svc := NewService(chRepo, userRepo)
+	svc := NewService(chRepo, userRepo, nil)
 
 	expected := &domain.ChannelListResponse{Total: 2}
 	params := domain.ChannelListParams{Page: 1, PageSize: 10}
@@ -356,7 +458,7 @@ func TestListChannels_Success(t *testing.T) {
 func TestListChannels_Error(t *testing.T) {
 	chRepo := new(mockChannelRepo)
 	userRepo := new(mockUserRepo)
-	svc := NewService(chRepo, userRepo)
+	svc := NewService(chRepo, userRepo, nil)
 
 	params := domain.ChannelListParams{}
 	chRepo.On("List", mock.Anything, params).Return(nil, errors.New("db error"))
@@ -369,7 +471,7 @@ func TestListChannels_Error(t *testing.T) {
 func TestGetUserChannels_Success(t *testing.T) {
 	chRepo := new(mockChannelRepo)
 	userRepo := new(mockUserRepo)
-	svc := NewService(chRepo, userRepo)
+	svc := NewService(chRepo, userRepo, nil)
 
 	userID := uuid.New()
 	expected := []domain.Channel{{ID: uuid.New(), Handle: "ch1"}}
@@ -383,7 +485,7 @@ func TestGetUserChannels_Success(t *testing.T) {
 func TestGetUserChannels_Error(t *testing.T) {
 	chRepo := new(mockChannelRepo)
 	userRepo := new(mockUserRepo)
-	svc := NewService(chRepo, userRepo)
+	svc := NewService(chRepo, userRepo, nil)
 
 	userID := uuid.New()
 	chRepo.On("GetChannelsByAccountID", mock.Anything, userID).Return(nil, errors.New("db error"))
@@ -396,7 +498,7 @@ func TestGetUserChannels_Error(t *testing.T) {
 func TestUpdateChannel_CheckOwnershipError(t *testing.T) {
 	chRepo := new(mockChannelRepo)
 	userRepo := new(mockUserRepo)
-	svc := NewService(chRepo, userRepo)
+	svc := NewService(chRepo, userRepo, nil)
 
 	userID := uuid.New()
 	channelID := uuid.New()
@@ -413,7 +515,7 @@ func TestUpdateChannel_CheckOwnershipError(t *testing.T) {
 func TestDeleteChannel_CheckOwnershipError(t *testing.T) {
 	chRepo := new(mockChannelRepo)
 	userRepo := new(mockUserRepo)
-	svc := NewService(chRepo, userRepo)
+	svc := NewService(chRepo, userRepo, nil)
 
 	userID := uuid.New()
 	channelID := uuid.New()
@@ -428,7 +530,7 @@ func TestDeleteChannel_CheckOwnershipError(t *testing.T) {
 func TestDeleteChannel_GetChannelsError(t *testing.T) {
 	chRepo := new(mockChannelRepo)
 	userRepo := new(mockUserRepo)
-	svc := NewService(chRepo, userRepo)
+	svc := NewService(chRepo, userRepo, nil)
 
 	userID := uuid.New()
 	channelID := uuid.New()
@@ -444,7 +546,7 @@ func TestDeleteChannel_GetChannelsError(t *testing.T) {
 func TestCreateChannel_InvalidRequest(t *testing.T) {
 	chRepo := new(mockChannelRepo)
 	userRepo := new(mockUserRepo)
-	svc := NewService(chRepo, userRepo)
+	svc := NewService(chRepo, userRepo, nil)
 
 	req := domain.ChannelCreateRequest{
 		Handle:      "",
@@ -459,7 +561,7 @@ func TestCreateChannel_InvalidRequest(t *testing.T) {
 func TestUpdateChannel_InvalidRequest(t *testing.T) {
 	chRepo := new(mockChannelRepo)
 	userRepo := new(mockUserRepo)
-	svc := NewService(chRepo, userRepo)
+	svc := NewService(chRepo, userRepo, nil)
 
 	emptyDesc := ""
 	req := domain.ChannelUpdateRequest{Description: &emptyDesc}
@@ -475,7 +577,7 @@ func TestUpdateChannel_InvalidRequest(t *testing.T) {
 func TestEnsureDefaultChannel_EmptyDisplayName(t *testing.T) {
 	chRepo := new(mockChannelRepo)
 	userRepo := new(mockUserRepo)
-	svc := NewService(chRepo, userRepo)
+	svc := NewService(chRepo, userRepo, nil)
 
 	userID := uuid.New()
 	user := &domain.User{ID: userID.String(), Username: "testuser", DisplayName: ""}
