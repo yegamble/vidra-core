@@ -84,6 +84,13 @@ func (m *mockSocialRepo) GetLikes(ctx context.Context, subjectURI string, limit,
 	}
 	return args.Get(0).([]domain.Like), args.Error(1)
 }
+func (m *mockSocialRepo) GetLike(ctx context.Context, actorDID, subjectURI string) (*domain.Like, error) {
+	args := m.Called(ctx, actorDID, subjectURI)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*domain.Like), args.Error(1)
+}
 func (m *mockSocialRepo) HasLiked(ctx context.Context, actorDID, subjectURI string) (bool, error) {
 	args := m.Called(ctx, actorDID, subjectURI)
 	return args.Bool(0), args.Error(1)
@@ -458,9 +465,7 @@ func TestLike_AlreadyLiked(t *testing.T) {
 func TestUnlike_NotLiked(t *testing.T) {
 	svc, repo, _ := newTestService(t)
 
-	repo.On("GetLikes", mock.Anything, "at://post/1", 1000, 0).Return([]domain.Like{
-		{ActorDID: "did:plc:other", URI: "at://like/1"},
-	}, nil)
+	repo.On("GetLike", mock.Anything, "did:plc:abc", "at://post/1").Return(nil, fmt.Errorf("like not found"))
 
 	err := svc.Unlike(context.Background(), "did:plc:abc", "at://post/1")
 	assert.Error(t, err)
@@ -721,7 +726,7 @@ func TestGetModerationLabels_Error(t *testing.T) {
 func TestUnlike_GetLikesError(t *testing.T) {
 	svc, repo, _ := newTestService(t)
 
-	repo.On("GetLikes", mock.Anything, "at://post/1", 1000, 0).Return(nil, errors.New("db error"))
+	repo.On("GetLike", mock.Anything, "did:plc:abc", "at://post/1").Return(nil, errors.New("db error"))
 
 	err := svc.Unlike(context.Background(), "did:plc:abc", "at://post/1")
 	assert.Error(t, err)
@@ -852,8 +857,8 @@ func TestUnlike_Success_WithHTTP(t *testing.T) {
 
 	svc, repo, _ := newTestServiceWithPDS(t, handlers)
 
-	repo.On("GetLikes", mock.Anything, "at://post/1", 1000, 0).Return([]domain.Like{
-		{ActorDID: "did:plc:abc", URI: "at://did:plc:abc/app.bsky.feed.like/xyz"},
+	repo.On("GetLike", mock.Anything, "did:plc:abc", "at://post/1").Return(&domain.Like{
+		ActorDID: "did:plc:abc", URI: "at://did:plc:abc/app.bsky.feed.like/xyz",
 	}, nil)
 	repo.On("DeleteLike", mock.Anything, "at://did:plc:abc/app.bsky.feed.like/xyz").Return(nil)
 
