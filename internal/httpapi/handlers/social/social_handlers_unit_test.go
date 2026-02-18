@@ -32,11 +32,13 @@ type mockSocialRepo struct {
 	revokeFollowFn func(ctx context.Context, uri string) error
 	getFollowersFn func(ctx context.Context, did string, limit, offset int) ([]domain.Follow, error)
 	getFollowingFn func(ctx context.Context, did string, limit, offset int) ([]domain.Follow, error)
+	getFollowFn    func(ctx context.Context, followerDID, followingDID string) (*domain.Follow, error)
 	isFollowingFn  func(ctx context.Context, followerDID, followingDID string) (bool, error)
 
 	createLikeFn func(ctx context.Context, like *domain.Like) error
 	deleteLikeFn func(ctx context.Context, uri string) error
 	getLikesFn   func(ctx context.Context, subjectURI string, limit, offset int) ([]domain.Like, error)
+	getLikeFn    func(ctx context.Context, actorDID, subjectURI string) (*domain.Like, error)
 	hasLikedFn   func(ctx context.Context, actorDID, subjectURI string) (bool, error)
 
 	createCommentFn    func(ctx context.Context, comment *domain.SocialComment) error
@@ -101,6 +103,13 @@ func (m *mockSocialRepo) GetFollowing(ctx context.Context, did string, limit, of
 	return nil, nil
 }
 
+func (m *mockSocialRepo) GetFollow(ctx context.Context, followerDID, followingDID string) (*domain.Follow, error) {
+	if m.getFollowFn != nil {
+		return m.getFollowFn(ctx, followerDID, followingDID)
+	}
+	return nil, nil
+}
+
 func (m *mockSocialRepo) IsFollowing(ctx context.Context, followerDID, followingDID string) (bool, error) {
 	if m.isFollowingFn != nil {
 		return m.isFollowingFn(ctx, followerDID, followingDID)
@@ -125,6 +134,13 @@ func (m *mockSocialRepo) DeleteLike(ctx context.Context, uri string) error {
 func (m *mockSocialRepo) GetLikes(ctx context.Context, subjectURI string, limit, offset int) ([]domain.Like, error) {
 	if m.getLikesFn != nil {
 		return m.getLikesFn(ctx, subjectURI, limit, offset)
+	}
+	return nil, nil
+}
+
+func (m *mockSocialRepo) GetLike(ctx context.Context, actorDID, subjectURI string) (*domain.Like, error) {
+	if m.getLikeFn != nil {
+		return m.getLikeFn(ctx, actorDID, subjectURI)
 	}
 	return nil, nil
 }
@@ -524,8 +540,8 @@ func TestUnit_Unfollow_NotFollowing(t *testing.T) {
 		getActorByHandleFn: func(_ context.Context, _ string) (*domain.ATProtoActor, error) {
 			return actor, nil
 		},
-		getFollowingFn: func(_ context.Context, _ string, _, _ int) ([]domain.Follow, error) {
-			return []domain.Follow{}, nil
+		getFollowFn: func(_ context.Context, _, _ string) (*domain.Follow, error) {
+			return nil, errors.New("not found")
 		},
 	}
 	h := newTestSocialHandler(repo)
@@ -552,10 +568,8 @@ func TestUnit_Unfollow_SuccessWithPDS(t *testing.T) {
 		getActorByHandleFn: func(_ context.Context, _ string) (*domain.ATProtoActor, error) {
 			return actor, nil
 		},
-		getFollowingFn: func(_ context.Context, _ string, _, _ int) ([]domain.Follow, error) {
-			return []domain.Follow{
-				{FollowingDID: "did:plc:alice", URI: "at://did:plc:me/app.bsky.graph.follow/abc123"},
-			}, nil
+		getFollowFn: func(_ context.Context, _, _ string) (*domain.Follow, error) {
+			return &domain.Follow{FollowingDID: "did:plc:alice", URI: "at://did:plc:me/app.bsky.graph.follow/abc123"}, nil
 		},
 		revokeFollowFn: func(_ context.Context, _ string) error {
 			revoked = true
@@ -761,8 +775,8 @@ func TestUnit_Unlike_InvalidJSON(t *testing.T) {
 
 func TestUnit_Unlike_NotLiked(t *testing.T) {
 	repo := &mockSocialRepo{
-		getLikesFn: func(_ context.Context, _ string, _, _ int) ([]domain.Like, error) {
-			return []domain.Like{}, nil
+		getLikeFn: func(_ context.Context, _, _ string) (*domain.Like, error) {
+			return nil, errors.New("not found")
 		},
 	}
 	h := newTestSocialHandler(repo)
@@ -785,10 +799,8 @@ func TestUnit_Unlike_SuccessWithPDS(t *testing.T) {
 
 	var likeDeleted bool
 	repo := &mockSocialRepo{
-		getLikesFn: func(_ context.Context, _ string, _, _ int) ([]domain.Like, error) {
-			return []domain.Like{
-				{ActorDID: "did:plc:me", URI: "at://did:plc:me/app.bsky.feed.like/xyz"},
-			}, nil
+		getLikeFn: func(_ context.Context, _, _ string) (*domain.Like, error) {
+			return &domain.Like{ActorDID: "did:plc:me", URI: "at://did:plc:me/app.bsky.feed.like/xyz"}, nil
 		},
 		deleteLikeFn: func(_ context.Context, _ string) error {
 			likeDeleted = true
