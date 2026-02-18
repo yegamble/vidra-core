@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"html"
 	"net/http"
 	"net/url"
 	"strings"
@@ -386,7 +387,7 @@ func (h *AuthHandlers) showAuthorizationForm(w http.ResponseWriter, r *http.Requ
 	}
 
 	// Simple HTML form
-	html := fmt.Sprintf(`
+	respHTML := fmt.Sprintf(`
 		<!DOCTYPE html>
 		<html>
 		<head><title>Authorize %s</title></head>
@@ -408,19 +409,19 @@ func (h *AuthHandlers) showAuthorizationForm(w http.ResponseWriter, r *http.Requ
 		</body>
 		</html>
 	`,
-		client.Name, client.Name, client.Name,
-		r.URL.Query().Get("scope"),
-		r.URL.Query().Get("client_id"),
-		r.URL.Query().Get("redirect_uri"),
-		r.URL.Query().Get("response_type"),
-		r.URL.Query().Get("scope"),
-		r.URL.Query().Get("state"),
-		r.URL.Query().Get("code_challenge"),
-		r.URL.Query().Get("code_challenge_method"),
+		html.EscapeString(client.Name), html.EscapeString(client.Name), html.EscapeString(client.Name),
+		html.EscapeString(r.URL.Query().Get("scope")),
+		html.EscapeString(r.URL.Query().Get("client_id")),
+		html.EscapeString(r.URL.Query().Get("redirect_uri")),
+		html.EscapeString(r.URL.Query().Get("response_type")),
+		html.EscapeString(r.URL.Query().Get("scope")),
+		html.EscapeString(r.URL.Query().Get("state")),
+		html.EscapeString(r.URL.Query().Get("code_challenge")),
+		html.EscapeString(r.URL.Query().Get("code_challenge_method")),
 	)
 
 	w.Header().Set("Content-Type", "text/html")
-	_, _ = w.Write([]byte(html))
+	_, _ = w.Write([]byte(respHTML))
 }
 
 // handleAuthorizationCodeGrant exchanges auth code for tokens
