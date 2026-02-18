@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"math"
 	"time"
 
 	"athena/internal/domain"
@@ -423,20 +424,18 @@ func (r *FederationHardeningRepository) CleanupExpired(ctx context.Context) erro
 	return err
 }
 
-// GetBackoffDelay calculates exponential backoff delay
+// CalculateBackoffDelay calculates exponential backoff delay using math.Pow for efficiency
 func CalculateBackoffDelay(attempts int, config domain.BackoffConfig) time.Duration {
 	if attempts <= 0 {
 		return config.InitialDelay
 	}
 
-	delay := config.InitialDelay
-	for i := 0; i < attempts; i++ {
-		delay = time.Duration(float64(delay) * config.Multiplier)
-		if delay > config.MaxDelay {
-			return config.MaxDelay
-		}
+	delay := float64(config.InitialDelay) * math.Pow(config.Multiplier, float64(attempts))
+	if delay > float64(config.MaxDelay) || math.IsInf(delay, 1) {
+		return config.MaxDelay
 	}
-	return delay
+
+	return time.Duration(delay)
 }
 
 // GetFederationConfig retrieves federation configuration from instance config
