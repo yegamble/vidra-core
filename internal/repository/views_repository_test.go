@@ -459,7 +459,7 @@ func TestViewsRepository_RateLimitingConcurrency(t *testing.T) {
 
 // Helper functions
 
-func createTestViewsUser(t *testing.T, testDB *testutil.TestDB) *domain.User {
+func createTestViewsUser(t testing.TB, testDB *testutil.TestDB) *domain.User {
 	t.Helper()
 
 	user := &domain.User{
@@ -483,7 +483,7 @@ func createTestViewsUser(t *testing.T, testDB *testutil.TestDB) *domain.User {
 	return user
 }
 
-func createTestViewsVideo(t *testing.T, testDB *testutil.TestDB, userID string) *domain.Video {
+func createTestViewsVideo(t testing.TB, testDB *testutil.TestDB, userID string) *domain.Video {
 	t.Helper()
 
 	video := &domain.Video{
@@ -516,17 +516,17 @@ func createTestViewsVideo(t *testing.T, testDB *testutil.TestDB, userID string) 
 	return video
 }
 
-func createTestUserView(t *testing.T, testDB *testutil.TestDB, userID, videoID string) *domain.UserView {
+func createTestUserView(t testing.TB, testDB *testutil.TestDB, userID, videoID string) *domain.UserView {
 	t.Helper()
 	return createTestUserViewWithSession(t, testDB, userID, videoID, uuid.New().String())
 }
 
-func createTestUserViewWithSession(t *testing.T, testDB *testutil.TestDB, userID, videoID, sessionID string) *domain.UserView {
+func createTestUserViewWithSession(t testing.TB, testDB *testutil.TestDB, userID, videoID, sessionID string) *domain.UserView {
 	t.Helper()
 	return createTestUserViewWithDetails(t, testDB, userID, videoID, 120, 40.0, "mobile", "US", sessionID)
 }
 
-func createTestUserViewWithDetails(t *testing.T, testDB *testutil.TestDB, userID, videoID string, watchDuration int,
+func createTestUserViewWithDetails(t testing.TB, testDB *testutil.TestDB, userID, videoID string, watchDuration int,
 	completionPercentage float64, deviceType, countryCode string, sessionID ...string) *domain.UserView {
 	t.Helper()
 
@@ -573,7 +573,7 @@ func createTestUserViewWithDetails(t *testing.T, testDB *testutil.TestDB, userID
 	return view
 }
 
-func getVideoViewCount(t *testing.T, testDB *testutil.TestDB, videoID string) int64 {
+func getVideoViewCount(t testing.TB, testDB *testutil.TestDB, videoID string) int64 {
 	t.Helper()
 
 	var viewCount int64
