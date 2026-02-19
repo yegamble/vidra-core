@@ -15,6 +15,8 @@ import (
 	"athena/internal/security"
 )
 
+const maxConcurrentIngestions = 20
+
 // SocialRepository defines the interface for social data persistence
 type SocialRepository interface {
 	UpsertActor(ctx context.Context, actor *domain.ATProtoActor) error
@@ -57,6 +59,7 @@ type Service struct {
 	client       *http.Client
 	encKey       []byte
 	urlValidator *security.URLValidator
+	ingestionSem chan struct{}
 }
 
 // NewService creates a new social service instance
@@ -74,6 +77,7 @@ func NewService(
 		client:       urlValidator.NewSafeHTTPClient(10 * time.Second),
 		encKey:       encKey,
 		urlValidator: urlValidator,
+		ingestionSem: make(chan struct{}, maxConcurrentIngestions),
 	}
 }
 
@@ -460,7 +464,12 @@ func (s *Service) IngestActorFeed(ctx context.Context, handle string, limit int)
 			}
 			if uri, ok := post["uri"].(string); ok {
 				if cid, ok := post["cid"].(string); ok {
-					go s.ingestPostLikes(ctx, uri, cid)
+					// Acquire semaphore token
+					s.ingestionSem <- struct{}{}
+					go func(u, c string) {
+						defer func() { <-s.ingestionSem }()
+						s.ingestPostLikes(ctx, u, c)
+					}(uri, cid)
 				}
 			}
 		}
