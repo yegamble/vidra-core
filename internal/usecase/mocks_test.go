@@ -274,6 +274,11 @@ func (m *MockInstanceConfigReader) GetInstanceConfigAsJSON(ctx context.Context, 
 	return args.Error(0)
 }
 
+func (m *MockInstanceConfigReader) UpdateInstanceConfig(ctx context.Context, key string, value []byte, isPublic bool) error {
+	args := m.Called(ctx, key, value, isPublic)
+	return args.Error(0)
+}
+
 // Helper function
 func strPtr(s string) *string {
 	return &s
