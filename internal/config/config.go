@@ -10,6 +10,20 @@ import (
 	"github.com/joho/godotenv"
 )
 
+const (
+	// ATProtoDefaultRefreshInterval is the default interval for refreshing ATProto sessions.
+	ATProtoDefaultRefreshInterval = 45 * time.Minute
+
+	// ATProtoSessionFreshnessWindow defines how long a session is considered fresh enough to reuse without check.
+	ATProtoSessionFreshnessWindow = 50 * time.Minute
+
+	// ATProtoSessionStoreAssumeAge defines the assumed age of a session when loaded from persistent store.
+	ATProtoSessionStoreAssumeAge = 40 * time.Minute
+
+	// ATProtoHTTPTimeout is the timeout for ATProto HTTP client requests.
+	ATProtoHTTPTimeout = 5 * time.Second
+)
+
 type Config struct {
 	Port int
 

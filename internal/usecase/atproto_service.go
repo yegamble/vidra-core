@@ -53,7 +53,7 @@ type atprotoService struct {
 }
 
 func NewAtprotoService(modRepo InstanceConfigReader, cfg *config.Config, store AtprotoSessionStore, encKey []byte) AtprotoPublisher {
-	httpClient := &http.Client{Timeout: 5 * time.Second}
+	httpClient := &http.Client{Timeout: config.ATProtoHTTPTimeout}
 	return &atprotoService{
 		enabled: cfg.EnableATProto,
 		cfg:     cfg,
@@ -220,7 +220,7 @@ func (s *atprotoService) ensureSession(ctx context.Context) (string, string, err
 	s.sessMu <- struct{}{}
 	defer func() { <-s.sessMu }()
 	// If cached and fresh (<50m), reuse
-	if s.accessJwt != "" && time.Since(s.fetchedAt) < 50*time.Minute {
+	if s.accessJwt != "" && time.Since(s.fetchedAt) < config.ATProtoSessionFreshnessWindow {
 		did := s.repoDID
 		if did == "" {
 			did = s.resolveRepoDID(ctx)
@@ -251,7 +251,7 @@ func (s *atprotoService) ensureSession(ctx context.Context) (string, string, err
 	if s.store != nil && len(s.encKey) == 32 {
 		if acc, ref, did, err := s.store.LoadSessionStrings(ctx, s.encKey); err == nil && acc != "" {
 			s.accessJwt, s.refreshJwt, s.repoDID = acc, ref, did
-			s.fetchedAt = time.Now().Add(-40 * time.Minute)
+			s.fetchedAt = time.Now().Add(-config.ATProtoSessionStoreAssumeAge)
 			if s.repoDID == "" {
 				s.repoDID = s.resolveRepoDID(ctx)
 			}
@@ -437,7 +437,7 @@ func (s *atprotoService) StartBackgroundRefresh(ctx context.Context, interval ti
 		if s.cfg.ATProtoRefreshIntervalSeconds > 0 {
 			interval = time.Duration(s.cfg.ATProtoRefreshIntervalSeconds) * time.Second
 		} else {
-			interval = 45 * time.Minute // fallback default
+			interval = config.ATProtoDefaultRefreshInterval // fallback default
 		}
 	}
 	ticker := time.NewTicker(interval)
