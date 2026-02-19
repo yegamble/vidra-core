@@ -7,7 +7,8 @@ import (
 
 // CORS returns a middleware that sets Cross-Origin Resource Sharing headers
 // based on the provided comma-separated allowedOrigins. When "*" is configured,
-// the request Origin is reflected (required when Allow-Credentials is true).
+// the request Origin is NOT reflected and Access-Control-Allow-Credentials is NOT set.
+// To use credentials, explicit origins must be configured.
 func CORS(allowedOrigins string) func(http.Handler) http.Handler {
 	allowed := make(map[string]bool)
 	allowAll := false
@@ -26,11 +27,16 @@ func CORS(allowedOrigins string) func(http.Handler) http.Handler {
 			origin := r.Header.Get("Origin")
 
 			if origin != "" && (allowAll || allowed[origin]) {
-				w.Header().Set("Access-Control-Allow-Origin", origin)
+				if allowed[origin] {
+					w.Header().Set("Access-Control-Allow-Origin", origin)
+					w.Header().Set("Access-Control-Allow-Credentials", "true")
+				} else {
+					w.Header().Set("Access-Control-Allow-Origin", "*")
+				}
+
 				w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, PATCH")
 				w.Header().Set("Access-Control-Allow-Headers", "Accept, Authorization, Content-Type, X-CSRF-Token, X-Requested-With, Idempotency-Key")
 				w.Header().Set("Access-Control-Expose-Headers", "Link")
-				w.Header().Set("Access-Control-Allow-Credentials", "true")
 				w.Header().Set("Access-Control-Max-Age", "300")
 				w.Header().Add("Vary", "Origin")
 			}
