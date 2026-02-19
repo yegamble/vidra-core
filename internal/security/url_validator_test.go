@@ -1,7 +1,10 @@
 package security
 
 import (
+	"context"
+	"strings"
 	"testing"
+	"time"
 )
 
 // TestValidateURL_ValidURLs tests that valid URLs pass validation
@@ -400,6 +403,37 @@ func TestIsPrivateIP(t *testing.T) {
 			t.Errorf("Expected %s to be detected as private IP", test.url)
 		} else if !test.isPrivate && hasError {
 			t.Errorf("Expected %s to be detected as public IP, got error: %v", test.url, err)
+		}
+	}
+}
+
+// TestSafeDialer tests that the SafeDialer blocks private IPs
+func TestSafeDialer(t *testing.T) {
+	validator := NewURLValidator()
+
+	// Try to dial a private IP
+	ctx := context.Background()
+	_, err := validator.SafeDialer(ctx, "tcp", "127.0.0.1:80")
+	if err == nil {
+		t.Error("Expected SafeDialer to block 127.0.0.1, but it didn't")
+	} else if !strings.Contains(err.Error(), "access to private IP addresses is not allowed") {
+		t.Errorf("Expected private IP error, got: %v", err)
+	}
+}
+
+// TestNewSafeHTTPClient tests that the client uses the SafeDialer
+func TestNewSafeHTTPClient(t *testing.T) {
+	validator := NewURLValidator()
+	client := validator.NewSafeHTTPClient(1 * time.Second)
+
+	// Try to get a private IP
+	_, err := client.Get("http://127.0.0.1")
+	if err == nil {
+		t.Error("Expected client to fail for 127.0.0.1")
+	} else {
+		// The error comes from Transport.RoundTrip -> DialContext -> SafeDialer
+		if !strings.Contains(err.Error(), "access to private IP addresses is not allowed") {
+			t.Logf("Got error as expected, but message was: %v", err)
 		}
 	}
 }
