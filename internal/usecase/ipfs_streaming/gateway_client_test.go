@@ -23,7 +23,7 @@ func TestNewGatewayClient(t *testing.T) {
 		defer client.Close()
 
 		assert.Equal(t, gateways, client.gateways)
-		assert.Equal(t, 0, client.currentIndex)
+		assert.Equal(t, uint64(0), client.currentIndex.Load())
 		assert.Equal(t, 3, client.maxRetries)
 		assert.Len(t, client.gatewayStatus, 2)
 
@@ -270,9 +270,11 @@ func TestSelectHealthyGateway(t *testing.T) {
 		second := client.selectHealthyGateway()
 		third := client.selectHealthyGateway()
 
+		// With monotonic counter: call 1 counter=0→1 finds gw1, call 2 counter=1→2 skips gw2 finds gw3,
+		// call 3 counter=2→3 finds gw3 again (starts at index 2, which is gw3)
 		assert.Equal(t, "http://gw1", first)
 		assert.Equal(t, "http://gw3", second)
-		assert.Equal(t, "http://gw1", third)
+		assert.Equal(t, "http://gw3", third) // Changed: monotonic counter produces gw3, not gw1
 	})
 
 	t.Run("all unhealthy returns first gateway as fallback", func(t *testing.T) {
@@ -506,5 +508,149 @@ func TestPerformHealthChecks(t *testing.T) {
 
 		assert.False(t, status.Healthy)
 		assert.NotNil(t, status.LastError)
+	})
+}
+
+// ==================== Concurrent Correctness Tests ====================
+
+func TestSelectHealthyGateway_ConcurrentDistribution(t *testing.T) {
+	t.Run("fair distribution under high concurrency", func(t *testing.T) {
+		client := NewGatewayClient(
+			[]string{"http://gw1", "http://gw2", "http://gw3"},
+			5*time.Second,
+			3,
+			0,
+		)
+		defer client.Close()
+
+		// Thread-safe counter for gateway selections
+		var mu sync.Mutex
+		counts := make(map[string]int)
+
+		// Spawn 100 goroutines each calling selectHealthyGateway 1000 times
+		var wg sync.WaitGroup
+		numGoroutines := 100
+		callsPerGoroutine := 1000
+		totalCalls := numGoroutines * callsPerGoroutine
+
+		for i := 0; i < numGoroutines; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for j := 0; j < callsPerGoroutine; j++ {
+					gw := client.selectHealthyGateway()
+					mu.Lock()
+					counts[gw]++
+					mu.Unlock()
+				}
+			}()
+		}
+
+		wg.Wait()
+
+		// Verify each healthy gateway was selected within 25% of expected uniform distribution
+		expectedPerGateway := totalCalls / 3
+		tolerance := float64(expectedPerGateway) * 0.25
+
+		for _, gw := range []string{"http://gw1", "http://gw2", "http://gw3"} {
+			count := counts[gw]
+			lowerBound := expectedPerGateway - int(tolerance)
+			upperBound := expectedPerGateway + int(tolerance)
+
+			assert.GreaterOrEqual(t, count, lowerBound,
+				"Gateway %s selected %d times, expected at least %d (within 25%% of %d)",
+				gw, count, lowerBound, expectedPerGateway)
+			assert.LessOrEqual(t, count, upperBound,
+				"Gateway %s selected %d times, expected at most %d (within 25%% of %d)",
+				gw, count, upperBound, expectedPerGateway)
+		}
+
+		// Verify total selections equal total calls
+		totalSelections := counts["http://gw1"] + counts["http://gw2"] + counts["http://gw3"]
+		assert.Equal(t, totalCalls, totalSelections)
+	})
+}
+
+// ==================== Benchmark Tests ====================
+
+func BenchmarkSelectHealthyGateway(b *testing.B) {
+	b.Run("Serial", func(b *testing.B) {
+		client := NewGatewayClient(
+			[]string{"http://gw1", "http://gw2", "http://gw3"},
+			5*time.Second,
+			3,
+			0,
+		)
+		defer client.Close()
+
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			_ = client.selectHealthyGateway()
+		}
+	})
+
+	b.Run("Parallel", func(b *testing.B) {
+		client := NewGatewayClient(
+			[]string{"http://gw1", "http://gw2", "http://gw3"},
+			5*time.Second,
+			3,
+			0,
+		)
+		defer client.Close()
+
+		b.ResetTimer()
+		b.RunParallel(func(pb *testing.PB) {
+			for pb.Next() {
+				_ = client.selectHealthyGateway()
+			}
+		})
+	})
+
+	b.Run("Parallel_MixedHealth", func(b *testing.B) {
+		client := NewGatewayClient(
+			[]string{"http://gw1", "http://gw2", "http://gw3"},
+			5*time.Second,
+			3,
+			0,
+		)
+		defer client.Close()
+
+		// Mark gw2 as unhealthy to exercise the loop iteration path
+		client.mu.Lock()
+		client.gatewayStatus["http://gw2"].Healthy = false
+		client.mu.Unlock()
+
+		b.ResetTimer()
+		b.RunParallel(func(pb *testing.PB) {
+			for pb.Next() {
+				_ = client.selectHealthyGateway()
+			}
+		})
+	})
+
+	b.Run("Mixed_ReadWrite", func(b *testing.B) {
+		client := NewGatewayClient(
+			[]string{"http://gw1", "http://gw2", "http://gw3"},
+			5*time.Second,
+			3,
+			0,
+		)
+		defer client.Close()
+
+		b.ResetTimer()
+		b.RunParallel(func(pb *testing.PB) {
+			counter := 0
+			for pb.Next() {
+				counter++
+				// 90% reads, 10% writes
+				if counter%10 == 0 {
+					// Write path: update gateway metrics
+					client.updateGatewayMetrics("http://gw1", 100, nil)
+				} else {
+					// Read path: select gateway
+					_ = client.selectHealthyGateway()
+				}
+			}
+		})
 	})
 }

@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -20,8 +21,11 @@ type GatewayStatus struct {
 
 // GatewayClient manages IPFS gateway requests with health checking and failover
 type GatewayClient struct {
-	gateways      []string
-	currentIndex  int
+	gateways     []string
+	currentIndex atomic.Uint64
+	// INVARIANT: Map keys are fixed after construction in NewGatewayClient.
+	// Only pointer-target fields (Healthy, ResponseTimeMs, etc.) are modified at runtime.
+	// Adding/removing entries would require upgrading all RLock callers to Lock.
 	gatewayStatus map[string]*GatewayStatus
 	httpClient    *http.Client
 	healthTicker  *time.Ticker
@@ -37,7 +41,6 @@ func NewGatewayClient(gateways []string, timeout time.Duration, maxRetries int, 
 
 	client := &GatewayClient{
 		gateways:      gateways,
-		currentIndex:  0,
 		gatewayStatus: make(map[string]*GatewayStatus),
 		httpClient: &http.Client{
 			Timeout: timeout,
@@ -164,18 +167,24 @@ func (c *GatewayClient) FetchCIDWithRange(ctx context.Context, cid string, range
 }
 
 // selectHealthyGateway selects the next healthy gateway using round-robin
+// Note: Uses atomic counter increment + RLock for read parallelism. There is a small
+// TOCTOU window between the atomic increment and RLock acquisition where health status
+// could change, but this is acceptable - the window is nanoseconds and duplicate gateway
+// selection temporarily reduces distribution uniformity but doesn't affect correctness.
 func (c *GatewayClient) selectHealthyGateway() string {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	// Atomically increment the counter and get the starting index
+	startIndex := c.currentIndex.Add(1) - 1
+
+	// Acquire read lock to check gateway health status
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 
 	// Try to find a healthy gateway starting from current index
-	startIndex := c.currentIndex
 	for i := 0; i < len(c.gateways); i++ {
-		index := (startIndex + i) % len(c.gateways)
+		index := (startIndex + uint64(i)) % uint64(len(c.gateways))
 		gateway := c.gateways[index]
 
 		if status, ok := c.gatewayStatus[gateway]; ok && status.Healthy {
-			c.currentIndex = (index + 1) % len(c.gateways)
 			return gateway
 		}
 	}
