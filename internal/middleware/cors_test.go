@@ -8,22 +8,24 @@ import (
 
 func TestCORS(t *testing.T) {
 	tests := []struct {
-		name           string
-		allowedOrigins string
-		requestOrigin  string
-		method         string
-		expectedStatus int
-		expectHeaders  bool
-		expectedOrigin string
+		name              string
+		allowedOrigins    string
+		requestOrigin     string
+		method            string
+		expectedStatus    int
+		expectHeaders     bool
+		expectedOrigin    string
+		expectCredentials bool
 	}{
 		{
-			name:           "allowed origin matches",
-			allowedOrigins: "https://example.com",
-			requestOrigin:  "https://example.com",
-			method:         http.MethodGet,
-			expectedStatus: http.StatusOK,
-			expectHeaders:  true,
-			expectedOrigin: "https://example.com",
+			name:              "allowed origin matches",
+			allowedOrigins:    "https://example.com",
+			requestOrigin:     "https://example.com",
+			method:            http.MethodGet,
+			expectedStatus:    http.StatusOK,
+			expectHeaders:     true,
+			expectedOrigin:    "https://example.com",
+			expectCredentials: true,
 		},
 		{
 			name:           "disallowed origin gets no CORS headers",
@@ -34,13 +36,14 @@ func TestCORS(t *testing.T) {
 			expectHeaders:  false,
 		},
 		{
-			name:           "wildcard reflects request origin",
-			allowedOrigins: "*",
-			requestOrigin:  "https://anything.com",
-			method:         http.MethodGet,
-			expectedStatus: http.StatusOK,
-			expectHeaders:  true,
-			expectedOrigin: "https://anything.com",
+			name:              "wildcard returns * and no credentials",
+			allowedOrigins:    "*",
+			requestOrigin:     "https://anything.com",
+			method:            http.MethodGet,
+			expectedStatus:    http.StatusOK,
+			expectHeaders:     true,
+			expectedOrigin:    "*",
+			expectCredentials: false,
 		},
 		{
 			name:           "no origin header means no CORS headers",
@@ -51,22 +54,24 @@ func TestCORS(t *testing.T) {
 			expectHeaders:  false,
 		},
 		{
-			name:           "multiple allowed origins first match",
-			allowedOrigins: "https://a.com, https://b.com",
-			requestOrigin:  "https://a.com",
-			method:         http.MethodGet,
-			expectedStatus: http.StatusOK,
-			expectHeaders:  true,
-			expectedOrigin: "https://a.com",
+			name:              "multiple allowed origins first match",
+			allowedOrigins:    "https://a.com, https://b.com",
+			requestOrigin:     "https://a.com",
+			method:            http.MethodGet,
+			expectedStatus:    http.StatusOK,
+			expectHeaders:     true,
+			expectedOrigin:    "https://a.com",
+			expectCredentials: true,
 		},
 		{
-			name:           "multiple allowed origins second match",
-			allowedOrigins: "https://a.com, https://b.com",
-			requestOrigin:  "https://b.com",
-			method:         http.MethodPost,
-			expectedStatus: http.StatusOK,
-			expectHeaders:  true,
-			expectedOrigin: "https://b.com",
+			name:              "multiple allowed origins second match",
+			allowedOrigins:    "https://a.com, https://b.com",
+			requestOrigin:     "https://b.com",
+			method:            http.MethodPost,
+			expectedStatus:    http.StatusOK,
+			expectHeaders:     true,
+			expectedOrigin:    "https://b.com",
+			expectCredentials: true,
 		},
 		{
 			name:           "multiple allowed origins no match",
@@ -77,13 +82,34 @@ func TestCORS(t *testing.T) {
 			expectHeaders:  false,
 		},
 		{
-			name:           "OPTIONS preflight with allowed origin",
-			allowedOrigins: "https://example.com",
-			requestOrigin:  "https://example.com",
-			method:         http.MethodOptions,
-			expectedStatus: http.StatusOK,
-			expectHeaders:  true,
-			expectedOrigin: "https://example.com",
+			name:              "mixed explicit and wildcard - explicit match",
+			allowedOrigins:    "https://example.com, *",
+			requestOrigin:     "https://example.com",
+			method:            http.MethodGet,
+			expectedStatus:    http.StatusOK,
+			expectHeaders:     true,
+			expectedOrigin:    "https://example.com",
+			expectCredentials: true,
+		},
+		{
+			name:              "mixed explicit and wildcard - wildcard match",
+			allowedOrigins:    "https://example.com, *",
+			requestOrigin:     "https://other.com",
+			method:            http.MethodGet,
+			expectedStatus:    http.StatusOK,
+			expectHeaders:     true,
+			expectedOrigin:    "*",
+			expectCredentials: false,
+		},
+		{
+			name:              "OPTIONS preflight with allowed origin",
+			allowedOrigins:    "https://example.com",
+			requestOrigin:     "https://example.com",
+			method:            http.MethodOptions,
+			expectedStatus:    http.StatusOK,
+			expectHeaders:     true,
+			expectedOrigin:    "https://example.com",
+			expectCredentials: true,
 		},
 		{
 			name:           "OPTIONS preflight with disallowed origin",
@@ -121,9 +147,18 @@ func TestCORS(t *testing.T) {
 				if actualOrigin != tt.expectedOrigin {
 					t.Errorf("expected Access-Control-Allow-Origin %q, got %q", tt.expectedOrigin, actualOrigin)
 				}
-				if w.Header().Get("Access-Control-Allow-Credentials") != "true" {
-					t.Error("expected Access-Control-Allow-Credentials to be true")
+
+				creds := w.Header().Get("Access-Control-Allow-Credentials")
+				if tt.expectCredentials {
+					if creds != "true" {
+						t.Error("expected Access-Control-Allow-Credentials to be true")
+					}
+				} else {
+					if creds != "" {
+						t.Errorf("expected Access-Control-Allow-Credentials to be empty, got %q", creds)
+					}
 				}
+
 				if w.Header().Get("Vary") != "Origin" {
 					t.Errorf("expected Vary: Origin header, got %q", w.Header().Get("Vary"))
 				}
