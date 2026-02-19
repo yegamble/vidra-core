@@ -66,13 +66,14 @@ func NewService(
 	atproto AtprotoPublisher,
 	encKey []byte,
 ) *Service {
+	urlValidator := security.NewURLValidator()
 	return &Service{
 		cfg:          cfg,
 		socialRepo:   socialRepo,
 		atproto:      atproto,
-		client:       &http.Client{Timeout: 10 * time.Second},
+		client:       urlValidator.NewSafeHTTPClient(10 * time.Second),
 		encKey:       encKey,
-		urlValidator: security.NewURLValidator(),
+		urlValidator: urlValidator,
 	}
 }
 

@@ -1,12 +1,16 @@
 package security
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
+	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
+	"syscall"
+	"time"
 )
 
 // URLValidator provides secure URL validation with SSRF protection
@@ -29,6 +33,9 @@ func NewURLValidatorAllowPrivate() *URLValidator {
 }
 
 // ValidateURL validates a URL and checks for SSRF vulnerabilities
+// Warning: This function checks the URL at the time of calling, but does not prevent
+// DNS rebinding attacks if the URL is used later. For complete protection, use
+// NewSafeHTTPClient() to make requests.
 func (v *URLValidator) ValidateURL(rawURL string) error {
 	if rawURL == "" {
 		return errors.New("URL cannot be empty")
@@ -257,4 +264,47 @@ func (v *URLValidator) ValidateAndResolveURL(rawURL string) ([]net.IP, error) {
 	}
 
 	return net.LookupIP(host)
+}
+
+// SafeDialer returns a dialer function that validates IP addresses before connection
+// This prevents DNS rebinding attacks by ensuring the IP used for connection is validated
+func (v *URLValidator) SafeDialer(ctx context.Context, network, addr string) (net.Conn, error) {
+	d := &net.Dialer{
+		Timeout:   30 * time.Second,
+		KeepAlive: 30 * time.Second,
+		Control: func(network, address string, c syscall.RawConn) error {
+			// address here is "ip:port" provided by the resolver
+			host, _, err := net.SplitHostPort(address)
+			if err != nil {
+				return err
+			}
+
+			ip := net.ParseIP(host)
+			if ip == nil {
+				return fmt.Errorf("invalid IP address in control: %s", host)
+			}
+
+			if !v.allowPrivate && isPrivateIP(ip) {
+				return fmt.Errorf("access to private IP addresses is not allowed: %s", host)
+			}
+			return nil
+		},
+	}
+
+	return d.DialContext(ctx, network, addr)
+}
+
+// NewSafeHTTPClient creates an HTTP client with SSRF protection
+func (v *URLValidator) NewSafeHTTPClient(timeout time.Duration) *http.Client {
+	return &http.Client{
+		Transport: &http.Transport{
+			DialContext:           v.SafeDialer,
+			ForceAttemptHTTP2:     true,
+			MaxIdleConns:          100,
+			IdleConnTimeout:       90 * time.Second,
+			TLSHandshakeTimeout:   10 * time.Second,
+			ExpectContinueTimeout: 1 * time.Second,
+		},
+		Timeout: timeout,
+	}
 }

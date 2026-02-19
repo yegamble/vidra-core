@@ -408,8 +408,9 @@ func (app *Application) initializeDependencies() *Dependencies {
 	log.Println("Plugin manager created")
 
 	redundancyRepo := repository.NewRedundancyRepository(app.DB)
-	deps.RedundancyService = ucredundancy.NewService(redundancyRepo, nil, &http.Client{Timeout: 30 * time.Second})
-	deps.InstanceDiscovery = ucredundancy.NewInstanceDiscovery(&http.Client{Timeout: 30 * time.Second})
+	safeClient := security.NewURLValidator().NewSafeHTTPClient(30 * time.Second)
+	deps.RedundancyService = ucredundancy.NewService(redundancyRepo, nil, safeClient)
+	deps.InstanceDiscovery = ucredundancy.NewInstanceDiscovery(safeClient)
 	log.Println("Redundancy service created")
 
 	videoCategoryRepo := repository.NewVideoCategoryRepository(app.DB)
