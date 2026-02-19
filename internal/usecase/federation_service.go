@@ -19,7 +19,7 @@ type FederationService interface {
 
 type federationService struct {
 	repo             FederationRepository
-	modRepo          InstanceConfigReader
+	modRepo          InstanceConfigManager
 	atproto          *atprotoService
 	atprotoPublisher AtprotoPublisher // Original publisher interface (for tests)
 	cfg              *config.Config
@@ -45,7 +45,7 @@ type FederationRepository interface {
 	SetActorAttempts(ctx context.Context, actor string, n int) error
 }
 
-func NewFederationService(repo FederationRepository, modRepo InstanceConfigReader, atproto AtprotoPublisher, cfg *config.Config, hardening HardeningRepository) FederationService {
+func NewFederationService(repo FederationRepository, modRepo InstanceConfigManager, atproto AtprotoPublisher, cfg *config.Config, hardening HardeningRepository) FederationService {
 	// Create enhanced services for robustness
 	var dedup DeduplicationService
 	var circuitBreaker CircuitBreaker
@@ -626,13 +626,7 @@ func (s *federationService) setActorCursor(ctx context.Context, actor string, cu
 	key := "atproto_cursor_" + actor
 	val, _ := json.Marshal(cursor)
 	// store as private
-	type updater interface {
-		UpdateInstanceConfig(ctx context.Context, key string, value []byte, isPublic bool) error
-	}
-	if u, ok := s.modRepo.(updater); ok {
-		return u.UpdateInstanceConfig(ctx, key, val, false)
-	}
-	return nil
+	return s.modRepo.UpdateInstanceConfig(ctx, key, val, false)
 }
 
 // Table-aware helpers for cursor/nextAt
@@ -675,12 +669,7 @@ func (s *federationService) setActorNextAt(ctx context.Context, actor string, t 
 	}
 	key := "atproto_actor_" + actor + "_next_at"
 	b, _ := json.Marshal(t.UTC().Format(time.RFC3339))
-	type updater interface {
-		UpdateInstanceConfig(ctx context.Context, key string, value []byte, isPublic bool) error
-	}
-	if u, ok := s.modRepo.(updater); ok {
-		_ = u.UpdateInstanceConfig(ctx, key, b, false)
-	}
+	_ = s.modRepo.UpdateInstanceConfig(ctx, key, b, false)
 }
 
 func (s *federationService) bumpActorBackoff(ctx context.Context, actor string) {
@@ -721,12 +710,7 @@ func (s *federationService) setActorAttempts(ctx context.Context, actor string, 
 	}
 	key := "atproto_actor_" + actor + "_attempts"
 	b, _ := json.Marshal(n)
-	type updater interface {
-		UpdateInstanceConfig(ctx context.Context, key string, value []byte, isPublic bool) error
-	}
-	if u, ok := s.modRepo.(updater); ok {
-		_ = u.UpdateInstanceConfig(ctx, key, b, false)
-	}
+	_ = s.modRepo.UpdateInstanceConfig(ctx, key, b, false)
 }
 
 // recordHardeningMetric is a small helper to record a metric via the hardening repository if available.

@@ -34,6 +34,18 @@ type InstanceConfigReader interface {
 	GetInstanceConfig(ctx context.Context, key string) (*domain.InstanceConfig, error)
 }
 
+// InstanceConfigUpdater abstracts updating instance configuration.
+// Satisfied by repository.ModerationRepository.
+type InstanceConfigUpdater interface {
+	UpdateInstanceConfig(ctx context.Context, key string, value []byte, isPublic bool) error
+}
+
+// InstanceConfigManager combines read and update operations for instance configuration.
+type InstanceConfigManager interface {
+	InstanceConfigReader
+	InstanceConfigUpdater
+}
+
 type atprotoService struct {
 	enabled bool
 	cfg     *config.Config
