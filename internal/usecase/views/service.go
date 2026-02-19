@@ -3,6 +3,7 @@ package views
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"sync"
 	"time"
@@ -19,6 +20,7 @@ type viewTask struct {
 type Service struct {
 	viewsRepo    port.ViewsRepository
 	videoRepo    port.VideoRepository
+	cacheRepo    port.CacheRepository
 	viewQueue    chan viewTask
 	workerWG     sync.WaitGroup
 	closeOnce    sync.Once
@@ -63,6 +65,11 @@ func (s *Service) Close() {
 	s.workerWG.Wait()
 	s.flushWG.Wait()
 	s.flushViewCounts()
+}
+
+// SetCacheRepository sets the cache repository for the service
+func (s *Service) SetCacheRepository(repo port.CacheRepository) {
+	s.cacheRepo = repo
 }
 
 func (s *Service) periodicFlush() {
@@ -114,9 +121,27 @@ func (s *Service) processViewTask(task viewTask) {
 	request := task.request
 	userID := task.userID
 
-	existingView, err := s.viewsRepo.GetUserViewBySessionAndVideo(ctx, request.SessionID, request.VideoID)
-	if err != nil {
-		return
+	var existingView *domain.UserView
+	var err error
+	cacheKey := fmt.Sprintf("view:%s:%s", request.SessionID, request.VideoID)
+
+	// Try cache
+	if s.cacheRepo != nil {
+		val, err := s.cacheRepo.Get(ctx, cacheKey)
+		if err == nil && val != "" {
+			var cachedView domain.UserView
+			if err := json.Unmarshal([]byte(val), &cachedView); err == nil {
+				existingView = &cachedView
+			}
+		}
+	}
+
+	// Fallback to DB if not found in cache
+	if existingView == nil {
+		existingView, err = s.viewsRepo.GetUserViewBySessionAndVideo(ctx, request.SessionID, request.VideoID)
+		if err != nil {
+			return
+		}
 	}
 
 	now := time.Now()
@@ -132,6 +157,13 @@ func (s *Service) processViewTask(task viewTask) {
 		existingView.BufferEvents = request.BufferEvents
 
 		_ = s.viewsRepo.UpdateUserView(ctx, existingView)
+
+		// Update cache
+		if s.cacheRepo != nil {
+			if data, err := json.Marshal(existingView); err == nil {
+				_ = s.cacheRepo.Set(ctx, cacheKey, data, 1*time.Hour)
+			}
+		}
 		return
 	}
 
@@ -188,6 +220,14 @@ func (s *Service) processViewTask(task viewTask) {
 	if err := s.viewsRepo.CreateUserView(ctx, view); err != nil {
 		return
 	}
+
+	// Update cache with new view
+	if s.cacheRepo != nil {
+		if data, err := json.Marshal(view); err == nil {
+			_ = s.cacheRepo.Set(ctx, cacheKey, data, 1*time.Hour)
+		}
+	}
+
 	s.bufferViewIncrement(request.VideoID)
 }
 

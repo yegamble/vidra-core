@@ -313,6 +313,7 @@ func (app *Application) initializeDependencies() *Dependencies {
 	e2eeConversationRepo := repository.NewE2EEConversationRepository(app.DB)
 	deps.E2EEService = usecase.NewE2EEService(cryptoRepo, e2eeMessageRepo, e2eeConversationRepo, app.DB)
 	deps.ViewsService = ucviews.NewService(deps.ViewsRepo, deps.VideoRepo)
+	deps.ViewsService.SetCacheRepository(repository.NewRedisCacheRepository(app.Redis))
 	deps.NotificationService = ucn.NewService(deps.NotificationRepo, deps.SubRepo, deps.UserRepo)
 	deps.ChannelService = ucchannel.NewService(deps.ChannelRepo, deps.UserRepo, deps.VideoRepo)
 	deps.CommentService = uccmt.NewService(deps.CommentRepo, deps.VideoRepo, deps.UserRepo, deps.ChannelRepo)
