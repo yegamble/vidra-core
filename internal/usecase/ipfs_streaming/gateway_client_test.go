@@ -569,6 +569,69 @@ func TestSelectHealthyGateway_ConcurrentDistribution(t *testing.T) {
 		totalSelections := counts["http://gw1"] + counts["http://gw2"] + counts["http://gw3"]
 		assert.Equal(t, totalCalls, totalSelections)
 	})
+
+	t.Run("fair distribution with mixed health under concurrency", func(t *testing.T) {
+		client := NewGatewayClient(
+			[]string{"http://gw1", "http://gw2", "http://gw3"},
+			5*time.Second,
+			3,
+			0,
+		)
+		defer client.Close()
+
+		// Mark gw2 as unhealthy — only gw1 and gw3 should be selected
+		client.mu.Lock()
+		client.gatewayStatus["http://gw2"].Healthy = false
+		client.mu.Unlock()
+
+		var mu sync.Mutex
+		counts := make(map[string]int)
+
+		var wg sync.WaitGroup
+		numGoroutines := 100
+		callsPerGoroutine := 1000
+		totalCalls := numGoroutines * callsPerGoroutine
+
+		for i := 0; i < numGoroutines; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for j := 0; j < callsPerGoroutine; j++ {
+					gw := client.selectHealthyGateway()
+					mu.Lock()
+					counts[gw]++
+					mu.Unlock()
+				}
+			}()
+		}
+
+		wg.Wait()
+
+		// gw2 should never be selected
+		assert.Equal(t, 0, counts["http://gw2"],
+			"Unhealthy gateway gw2 should never be selected, got %d", counts["http://gw2"])
+
+		// With monotonic counter and gw2 unhealthy, the expected distribution is:
+		// counter%3=0 → starts at gw1 (healthy) → selects gw1
+		// counter%3=1 → starts at gw2 (unhealthy) → falls through to gw3
+		// counter%3=2 → starts at gw3 (healthy) → selects gw3
+		// So gw1 gets ~1/3 and gw3 gets ~2/3 of total calls
+		expectedGw1 := totalCalls / 3
+		expectedGw3 := totalCalls * 2 / 3
+		tolerance := 0.25
+
+		gw1Count := counts["http://gw1"]
+		gw3Count := counts["http://gw3"]
+
+		assert.InDelta(t, expectedGw1, gw1Count, float64(expectedGw1)*tolerance,
+			"Gateway gw1 selected %d times, expected ~%d (1/3 of total)", gw1Count, expectedGw1)
+		assert.InDelta(t, expectedGw3, gw3Count, float64(expectedGw3)*tolerance,
+			"Gateway gw3 selected %d times, expected ~%d (2/3 of total)", gw3Count, expectedGw3)
+
+		// Verify total
+		totalSelections := gw1Count + gw3Count
+		assert.Equal(t, totalCalls, totalSelections)
+	})
 }
 
 // ==================== Benchmark Tests ====================
@@ -644,8 +707,9 @@ func BenchmarkSelectHealthyGateway(b *testing.B) {
 				counter++
 				// 90% reads, 10% writes
 				if counter%10 == 0 {
-					// Write path: update gateway metrics
-					client.updateGatewayMetrics("http://gw1", 100, nil)
+					// Write path: update gateway metrics (rotate across all gateways)
+					gws := []string{"http://gw1", "http://gw2", "http://gw3"}
+					client.updateGatewayMetrics(gws[counter%3], 100, nil)
 				} else {
 					// Read path: select gateway
 					_ = client.selectHealthyGateway()

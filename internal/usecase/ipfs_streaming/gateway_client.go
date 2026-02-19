@@ -189,7 +189,9 @@ func (c *GatewayClient) selectHealthyGateway() string {
 		}
 	}
 
-	// No healthy gateway found - return first gateway as last resort
+	// Fallback: return first gateway even if unhealthy. Counter has already
+	// advanced unconditionally; this is acceptable for load distribution
+	// purposes and ensures a non-deterministic starting position on recovery.
 	if len(c.gateways) > 0 {
 		return c.gateways[0]
 	}
