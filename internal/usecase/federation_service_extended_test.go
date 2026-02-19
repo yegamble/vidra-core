@@ -315,7 +315,7 @@ func TestResetActorBackoff(t *testing.T) {
 	assert.Equal(t, 0, n)
 }
 
-func TestGetActorCursorTableAware(t *testing.T) {
+func TestGetActorCursor_TableAware(t *testing.T) {
 	t.Run("uses repo first", func(t *testing.T) {
 		repo := &mockFederationRepo{
 			actorStates: map[string]*actorState{
@@ -323,7 +323,7 @@ func TestGetActorCursorTableAware(t *testing.T) {
 			},
 		}
 		svc := &federationService{repo: repo}
-		result := svc.getActorCursorTableAware(context.Background(), "actor1")
+		result := svc.getActorCursor(context.Background(), "actor1")
 		assert.Equal(t, "cursor-from-repo", result)
 	})
 
@@ -339,17 +339,17 @@ func TestGetActorCursorTableAware(t *testing.T) {
 			repo:    nil,
 			modRepo: modRepo,
 		}
-		result := svc.getActorCursorTableAware(context.Background(), "actor1")
+		result := svc.getActorCursor(context.Background(), "actor1")
 		assert.Equal(t, "cursor-from-config", result)
 	})
 }
 
-func TestSetActorCursorTableAware(t *testing.T) {
+func TestSetActorCursor_TableAware(t *testing.T) {
 	repo := &mockFederationRepo{actorStates: map[string]*actorState{}}
 	modRepo := &mockModRepo{configs: map[string]*domain.InstanceConfig{}}
 	svc := &federationService{repo: repo, modRepo: modRepo}
 
-	err := svc.setActorCursorTableAware(context.Background(), "actor1", "new-cursor")
+	err := svc.setActorCursor(context.Background(), "actor1", "new-cursor")
 	assert.NoError(t, err)
 	assert.Equal(t, "new-cursor", repo.actorStates["actor1"].cursor)
 }
@@ -434,6 +434,20 @@ func TestBumpActorBackoff_WithModRepo(t *testing.T) {
 
 	_, ok := modRepo.configs["atproto_actor_actor1_next_at"]
 	assert.True(t, ok)
+}
+
+func TestBumpActorBackoff_WithRepo(t *testing.T) {
+	repo := &mockFederationRepo{
+		actorStates: map[string]*actorState{
+			"actor1": {attempts: 2},
+		},
+	}
+	svc := &federationService{repo: repo}
+	svc.bumpActorBackoff(context.Background(), "actor1")
+
+	state := repo.actorStates["actor1"]
+	assert.Equal(t, 3, state.attempts)
+	assert.NotNil(t, state.nextAt)
 }
 
 func TestExtractEmbedInfo(t *testing.T) {

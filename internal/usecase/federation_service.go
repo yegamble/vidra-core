@@ -169,11 +169,7 @@ func (s *federationService) ProcessNext(ctx context.Context) (bool, error) {
 	}
 	// Success: reset backoff and schedule next run after ingest interval
 	s.resetActorBackoff(ctx, actor)
-	if s.repo != nil {
-		_ = s.repo.SetActorNextAt(ctx, actor, now.Add(time.Duration(s.cfg.FederationIngestIntervalSeconds)*time.Second))
-	} else {
-		s.setActorNextAt(ctx, actor, now.Add(time.Duration(s.cfg.FederationIngestIntervalSeconds)*time.Second))
-	}
+	s.setActorNextAt(ctx, actor, now.Add(time.Duration(s.cfg.FederationIngestIntervalSeconds)*time.Second))
 	return true, nil
 }
 
@@ -300,7 +296,7 @@ func (s *federationService) ingestActor(ctx context.Context, actor string) error
 
 	maxItems := s.getMaxItems()
 	maxPages := s.getMaxPages()
-	cursor := s.getActorCursorTableAware(ctx, actor)
+	cursor := s.getActorCursor(ctx, actor)
 
 	blockedSet := s.loadBlockedLabels(ctx)
 	totalIngested := 0
@@ -340,7 +336,7 @@ func (s *federationService) ingestActor(ctx context.Context, actor string) error
 		// Update cursor
 		if nextCursor, ok := feed["cursor"].(string); ok && strings.TrimSpace(nextCursor) != "" {
 			cursor = nextCursor
-			_ = s.setActorCursorTableAware(ctx, actor, cursor)
+			_ = s.setActorCursor(ctx, actor, cursor)
 		} else {
 			break
 		}
@@ -607,6 +603,11 @@ func strPtrIf(ok bool, v string) *string {
 
 // per-actor cursor persistence using instance_config as a simple store
 func (s *federationService) getActorCursor(ctx context.Context, actor string) string {
+	if s.repo != nil {
+		if c, _, _, _, err := s.repo.GetActorStateSimple(ctx, actor); err == nil {
+			return c
+		}
+	}
 	if s.modRepo == nil {
 		return ""
 	}
@@ -620,6 +621,10 @@ func (s *federationService) getActorCursor(ctx context.Context, actor string) st
 }
 
 func (s *federationService) setActorCursor(ctx context.Context, actor string, cursor string) error {
+	if s.repo != nil {
+		_ = s.repo.SetActorCursor(ctx, actor, cursor)
+		return nil
+	}
 	if s.modRepo == nil {
 		return nil
 	}
@@ -629,25 +634,17 @@ func (s *federationService) setActorCursor(ctx context.Context, actor string, cu
 	return s.modRepo.UpdateInstanceConfig(ctx, key, val, false)
 }
 
-// Table-aware helpers for cursor/nextAt
-func (s *federationService) getActorCursorTableAware(ctx context.Context, actor string) string {
-	if s.repo != nil {
-		if c, _, _, _, err := s.repo.GetActorStateSimple(ctx, actor); err == nil {
-			return c
-		}
-	}
-	return s.getActorCursor(ctx, actor)
-}
-
-func (s *federationService) setActorCursorTableAware(ctx context.Context, actor string, cursor string) error {
-	if s.repo != nil {
-		_ = s.repo.SetActorCursor(ctx, actor, cursor)
-	}
-	return s.setActorCursor(ctx, actor, cursor)
-}
-
 // backoff helpers stored in instance_config keys
 func (s *federationService) getActorNextAt(ctx context.Context, actor string) time.Time {
+	if s.repo != nil {
+		_, nextAt, _, _, err := s.repo.GetActorStateSimple(ctx, actor)
+		if err == nil && nextAt != nil {
+			return *nextAt
+		}
+		if err == nil {
+			return time.Time{}
+		}
+	}
 	if s.modRepo == nil {
 		return time.Time{}
 	}
@@ -664,6 +661,10 @@ func (s *federationService) getActorNextAt(ctx context.Context, actor string) ti
 }
 
 func (s *federationService) setActorNextAt(ctx context.Context, actor string, t time.Time) {
+	if s.repo != nil {
+		_ = s.repo.SetActorNextAt(ctx, actor, t)
+		return
+	}
 	if s.modRepo == nil {
 		return
 	}
@@ -673,7 +674,7 @@ func (s *federationService) setActorNextAt(ctx context.Context, actor string, t 
 }
 
 func (s *federationService) bumpActorBackoff(ctx context.Context, actor string) {
-	if s.modRepo == nil {
+	if s.modRepo == nil && s.repo == nil {
 		return
 	}
 	// attempts
@@ -692,6 +693,12 @@ func (s *federationService) resetActorBackoff(ctx context.Context, actor string)
 }
 
 func (s *federationService) getActorAttempts(ctx context.Context, actor string) int {
+	if s.repo != nil {
+		_, _, attempts, _, err := s.repo.GetActorStateSimple(ctx, actor)
+		if err == nil {
+			return attempts
+		}
+	}
 	if s.modRepo == nil {
 		return 0
 	}
@@ -705,6 +712,10 @@ func (s *federationService) getActorAttempts(ctx context.Context, actor string) 
 }
 
 func (s *federationService) setActorAttempts(ctx context.Context, actor string, n int) {
+	if s.repo != nil {
+		_ = s.repo.SetActorAttempts(ctx, actor, n)
+		return
+	}
 	if s.modRepo == nil {
 		return
 	}
