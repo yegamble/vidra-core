@@ -106,3 +106,4 @@ internal/httpapi/handlers/auth/storage/
 # S3 migration tool binaries
 s3migrate
 s3test
+.playwright-cli/
