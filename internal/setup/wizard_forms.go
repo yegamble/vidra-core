@@ -2,8 +2,11 @@ package setup
 
 import (
 	"fmt"
+	"net"
 	"net/http"
+	"net/url"
 	"strconv"
+	"strings"
 )
 
 func (w *Wizard) processDatabaseForm(rw http.ResponseWriter, r *http.Request) {
@@ -16,14 +19,83 @@ func (w *Wizard) processDatabaseForm(rw http.ResponseWriter, r *http.Request) {
 	defer w.mu.Unlock()
 
 	w.config.PostgresMode = r.FormValue("POSTGRES_MODE")
-	w.config.DatabaseURL = r.FormValue("DATABASE_URL")
 	w.config.CreateDB = r.FormValue("create_db") == "true"
 
 	if w.config.PostgresMode == "external" {
-		if err := ValidateDatabaseURL(w.config.DatabaseURL); err != nil {
-			http.Error(rw, "Invalid database URL: "+err.Error(), http.StatusBadRequest)
+		// Parse individual PostgreSQL fields
+		w.config.PostgresHost = r.FormValue("POSTGRES_HOST")
+		portStr := r.FormValue("POSTGRES_PORT")
+		if portStr != "" {
+			port, err := strconv.Atoi(portStr)
+			if err != nil || port <= 0 || port > 65535 {
+				http.Error(rw, "Invalid PostgreSQL port: must be between 1 and 65535", http.StatusBadRequest)
+				return
+			}
+			w.config.PostgresPort = port
+		} else {
+			w.config.PostgresPort = 5432
+		}
+		w.config.PostgresUser = r.FormValue("POSTGRES_USER")
+		w.config.PostgresPassword = r.FormValue("POSTGRES_PASSWORD")
+		dbName := r.FormValue("POSTGRES_DB")
+		if dbName != "" {
+			w.config.PostgresDB = dbName
+		} else {
+			w.config.PostgresDB = "athena"
+		}
+		w.config.PostgresSSLMode = r.FormValue("POSTGRES_SSLMODE")
+		if w.config.PostgresSSLMode == "" {
+			w.config.PostgresSSLMode = "disable"
+		}
+
+		// Validate required fields
+		if w.config.PostgresHost == "" {
+			http.Error(rw, "PostgreSQL host is required for external mode", http.StatusBadRequest)
 			return
 		}
+		if w.config.PostgresUser == "" {
+			http.Error(rw, "PostgreSQL user is required for external mode", http.StatusBadRequest)
+			return
+		}
+		if w.config.PostgresPassword == "" {
+			http.Error(rw, "PostgreSQL password is required for external mode", http.StatusBadRequest)
+			return
+		}
+
+		// Validate fields for shell metacharacters
+		if containsShellMetachars(w.config.PostgresHost) {
+			http.Error(rw, "PostgreSQL host contains invalid characters", http.StatusBadRequest)
+			return
+		}
+		if containsShellMetachars(w.config.PostgresUser) {
+			http.Error(rw, "PostgreSQL user contains invalid characters", http.StatusBadRequest)
+			return
+		}
+		if containsShellMetachars(w.config.PostgresDB) {
+			http.Error(rw, "PostgreSQL database name contains invalid characters", http.StatusBadRequest)
+			return
+		}
+
+		// Construct DATABASE_URL using net/url.UserPassword
+		u := &url.URL{
+			Scheme: "postgres",
+			User:   url.UserPassword(w.config.PostgresUser, w.config.PostgresPassword),
+			Host:   net.JoinHostPort(w.config.PostgresHost, strconv.Itoa(w.config.PostgresPort)),
+			Path:   "/" + w.config.PostgresDB,
+		}
+		if w.config.PostgresSSLMode != "" {
+			u.RawQuery = "sslmode=" + w.config.PostgresSSLMode
+		}
+		w.config.DatabaseURL = u.String()
+	} else {
+		// Docker mode - clear individual fields
+		w.config.PostgresHost = ""
+		w.config.PostgresPort = 5432
+		w.config.PostgresUser = ""
+		w.config.PostgresPassword = ""
+		w.config.PostgresDB = "athena"
+		w.config.PostgresSSLMode = "disable"
+		w.config.DatabaseURL = ""
 	}
 
 	http.Redirect(rw, r, "/setup/services", http.StatusSeeOther)
@@ -259,17 +331,111 @@ func (w *Wizard) processReviewForm(rw http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if err := WriteEnvFile(".env", w.config); err != nil {
-		http.Error(rw, "Failed to write configuration: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	if w.config.AdminUsername != "" && w.config.AdminEmail != "" {
+	// In Docker mode, skip CreateAdminUser (no database running during setup).
+	// Admin credentials are persisted to .env and created on first startup.
+	// In external mode, create admin user before writing .env to prevent partial state.
+	if w.config.PostgresMode == "external" && w.config.AdminUsername != "" && w.config.AdminEmail != "" {
 		ctx := r.Context()
 		if err := CreateAdminUser(ctx, w.config.DatabaseURL, w.config.AdminUsername, w.config.AdminEmail, adminPassword); err != nil {
 			http.Error(rw, "Failed to create admin user: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
+	}
+
+	// Write .env file last to prevent half-configured state
+	if err := WriteEnvFile(".env", w.config); err != nil {
+		http.Error(rw, "Failed to write configuration: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	http.Redirect(rw, r, "/setup/complete", http.StatusSeeOther)
+}
+
+func (w *Wizard) processQuickInstallForm(rw http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(rw, "Invalid form data", http.StatusBadRequest)
+		return
+	}
+
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	// Get form values
+	adminUsername := r.FormValue("ADMIN_USERNAME")
+	adminEmail := r.FormValue("ADMIN_EMAIL")
+	adminPassword := r.FormValue("ADMIN_PASSWORD")
+	adminPasswordConfirm := r.FormValue("ADMIN_PASSWORD_CONFIRM")
+	domain := r.FormValue("NGINX_DOMAIN")
+
+	// Validate required fields
+	if adminUsername == "" {
+		http.Error(rw, "Admin username is required", http.StatusBadRequest)
+		return
+	}
+	if containsShellMetachars(adminUsername) {
+		http.Error(rw, "Admin username contains invalid characters", http.StatusBadRequest)
+		return
+	}
+	if adminEmail == "" {
+		http.Error(rw, "Admin email is required", http.StatusBadRequest)
+		return
+	}
+	if !strings.Contains(adminEmail, "@") {
+		http.Error(rw, "Admin email must be a valid email address", http.StatusBadRequest)
+		return
+	}
+	if adminPassword == "" {
+		http.Error(rw, "Admin password is required", http.StatusBadRequest)
+		return
+	}
+	if len(adminPassword) < 8 {
+		http.Error(rw, "Admin password must be at least 8 characters", http.StatusBadRequest)
+		return
+	}
+	if adminPassword != adminPasswordConfirm {
+		http.Error(rw, "Passwords do not match", http.StatusBadRequest)
+		return
+	}
+	if domain == "" {
+		http.Error(rw, "Domain is required", http.StatusBadRequest)
+		return
+	}
+
+	// Validate domain
+	if err := ValidateDomain(domain); err != nil {
+		http.Error(rw, "Invalid domain: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// Set config values
+	w.config.AdminUsername = adminUsername
+	w.config.AdminEmail = adminEmail
+	w.config.AdminPassword = adminPassword
+	w.config.NginxDomain = domain
+
+	// Generate nginx config
+	if w.config.NginxProtocol == "http" || w.config.NginxProtocol == "https" {
+		if err := GenerateNginxConfig(w.config, "nginx/conf"); err != nil {
+			http.Error(rw, "Failed to generate nginx config: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
+
+	// In Docker mode, skip CreateAdminUser (no database running during setup).
+	// Admin credentials are persisted to .env and created on first startup.
+	// In external mode, create admin user before writing .env to prevent partial state.
+	if w.config.PostgresMode == "external" && w.config.DatabaseURL != "" {
+		ctx := r.Context()
+		if err := CreateAdminUser(ctx, w.config.DatabaseURL, w.config.AdminUsername, w.config.AdminEmail, adminPassword); err != nil {
+			http.Error(rw, "Failed to create admin user: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
+
+	// Write .env file last to prevent half-configured state
+	if err := WriteEnvFile(".env", w.config); err != nil {
+		http.Error(rw, "Failed to write configuration: "+err.Error(), http.StatusInternalServerError)
+		return
 	}
 
 	http.Redirect(rw, r, "/setup/complete", http.StatusSeeOther)

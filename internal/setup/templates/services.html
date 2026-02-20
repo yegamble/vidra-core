@@ -38,6 +38,10 @@
                    value="{{.Config.RedisURL}}"
                    placeholder="redis://localhost:6379/0">
         </div>
+        <button type="button" class="btn btn-secondary" onclick="testRedis()" style="margin-top: 10px;">
+            Test Connection
+        </button>
+        <div id="redisTestResult" style="margin-top: 10px;"></div>
     </div>
 
     <!-- IPFS -->
@@ -69,6 +73,10 @@
                        value="{{.Config.IPFSAPIUrl}}"
                        placeholder="http://localhost:5001">
             </div>
+            <button type="button" class="btn btn-secondary" onclick="testIPFS()" style="margin-top: 10px;">
+                Test Connection
+            </button>
+            <div id="ipfsTestResult" style="margin-top: 10px;"></div>
         </div>
     </div>
 
@@ -110,6 +118,10 @@
                        placeholder="http://localhost:14265">
                 <div class="help-text">JSON-RPC endpoint of your IOTA Rebased fullnode.</div>
             </div>
+            <button type="button" class="btn btn-secondary" onclick="testIOTA()" style="margin-top: 10px;">
+                Test Connection
+            </button>
+            <div id="iotaTestResult" style="margin-top: 10px;"></div>
         </div>
     </div>
 
@@ -141,5 +153,110 @@ document.querySelector('input[name="ENABLE_IPFS"]').addEventListener('change', f
 document.querySelector('input[name="ENABLE_IOTA"]').addEventListener('change', function(e) {
     document.getElementById('iota-config').style.display = e.target.checked ? 'block' : 'none';
 });
+
+function testRedis() {
+    const url = document.getElementById('redis_url').value;
+    if (!url) {
+        document.getElementById('redisTestResult').innerHTML =
+            '<div class="alert alert-error">Please enter a Redis URL</div>';
+        return;
+    }
+
+    // Parse redis://[user:pass@]host:port/db
+    const match = url.match(/redis:\/\/(?:([^:]+):([^@]+)@)?([^:\/]+):(\d+)(?:\/(\d+))?/);
+    if (!match) {
+        document.getElementById('redisTestResult').innerHTML =
+            '<div class="alert alert-error">Invalid Redis URL format</div>';
+        return;
+    }
+
+    const host = match[3];
+    const port = parseInt(match[4]);
+    const password = match[2] || '';
+
+    document.getElementById('redisTestResult').innerHTML = '<p>Testing connection...</p>';
+
+    fetch('/setup/test-redis', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ host, port, password })
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.success) {
+            document.getElementById('redisTestResult').innerHTML =
+                '<div class="alert alert-success">✓ ' + data.message + '</div>';
+        } else {
+            document.getElementById('redisTestResult').innerHTML =
+                '<div class="alert alert-error">✗ ' + data.error + '</div>';
+        }
+    })
+    .catch(e => {
+        document.getElementById('redisTestResult').innerHTML =
+            '<div class="alert alert-error">✗ Connection failed</div>';
+    });
+}
+
+function testIPFS() {
+    const url = document.getElementById('ipfs_api').value;
+    if (!url) {
+        document.getElementById('ipfsTestResult').innerHTML =
+            '<div class="alert alert-error">Please enter an IPFS API URL</div>';
+        return;
+    }
+
+    document.getElementById('ipfsTestResult').innerHTML = '<p>Testing connection...</p>';
+
+    fetch('/setup/test-ipfs', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ url })
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.success) {
+            document.getElementById('ipfsTestResult').innerHTML =
+                '<div class="alert alert-success">✓ ' + data.message + '</div>';
+        } else {
+            document.getElementById('ipfsTestResult').innerHTML =
+                '<div class="alert alert-error">✗ ' + data.error + '</div>';
+        }
+    })
+    .catch(e => {
+        document.getElementById('ipfsTestResult').innerHTML =
+            '<div class="alert alert-error">✗ Connection failed</div>';
+    });
+}
+
+function testIOTA() {
+    const url = document.getElementById('iota_node_url').value;
+    if (!url) {
+        document.getElementById('iotaTestResult').innerHTML =
+            '<div class="alert alert-error">Please enter an IOTA node URL</div>';
+        return;
+    }
+
+    document.getElementById('iotaTestResult').innerHTML = '<p>Testing connection...</p>';
+
+    fetch('/setup/test-iota', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ url })
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.success) {
+            document.getElementById('iotaTestResult').innerHTML =
+                '<div class="alert alert-success">✓ ' + data.message + '</div>';
+        } else {
+            document.getElementById('iotaTestResult').innerHTML =
+                '<div class="alert alert-error">✗ ' + data.error + '</div>';
+        }
+    })
+    .catch(e => {
+        document.getElementById('iotaTestResult').innerHTML =
+            '<div class="alert alert-error">✗ Connection failed</div>';
+    });
+}
 </script>
 {{end}}

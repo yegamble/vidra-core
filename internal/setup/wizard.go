@@ -29,9 +29,15 @@ type Wizard struct {
 }
 
 type WizardConfig struct {
-	PostgresMode string
-	DatabaseURL  string
-	CreateDB     bool
+	PostgresMode     string
+	DatabaseURL      string
+	CreateDB         bool
+	PostgresHost     string
+	PostgresPort     int
+	PostgresUser     string
+	PostgresPassword string
+	PostgresDB       string
+	PostgresSSLMode  string
 
 	RedisMode     string
 	RedisURL      string
@@ -102,7 +108,7 @@ func NewWizard() *Wizard {
 	// Parse each page template individually with the layout to avoid
 	// {{define "content"}} collision (last alphabetical file would win)
 	templates := make(map[string]*template.Template)
-	pages := []string{"welcome", "database", "services", "email", "networking", "storage", "security", "review", "complete"}
+	pages := []string{"welcome", "quickinstall", "database", "services", "email", "networking", "storage", "security", "review", "complete"}
 	for _, page := range pages {
 		t := template.Must(template.ParseFS(templatesFS, "templates/layout.html", "templates/"+page+".html"))
 		templates[page] = t
@@ -120,6 +126,10 @@ func NewWizard() *Wizard {
 		testEmailLimit: make(map[string][]int64),
 		config: &WizardConfig{
 			PostgresMode:    "docker",
+			PostgresPort:    5432,
+			PostgresUser:    "athena",
+			PostgresDB:      "athena",
+			PostgresSSLMode: "disable",
 			RedisMode:       "docker",
 			IPFSMode:        "docker",
 			IOTAMode:        "docker",
@@ -399,6 +409,24 @@ func (w *Wizard) HandleTestEmail(rw http.ResponseWriter, r *http.Request) {
 
 	rw.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(rw).Encode(response)
+}
+
+func (w *Wizard) HandleQuickInstall(rw http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodPost {
+		w.processQuickInstallForm(rw, r)
+		return
+	}
+
+	data := &TemplateData{
+		Title:           "Quick Install (Docker)",
+		CurrentStep:     "quickinstall",
+		ShowBreadcrumb:  false,
+		ShowActions:     false,
+		Config:          w.config,
+		SystemResources: w.config.SystemResources,
+	}
+
+	w.renderTemplate(rw, "layout.html", "quickinstall.html", data)
 }
 
 func (w *Wizard) HandleComplete(rw http.ResponseWriter, r *http.Request) {

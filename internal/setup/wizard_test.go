@@ -260,3 +260,46 @@ func TestNewWizardNginxDefaults(t *testing.T) {
 	assert.Equal(t, 80, wizard.config.NginxPort, "NginxPort should default to 80")
 	assert.Equal(t, "http", wizard.config.NginxProtocol, "NginxProtocol should default to http")
 }
+
+func TestWelcomePageHasQuickInstallLink(t *testing.T) {
+	wizard := NewWizard()
+	req := httptest.NewRequest(http.MethodGet, "/setup/welcome", nil)
+	w := httptest.NewRecorder()
+
+	wizard.HandleWelcome(w, req)
+
+	body := w.Body.String()
+	assert.Contains(t, body, "/setup/quickinstall", "Welcome page should contain link to /setup/quickinstall")
+	assert.Contains(t, body, "Quick Install", "Welcome page should contain 'Quick Install' text")
+}
+
+func TestWizardHandlerQuickInstall(t *testing.T) {
+	tests := []struct {
+		name           string
+		method         string
+		expectedStatus int
+		expectedBody   string
+	}{
+		{
+			name:           "GET quick install page returns 200",
+			method:         http.MethodGet,
+			expectedStatus: http.StatusOK,
+			expectedBody:   "Quick Install (Docker)",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			wizard := NewWizard()
+			req := httptest.NewRequest(tt.method, "/setup/quickinstall", nil)
+			w := httptest.NewRecorder()
+
+			wizard.HandleQuickInstall(w, req)
+
+			assert.Equal(t, tt.expectedStatus, w.Code)
+			if tt.expectedBody != "" {
+				assert.Contains(t, w.Body.String(), tt.expectedBody)
+			}
+		})
+	}
+}

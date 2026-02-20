@@ -29,27 +29,7 @@
         <input type="hidden" name="POSTGRES_MODE" value="{{or .Config.PostgresMode "docker"}}">
     </div>
 
-    <div class="external-fields {{if eq .Config.PostgresMode "external"}}show{{end}}">
-        <div class="form-group">
-            <label for="database_url">Database URL</label>
-            <input type="text" id="database_url" name="DATABASE_URL"
-                   value="{{.Config.DatabaseURL}}"
-                   placeholder="postgres://user:password@localhost:5432/athena?sslmode=disable">
-            <div class="help-text">
-                Format: postgres://username:password@host:port/database
-            </div>
-        </div>
-
-        <div class="form-group">
-            <label>
-                <input type="checkbox" name="create_db" value="true" {{if .Config.CreateDB}}checked{{end}}>
-                Create database if it doesn't exist
-            </label>
-        </div>
-    </div>
-
-    {{if eq .Config.PostgresMode "docker"}}
-    <div class="alert alert-info">
+    <div id="docker-info" class="alert alert-info" style="{{if eq .Config.PostgresMode "external"}}display:none{{else}}display:block{{end}}">
         <strong>Default Configuration</strong>
         <ul style="margin-top: 10px; margin-left: 20px;">
             <li>User: athena</li>
@@ -58,36 +38,110 @@
             <li>Port: 5432 (internal)</li>
         </ul>
     </div>
-    {{end}}
 
-    <button type="button" class="btn btn-secondary" onclick="testConnection()" style="margin-top: 10px;">
-        Test Connection
-    </button>
-    <div id="testResult" style="margin-top: 10px;"></div>
+    <div class="external-fields {{if eq .Config.PostgresMode "external"}}show{{end}}">
+        <div class="form-group">
+            <label for="postgres_host">Host *</label>
+            <input type="text" id="postgres_host" name="POSTGRES_HOST"
+                   value="{{.Config.PostgresHost}}"
+                   placeholder="localhost">
+            <div class="help-text">PostgreSQL server hostname or IP address</div>
+        </div>
+
+        <div class="form-group">
+            <label for="postgres_port">Port</label>
+            <input type="number" id="postgres_port" name="POSTGRES_PORT"
+                   value="{{if .Config.PostgresPort}}{{.Config.PostgresPort}}{{else}}5432{{end}}"
+                   placeholder="5432">
+            <div class="help-text">Default: 5432</div>
+        </div>
+
+        <div class="form-group">
+            <label for="postgres_user">Username *</label>
+            <input type="text" id="postgres_user" name="POSTGRES_USER"
+                   value="{{.Config.PostgresUser}}"
+                   placeholder="athena">
+        </div>
+
+        <div class="form-group">
+            <label for="postgres_password">Password *</label>
+            <input type="password" id="postgres_password" name="POSTGRES_PASSWORD"
+                   value="{{.Config.PostgresPassword}}"
+                   placeholder="password">
+        </div>
+
+        <div class="form-group">
+            <label for="postgres_db">Database Name</label>
+            <input type="text" id="postgres_db" name="POSTGRES_DB"
+                   value="{{if .Config.PostgresDB}}{{.Config.PostgresDB}}{{else}}athena{{end}}"
+                   placeholder="athena">
+            <div class="help-text">Default: athena</div>
+        </div>
+
+        <div class="form-group">
+            <label for="postgres_sslmode">SSL Mode</label>
+            <select id="postgres_sslmode" name="POSTGRES_SSLMODE">
+                <option value="disable" {{if eq .Config.PostgresSSLMode "disable"}}selected{{else}}{{if not .Config.PostgresSSLMode}}selected{{end}}{{end}}>Disable (not recommended for production)</option>
+                <option value="require" {{if eq .Config.PostgresSSLMode "require"}}selected{{end}}>Require SSL</option>
+                <option value="verify-full" {{if eq .Config.PostgresSSLMode "verify-full"}}selected{{end}}>Verify Full (most secure)</option>
+                <option value="prefer" {{if eq .Config.PostgresSSLMode "prefer"}}selected{{end}}>Prefer SSL</option>
+            </select>
+            <div class="help-text">Connection encryption setting</div>
+        </div>
+
+        <div class="form-group">
+            <label>
+                <input type="checkbox" name="create_db" value="true" {{if .Config.CreateDB}}checked{{end}}>
+                Create database if it doesn't exist
+            </label>
+        </div>
+
+        <button type="button" class="btn btn-secondary" onclick="testConnection()" style="margin-top: 10px;">
+            Test Connection
+        </button>
+        <div id="testResult" style="margin-top: 10px;"></div>
+    </div>
 </form>
 
 <script>
-function testConnection() {
-    const mode = document.querySelector('input[name="POSTGRES_MODE"]').value;
-    if (mode === 'docker') {
-        document.getElementById('testResult').innerHTML =
-            '<div class="alert alert-info">Docker mode will be validated during startup</div>';
-        return;
-    }
+// Update Docker info box visibility when mode changes
+document.querySelectorAll('.toggle-group[data-service="postgres"] .toggle-btn').forEach(btn => {
+    btn.addEventListener('click', function() {
+        const mode = this.dataset.mode;
+        const dockerInfo = document.getElementById('docker-info');
+        if (dockerInfo) {
+            dockerInfo.style.display = mode === 'docker' ? 'block' : 'none';
+        }
+    });
+});
 
-    const url = document.getElementById('database_url').value;
+function testConnection() {
+    const host = document.getElementById('postgres_host').value;
+    const port = document.getElementById('postgres_port').value;
+    const user = document.getElementById('postgres_user').value;
+    const password = document.getElementById('postgres_password').value;
+    const database = document.getElementById('postgres_db').value;
+    const sslmode = document.getElementById('postgres_sslmode').value;
+
     document.getElementById('testResult').innerHTML = '<p>Testing connection...</p>';
 
     fetch('/setup/test-database', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({url: url})
+        body: JSON.stringify({
+            host: host,
+            port: parseInt(port) || 5432,
+            user: user,
+            password: password,
+            database: database,
+            sslmode: sslmode
+        })
     })
     .then(r => r.json())
     .then(data => {
         if (data.success) {
             document.getElementById('testResult').innerHTML =
-                '<div class="alert alert-success">✓ Connection successful</div>';
+                '<div class="alert alert-success">✓ ' + data.message + '</div>';
         } else {
             document.getElementById('testResult').innerHTML =
                 '<div class="alert alert-error">✗ ' + data.error + '</div>';

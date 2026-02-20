@@ -303,18 +303,33 @@
                 group.querySelectorAll('.toggle-btn').forEach(b => b.classList.remove('active'));
                 this.classList.add('active');
 
-                // Show/hide external fields
-                const externalFields = group.nextElementSibling;
-                if (mode === 'external' && externalFields) {
-                    externalFields.classList.add('show');
-                } else if (externalFields) {
-                    externalFields.classList.remove('show');
-                }
-
-                // Update hidden form field
-                const modeInput = document.querySelector(`input[name="${serviceName}_MODE"]`);
+                // Update hidden form field - FIX 1: uppercase serviceName
+                const modeInput = document.querySelector(`input[name="${serviceName.toUpperCase()}_MODE"]`);
                 if (modeInput) {
                     modeInput.value = mode;
+
+                    // Show/hide external fields - FIX 2: robust sibling traversal
+                    // Guard this inside modeInput check to avoid double-toggle with email page
+                    const formGroup = group.closest('.form-group');
+                    let externalFields = null;
+
+                    // Walk siblings from form-group to find .external-fields
+                    let sibling = formGroup.nextElementSibling;
+                    while (sibling) {
+                        if (sibling.classList && sibling.classList.contains('external-fields')) {
+                            externalFields = sibling;
+                            break;
+                        }
+                        sibling = sibling.nextElementSibling;
+                    }
+
+                    if (externalFields) {
+                        if (mode === 'external') {
+                            externalFields.classList.add('show');
+                        } else {
+                            externalFields.classList.remove('show');
+                        }
+                    }
                 }
             });
         });

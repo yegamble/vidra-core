@@ -18,7 +18,12 @@
         <div style="margin-top: 10px; color: #6b7280; font-size: 14px;">
             <p><strong>Mode:</strong> {{.Config.PostgresMode}}</p>
             {{if eq .Config.PostgresMode "external"}}
-            <p><strong>URL:</strong> {{.Config.DatabaseURL}}</p>
+            <p><strong>Host:</strong> {{.Config.PostgresHost}}</p>
+            <p><strong>Port:</strong> {{.Config.PostgresPort}}</p>
+            <p><strong>User:</strong> {{.Config.PostgresUser}}</p>
+            <p><strong>Password:</strong> ••••••••••••••••</p>
+            <p><strong>Database:</strong> {{.Config.PostgresDB}}</p>
+            <p><strong>SSL Mode:</strong> {{.Config.PostgresSSLMode}}</p>
             {{end}}
         </div>
     </div>

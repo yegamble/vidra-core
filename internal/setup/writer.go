@@ -30,7 +30,15 @@ func WriteEnvFile(path string, config *WizardConfig) error {
 	lines = append(lines, "# Database Configuration")
 	lines = append(lines, fmt.Sprintf("POSTGRES_MODE=%s", config.PostgresMode))
 	if config.PostgresMode == "external" && config.DatabaseURL != "" {
+		// Write DATABASE_URL (required by internal/config/config.go)
 		lines = append(lines, fmt.Sprintf("DATABASE_URL=%s", config.DatabaseURL))
+		// Also write individual fields for reference
+		lines = append(lines, fmt.Sprintf("POSTGRES_HOST=%s", config.PostgresHost))
+		lines = append(lines, fmt.Sprintf("POSTGRES_PORT=%d", config.PostgresPort))
+		lines = append(lines, fmt.Sprintf("POSTGRES_USER=%s", config.PostgresUser))
+		lines = append(lines, fmt.Sprintf("POSTGRES_PASSWORD=%s", config.PostgresPassword))
+		lines = append(lines, fmt.Sprintf("POSTGRES_DB=%s", config.PostgresDB))
+		lines = append(lines, fmt.Sprintf("POSTGRES_SSLMODE=%s", config.PostgresSSLMode))
 	}
 	lines = append(lines, "")
 
@@ -140,6 +148,20 @@ func WriteEnvFile(path string, config *WizardConfig) error {
 	lines = append(lines, "# Security Configuration")
 	lines = append(lines, fmt.Sprintf("JWT_SECRET=%s", config.JWTSecret))
 	lines = append(lines, "")
+
+	if config.AdminUsername != "" || config.AdminEmail != "" {
+		lines = append(lines, "# Admin Account (created on first startup)")
+		if config.AdminUsername != "" {
+			lines = append(lines, fmt.Sprintf("ADMIN_USERNAME=%s", config.AdminUsername))
+		}
+		if config.AdminEmail != "" {
+			lines = append(lines, fmt.Sprintf("ADMIN_EMAIL=%s", config.AdminEmail))
+		}
+		if config.AdminPassword != "" {
+			lines = append(lines, fmt.Sprintf("ADMIN_PASSWORD=%s", config.AdminPassword))
+		}
+		lines = append(lines, "")
+	}
 
 	lines = append(lines, "# Setup Status")
 	lines = append(lines, "SETUP_COMPLETED=true")
