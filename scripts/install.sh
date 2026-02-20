@@ -5,9 +5,21 @@ set -e
 # Usage: curl -sSL https://raw.githubusercontent.com/yegamble/athena/main/scripts/install.sh | bash
 # Or safer: curl -O https://... && less install.sh && bash install.sh
 # From an existing clone: INSTALL_DIR=. bash scripts/install.sh
+# Options:
+#   --no-cache    Force rebuild of Docker images without cache
+#   NO_CACHE=true Environment variable alternative to --no-cache
 
 VERSION="${VERSION:-latest}"
+NO_CACHE="${NO_CACHE:-false}"
 MODE="${1:-docker}"
+
+# Parse flags
+for arg in "$@"; do
+    case "$arg" in
+        --no-cache) NO_CACHE="true" ;;
+        docker|native) MODE="$arg" ;;
+    esac
+done
 
 # If run from inside the repo (e.g., scripts/install.sh), use the repo root
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -155,7 +167,17 @@ EOF
 start_services() {
     log_info "Starting Athena services with Docker Compose..."
 
-    if ! docker compose up -d; then
+    COMPOSE_FLAGS="-d"
+    if [ "$NO_CACHE" = "true" ]; then
+        log_info "Building with --no-cache (this may take longer)..."
+        COMPOSE_FLAGS="-d --build"
+        docker compose build --no-cache || {
+            log_error "Docker build failed"
+            exit 1
+        }
+    fi
+
+    if ! docker compose up $COMPOSE_FLAGS; then
         log_error "Failed to start services"
         exit 1
     fi
