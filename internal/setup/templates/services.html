@@ -21,21 +21,21 @@
     <h3 style="margin-top: 30px; margin-bottom: 15px;">Redis (Required)</h3>
     <div class="form-group">
         <div class="toggle-group" data-service="redis">
-            <div class="toggle-btn {{if eq .RedisMode "docker"}}active{{end}}" data-mode="docker">
+            <div class="toggle-btn {{if eq .Config.RedisMode "docker"}}active{{end}}" data-mode="docker">
                 <strong>Local Docker</strong>
             </div>
-            <div class="toggle-btn {{if eq .RedisMode "external"}}active{{end}}" data-mode="external">
+            <div class="toggle-btn {{if eq .Config.RedisMode "external"}}active{{end}}" data-mode="external">
                 <strong>External Service</strong>
             </div>
         </div>
-        <input type="hidden" name="REDIS_MODE" value="{{or .RedisMode "docker"}}">
+        <input type="hidden" name="REDIS_MODE" value="{{or .Config.RedisMode "docker"}}">
     </div>
 
-    <div class="external-fields {{if eq .RedisMode "external"}}show{{end}}">
+    <div class="external-fields {{if eq .Config.RedisMode "external"}}show{{end}}">
         <div class="form-group">
             <label for="redis_url">Redis URL</label>
             <input type="text" id="redis_url" name="REDIS_URL"
-                   value="{{.RedisURL}}"
+                   value="{{.Config.RedisURL}}"
                    placeholder="redis://localhost:6379/0">
         </div>
     </div>
@@ -44,29 +44,29 @@
     <h3 style="margin-top: 30px; margin-bottom: 15px;">IPFS (Optional - P2P Storage)</h3>
     <div class="form-group">
         <label>
-            <input type="checkbox" name="ENABLE_IPFS" value="true" {{if .EnableIPFS}}checked{{end}}>
+            <input type="checkbox" name="ENABLE_IPFS" value="true" {{if .Config.EnableIPFS}}checked{{end}}>
             Enable IPFS for distributed storage
         </label>
     </div>
 
-    <div id="ipfs-config" style="{{if not .EnableIPFS}}display:none{{end}}">
+    <div id="ipfs-config" style="{{if not .Config.EnableIPFS}}display:none{{end}}">
         <div class="form-group">
             <div class="toggle-group" data-service="ipfs">
-                <div class="toggle-btn {{if eq .IPFSMode "docker"}}active{{end}}" data-mode="docker">
+                <div class="toggle-btn {{if eq .Config.IPFSMode "docker"}}active{{end}}" data-mode="docker">
                     <strong>Local Docker</strong>
                 </div>
-                <div class="toggle-btn {{if eq .IPFSMode "external"}}active{{end}}" data-mode="external">
+                <div class="toggle-btn {{if eq .Config.IPFSMode "external"}}active{{end}}" data-mode="external">
                     <strong>External Service</strong>
                 </div>
             </div>
-            <input type="hidden" name="IPFS_MODE" value="{{or .IPFSMode "docker"}}">
+            <input type="hidden" name="IPFS_MODE" value="{{or .Config.IPFSMode "docker"}}">
         </div>
 
-        <div class="external-fields {{if eq .IPFSMode "external"}}show{{end}}">
+        <div class="external-fields {{if eq .Config.IPFSMode "external"}}show{{end}}">
             <div class="form-group">
                 <label for="ipfs_api">IPFS API URL</label>
                 <input type="text" id="ipfs_api" name="IPFS_API_URL"
-                       value="{{.IPFSAPIUrl}}"
+                       value="{{.Config.IPFSAPIUrl}}"
                        placeholder="http://localhost:5001">
             </div>
         </div>
@@ -117,7 +117,7 @@
     <h3 style="margin-top: 30px; margin-bottom: 15px;">ClamAV (Optional - Virus Scanning)</h3>
     <div class="form-group">
         <label>
-            <input type="checkbox" name="ENABLE_CLAMAV" value="true" {{if .EnableClamAV}}checked{{end}}>
+            <input type="checkbox" name="ENABLE_CLAMAV" value="true" {{if .Config.EnableClamAV}}checked{{end}}>
             Enable virus scanning for uploaded files
         </label>
         <div class="help-text">Requires 2GB+ RAM</div>
@@ -127,7 +127,7 @@
     <h3 style="margin-top: 30px; margin-bottom: 15px;">Whisper (Optional - Captions)</h3>
     <div class="form-group">
         <label>
-            <input type="checkbox" name="ENABLE_WHISPER" value="true" {{if .EnableWhisper}}checked{{end}}>
+            <input type="checkbox" name="ENABLE_WHISPER" value="true" {{if .Config.EnableWhisper}}checked{{end}}>
             Enable automatic caption generation
         </label>
         <div class="help-text">Requires 4GB+ RAM. GPU recommended for faster processing.</div>

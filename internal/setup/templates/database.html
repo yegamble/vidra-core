@@ -17,23 +17,23 @@
     <div class="form-group">
         <label>Database Mode</label>
         <div class="toggle-group" data-service="postgres">
-            <div class="toggle-btn {{if eq .PostgresMode "docker"}}active{{end}}" data-mode="docker">
+            <div class="toggle-btn {{if eq .Config.PostgresMode "docker"}}active{{end}}" data-mode="docker">
                 <strong>Local Docker</strong>
                 <p style="font-size: 12px; margin-top: 5px; opacity: 0.8;">Managed PostgreSQL container</p>
             </div>
-            <div class="toggle-btn {{if eq .PostgresMode "external"}}active{{end}}" data-mode="external">
+            <div class="toggle-btn {{if eq .Config.PostgresMode "external"}}active{{end}}" data-mode="external">
                 <strong>External Service</strong>
                 <p style="font-size: 12px; margin-top: 5px; opacity: 0.8;">Connect to existing PostgreSQL</p>
             </div>
         </div>
-        <input type="hidden" name="POSTGRES_MODE" value="{{or .PostgresMode "docker"}}">
+        <input type="hidden" name="POSTGRES_MODE" value="{{or .Config.PostgresMode "docker"}}">
     </div>
 
-    <div class="external-fields {{if eq .PostgresMode "external"}}show{{end}}">
+    <div class="external-fields {{if eq .Config.PostgresMode "external"}}show{{end}}">
         <div class="form-group">
             <label for="database_url">Database URL</label>
             <input type="text" id="database_url" name="DATABASE_URL"
-                   value="{{.DatabaseURL}}"
+                   value="{{.Config.DatabaseURL}}"
                    placeholder="postgres://user:password@localhost:5432/athena?sslmode=disable">
             <div class="help-text">
                 Format: postgres://username:password@host:port/database
@@ -42,13 +42,13 @@
 
         <div class="form-group">
             <label>
-                <input type="checkbox" name="create_db" value="true" {{if .CreateDB}}checked{{end}}>
+                <input type="checkbox" name="create_db" value="true" {{if .Config.CreateDB}}checked{{end}}>
                 Create database if it doesn't exist
             </label>
         </div>
     </div>
 
-    {{if eq .PostgresMode "docker"}}
+    {{if eq .Config.PostgresMode "docker"}}
     <div class="alert alert-info">
         <strong>Default Configuration</strong>
         <ul style="margin-top: 10px; margin-left: 20px;">

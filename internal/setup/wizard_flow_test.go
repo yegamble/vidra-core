@@ -77,6 +77,7 @@ func TestWizardFullFlowDocker(t *testing.T) {
 	form = url.Values{}
 	form.Set("ADMIN_USERNAME", "admin")
 	form.Set("ADMIN_EMAIL", "admin@example.com")
+	form.Set("ADMIN_PASSWORD", "securepassword123")
 	req = httptest.NewRequest(http.MethodPost, "/setup/security", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w = httptest.NewRecorder()
@@ -85,11 +86,6 @@ func TestWizardFullFlowDocker(t *testing.T) {
 	assert.Equal(t, "/setup/review", w.Header().Get("Location"))
 
 	wizard.config.DatabaseURL = "postgres://test:test@localhost/test" // Mock DB URL
-	form = url.Values{}
-	form.Set("ADMIN_PASSWORD", "securepassword123")
-	req = httptest.NewRequest(http.MethodPost, "/setup/review", strings.NewReader(form.Encode()))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	w = httptest.NewRecorder()
 
 	origEnvPath := envPath
 	err := WriteEnvFile(origEnvPath, wizard.config)
@@ -187,6 +183,7 @@ func TestWizardFullFlowExternal(t *testing.T) {
 	form = url.Values{}
 	form.Set("ADMIN_USERNAME", "admin")
 	form.Set("ADMIN_EMAIL", "admin@example.com")
+	form.Set("ADMIN_PASSWORD", "securepassword123")
 	req = httptest.NewRequest(http.MethodPost, "/setup/security", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w = httptest.NewRecorder()
@@ -511,4 +508,183 @@ func TestWizardIOTADisabled(t *testing.T) {
 	wizard.mu.Lock()
 	assert.False(t, wizard.config.EnableIOTA)
 	wizard.mu.Unlock()
+}
+
+func TestWizardPageRendersOwnContent(t *testing.T) {
+	wizard := NewWizard()
+
+	tests := []struct {
+		name        string
+		url         string
+		handler     http.HandlerFunc
+		expectedH2  string
+		notExpected string
+	}{
+		{
+			name:        "welcome page",
+			url:         "/setup/welcome",
+			handler:     wizard.HandleWelcome,
+			expectedH2:  "Welcome to Athena Setup",
+			notExpected: "Database Configuration",
+		},
+		{
+			name:        "database page",
+			url:         "/setup/database",
+			handler:     wizard.HandleDatabase,
+			expectedH2:  "Database Configuration",
+			notExpected: "Welcome to Athena Setup",
+		},
+		{
+			name:        "services page",
+			url:         "/setup/services",
+			handler:     wizard.HandleServices,
+			expectedH2:  "Services Configuration",
+			notExpected: "Welcome to Athena Setup",
+		},
+		{
+			name:        "email page",
+			url:         "/setup/email",
+			handler:     wizard.HandleEmail,
+			expectedH2:  "Email Configuration",
+			notExpected: "Welcome to Athena Setup",
+		},
+		{
+			name:        "networking page",
+			url:         "/setup/networking",
+			handler:     wizard.HandleNetworking,
+			expectedH2:  "Networking Configuration",
+			notExpected: "Welcome to Athena Setup",
+		},
+		{
+			name:        "storage page",
+			url:         "/setup/storage",
+			handler:     wizard.HandleStorage,
+			expectedH2:  "Storage Configuration",
+			notExpected: "Welcome to Athena Setup",
+		},
+		{
+			name:        "security page",
+			url:         "/setup/security",
+			handler:     wizard.HandleSecurity,
+			expectedH2:  "Security Configuration",
+			notExpected: "Welcome to Athena Setup",
+		},
+		{
+			name:        "review page",
+			url:         "/setup/review",
+			handler:     wizard.HandleReview,
+			expectedH2:  "Review Configuration",
+			notExpected: "Welcome to Athena Setup",
+		},
+		{
+			name:        "complete page",
+			url:         "/setup/complete",
+			handler:     wizard.HandleComplete,
+			expectedH2:  "Setup Complete",
+			notExpected: "Welcome to Athena Setup",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, tt.url, nil)
+			w := httptest.NewRecorder()
+
+			tt.handler(w, req)
+
+			assert.Equal(t, http.StatusOK, w.Code)
+			assert.Contains(t, w.Body.String(), tt.expectedH2, "page should render its own heading")
+			assert.NotContains(t, w.Body.String(), tt.notExpected, "page should not render other page content")
+		})
+	}
+}
+
+func TestWizardFullNavigationFlow(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
+	wizard := NewWizard()
+
+	// Database POST → redirects to services
+	form := url.Values{}
+	form.Set("POSTGRES_MODE", "docker")
+	req := httptest.NewRequest(http.MethodPost, "/setup/database", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	wizard.HandleDatabase(w, req)
+	require.Equal(t, http.StatusSeeOther, w.Code)
+	assert.Equal(t, "/setup/services", w.Header().Get("Location"))
+
+	// Services POST → redirects to email
+	form = url.Values{}
+	form.Set("REDIS_MODE", "docker")
+	form.Set("ENABLE_IPFS", "false")
+	form.Set("ENABLE_CLAMAV", "false")
+	form.Set("ENABLE_WHISPER", "false")
+	req = httptest.NewRequest(http.MethodPost, "/setup/services", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w = httptest.NewRecorder()
+	wizard.HandleServices(w, req)
+	require.Equal(t, http.StatusSeeOther, w.Code)
+	assert.Equal(t, "/setup/email", w.Header().Get("Location"))
+
+	// Email POST → redirects to networking
+	form = url.Values{}
+	form.Set("SMTP_MODE", "docker")
+	form.Set("SMTP_FROM_ADDRESS", "noreply@localhost")
+	form.Set("SMTP_FROM_NAME", "Athena")
+	req = httptest.NewRequest(http.MethodPost, "/setup/email", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w = httptest.NewRecorder()
+	wizard.HandleEmail(w, req)
+	require.Equal(t, http.StatusSeeOther, w.Code)
+	assert.Equal(t, "/setup/networking", w.Header().Get("Location"))
+
+	// Networking POST → redirects to storage
+	form = url.Values{}
+	form.Set("NGINX_DOMAIN", "localhost")
+	form.Set("NGINX_PORT", "80")
+	form.Set("NGINX_PROTOCOL", "http")
+	req = httptest.NewRequest(http.MethodPost, "/setup/networking", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w = httptest.NewRecorder()
+	wizard.HandleNetworking(w, req)
+	require.Equal(t, http.StatusSeeOther, w.Code)
+	assert.Equal(t, "/setup/storage", w.Header().Get("Location"))
+
+	// Storage POST → redirects to security
+	form = url.Values{}
+	form.Set("STORAGE_PATH", "./storage")
+	form.Set("BACKUP_ENABLED", "false")
+	req = httptest.NewRequest(http.MethodPost, "/setup/storage", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w = httptest.NewRecorder()
+	wizard.HandleStorage(w, req)
+	require.Equal(t, http.StatusSeeOther, w.Code)
+	assert.Equal(t, "/setup/security", w.Header().Get("Location"))
+
+	// Security POST → redirects to review
+	form = url.Values{}
+	form.Set("ADMIN_USERNAME", "admin")
+	form.Set("ADMIN_EMAIL", "admin@example.com")
+	form.Set("ADMIN_PASSWORD", "securepassword123")
+	req = httptest.NewRequest(http.MethodPost, "/setup/security", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w = httptest.NewRecorder()
+	wizard.HandleSecurity(w, req)
+	require.Equal(t, http.StatusSeeOther, w.Code)
+	assert.Equal(t, "/setup/review", w.Header().Get("Location"))
+
+	// Verify admin password was saved to config
+	wizard.mu.Lock()
+	assert.Equal(t, "securepassword123", wizard.config.AdminPassword)
+	wizard.mu.Unlock()
+
+	// Review GET → renders review page
+	req = httptest.NewRequest(http.MethodGet, "/setup/review", nil)
+	w = httptest.NewRecorder()
+	wizard.HandleReview(w, req)
+	require.Equal(t, http.StatusOK, w.Code)
+	assert.Contains(t, w.Body.String(), "Review Configuration")
 }

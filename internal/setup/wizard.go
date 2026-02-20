@@ -22,7 +22,7 @@ import (
 var templatesFS embed.FS
 
 type Wizard struct {
-	templates      *template.Template
+	templates      map[string]*template.Template
 	config         *WizardConfig
 	mu             sync.Mutex
 	testEmailLimit map[string][]int64
@@ -67,6 +67,7 @@ type WizardConfig struct {
 	JWTSecret     string
 	AdminUsername string
 	AdminEmail    string
+	AdminPassword string
 
 	NginxEnabled  bool
 	NginxDomain   string
@@ -98,7 +99,14 @@ type TemplateData struct {
 }
 
 func NewWizard() *Wizard {
-	tmpl := template.Must(template.ParseFS(templatesFS, "templates/*.html"))
+	// Parse each page template individually with the layout to avoid
+	// {{define "content"}} collision (last alphabetical file would win)
+	templates := make(map[string]*template.Template)
+	pages := []string{"welcome", "database", "services", "email", "networking", "storage", "security", "review", "complete"}
+	for _, page := range pages {
+		t := template.Must(template.ParseFS(templatesFS, "templates/layout.html", "templates/"+page+".html"))
+		templates[page] = t
+	}
 
 	sysInfo := sysinfo.DetectResources()
 
@@ -108,7 +116,7 @@ func NewWizard() *Wizard {
 	}
 
 	return &Wizard{
-		templates:      tmpl,
+		templates:      templates,
 		testEmailLimit: make(map[string][]int64),
 		config: &WizardConfig{
 			PostgresMode:    "docker",
@@ -411,8 +419,17 @@ func (w *Wizard) HandleComplete(rw http.ResponseWriter, r *http.Request) {
 func (w *Wizard) renderTemplate(rw http.ResponseWriter, layout, content string, data *TemplateData) {
 	rw.Header().Set("Content-Type", "text/html; charset=utf-8")
 
+	// Extract page name from content (e.g., "database.html" → "database")
+	pageName := strings.TrimSuffix(content, ".html")
+	tmpl, ok := w.templates[pageName]
+	if !ok {
+		log.Printf("Template not found for page: %s", pageName)
+		http.Error(rw, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
 	var buf bytes.Buffer
-	if err := w.templates.ExecuteTemplate(&buf, layout, data); err != nil {
+	if err := tmpl.ExecuteTemplate(&buf, layout, data); err != nil {
 		log.Printf("Template rendering error: %v", err)
 		http.Error(rw, "Internal server error", http.StatusInternalServerError)
 		return

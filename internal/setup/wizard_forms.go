@@ -218,6 +218,13 @@ func (w *Wizard) processSecurityForm(rw http.ResponseWriter, r *http.Request) {
 	w.config.AdminUsername = r.FormValue("ADMIN_USERNAME")
 	w.config.AdminEmail = r.FormValue("ADMIN_EMAIL")
 
+	adminPassword := r.FormValue("ADMIN_PASSWORD")
+	if adminPassword != "" && len(adminPassword) < 8 {
+		http.Error(rw, "Admin password must be at least 8 characters", http.StatusBadRequest)
+		return
+	}
+	w.config.AdminPassword = adminPassword
+
 	http.Redirect(rw, r, "/setup/review", http.StatusSeeOther)
 }
 
@@ -230,7 +237,8 @@ func (w *Wizard) processReviewForm(rw http.ResponseWriter, r *http.Request) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
-	adminPassword := r.FormValue("ADMIN_PASSWORD")
+	// Admin password is saved to config by processSecurityForm
+	adminPassword := w.config.AdminPassword
 	if adminPassword == "" {
 		http.Error(rw, "Admin password is required", http.StatusBadRequest)
 		return
