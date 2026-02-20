@@ -11,7 +11,7 @@ set -e
 
 VERSION="${VERSION:-latest}"
 NO_CACHE="${NO_CACHE:-false}"
-MODE="${1:-docker}"
+MODE="docker"
 
 # Parse flags
 for arg in "$@"; do
