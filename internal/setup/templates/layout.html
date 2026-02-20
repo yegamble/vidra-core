@@ -334,12 +334,78 @@
             });
         });
 
-        // Form validation
+        // AJAX form submission with inline error handling
         const form = document.getElementById('wizardForm');
         if (form) {
-            form.addEventListener('submit', function(e) {
-                // Add validation logic here
+            form.addEventListener('submit', async function(e) {
+                e.preventDefault();
+
+                // Remove only AJAX-created error alerts (preserve template-rendered ones)
+                const existingAlert = document.querySelector('.alert-error[data-ajax-error]');
+                if (existingAlert) {
+                    existingAlert.remove();
+                }
+
+                // Find submit button: layout Continue button is outside the form
+                const submitBtn = document.querySelector('button[type="submit"][form="wizardForm"]') || form.querySelector('button[type="submit"]');
+                const originalBtnText = submitBtn ? submitBtn.textContent : '';
+                if (submitBtn) {
+                    submitBtn.disabled = true;
+                    submitBtn.textContent = 'Processing...';
+                }
+
+                try {
+                    // Submit form via fetch
+                    const formData = new FormData(form);
+                    const response = await fetch(form.action || window.location.pathname, {
+                        method: 'POST',
+                        body: formData,
+                    });
+
+                    // Success: redirect (303 or ok response)
+                    if (response.redirected) {
+                        window.location.href = response.url;
+                        return;
+                    }
+
+                    // Fallback for browsers without response.redirected support
+                    if (response.ok) {
+                        window.location.href = response.url;
+                        return;
+                    }
+
+                    // Error: 4xx/5xx status codes
+                    if (!response.ok) {
+                        const errorText = await response.text();
+                        showError(errorText || `Server error: ${response.status} ${response.statusText}`);
+                    }
+                } catch (error) {
+                    showError(`Network error: ${error.message}`);
+                } finally {
+                    // Re-enable submit button
+                    if (submitBtn) {
+                        submitBtn.disabled = false;
+                        submitBtn.textContent = originalBtnText;
+                    }
+                }
             });
+        }
+
+        // Show inline error alert banner
+        function showError(message) {
+            const content = document.querySelector('.content');
+            if (!content) return;
+
+            const alert = document.createElement('div');
+            alert.className = 'alert alert-error';
+            alert.dataset.ajaxError = 'true';
+            alert.textContent = message;
+
+            // Insert at the top of content
+            content.insertBefore(alert, content.firstChild);
+
+            // Scroll to top to make error visible
+            content.scrollIntoView({ behavior: 'smooth', block: 'start' });
         }
     </script>
 </body>

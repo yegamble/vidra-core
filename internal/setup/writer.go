@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -162,6 +163,49 @@ func WriteEnvFile(path string, config *WizardConfig) error {
 		}
 		lines = append(lines, "")
 	}
+
+	// Docker Compose Profiles Configuration
+	// Build list of profiles to activate based on enabled Docker services
+	profiles := make(map[string]bool)
+
+	if config.EnableIPFS && config.IPFSMode == "docker" {
+		profiles["ipfs"] = true
+	}
+
+	if config.EnableIOTA && config.IOTAMode == "docker" {
+		profiles["iota"] = true
+	}
+
+	if config.EnableClamAV {
+		profiles["media"] = true // ClamAV uses "media" profile
+	}
+
+	if config.EnableWhisper {
+		profiles["media"] = true // Whisper uses "media" profile (deduplicated by map)
+	}
+
+	if config.EnableEmail && config.SMTPMode == "docker" {
+		profiles["mail"] = true // Mailpit uses "mail" profile
+	}
+
+	if config.NginxTLSMode == "letsencrypt" {
+		profiles["letsencrypt"] = true
+	}
+
+	// Convert map to sorted comma-separated list for reproducibility
+	var profileList []string
+	for profile := range profiles {
+		profileList = append(profileList, profile)
+	}
+
+	lines = append(lines, "# Docker Compose Profiles (managed by setup wizard)")
+	if len(profileList) > 0 {
+		sort.Strings(profileList)
+		lines = append(lines, fmt.Sprintf("COMPOSE_PROFILES=%s", strings.Join(profileList, ",")))
+	} else {
+		lines = append(lines, "COMPOSE_PROFILES=")
+	}
+	lines = append(lines, "")
 
 	lines = append(lines, "# Setup Status")
 	lines = append(lines, "SETUP_COMPLETED=true")

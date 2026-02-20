@@ -105,6 +105,7 @@ document.getElementById('wizardForm').addEventListener('submit', function(e) {
 
     if (password !== confirm) {
         e.preventDefault();
+        e.stopImmediatePropagation();
         document.getElementById('password-match-error').style.display = 'block';
         return false;
     }

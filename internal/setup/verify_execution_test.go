@@ -158,4 +158,46 @@ func TestProgramExecution(t *testing.T) {
 			}
 		}
 	})
+
+	t.Run("database page shows test connection button only in external mode fields", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/setup/database", nil)
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
+
+		if w.Code != 200 {
+			t.Fatalf("Database GET returned %d", w.Code)
+		}
+		body := w.Body.String()
+
+		// Verify test connection button exists
+		if !strings.Contains(body, "testConnection()") {
+			t.Error("Database page missing test connection function")
+		}
+
+		// Verify test connection button is in external-fields section
+		if !strings.Contains(body, `external-fields`) {
+			t.Error("Database page missing external-fields section")
+		}
+	})
+
+	t.Run("database page shows managed automatically message in Docker mode", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/setup/database", nil)
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
+
+		if w.Code != 200 {
+			t.Fatalf("Database GET returned %d", w.Code)
+		}
+		body := w.Body.String()
+
+		// Verify Docker info box has "Managed Automatically" message
+		if !strings.Contains(body, "Managed Automatically") {
+			t.Error("Database page missing 'Managed Automatically' message for Docker mode")
+		}
+
+		// Verify it shows the auto-configuration details
+		if !strings.Contains(body, "Docker will set up PostgreSQL") {
+			t.Error("Database page missing Docker auto-setup explanation")
+		}
+	})
 }
