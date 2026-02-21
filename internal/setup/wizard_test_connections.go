@@ -14,8 +14,6 @@ import (
 	"strconv"
 	"time"
 
-	"athena/internal/security"
-
 	_ "github.com/lib/pq" // PostgreSQL driver
 )
 
@@ -100,9 +98,8 @@ func (w *Wizard) HandleTestDatabase(rw http.ResponseWriter, r *http.Request) {
 	}
 
 	// SSRF protection - validate host doesn't point to private IPs
-	validator := security.NewURLValidator()
 	testURL := fmt.Sprintf("http://%s:%d", req.Host, req.Port)
-	if err := validator.ValidateURL(testURL); err != nil {
+	if err := w.URLValidator.ValidateURL(testURL); err != nil {
 		respondTestConnectionError(rw, fmt.Sprintf("Invalid host: %s", err.Error()))
 		return
 	}
@@ -175,9 +172,8 @@ func (w *Wizard) HandleTestRedis(rw http.ResponseWriter, r *http.Request) {
 	}
 
 	// SSRF protection - validate host doesn't point to private IPs
-	validator := security.NewURLValidator()
 	testURL := fmt.Sprintf("http://%s:%d", req.Host, req.Port)
-	if err := validator.ValidateURL(testURL); err != nil {
+	if err := w.URLValidator.ValidateURL(testURL); err != nil {
 		respondTestConnectionError(rw, fmt.Sprintf("Invalid host: %s", err.Error()))
 		return
 	}
@@ -256,8 +252,7 @@ func (w *Wizard) HandleTestIPFS(rw http.ResponseWriter, r *http.Request) {
 	}
 
 	// SSRF protection
-	validator := security.NewURLValidator()
-	if err := validator.ValidateURL(req.URL); err != nil {
+	if err := w.URLValidator.ValidateURL(req.URL); err != nil {
 		respondTestConnectionError(rw, fmt.Sprintf("Invalid URL: %s", err.Error()))
 		return
 	}
@@ -266,7 +261,7 @@ func (w *Wizard) HandleTestIPFS(rw http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	client := validator.NewSafeHTTPClient(5 * time.Second)
+	client := w.URLValidator.NewSafeHTTPClient(5 * time.Second)
 	testURL := req.URL + "/api/v0/version"
 
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", testURL, nil)
@@ -323,8 +318,7 @@ func (w *Wizard) HandleTestIOTA(rw http.ResponseWriter, r *http.Request) {
 	}
 
 	// SSRF protection
-	validator := security.NewURLValidator()
-	if err := validator.ValidateURL(req.URL); err != nil {
+	if err := w.URLValidator.ValidateURL(req.URL); err != nil {
 		respondTestConnectionError(rw, fmt.Sprintf("Invalid URL: %s", err.Error()))
 		return
 	}
@@ -333,7 +327,7 @@ func (w *Wizard) HandleTestIOTA(rw http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	client := validator.NewSafeHTTPClient(5 * time.Second)
+	client := w.URLValidator.NewSafeHTTPClient(5 * time.Second)
 
 	// Use iota_getChainIdentifier as a lightweight health check for IOTA Rebased
 	jsonRPCReq := map[string]interface{}{

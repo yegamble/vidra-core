@@ -1123,13 +1123,9 @@ func TestQuickInstallDockerModeWritesEnv(t *testing.T) {
 	wizard := NewWizard()
 
 	tmpDir := t.TempDir()
-	originalWd, err := os.Getwd()
-	require.NoError(t, err)
-	err = os.Chdir(tmpDir)
-	require.NoError(t, err)
-	defer func() {
-		_ = os.Chdir(originalWd)
-	}()
+	wizard.OutputDir = tmpDir
+	// Create nginx conf dir required by GenerateNginxConfig
+	require.NoError(t, os.MkdirAll(filepath.Join(tmpDir, "nginx", "conf"), 0755))
 
 	formValues := url.Values{
 		"ADMIN_USERNAME":         {"admin"},

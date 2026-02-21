@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"athena/internal/email"
+	"athena/internal/security"
 	"athena/internal/sysinfo"
 )
 
@@ -26,6 +27,16 @@ type Wizard struct {
 	config         *WizardConfig
 	mu             sync.Mutex
 	testEmailLimit map[string][]int64
+
+	// URLValidator is used by test connection handlers for SSRF protection.
+	// Defaults to security.NewURLValidator() (blocks private IPs).
+	// Override with security.NewURLValidatorAllowPrivate() in integration tests.
+	URLValidator *security.URLValidator
+
+	// OutputDir is the base directory for generated files (.env, docker-compose.override.yml, nginx/conf).
+	// Defaults to "" (current working directory).
+	// Override with t.TempDir() in tests to avoid writing to the real project directory.
+	OutputDir string
 }
 
 type WizardConfig struct {
@@ -124,6 +135,8 @@ func NewWizard() *Wizard {
 	return &Wizard{
 		templates:      templates,
 		testEmailLimit: make(map[string][]int64),
+		URLValidator:   security.NewURLValidator(),
+		OutputDir:      "",
 		config: &WizardConfig{
 			PostgresMode:    "docker",
 			PostgresPort:    5432,

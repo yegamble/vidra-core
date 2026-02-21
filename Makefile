@@ -2,6 +2,7 @@ SHELL := /bin/bash
 
 .PHONY: help deps lint test test-unit test-integration test-integration-ci build docker docker-up docker-down clean dev install-tools test-ci postman-newman postman-e2e run logs run-with-encoding act-test
 .PHONY: migrate-dev migrate-test migrate-custom migrate-dev-docker migrate-test-docker migrate-up db-ensure-dev-user
+.PHONY: test-mock-services-up test-mock-services-down test-external-integration
 .PHONY: validate-all validate-quick
 .PHONY: coverage-check coverage-report coverage-per-package
 .PHONY: update-readme-metrics check-readme-metrics
@@ -248,6 +249,28 @@ test-integration-local-race: ## Run integration tests with local Docker services
 	CGO_ENABLED=1 $(GO_ENV) go test -v -race -tags=integration ./tests/integration
 	COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) --profile test down -v
 
+# ── External service integration tests (mock Docker services) ──────────────────
+
+test-mock-services-up: ## Start mock external services for integration testing (MinIO, ATProto PDS, ActivityPub, IOTA, Mailpit, Postgres, Redis, IPFS)
+	@echo "Starting mock external services (test-integration profile)..."
+	$(DOCKER_COMPOSE) --profile test-integration up -d --build
+	@echo "Waiting for services to be ready..."
+	@bash -lc 'for i in $$(seq 1 60); do curl -sf http://localhost:19100/minio/health/live >/dev/null 2>&1 && break; sleep 2; done; echo "MinIO ready (or timed out)"'
+	@bash -lc 'for i in $$(seq 1 60); do curl -sf http://localhost:19200/health >/dev/null 2>&1 && break; sleep 2; done; echo "ATProto PDS mock ready (or timed out)"'
+	@bash -lc 'for i in $$(seq 1 60); do curl -sf http://localhost:19300/health >/dev/null 2>&1 && break; sleep 2; done; echo "ActivityPub mock ready (or timed out)"'
+	@bash -lc 'for i in $$(seq 1 60); do curl -sf http://localhost:19500/health >/dev/null 2>&1 && break; sleep 2; done; echo "IOTA RPC mock ready (or timed out)"'
+	@bash -lc 'for i in $$(seq 1 60); do pg_isready -h 127.0.0.1 -p 15432 -d athena_integration -U integration_user >/dev/null 2>&1 && break; sleep 2; done; echo "Postgres-integration ready (or timed out)"'
+	@bash -lc 'for i in $$(seq 1 60); do redis-cli -u redis://127.0.0.1:16379 ping >/dev/null 2>&1 && break; sleep 2; done; echo "Redis-integration ready (or timed out)"'
+	@echo "All mock services started."
+
+test-mock-services-down: ## Stop mock external services
+	@echo "Stopping mock external services..."
+	$(DOCKER_COMPOSE) --profile test-integration down -v
+	@echo "Mock services stopped."
+
+test-external-integration: ## Run external service integration tests against Docker mock services (starts and stops services automatically)
+	@echo "Running external service integration tests..."
+	@scripts/test-integration.sh
 
 # Helper: ensure dev DB role/db exists inside docker postgres
 db-ensure-dev-user:

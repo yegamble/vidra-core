@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -325,7 +326,7 @@ func (w *Wizard) processReviewForm(rw http.ResponseWriter, r *http.Request) {
 	}
 
 	if w.config.NginxProtocol == "http" || w.config.NginxProtocol == "https" {
-		if err := GenerateNginxConfig(w.config, "nginx/conf"); err != nil {
+		if err := GenerateNginxConfig(w.config, filepath.Join(w.OutputDir, "nginx/conf")); err != nil {
 			http.Error(rw, "Failed to generate nginx config: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -343,13 +344,13 @@ func (w *Wizard) processReviewForm(rw http.ResponseWriter, r *http.Request) {
 	}
 
 	// Write docker-compose.override.yml before .env to ensure Docker services are configured
-	if err := WriteComposeOverride("docker-compose.override.yml", w.config); err != nil {
+	if err := WriteComposeOverride(filepath.Join(w.OutputDir, "docker-compose.override.yml"), w.config); err != nil {
 		http.Error(rw, "Failed to write docker-compose override: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	// Write .env file last to prevent half-configured state
-	if err := WriteEnvFile(".env", w.config); err != nil {
+	if err := WriteEnvFile(filepath.Join(w.OutputDir, ".env"), w.config); err != nil {
 		http.Error(rw, "Failed to write configuration: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -421,7 +422,7 @@ func (w *Wizard) processQuickInstallForm(rw http.ResponseWriter, r *http.Request
 
 	// Generate nginx config
 	if w.config.NginxProtocol == "http" || w.config.NginxProtocol == "https" {
-		if err := GenerateNginxConfig(w.config, "nginx/conf"); err != nil {
+		if err := GenerateNginxConfig(w.config, filepath.Join(w.OutputDir, "nginx/conf")); err != nil {
 			http.Error(rw, "Failed to generate nginx config: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -439,13 +440,13 @@ func (w *Wizard) processQuickInstallForm(rw http.ResponseWriter, r *http.Request
 	}
 
 	// Write docker-compose.override.yml before .env to ensure Docker services are configured
-	if err := WriteComposeOverride("docker-compose.override.yml", w.config); err != nil {
+	if err := WriteComposeOverride(filepath.Join(w.OutputDir, "docker-compose.override.yml"), w.config); err != nil {
 		http.Error(rw, "Failed to write docker-compose override: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	// Write .env file last to prevent half-configured state
-	if err := WriteEnvFile(".env", w.config); err != nil {
+	if err := WriteEnvFile(filepath.Join(w.OutputDir, ".env"), w.config); err != nil {
 		http.Error(rw, "Failed to write configuration: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
