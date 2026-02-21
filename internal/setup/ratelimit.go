@@ -9,10 +9,10 @@ import (
 )
 
 const (
-	rateLimitWindow   = 5 * time.Minute
-	rateLimitMax      = 3
-	rateLimitMapCap   = 1000
-	redisKeyPrefix    = "athena:wizard:ratelimit:"
+	rateLimitWindow = 5 * time.Minute
+	rateLimitMax    = 3
+	rateLimitMapCap = 1000
+	redisKeyPrefix  = "athena:wizard:ratelimit:"
 )
 
 // RateLimiter checks whether a client IP has exceeded the rate limit

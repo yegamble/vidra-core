@@ -135,10 +135,10 @@ func NewWizard() *Wizard {
 	}
 
 	return &Wizard{
-		templates: templates,
-		RateLimit: NewMemoryRateLimiter(),
-		URLValidator:   security.NewURLValidator(),
-		OutputDir:      "",
+		templates:    templates,
+		RateLimit:    NewMemoryRateLimiter(),
+		URLValidator: security.NewURLValidator(),
+		OutputDir:    "",
 		config: &WizardConfig{
 			PostgresMode:    "docker",
 			PostgresPort:    5432,
