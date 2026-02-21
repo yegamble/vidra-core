@@ -248,6 +248,125 @@ func newRouter() http.Handler {
 		})
 	})
 
+	// Get record — returns a record by repo/collection/rkey
+	mux.HandleFunc("/xrpc/com.atproto.repo.getRecord", func(w http.ResponseWriter, r *http.Request) {
+		repo := r.URL.Query().Get("repo")
+		collection := r.URL.Query().Get("collection")
+		rkey := r.URL.Query().Get("rkey")
+		if repo == "" || collection == "" || rkey == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing repo, collection, or rkey"})
+			return
+		}
+		targetURI := fmt.Sprintf("at://%s/%s/%s", repo, collection, rkey)
+		s.mu.Lock()
+		var found *recordEntry
+		for i := range s.records {
+			if s.records[i].URI == targetURI {
+				found = &s.records[i]
+				break
+			}
+		}
+		s.mu.Unlock()
+		if found == nil {
+			writeJSON(w, http.StatusOK, map[string]interface{}{
+				"uri":   targetURI,
+				"cid":   "bafyreid" + randomToken()[:12],
+				"value": map[string]interface{}{},
+			})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"uri":   found.URI,
+			"cid":   found.CID,
+			"value": found.Record,
+		})
+	})
+
+	// Resolve handle — returns DID for a given handle
+	mux.HandleFunc("/xrpc/com.atproto.identity.resolveHandle", func(w http.ResponseWriter, r *http.Request) {
+		handle := r.URL.Query().Get("handle")
+		if handle == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing handle"})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"did": "did:plc:test123",
+		})
+	})
+
+	// Get post thread — returns thread view for a given URI
+	mux.HandleFunc("/xrpc/app.bsky.feed.getPostThread", func(w http.ResponseWriter, r *http.Request) {
+		uri := r.URL.Query().Get("uri")
+		if uri == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing uri"})
+			return
+		}
+		s.mu.Lock()
+		replies := []interface{}{}
+		for _, rec := range s.records {
+			if rec.Record != nil {
+				if reply, ok := rec.Record["reply"].(map[string]interface{}); ok {
+					if parent, ok := reply["parent"].(map[string]interface{}); ok {
+						if parentURI, _ := parent["uri"].(string); parentURI == uri {
+							replies = append(replies, map[string]interface{}{
+								"$type": "app.bsky.feed.defs#threadViewPost",
+								"post": map[string]interface{}{
+									"uri":    rec.URI,
+									"cid":    rec.CID,
+									"record": rec.Record,
+								},
+							})
+						}
+					}
+				}
+			}
+		}
+		s.mu.Unlock()
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"thread": map[string]interface{}{
+				"$type": "app.bsky.feed.defs#threadViewPost",
+				"post": map[string]interface{}{
+					"uri": uri,
+					"cid": "bafyreid" + randomToken()[:12],
+				},
+				"replies": replies,
+			},
+		})
+	})
+
+	// Delete record — requires valid Bearer access token
+	mux.HandleFunc("/xrpc/com.atproto.repo.deleteRecord", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		token := extractBearer(r)
+		_, ok := s.validateAccess(token)
+		if !ok {
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "authentication required"})
+			return
+		}
+		var req struct {
+			Repo       string `json:"repo"`
+			Collection string `json:"collection"`
+			Rkey       string `json:"rkey"`
+		}
+		if err := json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&req); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request"})
+			return
+		}
+		targetURI := fmt.Sprintf("at://%s/%s/%s", req.Repo, req.Collection, req.Rkey)
+		s.mu.Lock()
+		for i := range s.records {
+			if s.records[i].URI == targetURI {
+				s.records = append(s.records[:i], s.records[i+1:]...)
+				break
+			}
+		}
+		s.mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+	})
+
 	// Debug endpoint: list all created records
 	mux.HandleFunc("/test/records", func(w http.ResponseWriter, r *http.Request) {
 		s.mu.Lock()

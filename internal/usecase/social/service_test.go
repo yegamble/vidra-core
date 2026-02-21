@@ -151,6 +151,9 @@ func (m *mockAtprotoPublisher) PublishVideo(ctx context.Context, v *domain.Video
 func (m *mockAtprotoPublisher) StartBackgroundRefresh(ctx context.Context, interval time.Duration) {
 	m.Called(ctx, interval)
 }
+func (m *mockAtprotoPublisher) AutoSyncEnabled() bool {
+	return false
+}
 
 // --- Helper ---
 

@@ -258,6 +258,137 @@ func TestRefreshSession_InvalidToken(t *testing.T) {
 	}
 }
 
+func TestResolveHandle(t *testing.T) {
+	ts := newTestServer()
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/xrpc/com.atproto.identity.resolveHandle?handle=alice.bsky.social")
+	if err != nil {
+		t.Fatalf("GET resolveHandle failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("expected 200, got %d", resp.StatusCode)
+	}
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	if _, ok := result["did"]; !ok {
+		t.Error("response missing did field")
+	}
+}
+
+func TestResolveHandle_MissingHandle(t *testing.T) {
+	ts := newTestServer()
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/xrpc/com.atproto.identity.resolveHandle")
+	if err != nil {
+		t.Fatalf("GET resolveHandle failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("expected 400 for missing handle, got %d", resp.StatusCode)
+	}
+}
+
+func TestGetRecord(t *testing.T) {
+	ts := newTestServer()
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/xrpc/com.atproto.repo.getRecord?repo=did:plc:test123&collection=app.bsky.feed.post&rkey=abc123")
+	if err != nil {
+		t.Fatalf("GET getRecord failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("expected 200, got %d", resp.StatusCode)
+	}
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	if _, ok := result["uri"]; !ok {
+		t.Error("response missing uri field")
+	}
+	if _, ok := result["cid"]; !ok {
+		t.Error("response missing cid field")
+	}
+}
+
+func TestGetPostThread(t *testing.T) {
+	ts := newTestServer()
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/xrpc/app.bsky.feed.getPostThread?uri=at://did:plc:test123/app.bsky.feed.post/abc123&depth=6")
+	if err != nil {
+		t.Fatalf("GET getPostThread failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("expected 200, got %d", resp.StatusCode)
+	}
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	if _, ok := result["thread"]; !ok {
+		t.Error("response missing thread field")
+	}
+}
+
+func TestDeleteRecord_RequiresAuth(t *testing.T) {
+	ts := newTestServer()
+	defer ts.Close()
+
+	body := `{"repo":"did:plc:test123","collection":"app.bsky.feed.post","rkey":"abc123"}`
+	req, _ := http.NewRequest("POST", ts.URL+"/xrpc/com.atproto.repo.deleteRecord", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	// No Authorization header
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("POST deleteRecord failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("expected 401 without auth, got %d", resp.StatusCode)
+	}
+}
+
+func TestDeleteRecord_WithAuth(t *testing.T) {
+	ts := newTestServer()
+	defer ts.Close()
+
+	// Create session
+	sessionBody := `{"identifier":"test@example.com","password":"test-password"}`
+	sessionResp, _ := http.Post(ts.URL+"/xrpc/com.atproto.server.createSession", "application/json", strings.NewReader(sessionBody))
+	var session map[string]interface{}
+	json.NewDecoder(sessionResp.Body).Decode(&session)
+	sessionResp.Body.Close()
+	accessToken := session["accessJwt"].(string)
+
+	// Delete record
+	body := `{"repo":"did:plc:test123","collection":"app.bsky.feed.post","rkey":"abc123"}`
+	req, _ := http.NewRequest("POST", ts.URL+"/xrpc/com.atproto.repo.deleteRecord", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("POST deleteRecord failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Errorf("expected 200, got %d: %s", resp.StatusCode, body)
+	}
+}
+
 func TestDebugRecords(t *testing.T) {
 	ts := newTestServer()
 	defer ts.Close()

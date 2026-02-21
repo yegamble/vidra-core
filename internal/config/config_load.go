@@ -171,6 +171,11 @@ func loadCommonFields(cfg *Config, setupMode bool) {
 	cfg.ATProtoRefreshIntervalSeconds = GetIntEnv("ATPROTO_REFRESH_INTERVAL_SECONDS", int(ATProtoDefaultRefreshInterval.Seconds()))
 	cfg.ATProtoUseImageEmbed = GetBoolEnv("ATPROTO_USE_IMAGE_EMBED", false)
 	cfg.ATProtoImageAltField = GetEnvOrDefault("ATPROTO_IMAGE_ALT_FIELD", "description")
+	cfg.ATProtoAutoSyncEnabled = GetBoolEnv("ATPROTO_SYNC_ENABLED", false)
+	cfg.ATProtoAutoSyncPublicOnly = GetBoolEnv("ATPROTO_SYNC_PUBLIC_ONLY", true)
+	cfg.ATProtoMaxRetries = GetIntEnv("ATPROTO_MAX_RETRIES", 3)
+	retryMs := GetIntEnv("ATPROTO_RETRY_BASE_DELAY_MS", 500)
+	cfg.ATProtoRetryBaseDelay = time.Duration(retryMs) * time.Millisecond
 
 	cfg.NginxEnabled = GetBoolEnv("NGINX_ENABLED", false)
 	cfg.NginxDomain = GetEnvOrDefault("NGINX_DOMAIN", "localhost")
