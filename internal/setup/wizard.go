@@ -12,7 +12,6 @@ import (
 	"net/http"
 	"strings"
 	"sync"
-	"time"
 
 	"athena/internal/email"
 	"athena/internal/security"
@@ -23,10 +22,13 @@ import (
 var templatesFS embed.FS
 
 type Wizard struct {
-	templates      map[string]*template.Template
-	config         *WizardConfig
-	mu             sync.Mutex
-	testEmailLimit map[string][]int64
+	templates map[string]*template.Template
+	config    *WizardConfig
+	mu        sync.Mutex
+
+	// RateLimit controls test connection request throttling.
+	// Defaults to in-memory. Set to NewRedisRateLimiter() for persistence across restarts.
+	RateLimit RateLimiter
 
 	// URLValidator is used by test connection handlers for SSRF protection.
 	// Defaults to security.NewURLValidator() (blocks private IPs).
@@ -133,10 +135,10 @@ func NewWizard() *Wizard {
 	}
 
 	return &Wizard{
-		templates:      templates,
-		testEmailLimit: make(map[string][]int64),
-		URLValidator:   security.NewURLValidator(),
-		OutputDir:      "",
+		templates:    templates,
+		RateLimit:    NewMemoryRateLimiter(),
+		URLValidator: security.NewURLValidator(),
+		OutputDir:    "",
 		config: &WizardConfig{
 			PostgresMode:    "docker",
 			PostgresPort:    5432,
@@ -373,21 +375,7 @@ func (w *Wizard) HandleTestEmail(rw http.ResponseWriter, r *http.Request) {
 		clientIP = r.RemoteAddr
 	}
 
-	if len(w.testEmailLimit) > 1000 {
-		w.testEmailLimit = make(map[string][]int64)
-	}
-
-	now := time.Now().Unix()
-	w.testEmailLimit[clientIP] = append(w.testEmailLimit[clientIP], now)
-	recent := []int64{}
-	for _, t := range w.testEmailLimit[clientIP] {
-		if now-t < 300 {
-			recent = append(recent, t)
-		}
-	}
-	w.testEmailLimit[clientIP] = recent
-
-	if len(recent) > 3 {
+	if !w.getRateLimiter().CheckRateLimit(clientIP) {
 		http.Error(rw, "Too many test emails. Please wait 5 minutes.", http.StatusTooManyRequests)
 		return
 	}

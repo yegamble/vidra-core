@@ -159,6 +159,22 @@ func (m *mockAtprotoPublisher) StartBackgroundRefresh(ctx context.Context, inter
 	// No-op for testing
 }
 
+func (m *mockAtprotoPublisher) PublishComment(ctx context.Context, comment *domain.Comment, video *domain.Video, parentPostURI string) (*AtprotoPostRef, error) {
+	return nil, nil
+}
+
+func (m *mockAtprotoPublisher) PublishVideoBatch(ctx context.Context, videos []*domain.Video) []AtprotoBatchResult {
+	return nil
+}
+
+func (m *mockAtprotoPublisher) ResolveHandle(ctx context.Context, handle string) (*AtprotoIdentity, error) {
+	return nil, nil
+}
+
+func (m *mockAtprotoPublisher) AutoSyncEnabled() bool {
+	return false
+}
+
 func TestFederationService_ProcessNext_Job(t *testing.T) {
 	repo := &mockFederationRepo{
 		jobs: []*domain.FederationJob{

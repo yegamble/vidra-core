@@ -49,6 +49,7 @@ type SocialRepository interface {
 type AtprotoPublisher interface {
 	PublishVideo(ctx context.Context, v *domain.Video) error
 	StartBackgroundRefresh(ctx context.Context, interval time.Duration)
+	AutoSyncEnabled() bool
 }
 
 // Service handles ATProto social interactions

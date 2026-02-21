@@ -83,8 +83,9 @@ Worktree: No
 
 ## Remaining Items (Deferred)
 
-The following items from the audit are deferred to future phases:
-
-- **P4 — IOTA Transaction Signing:** `BuildTransaction`, `SignTransaction`, `SubmitTransaction` (Phase 2 feature)
 - **P5 — Custom Platform Token:** Move module on IOTA Rebased (Phase 3 feature)
-- **P7 — Rate Limiter Redis Backing:** Low priority, wizard is single-use per deployment
+
+**Previously deferred, now completed in Phase 2 skeleton plan:**
+
+- ~~P4 — IOTA Transaction Signing~~ → Implemented via `unsafe_payIota` + Ed25519 Blake2b signing + `iota_executeTransactionBlock`
+- ~~P7 — Rate Limiter Redis Backing~~ → Refactored to `RateLimiter` interface with memory/Redis implementations

@@ -2,6 +2,8 @@ package payments
 
 import (
 	"context"
+	"crypto/ed25519"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -10,6 +12,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"golang.org/x/crypto/blake2b"
 
 	"athena/internal/domain"
 
@@ -318,37 +322,331 @@ func TestIOTAClient_GetNodeStatus_Error(t *testing.T) {
 	mockNodeClient.AssertExpectations(t)
 }
 
-func TestIOTAClient_BuildTransaction_NotImplemented(t *testing.T) {
-	client := NewIOTAClient("https://api.testnet.iota.org")
-
-	_, err := client.BuildTransaction("from", "to", 1000000)
-
-	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrNotImplemented)
+// MockFullNodeClient implements both IOTANodeClient and TransactionBuilder for testing.
+type MockFullNodeClient struct {
+	MockIOTANodeClient
 }
 
-func TestIOTAClient_SignTransaction_NotImplemented(t *testing.T) {
-	client := NewIOTAClient("https://api.testnet.iota.org")
-
-	_, err := client.SignTransaction("privkey", &UnsignedTransaction{})
-
-	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrNotImplemented)
+func (m *MockFullNodeClient) GetCoins(ctx context.Context, owner string) ([]CoinObject, error) {
+	args := m.Called(ctx, owner)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]CoinObject), args.Error(1)
 }
 
-func TestIOTAClient_SubmitTransaction_NotImplemented(t *testing.T) {
-	client := NewIOTAClient("https://api.testnet.iota.org")
+func (m *MockFullNodeClient) PayIota(ctx context.Context, signer string, inputCoins []string, recipients []string, amounts []string, gasBudget string) ([]byte, error) {
+	args := m.Called(ctx, signer, inputCoins, recipients, amounts, gasBudget)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]byte), args.Error(1)
+}
+
+func (m *MockFullNodeClient) ExecuteTransactionBlock(ctx context.Context, txBytes string, signatures []string) (string, error) {
+	args := m.Called(ctx, txBytes, signatures)
+	return args.String(0), args.Error(1)
+}
+
+func TestIOTAClient_BuildTransaction_Success(t *testing.T) {
+	mockClient := new(MockFullNodeClient)
+	client := NewIOTAClientWithMock(mockClient)
 	ctx := context.Background()
 
-	_, err := client.SubmitTransaction(ctx, &SignedTransaction{
-		FromAddress: "from",
-		ToAddress:   "to",
-		Amount:      1000000,
-		Signature:   []byte("sig"),
-	})
+	fromAddr := "0x" + repeatString("a", 64)
+	toAddr := "0x" + repeatString("b", 64)
+	amount := int64(1000000)
 
+	coins := []CoinObject{
+		{CoinObjectID: "0xcoin1", Version: "1", Digest: "abc", Balance: "5000000"},
+	}
+	fakeTxBytes := []byte("fake-bcs-tx-data")
+
+	mockClient.On("GetCoins", ctx, fromAddr).Return(coins, nil)
+	mockClient.On("PayIota", ctx, fromAddr, []string{"0xcoin1"}, []string{toAddr}, []string{"1000000"}, "10000000").Return(fakeTxBytes, nil)
+
+	tx, err := client.BuildTransaction(ctx, fromAddr, toAddr, amount)
+
+	require.NoError(t, err)
+	assert.Equal(t, fromAddr, tx.FromAddress)
+	assert.Equal(t, toAddr, tx.ToAddress)
+	assert.Equal(t, amount, tx.Amount)
+	assert.Equal(t, fakeTxBytes, tx.TxBytes)
+	mockClient.AssertExpectations(t)
+}
+
+func TestIOTAClient_BuildTransaction_InvalidAddresses(t *testing.T) {
+	mockClient := new(MockFullNodeClient)
+	client := NewIOTAClientWithMock(mockClient)
+	ctx := context.Background()
+
+	validAddr := "0x" + repeatString("a", 64)
+
+	// Invalid sender
+	_, err := client.BuildTransaction(ctx, "invalid", validAddr, 1000)
 	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrNotImplemented)
+	assert.ErrorIs(t, err, domain.ErrInvalidAddress)
+
+	// Invalid recipient
+	_, err = client.BuildTransaction(ctx, validAddr, "invalid", 1000)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, domain.ErrInvalidAddress)
+
+	// Zero amount
+	_, err = client.BuildTransaction(ctx, validAddr, validAddr, 0)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, domain.ErrBadRequest)
+}
+
+func TestIOTAClient_BuildTransaction_NoCoins(t *testing.T) {
+	mockClient := new(MockFullNodeClient)
+	client := NewIOTAClientWithMock(mockClient)
+	ctx := context.Background()
+
+	fromAddr := "0x" + repeatString("a", 64)
+	toAddr := "0x" + repeatString("b", 64)
+
+	mockClient.On("GetCoins", ctx, fromAddr).Return([]CoinObject{}, nil)
+
+	_, err := client.BuildTransaction(ctx, fromAddr, toAddr, 1000000)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, domain.ErrInsufficientBalance)
+}
+
+func TestIOTAClient_BuildTransaction_NoBuilderSupport(t *testing.T) {
+	// MockIOTANodeClient does NOT implement TransactionBuilder
+	mockClient := new(MockIOTANodeClient)
+	client := NewIOTAClientWithMock(mockClient)
+	ctx := context.Background()
+
+	fromAddr := "0x" + repeatString("a", 64)
+	toAddr := "0x" + repeatString("b", 64)
+
+	_, err := client.BuildTransaction(ctx, fromAddr, toAddr, 1000000)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "does not support transaction building")
+}
+
+func TestIOTAClient_SignTransaction_Success(t *testing.T) {
+	client := NewIOTAClient("https://api.testnet.iota.org")
+
+	// Generate a known keypair
+	seed := make([]byte, 32)
+	seed[0] = 0x42
+	privKeyHex := hex.EncodeToString(seed)
+
+	tx := &UnsignedTransaction{
+		FromAddress: "0x" + repeatString("a", 64),
+		ToAddress:   "0x" + repeatString("b", 64),
+		Amount:      1000000,
+		TxBytes:     []byte("fake-bcs-transaction-data"),
+	}
+
+	signed, err := client.SignTransaction(privKeyHex, tx)
+
+	require.NoError(t, err)
+	assert.Equal(t, tx.FromAddress, signed.FromAddress)
+	assert.Equal(t, tx.ToAddress, signed.ToAddress)
+	assert.Equal(t, tx.Amount, signed.Amount)
+	assert.Equal(t, tx.TxBytes, signed.TxBytes)
+
+	// Verify signature format: flag(1) + signature(64) + pubkey(32) = 97 bytes
+	assert.Len(t, signed.Signature, 97)
+	assert.Equal(t, byte(0x00), signed.Signature[0], "First byte should be Ed25519 flag")
+
+	// Verify the signature is valid
+	privKey := ed25519.NewKeyFromSeed(seed)
+	pubKey := privKey.Public().(ed25519.PublicKey)
+
+	// Extract pubkey from signature and verify it matches
+	extractedPubKey := signed.Signature[65:]
+	assert.Equal(t, []byte(pubKey), extractedPubKey)
+
+	// Verify Ed25519 signature
+	intentMsg := make([]byte, 3+len(tx.TxBytes))
+	copy(intentMsg, intentPrefix)
+	copy(intentMsg[3:], tx.TxBytes)
+	hasher, _ := blake2b.New256(nil)
+	hasher.Write(intentMsg)
+	digest := hasher.Sum(nil)
+	assert.True(t, ed25519.Verify(pubKey, digest, signed.Signature[1:65]))
+}
+
+func TestIOTAClient_SignTransaction_Deterministic(t *testing.T) {
+	client := NewIOTAClient("https://api.testnet.iota.org")
+
+	seed := make([]byte, 32)
+	seed[0] = 0xAB
+	privKeyHex := hex.EncodeToString(seed)
+
+	tx := &UnsignedTransaction{
+		TxBytes: []byte("deterministic-test-data"),
+	}
+
+	signed1, err := client.SignTransaction(privKeyHex, tx)
+	require.NoError(t, err)
+
+	signed2, err := client.SignTransaction(privKeyHex, tx)
+	require.NoError(t, err)
+
+	assert.Equal(t, signed1.Signature, signed2.Signature, "Same key + data should produce same signature")
+}
+
+func TestIOTAClient_SignTransaction_InvalidInputs(t *testing.T) {
+	client := NewIOTAClient("https://api.testnet.iota.org")
+
+	validKey := hex.EncodeToString(make([]byte, 32))
+
+	tests := []struct {
+		name    string
+		privKey string
+		tx      *UnsignedTransaction
+		errMsg  string
+	}{
+		{
+			name:    "nil transaction",
+			privKey: validKey,
+			tx:      nil,
+			errMsg:  "transaction is nil",
+		},
+		{
+			name:    "empty tx bytes",
+			privKey: validKey,
+			tx:      &UnsignedTransaction{TxBytes: []byte{}},
+			errMsg:  "transaction bytes are empty",
+		},
+		{
+			name:    "invalid hex key",
+			privKey: "not-hex",
+			tx:      &UnsignedTransaction{TxBytes: []byte("data")},
+			errMsg:  "decoding private key",
+		},
+		{
+			name:    "wrong key length",
+			privKey: hex.EncodeToString([]byte{0x01, 0x02}),
+			tx:      &UnsignedTransaction{TxBytes: []byte("data")},
+			errMsg:  "invalid private key length",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := client.SignTransaction(tt.privKey, tt.tx)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.errMsg)
+		})
+	}
+}
+
+func TestIOTAClient_SubmitTransaction_Success(t *testing.T) {
+	mockClient := new(MockFullNodeClient)
+	client := NewIOTAClientWithMock(mockClient)
+	ctx := context.Background()
+
+	txBytes := []byte("signed-tx-data")
+	sig := make([]byte, 97)
+	sig[0] = 0x00 // Ed25519 flag
+
+	tx := &SignedTransaction{
+		TxBytes:   txBytes,
+		Signature: sig,
+	}
+
+	txBytesB64 := base64.StdEncoding.EncodeToString(txBytes)
+	sigB64 := base64.StdEncoding.EncodeToString(sig)
+
+	mockClient.On("ExecuteTransactionBlock", ctx, txBytesB64, []string{sigB64}).Return("digest123", nil)
+
+	digest, err := client.SubmitTransaction(ctx, tx)
+
+	require.NoError(t, err)
+	assert.Equal(t, "digest123", digest)
+	mockClient.AssertExpectations(t)
+}
+
+func TestIOTAClient_SubmitTransaction_InvalidInputs(t *testing.T) {
+	mockClient := new(MockFullNodeClient)
+	client := NewIOTAClientWithMock(mockClient)
+	ctx := context.Background()
+
+	// Nil transaction
+	_, err := client.SubmitTransaction(ctx, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "transaction is nil")
+
+	// Empty tx bytes
+	_, err = client.SubmitTransaction(ctx, &SignedTransaction{Signature: []byte("sig")})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "transaction bytes are empty")
+
+	// Empty signature
+	_, err = client.SubmitTransaction(ctx, &SignedTransaction{TxBytes: []byte("tx")})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "signature is empty")
+}
+
+func TestIOTAClient_SubmitTransaction_FallbackToNodeClient(t *testing.T) {
+	// MockIOTANodeClient does NOT implement TransactionBuilder, so it falls back
+	mockClient := new(MockIOTANodeClient)
+	client := NewIOTAClientWithMock(mockClient)
+	ctx := context.Background()
+
+	tx := &SignedTransaction{
+		TxBytes:   []byte("tx-data"),
+		Signature: []byte("signature"),
+	}
+
+	mockClient.On("SubmitTransaction", ctx, tx).Return("fallback-digest", nil)
+
+	digest, err := client.SubmitTransaction(ctx, tx)
+
+	require.NoError(t, err)
+	assert.Equal(t, "fallback-digest", digest)
+	mockClient.AssertExpectations(t)
+}
+
+func TestIOTAClient_FullTransactionFlow_EndToEnd(t *testing.T) {
+	// Test the full Build → Sign → Submit flow with mock RPC
+	mockClient := new(MockFullNodeClient)
+	client := NewIOTAClientWithMock(mockClient)
+	ctx := context.Background()
+
+	fromAddr := "0x" + repeatString("a", 64)
+	toAddr := "0x" + repeatString("b", 64)
+	amount := int64(500000)
+
+	// Generate keypair
+	seed := make([]byte, 32)
+	seed[0] = 0xDE
+	privKeyHex := hex.EncodeToString(seed)
+
+	fakeTxBytes := []byte("bcs-serialized-ptb")
+
+	// Mock Build step
+	coins := []CoinObject{{CoinObjectID: "0xcoin1", Balance: "1000000"}}
+	mockClient.On("GetCoins", ctx, fromAddr).Return(coins, nil)
+	mockClient.On("PayIota", ctx, fromAddr, []string{"0xcoin1"}, []string{toAddr}, []string{"500000"}, "10000000").Return(fakeTxBytes, nil)
+
+	// Build
+	unsignedTx, err := client.BuildTransaction(ctx, fromAddr, toAddr, amount)
+	require.NoError(t, err)
+
+	// Sign
+	signedTx, err := client.SignTransaction(privKeyHex, unsignedTx)
+	require.NoError(t, err)
+	assert.Len(t, signedTx.Signature, 97)
+
+	// Mock Submit step
+	txBytesB64 := base64.StdEncoding.EncodeToString(signedTx.TxBytes)
+	sigB64 := base64.StdEncoding.EncodeToString(signedTx.Signature)
+	mockClient.On("ExecuteTransactionBlock", ctx, txBytesB64, []string{sigB64}).Return("tx-digest-abc", nil)
+
+	// Submit
+	digest, err := client.SubmitTransaction(ctx, signedTx)
+	require.NoError(t, err)
+	assert.Equal(t, "tx-digest-abc", digest)
+
+	mockClient.AssertExpectations(t)
 }
 
 func TestIOTAClient_GetTransactionStatus(t *testing.T) {
@@ -616,6 +914,172 @@ func TestIOTAClient_JSONRPC_RetryOnServerError(t *testing.T) {
 	require.NoError(t, err, "Should succeed after retries")
 	assert.Equal(t, int64(500000), balance)
 	assert.GreaterOrEqual(t, callCount, 3, "Should have retried at least 3 times")
+}
+
+func TestIOTAClient_JSONRPC_GetCoins_CallsServer(t *testing.T) {
+	called := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		var req map[string]interface{}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		assert.Equal(t, "iotax_getCoins", req["method"])
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"jsonrpc": "2.0",
+			"id":      1,
+			"result": map[string]interface{}{
+				"data": []map[string]interface{}{
+					{"coinObjectId": "0xcoin1", "version": "1", "digest": "abc", "balance": "5000000"},
+					{"coinObjectId": "0xcoin2", "version": "2", "digest": "def", "balance": "3000000"},
+				},
+				"nextCursor":  nil,
+				"hasNextPage": false,
+			},
+		})
+	}))
+	defer server.Close()
+
+	rpcClient := &jsonRPCClient{
+		nodeURL:    server.URL,
+		httpClient: &http.Client{Timeout: 5 * time.Second},
+		maxRetries: 0,
+	}
+
+	coins, err := rpcClient.GetCoins(context.Background(), "0x"+repeatString("a", 64))
+	require.NoError(t, err)
+	assert.True(t, called)
+	assert.Len(t, coins, 2)
+	assert.Equal(t, "0xcoin1", coins[0].CoinObjectID)
+	assert.Equal(t, "5000000", coins[0].Balance)
+}
+
+func TestIOTAClient_JSONRPC_PayIota_CallsServer(t *testing.T) {
+	called := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		var req map[string]interface{}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		assert.Equal(t, "unsafe_payIota", req["method"])
+
+		txBytes := base64.StdEncoding.EncodeToString([]byte("mock-bcs-data"))
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"jsonrpc": "2.0",
+			"id":      1,
+			"result": map[string]interface{}{
+				"txBytes": txBytes,
+			},
+		})
+	}))
+	defer server.Close()
+
+	rpcClient := &jsonRPCClient{
+		nodeURL:    server.URL,
+		httpClient: &http.Client{Timeout: 5 * time.Second},
+		maxRetries: 0,
+	}
+
+	txBytes, err := rpcClient.PayIota(context.Background(), "0xsigner", []string{"0xcoin1"}, []string{"0xrecipient"}, []string{"1000"}, "10000000")
+	require.NoError(t, err)
+	assert.True(t, called)
+	assert.Equal(t, []byte("mock-bcs-data"), txBytes)
+}
+
+func TestIOTAClient_JSONRPC_ExecuteTransactionBlock_CallsServer(t *testing.T) {
+	called := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		var req map[string]interface{}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		assert.Equal(t, "iota_executeTransactionBlock", req["method"])
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"jsonrpc": "2.0",
+			"id":      1,
+			"result": map[string]interface{}{
+				"digest": "tx-digest-xyz",
+			},
+		})
+	}))
+	defer server.Close()
+
+	rpcClient := &jsonRPCClient{
+		nodeURL:    server.URL,
+		httpClient: &http.Client{Timeout: 5 * time.Second},
+		maxRetries: 0,
+	}
+
+	digest, err := rpcClient.ExecuteTransactionBlock(context.Background(), "base64txbytes", []string{"base64sig"})
+	require.NoError(t, err)
+	assert.True(t, called)
+	assert.Equal(t, "tx-digest-xyz", digest)
+}
+
+func TestIOTAClient_JSONRPC_BuildSignSubmit_FullFlow(t *testing.T) {
+	// Full JSON-RPC flow: GetCoins → PayIota → sign locally → ExecuteTransactionBlock
+	callLog := []string{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req map[string]interface{}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		method := req["method"].(string)
+		callLog = append(callLog, method)
+
+		w.Header().Set("Content-Type", "application/json")
+
+		switch method {
+		case "iotax_getCoins":
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"jsonrpc": "2.0",
+				"id":      1,
+				"result": map[string]interface{}{
+					"data": []map[string]interface{}{
+						{"coinObjectId": "0xcoin1", "version": "1", "digest": "abc", "balance": "9000000"},
+					},
+					"hasNextPage": false,
+				},
+			})
+		case "unsafe_payIota":
+			txBytes := base64.StdEncoding.EncodeToString([]byte("bcs-ptb-data"))
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"jsonrpc": "2.0",
+				"id":      1,
+				"result":  map[string]interface{}{"txBytes": txBytes},
+			})
+		case "iota_executeTransactionBlock":
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"jsonrpc": "2.0",
+				"id":      1,
+				"result":  map[string]interface{}{"digest": "final-digest-123"},
+			})
+		}
+	}))
+	defer server.Close()
+
+	client := NewIOTAClient(server.URL)
+	ctx := context.Background()
+
+	fromAddr := "0x" + repeatString("a", 64)
+	toAddr := "0x" + repeatString("b", 64)
+
+	// Build
+	unsignedTx, err := client.BuildTransaction(ctx, fromAddr, toAddr, 1000000)
+	require.NoError(t, err)
+
+	// Sign
+	seed := make([]byte, 32)
+	seed[0] = 0xFF
+	signedTx, err := client.SignTransaction(hex.EncodeToString(seed), unsignedTx)
+	require.NoError(t, err)
+
+	// Submit
+	digest, err := client.SubmitTransaction(ctx, signedTx)
+	require.NoError(t, err)
+	assert.Equal(t, "final-digest-123", digest)
+
+	// Verify RPC call order
+	assert.Equal(t, []string{"iotax_getCoins", "unsafe_payIota", "iota_executeTransactionBlock"}, callLog)
 }
 
 func TestIOTAClient_JSONRPC_NoRetryOnRPCError(t *testing.T) {

@@ -19,7 +19,30 @@ import (
 // Implementations should be best-effort and never block critical paths.
 type AtprotoPublisher interface {
 	PublishVideo(ctx context.Context, v *domain.Video) error
+	PublishComment(ctx context.Context, comment *domain.Comment, video *domain.Video, parentPostURI string) (*AtprotoPostRef, error)
+	PublishVideoBatch(ctx context.Context, videos []*domain.Video) []AtprotoBatchResult
+	ResolveHandle(ctx context.Context, handle string) (*AtprotoIdentity, error)
 	StartBackgroundRefresh(ctx context.Context, interval time.Duration)
+	AutoSyncEnabled() bool
+}
+
+// AtprotoPostRef holds the URI and CID returned by createRecord.
+type AtprotoPostRef struct {
+	URI string `json:"uri"`
+	CID string `json:"cid"`
+}
+
+// AtprotoBatchResult holds the result of a batch syndication for a single video.
+type AtprotoBatchResult struct {
+	VideoID string
+	Ref     *AtprotoPostRef
+	Err     error
+}
+
+// AtprotoIdentity holds resolved identity information for a handle.
+type AtprotoIdentity struct {
+	DID    string `json:"did"`
+	Handle string `json:"handle"`
 }
 
 // AtprotoSessionStore persists/retrieves ATProto session tokens (encrypted outside of this layer)
@@ -51,6 +74,7 @@ type atprotoService struct {
 	cfg     *config.Config
 	modRepo InstanceConfigReader
 	client  *http.Client
+	retry   retryConfig
 
 	// session cache
 	sessMu     chan struct{}
@@ -66,11 +90,19 @@ type atprotoService struct {
 
 func NewAtprotoService(modRepo InstanceConfigReader, cfg *config.Config, store AtprotoSessionStore, encKey []byte) AtprotoPublisher {
 	httpClient := &http.Client{Timeout: config.ATProtoHTTPTimeout}
+	rc := defaultRetryConfig()
+	if cfg.ATProtoMaxRetries > 0 {
+		rc.maxRetries = cfg.ATProtoMaxRetries
+	}
+	if cfg.ATProtoRetryBaseDelay > 0 {
+		rc.baseDelay = cfg.ATProtoRetryBaseDelay
+	}
 	return &atprotoService{
 		enabled: cfg.EnableATProto,
 		cfg:     cfg,
 		modRepo: modRepo,
 		client:  httpClient,
+		retry:   rc,
 		sessMu:  make(chan struct{}, 1),
 		store:   store,
 		encKey:  encKey,
@@ -325,9 +357,16 @@ func swapExt(path, newExt string) string {
 }
 
 func (s *atprotoService) createPost(ctx context.Context, accessJwt string, repoDID string, text string, embed map[string]any) error {
+	_, err := s.createRecord(ctx, accessJwt, repoDID, text, embed, nil)
+	return err
+}
+
+// createRecord creates a post record and returns the AtprotoPostRef. It wraps
+// HTTP errors in *retryableError so doWithRetry can apply exponential backoff.
+func (s *atprotoService) createRecord(ctx context.Context, accessJwt string, repoDID string, text string, embed map[string]any, reply map[string]any) (*AtprotoPostRef, error) {
 	pds := strings.TrimRight(s.resolvePDSURL(ctx), "/")
 	if pds == "" {
-		return fmt.Errorf("atproto: missing PDS URL")
+		return nil, fmt.Errorf("atproto: missing PDS URL")
 	}
 	record := map[string]any{
 		"$type":     "app.bsky.feed.post",
@@ -337,6 +376,9 @@ func (s *atprotoService) createPost(ctx context.Context, accessJwt string, repoD
 	if embed != nil {
 		record["embed"] = embed
 	}
+	if reply != nil {
+		record["reply"] = reply
+	}
 	body := map[string]any{
 		"repo":       repoDID,
 		"collection": "app.bsky.feed.post",
@@ -344,21 +386,33 @@ func (s *atprotoService) createPost(ctx context.Context, accessJwt string, repoD
 		"validate":   true,
 	}
 	b, _ := json.Marshal(body)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, pds+"/xrpc/com.atproto.repo.createRecord", bytes.NewReader(b))
+
+	var ref AtprotoPostRef
+	err := doWithRetry(ctx, s.retry, "createRecord", func() error {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, pds+"/xrpc/com.atproto.repo.createRecord", bytes.NewReader(b))
+		if err != nil {
+			return err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+accessJwt)
+		resp, err := s.client.Do(req)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = resp.Body.Close() }()
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			return &retryableError{StatusCode: resp.StatusCode, Err: fmt.Errorf("createRecord status %d", resp.StatusCode)}
+		}
+		// Decode response; tolerate empty body (some servers return bare 200).
+		if err := json.NewDecoder(resp.Body).Decode(&ref); err != nil && err != io.EOF {
+			return fmt.Errorf("createRecord: decode response: %w", err)
+		}
+		return nil
+	})
 	if err != nil {
-		return err
+		return nil, err
 	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+accessJwt)
-	resp, err := s.client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("createRecord status %d", resp.StatusCode)
-	}
-	return nil
+	return &ref, nil
 }
 
 // getAuthorFeed fetches recent posts from an actor's feed.
@@ -393,17 +447,17 @@ func (s *atprotoService) getAuthorFeed(ctx context.Context, actor string, limit 
 	return out, nil
 }
 
-// uploadBlob sends a file to com.atproto.repo.uploadBlob and returns the blob object for record embeds
+// uploadBlob sends a file to com.atproto.repo.uploadBlob and returns the blob object for record embeds.
+// The file is read into memory so that retries can re-send the body.
 func (s *atprotoService) uploadBlob(ctx context.Context, accessJwt string, filePath string) (map[string]any, error) {
 	pds := strings.TrimRight(s.resolvePDSURL(ctx), "/")
 	if pds == "" {
 		return nil, fmt.Errorf("atproto: missing PDS URL")
 	}
-	f, err := os.Open(filePath)
+	data, err := os.ReadFile(filePath)
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = f.Close() }()
 	// crude MIME detect by extension
 	ct := "application/octet-stream"
 	lower := strings.ToLower(filePath)
@@ -415,31 +469,40 @@ func (s *atprotoService) uploadBlob(ctx context.Context, accessJwt string, fileP
 	case strings.HasSuffix(lower, ".webp"):
 		ct = "image/webp"
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, pds+"/xrpc/com.atproto.repo.uploadBlob", f)
+
+	var blob map[string]any
+	err = doWithRetry(ctx, s.retry, "uploadBlob", func() error {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, pds+"/xrpc/com.atproto.repo.uploadBlob", bytes.NewReader(data))
+		if err != nil {
+			return err
+		}
+		req.Header.Set("Content-Type", ct)
+		req.Header.Set("Authorization", "Bearer "+accessJwt)
+		resp, err := s.client.Do(req)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = resp.Body.Close() }()
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			b, _ := io.ReadAll(resp.Body)
+			return &retryableError{StatusCode: resp.StatusCode, Err: fmt.Errorf("uploadBlob status %d: %s", resp.StatusCode, string(b))}
+		}
+		var out struct {
+			Blob map[string]any `json:"blob"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+			return fmt.Errorf("uploadBlob: decode response: %w", err)
+		}
+		if out.Blob == nil {
+			return fmt.Errorf("uploadBlob: missing blob in response")
+		}
+		blob = out.Blob
+		return nil
+	})
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Content-Type", ct)
-	req.Header.Set("Authorization", "Bearer "+accessJwt)
-	resp, err := s.client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		b, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("uploadBlob status %d: %s", resp.StatusCode, string(b))
-	}
-	var out struct {
-		Blob map[string]any `json:"blob"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return nil, err
-	}
-	if out.Blob == nil {
-		return nil, fmt.Errorf("uploadBlob: missing blob in response")
-	}
-	return out.Blob, nil
+	return blob, nil
 }
 
 // StartBackgroundRefresh periodically ensures a valid session token is available.

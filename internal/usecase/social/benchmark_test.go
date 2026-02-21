@@ -155,6 +155,9 @@ func (m *benchMockAtprotoPublisher) PublishVideo(ctx context.Context, v *domain.
 func (m *benchMockAtprotoPublisher) StartBackgroundRefresh(ctx context.Context, interval time.Duration) {
 	m.Called(ctx, interval)
 }
+func (m *benchMockAtprotoPublisher) AutoSyncEnabled() bool {
+	return false
+}
 
 type mockTransport struct{}
 

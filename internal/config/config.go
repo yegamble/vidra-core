@@ -162,6 +162,10 @@ type Config struct {
 	ATProtoRefreshIntervalSeconds int
 	ATProtoUseImageEmbed          bool
 	ATProtoImageAltField          string
+	ATProtoAutoSyncEnabled        bool
+	ATProtoAutoSyncPublicOnly     bool
+	ATProtoMaxRetries             int
+	ATProtoRetryBaseDelay         time.Duration
 
 	PublicBaseURL string
 

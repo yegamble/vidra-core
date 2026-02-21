@@ -4,21 +4,23 @@ This guide explains how to set up and configure ATProto (Authenticated Transfer 
 
 ## Status
 
-**Current Implementation**: 75% complete, BETA
+**Current Implementation**: 90% complete, BETA
 
 - ✅ PDS (Personal Data Server) client implementation
 - ✅ BlueSky account linking
-- ✅ Basic content syndication (video posts)
-- ⚠️ Limited support for comments/replies
-- ⚠️ Manual syndication only (no automatic cross-posting yet)
-- ❌ Federation discovery incomplete
+- ✅ Content syndication (video posts)
+- ✅ Comment syndication as threaded replies
+- ✅ Automatic video cross-posting (configurable)
+- ✅ Batch video syndication
+- ✅ Federation discovery (handle resolution)
+- ✅ Exponential backoff retry on transient errors
+- ⚠️ Bidirectional comment sync not yet complete (Bluesky -> Athena)
 
-**Production Readiness**: NOT RECOMMENDED for production use
+**Production Readiness**: BETA — suitable for non-critical workloads
 
-- Use for testing and experimentation only
-- Known limitations and breaking changes expected
-- Limited error handling and retry logic
-- No performance optimization
+- Retry logic with exponential backoff for all HTTP calls
+- Automatic session management with background refresh
+- Configurable auto-sync for public videos
 
 ---
 
@@ -108,7 +110,8 @@ ATPROTO_APP_PASSWORD=xxxx-xxxx-xxxx-xxxx     # App password (NOT your main passw
 # Optional Settings
 ATPROTO_SYNC_ENABLED=false                   # Auto-sync new videos (BETA, default: false)
 ATPROTO_SYNC_PUBLIC_ONLY=true                # Only sync public videos
-ATPROTO_MAX_RETRIES=3                        # Retry failed requests
+ATPROTO_MAX_RETRIES=3                        # Retry failed requests (exponential backoff)
+ATPROTO_RETRY_BASE_DELAY_MS=500              # Base delay between retries (milliseconds)
 ATPROTO_TIMEOUT=30                           # Request timeout (seconds)
 ```
 
@@ -364,7 +367,7 @@ func SyndicateVideo(ctx context.Context, videoID uuid.UUID) error {
 
 **Limitations**:
 
-- No support for comments/replies (yet)
+- ~~No support for comments/replies~~ ✅ Comment syndication as threaded replies now supported
 - No support for video uploads to Bluesky (only links)
 - No automatic updates when video is edited
 - No deletion sync (deleting video doesn't delete Bluesky post)
@@ -381,28 +384,28 @@ func SyndicateVideo(ctx context.Context, videoID uuid.UUID) error {
    - Bluesky videos limited to 1 minute, 50MB
 
 2. **Limited Federation**
-   - No automatic discovery of Bluesky users
+   - ~~No automatic discovery of Bluesky users~~ ✅ Handle resolution implemented
    - Cannot follow Bluesky users from Athena
    - Cannot import Bluesky content to Athena
 
 3. **No Real-Time Sync**
-   - Manual syndication only (or delayed auto-sync)
+   - ~~Manual syndication only~~ ✅ Configurable auto-sync available
    - No webhook support
    - Updates not pushed automatically
 
 4. **Comment Limitations**
-   - Comments on Bluesky posts not synced back
-   - Cannot reply to Bluesky comments from Athena
-   - One-way syndication only
+   - Comments on Bluesky posts not synced back (Bluesky → Athena)
+   - ~~Cannot reply to Bluesky comments from Athena~~ ✅ Comment syndication implemented (Athena → Bluesky)
+   - Bidirectional sync not yet complete
 
-5. **Error Handling**
-   - Limited retry logic
-   - No exponential backoff
-   - Failed syncs not queued for retry
+5. ~~**Error Handling**~~ ✅ **Resolved**
+   - ~~Limited retry logic~~ ✅ Exponential backoff with configurable retries
+   - ~~No exponential backoff~~ ✅ Implemented with jitter and 30s max cap
+   - ~~Failed syncs not queued for retry~~ ✅ Automatic retry on transient errors (429, 5xx)
 
-6. **Performance**
-   - No batching support
-   - Each syndication is individual API call
+6. ~~**Performance**~~ ✅ **Partially Resolved**
+   - ~~No batching support~~ ✅ Batch video syndication implemented
+   - Each syndication is individual API call (batched sequentially)
    - No caching of PDS responses
 
 ### Planned Improvements (Roadmap)
@@ -410,16 +413,16 @@ func SyndicateVideo(ctx context.Context, videoID uuid.UUID) error {
 **Phase 2** (Target: Q2 2025):
 
 - [ ] Automatic video upload to Bluesky (if < 1 min)
-- [ ] Comment synchronization (bidirectional)
-- [ ] Improved error handling and retries
-- [ ] Batch syndication support
+- [x] Comment syndication (Athena → Bluesky as threaded replies)
+- [x] Improved error handling and retries (exponential backoff)
+- [x] Batch syndication support
 
 **Phase 3** (Target: Q3 2025):
 
-- [ ] Federation discovery
+- [x] Federation discovery (handle resolution)
 - [ ] Follow Bluesky users from Athena
 - [ ] Real-time webhook support
-- [ ] Full bidirectional sync
+- [ ] Full bidirectional comment sync (Bluesky → Athena)
 
 ---
 

@@ -5,9 +5,9 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -18,13 +18,31 @@ import (
 	"athena/internal/domain"
 )
 
-var ErrNotImplemented = errors.New("not implemented: requires Programmable Transaction Block construction (Task 2)")
+const (
+	// DefaultGasBudget is the default gas budget for simple IOTA transfers (0.01 IOTA in nanos).
+	DefaultGasBudget = 10_000_000
+
+	// ed25519Flag identifies the Ed25519 signature scheme in IOTA Rebased.
+	ed25519Flag = 0x00
+)
+
+// intentPrefix is the 3-byte intent prefix for IOTA transaction signing:
+// [IntentScope::TransactionData(0), IntentVersion::V0(0), AppId::Iota(0)].
+var intentPrefix = []byte{0x00, 0x00, 0x00}
 
 type IOTANodeClient interface {
 	GetNodeInfo(ctx context.Context) (*NodeInfo, error)
 	GetAddressBalance(ctx context.Context, address string) (int64, error)
 	GetTransactionStatus(ctx context.Context, txHash string) (*TransactionStatus, error)
 	SubmitTransaction(ctx context.Context, tx *SignedTransaction) (string, error)
+}
+
+// TransactionBuilder extends IOTANodeClient with IOTA Rebased transaction building
+// capabilities. The jsonRPCClient implements this interface; mock clients typically don't.
+type TransactionBuilder interface {
+	GetCoins(ctx context.Context, owner string) ([]CoinObject, error)
+	PayIota(ctx context.Context, signer string, inputCoins []string, recipients []string, amounts []string, gasBudget string) ([]byte, error)
+	ExecuteTransactionBlock(ctx context.Context, txBytes string, signatures []string) (string, error)
 }
 
 type IOTAClient struct {
@@ -142,19 +160,137 @@ func (c *IOTAClient) WaitForConfirmation(ctx context.Context, txDigest string, r
 	}
 }
 
-// TODO Task 2 Phase 2: implement as Programmable Transaction Block for IOTA Rebased.
-func (c *IOTAClient) BuildTransaction(fromAddress, toAddress string, amount int64) (*UnsignedTransaction, error) {
-	return nil, fmt.Errorf("BuildTransaction: %w", ErrNotImplemented)
+// BuildTransaction constructs an unsigned IOTA Rebased transaction using the node's
+// unsafe_payIota JSON-RPC method. The node returns BCS-serialized transaction bytes
+// which can then be signed locally and submitted.
+func (c *IOTAClient) BuildTransaction(ctx context.Context, fromAddress, toAddress string, amount int64) (*UnsignedTransaction, error) {
+	builder, ok := c.nodeClient.(TransactionBuilder)
+	if !ok {
+		return nil, fmt.Errorf("BuildTransaction: node client does not support transaction building")
+	}
+
+	if !c.ValidateAddress(fromAddress) {
+		return nil, fmt.Errorf("BuildTransaction: %w: invalid sender address", domain.ErrInvalidAddress)
+	}
+	if !c.ValidateAddress(toAddress) {
+		return nil, fmt.Errorf("BuildTransaction: %w: invalid recipient address", domain.ErrInvalidAddress)
+	}
+	if amount <= 0 {
+		return nil, fmt.Errorf("BuildTransaction: %w: amount must be positive", domain.ErrBadRequest)
+	}
+
+	coins, err := builder.GetCoins(ctx, fromAddress)
+	if err != nil {
+		return nil, fmt.Errorf("BuildTransaction: getting coins: %w", err)
+	}
+	if len(coins) == 0 {
+		return nil, fmt.Errorf("BuildTransaction: %w: no coins found for address %s", domain.ErrInsufficientBalance, fromAddress)
+	}
+
+	coinIDs := make([]string, len(coins))
+	for i, coin := range coins {
+		coinIDs[i] = coin.CoinObjectID
+	}
+
+	amountStr := strconv.FormatInt(amount, 10)
+	gasBudgetStr := strconv.FormatInt(DefaultGasBudget, 10)
+
+	txBytes, err := builder.PayIota(ctx, fromAddress, coinIDs, []string{toAddress}, []string{amountStr}, gasBudgetStr)
+	if err != nil {
+		return nil, fmt.Errorf("BuildTransaction: building payment: %w", err)
+	}
+
+	return &UnsignedTransaction{
+		FromAddress: fromAddress,
+		ToAddress:   toAddress,
+		Amount:      amount,
+		TxBytes:     txBytes,
+	}, nil
 }
 
-// TODO Task 2 Phase 2: implement Ed25519 signing for IOTA Rebased PTBs.
-func (c *IOTAClient) SignTransaction(privateKeyHex string, tx interface{}) (*SignedTransaction, error) {
-	return nil, fmt.Errorf("SignTransaction: %w", ErrNotImplemented)
+// SignTransaction signs an unsigned IOTA Rebased transaction using Ed25519.
+// The signing follows the IOTA Rebased protocol:
+//  1. Construct intent message: intentPrefix (3 bytes) || BCS transaction bytes
+//  2. Blake2b-256 hash the intent message
+//  3. Ed25519 sign the hash
+//  4. Produce signature: ed25519Flag (1 byte) || signature (64 bytes) || publicKey (32 bytes)
+func (c *IOTAClient) SignTransaction(privateKeyHex string, tx *UnsignedTransaction) (*SignedTransaction, error) {
+	if tx == nil {
+		return nil, fmt.Errorf("SignTransaction: transaction is nil")
+	}
+	if len(tx.TxBytes) == 0 {
+		return nil, fmt.Errorf("SignTransaction: transaction bytes are empty")
+	}
+
+	privKeyBytes, err := hex.DecodeString(privateKeyHex)
+	if err != nil {
+		return nil, fmt.Errorf("SignTransaction: decoding private key: %w", err)
+	}
+	if len(privKeyBytes) != ed25519.SeedSize {
+		return nil, fmt.Errorf("SignTransaction: invalid private key length: expected %d bytes, got %d", ed25519.SeedSize, len(privKeyBytes))
+	}
+
+	// Construct intent message: intent_prefix || tx_bytes
+	intentMsg := make([]byte, len(intentPrefix)+len(tx.TxBytes))
+	copy(intentMsg, intentPrefix)
+	copy(intentMsg[len(intentPrefix):], tx.TxBytes)
+
+	// Blake2b-256 hash
+	hasher, err := blake2b.New256(nil)
+	if err != nil {
+		return nil, fmt.Errorf("SignTransaction: creating blake2b hasher: %w", err)
+	}
+	hasher.Write(intentMsg)
+	digest := hasher.Sum(nil)
+
+	// Ed25519 sign
+	privKey := ed25519.NewKeyFromSeed(privKeyBytes)
+	signature := ed25519.Sign(privKey, digest)
+	pubKey := privKey.Public().(ed25519.PublicKey)
+
+	// Construct IOTA signature: flag(1) || signature(64) || pubkey(32)
+	iotaSig := make([]byte, 1+ed25519.SignatureSize+ed25519.PublicKeySize)
+	iotaSig[0] = ed25519Flag
+	copy(iotaSig[1:], signature)
+	copy(iotaSig[1+ed25519.SignatureSize:], pubKey)
+
+	return &SignedTransaction{
+		FromAddress: tx.FromAddress,
+		ToAddress:   tx.ToAddress,
+		Amount:      tx.Amount,
+		TxBytes:     tx.TxBytes,
+		Signature:   iotaSig,
+	}, nil
 }
 
-// TODO Task 2 Phase 2: implement via JSON-RPC iota_executeTransactionBlock.
+// SubmitTransaction submits a signed transaction to the IOTA Rebased network
+// via the iota_executeTransactionBlock JSON-RPC method.
 func (c *IOTAClient) SubmitTransaction(ctx context.Context, tx *SignedTransaction) (string, error) {
-	return "", fmt.Errorf("SubmitTransaction: %w", ErrNotImplemented)
+	if tx == nil {
+		return "", fmt.Errorf("SubmitTransaction: transaction is nil")
+	}
+	if len(tx.TxBytes) == 0 {
+		return "", fmt.Errorf("SubmitTransaction: transaction bytes are empty")
+	}
+	if len(tx.Signature) == 0 {
+		return "", fmt.Errorf("SubmitTransaction: signature is empty")
+	}
+
+	builder, ok := c.nodeClient.(TransactionBuilder)
+	if !ok {
+		// Fall back to the IOTANodeClient.SubmitTransaction for mock testing
+		return c.nodeClient.SubmitTransaction(ctx, tx)
+	}
+
+	txBytesB64 := base64.StdEncoding.EncodeToString(tx.TxBytes)
+	sigB64 := base64.StdEncoding.EncodeToString(tx.Signature)
+
+	digest, err := builder.ExecuteTransactionBlock(ctx, txBytesB64, []string{sigB64})
+	if err != nil {
+		return "", fmt.Errorf("SubmitTransaction: %w", err)
+	}
+
+	return digest, nil
 }
 
 type jsonRPCClient struct {
@@ -294,9 +430,78 @@ func (c *jsonRPCClient) GetTransactionStatus(ctx context.Context, txDigest strin
 	}, nil
 }
 
-// TODO Task 2 Phase 2: implement via iota_executeTransactionBlock.
+// SubmitTransaction submits a signed transaction via iota_executeTransactionBlock.
 func (c *jsonRPCClient) SubmitTransaction(ctx context.Context, tx *SignedTransaction) (string, error) {
-	return "", fmt.Errorf("SubmitTransaction: %w", ErrNotImplemented)
+	if len(tx.TxBytes) == 0 || len(tx.Signature) == 0 {
+		return "", fmt.Errorf("SubmitTransaction: transaction bytes and signature are required")
+	}
+
+	txBytesB64 := base64.StdEncoding.EncodeToString(tx.TxBytes)
+	sigB64 := base64.StdEncoding.EncodeToString(tx.Signature)
+
+	return c.ExecuteTransactionBlock(ctx, txBytesB64, []string{sigB64})
+}
+
+// GetCoins retrieves IOTA coin objects owned by the given address via iotax_getCoins.
+func (c *jsonRPCClient) GetCoins(ctx context.Context, owner string) ([]CoinObject, error) {
+	params := []interface{}{owner, "0x2::iota::IOTA"}
+	var result coinsResponse
+	if err := c.callRPC(ctx, "iotax_getCoins", params, &result); err != nil {
+		return nil, fmt.Errorf("getting coins for %s: %w", owner, err)
+	}
+	return result.Data, nil
+}
+
+// PayIota builds a transaction via unsafe_payIota JSON-RPC. The node handles coin
+// merging, splitting, and gas deduction. Returns the BCS-serialized transaction bytes.
+func (c *jsonRPCClient) PayIota(ctx context.Context, signer string, inputCoins []string, recipients []string, amounts []string, gasBudget string) ([]byte, error) {
+	params := []interface{}{signer, inputCoins, recipients, amounts, gasBudget}
+	var result payIotaResponse
+	if err := c.callRPC(ctx, "unsafe_payIota", params, &result); err != nil {
+		return nil, fmt.Errorf("building payIota transaction: %w", err)
+	}
+	txBytes, err := base64.StdEncoding.DecodeString(result.TxBytes)
+	if err != nil {
+		return nil, fmt.Errorf("decoding transaction bytes: %w", err)
+	}
+	return txBytes, nil
+}
+
+// ExecuteTransactionBlock submits a signed transaction via iota_executeTransactionBlock.
+func (c *jsonRPCClient) ExecuteTransactionBlock(ctx context.Context, txBytes string, signatures []string) (string, error) {
+	params := []interface{}{
+		txBytes,
+		signatures,
+		map[string]bool{"showEffects": true},
+		"WaitForLocalExecution",
+	}
+	var result executeResponse
+	if err := c.callRPC(ctx, "iota_executeTransactionBlock", params, &result); err != nil {
+		return "", fmt.Errorf("executing transaction block: %w", err)
+	}
+	return result.Digest, nil
+}
+
+// CoinObject represents an IOTA coin object returned by iotax_getCoins.
+type CoinObject struct {
+	CoinObjectID string `json:"coinObjectId"`
+	Version      string `json:"version"`
+	Digest       string `json:"digest"`
+	Balance      string `json:"balance"`
+}
+
+type coinsResponse struct {
+	Data        []CoinObject `json:"data"`
+	NextCursor  *string      `json:"nextCursor"`
+	HasNextPage bool         `json:"hasNextPage"`
+}
+
+type payIotaResponse struct {
+	TxBytes string `json:"txBytes"`
+}
+
+type executeResponse struct {
+	Digest string `json:"digest"`
 }
 
 type UnsignedTransaction struct {
@@ -304,14 +509,16 @@ type UnsignedTransaction struct {
 	ToAddress   string
 	Amount      int64
 	Nonce       int64
+	TxBytes     []byte // BCS-serialized transaction data from the IOTA node
 }
 
 type SignedTransaction struct {
 	FromAddress string
 	ToAddress   string
 	Amount      int64
-	Signature   []byte
+	Signature   []byte // IOTA signature: flag(1) || ed25519_sig(64) || pubkey(32)
 	Nonce       int64
+	TxBytes     []byte // BCS-serialized transaction data
 }
 
 type TransactionStatus struct {

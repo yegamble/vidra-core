@@ -164,6 +164,88 @@ func newMockPDS(t *testing.T) (*httptest.Server, *mockPDSState) {
 		json.NewEncoder(w).Encode(map[string]interface{}{"feed": []interface{}{}, "cursor": ""})
 	})
 
+	// getRecord — return stored record or synthetic response
+	mux.HandleFunc("/xrpc/com.atproto.repo.getRecord", func(w http.ResponseWriter, r *http.Request) {
+		repo := r.URL.Query().Get("repo")
+		collection := r.URL.Query().Get("collection")
+		rkey := r.URL.Query().Get("rkey")
+		targetURI := "at://" + repo + "/" + collection + "/" + rkey
+		state.mu.Lock()
+		var foundRecord map[string]interface{}
+		var foundCID string
+		for _, rec := range state.records {
+			if rec["_uri"] == targetURI {
+				foundRecord = rec
+				if c, ok := rec["_cid"].(string); ok {
+					foundCID = c
+				}
+				break
+			}
+		}
+		state.mu.Unlock()
+		cid := foundCID
+		if cid == "" {
+			cid = "bafyreid" + randomHex(12)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"uri":   targetURI,
+			"cid":   cid,
+			"value": foundRecord,
+		})
+	})
+
+	// resolveHandle — returns a DID for any handle
+	mux.HandleFunc("/xrpc/com.atproto.identity.resolveHandle", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"did": "did:plc:test123",
+		})
+	})
+
+	// getPostThread — returns thread view
+	mux.HandleFunc("/xrpc/app.bsky.feed.getPostThread", func(w http.ResponseWriter, r *http.Request) {
+		uri := r.URL.Query().Get("uri")
+		state.mu.Lock()
+		replies := []interface{}{}
+		for _, rec := range state.records {
+			if record, ok := rec["record"].(map[string]interface{}); ok {
+				if reply, ok := record["reply"].(map[string]interface{}); ok {
+					if parent, ok := reply["parent"].(map[string]interface{}); ok {
+						if parentURI, _ := parent["uri"].(string); parentURI == uri {
+							replies = append(replies, map[string]interface{}{
+								"$type": "app.bsky.feed.defs#threadViewPost",
+								"post":  map[string]interface{}{"uri": uri, "cid": "bafyreid" + randomHex(6)},
+							})
+						}
+					}
+				}
+			}
+		}
+		state.mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"thread": map[string]interface{}{
+				"$type":   "app.bsky.feed.defs#threadViewPost",
+				"post":    map[string]interface{}{"uri": uri, "cid": "bafyreid" + randomHex(6)},
+				"replies": replies,
+			},
+		})
+	})
+
+	// deleteRecord — removes a record
+	mux.HandleFunc("/xrpc/com.atproto.repo.deleteRecord", func(w http.ResponseWriter, r *http.Request) {
+		auth := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+		state.mu.Lock()
+		_, ok := state.accessTokens[auth]
+		state.mu.Unlock()
+		if !ok {
+			http.Error(w, `{"error":"unauthenticated"}`, http.StatusUnauthorized)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	})
+
 	ts := httptest.NewServer(mux)
 	t.Cleanup(ts.Close)
 	return ts, state
@@ -370,4 +452,282 @@ func TestAtprotoService_StartBackgroundRefresh(t *testing.T) {
 	case <-time.After(500 * time.Millisecond):
 		t.Error("StartBackgroundRefresh didn't exit after context cancellation")
 	}
+}
+
+// ── New feature integration tests ────────────────────────────────────────────
+
+// TestAtprotoService_PublishComment verifies comment syndication as a reply.
+func TestAtprotoService_PublishComment(t *testing.T) {
+	ts, state := newMockPDS(t)
+	store := newInMemSessionStore()
+	service := newATProtoService(ts.URL, store)
+
+	ctx := context.Background()
+
+	// First publish a video to get a parent post URI
+	video := &domain.Video{
+		ID:      uuid.New().String(),
+		Title:   "Video for comments",
+		Privacy: domain.PrivacyPublic,
+		Status:  domain.StatusCompleted,
+	}
+	err := service.PublishVideo(ctx, video)
+	require.NoError(t, err)
+
+	// Now publish a comment as a reply
+	comment := &domain.Comment{
+		ID:      uuid.New(),
+		VideoID: uuid.MustParse(video.ID),
+		Body:    "This is a great video! Really enjoyed the content.",
+		Status:  domain.CommentStatusActive,
+	}
+
+	ref, err := service.PublishComment(ctx, comment, video, "at://did:plc:test123/app.bsky.feed.post/parentrkey")
+	require.NoError(t, err, "PublishComment should succeed")
+	require.NotNil(t, ref)
+	assert.NotEmpty(t, ref.URI, "returned URI should not be empty")
+	assert.NotEmpty(t, ref.CID, "returned CID should not be empty")
+
+	// Verify 2 records were created (1 video + 1 comment)
+	state.mu.Lock()
+	recordCount := len(state.records)
+	state.mu.Unlock()
+	assert.Equal(t, 2, recordCount, "expected 2 records: 1 video post + 1 comment reply")
+
+	// Verify the comment record has reply structure
+	state.mu.Lock()
+	lastRecord := state.records[len(state.records)-1]
+	state.mu.Unlock()
+
+	record, ok := lastRecord["record"].(map[string]interface{})
+	require.True(t, ok)
+	_, hasReply := record["reply"]
+	assert.True(t, hasReply, "comment record should have reply field")
+}
+
+// TestAtprotoService_PublishComment_InactiveSkipped verifies deleted comments are not syndicated.
+func TestAtprotoService_PublishComment_InactiveSkipped(t *testing.T) {
+	ts, state := newMockPDS(t)
+	store := newInMemSessionStore()
+	service := newATProtoService(ts.URL, store)
+
+	ctx := context.Background()
+	comment := &domain.Comment{
+		ID:     uuid.New(),
+		Body:   "Deleted comment",
+		Status: domain.CommentStatusDeleted,
+	}
+	video := &domain.Video{ID: uuid.New().String(), Privacy: domain.PrivacyPublic, Status: domain.StatusCompleted}
+
+	ref, err := service.PublishComment(ctx, comment, video, "at://did:plc:test123/app.bsky.feed.post/x")
+	assert.NoError(t, err)
+	assert.Nil(t, ref, "inactive comment should return nil ref")
+
+	state.mu.Lock()
+	count := len(state.records)
+	state.mu.Unlock()
+	assert.Equal(t, 0, count, "no records should be created for inactive comments")
+}
+
+// TestAtprotoService_PublishVideoBatch verifies batch video syndication.
+func TestAtprotoService_PublishVideoBatch(t *testing.T) {
+	ts, state := newMockPDS(t)
+	store := newInMemSessionStore()
+	service := newATProtoService(ts.URL, store)
+
+	ctx := context.Background()
+	videos := []*domain.Video{
+		{ID: uuid.New().String(), Title: "Batch Video 1", Privacy: domain.PrivacyPublic, Status: domain.StatusCompleted},
+		{ID: uuid.New().String(), Title: "Batch Video 2", Privacy: domain.PrivacyPublic, Status: domain.StatusCompleted},
+		{ID: uuid.New().String(), Title: "Batch Video 3", Privacy: domain.PrivacyPublic, Status: domain.StatusCompleted},
+		{ID: uuid.New().String(), Title: "Private - Skip", Privacy: domain.PrivacyPrivate, Status: domain.StatusCompleted},
+	}
+
+	results := service.PublishVideoBatch(ctx, videos)
+	assert.Len(t, results, 4)
+
+	for _, r := range results {
+		assert.NoError(t, r.Err, "batch item %s should not error", r.VideoID)
+	}
+
+	// Only 3 public videos should create records
+	state.mu.Lock()
+	recordCount := len(state.records)
+	state.mu.Unlock()
+	assert.Equal(t, 3, recordCount, "expected 3 records for 3 public videos")
+}
+
+// TestAtprotoService_ResolveHandle verifies handle resolution.
+func TestAtprotoService_ResolveHandle(t *testing.T) {
+	ts, _ := newMockPDS(t)
+	store := newInMemSessionStore()
+	service := newATProtoService(ts.URL, store)
+
+	ctx := context.Background()
+	identity, err := service.ResolveHandle(ctx, "alice.bsky.social")
+	require.NoError(t, err)
+	require.NotNil(t, identity)
+	assert.Equal(t, "did:plc:test123", identity.DID)
+	assert.Equal(t, "alice.bsky.social", identity.Handle)
+}
+
+// TestAtprotoService_ResolveHandle_WithAtPrefix verifies @ prefix is stripped.
+func TestAtprotoService_ResolveHandle_WithAtPrefix(t *testing.T) {
+	ts, _ := newMockPDS(t)
+	store := newInMemSessionStore()
+	service := newATProtoService(ts.URL, store)
+
+	ctx := context.Background()
+	identity, err := service.ResolveHandle(ctx, "@bob.bsky.social")
+	require.NoError(t, err)
+	require.NotNil(t, identity)
+	assert.Equal(t, "bob.bsky.social", identity.Handle)
+}
+
+// TestAtprotoService_AutoSyncEnabled verifies the auto-sync flag.
+func TestAtprotoService_AutoSyncEnabled(t *testing.T) {
+	ts, _ := newMockPDS(t)
+
+	t.Run("disabled by default", func(t *testing.T) {
+		store := newInMemSessionStore()
+		service := newATProtoService(ts.URL, store)
+		assert.False(t, service.AutoSyncEnabled())
+	})
+
+	t.Run("enabled when configured", func(t *testing.T) {
+		cfg := &config.Config{
+			EnableATProto:          true,
+			ATProtoPDSURL:          ts.URL,
+			ATProtoHandle:          "test.handle",
+			ATProtoAppPassword:     "test-app-password",
+			ATProtoAutoSyncEnabled: true,
+		}
+		store := newInMemSessionStore()
+		service := usecase.NewAtprotoService(&staticCfgReader{pdsURL: ts.URL}, cfg, store, make([]byte, 32))
+		assert.True(t, service.AutoSyncEnabled())
+	})
+}
+
+// TestAtprotoService_EndToEnd_VideoAndComment exercises the full flow:
+// publish a video, then publish a comment as a reply, verify both records exist.
+func TestAtprotoService_EndToEnd_VideoAndComment(t *testing.T) {
+	ts, state := newMockPDS(t)
+	store := newInMemSessionStore()
+	service := newATProtoService(ts.URL, store)
+
+	ctx := context.Background()
+
+	// Step 1: Publish video
+	video := &domain.Video{
+		ID:          uuid.New().String(),
+		Title:       "E2E Test Video",
+		Description: "Full flow test",
+		Privacy:     domain.PrivacyPublic,
+		Status:      domain.StatusCompleted,
+	}
+	err := service.PublishVideo(ctx, video)
+	require.NoError(t, err)
+
+	// Step 2: Publish 3 comments
+	for i := 0; i < 3; i++ {
+		comment := &domain.Comment{
+			ID:      uuid.New(),
+			VideoID: uuid.MustParse(video.ID),
+			Body:    "Comment " + uuid.New().String()[:8],
+			Status:  domain.CommentStatusActive,
+		}
+		ref, err := service.PublishComment(ctx, comment, video, "at://did:plc:test123/app.bsky.feed.post/video1")
+		require.NoError(t, err)
+		assert.NotNil(t, ref)
+	}
+
+	// Step 3: Verify total records: 1 video + 3 comments = 4
+	state.mu.Lock()
+	recordCount := len(state.records)
+	state.mu.Unlock()
+	assert.Equal(t, 4, recordCount, "expected 4 records: 1 video + 3 comments")
+}
+
+// TestAtprotoService_DockerMockPDS exercises the Docker-hosted mock PDS
+// when the test-integration profile is running.
+func TestAtprotoService_DockerMockPDS(t *testing.T) {
+	pdsURL := os.Getenv("ATPROTO_PDS_URL")
+	if pdsURL == "" {
+		pdsURL = "http://localhost:19200"
+	}
+
+	// Check if Docker mock PDS is available
+	resp, err := http.Get(pdsURL + "/health")
+	if err != nil || resp.StatusCode != http.StatusOK {
+		t.Skip("Docker mock ATProto PDS not available, skipping Docker integration tests")
+	}
+	resp.Body.Close()
+
+	store := newInMemSessionStore()
+	cfg := &config.Config{
+		EnableATProto:          true,
+		ATProtoPDSURL:          pdsURL,
+		ATProtoHandle:          "test.handle",
+		ATProtoAppPassword:     "test-app-password",
+		PublicBaseURL:          "https://example.com",
+		ATProtoAutoSyncEnabled: true,
+	}
+	service := usecase.NewAtprotoService(&staticCfgReader{pdsURL: pdsURL}, cfg, store, make([]byte, 32))
+
+	ctx := context.Background()
+
+	t.Run("PublishVideo", func(t *testing.T) {
+		video := &domain.Video{
+			ID:          uuid.New().String(),
+			Title:       "Docker PDS Test Video",
+			Description: "Published via Docker mock PDS",
+			Privacy:     domain.PrivacyPublic,
+			Status:      domain.StatusCompleted,
+		}
+		err := service.PublishVideo(ctx, video)
+		require.NoError(t, err)
+
+		// Verify via debug endpoint
+		resp, err := http.Get(pdsURL + "/test/records")
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		var records []map[string]interface{}
+		require.NoError(t, json.NewDecoder(resp.Body).Decode(&records))
+		assert.GreaterOrEqual(t, len(records), 1, "at least 1 record should exist in Docker PDS")
+	})
+
+	t.Run("PublishComment", func(t *testing.T) {
+		comment := &domain.Comment{
+			ID:     uuid.New(),
+			Body:   "Comment via Docker PDS",
+			Status: domain.CommentStatusActive,
+		}
+		video := &domain.Video{ID: uuid.New().String(), Privacy: domain.PrivacyPublic, Status: domain.StatusCompleted}
+
+		ref, err := service.PublishComment(ctx, comment, video, "at://did:plc:test123/app.bsky.feed.post/dockertest")
+		require.NoError(t, err)
+		assert.NotNil(t, ref)
+	})
+
+	t.Run("ResolveHandle", func(t *testing.T) {
+		identity, err := service.ResolveHandle(ctx, "test.bsky.social")
+		require.NoError(t, err)
+		assert.NotEmpty(t, identity.DID)
+	})
+
+	t.Run("BatchPublish", func(t *testing.T) {
+		videos := []*domain.Video{
+			{ID: uuid.New().String(), Title: "Batch 1", Privacy: domain.PrivacyPublic, Status: domain.StatusCompleted},
+			{ID: uuid.New().String(), Title: "Batch 2", Privacy: domain.PrivacyPublic, Status: domain.StatusCompleted},
+		}
+		results := service.PublishVideoBatch(ctx, videos)
+		assert.Len(t, results, 2)
+		for _, r := range results {
+			assert.NoError(t, r.Err)
+		}
+	})
+
+	t.Run("AutoSyncEnabled", func(t *testing.T) {
+		assert.True(t, service.AutoSyncEnabled())
+	})
 }
