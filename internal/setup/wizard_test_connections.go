@@ -17,37 +17,12 @@ import (
 	_ "github.com/lib/pq" // PostgreSQL driver
 )
 
-// Shared rate limiting for all test connection handlers
-type rateLimiter struct {
-	testConnLimit map[string][]int64
-}
-
-func (w *Wizard) getRateLimiter() *rateLimiter {
-	if w.testEmailLimit == nil {
-		w.testEmailLimit = make(map[string][]int64)
+// getRateLimiter returns the wizard's rate limiter, initializing it if needed.
+func (w *Wizard) getRateLimiter() RateLimiter {
+	if w.RateLimit == nil {
+		w.RateLimit = NewMemoryRateLimiter()
 	}
-	return &rateLimiter{testConnLimit: w.testEmailLimit}
-}
-
-func (rl *rateLimiter) checkRateLimit(clientIP string) bool {
-	// Clean up if map gets too large (clear in-place to preserve shared reference)
-	if len(rl.testConnLimit) > 1000 {
-		for k := range rl.testConnLimit {
-			delete(rl.testConnLimit, k)
-		}
-	}
-
-	now := time.Now().Unix()
-	rl.testConnLimit[clientIP] = append(rl.testConnLimit[clientIP], now)
-	recent := []int64{}
-	for _, t := range rl.testConnLimit[clientIP] {
-		if now-t < 300 { // 5 minutes
-			recent = append(recent, t)
-		}
-	}
-	rl.testConnLimit[clientIP] = recent
-
-	return len(recent) <= 3 // Allow up to 3 requests per 5 minutes
+	return w.RateLimit
 }
 
 // HandleTestDatabase tests PostgreSQL connection
@@ -62,7 +37,7 @@ func (w *Wizard) HandleTestDatabase(rw http.ResponseWriter, r *http.Request) {
 	}
 
 	rateLimiter := w.getRateLimiter()
-	if !rateLimiter.checkRateLimit(clientIP) {
+	if !rateLimiter.CheckRateLimit(clientIP) {
 		http.Error(rw, "Too many test connection requests. Please wait 5 minutes.", http.StatusTooManyRequests)
 		return
 	}
@@ -145,7 +120,7 @@ func (w *Wizard) HandleTestRedis(rw http.ResponseWriter, r *http.Request) {
 	}
 
 	rateLimiter := w.getRateLimiter()
-	if !rateLimiter.checkRateLimit(clientIP) {
+	if !rateLimiter.CheckRateLimit(clientIP) {
 		http.Error(rw, "Too many test connection requests. Please wait 5 minutes.", http.StatusTooManyRequests)
 		return
 	}
@@ -252,7 +227,7 @@ func (w *Wizard) HandleTestIPFS(rw http.ResponseWriter, r *http.Request) {
 	}
 
 	rateLimiter := w.getRateLimiter()
-	if !rateLimiter.checkRateLimit(clientIP) {
+	if !rateLimiter.CheckRateLimit(clientIP) {
 		http.Error(rw, "Too many test connection requests. Please wait 5 minutes.", http.StatusTooManyRequests)
 		return
 	}
@@ -318,7 +293,7 @@ func (w *Wizard) HandleTestIOTA(rw http.ResponseWriter, r *http.Request) {
 	}
 
 	rateLimiter := w.getRateLimiter()
-	if !rateLimiter.checkRateLimit(clientIP) {
+	if !rateLimiter.CheckRateLimit(clientIP) {
 		http.Error(rw, "Too many test connection requests. Please wait 5 minutes.", http.StatusTooManyRequests)
 		return
 	}
