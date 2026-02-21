@@ -81,6 +81,13 @@ func NewService(
 	}
 }
 
+// SetURLValidator overrides the default URL validator and HTTP client.
+// This is intended for testing only, to allow connections to httptest servers on localhost.
+func (s *Service) SetURLValidator(v *security.URLValidator) {
+	s.urlValidator = v
+	s.client = v.NewSafeHTTPClient(10 * time.Second)
+}
+
 // FollowRecord represents an ATProto follow record
 type FollowRecord struct {
 	Type      string    `json:"$type"`
