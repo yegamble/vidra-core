@@ -1,6 +1,6 @@
 # Project: Athena
 
-**Last Updated:** 2026-02-16
+**Last Updated:** 2026-02-21
 
 ## Overview
 
@@ -18,7 +18,8 @@ High-performance PeerTube-compatible backend in Go with P2P distribution, live s
 - **Linting:** golangci-lint (with gosec)
 - **Video Processing:** FFmpeg
 - **P2P:** WebTorrent + IPFS
-- **Federation:** ActivityPub, ATProto (beta)
+- **Federation:** ActivityPub, ATProto (BlueSky)
+- **Payments:** IOTA Rebased (Ed25519 transaction signing + submission)
 
 ## Directory Structure
 
@@ -74,7 +75,7 @@ High-performance PeerTube-compatible backend in Go with P2P distribution, live s
 - **Configuration:** `.env.example` (template), `internal/config/`
 - **Entry Point:** `cmd/server/main.go`
 - **Migrations:** `migrations/*.sql` (Goose)
-- **Tests:** `**/*_test.go` (335 test files)
+- **Tests:** `**/*_test.go` (361 test files, ~4,273 test functions)
 - **Build:** `Makefile`
 
 ## Development Commands
@@ -119,6 +120,24 @@ make migrate-up               # Apply all pending migrations
 make migrate-down             # Rollback last migration
 make migrate-status           # Show migration status
 make migrate-create NAME=add_feature  # Create new migration
+make migrate-dev              # Apply to dev DB (reads .env)
+make migrate-test             # Apply to test DB (reads .env.test)
+make migrate-custom           # Apply to DATABASE_URL env var
+```
+
+**Integration testing with mock services:**
+
+```bash
+make test-mock-services-up    # Start Docker mock services (MinIO, ATProto PDS, IOTA, Mailpit, etc.)
+make test-mock-services-down  # Stop mock services
+make test-external-integration  # Run external service integration tests (auto starts/stops)
+```
+
+**OpenAPI code generation:**
+
+```bash
+make generate-openapi         # Regenerate types from api/*.yaml spec
+make verify-openapi           # Fail if generated code drifts from spec
 ```
 
 **Coverage:**
@@ -178,12 +197,13 @@ See subdirectory CLAUDE.md files for detailed guidance:
 
 ## Additional Context
 
-**Sprint Status:** Quality Programme Complete (Sprint 20/20)
+**Sprint Status:** Quality Programme in progress (Sprint 16/20 active)
 
 - Feature parity: 100% complete
-- Quality Programme: 100% complete
-- Full test suite: ~3,900 test functions (335 test files)
-- Coverage: 62.3% average across packages (90%+ achieved for core packages)
+- Full test suite: ~4,273 test functions (361 test files)
+- Coverage: 69.9% overall unit test coverage (90%+ for core packages)
+- ATProto (BlueSky) `PublishVideo` fully implemented and verified
+- IOTA Rebased payments: Ed25519 transaction signing + submission implemented
 
 **Key Features:**
 
