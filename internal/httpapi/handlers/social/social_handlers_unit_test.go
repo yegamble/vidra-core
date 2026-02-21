@@ -15,6 +15,7 @@ import (
 
 	"athena/internal/config"
 	"athena/internal/domain"
+	"athena/internal/security"
 	"athena/internal/usecase"
 	ucsocial "athena/internal/usecase/social"
 
@@ -223,7 +224,21 @@ func newTestSocialHandler(repo *mockSocialRepo) *SocialHandler {
 
 func newTestSocialHandlerWithPDS(repo *mockSocialRepo, pdsURL string) *SocialHandler {
 	cfg := &config.Config{
-		ATProtoPDSURL: pdsURL,
+		ATProtoPDSURL:      pdsURL,
+		ATProtoAppPassword: "test-token",
+	}
+	svc := ucsocial.NewService(cfg, repo, nil, nil)
+	// Allow private IPs so httptest (127.0.0.1) passes SSRF checks
+	svc.SetURLValidator(security.NewURLValidatorAllowPrivate())
+	return NewSocialHandler((*usecase.SocialService)(svc))
+}
+
+// newTestSocialHandlerWithPDSStrict creates a handler with the default strict SSRF validator.
+// Use this for tests that verify SSRF blocking behavior.
+func newTestSocialHandlerWithPDSStrict(repo *mockSocialRepo, pdsURL string) *SocialHandler {
+	cfg := &config.Config{
+		ATProtoPDSURL:      pdsURL,
+		ATProtoAppPassword: "test-token",
 	}
 	svc := ucsocial.NewService(cfg, repo, nil, nil)
 	return NewSocialHandler((*usecase.SocialService)(svc))
@@ -247,6 +262,16 @@ func decodeResponse(t *testing.T, rec *httptest.ResponseRecorder) map[string]int
 
 func newFakePDS(actor *domain.ATProtoActor) *httptest.Server {
 	mux := http.NewServeMux()
+
+	mux.HandleFunc("/xrpc/com.atproto.server.createSession", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"accessJwt":  "mock-access-token",
+			"refreshJwt": "mock-refresh-token",
+			"did":        actor.DID,
+			"handle":     actor.Handle,
+		})
+	})
 
 	mux.HandleFunc("/xrpc/com.atproto.identity.resolveHandle", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -1298,7 +1323,8 @@ func TestUnit_IngestFeed_SSRFBlocksLocalPDS(t *testing.T) {
 			return []string{}, nil
 		},
 	}
-	h := newTestSocialHandlerWithPDS(repo, pds.URL)
+	// Use strict SSRF validator to verify that private IPs are blocked
+	h := newTestSocialHandlerWithPDSStrict(repo, pds.URL)
 
 	req := httptest.NewRequest(http.MethodPost, "/social/ingest/creator.bsky.social?limit=10", nil)
 	req = withChiParam(req, map[string]string{"handle": "creator.bsky.social"})

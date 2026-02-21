@@ -276,6 +276,48 @@ func TestIOTAClient_GetBalance(t *testing.T) {
 	}
 }
 
+func TestIOTAClient_GetNodeStatus_Healthy(t *testing.T) {
+	mockNodeClient := new(MockIOTANodeClient)
+	client := NewIOTAClientWithMock(mockNodeClient)
+	ctx := context.Background()
+
+	mockNodeClient.On("GetNodeInfo", ctx).Return(&NodeInfo{
+		IsHealthy: true,
+	}, nil)
+
+	err := client.GetNodeStatus(ctx)
+	require.NoError(t, err)
+	mockNodeClient.AssertExpectations(t)
+}
+
+func TestIOTAClient_GetNodeStatus_Unhealthy(t *testing.T) {
+	mockNodeClient := new(MockIOTANodeClient)
+	client := NewIOTAClientWithMock(mockNodeClient)
+	ctx := context.Background()
+
+	mockNodeClient.On("GetNodeInfo", ctx).Return(&NodeInfo{
+		IsHealthy: false,
+	}, nil)
+
+	err := client.GetNodeStatus(ctx)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not healthy")
+	mockNodeClient.AssertExpectations(t)
+}
+
+func TestIOTAClient_GetNodeStatus_Error(t *testing.T) {
+	mockNodeClient := new(MockIOTANodeClient)
+	client := NewIOTAClientWithMock(mockNodeClient)
+	ctx := context.Background()
+
+	mockNodeClient.On("GetNodeInfo", ctx).Return(nil, errors.New("connection refused"))
+
+	err := client.GetNodeStatus(ctx)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "connection refused")
+	mockNodeClient.AssertExpectations(t)
+}
+
 func TestIOTAClient_BuildTransaction_NotImplemented(t *testing.T) {
 	client := NewIOTAClient("https://api.testnet.iota.org")
 

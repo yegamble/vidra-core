@@ -339,6 +339,7 @@
         if (form) {
             form.addEventListener('submit', async function(e) {
                 e.preventDefault();
+                e.stopImmediatePropagation();
 
                 // Remove only AJAX-created error alerts (preserve template-rendered ones)
                 const existingAlert = document.querySelector('.alert-error[data-ajax-error]');

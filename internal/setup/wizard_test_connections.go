@@ -196,6 +196,28 @@ func (w *Wizard) HandleTestRedis(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	reader := bufio.NewReader(conn)
+
+	// Send AUTH command if password is provided
+	if req.Password != "" {
+		authCmd := fmt.Sprintf("*2\r\n$4\r\nAUTH\r\n$%d\r\n%s\r\n", len(req.Password), req.Password)
+		if _, err := conn.Write([]byte(authCmd)); err != nil {
+			respondTestConnectionError(rw, fmt.Sprintf("Failed to send AUTH: %s", err.Error()))
+			return
+		}
+
+		authResp, err := reader.ReadString('\n')
+		if err != nil {
+			respondTestConnectionError(rw, fmt.Sprintf("Failed to read AUTH response: %s", err.Error()))
+			return
+		}
+
+		if authResp != "+OK\r\n" {
+			respondTestConnectionError(rw, "Redis authentication failed: invalid password")
+			return
+		}
+	}
+
 	// Send PING command
 	if _, err := conn.Write([]byte("*1\r\n$4\r\nPING\r\n")); err != nil {
 		respondTestConnectionError(rw, fmt.Sprintf("Failed to send PING: %s", err.Error()))
@@ -203,7 +225,6 @@ func (w *Wizard) HandleTestRedis(rw http.ResponseWriter, r *http.Request) {
 	}
 
 	// Read response
-	reader := bufio.NewReader(conn)
 	response, err := reader.ReadString('\n')
 	if err != nil {
 		respondTestConnectionError(rw, fmt.Sprintf("Failed to read response: %s", err.Error()))

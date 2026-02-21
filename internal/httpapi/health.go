@@ -7,8 +7,6 @@ import (
 	"net/http"
 	"time"
 
-	"athena/internal/domain"
-
 	"github.com/jmoiron/sqlx"
 	"github.com/redis/go-redis/v9"
 )
@@ -31,15 +29,19 @@ type HealthHandlers struct {
 	iotaNodeURL string
 }
 
-func NewHealthHandlers(db *sqlx.DB, redisClient *redis.Client, ipfsAPI string, iotaNodeURL string) *HealthHandlers {
+// QueueDepthFunc returns the current depth of a queue. Nil functions are treated as
+// unavailable queues and the queue health check will be skipped.
+type QueueDepthFunc func() (int, error)
+
+func NewHealthHandlers(db *sqlx.DB, redisClient *redis.Client, ipfsAPI string, iotaNodeURL string, encodingQueueDepth, activityQueueDepth QueueDepthFunc) *HealthHandlers {
 	checkers := []health.Checker{
 		health.NewDatabaseChecker(db),
 		health.NewRedisChecker(redisClient),
 		health.NewIPFSChecker(ipfsAPI),
-		health.NewQueueDepthChecker(
-			func() (int, error) { return 5, nil },  // TODO: Replace with real queue service
-			func() (int, error) { return 10, nil }, // TODO: Replace with real queue service
-		),
+	}
+
+	if encodingQueueDepth != nil && activityQueueDepth != nil {
+		checkers = append(checkers, health.NewQueueDepthChecker(encodingQueueDepth, activityQueueDepth))
 	}
 
 	if iotaNodeURL != "" {
@@ -163,12 +165,8 @@ func checkIPFS() error {
 }
 
 func checkQueueDepth() error {
-	queueDepth := 5
-	maxQueueDepth := 1000
-
-	if queueDepth > maxQueueDepth {
-		return domain.NewDomainError("QUEUE_OVERLOAD", "Queue depth exceeds threshold")
-	}
-
+	// Queue depth monitoring is handled by the HealthHandlers.ReadinessCheck path
+	// via injected QueueDepthFunc providers. This standalone function is a no-op
+	// placeholder for the legacy ReadinessCheck handler.
 	return nil
 }
