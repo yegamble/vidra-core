@@ -38,6 +38,7 @@ The 10-step setup wizard (`internal/setup/`) is fully functional end-to-end:
 **`.env` generation verified correct for:** `SETUP_COMPLETED`, `ADMIN_USERNAME`, `ADMIN_EMAIL`, `JWT_SECRET` (randomly generated), `POSTGRES_MODE` (docker mode).
 
 **Input validation confirmed:**
+
 - Missing admin username → 400 Bad Request
 - Password mismatch → 400 Bad Request
 - Password too short (< 8 chars) → 400 Bad Request
@@ -84,6 +85,7 @@ The 10-step setup wizard (`internal/setup/`) is fully functional end-to-end:
 ### 1.4 ActivityPub (Mock-Verified)
 
 The mock ActivityPub server (for use in tests) correctly implements:
+
 - `POST /inbox` — stores activities, tracks `Signature` header presence
 - `GET /users/{username}` — returns Actor JSON-LD with `publicKey`, `inbox`, `outbox`
 - `GET /.well-known/webfinger` — correct `subject`+`links` format
@@ -126,17 +128,19 @@ SubmitTransaction(ctx, tx)          → ErrNotImplemented
 **Impact:** IOTA payment *processing* is not functional. Wallet address generation, balance reading, and node health checks work.
 
 **What's needed for Phase 2:**
+
 - `BuildTransaction`: Construct a Programmable Transaction Block (PTB) per IOTA Rebased spec
 - `SignTransaction`: Ed25519 signing of the PTB serialization
 - `SubmitTransaction`: Call `iota_executeTransactionBlock` JSON-RPC
 
-**Reference:** https://docs.iota.org/developer/iota-101/transactions/ptb/building-programmable-transaction-blocks-ts-sdk
+**Reference:** <https://docs.iota.org/developer/iota-101/transactions/ptb/building-programmable-transaction-blocks-ts-sdk>
 
 ### 2.2 Custom Platform Token
 
 **Status:** No implementation found.
 
 The vision includes a "website specific token" on IOTA Rebased (a platform-native token). This requires:
+
 - A smart contract (Move module) deployed on IOTA Rebased
 - Token minting/transfer logic
 - Integration with the payment service
@@ -309,29 +313,36 @@ make test-external-integration  # Full run: up → test → down
 Priority order based on impact:
 
 ### P1 — Fix test failure (quick)
+
 - Add `createSession` to `newFakePDS()` in `social_handlers_unit_test.go` to fix `TestUnit_Follow_SuccessWithPDS`
 
 ### P2 — Fix COMPOSE_PROFILES mail profile bug (quick)
+
 - Fix `writer.go:191` to check email mode instead of SMTP host string
 - Always write `COMPOSE_PROFILES=` (even when empty) to prevent stale values
 - Add `letsencrypt` profile when HTTPS with Let's Encrypt is configured
 
 ### P3 — Fix Redis AUTH bug (quick)
+
 - Use a Redis client library in `HandleTestRedis` to properly send AUTH before PING
 
 ### P4 — IOTA Transaction Signing (Phase 2 feature)
+
 - Implement `BuildTransaction`, `SignTransaction`, `SubmitTransaction` using IOTA Rebased PTB spec
-- Reference: https://docs.iota.org/developer/iota-101/transactions/ptb/
+- Reference: <https://docs.iota.org/developer/iota-101/transactions/ptb/>
 
 ### P5 — Custom Platform Token (Phase 3 feature)
+
 - Deploy a Move module on IOTA Rebased testnet for the platform token
 - Wire token minting/transfer into the payment service
 - Add token balance display in the video platform API
 
 ### P6 — Health Check Queue Depth
+
 - Replace hardcoded queue depth values with actual worker queue metrics (from Redis or database)
 
 ### P7 — Rate Limiter Redis Backing
+
 - Back the wizard rate limiter with Redis for persistence across restarts (low priority — wizard is single-use per deployment)
 
 ---

@@ -45,18 +45,19 @@ Worktree: No
 - `BuildTransaction`: Construct Programmable Transaction Block (PTB) per IOTA Rebased spec
 - `SignTransaction`: Ed25519 signing of PTB serialization
 - `SubmitTransaction`: Call `iota_executeTransactionBlock` JSON-RPC
-**Reference:** https://docs.iota.org/developer/iota-101/transactions/ptb/
+**Reference:** <https://docs.iota.org/developer/iota-101/transactions/ptb/>
 **Files:** `internal/payments/iota_client.go`, `internal/payments/iota_client_test.go`
 
 ### P5 — Custom Platform Token (Phase 3 Feature)
 
 **Issue:** No implementation exists for website-specific token on IOTA Rebased.
 **Scope:**
+
 - Deploy a Move module on IOTA Rebased testnet
 - Token minting/transfer logic
 - Integration with payment service
 - Token balance display in video platform API
-**Reference:** https://docs.iota.org/about-iota/
+**Reference:** <https://docs.iota.org/about-iota/>
 
 ### P6 — Health Check Queue Depth
 

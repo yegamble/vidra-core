@@ -139,10 +139,12 @@ Worktree: No
 **Key Decisions / Notes:**
 
 - Add these fields to the Wizard struct:
+
   ```go
   OutputDir    string                    // defaults to "." (current dir)
   URLValidator *security.URLValidator    // defaults to security.NewURLValidator()
   ```
+
 - Update `NewWizard()` to use functional options or default values. For simplicity, set defaults in the constructor and allow override via exported fields after construction.
 - The existing pattern in the codebase uses injectable validators: `internal/usecase/social/service_test.go` and `internal/usecase/activitypub/service_extended_test.go` already use `security.NewURLValidatorAllowPrivate()`. Check if this function exists in `internal/security/url_validator.go`; if not, add it.
 - Update `WriteEnvFile(path, config)` → `WriteEnvFile(filepath.Join(w.OutputDir, path), config)`. Same for `WriteComposeOverride` and `GenerateNginxConfig`.
@@ -259,6 +261,7 @@ Worktree: No
 **Key Decisions / Notes:**
 
 **Mock ActivityPub server:**
+
 - Implement these endpoints:
   - `POST /inbox` — Accept Activity JSON (Follow, Create, Like, etc.), store in memory, return 202 Accepted. Log whether a valid `Signature` header was present (for assertion via `/test/inbox`).
   - `GET /users/{username}` — Return ActivityPub Actor JSON-LD with inbox, outbox, publicKey
@@ -270,6 +273,7 @@ Worktree: No
 - Return proper `Content-Type: application/activity+json` headers
 
 **Mock IOTA JSON-RPC server:**
+
 - Implement a minimal JSON-RPC 2.0 server that responds to:
   - `iota_getChainIdentifier` → `{"jsonrpc":"2.0","id":1,"result":"35834a8a"}`
   - `iota_getLatestCheckpointSequenceNumber` → `{"jsonrpc":"2.0","id":1,"result":"1000"}`
@@ -481,6 +485,7 @@ Worktree: No
   2. `AtprotoSessionStore` — Create a simple in-memory store implementing `SaveSession()` and `LoadSessionStrings()`.
   3. `encKey` — Any 32-byte key (e.g., `bytes.Repeat([]byte{0x42}, 32)`)
 - **Required config.Config fields:**
+
   ```go
   cfg := &config.Config{
     EnableATProto:         true,
@@ -491,6 +496,7 @@ Worktree: No
     PublicBaseURL:          "https://example.com",
   }
   ```
+
   Note: `config.ATProtoHTTPTimeout` is a constant (5s), not a config field.
 - Test flow:
   1. Create session with mock credentials → verify tokens received
