@@ -107,3 +107,6 @@ internal/httpapi/handlers/auth/storage/
 s3migrate
 s3test
 .playwright-cli/
+
+# Mock ATProto PDS binary (built by go test)
+atproto-pds
