@@ -42,6 +42,7 @@ Worktree: No
 **Package:** `internal/payments`
 **Issue:** `BuildTransaction`, `SignTransaction`, `SubmitTransaction` return `ErrNotImplemented`.
 **Scope:**
+
 - `BuildTransaction`: Construct Programmable Transaction Block (PTB) per IOTA Rebased spec
 - `SignTransaction`: Ed25519 signing of PTB serialization
 - `SubmitTransaction`: Call `iota_executeTransactionBlock` JSON-RPC
