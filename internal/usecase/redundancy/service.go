@@ -66,18 +66,8 @@ func (s *Service) UpdateInstancePeer(ctx context.Context, peer *domain.InstanceP
 }
 
 func (s *Service) DeleteInstancePeer(ctx context.Context, id string) error {
-	redundancies, err := s.redundancyRepo.GetVideoRedundanciesByInstanceID(ctx, id)
-	if err != nil {
+	if err := s.redundancyRepo.CancelRedundanciesByInstanceID(ctx, id); err != nil {
 		return err
-	}
-
-	for _, r := range redundancies {
-		if r.Status == domain.RedundancyStatusPending || r.Status == domain.RedundancyStatusSyncing {
-			r.MarkCancelled()
-			if err := s.redundancyRepo.UpdateVideoRedundancy(ctx, r); err != nil {
-				return err
-			}
-		}
 	}
 
 	return s.redundancyRepo.DeleteInstancePeer(ctx, id)
