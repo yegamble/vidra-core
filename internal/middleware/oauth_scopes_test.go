@@ -398,6 +398,126 @@ func TestRequireScopes_WWWAuthenticateHeader(t *testing.T) {
 	}
 }
 
+func TestExtractTokenScopes(t *testing.T) {
+	tests := []struct {
+		name      string
+		token     *jwt.Token
+		wantScope []string
+		wantErr   bool
+	}{
+		{
+			name:      "space-separated string scopes",
+			token:     createTokenWithScopes("upload write comment"),
+			wantScope: []string{"upload", "write", "comment"},
+		},
+		{
+			name: "array scopes",
+			token: &jwt.Token{
+				Claims: jwt.MapClaims{
+					"sub":   "user-123",
+					"scope": []interface{}{"upload", "write"},
+				},
+			},
+			wantScope: []string{"upload", "write"},
+		},
+		{
+			name: "no scope claim returns empty",
+			token: &jwt.Token{
+				Claims: jwt.MapClaims{
+					"sub": "user-123",
+				},
+			},
+			wantScope: nil,
+		},
+		{
+			name:    "nil token returns error",
+			token:   nil,
+			wantErr: true,
+		},
+		{
+			name: "non-MapClaims returns error",
+			token: &jwt.Token{
+				Claims: nil,
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			scopes, err := extractTokenScopes(tt.token)
+			if tt.wantErr {
+				if err == nil {
+					t.Error("Expected error, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Errorf("Unexpected error: %v", err)
+				return
+			}
+			if len(scopes) != len(tt.wantScope) {
+				t.Errorf("Expected %d scopes, got %d", len(tt.wantScope), len(scopes))
+				return
+			}
+			for i, s := range scopes {
+				if s != tt.wantScope[i] {
+					t.Errorf("Scope[%d]: expected %q, got %q", i, tt.wantScope[i], s)
+				}
+			}
+		})
+	}
+}
+
+func TestHasAllScopes(t *testing.T) {
+	tests := []struct {
+		name     string
+		token    []string
+		required []string
+		want     bool
+	}{
+		{
+			name:     "all scopes present",
+			token:    []string{"upload", "write", "comment"},
+			required: []string{"upload", "write"},
+			want:     true,
+		},
+		{
+			name:     "admin bypasses all",
+			token:    []string{"admin"},
+			required: []string{"upload", "write", "moderate"},
+			want:     true,
+		},
+		{
+			name:     "missing scope",
+			token:    []string{"upload"},
+			required: []string{"upload", "write"},
+			want:     false,
+		},
+		{
+			name:     "empty required passes",
+			token:    []string{"upload"},
+			required: []string{},
+			want:     true,
+		},
+		{
+			name:     "empty token fails",
+			token:    []string{},
+			required: []string{"upload"},
+			want:     false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := hasAllScopes(tt.token, tt.required)
+			if got != tt.want {
+				t.Errorf("hasAllScopes() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 // Helper function to create a JWT token with scopes
 func createTokenWithScopes(scopes string) *jwt.Token {
 	return &jwt.Token{

@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -29,57 +30,79 @@ type tokenKeyType struct{}
 
 var tokenKey = tokenKeyType{}
 
+// extractTokenScopes extracts OAuth scopes from a JWT token's claims.
+// The scope claim may be a space-separated string or a []interface{} array.
+func extractTokenScopes(token *jwt.Token) ([]string, error) {
+	if token == nil {
+		return nil, fmt.Errorf("no token provided")
+	}
+
+	claims, ok := token.Claims.(jwt.MapClaims)
+	if !ok {
+		return nil, fmt.Errorf("invalid token claims")
+	}
+
+	scopesClaim, exists := claims["scope"]
+	if !exists {
+		return nil, nil
+	}
+
+	switch v := scopesClaim.(type) {
+	case string:
+		return strings.Split(v, " "), nil
+	case []interface{}:
+		scopes := make([]string, 0, len(v))
+		for _, s := range v {
+			if str, ok := s.(string); ok {
+				scopes = append(scopes, str)
+			}
+		}
+		return scopes, nil
+	default:
+		return nil, nil
+	}
+}
+
+// hasAllScopes checks whether tokenScopes contains every requiredScope.
+// The admin scope is treated as a wildcard that satisfies any requirement.
+func hasAllScopes(tokenScopes []string, requiredScopes []string) bool {
+	for _, required := range requiredScopes {
+		found := false
+		for _, scope := range tokenScopes {
+			if scope == required || scope == ScopeAdmin {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
+}
+
 // RequireScopes creates a middleware that ensures the request has all required OAuth scopes
 func RequireScopes(requiredScopes ...string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// Get JWT token from context
 			token, ok := r.Context().Value(tokenKey).(*jwt.Token)
 			if !ok || token == nil {
 				http.Error(w, "Unauthorized", http.StatusUnauthorized)
 				return
 			}
 
-			// Extract scopes from token claims
-			claims, ok := token.Claims.(jwt.MapClaims)
-			if !ok {
+			tokenScopes, err := extractTokenScopes(token)
+			if err != nil {
 				http.Error(w, "Invalid token claims", http.StatusUnauthorized)
 				return
 			}
 
-			// Get scope claim (could be string or []string)
-			var tokenScopes []string
-			if scopesClaim, exists := claims["scope"]; exists {
-				switch v := scopesClaim.(type) {
-				case string:
-					tokenScopes = strings.Split(v, " ")
-				case []interface{}:
-					for _, s := range v {
-						if str, ok := s.(string); ok {
-							tokenScopes = append(tokenScopes, str)
-						}
-					}
-				}
+			if !hasAllScopes(tokenScopes, requiredScopes) {
+				w.Header().Set("WWW-Authenticate", `Bearer error="insufficient_scope", scope="`+strings.Join(requiredScopes, " ")+`"`)
+				http.Error(w, "Insufficient scope", http.StatusForbidden)
+				return
 			}
 
-			// Check if all required scopes are present
-			for _, required := range requiredScopes {
-				found := false
-				for _, scope := range tokenScopes {
-					if scope == required || scope == ScopeAdmin {
-						// Admin scope grants all permissions
-						found = true
-						break
-					}
-				}
-				if !found {
-					w.Header().Set("WWW-Authenticate", `Bearer error="insufficient_scope", scope="`+strings.Join(requiredScopes, " ")+`"`)
-					http.Error(w, "Insufficient scope", http.StatusForbidden)
-					return
-				}
-			}
-
-			// Store scopes in context for downstream handlers
 			ctx := context.WithValue(r.Context(), scopesKey{}, tokenScopes)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})

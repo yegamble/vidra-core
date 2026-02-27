@@ -66,14 +66,14 @@ These items from the original list are already implemented — no work needed:
 - [x] Task 4: Context Misuse in Video Import
 - [x] Task 5: Email Service Refactor (dedup + config struct)
 - [x] Task 6: Backup Config Structs + SFTP TOFU Persistence
-- [ ] Task 7: OAuth Scopes Middleware Flattening
+- [x] Task 7: OAuth Scopes Middleware Flattening
 - [ ] Task 8: Avatar Handler Debug Logging Cleanup
 - [ ] Task 9: Security - CSRF Protection in Setup Wizard
 - [ ] Task 10: Security - SSRF Hardening (ytdlp + DNS rebinding)
 - [ ] Task 11: Security - Chunk Assembly DoS Protection
 - [ ] Task 12: Test Improvements (ingestRemoteVideo + skeleton cleanup)
 
-**Total Tasks:** 12 | **Completed:** 6 | **Remaining:** 6
+**Total Tasks:** 12 | **Completed:** 7 | **Remaining:** 5
 
 ## Implementation Tasks
 
