@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"athena/internal/domain"
@@ -397,7 +398,11 @@ func (r *SocialRepository) GetBlockedLabels(ctx context.Context) ([]string, erro
 	return labels, err
 }
 
-// BatchUpsertActors efficiently upserts multiple actors
+// batchUpsertActorsMaxBatch is the max actors per INSERT to stay under
+// PostgreSQL's 65535 parameter limit (10 columns × 6000 = 60000 params).
+const batchUpsertActorsMaxBatch = 6000
+
+// BatchUpsertActors efficiently upserts multiple actors using multi-row INSERTs.
 func (r *SocialRepository) BatchUpsertActors(ctx context.Context, actors []domain.ATProtoActor) error {
 	if len(actors) == 0 {
 		return nil
@@ -409,11 +414,33 @@ func (r *SocialRepository) BatchUpsertActors(ctx context.Context, actors []domai
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	stmt, err := tx.PrepareContext(ctx, `
-		INSERT INTO atproto_actors (
+	for start := 0; start < len(actors); start += batchUpsertActorsMaxBatch {
+		end := start + batchUpsertActorsMaxBatch
+		if end > len(actors) {
+			end = len(actors)
+		}
+		batch := actors[start:end]
+
+		placeholders := make([]string, len(batch))
+		args := make([]interface{}, 0, len(batch)*10)
+		for i, actor := range batch {
+			base := i * 10
+			placeholders[i] = fmt.Sprintf(
+				"($%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d)",
+				base+1, base+2, base+3, base+4, base+5,
+				base+6, base+7, base+8, base+9, base+10,
+			)
+			args = append(args,
+				actor.DID, actor.Handle, actor.DisplayName, actor.Bio,
+				actor.AvatarURL, actor.BannerURL, actor.CreatedAt,
+				actor.UpdatedAt, actor.IndexedAt, actor.Labels,
+			)
+		}
+
+		query := `INSERT INTO atproto_actors (
 			did, handle, display_name, bio, avatar_url, banner_url,
 			created_at, updated_at, indexed_at, labels
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+		) VALUES ` + strings.Join(placeholders, ",") + `
 		ON CONFLICT (did) DO UPDATE SET
 			handle = EXCLUDED.handle,
 			display_name = EXCLUDED.display_name,
@@ -422,19 +449,9 @@ func (r *SocialRepository) BatchUpsertActors(ctx context.Context, actors []domai
 			banner_url = EXCLUDED.banner_url,
 			updated_at = EXCLUDED.updated_at,
 			indexed_at = EXCLUDED.indexed_at,
-			labels = EXCLUDED.labels`)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = stmt.Close() }()
+			labels = EXCLUDED.labels`
 
-	for _, actor := range actors {
-		_, err = stmt.ExecContext(ctx,
-			actor.DID, actor.Handle, actor.DisplayName, actor.Bio,
-			actor.AvatarURL, actor.BannerURL, actor.CreatedAt,
-			actor.UpdatedAt, actor.IndexedAt, actor.Labels,
-		)
-		if err != nil {
+		if _, err = tx.ExecContext(ctx, query, args...); err != nil {
 			return err
 		}
 	}

@@ -420,7 +420,7 @@ func TestEvaluatePolicies(t *testing.T) {
 		redundancyRepo.On("ListPoliciesToEvaluate", mock.Anything).Return([]*domain.RedundancyPolicy{policy}, nil)
 		videoRepo.On("GetVideosForRedundancy", mock.Anything, policy.Strategy, 100).Return([]*domain.Video{video}, nil)
 		redundancyRepo.On("GetActiveInstancesWithCapacity", mock.Anything, int64(0)).Return([]*domain.InstancePeer{instance}, nil)
-		redundancyRepo.On("GetVideoRedundanciesByVideoID", mock.Anything, video.ID).Return([]*domain.VideoRedundancy{}, nil)
+		redundancyRepo.On("GetVideoRedundanciesByVideoIDs", mock.Anything, []string{video.ID}).Return([]*domain.VideoRedundancy{}, nil)
 		redundancyRepo.On("CreateVideoRedundancy", mock.Anything, mock.MatchedBy(func(vr *domain.VideoRedundancy) bool {
 			return vr.VideoID == video.ID && vr.TargetInstanceID == instance.ID
 		})).Return(nil)
@@ -485,7 +485,7 @@ func TestEvaluatePolicy(t *testing.T) {
 
 		videoRepo.On("GetVideosForRedundancy", mock.Anything, policy.Strategy, 100).Return([]*domain.Video{video}, nil)
 		redundancyRepo.On("GetActiveInstancesWithCapacity", mock.Anything, int64(0)).Return([]*domain.InstancePeer{instance}, nil)
-		redundancyRepo.On("GetVideoRedundanciesByVideoID", mock.Anything, video.ID).Return([]*domain.VideoRedundancy{existingRedundancy}, nil)
+		redundancyRepo.On("GetVideoRedundanciesByVideoIDs", mock.Anything, []string{video.ID}).Return([]*domain.VideoRedundancy{existingRedundancy}, nil)
 
 		svc := newTestService(redundancyRepo, videoRepo, httpDoer)
 		created, err := svc.evaluatePolicy(context.Background(), policy)
@@ -509,7 +509,7 @@ func TestEvaluatePolicy(t *testing.T) {
 
 		videoRepo.On("GetVideosForRedundancy", mock.Anything, policy.Strategy, 100).Return([]*domain.Video{video}, nil)
 		redundancyRepo.On("GetActiveInstancesWithCapacity", mock.Anything, int64(0)).Return([]*domain.InstancePeer{instance}, nil)
-		redundancyRepo.On("GetVideoRedundanciesByVideoID", mock.Anything, video.ID).Return([]*domain.VideoRedundancy{}, nil)
+		redundancyRepo.On("GetVideoRedundanciesByVideoIDs", mock.Anything, []string{video.ID}).Return([]*domain.VideoRedundancy{}, nil)
 
 		svc := newTestService(redundancyRepo, videoRepo, httpDoer)
 		created, err := svc.evaluatePolicy(context.Background(), policy)
@@ -534,7 +534,7 @@ func TestEvaluatePolicy(t *testing.T) {
 
 		videoRepo.On("GetVideosForRedundancy", mock.Anything, policy.Strategy, 100).Return([]*domain.Video{video}, nil)
 		redundancyRepo.On("GetActiveInstancesWithCapacity", mock.Anything, int64(0)).Return([]*domain.InstancePeer{instance}, nil)
-		redundancyRepo.On("GetVideoRedundanciesByVideoID", mock.Anything, video.ID).Return([]*domain.VideoRedundancy{existingRedundancy}, nil)
+		redundancyRepo.On("GetVideoRedundanciesByVideoIDs", mock.Anything, []string{video.ID}).Return([]*domain.VideoRedundancy{existingRedundancy}, nil)
 
 		svc := newTestService(redundancyRepo, videoRepo, httpDoer)
 		created, err := svc.evaluatePolicy(context.Background(), policy)

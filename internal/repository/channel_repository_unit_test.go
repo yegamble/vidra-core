@@ -265,7 +265,7 @@ func TestChannelRepository_Unit_List(t *testing.T) {
 	ch2.AccountID = uuid.New()
 	ch2.Handle = "unit-channel-2"
 
-	t.Run("success with defaults and load-account-continue", func(t *testing.T) {
+	t.Run("success with defaults and bulk account fetch", func(t *testing.T) {
 		repo, mock, cleanup := newChannelRepo(t)
 		defer cleanup()
 
@@ -284,12 +284,11 @@ func TestChannelRepository_Unit_List(t *testing.T) {
 		mock.ExpectQuery(`(?s)SELECT\s+c\.id.*FROM channels c.*ORDER BY c\.created_at DESC`).
 			WillReturnRows(rows)
 
-		mock.ExpectQuery(`(?s)SELECT id, username, email, display_name, bio, created_at, updated_at.*FROM users.*WHERE id = \$1`).
-			WithArgs(ch1.AccountID).
-			WillReturnRows(makeUserScanRows(ch1.AccountID, ch1.CreatedAt))
-		mock.ExpectQuery(`(?s)SELECT id, username, email, display_name, bio, created_at, updated_at.*FROM users.*WHERE id = \$1`).
-			WithArgs(ch2.AccountID).
-			WillReturnError(errors.New("temporary user lookup error"))
+		// Single bulk query for all accounts (NOT N+1)
+		accountRows := makeUserScanRows(ch1.AccountID, ch1.CreatedAt)
+		// ch2's account is not returned (simulates deleted user) -> ch2.Account stays nil
+		mock.ExpectQuery(`(?s)SELECT id, username, email, display_name, bio, created_at, updated_at.*FROM users.*WHERE id = ANY`).
+			WillReturnRows(accountRows)
 
 		resp, err := repo.List(ctx, params)
 		require.NoError(t, err)

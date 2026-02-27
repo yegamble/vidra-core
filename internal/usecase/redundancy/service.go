@@ -379,12 +379,25 @@ func (s *Service) evaluatePolicy(ctx context.Context, policy *domain.RedundancyP
 		return 0, fmt.Errorf("no active instances available")
 	}
 
+	// Batch-fetch all redundancies in one query to eliminate N+1.
+	videoIDs := make([]string, len(videos))
+	for i, v := range videos {
+		videoIDs[i] = v.ID
+	}
+	allRedundancies, err := s.redundancyRepo.GetVideoRedundanciesByVideoIDs(ctx, videoIDs)
+	if err != nil {
+		return 0, fmt.Errorf("batch fetch redundancies: %w", err)
+	}
+
+	// Index by video ID for O(1) lookup.
+	redundanciesByVideo := make(map[string][]*domain.VideoRedundancy, len(videos))
+	for _, r := range allRedundancies {
+		redundanciesByVideo[r.VideoID] = append(redundanciesByVideo[r.VideoID], r)
+	}
+
 	created := 0
 	for _, video := range videos {
-		existing, err := s.redundancyRepo.GetVideoRedundanciesByVideoID(ctx, video.ID)
-		if err != nil {
-			continue
-		}
+		existing := redundanciesByVideo[video.ID]
 
 		syncedCount := 0
 		for _, r := range existing {

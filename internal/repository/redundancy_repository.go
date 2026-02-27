@@ -279,6 +279,25 @@ func (r *RedundancyRepository) GetVideoRedundanciesByVideoID(ctx context.Context
 	return redundancies, nil
 }
 
+// GetVideoRedundanciesByVideoIDs retrieves redundancies for multiple videos in one query.
+func (r *RedundancyRepository) GetVideoRedundanciesByVideoIDs(ctx context.Context, videoIDs []string) ([]*domain.VideoRedundancy, error) {
+	if len(videoIDs) == 0 {
+		return nil, nil
+	}
+
+	var redundancies []*domain.VideoRedundancy
+	query := `
+		SELECT * FROM video_redundancy
+		WHERE video_id = ANY($1::uuid[])
+		ORDER BY created_at DESC
+	`
+	err := r.db.SelectContext(ctx, &redundancies, query, pq.Array(videoIDs))
+	if err != nil {
+		return nil, fmt.Errorf("failed to get video redundancies by video IDs: %w", err)
+	}
+	return redundancies, nil
+}
+
 // GetVideoRedundanciesByInstanceID retrieves all redundancies for an instance
 func (r *RedundancyRepository) GetVideoRedundanciesByInstanceID(ctx context.Context, instanceID string) ([]*domain.VideoRedundancy, error) {
 	var redundancies []*domain.VideoRedundancy

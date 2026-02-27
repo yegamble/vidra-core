@@ -21,7 +21,7 @@ func computePublicBaseURL(domain string, port int, protocol string) string {
 	return baseURL
 }
 
-func WriteEnvFile(path string, config *WizardConfig) error {
+func WriteEnvFile(path string, config *WizardConfig) error { //nolint:gocyclo // large config serializer, complexity is inherent
 	var lines []string
 
 	lines = append(lines, "# Athena Configuration")

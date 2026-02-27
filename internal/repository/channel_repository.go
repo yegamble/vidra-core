@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
+	"github.com/lib/pq"
 )
 
 // ChannelRepository handles database operations for channels
@@ -199,11 +200,26 @@ func (r *ChannelRepository) List(ctx context.Context, params domain.ChannelListP
 		return nil, fmt.Errorf("failed to list channels: %w", err)
 	}
 
-	// Load account information for each channel
-	for i := range channels {
-		if err := r.loadChannelAccount(ctx, &channels[i]); err != nil {
-			// Log error but don't fail the entire request
-			continue
+	// Bulk-load account information for all channels in a single query
+	if len(channels) > 0 {
+		accountIDs := make([]string, len(channels))
+		for i, ch := range channels {
+			accountIDs[i] = ch.AccountID.String()
+		}
+
+		var users []domain.User
+		bulkQuery := `
+			SELECT id, username, email, display_name, bio, created_at, updated_at
+			FROM users
+			WHERE id = ANY($1::uuid[])`
+		if err := r.db.SelectContext(ctx, &users, bulkQuery, pq.Array(accountIDs)); err == nil {
+			userMap := make(map[string]*domain.User, len(users))
+			for i := range users {
+				userMap[users[i].ID] = &users[i]
+			}
+			for i := range channels {
+				channels[i].Account = userMap[channels[i].AccountID.String()]
+			}
 		}
 	}
 

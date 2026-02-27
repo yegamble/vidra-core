@@ -1472,25 +1472,34 @@ func TestSocialRepository_Unit_BatchUpsertActors(t *testing.T) {
 		require.NoError(t, err)
 	})
 
-	t.Run("success with one actor", func(t *testing.T) {
+	t.Run("success with one actor uses single INSERT", func(t *testing.T) {
 		repo, mock, cleanup := newSocialRepo(t)
 		defer cleanup()
 
 		actor := sampleActor()
 		mock.ExpectBegin()
-		mock.ExpectPrepare(regexp.QuoteMeta(
-			`INSERT INTO atproto_actors`))
-		mock.ExpectExec(regexp.QuoteMeta(
-			`INSERT INTO atproto_actors`)).
-			WithArgs(
-				actor.DID, actor.Handle, actor.DisplayName, actor.Bio,
-				actor.AvatarURL, actor.BannerURL, actor.CreatedAt,
-				actor.UpdatedAt, actor.IndexedAt, actor.Labels,
-			).
+		// Single multi-row INSERT (no Prepare)
+		mock.ExpectExec(`INSERT INTO atproto_actors`).
 			WillReturnResult(sqlmock.NewResult(0, 1))
 		mock.ExpectCommit()
 
 		err := repo.BatchUpsertActors(ctx, []domain.ATProtoActor{actor})
+		require.NoError(t, err)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("success with multiple actors uses single INSERT", func(t *testing.T) {
+		repo, mock, cleanup := newSocialRepo(t)
+		defer cleanup()
+
+		actors := []domain.ATProtoActor{sampleActor(), sampleActor(), sampleActor()}
+		mock.ExpectBegin()
+		// One INSERT for all three actors
+		mock.ExpectExec(`INSERT INTO atproto_actors`).
+			WillReturnResult(sqlmock.NewResult(0, 3))
+		mock.ExpectCommit()
+
+		err := repo.BatchUpsertActors(ctx, actors)
 		require.NoError(t, err)
 		require.NoError(t, mock.ExpectationsWereMet())
 	})
@@ -1508,38 +1517,13 @@ func TestSocialRepository_Unit_BatchUpsertActors(t *testing.T) {
 		require.NoError(t, mock.ExpectationsWereMet())
 	})
 
-	t.Run("prepare error", func(t *testing.T) {
-		repo, mock, cleanup := newSocialRepo(t)
-		defer cleanup()
-
-		actor := sampleActor()
-		mock.ExpectBegin()
-		mock.ExpectPrepare(regexp.QuoteMeta(
-			`INSERT INTO atproto_actors`)).
-			WillReturnError(errors.New("prepare failed"))
-		mock.ExpectRollback()
-
-		err := repo.BatchUpsertActors(ctx, []domain.ATProtoActor{actor})
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "prepare failed")
-		require.NoError(t, mock.ExpectationsWereMet())
-	})
-
 	t.Run("exec error rolls back", func(t *testing.T) {
 		repo, mock, cleanup := newSocialRepo(t)
 		defer cleanup()
 
 		actor := sampleActor()
 		mock.ExpectBegin()
-		mock.ExpectPrepare(regexp.QuoteMeta(
-			`INSERT INTO atproto_actors`))
-		mock.ExpectExec(regexp.QuoteMeta(
-			`INSERT INTO atproto_actors`)).
-			WithArgs(
-				actor.DID, actor.Handle, actor.DisplayName, actor.Bio,
-				actor.AvatarURL, actor.BannerURL, actor.CreatedAt,
-				actor.UpdatedAt, actor.IndexedAt, actor.Labels,
-			).
+		mock.ExpectExec(`INSERT INTO atproto_actors`).
 			WillReturnError(errors.New("exec failed"))
 		mock.ExpectRollback()
 

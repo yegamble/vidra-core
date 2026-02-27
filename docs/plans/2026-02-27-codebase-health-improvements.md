@@ -2,7 +2,7 @@
 
 Created: 2026-02-27
 Status: PENDING
-Approved: No
+Approved: Yes
 Iterations: 0
 Worktree: No
 Type: Feature
@@ -60,7 +60,7 @@ These items from the original list are already implemented — no work needed:
 
 ## Progress Tracking
 
-- [ ] Task 1: Batch DB Operations (N+1 fixes)
+- [x] Task 1: Batch DB Operations (N+1 fixes)
 - [ ] Task 2: Torrent Generator Optimizations
 - [ ] Task 3: Livestream Analytics Fixes (contains bug + collectAllStreams refactor)
 - [ ] Task 4: Context Misuse in Video Import
@@ -73,7 +73,7 @@ These items from the original list are already implemented — no work needed:
 - [ ] Task 11: Security - Chunk Assembly DoS Protection
 - [ ] Task 12: Test Improvements (ingestRemoteVideo + skeleton cleanup)
 
-**Total Tasks:** 12 | **Completed:** 0 | **Remaining:** 12
+**Total Tasks:** 12 | **Completed:** 1 | **Remaining:** 11
 
 ## Implementation Tasks
 
@@ -97,13 +97,14 @@ These items from the original list are already implemented — no work needed:
 - **BatchIncrementVideoViews** (views_repository.go:478): Replace loop with single `UPDATE videos SET views = views + c.count, updated_at = NOW() FROM (SELECT unnest($1::uuid[]) AS id, unnest($2::bigint[]) AS count) c WHERE videos.id = c.id`. Build two parallel slices from the map.
 - **evaluatePolicy** (redundancy/service.go:384): Add `GetVideoRedundanciesByVideoIDs(ctx, videoIDs []string)` to the redundancy port interface. Implement with `WHERE video_id = ANY($1)`. Group results by video ID in Go.
 - **Channel List** (channel_repository.go:202): Replace the N+1 `loadChannelAccount` loop with a JOIN in the main query: `LEFT JOIN accounts a ON c.account_id = a.id`. Scan account fields inline.
-- **BatchUpsertActors** (social_repository.go:431): Replace loop with multi-row INSERT using value list builder: `INSERT INTO ... VALUES ($1,$2,...), ($11,$12,...) ON CONFLICT ...`. Build args slice dynamically. Keep within PostgreSQL's 65535 param limit (batch if >6000 actors).
+- **BatchUpsertActors** (social_repository.go:431): Replace loop with multi-row INSERT using value list builder: `INSERT INTO ... VALUES ($1,$2,...), ($13,$14,...) ON CONFLICT ...`. Build args slice dynamically. Keep within PostgreSQL's 65535 param limit — batch at 5461 actors max per INSERT (12 columns × 5461 = 65,532 < 65,535).
 
 **Definition of Done:**
 
 - [ ] All 4 batch operations use single SQL query instead of N queries
 - [ ] Existing tests pass (no behavior change, only performance)
 - [ ] New unit tests verify batch operations with 0, 1, and multiple items
+- [ ] Mock implementations updated for any new/changed interface methods
 - [ ] `go test ./internal/repository/... ./internal/usecase/redundancy/... -short` passes
 
 **Verify:**
@@ -163,6 +164,7 @@ These items from the original list are already implemented — no work needed:
 **Definition of Done:**
 
 - [ ] `contains` function uses `strings.Contains` (or replaced with direct `strings.Contains` calls)
+- [ ] New test verifies mid-string matching (e.g., `contains("Mozilla/5.0 Chrome/120", "Chrome")` returns true)
 - [ ] `collectAllStreams` split into 3+ sub-functions, each < 50 lines
 - [ ] All existing livestream tests pass
 - [ ] `go test ./internal/livestream/... -short` passes
@@ -248,7 +250,7 @@ These items from the original list are already implemented — no work needed:
 
 - **SFTPConfig**: `type SFTPConfig struct { Host string; Port int; User string; Password string; KeyPath string; Path string; KnownHostsFile string }`. `NewSFTPBackend(cfg SFTPConfig)`.
 - **S3Config**: `type S3Config struct { Bucket string; Region string; Prefix string; Endpoint string; AccessKey string; SecretKey string }`. `NewS3Backend(cfg S3Config)`.
-- **TOFU persistence**: In `buildHostKeyCallback`, when `knownHostKey == ""` and TOFU accepts a key, write it to `KnownHostsFile` (default: `~/.ssh/known_hosts_athena` or configurable). On subsequent connections, read from file first. Use `os.OpenFile` with `O_CREATE|O_APPEND`.
+- **TOFU persistence**: Read known hosts from `KnownHostsFile` during `NewSFTPBackend()` construction (before `sync.Once` in `initClient`). Store in `knownHostKey` field. In `buildHostKeyCallback`, when `knownHostKey == ""` and TOFU accepts a key, write it to `KnownHostsFile` (default: `~/.ssh/known_hosts_athena` or configurable). Use `os.OpenFile` with `O_CREATE|O_APPEND`. **Critical:** The known_hosts file must be read at construction time, not inside `initClient`, because `sync.Once` means `initClient` only runs once — if it reads from file inside `sync.Once`, later file writes won't be visible on reconnection without recreating the backend.
 - **Callers:** Search with `Grep` for `NewSFTPBackend(` and `NewS3Backend(` to find all call sites. Update them to pass config structs.
 
 **Definition of Done:**
@@ -355,9 +357,10 @@ These items from the original list are already implemented — no work needed:
 - [ ] CSRF token generated at wizard creation
 - [ ] All POST form handlers validate CSRF token
 - [ ] HTML templates include hidden CSRF token field
-- [ ] Missing/invalid token returns 403 Forbidden
-- [ ] Token comparison uses constant-time comparison
-- [ ] Tests verify CSRF rejection and acceptance
+- [ ] POST without `_csrf_token` returns 403 Forbidden
+- [ ] POST with wrong `_csrf_token` returns 403 Forbidden
+- [ ] POST with correct `_csrf_token` returns 2xx (normal flow)
+- [ ] Token comparison uses `crypto/subtle.ConstantTimeCompare`
 - [ ] `go test ./internal/setup/... -short` passes
 
 **Verify:**
@@ -381,15 +384,14 @@ These items from the original list are already implemented — no work needed:
 **Key Decisions / Notes:**
 
 - **yt-dlp SSRF** (ytdlp.go): Before passing URL to yt-dlp, validate scheme is http/https only (reject `file://`, `ftp://`, etc.). Also call `security.IsSSRFSafeURL()` to check for private IPs. Add to `ValidateURL`, `ExtractMetadata`, and `Download`.
-- **DNS rebinding** (validation.go:107-114): Current approach does `time.Sleep(DNSRebindDelay)` then re-resolves. This doesn't prevent the actual HTTP client from resolving to a different IP. Fix: return the resolved IPs from `IsSSRFSafeURL` and provide a `SafeDialer(resolvedIPs)` function that pins the connection to the pre-validated IPs. The dialer uses `net.Dialer` with a custom `Control` function or overrides resolution.
-- Alternatively, simpler approach: export a `NewSSRFSafeHTTPClient()` that uses a custom `Transport` with a `DialContext` that resolves+validates before connecting. This is the standard Go pattern.
+- **DNS rebinding** (validation.go:107-114): Current approach does `time.Sleep(DNSRebindDelay)` then re-resolves. This doesn't prevent the actual HTTP client from resolving to a different IP. Fix: export `NewSSRFSafeHTTPClient()` that returns an `*http.Client` with a custom `Transport` whose `DialContext` resolves the hostname, validates the resolved IPs against the SSRF blocklist, then connects to the validated IP directly. This is the standard Go pattern for IP pinning. Remove the sleep-and-re-resolve approach.
 
 **Definition of Done:**
 
 - [ ] yt-dlp wrapper rejects non-http/https URLs
 - [ ] yt-dlp wrapper calls SSRF validation on target URL
-- [ ] `IsSSRFSafeURL` returns resolved IPs for pinning
-- [ ] `NewSSRFSafeHTTPClient` or `SafeDialer` pins to pre-validated IPs
+- [ ] `NewSSRFSafeHTTPClient()` exported, returns `*http.Client` with IP-pinning DialContext
+- [ ] Sleep-and-re-resolve DNS rebinding approach removed
 - [ ] Tests verify file://, ftp://, and private IP rejection
 - [ ] `go test ./internal/importer/... ./internal/security/... -short` passes
 
@@ -413,13 +415,14 @@ These items from the original list are already implemented — no work needed:
 
 **Key Decisions / Notes:**
 
-- **ChunkSize bound**: In `InitiateUpload` (line 56), add validation: `if req.ChunkSize > MaxChunkSize { return error }`. Set `MaxChunkSize = 64 * 1024 * 1024` (64MB) as a sensible upper bound.
+- **ChunkSize bound**: In `InitiateUpload` (line 56), add validation: `if req.ChunkSize <= 0 || req.ChunkSize > MaxChunkSize { return error }`. Set `MaxChunkSize = 64 * 1024 * 1024` (64MB) as a sensible upper bound. The `> 0` check prevents a divide-by-zero at line 64 where ChunkSize is used as a divisor (`expectedChunks = totalSize / chunkSize`).
 - **Streaming assembly**: In `AssembleChunks` (line 284), replace `os.ReadFile(chunkPath)` + `finalFile.Write(chunkData)` with `chunkFile, _ := os.Open(chunkPath)` + `io.Copy(finalFile, chunkFile)` + `chunkFile.Close()`. This streams chunk data without loading it all into memory.
 
 **Definition of Done:**
 
-- [ ] ChunkSize validated with upper bound (64MB) in InitiateUpload
+- [ ] ChunkSize validated: must be > 0 AND <= 64MB in InitiateUpload
 - [ ] AssembleChunks uses `io.Copy` streaming instead of `os.ReadFile`
+- [ ] Test verifies rejection of ChunkSize=0 (divide-by-zero prevention)
 - [ ] Test verifies rejection of oversized ChunkSize
 - [ ] Existing upload tests pass
 - [ ] `go test ./internal/usecase/upload/... -short` passes
@@ -490,7 +493,8 @@ These items from the original list are already implemented — no work needed:
 ### Truths
 
 - N+1 query patterns eliminated from 4 identified locations
-- User-agent detection in analytics correctly identifies browsers mid-string (not just prefix)
+- User-agent detection in analytics correctly identifies browsers
+  mid-string (not just prefix)
 - Setup wizard POST forms are protected against CSRF
 - yt-dlp URL import rejects file:// and private IP addresses
 - Chunk uploads reject oversized ChunkSize values

@@ -1204,3 +1204,59 @@ func TestViewsRepository_Unit_GetVideoAnalytics(t *testing.T) {
 		require.NoError(t, mock.ExpectationsWereMet())
 	})
 }
+
+func TestBatchIncrementVideoViews(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("empty map does nothing", func(t *testing.T) {
+		repo, mock, cleanup := newViewsRepo(t)
+		defer cleanup()
+
+		err := repo.BatchIncrementVideoViews(ctx, map[string]int64{})
+		assert.NoError(t, err)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("single entry uses single query", func(t *testing.T) {
+		repo, mock, cleanup := newViewsRepo(t)
+		defer cleanup()
+
+		videoID := uuid.New().String()
+		mock.ExpectExec(`UPDATE videos.*unnest`).
+			WithArgs(pq.Array([]string{videoID}), pq.Array([]int64{5})).
+			WillReturnResult(sqlmock.NewResult(0, 1))
+
+		err := repo.BatchIncrementVideoViews(ctx, map[string]int64{videoID: 5})
+		assert.NoError(t, err)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("multiple entries use single query", func(t *testing.T) {
+		repo, mock, cleanup := newViewsRepo(t)
+		defer cleanup()
+
+		id1 := uuid.New().String()
+		id2 := uuid.New().String()
+
+		// Single query expected (not two)
+		mock.ExpectExec(`UPDATE videos.*unnest`).
+			WillReturnResult(sqlmock.NewResult(0, 2))
+
+		err := repo.BatchIncrementVideoViews(ctx, map[string]int64{id1: 3, id2: 7})
+		assert.NoError(t, err)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("db error propagated", func(t *testing.T) {
+		repo, mock, cleanup := newViewsRepo(t)
+		defer cleanup()
+
+		videoID := uuid.New().String()
+		mock.ExpectExec(`UPDATE videos.*unnest`).
+			WillReturnError(errors.New("db error"))
+
+		err := repo.BatchIncrementVideoViews(ctx, map[string]int64{videoID: 1})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "batch increment views")
+	})
+}

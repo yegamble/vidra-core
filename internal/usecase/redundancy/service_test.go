@@ -85,6 +85,14 @@ func (m *MockRedundancyRepository) GetVideoRedundanciesByVideoID(ctx context.Con
 	return args.Get(0).([]*domain.VideoRedundancy), args.Error(1)
 }
 
+func (m *MockRedundancyRepository) GetVideoRedundanciesByVideoIDs(ctx context.Context, videoIDs []string) ([]*domain.VideoRedundancy, error) {
+	args := m.Called(ctx, videoIDs)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*domain.VideoRedundancy), args.Error(1)
+}
+
 func (m *MockRedundancyRepository) GetVideoRedundanciesByInstanceID(ctx context.Context, instanceID string) ([]*domain.VideoRedundancy, error) {
 	args := m.Called(ctx, instanceID)
 	if args.Get(0) == nil {
@@ -1428,6 +1436,51 @@ func TestCheckInstanceHealth(t *testing.T) {
 			redundancyRepo.AssertExpectations(t)
 		})
 	}
+}
+
+// ==================== EvaluatePolicies N+1 Fix Tests ====================
+
+func TestEvaluatePolicies_BatchFetchesRedundancies(t *testing.T) {
+	ctx := context.Background()
+
+	video1 := validVideo()
+	video1.ID = "video-1"
+	video2 := &domain.Video{ID: "video-2", FileSize: 1024 * 1024 * 50}
+	peer := validInstancePeer()
+	peer.MaxRedundancySizeGB = 1000
+	policy := validPolicy()
+	policy.TargetInstanceCount = 1
+
+	// video-1 already has synced redundancy on peer-1 → needs none
+	// video-2 has no redundancy → service should create one
+	existing := &domain.VideoRedundancy{
+		ID:               "redundancy-1",
+		VideoID:          "video-1",
+		TargetInstanceID: "peer-1",
+		Status:           domain.RedundancyStatusSynced,
+	}
+
+	redundancyRepo := new(MockRedundancyRepository)
+	videoRepo := new(MockVideoRepository)
+	httpDoer := new(MockHTTPDoer)
+
+	redundancyRepo.On("ListPoliciesToEvaluate", mock.Anything).Return([]*domain.RedundancyPolicy{policy}, nil)
+	videoRepo.On("GetVideosForRedundancy", mock.Anything, policy.Strategy, 100).Return([]*domain.Video{video1, video2}, nil)
+	redundancyRepo.On("GetActiveInstancesWithCapacity", mock.Anything, int64(0)).Return([]*domain.InstancePeer{peer}, nil)
+	// Single batch call for both video IDs — verifies N+1 is eliminated
+	redundancyRepo.On("GetVideoRedundanciesByVideoIDs", mock.Anything, []string{"video-1", "video-2"}).
+		Return([]*domain.VideoRedundancy{existing}, nil)
+	redundancyRepo.On("CreateVideoRedundancy", mock.Anything, mock.AnythingOfType("*domain.VideoRedundancy")).Return(nil)
+	redundancyRepo.On("UpdatePolicyEvaluationTime", mock.Anything, policy.ID).Return(nil)
+
+	svc := newTestService(redundancyRepo, videoRepo, httpDoer)
+	count, err := svc.EvaluatePolicies(ctx)
+
+	assert.NoError(t, err)
+	assert.Equal(t, 1, count) // video-2 needed a new redundancy
+	redundancyRepo.AssertExpectations(t)
+	// Crucially: GetVideoRedundanciesByVideoID (singular) must NOT have been called
+	redundancyRepo.AssertNotCalled(t, "GetVideoRedundanciesByVideoID", mock.Anything, mock.Anything)
 }
 
 // ==================== CleanupOldLogs Tests ====================

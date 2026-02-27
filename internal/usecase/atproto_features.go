@@ -1,7 +1,6 @@
 package usecase
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -173,76 +172,6 @@ func (s *atprotoService) resolveRecordCID(ctx context.Context, atURI string) (st
 		return "", err
 	}
 	return cid, nil
-}
-
-// getPostThread fetches the thread for a given AT URI.
-func (s *atprotoService) getPostThread(ctx context.Context, uri string, depth int) (map[string]any, error) {
-	pds := strings.TrimRight(s.resolvePDSURL(ctx), "/")
-	if pds == "" {
-		return nil, fmt.Errorf("atproto: missing PDS URL")
-	}
-	if depth <= 0 {
-		depth = 6
-	}
-
-	var result map[string]any
-	err := doWithRetry(ctx, s.retry, "getPostThread", func() error {
-		url := fmt.Sprintf("%s/xrpc/app.bsky.feed.getPostThread?uri=%s&depth=%d", pds, uri, depth)
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-		if err != nil {
-			return err
-		}
-		resp, err := s.client.Do(req)
-		if err != nil {
-			return err
-		}
-		defer func() { _ = resp.Body.Close() }()
-		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			b, _ := io.ReadAll(resp.Body)
-			return &retryableError{StatusCode: resp.StatusCode, Err: fmt.Errorf("getPostThread status %d: %s", resp.StatusCode, string(b))}
-		}
-		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-			return fmt.Errorf("getPostThread: decode: %w", err)
-		}
-		return nil
-	})
-	if err != nil {
-		return nil, err
-	}
-	return result, nil
-}
-
-// deleteRecord deletes a record from the PDS.
-func (s *atprotoService) deleteRecord(ctx context.Context, accessJwt, repoDID, collection, rkey string) error {
-	pds := strings.TrimRight(s.resolvePDSURL(ctx), "/")
-	if pds == "" {
-		return fmt.Errorf("atproto: missing PDS URL")
-	}
-	body := map[string]any{
-		"repo":       repoDID,
-		"collection": collection,
-		"rkey":       rkey,
-	}
-	b, _ := json.Marshal(body)
-
-	return doWithRetry(ctx, s.retry, "deleteRecord", func() error {
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, pds+"/xrpc/com.atproto.repo.deleteRecord", bytes.NewReader(b))
-		if err != nil {
-			return err
-		}
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Authorization", "Bearer "+accessJwt)
-		resp, err := s.client.Do(req)
-		if err != nil {
-			return err
-		}
-		defer func() { _ = resp.Body.Close() }()
-		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			respBody, _ := io.ReadAll(resp.Body)
-			return &retryableError{StatusCode: resp.StatusCode, Err: fmt.Errorf("deleteRecord status %d: %s", resp.StatusCode, string(respBody))}
-		}
-		return nil
-	})
 }
 
 // truncateText truncates text to maxGraphemes, appending "..." if truncated.
