@@ -345,6 +345,15 @@ func (h *ViewsHandler) GetViewHistory(w http.ResponseWriter, r *http.Request) {
 		filter.UserID = userIDFilter
 	}
 
+	// Privacy guard: if no user_id filter provided, non-admins can only see their own history.
+	if filter.UserID == "" {
+		callerID, _ := r.Context().Value(middleware.UserIDKey).(string)
+		callerRole, _ := r.Context().Value(middleware.UserRoleKey).(string)
+		if callerID != "" && callerRole != "admin" {
+			filter.UserID = callerID
+		}
+	}
+
 	// Parse date range
 	if startDateStr := r.URL.Query().Get("start_date"); startDateStr != "" {
 		startDate, err := time.Parse("2006-01-02", startDateStr)

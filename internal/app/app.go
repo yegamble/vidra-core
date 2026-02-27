@@ -84,6 +84,7 @@ type Dependencies struct {
 	SubRepo               usecase.SubscriptionRepository
 	ViewsRepo             *repository.ViewsRepository
 	NotificationRepo      *repository.NotificationRepository
+	NotificationPrefRepo  *repository.NotificationPreferencesRepository
 	ChannelRepo           *repository.ChannelRepository
 	CommentRepo           usecase.CommentRepository
 	RatingRepo            usecase.RatingRepository
@@ -268,6 +269,7 @@ func (app *Application) initializeDependencies() *Dependencies {
 		SubRepo:               repository.NewSubscriptionRepository(app.DB),
 		ViewsRepo:             repository.NewViewsRepository(app.DB),
 		NotificationRepo:      repository.NewNotificationRepository(app.DB),
+		NotificationPrefRepo:  repository.NewNotificationPreferencesRepository(app.DB),
 		ChannelRepo:           repository.NewChannelRepository(app.DB),
 		CommentRepo:           repository.NewCommentRepository(app.DB),
 		RatingRepo:            repository.NewRatingRepository(app.DB),

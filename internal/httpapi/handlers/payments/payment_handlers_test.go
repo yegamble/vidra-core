@@ -119,7 +119,8 @@ func TestCreateWallet(t *testing.T) {
 			expectedStatus: http.StatusConflict,
 			checkResponse: func(t *testing.T, resp map[string]interface{}) {
 				assert.False(t, resp["success"].(bool))
-				assert.Contains(t, resp["error"].(string), "already exists")
+				errObj := resp["error"].(map[string]interface{})
+				assert.Contains(t, errObj["message"].(string), "already exists")
 			},
 		},
 		{
@@ -305,7 +306,8 @@ func TestCreatePaymentIntent(t *testing.T) {
 			expectedStatus: http.StatusBadRequest,
 			checkResponse: func(t *testing.T, resp map[string]interface{}) {
 				assert.False(t, resp["success"].(bool))
-				assert.Contains(t, resp["error"].(string), "amount")
+				errObj := resp["error"].(map[string]interface{})
+				assert.Contains(t, errObj["message"].(string), "amount")
 			},
 		},
 		{
@@ -646,7 +648,8 @@ func TestValidateInputSanitization(t *testing.T) {
 				err := json.Unmarshal(rr.Body.Bytes(), &response)
 				require.NoError(t, err)
 				assert.Equal(t, false, response["success"])
-				assert.Contains(t, response["error"], tt.expectedError)
+				errObj := response["error"].(map[string]interface{})
+				assert.Contains(t, errObj["message"].(string), tt.expectedError)
 			}
 		})
 	}
@@ -708,7 +711,8 @@ func TestErrorHandling(t *testing.T) {
 			assert.False(t, response["success"].(bool))
 			// Error message should be user-friendly, not exposing internal details
 			if tt.mockError == domain.ErrWalletNotFound || tt.mockError == domain.ErrInvalidAmount {
-				assert.Contains(t, response["error"].(string), tt.expectedMsg)
+				errObj := response["error"].(map[string]interface{})
+				assert.Contains(t, errObj["message"].(string), tt.expectedMsg)
 			}
 		})
 	}

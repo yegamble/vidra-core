@@ -1,0 +1,866 @@
+{
+  "info": {
+    "name": "Athena Frontend API Gaps",
+    "_postman_id": "b7e2a1c0-f3a4-4b5d-8c6e-d9f0a1b2c3d4",
+    "description": "E2E tests for new endpoints added to support the Iris frontend: public user profiles, admin user/video management, view history, and notification preferences.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:8080", "type": "string" },
+    { "key": "access_token", "value": "", "type": "string" },
+    { "key": "admin_access_token", "value": "", "type": "string" },
+    { "key": "test_user_id", "value": "", "type": "string" },
+    { "key": "test_video_id", "value": "", "type": "string" }
+  ],
+  "item": [
+    {
+      "name": "Setup - Login as admin",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Admin login succeeds', () => pm.response.to.have.status(200));",
+              "const json = pm.response.json();",
+              "pm.test('Admin token present', () => pm.expect(json).to.have.property('access_token'));",
+              "pm.collectionVariables.set('admin_access_token', json.access_token);"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "url": {
+          "raw": "{{baseUrl}}/auth/login",
+          "host": ["{{baseUrl}}"],
+          "path": ["auth", "login"]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\"email\": \"admin@example.com\", \"password\": \"admin123\"}"
+        },
+        "description": "Login as admin to get admin token for admin-protected endpoints."
+      }
+    },
+    {
+      "name": "Setup - Login as regular user",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('User login succeeds', () => pm.response.to.have.status(200));",
+              "const json = pm.response.json();",
+              "pm.test('User token present', () => pm.expect(json).to.have.property('access_token'));",
+              "pm.collectionVariables.set('access_token', json.access_token);"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "url": {
+          "raw": "{{baseUrl}}/auth/login",
+          "host": ["{{baseUrl}}"],
+          "path": ["auth", "login"]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\"email\": \"user@example.com\", \"password\": \"user123\"}"
+        },
+        "description": "Login as regular user to get token for user-protected endpoints."
+      }
+    },
+    {
+      "name": "Public User Profile",
+      "item": [
+        {
+          "name": "GET /api/v1/users/{id} - Happy path",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.test('Response has success flag', () => pm.expect(json.success).to.be.true);",
+                  "pm.test('Response has data with user fields', () => {",
+                  "  pm.expect(json.data).to.have.property('id');",
+                  "  pm.expect(json.data).to.have.property('username');",
+                  "  pm.expect(json.data).to.not.have.property('password_hash');",
+                  "  pm.expect(json.data).to.not.have.property('two_factor_secret');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/users/{{test_user_id}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "users", "{{test_user_id}}"]
+            },
+            "description": "Get public user profile by ID. No auth required. Sensitive fields must be stripped."
+          }
+        },
+        {
+          "name": "GET /api/v1/users/{id} - 404 not found",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 404', () => pm.response.to.have.status(404));",
+                  "const json = pm.response.json();",
+                  "pm.test('Response has error', () => pm.expect(json.success).to.be.false);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/users/00000000-0000-0000-0000-000000000000",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "users", "00000000-0000-0000-0000-000000000000"]
+            },
+            "description": "Non-existent user ID should return 404."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Admin User Management",
+      "item": [
+        {
+          "name": "GET /api/v1/admin/users - Happy path (admin)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.test('Response has success flag', () => pm.expect(json.success).to.be.true);",
+                  "pm.test('Response has data array', () => pm.expect(json.data).to.be.an('array'));",
+                  "pm.test('Response has meta with total', () => {",
+                  "  pm.expect(json.meta).to.have.property('total');",
+                  "  pm.expect(json.meta).to.have.property('limit');",
+                  "  pm.expect(json.meta).to.have.property('offset');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{admin_access_token}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/admin/users?limit=10&offset=0",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "admin", "users"],
+              "query": [
+                { "key": "limit", "value": "10" },
+                { "key": "offset", "value": "0" }
+              ]
+            },
+            "description": "Admin lists all users with pagination."
+          }
+        },
+        {
+          "name": "GET /api/v1/admin/users - With search filter",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.test('Response has data array', () => pm.expect(json.data).to.be.an('array'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{admin_access_token}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/admin/users?search=admin",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "admin", "users"],
+              "query": [{ "key": "search", "value": "admin" }]
+            },
+            "description": "Admin searches users by username/email."
+          }
+        },
+        {
+          "name": "GET /api/v1/admin/users - 401 without token",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 401', () => pm.response.to.have.status(401));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/admin/users",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "admin", "users"]
+            },
+            "description": "Admin endpoint requires authentication."
+          }
+        },
+        {
+          "name": "GET /api/v1/admin/users - 403 for regular user",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 403', () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{access_token}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/admin/users",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "admin", "users"]
+            },
+            "description": "Non-admin users must receive 403 Forbidden."
+          }
+        },
+        {
+          "name": "PUT /api/v1/admin/users/{id} - Happy path (change role)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.test('Response has success flag', () => pm.expect(json.success).to.be.true);",
+                  "pm.test('Response has user data', () => pm.expect(json.data).to.have.property('id'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{admin_access_token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/admin/users/{{test_user_id}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "admin", "users", "{{test_user_id}}"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"role\": \"user\"}"
+            },
+            "description": "Admin updates a user's role."
+          }
+        },
+        {
+          "name": "PUT /api/v1/admin/users/{id} - 400 invalid role",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 400', () => pm.response.to.have.status(400));",
+                  "const json = pm.response.json();",
+                  "pm.test('Response has error', () => pm.expect(json.success).to.be.false);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{admin_access_token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/admin/users/{{test_user_id}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "admin", "users", "{{test_user_id}}"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"role\": \"superuser\"}"
+            },
+            "description": "Invalid role value returns 400."
+          }
+        },
+        {
+          "name": "PUT /api/v1/admin/users/{id} - 403 for regular user",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 403', () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{access_token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/admin/users/{{test_user_id}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "admin", "users", "{{test_user_id}}"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"role\": \"admin\"}"
+            },
+            "description": "Non-admin users cannot update other users."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Admin Video Management",
+      "item": [
+        {
+          "name": "GET /api/v1/admin/videos - Happy path (admin)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.test('Response has success flag', () => pm.expect(json.success).to.be.true);",
+                  "pm.test('Response has data array', () => pm.expect(json.data).to.be.an('array'));",
+                  "pm.test('Response has meta', () => pm.expect(json.meta).to.have.property('total'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{admin_access_token}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/admin/videos?limit=10&offset=0",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "admin", "videos"],
+              "query": [
+                { "key": "limit", "value": "10" },
+                { "key": "offset", "value": "0" }
+              ]
+            },
+            "description": "Admin lists all videos with pagination."
+          }
+        },
+        {
+          "name": "GET /api/v1/admin/videos - With search filter",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.test('Response has data array', () => pm.expect(json.data).to.be.an('array'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{admin_access_token}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/admin/videos?search=test",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "admin", "videos"],
+              "query": [{ "key": "search", "value": "test" }]
+            },
+            "description": "Admin searches videos by title."
+          }
+        },
+        {
+          "name": "GET /api/v1/admin/videos - 401 without token",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 401', () => pm.response.to.have.status(401));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/admin/videos",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "admin", "videos"]
+            },
+            "description": "Admin endpoint requires authentication."
+          }
+        },
+        {
+          "name": "GET /api/v1/admin/videos - 403 for regular user",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 403', () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{access_token}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/admin/videos",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "admin", "videos"]
+            },
+            "description": "Non-admin users must receive 403 Forbidden."
+          }
+        }
+      ]
+    },
+    {
+      "name": "View History",
+      "item": [
+        {
+          "name": "GET /api/v1/views/history - Happy path (authenticated)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.test('Response has success flag', () => pm.expect(json.success).to.be.true);",
+                  "pm.test('Response has data with views array', () => {",
+                  "  pm.expect(json.data).to.have.property('views');",
+                  "  pm.expect(json.data.views).to.be.an('array');",
+                  "  pm.expect(json.data).to.have.property('count');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{access_token}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/views/history",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "views", "history"]
+            },
+            "description": "Authenticated user gets their own view history."
+          }
+        },
+        {
+          "name": "GET /api/v1/views/history - With date filter",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.test('Response has views array', () => pm.expect(json.data.views).to.be.an('array'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{access_token}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/views/history?start_date=2024-01-01&end_date=2026-12-31&limit=20",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "views", "history"],
+              "query": [
+                { "key": "start_date", "value": "2024-01-01" },
+                { "key": "end_date", "value": "2026-12-31" },
+                { "key": "limit", "value": "20" }
+              ]
+            },
+            "description": "View history with date range filter."
+          }
+        },
+        {
+          "name": "GET /api/v1/views/history - 400 invalid date",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 400', () => pm.response.to.have.status(400));",
+                  "const json = pm.response.json();",
+                  "pm.test('Response has error', () => pm.expect(json.success).to.be.false);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{access_token}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/views/history?start_date=not-a-date",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "views", "history"],
+              "query": [{ "key": "start_date", "value": "not-a-date" }]
+            },
+            "description": "Invalid date format returns 400."
+          }
+        },
+        {
+          "name": "GET /api/v1/views/history - 401 without token",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 401 or 200 with empty data', () => {",
+                  "  pm.expect(pm.response.code).to.be.oneOf([200, 401]);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/views/history",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "views", "history"]
+            },
+            "description": "Without auth, returns 401 (route requires Auth middleware)."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Notification Preferences",
+      "item": [
+        {
+          "name": "GET /api/v1/users/me/notification-preferences - Happy path",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.test('Response has success flag', () => pm.expect(json.success).to.be.true);",
+                  "pm.test('Response has notification preference fields', () => {",
+                  "  const data = json.data;",
+                  "  pm.expect(data).to.have.property('user_id');",
+                  "  pm.expect(data).to.have.property('comment');",
+                  "  pm.expect(data).to.have.property('like');",
+                  "  pm.expect(data).to.have.property('subscribe');",
+                  "  pm.expect(data).to.have.property('mention');",
+                  "  pm.expect(data).to.have.property('reply');",
+                  "  pm.expect(data).to.have.property('upload');",
+                  "  pm.expect(data).to.have.property('system');",
+                  "  pm.expect(data).to.have.property('email_enabled');",
+                  "});",
+                  "pm.test('All preference fields are booleans', () => {",
+                  "  const data = json.data;",
+                  "  ['comment', 'like', 'subscribe', 'mention', 'reply', 'upload', 'system', 'email_enabled'].forEach(f => {",
+                  "    pm.expect(typeof data[f]).to.equal('boolean');",
+                  "  });",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{access_token}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/users/me/notification-preferences",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "users", "me", "notification-preferences"]
+            },
+            "description": "Get authenticated user's notification preferences. Creates defaults if not yet configured."
+          }
+        },
+        {
+          "name": "GET /api/v1/users/me/notification-preferences - 401 without token",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 401', () => pm.response.to.have.status(401));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/users/me/notification-preferences",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "users", "me", "notification-preferences"]
+            },
+            "description": "Requires authentication."
+          }
+        },
+        {
+          "name": "PUT /api/v1/users/me/notification-preferences - Happy path",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.test('Response has success flag', () => pm.expect(json.success).to.be.true);",
+                  "pm.test('Updated preferences are reflected', () => {",
+                  "  pm.expect(json.data.comment).to.equal(false);",
+                  "  pm.expect(json.data.like).to.equal(true);",
+                  "  pm.expect(json.data.email_enabled).to.equal(false);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{access_token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/users/me/notification-preferences",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "users", "me", "notification-preferences"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"comment\": false, \"like\": true, \"subscribe\": true, \"mention\": true, \"reply\": true, \"upload\": true, \"system\": true, \"email_enabled\": false}"
+            },
+            "description": "Update notification preferences. All fields optional; only provided fields are changed."
+          }
+        },
+        {
+          "name": "PUT /api/v1/users/me/notification-preferences - 400 invalid body",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 400', () => pm.response.to.have.status(400));",
+                  "const json = pm.response.json();",
+                  "pm.test('Response has error', () => pm.expect(json.success).to.be.false);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{access_token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/users/me/notification-preferences",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "users", "me", "notification-preferences"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "not valid json {"
+            },
+            "description": "Malformed JSON body returns 400."
+          }
+        },
+        {
+          "name": "PUT /api/v1/users/me/notification-preferences - 401 without token",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 401', () => pm.response.to.have.status(401));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/users/me/notification-preferences",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "users", "me", "notification-preferences"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"comment\": true}"
+            },
+            "description": "Requires authentication."
+          }
+        },
+        {
+          "name": "GET /api/v1/users/me/notification-preferences - Idempotent GET after PUT",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.test('Changes from PUT are persisted', () => {",
+                  "  pm.expect(json.data.comment).to.equal(false);",
+                  "  pm.expect(json.data.email_enabled).to.equal(false);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{access_token}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/users/me/notification-preferences",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "users", "me", "notification-preferences"]
+            },
+            "description": "Verify PUT changes are persisted by re-fetching."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Payment Envelope (Normalized)",
+      "item": [
+        {
+          "name": "POST /api/v1/payments/wallet - Response has normalized envelope",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('Response uses normalized envelope', () => {",
+                  "  if (pm.response.code === 201) {",
+                  "    pm.expect(json).to.have.property('success');",
+                  "    pm.expect(json).to.have.property('data');",
+                  "    pm.expect(json.success).to.be.true;",
+                  "  } else if (pm.response.code === 409) {",
+                  "    pm.expect(json).to.have.property('success');",
+                  "    pm.expect(json.success).to.be.false;",
+                  "    pm.expect(json).to.have.property('error');",
+                  "    pm.expect(json.error).to.have.property('code');",
+                  "    pm.expect(json.error).to.have.property('message');",
+                  "  }",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Authorization", "value": "Bearer {{access_token}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/payments/wallet",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "payments", "wallet"]
+            },
+            "description": "Verify payment wallet creation uses normalized {data, success} envelope."
+          }
+        },
+        {
+          "name": "GET /api/v1/payments/wallet - Response has normalized envelope",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('Response uses normalized envelope', () => {",
+                  "  if (pm.response.code === 200) {",
+                  "    pm.expect(json).to.have.property('success');",
+                  "    pm.expect(json).to.have.property('data');",
+                  "    pm.expect(json.success).to.be.true;",
+                  "  } else if (pm.response.code === 404) {",
+                  "    pm.expect(json).to.have.property('success');",
+                  "    pm.expect(json.success).to.be.false;",
+                  "    pm.expect(json.error).to.have.property('code');",
+                  "  }",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{access_token}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/payments/wallet",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "payments", "wallet"]
+            },
+            "description": "Verify payment wallet get uses normalized envelope."
+          }
+        }
+      ]
+    }
+  ]
+}

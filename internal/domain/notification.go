@@ -71,6 +71,34 @@ type NotificationFilter struct {
 	EndDate   *time.Time
 }
 
+// NotificationPreferences stores per-user notification toggle settings.
+type NotificationPreferences struct {
+	UserID       string `json:"user_id" db:"user_id"`
+	Comment      bool   `json:"comment" db:"comment_enabled"`
+	Like         bool   `json:"like" db:"like_enabled"`
+	Subscribe    bool   `json:"subscribe" db:"subscribe_enabled"`
+	Mention      bool   `json:"mention" db:"mention_enabled"`
+	Reply        bool   `json:"reply" db:"reply_enabled"`
+	Upload       bool   `json:"upload" db:"upload_enabled"`
+	System       bool   `json:"system" db:"system_enabled"`
+	EmailEnabled bool   `json:"email_enabled" db:"email_enabled"`
+}
+
+// DefaultNotificationPreferences returns all-enabled preferences for a user.
+func DefaultNotificationPreferences(userID string) *NotificationPreferences {
+	return &NotificationPreferences{
+		UserID:       userID,
+		Comment:      true,
+		Like:         true,
+		Subscribe:    true,
+		Mention:      true,
+		Reply:        true,
+		Upload:       true,
+		System:       true,
+		EmailEnabled: true,
+	}
+}
+
 // NotificationStats represents notification statistics for a user
 type NotificationStats struct {
 	TotalCount  int                      `json:"total_count"`

@@ -26,7 +26,12 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/IOTAWallet'
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/IOTAWallet'
+                  success: { type: boolean, example: true }
+                required: [data, success]
         '401':
           $ref: '#/components/responses/UnauthorizedError'
         '409':
@@ -50,7 +55,12 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/IOTAWallet'
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/IOTAWallet'
+                  success: { type: boolean, example: true }
+                required: [data, success]
         '401':
           $ref: '#/components/responses/UnauthorizedError'
         '404':
@@ -81,7 +91,12 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/IOTAPaymentIntent'
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/IOTAPaymentIntent'
+                  success: { type: boolean, example: true }
+                required: [data, success]
         '400':
           description: Invalid request parameters
           content:
@@ -114,7 +129,12 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/IOTAPaymentIntent'
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/IOTAPaymentIntent'
+                  success: { type: boolean, example: true }
+                required: [data, success]
         '401':
           $ref: '#/components/responses/UnauthorizedError'
         '404':
@@ -157,17 +177,22 @@ paths:
               schema:
                 type: object
                 properties:
-                  transactions:
-                    type: array
-                    items:
-                      $ref: '#/components/schemas/IOTATransaction'
-                  total:
-                    type: integer
-                    description: Total number of transactions
-                  limit:
-                    type: integer
-                  offset:
-                    type: integer
+                  data:
+                    type: object
+                    properties:
+                      transactions:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/IOTATransaction'
+                      total:
+                        type: integer
+                        description: Total number of transactions
+                      limit:
+                        type: integer
+                      offset:
+                        type: integer
+                  success: { type: boolean, example: true }
+                required: [data, success]
         '401':
           $ref: '#/components/responses/UnauthorizedError'
         '500':

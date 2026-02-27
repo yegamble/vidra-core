@@ -8,7 +8,6 @@ import (
 
 	"athena/internal/chat"
 	"athena/internal/email"
-	"athena/internal/httpapi/handlers/payments"
 	"athena/internal/livestream"
 	"athena/internal/plugin"
 	"athena/internal/port"
@@ -38,6 +37,7 @@ type HandlerDependencies struct {
 	SubRepo               usecase.SubscriptionRepository
 	ViewsRepo             *repository.ViewsRepository
 	NotificationRepo      *repository.NotificationRepository
+	NotificationPrefRepo  port.NotificationPreferenceRepository
 	ChannelRepo           *repository.ChannelRepository
 	CommentRepo           usecase.CommentRepository
 	RatingRepo            usecase.RatingRepository
@@ -67,7 +67,7 @@ type HandlerDependencies struct {
 	CaptionService           *usecase.CaptionService
 	CaptionGenService        captiongen.Service
 	TwoFAService             *usecase.TwoFAService
-	PaymentService           payments.PaymentService
+	PaymentService           port.PaymentService
 	SocialService            *usecase.SocialService
 	AtprotoService           usecase.AtprotoPublisher
 	FederationService        usecase.FederationService

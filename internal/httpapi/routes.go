@@ -241,6 +241,7 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 			r.With(middleware.Auth(cfg.JWTSecret)).Get("/me", auth.GetCurrentUserHandler(deps.UserRepo))
 			r.With(middleware.Auth(cfg.JWTSecret)).Put("/me", auth.UpdateCurrentUserHandler(deps.UserRepo))
 			r.With(middleware.Auth(cfg.JWTSecret)).Post("/me/avatar", authHandlers.UploadAvatar)
+			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{id}", auth.GetPublicUserHandler(deps.UserRepo))
 			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{id}/videos", video.GetUserVideosHandler(deps.VideoRepo))
 			r.With(middleware.Auth(cfg.JWTSecret)).Post("/{id}/subscribe", channel.SubscribeToUserHandler(deps.SubRepo, deps.UserRepo))
 			r.With(middleware.Auth(cfg.JWTSecret)).Delete("/{id}/subscribe", channel.UnsubscribeFromUserHandler(deps.SubRepo))
@@ -254,6 +255,9 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 
 			playlistHandlers := social.NewPlaylistHandlers(deps.PlaylistService)
 			r.With(middleware.Auth(cfg.JWTSecret)).Get("/me/watch-later", playlistHandlers.GetWatchLater)
+
+			r.With(middleware.Auth(cfg.JWTSecret)).Get("/me/notification-preferences", auth.GetNotificationPreferencesHandler(deps.NotificationPrefRepo))
+			r.With(middleware.Auth(cfg.JWTSecret)).Put("/me/notification-preferences", auth.UpdateNotificationPreferencesHandler(deps.NotificationPrefRepo))
 		})
 
 		r.Route("/messages", func(r chi.Router) {
@@ -288,6 +292,7 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 		r.Get("/trending", viewsHandler.GetTrendingVideos)
 
 		r.Post("/views/fingerprint", viewsHandler.GenerateFingerprint)
+		r.With(middleware.Auth(cfg.JWTSecret)).Get("/views/history", viewsHandler.GetViewHistory)
 
 		r.Route("/channels", func(r chi.Router) {
 			channelHandlers := channel.NewChannelHandlers(deps.ChannelService, deps.SubRepo)
@@ -437,6 +442,13 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 		r.Route("/admin", func(r chi.Router) {
 			r.Use(middleware.Auth(cfg.JWTSecret))
 			r.Use(middleware.RequireRole(string(domain.RoleAdmin), string(domain.RoleMod)))
+
+			adminUserHandlers := admin.NewAdminUserHandlers(deps.UserRepo)
+			r.Get("/users", adminUserHandlers.ListUsers)
+			r.Put("/users/{id}", adminUserHandlers.UpdateUser)
+
+			adminVideoHandlers := admin.NewAdminVideoHandlers(deps.VideoRepo)
+			r.Get("/videos", adminVideoHandlers.ListVideos)
 
 			r.Route("/abuse-reports", func(r chi.Router) {
 				r.Get("/", moderationHandlers.ListAbuseReports)

@@ -1585,7 +1585,7 @@ paths:
         public halves. Requires authentication.
       operationId: registerIdentityKey
       security:
-        - BearerAuth: []
+        - bearerAuth: []
       requestBody:
         required: true
         content:
@@ -1635,7 +1635,7 @@ paths:
         server ever learning the private keys.
       operationId: getUserPublicKeys
       security:
-        - BearerAuth: []
+        - bearerAuth: []
       parameters:
         - name: userId
           in: path
@@ -1674,7 +1674,7 @@ paths:
         the user to generate and register keys.
       operationId: getE2EEStatus
       security:
-        - BearerAuth: []
+        - bearerAuth: []
       responses:
         '200':
           description: E2EE status
@@ -1701,7 +1701,7 @@ paths:
         held entirely on each client device.
       operationId: initiateKeyExchange
       security:
-        - BearerAuth: []
+        - bearerAuth: []
       requestBody:
         required: true
         content:
@@ -1745,7 +1745,7 @@ paths:
         shared secret using ECDH — the server stores neither secret.
       operationId: acceptKeyExchange
       security:
-        - BearerAuth: []
+        - bearerAuth: []
       requestBody:
         required: true
         content:
@@ -1788,7 +1788,7 @@ paths:
         that have not yet been accepted.
       operationId: getPendingKeyExchanges
       security:
-        - BearerAuth: []
+        - bearerAuth: []
       responses:
         '200':
           description: List of pending key exchange messages
@@ -1821,7 +1821,7 @@ paths:
         ciphertext, allowing the recipient to verify authenticity.
       operationId: storeEncryptedMessage
       security:
-        - BearerAuth: []
+        - bearerAuth: []
       requestBody:
         required: true
         content:
@@ -1868,7 +1868,7 @@ paths:
         `content` field is always null for encrypted messages.
       operationId: getEncryptedMessages
       security:
-        - BearerAuth: []
+        - bearerAuth: []
       parameters:
         - name: conversationId
           in: path
@@ -2906,8 +2906,6 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
-
-
   /api/v1/users/{id}:
     get:
       tags:
@@ -3427,8 +3425,313 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
-  # Views fingerprint
-  # Views fingerprint
+  /api/v1/admin/users:
+    get:
+      tags: [Admin, Users]
+      summary: List all users (admin)
+      description: Admin-only endpoint to list all users with search, filtering, and pagination.
+      operationId: adminListUsers
+      parameters:
+        - in: query
+          name: limit
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+          description: Number of users to return
+        - in: query
+          name: offset
+          required: false
+          schema: { type: integer, minimum: 0, default: 0 }
+          description: Number of users to skip
+        - in: query
+          name: search
+          required: false
+          schema: { type: string }
+          description: Search by username or email
+        - in: query
+          name: role
+          required: false
+          schema: { type: string, enum: [user, moderator, admin] }
+          description: Filter by role
+      responses:
+        '200':
+          description: List of users
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WrappedUsersResponse'
+        '401': { description: Unauthorized }
+        '403': { description: Forbidden }
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/admin/users/{id}:
+    put:
+      tags: [Admin, Users]
+      summary: Update user (admin)
+      description: Admin-only endpoint to update a user's role or active status.
+      operationId: adminUpdateUser
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+          description: User ID
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                role:
+                  type: string
+                  enum: [user, moderator, admin]
+                  description: New role for the user
+                is_active:
+                  type: boolean
+                  description: Whether the user account is active
+      responses:
+        '200':
+          description: Updated user
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WrappedUserResponse'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401': { description: Unauthorized }
+        '403': { description: Forbidden }
+        '404':
+          description: User not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/admin/videos:
+    get:
+      tags: [Admin, Videos]
+      summary: List all videos (admin)
+      description: Admin-only endpoint to list all videos with search and pagination.
+      operationId: adminListVideos
+      parameters:
+        - in: query
+          name: limit
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+          description: Number of videos to return
+        - in: query
+          name: offset
+          required: false
+          schema: { type: integer, minimum: 0, default: 0 }
+          description: Number of videos to skip
+        - in: query
+          name: search
+          required: false
+          schema: { type: string }
+          description: Search by title
+      responses:
+        '200':
+          description: List of videos
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WrappedVideosResponse'
+        '401': { description: Unauthorized }
+        '403': { description: Forbidden }
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/views/history:
+    get:
+      tags: [Views]
+      summary: Get view history
+      description: Returns the authenticated user's view history with optional filtering. Admins can view any user's history via user_id parameter.
+      operationId: getViewHistory
+      parameters:
+        - in: query
+          name: video_id
+          required: false
+          schema: { type: string, format: uuid }
+          description: Filter by video ID
+        - in: query
+          name: user_id
+          required: false
+          schema: { type: string, format: uuid }
+          description: Filter by user ID (admin only for other users)
+        - in: query
+          name: start_date
+          required: false
+          schema: { type: string, format: date }
+          description: Start date filter (YYYY-MM-DD)
+        - in: query
+          name: end_date
+          required: false
+          schema: { type: string, format: date }
+          description: End date filter (YYYY-MM-DD)
+        - in: query
+          name: limit
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 1000, default: 100 }
+          description: Number of records to return
+        - in: query
+          name: offset
+          required: false
+          schema: { type: integer, minimum: 0, default: 0 }
+          description: Number of records to skip
+      responses:
+        '200':
+          description: View history
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      views:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            id: { type: string, format: uuid }
+                            user_id: { type: string, format: uuid }
+                            video_id: { type: string, format: uuid }
+                            created_at: { type: string, format: date-time }
+                      count:
+                        type: integer
+                        description: Number of view records returned
+                  success: { type: boolean, example: true }
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden - cannot access another user's history
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/users/me/notification-preferences:
+    get:
+      tags: [Users, Notifications]
+      summary: Get notification preferences
+      description: Returns the authenticated user's notification preferences. Defaults are created if not yet configured.
+      operationId: getNotificationPreferences
+      responses:
+        '200':
+          description: Notification preferences
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      user_id: { type: string, format: uuid }
+                      comment: { type: boolean }
+                      like: { type: boolean }
+                      subscribe: { type: boolean }
+                      mention: { type: boolean }
+                      reply: { type: boolean }
+                      upload: { type: boolean }
+                      system: { type: boolean }
+                      email_enabled: { type: boolean }
+                  success: { type: boolean, example: true }
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    put:
+      tags: [Users, Notifications]
+      summary: Update notification preferences
+      description: Updates the authenticated user's per-type notification preferences.
+      operationId: updateNotificationPreferences
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                comment: { type: boolean }
+                like: { type: boolean }
+                subscribe: { type: boolean }
+                mention: { type: boolean }
+                reply: { type: boolean }
+                upload: { type: boolean }
+                system: { type: boolean }
+                email_enabled: { type: boolean }
+      responses:
+        '200':
+          description: Updated notification preferences
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      user_id: { type: string, format: uuid }
+                      comment: { type: boolean }
+                      like: { type: boolean }
+                      subscribe: { type: boolean }
+                      mention: { type: boolean }
+                      reply: { type: boolean }
+                      upload: { type: boolean }
+                      system: { type: boolean }
+                      email_enabled: { type: boolean }
+                  success: { type: boolean, example: true }
+        '400':
+          description: Invalid request body
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 
 components:
   securitySchemes:
