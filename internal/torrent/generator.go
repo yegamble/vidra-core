@@ -186,7 +186,7 @@ type VideoFile struct {
 // generatePieces generates SHA1 hashes for all pieces
 func (g *Generator) generatePieces(ctx context.Context, files []VideoFile) ([]byte, error) {
 	var pieces []byte
-	var currentPiece []byte
+	currentPiece := make([]byte, 0, g.config.PieceLength)
 	var currentPieceSize int64
 
 	for _, file := range files {
@@ -234,7 +234,7 @@ func (g *Generator) generatePieces(ctx context.Context, files []VideoFile) ([]by
 					if currentPieceSize == g.config.PieceLength {
 						hash := sha1.Sum(currentPiece)
 						pieces = append(pieces, hash[:]...)
-						currentPiece = nil
+						currentPiece = currentPiece[:0]
 						currentPieceSize = 0
 					}
 				}
@@ -298,28 +298,28 @@ func (g *Generator) buildWebSeeds(videoID uuid.UUID) []string {
 
 // generateMagnetURI creates a magnet link for the torrent
 func (g *Generator) generateMagnetURI(infoHash, name string, size int64) string {
-	// Start with the basic magnet URI
-	magnet := fmt.Sprintf("magnet:?xt=urn:btih:%s", infoHash)
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "magnet:?xt=urn:btih:%s", infoHash)
 
 	// Add display name
 	if name != "" {
-		magnet += fmt.Sprintf("&dn=%s", name)
+		fmt.Fprintf(&sb, "&dn=%s", name)
 	}
 
 	// Add exact length
-	magnet += fmt.Sprintf("&xl=%d", size)
+	fmt.Fprintf(&sb, "&xl=%d", size)
 
 	// Add trackers
 	for _, tracker := range g.config.Trackers {
-		magnet += fmt.Sprintf("&tr=%s", tracker)
+		fmt.Fprintf(&sb, "&tr=%s", tracker)
 	}
 
 	// Add web seeds
 	for _, webseed := range g.config.WebSeeds {
-		magnet += fmt.Sprintf("&ws=%s", webseed)
+		fmt.Fprintf(&sb, "&ws=%s", webseed)
 	}
 
-	return magnet
+	return sb.String()
 }
 
 // GenerateMagnetFromTorrent creates a magnet URI from existing torrent data
