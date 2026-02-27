@@ -64,33 +64,7 @@ func (s *smtpSender) SendTLS(addr string, auth smtp.Auth, from string, to []stri
 	}
 	defer func() { _ = client.Close() }()
 
-	if err = client.Auth(auth); err != nil {
-		return fmt.Errorf("failed to authenticate: %w", err)
-	}
-
-	if err = client.Mail(from); err != nil {
-		return fmt.Errorf("failed to set sender: %w", err)
-	}
-
-	for _, recipient := range to {
-		if err = client.Rcpt(recipient); err != nil {
-			return fmt.Errorf("failed to set recipient: %w", err)
-		}
-	}
-
-	w, err := client.Data()
-	if err != nil {
-		return fmt.Errorf("failed to get data writer: %w", err)
-	}
-
-	if _, err = w.Write(msg); err != nil {
-		return fmt.Errorf("failed to write message: %w", err)
-	}
-	if err = w.Close(); err != nil {
-		return fmt.Errorf("failed to close data writer: %w", err)
-	}
-
-	return client.Quit()
+	return sendViaClient(client, auth, from, to, msg)
 }
 
 func (s *smtpSender) SendSTARTTLS(addr string, auth smtp.Auth, from string, to []string, msg []byte, host string) error {
@@ -117,26 +91,32 @@ func (s *smtpSender) SendSTARTTLS(addr string, auth smtp.Auth, from string, to [
 		return fmt.Errorf("STARTTLS not supported by server on port 587 - refusing to send over insecure connection")
 	}
 
+	return sendViaClient(c, auth, from, to, msg)
+}
+
+// sendViaClient performs the shared SMTP envelope sequence: Auth, Mail, Rcpt, Data, Quit.
+func sendViaClient(client *smtp.Client, auth smtp.Auth, from string, to []string, msg []byte) error {
 	if auth != nil {
-		if err = c.Auth(auth); err != nil {
+		if err := client.Auth(auth); err != nil {
 			return fmt.Errorf("failed to authenticate: %w", err)
 		}
 	}
 
-	if err = c.Mail(from); err != nil {
+	if err := client.Mail(from); err != nil {
 		return fmt.Errorf("failed to set sender: %w", err)
 	}
 
 	for _, recipient := range to {
-		if err = c.Rcpt(recipient); err != nil {
+		if err := client.Rcpt(recipient); err != nil {
 			return fmt.Errorf("failed to set recipient %s: %w", recipient, err)
 		}
 	}
 
-	w, err := c.Data()
+	w, err := client.Data()
 	if err != nil {
 		return fmt.Errorf("failed to get data writer: %w", err)
 	}
+
 	if _, err = w.Write(msg); err != nil {
 		return fmt.Errorf("failed to write message: %w", err)
 	}
@@ -144,7 +124,7 @@ func (s *smtpSender) SendSTARTTLS(addr string, auth smtp.Auth, from string, to [
 		return fmt.Errorf("failed to close data writer: %w", err)
 	}
 
-	return c.Quit()
+	return client.Quit()
 }
 
 func (s *Service) SendVerificationEmail(ctx context.Context, toEmail, username, token, code string) error {

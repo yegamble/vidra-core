@@ -64,7 +64,7 @@ These items from the original list are already implemented — no work needed:
 - [x] Task 2: Torrent Generator Optimizations
 - [x] Task 3: Livestream Analytics Fixes (contains bug + collectAllStreams refactor)
 - [x] Task 4: Context Misuse in Video Import
-- [ ] Task 5: Email Service Refactor (dedup + config struct)
+- [x] Task 5: Email Service Refactor (dedup + config struct)
 - [ ] Task 6: Backup Config Structs + SFTP TOFU Persistence
 - [ ] Task 7: OAuth Scopes Middleware Flattening
 - [ ] Task 8: Avatar Handler Debug Logging Cleanup
@@ -73,7 +73,7 @@ These items from the original list are already implemented — no work needed:
 - [ ] Task 11: Security - Chunk Assembly DoS Protection
 - [ ] Task 12: Test Improvements (ingestRemoteVideo + skeleton cleanup)
 
-**Total Tasks:** 12 | **Completed:** 4 | **Remaining:** 8
+**Total Tasks:** 12 | **Completed:** 5 | **Remaining:** 7
 
 ## Implementation Tasks
 
