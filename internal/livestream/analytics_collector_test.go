@@ -113,6 +113,37 @@ func (m *mockChatRepo) GetMessageCountSince(ctx context.Context, streamID uuid.U
 	return 10, nil
 }
 
+// TestContainsHelper verifies mid-string matching (not just prefix matching)
+func TestContainsHelper(t *testing.T) {
+	tests := []struct {
+		s      string
+		substr string
+		want   bool
+	}{
+		// Mid-string matches — the bug: HasPrefix logic would return false for these
+		{"Mozilla/5.0 Chrome/120", "Chrome", true},
+		{"Mozilla/5.0 Firefox/120", "Firefox", true},
+		{"Mozilla/5.0 Safari/537", "Safari", true},
+		{"some text Mobile here", "Mobile", true},
+		{"some text Tablet here", "Tablet", true},
+		// Prefix matches still work
+		{"Chrome/120", "Chrome", true},
+		// Non-matches
+		{"Mozilla/5.0", "Chrome", false},
+		{"", "Chrome", false},
+		{"Chrome", "", true}, // empty substr always contained
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.s+"/"+tt.substr, func(t *testing.T) {
+			got := contains(tt.s, tt.substr)
+			if got != tt.want {
+				t.Errorf("contains(%q, %q) = %v, want %v", tt.s, tt.substr, got, tt.want)
+			}
+		})
+	}
+}
+
 func BenchmarkCollectAllStreams(b *testing.B) {
 	// Setup mocks
 	streamRepo := &mockStreamRepo{}

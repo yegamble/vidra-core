@@ -62,7 +62,7 @@ These items from the original list are already implemented — no work needed:
 
 - [x] Task 1: Batch DB Operations (N+1 fixes)
 - [x] Task 2: Torrent Generator Optimizations
-- [ ] Task 3: Livestream Analytics Fixes (contains bug + collectAllStreams refactor)
+- [x] Task 3: Livestream Analytics Fixes (contains bug + collectAllStreams refactor)
 - [ ] Task 4: Context Misuse in Video Import
 - [ ] Task 5: Email Service Refactor (dedup + config struct)
 - [ ] Task 6: Backup Config Structs + SFTP TOFU Persistence
@@ -73,7 +73,7 @@ These items from the original list are already implemented — no work needed:
 - [ ] Task 11: Security - Chunk Assembly DoS Protection
 - [ ] Task 12: Test Improvements (ingestRemoteVideo + skeleton cleanup)
 
-**Total Tasks:** 12 | **Completed:** 2 | **Remaining:** 10
+**Total Tasks:** 12 | **Completed:** 3 | **Remaining:** 9
 
 ## Implementation Tasks
 
