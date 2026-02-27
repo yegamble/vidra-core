@@ -1,6 +1,6 @@
 # Project: Athena
 
-**Last Updated:** 2026-02-21
+**Last Updated:** 2026-02-27
 
 ## Overview
 
@@ -105,6 +105,16 @@ make build                    # Build binary
 make validate-all             # REQUIRED before claiming completion
 # Runs: gofmt, goimports, golangci-lint, tests, build
 ```
+
+**Pre-commit hook env vars (override defaults):**
+
+```bash
+PRECOMMIT_SKIP_HOOKS=""       # Default skips go-unit-tests,test-coverage. Set "" to run all.
+LINT_TIMEOUT_SECONDS=180      # Lint timeout (0 = unlimited)
+HOOK_TIMEOUT_SECONDS=240      # Total hook timeout (0 = unlimited)
+```
+
+See `.claude/rules/pre-commit-hook.md` for full details.
 
 **Docker:**
 
