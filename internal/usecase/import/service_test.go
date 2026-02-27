@@ -851,3 +851,42 @@ func TestServiceLifecycle_HasManagedContext(t *testing.T) {
 		t.Fatal("service context should be cancelled after calling cancel()")
 	}
 }
+
+func TestImportService_downloadVideo_PropagatesContext(t *testing.T) {
+	importRepo := new(MockImportRepository)
+	mockYtdlp := new(MockYtDlp)
+
+	storageDir := t.TempDir()
+	cfg := &config.Config{StorageDir: storageDir}
+
+	svc := NewService(importRepo, nil, nil, mockYtdlp, cfg, storageDir).(*service)
+
+	type ctxKey struct{}
+	parentCtx := context.WithValue(context.Background(), ctxKey{}, "sentinel")
+
+	imp := &domain.VideoImport{
+		ID:        "dl-ctx-test",
+		SourceURL: "https://youtube.com/watch?v=ctx",
+	}
+
+	var capturedCtx context.Context
+	importRepo.On("UpdateProgress", mock.MatchedBy(func(ctx context.Context) bool {
+		capturedCtx = ctx
+		return true
+	}), "dl-ctx-test", mock.AnythingOfType("int"), mock.AnythingOfType("int64")).Return(nil).Maybe()
+
+	// Download mock invokes the progressCallback so UpdateProgress is called
+	mockYtdlp.On("Download", parentCtx, imp.SourceURL, imp.ID, mock.AnythingOfType("func(int, int64, int64)")).
+		Run(func(args mock.Arguments) {
+			cb := args.Get(3).(func(int, int64, int64))
+			cb(50, 512, 1024)
+		}).
+		Return("/tmp/ctx-video.mp4", nil)
+
+	_, err := svc.downloadVideo(parentCtx, imp)
+	require.NoError(t, err)
+
+	require.NotNil(t, capturedCtx, "UpdateProgress was not called")
+	assert.Equal(t, "sentinel", capturedCtx.Value(ctxKey{}),
+		"UpdateProgress must receive parent context, not context.Background()")
+}

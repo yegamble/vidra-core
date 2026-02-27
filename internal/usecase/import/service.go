@@ -221,7 +221,7 @@ func (s *service) processImport(ctx context.Context, importID string) {
 
 func (s *service) downloadVideo(ctx context.Context, imp *domain.VideoImport) (string, error) {
 	progressCallback := func(progress int, downloadedBytes, totalBytes int64) {
-		_ = s.importRepo.UpdateProgress(context.Background(), imp.ID, progress, downloadedBytes)
+		_ = s.importRepo.UpdateProgress(ctx, imp.ID, progress, downloadedBytes)
 	}
 
 	videoPath, err := s.ytdlp.Download(ctx, imp.SourceURL, imp.ID, progressCallback)
