@@ -7,7 +7,14 @@ import (
 )
 
 func TestNewS3Backend(t *testing.T) {
-	backend := NewS3Backend("test-bucket", "test-region", "backups/", "endpoint", "access", "secret")
+	backend := NewS3Backend(S3Config{
+		Bucket:    "test-bucket",
+		Region:    "test-region",
+		Prefix:    "backups/",
+		Endpoint:  "endpoint",
+		AccessKey: "access",
+		SecretKey: "secret",
+	})
 
 	assert.NotNil(t, backend)
 	assert.Equal(t, "test-bucket", backend.Bucket)
@@ -17,7 +24,7 @@ func TestNewS3Backend(t *testing.T) {
 }
 
 func TestS3Backend_Upload(t *testing.T) {
-	backend := NewS3Backend("test-bucket", "us-east-1", "backups/", "", "access-key", "secret-key")
+	backend := NewS3Backend(S3Config{Bucket: "test-bucket", Region: "us-east-1", Prefix: "backups/", AccessKey: "access-key", SecretKey: "secret-key"})
 	assert.NotNil(t, backend)
 	assert.Equal(t, "test-bucket", backend.Bucket)
 }
@@ -75,7 +82,7 @@ func TestS3Backend_buildKey(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			backend := NewS3Backend("bucket", "region", tt.prefix, "", "access", "secret")
+			backend := NewS3Backend(S3Config{Bucket: "bucket", Region: "region", Prefix: tt.prefix, AccessKey: "access", SecretKey: "secret"})
 			got := backend.buildKey(tt.path)
 			assert.Equal(t, tt.want, got)
 		})

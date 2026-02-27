@@ -536,15 +536,24 @@ func (app *Application) initializeSchedulers(deps *Dependencies) {
 		case "local":
 			target = backup.NewLocalBackend("./backups")
 		case "s3":
-			target = backup.NewS3Backend(app.Config.BackupS3Bucket, app.Config.BackupS3Prefix,
-				app.Config.BackupS3Endpoint, app.Config.BackupS3AccessKey,
-				app.Config.BackupS3SecretKey, app.Config.BackupS3Region)
+			target = backup.NewS3Backend(backup.S3Config{
+				Bucket:    app.Config.BackupS3Bucket,
+				Region:    app.Config.BackupS3Region,
+				Prefix:    app.Config.BackupS3Prefix,
+				Endpoint:  app.Config.BackupS3Endpoint,
+				AccessKey: app.Config.BackupS3AccessKey,
+				SecretKey: app.Config.BackupS3SecretKey,
+			})
 		case "sftp":
-			sftpBackend := backup.NewSFTPBackend(app.Config.BackupSFTPHost, app.Config.BackupSFTPPort,
-				app.Config.BackupSFTPUser, app.Config.BackupSFTPPassword,
-				app.Config.BackupSFTPKeyPath, app.Config.BackupSFTPPath)
-			sftpBackend.HostKey = app.Config.BackupSFTPHostKey
-			target = sftpBackend
+			target = backup.NewSFTPBackend(backup.SFTPConfig{
+				Host:     app.Config.BackupSFTPHost,
+				Port:     app.Config.BackupSFTPPort,
+				User:     app.Config.BackupSFTPUser,
+				Password: app.Config.BackupSFTPPassword,
+				KeyPath:  app.Config.BackupSFTPKeyPath,
+				Path:     app.Config.BackupSFTPPath,
+				HostKey:  app.Config.BackupSFTPHostKey,
+			})
 		default:
 			target = backup.NewLocalBackend("./backups")
 		}

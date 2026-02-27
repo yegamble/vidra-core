@@ -15,30 +15,54 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
-type SFTPBackend struct {
-	Host         string
-	Port         int
-	User         string
-	password     string
-	keyPath      string
-	Path         string
-	HostKey      string
-	client       *sftp.Client
-	sshClient    *ssh.Client
-	knownHostKey string
-	once         sync.Once
-	initErr      error
+// SFTPConfig holds configuration for an SFTP backup backend.
+type SFTPConfig struct {
+	Host           string
+	Port           int
+	User           string
+	Password       string
+	KeyPath        string
+	Path           string
+	HostKey        string
+	KnownHostsFile string
 }
 
-func NewSFTPBackend(host string, port int, user, password, keyPath, path string) *SFTPBackend {
-	return &SFTPBackend{
-		Host:     host,
-		Port:     port,
-		User:     user,
-		password: password,
-		keyPath:  keyPath,
-		Path:     path,
+type SFTPBackend struct {
+	Host           string
+	Port           int
+	User           string
+	password       string
+	keyPath        string
+	Path           string
+	HostKey        string
+	client         *sftp.Client
+	sshClient      *ssh.Client
+	knownHostKey   string
+	knownHostsFile string
+	once           sync.Once
+	initErr        error
+}
+
+func NewSFTPBackend(cfg SFTPConfig) *SFTPBackend {
+	b := &SFTPBackend{
+		Host:           cfg.Host,
+		Port:           cfg.Port,
+		User:           cfg.User,
+		password:       cfg.Password,
+		keyPath:        cfg.KeyPath,
+		Path:           cfg.Path,
+		HostKey:        cfg.HostKey,
+		knownHostsFile: cfg.KnownHostsFile,
 	}
+
+	// Read existing known host key from file (TOFU persistence)
+	if cfg.KnownHostsFile != "" {
+		if data, err := os.ReadFile(cfg.KnownHostsFile); err == nil && len(data) > 0 {
+			b.knownHostKey = string(data)
+		}
+	}
+
+	return b
 }
 
 func (s *SFTPBackend) initClient(ctx context.Context) error {
@@ -115,6 +139,11 @@ func (s *SFTPBackend) buildHostKeyCallback() (ssh.HostKeyCallback, error) {
 			log.Printf("WARNING: accepting unverified host key for %s on first connection (TOFU)", hostname)
 			log.Printf("Host key fingerprint: %s", marshaledKey)
 			s.knownHostKey = marshaledKey
+			if s.knownHostsFile != "" {
+				if err := os.MkdirAll(filepath.Dir(s.knownHostsFile), 0700); err == nil {
+					_ = os.WriteFile(s.knownHostsFile, []byte(marshaledKey), 0600)
+				}
+			}
 			return nil
 		}
 		if s.knownHostKey != marshaledKey {

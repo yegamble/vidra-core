@@ -27,14 +27,24 @@ type S3Backend struct {
 	initErr   error
 }
 
-func NewS3Backend(bucket, region, prefix, endpoint, accessKey, secretKey string) *S3Backend {
+// S3Config holds configuration for an S3 backup backend.
+type S3Config struct {
+	Bucket    string
+	Region    string
+	Prefix    string
+	Endpoint  string
+	AccessKey string
+	SecretKey string
+}
+
+func NewS3Backend(cfg S3Config) *S3Backend {
 	return &S3Backend{
-		Bucket:    bucket,
-		Region:    region,
-		Prefix:    prefix,
-		Endpoint:  endpoint,
-		accessKey: accessKey,
-		secretKey: secretKey,
+		Bucket:    cfg.Bucket,
+		Region:    cfg.Region,
+		Prefix:    cfg.Prefix,
+		Endpoint:  cfg.Endpoint,
+		accessKey: cfg.AccessKey,
+		secretKey: cfg.SecretKey,
 	}
 }
 
