@@ -428,6 +428,25 @@ func (r *RedundancyRepository) UpdateRedundancyProgress(ctx context.Context, id 
 	return nil
 }
 
+// CancelRedundanciesByInstanceID marks all pending or syncing redundancies for an instance as cancelled
+func (r *RedundancyRepository) CancelRedundanciesByInstanceID(ctx context.Context, instanceID string) error {
+	query := `
+		UPDATE video_redundancy
+		SET
+			status = 'cancelled',
+			updated_at = NOW()
+		WHERE target_instance_id = $1
+		  AND status IN ('pending', 'syncing')
+	`
+
+	_, err := r.db.ExecContext(ctx, query, instanceID)
+	if err != nil {
+		return fmt.Errorf("failed to cancel redundancies for instance: %w", err)
+	}
+
+	return nil
+}
+
 // DeleteVideoRedundancy deletes a video redundancy
 func (r *RedundancyRepository) DeleteVideoRedundancy(ctx context.Context, id string) error {
 	query := `DELETE FROM video_redundancy WHERE id = $1`

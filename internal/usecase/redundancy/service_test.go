@@ -103,6 +103,11 @@ func (m *MockRedundancyRepository) UpdateRedundancyProgress(ctx context.Context,
 	return args.Error(0)
 }
 
+func (m *MockRedundancyRepository) CancelRedundanciesByInstanceID(ctx context.Context, instanceID string) error {
+	args := m.Called(ctx, instanceID)
+	return args.Error(0)
+}
+
 func (m *MockRedundancyRepository) DeleteVideoRedundancy(ctx context.Context, id string) error {
 	args := m.Called(ctx, id)
 	return args.Error(0)
@@ -580,82 +585,28 @@ func TestDeleteInstancePeer(t *testing.T) {
 		wantErr   bool
 	}{
 		{
-			name: "success with no active redundancies",
+			name: "success",
 			id:   "peer-1",
 			setupMock: func(repo *MockRedundancyRepository) {
-				repo.On("GetVideoRedundanciesByInstanceID", mock.Anything, "peer-1").Return([]*domain.VideoRedundancy{}, nil)
+				repo.On("CancelRedundanciesByInstanceID", mock.Anything, "peer-1").Return(nil)
 				repo.On("DeleteInstancePeer", mock.Anything, "peer-1").Return(nil)
 			},
 			wantErr: false,
 		},
 		{
-			name: "success cancels active redundancies before deleting",
+			name: "error cancelling redundancies propagated",
 			id:   "peer-1",
 			setupMock: func(repo *MockRedundancyRepository) {
-				pendingRedundancy := &domain.VideoRedundancy{
-					ID:               "r-1",
-					VideoID:          "video-1",
-					TargetInstanceID: "peer-1",
-					Status:           domain.RedundancyStatusPending,
-					Strategy:         domain.RedundancyStrategyTrending,
-					FileSizeBytes:    1024,
-					MaxSyncAttempts:  5,
-				}
-				syncingRedundancy := &domain.VideoRedundancy{
-					ID:               "r-2",
-					VideoID:          "video-2",
-					TargetInstanceID: "peer-1",
-					Status:           domain.RedundancyStatusSyncing,
-					Strategy:         domain.RedundancyStrategyTrending,
-					FileSizeBytes:    2048,
-					MaxSyncAttempts:  5,
-				}
-				syncedRedundancy := &domain.VideoRedundancy{
-					ID:               "r-3",
-					VideoID:          "video-3",
-					TargetInstanceID: "peer-1",
-					Status:           domain.RedundancyStatusSynced,
-					Strategy:         domain.RedundancyStrategyTrending,
-					FileSizeBytes:    4096,
-					MaxSyncAttempts:  5,
-				}
-
-				repo.On("GetVideoRedundanciesByInstanceID", mock.Anything, "peer-1").Return(
-					[]*domain.VideoRedundancy{pendingRedundancy, syncingRedundancy, syncedRedundancy}, nil,
-				)
-				// Only pending and syncing should be cancelled
-				repo.On("UpdateVideoRedundancy", mock.Anything, mock.MatchedBy(func(r *domain.VideoRedundancy) bool {
-					return r.Status == domain.RedundancyStatusCancelled && (r.ID == "r-1" || r.ID == "r-2")
-				})).Return(nil).Times(2)
-				repo.On("DeleteInstancePeer", mock.Anything, "peer-1").Return(nil)
-			},
-			wantErr: false,
-		},
-		{
-			name: "error fetching redundancies propagated",
-			id:   "peer-1",
-			setupMock: func(repo *MockRedundancyRepository) {
-				repo.On("GetVideoRedundanciesByInstanceID", mock.Anything, "peer-1").Return(nil, errors.New("db error"))
+				repo.On("CancelRedundanciesByInstanceID", mock.Anything, "peer-1").Return(errors.New("db error"))
 			},
 			wantErr: true,
 		},
 		{
-			name: "error updating redundancy propagated",
+			name: "error deleting instance peer propagated",
 			id:   "peer-1",
 			setupMock: func(repo *MockRedundancyRepository) {
-				pendingRedundancy := &domain.VideoRedundancy{
-					ID:               "r-1",
-					VideoID:          "video-1",
-					TargetInstanceID: "peer-1",
-					Status:           domain.RedundancyStatusPending,
-					Strategy:         domain.RedundancyStrategyTrending,
-					FileSizeBytes:    1024,
-					MaxSyncAttempts:  5,
-				}
-				repo.On("GetVideoRedundanciesByInstanceID", mock.Anything, "peer-1").Return(
-					[]*domain.VideoRedundancy{pendingRedundancy}, nil,
-				)
-				repo.On("UpdateVideoRedundancy", mock.Anything, mock.Anything).Return(errors.New("update error"))
+				repo.On("CancelRedundanciesByInstanceID", mock.Anything, "peer-1").Return(nil)
+				repo.On("DeleteInstancePeer", mock.Anything, "peer-1").Return(errors.New("delete error"))
 			},
 			wantErr: true,
 		},

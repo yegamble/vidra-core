@@ -24,6 +24,7 @@ type RedundancyRepository interface {
 	GetVideoRedundanciesByInstanceID(ctx context.Context, instanceID string) ([]*domain.VideoRedundancy, error)
 	UpdateVideoRedundancy(ctx context.Context, redundancy *domain.VideoRedundancy) error
 	UpdateRedundancyProgress(ctx context.Context, id string, bytesTransferred, speedBPS int64) error
+	CancelRedundanciesByInstanceID(ctx context.Context, instanceID string) error
 	DeleteVideoRedundancy(ctx context.Context, id string) error
 	ListPendingRedundancies(ctx context.Context, limit int) ([]*domain.VideoRedundancy, error)
 	ListFailedRedundancies(ctx context.Context, limit int) ([]*domain.VideoRedundancy, error)

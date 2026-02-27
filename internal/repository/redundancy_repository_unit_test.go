@@ -1667,6 +1667,63 @@ func TestRedundancyRepository_UpdateRedundancyProgress(t *testing.T) {
 	}
 }
 
+func TestRedundancyRepository_CancelRedundanciesByInstanceID(t *testing.T) {
+	tests := []struct {
+		name       string
+		instanceID string
+		setupMock  func(sqlmock.Sqlmock)
+		wantErr    bool
+	}{
+		{
+			name:       "success - cancels redundancies",
+			instanceID: "peer-123",
+			setupMock: func(mock sqlmock.Sqlmock) {
+				mock.ExpectExec(regexp.QuoteMeta(`UPDATE video_redundancy SET status = 'cancelled', updated_at = NOW() WHERE target_instance_id = $1 AND status IN ('pending', 'syncing')`)).
+					WithArgs("peer-123").
+					WillReturnResult(sqlmock.NewResult(0, 5))
+			},
+			wantErr: false,
+		},
+		{
+			name:       "success - no redundancies to cancel",
+			instanceID: "peer-456",
+			setupMock: func(mock sqlmock.Sqlmock) {
+				mock.ExpectExec(regexp.QuoteMeta(`UPDATE video_redundancy SET status = 'cancelled', updated_at = NOW() WHERE target_instance_id = $1 AND status IN ('pending', 'syncing')`)).
+					WithArgs("peer-456").
+					WillReturnResult(sqlmock.NewResult(0, 0))
+			},
+			wantErr: false,
+		},
+		{
+			name:       "database error",
+			instanceID: "peer-123",
+			setupMock: func(mock sqlmock.Sqlmock) {
+				mock.ExpectExec(regexp.QuoteMeta(`UPDATE video_redundancy SET status = 'cancelled', updated_at = NOW() WHERE target_instance_id = $1 AND status IN ('pending', 'syncing')`)).
+					WithArgs("peer-123").
+					WillReturnError(sql.ErrConnDone)
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo, mock := setupRedundancyRepositoryTest(t)
+			tt.setupMock(mock)
+
+			err := repo.CancelRedundanciesByInstanceID(context.Background(), tt.instanceID)
+
+			if tt.wantErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+
+			assert.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
+}
+
 func TestRedundancyRepository_DeleteVideoRedundanciesByVideoID(t *testing.T) {
 	tests := []struct {
 		name      string
