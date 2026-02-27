@@ -253,8 +253,10 @@ func (sm *StreamManager) processHeartbeats(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
+			sm.flushRemainingHeartbeats(batch)
 			return
 		case <-sm.shutdownChan:
+			sm.flushRemainingHeartbeats(batch)
 			return
 		case heartbeat := <-sm.viewerHeartbeats:
 			// Batch heartbeats for efficiency
@@ -267,6 +269,17 @@ func (sm *StreamManager) processHeartbeats(ctx context.Context) {
 			}
 		}
 	}
+}
+
+// flushRemainingHeartbeats drains any accumulated heartbeats on shutdown.
+// Uses a fresh context since the parent context may already be cancelled.
+func (sm *StreamManager) flushRemainingHeartbeats(batch map[string]time.Time) {
+	if len(batch) == 0 {
+		return
+	}
+	flushCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	sm.flushHeartbeatBatch(flushCtx, batch)
 }
 
 func (sm *StreamManager) flushHeartbeatBatch(ctx context.Context, batch map[string]time.Time) {
