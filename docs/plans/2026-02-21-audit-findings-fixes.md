@@ -28,6 +28,7 @@ Worktree: No
 **Root cause:** The `newTestSocialHandlerWithPDS()` function in `social_handlers_unit_test.go` created a social service with the default SSRF validator, which blocks connections to private IPs (127.0.0.1). Since httptest servers bind to localhost, all PDS-related tests failed with HTTP 500.
 
 **Fix applied:**
+
 - Added `SetURLValidator()` method to `internal/usecase/social/service.go` to allow test-time injection of a permissive URL validator
 - Updated `newTestSocialHandlerWithPDS()` to use `security.NewURLValidatorAllowPrivate()` and set `ATProtoAppPassword`
 - Added `createSession` endpoint to `newFakePDS()` for completeness
@@ -35,12 +36,14 @@ Worktree: No
 - All 6 PDS tests now pass (Follow, Unfollow, Like, Unlike, CreateComment, DeleteComment)
 
 **Files modified:**
+
 - `internal/usecase/social/service.go`
 - `internal/httpapi/handlers/social/social_handlers_unit_test.go`
 
 ### Task 2: Verify COMPOSE_PROFILES (Bugs 3.3, 3.5, 3.6)
 
 **Finding:** All three COMPOSE_PROFILES bugs documented in the audit were already fixed in the current codebase:
+
 - Bug 3.3: `writer.go:187` checks `config.SMTPMode == "docker"` (not `SMTPHost == "mailpit"`)
 - Bug 3.5: Lines 201-207 always write `COMPOSE_PROFILES=` even when empty
 - Bug 3.6: Line 191 adds `letsencrypt` profile when `NginxTLSMode == "letsencrypt"`
@@ -64,6 +67,7 @@ Worktree: No
 ### Task 5: Add GetNodeStatus() Tests (Bug 3.2 — P8)
 
 **Fix applied:** Added 3 table-driven tests covering:
+
 - Healthy node → no error
 - Unhealthy node → error containing "not healthy"
 - Connection error → error propagated
@@ -75,6 +79,7 @@ Worktree: No
 **Root cause:** `NewHealthHandlers` hardcoded queue depth values (`return 5, nil` and `return 10, nil`), making the `/ready` endpoint always report healthy regardless of actual queue state.
 
 **Fix applied:**
+
 - Updated `NewHealthHandlers` signature to accept `QueueDepthFunc` parameters for encoding and activity queue depth
 - Queue health check is only added when both functions are provided (nil = skip)
 - Cleaned up standalone `checkQueueDepth()` stub to remove misleading hardcoded values
