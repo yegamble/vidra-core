@@ -17,6 +17,7 @@
 {{end}}
 
 <form id="wizardForm" action="/setup/services" method="POST">
+    <input type="hidden" name="_csrf_token" value="{{.CSRFToken}}">
     <!-- Redis -->
     <h3 style="margin-top: 30px; margin-bottom: 15px;">Redis (Required)</h3>
     <div class="form-group">

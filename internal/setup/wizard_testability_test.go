@@ -110,7 +110,7 @@ func TestWizardOutputDirIsUsedForFileWrites(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Join(tmpDir, "nginx", "conf"), 0755))
 
 	// POST to review - triggers file writes
-	form := "POSTGRES_MODE=docker"
+	form := "_csrf_token=" + wizard.csrfToken + "&POSTGRES_MODE=docker"
 	req := httptest.NewRequest(http.MethodPost, "/setup/review", strings.NewReader(form))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w := httptest.NewRecorder()
@@ -151,7 +151,7 @@ func TestWizardOutputDirUsedByQuickInstall(t *testing.T) {
 	// Create nginx conf subdirectory in temp dir
 	require.NoError(t, os.MkdirAll(filepath.Join(tmpDir, "nginx", "conf"), 0755))
 
-	form := "ADMIN_USERNAME=admin&ADMIN_EMAIL=admin%40example.com&ADMIN_PASSWORD=password123&ADMIN_PASSWORD_CONFIRM=password123&NGINX_DOMAIN=localhost"
+	form := "_csrf_token=" + wizard.csrfToken + "&ADMIN_USERNAME=admin&ADMIN_EMAIL=admin%40example.com&ADMIN_PASSWORD=password123&ADMIN_PASSWORD_CONFIRM=password123&NGINX_DOMAIN=localhost"
 	req := httptest.NewRequest(http.MethodPost, "/setup/quickinstall", strings.NewReader(form))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w := httptest.NewRecorder()

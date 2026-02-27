@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"athena/internal/domain"
+	"athena/internal/security"
 )
 
 type YtDlp struct {
@@ -38,7 +39,16 @@ var (
 	progressSizeRegex    = regexp.MustCompile(`([\d.]+)([KMG]iB) of ([\d.]+)([KMG]iB)`)
 )
 
+// validateImportURL checks that the URL uses http/https and doesn't target private IPs.
+func validateImportURL(rawURL string) error {
+	return security.IsSSRFSafeURL(rawURL)
+}
+
 func (y *YtDlp) ValidateURL(ctx context.Context, url string) error {
+	if err := validateImportURL(url); err != nil {
+		return fmt.Errorf("video URL validation failed: %w", err)
+	}
+
 	cmd := exec.CommandContext(ctx, y.binaryPath, "--get-title", "--no-warnings", "--", url)
 
 	output, err := cmd.CombinedOutput()
@@ -55,6 +65,10 @@ func (y *YtDlp) ValidateURL(ctx context.Context, url string) error {
 }
 
 func (y *YtDlp) ExtractMetadata(ctx context.Context, url string) (*domain.ImportMetadata, error) {
+	if err := validateImportURL(url); err != nil {
+		return nil, fmt.Errorf("failed to extract metadata: %w", err)
+	}
+
 	args := []string{
 		"--dump-json",
 		"--no-warnings",
@@ -121,6 +135,10 @@ func (y *YtDlp) ExtractMetadata(ctx context.Context, url string) (*domain.Import
 }
 
 func (y *YtDlp) Download(ctx context.Context, url string, importID string, progressCallback func(progress int, downloadedBytes, totalBytes int64)) (string, error) {
+	if err := validateImportURL(url); err != nil {
+		return "", fmt.Errorf("video download failed: %w", err)
+	}
+
 	const maxFileSize = int64(5 * 1024 * 1024 * 1024)
 
 	outputPath := filepath.Join(y.outputDir, importID)
@@ -305,6 +323,10 @@ func getFloat64(m map[string]interface{}, key string) float64 {
 }
 
 func (y *YtDlp) DownloadThumbnail(ctx context.Context, url, outputPath string) error {
+	if err := validateImportURL(url); err != nil {
+		return fmt.Errorf("failed to download thumbnail: %w", err)
+	}
+
 	args := []string{
 		"--write-thumbnail",
 		"--skip-download",

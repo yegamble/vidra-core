@@ -77,6 +77,7 @@
 </div>
 
 <form id="wizardForm" action="/setup/review" method="POST">
+    <input type="hidden" name="_csrf_token" value="{{.CSRFToken}}">
     <div class="alert alert-info">
         <strong>What happens next:</strong>
         <ul style="margin-top: 10px; margin-left: 20px; line-height: 1.8;">

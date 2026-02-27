@@ -109,6 +109,7 @@ func TestHandleTestEmail_InvalidJSON(t *testing.T) {
 	wizard := NewWizard()
 	req := httptest.NewRequest(http.MethodPost, "/setup/test-email", strings.NewReader("not json"))
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-CSRF-Token", wizard.csrfToken)
 	w := httptest.NewRecorder()
 
 	wizard.HandleTestEmail(w, req)
@@ -120,6 +121,7 @@ func TestHandleTestEmail_EmptyEmail(t *testing.T) {
 	wizard := NewWizard()
 	req := httptest.NewRequest(http.MethodPost, "/setup/test-email", strings.NewReader(`{"email":""}`))
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-CSRF-Token", wizard.csrfToken)
 	w := httptest.NewRecorder()
 
 	wizard.HandleTestEmail(w, req)
@@ -132,6 +134,7 @@ func TestHandleTestEmail_InvalidEmail(t *testing.T) {
 	wizard := NewWizard()
 	req := httptest.NewRequest(http.MethodPost, "/setup/test-email", strings.NewReader(`{"email":"notanemail"}`))
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-CSRF-Token", wizard.csrfToken)
 	w := httptest.NewRecorder()
 
 	wizard.HandleTestEmail(w, req)
@@ -147,6 +150,7 @@ func TestHandleTestEmail_RateLimit(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/setup/test-email",
 			strings.NewReader(`{"email":"test@example.com"}`))
 		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-CSRF-Token", wizard.csrfToken)
 		req.RemoteAddr = "192.168.1.1:12345"
 		w := httptest.NewRecorder()
 		wizard.HandleTestEmail(w, req)
@@ -155,6 +159,7 @@ func TestHandleTestEmail_RateLimit(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/setup/test-email",
 		strings.NewReader(`{"email":"test@example.com"}`))
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-CSRF-Token", wizard.csrfToken)
 	req.RemoteAddr = "192.168.1.1:54321"
 	w := httptest.NewRecorder()
 	wizard.HandleTestEmail(w, req)
@@ -271,6 +276,101 @@ func TestWelcomePageHasQuickInstallLink(t *testing.T) {
 	body := w.Body.String()
 	assert.Contains(t, body, "/setup/quickinstall", "Welcome page should contain link to /setup/quickinstall")
 	assert.Contains(t, body, "Quick Install", "Welcome page should contain 'Quick Install' text")
+}
+
+func TestCSRFProtection(t *testing.T) {
+	wizard := NewWizard()
+
+	t.Run("POST without CSRF token returns 403", func(t *testing.T) {
+		form := strings.NewReader("POSTGRES_MODE=docker")
+		req := httptest.NewRequest(http.MethodPost, "/setup/database", form)
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		w := httptest.NewRecorder()
+
+		wizard.HandleDatabase(w, req)
+
+		assert.Equal(t, http.StatusForbidden, w.Code)
+		assert.Contains(t, w.Body.String(), "CSRF")
+	})
+
+	t.Run("POST with wrong CSRF token returns 403", func(t *testing.T) {
+		form := strings.NewReader("POSTGRES_MODE=docker&_csrf_token=wrong-token")
+		req := httptest.NewRequest(http.MethodPost, "/setup/database", form)
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		w := httptest.NewRecorder()
+
+		wizard.HandleDatabase(w, req)
+
+		assert.Equal(t, http.StatusForbidden, w.Code)
+		assert.Contains(t, w.Body.String(), "CSRF")
+	})
+
+	t.Run("POST with valid CSRF token proceeds", func(t *testing.T) {
+		form := strings.NewReader("POSTGRES_MODE=docker&_csrf_token=" + wizard.csrfToken)
+		req := httptest.NewRequest(http.MethodPost, "/setup/database", form)
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		w := httptest.NewRecorder()
+
+		wizard.HandleDatabase(w, req)
+
+		// Should redirect to next step (303), not 403
+		assert.Equal(t, http.StatusSeeOther, w.Code)
+	})
+
+	t.Run("CSRF token via X-CSRF-Token header works", func(t *testing.T) {
+		form := strings.NewReader("POSTGRES_MODE=docker")
+		req := httptest.NewRequest(http.MethodPost, "/setup/database", form)
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.Header.Set("X-CSRF-Token", wizard.csrfToken)
+		w := httptest.NewRecorder()
+
+		wizard.HandleDatabase(w, req)
+
+		assert.Equal(t, http.StatusSeeOther, w.Code)
+	})
+
+	t.Run("CSRF token is rendered in GET templates", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/setup/database", nil)
+		w := httptest.NewRecorder()
+
+		wizard.HandleDatabase(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		assert.Contains(t, w.Body.String(), wizard.csrfToken)
+	})
+
+	t.Run("CSRF protects all form endpoints", func(t *testing.T) {
+		endpoints := []struct {
+			path    string
+			handler func(http.ResponseWriter, *http.Request)
+		}{
+			{"/setup/services", wizard.HandleServices},
+			{"/setup/email", wizard.HandleEmail},
+			{"/setup/networking", wizard.HandleNetworking},
+			{"/setup/storage", wizard.HandleStorage},
+			{"/setup/security", wizard.HandleSecurity},
+		}
+
+		for _, ep := range endpoints {
+			form := strings.NewReader("_csrf_token=invalid")
+			req := httptest.NewRequest(http.MethodPost, ep.path, form)
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			w := httptest.NewRecorder()
+
+			ep.handler(w, req)
+
+			assert.Equal(t, http.StatusForbidden, w.Code, "expected 403 for %s without valid CSRF", ep.path)
+		}
+	})
+}
+
+func TestCSRFTokenGeneration(t *testing.T) {
+	w1 := NewWizard()
+	w2 := NewWizard()
+
+	require.NotEmpty(t, w1.csrfToken)
+	require.NotEmpty(t, w2.csrfToken)
+	assert.NotEqual(t, w1.csrfToken, w2.csrfToken, "each wizard instance should get a unique CSRF token")
 }
 
 func TestWizardHandlerQuickInstall(t *testing.T) {

@@ -1,6 +1,7 @@
 package security
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -20,7 +21,6 @@ var (
 	ErrMetadataServiceBlocked = errors.New("access to AWS metadata service is blocked")
 	ErrFileTooLarge           = errors.New("file size exceeds maximum allowed limit")
 	ErrContentLengthMissing   = errors.New("content-length header is missing")
-	ErrDNSRebindingDetected   = errors.New("DNS rebinding attack detected")
 )
 
 // Security configuration constants
@@ -29,7 +29,6 @@ const (
 	MaxImageFileSize   = int64(50 * 1024 * 1024)       // 50MB
 	MaxDocumentSize    = int64(100 * 1024 * 1024)      // 100MB
 	DefaultHTTPTimeout = 30 * time.Second
-	DNSRebindDelay     = 100 * time.Millisecond
 )
 
 // Private IP ranges that should be blocked for SSRF protection
@@ -104,24 +103,9 @@ func IsSSRFSafeURL(urlStr string) error {
 		}
 	}
 
-	// Implement DNS rebinding protection
-	// Wait a short time and resolve again to detect DNS rebinding
-	time.Sleep(DNSRebindDelay)
-
-	ipsAfter, err := net.LookupIP(hostname)
-	if err != nil {
-		return fmt.Errorf("DNS resolution failed on second attempt: %w", err)
-	}
-
-	// Check if IPs changed (potential DNS rebinding)
-	if !areIPListsEqual(ips, ipsAfter) {
-		// IPs changed, check the new IPs too
-		for _, ip := range ipsAfter {
-			if err := checkIPSafety(ip); err != nil {
-				return ErrDNSRebindingDetected
-			}
-		}
-	}
+	// DNS rebinding protection is handled at the transport level by
+	// NewSSRFSafeHTTPClient, which pins resolved IPs in DialContext.
+	// The URL-level check here validates the initial resolution only.
 
 	return nil
 }
@@ -235,24 +219,54 @@ func parseCIDR(cidr string) *net.IPNet {
 	return ipNet
 }
 
-// Helper function to compare IP lists
-func areIPListsEqual(ips1, ips2 []net.IP) bool {
-	if len(ips1) != len(ips2) {
-		return false
+// NewSSRFSafeHTTPClient returns an *http.Client whose DialContext resolves the
+// hostname, validates every resolved IP against the SSRF blocklist, then
+// connects directly to the validated IP. This prevents DNS rebinding attacks
+// because the HTTP stack never performs its own resolution.
+func NewSSRFSafeHTTPClient(timeout time.Duration) *http.Client {
+	dialer := &net.Dialer{Timeout: 10 * time.Second}
+
+	transport := &http.Transport{
+		DisableKeepAlives: true,
+		MaxIdleConns:      1,
+		IdleConnTimeout:   30 * time.Second,
+		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			host, port, err := net.SplitHostPort(addr)
+			if err != nil {
+				return nil, fmt.Errorf("invalid address %q: %w", addr, err)
+			}
+
+			ips, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+			if err != nil {
+				return nil, fmt.Errorf("failed to resolve %q: %w", host, err)
+			}
+
+			for _, ipAddr := range ips {
+				if err := checkIPSafety(ipAddr.IP); err != nil {
+					return nil, fmt.Errorf("SSRF blocked for %s (%s): %w", host, ipAddr.IP, err)
+				}
+			}
+
+			if len(ips) == 0 {
+				return nil, fmt.Errorf("no IPs resolved for %q", host)
+			}
+
+			// Connect to the first validated IP directly (pinned).
+			pinnedAddr := net.JoinHostPort(ips[0].IP.String(), port)
+			return dialer.DialContext(ctx, network, pinnedAddr)
+		},
 	}
 
-	ipMap := make(map[string]bool)
-	for _, ip := range ips1 {
-		ipMap[ip.String()] = true
+	return &http.Client{
+		Timeout:   timeout,
+		Transport: transport,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 10 {
+				return errors.New("too many redirects")
+			}
+			return IsSSRFSafeURL(req.URL.String())
+		},
 	}
-
-	for _, ip := range ips2 {
-		if !ipMap[ip.String()] {
-			return false
-		}
-	}
-
-	return true
 }
 
 // CreateSecureHTTPClient creates an HTTP client with security protections

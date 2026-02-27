@@ -3,6 +3,7 @@ package upload
 import (
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"math"
 	"os"
@@ -53,6 +54,10 @@ func NewService(uploadRepo port.UploadRepository, encodingRepo port.EncodingRepo
 	}
 }
 
+// MaxChunkSize is the maximum allowed chunk size (64 MiB) to prevent memory
+// exhaustion during chunk assembly.
+const MaxChunkSize = 64 * 1024 * 1024
+
 func (s *service) InitiateUpload(ctx context.Context, userID string, req *domain.InitiateUploadRequest) (*domain.InitiateUploadResponse, error) {
 	if ext := filepath.Ext(req.FileName); !validUploadExt(ext) {
 		return nil, domain.NewDomainError("INVALID_FILE_EXTENSION", "Invalid file extension")
@@ -60,6 +65,10 @@ func (s *service) InitiateUpload(ctx context.Context, userID string, req *domain
 	const maxFileSize = 10 * 1024 * 1024 * 1024
 	if req.FileSize > maxFileSize {
 		return nil, domain.NewDomainError("FILE_TOO_LARGE", "File size exceeds maximum limit of 10GB")
+	}
+	if req.ChunkSize <= 0 || req.ChunkSize > MaxChunkSize {
+		return nil, domain.NewDomainError("INVALID_CHUNK_SIZE",
+			fmt.Sprintf("Chunk size must be between 1 and %d bytes", MaxChunkSize))
 	}
 	totalChunks := int((req.FileSize + req.ChunkSize - 1) / req.ChunkSize)
 	now := time.Now()
@@ -122,6 +131,20 @@ func validUploadExt(ext string) bool {
 	default:
 		return false
 	}
+}
+
+// streamChunkToFile streams a chunk file into the destination without loading
+// the entire chunk into memory, preventing DoS via large ChunkSize values.
+func streamChunkToFile(chunkPath string, dst *os.File, chunkIndex int) error {
+	src, err := os.Open(chunkPath)
+	if err != nil {
+		return fmt.Errorf("failed to read chunk %d: %w", chunkIndex, err)
+	}
+	defer func() { _ = src.Close() }()
+	if _, err := io.Copy(dst, src); err != nil {
+		return fmt.Errorf("failed to write chunk %d to final file: %w", chunkIndex, err)
+	}
+	return nil
 }
 
 func validateFilePath(path, expectedRoot string) error {
@@ -281,12 +304,8 @@ func (s *service) AssembleChunks(ctx context.Context, session *domain.UploadSess
 		if err := validateFilePath(chunkPath, s.uploadsDir); err != nil {
 			return fmt.Errorf("invalid chunk file path: %w", err)
 		}
-		chunkData, err := os.ReadFile(chunkPath)
-		if err != nil {
-			return fmt.Errorf("failed to read chunk %d: %w", chunkIndex, err)
-		}
-		if _, err := finalFile.Write(chunkData); err != nil {
-			return fmt.Errorf("failed to write chunk %d to final file: %w", chunkIndex, err)
+		if err := streamChunkToFile(chunkPath, finalFile, chunkIndex); err != nil {
+			return err
 		}
 	}
 	_ = finalFile.Close()

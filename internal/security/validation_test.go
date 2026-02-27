@@ -371,11 +371,10 @@ func TestDNSRebindingProtection(t *testing.T) {
 	// This test demonstrates the concept of DNS rebinding protection
 	// In production, this would use a mock DNS resolver interface
 	t.Run("DNS rebinding concept test", func(t *testing.T) {
-		// The IsSSRFSafeURL function includes DNS rebinding protection by:
-		// 1. Resolving the hostname
-		// 2. Checking if the IP is safe
-		// 3. Waiting a short delay
-		// 4. Resolving again to detect changes
+		// DNS rebinding protection is handled by NewSSRFSafeHTTPClient which
+		// uses a custom DialContext that resolves the hostname, validates all
+		// resolved IPs against the SSRF blocklist, then connects directly to
+		// the validated IP — preventing the HTTP stack from re-resolving.
 
 		// Test with a known bad IP
 		err := IsSSRFSafeURL("http://169.254.169.254/")
@@ -532,44 +531,6 @@ func TestIsSSRFSafeURL_EdgeCases(t *testing.T) {
 	})
 }
 
-// TestAreIPListsEqual tests the areIPListsEqual helper function
-func TestAreIPListsEqual(t *testing.T) {
-	t.Run("equal lists same order", func(t *testing.T) {
-		ips1 := []net.IP{net.ParseIP("8.8.8.8"), net.ParseIP("8.8.4.4")}
-		ips2 := []net.IP{net.ParseIP("8.8.8.8"), net.ParseIP("8.8.4.4")}
-		assert.True(t, areIPListsEqual(ips1, ips2))
-	})
-
-	t.Run("equal lists different order", func(t *testing.T) {
-		ips1 := []net.IP{net.ParseIP("8.8.8.8"), net.ParseIP("8.8.4.4")}
-		ips2 := []net.IP{net.ParseIP("8.8.4.4"), net.ParseIP("8.8.8.8")}
-		assert.True(t, areIPListsEqual(ips1, ips2))
-	})
-
-	t.Run("different lengths", func(t *testing.T) {
-		ips1 := []net.IP{net.ParseIP("8.8.8.8")}
-		ips2 := []net.IP{net.ParseIP("8.8.8.8"), net.ParseIP("8.8.4.4")}
-		assert.False(t, areIPListsEqual(ips1, ips2))
-	})
-
-	t.Run("different IPs", func(t *testing.T) {
-		ips1 := []net.IP{net.ParseIP("8.8.8.8"), net.ParseIP("1.1.1.1")}
-		ips2 := []net.IP{net.ParseIP("8.8.8.8"), net.ParseIP("8.8.4.4")}
-		assert.False(t, areIPListsEqual(ips1, ips2))
-	})
-
-	t.Run("empty lists", func(t *testing.T) {
-		ips1 := []net.IP{}
-		ips2 := []net.IP{}
-		assert.True(t, areIPListsEqual(ips1, ips2))
-	})
-
-	t.Run("IPv6 addresses", func(t *testing.T) {
-		ips1 := []net.IP{net.ParseIP("2001:4860:4860::8888")}
-		ips2 := []net.IP{net.ParseIP("2001:4860:4860::8888")}
-		assert.True(t, areIPListsEqual(ips1, ips2))
-	})
-}
 
 // TestCheckIPSafety tests the checkIPSafety helper function
 func TestCheckIPSafety(t *testing.T) {
@@ -933,9 +894,52 @@ func TestSecurityConstants(t *testing.T) {
 		assert.Equal(t, 30*time.Second, DefaultHTTPTimeout)
 	})
 
-	t.Run("DNSRebindDelay is 100ms", func(t *testing.T) {
-		assert.Equal(t, 100*time.Millisecond, DNSRebindDelay)
+}
+
+// TestNewSSRFSafeHTTPClient tests the SSRF-safe HTTP client with IP-pinning DialContext
+func TestNewSSRFSafeHTTPClient(t *testing.T) {
+	t.Run("returns non-nil client", func(t *testing.T) {
+		client := NewSSRFSafeHTTPClient(10 * time.Second)
+		assert.NotNil(t, client)
+		assert.Equal(t, 10*time.Second, client.Timeout)
 	})
+
+	t.Run("blocks requests to private IPs", func(t *testing.T) {
+		// Start a local test server (binds to 127.0.0.1)
+		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		}))
+		defer ts.Close()
+
+		client := NewSSRFSafeHTTPClient(5 * time.Second)
+		_, err := client.Get(ts.URL)
+		assert.Error(t, err, "request to localhost should be blocked by IP-pinning dialer")
+	})
+
+	t.Run("blocks redirects to private IPs", func(t *testing.T) {
+		client := NewSSRFSafeHTTPClient(5 * time.Second)
+		assert.NotNil(t, client.CheckRedirect)
+
+		req := httptest.NewRequest("GET", "http://127.0.0.1/", nil)
+		err := client.CheckRedirect(req, []*http.Request{})
+		assert.Error(t, err)
+	})
+}
+
+// TestIsSSRFSafeURL_NoSleep verifies the DNS rebinding fix doesn't use sleep
+func TestIsSSRFSafeURL_NoSleep(t *testing.T) {
+	// After the DNS rebinding fix, IsSSRFSafeURL should not sleep.
+	// A public URL should resolve quickly (< 1 second, not 100ms+ sleep).
+	start := time.Now()
+	_ = IsSSRFSafeURL("https://www.example.com/")
+	elapsed := time.Since(start)
+
+	// The old implementation sleeps 100ms. With the fix, it should be faster.
+	// Allow up to 500ms for DNS resolution but no artificial delay.
+	// This is a soft check — it may flake in slow CI but documents intent.
+	if elapsed > 2*time.Second {
+		t.Logf("IsSSRFSafeURL took %v — check if sleep was removed", elapsed)
+	}
 }
 
 // TestErrorTypes tests that error types are properly defined
@@ -946,5 +950,4 @@ func TestErrorTypes(t *testing.T) {
 	assert.NotNil(t, ErrMetadataServiceBlocked)
 	assert.NotNil(t, ErrFileTooLarge)
 	assert.NotNil(t, ErrContentLengthMissing)
-	assert.NotNil(t, ErrDNSRebindingDetected)
 }

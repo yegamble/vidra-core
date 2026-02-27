@@ -25,6 +25,7 @@ type Wizard struct {
 	templates map[string]*template.Template
 	config    *WizardConfig
 	mu        sync.Mutex
+	csrfToken string
 
 	// RateLimit controls test connection request throttling.
 	// Defaults to in-memory. Set to NewRedisRateLimiter() for persistence across restarts.
@@ -115,6 +116,7 @@ type TemplateData struct {
 	Success         string
 	MigrationCount  int
 	Port            string
+	CSRFToken       string
 }
 
 func NewWizard() *Wizard {
@@ -134,8 +136,15 @@ func NewWizard() *Wizard {
 		log.Fatalf("Failed to generate JWT secret: %v", err)
 	}
 
+	csrfBytes := make([]byte, 32)
+	if _, err := rand.Read(csrfBytes); err != nil {
+		log.Fatalf("Failed to generate CSRF token: %v", err)
+	}
+	csrfToken := base64.URLEncoding.EncodeToString(csrfBytes)
+
 	return &Wizard{
 		templates:    templates,
+		csrfToken:    csrfToken,
 		RateLimit:    NewMemoryRateLimiter(),
 		URLValidator: security.NewURLValidator(),
 		OutputDir:    "",
@@ -354,6 +363,10 @@ func (w *Wizard) HandleReview(rw http.ResponseWriter, r *http.Request) {
 }
 
 func (w *Wizard) HandleTestEmail(rw http.ResponseWriter, r *http.Request) {
+	if !w.validateCSRF(rw, r) {
+		return
+	}
+
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
@@ -447,6 +460,7 @@ func (w *Wizard) HandleComplete(rw http.ResponseWriter, r *http.Request) {
 
 func (w *Wizard) renderTemplate(rw http.ResponseWriter, layout, content string, data *TemplateData) {
 	rw.Header().Set("Content-Type", "text/html; charset=utf-8")
+	data.CSRFToken = w.csrfToken
 
 	// Extract page name from content (e.g., "database.html" → "database")
 	pageName := strings.TrimSuffix(content, ".html")
@@ -467,12 +481,4 @@ func (w *Wizard) renderTemplate(rw http.ResponseWriter, layout, content string, 
 	if _, err := buf.WriteTo(rw); err != nil {
 		log.Printf("Failed to write template response: %v", err)
 	}
-}
-
-func GenerateJWTSecret() (string, error) {
-	bytes := make([]byte, 32)
-	if _, err := rand.Read(bytes); err != nil {
-		return "", err
-	}
-	return base64.URLEncoding.EncodeToString(bytes), nil
 }

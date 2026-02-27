@@ -25,6 +25,7 @@ func TestWizardFullFlowDocker(t *testing.T) {
 
 	form := url.Values{}
 	form.Set("POSTGRES_MODE", "docker")
+	form.Set("_csrf_token", wizard.csrfToken)
 	req := httptest.NewRequest(http.MethodPost, "/setup/database", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w := httptest.NewRecorder()
@@ -35,6 +36,7 @@ func TestWizardFullFlowDocker(t *testing.T) {
 	form = url.Values{}
 	form.Set("REDIS_MODE", "docker")
 	form.Set("ENABLE_IPFS", "false")
+	form.Set("_csrf_token", wizard.csrfToken)
 	req = httptest.NewRequest(http.MethodPost, "/setup/services", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w = httptest.NewRecorder()
@@ -46,6 +48,7 @@ func TestWizardFullFlowDocker(t *testing.T) {
 	form.Set("SMTP_MODE", "docker")
 	form.Set("SMTP_FROM_ADDRESS", "noreply@localhost")
 	form.Set("SMTP_FROM_NAME", "Athena")
+	form.Set("_csrf_token", wizard.csrfToken)
 	req = httptest.NewRequest(http.MethodPost, "/setup/email", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w = httptest.NewRecorder()
@@ -57,6 +60,7 @@ func TestWizardFullFlowDocker(t *testing.T) {
 	form.Set("NGINX_DOMAIN", "localhost")
 	form.Set("NGINX_PORT", "80")
 	form.Set("NGINX_PROTOCOL", "http")
+	form.Set("_csrf_token", wizard.csrfToken)
 	req = httptest.NewRequest(http.MethodPost, "/setup/networking", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w = httptest.NewRecorder()
@@ -67,6 +71,7 @@ func TestWizardFullFlowDocker(t *testing.T) {
 	form = url.Values{}
 	form.Set("STORAGE_PATH", "./storage")
 	form.Set("BACKUP_ENABLED", "false")
+	form.Set("_csrf_token", wizard.csrfToken)
 	req = httptest.NewRequest(http.MethodPost, "/setup/storage", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w = httptest.NewRecorder()
@@ -78,6 +83,7 @@ func TestWizardFullFlowDocker(t *testing.T) {
 	form.Set("ADMIN_USERNAME", "admin")
 	form.Set("ADMIN_EMAIL", "admin@example.com")
 	form.Set("ADMIN_PASSWORD", "securepassword123")
+	form.Set("_csrf_token", wizard.csrfToken)
 	req = httptest.NewRequest(http.MethodPost, "/setup/security", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w = httptest.NewRecorder()
@@ -119,6 +125,7 @@ func TestWizardFullFlowExternal(t *testing.T) {
 	form.Set("POSTGRES_PASSWORD", "pass")
 	form.Set("POSTGRES_DB", "athena")
 	form.Set("POSTGRES_SSLMODE", "disable")
+	form.Set("_csrf_token", wizard.csrfToken)
 	req := httptest.NewRequest(http.MethodPost, "/setup/database", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w := httptest.NewRecorder()
@@ -129,6 +136,7 @@ func TestWizardFullFlowExternal(t *testing.T) {
 	form.Set("REDIS_MODE", "external")
 	form.Set("REDIS_URL", "redis://external.host:6379/0")
 	form.Set("ENABLE_IPFS", "false")
+	form.Set("_csrf_token", wizard.csrfToken)
 	req = httptest.NewRequest(http.MethodPost, "/setup/services", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w = httptest.NewRecorder()
@@ -158,6 +166,7 @@ func TestWizardFullFlowExternal(t *testing.T) {
 	form.Set("SMTP_PASSWORD", "secret")
 	form.Set("SMTP_FROM_ADDRESS", "noreply@example.com")
 	form.Set("SMTP_FROM_NAME", "Athena Videos")
+	form.Set("_csrf_token", wizard.csrfToken)
 	req = httptest.NewRequest(http.MethodPost, "/setup/email", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w = httptest.NewRecorder()
@@ -170,6 +179,7 @@ func TestWizardFullFlowExternal(t *testing.T) {
 	form.Set("NGINX_PROTOCOL", "https")
 	form.Set("NGINX_TLS_MODE", "letsencrypt")
 	form.Set("NGINX_LETSENCRYPT_EMAIL", "admin@example.com")
+	form.Set("_csrf_token", wizard.csrfToken)
 	req = httptest.NewRequest(http.MethodPost, "/setup/networking", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w = httptest.NewRecorder()
@@ -187,6 +197,7 @@ func TestWizardFullFlowExternal(t *testing.T) {
 
 	form = url.Values{}
 	form.Set("STORAGE_PATH", "./storage")
+	form.Set("_csrf_token", wizard.csrfToken)
 	req = httptest.NewRequest(http.MethodPost, "/setup/storage", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w = httptest.NewRecorder()
@@ -197,6 +208,7 @@ func TestWizardFullFlowExternal(t *testing.T) {
 	form.Set("ADMIN_USERNAME", "admin")
 	form.Set("ADMIN_EMAIL", "admin@example.com")
 	form.Set("ADMIN_PASSWORD", "securepassword123")
+	form.Set("_csrf_token", wizard.csrfToken)
 	req = httptest.NewRequest(http.MethodPost, "/setup/security", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w = httptest.NewRecorder()
@@ -232,6 +244,7 @@ func TestWizardInvalidDatabaseURL(t *testing.T) {
 	form.Set("POSTGRES_PORT", "5432")
 	form.Set("POSTGRES_USER", "user")
 	form.Set("POSTGRES_PASSWORD", "pass")
+	form.Set("_csrf_token", wizard.csrfToken)
 	req := httptest.NewRequest(http.MethodPost, "/setup/database", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w := httptest.NewRecorder()
@@ -248,6 +261,7 @@ func TestWizardInvalidJWTSecret(t *testing.T) {
 	form.Set("JWT_SECRET_CUSTOM", "short")
 	form.Set("ADMIN_USERNAME", "admin")
 	form.Set("ADMIN_EMAIL", "admin@example.com")
+	form.Set("_csrf_token", wizard.csrfToken)
 	req := httptest.NewRequest(http.MethodPost, "/setup/security", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w := httptest.NewRecorder()
@@ -262,6 +276,7 @@ func TestWizardMissingAdminPassword(t *testing.T) {
 	wizard.config.DatabaseURL = "postgres://test:test@localhost/test"
 
 	form := url.Values{}
+	form.Set("_csrf_token", wizard.csrfToken)
 	req := httptest.NewRequest(http.MethodPost, "/setup/review", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w := httptest.NewRecorder()
@@ -312,6 +327,7 @@ func TestWizardCustomJWTSecret(t *testing.T) {
 	form.Set("JWT_SECRET_CUSTOM", customSecret)
 	form.Set("ADMIN_USERNAME", "admin")
 	form.Set("ADMIN_EMAIL", "admin@example.com")
+	form.Set("_csrf_token", wizard.csrfToken)
 	req := httptest.NewRequest(http.MethodPost, "/setup/security", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w := httptest.NewRecorder()
@@ -339,6 +355,7 @@ func TestWizardIPFSEnabled(t *testing.T) {
 	form.Set("ENABLE_IPFS", "true")
 	form.Set("IPFS_MODE", "external")
 	form.Set("IPFS_API_URL", "http://external.ipfs.host:5001")
+	form.Set("_csrf_token", wizard.csrfToken)
 	req := httptest.NewRequest(http.MethodPost, "/setup/services", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w := httptest.NewRecorder()
@@ -383,6 +400,7 @@ func TestWizardOptionalServicesDisabled(t *testing.T) {
 	form.Set("ENABLE_IPFS", "false")
 	form.Set("ENABLE_CLAMAV", "false")
 	form.Set("ENABLE_WHISPER", "false")
+	form.Set("_csrf_token", wizard.csrfToken)
 	req := httptest.NewRequest(http.MethodPost, "/setup/services", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w := httptest.NewRecorder()
@@ -418,6 +436,7 @@ func TestWizardStateIsolation(t *testing.T) {
 	form.Set("POSTGRES_PASSWORD", "pass")
 	form.Set("POSTGRES_DB", "db1")
 	form.Set("POSTGRES_SSLMODE", "disable")
+	form.Set("_csrf_token", wizard1.csrfToken)
 	req := httptest.NewRequest(http.MethodPost, "/setup/database", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w := httptest.NewRecorder()
@@ -425,6 +444,7 @@ func TestWizardStateIsolation(t *testing.T) {
 
 	form = url.Values{}
 	form.Set("POSTGRES_MODE", "docker")
+	form.Set("_csrf_token", wizard2.csrfToken)
 	req = httptest.NewRequest(http.MethodPost, "/setup/database", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w = httptest.NewRecorder()
@@ -450,6 +470,7 @@ func TestWizardIOTADockerMode(t *testing.T) {
 	form.Set("ENABLE_IOTA", "true")
 	form.Set("IOTA_MODE", "docker")
 	form.Set("IOTA_NETWORK", "testnet")
+	form.Set("_csrf_token", wizard.csrfToken)
 	req := httptest.NewRequest(http.MethodPost, "/setup/services", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w := httptest.NewRecorder()
@@ -473,6 +494,7 @@ func TestWizardIOTAExternalMode(t *testing.T) {
 	form.Set("IOTA_MODE", "external")
 	form.Set("IOTA_NODE_URL", "http://iota-node.example.com:14265")
 	form.Set("IOTA_NETWORK", "mainnet")
+	form.Set("_csrf_token", wizard.csrfToken)
 	req := httptest.NewRequest(http.MethodPost, "/setup/services", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w := httptest.NewRecorder()
@@ -497,6 +519,7 @@ func TestWizardIOTAExternalModeInvalidURL(t *testing.T) {
 	form.Set("IOTA_MODE", "external")
 	form.Set("IOTA_NODE_URL", "not-a-url")
 	form.Set("IOTA_NETWORK", "testnet")
+	form.Set("_csrf_token", wizard.csrfToken)
 	req := httptest.NewRequest(http.MethodPost, "/setup/services", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w := httptest.NewRecorder()
@@ -513,6 +536,7 @@ func TestWizardIOTAInvalidNetwork(t *testing.T) {
 	form.Set("ENABLE_IOTA", "true")
 	form.Set("IOTA_MODE", "docker")
 	form.Set("IOTA_NETWORK", "devnet")
+	form.Set("_csrf_token", wizard.csrfToken)
 	req := httptest.NewRequest(http.MethodPost, "/setup/services", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w := httptest.NewRecorder()
@@ -526,6 +550,7 @@ func TestWizardIOTADisabled(t *testing.T) {
 
 	form := url.Values{}
 	form.Set("REDIS_MODE", "docker")
+	form.Set("_csrf_token", wizard.csrfToken)
 	req := httptest.NewRequest(http.MethodPost, "/setup/services", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w := httptest.NewRecorder()
@@ -637,6 +662,7 @@ func TestWizardFullNavigationFlow(t *testing.T) {
 	// Database POST → redirects to services
 	form := url.Values{}
 	form.Set("POSTGRES_MODE", "docker")
+	form.Set("_csrf_token", wizard.csrfToken)
 	req := httptest.NewRequest(http.MethodPost, "/setup/database", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w := httptest.NewRecorder()
@@ -650,6 +676,7 @@ func TestWizardFullNavigationFlow(t *testing.T) {
 	form.Set("ENABLE_IPFS", "false")
 	form.Set("ENABLE_CLAMAV", "false")
 	form.Set("ENABLE_WHISPER", "false")
+	form.Set("_csrf_token", wizard.csrfToken)
 	req = httptest.NewRequest(http.MethodPost, "/setup/services", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w = httptest.NewRecorder()
@@ -662,6 +689,7 @@ func TestWizardFullNavigationFlow(t *testing.T) {
 	form.Set("SMTP_MODE", "docker")
 	form.Set("SMTP_FROM_ADDRESS", "noreply@localhost")
 	form.Set("SMTP_FROM_NAME", "Athena")
+	form.Set("_csrf_token", wizard.csrfToken)
 	req = httptest.NewRequest(http.MethodPost, "/setup/email", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w = httptest.NewRecorder()
@@ -674,6 +702,7 @@ func TestWizardFullNavigationFlow(t *testing.T) {
 	form.Set("NGINX_DOMAIN", "localhost")
 	form.Set("NGINX_PORT", "80")
 	form.Set("NGINX_PROTOCOL", "http")
+	form.Set("_csrf_token", wizard.csrfToken)
 	req = httptest.NewRequest(http.MethodPost, "/setup/networking", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w = httptest.NewRecorder()
@@ -685,6 +714,7 @@ func TestWizardFullNavigationFlow(t *testing.T) {
 	form = url.Values{}
 	form.Set("STORAGE_PATH", "./storage")
 	form.Set("BACKUP_ENABLED", "false")
+	form.Set("_csrf_token", wizard.csrfToken)
 	req = httptest.NewRequest(http.MethodPost, "/setup/storage", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w = httptest.NewRecorder()
@@ -697,6 +727,7 @@ func TestWizardFullNavigationFlow(t *testing.T) {
 	form.Set("ADMIN_USERNAME", "admin")
 	form.Set("ADMIN_EMAIL", "admin@example.com")
 	form.Set("ADMIN_PASSWORD", "securepassword123")
+	form.Set("_csrf_token", wizard.csrfToken)
 	req = httptest.NewRequest(http.MethodPost, "/setup/security", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w = httptest.NewRecorder()
@@ -729,6 +760,7 @@ func TestProcessDatabaseFormIndividualFields(t *testing.T) {
 	form.Set("POSTGRES_PASSWORD", "testpass123")
 	form.Set("POSTGRES_DB", "testdb")
 	form.Set("POSTGRES_SSLMODE", "require")
+	form.Set("_csrf_token", wizard.csrfToken)
 
 	req := httptest.NewRequest(http.MethodPost, "/setup/database", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -834,6 +866,7 @@ func TestProcessDatabaseFormPasswordEncoding(t *testing.T) {
 			form.Set("POSTGRES_PASSWORD", tt.password)
 			form.Set("POSTGRES_DB", "testdb")
 			form.Set("POSTGRES_SSLMODE", "disable")
+			form.Set("_csrf_token", wizard.csrfToken)
 
 			req := httptest.NewRequest(http.MethodPost, "/setup/database", strings.NewReader(form.Encode()))
 			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -904,6 +937,7 @@ func TestDatabaseFormShellMetacharValidation(t *testing.T) {
 			form.Set("POSTGRES_SSLMODE", "disable")
 			// Override the targeted field with the malicious value
 			form.Set(tt.field, tt.value)
+			form.Set("_csrf_token", wizard.csrfToken)
 
 			req := httptest.NewRequest(http.MethodPost, "/setup/database", strings.NewReader(form.Encode()))
 			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -1012,6 +1046,7 @@ func TestQuickInstallFormValidation(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			wizard := NewWizard()
+			tt.formValues.Set("_csrf_token", wizard.csrfToken)
 
 			req := httptest.NewRequest(http.MethodPost, "/setup/quickinstall", strings.NewReader(tt.formValues.Encode()))
 			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -1064,6 +1099,7 @@ func TestQuickInstallUsernameValidation(t *testing.T) {
 				"ADMIN_PASSWORD_CONFIRM": {"password123"},
 				"NGINX_DOMAIN":           {"localhost"},
 			}
+			formValues.Set("_csrf_token", wizard.csrfToken)
 			req := httptest.NewRequest(http.MethodPost, "/setup/quickinstall", strings.NewReader(formValues.Encode()))
 			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 			w := httptest.NewRecorder()
@@ -1107,6 +1143,7 @@ func TestQuickInstallEmailValidation(t *testing.T) {
 				"ADMIN_PASSWORD_CONFIRM": {"password123"},
 				"NGINX_DOMAIN":           {"localhost"},
 			}
+			formValues.Set("_csrf_token", wizard.csrfToken)
 			req := httptest.NewRequest(http.MethodPost, "/setup/quickinstall", strings.NewReader(formValues.Encode()))
 			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 			w := httptest.NewRecorder()
@@ -1134,6 +1171,7 @@ func TestQuickInstallDockerModeWritesEnv(t *testing.T) {
 		"ADMIN_PASSWORD_CONFIRM": {"password123"},
 		"NGINX_DOMAIN":           {"localhost"},
 	}
+	formValues.Set("_csrf_token", wizard.csrfToken)
 	req := httptest.NewRequest(http.MethodPost, "/setup/quickinstall", strings.NewReader(formValues.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w := httptest.NewRecorder()

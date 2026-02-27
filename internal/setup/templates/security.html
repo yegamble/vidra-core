@@ -6,6 +6,7 @@
 </p>
 
 <form id="wizardForm" action="/setup/security" method="POST">
+    <input type="hidden" name="_csrf_token" value="{{.CSRFToken}}">
     <h3 style="margin-bottom: 15px;">JWT Secret</h3>
 
     <div class="form-group">

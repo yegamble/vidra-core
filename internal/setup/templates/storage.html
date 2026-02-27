@@ -6,6 +6,7 @@
 </p>
 
 <form id="wizardForm" action="/setup/storage" method="POST">
+    <input type="hidden" name="_csrf_token" value="{{.CSRFToken}}">
     <div class="form-group">
         <label for="storage_path">Local Storage Path</label>
         <input type="text" id="storage_path" name="STORAGE_PATH"

@@ -2,10 +2,31 @@ package setup
 
 import (
 	"fmt"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 )
+
+// extractCSRFToken fetches a GET page and extracts the CSRF token from the hidden input.
+func extractCSRFToken(t *testing.T, handler http.Handler, path string) string {
+	t.Helper()
+	req := httptest.NewRequest("GET", path, nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	body := w.Body.String()
+	const marker = `name="_csrf_token" value="`
+	idx := strings.Index(body, marker)
+	if idx == -1 {
+		t.Fatalf("CSRF token not found in GET %s response", path)
+	}
+	start := idx + len(marker)
+	end := strings.Index(body[start:], `"`)
+	if end == -1 {
+		t.Fatalf("CSRF token value not terminated in GET %s response", path)
+	}
+	return body[start : start+end]
+}
 
 // TestProgramExecution exercises the full server handler through the chi router
 // to verify all routes work end-to-end as the real server would serve them.
@@ -30,7 +51,8 @@ func TestProgramExecution(t *testing.T) {
 	})
 
 	t.Run("database POST with external mode redirects to services", func(t *testing.T) {
-		form := "POSTGRES_MODE=external&POSTGRES_HOST=myhost&POSTGRES_PORT=5432&POSTGRES_USER=myuser&POSTGRES_PASSWORD=mypass&POSTGRES_DB=mydb&POSTGRES_SSLMODE=disable"
+		csrfToken := extractCSRFToken(t, handler, "/setup/database")
+		form := "_csrf_token=" + csrfToken + "&POSTGRES_MODE=external&POSTGRES_HOST=myhost&POSTGRES_PORT=5432&POSTGRES_USER=myuser&POSTGRES_PASSWORD=mypass&POSTGRES_DB=mydb&POSTGRES_SSLMODE=disable"
 		req := httptest.NewRequest("POST", "/setup/database", strings.NewReader(form))
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		w := httptest.NewRecorder()
@@ -123,7 +145,8 @@ func TestProgramExecution(t *testing.T) {
 
 	t.Run("review page masks password", func(t *testing.T) {
 		// First, configure external PostgreSQL
-		form := "POSTGRES_MODE=external&POSTGRES_HOST=host&POSTGRES_PORT=5432&POSTGRES_USER=user&POSTGRES_PASSWORD=secret123&POSTGRES_DB=db&POSTGRES_SSLMODE=disable"
+		csrfToken := extractCSRFToken(t, handler, "/setup/database")
+		form := "_csrf_token=" + csrfToken + "&POSTGRES_MODE=external&POSTGRES_HOST=host&POSTGRES_PORT=5432&POSTGRES_USER=user&POSTGRES_PASSWORD=secret123&POSTGRES_DB=db&POSTGRES_SSLMODE=disable"
 		req := httptest.NewRequest("POST", "/setup/database", strings.NewReader(form))
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		w := httptest.NewRecorder()

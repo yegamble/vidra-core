@@ -421,6 +421,62 @@ func TestJSONHelperExtractors(t *testing.T) {
 	}
 }
 
+func TestYtDlp_ValidateURL_SSRF(t *testing.T) {
+	outputDir := t.TempDir()
+	// Use a real binary path — these should be rejected before exec
+	y := NewYtDlp("yt-dlp", outputDir)
+
+	tests := []struct {
+		name string
+		url  string
+	}{
+		{"file scheme", "file:///etc/passwd"},
+		{"ftp scheme", "ftp://example.com/video"},
+		{"gopher scheme", "gopher://example.com/"},
+		{"data scheme", "data:text/html,<script>alert(1)</script>"},
+		{"private IP 127.0.0.1", "http://127.0.0.1:8080/video"},
+		{"private IP 10.x", "http://10.0.0.1/video"},
+		{"private IP 192.168.x", "http://192.168.1.1/video"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := y.ValidateURL(context.Background(), tt.url)
+			if err == nil {
+				t.Fatalf("ValidateURL(%q) should have returned an error", tt.url)
+			}
+		})
+	}
+}
+
+func TestYtDlp_ExtractMetadata_SSRF(t *testing.T) {
+	outputDir := t.TempDir()
+	y := NewYtDlp("yt-dlp", outputDir)
+
+	_, err := y.ExtractMetadata(context.Background(), "file:///etc/passwd")
+	if err == nil {
+		t.Fatal("ExtractMetadata(file://) should have returned an error")
+	}
+}
+
+func TestYtDlp_Download_SSRF(t *testing.T) {
+	y := NewYtDlp("yt-dlp", t.TempDir())
+
+	_, err := y.Download(context.Background(), "file:///etc/passwd", "import-ssrf", nil)
+	if err == nil {
+		t.Fatal("Download(file://) should have returned an error")
+	}
+}
+
+func TestYtDlp_DownloadThumbnail_SSRF(t *testing.T) {
+	y := NewYtDlp("yt-dlp", t.TempDir())
+
+	err := y.DownloadThumbnail(context.Background(), "file:///etc/passwd", t.TempDir())
+	if err == nil {
+		t.Fatal("DownloadThumbnail(file://) should have returned an error")
+	}
+}
+
 func TestYtDlp_DownloadThumbnail(t *testing.T) {
 	outputDir := t.TempDir()
 

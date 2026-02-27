@@ -1,6 +1,9 @@
 package setup
 
 import (
+	"crypto/rand"
+	"crypto/subtle"
+	"encoding/base64"
 	"fmt"
 	"net"
 	"net/http"
@@ -10,9 +13,36 @@ import (
 	"strings"
 )
 
+// validateCSRF checks that the request's CSRF token matches the wizard's token.
+// Checks X-CSRF-Token header first (for JSON endpoints), then _csrf_token form value.
+// Returns true if valid, false if invalid (and writes 403 to the response).
+func (w *Wizard) validateCSRF(rw http.ResponseWriter, r *http.Request) bool {
+	token := r.Header.Get("X-CSRF-Token")
+	if token == "" {
+		token = r.FormValue("_csrf_token")
+	}
+	if subtle.ConstantTimeCompare([]byte(token), []byte(w.csrfToken)) != 1 {
+		http.Error(rw, "Forbidden - invalid CSRF token", http.StatusForbidden)
+		return false
+	}
+	return true
+}
+
+// GenerateJWTSecret generates a cryptographically random JWT secret.
+func GenerateJWTSecret() (string, error) {
+	bytes := make([]byte, 32)
+	if _, err := rand.Read(bytes); err != nil {
+		return "", err
+	}
+	return base64.URLEncoding.EncodeToString(bytes), nil
+}
+
 func (w *Wizard) processDatabaseForm(rw http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
 		http.Error(rw, "Invalid form data", http.StatusBadRequest)
+		return
+	}
+	if !w.validateCSRF(rw, r) {
 		return
 	}
 
@@ -107,6 +137,9 @@ func (w *Wizard) processServicesForm(rw http.ResponseWriter, r *http.Request) {
 		http.Error(rw, "Invalid form data", http.StatusBadRequest)
 		return
 	}
+	if !w.validateCSRF(rw, r) {
+		return
+	}
 
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -145,6 +178,9 @@ func (w *Wizard) processServicesForm(rw http.ResponseWriter, r *http.Request) {
 func (w *Wizard) processEmailForm(rw http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
 		http.Error(rw, "Invalid form data", http.StatusBadRequest)
+		return
+	}
+	if !w.validateCSRF(rw, r) {
 		return
 	}
 
@@ -204,6 +240,9 @@ func (w *Wizard) processNetworkingForm(rw http.ResponseWriter, r *http.Request) 
 		http.Error(rw, "Invalid form data", http.StatusBadRequest)
 		return
 	}
+	if !w.validateCSRF(rw, r) {
+		return
+	}
 
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -256,6 +295,9 @@ func (w *Wizard) processStorageForm(rw http.ResponseWriter, r *http.Request) {
 		http.Error(rw, "Invalid form data", http.StatusBadRequest)
 		return
 	}
+	if !w.validateCSRF(rw, r) {
+		return
+	}
 
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -273,6 +315,9 @@ func (w *Wizard) processStorageForm(rw http.ResponseWriter, r *http.Request) {
 func (w *Wizard) processSecurityForm(rw http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
 		http.Error(rw, "Invalid form data", http.StatusBadRequest)
+		return
+	}
+	if !w.validateCSRF(rw, r) {
 		return
 	}
 
@@ -304,6 +349,9 @@ func (w *Wizard) processSecurityForm(rw http.ResponseWriter, r *http.Request) {
 func (w *Wizard) processReviewForm(rw http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
 		http.Error(rw, "Invalid form data", http.StatusBadRequest)
+		return
+	}
+	if !w.validateCSRF(rw, r) {
 		return
 	}
 
@@ -361,6 +409,9 @@ func (w *Wizard) processReviewForm(rw http.ResponseWriter, r *http.Request) {
 func (w *Wizard) processQuickInstallForm(rw http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
 		http.Error(rw, "Invalid form data", http.StatusBadRequest)
+		return
+	}
+	if !w.validateCSRF(rw, r) {
 		return
 	}
 

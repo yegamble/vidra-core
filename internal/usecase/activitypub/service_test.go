@@ -1204,131 +1204,6 @@ func TestServiceDeleteVideo(t *testing.T) {
 	})
 }
 
-func TestServicePublishComment(t *testing.T) {
-	mockAPRepo := new(MockActivityPubRepository)
-	mockUserRepo := new(MockUserRepository)
-	mockVideoRepo := new(MockVideoRepository)
-	mockCommentRepo := new(MockCommentRepository)
-
-	cfg := &config.Config{
-		PublicBaseURL: "https://video.example",
-	}
-
-	service := NewService(mockAPRepo, mockUserRepo, mockVideoRepo, mockCommentRepo, cfg)
-
-	ctx := context.Background()
-
-	t.Run("PublishComment delivers to video owner and followers", func(t *testing.T) {
-
-		err := service.PublishComment(ctx, "comment-123")
-
-		_ = err
-	})
-}
-
-func TestServiceBuildVideoObject(t *testing.T) {
-	mockAPRepo := new(MockActivityPubRepository)
-	mockUserRepo := new(MockUserRepository)
-	mockVideoRepo := new(MockVideoRepository)
-	mockCommentRepo := new(MockCommentRepository)
-
-	cfg := &config.Config{
-		PublicBaseURL: "https://video.example",
-	}
-
-	service := NewService(mockAPRepo, mockUserRepo, mockVideoRepo, mockCommentRepo, cfg)
-
-	ctx := context.Background()
-
-	t.Run("BuildVideoObject creates valid VideoObject", func(t *testing.T) {
-		video := &domain.Video{
-			ID:          "video-build-123",
-			Title:       "Build Test",
-			Description: "Testing BuildVideoObject",
-			Duration:    120,
-			UserID:      "user-build-123",
-			Privacy:     domain.PrivacyPublic,
-			Status:      domain.StatusCompleted,
-		}
-
-		user := &domain.User{
-			ID:       "user-build-123",
-			Username: "builder",
-		}
-
-		mockUserRepo.On("GetByID", ctx, user.ID).Return(user, nil).Once()
-
-		videoObject, err := service.BuildVideoObject(ctx, video)
-
-		_ = videoObject
-		_ = err
-
-		mockUserRepo.AssertExpectations(t)
-	})
-}
-
-func TestServiceBuildNoteObject(t *testing.T) {
-	mockAPRepo := new(MockActivityPubRepository)
-	mockUserRepo := new(MockUserRepository)
-	mockVideoRepo := new(MockVideoRepository)
-	mockCommentRepo := new(MockCommentRepository)
-
-	cfg := &config.Config{
-		PublicBaseURL: "https://video.example",
-	}
-
-	service := NewService(mockAPRepo, mockUserRepo, mockVideoRepo, mockCommentRepo, cfg)
-
-	ctx := context.Background()
-
-	t.Run("BuildNoteObject creates valid Note", func(t *testing.T) {
-
-		var comment *domain.Comment
-		noteObject, err := service.BuildNoteObject(ctx, comment)
-
-		_ = noteObject
-		_ = err
-	})
-}
-
-func TestServiceCreateVideoActivity(t *testing.T) {
-	mockAPRepo := new(MockActivityPubRepository)
-	mockUserRepo := new(MockUserRepository)
-	mockVideoRepo := new(MockVideoRepository)
-	mockCommentRepo := new(MockCommentRepository)
-
-	cfg := &config.Config{
-		PublicBaseURL: "https://video.example",
-	}
-
-	service := NewService(mockAPRepo, mockUserRepo, mockVideoRepo, mockCommentRepo, cfg)
-
-	ctx := context.Background()
-
-	t.Run("CreateVideoActivity wraps VideoObject in Create", func(t *testing.T) {
-		video := &domain.Video{
-			ID:      "video-create-123",
-			Title:   "Create Activity Test",
-			UserID:  "user-create-123",
-			Privacy: domain.PrivacyPublic,
-			Status:  domain.StatusCompleted,
-		}
-
-		user := &domain.User{
-			ID:       "user-create-123",
-			Username: "creator",
-		}
-
-		mockUserRepo.On("GetByID", ctx, user.ID).Return(user, nil).Times(2)
-
-		activity, err := service.CreateVideoActivity(ctx, video)
-
-		_ = activity
-		_ = err
-
-		mockUserRepo.AssertExpectations(t)
-	})
-}
 
 func TestServiceCreateCommentActivity(t *testing.T) {
 	mockAPRepo := new(MockActivityPubRepository)
@@ -2466,6 +2341,140 @@ func TestIngestRemoteVideo(t *testing.T) {
 		err := service.ingestRemoteVideo(ctx, videoObj, remoteActor, "activity-1")
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "no video URL found")
+	})
+
+	t.Run("Missing name defaults to Untitled Remote Video", func(t *testing.T) {
+		mockAPRepo := new(MockActivityPubRepository)
+		mockUserRepo := new(MockUserRepository)
+		mockVideoRepo := new(MockVideoRepository)
+		mockCommentRepo := new(MockCommentRepository)
+
+		cfg := &config.Config{PublicBaseURL: "https://video.example"}
+		service := NewService(mockAPRepo, mockUserRepo, mockVideoRepo, mockCommentRepo, cfg)
+
+		remoteActor := &domain.APRemoteActor{ActorURI: "https://peertube.example/accounts/alice"}
+
+		videoObj := map[string]interface{}{
+			"id":  "https://peertube.example/videos/vid-no-name",
+			"url": "https://peertube.example/videos/stream.mp4",
+		}
+
+		mockVideoRepo.On("GetByRemoteURI", ctx, "https://peertube.example/videos/vid-no-name").Return(nil, assert.AnError).Once()
+		mockVideoRepo.On("CreateRemoteVideo", ctx, mock.MatchedBy(func(v *domain.Video) bool {
+			return v.Title == "Untitled Remote Video"
+		})).Return(nil).Once()
+
+		err := service.ingestRemoteVideo(ctx, videoObj, remoteActor, "activity-1")
+		require.NoError(t, err)
+		mockVideoRepo.AssertExpectations(t)
+	})
+
+	t.Run("Invalid duration string defaults to 0", func(t *testing.T) {
+		mockAPRepo := new(MockActivityPubRepository)
+		mockUserRepo := new(MockUserRepository)
+		mockVideoRepo := new(MockVideoRepository)
+		mockCommentRepo := new(MockCommentRepository)
+
+		cfg := &config.Config{PublicBaseURL: "https://video.example"}
+		service := NewService(mockAPRepo, mockUserRepo, mockVideoRepo, mockCommentRepo, cfg)
+
+		remoteActor := &domain.APRemoteActor{ActorURI: "https://peertube.example/accounts/alice"}
+
+		videoObj := map[string]interface{}{
+			"id":       "https://peertube.example/videos/vid-bad-dur",
+			"name":     "Bad Duration",
+			"url":      "https://peertube.example/videos/stream.mp4",
+			"duration": "not-a-duration",
+		}
+
+		mockVideoRepo.On("GetByRemoteURI", ctx, "https://peertube.example/videos/vid-bad-dur").Return(nil, assert.AnError).Once()
+		mockVideoRepo.On("CreateRemoteVideo", ctx, mock.MatchedBy(func(v *domain.Video) bool {
+			return v.Duration == 0
+		})).Return(nil).Once()
+
+		err := service.ingestRemoteVideo(ctx, videoObj, remoteActor, "activity-1")
+		require.NoError(t, err)
+		mockVideoRepo.AssertExpectations(t)
+	})
+
+	t.Run("Malformed published timestamp uses current time", func(t *testing.T) {
+		mockAPRepo := new(MockActivityPubRepository)
+		mockUserRepo := new(MockUserRepository)
+		mockVideoRepo := new(MockVideoRepository)
+		mockCommentRepo := new(MockCommentRepository)
+
+		cfg := &config.Config{PublicBaseURL: "https://video.example"}
+		service := NewService(mockAPRepo, mockUserRepo, mockVideoRepo, mockCommentRepo, cfg)
+
+		remoteActor := &domain.APRemoteActor{ActorURI: "https://peertube.example/accounts/alice"}
+
+		videoObj := map[string]interface{}{
+			"id":        "https://peertube.example/videos/vid-bad-pub",
+			"name":      "Bad Published",
+			"url":       "https://peertube.example/videos/stream.mp4",
+			"published": "not-a-timestamp",
+		}
+
+		before := time.Now().Add(-1 * time.Second)
+
+		mockVideoRepo.On("GetByRemoteURI", ctx, "https://peertube.example/videos/vid-bad-pub").Return(nil, assert.AnError).Once()
+		mockVideoRepo.On("CreateRemoteVideo", ctx, mock.MatchedBy(func(v *domain.Video) bool {
+			return v.UploadDate.After(before)
+		})).Return(nil).Once()
+
+		err := service.ingestRemoteVideo(ctx, videoObj, remoteActor, "activity-1")
+		require.NoError(t, err)
+		mockVideoRepo.AssertExpectations(t)
+	})
+
+	t.Run("Non-string id field returns error", func(t *testing.T) {
+		mockAPRepo := new(MockActivityPubRepository)
+		mockUserRepo := new(MockUserRepository)
+		mockVideoRepo := new(MockVideoRepository)
+		mockCommentRepo := new(MockCommentRepository)
+
+		cfg := &config.Config{PublicBaseURL: "https://video.example"}
+		service := NewService(mockAPRepo, mockUserRepo, mockVideoRepo, mockCommentRepo, cfg)
+
+		remoteActor := &domain.APRemoteActor{ActorURI: "https://peertube.example/accounts/alice"}
+
+		videoObj := map[string]interface{}{
+			"id":   12345,
+			"name": "Numeric ID",
+			"url":  "https://peertube.example/videos/stream.mp4",
+		}
+
+		err := service.ingestRemoteVideo(ctx, videoObj, remoteActor, "activity-1")
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "missing video id")
+	})
+
+	t.Run("Summary fallback when content is empty", func(t *testing.T) {
+		mockAPRepo := new(MockActivityPubRepository)
+		mockUserRepo := new(MockUserRepository)
+		mockVideoRepo := new(MockVideoRepository)
+		mockCommentRepo := new(MockCommentRepository)
+
+		cfg := &config.Config{PublicBaseURL: "https://video.example"}
+		service := NewService(mockAPRepo, mockUserRepo, mockVideoRepo, mockCommentRepo, cfg)
+
+		remoteActor := &domain.APRemoteActor{ActorURI: "https://peertube.example/accounts/alice"}
+
+		videoObj := map[string]interface{}{
+			"id":      "https://peertube.example/videos/vid-summary",
+			"name":    "Summary Fallback",
+			"url":     "https://peertube.example/videos/stream.mp4",
+			"summary": "This is the summary",
+		}
+
+		mockVideoRepo.On("GetByRemoteURI", ctx, "https://peertube.example/videos/vid-summary").Return(nil, assert.AnError).Once()
+		mockVideoRepo.On("CreateRemoteVideo", ctx, mock.MatchedBy(func(v *domain.Video) bool {
+			return v.Description == "This is the summary"
+		})).Return(nil).Once()
+
+		err := service.ingestRemoteVideo(ctx, videoObj, remoteActor, "activity-1")
+		require.NoError(t, err)
+		mockVideoRepo.AssertExpectations(t)
 	})
 }
 

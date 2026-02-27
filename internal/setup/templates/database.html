@@ -14,6 +14,7 @@
 {{end}}
 
 <form id="wizardForm" action="/setup/database" method="POST">
+    <input type="hidden" name="_csrf_token" value="{{.CSRFToken}}">
     <div class="form-group">
         <label>Database Mode</label>
         <div class="toggle-group" data-service="postgres">

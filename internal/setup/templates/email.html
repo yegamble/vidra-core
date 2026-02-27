@@ -6,6 +6,7 @@
 </p>
 
 <form id="wizardForm" action="/setup/email" method="POST">
+    <input type="hidden" name="_csrf_token" value="{{.CSRFToken}}">
     <h3 style="margin-top: 30px; margin-bottom: 15px;">Email Mode</h3>
     <div class="form-group">
         <div class="toggle-group" data-service="email">

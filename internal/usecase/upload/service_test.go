@@ -780,6 +780,69 @@ func TestUploadChunk_SessionNotFound(t *testing.T) {
 	assert.Nil(t, resp)
 }
 
+func TestInitiateUpload_ChunkSizeZero(t *testing.T) {
+	svc, _, _, _, _ := newTestService(t)
+
+	req := &domain.InitiateUploadRequest{
+		FileName:  "test.mp4",
+		FileSize:  10485760,
+		ChunkSize: 0,
+	}
+
+	resp, err := svc.InitiateUpload(context.Background(), "user-1", req)
+	assert.Error(t, err)
+	assert.Nil(t, resp)
+	assert.Contains(t, err.Error(), "INVALID_CHUNK_SIZE")
+}
+
+func TestInitiateUpload_ChunkSizeNegative(t *testing.T) {
+	svc, _, _, _, _ := newTestService(t)
+
+	req := &domain.InitiateUploadRequest{
+		FileName:  "test.mp4",
+		FileSize:  10485760,
+		ChunkSize: -1,
+	}
+
+	resp, err := svc.InitiateUpload(context.Background(), "user-1", req)
+	assert.Error(t, err)
+	assert.Nil(t, resp)
+	assert.Contains(t, err.Error(), "INVALID_CHUNK_SIZE")
+}
+
+func TestInitiateUpload_ChunkSizeExceedsMax(t *testing.T) {
+	svc, _, _, _, _ := newTestService(t)
+
+	req := &domain.InitiateUploadRequest{
+		FileName:  "test.mp4",
+		FileSize:  10485760,
+		ChunkSize: MaxChunkSize + 1,
+	}
+
+	resp, err := svc.InitiateUpload(context.Background(), "user-1", req)
+	assert.Error(t, err)
+	assert.Nil(t, resp)
+	assert.Contains(t, err.Error(), "INVALID_CHUNK_SIZE")
+}
+
+func TestInitiateUpload_ChunkSizeAtMax(t *testing.T) {
+	svc, uploadRepo, _, videoRepo, _ := newTestService(t)
+
+	videoRepo.On("Create", mock.Anything, mock.AnythingOfType("*domain.Video")).Return(nil)
+	uploadRepo.On("CreateSession", mock.Anything, mock.AnythingOfType("*domain.UploadSession")).Return(nil)
+
+	req := &domain.InitiateUploadRequest{
+		FileName:  "test.mp4",
+		FileSize:  MaxChunkSize * 2,
+		ChunkSize: MaxChunkSize,
+	}
+
+	resp, err := svc.InitiateUpload(context.Background(), "user-1", req)
+	assert.NoError(t, err)
+	assert.NotNil(t, resp)
+	assert.Equal(t, int64(MaxChunkSize), resp.ChunkSize)
+}
+
 func TestUploadChunk_NegativeChunkIndex(t *testing.T) {
 	svc, uploadRepo, _, _, _ := newTestService(t)
 

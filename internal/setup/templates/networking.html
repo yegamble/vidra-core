@@ -6,6 +6,7 @@
 </p>
 
 <form id="wizardForm" action="/setup/networking" method="POST">
+    <input type="hidden" name="_csrf_token" value="{{.CSRFToken}}">
     <!-- Domain/Hostname -->
     <h3 style="margin-top: 30px; margin-bottom: 15px;">Domain/Hostname</h3>
     <div class="form-group">
