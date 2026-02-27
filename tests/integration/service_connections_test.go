@@ -132,29 +132,24 @@ func TestServiceConnections_Redis(t *testing.T) {
 	})
 }
 
-// TestServiceConnections_Redis_PasswordBug documents a known bug:
-// HandleTestRedis accepts a 'password' field but never sends AUTH before PING.
-// This test verifies the bug is present (passes even with a "wrong" password
-// against an unauthenticated Redis, since AUTH is never sent).
-// Bug to fix: The handler should send AUTH <password>\r\n before PING when password != "".
-func TestServiceConnections_Redis_PasswordBug(t *testing.T) {
+// TestServiceConnections_Redis_AuthRejectsWrongPassword verifies that HandleTestRedis
+// sends AUTH before PING when a password is provided. A no-password Redis rejects
+// AUTH with any non-empty password, so the handler should return success: false.
+func TestServiceConnections_Redis_AuthRejectsWrongPassword(t *testing.T) {
 	skipIfNoIntegration(t)
 
-	// Our test Redis has no password, so sending any password field should still succeed
-	// (because the handler ignores the password field and just does PING).
-	// If the bug is fixed, a password-protected Redis would require AUTH first.
 	wizard := newIntegrationWizard()
 	handler := newWizardHandler(wizard)
 
+	// The test Redis instance has no password configured. Sending AUTH with any
+	// password causes Redis to reject it, so the handler must return success: false.
 	resp := testConnectionJSON(t, handler, "/setup/test-redis", map[string]interface{}{
 		"host":     "localhost",
 		"port":     16379,
-		"password": "anypassword", // This field is parsed but never used for AUTH
+		"password": "anypassword",
 	})
-	// BUG: This succeeds even though 'anypassword' is ignored.
-	// A correctly implemented handler would reject this against a password-protected Redis.
-	assert.Equal(t, true, resp["success"], "BUG: Redis password field is parsed but AUTH command is never sent")
-	t.Log("KNOWN BUG documented: HandleTestRedis parses 'password' field but never sends AUTH command")
+	assert.Equal(t, false, resp["success"], "expected AUTH failure against a no-password Redis")
+	assert.Contains(t, resp["error"], "authentication failed", "expected auth failure message")
 }
 
 // TestServiceConnections_IPFS tests the IPFS test connection handler
