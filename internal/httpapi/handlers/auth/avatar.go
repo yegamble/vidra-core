@@ -12,7 +12,7 @@ import (
 	_ "image/jpeg"
 	_ "image/png"
 	"io"
-	"log"
+	"log/slog"
 	"mime/multipart"
 	"net/http"
 	"net/url"
@@ -51,44 +51,34 @@ var (
 // UploadAvatar handles multipart upload of a user's avatar, uploads it to IPFS, pins it,
 // and persists file_id + ipfs_cid in user_avatars.
 func (h *AuthHandlers) UploadAvatar(w http.ResponseWriter, r *http.Request) {
-	log.Printf("UploadAvatar handler called")
-
-	// Add defer to catch any panics
+	// Catch any panics
 	defer func() {
 		if recovered := recover(); recovered != nil {
-			log.Printf("PANIC in UploadAvatar: %v (type: %T)", recovered, recovered)
-			// Try to get stack trace
-			if err, ok := recovered.(error); ok {
-				log.Printf("Error details: %+v", err)
-			}
+			slog.Error("panic in UploadAvatar", "recovered", recovered)
 			shared.WriteError(w, http.StatusInternalServerError, domain.NewDomainError("INTERNAL_ERROR", "Internal server error"))
 		}
 	}()
 
 	userID, _ := r.Context().Value(middleware.UserIDKey).(string)
 	if userID == "" {
-		log.Printf("Avatar upload: No user ID in context")
+		slog.Warn("avatar upload: no user ID in context")
 		shared.WriteError(w, http.StatusUnauthorized, domain.NewDomainError("UNAUTHORIZED", "Missing or invalid authentication"))
 		return
 	}
 
-	log.Printf("Avatar upload starting for user %s", userID)
-
 	// Parse and validate the uploaded file
 	fileData, err := h.parseAvatarFile(r)
 	if err != nil {
-		log.Printf("Avatar upload parse error for user %s: %v", userID, err)
+		slog.Error("avatar upload parse error", "user_id", userID, "error", err)
 		status := shared.MapDomainErrorToHTTP(err)
 		shared.WriteError(w, status, err)
 		return
 	}
 
-	log.Printf("Avatar file parsed successfully for user %s", userID)
-
 	// Save file locally and generate WebP
 	localPath, err := h.saveAvatarLocally(fileData)
 	if err != nil {
-		log.Printf("Avatar save error for user %s: %v", userID, err)
+		slog.Error("avatar save error", "user_id", userID, "error", err)
 		status := shared.MapDomainErrorToHTTP(err)
 		shared.WriteError(w, status, err)
 		return
@@ -105,13 +95,12 @@ func (h *AuthHandlers) UploadAvatar(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			// If IPFS is required, return error
 			if h.cfg != nil && h.cfg.RequireIPFS {
-				log.Printf("IPFS upload failed for user %s (required): %v (type: %T)", userID, err, err)
+				slog.Error("IPFS upload failed (required)", "user_id", userID, "error", err)
 				shared.WriteError(w, http.StatusServiceUnavailable, err)
 				return
 			}
 			// Otherwise, log warning and continue without IPFS
-			log.Printf("IPFS upload failed for user %s (optional): %v (type: %T)", userID, err, err)
-			// The avatar will be stored locally only
+			slog.Warn("IPFS upload failed (optional), storing locally only", "user_id", userID, "error", err)
 		} else {
 			cid = cidResult
 			// Upload WebP version if available
@@ -130,7 +119,7 @@ func (h *AuthHandlers) UploadAvatar(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.userRepo.SetAvatarFields(r.Context(), userID, ipfsNullString, webpNullString); err != nil {
-		log.Printf("Failed to store avatar identifiers for user %s: %v", userID, err)
+		slog.Error("failed to store avatar identifiers", "user_id", userID, "error", err)
 		status := shared.MapDomainErrorToHTTP(err)
 		shared.WriteError(w, status, err)
 		return
