@@ -1344,13 +1344,50 @@ func TestServiceCreateCommentActivity(t *testing.T) {
 
 	ctx := context.Background()
 
+	commentID := uuid.New()
+	videoID := uuid.New()
+	userID := uuid.New()
+
+	comment := &domain.Comment{
+		ID:        commentID,
+		VideoID:   videoID,
+		UserID:    userID,
+		Body:      "Service test comment",
+		CreatedAt: time.Now(),
+	}
+
+	user := &domain.User{
+		ID:       userID.String(),
+		Username: "serviceuser",
+	}
+
+	video := &domain.Video{
+		ID:      videoID.String(),
+		UserID:  "owner-123",
+		Privacy: domain.PrivacyPublic,
+	}
+
 	t.Run("CreateCommentActivity wraps Note in Create", func(t *testing.T) {
+		mockUserRepo.On("GetByID", ctx, userID.String()).Return(user, nil).Times(2)
+		mockVideoRepo.On("GetByID", ctx, videoID.String()).Return(video, nil).Once()
+		mockUserRepo.On("GetByID", ctx, "owner-123").Return(nil, sql.ErrNoRows).Once()
 
-		var comment *domain.Comment
 		activity, err := service.CreateCommentActivity(ctx, comment)
+		require.NoError(t, err)
+		require.NotNil(t, activity)
 
-		_ = activity
-		_ = err
+		assert.Equal(t, domain.ActivityTypeCreate, activity.Type)
+		assert.Equal(t, "https://video.example/users/serviceuser", activity.Actor)
+		assert.Equal(t, &comment.CreatedAt, activity.Published)
+
+		note, ok := activity.Object.(*domain.NoteObject)
+		require.True(t, ok)
+		assert.Equal(t, domain.ObjectTypeNote, note.Type)
+		assert.Equal(t, comment.Body, note.Content)
+		assert.Equal(t, "https://video.example/users/serviceuser", note.AttributedTo)
+
+		mockUserRepo.AssertExpectations(t)
+		mockVideoRepo.AssertExpectations(t)
 	})
 }
 
