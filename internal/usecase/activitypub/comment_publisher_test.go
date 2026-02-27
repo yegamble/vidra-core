@@ -345,6 +345,17 @@ func TestCreateCommentActivity(t *testing.T) {
 
 		assert.Equal(t, domain.ActivityTypeCreate, activity.Type)
 		assert.Equal(t, "https://video.example/users/commenter", activity.Actor)
+		assert.Equal(t, &comment.CreatedAt, activity.Published)
+
+		note, ok := activity.Object.(*domain.NoteObject)
+		require.True(t, ok)
+		assert.Equal(t, domain.ObjectTypeNote, note.Type)
+		assert.Equal(t, "Test comment", note.Content)
+		assert.Equal(t, "https://video.example/users/commenter", note.AttributedTo)
+		assert.Equal(t, fmt.Sprintf("https://video.example/videos/%s", videoID.String()), note.InReplyTo)
+
+		assert.Equal(t, note.To, activity.To)
+		assert.Equal(t, note.Cc, activity.Cc)
 
 		mockUserRepo.AssertExpectations(t)
 		mockVideoRepo.AssertExpectations(t)
