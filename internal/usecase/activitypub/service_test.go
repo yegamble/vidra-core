@@ -1204,7 +1204,6 @@ func TestServiceDeleteVideo(t *testing.T) {
 	})
 }
 
-
 func TestServiceCreateCommentActivity(t *testing.T) {
 	mockAPRepo := new(MockActivityPubRepository)
 	mockUserRepo := new(MockUserRepository)

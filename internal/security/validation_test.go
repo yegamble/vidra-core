@@ -531,7 +531,6 @@ func TestIsSSRFSafeURL_EdgeCases(t *testing.T) {
 	})
 }
 
-
 // TestCheckIPSafety tests the checkIPSafety helper function
 func TestCheckIPSafety(t *testing.T) {
 	t.Run("public IPv4 is safe", func(t *testing.T) {
