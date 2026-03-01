@@ -4048,11 +4048,6 @@ components:
           type: boolean
           description: Whether the user account is active
           example: true
-        subscriber_count:
-          type: integer
-          format: int64
-          description: Number of subscribers to this user (channel)
-          example: 42
         created_at:
           type: string
           format: date-time
@@ -4069,7 +4064,6 @@ components:
         - email
         - role
         - is_active
-        - subscriber_count
         - created_at
         - updated_at
 

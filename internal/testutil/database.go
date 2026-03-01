@@ -258,13 +258,11 @@ func ensureTestSchema(db *sqlx.DB) error {
             role VARCHAR(20) NOT NULL DEFAULT 'user' CHECK (role IN ('user', 'admin', 'moderator')),
             password_hash TEXT NOT NULL,
             is_active BOOLEAN NOT NULL DEFAULT true,
-            subscriber_count BIGINT NOT NULL DEFAULT 0,
             email_verified BOOLEAN NOT NULL DEFAULT false,
             email_verified_at TIMESTAMP WITH TIME ZONE,
             created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
             updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
         )`,
-		`ALTER TABLE users ADD COLUMN IF NOT EXISTS subscriber_count BIGINT NOT NULL DEFAULT 0`,
 		`ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified BOOLEAN NOT NULL DEFAULT false`,
 		`ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified_at TIMESTAMP WITH TIME ZONE`,
 		`CREATE TABLE IF NOT EXISTS subscriptions (
@@ -781,7 +779,6 @@ func applyPostMigrationCompatibility(db *sqlx.DB) error {
 
 	compatStmts := []string{
 		`ALTER TABLE notifications ALTER COLUMN title DROP NOT NULL`,
-		`ALTER TABLE users ADD COLUMN IF NOT EXISTS subscriber_count BIGINT NOT NULL DEFAULT 0`,
 		`ALTER TABLE videos ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP WITH TIME ZONE`,
 		`ALTER TABLE users ALTER COLUMN password_hash DROP NOT NULL`,
 		`ALTER TABLE videos ALTER COLUMN channel_id DROP NOT NULL`,

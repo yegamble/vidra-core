@@ -261,7 +261,6 @@ func TestUser_JSONRoundTrip(t *testing.T) {
 		Role:            RoleUser,
 		IsActive:        true,
 		EmailVerified:   true,
-		SubscriberCount: 42,
 		CreatedAt:       time.Now().UTC().Truncate(time.Second),
 		UpdatedAt:       time.Now().UTC().Truncate(time.Second),
 	}
@@ -288,9 +287,6 @@ func TestUser_JSONRoundTrip(t *testing.T) {
 		t.Errorf("Email mismatch: expected %s, got %s", original.Email, decoded.Email)
 	}
 
-	if decoded.SubscriberCount != original.SubscriberCount {
-		t.Errorf("SubscriberCount mismatch: expected %d, got %d", original.SubscriberCount, decoded.SubscriberCount)
-	}
 }
 
 func TestAvatar_Struct(t *testing.T) {

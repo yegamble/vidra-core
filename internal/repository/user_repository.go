@@ -79,7 +79,7 @@ const selectUserWithAvatar = `
                a.id            AS avatar_id,
                a.ipfs_cid      AS avatar_ipfs_cid,
                a.webp_ipfs_cid AS avatar_webp_ipfs_cid,
-               u.bio, u.bitcoin_wallet, u.role, u.is_active, u.email_verified, u.email_verified_at, u.subscriber_count,
+               u.bio, u.bitcoin_wallet, u.role, u.is_active, u.email_verified, u.email_verified_at,
                u.twofa_enabled, u.twofa_secret, u.twofa_confirmed_at,
                u.created_at, u.updated_at
         FROM users u
@@ -99,7 +99,6 @@ type userRow struct {
 	IsActive          bool            `db:"is_active"`
 	EmailVerified     bool            `db:"email_verified"`
 	EmailVerifiedAt   sql.NullTime    `db:"email_verified_at"`
-	SubscriberCount   int64           `db:"subscriber_count"`
 	TwoFAEnabled      bool            `db:"twofa_enabled"`
 	TwoFASecret       sql.NullString  `db:"twofa_secret"`
 	TwoFAConfirmedAt  sql.NullTime    `db:"twofa_confirmed_at"`
@@ -125,7 +124,6 @@ func mapUserRow(rrow userRow) *domain.User {
 		IsActive:         rrow.IsActive,
 		EmailVerified:    rrow.EmailVerified,
 		EmailVerifiedAt:  rrow.EmailVerifiedAt,
-		SubscriberCount:  rrow.SubscriberCount,
 		TwoFAEnabled:     rrow.TwoFAEnabled,
 		TwoFASecret:      twoFASecret,
 		TwoFAConfirmedAt: rrow.TwoFAConfirmedAt,

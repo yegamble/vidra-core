@@ -1318,9 +1318,6 @@ type User struct {
 	// Role User role determining permissions
 	Role UserRole `json:"role"`
 
-	// SubscriberCount Number of subscribers to this user (channel)
-	SubscriberCount int64 `json:"subscriber_count"`
-
 	// UpdatedAt Last account update timestamp
 	UpdatedAt time.Time `json:"updated_at"`
 

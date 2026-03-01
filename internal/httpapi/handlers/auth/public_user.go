@@ -12,14 +12,13 @@ import (
 // PublicUser is the public-safe representation of a user.
 // It deliberately omits sensitive fields: Email, BitcoinWallet, IsActive, TwoFAEnabled, EmailVerified.
 type PublicUser struct {
-	ID              string        `json:"id"`
-	Username        string        `json:"username"`
-	DisplayName     string        `json:"display_name"`
-	Bio             string        `json:"bio"`
-	Avatar          *PublicAvatar `json:"avatar,omitempty"`
-	Role            string        `json:"role"`
-	SubscriberCount int64         `json:"subscriber_count"`
-	CreatedAt       time.Time     `json:"created_at"`
+	ID          string        `json:"id"`
+	Username    string        `json:"username"`
+	DisplayName string        `json:"display_name"`
+	Bio         string        `json:"bio"`
+	Avatar      *PublicAvatar `json:"avatar,omitempty"`
+	Role        string        `json:"role"`
+	CreatedAt   time.Time     `json:"created_at"`
 }
 
 // PublicAvatar is the public representation of a user avatar.
@@ -32,13 +31,12 @@ type PublicAvatar struct {
 // toPublicUser converts a domain.User to a PublicUser, stripping sensitive fields.
 func toPublicUser(u *domain.User) PublicUser {
 	p := PublicUser{
-		ID:              u.ID,
-		Username:        u.Username,
-		DisplayName:     u.DisplayName,
-		Bio:             u.Bio,
-		Role:            string(u.Role),
-		SubscriberCount: u.SubscriberCount,
-		CreatedAt:       u.CreatedAt,
+		ID:          u.ID,
+		Username:    u.Username,
+		DisplayName: u.DisplayName,
+		Bio:         u.Bio,
+		Role:        string(u.Role),
+		CreatedAt:   u.CreatedAt,
 	}
 	if u.Avatar != nil {
 		var ipfsCID, webpCID *string

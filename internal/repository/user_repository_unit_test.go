@@ -55,13 +55,13 @@ func makeUserSelectRows(now time.Time, withAvatar bool, withTwoFA bool) *sqlmock
 	return sqlmock.NewRows([]string{
 		"id", "username", "email", "display_name",
 		"avatar_id", "avatar_ipfs_cid", "avatar_webp_ipfs_cid",
-		"bio", "bitcoin_wallet", "role", "is_active", "email_verified", "email_verified_at", "subscriber_count",
+		"bio", "bitcoin_wallet", "role", "is_active", "email_verified", "email_verified_at",
 		"twofa_enabled", "twofa_secret", "twofa_confirmed_at",
 		"created_at", "updated_at",
 	}).AddRow(
 		"user-1", "unit-user", "unit@example.com", "Unit User",
 		avatarID, avatarCID, avatarWebpCID,
-		"bio", "btc-wallet", string(domain.RoleAdmin), true, true, now, int64(11),
+		"bio", "btc-wallet", string(domain.RoleAdmin), true, true, now,
 		withTwoFA, twoFASecret, twoFAConfirmedAt,
 		now, now,
 	)
@@ -458,12 +458,12 @@ func TestUserRepository_Unit_ListAndCount(t *testing.T) {
 		rows := sqlmock.NewRows([]string{
 			"id", "username", "email", "display_name",
 			"avatar_id", "avatar_ipfs_cid", "avatar_webp_ipfs_cid",
-			"bio", "bitcoin_wallet", "role", "is_active", "email_verified", "email_verified_at", "subscriber_count",
+			"bio", "bitcoin_wallet", "role", "is_active", "email_verified", "email_verified_at",
 			"twofa_enabled", "twofa_secret", "twofa_confirmed_at",
 			"created_at", "updated_at",
 		}).
-			AddRow("user-1", "u1", "u1@example.com", "User One", "avatar-1", "cid-1", "webp-1", "bio1", "wallet1", string(domain.RoleUser), true, false, nil, int64(1), false, nil, nil, now, now).
-			AddRow("user-2", "u2", "u2@example.com", "User Two", nil, nil, nil, "bio2", "wallet2", string(domain.RoleAdmin), true, true, now, int64(2), true, "secret", now, now, now)
+			AddRow("user-1", "u1", "u1@example.com", "User One", "avatar-1", "cid-1", "webp-1", "bio1", "wallet1", string(domain.RoleUser), true, false, nil, false, nil, nil, now, now).
+			AddRow("user-2", "u2", "u2@example.com", "User Two", nil, nil, nil, "bio2", "wallet2", string(domain.RoleAdmin), true, true, now, true, "secret", now, now, now)
 
 		mock.ExpectQuery(`(?s)SELECT u\.id, u\.username, u\.email, u\.display_name.*ORDER BY u\.created_at DESC.*LIMIT \$1 OFFSET \$2`).
 			WithArgs(2, 0).
