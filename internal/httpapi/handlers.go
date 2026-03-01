@@ -80,15 +80,22 @@ func (s *Server) Login(w http.ResponseWriter, r *http.Request) {
 	}
 
 	email, _ := reqData["email"].(string)
+	username, _ := reqData["username"].(string)
 	password, _ := reqData["password"].(string)
 	twoFACode, _ := reqData["twofa_code"].(string)
 
-	if email == "" || password == "" {
-		shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("MISSING_CREDENTIALS", "Email and password are required"))
+	if (email == "" && username == "") || password == "" {
+		shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("MISSING_CREDENTIALS", "Email or username, and password are required"))
 		return
 	}
 
-	dUser, err := s.userRepo.GetByEmail(r.Context(), email)
+	var dUser *domain.User
+	var err error
+	if email != "" {
+		dUser, err = s.userRepo.GetByEmail(r.Context(), email)
+	} else {
+		dUser, err = s.userRepo.GetByUsername(r.Context(), username)
+	}
 	if err != nil {
 		shared.WriteError(w, http.StatusUnauthorized, domain.ErrInvalidCredentials)
 		return

@@ -235,3 +235,113 @@ func TestLogin_ActiveUserAllowed(t *testing.T) {
 		t.Fatalf("active user: expected 200, got %d; body: %s", rr.Code, rr.Body.String())
 	}
 }
+
+func TestLogin_WithUsername_Success(t *testing.T) {
+	const testSecret = "test-jwt-secret"
+	const password = "password123"
+
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.MinCost)
+	if err != nil {
+		t.Fatalf("bcrypt: %v", err)
+	}
+
+	repo := newMockUserRepo()
+	userID := uuid.NewString()
+	repo.users[userID] = &domain.User{
+		ID:        userID,
+		Username:  "myusername",
+		Email:     "myuser@example.com",
+		Role:      domain.RoleUser,
+		IsActive:  true,
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+	repo.passwords[userID] = string(hash)
+
+	cfg := &config.Config{JWTSecret: testSecret}
+	s := NewServer(repo, nil, testSecret, nil, time.Second, "", "", time.Second, cfg)
+
+	body := `{"username":"myusername","password":"password123"}`
+	req := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(body))
+	rr := httptest.NewRecorder()
+	s.Login(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("username login: expected 200, got %d; body: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestLogin_MissingBothEmailAndUsername(t *testing.T) {
+	cfg := &config.Config{JWTSecret: "test-jwt-secret"}
+	s := NewServer(newMockUserRepo(), nil, "test-jwt-secret", nil, time.Second, "", "", time.Second, cfg)
+
+	body := `{"password":"password123"}`
+	req := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(body))
+	rr := httptest.NewRecorder()
+	s.Login(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("missing identifiers: expected 400, got %d; body: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestLogin_BothEmailAndUsername_UsesEmail(t *testing.T) {
+	const testSecret = "test-jwt-secret"
+	const password = "password123"
+
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.MinCost)
+	if err != nil {
+		t.Fatalf("bcrypt: %v", err)
+	}
+
+	repo := newMockUserRepo()
+	// emailUser: should be found when email field takes priority
+	emailUserID := uuid.NewString()
+	repo.users[emailUserID] = &domain.User{
+		ID:        emailUserID,
+		Username:  "emailuser",
+		Email:     "email@example.com",
+		Role:      domain.RoleUser,
+		IsActive:  true,
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+	repo.passwords[emailUserID] = string(hash)
+
+	// otherUser: different user, matched by username field
+	otherUserID := uuid.NewString()
+	repo.users[otherUserID] = &domain.User{
+		ID:        otherUserID,
+		Username:  "otherusername",
+		Email:     "other@example.com",
+		Role:      domain.RoleUser,
+		IsActive:  true,
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+	repo.passwords[otherUserID] = string(hash)
+
+	cfg := &config.Config{JWTSecret: testSecret}
+	s := NewServer(repo, nil, testSecret, nil, time.Second, "", "", time.Second, cfg)
+
+	// Send both email and username — email should take priority
+	body := `{"email":"email@example.com","username":"otherusername","password":"password123"}`
+	req := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(body))
+	rr := httptest.NewRecorder()
+	s.Login(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("both fields: expected 200, got %d; body: %s", rr.Code, rr.Body.String())
+	}
+
+	// Verify the email-matched user was returned (not the username-matched user)
+	var resp map[string]interface{}
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	data, _ := resp["data"].(map[string]interface{})
+	user, _ := data["user"].(map[string]interface{})
+	if user["id"] != emailUserID {
+		t.Fatalf("expected email user %s to be returned, got %v", emailUserID, user["id"])
+	}
+}

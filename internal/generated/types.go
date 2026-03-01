@@ -999,11 +999,14 @@ type ListMeta struct {
 
 // LoginRequest defines model for LoginRequest.
 type LoginRequest struct {
-	// Email User's email address
-	Email openapi_types.Email `json:"email"`
+	// Email User's email address (provide email or username)
+	Email *openapi_types.Email `json:"email,omitempty"`
 
 	// Password User's password
 	Password string `json:"password"`
+
+	// Username User's username (provide email or username)
+	Username *string `json:"username,omitempty"`
 }
 
 // LogoutResponse defines model for LogoutResponse.

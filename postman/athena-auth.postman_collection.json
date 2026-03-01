@@ -137,7 +137,7 @@
               "mode": "raw",
               "raw": "{\n  \"email\": \"{{email}}\",\n  \"password\": \"{{password}}\"\n}"
             },
-            "description": "Authenticates an existing user and returns tokens."
+            "description": "Authenticates an existing user by email and returns tokens. See also 'Login with Username'."
           },
           "event": [
             {
@@ -233,6 +233,188 @@
                 "exec": [
                   "pm.test('Status is 401', () => pm.response.to.have.status(401));",
                   "pm.test('Has error body', () => { const j = pm.response.json(); pm.expect(j).to.have.property('error'); });"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Login with Username",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "login"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{username}}\",\n  \"password\": \"{{password}}\"\n}"
+            },
+            "description": "Authenticates an existing user by username (instead of email) and returns tokens."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "const username = pm.environment.get('username');",
+                  "const password = pm.environment.get('password');",
+                  "",
+                  "if (!username || !password) {",
+                  "  console.log('No registered user credentials found, using default test account');",
+                  "  pm.environment.set('username', 'testuser');",
+                  "  pm.environment.set('password', 'Password123!');",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is valid (200 or 401)', () => {",
+                  "  pm.expect([200, 401]).to.include(pm.response.code);",
+                  "});",
+                  "",
+                  "if (pm.response.code === 200) {",
+                  "  const wrap = pm.response.json();",
+                  "  pm.test('Response wrapped with data', () => pm.expect(wrap).to.have.property('data'));",
+                  "  const json = wrap.data || {};",
+                  "  pm.test('Has user + tokens', () => {",
+                  "    pm.expect(json).to.have.property('user');",
+                  "    pm.expect(json).to.have.property('access_token');",
+                  "    pm.expect(json).to.have.property('refresh_token');",
+                  "  });",
+                  "  pm.environment.set('user_id', json.user.id);",
+                  "  pm.environment.set('access_token', json.access_token);",
+                  "  pm.environment.set('refresh_token', json.refresh_token);",
+                  "  pm.variables.set('access_token', json.access_token);",
+                  "  pm.variables.set('refresh_token', json.refresh_token);",
+                  "  console.log('Login with username successful - tokens saved');",
+                  "} else if (pm.response.code === 401) {",
+                  "  console.log('Login with username failed - user may not exist (expected when running individual tests)');",
+                  "  pm.test('401 response has error structure', () => {",
+                  "    const wrap = pm.response.json();",
+                  "    pm.expect(wrap).to.have.property('error');",
+                  "  });",
+                  "  pm.environment.unset('access_token');",
+                  "  pm.environment.unset('refresh_token');",
+                  "  pm.environment.unset('user_id');",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Login - Missing Both Email and Username (400)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "login"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"password\": \"{{password}}\"\n}"
+            },
+            "description": "Expect 400 when neither email nor username is provided."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 400', () => pm.response.to.have.status(400));",
+                  "pm.test('Has MISSING_CREDENTIALS error code', () => {",
+                  "  const j = pm.response.json();",
+                  "  pm.expect(j).to.have.property('error');",
+                  "  pm.expect(j.error.code).to.equal('MISSING_CREDENTIALS');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Login - Both Email and Username Uses Email (200)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "login"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{email}}\",\n  \"username\": \"nonexistent_user_xyz\",\n  \"password\": \"{{password}}\"\n}"
+            },
+            "description": "When both email and username are provided, email takes priority. Sends a nonexistent username alongside the valid email — login should succeed using the email lookup."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is valid (200 or 401)', () => {",
+                  "  pm.expect([200, 401]).to.include(pm.response.code);",
+                  "});",
+                  "",
+                  "if (pm.response.code === 200) {",
+                  "  const wrap = pm.response.json();",
+                  "  pm.test('Response wrapped with data', () => pm.expect(wrap).to.have.property('data'));",
+                  "  const json = wrap.data || {};",
+                  "  pm.test('Login succeeded using email (not nonexistent username)', () => {",
+                  "    pm.expect(json).to.have.property('user');",
+                  "    pm.expect(json.user.email).to.equal(pm.environment.get('email'));",
+                  "  });",
+                  "  console.log('Both-fields test: login succeeded via email priority');",
+                  "} else if (pm.response.code === 401) {",
+                  "  console.log('Both-fields test: 401 - test user may not exist (expected when running individual tests)');",
+                  "  pm.test('401 response has error structure', () => {",
+                  "    const wrap = pm.response.json();",
+                  "    pm.expect(wrap).to.have.property('error');",
+                  "  });",
+                  "}"
                 ],
                 "type": "text/javascript"
               }

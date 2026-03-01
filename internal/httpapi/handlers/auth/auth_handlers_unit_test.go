@@ -565,6 +565,46 @@ func TestUnit_Login_Success(t *testing.T) {
 	}
 }
 
+func TestUnit_Login_WithUsername_Success(t *testing.T) {
+	userRepo := newMockUserRepoWithPasswords()
+	authRepo := newMockAuthRepo()
+	pw := "correct-password"
+	hash, _ := bcrypt.GenerateFromPassword([]byte(pw), bcrypt.MinCost)
+	user := &domain.User{
+		ID:       "user-login-by-username",
+		Username: "loginbyusername",
+		Email:    "loginbyusername@example.com",
+		Role:     domain.RoleUser,
+		IsActive: true,
+	}
+	userRepo.users[user.ID] = user
+	userRepo.passwords[user.ID] = string(hash)
+
+	h := newTestAuthHandlers(userRepo, authRepo, nil)
+
+	body, _ := json.Marshal(map[string]string{"username": "loginbyusername", "password": pw})
+	req := httptest.NewRequest(http.MethodPost, "/auth/login", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+
+	h.Login(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d; body=%s", rr.Code, rr.Body.String())
+	}
+	resp := decodeResponse(t, rr)
+	if !resp.Success {
+		t.Fatal("expected success=true")
+	}
+	var data map[string]interface{}
+	if err := json.Unmarshal(resp.Data, &data); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if data["access_token"] == nil || data["access_token"].(string) == "" {
+		t.Fatal("missing access_token")
+	}
+}
+
 func TestUnit_Login_InvalidJSON(t *testing.T) {
 	h := newTestAuthHandlers(newMockUserRepo(), nil, nil)
 	req := httptest.NewRequest(http.MethodPost, "/auth/login", strings.NewReader("{bad json"))
@@ -575,9 +615,31 @@ func TestUnit_Login_InvalidJSON(t *testing.T) {
 	}
 }
 
-func TestUnit_Login_MissingCredentials(t *testing.T) {
+func TestUnit_Login_MissingPassword_WithEmailOnly(t *testing.T) {
 	h := newTestAuthHandlers(newMockUserRepo(), nil, nil)
 	body, _ := json.Marshal(map[string]string{"email": "a@b.com"})
+	req := httptest.NewRequest(http.MethodPost, "/auth/login", bytes.NewReader(body))
+	rr := httptest.NewRecorder()
+	h.Login(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", rr.Code)
+	}
+}
+
+func TestUnit_Login_MissingPassword_WithUsernameOnly(t *testing.T) {
+	h := newTestAuthHandlers(newMockUserRepo(), nil, nil)
+	body, _ := json.Marshal(map[string]string{"username": "someuser"})
+	req := httptest.NewRequest(http.MethodPost, "/auth/login", bytes.NewReader(body))
+	rr := httptest.NewRecorder()
+	h.Login(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", rr.Code)
+	}
+}
+
+func TestUnit_Login_MissingBothEmailAndUsername(t *testing.T) {
+	h := newTestAuthHandlers(newMockUserRepo(), nil, nil)
+	body, _ := json.Marshal(map[string]string{"password": "somepassword"})
 	req := httptest.NewRequest(http.MethodPost, "/auth/login", bytes.NewReader(body))
 	rr := httptest.NewRecorder()
 	h.Login(rr, req)

@@ -89,14 +89,15 @@ func decodeResponse(t *testing.T, rr *httptest.ResponseRecorder) testResponse {
 func (h *AuthHandlers) Login(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Email    string `json:"email"`
+		Username string `json:"username"`
 		Password string `json:"password"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_JSON", "Invalid JSON payload"))
 		return
 	}
-	if req.Email == "" || req.Password == "" {
-		shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("MISSING_CREDENTIALS", "Email and password are required"))
+	if (req.Email == "" && req.Username == "") || req.Password == "" {
+		shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("MISSING_CREDENTIALS", "Email or username, and password are required"))
 		return
 	}
 	if h.userRepo == nil {
@@ -104,7 +105,13 @@ func (h *AuthHandlers) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, err := h.userRepo.GetByEmail(r.Context(), req.Email)
+	var user *domain.User
+	var err error
+	if req.Email != "" {
+		user, err = h.userRepo.GetByEmail(r.Context(), req.Email)
+	} else {
+		user, err = h.userRepo.GetByUsername(r.Context(), req.Username)
+	}
 	if err != nil {
 		shared.WriteError(w, http.StatusUnauthorized, domain.ErrInvalidCredentials)
 		return
