@@ -12,7 +12,7 @@ ENTRYPOINT_SCRIPT_PATH="$SCRIPT_DIR/entrypoint.sh"
 # Colors for test output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
+# YELLOW='\033[1;33m'  # reserved for future use
 NC='\033[0m' # No Color
 
 # Test counters
@@ -55,6 +55,7 @@ teardown_test() {
 # Mock commands
 mock_openssl() {
     # Create a function that simulates openssl
+    # shellcheck disable=SC2317  # called indirectly via mock_openssl
     openssl() {
         case "$1" in
             req)
@@ -62,7 +63,8 @@ mock_openssl() {
                 local keyout=""
                 local out=""
                 local i=0
-                while [ $i -lt $# ]; do
+                local arg=""
+                while [ "$i" -lt $# ]; do
                     i=$((i + 1))
                     eval "arg=\${$i}"
                     case "$arg" in
@@ -90,7 +92,8 @@ mock_openssl() {
                 # Extract output file from arguments
                 local out=""
                 local i=0
-                while [ $i -lt $# ]; do
+                local arg=""
+                while [ "$i" -lt $# ]; do
                     i=$((i + 1))
                     eval "arg=\${$i}"
                     if [ "$arg" = "-out" ]; then
@@ -116,10 +119,22 @@ mock_openssl() {
 }
 
 mock_openssl_missing() {
+    # Two-pronged mock for cross-platform compatibility:
+    # 1. Redefine bash function (overrides any previous mock_openssl function on macOS/bash)
+    # 2. Put a fake binary in PATH (propagates to child sh/dash processes on Linux)
     openssl() {
-        return 127  # Command not found
+        return 127  # Simulate openssl not working
     }
     export -f openssl 2>/dev/null || true
+
+    FAKE_OPENSSL_DIR="${TEST_DIR}/fake_bin_missing"
+    mkdir -p "$FAKE_OPENSSL_DIR"
+    cat > "$FAKE_OPENSSL_DIR/openssl" << 'FAKE_OPENSSL'
+#!/bin/sh
+exit 127
+FAKE_OPENSSL
+    chmod +x "$FAKE_OPENSSL_DIR/openssl"
+    export PATH="$FAKE_OPENSSL_DIR:$PATH"
 }
 
 mock_nginx() {
@@ -210,9 +225,9 @@ test_cert_generation_permissions() {
     # Run cert generation script
     bash "$CERT_SCRIPT_PATH" "example.com" > /dev/null 2>&1
 
-    # Check permissions
-    key_perm=$(stat -f "%OLp" "$SSL_DIR/self-signed.key" 2>/dev/null || stat -c "%a" "$SSL_DIR/self-signed.key" 2>/dev/null)
-    cert_perm=$(stat -f "%OLp" "$SSL_DIR/self-signed.crt" 2>/dev/null || stat -c "%a" "$SSL_DIR/self-signed.crt" 2>/dev/null)
+    # Check permissions (Linux: stat -c, macOS: stat -f fallback)
+    key_perm=$(stat -c "%a" "$SSL_DIR/self-signed.key" 2>/dev/null || stat -f "%OLp" "$SSL_DIR/self-signed.key" 2>/dev/null)
+    cert_perm=$(stat -c "%a" "$SSL_DIR/self-signed.crt" 2>/dev/null || stat -f "%OLp" "$SSL_DIR/self-signed.crt" 2>/dev/null)
 
     if [ "$key_perm" = "600" ] && [ "$cert_perm" = "644" ]; then
         test_pass "Test 4: Sets correct file permissions (key=600, cert=644)"
@@ -285,7 +300,7 @@ EOF
 
     # Better approach: temporarily rename the script's openssl check
     # Create a modified version of the script for testing
-    cat "$CERT_SCRIPT_PATH" | sed 's/command -v openssl/command -v openssl_DOES_NOT_EXIST/g' > "$TEST_DIR/test_cert.sh"
+    sed 's/command -v openssl/command -v openssl_DOES_NOT_EXIST/g' "$CERT_SCRIPT_PATH" > "$TEST_DIR/test_cert.sh"
 
     # Run modified script (openssl check will fail)
     if bash "$TEST_DIR/test_cert.sh" "example.com" 2>&1 | grep -q "openssl command not found"; then

@@ -265,10 +265,11 @@ runs:
         if [[ -z "${GOPROXY:-}" ]]; then
           FALLBACK_PROXY="${{ inputs.goproxy-fallback }}"
           if [[ -n "$FALLBACK_PROXY" ]]; then
-            # Use multiple proxies for redundancy and speed
-            # goproxy.io, proxy.golang.org, and direct as fallbacks
-            PROXY_CHAIN="https://goproxy.io,https://proxy.golang.org,direct"
-            echo "ℹ️  No GOPROXY set, using proxy chain: $PROXY_CHAIN"
+            # Use proxy.golang.org (official Go proxy) as primary with direct fallback.
+            # Note: Go only falls through to the next proxy on 404/410, NOT on 5xx errors,
+            # so unreliable third-party proxies (e.g. goproxy.io returning 502) must not be first.
+            PROXY_CHAIN="https://proxy.golang.org,direct"
+            echo "ℹ️  No GOPROXY set, using: $PROXY_CHAIN"
 
             # Set for current step and all subsequent steps in workflow
             export GOPROXY="$PROXY_CHAIN"
