@@ -138,20 +138,20 @@ linters:
       - ".*_gen\\.go$"
       - tests/e2e/
 
-linters-settings:
-  gosec:
-    # Gosec security scanner configuration
-    severity: medium
-    confidence: medium
-    excludes:
-      # G101: Hardcoded credentials - excluded, handled by secret scanning in CI
-      - G101
-      # G104: Audit errors not checked - too noisy, errcheck handles this better
-      - G104
-  gocyclo:
-    min-complexity: 15
-  dupl:
-    threshold: 150
+  settings:
+    gosec:
+      # Gosec security scanner configuration
+      severity: medium
+      confidence: medium
+      excludes:
+        # G101: Hardcoded credentials - excluded, handled by secret scanning in CI
+        - G101
+        # G104: Audit errors not checked - too noisy, errcheck handles this better
+        - G104
+    gocyclo:
+      min-complexity: 15
+    dupl:
+      threshold: 150
 
 formatters:
   exclusions:
