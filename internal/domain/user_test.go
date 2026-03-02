@@ -252,17 +252,17 @@ func TestAuthResponse_Struct(t *testing.T) {
 
 func TestUser_JSONRoundTrip(t *testing.T) {
 	original := User{
-		ID:              "user-123",
-		Username:        "testuser",
-		Email:           "test@example.com",
-		DisplayName:     "Test User",
-		Bio:             "Test bio",
-		BitcoinWallet:   "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh",
-		Role:            RoleUser,
-		IsActive:        true,
-		EmailVerified:   true,
-		CreatedAt:       time.Now().UTC().Truncate(time.Second),
-		UpdatedAt:       time.Now().UTC().Truncate(time.Second),
+		ID:            "user-123",
+		Username:      "testuser",
+		Email:         "test@example.com",
+		DisplayName:   "Test User",
+		Bio:           "Test bio",
+		BitcoinWallet: "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh",
+		Role:          RoleUser,
+		IsActive:      true,
+		EmailVerified: true,
+		CreatedAt:     time.Now().UTC().Truncate(time.Second),
+		UpdatedAt:     time.Now().UTC().Truncate(time.Second),
 	}
 
 	data, err := json.Marshal(original)

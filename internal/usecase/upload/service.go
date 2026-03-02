@@ -220,6 +220,10 @@ func (s *service) CompleteUpload(ctx context.Context, sessionID string) error {
 	if err != nil {
 		return fmt.Errorf("failed to get upload session: %w", err)
 	}
+	// Idempotent: if already completed, return success
+	if session.Status == domain.UploadStatusCompleted {
+		return nil
+	}
 	if session.Status != domain.UploadStatusActive {
 		return domain.NewDomainError("INVALID_SESSION", "Upload session is not active")
 	}
@@ -246,6 +250,11 @@ func (s *service) CompleteUpload(ctx context.Context, sessionID string) error {
 	video.UpdatedAt = time.Now()
 	if err := s.videoRepo.Update(ctx, video); err != nil {
 		return fmt.Errorf("failed to update video status: %w", err)
+	}
+	// Prevent duplicate encoding jobs — check if one already exists for this video
+	existingJob, _ := s.encodingRepo.GetJobByVideoID(ctx, session.VideoID)
+	if existingJob != nil {
+		return nil
 	}
 	finalFilePath := s.paths.WebVideoFilePath(session.VideoID, filepath.Ext(session.FileName))
 	sourceResolution := s.detectSourceResolution(video)
