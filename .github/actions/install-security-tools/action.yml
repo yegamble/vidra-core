@@ -62,3 +62,7 @@ runs:
         else
           echo "staticcheck already installed: $(staticcheck -version 2>&1 || echo 'version unknown')"
         fi
+
+    - name: Add Go bin to PATH
+      shell: bash
+      run: echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
