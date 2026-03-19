@@ -261,7 +261,7 @@ func (r *RestoreManager) extractBackup(ctx context.Context, reader io.Reader) (*
 			return nil, fmt.Errorf("creating file: %w", err)
 		}
 
-		if _, err := io.Copy(file, tr); err != nil {
+		if _, err := io.Copy(file, io.LimitReader(tr, 10*1024*1024*1024)); err != nil {
 			file.Close()
 			return nil, fmt.Errorf("extracting file: %w", err)
 		}
@@ -388,7 +388,7 @@ func (r *RestoreManager) restoreStorage(ctx context.Context, archivePath string)
 			return fmt.Errorf("creating file: %w", err)
 		}
 
-		if _, err := io.Copy(file, tr); err != nil {
+		if _, err := io.Copy(file, io.LimitReader(tr, 10*1024*1024*1024)); err != nil {
 			file.Close()
 			return fmt.Errorf("extracting file: %w", err)
 		}

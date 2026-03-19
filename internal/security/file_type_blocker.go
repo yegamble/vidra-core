@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"math"
 	"path/filepath"
 	"strings"
 )
@@ -209,6 +210,9 @@ func (b *FileTypeBlocker) ValidateArchive(filename string, content []byte) (bool
 	// Check uncompressed size and compression ratio first (ZIP bomb detection)
 	var totalUncompressed int64
 	for _, file := range zipReader.File {
+		if file.UncompressedSize64 > math.MaxInt64 {
+			return false, "file uncompressed size exceeds maximum"
+		}
 		totalUncompressed += int64(file.UncompressedSize64)
 	}
 

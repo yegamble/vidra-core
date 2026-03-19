@@ -349,7 +349,7 @@ func TestLoad_NormalModeRequiresAllFields(t *testing.T) {
 		t.Errorf("Load() should succeed with all required fields in normal mode: %v", err)
 	}
 	if cfg == nil {
-		t.Error("Load() returned nil config")
+		t.Fatal("Load() returned nil config")
 	}
 	if cfg.SetupMode {
 		t.Error("Load() should not be in setup mode when all fields are present")

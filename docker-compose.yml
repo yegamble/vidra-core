@@ -45,10 +45,14 @@ services:
     environment:
       - IPFS_PROFILE=server
     ports:
-      - "5001:5001"
+      - "4001:4001"      # Swarm TCP — required for p2p connectivity
+      - "4001:4001/udp"  # Swarm QUIC — required for p2p connectivity
+      - "5001:5001"      # API
+      - "9090:8080"      # Gateway — local IPFS content retrieval (9090 avoids conflict with app:8080)
     volumes:
       - ipfs_staging:/export
       - ipfs_data:/data/ipfs
+      - ./docker/ipfs/configure-node.sh:/container-init.d/001-configure-node.sh:ro
     healthcheck:
       test: ["CMD", "wget", "--post-data=''", "-qO-", "http://localhost:5001/api/v0/version"]
       interval: 10s
@@ -177,6 +181,7 @@ services:
       # Optional services
       ENABLE_IPFS: ${ENABLE_IPFS:-false}
       IPFS_API: ${IPFS_API:-http://ipfs:5001}
+      IPFS_LOCAL_GATEWAY_URL: ${IPFS_LOCAL_GATEWAY_URL:-http://ipfs:8080}
       REQUIRE_IPFS: ${REQUIRE_IPFS:-false}
 
       # IOTA Rebased node (container-to-container uses port 9000; host access uses 14265)

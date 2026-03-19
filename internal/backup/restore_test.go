@@ -25,8 +25,8 @@ func TestRestoreManager_ListBackups(t *testing.T) {
 		t.Skip("Skipping integration test in short mode")
 	}
 
-	target := NewLocalBackend("./test-backups")
-	manager := NewRestoreManager(target, "./temp")
+	target := NewLocalBackend(t.TempDir())
+	manager := NewRestoreManager(target, t.TempDir())
 
 	ctx := context.Background()
 	backups, err := manager.ListBackups(ctx)

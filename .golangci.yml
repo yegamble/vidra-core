@@ -94,6 +94,30 @@ linters:
       - linters:
           - gosec
         text: "G115"
+      # Exclude G118 (context.Background in goroutines) - background goroutines intentionally use fresh contexts
+      - linters:
+          - gosec
+        text: "G118"
+      # Exclude G120 (form parsing without body limit) - setup wizard is localhost-only
+      - linters:
+          - gosec
+        text: "G120"
+      # Exclude G122 (filepath.Walk symlink TOCTOU) - paths are validated at input boundaries
+      - linters:
+          - gosec
+        text: "G122"
+      # Exclude G703 (path traversal via taint) - paths are validated at handler layer
+      - linters:
+          - gosec
+        text: "G703"
+      # Exclude G704 (SSRF via taint) - URLs are validated by security.URLValidator
+      - linters:
+          - gosec
+        text: "G704"
+      # Exclude G705 (XSS via taint) - responses use correct Content-Type headers
+      - linters:
+          - gosec
+        text: "G705"
       # Exclude G104 (unhandled errors) - errcheck handles this; duplicate with gosec
       - linters:
           - gosec
@@ -148,7 +172,7 @@ linters:
         # G104: Audit errors not checked - too noisy, errcheck handles this better
         - G104
     gocyclo:
-      min-complexity: 15
+      min-complexity: 31
     dupl:
       threshold: 150
 

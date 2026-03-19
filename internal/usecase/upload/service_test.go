@@ -555,7 +555,7 @@ func TestCompleteUpload_SessionNotActive(t *testing.T) {
 
 	session := &domain.UploadSession{
 		ID:     "sess-1",
-		Status: domain.UploadStatusCompleted,
+		Status: domain.UploadStatusExpired,
 	}
 
 	uploadRepo.On("GetSession", mock.Anything, "sess-1").Return(session, nil)
@@ -673,6 +673,7 @@ func TestCompleteUpload_FullSuccess(t *testing.T) {
 	videoRepo.On("GetByID", mock.Anything, "video-1").Return(video, nil)
 	videoRepo.On("Update", mock.Anything, mock.AnythingOfType("*domain.Video")).Return(nil)
 	encodingRepo.On("CreateJob", mock.Anything, mock.AnythingOfType("*domain.EncodingJob")).Return(nil)
+	encodingRepo.On("GetJobByVideoID", mock.Anything, "video-1").Return((*domain.EncodingJob)(nil), nil)
 
 	err := svc.CompleteUpload(context.Background(), sessionID)
 	assert.NoError(t, err)

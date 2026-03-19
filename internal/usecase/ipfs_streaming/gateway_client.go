@@ -287,10 +287,10 @@ func (c *GatewayClient) performHealthChecks(testCID string) {
 
 // Close stops health checks and cleans up resources
 func (c *GatewayClient) Close() {
-	if c.healthTicker != nil {
-		c.healthTicker.Stop()
-	}
 	if c.cancel != nil {
 		c.cancel()
+	}
+	if c.healthTicker != nil {
+		c.healthTicker.Stop()
 	}
 }

@@ -458,6 +458,10 @@ func (w *Wizard) HandleComplete(rw http.ResponseWriter, r *http.Request) {
 	w.renderTemplate(rw, "layout.html", "complete.html", data)
 }
 
+func (w *Wizard) GetCSRFToken() string {
+	return w.csrfToken
+}
+
 func (w *Wizard) renderTemplate(rw http.ResponseWriter, layout, content string, data *TemplateData) {
 	rw.Header().Set("Content-Type", "text/html; charset=utf-8")
 	data.CSRFToken = w.csrfToken

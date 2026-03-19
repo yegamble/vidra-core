@@ -625,12 +625,17 @@ func (h *PluginHandler) extractPlugin(zipData []byte, destDir, pluginName string
 		return "", fmt.Errorf("failed to create plugin directory: %w", err)
 	}
 
+	const maxFileSize = 100 * 1024 * 1024 // 100MB per file limit
+
 	for _, f := range zipReader.File {
 		if strings.Contains(f.Name, "..") {
 			return "", fmt.Errorf("invalid file path: %s", f.Name)
 		}
 
-		destPath := filepath.Join(pluginDir, f.Name)
+		destPath := filepath.Clean(filepath.Join(pluginDir, f.Name))
+		if !strings.HasPrefix(destPath, filepath.Clean(pluginDir)+string(os.PathSeparator)) {
+			return "", fmt.Errorf("invalid file path (path traversal): %s", f.Name)
+		}
 
 		if f.FileInfo().IsDir() {
 			if err := os.MkdirAll(destPath, f.Mode()); err != nil {
@@ -654,7 +659,7 @@ func (h *PluginHandler) extractPlugin(zipData []byte, destDir, pluginName string
 			return "", fmt.Errorf("failed to create file: %w", err)
 		}
 
-		if _, err := io.Copy(destFile, rc); err != nil {
+		if _, err := io.Copy(destFile, io.LimitReader(rc, maxFileSize)); err != nil {
 			_ = destFile.Close()
 			_ = rc.Close()
 			return "", fmt.Errorf("failed to write file: %w", err)

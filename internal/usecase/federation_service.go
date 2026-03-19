@@ -115,7 +115,14 @@ func (s *federationService) ProcessNext(ctx context.Context) (bool, error) {
 		err := s.processJob(ctx, job)
 		if err != nil {
 			// Exponential backoff: min(2^attempt * 10s, 10m)
-			backoff := time.Duration(10*(1<<uint(job.Attempts))) * time.Second
+			attempts := job.Attempts
+			if attempts < 0 {
+				attempts = 0
+			}
+			if attempts > 30 {
+				attempts = 30
+			}
+			backoff := time.Duration(10*(1<<uint(attempts))) * time.Second
 			if backoff > 10*time.Minute {
 				backoff = 10 * time.Minute
 			}
@@ -681,6 +688,12 @@ func (s *federationService) bumpActorBackoff(ctx context.Context, actor string) 
 	attempts := s.getActorAttempts(ctx, actor) + 1
 	s.setActorAttempts(ctx, actor, attempts)
 	// compute next time with capped exponential backoff
+	if attempts < 0 {
+		attempts = 0
+	}
+	if attempts > 30 {
+		attempts = 30
+	}
 	backoff := time.Duration(10*(1<<uint(attempts))) * time.Second
 	if backoff > 10*time.Minute {
 		backoff = 10 * time.Minute

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -128,9 +129,13 @@ func (f *FTPBackend) List(ctx context.Context, prefix string) ([]BackupEntry, er
 				relPath = strings.TrimPrefix(relPath, "/")
 			}
 
+			entrySize := int64(0)
+			if entry.Size <= math.MaxInt64 {
+				entrySize = int64(entry.Size)
+			}
 			backupEntries = append(backupEntries, BackupEntry{
 				Path:    relPath,
-				Size:    int64(entry.Size),
+				Size:    entrySize,
 				ModTime: entry.Time,
 			})
 		}

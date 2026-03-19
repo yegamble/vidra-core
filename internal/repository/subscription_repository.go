@@ -281,13 +281,13 @@ func (r *subscriptionRepository) GetSubscriptionVideos(ctx context.Context, subs
 			return nil, 0, fmt.Errorf("failed to scan subscription video: %w", err)
 		}
 
-		if len(processedCIDsJSON) > 0 {
+		if len(processedCIDsJSON) > 0 && string(processedCIDsJSON) != "null" {
 			_ = json.Unmarshal(processedCIDsJSON, &v.ProcessedCIDs)
 		}
-		if len(metadataJSON) > 0 {
+		if len(metadataJSON) > 0 && string(metadataJSON) != "null" {
 			_ = json.Unmarshal(metadataJSON, &v.Metadata)
 		}
-		if len(outputPathsJSON) > 0 {
+		if len(outputPathsJSON) > 0 && string(outputPathsJSON) != "null" {
 			_ = json.Unmarshal(outputPathsJSON, &v.OutputPaths)
 		}
 		v.Tags = []string(tags)

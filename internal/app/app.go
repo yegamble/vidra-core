@@ -203,6 +203,12 @@ func (app *Application) initializeRedis() error {
 	if err != nil {
 		return fmt.Errorf("failed to parse redis url: %w", err)
 	}
+	// Configure connection pooling for Redis
+	redisOpts.PoolSize = 100
+	redisOpts.MinIdleConns = 10
+	redisOpts.ConnMaxIdleTime = 5 * time.Minute
+	redisOpts.ConnMaxLifetime = 1 * time.Hour
+
 	rdb := redis.NewClient(redisOpts)
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(app.Config.RedisPingTimeout)*time.Second)
