@@ -2,7 +2,9 @@ package auth
 
 import (
 	"bytes"
+	"database/sql"
 	"encoding/json"
+	"fmt"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"athena/internal/config"
 	"athena/internal/domain"
 	"athena/internal/generated"
 	"athena/internal/testutil"
@@ -561,6 +564,223 @@ func TestUploadAvatar_ValidHEIC_WithMockIPFS(t *testing.T) {
 	}
 	if got.Avatar == nil || got.Avatar.WebpIpfsCid == nil || *got.Avatar.WebpIpfsCid != "CIDWEBP6" {
 		t.Fatalf("expected CIDWEBP6 for webp, got %+v", got)
+	}
+}
+
+// Test that verifyIPFSContent is called after successful IPFS upload
+func TestUploadAvatar_VerifyCalled(t *testing.T) {
+	repo := newMockUserRepo()
+	u := &domain.User{ID: "77777777-7777-7777-7777-777777777777", Username: "grace", Email: "g@e.com", Role: domain.RoleUser, IsActive: true, CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	repo.users[u.ID] = u
+
+	s := NewServer(repo, nil, "test", nil, 0, "http://test-ipfs:5001", "", 0, nil)
+
+	verifyCalled := false
+	testIPFSAdd = func(_ string) (string, error) { return "CID_VERIFY_TEST", nil }
+	defer func() { testIPFSAdd = nil }()
+	testIPFSPin = func(_ string) error { return nil }
+	defer func() { testIPFSPin = nil }()
+	testEncodeToWebP = func(_, dst string) error { return os.WriteFile(dst, []byte("webp"), 0600) }
+	defer func() { testEncodeToWebP = nil }()
+	testIPFSVerify = func(_ string) error {
+		verifyCalled = true
+		return nil
+	}
+	defer func() { testIPFSVerify = nil }()
+
+	var body bytes.Buffer
+	mw := multipart.NewWriter(&body)
+	fw, _ := mw.CreateFormFile("file", "avatar.png")
+	_, _ = fw.Write(testutil.CreateTestPNG())
+	_ = mw.Close()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/users/me/avatar", &body)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	req = req.WithContext(withUserID(req.Context(), u.ID))
+	rr := httptest.NewRecorder()
+
+	s.UploadAvatar(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	if !verifyCalled {
+		t.Fatal("expected testIPFSVerify to be called after successful upload")
+	}
+}
+
+// Test that upload succeeds even when IPFS verification fails
+func TestUploadAvatar_VerifyFailureDoesNotFailUpload(t *testing.T) {
+	repo := newMockUserRepo()
+	u := &domain.User{ID: "88888888-8888-8888-8888-888888888888", Username: "hank", Email: "h@e.com", Role: domain.RoleUser, IsActive: true, CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	repo.users[u.ID] = u
+
+	s := NewServer(repo, nil, "test", nil, 0, "http://test-ipfs:5001", "", 0, nil)
+
+	testIPFSAdd = func(_ string) (string, error) { return "CID_VERIFY_FAIL", nil }
+	defer func() { testIPFSAdd = nil }()
+	testIPFSPin = func(_ string) error { return nil }
+	defer func() { testIPFSPin = nil }()
+	testEncodeToWebP = func(_, dst string) error { return os.WriteFile(dst, []byte("webp"), 0600) }
+	defer func() { testEncodeToWebP = nil }()
+	testIPFSVerify = func(_ string) error {
+		return fmt.Errorf("simulated verification failure")
+	}
+	defer func() { testIPFSVerify = nil }()
+
+	var body bytes.Buffer
+	mw := multipart.NewWriter(&body)
+	fw, _ := mw.CreateFormFile("file", "avatar.png")
+	_, _ = fw.Write(testutil.CreateTestPNG())
+	_ = mw.Close()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/users/me/avatar", &body)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	req = req.WithContext(withUserID(req.Context(), u.ID))
+	rr := httptest.NewRecorder()
+
+	s.UploadAvatar(rr, req)
+
+	// Upload must succeed even though verification failed
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200 even with verify failure, got %d body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+// Test that gateway_url and local_gateway_url appear in avatar response
+func TestUploadAvatar_GatewayURLsInResponse(t *testing.T) {
+	repo := newMockUserRepo()
+	u := &domain.User{ID: "99999999-9999-9999-9999-999999999999", Username: "ivan", Email: "i@e.com", Role: domain.RoleUser, IsActive: true, CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	repo.users[u.ID] = u
+
+	s := NewServer(repo, nil, "test", nil, 0, "http://test-ipfs:5001", "", 0, nil)
+	// Set gateway URLs via cfg
+	s.cfg = &config.Config{
+		IPFSGatewayURLs:     []string{"https://ipfs.io", "https://dweb.link"},
+		IPFSLocalGatewayURL: "http://localhost:8080",
+	}
+
+	testIPFSAdd = func(_ string) (string, error) { return "CID_GATEWAY_TEST", nil }
+	defer func() { testIPFSAdd = nil }()
+	testIPFSPin = func(_ string) error { return nil }
+	defer func() { testIPFSPin = nil }()
+	testEncodeToWebP = func(_, dst string) error { return os.WriteFile(dst, []byte("webp"), 0600) }
+	defer func() { testEncodeToWebP = nil }()
+	testIPFSVerify = func(_ string) error { return nil }
+	defer func() { testIPFSVerify = nil }()
+
+	var body bytes.Buffer
+	mw := multipart.NewWriter(&body)
+	fw, _ := mw.CreateFormFile("file", "avatar.png")
+	_, _ = fw.Write(testutil.CreateTestPNG())
+	_ = mw.Close()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/users/me/avatar", &body)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	req = req.WithContext(withUserID(req.Context(), u.ID))
+	rr := httptest.NewRecorder()
+
+	s.UploadAvatar(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rr.Code, rr.Body.String())
+	}
+
+	// Decode the raw response to check gateway_url fields
+	var envResp struct {
+		Success bool `json:"success"`
+		Data    struct {
+			Avatar struct {
+				IpfsCid         string `json:"ipfs_cid"`
+				GatewayURL      string `json:"gateway_url"`
+				LocalGatewayURL string `json:"local_gateway_url"`
+			} `json:"avatar"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &envResp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if !envResp.Success {
+		t.Fatal("expected success=true")
+	}
+	wantGateway := "https://ipfs.io/ipfs/CID_GATEWAY_TEST"
+	if envResp.Data.Avatar.GatewayURL != wantGateway {
+		t.Errorf("expected gateway_url=%q, got %q", wantGateway, envResp.Data.Avatar.GatewayURL)
+	}
+	wantLocal := "http://localhost:8080/ipfs/CID_GATEWAY_TEST"
+	if envResp.Data.Avatar.LocalGatewayURL != wantLocal {
+		t.Errorf("expected local_gateway_url=%q, got %q", wantLocal, envResp.Data.Avatar.LocalGatewayURL)
+	}
+}
+
+// Test gateway_url is omitted when IPFSGatewayURLs is empty (no panic)
+func TestUploadAvatar_EmptyGatewayURLsNoPanic(t *testing.T) {
+	repo := newMockUserRepo()
+	u := &domain.User{ID: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", Username: "jane", Email: "j@e.com", Role: domain.RoleUser, IsActive: true, CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	repo.users[u.ID] = u
+
+	s := NewServer(repo, nil, "test", nil, 0, "http://test-ipfs:5001", "", 0, nil)
+	s.cfg = &config.Config{IPFSGatewayURLs: []string{}} // empty — should not panic
+
+	testIPFSAdd = func(_ string) (string, error) { return "CID_NOGW", nil }
+	defer func() { testIPFSAdd = nil }()
+	testIPFSPin = func(_ string) error { return nil }
+	defer func() { testIPFSPin = nil }()
+	testEncodeToWebP = func(_, dst string) error { return nil }
+	defer func() { testEncodeToWebP = nil }()
+	testIPFSVerify = func(_ string) error { return nil }
+	defer func() { testIPFSVerify = nil }()
+
+	var body bytes.Buffer
+	mw := multipart.NewWriter(&body)
+	fw, _ := mw.CreateFormFile("file", "avatar.png")
+	_, _ = fw.Write(testutil.CreateTestPNG())
+	_ = mw.Close()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/users/me/avatar", &body)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	req = req.WithContext(withUserID(req.Context(), u.ID))
+	rr := httptest.NewRecorder()
+
+	// Must not panic
+	s.UploadAvatar(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	// gateway_url should not be present in response
+	if strings.Contains(rr.Body.String(), "gateway_url") && strings.Contains(rr.Body.String(), "ipfs.io") {
+		t.Error("expected no gateway_url with empty IPFSGatewayURLs")
+	}
+}
+
+// Test directly that User.MarshalJSON emits gateway_url when Avatar has GatewayURL set
+func TestUserMarshalJSON_AvatarGatewayURLs(t *testing.T) {
+	u := domain.User{
+		ID:       "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+		Username: "kate",
+		Email:    "k@e.com",
+		Role:     domain.RoleUser,
+		IsActive: true,
+		Avatar: &domain.Avatar{
+			ID:              "avatar-1",
+			IPFSCID:         sql.NullString{String: "bafyCID123", Valid: true},
+			WebPIPFSCID:     sql.NullString{String: "bafyCIDWEBP", Valid: true},
+			GatewayURL:      "https://ipfs.io/ipfs/bafyCID123",
+			LocalGatewayURL: "http://localhost:8080/ipfs/bafyCID123",
+		},
+	}
+
+	data, err := json.Marshal(u)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	s := string(data)
+	if !strings.Contains(s, `"gateway_url":"https://ipfs.io/ipfs/bafyCID123"`) {
+		t.Errorf("expected gateway_url in JSON, got: %s", s)
+	}
+	if !strings.Contains(s, `"local_gateway_url":"http://localhost:8080/ipfs/bafyCID123"`) {
+		t.Errorf("expected local_gateway_url in JSON, got: %s", s)
 	}
 }
 

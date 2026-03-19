@@ -4,6 +4,7 @@ import (
 	"athena/internal/httpapi/shared"
 	"bufio"
 	"bytes"
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -46,6 +47,8 @@ var (
 	testIPFSPin        func(cid string) error
 	testIPFSClusterPin func(cid string) error
 	testEncodeToWebP   func(srcPath, dstPath string) error
+	testIPFSVerify     func(cid string) error
+	testIPFSCat        func(cid string) (io.ReadCloser, error)
 )
 
 // UploadAvatar handles multipart upload of a user's avatar, uploads it to IPFS, pins it,
@@ -103,6 +106,8 @@ func (h *AuthHandlers) UploadAvatar(w http.ResponseWriter, r *http.Request) {
 			slog.Warn("IPFS upload failed (optional), storing locally only", "user_id", userID, "error", err)
 		} else {
 			cid = cidResult
+			// Verify the pinned content is retrievable (non-blocking: logs warning on failure)
+			h.verifyIPFSContent(r.Context(), cid)
 			// Upload WebP version if available
 			webpCID = h.uploadWebPToIPFS(localPath)
 		}
@@ -132,6 +137,17 @@ func (h *AuthHandlers) UploadAvatar(w http.ResponseWriter, r *http.Request) {
 		shared.WriteError(w, status, err)
 		return
 	}
+
+	// Attach computed gateway URLs when IPFS CID is present
+	if cid != "" && user.Avatar != nil && h.cfg != nil {
+		if len(h.cfg.IPFSGatewayURLs) > 0 {
+			user.Avatar.GatewayURL = h.cfg.IPFSGatewayURLs[0] + "/ipfs/" + cid
+		}
+		if h.cfg.IPFSLocalGatewayURL != "" {
+			user.Avatar.LocalGatewayURL = h.cfg.IPFSLocalGatewayURL + "/ipfs/" + cid
+		}
+	}
+
 	shared.WriteJSON(w, http.StatusOK, user)
 }
 
@@ -351,6 +367,42 @@ func (h *AuthHandlers) uploadAvatarToIPFS(localPath string) (string, error) {
 	}
 
 	return cid, nil
+}
+
+// verifyIPFSContent confirms the pinned content is retrievable from the local IPFS node.
+// Non-blocking: logs a warning but does not fail the upload if verification fails.
+func (h *AuthHandlers) verifyIPFSContent(ctx context.Context, cid string) {
+	if testIPFSVerify != nil {
+		if err := testIPFSVerify(cid); err != nil {
+			slog.Warn("IPFS post-pin verification failed", "cid", cid, "error", err)
+		}
+		return
+	}
+	if h.ipfsAPI == "" {
+		return
+	}
+	verifyCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	u := h.ipfsAPI + "/api/v0/cat?arg=" + url.QueryEscape(cid)
+	req, err := http.NewRequestWithContext(verifyCtx, http.MethodPost, u, nil)
+	if err != nil {
+		slog.Warn("IPFS verification: failed to build request", "cid", cid, "error", err)
+		return
+	}
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		slog.Warn("IPFS verification: request failed", "cid", cid, "error", err)
+		return
+	}
+	defer func() { _ = resp.Body.Close() }()
+	// Read just 1 byte to confirm content is accessible
+	buf := make([]byte, 1)
+	if _, err := io.ReadAtLeast(resp.Body, buf, 1); err != nil {
+		slog.Warn("IPFS verification: content not readable", "cid", cid, "error", err)
+		return
+	}
+	slog.Info("IPFS post-pin verification succeeded", "cid", cid)
 }
 
 // pinToIPFS pins content to IPFS and optionally cluster

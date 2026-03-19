@@ -141,6 +141,9 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 	r.Route("/api/v1", func(r chi.Router) {
 		viewsHandler := video.NewViewsHandler(deps.ViewsService)
 
+		// Avatar proxy — unauthenticated, avatars are content-addressed and public
+		r.Get("/avatars/{cid}", authHandlers.ServeAvatarFromIPFS)
+
 		r.Route("/videos", func(r chi.Router) {
 			log.Printf("Registering video routes...")
 			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/", video.ListVideosHandler(deps.VideoRepo))

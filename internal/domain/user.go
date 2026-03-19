@@ -29,9 +29,11 @@ type User struct {
 
 // Avatar represents a user's avatar metadata
 type Avatar struct {
-	ID          string         `json:"-" db:"avatar_id"`
-	IPFSCID     sql.NullString `json:"-" db:"avatar_ipfs_cid"`
-	WebPIPFSCID sql.NullString `json:"-" db:"avatar_webp_ipfs_cid"`
+	ID              string         `json:"-" db:"avatar_id"`
+	IPFSCID         sql.NullString `json:"-" db:"avatar_ipfs_cid"`
+	WebPIPFSCID     sql.NullString `json:"-" db:"avatar_webp_ipfs_cid"`
+	GatewayURL      string         `json:"-"` // Computed at response time, not stored
+	LocalGatewayURL string         `json:"-"` // Computed at response time, not stored
 }
 
 // MarshalJSON implements custom JSON marshaling for User
@@ -39,26 +41,34 @@ func (u User) MarshalJSON() ([]byte, error) {
 	type Alias User
 	// Prepare nested avatar payload if present
 	var avatarPayload *struct {
-		ID          string  `json:"id"`
-		IPFSCID     *string `json:"ipfs_cid"`
-		WebPIPFSCID *string `json:"webp_ipfs_cid"`
+		ID              string  `json:"id"`
+		IPFSCID         *string `json:"ipfs_cid"`
+		WebPIPFSCID     *string `json:"webp_ipfs_cid"`
+		GatewayURL      string  `json:"gateway_url,omitempty"`
+		LocalGatewayURL string  `json:"local_gateway_url,omitempty"`
 	}
 	if u.Avatar != nil {
 		avatarPayload = &struct {
-			ID          string  `json:"id"`
-			IPFSCID     *string `json:"ipfs_cid"`
-			WebPIPFSCID *string `json:"webp_ipfs_cid"`
+			ID              string  `json:"id"`
+			IPFSCID         *string `json:"ipfs_cid"`
+			WebPIPFSCID     *string `json:"webp_ipfs_cid"`
+			GatewayURL      string  `json:"gateway_url,omitempty"`
+			LocalGatewayURL string  `json:"local_gateway_url,omitempty"`
 		}{
-			ID:          u.Avatar.ID,
-			IPFSCID:     nullStringToPtr(u.Avatar.IPFSCID),
-			WebPIPFSCID: nullStringToPtr(u.Avatar.WebPIPFSCID),
+			ID:              u.Avatar.ID,
+			IPFSCID:         nullStringToPtr(u.Avatar.IPFSCID),
+			WebPIPFSCID:     nullStringToPtr(u.Avatar.WebPIPFSCID),
+			GatewayURL:      u.Avatar.GatewayURL,
+			LocalGatewayURL: u.Avatar.LocalGatewayURL,
 		}
 	}
 	return json.Marshal(&struct {
 		Avatar *struct {
-			ID          string  `json:"id"`
-			IPFSCID     *string `json:"ipfs_cid"`
-			WebPIPFSCID *string `json:"webp_ipfs_cid"`
+			ID              string  `json:"id"`
+			IPFSCID         *string `json:"ipfs_cid"`
+			WebPIPFSCID     *string `json:"webp_ipfs_cid"`
+			GatewayURL      string  `json:"gateway_url,omitempty"`
+			LocalGatewayURL string  `json:"local_gateway_url,omitempty"`
 		} `json:"avatar,omitempty"`
 		*Alias
 	}{

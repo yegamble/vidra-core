@@ -31,8 +31,9 @@ type Config struct {
 
 	RedisURL string
 
-	IPFSApi     string
-	IPFSCluster string
+	IPFSApi             string
+	IPFSCluster         string
+	IPFSLocalGatewayURL string
 
 	IPFSClusterSecret     string
 	IPFSClusterClientCert string

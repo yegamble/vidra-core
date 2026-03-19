@@ -18,6 +18,7 @@ func loadCommonFields(cfg *Config, setupMode bool) {
 	cfg.RequireIPFS = GetBoolEnv("REQUIRE_IPFS", prodDefault(setupMode, true, false))
 	cfg.IPFSApi = GetEnvOrDefault("IPFS_API", "")
 	cfg.IPFSCluster = GetEnvOrDefault("IPFS_CLUSTER_API", "")
+	cfg.IPFSLocalGatewayURL = GetEnvOrDefault("IPFS_LOCAL_GATEWAY_URL", "http://localhost:8080")
 	cfg.IPFSClusterSecret = GetEnvOrDefault("IPFS_CLUSTER_SECRET", "")
 	cfg.IPFSClusterClientCert = GetEnvOrDefault("IPFS_CLUSTER_CLIENT_CERT", "")
 	cfg.IPFSClusterClientKey = GetEnvOrDefault("IPFS_CLUSTER_CLIENT_KEY", "")

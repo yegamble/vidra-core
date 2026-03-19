@@ -93,6 +93,29 @@ func TestLoadCommonFields(t *testing.T) {
 				}
 			},
 		},
+		{
+			name:      "IPFS_LOCAL_GATEWAY_URL default",
+			setupMode: false,
+			envVars:   map[string]string{"REQUIRE_IPFS": "false"},
+			verify: func(t *testing.T, cfg *Config) {
+				if cfg.IPFSLocalGatewayURL != "http://localhost:8080" {
+					t.Errorf("expected IPFSLocalGatewayURL default http://localhost:8080, got %q", cfg.IPFSLocalGatewayURL)
+				}
+			},
+		},
+		{
+			name:      "IPFS_LOCAL_GATEWAY_URL custom",
+			setupMode: false,
+			envVars: map[string]string{
+				"REQUIRE_IPFS":           "false",
+				"IPFS_LOCAL_GATEWAY_URL": "http://ipfs-node:8080",
+			},
+			verify: func(t *testing.T, cfg *Config) {
+				if cfg.IPFSLocalGatewayURL != "http://ipfs-node:8080" {
+					t.Errorf("expected IPFSLocalGatewayURL http://ipfs-node:8080, got %q", cfg.IPFSLocalGatewayURL)
+				}
+			},
+		},
 	}
 
 	for _, tt := range tests {
