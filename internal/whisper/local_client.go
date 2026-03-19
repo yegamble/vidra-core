@@ -121,8 +121,8 @@ func (c *localClient) FormatToVTT(result *TranscriptionResult) (string, error) {
 		start := formatVTTTimestamp(segment.Start)
 		end := formatVTTTimestamp(segment.End)
 
-		sb.WriteString(fmt.Sprintf("%d\n", i+1))
-		sb.WriteString(fmt.Sprintf("%s --> %s\n", start, end))
+		fmt.Fprintf(&sb, "%d\n", i+1)
+		fmt.Fprintf(&sb, "%s --> %s\n", start, end)
 		sb.WriteString(segment.Text)
 		sb.WriteString("\n\n")
 	}
@@ -137,8 +137,8 @@ func (c *localClient) FormatToSRT(result *TranscriptionResult) (string, error) {
 		start := formatSRTTimestamp(segment.Start)
 		end := formatSRTTimestamp(segment.End)
 
-		sb.WriteString(fmt.Sprintf("%d\n", i+1))
-		sb.WriteString(fmt.Sprintf("%s --> %s\n", start, end))
+		fmt.Fprintf(&sb, "%d\n", i+1)
+		fmt.Fprintf(&sb, "%s --> %s\n", start, end)
 		sb.WriteString(segment.Text)
 		sb.WriteString("\n\n")
 	}

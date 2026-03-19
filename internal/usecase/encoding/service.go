@@ -575,8 +575,8 @@ func (s *service) generateMasterPlaylist(outBaseDir string, resolutions []string
 			continue
 		}
 		if h, ok := domain.HeightForResolution(res); ok {
-			b.WriteString(fmt.Sprintf("#EXT-X-STREAM-INF:BANDWIDTH=%d,NAME=\"%s\"\n", bw[res], res))
-			b.WriteString(fmt.Sprintf("%dp/stream.m3u8\n", h))
+			fmt.Fprintf(&b, "#EXT-X-STREAM-INF:BANDWIDTH=%d,NAME=\"%s\"\n", bw[res], res)
+			fmt.Fprintf(&b, "%dp/stream.m3u8\n", h)
 		}
 	}
 	return os.WriteFile(filepath.Join(outBaseDir, "master.m3u8"), []byte(b.String()), 0o600)

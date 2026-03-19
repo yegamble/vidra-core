@@ -211,8 +211,8 @@ func (c *openAIClient) FormatToVTT(result *TranscriptionResult) (string, error) 
 		end := formatVTTTimestamp(segment.End)
 
 		// Write cue
-		sb.WriteString(fmt.Sprintf("%d\n", i+1))
-		sb.WriteString(fmt.Sprintf("%s --> %s\n", start, end))
+		fmt.Fprintf(&sb, "%d\n", i+1)
+		fmt.Fprintf(&sb, "%s --> %s\n", start, end)
 		sb.WriteString(segment.Text)
 		sb.WriteString("\n\n")
 	}
@@ -230,8 +230,8 @@ func (c *openAIClient) FormatToSRT(result *TranscriptionResult) (string, error) 
 		end := formatSRTTimestamp(segment.End)
 
 		// Write subtitle entry
-		sb.WriteString(fmt.Sprintf("%d\n", i+1))
-		sb.WriteString(fmt.Sprintf("%s --> %s\n", start, end))
+		fmt.Fprintf(&sb, "%d\n", i+1)
+		fmt.Fprintf(&sb, "%s --> %s\n", start, end)
 		sb.WriteString(segment.Text)
 		sb.WriteString("\n\n")
 	}

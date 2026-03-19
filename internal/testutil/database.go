@@ -834,7 +834,7 @@ func runSchemaMigrations(db *sqlx.DB, schema string) error {
 	}
 
 	var script strings.Builder
-	script.WriteString(fmt.Sprintf("SET search_path TO %s,public;\n\n", pqQuoteIdent(schema)))
+	fmt.Fprintf(&script, "SET search_path TO %s,public;\n\n", pqQuoteIdent(schema))
 	for _, file := range migrationFiles {
 		content, readErr := os.ReadFile(file)
 		if readErr != nil {

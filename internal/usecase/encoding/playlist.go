@@ -74,14 +74,13 @@ func (g *MultiCodecPlaylistGenerator) GenerateMultiCodecMasterPlaylist(outBaseDi
 			codecsParam := encoder.GetCodecsString(height)
 
 			// Write stream info
-			b.WriteString(fmt.Sprintf("#EXT-X-STREAM-INF:BANDWIDTH=%d,RESOLUTION=%dx%d,CODECS=\"%s\",NAME=\"%s %s\"\n",
+			fmt.Fprintf(&b, "#EXT-X-STREAM-INF:BANDWIDTH=%d,RESOLUTION=%dx%d,CODECS=\"%s\",NAME=\"%s %s\"\n",
 				adjustedBandwidth,
 				g.calculateWidth(height),
 				height,
 				codecsParam,
 				res,
-				strings.ToUpper(codec),
-			))
+				strings.ToUpper(codec))
 			b.WriteString(playlistPath + "\n")
 			b.WriteString("\n")
 		}
@@ -149,7 +148,7 @@ func (g *MultiCodecPlaylistGenerator) GenerateLegacyMasterPlaylist(outBaseDir st
 			continue
 		}
 
-		b.WriteString(fmt.Sprintf("#EXT-X-STREAM-INF:BANDWIDTH=%d,NAME=\"%s\"\n", bandwidth, res))
+		fmt.Fprintf(&b, "#EXT-X-STREAM-INF:BANDWIDTH=%d,NAME=\"%s\"\n", bandwidth, res)
 		b.WriteString(playlistPath + "\n")
 	}
 
@@ -205,13 +204,12 @@ func (g *MultiCodecPlaylistGenerator) GenerateCodecSpecificMasterPlaylist(codecD
 
 		codecsParam := encoder.GetCodecsString(height)
 
-		b.WriteString(fmt.Sprintf("#EXT-X-STREAM-INF:BANDWIDTH=%d,RESOLUTION=%dx%d,CODECS=\"%s\",NAME=\"%s\"\n",
+		fmt.Fprintf(&b, "#EXT-X-STREAM-INF:BANDWIDTH=%d,RESOLUTION=%dx%d,CODECS=\"%s\",NAME=\"%s\"\n",
 			adjustedBandwidth,
 			g.calculateWidth(height),
 			height,
 			codecsParam,
-			res,
-		))
+			res)
 		b.WriteString(playlistPath + "\n")
 		b.WriteString("\n")
 	}
