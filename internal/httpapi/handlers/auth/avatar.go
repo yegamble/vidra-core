@@ -389,8 +389,7 @@ func (h *AuthHandlers) verifyIPFSContent(ctx context.Context, cid string) {
 		slog.Warn("IPFS verification: failed to build request", "cid", cid, "error", err)
 		return
 	}
-	client := &http.Client{Timeout: 5 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := ipfsHTTPClient.Do(req)
 	if err != nil {
 		slog.Warn("IPFS verification: request failed", "cid", cid, "error", err)
 		return

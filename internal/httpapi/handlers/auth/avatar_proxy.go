@@ -15,6 +15,9 @@ import (
 	ipfspkg "athena/internal/ipfs"
 )
 
+// ipfsHTTPClient is a shared client for all IPFS API calls, enabling connection reuse.
+var ipfsHTTPClient = &http.Client{}
+
 // ServeAvatarFromIPFS proxies an avatar by CID from the local IPFS node.
 // Route: GET /api/v1/avatars/{cid} — unauthenticated (avatars are public).
 func (h *AuthHandlers) ServeAvatarFromIPFS(w http.ResponseWriter, r *http.Request) {
@@ -32,13 +35,14 @@ func (h *AuthHandlers) ServeAvatarFromIPFS(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Fetch content from IPFS
-	body, err := h.fetchIPFSContent(r.Context(), cid)
+	// Fetch content from IPFS — cancel deferred here so the body stays readable during streaming
+	body, cancel, err := h.fetchIPFSContent(r.Context(), cid)
 	if err != nil {
 		slog.Warn("avatar proxy: IPFS fetch failed", "cid", cid, "error", err)
 		shared.WriteError(w, http.StatusServiceUnavailable, domain.NewDomainError("IPFS_UNAVAILABLE", "Failed to fetch content from IPFS"))
 		return
 	}
+	defer cancel()
 	defer func() { _ = body.Close() }()
 
 	// Read first 512 bytes to detect content type
@@ -64,28 +68,32 @@ func (h *AuthHandlers) ServeAvatarFromIPFS(w http.ResponseWriter, r *http.Reques
 }
 
 // fetchIPFSContent retrieves content by CID from the local IPFS node.
+// Returns the body and a cancel function; the caller must defer cancel() to release
+// the context only after the body has been fully read.
 // Uses testIPFSCat hook in tests.
-func (h *AuthHandlers) fetchIPFSContent(ctx context.Context, cid string) (io.ReadCloser, error) {
+func (h *AuthHandlers) fetchIPFSContent(ctx context.Context, cid string) (io.ReadCloser, context.CancelFunc, error) {
 	if testIPFSCat != nil {
-		return testIPFSCat(cid)
+		body, err := testIPFSCat(cid)
+		return body, func() {}, err
 	}
 
 	fetchCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
 
 	u := h.ipfsAPI + "/api/v0/cat?arg=" + url.QueryEscape(cid)
 	req, err := http.NewRequestWithContext(fetchCtx, http.MethodPost, u, nil)
 	if err != nil {
-		return nil, err
+		cancel()
+		return nil, func() {}, err
 	}
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := ipfsHTTPClient.Do(req)
 	if err != nil {
-		return nil, err
+		cancel()
+		return nil, func() {}, err
 	}
 	if resp.StatusCode != http.StatusOK {
 		_ = resp.Body.Close()
-		return nil, domain.NewDomainError("IPFS_UNAVAILABLE", "IPFS returned non-200 status")
+		cancel()
+		return nil, func() {}, domain.NewDomainError("IPFS_UNAVAILABLE", "IPFS returned non-200 status")
 	}
-	return resp.Body, nil
+	return resp.Body, cancel, nil
 }
