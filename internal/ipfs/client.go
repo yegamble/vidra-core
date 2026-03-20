@@ -471,6 +471,46 @@ func (c *Client) Cat(ctx context.Context, cid string) (io.ReadCloser, error) {
 	return resp.Body, nil
 }
 
+// ObjectStatResult holds the result of an IPFS object/stat call.
+type ObjectStatResult struct {
+	Hash           string `json:"Hash"`
+	NumLinks       int    `json:"NumLinks"`
+	BlockSize      int64  `json:"BlockSize"`
+	LinksSize      int64  `json:"LinksSize"`
+	DataSize       int64  `json:"DataSize"`
+	CumulativeSize int64  `json:"CumulativeSize"`
+}
+
+// ObjectStat retrieves metadata about an IPFS object via the object/stat API.
+func (c *Client) ObjectStat(ctx context.Context, cid string) (*ObjectStatResult, error) {
+	if !c.enabled {
+		return nil, fmt.Errorf("IPFS not enabled")
+	}
+
+	reqURL := c.apiURL + "/api/v0/object/stat?arg=" + url.QueryEscape(cid)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to stat IPFS object: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		return nil, fmt.Errorf("IPFS object/stat failed with status %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	var result ObjectStatResult
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode object/stat response: %w", err)
+	}
+	return &result, nil
+}
+
 func (c *Client) Unpin(ctx context.Context, cid string) error {
 	if !c.enabled {
 		return fmt.Errorf("IPFS not enabled")

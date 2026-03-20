@@ -81,16 +81,33 @@ func (i *IPFSBackend) Exists(ctx context.Context, key string) (bool, error) {
 	return pinned, nil
 }
 
+// Copy downloads the source CID content and re-adds it to IPFS, ensuring
+// the content is locally pinned. Because IPFS is content-addressed, the
+// resulting CID is identical for the same content.
 func (i *IPFSBackend) Copy(ctx context.Context, sourceKey, destKey string) error {
+	rc, err := i.client.Cat(ctx, sourceKey)
+	if err != nil {
+		return fmt.Errorf("failed to read source for IPFS copy: %w", err)
+	}
+	defer rc.Close()
+	_, err = i.client.AddReader(ctx, destKey, rc)
+	if err != nil {
+		return fmt.Errorf("failed to re-add content during IPFS copy: %w", err)
+	}
 	return nil
 }
 
+// GetMetadata returns metadata for an IPFS object via the object/stat API.
 func (i *IPFSBackend) GetMetadata(ctx context.Context, key string) (*FileMetadata, error) {
+	stat, err := i.client.ObjectStat(ctx, key)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get IPFS object metadata: %w", err)
+	}
 	return &FileMetadata{
 		Key:          key,
-		Size:         0,
+		Size:         stat.CumulativeSize,
 		ContentType:  "application/octet-stream",
-		LastModified: time.Now(),
+		LastModified: time.Time{}, // IPFS does not track modification time
 		ETag:         key,
 	}, nil
 }

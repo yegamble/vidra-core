@@ -168,3 +168,163 @@ func TestHLSHandler_PrivateOwnerAllowed(t *testing.T) {
 		t.Fatalf("expected 200 for owner, got %d", rr.Code)
 	}
 }
+
+// TestStreamVideoHandler_S3URLs_MasterRedirect verifies that when a video has an S3URL for master,
+// the handler redirects to the S3 URL rather than serving a mock playlist.
+func TestStreamVideoHandler_S3URLs_MasterRedirect(t *testing.T) {
+	videoID := "vid-s3-master"
+	s3URL := "https://s3.backblaze.com/bucket/videos/" + videoID + "/hls/master.m3u8"
+
+	vid := &domain.Video{
+		ID:      videoID,
+		Privacy: domain.PrivacyPublic,
+		UserID:  "u1",
+		S3URLs:  map[string]string{"master": s3URL},
+	}
+	repo := &mockStreamRepo{vid: vid}
+	h := StreamVideoHandler(repo)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/videos/"+videoID+"/stream", nil)
+	rc := chi.NewRouteContext()
+	rc.URLParams.Add("id", videoID)
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rc))
+	rr := httptest.NewRecorder()
+
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusTemporaryRedirect {
+		t.Fatalf("expected 307 redirect to S3 URL, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	loc := rr.Header().Get("Location")
+	if loc != s3URL {
+		t.Fatalf("expected redirect to %s, got %s", s3URL, loc)
+	}
+}
+
+// TestStreamVideoHandler_S3URLs_QualityRedirect verifies that a quality-specific S3URL redirects.
+func TestStreamVideoHandler_S3URLs_QualityRedirect(t *testing.T) {
+	videoID := "vid-s3-quality"
+	s3URL := "https://s3.backblaze.com/bucket/videos/" + videoID + "/hls/1080p/stream.m3u8"
+
+	vid := &domain.Video{
+		ID:      videoID,
+		Privacy: domain.PrivacyPublic,
+		UserID:  "u1",
+		S3URLs:  map[string]string{"1080p": s3URL},
+	}
+	repo := &mockStreamRepo{vid: vid}
+	h := StreamVideoHandler(repo)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/videos/"+videoID+"/stream?quality=1080p", nil)
+	rc := chi.NewRouteContext()
+	rc.URLParams.Add("id", videoID)
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rc))
+	rr := httptest.NewRecorder()
+
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusTemporaryRedirect {
+		t.Fatalf("expected 307 redirect to S3 URL, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	loc := rr.Header().Get("Location")
+	if loc != s3URL {
+		t.Fatalf("expected redirect to %s, got %s", s3URL, loc)
+	}
+}
+
+// TestHLSHandler_S3Redirect_PlaylistFile verifies that when a local .m3u8 is missing but the video
+// has an S3URLs["master"] entry, the HLS handler redirects to the S3 URL for that file.
+func TestHLSHandler_S3Redirect_PlaylistFile(t *testing.T) {
+	videoID := "vid-hls-s3-playlist"
+	s3Base := "https://s3.example.com/bucket/videos/" + videoID + "/hls/"
+
+	vid := &domain.Video{
+		ID:      videoID,
+		Privacy: domain.PrivacyPublic,
+		UserID:  "u1",
+		S3URLs:  map[string]string{"master": s3Base + "master.m3u8"},
+	}
+	repo := &mockStreamRepo{vid: vid}
+	h := HLSHandler(repo)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/hls/"+videoID+"/720p/stream.m3u8", nil)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusTemporaryRedirect {
+		t.Fatalf("expected 307 redirect to S3, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	want := s3Base + "720p/stream.m3u8"
+	if loc := rr.Header().Get("Location"); loc != want {
+		t.Fatalf("expected Location=%s, got %s", want, loc)
+	}
+}
+
+// TestHLSHandler_S3Redirect_SegmentFile verifies that .ts segment requests redirect to S3.
+func TestHLSHandler_S3Redirect_SegmentFile(t *testing.T) {
+	videoID := "vid-hls-s3-segment"
+	s3Base := "https://s3.example.com/bucket/videos/" + videoID + "/hls/"
+
+	vid := &domain.Video{
+		ID:      videoID,
+		Privacy: domain.PrivacyPublic,
+		UserID:  "u1",
+		S3URLs:  map[string]string{"master": s3Base + "master.m3u8"},
+	}
+	repo := &mockStreamRepo{vid: vid}
+	h := HLSHandler(repo)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/hls/"+videoID+"/720p/segment_00000.ts", nil)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusTemporaryRedirect {
+		t.Fatalf("expected 307 redirect to S3 for segment, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	want := s3Base + "720p/segment_00000.ts"
+	if loc := rr.Header().Get("Location"); loc != want {
+		t.Fatalf("expected Location=%s, got %s", want, loc)
+	}
+}
+
+// TestHLSHandler_NoS3_LocalMissing_Returns404 verifies 404 when no local file and no S3URLs.
+func TestHLSHandler_NoS3_LocalMissing_Returns404(t *testing.T) {
+	videoID := "vid-hls-no-s3"
+	vid := &domain.Video{ID: videoID, Privacy: domain.PrivacyPublic, UserID: "u1"}
+	repo := &mockStreamRepo{vid: vid}
+	h := HLSHandler(repo)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/hls/"+videoID+"/720p/stream.m3u8", nil)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 when local missing and no S3, got %d", rr.Code)
+	}
+}
+
+// TestStreamVideoHandler_NoHLSFiles_Returns404 verifies that when a video exists but has no HLS files
+// (no OutputPaths, no S3URLs, no local directory), a 404 is returned instead of a mock playlist.
+func TestStreamVideoHandler_NoHLSFiles_Returns404(t *testing.T) {
+	videoID := "vid-no-hls"
+
+	vid := &domain.Video{
+		ID:      videoID,
+		Privacy: domain.PrivacyPublic,
+		UserID:  "u1",
+	}
+	repo := &mockStreamRepo{vid: vid}
+	h := StreamVideoHandler(repo)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/videos/"+videoID+"/stream", nil)
+	rc := chi.NewRouteContext()
+	rc.URLParams.Add("id", videoID)
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rc))
+	rr := httptest.NewRecorder()
+
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 when no HLS files exist, got %d body=%s", rr.Code, rr.Body.String())
+	}
+}

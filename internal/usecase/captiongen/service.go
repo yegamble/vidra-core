@@ -3,6 +3,7 @@ package captiongen
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -46,6 +47,15 @@ type service struct {
 	videoRepo   port.VideoRepository
 	whisperCli  whisper.Client
 	uploadsDir  string
+	s3Backend   storage.StorageBackend
+}
+
+// WithS3Backend configures an S3 backend for downloading source videos
+// that are no longer stored locally. Returns the receiver so the caller
+// can reassign the Service variable using a type-assertion interface.
+func (s *service) WithS3Backend(backend storage.StorageBackend) *service {
+	s.s3Backend = backend
+	return s
 }
 
 // NewService creates a new caption generation service
@@ -171,7 +181,10 @@ func (s *service) CreateJob(
 	ext := getExtensionFromMimeType(video.MimeType)
 	sourceVideoPath := sp.WebVideoFilePath(video.ID, ext)
 	if _, err := os.Stat(sourceVideoPath); os.IsNotExist(err) {
-		return nil, fmt.Errorf("source video file not found: %s", sourceVideoPath)
+		// Allow job creation when the source is on S3 (downloaded during processing)
+		if s3URL := video.S3URLs["source"]; s3URL == "" {
+			return nil, fmt.Errorf("source video file not found: %s", sourceVideoPath)
+		}
 	}
 
 	// Create audio extraction path
@@ -277,6 +290,28 @@ func (s *service) processJob(ctx context.Context, job *domain.CaptionGenerationJ
 	sp := storage.NewPaths(s.uploadsDir)
 	ext := getExtensionFromMimeType(video.MimeType)
 	sourceVideoPath := sp.WebVideoFilePath(video.ID, ext)
+
+	// If the local file is missing and we have an S3 backend, download it to a temp file.
+	if _, statErr := os.Stat(sourceVideoPath); os.IsNotExist(statErr) && s.s3Backend != nil {
+		s3Key := fmt.Sprintf("videos/%s/source%s", video.ID, ext)
+		rc, dlErr := s.s3Backend.Download(ctx, s3Key)
+		if dlErr != nil {
+			return fmt.Errorf("local source file missing and S3 download failed: %w", dlErr)
+		}
+		defer rc.Close() //nolint:gocritic // intentional: close after audio extraction
+		tmpFile, tmpErr := os.CreateTemp("", "caption-source-*"+ext)
+		if tmpErr != nil {
+			return fmt.Errorf("failed to create temp file for S3 source: %w", tmpErr)
+		}
+		defer os.Remove(tmpFile.Name()) //nolint:gocritic
+		if _, copyErr := io.Copy(tmpFile, rc); copyErr != nil {
+			tmpFile.Close()
+			return fmt.Errorf("failed to write S3 source to temp file: %w", copyErr)
+		}
+		tmpFile.Close()
+		sourceVideoPath = tmpFile.Name()
+	}
+
 	if err := s.whisperCli.ExtractAudioFromVideo(ctx, sourceVideoPath, job.SourceAudioPath); err != nil {
 		return fmt.Errorf("failed to extract audio: %w", err)
 	}

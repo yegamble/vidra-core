@@ -56,6 +56,7 @@ type service struct {
 	fedEnq          JobEnqueuer
 	ipfsClient      *ipfs.Client
 	captionGen      CaptionGenerator
+	s3Backend       storage.StorageBackend
 }
 
 func NewService(repo port.EncodingRepository, videoRepo port.VideoRepository, notificationSvc ucn.Service, uploadsDir string, cfg *config.Config, atproto Publisher, enq JobEnqueuer, ipfsClient *ipfs.Client) Service {
@@ -69,6 +70,11 @@ func (s *service) WithFederationEnqueuer(enq JobEnqueuer) *service {
 
 func (s *service) WithCaptionGenerator(gen CaptionGenerator) Service {
 	s.captionGen = gen
+	return s
+}
+
+func (s *service) WithS3Backend(backend storage.StorageBackend) Service {
+	s.s3Backend = backend
 	return s
 }
 
@@ -321,6 +327,18 @@ func (s *service) processJob(ctx context.Context, job *domain.EncodingJob) error
 		return err
 	}
 
+	s3URLs, err := s.uploadHLSToS3(ctx, job.VideoID, job.SourceFilePath, outBaseDir, job.TargetResolutions)
+	if err != nil {
+		slog.Warn("failed to upload HLS to S3", "video_id", job.VideoID, "error", err)
+	} else if len(s3URLs) > 0 {
+		if v, getErr := s.videoRepo.GetByID(ctx, job.VideoID); getErr == nil && v != nil {
+			v.S3URLs = s3URLs
+			if updateErr := s.videoRepo.Update(ctx, v); updateErr != nil {
+				slog.Warn("failed to save S3URLs to video", "video_id", job.VideoID, "error", updateErr)
+			}
+		}
+	}
+
 	if s.atproto != nil {
 		if v, err := s.videoRepo.GetByID(ctx, job.VideoID); err == nil && v != nil {
 			if err := s.atproto.PublishVideo(ctx, v); err != nil && s.fedEnq != nil {
@@ -465,6 +483,77 @@ func (s *service) updateVideoInfo(ctx context.Context, job *domain.EncodingJob, 
 	}
 
 	return s.videoRepo.UpdateProcessingInfoWithCIDs(ctx, job.VideoID, domain.StatusCompleted, outputs, filepath.ToSlash(thumb), filepath.ToSlash(preview), processedCIDs, thumbCID, previewCID)
+}
+
+// uploadHLSToS3 walks outBaseDir, uploads every HLS file and the source video
+// to the configured s3Backend. Returns a map of S3URLs keyed by quality/role.
+// Returns an empty map (no error) when s3Backend is nil.
+func (s *service) uploadHLSToS3(ctx context.Context, videoID, sourceFilePath, outBaseDir string, targetResolutions []string) (map[string]string, error) {
+	if s.s3Backend == nil {
+		return map[string]string{}, nil
+	}
+
+	s3URLs := make(map[string]string)
+
+	// Upload entire HLS tree preserving relative paths.
+	err := filepath.Walk(outBaseDir, func(path string, info os.FileInfo, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if info.IsDir() {
+			return nil
+		}
+		rel, err := filepath.Rel(outBaseDir, path)
+		if err != nil {
+			return fmt.Errorf("rel path: %w", err)
+		}
+		key := fmt.Sprintf("videos/%s/hls/%s", videoID, filepath.ToSlash(rel))
+		if err := s.s3Backend.UploadFile(ctx, key, path, contentTypeForPath(path)); err != nil {
+			return fmt.Errorf("upload hls %s: %w", rel, err)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("uploadHLSToS3 walk: %w", err)
+	}
+
+	// Record master playlist URL.
+	masterKey := fmt.Sprintf("videos/%s/hls/master.m3u8", videoID)
+	s3URLs["master"] = s.s3Backend.GetURL(masterKey)
+
+	// Record each quality playlist URL.
+	for _, res := range targetResolutions {
+		h, ok := domain.HeightForResolution(res)
+		if !ok {
+			continue
+		}
+		playlistKey := fmt.Sprintf("videos/%s/hls/%dp/stream.m3u8", videoID, h)
+		s3URLs[res] = s.s3Backend.GetURL(playlistKey)
+	}
+
+	// Upload the source video.
+	if sourceFilePath != "" {
+		ext := filepath.Ext(sourceFilePath)
+		srcKey := fmt.Sprintf("videos/%s/source%s", videoID, ext)
+		if err := s.s3Backend.UploadFile(ctx, srcKey, sourceFilePath, "video/mp4"); err != nil {
+			slog.Warn("failed to upload source video to S3", "video_id", videoID, "error", err)
+		} else {
+			s3URLs["source"] = s.s3Backend.GetURL(srcKey)
+		}
+	}
+
+	return s3URLs, nil
+}
+
+func contentTypeForPath(path string) string {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".m3u8":
+		return "application/vnd.apple.mpegurl"
+	case ".ts":
+		return "video/MP2T"
+	default:
+		return "application/octet-stream"
+	}
 }
 
 func (s *service) triggerNotifications(ctx context.Context, videoID string) {

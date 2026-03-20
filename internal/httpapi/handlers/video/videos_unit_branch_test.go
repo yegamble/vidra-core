@@ -910,26 +910,51 @@ func TestTryServeFromLocalDirectory_UnitBranches(t *testing.T) {
 	})
 }
 
-func TestServeMockPlaylist_UnitBranches(t *testing.T) {
-	t.Run("master playlist", func(t *testing.T) {
+func TestTryServeFromS3URLs_UnitBranches(t *testing.T) {
+	t.Run("no S3URLs returns false", func(t *testing.T) {
 		rr := httptest.NewRecorder()
-		serveMockPlaylist(rr, "")
-		assert.Contains(t, rr.Body.String(), "#EXT-X-STREAM-INF")
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		ctx := &streamHandlerContext{videoID: "vid-1", video: &domain.Video{S3URLs: nil}}
+		assert.False(t, tryServeFromS3URLs(rr, req, ctx))
 	})
 
-	t.Run("quality playlist", func(t *testing.T) {
+	t.Run("matching master S3URL redirects 307", func(t *testing.T) {
 		rr := httptest.NewRecorder()
-		serveMockPlaylist(rr, "720p")
-		assert.Contains(t, rr.Body.String(), "720p_segment_0.ts")
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		s3URL := "https://s3.example.com/master.m3u8"
+		ctx := &streamHandlerContext{
+			videoID: "vid-2",
+			quality: "",
+			video:   &domain.Video{S3URLs: map[string]string{"master": s3URL}},
+		}
+		assert.True(t, tryServeFromS3URLs(rr, req, ctx))
+		assert.Equal(t, http.StatusTemporaryRedirect, rr.Code)
+		assert.Equal(t, s3URL, rr.Header().Get("Location"))
 	})
 
-	t.Run("invalid quality", func(t *testing.T) {
+	t.Run("matching quality S3URL redirects 307", func(t *testing.T) {
 		rr := httptest.NewRecorder()
-		serveMockPlaylist(rr, "bogus")
-		require.Equal(t, http.StatusBadRequest, rr.Code)
-		response := decodeHandlerResponse(t, rr)
-		require.NotNil(t, response.Error)
-		assert.Equal(t, "INVALID_QUALITY", response.Error.Code)
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		s3URL := "https://s3.example.com/720p/stream.m3u8"
+		ctx := &streamHandlerContext{
+			videoID: "vid-3",
+			quality: "720p",
+			video:   &domain.Video{S3URLs: map[string]string{"720p": s3URL}},
+		}
+		assert.True(t, tryServeFromS3URLs(rr, req, ctx))
+		assert.Equal(t, http.StatusTemporaryRedirect, rr.Code)
+		assert.Equal(t, s3URL, rr.Header().Get("Location"))
+	})
+
+	t.Run("quality not in S3URLs returns false", func(t *testing.T) {
+		rr := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		ctx := &streamHandlerContext{
+			videoID: "vid-4",
+			quality: "1080p",
+			video:   &domain.Video{S3URLs: map[string]string{"720p": "https://s3.example.com/720p.m3u8"}},
+		}
+		assert.False(t, tryServeFromS3URLs(rr, req, ctx))
 	})
 }
 

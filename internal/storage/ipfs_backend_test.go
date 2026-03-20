@@ -52,8 +52,23 @@ func TestNewIPFSBackend(t *testing.T) {
 	})
 }
 
+// closedServerURL returns the URL of a freshly started then immediately closed
+// httptest server. Connecting to this URL will fail with "connection refused",
+// giving a deterministic "IPFS not running" environment regardless of whether
+// a real IPFS daemon is running elsewhere on the host.
+func closedServerURL(t *testing.T) string {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	url := srv.URL
+	srv.Close()
+	return url
+}
+
 func TestIPFSBackend_Methods(t *testing.T) {
-	client := ipfs.NewClient("http://127.0.0.1:5001", "", 100*time.Millisecond)
+	// Use a closed server so tests are deterministic whether or not a local
+	// IPFS daemon happens to be running on port 5001.
+	apiURL := closedServerURL(t)
+	client := ipfs.NewClient(apiURL, "", time.Second)
 	backend, err := NewIPFSBackend(IPFSConfig{Client: client, GatewayURL: "https://gateway.example.com"})
 	if err != nil {
 		t.Fatalf("NewIPFSBackend() error = %v", err)
@@ -117,28 +132,19 @@ func TestIPFSBackend_Methods(t *testing.T) {
 		}
 	})
 
-	t.Run("Copy no-op", func(t *testing.T) {
-		if err := backend.Copy(context.Background(), "src", "dst"); err != nil {
-			t.Fatalf("Copy() error = %v", err)
+	t.Run("Copy error when not running", func(t *testing.T) {
+		if err := backend.Copy(context.Background(), "src", "dst"); err == nil {
+			t.Fatal("expected error from Copy when IPFS not running, got nil")
 		}
 	})
 
-	t.Run("GetMetadata returns CID-backed defaults", func(t *testing.T) {
+	t.Run("GetMetadata error when not running", func(t *testing.T) {
 		meta, err := backend.GetMetadata(context.Background(), "cid123")
-		if err != nil {
-			t.Fatalf("GetMetadata() error = %v", err)
+		if err == nil {
+			t.Fatal("expected error from GetMetadata when IPFS not running, got nil")
 		}
-		if meta.Key != "cid123" {
-			t.Fatalf("meta.Key = %q", meta.Key)
-		}
-		if meta.ETag != "cid123" {
-			t.Fatalf("meta.ETag = %q", meta.ETag)
-		}
-		if meta.ContentType != "application/octet-stream" {
-			t.Fatalf("meta.ContentType = %q", meta.ContentType)
-		}
-		if meta.LastModified.IsZero() {
-			t.Fatal("meta.LastModified is zero")
+		if meta != nil {
+			t.Fatal("expected nil metadata on error")
 		}
 	})
 }
@@ -158,6 +164,9 @@ func TestIPFSBackend_WithMockServer(t *testing.T) {
 		case "/api/v0/add":
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(`{"Name":"data.bin","Hash":"QmNewCID","Size":"17"}`))
+		case "/api/v0/object/stat":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"Hash":"QmTestCID","NumLinks":0,"BlockSize":17,"LinksSize":0,"DataSize":17,"CumulativeSize":17}`))
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -205,6 +214,28 @@ func TestIPFSBackend_WithMockServer(t *testing.T) {
 		}
 		if !exists {
 			t.Fatal("Exists() = false, want true")
+		}
+	})
+
+	t.Run("Copy downloads and re-adds content", func(t *testing.T) {
+		if err := backend.Copy(context.Background(), "QmTestCID", "dest"); err != nil {
+			t.Fatalf("Copy() error = %v", err)
+		}
+	})
+
+	t.Run("GetMetadata returns real size from object/stat", func(t *testing.T) {
+		meta, err := backend.GetMetadata(context.Background(), "QmTestCID")
+		if err != nil {
+			t.Fatalf("GetMetadata() error = %v", err)
+		}
+		if meta.Key != "QmTestCID" {
+			t.Fatalf("meta.Key = %q, want %q", meta.Key, "QmTestCID")
+		}
+		if meta.Size != 17 {
+			t.Fatalf("meta.Size = %d, want 17", meta.Size)
+		}
+		if meta.ETag != "QmTestCID" {
+			t.Fatalf("meta.ETag = %q, want %q", meta.ETag, "QmTestCID")
 		}
 	})
 }

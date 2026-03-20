@@ -205,40 +205,23 @@ func tryServeFromLocalDirectory(w http.ResponseWriter, r *http.Request, ctx *str
 	return true
 }
 
-func serveMockPlaylist(w http.ResponseWriter, quality string) {
-	if quality == "" || quality == "master" {
-		hlsPlaylist := `#EXTM3U
-#EXT-X-VERSION:3
-#EXT-X-STREAM-INF:BANDWIDTH=5000000,RESOLUTION=1920x1080
-1080p.m3u8
-#EXT-X-STREAM-INF:BANDWIDTH=2800000,RESOLUTION=1280x720
-720p.m3u8
-#EXT-X-STREAM-INF:BANDWIDTH=1400000,RESOLUTION=854x480
-480p.m3u8
-#EXT-X-STREAM-INF:BANDWIDTH=800000,RESOLUTION=640x360
-360p.m3u8`
-		_, _ = w.Write([]byte(hlsPlaylist))
-	} else {
-		if !domain.IsValidResolution(quality) {
-			shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_QUALITY", "Unsupported quality"))
-			return
-		}
-		hlsPlaylist := fmt.Sprintf(`#EXTM3U
-#EXT-X-VERSION:3
-#EXT-X-TARGETDURATION:4
-#EXT-X-MEDIA-SEQUENCE:0
-#EXT-X-PLAYLIST-TYPE:VOD
-#EXTINF:4.000,
-%s_segment_0.ts
-#EXTINF:4.000,
-%s_segment_1.ts
-#EXTINF:4.000,
-%s_segment_2.ts
-#EXTINF:2.000,
-%s_segment_3.ts
-#EXT-X-ENDLIST`, quality, quality, quality, quality)
-		_, _ = w.Write([]byte(hlsPlaylist))
+func tryServeFromS3URLs(w http.ResponseWriter, r *http.Request, ctx *streamHandlerContext) bool {
+	if ctx.video == nil || len(ctx.video.S3URLs) == 0 {
+		return false
 	}
+
+	quality := ctx.quality
+	if quality == "" {
+		quality = "master"
+	}
+
+	s3URL, ok := ctx.video.S3URLs[quality]
+	if !ok || s3URL == "" {
+		return false
+	}
+
+	http.Redirect(w, r, s3URL, http.StatusTemporaryRedirect)
+	return true
 }
 
 func StreamVideoHandler(videoRepo usecase.VideoRepository) http.HandlerFunc {
@@ -261,11 +244,15 @@ func StreamVideoHandler(videoRepo usecase.VideoRepository) http.HandlerFunc {
 			return
 		}
 
+		if tryServeFromS3URLs(w, r, ctx) {
+			return
+		}
+
 		if tryServeFromLocalDirectory(w, r, ctx) {
 			return
 		}
 
-		serveMockPlaylist(w, ctx.quality)
+		shared.WriteError(w, http.StatusNotFound, domain.NewDomainError("HLS_NOT_FOUND", "No HLS content available for this video"))
 	}
 }
 
@@ -292,7 +279,11 @@ func HLSHandler(videoRepo usecase.VideoRepository) http.HandlerFunc {
 			return
 		}
 		videoID := parts[0]
+
+		// Fetch video once — needed for privacy check and S3 fallback.
+		var vid *domain.Video
 		if v, err := videoRepo.GetByID(r.Context(), videoID); err == nil && v != nil {
+			vid = v
 			if v.Privacy == domain.PrivacyPrivate {
 				userID, _ := r.Context().Value(middleware.UserIDKey).(string)
 				if userID == "" || userID != v.UserID {
@@ -301,6 +292,7 @@ func HLSHandler(videoRepo usecase.VideoRepository) http.HandlerFunc {
 				}
 			}
 		}
+
 		sp := storage.NewPaths("./storage")
 		root := sp.HLSRootDir()
 		local := filepath.Clean(filepath.Join(root, rel))
@@ -310,15 +302,32 @@ func HLSHandler(videoRepo usecase.VideoRepository) http.HandlerFunc {
 			http.NotFound(w, r)
 			return
 		}
-		if strings.HasSuffix(local, ".m3u8") {
-			w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
-			w.Header().Set("Cache-Control", "public, max-age=60")
-		} else if strings.HasSuffix(local, ".ts") {
-			w.Header().Set("Content-Type", "video/MP2T")
-			w.Header().Set("Cache-Control", "public, max-age=86400, immutable")
-		} else {
-			w.Header().Set("Cache-Control", "public, max-age=300")
+
+		// Serve local file when it exists.
+		if _, err := os.Stat(local); err == nil {
+			if strings.HasSuffix(local, ".m3u8") {
+				w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
+				w.Header().Set("Cache-Control", "public, max-age=60")
+			} else if strings.HasSuffix(local, ".ts") {
+				w.Header().Set("Content-Type", "video/MP2T")
+				w.Header().Set("Cache-Control", "public, max-age=86400, immutable")
+			} else {
+				w.Header().Set("Cache-Control", "public, max-age=300")
+			}
+			http.ServeFile(w, r, local)
+			return
 		}
-		http.ServeFile(w, r, local)
+
+		// Local file missing — try S3 redirect using the master URL as base.
+		if vid != nil && len(vid.S3URLs) > 0 {
+			if masterURL, ok := vid.S3URLs["master"]; ok && masterURL != "" && len(parts) > 1 {
+				s3Base := strings.TrimSuffix(masterURL, "master.m3u8")
+				s3URL := s3Base + parts[1]
+				http.Redirect(w, r, s3URL, http.StatusTemporaryRedirect)
+				return
+			}
+		}
+
+		http.NotFound(w, r)
 	}
 }

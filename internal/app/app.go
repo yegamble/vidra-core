@@ -32,6 +32,7 @@ import (
 	"athena/internal/repository"
 	"athena/internal/scheduler"
 	"athena/internal/security"
+	"athena/internal/storage"
 	"athena/internal/usecase"
 	ucactivitypub "athena/internal/usecase/activitypub"
 	ucbackup "athena/internal/usecase/backup"
@@ -371,6 +372,26 @@ func (app *Application) initializeDependencies() *Dependencies {
 		}
 		if cc, ok := deps.EncodingService.(captionConfigurable); ok {
 			deps.EncodingService = cc.WithCaptionGenerator(deps.CaptionGenService)
+		}
+	}
+
+	if app.Config.EnableS3 && app.Config.S3Bucket != "" {
+		s3Cfg := storage.S3Config{
+			Endpoint:  app.Config.S3Endpoint,
+			Bucket:    app.Config.S3Bucket,
+			AccessKey: app.Config.S3AccessKey,
+			SecretKey: app.Config.S3SecretKey,
+			Region:    app.Config.S3Region,
+		}
+		if s3b, err := storage.NewS3Backend(s3Cfg); err == nil {
+			type s3Wireable interface {
+				WithS3Backend(backend storage.StorageBackend) ucenc.Service
+			}
+			if sw, ok := deps.EncodingService.(s3Wireable); ok {
+				deps.EncodingService = sw.WithS3Backend(s3b)
+			}
+		} else {
+			log.Printf("S3 backend init failed (encoding): %v", err)
 		}
 	}
 
