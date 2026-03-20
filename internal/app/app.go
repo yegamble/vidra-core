@@ -384,11 +384,20 @@ func (app *Application) initializeDependencies() *Dependencies {
 			Region:    app.Config.S3Region,
 		}
 		if s3b, err := storage.NewS3Backend(s3Cfg); err == nil {
-			type s3Wireable interface {
+			type s3WireableEnc interface {
 				WithS3Backend(backend storage.StorageBackend) ucenc.Service
 			}
-			if sw, ok := deps.EncodingService.(s3Wireable); ok {
+			if sw, ok := deps.EncodingService.(s3WireableEnc); ok {
 				deps.EncodingService = sw.WithS3Backend(s3b)
+			}
+			// Wire S3 backend into captiongen so it can download source videos from S3.
+			if deps.CaptionGenService != nil {
+				type s3WireableCaption interface {
+					WithS3Backend(backend storage.StorageBackend) captiongen.Service
+				}
+				if sc, ok := deps.CaptionGenService.(s3WireableCaption); ok {
+					deps.CaptionGenService = sc.WithS3Backend(s3b)
+				}
 			}
 		} else {
 			log.Printf("S3 backend init failed (encoding): %v", err)

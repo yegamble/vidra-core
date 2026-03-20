@@ -51,9 +51,8 @@ type service struct {
 }
 
 // WithS3Backend configures an S3 backend for downloading source videos
-// that are no longer stored locally. Returns the receiver so the caller
-// can reassign the Service variable using a type-assertion interface.
-func (s *service) WithS3Backend(backend storage.StorageBackend) *service {
+// that are no longer stored locally.
+func (s *service) WithS3Backend(backend storage.StorageBackend) Service {
 	s.s3Backend = backend
 	return s
 }

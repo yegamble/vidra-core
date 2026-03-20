@@ -252,7 +252,11 @@ func StreamVideoHandler(videoRepo usecase.VideoRepository) http.HandlerFunc {
 			return
 		}
 
-		shared.WriteError(w, http.StatusNotFound, domain.NewDomainError("HLS_NOT_FOUND", "No HLS content available for this video"))
+		if ctx.video != nil && (ctx.video.Status == domain.StatusProcessing || ctx.video.Status == domain.StatusQueued) {
+			shared.WriteError(w, http.StatusNotFound, domain.NewDomainError("VIDEO_NOT_READY", "Video is still processing"))
+		} else {
+			shared.WriteError(w, http.StatusNotFound, domain.NewDomainError("VIDEO_FILES_NOT_FOUND", "No HLS content available for this video"))
+		}
 	}
 }
 

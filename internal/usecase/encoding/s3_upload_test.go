@@ -112,7 +112,7 @@ func TestUploadHLSToS3_UploadsFilesAndReturnsURLs(t *testing.T) {
 	cfg := &config.Config{FFMPEGPath: "ffmpeg", HLSSegmentDuration: 4}
 	svc := &service{cfg: cfg, s3Backend: backend}
 
-	s3URLs, err := svc.uploadHLSToS3(context.Background(), videoID, sourceFile, hlsDir, []string{"720p"})
+	s3URLs, err := svc.uploadHLSToS3(context.Background(), videoID, sourceFile, hlsDir, "", "", []string{"720p"})
 	require.NoError(t, err)
 
 	// Verify master playlist URL is in s3URLs
@@ -141,7 +141,36 @@ func TestUploadHLSToS3_NoBackend_ReturnsEmpty(t *testing.T) {
 	cfg := &config.Config{FFMPEGPath: "ffmpeg", HLSSegmentDuration: 4}
 	svc := &service{cfg: cfg, s3Backend: nil}
 
-	s3URLs, err := svc.uploadHLSToS3(context.Background(), videoID, sourceFile, hlsDir, []string{"720p"})
+	s3URLs, err := svc.uploadHLSToS3(context.Background(), videoID, sourceFile, hlsDir, "", "", []string{"720p"})
 	require.NoError(t, err)
 	assert.Empty(t, s3URLs)
+}
+
+func TestUploadHLSToS3_UploadsThumbAndPreview(t *testing.T) {
+	videoID := "vid-thumb-preview"
+	hlsDir, sourceFile := buildFakeHLSTree(t, videoID)
+
+	// Create fake thumbnail and preview files
+	base := t.TempDir()
+	thumbPath := filepath.Join(base, videoID+"_thumb.jpg")
+	previewPath := filepath.Join(base, videoID+"_preview.webp")
+	require.NoError(t, os.WriteFile(thumbPath, []byte("jpeg-data"), 0o600))
+	require.NoError(t, os.WriteFile(previewPath, []byte("webp-data"), 0o600))
+
+	backend := newMockStorageBackend("https://s3.example.com/bucket")
+	cfg := &config.Config{FFMPEGPath: "ffmpeg", HLSSegmentDuration: 4}
+	svc := &service{cfg: cfg, s3Backend: backend}
+
+	s3URLs, err := svc.uploadHLSToS3(context.Background(), videoID, sourceFile, hlsDir, thumbPath, previewPath, []string{"720p"})
+	require.NoError(t, err)
+
+	// Verify thumbnail and preview URLs are in s3URLs
+	assert.Contains(t, s3URLs, "thumbnail")
+	assert.Contains(t, s3URLs["thumbnail"], videoID+"/thumbnail.jpg")
+	assert.Contains(t, s3URLs, "preview")
+	assert.Contains(t, s3URLs["preview"], videoID+"/preview.webp")
+
+	// Verify files were actually uploaded to the backend
+	assert.Contains(t, backend.uploaded, "videos/"+videoID+"/thumbnail.jpg")
+	assert.Contains(t, backend.uploaded, "videos/"+videoID+"/preview.webp")
 }

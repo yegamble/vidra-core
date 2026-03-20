@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -20,17 +21,33 @@ func NewLocalBackend(baseDir string) *LocalBackend {
 	return &LocalBackend{baseDir: baseDir}
 }
 
-func (b *LocalBackend) fullPath(key string) string {
-	return filepath.Join(b.baseDir, filepath.FromSlash(key))
+// fullPath resolves key to an absolute path under baseDir.
+// Returns an error if the resolved path would escape baseDir (path traversal).
+func (b *LocalBackend) fullPath(key string) (string, error) {
+	abs, err := filepath.Abs(filepath.Join(b.baseDir, filepath.FromSlash(key)))
+	if err != nil {
+		return "", fmt.Errorf("local backend: resolve path: %w", err)
+	}
+	root, err := filepath.Abs(b.baseDir)
+	if err != nil {
+		return "", fmt.Errorf("local backend: resolve base: %w", err)
+	}
+	if abs != root && !strings.HasPrefix(abs, root+string(os.PathSeparator)) {
+		return "", fmt.Errorf("local backend: key %q escapes storage root", key)
+	}
+	return abs, nil
 }
 
 // Upload writes data from an io.Reader to baseDir/key.
 func (b *LocalBackend) Upload(_ context.Context, key string, data io.Reader, _ string) error {
-	dest := b.fullPath(key)
+	dest, err := b.fullPath(key)
+	if err != nil {
+		return err
+	}
 	if err := os.MkdirAll(filepath.Dir(dest), 0o750); err != nil {
 		return fmt.Errorf("local backend upload: mkdir %s: %w", filepath.Dir(dest), err)
 	}
-	f, err := os.Create(dest) //nolint:gosec // key is internal, not user-controlled
+	f, err := os.Create(dest) //nolint:gosec // path validated by fullPath
 	if err != nil {
 		return fmt.Errorf("local backend upload: create %s: %w", dest, err)
 	}
@@ -49,11 +66,14 @@ func (b *LocalBackend) UploadFile(_ context.Context, key string, localPath strin
 	}
 	defer src.Close()
 
-	dest := b.fullPath(key)
+	dest, err := b.fullPath(key)
+	if err != nil {
+		return err
+	}
 	if err := os.MkdirAll(filepath.Dir(dest), 0o750); err != nil {
 		return fmt.Errorf("local backend upload file: mkdir %s: %w", filepath.Dir(dest), err)
 	}
-	dst, err := os.Create(dest) //nolint:gosec
+	dst, err := os.Create(dest) //nolint:gosec // path validated by fullPath
 	if err != nil {
 		return fmt.Errorf("local backend upload file: create %s: %w", dest, err)
 	}
@@ -66,8 +86,11 @@ func (b *LocalBackend) UploadFile(_ context.Context, key string, localPath strin
 
 // Download returns a ReadCloser for the file at baseDir/key.
 func (b *LocalBackend) Download(_ context.Context, key string) (io.ReadCloser, error) {
-	path := b.fullPath(key)
-	f, err := os.Open(path) //nolint:gosec
+	path, err := b.fullPath(key)
+	if err != nil {
+		return nil, err
+	}
+	f, err := os.Open(path) //nolint:gosec // path validated by fullPath
 	if err != nil {
 		return nil, fmt.Errorf("local backend download: open %s: %w", path, err)
 	}
@@ -75,22 +98,30 @@ func (b *LocalBackend) Download(_ context.Context, key string) (io.ReadCloser, e
 }
 
 // GetURL returns the absolute filesystem path for the given key.
+// Returns an empty string if the key would escape the storage root.
 func (b *LocalBackend) GetURL(key string) string {
-	abs, err := filepath.Abs(b.fullPath(key))
+	abs, err := b.fullPath(key)
 	if err != nil {
-		return b.fullPath(key)
+		return ""
 	}
 	return abs
 }
 
 // GetSignedURL returns the same as GetURL — local files don't need signing.
 func (b *LocalBackend) GetSignedURL(_ context.Context, key string, _ time.Duration) (string, error) {
-	return b.GetURL(key), nil
+	url := b.GetURL(key)
+	if url == "" {
+		return "", fmt.Errorf("local backend: key %q is invalid", key)
+	}
+	return url, nil
 }
 
 // Delete removes the file at baseDir/key.
 func (b *LocalBackend) Delete(_ context.Context, key string) error {
-	path := b.fullPath(key)
+	path, err := b.fullPath(key)
+	if err != nil {
+		return err
+	}
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("local backend delete: remove %s: %w", path, err)
 	}
@@ -99,14 +130,18 @@ func (b *LocalBackend) Delete(_ context.Context, key string) error {
 
 // Exists checks whether the file at baseDir/key exists.
 func (b *LocalBackend) Exists(_ context.Context, key string) (bool, error) {
-	_, err := os.Stat(b.fullPath(key))
-	if err == nil {
+	path, err := b.fullPath(key)
+	if err != nil {
+		return false, err
+	}
+	_, statErr := os.Stat(path)
+	if statErr == nil {
 		return true, nil
 	}
-	if os.IsNotExist(err) {
+	if os.IsNotExist(statErr) {
 		return false, nil
 	}
-	return false, fmt.Errorf("local backend exists: stat %s: %w", b.fullPath(key), err)
+	return false, fmt.Errorf("local backend exists: stat %s: %w", path, statErr)
 }
 
 // Copy duplicates the file at sourceKey to destKey within the same base directory.
@@ -121,7 +156,10 @@ func (b *LocalBackend) Copy(ctx context.Context, sourceKey, destKey string) erro
 
 // GetMetadata returns filesystem metadata for the file at baseDir/key.
 func (b *LocalBackend) GetMetadata(_ context.Context, key string) (*FileMetadata, error) {
-	path := b.fullPath(key)
+	path, err := b.fullPath(key)
+	if err != nil {
+		return nil, err
+	}
 	info, err := os.Stat(path)
 	if err != nil {
 		return nil, fmt.Errorf("local backend get metadata: stat %s: %w", path, err)

@@ -173,3 +173,34 @@ func TestLocalBackend_GetMetadata_NotFound(t *testing.T) {
 	_, err := b.GetMetadata(ctx, "nonexistent/key.txt")
 	assert.Error(t, err)
 }
+
+func TestLocalBackend_PathTraversal(t *testing.T) {
+	b, _ := newTestLocalBackend(t)
+	ctx := context.Background()
+
+	traversalKeys := []string{
+		"../../etc/passwd",
+		"../secret",
+		"videos/../../outside",
+	}
+
+	for _, key := range traversalKeys {
+		t.Run(key, func(t *testing.T) {
+			// Upload should reject traversal
+			err := b.Upload(ctx, key, strings.NewReader("bad"), "text/plain")
+			assert.Error(t, err, "Upload should reject path traversal key %q", key)
+
+			// Download should reject traversal
+			_, err = b.Download(ctx, key)
+			assert.Error(t, err, "Download should reject path traversal key %q", key)
+
+			// Delete should reject traversal
+			err = b.Delete(ctx, key)
+			assert.Error(t, err, "Delete should reject path traversal key %q", key)
+
+			// GetURL should return empty string for traversal keys
+			url := b.GetURL(key)
+			assert.Empty(t, url, "GetURL should return empty for path traversal key %q", key)
+		})
+	}
+}

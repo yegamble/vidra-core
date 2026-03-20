@@ -327,7 +327,7 @@ func (s *service) processJob(ctx context.Context, job *domain.EncodingJob) error
 		return err
 	}
 
-	s3URLs, err := s.uploadHLSToS3(ctx, job.VideoID, job.SourceFilePath, outBaseDir, job.TargetResolutions)
+	s3URLs, err := s.uploadHLSToS3(ctx, job.VideoID, job.SourceFilePath, outBaseDir, thumb, preview, job.TargetResolutions)
 	if err != nil {
 		slog.Warn("failed to upload HLS to S3", "video_id", job.VideoID, "error", err)
 	} else if len(s3URLs) > 0 {
@@ -485,10 +485,11 @@ func (s *service) updateVideoInfo(ctx context.Context, job *domain.EncodingJob, 
 	return s.videoRepo.UpdateProcessingInfoWithCIDs(ctx, job.VideoID, domain.StatusCompleted, outputs, filepath.ToSlash(thumb), filepath.ToSlash(preview), processedCIDs, thumbCID, previewCID)
 }
 
-// uploadHLSToS3 walks outBaseDir, uploads every HLS file and the source video
-// to the configured s3Backend. Returns a map of S3URLs keyed by quality/role.
+// uploadHLSToS3 walks outBaseDir, uploads every HLS file, the source video,
+// and the thumbnail/preview images to the configured s3Backend.
+// Returns a map of S3URLs keyed by quality/role.
 // Returns an empty map (no error) when s3Backend is nil.
-func (s *service) uploadHLSToS3(ctx context.Context, videoID, sourceFilePath, outBaseDir string, targetResolutions []string) (map[string]string, error) {
+func (s *service) uploadHLSToS3(ctx context.Context, videoID, sourceFilePath, outBaseDir, thumbPath, previewPath string, targetResolutions []string) (map[string]string, error) {
 	if s.s3Backend == nil {
 		return map[string]string{}, nil
 	}
@@ -539,6 +540,30 @@ func (s *service) uploadHLSToS3(ctx context.Context, videoID, sourceFilePath, ou
 			slog.Warn("failed to upload source video to S3", "video_id", videoID, "error", err)
 		} else {
 			s3URLs["source"] = s.s3Backend.GetURL(srcKey)
+		}
+	}
+
+	// Upload thumbnail.
+	if thumbPath != "" {
+		if _, err := os.Stat(thumbPath); err == nil {
+			thumbKey := fmt.Sprintf("videos/%s/thumbnail%s", videoID, filepath.Ext(thumbPath))
+			if err := s.s3Backend.UploadFile(ctx, thumbKey, thumbPath, "image/jpeg"); err != nil {
+				slog.Warn("failed to upload thumbnail to S3", "video_id", videoID, "error", err)
+			} else {
+				s3URLs["thumbnail"] = s.s3Backend.GetURL(thumbKey)
+			}
+		}
+	}
+
+	// Upload preview.
+	if previewPath != "" {
+		if _, err := os.Stat(previewPath); err == nil {
+			previewKey := fmt.Sprintf("videos/%s/preview%s", videoID, filepath.Ext(previewPath))
+			if err := s.s3Backend.UploadFile(ctx, previewKey, previewPath, "image/webp"); err != nil {
+				slog.Warn("failed to upload preview to S3", "video_id", videoID, "error", err)
+			} else {
+				s3URLs["preview"] = s.s3Backend.GetURL(previewKey)
+			}
 		}
 	}
 
