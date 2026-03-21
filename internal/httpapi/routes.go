@@ -169,6 +169,9 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/", video.ListVideosHandler(deps.VideoRepo))
 			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/search", video.SearchVideosHandler(deps.VideoRepo))
 			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/qualities", video.GetSupportedQualities)
+			r.Get("/licences", video.GetVideoLicences)
+			r.Get("/languages", video.GetVideoLanguages)
+			r.Get("/privacies", video.GetVideoPrivacies)
 			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/top", viewsHandler.GetTopVideos)
 			r.With(middleware.Auth(cfg.JWTSecret)).Post("/upload", video.UploadVideoFileHandler(deps.VideoRepo, cfg))
 			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{id}", video.GetVideoHandler(deps.VideoRepo, deps.CaptionService))
@@ -385,54 +388,7 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 		})
 
 		if deps.LiveStreamRepo != nil && deps.StreamKeyRepo != nil && deps.ViewerSessionRepo != nil {
-			log.Printf("Registering live stream routes...")
-			r.Route("/streams", func(r chi.Router) {
-				liveStreamHandlers := livestream.NewLiveStreamHandlers(
-					deps.LiveStreamRepo,
-					deps.StreamKeyRepo,
-					deps.ViewerSessionRepo,
-					deps.ChannelRepo,
-					deps.StreamManager,
-					cfg,
-				)
-
-				var hlsHandlers *video.HLSHandlers
-				if deps.HLSTranscoder != nil {
-					hlsHandlers = video.NewHLSHandlers(cfg, deps.LiveStreamRepo, deps.HLSTranscoder, deps.IPFSStreamingService)
-				}
-
-				r.Group(func(r chi.Router) {
-					r.Use(middleware.Auth(cfg.JWTSecret))
-					r.Post("/", liveStreamHandlers.CreateStream)
-					r.Get("/active", liveStreamHandlers.GetActiveStreams)
-				})
-
-				r.Route("/channels/{channelId}", func(r chi.Router) {
-					r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/", liveStreamHandlers.ListChannelStreams)
-				})
-
-				r.Route("/{id}", func(r chi.Router) {
-					r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/", liveStreamHandlers.GetStream)
-					r.With(middleware.Auth(cfg.JWTSecret)).Put("/", liveStreamHandlers.UpdateStream)
-					r.With(middleware.Auth(cfg.JWTSecret)).Post("/end", liveStreamHandlers.EndStream)
-					r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/stats", liveStreamHandlers.GetStreamStats)
-					r.With(middleware.Auth(cfg.JWTSecret)).Post("/rotate-key", liveStreamHandlers.RotateStreamKey)
-
-					if deps.LiveStreamSessionRepo != nil {
-						sessionHandlers := livestream.NewSessionHistoryHandlers(deps.LiveStreamSessionRepo)
-						r.With(middleware.Auth(cfg.JWTSecret)).Get("/sessions", sessionHandlers.GetSessionHistory)
-					}
-
-					if hlsHandlers != nil {
-						r.Route("/hls", func(r chi.Router) {
-							r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/master.m3u8", hlsHandlers.GetMasterPlaylist)
-							r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{variant}/index.m3u8", hlsHandlers.GetVariantPlaylist)
-							r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{variant}/{segment}", hlsHandlers.GetSegment)
-						})
-						r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/hls-info", hlsHandlers.GetStreamHLSInfo)
-					}
-				})
-			})
+			registerLiveStreamAPIRoutes(r, deps, cfg)
 		}
 
 		if deps.ChatServer != nil && deps.ChatRepo != nil {
@@ -524,192 +480,8 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 		moderationHandlers := moderation.NewModerationHandlers(deps.ModerationRepo)
 		instanceHandlers := admin.NewInstanceHandlers(deps.ModerationRepo, deps.UserRepo, deps.VideoRepo)
 
-		r.Route("/abuse-reports", func(r chi.Router) {
-			r.With(middleware.Auth(cfg.JWTSecret)).Post("/", moderationHandlers.CreateAbuseReport)
-		})
-
-		// Abuse report discussion threads
-		if deps.AbuseMessageRepo != nil {
-			abuseMessageHandlers := moderation.NewAbuseMessageHandlers(deps.AbuseMessageRepo)
-			r.Route("/admin/abuse-reports/{id}/messages", func(r chi.Router) {
-				r.Use(middleware.Auth(cfg.JWTSecret))
-				r.Get("/", abuseMessageHandlers.ListMessages)
-				r.Post("/", abuseMessageHandlers.CreateMessage)
-				r.Delete("/{messageId}", abuseMessageHandlers.DeleteMessage)
-			})
-		}
-
-		// Video chapter routes
-		if deps.ChapterRepo != nil {
-			chapterHandlers := video.NewChapterHandlers(deps.ChapterRepo, deps.VideoRepo)
-			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/videos/{id}/chapters", chapterHandlers.GetChapters)
-			r.With(middleware.Auth(cfg.JWTSecret)).Put("/videos/{id}/chapters", chapterHandlers.PutChapters)
-		}
-
-		// Video description route
-		r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/videos/{id}/description", video.GetVideoDescriptionHandler(deps.VideoRepo))
-
-		// Video blacklist routes (admin only)
-		if deps.BlacklistRepo != nil {
-			blacklistHandlers := moderation.NewBlacklistHandlers(deps.BlacklistRepo)
-			r.Route("/videos/{id}/blacklist", func(r chi.Router) {
-				r.Use(middleware.Auth(cfg.JWTSecret))
-				r.Use(middleware.RequireRole(string(domain.RoleAdmin), string(domain.RoleMod)))
-				r.Post("/", blacklistHandlers.AddToBlacklist)
-				r.Delete("/", blacklistHandlers.RemoveFromBlacklist)
-			})
-			r.With(middleware.Auth(cfg.JWTSecret), middleware.RequireRole(string(domain.RoleAdmin), string(domain.RoleMod))).
-				Get("/videos/blacklist", blacklistHandlers.ListBlacklist)
-		}
-
-		// Blocklist status endpoint (authenticated users)
-		if deps.ModerationRepo != nil {
-			r.With(middleware.Auth(cfg.JWTSecret)).Get("/blocklist/status", moderation.BlocklistStatusHandler(deps.ModerationRepo))
-		}
-
-		// Per-user blocklist (account and server blocks)
-		if deps.UserBlockRepo != nil {
-			userBlockHandlers := moderation.NewUserBlocklistHandlers(deps.UserBlockRepo)
-			r.Route("/blocklist/accounts", func(r chi.Router) {
-				r.Use(middleware.Auth(cfg.JWTSecret))
-				r.Get("/", userBlockHandlers.ListAccountBlocks)
-				r.Post("/", userBlockHandlers.BlockAccount)
-				r.Delete("/{accountName}", userBlockHandlers.UnblockAccount)
-			})
-			r.Route("/blocklist/servers", func(r chi.Router) {
-				r.Use(middleware.Auth(cfg.JWTSecret))
-				r.Get("/", userBlockHandlers.ListServerBlocks)
-				r.Post("/", userBlockHandlers.BlockServer)
-				r.Delete("/{host}", userBlockHandlers.UnblockServer)
-			})
-		}
-
-		r.Route("/admin", func(r chi.Router) {
-			r.Use(middleware.Auth(cfg.JWTSecret))
-			r.Use(middleware.RequireRole(string(domain.RoleAdmin), string(domain.RoleMod)))
-
-			adminUserHandlers := admin.NewAdminUserHandlers(deps.UserRepo)
-			r.Get("/users", adminUserHandlers.ListUsers)
-			r.Put("/users/{id}", adminUserHandlers.UpdateUser)
-			r.Delete("/users/{id}", adminUserHandlers.DeleteUser)
-			r.Post("/users/{id}/block", adminUserHandlers.BlockUser)
-			r.Post("/users/{id}/unblock", adminUserHandlers.UnblockUser)
-
-			if deps.RegistrationRepo != nil {
-				regHandlers := admin.NewRegistrationHandlers(deps.RegistrationRepo, deps.UserRepo)
-				r.Get("/registrations", regHandlers.ListRegistrations)
-				r.Post("/registrations/{id}/accept", regHandlers.AcceptRegistration)
-				r.Post("/registrations/{id}/reject", regHandlers.RejectRegistration)
-			}
-
-			adminVideoHandlers := admin.NewAdminVideoHandlers(deps.VideoRepo)
-			r.Get("/videos", adminVideoHandlers.ListVideos)
-
-			jobHandlers := admin.NewJobHandlers(deps.EncodingRepo, deps.EncodingScheduler)
-			r.Get("/jobs/{state}", jobHandlers.ListJobs)
-			r.Post("/jobs/pause", jobHandlers.PauseJobs)
-			r.Post("/jobs/resume", jobHandlers.ResumeJobs)
-
-			r.Route("/abuse-reports", func(r chi.Router) {
-				r.Get("/", moderationHandlers.ListAbuseReports)
-				r.Get("/{id}", moderationHandlers.GetAbuseReport)
-				r.Put("/{id}", moderationHandlers.UpdateAbuseReport)
-				r.Delete("/{id}", moderationHandlers.DeleteAbuseReport)
-			})
-
-			r.Route("/blocklist", func(r chi.Router) {
-				r.Post("/", moderationHandlers.CreateBlocklistEntry)
-				r.Get("/", moderationHandlers.ListBlocklistEntries)
-				r.Put("/{id}", moderationHandlers.UpdateBlocklistEntry)
-				r.Delete("/{id}", moderationHandlers.DeleteBlocklistEntry)
-			})
-
-			r.Route("/views", func(r chi.Router) {
-				r.Use(middleware.RequireRole("admin"))
-				r.Post("/aggregate", viewsHandler.AdminAggregateStats)
-				r.Post("/cleanup", viewsHandler.AdminCleanupOldData)
-			})
-
-			r.Route("/instance/config", func(r chi.Router) {
-				r.Use(middleware.RequireRole("admin"))
-				r.Get("/", instanceHandlers.ListInstanceConfigs)
-				r.Get("/{key}", instanceHandlers.GetInstanceConfig)
-				r.Put("/{key}", instanceHandlers.UpdateInstanceConfig)
-			})
-
-			r.Route("/oauth/clients", func(r chi.Router) {
-				r.Use(middleware.RequireRole("admin"))
-				r.Get("/", authHandlers.AdminListOAuthClients)
-				r.Post("/", authHandlers.AdminCreateOAuthClient)
-				r.Put("/{clientId}/secret", authHandlers.AdminRotateOAuthClientSecret)
-				r.Delete("/{clientId}", authHandlers.AdminDeleteOAuthClient)
-			})
-
-			fedAdminHandlers := federation.NewAdminFederationHandlers(deps.FederationRepo)
-			r.Route("/federation/jobs", func(r chi.Router) {
-				r.Get("/", fedAdminHandlers.ListJobs)
-				r.Get("/{id}", fedAdminHandlers.GetJob)
-				r.Post("/{id}/retry", fedAdminHandlers.RetryJob)
-				r.Delete("/{id}", fedAdminHandlers.DeleteJob)
-			})
-
-			fedActorsHandlers := federation.NewAdminFederationActorsHandlers(deps.FederationRepo)
-			r.Route("/federation/actors", func(r chi.Router) {
-				r.Get("/", fedActorsHandlers.ListActors)
-				r.Post("/", fedActorsHandlers.UpsertActor)
-				r.Put("/{actor}", fedActorsHandlers.UpdateActor)
-				r.Delete("/{actor}", fedActorsHandlers.DeleteActor)
-			})
-
-			fh := federation.NewFederationHardeningHandler(deps.HardeningService)
-			r.Route("/federation/hardening", func(r chi.Router) {
-				r.Get("/dashboard", fh.GetDashboard)
-				r.Get("/health", fh.GetHealthMetrics)
-				r.Get("/dlq", fh.GetDLQJobs)
-				r.Post("/dlq/{id}/retry", fh.RetryDLQJob)
-				r.Route("/blocklist", func(r chi.Router) {
-					r.Get("/instances", fh.GetInstanceBlocks)
-					r.Post("/instances", fh.BlockInstance)
-					r.Delete("/instances/{domain}", fh.UnblockInstance)
-					r.Post("/actors", fh.BlockActor)
-					r.Get("/check", fh.CheckBlocked)
-				})
-				r.Route("/abuse", func(r chi.Router) {
-					r.Get("/reports", fh.GetAbuseReports)
-					r.Post("/reports/{id}/resolve", fh.ResolveAbuseReport)
-				})
-				r.Post("/cleanup", fh.RunCleanup)
-			})
-
-			if deps.BackupService != nil {
-				backupHandler := backuphandlers.NewHandler(deps.BackupService)
-				r.Route("/backups", func(r chi.Router) {
-					r.Get("/", backupHandler.ListBackups)
-					r.Post("/", backupHandler.TriggerBackup)
-					r.Delete("/{id}", backupHandler.DeleteBackup)
-					r.Post("/{id}/restore", backupHandler.RestoreBackup)
-					r.Get("/restore/status", backupHandler.GetRestoreStatus)
-				})
-			}
-
-			if deps.PluginManager != nil && deps.PluginRepo != nil {
-				log.Printf("Registering plugin admin routes...")
-				ph := pluginhandlers.NewPluginHandler(deps.PluginRepo, deps.PluginManager, nil, false)
-				pih := pluginhandlers.NewPluginInstallHandlers(deps.PluginManager)
-				r.Route("/plugins", func(r chi.Router) {
-					r.Get("/", ph.ListPlugins)
-					r.Get("/{name}", ph.GetPlugin)
-					r.Post("/{name}/enable", ph.EnablePlugin)
-					r.Post("/{name}/disable", ph.DisablePlugin)
-					r.Put("/{name}/config", ph.UpdatePluginConfig)
-					r.Delete("/{name}", ph.UninstallPlugin)
-					r.Get("/statistics", ph.GetAllStatistics)
-					r.Post("/upload", ph.UploadPlugin)
-					r.Post("/install", pih.InstallPlugin)
-					r.Get("/available", pih.ListAvailablePlugins)
-				})
-			}
-		})
+		registerModerationAPIRoutes(r, deps, cfg, moderationHandlers)
+		registerAdminAPIRoutes(r, deps, cfg, authHandlers, moderationHandlers, instanceHandlers, viewsHandler)
 
 		r.Route("/config", func(r chi.Router) {
 			r.Get("/", instanceHandlers.GetPublicConfig)
@@ -837,4 +609,255 @@ func (a *waitingRoomAdapter) GetScheduledStreams(ctx context.Context, limit, off
 
 func (a *waitingRoomAdapter) GetUpcomingStreams(ctx context.Context, userID uuid.UUID, limit int) ([]*domain.LiveStream, error) {
 	return a.ls.GetUpcomingStreams(ctx, userID, limit)
+}
+
+// registerLiveStreamAPIRoutes registers /streams routes. Extracted to keep
+// RegisterRoutesWithDependencies within cyclomatic-complexity limits.
+func registerLiveStreamAPIRoutes(r chi.Router, deps *shared.HandlerDependencies, cfg *config.Config) {
+	log.Printf("Registering live stream routes...")
+	r.Route("/streams", func(r chi.Router) {
+		liveStreamHandlers := livestream.NewLiveStreamHandlers(
+			deps.LiveStreamRepo,
+			deps.StreamKeyRepo,
+			deps.ViewerSessionRepo,
+			deps.ChannelRepo,
+			deps.StreamManager,
+			cfg,
+		)
+
+		var hlsHandlers *video.HLSHandlers
+		if deps.HLSTranscoder != nil {
+			hlsHandlers = video.NewHLSHandlers(cfg, deps.LiveStreamRepo, deps.HLSTranscoder, deps.IPFSStreamingService)
+		}
+
+		r.Group(func(r chi.Router) {
+			r.Use(middleware.Auth(cfg.JWTSecret))
+			r.Post("/", liveStreamHandlers.CreateStream)
+			r.Get("/active", liveStreamHandlers.GetActiveStreams)
+		})
+
+		r.Route("/channels/{channelId}", func(r chi.Router) {
+			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/", liveStreamHandlers.ListChannelStreams)
+		})
+
+		r.Route("/{id}", func(r chi.Router) {
+			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/", liveStreamHandlers.GetStream)
+			r.With(middleware.Auth(cfg.JWTSecret)).Put("/", liveStreamHandlers.UpdateStream)
+			r.With(middleware.Auth(cfg.JWTSecret)).Post("/end", liveStreamHandlers.EndStream)
+			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/stats", liveStreamHandlers.GetStreamStats)
+			r.With(middleware.Auth(cfg.JWTSecret)).Post("/rotate-key", liveStreamHandlers.RotateStreamKey)
+
+			if deps.LiveStreamSessionRepo != nil {
+				sessionHandlers := livestream.NewSessionHistoryHandlers(deps.LiveStreamSessionRepo)
+				r.With(middleware.Auth(cfg.JWTSecret)).Get("/sessions", sessionHandlers.GetSessionHistory)
+			}
+
+			if hlsHandlers != nil {
+				r.Route("/hls", func(r chi.Router) {
+					r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/master.m3u8", hlsHandlers.GetMasterPlaylist)
+					r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{variant}/index.m3u8", hlsHandlers.GetVariantPlaylist)
+					r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{variant}/{segment}", hlsHandlers.GetSegment)
+				})
+				r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/hls-info", hlsHandlers.GetStreamHLSInfo)
+			}
+		})
+	})
+}
+
+// registerModerationAPIRoutes registers abuse reports, blocklist and video
+// moderation routes. Extracted to keep RegisterRoutesWithDependencies within
+// cyclomatic-complexity limits.
+func registerModerationAPIRoutes(r chi.Router, deps *shared.HandlerDependencies, cfg *config.Config, moderationHandlers *moderation.ModerationHandlers) {
+	r.Route("/abuse-reports", func(r chi.Router) {
+		r.With(middleware.Auth(cfg.JWTSecret)).Post("/", moderationHandlers.CreateAbuseReport)
+	})
+
+	if deps.AbuseMessageRepo != nil {
+		abuseMessageHandlers := moderation.NewAbuseMessageHandlers(deps.AbuseMessageRepo)
+		r.Route("/admin/abuse-reports/{id}/messages", func(r chi.Router) {
+			r.Use(middleware.Auth(cfg.JWTSecret))
+			r.Get("/", abuseMessageHandlers.ListMessages)
+			r.Post("/", abuseMessageHandlers.CreateMessage)
+			r.Delete("/{messageId}", abuseMessageHandlers.DeleteMessage)
+		})
+	}
+
+	if deps.ChapterRepo != nil {
+		chapterHandlers := video.NewChapterHandlers(deps.ChapterRepo, deps.VideoRepo)
+		r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/videos/{id}/chapters", chapterHandlers.GetChapters)
+		r.With(middleware.Auth(cfg.JWTSecret)).Put("/videos/{id}/chapters", chapterHandlers.PutChapters)
+	}
+
+	r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/videos/{id}/description", video.GetVideoDescriptionHandler(deps.VideoRepo))
+
+	if deps.BlacklistRepo != nil {
+		blacklistHandlers := moderation.NewBlacklistHandlers(deps.BlacklistRepo)
+		r.Route("/videos/{id}/blacklist", func(r chi.Router) {
+			r.Use(middleware.Auth(cfg.JWTSecret))
+			r.Use(middleware.RequireRole(string(domain.RoleAdmin), string(domain.RoleMod)))
+			r.Post("/", blacklistHandlers.AddToBlacklist)
+			r.Delete("/", blacklistHandlers.RemoveFromBlacklist)
+		})
+		r.With(middleware.Auth(cfg.JWTSecret), middleware.RequireRole(string(domain.RoleAdmin), string(domain.RoleMod))).
+			Get("/videos/blacklist", blacklistHandlers.ListBlacklist)
+	}
+
+	if deps.ModerationRepo != nil {
+		r.With(middleware.Auth(cfg.JWTSecret)).Get("/blocklist/status", moderation.BlocklistStatusHandler(deps.ModerationRepo))
+	}
+
+	if deps.UserBlockRepo != nil {
+		userBlockHandlers := moderation.NewUserBlocklistHandlers(deps.UserBlockRepo)
+		r.Route("/blocklist/accounts", func(r chi.Router) {
+			r.Use(middleware.Auth(cfg.JWTSecret))
+			r.Get("/", userBlockHandlers.ListAccountBlocks)
+			r.Post("/", userBlockHandlers.BlockAccount)
+			r.Delete("/{accountName}", userBlockHandlers.UnblockAccount)
+		})
+		r.Route("/blocklist/servers", func(r chi.Router) {
+			r.Use(middleware.Auth(cfg.JWTSecret))
+			r.Get("/", userBlockHandlers.ListServerBlocks)
+			r.Post("/", userBlockHandlers.BlockServer)
+			r.Delete("/{host}", userBlockHandlers.UnblockServer)
+		})
+	}
+}
+
+// registerAdminAPIRoutes registers /admin/* routes. Extracted to keep
+// RegisterRoutesWithDependencies within cyclomatic-complexity limits.
+func registerAdminAPIRoutes(
+	r chi.Router,
+	deps *shared.HandlerDependencies,
+	cfg *config.Config,
+	authHandlers *auth.AuthHandlers,
+	moderationHandlers *moderation.ModerationHandlers,
+	instanceHandlers *admin.InstanceHandlers,
+	viewsHandler *video.ViewsHandler,
+) {
+	r.Route("/admin", func(r chi.Router) {
+		r.Use(middleware.Auth(cfg.JWTSecret))
+		r.Use(middleware.RequireRole(string(domain.RoleAdmin), string(domain.RoleMod)))
+
+		adminUserHandlers := admin.NewAdminUserHandlers(deps.UserRepo)
+		r.Get("/users", adminUserHandlers.ListUsers)
+		r.Put("/users/{id}", adminUserHandlers.UpdateUser)
+		r.Delete("/users/{id}", adminUserHandlers.DeleteUser)
+		r.Post("/users/{id}/block", adminUserHandlers.BlockUser)
+		r.Post("/users/{id}/unblock", adminUserHandlers.UnblockUser)
+
+		if deps.RegistrationRepo != nil {
+			regHandlers := admin.NewRegistrationHandlers(deps.RegistrationRepo, deps.UserRepo)
+			r.Get("/registrations", regHandlers.ListRegistrations)
+			r.Post("/registrations/{id}/accept", regHandlers.AcceptRegistration)
+			r.Post("/registrations/{id}/reject", regHandlers.RejectRegistration)
+		}
+
+		adminVideoHandlers := admin.NewAdminVideoHandlers(deps.VideoRepo)
+		r.Get("/videos", adminVideoHandlers.ListVideos)
+
+		jobHandlers := admin.NewJobHandlers(deps.EncodingRepo, deps.EncodingScheduler)
+		r.Get("/jobs/{state}", jobHandlers.ListJobs)
+		r.Post("/jobs/pause", jobHandlers.PauseJobs)
+		r.Post("/jobs/resume", jobHandlers.ResumeJobs)
+
+		r.Route("/abuse-reports", func(r chi.Router) {
+			r.Get("/", moderationHandlers.ListAbuseReports)
+			r.Get("/{id}", moderationHandlers.GetAbuseReport)
+			r.Put("/{id}", moderationHandlers.UpdateAbuseReport)
+			r.Delete("/{id}", moderationHandlers.DeleteAbuseReport)
+		})
+
+		r.Route("/blocklist", func(r chi.Router) {
+			r.Post("/", moderationHandlers.CreateBlocklistEntry)
+			r.Get("/", moderationHandlers.ListBlocklistEntries)
+			r.Put("/{id}", moderationHandlers.UpdateBlocklistEntry)
+			r.Delete("/{id}", moderationHandlers.DeleteBlocklistEntry)
+		})
+
+		r.Route("/views", func(r chi.Router) {
+			r.Use(middleware.RequireRole("admin"))
+			r.Post("/aggregate", viewsHandler.AdminAggregateStats)
+			r.Post("/cleanup", viewsHandler.AdminCleanupOldData)
+		})
+
+		r.Route("/instance/config", func(r chi.Router) {
+			r.Use(middleware.RequireRole("admin"))
+			r.Get("/", instanceHandlers.ListInstanceConfigs)
+			r.Get("/{key}", instanceHandlers.GetInstanceConfig)
+			r.Put("/{key}", instanceHandlers.UpdateInstanceConfig)
+		})
+
+		r.Route("/oauth/clients", func(r chi.Router) {
+			r.Use(middleware.RequireRole("admin"))
+			r.Get("/", authHandlers.AdminListOAuthClients)
+			r.Post("/", authHandlers.AdminCreateOAuthClient)
+			r.Put("/{clientId}/secret", authHandlers.AdminRotateOAuthClientSecret)
+			r.Delete("/{clientId}", authHandlers.AdminDeleteOAuthClient)
+		})
+
+		fedAdminHandlers := federation.NewAdminFederationHandlers(deps.FederationRepo)
+		r.Route("/federation/jobs", func(r chi.Router) {
+			r.Get("/", fedAdminHandlers.ListJobs)
+			r.Get("/{id}", fedAdminHandlers.GetJob)
+			r.Post("/{id}/retry", fedAdminHandlers.RetryJob)
+			r.Delete("/{id}", fedAdminHandlers.DeleteJob)
+		})
+
+		fedActorsHandlers := federation.NewAdminFederationActorsHandlers(deps.FederationRepo)
+		r.Route("/federation/actors", func(r chi.Router) {
+			r.Get("/", fedActorsHandlers.ListActors)
+			r.Post("/", fedActorsHandlers.UpsertActor)
+			r.Put("/{actor}", fedActorsHandlers.UpdateActor)
+			r.Delete("/{actor}", fedActorsHandlers.DeleteActor)
+		})
+
+		fh := federation.NewFederationHardeningHandler(deps.HardeningService)
+		r.Route("/federation/hardening", func(r chi.Router) {
+			r.Get("/dashboard", fh.GetDashboard)
+			r.Get("/health", fh.GetHealthMetrics)
+			r.Get("/dlq", fh.GetDLQJobs)
+			r.Post("/dlq/{id}/retry", fh.RetryDLQJob)
+			r.Route("/blocklist", func(r chi.Router) {
+				r.Get("/instances", fh.GetInstanceBlocks)
+				r.Post("/instances", fh.BlockInstance)
+				r.Delete("/instances/{domain}", fh.UnblockInstance)
+				r.Post("/actors", fh.BlockActor)
+				r.Get("/check", fh.CheckBlocked)
+			})
+			r.Route("/abuse", func(r chi.Router) {
+				r.Get("/reports", fh.GetAbuseReports)
+				r.Post("/reports/{id}/resolve", fh.ResolveAbuseReport)
+			})
+			r.Post("/cleanup", fh.RunCleanup)
+		})
+
+		if deps.BackupService != nil {
+			backupHandler := backuphandlers.NewHandler(deps.BackupService)
+			r.Route("/backups", func(r chi.Router) {
+				r.Get("/", backupHandler.ListBackups)
+				r.Post("/", backupHandler.TriggerBackup)
+				r.Delete("/{id}", backupHandler.DeleteBackup)
+				r.Post("/{id}/restore", backupHandler.RestoreBackup)
+				r.Get("/restore/status", backupHandler.GetRestoreStatus)
+			})
+		}
+
+		if deps.PluginManager != nil && deps.PluginRepo != nil {
+			log.Printf("Registering plugin admin routes...")
+			ph := pluginhandlers.NewPluginHandler(deps.PluginRepo, deps.PluginManager, nil, false)
+			pih := pluginhandlers.NewPluginInstallHandlers(deps.PluginManager)
+			r.Route("/plugins", func(r chi.Router) {
+				r.Get("/", ph.ListPlugins)
+				r.Get("/{name}", ph.GetPlugin)
+				r.Post("/{name}/enable", ph.EnablePlugin)
+				r.Post("/{name}/disable", ph.DisablePlugin)
+				r.Put("/{name}/config", ph.UpdatePluginConfig)
+				r.Delete("/{name}", ph.UninstallPlugin)
+				r.Get("/statistics", ph.GetAllStatistics)
+				r.Post("/upload", ph.UploadPlugin)
+				r.Post("/install", pih.InstallPlugin)
+				r.Get("/available", pih.ListAvailablePlugins)
+			})
+		}
+	})
 }

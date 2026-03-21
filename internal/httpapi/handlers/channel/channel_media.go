@@ -49,8 +49,17 @@ func NewChannelMediaHandlers(repo ChannelMediaRepository) *ChannelMediaHandlers 
 	return &ChannelMediaHandlers{repo: repo}
 }
 
-// UploadAvatar handles POST /api/v1/channels/{id}/avatar.
-func (h *ChannelMediaHandlers) UploadAvatar(w http.ResponseWriter, r *http.Request) {
+// uploadMediaConfig holds configuration for the shared upload handler.
+type uploadMediaConfig struct {
+	formField   string
+	setFn       func(ctx context.Context, channelID uuid.UUID, filename, cid string) error
+	responseKey string
+	staticDir   string
+	errMessage  string
+}
+
+// uploadMedia is the shared implementation for UploadAvatar and UploadBanner.
+func (h *ChannelMediaHandlers) uploadMedia(w http.ResponseWriter, r *http.Request, cfg uploadMediaConfig) {
 	channelID, userID, ok := h.extractIDs(w, r)
 	if !ok {
 		return
@@ -72,9 +81,9 @@ func (h *ChannelMediaHandlers) UploadAvatar(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	file, header, err := r.FormFile("avatarfile")
+	file, header, err := r.FormFile(cfg.formField)
 	if err != nil {
-		shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("BAD_REQUEST", "Missing avatarfile field"))
+		shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("BAD_REQUEST", "Missing "+cfg.formField+" field"))
 		return
 	}
 	defer file.Close()
@@ -84,62 +93,37 @@ func (h *ChannelMediaHandlers) UploadAvatar(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	if err := h.repo.SetAvatar(r.Context(), channelID, header.Filename, ""); err != nil {
-		shared.WriteError(w, http.StatusInternalServerError, domain.NewDomainError("INTERNAL_ERROR", "Failed to set avatar"))
+	if err := cfg.setFn(r.Context(), channelID, header.Filename, ""); err != nil {
+		shared.WriteError(w, http.StatusInternalServerError, domain.NewDomainError("INTERNAL_ERROR", cfg.errMessage))
 		return
 	}
 
 	shared.WriteJSON(w, http.StatusOK, map[string]interface{}{
-		"avatars": []map[string]interface{}{
-			{"path": "/lazy-static/avatars/" + header.Filename},
+		cfg.responseKey: []map[string]interface{}{
+			{"path": cfg.staticDir + header.Filename},
 		},
+	})
+}
+
+// UploadAvatar handles POST /api/v1/channels/{id}/avatar.
+func (h *ChannelMediaHandlers) UploadAvatar(w http.ResponseWriter, r *http.Request) {
+	h.uploadMedia(w, r, uploadMediaConfig{
+		formField:   "avatarfile",
+		setFn:       h.repo.SetAvatar,
+		responseKey: "avatars",
+		staticDir:   "/lazy-static/avatars/",
+		errMessage:  "Failed to set avatar",
 	})
 }
 
 // UploadBanner handles POST /api/v1/channels/{id}/banner.
 func (h *ChannelMediaHandlers) UploadBanner(w http.ResponseWriter, r *http.Request) {
-	channelID, userID, ok := h.extractIDs(w, r)
-	if !ok {
-		return
-	}
-
-	ownerID, err := h.repo.GetOwnerID(r.Context(), channelID)
-	if err != nil {
-		shared.WriteError(w, shared.MapDomainErrorToHTTP(err), err)
-		return
-	}
-
-	if ownerID != userID {
-		shared.WriteError(w, http.StatusForbidden, domain.ErrForbidden)
-		return
-	}
-
-	if err := r.ParseMultipartForm(5 << 20); err != nil {
-		shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("BAD_REQUEST", "Failed to parse upload"))
-		return
-	}
-
-	file, header, err := r.FormFile("bannerfile")
-	if err != nil {
-		shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("BAD_REQUEST", "Missing bannerfile field"))
-		return
-	}
-	defer file.Close()
-
-	if detected, ok := validateImageMIME(file); !ok {
-		shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_FILE_TYPE", "File type not allowed: "+detected))
-		return
-	}
-
-	if err := h.repo.SetBanner(r.Context(), channelID, header.Filename, ""); err != nil {
-		shared.WriteError(w, http.StatusInternalServerError, domain.NewDomainError("INTERNAL_ERROR", "Failed to set banner"))
-		return
-	}
-
-	shared.WriteJSON(w, http.StatusOK, map[string]interface{}{
-		"banners": []map[string]interface{}{
-			{"path": "/lazy-static/banners/" + header.Filename},
-		},
+	h.uploadMedia(w, r, uploadMediaConfig{
+		formField:   "bannerfile",
+		setFn:       h.repo.SetBanner,
+		responseKey: "banners",
+		staticDir:   "/lazy-static/banners/",
+		errMessage:  "Failed to set banner",
 	})
 }
 
