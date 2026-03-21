@@ -1026,3 +1026,125 @@ func TestRotateStreamKeyCorrectRoute(t *testing.T) {
 		streamKeyRepo.AssertExpectations(t)
 	})
 }
+
+func TestGetStream_InvalidID(t *testing.T) {
+	handlers := NewLiveStreamHandlers(nil, nil, nil, nil, nil, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/streams/bad-id", nil)
+	rr := httptest.NewRecorder()
+
+	router := chi.NewRouter()
+	router.Get("/api/v1/streams/{id}", handlers.GetStream)
+	router.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusBadRequest, rr.Code)
+}
+
+func TestUpdateStream_Unauthorized(t *testing.T) {
+	handlers := NewLiveStreamHandlers(nil, nil, nil, nil, nil, nil)
+
+	streamID := uuid.New()
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/streams/"+streamID.String(), bytes.NewReader([]byte("{}")))
+	rr := httptest.NewRecorder()
+
+	router := chi.NewRouter()
+	router.Put("/api/v1/streams/{id}", handlers.UpdateStream)
+	router.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusUnauthorized, rr.Code)
+}
+
+func TestUpdateStream_InvalidID(t *testing.T) {
+	handlers := NewLiveStreamHandlers(nil, nil, nil, nil, nil, nil)
+
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/streams/bad-id", bytes.NewReader([]byte("{}")))
+	ctx := context.WithValue(req.Context(), middleware.UserIDKey, uuid.New().String())
+	req = req.WithContext(ctx)
+	rr := httptest.NewRecorder()
+
+	router := chi.NewRouter()
+	router.Put("/api/v1/streams/{id}", handlers.UpdateStream)
+	router.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusBadRequest, rr.Code)
+}
+
+func TestUpdateStream_NotFound(t *testing.T) {
+	streamRepo := new(MockLiveStreamRepository)
+	handlers := NewLiveStreamHandlers(streamRepo, nil, nil, nil, nil, nil)
+
+	streamID := uuid.New()
+	streamRepo.On("GetByID", mock.Anything, streamID).Return(nil, domain.ErrNotFound)
+
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/streams/"+streamID.String(), bytes.NewReader([]byte("{}")))
+	ctx := context.WithValue(req.Context(), middleware.UserIDKey, uuid.New().String())
+	req = req.WithContext(ctx)
+	rr := httptest.NewRecorder()
+
+	router := chi.NewRouter()
+	router.Put("/api/v1/streams/{id}", handlers.UpdateStream)
+	router.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusNotFound, rr.Code)
+	streamRepo.AssertExpectations(t)
+}
+
+func TestEndStream_Unauthorized(t *testing.T) {
+	handlers := NewLiveStreamHandlers(nil, nil, nil, nil, nil, nil)
+
+	streamID := uuid.New()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/streams/"+streamID.String()+"/end", nil)
+	rr := httptest.NewRecorder()
+
+	router := chi.NewRouter()
+	router.Post("/api/v1/streams/{id}/end", handlers.EndStream)
+	router.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusUnauthorized, rr.Code)
+}
+
+func TestEndStream_NotFound(t *testing.T) {
+	streamRepo := new(MockLiveStreamRepository)
+	handlers := NewLiveStreamHandlers(streamRepo, nil, nil, nil, nil, nil)
+
+	streamID := uuid.New()
+	streamRepo.On("GetByID", mock.Anything, streamID).Return(nil, domain.ErrNotFound)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/streams/"+streamID.String()+"/end", nil)
+	ctx := context.WithValue(req.Context(), middleware.UserIDKey, uuid.New().String())
+	req = req.WithContext(ctx)
+	rr := httptest.NewRecorder()
+
+	router := chi.NewRouter()
+	router.Post("/api/v1/streams/{id}/end", handlers.EndStream)
+	router.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusNotFound, rr.Code)
+	streamRepo.AssertExpectations(t)
+}
+
+func TestGetStreamStats_InvalidID(t *testing.T) {
+	handlers := NewLiveStreamHandlers(nil, nil, nil, nil, nil, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/streams/bad-id/stats", nil)
+	rr := httptest.NewRecorder()
+
+	router := chi.NewRouter()
+	router.Get("/api/v1/streams/{id}/stats", handlers.GetStreamStats)
+	router.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusBadRequest, rr.Code)
+}
+
+func TestListChannelStreams_InvalidChannelID(t *testing.T) {
+	handlers := NewLiveStreamHandlers(nil, nil, nil, nil, nil, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/channels/bad-id/streams", nil)
+	rr := httptest.NewRecorder()
+
+	router := chi.NewRouter()
+	router.Get("/api/v1/channels/{channelId}/streams", handlers.ListChannelStreams)
+	router.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusBadRequest, rr.Code)
+}
