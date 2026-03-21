@@ -126,10 +126,15 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 
 	// RSS/Atom feed endpoints (PeerTube compatible, outside /api/v1)
 	feedHandlers := video.NewFeedHandlers(deps.VideoRepo, deps.CommentRepo, cfg.PublicBaseURL)
+	if deps.SubRepo != nil {
+		feedHandlers.SetSubRepo(deps.SubRepo)
+	}
 	r.Get("/feeds/videos.atom", feedHandlers.VideosFeed)
 	r.Get("/feeds/videos.rss", feedHandlers.VideosFeedRSS)
 	r.Get("/feeds/video-comments.atom", feedHandlers.CommentsFeed)
 	r.Get("/feeds/video-comments.rss", feedHandlers.CommentsFeed)
+	r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/feeds/subscriptions.atom", feedHandlers.SubscriptionFeedAtom)
+	r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/feeds/subscriptions.rss", feedHandlers.SubscriptionFeedRSS)
 
 	if cfg.EnableActivityPub && deps.ActivityPubService != nil {
 		apHandlers := federation.NewActivityPubHandlers(deps.ActivityPubService, cfg, deps.UserRepo, deps.VideoRepo)
@@ -258,6 +263,7 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 			r.With(middleware.Auth(cfg.JWTSecret)).Put("/me", auth.UpdateCurrentUserHandler(deps.UserRepo))
 			r.With(middleware.Auth(cfg.JWTSecret)).Delete("/me", auth.DeleteAccountHandler(deps.UserRepo))
 			r.With(middleware.Auth(cfg.JWTSecret)).Post("/me/avatar", authHandlers.UploadAvatar)
+			r.With(middleware.Auth(cfg.JWTSecret)).Delete("/me/avatar", authHandlers.DeleteAvatar)
 			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{id}", auth.GetPublicUserHandler(deps.UserRepo))
 			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{id}/videos", video.GetUserVideosHandler(deps.VideoRepo))
 			r.With(middleware.Auth(cfg.JWTSecret)).Post("/{id}/subscribe", channel.SubscribeToUserHandler(deps.SubRepo, deps.UserRepo))
@@ -275,6 +281,7 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 
 			r.With(middleware.Auth(cfg.JWTSecret)).Get("/me/notification-preferences", auth.GetNotificationPreferencesHandler(deps.NotificationPrefRepo))
 			r.With(middleware.Auth(cfg.JWTSecret)).Put("/me/notification-preferences", auth.UpdateNotificationPreferencesHandler(deps.NotificationPrefRepo))
+			r.With(middleware.Auth(cfg.JWTSecret)).Get("/me/video-quota-used", auth.GetVideoQuotaUsedHandler(deps.VideoRepo))
 		})
 
 		r.Route("/messages", func(r chi.Router) {
@@ -326,6 +333,12 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 				r.Delete("/{id}", channelHandlers.DeleteChannel)
 				r.Post("/{id}/subscribe", channelHandlers.SubscribeToChannel)
 				r.Delete("/{id}/subscribe", channelHandlers.UnsubscribeFromChannel)
+
+				if deps.ChannelRepo != nil {
+					channelMediaHandlers := channel.NewChannelMediaHandlers(deps.ChannelRepo)
+					r.Delete("/{id}/avatar", channelMediaHandlers.DeleteAvatar)
+					r.Delete("/{id}/banner", channelMediaHandlers.DeleteBanner)
+				}
 			})
 		})
 
@@ -369,6 +382,11 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 					r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/stats", liveStreamHandlers.GetStreamStats)
 					r.With(middleware.Auth(cfg.JWTSecret)).Post("/rotate-key", liveStreamHandlers.RotateStreamKey)
 
+					if deps.LiveStreamSessionRepo != nil {
+						sessionHandlers := livestream.NewSessionHistoryHandlers(deps.LiveStreamSessionRepo)
+						r.With(middleware.Auth(cfg.JWTSecret)).Get("/sessions", sessionHandlers.GetSessionHistory)
+					}
+
 					if hlsHandlers != nil {
 						r.Route("/hls", func(r chi.Router) {
 							r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/master.m3u8", hlsHandlers.GetMasterPlaylist)
@@ -411,6 +429,7 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 			r.Get("/stats", notificationHandlers.GetNotificationStats)
 			r.Put("/{id}/read", notificationHandlers.MarkAsRead)
 			r.Put("/read-all", notificationHandlers.MarkAllAsRead)
+			r.Post("/read", notificationHandlers.MarkBatchAsRead)
 			r.Delete("/{id}", notificationHandlers.DeleteNotification)
 		})
 
@@ -462,6 +481,17 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 			r.With(middleware.Auth(cfg.JWTSecret)).Post("/", moderationHandlers.CreateAbuseReport)
 		})
 
+		// Abuse report discussion threads
+		if deps.AbuseMessageRepo != nil {
+			abuseMessageHandlers := moderation.NewAbuseMessageHandlers(deps.AbuseMessageRepo)
+			r.Route("/admin/abuse-reports/{id}/messages", func(r chi.Router) {
+				r.Use(middleware.Auth(cfg.JWTSecret))
+				r.Get("/", abuseMessageHandlers.ListMessages)
+				r.Post("/", abuseMessageHandlers.CreateMessage)
+				r.Delete("/{messageId}", abuseMessageHandlers.DeleteMessage)
+			})
+		}
+
 		// Video chapter routes
 		if deps.ChapterRepo != nil {
 			chapterHandlers := video.NewChapterHandlers(deps.ChapterRepo, deps.VideoRepo)
@@ -488,6 +518,23 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 		// Blocklist status endpoint (authenticated users)
 		if deps.ModerationRepo != nil {
 			r.With(middleware.Auth(cfg.JWTSecret)).Get("/blocklist/status", moderation.BlocklistStatusHandler(deps.ModerationRepo))
+		}
+
+		// Per-user blocklist (account and server blocks)
+		if deps.UserBlockRepo != nil {
+			userBlockHandlers := moderation.NewUserBlocklistHandlers(deps.UserBlockRepo)
+			r.Route("/blocklist/accounts", func(r chi.Router) {
+				r.Use(middleware.Auth(cfg.JWTSecret))
+				r.Get("/", userBlockHandlers.ListAccountBlocks)
+				r.Post("/", userBlockHandlers.BlockAccount)
+				r.Delete("/{accountName}", userBlockHandlers.UnblockAccount)
+			})
+			r.Route("/blocklist/servers", func(r chi.Router) {
+				r.Use(middleware.Auth(cfg.JWTSecret))
+				r.Get("/", userBlockHandlers.ListServerBlocks)
+				r.Post("/", userBlockHandlers.BlockServer)
+				r.Delete("/{host}", userBlockHandlers.UnblockServer)
+			})
 		}
 
 		r.Route("/admin", func(r chi.Router) {
@@ -599,8 +646,14 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 			}
 		})
 
+		r.Route("/config", func(r chi.Router) {
+			r.Get("/", instanceHandlers.GetPublicConfig)
+			r.Get("/about", instanceHandlers.GetInstanceAboutPublic)
+		})
+
 		r.Route("/instance", func(r chi.Router) {
 			r.Get("/about", instanceHandlers.GetInstanceAbout)
+			r.Get("/stats", instanceHandlers.GetPublicStats)
 		})
 	})
 

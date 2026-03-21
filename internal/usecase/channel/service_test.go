@@ -93,6 +93,9 @@ func (m *mockVideoRepo) GetByRemoteURI(ctx context.Context, remoteURI string) (*
 func (m *mockVideoRepo) CreateRemoteVideo(ctx context.Context, video *domain.Video) error {
 	return m.Called(ctx, video).Error(0)
 }
+func (m *mockVideoRepo) GetVideoQuotaUsed(_ context.Context, _ string) (int64, error) {
+	return 0, nil
+}
 
 type mockChannelRepo struct{ mock.Mock }
 

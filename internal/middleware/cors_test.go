@@ -3,6 +3,7 @@ package middleware
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -135,7 +136,11 @@ func TestCORS(t *testing.T) {
 				w.WriteHeader(http.StatusOK)
 			})
 
-			handler := CORS(tt.allowedOrigins)(next)
+			handler := CORS(
+				tt.allowedOrigins,
+				"GET,POST,PUT,DELETE,OPTIONS,PATCH",
+				"Accept,Authorization,Content-Type,X-CSRF-Token,X-Requested-With,Idempotency-Key,X-Chunk-Index,X-Chunk-Checksum",
+			)(next)
 			handler.ServeHTTP(w, req)
 
 			if w.Code != tt.expectedStatus {
@@ -164,6 +169,9 @@ func TestCORS(t *testing.T) {
 				}
 				if w.Header().Get("Access-Control-Allow-Methods") == "" {
 					t.Error("expected Access-Control-Allow-Methods to be set")
+				}
+				if !strings.Contains(w.Header().Get("Access-Control-Allow-Headers"), "X-Chunk-Checksum") {
+					t.Errorf("expected chunk checksum header to be allowed, got %q", w.Header().Get("Access-Control-Allow-Headers"))
 				}
 			} else {
 				if actualOrigin != "" {

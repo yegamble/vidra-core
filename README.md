@@ -18,14 +18,14 @@ See [VALIDATION_REQUIRED.md](docs/development/VALIDATION_REQUIRED.md) for comple
 
 | Metric | Count | Description |
 |--------|-------|-------------|
-| **Go Files** | 630 | Total Go files (318 non-test) |
-| **Test Files** | 312 | Test files across unit, integration, and E2E suites |
+| **Go Files** | 798 | Total Go files (397 non-test) |
+| **Test Files** | 401 | Test files across unit, integration, and E2E suites |
 | **Lines of Code** | 244,463+ | ~77,959 source + ~166,504 test code |
-| **Database Migrations** | 61 | Goose SQL migrations |
-| **API Endpoints** | ~184 | RESTful + WebSocket + Federation (OpenAPI-documented) |
-| **Test Coverage** | 62.3% avg | Per-package average across 72 packages (per-package thresholds in `scripts/coverage-thresholds.txt`) |
+| **Database Migrations** | 73 | Goose SQL migrations |
+| **API Endpoints** | ~215 | RESTful + WebSocket + Federation (OpenAPI-documented) |
+| **Test Coverage** | 69.9% avg | Per-package average across 74 packages (per-package thresholds in `scripts/coverage-thresholds.txt`) |
 | **Security Tests** | 50+ | Including SSRF, virus scanning, auth |
-| **Automated Tests** | 3,740 | `func Test*` count across `*_test.go` files |
+| **Automated Tests** | 4,411 | `func Test*` count across `*_test.go` files |
 
 ## Features
 
@@ -338,14 +338,14 @@ See the full documentation index at [docs/README.md](docs/README.md).
 **Sprints 1-14**: PeerTube Feature Parity - **100% COMPLETE**
 
 - 77,959+ lines of production code
-- 3,740 automated tests
-- 61 database migrations
-- ~184 API endpoints
+- 4,411 automated tests
+- 73 database migrations
+- ~215 API endpoints
 - Full ActivityPub federation
 
 **Sprint 20** (Complete): Release Hardening
 
-- Full regression and security validation (3,740 tests passing, zero critical vulnerabilities)
+- Full regression and security validation (4,411 tests passing, zero critical vulnerabilities)
 - Coverage sign-off (all 30 per-package thresholds met)
 - CHANGELOG.md and maintenance plan finalized
 - Final Release Checklist completed (12/14 items verified)
@@ -382,14 +382,14 @@ See [Quality Programme](docs/sprints/QUALITY_PROGRAMME.md) for full details.
 
 | Metric | Count | Description |
 |--------|-------|-------------|
-| **Go Files** | 630 | Total Go files (318 non-test) |
-| **Test Files** | 312 | Test files across unit, integration, and E2E suites |
+| **Go Files** | 798 | Total Go files (397 non-test) |
+| **Test Files** | 401 | Test files across unit, integration, and E2E suites |
 | **Lines of Code** | 244,463+ | ~77,959 source + ~166,504 test code |
-| **Database Migrations** | 61 | Goose SQL migrations |
-| **API Endpoints** | ~184 | RESTful + WebSocket + Federation (OpenAPI-documented) |
-| **Test Coverage** | 62.3% avg | Per-package average across 72 packages (per-package thresholds in `scripts/coverage-thresholds.txt`) |
+| **Database Migrations** | 73 | Goose SQL migrations |
+| **API Endpoints** | ~215 | RESTful + WebSocket + Federation (OpenAPI-documented) |
+| **Test Coverage** | 69.9% avg | Per-package average across 74 packages (per-package thresholds in `scripts/coverage-thresholds.txt`) |
 | **Security Tests** | 50+ | SSRF, virus scanning, auth, input validation |
-| **Automated Tests** | 3,740 | `func Test*` count across `*_test.go` files |
+| **Automated Tests** | 4,411 | `func Test*` count across `*_test.go` files |
 
 See [Project Management Documentation](docs/project-management/README.md), [Sprint History](docs/sprints/README.md), and [Quality Programme](docs/sprints/QUALITY_PROGRAMME.md) for detailed progress tracking.
 

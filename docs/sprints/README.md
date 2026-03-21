@@ -4,13 +4,13 @@ This directory contains comprehensive documentation for all completed sprints in
 
 ## 🎉 Project Complete - 100% Feature Delivery
 
-All 14 planned sprints have been successfully completed, delivering a full-featured PeerTube-compatible video platform with advanced P2P, live streaming, and plugin capabilities.
+All 20 sprints (14 feature + 6 quality) have been successfully completed, delivering a full-featured PeerTube-compatible video platform with advanced P2P, live streaming, and plugin capabilities.
 
 ## Quick Reference
 
 ### High-Level Overview
 
-- **[SPRINT_PLAN.md](./SPRINT_PLAN.md)** - Comprehensive sprint plan with all 14 sprints, timelines, and acceptance criteria
+- **[SPRINT_PLAN.md](./SPRINT_PLAN.md)** - Comprehensive sprint plan with all 20 sprints, timelines, and acceptance criteria
 - **[PROJECT_COMPLETE.md](./PROJECT_COMPLETE.md)** - 100% completion summary and final project metrics
 - **[peertube_compatibility.md](./peertube_compatibility.md)** - PeerTube API compatibility tracking (Sprints A-K)
 - **[SPRINT_MONITORING_PLAN.md](./SPRINT_MONITORING_PLAN.md)** - Monitoring and observability strategy

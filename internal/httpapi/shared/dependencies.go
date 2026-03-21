@@ -55,6 +55,9 @@ type HandlerDependencies struct {
 	PasswordResetRepo     repository.PasswordResetRepository
 	BlacklistRepo         repository.BlacklistRepository
 	ChapterRepo           repository.ChapterRepository
+	UserBlockRepo         *repository.UserBlockRepository
+	AbuseMessageRepo         *repository.AbuseMessageRepository
+	LiveStreamSessionRepo    *repository.LiveStreamSessionRepository
 
 	UploadService            ucup.Service
 	EmailService             email.EmailService

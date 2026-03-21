@@ -75,7 +75,7 @@ High-performance PeerTube-compatible backend in Go with P2P distribution, live s
 - **Configuration:** `.env.example` (template), `internal/config/`
 - **Entry Point:** `cmd/server/main.go`
 - **Migrations:** `migrations/*.sql` (Goose)
-- **Tests:** `**/*_test.go` (361 test files, ~4,273 test functions)
+- **Tests:** `**/*_test.go` (401 test files, ~4,411 test functions)
 - **Build:** `Makefile`
 
 ## Development Commands
@@ -207,10 +207,10 @@ See subdirectory CLAUDE.md files for detailed guidance:
 
 ## Additional Context
 
-**Sprint Status:** Quality Programme in progress (Sprint 16/20 active)
+**Sprint Status:** Quality Programme Complete (20/20 sprints done)
 
-- Feature parity: 100% complete
-- Full test suite: ~4,273 test functions (361 test files)
+- Feature parity: 100% complete (all PeerTube gap endpoints implemented)
+- Full test suite: ~4,411 test functions (401 test files)
 - Coverage: 69.9% overall unit test coverage (90%+ for core packages)
 - ATProto (BlueSky) `PublishVideo` fully implemented and verified
 - IOTA Rebased payments: Ed25519 transaction signing + submission implemented

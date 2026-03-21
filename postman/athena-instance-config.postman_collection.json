@@ -1,0 +1,87 @@
+{
+  "info": {
+    "name": "Athena Instance Config & Quota API",
+    "_postman_id": "c1a1c1a1-0001-4000-9000-c1a1c1a1c1a1",
+    "description": "Postman collection for instance config, user video quota, and public server info endpoints.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {"key": "baseUrl", "value": "http://app-test:8080", "type": "string"},
+    {"key": "access_token", "value": "", "type": "string"}
+  ],
+  "item": [
+    {
+      "name": "Instance Config - Happy Path",
+      "item": [
+        {
+          "name": "GET /api/v1/config - Public instance config",
+          "event": [{"listen": "test", "script": {"exec": [
+            "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+            "const json = pm.response.json();",
+            "pm.test('Has instance name', () => pm.expect(json).to.have.property('instance'));",
+            "pm.test('Has serverVersion', () => pm.expect(json).to.have.property('serverVersion'));"
+          ], "type": "text/javascript"}}],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {"raw": "{{baseUrl}}/api/v1/config", "host": ["{{baseUrl}}"], "path": ["api", "v1", "config"]}
+          }
+        },
+        {
+          "name": "GET /api/v1/users/me/video-quota-used - Quota used",
+          "event": [{"listen": "test", "script": {"exec": [
+            "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+            "const json = pm.response.json();",
+            "pm.test('Has videoQuotaUsed', () => pm.expect(json).to.have.property('videoQuotaUsed'));",
+            "pm.test('Has videoQuotaUsedDaily', () => pm.expect(json).to.have.property('videoQuotaUsedDaily'));"
+          ], "type": "text/javascript"}}],
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{access_token}}"}],
+            "url": {"raw": "{{baseUrl}}/api/v1/users/me/video-quota-used", "host": ["{{baseUrl}}"], "path": ["api", "v1", "users", "me", "video-quota-used"]}
+          }
+        },
+        {
+          "name": "GET /admin/instance/config - List all config (admin)",
+          "event": [{"listen": "test", "script": {"exec": [
+            "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+            "const json = pm.response.json();",
+            "pm.test('Returns array', () => pm.expect(json).to.be.an('array'));"
+          ], "type": "text/javascript"}}],
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{access_token}}"}],
+            "url": {"raw": "{{baseUrl}}/api/v1/admin/instance/config", "host": ["{{baseUrl}}"], "path": ["api", "v1", "admin", "instance", "config"]}
+          }
+        }
+      ]
+    },
+    {
+      "name": "Instance Config - Error Path",
+      "item": [
+        {
+          "name": "GET /api/v1/users/me/video-quota-used - Unauthenticated (401)",
+          "event": [{"listen": "test", "script": {"exec": [
+            "pm.test('Status is 401', () => pm.response.to.have.status(401));"
+          ], "type": "text/javascript"}}],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {"raw": "{{baseUrl}}/api/v1/users/me/video-quota-used", "host": ["{{baseUrl}}"], "path": ["api", "v1", "users", "me", "video-quota-used"]}
+          }
+        },
+        {
+          "name": "GET /admin/instance/config - Non-admin forbidden (403)",
+          "event": [{"listen": "test", "script": {"exec": [
+            "pm.test('Status is 401 or 403', () => { pm.expect([401,403]).to.include(pm.response.code); });"
+          ], "type": "text/javascript"}}],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {"raw": "{{baseUrl}}/api/v1/admin/instance/config", "host": ["{{baseUrl}}"], "path": ["api", "v1", "admin", "instance", "config"]}
+          }
+        }
+      ]
+    }
+  ]
+}

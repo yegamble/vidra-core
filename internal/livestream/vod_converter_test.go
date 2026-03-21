@@ -77,6 +77,9 @@ func (m *MockVideoRepository) GetVideosForMigration(ctx context.Context, limit i
 func (m *MockVideoRepository) GetByChannelID(_ context.Context, _ string, _, _ int) ([]*domain.Video, int64, error) {
 	return nil, 0, nil
 }
+func (m *MockVideoRepository) GetVideoQuotaUsed(_ context.Context, _ string) (int64, error) {
+	return 0, nil
+}
 
 func TestNewVODConverter(t *testing.T) {
 	cfg := &config.Config{

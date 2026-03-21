@@ -55,6 +55,9 @@ func (m *mockStreamRepo) CreateRemoteVideo(_ context.Context, _ *domain.Video) e
 func (m *mockStreamRepo) GetByChannelID(_ context.Context, _ string, _, _ int) ([]*domain.Video, int64, error) {
 	return nil, 0, nil
 }
+func (m *mockStreamRepo) GetVideoQuotaUsed(_ context.Context, _ string) (int64, error) {
+	return 0, nil
+}
 
 func TestStreamVideoHandler_DBOutputMasterRedirectsToHLS(t *testing.T) {
 	videoID := "vid-stream-1"

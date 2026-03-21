@@ -87,6 +87,9 @@ func (m *MockVideoRepoForFeed) GetByRemoteURI(ctx context.Context, remoteURI str
 func (m *MockVideoRepoForFeed) CreateRemoteVideo(ctx context.Context, v *domain.Video) error {
 	return nil
 }
+func (m *MockVideoRepoForFeed) GetVideoQuotaUsed(_ context.Context, _ string) (int64, error) {
+	return 0, nil
+}
 
 var _ usecase.VideoRepository = (*MockVideoRepoForFeed)(nil)
 

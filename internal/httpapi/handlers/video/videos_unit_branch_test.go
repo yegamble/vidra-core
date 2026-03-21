@@ -110,6 +110,9 @@ type unitUploadServiceStub struct {
 func (s *unitVideoRepoStub) GetByChannelID(_ context.Context, _ string, _, _ int) ([]*domain.Video, int64, error) {
 	return nil, 0, nil
 }
+func (s *unitVideoRepoStub) GetVideoQuotaUsed(_ context.Context, _ string) (int64, error) {
+	return 0, nil
+}
 
 type unitEncodingRepoStub struct {
 	getJobCountsFn func(ctx context.Context) (map[string]int64, error)

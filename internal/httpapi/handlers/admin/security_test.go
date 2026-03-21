@@ -56,6 +56,9 @@ func (m *MockVideoRepo) GetByIDs(ctx context.Context, ids []string) ([]*domain.V
 func (m *MockVideoRepo) GetByChannelID(ctx context.Context, channelID string, limit, offset int) ([]*domain.Video, int64, error) {
 	return nil, 0, nil
 }
+func (m *MockVideoRepo) GetVideoQuotaUsed(_ context.Context, _ string) (int64, error) {
+	return 0, nil
+}
 
 type MockUserRepo struct {
 	User *domain.User

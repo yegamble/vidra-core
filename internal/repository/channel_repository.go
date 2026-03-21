@@ -398,3 +398,67 @@ func (r *ChannelRepository) CheckOwnership(ctx context.Context, channelID, userI
 
 	return exists, nil
 }
+
+// GetOwnerID returns the account_id (as a string) for the given channel.
+func (r *ChannelRepository) GetOwnerID(ctx context.Context, channelID uuid.UUID) (string, error) {
+	query := `SELECT account_id FROM channels WHERE id = $1`
+
+	var ownerID string
+	err := r.db.GetContext(ctx, &ownerID, query, channelID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return "", domain.ErrNotFound
+		}
+		return "", fmt.Errorf("failed to get channel owner: %w", err)
+	}
+
+	return ownerID, nil
+}
+
+// SetAvatar sets the avatar filename and IPFS CID for a channel.
+func (r *ChannelRepository) SetAvatar(ctx context.Context, channelID uuid.UUID, filename, ipfsCID string) error {
+	query := `UPDATE channels SET avatar_filename = $1, avatar_ipfs_cid = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $3`
+
+	_, err := r.db.ExecContext(ctx, query, filename, ipfsCID, channelID)
+	if err != nil {
+		return fmt.Errorf("failed to set channel avatar: %w", err)
+	}
+
+	return nil
+}
+
+// ClearAvatar removes the avatar for a channel.
+func (r *ChannelRepository) ClearAvatar(ctx context.Context, channelID uuid.UUID) error {
+	query := `UPDATE channels SET avatar_filename = NULL, avatar_ipfs_cid = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = $1`
+
+	_, err := r.db.ExecContext(ctx, query, channelID)
+	if err != nil {
+		return fmt.Errorf("failed to clear channel avatar: %w", err)
+	}
+
+	return nil
+}
+
+// SetBanner sets the banner filename and IPFS CID for a channel.
+func (r *ChannelRepository) SetBanner(ctx context.Context, channelID uuid.UUID, filename, ipfsCID string) error {
+	query := `UPDATE channels SET banner_filename = $1, banner_ipfs_cid = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $3`
+
+	_, err := r.db.ExecContext(ctx, query, filename, ipfsCID, channelID)
+	if err != nil {
+		return fmt.Errorf("failed to set channel banner: %w", err)
+	}
+
+	return nil
+}
+
+// ClearBanner removes the banner for a channel.
+func (r *ChannelRepository) ClearBanner(ctx context.Context, channelID uuid.UUID) error {
+	query := `UPDATE channels SET banner_filename = NULL, banner_ipfs_cid = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = $1`
+
+	_, err := r.db.ExecContext(ctx, query, channelID)
+	if err != nil {
+		return fmt.Errorf("failed to clear channel banner: %w", err)
+	}
+
+	return nil
+}

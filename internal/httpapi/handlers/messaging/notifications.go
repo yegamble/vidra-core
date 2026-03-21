@@ -1,12 +1,13 @@
 package messaging
 
 import (
-	"athena/internal/httpapi/shared"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
 
 	"athena/internal/domain"
+	"athena/internal/httpapi/shared"
 	"athena/internal/middleware"
 	ucn "athena/internal/usecase/notification"
 
@@ -237,6 +238,44 @@ func (h *NotificationHandlers) MarkAllAsRead(w http.ResponseWriter, r *http.Requ
 	}
 
 	shared.WriteJSON(w, http.StatusOK, map[string]bool{"success": true})
+}
+
+// MarkBatchAsRead handles POST /api/v1/notifications/read — marks specific notifications as read.
+// If ids is empty, marks all notifications as read (PeerTube-compatible).
+func (h *NotificationHandlers) MarkBatchAsRead(w http.ResponseWriter, r *http.Request) {
+	userID, ok := r.Context().Value(middleware.UserIDKey).(string)
+	if !ok || userID == "" {
+		shared.WriteError(w, http.StatusUnauthorized, domain.NewDomainError("ERROR", "Unauthorized"))
+		return
+	}
+	userUUID, err := uuid.Parse(userID)
+	if err != nil {
+		shared.WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid user ID: %w", err))
+		return
+	}
+
+	var body struct {
+		IDs []uuid.UUID `json:"ids"`
+	}
+	// Decode if body present; ignore EOF (empty body treated as "mark all")
+	_ = json.NewDecoder(r.Body).Decode(&body)
+
+	if len(body.IDs) == 0 {
+		if err := h.notificationService.MarkAllAsRead(r.Context(), userUUID); err != nil {
+			shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to mark all as read: %w", err))
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	for _, nid := range body.IDs {
+		if err := h.notificationService.MarkAsRead(r.Context(), nid, userUUID); err != nil {
+			// Log and continue — partial success is better than 500 for the whole batch
+			continue
+		}
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // DeleteNotification deletes a notification

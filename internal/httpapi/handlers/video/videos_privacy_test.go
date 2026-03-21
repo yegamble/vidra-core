@@ -56,6 +56,9 @@ func (m *mockVideoRepoPrivacy) CreateRemoteVideo(_ context.Context, _ *domain.Vi
 func (m *mockVideoRepoPrivacy) GetByChannelID(_ context.Context, _ string, _, _ int) ([]*domain.Video, int64, error) {
 	return nil, 0, nil
 }
+func (m *mockVideoRepoPrivacy) GetVideoQuotaUsed(_ context.Context, _ string) (int64, error) {
+	return 0, nil
+}
 
 func TestGetVideo_PrivacyGate(t *testing.T) {
 	ownerID := "owner-1"

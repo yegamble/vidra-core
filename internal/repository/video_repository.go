@@ -386,3 +386,15 @@ func (r *videoRepository) Delete(ctx context.Context, id string, userID string) 
 
 	return nil
 }
+
+// GetVideoQuotaUsed returns the total bytes used by a user's videos via SUM(file_size).
+func (r *videoRepository) GetVideoQuotaUsed(ctx context.Context, userID string) (int64, error) {
+	exec := GetExecutor(ctx, r.db)
+
+	var total int64
+	query := `SELECT COALESCE(SUM(file_size), 0) FROM videos WHERE user_id = $1`
+	if err := exec.QueryRowContext(ctx, query, userID).Scan(&total); err != nil {
+		return 0, fmt.Errorf("computing video quota for user %s: %w", userID, err)
+	}
+	return total, nil
+}

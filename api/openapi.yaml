@@ -740,6 +740,44 @@ paths:
               schema:
                 type: string
 
+  /feeds/subscriptions.atom:
+    get:
+      tags:
+        - Feeds
+      summary: Subscription Atom feed
+      description: Returns an Atom 1.0 feed of videos from subscribed channels. Requires authentication.
+      operationId: getSubscriptionFeedAtom
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Atom feed XML
+          content:
+            application/atom+xml:
+              schema:
+                type: string
+        '401':
+          description: Unauthorized
+
+  /feeds/subscriptions.rss:
+    get:
+      tags:
+        - Feeds
+      summary: Subscription RSS feed
+      description: Returns an RSS 2.0 feed of videos from subscribed channels. Requires authentication.
+      operationId: getSubscriptionFeedRSS
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: RSS feed XML
+          content:
+            application/rss+xml:
+              schema:
+                type: string
+        '401':
+          description: Unauthorized
+
   /api/v1/admin/oauth/clients:
     get:
       tags: [Admin, OAuth]
@@ -1240,6 +1278,261 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/blocklist/accounts:
+    get:
+      tags: [Blocklist, PeerTube-Compat]
+      summary: List blocked accounts
+      operationId: listBlockedAccounts
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: List of blocked accounts
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/UserBlock'
+                  meta:
+                    $ref: '#/components/schemas/PaginationMeta'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      tags: [Blocklist, PeerTube-Compat]
+      summary: Block an account
+      operationId: blockAccount
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [accountId]
+              properties:
+                accountId:
+                  type: string
+                  format: uuid
+      responses:
+        '201':
+          description: Account blocked
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/v1/blocklist/accounts/{accountName}:
+    delete:
+      tags: [Blocklist, PeerTube-Compat]
+      summary: Unblock an account
+      operationId: unblockAccount
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: accountName
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Account unblocked
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/v1/blocklist/servers:
+    get:
+      tags: [Blocklist, PeerTube-Compat]
+      summary: List blocked servers
+      operationId: listBlockedServers
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: List of blocked servers
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/UserBlock'
+                  meta:
+                    $ref: '#/components/schemas/PaginationMeta'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      tags: [Blocklist, PeerTube-Compat]
+      summary: Block a server
+      operationId: blockServer
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [host]
+              properties:
+                host:
+                  type: string
+                  description: Domain name to block (e.g. evil.example.com)
+      responses:
+        '201':
+          description: Server blocked
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/v1/blocklist/servers/{host}:
+    delete:
+      tags: [Blocklist, PeerTube-Compat]
+      summary: Unblock a server
+      operationId: unblockServer
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: host
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Server unblocked
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/v1/users/me/avatar:
+    delete:
+      tags: [Users, PeerTube-Compat]
+      summary: Delete user avatar
+      description: Clears the authenticated user's avatar (sets avatar fields to null).
+      operationId: deleteMyAvatar
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: Avatar deleted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/v1/users/me/video-quota-used:
+    get:
+      tags:
+        - Users
+        - PeerTube-Compat
+      summary: Get authenticated user's video quota usage
+      description: Returns total bytes used by the authenticated user's uploaded videos. Computed via SUM(file_size) on the videos table.
+      operationId: getMyVideoQuotaUsed
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  videoQuotaUsed:
+                    type: integer
+                    format: int64
+                    description: Total bytes used by uploaded videos
+                  videoQuotaUsedDaily:
+                    type: integer
+                    format: int64
+                    description: Bytes uploaded today (daily tracking not yet implemented, returns 0)
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/v1/users/me/channels:
+    get:
+      tags: [Users, Channels]
+      summary: Get my channels
+      description: Returns the channels owned by the authenticated user.
+      operationId: getMyChannels
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: List of owned channels
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Channel'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/v1/users/me/ratings:
+    get:
+      tags: [Users, Ratings]
+      summary: Get my video ratings
+      description: Returns videos the authenticated user has rated.
+      operationId: getMyRatings
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: query
+          name: limit
+          schema: { type: integer, default: 20, maximum: 100 }
+        - in: query
+          name: offset
+          schema: { type: integer, default: 0 }
+      responses:
+        '200':
+          description: Paginated list of rated videos
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/v1/users/me/watch-later:
+    get:
+      tags: [Users, Playlists]
+      summary: Get my watch-later playlist
+      description: Returns videos in the authenticated user's watch-later playlist.
+      operationId: getMyWatchLater
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: query
+          name: limit
+          schema: { type: integer, default: 20, maximum: 100 }
+        - in: query
+          name: offset
+          schema: { type: integer, default: 0 }
+      responses:
+        '200':
+          description: Paginated list of watch-later videos
+          content:
+            application/json:
+              schema:
+                type: object
+        '401':
+          $ref: '#/components/responses/Unauthorized'
 
   /api/v1/users/me/subscriptions:
     get:
@@ -3287,6 +3580,31 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
+  /api/v1/encoding/my-jobs:
+    get:
+      tags: [Encoding]
+      summary: Get my encoding jobs
+      description: Returns encoding jobs for videos owned by the authenticated user.
+      operationId: getMyEncodingJobs
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: query
+          name: limit
+          schema: { type: integer, default: 20 }
+        - in: query
+          name: offset
+          schema: { type: integer, default: 0 }
+      responses:
+        '200':
+          description: List of encoding jobs
+          content:
+            application/json:
+              schema:
+                type: object
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
   # Get encoding jobs for a video
   /api/v1/videos/{id}/encoding-jobs:
     get:
@@ -3843,6 +4161,36 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
+  /api/v1/notifications/read:
+    post:
+      tags:
+        - Notifications
+      summary: Batch mark notifications as read
+      description: Marks the specified notifications as read. If ids is empty or omitted, marks all notifications as read.
+      operationId: markNotificationsBatchRead
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                ids:
+                  type: array
+                  items:
+                    type: string
+                    format: uuid
+                  description: Notification IDs to mark as read. Empty array marks all as read.
+      responses:
+        '204':
+          description: Notifications marked as read
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
   /api/v1/notifications/{id}/read:
     put:
       tags:
@@ -4267,6 +4615,177 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
+  /api/v1/avatars/{cid}:
+    get:
+      tags: [Users]
+      summary: Serve avatar from IPFS
+      description: Proxies an avatar image stored in IPFS by its CID.
+      operationId: serveAvatarFromIPFS
+      security: []
+      parameters:
+        - in: path
+          name: cid
+          required: true
+          schema: { type: string }
+          description: IPFS content identifier for the avatar
+      responses:
+        '200':
+          description: Avatar image
+          content:
+            image/*:
+              schema:
+                type: string
+                format: binary
+        '404':
+          description: Avatar not found
+
+  /api/v1/social/actors/{handle}:
+    get:
+      tags: [Social, ATProto]
+      summary: Get social actor
+      description: Resolve a handle to its ATProto actor profile.
+      operationId: getSocialActor
+      security: []
+      parameters:
+        - in: path
+          name: handle
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Actor profile
+          content:
+            application/json:
+              schema: { type: object }
+        '404':
+          description: Actor not found
+
+  /api/v1/social/follow:
+    post:
+      tags: [Social, ATProto]
+      summary: Follow a user/channel
+      operationId: socialFollow
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [did]
+              properties:
+                did:
+                  type: string
+      responses:
+        '200':
+          description: Follow created
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/v1/social/follow/{handle}:
+    delete:
+      tags: [Social, ATProto]
+      summary: Unfollow a user/channel
+      operationId: socialUnfollow
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: handle
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Unfollowed
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/v1/social/like:
+    post:
+      tags: [Social, ATProto]
+      summary: Like a post/video via ATProto
+      operationId: socialLike
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [uri]
+              properties:
+                uri: { type: string }
+      responses:
+        '200':
+          description: Like created
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    delete:
+      tags: [Social, ATProto]
+      summary: Unlike a post/video
+      operationId: socialUnlike
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [uri]
+              properties:
+                uri: { type: string }
+      responses:
+        '200':
+          description: Like removed
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/v1/views/fingerprint:
+    post:
+      tags: [Analytics]
+      summary: Generate view fingerprint
+      description: Generates a fingerprint for anonymous view deduplication.
+      operationId: generateViewFingerprint
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ip, user_agent]
+              properties:
+                ip: { type: string }
+                user_agent: { type: string }
+      responses:
+        '200':
+          description: Fingerprint generated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  fingerprint: { type: string }
+        '400':
+          description: Missing required fields
+
+  /.well-known/atproto-did:
+    get:
+      tags: [Federation, ATProto]
+      summary: ATProto DID well-known
+      description: Returns the DID document for ATProto/BlueSky federation.
+      operationId: wellKnownAtprotoDID
+      security: []
+      responses:
+        '200':
+          description: DID document
+          content:
+            application/json:
+              schema: { type: object }
+
 components:
   securitySchemes:
     bearerAuth:
@@ -4276,6 +4795,41 @@ components:
       description: JWT token for authentication
 
   schemas:
+    UserBlock:
+      type: object
+      description: A per-user block of an account or server
+      properties:
+        id:
+          type: string
+          format: uuid
+        userId:
+          type: string
+          format: uuid
+        blockType:
+          type: string
+          enum: [account, server]
+        targetAccountId:
+          type: string
+          format: uuid
+          nullable: true
+        targetServerHost:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+
+    PaginationMeta:
+      type: object
+      properties:
+        total:
+          type: integer
+          format: int64
+        limit:
+          type: integer
+        offset:
+          type: integer
+
     Notification:
       type: object
       properties:

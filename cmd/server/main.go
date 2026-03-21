@@ -90,7 +90,7 @@ func main() {
 	root.Use(middleware.Timeout(60 * time.Second))
 	root.Use(middleware.Compress(5))
 
-	root.Use(appMiddleware.CORS(cfg.CORSAllowedOrigins))
+	root.Use(appMiddleware.CORS(cfg.CORSAllowedOrigins, cfg.CORSAllowedMethods, cfg.CORSAllowedHeaders))
 	root.Use(appMiddleware.SizeLimiter(100 * 1024 * 1024))
 
 	root.Mount("/", appRouter)

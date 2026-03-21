@@ -21,4 +21,5 @@ type VideoRepository interface {
 	GetVideosForMigration(ctx context.Context, limit int) ([]*domain.Video, error)
 	GetByRemoteURI(ctx context.Context, remoteURI string) (*domain.Video, error)
 	CreateRemoteVideo(ctx context.Context, video *domain.Video) error
+	GetVideoQuotaUsed(ctx context.Context, userID string) (int64, error)
 }

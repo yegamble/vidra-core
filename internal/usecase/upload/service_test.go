@@ -210,6 +210,9 @@ func (m *mockVideoRepo) CreateRemoteVideo(ctx context.Context, video *domain.Vid
 func (m *mockVideoRepo) GetByChannelID(_ context.Context, _ string, _, _ int) ([]*domain.Video, int64, error) {
 	return nil, 0, nil
 }
+func (m *mockVideoRepo) GetVideoQuotaUsed(_ context.Context, _ string) (int64, error) {
+	return 0, nil
+}
 
 func newTestService(t *testing.T) (Service, *mockUploadRepo, *mockEncodingRepo, *mockVideoRepo, string) {
 	t.Helper()

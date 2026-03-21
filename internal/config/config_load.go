@@ -96,7 +96,7 @@ func loadCommonFields(cfg *Config, setupMode bool) {
 
 	cfg.CORSAllowedOrigins = GetEnvOrDefault("CORS_ALLOWED_ORIGINS", "*")
 	cfg.CORSAllowedMethods = GetEnvOrDefault("CORS_ALLOWED_METHODS", "GET,POST,PUT,DELETE,OPTIONS,PATCH")
-	cfg.CORSAllowedHeaders = GetEnvOrDefault("CORS_ALLOWED_HEADERS", "Accept,Authorization,Content-Type,X-CSRF-Token,X-Requested-With,Idempotency-Key")
+	cfg.CORSAllowedHeaders = GetEnvOrDefault("CORS_ALLOWED_HEADERS", "Accept,Authorization,Content-Type,X-CSRF-Token,X-Requested-With,Idempotency-Key,X-Chunk-Index,X-Chunk-Checksum")
 
 	cfg.LogLevel = GetEnvOrDefault("LOG_LEVEL", "info")
 	cfg.LogFormat = GetEnvOrDefault("LOG_FORMAT", "json")

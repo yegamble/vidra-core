@@ -104,6 +104,9 @@ type Dependencies struct {
 	PasswordResetRepo     repository.PasswordResetRepository
 	BlacklistRepo         repository.BlacklistRepository
 	ChapterRepo           repository.ChapterRepository
+	UserBlockRepo         *repository.UserBlockRepository
+	AbuseMessageRepo         *repository.AbuseMessageRepository
+	LiveStreamSessionRepo    *repository.LiveStreamSessionRepository
 
 	UploadService            ucup.Service
 	EmailService             email.EmailService
@@ -296,6 +299,9 @@ func (app *Application) initializeDependencies() *Dependencies {
 		PasswordResetRepo:     repository.NewPasswordResetRepository(app.DB),
 		BlacklistRepo:         repository.NewBlacklistRepository(app.DB),
 		ChapterRepo:           repository.NewChapterRepository(app.DB),
+		UserBlockRepo:         repository.NewUserBlockRepository(app.DB),
+		AbuseMessageRepo:         repository.NewAbuseMessageRepository(app.DB),
+		LiveStreamSessionRepo:    repository.NewLiveStreamSessionRepository(app.DB),
 	}
 
 	if app.Config.EnableIOTA {
@@ -674,6 +680,9 @@ func (app *Application) registerRoutes(deps *Dependencies) {
 		InstanceDiscovery:    deps.InstanceDiscovery,
 		VideoCategoryUseCase: deps.VideoCategoryUseCase,
 		AnalyticsRepo:        deps.AnalyticsRepo,
+		UserBlockRepo:        deps.UserBlockRepo,
+		AbuseMessageRepo:        deps.AbuseMessageRepo,
+		LiveStreamSessionRepo:   deps.LiveStreamSessionRepo,
 		HLSTranscoder:        app.hlsTranscoder,
 		IPFSStreamingService: deps.IPFSStreamingService,
 		EncodingScheduler:    app.encodingScheduler,

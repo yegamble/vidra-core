@@ -294,6 +294,9 @@ func (m *mockVideoRepo) CreateRemoteVideo(context.Context, *domain.Video) error 
 func (m *mockVideoRepo) GetByChannelID(_ context.Context, _ string, _, _ int) ([]*domain.Video, int64, error) {
 	return nil, 0, nil
 }
+func (m *mockVideoRepo) GetVideoQuotaUsed(_ context.Context, _ string) (int64, error) {
+	return 0, nil
+}
 
 func TestRequireAdmin_Unit(t *testing.T) {
 	t.Run("no role in context returns forbidden", func(t *testing.T) {

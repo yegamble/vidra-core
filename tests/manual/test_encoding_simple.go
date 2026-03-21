@@ -347,3 +347,7 @@ func (r *mockVideoRepository) GetByChannelID(ctx context.Context, channelID stri
 func (r *mockVideoRepository) GetVideosForMigration(ctx context.Context, limit int) ([]*domain.Video, error) {
 	return []*domain.Video{}, nil
 }
+
+func (r *mockVideoRepository) GetVideoQuotaUsed(ctx context.Context, userID string) (int64, error) {
+	return 0, nil
+}

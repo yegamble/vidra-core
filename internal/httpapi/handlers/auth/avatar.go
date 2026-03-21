@@ -699,3 +699,21 @@ func (h *AuthHandlers) ipfsClusterPin(cid string) error {
 	b, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
 	return fmt.Errorf("ipfs cluster pin failed: %s", string(b))
 }
+
+// DeleteAvatar handles DELETE /api/v1/users/me/avatar.
+// Clears the authenticated user's avatar by setting all avatar fields to null.
+func (h *AuthHandlers) DeleteAvatar(w http.ResponseWriter, r *http.Request) {
+	userID, ok := r.Context().Value(middleware.UserIDKey).(string)
+	if !ok || userID == "" {
+		shared.WriteError(w, http.StatusUnauthorized, domain.ErrUnauthorized)
+		return
+	}
+
+	nullStr := sql.NullString{Valid: false}
+	if err := h.userRepo.SetAvatarFields(r.Context(), userID, nullStr, nullStr); err != nil {
+		shared.WriteError(w, http.StatusInternalServerError, domain.NewDomainError("INTERNAL_ERROR", "Failed to clear avatar"))
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}

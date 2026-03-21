@@ -70,9 +70,9 @@ All critical user journeys (upload, watch, comment, subscribe, live stream, fede
 | `/users/me` | PUT | `Implemented` | |
 | `/users/me` | DELETE | `Implemented` | Soft-delete + PII anonymization (Task 9) |
 | `/users/me/avatar` | POST | `Implemented` | IPFS-pinned avatar |
-| `/users/me/avatar` | DELETE | `Missing` | Remove avatar (reset to default) |
+| `/users/me/avatar` | DELETE | `Implemented` | Remove avatar (reset to default) — Task 4 ✓ |
 | `/users/me/videos` | GET | `Implemented` | `GET /users/{id}/videos` |
-| `/users/me/video-quota-used` | GET | `Missing` | Storage quota tracking per user |
+| `/users/me/video-quota-used` | GET | `Implemented` | Storage quota tracking per user — Task 2 ✓ |
 | `/users/me/subscriptions` | GET | `Implemented` | `GET /users/me/subscriptions` |
 | `/users/me/subscriptions` | POST | `Partial` | `POST /users/{id}/subscribe` (takes user ID, not channel handle) |
 | `/users/me/subscriptions/exist` | GET | `Missing` | Batch-check subscription status |
@@ -113,7 +113,7 @@ PeerTube exposes accounts by `@username@instance` handle (e.g., `/api/v1/account
 
 | PeerTube Endpoint | Method | Athena Status | Notes |
 |---|---|---|---|
-| `/config` | GET | `Missing` | Public instance configuration |
+| `/config` | GET | `Implemented` | Public instance configuration — Task 1 ✓ |
 | `/config/about` | GET | `Missing` | Instance about page info |
 | `/config/custom` (admin) | GET | `Partial` | Athena: `GET /admin/instance/config` (key-by-key) |
 | `/config/custom` (admin) | PUT | `Partial` | Athena: `PUT /admin/instance/config/{key}` |
@@ -170,7 +170,7 @@ PeerTube exposes accounts by `@username@instance` handle (e.g., `/api/v1/account
 | `/videos/{id}/live` | GET | `Implemented` | (Athena: `GET /streams/{id}`) |
 | `/videos/live` | POST | `Implemented` | (Athena: `POST /streams`) |
 | `/videos/{id}/live` | PUT | `Implemented` | |
-| `/videos/live/{id}/sessions` | GET | `Missing` | Live session history list |
+| `/videos/live/{id}/sessions` | GET | `Implemented` | Live session history list — Task 7 ✓ |
 | `/videos/top` | GET | `Implemented` | |
 | `/videos/trending` | GET | `Implemented` | |
 | `/videos/subscriptions` | GET | `Implemented` | |
@@ -190,10 +190,10 @@ PeerTube exposes accounts by `@username@instance` handle (e.g., `/api/v1/account
 | `/video-channels/{channelHandle}/videos` | GET | `Implemented` | |
 | `/video-channels/{channelHandle}/video-playlists` | GET | `Missing` | List channel's playlists |
 | `/video-channels/{channelHandle}/followers` | GET | `Implemented` | (Athena: `GET /channels/{id}/subscribers`) |
-| `/video-channels/{channelHandle}/avatar` | POST | `Missing` | Upload channel avatar |
-| `/video-channels/{channelHandle}/avatar` | DELETE | `Missing` | Remove channel avatar |
-| `/video-channels/{channelHandle}/banner` | POST | `Missing` | Upload channel banner |
-| `/video-channels/{channelHandle}/banner` | DELETE | `Missing` | Remove channel banner |
+| `/video-channels/{channelHandle}/avatar` | POST | `Implemented` | Upload channel avatar — Task 5 ✓ |
+| `/video-channels/{channelHandle}/avatar` | DELETE | `Implemented` | Remove channel avatar — Task 5 ✓ |
+| `/video-channels/{channelHandle}/banner` | POST | `Implemented` | Upload channel banner — Task 5 ✓ |
+| `/video-channels/{channelHandle}/banner` | DELETE | `Implemented` | Remove channel banner — Task 5 ✓ |
 
 ---
 
@@ -245,7 +245,7 @@ PeerTube exposes accounts by `@username@instance` handle (e.g., `/api/v1/account
 |---|---|---|---|
 | `/notifications` | GET | `Implemented` | |
 | `/notifications/read` | PUT | `Implemented` | Mark all read |
-| `/notifications/read` (batch) | POST | `Missing` | Mark specific IDs as read |
+| `/notifications/read` (batch) | POST | `Implemented` | Mark specific IDs as read — Task 9 ✓ |
 | `/notifications/{id}/read` | PUT | `Implemented` | |
 | `/notifications/{id}` | DELETE | `Implemented` | |
 
@@ -259,9 +259,9 @@ PeerTube exposes accounts by `@username@instance` handle (e.g., `/api/v1/account
 | `/abuses` | POST | `Implemented` | `POST /abuse-reports` |
 | `/abuses/{id}` | PUT | `Implemented` | |
 | `/abuses/{id}` | DELETE | `Implemented` | |
-| `/abuses/{id}/messages` | GET | `Missing` | Abuse report discussion thread |
-| `/abuses/{id}/messages` | POST | `Missing` | |
-| `/abuses/{id}/messages/{messageId}` | DELETE | `Missing` | |
+| `/abuses/{id}/messages` | GET | `Implemented` | Abuse report discussion thread — Task 6 ✓ |
+| `/abuses/{id}/messages` | POST | `Implemented` | — Task 6 ✓ |
+| `/abuses/{id}/messages/{messageId}` | DELETE | `Implemented` | — Task 6 ✓ |
 
 ---
 
@@ -270,12 +270,12 @@ PeerTube exposes accounts by `@username@instance` handle (e.g., `/api/v1/account
 | PeerTube Endpoint | Method | Athena Status | Notes |
 |---|---|---|---|
 | `/blocklist/status` | GET | `Implemented` | Task 11 ✓ |
-| `/blocklist/accounts` | GET | `Missing` | Per-user account blocklist |
-| `/blocklist/accounts` | POST | `Missing` | Block an account |
-| `/blocklist/accounts/{accountName}` | DELETE | `Missing` | Unblock account |
-| `/blocklist/servers` | GET | `Missing` | Per-user server blocklist |
-| `/blocklist/servers` | POST | `Missing` | Block a server |
-| `/blocklist/servers/{host}` | DELETE | `Missing` | Unblock server |
+| `/blocklist/accounts` | GET | `Implemented` | Per-user account blocklist — Task 3 ✓ |
+| `/blocklist/accounts` | POST | `Implemented` | Block an account — Task 3 ✓ |
+| `/blocklist/accounts/{accountName}` | DELETE | `Implemented` | Unblock account — Task 3 ✓ |
+| `/blocklist/servers` | GET | `Implemented` | Per-user server blocklist — Task 3 ✓ |
+| `/blocklist/servers` | POST | `Implemented` | Block a server — Task 3 ✓ |
+| `/blocklist/servers/{host}` | DELETE | `Implemented` | Unblock server — Task 3 ✓ |
 
 **Note:** Athena has an **admin-level** blocklist (`GET/POST/PUT/DELETE /admin/blocklist`). PeerTube's `/blocklist/*` endpoints allow individual users to manage their personal block lists. These are separate concerns.
 
@@ -354,7 +354,7 @@ PeerTube's external runner system allows delegating transcoding to remote machin
 |---|---|---|---|
 | `/feeds/videos.{format}` | GET | `Implemented` | Atom + RSS (Task 7 ✓) |
 | `/feeds/video-comments.{format}` | GET | `Implemented` | Task 7 ✓ |
-| `/feeds/subscriptions.{format}` | GET | `Missing` | Subscription activity feed |
+| `/feeds/subscriptions.{format}` | GET | `Implemented` | Subscription activity feed — Task 8 ✓ |
 | `/feeds/podcast/videos.{format}` | GET | `Missing` | Podcast-compatible RSS feed |
 
 ---

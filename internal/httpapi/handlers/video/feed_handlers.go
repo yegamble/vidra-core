@@ -1,6 +1,7 @@
 package video
 
 import (
+	"context"
 	"encoding/xml"
 	"fmt"
 	"log"
@@ -10,19 +11,31 @@ import (
 	"github.com/google/uuid"
 
 	"athena/internal/domain"
+	"athena/internal/middleware"
 	"athena/internal/usecase"
 )
+
+// subscriptionFeedRepo is the narrow interface needed for subscription feeds.
+type subscriptionFeedRepo interface {
+	ListSubscriptionVideos(ctx context.Context, userID string, limit, offset int) ([]*domain.Video, int64, error)
+}
 
 // FeedHandlers provides RSS/Atom feed endpoints.
 type FeedHandlers struct {
 	videoRepo   usecase.VideoRepository
 	commentRepo usecase.CommentRepository
 	baseURL     string
+	subRepo     subscriptionFeedRepo
 }
 
 // NewFeedHandlers creates a new FeedHandlers.
 func NewFeedHandlers(videoRepo usecase.VideoRepository, commentRepo usecase.CommentRepository, baseURL string) *FeedHandlers {
 	return &FeedHandlers{videoRepo: videoRepo, commentRepo: commentRepo, baseURL: baseURL}
+}
+
+// SetSubRepo sets the subscription feed repository.
+func (h *FeedHandlers) SetSubRepo(repo subscriptionFeedRepo) {
+	h.subRepo = repo
 }
 
 // --- Atom 1.0 types ---
@@ -188,6 +201,73 @@ func (h *FeedHandlers) VideosFeedRSS(w http.ResponseWriter, r *http.Request) {
 		feed.Channel.Items = append(feed.Channel.Items, item)
 	}
 
+	writeRSSFeed(w, feed)
+}
+
+// SubscriptionFeedAtom handles GET /feeds/subscriptions.atom — returns Atom feed of subscribed channel videos.
+func (h *FeedHandlers) SubscriptionFeedAtom(w http.ResponseWriter, r *http.Request) {
+	userID, ok := r.Context().Value(middleware.UserIDKey).(string)
+	if !ok || userID == "" {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+	videos, _, err := h.subRepo.ListSubscriptionVideos(r.Context(), userID, 20, 0)
+	if err != nil {
+		http.Error(w, "Failed to load subscription feed", http.StatusInternalServerError)
+		return
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	feed := &atomFeed{
+		XMLNS:   "http://www.w3.org/2005/Atom",
+		Title:   "My Subscription Feed",
+		ID:      h.baseURL + "/feeds/subscriptions.atom",
+		Updated: now,
+		Link:    []atomLink{{Rel: "self", Href: h.baseURL + "/feeds/subscriptions.atom"}},
+	}
+	for _, v := range videos {
+		updated := v.UpdatedAt.UTC().Format(time.RFC3339)
+		entry := atomEntry{
+			Title:   v.Title,
+			ID:      fmt.Sprintf("%s/videos/%s", h.baseURL, v.ID),
+			Updated: updated,
+			Link:    atomLink{Href: fmt.Sprintf("%s/videos/%s", h.baseURL, v.ID)},
+			Summary: v.Description,
+		}
+		feed.Entries = append(feed.Entries, entry)
+	}
+	writeAtomFeed(w, feed)
+}
+
+// SubscriptionFeedRSS handles GET /feeds/subscriptions.rss — returns RSS feed of subscribed channel videos.
+func (h *FeedHandlers) SubscriptionFeedRSS(w http.ResponseWriter, r *http.Request) {
+	userID, ok := r.Context().Value(middleware.UserIDKey).(string)
+	if !ok || userID == "" {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+	videos, _, err := h.subRepo.ListSubscriptionVideos(r.Context(), userID, 20, 0)
+	if err != nil {
+		http.Error(w, "Failed to load subscription feed", http.StatusInternalServerError)
+		return
+	}
+	feed := &rssFeed{
+		Version: "2.0",
+		Channel: rssChannel{
+			Title:       "My Subscription Feed",
+			Link:        h.baseURL,
+			Description: "Videos from channels you subscribe to",
+		},
+	}
+	for _, v := range videos {
+		item := rssItem{
+			Title:       v.Title,
+			Link:        fmt.Sprintf("%s/videos/%s", h.baseURL, v.ID),
+			GUID:        fmt.Sprintf("%s/videos/%s", h.baseURL, v.ID),
+			PubDate:     v.CreatedAt.UTC().Format(time.RFC1123Z),
+			Description: v.Description,
+		}
+		feed.Channel.Items = append(feed.Channel.Items, item)
+	}
 	writeRSSFeed(w, feed)
 }
 

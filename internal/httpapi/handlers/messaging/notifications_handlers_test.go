@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
@@ -157,6 +158,49 @@ func TestNotificationHandlers_GetNotifications_TypeFilter_OK(t *testing.T) {
 	}
 	if len(expected) != 0 {
 		t.Fatalf("missing expected notification types: %+v", expected)
+	}
+}
+
+func TestMarkBatchAsRead_WithIDs_CallsMarkAsReadForEach(t *testing.T) {
+	svc := &mockNotificationService{}
+	h := NewNotificationHandlers(svc)
+	id1, id2 := uuid.New(), uuid.New()
+	body := `{"ids":["` + id1.String() + `","` + id2.String() + `"]}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/notifications/read", strings.NewReader(body))
+	req = req.WithContext(withUserID(req.Context(), uuid.NewString()))
+	rr := httptest.NewRecorder()
+	h.MarkBatchAsRead(rr, req)
+	if rr.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d: %s", rr.Code, rr.Body.String())
+	}
+	if !svc.markReadCalled {
+		t.Fatalf("expected markReadCalled to be true")
+	}
+}
+
+func TestMarkBatchAsRead_EmptyIDs_CallsMarkAllAsRead(t *testing.T) {
+	svc := &mockNotificationService{}
+	h := NewNotificationHandlers(svc)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/notifications/read", strings.NewReader(`{"ids":[]}`))
+	req = req.WithContext(withUserID(req.Context(), uuid.NewString()))
+	rr := httptest.NewRecorder()
+	h.MarkBatchAsRead(rr, req)
+	if rr.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d: %s", rr.Code, rr.Body.String())
+	}
+	if !svc.markAllCalled {
+		t.Fatalf("expected markAllCalled to be true")
+	}
+}
+
+func TestMarkBatchAsRead_Unauthenticated_Returns401(t *testing.T) {
+	svc := &mockNotificationService{}
+	h := NewNotificationHandlers(svc)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/notifications/read", strings.NewReader(`{"ids":[]}`))
+	rr := httptest.NewRecorder()
+	h.MarkBatchAsRead(rr, req)
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", rr.Code)
 	}
 }
 

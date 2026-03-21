@@ -333,6 +333,62 @@ paths:
                   success:
                     type: boolean
 
+  /api/v1/config:
+    get:
+      tags:
+        - Instance
+        - PeerTube-Compat
+      summary: Get public instance configuration
+      description: Returns public configuration for this instance (signup settings, video limits, features). No authentication required.
+      operationId: getPublicConfig
+      security: []
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicConfig'
+
+  /api/v1/config/about:
+    get:
+      tags:
+        - Instance
+        - PeerTube-Compat
+      summary: Get instance about information
+      description: Returns public about information for this instance (name, description, rules, contact). No authentication required.
+      operationId: getPublicConfigAbout
+      security: []
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/InstanceInfo'
+                  success:
+                    type: boolean
+
+  /api/v1/instance/stats:
+    get:
+      tags:
+        - Instance
+        - PeerTube-Compat
+      summary: Get instance statistics
+      description: Returns aggregate statistics for this instance (user count, video count). No authentication required.
+      operationId: getInstanceStats
+      security: []
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InstanceStats'
+
   /api/v1/admin/instance/config:
     get:
       tags:
@@ -459,8 +515,205 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
 
+  /api/v1/admin/abuse-reports/{id}/messages:
+    get:
+      tags:
+        - Admin
+        - Moderation
+      summary: List abuse report messages
+      operationId: listAbuseReportMessages
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: List of messages
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AbuseMessage'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    post:
+      tags:
+        - Admin
+        - Moderation
+      summary: Add message to abuse report
+      operationId: createAbuseReportMessage
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [message]
+              properties:
+                message:
+                  type: string
+      responses:
+        '201':
+          description: Message created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AbuseMessage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /api/v1/admin/abuse-reports/{id}/messages/{messageId}:
+    delete:
+      tags:
+        - Admin
+        - Moderation
+      summary: Delete abuse report message
+      operationId: deleteAbuseReportMessage
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - in: path
+          name: messageId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Message deleted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
 components:
   schemas:
+    AbuseMessage:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        abuseReportId:
+          type: string
+          format: uuid
+        senderId:
+          type: string
+        message:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+
+    PublicConfig:
+      type: object
+      description: Public instance configuration (PeerTube-compatible)
+      properties:
+        instance:
+          type: object
+          properties:
+            name:
+              type: string
+            shortDescription:
+              type: string
+            description:
+              type: string
+            isNSFW:
+              type: boolean
+            defaultNSFWPolicy:
+              type: string
+            serverVersion:
+              type: string
+        signup:
+          type: object
+          properties:
+            allowed:
+              type: boolean
+            allowedForCurrentIP:
+              type: boolean
+            requiresEmailVerification:
+              type: boolean
+        video:
+          type: object
+          properties:
+            file:
+              type: object
+              properties:
+                size:
+                  type: object
+                  properties:
+                    max:
+                      type: integer
+                      format: int64
+        features:
+          type: object
+          properties:
+            signup:
+              type: boolean
+            login:
+              type: boolean
+
+    InstanceStats:
+      type: object
+      description: Aggregate instance statistics (PeerTube-compatible)
+      properties:
+        totalUsers:
+          type: integer
+          format: int64
+        totalDailyActiveUsers:
+          type: integer
+          format: int64
+        totalWeeklyActiveUsers:
+          type: integer
+          format: int64
+        totalMonthlyActiveUsers:
+          type: integer
+          format: int64
+        totalLocalVideos:
+          type: integer
+          format: int64
+        totalLocalVideoViews:
+          type: integer
+          format: int64
+        totalInstanceFollowers:
+          type: integer
+          format: int64
+        totalInstanceFollowing:
+          type: integer
+          format: int64
+        totalVideos:
+          type: integer
+          format: int64
+
     AbuseReport:
       type: object
       properties:
