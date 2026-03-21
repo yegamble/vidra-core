@@ -278,6 +278,9 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 			r.With(middleware.Auth(cfg.JWTSecret)).Delete("/{id}/subscribe", channel.UnsubscribeFromUserHandler(deps.SubRepo))
 			r.With(middleware.Auth(cfg.JWTSecret)).Get("/me/subscriptions", channel.ListMySubscriptionsHandler(deps.SubRepo))
 			r.With(middleware.Auth(cfg.JWTSecret)).Get("/me/subscriptions/exist", channel.CheckSubscriptionsExistHandler(deps.SubRepo, deps.ChannelService))
+			r.With(middleware.Auth(cfg.JWTSecret)).Post("/me/subscriptions", channel.SubscribeByHandleHandler(deps.SubRepo, deps.ChannelService))
+			r.With(middleware.Auth(cfg.JWTSecret)).Get("/me/subscriptions/{subscriptionHandle}", channel.GetSubscriptionByHandleHandler(deps.SubRepo, deps.ChannelService))
+			r.With(middleware.Auth(cfg.JWTSecret)).Delete("/me/subscriptions/{subscriptionHandle}", channel.UnsubscribeByHandleHandler(deps.SubRepo, deps.ChannelService))
 
 			channelHandlers := channel.NewChannelHandlers(deps.ChannelService, deps.SubRepo)
 			r.With(middleware.Auth(cfg.JWTSecret)).Get("/me/channels", channelHandlers.GetMyChannels)
