@@ -1,12 +1,16 @@
 package channel
 
 import (
-	"athena/internal/httpapi/shared"
 	"net/http"
+	"strings"
 
 	"athena/internal/domain"
+	"athena/internal/httpapi/shared"
 	"athena/internal/middleware"
 	"athena/internal/usecase"
+	ucchannel "athena/internal/usecase/channel"
+
+	"github.com/google/uuid"
 )
 
 // common helper to enforce auth and parse pagination
@@ -108,5 +112,61 @@ func ListSubscriptionVideosHandler(subRepo usecase.SubscriptionRepository) http.
 		}
 		meta := &shared.Meta{Total: total, Limit: limit, Offset: offset, Page: page, PageSize: pageSize}
 		shared.WriteJSONWithMeta(w, http.StatusOK, videos, meta)
+	}
+}
+
+// CheckSubscriptionsExistHandler handles GET /api/v1/users/me/subscriptions/exist?uris=uri1,uri2
+// Returns a map of URI → subscribed boolean for up to 50 URIs.
+// URIs may be channel UUID strings or channel handles (resolved via channelSvc when non-nil).
+func CheckSubscriptionsExistHandler(subRepo usecase.SubscriptionRepository, channelSvc *ucchannel.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		subscriberID, ok := middleware.GetUserIDFromContext(r.Context())
+		if !ok {
+			shared.WriteError(w, http.StatusUnauthorized, domain.NewDomainError("UNAUTHORIZED", "Authentication required"))
+			return
+		}
+
+		uriParam := r.URL.Query().Get("uris")
+		if uriParam == "" {
+			shared.WriteJSON(w, http.StatusOK, map[string]bool{})
+			return
+		}
+
+		parts := strings.Split(uriParam, ",")
+		if len(parts) > 50 {
+			parts = parts[:50]
+		}
+
+		result := make(map[string]bool, len(parts))
+		for _, uri := range parts {
+			uri = strings.TrimSpace(uri)
+			if uri == "" {
+				continue
+			}
+
+			var channelID uuid.UUID
+			if id, err := uuid.Parse(uri); err == nil {
+				channelID = id
+			} else if channelSvc != nil {
+				ch, err := channelSvc.GetChannelByHandle(r.Context(), uri)
+				if err != nil {
+					result[uri] = false
+					continue
+				}
+				channelID = ch.ID
+			} else {
+				result[uri] = false
+				continue
+			}
+
+			subscribed, err := subRepo.IsSubscribed(r.Context(), subscriberID, channelID)
+			if err != nil {
+				result[uri] = false
+				continue
+			}
+			result[uri] = subscribed
+		}
+
+		shared.WriteJSON(w, http.StatusOK, result)
 	}
 }

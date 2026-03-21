@@ -28,4 +28,5 @@ type EncodingRepository interface {
 	// Job queries
 	GetJobsByVideoID(ctx context.Context, videoID string) ([]*domain.EncodingJob, error)
 	GetActiveJobsByVideoID(ctx context.Context, videoID string) ([]*domain.EncodingJob, error)
+	ListJobsByStatus(ctx context.Context, status string) ([]*domain.EncodingJob, error)
 }

@@ -20,6 +20,35 @@ func NewEncodingRepository(db *sqlx.DB) usecase.EncodingRepository {
 	return &encodingRepository{db: db}
 }
 
+func (r *encodingRepository) ListJobsByStatus(ctx context.Context, status string) ([]*domain.EncodingJob, error) {
+	query := `SELECT id, video_id, source_file_path, source_resolution, target_resolutions,
+		status, progress, error_message, started_at, completed_at, created_at, updated_at
+		FROM encoding_jobs WHERE status = $1 ORDER BY created_at DESC`
+
+	rows, err := r.db.QueryContext(ctx, query, status)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list jobs by status: %w", err)
+	}
+	defer rows.Close()
+
+	var jobs []*domain.EncodingJob
+	for rows.Next() {
+		var job domain.EncodingJob
+		var targetResolutions pq.StringArray
+		err := rows.Scan(
+			&job.ID, &job.VideoID, &job.SourceFilePath, &job.SourceResolution,
+			&targetResolutions, &job.Status, &job.Progress, &job.ErrorMessage,
+			&job.StartedAt, &job.CompletedAt, &job.CreatedAt, &job.UpdatedAt,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan job: %w", err)
+		}
+		job.TargetResolutions = []string(targetResolutions)
+		jobs = append(jobs, &job)
+	}
+	return jobs, rows.Err()
+}
+
 func (r *encodingRepository) CreateJob(ctx context.Context, job *domain.EncodingJob) error {
 	query := `
 		INSERT INTO encoding_jobs (

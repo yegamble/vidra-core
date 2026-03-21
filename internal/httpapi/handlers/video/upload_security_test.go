@@ -179,6 +179,10 @@ func (m *MockEncodingRepoUpload) GetActiveJobsByVideoID(ctx context.Context, vid
 	return nil, nil
 }
 
+func (m *MockEncodingRepoUpload) ListJobsByStatus(_ context.Context, _ string) ([]*domain.EncodingJob, error) {
+	return nil, nil
+}
+
 func TestInitiateUpload_Security_FileSizeLimit(t *testing.T) {
 	mockUploadRepo := new(MockUploadRepository)
 	mockVideoRepo := new(MockVideoRepository)

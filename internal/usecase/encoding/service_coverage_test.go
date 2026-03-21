@@ -723,3 +723,7 @@ func (r *errorEncodingRepository) GetJobsByVideoID(_ context.Context, _ string) 
 func (r *errorEncodingRepository) GetActiveJobsByVideoID(_ context.Context, _ string) ([]*domain.EncodingJob, error) {
 	return nil, nil
 }
+
+func (r *errorEncodingRepository) ListJobsByStatus(_ context.Context, _ string) ([]*domain.EncodingJob, error) {
+	return nil, nil
+}

@@ -5,9 +5,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
+	"net/http"
+	"net/url"
 	"os"
+	"path"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -501,4 +506,39 @@ func (m *Manager) detectHooks(plugin Plugin) []EventType {
 
 func (m *Manager) GetPluginDir() string {
 	return m.pluginDir
+}
+
+// InstallFromURL downloads a plugin zip from the given URL and loads it.
+func (m *Manager) InstallFromURL(_ context.Context, pluginURL string) error {
+	resp, err := http.Get(pluginURL) //nolint:gosec // URL validated by handler (https-only)
+	if err != nil {
+		return fmt.Errorf("download plugin: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("download plugin: unexpected status %d", resp.StatusCode)
+	}
+
+	parsed, err := url.Parse(pluginURL)
+	if err != nil {
+		return fmt.Errorf("parse plugin URL: %w", err)
+	}
+	filename := path.Base(parsed.Path)
+	if filename == "" || filename == "." || strings.ContainsAny(filename, `/\`) {
+		return fmt.Errorf("invalid plugin filename derived from URL: %q", filename)
+	}
+	destPath := filepath.Join(m.pluginDir, filename)
+	if !strings.HasPrefix(filepath.Clean(destPath), filepath.Clean(m.pluginDir)+string(os.PathSeparator)) {
+		return fmt.Errorf("plugin path escapes plugin directory")
+	}
+	f, err := os.Create(destPath)
+	if err != nil {
+		return fmt.Errorf("create plugin file: %w", err)
+	}
+	defer f.Close()
+
+	if _, err := io.Copy(f, resp.Body); err != nil {
+		return fmt.Errorf("write plugin file: %w", err)
+	}
+	return nil
 }

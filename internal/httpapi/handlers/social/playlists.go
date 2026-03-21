@@ -1,17 +1,24 @@
 package social
 
 import (
-	"athena/internal/domain"
-	"athena/internal/httpapi/shared"
-	"athena/internal/middleware"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"strconv"
 
-	"github.com/go-chi/chi/v5"
+	"athena/internal/domain"
+	"athena/internal/httpapi/shared"
+	"athena/internal/middleware"
+
+	chi "github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 )
+
+// channelHandleResolver resolves a channel handle to a domain.Channel.
+type channelHandleResolver interface {
+	GetChannelByHandle(ctx context.Context, handle string) (*domain.Channel, error)
+}
 
 type PlaylistHandlers struct {
 	playlistService PlaylistServiceInterface
@@ -398,4 +405,46 @@ func (h *PlaylistHandlers) AddToWatchLater(w http.ResponseWriter, r *http.Reques
 	shared.WriteJSON(w, http.StatusOK, map[string]string{
 		"status": "ok",
 	})
+}
+
+// GetPrivacies handles GET /api/v1/video-playlists/privacies.
+// Returns the map of numeric privacy IDs to labels, matching PeerTube's response.
+func (h *PlaylistHandlers) GetPrivacies(w http.ResponseWriter, r *http.Request) {
+	privacies := map[string]string{
+		"1": "Public",
+		"2": "Unlisted",
+		"3": "Private",
+	}
+	shared.WriteJSON(w, http.StatusOK, privacies)
+}
+
+// GetChannelPlaylistsHandler handles GET /video-channels/{channelHandle}/video-playlists.
+func GetChannelPlaylistsHandler(channelSvc channelHandleResolver, playlistSvc PlaylistServiceInterface) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		handle := chi.URLParam(r, "channelHandle")
+
+		channel, err := channelSvc.GetChannelByHandle(r.Context(), handle)
+		if err != nil {
+			if err == domain.ErrNotFound {
+				shared.WriteError(w, http.StatusNotFound, fmt.Errorf("channel not found"))
+				return
+			}
+			shared.WriteError(w, http.StatusInternalServerError, err)
+			return
+		}
+
+		opts := domain.PlaylistListOptions{
+			UserID: &channel.UserID,
+			Limit:  20,
+			Offset: 0,
+		}
+
+		resp, err := playlistSvc.ListPlaylists(r.Context(), opts)
+		if err != nil {
+			shared.WriteError(w, http.StatusInternalServerError, err)
+			return
+		}
+
+		shared.WriteJSON(w, http.StatusOK, resp)
+	}
 }

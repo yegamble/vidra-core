@@ -361,6 +361,58 @@ func (h *ChannelHandlers) UnsubscribeFromChannel(w http.ResponseWriter, r *http.
 	})
 }
 
+// GetChannelByHandleParam handles GET /api/v1/video-channels/{channelHandle}
+// It resolves the handle param strictly as a channel handle (never a UUID).
+func (h *ChannelHandlers) GetChannelByHandleParam(w http.ResponseWriter, r *http.Request) {
+	handle := chi.URLParam(r, "channelHandle")
+	channel, err := h.channelService.GetChannelByHandle(r.Context(), handle)
+	if err != nil {
+		if err == domain.ErrNotFound {
+			shared.WriteError(w, http.StatusNotFound, domain.ErrNotFound)
+			return
+		}
+		shared.WriteError(w, http.StatusInternalServerError, errors.New("failed to get channel"))
+		return
+	}
+	shared.WriteJSON(w, http.StatusOK, channel)
+}
+
+// GetChannelVideosByHandleParam handles GET /api/v1/video-channels/{channelHandle}/videos
+func (h *ChannelHandlers) GetChannelVideosByHandleParam(w http.ResponseWriter, r *http.Request) {
+	handle := chi.URLParam(r, "channelHandle")
+	channel, err := h.channelService.GetChannelByHandle(r.Context(), handle)
+	if err != nil {
+		if err == domain.ErrNotFound {
+			shared.WriteError(w, http.StatusNotFound, domain.ErrNotFound)
+			return
+		}
+		shared.WriteError(w, http.StatusInternalServerError, errors.New("failed to get channel"))
+		return
+	}
+
+	// Parse pagination
+	page := 1
+	pageSize := 20
+	if pageStr := r.URL.Query().Get("page"); pageStr != "" {
+		if p, err := strconv.Atoi(pageStr); err == nil && p > 0 {
+			page = p
+		}
+	}
+	if pageSizeStr := r.URL.Query().Get("pageSize"); pageSizeStr != "" {
+		if ps, err := strconv.Atoi(pageSizeStr); err == nil && ps > 0 && ps <= 100 {
+			pageSize = ps
+		}
+	}
+
+	response, err := h.channelService.GetChannelVideos(r.Context(), channel.ID, page, pageSize)
+	if err != nil {
+		shared.WriteError(w, http.StatusInternalServerError, errors.New("failed to get channel videos"))
+		return
+	}
+
+	shared.WriteJSON(w, http.StatusOK, response)
+}
+
 // GetChannelSubscribers handles GET /api/v1/channels/{id}/subscribers
 func (h *ChannelHandlers) GetChannelSubscribers(w http.ResponseWriter, r *http.Request) {
 	// Get channel ID from URL

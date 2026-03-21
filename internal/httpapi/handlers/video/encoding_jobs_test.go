@@ -113,6 +113,10 @@ func (m *MockEncodingRepository) GetActiveJobsByVideoID(ctx context.Context, vid
 	return args.Get(0).([]*domain.EncodingJob), args.Error(1)
 }
 
+func (m *MockEncodingRepository) ListJobsByStatus(_ context.Context, _ string) ([]*domain.EncodingJob, error) {
+	return nil, nil
+}
+
 func TestGetEncodingJobHandler_Authorization(t *testing.T) {
 	tests := []struct {
 		name           string

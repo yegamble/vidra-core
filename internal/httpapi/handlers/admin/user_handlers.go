@@ -191,3 +191,73 @@ func (h *AdminUserHandlers) UpdateUser(w http.ResponseWriter, r *http.Request) {
 
 	shared.WriteJSON(w, http.StatusOK, user)
 }
+
+// DeleteUser handles DELETE /api/v1/admin/users/{id}.
+// Hard-deletes a user. Admins cannot delete themselves.
+func (h *AdminUserHandlers) DeleteUser(w http.ResponseWriter, r *http.Request) {
+	targetID := chi.URLParam(r, "id")
+	if targetID == "" {
+		shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("MISSING_USER_ID", "User ID is required"))
+		return
+	}
+
+	callerID, _ := r.Context().Value(middleware.UserIDKey).(string)
+	if callerID == targetID {
+		shared.WriteError(w, http.StatusForbidden, domain.NewDomainError("SELF_DELETE", "Admins cannot delete themselves"))
+		return
+	}
+
+	if _, err := h.userRepo.GetByID(r.Context(), targetID); err != nil {
+		if err == domain.ErrUserNotFound {
+			shared.WriteError(w, http.StatusNotFound, domain.NewDomainError("USER_NOT_FOUND", "User not found"))
+			return
+		}
+		shared.WriteError(w, http.StatusInternalServerError, domain.NewDomainError("INTERNAL_ERROR", "Failed to fetch user"))
+		return
+	}
+
+	if err := h.userRepo.Delete(r.Context(), targetID); err != nil {
+		shared.WriteError(w, http.StatusInternalServerError, domain.NewDomainError("INTERNAL_ERROR", "Failed to delete user"))
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// BlockUser handles POST /api/v1/admin/users/{id}/block.
+// Sets is_active=false to prevent the user from logging in.
+func (h *AdminUserHandlers) BlockUser(w http.ResponseWriter, r *http.Request) {
+	h.setUserActiveState(w, r, false)
+}
+
+// UnblockUser handles POST /api/v1/admin/users/{id}/unblock.
+// Sets is_active=true to re-enable the user's account.
+func (h *AdminUserHandlers) UnblockUser(w http.ResponseWriter, r *http.Request) {
+	h.setUserActiveState(w, r, true)
+}
+
+func (h *AdminUserHandlers) setUserActiveState(w http.ResponseWriter, r *http.Request, active bool) {
+	targetID := chi.URLParam(r, "id")
+	if targetID == "" {
+		shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("MISSING_USER_ID", "User ID is required"))
+		return
+	}
+
+	user, err := h.userRepo.GetByID(r.Context(), targetID)
+	if err != nil {
+		if err == domain.ErrUserNotFound {
+			shared.WriteError(w, http.StatusNotFound, domain.NewDomainError("USER_NOT_FOUND", "User not found"))
+			return
+		}
+		shared.WriteError(w, http.StatusInternalServerError, domain.NewDomainError("INTERNAL_ERROR", "Failed to fetch user"))
+		return
+	}
+
+	user.IsActive = active
+	if err := h.userRepo.Update(r.Context(), user); err != nil {
+		shared.WriteError(w, http.StatusInternalServerError, domain.NewDomainError("INTERNAL_ERROR", "Failed to update user"))
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}

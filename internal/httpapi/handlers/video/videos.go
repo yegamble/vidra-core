@@ -412,3 +412,52 @@ func GetUserVideosHandler(repo usecase.VideoRepository) http.HandlerFunc {
 		shared.WriteJSONWithMeta(w, http.StatusOK, videos, meta)
 	}
 }
+
+// GetVideoSourceHandler handles GET /api/v1/videos/{id}/source.
+// Returns the download URL for the original source file (S3 or local path).
+// Only the video owner may access the source file.
+func GetVideoSourceHandler(repo usecase.VideoRepository) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		videoID, ok := shared.RequireUUIDParam(w, r, "id", "MISSING_VIDEO_ID", "INVALID_VIDEO_ID", "Video ID is required", "Invalid video ID format")
+		if !ok {
+			return
+		}
+
+		requesterID, _ := r.Context().Value(middleware.UserIDKey).(string)
+		if requesterID == "" {
+			shared.WriteError(w, http.StatusUnauthorized, domain.NewDomainError("UNAUTHORIZED", "Authentication required"))
+			return
+		}
+
+		video, err := repo.GetByID(r.Context(), videoID)
+		if err != nil {
+			if domainErr, ok := err.(domain.DomainError); ok {
+				shared.WriteError(w, http.StatusNotFound, domainErr)
+				return
+			}
+			shared.WriteError(w, http.StatusInternalServerError, domain.NewDomainError("GET_FAILED", "Failed to get video"))
+			return
+		}
+
+		requesterRole, _ := r.Context().Value(middleware.UserRoleKey).(string)
+		if video.UserID != requesterID && requesterRole != string(domain.RoleAdmin) {
+			shared.WriteError(w, http.StatusForbidden, domain.NewDomainError("FORBIDDEN", "Only the video owner or an admin can access the source file"))
+			return
+		}
+
+		// Prefer S3 URL, fall back to local output path.
+		downloadURL := video.S3URLs["source"]
+		if downloadURL == "" {
+			downloadURL = video.OutputPaths["source"]
+		}
+		if downloadURL == "" {
+			shared.WriteError(w, http.StatusNotFound, domain.NewDomainError("SOURCE_NOT_FOUND", "Source file is no longer available"))
+			return
+		}
+
+		shared.WriteJSON(w, http.StatusOK, map[string]interface{}{
+			"fileDownloadUrl": downloadURL,
+			"filename":        video.Title + ".mp4",
+		})
+	}
+}

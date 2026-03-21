@@ -260,6 +260,10 @@ func (r *mockEncodingRepository) GetActiveJobsByVideoID(ctx context.Context, vid
 	return jobs, nil
 }
 
+func (r *mockEncodingRepository) ListJobsByStatus(_ context.Context, _ string) ([]*domain.EncodingJob, error) {
+	return nil, nil
+}
+
 type mockVideoRepository struct {
 	videos map[string]*domain.Video
 }

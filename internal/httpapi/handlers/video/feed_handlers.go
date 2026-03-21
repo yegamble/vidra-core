@@ -271,6 +271,104 @@ func (h *FeedHandlers) SubscriptionFeedRSS(w http.ResponseWriter, r *http.Reques
 	writeRSSFeed(w, feed)
 }
 
+// --- Podcast RSS 2.0 types (iTunes namespace) ---
+
+type podcastRSSFeed struct {
+	XMLName xml.Name       `xml:"rss"`
+	Version string         `xml:"version,attr"`
+	XMLNS   string         `xml:"xmlns:itunes,attr"`
+	Channel podcastChannel `xml:"channel"`
+}
+
+type podcastChannel struct {
+	Title       string         `xml:"title"`
+	Link        string         `xml:"link"`
+	Description string         `xml:"description"`
+	Language    string         `xml:"language"`
+	Items       []podcastItem  `xml:"item"`
+}
+
+type podcastItem struct {
+	Title     string          `xml:"title"`
+	Link      string          `xml:"link"`
+	GUID      string          `xml:"guid"`
+	PubDate   string          `xml:"pubDate"`
+	Summary   string          `xml:"itunes:summary"`
+	Duration  string          `xml:"itunes:duration"`
+	Enclosure podcastEnclosure `xml:"enclosure"`
+}
+
+type podcastEnclosure struct {
+	URL    string `xml:"url,attr"`
+	Length int64  `xml:"length,attr"`
+	Type   string `xml:"type,attr"`
+}
+
+// PodcastFeed handles GET /feeds/podcast/videos.xml — returns podcast-compatible RSS 2.0.
+func (h *FeedHandlers) PodcastFeed(w http.ResponseWriter, r *http.Request) {
+	req := &domain.VideoSearchRequest{
+		Privacy: domain.PrivacyPublic,
+		Sort:    "upload_date",
+		Order:   "desc",
+		Limit:   20,
+	}
+	if channelIDStr := r.URL.Query().Get("videoChannelId"); channelIDStr != "" {
+		if id, err := uuid.Parse(channelIDStr); err == nil {
+			req.ChannelID = &id
+		}
+	}
+
+	videos, _, err := h.videoRepo.List(r.Context(), req)
+	if err != nil {
+		http.Error(w, "Failed to load videos", http.StatusInternalServerError)
+		return
+	}
+
+	feed := &podcastRSSFeed{
+		Version: "2.0",
+		XMLNS:   "http://www.itunes.com/dtds/podcast-1.0.dtd",
+		Channel: podcastChannel{
+			Title:       "Videos Podcast Feed",
+			Link:        h.baseURL,
+			Description: "Recent public videos as a podcast",
+			Language:    "en",
+		},
+	}
+
+	for _, v := range videos {
+		mimeType := v.MimeType
+		if mimeType == "" {
+			mimeType = "video/mp4"
+		}
+		videoURL := v.S3URLs["source"]
+		if videoURL == "" {
+			videoURL = fmt.Sprintf("%s/videos/%s/stream", h.baseURL, v.ID)
+		}
+		durationStr := fmt.Sprintf("%d:%02d", v.Duration/60, v.Duration%60)
+		item := podcastItem{
+			Title:    v.Title,
+			Link:     fmt.Sprintf("%s/videos/%s", h.baseURL, v.ID),
+			GUID:     fmt.Sprintf("%s/videos/%s", h.baseURL, v.ID),
+			PubDate:  v.UploadDate.UTC().Format(time.RFC1123Z),
+			Summary:  v.Description,
+			Duration: durationStr,
+			Enclosure: podcastEnclosure{
+				URL:    videoURL,
+				Length: v.FileSize,
+				Type:   mimeType,
+			},
+		}
+		feed.Channel.Items = append(feed.Channel.Items, item)
+	}
+
+	w.Header().Set("Content-Type", "application/rss+xml; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(xml.Header))
+	enc := xml.NewEncoder(w)
+	enc.Indent("", "  ")
+	_ = enc.Encode(feed)
+}
+
 // CommentsFeed handles GET /feeds/video-comments.atom — returns Atom feed of comments.
 // If the "videoId" query param is provided, returns comments for that video.
 // Otherwise returns an empty feed.

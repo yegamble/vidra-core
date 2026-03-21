@@ -28,6 +28,7 @@ type EncodingScheduler struct {
 	mu     sync.RWMutex
 	status Status
 	cancel context.CancelFunc
+	paused bool
 }
 
 // NewEncodingScheduler creates a new scheduler.
@@ -69,6 +70,12 @@ func (s *EncodingScheduler) Start(ctx context.Context) {
 		case <-localCtx.Done():
 			return
 		case <-ticker.C:
+			s.mu.RLock()
+			isPaused := s.paused
+			s.mu.RUnlock()
+			if isPaused {
+				continue
+			}
 			processedCount := 0
 			// Drain up to burst jobs per tick
 			for i := 0; i < s.burst; i++ {
@@ -94,4 +101,25 @@ func (s *EncodingScheduler) Stop() {
 		s.cancel()
 	}
 	s.mu.Unlock()
+}
+
+// Pause temporarily stops the scheduler from picking up new jobs.
+func (s *EncodingScheduler) Pause() {
+	s.mu.Lock()
+	s.paused = true
+	s.mu.Unlock()
+}
+
+// Resume re-enables job processing after a Pause.
+func (s *EncodingScheduler) Resume() {
+	s.mu.Lock()
+	s.paused = false
+	s.mu.Unlock()
+}
+
+// IsPaused reports whether the scheduler is currently paused.
+func (s *EncodingScheduler) IsPaused() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.paused
 }

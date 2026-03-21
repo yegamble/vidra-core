@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 
 	"athena/internal/domain"
@@ -340,6 +341,34 @@ func (r *ModerationRepository) UpdateInstanceConfig(ctx context.Context, key str
 
 	_, err := r.db.ExecContext(ctx, query, key, value, isPublic)
 	return err
+}
+
+// DeleteAllInstanceConfigs removes all custom instance config entries (resets to defaults).
+func (r *ModerationRepository) DeleteAllInstanceConfigs(ctx context.Context) error {
+	_, err := r.db.ExecContext(ctx, "DELETE FROM instance_config")
+	return err
+}
+
+// GetConfigValue retrieves a string value from instance_config by key.
+func (r *ModerationRepository) GetConfigValue(ctx context.Context, key string) (string, error) {
+	cfg, err := r.GetInstanceConfig(ctx, key)
+	if err != nil {
+		return "", err
+	}
+	var v string
+	if jsonErr := json.Unmarshal(cfg.Value, &v); jsonErr != nil {
+		return "", jsonErr
+	}
+	return v, nil
+}
+
+// SetConfigValue stores a string value in instance_config.
+func (r *ModerationRepository) SetConfigValue(ctx context.Context, key, value string) error {
+	b, err := json.Marshal(value)
+	if err != nil {
+		return err
+	}
+	return r.UpdateInstanceConfig(ctx, key, b, true)
 }
 
 // GetInstanceStats retrieves instance statistics

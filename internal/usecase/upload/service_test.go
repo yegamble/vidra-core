@@ -133,6 +133,10 @@ func (m *mockEncodingRepo) GetActiveJobsByVideoID(ctx context.Context, videoID s
 	return args.Get(0).([]*domain.EncodingJob), args.Error(1)
 }
 
+func (m *mockEncodingRepo) ListJobsByStatus(_ context.Context, _ string) ([]*domain.EncodingJob, error) {
+	return nil, nil
+}
+
 type mockVideoRepo struct{ mock.Mock }
 
 func (m *mockVideoRepo) Create(ctx context.Context, video *domain.Video) error {

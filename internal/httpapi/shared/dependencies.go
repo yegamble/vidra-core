@@ -55,6 +55,8 @@ type HandlerDependencies struct {
 	PasswordResetRepo     repository.PasswordResetRepository
 	BlacklistRepo         repository.BlacklistRepository
 	ChapterRepo           repository.ChapterRepository
+	TokenSessionRepo      port.TokenSessionRepository
+	ServerFollowingRepo   port.ServerFollowingRepository
 	UserBlockRepo         *repository.UserBlockRepository
 	AbuseMessageRepo         *repository.AbuseMessageRepository
 	LiveStreamSessionRepo    *repository.LiveStreamSessionRepository
@@ -89,7 +91,8 @@ type HandlerDependencies struct {
 	ChatServer *chat.ChatServer
 	ChatRepo   repository.ChatRepository
 
-	PluginRepo    *repository.PluginRepository
+	RegistrationRepo *repository.RegistrationRepository
+	PluginRepo       *repository.PluginRepository
 	PluginManager *plugin.Manager
 
 	RedundancyService any

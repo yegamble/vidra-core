@@ -1,9 +1,64 @@
 package admin
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
+
+	"athena/internal/httpapi/shared"
 )
+
+// configResetRepo is the minimal interface needed for config reset and homepage management.
+type configResetRepo interface {
+	DeleteAllInstanceConfigs(ctx context.Context) error
+	GetConfigValue(ctx context.Context, key string) (string, error)
+	SetConfigValue(ctx context.Context, key, value string) error
+}
+
+// ConfigResetHandlers provides config reset and custom homepage endpoints.
+type ConfigResetHandlers struct {
+	repo configResetRepo
+}
+
+// NewConfigResetHandlers creates a new ConfigResetHandlers.
+func NewConfigResetHandlers(repo configResetRepo) *ConfigResetHandlers {
+	return &ConfigResetHandlers{repo: repo}
+}
+
+// DeleteCustomConfig handles DELETE /api/v1/config/custom — resets all custom config to defaults.
+func (h *ConfigResetHandlers) DeleteCustomConfig(w http.ResponseWriter, r *http.Request) {
+	if err := h.repo.DeleteAllInstanceConfigs(r.Context()); err != nil {
+		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to reset config: %w", err))
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// GetCustomHomepage handles GET /api/v1/custom-pages/homepage/instance.
+func (h *ConfigResetHandlers) GetCustomHomepage(w http.ResponseWriter, r *http.Request) {
+	content, err := h.repo.GetConfigValue(r.Context(), "homepage_content")
+	if err != nil {
+		content = ""
+	}
+	shared.WriteJSON(w, http.StatusOK, map[string]string{"content": content})
+}
+
+// UpdateCustomHomepage handles PUT /api/v1/custom-pages/homepage/instance.
+func (h *ConfigResetHandlers) UpdateCustomHomepage(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Content string `json:"content"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		shared.WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid request body"))
+		return
+	}
+	if err := h.repo.SetConfigValue(r.Context(), "homepage_content", req.Content); err != nil {
+		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to update homepage: %w", err))
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
 
 // publicConfigResponse matches PeerTube GET /api/v1/config response shape
 type publicConfigResponse struct {

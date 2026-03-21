@@ -187,6 +187,10 @@ func (s *unitEncodingRepoStub) GetActiveJobsByVideoID(context.Context, string) (
 	return nil, nil
 }
 
+func (s *unitEncodingRepoStub) ListJobsByStatus(context.Context, string) ([]*domain.EncodingJob, error) {
+	return nil, nil
+}
+
 func decodeHandlerResponse(t *testing.T, rr *httptest.ResponseRecorder) Response {
 	t.Helper()
 	var response Response

@@ -417,3 +417,128 @@ func (m *mockAdminUserRepoListErr) List(_ context.Context, _, _ int) ([]*domain.
 func jsonBody(s string) *strings.Reader {
 	return strings.NewReader(s)
 }
+
+// ---------------------------------------------------------------------------
+// DeleteUser tests
+// ---------------------------------------------------------------------------
+
+func TestAdminDeleteUser_OK(t *testing.T) {
+	repo := &mockAdminUserRepo{users: newTestUsers()}
+	h := NewAdminUserHandlers(repo)
+
+	r := chi.NewRouter()
+	r.Delete("/admin/users/{id}", h.DeleteUser)
+
+	req := httptest.NewRequest(http.MethodDelete, "/admin/users/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", nil)
+	req = withAdminContext(req, "cccccccc-cccc-cccc-cccc-cccccccccccc")
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestAdminDeleteUser_NotFound(t *testing.T) {
+	repo := &mockAdminUserRepo{users: newTestUsers()}
+	h := NewAdminUserHandlers(repo)
+
+	r := chi.NewRouter()
+	r.Delete("/admin/users/{id}", h.DeleteUser)
+
+	req := httptest.NewRequest(http.MethodDelete, "/admin/users/ffffffff-ffff-ffff-ffff-ffffffffffff", nil)
+	req = withAdminContext(req, "cccccccc-cccc-cccc-cccc-cccccccccccc")
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestAdminDeleteUser_SelfDelete(t *testing.T) {
+	repo := &mockAdminUserRepo{users: newTestUsers()}
+	h := NewAdminUserHandlers(repo)
+
+	r := chi.NewRouter()
+	r.Delete("/admin/users/{id}", h.DeleteUser)
+
+	// Admin tries to delete themselves
+	req := httptest.NewRequest(http.MethodDelete, "/admin/users/cccccccc-cccc-cccc-cccc-cccccccccccc", nil)
+	req = withAdminContext(req, "cccccccc-cccc-cccc-cccc-cccccccccccc")
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 (self-delete forbidden), got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+// ---------------------------------------------------------------------------
+// BlockUser / UnblockUser tests
+// ---------------------------------------------------------------------------
+
+func TestAdminBlockUser_OK(t *testing.T) {
+	repo := &mockAdminUserRepo{users: newTestUsers()}
+	h := NewAdminUserHandlers(repo)
+
+	r := chi.NewRouter()
+	r.Post("/admin/users/{id}/block", h.BlockUser)
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/users/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa/block", nil)
+	req = withAdminContext(req, "cccccccc-cccc-cccc-cccc-cccccccccccc")
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	// Verify user is now blocked
+	user, _ := repo.GetByID(context.Background(), "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+	if user.IsActive {
+		t.Fatal("expected user to be blocked (IsActive=false)")
+	}
+}
+
+func TestAdminUnblockUser_OK(t *testing.T) {
+	users := newTestUsers()
+	users[0].IsActive = false // alice is blocked
+	repo := &mockAdminUserRepo{users: users}
+	h := NewAdminUserHandlers(repo)
+
+	r := chi.NewRouter()
+	r.Post("/admin/users/{id}/unblock", h.UnblockUser)
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/users/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa/unblock", nil)
+	req = withAdminContext(req, "cccccccc-cccc-cccc-cccc-cccccccccccc")
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	// Verify user is now active
+	user, _ := repo.GetByID(context.Background(), "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+	if !user.IsActive {
+		t.Fatal("expected user to be unblocked (IsActive=true)")
+	}
+}
+
+func TestAdminBlockUser_NotFound(t *testing.T) {
+	repo := &mockAdminUserRepo{users: newTestUsers()}
+	h := NewAdminUserHandlers(repo)
+
+	r := chi.NewRouter()
+	r.Post("/admin/users/{id}/block", h.BlockUser)
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/users/ffffffff-ffff-ffff-ffff-ffffffffffff/block", nil)
+	req = withAdminContext(req, "cccccccc-cccc-cccc-cccc-cccccccccccc")
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d: %s", rr.Code, rr.Body.String())
+	}
+}

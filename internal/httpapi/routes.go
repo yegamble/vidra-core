@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"athena/internal/httpapi/handlers/account"
 	"athena/internal/httpapi/handlers/admin"
 	"athena/internal/httpapi/handlers/auth"
 	backuphandlers "athena/internal/httpapi/handlers/backup"
@@ -135,6 +136,7 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 	r.Get("/feeds/video-comments.rss", feedHandlers.CommentsFeed)
 	r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/feeds/subscriptions.atom", feedHandlers.SubscriptionFeedAtom)
 	r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/feeds/subscriptions.rss", feedHandlers.SubscriptionFeedRSS)
+	r.Get("/feeds/podcast/videos.xml", feedHandlers.PodcastFeed)
 
 	if cfg.EnableActivityPub && deps.ActivityPubService != nil {
 		apHandlers := federation.NewActivityPubHandlers(deps.ActivityPubService, cfg, deps.UserRepo, deps.VideoRepo)
@@ -171,6 +173,7 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 			r.With(middleware.Auth(cfg.JWTSecret)).Post("/upload", video.UploadVideoFileHandler(deps.VideoRepo, cfg))
 			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{id}", video.GetVideoHandler(deps.VideoRepo, deps.CaptionService))
 			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{id}/stream", video.StreamVideoHandler(deps.VideoRepo))
+			r.With(middleware.Auth(cfg.JWTSecret)).Get("/{id}/source", video.GetVideoSourceHandler(deps.VideoRepo))
 			r.With(middleware.Auth(cfg.JWTSecret)).Get("/subscriptions", channel.ListSubscriptionVideosHandler(deps.SubRepo))
 
 			r.With(middleware.Auth(cfg.JWTSecret)).Post("/", video.CreateVideoHandler(deps.VideoRepo))
@@ -269,6 +272,7 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 			r.With(middleware.Auth(cfg.JWTSecret)).Post("/{id}/subscribe", channel.SubscribeToUserHandler(deps.SubRepo, deps.UserRepo))
 			r.With(middleware.Auth(cfg.JWTSecret)).Delete("/{id}/subscribe", channel.UnsubscribeFromUserHandler(deps.SubRepo))
 			r.With(middleware.Auth(cfg.JWTSecret)).Get("/me/subscriptions", channel.ListMySubscriptionsHandler(deps.SubRepo))
+			r.With(middleware.Auth(cfg.JWTSecret)).Get("/me/subscriptions/exist", channel.CheckSubscriptionsExistHandler(deps.SubRepo, deps.ChannelService))
 
 			channelHandlers := channel.NewChannelHandlers(deps.ChannelService, deps.SubRepo)
 			r.With(middleware.Auth(cfg.JWTSecret)).Get("/me/channels", channelHandlers.GetMyChannels)
@@ -282,6 +286,36 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 			r.With(middleware.Auth(cfg.JWTSecret)).Get("/me/notification-preferences", auth.GetNotificationPreferencesHandler(deps.NotificationPrefRepo))
 			r.With(middleware.Auth(cfg.JWTSecret)).Put("/me/notification-preferences", auth.UpdateNotificationPreferencesHandler(deps.NotificationPrefRepo))
 			r.With(middleware.Auth(cfg.JWTSecret)).Get("/me/video-quota-used", auth.GetVideoQuotaUsedHandler(deps.VideoRepo))
+
+			if deps.TokenSessionRepo != nil {
+				tokenSessionHandlers := auth.NewTokenSessionHandlers(deps.TokenSessionRepo)
+				r.With(middleware.Auth(cfg.JWTSecret)).Get("/{id}/token-sessions", tokenSessionHandlers.ListTokenSessions)
+				r.With(middleware.Auth(cfg.JWTSecret)).Post("/{id}/token-sessions/{tokenSessionId}/revoke", tokenSessionHandlers.RevokeTokenSession)
+			}
+		})
+
+		// PeerTube-compatible /video-channels/{channelHandle} routes
+		r.Route("/video-channels", func(r chi.Router) {
+			channelHandlers := channel.NewChannelHandlers(deps.ChannelService, deps.SubRepo)
+			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{channelHandle}", channelHandlers.GetChannelByHandleParam)
+			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{channelHandle}/videos", channelHandlers.GetChannelVideosByHandleParam)
+			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{channelHandle}/video-playlists", social.GetChannelPlaylistsHandler(deps.ChannelService, deps.PlaylistService))
+		})
+
+		// Playlist privacies (public, unauthenticated)
+		r.Route("/video-playlists", func(r chi.Router) {
+			ph := social.NewPlaylistHandlers(deps.PlaylistService)
+			r.Get("/privacies", ph.GetPrivacies)
+		})
+
+		// PeerTube-compatible handle-based account routes
+		r.Route("/accounts", func(r chi.Router) {
+			accountHandlers := account.NewAccountHandlers(deps.UserRepo, deps.VideoRepo, deps.ChannelService, deps.SubRepo)
+			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{name}", accountHandlers.GetAccount)
+			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{name}/videos", accountHandlers.GetAccountVideos)
+			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{name}/video-channels", accountHandlers.GetAccountVideoChannels)
+			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{name}/ratings", accountHandlers.GetAccountRatings)
+			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{name}/followers", accountHandlers.GetAccountFollowers)
 		})
 
 		r.Route("/messages", func(r chi.Router) {
@@ -336,8 +370,10 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 
 				if deps.ChannelRepo != nil {
 					channelMediaHandlers := channel.NewChannelMediaHandlers(deps.ChannelRepo)
-					r.Delete("/{id}/avatar", channelMediaHandlers.DeleteAvatar)
-					r.Delete("/{id}/banner", channelMediaHandlers.DeleteBanner)
+					r.With(middleware.Auth(cfg.JWTSecret)).Post("/{id}/avatar", channelMediaHandlers.UploadAvatar)
+					r.With(middleware.Auth(cfg.JWTSecret)).Delete("/{id}/avatar", channelMediaHandlers.DeleteAvatar)
+					r.With(middleware.Auth(cfg.JWTSecret)).Post("/{id}/banner", channelMediaHandlers.UploadBanner)
+					r.With(middleware.Auth(cfg.JWTSecret)).Delete("/{id}/banner", channelMediaHandlers.DeleteBanner)
 				}
 			})
 		})
@@ -459,6 +495,17 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/timeline", fedHandlers.GetTimeline)
 		})
 
+		if deps.ServerFollowingRepo != nil {
+			sfHandlers := federation.NewServerFollowingHandlers(deps.ServerFollowingRepo)
+			r.Get("/server/followers", sfHandlers.ListFollowers)
+			r.Get("/server/following", sfHandlers.ListFollowing)
+			r.With(middleware.Auth(cfg.JWTSecret), middleware.RequireRole(string(domain.RoleAdmin))).Post("/server/following", sfHandlers.FollowInstance)
+			r.With(middleware.Auth(cfg.JWTSecret), middleware.RequireRole(string(domain.RoleAdmin))).Delete("/server/following/{host}", sfHandlers.UnfollowInstance)
+			r.With(middleware.Auth(cfg.JWTSecret), middleware.RequireRole(string(domain.RoleAdmin))).Post("/server/followers/{host}/accept", sfHandlers.AcceptFollower)
+			r.With(middleware.Auth(cfg.JWTSecret), middleware.RequireRole(string(domain.RoleAdmin))).Post("/server/followers/{host}/reject", sfHandlers.RejectFollower)
+			r.With(middleware.Auth(cfg.JWTSecret), middleware.RequireRole(string(domain.RoleAdmin))).Delete("/server/followers/{host}", sfHandlers.DeleteFollower)
+		}
+
 		r.Route("/playlists", func(r chi.Router) {
 			playlistHandlers := social.NewPlaylistHandlers(deps.PlaylistService)
 
@@ -544,9 +591,24 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 			adminUserHandlers := admin.NewAdminUserHandlers(deps.UserRepo)
 			r.Get("/users", adminUserHandlers.ListUsers)
 			r.Put("/users/{id}", adminUserHandlers.UpdateUser)
+			r.Delete("/users/{id}", adminUserHandlers.DeleteUser)
+			r.Post("/users/{id}/block", adminUserHandlers.BlockUser)
+			r.Post("/users/{id}/unblock", adminUserHandlers.UnblockUser)
+
+			if deps.RegistrationRepo != nil {
+				regHandlers := admin.NewRegistrationHandlers(deps.RegistrationRepo, deps.UserRepo)
+				r.Get("/registrations", regHandlers.ListRegistrations)
+				r.Post("/registrations/{id}/accept", regHandlers.AcceptRegistration)
+				r.Post("/registrations/{id}/reject", regHandlers.RejectRegistration)
+			}
 
 			adminVideoHandlers := admin.NewAdminVideoHandlers(deps.VideoRepo)
 			r.Get("/videos", adminVideoHandlers.ListVideos)
+
+			jobHandlers := admin.NewJobHandlers(deps.EncodingRepo, deps.EncodingScheduler)
+			r.Get("/jobs/{state}", jobHandlers.ListJobs)
+			r.Post("/jobs/pause", jobHandlers.PauseJobs)
+			r.Post("/jobs/resume", jobHandlers.ResumeJobs)
 
 			r.Route("/abuse-reports", func(r chi.Router) {
 				r.Get("/", moderationHandlers.ListAbuseReports)
@@ -633,6 +695,7 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 			if deps.PluginManager != nil && deps.PluginRepo != nil {
 				log.Printf("Registering plugin admin routes...")
 				ph := pluginhandlers.NewPluginHandler(deps.PluginRepo, deps.PluginManager, nil, false)
+				pih := pluginhandlers.NewPluginInstallHandlers(deps.PluginManager)
 				r.Route("/plugins", func(r chi.Router) {
 					r.Get("/", ph.ListPlugins)
 					r.Get("/{name}", ph.GetPlugin)
@@ -642,6 +705,8 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 					r.Delete("/{name}", ph.UninstallPlugin)
 					r.Get("/statistics", ph.GetAllStatistics)
 					r.Post("/upload", ph.UploadPlugin)
+					r.Post("/install", pih.InstallPlugin)
+					r.Get("/available", pih.ListAvailablePlugins)
 				})
 			}
 		})
@@ -649,6 +714,18 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 		r.Route("/config", func(r chi.Router) {
 			r.Get("/", instanceHandlers.GetPublicConfig)
 			r.Get("/about", instanceHandlers.GetInstanceAboutPublic)
+			r.With(middleware.Auth(cfg.JWTSecret)).With(middleware.RequireRole(string(domain.RoleAdmin))).Delete("/custom", admin.NewConfigResetHandlers(deps.ModerationRepo).DeleteCustomConfig)
+			instanceMedia := admin.NewInstanceMediaHandlers(deps.ModerationRepo)
+			r.With(middleware.Auth(cfg.JWTSecret)).With(middleware.RequireRole(string(domain.RoleAdmin))).Post("/instance-avatar/pick", instanceMedia.UploadInstanceAvatar)
+			r.With(middleware.Auth(cfg.JWTSecret)).With(middleware.RequireRole(string(domain.RoleAdmin))).Delete("/instance-avatar/pick", instanceMedia.DeleteInstanceAvatar)
+			r.With(middleware.Auth(cfg.JWTSecret)).With(middleware.RequireRole(string(domain.RoleAdmin))).Post("/instance-banner/pick", instanceMedia.UploadInstanceBanner)
+			r.With(middleware.Auth(cfg.JWTSecret)).With(middleware.RequireRole(string(domain.RoleAdmin))).Delete("/instance-banner/pick", instanceMedia.DeleteInstanceBanner)
+		})
+
+		r.Route("/custom-pages", func(r chi.Router) {
+			configHandlers := admin.NewConfigResetHandlers(deps.ModerationRepo)
+			r.Get("/homepage/instance", configHandlers.GetCustomHomepage)
+			r.With(middleware.Auth(cfg.JWTSecret)).With(middleware.RequireRole(string(domain.RoleAdmin))).Put("/homepage/instance", configHandlers.UpdateCustomHomepage)
 		})
 
 		r.Route("/instance", func(r chi.Router) {

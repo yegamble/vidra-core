@@ -2,6 +2,7 @@ package channel
 
 import (
 	"context"
+	"io"
 	"net/http"
 
 	"athena/internal/domain"
@@ -11,6 +12,23 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 )
+
+var allowedImageMIMETypes = map[string]bool{
+	"image/png":  true,
+	"image/jpeg": true,
+	"image/webp": true,
+	"image/gif":  true,
+}
+
+// validateImageMIME reads the first 512 bytes of r and checks the detected
+// content type against the allowed image MIME types. Returns "" on success or
+// the detected type string if disallowed.
+func validateImageMIME(r io.Reader) (string, bool) {
+	buf := make([]byte, 512)
+	n, _ := r.Read(buf)
+	detected := http.DetectContentType(buf[:n])
+	return detected, allowedImageMIMETypes[detected]
+}
 
 // ChannelMediaRepository defines data access needed for channel media operations.
 type ChannelMediaRepository interface {
@@ -29,6 +47,100 @@ type ChannelMediaHandlers struct {
 // NewChannelMediaHandlers creates handlers for channel media endpoints.
 func NewChannelMediaHandlers(repo ChannelMediaRepository) *ChannelMediaHandlers {
 	return &ChannelMediaHandlers{repo: repo}
+}
+
+// UploadAvatar handles POST /api/v1/channels/{id}/avatar.
+func (h *ChannelMediaHandlers) UploadAvatar(w http.ResponseWriter, r *http.Request) {
+	channelID, userID, ok := h.extractIDs(w, r)
+	if !ok {
+		return
+	}
+
+	ownerID, err := h.repo.GetOwnerID(r.Context(), channelID)
+	if err != nil {
+		shared.WriteError(w, shared.MapDomainErrorToHTTP(err), err)
+		return
+	}
+
+	if ownerID != userID {
+		shared.WriteError(w, http.StatusForbidden, domain.ErrForbidden)
+		return
+	}
+
+	if err := r.ParseMultipartForm(5 << 20); err != nil {
+		shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("BAD_REQUEST", "Failed to parse upload"))
+		return
+	}
+
+	file, header, err := r.FormFile("avatarfile")
+	if err != nil {
+		shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("BAD_REQUEST", "Missing avatarfile field"))
+		return
+	}
+	defer file.Close()
+
+	if detected, ok := validateImageMIME(file); !ok {
+		shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_FILE_TYPE", "File type not allowed: "+detected))
+		return
+	}
+
+	if err := h.repo.SetAvatar(r.Context(), channelID, header.Filename, ""); err != nil {
+		shared.WriteError(w, http.StatusInternalServerError, domain.NewDomainError("INTERNAL_ERROR", "Failed to set avatar"))
+		return
+	}
+
+	shared.WriteJSON(w, http.StatusOK, map[string]interface{}{
+		"avatars": []map[string]interface{}{
+			{"path": "/lazy-static/avatars/" + header.Filename},
+		},
+	})
+}
+
+// UploadBanner handles POST /api/v1/channels/{id}/banner.
+func (h *ChannelMediaHandlers) UploadBanner(w http.ResponseWriter, r *http.Request) {
+	channelID, userID, ok := h.extractIDs(w, r)
+	if !ok {
+		return
+	}
+
+	ownerID, err := h.repo.GetOwnerID(r.Context(), channelID)
+	if err != nil {
+		shared.WriteError(w, shared.MapDomainErrorToHTTP(err), err)
+		return
+	}
+
+	if ownerID != userID {
+		shared.WriteError(w, http.StatusForbidden, domain.ErrForbidden)
+		return
+	}
+
+	if err := r.ParseMultipartForm(5 << 20); err != nil {
+		shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("BAD_REQUEST", "Failed to parse upload"))
+		return
+	}
+
+	file, header, err := r.FormFile("bannerfile")
+	if err != nil {
+		shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("BAD_REQUEST", "Missing bannerfile field"))
+		return
+	}
+	defer file.Close()
+
+	if detected, ok := validateImageMIME(file); !ok {
+		shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_FILE_TYPE", "File type not allowed: "+detected))
+		return
+	}
+
+	if err := h.repo.SetBanner(r.Context(), channelID, header.Filename, ""); err != nil {
+		shared.WriteError(w, http.StatusInternalServerError, domain.NewDomainError("INTERNAL_ERROR", "Failed to set banner"))
+		return
+	}
+
+	shared.WriteJSON(w, http.StatusOK, map[string]interface{}{
+		"banners": []map[string]interface{}{
+			{"path": "/lazy-static/banners/" + header.Filename},
+		},
+	})
 }
 
 // DeleteAvatar handles DELETE /api/v1/channels/{id}/avatar.
