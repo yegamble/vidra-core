@@ -742,3 +742,142 @@ func TestSecurityHeaders(t *testing.T) {
 	// For now, just verify response format
 	assert.Equal(t, "application/json", rr.Header().Get("Content-Type"))
 }
+
+func TestCreateWallet_ServiceError(t *testing.T) {
+	mockService := new(MockPaymentService)
+	mockService.On("CreateWallet", mock.Anything, mock.Anything).Return(nil, errors.New("database error"))
+
+	handler := NewPaymentHandler(mockService)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/payments/wallet", nil)
+	ctx := context.WithValue(req.Context(), middleware.UserIDKey, uuid.New().String())
+	req = req.WithContext(ctx)
+	rr := httptest.NewRecorder()
+
+	handler.CreateWallet(rr, req)
+
+	assert.Equal(t, http.StatusInternalServerError, rr.Code)
+	mockService.AssertExpectations(t)
+}
+
+func TestGetWallet_ServiceError(t *testing.T) {
+	mockService := new(MockPaymentService)
+	mockService.On("GetWallet", mock.Anything, mock.Anything).Return(nil, errors.New("database error"))
+
+	handler := NewPaymentHandler(mockService)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/payments/wallet", nil)
+	ctx := context.WithValue(req.Context(), middleware.UserIDKey, uuid.New().String())
+	req = req.WithContext(ctx)
+	rr := httptest.NewRecorder()
+
+	handler.GetWallet(rr, req)
+
+	assert.Equal(t, http.StatusInternalServerError, rr.Code)
+	mockService.AssertExpectations(t)
+}
+
+func TestCreatePaymentIntent_InvalidJSON(t *testing.T) {
+	handler := NewPaymentHandler(nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/payments/intent", bytes.NewReader([]byte("{bad json")))
+	req.Header.Set("Content-Type", "application/json")
+	ctx := context.WithValue(req.Context(), middleware.UserIDKey, uuid.New().String())
+	req = req.WithContext(ctx)
+	rr := httptest.NewRecorder()
+
+	handler.CreatePaymentIntent(rr, req)
+
+	assert.Equal(t, http.StatusBadRequest, rr.Code)
+}
+
+func TestCreatePaymentIntent_ServiceError(t *testing.T) {
+	mockService := new(MockPaymentService)
+	mockService.On("CreatePaymentIntent", mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+		Return(nil, errors.New("service error"))
+
+	handler := NewPaymentHandler(mockService)
+	body := `{"amount_iota":1000}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/payments/intent", bytes.NewReader([]byte(body)))
+	req.Header.Set("Content-Type", "application/json")
+	ctx := context.WithValue(req.Context(), middleware.UserIDKey, uuid.New().String())
+	req = req.WithContext(ctx)
+	rr := httptest.NewRecorder()
+
+	handler.CreatePaymentIntent(rr, req)
+
+	assert.Equal(t, http.StatusInternalServerError, rr.Code)
+	mockService.AssertExpectations(t)
+}
+
+func TestGetPaymentIntent_ServiceError(t *testing.T) {
+	mockService := new(MockPaymentService)
+	mockService.On("GetPaymentIntent", mock.Anything, mock.Anything).Return(nil, errors.New("db error"))
+
+	handler := NewPaymentHandler(mockService)
+	intentID := uuid.New().String()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/payments/intent/"+intentID, nil)
+	ctx := context.WithValue(req.Context(), middleware.UserIDKey, uuid.New().String())
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("id", intentID)
+	ctx = context.WithValue(ctx, chi.RouteCtxKey, rctx)
+	req = req.WithContext(ctx)
+	rr := httptest.NewRecorder()
+
+	handler.GetPaymentIntent(rr, req)
+
+	assert.Equal(t, http.StatusInternalServerError, rr.Code)
+	mockService.AssertExpectations(t)
+}
+
+func TestGetTransactionHistory_EmptyList(t *testing.T) {
+	mockService := new(MockPaymentService)
+	mockService.On("GetTransactionHistory", mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+		Return([]*domain.IOTATransaction{}, nil)
+
+	handler := NewPaymentHandler(mockService)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/payments/transactions", nil)
+	ctx := context.WithValue(req.Context(), middleware.UserIDKey, uuid.New().String())
+	req = req.WithContext(ctx)
+	rr := httptest.NewRecorder()
+
+	handler.GetTransactionHistory(rr, req)
+
+	assert.Equal(t, http.StatusOK, rr.Code)
+	mockService.AssertExpectations(t)
+}
+
+func TestGetTransactionHistory_ServiceError(t *testing.T) {
+	mockService := new(MockPaymentService)
+	mockService.On("GetTransactionHistory", mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+		Return(nil, errors.New("service error"))
+
+	handler := NewPaymentHandler(mockService)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/payments/transactions", nil)
+	ctx := context.WithValue(req.Context(), middleware.UserIDKey, uuid.New().String())
+	req = req.WithContext(ctx)
+	rr := httptest.NewRecorder()
+
+	handler.GetTransactionHistory(rr, req)
+
+	assert.Equal(t, http.StatusInternalServerError, rr.Code)
+	mockService.AssertExpectations(t)
+}
+
+func TestPaymentHandler_ContentType(t *testing.T) {
+	mockService := new(MockPaymentService)
+	mockService.On("GetWallet", mock.Anything, mock.Anything).Return(&domain.IOTAWallet{
+		ID:      uuid.New().String(),
+		UserID:  uuid.New().String(),
+		Address: "iota1qtest",
+	}, nil)
+
+	handler := NewPaymentHandler(mockService)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/payments/wallet", nil)
+	ctx := context.WithValue(req.Context(), middleware.UserIDKey, uuid.New().String())
+	req = req.WithContext(ctx)
+	rr := httptest.NewRecorder()
+
+	handler.GetWallet(rr, req)
+
+	assert.Equal(t, http.StatusOK, rr.Code)
+	assert.Contains(t, rr.Header().Get("Content-Type"), "application/json")
+	mockService.AssertExpectations(t)
+}

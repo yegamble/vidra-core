@@ -287,3 +287,27 @@ func TestPluginHandlers_UploadValidationBranches(t *testing.T) {
 		require.Equal(t, http.StatusBadRequest, rr.Code)
 	})
 }
+
+func TestExtractManifest_MissingName(t *testing.T) {
+	h := NewPluginHandler(nil, nil, nil, false)
+	zipBytes := makeZipBytes(t, map[string]string{
+		"plugin.json": `{"version":"1.0.0","author":"alice"}`,
+	})
+	_, err := h.extractManifest(zipBytes)
+	require.Error(t, err, "manifest without name should fail validation")
+}
+
+func TestExtractManifest_MissingVersion(t *testing.T) {
+	h := NewPluginHandler(nil, nil, nil, false)
+	zipBytes := makeZipBytes(t, map[string]string{
+		"plugin.json": `{"name":"demo","author":"alice"}`,
+	})
+	_, err := h.extractManifest(zipBytes)
+	require.Error(t, err, "manifest without version should fail validation")
+}
+
+func TestConvertEventTypes_Empty(t *testing.T) {
+	result := convertEventTypesToStrings(nil)
+	require.NotNil(t, result)
+	require.Empty(t, result)
+}

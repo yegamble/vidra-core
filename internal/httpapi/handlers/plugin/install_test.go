@@ -63,3 +63,78 @@ func TestListAvailablePlugins_OK(t *testing.T) {
 		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
 	}
 }
+
+func TestInstallPlugin_HTTPUrl(t *testing.T) {
+	installer := &mockPluginInstaller{}
+	h := NewPluginInstallHandlers(installer)
+
+	body := `{"pluginURL":"http://example.com/plugin.zip"}`
+	req := httptest.NewRequest(http.MethodPost, "/admin/plugins/install", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	h.InstallPlugin(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for http URL, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestInstallPlugin_FTPUrl(t *testing.T) {
+	installer := &mockPluginInstaller{}
+	h := NewPluginInstallHandlers(installer)
+
+	body := `{"pluginURL":"ftp://example.com/plugin.zip"}`
+	req := httptest.NewRequest(http.MethodPost, "/admin/plugins/install", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	h.InstallPlugin(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for ftp URL, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestInstallPlugin_InvalidJSON(t *testing.T) {
+	installer := &mockPluginInstaller{}
+	h := NewPluginInstallHandlers(installer)
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/plugins/install", strings.NewReader("{bad json"))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	h.InstallPlugin(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for invalid JSON, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestInstallPlugin_ServiceError(t *testing.T) {
+	installer := &mockPluginInstaller{err: context.DeadlineExceeded}
+	h := NewPluginInstallHandlers(installer)
+
+	body := `{"pluginURL":"https://example.com/plugin.zip"}`
+	req := httptest.NewRequest(http.MethodPost, "/admin/plugins/install", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	h.InstallPlugin(rr, req)
+
+	if rr.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500 for service error, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestListAvailablePlugins_ResponseShape(t *testing.T) {
+	installer := &mockPluginInstaller{}
+	h := NewPluginInstallHandlers(installer)
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/plugins/available", nil)
+	rr := httptest.NewRecorder()
+	h.ListAvailablePlugins(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	if ct := rr.Header().Get("Content-Type"); ct == "" {
+		t.Fatalf("expected Content-Type header, got empty")
+	}
+}
