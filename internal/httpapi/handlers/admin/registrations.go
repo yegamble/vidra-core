@@ -20,6 +20,7 @@ type RegistrationRepository interface {
 	ListPending(ctx context.Context) ([]*domain.UserRegistration, error)
 	GetByID(ctx context.Context, id uuid.UUID) (*domain.UserRegistration, error)
 	UpdateStatus(ctx context.Context, id uuid.UUID, status, response string) error
+	Delete(ctx context.Context, id uuid.UUID) error
 }
 
 // UserCreator provisions a user account from a registration.
@@ -103,6 +104,26 @@ func (h *RegistrationHandlers) AcceptRegistration(w http.ResponseWriter, r *http
 // RejectRegistration handles POST /api/v1/admin/registrations/{id}/reject.
 func (h *RegistrationHandlers) RejectRegistration(w http.ResponseWriter, r *http.Request) {
 	h.updateRegistrationStatus(w, r, "rejected")
+}
+
+// DeleteRegistration handles DELETE /api/v1/admin/registrations/{id}.
+func (h *RegistrationHandlers) DeleteRegistration(w http.ResponseWriter, r *http.Request) {
+	idStr := chi.URLParam(r, "id")
+	id, err := uuid.Parse(idStr)
+	if err != nil {
+		shared.WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid registration ID"))
+		return
+	}
+
+	if err := h.repo.Delete(r.Context(), id); err != nil {
+		if errors.Is(err, domain.ErrNotFound) {
+			shared.WriteError(w, http.StatusNotFound, fmt.Errorf("registration not found"))
+			return
+		}
+		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to delete registration: %w", err))
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *RegistrationHandlers) updateRegistrationStatus(w http.ResponseWriter, r *http.Request, status string) {

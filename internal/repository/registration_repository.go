@@ -63,3 +63,16 @@ func (r *RegistrationRepository) UpdateStatus(ctx context.Context, id uuid.UUID,
 	}
 	return nil
 }
+
+// Delete permanently removes a registration by its UUID.
+func (r *RegistrationRepository) Delete(ctx context.Context, id uuid.UUID) error {
+	res, err := r.db.ExecContext(ctx, `DELETE FROM user_registrations WHERE id = $1`, id)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return domain.ErrNotFound
+	}
+	return nil
+}

@@ -62,6 +62,19 @@ func (m *mockRegistrationRepo) UpdateStatus(_ context.Context, id uuid.UUID, sta
 	return domain.ErrNotFound
 }
 
+func (m *mockRegistrationRepo) Delete(_ context.Context, id uuid.UUID) error {
+	if m.err != nil {
+		return m.err
+	}
+	for i, r := range m.registrations {
+		if r.ID == id {
+			m.registrations = append(m.registrations[:i], m.registrations[i+1:]...)
+			return nil
+		}
+	}
+	return domain.ErrNotFound
+}
+
 type mockUserCreator struct {
 	created []*domain.User
 	err     error
@@ -153,6 +166,43 @@ func TestRejectRegistration_OK(t *testing.T) {
 	}
 	if repo.registrations[0].Status != "rejected" {
 		t.Fatalf("expected status=rejected, got %q", repo.registrations[0].Status)
+	}
+}
+
+func TestDeleteRegistration_OK(t *testing.T) {
+	repo := &mockRegistrationRepo{registrations: newTestRegistrations()}
+	h := NewRegistrationHandlers(repo, nil)
+
+	r := chi.NewRouter()
+	r.Delete("/admin/registrations/{id}", h.DeleteRegistration)
+
+	req := httptest.NewRequest(http.MethodDelete, "/admin/registrations/11111111-1111-1111-1111-111111111111", nil)
+	req = withAdminContext(req, "cccccccc-cccc-cccc-cccc-cccccccccccc")
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d: %s", rr.Code, rr.Body.String())
+	}
+	if len(repo.registrations) != 1 {
+		t.Fatalf("expected 1 registration remaining, got %d", len(repo.registrations))
+	}
+}
+
+func TestDeleteRegistration_NotFound(t *testing.T) {
+	repo := &mockRegistrationRepo{registrations: newTestRegistrations()}
+	h := NewRegistrationHandlers(repo, nil)
+
+	r := chi.NewRouter()
+	r.Delete("/admin/registrations/{id}", h.DeleteRegistration)
+
+	req := httptest.NewRequest(http.MethodDelete, "/admin/registrations/ffffffff-ffff-ffff-ffff-ffffffffffff", nil)
+	req = withAdminContext(req, "cccccccc-cccc-cccc-cccc-cccccccccccc")
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d: %s", rr.Code, rr.Body.String())
 	}
 }
 

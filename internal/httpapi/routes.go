@@ -9,6 +9,7 @@ import (
 	"athena/internal/httpapi/handlers/federation"
 	"athena/internal/httpapi/handlers/livestream"
 	"athena/internal/httpapi/handlers/messaging"
+	"athena/internal/httpapi/handlers/misc"
 	"athena/internal/httpapi/handlers/moderation"
 	"athena/internal/httpapi/handlers/payments"
 	pluginhandlers "athena/internal/httpapi/handlers/plugin"
@@ -488,6 +489,8 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 			r.With(middleware.Auth(cfg.JWTSecret), middleware.RequireRole(string(domain.RoleAdmin))).Post("/server/followers/{host}/reject", sfHandlers.RejectFollower)
 			r.With(middleware.Auth(cfg.JWTSecret), middleware.RequireRole(string(domain.RoleAdmin))).Delete("/server/followers/{host}", sfHandlers.DeleteFollower)
 		}
+		r.Post("/server/contact", misc.ContactFormHandler())
+		r.Get("/oauth-clients/local", misc.GetOAuthLocalHandler("local", cfg.JWTSecret))
 
 		r.Route("/playlists", func(r chi.Router) {
 			playlistHandlers := social.NewPlaylistHandlers(deps.PlaylistService)
@@ -780,6 +783,7 @@ func registerAdminAPIRoutes(
 			r.Get("/registrations", regHandlers.ListRegistrations)
 			r.Post("/registrations/{id}/accept", regHandlers.AcceptRegistration)
 			r.Post("/registrations/{id}/reject", regHandlers.RejectRegistration)
+			r.Delete("/registrations/{id}", regHandlers.DeleteRegistration)
 		}
 
 		adminVideoHandlers := admin.NewAdminVideoHandlers(deps.VideoRepo)
