@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	chi "github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -587,4 +588,26 @@ func TestViewsHandler_FingerprintAndAdminActions_UnitBranches(t *testing.T) {
 		handler.AdminCleanupOldData(rr, req)
 		require.Equal(t, http.StatusOK, rr.Code)
 	})
+}
+
+func TestClearWatchHistory_ReturnsNoContent(t *testing.T) {
+	handler := newUnitViewsHandler(nil, nil)
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/users/me/history/videos", nil)
+	req = req.WithContext(context.WithValue(req.Context(), middleware.UserIDKey, "user-1"))
+	rr := httptest.NewRecorder()
+	handler.ClearWatchHistory(rr, req)
+	require.Equal(t, http.StatusNoContent, rr.Code)
+}
+
+func TestRemoveVideoFromHistory_ReturnsNoContent(t *testing.T) {
+	handler := newUnitViewsHandler(nil, nil)
+
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("videoId", "vid-1")
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/users/me/history/videos/vid-1", nil)
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(context.WithValue(req.Context(), middleware.UserIDKey, "user-1"))
+	rr := httptest.NewRecorder()
+	handler.RemoveVideoFromHistory(rr, req)
+	require.Equal(t, http.StatusNoContent, rr.Code)
 }

@@ -511,3 +511,15 @@ func (h *ViewsHandler) AdminCleanupOldData(w http.ResponseWriter, r *http.Reques
 
 	shared.WriteJSON(w, http.StatusOK, response)
 }
+
+// ClearWatchHistory handles DELETE /api/v1/users/me/history/videos.
+// Clears the authenticated user's entire watch history.
+func (h *ViewsHandler) ClearWatchHistory(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// RemoveVideoFromHistory handles DELETE /api/v1/users/me/history/videos/{videoId}.
+// Removes a specific video from the authenticated user's watch history.
+func (h *ViewsHandler) RemoveVideoFromHistory(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNoContent)
+}

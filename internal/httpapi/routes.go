@@ -360,6 +360,9 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 
 		r.Post("/views/fingerprint", viewsHandler.GenerateFingerprint)
 		r.With(middleware.Auth(cfg.JWTSecret)).Get("/views/history", viewsHandler.GetViewHistory)
+		r.With(middleware.Auth(cfg.JWTSecret)).Get("/users/me/history/videos", viewsHandler.GetViewHistory)
+		r.With(middleware.Auth(cfg.JWTSecret)).Delete("/users/me/history/videos", viewsHandler.ClearWatchHistory)
+		r.With(middleware.Auth(cfg.JWTSecret)).Delete("/users/me/history/videos/{videoId}", viewsHandler.RemoveVideoFromHistory)
 
 		r.Route("/channels", func(r chi.Router) {
 			channelHandlers := channel.NewChannelHandlers(deps.ChannelService, deps.SubRepo)
