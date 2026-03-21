@@ -492,7 +492,10 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 		r.Route("/config", func(r chi.Router) {
 			r.Get("/", instanceHandlers.GetPublicConfig)
 			r.Get("/about", instanceHandlers.GetInstanceAboutPublic)
-			r.With(middleware.Auth(cfg.JWTSecret)).With(middleware.RequireRole(string(domain.RoleAdmin))).Delete("/custom", admin.NewConfigResetHandlers(deps.ModerationRepo).DeleteCustomConfig)
+			configResetHandlers := admin.NewConfigResetHandlers(deps.ModerationRepo)
+			r.With(middleware.Auth(cfg.JWTSecret)).With(middleware.RequireRole(string(domain.RoleAdmin))).Get("/custom", configResetHandlers.GetCustomConfig)
+			r.With(middleware.Auth(cfg.JWTSecret)).With(middleware.RequireRole(string(domain.RoleAdmin))).Put("/custom", configResetHandlers.UpdateCustomConfig)
+			r.With(middleware.Auth(cfg.JWTSecret)).With(middleware.RequireRole(string(domain.RoleAdmin))).Delete("/custom", configResetHandlers.DeleteCustomConfig)
 			instanceMedia := admin.NewInstanceMediaHandlers(deps.ModerationRepo)
 			r.With(middleware.Auth(cfg.JWTSecret)).With(middleware.RequireRole(string(domain.RoleAdmin))).Post("/instance-avatar/pick", instanceMedia.UploadInstanceAvatar)
 			r.With(middleware.Auth(cfg.JWTSecret)).With(middleware.RequireRole(string(domain.RoleAdmin))).Delete("/instance-avatar/pick", instanceMedia.DeleteInstanceAvatar)

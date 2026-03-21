@@ -35,6 +35,61 @@ func (h *ConfigResetHandlers) DeleteCustomConfig(w http.ResponseWriter, r *http.
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// customConfigBody is the request/response body for GET/PUT /api/v1/config/custom.
+type customConfigBody struct {
+	Instance customConfigInstance `json:"instance"`
+	Signup   customConfigSignup   `json:"signup"`
+}
+
+type customConfigInstance struct {
+	Name             string `json:"name"`
+	ShortDescription string `json:"shortDescription"`
+	Description      string `json:"description"`
+	IsNSFW           bool   `json:"isNSFW"`
+}
+
+type customConfigSignup struct {
+	Enabled bool `json:"enabled"`
+}
+
+// GetCustomConfig handles GET /api/v1/config/custom — admin only.
+func (h *ConfigResetHandlers) GetCustomConfig(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	cfg := customConfigBody{}
+	cfg.Instance.Name, _ = h.repo.GetConfigValue(ctx, "instance_name")
+	cfg.Instance.ShortDescription, _ = h.repo.GetConfigValue(ctx, "instance_short_description")
+	cfg.Instance.Description, _ = h.repo.GetConfigValue(ctx, "instance_description")
+	isNSFW, _ := h.repo.GetConfigValue(ctx, "instance_is_nsfw")
+	cfg.Instance.IsNSFW = isNSFW == "true"
+	signupEnabled, _ := h.repo.GetConfigValue(ctx, "signup_enabled")
+	cfg.Signup.Enabled = signupEnabled != "false"
+	shared.WriteJSON(w, http.StatusOK, cfg)
+}
+
+// UpdateCustomConfig handles PUT /api/v1/config/custom — admin only.
+func (h *ConfigResetHandlers) UpdateCustomConfig(w http.ResponseWriter, r *http.Request) {
+	var req customConfigBody
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		shared.WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid request body"))
+		return
+	}
+	ctx := r.Context()
+	_ = h.repo.SetConfigValue(ctx, "instance_name", req.Instance.Name)
+	_ = h.repo.SetConfigValue(ctx, "instance_short_description", req.Instance.ShortDescription)
+	_ = h.repo.SetConfigValue(ctx, "instance_description", req.Instance.Description)
+	isNSFW := "false"
+	if req.Instance.IsNSFW {
+		isNSFW = "true"
+	}
+	_ = h.repo.SetConfigValue(ctx, "instance_is_nsfw", isNSFW)
+	signupEnabled := "true"
+	if !req.Signup.Enabled {
+		signupEnabled = "false"
+	}
+	_ = h.repo.SetConfigValue(ctx, "signup_enabled", signupEnabled)
+	shared.WriteJSON(w, http.StatusOK, req)
+}
+
 // GetCustomHomepage handles GET /api/v1/custom-pages/homepage/instance.
 func (h *ConfigResetHandlers) GetCustomHomepage(w http.ResponseWriter, r *http.Request) {
 	content, err := h.repo.GetConfigValue(r.Context(), "homepage_content")
@@ -102,15 +157,15 @@ type publicConfigFeatures struct {
 
 // publicStatsResponse matches PeerTube GET /api/v1/instance/stats response shape
 type publicStatsResponse struct {
-	TotalUsers           int64 `json:"totalUsers"`
-	TotalDailyActiveUsers int64 `json:"totalDailyActiveUsers"`
-	TotalWeeklyActiveUsers int64 `json:"totalWeeklyActiveUsers"`
+	TotalUsers              int64 `json:"totalUsers"`
+	TotalDailyActiveUsers   int64 `json:"totalDailyActiveUsers"`
+	TotalWeeklyActiveUsers  int64 `json:"totalWeeklyActiveUsers"`
 	TotalMonthlyActiveUsers int64 `json:"totalMonthlyActiveUsers"`
-	TotalLocalVideos     int64 `json:"totalLocalVideos"`
-	TotalLocalVideoViews int64 `json:"totalLocalVideoViews"`
-	TotalInstanceFollowers int64 `json:"totalInstanceFollowers"`
-	TotalInstanceFollowing int64 `json:"totalInstanceFollowing"`
-	TotalVideos          int64 `json:"totalVideos"`
+	TotalLocalVideos        int64 `json:"totalLocalVideos"`
+	TotalLocalVideoViews    int64 `json:"totalLocalVideoViews"`
+	TotalInstanceFollowers  int64 `json:"totalInstanceFollowers"`
+	TotalInstanceFollowing  int64 `json:"totalInstanceFollowing"`
+	TotalVideos             int64 `json:"totalVideos"`
 }
 
 // GetPublicConfig handles GET /api/v1/config — public, no auth required.
