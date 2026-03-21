@@ -32,7 +32,7 @@ import (
 	importuc "athena/internal/usecase/import"
 )
 
-func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager *middleware.RateLimiterManager, deps *shared.HandlerDependencies) {
+func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager *middleware.RateLimiterManager, deps *shared.HandlerDependencies) { //nolint:gocyclo
 	generalLimiter := rlManager.CreateRateLimiter(cfg.RateLimitDuration, cfg.RateLimitRequests)
 	r.Use(generalLimiter.Limit)
 
@@ -184,6 +184,11 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 			r.With(middleware.Auth(cfg.JWTSecret)).Delete("/{id}", video.DeleteVideoHandler(deps.VideoRepo))
 			if deps.OwnershipRepo != nil {
 				r.With(middleware.Auth(cfg.JWTSecret)).Post("/{id}/give-ownership", video.GiveOwnershipHandler(deps.OwnershipRepo, deps.VideoRepo))
+			}
+			r.With(middleware.Auth(cfg.JWTSecret)).Delete("/{id}/source", video.DeleteVideoSourceHandler(deps.VideoRepo))
+			if deps.Redis != nil {
+				tokenStore := repository.NewRedisVideoTokenStore(deps.Redis)
+				r.With(middleware.Auth(cfg.JWTSecret)).Post("/{id}/token", video.CreateVideoTokenHandler(deps.VideoRepo, tokenStore))
 			}
 
 			r.With(middleware.Auth(cfg.JWTSecret)).Post("/{id}/upload", video.VideoUploadChunkHandler(deps.UploadService, cfg))
