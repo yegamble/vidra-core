@@ -114,6 +114,8 @@ type VideoSearchRequest struct {
 	Query      string     `json:"query"`
 	Tags       []string   `json:"tags"`
 	CategoryID *uuid.UUID `json:"category_id"`
+	ChannelID  *uuid.UUID `json:"channel_id"`
+	AccountID  *uuid.UUID `json:"account_id"`
 	Language   string     `json:"language"`
 	Privacy    Privacy    `json:"privacy"`
 	Sort       string     `json:"sort"`

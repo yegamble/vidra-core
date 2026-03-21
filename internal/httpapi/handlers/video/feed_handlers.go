@@ -3,6 +3,7 @@ package video
 import (
 	"encoding/xml"
 	"fmt"
+	"log"
 	"net/http"
 	"time"
 
@@ -97,12 +98,23 @@ func writeRSSFeed(w http.ResponseWriter, feed *rssFeed) {
 
 // VideosFeed handles GET /feeds/videos.atom — returns Atom 1.0 feed of recent public videos.
 func (h *FeedHandlers) VideosFeed(w http.ResponseWriter, r *http.Request) {
-	videos, _, err := h.videoRepo.List(r.Context(), &domain.VideoSearchRequest{
+	req := &domain.VideoSearchRequest{
 		Privacy: domain.PrivacyPublic,
 		Sort:    "upload_date",
 		Order:   "desc",
 		Limit:   20,
-	})
+	}
+	if channelIDStr := r.URL.Query().Get("videoChannelId"); channelIDStr != "" {
+		if id, err := uuid.Parse(channelIDStr); err == nil {
+			req.ChannelID = &id
+		}
+	}
+	if accountIDStr := r.URL.Query().Get("accountId"); accountIDStr != "" {
+		if id, err := uuid.Parse(accountIDStr); err == nil {
+			req.AccountID = &id
+		}
+	}
+	videos, _, err := h.videoRepo.List(r.Context(), req)
 	if err != nil {
 		http.Error(w, "Failed to load videos", http.StatusInternalServerError)
 		return
@@ -134,12 +146,23 @@ func (h *FeedHandlers) VideosFeed(w http.ResponseWriter, r *http.Request) {
 
 // VideosFeedRSS handles GET /feeds/videos.rss — returns RSS 2.0 feed of recent public videos.
 func (h *FeedHandlers) VideosFeedRSS(w http.ResponseWriter, r *http.Request) {
-	videos, _, err := h.videoRepo.List(r.Context(), &domain.VideoSearchRequest{
+	req := &domain.VideoSearchRequest{
 		Privacy: domain.PrivacyPublic,
 		Sort:    "upload_date",
 		Order:   "desc",
 		Limit:   20,
-	})
+	}
+	if channelIDStr := r.URL.Query().Get("videoChannelId"); channelIDStr != "" {
+		if id, err := uuid.Parse(channelIDStr); err == nil {
+			req.ChannelID = &id
+		}
+	}
+	if accountIDStr := r.URL.Query().Get("accountId"); accountIDStr != "" {
+		if id, err := uuid.Parse(accountIDStr); err == nil {
+			req.AccountID = &id
+		}
+	}
+	videos, _, err := h.videoRepo.List(r.Context(), req)
 	if err != nil {
 		http.Error(w, "Failed to load videos", http.StatusInternalServerError)
 		return
@@ -189,7 +212,9 @@ func (h *FeedHandlers) CommentsFeed(w http.ResponseWriter, r *http.Request) {
 				VideoID: videoID,
 				Limit:   20,
 			})
-			if err == nil {
+			if err != nil {
+				log.Printf("feed: failed to list comments for video %s: %v", videoIDStr, err)
+			} else {
 				for _, c := range comments {
 					entry := atomEntry{
 						Title:   fmt.Sprintf("Comment by %s", c.Username),

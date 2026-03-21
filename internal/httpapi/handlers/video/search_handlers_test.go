@@ -136,7 +136,7 @@ func TestSearchChannelsHandler_ValidQuery(t *testing.T) {
 		return p.Search == "test"
 	})).Return(response, nil)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/search/video-channels?q=test", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/search/video-channels?search=test", nil)
 	w := httptest.NewRecorder()
 
 	SearchChannelsHandler(repo)(w, req)
@@ -162,7 +162,7 @@ func TestSearchPlaylistsHandler_ValidQuery(t *testing.T) {
 		return opts.Search == "test"
 	})).Return(playlists, 1, nil)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/search/video-playlists?q=test", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/search/video-playlists?search=test", nil)
 	w := httptest.NewRecorder()
 
 	SearchPlaylistsHandler(repo)(w, req)

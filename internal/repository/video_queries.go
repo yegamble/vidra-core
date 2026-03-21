@@ -189,9 +189,10 @@ func (r *videoRepository) List(ctx context.Context, req *domain.VideoSearchReque
                tags, category_id, language, file_size, mime_type, metadata,
                created_at, updated_at, output_paths, thumbnail_path, preview_path
         FROM videos
-        WHERE privacy = 'public' AND status = 'completed'`
+        WHERE privacy = 'public' AND status = 'completed'
+          AND NOT EXISTS (SELECT 1 FROM video_blacklist vb WHERE vb.video_id = videos.id)`
 
-	countQuery := `SELECT COUNT(*) FROM videos WHERE privacy = 'public' AND status = 'completed'`
+	countQuery := `SELECT COUNT(*) FROM videos WHERE privacy = 'public' AND status = 'completed' AND NOT EXISTS (SELECT 1 FROM video_blacklist vb WHERE vb.video_id = videos.id)`
 
 	args := []interface{}{}
 	argIndex := 1
@@ -207,6 +208,20 @@ func (r *videoRepository) List(ctx context.Context, req *domain.VideoSearchReque
 		baseQuery += fmt.Sprintf(" AND language = $%d", argIndex)
 		countQuery += fmt.Sprintf(" AND language = $%d", argIndex)
 		args = append(args, req.Language)
+		argIndex++
+	}
+
+	if req.ChannelID != nil {
+		baseQuery += fmt.Sprintf(" AND channel_id = $%d", argIndex)
+		countQuery += fmt.Sprintf(" AND channel_id = $%d", argIndex)
+		args = append(args, req.ChannelID)
+		argIndex++
+	}
+
+	if req.AccountID != nil {
+		baseQuery += fmt.Sprintf(" AND user_id = $%d", argIndex)
+		countQuery += fmt.Sprintf(" AND user_id = $%d", argIndex)
+		args = append(args, req.AccountID)
 		argIndex++
 	}
 
@@ -269,9 +284,10 @@ func (r *videoRepository) Search(ctx context.Context, req *domain.VideoSearchReq
                tags, category_id, language, file_size, mime_type, metadata,
                created_at, updated_at, output_paths, thumbnail_path, preview_path
         FROM videos
-        WHERE privacy = 'public' AND status = 'completed'`
+        WHERE privacy = 'public' AND status = 'completed'
+          AND NOT EXISTS (SELECT 1 FROM video_blacklist vb WHERE vb.video_id = videos.id)`
 
-	countQuery := `SELECT COUNT(*) FROM videos WHERE privacy = 'public' AND status = 'completed'`
+	countQuery := `SELECT COUNT(*) FROM videos WHERE privacy = 'public' AND status = 'completed' AND NOT EXISTS (SELECT 1 FROM video_blacklist vb WHERE vb.video_id = videos.id)`
 
 	args := []interface{}{}
 	argIndex := 1

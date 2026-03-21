@@ -11,7 +11,7 @@ import (
 // SearchChannelsHandler handles GET /api/v1/search/video-channels.
 func SearchChannelsHandler(repo port.ChannelRepository) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		query := r.URL.Query().Get("q")
+		query := r.URL.Query().Get("search")
 		if query == "" {
 			shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("MISSING_QUERY", "Search query is required"))
 			return
@@ -46,7 +46,7 @@ func SearchChannelsHandler(repo port.ChannelRepository) http.HandlerFunc {
 // SearchPlaylistsHandler handles GET /api/v1/search/video-playlists.
 func SearchPlaylistsHandler(repo port.PlaylistRepository) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		query := r.URL.Query().Get("q")
+		query := r.URL.Query().Get("search")
 		if query == "" {
 			shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("MISSING_QUERY", "Search query is required"))
 			return
