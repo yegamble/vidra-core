@@ -62,8 +62,8 @@ func TestListJobs_OK(t *testing.T) {
 	}
 
 	var resp struct {
-		Success bool                    `json:"success"`
-		Data    []*domain.EncodingJob   `json:"data"`
+		Success bool                  `json:"success"`
+		Data    []*domain.EncodingJob `json:"data"`
 	}
 	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode: %v", err)

@@ -281,20 +281,20 @@ type podcastRSSFeed struct {
 }
 
 type podcastChannel struct {
-	Title       string         `xml:"title"`
-	Link        string         `xml:"link"`
-	Description string         `xml:"description"`
-	Language    string         `xml:"language"`
-	Items       []podcastItem  `xml:"item"`
+	Title       string        `xml:"title"`
+	Link        string        `xml:"link"`
+	Description string        `xml:"description"`
+	Language    string        `xml:"language"`
+	Items       []podcastItem `xml:"item"`
 }
 
 type podcastItem struct {
-	Title     string          `xml:"title"`
-	Link      string          `xml:"link"`
-	GUID      string          `xml:"guid"`
-	PubDate   string          `xml:"pubDate"`
-	Summary   string          `xml:"itunes:summary"`
-	Duration  string          `xml:"itunes:duration"`
+	Title     string           `xml:"title"`
+	Link      string           `xml:"link"`
+	GUID      string           `xml:"guid"`
+	PubDate   string           `xml:"pubDate"`
+	Summary   string           `xml:"itunes:summary"`
+	Duration  string           `xml:"itunes:duration"`
 	Enclosure podcastEnclosure `xml:"enclosure"`
 }
 
