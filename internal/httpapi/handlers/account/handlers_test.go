@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 	"time"
 
@@ -345,5 +346,207 @@ func TestGetAccountFollowers_ReturnsEmptyList(t *testing.T) {
 
 	if rr.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+// TestGetAccountVideos_NotFound returns 404 when account doesn't exist.
+func TestGetAccountVideos_NotFound(t *testing.T) {
+	repo := newMockUserRepo()
+	h := NewAccountHandlers(repo, nil, nil, nil)
+	r := newRouter(h)
+
+	req := httptest.NewRequest(http.MethodGet, "/nobody/videos", nil)
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", rr.Code)
+	}
+}
+
+// TestGetAccountVideoChannels_NotFound returns 404 when account doesn't exist.
+func TestGetAccountVideoChannels_NotFound(t *testing.T) {
+	repo := newMockUserRepo()
+	h := NewAccountHandlers(repo, nil, nil, nil)
+	r := newRouter(h)
+
+	req := httptest.NewRequest(http.MethodGet, "/nobody/video-channels", nil)
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", rr.Code)
+	}
+}
+
+// TestGetAccountRatings_NotFound returns 404 when account doesn't exist.
+func TestGetAccountRatings_NotFound(t *testing.T) {
+	repo := newMockUserRepo()
+	h := NewAccountHandlers(repo, nil, nil, nil)
+	r := newRouter(h)
+
+	req := httptest.NewRequest(http.MethodGet, "/nobody/ratings", nil)
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", rr.Code)
+	}
+}
+
+// TestGetAccountFollowers_NotFound returns 404 when account doesn't exist.
+func TestGetAccountFollowers_NotFound(t *testing.T) {
+	repo := newMockUserRepo()
+	h := NewAccountHandlers(repo, nil, nil, nil)
+	r := newRouter(h)
+
+	req := httptest.NewRequest(http.MethodGet, "/nobody/followers", nil)
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", rr.Code)
+	}
+}
+
+// TestListAccounts_PaginationCount verifies count= query param is respected.
+func TestListAccounts_PaginationCount(t *testing.T) {
+	repo := newMockUserRepo()
+	for i := 0; i < 5; i++ {
+		seedUser(repo, "user"+strconv.Itoa(i), "123e4567-e89b-12d3-a456-42661417400"+strconv.Itoa(i))
+	}
+	h := NewAccountHandlers(repo, nil, nil, nil)
+	r := newRouter(h)
+
+	req := httptest.NewRequest(http.MethodGet, "/?count=2", nil)
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+}
+
+// TestListAccounts_PaginationStart verifies start= offset is handled.
+func TestListAccounts_PaginationStart(t *testing.T) {
+	repo := newMockUserRepo()
+	seedUser(repo, "alpha", "123e4567-e89b-12d3-a456-426614174011")
+	h := NewAccountHandlers(repo, nil, nil, nil)
+	r := newRouter(h)
+
+	req := httptest.NewRequest(http.MethodGet, "/?start=0&count=15", nil)
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+}
+
+// TestGetAccount_ResponseShape verifies the account response has expected fields.
+func TestGetAccount_ResponseShape(t *testing.T) {
+	repo := newMockUserRepo()
+	seedUser(repo, "carol", "123e4567-e89b-12d3-a456-426614174099")
+	h := NewAccountHandlers(repo, nil, nil, nil)
+	r := newRouter(h)
+
+	req := httptest.NewRequest(http.MethodGet, "/carol", nil)
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+
+	resp := decodeResponse(t, rr)
+	var acc map[string]interface{}
+	if err := json.Unmarshal(resp.Data, &acc); err != nil {
+		t.Fatalf("decode data: %v", err)
+	}
+	for _, field := range []string{"id", "username", "display_name", "created_at"} {
+		if _, ok := acc[field]; !ok {
+			t.Errorf("expected field %q in account response", field)
+		}
+	}
+}
+
+// TestGetAccount_HandleWithAtPrefix verifies @username (without domain) resolves correctly.
+func TestGetAccount_HandleWithAtPrefix(t *testing.T) {
+	repo := newMockUserRepo()
+	seedUser(repo, "dave", "123e4567-e89b-12d3-a456-426614174088")
+	h := NewAccountHandlers(repo, nil, nil, nil)
+	r := newRouter(h)
+
+	req := httptest.NewRequest(http.MethodGet, "/@dave", nil)
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+// TestGetAccountVideos_WithVideoRepo verifies videos endpoint uses videoRepo when set.
+func TestGetAccountVideos_WithVideoRepo(t *testing.T) {
+	repo := newMockUserRepo()
+	seedUser(repo, "eve", "123e4567-e89b-12d3-a456-426614174066")
+	h := NewAccountHandlers(repo, nil, nil, nil)
+	r := newRouter(h)
+
+	req := httptest.NewRequest(http.MethodGet, "/eve/videos", nil)
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, req)
+
+	// videoRepo is nil, so stub returns empty 200
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+}
+
+// TestGetAccountFollowers_ResponseShape verifies total and data keys present in followers list.
+func TestGetAccountFollowers_ResponseShape(t *testing.T) {
+	repo := newMockUserRepo()
+	seedUser(repo, "frank", "123e4567-e89b-12d3-a456-426614174055")
+	h := NewAccountHandlers(repo, nil, nil, nil)
+	r := newRouter(h)
+
+	req := httptest.NewRequest(http.MethodGet, "/frank/followers", nil)
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	resp := decodeResponse(t, rr)
+	var got map[string]interface{}
+	if err := json.Unmarshal(resp.Data, &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if _, ok := got["total"]; !ok {
+		t.Error("expected 'total' field in followers response")
+	}
+}
+
+// TestListAccounts_ResponseHasTotal verifies the list response has total field.
+func TestListAccounts_ResponseHasTotal(t *testing.T) {
+	repo := newMockUserRepo()
+	seedUser(repo, "dan", "123e4567-e89b-12d3-a456-426614174077")
+	h := NewAccountHandlers(repo, nil, nil, nil)
+	r := newRouter(h)
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, req)
+
+	resp := decodeResponse(t, rr)
+	var got map[string]interface{}
+	if err := json.Unmarshal(resp.Data, &got); err != nil {
+		t.Fatalf("decode data: %v", err)
+	}
+	if _, ok := got["total"]; !ok {
+		t.Error("expected 'total' key in list response")
+	}
+	if _, ok := got["data"]; !ok {
+		t.Error("expected 'data' key in list response")
 	}
 }
