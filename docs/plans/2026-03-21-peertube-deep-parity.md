@@ -1,11 +1,14 @@
 # PeerTube Deep Parity Audit Implementation Plan
 
 Created: 2026-03-21
-Status: VERIFIED
+Status: SUPERSEDED
 Approved: Yes
 Iterations: 0
 Worktree: No
 Type: Feature
+
+> Superseded by `/Users/yosefgamble/github/athena/docs/reports/peertube-parity-gap-report.md`.
+> Implementation work landed, but later runtime validation showed remaining parity and E2E gaps, so this plan should not be treated as the current compatibility status.
 
 ## Summary
 

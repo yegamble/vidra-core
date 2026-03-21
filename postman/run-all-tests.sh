@@ -1,61 +1,83 @@
-#!/bin/bash
+#!/bin/sh
 #
-# Run all Postman test collections
+# Run Athena Postman test collections in a stateful sequence.
 #
 # Usage: ./run-all-tests.sh [environment_file]
 #
 
-set -e
+set -eu
 
-# Use provided environment file or default
-ENV_FILE="${1:-athena.local.postman_environment.json}"
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+cd "$SCRIPT_DIR"
+
+ENV_FILE=${1:-"$SCRIPT_DIR/athena.local.postman_environment.json"}
+if [ ! -f "$ENV_FILE" ] && [ -f "$SCRIPT_DIR/$ENV_FILE" ]; then
+  ENV_FILE="$SCRIPT_DIR/$ENV_FILE"
+fi
 
 if [ ! -f "$ENV_FILE" ]; then
-  echo "Error: Environment file '$ENV_FILE' not found"
+  echo "Error: environment file '$ENV_FILE' not found"
   exit 1
 fi
 
+WORK_ENV=$(mktemp "${TMPDIR:-/tmp}/athena-postman-env.XXXXXX")
+cp "$ENV_FILE" "$WORK_ENV"
+trap 'rm -f "$WORK_ENV"' EXIT INT TERM
+
 echo "========================================="
 echo "Running Athena API Test Collections"
-echo "Environment: $ENV_FILE"
+echo "Seed environment: $ENV_FILE"
+echo "Working environment: $WORK_ENV"
 echo "========================================="
 echo ""
 
-# Define collections in execution order
-collections=(
-  "athena-auth.postman_collection.json"
-  "athena-uploads.postman_collection.json"
-  "athena-analytics.postman_collection.json"
-  "athena-imports.postman_collection.json"
-)
+# Collections here are chosen to exercise the PeerTube-compatible surface plus
+# Athena extensions that are runnable in the test profile.
+COLLECTIONS="
+athena-auth.postman_collection.json
+athena-videos.postman_collection.json
+athena-uploads.postman_collection.json
+athena-channels.postman_collection.json
+athena-instance-config.postman_collection.json
+athena-imports.postman_collection.json
+athena-feeds.postman_collection.json
+athena-blocklist.postman_collection.json
+athena-notifications.postman_collection.json
+athena-livestreaming.postman_collection.json
+athena-federation.postman_collection.json
+athena-secure-messaging.postman_collection.json
+"
 
-# Track results
-total_tests=0
-passed_tests=0
-failed_tests=0
-failed_collections=()
+collections_run=0
+successful=0
+failed=0
+failed_collections=""
 
-# Run each collection
-for collection in "${collections[@]}"; do
+for collection in $COLLECTIONS; do
   if [ ! -f "$collection" ]; then
-    echo "⚠️  Warning: $collection not found, skipping..."
+    echo "Warning: $collection not found, skipping"
     echo ""
     continue
   fi
 
-  echo "📋 Running $collection..."
+  collections_run=$((collections_run + 1))
+  echo "Running $collection..."
   echo "---"
 
-  # Run newman and capture output
+  report_file="results-${collection%.json}.json"
   if newman run "$collection" \
-    -e "$ENV_FILE" \
+    -e "$WORK_ENV" \
     --reporters cli,json \
-    --reporter-json-export "results-${collection%.json}.json" \
+    --reporter-json-export "$report_file" \
+    --export-environment "$WORK_ENV" \
     --color on; then
-    echo "✅ $collection completed successfully"
+    successful=$((successful + 1))
+    echo "$collection completed successfully"
   else
-    echo "❌ $collection failed"
-    failed_collections+=("$collection")
+    failed=$((failed + 1))
+    failed_collections="$failed_collections
+$collection"
+    echo "$collection failed"
   fi
 
   echo ""
@@ -63,23 +85,19 @@ for collection in "${collections[@]}"; do
   echo ""
 done
 
-# Summary
-echo "📊 Test Execution Summary"
+echo "Test Execution Summary"
 echo "========================================="
-echo "Collections run: ${#collections[@]}"
-echo "Successful: $((${#collections[@]} - ${#failed_collections[@]}))"
-echo "Failed: ${#failed_collections[@]}"
+echo "Collections run: $collections_run"
+echo "Successful: $successful"
+echo "Failed: $failed"
 
-if [ ${#failed_collections[@]} -gt 0 ]; then
+if [ "$failed" -gt 0 ]; then
   echo ""
   echo "Failed collections:"
-  for fc in "${failed_collections[@]}"; do
-    echo "  - $fc"
-  done
+  printf '%s\n' "$failed_collections" | sed '/^$/d; s/^/  - /'
   echo ""
   exit 1
-else
-  echo ""
-  echo "🎉 All collections passed!"
-  exit 0
 fi
+
+echo ""
+echo "All collections passed."

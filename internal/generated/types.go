@@ -13,6 +13,30 @@ const (
 	BearerAuthScopes = "bearerAuth.Scopes"
 )
 
+// Defines values for BlocklistEntryBlockType.
+const (
+	BlocklistEntryBlockTypeDomain BlocklistEntryBlockType = "domain"
+	BlocklistEntryBlockTypeEmail  BlocklistEntryBlockType = "email"
+	BlocklistEntryBlockTypeIp     BlocklistEntryBlockType = "ip"
+	BlocklistEntryBlockTypeUser   BlocklistEntryBlockType = "user"
+)
+
+// Valid indicates whether the value is a known member of the BlocklistEntryBlockType enum.
+func (e BlocklistEntryBlockType) Valid() bool {
+	switch e {
+	case BlocklistEntryBlockTypeDomain:
+		return true
+	case BlocklistEntryBlockTypeEmail:
+		return true
+	case BlocklistEntryBlockTypeIp:
+		return true
+	case BlocklistEntryBlockTypeUser:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for CreateUserRequestRole.
 const (
 	CreateUserRequestRoleAdmin CreateUserRequestRole = "admin"
@@ -274,6 +298,24 @@ func (e UpdateVideoRequestPrivacy) Valid() bool {
 	case UpdateVideoRequestPrivacyPublic:
 		return true
 	case UpdateVideoRequestPrivacyUnlisted:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for UserBlockBlockType.
+const (
+	Account UserBlockBlockType = "account"
+	Server  UserBlockBlockType = "server"
+)
+
+// Valid indicates whether the value is a known member of the UserBlockBlockType enum.
+func (e UserBlockBlockType) Valid() bool {
+	switch e {
+	case Account:
+		return true
+	case Server:
 		return true
 	default:
 		return false
@@ -776,6 +818,75 @@ type Avatar struct {
 	WebpIpfsCid *string `json:"webp_ipfs_cid,omitempty"`
 }
 
+// BlocklistEntry defines model for BlocklistEntry.
+type BlocklistEntry struct {
+	BlockType    *BlocklistEntryBlockType `json:"block_type,omitempty"`
+	BlockedBy    *openapi_types.UUID      `json:"blocked_by,omitempty"`
+	BlockedValue *string                  `json:"blocked_value,omitempty"`
+	CreatedAt    *time.Time               `json:"created_at,omitempty"`
+	ExpiresAt    *time.Time               `json:"expires_at,omitempty"`
+	Id           *openapi_types.UUID      `json:"id,omitempty"`
+	IsActive     *bool                    `json:"is_active,omitempty"`
+	Reason       *string                  `json:"reason,omitempty"`
+	UpdatedAt    *time.Time               `json:"updated_at,omitempty"`
+}
+
+// BlocklistEntryBlockType defines model for BlocklistEntry.BlockType.
+type BlocklistEntryBlockType string
+
+// Channel defines model for Channel.
+type Channel struct {
+	Account *User `json:"account,omitempty"`
+
+	// AccountId ID of the user account that owns this channel
+	AccountId openapi_types.UUID `json:"accountId"`
+
+	// AtprotoDid ATProto DID for federation (for example, did:plc:...)
+	AtprotoDid *string `json:"atprotoDid,omitempty"`
+
+	// AtprotoPdsUrl Optional ATProto PDS base URL associated with the DID
+	AtprotoPdsUrl *string `json:"atprotoPdsUrl,omitempty"`
+
+	// AvatarUrl Channel avatar URL
+	AvatarUrl *string `json:"avatarUrl,omitempty"`
+
+	// BannerUrl Channel banner URL
+	BannerUrl *string `json:"bannerUrl,omitempty"`
+
+	// CreatedAt Channel creation timestamp
+	CreatedAt time.Time `json:"createdAt"`
+
+	// Description Channel description
+	Description *string `json:"description,omitempty"`
+
+	// DisplayName Channel display name
+	DisplayName string `json:"displayName"`
+
+	// FollowersCount Number of subscribers/followers
+	FollowersCount int `json:"followersCount"`
+
+	// FollowingCount Number of channels this channel follows
+	FollowingCount int `json:"followingCount"`
+
+	// Handle Unique channel handle/username
+	Handle string `json:"handle"`
+
+	// Id Channel unique identifier
+	Id openapi_types.UUID `json:"id"`
+
+	// IsLocal Whether this is a local channel (not federated)
+	IsLocal bool `json:"isLocal"`
+
+	// Support Support/donation information
+	Support *string `json:"support,omitempty"`
+
+	// UpdatedAt Last update timestamp
+	UpdatedAt time.Time `json:"updatedAt"`
+
+	// VideosCount Number of videos in this channel
+	VideosCount int `json:"videosCount"`
+}
+
 // Conversation defines model for Conversation.
 type Conversation struct {
 	LastActivity time.Time `json:"last_activity"`
@@ -1109,6 +1220,13 @@ type OAuthTokenResponse struct {
 	TokenType    *string `json:"token_type,omitempty"`
 }
 
+// PaginationMeta defines model for PaginationMeta.
+type PaginationMeta struct {
+	Limit  *int   `json:"limit,omitempty"`
+	Offset *int   `json:"offset,omitempty"`
+	Total  *int64 `json:"total,omitempty"`
+}
+
 // PublicKeyBundle Public key material for a user, returned by GET /api/v1/e2ee/keys/{userId}
 type PublicKeyBundle struct {
 	// KeyVersion Monotonically increasing version, incremented on each key rotation
@@ -1325,6 +1443,19 @@ type User struct {
 	Username string `json:"username"`
 }
 
+// UserBlock A per-user block of an account or server
+type UserBlock struct {
+	BlockType        *UserBlockBlockType `json:"blockType,omitempty"`
+	CreatedAt        *time.Time          `json:"createdAt,omitempty"`
+	Id               *openapi_types.UUID `json:"id,omitempty"`
+	TargetAccountId  *openapi_types.UUID `json:"targetAccountId,omitempty"`
+	TargetServerHost *string             `json:"targetServerHost,omitempty"`
+	UserId           *openapi_types.UUID `json:"userId,omitempty"`
+}
+
+// UserBlockBlockType defines model for UserBlock.BlockType.
+type UserBlockBlockType string
+
 // UserRole User role determining permissions
 type UserRole string
 
@@ -1438,6 +1569,12 @@ type WrappedVideosResponse struct {
 	Success bool     `json:"success"`
 }
 
+// NotFound defines model for NotFound.
+type NotFound = ErrorResponse
+
+// Unauthorized defines model for Unauthorized.
+type Unauthorized = ErrorResponse
+
 // AdminListUsersParams defines parameters for AdminListUsers.
 type AdminListUsersParams struct {
 	// Limit Number of users to return
@@ -1480,6 +1617,17 @@ type AdminListVideosParams struct {
 	Search *string `form:"search,omitempty" json:"search,omitempty"`
 }
 
+// BlockAccountJSONBody defines parameters for BlockAccount.
+type BlockAccountJSONBody struct {
+	AccountId openapi_types.UUID `json:"accountId"`
+}
+
+// BlockServerJSONBody defines parameters for BlockServer.
+type BlockServerJSONBody struct {
+	// Host Domain name to block (e.g. evil.example.com)
+	Host string `json:"host"`
+}
+
 // ListCategoriesParams defines parameters for ListCategories.
 type ListCategoriesParams struct {
 	// ActiveOnly Filter to active categories only
@@ -1512,6 +1660,12 @@ type ListCategoriesParamsOrderDir string
 
 // GetEncryptedMessagesParams defines parameters for GetEncryptedMessages.
 type GetEncryptedMessagesParams struct {
+	Limit  *int `form:"limit,omitempty" json:"limit,omitempty"`
+	Offset *int `form:"offset,omitempty" json:"offset,omitempty"`
+}
+
+// GetMyEncodingJobsParams defines parameters for GetMyEncodingJobs.
+type GetMyEncodingJobsParams struct {
 	Limit  *int `form:"limit,omitempty" json:"limit,omitempty"`
 	Offset *int `form:"offset,omitempty" json:"offset,omitempty"`
 }
@@ -1551,6 +1705,48 @@ type ListNotificationsParams struct {
 	Unread *bool `form:"unread,omitempty" json:"unread,omitempty"`
 }
 
+// MarkNotificationsBatchReadJSONBody defines parameters for MarkNotificationsBatchRead.
+type MarkNotificationsBatchReadJSONBody struct {
+	// Ids Notification IDs to mark as read. Empty array marks all as read.
+	Ids *[]openapi_types.UUID `json:"ids,omitempty"`
+}
+
+// SearchVideoChannelsParams defines parameters for SearchVideoChannels.
+type SearchVideoChannelsParams struct {
+	Q     string `form:"q" json:"q"`
+	Start *int   `form:"start,omitempty" json:"start,omitempty"`
+	Count *int   `form:"count,omitempty" json:"count,omitempty"`
+}
+
+// SearchVideoPlaylistsParams defines parameters for SearchVideoPlaylists.
+type SearchVideoPlaylistsParams struct {
+	Q     string `form:"q" json:"q"`
+	Start *int   `form:"start,omitempty" json:"start,omitempty"`
+	Count *int   `form:"count,omitempty" json:"count,omitempty"`
+}
+
+// SearchVideosCompatParams defines parameters for SearchVideosCompat.
+type SearchVideosCompatParams struct {
+	Q     string `form:"q" json:"q"`
+	Start *int   `form:"start,omitempty" json:"start,omitempty"`
+	Count *int   `form:"count,omitempty" json:"count,omitempty"`
+}
+
+// SocialFollowJSONBody defines parameters for SocialFollow.
+type SocialFollowJSONBody struct {
+	Did string `json:"did"`
+}
+
+// SocialUnlikeJSONBody defines parameters for SocialUnlike.
+type SocialUnlikeJSONBody struct {
+	Uri string `json:"uri"`
+}
+
+// SocialLikeJSONBody defines parameters for SocialLike.
+type SocialLikeJSONBody struct {
+	Uri string `json:"uri"`
+}
+
 // GetTrendingVideosParams defines parameters for GetTrendingVideos.
 type GetTrendingVideosParams struct {
 	// Page 1-based page index (preferred)
@@ -1577,6 +1773,17 @@ type UploadChunkMultipartBody struct {
 	ChunkIndex int                `json:"chunkIndex"`
 }
 
+// AskResetPasswordJSONBody defines parameters for AskResetPassword.
+type AskResetPasswordJSONBody struct {
+	Email openapi_types.Email `json:"email"`
+}
+
+// DeleteMyAccountJSONBody defines parameters for DeleteMyAccount.
+type DeleteMyAccountJSONBody struct {
+	// Password Current account password for confirmation
+	Password string `json:"password"`
+}
+
 // UploadUserAvatarMultipartBody defines parameters for UploadUserAvatar.
 type UploadUserAvatarMultipartBody struct {
 	// File Avatar image file. Must be a valid image in one of the supported formats:
@@ -1596,6 +1803,12 @@ type UpdateNotificationPreferencesJSONBody struct {
 	Upload       *bool `json:"upload,omitempty"`
 }
 
+// GetMyRatingsParams defines parameters for GetMyRatings.
+type GetMyRatingsParams struct {
+	Limit  *int `form:"limit,omitempty" json:"limit,omitempty"`
+	Offset *int `form:"offset,omitempty" json:"offset,omitempty"`
+}
+
 // ListMySubscriptionsParams defines parameters for ListMySubscriptions.
 type ListMySubscriptionsParams struct {
 	// Page 1-based page index (preferred)
@@ -1609,6 +1822,20 @@ type ListMySubscriptionsParams struct {
 
 	// Offset Deprecated; use page
 	Offset *int `form:"offset,omitempty" json:"offset,omitempty"`
+}
+
+// GetMyWatchLaterParams defines parameters for GetMyWatchLater.
+type GetMyWatchLaterParams struct {
+	Limit  *int `form:"limit,omitempty" json:"limit,omitempty"`
+	Offset *int `form:"offset,omitempty" json:"offset,omitempty"`
+}
+
+// ResetPasswordJSONBody defines parameters for ResetPassword.
+type ResetPasswordJSONBody struct {
+	Password string `json:"password"`
+
+	// ResetPasswordToken Token received in the reset email
+	ResetPasswordToken string `json:"resetPasswordToken"`
 }
 
 // GetUserVideosParams defines parameters for GetUserVideos.
@@ -1646,6 +1873,12 @@ type ListVideosParamsSort string
 
 // ListVideosParamsOrder defines parameters for ListVideos.
 type ListVideosParamsOrder string
+
+// ListBlacklistedVideosParams defines parameters for ListBlacklistedVideos.
+type ListBlacklistedVideosParams struct {
+	Start *int `form:"start,omitempty" json:"start,omitempty"`
+	Count *int `form:"count,omitempty" json:"count,omitempty"`
+}
 
 // SearchVideosParams defines parameters for SearchVideos.
 type SearchVideosParams struct {
@@ -1707,6 +1940,23 @@ type UploadVideoFileMultipartBody struct {
 
 // UploadVideoFileMultipartBodyPrivacy defines parameters for UploadVideoFile.
 type UploadVideoFileMultipartBodyPrivacy string
+
+// AddVideoToBlacklistJSONBody defines parameters for AddVideoToBlacklist.
+type AddVideoToBlacklistJSONBody struct {
+	// Reason Reason for blacklisting
+	Reason *string `json:"reason,omitempty"`
+
+	// Unfederated Whether to prevent federation
+	Unfederated *bool `json:"unfederated,omitempty"`
+}
+
+// PutVideoChaptersJSONBody defines parameters for PutVideoChapters.
+type PutVideoChaptersJSONBody struct {
+	Chapters []struct {
+		Timecode int    `json:"timecode"`
+		Title    string `json:"title"`
+	} `json:"chapters"`
+}
 
 // GetVideoEncodingJobsParams defines parameters for GetVideoEncodingJobs.
 type GetVideoEncodingJobsParams struct {
@@ -1774,6 +2024,16 @@ type GetViewHistoryParams struct {
 
 // LogoutJSONBody defines parameters for Logout.
 type LogoutJSONBody = map[string]interface{}
+
+// GetCommentsFeedAtomParams defines parameters for GetCommentsFeedAtom.
+type GetCommentsFeedAtomParams struct {
+	VideoId *openapi_types.UUID `form:"videoId,omitempty" json:"videoId,omitempty"`
+}
+
+// GetCommentsFeedRSSParams defines parameters for GetCommentsFeedRSS.
+type GetCommentsFeedRSSParams struct {
+	VideoId *openapi_types.UUID `form:"videoId,omitempty" json:"videoId,omitempty"`
+}
 
 // OauthAuthorizeGetParams defines parameters for OauthAuthorizeGet.
 type OauthAuthorizeGetParams struct {
@@ -1909,6 +2169,12 @@ type AdminRotateOAuthClientSecretJSONRequestBody = RotateOAuthClientSecretReques
 // AdminUpdateUserJSONRequestBody defines body for AdminUpdateUser for application/json ContentType.
 type AdminUpdateUserJSONRequestBody AdminUpdateUserJSONBody
 
+// BlockAccountJSONRequestBody defines body for BlockAccount for application/json ContentType.
+type BlockAccountJSONRequestBody BlockAccountJSONBody
+
+// BlockServerJSONRequestBody defines body for BlockServer for application/json ContentType.
+type BlockServerJSONRequestBody BlockServerJSONBody
+
 // InitiateKeyExchangeJSONRequestBody defines body for InitiateKeyExchange for application/json ContentType.
 type InitiateKeyExchangeJSONRequestBody = InitiateKeyExchangeRequest
 
@@ -1924,6 +2190,18 @@ type StoreEncryptedMessageJSONRequestBody = StoreEncryptedMessageRequest
 // SendMessageJSONRequestBody defines body for SendMessage for application/json ContentType.
 type SendMessageJSONRequestBody = SendMessageRequest
 
+// MarkNotificationsBatchReadJSONRequestBody defines body for MarkNotificationsBatchRead for application/json ContentType.
+type MarkNotificationsBatchReadJSONRequestBody MarkNotificationsBatchReadJSONBody
+
+// SocialFollowJSONRequestBody defines body for SocialFollow for application/json ContentType.
+type SocialFollowJSONRequestBody SocialFollowJSONBody
+
+// SocialUnlikeJSONRequestBody defines body for SocialUnlike for application/json ContentType.
+type SocialUnlikeJSONRequestBody SocialUnlikeJSONBody
+
+// SocialLikeJSONRequestBody defines body for SocialLike for application/json ContentType.
+type SocialLikeJSONRequestBody SocialLikeJSONBody
+
 // InitiateUploadJSONRequestBody defines body for InitiateUpload for application/json ContentType.
 type InitiateUploadJSONRequestBody InitiateUploadJSONBody
 
@@ -1932,6 +2210,12 @@ type UploadChunkMultipartRequestBody UploadChunkMultipartBody
 
 // CreateUserJSONRequestBody defines body for CreateUser for application/json ContentType.
 type CreateUserJSONRequestBody = CreateUserRequest
+
+// AskResetPasswordJSONRequestBody defines body for AskResetPassword for application/json ContentType.
+type AskResetPasswordJSONRequestBody AskResetPasswordJSONBody
+
+// DeleteMyAccountJSONRequestBody defines body for DeleteMyAccount for application/json ContentType.
+type DeleteMyAccountJSONRequestBody DeleteMyAccountJSONBody
 
 // UpdateCurrentUserJSONRequestBody defines body for UpdateCurrentUser for application/json ContentType.
 type UpdateCurrentUserJSONRequestBody = UpdateUserRequest
@@ -1945,11 +2229,20 @@ type UpdateNotificationPreferencesJSONRequestBody UpdateNotificationPreferencesJ
 // CreateVideoJSONRequestBody defines body for CreateVideo for application/json ContentType.
 type CreateVideoJSONRequestBody = CreateVideoRequest
 
+// ResetPasswordJSONRequestBody defines body for ResetPassword for application/json ContentType.
+type ResetPasswordJSONRequestBody ResetPasswordJSONBody
+
 // UploadVideoFileMultipartRequestBody defines body for UploadVideoFile for multipart/form-data ContentType.
 type UploadVideoFileMultipartRequestBody UploadVideoFileMultipartBody
 
 // UpdateVideoJSONRequestBody defines body for UpdateVideo for application/json ContentType.
 type UpdateVideoJSONRequestBody = UpdateVideoRequest
+
+// AddVideoToBlacklistJSONRequestBody defines body for AddVideoToBlacklist for application/json ContentType.
+type AddVideoToBlacklistJSONRequestBody AddVideoToBlacklistJSONBody
+
+// PutVideoChaptersJSONRequestBody defines body for PutVideoChapters for application/json ContentType.
+type PutVideoChaptersJSONRequestBody PutVideoChaptersJSONBody
 
 // UploadVideoChunkMultipartRequestBody defines body for UploadVideoChunk for multipart/form-data ContentType.
 type UploadVideoChunkMultipartRequestBody UploadVideoChunkMultipartBody

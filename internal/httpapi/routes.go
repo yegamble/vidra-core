@@ -34,7 +34,20 @@ import (
 )
 
 func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager *middleware.RateLimiterManager, deps *shared.HandlerDependencies) { //nolint:gocyclo
-	generalLimiter := rlManager.CreateRateLimiter(cfg.RateLimitDuration, cfg.RateLimitRequests)
+	generalBurst := cfg.RateLimitRequests
+	strictAuthBurst := 5
+	strictLoginBurst := 10
+	strictImportBurst := 10
+
+	// Keep production limits unchanged, but avoid cross-collection throttling in validation/E2E runs.
+	if cfg.ValidationTestMode {
+		generalBurst = 10000
+		strictAuthBurst = 1000
+		strictLoginBurst = 1000
+		strictImportBurst = 1000
+	}
+
+	generalLimiter := rlManager.CreateRateLimiter(cfg.RateLimitDuration, generalBurst)
 	r.Use(generalLimiter.Limit)
 
 	defaultMaxRequestBytes, err := middleware.ParseByteSize(cfg.APIMaxRequestSize)
@@ -54,9 +67,9 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 		{PathPrefix: "/api/v1/users/me/avatar", MaxBytes: uploadMaxRequestBytes},
 	}))
 
-	strictAuthLimiter := rlManager.CreateRateLimiter(60*time.Second, 5)
-	strictLoginLimiter := rlManager.CreateRateLimiter(60*time.Second, 10)
-	strictImportLimiter := rlManager.CreateRateLimiter(60*time.Second, 10)
+	strictAuthLimiter := rlManager.CreateRateLimiter(60*time.Second, strictAuthBurst)
+	strictLoginLimiter := rlManager.CreateRateLimiter(60*time.Second, strictLoginBurst)
+	strictImportLimiter := rlManager.CreateRateLimiter(60*time.Second, strictImportBurst)
 
 	server := NewServerWithOAuth(
 		deps.UserRepo,

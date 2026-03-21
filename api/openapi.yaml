@@ -354,41 +354,6 @@ paths:
         '401':
           description: Not authenticated
 
-  /api/v1/users/me:
-    delete:
-      tags:
-        - Users
-      summary: Delete own account
-      description: |
-        Permanently anonymizes the authenticated user's account. Requires password confirmation.
-        Videos are retained with "Deleted User" attribution. Storage assets are not removed.
-      operationId: deleteMyAccount
-      security:
-        - bearerAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [password]
-              properties:
-                password:
-                  type: string
-                  format: password
-                  description: Current account password for confirmation
-      responses:
-        '204':
-          description: Account successfully deleted
-        '400':
-          description: Missing password
-        '401':
-          description: Not authenticated
-        '403':
-          description: Incorrect password
-        '404':
-          description: User not found
-
   /api/v1/videos/{id}/blacklist:
     post:
       tags:
@@ -578,7 +543,7 @@ paths:
         - Search
       summary: Search videos
       description: Search public videos by keyword.
-      operationId: searchVideos
+      operationId: searchVideosCompat
       security: []
       parameters:
         - name: q
@@ -1413,20 +1378,6 @@ paths:
         '401':
           $ref: '#/components/responses/Unauthorized'
 
-  /api/v1/users/me/avatar:
-    delete:
-      tags: [Users, PeerTube-Compat]
-      summary: Delete user avatar
-      description: Clears the authenticated user's avatar (sets avatar fields to null).
-      operationId: deleteMyAvatar
-      security:
-        - bearerAuth: []
-      responses:
-        '204':
-          description: Avatar deleted
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-
   /api/v1/users/me/video-quota-used:
     get:
       tags:
@@ -2199,6 +2150,20 @@ paths:
                       code: "IPFS_UPLOAD_FAILED"
                       message: "Failed to upload to IPFS"
                       details: {}
+    delete:
+      tags:
+        - Users
+        - PeerTube-Compat
+      summary: Delete user avatar
+      description: Clears the authenticated user's avatar (sets avatar fields to null).
+      operationId: deleteMyAvatar
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: Avatar deleted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
 
   /api/v1/videos/{id}/stream:
     get:
@@ -3757,6 +3722,40 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+    delete:
+      tags:
+        - Users
+      summary: Delete own account
+      description: |
+        Permanently anonymizes the authenticated user's account. Requires password confirmation.
+        Videos are retained with "Deleted User" attribution. Storage assets are not removed.
+      operationId: deleteMyAccount
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - password
+              properties:
+                password:
+                  type: string
+                  format: password
+                  description: Current account password for confirmation
+      responses:
+        '204':
+          description: Account successfully deleted
+        '400':
+          description: Missing password
+        '401':
+          description: Not authenticated
+        '403':
+          description: Incorrect password
+        '404':
+          description: User not found
 
   /api/v1/users/{id}:
     get:
@@ -4743,35 +4742,6 @@ paths:
         '401':
           $ref: '#/components/responses/Unauthorized'
 
-  /api/v1/views/fingerprint:
-    post:
-      tags: [Analytics]
-      summary: Generate view fingerprint
-      description: Generates a fingerprint for anonymous view deduplication.
-      operationId: generateViewFingerprint
-      security: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [ip, user_agent]
-              properties:
-                ip: { type: string }
-                user_agent: { type: string }
-      responses:
-        '200':
-          description: Fingerprint generated
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  fingerprint: { type: string }
-        '400':
-          description: Missing required fields
-
   /.well-known/atproto-did:
     get:
       tags: [Federation, ATProto]
@@ -4793,6 +4763,20 @@ components:
       scheme: bearer
       bearerFormat: JWT
       description: JWT token for authentication
+
+  responses:
+    Unauthorized:
+      description: Unauthorized
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
 
   schemas:
     UserBlock:
@@ -5169,6 +5153,129 @@ components:
           nullable: true
           description: IPFS CID for the WebP-optimized avatar image
           example: "bafybeigdyrzt5n3q4h7v6s6l4xgk7g6v7m3kz7l2o3q4r5s6t7u8v9w0y"
+
+    Channel:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Channel unique identifier
+        accountId:
+          type: string
+          format: uuid
+          description: ID of the user account that owns this channel
+        handle:
+          type: string
+          pattern: '^[a-zA-Z0-9][a-zA-Z0-9-_]*$'
+          minLength: 3
+          maxLength: 50
+          description: Unique channel handle/username
+        displayName:
+          type: string
+          minLength: 1
+          maxLength: 120
+          description: Channel display name
+        description:
+          type: string
+          maxLength: 1000
+          description: Channel description
+          nullable: true
+        support:
+          type: string
+          maxLength: 1000
+          description: Support/donation information
+          nullable: true
+        isLocal:
+          type: boolean
+          description: Whether this is a local channel (not federated)
+        atprotoDid:
+          type: string
+          description: ATProto DID for federation (for example, did:plc:...)
+          nullable: true
+        atprotoPdsUrl:
+          type: string
+          format: uri
+          description: Optional ATProto PDS base URL associated with the DID
+          nullable: true
+        avatarUrl:
+          type: string
+          format: uri
+          description: Channel avatar URL
+          nullable: true
+        bannerUrl:
+          type: string
+          format: uri
+          description: Channel banner URL
+          nullable: true
+        followersCount:
+          type: integer
+          minimum: 0
+          description: Number of subscribers/followers
+        followingCount:
+          type: integer
+          minimum: 0
+          description: Number of channels this channel follows
+        videosCount:
+          type: integer
+          minimum: 0
+          description: Number of videos in this channel
+        createdAt:
+          type: string
+          format: date-time
+          description: Channel creation timestamp
+        updatedAt:
+          type: string
+          format: date-time
+          description: Last update timestamp
+        account:
+          $ref: '#/components/schemas/User'
+          description: Owner account information when included in responses
+      required:
+        - id
+        - accountId
+        - handle
+        - displayName
+        - isLocal
+        - followersCount
+        - followingCount
+        - videosCount
+        - createdAt
+        - updatedAt
+
+    BlocklistEntry:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        block_type:
+          type: string
+          enum:
+            - user
+            - domain
+            - ip
+            - email
+        blocked_value:
+          type: string
+        reason:
+          type: string
+          nullable: true
+        blocked_by:
+          type: string
+          format: uuid
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+        is_active:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
 
     UserRole:
       type: string

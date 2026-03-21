@@ -8,7 +8,8 @@
   "variable": [
     {"key": "baseUrl", "value": "http://app-test:8080", "type": "string"},
     {"key": "access_token", "value": "", "type": "string"},
-    {"key": "username", "value": "testuser", "type": "string"}
+    {"key": "federation_username", "value": "", "type": "string"},
+    {"key": "federation_domain", "value": "app-test", "type": "string"}
   ],
   "item": [
     {
@@ -16,19 +17,25 @@
       "item": [
         {
           "name": "GET /.well-known/webfinger - WebFinger lookup",
-          "event": [{"listen": "test", "script": {"exec": [
-            "pm.test('Status is 200', () => pm.response.to.have.status(200));",
-            "const json = pm.response.json();",
-            "pm.test('Has subject', () => pm.expect(json).to.have.property('subject'));"
-          ], "type": "text/javascript"}}],
+          "event": [
+            {"listen": "prerequest", "script": {"exec": [
+              "const envUsername = pm.environment.get('username');",
+              "pm.collectionVariables.set('federation_username', envUsername || 'testuser');"
+            ], "type": "text/javascript"}},
+            {"listen": "test", "script": {"exec": [
+              "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+              "const json = pm.response.json();",
+              "pm.test('Has subject', () => pm.expect(json).to.have.property('subject'));"
+            ], "type": "text/javascript"}}
+          ],
           "request": {
             "method": "GET",
             "header": [],
             "url": {
-              "raw": "{{baseUrl}}/.well-known/webfinger?resource=acct:{{username}}@localhost",
+              "raw": "{{baseUrl}}/.well-known/webfinger?resource=acct:{{federation_username}}@{{federation_domain}}",
               "host": ["{{baseUrl}}"],
               "path": [".well-known", "webfinger"],
-              "query": [{"key": "resource", "value": "acct:{{username}}@localhost"}]
+              "query": [{"key": "resource", "value": "acct:{{federation_username}}@{{federation_domain}}"}]
             }
           }
         },
@@ -57,7 +64,7 @@
           }
         },
         {
-          "name": "GET /api/v1/nodeinfo/2.0 - NodeInfo 2.0",
+          "name": "GET /nodeinfo/2.0 - NodeInfo 2.0",
           "event": [{"listen": "test", "script": {"exec": [
             "pm.test('Status is 200', () => pm.response.to.have.status(200));",
             "const json = pm.response.json();",
@@ -67,7 +74,7 @@
           "request": {
             "method": "GET",
             "header": [],
-            "url": {"raw": "{{baseUrl}}/api/v1/nodeinfo/2.0", "host": ["{{baseUrl}}"], "path": ["api", "v1", "nodeinfo", "2.0"]}
+            "url": {"raw": "{{baseUrl}}/nodeinfo/2.0", "host": ["{{baseUrl}}"], "path": ["nodeinfo", "2.0"]}
           }
         },
         {
@@ -94,7 +101,7 @@
           "request": {
             "method": "GET",
             "header": [{"key": "Accept", "value": "application/activity+json"}],
-            "url": {"raw": "{{baseUrl}}/api/v1/accounts/{{username}}", "host": ["{{baseUrl}}"], "path": ["api", "v1", "accounts", "{{username}}"]}
+            "url": {"raw": "{{baseUrl}}/api/v1/accounts/{{federation_username}}", "host": ["{{baseUrl}}"], "path": ["api", "v1", "accounts", "{{federation_username}}"]}
           }
         }
       ]

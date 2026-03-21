@@ -3,8 +3,6 @@
 -- Create oauth_clients table for minimal OAuth2 client storage
 -- Allows password and refresh_token grants with client authentication
 
-BEGIN;
-
 CREATE TABLE IF NOT EXISTS oauth_clients (
     id UUID PRIMARY KEY,
     client_id TEXT NOT NULL UNIQUE,
@@ -34,8 +32,6 @@ DROP TRIGGER IF EXISTS trg_oauth_clients_updated_at ON oauth_clients;
 CREATE TRIGGER trg_oauth_clients_updated_at
 BEFORE UPDATE ON oauth_clients
 FOR EACH ROW EXECUTE FUNCTION set_updated_at_oauth_clients();
-
-COMMIT;
 -- +goose StatementEnd
 
 -- +goose Down

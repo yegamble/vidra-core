@@ -22,6 +22,7 @@
             "pm.test('Has channel id', () => {",
             "  pm.expect(json).to.have.property('id');",
             "  pm.collectionVariables.set('channel_id', json.id);",
+            "  pm.environment.set('channel_id', json.id);",
             "});"
           ], "type": "text/javascript"}}],
           "request": {

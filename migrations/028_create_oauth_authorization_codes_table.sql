@@ -3,8 +3,6 @@
 -- Create oauth_authorization_codes table for OAuth2 Authorization Code flow
 -- Supports PKCE (code_challenge, code_challenge_method) and scopes
 
-BEGIN;
-
 CREATE TABLE IF NOT EXISTS oauth_authorization_codes (
     id UUID PRIMARY KEY,
     code TEXT NOT NULL UNIQUE,
@@ -44,8 +42,6 @@ CREATE INDEX idx_oauth_tokens_expires ON oauth_access_tokens(expires_at);
 
 -- Add scope column to oauth_clients if not exists
 ALTER TABLE oauth_clients ADD COLUMN IF NOT EXISTS allowed_scopes TEXT[] NOT NULL DEFAULT ARRAY['basic'];
-
-COMMIT;
 -- +goose StatementEnd
 
 -- +goose Down

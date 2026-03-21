@@ -2910,6 +2910,7 @@
                   "  pm.test('id is uuid', () => pm.expect(json.id).to.match(uuidRe));",
                   "  pm.test('thumbnail_id is uuid', () => pm.expect(json.thumbnail_id).to.match(uuidRe));",
                   "  pm.environment.set('video_id', json.id);",
+                  "  pm.environment.set('test_video_id', json.id);",
                   "  console.log('Video created successfully with ID:', json.id);",
                   "} else if (pm.response.code === 401) {",
                   "  console.log('Video creation skipped: No authentication token (401)');",

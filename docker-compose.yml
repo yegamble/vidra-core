@@ -298,8 +298,6 @@ services:
       POSTGRES_HOST_AUTH_METHOD: trust
     ports:
       - "5433:5432"
-    volumes:
-      - ./init-test-db.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U test_user -d athena_test"]
       interval: 5s
@@ -371,8 +369,6 @@ services:
     image: clamav/clamav:stable
     platform: linux/amd64
     container_name: athena_test_clamav
-    ports:
-      - "3310:3310"
     environment:
       - CLAMAV_NO_FRESHCLAM=false
       - CLAMD_STARTUP_TIMEOUT=300
@@ -408,6 +404,10 @@ services:
       JWT_SECRET: test-jwt-secret
       IPFS_API: http://ipfs-test:5001
       REQUIRE_IPFS: "false"
+      PUBLIC_BASE_URL: http://app-test:8080
+      ENABLE_ACTIVITYPUB: "true"
+      ACTIVITYPUB_DOMAIN: app-test
+      ACTIVITYPUB_KEY_ENCRYPTION_KEY: test-activitypub-key-32-characters
       PORT: 8080
       VALIDATION_TEST_MODE: "true"
       LOG_LEVEL: debug
@@ -439,11 +439,7 @@ services:
       - ./postman:/etc/newman
     entrypoint:
       [
-        "newman", "run", "/etc/newman/athena-auth.postman_collection.json",
-        "-e", "/etc/newman/athena.local.postman_environment.json",
-        "--env-var", "baseUrl=http://app-test:8080",
-        "--reporters", "cli,junit",
-        "--reporter-junit-export", "/etc/newman/newman-results.xml"
+        "/bin/sh", "/etc/newman/run-all-tests.sh", "/etc/newman/athena.local.postman_environment.json"
       ]
     networks:
       - test-network
@@ -465,8 +461,6 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-    volumes:
-      - ./init-test-db.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
     networks:
       - ci-network
 

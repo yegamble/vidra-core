@@ -43,6 +43,7 @@
                   "pm.test('Response has video ID', () => {",
                   "  pm.expect(json).to.have.property('id');",
                   "  pm.collectionVariables.set('video_id', json.id);",
+                  "  pm.environment.set('video_id', json.id);",
                   "});"
                 ],
                 "type": "text/javascript"
