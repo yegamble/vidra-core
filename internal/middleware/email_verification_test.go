@@ -76,6 +76,8 @@ func (m *mockUserRepository) MarkEmailAsVerified(ctx context.Context, userID str
 	return nil
 }
 
+func (m *mockUserRepository) Anonymize(_ context.Context, _ string) error { return nil }
+
 func TestRequireEmailVerification_Success(t *testing.T) {
 	userID := uuid.New().String()
 	repo := &mockUserRepository{

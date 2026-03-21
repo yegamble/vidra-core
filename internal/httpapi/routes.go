@@ -110,6 +110,12 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 		r.Post("/auth/email/resend", emailVerificationHandlers.ResendVerification)
 	}
 
+	if deps.PasswordResetRepo != nil && deps.EmailService != nil {
+		passwordResetHandlers := auth.NewPasswordResetHandlers(deps.PasswordResetRepo, deps.UserRepo, deps.EmailService)
+		r.With(strictAuthLimiter.Limit).Post("/users/ask-reset-password", passwordResetHandlers.AskResetPassword)
+		r.Post("/users/{id}/reset-password", passwordResetHandlers.ResetPassword)
+	}
+
 	r.Post("/oauth/token", authHandlers.OAuthToken)
 	r.HandleFunc("/oauth/authorize", authHandlers.OAuthAuthorize)
 	r.Post("/oauth/revoke", authHandlers.OAuthRevoke)
@@ -117,6 +123,13 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 
 	r.Get("/health", server.HealthCheck)
 	r.Get("/ready", server.ReadinessCheck)
+
+	// RSS/Atom feed endpoints (PeerTube compatible, outside /api/v1)
+	feedHandlers := video.NewFeedHandlers(deps.VideoRepo, deps.CommentRepo, cfg.PublicBaseURL)
+	r.Get("/feeds/videos.atom", feedHandlers.VideosFeed)
+	r.Get("/feeds/videos.rss", feedHandlers.VideosFeedRSS)
+	r.Get("/feeds/video-comments.atom", feedHandlers.CommentsFeed)
+	r.Get("/feeds/video-comments.rss", feedHandlers.CommentsFeed)
 
 	if cfg.EnableActivityPub && deps.ActivityPubService != nil {
 		apHandlers := federation.NewActivityPubHandlers(deps.ActivityPubService, cfg, deps.UserRepo, deps.VideoRepo)
@@ -243,6 +256,7 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 			r.With(middleware.Auth(cfg.JWTSecret), middleware.RequireRole("admin")).Post("/", auth.CreateUserHandler(deps.UserRepo))
 			r.With(middleware.Auth(cfg.JWTSecret)).Get("/me", auth.GetCurrentUserHandler(deps.UserRepo))
 			r.With(middleware.Auth(cfg.JWTSecret)).Put("/me", auth.UpdateCurrentUserHandler(deps.UserRepo))
+			r.With(middleware.Auth(cfg.JWTSecret)).Delete("/me", auth.DeleteAccountHandler(deps.UserRepo))
 			r.With(middleware.Auth(cfg.JWTSecret)).Post("/me/avatar", authHandlers.UploadAvatar)
 			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{id}", auth.GetPublicUserHandler(deps.UserRepo))
 			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{id}/videos", video.GetUserVideosHandler(deps.VideoRepo))
@@ -313,6 +327,12 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 				r.Post("/{id}/subscribe", channelHandlers.SubscribeToChannel)
 				r.Delete("/{id}/subscribe", channelHandlers.UnsubscribeFromChannel)
 			})
+		})
+
+		r.Route("/search", func(r chi.Router) {
+			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/videos", video.SearchVideosHandler(deps.VideoRepo))
+			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/video-channels", video.SearchChannelsHandler(deps.ChannelRepo))
+			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/video-playlists", video.SearchPlaylistsHandler(deps.PlaylistRepo))
 		})
 
 		if deps.LiveStreamRepo != nil && deps.StreamKeyRepo != nil && deps.ViewerSessionRepo != nil {
@@ -441,6 +461,34 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 		r.Route("/abuse-reports", func(r chi.Router) {
 			r.With(middleware.Auth(cfg.JWTSecret)).Post("/", moderationHandlers.CreateAbuseReport)
 		})
+
+		// Video chapter routes
+		if deps.ChapterRepo != nil {
+			chapterHandlers := video.NewChapterHandlers(deps.ChapterRepo, deps.VideoRepo)
+			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/videos/{id}/chapters", chapterHandlers.GetChapters)
+			r.With(middleware.Auth(cfg.JWTSecret)).Put("/videos/{id}/chapters", chapterHandlers.PutChapters)
+		}
+
+		// Video description route
+		r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/videos/{id}/description", video.GetVideoDescriptionHandler(deps.VideoRepo))
+
+		// Video blacklist routes (admin only)
+		if deps.BlacklistRepo != nil {
+			blacklistHandlers := moderation.NewBlacklistHandlers(deps.BlacklistRepo)
+			r.Route("/videos/{id}/blacklist", func(r chi.Router) {
+				r.Use(middleware.Auth(cfg.JWTSecret))
+				r.Use(middleware.RequireRole(string(domain.RoleAdmin), string(domain.RoleMod)))
+				r.Post("/", blacklistHandlers.AddToBlacklist)
+				r.Delete("/", blacklistHandlers.RemoveFromBlacklist)
+			})
+			r.With(middleware.Auth(cfg.JWTSecret), middleware.RequireRole(string(domain.RoleAdmin), string(domain.RoleMod))).
+				Get("/videos/blacklist", blacklistHandlers.ListBlacklist)
+		}
+
+		// Blocklist status endpoint (authenticated users)
+		if deps.ModerationRepo != nil {
+			r.With(middleware.Auth(cfg.JWTSecret)).Get("/blocklist/status", moderation.BlocklistStatusHandler(deps.ModerationRepo))
+		}
 
 		r.Route("/admin", func(r chi.Router) {
 			r.Use(middleware.Auth(cfg.JWTSecret))

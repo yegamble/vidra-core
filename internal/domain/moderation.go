@@ -4,6 +4,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // AbuseReportStatus represents the status of an abuse report
@@ -123,4 +125,13 @@ type InstanceInfo struct {
 	TotalVideos        int64    `json:"total_videos"`
 	TotalLocalVideos   int64    `json:"total_local_videos"`
 	TotalInstanceViews int64    `json:"total_instance_views"`
+}
+
+// VideoBlacklist represents a blacklisted video entry.
+type VideoBlacklist struct {
+	ID          uuid.UUID `json:"id" db:"id"`
+	VideoID     uuid.UUID `json:"video_id" db:"video_id"`
+	Reason      string    `json:"reason" db:"reason"`
+	Unfederated bool      `json:"unfederated" db:"unfederated"`
+	CreatedAt   time.Time `json:"created_at" db:"created_at"`
 }

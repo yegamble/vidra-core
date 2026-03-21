@@ -152,6 +152,8 @@ func (m *MockVCUserRepo) MarkEmailAsVerified(ctx context.Context, userID string)
 	return args.Error(0)
 }
 
+func (m *MockVCUserRepo) Anonymize(_ context.Context, _ string) error { return nil }
+
 // ---------------------------------------------------------------------------
 // helpers
 // ---------------------------------------------------------------------------

@@ -211,6 +211,535 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+  /api/v1/videos/{id}/chapters:
+    get:
+      tags:
+        - Videos
+      summary: Get video chapters
+      description: Returns ordered chapter markers for a video.
+      operationId: getVideoChapters
+      security: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: List of chapters ordered by position
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        timecode:
+                          type: integer
+                          description: Start time in seconds
+                        title:
+                          type: string
+                        position:
+                          type: integer
+    put:
+      tags:
+        - Videos
+      summary: Replace video chapters
+      description: Replace all chapter markers for a video. Only the video owner may call this.
+      operationId: putVideoChapters
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [chapters]
+              properties:
+                chapters:
+                  type: array
+                  items:
+                    type: object
+                    required: [timecode, title]
+                    properties:
+                      timecode:
+                        type: integer
+                        minimum: 0
+                      title:
+                        type: string
+      responses:
+        '204':
+          description: Chapters updated
+        '400':
+          description: Invalid JSON
+        '401':
+          description: Not authenticated
+        '403':
+          description: Not video owner
+        '404':
+          description: Video not found
+
+  /api/v1/videos/{id}/description:
+    get:
+      tags:
+        - Videos
+      summary: Get video description
+      description: Returns only the full description text for a video.
+      operationId: getVideoDescription
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Video description
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: object
+                    properties:
+                      description:
+                        type: string
+        '404':
+          description: Video not found
+
+  /api/v1/blocklist/status:
+    get:
+      tags:
+        - Moderation
+      summary: Get instance blocklist status
+      description: Returns a summary of the instance blocklist split by accounts and servers. Requires authentication.
+      operationId: getBlocklistStatus
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Blocklist status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: object
+                    properties:
+                      accounts:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/BlocklistEntry'
+                      servers:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/BlocklistEntry'
+        '401':
+          description: Not authenticated
+
+  /api/v1/users/me:
+    delete:
+      tags:
+        - Users
+      summary: Delete own account
+      description: |
+        Permanently anonymizes the authenticated user's account. Requires password confirmation.
+        Videos are retained with "Deleted User" attribution. Storage assets are not removed.
+      operationId: deleteMyAccount
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [password]
+              properties:
+                password:
+                  type: string
+                  format: password
+                  description: Current account password for confirmation
+      responses:
+        '204':
+          description: Account successfully deleted
+        '400':
+          description: Missing password
+        '401':
+          description: Not authenticated
+        '403':
+          description: Incorrect password
+        '404':
+          description: User not found
+
+  /api/v1/videos/{id}/blacklist:
+    post:
+      tags:
+        - Moderation
+      summary: Blacklist a video
+      description: Add a video to the admin blacklist (admin/mod only). Hides it from public listings.
+      operationId: addVideoToBlacklist
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason:
+                  type: string
+                  description: Reason for blacklisting
+                unfederated:
+                  type: boolean
+                  default: false
+                  description: Whether to prevent federation
+      responses:
+        '204':
+          description: Video blacklisted
+        '401':
+          description: Not authenticated
+        '403':
+          description: Not authorized (requires admin/mod)
+        '409':
+          description: Video already blacklisted
+    delete:
+      tags:
+        - Moderation
+      summary: Remove video from blacklist
+      description: Remove a video from the admin blacklist (admin/mod only).
+      operationId: removeVideoFromBlacklist
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Video removed from blacklist
+        '401':
+          description: Not authenticated
+        '403':
+          description: Not authorized (requires admin/mod)
+        '404':
+          description: Video not found in blacklist
+
+  /api/v1/videos/blacklist:
+    get:
+      tags:
+        - Moderation
+      summary: List blacklisted videos
+      description: List all blacklisted videos with pagination (admin/mod only).
+      operationId: listBlacklistedVideos
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: start
+          in: query
+          schema:
+            type: integer
+            default: 0
+        - name: count
+          in: query
+          schema:
+            type: integer
+            default: 20
+      responses:
+        '200':
+          description: Paginated list of blacklisted videos
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                          format: uuid
+                        video_id:
+                          type: string
+                          format: uuid
+                        reason:
+                          type: string
+                        unfederated:
+                          type: boolean
+                        created_at:
+                          type: string
+                          format: date-time
+                  meta:
+                    type: object
+                    properties:
+                      total:
+                        type: integer
+        '401':
+          description: Not authenticated
+        '403':
+          description: Not authorized (requires admin/mod)
+
+  /api/v1/users/ask-reset-password:
+    post:
+      tags:
+        - Authentication
+      summary: Request password reset
+      description: Send a password reset email to the user. Always returns 204 to avoid leaking user existence.
+      operationId: askResetPassword
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email:
+                  type: string
+                  format: email
+                  example: user@example.com
+      responses:
+        '204':
+          description: Email sent (or silently ignored if address not found)
+        '400':
+          description: Missing or invalid email field
+
+  /api/v1/users/{id}/reset-password:
+    post:
+      tags:
+        - Authentication
+      summary: Confirm password reset
+      description: Reset the user password using a valid reset token.
+      operationId: resetPassword
+      security: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [resetPasswordToken, password]
+              properties:
+                resetPasswordToken:
+                  type: string
+                  description: Token received in the reset email
+                password:
+                  type: string
+                  format: password
+                  minLength: 8
+      responses:
+        '204':
+          description: Password changed successfully
+        '400':
+          description: Missing required fields
+        '403':
+          description: Invalid or expired token
+
+  /api/v1/search/videos:
+    get:
+      tags:
+        - Search
+      summary: Search videos
+      description: Search public videos by keyword.
+      operationId: searchVideos
+      security: []
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: start
+          in: query
+          schema:
+            type: integer
+            default: 0
+        - name: count
+          in: query
+          schema:
+            type: integer
+            default: 20
+      responses:
+        '200':
+          description: Paginated list of matching videos
+        '400':
+          description: Missing query parameter
+
+  /api/v1/search/video-channels:
+    get:
+      tags:
+        - Search
+      summary: Search video channels
+      description: Search channels by name or description.
+      operationId: searchVideoChannels
+      security: []
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: start
+          in: query
+          schema:
+            type: integer
+            default: 0
+        - name: count
+          in: query
+          schema:
+            type: integer
+            default: 20
+      responses:
+        '200':
+          description: Paginated list of matching channels
+        '400':
+          description: Missing query parameter
+
+  /api/v1/search/video-playlists:
+    get:
+      tags:
+        - Search
+      summary: Search video playlists
+      description: Search playlists by name or description.
+      operationId: searchVideoPlaylists
+      security: []
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: start
+          in: query
+          schema:
+            type: integer
+            default: 0
+        - name: count
+          in: query
+          schema:
+            type: integer
+            default: 20
+      responses:
+        '200':
+          description: Paginated list of matching playlists
+        '400':
+          description: Missing query parameter
+
+  /feeds/videos.atom:
+    get:
+      tags:
+        - Feeds
+      summary: Recent videos Atom feed
+      description: Returns an Atom 1.0 feed of recently published public videos.
+      operationId: getVideosFeedAtom
+      security: []
+      responses:
+        '200':
+          description: Atom feed XML
+          content:
+            application/atom+xml:
+              schema:
+                type: string
+
+  /feeds/videos.rss:
+    get:
+      tags:
+        - Feeds
+      summary: Recent videos RSS feed
+      description: Returns an RSS 2.0 feed of recently published public videos.
+      operationId: getVideosFeedRSS
+      security: []
+      responses:
+        '200':
+          description: RSS feed XML
+          content:
+            application/rss+xml:
+              schema:
+                type: string
+
+  /feeds/video-comments.atom:
+    get:
+      tags:
+        - Feeds
+      summary: Video comments Atom feed
+      description: Returns an Atom 1.0 feed of video comments. Filter by videoId query param.
+      operationId: getCommentsFeedAtom
+      security: []
+      parameters:
+        - name: videoId
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Atom feed XML
+          content:
+            application/atom+xml:
+              schema:
+                type: string
+
+  /feeds/video-comments.rss:
+    get:
+      tags:
+        - Feeds
+      summary: Video comments RSS feed
+      description: Returns an RSS 2.0 feed of video comments. Filter by videoId query param.
+      operationId: getCommentsFeedRSS
+      security: []
+      parameters:
+        - name: videoId
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: RSS feed XML
+          content:
+            application/rss+xml:
+              schema:
+                type: string
+
   /api/v1/admin/oauth/clients:
     get:
       tags: [Admin, OAuth]

@@ -107,6 +107,8 @@ func (m *MockEVUserRepo) MarkEmailAsVerified(ctx context.Context, userID string)
 	return args.Error(0)
 }
 
+func (m *MockEVUserRepo) Anonymize(_ context.Context, _ string) error { return nil }
+
 type MockEmailVerificationRepo struct {
 	mock.Mock
 }

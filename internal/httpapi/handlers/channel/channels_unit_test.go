@@ -125,6 +125,7 @@ func (s *unitUserRepoStub) SetAvatarFields(context.Context, string, sql.NullStri
 	return nil
 }
 func (s *unitUserRepoStub) MarkEmailAsVerified(context.Context, string) error { return nil }
+func (s *unitUserRepoStub) Anonymize(_ context.Context, _ string) error       { return nil }
 
 type unitSubscriptionRepoStub struct {
 	subscribeToChannelFn      func(ctx context.Context, subscriberID, channelID uuid.UUID) error

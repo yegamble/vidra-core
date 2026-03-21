@@ -14,6 +14,9 @@ type UserRepository interface {
 	Update(ctx context.Context, user *domain.User) error
 	Delete(ctx context.Context, id string) error
 	GetPasswordHash(ctx context.Context, userID string) (string, error)
+	// Anonymize soft-deletes a user: sets is_active=false and anonymizes PII fields.
+	// The user's videos are retained with "Deleted User" attribution.
+	Anonymize(ctx context.Context, userID string) error
 	UpdatePassword(ctx context.Context, userID, passwordHash string) error
 	List(ctx context.Context, limit, offset int) ([]*domain.User, error)
 	Count(ctx context.Context) (int64, error)

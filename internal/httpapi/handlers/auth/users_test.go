@@ -148,6 +148,22 @@ func (m *mockUserRepo) MarkEmailAsVerified(_ context.Context, userID string) err
 	return nil
 }
 
+func (m *mockUserRepo) Anonymize(_ context.Context, userID string) error {
+	u, ok := m.users[userID]
+	if !ok {
+		return domain.ErrUserNotFound
+	}
+	c := *u
+	c.IsActive = false
+	c.Email = "deleted-" + userID + "@deleted.invalid"
+	c.Username = "deleted-" + userID
+	c.DisplayName = "Deleted User"
+	c.Bio = ""
+	c.BitcoinWallet = ""
+	m.users[userID] = &c
+	return nil
+}
+
 // Response decoding functions are now in test_helpers.go
 
 func TestGetCurrentUserHandler_Success(t *testing.T) {
@@ -341,6 +357,7 @@ func (m *errorMockUserRepo) SetAvatarFields(_ context.Context, _ string, _ sql.N
 	return nil
 }
 func (m *errorMockUserRepo) MarkEmailAsVerified(_ context.Context, _ string) error { return nil }
+func (m *errorMockUserRepo) Anonymize(_ context.Context, _ string) error           { return nil }
 
 // Additional UpdateCurrentUserHandler error path tests
 

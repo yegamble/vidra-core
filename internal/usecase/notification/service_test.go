@@ -185,6 +185,7 @@ func (m *mockUserRepo) SetAvatarFields(ctx context.Context, userID string, ipfsC
 func (m *mockUserRepo) MarkEmailAsVerified(ctx context.Context, userID string) error {
 	return m.Called(ctx, userID).Error(0)
 }
+func (m *mockUserRepo) Anonymize(_ context.Context, _ string) error { return nil }
 
 func TestCreateVideoNotification_SkipsNonPublic(t *testing.T) {
 	notifRepo := new(mockNotificationRepo)

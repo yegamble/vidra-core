@@ -263,6 +263,8 @@ func (m *MockUserRepository) MarkEmailAsVerified(ctx context.Context, userID str
 	return args.Error(0)
 }
 
+func (m *MockUserRepository) Anonymize(_ context.Context, _ string) error { return nil }
+
 func withUserContext(ctx context.Context, userID uuid.UUID) context.Context {
 	return context.WithValue(ctx, middleware.UserIDKey, userID.String())
 }

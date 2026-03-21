@@ -181,6 +181,15 @@ func (r *playlistRepository) List(ctx context.Context, opts domain.PlaylistListO
 		countArgs = append(countArgs, *opts.Privacy)
 	}
 
+	if opts.Search != "" {
+		argCount++
+		searchPattern := "%" + opts.Search + "%"
+		query += fmt.Sprintf(" AND (p.name ILIKE $%d OR p.description ILIKE $%d)", argCount, argCount)
+		countQuery += fmt.Sprintf(" AND (p.name ILIKE $%d OR p.description ILIKE $%d)", argCount, argCount)
+		args = append(args, searchPattern)
+		countArgs = append(countArgs, searchPattern)
+	}
+
 	// Group by for aggregation
 	query += " GROUP BY p.id"
 

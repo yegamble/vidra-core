@@ -429,7 +429,7 @@ func TestImportService_ImportVideo_InvalidURL(t *testing.T) {
 
 	req := &ImportRequest{
 		UserID:        "user-123",
-		SourceURL:     "https://invalid-url.com/video",
+		SourceURL:     "https://youtube.com/watch?v=unsupported123",
 		TargetPrivacy: "private",
 	}
 

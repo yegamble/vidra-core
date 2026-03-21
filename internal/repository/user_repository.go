@@ -227,6 +227,34 @@ func (r *userRepository) Delete(ctx context.Context, id string) error {
 	return nil
 }
 
+func (r *userRepository) Anonymize(ctx context.Context, userID string) error {
+	exec := GetExecutor(ctx, r.db)
+
+	query := `UPDATE users
+	          SET is_active = false,
+	              email = 'deleted-' || id || '@deleted.invalid',
+	              username = 'deleted-' || id,
+	              display_name = 'Deleted User',
+	              bio = '',
+	              bitcoin_wallet = '',
+	              updated_at = NOW()
+	          WHERE id = $1`
+
+	result, err := exec.ExecContext(ctx, query, userID)
+	if err != nil {
+		return fmt.Errorf("anonymize user: %w", err)
+	}
+
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("anonymize user rows: %w", err)
+	}
+	if rows == 0 {
+		return domain.ErrUserNotFound
+	}
+	return nil
+}
+
 func (r *userRepository) GetPasswordHash(ctx context.Context, userID string) (string, error) {
 	query := `SELECT password_hash FROM users WHERE id = $1`
 

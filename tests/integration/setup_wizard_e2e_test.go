@@ -57,9 +57,12 @@ func noRedirectClient() *http.Client {
 	}
 }
 
-// doForm submits a url.Values form to the given URL via POST.
-func doForm(t *testing.T, client *http.Client, rawURL string, form url.Values) *http.Response {
+// doForm submits a url.Values form to the given URL via POST, including the CSRF token.
+func doForm(t *testing.T, client *http.Client, rawURL string, form url.Values, csrfToken string) *http.Response {
 	t.Helper()
+	if csrfToken != "" {
+		form.Set("_csrf_token", csrfToken)
+	}
 	req, err := http.NewRequest(http.MethodPost, rawURL, strings.NewReader(form.Encode()))
 	require.NoError(t, err)
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -82,6 +85,7 @@ func TestSetupWizardFullFlow(t *testing.T) {
 	defer ts.Close()
 
 	client := noRedirectClient()
+	csrf := wizard.GetCSRFToken()
 
 	// Step 1: GET /setup/welcome
 	resp, err := client.Get(ts.URL + "/setup/welcome")
@@ -99,7 +103,7 @@ func TestSetupWizardFullFlow(t *testing.T) {
 	dbForm := url.Values{
 		"POSTGRES_MODE": {"docker"},
 	}
-	resp3 := doForm(t, client, ts.URL+"/setup/database", dbForm)
+	resp3 := doForm(t, client, ts.URL+"/setup/database", dbForm, csrf)
 	resp3.Body.Close()
 	assert.Equal(t, http.StatusSeeOther, resp3.StatusCode, "database POST should redirect")
 	assert.Equal(t, "/setup/services", resp3.Header.Get("Location"), "database POST should redirect to services")
@@ -119,7 +123,7 @@ func TestSetupWizardFullFlow(t *testing.T) {
 		"IOTA_MODE":    {"docker"},
 		"IOTA_NETWORK": {"testnet"},
 	}
-	resp5 := doForm(t, client, ts.URL+"/setup/services", svcForm)
+	resp5 := doForm(t, client, ts.URL+"/setup/services", svcForm, csrf)
 	resp5.Body.Close()
 	assert.Equal(t, http.StatusSeeOther, resp5.StatusCode, "services POST should redirect")
 	assert.Equal(t, "/setup/email", resp5.Header.Get("Location"))
@@ -136,7 +140,7 @@ func TestSetupWizardFullFlow(t *testing.T) {
 		"SMTP_FROM_ADDRESS": {"noreply@localhost"},
 		"SMTP_FROM_NAME":    {"Athena"},
 	}
-	resp7 := doForm(t, client, ts.URL+"/setup/email", emailForm)
+	resp7 := doForm(t, client, ts.URL+"/setup/email", emailForm, csrf)
 	resp7.Body.Close()
 	assert.Equal(t, http.StatusSeeOther, resp7.StatusCode, "email POST should redirect")
 	assert.Equal(t, "/setup/networking", resp7.Header.Get("Location"))
@@ -147,7 +151,7 @@ func TestSetupWizardFullFlow(t *testing.T) {
 		"NGINX_PROTOCOL": {"http"},
 		"NGINX_PORT":     {"80"},
 	}
-	resp8 := doForm(t, client, ts.URL+"/setup/networking", netForm)
+	resp8 := doForm(t, client, ts.URL+"/setup/networking", netForm, csrf)
 	resp8.Body.Close()
 	assert.Equal(t, http.StatusSeeOther, resp8.StatusCode, "networking POST should redirect")
 	assert.Equal(t, "/setup/storage", resp8.Header.Get("Location"))
@@ -161,7 +165,7 @@ func TestSetupWizardFullFlow(t *testing.T) {
 		"BACKUP_RETENTION":  {"7"},
 		"BACKUP_LOCAL_PATH": {"./backups"},
 	}
-	resp9 := doForm(t, client, ts.URL+"/setup/storage", storageForm)
+	resp9 := doForm(t, client, ts.URL+"/setup/storage", storageForm, csrf)
 	resp9.Body.Close()
 	assert.Equal(t, http.StatusSeeOther, resp9.StatusCode, "storage POST should redirect")
 	assert.Equal(t, "/setup/security", resp9.Header.Get("Location"))
@@ -172,7 +176,7 @@ func TestSetupWizardFullFlow(t *testing.T) {
 		"ADMIN_EMAIL":    {"admin@example.com"},
 		"ADMIN_PASSWORD": {"S3cur3P@ssw0rd!"},
 	}
-	resp10 := doForm(t, client, ts.URL+"/setup/security", secForm)
+	resp10 := doForm(t, client, ts.URL+"/setup/security", secForm, csrf)
 	resp10.Body.Close()
 	assert.Equal(t, http.StatusSeeOther, resp10.StatusCode, "security POST should redirect")
 	assert.Equal(t, "/setup/review", resp10.Header.Get("Location"))
@@ -187,7 +191,7 @@ func TestSetupWizardFullFlow(t *testing.T) {
 	reviewForm := url.Values{
 		"POSTGRES_MODE": {"docker"},
 	}
-	resp12 := doForm(t, client, ts.URL+"/setup/review", reviewForm)
+	resp12 := doForm(t, client, ts.URL+"/setup/review", reviewForm, csrf)
 	resp12.Body.Close()
 	assert.Equal(t, http.StatusSeeOther, resp12.StatusCode, "review POST should redirect: %s", resp12.Header.Get("Location"))
 	assert.Equal(t, "/setup/complete", resp12.Header.Get("Location"))
@@ -229,6 +233,7 @@ func TestSetupWizardQuickInstallFlow(t *testing.T) {
 	defer ts.Close()
 
 	client := noRedirectClient()
+	csrf := wizard.GetCSRFToken()
 
 	// GET quick install page
 	resp, err := client.Get(ts.URL + "/setup/quickinstall")
@@ -244,7 +249,7 @@ func TestSetupWizardQuickInstallFlow(t *testing.T) {
 		"ADMIN_PASSWORD_CONFIRM": {"SecurePass123!"},
 		"NGINX_DOMAIN":           {"localhost"},
 	}
-	resp2 := doForm(t, client, ts.URL+"/setup/quickinstall", form)
+	resp2 := doForm(t, client, ts.URL+"/setup/quickinstall", form, csrf)
 	resp2.Body.Close()
 	assert.Equal(t, http.StatusSeeOther, resp2.StatusCode, "quickinstall POST should redirect")
 	assert.Equal(t, "/setup/complete", resp2.Header.Get("Location"))
@@ -300,7 +305,7 @@ func TestSetupWizardInvalidFormSubmissions(t *testing.T) {
 			defer ts.Close()
 
 			client := noRedirectClient()
-			resp := doForm(t, client, ts.URL+tt.path, tt.form)
+			resp := doForm(t, client, ts.URL+tt.path, tt.form, wizard.GetCSRFToken())
 			resp.Body.Close()
 			assert.Equal(t, tt.wantStatus, resp.StatusCode)
 		})
@@ -320,6 +325,7 @@ func TestSetupWizardEnvFileContents(t *testing.T) {
 	defer ts.Close()
 
 	client := noRedirectClient()
+	csrf := wizard.GetCSRFToken()
 
 	// Set up admin credentials through security form first
 	secForm := url.Values{
@@ -327,14 +333,14 @@ func TestSetupWizardEnvFileContents(t *testing.T) {
 		"ADMIN_EMAIL":    {"testadmin@example.com"},
 		"ADMIN_PASSWORD": {"TestAdmin123!"},
 	}
-	resp := doForm(t, client, ts.URL+"/setup/security", secForm)
+	resp := doForm(t, client, ts.URL+"/setup/security", secForm, csrf)
 	resp.Body.Close()
 
 	// Submit review to generate .env
 	reviewForm := url.Values{
 		"POSTGRES_MODE": {"docker"},
 	}
-	resp2 := doForm(t, client, ts.URL+"/setup/review", reviewForm)
+	resp2 := doForm(t, client, ts.URL+"/setup/review", reviewForm, csrf)
 	resp2.Body.Close()
 	require.Equal(t, http.StatusSeeOther, resp2.StatusCode)
 

@@ -62,6 +62,7 @@ type ReorderPlaylistItemRequest struct {
 type PlaylistListOptions struct {
 	UserID  *uuid.UUID
 	Privacy *Privacy
+	Search  string
 	Limit   int
 	Offset  int
 	OrderBy string // "created_at", "updated_at", "name"

@@ -95,6 +95,8 @@ func (m *MockTwoFAUserRepo) MarkEmailAsVerified(ctx context.Context, userID stri
 	return args.Error(0)
 }
 
+func (m *MockTwoFAUserRepo) Anonymize(_ context.Context, _ string) error { return nil }
+
 // MockTwoFABackupCodeRepository is a mock implementation of TwoFABackupCodeRepository
 type MockTwoFABackupCodeRepository struct {
 	mock.Mock

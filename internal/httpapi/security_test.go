@@ -102,6 +102,8 @@ func (m *mockUserRepo) MarkEmailAsVerified(ctx context.Context, userID string) e
 	return nil
 }
 
+func (m *mockUserRepo) Anonymize(_ context.Context, _ string) error { return nil }
+
 func generateTestJWT(secret, userID, role string) string {
 	now := time.Now()
 	claims := jwt.MapClaims{

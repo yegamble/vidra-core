@@ -114,6 +114,8 @@ func (m *mockUserRepository) MarkEmailAsVerified(ctx context.Context, userID str
 	return nil
 }
 
+func (m *mockUserRepository) Anonymize(_ context.Context, _ string) error { return nil }
+
 type mockAuthRepository struct {
 	refreshTokens         map[string]*port.RefreshToken
 	sessions              map[string]string

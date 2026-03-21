@@ -259,3 +259,5 @@ func (s *stubUserRepo) SetAvatarFields(context.Context, string, sql.NullString, 
 func (s *stubUserRepo) MarkEmailAsVerified(context.Context, string) error {
 	return domain.ErrInternalServer
 }
+
+func (s *stubUserRepo) Anonymize(_ context.Context, _ string) error { return nil }

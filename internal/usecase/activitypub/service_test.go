@@ -229,6 +229,8 @@ func (m *MockUserRepository) MarkEmailAsVerified(ctx context.Context, userID str
 	return args.Error(0)
 }
 
+func (m *MockUserRepository) Anonymize(_ context.Context, _ string) error { return nil }
+
 type MockVideoRepository struct {
 	mock.Mock
 }

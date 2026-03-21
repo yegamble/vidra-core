@@ -301,3 +301,12 @@ type ChunkUploadResponse struct {
 	Uploaded        bool  `json:"uploaded"`
 	RemainingChunks []int `json:"remaining_chunks"`
 }
+
+// VideoChapter represents a chapter marker within a video (timestamp + title).
+type VideoChapter struct {
+	ID       string `json:"id,omitempty" db:"id"`
+	VideoID  string `json:"video_id" db:"video_id"`
+	Timecode int    `json:"timecode" db:"timecode"` // seconds from start
+	Title    string `json:"title" db:"title"`
+	Position int    `json:"position" db:"position"` // display order
+}

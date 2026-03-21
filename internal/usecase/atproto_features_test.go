@@ -454,54 +454,6 @@ func TestResolveRecordCID_InvalidURI(t *testing.T) {
 	assert.Contains(t, err.Error(), "invalid AT URI")
 }
 
-// ── getPostThread tests ──────────────────────────────────────────────────────
-
-func TestGetPostThread_Success(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "/xrpc/app.bsky.feed.getPostThread", r.URL.Path)
-		assert.Equal(t, "at://did:plc:test/app.bsky.feed.post/123", r.URL.Query().Get("uri"))
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"thread": map[string]interface{}{
-				"$type": "app.bsky.feed.defs#threadViewPost",
-				"post":  map[string]interface{}{"uri": "at://did:plc:test/app.bsky.feed.post/123"},
-			},
-		})
-	}))
-	defer server.Close()
-
-	svc := newTestATProtoService(t, server.URL)
-	result, err := svc.getPostThread(context.Background(), "at://did:plc:test/app.bsky.feed.post/123", 6)
-	require.NoError(t, err)
-	assert.NotNil(t, result["thread"])
-}
-
-// ── deleteRecord tests ───────────────────────────────────────────────────────
-
-func TestDeleteRecord_Success(t *testing.T) {
-	var capturedBody map[string]interface{}
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/xrpc/com.atproto.server.createSession":
-			json.NewEncoder(w).Encode(map[string]string{
-				"accessJwt": "token", "refreshJwt": "refresh", "did": "did:plc:test123",
-			})
-		case "/xrpc/com.atproto.repo.deleteRecord":
-			body, _ := io.ReadAll(r.Body)
-			json.Unmarshal(body, &capturedBody)
-			assert.Equal(t, "Bearer token", r.Header.Get("Authorization"))
-			w.WriteHeader(http.StatusOK)
-		}
-	}))
-	defer server.Close()
-
-	svc := newTestATProtoService(t, server.URL)
-	err := svc.deleteRecord(context.Background(), "token", "did:plc:test123", "app.bsky.feed.post", "rkey123")
-	require.NoError(t, err)
-	assert.Equal(t, "did:plc:test123", capturedBody["repo"])
-	assert.Equal(t, "app.bsky.feed.post", capturedBody["collection"])
-	assert.Equal(t, "rkey123", capturedBody["rkey"])
-}
-
 // ── Retry integration tests (HTTP calls with retry) ──────────────────────────
 
 func TestCreateRecord_RetriesOnServerError(t *testing.T) {

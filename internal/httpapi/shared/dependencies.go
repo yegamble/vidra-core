@@ -52,6 +52,9 @@ type HandlerDependencies struct {
 	StreamKeyRepo         repository.StreamKeyRepository
 	ViewerSessionRepo     repository.ViewerSessionRepository
 	EmailVerificationRepo usecase.EmailVerificationRepository
+	PasswordResetRepo     repository.PasswordResetRepository
+	BlacklistRepo         repository.BlacklistRepository
+	ChapterRepo           repository.ChapterRepository
 
 	UploadService            ucup.Service
 	EmailService             email.EmailService

@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"testing"
 	"time"
+
+	openapi_types "github.com/oapi-codegen/runtime/types"
 )
 
 func TestUserSerialization(t *testing.T) {
@@ -11,7 +13,7 @@ func TestUserSerialization(t *testing.T) {
 	user := User{
 		Id:          "user123",
 		Username:    "johndoe",
-		Email:       "john@example.com",
+		Email:       openapi_types.Email("john@example.com"),
 		DisplayName: &displayName,
 		Role:        UserRoleUser,
 		IsActive:    true,
@@ -44,8 +46,9 @@ func TestUserSerialization(t *testing.T) {
 }
 
 func TestLoginRequest(t *testing.T) {
+	loginEmail := openapi_types.Email("test@example.com")
 	req := LoginRequest{
-		Email:    "test@example.com",
+		Email:    &loginEmail,
 		Password: "password123",
 	}
 
@@ -60,8 +63,8 @@ func TestLoginRequest(t *testing.T) {
 		t.Fatalf("Failed to unmarshal login request: %v", err)
 	}
 
-	if unmarshaled.Email != req.Email {
-		t.Errorf("Expected email %s, got %s", req.Email, unmarshaled.Email)
+	if unmarshaled.Email == nil || *unmarshaled.Email != *req.Email {
+		t.Errorf("Expected email %s, got %v", *req.Email, unmarshaled.Email)
 	}
 }
 
@@ -69,7 +72,7 @@ func TestAuthResponse(t *testing.T) {
 	user := User{
 		Id:        "user123",
 		Username:  "testuser",
-		Email:     "test@example.com",
+		Email:     openapi_types.Email("test@example.com"),
 		Role:      UserRoleUser,
 		IsActive:  true,
 		CreatedAt: time.Now(),

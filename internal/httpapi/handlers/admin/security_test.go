@@ -93,6 +93,7 @@ func (m *MockUserRepo) SetAvatarFields(ctx context.Context, userID string, ipfsC
 	return nil
 }
 func (m *MockUserRepo) MarkEmailAsVerified(ctx context.Context, userID string) error { return nil }
+func (m *MockUserRepo) Anonymize(_ context.Context, _ string) error                  { return nil }
 
 func TestOEmbed_XMLInjection(t *testing.T) {
 	maliciousTitle := "Test Video</title><script>alert('XSS')</script><title>"

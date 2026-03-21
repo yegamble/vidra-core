@@ -101,6 +101,7 @@ func (m *mockAdminUserRepo) SetAvatarFields(_ context.Context, _ string, _ sql.N
 }
 
 func (m *mockAdminUserRepo) MarkEmailAsVerified(_ context.Context, _ string) error { return nil }
+func (m *mockAdminUserRepo) Anonymize(_ context.Context, _ string) error           { return nil }
 
 var _ usecase.UserRepository = (*mockAdminUserRepo)(nil)
 

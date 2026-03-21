@@ -101,6 +101,9 @@ type Dependencies struct {
 	ViewerSessionRepo     repository.ViewerSessionRepository
 	IOTARepo              *repository.IOTARepository
 	EmailVerificationRepo usecase.EmailVerificationRepository
+	PasswordResetRepo     repository.PasswordResetRepository
+	BlacklistRepo         repository.BlacklistRepository
+	ChapterRepo           repository.ChapterRepository
 
 	UploadService            ucup.Service
 	EmailService             email.EmailService
@@ -290,6 +293,9 @@ func (app *Application) initializeDependencies() *Dependencies {
 		StreamKeyRepo:         repository.NewStreamKeyRepository(app.DB),
 		ViewerSessionRepo:     repository.NewViewerSessionRepository(app.DB),
 		EmailVerificationRepo: repository.NewEmailVerificationRepository(app.DB),
+		PasswordResetRepo:     repository.NewPasswordResetRepository(app.DB),
+		BlacklistRepo:         repository.NewBlacklistRepository(app.DB),
+		ChapterRepo:           repository.NewChapterRepository(app.DB),
 	}
 
 	if app.Config.EnableIOTA {

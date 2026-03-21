@@ -248,6 +248,7 @@ func (m *mockUserRepo) SetAvatarFields(context.Context, string, sql.NullString, 
 	return nil
 }
 func (m *mockUserRepo) MarkEmailAsVerified(context.Context, string) error { return nil }
+func (m *mockUserRepo) Anonymize(_ context.Context, _ string) error       { return nil }
 
 type mockVideoRepo struct {
 	countFn func(ctx context.Context) (int64, error)
