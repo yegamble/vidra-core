@@ -143,12 +143,72 @@ func seedUser(repo *mockUserRepo, username, id string) *domain.User {
 
 func newRouter(h *AccountHandlers) chi.Router {
 	r := chi.NewRouter()
+	r.Get("/", h.ListAccounts)
 	r.Get("/{name}", h.GetAccount)
 	r.Get("/{name}/videos", h.GetAccountVideos)
 	r.Get("/{name}/video-channels", h.GetAccountVideoChannels)
 	r.Get("/{name}/ratings", h.GetAccountRatings)
 	r.Get("/{name}/followers", h.GetAccountFollowers)
 	return r
+}
+
+// TestListAccounts_ReturnsAllAccounts verifies GET /accounts returns a paginated list.
+func TestListAccounts_ReturnsAllAccounts(t *testing.T) {
+	repo := newMockUserRepo()
+	seedUser(repo, "alice", "123e4567-e89b-12d3-a456-426614174001")
+	seedUser(repo, "bob", "123e4567-e89b-12d3-a456-426614174002")
+
+	h := NewAccountHandlers(repo, nil, nil, nil)
+	r := newRouter(h)
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	resp := decodeResponse(t, rr)
+	if !resp.Success {
+		t.Fatalf("expected success=true")
+	}
+
+	var got map[string]interface{}
+	if err := json.Unmarshal(resp.Data, &got); err != nil {
+		t.Fatalf("failed to unmarshal data: %v", err)
+	}
+	total, ok := got["total"]
+	if !ok {
+		t.Fatal("expected 'total' field in response")
+	}
+	if total.(float64) < 2 {
+		t.Errorf("expected total >= 2, got %v", total)
+	}
+}
+
+// TestListAccounts_EmptyRepo verifies GET /accounts returns total=0 for an empty user store.
+func TestListAccounts_EmptyRepo(t *testing.T) {
+	repo := newMockUserRepo()
+	h := NewAccountHandlers(repo, nil, nil, nil)
+	r := newRouter(h)
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+
+	resp := decodeResponse(t, rr)
+	var got map[string]interface{}
+	if err := json.Unmarshal(resp.Data, &got); err != nil {
+		t.Fatalf("failed to unmarshal data: %v", err)
+	}
+	if got["total"].(float64) != 0 {
+		t.Errorf("expected total=0, got %v", got["total"])
+	}
 }
 
 // TestGetAccount_BySimpleUsername verifies that GET /accounts/{name} resolves a plain username.

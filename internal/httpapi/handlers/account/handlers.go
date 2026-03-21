@@ -91,6 +91,33 @@ func (h *AccountHandlers) lookupUser(w http.ResponseWriter, r *http.Request, nam
 	return user
 }
 
+// ListAccounts handles GET /api/v1/accounts
+func (h *AccountHandlers) ListAccounts(w http.ResponseWriter, r *http.Request) {
+	page, pageSize := parsePagination(r)
+	offset := (page - 1) * pageSize
+
+	users, err := h.userRepo.List(r.Context(), pageSize, offset)
+	if err != nil {
+		shared.WriteError(w, http.StatusInternalServerError, domain.NewDomainError("INTERNAL_ERROR", "Failed to list accounts"))
+		return
+	}
+
+	total, err := h.userRepo.Count(r.Context())
+	if err != nil {
+		shared.WriteError(w, http.StatusInternalServerError, domain.NewDomainError("INTERNAL_ERROR", "Failed to count accounts"))
+		return
+	}
+
+	data := make([]accountResponse, len(users))
+	for i, u := range users {
+		data[i] = toAccountResponse(u)
+	}
+	shared.WriteJSON(w, http.StatusOK, map[string]interface{}{
+		"total": total,
+		"data":  data,
+	})
+}
+
 // GetAccount handles GET /api/v1/accounts/{name}
 func (h *AccountHandlers) GetAccount(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")

@@ -230,14 +230,16 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 			log.Printf("Registering video import routes...")
 			importService, ok := deps.ImportService.(importuc.Service)
 			if ok {
+				importHandlers := video.NewImportHandlers(importService)
 				r.Route("/videos/imports", func(r chi.Router) {
 					r.Use(middleware.Auth(cfg.JWTSecret))
-					importHandlers := video.NewImportHandlers(importService)
 					r.With(strictImportLimiter.Limit).Post("/", importHandlers.CreateImport)
 					r.Get("/", importHandlers.ListImports)
 					r.Get("/{id}", importHandlers.GetImport)
 					r.Delete("/{id}", importHandlers.CancelImport)
 				})
+				// PeerTube alias: /users/me/videos/imports → same handler
+				r.With(middleware.Auth(cfg.JWTSecret)).Get("/users/me/videos/imports", importHandlers.ListImports)
 			}
 		}
 
@@ -280,6 +282,9 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 			channelHandlers := channel.NewChannelHandlers(deps.ChannelService, deps.SubRepo)
 			r.With(middleware.Auth(cfg.JWTSecret)).Get("/me/channels", channelHandlers.GetMyChannels)
 
+			r.With(middleware.Auth(cfg.JWTSecret)).Get("/me/videos", video.GetMyVideosHandler(deps.VideoRepo))
+			r.With(middleware.Auth(cfg.JWTSecret)).Get("/me/comments", video.GetMyCommentsHandler())
+
 			ratingHandlers := social.NewRatingHandlers(deps.RatingService)
 			r.With(middleware.Auth(cfg.JWTSecret)).Get("/me/ratings", ratingHandlers.GetUserRatings)
 
@@ -314,6 +319,7 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 		// PeerTube-compatible handle-based account routes
 		r.Route("/accounts", func(r chi.Router) {
 			accountHandlers := account.NewAccountHandlers(deps.UserRepo, deps.VideoRepo, deps.ChannelService, deps.SubRepo)
+			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/", accountHandlers.ListAccounts)
 			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{name}", accountHandlers.GetAccount)
 			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{name}/videos", accountHandlers.GetAccountVideos)
 			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{name}/video-channels", accountHandlers.GetAccountVideoChannels)
