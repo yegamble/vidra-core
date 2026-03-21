@@ -182,6 +182,9 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 			r.With(middleware.Auth(cfg.JWTSecret)).Post("/", video.CreateVideoHandler(deps.VideoRepo))
 			r.With(middleware.Auth(cfg.JWTSecret)).Put("/{id}", video.UpdateVideoHandler(deps.VideoRepo))
 			r.With(middleware.Auth(cfg.JWTSecret)).Delete("/{id}", video.DeleteVideoHandler(deps.VideoRepo))
+			if deps.OwnershipRepo != nil {
+				r.With(middleware.Auth(cfg.JWTSecret)).Post("/{id}/give-ownership", video.GiveOwnershipHandler(deps.OwnershipRepo, deps.VideoRepo))
+			}
 
 			r.With(middleware.Auth(cfg.JWTSecret)).Post("/{id}/upload", video.VideoUploadChunkHandler(deps.UploadService, cfg))
 			r.With(middleware.Auth(cfg.JWTSecret)).Post("/{id}/complete", video.VideoCompleteUploadHandler(deps.UploadService))
@@ -287,6 +290,11 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 
 			r.With(middleware.Auth(cfg.JWTSecret)).Get("/me/videos", video.GetMyVideosHandler(deps.VideoRepo))
 			r.With(middleware.Auth(cfg.JWTSecret)).Get("/me/comments", video.GetMyCommentsHandler())
+			if deps.OwnershipRepo != nil {
+				r.With(middleware.Auth(cfg.JWTSecret)).Get("/me/videos/ownership", video.ListOwnershipChangesHandler(deps.OwnershipRepo))
+				r.With(middleware.Auth(cfg.JWTSecret)).Post("/me/videos/ownership/{id}/accept", video.AcceptOwnershipHandler(deps.OwnershipRepo, deps.VideoRepo))
+				r.With(middleware.Auth(cfg.JWTSecret)).Post("/me/videos/ownership/{id}/refuse", video.RefuseOwnershipHandler(deps.OwnershipRepo))
+			}
 
 			ratingHandlers := social.NewRatingHandlers(deps.RatingService)
 			r.With(middleware.Auth(cfg.JWTSecret)).Get("/me/ratings", ratingHandlers.GetUserRatings)

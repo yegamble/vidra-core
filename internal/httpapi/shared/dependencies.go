@@ -58,8 +58,9 @@ type HandlerDependencies struct {
 	TokenSessionRepo      port.TokenSessionRepository
 	ServerFollowingRepo   port.ServerFollowingRepository
 	UserBlockRepo         *repository.UserBlockRepository
-	AbuseMessageRepo         *repository.AbuseMessageRepository
-	LiveStreamSessionRepo    *repository.LiveStreamSessionRepository
+	AbuseMessageRepo      *repository.AbuseMessageRepository
+	LiveStreamSessionRepo *repository.LiveStreamSessionRepository
+	OwnershipRepo         port.VideoOwnershipRepository
 
 	UploadService            ucup.Service
 	EmailService             email.EmailService
@@ -93,7 +94,7 @@ type HandlerDependencies struct {
 
 	RegistrationRepo *repository.RegistrationRepository
 	PluginRepo       *repository.PluginRepository
-	PluginManager *plugin.Manager
+	PluginManager    *plugin.Manager
 
 	RedundancyService any
 	InstanceDiscovery any
