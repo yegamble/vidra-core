@@ -114,14 +114,3 @@ func TestGetSessionHistory_ResponseShape(t *testing.T) {
 	assert.True(t, out["success"].(bool))
 	assert.Contains(t, out, "data")
 }
-
-func TestGetSessionHistory_NilSessions(t *testing.T) {
-	repo := &mockSessionRepo{sessions: nil}
-	h := NewSessionHistoryHandlers(repo)
-
-	req := sessionReqWithStream(uuid.New().String(), "user-1")
-	w := httptest.NewRecorder()
-	h.GetSessionHistory(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-}

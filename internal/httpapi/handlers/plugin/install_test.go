@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 type mockPluginInstaller struct {
@@ -28,12 +30,8 @@ func TestInstallPlugin_OK(t *testing.T) {
 	rr := httptest.NewRecorder()
 	h.InstallPlugin(rr, req)
 
-	if rr.Code != http.StatusNoContent {
-		t.Fatalf("expected 204, got %d: %s", rr.Code, rr.Body.String())
-	}
-	if installer.installedURL != "https://example.com/my-plugin.zip" {
-		t.Fatalf("expected installedURL=https://example.com/my-plugin.zip, got %q", installer.installedURL)
-	}
+	require.Equal(t, http.StatusNoContent, rr.Code, rr.Body.String())
+	require.Equal(t, "https://example.com/my-plugin.zip", installer.installedURL)
 }
 
 func TestInstallPlugin_MissingURL(t *testing.T) {
@@ -46,9 +44,7 @@ func TestInstallPlugin_MissingURL(t *testing.T) {
 	rr := httptest.NewRecorder()
 	h.InstallPlugin(rr, req)
 
-	if rr.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400, got %d: %s", rr.Code, rr.Body.String())
-	}
+	require.Equal(t, http.StatusBadRequest, rr.Code, rr.Body.String())
 }
 
 func TestListAvailablePlugins_OK(t *testing.T) {
@@ -59,9 +55,7 @@ func TestListAvailablePlugins_OK(t *testing.T) {
 	rr := httptest.NewRecorder()
 	h.ListAvailablePlugins(rr, req)
 
-	if rr.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
-	}
+	require.Equal(t, http.StatusOK, rr.Code, rr.Body.String())
 }
 
 func TestInstallPlugin_HTTPUrl(t *testing.T) {
@@ -74,9 +68,7 @@ func TestInstallPlugin_HTTPUrl(t *testing.T) {
 	rr := httptest.NewRecorder()
 	h.InstallPlugin(rr, req)
 
-	if rr.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400 for http URL, got %d: %s", rr.Code, rr.Body.String())
-	}
+	require.Equal(t, http.StatusBadRequest, rr.Code, "expected 400 for http URL")
 }
 
 func TestInstallPlugin_FTPUrl(t *testing.T) {
@@ -89,9 +81,7 @@ func TestInstallPlugin_FTPUrl(t *testing.T) {
 	rr := httptest.NewRecorder()
 	h.InstallPlugin(rr, req)
 
-	if rr.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400 for ftp URL, got %d: %s", rr.Code, rr.Body.String())
-	}
+	require.Equal(t, http.StatusBadRequest, rr.Code, "expected 400 for ftp URL")
 }
 
 func TestInstallPlugin_InvalidJSON(t *testing.T) {
@@ -103,9 +93,7 @@ func TestInstallPlugin_InvalidJSON(t *testing.T) {
 	rr := httptest.NewRecorder()
 	h.InstallPlugin(rr, req)
 
-	if rr.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400 for invalid JSON, got %d: %s", rr.Code, rr.Body.String())
-	}
+	require.Equal(t, http.StatusBadRequest, rr.Code, "expected 400 for invalid JSON")
 }
 
 func TestInstallPlugin_ServiceError(t *testing.T) {
@@ -118,9 +106,7 @@ func TestInstallPlugin_ServiceError(t *testing.T) {
 	rr := httptest.NewRecorder()
 	h.InstallPlugin(rr, req)
 
-	if rr.Code != http.StatusInternalServerError {
-		t.Fatalf("expected 500 for service error, got %d: %s", rr.Code, rr.Body.String())
-	}
+	require.Equal(t, http.StatusInternalServerError, rr.Code, "expected 500 for service error")
 }
 
 func TestListAvailablePlugins_ResponseShape(t *testing.T) {
@@ -131,10 +117,6 @@ func TestListAvailablePlugins_ResponseShape(t *testing.T) {
 	rr := httptest.NewRecorder()
 	h.ListAvailablePlugins(rr, req)
 
-	if rr.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", rr.Code)
-	}
-	if ct := rr.Header().Get("Content-Type"); ct == "" {
-		t.Fatalf("expected Content-Type header, got empty")
-	}
+	require.Equal(t, http.StatusOK, rr.Code)
+	require.NotEmpty(t, rr.Header().Get("Content-Type"), "expected Content-Type header")
 }

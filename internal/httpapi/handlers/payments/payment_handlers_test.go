@@ -655,16 +655,6 @@ func TestValidateInputSanitization(t *testing.T) {
 	}
 }
 
-// TestRateLimiting tests rate limiting on endpoints
-func TestRateLimiting(t *testing.T) {
-	t.Skip("Rate limiting integration test - requires middleware setup")
-}
-
-// TestConcurrentRequests tests handling of concurrent requests
-func TestConcurrentRequests(t *testing.T) {
-	t.Skip("Concurrent request handling test - requires load testing")
-}
-
 // TestErrorHandling tests proper error response formatting
 func TestErrorHandling(t *testing.T) {
 	tests := []struct {

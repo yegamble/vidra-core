@@ -181,6 +181,15 @@ func TestExtractBackupID_ValidID(t *testing.T) {
 	assert.Equal(t, "backup-2026", id)
 }
 
+func TestDeleteBackup_PathTraversal(t *testing.T) {
+	h := &Handler{}
+	req := reqWithID(http.MethodDelete, "/admin/backups/../../etc/passwd", "../../etc/passwd")
+	w := httptest.NewRecorder()
+	h.DeleteBackup(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
 func TestHandler_extractBackupID(t *testing.T) {
 	tests := []struct {
 		name   string
