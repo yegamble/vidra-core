@@ -98,20 +98,8 @@ func (h *PluginHandler) ListPlugins(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *PluginHandler) GetPlugin(w http.ResponseWriter, r *http.Request) {
-	pluginIDStr := chi.URLParam(r, "id")
-	pluginID, err := uuid.Parse(pluginIDStr)
-	if err != nil {
-		shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_ID", "Invalid plugin ID"))
-		return
-	}
-
-	plugin, err := h.pluginRepo.GetByID(r.Context(), pluginID)
-	if err == domain.ErrPluginNotFound {
-		shared.WriteError(w, http.StatusNotFound, domain.NewDomainError("NOT_FOUND", "Plugin not found"))
-		return
-	}
-	if err != nil {
-		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to get plugin: %w", err))
+	plugin, ok := h.resolvePluginRecord(w, r)
+	if !ok {
 		return
 	}
 
@@ -164,20 +152,8 @@ func (h *PluginHandler) DisablePlugin(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *PluginHandler) togglePluginStatus(w http.ResponseWriter, r *http.Request, enable bool) {
-	pluginIDStr := chi.URLParam(r, "id")
-	pluginID, err := uuid.Parse(pluginIDStr)
-	if err != nil {
-		shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_ID", "Invalid plugin ID"))
-		return
-	}
-
-	plugin, err := h.pluginRepo.GetByID(r.Context(), pluginID)
-	if err == domain.ErrPluginNotFound {
-		shared.WriteError(w, http.StatusNotFound, domain.NewDomainError("NOT_FOUND", "Plugin not found"))
-		return
-	}
-	if err != nil {
-		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to get plugin: %w", err))
+	plugin, ok := h.resolvePluginRecord(w, r)
+	if !ok {
 		return
 	}
 
@@ -235,13 +211,6 @@ func (h *PluginHandler) togglePluginStatus(w http.ResponseWriter, r *http.Reques
 }
 
 func (h *PluginHandler) UpdatePluginConfig(w http.ResponseWriter, r *http.Request) {
-	pluginIDStr := chi.URLParam(r, "id")
-	pluginID, err := uuid.Parse(pluginIDStr)
-	if err != nil {
-		shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_ID", "Invalid plugin ID"))
-		return
-	}
-
 	var req struct {
 		Config map[string]any `json:"config"`
 	}
@@ -256,13 +225,8 @@ func (h *PluginHandler) UpdatePluginConfig(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	plugin, err := h.pluginRepo.GetByID(r.Context(), pluginID)
-	if err == domain.ErrPluginNotFound {
-		shared.WriteError(w, http.StatusNotFound, domain.NewDomainError("NOT_FOUND", "Plugin not found"))
-		return
-	}
-	if err != nil {
-		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to get plugin: %w", err))
+	plugin, ok := h.resolvePluginRecord(w, r)
+	if !ok {
 		return
 	}
 
@@ -288,20 +252,8 @@ func (h *PluginHandler) UpdatePluginConfig(w http.ResponseWriter, r *http.Reques
 }
 
 func (h *PluginHandler) UninstallPlugin(w http.ResponseWriter, r *http.Request) {
-	pluginIDStr := chi.URLParam(r, "id")
-	pluginID, err := uuid.Parse(pluginIDStr)
-	if err != nil {
-		shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_ID", "Invalid plugin ID"))
-		return
-	}
-
-	plugin, err := h.pluginRepo.GetByID(r.Context(), pluginID)
-	if err == domain.ErrPluginNotFound {
-		shared.WriteError(w, http.StatusNotFound, domain.NewDomainError("NOT_FOUND", "Plugin not found"))
-		return
-	}
-	if err != nil {
-		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to get plugin: %w", err))
+	plugin, ok := h.resolvePluginRecord(w, r)
+	if !ok {
 		return
 	}
 
@@ -312,7 +264,7 @@ func (h *PluginHandler) UninstallPlugin(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
-	if err := h.pluginRepo.Delete(r.Context(), pluginID); err != nil {
+	if err := h.pluginRepo.Delete(r.Context(), plugin.ID); err != nil {
 		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to uninstall plugin: %w", err))
 		return
 	}
@@ -411,6 +363,49 @@ func (h *PluginHandler) GetPluginHealth(w http.ResponseWriter, r *http.Request) 
 	}
 
 	shared.WriteJSON(w, http.StatusOK, health)
+}
+
+func (h *PluginHandler) resolvePluginRecord(w http.ResponseWriter, r *http.Request) (*domain.PluginRecord, bool) {
+	identifier := pluginIdentifier(r)
+	if identifier == "" {
+		shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_ID", "Invalid plugin identifier"))
+		return nil, false
+	}
+
+	if h.pluginRepo == nil {
+		shared.WriteError(w, http.StatusServiceUnavailable, domain.NewDomainError("PLUGIN_REPO_UNAVAILABLE", "Plugin repository not configured"))
+		return nil, false
+	}
+
+	plugin, err := h.getPluginByIdentifier(r, identifier)
+	if err == domain.ErrPluginNotFound {
+		shared.WriteError(w, http.StatusNotFound, domain.NewDomainError("NOT_FOUND", "Plugin not found"))
+		return nil, false
+	}
+	if err != nil {
+		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to get plugin: %w", err))
+		return nil, false
+	}
+
+	return plugin, true
+}
+
+func (h *PluginHandler) getPluginByIdentifier(r *http.Request, identifier string) (*domain.PluginRecord, error) {
+	if pluginID, err := uuid.Parse(identifier); err == nil {
+		return h.pluginRepo.GetByID(r.Context(), pluginID)
+	}
+
+	return h.pluginRepo.GetByName(r.Context(), identifier)
+}
+
+func pluginIdentifier(r *http.Request) string {
+	for _, key := range []string{"id", "name", "npmName"} {
+		if value := chi.URLParam(r, key); value != "" {
+			return value
+		}
+	}
+
+	return ""
 }
 
 func (h *PluginHandler) GetHooks(w http.ResponseWriter, r *http.Request) {

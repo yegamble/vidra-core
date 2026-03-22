@@ -114,32 +114,33 @@ func TestPluginHandlers_ConstructorAndHelpers(t *testing.T) {
 	})
 }
 
-func TestPluginHandlers_InvalidIDBranches(t *testing.T) {
+func TestPluginHandlers_MissingOrInvalidIdentifierBranches(t *testing.T) {
 	h := NewPluginHandler(nil, nil, nil, false)
 	tests := []struct {
-		name   string
-		call   func(http.ResponseWriter, *http.Request)
-		method string
-		path   string
-		needID bool
-		body   string
-		want   int
+		name       string
+		call       func(http.ResponseWriter, *http.Request)
+		method     string
+		path       string
+		paramKey   string
+		paramValue string
+		body       string
+		want       int
 	}{
-		{"GetPlugin", h.GetPlugin, http.MethodGet, "/x", true, "", http.StatusBadRequest},
-		{"EnablePlugin", h.EnablePlugin, http.MethodPut, "/x/enable", true, "", http.StatusBadRequest},
-		{"DisablePlugin", h.DisablePlugin, http.MethodPut, "/x/disable", true, "", http.StatusBadRequest},
-		{"UpdatePluginConfig-invalid-id", h.UpdatePluginConfig, http.MethodPut, "/x/config", true, `{"config":{}}`, http.StatusBadRequest},
-		{"UninstallPlugin", h.UninstallPlugin, http.MethodDelete, "/x", true, "", http.StatusBadRequest},
-		{"GetPluginStatistics", h.GetPluginStatistics, http.MethodGet, "/x/statistics", true, "", http.StatusBadRequest},
-		{"GetExecutionHistory", h.GetExecutionHistory, http.MethodGet, "/x/executions", true, "", http.StatusBadRequest},
-		{"GetPluginHealth", h.GetPluginHealth, http.MethodGet, "/x/health", true, "", http.StatusBadRequest},
+		{"GetPlugin", h.GetPlugin, http.MethodGet, "/x", "", "", "", http.StatusBadRequest},
+		{"EnablePlugin", h.EnablePlugin, http.MethodPut, "/x/enable", "", "", "", http.StatusBadRequest},
+		{"DisablePlugin", h.DisablePlugin, http.MethodPut, "/x/disable", "", "", "", http.StatusBadRequest},
+		{"UpdatePluginConfig-missing-id", h.UpdatePluginConfig, http.MethodPut, "/x/config", "", "", `{"config":{}}`, http.StatusBadRequest},
+		{"UninstallPlugin", h.UninstallPlugin, http.MethodDelete, "/x", "", "", "", http.StatusBadRequest},
+		{"GetPluginStatistics", h.GetPluginStatistics, http.MethodGet, "/x/statistics", "id", "not-a-uuid", "", http.StatusBadRequest},
+		{"GetExecutionHistory", h.GetExecutionHistory, http.MethodGet, "/x/executions", "id", "not-a-uuid", "", http.StatusBadRequest},
+		{"GetPluginHealth", h.GetPluginHealth, http.MethodGet, "/x/health", "id", "not-a-uuid", "", http.StatusBadRequest},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			req := httptest.NewRequest(tc.method, tc.path, strings.NewReader(tc.body))
-			if tc.needID {
-				req = withPluginParam(req, "id", "not-a-uuid")
+			if tc.paramKey != "" {
+				req = withPluginParam(req, tc.paramKey, tc.paramValue)
 			}
 			rr := httptest.NewRecorder()
 			tc.call(rr, req)
@@ -154,7 +155,7 @@ func TestPluginHandlers_BodyValidationBranches(t *testing.T) {
 
 	t.Run("update config invalid json", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPut, "/api/v1/admin/plugins/123/config", strings.NewReader("{bad"))
-		req = withPluginParam(req, "id", "11111111-1111-1111-1111-111111111111")
+		req = withPluginParam(req, "name", "demo-plugin")
 		rr := httptest.NewRecorder()
 		h.UpdatePluginConfig(rr, req)
 		require.Equal(t, http.StatusBadRequest, rr.Code)
@@ -162,7 +163,7 @@ func TestPluginHandlers_BodyValidationBranches(t *testing.T) {
 
 	t.Run("update config missing config", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPut, "/api/v1/admin/plugins/123/config", strings.NewReader(`{"config":null}`))
-		req = withPluginParam(req, "id", "11111111-1111-1111-1111-111111111111")
+		req = withPluginParam(req, "name", "demo-plugin")
 		rr := httptest.NewRecorder()
 		h.UpdatePluginConfig(rr, req)
 		require.Equal(t, http.StatusBadRequest, rr.Code)

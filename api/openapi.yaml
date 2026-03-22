@@ -3827,6 +3827,774 @@ paths:
                   total:
                     type: integer
 
+  /api/v1/users/registrations:
+    get:
+      tags:
+        - Users
+      summary: List registration requests
+      description: PeerTube-compatible alias for moderation registration review.
+      operationId: listUserRegistrations
+      responses:
+        '200':
+          description: Registration requests
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WrappedUserRegistrationsResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/users/registrations/{registrationId}/accept:
+    post:
+      tags:
+        - Users
+      summary: Accept registration request
+      description: PeerTube-compatible alias for accepting a pending registration.
+      operationId: acceptUserRegistration
+      parameters:
+        - name: registrationId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Registration accepted
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Registration not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/users/registrations/{registrationId}/reject:
+    post:
+      tags:
+        - Users
+      summary: Reject registration request
+      description: PeerTube-compatible alias for rejecting a pending registration.
+      operationId: rejectUserRegistration
+      parameters:
+        - name: registrationId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Registration rejected
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Registration not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/users/registrations/{registrationId}:
+    delete:
+      tags:
+        - Users
+      summary: Delete registration request
+      description: PeerTube-compatible alias for deleting a registration request.
+      operationId: deleteUserRegistration
+      parameters:
+        - name: registrationId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Registration deleted
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Registration not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/jobs:
+    get:
+      tags:
+        - Jobs
+      summary: List jobs
+      description: PeerTube-compatible alias for listing Athena encoding jobs without a state filter.
+      operationId: listJobs
+      responses:
+        '200':
+          description: Jobs
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WrappedEncodingJobsResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/jobs/{state}:
+    get:
+      tags:
+        - Jobs
+      summary: List jobs by state
+      description: PeerTube-compatible alias for listing Athena encoding jobs filtered by state.
+      operationId: listJobsByState
+      parameters:
+        - name: state
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Jobs
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WrappedEncodingJobsResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/jobs/pause:
+    post:
+      tags:
+        - Jobs
+      summary: Pause jobs
+      description: PeerTube-compatible alias for pausing Athena job scheduling.
+      operationId: pauseJobs
+      responses:
+        '204':
+          description: Job scheduling paused
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/jobs/resume:
+    post:
+      tags:
+        - Jobs
+      summary: Resume jobs
+      description: PeerTube-compatible alias for resuming Athena job scheduling.
+      operationId: resumeJobs
+      responses:
+        '204':
+          description: Job scheduling resumed
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/videos/imports/{id}/cancel:
+    post:
+      tags:
+        - Videos
+      summary: Cancel video import
+      description: PeerTube-compatible cancel endpoint. Athena currently enforces pending-state cancellation on this alias.
+      operationId: cancelVideoImport
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Import cancelled
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Import not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Import is not pending
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/videos/imports/{id}/retry:
+    post:
+      tags:
+        - Videos
+      summary: Retry video import
+      description: PeerTube-compatible retry endpoint for failed imports.
+      operationId: retryVideoImport
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Import retry scheduled
+        '400':
+          description: Import cannot be retried from its current state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Import not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/video-channels/{channelHandle}/collaborators:
+    get:
+      tags:
+        - Channels
+      summary: List channel collaborators
+      description: PeerTube-compatible collaborator route reserved by Athena for future implementation.
+      operationId: listChannelCollaborators
+      parameters:
+        - name: channelHandle
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '501':
+          $ref: '#/components/responses/NotImplemented'
+
+  /api/v1/video-channels/{channelHandle}/collaborators/invite:
+    post:
+      tags:
+        - Channels
+      summary: Invite channel collaborator
+      description: PeerTube-compatible collaborator invite route reserved by Athena for future implementation.
+      operationId: inviteChannelCollaborator
+      parameters:
+        - name: channelHandle
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '501':
+          $ref: '#/components/responses/NotImplemented'
+
+  /api/v1/video-channels/{channelHandle}/collaborators/{collaboratorId}/accept:
+    post:
+      tags:
+        - Channels
+      summary: Accept collaborator invitation
+      description: PeerTube-compatible collaborator acceptance route reserved by Athena for future implementation.
+      operationId: acceptChannelCollaborator
+      parameters:
+        - name: channelHandle
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: collaboratorId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '501':
+          $ref: '#/components/responses/NotImplemented'
+
+  /api/v1/video-channels/{channelHandle}/collaborators/{collaboratorId}/reject:
+    post:
+      tags:
+        - Channels
+      summary: Reject collaborator invitation
+      description: PeerTube-compatible collaborator rejection route reserved by Athena for future implementation.
+      operationId: rejectChannelCollaborator
+      parameters:
+        - name: channelHandle
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: collaboratorId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '501':
+          $ref: '#/components/responses/NotImplemented'
+
+  /api/v1/video-channels/{channelHandle}/collaborators/{collaboratorId}:
+    delete:
+      tags:
+        - Channels
+      summary: Remove channel collaborator
+      description: PeerTube-compatible collaborator removal route reserved by Athena for future implementation.
+      operationId: deleteChannelCollaborator
+      parameters:
+        - name: channelHandle
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: collaboratorId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '501':
+          $ref: '#/components/responses/NotImplemented'
+
+  /api/v1/runners:
+    get:
+      tags:
+        - Runners
+      summary: List runners
+      description: PeerTube-compatible runner management route reserved by Athena for future implementation.
+      operationId: listRunners
+      responses:
+        '501':
+          $ref: '#/components/responses/NotImplemented'
+
+  /api/v1/runners/register:
+    post:
+      tags:
+        - Runners
+      summary: Register runner
+      description: PeerTube-compatible runner registration route reserved by Athena for future implementation.
+      operationId: registerRunner
+      responses:
+        '501':
+          $ref: '#/components/responses/NotImplemented'
+
+  /api/v1/runners/unregister:
+    post:
+      tags:
+        - Runners
+      summary: Unregister runner
+      description: PeerTube-compatible runner unregister route reserved by Athena for future implementation.
+      operationId: unregisterRunner
+      responses:
+        '501':
+          $ref: '#/components/responses/NotImplemented'
+
+  /api/v1/runners/{runnerId}:
+    delete:
+      tags:
+        - Runners
+      summary: Delete runner
+      description: PeerTube-compatible runner deletion route reserved by Athena for future implementation.
+      operationId: deleteRunner
+      parameters:
+        - name: runnerId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '501':
+          $ref: '#/components/responses/NotImplemented'
+
+  /api/v1/runners/registration-tokens:
+    get:
+      tags:
+        - Runners
+      summary: List runner registration tokens
+      description: PeerTube-compatible runner registration token route reserved by Athena for future implementation.
+      operationId: listRunnerRegistrationTokens
+      responses:
+        '501':
+          $ref: '#/components/responses/NotImplemented'
+
+  /api/v1/runners/registration-tokens/generate:
+    post:
+      tags:
+        - Runners
+      summary: Generate runner registration token
+      description: PeerTube-compatible runner registration token generation route reserved by Athena for future implementation.
+      operationId: generateRunnerRegistrationToken
+      responses:
+        '501':
+          $ref: '#/components/responses/NotImplemented'
+
+  /api/v1/runners/registration-tokens/{id}:
+    delete:
+      tags:
+        - Runners
+      summary: Delete runner registration token
+      description: PeerTube-compatible runner registration token deletion route reserved by Athena for future implementation.
+      operationId: deleteRunnerRegistrationToken
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '501':
+          $ref: '#/components/responses/NotImplemented'
+
+  /api/v1/runners/jobs:
+    get:
+      tags:
+        - Runners
+      summary: List runner jobs
+      description: PeerTube-compatible runner jobs route reserved by Athena for future implementation.
+      operationId: listRunnerJobs
+      responses:
+        '501':
+          $ref: '#/components/responses/NotImplemented'
+
+  /api/v1/runners/jobs/request:
+    post:
+      tags:
+        - Runners
+      summary: Request runner job
+      description: PeerTube-compatible runner job request route reserved by Athena for future implementation.
+      operationId: requestRunnerJob
+      responses:
+        '501':
+          $ref: '#/components/responses/NotImplemented'
+
+  /api/v1/runners/jobs/{jobUUID}:
+    delete:
+      tags:
+        - Runners
+      summary: Delete runner job
+      description: PeerTube-compatible runner job deletion route reserved by Athena for future implementation.
+      operationId: deleteRunnerJob
+      parameters:
+        - name: jobUUID
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '501':
+          $ref: '#/components/responses/NotImplemented'
+
+  /api/v1/runners/jobs/{jobUUID}/accept:
+    post:
+      tags:
+        - Runners
+      summary: Accept runner job
+      description: PeerTube-compatible runner job accept route reserved by Athena for future implementation.
+      operationId: acceptRunnerJob
+      parameters:
+        - name: jobUUID
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '501':
+          $ref: '#/components/responses/NotImplemented'
+
+  /api/v1/runners/jobs/{jobUUID}/abort:
+    post:
+      tags:
+        - Runners
+      summary: Abort runner job
+      description: PeerTube-compatible runner job abort route reserved by Athena for future implementation.
+      operationId: abortRunnerJob
+      parameters:
+        - name: jobUUID
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '501':
+          $ref: '#/components/responses/NotImplemented'
+
+  /api/v1/runners/jobs/{jobUUID}/update:
+    post:
+      tags:
+        - Runners
+      summary: Update runner job
+      description: PeerTube-compatible runner job update route reserved by Athena for future implementation.
+      operationId: updateRunnerJob
+      parameters:
+        - name: jobUUID
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '501':
+          $ref: '#/components/responses/NotImplemented'
+
+  /api/v1/runners/jobs/{jobUUID}/error:
+    post:
+      tags:
+        - Runners
+      summary: Mark runner job as errored
+      description: PeerTube-compatible runner job error route reserved by Athena for future implementation.
+      operationId: errorRunnerJob
+      parameters:
+        - name: jobUUID
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '501':
+          $ref: '#/components/responses/NotImplemented'
+
+  /api/v1/runners/jobs/{jobUUID}/success:
+    post:
+      tags:
+        - Runners
+      summary: Complete runner job
+      description: PeerTube-compatible runner job success route reserved by Athena for future implementation.
+      operationId: successRunnerJob
+      parameters:
+        - name: jobUUID
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '501':
+          $ref: '#/components/responses/NotImplemented'
+
+  /api/v1/runners/jobs/{jobUUID}/cancel:
+    post:
+      tags:
+        - Runners
+      summary: Cancel runner job
+      description: PeerTube-compatible runner job cancellation route reserved by Athena for future implementation.
+      operationId: cancelRunnerJob
+      parameters:
+        - name: jobUUID
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '501':
+          $ref: '#/components/responses/NotImplemented'
+
+  /api/v1/runners/jobs/{jobUUID}/files/videos/{videoId}/max-quality:
+    post:
+      tags:
+        - Runners
+      summary: Fetch runner max-quality video input
+      description: PeerTube-compatible runner file route reserved by Athena for future implementation.
+      operationId: getRunnerMaxQualityVideo
+      parameters:
+        - name: jobUUID
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: videoId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '501':
+          $ref: '#/components/responses/NotImplemented'
+
+  /api/v1/runners/jobs/{jobUUID}/files/videos/{videoId}/max-quality/audio:
+    post:
+      tags:
+        - Runners
+      summary: Fetch runner max-quality audio input
+      description: PeerTube-compatible runner audio file route reserved by Athena for future implementation.
+      operationId: getRunnerMaxQualityAudio
+      parameters:
+        - name: jobUUID
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: videoId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '501':
+          $ref: '#/components/responses/NotImplemented'
+
+  /api/v1/runners/jobs/{jobUUID}/files/videos/{videoId}/previews/max-quality:
+    post:
+      tags:
+        - Runners
+      summary: Fetch runner preview input
+      description: PeerTube-compatible runner preview file route reserved by Athena for future implementation.
+      operationId: getRunnerPreviewFile
+      parameters:
+        - name: jobUUID
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: videoId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '501':
+          $ref: '#/components/responses/NotImplemented'
+
+  /api/v1/runners/jobs/{jobUUID}/files/videos/{videoId}/thumbnails/max-quality:
+    post:
+      tags:
+        - Runners
+      summary: Fetch runner thumbnail input
+      description: PeerTube-compatible runner thumbnail file route reserved by Athena for future implementation.
+      operationId: getRunnerThumbnailFile
+      parameters:
+        - name: jobUUID
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: videoId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '501':
+          $ref: '#/components/responses/NotImplemented'
+
+  /api/v1/runners/jobs/{jobUUID}/files/videos/{videoId}/studio/task-files/{filename}:
+    post:
+      tags:
+        - Runners
+      summary: Fetch runner studio task input
+      description: PeerTube-compatible runner studio task file route reserved by Athena for future implementation.
+      operationId: getRunnerStudioTaskFile
+      parameters:
+        - name: jobUUID
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: videoId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: filename
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '501':
+          $ref: '#/components/responses/NotImplemented'
+
 
   # Message endpoints
 
@@ -4777,6 +5545,12 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/ErrorResponse'
+    NotImplemented:
+      description: Declared PeerTube compatibility route not implemented yet
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
 
   schemas:
     UserBlock:
@@ -5474,6 +6248,57 @@ components:
           type: boolean
           example: true
       required: [data, meta, success]
+
+    UserRegistration:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        username:
+          type: string
+        email:
+          type: string
+          format: email
+        channelDisplayName:
+          type: string
+          nullable: true
+        registrationReason:
+          type: string
+          nullable: true
+        state:
+          type: string
+        moderationResponse:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+      required: [id, username, email, state, createdAt]
+
+    WrappedUserRegistrationsResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/UserRegistration'
+        success:
+          type: boolean
+          example: true
+      required: [data, success]
+
+    WrappedEncodingJobsResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/EncodingJob'
+        success:
+          type: boolean
+          example: true
+      required: [data, success]
 
     ErrorResponse:
       type: object

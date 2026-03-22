@@ -54,7 +54,7 @@ func (h *RegistrationHandlers) ListRegistrations(w http.ResponseWriter, r *http.
 
 // AcceptRegistration handles POST /api/v1/admin/registrations/{id}/accept.
 func (h *RegistrationHandlers) AcceptRegistration(w http.ResponseWriter, r *http.Request) {
-	idStr := chi.URLParam(r, "id")
+	idStr := registrationIDParam(r)
 	id, err := uuid.Parse(idStr)
 	if err != nil {
 		shared.WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid registration ID"))
@@ -108,7 +108,7 @@ func (h *RegistrationHandlers) RejectRegistration(w http.ResponseWriter, r *http
 
 // DeleteRegistration handles DELETE /api/v1/admin/registrations/{id}.
 func (h *RegistrationHandlers) DeleteRegistration(w http.ResponseWriter, r *http.Request) {
-	idStr := chi.URLParam(r, "id")
+	idStr := registrationIDParam(r)
 	id, err := uuid.Parse(idStr)
 	if err != nil {
 		shared.WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid registration ID"))
@@ -127,7 +127,7 @@ func (h *RegistrationHandlers) DeleteRegistration(w http.ResponseWriter, r *http
 }
 
 func (h *RegistrationHandlers) updateRegistrationStatus(w http.ResponseWriter, r *http.Request, status string) {
-	idStr := chi.URLParam(r, "id")
+	idStr := registrationIDParam(r)
 	id, err := uuid.Parse(idStr)
 	if err != nil {
 		shared.WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid registration ID"))
@@ -154,4 +154,12 @@ func (h *RegistrationHandlers) updateRegistrationStatus(w http.ResponseWriter, r
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func registrationIDParam(r *http.Request) string {
+	if registrationID := chi.URLParam(r, "registrationId"); registrationID != "" {
+		return registrationID
+	}
+
+	return chi.URLParam(r, "id")
 }

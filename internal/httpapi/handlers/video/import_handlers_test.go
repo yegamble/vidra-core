@@ -554,6 +554,84 @@ func TestImportHandlers_CancelImport_Error(t *testing.T) {
 	mockService.AssertExpectations(t)
 }
 
+func TestImportHandlers_CancelImportCanonical_Success(t *testing.T) {
+	mockService := new(MockImportService)
+	handlers := NewImportHandlers(mockService)
+
+	mockService.On("GetImport", mock.Anything, "import-123", "user-123").Return(&domain.VideoImport{
+		ID:     "import-123",
+		UserID: "user-123",
+		Status: domain.ImportStatusPending,
+	}, nil)
+	mockService.On("CancelImport", mock.Anything, "import-123", "user-123").Return(nil)
+
+	req := httptest.NewRequest("POST", "/api/v1/videos/imports/import-123/cancel", nil)
+	req = req.WithContext(context.WithValue(req.Context(), middleware.UserIDKey, "user-123"))
+	req = withChiURLParam(req, "id", "import-123")
+
+	w := httptest.NewRecorder()
+	handlers.CancelImportCanonical(w, req)
+
+	assert.Equal(t, http.StatusNoContent, w.Code)
+	mockService.AssertExpectations(t)
+}
+
+func TestImportHandlers_CancelImportCanonical_RequiresPendingState(t *testing.T) {
+	mockService := new(MockImportService)
+	handlers := NewImportHandlers(mockService)
+
+	mockService.On("GetImport", mock.Anything, "import-123", "user-123").Return(&domain.VideoImport{
+		ID:     "import-123",
+		UserID: "user-123",
+		Status: domain.ImportStatusDownloading,
+	}, nil)
+
+	req := httptest.NewRequest("POST", "/api/v1/videos/imports/import-123/cancel", nil)
+	req = req.WithContext(context.WithValue(req.Context(), middleware.UserIDKey, "user-123"))
+	req = withChiURLParam(req, "id", "import-123")
+
+	w := httptest.NewRecorder()
+	handlers.CancelImportCanonical(w, req)
+
+	assert.Equal(t, http.StatusConflict, w.Code)
+	mockService.AssertNotCalled(t, "CancelImport")
+	mockService.AssertExpectations(t)
+}
+
+func TestImportHandlers_RetryImport_Success(t *testing.T) {
+	mockService := new(MockImportService)
+	handlers := NewImportHandlers(mockService)
+
+	mockService.On("RetryImport", mock.Anything, "import-123", "user-123").Return(nil)
+
+	req := httptest.NewRequest("POST", "/api/v1/videos/imports/import-123/retry", nil)
+	req = req.WithContext(context.WithValue(req.Context(), middleware.UserIDKey, "user-123"))
+	req = withChiURLParam(req, "id", "import-123")
+
+	w := httptest.NewRecorder()
+	handlers.RetryImport(w, req)
+
+	assert.Equal(t, http.StatusNoContent, w.Code)
+	mockService.AssertExpectations(t)
+}
+
+func TestImportHandlers_RetryImport_BadRequest(t *testing.T) {
+	mockService := new(MockImportService)
+	handlers := NewImportHandlers(mockService)
+
+	mockService.On("RetryImport", mock.Anything, "import-123", "user-123").Return(fmt.Errorf("%w: cannot retry import in state completed", domain.ErrBadRequest))
+
+	req := httptest.NewRequest("POST", "/api/v1/videos/imports/import-123/retry", nil)
+	req = req.WithContext(context.WithValue(req.Context(), middleware.UserIDKey, "user-123"))
+	req = withChiURLParam(req, "id", "import-123")
+
+	w := httptest.NewRecorder()
+	handlers.RetryImport(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	mockService.AssertExpectations(t)
+}
+
 func TestParsePagination(t *testing.T) {
 	tests := []struct {
 		name           string

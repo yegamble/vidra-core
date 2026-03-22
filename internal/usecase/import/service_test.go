@@ -582,6 +582,75 @@ func TestImportService_CancelImport_AlreadyCompleted(t *testing.T) {
 	importRepo.AssertExpectations(t)
 }
 
+func TestImportService_RetryImport_Success(t *testing.T) {
+	svc, importRepo, _, _, _ := setupTestService()
+	ctx := context.Background()
+
+	importID := "import-123"
+	userID := "user-123"
+	videoID := "video-123"
+	errMessage := "download failed"
+	startedAt := time.Now().Add(-2 * time.Minute)
+	completedAt := time.Now().Add(-time.Minute)
+
+	existingImport := &domain.VideoImport{
+		ID:              importID,
+		UserID:          userID,
+		SourceURL:       "https://youtube.com/watch?v=test",
+		Status:          domain.ImportStatusFailed,
+		VideoID:         &videoID,
+		ErrorMessage:    &errMessage,
+		Progress:        73,
+		DownloadedBytes: 2048,
+		StartedAt:       &startedAt,
+		CompletedAt:     &completedAt,
+	}
+
+	importRepo.On("GetByID", ctx, importID).Return(existingImport, nil).Once()
+	importRepo.On("GetByID", mock.Anything, importID).Return(nil, errors.New("stop retry worker")).Maybe()
+	importRepo.On("Update", ctx, mock.MatchedBy(func(imp *domain.VideoImport) bool {
+		return imp != nil &&
+			imp.ID == importID &&
+			imp.Status == domain.ImportStatusPending &&
+			imp.VideoID == nil &&
+			imp.ErrorMessage == nil &&
+			imp.Progress == 0 &&
+			imp.DownloadedBytes == 0 &&
+			imp.StartedAt == nil &&
+			imp.CompletedAt == nil
+	})).Return(nil)
+
+	err := svc.RetryImport(ctx, importID, userID)
+
+	assert.NoError(t, err)
+	time.Sleep(10 * time.Millisecond)
+	importRepo.AssertExpectations(t)
+}
+
+func TestImportService_RetryImport_NonFailed(t *testing.T) {
+	svc, importRepo, _, _, _ := setupTestService()
+	ctx := context.Background()
+
+	importID := "import-123"
+	userID := "user-123"
+
+	existingImport := &domain.VideoImport{
+		ID:        importID,
+		UserID:    userID,
+		SourceURL: "https://youtube.com/watch?v=test",
+		Status:    domain.ImportStatusCompleted,
+	}
+
+	importRepo.On("GetByID", ctx, importID).Return(existingImport, nil)
+
+	err := svc.RetryImport(ctx, importID, userID)
+
+	assert.Error(t, err)
+	assert.ErrorIs(t, err, domain.ErrBadRequest)
+	assert.Contains(t, err.Error(), "cannot retry import")
+	importRepo.AssertExpectations(t)
+}
+
 func TestImportService_CleanupOldImports(t *testing.T) {
 	svc, importRepo, _, _, _ := setupTestService()
 	ctx := context.Background()

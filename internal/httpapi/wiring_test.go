@@ -21,6 +21,7 @@ import (
 	"athena/internal/repository"
 	"athena/internal/usecase"
 	"athena/internal/usecase/captiongen"
+	importuc "athena/internal/usecase/import"
 )
 
 type captionGenStub struct{}
@@ -231,6 +232,30 @@ func (s *stubAnalyticsCollector) TrackEngagement(_ context.Context, _ string, _ 
 	return nil
 }
 
+type stubImportService struct{}
+
+func (s *stubImportService) ImportVideo(_ context.Context, _ *importuc.ImportRequest) (*domain.VideoImport, error) {
+	return nil, nil
+}
+
+func (s *stubImportService) CancelImport(_ context.Context, _, _ string) error { return nil }
+
+func (s *stubImportService) RetryImport(_ context.Context, _, _ string) error { return nil }
+
+func (s *stubImportService) GetImport(_ context.Context, _, _ string) (*domain.VideoImport, error) {
+	return nil, nil
+}
+
+func (s *stubImportService) ListUserImports(_ context.Context, _ string, _, _ int) ([]*domain.VideoImport, int, error) {
+	return nil, 0, nil
+}
+
+func (s *stubImportService) ProcessPendingImports(_ context.Context) error { return nil }
+
+func (s *stubImportService) CleanupOldImports(_ context.Context, _ int) (int64, error) {
+	return 0, nil
+}
+
 type stubLiveStreamRepo struct{}
 
 func (s *stubLiveStreamRepo) Create(ctx context.Context, stream *domain.LiveStream) error {
@@ -291,6 +316,26 @@ func collectRoutes(r chi.Router) []string {
 		return nil
 	})
 	return routes
+}
+
+func hasRoute(routes []string, target string) bool {
+	for _, route := range routes {
+		if route == target {
+			return true
+		}
+	}
+
+	return false
+}
+
+func hasRoutePrefix(routes []string, prefix string) bool {
+	for _, route := range routes {
+		if strings.HasPrefix(route, prefix) {
+			return true
+		}
+	}
+
+	return false
 }
 
 func buildTestRouter(deps *shared.HandlerDependencies) chi.Router {
@@ -371,6 +416,47 @@ func TestPluginRoutesRegistered_WhenPluginManagerSet(t *testing.T) {
 	}
 
 	assert.True(t, hasPluginList, "GET /admin/plugins route should be registered when PluginManager is set")
+}
+
+func TestPeerTubeCanonicalRoutesRegistered_WhenDependenciesSet(t *testing.T) {
+	deps := &shared.HandlerDependencies{
+		JWTSecret:        "test-secret",
+		RedisPingTimeout: time.Second,
+		RegistrationRepo: &repository.RegistrationRepository{},
+		PluginRepo:       &repository.PluginRepository{},
+		PluginManager:    plugin.NewManager(t.TempDir()),
+		ImportService:    &stubImportService{},
+	}
+
+	r := buildTestRouter(deps)
+	routes := collectRoutes(r)
+
+	assert.True(t, hasRoute(routes, "GET /api/v1/users/registrations"))
+	assert.True(t, hasRoute(routes, "POST /api/v1/users/registrations/{registrationId}/accept"))
+	assert.True(t, hasRoute(routes, "GET /api/v1/jobs"))
+	assert.True(t, hasRoute(routes, "GET /api/v1/jobs/{state}"))
+	assert.True(t, hasRoute(routes, "POST /api/v1/videos/imports/{id}/cancel"))
+	assert.True(t, hasRoute(routes, "POST /api/v1/videos/imports/{id}/retry"))
+	assert.True(t, hasRoutePrefix(routes, "GET /api/v1/plugins/"))
+	assert.True(t, hasRoute(routes, "GET /api/v1/plugins/{npmName}"))
+	assert.True(t, hasRoute(routes, "GET /api/v1/video-channels/{channelHandle}/collaborators"))
+	assert.True(t, hasRoute(routes, "POST /api/v1/runners/register"))
+	assert.True(t, hasRoute(routes, "POST /api/v1/runners/jobs/request"))
+}
+
+func TestPeerTubeCanonicalRegistrationRoutesRegistered_WithoutRegistrationRepo(t *testing.T) {
+	deps := &shared.HandlerDependencies{
+		JWTSecret:        "test-secret",
+		RedisPingTimeout: time.Second,
+	}
+
+	r := buildTestRouter(deps)
+	routes := collectRoutes(r)
+
+	assert.True(t, hasRoute(routes, "GET /api/v1/users/registrations"))
+	assert.True(t, hasRoute(routes, "POST /api/v1/users/registrations/{registrationId}/accept"))
+	assert.True(t, hasRoute(routes, "POST /api/v1/users/registrations/{registrationId}/reject"))
+	assert.True(t, hasRoute(routes, "DELETE /api/v1/users/registrations/{registrationId}"))
 }
 
 func TestCaptionGenerationRoutesRegistered_WhenCaptionGenServiceSet(t *testing.T) {

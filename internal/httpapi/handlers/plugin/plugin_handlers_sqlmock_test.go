@@ -141,6 +141,41 @@ func TestPluginHandler_GetPlugin_SQLMockSuccess(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestPluginHandler_GetPlugin_ByName_SQLMockSuccess(t *testing.T) {
+	handler, mock, cleanup := newSQLMockPluginHandler(t)
+	defer cleanup()
+
+	pluginID := uuid.New()
+
+	mock.ExpectQuery("(?s)SELECT id, name, version, author, description, status, config,.*FROM plugins.*WHERE name = \\$1").
+		WithArgs("plugin-a").
+		WillReturnRows(samplePluginRow(pluginID, domain.PluginStatusInstalled, "plugin-a"))
+
+	mock.ExpectQuery("(?s)SELECT plugin_id, plugin_name, total_executions, success_count,.*FROM plugin_statistics.*WHERE plugin_id = \\$1").
+		WithArgs(pluginID).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"plugin_id", "plugin_name", "total_executions", "success_count",
+			"failure_count", "avg_duration_ms", "last_executed_at",
+		}).AddRow(pluginID, "plugin-a", int64(5), int64(4), int64(1), float64(10.0), time.Now()))
+
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT * FROM get_plugin_health($1)")).
+		WithArgs(pluginID).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"plugin_id", "plugin_name", "status", "success_rate", "avg_duration_ms", "last_executed_at",
+		}).AddRow(pluginID, "plugin-a", domain.PluginStatusInstalled, float64(80), float64(12.5), time.Now()))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/plugins/plugin-a", nil)
+	req = withPluginParam(req, "npmName", "plugin-a")
+	rr := httptest.NewRecorder()
+	handler.GetPlugin(rr, req)
+
+	require.Equal(t, http.StatusOK, rr.Code)
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &payload))
+	assert.Equal(t, true, payload["success"])
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestPluginHandler_StatisticsAndCleanup_SQLMockSuccess(t *testing.T) {
 	handler, mock, cleanup := newSQLMockPluginHandler(t)
 	defer cleanup()

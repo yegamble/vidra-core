@@ -10,6 +10,8 @@
     {"key": "access_token", "value": "", "type": "string"},
     {"key": "block_account_id", "value": "", "type": "string"},
     {"key": "account_name", "value": "blockeduser", "type": "string"},
+    {"key": "block_account_email", "value": "", "type": "string"},
+    {"key": "block_account_password", "value": "Passw0rd!123", "type": "string"},
     {"key": "server_host", "value": "badinstance.example.com", "type": "string"}
   ],
   "item": [
@@ -17,25 +19,46 @@
       "name": "Account Blocklist - Happy Path",
       "item": [
         {
-          "name": "GET /api/v1/channels - Resolve block target account",
-          "event": [{"listen": "test", "script": {"exec": [
-            "pm.test('Status is 200', () => pm.response.to.have.status(200));",
-            "const json = pm.response.json();",
-            "const channels = json.data && Array.isArray(json.data.data) ? json.data.data : [];",
-            "const currentUserId = pm.environment.get('user_id');",
-            "const target = channels.find(ch => ch.accountId && ch.accountId !== currentUserId && ch.account && ch.account.username);",
-            "pm.test('Found block target account', () => pm.expect(target).to.exist);",
-            "if (target) {",
-            "  pm.collectionVariables.set('block_account_id', target.accountId);",
-            "  pm.collectionVariables.set('account_name', target.account.username);",
-            "  pm.environment.set('block_account_id', target.accountId);",
-            "  pm.environment.set('account_name', target.account.username);",
-            "}"
-          ], "type": "text/javascript"}}],
+          "name": "POST /auth/register - Create block target account",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "const stamp = Date.now();",
+                  "pm.collectionVariables.set('account_name', `blockeduser${stamp}`);",
+                  "pm.collectionVariables.set('block_account_email', `blockeduser${stamp}@example.com`);"
+                ],
+                "type": "text/javascript"
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 201', () => pm.response.to.have.status(201));",
+                  "const json = pm.response.json();",
+                  "pm.test('Has block target user id', () => {",
+                  "  pm.expect(json).to.have.nested.property('data.user.id');",
+                  "});",
+                  "pm.collectionVariables.set('block_account_id', json.data.user.id);",
+                  "pm.environment.set('block_account_id', json.data.user.id);",
+                  "pm.environment.set('account_name', pm.collectionVariables.get('account_name'));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
           "request": {
-            "method": "GET",
-            "header": [],
-            "url": {"raw": "{{baseUrl}}/api/v1/channels", "host": ["{{baseUrl}}"], "path": ["api", "v1", "channels"]}
+            "method": "POST",
+            "header": [
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{account_name}}\",\n  \"email\": \"{{block_account_email}}\",\n  \"password\": \"{{block_account_password}}\",\n  \"display_name\": \"Blocked User\"\n}"
+            },
+            "url": {"raw": "{{baseUrl}}/auth/register", "host": ["{{baseUrl}}"], "path": ["auth", "register"]}
           }
         },
         {

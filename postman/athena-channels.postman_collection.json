@@ -9,12 +9,51 @@
     {"key": "baseUrl", "value": "http://app-test:8080", "type": "string"},
     {"key": "access_token", "value": "", "type": "string"},
     {"key": "channel_id", "value": "", "type": "string"},
-    {"key": "subscription_channel_id", "value": "", "type": "string"}
+    {"key": "subscription_channel_id", "value": "", "type": "string"},
+    {"key": "subscription_username", "value": "", "type": "string"},
+    {"key": "subscription_email", "value": "", "type": "string"},
+    {"key": "subscription_password", "value": "Passw0rd!123", "type": "string"}
   ],
   "item": [
     {
       "name": "Channels - Happy Path",
       "item": [
+        {
+          "name": "POST /auth/register - Create subscription target user",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "const stamp = Date.now();",
+                  "pm.collectionVariables.set('subscription_username', `channeltarget${stamp}`);",
+                  "pm.collectionVariables.set('subscription_email', `channeltarget${stamp}@example.com`);"
+                ],
+                "type": "text/javascript"
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 201', () => pm.response.to.have.status(201));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{subscription_username}}\",\n  \"email\": \"{{subscription_email}}\",\n  \"password\": \"{{subscription_password}}\",\n  \"display_name\": \"Subscription Target\"\n}"
+            },
+            "url": {"raw": "{{baseUrl}}/auth/register", "host": ["{{baseUrl}}"], "path": ["auth", "register"]}
+          }
+        },
         {
           "name": "POST /api/v1/channels - Create channel",
           "event": [{"listen": "test", "script": {"exec": [

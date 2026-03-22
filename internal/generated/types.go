@@ -1456,6 +1456,18 @@ type UserBlock struct {
 // UserBlockBlockType defines model for UserBlock.BlockType.
 type UserBlockBlockType string
 
+// UserRegistration defines model for UserRegistration.
+type UserRegistration struct {
+	ChannelDisplayName *string             `json:"channelDisplayName,omitempty"`
+	CreatedAt          time.Time           `json:"createdAt"`
+	Email              openapi_types.Email `json:"email"`
+	Id                 openapi_types.UUID  `json:"id"`
+	ModerationResponse *string             `json:"moderationResponse,omitempty"`
+	RegistrationReason *string             `json:"registrationReason,omitempty"`
+	State              string              `json:"state"`
+	Username           string              `json:"username"`
+}
+
 // UserRole User role determining permissions
 type UserRole string
 
@@ -1523,6 +1535,12 @@ type VideoCategory struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+// WrappedEncodingJobsResponse defines model for WrappedEncodingJobsResponse.
+type WrappedEncodingJobsResponse struct {
+	Data    []EncodingJob `json:"data"`
+	Success bool          `json:"success"`
+}
+
 // WrappedNotificationsResponse defines model for WrappedNotificationsResponse.
 type WrappedNotificationsResponse struct {
 	Data    []Notification `json:"data"`
@@ -1541,6 +1559,12 @@ type WrappedTrendingResponse struct {
 	Data    TrendingData `json:"data"`
 	Meta    ListMeta     `json:"meta"`
 	Success bool         `json:"success"`
+}
+
+// WrappedUserRegistrationsResponse defines model for WrappedUserRegistrationsResponse.
+type WrappedUserRegistrationsResponse struct {
+	Data    []UserRegistration `json:"data"`
+	Success bool               `json:"success"`
 }
 
 // WrappedUserResponse defines model for WrappedUserResponse.
@@ -1571,6 +1595,9 @@ type WrappedVideosResponse struct {
 
 // NotFound defines model for NotFound.
 type NotFound = ErrorResponse
+
+// NotImplemented defines model for NotImplemented.
+type NotImplemented = ErrorResponse
 
 // Unauthorized defines model for Unauthorized.
 type Unauthorized = ErrorResponse

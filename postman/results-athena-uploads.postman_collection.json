@@ -2,7 +2,7 @@
   "collection": {
     "item": [
       {
-        "id": "09dfae35-715d-4215-81f7-50ff51a3c70b",
+        "id": "ff78f2b3-8831-4856-b2b3-afeb93b79dd1",
         "name": "Chunked Upload Flow",
         "description": {
           "content": "Complete chunked upload workflow from initiation to completion",
@@ -10,7 +10,7 @@
         },
         "item": [
           {
-            "id": "87a79f38-9fe0-460e-a3bd-835bb9108b5d",
+            "id": "5c3aa3f5-38bc-4b79-bfa5-f640fa91d604",
             "name": "Initiate Upload",
             "request": {
               "description": {
@@ -51,7 +51,7 @@
               {
                 "listen": "prerequest",
                 "script": {
-                  "id": "9fa74612-de93-4358-9227-fe1f823c384a",
+                  "id": "dcadcc69-4818-40e5-aecc-36e9152293c3",
                   "type": "text/javascript",
                   "exec": [
                     "// Check authentication",
@@ -64,13 +64,13 @@
                     "const timestamp = new Date().getTime();",
                     "pm.environment.set('test_filename', `test-video-${timestamp}.mp4`);"
                   ],
-                  "_lastExecutionId": "74fbf668-f2dd-4ef1-9415-fb0c872ad563"
+                  "_lastExecutionId": "febfb6ad-ad8b-49f4-9cac-e103a545c4b1"
                 }
               },
               {
                 "listen": "test",
                 "script": {
-                  "id": "b2a56e24-cfa2-477e-902d-684ef3cd833f",
+                  "id": "1e0c68d8-fe2f-4653-b1c9-493348a5123e",
                   "type": "text/javascript",
                   "exec": [
                     "pm.test('Status is 201 or 401', () => {",
@@ -102,13 +102,13 @@
                     "  console.log('Skipped: No authentication token');",
                     "}"
                   ],
-                  "_lastExecutionId": "f3fdf272-1a65-43ac-be7f-c918d692c36f"
+                  "_lastExecutionId": "d4231ec1-4af4-4c2e-928f-8df217560e3d"
                 }
               }
             ]
           },
           {
-            "id": "d1bb42c6-0575-47ad-9844-33cf817974ee",
+            "id": "738c321b-adf7-4590-946a-a9f8f3627e19",
             "name": "Upload Chunk 0",
             "request": {
               "description": {
@@ -156,7 +156,7 @@
               {
                 "listen": "prerequest",
                 "script": {
-                  "id": "5665be45-26bd-446b-aa21-51933e2b3dc7",
+                  "id": "e40094e7-7f98-43be-9e47-265b1ee3186d",
                   "type": "text/javascript",
                   "exec": [
                     "const sessionId = pm.environment.get('upload_session_id');",
@@ -164,13 +164,13 @@
                     "  console.warn('No upload session ID found - run Initiate Upload first');",
                     "}"
                   ],
-                  "_lastExecutionId": "ff685a18-e5e1-4512-bcbf-89f93a1999a3"
+                  "_lastExecutionId": "625b112c-0c9e-4b6b-8c22-5359cf6d3c66"
                 }
               },
               {
                 "listen": "test",
                 "script": {
-                  "id": "a234fba1-5337-44b5-91b8-3fbd8ce6a14e",
+                  "id": "6142abd0-af81-4d20-bc0e-a6c74bcfee3d",
                   "type": "text/javascript",
                   "exec": [
                     "pm.test('Status is 200, 401, or 404', () => {",
@@ -196,13 +196,13 @@
                     "  console.log('Upload session not found or expired');",
                     "}"
                   ],
-                  "_lastExecutionId": "552d65f1-e4dc-4672-b685-155c1e5f3e08"
+                  "_lastExecutionId": "035c916f-5f54-4f39-b91a-bf7d1c5d4055"
                 }
               }
             ]
           },
           {
-            "id": "ea05bc74-3f1f-4975-bbfb-8d37e0fd829b",
+            "id": "fe1618ba-11d3-4539-ad4d-e22dea3eeee9",
             "name": "Get Upload Status",
             "request": {
               "description": {
@@ -236,7 +236,7 @@
               {
                 "listen": "test",
                 "script": {
-                  "id": "c00977c8-b803-4a1a-be05-9646d638f50e",
+                  "id": "c628d1b3-d74c-4574-b8ae-3fd248863c29",
                   "type": "text/javascript",
                   "exec": [
                     "pm.test('Status is 200, 401, or 404', () => {",
@@ -259,13 +259,13 @@
                     "  console.log(`Status: ${wrap.data.status}`);",
                     "}"
                   ],
-                  "_lastExecutionId": "7e2762aa-75d5-4a3d-9c32-686000f005ab"
+                  "_lastExecutionId": "a5214ba6-ed06-4178-a89d-e4911d446a89"
                 }
               }
             ]
           },
           {
-            "id": "31bae2d1-92bc-41be-baed-44a4763c3b58",
+            "id": "380b99bc-2431-4425-b374-81ad5cc0d384",
             "name": "Resume Upload Info",
             "request": {
               "description": {
@@ -299,7 +299,7 @@
               {
                 "listen": "test",
                 "script": {
-                  "id": "9cda1d26-e0f7-4e70-8cda-d2d3e4e77d07",
+                  "id": "bb86ceac-6c68-442d-bf78-013107995cb7",
                   "type": "text/javascript",
                   "exec": [
                     "pm.test('Status is 200, 401, or 404', () => {",
@@ -321,13 +321,13 @@
                     "  console.log(`Remaining chunks: ${remainingChunks.join(', ')}`);",
                     "}"
                   ],
-                  "_lastExecutionId": "25d6e503-65a4-466d-bcfd-8b20a9f176cd"
+                  "_lastExecutionId": "56c8dd81-af5c-4a9f-815c-00ba883acb34"
                 }
               }
             ]
           },
           {
-            "id": "34f9aece-6956-48b6-9f3d-1220e4ae8fb9",
+            "id": "06637803-e7ec-4a69-90a8-ffd6da76864d",
             "name": "Complete Upload",
             "request": {
               "description": {
@@ -369,7 +369,7 @@
               {
                 "listen": "test",
                 "script": {
-                  "id": "c7df183f-a025-4c1d-a7b3-8a06c5114976",
+                  "id": "8d7cdd7b-91a7-4df4-b994-8bbd589274d8",
                   "type": "text/javascript",
                   "exec": [
                     "// Accept 200 (complete) or 400 (incomplete - missing chunks)",
@@ -396,7 +396,7 @@
                     "  }",
                     "}"
                   ],
-                  "_lastExecutionId": "fe5b1ac3-2472-4391-9ab2-fbc44174297a"
+                  "_lastExecutionId": "13bca04a-a48f-4580-90ed-f66da84c05b9"
                 }
               }
             ]
@@ -405,7 +405,7 @@
         "event": []
       },
       {
-        "id": "f306ca4b-a2a1-4d96-a691-74bbe724a8fa",
+        "id": "7a17ad14-3ffc-4c01-9f81-3a9905c06066",
         "name": "Encoding Status",
         "description": {
           "content": "Track video encoding/transcoding status with progress information",
@@ -413,7 +413,7 @@
         },
         "item": [
           {
-            "id": "f0c7b38e-a7e3-43eb-aded-6c951118e21c",
+            "id": "6f42200b-f424-4034-b3e8-442e05543452",
             "name": "Get Encoding Status - By Video ID",
             "request": {
               "description": {
@@ -455,7 +455,7 @@
               {
                 "listen": "test",
                 "script": {
-                  "id": "a69d76b4-0d3a-4262-bd9f-098b8940122d",
+                  "id": "be87ab85-684d-41e2-9f77-3e9251b511dd",
                   "type": "text/javascript",
                   "exec": [
                     "pm.test('Status is 200 or 401', () => {",
@@ -475,13 +475,13 @@
                     "  console.log(`Encoding summary: pending=${wrap.data.pending}, processing=${wrap.data.processing}, completed=${wrap.data.completed}, failed=${wrap.data.failed}`);",
                     "}"
                   ],
-                  "_lastExecutionId": "33f0248b-9ced-4107-a052-e28ae626353a"
+                  "_lastExecutionId": "fd5881b2-f1b4-4dce-b970-6a9048ae3bdc"
                 }
               }
             ]
           },
           {
-            "id": "329265d7-18ac-4382-abef-af734b6edc48",
+            "id": "3f82cfd1-dfc3-4a38-a9a7-1f4333fb4195",
             "name": "Get Encoding Status - By Job ID",
             "request": {
               "description": {
@@ -523,7 +523,7 @@
               {
                 "listen": "test",
                 "script": {
-                  "id": "ae89c109-49ba-4009-a352-65019f814fcc",
+                  "id": "a25df440-115d-4b7c-bc0f-09c4d71e6153",
                   "type": "text/javascript",
                   "exec": [
                     "pm.test('Status is 200 or 401', () => {",
@@ -542,13 +542,13 @@
                     "  console.log(`Encoding summary: pending=${wrap.data.pending}, processing=${wrap.data.processing}`);",
                     "}"
                   ],
-                  "_lastExecutionId": "69261c4b-8b0c-44be-9909-c33b4735e946"
+                  "_lastExecutionId": "2fe9e264-6627-4675-a094-3ad0b8471d3a"
                 }
               }
             ]
           },
           {
-            "id": "99867b60-c69d-4815-80bf-00387e252737",
+            "id": "d4f5c720-3d4e-4776-9067-b901f578223c",
             "name": "Get Encoding Status - All Processing",
             "request": {
               "description": {
@@ -590,7 +590,7 @@
               {
                 "listen": "test",
                 "script": {
-                  "id": "1c77ee22-33bf-41cd-8642-d37e762fcb3d",
+                  "id": "203de70a-5483-40c3-ab80-a4bd648598f7",
                   "type": "text/javascript",
                   "exec": [
                     "pm.test('Status is 200 or 401', () => {",
@@ -610,7 +610,7 @@
                     "  console.log(`Currently processing jobs: ${wrap.data.processing}`);",
                     "}"
                   ],
-                  "_lastExecutionId": "01cfaa94-03fb-4e3a-a75a-4a08191bec5c"
+                  "_lastExecutionId": "750e321d-1438-45ae-b2e5-beab2890dd59"
                 }
               }
             ]
@@ -619,7 +619,7 @@
         "event": []
       },
       {
-        "id": "1472db4f-e9dc-4407-bb79-67fdee63deda",
+        "id": "cf0ef07e-cb9e-4f79-bea0-447a2142e7e9",
         "name": "Error Cases",
         "description": {
           "content": "Error cases and negative testing scenarios",
@@ -627,7 +627,7 @@
         },
         "item": [
           {
-            "id": "b7af02a8-15b4-45df-8160-47870abac98c",
+            "id": "a47b6682-e012-49ce-9fe4-2050601dc86b",
             "name": "Initiate Upload - Missing Auth",
             "request": {
               "description": {
@@ -664,7 +664,7 @@
               {
                 "listen": "test",
                 "script": {
-                  "id": "37d58574-d6b5-4b90-bd30-c5e6824ee486",
+                  "id": "29f9800a-1a6b-47de-b1b7-2ff7a64fdc47",
                   "type": "text/javascript",
                   "exec": [
                     "pm.test('Status is 401 Unauthorized', () => {",
@@ -677,13 +677,13 @@
                     "  pm.expect(wrap).to.have.property('error');",
                     "});"
                   ],
-                  "_lastExecutionId": "34e1aab1-4412-446f-ba68-a784f07f81e1"
+                  "_lastExecutionId": "e1482453-2c29-4d7e-9435-81d2abcca4cc"
                 }
               }
             ]
           },
           {
-            "id": "aa2c696f-b798-4001-9b0a-c5de1ed687f1",
+            "id": "a2d3449e-bf74-4ed7-b4ef-dfecb3dac4bc",
             "name": "Initiate Upload - Incomplete Session",
             "request": {
               "description": {
@@ -724,7 +724,7 @@
               {
                 "listen": "test",
                 "script": {
-                  "id": "42bc8c5a-1087-437d-808e-d971cca567ce",
+                  "id": "106b143f-9e6e-43d9-95f5-bcc75cff45b6",
                   "type": "text/javascript",
                   "exec": [
                     "pm.test('Status is 201', () => pm.response.to.have.status(201));",
@@ -734,13 +734,13 @@
                     "});",
                     "pm.environment.set('incomplete_upload_session_id', wrap.data.session_id);"
                   ],
-                  "_lastExecutionId": "cb5c547b-a401-42ba-9bff-2bf4a9e46088"
+                  "_lastExecutionId": "feb29d99-e120-4560-8cd1-ea40feb44bf0"
                 }
               }
             ]
           },
           {
-            "id": "54959b49-611a-4b32-9413-7e4f04f16ce6",
+            "id": "9cdc5f7f-000e-4ed8-8b91-9d56855e5c17",
             "name": "Complete Upload - Missing Chunks",
             "request": {
               "description": {
@@ -774,7 +774,7 @@
               {
                 "listen": "test",
                 "script": {
-                  "id": "f7902376-9e92-477b-bdaf-320eb93fb0ce",
+                  "id": "09776d70-1327-4db8-8e96-c0c993b4ceb2",
                   "type": "text/javascript",
                   "exec": [
                     "// This test expects 400 if chunks are missing",
@@ -790,13 +790,13 @@
                     "  });",
                     "}"
                   ],
-                  "_lastExecutionId": "8c25c9a4-2ceb-4470-b85f-667ecf4c3a79"
+                  "_lastExecutionId": "d6154e25-25fc-4c73-bdbf-61d4b21a13dc"
                 }
               }
             ]
           },
           {
-            "id": "33ab6005-8827-453c-946b-171cb49d1e8c",
+            "id": "b5a0af3a-2aec-4408-8212-d66521156bb8",
             "name": "Get Status - Invalid Session",
             "request": {
               "description": {
@@ -830,7 +830,7 @@
               {
                 "listen": "test",
                 "script": {
-                  "id": "df8ef863-8e92-4d08-b3d2-3a2febad41a5",
+                  "id": "7fbd273c-a87c-4289-877a-5a6f504558ba",
                   "type": "text/javascript",
                   "exec": [
                     "pm.test('Status is 400 Bad Request', () => {",
@@ -842,7 +842,7 @@
                     "  pm.expect(wrap).to.have.property('success', false);",
                     "});"
                   ],
-                  "_lastExecutionId": "ab835154-4d1b-4573-b180-7c67dc1dcea8"
+                  "_lastExecutionId": "faabdcb5-0cc6-430b-8b0f-f228b869c220"
                 }
               }
             ]
@@ -860,7 +860,7 @@
       }
     ],
     "info": {
-      "_postman_id": "09b0c9f9-fc79-458a-9ffa-d207beb5366c",
+      "_postman_id": "09a74808-ea58-41b3-a0e6-b89052c1c33a",
       "name": "Athena Uploads & Encoding API",
       "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
       "description": {
@@ -872,7 +872,7 @@
   "environment": {
     "_": {
       "postman_variable_scope": "environment",
-      "postman_exported_at": "2026-03-21T23:43:04.450Z",
+      "postman_exported_at": "2026-03-22T02:36:30.625Z",
       "postman_exported_using": "Newman/6.1.3"
     },
     "id": "0f7a1111-2222-4333-8444-bbbbbbbbbbbb",
@@ -885,12 +885,12 @@
       },
       {
         "type": "any",
-        "value": "user_1774136580802",
+        "value": "user_1774146915043",
         "key": "username"
       },
       {
         "type": "any",
-        "value": "user_1774136580802@example.com",
+        "value": "user_1774146915043@example.com",
         "key": "email"
       },
       {
@@ -900,17 +900,17 @@
       },
       {
         "type": "any",
-        "value": "62c1a415-a2dd-49a8-86a9-44e82cb5fd66",
+        "value": "98770abc-2827-4efa-a02a-ca053dc7b927",
         "key": "user_id"
       },
       {
         "type": "any",
-        "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzQxMzc0ODEsImlhdCI6MTc3NDEzNjU4MSwianRpIjoiMzRlYjg1MTktNGY0Yi00MGQ2LWI1MTctMDdlZGI0YmE0MGVhIiwicm9sZSI6InVzZXIiLCJzdWIiOiI2MmMxYTQxNS1hMmRkLTQ5YTgtODZhOS00NGU4MmNiNWZkNjYifQ.VByzKQeQTZ_Dv47vA2PEssyBUZkWRpIRGxRMS9L4ZlQ",
+        "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzQxNDc4MjYsImlhdCI6MTc3NDE0NjkyNiwianRpIjoiNDdlZDJmNTQtMjI3Yy00ZjcwLTlmOGUtZjI2MjFjOTM0YjcyIiwicm9sZSI6InVzZXIiLCJzdWIiOiI5ODc3MGFiYy0yODI3LTRlZmEtYTAyYS1jYTA1M2RjN2I5MjcifQ.oID8Tpf95Fatmq8YhAVnNDlXSITJhyEYu8lD4suIjFQ",
         "key": "access_token"
       },
       {
         "type": "any",
-        "value": "d5fd9825-836c-46a9-a051-a27f95784f3d",
+        "value": "823e00dc-eb2b-4c35-8dd1-3b6cd818e7f6",
         "key": "refresh_token"
       },
       {
@@ -920,27 +920,27 @@
       },
       {
         "type": "any",
-        "value": "15e75cdf-0856-4194-965b-bc44aea5e22b",
+        "value": "606e1a61-d827-42c7-8310-a02c9fdf3506",
         "key": "uploadedVideoId"
       },
       {
         "type": "any",
-        "value": "f1a0b2f8-e3a3-4973-8abd-9452cb5106af",
+        "value": "9cae4a61-93e1-48c9-af92-2bac9c244cf9",
         "key": "video_id"
       },
       {
         "type": "any",
-        "value": "4f78d474-adcf-419e-affd-73bf4026073a",
+        "value": "d5cfdd31-2552-4686-9a52-bd8b1c171221",
         "key": "test_video_id"
       },
       {
         "type": "any",
-        "value": "test-video-1774136584855.mp4",
+        "value": "test-video-1774146993574.mp4",
         "key": "test_filename"
       },
       {
         "type": "any",
-        "value": "45cefb4d-9e3a-4d66-96a4-cc13d3f07e03",
+        "value": "97eba27c-5560-4930-bd9b-425b7024a2a3",
         "key": "upload_session_id"
       },
       {
@@ -950,18 +950,18 @@
       },
       {
         "type": "any",
-        "value": "a13b9910-740a-4d6c-bac8-5c3664409f17",
+        "value": "5090c218-f70b-4496-9d64-f9eb152eeeca",
         "key": "upload_video_id"
       },
       {
         "type": "any",
-        "value": "318adb47-ac6c-484d-b0c9-6e53fe619657",
+        "value": "aa310f25-8af2-4b60-9466-d18b9d09474d",
         "key": "incomplete_upload_session_id"
       }
     ]
   },
   "globals": {
-    "id": "8b05e9de-4867-4500-90a8-a67c6d1c5439",
+    "id": "b3c3413e-6ea0-4849-9d84-e2f08fbb19d2",
     "values": []
   },
   "run": {
@@ -1013,10 +1013,10 @@
       }
     },
     "timings": {
-      "responseAverage": 7.166666666666667,
-      "responseMin": 2,
-      "responseMax": 35,
-      "responseSd": 8.620067027323834,
+      "responseAverage": 64.75000000000001,
+      "responseMin": 12,
+      "responseMax": 299,
+      "responseSd": 85.77696369072527,
       "dnsAverage": 0,
       "dnsMin": 0,
       "dnsMax": 0,
@@ -1025,8 +1025,8 @@
       "firstByteMin": 0,
       "firstByteMax": 0,
       "firstByteSd": 0,
-      "started": 1774136584847,
-      "completed": 1774136585216
+      "started": 1774146993530,
+      "completed": 1774146995658
     },
     "executions": [
       {
@@ -1039,11 +1039,11 @@
           "eof": false,
           "bof": true,
           "cr": false,
-          "ref": "22ca900d-fcec-4851-84e8-6faaa0332c0a",
-          "httpRequestId": "f2ab4986-05da-4815-9129-19592cf4c32f"
+          "ref": "82ecf5a8-bf4a-4a2a-ab27-693eeb487443",
+          "httpRequestId": "ee751676-c025-4cad-9313-591aae7d9c79"
         },
         "item": {
-          "id": "87a79f38-9fe0-460e-a3bd-835bb9108b5d",
+          "id": "5c3aa3f5-38bc-4b79-bfa5-f640fa91d604",
           "name": "Initiate Upload",
           "request": {
             "description": {
@@ -1084,7 +1084,7 @@
             {
               "listen": "prerequest",
               "script": {
-                "id": "9fa74612-de93-4358-9227-fe1f823c384a",
+                "id": "dcadcc69-4818-40e5-aecc-36e9152293c3",
                 "type": "text/javascript",
                 "exec": [
                   "// Check authentication",
@@ -1097,13 +1097,13 @@
                   "const timestamp = new Date().getTime();",
                   "pm.environment.set('test_filename', `test-video-${timestamp}.mp4`);"
                 ],
-                "_lastExecutionId": "74fbf668-f2dd-4ef1-9415-fb0c872ad563"
+                "_lastExecutionId": "febfb6ad-ad8b-49f4-9cac-e103a545c4b1"
               }
             },
             {
               "listen": "test",
               "script": {
-                "id": "b2a56e24-cfa2-477e-902d-684ef3cd833f",
+                "id": "1e0c68d8-fe2f-4653-b1c9-493348a5123e",
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('Status is 201 or 401', () => {",
@@ -1135,7 +1135,7 @@
                   "  console.log('Skipped: No authentication token');",
                   "}"
                 ],
-                "_lastExecutionId": "f3fdf272-1a65-43ac-be7f-c918d692c36f"
+                "_lastExecutionId": "d4231ec1-4af4-4c2e-928f-8df217560e3d"
               }
             }
           ]
@@ -1163,7 +1163,7 @@
           "header": [
             {
               "key": "Authorization",
-              "value": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzQxMzc0ODEsImlhdCI6MTc3NDEzNjU4MSwianRpIjoiMzRlYjg1MTktNGY0Yi00MGQ2LWI1MTctMDdlZGI0YmE0MGVhIiwicm9sZSI6InVzZXIiLCJzdWIiOiI2MmMxYTQxNS1hMmRkLTQ5YTgtODZhOS00NGU4MmNiNWZkNjYifQ.VByzKQeQTZ_Dv47vA2PEssyBUZkWRpIRGxRMS9L4ZlQ"
+              "value": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzQxNDc4MjYsImlhdCI6MTc3NDE0NjkyNiwianRpIjoiNDdlZDJmNTQtMjI3Yy00ZjcwLTlmOGUtZjI2MjFjOTM0YjcyIiwicm9sZSI6InVzZXIiLCJzdWIiOiI5ODc3MGFiYy0yODI3LTRlZmEtYTAyYS1jYTA1M2RjN2I5MjcifQ.oID8Tpf95Fatmq8YhAVnNDlXSITJhyEYu8lD4suIjFQ"
             },
             {
               "key": "Content-Type",
@@ -1186,7 +1186,7 @@
             },
             {
               "key": "Postman-Token",
-              "value": "7e3992be-f2db-41a6-aa4d-fd83d63b7bd3",
+              "value": "e7dddc83-a10d-4ee7-9565-d5c54f1cf919",
               "system": true
             },
             {
@@ -1213,11 +1213,11 @@
           "method": "POST",
           "body": {
             "mode": "raw",
-            "raw": "{\n  \"filename\": \"test-video-1774136584855.mp4\",\n  \"file_size\": 5242880,\n  \"chunk_size\": 5242880,\n  \"video_metadata\": {\n    \"title\": \"Test Chunked Upload Video\",\n    \"description\": \"Testing chunked upload functionality\",\n    \"privacy\": \"unlisted\"\n  }\n}"
+            "raw": "{\n  \"filename\": \"test-video-1774146993574.mp4\",\n  \"file_size\": 5242880,\n  \"chunk_size\": 5242880,\n  \"video_metadata\": {\n    \"title\": \"Test Chunked Upload Video\",\n    \"description\": \"Testing chunked upload functionality\",\n    \"privacy\": \"unlisted\"\n  }\n}"
           }
         },
         "response": {
-          "id": "418e00b0-6686-42f9-828c-18e3f0355a49",
+          "id": "4ab07027-8f2f-4eed-b104-51ecf5bef125",
           "status": "Created",
           "code": 201,
           "header": [
@@ -1255,7 +1255,7 @@
             },
             {
               "key": "X-Request-Id",
-              "value": "KHhMRGvhyKAwOnOQtg-anA"
+              "value": "9imGNjgyOvxHf1bK0oIDsw"
             },
             {
               "key": "X-Xss-Protection",
@@ -1263,11 +1263,11 @@
             },
             {
               "key": "Date",
-              "value": "Sat, 21 Mar 2026 23:43:04 GMT"
+              "value": "Sun, 22 Mar 2026 02:36:33 GMT"
             },
             {
               "key": "Content-Length",
-              "value": "155"
+              "value": "154"
             }
           ],
           "stream": {
@@ -1296,41 +1296,41 @@
               34,
               58,
               34,
-              52,
-              53,
-              99,
-              101,
-              102,
-              98,
-              52,
-              100,
-              45,
               57,
-              101,
-              51,
-              97,
-              45,
-              52,
-              100,
-              54,
-              54,
-              45,
-              57,
-              54,
-              97,
-              52,
-              45,
-              99,
-              99,
-              49,
-              51,
-              100,
-              51,
-              102,
-              48,
               55,
               101,
+              98,
+              97,
+              50,
+              55,
+              99,
+              45,
+              53,
+              53,
+              54,
               48,
+              45,
+              52,
+              57,
+              51,
+              48,
+              45,
+              98,
+              100,
+              57,
+              98,
+              45,
+              52,
+              50,
+              53,
+              98,
+              55,
+              48,
+              50,
+              52,
+              97,
+              50,
+              97,
               51,
               34,
               44,
@@ -1402,41 +1402,41 @@
               100,
               115,
               47,
-              52,
-              53,
-              99,
-              101,
-              102,
-              98,
-              52,
-              100,
-              45,
               57,
-              101,
-              51,
-              97,
-              45,
-              52,
-              100,
-              54,
-              54,
-              45,
-              57,
-              54,
-              97,
-              52,
-              45,
-              99,
-              99,
-              49,
-              51,
-              100,
-              51,
-              102,
-              48,
               55,
               101,
+              98,
+              97,
+              50,
+              55,
+              99,
+              45,
+              53,
+              53,
+              54,
               48,
+              45,
+              52,
+              57,
+              51,
+              48,
+              45,
+              98,
+              100,
+              57,
+              98,
+              45,
+              52,
+              50,
+              53,
+              98,
+              55,
+              48,
+              50,
+              52,
+              97,
+              50,
+              97,
               51,
               47,
               99,
@@ -1467,10 +1467,10 @@
             ]
           },
           "cookie": [],
-          "responseTime": 35,
+          "responseTime": 299,
           "responseSize": 191
         },
-        "id": "87a79f38-9fe0-460e-a3bd-835bb9108b5d",
+        "id": "5c3aa3f5-38bc-4b79-bfa5-f640fa91d604",
         "assertions": [
           {
             "assertion": "Status is 201 or 401",
@@ -1488,15 +1488,15 @@
       },
       {
         "cursor": {
-          "ref": "6b0cee27-3275-42d9-9246-730e11beb6ef",
+          "ref": "6715dbb4-2006-47cc-8126-4db0a94d9011",
           "length": 12,
           "cycles": 1,
           "position": 1,
           "iteration": 0,
-          "httpRequestId": "54a06db3-397b-4dde-ae77-74f70e46b73a"
+          "httpRequestId": "aebe4ce8-ff43-41f0-a480-c44783521bef"
         },
         "item": {
-          "id": "d1bb42c6-0575-47ad-9844-33cf817974ee",
+          "id": "738c321b-adf7-4590-946a-a9f8f3627e19",
           "name": "Upload Chunk 0",
           "request": {
             "description": {
@@ -1544,7 +1544,7 @@
             {
               "listen": "prerequest",
               "script": {
-                "id": "5665be45-26bd-446b-aa21-51933e2b3dc7",
+                "id": "e40094e7-7f98-43be-9e47-265b1ee3186d",
                 "type": "text/javascript",
                 "exec": [
                   "const sessionId = pm.environment.get('upload_session_id');",
@@ -1552,13 +1552,13 @@
                   "  console.warn('No upload session ID found - run Initiate Upload first');",
                   "}"
                 ],
-                "_lastExecutionId": "ff685a18-e5e1-4512-bcbf-89f93a1999a3"
+                "_lastExecutionId": "625b112c-0c9e-4b6b-8c22-5359cf6d3c66"
               }
             },
             {
               "listen": "test",
               "script": {
-                "id": "a234fba1-5337-44b5-91b8-3fbd8ce6a14e",
+                "id": "6142abd0-af81-4d20-bc0e-a6c74bcfee3d",
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('Status is 200, 401, or 404', () => {",
@@ -1584,7 +1584,7 @@
                   "  console.log('Upload session not found or expired');",
                   "}"
                 ],
-                "_lastExecutionId": "552d65f1-e4dc-4672-b685-155c1e5f3e08"
+                "_lastExecutionId": "035c916f-5f54-4f39-b91a-bf7d1c5d4055"
               }
             }
           ]
@@ -1601,7 +1601,7 @@
               "api",
               "v1",
               "uploads",
-              "45cefb4d-9e3a-4d66-96a4-cc13d3f07e03",
+              "97eba27c-5560-4930-bd9b-425b7024a2a3",
               "chunks"
             ],
             "host": [
@@ -1613,7 +1613,7 @@
           "header": [
             {
               "key": "Authorization",
-              "value": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzQxMzc0ODEsImlhdCI6MTc3NDEzNjU4MSwianRpIjoiMzRlYjg1MTktNGY0Yi00MGQ2LWI1MTctMDdlZGI0YmE0MGVhIiwicm9sZSI6InVzZXIiLCJzdWIiOiI2MmMxYTQxNS1hMmRkLTQ5YTgtODZhOS00NGU4MmNiNWZkNjYifQ.VByzKQeQTZ_Dv47vA2PEssyBUZkWRpIRGxRMS9L4ZlQ"
+              "value": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzQxNDc4MjYsImlhdCI6MTc3NDE0NjkyNiwianRpIjoiNDdlZDJmNTQtMjI3Yy00ZjcwLTlmOGUtZjI2MjFjOTM0YjcyIiwicm9sZSI6InVzZXIiLCJzdWIiOiI5ODc3MGFiYy0yODI3LTRlZmEtYTAyYS1jYTA1M2RjN2I5MjcifQ.oID8Tpf95Fatmq8YhAVnNDlXSITJhyEYu8lD4suIjFQ"
             },
             {
               "key": "Content-Type",
@@ -1640,7 +1640,7 @@
             },
             {
               "key": "Postman-Token",
-              "value": "816e7277-537f-463f-a38e-b2e55285d5d1",
+              "value": "2ce77cc8-273a-4309-9f6d-da43be438f7e",
               "system": true
             },
             {
@@ -1674,7 +1674,7 @@
           }
         },
         "response": {
-          "id": "044627c9-7d62-40b8-baaf-cf9d2b75f3aa",
+          "id": "2b145576-c6df-4ef3-baa1-3e404912d111",
           "status": "OK",
           "code": 200,
           "header": [
@@ -1712,7 +1712,7 @@
             },
             {
               "key": "X-Request-Id",
-              "value": "S0Q_ceFDfW3uJ9K7HTa5DA"
+              "value": "Z--VF_YrXtuuxtRbzP-rSA"
             },
             {
               "key": "X-Xss-Protection",
@@ -1720,7 +1720,7 @@
             },
             {
               "key": "Date",
-              "value": "Sat, 21 Mar 2026 23:43:04 GMT"
+              "value": "Sun, 22 Mar 2026 02:36:34 GMT"
             },
             {
               "key": "Content-Length",
@@ -1815,10 +1815,10 @@
             ]
           },
           "cookie": [],
-          "responseTime": 9,
+          "responseTime": 24,
           "responseSize": 82
         },
-        "id": "d1bb42c6-0575-47ad-9844-33cf817974ee",
+        "id": "738c321b-adf7-4590-946a-a9f8f3627e19",
         "assertions": [
           {
             "assertion": "Status is 200, 401, or 404",
@@ -1836,15 +1836,15 @@
       },
       {
         "cursor": {
-          "ref": "ed4ac452-6f41-4b93-a3ad-5c4244b6333b",
+          "ref": "5ea2c2db-3aa6-4534-8e29-8bdfbf960e2a",
           "length": 12,
           "cycles": 1,
           "position": 2,
           "iteration": 0,
-          "httpRequestId": "ed314a1f-6d83-43c2-babe-a11a02e66456"
+          "httpRequestId": "50a98b15-88cb-419a-a38e-1dbe3654a439"
         },
         "item": {
-          "id": "ea05bc74-3f1f-4975-bbfb-8d37e0fd829b",
+          "id": "fe1618ba-11d3-4539-ad4d-e22dea3eeee9",
           "name": "Get Upload Status",
           "request": {
             "description": {
@@ -1878,7 +1878,7 @@
             {
               "listen": "test",
               "script": {
-                "id": "c00977c8-b803-4a1a-be05-9646d638f50e",
+                "id": "c628d1b3-d74c-4574-b8ae-3fd248863c29",
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('Status is 200, 401, or 404', () => {",
@@ -1901,7 +1901,7 @@
                   "  console.log(`Status: ${wrap.data.status}`);",
                   "}"
                 ],
-                "_lastExecutionId": "7e2762aa-75d5-4a3d-9c32-686000f005ab"
+                "_lastExecutionId": "a5214ba6-ed06-4178-a89d-e4911d446a89"
               }
             }
           ]
@@ -1918,7 +1918,7 @@
               "api",
               "v1",
               "uploads",
-              "45cefb4d-9e3a-4d66-96a4-cc13d3f07e03",
+              "97eba27c-5560-4930-bd9b-425b7024a2a3",
               "status"
             ],
             "host": [
@@ -1930,7 +1930,7 @@
           "header": [
             {
               "key": "Authorization",
-              "value": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzQxMzc0ODEsImlhdCI6MTc3NDEzNjU4MSwianRpIjoiMzRlYjg1MTktNGY0Yi00MGQ2LWI1MTctMDdlZGI0YmE0MGVhIiwicm9sZSI6InVzZXIiLCJzdWIiOiI2MmMxYTQxNS1hMmRkLTQ5YTgtODZhOS00NGU4MmNiNWZkNjYifQ.VByzKQeQTZ_Dv47vA2PEssyBUZkWRpIRGxRMS9L4ZlQ"
+              "value": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzQxNDc4MjYsImlhdCI6MTc3NDE0NjkyNiwianRpIjoiNDdlZDJmNTQtMjI3Yy00ZjcwLTlmOGUtZjI2MjFjOTM0YjcyIiwicm9sZSI6InVzZXIiLCJzdWIiOiI5ODc3MGFiYy0yODI3LTRlZmEtYTAyYS1jYTA1M2RjN2I5MjcifQ.oID8Tpf95Fatmq8YhAVnNDlXSITJhyEYu8lD4suIjFQ"
             },
             {
               "key": "User-Agent",
@@ -1949,7 +1949,7 @@
             },
             {
               "key": "Postman-Token",
-              "value": "7e5fce2a-5841-427b-bb81-001ba15265de",
+              "value": "b253864b-8a3f-4ef8-94a4-33f33ab2b153",
               "system": true
             },
             {
@@ -1971,7 +1971,7 @@
           "method": "GET"
         },
         "response": {
-          "id": "8538227a-b4d0-40b4-9bca-7b3c486a3579",
+          "id": "557c219b-ac8c-4e51-9d82-1a990f342512",
           "status": "OK",
           "code": 200,
           "header": [
@@ -2009,7 +2009,7 @@
             },
             {
               "key": "X-Request-Id",
-              "value": "4mhaL3tiXRHjDOWvLzIKdQ"
+              "value": "bzDsDfgtuXbWCPp9EoITHQ"
             },
             {
               "key": "X-Xss-Protection",
@@ -2017,11 +2017,11 @@
             },
             {
               "key": "Date",
-              "value": "Sat, 21 Mar 2026 23:43:04 GMT"
+              "value": "Sun, 22 Mar 2026 02:36:34 GMT"
             },
             {
               "key": "Content-Length",
-              "value": "337"
+              "value": "339"
             }
           ],
           "stream": {
@@ -2042,41 +2042,41 @@
               34,
               58,
               34,
-              52,
-              53,
-              99,
-              101,
-              102,
-              98,
-              52,
-              100,
-              45,
               57,
-              101,
-              51,
-              97,
-              45,
-              52,
-              100,
-              54,
-              54,
-              45,
-              57,
-              54,
-              97,
-              52,
-              45,
-              99,
-              99,
-              49,
-              51,
-              100,
-              51,
-              102,
-              48,
               55,
               101,
+              98,
+              97,
+              50,
+              55,
+              99,
+              45,
+              53,
+              53,
+              54,
               48,
+              45,
+              52,
+              57,
+              51,
+              48,
+              45,
+              98,
+              100,
+              57,
+              98,
+              45,
+              52,
+              50,
+              53,
+              98,
+              55,
+              48,
+              50,
+              52,
+              97,
+              50,
+              97,
               51,
               34,
               44,
@@ -2092,42 +2092,42 @@
               34,
               58,
               34,
-              97,
-              49,
-              51,
-              98,
-              57,
-              57,
-              49,
+              53,
               48,
-              45,
-              55,
-              52,
+              57,
               48,
-              97,
-              45,
-              52,
-              100,
-              54,
               99,
-              45,
-              98,
-              97,
-              99,
+              50,
+              49,
               56,
               45,
-              53,
-              99,
-              51,
-              54,
-              54,
-              52,
-              52,
-              48,
-              57,
               102,
-              49,
               55,
+              48,
+              98,
+              45,
+              52,
+              52,
+              57,
+              54,
+              45,
+              57,
+              100,
+              54,
+              52,
+              45,
+              102,
+              57,
+              101,
+              98,
+              49,
+              53,
+              50,
+              101,
+              101,
+              101,
+              99,
+              97,
               34,
               44,
               34,
@@ -2141,42 +2141,42 @@
               34,
               58,
               34,
-              54,
-              50,
+              57,
+              56,
+              55,
+              55,
+              48,
+              97,
+              98,
               99,
-              49,
-              97,
-              52,
-              49,
-              53,
               45,
-              97,
               50,
-              100,
-              100,
-              45,
-              52,
-              57,
-              97,
               56,
+              50,
+              55,
               45,
-              56,
-              54,
-              97,
-              57,
-              45,
-              52,
               52,
               101,
-              56,
-              50,
-              99,
-              98,
-              53,
               102,
+              97,
+              45,
+              97,
+              48,
+              50,
+              97,
+              45,
+              99,
+              97,
+              48,
+              53,
+              51,
               100,
-              54,
-              54,
+              99,
+              55,
+              98,
+              57,
+              50,
+              55,
               34,
               44,
               34,
@@ -2207,14 +2207,14 @@
               55,
               52,
               49,
-              51,
-              54,
-              53,
-              56,
               52,
-              56,
+              54,
+              57,
+              57,
+              51,
               53,
-              53,
+              55,
+              52,
               46,
               109,
               112,
@@ -2364,41 +2364,41 @@
               100,
               115,
               47,
-              52,
-              53,
-              99,
-              101,
-              102,
-              98,
-              52,
-              100,
-              45,
               57,
-              101,
-              51,
-              97,
-              45,
-              52,
-              100,
-              54,
-              54,
-              45,
-              57,
-              54,
-              97,
-              52,
-              45,
-              99,
-              99,
-              49,
-              51,
-              100,
-              51,
-              102,
-              48,
               55,
               101,
+              98,
+              97,
+              50,
+              55,
+              99,
+              45,
+              53,
+              53,
+              54,
               48,
+              45,
+              52,
+              57,
+              51,
+              48,
+              45,
+              98,
+              100,
+              57,
+              98,
+              45,
+              52,
+              50,
+              53,
+              98,
+              55,
+              48,
+              50,
+              52,
+              97,
+              50,
+              97,
               51,
               47,
               99,
@@ -2455,23 +2455,23 @@
               51,
               45,
               50,
-              49,
-              84,
               50,
-              51,
-              58,
-              52,
-              51,
-              58,
+              84,
               48,
-              52,
+              50,
+              58,
+              51,
+              54,
+              58,
+              51,
+              51,
               46,
               56,
-              56,
+              57,
+              50,
+              51,
+              53,
               55,
-              55,
-              52,
-              52,
               90,
               34,
               44,
@@ -2498,23 +2498,23 @@
               51,
               45,
               50,
-              49,
-              84,
               50,
-              51,
-              58,
-              52,
-              51,
-              58,
+              84,
               48,
+              50,
+              58,
+              51,
+              54,
+              58,
+              51,
               52,
               46,
-              57,
-              53,
-              56,
+              48,
+              51,
               57,
               51,
-              52,
+              48,
+              53,
               90,
               34,
               44,
@@ -2541,23 +2541,23 @@
               51,
               45,
               50,
-              50,
+              51,
               84,
-              50,
-              51,
-              58,
-              52,
-              51,
-              58,
               48,
-              52,
+              50,
+              58,
+              51,
+              54,
+              58,
+              51,
+              51,
               46,
               56,
-              56,
+              57,
+              50,
+              51,
+              53,
               55,
-              55,
-              52,
-              52,
               90,
               34,
               125,
@@ -2581,10 +2581,10 @@
             ]
           },
           "cookie": [],
-          "responseTime": 4,
+          "responseTime": 13,
           "responseSize": 551
         },
-        "id": "ea05bc74-3f1f-4975-bbfb-8d37e0fd829b",
+        "id": "fe1618ba-11d3-4539-ad4d-e22dea3eeee9",
         "assertions": [
           {
             "assertion": "Status is 200, 401, or 404",
@@ -2598,15 +2598,15 @@
       },
       {
         "cursor": {
-          "ref": "c55a03c1-569d-4fa3-adf4-2b23717abffb",
+          "ref": "c4543e23-ab2e-472f-9484-ccddce1a58a3",
           "length": 12,
           "cycles": 1,
           "position": 3,
           "iteration": 0,
-          "httpRequestId": "54f21a0e-bb0d-42f8-be85-9b7310485c03"
+          "httpRequestId": "a2b8285d-8845-4220-a0ec-28fd6d3a9dd6"
         },
         "item": {
-          "id": "31bae2d1-92bc-41be-baed-44a4763c3b58",
+          "id": "380b99bc-2431-4425-b374-81ad5cc0d384",
           "name": "Resume Upload Info",
           "request": {
             "description": {
@@ -2640,7 +2640,7 @@
             {
               "listen": "test",
               "script": {
-                "id": "9cda1d26-e0f7-4e70-8cda-d2d3e4e77d07",
+                "id": "bb86ceac-6c68-442d-bf78-013107995cb7",
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('Status is 200, 401, or 404', () => {",
@@ -2662,7 +2662,7 @@
                   "  console.log(`Remaining chunks: ${remainingChunks.join(', ')}`);",
                   "}"
                 ],
-                "_lastExecutionId": "25d6e503-65a4-466d-bcfd-8b20a9f176cd"
+                "_lastExecutionId": "56c8dd81-af5c-4a9f-815c-00ba883acb34"
               }
             }
           ]
@@ -2679,7 +2679,7 @@
               "api",
               "v1",
               "uploads",
-              "45cefb4d-9e3a-4d66-96a4-cc13d3f07e03",
+              "97eba27c-5560-4930-bd9b-425b7024a2a3",
               "resume"
             ],
             "host": [
@@ -2691,7 +2691,7 @@
           "header": [
             {
               "key": "Authorization",
-              "value": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzQxMzc0ODEsImlhdCI6MTc3NDEzNjU4MSwianRpIjoiMzRlYjg1MTktNGY0Yi00MGQ2LWI1MTctMDdlZGI0YmE0MGVhIiwicm9sZSI6InVzZXIiLCJzdWIiOiI2MmMxYTQxNS1hMmRkLTQ5YTgtODZhOS00NGU4MmNiNWZkNjYifQ.VByzKQeQTZ_Dv47vA2PEssyBUZkWRpIRGxRMS9L4ZlQ"
+              "value": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzQxNDc4MjYsImlhdCI6MTc3NDE0NjkyNiwianRpIjoiNDdlZDJmNTQtMjI3Yy00ZjcwLTlmOGUtZjI2MjFjOTM0YjcyIiwicm9sZSI6InVzZXIiLCJzdWIiOiI5ODc3MGFiYy0yODI3LTRlZmEtYTAyYS1jYTA1M2RjN2I5MjcifQ.oID8Tpf95Fatmq8YhAVnNDlXSITJhyEYu8lD4suIjFQ"
             },
             {
               "key": "User-Agent",
@@ -2710,7 +2710,7 @@
             },
             {
               "key": "Postman-Token",
-              "value": "ac9a135d-74a9-468b-a760-5bb8ee7e6123",
+              "value": "a2c0abd2-632f-4a89-9bdd-a7cdcb73e33f",
               "system": true
             },
             {
@@ -2732,7 +2732,7 @@
           "method": "GET"
         },
         "response": {
-          "id": "e40cafba-1615-4c27-abc6-d7ec1cad2aa2",
+          "id": "634be887-c297-4895-bd08-ca97f3e3cbc1",
           "status": "OK",
           "code": 200,
           "header": [
@@ -2770,7 +2770,7 @@
             },
             {
               "key": "X-Request-Id",
-              "value": "5dfco-kUNEGbHG6sW12Y3A"
+              "value": "EIypyM1NOn4pu5EV6O8SYA"
             },
             {
               "key": "X-Xss-Protection",
@@ -2778,7 +2778,7 @@
             },
             {
               "key": "Date",
-              "value": "Sat, 21 Mar 2026 23:43:05 GMT"
+              "value": "Sun, 22 Mar 2026 02:36:34 GMT"
             },
             {
               "key": "Content-Length",
@@ -2820,23 +2820,23 @@
               51,
               45,
               50,
-              50,
+              51,
               84,
-              50,
-              51,
-              58,
-              52,
-              51,
-              58,
               48,
-              52,
+              50,
+              58,
+              51,
+              54,
+              58,
+              51,
+              51,
               46,
               56,
-              56,
+              57,
+              50,
+              51,
+              53,
               55,
-              55,
-              52,
-              52,
               90,
               34,
               44,
@@ -2901,41 +2901,41 @@
               34,
               58,
               34,
-              52,
-              53,
-              99,
-              101,
-              102,
-              98,
-              52,
-              100,
-              45,
               57,
-              101,
-              51,
-              97,
-              45,
-              52,
-              100,
-              54,
-              54,
-              45,
-              57,
-              54,
-              97,
-              52,
-              45,
-              99,
-              99,
-              49,
-              51,
-              100,
-              51,
-              102,
-              48,
               55,
               101,
+              98,
+              97,
+              50,
+              55,
+              99,
+              45,
+              53,
+              53,
+              54,
               48,
+              45,
+              52,
+              57,
+              51,
+              48,
+              45,
+              98,
+              100,
+              57,
+              98,
+              45,
+              52,
+              50,
+              53,
+              98,
+              55,
+              48,
+              50,
+              52,
+              97,
+              50,
+              97,
               51,
               34,
               44,
@@ -3016,10 +3016,10 @@
             ]
           },
           "cookie": [],
-          "responseTime": 7,
+          "responseTime": 17,
           "responseSize": 225
         },
-        "id": "31bae2d1-92bc-41be-baed-44a4763c3b58",
+        "id": "380b99bc-2431-4425-b374-81ad5cc0d384",
         "assertions": [
           {
             "assertion": "Status is 200, 401, or 404",
@@ -3033,15 +3033,15 @@
       },
       {
         "cursor": {
-          "ref": "bd5458e9-0faa-496e-8b54-bbc1faed9c24",
+          "ref": "d7bd9539-bc99-471d-9a47-6e9fe7a5cb3f",
           "length": 12,
           "cycles": 1,
           "position": 4,
           "iteration": 0,
-          "httpRequestId": "5f31c0fe-21b2-4096-9045-64b25d3719e1"
+          "httpRequestId": "6ce6521a-00b4-4b66-9b8c-abe28abb8c88"
         },
         "item": {
-          "id": "34f9aece-6956-48b6-9f3d-1220e4ae8fb9",
+          "id": "06637803-e7ec-4a69-90a8-ffd6da76864d",
           "name": "Complete Upload",
           "request": {
             "description": {
@@ -3083,7 +3083,7 @@
             {
               "listen": "test",
               "script": {
-                "id": "c7df183f-a025-4c1d-a7b3-8a06c5114976",
+                "id": "8d7cdd7b-91a7-4df4-b994-8bbd589274d8",
                 "type": "text/javascript",
                 "exec": [
                   "// Accept 200 (complete) or 400 (incomplete - missing chunks)",
@@ -3110,7 +3110,7 @@
                   "  }",
                   "}"
                 ],
-                "_lastExecutionId": "fe5b1ac3-2472-4391-9ab2-fbc44174297a"
+                "_lastExecutionId": "13bca04a-a48f-4580-90ed-f66da84c05b9"
               }
             }
           ]
@@ -3127,7 +3127,7 @@
               "api",
               "v1",
               "uploads",
-              "45cefb4d-9e3a-4d66-96a4-cc13d3f07e03",
+              "97eba27c-5560-4930-bd9b-425b7024a2a3",
               "complete"
             ],
             "host": [
@@ -3139,7 +3139,7 @@
           "header": [
             {
               "key": "Authorization",
-              "value": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzQxMzc0ODEsImlhdCI6MTc3NDEzNjU4MSwianRpIjoiMzRlYjg1MTktNGY0Yi00MGQ2LWI1MTctMDdlZGI0YmE0MGVhIiwicm9sZSI6InVzZXIiLCJzdWIiOiI2MmMxYTQxNS1hMmRkLTQ5YTgtODZhOS00NGU4MmNiNWZkNjYifQ.VByzKQeQTZ_Dv47vA2PEssyBUZkWRpIRGxRMS9L4ZlQ"
+              "value": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzQxNDc4MjYsImlhdCI6MTc3NDE0NjkyNiwianRpIjoiNDdlZDJmNTQtMjI3Yy00ZjcwLTlmOGUtZjI2MjFjOTM0YjcyIiwicm9sZSI6InVzZXIiLCJzdWIiOiI5ODc3MGFiYy0yODI3LTRlZmEtYTAyYS1jYTA1M2RjN2I5MjcifQ.oID8Tpf95Fatmq8YhAVnNDlXSITJhyEYu8lD4suIjFQ"
             },
             {
               "key": "Content-Type",
@@ -3162,7 +3162,7 @@
             },
             {
               "key": "Postman-Token",
-              "value": "20f15a2e-5276-4c28-87f1-99372fdfe0d3",
+              "value": "f12839b0-9085-40e4-8741-9feb4863b2be",
               "system": true
             },
             {
@@ -3193,7 +3193,7 @@
           }
         },
         "response": {
-          "id": "f161866c-dc9e-4679-9615-064fe81cc72a",
+          "id": "38b9a30d-2d3e-441d-a00b-7913dc8f5b87",
           "status": "OK",
           "code": 200,
           "header": [
@@ -3231,7 +3231,7 @@
             },
             {
               "key": "X-Request-Id",
-              "value": "JhUHTYh2c_A60RiKccLRKA"
+              "value": "4zqzzzt3lc9WkGKXkss8-A"
             },
             {
               "key": "X-Xss-Protection",
@@ -3239,11 +3239,11 @@
             },
             {
               "key": "Date",
-              "value": "Sat, 21 Mar 2026 23:43:05 GMT"
+              "value": "Sun, 22 Mar 2026 02:36:34 GMT"
             },
             {
               "key": "Content-Length",
-              "value": "143"
+              "value": "145"
             }
           ],
           "stream": {
@@ -3320,41 +3320,41 @@
               34,
               58,
               34,
-              52,
-              53,
-              99,
-              101,
-              102,
-              98,
-              52,
-              100,
-              45,
               57,
-              101,
-              51,
-              97,
-              45,
-              52,
-              100,
-              54,
-              54,
-              45,
-              57,
-              54,
-              97,
-              52,
-              45,
-              99,
-              99,
-              49,
-              51,
-              100,
-              51,
-              102,
-              48,
               55,
               101,
+              98,
+              97,
+              50,
+              55,
+              99,
+              45,
+              53,
+              53,
+              54,
               48,
+              45,
+              52,
+              57,
+              51,
+              48,
+              45,
+              98,
+              100,
+              57,
+              98,
+              45,
+              52,
+              50,
+              53,
+              98,
+              55,
+              48,
+              50,
+              52,
+              97,
+              50,
+              97,
               51,
               34,
               44,
@@ -3399,10 +3399,10 @@
             ]
           },
           "cookie": [],
-          "responseTime": 7,
+          "responseTime": 29,
           "responseSize": 147
         },
-        "id": "34f9aece-6956-48b6-9f3d-1220e4ae8fb9",
+        "id": "06637803-e7ec-4a69-90a8-ffd6da76864d",
         "assertions": [
           {
             "assertion": "Status is 200, 400, 401, or 404",
@@ -3416,15 +3416,15 @@
       },
       {
         "cursor": {
-          "ref": "3f33b744-7e05-4788-82aa-b731c17856ac",
+          "ref": "c0afd1f6-e108-4bb8-984f-4f5a243b55ba",
           "length": 12,
           "cycles": 1,
           "position": 5,
           "iteration": 0,
-          "httpRequestId": "62510489-b7e8-49b9-9260-bf88ef8dd9cc"
+          "httpRequestId": "d4838b83-45d2-425f-a5a5-efd0cff7d1c1"
         },
         "item": {
-          "id": "f0c7b38e-a7e3-43eb-aded-6c951118e21c",
+          "id": "6f42200b-f424-4034-b3e8-442e05543452",
           "name": "Get Encoding Status - By Video ID",
           "request": {
             "description": {
@@ -3466,7 +3466,7 @@
             {
               "listen": "test",
               "script": {
-                "id": "a69d76b4-0d3a-4262-bd9f-098b8940122d",
+                "id": "be87ab85-684d-41e2-9f77-3e9251b511dd",
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('Status is 200 or 401', () => {",
@@ -3486,7 +3486,7 @@
                   "  console.log(`Encoding summary: pending=${wrap.data.pending}, processing=${wrap.data.processing}, completed=${wrap.data.completed}, failed=${wrap.data.failed}`);",
                   "}"
                 ],
-                "_lastExecutionId": "33f0248b-9ced-4107-a052-e28ae626353a"
+                "_lastExecutionId": "fd5881b2-f1b4-4dce-b970-6a9048ae3bdc"
               }
             }
           ]
@@ -3511,7 +3511,7 @@
             "query": [
               {
                 "key": "video_id",
-                "value": "a13b9910-740a-4d6c-bac8-5c3664409f17"
+                "value": "5090c218-f70b-4496-9d64-f9eb152eeeca"
               }
             ],
             "variable": []
@@ -3519,7 +3519,7 @@
           "header": [
             {
               "key": "Authorization",
-              "value": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzQxMzc0ODEsImlhdCI6MTc3NDEzNjU4MSwianRpIjoiMzRlYjg1MTktNGY0Yi00MGQ2LWI1MTctMDdlZGI0YmE0MGVhIiwicm9sZSI6InVzZXIiLCJzdWIiOiI2MmMxYTQxNS1hMmRkLTQ5YTgtODZhOS00NGU4MmNiNWZkNjYifQ.VByzKQeQTZ_Dv47vA2PEssyBUZkWRpIRGxRMS9L4ZlQ"
+              "value": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzQxNDc4MjYsImlhdCI6MTc3NDE0NjkyNiwianRpIjoiNDdlZDJmNTQtMjI3Yy00ZjcwLTlmOGUtZjI2MjFjOTM0YjcyIiwicm9sZSI6InVzZXIiLCJzdWIiOiI5ODc3MGFiYy0yODI3LTRlZmEtYTAyYS1jYTA1M2RjN2I5MjcifQ.oID8Tpf95Fatmq8YhAVnNDlXSITJhyEYu8lD4suIjFQ"
             },
             {
               "key": "User-Agent",
@@ -3538,7 +3538,7 @@
             },
             {
               "key": "Postman-Token",
-              "value": "ff4c0680-5810-4b63-a14f-1c8a8b342b3c",
+              "value": "edba0e91-2fac-4539-845b-736f9e07ca20",
               "system": true
             },
             {
@@ -3560,7 +3560,7 @@
           "method": "GET"
         },
         "response": {
-          "id": "9ffd2695-bcfc-4f46-b17f-eb3ab7a0e88f",
+          "id": "07bdc2eb-4c57-4b09-8049-ec9e75dce37e",
           "status": "OK",
           "code": 200,
           "header": [
@@ -3598,7 +3598,7 @@
             },
             {
               "key": "X-Request-Id",
-              "value": "2MD1vhqiHKsGFZLbMFYTGA"
+              "value": "4xUd9_x8sNTsqS1dXw4rdA"
             },
             {
               "key": "X-Xss-Protection",
@@ -3606,11 +3606,11 @@
             },
             {
               "key": "Date",
-              "value": "Sat, 21 Mar 2026 23:43:05 GMT"
+              "value": "Sun, 22 Mar 2026 02:36:34 GMT"
             },
             {
               "key": "Content-Length",
-              "value": "178"
+              "value": "176"
             }
           ],
           "stream": {
@@ -3648,7 +3648,7 @@
               100,
               34,
               58,
-              51,
+              50,
               44,
               34,
               112,
@@ -3814,26 +3814,26 @@
               51,
               45,
               50,
-              49,
+              50,
               84,
+              48,
               50,
-              51,
               58,
-              52,
               51,
-              58,
-              48,
-              48,
-              46,
-              50,
-              50,
-              56,
-              53,
-              52,
-              51,
-              53,
-              48,
               54,
+              58,
+              51,
+              50,
+              46,
+              54,
+              53,
+              50,
+              51,
+              51,
+              51,
+              53,
+              52,
+              53,
               90,
               34,
               125,
@@ -3857,10 +3857,10 @@
             ]
           },
           "cookie": [],
-          "responseTime": 5,
+          "responseTime": 197,
           "responseSize": 238
         },
-        "id": "f0c7b38e-a7e3-43eb-aded-6c951118e21c",
+        "id": "6f42200b-f424-4034-b3e8-442e05543452",
         "assertions": [
           {
             "assertion": "Status is 200 or 401",
@@ -3874,15 +3874,15 @@
       },
       {
         "cursor": {
-          "ref": "2c271a4b-3b2f-4664-97fc-e462f8177a3c",
+          "ref": "fce84844-31d5-4470-8841-125af78adff9",
           "length": 12,
           "cycles": 1,
           "position": 6,
           "iteration": 0,
-          "httpRequestId": "ed8d44c8-d90c-4746-813d-4e4a50182935"
+          "httpRequestId": "4b75c949-d709-421f-b2c5-dd2bcd91e096"
         },
         "item": {
-          "id": "329265d7-18ac-4382-abef-af734b6edc48",
+          "id": "3f82cfd1-dfc3-4a38-a9a7-1f4333fb4195",
           "name": "Get Encoding Status - By Job ID",
           "request": {
             "description": {
@@ -3924,7 +3924,7 @@
             {
               "listen": "test",
               "script": {
-                "id": "ae89c109-49ba-4009-a352-65019f814fcc",
+                "id": "a25df440-115d-4b7c-bc0f-09c4d71e6153",
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('Status is 200 or 401', () => {",
@@ -3943,7 +3943,7 @@
                   "  console.log(`Encoding summary: pending=${wrap.data.pending}, processing=${wrap.data.processing}`);",
                   "}"
                 ],
-                "_lastExecutionId": "69261c4b-8b0c-44be-9909-c33b4735e946"
+                "_lastExecutionId": "2fe9e264-6627-4675-a094-3ad0b8471d3a"
               }
             }
           ]
@@ -3976,7 +3976,7 @@
           "header": [
             {
               "key": "Authorization",
-              "value": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzQxMzc0ODEsImlhdCI6MTc3NDEzNjU4MSwianRpIjoiMzRlYjg1MTktNGY0Yi00MGQ2LWI1MTctMDdlZGI0YmE0MGVhIiwicm9sZSI6InVzZXIiLCJzdWIiOiI2MmMxYTQxNS1hMmRkLTQ5YTgtODZhOS00NGU4MmNiNWZkNjYifQ.VByzKQeQTZ_Dv47vA2PEssyBUZkWRpIRGxRMS9L4ZlQ"
+              "value": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzQxNDc4MjYsImlhdCI6MTc3NDE0NjkyNiwianRpIjoiNDdlZDJmNTQtMjI3Yy00ZjcwLTlmOGUtZjI2MjFjOTM0YjcyIiwicm9sZSI6InVzZXIiLCJzdWIiOiI5ODc3MGFiYy0yODI3LTRlZmEtYTAyYS1jYTA1M2RjN2I5MjcifQ.oID8Tpf95Fatmq8YhAVnNDlXSITJhyEYu8lD4suIjFQ"
             },
             {
               "key": "User-Agent",
@@ -3995,7 +3995,7 @@
             },
             {
               "key": "Postman-Token",
-              "value": "5000671f-31f7-4a01-9299-5c1b33856372",
+              "value": "6b416391-930a-408a-94cf-2f907611af8a",
               "system": true
             },
             {
@@ -4017,7 +4017,7 @@
           "method": "GET"
         },
         "response": {
-          "id": "c3b8f284-1569-4d9c-a0e0-e7294cdad153",
+          "id": "f118e0d7-7f2c-4741-90d4-b08a193e1587",
           "status": "OK",
           "code": 200,
           "header": [
@@ -4055,7 +4055,7 @@
             },
             {
               "key": "X-Request-Id",
-              "value": "r4QqOLVI8LE2PFuTRp4KWw"
+              "value": "xzZBGR2oFeN-uIo3r4WS4w"
             },
             {
               "key": "X-Xss-Protection",
@@ -4063,11 +4063,11 @@
             },
             {
               "key": "Date",
-              "value": "Sat, 21 Mar 2026 23:43:05 GMT"
+              "value": "Sun, 22 Mar 2026 02:36:34 GMT"
             },
             {
               "key": "Content-Length",
-              "value": "178"
+              "value": "176"
             }
           ],
           "stream": {
@@ -4105,7 +4105,7 @@
               100,
               34,
               58,
-              51,
+              50,
               44,
               34,
               112,
@@ -4271,26 +4271,26 @@
               51,
               45,
               50,
-              49,
+              50,
               84,
+              48,
               50,
-              51,
               58,
-              52,
               51,
-              58,
-              48,
-              48,
-              46,
-              50,
-              50,
-              56,
-              53,
-              52,
-              51,
-              53,
-              48,
               54,
+              58,
+              51,
+              50,
+              46,
+              54,
+              53,
+              50,
+              51,
+              51,
+              51,
+              53,
+              52,
+              53,
               90,
               34,
               125,
@@ -4314,10 +4314,10 @@
             ]
           },
           "cookie": [],
-          "responseTime": 4,
+          "responseTime": 12,
           "responseSize": 238
         },
-        "id": "329265d7-18ac-4382-abef-af734b6edc48",
+        "id": "3f82cfd1-dfc3-4a38-a9a7-1f4333fb4195",
         "assertions": [
           {
             "assertion": "Status is 200 or 401",
@@ -4331,15 +4331,15 @@
       },
       {
         "cursor": {
-          "ref": "81c3c05b-3417-4322-bddb-08202d8a6521",
+          "ref": "5cb75b4a-85c0-49b1-a2b7-e4a01d7cbc57",
           "length": 12,
           "cycles": 1,
           "position": 7,
           "iteration": 0,
-          "httpRequestId": "a6f8530f-cd3d-4c1f-9ade-2dd2de30a7e8"
+          "httpRequestId": "ec07ec7a-42ca-41c3-8de4-5daae8ad4b03"
         },
         "item": {
-          "id": "99867b60-c69d-4815-80bf-00387e252737",
+          "id": "d4f5c720-3d4e-4776-9067-b901f578223c",
           "name": "Get Encoding Status - All Processing",
           "request": {
             "description": {
@@ -4381,7 +4381,7 @@
             {
               "listen": "test",
               "script": {
-                "id": "1c77ee22-33bf-41cd-8642-d37e762fcb3d",
+                "id": "203de70a-5483-40c3-ab80-a4bd648598f7",
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('Status is 200 or 401', () => {",
@@ -4401,7 +4401,7 @@
                   "  console.log(`Currently processing jobs: ${wrap.data.processing}`);",
                   "}"
                 ],
-                "_lastExecutionId": "01cfaa94-03fb-4e3a-a75a-4a08191bec5c"
+                "_lastExecutionId": "750e321d-1438-45ae-b2e5-beab2890dd59"
               }
             }
           ]
@@ -4434,7 +4434,7 @@
           "header": [
             {
               "key": "Authorization",
-              "value": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzQxMzc0ODEsImlhdCI6MTc3NDEzNjU4MSwianRpIjoiMzRlYjg1MTktNGY0Yi00MGQ2LWI1MTctMDdlZGI0YmE0MGVhIiwicm9sZSI6InVzZXIiLCJzdWIiOiI2MmMxYTQxNS1hMmRkLTQ5YTgtODZhOS00NGU4MmNiNWZkNjYifQ.VByzKQeQTZ_Dv47vA2PEssyBUZkWRpIRGxRMS9L4ZlQ"
+              "value": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzQxNDc4MjYsImlhdCI6MTc3NDE0NjkyNiwianRpIjoiNDdlZDJmNTQtMjI3Yy00ZjcwLTlmOGUtZjI2MjFjOTM0YjcyIiwicm9sZSI6InVzZXIiLCJzdWIiOiI5ODc3MGFiYy0yODI3LTRlZmEtYTAyYS1jYTA1M2RjN2I5MjcifQ.oID8Tpf95Fatmq8YhAVnNDlXSITJhyEYu8lD4suIjFQ"
             },
             {
               "key": "User-Agent",
@@ -4453,7 +4453,7 @@
             },
             {
               "key": "Postman-Token",
-              "value": "e54cdcc1-61e9-4032-a7d8-d985fb8f5111",
+              "value": "37594cc4-cceb-467e-b2e0-475e2df94ead",
               "system": true
             },
             {
@@ -4475,7 +4475,7 @@
           "method": "GET"
         },
         "response": {
-          "id": "1c37d7c7-4372-4dfa-9267-741de22acbb5",
+          "id": "1a41564f-e63a-4f9b-95dc-4992ed70cc2a",
           "status": "OK",
           "code": 200,
           "header": [
@@ -4513,7 +4513,7 @@
             },
             {
               "key": "X-Request-Id",
-              "value": "M7J_jrl9e0ZXaJmgVJsijg"
+              "value": "dPDvaPqwiNstCmn7FmWPKQ"
             },
             {
               "key": "X-Xss-Protection",
@@ -4521,11 +4521,11 @@
             },
             {
               "key": "Date",
-              "value": "Sat, 21 Mar 2026 23:43:05 GMT"
+              "value": "Sun, 22 Mar 2026 02:36:34 GMT"
             },
             {
               "key": "Content-Length",
-              "value": "178"
+              "value": "176"
             }
           ],
           "stream": {
@@ -4563,7 +4563,7 @@
               100,
               34,
               58,
-              51,
+              50,
               44,
               34,
               112,
@@ -4729,26 +4729,26 @@
               51,
               45,
               50,
-              49,
+              50,
               84,
+              48,
               50,
-              51,
               58,
-              52,
               51,
-              58,
-              48,
-              48,
-              46,
-              50,
-              50,
-              56,
-              53,
-              52,
-              51,
-              53,
-              48,
               54,
+              58,
+              51,
+              50,
+              46,
+              54,
+              53,
+              50,
+              51,
+              51,
+              51,
+              53,
+              52,
+              53,
               90,
               34,
               125,
@@ -4772,10 +4772,10 @@
             ]
           },
           "cookie": [],
-          "responseTime": 3,
+          "responseTime": 16,
           "responseSize": 238
         },
-        "id": "99867b60-c69d-4815-80bf-00387e252737",
+        "id": "d4f5c720-3d4e-4776-9067-b901f578223c",
         "assertions": [
           {
             "assertion": "Status is 200 or 401",
@@ -4789,15 +4789,15 @@
       },
       {
         "cursor": {
-          "ref": "0dadd7ca-1d10-4417-b6d8-cc596527308d",
+          "ref": "a4013608-c39c-40b0-8dc0-922999c5e155",
           "length": 12,
           "cycles": 1,
           "position": 8,
           "iteration": 0,
-          "httpRequestId": "cac5fe7c-58ba-42b5-95d4-f948cb9b1884"
+          "httpRequestId": "b267532f-4186-4344-9220-86d2ddc97154"
         },
         "item": {
-          "id": "b7af02a8-15b4-45df-8160-47870abac98c",
+          "id": "a47b6682-e012-49ce-9fe4-2050601dc86b",
           "name": "Initiate Upload - Missing Auth",
           "request": {
             "description": {
@@ -4834,7 +4834,7 @@
             {
               "listen": "test",
               "script": {
-                "id": "37d58574-d6b5-4b90-bd30-c5e6824ee486",
+                "id": "29f9800a-1a6b-47de-b1b7-2ff7a64fdc47",
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('Status is 401 Unauthorized', () => {",
@@ -4847,7 +4847,7 @@
                   "  pm.expect(wrap).to.have.property('error');",
                   "});"
                 ],
-                "_lastExecutionId": "34e1aab1-4412-446f-ba68-a784f07f81e1"
+                "_lastExecutionId": "e1482453-2c29-4d7e-9435-81d2abcca4cc"
               }
             }
           ]
@@ -4894,7 +4894,7 @@
             },
             {
               "key": "Postman-Token",
-              "value": "2f775c3a-eeee-49c2-b13a-7c506bb53450",
+              "value": "afe185e8-e718-4b49-9310-82aeb99c2d06",
               "system": true
             },
             {
@@ -4925,7 +4925,7 @@
           }
         },
         "response": {
-          "id": "01069e1a-e11a-4d51-afe4-7a3e07268061",
+          "id": "da854491-f1d2-47b8-961b-3b79018d1244",
           "status": "Unauthorized",
           "code": 401,
           "header": [
@@ -4963,7 +4963,7 @@
             },
             {
               "key": "X-Request-Id",
-              "value": "SkFNjlcCPx8h-k67RtfluQ"
+              "value": "Y6NRz1SqdlVl7Y-pvY_srg"
             },
             {
               "key": "X-Xss-Protection",
@@ -4971,7 +4971,7 @@
             },
             {
               "key": "Date",
-              "value": "Sat, 21 Mar 2026 23:43:05 GMT"
+              "value": "Sun, 22 Mar 2026 02:36:35 GMT"
             },
             {
               "key": "Content-Length",
@@ -5089,10 +5089,10 @@
             ]
           },
           "cookie": [],
-          "responseTime": 3,
+          "responseTime": 45,
           "responseSize": 105
         },
-        "id": "b7af02a8-15b4-45df-8160-47870abac98c",
+        "id": "a47b6682-e012-49ce-9fe4-2050601dc86b",
         "assertions": [
           {
             "assertion": "Status is 401 Unauthorized",
@@ -5106,15 +5106,15 @@
       },
       {
         "cursor": {
-          "ref": "a39ad126-e0d6-405b-9301-316b203f9222",
+          "ref": "56b9d647-f705-43b8-8144-394d687aa57c",
           "length": 12,
           "cycles": 1,
           "position": 9,
           "iteration": 0,
-          "httpRequestId": "f85d1446-c25b-4634-af06-2f1fdf6717f0"
+          "httpRequestId": "a2148fe6-7a0c-49c3-949e-a0360c8296c8"
         },
         "item": {
-          "id": "aa2c696f-b798-4001-9b0a-c5de1ed687f1",
+          "id": "a2d3449e-bf74-4ed7-b4ef-dfecb3dac4bc",
           "name": "Initiate Upload - Incomplete Session",
           "request": {
             "description": {
@@ -5155,7 +5155,7 @@
             {
               "listen": "test",
               "script": {
-                "id": "42bc8c5a-1087-437d-808e-d971cca567ce",
+                "id": "106b143f-9e6e-43d9-95f5-bcc75cff45b6",
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('Status is 201', () => pm.response.to.have.status(201));",
@@ -5165,7 +5165,7 @@
                   "});",
                   "pm.environment.set('incomplete_upload_session_id', wrap.data.session_id);"
                 ],
-                "_lastExecutionId": "cb5c547b-a401-42ba-9bff-2bf4a9e46088"
+                "_lastExecutionId": "feb29d99-e120-4560-8cd1-ea40feb44bf0"
               }
             }
           ]
@@ -5193,7 +5193,7 @@
           "header": [
             {
               "key": "Authorization",
-              "value": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzQxMzc0ODEsImlhdCI6MTc3NDEzNjU4MSwianRpIjoiMzRlYjg1MTktNGY0Yi00MGQ2LWI1MTctMDdlZGI0YmE0MGVhIiwicm9sZSI6InVzZXIiLCJzdWIiOiI2MmMxYTQxNS1hMmRkLTQ5YTgtODZhOS00NGU4MmNiNWZkNjYifQ.VByzKQeQTZ_Dv47vA2PEssyBUZkWRpIRGxRMS9L4ZlQ"
+              "value": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzQxNDc4MjYsImlhdCI6MTc3NDE0NjkyNiwianRpIjoiNDdlZDJmNTQtMjI3Yy00ZjcwLTlmOGUtZjI2MjFjOTM0YjcyIiwicm9sZSI6InVzZXIiLCJzdWIiOiI5ODc3MGFiYy0yODI3LTRlZmEtYTAyYS1jYTA1M2RjN2I5MjcifQ.oID8Tpf95Fatmq8YhAVnNDlXSITJhyEYu8lD4suIjFQ"
             },
             {
               "key": "Content-Type",
@@ -5216,7 +5216,7 @@
             },
             {
               "key": "Postman-Token",
-              "value": "90402f67-e1b1-42f6-af26-9355c74dfd6f",
+              "value": "7a54553c-f9cf-492a-94e6-e08f7f182ec9",
               "system": true
             },
             {
@@ -5247,7 +5247,7 @@
           }
         },
         "response": {
-          "id": "943aada1-8dca-40c1-870b-e090d27e1feb",
+          "id": "6572eeab-6776-4ea2-a24c-1c84bb654bd0",
           "status": "Created",
           "code": 201,
           "header": [
@@ -5285,7 +5285,7 @@
             },
             {
               "key": "X-Request-Id",
-              "value": "D3kmh_JOYDJjADzVarXxhw"
+              "value": "dQe6l2cdUidHWmYaJ5T-1g"
             },
             {
               "key": "X-Xss-Protection",
@@ -5293,11 +5293,11 @@
             },
             {
               "key": "Date",
-              "value": "Sat, 21 Mar 2026 23:43:05 GMT"
+              "value": "Sun, 22 Mar 2026 02:36:35 GMT"
             },
             {
               "key": "Content-Length",
-              "value": "154"
+              "value": "153"
             }
           ],
           "stream": {
@@ -5326,42 +5326,42 @@
               34,
               58,
               34,
+              97,
+              97,
               51,
               49,
-              56,
-              97,
-              100,
-              98,
-              52,
-              55,
-              45,
-              97,
-              99,
-              54,
-              99,
-              45,
-              52,
-              56,
-              52,
-              100,
-              45,
-              98,
               48,
-              99,
-              57,
-              45,
-              54,
-              101,
-              53,
-              51,
               102,
-              101,
-              54,
-              49,
-              57,
-              54,
+              50,
               53,
+              45,
+              56,
+              97,
+              102,
+              50,
+              45,
+              52,
+              98,
+              54,
+              48,
+              45,
+              57,
+              52,
+              54,
+              54,
+              45,
+              100,
+              49,
+              56,
+              98,
+              57,
+              100,
+              48,
+              57,
+              52,
               55,
+              52,
+              100,
               34,
               44,
               34,
@@ -5432,42 +5432,42 @@
               100,
               115,
               47,
+              97,
+              97,
               51,
               49,
-              56,
-              97,
-              100,
-              98,
-              52,
-              55,
-              45,
-              97,
-              99,
-              54,
-              99,
-              45,
-              52,
-              56,
-              52,
-              100,
-              45,
-              98,
               48,
-              99,
-              57,
-              45,
-              54,
-              101,
-              53,
-              51,
               102,
-              101,
-              54,
-              49,
-              57,
-              54,
+              50,
               53,
+              45,
+              56,
+              97,
+              102,
+              50,
+              45,
+              52,
+              98,
+              54,
+              48,
+              45,
+              57,
+              52,
+              54,
+              54,
+              45,
+              100,
+              49,
+              56,
+              98,
+              57,
+              100,
+              48,
+              57,
+              52,
               55,
+              52,
+              100,
               47,
               99,
               104,
@@ -5497,10 +5497,10 @@
             ]
           },
           "cookie": [],
-          "responseTime": 4,
+          "responseTime": 62,
           "responseSize": 191
         },
-        "id": "aa2c696f-b798-4001-9b0a-c5de1ed687f1",
+        "id": "a2d3449e-bf74-4ed7-b4ef-dfecb3dac4bc",
         "assertions": [
           {
             "assertion": "Status is 201",
@@ -5514,15 +5514,15 @@
       },
       {
         "cursor": {
-          "ref": "9b62b176-f4e6-41d1-b68d-dd74c1cb0ae9",
+          "ref": "adddb9ef-c475-4c1c-8573-9a9b7984684e",
           "length": 12,
           "cycles": 1,
           "position": 10,
           "iteration": 0,
-          "httpRequestId": "fad4d9ef-2e94-47ff-9039-9461b69d0283"
+          "httpRequestId": "03743f1a-9159-43bc-a5ba-edf30b2979c1"
         },
         "item": {
-          "id": "54959b49-611a-4b32-9413-7e4f04f16ce6",
+          "id": "9cdc5f7f-000e-4ed8-8b91-9d56855e5c17",
           "name": "Complete Upload - Missing Chunks",
           "request": {
             "description": {
@@ -5556,7 +5556,7 @@
             {
               "listen": "test",
               "script": {
-                "id": "f7902376-9e92-477b-bdaf-320eb93fb0ce",
+                "id": "09776d70-1327-4db8-8e96-c0c993b4ceb2",
                 "type": "text/javascript",
                 "exec": [
                   "// This test expects 400 if chunks are missing",
@@ -5572,7 +5572,7 @@
                   "  });",
                   "}"
                 ],
-                "_lastExecutionId": "8c25c9a4-2ceb-4470-b85f-667ecf4c3a79"
+                "_lastExecutionId": "d6154e25-25fc-4c73-bdbf-61d4b21a13dc"
               }
             }
           ]
@@ -5589,7 +5589,7 @@
               "api",
               "v1",
               "uploads",
-              "318adb47-ac6c-484d-b0c9-6e53fe619657",
+              "aa310f25-8af2-4b60-9466-d18b9d09474d",
               "complete"
             ],
             "host": [
@@ -5601,7 +5601,7 @@
           "header": [
             {
               "key": "Authorization",
-              "value": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzQxMzc0ODEsImlhdCI6MTc3NDEzNjU4MSwianRpIjoiMzRlYjg1MTktNGY0Yi00MGQ2LWI1MTctMDdlZGI0YmE0MGVhIiwicm9sZSI6InVzZXIiLCJzdWIiOiI2MmMxYTQxNS1hMmRkLTQ5YTgtODZhOS00NGU4MmNiNWZkNjYifQ.VByzKQeQTZ_Dv47vA2PEssyBUZkWRpIRGxRMS9L4ZlQ"
+              "value": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzQxNDc4MjYsImlhdCI6MTc3NDE0NjkyNiwianRpIjoiNDdlZDJmNTQtMjI3Yy00ZjcwLTlmOGUtZjI2MjFjOTM0YjcyIiwicm9sZSI6InVzZXIiLCJzdWIiOiI5ODc3MGFiYy0yODI3LTRlZmEtYTAyYS1jYTA1M2RjN2I5MjcifQ.oID8Tpf95Fatmq8YhAVnNDlXSITJhyEYu8lD4suIjFQ"
             },
             {
               "key": "User-Agent",
@@ -5620,7 +5620,7 @@
             },
             {
               "key": "Postman-Token",
-              "value": "b03889c0-aca9-4f52-81ba-ed298c5763d9",
+              "value": "ccb33dd5-557a-48a8-aef5-f04b608bb0a7",
               "system": true
             },
             {
@@ -5647,7 +5647,7 @@
           "method": "POST"
         },
         "response": {
-          "id": "5204306e-b32a-4c92-bf9e-d90a42309a5b",
+          "id": "4945b83d-a53f-4a19-90e8-df57df1e93f5",
           "status": "Bad Request",
           "code": 400,
           "header": [
@@ -5685,7 +5685,7 @@
             },
             {
               "key": "X-Request-Id",
-              "value": "svp0XXObdw4KphfH21L7mw"
+              "value": "za2G7My0KcFGAj0rYVPIKA"
             },
             {
               "key": "X-Xss-Protection",
@@ -5693,7 +5693,7 @@
             },
             {
               "key": "Date",
-              "value": "Sat, 21 Mar 2026 23:43:05 GMT"
+              "value": "Sun, 22 Mar 2026 02:36:35 GMT"
             },
             {
               "key": "Content-Length",
@@ -5826,10 +5826,10 @@
             ]
           },
           "cookie": [],
-          "responseTime": 2,
+          "responseTime": 20,
           "responseSize": 120
         },
-        "id": "54959b49-611a-4b32-9413-7e4f04f16ce6",
+        "id": "9cdc5f7f-000e-4ed8-8b91-9d56855e5c17",
         "assertions": [
           {
             "assertion": "Status is 400 or 404",
@@ -5843,15 +5843,15 @@
       },
       {
         "cursor": {
-          "ref": "382d454b-f630-441b-8c6e-8a4dfde55267",
+          "ref": "6edaab00-6c07-4fb5-9930-50e87bc2371f",
           "length": 12,
           "cycles": 1,
           "position": 11,
           "iteration": 0,
-          "httpRequestId": "bd584008-58a3-4d19-bc37-f1163f9b51ce"
+          "httpRequestId": "7a04f2db-a900-48ba-8795-f3a899cf7802"
         },
         "item": {
-          "id": "33ab6005-8827-453c-946b-171cb49d1e8c",
+          "id": "b5a0af3a-2aec-4408-8212-d66521156bb8",
           "name": "Get Status - Invalid Session",
           "request": {
             "description": {
@@ -5885,7 +5885,7 @@
             {
               "listen": "test",
               "script": {
-                "id": "df8ef863-8e92-4d08-b3d2-3a2febad41a5",
+                "id": "7fbd273c-a87c-4289-877a-5a6f504558ba",
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('Status is 400 Bad Request', () => {",
@@ -5897,7 +5897,7 @@
                   "  pm.expect(wrap).to.have.property('success', false);",
                   "});"
                 ],
-                "_lastExecutionId": "ab835154-4d1b-4573-b180-7c67dc1dcea8"
+                "_lastExecutionId": "faabdcb5-0cc6-430b-8b0f-f228b869c220"
               }
             }
           ]
@@ -5926,7 +5926,7 @@
           "header": [
             {
               "key": "Authorization",
-              "value": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzQxMzc0ODEsImlhdCI6MTc3NDEzNjU4MSwianRpIjoiMzRlYjg1MTktNGY0Yi00MGQ2LWI1MTctMDdlZGI0YmE0MGVhIiwicm9sZSI6InVzZXIiLCJzdWIiOiI2MmMxYTQxNS1hMmRkLTQ5YTgtODZhOS00NGU4MmNiNWZkNjYifQ.VByzKQeQTZ_Dv47vA2PEssyBUZkWRpIRGxRMS9L4ZlQ"
+              "value": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzQxNDc4MjYsImlhdCI6MTc3NDE0NjkyNiwianRpIjoiNDdlZDJmNTQtMjI3Yy00ZjcwLTlmOGUtZjI2MjFjOTM0YjcyIiwicm9sZSI6InVzZXIiLCJzdWIiOiI5ODc3MGFiYy0yODI3LTRlZmEtYTAyYS1jYTA1M2RjN2I5MjcifQ.oID8Tpf95Fatmq8YhAVnNDlXSITJhyEYu8lD4suIjFQ"
             },
             {
               "key": "User-Agent",
@@ -5945,7 +5945,7 @@
             },
             {
               "key": "Postman-Token",
-              "value": "3d8ecdd6-2ade-4490-909c-0fb6838febc5",
+              "value": "7a8dba5a-702d-477f-a63d-7c3a27666e76",
               "system": true
             },
             {
@@ -5967,7 +5967,7 @@
           "method": "GET"
         },
         "response": {
-          "id": "cb06351b-6156-4110-ac71-e7cf3f0f84bc",
+          "id": "8dd538b6-cb20-4fc6-bb43-9e731a1e2b0f",
           "status": "Bad Request",
           "code": 400,
           "header": [
@@ -6005,7 +6005,7 @@
             },
             {
               "key": "X-Request-Id",
-              "value": "5HawDAqcsmq8LErk8yYmgQ"
+              "value": "ZRYVibQT07qg1ssCqv6lPQ"
             },
             {
               "key": "X-Xss-Protection",
@@ -6013,7 +6013,7 @@
             },
             {
               "key": "Date",
-              "value": "Sat, 21 Mar 2026 23:43:05 GMT"
+              "value": "Sun, 22 Mar 2026 02:36:35 GMT"
             },
             {
               "key": "Content-Length",
@@ -6140,10 +6140,10 @@
             ]
           },
           "cookie": [],
-          "responseTime": 3,
+          "responseTime": 43,
           "responseSize": 114
         },
-        "id": "33ab6005-8827-453c-946b-171cb49d1e8c",
+        "id": "b5a0af3a-2aec-4408-8212-d66521156bb8",
         "assertions": [
           {
             "assertion": "Status is 400 Bad Request",
@@ -6157,7 +6157,7 @@
       }
     ],
     "transfers": {
-      "responseTotal": 1974
+      "responseTotal": 1970
     },
     "failures": [],
     "error": null

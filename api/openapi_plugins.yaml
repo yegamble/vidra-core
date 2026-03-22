@@ -435,6 +435,144 @@ paths:
                     type: integer
                     example: 1523
 
+  /api/v1/plugins:
+    get:
+      tags:
+        - Plugins
+      summary: List plugins
+      description: PeerTube-compatible alias for listing installed plugins.
+      operationId: listPluginsCanonical
+      responses:
+        '200':
+          description: List of plugins
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PluginInfo'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  /api/v1/plugins/available:
+    get:
+      tags:
+        - Plugins
+      summary: List available plugins
+      description: PeerTube-compatible alias for available plugin discovery.
+      operationId: listAvailablePluginsCanonical
+      responses:
+        '200':
+          description: Available plugins
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  additionalProperties: true
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  /api/v1/plugins/install:
+    post:
+      tags:
+        - Plugins
+      summary: Install plugin
+      description: PeerTube-compatible plugin install route reserved by Athena for future implementation.
+      operationId: installPluginCanonical
+      responses:
+        '501':
+          $ref: '#/components/responses/NotImplementedError'
+
+  /api/v1/plugins/update:
+    post:
+      tags:
+        - Plugins
+      summary: Update plugin
+      description: PeerTube-compatible plugin update route reserved by Athena for future implementation.
+      operationId: updatePluginCanonical
+      responses:
+        '501':
+          $ref: '#/components/responses/NotImplementedError'
+
+  /api/v1/plugins/uninstall:
+    post:
+      tags:
+        - Plugins
+      summary: Uninstall plugin
+      description: PeerTube-compatible plugin uninstall route reserved by Athena for future implementation.
+      operationId: uninstallPluginCanonical
+      responses:
+        '501':
+          $ref: '#/components/responses/NotImplementedError'
+
+  /api/v1/plugins/{npmName}:
+    get:
+      tags:
+        - Plugins
+      summary: Get plugin by name
+      description: PeerTube-compatible plugin lookup by npm name.
+      operationId: getPluginCanonical
+      parameters:
+        - $ref: '#/components/parameters/PluginName'
+      responses:
+        '200':
+          description: Plugin details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PluginDetails'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /api/v1/plugins/{npmName}/registered-settings:
+    get:
+      tags:
+        - Plugins
+      summary: Get registered plugin settings
+      description: PeerTube-compatible plugin settings metadata route reserved by Athena for future implementation.
+      operationId: getRegisteredPluginSettingsCanonical
+      parameters:
+        - $ref: '#/components/parameters/PluginName'
+      responses:
+        '501':
+          $ref: '#/components/responses/NotImplementedError'
+
+  /api/v1/plugins/{npmName}/public-settings:
+    get:
+      tags:
+        - Plugins
+      summary: Get public plugin settings
+      description: PeerTube-compatible public plugin settings route reserved by Athena for future implementation.
+      operationId: getPublicPluginSettingsCanonical
+      parameters:
+        - $ref: '#/components/parameters/PluginName'
+      responses:
+        '501':
+          $ref: '#/components/responses/NotImplementedError'
+
+  /api/v1/plugins/{npmName}/settings:
+    put:
+      tags:
+        - Plugins
+      summary: Update plugin settings
+      description: PeerTube-compatible plugin settings update route reserved by Athena for future implementation.
+      operationId: updatePluginSettingsCanonical
+      parameters:
+        - $ref: '#/components/parameters/PluginName'
+      responses:
+        '501':
+          $ref: '#/components/responses/NotImplementedError'
+
 components:
   securitySchemes:
     bearerAuth:
@@ -451,6 +589,13 @@ components:
       schema:
         type: string
         format: uuid
+    PluginName:
+      name: npmName
+      in: path
+      description: PeerTube plugin npm name
+      required: true
+      schema:
+        type: string
 
   schemas:
     PluginInfo:
@@ -667,6 +812,12 @@ components:
 
     NotFoundError:
       description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    NotImplementedError:
+      description: Declared PeerTube compatibility route not implemented yet
       content:
         application/json:
           schema:

@@ -218,6 +218,16 @@ func (h *ImportHandlers) ListImports(w http.ResponseWriter, r *http.Request) {
 
 // CancelImport handles DELETE /api/v1/videos/imports/:id
 func (h *ImportHandlers) CancelImport(w http.ResponseWriter, r *http.Request) {
+	h.cancelImport(w, r, false)
+}
+
+// CancelImportCanonical handles POST /api/v1/videos/imports/:id/cancel.
+func (h *ImportHandlers) CancelImportCanonical(w http.ResponseWriter, r *http.Request) {
+	h.cancelImport(w, r, true)
+}
+
+// RetryImport handles POST /api/v1/videos/imports/:id/retry.
+func (h *ImportHandlers) RetryImport(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	userID := getUserID(r)
 	if userID == "" {
@@ -231,6 +241,67 @@ func (h *ImportHandlers) CancelImport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	err := h.importService.RetryImport(ctx, importID, userID)
+	if err != nil {
+		switch {
+		case errors.Is(err, domain.ErrImportNotFound):
+			writeError(w, http.StatusNotFound, "import not found", err)
+			return
+		case errors.Is(err, domain.ErrForbidden):
+			writeError(w, http.StatusForbidden, "access denied", err)
+			return
+		case errors.Is(err, domain.ErrBadRequest):
+			writeError(w, http.StatusBadRequest, "cannot retry import in current state", err)
+			return
+		case errors.Is(err, domain.ErrUnauthorized):
+			writeError(w, http.StatusUnauthorized, "authentication required", err)
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "failed to retry import", err)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *ImportHandlers) cancelImport(w http.ResponseWriter, r *http.Request, peerTubeCanonical bool) {
+	ctx := r.Context()
+	userID := getUserID(r)
+	if userID == "" {
+		writeError(w, http.StatusUnauthorized, "authentication required", nil)
+		return
+	}
+	importID := chi.URLParam(r, "id")
+
+	if importID == "" {
+		writeError(w, http.StatusBadRequest, "import id is required", nil)
+		return
+	}
+
+	if peerTubeCanonical {
+		imp, err := h.importService.GetImport(ctx, importID, userID)
+		if err != nil {
+			switch {
+			case errors.Is(err, domain.ErrImportNotFound):
+				writeError(w, http.StatusNotFound, "import not found", err)
+				return
+			case errors.Is(err, domain.ErrForbidden):
+				writeError(w, http.StatusForbidden, "access denied", err)
+				return
+			case errors.Is(err, domain.ErrUnauthorized):
+				writeError(w, http.StatusUnauthorized, "authentication required", err)
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "failed to get import", err)
+			return
+		}
+
+		if imp.Status != domain.ImportStatusPending {
+			writeError(w, http.StatusConflict, "cannot cancel a non pending video import", nil)
+			return
+		}
+	}
+
 	err := h.importService.CancelImport(ctx, importID, userID)
 	if err != nil {
 		switch {
@@ -241,6 +312,10 @@ func (h *ImportHandlers) CancelImport(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusForbidden, "access denied", err)
 			return
 		case errors.Is(err, domain.ErrBadRequest):
+			if peerTubeCanonical {
+				writeError(w, http.StatusConflict, "cannot cancel a non pending video import", err)
+				return
+			}
 			writeError(w, http.StatusBadRequest, "cannot cancel import in current state", err)
 			return
 		case errors.Is(err, domain.ErrUnauthorized):

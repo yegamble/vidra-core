@@ -147,6 +147,28 @@ func TestAcceptRegistration_OK(t *testing.T) {
 	}
 }
 
+func TestAcceptRegistration_AliasParam_OK(t *testing.T) {
+	repo := &mockRegistrationRepo{registrations: newTestRegistrations()}
+	creator := &mockUserCreator{}
+	h := NewRegistrationHandlers(repo, creator)
+
+	r := chi.NewRouter()
+	r.Post("/users/registrations/{registrationId}/accept", h.AcceptRegistration)
+
+	req := httptest.NewRequest(http.MethodPost, "/users/registrations/11111111-1111-1111-1111-111111111111/accept", strings.NewReader(`{}`))
+	req.Header.Set("Content-Type", "application/json")
+	req = withAdminContext(req, "cccccccc-cccc-cccc-cccc-cccccccccccc")
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d: %s", rr.Code, rr.Body.String())
+	}
+	if repo.registrations[0].Status != "accepted" {
+		t.Fatalf("expected status=accepted, got %q", repo.registrations[0].Status)
+	}
+}
+
 func TestRejectRegistration_OK(t *testing.T) {
 	repo := &mockRegistrationRepo{registrations: newTestRegistrations()}
 	h := NewRegistrationHandlers(repo, nil)

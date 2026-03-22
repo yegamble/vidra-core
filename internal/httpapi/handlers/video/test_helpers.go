@@ -54,6 +54,11 @@ func (m *MockImportService) CancelImport(ctx context.Context, importID, userID s
 	return args.Error(0)
 }
 
+func (m *MockImportService) RetryImport(ctx context.Context, importID, userID string) error {
+	args := m.Called(ctx, importID, userID)
+	return args.Error(0)
+}
+
 func (m *MockImportService) GetImport(ctx context.Context, importID, userID string) (*domain.VideoImport, error) {
 	args := m.Called(ctx, importID, userID)
 	if args.Get(0) == nil {

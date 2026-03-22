@@ -6,6 +6,7 @@ import (
 	"athena/internal/httpapi/handlers/auth"
 	backuphandlers "athena/internal/httpapi/handlers/backup"
 	"athena/internal/httpapi/handlers/channel"
+	compat "athena/internal/httpapi/handlers/compat"
 	"athena/internal/httpapi/handlers/federation"
 	"athena/internal/httpapi/handlers/livestream"
 	"athena/internal/httpapi/handlers/messaging"
@@ -260,6 +261,8 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 					r.With(strictImportLimiter.Limit).Post("/", importHandlers.CreateImport)
 					r.Get("/", importHandlers.ListImports)
 					r.Get("/{id}", importHandlers.GetImport)
+					r.Post("/{id}/cancel", importHandlers.CancelImportCanonical)
+					r.Post("/{id}/retry", importHandlers.RetryImport)
 					r.Delete("/{id}", importHandlers.CancelImport)
 				})
 				// PeerTube alias: /users/me/videos/imports → same handler
@@ -289,6 +292,12 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 			r.With(middleware.Auth(cfg.JWTSecret)).Get("/my-jobs", video.GetMyEncodingJobsHandler(deps.EncodingRepo, deps.VideoRepo))
 		})
 
+		jobHandlers := admin.NewJobHandlers(deps.EncodingRepo, deps.EncodingScheduler)
+		r.With(middleware.Auth(cfg.JWTSecret), middleware.RequireRole(string(domain.RoleAdmin), string(domain.RoleMod))).Post("/jobs/pause", jobHandlers.PauseJobs)
+		r.With(middleware.Auth(cfg.JWTSecret), middleware.RequireRole(string(domain.RoleAdmin), string(domain.RoleMod))).Post("/jobs/resume", jobHandlers.ResumeJobs)
+		r.With(middleware.Auth(cfg.JWTSecret), middleware.RequireRole(string(domain.RoleAdmin), string(domain.RoleMod))).Get("/jobs", jobHandlers.ListJobs)
+		r.With(middleware.Auth(cfg.JWTSecret), middleware.RequireRole(string(domain.RoleAdmin), string(domain.RoleMod))).Get("/jobs/{state}", jobHandlers.ListJobs)
+
 		r.Route("/users", func(r chi.Router) {
 			r.With(middleware.Auth(cfg.JWTSecret), middleware.RequireRole("admin")).Post("/", auth.CreateUserHandler(deps.UserRepo))
 			r.With(middleware.Auth(cfg.JWTSecret)).Get("/me", auth.GetCurrentUserHandler(deps.UserRepo))
@@ -296,6 +305,19 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 			r.With(middleware.Auth(cfg.JWTSecret)).Delete("/me", auth.DeleteAccountHandler(deps.UserRepo))
 			r.With(middleware.Auth(cfg.JWTSecret)).Post("/me/avatar", authHandlers.UploadAvatar)
 			r.With(middleware.Auth(cfg.JWTSecret)).Delete("/me/avatar", authHandlers.DeleteAvatar)
+			if deps.RegistrationRepo != nil {
+				regHandlers := admin.NewRegistrationHandlers(deps.RegistrationRepo, deps.UserRepo)
+				r.With(middleware.Auth(cfg.JWTSecret), middleware.RequireRole(string(domain.RoleAdmin), string(domain.RoleMod))).Get("/registrations", regHandlers.ListRegistrations)
+				r.With(middleware.Auth(cfg.JWTSecret), middleware.RequireRole(string(domain.RoleAdmin), string(domain.RoleMod))).Post("/registrations/{registrationId}/accept", regHandlers.AcceptRegistration)
+				r.With(middleware.Auth(cfg.JWTSecret), middleware.RequireRole(string(domain.RoleAdmin), string(domain.RoleMod))).Post("/registrations/{registrationId}/reject", regHandlers.RejectRegistration)
+				r.With(middleware.Auth(cfg.JWTSecret), middleware.RequireRole(string(domain.RoleAdmin), string(domain.RoleMod))).Delete("/registrations/{registrationId}", regHandlers.DeleteRegistration)
+			} else {
+				registrationsNotImplemented := compat.PeerTubeNotImplemented("PeerTube user registrations moderation")
+				r.With(middleware.Auth(cfg.JWTSecret), middleware.RequireRole(string(domain.RoleAdmin), string(domain.RoleMod))).Get("/registrations", registrationsNotImplemented)
+				r.With(middleware.Auth(cfg.JWTSecret), middleware.RequireRole(string(domain.RoleAdmin), string(domain.RoleMod))).Post("/registrations/{registrationId}/accept", registrationsNotImplemented)
+				r.With(middleware.Auth(cfg.JWTSecret), middleware.RequireRole(string(domain.RoleAdmin), string(domain.RoleMod))).Post("/registrations/{registrationId}/reject", registrationsNotImplemented)
+				r.With(middleware.Auth(cfg.JWTSecret), middleware.RequireRole(string(domain.RoleAdmin), string(domain.RoleMod))).Delete("/registrations/{registrationId}", registrationsNotImplemented)
+			}
 			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{id}", auth.GetPublicUserHandler(deps.UserRepo))
 			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{id}/videos", video.GetUserVideosHandler(deps.VideoRepo))
 			r.With(middleware.Auth(cfg.JWTSecret)).Post("/{id}/subscribe", channel.SubscribeToUserHandler(deps.SubRepo, deps.UserRepo))
@@ -340,6 +362,13 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{channelHandle}", channelHandlers.GetChannelByHandleParam)
 			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{channelHandle}/videos", channelHandlers.GetChannelVideosByHandleParam)
 			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{channelHandle}/video-playlists", social.GetChannelPlaylistsHandler(deps.ChannelService, deps.PlaylistService))
+
+			collaboratorsNotImplemented := compat.PeerTubeNotImplemented("PeerTube channel collaborators")
+			r.With(middleware.Auth(cfg.JWTSecret)).Get("/{channelHandle}/collaborators", collaboratorsNotImplemented)
+			r.With(middleware.Auth(cfg.JWTSecret)).Post("/{channelHandle}/collaborators/invite", collaboratorsNotImplemented)
+			r.With(middleware.Auth(cfg.JWTSecret)).Post("/{channelHandle}/collaborators/{collaboratorId}/accept", collaboratorsNotImplemented)
+			r.With(middleware.Auth(cfg.JWTSecret)).Post("/{channelHandle}/collaborators/{collaboratorId}/reject", collaboratorsNotImplemented)
+			r.With(middleware.Auth(cfg.JWTSecret)).Delete("/{channelHandle}/collaborators/{collaboratorId}", collaboratorsNotImplemented)
 		})
 
 		// Playlist privacies (public, unauthenticated)
@@ -357,6 +386,55 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{name}/video-channels", accountHandlers.GetAccountVideoChannels)
 			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{name}/ratings", accountHandlers.GetAccountRatings)
 			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{name}/followers", accountHandlers.GetAccountFollowers)
+		})
+
+		if deps.PluginManager != nil && deps.PluginRepo != nil {
+			ph := pluginhandlers.NewPluginHandler(deps.PluginRepo, deps.PluginManager, nil, false)
+			pih := pluginhandlers.NewPluginInstallHandlers(deps.PluginManager)
+			pluginCompatNotImplemented := compat.PeerTubeNotImplemented("PeerTube plugin compatibility route")
+
+			r.Route("/plugins", func(r chi.Router) {
+				r.Use(middleware.Auth(cfg.JWTSecret))
+				r.Use(middleware.RequireRole(string(domain.RoleAdmin), string(domain.RoleMod)))
+				r.Get("/", ph.ListPlugins)
+				r.Get("/available", pih.ListAvailablePlugins)
+				r.Post("/install", pluginCompatNotImplemented)
+				r.Post("/update", pluginCompatNotImplemented)
+				r.Post("/uninstall", pluginCompatNotImplemented)
+				r.Get("/{npmName}/registered-settings", pluginCompatNotImplemented)
+				r.Get("/{npmName}/public-settings", pluginCompatNotImplemented)
+				r.Put("/{npmName}/settings", pluginCompatNotImplemented)
+				r.Get("/{npmName}", ph.GetPlugin)
+			})
+		}
+
+		r.Route("/runners", func(r chi.Router) {
+			runnersNotImplemented := compat.PeerTubeNotImplemented("PeerTube remote runners")
+			adminRunners := r.With(middleware.Auth(cfg.JWTSecret), middleware.RequireRole(string(domain.RoleAdmin), string(domain.RoleMod)))
+
+			r.Post("/register", runnersNotImplemented)
+			r.Post("/unregister", runnersNotImplemented)
+
+			adminRunners.Get("/", runnersNotImplemented)
+			adminRunners.Get("/registration-tokens", runnersNotImplemented)
+			adminRunners.Post("/registration-tokens/generate", runnersNotImplemented)
+			adminRunners.Delete("/registration-tokens/{id}", runnersNotImplemented)
+			adminRunners.Get("/jobs", runnersNotImplemented)
+			adminRunners.Post("/jobs/{jobUUID}/cancel", runnersNotImplemented)
+			adminRunners.Delete("/jobs/{jobUUID}", runnersNotImplemented)
+			adminRunners.Delete("/{runnerId}", runnersNotImplemented)
+
+			r.Post("/jobs/request", runnersNotImplemented)
+			r.Post("/jobs/{jobUUID}/accept", runnersNotImplemented)
+			r.Post("/jobs/{jobUUID}/abort", runnersNotImplemented)
+			r.Post("/jobs/{jobUUID}/update", runnersNotImplemented)
+			r.Post("/jobs/{jobUUID}/error", runnersNotImplemented)
+			r.Post("/jobs/{jobUUID}/success", runnersNotImplemented)
+			r.Post("/jobs/{jobUUID}/files/videos/{videoId}/max-quality/audio", runnersNotImplemented)
+			r.Post("/jobs/{jobUUID}/files/videos/{videoId}/max-quality", runnersNotImplemented)
+			r.Post("/jobs/{jobUUID}/files/videos/{videoId}/thumbnails/max-quality", runnersNotImplemented)
+			r.Post("/jobs/{jobUUID}/files/videos/{videoId}/previews/max-quality", runnersNotImplemented)
+			r.Post("/jobs/{jobUUID}/files/videos/{videoId}/studio/task-files/{filename}", runnersNotImplemented)
 		})
 
 		r.Route("/messages", func(r chi.Router) {

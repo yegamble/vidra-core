@@ -5,11 +5,11 @@
     },
     "item": [
       {
-        "id": "200219c4-93a7-4312-9a15-e9b22285c105",
+        "id": "ed8a00a6-4ab8-4ebd-83b5-a5eeb1d366ad",
         "name": "Instance Config - Happy Path",
         "item": [
           {
-            "id": "9037131c-262c-48fe-b271-9ea0b49457df",
+            "id": "7e20a82e-5853-4189-a052-b19dcb978738",
             "name": "GET /api/v1/config - Public instance config",
             "request": {
               "url": {
@@ -31,7 +31,7 @@
               {
                 "listen": "test",
                 "script": {
-                  "id": "495342bf-d6a9-4ff6-be24-a480043fa1ad",
+                  "id": "4e037f47-722e-4808-a9d4-5398acb32609",
                   "type": "text/javascript",
                   "exec": [
                     "pm.test('Status is 200', () => pm.response.to.have.status(200));",
@@ -39,13 +39,13 @@
                     "pm.test('Has instance name', () => pm.expect(json).to.have.property('instance'));",
                     "pm.test('Has serverVersion', () => pm.expect(json.instance).to.have.property('serverVersion'));"
                   ],
-                  "_lastExecutionId": "adc4d0d2-852f-4c4a-bfbd-174800039938"
+                  "_lastExecutionId": "e5a5a52b-3ef5-4fa0-b624-503220c9dac4"
                 }
               }
             ]
           },
           {
-            "id": "8856f4dc-c20a-4ef7-b5f0-b688fb2d830c",
+            "id": "6cfb4042-d34a-4865-8a92-dae204464e6a",
             "name": "GET /api/v1/users/me/video-quota-used - Quota used",
             "request": {
               "url": {
@@ -75,7 +75,7 @@
               {
                 "listen": "test",
                 "script": {
-                  "id": "7897b537-859b-4b46-abc1-040b3ce8bb21",
+                  "id": "9fea394c-7a05-4342-b724-2c89a7af6f31",
                   "type": "text/javascript",
                   "exec": [
                     "pm.test('Status is 200', () => pm.response.to.have.status(200));",
@@ -83,13 +83,13 @@
                     "pm.test('Has videoQuotaUsed', () => pm.expect(json).to.have.property('videoQuotaUsed'));",
                     "pm.test('Has videoQuotaUsedDaily', () => pm.expect(json).to.have.property('videoQuotaUsedDaily'));"
                   ],
-                  "_lastExecutionId": "1a7644ba-1af4-4dac-a8d3-9c3d63da536f"
+                  "_lastExecutionId": "dd3c4955-1e7b-4a7b-9c69-ee1489f34132"
                 }
               }
             ]
           },
           {
-            "id": "21376964-81e0-48e7-bd92-6c3cb3641373",
+            "id": "a15ae4eb-53e9-4e5a-b58a-363f0b160bce",
             "name": "GET /admin/instance/config - List all config (admin)",
             "request": {
               "url": {
@@ -119,7 +119,7 @@
               {
                 "listen": "test",
                 "script": {
-                  "id": "b1413370-8bc2-4061-9c45-c1b86474f791",
+                  "id": "ef5d5970-81ce-4d43-a905-99ab82ae9850",
                   "type": "text/javascript",
                   "exec": [
                     "pm.test('Status is 200 or 403', () => pm.expect([200, 403]).to.include(pm.response.code));",
@@ -133,7 +133,7 @@
                     "  console.log('Skipped admin config positive assertion: current token is not admin');",
                     "}"
                   ],
-                  "_lastExecutionId": "b2c793b7-7ee3-409a-94c8-d103a90cbb77"
+                  "_lastExecutionId": "c6b6cbf0-6adf-4c90-8546-dcacac0ace4d"
                 }
               }
             ]
@@ -142,11 +142,11 @@
         "event": []
       },
       {
-        "id": "53ca2f00-e159-4566-85f8-ef405d22a5b6",
+        "id": "8f96dcf0-40ee-496a-a7eb-cf51d729b3b4",
         "name": "Instance Config - Error Path",
         "item": [
           {
-            "id": "c230bd9b-3347-48b4-a953-ba65362390a4",
+            "id": "bb0a0bb6-47ce-4194-bfe7-15e6f3139c37",
             "name": "GET /api/v1/users/me/video-quota-used - Unauthenticated (401)",
             "request": {
               "url": {
@@ -170,18 +170,18 @@
               {
                 "listen": "test",
                 "script": {
-                  "id": "ff4af47c-1120-4510-bc14-0d77cd532a40",
+                  "id": "5af5e150-ead3-4b74-a382-c18bffdd2790",
                   "type": "text/javascript",
                   "exec": [
                     "pm.test('Status is 401', () => pm.response.to.have.status(401));"
                   ],
-                  "_lastExecutionId": "68583807-3061-4b20-845e-475edea89796"
+                  "_lastExecutionId": "852e948d-08e3-4f36-9393-6bbd87f34baf"
                 }
               }
             ]
           },
           {
-            "id": "d276d63d-91d2-448a-86bb-d7f66e8175c5",
+            "id": "fbfcc2e6-38db-4da8-8993-69004392dbe8",
             "name": "GET /admin/instance/config - Non-admin forbidden (403)",
             "request": {
               "url": {
@@ -205,12 +205,12 @@
               {
                 "listen": "test",
                 "script": {
-                  "id": "0e1cb3cf-23b3-42b6-bde9-d468abcd4a19",
+                  "id": "b2a1ea03-4efb-47c4-a545-51dfc94cb515",
                   "type": "text/javascript",
                   "exec": [
                     "pm.test('Status is 401 or 403', () => { pm.expect([401,403]).to.include(pm.response.code); });"
                   ],
-                  "_lastExecutionId": "a06879cf-1944-4e3f-ab1b-eb90695d46b5"
+                  "_lastExecutionId": "10475e9d-3a28-4e5a-9991-a14d81ab560e"
                 }
               }
             ]
@@ -245,7 +245,7 @@
   "environment": {
     "_": {
       "postman_variable_scope": "environment",
-      "postman_exported_at": "2026-03-21T23:43:05.975Z",
+      "postman_exported_at": "2026-03-22T02:36:40.331Z",
       "postman_exported_using": "Newman/6.1.3"
     },
     "id": "0f7a1111-2222-4333-8444-bbbbbbbbbbbb",
@@ -258,12 +258,12 @@
       },
       {
         "type": "any",
-        "value": "user_1774136580802",
+        "value": "user_1774146915043",
         "key": "username"
       },
       {
         "type": "any",
-        "value": "user_1774136580802@example.com",
+        "value": "user_1774146915043@example.com",
         "key": "email"
       },
       {
@@ -273,17 +273,17 @@
       },
       {
         "type": "any",
-        "value": "62c1a415-a2dd-49a8-86a9-44e82cb5fd66",
+        "value": "98770abc-2827-4efa-a02a-ca053dc7b927",
         "key": "user_id"
       },
       {
         "type": "any",
-        "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzQxMzc0ODEsImlhdCI6MTc3NDEzNjU4MSwianRpIjoiMzRlYjg1MTktNGY0Yi00MGQ2LWI1MTctMDdlZGI0YmE0MGVhIiwicm9sZSI6InVzZXIiLCJzdWIiOiI2MmMxYTQxNS1hMmRkLTQ5YTgtODZhOS00NGU4MmNiNWZkNjYifQ.VByzKQeQTZ_Dv47vA2PEssyBUZkWRpIRGxRMS9L4ZlQ",
+        "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzQxNDc4MjYsImlhdCI6MTc3NDE0NjkyNiwianRpIjoiNDdlZDJmNTQtMjI3Yy00ZjcwLTlmOGUtZjI2MjFjOTM0YjcyIiwicm9sZSI6InVzZXIiLCJzdWIiOiI5ODc3MGFiYy0yODI3LTRlZmEtYTAyYS1jYTA1M2RjN2I5MjcifQ.oID8Tpf95Fatmq8YhAVnNDlXSITJhyEYu8lD4suIjFQ",
         "key": "access_token"
       },
       {
         "type": "any",
-        "value": "d5fd9825-836c-46a9-a051-a27f95784f3d",
+        "value": "823e00dc-eb2b-4c35-8dd1-3b6cd818e7f6",
         "key": "refresh_token"
       },
       {
@@ -293,27 +293,27 @@
       },
       {
         "type": "any",
-        "value": "15e75cdf-0856-4194-965b-bc44aea5e22b",
+        "value": "606e1a61-d827-42c7-8310-a02c9fdf3506",
         "key": "uploadedVideoId"
       },
       {
         "type": "any",
-        "value": "f1a0b2f8-e3a3-4973-8abd-9452cb5106af",
+        "value": "9cae4a61-93e1-48c9-af92-2bac9c244cf9",
         "key": "video_id"
       },
       {
         "type": "any",
-        "value": "4f78d474-adcf-419e-affd-73bf4026073a",
+        "value": "d5cfdd31-2552-4686-9a52-bd8b1c171221",
         "key": "test_video_id"
       },
       {
         "type": "any",
-        "value": "test-video-1774136584855.mp4",
+        "value": "test-video-1774146993574.mp4",
         "key": "test_filename"
       },
       {
         "type": "any",
-        "value": "45cefb4d-9e3a-4d66-96a4-cc13d3f07e03",
+        "value": "97eba27c-5560-4930-bd9b-425b7024a2a3",
         "key": "upload_session_id"
       },
       {
@@ -323,28 +323,28 @@
       },
       {
         "type": "any",
-        "value": "a13b9910-740a-4d6c-bac8-5c3664409f17",
+        "value": "5090c218-f70b-4496-9d64-f9eb152eeeca",
         "key": "upload_video_id"
       },
       {
         "type": "any",
-        "value": "318adb47-ac6c-484d-b0c9-6e53fe619657",
+        "value": "aa310f25-8af2-4b60-9466-d18b9d09474d",
         "key": "incomplete_upload_session_id"
       },
       {
         "type": "any",
-        "value": "ff37a565-7567-4099-aff0-d3c16452c5af",
+        "value": "4631b9a5-413c-416f-bdde-f6ece9ca2ec5",
         "key": "channel_id"
       },
       {
         "type": "any",
-        "value": "a5630879-4c42-4c80-aca6-e7fffadda56b",
+        "value": "9823f4eb-dca7-4f23-93a6-01957ba97e01",
         "key": "subscription_channel_id"
       }
     ]
   },
   "globals": {
-    "id": "c59d2e47-4c6f-4603-a1c8-a13a87804080",
+    "id": "b7f23325-edb7-48d7-a4e9-b976d0e583e7",
     "values": []
   },
   "run": {
@@ -396,10 +396,10 @@
       }
     },
     "timings": {
-      "responseAverage": 9.4,
-      "responseMin": 2,
-      "responseMax": 34,
-      "responseSd": 12.354756169184398,
+      "responseAverage": 61.6,
+      "responseMin": 17,
+      "responseMax": 226,
+      "responseSd": 82.25472630797576,
       "dnsAverage": 0,
       "dnsMin": 0,
       "dnsMax": 0,
@@ -408,8 +408,8 @@
       "firstByteMin": 0,
       "firstByteMax": 0,
       "firstByteSd": 0,
-      "started": 1774136586356,
-      "completed": 1774136586514
+      "started": 1774147002572,
+      "completed": 1774147003303
     },
     "executions": [
       {
@@ -422,11 +422,11 @@
           "eof": false,
           "bof": true,
           "cr": false,
-          "ref": "2f93dfa3-20f8-4803-b382-729558ce07ab",
-          "httpRequestId": "fa003f6a-5be4-4b43-8ab3-a0fcaf3e56d5"
+          "ref": "2fe47a8f-2a65-4cf0-a4ed-94d4a3970c7e",
+          "httpRequestId": "07507998-a0dd-4340-9786-b7b0fdbeee82"
         },
         "item": {
-          "id": "9037131c-262c-48fe-b271-9ea0b49457df",
+          "id": "7e20a82e-5853-4189-a052-b19dcb978738",
           "name": "GET /api/v1/config - Public instance config",
           "request": {
             "url": {
@@ -448,7 +448,7 @@
             {
               "listen": "test",
               "script": {
-                "id": "495342bf-d6a9-4ff6-be24-a480043fa1ad",
+                "id": "4e037f47-722e-4808-a9d4-5398acb32609",
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('Status is 200', () => pm.response.to.have.status(200));",
@@ -456,7 +456,7 @@
                   "pm.test('Has instance name', () => pm.expect(json).to.have.property('instance'));",
                   "pm.test('Has serverVersion', () => pm.expect(json.instance).to.have.property('serverVersion'));"
                 ],
-                "_lastExecutionId": "adc4d0d2-852f-4c4a-bfbd-174800039938"
+                "_lastExecutionId": "e5a5a52b-3ef5-4fa0-b624-503220c9dac4"
               }
             }
           ]
@@ -494,7 +494,7 @@
             },
             {
               "key": "Postman-Token",
-              "value": "2f065dcd-1e7b-4e97-a47b-80be5ea62706",
+              "value": "d3734461-222c-49cb-ab0c-d78210ae5ca5",
               "system": true
             },
             {
@@ -516,7 +516,7 @@
           "method": "GET"
         },
         "response": {
-          "id": "74531b96-08f4-4a83-91bb-66b4a3affe16",
+          "id": "97d5a9f4-56e5-4906-9057-85495ff8a75d",
           "status": "OK",
           "code": 200,
           "header": [
@@ -554,7 +554,7 @@
             },
             {
               "key": "X-Request-Id",
-              "value": "uWKJoVDagSuVK3WBK_H1Ug"
+              "value": "r_bMs5L6WurFOjxK7BvX7g"
             },
             {
               "key": "X-Xss-Protection",
@@ -562,7 +562,7 @@
             },
             {
               "key": "Date",
-              "value": "Sat, 21 Mar 2026 23:43:06 GMT"
+              "value": "Sun, 22 Mar 2026 02:36:42 GMT"
             },
             {
               "key": "Content-Length",
@@ -913,10 +913,10 @@
             ]
           },
           "cookie": [],
-          "responseTime": 34,
+          "responseTime": 226,
           "responseSize": 338
         },
-        "id": "9037131c-262c-48fe-b271-9ea0b49457df",
+        "id": "7e20a82e-5853-4189-a052-b19dcb978738",
         "assertions": [
           {
             "assertion": "Status is 200",
@@ -934,15 +934,15 @@
       },
       {
         "cursor": {
-          "ref": "a85ee255-c0b1-4a9a-83fa-7a6ce4cf8616",
+          "ref": "3fb06fd1-8ea1-4306-8dbe-6beb227b6874",
           "length": 5,
           "cycles": 1,
           "position": 1,
           "iteration": 0,
-          "httpRequestId": "bb3be980-2c39-44fb-825c-82811d511ef0"
+          "httpRequestId": "0686a388-5a68-41a3-baac-ad8731313023"
         },
         "item": {
-          "id": "8856f4dc-c20a-4ef7-b5f0-b688fb2d830c",
+          "id": "6cfb4042-d34a-4865-8a92-dae204464e6a",
           "name": "GET /api/v1/users/me/video-quota-used - Quota used",
           "request": {
             "url": {
@@ -972,7 +972,7 @@
             {
               "listen": "test",
               "script": {
-                "id": "7897b537-859b-4b46-abc1-040b3ce8bb21",
+                "id": "9fea394c-7a05-4342-b724-2c89a7af6f31",
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('Status is 200', () => pm.response.to.have.status(200));",
@@ -980,7 +980,7 @@
                   "pm.test('Has videoQuotaUsed', () => pm.expect(json).to.have.property('videoQuotaUsed'));",
                   "pm.test('Has videoQuotaUsedDaily', () => pm.expect(json).to.have.property('videoQuotaUsedDaily'));"
                 ],
-                "_lastExecutionId": "1a7644ba-1af4-4dac-a8d3-9c3d63da536f"
+                "_lastExecutionId": "dd3c4955-1e7b-4a7b-9c69-ee1489f34132"
               }
             }
           ]
@@ -1005,7 +1005,7 @@
           "header": [
             {
               "key": "Authorization",
-              "value": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzQxMzc0ODEsImlhdCI6MTc3NDEzNjU4MSwianRpIjoiMzRlYjg1MTktNGY0Yi00MGQ2LWI1MTctMDdlZGI0YmE0MGVhIiwicm9sZSI6InVzZXIiLCJzdWIiOiI2MmMxYTQxNS1hMmRkLTQ5YTgtODZhOS00NGU4MmNiNWZkNjYifQ.VByzKQeQTZ_Dv47vA2PEssyBUZkWRpIRGxRMS9L4ZlQ"
+              "value": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzQxNDc4MjYsImlhdCI6MTc3NDE0NjkyNiwianRpIjoiNDdlZDJmNTQtMjI3Yy00ZjcwLTlmOGUtZjI2MjFjOTM0YjcyIiwicm9sZSI6InVzZXIiLCJzdWIiOiI5ODc3MGFiYy0yODI3LTRlZmEtYTAyYS1jYTA1M2RjN2I5MjcifQ.oID8Tpf95Fatmq8YhAVnNDlXSITJhyEYu8lD4suIjFQ"
             },
             {
               "key": "User-Agent",
@@ -1024,7 +1024,7 @@
             },
             {
               "key": "Postman-Token",
-              "value": "33924422-79b0-4e41-87d5-4ab4299932f2",
+              "value": "7fd4ac61-e3bd-41dd-af97-fb7fe2bd433c",
               "system": true
             },
             {
@@ -1046,7 +1046,7 @@
           "method": "GET"
         },
         "response": {
-          "id": "93f85291-54f6-48f0-8984-37212d53dfd2",
+          "id": "1a05fa3d-5a4d-4a11-baea-495f5872f722",
           "status": "OK",
           "code": 200,
           "header": [
@@ -1084,7 +1084,7 @@
             },
             {
               "key": "X-Request-Id",
-              "value": "6RoQxJBSn-lYehdM884mNg"
+              "value": "sRjJmT1xFgQ2XOWwi6_rfA"
             },
             {
               "key": "X-Xss-Protection",
@@ -1092,7 +1092,7 @@
             },
             {
               "key": "Date",
-              "value": "Sat, 21 Mar 2026 23:43:06 GMT"
+              "value": "Sun, 22 Mar 2026 02:36:42 GMT"
             },
             {
               "key": "Content-Length",
@@ -1157,10 +1157,10 @@
             ]
           },
           "cookie": [],
-          "responseTime": 5,
+          "responseTime": 17,
           "responseSize": 52
         },
-        "id": "8856f4dc-c20a-4ef7-b5f0-b688fb2d830c",
+        "id": "6cfb4042-d34a-4865-8a92-dae204464e6a",
         "assertions": [
           {
             "assertion": "Status is 200",
@@ -1178,15 +1178,15 @@
       },
       {
         "cursor": {
-          "ref": "612ff500-9ef2-43c8-b580-b05d0e66c70d",
+          "ref": "581460f2-70cc-44c9-9bad-27edb5a2cdb0",
           "length": 5,
           "cycles": 1,
           "position": 2,
           "iteration": 0,
-          "httpRequestId": "8fcd5e35-b0ce-4ca6-b9b0-e11eca701463"
+          "httpRequestId": "ef0e4ecd-ecd5-4521-8a2b-8b80ac321f00"
         },
         "item": {
-          "id": "21376964-81e0-48e7-bd92-6c3cb3641373",
+          "id": "a15ae4eb-53e9-4e5a-b58a-363f0b160bce",
           "name": "GET /admin/instance/config - List all config (admin)",
           "request": {
             "url": {
@@ -1216,7 +1216,7 @@
             {
               "listen": "test",
               "script": {
-                "id": "b1413370-8bc2-4061-9c45-c1b86474f791",
+                "id": "ef5d5970-81ce-4d43-a905-99ab82ae9850",
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('Status is 200 or 403', () => pm.expect([200, 403]).to.include(pm.response.code));",
@@ -1230,7 +1230,7 @@
                   "  console.log('Skipped admin config positive assertion: current token is not admin');",
                   "}"
                 ],
-                "_lastExecutionId": "b2c793b7-7ee3-409a-94c8-d103a90cbb77"
+                "_lastExecutionId": "c6b6cbf0-6adf-4c90-8546-dcacac0ace4d"
               }
             }
           ]
@@ -1255,7 +1255,7 @@
           "header": [
             {
               "key": "Authorization",
-              "value": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzQxMzc0ODEsImlhdCI6MTc3NDEzNjU4MSwianRpIjoiMzRlYjg1MTktNGY0Yi00MGQ2LWI1MTctMDdlZGI0YmE0MGVhIiwicm9sZSI6InVzZXIiLCJzdWIiOiI2MmMxYTQxNS1hMmRkLTQ5YTgtODZhOS00NGU4MmNiNWZkNjYifQ.VByzKQeQTZ_Dv47vA2PEssyBUZkWRpIRGxRMS9L4ZlQ"
+              "value": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzQxNDc4MjYsImlhdCI6MTc3NDE0NjkyNiwianRpIjoiNDdlZDJmNTQtMjI3Yy00ZjcwLTlmOGUtZjI2MjFjOTM0YjcyIiwicm9sZSI6InVzZXIiLCJzdWIiOiI5ODc3MGFiYy0yODI3LTRlZmEtYTAyYS1jYTA1M2RjN2I5MjcifQ.oID8Tpf95Fatmq8YhAVnNDlXSITJhyEYu8lD4suIjFQ"
             },
             {
               "key": "User-Agent",
@@ -1274,7 +1274,7 @@
             },
             {
               "key": "Postman-Token",
-              "value": "d8e9486b-f1ee-4721-b6b7-6a6ae7e7c289",
+              "value": "4db02881-5ef3-4293-9d9b-9b98cfc5dd21",
               "system": true
             },
             {
@@ -1296,7 +1296,7 @@
           "method": "GET"
         },
         "response": {
-          "id": "53a01ee3-764f-44a9-b6a3-e54267eda920",
+          "id": "ce73beb3-02f3-4f2d-a650-6e493b9c25ed",
           "status": "Forbidden",
           "code": 403,
           "header": [
@@ -1334,7 +1334,7 @@
             },
             {
               "key": "X-Request-Id",
-              "value": "uGWuQSrEI9fwZUmZ00zAOw"
+              "value": "QXel2f0bkKm1qEBoXqEezQ"
             },
             {
               "key": "X-Xss-Protection",
@@ -1342,7 +1342,7 @@
             },
             {
               "key": "Date",
-              "value": "Sat, 21 Mar 2026 23:43:06 GMT"
+              "value": "Sun, 22 Mar 2026 02:36:43 GMT"
             },
             {
               "key": "Content-Length",
@@ -1450,10 +1450,10 @@
             ]
           },
           "cookie": [],
-          "responseTime": 2,
+          "responseTime": 20,
           "responseSize": 95
         },
-        "id": "21376964-81e0-48e7-bd92-6c3cb3641373",
+        "id": "a15ae4eb-53e9-4e5a-b58a-363f0b160bce",
         "assertions": [
           {
             "assertion": "Status is 200 or 403",
@@ -1463,15 +1463,15 @@
       },
       {
         "cursor": {
-          "ref": "628bd016-2d97-43cb-a337-c4879cd7b4a9",
+          "ref": "f280cec1-716f-4257-ad5c-6b1cf1e44fdc",
           "length": 5,
           "cycles": 1,
           "position": 3,
           "iteration": 0,
-          "httpRequestId": "7e099da1-875f-4ef0-b7d2-62df925a3248"
+          "httpRequestId": "1e179fe1-57b3-4d62-be71-84cd5952f2ab"
         },
         "item": {
-          "id": "c230bd9b-3347-48b4-a953-ba65362390a4",
+          "id": "bb0a0bb6-47ce-4194-bfe7-15e6f3139c37",
           "name": "GET /api/v1/users/me/video-quota-used - Unauthenticated (401)",
           "request": {
             "url": {
@@ -1495,12 +1495,12 @@
             {
               "listen": "test",
               "script": {
-                "id": "ff4af47c-1120-4510-bc14-0d77cd532a40",
+                "id": "5af5e150-ead3-4b74-a382-c18bffdd2790",
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('Status is 401', () => pm.response.to.have.status(401));"
                 ],
-                "_lastExecutionId": "68583807-3061-4b20-845e-475edea89796"
+                "_lastExecutionId": "852e948d-08e3-4f36-9393-6bbd87f34baf"
               }
             }
           ]
@@ -1540,7 +1540,7 @@
             },
             {
               "key": "Postman-Token",
-              "value": "4e7c7bc0-0060-46a6-bd64-873e4ebe13f2",
+              "value": "6a71a3fd-474e-460b-a93c-1cedeeeec125",
               "system": true
             },
             {
@@ -1562,7 +1562,7 @@
           "method": "GET"
         },
         "response": {
-          "id": "6c01c7c5-d378-4eda-a0ad-d78a4df6da43",
+          "id": "bd6c0d4a-821b-4ac7-9c8c-b849e862102f",
           "status": "Unauthorized",
           "code": 401,
           "header": [
@@ -1600,7 +1600,7 @@
             },
             {
               "key": "X-Request-Id",
-              "value": "aSdJhqUseCaVmuxHRH3fJA"
+              "value": "8wjbzCa79-cgn8jjotEYhg"
             },
             {
               "key": "X-Xss-Protection",
@@ -1608,7 +1608,7 @@
             },
             {
               "key": "Date",
-              "value": "Sat, 21 Mar 2026 23:43:06 GMT"
+              "value": "Sun, 22 Mar 2026 02:36:43 GMT"
             },
             {
               "key": "Content-Length",
@@ -1726,10 +1726,10 @@
             ]
           },
           "cookie": [],
-          "responseTime": 4,
+          "responseTime": 19,
           "responseSize": 105
         },
-        "id": "c230bd9b-3347-48b4-a953-ba65362390a4",
+        "id": "bb0a0bb6-47ce-4194-bfe7-15e6f3139c37",
         "assertions": [
           {
             "assertion": "Status is 401",
@@ -1739,15 +1739,15 @@
       },
       {
         "cursor": {
-          "ref": "ef7a462b-585d-48dd-b9d7-9e979925a512",
+          "ref": "3261661a-a07f-479a-9f52-5437529da7f2",
           "length": 5,
           "cycles": 1,
           "position": 4,
           "iteration": 0,
-          "httpRequestId": "d59dc45e-1a9d-408f-a2ad-f93106f8768c"
+          "httpRequestId": "0d684ca4-06f5-478b-9e4d-783e61b73613"
         },
         "item": {
-          "id": "d276d63d-91d2-448a-86bb-d7f66e8175c5",
+          "id": "fbfcc2e6-38db-4da8-8993-69004392dbe8",
           "name": "GET /admin/instance/config - Non-admin forbidden (403)",
           "request": {
             "url": {
@@ -1771,12 +1771,12 @@
             {
               "listen": "test",
               "script": {
-                "id": "0e1cb3cf-23b3-42b6-bde9-d468abcd4a19",
+                "id": "b2a1ea03-4efb-47c4-a545-51dfc94cb515",
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('Status is 401 or 403', () => { pm.expect([401,403]).to.include(pm.response.code); });"
                 ],
-                "_lastExecutionId": "a06879cf-1944-4e3f-ab1b-eb90695d46b5"
+                "_lastExecutionId": "10475e9d-3a28-4e5a-9991-a14d81ab560e"
               }
             }
           ]
@@ -1816,7 +1816,7 @@
             },
             {
               "key": "Postman-Token",
-              "value": "b3a51a9e-94ea-4d6d-aaf7-f5a08632f5bd",
+              "value": "d02cb1b2-bf72-460e-9790-a2288f54b2f8",
               "system": true
             },
             {
@@ -1838,7 +1838,7 @@
           "method": "GET"
         },
         "response": {
-          "id": "44bb85b4-f8f2-48f8-9dfc-c00915adf90b",
+          "id": "4e5668f3-feca-40b5-955f-f180e22595db",
           "status": "Unauthorized",
           "code": 401,
           "header": [
@@ -1876,7 +1876,7 @@
             },
             {
               "key": "X-Request-Id",
-              "value": "e4JIfGdkh7w0SGres7oYkQ"
+              "value": "gckjjzafUQX19IgTF9mc1g"
             },
             {
               "key": "X-Xss-Protection",
@@ -1884,7 +1884,7 @@
             },
             {
               "key": "Date",
-              "value": "Sat, 21 Mar 2026 23:43:06 GMT"
+              "value": "Sun, 22 Mar 2026 02:36:43 GMT"
             },
             {
               "key": "Content-Length",
@@ -2002,10 +2002,10 @@
             ]
           },
           "cookie": [],
-          "responseTime": 2,
+          "responseTime": 26,
           "responseSize": 105
         },
-        "id": "d276d63d-91d2-448a-86bb-d7f66e8175c5",
+        "id": "fbfcc2e6-38db-4da8-8993-69004392dbe8",
         "assertions": [
           {
             "assertion": "Status is 401 or 403",

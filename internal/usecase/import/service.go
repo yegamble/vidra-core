@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"athena/internal/config"
 	"athena/internal/domain"
@@ -24,6 +25,7 @@ type VideoDownloader interface {
 type Service interface {
 	ImportVideo(ctx context.Context, req *ImportRequest) (*domain.VideoImport, error)
 	CancelImport(ctx context.Context, importID, userID string) error
+	RetryImport(ctx context.Context, importID, userID string) error
 	GetImport(ctx context.Context, importID, userID string) (*domain.VideoImport, error)
 	ListUserImports(ctx context.Context, userID string, limit, offset int) ([]*domain.VideoImport, int, error)
 	ProcessPendingImports(ctx context.Context) error
@@ -343,6 +345,46 @@ func (s *service) CancelImport(ctx context.Context, importID, userID string) err
 	}
 
 	s.cleanupFiles(importID)
+
+	return nil
+}
+
+func (s *service) RetryImport(ctx context.Context, importID, userID string) error {
+	imp, err := s.importRepo.GetByID(ctx, importID)
+	if err != nil {
+		return err
+	}
+
+	if imp.UserID != userID {
+		return fmt.Errorf("%w: import belongs to different user", domain.ErrForbidden)
+	}
+
+	if imp.Status != domain.ImportStatusFailed {
+		return fmt.Errorf("%w: cannot retry import in state %s", domain.ErrBadRequest, imp.Status)
+	}
+
+	s.mu.Lock()
+	if importCtx, exists := s.activeImports[importID]; exists {
+		importCtx.cancel()
+		delete(s.activeImports, importID)
+	}
+	s.mu.Unlock()
+
+	imp.Status = domain.ImportStatusPending
+	imp.VideoID = nil
+	imp.ErrorMessage = nil
+	imp.Progress = 0
+	imp.DownloadedBytes = 0
+	imp.StartedAt = nil
+	imp.CompletedAt = nil
+	imp.UpdatedAt = time.Now()
+
+	if err := s.importRepo.Update(ctx, imp); err != nil {
+		return fmt.Errorf("failed to update import: %w", err)
+	}
+
+	s.cleanupFiles(importID)
+	go s.processImport(s.ctx, imp.ID)
 
 	return nil
 }

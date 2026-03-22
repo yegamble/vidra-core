@@ -40,6 +40,7 @@ athena-uploads.postman_collection.json
 athena-channels.postman_collection.json
 athena-instance-config.postman_collection.json
 athena-imports.postman_collection.json
+athena-peertube-canonical.postman_collection.json
 athena-feeds.postman_collection.json
 athena-blocklist.postman_collection.json
 athena-notifications.postman_collection.json
