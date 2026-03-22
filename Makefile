@@ -366,14 +366,14 @@ docker-up: ## Start docker-compose services
 	@sleep 15
 	@echo "Services are up! Application available at http://localhost:8080"
 
-docker-down: ## Stop docker-compose services
-	$(DOCKER_COMPOSE) down
+docker-down: ## Stop docker-compose services (all profiles)
+	$(DOCKER_COMPOSE) --profile full --profile iota --profile test --profile ci --profile test-integration --profile letsencrypt down
 
 docker-logs: ## View docker-compose logs
 	$(DOCKER_COMPOSE) logs -f
 
-docker-reset: ## Reset docker environment (remove volumes)
-	$(DOCKER_COMPOSE) down -v
+docker-reset: ## Reset docker environment (remove volumes, all profiles)
+	$(DOCKER_COMPOSE) --profile full --profile iota --profile test --profile ci --profile test-integration --profile letsencrypt down -v
 	$(DOCKER_COMPOSE) up -d
 
 migrate-dev-docker: ## Apply development migrations using Docker Postgres container

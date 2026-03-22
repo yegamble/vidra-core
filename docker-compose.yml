@@ -134,7 +134,7 @@ services:
   iota-node:
     profiles: ["iota", "full"]
     image: iotaledger/iota-node:v1.16.2
-    restart: unless-stopped
+    restart: on-failure:3
     entrypoint: ["/entrypoint.sh"]
     ports:
       - "14265:9000"    # JSON-RPC (host:container)
