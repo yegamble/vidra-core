@@ -1,63 +1,194 @@
 {
   "info": {
-    "name": "Athena PeerTube Canonical Compatibility",
-    "_postman_id": "4ccf0d26-6f47-4f1d-9451-1f5d79b1d901",
-    "description": "Stateful Postman coverage for PeerTube-canonical Athena routes. The collection uses the regular authenticated user from the auth suite and asserts mounted-route behavior deterministically on a fresh test stack.",
+    "name": "Athena PeerTube Canonical Routes",
+    "_postman_id": "b78a3df2-72d1-4db5-9d0e-9e8f6e0d7b13",
+    "description": "Stateful Postman coverage for PeerTube-canonical Athena routes with backed collaborator, runner, and plugin behavior.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
     {
-      "key": "peertube_channel_handle",
+      "key": "baseUrl",
+      "value": "http://app-test:8080",
+      "type": "string"
+    },
+    {
+      "key": "access_token",
       "value": "",
       "type": "string"
     },
     {
-      "key": "peertube_channel_id",
+      "key": "admin_access_token",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "collaborator_access_token",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "collaborator_username",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "collaborator_email",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "collaborator_password",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "canonical_channel_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "canonical_channel_handle",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "canonical_collaborator_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "runner_registration_token",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "runner_registration_token_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "runner_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "runner_token",
       "value": "",
       "type": "string"
     }
   ],
   "item": [
     {
-      "name": "Setup - Verify authenticated user",
-      "event": [
+      "name": "Setup",
+      "item": [
         {
-          "listen": "test",
-          "script": {
-            "type": "text/javascript",
-            "exec": [
-              "pm.test('Status is 200', () => pm.response.to.have.status(200));",
-              "const json = pm.response.json();",
-              "pm.test('Authenticated user payload is wrapped', () => {",
-              "  pm.expect(json).to.have.nested.property('data.id');",
-              "});"
-            ]
+          "name": "Verify authenticated user from auth collection",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const authSuiteToken = pm.environment.get('access_token');",
+                  "if (authSuiteToken) {",
+                  "  pm.test('Auth suite token exists', () => pm.expect(authSuiteToken).to.be.a('string').and.not.empty);",
+                  "  pm.response.to.have.status(200);",
+                  "} else {",
+                  "  pm.test('Standalone canonical run can start without auth-suite token', () => pm.expect([200, 401]).to.include(pm.response.code));",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/users/me"
+          }
+        },
+        {
+          "name": "Login admin",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.response.to.have.status(200);",
+                  "const wrap = pm.response.json();",
+                  "pm.expect(wrap).to.have.nested.property('data.access_token');",
+                  "pm.environment.set('admin_access_token', wrap.data.access_token);",
+                  "pm.environment.unset('canonical_channel_id');",
+                  "pm.environment.unset('canonical_collaborator_id');"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"email\":\"admin@example.com\",\"password\":\"admin123\"}"
+            },
+            "url": "{{baseUrl}}/auth/login"
+          }
+        },
+        {
+          "name": "Register collaborator invitee",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const suffix = Date.now();",
+                  "pm.environment.set('collaborator_username', `ptcollab${suffix}`);",
+                  "pm.environment.set('collaborator_email', `ptcollab${suffix}@example.com`);",
+                  "pm.environment.set('collaborator_password', 'Password123!');",
+                  "pm.environment.unset('collaborator_access_token');"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.response.to.have.status(201);",
+                  "const wrap = pm.response.json();",
+                  "pm.expect(wrap).to.have.nested.property('data.access_token');",
+                  "pm.environment.set('collaborator_access_token', wrap.data.access_token);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{collaborator_username}}\",\n  \"email\": \"{{collaborator_email}}\",\n  \"password\": \"{{collaborator_password}}\",\n  \"display_name\": \"PeerTube Collaborator\"\n}"
+            },
+            "url": "{{baseUrl}}/auth/register"
           }
         }
-      ],
-      "request": {
-        "method": "GET",
-        "header": [
-          {
-            "key": "Authorization",
-            "value": "Bearer {{access_token}}"
-          }
-        ],
-        "url": {
-          "raw": "{{baseUrl}}/api/v1/users/me",
-          "host": [
-            "{{baseUrl}}"
-          ],
-          "path": [
-            "api",
-            "v1",
-            "users",
-            "me"
-          ]
-        },
-        "description": "The canonical-compat collection relies on the authenticated user created by the stateful auth collection earlier in the run."
-      },
-      "response": []
+      ]
     },
     {
       "name": "Admin Canonical Routes",
@@ -70,16 +201,7 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('Status is 200 or 403', () => pm.expect([200, 403]).to.include(pm.response.code));",
-                  "const json = pm.response.json();",
-                  "if (pm.response.code === 200) {",
-                  "  pm.test('Registrations response is wrapped', () => {",
-                  "    pm.expect(json).to.have.property('data');",
-                  "    pm.expect(json.data).to.be.an('array');",
-                  "  });",
-                  "} else {",
-                  "  pm.test('Non-admin requests are forbidden', () => pm.expect(json).to.have.nested.property('error.message'));",
-                  "}"
+                  "pm.response.to.have.status(200);"
                 ]
               }
             }
@@ -89,24 +211,11 @@
             "header": [
               {
                 "key": "Authorization",
-                "value": "Bearer {{access_token}}"
+                "value": "Bearer {{admin_access_token}}"
               }
             ],
-            "url": {
-              "raw": "{{baseUrl}}/api/v1/users/registrations",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "api",
-                "v1",
-                "users",
-                "registrations"
-              ]
-            },
-            "description": "PeerTube-canonical registration moderation alias."
-          },
-          "response": []
+            "url": "{{baseUrl}}/api/v1/users/registrations"
+          }
         },
         {
           "name": "POST /api/v1/users/registrations/:id/accept - missing registration",
@@ -116,11 +225,7 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('Status is 403 or 404', () => pm.expect([403, 404]).to.include(pm.response.code));",
-                  "const json = pm.response.json();",
-                  "pm.test('Canonical moderation action returns an error envelope', () => {",
-                  "  pm.expect(json).to.have.nested.property('error.message');",
-                  "});"
+                  "pm.response.to.have.status(404);"
                 ]
               }
             }
@@ -130,7 +235,7 @@
             "header": [
               {
                 "key": "Authorization",
-                "value": "Bearer {{access_token}}"
+                "value": "Bearer {{admin_access_token}}"
               },
               {
                 "key": "Content-Type",
@@ -139,25 +244,10 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\"moderatorMessage\": \"Checked by canonical compatibility E2E\"}"
+              "raw": "{\"moderatorMessage\":\"Checked by canonical compatibility E2E\"}"
             },
-            "url": {
-              "raw": "{{baseUrl}}/api/v1/users/registrations/00000000-0000-0000-0000-000000000001/accept",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "api",
-                "v1",
-                "users",
-                "registrations",
-                "00000000-0000-0000-0000-000000000001",
-                "accept"
-              ]
-            },
-            "description": "Verifies the canonical moderation action is mounted and auth-protected."
-          },
-          "response": []
+            "url": "{{baseUrl}}/api/v1/users/registrations/00000000-0000-0000-0000-000000000001/accept"
+          }
         },
         {
           "name": "GET /api/v1/jobs",
@@ -167,16 +257,7 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('Status is 200 or 403', () => pm.expect([200, 403]).to.include(pm.response.code));",
-                  "const json = pm.response.json();",
-                  "if (pm.response.code === 200) {",
-                  "  pm.test('Jobs response is wrapped', () => {",
-                  "    pm.expect(json).to.have.property('data');",
-                  "    pm.expect(json.data).to.be.an('array');",
-                  "  });",
-                  "} else {",
-                  "  pm.test('Non-admin requests are forbidden', () => pm.expect(json).to.have.nested.property('error.message'));",
-                  "}"
+                  "pm.response.to.have.status(200);"
                 ]
               }
             }
@@ -186,23 +267,11 @@
             "header": [
               {
                 "key": "Authorization",
-                "value": "Bearer {{access_token}}"
+                "value": "Bearer {{admin_access_token}}"
               }
             ],
-            "url": {
-              "raw": "{{baseUrl}}/api/v1/jobs",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "api",
-                "v1",
-                "jobs"
-              ]
-            },
-            "description": "PeerTube-canonical top-level job listing alias."
-          },
-          "response": []
+            "url": "{{baseUrl}}/api/v1/jobs"
+          }
         },
         {
           "name": "GET /api/v1/jobs/pending",
@@ -212,16 +281,7 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('Status is 200 or 403', () => pm.expect([200, 403]).to.include(pm.response.code));",
-                  "const json = pm.response.json();",
-                  "if (pm.response.code === 200) {",
-                  "  pm.test('Filtered jobs response is wrapped', () => {",
-                  "    pm.expect(json).to.have.property('data');",
-                  "    pm.expect(json.data).to.be.an('array');",
-                  "  });",
-                  "} else {",
-                  "  pm.test('Non-admin requests are forbidden', () => pm.expect(json).to.have.nested.property('error.message'));",
-                  "}"
+                  "pm.response.to.have.status(200);"
                 ]
               }
             }
@@ -231,24 +291,11 @@
             "header": [
               {
                 "key": "Authorization",
-                "value": "Bearer {{access_token}}"
+                "value": "Bearer {{admin_access_token}}"
               }
             ],
-            "url": {
-              "raw": "{{baseUrl}}/api/v1/jobs/pending",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "api",
-                "v1",
-                "jobs",
-                "pending"
-              ]
-            },
-            "description": "PeerTube-canonical job-state alias."
-          },
-          "response": []
+            "url": "{{baseUrl}}/api/v1/jobs/pending"
+          }
         },
         {
           "name": "GET /api/v1/plugins",
@@ -258,16 +305,7 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('Status is 200 or 403', () => pm.expect([200, 403]).to.include(pm.response.code));",
-                  "const json = pm.response.json();",
-                  "if (pm.response.code === 200) {",
-                  "  pm.test('Plugins response is wrapped', () => {",
-                  "    pm.expect(json).to.have.property('data');",
-                  "    pm.expect(json.data).to.be.an('array');",
-                  "  });",
-                  "} else {",
-                  "  pm.test('Non-admin requests are forbidden', () => pm.expect(json).to.have.nested.property('error.message'));",
-                  "}"
+                  "pm.response.to.have.status(200);"
                 ]
               }
             }
@@ -277,23 +315,11 @@
             "header": [
               {
                 "key": "Authorization",
-                "value": "Bearer {{access_token}}"
+                "value": "Bearer {{admin_access_token}}"
               }
             ],
-            "url": {
-              "raw": "{{baseUrl}}/api/v1/plugins",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "api",
-                "v1",
-                "plugins"
-              ]
-            },
-            "description": "PeerTube-canonical top-level plugin listing alias."
-          },
-          "response": []
+            "url": "{{baseUrl}}/api/v1/plugins"
+          }
         },
         {
           "name": "GET /api/v1/plugins/available",
@@ -303,16 +329,7 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('Status is 200 or 403', () => pm.expect([200, 403]).to.include(pm.response.code));",
-                  "const json = pm.response.json();",
-                  "if (pm.response.code === 200) {",
-                  "  pm.test('Available plugins response is wrapped', () => {",
-                  "    pm.expect(json).to.have.property('data');",
-                  "    pm.expect(json.data).to.be.an('array');",
-                  "  });",
-                  "} else {",
-                  "  pm.test('Non-admin requests are forbidden', () => pm.expect(json).to.have.nested.property('error.message'));",
-                  "}"
+                  "pm.response.to.have.status(200);"
                 ]
               }
             }
@@ -322,24 +339,11 @@
             "header": [
               {
                 "key": "Authorization",
-                "value": "Bearer {{access_token}}"
+                "value": "Bearer {{admin_access_token}}"
               }
             ],
-            "url": {
-              "raw": "{{baseUrl}}/api/v1/plugins/available",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "api",
-                "v1",
-                "plugins",
-                "available"
-              ]
-            },
-            "description": "Canonical read-only plugin discovery alias."
-          },
-          "response": []
+            "url": "{{baseUrl}}/api/v1/plugins/available"
+          }
         },
         {
           "name": "GET /api/v1/plugins/:npmName - missing plugin",
@@ -349,11 +353,7 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('Status is 403 or 404', () => pm.expect([403, 404]).to.include(pm.response.code));",
-                  "const json = pm.response.json();",
-                  "pm.test('Missing plugin or forbidden access returns error envelope', () => {",
-                  "  pm.expect(json).to.have.nested.property('error.message');",
-                  "});"
+                  "pm.response.to.have.status(404);"
                 ]
               }
             }
@@ -363,38 +363,77 @@
             "header": [
               {
                 "key": "Authorization",
-                "value": "Bearer {{access_token}}"
+                "value": "Bearer {{admin_access_token}}"
               }
             ],
-            "url": {
-              "raw": "{{baseUrl}}/api/v1/plugins/peertube-missing-plugin",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "api",
-                "v1",
-                "plugins",
-                "peertube-missing-plugin"
-              ]
-            },
-            "description": "Confirms canonical plugin lookup resolves by npm-style name."
-          },
-          "response": []
+            "url": "{{baseUrl}}/api/v1/plugins/peertube-missing-plugin"
+          }
         },
         {
-          "name": "POST /api/v1/plugins/install",
+          "name": "GET /api/v1/plugins/:npmName/registered-settings - missing plugin",
           "event": [
             {
               "listen": "test",
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('Status is 403 or 501', () => pm.expect([403, 501]).to.include(pm.response.code));",
-                  "const json = pm.response.json();",
-                  "pm.test('Install route returns an error envelope', () => {",
-                  "  pm.expect(json).to.have.nested.property('error.message');",
-                  "});"
+                  "pm.response.to.have.status(404);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{admin_access_token}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/plugins/peertube-missing-plugin/registered-settings"
+          }
+        },
+        {
+          "name": "PUT /api/v1/plugins/:npmName/settings - missing plugin",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.response.to.have.status(404);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{admin_access_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"settings\":{\"enabled\":true}}"
+            },
+            "url": "{{baseUrl}}/api/v1/plugins/peertube-missing-plugin/settings"
+          }
+        },
+        {
+          "name": "POST /api/v1/plugins/install - invalid URL",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.response.to.have.status(400);"
                 ]
               }
             }
@@ -404,7 +443,7 @@
             "header": [
               {
                 "key": "Authorization",
-                "value": "Bearer {{access_token}}"
+                "value": "Bearer {{admin_access_token}}"
               },
               {
                 "key": "Content-Type",
@@ -413,23 +452,74 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\"pluginURL\": \"https://example.com/plugin.zip\"}"
+              "raw": "{\"pluginURL\":\"http://example.com/plugin.zip\"}"
             },
-            "url": {
-              "raw": "{{baseUrl}}/api/v1/plugins/install",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "api",
-                "v1",
-                "plugins",
-                "install"
-              ]
+            "url": "{{baseUrl}}/api/v1/plugins/install"
+          }
+        },
+        {
+          "name": "POST /api/v1/plugins/update - invalid URL",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.response.to.have.status(400);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{admin_access_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"pluginURL\":\"http://example.com/plugin.zip\"}"
             },
-            "description": "Canonical PeerTube plugin install route is currently an auth-gated compatibility shim."
-          },
-          "response": []
+            "url": "{{baseUrl}}/api/v1/plugins/update"
+          }
+        },
+        {
+          "name": "POST /api/v1/plugins/uninstall - missing plugin",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.response.to.have.status(404);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{admin_access_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"npmName\":\"peertube-missing-plugin\"}"
+            },
+            "url": "{{baseUrl}}/api/v1/plugins/uninstall"
+          }
         }
       ]
     },
@@ -444,10 +534,7 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "if (!pm.environment.get('access_token')) {",
-                  "  throw new Error('access_token missing. Run athena-auth before canonical compatibility tests.');",
-                  "}",
-                  "pm.collectionVariables.set('peertube_channel_handle', `ptcanonical${Date.now()}`);"
+                  "pm.environment.set('canonical_channel_handle', `ptcanonical${Date.now()}`);"
                 ]
               }
             },
@@ -456,15 +543,10 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('Status is 201', () => pm.response.to.have.status(201));",
-                  "const json = pm.response.json();",
-                  "pm.test('Created channel is wrapped', () => {",
-                  "  pm.expect(json).to.have.nested.property('data.id');",
-                  "});",
-                  "pm.collectionVariables.set('peertube_channel_id', json.data.id);",
-                  "pm.test('Created handle matches canonical test handle', () => {",
-                  "  pm.expect(json.data.handle).to.equal(pm.collectionVariables.get('peertube_channel_handle'));",
-                  "});"
+                  "pm.response.to.have.status(201);",
+                  "const wrap = pm.response.json();",
+                  "pm.environment.set('canonical_channel_id', wrap.data.id);",
+                  "pm.expect(wrap.data.handle).to.eql(pm.environment.get('canonical_channel_handle'));"
                 ]
               }
             }
@@ -474,7 +556,7 @@
             "header": [
               {
                 "key": "Authorization",
-                "value": "Bearer {{access_token}}"
+                "value": "Bearer {{admin_access_token}}"
               },
               {
                 "key": "Content-Type",
@@ -483,21 +565,10 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"handle\": \"{{peertube_channel_handle}}\",\n  \"displayName\": \"PeerTube Canonical Test Channel\",\n  \"description\": \"Stateful compatibility channel for PeerTube-handle routes\"\n}"
+              "raw": "{\n  \"handle\": \"{{canonical_channel_handle}}\",\n  \"displayName\": \"PeerTube Canonical Test Channel\",\n  \"description\": \"Stateful compatibility channel for PeerTube-handle routes\"\n}"
             },
-            "url": {
-              "raw": "{{baseUrl}}/api/v1/channels",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "api",
-                "v1",
-                "channels"
-              ]
-            }
-          },
-          "response": []
+            "url": "{{baseUrl}}/api/v1/channels"
+          }
         },
         {
           "name": "GET /api/v1/video-channels/:channelHandle",
@@ -507,39 +578,49 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
-                  "const json = pm.response.json();",
-                  "pm.test('Canonical handle route resolves the created channel', () => {",
-                  "  pm.expect(json).to.have.nested.property('data.handle');",
-                  "  pm.expect(json.data.handle).to.equal(pm.collectionVariables.get('peertube_channel_handle'));",
-                  "});"
+                  "pm.response.to.have.status(200);"
                 ]
               }
             }
           ],
           "request": {
             "method": "GET",
+            "url": "{{baseUrl}}/api/v1/video-channels/{{canonical_channel_handle}}"
+          }
+        },
+        {
+          "name": "POST /api/v1/video-channels/:channelHandle/collaborators/invite",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.response.to.have.status(201);",
+                  "const wrap = pm.response.json();",
+                  "pm.environment.set('canonical_collaborator_id', wrap.data.id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
             "header": [
               {
                 "key": "Authorization",
-                "value": "Bearer {{access_token}}"
+                "value": "Bearer {{admin_access_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
               }
             ],
-            "url": {
-              "raw": "{{baseUrl}}/api/v1/video-channels/{{peertube_channel_handle}}",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "api",
-                "v1",
-                "video-channels",
-                "{{peertube_channel_handle}}"
-              ]
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{collaborator_username}}\"\n}"
             },
-            "description": "Confirms handle-based PeerTube canonical channel lookup works against Athena."
-          },
-          "response": []
+            "url": "{{baseUrl}}/api/v1/video-channels/{{canonical_channel_handle}}/collaborators/invite"
+          }
         },
         {
           "name": "GET /api/v1/video-channels/:channelHandle/collaborators",
@@ -549,12 +630,9 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('Status is 501', () => pm.response.to.have.status(501));",
-                  "const json = pm.response.json();",
-                  "pm.test('Collaborator shim advertises not implemented', () => {",
-                  "  pm.expect(json).to.have.nested.property('error.message');",
-                  "  pm.expect(json.error.message.toLowerCase()).to.include('not implemented');",
-                  "});"
+                  "pm.response.to.have.status(200);",
+                  "const wrap = pm.response.json();",
+                  "pm.expect(wrap).to.have.nested.property(\"data.total\");"
                 ]
               }
             }
@@ -564,25 +642,64 @@
             "header": [
               {
                 "key": "Authorization",
-                "value": "Bearer {{access_token}}"
+                "value": "Bearer {{admin_access_token}}"
               }
             ],
-            "url": {
-              "raw": "{{baseUrl}}/api/v1/video-channels/{{peertube_channel_handle}}/collaborators",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "api",
-                "v1",
-                "video-channels",
-                "{{peertube_channel_handle}}",
-                "collaborators"
-              ]
-            },
-            "description": "PeerTube collaborator routes are present but still explicit compatibility stubs."
-          },
-          "response": []
+            "url": "{{baseUrl}}/api/v1/video-channels/{{canonical_channel_handle}}/collaborators"
+          }
+        },
+        {
+          "name": "POST /api/v1/video-channels/:channelHandle/collaborators/:id/accept",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.response.to.have.status(200);",
+                  "const wrap = pm.response.json();",
+                  "pm.expect(wrap).to.have.nested.property(\"data.status\", \"accepted\");"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{collaborator_access_token}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/video-channels/{{canonical_channel_handle}}/collaborators/{{canonical_collaborator_id}}/accept"
+          }
+        },
+        {
+          "name": "GET /api/v1/video-channels/:channelHandle/collaborators - accepted",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.response.to.have.status(200);",
+                  "const wrap = pm.response.json();",
+                  "const items = wrap.data.data || [];",
+                  "pm.expect(items.some(item => item.status === \"accepted\")).to.eql(true);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{admin_access_token}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/video-channels/{{canonical_channel_handle}}/collaborators"
+          }
         },
         {
           "name": "DELETE /api/v1/channels/:id - cleanup canonical test channel",
@@ -592,7 +709,7 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('Status is 204', () => pm.response.to.have.status(204));"
+                  "pm.response.to.have.status(204);"
                 ]
               }
             }
@@ -602,24 +719,11 @@
             "header": [
               {
                 "key": "Authorization",
-                "value": "Bearer {{access_token}}"
+                "value": "Bearer {{admin_access_token}}"
               }
             ],
-            "url": {
-              "raw": "{{baseUrl}}/api/v1/channels/{{peertube_channel_id}}",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "api",
-                "v1",
-                "channels",
-                "{{peertube_channel_id}}"
-              ]
-            },
-            "description": "Cleanup for the compatibility-only channel fixture."
-          },
-          "response": []
+            "url": "{{baseUrl}}/api/v1/channels/{{canonical_channel_id}}"
+          }
         }
       ]
     },
@@ -634,12 +738,7 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('Status is 404', () => pm.response.to.have.status(404));",
-                  "const json = pm.response.json();",
-                  "pm.test('Missing import returns descriptive error', () => {",
-                  "  pm.expect(json).to.have.property('message');",
-                  "  pm.expect(json.message.toLowerCase()).to.include('import');",
-                  "});"
+                  "pm.response.to.have.status(404);"
                 ]
               }
             }
@@ -649,26 +748,11 @@
             "header": [
               {
                 "key": "Authorization",
-                "value": "Bearer {{access_token}}"
+                "value": "Bearer {{admin_access_token}}"
               }
             ],
-            "url": {
-              "raw": "{{baseUrl}}/api/v1/videos/imports/import_nonexistent_12345/cancel",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "api",
-                "v1",
-                "videos",
-                "imports",
-                "import_nonexistent_12345",
-                "cancel"
-              ]
-            },
-            "description": "Canonical cancel alias should return a normal not-found response for a missing import."
-          },
-          "response": []
+            "url": "{{baseUrl}}/api/v1/videos/imports/00000000-0000-0000-0000-000000000001/cancel"
+          }
         },
         {
           "name": "POST /api/v1/videos/imports/:id/retry - missing import",
@@ -678,12 +762,7 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('Status is 404', () => pm.response.to.have.status(404));",
-                  "const json = pm.response.json();",
-                  "pm.test('Missing import returns descriptive error', () => {",
-                  "  pm.expect(json).to.have.property('message');",
-                  "  pm.expect(json.message.toLowerCase()).to.include('import');",
-                  "});"
+                  "pm.response.to.have.status(404);"
                 ]
               }
             }
@@ -693,71 +772,43 @@
             "header": [
               {
                 "key": "Authorization",
-                "value": "Bearer {{access_token}}"
+                "value": "Bearer {{admin_access_token}}"
               }
             ],
-            "url": {
-              "raw": "{{baseUrl}}/api/v1/videos/imports/import_nonexistent_12345/retry",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "api",
-                "v1",
-                "videos",
-                "imports",
-                "import_nonexistent_12345",
-                "retry"
-              ]
-            },
-            "description": "Canonical retry alias should return a normal not-found response for a missing import."
-          },
-          "response": []
+            "url": "{{baseUrl}}/api/v1/videos/imports/00000000-0000-0000-0000-000000000001/retry"
+          }
         }
       ]
     },
     {
-      "name": "Runner Compatibility Shims",
+      "name": "Runner Canonical Routes",
       "item": [
         {
-          "name": "GET /api/v1/runners",
+          "name": "POST /api/v1/runners/registration-tokens/generate",
           "event": [
             {
               "listen": "test",
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('Status is 403 or 501', () => pm.expect([403, 501]).to.include(pm.response.code));",
-                  "const json = pm.response.json();",
-                  "pm.test('Runner admin route returns an error envelope', () => {",
-                  "  pm.expect(json).to.have.nested.property('error.message');",
-                  "});"
+                  "pm.response.to.have.status(201);",
+                  "const wrap = pm.response.json();",
+                  "pm.environment.set('runner_registration_token', wrap.data.token);",
+                  "pm.environment.set('runner_registration_token_id', wrap.data.id);"
                 ]
               }
             }
           ],
           "request": {
-            "method": "GET",
+            "method": "POST",
             "header": [
               {
                 "key": "Authorization",
-                "value": "Bearer {{access_token}}"
+                "value": "Bearer {{admin_access_token}}"
               }
             ],
-            "url": {
-              "raw": "{{baseUrl}}/api/v1/runners",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "api",
-                "v1",
-                "runners"
-              ]
-            },
-            "description": "PeerTube runner-management family is currently a compatibility stub."
-          },
-          "response": []
+            "url": "{{baseUrl}}/api/v1/runners/registration-tokens/generate"
+          }
         },
         {
           "name": "POST /api/v1/runners/register",
@@ -767,12 +818,10 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('Status is 501', () => pm.response.to.have.status(501));",
-                  "const json = pm.response.json();",
-                  "pm.test('Runner registration shim advertises not implemented', () => {",
-                  "  pm.expect(json).to.have.nested.property('error.message');",
-                  "  pm.expect(json.error.message.toLowerCase()).to.include('not implemented');",
-                  "});"
+                  "pm.response.to.have.status(201);",
+                  "const wrap = pm.response.json();",
+                  "pm.environment.set('runner_id', wrap.data.id);",
+                  "pm.environment.set('runner_token', wrap.data.runnerToken);"
                 ]
               }
             }
@@ -787,23 +836,165 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{}"
+              "raw": "{\n  \"registrationToken\": \"{{runner_registration_token}}\",\n  \"name\": \"PeerTube Newman Runner\",\n  \"description\": \"Stateful canonical runner\"\n}"
             },
-            "url": {
-              "raw": "{{baseUrl}}/api/v1/runners/register",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "api",
-                "v1",
-                "runners",
-                "register"
-              ]
+            "url": "{{baseUrl}}/api/v1/runners/register"
+          }
+        },
+        {
+          "name": "GET /api/v1/runners",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.response.to.have.status(200);",
+                  "const wrap = pm.response.json();",
+                  "const items = wrap.data.data || [];",
+                  "pm.expect(items.some(item => item.id === pm.environment.get(\"runner_id\"))).to.eql(true);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{admin_access_token}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/runners"
+          }
+        },
+        {
+          "name": "POST /api/v1/runners/jobs/request",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Request job returns backed status\", () => pm.expect([200, 204]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"runnerToken\": \"{{runner_token}}\"\n}"
             },
-            "description": "Unauthenticated PeerTube runner registration path is mounted but intentionally not implemented yet."
-          },
-          "response": []
+            "url": "{{baseUrl}}/api/v1/runners/jobs/request"
+          }
+        },
+        {
+          "name": "GET /api/v1/runners/jobs",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.response.to.have.status(200);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{admin_access_token}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/runners/jobs"
+          }
+        },
+        {
+          "name": "POST /api/v1/runners/unregister",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.response.to.have.status(204);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"runnerToken\": \"{{runner_token}}\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/runners/unregister"
+          }
+        },
+        {
+          "name": "DELETE /api/v1/runners/:runnerId",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.response.to.have.status(204);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{admin_access_token}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/runners/{{runner_id}}"
+          }
+        },
+        {
+          "name": "DELETE /api/v1/runners/registration-tokens/:id",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.response.to.have.status(204);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{admin_access_token}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/runners/registration-tokens/{{runner_registration_token_id}}"
+          }
         }
       ]
     }

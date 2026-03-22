@@ -10,7 +10,10 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/crypto/bcrypt"
+
 	chi "github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
 	redis "github.com/redis/go-redis/v9"
@@ -20,6 +23,7 @@ import (
 	"athena/internal/chat"
 	"athena/internal/config"
 	"athena/internal/database"
+	"athena/internal/domain"
 	"athena/internal/email"
 	"athena/internal/httpapi"
 	"athena/internal/httpapi/shared"
@@ -109,6 +113,9 @@ type Dependencies struct {
 	AbuseMessageRepo      *repository.AbuseMessageRepository
 	LiveStreamSessionRepo *repository.LiveStreamSessionRepository
 	OwnershipRepo         port.VideoOwnershipRepository
+	RegistrationRepo      *repository.RegistrationRepository
+	CollaboratorRepo      *repository.ChannelCollaboratorRepository
+	RunnerRepo            *repository.RunnerRepository
 
 	UploadService            ucup.Service
 	EmailService             email.EmailService
@@ -169,6 +176,9 @@ func New(cfg *config.Config) (*Application, error) {
 	}
 
 	deps := app.initializeDependencies()
+	if err := app.ensureValidationAdmin(deps.UserRepo); err != nil {
+		return nil, fmt.Errorf("failed to bootstrap validation admin user: %w", err)
+	}
 	app.Dependencies = deps
 	app.initializeSchedulers(deps)
 	app.registerRoutes(deps)
@@ -305,6 +315,9 @@ func (app *Application) initializeDependencies() *Dependencies {
 		AbuseMessageRepo:      repository.NewAbuseMessageRepository(app.DB),
 		LiveStreamSessionRepo: repository.NewLiveStreamSessionRepository(app.DB),
 		OwnershipRepo:         repository.NewVideoOwnershipRepository(app.DB),
+		RegistrationRepo:      repository.NewRegistrationRepository(app.DB),
+		CollaboratorRepo:      repository.NewChannelCollaboratorRepository(app.DB),
+		RunnerRepo:            repository.NewRunnerRepository(app.DB),
 	}
 
 	if app.Config.EnableIOTA {
@@ -556,6 +569,131 @@ func (app *Application) initializeDependencies() *Dependencies {
 	return deps
 }
 
+func (app *Application) ensureValidationAdmin(userRepo usecase.UserRepository) error {
+	if !app.Config.ValidationTestMode || userRepo == nil {
+		return nil
+	}
+
+	username := strings.TrimSpace(os.Getenv("VALIDATION_TEST_ADMIN_USERNAME"))
+	if username == "" {
+		username = strings.TrimSpace(os.Getenv("ADMIN_USERNAME"))
+	}
+	if username == "" {
+		username = "admin"
+	}
+
+	email := strings.TrimSpace(os.Getenv("VALIDATION_TEST_ADMIN_EMAIL"))
+	if email == "" {
+		email = strings.TrimSpace(os.Getenv("ADMIN_EMAIL"))
+	}
+	if email == "" {
+		email = "admin@example.com"
+	}
+
+	password := os.Getenv("VALIDATION_TEST_ADMIN_PASSWORD")
+	if password == "" {
+		password = os.Getenv("ADMIN_PASSWORD")
+	}
+	if password == "" {
+		password = "admin123"
+	}
+
+	ctx := context.Background()
+
+	desiredUser, foundByEmail, err := app.findValidationAdminUser(ctx, userRepo, username, email)
+	if err != nil {
+		return err
+	}
+
+	passwordHash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return fmt.Errorf("hash validation admin password: %w", err)
+	}
+
+	if desiredUser == nil {
+		now := time.Now().UTC()
+		desiredUser = &domain.User{
+			ID:          uuid.NewString(),
+			Username:    username,
+			Email:       email,
+			DisplayName: "Administrator",
+			Role:        domain.RoleAdmin,
+			IsActive:    true,
+			CreatedAt:   now,
+			UpdatedAt:   now,
+		}
+		if err := userRepo.Create(ctx, desiredUser, string(passwordHash)); err != nil {
+			return fmt.Errorf("create validation admin user: %w", err)
+		}
+		if err := userRepo.MarkEmailAsVerified(ctx, desiredUser.ID); err != nil {
+			return fmt.Errorf("mark validation admin email verified: %w", err)
+		}
+		log.Printf("Bootstrapped validation admin user %s <%s>", desiredUser.Username, desiredUser.Email)
+		return nil
+	}
+
+	needsUpdate := false
+	if !foundByEmail && desiredUser.Email != email {
+		desiredUser.Email = email
+		needsUpdate = true
+	}
+	if desiredUser.Username == "" {
+		desiredUser.Username = username
+		needsUpdate = true
+	}
+	if desiredUser.DisplayName == "" {
+		desiredUser.DisplayName = "Administrator"
+		needsUpdate = true
+	}
+	if desiredUser.Role != domain.RoleAdmin {
+		desiredUser.Role = domain.RoleAdmin
+		needsUpdate = true
+	}
+	if !desiredUser.IsActive {
+		desiredUser.IsActive = true
+		needsUpdate = true
+	}
+	if needsUpdate {
+		desiredUser.UpdatedAt = time.Now().UTC()
+		if err := userRepo.Update(ctx, desiredUser); err != nil {
+			return fmt.Errorf("update validation admin user: %w", err)
+		}
+	}
+
+	if !desiredUser.EmailVerified {
+		if err := userRepo.MarkEmailAsVerified(ctx, desiredUser.ID); err != nil {
+			return fmt.Errorf("mark existing validation admin email verified: %w", err)
+		}
+	}
+
+	if err := userRepo.UpdatePassword(ctx, desiredUser.ID, string(passwordHash)); err != nil {
+		return fmt.Errorf("update validation admin password: %w", err)
+	}
+
+	log.Printf("Ensured validation admin user %s <%s>", desiredUser.Username, desiredUser.Email)
+	return nil
+}
+
+func (app *Application) findValidationAdminUser(ctx context.Context, userRepo usecase.UserRepository, username, email string) (*domain.User, bool, error) {
+	user, err := userRepo.GetByEmail(ctx, email)
+	if err == nil {
+		return user, true, nil
+	}
+	if err != domain.ErrUserNotFound {
+		return nil, false, fmt.Errorf("lookup validation admin by email: %w", err)
+	}
+
+	user, err = userRepo.GetByUsername(ctx, username)
+	if err == nil {
+		return user, false, nil
+	}
+	if err != domain.ErrUserNotFound {
+		return nil, false, fmt.Errorf("lookup validation admin by username: %w", err)
+	}
+
+	return nil, false, nil
+}
+
 func (app *Application) initializeSchedulers(deps *Dependencies) {
 	if app.Config.EnableEncodingScheduler && deps.EncodingService != nil {
 		interval := time.Duration(app.Config.EncodingSchedulerIntervalSeconds) * time.Second
@@ -678,6 +816,7 @@ func (app *Application) registerRoutes(deps *Dependencies) {
 		StreamManager:         deps.StreamManager,
 		ChatServer:            deps.ChatServer,
 		ChatRepo:              deps.ChatRepo,
+		RegistrationRepo:      deps.RegistrationRepo,
 		PluginRepo:            deps.PluginRepo,
 		PluginManager:         deps.PluginManager,
 		RedundancyService:     deps.RedundancyService,
@@ -688,6 +827,8 @@ func (app *Application) registerRoutes(deps *Dependencies) {
 		AbuseMessageRepo:      deps.AbuseMessageRepo,
 		LiveStreamSessionRepo: deps.LiveStreamSessionRepo,
 		OwnershipRepo:         deps.OwnershipRepo,
+		CollaboratorRepo:      deps.CollaboratorRepo,
+		RunnerRepo:            deps.RunnerRepo,
 		HLSTranscoder:         app.hlsTranscoder,
 		IPFSStreamingService:  deps.IPFSStreamingService,
 		EncodingScheduler:     app.encodingScheduler,

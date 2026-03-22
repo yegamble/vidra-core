@@ -14,6 +14,7 @@ import (
 	"athena/internal/httpapi/handlers/moderation"
 	"athena/internal/httpapi/handlers/payments"
 	pluginhandlers "athena/internal/httpapi/handlers/plugin"
+	runnerhandlers "athena/internal/httpapi/handlers/runner"
 	"athena/internal/httpapi/handlers/social"
 	"athena/internal/httpapi/handlers/video"
 	"athena/internal/httpapi/shared"
@@ -363,12 +364,21 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{channelHandle}/videos", channelHandlers.GetChannelVideosByHandleParam)
 			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{channelHandle}/video-playlists", social.GetChannelPlaylistsHandler(deps.ChannelService, deps.PlaylistService))
 
-			collaboratorsNotImplemented := compat.PeerTubeNotImplemented("PeerTube channel collaborators")
-			r.With(middleware.Auth(cfg.JWTSecret)).Get("/{channelHandle}/collaborators", collaboratorsNotImplemented)
-			r.With(middleware.Auth(cfg.JWTSecret)).Post("/{channelHandle}/collaborators/invite", collaboratorsNotImplemented)
-			r.With(middleware.Auth(cfg.JWTSecret)).Post("/{channelHandle}/collaborators/{collaboratorId}/accept", collaboratorsNotImplemented)
-			r.With(middleware.Auth(cfg.JWTSecret)).Post("/{channelHandle}/collaborators/{collaboratorId}/reject", collaboratorsNotImplemented)
-			r.With(middleware.Auth(cfg.JWTSecret)).Delete("/{channelHandle}/collaborators/{collaboratorId}", collaboratorsNotImplemented)
+			if deps.CollaboratorRepo != nil {
+				collaboratorHandlers := channel.NewCollaboratorHandlers(deps.ChannelRepo, deps.UserRepo, deps.CollaboratorRepo)
+				r.With(middleware.Auth(cfg.JWTSecret)).Get("/{channelHandle}/collaborators", collaboratorHandlers.ListCollaborators)
+				r.With(middleware.Auth(cfg.JWTSecret)).Post("/{channelHandle}/collaborators/invite", collaboratorHandlers.InviteCollaborator)
+				r.With(middleware.Auth(cfg.JWTSecret)).Post("/{channelHandle}/collaborators/{collaboratorId}/accept", collaboratorHandlers.AcceptCollaborator)
+				r.With(middleware.Auth(cfg.JWTSecret)).Post("/{channelHandle}/collaborators/{collaboratorId}/reject", collaboratorHandlers.RejectCollaborator)
+				r.With(middleware.Auth(cfg.JWTSecret)).Delete("/{channelHandle}/collaborators/{collaboratorId}", collaboratorHandlers.DeleteCollaborator)
+			} else {
+				collaboratorsNotImplemented := compat.PeerTubeNotImplemented("PeerTube channel collaborators")
+				r.With(middleware.Auth(cfg.JWTSecret)).Get("/{channelHandle}/collaborators", collaboratorsNotImplemented)
+				r.With(middleware.Auth(cfg.JWTSecret)).Post("/{channelHandle}/collaborators/invite", collaboratorsNotImplemented)
+				r.With(middleware.Auth(cfg.JWTSecret)).Post("/{channelHandle}/collaborators/{collaboratorId}/accept", collaboratorsNotImplemented)
+				r.With(middleware.Auth(cfg.JWTSecret)).Post("/{channelHandle}/collaborators/{collaboratorId}/reject", collaboratorsNotImplemented)
+				r.With(middleware.Auth(cfg.JWTSecret)).Delete("/{channelHandle}/collaborators/{collaboratorId}", collaboratorsNotImplemented)
+			}
 		})
 
 		// Playlist privacies (public, unauthenticated)
@@ -391,50 +401,78 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 		if deps.PluginManager != nil && deps.PluginRepo != nil {
 			ph := pluginhandlers.NewPluginHandler(deps.PluginRepo, deps.PluginManager, nil, false)
 			pih := pluginhandlers.NewPluginInstallHandlers(deps.PluginManager)
-			pluginCompatNotImplemented := compat.PeerTubeNotImplemented("PeerTube plugin compatibility route")
 
 			r.Route("/plugins", func(r chi.Router) {
 				r.Use(middleware.Auth(cfg.JWTSecret))
 				r.Use(middleware.RequireRole(string(domain.RoleAdmin), string(domain.RoleMod)))
 				r.Get("/", ph.ListPlugins)
 				r.Get("/available", pih.ListAvailablePlugins)
-				r.Post("/install", pluginCompatNotImplemented)
-				r.Post("/update", pluginCompatNotImplemented)
-				r.Post("/uninstall", pluginCompatNotImplemented)
-				r.Get("/{npmName}/registered-settings", pluginCompatNotImplemented)
-				r.Get("/{npmName}/public-settings", pluginCompatNotImplemented)
-				r.Put("/{npmName}/settings", pluginCompatNotImplemented)
+				r.Post("/install", ph.InstallPluginFromURL)
+				r.Post("/update", ph.UpdatePluginFromURL)
+				r.Post("/uninstall", ph.UninstallPluginCanonical)
+				r.Get("/{npmName}/registered-settings", ph.GetRegisteredSettings)
+				r.Get("/{npmName}/public-settings", ph.GetPublicSettings)
+				r.Put("/{npmName}/settings", ph.UpdateCanonicalSettings)
 				r.Get("/{npmName}", ph.GetPlugin)
 			})
 		}
 
 		r.Route("/runners", func(r chi.Router) {
-			runnersNotImplemented := compat.PeerTubeNotImplemented("PeerTube remote runners")
-			adminRunners := r.With(middleware.Auth(cfg.JWTSecret), middleware.RequireRole(string(domain.RoleAdmin), string(domain.RoleMod)))
+			if deps.RunnerRepo != nil {
+				runnerHandlers := runnerhandlers.NewHandlers(deps.RunnerRepo, deps.EncodingRepo)
+				adminRunners := r.With(middleware.Auth(cfg.JWTSecret), middleware.RequireRole(string(domain.RoleAdmin), string(domain.RoleMod)))
 
-			r.Post("/register", runnersNotImplemented)
-			r.Post("/unregister", runnersNotImplemented)
+				r.Post("/register", runnerHandlers.RegisterRunner)
+				r.Post("/unregister", runnerHandlers.UnregisterRunner)
 
-			adminRunners.Get("/", runnersNotImplemented)
-			adminRunners.Get("/registration-tokens", runnersNotImplemented)
-			adminRunners.Post("/registration-tokens/generate", runnersNotImplemented)
-			adminRunners.Delete("/registration-tokens/{id}", runnersNotImplemented)
-			adminRunners.Get("/jobs", runnersNotImplemented)
-			adminRunners.Post("/jobs/{jobUUID}/cancel", runnersNotImplemented)
-			adminRunners.Delete("/jobs/{jobUUID}", runnersNotImplemented)
-			adminRunners.Delete("/{runnerId}", runnersNotImplemented)
+				adminRunners.Get("/", runnerHandlers.ListRunners)
+				adminRunners.Get("/registration-tokens", runnerHandlers.ListRegistrationTokens)
+				adminRunners.Post("/registration-tokens/generate", runnerHandlers.CreateRegistrationToken)
+				adminRunners.Delete("/registration-tokens/{id}", runnerHandlers.DeleteRegistrationToken)
+				adminRunners.Get("/jobs", runnerHandlers.ListJobs)
+				adminRunners.Post("/jobs/{jobUUID}/cancel", runnerHandlers.CancelJob)
+				adminRunners.Delete("/jobs/{jobUUID}", runnerHandlers.DeleteJob)
+				adminRunners.Delete("/{runnerId}", runnerHandlers.DeleteRunner)
 
-			r.Post("/jobs/request", runnersNotImplemented)
-			r.Post("/jobs/{jobUUID}/accept", runnersNotImplemented)
-			r.Post("/jobs/{jobUUID}/abort", runnersNotImplemented)
-			r.Post("/jobs/{jobUUID}/update", runnersNotImplemented)
-			r.Post("/jobs/{jobUUID}/error", runnersNotImplemented)
-			r.Post("/jobs/{jobUUID}/success", runnersNotImplemented)
-			r.Post("/jobs/{jobUUID}/files/videos/{videoId}/max-quality/audio", runnersNotImplemented)
-			r.Post("/jobs/{jobUUID}/files/videos/{videoId}/max-quality", runnersNotImplemented)
-			r.Post("/jobs/{jobUUID}/files/videos/{videoId}/thumbnails/max-quality", runnersNotImplemented)
-			r.Post("/jobs/{jobUUID}/files/videos/{videoId}/previews/max-quality", runnersNotImplemented)
-			r.Post("/jobs/{jobUUID}/files/videos/{videoId}/studio/task-files/{filename}", runnersNotImplemented)
+				r.Post("/jobs/request", runnerHandlers.RequestJob)
+				r.Post("/jobs/{jobUUID}/accept", runnerHandlers.AcceptJob)
+				r.Post("/jobs/{jobUUID}/abort", runnerHandlers.AbortJob)
+				r.Post("/jobs/{jobUUID}/update", runnerHandlers.UpdateJob)
+				r.Post("/jobs/{jobUUID}/error", runnerHandlers.ErrorJob)
+				r.Post("/jobs/{jobUUID}/success", runnerHandlers.SuccessJob)
+				r.Post("/jobs/{jobUUID}/files/videos/{videoId}/max-quality/audio", runnerHandlers.UploadJobFile)
+				r.Post("/jobs/{jobUUID}/files/videos/{videoId}/max-quality", runnerHandlers.UploadJobFile)
+				r.Post("/jobs/{jobUUID}/files/videos/{videoId}/thumbnails/max-quality", runnerHandlers.UploadJobFile)
+				r.Post("/jobs/{jobUUID}/files/videos/{videoId}/previews/max-quality", runnerHandlers.UploadJobFile)
+				r.Post("/jobs/{jobUUID}/files/videos/{videoId}/studio/task-files/{filename}", runnerHandlers.UploadJobFile)
+			} else {
+				runnersNotImplemented := compat.PeerTubeNotImplemented("PeerTube remote runners")
+				adminRunners := r.With(middleware.Auth(cfg.JWTSecret), middleware.RequireRole(string(domain.RoleAdmin), string(domain.RoleMod)))
+
+				r.Post("/register", runnersNotImplemented)
+				r.Post("/unregister", runnersNotImplemented)
+
+				adminRunners.Get("/", runnersNotImplemented)
+				adminRunners.Get("/registration-tokens", runnersNotImplemented)
+				adminRunners.Post("/registration-tokens/generate", runnersNotImplemented)
+				adminRunners.Delete("/registration-tokens/{id}", runnersNotImplemented)
+				adminRunners.Get("/jobs", runnersNotImplemented)
+				adminRunners.Post("/jobs/{jobUUID}/cancel", runnersNotImplemented)
+				adminRunners.Delete("/jobs/{jobUUID}", runnersNotImplemented)
+				adminRunners.Delete("/{runnerId}", runnersNotImplemented)
+
+				r.Post("/jobs/request", runnersNotImplemented)
+				r.Post("/jobs/{jobUUID}/accept", runnersNotImplemented)
+				r.Post("/jobs/{jobUUID}/abort", runnersNotImplemented)
+				r.Post("/jobs/{jobUUID}/update", runnersNotImplemented)
+				r.Post("/jobs/{jobUUID}/error", runnersNotImplemented)
+				r.Post("/jobs/{jobUUID}/success", runnersNotImplemented)
+				r.Post("/jobs/{jobUUID}/files/videos/{videoId}/max-quality/audio", runnersNotImplemented)
+				r.Post("/jobs/{jobUUID}/files/videos/{videoId}/max-quality", runnersNotImplemented)
+				r.Post("/jobs/{jobUUID}/files/videos/{videoId}/thumbnails/max-quality", runnersNotImplemented)
+				r.Post("/jobs/{jobUUID}/files/videos/{videoId}/previews/max-quality", runnersNotImplemented)
+				r.Post("/jobs/{jobUUID}/files/videos/{videoId}/studio/task-files/{filename}", runnersNotImplemented)
+			}
 		})
 
 		r.Route("/messages", func(r chi.Router) {
@@ -980,7 +1018,7 @@ func registerAdminAPIRoutes(
 				r.Delete("/{name}", ph.UninstallPlugin)
 				r.Get("/statistics", ph.GetAllStatistics)
 				r.Post("/upload", ph.UploadPlugin)
-				r.Post("/install", pih.InstallPlugin)
+				r.Post("/install", ph.InstallPluginFromURL)
 				r.Get("/available", pih.ListAvailablePlugins)
 			})
 		}

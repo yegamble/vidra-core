@@ -4155,7 +4155,7 @@ paths:
       tags:
         - Channels
       summary: List channel collaborators
-      description: PeerTube-compatible collaborator route reserved by Athena for future implementation.
+      description: List channel collaborators for a handle-based PeerTube-compatible channel route.
       operationId: listChannelCollaborators
       parameters:
         - name: channelHandle
@@ -4164,15 +4164,38 @@ paths:
           schema:
             type: string
       responses:
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+        '200':
+          description: Channel collaborators
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Channel not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 
   /api/v1/video-channels/{channelHandle}/collaborators/invite:
     post:
       tags:
         - Channels
       summary: Invite channel collaborator
-      description: PeerTube-compatible collaborator invite route reserved by Athena for future implementation.
+      description: Invite a collaborator to a handle-based PeerTube-compatible channel route.
       operationId: inviteChannelCollaborator
       parameters:
         - name: channelHandle
@@ -4180,16 +4203,63 @@ paths:
           required: true
           schema:
             type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                userId:
+                  type: string
+                  format: uuid
+                username:
+                  type: string
+                account:
+                  type: string
+                accountName:
+                  type: string
+                role:
+                  type: string
       responses:
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+        '201':
+          description: Collaborator invitation created
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          description: Invalid collaborator invitation request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Channel or user not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 
   /api/v1/video-channels/{channelHandle}/collaborators/{collaboratorId}/accept:
     post:
       tags:
         - Channels
       summary: Accept collaborator invitation
-      description: PeerTube-compatible collaborator acceptance route reserved by Athena for future implementation.
+      description: Accept a collaborator invitation on a handle-based PeerTube-compatible channel route.
       operationId: acceptChannelCollaborator
       parameters:
         - name: channelHandle
@@ -4203,15 +4273,44 @@ paths:
           schema:
             type: string
       responses:
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+        '200':
+          description: Collaborator invitation accepted
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          description: Invalid collaborator identifier
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Channel or collaborator not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 
   /api/v1/video-channels/{channelHandle}/collaborators/{collaboratorId}/reject:
     post:
       tags:
         - Channels
       summary: Reject collaborator invitation
-      description: PeerTube-compatible collaborator rejection route reserved by Athena for future implementation.
+      description: Reject a collaborator invitation on a handle-based PeerTube-compatible channel route.
       operationId: rejectChannelCollaborator
       parameters:
         - name: channelHandle
@@ -4225,15 +4324,44 @@ paths:
           schema:
             type: string
       responses:
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+        '200':
+          description: Collaborator invitation rejected
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          description: Invalid collaborator identifier
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Channel or collaborator not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 
   /api/v1/video-channels/{channelHandle}/collaborators/{collaboratorId}:
     delete:
       tags:
         - Channels
       summary: Remove channel collaborator
-      description: PeerTube-compatible collaborator removal route reserved by Athena for future implementation.
+      description: Remove a channel collaborator from a handle-based PeerTube-compatible channel route.
       operationId: deleteChannelCollaborator
       parameters:
         - name: channelHandle
@@ -4247,48 +4375,152 @@ paths:
           schema:
             type: string
       responses:
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+        '204':
+          description: Collaborator removed
+        '400':
+          description: Invalid collaborator identifier
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Channel or collaborator not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 
   /api/v1/runners:
     get:
       tags:
         - Runners
       summary: List runners
-      description: PeerTube-compatible runner management route reserved by Athena for future implementation.
+      description: List registered remote runners.
       operationId: listRunners
       responses:
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+        '200':
+          description: Remote runners
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 
   /api/v1/runners/register:
     post:
       tags:
         - Runners
       summary: Register runner
-      description: PeerTube-compatible runner registration route reserved by Athena for future implementation.
+      description: Register a remote runner using an admin-generated registration token.
       operationId: registerRunner
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - name
+              properties:
+                registrationToken:
+                  type: string
+                token:
+                  type: string
+                name:
+                  type: string
+                description:
+                  type: string
       responses:
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+        '201':
+          description: Runner registered
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          description: Invalid runner registration request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Registration token expired or rejected
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Registration token not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 
   /api/v1/runners/unregister:
     post:
       tags:
         - Runners
       summary: Unregister runner
-      description: PeerTube-compatible runner unregister route reserved by Athena for future implementation.
+      description: Unregister a remote runner using its runner token.
       operationId: unregisterRunner
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                runnerToken:
+                  type: string
+                token:
+                  type: string
       responses:
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+        '204':
+          description: Runner unregistered
+        '400':
+          description: Invalid runner unregister request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Runner not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 
   /api/v1/runners/{runnerId}:
     delete:
       tags:
         - Runners
       summary: Delete runner
-      description: PeerTube-compatible runner deletion route reserved by Athena for future implementation.
+      description: Delete a registered remote runner.
       operationId: deleteRunner
       parameters:
         - name: runnerId
@@ -4297,37 +4529,105 @@ paths:
           schema:
             type: string
       responses:
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+        '204':
+          description: Runner deleted
+        '400':
+          description: Invalid runner identifier
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Runner not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 
   /api/v1/runners/registration-tokens:
     get:
       tags:
         - Runners
       summary: List runner registration tokens
-      description: PeerTube-compatible runner registration token route reserved by Athena for future implementation.
+      description: List admin-generated runner registration tokens.
       operationId: listRunnerRegistrationTokens
       responses:
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+        '200':
+          description: Runner registration tokens
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 
   /api/v1/runners/registration-tokens/generate:
     post:
       tags:
         - Runners
       summary: Generate runner registration token
-      description: PeerTube-compatible runner registration token generation route reserved by Athena for future implementation.
+      description: Generate a runner registration token for a remote worker.
       operationId: generateRunnerRegistrationToken
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                expiresAt:
+                  type: string
+                  format: date-time
       responses:
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+        '201':
+          description: Runner registration token created
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 
   /api/v1/runners/registration-tokens/{id}:
     delete:
       tags:
         - Runners
       summary: Delete runner registration token
-      description: PeerTube-compatible runner registration token deletion route reserved by Athena for future implementation.
+      description: Delete a runner registration token.
       operationId: deleteRunnerRegistrationToken
       parameters:
         - name: id
@@ -4336,37 +4636,108 @@ paths:
           schema:
             type: string
       responses:
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+        '204':
+          description: Runner registration token deleted
+        '400':
+          description: Invalid token identifier
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Registration token not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 
   /api/v1/runners/jobs:
     get:
       tags:
         - Runners
       summary: List runner jobs
-      description: PeerTube-compatible runner jobs route reserved by Athena for future implementation.
+      description: List current remote runner job assignments.
       operationId: listRunnerJobs
       responses:
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+        '200':
+          description: Runner jobs
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 
   /api/v1/runners/jobs/request:
     post:
       tags:
         - Runners
       summary: Request runner job
-      description: PeerTube-compatible runner job request route reserved by Athena for future implementation.
+      description: Request the next available encoding job for a registered runner.
       operationId: requestRunnerJob
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                runnerToken:
+                  type: string
+                token:
+                  type: string
       responses:
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+        '200':
+          description: Runner job assignment created
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '204':
+          description: No pending jobs are currently available
+        '400':
+          description: Invalid job request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 
   /api/v1/runners/jobs/{jobUUID}:
     delete:
       tags:
         - Runners
       summary: Delete runner job
-      description: PeerTube-compatible runner job deletion route reserved by Athena for future implementation.
+      description: Delete a runner job assignment.
       operationId: deleteRunnerJob
       parameters:
         - name: jobUUID
@@ -4375,15 +4746,33 @@ paths:
           schema:
             type: string
       responses:
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+        '204':
+          description: Runner job assignment deleted
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Runner job assignment not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 
   /api/v1/runners/jobs/{jobUUID}/accept:
     post:
       tags:
         - Runners
       summary: Accept runner job
-      description: PeerTube-compatible runner job accept route reserved by Athena for future implementation.
+      description: Accept a runner job assignment.
       operationId: acceptRunnerJob
       parameters:
         - name: jobUUID
@@ -4392,15 +4781,27 @@ paths:
           schema:
             type: string
       responses:
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+        '204':
+          description: Runner job accepted
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 
   /api/v1/runners/jobs/{jobUUID}/abort:
     post:
       tags:
         - Runners
       summary: Abort runner job
-      description: PeerTube-compatible runner job abort route reserved by Athena for future implementation.
+      description: Abort a runner job assignment and requeue the encoding job.
       operationId: abortRunnerJob
       parameters:
         - name: jobUUID
@@ -4409,15 +4810,27 @@ paths:
           schema:
             type: string
       responses:
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+        '204':
+          description: Runner job aborted
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 
   /api/v1/runners/jobs/{jobUUID}/update:
     post:
       tags:
         - Runners
       summary: Update runner job
-      description: PeerTube-compatible runner job update route reserved by Athena for future implementation.
+      description: Update runner job progress and metadata.
       operationId: updateRunnerJob
       parameters:
         - name: jobUUID
@@ -4426,15 +4839,38 @@ paths:
           schema:
             type: string
       responses:
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+        '200':
+          description: Runner job updated
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          description: Invalid runner job update request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 
   /api/v1/runners/jobs/{jobUUID}/error:
     post:
       tags:
         - Runners
       summary: Mark runner job as errored
-      description: PeerTube-compatible runner job error route reserved by Athena for future implementation.
+      description: Mark a runner job as failed.
       operationId: errorRunnerJob
       parameters:
         - name: jobUUID
@@ -4443,15 +4879,33 @@ paths:
           schema:
             type: string
       responses:
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+        '204':
+          description: Runner job marked as failed
+        '400':
+          description: Invalid runner job error request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 
   /api/v1/runners/jobs/{jobUUID}/success:
     post:
       tags:
         - Runners
       summary: Complete runner job
-      description: PeerTube-compatible runner job success route reserved by Athena for future implementation.
+      description: Mark a runner job as completed.
       operationId: successRunnerJob
       parameters:
         - name: jobUUID
@@ -4460,15 +4914,27 @@ paths:
           schema:
             type: string
       responses:
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+        '204':
+          description: Runner job completed
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 
   /api/v1/runners/jobs/{jobUUID}/cancel:
     post:
       tags:
         - Runners
       summary: Cancel runner job
-      description: PeerTube-compatible runner job cancellation route reserved by Athena for future implementation.
+      description: Cancel a runner job assignment from the admin surface.
       operationId: cancelRunnerJob
       parameters:
         - name: jobUUID
@@ -4477,15 +4943,33 @@ paths:
           schema:
             type: string
       responses:
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+        '204':
+          description: Runner job cancelled
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Runner job assignment not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 
   /api/v1/runners/jobs/{jobUUID}/files/videos/{videoId}/max-quality:
     post:
       tags:
         - Runners
       summary: Fetch runner max-quality video input
-      description: PeerTube-compatible runner file route reserved by Athena for future implementation.
+      description: Record receipt of a runner max-quality video file payload.
       operationId: getRunnerMaxQualityVideo
       parameters:
         - name: jobUUID
@@ -4499,15 +4983,27 @@ paths:
           schema:
             type: string
       responses:
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+        '204':
+          description: Runner file receipt recorded
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 
   /api/v1/runners/jobs/{jobUUID}/files/videos/{videoId}/max-quality/audio:
     post:
       tags:
         - Runners
       summary: Fetch runner max-quality audio input
-      description: PeerTube-compatible runner audio file route reserved by Athena for future implementation.
+      description: Record receipt of a runner max-quality audio file payload.
       operationId: getRunnerMaxQualityAudio
       parameters:
         - name: jobUUID
@@ -4521,15 +5017,27 @@ paths:
           schema:
             type: string
       responses:
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+        '204':
+          description: Runner audio file receipt recorded
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 
   /api/v1/runners/jobs/{jobUUID}/files/videos/{videoId}/previews/max-quality:
     post:
       tags:
         - Runners
       summary: Fetch runner preview input
-      description: PeerTube-compatible runner preview file route reserved by Athena for future implementation.
+      description: Record receipt of a runner preview file payload.
       operationId: getRunnerPreviewFile
       parameters:
         - name: jobUUID
@@ -4543,15 +5051,27 @@ paths:
           schema:
             type: string
       responses:
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+        '204':
+          description: Runner preview file receipt recorded
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 
   /api/v1/runners/jobs/{jobUUID}/files/videos/{videoId}/thumbnails/max-quality:
     post:
       tags:
         - Runners
       summary: Fetch runner thumbnail input
-      description: PeerTube-compatible runner thumbnail file route reserved by Athena for future implementation.
+      description: Record receipt of a runner thumbnail file payload.
       operationId: getRunnerThumbnailFile
       parameters:
         - name: jobUUID
@@ -4565,15 +5085,27 @@ paths:
           schema:
             type: string
       responses:
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+        '204':
+          description: Runner thumbnail file receipt recorded
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 
   /api/v1/runners/jobs/{jobUUID}/files/videos/{videoId}/studio/task-files/{filename}:
     post:
       tags:
         - Runners
       summary: Fetch runner studio task input
-      description: PeerTube-compatible runner studio task file route reserved by Athena for future implementation.
+      description: Record receipt of a runner studio task file payload.
       operationId: getRunnerStudioTaskFile
       parameters:
         - name: jobUUID
@@ -4592,8 +5124,20 @@ paths:
           schema:
             type: string
       responses:
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+        '204':
+          description: Runner studio task file receipt recorded
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 
 
   # Message endpoints

@@ -1596,9 +1596,6 @@ type WrappedVideosResponse struct {
 // NotFound defines model for NotFound.
 type NotFound = ErrorResponse
 
-// NotImplemented defines model for NotImplemented.
-type NotImplemented = ErrorResponse
-
 // Unauthorized defines model for Unauthorized.
 type Unauthorized = ErrorResponse
 
@@ -1738,6 +1735,31 @@ type MarkNotificationsBatchReadJSONBody struct {
 	Ids *[]openapi_types.UUID `json:"ids,omitempty"`
 }
 
+// RequestRunnerJobJSONBody defines parameters for RequestRunnerJob.
+type RequestRunnerJobJSONBody struct {
+	RunnerToken *string `json:"runnerToken,omitempty"`
+	Token       *string `json:"token,omitempty"`
+}
+
+// RegisterRunnerJSONBody defines parameters for RegisterRunner.
+type RegisterRunnerJSONBody struct {
+	Description       *string `json:"description,omitempty"`
+	Name              string  `json:"name"`
+	RegistrationToken *string `json:"registrationToken,omitempty"`
+	Token             *string `json:"token,omitempty"`
+}
+
+// GenerateRunnerRegistrationTokenJSONBody defines parameters for GenerateRunnerRegistrationToken.
+type GenerateRunnerRegistrationTokenJSONBody struct {
+	ExpiresAt *time.Time `json:"expiresAt,omitempty"`
+}
+
+// UnregisterRunnerJSONBody defines parameters for UnregisterRunner.
+type UnregisterRunnerJSONBody struct {
+	RunnerToken *string `json:"runnerToken,omitempty"`
+	Token       *string `json:"token,omitempty"`
+}
+
 // SearchVideoChannelsParams defines parameters for SearchVideoChannels.
 type SearchVideoChannelsParams struct {
 	Q     string `form:"q" json:"q"`
@@ -1869,6 +1891,15 @@ type ResetPasswordJSONBody struct {
 type GetUserVideosParams struct {
 	Limit  *int `form:"limit,omitempty" json:"limit,omitempty"`
 	Offset *int `form:"offset,omitempty" json:"offset,omitempty"`
+}
+
+// InviteChannelCollaboratorJSONBody defines parameters for InviteChannelCollaborator.
+type InviteChannelCollaboratorJSONBody struct {
+	Account     *string             `json:"account,omitempty"`
+	AccountName *string             `json:"accountName,omitempty"`
+	Role        *string             `json:"role,omitempty"`
+	UserId      *openapi_types.UUID `json:"userId,omitempty"`
+	Username    *string             `json:"username,omitempty"`
 }
 
 // ListVideosParams defines parameters for ListVideos.
@@ -2220,6 +2251,18 @@ type SendMessageJSONRequestBody = SendMessageRequest
 // MarkNotificationsBatchReadJSONRequestBody defines body for MarkNotificationsBatchRead for application/json ContentType.
 type MarkNotificationsBatchReadJSONRequestBody MarkNotificationsBatchReadJSONBody
 
+// RequestRunnerJobJSONRequestBody defines body for RequestRunnerJob for application/json ContentType.
+type RequestRunnerJobJSONRequestBody RequestRunnerJobJSONBody
+
+// RegisterRunnerJSONRequestBody defines body for RegisterRunner for application/json ContentType.
+type RegisterRunnerJSONRequestBody RegisterRunnerJSONBody
+
+// GenerateRunnerRegistrationTokenJSONRequestBody defines body for GenerateRunnerRegistrationToken for application/json ContentType.
+type GenerateRunnerRegistrationTokenJSONRequestBody GenerateRunnerRegistrationTokenJSONBody
+
+// UnregisterRunnerJSONRequestBody defines body for UnregisterRunner for application/json ContentType.
+type UnregisterRunnerJSONRequestBody UnregisterRunnerJSONBody
+
 // SocialFollowJSONRequestBody defines body for SocialFollow for application/json ContentType.
 type SocialFollowJSONRequestBody SocialFollowJSONBody
 
@@ -2258,6 +2301,9 @@ type CreateVideoJSONRequestBody = CreateVideoRequest
 
 // ResetPasswordJSONRequestBody defines body for ResetPassword for application/json ContentType.
 type ResetPasswordJSONRequestBody ResetPasswordJSONBody
+
+// InviteChannelCollaboratorJSONRequestBody defines body for InviteChannelCollaborator for application/json ContentType.
+type InviteChannelCollaboratorJSONRequestBody InviteChannelCollaboratorJSONBody
 
 // UploadVideoFileMultipartRequestBody defines body for UploadVideoFile for multipart/form-data ContentType.
 type UploadVideoFileMultipartRequestBody UploadVideoFileMultipartBody

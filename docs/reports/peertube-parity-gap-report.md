@@ -29,11 +29,13 @@ What is true today:
 - Channel subscription and livestream flows now pass their real stateful E2E paths
 - PeerTube-canonical registration, jobs, plugins, runners, import lifecycle, and handle-based collaborator paths are now mounted at the expected URLs
 - PeerTube-canonical registration routes remain reserved even when registration moderation backing is absent, so they no longer fall through to `/api/v1/users/{id}`
+- Validation-mode admin bootstrap now exists in the Docker test profile, so canonical admin routes execute through real `200`/`201`/`204` flows in Newman
+- PeerTube-canonical registration moderation, collaborator management, runner lifecycle, and plugin write/settings paths now execute backed behavior instead of `501 Not Implemented` shims
 
 What is not true yet:
 
-- Several PeerTube-canonical endpoint families now exist at the right paths, but collaborator, runner, registration-moderation, and plugin-write flows are still thin compatibility shims or `501 Not Implemented` stubs
 - There is still no true “import an existing PeerTube instance and use it normally” E2E scenario
+- Successful plugin install/update from a real distributable and full runner artifact/job-completion flows are not yet proven by stateful Newman
 - Athena-only extensions such as crypto payments, IPFS-native flows, and ATProto interoperability are not yet proven by the stateful Newman suite
 
 Current Newman result:
@@ -54,6 +56,7 @@ The validation uncovered and fixed several test-environment blockers before any 
 - `postman/run-all-tests.sh` uses an Alpine-safe `mktemp` pattern
 - validation-mode rate limits are relaxed so later collections are not polluted by `429` noise
 - OpenAPI duplicate paths and duplicate `searchVideos` operation IDs were fixed
+- validation-mode admin bootstrap now seeds a deterministic admin account for canonical admin-route coverage
 
 These changes improved signal quality enough to produce a green baseline. The remaining compatibility work is now primarily missing-scope work, not a broken validation harness.
 
@@ -84,9 +87,8 @@ These are the gaps most likely to block a true PeerTube-instance import or an ex
 
 | Gap | Evidence | Why it matters |
 | --- | --- | --- |
-| PeerTube-canonical admin and maintenance paths are only partially implemented | Route/spec audit and Newman now show `registrations`, `jobs`, canonical import lifecycle aliases, top-level `plugins`, and `runners` paths, but many of those flows still end in explicit compatibility handlers | Imported tooling now finds the expected routes, but non-trivial management flows will still fail until the backing behavior exists |
-| Handle/collaborator import stories are incomplete | `/api/v1/video-channels/{channelHandle}/collaborators*` is now mounted and covered in Newman, but currently returns `501 Not Implemented` | Multi-user channel administration is part of real PeerTube instance behavior |
 | True import/federation continuation is not E2E-proven | The current suite validates discovery endpoints and import CRUD, but not a full imported remote instance behaving normally afterward | “Drop-in PeerTube instance target” requires more than route availability |
+| Plugin and runner positive-path lifecycle coverage is still shallow | Canonical Newman now proves backed routes, collaborator state changes, registration moderation, and runner registration, but plugin install/update is still only negative-path exercised and runner file/result upload endpoints are not yet driven through a real job | The routes exist and work, but imported admin workflows still need success-path proof |
 | Athena-only extensions are only partially validated | Secure messaging and livestreaming now pass; crypto payments, IPFS-native flows, and ATProto interoperability are not in the stateful suite | Extra Athena features still need proof beyond route presence |
 
 PeerTube-canonical path coverage now present in the route/spec/runtime comparison:
@@ -98,17 +100,16 @@ PeerTube-canonical path coverage now present in the route/spec/runtime compariso
 - `/api/v1/runners*`
 - `/api/v1/video-channels/{channelHandle}/collaborators*`
 
-The remaining problem is no longer missing paths. It is the limited behavior behind several of those paths.
+The remaining problem is no longer missing paths or `501` shims on the main PeerTube-canonical families. It is the missing success-path proof for imported-instance behavior and a few deeper admin/worker lifecycles.
 
 ## Missing or Incomplete User Stories
 
 The following user stories are not yet fully satisfied end to end:
 
 - Import a PeerTube instance and continue normal follow/watch/discovery behavior without Athena-specific adaptation
-- Import PeerTube channels that rely on handle-based discovery and collaborator management
-- Retry or cancel imported videos using PeerTube’s canonical import lifecycle endpoints
-- Administer PeerTube-style registration approvals through PeerTube-compatible registration moderation routes
-- Use plugin and runner management with PeerTube-compatible endpoints beyond route discovery and basic read-only aliasing
+- Install or update a PeerTube plugin through the canonical endpoints and then exercise registered/public settings against the live installed plugin
+- Register a remote runner, claim a real encoding job, upload artifacts, and drive terminal success/error states end to end
+- Retry or cancel a real imported video through PeerTube’s canonical import lifecycle endpoints, not only missing-import negative paths
 
 Athena-only user stories that exist in code but are not yet fully proven by stateful Newman coverage:
 
@@ -128,7 +129,7 @@ Current state of the stateful Postman/Newman suite:
 | `athena-channels` | Pass | Channel CRUD, list/get, subscribe/unsubscribe, and cleanup flows work end to end |
 | `athena-instance-config` | Pass | Public config and quota endpoints match the validated contract |
 | `athena-imports` | Pass | Import CRUD/error semantics work for the validated Athena surface |
-| `athena-peertube-canonical` | Pass | PeerTube-canonical aliases for registrations, jobs, plugins, runners, import cancel/retry, and handle/collaborator paths are mounted and behave according to the current Athena contract, including explicit auth-gated and `501` compatibility-shim behavior |
+| `athena-peertube-canonical` | Pass | PeerTube-canonical registrations, jobs, plugins, collaborators, import cancel/retry, and runners now execute backed runtime behavior; the collection also runs cleanly both inside the full stateful suite and standalone |
 | `athena-feeds` | Pass | Public and subscription feeds behave correctly |
 | `athena-blocklist` | Pass | Account/server blocklist state transitions and pagination work |
 | `athena-notifications` | Pass | Notification list/read/delete flows work against wrapped responses |
@@ -155,18 +156,17 @@ Documentation/runtime alignment is materially better now:
 - Federation discovery endpoints are represented in docs/code and are mounted in the validated runtime
 - Wrapped response expectations in Postman now match the current documented Athena contract
 
-The remaining OpenAPI/parity risk is mostly scope risk: compatibility handlers that still need full behavior, and missing import-scenario coverage.
+The remaining OpenAPI/parity risk is mostly scope risk: deeper success-path scenarios are still missing from validation, along with imported-instance coverage.
 
 ## Recommended Next Steps
 
-1. Replace the remaining `501`/compatibility-shim PeerTube routes with real backed behavior:
-   collaborator management, runners, plugin write/settings flows, and registration moderation where appropriate.
-2. Add a true “import PeerTube instance” E2E scenario that verifies:
+1. Add a true “import PeerTube instance” E2E scenario that verifies:
    discovery, remote actor resolution, channel mapping, imported videos, and follow/watch behavior after import.
+2. Extend canonical success-path coverage for plugin and runner lifecycles:
+   real plugin install/update/settings round-trips, positive-path import cancel/retry, and runner artifact/job terminal states.
 3. Extend stateful coverage for Athena-only extensions:
    crypto payments, IPFS flows, and ATProto interoperability.
-4. Add an admin bootstrap path in the Docker test profile so canonical admin routes can be exercised through successful `200`/`204` flows, not only auth-gated and compatibility-shim behavior.
-5. Keep OpenAPI and the PeerTube-canonical Postman collection in lockstep so future drift is caught immediately.
+4. Keep OpenAPI and the PeerTube-canonical Postman collection in lockstep so future drift is caught immediately.
 
 ## Confidence Statement
 
@@ -174,7 +174,7 @@ Confidence is high that Athena now has a working, internally consistent validati
 
 Confidence is also high that **full PeerTube instance import compatibility is still not complete**, because the remaining blockers are now mostly scope blockers:
 
-- remaining compatibility-handler behavior gaps rather than missing-path gaps
-- missing collaborator/plugin/runner/registration lifecycle coverage
+- remaining success-path validation gaps rather than missing-path gaps
+- missing imported-instance proof and deeper plugin/runner success-path coverage
 - no true imported-instance E2E proving normal post-import behavior
 - incomplete stateful coverage for Athena-only extensions outside secure messaging and livestreaming

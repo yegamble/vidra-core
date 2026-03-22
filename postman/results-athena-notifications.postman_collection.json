@@ -5,11 +5,11 @@
     },
     "item": [
       {
-        "id": "188da53b-220e-4725-83cd-457c63801114",
+        "id": "7bfbfa1a-f3dd-40da-bad9-ed659878b89c",
         "name": "Notifications - Happy Path",
         "item": [
           {
-            "id": "1874aaba-1eca-47fd-8b48-0da06ea1a49d",
+            "id": "1a24b17b-0531-4e23-a75a-abf3041d1617",
             "name": "GET /api/v1/notifications - List notifications",
             "request": {
               "url": {
@@ -37,7 +37,7 @@
               {
                 "listen": "test",
                 "script": {
-                  "id": "df492cee-649d-44c5-883f-4f7ac09e5f0b",
+                  "id": "072185b1-4c27-479e-8ab2-941215347194",
                   "type": "text/javascript",
                   "exec": [
                     "pm.test('Status is 200', () => pm.response.to.have.status(200));",
@@ -51,13 +51,13 @@
                     "  console.log('No notifications available; using placeholder UUID for negative-path assertions');",
                     "}"
                   ],
-                  "_lastExecutionId": "f860e284-84d6-4b4e-9b3d-131a4108d75d"
+                  "_lastExecutionId": "11546aa2-6808-4dc3-9e32-1efda5f74578"
                 }
               }
             ]
           },
           {
-            "id": "05f83d8b-d13d-4042-8da9-bc2b180d3626",
+            "id": "224bc4ab-82dc-4ec8-834a-d501303496da",
             "name": "GET /api/v1/notifications/unread-count - Unread count",
             "request": {
               "url": {
@@ -86,20 +86,20 @@
               {
                 "listen": "test",
                 "script": {
-                  "id": "5b6c210a-6514-434e-9ab5-0c647ad255ef",
+                  "id": "da3809b1-ab69-4f26-b22e-757e47efec85",
                   "type": "text/javascript",
                   "exec": [
                     "pm.test('Status is 200', () => pm.response.to.have.status(200));",
                     "const json = pm.response.json();",
                     "pm.test('Has count', () => pm.expect(json).to.satisfy(r => (r.data && r.data.unread_count !== undefined) || r.unread_count !== undefined || typeof r === 'number'));"
                   ],
-                  "_lastExecutionId": "dbd1de9c-5cdc-4556-9a24-421c0f6ece01"
+                  "_lastExecutionId": "6ef9d338-0258-45dc-b665-f77b77eea357"
                 }
               }
             ]
           },
           {
-            "id": "93a75e7a-6326-41cf-8ede-590cf5b4c9fc",
+            "id": "84ad46e6-4fcc-48ed-aa5b-59439d0301c8",
             "name": "GET /api/v1/notifications/stats - Notification stats",
             "request": {
               "url": {
@@ -128,18 +128,18 @@
               {
                 "listen": "test",
                 "script": {
-                  "id": "8db2f088-29ec-4e46-9a64-b15e3f8c3eca",
+                  "id": "2e9bcb71-ea94-4e71-a66f-9ba0cc2db29f",
                   "type": "text/javascript",
                   "exec": [
                     "pm.test('Status is 200', () => pm.response.to.have.status(200));"
                   ],
-                  "_lastExecutionId": "c1c45a4e-2663-487f-accb-4b98e06170b5"
+                  "_lastExecutionId": "007feffc-dd28-4fc2-9cc9-61a96dd23443"
                 }
               }
             ]
           },
           {
-            "id": "ab7994b6-cabd-4f97-bdf6-e56669c73e4f",
+            "id": "eeeec6fc-1964-4d0c-bf60-3384083ac831",
             "name": "PUT /api/v1/notifications/:id/read - Mark single as read",
             "request": {
               "url": {
@@ -169,18 +169,18 @@
               {
                 "listen": "test",
                 "script": {
-                  "id": "92df008a-06cb-4943-b193-dbfed500ab2a",
+                  "id": "c080cc7c-6d05-4efa-a7a6-9dc4a8206774",
                   "type": "text/javascript",
                   "exec": [
                     "pm.test('Status is 200, 204, or 404', () => pm.expect([200, 204, 404]).to.include(pm.response.code));"
                   ],
-                  "_lastExecutionId": "000b734d-f95b-4218-a383-3e07b81583a4"
+                  "_lastExecutionId": "d9daf6cf-29b7-4218-942b-25a2236f0e34"
                 }
               }
             ]
           },
           {
-            "id": "40c191da-bb41-4e37-aa1c-5b85e10553ed",
+            "id": "be085cd5-ceb3-4073-a91e-bf2e18864915",
             "name": "POST /api/v1/notifications/read - Batch mark-read (with IDs)",
             "request": {
               "url": {
@@ -217,18 +217,18 @@
               {
                 "listen": "test",
                 "script": {
-                  "id": "190ffb7a-8bcb-4445-abfd-18ac5c3b000f",
+                  "id": "0d8020fd-8da5-4b2b-a293-2df71b3a3472",
                   "type": "text/javascript",
                   "exec": [
                     "pm.test('Status is 204', () => pm.response.to.have.status(204));"
                   ],
-                  "_lastExecutionId": "36500f4a-fcc5-4893-8d1f-f4306bdf69f3"
+                  "_lastExecutionId": "4185face-8399-4330-bdfb-37efb90eb3b1"
                 }
               }
             ]
           },
           {
-            "id": "b104c907-7c6e-4b40-abe3-5005bad16b19",
+            "id": "112fcc0e-1521-49ba-9af3-311515d134a1",
             "name": "POST /api/v1/notifications/read - Batch mark-read (all, empty IDs)",
             "request": {
               "url": {
@@ -265,18 +265,18 @@
               {
                 "listen": "test",
                 "script": {
-                  "id": "e8ea9106-24eb-4f44-a0a4-6544d6a7d4b1",
+                  "id": "4e94671f-c3fb-48b8-8c6a-062540259063",
                   "type": "text/javascript",
                   "exec": [
                     "pm.test('Status is 204', () => pm.response.to.have.status(204));"
                   ],
-                  "_lastExecutionId": "51ff1827-ddc3-460e-9c1c-7dd2555183c4"
+                  "_lastExecutionId": "bf5e69b6-d8f0-41ae-9d24-5d1f1fa65f3d"
                 }
               }
             ]
           },
           {
-            "id": "593c280d-cd97-42e1-9aae-3c75bae318d1",
+            "id": "c7b6db25-0fed-42bd-9a29-761a1d6825ee",
             "name": "PUT /api/v1/notifications/read-all - Mark all as read",
             "request": {
               "url": {
@@ -305,18 +305,18 @@
               {
                 "listen": "test",
                 "script": {
-                  "id": "b799b27e-c350-47a2-8b33-25929e9d7edf",
+                  "id": "168d561d-a000-473d-aea0-229763c447c8",
                   "type": "text/javascript",
                   "exec": [
                     "pm.test('Status is 204 or 200', () => pm.expect([200, 204]).to.include(pm.response.code));"
                   ],
-                  "_lastExecutionId": "87f2cf10-441c-45a2-aff9-3e6b1bb90589"
+                  "_lastExecutionId": "71f76921-0f5b-4db9-815e-bb7ec47eb7de"
                 }
               }
             ]
           },
           {
-            "id": "e6c6c434-2b29-45cd-a42b-7986f90662ed",
+            "id": "5aa46b39-3b2e-43e2-b731-fbd17a41e291",
             "name": "DELETE /api/v1/notifications/:id - Delete notification",
             "request": {
               "url": {
@@ -345,12 +345,12 @@
               {
                 "listen": "test",
                 "script": {
-                  "id": "d589201f-625d-4ea5-ac35-28c03505cb88",
+                  "id": "8a4b4afb-e428-4067-b951-4b8d14ec086b",
                   "type": "text/javascript",
                   "exec": [
                     "pm.test('Status is 204 or 404', () => pm.expect([204, 404]).to.include(pm.response.code));"
                   ],
-                  "_lastExecutionId": "32cff889-4a8e-4543-a8f0-592e11679890"
+                  "_lastExecutionId": "94bd678d-d8bc-41a1-b4dc-dcdf4d033464"
                 }
               }
             ]
@@ -359,11 +359,11 @@
         "event": []
       },
       {
-        "id": "9092e20b-ec3e-4057-b2d6-b4add7aba2f1",
+        "id": "905c48b2-ca9a-4c4b-b0f3-29632c34f412",
         "name": "Notifications - Error Path",
         "item": [
           {
-            "id": "8a1f67ba-c77e-4f5a-b889-ddf6ce827728",
+            "id": "c6e546cd-a90f-491f-bfdd-93a72044f793",
             "name": "GET /api/v1/notifications - Unauthenticated (401)",
             "request": {
               "url": {
@@ -385,18 +385,18 @@
               {
                 "listen": "test",
                 "script": {
-                  "id": "73701ea3-c612-4140-8fd7-72b40306c8af",
+                  "id": "a8f98582-762e-43ac-b59d-1e7379974f58",
                   "type": "text/javascript",
                   "exec": [
                     "pm.test('Status is 401', () => pm.response.to.have.status(401));"
                   ],
-                  "_lastExecutionId": "1680740d-fa26-4d96-8566-d899fbe0f732"
+                  "_lastExecutionId": "39008b9a-2bd7-4675-81d2-195cc9217494"
                 }
               }
             ]
           },
           {
-            "id": "774926f9-64bc-43d9-8a6c-0a735ee03647",
+            "id": "fda0eba4-685e-466c-8ebb-3fd04a771fad",
             "name": "POST /api/v1/notifications/read - Unauthenticated (401)",
             "request": {
               "url": {
@@ -429,12 +429,12 @@
               {
                 "listen": "test",
                 "script": {
-                  "id": "fafd31f8-c8ef-40ae-b5a8-110bb48ae59c",
+                  "id": "4e25eecb-95d1-471e-a10e-cb5fc2d5fe58",
                   "type": "text/javascript",
                   "exec": [
                     "pm.test('Status is 401', () => pm.response.to.have.status(401));"
                   ],
-                  "_lastExecutionId": "f6ebe8aa-ae77-4485-a88a-a0b98a8f6652"
+                  "_lastExecutionId": "afebf3fd-e931-491a-a0ca-20538f84c7cd"
                 }
               }
             ]
@@ -474,7 +474,7 @@
   "environment": {
     "_": {
       "postman_variable_scope": "environment",
-      "postman_exported_at": "2026-03-22T02:37:00.529Z",
+      "postman_exported_at": "2026-03-22T03:36:23.530Z",
       "postman_exported_using": "Newman/6.1.3"
     },
     "id": "0f7a1111-2222-4333-8444-bbbbbbbbbbbb",
@@ -487,12 +487,12 @@
       },
       {
         "type": "any",
-        "value": "user_1774146915043",
+        "value": "user_1774150570893",
         "key": "username"
       },
       {
         "type": "any",
-        "value": "user_1774146915043@example.com",
+        "value": "user_1774150570893@example.com",
         "key": "email"
       },
       {
@@ -502,17 +502,17 @@
       },
       {
         "type": "any",
-        "value": "98770abc-2827-4efa-a02a-ca053dc7b927",
+        "value": "6a70658f-797a-49da-9cdf-34c9853ebfc5",
         "key": "user_id"
       },
       {
         "type": "any",
-        "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzQxNDc4MjYsImlhdCI6MTc3NDE0NjkyNiwianRpIjoiNDdlZDJmNTQtMjI3Yy00ZjcwLTlmOGUtZjI2MjFjOTM0YjcyIiwicm9sZSI6InVzZXIiLCJzdWIiOiI5ODc3MGFiYy0yODI3LTRlZmEtYTAyYS1jYTA1M2RjN2I5MjcifQ.oID8Tpf95Fatmq8YhAVnNDlXSITJhyEYu8lD4suIjFQ",
+        "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzQxNTE0NzEsImlhdCI6MTc3NDE1MDU3MSwianRpIjoiYTQ3MzcxYzEtMGFkNy00ODNiLThiZWEtMTA0YWIwMDY0YmM4Iiwicm9sZSI6InVzZXIiLCJzdWIiOiI2YTcwNjU4Zi03OTdhLTQ5ZGEtOWNkZi0zNGM5ODUzZWJmYzUifQ.E3KsIqL8I5yTf-PpBenSXa2vA3MIS_jqlJB4V9356OA",
         "key": "access_token"
       },
       {
         "type": "any",
-        "value": "823e00dc-eb2b-4c35-8dd1-3b6cd818e7f6",
+        "value": "971c660e-2b39-42d5-9049-fef49b0cd487",
         "key": "refresh_token"
       },
       {
@@ -522,27 +522,27 @@
       },
       {
         "type": "any",
-        "value": "606e1a61-d827-42c7-8310-a02c9fdf3506",
+        "value": "5c624479-776b-44f3-8aca-298b76d41b93",
         "key": "uploadedVideoId"
       },
       {
         "type": "any",
-        "value": "9cae4a61-93e1-48c9-af92-2bac9c244cf9",
+        "value": "cdd64e14-b883-4cb8-8332-ffa75abfe6dc",
         "key": "video_id"
       },
       {
         "type": "any",
-        "value": "d5cfdd31-2552-4686-9a52-bd8b1c171221",
+        "value": "36e1a399-b557-46f0-9853-f0ee93ccebea",
         "key": "test_video_id"
       },
       {
         "type": "any",
-        "value": "test-video-1774146993574.mp4",
+        "value": "test-video-1774150576560.mp4",
         "key": "test_filename"
       },
       {
         "type": "any",
-        "value": "97eba27c-5560-4930-bd9b-425b7024a2a3",
+        "value": "c3241eae-65b9-4707-8eff-280cdae84b62",
         "key": "upload_session_id"
       },
       {
@@ -552,38 +552,98 @@
       },
       {
         "type": "any",
-        "value": "5090c218-f70b-4496-9d64-f9eb152eeeca",
+        "value": "d4f6f448-b85e-498b-86b1-020c6fbd607d",
         "key": "upload_video_id"
       },
       {
         "type": "any",
-        "value": "aa310f25-8af2-4b60-9466-d18b9d09474d",
+        "value": "f7f7969b-e9c1-42ba-9bc5-a2a731cc3679",
         "key": "incomplete_upload_session_id"
       },
       {
         "type": "any",
-        "value": "4631b9a5-413c-416f-bdde-f6ece9ca2ec5",
+        "value": "8de9d6b6-78b9-42c5-880b-83c2a860b220",
         "key": "channel_id"
       },
       {
         "type": "any",
-        "value": "9823f4eb-dca7-4f23-93a6-01957ba97e01",
+        "value": "0a425c6a-7d2e-4e84-bfd5-3befcda7f758",
         "key": "subscription_channel_id"
       },
       {
         "type": "any",
-        "value": "714fa53e-47da-4c9d-b5db-c78d07726389",
+        "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzQxNTE0ODAsImlhdCI6MTc3NDE1MDU4MCwianRpIjoiNzFmMTZlOWItM2E3MC00ZWJiLWJkNTctZDZhMTI5MWJmMmIwIiwicm9sZSI6ImFkbWluIiwic3ViIjoiZjE3MDc2MDMtNWIxMi00YzAzLTk4M2ItN2VhZGM5NzA2OTM4In0.u6rMDod3k2WyNs9EuXURRQxbz1otGmWG34j3klVnigQ",
+        "key": "admin_access_token"
+      },
+      {
+        "type": "any",
+        "value": "ptcollab1774150580656",
+        "key": "collaborator_username"
+      },
+      {
+        "type": "any",
+        "value": "ptcollab1774150580656@example.com",
+        "key": "collaborator_email"
+      },
+      {
+        "type": "any",
+        "value": "Password123!",
+        "key": "collaborator_password"
+      },
+      {
+        "type": "any",
+        "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzQxNTE0ODAsImlhdCI6MTc3NDE1MDU4MCwianRpIjoiNmI1YzNiMTItMjg0OC00OTM1LTkwZjItMTM0N2RlZTBlMWEwIiwicm9sZSI6InVzZXIiLCJzdWIiOiI4ODQyM2VhNS1iYTNiLTQ1YWUtYWRlMC1lOWZhNWU1YzBhZjUifQ.d4AFuiHbYQvaV7NuRtvO-hS1nciTkZQ8htbDd-oEYQ8",
+        "key": "collaborator_access_token"
+      },
+      {
+        "type": "any",
+        "value": "ptcanonical1774150581045",
+        "key": "canonical_channel_handle"
+      },
+      {
+        "type": "any",
+        "value": "5ab1491f-aa2a-4a13-90c2-1d8084fb772f",
+        "key": "canonical_channel_id"
+      },
+      {
+        "type": "any",
+        "value": "e0d48d26-6ea1-46b4-a4fb-64840ca88725",
+        "key": "canonical_collaborator_id"
+      },
+      {
+        "type": "any",
+        "value": "8420c9d4-db60-401f-b0b5-4698fb2d5f41",
+        "key": "runner_registration_token"
+      },
+      {
+        "type": "any",
+        "value": "719499aa-8b05-4f26-b041-98d10c1e6e48",
+        "key": "runner_registration_token_id"
+      },
+      {
+        "type": "any",
+        "value": "1c091070-6878-4b82-b2e8-afdcf72c977d",
+        "key": "runner_id"
+      },
+      {
+        "type": "any",
+        "value": "324996b3-7d25-4449-a9ea-9c0849cbc592",
+        "key": "runner_token"
+      },
+      {
+        "type": "any",
+        "value": "c9807231-d491-403f-b196-dc98fef56e25",
         "key": "block_account_id"
       },
       {
         "type": "any",
-        "value": "blockeduser1774147018115",
+        "value": "blockeduser1774150582887",
         "key": "account_name"
       }
     ]
   },
   "globals": {
-    "id": "a97c2477-87b6-4e67-a6c8-dbdc4e389eaa",
+    "id": "51340931-f7c8-43d4-8dec-aa56fbc82f62",
     "values": []
   },
   "run": {
@@ -635,10 +695,10 @@
       }
     },
     "timings": {
-      "responseAverage": 81.3,
-      "responseMin": 12,
-      "responseMax": 468,
-      "responseSd": 130.56113510535974,
+      "responseAverage": 9.6,
+      "responseMin": 4,
+      "responseMax": 53,
+      "responseSd": 14.492756811593852,
       "dnsAverage": 0,
       "dnsMin": 0,
       "dnsMax": 0,
@@ -647,8 +707,8 @@
       "firstByteMin": 0,
       "firstByteMax": 0,
       "firstByteSd": 0,
-      "started": 1774147024024,
-      "completed": 1774147025878
+      "started": 1774150584252,
+      "completed": 1774150584579
     },
     "executions": [
       {
@@ -661,11 +721,11 @@
           "eof": false,
           "bof": true,
           "cr": false,
-          "ref": "8d4f0f97-d280-4b12-aacd-6f459c656381",
-          "httpRequestId": "330db0e6-63b7-4984-8b89-0229958108b7"
+          "ref": "c2d9b207-b5f9-46a6-af8e-d40802251228",
+          "httpRequestId": "2e7d4b6f-f0f7-4dcf-98d9-806e2e2b8dab"
         },
         "item": {
-          "id": "1874aaba-1eca-47fd-8b48-0da06ea1a49d",
+          "id": "1a24b17b-0531-4e23-a75a-abf3041d1617",
           "name": "GET /api/v1/notifications - List notifications",
           "request": {
             "url": {
@@ -693,7 +753,7 @@
             {
               "listen": "test",
               "script": {
-                "id": "df492cee-649d-44c5-883f-4f7ac09e5f0b",
+                "id": "072185b1-4c27-479e-8ab2-941215347194",
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('Status is 200', () => pm.response.to.have.status(200));",
@@ -707,7 +767,7 @@
                   "  console.log('No notifications available; using placeholder UUID for negative-path assertions');",
                   "}"
                 ],
-                "_lastExecutionId": "f860e284-84d6-4b4e-9b3d-131a4108d75d"
+                "_lastExecutionId": "11546aa2-6808-4dc3-9e32-1efda5f74578"
               }
             }
           ]
@@ -730,7 +790,7 @@
           "header": [
             {
               "key": "Authorization",
-              "value": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzQxNDc4MjYsImlhdCI6MTc3NDE0NjkyNiwianRpIjoiNDdlZDJmNTQtMjI3Yy00ZjcwLTlmOGUtZjI2MjFjOTM0YjcyIiwicm9sZSI6InVzZXIiLCJzdWIiOiI5ODc3MGFiYy0yODI3LTRlZmEtYTAyYS1jYTA1M2RjN2I5MjcifQ.oID8Tpf95Fatmq8YhAVnNDlXSITJhyEYu8lD4suIjFQ"
+              "value": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzQxNTE0NzEsImlhdCI6MTc3NDE1MDU3MSwianRpIjoiYTQ3MzcxYzEtMGFkNy00ODNiLThiZWEtMTA0YWIwMDY0YmM4Iiwicm9sZSI6InVzZXIiLCJzdWIiOiI2YTcwNjU4Zi03OTdhLTQ5ZGEtOWNkZi0zNGM5ODUzZWJmYzUifQ.E3KsIqL8I5yTf-PpBenSXa2vA3MIS_jqlJB4V9356OA"
             },
             {
               "key": "User-Agent",
@@ -749,7 +809,7 @@
             },
             {
               "key": "Postman-Token",
-              "value": "03482a65-d2cc-46ba-a7f4-f0f3c25194db",
+              "value": "92252860-9efa-445e-91dc-fadcd4327019",
               "system": true
             },
             {
@@ -771,7 +831,7 @@
           "method": "GET"
         },
         "response": {
-          "id": "d231e525-c8b2-4625-92c8-dff653d3edec",
+          "id": "97a13a38-6522-4e1a-bcfe-05ae92b53f83",
           "status": "OK",
           "code": 200,
           "header": [
@@ -809,7 +869,7 @@
             },
             {
               "key": "X-Request-Id",
-              "value": "iwKdsE0zAMfa9OOBAtkSrg"
+              "value": "vXnWlfaYRqFsFx-tdvCRPw"
             },
             {
               "key": "X-Xss-Protection",
@@ -817,7 +877,7 @@
             },
             {
               "key": "Date",
-              "value": "Sun, 22 Mar 2026 02:37:04 GMT"
+              "value": "Sun, 22 Mar 2026 03:36:24 GMT"
             },
             {
               "key": "Content-Length",
@@ -921,10 +981,10 @@
             ]
           },
           "cookie": [],
-          "responseTime": 468,
+          "responseTime": 53,
           "responseSize": 91
         },
-        "id": "1874aaba-1eca-47fd-8b48-0da06ea1a49d",
+        "id": "1a24b17b-0531-4e23-a75a-abf3041d1617",
         "assertions": [
           {
             "assertion": "Status is 200",
@@ -938,15 +998,15 @@
       },
       {
         "cursor": {
-          "ref": "e207a465-abd0-4a75-95f1-c4cd8cbe4d82",
+          "ref": "bc67672d-55e2-42ce-beb0-71b3ef5bc002",
           "length": 10,
           "cycles": 1,
           "position": 1,
           "iteration": 0,
-          "httpRequestId": "e7c4832f-3ffa-480c-8eb0-4d49c9f7ccca"
+          "httpRequestId": "71e2cee4-f1b3-4c30-b7ef-624050f2ad84"
         },
         "item": {
-          "id": "05f83d8b-d13d-4042-8da9-bc2b180d3626",
+          "id": "224bc4ab-82dc-4ec8-834a-d501303496da",
           "name": "GET /api/v1/notifications/unread-count - Unread count",
           "request": {
             "url": {
@@ -975,14 +1035,14 @@
             {
               "listen": "test",
               "script": {
-                "id": "5b6c210a-6514-434e-9ab5-0c647ad255ef",
+                "id": "da3809b1-ab69-4f26-b22e-757e47efec85",
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('Status is 200', () => pm.response.to.have.status(200));",
                   "const json = pm.response.json();",
                   "pm.test('Has count', () => pm.expect(json).to.satisfy(r => (r.data && r.data.unread_count !== undefined) || r.unread_count !== undefined || typeof r === 'number'));"
                 ],
-                "_lastExecutionId": "dbd1de9c-5cdc-4556-9a24-421c0f6ece01"
+                "_lastExecutionId": "6ef9d338-0258-45dc-b665-f77b77eea357"
               }
             }
           ]
@@ -1006,7 +1066,7 @@
           "header": [
             {
               "key": "Authorization",
-              "value": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzQxNDc4MjYsImlhdCI6MTc3NDE0NjkyNiwianRpIjoiNDdlZDJmNTQtMjI3Yy00ZjcwLTlmOGUtZjI2MjFjOTM0YjcyIiwicm9sZSI6InVzZXIiLCJzdWIiOiI5ODc3MGFiYy0yODI3LTRlZmEtYTAyYS1jYTA1M2RjN2I5MjcifQ.oID8Tpf95Fatmq8YhAVnNDlXSITJhyEYu8lD4suIjFQ"
+              "value": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzQxNTE0NzEsImlhdCI6MTc3NDE1MDU3MSwianRpIjoiYTQ3MzcxYzEtMGFkNy00ODNiLThiZWEtMTA0YWIwMDY0YmM4Iiwicm9sZSI6InVzZXIiLCJzdWIiOiI2YTcwNjU4Zi03OTdhLTQ5ZGEtOWNkZi0zNGM5ODUzZWJmYzUifQ.E3KsIqL8I5yTf-PpBenSXa2vA3MIS_jqlJB4V9356OA"
             },
             {
               "key": "User-Agent",
@@ -1025,7 +1085,7 @@
             },
             {
               "key": "Postman-Token",
-              "value": "b0d06d6e-3b22-4449-b5e8-a74e513e4d7c",
+              "value": "cd8f99f5-3477-4599-b712-93fbc4fc715b",
               "system": true
             },
             {
@@ -1047,7 +1107,7 @@
           "method": "GET"
         },
         "response": {
-          "id": "6d448dd1-1240-42f9-b991-b923736e11af",
+          "id": "4361111f-d0dd-4cd2-a037-289abbafa299",
           "status": "OK",
           "code": 200,
           "header": [
@@ -1085,7 +1145,7 @@
             },
             {
               "key": "X-Request-Id",
-              "value": "-AI8pIMG-ASnGvgNMZvZjQ"
+              "value": "WjIOISXmWavH-mGYPAUiAA"
             },
             {
               "key": "X-Xss-Protection",
@@ -1093,7 +1153,7 @@
             },
             {
               "key": "Date",
-              "value": "Sun, 22 Mar 2026 02:37:04 GMT"
+              "value": "Sun, 22 Mar 2026 03:36:24 GMT"
             },
             {
               "key": "Content-Length",
@@ -1149,10 +1209,10 @@
             ]
           },
           "cookie": [],
-          "responseTime": 20,
+          "responseTime": 6,
           "responseSize": 43
         },
-        "id": "05f83d8b-d13d-4042-8da9-bc2b180d3626",
+        "id": "224bc4ab-82dc-4ec8-834a-d501303496da",
         "assertions": [
           {
             "assertion": "Status is 200",
@@ -1166,15 +1226,15 @@
       },
       {
         "cursor": {
-          "ref": "acd7ec94-eba6-42ae-8bf4-06dd45fe91ed",
+          "ref": "105f2914-0383-4a2f-9ca5-dc4fab5b30f6",
           "length": 10,
           "cycles": 1,
           "position": 2,
           "iteration": 0,
-          "httpRequestId": "0c745216-7b83-49b9-9519-aab89d2b0e4c"
+          "httpRequestId": "67dc3447-a486-47c6-a51a-45780549f082"
         },
         "item": {
-          "id": "93a75e7a-6326-41cf-8ede-590cf5b4c9fc",
+          "id": "84ad46e6-4fcc-48ed-aa5b-59439d0301c8",
           "name": "GET /api/v1/notifications/stats - Notification stats",
           "request": {
             "url": {
@@ -1203,12 +1263,12 @@
             {
               "listen": "test",
               "script": {
-                "id": "8db2f088-29ec-4e46-9a64-b15e3f8c3eca",
+                "id": "2e9bcb71-ea94-4e71-a66f-9ba0cc2db29f",
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('Status is 200', () => pm.response.to.have.status(200));"
                 ],
-                "_lastExecutionId": "c1c45a4e-2663-487f-accb-4b98e06170b5"
+                "_lastExecutionId": "007feffc-dd28-4fc2-9cc9-61a96dd23443"
               }
             }
           ]
@@ -1232,7 +1292,7 @@
           "header": [
             {
               "key": "Authorization",
-              "value": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzQxNDc4MjYsImlhdCI6MTc3NDE0NjkyNiwianRpIjoiNDdlZDJmNTQtMjI3Yy00ZjcwLTlmOGUtZjI2MjFjOTM0YjcyIiwicm9sZSI6InVzZXIiLCJzdWIiOiI5ODc3MGFiYy0yODI3LTRlZmEtYTAyYS1jYTA1M2RjN2I5MjcifQ.oID8Tpf95Fatmq8YhAVnNDlXSITJhyEYu8lD4suIjFQ"
+              "value": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzQxNTE0NzEsImlhdCI6MTc3NDE1MDU3MSwianRpIjoiYTQ3MzcxYzEtMGFkNy00ODNiLThiZWEtMTA0YWIwMDY0YmM4Iiwicm9sZSI6InVzZXIiLCJzdWIiOiI2YTcwNjU4Zi03OTdhLTQ5ZGEtOWNkZi0zNGM5ODUzZWJmYzUifQ.E3KsIqL8I5yTf-PpBenSXa2vA3MIS_jqlJB4V9356OA"
             },
             {
               "key": "User-Agent",
@@ -1251,7 +1311,7 @@
             },
             {
               "key": "Postman-Token",
-              "value": "630ac28e-0b32-4ace-a80f-2127bad223ca",
+              "value": "94bd045f-8949-428d-be9c-26f3fae97793",
               "system": true
             },
             {
@@ -1273,7 +1333,7 @@
           "method": "GET"
         },
         "response": {
-          "id": "be3fb024-232b-4286-8168-cc582de707e3",
+          "id": "6764541d-bd8b-45b3-a872-c6b2587bd33f",
           "status": "OK",
           "code": 200,
           "header": [
@@ -1311,7 +1371,7 @@
             },
             {
               "key": "X-Request-Id",
-              "value": "Q7h9uB6rSCkE75-39QZg1g"
+              "value": "4XbRB6wtA8lS7QU1D2Ab6A"
             },
             {
               "key": "X-Xss-Protection",
@@ -1319,7 +1379,7 @@
             },
             {
               "key": "Date",
-              "value": "Sun, 22 Mar 2026 02:37:04 GMT"
+              "value": "Sun, 22 Mar 2026 03:36:24 GMT"
             },
             {
               "key": "Content-Length",
@@ -1404,10 +1464,10 @@
             ]
           },
           "cookie": [],
-          "responseTime": 31,
+          "responseTime": 6,
           "responseSize": 72
         },
-        "id": "93a75e7a-6326-41cf-8ede-590cf5b4c9fc",
+        "id": "84ad46e6-4fcc-48ed-aa5b-59439d0301c8",
         "assertions": [
           {
             "assertion": "Status is 200",
@@ -1417,15 +1477,15 @@
       },
       {
         "cursor": {
-          "ref": "18ef3bc3-82f5-4692-9458-9b7f568cea44",
+          "ref": "dbb2b86f-cc89-4170-b1c4-21de41e09a0e",
           "length": 10,
           "cycles": 1,
           "position": 3,
           "iteration": 0,
-          "httpRequestId": "b24d452d-8eca-418a-80a2-b7e1d9650100"
+          "httpRequestId": "8ddacef6-2c5c-4c5f-8cb7-cf8e9186ad8a"
         },
         "item": {
-          "id": "ab7994b6-cabd-4f97-bdf6-e56669c73e4f",
+          "id": "eeeec6fc-1964-4d0c-bf60-3384083ac831",
           "name": "PUT /api/v1/notifications/:id/read - Mark single as read",
           "request": {
             "url": {
@@ -1455,12 +1515,12 @@
             {
               "listen": "test",
               "script": {
-                "id": "92df008a-06cb-4943-b193-dbfed500ab2a",
+                "id": "c080cc7c-6d05-4efa-a7a6-9dc4a8206774",
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('Status is 200, 204, or 404', () => pm.expect([200, 204, 404]).to.include(pm.response.code));"
                 ],
-                "_lastExecutionId": "000b734d-f95b-4218-a383-3e07b81583a4"
+                "_lastExecutionId": "d9daf6cf-29b7-4218-942b-25a2236f0e34"
               }
             }
           ]
@@ -1485,7 +1545,7 @@
           "header": [
             {
               "key": "Authorization",
-              "value": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzQxNDc4MjYsImlhdCI6MTc3NDE0NjkyNiwianRpIjoiNDdlZDJmNTQtMjI3Yy00ZjcwLTlmOGUtZjI2MjFjOTM0YjcyIiwicm9sZSI6InVzZXIiLCJzdWIiOiI5ODc3MGFiYy0yODI3LTRlZmEtYTAyYS1jYTA1M2RjN2I5MjcifQ.oID8Tpf95Fatmq8YhAVnNDlXSITJhyEYu8lD4suIjFQ"
+              "value": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzQxNTE0NzEsImlhdCI6MTc3NDE1MDU3MSwianRpIjoiYTQ3MzcxYzEtMGFkNy00ODNiLThiZWEtMTA0YWIwMDY0YmM4Iiwicm9sZSI6InVzZXIiLCJzdWIiOiI2YTcwNjU4Zi03OTdhLTQ5ZGEtOWNkZi0zNGM5ODUzZWJmYzUifQ.E3KsIqL8I5yTf-PpBenSXa2vA3MIS_jqlJB4V9356OA"
             },
             {
               "key": "User-Agent",
@@ -1504,7 +1564,7 @@
             },
             {
               "key": "Postman-Token",
-              "value": "da9f735b-6da3-4e77-a257-56efc6cc7707",
+              "value": "5fb64cf2-2a40-4e2b-b6fd-53028842a915",
               "system": true
             },
             {
@@ -1531,7 +1591,7 @@
           "method": "PUT"
         },
         "response": {
-          "id": "1d8d5f22-2d47-4397-b390-1af04cde405c",
+          "id": "1dd69238-7fe6-4db6-a2b9-e3d2f119d9f8",
           "status": "Not Found",
           "code": 404,
           "header": [
@@ -1569,7 +1629,7 @@
             },
             {
               "key": "X-Request-Id",
-              "value": "nmrFsDIQvxTxRQVByPnF8A"
+              "value": "C0KqUFYB4m0VSAyk_nFTbA"
             },
             {
               "key": "X-Xss-Protection",
@@ -1577,7 +1637,7 @@
             },
             {
               "key": "Date",
-              "value": "Sun, 22 Mar 2026 02:37:04 GMT"
+              "value": "Sun, 22 Mar 2026 03:36:24 GMT"
             },
             {
               "key": "Content-Length",
@@ -1687,10 +1747,10 @@
             ]
           },
           "cookie": [],
-          "responseTime": 68,
+          "responseTime": 4,
           "responseSize": 97
         },
-        "id": "ab7994b6-cabd-4f97-bdf6-e56669c73e4f",
+        "id": "eeeec6fc-1964-4d0c-bf60-3384083ac831",
         "assertions": [
           {
             "assertion": "Status is 200, 204, or 404",
@@ -1700,15 +1760,15 @@
       },
       {
         "cursor": {
-          "ref": "afef2d6f-caaf-40a8-ae88-ce9c849bb84a",
+          "ref": "8167832c-4e0a-45b8-a1fc-8e7622dba421",
           "length": 10,
           "cycles": 1,
           "position": 4,
           "iteration": 0,
-          "httpRequestId": "98a80ed7-88d8-476e-9b0a-829f9659b2e4"
+          "httpRequestId": "f320d535-752e-47b2-94c6-4ff6f0bbaf0c"
         },
         "item": {
-          "id": "40c191da-bb41-4e37-aa1c-5b85e10553ed",
+          "id": "be085cd5-ceb3-4073-a91e-bf2e18864915",
           "name": "POST /api/v1/notifications/read - Batch mark-read (with IDs)",
           "request": {
             "url": {
@@ -1745,12 +1805,12 @@
             {
               "listen": "test",
               "script": {
-                "id": "190ffb7a-8bcb-4445-abfd-18ac5c3b000f",
+                "id": "0d8020fd-8da5-4b2b-a293-2df71b3a3472",
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('Status is 204', () => pm.response.to.have.status(204));"
                 ],
-                "_lastExecutionId": "36500f4a-fcc5-4893-8d1f-f4306bdf69f3"
+                "_lastExecutionId": "4185face-8399-4330-bdfb-37efb90eb3b1"
               }
             }
           ]
@@ -1778,7 +1838,7 @@
             },
             {
               "key": "Authorization",
-              "value": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzQxNDc4MjYsImlhdCI6MTc3NDE0NjkyNiwianRpIjoiNDdlZDJmNTQtMjI3Yy00ZjcwLTlmOGUtZjI2MjFjOTM0YjcyIiwicm9sZSI6InVzZXIiLCJzdWIiOiI5ODc3MGFiYy0yODI3LTRlZmEtYTAyYS1jYTA1M2RjN2I5MjcifQ.oID8Tpf95Fatmq8YhAVnNDlXSITJhyEYu8lD4suIjFQ"
+              "value": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzQxNTE0NzEsImlhdCI6MTc3NDE1MDU3MSwianRpIjoiYTQ3MzcxYzEtMGFkNy00ODNiLThiZWEtMTA0YWIwMDY0YmM4Iiwicm9sZSI6InVzZXIiLCJzdWIiOiI2YTcwNjU4Zi03OTdhLTQ5ZGEtOWNkZi0zNGM5ODUzZWJmYzUifQ.E3KsIqL8I5yTf-PpBenSXa2vA3MIS_jqlJB4V9356OA"
             },
             {
               "key": "User-Agent",
@@ -1797,7 +1857,7 @@
             },
             {
               "key": "Postman-Token",
-              "value": "9d91429d-55c3-41b0-8b56-781ecf39eb8d",
+              "value": "8b056c19-72ec-4b98-9164-9f2c53278afc",
               "system": true
             },
             {
@@ -1828,7 +1888,7 @@
           }
         },
         "response": {
-          "id": "decb133d-53ac-4ba7-86b1-7aaca5f22224",
+          "id": "60b12643-1a52-4578-b7c2-b85927c0a7c9",
           "status": "No Content",
           "code": 204,
           "header": [
@@ -1854,7 +1914,7 @@
             },
             {
               "key": "X-Request-Id",
-              "value": "jZDqLJuD8OHi_7azTlFfAQ"
+              "value": "xCXWOvk11Vx8Vs483I5Mrw"
             },
             {
               "key": "X-Xss-Protection",
@@ -1862,7 +1922,7 @@
             },
             {
               "key": "Date",
-              "value": "Sun, 22 Mar 2026 02:37:05 GMT"
+              "value": "Sun, 22 Mar 2026 03:36:24 GMT"
             }
           ],
           "stream": {
@@ -1870,10 +1930,10 @@
             "data": []
           },
           "cookie": [],
-          "responseTime": 41,
+          "responseTime": 4,
           "responseSize": 0
         },
-        "id": "40c191da-bb41-4e37-aa1c-5b85e10553ed",
+        "id": "be085cd5-ceb3-4073-a91e-bf2e18864915",
         "assertions": [
           {
             "assertion": "Status is 204",
@@ -1883,15 +1943,15 @@
       },
       {
         "cursor": {
-          "ref": "42e8c885-d936-48e3-bb9a-326ae3326d1e",
+          "ref": "4f9ff7a1-d7d6-4b84-991d-b7ffa7e9c248",
           "length": 10,
           "cycles": 1,
           "position": 5,
           "iteration": 0,
-          "httpRequestId": "ac0c4eb8-6797-424b-bcf4-0fc24a0be552"
+          "httpRequestId": "e903ae73-4bcc-491c-bb01-b894d48c6784"
         },
         "item": {
-          "id": "b104c907-7c6e-4b40-abe3-5005bad16b19",
+          "id": "112fcc0e-1521-49ba-9af3-311515d134a1",
           "name": "POST /api/v1/notifications/read - Batch mark-read (all, empty IDs)",
           "request": {
             "url": {
@@ -1928,12 +1988,12 @@
             {
               "listen": "test",
               "script": {
-                "id": "e8ea9106-24eb-4f44-a0a4-6544d6a7d4b1",
+                "id": "4e94671f-c3fb-48b8-8c6a-062540259063",
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('Status is 204', () => pm.response.to.have.status(204));"
                 ],
-                "_lastExecutionId": "51ff1827-ddc3-460e-9c1c-7dd2555183c4"
+                "_lastExecutionId": "bf5e69b6-d8f0-41ae-9d24-5d1f1fa65f3d"
               }
             }
           ]
@@ -1961,7 +2021,7 @@
             },
             {
               "key": "Authorization",
-              "value": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzQxNDc4MjYsImlhdCI6MTc3NDE0NjkyNiwianRpIjoiNDdlZDJmNTQtMjI3Yy00ZjcwLTlmOGUtZjI2MjFjOTM0YjcyIiwicm9sZSI6InVzZXIiLCJzdWIiOiI5ODc3MGFiYy0yODI3LTRlZmEtYTAyYS1jYTA1M2RjN2I5MjcifQ.oID8Tpf95Fatmq8YhAVnNDlXSITJhyEYu8lD4suIjFQ"
+              "value": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzQxNTE0NzEsImlhdCI6MTc3NDE1MDU3MSwianRpIjoiYTQ3MzcxYzEtMGFkNy00ODNiLThiZWEtMTA0YWIwMDY0YmM4Iiwicm9sZSI6InVzZXIiLCJzdWIiOiI2YTcwNjU4Zi03OTdhLTQ5ZGEtOWNkZi0zNGM5ODUzZWJmYzUifQ.E3KsIqL8I5yTf-PpBenSXa2vA3MIS_jqlJB4V9356OA"
             },
             {
               "key": "User-Agent",
@@ -1980,7 +2040,7 @@
             },
             {
               "key": "Postman-Token",
-              "value": "b684305d-f232-425d-b08e-0b3982d7c311",
+              "value": "d6c77131-d53a-4096-80ab-c5ad7a9a1c7b",
               "system": true
             },
             {
@@ -2011,7 +2071,7 @@
           }
         },
         "response": {
-          "id": "9cd6def1-2956-4f4b-9f77-c61a2aefd693",
+          "id": "74522e91-3348-4b99-9902-9230380fb411",
           "status": "No Content",
           "code": 204,
           "header": [
@@ -2037,7 +2097,7 @@
             },
             {
               "key": "X-Request-Id",
-              "value": "Abe4idQejdxTdMgRVaxReQ"
+              "value": "uw1IBjPek4z75lFnubkaBA"
             },
             {
               "key": "X-Xss-Protection",
@@ -2045,7 +2105,7 @@
             },
             {
               "key": "Date",
-              "value": "Sun, 22 Mar 2026 02:37:05 GMT"
+              "value": "Sun, 22 Mar 2026 03:36:24 GMT"
             }
           ],
           "stream": {
@@ -2053,10 +2113,10 @@
             "data": []
           },
           "cookie": [],
-          "responseTime": 34,
+          "responseTime": 4,
           "responseSize": 0
         },
-        "id": "b104c907-7c6e-4b40-abe3-5005bad16b19",
+        "id": "112fcc0e-1521-49ba-9af3-311515d134a1",
         "assertions": [
           {
             "assertion": "Status is 204",
@@ -2066,15 +2126,15 @@
       },
       {
         "cursor": {
-          "ref": "bc3d0c34-482b-46aa-ad2b-e3a0c9a1d9ac",
+          "ref": "5214fc1a-3afd-4410-a761-c1675e44acd2",
           "length": 10,
           "cycles": 1,
           "position": 6,
           "iteration": 0,
-          "httpRequestId": "87cc99c7-2994-4ebf-af22-8dca61f0ac5e"
+          "httpRequestId": "4ab4190a-44cb-439b-b1e3-66cd489d3a59"
         },
         "item": {
-          "id": "593c280d-cd97-42e1-9aae-3c75bae318d1",
+          "id": "c7b6db25-0fed-42bd-9a29-761a1d6825ee",
           "name": "PUT /api/v1/notifications/read-all - Mark all as read",
           "request": {
             "url": {
@@ -2103,12 +2163,12 @@
             {
               "listen": "test",
               "script": {
-                "id": "b799b27e-c350-47a2-8b33-25929e9d7edf",
+                "id": "168d561d-a000-473d-aea0-229763c447c8",
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('Status is 204 or 200', () => pm.expect([200, 204]).to.include(pm.response.code));"
                 ],
-                "_lastExecutionId": "87f2cf10-441c-45a2-aff9-3e6b1bb90589"
+                "_lastExecutionId": "71f76921-0f5b-4db9-815e-bb7ec47eb7de"
               }
             }
           ]
@@ -2132,7 +2192,7 @@
           "header": [
             {
               "key": "Authorization",
-              "value": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzQxNDc4MjYsImlhdCI6MTc3NDE0NjkyNiwianRpIjoiNDdlZDJmNTQtMjI3Yy00ZjcwLTlmOGUtZjI2MjFjOTM0YjcyIiwicm9sZSI6InVzZXIiLCJzdWIiOiI5ODc3MGFiYy0yODI3LTRlZmEtYTAyYS1jYTA1M2RjN2I5MjcifQ.oID8Tpf95Fatmq8YhAVnNDlXSITJhyEYu8lD4suIjFQ"
+              "value": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzQxNTE0NzEsImlhdCI6MTc3NDE1MDU3MSwianRpIjoiYTQ3MzcxYzEtMGFkNy00ODNiLThiZWEtMTA0YWIwMDY0YmM4Iiwicm9sZSI6InVzZXIiLCJzdWIiOiI2YTcwNjU4Zi03OTdhLTQ5ZGEtOWNkZi0zNGM5ODUzZWJmYzUifQ.E3KsIqL8I5yTf-PpBenSXa2vA3MIS_jqlJB4V9356OA"
             },
             {
               "key": "User-Agent",
@@ -2151,7 +2211,7 @@
             },
             {
               "key": "Postman-Token",
-              "value": "9f27088d-fdde-4333-a117-f469efa03bd0",
+              "value": "750789c2-55ed-411a-b138-994678406f57",
               "system": true
             },
             {
@@ -2178,7 +2238,7 @@
           "method": "PUT"
         },
         "response": {
-          "id": "9f155e7d-6fae-4bd7-b40a-a930f4489262",
+          "id": "c9afe138-60c6-4f87-8d5f-c5649424defc",
           "status": "OK",
           "code": 200,
           "header": [
@@ -2216,7 +2276,7 @@
             },
             {
               "key": "X-Request-Id",
-              "value": "Xv3O3mFBE493_lHjivIoOQ"
+              "value": "jAZtydRABG1HinIDvHeBSg"
             },
             {
               "key": "X-Xss-Protection",
@@ -2224,7 +2284,7 @@
             },
             {
               "key": "Date",
-              "value": "Sun, 22 Mar 2026 02:37:05 GMT"
+              "value": "Sun, 22 Mar 2026 03:36:24 GMT"
             },
             {
               "key": "Content-Length",
@@ -2278,10 +2338,10 @@
             ]
           },
           "cookie": [],
-          "responseTime": 12,
+          "responseTime": 4,
           "responseSize": 41
         },
-        "id": "593c280d-cd97-42e1-9aae-3c75bae318d1",
+        "id": "c7b6db25-0fed-42bd-9a29-761a1d6825ee",
         "assertions": [
           {
             "assertion": "Status is 204 or 200",
@@ -2291,15 +2351,15 @@
       },
       {
         "cursor": {
-          "ref": "246c627c-ddc3-4596-8e21-b7aaeb365b41",
+          "ref": "9b5c2232-cbef-4f34-8441-e05bd5e6028e",
           "length": 10,
           "cycles": 1,
           "position": 7,
           "iteration": 0,
-          "httpRequestId": "1d3758fa-ac0f-4550-8d2a-83fab725c258"
+          "httpRequestId": "001e9388-3aaa-4063-9854-a3f888eab6c6"
         },
         "item": {
-          "id": "e6c6c434-2b29-45cd-a42b-7986f90662ed",
+          "id": "5aa46b39-3b2e-43e2-b731-fbd17a41e291",
           "name": "DELETE /api/v1/notifications/:id - Delete notification",
           "request": {
             "url": {
@@ -2328,12 +2388,12 @@
             {
               "listen": "test",
               "script": {
-                "id": "d589201f-625d-4ea5-ac35-28c03505cb88",
+                "id": "8a4b4afb-e428-4067-b951-4b8d14ec086b",
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('Status is 204 or 404', () => pm.expect([204, 404]).to.include(pm.response.code));"
                 ],
-                "_lastExecutionId": "32cff889-4a8e-4543-a8f0-592e11679890"
+                "_lastExecutionId": "94bd678d-d8bc-41a1-b4dc-dcdf4d033464"
               }
             }
           ]
@@ -2357,7 +2417,7 @@
           "header": [
             {
               "key": "Authorization",
-              "value": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzQxNDc4MjYsImlhdCI6MTc3NDE0NjkyNiwianRpIjoiNDdlZDJmNTQtMjI3Yy00ZjcwLTlmOGUtZjI2MjFjOTM0YjcyIiwicm9sZSI6InVzZXIiLCJzdWIiOiI5ODc3MGFiYy0yODI3LTRlZmEtYTAyYS1jYTA1M2RjN2I5MjcifQ.oID8Tpf95Fatmq8YhAVnNDlXSITJhyEYu8lD4suIjFQ"
+              "value": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzQxNTE0NzEsImlhdCI6MTc3NDE1MDU3MSwianRpIjoiYTQ3MzcxYzEtMGFkNy00ODNiLThiZWEtMTA0YWIwMDY0YmM4Iiwicm9sZSI6InVzZXIiLCJzdWIiOiI2YTcwNjU4Zi03OTdhLTQ5ZGEtOWNkZi0zNGM5ODUzZWJmYzUifQ.E3KsIqL8I5yTf-PpBenSXa2vA3MIS_jqlJB4V9356OA"
             },
             {
               "key": "User-Agent",
@@ -2376,7 +2436,7 @@
             },
             {
               "key": "Postman-Token",
-              "value": "a710d798-c1b7-435d-ad17-18c503297c40",
+              "value": "bb28b22e-c396-426d-acbc-d64c9c149ca2",
               "system": true
             },
             {
@@ -2398,7 +2458,7 @@
           "method": "DELETE"
         },
         "response": {
-          "id": "50c298a3-9b29-4834-8356-0be8a49f6952",
+          "id": "903bbf5e-d9af-4a9d-92d8-e6a59e98aed7",
           "status": "Not Found",
           "code": 404,
           "header": [
@@ -2436,7 +2496,7 @@
             },
             {
               "key": "X-Request-Id",
-              "value": "q4Iq-OUAsJRSVHnFEWIOVQ"
+              "value": "Y-zXHocYd_NyAvUlr7imWA"
             },
             {
               "key": "X-Xss-Protection",
@@ -2444,7 +2504,7 @@
             },
             {
               "key": "Date",
-              "value": "Sun, 22 Mar 2026 02:37:05 GMT"
+              "value": "Sun, 22 Mar 2026 03:36:24 GMT"
             },
             {
               "key": "Content-Length",
@@ -2554,10 +2614,10 @@
             ]
           },
           "cookie": [],
-          "responseTime": 28,
+          "responseTime": 6,
           "responseSize": 97
         },
-        "id": "e6c6c434-2b29-45cd-a42b-7986f90662ed",
+        "id": "5aa46b39-3b2e-43e2-b731-fbd17a41e291",
         "assertions": [
           {
             "assertion": "Status is 204 or 404",
@@ -2567,15 +2627,15 @@
       },
       {
         "cursor": {
-          "ref": "267958c3-333f-40f7-8ceb-adb3793c93e8",
+          "ref": "91b42f27-c35a-4b58-be73-bbb6a476dcd2",
           "length": 10,
           "cycles": 1,
           "position": 8,
           "iteration": 0,
-          "httpRequestId": "62be8dfe-a2f7-4842-bd4c-b2bada454d81"
+          "httpRequestId": "b9b473bb-7984-4ed8-98fb-40ff06578217"
         },
         "item": {
-          "id": "8a1f67ba-c77e-4f5a-b889-ddf6ce827728",
+          "id": "c6e546cd-a90f-491f-bfdd-93a72044f793",
           "name": "GET /api/v1/notifications - Unauthenticated (401)",
           "request": {
             "url": {
@@ -2597,12 +2657,12 @@
             {
               "listen": "test",
               "script": {
-                "id": "73701ea3-c612-4140-8fd7-72b40306c8af",
+                "id": "a8f98582-762e-43ac-b59d-1e7379974f58",
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('Status is 401', () => pm.response.to.have.status(401));"
                 ],
-                "_lastExecutionId": "1680740d-fa26-4d96-8566-d899fbe0f732"
+                "_lastExecutionId": "39008b9a-2bd7-4675-81d2-195cc9217494"
               }
             }
           ]
@@ -2640,7 +2700,7 @@
             },
             {
               "key": "Postman-Token",
-              "value": "9739c2ae-6efc-4444-b8c5-6ca85ebf472c",
+              "value": "93dc4943-4e17-44b1-9964-a31debce44a6",
               "system": true
             },
             {
@@ -2662,7 +2722,7 @@
           "method": "GET"
         },
         "response": {
-          "id": "d31a9e95-adc6-4322-8720-f8671e3a15b0",
+          "id": "ecb7edc8-10eb-4675-9cb4-725d2786173e",
           "status": "Unauthorized",
           "code": 401,
           "header": [
@@ -2700,7 +2760,7 @@
             },
             {
               "key": "X-Request-Id",
-              "value": "jQfkAW7p3WeoqA-gQsQe0w"
+              "value": "XFptsdIUVbWGaT3ngbiUSg"
             },
             {
               "key": "X-Xss-Protection",
@@ -2708,7 +2768,7 @@
             },
             {
               "key": "Date",
-              "value": "Sun, 22 Mar 2026 02:37:05 GMT"
+              "value": "Sun, 22 Mar 2026 03:36:24 GMT"
             },
             {
               "key": "Content-Length",
@@ -2826,10 +2886,10 @@
             ]
           },
           "cookie": [],
-          "responseTime": 84,
+          "responseTime": 5,
           "responseSize": 105
         },
-        "id": "8a1f67ba-c77e-4f5a-b889-ddf6ce827728",
+        "id": "c6e546cd-a90f-491f-bfdd-93a72044f793",
         "assertions": [
           {
             "assertion": "Status is 401",
@@ -2839,15 +2899,15 @@
       },
       {
         "cursor": {
-          "ref": "f9a46076-db5f-4761-ad45-ecaed074783e",
+          "ref": "4f85fe0b-c7d8-4ace-8d2d-6475ad683c73",
           "length": 10,
           "cycles": 1,
           "position": 9,
           "iteration": 0,
-          "httpRequestId": "315f6214-c687-4fd1-9798-921d6c53a070"
+          "httpRequestId": "34951129-0de5-4112-8066-86d861341216"
         },
         "item": {
-          "id": "774926f9-64bc-43d9-8a6c-0a735ee03647",
+          "id": "fda0eba4-685e-466c-8ebb-3fd04a771fad",
           "name": "POST /api/v1/notifications/read - Unauthenticated (401)",
           "request": {
             "url": {
@@ -2880,12 +2940,12 @@
             {
               "listen": "test",
               "script": {
-                "id": "fafd31f8-c8ef-40ae-b5a8-110bb48ae59c",
+                "id": "4e25eecb-95d1-471e-a10e-cb5fc2d5fe58",
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('Status is 401', () => pm.response.to.have.status(401));"
                 ],
-                "_lastExecutionId": "f6ebe8aa-ae77-4485-a88a-a0b98a8f6652"
+                "_lastExecutionId": "afebf3fd-e931-491a-a0ca-20538f84c7cd"
               }
             }
           ]
@@ -2928,7 +2988,7 @@
             },
             {
               "key": "Postman-Token",
-              "value": "0153c643-636c-4b7e-8161-186c95172dea",
+              "value": "bd8e2bcd-aa28-4c53-bec2-0d479c438034",
               "system": true
             },
             {
@@ -2959,7 +3019,7 @@
           }
         },
         "response": {
-          "id": "5940bae8-0642-45c3-90dd-6a1f18257961",
+          "id": "07a89c45-f61e-4b70-994f-3e808cabae62",
           "status": "Unauthorized",
           "code": 401,
           "header": [
@@ -2997,7 +3057,7 @@
             },
             {
               "key": "X-Request-Id",
-              "value": "Z4mLIj_JQ9PV8mGKTsp6aA"
+              "value": "tBml7RzBl1sRWH2OHemQTw"
             },
             {
               "key": "X-Xss-Protection",
@@ -3005,7 +3065,7 @@
             },
             {
               "key": "Date",
-              "value": "Sun, 22 Mar 2026 02:37:05 GMT"
+              "value": "Sun, 22 Mar 2026 03:36:24 GMT"
             },
             {
               "key": "Content-Length",
@@ -3123,10 +3183,10 @@
             ]
           },
           "cookie": [],
-          "responseTime": 27,
+          "responseTime": 4,
           "responseSize": 105
         },
-        "id": "774926f9-64bc-43d9-8a6c-0a735ee03647",
+        "id": "fda0eba4-685e-466c-8ebb-3fd04a771fad",
         "assertions": [
           {
             "assertion": "Status is 401",

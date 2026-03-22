@@ -61,6 +61,8 @@ type HandlerDependencies struct {
 	AbuseMessageRepo      *repository.AbuseMessageRepository
 	LiveStreamSessionRepo *repository.LiveStreamSessionRepository
 	OwnershipRepo         port.VideoOwnershipRepository
+	CollaboratorRepo      *repository.ChannelCollaboratorRepository
+	RunnerRepo            *repository.RunnerRepository
 
 	UploadService            ucup.Service
 	EmailService             email.EmailService

@@ -119,6 +119,9 @@ services:
 
       # Validation
       VALIDATION_TEST_MODE: "true"
+      VALIDATION_TEST_ADMIN_USERNAME: "admin"
+      VALIDATION_TEST_ADMIN_EMAIL: "admin@example.com"
+      VALIDATION_TEST_ADMIN_PASSWORD: "admin123"
 
       # Storage
       STORAGE_DIR: "/tmp/storage"

@@ -410,6 +410,9 @@ services:
       ACTIVITYPUB_KEY_ENCRYPTION_KEY: test-activitypub-key-32-characters
       PORT: 8080
       VALIDATION_TEST_MODE: "true"
+      VALIDATION_TEST_ADMIN_USERNAME: admin
+      VALIDATION_TEST_ADMIN_EMAIL: admin@example.com
+      VALIDATION_TEST_ADMIN_PASSWORD: admin123
       LOG_LEVEL: debug
       STORAGE_DIR: /tmp/storage
       CLAMAV_ADDRESS: clamav-test:3310

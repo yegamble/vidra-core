@@ -1,18 +1,16 @@
 package plugin
 
 import (
-	"archive/zip"
-	"athena/internal/httpapi/shared"
-	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"athena/internal/domain"
+	"athena/internal/httpapi/shared"
 	"athena/internal/plugin"
 	"athena/internal/repository"
 
@@ -230,18 +228,8 @@ func (h *PluginHandler) UpdatePluginConfig(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	if err := h.pluginManager.UpdatePluginConfig(r.Context(), plugin.Name, req.Config); err != nil {
+	if err := h.updatePluginConfigData(r.Context(), plugin, req.Config); err != nil {
 		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to update plugin config: %w", err))
-		return
-	}
-
-	if err := plugin.UpdateConfig(req.Config); err != nil {
-		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to update config: %w", err))
-		return
-	}
-
-	if err := h.pluginRepo.Update(r.Context(), plugin); err != nil {
-		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to save config: %w", err))
 		return
 	}
 
@@ -258,7 +246,7 @@ func (h *PluginHandler) UninstallPlugin(w http.ResponseWriter, r *http.Request) 
 	}
 
 	if plugin.IsEnabled() {
-		if err := h.pluginManager.DisablePlugin(r.Context(), plugin.Name); err != nil {
+		if err := h.pluginManager.DisablePlugin(r.Context(), plugin.Name); err != nil && !isMissingRuntimePluginError(err) {
 			shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to disable plugin before uninstall: %w", err))
 			return
 		}
@@ -268,6 +256,7 @@ func (h *PluginHandler) UninstallPlugin(w http.ResponseWriter, r *http.Request) 
 		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to uninstall plugin: %w", err))
 		return
 	}
+	_ = os.RemoveAll(plugin.InstallPath)
 
 	shared.WriteJSON(w, http.StatusOK, map[string]string{
 		"status":  "success",
@@ -302,6 +291,89 @@ func (h *PluginHandler) GetPluginStatistics(w http.ResponseWriter, r *http.Reque
 	}
 
 	shared.WriteJSON(w, http.StatusOK, result)
+}
+
+func (h *PluginHandler) GetRegisteredSettings(w http.ResponseWriter, r *http.Request) {
+	plugin, ok := h.resolvePluginRecord(w, r)
+	if !ok {
+		return
+	}
+
+	shared.WriteJSON(w, http.StatusOK, map[string]any{
+		"npmName":            plugin.Name,
+		"settings":           plugin.Config,
+		"registeredSettings": plugin.Config,
+	})
+}
+
+func (h *PluginHandler) GetPublicSettings(w http.ResponseWriter, r *http.Request) {
+	plugin, ok := h.resolvePluginRecord(w, r)
+	if !ok {
+		return
+	}
+
+	shared.WriteJSON(w, http.StatusOK, map[string]any{
+		"npmName":        plugin.Name,
+		"publicSettings": plugin.Config,
+	})
+}
+
+func (h *PluginHandler) UpdateCanonicalSettings(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Config   map[string]any `json:"config"`
+		Settings map[string]any `json:"settings"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("ERROR", "Invalid request body"))
+		return
+	}
+
+	config := req.Config
+	if config == nil {
+		config = req.Settings
+	}
+	if config == nil {
+		shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("ERROR", "Settings are required"))
+		return
+	}
+
+	plugin, ok := h.resolvePluginRecord(w, r)
+	if !ok {
+		return
+	}
+
+	if err := h.updatePluginConfigData(r.Context(), plugin, config); err != nil {
+		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to update plugin settings: %w", err))
+		return
+	}
+
+	shared.WriteJSON(w, http.StatusOK, map[string]any{
+		"npmName":  plugin.Name,
+		"settings": plugin.Config,
+		"message":  "Plugin settings updated successfully",
+	})
+}
+
+func (h *PluginHandler) InstallPluginFromURL(w http.ResponseWriter, r *http.Request) {
+	h.installPluginFromURL(w, r, false)
+}
+
+func (h *PluginHandler) UpdatePluginFromURL(w http.ResponseWriter, r *http.Request) {
+	h.installPluginFromURL(w, r, true)
+}
+
+func (h *PluginHandler) UninstallPluginCanonical(w http.ResponseWriter, r *http.Request) {
+	identifier, err := canonicalPluginIdentifier(r)
+	if err != nil {
+		shared.WriteError(w, http.StatusBadRequest, err)
+		return
+	}
+
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("npmName", identifier)
+	req := r.Clone(contextWithRouteContext(r, rctx))
+	h.UninstallPlugin(w, req)
 }
 
 func (h *PluginHandler) GetAllStatistics(w http.ResponseWriter, r *http.Request) {
@@ -514,51 +586,13 @@ func (h *PluginHandler) UploadPlugin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	existing, err := h.pluginRepo.GetByName(r.Context(), manifest.Name)
-	if err == nil && existing != nil {
-		shared.WriteError(w, http.StatusConflict, fmt.Errorf("plugin %s is already installed", manifest.Name))
-		return
-	}
-
-	tempDir, err := os.MkdirTemp("", "plugin-install-*")
+	pluginRecord, err := installPluginArchive(r.Context(), h.pluginRepo, h.pluginManager, fileBytes, false)
 	if err != nil {
-		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to create temp directory: %w", err))
-		return
-	}
-	defer func() { _ = os.RemoveAll(tempDir) }()
-
-	pluginDir, err := h.extractPlugin(fileBytes, tempDir, manifest.Name)
-	if err != nil {
-		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to extract plugin: %v", err))
-		return
-	}
-
-	finalPath := filepath.Join(h.pluginManager.GetPluginDir(), manifest.Name)
-	if err := os.RemoveAll(finalPath); err != nil && !os.IsNotExist(err) {
-		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to prepare installation path: %w", err))
-		return
-	}
-	if err := os.Rename(pluginDir, finalPath); err != nil {
+		if err == domain.ErrPluginAlreadyExists {
+			shared.WriteError(w, http.StatusConflict, fmt.Errorf("plugin %s is already installed", manifest.Name))
+			return
+		}
 		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to install plugin: %w", err))
-		return
-	}
-
-	pluginRecord := &domain.PluginRecord{
-		ID:          uuid.New(),
-		Name:        manifest.Name,
-		Version:     manifest.Version,
-		Author:      manifest.Author,
-		Description: manifest.Description,
-		Status:      domain.PluginStatusInstalled,
-		Config:      manifest.Config,
-		Permissions: manifest.Permissions,
-		Hooks:       convertEventTypesToStrings(manifest.Hooks),
-		InstallPath: finalPath,
-	}
-
-	if err := h.pluginRepo.Create(r.Context(), pluginRecord); err != nil {
-		_ = os.RemoveAll(finalPath)
-		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to register plugin: %w", err))
 		return
 	}
 
@@ -574,105 +608,11 @@ func (h *PluginHandler) UploadPlugin(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *PluginHandler) extractManifest(zipData []byte) (*plugin.PluginInfo, error) {
-	zipReader, err := zip.NewReader(bytes.NewReader(zipData), int64(len(zipData)))
-	if err != nil {
-		return nil, fmt.Errorf("failed to read ZIP: %w", err)
-	}
-
-	for _, f := range zipReader.File {
-		if f.Name == "plugin.json" || strings.HasSuffix(f.Name, "/plugin.json") {
-			rc, err := f.Open()
-			if err != nil {
-				return nil, fmt.Errorf("failed to open plugin.json: %w", err)
-			}
-			defer func() { _ = rc.Close() }()
-
-			var manifest plugin.PluginInfo
-			if err := json.NewDecoder(rc).Decode(&manifest); err != nil {
-				return nil, fmt.Errorf("failed to parse plugin.json: %w", err)
-			}
-
-			if manifest.Name == "" {
-				return nil, fmt.Errorf("plugin name is required")
-			}
-			if manifest.Version == "" {
-				return nil, fmt.Errorf("plugin version is required")
-			}
-			if manifest.Author == "" {
-				return nil, fmt.Errorf("plugin author is required")
-			}
-
-			return &manifest, nil
-		}
-	}
-
-	return nil, fmt.Errorf("plugin.json not found in ZIP")
+	return extractPluginManifest(zipData)
 }
 
 func (h *PluginHandler) extractPlugin(zipData []byte, destDir, pluginName string) (string, error) {
-	zipReader, err := zip.NewReader(bytes.NewReader(zipData), int64(len(zipData)))
-	if err != nil {
-		return "", fmt.Errorf("failed to read ZIP: %w", err)
-	}
-
-	pluginDir := filepath.Join(destDir, pluginName)
-	if err := os.MkdirAll(pluginDir, 0750); err != nil {
-		return "", fmt.Errorf("failed to create plugin directory: %w", err)
-	}
-
-	const maxFileSize = 100 * 1024 * 1024 // 100MB per file limit
-
-	for _, f := range zipReader.File {
-		if strings.Contains(f.Name, "..") {
-			return "", fmt.Errorf("invalid file path: %s", f.Name)
-		}
-
-		destPath := filepath.Clean(filepath.Join(pluginDir, f.Name))
-		if !strings.HasPrefix(destPath, filepath.Clean(pluginDir)+string(os.PathSeparator)) {
-			return "", fmt.Errorf("invalid file path (path traversal): %s", f.Name)
-		}
-
-		if f.FileInfo().IsDir() {
-			if err := os.MkdirAll(destPath, f.Mode()); err != nil {
-				return "", fmt.Errorf("failed to create directory: %w", err)
-			}
-			continue
-		}
-
-		if err := os.MkdirAll(filepath.Dir(destPath), 0750); err != nil {
-			return "", fmt.Errorf("failed to create parent directory: %w", err)
-		}
-
-		rc, err := f.Open()
-		if err != nil {
-			return "", fmt.Errorf("failed to open file in ZIP: %w", err)
-		}
-
-		destFile, err := os.OpenFile(destPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, f.Mode())
-		if err != nil {
-			_ = rc.Close()
-			return "", fmt.Errorf("failed to create file: %w", err)
-		}
-
-		if _, err := io.Copy(destFile, io.LimitReader(rc, maxFileSize)); err != nil {
-			_ = destFile.Close()
-			_ = rc.Close()
-			return "", fmt.Errorf("failed to write file: %w", err)
-		}
-
-		_ = destFile.Close()
-		_ = rc.Close()
-	}
-
-	return pluginDir, nil
-}
-
-func convertEventTypesToStrings(events []plugin.EventType) []string {
-	result := make([]string, len(events))
-	for i, e := range events {
-		result[i] = string(e)
-	}
-	return result
+	return extractPluginArchive(zipData, destDir, pluginName)
 }
 
 func (h *PluginHandler) CleanupExecutions(w http.ResponseWriter, r *http.Request) {
@@ -687,4 +627,94 @@ func (h *PluginHandler) CleanupExecutions(w http.ResponseWriter, r *http.Request
 		"message": fmt.Sprintf("Cleaned up %d old execution records", count),
 		"count":   count,
 	})
+}
+
+func (h *PluginHandler) installPluginFromURL(w http.ResponseWriter, r *http.Request, overwrite bool) {
+	var req struct {
+		PluginURL string `json:"pluginURL"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.PluginURL == "" {
+		shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_REQUEST", "pluginURL is required"))
+		return
+	}
+
+	if !strings.HasPrefix(req.PluginURL, "https://") {
+		shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_URL", "pluginURL must be an https URL"))
+		return
+	}
+
+	archive, err := downloadPluginArchive(req.PluginURL)
+	if err != nil {
+		shared.WriteError(w, http.StatusBadGateway, fmt.Errorf("failed to download plugin archive: %w", err))
+		return
+	}
+
+	record, err := installPluginArchive(r.Context(), h.pluginRepo, h.pluginManager, archive, overwrite)
+	if err != nil {
+		switch err {
+		case domain.ErrPluginAlreadyExists:
+			shared.WriteError(w, http.StatusConflict, fmt.Errorf("plugin is already installed"))
+		case domain.ErrPluginNotFound:
+			shared.WriteError(w, http.StatusNotFound, fmt.Errorf("plugin is not installed"))
+		default:
+			shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to install plugin: %w", err))
+		}
+		return
+	}
+
+	status := http.StatusCreated
+	if overwrite {
+		status = http.StatusOK
+	}
+
+	shared.WriteJSON(w, status, map[string]any{
+		"id":      record.ID,
+		"name":    record.Name,
+		"version": record.Version,
+		"status":  record.Status,
+	})
+}
+
+func (h *PluginHandler) updatePluginConfigData(ctx context.Context, pluginRecord *domain.PluginRecord, config map[string]any) error {
+	if h.pluginManager != nil {
+		if err := h.pluginManager.UpdatePluginConfig(ctx, pluginRecord.Name, config); err != nil && !isMissingRuntimePluginError(err) {
+			return err
+		}
+	}
+
+	if err := pluginRecord.UpdateConfig(config); err != nil {
+		return err
+	}
+
+	return h.pluginRepo.Update(ctx, pluginRecord)
+}
+
+func canonicalPluginIdentifier(r *http.Request) (string, error) {
+	if identifier := pluginIdentifier(r); identifier != "" {
+		return identifier, nil
+	}
+
+	var req struct {
+		NPMName string `json:"npmName"`
+		Name    string `json:"name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		return "", domain.NewDomainError("INVALID_REQUEST", "Invalid request body")
+	}
+	if req.NPMName != "" {
+		return req.NPMName, nil
+	}
+	if req.Name != "" {
+		return req.Name, nil
+	}
+
+	return "", domain.NewDomainError("INVALID_REQUEST", "Plugin name is required")
+}
+
+func isMissingRuntimePluginError(err error) bool {
+	return err != nil && strings.Contains(strings.ToLower(err.Error()), "not found")
+}
+
+func contextWithRouteContext(r *http.Request, rctx *chi.Context) context.Context {
+	return context.WithValue(r.Context(), chi.RouteCtxKey, rctx)
 }

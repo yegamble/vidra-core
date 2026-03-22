@@ -483,33 +483,107 @@ paths:
       tags:
         - Plugins
       summary: Install plugin
-      description: PeerTube-compatible plugin install route reserved by Athena for future implementation.
+      description: PeerTube-compatible plugin install route backed by Athena's URL-based plugin installer.
       operationId: installPluginCanonical
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - pluginURL
+              properties:
+                pluginURL:
+                  type: string
+                  format: uri
       responses:
-        '501':
-          $ref: '#/components/responses/NotImplementedError'
+        '201':
+          description: Plugin installed
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          description: Invalid install request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          $ref: '#/components/responses/ConflictError'
 
   /api/v1/plugins/update:
     post:
       tags:
         - Plugins
       summary: Update plugin
-      description: PeerTube-compatible plugin update route reserved by Athena for future implementation.
+      description: PeerTube-compatible plugin update route backed by Athena's URL-based plugin installer.
       operationId: updatePluginCanonical
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - pluginURL
+              properties:
+                pluginURL:
+                  type: string
+                  format: uri
       responses:
-        '501':
-          $ref: '#/components/responses/NotImplementedError'
+        '200':
+          description: Plugin updated
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          description: Invalid update request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
 
   /api/v1/plugins/uninstall:
     post:
       tags:
         - Plugins
       summary: Uninstall plugin
-      description: PeerTube-compatible plugin uninstall route reserved by Athena for future implementation.
+      description: PeerTube-compatible plugin uninstall route backed by Athena's plugin registry.
       operationId: uninstallPluginCanonical
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                npmName:
+                  type: string
+                name:
+                  type: string
       responses:
-        '501':
-          $ref: '#/components/responses/NotImplementedError'
+        '200':
+          description: Plugin uninstalled
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          description: Invalid uninstall request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
 
   /api/v1/plugins/{npmName}:
     get:
@@ -539,39 +613,79 @@ paths:
       tags:
         - Plugins
       summary: Get registered plugin settings
-      description: PeerTube-compatible plugin settings metadata route reserved by Athena for future implementation.
+      description: PeerTube-compatible plugin settings metadata route backed by Athena's persisted plugin configuration.
       operationId: getRegisteredPluginSettingsCanonical
       parameters:
         - $ref: '#/components/parameters/PluginName'
       responses:
-        '501':
-          $ref: '#/components/responses/NotImplementedError'
+        '200':
+          description: Registered plugin settings
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '404':
+          $ref: '#/components/responses/NotFoundError'
 
   /api/v1/plugins/{npmName}/public-settings:
     get:
       tags:
         - Plugins
       summary: Get public plugin settings
-      description: PeerTube-compatible public plugin settings route reserved by Athena for future implementation.
+      description: PeerTube-compatible public plugin settings route backed by Athena's persisted plugin configuration.
       operationId: getPublicPluginSettingsCanonical
       parameters:
         - $ref: '#/components/parameters/PluginName'
       responses:
-        '501':
-          $ref: '#/components/responses/NotImplementedError'
+        '200':
+          description: Public plugin settings
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '404':
+          $ref: '#/components/responses/NotFoundError'
 
   /api/v1/plugins/{npmName}/settings:
     put:
       tags:
         - Plugins
       summary: Update plugin settings
-      description: PeerTube-compatible plugin settings update route reserved by Athena for future implementation.
+      description: PeerTube-compatible plugin settings update route backed by Athena's persisted plugin configuration.
       operationId: updatePluginSettingsCanonical
       parameters:
         - $ref: '#/components/parameters/PluginName'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                config:
+                  type: object
+                  additionalProperties: true
+                settings:
+                  type: object
+                  additionalProperties: true
       responses:
-        '501':
-          $ref: '#/components/responses/NotImplementedError'
+        '200':
+          description: Plugin settings updated
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          description: Invalid settings request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
 
 components:
   securitySchemes:
@@ -812,6 +926,12 @@ components:
 
     NotFoundError:
       description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    ConflictError:
+      description: Resource conflict
       content:
         application/json:
           schema:

@@ -5,11 +5,11 @@
     },
     "item": [
       {
-        "id": "7583a1e1-4535-4c45-aea5-80b9d35039b1",
+        "id": "e498f6cc-543e-4330-aa0b-cdd21bd72d69",
         "name": "Account Blocklist - Happy Path",
         "item": [
           {
-            "id": "6f82760f-8e4f-4809-b28c-82859723c6f1",
+            "id": "c02779c5-c485-4d1d-bb8e-19e30c1480fc",
             "name": "POST /auth/register - Create block target account",
             "request": {
               "url": {
@@ -40,20 +40,20 @@
               {
                 "listen": "prerequest",
                 "script": {
-                  "id": "6249df0b-05d8-427c-a4d7-9423a977eefe",
+                  "id": "855c4f5e-6105-42f6-b97c-cb207f14e857",
                   "type": "text/javascript",
                   "exec": [
                     "const stamp = Date.now();",
                     "pm.collectionVariables.set('account_name', `blockeduser${stamp}`);",
                     "pm.collectionVariables.set('block_account_email', `blockeduser${stamp}@example.com`);"
                   ],
-                  "_lastExecutionId": "e560a92c-f936-456d-bbb5-dc81cce6e168"
+                  "_lastExecutionId": "e0f4727e-d2b0-4038-9334-298b89ea8f6e"
                 }
               },
               {
                 "listen": "test",
                 "script": {
-                  "id": "fb77ccb9-7a95-4aa2-b3ae-ca269152004f",
+                  "id": "e42309e5-cb1d-4b4a-9310-11d1872a16d2",
                   "type": "text/javascript",
                   "exec": [
                     "pm.test('Status is 201', () => pm.response.to.have.status(201));",
@@ -65,13 +65,13 @@
                     "pm.environment.set('block_account_id', json.data.user.id);",
                     "pm.environment.set('account_name', pm.collectionVariables.get('account_name'));"
                   ],
-                  "_lastExecutionId": "da84ab32-1f50-4ba5-90b0-f43fabd4e039"
+                  "_lastExecutionId": "fd4ef725-2143-4ab6-b8c4-8bde637ec50f"
                 }
               }
             ]
           },
           {
-            "id": "e1b1468a-92a1-40b9-9561-3f5a6f44bf2a",
+            "id": "78b4ac39-ef63-47f8-9ff0-2bfbc039d493",
             "name": "POST /api/v1/blocklist/accounts - Block account",
             "request": {
               "url": {
@@ -108,18 +108,18 @@
               {
                 "listen": "test",
                 "script": {
-                  "id": "79ceb1dd-0e11-4f0d-a717-1d3852891149",
+                  "id": "a250e4c4-5466-4110-b05a-4b03bb2ec000",
                   "type": "text/javascript",
                   "exec": [
                     "pm.test('Status is 204 or 201', () => pm.expect([201, 204]).to.include(pm.response.code));"
                   ],
-                  "_lastExecutionId": "209efdfa-1a39-4878-8b3e-551cdc68e186"
+                  "_lastExecutionId": "334f4c47-028d-4cab-b8f6-e58fd7fd40b6"
                 }
               }
             ]
           },
           {
-            "id": "f37ec243-68a3-47a2-8de9-585d1aaecc2c",
+            "id": "4ad6a291-6992-4791-a9d7-8e02c31beb45",
             "name": "GET /api/v1/blocklist/accounts - List blocked accounts",
             "request": {
               "url": {
@@ -148,7 +148,7 @@
               {
                 "listen": "test",
                 "script": {
-                  "id": "3d5eecb9-ffff-4b70-a65e-bf427a5b9b95",
+                  "id": "108d112f-54aa-46c3-9ce2-ae7ac2328436",
                   "type": "text/javascript",
                   "exec": [
                     "pm.test('Status is 200', () => pm.response.to.have.status(200));",
@@ -159,13 +159,13 @@
                     "  pm.expect(json.meta).to.have.property('total');",
                     "});"
                   ],
-                  "_lastExecutionId": "70d1f2ec-348f-465a-89a0-dd033173d80a"
+                  "_lastExecutionId": "3faf2467-c632-4f3d-b518-154520810225"
                 }
               }
             ]
           },
           {
-            "id": "a7d63ade-d6e9-4054-9f66-c16b3e751d8e",
+            "id": "8771cf9b-f890-4f27-9270-2430db7c156c",
             "name": "DELETE /api/v1/blocklist/accounts/:accountName - Unblock account",
             "request": {
               "url": {
@@ -195,12 +195,12 @@
               {
                 "listen": "test",
                 "script": {
-                  "id": "22ef9194-8958-4b70-a88c-36e96ee146a3",
+                  "id": "e34517e7-db64-4136-aa7f-05781192320b",
                   "type": "text/javascript",
                   "exec": [
                     "pm.test('Status is 204', () => pm.response.to.have.status(204));"
                   ],
-                  "_lastExecutionId": "7b6f1af3-5267-475d-8a52-86e1c5b9bc22"
+                  "_lastExecutionId": "eca65db1-b10d-4596-8ee5-ab746211cc7e"
                 }
               }
             ]
@@ -209,11 +209,11 @@
         "event": []
       },
       {
-        "id": "7ad2b63d-8125-465a-a566-d1ea263cb5ba",
+        "id": "13d3c3c8-5636-4aca-87cb-94d2e8e94d55",
         "name": "Server Blocklist - Happy Path",
         "item": [
           {
-            "id": "5192402f-fa65-4e49-9314-9477691f5af0",
+            "id": "dddc9b28-b3ed-43f0-89fd-e123864ba7e3",
             "name": "POST /api/v1/blocklist/servers - Block server",
             "request": {
               "url": {
@@ -250,18 +250,18 @@
               {
                 "listen": "test",
                 "script": {
-                  "id": "f37a8091-74d5-444a-8620-438644d3a2ce",
+                  "id": "eb77bcdb-5602-441a-9af1-6db36609d2cd",
                   "type": "text/javascript",
                   "exec": [
                     "pm.test('Status is 204 or 201', () => pm.expect([201, 204]).to.include(pm.response.code));"
                   ],
-                  "_lastExecutionId": "0f255c0c-6c41-4d7b-87d8-18562e6f93ba"
+                  "_lastExecutionId": "952b34d1-f326-432b-99b2-01319315b438"
                 }
               }
             ]
           },
           {
-            "id": "dee20526-d59a-44a8-a351-2671e15ad99c",
+            "id": "042ea762-1c22-4af5-ba0f-bf1c0da22a5f",
             "name": "GET /api/v1/blocklist/servers - List blocked servers",
             "request": {
               "url": {
@@ -290,7 +290,7 @@
               {
                 "listen": "test",
                 "script": {
-                  "id": "fc7d3335-61b3-4f92-8412-c527092f20a4",
+                  "id": "13e2b44a-c27b-4e3d-a4e6-afd080a36d8e",
                   "type": "text/javascript",
                   "exec": [
                     "pm.test('Status is 200', () => pm.response.to.have.status(200));",
@@ -301,13 +301,13 @@
                     "  pm.expect(json.meta).to.have.property('total');",
                     "});"
                   ],
-                  "_lastExecutionId": "3ab0ba83-9c5e-4593-a031-cefa25b6e245"
+                  "_lastExecutionId": "7567fe44-d977-40cf-ba4e-d8175a3905db"
                 }
               }
             ]
           },
           {
-            "id": "5d26a20b-8a96-4883-96f4-d20fbfe05ac6",
+            "id": "97b8533f-d9be-4b1a-8ea3-33c806a798be",
             "name": "DELETE /api/v1/blocklist/servers/:host - Unblock server",
             "request": {
               "url": {
@@ -337,12 +337,12 @@
               {
                 "listen": "test",
                 "script": {
-                  "id": "1f4324b1-2083-4784-ba73-344cf998aff1",
+                  "id": "1b4bf409-5f4d-4d37-9857-dbc1ef10f85e",
                   "type": "text/javascript",
                   "exec": [
                     "pm.test('Status is 204', () => pm.response.to.have.status(204));"
                   ],
-                  "_lastExecutionId": "2278a678-cb22-4e33-8d1c-46a3068ebdbc"
+                  "_lastExecutionId": "cb40afb8-968a-472b-b7df-5c9527dbf50a"
                 }
               }
             ]
@@ -351,11 +351,11 @@
         "event": []
       },
       {
-        "id": "4510c84f-5541-44f9-87c2-ef587a12ba98",
+        "id": "4b0b98a6-5c69-4c2c-ae4c-f5ae7c82d220",
         "name": "Blocklist - Error Path",
         "item": [
           {
-            "id": "05c359ad-de57-40ee-b112-775b2c154403",
+            "id": "3eb62af0-f139-4a49-a43d-9cca3c2442e3",
             "name": "GET /api/v1/blocklist/accounts - Unauthenticated (401)",
             "request": {
               "url": {
@@ -378,18 +378,18 @@
               {
                 "listen": "test",
                 "script": {
-                  "id": "c613ca2e-aa1a-4e40-a23f-b7548441531a",
+                  "id": "188ed17c-35c5-4f7b-9ac8-2a19e655b5ff",
                   "type": "text/javascript",
                   "exec": [
                     "pm.test('Status is 401', () => pm.response.to.have.status(401));"
                   ],
-                  "_lastExecutionId": "1788e9ef-8bbf-4e77-a794-39e6fc599226"
+                  "_lastExecutionId": "d29558f4-5c32-4fc0-aab3-acdde36a911b"
                 }
               }
             ]
           },
           {
-            "id": "de271658-79cd-4e60-b5ce-306c4e18c6ba",
+            "id": "7ba21af6-72e1-4531-bedb-723d48438c4c",
             "name": "POST /api/v1/blocklist/accounts - Missing body (400)",
             "request": {
               "url": {
@@ -426,18 +426,18 @@
               {
                 "listen": "test",
                 "script": {
-                  "id": "42ff2b08-244c-48ab-a1f7-6e3118e3d900",
+                  "id": "b8d20b46-94ec-4dd5-bf66-5b0c98ac3f86",
                   "type": "text/javascript",
                   "exec": [
                     "pm.test('Status is 400 or 422', () => pm.expect([400, 422]).to.include(pm.response.code));"
                   ],
-                  "_lastExecutionId": "327650e8-8e0a-4e74-be32-3c5f24c21477"
+                  "_lastExecutionId": "b057264e-5137-4a8e-90c4-4754c0f546a0"
                 }
               }
             ]
           },
           {
-            "id": "875f216e-de9c-44da-bccf-b1d9c12ff40b",
+            "id": "b278d4cd-54a4-498b-8402-538aed2eefe8",
             "name": "GET /api/v1/blocklist/status - Status check (authenticated)",
             "request": {
               "url": {
@@ -471,12 +471,12 @@
               {
                 "listen": "test",
                 "script": {
-                  "id": "c5ab3eeb-6503-4184-a6e6-0ffbbf012d94",
+                  "id": "7e2b592e-eeae-4dba-9586-2e9cb6055427",
                   "type": "text/javascript",
                   "exec": [
                     "pm.test('Status is 200', () => pm.response.to.have.status(200));"
                   ],
-                  "_lastExecutionId": "17bd4cd5-b2a5-4ee5-8831-6b79d1ad269e"
+                  "_lastExecutionId": "5a662c0f-8074-4bf9-a4d8-221b0f7dd5d7"
                 }
               }
             ]
@@ -536,7 +536,7 @@
   "environment": {
     "_": {
       "postman_variable_scope": "environment",
-      "postman_exported_at": "2026-03-22T02:36:54.558Z",
+      "postman_exported_at": "2026-03-22T03:36:22.285Z",
       "postman_exported_using": "Newman/6.1.3"
     },
     "id": "0f7a1111-2222-4333-8444-bbbbbbbbbbbb",
@@ -549,12 +549,12 @@
       },
       {
         "type": "any",
-        "value": "user_1774146915043",
+        "value": "user_1774150570893",
         "key": "username"
       },
       {
         "type": "any",
-        "value": "user_1774146915043@example.com",
+        "value": "user_1774150570893@example.com",
         "key": "email"
       },
       {
@@ -564,17 +564,17 @@
       },
       {
         "type": "any",
-        "value": "98770abc-2827-4efa-a02a-ca053dc7b927",
+        "value": "6a70658f-797a-49da-9cdf-34c9853ebfc5",
         "key": "user_id"
       },
       {
         "type": "any",
-        "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzQxNDc4MjYsImlhdCI6MTc3NDE0NjkyNiwianRpIjoiNDdlZDJmNTQtMjI3Yy00ZjcwLTlmOGUtZjI2MjFjOTM0YjcyIiwicm9sZSI6InVzZXIiLCJzdWIiOiI5ODc3MGFiYy0yODI3LTRlZmEtYTAyYS1jYTA1M2RjN2I5MjcifQ.oID8Tpf95Fatmq8YhAVnNDlXSITJhyEYu8lD4suIjFQ",
+        "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzQxNTE0NzEsImlhdCI6MTc3NDE1MDU3MSwianRpIjoiYTQ3MzcxYzEtMGFkNy00ODNiLThiZWEtMTA0YWIwMDY0YmM4Iiwicm9sZSI6InVzZXIiLCJzdWIiOiI2YTcwNjU4Zi03OTdhLTQ5ZGEtOWNkZi0zNGM5ODUzZWJmYzUifQ.E3KsIqL8I5yTf-PpBenSXa2vA3MIS_jqlJB4V9356OA",
         "key": "access_token"
       },
       {
         "type": "any",
-        "value": "823e00dc-eb2b-4c35-8dd1-3b6cd818e7f6",
+        "value": "971c660e-2b39-42d5-9049-fef49b0cd487",
         "key": "refresh_token"
       },
       {
@@ -584,27 +584,27 @@
       },
       {
         "type": "any",
-        "value": "606e1a61-d827-42c7-8310-a02c9fdf3506",
+        "value": "5c624479-776b-44f3-8aca-298b76d41b93",
         "key": "uploadedVideoId"
       },
       {
         "type": "any",
-        "value": "9cae4a61-93e1-48c9-af92-2bac9c244cf9",
+        "value": "cdd64e14-b883-4cb8-8332-ffa75abfe6dc",
         "key": "video_id"
       },
       {
         "type": "any",
-        "value": "d5cfdd31-2552-4686-9a52-bd8b1c171221",
+        "value": "36e1a399-b557-46f0-9853-f0ee93ccebea",
         "key": "test_video_id"
       },
       {
         "type": "any",
-        "value": "test-video-1774146993574.mp4",
+        "value": "test-video-1774150576560.mp4",
         "key": "test_filename"
       },
       {
         "type": "any",
-        "value": "97eba27c-5560-4930-bd9b-425b7024a2a3",
+        "value": "c3241eae-65b9-4707-8eff-280cdae84b62",
         "key": "upload_session_id"
       },
       {
@@ -614,38 +614,98 @@
       },
       {
         "type": "any",
-        "value": "5090c218-f70b-4496-9d64-f9eb152eeeca",
+        "value": "d4f6f448-b85e-498b-86b1-020c6fbd607d",
         "key": "upload_video_id"
       },
       {
         "type": "any",
-        "value": "aa310f25-8af2-4b60-9466-d18b9d09474d",
+        "value": "f7f7969b-e9c1-42ba-9bc5-a2a731cc3679",
         "key": "incomplete_upload_session_id"
       },
       {
         "type": "any",
-        "value": "4631b9a5-413c-416f-bdde-f6ece9ca2ec5",
+        "value": "8de9d6b6-78b9-42c5-880b-83c2a860b220",
         "key": "channel_id"
       },
       {
         "type": "any",
-        "value": "9823f4eb-dca7-4f23-93a6-01957ba97e01",
+        "value": "0a425c6a-7d2e-4e84-bfd5-3befcda7f758",
         "key": "subscription_channel_id"
       },
       {
         "type": "any",
-        "value": "714fa53e-47da-4c9d-b5db-c78d07726389",
+        "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzQxNTE0ODAsImlhdCI6MTc3NDE1MDU4MCwianRpIjoiNzFmMTZlOWItM2E3MC00ZWJiLWJkNTctZDZhMTI5MWJmMmIwIiwicm9sZSI6ImFkbWluIiwic3ViIjoiZjE3MDc2MDMtNWIxMi00YzAzLTk4M2ItN2VhZGM5NzA2OTM4In0.u6rMDod3k2WyNs9EuXURRQxbz1otGmWG34j3klVnigQ",
+        "key": "admin_access_token"
+      },
+      {
+        "type": "any",
+        "value": "ptcollab1774150580656",
+        "key": "collaborator_username"
+      },
+      {
+        "type": "any",
+        "value": "ptcollab1774150580656@example.com",
+        "key": "collaborator_email"
+      },
+      {
+        "type": "any",
+        "value": "Password123!",
+        "key": "collaborator_password"
+      },
+      {
+        "type": "any",
+        "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzQxNTE0ODAsImlhdCI6MTc3NDE1MDU4MCwianRpIjoiNmI1YzNiMTItMjg0OC00OTM1LTkwZjItMTM0N2RlZTBlMWEwIiwicm9sZSI6InVzZXIiLCJzdWIiOiI4ODQyM2VhNS1iYTNiLTQ1YWUtYWRlMC1lOWZhNWU1YzBhZjUifQ.d4AFuiHbYQvaV7NuRtvO-hS1nciTkZQ8htbDd-oEYQ8",
+        "key": "collaborator_access_token"
+      },
+      {
+        "type": "any",
+        "value": "ptcanonical1774150581045",
+        "key": "canonical_channel_handle"
+      },
+      {
+        "type": "any",
+        "value": "5ab1491f-aa2a-4a13-90c2-1d8084fb772f",
+        "key": "canonical_channel_id"
+      },
+      {
+        "type": "any",
+        "value": "e0d48d26-6ea1-46b4-a4fb-64840ca88725",
+        "key": "canonical_collaborator_id"
+      },
+      {
+        "type": "any",
+        "value": "8420c9d4-db60-401f-b0b5-4698fb2d5f41",
+        "key": "runner_registration_token"
+      },
+      {
+        "type": "any",
+        "value": "719499aa-8b05-4f26-b041-98d10c1e6e48",
+        "key": "runner_registration_token_id"
+      },
+      {
+        "type": "any",
+        "value": "1c091070-6878-4b82-b2e8-afdcf72c977d",
+        "key": "runner_id"
+      },
+      {
+        "type": "any",
+        "value": "324996b3-7d25-4449-a9ea-9c0849cbc592",
+        "key": "runner_token"
+      },
+      {
+        "type": "any",
+        "value": "c9807231-d491-403f-b196-dc98fef56e25",
         "key": "block_account_id"
       },
       {
         "type": "any",
-        "value": "blockeduser1774147018115",
+        "value": "blockeduser1774150582887",
         "key": "account_name"
       }
     ]
   },
   "globals": {
-    "id": "c3038f95-ff89-4fc7-9a1c-79a2b56129d3",
+    "id": "b016cfd7-4b82-45f2-b3cf-69a45c97d6a0",
     "values": []
   },
   "run": {
@@ -697,10 +757,10 @@
       }
     },
     "timings": {
-      "responseAverage": 107.1,
-      "responseMin": 12,
-      "responseMax": 525,
-      "responseSd": 146.0126364394534,
+      "responseAverage": 28.9,
+      "responseMin": 4,
+      "responseMax": 211,
+      "responseSd": 60.787251953020565,
       "dnsAverage": 0,
       "dnsMin": 0,
       "dnsMax": 0,
@@ -709,8 +769,8 @@
       "firstByteMin": 0,
       "firstByteMax": 0,
       "firstByteSd": 0,
-      "started": 1774147018039,
-      "completed": 1774147020511
+      "started": 1774150582867,
+      "completed": 1774150583525
     },
     "executions": [
       {
@@ -723,11 +783,11 @@
           "eof": false,
           "bof": true,
           "cr": false,
-          "ref": "1e88c026-fcbc-4779-8ee9-822a50fef18e",
-          "httpRequestId": "e6a013ca-9206-44ba-bf26-93892c51af7e"
+          "ref": "ff5db6f4-8c48-40ed-891c-180e4862b90d",
+          "httpRequestId": "6145608a-ff2d-4067-8af5-400f2d65aa87"
         },
         "item": {
-          "id": "6f82760f-8e4f-4809-b28c-82859723c6f1",
+          "id": "c02779c5-c485-4d1d-bb8e-19e30c1480fc",
           "name": "POST /auth/register - Create block target account",
           "request": {
             "url": {
@@ -758,20 +818,20 @@
             {
               "listen": "prerequest",
               "script": {
-                "id": "6249df0b-05d8-427c-a4d7-9423a977eefe",
+                "id": "855c4f5e-6105-42f6-b97c-cb207f14e857",
                 "type": "text/javascript",
                 "exec": [
                   "const stamp = Date.now();",
                   "pm.collectionVariables.set('account_name', `blockeduser${stamp}`);",
                   "pm.collectionVariables.set('block_account_email', `blockeduser${stamp}@example.com`);"
                 ],
-                "_lastExecutionId": "e560a92c-f936-456d-bbb5-dc81cce6e168"
+                "_lastExecutionId": "e0f4727e-d2b0-4038-9334-298b89ea8f6e"
               }
             },
             {
               "listen": "test",
               "script": {
-                "id": "fb77ccb9-7a95-4aa2-b3ae-ca269152004f",
+                "id": "e42309e5-cb1d-4b4a-9310-11d1872a16d2",
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('Status is 201', () => pm.response.to.have.status(201));",
@@ -783,7 +843,7 @@
                   "pm.environment.set('block_account_id', json.data.user.id);",
                   "pm.environment.set('account_name', pm.collectionVariables.get('account_name'));"
                 ],
-                "_lastExecutionId": "da84ab32-1f50-4ba5-90b0-f43fabd4e039"
+                "_lastExecutionId": "fd4ef725-2143-4ab6-b8c4-8bde637ec50f"
               }
             }
           ]
@@ -824,7 +884,7 @@
             },
             {
               "key": "Postman-Token",
-              "value": "4edd752a-164c-40b8-b73f-1403ebf43dbb",
+              "value": "8bfac58e-d263-4867-b355-3a7bc997c41c",
               "system": true
             },
             {
@@ -851,11 +911,11 @@
           "method": "POST",
           "body": {
             "mode": "raw",
-            "raw": "{\n  \"username\": \"blockeduser1774147018115\",\n  \"email\": \"blockeduser1774147018115@example.com\",\n  \"password\": \"Passw0rd!123\",\n  \"display_name\": \"Blocked User\"\n}"
+            "raw": "{\n  \"username\": \"blockeduser1774150582887\",\n  \"email\": \"blockeduser1774150582887@example.com\",\n  \"password\": \"Passw0rd!123\",\n  \"display_name\": \"Blocked User\"\n}"
           }
         },
         "response": {
-          "id": "1adff916-aa11-4368-b42e-4f8f02b2a3ef",
+          "id": "3631fa55-66a8-4f9e-a2ea-e3dbc5dfeeea",
           "status": "Created",
           "code": 201,
           "header": [
@@ -873,7 +933,7 @@
             },
             {
               "key": "Location",
-              "value": "/api/v1/users/714fa53e-47da-4c9d-b5db-c78d07726389"
+              "value": "/api/v1/users/c9807231-d491-403f-b196-dc98fef56e25"
             },
             {
               "key": "Permissions-Policy",
@@ -897,7 +957,7 @@
             },
             {
               "key": "X-Request-Id",
-              "value": "1_XcX34QIoduO3_ejQpuoQ"
+              "value": "Rvz-468vW7MEYMb6SJHz1Q"
             },
             {
               "key": "X-Xss-Protection",
@@ -905,11 +965,11 @@
             },
             {
               "key": "Date",
-              "value": "Sun, 22 Mar 2026 02:36:58 GMT"
+              "value": "Sun, 22 Mar 2026 03:36:23 GMT"
             },
             {
               "key": "Content-Length",
-              "value": "506"
+              "value": "508"
             }
           ],
           "stream": {
@@ -994,12 +1054,12 @@
               81,
               120,
               78,
-              68,
-              99,
-              53,
-              77,
               84,
-              103,
+              69,
+              48,
+              79,
+              68,
+              77,
               115,
               73,
               109,
@@ -1016,13 +1076,13 @@
               78,
               68,
               69,
-              48,
-              78,
-              122,
-              65,
-              120,
-              79,
-              67,
+              49,
+              77,
+              68,
+              85,
+              52,
+              77,
+              121,
               119,
               105,
               97,
@@ -1033,54 +1093,54 @@
               106,
               111,
               105,
-              89,
-              84,
-              104,
-              109,
-              79,
-              87,
-              89,
-              122,
-              90,
+              77,
               71,
-              73,
-              116,
-              78,
+              89,
+              120,
+              77,
+              68,
+              74,
+              104,
+              77,
               109,
-              85,
-              53,
-              79,
+              89,
+              116,
+              77,
+              122,
+              70,
+              105,
+              90,
               83,
               48,
               48,
               89,
-              122,
-              66,
-              104,
+              84,
+              74,
+              107,
               76,
-              84,
-              104,
-              105,
-              77,
-              106,
-              103,
-              116,
-              77,
-              122,
-              85,
-              122,
-              89,
-              84,
-              73,
-              120,
+              87,
+              74,
+              107,
               90,
-              71,
-              73,
-              50,
-              78,
-              109,
+              84,
               69,
-              48,
+              116,
+              79,
+              84,
+              74,
+              109,
+              89,
+              87,
+              86,
+              105,
+              90,
+              106,
+              70,
+              109,
+              90,
+              87,
+              69,
+              51,
               73,
               105,
               119,
@@ -1111,102 +1171,102 @@
               105,
               79,
               105,
-              73,
-              51,
-              77,
-              84,
-              82,
-              109,
-              89,
-              84,
-              85,
-              122,
-              90,
-              83,
-              48,
-              48,
-              78,
-              50,
-              82,
-              104,
-              76,
-              84,
-              82,
+              74,
               106,
               79,
-              87,
+              84,
+              103,
+              119,
+              78,
+              122,
+              73,
+              122,
+              77,
+              83,
+              49,
+              107,
+              78,
+              68,
+              107,
+              120,
+              76,
+              84,
               81,
+              119,
+              77,
+              50,
+              89,
               116,
               89,
               106,
-              86,
-              107,
-              89,
+              69,
+              53,
+              78,
               105,
               49,
-              106,
-              78,
-              122,
-              104,
               107,
-              77,
-              68,
-              99,
-              51,
-              77,
-              106,
               89,
               122,
-              79,
-              68,
               107,
+              52,
+              90,
+              109,
+              86,
+              109,
+              78,
+              84,
+              90,
+              108,
+              77,
+              106,
+              85,
               105,
               102,
               81,
               46,
-              67,
-              66,
-              78,
-              106,
-              79,
-              78,
+              116,
+              55,
               57,
-              100,
-              86,
-              48,
               116,
-              97,
-              104,
-              76,
-              109,
-              115,
-              99,
-              114,
-              119,
-              103,
-              115,
               118,
-              74,
-              108,
-              101,
-              115,
-              50,
-              119,
-              120,
-              86,
-              84,
-              112,
-              122,
-              52,
-              118,
-              49,
-              106,
+              111,
               107,
-              116,
-              95,
-              110,
+              55,
+              98,
+              108,
+              106,
+              99,
+              84,
+              52,
               117,
-              85,
+              70,
+              53,
+              69,
+              72,
+              75,
+              69,
+              69,
+              102,
+              90,
+              121,
+              83,
+              45,
+              75,
+              73,
+              75,
+              108,
+              99,
+              100,
+              81,
+              116,
+              76,
+              111,
+              117,
+              98,
+              101,
+              122,
+              55,
+              103,
               34,
               44,
               34,
@@ -1243,42 +1303,42 @@
               34,
               58,
               34,
-              53,
-              100,
-              57,
-              57,
+              55,
               49,
-              54,
-              97,
-              50,
-              45,
-              100,
-              57,
-              100,
-              56,
-              45,
-              52,
-              56,
-              49,
-              51,
-              45,
-              56,
-              57,
-              57,
-              52,
-              45,
-              100,
-              97,
               101,
-              99,
-              56,
-              48,
-              102,
-              102,
-              54,
               51,
-              54,
+              97,
+              102,
+              98,
               50,
+              45,
+              102,
+              49,
+              53,
+              98,
+              45,
+              52,
+              49,
+              100,
+              101,
+              45,
+              97,
+              48,
+              97,
+              99,
+              45,
+              52,
+              102,
+              52,
+              98,
+              48,
+              53,
+              49,
+              53,
+              57,
+              52,
+              48,
+              97,
               34,
               44,
               34,
@@ -1315,23 +1375,23 @@
               50,
               84,
               48,
-              50,
+              51,
               58,
               51,
               54,
               58,
-              53,
-              56,
+              50,
+              50,
               46,
+              57,
+              55,
+              51,
+              51,
+              53,
               52,
               49,
-              54,
-              50,
-              50,
-              53,
-              56,
-              51,
-              52,
+              55,
+              55,
               90,
               34,
               44,
@@ -1390,14 +1450,14 @@
               55,
               52,
               49,
-              52,
-              55,
-              48,
-              49,
-              56,
-              49,
-              49,
               53,
+              48,
+              53,
+              56,
+              50,
+              56,
+              56,
+              55,
               64,
               101,
               120,
@@ -1418,42 +1478,42 @@
               34,
               58,
               34,
-              55,
-              49,
-              52,
-              102,
-              97,
-              53,
-              51,
-              101,
-              45,
-              52,
-              55,
-              100,
-              97,
-              45,
-              52,
               99,
               57,
-              100,
-              45,
-              98,
-              53,
-              100,
-              98,
-              45,
-              99,
-              55,
               56,
-              100,
               48,
               55,
-              55,
               50,
-              54,
               51,
-              56,
+              49,
+              45,
+              100,
+              52,
               57,
+              49,
+              45,
+              52,
+              48,
+              51,
+              102,
+              45,
+              98,
+              49,
+              57,
+              54,
+              45,
+              100,
+              99,
+              57,
+              56,
+              102,
+              101,
+              102,
+              53,
+              54,
+              101,
+              50,
+              53,
               34,
               44,
               34,
@@ -1513,23 +1573,23 @@
               50,
               84,
               48,
-              50,
+              51,
               58,
               51,
               54,
               58,
-              53,
-              56,
+              50,
+              50,
               46,
+              57,
+              55,
+              51,
+              51,
+              53,
               52,
               49,
-              54,
-              50,
-              50,
-              53,
-              56,
-              51,
-              52,
+              55,
+              55,
               90,
               34,
               44,
@@ -1561,14 +1621,14 @@
               55,
               52,
               49,
-              52,
-              55,
-              48,
-              49,
-              56,
-              49,
-              49,
               53,
+              48,
+              53,
+              56,
+              50,
+              56,
+              56,
+              55,
               34,
               125,
               125,
@@ -1592,10 +1652,10 @@
             ]
           },
           "cookie": [],
-          "responseTime": 525,
+          "responseTime": 211,
           "responseSize": 674
         },
-        "id": "6f82760f-8e4f-4809-b28c-82859723c6f1",
+        "id": "c02779c5-c485-4d1d-bb8e-19e30c1480fc",
         "assertions": [
           {
             "assertion": "Status is 201",
@@ -1609,15 +1669,15 @@
       },
       {
         "cursor": {
-          "ref": "fedb39c9-247a-45d3-abe6-67de1619aebd",
+          "ref": "4fb9db70-f354-482e-aebc-eb0c7b4a4932",
           "length": 10,
           "cycles": 1,
           "position": 1,
           "iteration": 0,
-          "httpRequestId": "246294e2-629b-414a-8489-42a17012b11b"
+          "httpRequestId": "24ef4a81-4285-4f90-9c43-984357f38fbe"
         },
         "item": {
-          "id": "e1b1468a-92a1-40b9-9561-3f5a6f44bf2a",
+          "id": "78b4ac39-ef63-47f8-9ff0-2bfbc039d493",
           "name": "POST /api/v1/blocklist/accounts - Block account",
           "request": {
             "url": {
@@ -1654,12 +1714,12 @@
             {
               "listen": "test",
               "script": {
-                "id": "79ceb1dd-0e11-4f0d-a717-1d3852891149",
+                "id": "a250e4c4-5466-4110-b05a-4b03bb2ec000",
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('Status is 204 or 201', () => pm.expect([201, 204]).to.include(pm.response.code));"
                 ],
-                "_lastExecutionId": "209efdfa-1a39-4878-8b3e-551cdc68e186"
+                "_lastExecutionId": "334f4c47-028d-4cab-b8f6-e58fd7fd40b6"
               }
             }
           ]
@@ -1687,7 +1747,7 @@
             },
             {
               "key": "Authorization",
-              "value": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzQxNDc4MjYsImlhdCI6MTc3NDE0NjkyNiwianRpIjoiNDdlZDJmNTQtMjI3Yy00ZjcwLTlmOGUtZjI2MjFjOTM0YjcyIiwicm9sZSI6InVzZXIiLCJzdWIiOiI5ODc3MGFiYy0yODI3LTRlZmEtYTAyYS1jYTA1M2RjN2I5MjcifQ.oID8Tpf95Fatmq8YhAVnNDlXSITJhyEYu8lD4suIjFQ"
+              "value": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzQxNTE0NzEsImlhdCI6MTc3NDE1MDU3MSwianRpIjoiYTQ3MzcxYzEtMGFkNy00ODNiLThiZWEtMTA0YWIwMDY0YmM4Iiwicm9sZSI6InVzZXIiLCJzdWIiOiI2YTcwNjU4Zi03OTdhLTQ5ZGEtOWNkZi0zNGM5ODUzZWJmYzUifQ.E3KsIqL8I5yTf-PpBenSXa2vA3MIS_jqlJB4V9356OA"
             },
             {
               "key": "User-Agent",
@@ -1706,7 +1766,7 @@
             },
             {
               "key": "Postman-Token",
-              "value": "0c32194a-d80b-4c4e-9b87-f5a6c0eb7a89",
+              "value": "4bce4e0e-5ebe-4b1b-a108-849474cd1a54",
               "system": true
             },
             {
@@ -1733,11 +1793,11 @@
           "method": "POST",
           "body": {
             "mode": "raw",
-            "raw": "{\n  \"accountId\": \"714fa53e-47da-4c9d-b5db-c78d07726389\",\n  \"accountName\": \"blockeduser1774147018115\"\n}"
+            "raw": "{\n  \"accountId\": \"c9807231-d491-403f-b196-dc98fef56e25\",\n  \"accountName\": \"blockeduser1774150582887\"\n}"
           }
         },
         "response": {
-          "id": "085ead8c-02cd-487b-ba22-8863be0bdb8c",
+          "id": "4e51740f-9037-4541-b818-3c5fc40f9ef3",
           "status": "Created",
           "code": 201,
           "header": [
@@ -1775,7 +1835,7 @@
             },
             {
               "key": "X-Request-Id",
-              "value": "bg03Y58zY87BC_v7IbjxIg"
+              "value": "nH_3J_N80SASVYGJ_JqA8A"
             },
             {
               "key": "X-Xss-Protection",
@@ -1783,7 +1843,7 @@
             },
             {
               "key": "Date",
-              "value": "Sun, 22 Mar 2026 02:36:58 GMT"
+              "value": "Sun, 22 Mar 2026 03:36:23 GMT"
             },
             {
               "key": "Content-Length",
@@ -1808,42 +1868,42 @@
               34,
               58,
               34,
-              100,
-              98,
-              99,
-              50,
-              52,
+              102,
+              49,
               51,
-              97,
-              50,
-              45,
-              102,
-              100,
-              55,
-              102,
-              45,
-              52,
-              100,
-              52,
-              99,
-              45,
               57,
               50,
-              56,
-              49,
+              54,
+              102,
+              50,
+              45,
+              53,
+              50,
+              101,
+              50,
+              45,
+              52,
+              54,
+              51,
+              102,
               45,
               98,
+              55,
+              54,
+              49,
+              45,
+              100,
+              97,
+              56,
+              56,
+              99,
+              51,
+              102,
+              49,
               54,
               56,
-              49,
+              99,
               54,
-              48,
-              49,
-              57,
-              102,
-              51,
-              55,
-              97,
               34,
               44,
               34,
@@ -1856,42 +1916,42 @@
               34,
               58,
               34,
-              57,
-              56,
-              55,
+              54,
+              97,
               55,
               48,
-              97,
-              98,
-              99,
-              45,
-              50,
+              54,
+              53,
               56,
-              50,
+              102,
+              45,
               55,
+              57,
+              55,
+              97,
               45,
               52,
-              101,
-              102,
+              57,
+              100,
               97,
               45,
-              97,
-              48,
-              50,
-              97,
-              45,
+              57,
               99,
-              97,
-              48,
+              100,
+              102,
+              45,
+              51,
+              52,
+              99,
+              57,
+              56,
               53,
               51,
-              100,
-              99,
-              55,
+              101,
               98,
-              57,
-              50,
-              55,
+              102,
+              99,
+              53,
               34,
               44,
               34,
@@ -1935,42 +1995,42 @@
               34,
               58,
               34,
-              55,
-              49,
-              52,
-              102,
-              97,
-              53,
-              51,
-              101,
-              45,
-              52,
-              55,
-              100,
-              97,
-              45,
-              52,
               99,
               57,
-              100,
-              45,
-              98,
-              53,
-              100,
-              98,
-              45,
-              99,
-              55,
               56,
-              100,
               48,
               55,
-              55,
               50,
-              54,
               51,
-              56,
+              49,
+              45,
+              100,
+              52,
               57,
+              49,
+              45,
+              52,
+              48,
+              51,
+              102,
+              45,
+              98,
+              49,
+              57,
+              54,
+              45,
+              100,
+              99,
+              57,
+              56,
+              102,
+              101,
+              102,
+              53,
+              54,
+              101,
+              50,
+              53,
               34,
               44,
               34,
@@ -1998,20 +2058,20 @@
               50,
               84,
               48,
-              50,
+              51,
               58,
               51,
               54,
               58,
-              53,
-              56,
+              50,
+              51,
               46,
-              56,
+              49,
               53,
+              57,
               54,
-              51,
-              55,
-              50,
+              57,
+              53,
               90,
               34,
               125,
@@ -2035,10 +2095,10 @@
             ]
           },
           "cookie": [],
-          "responseTime": 41,
+          "responseTime": 10,
           "responseSize": 239
         },
-        "id": "e1b1468a-92a1-40b9-9561-3f5a6f44bf2a",
+        "id": "78b4ac39-ef63-47f8-9ff0-2bfbc039d493",
         "assertions": [
           {
             "assertion": "Status is 204 or 201",
@@ -2048,15 +2108,15 @@
       },
       {
         "cursor": {
-          "ref": "1bd893a1-0749-436e-b1e9-d49b882513ad",
+          "ref": "638d7695-f2eb-42fb-a9fe-e0906a7edcdf",
           "length": 10,
           "cycles": 1,
           "position": 2,
           "iteration": 0,
-          "httpRequestId": "8fd2df88-35c4-4422-ace4-8deceb04bbf7"
+          "httpRequestId": "ac33c131-7eb4-4eff-98ae-9152e08268f8"
         },
         "item": {
-          "id": "f37ec243-68a3-47a2-8de9-585d1aaecc2c",
+          "id": "4ad6a291-6992-4791-a9d7-8e02c31beb45",
           "name": "GET /api/v1/blocklist/accounts - List blocked accounts",
           "request": {
             "url": {
@@ -2085,7 +2145,7 @@
             {
               "listen": "test",
               "script": {
-                "id": "3d5eecb9-ffff-4b70-a65e-bf427a5b9b95",
+                "id": "108d112f-54aa-46c3-9ce2-ae7ac2328436",
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('Status is 200', () => pm.response.to.have.status(200));",
@@ -2096,7 +2156,7 @@
                   "  pm.expect(json.meta).to.have.property('total');",
                   "});"
                 ],
-                "_lastExecutionId": "70d1f2ec-348f-465a-89a0-dd033173d80a"
+                "_lastExecutionId": "3faf2467-c632-4f3d-b518-154520810225"
               }
             }
           ]
@@ -2120,7 +2180,7 @@
           "header": [
             {
               "key": "Authorization",
-              "value": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzQxNDc4MjYsImlhdCI6MTc3NDE0NjkyNiwianRpIjoiNDdlZDJmNTQtMjI3Yy00ZjcwLTlmOGUtZjI2MjFjOTM0YjcyIiwicm9sZSI6InVzZXIiLCJzdWIiOiI5ODc3MGFiYy0yODI3LTRlZmEtYTAyYS1jYTA1M2RjN2I5MjcifQ.oID8Tpf95Fatmq8YhAVnNDlXSITJhyEYu8lD4suIjFQ"
+              "value": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzQxNTE0NzEsImlhdCI6MTc3NDE1MDU3MSwianRpIjoiYTQ3MzcxYzEtMGFkNy00ODNiLThiZWEtMTA0YWIwMDY0YmM4Iiwicm9sZSI6InVzZXIiLCJzdWIiOiI2YTcwNjU4Zi03OTdhLTQ5ZGEtOWNkZi0zNGM5ODUzZWJmYzUifQ.E3KsIqL8I5yTf-PpBenSXa2vA3MIS_jqlJB4V9356OA"
             },
             {
               "key": "User-Agent",
@@ -2139,7 +2199,7 @@
             },
             {
               "key": "Postman-Token",
-              "value": "c5c5f840-cd49-4bba-8d96-55240d6b32b5",
+              "value": "a4adaa19-da88-4197-9698-09bed1ebcc80",
               "system": true
             },
             {
@@ -2161,7 +2221,7 @@
           "method": "GET"
         },
         "response": {
-          "id": "bb239633-7e8d-40e1-a28c-b4f407660a7d",
+          "id": "4e9a1b7e-a23d-40b8-9c51-354e70ee16e6",
           "status": "OK",
           "code": 200,
           "header": [
@@ -2199,7 +2259,7 @@
             },
             {
               "key": "X-Request-Id",
-              "value": "dsZN7tZA_xrvGKUOr-QyKg"
+              "value": "4fA0PYPR2w2sElRavv17gg"
             },
             {
               "key": "X-Xss-Protection",
@@ -2207,11 +2267,11 @@
             },
             {
               "key": "Date",
-              "value": "Sun, 22 Mar 2026 02:36:58 GMT"
+              "value": "Sun, 22 Mar 2026 03:36:23 GMT"
             },
             {
               "key": "Content-Length",
-              "value": "236"
+              "value": "235"
             }
           ],
           "stream": {
@@ -2233,42 +2293,42 @@
               34,
               58,
               34,
-              100,
-              98,
-              99,
-              50,
-              52,
+              102,
+              49,
               51,
-              97,
-              50,
-              45,
-              102,
-              100,
-              55,
-              102,
-              45,
-              52,
-              100,
-              52,
-              99,
-              45,
               57,
               50,
-              56,
-              49,
+              54,
+              102,
+              50,
+              45,
+              53,
+              50,
+              101,
+              50,
+              45,
+              52,
+              54,
+              51,
+              102,
               45,
               98,
+              55,
+              54,
+              49,
+              45,
+              100,
+              97,
+              56,
+              56,
+              99,
+              51,
+              102,
+              49,
               54,
               56,
-              49,
+              99,
               54,
-              48,
-              49,
-              57,
-              102,
-              51,
-              55,
-              97,
               34,
               44,
               34,
@@ -2281,42 +2341,42 @@
               34,
               58,
               34,
-              57,
-              56,
-              55,
+              54,
+              97,
               55,
               48,
-              97,
-              98,
-              99,
-              45,
-              50,
+              54,
+              53,
               56,
-              50,
+              102,
+              45,
               55,
+              57,
+              55,
+              97,
               45,
               52,
-              101,
-              102,
+              57,
+              100,
               97,
               45,
-              97,
-              48,
-              50,
-              97,
-              45,
+              57,
               99,
-              97,
-              48,
+              100,
+              102,
+              45,
+              51,
+              52,
+              99,
+              57,
+              56,
               53,
               51,
-              100,
-              99,
-              55,
+              101,
               98,
-              57,
-              50,
-              55,
+              102,
+              99,
+              53,
               34,
               44,
               34,
@@ -2360,42 +2420,42 @@
               34,
               58,
               34,
-              55,
-              49,
-              52,
-              102,
-              97,
-              53,
-              51,
-              101,
-              45,
-              52,
-              55,
-              100,
-              97,
-              45,
-              52,
               99,
               57,
-              100,
-              45,
-              98,
-              53,
-              100,
-              98,
-              45,
-              99,
-              55,
               56,
-              100,
               48,
               55,
-              55,
               50,
-              54,
               51,
-              56,
+              49,
+              45,
+              100,
+              52,
               57,
+              49,
+              45,
+              52,
+              48,
+              51,
+              102,
+              45,
+              98,
+              49,
+              57,
+              54,
+              45,
+              100,
+              99,
+              57,
+              56,
+              102,
+              101,
+              102,
+              53,
+              54,
+              101,
+              50,
+              53,
               34,
               44,
               34,
@@ -2423,20 +2483,20 @@
               50,
               84,
               48,
-              50,
+              51,
               58,
               51,
               54,
               58,
-              53,
-              56,
+              50,
+              51,
               46,
-              56,
+              49,
               53,
+              57,
               54,
-              51,
-              55,
-              50,
+              57,
+              53,
               90,
               34,
               125,
@@ -2501,10 +2561,10 @@
             ]
           },
           "cookie": [],
-          "responseTime": 37,
+          "responseTime": 10,
           "responseSize": 281
         },
-        "id": "f37ec243-68a3-47a2-8de9-585d1aaecc2c",
+        "id": "4ad6a291-6992-4791-a9d7-8e02c31beb45",
         "assertions": [
           {
             "assertion": "Status is 200",
@@ -2518,15 +2578,15 @@
       },
       {
         "cursor": {
-          "ref": "94cfbad4-658e-441b-92a2-3d2a5e9004ee",
+          "ref": "a3c1aea7-7e08-4f3f-a1e3-5ac91c4856e5",
           "length": 10,
           "cycles": 1,
           "position": 3,
           "iteration": 0,
-          "httpRequestId": "4620bc27-3f22-407c-a9a8-38d46152b6b2"
+          "httpRequestId": "d783637d-f9fb-4d39-9069-8776f0ad692a"
         },
         "item": {
-          "id": "a7d63ade-d6e9-4054-9f66-c16b3e751d8e",
+          "id": "8771cf9b-f890-4f27-9270-2430db7c156c",
           "name": "DELETE /api/v1/blocklist/accounts/:accountName - Unblock account",
           "request": {
             "url": {
@@ -2556,12 +2616,12 @@
             {
               "listen": "test",
               "script": {
-                "id": "22ef9194-8958-4b70-a88c-36e96ee146a3",
+                "id": "e34517e7-db64-4136-aa7f-05781192320b",
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('Status is 204', () => pm.response.to.have.status(204));"
                 ],
-                "_lastExecutionId": "7b6f1af3-5267-475d-8a52-86e1c5b9bc22"
+                "_lastExecutionId": "eca65db1-b10d-4596-8ee5-ab746211cc7e"
               }
             }
           ]
@@ -2575,7 +2635,7 @@
               "v1",
               "blocklist",
               "accounts",
-              "blockeduser1774147018115"
+              "blockeduser1774150582887"
             ],
             "host": [
               "app-test"
@@ -2586,7 +2646,7 @@
           "header": [
             {
               "key": "Authorization",
-              "value": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzQxNDc4MjYsImlhdCI6MTc3NDE0NjkyNiwianRpIjoiNDdlZDJmNTQtMjI3Yy00ZjcwLTlmOGUtZjI2MjFjOTM0YjcyIiwicm9sZSI6InVzZXIiLCJzdWIiOiI5ODc3MGFiYy0yODI3LTRlZmEtYTAyYS1jYTA1M2RjN2I5MjcifQ.oID8Tpf95Fatmq8YhAVnNDlXSITJhyEYu8lD4suIjFQ"
+              "value": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzQxNTE0NzEsImlhdCI6MTc3NDE1MDU3MSwianRpIjoiYTQ3MzcxYzEtMGFkNy00ODNiLThiZWEtMTA0YWIwMDY0YmM4Iiwicm9sZSI6InVzZXIiLCJzdWIiOiI2YTcwNjU4Zi03OTdhLTQ5ZGEtOWNkZi0zNGM5ODUzZWJmYzUifQ.E3KsIqL8I5yTf-PpBenSXa2vA3MIS_jqlJB4V9356OA"
             },
             {
               "key": "User-Agent",
@@ -2605,7 +2665,7 @@
             },
             {
               "key": "Postman-Token",
-              "value": "856af772-0700-4b8e-b4c8-0090f9ee7eb7",
+              "value": "f534d88c-0a8c-4176-8adf-8a2986be2f3f",
               "system": true
             },
             {
@@ -2627,7 +2687,7 @@
           "method": "DELETE"
         },
         "response": {
-          "id": "bb7e0bd5-fe10-458a-80e8-2499953a5d44",
+          "id": "e782146d-aa89-4f93-aa3c-4296d23021bb",
           "status": "No Content",
           "code": 204,
           "header": [
@@ -2653,7 +2713,7 @@
             },
             {
               "key": "X-Request-Id",
-              "value": "5pbiCiMuxW0POjIQdxyfbA"
+              "value": "SM8r_PdzSf6OA1rW3Pb6zA"
             },
             {
               "key": "X-Xss-Protection",
@@ -2661,7 +2721,7 @@
             },
             {
               "key": "Date",
-              "value": "Sun, 22 Mar 2026 02:36:59 GMT"
+              "value": "Sun, 22 Mar 2026 03:36:23 GMT"
             }
           ],
           "stream": {
@@ -2669,10 +2729,10 @@
             "data": []
           },
           "cookie": [],
-          "responseTime": 33,
+          "responseTime": 8,
           "responseSize": 0
         },
-        "id": "a7d63ade-d6e9-4054-9f66-c16b3e751d8e",
+        "id": "8771cf9b-f890-4f27-9270-2430db7c156c",
         "assertions": [
           {
             "assertion": "Status is 204",
@@ -2682,15 +2742,15 @@
       },
       {
         "cursor": {
-          "ref": "7adb54b7-4a8a-48d7-936c-4678105f14aa",
+          "ref": "a04bc25c-2eac-4ece-806a-d1d75cae7b95",
           "length": 10,
           "cycles": 1,
           "position": 4,
           "iteration": 0,
-          "httpRequestId": "2dfee474-18df-445e-8b88-4d8de0a6ca19"
+          "httpRequestId": "3fdf738c-9162-4bca-88c6-f4c6caef512c"
         },
         "item": {
-          "id": "5192402f-fa65-4e49-9314-9477691f5af0",
+          "id": "dddc9b28-b3ed-43f0-89fd-e123864ba7e3",
           "name": "POST /api/v1/blocklist/servers - Block server",
           "request": {
             "url": {
@@ -2727,12 +2787,12 @@
             {
               "listen": "test",
               "script": {
-                "id": "f37a8091-74d5-444a-8620-438644d3a2ce",
+                "id": "eb77bcdb-5602-441a-9af1-6db36609d2cd",
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('Status is 204 or 201', () => pm.expect([201, 204]).to.include(pm.response.code));"
                 ],
-                "_lastExecutionId": "0f255c0c-6c41-4d7b-87d8-18562e6f93ba"
+                "_lastExecutionId": "952b34d1-f326-432b-99b2-01319315b438"
               }
             }
           ]
@@ -2760,7 +2820,7 @@
             },
             {
               "key": "Authorization",
-              "value": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzQxNDc4MjYsImlhdCI6MTc3NDE0NjkyNiwianRpIjoiNDdlZDJmNTQtMjI3Yy00ZjcwLTlmOGUtZjI2MjFjOTM0YjcyIiwicm9sZSI6InVzZXIiLCJzdWIiOiI5ODc3MGFiYy0yODI3LTRlZmEtYTAyYS1jYTA1M2RjN2I5MjcifQ.oID8Tpf95Fatmq8YhAVnNDlXSITJhyEYu8lD4suIjFQ"
+              "value": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzQxNTE0NzEsImlhdCI6MTc3NDE1MDU3MSwianRpIjoiYTQ3MzcxYzEtMGFkNy00ODNiLThiZWEtMTA0YWIwMDY0YmM4Iiwicm9sZSI6InVzZXIiLCJzdWIiOiI2YTcwNjU4Zi03OTdhLTQ5ZGEtOWNkZi0zNGM5ODUzZWJmYzUifQ.E3KsIqL8I5yTf-PpBenSXa2vA3MIS_jqlJB4V9356OA"
             },
             {
               "key": "User-Agent",
@@ -2779,7 +2839,7 @@
             },
             {
               "key": "Postman-Token",
-              "value": "6d491ae7-abdc-47d8-9b94-7af9b4abe477",
+              "value": "9574fa0a-0214-47da-8556-3502a284942d",
               "system": true
             },
             {
@@ -2810,7 +2870,7 @@
           }
         },
         "response": {
-          "id": "a5aacf16-290f-444e-9acd-dbdfa1b9559d",
+          "id": "339f8db0-f30f-401d-9437-547921c608f1",
           "status": "Created",
           "code": 201,
           "header": [
@@ -2848,7 +2908,7 @@
             },
             {
               "key": "X-Request-Id",
-              "value": "HDusjzna8KDLuCNIxo6UHQ"
+              "value": "d39_yZfw_YOQLAEv-vawgA"
             },
             {
               "key": "X-Xss-Protection",
@@ -2856,11 +2916,11 @@
             },
             {
               "key": "Date",
-              "value": "Sun, 22 Mar 2026 02:36:59 GMT"
+              "value": "Sun, 22 Mar 2026 03:36:23 GMT"
             },
             {
               "key": "Content-Length",
-              "value": "202"
+              "value": "204"
             }
           ],
           "stream": {
@@ -2881,42 +2941,42 @@
               34,
               58,
               34,
-              57,
-              98,
-              101,
-              99,
-              56,
+              97,
+              52,
+              100,
               55,
+              50,
+              53,
               57,
-              52,
+              101,
               45,
-              50,
-              48,
+              52,
+              100,
+              52,
               97,
-              50,
               45,
               52,
-              102,
+              55,
+              52,
+              98,
+              45,
               56,
-              53,
-              45,
-              57,
-              53,
+              51,
+              50,
               54,
-              48,
               45,
+              49,
+              52,
+              53,
+              53,
+              102,
+              50,
+              55,
+              100,
               50,
               57,
-              97,
-              49,
-              51,
-              53,
-              100,
-              99,
-              98,
-              98,
-              100,
-              52,
+              54,
+              56,
               34,
               44,
               34,
@@ -2929,42 +2989,42 @@
               34,
               58,
               34,
-              57,
-              56,
-              55,
+              54,
+              97,
               55,
               48,
-              97,
-              98,
-              99,
-              45,
-              50,
+              54,
+              53,
               56,
-              50,
+              102,
+              45,
               55,
+              57,
+              55,
+              97,
               45,
               52,
-              101,
-              102,
+              57,
+              100,
               97,
               45,
-              97,
-              48,
-              50,
-              97,
-              45,
+              57,
               99,
-              97,
-              48,
+              100,
+              102,
+              45,
+              51,
+              52,
+              99,
+              57,
+              56,
               53,
               51,
-              100,
-              99,
-              55,
+              101,
               98,
-              57,
-              50,
-              55,
+              102,
+              99,
+              53,
               34,
               44,
               34,
@@ -3058,20 +3118,19 @@
               50,
               84,
               48,
-              50,
+              51,
               58,
               51,
               54,
               58,
-              53,
-              57,
-              46,
-              49,
-              53,
-              57,
-              57,
-              55,
               50,
+              51,
+              46,
+              50,
+              55,
+              48,
+              49,
+              52,
               90,
               34,
               125,
@@ -3095,10 +3154,10 @@
             ]
           },
           "cookie": [],
-          "responseTime": 12,
-          "responseSize": 226
+          "responseTime": 8,
+          "responseSize": 225
         },
-        "id": "5192402f-fa65-4e49-9314-9477691f5af0",
+        "id": "dddc9b28-b3ed-43f0-89fd-e123864ba7e3",
         "assertions": [
           {
             "assertion": "Status is 204 or 201",
@@ -3108,15 +3167,15 @@
       },
       {
         "cursor": {
-          "ref": "fd1fc491-032a-4425-b8d0-c4759cd48a36",
+          "ref": "cedbb49b-e4e2-4121-8a0f-57c9acd90a1f",
           "length": 10,
           "cycles": 1,
           "position": 5,
           "iteration": 0,
-          "httpRequestId": "7bec724b-7e9e-43a3-a96c-d68606469950"
+          "httpRequestId": "65fc7b87-7846-41af-8af6-29d6ed432bcc"
         },
         "item": {
-          "id": "dee20526-d59a-44a8-a351-2671e15ad99c",
+          "id": "042ea762-1c22-4af5-ba0f-bf1c0da22a5f",
           "name": "GET /api/v1/blocklist/servers - List blocked servers",
           "request": {
             "url": {
@@ -3145,7 +3204,7 @@
             {
               "listen": "test",
               "script": {
-                "id": "fc7d3335-61b3-4f92-8412-c527092f20a4",
+                "id": "13e2b44a-c27b-4e3d-a4e6-afd080a36d8e",
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('Status is 200', () => pm.response.to.have.status(200));",
@@ -3156,7 +3215,7 @@
                   "  pm.expect(json.meta).to.have.property('total');",
                   "});"
                 ],
-                "_lastExecutionId": "3ab0ba83-9c5e-4593-a031-cefa25b6e245"
+                "_lastExecutionId": "7567fe44-d977-40cf-ba4e-d8175a3905db"
               }
             }
           ]
@@ -3180,7 +3239,7 @@
           "header": [
             {
               "key": "Authorization",
-              "value": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzQxNDc4MjYsImlhdCI6MTc3NDE0NjkyNiwianRpIjoiNDdlZDJmNTQtMjI3Yy00ZjcwLTlmOGUtZjI2MjFjOTM0YjcyIiwicm9sZSI6InVzZXIiLCJzdWIiOiI5ODc3MGFiYy0yODI3LTRlZmEtYTAyYS1jYTA1M2RjN2I5MjcifQ.oID8Tpf95Fatmq8YhAVnNDlXSITJhyEYu8lD4suIjFQ"
+              "value": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzQxNTE0NzEsImlhdCI6MTc3NDE1MDU3MSwianRpIjoiYTQ3MzcxYzEtMGFkNy00ODNiLThiZWEtMTA0YWIwMDY0YmM4Iiwicm9sZSI6InVzZXIiLCJzdWIiOiI2YTcwNjU4Zi03OTdhLTQ5ZGEtOWNkZi0zNGM5ODUzZWJmYzUifQ.E3KsIqL8I5yTf-PpBenSXa2vA3MIS_jqlJB4V9356OA"
             },
             {
               "key": "User-Agent",
@@ -3199,7 +3258,7 @@
             },
             {
               "key": "Postman-Token",
-              "value": "61552ae6-a192-4209-b5a2-cfedf6f7b3a5",
+              "value": "306b7da8-f25e-4cb6-be34-fa1ce691f5a2",
               "system": true
             },
             {
@@ -3221,7 +3280,7 @@
           "method": "GET"
         },
         "response": {
-          "id": "7ca993c8-d9f1-4917-baee-a53fa76191b6",
+          "id": "513ed1fc-08ca-4f00-9242-8d3009242ed7",
           "status": "OK",
           "code": 200,
           "header": [
@@ -3259,7 +3318,7 @@
             },
             {
               "key": "X-Request-Id",
-              "value": "D54oaQlPSZ7h4RCPnOOTkw"
+              "value": "j2LH8xmUvI_TW_-gPLMQsg"
             },
             {
               "key": "X-Xss-Protection",
@@ -3267,11 +3326,11 @@
             },
             {
               "key": "Date",
-              "value": "Sun, 22 Mar 2026 02:36:59 GMT"
+              "value": "Sun, 22 Mar 2026 03:36:23 GMT"
             },
             {
               "key": "Content-Length",
-              "value": "231"
+              "value": "233"
             }
           ],
           "stream": {
@@ -3293,42 +3352,42 @@
               34,
               58,
               34,
-              57,
-              98,
-              101,
-              99,
-              56,
+              97,
+              52,
+              100,
               55,
+              50,
+              53,
               57,
-              52,
+              101,
               45,
-              50,
-              48,
+              52,
+              100,
+              52,
               97,
-              50,
               45,
               52,
-              102,
+              55,
+              52,
+              98,
+              45,
               56,
-              53,
-              45,
-              57,
-              53,
+              51,
+              50,
               54,
-              48,
               45,
+              49,
+              52,
+              53,
+              53,
+              102,
+              50,
+              55,
+              100,
               50,
               57,
-              97,
-              49,
-              51,
-              53,
-              100,
-              99,
-              98,
-              98,
-              100,
-              52,
+              54,
+              56,
               34,
               44,
               34,
@@ -3341,42 +3400,42 @@
               34,
               58,
               34,
-              57,
-              56,
-              55,
+              54,
+              97,
               55,
               48,
-              97,
-              98,
-              99,
-              45,
-              50,
+              54,
+              53,
               56,
-              50,
+              102,
+              45,
               55,
+              57,
+              55,
+              97,
               45,
               52,
-              101,
-              102,
+              57,
+              100,
               97,
               45,
-              97,
-              48,
-              50,
-              97,
-              45,
+              57,
               99,
-              97,
-              48,
+              100,
+              102,
+              45,
+              51,
+              52,
+              99,
+              57,
+              56,
               53,
               51,
-              100,
-              99,
-              55,
+              101,
               98,
-              57,
-              50,
-              55,
+              102,
+              99,
+              53,
               34,
               44,
               34,
@@ -3470,20 +3529,19 @@
               50,
               84,
               48,
-              50,
+              51,
               58,
               51,
               54,
               58,
-              53,
-              57,
-              46,
-              49,
-              53,
-              57,
-              57,
-              55,
               50,
+              51,
+              46,
+              50,
+              55,
+              48,
+              49,
+              52,
               90,
               34,
               125,
@@ -3548,10 +3606,10 @@
             ]
           },
           "cookie": [],
-          "responseTime": 20,
-          "responseSize": 268
+          "responseTime": 8,
+          "responseSize": 267
         },
-        "id": "dee20526-d59a-44a8-a351-2671e15ad99c",
+        "id": "042ea762-1c22-4af5-ba0f-bf1c0da22a5f",
         "assertions": [
           {
             "assertion": "Status is 200",
@@ -3565,15 +3623,15 @@
       },
       {
         "cursor": {
-          "ref": "d3d6c334-36df-4d57-9137-482578a1d782",
+          "ref": "60f04f7c-e664-417e-bef7-7638cf9620a0",
           "length": 10,
           "cycles": 1,
           "position": 6,
           "iteration": 0,
-          "httpRequestId": "ed01ac6f-c331-4cf8-a4d4-9b641293ce24"
+          "httpRequestId": "41edbd7d-4b69-4973-b47d-f17e836cb682"
         },
         "item": {
-          "id": "5d26a20b-8a96-4883-96f4-d20fbfe05ac6",
+          "id": "97b8533f-d9be-4b1a-8ea3-33c806a798be",
           "name": "DELETE /api/v1/blocklist/servers/:host - Unblock server",
           "request": {
             "url": {
@@ -3603,12 +3661,12 @@
             {
               "listen": "test",
               "script": {
-                "id": "1f4324b1-2083-4784-ba73-344cf998aff1",
+                "id": "1b4bf409-5f4d-4d37-9857-dbc1ef10f85e",
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('Status is 204', () => pm.response.to.have.status(204));"
                 ],
-                "_lastExecutionId": "2278a678-cb22-4e33-8d1c-46a3068ebdbc"
+                "_lastExecutionId": "cb40afb8-968a-472b-b7df-5c9527dbf50a"
               }
             }
           ]
@@ -3633,7 +3691,7 @@
           "header": [
             {
               "key": "Authorization",
-              "value": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzQxNDc4MjYsImlhdCI6MTc3NDE0NjkyNiwianRpIjoiNDdlZDJmNTQtMjI3Yy00ZjcwLTlmOGUtZjI2MjFjOTM0YjcyIiwicm9sZSI6InVzZXIiLCJzdWIiOiI5ODc3MGFiYy0yODI3LTRlZmEtYTAyYS1jYTA1M2RjN2I5MjcifQ.oID8Tpf95Fatmq8YhAVnNDlXSITJhyEYu8lD4suIjFQ"
+              "value": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzQxNTE0NzEsImlhdCI6MTc3NDE1MDU3MSwianRpIjoiYTQ3MzcxYzEtMGFkNy00ODNiLThiZWEtMTA0YWIwMDY0YmM4Iiwicm9sZSI6InVzZXIiLCJzdWIiOiI2YTcwNjU4Zi03OTdhLTQ5ZGEtOWNkZi0zNGM5ODUzZWJmYzUifQ.E3KsIqL8I5yTf-PpBenSXa2vA3MIS_jqlJB4V9356OA"
             },
             {
               "key": "User-Agent",
@@ -3652,7 +3710,7 @@
             },
             {
               "key": "Postman-Token",
-              "value": "c8137388-455f-49af-a3b8-6c3ecb3c3bad",
+              "value": "1a0b984a-fc90-4acb-b3a9-d4de49231579",
               "system": true
             },
             {
@@ -3674,7 +3732,7 @@
           "method": "DELETE"
         },
         "response": {
-          "id": "b28d60e9-ed53-44f8-b9d9-c0a2a8364506",
+          "id": "62025f6d-b280-4db1-af4e-207cdb33e9b8",
           "status": "No Content",
           "code": 204,
           "header": [
@@ -3700,7 +3758,7 @@
             },
             {
               "key": "X-Request-Id",
-              "value": "O2ccRsDci5ubfKzvCcK5PA"
+              "value": "6EThDdEZLMKQOJ-kd9PxNQ"
             },
             {
               "key": "X-Xss-Protection",
@@ -3708,7 +3766,7 @@
             },
             {
               "key": "Date",
-              "value": "Sun, 22 Mar 2026 02:36:59 GMT"
+              "value": "Sun, 22 Mar 2026 03:36:23 GMT"
             }
           ],
           "stream": {
@@ -3716,10 +3774,10 @@
             "data": []
           },
           "cookie": [],
-          "responseTime": 111,
+          "responseTime": 7,
           "responseSize": 0
         },
-        "id": "5d26a20b-8a96-4883-96f4-d20fbfe05ac6",
+        "id": "97b8533f-d9be-4b1a-8ea3-33c806a798be",
         "assertions": [
           {
             "assertion": "Status is 204",
@@ -3729,15 +3787,15 @@
       },
       {
         "cursor": {
-          "ref": "9c328451-7967-4f97-be0a-859987010c0b",
+          "ref": "718922ad-236a-4fc8-9184-e2d7eb9af650",
           "length": 10,
           "cycles": 1,
           "position": 7,
           "iteration": 0,
-          "httpRequestId": "420ae597-4c54-43d0-9114-aa497b5d1863"
+          "httpRequestId": "7199fac4-73d2-4fef-aacc-0ad4b181ebfa"
         },
         "item": {
-          "id": "05c359ad-de57-40ee-b112-775b2c154403",
+          "id": "3eb62af0-f139-4a49-a43d-9cca3c2442e3",
           "name": "GET /api/v1/blocklist/accounts - Unauthenticated (401)",
           "request": {
             "url": {
@@ -3760,12 +3818,12 @@
             {
               "listen": "test",
               "script": {
-                "id": "c613ca2e-aa1a-4e40-a23f-b7548441531a",
+                "id": "188ed17c-35c5-4f7b-9ac8-2a19e655b5ff",
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('Status is 401', () => pm.response.to.have.status(401));"
                 ],
-                "_lastExecutionId": "1788e9ef-8bbf-4e77-a794-39e6fc599226"
+                "_lastExecutionId": "d29558f4-5c32-4fc0-aab3-acdde36a911b"
               }
             }
           ]
@@ -3804,7 +3862,7 @@
             },
             {
               "key": "Postman-Token",
-              "value": "91880ab2-c373-41d6-ad85-ba08262b7a9f",
+              "value": "859fa9d7-ccc7-496b-b53e-05b6db49b962",
               "system": true
             },
             {
@@ -3826,7 +3884,7 @@
           "method": "GET"
         },
         "response": {
-          "id": "d0aab674-b8c9-4035-886e-107e0cf8044b",
+          "id": "aa274606-d475-405b-898c-6c7f2d0468eb",
           "status": "Unauthorized",
           "code": 401,
           "header": [
@@ -3864,7 +3922,7 @@
             },
             {
               "key": "X-Request-Id",
-              "value": "3-hyVWzbIPQAmVOx3QfOwg"
+              "value": "5_y4Si_ZRIrKaLydiGNqYw"
             },
             {
               "key": "X-Xss-Protection",
@@ -3872,7 +3930,7 @@
             },
             {
               "key": "Date",
-              "value": "Sun, 22 Mar 2026 02:36:59 GMT"
+              "value": "Sun, 22 Mar 2026 03:36:23 GMT"
             },
             {
               "key": "Content-Length",
@@ -3990,10 +4048,10 @@
             ]
           },
           "cookie": [],
-          "responseTime": 126,
+          "responseTime": 4,
           "responseSize": 105
         },
-        "id": "05c359ad-de57-40ee-b112-775b2c154403",
+        "id": "3eb62af0-f139-4a49-a43d-9cca3c2442e3",
         "assertions": [
           {
             "assertion": "Status is 401",
@@ -4003,15 +4061,15 @@
       },
       {
         "cursor": {
-          "ref": "2dfce455-f8c6-49fa-a137-775b6228b8ec",
+          "ref": "8719b607-07bd-4683-b7bf-ea77a14e2d03",
           "length": 10,
           "cycles": 1,
           "position": 8,
           "iteration": 0,
-          "httpRequestId": "887f36c8-6b0b-4309-9a60-53cdf2d6d405"
+          "httpRequestId": "4c2f3182-e05e-4c8e-bb37-08bf56071792"
         },
         "item": {
-          "id": "de271658-79cd-4e60-b5ce-306c4e18c6ba",
+          "id": "7ba21af6-72e1-4531-bedb-723d48438c4c",
           "name": "POST /api/v1/blocklist/accounts - Missing body (400)",
           "request": {
             "url": {
@@ -4048,12 +4106,12 @@
             {
               "listen": "test",
               "script": {
-                "id": "42ff2b08-244c-48ab-a1f7-6e3118e3d900",
+                "id": "b8d20b46-94ec-4dd5-bf66-5b0c98ac3f86",
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('Status is 400 or 422', () => pm.expect([400, 422]).to.include(pm.response.code));"
                 ],
-                "_lastExecutionId": "327650e8-8e0a-4e74-be32-3c5f24c21477"
+                "_lastExecutionId": "b057264e-5137-4a8e-90c4-4754c0f546a0"
               }
             }
           ]
@@ -4081,7 +4139,7 @@
             },
             {
               "key": "Authorization",
-              "value": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzQxNDc4MjYsImlhdCI6MTc3NDE0NjkyNiwianRpIjoiNDdlZDJmNTQtMjI3Yy00ZjcwLTlmOGUtZjI2MjFjOTM0YjcyIiwicm9sZSI6InVzZXIiLCJzdWIiOiI5ODc3MGFiYy0yODI3LTRlZmEtYTAyYS1jYTA1M2RjN2I5MjcifQ.oID8Tpf95Fatmq8YhAVnNDlXSITJhyEYu8lD4suIjFQ"
+              "value": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzQxNTE0NzEsImlhdCI6MTc3NDE1MDU3MSwianRpIjoiYTQ3MzcxYzEtMGFkNy00ODNiLThiZWEtMTA0YWIwMDY0YmM4Iiwicm9sZSI6InVzZXIiLCJzdWIiOiI2YTcwNjU4Zi03OTdhLTQ5ZGEtOWNkZi0zNGM5ODUzZWJmYzUifQ.E3KsIqL8I5yTf-PpBenSXa2vA3MIS_jqlJB4V9356OA"
             },
             {
               "key": "User-Agent",
@@ -4100,7 +4158,7 @@
             },
             {
               "key": "Postman-Token",
-              "value": "df59de23-b8ce-4194-b60b-5d0cb223c50d",
+              "value": "d1bf2567-6ea5-4ff3-8780-eaa3443d5605",
               "system": true
             },
             {
@@ -4131,7 +4189,7 @@
           }
         },
         "response": {
-          "id": "435aaa6b-3898-4279-b588-ec83691349fa",
+          "id": "b70b46d6-323a-4730-b4b5-294894ff9ade",
           "status": "Bad Request",
           "code": 400,
           "header": [
@@ -4169,7 +4227,7 @@
             },
             {
               "key": "X-Request-Id",
-              "value": "nJzG5IqZrZTyql7gJDy-Ag"
+              "value": "s-y2VQotPIsQEFTR7MzBOw"
             },
             {
               "key": "X-Xss-Protection",
@@ -4177,7 +4235,7 @@
             },
             {
               "key": "Date",
-              "value": "Sun, 22 Mar 2026 02:36:59 GMT"
+              "value": "Sun, 22 Mar 2026 03:36:23 GMT"
             },
             {
               "key": "Content-Length",
@@ -4295,10 +4353,10 @@
             ]
           },
           "cookie": [],
-          "responseTime": 30,
+          "responseTime": 6,
           "responseSize": 105
         },
-        "id": "de271658-79cd-4e60-b5ce-306c4e18c6ba",
+        "id": "7ba21af6-72e1-4531-bedb-723d48438c4c",
         "assertions": [
           {
             "assertion": "Status is 400 or 422",
@@ -4308,15 +4366,15 @@
       },
       {
         "cursor": {
-          "ref": "00d3b245-213c-4713-bc88-5f7a27a21fb2",
+          "ref": "93a86027-83eb-48c9-9252-46d8e16a9d72",
           "length": 10,
           "cycles": 1,
           "position": 9,
           "iteration": 0,
-          "httpRequestId": "e159a8be-4dfe-4bc7-92ad-f5c3eb2b6f62"
+          "httpRequestId": "4e279533-af80-4738-830d-f222058479d3"
         },
         "item": {
-          "id": "875f216e-de9c-44da-bccf-b1d9c12ff40b",
+          "id": "b278d4cd-54a4-498b-8402-538aed2eefe8",
           "name": "GET /api/v1/blocklist/status - Status check (authenticated)",
           "request": {
             "url": {
@@ -4350,12 +4408,12 @@
             {
               "listen": "test",
               "script": {
-                "id": "c5ab3eeb-6503-4184-a6e6-0ffbbf012d94",
+                "id": "7e2b592e-eeae-4dba-9586-2e9cb6055427",
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('Status is 200', () => pm.response.to.have.status(200));"
                 ],
-                "_lastExecutionId": "17bd4cd5-b2a5-4ee5-8831-6b79d1ad269e"
+                "_lastExecutionId": "5a662c0f-8074-4bf9-a4d8-221b0f7dd5d7"
               }
             }
           ]
@@ -4376,7 +4434,7 @@
             "query": [
               {
                 "key": "accountName",
-                "value": "blockeduser1774147018115"
+                "value": "blockeduser1774150582887"
               }
             ],
             "variable": []
@@ -4384,7 +4442,7 @@
           "header": [
             {
               "key": "Authorization",
-              "value": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzQxNDc4MjYsImlhdCI6MTc3NDE0NjkyNiwianRpIjoiNDdlZDJmNTQtMjI3Yy00ZjcwLTlmOGUtZjI2MjFjOTM0YjcyIiwicm9sZSI6InVzZXIiLCJzdWIiOiI5ODc3MGFiYy0yODI3LTRlZmEtYTAyYS1jYTA1M2RjN2I5MjcifQ.oID8Tpf95Fatmq8YhAVnNDlXSITJhyEYu8lD4suIjFQ"
+              "value": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzQxNTE0NzEsImlhdCI6MTc3NDE1MDU3MSwianRpIjoiYTQ3MzcxYzEtMGFkNy00ODNiLThiZWEtMTA0YWIwMDY0YmM4Iiwicm9sZSI6InVzZXIiLCJzdWIiOiI2YTcwNjU4Zi03OTdhLTQ5ZGEtOWNkZi0zNGM5ODUzZWJmYzUifQ.E3KsIqL8I5yTf-PpBenSXa2vA3MIS_jqlJB4V9356OA"
             },
             {
               "key": "User-Agent",
@@ -4403,7 +4461,7 @@
             },
             {
               "key": "Postman-Token",
-              "value": "7b9e84ec-4e82-4032-8006-c86a37bef774",
+              "value": "c8eb9ecb-cf56-4bfb-b897-236058b25478",
               "system": true
             },
             {
@@ -4425,7 +4483,7 @@
           "method": "GET"
         },
         "response": {
-          "id": "bab32f80-cc90-458b-8294-d8641a662b49",
+          "id": "c69045b0-76ca-422e-a1b4-7420e08d83ad",
           "status": "OK",
           "code": 200,
           "header": [
@@ -4463,7 +4521,7 @@
             },
             {
               "key": "X-Request-Id",
-              "value": "SgJxfNem9f7zE89i11CduA"
+              "value": "Uct-rZXVmmDUFrUDQTVwXA"
             },
             {
               "key": "X-Xss-Protection",
@@ -4471,7 +4529,7 @@
             },
             {
               "key": "Date",
-              "value": "Sun, 22 Mar 2026 02:37:00 GMT"
+              "value": "Sun, 22 Mar 2026 03:36:23 GMT"
             },
             {
               "key": "Content-Length",
@@ -4537,10 +4595,10 @@
             ]
           },
           "cookie": [],
-          "responseTime": 136,
+          "responseTime": 17,
           "responseSize": 53
         },
-        "id": "875f216e-de9c-44da-bccf-b1d9c12ff40b",
+        "id": "b278d4cd-54a4-498b-8402-538aed2eefe8",
         "assertions": [
           {
             "assertion": "Status is 200",
@@ -4550,7 +4608,7 @@
       }
     ],
     "transfers": {
-      "responseTotal": 1686
+      "responseTotal": 1691
     },
     "failures": [],
     "error": null

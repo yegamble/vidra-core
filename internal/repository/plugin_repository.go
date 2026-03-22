@@ -240,9 +240,10 @@ func (r *PluginRepository) Update(ctx context.Context, plugin *domain.PluginReco
 		UPDATE plugins
 		SET version = $1, author = $2, description = $3, status = $4,
 		    config = $5, permissions = $6, hooks = $7,
-		    enabled_at = $8, disabled_at = $9, last_error = $10,
-		    updated_at = $11
-		WHERE id = $12
+		    install_path = $8, checksum = $9,
+		    enabled_at = $10, disabled_at = $11, last_error = $12,
+		    updated_at = $13
+		WHERE id = $14
 	`
 
 	result, err := r.db.ExecContext(
@@ -254,6 +255,8 @@ func (r *PluginRepository) Update(ctx context.Context, plugin *domain.PluginReco
 		configJSON,
 		pq.Array(plugin.Permissions),
 		pq.Array(plugin.Hooks),
+		plugin.InstallPath,
+		plugin.Checksum,
 		plugin.EnabledAt,
 		plugin.DisabledAt,
 		plugin.LastError,
