@@ -1,12 +1,14 @@
 # Athena API Documentation
 
-This directory contains comprehensive OpenAPI 3.0 specifications for the Athena video platform API.
+This directory contains the primary OpenAPI 3.0 specifications for the Athena video platform API.
+
+The canonical HTTP surface lives in `internal/httpapi/routes.go`. The specs in `api/` cover the major domains, but some newer PeerTube-compatible and admin routes are implemented ahead of their OpenAPI updates.
 
 ## Documentation Structure
 
 The API documentation is split into modular files by functional domain for better maintainability:
 
-### Core API Files (COMPLETE)
+### Primary Specs
 
 1. **`openapi.yaml`** - Main specification
    - Authentication (register, login, refresh, logout)
@@ -15,147 +17,134 @@ The API documentation is split into modular files by functional domain for bette
    - User messaging (basic endpoints)
    - E2EE encrypted messaging
    - Core video endpoints (CRUD)
-   - Subscriptions
+   - Notifications, categories, collaborators, runners, and other PeerTube-compatible/admin routes
 
-2. **`openapi_auth_2fa.yaml`** - Two-Factor Authentication ✅ **NEW**
+2. **`openapi_auth_2fa.yaml`** - Canonical Two-Factor Authentication reference
    - TOTP setup and verification (RFC 6238)
    - Backup code generation (10 one-time recovery codes)
    - QR code generation for authenticator apps
    - 2FA disable with password + code verification
    - Backup code regeneration
    - 2FA status endpoint
-   - **Coverage**: 5 endpoints
 
-3. **`openapi_uploads.yaml`** - Video Upload & Encoding ✅ **NEW**
+3. **`openapi_uploads.yaml`** - Video Upload & Encoding
    - Chunked upload workflow (initiate, upload chunks, complete)
    - Upload session management
    - Resume capabilities for interrupted uploads
    - Legacy one-shot upload (backward compatibility)
    - Encoding status tracking (Redis-backed)
-   - **Coverage**: 10 endpoints
 
-4. **`openapi_analytics.yaml`** - Video Analytics & Views ✅ **NEW**
+4. **`openapi_analytics.yaml`** - Video Analytics & Views
    - View tracking with fingerprint deduplication
    - Video analytics (owner/admin access)
    - Daily statistics for time-series charts
    - Top videos by views
    - Trending algorithm (velocity, engagement, recency)
    - Fingerprint generation for view deduplication
-   - **Coverage**: 6 endpoints
 
-5. **`openapi_livestreaming.yaml`** - Live Streaming ✅ **COMPLETE**
+5. **`openapi_livestreaming.yaml`** - Live Streaming
    - Stream management (create, update, end, stats)
    - RTMP ingest configuration
    - HLS transcoding and delivery
    - Stream key rotation
-   - Stream scheduling with waiting rooms
    - Multi-quality variants (360p-1080p)
    - Master and variant playlists
    - Segment delivery
-   - Real-time analytics collection
-   - **Coverage**: 25 endpoints (12 streaming + 6 scheduling + 7 analytics)
+   - Session history
+   - Waiting-room, scheduling, and stream-analytics routes exist in code but are not yet fully reflected here
 
-6. **`openapi_imports.yaml`** - Video Imports ✅ **NEW**
+6. **`openapi_imports.yaml`** - Video Imports
    - Import from external URLs
    - Import job management (create, list, status, cancel)
    - SSRF protection documentation
    - Rate limiting (10 imports/minute)
    - Progress tracking
-   - **Coverage**: 4 endpoints
 
-### Domain-Specific Files (ALREADY COMPLETE)
+### Domain Specs
 
-7. **`openapi_comments.yaml`** - Comment System ✅
+7. **`openapi_comments.yaml`** - Comment System
    - Video comments (CRUD)
    - Comment flagging and moderation
    - Nested comment support
 
-8. **`openapi_channels.yaml`** - Channel Management ✅
+8. **`openapi_channels.yaml`** - Channel Management
    - Channel CRUD operations
    - Channel subscriptions
    - Subscriber listing
    - Channel videos
 
-9. **`openapi_captions.yaml`** - Video Captions/Subtitles ✅
+9. **`openapi_captions.yaml`** - Video Captions/Subtitles
    - Caption upload (VTT, SRT formats)
    - Caption metadata management
    - IPFS storage integration
    - Auto-generated caption support
 
-10. **`openapi_ratings_playlists.yaml`** - Ratings & Playlists ✅
+10. **`openapi_ratings_playlists.yaml`** - Ratings & Playlists
+    - Video like/dislike system
+    - Playlist management (create, update, delete)
+    - Watch Later special playlist
+    - Playlist item reordering
 
-- Video like/dislike system
-- Playlist management (create, update, delete)
-- Watch Later special playlist
-- Playlist item reordering
-
-11. **`openapi_moderation.yaml`** - Moderation & Instance Config ✅
+11. **`openapi_moderation.yaml`** - Moderation & Instance Config
     - Abuse reports
     - Blocklist management
     - Instance configuration (admin)
     - oEmbed endpoint
 
-12. **`openapi_chat.yaml`** - WebSocket Chat ✅ **COMPLETE (Sprint 7)**
+12. **`openapi_chat.yaml`** - WebSocket Chat
     - Live chat for streams (10,000+ concurrent connections)
     - Role-based moderation (owner/moderator permissions)
     - User bans (temporary/permanent) and timeouts
     - Message history with soft deletes
     - Rate limiting (5 msg/10s users, 10 msg/10s moderators)
     - Chat statistics and analytics
-    - **Coverage**: 10 endpoints
 
-13. **`openapi_federation.yaml`** - ActivityPub Federation ✅
+13. **`openapi_federation.yaml`** - ActivityPub Federation
     - Federation timeline
     - ActivityPub discovery endpoints (.well-known)
     - Actor endpoints (inbox, outbox, followers, following)
 
-14. **`openapi_federation_hardening.yaml`** - Federation Security ✅
+14. **`openapi_federation_hardening.yaml`** - Federation Security
     - Dead letter queue management
     - Instance/actor blocklists
     - Abuse reports
     - Dashboard and health metrics
 
-15. **`openapi_plugins.yaml`** - Plugin System ✅
+15. **`openapi_plugins.yaml`** - Plugin System
     - Plugin installation and management
     - Enable/disable plugins
     - Plugin configuration
     - Plugin statistics
 
-16. **`openapi_redundancy.yaml`** - Video Redundancy ✅
+16. **`openapi_redundancy.yaml`** - Video Redundancy
     - Peer management
     - Redundancy policies
     - Synchronization
 
+17. **`openapi_social.yaml`** - Social & ATProto
+    - ATProto actor resolution and stats
+    - Follow graph endpoints
+    - Likes, comments, labels, and ingest routes
+
+18. **`openapi_payments.yaml`** - IOTA Payments (beta / feature-flagged)
+    - Wallet creation and retrieval
+    - Payment intents
+    - Transaction history
+
+### Legacy / Compatibility Specs
+
+- **`openapi_2fa.yaml`** - Older duplicate 2FA spec retained for compatibility; prefer `openapi_auth_2fa.yaml`
+- **`../docs/openapi_notifications.yaml`** - Older standalone notifications spec; canonical notification routes live in `openapi.yaml`
+
 ---
 
-## Documentation Coverage Statistics
+## Current Sync Status
 
-### Overall API Coverage: 100%
-
-| Category | Endpoints Implemented | Endpoints Documented | Coverage |
-|----------|----------------------|---------------------|----------|
-| Authentication | 8 | 8 | 100% ✅ |
-| **Two-Factor Auth (2FA)** | **5** | **5** | **100% ✅ NEW** |
-| OAuth 2.0 | 8 | 8 | 100% ✅ |
-| Videos (Core) | 12 | 12 | 100% ✅ |
-| **Uploads** | **10** | **10** | **100% ✅** |
-| **Analytics** | **6** | **6** | **100% ✅** |
-| **Live Streaming** | **25** | **25** | **100% ✅** (includes scheduling & analytics) |
-| **Imports** | **4** | **4** | **100% ✅** |
-| Comments | 7 | 7 | 100% ✅ |
-| Channels | 8 | 8 | 100% ✅ |
-| Captions | 5 | 5 | 100% ✅ |
-| Ratings & Playlists | 10 | 10 | 100% ✅ |
-| Notifications | 6 | 6 | 100% ✅ |
-| Chat | 10 | 10 | 100% ✅ (Sprint 7) |
-| Moderation | 12 | 12 | 100% ✅ |
-| Federation | 15 | 15 | 100% ✅ |
-| Federation Hardening | 12 | 12 | 100% ✅ |
-| Plugins | 8 | 8 | 100% ✅ |
-| Redundancy | 6 | 6 | 100% ✅ |
-| User Profiles | 6 | 6 | 100% ✅ |
-| HLS Static | 1 | 1 | 100% ✅ |
-| **TOTAL** | **~184** | **~184** | **100%** |
+- Primary specs exist for the major domains listed above.
+- `openapi.yaml` covers many newer PeerTube-compatible/admin routes that are not broken out into separate files.
+- The router is currently ahead of the specs in some areas. Treat `internal/httpapi/routes.go` as the implementation source of truth when verifying current behavior.
+- Known gaps from the latest audit include email verification, waiting-room and scheduling routes, stream analytics collection routes, account routes, server-following routes, custom config/homepage routes, and several convenience video/user endpoints.
+- Historical changelog entries below describe milestone states at the time they were written; they are not a guarantee of current 100% coverage.
 
 ---
 
@@ -179,12 +168,14 @@ docker run -p 8080:8080 \
     {url: '/api/openapi_channels.yaml', name: 'Channels'}, \
     {url: '/api/openapi_captions.yaml', name: 'Captions'}, \
     {url: '/api/openapi_ratings_playlists.yaml', name: 'Ratings & Playlists'}, \
+    {url: '/api/openapi_social.yaml', name: 'Social & ATProto'}, \
     {url: '/api/openapi_chat.yaml', name: 'Chat'}, \
     {url: '/api/openapi_moderation.yaml', name: 'Moderation'}, \
     {url: '/api/openapi_federation.yaml', name: 'Federation'}, \
     {url: '/api/openapi_federation_hardening.yaml', name: 'Federation Security'}, \
     {url: '/api/openapi_plugins.yaml', name: 'Plugins'}, \
-    {url: '/api/openapi_redundancy.yaml', name: 'Redundancy'} \
+    {url: '/api/openapi_redundancy.yaml', name: 'Redundancy'}, \
+    {url: '/api/openapi_payments.yaml', name: 'Payments'} \
   ]" \
   -v $(pwd)/api:/usr/share/nginx/html/api \
   swaggerapi/swagger-ui
@@ -220,8 +211,9 @@ openapi-generator-cli generate \
 # Install validator
 npm install -g @apidevtools/swagger-cli
 
-# Validate all specs
-for spec in api/openapi*.yaml; do
+# Validate all primary specs plus the legacy notifications spec
+for spec in api/openapi*.yaml docs/openapi*.yaml; do
+  [ -f "$spec" ] || continue
   echo "Validating $spec..."
   swagger-cli validate "$spec"
 done
@@ -399,7 +391,7 @@ When adding new API endpoints:
 3. Include comprehensive examples
 4. Document security requirements
 5. Add rate limiting information if applicable
-6. Update this README with new endpoints
+6. Update this README and keep the sync-status notes honest when code lands ahead of spec coverage
 
 ### File Naming Convention
 

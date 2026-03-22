@@ -3,8 +3,6 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 README_FILE="$ROOT_DIR/README.md"
-API_README_FILE="$ROOT_DIR/api/README.md"
-BASELINE_REPORT_FILE="$ROOT_DIR/docs/development/TEST_BASELINE_REPORT.md"
 
 CHECK_MODE=0
 if [[ "${1:-}" == "--check" ]]; then
@@ -30,8 +28,10 @@ tmp_go_files="$(mktemp)"
 tmp_non_test_go_files="$(mktemp)"
 tmp_test_files="$(mktemp)"
 tmp_migration_files="$(mktemp)"
+tmp_api_openapi_files="$(mktemp)"
+tmp_docs_openapi_files="$(mktemp)"
 tmp_file="$(mktemp)"
-trap 'rm -f "$tmp_file" "$tmp_all_files" "$tmp_go_files" "$tmp_non_test_go_files" "$tmp_test_files" "$tmp_migration_files"' EXIT
+trap 'rm -f "$tmp_file" "$tmp_all_files" "$tmp_go_files" "$tmp_non_test_go_files" "$tmp_test_files" "$tmp_migration_files" "$tmp_api_openapi_files" "$tmp_docs_openapi_files"' EXIT
 
 collect_file_inventory() {
 	if command -v git >/dev/null 2>&1 && git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
@@ -88,31 +88,21 @@ awk '/\.go$/ {print}' "$tmp_all_files" > "$tmp_go_files"
 awk '/_test\.go$/ {print}' "$tmp_all_files" > "$tmp_test_files"
 awk '/\.go$/ && $0 !~ /_test\.go$/ {print}' "$tmp_all_files" > "$tmp_non_test_go_files"
 awk '/^migrations\/.*\.sql$/ {print}' "$tmp_all_files" > "$tmp_migration_files"
+awk '/^api\/openapi.*\.yaml$/ {print}' "$tmp_all_files" > "$tmp_api_openapi_files"
+awk '/^docs\/openapi.*\.yaml$/ {print}' "$tmp_all_files" > "$tmp_docs_openapi_files"
 
 go_files="$(awk 'END{print NR+0}' "$tmp_go_files")"
 non_test_go_files="$(awk 'END{print NR+0}' "$tmp_non_test_go_files")"
 test_files="$(awk 'END{print NR+0}' "$tmp_test_files")"
 migrations="$(awk 'END{print NR+0}' "$tmp_migration_files")"
 automated_tests="$(count_test_functions "$tmp_test_files")"
+api_openapi_specs="$(awk 'END{print NR+0}' "$tmp_api_openapi_files")"
+docs_openapi_specs="$(awk 'END{print NR+0}' "$tmp_docs_openapi_files")"
+openapi_total=$((api_openapi_specs + docs_openapi_specs))
 
 source_lines="$(sum_line_counts "$tmp_non_test_go_files")"
 test_lines="$(sum_line_counts "$tmp_test_files")"
 total_lines=$((source_lines + test_lines))
-
-api_endpoints="$(sed -nE 's/^\| \*\*TOTAL\*\* \| \*\*(~?[0-9]+)\*\* \|.*$/\1/p' "$API_README_FILE" | head -n 1)"
-if [[ -z "$api_endpoints" ]]; then
-	api_endpoints="unknown"
-fi
-
-coverage_baseline="$(sed -nE 's/^- \*\*Overall Code Coverage\*\*: ([0-9.]+%).*$/\1/p' "$BASELINE_REPORT_FILE" | head -n 1)"
-if [[ -z "$coverage_baseline" ]]; then
-	coverage_baseline="unknown"
-fi
-
-coverage_date="$(sed -nE 's/^\*\*Generated\*\*: ([0-9]{4}-[0-9]{2}-[0-9]{2}).*$/\1/p' "$BASELINE_REPORT_FILE" | head -n 1)"
-if [[ -z "$coverage_date" ]]; then
-	coverage_date="unknown date"
-fi
 
 go_files_fmt="$(format_int "$go_files")"
 non_test_go_files_fmt="$(format_int "$non_test_go_files")"
@@ -121,6 +111,7 @@ source_lines_fmt="$(format_int "$source_lines")"
 test_lines_fmt="$(format_int "$test_lines")"
 total_lines_fmt="$(format_int "$total_lines")"
 automated_tests_fmt="$(format_int "$automated_tests")"
+openapi_total_fmt="$(format_int "$openapi_total")"
 
 awk \
 	-v go_files_fmt="$go_files_fmt" \
@@ -130,9 +121,9 @@ awk \
 	-v test_lines_fmt="$test_lines_fmt" \
 	-v total_lines_fmt="$total_lines_fmt" \
 	-v migrations="$migrations" \
-	-v api_endpoints="$api_endpoints" \
-	-v coverage_baseline="$coverage_baseline" \
-	-v coverage_date="$coverage_date" \
+	-v openapi_total_fmt="$openapi_total_fmt" \
+	-v api_openapi_specs="$api_openapi_specs" \
+	-v docs_openapi_specs="$docs_openapi_specs" \
 	-v automated_tests_fmt="$automated_tests_fmt" '
 BEGIN { state = "" }
 {
@@ -145,8 +136,7 @@ BEGIN { state = "" }
 		print "| **Test Files** | " test_files_fmt " | Test files across unit, integration, and E2E suites |"
 		print "| **Lines of Code** | " total_lines_fmt "+ | ~" source_lines_fmt " source + ~" test_lines_fmt " test code |"
 		print "| **Database Migrations** | " migrations " | Goose SQL migrations |"
-		print "| **API Endpoints** | " api_endpoints " | RESTful + WebSocket + Federation (OpenAPI-documented) |"
-		print "| **Coverage Baseline** | " coverage_baseline " | Latest full-repo baseline (`docs/development/TEST_BASELINE_REPORT.md`, " coverage_date ") |"
+		print "| **OpenAPI Files** | " openapi_total_fmt " | " api_openapi_specs " specs in `api/` plus " docs_openapi_specs " legacy standalone spec in `docs/` |"
 		print "| **Security Tests** | 50+ | Including SSRF, virus scanning, auth |"
 		print "| **Automated Tests** | " automated_tests_fmt " | `func Test*` count across `*_test.go` files |"
 		state = "skip_project_metrics_table"
@@ -170,8 +160,7 @@ BEGIN { state = "" }
 		print "| **Test Files** | " test_files_fmt " | Test files across unit, integration, and E2E suites |"
 		print "| **Lines of Code** | " total_lines_fmt "+ | ~" source_lines_fmt " source + ~" test_lines_fmt " test code |"
 		print "| **Database Migrations** | " migrations " | Goose SQL migrations |"
-		print "| **API Endpoints** | " api_endpoints " | RESTful + WebSocket + Federation (OpenAPI-documented) |"
-		print "| **Test Coverage** | " coverage_baseline " baseline | Latest full-repo baseline (`docs/development/TEST_BASELINE_REPORT.md`, " coverage_date ") |"
+		print "| **OpenAPI Files** | " openapi_total_fmt " | " api_openapi_specs " specs in `api/` plus " docs_openapi_specs " legacy standalone spec in `docs/` |"
 		print "| **Security Tests** | 50+ | SSRF, virus scanning, auth, input validation |"
 		print "| **Automated Tests** | " automated_tests_fmt " | `func Test*` count across `*_test.go` files |"
 		state = "skip_test_metrics_table"

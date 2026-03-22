@@ -2,6 +2,10 @@
 # OpenAPI Endpoint Audit Script
 # Extracts all endpoints from routes.go and OpenAPI specs for comparison
 
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 echo "=== IMPLEMENTED ENDPOINTS (from routes.go) ==="
 echo ""
 echo "Authentication Endpoints:"
@@ -290,4 +294,4 @@ echo ""
 echo "=== DOCUMENTED ENDPOINTS (from OpenAPI specs) ==="
 echo ""
 echo "Extracting from all OpenAPI files..."
-grep -h "^  /" /Users/yosefgamble/github/athena/api/*.yaml /Users/yosefgamble/github/athena/docs/openapi_notifications.yaml 2>/dev/null | sort -u
+grep -h "^  /" "$ROOT_DIR"/api/*.yaml "$ROOT_DIR"/docs/openapi_notifications.yaml 2>/dev/null | sort -u

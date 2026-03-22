@@ -4,6 +4,9 @@
 
 set -e
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
 echo "========================================"
 echo "OpenAPI Validation Script"
 echo "========================================"
@@ -30,8 +33,8 @@ echo "Step 1: Linting OpenAPI files with Spectral"
 echo "--------------------------------------------"
 
 # Find all OpenAPI YAML files
-API_DIR="/Users/yosefgamble/github/athena/api"
-DOCS_DIR="/Users/yosefgamble/github/athena/docs"
+API_DIR="$REPO_ROOT/api"
+DOCS_DIR="$REPO_ROOT/docs"
 
 for file in "$API_DIR"/*.yaml "$DOCS_DIR"/openapi*.yaml; do
     if [ -f "$file" ]; then
@@ -41,7 +44,7 @@ for file in "$API_DIR"/*.yaml "$DOCS_DIR"/openapi*.yaml; do
         echo ""
         echo "Validating: $filename"
 
-        if spectral lint "$file" --ruleset .spectral.yaml 2>&1; then
+        if spectral lint "$file" --ruleset "$REPO_ROOT/.spectral.yaml" 2>&1; then
             echo -e "${GREEN}✓ $filename is valid${NC}"
             VALID_FILES=$((VALID_FILES + 1))
         else
@@ -62,8 +65,14 @@ for file in "$API_DIR"/*.yaml "$DOCS_DIR"/openapi*.yaml; do
     if [ -f "$file" ]; then
         filename=$(basename "$file")
 
-        # Skip files that shouldn't have /api/v1 prefix
+        # Skip files that shouldn't have /api/v1 in the raw path entries.
         if [[ "$filename" == "openapi_2fa.yaml" ]] || [[ "$filename" == "openapi_auth_2fa.yaml" ]]; then
+            continue
+        fi
+
+        # Some specs set /api/v1 at the server level and intentionally keep raw paths
+        # relative (for example: /payments/* and legacy /notifications/* specs).
+        if grep -Eq '^[[:space:]]*- url:[[:space:]]+.*/api/v1/?$' "$file"; then
             continue
         fi
 

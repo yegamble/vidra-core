@@ -18,14 +18,13 @@ See [VALIDATION_REQUIRED.md](docs/development/VALIDATION_REQUIRED.md) for comple
 
 | Metric | Count | Description |
 |--------|-------|-------------|
-| **Go Files** | 798 | Total Go files (397 non-test) |
-| **Test Files** | 401 | Test files across unit, integration, and E2E suites |
-| **Lines of Code** | 244,463+ | ~77,959 source + ~166,504 test code |
-| **Database Migrations** | 73 | Goose SQL migrations |
-| **API Endpoints** | ~215 | RESTful + WebSocket + Federation (OpenAPI-documented) |
-| **Test Coverage** | 69.9% avg | Per-package average across 74 packages (per-package thresholds in `scripts/coverage-thresholds.txt`) |
+| **Go Files** | 855 | Total Go files (428 non-test) |
+| **Test Files** | 427 | Test files across unit, integration, and E2E suites |
+| **Lines of Code** | 287,316+ | ~94,227 source + ~193,089 test code |
+| **Database Migrations** | 76 | Goose SQL migrations |
+| **OpenAPI Files** | 20 | 19 specs in `api/` plus 1 legacy standalone spec in `docs/` |
 | **Security Tests** | 50+ | Including SSRF, virus scanning, auth |
-| **Automated Tests** | 4,411 | `func Test*` count across `*_test.go` files |
+| **Automated Tests** | 4,666 | `func Test*` count across `*_test.go` files |
 
 ## Features
 
@@ -157,12 +156,15 @@ Without `DATABASE_URL`, `REDIS_URL`, or `JWT_SECRET` set, the server starts in *
 On first run (or when required config is missing), Athena serves a web-based wizard at `http://localhost:8080/setup/welcome`:
 
 1. **Welcome** — System resource detection and deployment overview
-2. **Database** — Choose "Local Docker" (auto-provisioned) or "External Service" (provide your own Postgres URL). Tests connectivity.
-3. **Services** — Configure Redis, IPFS, ClamAV, and Whisper with "Local Docker" / "External Service" toggles.
-4. **Storage** — Set the storage path and configure backup settings (local, S3, or SFTP).
-5. **Security** — Auto-generated JWT secret (or provide your own, minimum 32 chars). Create the initial admin account.
-6. **Review** — Summary of all settings with edit links per section.
-7. **Complete** — Configuration saved. Restart the server to apply.
+2. **Quick Install** — Optional shortcut path for guided local setup
+3. **Database** — Choose "Local Docker" (auto-provisioned) or "External Service" (provide your own Postgres URL). Tests connectivity.
+4. **Services** — Configure Redis, IPFS, ClamAV, and Whisper with "Local Docker" / "External Service" toggles.
+5. **Email** — Configure SMTP/mail delivery settings and test connectivity.
+6. **Networking** — Set public URL, reverse-proxy, and ingress-related options.
+7. **Storage** — Set the storage path and configure backup settings (local, S3, or SFTP).
+8. **Security** — Auto-generated JWT secret (or provide your own, minimum 32 chars). Create the initial admin account.
+9. **Review** — Summary of all settings with edit links per section.
+10. **Complete** — Configuration saved. Restart the server to apply.
 
 The wizard writes a `.env` file and sets `SETUP_COMPLETED=true`. After restart, Athena boots normally.
 
@@ -260,16 +262,19 @@ See the full documentation index at [docs/README.md](docs/README.md).
 
 ### API Documentation
 
-- **OpenAPI Specifications** - Comprehensive OpenAPI 3.0 API documentation (98%+ coverage)
+- **OpenAPI Reference** - Modular OpenAPI 3.0 specs for major API areas; the live router in `internal/httpapi/routes.go` remains the source of truth for the newest routes
+  - [API Index](api/README.md) - Current spec inventory, legacy-spec notes, and sync status
+  - [Main API](api/openapi.yaml) - Core auth, video, messaging, notifications, categories, runners, and PeerTube-compatible/admin routes
   - [Authentication & 2FA](api/openapi_auth_2fa.yaml) - Two-factor authentication (TOTP + backup codes)
   - [Uploads & Encoding](api/openapi_uploads.yaml) - Chunked uploads, resume, encoding status
   - [Analytics & Views](api/openapi_analytics.yaml) - View tracking, analytics, trending
-  - [Live Streaming](api/openapi_livestreaming.yaml) - RTMP ingest, HLS delivery, scheduling, analytics
+  - [Live Streaming](api/openapi_livestreaming.yaml) - RTMP ingest, HLS delivery, and session history
   - [Video Imports](api/openapi_imports.yaml) - External URL imports
   - [Comments](api/openapi_comments.yaml), [Channels](api/openapi_channels.yaml), [Captions](api/openapi_captions.yaml)
-  - [Ratings & Playlists](api/openapi_ratings_playlists.yaml), [Notifications](docs/openapi_notifications.yaml)
+  - [Ratings & Playlists](api/openapi_ratings_playlists.yaml), [Social & ATProto](api/openapi_social.yaml)
   - [Chat](api/openapi_chat.yaml), [Moderation](api/openapi_moderation.yaml), [Federation](api/openapi_federation.yaml)
-  - [Plugins](api/openapi_plugins.yaml), [Redundancy](api/openapi_redundancy.yaml)
+  - [Plugins](api/openapi_plugins.yaml), [Redundancy](api/openapi_redundancy.yaml), [Payments](api/openapi_payments.yaml)
+  - Notifications are documented in [Main API](api/openapi.yaml); [Legacy Notifications Spec](docs/openapi_notifications.yaml) is retained for compatibility.
 - **[API Examples](docs/API_EXAMPLES.md)** - API usage examples and patterns
 - **[API Contract Policy](docs/API_CONTRACT_POLICY.md)** - API change governance and CI enforcement
 
@@ -337,15 +342,15 @@ See the full documentation index at [docs/README.md](docs/README.md).
 
 **Sprints 1-14**: PeerTube Feature Parity - **100% COMPLETE**
 
-- 77,959+ lines of production code
-- 4,411 automated tests
-- 73 database migrations
-- ~215 API endpoints
+- 94,227+ lines of production code
+- 4,650 automated tests
+- 76 database migrations
+- 20 tracked OpenAPI files (19 primary specs plus 1 legacy notifications spec)
 - Full ActivityPub federation
 
 **Sprint 20** (Complete): Release Hardening
 
-- Full regression and security validation (4,411 tests passing, zero critical vulnerabilities)
+- Full regression and security validation; see current CI and audit reports for the latest pass counts
 - Coverage sign-off (all 30 per-package thresholds met)
 - CHANGELOG.md and maintenance plan finalized
 - Final Release Checklist completed (12/14 items verified)
@@ -382,14 +387,13 @@ See [Quality Programme](docs/sprints/QUALITY_PROGRAMME.md) for full details.
 
 | Metric | Count | Description |
 |--------|-------|-------------|
-| **Go Files** | 798 | Total Go files (397 non-test) |
-| **Test Files** | 401 | Test files across unit, integration, and E2E suites |
-| **Lines of Code** | 244,463+ | ~77,959 source + ~166,504 test code |
-| **Database Migrations** | 73 | Goose SQL migrations |
-| **API Endpoints** | ~215 | RESTful + WebSocket + Federation (OpenAPI-documented) |
-| **Test Coverage** | 69.9% avg | Per-package average across 74 packages (per-package thresholds in `scripts/coverage-thresholds.txt`) |
+| **Go Files** | 855 | Total Go files (428 non-test) |
+| **Test Files** | 427 | Test files across unit, integration, and E2E suites |
+| **Lines of Code** | 287,316+ | ~94,227 source + ~193,089 test code |
+| **Database Migrations** | 76 | Goose SQL migrations |
+| **OpenAPI Files** | 20 | 19 specs in `api/` plus 1 legacy standalone spec in `docs/` |
 | **Security Tests** | 50+ | SSRF, virus scanning, auth, input validation |
-| **Automated Tests** | 4,411 | `func Test*` count across `*_test.go` files |
+| **Automated Tests** | 4,666 | `func Test*` count across `*_test.go` files |
 
 See [Project Management Documentation](docs/project-management/README.md), [Sprint History](docs/sprints/README.md), and [Quality Programme](docs/sprints/QUALITY_PROGRAMME.md) for detailed progress tracking.
 

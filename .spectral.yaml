@@ -15,9 +15,6 @@ rules:
   operation-description: warn
   info-description: error
 
-  # Require examples in schemas
-  oas3-schema-examples-or-examples: warn
-
   # Tag rules
   operation-tags: warn
   openapi-tags: warn

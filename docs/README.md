@@ -18,7 +18,12 @@ This index links the core Athena documentation by area.
 
 ## API and Compatibility
 
+- [API Reference Index](../api/README.md)
 - [API Examples](API_EXAMPLES.md)
+- [API Contract Policy](API_CONTRACT_POLICY.md)
+- [Notifications API Notes](NOTIFICATIONS_API.md)
+- [Email Verification API](EMAIL_VERIFICATION_API.md)
+- [OAuth2 Guide](OAUTH2.md)
 - [PeerTube Compatibility](PEERTUBE_COMPAT.md)
 - [PeerTube Migration Guide](PEERTUBE_MIGRATION.md)
 
@@ -26,8 +31,8 @@ This index links the core Athena documentation by area.
 
 - [Deployment Overview](deployment/README.md)
 - [Production Deployment](deployment/PRODUCTION.md)
-- [Operations Runbook](deployment/OPERATIONS_RUNBOOK.md)
-- [Monitoring](deployment/MONITORING.md)
+- [Operations Runbook](operations/RUNBOOK.md)
+- [Monitoring](operations/MONITORING.md)
 
 ## Security
 
