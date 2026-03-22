@@ -5,8 +5,8 @@
 set -e
 
 GENESIS_PATH="/opt/iota/config/genesis.blob"
-TESTNET_GENESIS_URL="https://github.com/iotaledger/iota-genesis/raw/main/testnet/genesis.blob"
-MAINNET_GENESIS_URL="https://github.com/iotaledger/iota-genesis/raw/main/mainnet/genesis.blob"
+TESTNET_GENESIS_URL="https://dbfiles.testnet.iota.cafe/genesis.blob"
+MAINNET_GENESIS_URL="https://dbfiles.mainnet.iota.cafe/genesis.blob"
 NETWORK="${IOTA_NETWORK:-testnet}"
 
 echo "[entrypoint] IOTA Rebased fullnode starting (network: ${NETWORK})"
