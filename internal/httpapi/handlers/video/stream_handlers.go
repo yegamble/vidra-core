@@ -106,20 +106,15 @@ func fetchVideo(w http.ResponseWriter, r *http.Request, videoRepo usecase.VideoR
 
 	video, err := videoRepo.GetByID(r.Context(), videoID)
 	if err != nil {
-		var domainErr domain.DomainError
-		if de, ok := err.(domain.DomainError); ok {
-			domainErr = de
-		} else if de, ok := err.(*domain.DomainError); ok {
-			domainErr = *de
-		} else {
-			slog.Error("stream handler: failed to fetch video", "id", videoID, "error", err)
-			shared.WriteError(w, http.StatusInternalServerError, domain.NewDomainError("DB_ERROR", "Failed to fetch video"))
+		if isVideoNotFoundError(err) {
+			shared.WriteError(w, http.StatusNotFound, videoErrorOrDefault(err, "VIDEO_NOT_FOUND", "Video not found"))
 			return nil, false
 		}
 
-		if domainErr.Code == "VIDEO_NOT_FOUND" {
-			shared.WriteError(w, http.StatusNotFound, domainErr)
+		if domainErr := videoErrorOrDefault(err, "DB_ERROR", "Failed to fetch video"); domainErr.Code != "DB_ERROR" || domainErr.Message != "Failed to fetch video" {
+			shared.WriteError(w, http.StatusInternalServerError, domainErr)
 		} else {
+			slog.Error("stream handler: failed to fetch video", "id", videoID, "error", err)
 			shared.WriteError(w, http.StatusInternalServerError, domainErr)
 		}
 		return nil, false

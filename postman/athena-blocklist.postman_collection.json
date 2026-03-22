@@ -8,6 +8,7 @@
   "variable": [
     {"key": "baseUrl", "value": "http://app-test:8080", "type": "string"},
     {"key": "access_token", "value": "", "type": "string"},
+    {"key": "block_account_id", "value": "", "type": "string"},
     {"key": "account_name", "value": "blockeduser", "type": "string"},
     {"key": "server_host", "value": "badinstance.example.com", "type": "string"}
   ],
@@ -15,6 +16,28 @@
     {
       "name": "Account Blocklist - Happy Path",
       "item": [
+        {
+          "name": "GET /api/v1/channels - Resolve block target account",
+          "event": [{"listen": "test", "script": {"exec": [
+            "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+            "const json = pm.response.json();",
+            "const channels = json.data && Array.isArray(json.data.data) ? json.data.data : [];",
+            "const currentUserId = pm.environment.get('user_id');",
+            "const target = channels.find(ch => ch.accountId && ch.accountId !== currentUserId && ch.account && ch.account.username);",
+            "pm.test('Found block target account', () => pm.expect(target).to.exist);",
+            "if (target) {",
+            "  pm.collectionVariables.set('block_account_id', target.accountId);",
+            "  pm.collectionVariables.set('account_name', target.account.username);",
+            "  pm.environment.set('block_account_id', target.accountId);",
+            "  pm.environment.set('account_name', target.account.username);",
+            "}"
+          ], "type": "text/javascript"}}],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {"raw": "{{baseUrl}}/api/v1/channels", "host": ["{{baseUrl}}"], "path": ["api", "v1", "channels"]}
+          }
+        },
         {
           "name": "POST /api/v1/blocklist/accounts - Block account",
           "event": [{"listen": "test", "script": {"exec": [
@@ -26,7 +49,7 @@
               {"key": "Content-Type", "value": "application/json"},
               {"key": "Authorization", "value": "Bearer {{access_token}}"}
             ],
-            "body": {"mode": "raw", "raw": "{\n  \"accountName\": \"{{account_name}}\"\n}"},
+            "body": {"mode": "raw", "raw": "{\n  \"accountId\": \"{{block_account_id}}\",\n  \"accountName\": \"{{account_name}}\"\n}"},
             "url": {"raw": "{{baseUrl}}/api/v1/blocklist/accounts", "host": ["{{baseUrl}}"], "path": ["api", "v1", "blocklist", "accounts"]}
           }
         },
@@ -35,9 +58,10 @@
           "event": [{"listen": "test", "script": {"exec": [
             "pm.test('Status is 200', () => pm.response.to.have.status(200));",
             "const json = pm.response.json();",
-            "pm.test('Has data and total', () => {",
+            "pm.test('Has data and meta total', () => {",
             "  pm.expect(json).to.have.property('data');",
-            "  pm.expect(json).to.have.property('total');",
+            "  pm.expect(json).to.have.property('meta');",
+            "  pm.expect(json.meta).to.have.property('total');",
             "});"
           ], "type": "text/javascript"}}],
           "request": {
@@ -82,9 +106,10 @@
           "event": [{"listen": "test", "script": {"exec": [
             "pm.test('Status is 200', () => pm.response.to.have.status(200));",
             "const json = pm.response.json();",
-            "pm.test('Has data and total', () => {",
+            "pm.test('Has data and meta total', () => {",
             "  pm.expect(json).to.have.property('data');",
-            "  pm.expect(json).to.have.property('total');",
+            "  pm.expect(json).to.have.property('meta');",
+            "  pm.expect(json.meta).to.have.property('total');",
             "});"
           ], "type": "text/javascript"}}],
           "request": {

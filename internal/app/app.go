@@ -667,6 +667,7 @@ func (app *Application) registerRoutes(deps *Dependencies) {
 		PlaylistService:       deps.PlaylistService,
 		CaptionService:        deps.CaptionService,
 		CaptionGenService:     deps.CaptionGenService,
+		ActivityPubService:    deps.ActivityPubService,
 		SocialService:         deps.SocialService,
 		AtprotoService:        deps.AtprotoService,
 		FederationService:     deps.FederationService,

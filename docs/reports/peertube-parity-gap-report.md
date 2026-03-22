@@ -16,28 +16,30 @@ This report replaces the earlier optimistic parity snapshot with a validation-dr
 
 ## Bottom Line
 
-Athena has broad PeerTube-shaped API coverage and meaningful Athena-only extensions, but it is **not yet a drop-in PeerTube instance target**.
+Athena now has a **green validation baseline** for the current documented/OpenAPI + Postman surface, but it is **still not yet a full drop-in PeerTube instance target**.
 
 What is true today:
 
-- `api/openapi.yaml` now validates cleanly and regenerates `internal/generated/types.go`
+- `api/openapi.yaml` validates cleanly and regenerates `internal/generated/types.go`
 - Focused Go tests pass across generated types, HTTP handlers, integration tests, and E2E scenarios
-- The Docker E2E stack now boots reliably on a fresh database
-- Stateful Newman execution is now real, not synthetic
+- The Docker E2E stack boots reliably on a fresh database
+- Stateful Newman execution is real and now passes end to end
+- Runtime federation discovery is mounted in the validated container runtime
+- Missing-video and missing-import error paths now return PeerTube-style `404`/`400` semantics instead of `500`
+- Channel subscription and livestream flows now pass their real stateful E2E paths
 
 What is not true yet:
 
-- Runtime federation discovery is not working like PeerTube
-- Several not-found paths return `500` where PeerTube clients expect `404`
-- A number of Postman collections still assert Athena-native or stale response shapes instead of PeerTube-compatible ones
-- Some PeerTube-canonical endpoints remain absent or only exist behind Athena-specific paths
+- Some PeerTube-canonical endpoint families are still absent or Athena-shaped
+- There is still no true “import an existing PeerTube instance and use it normally” E2E scenario
+- Athena-only extensions such as crypto payments, IPFS-native flows, and ATProto interoperability are not yet proven by the stateful Newman suite
 
 Current Newman result:
 
 - Collections run: 12
-- Passed: 2
-- Failed: 10
-- Passing collections: `athena-feeds`, `athena-secure-messaging`
+- Passed: 12
+- Failed: 0
+- Passing collections: `athena-auth`, `athena-videos`, `athena-uploads`, `athena-channels`, `athena-instance-config`, `athena-imports`, `athena-feeds`, `athena-blocklist`, `athena-notifications`, `athena-livestreaming`, `athena-federation`, `athena-secure-messaging`
 
 ## Infrastructure Fixes Applied During Validation
 
@@ -51,7 +53,7 @@ The validation uncovered and fixed several test-environment blockers before any 
 - validation-mode rate limits are relaxed so later collections are not polluted by `429` noise
 - OpenAPI duplicate paths and duplicate `searchVideos` operation IDs were fixed
 
-These changes improved signal quality; the remaining failures are now mostly real contract or behavior gaps.
+These changes improved signal quality enough to produce a green baseline. The remaining compatibility work is now primarily missing-scope work, not a broken validation harness.
 
 ## What Athena Already Covers Well
 
@@ -75,14 +77,14 @@ Validated by E2E:
 
 ## Highest-Risk PeerTube Compatibility Gaps
 
-These are the gaps most likely to break a PeerTube-style instance import or client behavior.
+These are the gaps most likely to block a true PeerTube-instance import or an external PeerTube client/tooling integration even though the current Athena validation suite is green.
 
 | Gap | Evidence | Why it matters |
 | --- | --- | --- |
-| Federation discovery missing at runtime | Newman: `/.well-known/webfinger`, `/.well-known/nodeinfo`, `/nodeinfo/2.0` all return `404`; app logs show `NOT_FOUND` and only register `/.well-known/atproto-did` in the test app | PeerTube and ActivityPub discovery depend on these endpoints |
-| Video not-found paths return `500` | Newman failures on `GET /api/v1/videos/{id}`, `PUT /api/v1/videos/{id}`, and stream lookup for nonexistent IDs | PeerTube clients expect deterministic `404`/`400`, not internal errors |
-| PeerTube canonical admin paths still differ | Athena still uses Athena-specific/admin-prefixed variants for some operations | Imported tooling expecting exact PeerTube routes will break |
-| Handle-based compatibility is incomplete | Several flows still use Athena UUID/ID semantics or Athena-native `/channels` paths | PeerTube imports and external clients expect account/channel handles |
+| PeerTube-canonical admin and maintenance paths are still incomplete | Route/spec audit still shows missing or Athena-shaped `registrations`, `jobs`, `plugins`, `runners`, and import lifecycle aliases | Imported tooling expecting exact PeerTube routes will still break |
+| Handle/collaborator import stories are incomplete | `/api/v1/video-channels/{channelHandle}/collaborators*` is still absent | Multi-user channel administration is part of real PeerTube instance behavior |
+| True import/federation continuation is not E2E-proven | The current suite validates discovery endpoints and import CRUD, but not a full imported remote instance behaving normally afterward | “Drop-in PeerTube instance target” requires more than route availability |
+| Athena-only extensions are only partially validated | Secure messaging and livestreaming now pass; crypto payments, IPFS-native flows, and ATProto interoperability are not in the stateful suite | Extra Athena features still need proof beyond route presence |
 
 PeerTube-canonical path gaps still visible in the route/spec comparison:
 
@@ -97,44 +99,41 @@ PeerTube-canonical path gaps still visible in the route/spec comparison:
 
 The following user stories are not yet fully satisfied end to end:
 
-- Import a PeerTube instance and have remote actors resolve through WebFinger and NodeInfo without Athena-specific adaptation
+- Import a PeerTube instance and continue normal follow/watch/discovery behavior without Athena-specific adaptation
 - Import PeerTube channels that rely on handle-based discovery and collaborator management
 - Retry or cancel imported videos using PeerTube’s canonical import lifecycle endpoints
 - Administer PeerTube-style registration approvals through PeerTube-compatible registration moderation routes
 - Use plugin and runner management with PeerTube-compatible endpoints
-- Access video detail, update, and streaming endpoints with predictable PeerTube-style error semantics for nonexistent IDs
 
 Athena-only user stories that exist in code but are not yet fully proven by stateful Newman coverage:
 
 - Crypto payments
 - IPFS-backed flows
 - ATProto interoperability
-- End-to-end livestream lifecycle
 
 ## Newman Coverage Status
 
 Current state of the stateful Postman/Newman suite:
 
-| Collection | Result | Primary issue type |
+| Collection | Result | What it now proves |
 | --- | --- | --- |
-| `athena-feeds` | Pass | Good PeerTube-style coverage |
-| `athena-secure-messaging` | Pass | Athena-only extension validated |
-| `athena-auth` | Fail | Video upload assertions expect top-level `id`; video lookup/stream not-found paths return `500` |
-| `athena-videos` | Fail | Same `500` not-found problem plus stale response-shape expectations |
-| `athena-uploads` | Fail | Missing fixture file, stale field expectations, mixed response-shape drift |
-| `athena-channels` | Fail | Creation/setup assumptions and Athena-native path/ID expectations |
-| `athena-instance-config` | Fail | Contract mismatch: expected `serverVersion`; admin request is not authenticated as admin |
-| `athena-imports` | Fail | Contract mismatch between collection and actual wrapped responses; several import edge cases still return `500` |
-| `athena-blocklist` | Fail | Account blocklist flow and pagination/total expectations drift from actual response shape |
-| `athena-notifications` | Fail | Single-item mark-read/delete seed-data issues and response-shape assumptions |
-| `athena-livestreaming` | Fail | Missing seeded stream IDs; create/get/end flow not fully stateful |
-| `athena-federation` | Fail | Real runtime discovery gap (`404`) |
+| `athena-auth` | Pass | Stateful auth, avatar, and core auth error handling work against the current contract |
+| `athena-videos` | Pass | Video CRUD, search, upload, stream edge cases, and not-found behavior align with the validated contract |
+| `athena-uploads` | Pass | Chunked uploads and encoding-status endpoints work statefully in Docker |
+| `athena-channels` | Pass | Channel CRUD, list/get, subscribe/unsubscribe, and cleanup flows work end to end |
+| `athena-instance-config` | Pass | Public config and quota endpoints match the validated contract |
+| `athena-imports` | Pass | Import CRUD/error semantics work for the validated Athena surface |
+| `athena-feeds` | Pass | Public and subscription feeds behave correctly |
+| `athena-blocklist` | Pass | Account/server blocklist state transitions and pagination work |
+| `athena-notifications` | Pass | Notification list/read/delete flows work against wrapped responses |
+| `athena-livestreaming` | Pass | Stream create/get/stats/session/channel flows are stateful and working |
+| `athena-federation` | Pass | WebFinger, NodeInfo, and related federation discovery endpoints are live in runtime |
+| `athena-secure-messaging` | Pass | Athena-only encrypted messaging works across a full multi-user E2E flow |
 
 Important distinction:
 
-- Some failures are real product issues: federation discovery, `500` on missing video/import lookups
-- Some failures are collection drift: top-level vs wrapped response assertions, missing seed IDs, outdated field names
-- Both matter for PeerTube compatibility, because a compatibility claim requires the contract and the implementation to agree
+- A green suite means the currently claimed contract is now internally consistent and working
+- It does **not** yet mean Athena has complete PeerTube endpoint parity or import-story parity
 
 ## OpenAPI Status
 
@@ -145,31 +144,32 @@ OpenAPI is in better shape than runtime parity:
 - duplicate path keys were removed
 - duplicate search operation IDs were separated
 
-However, documentation is still ahead of runtime in at least one important area:
+Documentation/runtime alignment is materially better now:
 
-- Federation discovery endpoints are represented in docs/code, but are not mounted in the containerized runtime used for validation
+- Federation discovery endpoints are represented in docs/code and are mounted in the validated runtime
+- Wrapped response expectations in Postman now match the current documented Athena contract
 
-That mismatch must be resolved before Athena can be presented as PeerTube-compatible for import and federation workflows.
+The remaining OpenAPI/parity risk is mostly scope risk: missing PeerTube-canonical endpoint families and missing import-scenario coverage.
 
 ## Recommended Next Steps
 
-1. Fix ActivityPub discovery route registration so `/.well-known/webfinger`, `/.well-known/nodeinfo`, and `/nodeinfo/2.0` are live whenever ActivityPub is enabled.
-2. Fix video and import handlers so missing resources return `404` instead of `500`.
-3. Add the remaining PeerTube-canonical aliases and paths:
-   `users/registrations`, `jobs/{state}`, `plugins`, import `cancel`/`retry`, channel collaborators.
+1. Add the remaining PeerTube-canonical aliases and paths:
+   `users/registrations`, `jobs/{state}`, `plugins`, `runners`, import `cancel`/`retry`, channel collaborators.
+2. Add a true “import PeerTube instance” E2E scenario that verifies:
+   discovery, remote actor resolution, channel mapping, imported videos, and follow/watch behavior after import.
+3. Extend stateful coverage for Athena-only extensions:
+   crypto payments, IPFS flows, and ATProto interoperability.
 4. Split Postman collections into:
    PeerTube-compat collections and Athena-extension collections.
-5. Update failing Postman assertions to use Athena’s wrapped response format only where that format is intentional and documented.
-6. Add a true “import PeerTube instance” E2E scenario that verifies:
-   discovery, remote actor resolution, channel mapping, imported videos, and normal follow/watch behavior after import.
+5. Continue tightening OpenAPI around PeerTube-canonical alias coverage so route gaps are visible at spec-review time.
 
 ## Confidence Statement
 
-Confidence is high that Athena has a strong foundation and substantial PeerTube overlap.
+Confidence is high that Athena now has a working, internally consistent validation baseline across the currently covered surface.
 
-Confidence is also high that **full PeerTube instance import compatibility is not complete yet**, because the latest validation still shows:
+Confidence is also high that **full PeerTube instance import compatibility is still not complete**, because the remaining blockers are now mostly scope blockers:
 
-- broken federation discovery at runtime
-- incorrect `500` behavior on missing video/import paths
 - unresolved canonical-route gaps
-- E2E contract drift across 10 of 12 stateful collections
+- missing collaborator/plugin/runner/registration lifecycle coverage
+- no true imported-instance E2E proving normal post-import behavior
+- incomplete stateful coverage for Athena-only extensions outside secure messaging and livestreaming

@@ -42,6 +42,43 @@ func NewLiveStreamRepository(db *sqlx.DB) LiveStreamRepository {
 	return &liveStreamRepository{db: db}
 }
 
+func liveStreamSelectColumns(prefix string) string {
+	if prefix != "" {
+		prefix += "."
+	}
+
+	return fmt.Sprintf(`
+		%sid,
+		%schannel_id,
+		%suser_id,
+		%stitle,
+		COALESCE(%sdescription, '') AS description,
+		%sstream_key,
+		%sstatus,
+		%sprivacy,
+		COALESCE(%srtmp_url, '') AS rtmp_url,
+		COALESCE(%shls_playlist_url, '') AS hls_playlist_url,
+		%sviewer_count,
+		%speak_viewer_count,
+		%sstarted_at,
+		%sended_at,
+		%ssave_replay,
+		%sreplay_video_id,
+		%sscheduled_start,
+		%sscheduled_end,
+		%swaiting_room_enabled,
+		COALESCE(%swaiting_room_message, '') AS waiting_room_message,
+		%sreminder_sent,
+		%schat_enabled,
+		%screated_at,
+		%supdated_at
+	`,
+		prefix, prefix, prefix, prefix, prefix, prefix, prefix, prefix,
+		prefix, prefix, prefix, prefix, prefix, prefix, prefix, prefix,
+		prefix, prefix, prefix, prefix, prefix, prefix, prefix, prefix,
+	)
+}
+
 func (r *liveStreamRepository) Create(ctx context.Context, stream *domain.LiveStream) error {
 	query := `
 		INSERT INTO live_streams (
@@ -73,9 +110,7 @@ func (r *liveStreamRepository) Create(ctx context.Context, stream *domain.LiveSt
 
 func (r *liveStreamRepository) GetByID(ctx context.Context, id uuid.UUID) (*domain.LiveStream, error) {
 	var stream domain.LiveStream
-	query := `
-		SELECT * FROM live_streams WHERE id = $1
-	`
+	query := fmt.Sprintf(`SELECT %s FROM live_streams WHERE id = $1`, liveStreamSelectColumns(""))
 
 	if err := r.db.GetContext(ctx, &stream, query, id); err != nil {
 		if err == sql.ErrNoRows {
@@ -89,9 +124,7 @@ func (r *liveStreamRepository) GetByID(ctx context.Context, id uuid.UUID) (*doma
 
 func (r *liveStreamRepository) GetByStreamKey(ctx context.Context, streamKey string) (*domain.LiveStream, error) {
 	var stream domain.LiveStream
-	query := `
-		SELECT * FROM live_streams WHERE stream_key = $1
-	`
+	query := fmt.Sprintf(`SELECT %s FROM live_streams WHERE stream_key = $1`, liveStreamSelectColumns(""))
 
 	if err := r.db.GetContext(ctx, &stream, query, streamKey); err != nil {
 		if err == sql.ErrNoRows {
@@ -105,12 +138,12 @@ func (r *liveStreamRepository) GetByStreamKey(ctx context.Context, streamKey str
 
 func (r *liveStreamRepository) GetByChannelID(ctx context.Context, channelID uuid.UUID, limit, offset int) ([]*domain.LiveStream, error) {
 	var streams []*domain.LiveStream
-	query := `
-		SELECT * FROM live_streams
+	query := fmt.Sprintf(`
+		SELECT %s FROM live_streams
 		WHERE channel_id = $1
 		ORDER BY created_at DESC
 		LIMIT $2 OFFSET $3
-	`
+	`, liveStreamSelectColumns(""))
 
 	if err := r.db.SelectContext(ctx, &streams, query, channelID, limit, offset); err != nil {
 		return nil, fmt.Errorf("failed to get streams by channel: %w", err)
@@ -121,12 +154,12 @@ func (r *liveStreamRepository) GetByChannelID(ctx context.Context, channelID uui
 
 func (r *liveStreamRepository) GetByUserID(ctx context.Context, userID uuid.UUID, limit, offset int) ([]*domain.LiveStream, error) {
 	var streams []*domain.LiveStream
-	query := `
-		SELECT * FROM live_streams
+	query := fmt.Sprintf(`
+		SELECT %s FROM live_streams
 		WHERE user_id = $1
 		ORDER BY created_at DESC
 		LIMIT $2 OFFSET $3
-	`
+	`, liveStreamSelectColumns(""))
 
 	if err := r.db.SelectContext(ctx, &streams, query, userID, limit, offset); err != nil {
 		return nil, fmt.Errorf("failed to get streams by user: %w", err)
@@ -137,12 +170,12 @@ func (r *liveStreamRepository) GetByUserID(ctx context.Context, userID uuid.UUID
 
 func (r *liveStreamRepository) GetActiveStreams(ctx context.Context, limit, offset int) ([]*domain.LiveStream, error) {
 	var streams []*domain.LiveStream
-	query := `
-		SELECT * FROM live_streams
+	query := fmt.Sprintf(`
+		SELECT %s FROM live_streams
 		WHERE status = $1
 		ORDER BY started_at DESC
 		LIMIT $2 OFFSET $3
-	`
+	`, liveStreamSelectColumns(""))
 
 	if err := r.db.SelectContext(ctx, &streams, query, domain.StreamStatusLive, limit, offset); err != nil {
 		return nil, fmt.Errorf("failed to get active streams: %w", err)
@@ -357,12 +390,12 @@ func (r *liveStreamRepository) CancelSchedule(ctx context.Context, streamID uuid
 }
 
 func (r *liveStreamRepository) GetScheduledStreams(ctx context.Context, limit, offset int) ([]*domain.LiveStream, error) {
-	query := `
-		SELECT * FROM live_streams
+	query := fmt.Sprintf(`
+		SELECT %s FROM live_streams
 		WHERE status = 'scheduled'
 		ORDER BY scheduled_start ASC
 		LIMIT $1 OFFSET $2
-	`
+	`, liveStreamSelectColumns(""))
 	var streams []*domain.LiveStream
 	if err := r.db.SelectContext(ctx, &streams, query, limit, offset); err != nil {
 		return nil, fmt.Errorf("failed to get scheduled streams: %w", err)
@@ -371,15 +404,15 @@ func (r *liveStreamRepository) GetScheduledStreams(ctx context.Context, limit, o
 }
 
 func (r *liveStreamRepository) GetUpcomingStreams(ctx context.Context, userID uuid.UUID, limit int) ([]*domain.LiveStream, error) {
-	query := `
-		SELECT ls.* FROM live_streams ls
+	query := fmt.Sprintf(`
+		SELECT %s FROM live_streams ls
 		JOIN channels c ON c.id = ls.channel_id
 		WHERE ls.status = 'scheduled'
 		  AND ls.scheduled_start > NOW()
 		  AND c.account_id = $1
 		ORDER BY ls.scheduled_start ASC
 		LIMIT $2
-	`
+	`, liveStreamSelectColumns("ls"))
 	var streams []*domain.LiveStream
 	if err := r.db.SelectContext(ctx, &streams, query, userID, limit); err != nil {
 		return nil, fmt.Errorf("failed to get upcoming streams: %w", err)

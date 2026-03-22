@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -194,6 +195,25 @@ func TestImportHandlers_CreateImport_InvalidJSON(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
+func TestImportHandlers_CreateImport_Unauthenticated(t *testing.T) {
+	mockService := new(MockImportService)
+	handlers := NewImportHandlers(mockService)
+
+	reqBody := CreateImportRequest{
+		SourceURL:     "https://youtube.com/watch?v=test",
+		TargetPrivacy: "private",
+	}
+	body, _ := json.Marshal(reqBody)
+
+	req := httptest.NewRequest("POST", "/api/v1/videos/imports", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+
+	handlers.CreateImport(w, req)
+
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+	mockService.AssertNotCalled(t, "ImportVideo")
+}
+
 func TestImportHandlers_GetImport_Success(t *testing.T) {
 	mockService := new(MockImportService)
 	handlers := NewImportHandlers(mockService)
@@ -255,6 +275,26 @@ func TestImportHandlers_GetImport_NotFound(t *testing.T) {
 
 	assert.Equal(t, http.StatusNotFound, w.Code)
 
+	mockService.AssertExpectations(t)
+}
+
+func TestImportHandlers_GetImport_Forbidden(t *testing.T) {
+	mockService := new(MockImportService)
+	handlers := NewImportHandlers(mockService)
+
+	mockService.On("GetImport", mock.Anything, "import-123", "user-123").Return(nil, fmt.Errorf("%w: import belongs to different user", domain.ErrForbidden))
+
+	req := httptest.NewRequest("GET", "/api/v1/videos/imports/import-123", nil)
+	req = req.WithContext(context.WithValue(req.Context(), middleware.UserIDKey, "user-123"))
+
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("id", "import-123")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+
+	w := httptest.NewRecorder()
+	handlers.GetImport(w, req)
+
+	assert.Equal(t, http.StatusForbidden, w.Code)
 	mockService.AssertExpectations(t)
 }
 
@@ -345,6 +385,52 @@ func TestImportHandlers_ListImports_WithPagination(t *testing.T) {
 	mockService.AssertExpectations(t)
 }
 
+func TestImportHandlers_ListImports_WithStatusFilter(t *testing.T) {
+	mockService := new(MockImportService)
+	handlers := NewImportHandlers(mockService)
+
+	now := time.Now()
+	expectedImports := []*domain.VideoImport{
+		{
+			ID:            "import-pending",
+			UserID:        "user-123",
+			SourceURL:     "https://youtube.com/watch?v=pending",
+			Status:        domain.ImportStatusPending,
+			TargetPrivacy: "private",
+			CreatedAt:     now,
+			UpdatedAt:     now,
+		},
+		{
+			ID:            "import-completed",
+			UserID:        "user-123",
+			SourceURL:     "https://youtube.com/watch?v=completed",
+			Status:        domain.ImportStatusCompleted,
+			TargetPrivacy: "private",
+			CreatedAt:     now,
+			UpdatedAt:     now,
+		},
+	}
+
+	mockService.On("ListUserImports", mock.Anything, "user-123", 20, 0).Return(expectedImports, 2, nil)
+
+	req := httptest.NewRequest("GET", "/api/v1/videos/imports?status=pending", nil)
+	req = req.WithContext(context.WithValue(req.Context(), middleware.UserIDKey, "user-123"))
+	w := httptest.NewRecorder()
+
+	handlers.ListImports(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var resp ImportListResponse
+	err := json.NewDecoder(w.Body).Decode(&resp)
+	assert.NoError(t, err)
+	assert.Len(t, resp.Imports, 1)
+	assert.Equal(t, 1, resp.TotalCount)
+	assert.Equal(t, "pending", resp.Imports[0].Status)
+
+	mockService.AssertExpectations(t)
+}
+
 func TestImportHandlers_ListImports_Error(t *testing.T) {
 	mockService := new(MockImportService)
 	handlers := NewImportHandlers(mockService)
@@ -403,6 +489,46 @@ func TestImportHandlers_CancelImport_NotFound(t *testing.T) {
 
 	assert.Equal(t, http.StatusNotFound, w.Code)
 
+	mockService.AssertExpectations(t)
+}
+
+func TestImportHandlers_CancelImport_Forbidden(t *testing.T) {
+	mockService := new(MockImportService)
+	handlers := NewImportHandlers(mockService)
+
+	mockService.On("CancelImport", mock.Anything, "import-123", "user-123").Return(fmt.Errorf("%w: import belongs to different user", domain.ErrForbidden))
+
+	req := httptest.NewRequest("DELETE", "/api/v1/videos/imports/import-123", nil)
+	req = req.WithContext(context.WithValue(req.Context(), middleware.UserIDKey, "user-123"))
+
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("id", "import-123")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+
+	w := httptest.NewRecorder()
+	handlers.CancelImport(w, req)
+
+	assert.Equal(t, http.StatusForbidden, w.Code)
+	mockService.AssertExpectations(t)
+}
+
+func TestImportHandlers_CancelImport_TerminalStateReturns400(t *testing.T) {
+	mockService := new(MockImportService)
+	handlers := NewImportHandlers(mockService)
+
+	mockService.On("CancelImport", mock.Anything, "import-123", "user-123").Return(fmt.Errorf("%w: cannot cancel import in terminal state: completed", domain.ErrBadRequest))
+
+	req := httptest.NewRequest("DELETE", "/api/v1/videos/imports/import-123", nil)
+	req = req.WithContext(context.WithValue(req.Context(), middleware.UserIDKey, "user-123"))
+
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("id", "import-123")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+
+	w := httptest.NewRecorder()
+	handlers.CancelImport(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
 	mockService.AssertExpectations(t)
 }
 

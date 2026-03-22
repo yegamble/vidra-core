@@ -69,6 +69,15 @@ func TestGetSessionHistory_EmptyList(t *testing.T) {
 	h.GetSessionHistory(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
+
+	var out struct {
+		Success bool                       `json:"success"`
+		Data    []domain.LiveStreamSession `json:"data"`
+	}
+	assert.NoError(t, json.NewDecoder(w.Body).Decode(&out))
+	assert.True(t, out.Success)
+	assert.NotNil(t, out.Data)
+	assert.Len(t, out.Data, 0)
 }
 
 func TestGetSessionHistory_InvalidID(t *testing.T) {

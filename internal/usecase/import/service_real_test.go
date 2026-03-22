@@ -189,7 +189,8 @@ func TestRealService_CancelImport(t *testing.T) {
 
 		err := svc.CancelImport(ctx, importID, importUnitUserID)
 
-		require.ErrorContains(t, err, "unauthorized")
+		require.ErrorIs(t, err, domain.ErrForbidden)
+		require.ErrorContains(t, err, "different user")
 		importRepo.AssertExpectations(t)
 	})
 
@@ -206,6 +207,7 @@ func TestRealService_CancelImport(t *testing.T) {
 
 		err := svc.CancelImport(ctx, importID, importUnitUserID)
 
+		require.ErrorIs(t, err, domain.ErrBadRequest)
 		require.ErrorContains(t, err, "terminal state")
 		importRepo.AssertExpectations(t)
 	})
@@ -513,7 +515,8 @@ func TestRealService_GetImport(t *testing.T) {
 		imp, err := svc.GetImport(ctx, importID, importUnitUserID)
 
 		require.Nil(t, imp)
-		require.ErrorContains(t, err, "unauthorized")
+		require.ErrorIs(t, err, domain.ErrForbidden)
+		require.ErrorContains(t, err, "different user")
 		importRepo.AssertExpectations(t)
 	})
 

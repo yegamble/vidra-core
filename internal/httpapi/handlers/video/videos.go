@@ -105,8 +105,8 @@ func GetVideoHandler(repo usecase.VideoRepository, captionService *usecase.Capti
 
 		video, err := repo.GetByID(r.Context(), videoID)
 		if err != nil {
-			if domainErr, ok := err.(domain.DomainError); ok {
-				shared.WriteError(w, http.StatusNotFound, domainErr)
+			if isVideoNotFoundError(err) {
+				shared.WriteError(w, http.StatusNotFound, videoErrorOrDefault(err, "VIDEO_NOT_FOUND", "Video not found"))
 				return
 			}
 			shared.WriteError(w, http.StatusInternalServerError, domain.NewDomainError("GET_FAILED", "Failed to get video"))
@@ -259,9 +259,8 @@ func UpdateVideoHandler(repo usecase.VideoRepository) http.HandlerFunc {
 
 		existingVideo, err := repo.GetByID(r.Context(), videoID)
 		if err != nil {
-			var domainErr domain.DomainError
-			if errors.As(err, &domainErr) {
-				shared.WriteError(w, http.StatusNotFound, domainErr)
+			if isVideoNotFoundError(err) {
+				shared.WriteError(w, http.StatusNotFound, videoErrorOrDefault(err, "VIDEO_NOT_FOUND", "Video not found"))
 				return
 			}
 			shared.WriteError(w, http.StatusInternalServerError, domain.NewDomainError("GET_FAILED", "Failed to get video"))
@@ -310,6 +309,10 @@ func UpdateVideoHandler(repo usecase.VideoRepository) http.HandlerFunc {
 
 		updatedVideo, err := repo.GetByID(r.Context(), videoID)
 		if err != nil {
+			if isVideoNotFoundError(err) {
+				shared.WriteError(w, http.StatusNotFound, videoErrorOrDefault(err, "VIDEO_NOT_FOUND", "Video not found"))
+				return
+			}
 			shared.WriteError(w, http.StatusInternalServerError, domain.NewDomainError("GET_FAILED", "Failed to retrieve updated video"))
 			return
 		}
@@ -431,8 +434,8 @@ func GetVideoSourceHandler(repo usecase.VideoRepository) http.HandlerFunc {
 
 		video, err := repo.GetByID(r.Context(), videoID)
 		if err != nil {
-			if domainErr, ok := err.(domain.DomainError); ok {
-				shared.WriteError(w, http.StatusNotFound, domainErr)
+			if isVideoNotFoundError(err) {
+				shared.WriteError(w, http.StatusNotFound, videoErrorOrDefault(err, "VIDEO_NOT_FOUND", "Video not found"))
 				return
 			}
 			shared.WriteError(w, http.StatusInternalServerError, domain.NewDomainError("GET_FAILED", "Failed to get video"))

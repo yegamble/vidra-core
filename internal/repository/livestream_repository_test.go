@@ -86,7 +86,7 @@ func TestLiveStreamRepository_GetByID(t *testing.T) {
 			10, 15, now, nil, true, nil, now, now,
 		)
 
-		mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM live_streams WHERE id = $1`)).
+		mock.ExpectQuery(`(?s)SELECT .* FROM live_streams WHERE id = \$1`).
 			WithArgs(streamID).
 			WillReturnRows(rows)
 
@@ -100,7 +100,7 @@ func TestLiveStreamRepository_GetByID(t *testing.T) {
 	})
 
 	t.Run("Stream not found", func(t *testing.T) {
-		mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM live_streams WHERE id = $1`)).
+		mock.ExpectQuery(`(?s)SELECT .* FROM live_streams WHERE id = \$1`).
 			WithArgs(streamID).
 			WillReturnError(sql.ErrNoRows)
 
@@ -133,7 +133,7 @@ func TestLiveStreamRepository_GetByStreamKey(t *testing.T) {
 		0, 0, nil, nil, true, nil, now, now,
 	)
 
-	mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM live_streams WHERE stream_key = $1`)).
+	mock.ExpectQuery(`(?s)SELECT .* FROM live_streams WHERE stream_key = \$1`).
 		WithArgs(streamKey).
 		WillReturnRows(rows)
 
@@ -162,7 +162,7 @@ func TestLiveStreamRepository_GetActiveStreams(t *testing.T) {
 		AddRow(uuid.New(), uuid.New(), uuid.New(), "Stream 2", "", "key2",
 			domain.StreamStatusLive, domain.StreamPrivacyPublic, "", "", 3, 8, now, nil, true, nil, now, now)
 
-	mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM live_streams WHERE status = $1`)).
+	mock.ExpectQuery(`(?s)SELECT .* FROM live_streams WHERE status = \$1`).
 		WithArgs(domain.StreamStatusLive, 10, 0).
 		WillReturnRows(rows)
 

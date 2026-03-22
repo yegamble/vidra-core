@@ -54,6 +54,9 @@ func (h *SessionHistoryHandlers) GetSessionHistory(w http.ResponseWriter, r *htt
 		shared.WriteError(w, shared.MapDomainErrorToHTTP(err), err)
 		return
 	}
+	if sessions == nil {
+		sessions = []*domain.LiveStreamSession{}
+	}
 
 	shared.WriteJSON(w, http.StatusOK, sessions)
 }

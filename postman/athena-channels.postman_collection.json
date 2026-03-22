@@ -8,7 +8,8 @@
   "variable": [
     {"key": "baseUrl", "value": "http://app-test:8080", "type": "string"},
     {"key": "access_token", "value": "", "type": "string"},
-    {"key": "channel_id", "value": "", "type": "string"}
+    {"key": "channel_id", "value": "", "type": "string"},
+    {"key": "subscription_channel_id", "value": "", "type": "string"}
   ],
   "item": [
     {
@@ -20,9 +21,9 @@
             "pm.test('Status is 201', () => pm.response.to.have.status(201));",
             "const json = pm.response.json();",
             "pm.test('Has channel id', () => {",
-            "  pm.expect(json).to.have.property('id');",
-            "  pm.collectionVariables.set('channel_id', json.id);",
-            "  pm.environment.set('channel_id', json.id);",
+            "  pm.expect(json).to.have.nested.property('data.id');",
+            "  pm.collectionVariables.set('channel_id', json.data.id);",
+            "  pm.environment.set('channel_id', json.data.id);",
             "});"
           ], "type": "text/javascript"}}],
           "request": {
@@ -31,7 +32,7 @@
               {"key": "Content-Type", "value": "application/json"},
               {"key": "Authorization", "value": "Bearer {{access_token}}"}
             ],
-            "body": {"mode": "raw", "raw": "{\n  \"name\": \"test-channel-{{$timestamp}}\",\n  \"displayName\": \"Test Channel\",\n  \"description\": \"A test channel for E2E tests\"\n}"},
+            "body": {"mode": "raw", "raw": "{\n  \"handle\": \"testchannel{{$timestamp}}\",\n  \"displayName\": \"Test Channel\",\n  \"description\": \"A test channel for E2E tests\"\n}"},
             "url": {"raw": "{{baseUrl}}/api/v1/channels", "host": ["{{baseUrl}}"], "path": ["api", "v1", "channels"]}
           }
         },
@@ -40,7 +41,17 @@
           "event": [{"listen": "test", "script": {"exec": [
             "pm.test('Status is 200', () => pm.response.to.have.status(200));",
             "const json = pm.response.json();",
-            "pm.test('Response is array or has data', () => pm.expect(json).to.satisfy(r => Array.isArray(r) || r.data !== undefined));"
+            "pm.test('Response has wrapped channel list', () => {",
+            "  pm.expect(json).to.have.nested.property('data.data');",
+            "  pm.expect(json.data.data).to.be.an('array');",
+            "});",
+            "const currentChannelId = pm.collectionVariables.get('channel_id');",
+            "const currentUserId = pm.environment.get('user_id');",
+            "const otherChannel = (json.data.data || []).find(ch => ch.id && ch.id !== currentChannelId && ch.accountId && ch.accountId !== currentUserId);",
+            "if (otherChannel && otherChannel.id) {",
+            "  pm.collectionVariables.set('subscription_channel_id', otherChannel.id);",
+            "  pm.environment.set('subscription_channel_id', otherChannel.id);",
+            "}"
           ], "type": "text/javascript"}}],
           "request": {
             "method": "GET",
@@ -52,7 +63,8 @@
           "name": "GET /api/v1/channels/:id - Get channel by ID",
           "event": [{"listen": "test", "script": {"exec": [
             "pm.test('Status is 200', () => pm.response.to.have.status(200));",
-            "pm.test('Has id field', () => pm.expect(pm.response.json()).to.have.property('id'));"
+            "const json = pm.response.json();",
+            "pm.test('Has id field', () => pm.expect(json).to.have.nested.property('data.id'));"
           ], "type": "text/javascript"}}],
           "request": {
             "method": "GET",
@@ -63,7 +75,9 @@
         {
           "name": "GET /api/v1/channels/:id/videos - Channel videos",
           "event": [{"listen": "test", "script": {"exec": [
-            "pm.test('Status is 200', () => pm.response.to.have.status(200));"
+            "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+            "const json = pm.response.json();",
+            "pm.test('Has wrapped video list', () => pm.expect(json).to.have.nested.property('data.data'));"
           ], "type": "text/javascript"}}],
           "request": {
             "method": "GET",
@@ -85,23 +99,23 @@
         {
           "name": "POST /api/v1/channels/:id/subscribe - Subscribe",
           "event": [{"listen": "test", "script": {"exec": [
-            "pm.test('Status is 204', () => pm.response.to.have.status(204));"
+            "pm.test('Status is 200', () => pm.response.to.have.status(200));"
           ], "type": "text/javascript"}}],
           "request": {
             "method": "POST",
             "header": [{"key": "Authorization", "value": "Bearer {{access_token}}"}],
-            "url": {"raw": "{{baseUrl}}/api/v1/channels/{{channel_id}}/subscribe", "host": ["{{baseUrl}}"], "path": ["api", "v1", "channels", "{{channel_id}}", "subscribe"]}
+            "url": {"raw": "{{baseUrl}}/api/v1/channels/{{subscription_channel_id}}/subscribe", "host": ["{{baseUrl}}"], "path": ["api", "v1", "channels", "{{subscription_channel_id}}", "subscribe"]}
           }
         },
         {
           "name": "DELETE /api/v1/channels/:id/subscribe - Unsubscribe",
           "event": [{"listen": "test", "script": {"exec": [
-            "pm.test('Status is 204', () => pm.response.to.have.status(204));"
+            "pm.test('Status is 200', () => pm.response.to.have.status(200));"
           ], "type": "text/javascript"}}],
           "request": {
             "method": "DELETE",
             "header": [{"key": "Authorization", "value": "Bearer {{access_token}}"}],
-            "url": {"raw": "{{baseUrl}}/api/v1/channels/{{channel_id}}/subscribe", "host": ["{{baseUrl}}"], "path": ["api", "v1", "channels", "{{channel_id}}", "subscribe"]}
+            "url": {"raw": "{{baseUrl}}/api/v1/channels/{{subscription_channel_id}}/subscribe", "host": ["{{baseUrl}}"], "path": ["api", "v1", "channels", "{{subscription_channel_id}}", "subscribe"]}
           }
         },
         {

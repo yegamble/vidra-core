@@ -97,7 +97,13 @@ func TestChannelSubscriptions_Integration(t *testing.T) {
 	}
 
 	t.Run("Subscribe to Channel", func(t *testing.T) {
-		td.TruncateTables(t, "users", "channels", "subscriptions", "refresh_tokens")
+		td.TruncateTables(t, "users", "channels", "subscriptions", "refresh_tokens", "notifications")
+
+		_, err := td.DB.Exec(`ALTER TABLE notifications ALTER COLUMN title SET NOT NULL`)
+		require.NoError(t, err)
+		t.Cleanup(func() {
+			_, _ = td.DB.Exec(`ALTER TABLE notifications ALTER COLUMN title DROP NOT NULL`)
+		})
 
 		user1, _ := createUser(t, "subscriber", "subscriber@test.com")
 		user2, _ := createUser(t, "creator", "creator@test.com")
@@ -118,6 +124,23 @@ func TestChannelSubscriptions_Integration(t *testing.T) {
 		assert.Equal(t, 1, response.Total)
 		assert.Len(t, response.Data, 1)
 		assert.Equal(t, channel.ID, response.Data[0].ChannelID)
+
+		var notif struct {
+			Title     string `db:"title"`
+			Type      string `db:"type"`
+			ChannelID string `db:"channel_id"`
+		}
+		err = td.DB.Get(&notif, `
+			SELECT title, type, data->>'channel_id' AS channel_id
+			FROM notifications
+			WHERE user_id = $1
+			ORDER BY created_at DESC
+			LIMIT 1
+		`, uuid.MustParse(user2.ID))
+		require.NoError(t, err)
+		assert.Equal(t, "new_subscriber", notif.Type)
+		assert.NotEmpty(t, notif.Title)
+		assert.Equal(t, channel.ID.String(), notif.ChannelID)
 	})
 
 	t.Run("Cannot Subscribe to Own Channel", func(t *testing.T) {

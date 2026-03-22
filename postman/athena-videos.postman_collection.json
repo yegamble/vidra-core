@@ -39,7 +39,8 @@
               "script": {
                 "exec": [
                   "pm.test('Status is 201', () => pm.response.to.have.status(201));",
-                  "const json = pm.response.json();",
+                  "const wrap = pm.response.json();",
+                  "const json = wrap.data || {};",
                   "pm.test('Response has video ID', () => {",
                   "  pm.expect(json).to.have.property('id');",
                   "  pm.collectionVariables.set('video_id', json.id);",
@@ -81,7 +82,8 @@
               "script": {
                 "exec": [
                   "pm.test('Status is 200', () => pm.response.to.have.status(200));",
-                  "const json = pm.response.json();",
+                  "const wrap = pm.response.json();",
+                  "const json = wrap.data || {};",
                   "pm.test('Response has video data', () => {",
                   "  pm.expect(json).to.have.property('id');",
                   "  pm.expect(json).to.have.property('title');",
@@ -121,9 +123,10 @@
                   "  pm.expect(json.data).to.be.an('array');",
                   "});",
                   "pm.test('Response has pagination', () => {",
-                  "  pm.expect(json).to.have.property('total');",
-                  "  pm.expect(json).to.have.property('offset');",
-                  "  pm.expect(json).to.have.property('limit');",
+                  "  pm.expect(json).to.have.property('meta');",
+                  "  pm.expect(json.meta).to.have.property('total');",
+                  "  pm.expect(json.meta).to.have.property('offset');",
+                  "  pm.expect(json.meta).to.have.property('limit');",
                   "});"
                 ],
                 "type": "text/javascript"
@@ -166,11 +169,11 @@
             "method": "GET",
             "header": [],
             "url": {
-              "raw": "{{baseUrl}}/api/v1/videos/search?query=test&limit=10",
+              "raw": "{{baseUrl}}/api/v1/videos/search?q=test&limit=10",
               "host": ["{{baseUrl}}"],
               "path": ["api", "v1", "videos", "search"],
               "query": [
-                {"key": "query", "value": "test"},
+                {"key": "q", "value": "test"},
                 {"key": "limit", "value": "10"}
               ]
             }
@@ -184,7 +187,8 @@
               "script": {
                 "exec": [
                   "pm.test('Status is 200', () => pm.response.to.have.status(200));",
-                  "const json = pm.response.json();",
+                  "const wrap = pm.response.json();",
+                  "const json = wrap.data || {};",
                   "pm.test('Video updated', () => {",
                   "  pm.expect(json).to.have.property('id');",
                   "  pm.expect(json.title).to.include('Updated');",
@@ -539,11 +543,10 @@
               "listen": "test",
               "script": {
                 "exec": [
-                  "// Should return all videos or handle gracefully",
-                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Status is 400', () => pm.response.to.have.status(400));",
                   "const json = pm.response.json();",
-                  "pm.test('Response has data array', () => {",
-                  "  pm.expect(json).to.have.property('data');",
+                  "pm.test('Response has error body', () => {",
+                  "  pm.expect(json).to.have.property('error');",
                   "});"
                 ],
                 "type": "text/javascript"
@@ -554,11 +557,11 @@
             "method": "GET",
             "header": [],
             "url": {
-              "raw": "{{baseUrl}}/api/v1/videos/search?query=&limit=10",
+              "raw": "{{baseUrl}}/api/v1/videos/search?q=&limit=10",
               "host": ["{{baseUrl}}"],
               "path": ["api", "v1", "videos", "search"],
               "query": [
-                {"key": "query", "value": ""},
+                {"key": "q", "value": ""},
                 {"key": "limit", "value": "10"}
               ]
             }

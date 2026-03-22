@@ -1,0 +1,6165 @@
+{
+  "collection": {
+    "item": [
+      {
+        "id": "09dfae35-715d-4215-81f7-50ff51a3c70b",
+        "name": "Chunked Upload Flow",
+        "description": {
+          "content": "Complete chunked upload workflow from initiation to completion",
+          "type": "text/plain"
+        },
+        "item": [
+          {
+            "id": "87a79f38-9fe0-460e-a3bd-835bb9108b5d",
+            "name": "Initiate Upload",
+            "request": {
+              "description": {
+                "content": "Initiate a chunked upload session. Returns a session ID for uploading chunks.",
+                "type": "text/plain"
+              },
+              "url": {
+                "path": [
+                  "api",
+                  "v1",
+                  "uploads",
+                  "initiate"
+                ],
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "query": [],
+                "variable": []
+              },
+              "header": [
+                {
+                  "key": "Authorization",
+                  "value": "Bearer {{access_token}}"
+                },
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "method": "POST",
+              "body": {
+                "mode": "raw",
+                "raw": "{\n  \"filename\": \"{{test_filename}}\",\n  \"file_size\": 5242880,\n  \"chunk_size\": 5242880,\n  \"video_metadata\": {\n    \"title\": \"Test Chunked Upload Video\",\n    \"description\": \"Testing chunked upload functionality\",\n    \"privacy\": \"unlisted\"\n  }\n}"
+              }
+            },
+            "response": [],
+            "event": [
+              {
+                "listen": "prerequest",
+                "script": {
+                  "id": "9fa74612-de93-4358-9227-fe1f823c384a",
+                  "type": "text/javascript",
+                  "exec": [
+                    "// Check authentication",
+                    "const accessToken = pm.environment.get('access_token');",
+                    "if (!accessToken || accessToken.length === 0) {",
+                    "  console.warn('No access token found - upload will fail with 401');",
+                    "}",
+                    "",
+                    "// Generate test filename with timestamp",
+                    "const timestamp = new Date().getTime();",
+                    "pm.environment.set('test_filename', `test-video-${timestamp}.mp4`);"
+                  ],
+                  "_lastExecutionId": "74fbf668-f2dd-4ef1-9415-fb0c872ad563"
+                }
+              },
+              {
+                "listen": "test",
+                "script": {
+                  "id": "b2a56e24-cfa2-477e-902d-684ef3cd833f",
+                  "type": "text/javascript",
+                  "exec": [
+                    "pm.test('Status is 201 or 401', () => {",
+                    "  pm.expect([201, 401]).to.include(pm.response.code);",
+                    "});",
+                    "",
+                    "if (pm.response.code === 201) {",
+                    "  const wrap = pm.response.json();",
+                    "  ",
+                    "  pm.test('Response has success field', () => {",
+                    "    pm.expect(wrap).to.have.property('success', true);",
+                    "  });",
+                    "  ",
+                    "  pm.test('Response has data with session_id', () => {",
+                    "    pm.expect(wrap).to.have.property('data');",
+                    "    pm.expect(wrap.data).to.have.property('session_id');",
+                    "    pm.expect(wrap.data).to.have.property('chunk_size');",
+                    "    pm.expect(wrap.data).to.have.property('total_chunks');",
+                    "    pm.expect(wrap.data).to.have.property('upload_url');",
+                    "  });",
+                    "  ",
+                    "  // Save session_id for subsequent requests",
+                    "  pm.environment.set('upload_session_id', wrap.data.session_id);",
+                    "  pm.environment.set('total_chunks', wrap.data.total_chunks);",
+                    "  ",
+                    "  console.log(`Upload session created: ${wrap.data.session_id}`);",
+                    "  console.log(`Total chunks: ${wrap.data.total_chunks}`);",
+                    "} else if (pm.response.code === 401) {",
+                    "  console.log('Skipped: No authentication token');",
+                    "}"
+                  ],
+                  "_lastExecutionId": "f3fdf272-1a65-43ac-be7f-c918d692c36f"
+                }
+              }
+            ]
+          },
+          {
+            "id": "d1bb42c6-0575-47ad-9844-33cf817974ee",
+            "name": "Upload Chunk 0",
+            "request": {
+              "description": {
+                "content": "Upload the first chunk (index 0). Chunks must be uploaded in order.",
+                "type": "text/plain"
+              },
+              "url": {
+                "path": [
+                  "api",
+                  "v1",
+                  "uploads",
+                  "{{upload_session_id}}",
+                  "chunks"
+                ],
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "query": [],
+                "variable": []
+              },
+              "header": [
+                {
+                  "key": "Authorization",
+                  "value": "Bearer {{access_token}}"
+                },
+                {
+                  "key": "Content-Type",
+                  "value": "application/octet-stream"
+                },
+                {
+                  "key": "X-Chunk-Index",
+                  "value": "0"
+                }
+              ],
+              "method": "POST",
+              "body": {
+                "mode": "file",
+                "file": {
+                  "src": "/etc/newman/test-files/video-chunk-0.bin"
+                }
+              }
+            },
+            "response": [],
+            "event": [
+              {
+                "listen": "prerequest",
+                "script": {
+                  "id": "5665be45-26bd-446b-aa21-51933e2b3dc7",
+                  "type": "text/javascript",
+                  "exec": [
+                    "const sessionId = pm.environment.get('upload_session_id');",
+                    "if (!sessionId) {",
+                    "  console.warn('No upload session ID found - run Initiate Upload first');",
+                    "}"
+                  ],
+                  "_lastExecutionId": "ff685a18-e5e1-4512-bcbf-89f93a1999a3"
+                }
+              },
+              {
+                "listen": "test",
+                "script": {
+                  "id": "a234fba1-5337-44b5-91b8-3fbd8ce6a14e",
+                  "type": "text/javascript",
+                  "exec": [
+                    "pm.test('Status is 200, 401, or 404', () => {",
+                    "  pm.expect([200, 401, 404]).to.include(pm.response.code);",
+                    "});",
+                    "",
+                    "if (pm.response.code === 200) {",
+                    "  const wrap = pm.response.json();",
+                    "  ",
+                    "  pm.test('Response has success field', () => {",
+                    "    pm.expect(wrap).to.have.property('success', true);",
+                    "  });",
+                    "  ",
+                    "  pm.test('Chunk upload confirmed', () => {",
+                    "    pm.expect(wrap.data).to.have.property('chunk_index', 0);",
+                    "    pm.expect(wrap.data).to.have.property('uploaded', true);",
+                    "    pm.expect(wrap.data).to.have.property('remaining_chunks');",
+                    "  });",
+                    "  ",
+                    "  const remainingChunks = Array.isArray(wrap.data.remaining_chunks) ? wrap.data.remaining_chunks : [];",
+                    "  console.log(`Remaining chunks: ${remainingChunks.length}`);",
+                    "} else if (pm.response.code === 404) {",
+                    "  console.log('Upload session not found or expired');",
+                    "}"
+                  ],
+                  "_lastExecutionId": "552d65f1-e4dc-4672-b685-155c1e5f3e08"
+                }
+              }
+            ]
+          },
+          {
+            "id": "ea05bc74-3f1f-4975-bbfb-8d37e0fd829b",
+            "name": "Get Upload Status",
+            "request": {
+              "description": {
+                "content": "Check the current status of an upload session, including which chunks have been received.",
+                "type": "text/plain"
+              },
+              "url": {
+                "path": [
+                  "api",
+                  "v1",
+                  "uploads",
+                  "{{upload_session_id}}",
+                  "status"
+                ],
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "query": [],
+                "variable": []
+              },
+              "header": [
+                {
+                  "key": "Authorization",
+                  "value": "Bearer {{access_token}}"
+                }
+              ],
+              "method": "GET"
+            },
+            "response": [],
+            "event": [
+              {
+                "listen": "test",
+                "script": {
+                  "id": "c00977c8-b803-4a1a-be05-9646d638f50e",
+                  "type": "text/javascript",
+                  "exec": [
+                    "pm.test('Status is 200, 401, or 404', () => {",
+                    "  pm.expect([200, 401, 404]).to.include(pm.response.code);",
+                    "});",
+                    "",
+                    "if (pm.response.code === 200) {",
+                    "  const wrap = pm.response.json();",
+                    "  ",
+                    "  pm.test('Response has upload status', () => {",
+                    "    pm.expect(wrap.data).to.have.property('id');",
+                    "    pm.expect(wrap.data).to.have.property('video_id');",
+                    "    pm.expect(wrap.data).to.have.property('total_chunks');",
+                    "    pm.expect(wrap.data).to.have.property('uploaded_chunks');",
+                    "    pm.expect(wrap.data).to.have.property('status');",
+                    "  });",
+                    "  ",
+                    "  pm.environment.set('upload_video_id', wrap.data.video_id);",
+                    "  console.log(`Upload progress: ${wrap.data.uploaded_chunks.length}/${wrap.data.total_chunks} chunks`);",
+                    "  console.log(`Status: ${wrap.data.status}`);",
+                    "}"
+                  ],
+                  "_lastExecutionId": "7e2762aa-75d5-4a3d-9c32-686000f005ab"
+                }
+              }
+            ]
+          },
+          {
+            "id": "31bae2d1-92bc-41be-baed-44a4763c3b58",
+            "name": "Resume Upload Info",
+            "request": {
+              "description": {
+                "content": "Get information needed to resume an interrupted upload. Returns list of uploaded and missing chunks.",
+                "type": "text/plain"
+              },
+              "url": {
+                "path": [
+                  "api",
+                  "v1",
+                  "uploads",
+                  "{{upload_session_id}}",
+                  "resume"
+                ],
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "query": [],
+                "variable": []
+              },
+              "header": [
+                {
+                  "key": "Authorization",
+                  "value": "Bearer {{access_token}}"
+                }
+              ],
+              "method": "GET"
+            },
+            "response": [],
+            "event": [
+              {
+                "listen": "test",
+                "script": {
+                  "id": "9cda1d26-e0f7-4e70-8cda-d2d3e4e77d07",
+                  "type": "text/javascript",
+                  "exec": [
+                    "pm.test('Status is 200, 401, or 404', () => {",
+                    "  pm.expect([200, 401, 404]).to.include(pm.response.code);",
+                    "});",
+                    "",
+                    "if (pm.response.code === 200) {",
+                    "  const wrap = pm.response.json();",
+                    "  ",
+                    "  pm.test('Response has resume information', () => {",
+                    "    pm.expect(wrap.data).to.have.property('uploaded_chunks');",
+                    "    pm.expect(wrap.data).to.have.property('remaining_chunks');",
+                    "    pm.expect(wrap.data).to.have.property('progress_percent');",
+                    "  });",
+                    "  ",
+                    "  const remainingChunks = Array.isArray(wrap.data.remaining_chunks) ? wrap.data.remaining_chunks : [];",
+                    "  const nextChunkIndex = remainingChunks.length > 0 ? remainingChunks[0] : 'none';",
+                    "  console.log(`Next chunk to upload: ${nextChunkIndex}`);",
+                    "  console.log(`Remaining chunks: ${remainingChunks.join(', ')}`);",
+                    "}"
+                  ],
+                  "_lastExecutionId": "25d6e503-65a4-466d-bcfd-8b20a9f176cd"
+                }
+              }
+            ]
+          },
+          {
+            "id": "34f9aece-6956-48b6-9f3d-1220e4ae8fb9",
+            "name": "Complete Upload",
+            "request": {
+              "description": {
+                "content": "Finalize the upload after all chunks have been uploaded. Triggers video processing and encoding.",
+                "type": "text/plain"
+              },
+              "url": {
+                "path": [
+                  "api",
+                  "v1",
+                  "uploads",
+                  "{{upload_session_id}}",
+                  "complete"
+                ],
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "query": [],
+                "variable": []
+              },
+              "header": [
+                {
+                  "key": "Authorization",
+                  "value": "Bearer {{access_token}}"
+                },
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "method": "POST",
+              "body": {
+                "mode": "raw",
+                "raw": "{}"
+              }
+            },
+            "response": [],
+            "event": [
+              {
+                "listen": "test",
+                "script": {
+                  "id": "c7df183f-a025-4c1d-a7b3-8a06c5114976",
+                  "type": "text/javascript",
+                  "exec": [
+                    "// Accept 200 (complete) or 400 (incomplete - missing chunks)",
+                    "pm.test('Status is 200, 400, 401, or 404', () => {",
+                    "  pm.expect([200, 400, 401, 404]).to.include(pm.response.code);",
+                    "});",
+                    "",
+                    "if (pm.response.code === 200) {",
+                    "  const wrap = pm.response.json();",
+                    "  ",
+                    "  pm.test('Upload completed successfully', () => {",
+                    "    pm.expect(wrap.data).to.have.property('session_id');",
+                    "    pm.expect(wrap.data).to.have.property('status');",
+                    "    pm.expect(wrap.data).to.have.property('message');",
+                    "  });",
+                    "  ",
+                    "  console.log(`Upload complete for session: ${wrap.data.session_id}`);",
+                    "  console.log(wrap.data.message);",
+                    "} else if (pm.response.code === 400) {",
+                    "  const wrap = pm.response.json();",
+                    "  console.log(`Upload incomplete: ${wrap.error.message}`);",
+                    "  if (wrap.error.details && wrap.error.details.missing_chunks) {",
+                    "    console.log(`Missing chunks: ${wrap.error.details.missing_chunks.join(', ')}`);",
+                    "  }",
+                    "}"
+                  ],
+                  "_lastExecutionId": "fe5b1ac3-2472-4391-9ab2-fbc44174297a"
+                }
+              }
+            ]
+          }
+        ],
+        "event": []
+      },
+      {
+        "id": "f306ca4b-a2a1-4d96-a691-74bbe724a8fa",
+        "name": "Encoding Status",
+        "description": {
+          "content": "Track video encoding/transcoding status with progress information",
+          "type": "text/plain"
+        },
+        "item": [
+          {
+            "id": "f0c7b38e-a7e3-43eb-aded-6c951118e21c",
+            "name": "Get Encoding Status - By Video ID",
+            "request": {
+              "description": {
+                "content": "Get encoding job status for a specific video. Shows progress, completed variants, and current encoding status.",
+                "type": "text/plain"
+              },
+              "url": {
+                "path": [
+                  "api",
+                  "v1",
+                  "encoding",
+                  "status"
+                ],
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "query": [
+                  {
+                    "description": {
+                      "content": "Filter by video UUID",
+                      "type": "text/plain"
+                    },
+                    "key": "video_id",
+                    "value": "{{upload_video_id}}"
+                  }
+                ],
+                "variable": []
+              },
+              "header": [
+                {
+                  "key": "Authorization",
+                  "value": "Bearer {{access_token}}"
+                }
+              ],
+              "method": "GET"
+            },
+            "response": [],
+            "event": [
+              {
+                "listen": "test",
+                "script": {
+                  "id": "a69d76b4-0d3a-4262-bd9f-098b8940122d",
+                  "type": "text/javascript",
+                  "exec": [
+                    "pm.test('Status is 200 or 401', () => {",
+                    "  pm.expect([200, 401]).to.include(pm.response.code);",
+                    "});",
+                    "",
+                    "if (pm.response.code === 200) {",
+                    "  const wrap = pm.response.json();",
+                    "  ",
+                    "  pm.test('Response has encoding scheduler summary', () => {",
+                    "    pm.expect(wrap.data).to.have.property('pending');",
+                    "    pm.expect(wrap.data).to.have.property('processing');",
+                    "    pm.expect(wrap.data).to.have.property('completed');",
+                    "    pm.expect(wrap.data).to.have.property('failed');",
+                    "  });",
+                    "  ",
+                    "  console.log(`Encoding summary: pending=${wrap.data.pending}, processing=${wrap.data.processing}, completed=${wrap.data.completed}, failed=${wrap.data.failed}`);",
+                    "}"
+                  ],
+                  "_lastExecutionId": "33f0248b-9ced-4107-a052-e28ae626353a"
+                }
+              }
+            ]
+          },
+          {
+            "id": "329265d7-18ac-4382-abef-af734b6edc48",
+            "name": "Get Encoding Status - By Job ID",
+            "request": {
+              "description": {
+                "content": "Get status of a specific encoding job by job ID.",
+                "type": "text/plain"
+              },
+              "url": {
+                "path": [
+                  "api",
+                  "v1",
+                  "encoding",
+                  "status"
+                ],
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "query": [
+                  {
+                    "description": {
+                      "content": "Specific encoding job ID",
+                      "type": "text/plain"
+                    },
+                    "key": "job_id",
+                    "value": "{{encoding_job_id}}"
+                  }
+                ],
+                "variable": []
+              },
+              "header": [
+                {
+                  "key": "Authorization",
+                  "value": "Bearer {{access_token}}"
+                }
+              ],
+              "method": "GET"
+            },
+            "response": [],
+            "event": [
+              {
+                "listen": "test",
+                "script": {
+                  "id": "ae89c109-49ba-4009-a352-65019f814fcc",
+                  "type": "text/javascript",
+                  "exec": [
+                    "pm.test('Status is 200 or 401', () => {",
+                    "  pm.expect([200, 401]).to.include(pm.response.code);",
+                    "});",
+                    "",
+                    "if (pm.response.code === 200) {",
+                    "  const wrap = pm.response.json();",
+                    "  ",
+                    "  pm.test('Response has encoding scheduler summary', () => {",
+                    "    pm.expect(wrap.data).to.have.property('pending');",
+                    "    pm.expect(wrap.data).to.have.property('processing');",
+                    "    pm.expect(wrap.data).to.have.property('completed');",
+                    "    pm.expect(wrap.data).to.have.property('failed');",
+                    "  });",
+                    "  console.log(`Encoding summary: pending=${wrap.data.pending}, processing=${wrap.data.processing}`);",
+                    "}"
+                  ],
+                  "_lastExecutionId": "69261c4b-8b0c-44be-9909-c33b4735e946"
+                }
+              }
+            ]
+          },
+          {
+            "id": "99867b60-c69d-4815-80bf-00387e252737",
+            "name": "Get Encoding Status - All Processing",
+            "request": {
+              "description": {
+                "content": "Get all currently processing encoding jobs.",
+                "type": "text/plain"
+              },
+              "url": {
+                "path": [
+                  "api",
+                  "v1",
+                  "encoding",
+                  "status"
+                ],
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "query": [
+                  {
+                    "description": {
+                      "content": "Filter by status (pending, processing, completed, failed)",
+                      "type": "text/plain"
+                    },
+                    "key": "status",
+                    "value": "processing"
+                  }
+                ],
+                "variable": []
+              },
+              "header": [
+                {
+                  "key": "Authorization",
+                  "value": "Bearer {{access_token}}"
+                }
+              ],
+              "method": "GET"
+            },
+            "response": [],
+            "event": [
+              {
+                "listen": "test",
+                "script": {
+                  "id": "1c77ee22-33bf-41cd-8642-d37e762fcb3d",
+                  "type": "text/javascript",
+                  "exec": [
+                    "pm.test('Status is 200 or 401', () => {",
+                    "  pm.expect([200, 401]).to.include(pm.response.code);",
+                    "});",
+                    "",
+                    "if (pm.response.code === 200) {",
+                    "  const wrap = pm.response.json();",
+                    "  ",
+                    "  pm.test('Response shows encoding scheduler summary', () => {",
+                    "    pm.expect(wrap.data).to.have.property('pending');",
+                    "    pm.expect(wrap.data).to.have.property('processing');",
+                    "    pm.expect(wrap.data).to.have.property('completed');",
+                    "    pm.expect(wrap.data).to.have.property('failed');",
+                    "  });",
+                    "  ",
+                    "  console.log(`Currently processing jobs: ${wrap.data.processing}`);",
+                    "}"
+                  ],
+                  "_lastExecutionId": "01cfaa94-03fb-4e3a-a75a-4a08191bec5c"
+                }
+              }
+            ]
+          }
+        ],
+        "event": []
+      },
+      {
+        "id": "1472db4f-e9dc-4407-bb79-67fdee63deda",
+        "name": "Error Cases",
+        "description": {
+          "content": "Error cases and negative testing scenarios",
+          "type": "text/plain"
+        },
+        "item": [
+          {
+            "id": "b7af02a8-15b4-45df-8160-47870abac98c",
+            "name": "Initiate Upload - Missing Auth",
+            "request": {
+              "description": {
+                "content": "Verify that upload initiation fails without authentication",
+                "type": "text/plain"
+              },
+              "url": {
+                "path": [
+                  "api",
+                  "v1",
+                  "uploads",
+                  "initiate"
+                ],
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "query": [],
+                "variable": []
+              },
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "method": "POST",
+              "body": {
+                "mode": "raw",
+                "raw": "{\n  \"filename\": \"test.mp4\",\n  \"file_size\": 52428800\n}"
+              }
+            },
+            "response": [],
+            "event": [
+              {
+                "listen": "test",
+                "script": {
+                  "id": "37d58574-d6b5-4b90-bd30-c5e6824ee486",
+                  "type": "text/javascript",
+                  "exec": [
+                    "pm.test('Status is 401 Unauthorized', () => {",
+                    "  pm.expect(pm.response.code).to.equal(401);",
+                    "});",
+                    "",
+                    "pm.test('Error response has correct structure', () => {",
+                    "  const wrap = pm.response.json();",
+                    "  pm.expect(wrap).to.have.property('success', false);",
+                    "  pm.expect(wrap).to.have.property('error');",
+                    "});"
+                  ],
+                  "_lastExecutionId": "34e1aab1-4412-446f-ba68-a784f07f81e1"
+                }
+              }
+            ]
+          },
+          {
+            "id": "aa2c696f-b798-4001-9b0a-c5de1ed687f1",
+            "name": "Initiate Upload - Incomplete Session",
+            "request": {
+              "description": {
+                "content": "Create a separate upload session that intentionally remains incomplete for negative-path testing",
+                "type": "text/plain"
+              },
+              "url": {
+                "path": [
+                  "api",
+                  "v1",
+                  "uploads",
+                  "initiate"
+                ],
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "query": [],
+                "variable": []
+              },
+              "header": [
+                {
+                  "key": "Authorization",
+                  "value": "Bearer {{access_token}}"
+                },
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "method": "POST",
+              "body": {
+                "mode": "raw",
+                "raw": "{\n  \"filename\": \"incomplete-test.mp4\",\n  \"file_size\": 10485760,\n  \"chunk_size\": 5242880\n}"
+              }
+            },
+            "response": [],
+            "event": [
+              {
+                "listen": "test",
+                "script": {
+                  "id": "42bc8c5a-1087-437d-808e-d971cca567ce",
+                  "type": "text/javascript",
+                  "exec": [
+                    "pm.test('Status is 201', () => pm.response.to.have.status(201));",
+                    "const wrap = pm.response.json();",
+                    "pm.test('Incomplete-session upload was created', () => {",
+                    "  pm.expect(wrap).to.have.nested.property('data.session_id');",
+                    "});",
+                    "pm.environment.set('incomplete_upload_session_id', wrap.data.session_id);"
+                  ],
+                  "_lastExecutionId": "cb5c547b-a401-42ba-9bff-2bf4a9e46088"
+                }
+              }
+            ]
+          },
+          {
+            "id": "54959b49-611a-4b32-9413-7e4f04f16ce6",
+            "name": "Complete Upload - Missing Chunks",
+            "request": {
+              "description": {
+                "content": "Verify that completing an upload with missing chunks returns 400 error with details",
+                "type": "text/plain"
+              },
+              "url": {
+                "path": [
+                  "api",
+                  "v1",
+                  "uploads",
+                  "{{incomplete_upload_session_id}}",
+                  "complete"
+                ],
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "query": [],
+                "variable": []
+              },
+              "header": [
+                {
+                  "key": "Authorization",
+                  "value": "Bearer {{access_token}}"
+                }
+              ],
+              "method": "POST"
+            },
+            "response": [],
+            "event": [
+              {
+                "listen": "test",
+                "script": {
+                  "id": "f7902376-9e92-477b-bdaf-320eb93fb0ce",
+                  "type": "text/javascript",
+                  "exec": [
+                    "// This test expects 400 if chunks are missing",
+                    "pm.test('Status is 400 or 404', () => {",
+                    "  pm.expect([400, 404]).to.include(pm.response.code);",
+                    "});",
+                    "",
+                    "if (pm.response.code === 400) {",
+                    "  const wrap = pm.response.json();",
+                    "  ",
+                    "  pm.test('Error indicates incomplete upload', () => {",
+                    "    pm.expect(wrap.error.message.toLowerCase()).to.match(/incomplete|not all chunks|uploaded/);",
+                    "  });",
+                    "}"
+                  ],
+                  "_lastExecutionId": "8c25c9a4-2ceb-4470-b85f-667ecf4c3a79"
+                }
+              }
+            ]
+          },
+          {
+            "id": "33ab6005-8827-453c-946b-171cb49d1e8c",
+            "name": "Get Status - Invalid Session",
+            "request": {
+              "description": {
+                "content": "Verify proper error handling for non-existent upload sessions",
+                "type": "text/plain"
+              },
+              "url": {
+                "path": [
+                  "api",
+                  "v1",
+                  "uploads",
+                  "invalid_session_id_12345",
+                  "status"
+                ],
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "query": [],
+                "variable": []
+              },
+              "header": [
+                {
+                  "key": "Authorization",
+                  "value": "Bearer {{access_token}}"
+                }
+              ],
+              "method": "GET"
+            },
+            "response": [],
+            "event": [
+              {
+                "listen": "test",
+                "script": {
+                  "id": "df8ef863-8e92-4d08-b3d2-3a2febad41a5",
+                  "type": "text/javascript",
+                  "exec": [
+                    "pm.test('Status is 400 Bad Request', () => {",
+                    "  pm.expect(pm.response.code).to.equal(400);",
+                    "});",
+                    "",
+                    "pm.test('Error response indicates session not found', () => {",
+                    "  const wrap = pm.response.json();",
+                    "  pm.expect(wrap).to.have.property('success', false);",
+                    "});"
+                  ],
+                  "_lastExecutionId": "ab835154-4d1b-4573-b180-7c67dc1dcea8"
+                }
+              }
+            ]
+          }
+        ],
+        "event": []
+      }
+    ],
+    "event": [],
+    "variable": [
+      {
+        "type": "string",
+        "value": "http://localhost:8080",
+        "key": "baseUrl"
+      }
+    ],
+    "info": {
+      "_postman_id": "09b0c9f9-fc79-458a-9ffa-d207beb5366c",
+      "name": "Athena Uploads & Encoding API",
+      "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+      "description": {
+        "content": "Test collection for chunked video uploads, encoding status tracking, and resume functionality.\n\n## Workflow\n\n1. **Initiate Upload** - Create upload session\n2. **Upload Chunks** - Upload file in chunks\n3. **Complete Upload** - Finalize and start encoding\n4. **Get Status** - Monitor upload progress\n5. **Get Encoding Status** - Track video processing\n\n## Environment Variables Required\n\n- `baseUrl` - API base URL (e.g., http://localhost:8080)\n- `access_token` - JWT access token from login",
+        "type": "text/plain"
+      }
+    }
+  },
+  "environment": {
+    "_": {
+      "postman_variable_scope": "environment",
+      "postman_exported_at": "2026-03-21T23:43:04.450Z",
+      "postman_exported_using": "Newman/6.1.3"
+    },
+    "id": "0f7a1111-2222-4333-8444-bbbbbbbbbbbb",
+    "name": "Athena Local",
+    "values": [
+      {
+        "type": "any",
+        "value": "http://app-test:8080",
+        "key": "baseUrl"
+      },
+      {
+        "type": "any",
+        "value": "user_1774136580802",
+        "key": "username"
+      },
+      {
+        "type": "any",
+        "value": "user_1774136580802@example.com",
+        "key": "email"
+      },
+      {
+        "type": "any",
+        "value": "Password123!",
+        "key": "password"
+      },
+      {
+        "type": "any",
+        "value": "62c1a415-a2dd-49a8-86a9-44e82cb5fd66",
+        "key": "user_id"
+      },
+      {
+        "type": "any",
+        "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzQxMzc0ODEsImlhdCI6MTc3NDEzNjU4MSwianRpIjoiMzRlYjg1MTktNGY0Yi00MGQ2LWI1MTctMDdlZGI0YmE0MGVhIiwicm9sZSI6InVzZXIiLCJzdWIiOiI2MmMxYTQxNS1hMmRkLTQ5YTgtODZhOS00NGU4MmNiNWZkNjYifQ.VByzKQeQTZ_Dv47vA2PEssyBUZkWRpIRGxRMS9L4ZlQ",
+        "key": "access_token"
+      },
+      {
+        "type": "any",
+        "value": "d5fd9825-836c-46a9-a051-a27f95784f3d",
+        "key": "refresh_token"
+      },
+      {
+        "type": "any",
+        "value": "bafkreidggesxrtgthyu6zy5xyqlkjgyoz7dl75rv4skkmag3ivmbhr26ea",
+        "key": "avatar_ipfs_cid"
+      },
+      {
+        "type": "any",
+        "value": "15e75cdf-0856-4194-965b-bc44aea5e22b",
+        "key": "uploadedVideoId"
+      },
+      {
+        "type": "any",
+        "value": "f1a0b2f8-e3a3-4973-8abd-9452cb5106af",
+        "key": "video_id"
+      },
+      {
+        "type": "any",
+        "value": "4f78d474-adcf-419e-affd-73bf4026073a",
+        "key": "test_video_id"
+      },
+      {
+        "type": "any",
+        "value": "test-video-1774136584855.mp4",
+        "key": "test_filename"
+      },
+      {
+        "type": "any",
+        "value": "45cefb4d-9e3a-4d66-96a4-cc13d3f07e03",
+        "key": "upload_session_id"
+      },
+      {
+        "type": "any",
+        "value": 1,
+        "key": "total_chunks"
+      },
+      {
+        "type": "any",
+        "value": "a13b9910-740a-4d6c-bac8-5c3664409f17",
+        "key": "upload_video_id"
+      },
+      {
+        "type": "any",
+        "value": "318adb47-ac6c-484d-b0c9-6e53fe619657",
+        "key": "incomplete_upload_session_id"
+      }
+    ]
+  },
+  "globals": {
+    "id": "8b05e9de-4867-4500-90a8-a67c6d1c5439",
+    "values": []
+  },
+  "run": {
+    "stats": {
+      "iterations": {
+        "total": 1,
+        "pending": 0,
+        "failed": 0
+      },
+      "items": {
+        "total": 12,
+        "pending": 0,
+        "failed": 0
+      },
+      "scripts": {
+        "total": 14,
+        "pending": 0,
+        "failed": 0
+      },
+      "prerequests": {
+        "total": 12,
+        "pending": 0,
+        "failed": 0
+      },
+      "requests": {
+        "total": 12,
+        "pending": 0,
+        "failed": 0
+      },
+      "tests": {
+        "total": 12,
+        "pending": 0,
+        "failed": 0
+      },
+      "assertions": {
+        "total": 26,
+        "pending": 0,
+        "failed": 0
+      },
+      "testScripts": {
+        "total": 12,
+        "pending": 0,
+        "failed": 0
+      },
+      "prerequestScripts": {
+        "total": 2,
+        "pending": 0,
+        "failed": 0
+      }
+    },
+    "timings": {
+      "responseAverage": 7.166666666666667,
+      "responseMin": 2,
+      "responseMax": 35,
+      "responseSd": 8.620067027323834,
+      "dnsAverage": 0,
+      "dnsMin": 0,
+      "dnsMax": 0,
+      "dnsSd": 0,
+      "firstByteAverage": 0,
+      "firstByteMin": 0,
+      "firstByteMax": 0,
+      "firstByteSd": 0,
+      "started": 1774136584847,
+      "completed": 1774136585216
+    },
+    "executions": [
+      {
+        "cursor": {
+          "position": 0,
+          "iteration": 0,
+          "length": 12,
+          "cycles": 1,
+          "empty": false,
+          "eof": false,
+          "bof": true,
+          "cr": false,
+          "ref": "22ca900d-fcec-4851-84e8-6faaa0332c0a",
+          "httpRequestId": "f2ab4986-05da-4815-9129-19592cf4c32f"
+        },
+        "item": {
+          "id": "87a79f38-9fe0-460e-a3bd-835bb9108b5d",
+          "name": "Initiate Upload",
+          "request": {
+            "description": {
+              "content": "Initiate a chunked upload session. Returns a session ID for uploading chunks.",
+              "type": "text/plain"
+            },
+            "url": {
+              "path": [
+                "api",
+                "v1",
+                "uploads",
+                "initiate"
+              ],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "query": [],
+              "variable": []
+            },
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "method": "POST",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"filename\": \"{{test_filename}}\",\n  \"file_size\": 5242880,\n  \"chunk_size\": 5242880,\n  \"video_metadata\": {\n    \"title\": \"Test Chunked Upload Video\",\n    \"description\": \"Testing chunked upload functionality\",\n    \"privacy\": \"unlisted\"\n  }\n}"
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "id": "9fa74612-de93-4358-9227-fe1f823c384a",
+                "type": "text/javascript",
+                "exec": [
+                  "// Check authentication",
+                  "const accessToken = pm.environment.get('access_token');",
+                  "if (!accessToken || accessToken.length === 0) {",
+                  "  console.warn('No access token found - upload will fail with 401');",
+                  "}",
+                  "",
+                  "// Generate test filename with timestamp",
+                  "const timestamp = new Date().getTime();",
+                  "pm.environment.set('test_filename', `test-video-${timestamp}.mp4`);"
+                ],
+                "_lastExecutionId": "74fbf668-f2dd-4ef1-9415-fb0c872ad563"
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "id": "b2a56e24-cfa2-477e-902d-684ef3cd833f",
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 201 or 401', () => {",
+                  "  pm.expect([201, 401]).to.include(pm.response.code);",
+                  "});",
+                  "",
+                  "if (pm.response.code === 201) {",
+                  "  const wrap = pm.response.json();",
+                  "  ",
+                  "  pm.test('Response has success field', () => {",
+                  "    pm.expect(wrap).to.have.property('success', true);",
+                  "  });",
+                  "  ",
+                  "  pm.test('Response has data with session_id', () => {",
+                  "    pm.expect(wrap).to.have.property('data');",
+                  "    pm.expect(wrap.data).to.have.property('session_id');",
+                  "    pm.expect(wrap.data).to.have.property('chunk_size');",
+                  "    pm.expect(wrap.data).to.have.property('total_chunks');",
+                  "    pm.expect(wrap.data).to.have.property('upload_url');",
+                  "  });",
+                  "  ",
+                  "  // Save session_id for subsequent requests",
+                  "  pm.environment.set('upload_session_id', wrap.data.session_id);",
+                  "  pm.environment.set('total_chunks', wrap.data.total_chunks);",
+                  "  ",
+                  "  console.log(`Upload session created: ${wrap.data.session_id}`);",
+                  "  console.log(`Total chunks: ${wrap.data.total_chunks}`);",
+                  "} else if (pm.response.code === 401) {",
+                  "  console.log('Skipped: No authentication token');",
+                  "}"
+                ],
+                "_lastExecutionId": "f3fdf272-1a65-43ac-be7f-c918d692c36f"
+              }
+            }
+          ]
+        },
+        "request": {
+          "description": {
+            "content": "Initiate a chunked upload session. Returns a session ID for uploading chunks.",
+            "type": "text/plain"
+          },
+          "url": {
+            "protocol": "http",
+            "port": "8080",
+            "path": [
+              "api",
+              "v1",
+              "uploads",
+              "initiate"
+            ],
+            "host": [
+              "app-test"
+            ],
+            "query": [],
+            "variable": []
+          },
+          "header": [
+            {
+              "key": "Authorization",
+              "value": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzQxMzc0ODEsImlhdCI6MTc3NDEzNjU4MSwianRpIjoiMzRlYjg1MTktNGY0Yi00MGQ2LWI1MTctMDdlZGI0YmE0MGVhIiwicm9sZSI6InVzZXIiLCJzdWIiOiI2MmMxYTQxNS1hMmRkLTQ5YTgtODZhOS00NGU4MmNiNWZkNjYifQ.VByzKQeQTZ_Dv47vA2PEssyBUZkWRpIRGxRMS9L4ZlQ"
+            },
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "key": "User-Agent",
+              "value": "PostmanRuntime/7.39.0",
+              "system": true
+            },
+            {
+              "key": "Accept",
+              "value": "*/*",
+              "system": true
+            },
+            {
+              "key": "Cache-Control",
+              "value": "no-cache",
+              "system": true
+            },
+            {
+              "key": "Postman-Token",
+              "value": "7e3992be-f2db-41a6-aa4d-fd83d63b7bd3",
+              "system": true
+            },
+            {
+              "key": "Host",
+              "value": "app-test:8080",
+              "system": true
+            },
+            {
+              "key": "Accept-Encoding",
+              "value": "gzip, deflate, br",
+              "system": true
+            },
+            {
+              "key": "Connection",
+              "value": "keep-alive",
+              "system": true
+            },
+            {
+              "key": "Content-Length",
+              "value": "251",
+              "system": true
+            }
+          ],
+          "method": "POST",
+          "body": {
+            "mode": "raw",
+            "raw": "{\n  \"filename\": \"test-video-1774136584855.mp4\",\n  \"file_size\": 5242880,\n  \"chunk_size\": 5242880,\n  \"video_metadata\": {\n    \"title\": \"Test Chunked Upload Video\",\n    \"description\": \"Testing chunked upload functionality\",\n    \"privacy\": \"unlisted\"\n  }\n}"
+          }
+        },
+        "response": {
+          "id": "418e00b0-6686-42f9-828c-18e3f0355a49",
+          "status": "Created",
+          "code": 201,
+          "header": [
+            {
+              "key": "Content-Encoding",
+              "value": "gzip"
+            },
+            {
+              "key": "Content-Security-Policy",
+              "value": "default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self' data:; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; upgrade-insecure-requests; img-src 'self' data:; connect-src 'self'; media-src 'self' blob:"
+            },
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "key": "Permissions-Policy",
+              "value": "camera=(), microphone=(), geolocation=(), interest-cohort=()"
+            },
+            {
+              "key": "Referrer-Policy",
+              "value": "strict-origin-when-cross-origin"
+            },
+            {
+              "key": "Vary",
+              "value": "Accept-Encoding"
+            },
+            {
+              "key": "X-Content-Type-Options",
+              "value": "nosniff"
+            },
+            {
+              "key": "X-Frame-Options",
+              "value": "DENY"
+            },
+            {
+              "key": "X-Request-Id",
+              "value": "KHhMRGvhyKAwOnOQtg-anA"
+            },
+            {
+              "key": "X-Xss-Protection",
+              "value": "1; mode=block"
+            },
+            {
+              "key": "Date",
+              "value": "Sat, 21 Mar 2026 23:43:04 GMT"
+            },
+            {
+              "key": "Content-Length",
+              "value": "155"
+            }
+          ],
+          "stream": {
+            "type": "Buffer",
+            "data": [
+              123,
+              34,
+              100,
+              97,
+              116,
+              97,
+              34,
+              58,
+              123,
+              34,
+              115,
+              101,
+              115,
+              115,
+              105,
+              111,
+              110,
+              95,
+              105,
+              100,
+              34,
+              58,
+              34,
+              52,
+              53,
+              99,
+              101,
+              102,
+              98,
+              52,
+              100,
+              45,
+              57,
+              101,
+              51,
+              97,
+              45,
+              52,
+              100,
+              54,
+              54,
+              45,
+              57,
+              54,
+              97,
+              52,
+              45,
+              99,
+              99,
+              49,
+              51,
+              100,
+              51,
+              102,
+              48,
+              55,
+              101,
+              48,
+              51,
+              34,
+              44,
+              34,
+              99,
+              104,
+              117,
+              110,
+              107,
+              95,
+              115,
+              105,
+              122,
+              101,
+              34,
+              58,
+              53,
+              50,
+              52,
+              50,
+              56,
+              56,
+              48,
+              44,
+              34,
+              116,
+              111,
+              116,
+              97,
+              108,
+              95,
+              99,
+              104,
+              117,
+              110,
+              107,
+              115,
+              34,
+              58,
+              49,
+              44,
+              34,
+              117,
+              112,
+              108,
+              111,
+              97,
+              100,
+              95,
+              117,
+              114,
+              108,
+              34,
+              58,
+              34,
+              47,
+              97,
+              112,
+              105,
+              47,
+              118,
+              49,
+              47,
+              117,
+              112,
+              108,
+              111,
+              97,
+              100,
+              115,
+              47,
+              52,
+              53,
+              99,
+              101,
+              102,
+              98,
+              52,
+              100,
+              45,
+              57,
+              101,
+              51,
+              97,
+              45,
+              52,
+              100,
+              54,
+              54,
+              45,
+              57,
+              54,
+              97,
+              52,
+              45,
+              99,
+              99,
+              49,
+              51,
+              100,
+              51,
+              102,
+              48,
+              55,
+              101,
+              48,
+              51,
+              47,
+              99,
+              104,
+              117,
+              110,
+              107,
+              115,
+              34,
+              125,
+              44,
+              34,
+              115,
+              117,
+              99,
+              99,
+              101,
+              115,
+              115,
+              34,
+              58,
+              116,
+              114,
+              117,
+              101,
+              125,
+              10
+            ]
+          },
+          "cookie": [],
+          "responseTime": 35,
+          "responseSize": 191
+        },
+        "id": "87a79f38-9fe0-460e-a3bd-835bb9108b5d",
+        "assertions": [
+          {
+            "assertion": "Status is 201 or 401",
+            "skipped": false
+          },
+          {
+            "assertion": "Response has success field",
+            "skipped": false
+          },
+          {
+            "assertion": "Response has data with session_id",
+            "skipped": false
+          }
+        ]
+      },
+      {
+        "cursor": {
+          "ref": "6b0cee27-3275-42d9-9246-730e11beb6ef",
+          "length": 12,
+          "cycles": 1,
+          "position": 1,
+          "iteration": 0,
+          "httpRequestId": "54a06db3-397b-4dde-ae77-74f70e46b73a"
+        },
+        "item": {
+          "id": "d1bb42c6-0575-47ad-9844-33cf817974ee",
+          "name": "Upload Chunk 0",
+          "request": {
+            "description": {
+              "content": "Upload the first chunk (index 0). Chunks must be uploaded in order.",
+              "type": "text/plain"
+            },
+            "url": {
+              "path": [
+                "api",
+                "v1",
+                "uploads",
+                "{{upload_session_id}}",
+                "chunks"
+              ],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "query": [],
+              "variable": []
+            },
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/octet-stream"
+              },
+              {
+                "key": "X-Chunk-Index",
+                "value": "0"
+              }
+            ],
+            "method": "POST",
+            "body": {
+              "mode": "file",
+              "file": {
+                "src": "/etc/newman/test-files/video-chunk-0.bin"
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "id": "5665be45-26bd-446b-aa21-51933e2b3dc7",
+                "type": "text/javascript",
+                "exec": [
+                  "const sessionId = pm.environment.get('upload_session_id');",
+                  "if (!sessionId) {",
+                  "  console.warn('No upload session ID found - run Initiate Upload first');",
+                  "}"
+                ],
+                "_lastExecutionId": "ff685a18-e5e1-4512-bcbf-89f93a1999a3"
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "id": "a234fba1-5337-44b5-91b8-3fbd8ce6a14e",
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200, 401, or 404', () => {",
+                  "  pm.expect([200, 401, 404]).to.include(pm.response.code);",
+                  "});",
+                  "",
+                  "if (pm.response.code === 200) {",
+                  "  const wrap = pm.response.json();",
+                  "  ",
+                  "  pm.test('Response has success field', () => {",
+                  "    pm.expect(wrap).to.have.property('success', true);",
+                  "  });",
+                  "  ",
+                  "  pm.test('Chunk upload confirmed', () => {",
+                  "    pm.expect(wrap.data).to.have.property('chunk_index', 0);",
+                  "    pm.expect(wrap.data).to.have.property('uploaded', true);",
+                  "    pm.expect(wrap.data).to.have.property('remaining_chunks');",
+                  "  });",
+                  "  ",
+                  "  const remainingChunks = Array.isArray(wrap.data.remaining_chunks) ? wrap.data.remaining_chunks : [];",
+                  "  console.log(`Remaining chunks: ${remainingChunks.length}`);",
+                  "} else if (pm.response.code === 404) {",
+                  "  console.log('Upload session not found or expired');",
+                  "}"
+                ],
+                "_lastExecutionId": "552d65f1-e4dc-4672-b685-155c1e5f3e08"
+              }
+            }
+          ]
+        },
+        "request": {
+          "description": {
+            "content": "Upload the first chunk (index 0). Chunks must be uploaded in order.",
+            "type": "text/plain"
+          },
+          "url": {
+            "protocol": "http",
+            "port": "8080",
+            "path": [
+              "api",
+              "v1",
+              "uploads",
+              "45cefb4d-9e3a-4d66-96a4-cc13d3f07e03",
+              "chunks"
+            ],
+            "host": [
+              "app-test"
+            ],
+            "query": [],
+            "variable": []
+          },
+          "header": [
+            {
+              "key": "Authorization",
+              "value": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzQxMzc0ODEsImlhdCI6MTc3NDEzNjU4MSwianRpIjoiMzRlYjg1MTktNGY0Yi00MGQ2LWI1MTctMDdlZGI0YmE0MGVhIiwicm9sZSI6InVzZXIiLCJzdWIiOiI2MmMxYTQxNS1hMmRkLTQ5YTgtODZhOS00NGU4MmNiNWZkNjYifQ.VByzKQeQTZ_Dv47vA2PEssyBUZkWRpIRGxRMS9L4ZlQ"
+            },
+            {
+              "key": "Content-Type",
+              "value": "application/octet-stream"
+            },
+            {
+              "key": "X-Chunk-Index",
+              "value": "0"
+            },
+            {
+              "key": "User-Agent",
+              "value": "PostmanRuntime/7.39.0",
+              "system": true
+            },
+            {
+              "key": "Accept",
+              "value": "*/*",
+              "system": true
+            },
+            {
+              "key": "Cache-Control",
+              "value": "no-cache",
+              "system": true
+            },
+            {
+              "key": "Postman-Token",
+              "value": "816e7277-537f-463f-a38e-b2e55285d5d1",
+              "system": true
+            },
+            {
+              "key": "Host",
+              "value": "app-test:8080",
+              "system": true
+            },
+            {
+              "key": "Accept-Encoding",
+              "value": "gzip, deflate, br",
+              "system": true
+            },
+            {
+              "key": "Connection",
+              "value": "keep-alive",
+              "system": true
+            },
+            {
+              "key": "Content-Length",
+              "value": "0",
+              "system": true
+            }
+          ],
+          "method": "POST",
+          "body": {
+            "mode": "file",
+            "file": {
+              "src": "/etc/newman/test-files/video-chunk-0.bin",
+              "value": null
+            }
+          }
+        },
+        "response": {
+          "id": "044627c9-7d62-40b8-baaf-cf9d2b75f3aa",
+          "status": "OK",
+          "code": 200,
+          "header": [
+            {
+              "key": "Content-Encoding",
+              "value": "gzip"
+            },
+            {
+              "key": "Content-Security-Policy",
+              "value": "default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self' data:; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; upgrade-insecure-requests; img-src 'self' data:; connect-src 'self'; media-src 'self' blob:"
+            },
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "key": "Permissions-Policy",
+              "value": "camera=(), microphone=(), geolocation=(), interest-cohort=()"
+            },
+            {
+              "key": "Referrer-Policy",
+              "value": "strict-origin-when-cross-origin"
+            },
+            {
+              "key": "Vary",
+              "value": "Accept-Encoding"
+            },
+            {
+              "key": "X-Content-Type-Options",
+              "value": "nosniff"
+            },
+            {
+              "key": "X-Frame-Options",
+              "value": "DENY"
+            },
+            {
+              "key": "X-Request-Id",
+              "value": "S0Q_ceFDfW3uJ9K7HTa5DA"
+            },
+            {
+              "key": "X-Xss-Protection",
+              "value": "1; mode=block"
+            },
+            {
+              "key": "Date",
+              "value": "Sat, 21 Mar 2026 23:43:04 GMT"
+            },
+            {
+              "key": "Content-Length",
+              "value": "98"
+            }
+          ],
+          "stream": {
+            "type": "Buffer",
+            "data": [
+              123,
+              34,
+              100,
+              97,
+              116,
+              97,
+              34,
+              58,
+              123,
+              34,
+              99,
+              104,
+              117,
+              110,
+              107,
+              95,
+              105,
+              110,
+              100,
+              101,
+              120,
+              34,
+              58,
+              48,
+              44,
+              34,
+              117,
+              112,
+              108,
+              111,
+              97,
+              100,
+              101,
+              100,
+              34,
+              58,
+              116,
+              114,
+              117,
+              101,
+              44,
+              34,
+              114,
+              101,
+              109,
+              97,
+              105,
+              110,
+              105,
+              110,
+              103,
+              95,
+              99,
+              104,
+              117,
+              110,
+              107,
+              115,
+              34,
+              58,
+              110,
+              117,
+              108,
+              108,
+              125,
+              44,
+              34,
+              115,
+              117,
+              99,
+              99,
+              101,
+              115,
+              115,
+              34,
+              58,
+              116,
+              114,
+              117,
+              101,
+              125,
+              10
+            ]
+          },
+          "cookie": [],
+          "responseTime": 9,
+          "responseSize": 82
+        },
+        "id": "d1bb42c6-0575-47ad-9844-33cf817974ee",
+        "assertions": [
+          {
+            "assertion": "Status is 200, 401, or 404",
+            "skipped": false
+          },
+          {
+            "assertion": "Response has success field",
+            "skipped": false
+          },
+          {
+            "assertion": "Chunk upload confirmed",
+            "skipped": false
+          }
+        ]
+      },
+      {
+        "cursor": {
+          "ref": "ed4ac452-6f41-4b93-a3ad-5c4244b6333b",
+          "length": 12,
+          "cycles": 1,
+          "position": 2,
+          "iteration": 0,
+          "httpRequestId": "ed314a1f-6d83-43c2-babe-a11a02e66456"
+        },
+        "item": {
+          "id": "ea05bc74-3f1f-4975-bbfb-8d37e0fd829b",
+          "name": "Get Upload Status",
+          "request": {
+            "description": {
+              "content": "Check the current status of an upload session, including which chunks have been received.",
+              "type": "text/plain"
+            },
+            "url": {
+              "path": [
+                "api",
+                "v1",
+                "uploads",
+                "{{upload_session_id}}",
+                "status"
+              ],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "query": [],
+              "variable": []
+            },
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "method": "GET"
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "id": "c00977c8-b803-4a1a-be05-9646d638f50e",
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200, 401, or 404', () => {",
+                  "  pm.expect([200, 401, 404]).to.include(pm.response.code);",
+                  "});",
+                  "",
+                  "if (pm.response.code === 200) {",
+                  "  const wrap = pm.response.json();",
+                  "  ",
+                  "  pm.test('Response has upload status', () => {",
+                  "    pm.expect(wrap.data).to.have.property('id');",
+                  "    pm.expect(wrap.data).to.have.property('video_id');",
+                  "    pm.expect(wrap.data).to.have.property('total_chunks');",
+                  "    pm.expect(wrap.data).to.have.property('uploaded_chunks');",
+                  "    pm.expect(wrap.data).to.have.property('status');",
+                  "  });",
+                  "  ",
+                  "  pm.environment.set('upload_video_id', wrap.data.video_id);",
+                  "  console.log(`Upload progress: ${wrap.data.uploaded_chunks.length}/${wrap.data.total_chunks} chunks`);",
+                  "  console.log(`Status: ${wrap.data.status}`);",
+                  "}"
+                ],
+                "_lastExecutionId": "7e2762aa-75d5-4a3d-9c32-686000f005ab"
+              }
+            }
+          ]
+        },
+        "request": {
+          "description": {
+            "content": "Check the current status of an upload session, including which chunks have been received.",
+            "type": "text/plain"
+          },
+          "url": {
+            "protocol": "http",
+            "port": "8080",
+            "path": [
+              "api",
+              "v1",
+              "uploads",
+              "45cefb4d-9e3a-4d66-96a4-cc13d3f07e03",
+              "status"
+            ],
+            "host": [
+              "app-test"
+            ],
+            "query": [],
+            "variable": []
+          },
+          "header": [
+            {
+              "key": "Authorization",
+              "value": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzQxMzc0ODEsImlhdCI6MTc3NDEzNjU4MSwianRpIjoiMzRlYjg1MTktNGY0Yi00MGQ2LWI1MTctMDdlZGI0YmE0MGVhIiwicm9sZSI6InVzZXIiLCJzdWIiOiI2MmMxYTQxNS1hMmRkLTQ5YTgtODZhOS00NGU4MmNiNWZkNjYifQ.VByzKQeQTZ_Dv47vA2PEssyBUZkWRpIRGxRMS9L4ZlQ"
+            },
+            {
+              "key": "User-Agent",
+              "value": "PostmanRuntime/7.39.0",
+              "system": true
+            },
+            {
+              "key": "Accept",
+              "value": "*/*",
+              "system": true
+            },
+            {
+              "key": "Cache-Control",
+              "value": "no-cache",
+              "system": true
+            },
+            {
+              "key": "Postman-Token",
+              "value": "7e5fce2a-5841-427b-bb81-001ba15265de",
+              "system": true
+            },
+            {
+              "key": "Host",
+              "value": "app-test:8080",
+              "system": true
+            },
+            {
+              "key": "Accept-Encoding",
+              "value": "gzip, deflate, br",
+              "system": true
+            },
+            {
+              "key": "Connection",
+              "value": "keep-alive",
+              "system": true
+            }
+          ],
+          "method": "GET"
+        },
+        "response": {
+          "id": "8538227a-b4d0-40b4-9bca-7b3c486a3579",
+          "status": "OK",
+          "code": 200,
+          "header": [
+            {
+              "key": "Content-Encoding",
+              "value": "gzip"
+            },
+            {
+              "key": "Content-Security-Policy",
+              "value": "default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self' data:; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; upgrade-insecure-requests; img-src 'self' data:; connect-src 'self'; media-src 'self' blob:"
+            },
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "key": "Permissions-Policy",
+              "value": "camera=(), microphone=(), geolocation=(), interest-cohort=()"
+            },
+            {
+              "key": "Referrer-Policy",
+              "value": "strict-origin-when-cross-origin"
+            },
+            {
+              "key": "Vary",
+              "value": "Accept-Encoding"
+            },
+            {
+              "key": "X-Content-Type-Options",
+              "value": "nosniff"
+            },
+            {
+              "key": "X-Frame-Options",
+              "value": "DENY"
+            },
+            {
+              "key": "X-Request-Id",
+              "value": "4mhaL3tiXRHjDOWvLzIKdQ"
+            },
+            {
+              "key": "X-Xss-Protection",
+              "value": "1; mode=block"
+            },
+            {
+              "key": "Date",
+              "value": "Sat, 21 Mar 2026 23:43:04 GMT"
+            },
+            {
+              "key": "Content-Length",
+              "value": "337"
+            }
+          ],
+          "stream": {
+            "type": "Buffer",
+            "data": [
+              123,
+              34,
+              100,
+              97,
+              116,
+              97,
+              34,
+              58,
+              123,
+              34,
+              105,
+              100,
+              34,
+              58,
+              34,
+              52,
+              53,
+              99,
+              101,
+              102,
+              98,
+              52,
+              100,
+              45,
+              57,
+              101,
+              51,
+              97,
+              45,
+              52,
+              100,
+              54,
+              54,
+              45,
+              57,
+              54,
+              97,
+              52,
+              45,
+              99,
+              99,
+              49,
+              51,
+              100,
+              51,
+              102,
+              48,
+              55,
+              101,
+              48,
+              51,
+              34,
+              44,
+              34,
+              118,
+              105,
+              100,
+              101,
+              111,
+              95,
+              105,
+              100,
+              34,
+              58,
+              34,
+              97,
+              49,
+              51,
+              98,
+              57,
+              57,
+              49,
+              48,
+              45,
+              55,
+              52,
+              48,
+              97,
+              45,
+              52,
+              100,
+              54,
+              99,
+              45,
+              98,
+              97,
+              99,
+              56,
+              45,
+              53,
+              99,
+              51,
+              54,
+              54,
+              52,
+              52,
+              48,
+              57,
+              102,
+              49,
+              55,
+              34,
+              44,
+              34,
+              117,
+              115,
+              101,
+              114,
+              95,
+              105,
+              100,
+              34,
+              58,
+              34,
+              54,
+              50,
+              99,
+              49,
+              97,
+              52,
+              49,
+              53,
+              45,
+              97,
+              50,
+              100,
+              100,
+              45,
+              52,
+              57,
+              97,
+              56,
+              45,
+              56,
+              54,
+              97,
+              57,
+              45,
+              52,
+              52,
+              101,
+              56,
+              50,
+              99,
+              98,
+              53,
+              102,
+              100,
+              54,
+              54,
+              34,
+              44,
+              34,
+              102,
+              105,
+              108,
+              101,
+              110,
+              97,
+              109,
+              101,
+              34,
+              58,
+              34,
+              116,
+              101,
+              115,
+              116,
+              45,
+              118,
+              105,
+              100,
+              101,
+              111,
+              45,
+              49,
+              55,
+              55,
+              52,
+              49,
+              51,
+              54,
+              53,
+              56,
+              52,
+              56,
+              53,
+              53,
+              46,
+              109,
+              112,
+              52,
+              34,
+              44,
+              34,
+              102,
+              105,
+              108,
+              101,
+              95,
+              115,
+              105,
+              122,
+              101,
+              34,
+              58,
+              53,
+              50,
+              52,
+              50,
+              56,
+              56,
+              48,
+              44,
+              34,
+              99,
+              104,
+              117,
+              110,
+              107,
+              95,
+              115,
+              105,
+              122,
+              101,
+              34,
+              58,
+              53,
+              50,
+              52,
+              50,
+              56,
+              56,
+              48,
+              44,
+              34,
+              116,
+              111,
+              116,
+              97,
+              108,
+              95,
+              99,
+              104,
+              117,
+              110,
+              107,
+              115,
+              34,
+              58,
+              49,
+              44,
+              34,
+              117,
+              112,
+              108,
+              111,
+              97,
+              100,
+              101,
+              100,
+              95,
+              99,
+              104,
+              117,
+              110,
+              107,
+              115,
+              34,
+              58,
+              91,
+              48,
+              93,
+              44,
+              34,
+              115,
+              116,
+              97,
+              116,
+              117,
+              115,
+              34,
+              58,
+              34,
+              97,
+              99,
+              116,
+              105,
+              118,
+              101,
+              34,
+              44,
+              34,
+              116,
+              101,
+              109,
+              112,
+              95,
+              102,
+              105,
+              108,
+              101,
+              95,
+              112,
+              97,
+              116,
+              104,
+              34,
+              58,
+              34,
+              47,
+              116,
+              109,
+              112,
+              47,
+              115,
+              116,
+              111,
+              114,
+              97,
+              103,
+              101,
+              47,
+              99,
+              97,
+              99,
+              104,
+              101,
+              47,
+              117,
+              112,
+              108,
+              111,
+              97,
+              100,
+              115,
+              47,
+              52,
+              53,
+              99,
+              101,
+              102,
+              98,
+              52,
+              100,
+              45,
+              57,
+              101,
+              51,
+              97,
+              45,
+              52,
+              100,
+              54,
+              54,
+              45,
+              57,
+              54,
+              97,
+              52,
+              45,
+              99,
+              99,
+              49,
+              51,
+              100,
+              51,
+              102,
+              48,
+              55,
+              101,
+              48,
+              51,
+              47,
+              99,
+              104,
+              117,
+              110,
+              107,
+              115,
+              34,
+              44,
+              34,
+              101,
+              120,
+              112,
+              101,
+              99,
+              116,
+              101,
+              100,
+              95,
+              99,
+              104,
+              101,
+              99,
+              107,
+              115,
+              117,
+              109,
+              34,
+              58,
+              34,
+              34,
+              44,
+              34,
+              99,
+              114,
+              101,
+              97,
+              116,
+              101,
+              100,
+              95,
+              97,
+              116,
+              34,
+              58,
+              34,
+              50,
+              48,
+              50,
+              54,
+              45,
+              48,
+              51,
+              45,
+              50,
+              49,
+              84,
+              50,
+              51,
+              58,
+              52,
+              51,
+              58,
+              48,
+              52,
+              46,
+              56,
+              56,
+              55,
+              55,
+              52,
+              52,
+              90,
+              34,
+              44,
+              34,
+              117,
+              112,
+              100,
+              97,
+              116,
+              101,
+              100,
+              95,
+              97,
+              116,
+              34,
+              58,
+              34,
+              50,
+              48,
+              50,
+              54,
+              45,
+              48,
+              51,
+              45,
+              50,
+              49,
+              84,
+              50,
+              51,
+              58,
+              52,
+              51,
+              58,
+              48,
+              52,
+              46,
+              57,
+              53,
+              56,
+              57,
+              51,
+              52,
+              90,
+              34,
+              44,
+              34,
+              101,
+              120,
+              112,
+              105,
+              114,
+              101,
+              115,
+              95,
+              97,
+              116,
+              34,
+              58,
+              34,
+              50,
+              48,
+              50,
+              54,
+              45,
+              48,
+              51,
+              45,
+              50,
+              50,
+              84,
+              50,
+              51,
+              58,
+              52,
+              51,
+              58,
+              48,
+              52,
+              46,
+              56,
+              56,
+              55,
+              55,
+              52,
+              52,
+              90,
+              34,
+              125,
+              44,
+              34,
+              115,
+              117,
+              99,
+              99,
+              101,
+              115,
+              115,
+              34,
+              58,
+              116,
+              114,
+              117,
+              101,
+              125,
+              10
+            ]
+          },
+          "cookie": [],
+          "responseTime": 4,
+          "responseSize": 551
+        },
+        "id": "ea05bc74-3f1f-4975-bbfb-8d37e0fd829b",
+        "assertions": [
+          {
+            "assertion": "Status is 200, 401, or 404",
+            "skipped": false
+          },
+          {
+            "assertion": "Response has upload status",
+            "skipped": false
+          }
+        ]
+      },
+      {
+        "cursor": {
+          "ref": "c55a03c1-569d-4fa3-adf4-2b23717abffb",
+          "length": 12,
+          "cycles": 1,
+          "position": 3,
+          "iteration": 0,
+          "httpRequestId": "54f21a0e-bb0d-42f8-be85-9b7310485c03"
+        },
+        "item": {
+          "id": "31bae2d1-92bc-41be-baed-44a4763c3b58",
+          "name": "Resume Upload Info",
+          "request": {
+            "description": {
+              "content": "Get information needed to resume an interrupted upload. Returns list of uploaded and missing chunks.",
+              "type": "text/plain"
+            },
+            "url": {
+              "path": [
+                "api",
+                "v1",
+                "uploads",
+                "{{upload_session_id}}",
+                "resume"
+              ],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "query": [],
+              "variable": []
+            },
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "method": "GET"
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "id": "9cda1d26-e0f7-4e70-8cda-d2d3e4e77d07",
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200, 401, or 404', () => {",
+                  "  pm.expect([200, 401, 404]).to.include(pm.response.code);",
+                  "});",
+                  "",
+                  "if (pm.response.code === 200) {",
+                  "  const wrap = pm.response.json();",
+                  "  ",
+                  "  pm.test('Response has resume information', () => {",
+                  "    pm.expect(wrap.data).to.have.property('uploaded_chunks');",
+                  "    pm.expect(wrap.data).to.have.property('remaining_chunks');",
+                  "    pm.expect(wrap.data).to.have.property('progress_percent');",
+                  "  });",
+                  "  ",
+                  "  const remainingChunks = Array.isArray(wrap.data.remaining_chunks) ? wrap.data.remaining_chunks : [];",
+                  "  const nextChunkIndex = remainingChunks.length > 0 ? remainingChunks[0] : 'none';",
+                  "  console.log(`Next chunk to upload: ${nextChunkIndex}`);",
+                  "  console.log(`Remaining chunks: ${remainingChunks.join(', ')}`);",
+                  "}"
+                ],
+                "_lastExecutionId": "25d6e503-65a4-466d-bcfd-8b20a9f176cd"
+              }
+            }
+          ]
+        },
+        "request": {
+          "description": {
+            "content": "Get information needed to resume an interrupted upload. Returns list of uploaded and missing chunks.",
+            "type": "text/plain"
+          },
+          "url": {
+            "protocol": "http",
+            "port": "8080",
+            "path": [
+              "api",
+              "v1",
+              "uploads",
+              "45cefb4d-9e3a-4d66-96a4-cc13d3f07e03",
+              "resume"
+            ],
+            "host": [
+              "app-test"
+            ],
+            "query": [],
+            "variable": []
+          },
+          "header": [
+            {
+              "key": "Authorization",
+              "value": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzQxMzc0ODEsImlhdCI6MTc3NDEzNjU4MSwianRpIjoiMzRlYjg1MTktNGY0Yi00MGQ2LWI1MTctMDdlZGI0YmE0MGVhIiwicm9sZSI6InVzZXIiLCJzdWIiOiI2MmMxYTQxNS1hMmRkLTQ5YTgtODZhOS00NGU4MmNiNWZkNjYifQ.VByzKQeQTZ_Dv47vA2PEssyBUZkWRpIRGxRMS9L4ZlQ"
+            },
+            {
+              "key": "User-Agent",
+              "value": "PostmanRuntime/7.39.0",
+              "system": true
+            },
+            {
+              "key": "Accept",
+              "value": "*/*",
+              "system": true
+            },
+            {
+              "key": "Cache-Control",
+              "value": "no-cache",
+              "system": true
+            },
+            {
+              "key": "Postman-Token",
+              "value": "ac9a135d-74a9-468b-a760-5bb8ee7e6123",
+              "system": true
+            },
+            {
+              "key": "Host",
+              "value": "app-test:8080",
+              "system": true
+            },
+            {
+              "key": "Accept-Encoding",
+              "value": "gzip, deflate, br",
+              "system": true
+            },
+            {
+              "key": "Connection",
+              "value": "keep-alive",
+              "system": true
+            }
+          ],
+          "method": "GET"
+        },
+        "response": {
+          "id": "e40cafba-1615-4c27-abc6-d7ec1cad2aa2",
+          "status": "OK",
+          "code": 200,
+          "header": [
+            {
+              "key": "Content-Encoding",
+              "value": "gzip"
+            },
+            {
+              "key": "Content-Security-Policy",
+              "value": "default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self' data:; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; upgrade-insecure-requests; img-src 'self' data:; connect-src 'self'; media-src 'self' blob:"
+            },
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "key": "Permissions-Policy",
+              "value": "camera=(), microphone=(), geolocation=(), interest-cohort=()"
+            },
+            {
+              "key": "Referrer-Policy",
+              "value": "strict-origin-when-cross-origin"
+            },
+            {
+              "key": "Vary",
+              "value": "Accept-Encoding"
+            },
+            {
+              "key": "X-Content-Type-Options",
+              "value": "nosniff"
+            },
+            {
+              "key": "X-Frame-Options",
+              "value": "DENY"
+            },
+            {
+              "key": "X-Request-Id",
+              "value": "5dfco-kUNEGbHG6sW12Y3A"
+            },
+            {
+              "key": "X-Xss-Protection",
+              "value": "1; mode=block"
+            },
+            {
+              "key": "Date",
+              "value": "Sat, 21 Mar 2026 23:43:05 GMT"
+            },
+            {
+              "key": "Content-Length",
+              "value": "196"
+            }
+          ],
+          "stream": {
+            "type": "Buffer",
+            "data": [
+              123,
+              34,
+              100,
+              97,
+              116,
+              97,
+              34,
+              58,
+              123,
+              34,
+              101,
+              120,
+              112,
+              105,
+              114,
+              101,
+              115,
+              95,
+              97,
+              116,
+              34,
+              58,
+              34,
+              50,
+              48,
+              50,
+              54,
+              45,
+              48,
+              51,
+              45,
+              50,
+              50,
+              84,
+              50,
+              51,
+              58,
+              52,
+              51,
+              58,
+              48,
+              52,
+              46,
+              56,
+              56,
+              55,
+              55,
+              52,
+              52,
+              90,
+              34,
+              44,
+              34,
+              112,
+              114,
+              111,
+              103,
+              114,
+              101,
+              115,
+              115,
+              95,
+              112,
+              101,
+              114,
+              99,
+              101,
+              110,
+              116,
+              34,
+              58,
+              49,
+              48,
+              48,
+              44,
+              34,
+              114,
+              101,
+              109,
+              97,
+              105,
+              110,
+              105,
+              110,
+              103,
+              95,
+              99,
+              104,
+              117,
+              110,
+              107,
+              115,
+              34,
+              58,
+              110,
+              117,
+              108,
+              108,
+              44,
+              34,
+              115,
+              101,
+              115,
+              115,
+              105,
+              111,
+              110,
+              95,
+              105,
+              100,
+              34,
+              58,
+              34,
+              52,
+              53,
+              99,
+              101,
+              102,
+              98,
+              52,
+              100,
+              45,
+              57,
+              101,
+              51,
+              97,
+              45,
+              52,
+              100,
+              54,
+              54,
+              45,
+              57,
+              54,
+              97,
+              52,
+              45,
+              99,
+              99,
+              49,
+              51,
+              100,
+              51,
+              102,
+              48,
+              55,
+              101,
+              48,
+              51,
+              34,
+              44,
+              34,
+              115,
+              116,
+              97,
+              116,
+              117,
+              115,
+              34,
+              58,
+              34,
+              97,
+              99,
+              116,
+              105,
+              118,
+              101,
+              34,
+              44,
+              34,
+              116,
+              111,
+              116,
+              97,
+              108,
+              95,
+              99,
+              104,
+              117,
+              110,
+              107,
+              115,
+              34,
+              58,
+              49,
+              44,
+              34,
+              117,
+              112,
+              108,
+              111,
+              97,
+              100,
+              101,
+              100,
+              95,
+              99,
+              104,
+              117,
+              110,
+              107,
+              115,
+              34,
+              58,
+              91,
+              48,
+              93,
+              125,
+              44,
+              34,
+              115,
+              117,
+              99,
+              99,
+              101,
+              115,
+              115,
+              34,
+              58,
+              116,
+              114,
+              117,
+              101,
+              125,
+              10
+            ]
+          },
+          "cookie": [],
+          "responseTime": 7,
+          "responseSize": 225
+        },
+        "id": "31bae2d1-92bc-41be-baed-44a4763c3b58",
+        "assertions": [
+          {
+            "assertion": "Status is 200, 401, or 404",
+            "skipped": false
+          },
+          {
+            "assertion": "Response has resume information",
+            "skipped": false
+          }
+        ]
+      },
+      {
+        "cursor": {
+          "ref": "bd5458e9-0faa-496e-8b54-bbc1faed9c24",
+          "length": 12,
+          "cycles": 1,
+          "position": 4,
+          "iteration": 0,
+          "httpRequestId": "5f31c0fe-21b2-4096-9045-64b25d3719e1"
+        },
+        "item": {
+          "id": "34f9aece-6956-48b6-9f3d-1220e4ae8fb9",
+          "name": "Complete Upload",
+          "request": {
+            "description": {
+              "content": "Finalize the upload after all chunks have been uploaded. Triggers video processing and encoding.",
+              "type": "text/plain"
+            },
+            "url": {
+              "path": [
+                "api",
+                "v1",
+                "uploads",
+                "{{upload_session_id}}",
+                "complete"
+              ],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "query": [],
+              "variable": []
+            },
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "method": "POST",
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "id": "c7df183f-a025-4c1d-a7b3-8a06c5114976",
+                "type": "text/javascript",
+                "exec": [
+                  "// Accept 200 (complete) or 400 (incomplete - missing chunks)",
+                  "pm.test('Status is 200, 400, 401, or 404', () => {",
+                  "  pm.expect([200, 400, 401, 404]).to.include(pm.response.code);",
+                  "});",
+                  "",
+                  "if (pm.response.code === 200) {",
+                  "  const wrap = pm.response.json();",
+                  "  ",
+                  "  pm.test('Upload completed successfully', () => {",
+                  "    pm.expect(wrap.data).to.have.property('session_id');",
+                  "    pm.expect(wrap.data).to.have.property('status');",
+                  "    pm.expect(wrap.data).to.have.property('message');",
+                  "  });",
+                  "  ",
+                  "  console.log(`Upload complete for session: ${wrap.data.session_id}`);",
+                  "  console.log(wrap.data.message);",
+                  "} else if (pm.response.code === 400) {",
+                  "  const wrap = pm.response.json();",
+                  "  console.log(`Upload incomplete: ${wrap.error.message}`);",
+                  "  if (wrap.error.details && wrap.error.details.missing_chunks) {",
+                  "    console.log(`Missing chunks: ${wrap.error.details.missing_chunks.join(', ')}`);",
+                  "  }",
+                  "}"
+                ],
+                "_lastExecutionId": "fe5b1ac3-2472-4391-9ab2-fbc44174297a"
+              }
+            }
+          ]
+        },
+        "request": {
+          "description": {
+            "content": "Finalize the upload after all chunks have been uploaded. Triggers video processing and encoding.",
+            "type": "text/plain"
+          },
+          "url": {
+            "protocol": "http",
+            "port": "8080",
+            "path": [
+              "api",
+              "v1",
+              "uploads",
+              "45cefb4d-9e3a-4d66-96a4-cc13d3f07e03",
+              "complete"
+            ],
+            "host": [
+              "app-test"
+            ],
+            "query": [],
+            "variable": []
+          },
+          "header": [
+            {
+              "key": "Authorization",
+              "value": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzQxMzc0ODEsImlhdCI6MTc3NDEzNjU4MSwianRpIjoiMzRlYjg1MTktNGY0Yi00MGQ2LWI1MTctMDdlZGI0YmE0MGVhIiwicm9sZSI6InVzZXIiLCJzdWIiOiI2MmMxYTQxNS1hMmRkLTQ5YTgtODZhOS00NGU4MmNiNWZkNjYifQ.VByzKQeQTZ_Dv47vA2PEssyBUZkWRpIRGxRMS9L4ZlQ"
+            },
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "key": "User-Agent",
+              "value": "PostmanRuntime/7.39.0",
+              "system": true
+            },
+            {
+              "key": "Accept",
+              "value": "*/*",
+              "system": true
+            },
+            {
+              "key": "Cache-Control",
+              "value": "no-cache",
+              "system": true
+            },
+            {
+              "key": "Postman-Token",
+              "value": "20f15a2e-5276-4c28-87f1-99372fdfe0d3",
+              "system": true
+            },
+            {
+              "key": "Host",
+              "value": "app-test:8080",
+              "system": true
+            },
+            {
+              "key": "Accept-Encoding",
+              "value": "gzip, deflate, br",
+              "system": true
+            },
+            {
+              "key": "Connection",
+              "value": "keep-alive",
+              "system": true
+            },
+            {
+              "key": "Content-Length",
+              "value": "2",
+              "system": true
+            }
+          ],
+          "method": "POST",
+          "body": {
+            "mode": "raw",
+            "raw": "{}"
+          }
+        },
+        "response": {
+          "id": "f161866c-dc9e-4679-9615-064fe81cc72a",
+          "status": "OK",
+          "code": 200,
+          "header": [
+            {
+              "key": "Content-Encoding",
+              "value": "gzip"
+            },
+            {
+              "key": "Content-Security-Policy",
+              "value": "default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self' data:; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; upgrade-insecure-requests; img-src 'self' data:; connect-src 'self'; media-src 'self' blob:"
+            },
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "key": "Permissions-Policy",
+              "value": "camera=(), microphone=(), geolocation=(), interest-cohort=()"
+            },
+            {
+              "key": "Referrer-Policy",
+              "value": "strict-origin-when-cross-origin"
+            },
+            {
+              "key": "Vary",
+              "value": "Accept-Encoding"
+            },
+            {
+              "key": "X-Content-Type-Options",
+              "value": "nosniff"
+            },
+            {
+              "key": "X-Frame-Options",
+              "value": "DENY"
+            },
+            {
+              "key": "X-Request-Id",
+              "value": "JhUHTYh2c_A60RiKccLRKA"
+            },
+            {
+              "key": "X-Xss-Protection",
+              "value": "1; mode=block"
+            },
+            {
+              "key": "Date",
+              "value": "Sat, 21 Mar 2026 23:43:05 GMT"
+            },
+            {
+              "key": "Content-Length",
+              "value": "143"
+            }
+          ],
+          "stream": {
+            "type": "Buffer",
+            "data": [
+              123,
+              34,
+              100,
+              97,
+              116,
+              97,
+              34,
+              58,
+              123,
+              34,
+              109,
+              101,
+              115,
+              115,
+              97,
+              103,
+              101,
+              34,
+              58,
+              34,
+              85,
+              112,
+              108,
+              111,
+              97,
+              100,
+              32,
+              99,
+              111,
+              109,
+              112,
+              108,
+              101,
+              116,
+              101,
+              100,
+              44,
+              32,
+              112,
+              114,
+              111,
+              99,
+              101,
+              115,
+              115,
+              105,
+              110,
+              103,
+              32,
+              113,
+              117,
+              101,
+              117,
+              101,
+              100,
+              34,
+              44,
+              34,
+              115,
+              101,
+              115,
+              115,
+              105,
+              111,
+              110,
+              95,
+              105,
+              100,
+              34,
+              58,
+              34,
+              52,
+              53,
+              99,
+              101,
+              102,
+              98,
+              52,
+              100,
+              45,
+              57,
+              101,
+              51,
+              97,
+              45,
+              52,
+              100,
+              54,
+              54,
+              45,
+              57,
+              54,
+              97,
+              52,
+              45,
+              99,
+              99,
+              49,
+              51,
+              100,
+              51,
+              102,
+              48,
+              55,
+              101,
+              48,
+              51,
+              34,
+              44,
+              34,
+              115,
+              116,
+              97,
+              116,
+              117,
+              115,
+              34,
+              58,
+              34,
+              99,
+              111,
+              109,
+              112,
+              108,
+              101,
+              116,
+              101,
+              100,
+              34,
+              125,
+              44,
+              34,
+              115,
+              117,
+              99,
+              99,
+              101,
+              115,
+              115,
+              34,
+              58,
+              116,
+              114,
+              117,
+              101,
+              125,
+              10
+            ]
+          },
+          "cookie": [],
+          "responseTime": 7,
+          "responseSize": 147
+        },
+        "id": "34f9aece-6956-48b6-9f3d-1220e4ae8fb9",
+        "assertions": [
+          {
+            "assertion": "Status is 200, 400, 401, or 404",
+            "skipped": false
+          },
+          {
+            "assertion": "Upload completed successfully",
+            "skipped": false
+          }
+        ]
+      },
+      {
+        "cursor": {
+          "ref": "3f33b744-7e05-4788-82aa-b731c17856ac",
+          "length": 12,
+          "cycles": 1,
+          "position": 5,
+          "iteration": 0,
+          "httpRequestId": "62510489-b7e8-49b9-9260-bf88ef8dd9cc"
+        },
+        "item": {
+          "id": "f0c7b38e-a7e3-43eb-aded-6c951118e21c",
+          "name": "Get Encoding Status - By Video ID",
+          "request": {
+            "description": {
+              "content": "Get encoding job status for a specific video. Shows progress, completed variants, and current encoding status.",
+              "type": "text/plain"
+            },
+            "url": {
+              "path": [
+                "api",
+                "v1",
+                "encoding",
+                "status"
+              ],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "query": [
+                {
+                  "description": {
+                    "content": "Filter by video UUID",
+                    "type": "text/plain"
+                  },
+                  "key": "video_id",
+                  "value": "{{upload_video_id}}"
+                }
+              ],
+              "variable": []
+            },
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "method": "GET"
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "id": "a69d76b4-0d3a-4262-bd9f-098b8940122d",
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200 or 401', () => {",
+                  "  pm.expect([200, 401]).to.include(pm.response.code);",
+                  "});",
+                  "",
+                  "if (pm.response.code === 200) {",
+                  "  const wrap = pm.response.json();",
+                  "  ",
+                  "  pm.test('Response has encoding scheduler summary', () => {",
+                  "    pm.expect(wrap.data).to.have.property('pending');",
+                  "    pm.expect(wrap.data).to.have.property('processing');",
+                  "    pm.expect(wrap.data).to.have.property('completed');",
+                  "    pm.expect(wrap.data).to.have.property('failed');",
+                  "  });",
+                  "  ",
+                  "  console.log(`Encoding summary: pending=${wrap.data.pending}, processing=${wrap.data.processing}, completed=${wrap.data.completed}, failed=${wrap.data.failed}`);",
+                  "}"
+                ],
+                "_lastExecutionId": "33f0248b-9ced-4107-a052-e28ae626353a"
+              }
+            }
+          ]
+        },
+        "request": {
+          "description": {
+            "content": "Get encoding job status for a specific video. Shows progress, completed variants, and current encoding status.",
+            "type": "text/plain"
+          },
+          "url": {
+            "protocol": "http",
+            "port": "8080",
+            "path": [
+              "api",
+              "v1",
+              "encoding",
+              "status"
+            ],
+            "host": [
+              "app-test"
+            ],
+            "query": [
+              {
+                "key": "video_id",
+                "value": "a13b9910-740a-4d6c-bac8-5c3664409f17"
+              }
+            ],
+            "variable": []
+          },
+          "header": [
+            {
+              "key": "Authorization",
+              "value": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzQxMzc0ODEsImlhdCI6MTc3NDEzNjU4MSwianRpIjoiMzRlYjg1MTktNGY0Yi00MGQ2LWI1MTctMDdlZGI0YmE0MGVhIiwicm9sZSI6InVzZXIiLCJzdWIiOiI2MmMxYTQxNS1hMmRkLTQ5YTgtODZhOS00NGU4MmNiNWZkNjYifQ.VByzKQeQTZ_Dv47vA2PEssyBUZkWRpIRGxRMS9L4ZlQ"
+            },
+            {
+              "key": "User-Agent",
+              "value": "PostmanRuntime/7.39.0",
+              "system": true
+            },
+            {
+              "key": "Accept",
+              "value": "*/*",
+              "system": true
+            },
+            {
+              "key": "Cache-Control",
+              "value": "no-cache",
+              "system": true
+            },
+            {
+              "key": "Postman-Token",
+              "value": "ff4c0680-5810-4b63-a14f-1c8a8b342b3c",
+              "system": true
+            },
+            {
+              "key": "Host",
+              "value": "app-test:8080",
+              "system": true
+            },
+            {
+              "key": "Accept-Encoding",
+              "value": "gzip, deflate, br",
+              "system": true
+            },
+            {
+              "key": "Connection",
+              "value": "keep-alive",
+              "system": true
+            }
+          ],
+          "method": "GET"
+        },
+        "response": {
+          "id": "9ffd2695-bcfc-4f46-b17f-eb3ab7a0e88f",
+          "status": "OK",
+          "code": 200,
+          "header": [
+            {
+              "key": "Content-Encoding",
+              "value": "gzip"
+            },
+            {
+              "key": "Content-Security-Policy",
+              "value": "default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self' data:; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; upgrade-insecure-requests; img-src 'self' data:; connect-src 'self'; media-src 'self' blob:"
+            },
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "key": "Permissions-Policy",
+              "value": "camera=(), microphone=(), geolocation=(), interest-cohort=()"
+            },
+            {
+              "key": "Referrer-Policy",
+              "value": "strict-origin-when-cross-origin"
+            },
+            {
+              "key": "Vary",
+              "value": "Accept-Encoding"
+            },
+            {
+              "key": "X-Content-Type-Options",
+              "value": "nosniff"
+            },
+            {
+              "key": "X-Frame-Options",
+              "value": "DENY"
+            },
+            {
+              "key": "X-Request-Id",
+              "value": "2MD1vhqiHKsGFZLbMFYTGA"
+            },
+            {
+              "key": "X-Xss-Protection",
+              "value": "1; mode=block"
+            },
+            {
+              "key": "Date",
+              "value": "Sat, 21 Mar 2026 23:43:05 GMT"
+            },
+            {
+              "key": "Content-Length",
+              "value": "178"
+            }
+          ],
+          "stream": {
+            "type": "Buffer",
+            "data": [
+              123,
+              34,
+              100,
+              97,
+              116,
+              97,
+              34,
+              58,
+              123,
+              34,
+              99,
+              111,
+              109,
+              112,
+              108,
+              101,
+              116,
+              101,
+              100,
+              34,
+              58,
+              48,
+              44,
+              34,
+              102,
+              97,
+              105,
+              108,
+              101,
+              100,
+              34,
+              58,
+              51,
+              44,
+              34,
+              112,
+              101,
+              110,
+              100,
+              105,
+              110,
+              103,
+              34,
+              58,
+              49,
+              44,
+              34,
+              112,
+              114,
+              111,
+              99,
+              101,
+              115,
+              115,
+              105,
+              110,
+              103,
+              34,
+              58,
+              48,
+              44,
+              34,
+              115,
+              99,
+              104,
+              101,
+              100,
+              117,
+              108,
+              101,
+              114,
+              95,
+              98,
+              117,
+              114,
+              115,
+              116,
+              34,
+              58,
+              51,
+              44,
+              34,
+              115,
+              99,
+              104,
+              101,
+              100,
+              117,
+              108,
+              101,
+              114,
+              95,
+              101,
+              110,
+              97,
+              98,
+              108,
+              101,
+              100,
+              34,
+              58,
+              116,
+              114,
+              117,
+              101,
+              44,
+              34,
+              115,
+              99,
+              104,
+              101,
+              100,
+              117,
+              108,
+              101,
+              114,
+              95,
+              105,
+              110,
+              116,
+              101,
+              114,
+              118,
+              97,
+              108,
+              95,
+              115,
+              101,
+              99,
+              111,
+              110,
+              100,
+              115,
+              34,
+              58,
+              53,
+              44,
+              34,
+              115,
+              99,
+              104,
+              101,
+              100,
+              117,
+              108,
+              101,
+              114,
+              95,
+              108,
+              97,
+              115,
+              116,
+              95,
+              112,
+              114,
+              111,
+              99,
+              101,
+              115,
+              115,
+              101,
+              100,
+              34,
+              58,
+              48,
+              44,
+              34,
+              115,
+              99,
+              104,
+              101,
+              100,
+              117,
+              108,
+              101,
+              114,
+              95,
+              108,
+              97,
+              115,
+              116,
+              95,
+              116,
+              105,
+              99,
+              107,
+              34,
+              58,
+              34,
+              50,
+              48,
+              50,
+              54,
+              45,
+              48,
+              51,
+              45,
+              50,
+              49,
+              84,
+              50,
+              51,
+              58,
+              52,
+              51,
+              58,
+              48,
+              48,
+              46,
+              50,
+              50,
+              56,
+              53,
+              52,
+              51,
+              53,
+              48,
+              54,
+              90,
+              34,
+              125,
+              44,
+              34,
+              115,
+              117,
+              99,
+              99,
+              101,
+              115,
+              115,
+              34,
+              58,
+              116,
+              114,
+              117,
+              101,
+              125,
+              10
+            ]
+          },
+          "cookie": [],
+          "responseTime": 5,
+          "responseSize": 238
+        },
+        "id": "f0c7b38e-a7e3-43eb-aded-6c951118e21c",
+        "assertions": [
+          {
+            "assertion": "Status is 200 or 401",
+            "skipped": false
+          },
+          {
+            "assertion": "Response has encoding scheduler summary",
+            "skipped": false
+          }
+        ]
+      },
+      {
+        "cursor": {
+          "ref": "2c271a4b-3b2f-4664-97fc-e462f8177a3c",
+          "length": 12,
+          "cycles": 1,
+          "position": 6,
+          "iteration": 0,
+          "httpRequestId": "ed8d44c8-d90c-4746-813d-4e4a50182935"
+        },
+        "item": {
+          "id": "329265d7-18ac-4382-abef-af734b6edc48",
+          "name": "Get Encoding Status - By Job ID",
+          "request": {
+            "description": {
+              "content": "Get status of a specific encoding job by job ID.",
+              "type": "text/plain"
+            },
+            "url": {
+              "path": [
+                "api",
+                "v1",
+                "encoding",
+                "status"
+              ],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "query": [
+                {
+                  "description": {
+                    "content": "Specific encoding job ID",
+                    "type": "text/plain"
+                  },
+                  "key": "job_id",
+                  "value": "{{encoding_job_id}}"
+                }
+              ],
+              "variable": []
+            },
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "method": "GET"
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "id": "ae89c109-49ba-4009-a352-65019f814fcc",
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200 or 401', () => {",
+                  "  pm.expect([200, 401]).to.include(pm.response.code);",
+                  "});",
+                  "",
+                  "if (pm.response.code === 200) {",
+                  "  const wrap = pm.response.json();",
+                  "  ",
+                  "  pm.test('Response has encoding scheduler summary', () => {",
+                  "    pm.expect(wrap.data).to.have.property('pending');",
+                  "    pm.expect(wrap.data).to.have.property('processing');",
+                  "    pm.expect(wrap.data).to.have.property('completed');",
+                  "    pm.expect(wrap.data).to.have.property('failed');",
+                  "  });",
+                  "  console.log(`Encoding summary: pending=${wrap.data.pending}, processing=${wrap.data.processing}`);",
+                  "}"
+                ],
+                "_lastExecutionId": "69261c4b-8b0c-44be-9909-c33b4735e946"
+              }
+            }
+          ]
+        },
+        "request": {
+          "description": {
+            "content": "Get status of a specific encoding job by job ID.",
+            "type": "text/plain"
+          },
+          "url": {
+            "protocol": "http",
+            "port": "8080",
+            "path": [
+              "api",
+              "v1",
+              "encoding",
+              "status"
+            ],
+            "host": [
+              "app-test"
+            ],
+            "query": [
+              {
+                "key": "job_id",
+                "value": "{{encoding_job_id}}"
+              }
+            ],
+            "variable": []
+          },
+          "header": [
+            {
+              "key": "Authorization",
+              "value": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzQxMzc0ODEsImlhdCI6MTc3NDEzNjU4MSwianRpIjoiMzRlYjg1MTktNGY0Yi00MGQ2LWI1MTctMDdlZGI0YmE0MGVhIiwicm9sZSI6InVzZXIiLCJzdWIiOiI2MmMxYTQxNS1hMmRkLTQ5YTgtODZhOS00NGU4MmNiNWZkNjYifQ.VByzKQeQTZ_Dv47vA2PEssyBUZkWRpIRGxRMS9L4ZlQ"
+            },
+            {
+              "key": "User-Agent",
+              "value": "PostmanRuntime/7.39.0",
+              "system": true
+            },
+            {
+              "key": "Accept",
+              "value": "*/*",
+              "system": true
+            },
+            {
+              "key": "Cache-Control",
+              "value": "no-cache",
+              "system": true
+            },
+            {
+              "key": "Postman-Token",
+              "value": "5000671f-31f7-4a01-9299-5c1b33856372",
+              "system": true
+            },
+            {
+              "key": "Host",
+              "value": "app-test:8080",
+              "system": true
+            },
+            {
+              "key": "Accept-Encoding",
+              "value": "gzip, deflate, br",
+              "system": true
+            },
+            {
+              "key": "Connection",
+              "value": "keep-alive",
+              "system": true
+            }
+          ],
+          "method": "GET"
+        },
+        "response": {
+          "id": "c3b8f284-1569-4d9c-a0e0-e7294cdad153",
+          "status": "OK",
+          "code": 200,
+          "header": [
+            {
+              "key": "Content-Encoding",
+              "value": "gzip"
+            },
+            {
+              "key": "Content-Security-Policy",
+              "value": "default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self' data:; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; upgrade-insecure-requests; img-src 'self' data:; connect-src 'self'; media-src 'self' blob:"
+            },
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "key": "Permissions-Policy",
+              "value": "camera=(), microphone=(), geolocation=(), interest-cohort=()"
+            },
+            {
+              "key": "Referrer-Policy",
+              "value": "strict-origin-when-cross-origin"
+            },
+            {
+              "key": "Vary",
+              "value": "Accept-Encoding"
+            },
+            {
+              "key": "X-Content-Type-Options",
+              "value": "nosniff"
+            },
+            {
+              "key": "X-Frame-Options",
+              "value": "DENY"
+            },
+            {
+              "key": "X-Request-Id",
+              "value": "r4QqOLVI8LE2PFuTRp4KWw"
+            },
+            {
+              "key": "X-Xss-Protection",
+              "value": "1; mode=block"
+            },
+            {
+              "key": "Date",
+              "value": "Sat, 21 Mar 2026 23:43:05 GMT"
+            },
+            {
+              "key": "Content-Length",
+              "value": "178"
+            }
+          ],
+          "stream": {
+            "type": "Buffer",
+            "data": [
+              123,
+              34,
+              100,
+              97,
+              116,
+              97,
+              34,
+              58,
+              123,
+              34,
+              99,
+              111,
+              109,
+              112,
+              108,
+              101,
+              116,
+              101,
+              100,
+              34,
+              58,
+              48,
+              44,
+              34,
+              102,
+              97,
+              105,
+              108,
+              101,
+              100,
+              34,
+              58,
+              51,
+              44,
+              34,
+              112,
+              101,
+              110,
+              100,
+              105,
+              110,
+              103,
+              34,
+              58,
+              49,
+              44,
+              34,
+              112,
+              114,
+              111,
+              99,
+              101,
+              115,
+              115,
+              105,
+              110,
+              103,
+              34,
+              58,
+              48,
+              44,
+              34,
+              115,
+              99,
+              104,
+              101,
+              100,
+              117,
+              108,
+              101,
+              114,
+              95,
+              98,
+              117,
+              114,
+              115,
+              116,
+              34,
+              58,
+              51,
+              44,
+              34,
+              115,
+              99,
+              104,
+              101,
+              100,
+              117,
+              108,
+              101,
+              114,
+              95,
+              101,
+              110,
+              97,
+              98,
+              108,
+              101,
+              100,
+              34,
+              58,
+              116,
+              114,
+              117,
+              101,
+              44,
+              34,
+              115,
+              99,
+              104,
+              101,
+              100,
+              117,
+              108,
+              101,
+              114,
+              95,
+              105,
+              110,
+              116,
+              101,
+              114,
+              118,
+              97,
+              108,
+              95,
+              115,
+              101,
+              99,
+              111,
+              110,
+              100,
+              115,
+              34,
+              58,
+              53,
+              44,
+              34,
+              115,
+              99,
+              104,
+              101,
+              100,
+              117,
+              108,
+              101,
+              114,
+              95,
+              108,
+              97,
+              115,
+              116,
+              95,
+              112,
+              114,
+              111,
+              99,
+              101,
+              115,
+              115,
+              101,
+              100,
+              34,
+              58,
+              48,
+              44,
+              34,
+              115,
+              99,
+              104,
+              101,
+              100,
+              117,
+              108,
+              101,
+              114,
+              95,
+              108,
+              97,
+              115,
+              116,
+              95,
+              116,
+              105,
+              99,
+              107,
+              34,
+              58,
+              34,
+              50,
+              48,
+              50,
+              54,
+              45,
+              48,
+              51,
+              45,
+              50,
+              49,
+              84,
+              50,
+              51,
+              58,
+              52,
+              51,
+              58,
+              48,
+              48,
+              46,
+              50,
+              50,
+              56,
+              53,
+              52,
+              51,
+              53,
+              48,
+              54,
+              90,
+              34,
+              125,
+              44,
+              34,
+              115,
+              117,
+              99,
+              99,
+              101,
+              115,
+              115,
+              34,
+              58,
+              116,
+              114,
+              117,
+              101,
+              125,
+              10
+            ]
+          },
+          "cookie": [],
+          "responseTime": 4,
+          "responseSize": 238
+        },
+        "id": "329265d7-18ac-4382-abef-af734b6edc48",
+        "assertions": [
+          {
+            "assertion": "Status is 200 or 401",
+            "skipped": false
+          },
+          {
+            "assertion": "Response has encoding scheduler summary",
+            "skipped": false
+          }
+        ]
+      },
+      {
+        "cursor": {
+          "ref": "81c3c05b-3417-4322-bddb-08202d8a6521",
+          "length": 12,
+          "cycles": 1,
+          "position": 7,
+          "iteration": 0,
+          "httpRequestId": "a6f8530f-cd3d-4c1f-9ade-2dd2de30a7e8"
+        },
+        "item": {
+          "id": "99867b60-c69d-4815-80bf-00387e252737",
+          "name": "Get Encoding Status - All Processing",
+          "request": {
+            "description": {
+              "content": "Get all currently processing encoding jobs.",
+              "type": "text/plain"
+            },
+            "url": {
+              "path": [
+                "api",
+                "v1",
+                "encoding",
+                "status"
+              ],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "query": [
+                {
+                  "description": {
+                    "content": "Filter by status (pending, processing, completed, failed)",
+                    "type": "text/plain"
+                  },
+                  "key": "status",
+                  "value": "processing"
+                }
+              ],
+              "variable": []
+            },
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "method": "GET"
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "id": "1c77ee22-33bf-41cd-8642-d37e762fcb3d",
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200 or 401', () => {",
+                  "  pm.expect([200, 401]).to.include(pm.response.code);",
+                  "});",
+                  "",
+                  "if (pm.response.code === 200) {",
+                  "  const wrap = pm.response.json();",
+                  "  ",
+                  "  pm.test('Response shows encoding scheduler summary', () => {",
+                  "    pm.expect(wrap.data).to.have.property('pending');",
+                  "    pm.expect(wrap.data).to.have.property('processing');",
+                  "    pm.expect(wrap.data).to.have.property('completed');",
+                  "    pm.expect(wrap.data).to.have.property('failed');",
+                  "  });",
+                  "  ",
+                  "  console.log(`Currently processing jobs: ${wrap.data.processing}`);",
+                  "}"
+                ],
+                "_lastExecutionId": "01cfaa94-03fb-4e3a-a75a-4a08191bec5c"
+              }
+            }
+          ]
+        },
+        "request": {
+          "description": {
+            "content": "Get all currently processing encoding jobs.",
+            "type": "text/plain"
+          },
+          "url": {
+            "protocol": "http",
+            "port": "8080",
+            "path": [
+              "api",
+              "v1",
+              "encoding",
+              "status"
+            ],
+            "host": [
+              "app-test"
+            ],
+            "query": [
+              {
+                "key": "status",
+                "value": "processing"
+              }
+            ],
+            "variable": []
+          },
+          "header": [
+            {
+              "key": "Authorization",
+              "value": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzQxMzc0ODEsImlhdCI6MTc3NDEzNjU4MSwianRpIjoiMzRlYjg1MTktNGY0Yi00MGQ2LWI1MTctMDdlZGI0YmE0MGVhIiwicm9sZSI6InVzZXIiLCJzdWIiOiI2MmMxYTQxNS1hMmRkLTQ5YTgtODZhOS00NGU4MmNiNWZkNjYifQ.VByzKQeQTZ_Dv47vA2PEssyBUZkWRpIRGxRMS9L4ZlQ"
+            },
+            {
+              "key": "User-Agent",
+              "value": "PostmanRuntime/7.39.0",
+              "system": true
+            },
+            {
+              "key": "Accept",
+              "value": "*/*",
+              "system": true
+            },
+            {
+              "key": "Cache-Control",
+              "value": "no-cache",
+              "system": true
+            },
+            {
+              "key": "Postman-Token",
+              "value": "e54cdcc1-61e9-4032-a7d8-d985fb8f5111",
+              "system": true
+            },
+            {
+              "key": "Host",
+              "value": "app-test:8080",
+              "system": true
+            },
+            {
+              "key": "Accept-Encoding",
+              "value": "gzip, deflate, br",
+              "system": true
+            },
+            {
+              "key": "Connection",
+              "value": "keep-alive",
+              "system": true
+            }
+          ],
+          "method": "GET"
+        },
+        "response": {
+          "id": "1c37d7c7-4372-4dfa-9267-741de22acbb5",
+          "status": "OK",
+          "code": 200,
+          "header": [
+            {
+              "key": "Content-Encoding",
+              "value": "gzip"
+            },
+            {
+              "key": "Content-Security-Policy",
+              "value": "default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self' data:; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; upgrade-insecure-requests; img-src 'self' data:; connect-src 'self'; media-src 'self' blob:"
+            },
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "key": "Permissions-Policy",
+              "value": "camera=(), microphone=(), geolocation=(), interest-cohort=()"
+            },
+            {
+              "key": "Referrer-Policy",
+              "value": "strict-origin-when-cross-origin"
+            },
+            {
+              "key": "Vary",
+              "value": "Accept-Encoding"
+            },
+            {
+              "key": "X-Content-Type-Options",
+              "value": "nosniff"
+            },
+            {
+              "key": "X-Frame-Options",
+              "value": "DENY"
+            },
+            {
+              "key": "X-Request-Id",
+              "value": "M7J_jrl9e0ZXaJmgVJsijg"
+            },
+            {
+              "key": "X-Xss-Protection",
+              "value": "1; mode=block"
+            },
+            {
+              "key": "Date",
+              "value": "Sat, 21 Mar 2026 23:43:05 GMT"
+            },
+            {
+              "key": "Content-Length",
+              "value": "178"
+            }
+          ],
+          "stream": {
+            "type": "Buffer",
+            "data": [
+              123,
+              34,
+              100,
+              97,
+              116,
+              97,
+              34,
+              58,
+              123,
+              34,
+              99,
+              111,
+              109,
+              112,
+              108,
+              101,
+              116,
+              101,
+              100,
+              34,
+              58,
+              48,
+              44,
+              34,
+              102,
+              97,
+              105,
+              108,
+              101,
+              100,
+              34,
+              58,
+              51,
+              44,
+              34,
+              112,
+              101,
+              110,
+              100,
+              105,
+              110,
+              103,
+              34,
+              58,
+              49,
+              44,
+              34,
+              112,
+              114,
+              111,
+              99,
+              101,
+              115,
+              115,
+              105,
+              110,
+              103,
+              34,
+              58,
+              48,
+              44,
+              34,
+              115,
+              99,
+              104,
+              101,
+              100,
+              117,
+              108,
+              101,
+              114,
+              95,
+              98,
+              117,
+              114,
+              115,
+              116,
+              34,
+              58,
+              51,
+              44,
+              34,
+              115,
+              99,
+              104,
+              101,
+              100,
+              117,
+              108,
+              101,
+              114,
+              95,
+              101,
+              110,
+              97,
+              98,
+              108,
+              101,
+              100,
+              34,
+              58,
+              116,
+              114,
+              117,
+              101,
+              44,
+              34,
+              115,
+              99,
+              104,
+              101,
+              100,
+              117,
+              108,
+              101,
+              114,
+              95,
+              105,
+              110,
+              116,
+              101,
+              114,
+              118,
+              97,
+              108,
+              95,
+              115,
+              101,
+              99,
+              111,
+              110,
+              100,
+              115,
+              34,
+              58,
+              53,
+              44,
+              34,
+              115,
+              99,
+              104,
+              101,
+              100,
+              117,
+              108,
+              101,
+              114,
+              95,
+              108,
+              97,
+              115,
+              116,
+              95,
+              112,
+              114,
+              111,
+              99,
+              101,
+              115,
+              115,
+              101,
+              100,
+              34,
+              58,
+              48,
+              44,
+              34,
+              115,
+              99,
+              104,
+              101,
+              100,
+              117,
+              108,
+              101,
+              114,
+              95,
+              108,
+              97,
+              115,
+              116,
+              95,
+              116,
+              105,
+              99,
+              107,
+              34,
+              58,
+              34,
+              50,
+              48,
+              50,
+              54,
+              45,
+              48,
+              51,
+              45,
+              50,
+              49,
+              84,
+              50,
+              51,
+              58,
+              52,
+              51,
+              58,
+              48,
+              48,
+              46,
+              50,
+              50,
+              56,
+              53,
+              52,
+              51,
+              53,
+              48,
+              54,
+              90,
+              34,
+              125,
+              44,
+              34,
+              115,
+              117,
+              99,
+              99,
+              101,
+              115,
+              115,
+              34,
+              58,
+              116,
+              114,
+              117,
+              101,
+              125,
+              10
+            ]
+          },
+          "cookie": [],
+          "responseTime": 3,
+          "responseSize": 238
+        },
+        "id": "99867b60-c69d-4815-80bf-00387e252737",
+        "assertions": [
+          {
+            "assertion": "Status is 200 or 401",
+            "skipped": false
+          },
+          {
+            "assertion": "Response shows encoding scheduler summary",
+            "skipped": false
+          }
+        ]
+      },
+      {
+        "cursor": {
+          "ref": "0dadd7ca-1d10-4417-b6d8-cc596527308d",
+          "length": 12,
+          "cycles": 1,
+          "position": 8,
+          "iteration": 0,
+          "httpRequestId": "cac5fe7c-58ba-42b5-95d4-f948cb9b1884"
+        },
+        "item": {
+          "id": "b7af02a8-15b4-45df-8160-47870abac98c",
+          "name": "Initiate Upload - Missing Auth",
+          "request": {
+            "description": {
+              "content": "Verify that upload initiation fails without authentication",
+              "type": "text/plain"
+            },
+            "url": {
+              "path": [
+                "api",
+                "v1",
+                "uploads",
+                "initiate"
+              ],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "query": [],
+              "variable": []
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "method": "POST",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"filename\": \"test.mp4\",\n  \"file_size\": 52428800\n}"
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "id": "37d58574-d6b5-4b90-bd30-c5e6824ee486",
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 401 Unauthorized', () => {",
+                  "  pm.expect(pm.response.code).to.equal(401);",
+                  "});",
+                  "",
+                  "pm.test('Error response has correct structure', () => {",
+                  "  const wrap = pm.response.json();",
+                  "  pm.expect(wrap).to.have.property('success', false);",
+                  "  pm.expect(wrap).to.have.property('error');",
+                  "});"
+                ],
+                "_lastExecutionId": "34e1aab1-4412-446f-ba68-a784f07f81e1"
+              }
+            }
+          ]
+        },
+        "request": {
+          "description": {
+            "content": "Verify that upload initiation fails without authentication",
+            "type": "text/plain"
+          },
+          "url": {
+            "protocol": "http",
+            "port": "8080",
+            "path": [
+              "api",
+              "v1",
+              "uploads",
+              "initiate"
+            ],
+            "host": [
+              "app-test"
+            ],
+            "query": [],
+            "variable": []
+          },
+          "header": [
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "key": "User-Agent",
+              "value": "PostmanRuntime/7.39.0",
+              "system": true
+            },
+            {
+              "key": "Accept",
+              "value": "*/*",
+              "system": true
+            },
+            {
+              "key": "Cache-Control",
+              "value": "no-cache",
+              "system": true
+            },
+            {
+              "key": "Postman-Token",
+              "value": "2f775c3a-eeee-49c2-b13a-7c506bb53450",
+              "system": true
+            },
+            {
+              "key": "Host",
+              "value": "app-test:8080",
+              "system": true
+            },
+            {
+              "key": "Accept-Encoding",
+              "value": "gzip, deflate, br",
+              "system": true
+            },
+            {
+              "key": "Connection",
+              "value": "keep-alive",
+              "system": true
+            },
+            {
+              "key": "Content-Length",
+              "value": "53",
+              "system": true
+            }
+          ],
+          "method": "POST",
+          "body": {
+            "mode": "raw",
+            "raw": "{\n  \"filename\": \"test.mp4\",\n  \"file_size\": 52428800\n}"
+          }
+        },
+        "response": {
+          "id": "01069e1a-e11a-4d51-afe4-7a3e07268061",
+          "status": "Unauthorized",
+          "code": 401,
+          "header": [
+            {
+              "key": "Content-Encoding",
+              "value": "gzip"
+            },
+            {
+              "key": "Content-Security-Policy",
+              "value": "default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self' data:; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; upgrade-insecure-requests; img-src 'self' data:; connect-src 'self'; media-src 'self' blob:"
+            },
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "key": "Permissions-Policy",
+              "value": "camera=(), microphone=(), geolocation=(), interest-cohort=()"
+            },
+            {
+              "key": "Referrer-Policy",
+              "value": "strict-origin-when-cross-origin"
+            },
+            {
+              "key": "Vary",
+              "value": "Accept-Encoding"
+            },
+            {
+              "key": "X-Content-Type-Options",
+              "value": "nosniff"
+            },
+            {
+              "key": "X-Frame-Options",
+              "value": "DENY"
+            },
+            {
+              "key": "X-Request-Id",
+              "value": "SkFNjlcCPx8h-k67RtfluQ"
+            },
+            {
+              "key": "X-Xss-Protection",
+              "value": "1; mode=block"
+            },
+            {
+              "key": "Date",
+              "value": "Sat, 21 Mar 2026 23:43:05 GMT"
+            },
+            {
+              "key": "Content-Length",
+              "value": "115"
+            }
+          ],
+          "stream": {
+            "type": "Buffer",
+            "data": [
+              123,
+              34,
+              101,
+              114,
+              114,
+              111,
+              114,
+              34,
+              58,
+              123,
+              34,
+              99,
+              111,
+              100,
+              101,
+              34,
+              58,
+              34,
+              77,
+              73,
+              83,
+              83,
+              73,
+              78,
+              71,
+              95,
+              65,
+              85,
+              84,
+              72,
+              34,
+              44,
+              34,
+              109,
+              101,
+              115,
+              115,
+              97,
+              103,
+              101,
+              34,
+              58,
+              34,
+              77,
+              73,
+              83,
+              83,
+              73,
+              78,
+              71,
+              95,
+              65,
+              85,
+              84,
+              72,
+              58,
+              32,
+              77,
+              105,
+              115,
+              115,
+              105,
+              110,
+              103,
+              32,
+              97,
+              117,
+              116,
+              104,
+              111,
+              114,
+              105,
+              122,
+              97,
+              116,
+              105,
+              111,
+              110,
+              32,
+              104,
+              101,
+              97,
+              100,
+              101,
+              114,
+              34,
+              125,
+              44,
+              34,
+              115,
+              117,
+              99,
+              99,
+              101,
+              115,
+              115,
+              34,
+              58,
+              102,
+              97,
+              108,
+              115,
+              101,
+              125,
+              10
+            ]
+          },
+          "cookie": [],
+          "responseTime": 3,
+          "responseSize": 105
+        },
+        "id": "b7af02a8-15b4-45df-8160-47870abac98c",
+        "assertions": [
+          {
+            "assertion": "Status is 401 Unauthorized",
+            "skipped": false
+          },
+          {
+            "assertion": "Error response has correct structure",
+            "skipped": false
+          }
+        ]
+      },
+      {
+        "cursor": {
+          "ref": "a39ad126-e0d6-405b-9301-316b203f9222",
+          "length": 12,
+          "cycles": 1,
+          "position": 9,
+          "iteration": 0,
+          "httpRequestId": "f85d1446-c25b-4634-af06-2f1fdf6717f0"
+        },
+        "item": {
+          "id": "aa2c696f-b798-4001-9b0a-c5de1ed687f1",
+          "name": "Initiate Upload - Incomplete Session",
+          "request": {
+            "description": {
+              "content": "Create a separate upload session that intentionally remains incomplete for negative-path testing",
+              "type": "text/plain"
+            },
+            "url": {
+              "path": [
+                "api",
+                "v1",
+                "uploads",
+                "initiate"
+              ],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "query": [],
+              "variable": []
+            },
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "method": "POST",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"filename\": \"incomplete-test.mp4\",\n  \"file_size\": 10485760,\n  \"chunk_size\": 5242880\n}"
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "id": "42bc8c5a-1087-437d-808e-d971cca567ce",
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 201', () => pm.response.to.have.status(201));",
+                  "const wrap = pm.response.json();",
+                  "pm.test('Incomplete-session upload was created', () => {",
+                  "  pm.expect(wrap).to.have.nested.property('data.session_id');",
+                  "});",
+                  "pm.environment.set('incomplete_upload_session_id', wrap.data.session_id);"
+                ],
+                "_lastExecutionId": "cb5c547b-a401-42ba-9bff-2bf4a9e46088"
+              }
+            }
+          ]
+        },
+        "request": {
+          "description": {
+            "content": "Create a separate upload session that intentionally remains incomplete for negative-path testing",
+            "type": "text/plain"
+          },
+          "url": {
+            "protocol": "http",
+            "port": "8080",
+            "path": [
+              "api",
+              "v1",
+              "uploads",
+              "initiate"
+            ],
+            "host": [
+              "app-test"
+            ],
+            "query": [],
+            "variable": []
+          },
+          "header": [
+            {
+              "key": "Authorization",
+              "value": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzQxMzc0ODEsImlhdCI6MTc3NDEzNjU4MSwianRpIjoiMzRlYjg1MTktNGY0Yi00MGQ2LWI1MTctMDdlZGI0YmE0MGVhIiwicm9sZSI6InVzZXIiLCJzdWIiOiI2MmMxYTQxNS1hMmRkLTQ5YTgtODZhOS00NGU4MmNiNWZkNjYifQ.VByzKQeQTZ_Dv47vA2PEssyBUZkWRpIRGxRMS9L4ZlQ"
+            },
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "key": "User-Agent",
+              "value": "PostmanRuntime/7.39.0",
+              "system": true
+            },
+            {
+              "key": "Accept",
+              "value": "*/*",
+              "system": true
+            },
+            {
+              "key": "Cache-Control",
+              "value": "no-cache",
+              "system": true
+            },
+            {
+              "key": "Postman-Token",
+              "value": "90402f67-e1b1-42f6-af26-9355c74dfd6f",
+              "system": true
+            },
+            {
+              "key": "Host",
+              "value": "app-test:8080",
+              "system": true
+            },
+            {
+              "key": "Accept-Encoding",
+              "value": "gzip, deflate, br",
+              "system": true
+            },
+            {
+              "key": "Connection",
+              "value": "keep-alive",
+              "system": true
+            },
+            {
+              "key": "Content-Length",
+              "value": "89",
+              "system": true
+            }
+          ],
+          "method": "POST",
+          "body": {
+            "mode": "raw",
+            "raw": "{\n  \"filename\": \"incomplete-test.mp4\",\n  \"file_size\": 10485760,\n  \"chunk_size\": 5242880\n}"
+          }
+        },
+        "response": {
+          "id": "943aada1-8dca-40c1-870b-e090d27e1feb",
+          "status": "Created",
+          "code": 201,
+          "header": [
+            {
+              "key": "Content-Encoding",
+              "value": "gzip"
+            },
+            {
+              "key": "Content-Security-Policy",
+              "value": "default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self' data:; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; upgrade-insecure-requests; img-src 'self' data:; connect-src 'self'; media-src 'self' blob:"
+            },
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "key": "Permissions-Policy",
+              "value": "camera=(), microphone=(), geolocation=(), interest-cohort=()"
+            },
+            {
+              "key": "Referrer-Policy",
+              "value": "strict-origin-when-cross-origin"
+            },
+            {
+              "key": "Vary",
+              "value": "Accept-Encoding"
+            },
+            {
+              "key": "X-Content-Type-Options",
+              "value": "nosniff"
+            },
+            {
+              "key": "X-Frame-Options",
+              "value": "DENY"
+            },
+            {
+              "key": "X-Request-Id",
+              "value": "D3kmh_JOYDJjADzVarXxhw"
+            },
+            {
+              "key": "X-Xss-Protection",
+              "value": "1; mode=block"
+            },
+            {
+              "key": "Date",
+              "value": "Sat, 21 Mar 2026 23:43:05 GMT"
+            },
+            {
+              "key": "Content-Length",
+              "value": "154"
+            }
+          ],
+          "stream": {
+            "type": "Buffer",
+            "data": [
+              123,
+              34,
+              100,
+              97,
+              116,
+              97,
+              34,
+              58,
+              123,
+              34,
+              115,
+              101,
+              115,
+              115,
+              105,
+              111,
+              110,
+              95,
+              105,
+              100,
+              34,
+              58,
+              34,
+              51,
+              49,
+              56,
+              97,
+              100,
+              98,
+              52,
+              55,
+              45,
+              97,
+              99,
+              54,
+              99,
+              45,
+              52,
+              56,
+              52,
+              100,
+              45,
+              98,
+              48,
+              99,
+              57,
+              45,
+              54,
+              101,
+              53,
+              51,
+              102,
+              101,
+              54,
+              49,
+              57,
+              54,
+              53,
+              55,
+              34,
+              44,
+              34,
+              99,
+              104,
+              117,
+              110,
+              107,
+              95,
+              115,
+              105,
+              122,
+              101,
+              34,
+              58,
+              53,
+              50,
+              52,
+              50,
+              56,
+              56,
+              48,
+              44,
+              34,
+              116,
+              111,
+              116,
+              97,
+              108,
+              95,
+              99,
+              104,
+              117,
+              110,
+              107,
+              115,
+              34,
+              58,
+              50,
+              44,
+              34,
+              117,
+              112,
+              108,
+              111,
+              97,
+              100,
+              95,
+              117,
+              114,
+              108,
+              34,
+              58,
+              34,
+              47,
+              97,
+              112,
+              105,
+              47,
+              118,
+              49,
+              47,
+              117,
+              112,
+              108,
+              111,
+              97,
+              100,
+              115,
+              47,
+              51,
+              49,
+              56,
+              97,
+              100,
+              98,
+              52,
+              55,
+              45,
+              97,
+              99,
+              54,
+              99,
+              45,
+              52,
+              56,
+              52,
+              100,
+              45,
+              98,
+              48,
+              99,
+              57,
+              45,
+              54,
+              101,
+              53,
+              51,
+              102,
+              101,
+              54,
+              49,
+              57,
+              54,
+              53,
+              55,
+              47,
+              99,
+              104,
+              117,
+              110,
+              107,
+              115,
+              34,
+              125,
+              44,
+              34,
+              115,
+              117,
+              99,
+              99,
+              101,
+              115,
+              115,
+              34,
+              58,
+              116,
+              114,
+              117,
+              101,
+              125,
+              10
+            ]
+          },
+          "cookie": [],
+          "responseTime": 4,
+          "responseSize": 191
+        },
+        "id": "aa2c696f-b798-4001-9b0a-c5de1ed687f1",
+        "assertions": [
+          {
+            "assertion": "Status is 201",
+            "skipped": false
+          },
+          {
+            "assertion": "Incomplete-session upload was created",
+            "skipped": false
+          }
+        ]
+      },
+      {
+        "cursor": {
+          "ref": "9b62b176-f4e6-41d1-b68d-dd74c1cb0ae9",
+          "length": 12,
+          "cycles": 1,
+          "position": 10,
+          "iteration": 0,
+          "httpRequestId": "fad4d9ef-2e94-47ff-9039-9461b69d0283"
+        },
+        "item": {
+          "id": "54959b49-611a-4b32-9413-7e4f04f16ce6",
+          "name": "Complete Upload - Missing Chunks",
+          "request": {
+            "description": {
+              "content": "Verify that completing an upload with missing chunks returns 400 error with details",
+              "type": "text/plain"
+            },
+            "url": {
+              "path": [
+                "api",
+                "v1",
+                "uploads",
+                "{{incomplete_upload_session_id}}",
+                "complete"
+              ],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "query": [],
+              "variable": []
+            },
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "method": "POST"
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "id": "f7902376-9e92-477b-bdaf-320eb93fb0ce",
+                "type": "text/javascript",
+                "exec": [
+                  "// This test expects 400 if chunks are missing",
+                  "pm.test('Status is 400 or 404', () => {",
+                  "  pm.expect([400, 404]).to.include(pm.response.code);",
+                  "});",
+                  "",
+                  "if (pm.response.code === 400) {",
+                  "  const wrap = pm.response.json();",
+                  "  ",
+                  "  pm.test('Error indicates incomplete upload', () => {",
+                  "    pm.expect(wrap.error.message.toLowerCase()).to.match(/incomplete|not all chunks|uploaded/);",
+                  "  });",
+                  "}"
+                ],
+                "_lastExecutionId": "8c25c9a4-2ceb-4470-b85f-667ecf4c3a79"
+              }
+            }
+          ]
+        },
+        "request": {
+          "description": {
+            "content": "Verify that completing an upload with missing chunks returns 400 error with details",
+            "type": "text/plain"
+          },
+          "url": {
+            "protocol": "http",
+            "port": "8080",
+            "path": [
+              "api",
+              "v1",
+              "uploads",
+              "318adb47-ac6c-484d-b0c9-6e53fe619657",
+              "complete"
+            ],
+            "host": [
+              "app-test"
+            ],
+            "query": [],
+            "variable": []
+          },
+          "header": [
+            {
+              "key": "Authorization",
+              "value": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzQxMzc0ODEsImlhdCI6MTc3NDEzNjU4MSwianRpIjoiMzRlYjg1MTktNGY0Yi00MGQ2LWI1MTctMDdlZGI0YmE0MGVhIiwicm9sZSI6InVzZXIiLCJzdWIiOiI2MmMxYTQxNS1hMmRkLTQ5YTgtODZhOS00NGU4MmNiNWZkNjYifQ.VByzKQeQTZ_Dv47vA2PEssyBUZkWRpIRGxRMS9L4ZlQ"
+            },
+            {
+              "key": "User-Agent",
+              "value": "PostmanRuntime/7.39.0",
+              "system": true
+            },
+            {
+              "key": "Accept",
+              "value": "*/*",
+              "system": true
+            },
+            {
+              "key": "Cache-Control",
+              "value": "no-cache",
+              "system": true
+            },
+            {
+              "key": "Postman-Token",
+              "value": "b03889c0-aca9-4f52-81ba-ed298c5763d9",
+              "system": true
+            },
+            {
+              "key": "Host",
+              "value": "app-test:8080",
+              "system": true
+            },
+            {
+              "key": "Accept-Encoding",
+              "value": "gzip, deflate, br",
+              "system": true
+            },
+            {
+              "key": "Connection",
+              "value": "keep-alive",
+              "system": true
+            },
+            {
+              "key": "Content-Length",
+              "value": "0",
+              "system": true
+            }
+          ],
+          "method": "POST"
+        },
+        "response": {
+          "id": "5204306e-b32a-4c92-bf9e-d90a42309a5b",
+          "status": "Bad Request",
+          "code": 400,
+          "header": [
+            {
+              "key": "Content-Encoding",
+              "value": "gzip"
+            },
+            {
+              "key": "Content-Security-Policy",
+              "value": "default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self' data:; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; upgrade-insecure-requests; img-src 'self' data:; connect-src 'self'; media-src 'self' blob:"
+            },
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "key": "Permissions-Policy",
+              "value": "camera=(), microphone=(), geolocation=(), interest-cohort=()"
+            },
+            {
+              "key": "Referrer-Policy",
+              "value": "strict-origin-when-cross-origin"
+            },
+            {
+              "key": "Vary",
+              "value": "Accept-Encoding"
+            },
+            {
+              "key": "X-Content-Type-Options",
+              "value": "nosniff"
+            },
+            {
+              "key": "X-Frame-Options",
+              "value": "DENY"
+            },
+            {
+              "key": "X-Request-Id",
+              "value": "svp0XXObdw4KphfH21L7mw"
+            },
+            {
+              "key": "X-Xss-Protection",
+              "value": "1; mode=block"
+            },
+            {
+              "key": "Date",
+              "value": "Sat, 21 Mar 2026 23:43:05 GMT"
+            },
+            {
+              "key": "Content-Length",
+              "value": "124"
+            }
+          ],
+          "stream": {
+            "type": "Buffer",
+            "data": [
+              123,
+              34,
+              101,
+              114,
+              114,
+              111,
+              114,
+              34,
+              58,
+              123,
+              34,
+              99,
+              111,
+              100,
+              101,
+              34,
+              58,
+              34,
+              73,
+              78,
+              67,
+              79,
+              77,
+              80,
+              76,
+              69,
+              84,
+              69,
+              95,
+              85,
+              80,
+              76,
+              79,
+              65,
+              68,
+              34,
+              44,
+              34,
+              109,
+              101,
+              115,
+              115,
+              97,
+              103,
+              101,
+              34,
+              58,
+              34,
+              73,
+              78,
+              67,
+              79,
+              77,
+              80,
+              76,
+              69,
+              84,
+              69,
+              95,
+              85,
+              80,
+              76,
+              79,
+              65,
+              68,
+              58,
+              32,
+              78,
+              111,
+              116,
+              32,
+              97,
+              108,
+              108,
+              32,
+              99,
+              104,
+              117,
+              110,
+              107,
+              115,
+              32,
+              104,
+              97,
+              118,
+              101,
+              32,
+              98,
+              101,
+              101,
+              110,
+              32,
+              117,
+              112,
+              108,
+              111,
+              97,
+              100,
+              101,
+              100,
+              34,
+              125,
+              44,
+              34,
+              115,
+              117,
+              99,
+              99,
+              101,
+              115,
+              115,
+              34,
+              58,
+              102,
+              97,
+              108,
+              115,
+              101,
+              125,
+              10
+            ]
+          },
+          "cookie": [],
+          "responseTime": 2,
+          "responseSize": 120
+        },
+        "id": "54959b49-611a-4b32-9413-7e4f04f16ce6",
+        "assertions": [
+          {
+            "assertion": "Status is 400 or 404",
+            "skipped": false
+          },
+          {
+            "assertion": "Error indicates incomplete upload",
+            "skipped": false
+          }
+        ]
+      },
+      {
+        "cursor": {
+          "ref": "382d454b-f630-441b-8c6e-8a4dfde55267",
+          "length": 12,
+          "cycles": 1,
+          "position": 11,
+          "iteration": 0,
+          "httpRequestId": "bd584008-58a3-4d19-bc37-f1163f9b51ce"
+        },
+        "item": {
+          "id": "33ab6005-8827-453c-946b-171cb49d1e8c",
+          "name": "Get Status - Invalid Session",
+          "request": {
+            "description": {
+              "content": "Verify proper error handling for non-existent upload sessions",
+              "type": "text/plain"
+            },
+            "url": {
+              "path": [
+                "api",
+                "v1",
+                "uploads",
+                "invalid_session_id_12345",
+                "status"
+              ],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "query": [],
+              "variable": []
+            },
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "method": "GET"
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "id": "df8ef863-8e92-4d08-b3d2-3a2febad41a5",
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 400 Bad Request', () => {",
+                  "  pm.expect(pm.response.code).to.equal(400);",
+                  "});",
+                  "",
+                  "pm.test('Error response indicates session not found', () => {",
+                  "  const wrap = pm.response.json();",
+                  "  pm.expect(wrap).to.have.property('success', false);",
+                  "});"
+                ],
+                "_lastExecutionId": "ab835154-4d1b-4573-b180-7c67dc1dcea8"
+              }
+            }
+          ]
+        },
+        "request": {
+          "description": {
+            "content": "Verify proper error handling for non-existent upload sessions",
+            "type": "text/plain"
+          },
+          "url": {
+            "protocol": "http",
+            "port": "8080",
+            "path": [
+              "api",
+              "v1",
+              "uploads",
+              "invalid_session_id_12345",
+              "status"
+            ],
+            "host": [
+              "app-test"
+            ],
+            "query": [],
+            "variable": []
+          },
+          "header": [
+            {
+              "key": "Authorization",
+              "value": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzQxMzc0ODEsImlhdCI6MTc3NDEzNjU4MSwianRpIjoiMzRlYjg1MTktNGY0Yi00MGQ2LWI1MTctMDdlZGI0YmE0MGVhIiwicm9sZSI6InVzZXIiLCJzdWIiOiI2MmMxYTQxNS1hMmRkLTQ5YTgtODZhOS00NGU4MmNiNWZkNjYifQ.VByzKQeQTZ_Dv47vA2PEssyBUZkWRpIRGxRMS9L4ZlQ"
+            },
+            {
+              "key": "User-Agent",
+              "value": "PostmanRuntime/7.39.0",
+              "system": true
+            },
+            {
+              "key": "Accept",
+              "value": "*/*",
+              "system": true
+            },
+            {
+              "key": "Cache-Control",
+              "value": "no-cache",
+              "system": true
+            },
+            {
+              "key": "Postman-Token",
+              "value": "3d8ecdd6-2ade-4490-909c-0fb6838febc5",
+              "system": true
+            },
+            {
+              "key": "Host",
+              "value": "app-test:8080",
+              "system": true
+            },
+            {
+              "key": "Accept-Encoding",
+              "value": "gzip, deflate, br",
+              "system": true
+            },
+            {
+              "key": "Connection",
+              "value": "keep-alive",
+              "system": true
+            }
+          ],
+          "method": "GET"
+        },
+        "response": {
+          "id": "cb06351b-6156-4110-ac71-e7cf3f0f84bc",
+          "status": "Bad Request",
+          "code": 400,
+          "header": [
+            {
+              "key": "Content-Encoding",
+              "value": "gzip"
+            },
+            {
+              "key": "Content-Security-Policy",
+              "value": "default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self' data:; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; upgrade-insecure-requests; img-src 'self' data:; connect-src 'self'; media-src 'self' blob:"
+            },
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "key": "Permissions-Policy",
+              "value": "camera=(), microphone=(), geolocation=(), interest-cohort=()"
+            },
+            {
+              "key": "Referrer-Policy",
+              "value": "strict-origin-when-cross-origin"
+            },
+            {
+              "key": "Vary",
+              "value": "Accept-Encoding"
+            },
+            {
+              "key": "X-Content-Type-Options",
+              "value": "nosniff"
+            },
+            {
+              "key": "X-Frame-Options",
+              "value": "DENY"
+            },
+            {
+              "key": "X-Request-Id",
+              "value": "5HawDAqcsmq8LErk8yYmgQ"
+            },
+            {
+              "key": "X-Xss-Protection",
+              "value": "1; mode=block"
+            },
+            {
+              "key": "Date",
+              "value": "Sat, 21 Mar 2026 23:43:05 GMT"
+            },
+            {
+              "key": "Content-Length",
+              "value": "118"
+            }
+          ],
+          "stream": {
+            "type": "Buffer",
+            "data": [
+              123,
+              34,
+              101,
+              114,
+              114,
+              111,
+              114,
+              34,
+              58,
+              123,
+              34,
+              99,
+              111,
+              100,
+              101,
+              34,
+              58,
+              34,
+              73,
+              78,
+              86,
+              65,
+              76,
+              73,
+              68,
+              95,
+              83,
+              69,
+              83,
+              83,
+              73,
+              79,
+              78,
+              95,
+              73,
+              68,
+              34,
+              44,
+              34,
+              109,
+              101,
+              115,
+              115,
+              97,
+              103,
+              101,
+              34,
+              58,
+              34,
+              73,
+              78,
+              86,
+              65,
+              76,
+              73,
+              68,
+              95,
+              83,
+              69,
+              83,
+              83,
+              73,
+              79,
+              78,
+              95,
+              73,
+              68,
+              58,
+              32,
+              73,
+              110,
+              118,
+              97,
+              108,
+              105,
+              100,
+              32,
+              115,
+              101,
+              115,
+              115,
+              105,
+              111,
+              110,
+              32,
+              73,
+              68,
+              32,
+              102,
+              111,
+              114,
+              109,
+              97,
+              116,
+              34,
+              125,
+              44,
+              34,
+              115,
+              117,
+              99,
+              99,
+              101,
+              115,
+              115,
+              34,
+              58,
+              102,
+              97,
+              108,
+              115,
+              101,
+              125,
+              10
+            ]
+          },
+          "cookie": [],
+          "responseTime": 3,
+          "responseSize": 114
+        },
+        "id": "33ab6005-8827-453c-946b-171cb49d1e8c",
+        "assertions": [
+          {
+            "assertion": "Status is 400 Bad Request",
+            "skipped": false
+          },
+          {
+            "assertion": "Error response indicates session not found",
+            "skipped": false
+          }
+        ]
+      }
+    ],
+    "transfers": {
+      "responseTotal": 1974
+    },
+    "failures": [],
+    "error": null
+  }
+}

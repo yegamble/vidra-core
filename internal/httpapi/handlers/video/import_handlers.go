@@ -2,6 +2,7 @@ package video
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 
@@ -83,6 +84,10 @@ type ImportListResponse struct {
 func (h *ImportHandlers) CreateImport(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	userID := getUserID(r)
+	if userID == "" {
+		writeError(w, http.StatusUnauthorized, "authentication required", nil)
+		return
+	}
 
 	var req CreateImportRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -134,6 +139,10 @@ func (h *ImportHandlers) CreateImport(w http.ResponseWriter, r *http.Request) {
 func (h *ImportHandlers) GetImport(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	userID := getUserID(r)
+	if userID == "" {
+		writeError(w, http.StatusUnauthorized, "authentication required", nil)
+		return
+	}
 	importID := chi.URLParam(r, "id")
 
 	if importID == "" {
@@ -143,8 +152,15 @@ func (h *ImportHandlers) GetImport(w http.ResponseWriter, r *http.Request) {
 
 	imp, err := h.importService.GetImport(ctx, importID, userID)
 	if err != nil {
-		if err == domain.ErrImportNotFound {
+		switch {
+		case errors.Is(err, domain.ErrImportNotFound):
 			writeError(w, http.StatusNotFound, "import not found", err)
+			return
+		case errors.Is(err, domain.ErrForbidden):
+			writeError(w, http.StatusForbidden, "access denied", err)
+			return
+		case errors.Is(err, domain.ErrUnauthorized):
+			writeError(w, http.StatusUnauthorized, "authentication required", err)
 			return
 		}
 		writeError(w, http.StatusInternalServerError, "failed to get import", err)
@@ -159,6 +175,10 @@ func (h *ImportHandlers) GetImport(w http.ResponseWriter, r *http.Request) {
 func (h *ImportHandlers) ListImports(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	userID := getUserID(r)
+	if userID == "" {
+		writeError(w, http.StatusUnauthorized, "authentication required", nil)
+		return
+	}
 
 	// Parse pagination parameters
 	limit, offset := parsePagination(r)
@@ -167,6 +187,17 @@ func (h *ImportHandlers) ListImports(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list imports", err)
 		return
+	}
+
+	if statusFilter := r.URL.Query().Get("status"); statusFilter != "" {
+		filtered := make([]*domain.VideoImport, 0, len(imports))
+		for _, imp := range imports {
+			if string(imp.Status) == statusFilter {
+				filtered = append(filtered, imp)
+			}
+		}
+		imports = filtered
+		totalCount = len(filtered)
 	}
 
 	// Map to response
@@ -189,6 +220,10 @@ func (h *ImportHandlers) ListImports(w http.ResponseWriter, r *http.Request) {
 func (h *ImportHandlers) CancelImport(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	userID := getUserID(r)
+	if userID == "" {
+		writeError(w, http.StatusUnauthorized, "authentication required", nil)
+		return
+	}
 	importID := chi.URLParam(r, "id")
 
 	if importID == "" {
@@ -198,8 +233,18 @@ func (h *ImportHandlers) CancelImport(w http.ResponseWriter, r *http.Request) {
 
 	err := h.importService.CancelImport(ctx, importID, userID)
 	if err != nil {
-		if err == domain.ErrImportNotFound {
+		switch {
+		case errors.Is(err, domain.ErrImportNotFound):
 			writeError(w, http.StatusNotFound, "import not found", err)
+			return
+		case errors.Is(err, domain.ErrForbidden):
+			writeError(w, http.StatusForbidden, "access denied", err)
+			return
+		case errors.Is(err, domain.ErrBadRequest):
+			writeError(w, http.StatusBadRequest, "cannot cancel import in current state", err)
+			return
+		case errors.Is(err, domain.ErrUnauthorized):
+			writeError(w, http.StatusUnauthorized, "authentication required", err)
 			return
 		}
 		writeError(w, http.StatusInternalServerError, "failed to cancel import", err)
@@ -243,15 +288,17 @@ func mapImportToResponse(imp *domain.VideoImport) ImportResponse {
 
 // handleImportError handles import-specific errors and returns appropriate HTTP responses
 func handleImportError(w http.ResponseWriter, err error) {
-	switch err {
-	case domain.ErrImportQuotaExceeded:
+	switch {
+	case errors.Is(err, domain.ErrImportQuotaExceeded):
 		writeError(w, http.StatusTooManyRequests, "daily import quota exceeded (max 100 per day)", err)
-	case domain.ErrImportRateLimited:
+	case errors.Is(err, domain.ErrImportRateLimited):
 		writeError(w, http.StatusTooManyRequests, "too many concurrent imports (max 5)", err)
-	case domain.ErrImportUnsupportedURL:
+	case errors.Is(err, domain.ErrImportUnsupportedURL):
 		writeError(w, http.StatusBadRequest, "unsupported URL or platform", err)
-	case domain.ErrImportInvalidURL:
+	case errors.Is(err, domain.ErrImportInvalidURL), errors.Is(err, domain.ErrBadRequest):
 		writeError(w, http.StatusBadRequest, "invalid URL format", err)
+	case errors.Is(err, domain.ErrUnauthorized):
+		writeError(w, http.StatusUnauthorized, "authentication required", err)
 	default:
 		writeError(w, http.StatusInternalServerError, "failed to create import", err)
 	}

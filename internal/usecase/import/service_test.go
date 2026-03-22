@@ -501,8 +501,9 @@ func TestImportService_GetImport_Unauthorized(t *testing.T) {
 	imp, err := svc.GetImport(ctx, importID, userID)
 
 	assert.Error(t, err)
+	assert.ErrorIs(t, err, domain.ErrForbidden)
 	assert.Nil(t, imp)
-	assert.Contains(t, err.Error(), "unauthorized")
+	assert.Contains(t, err.Error(), "different user")
 
 	importRepo.AssertExpectations(t)
 }
@@ -575,6 +576,7 @@ func TestImportService_CancelImport_AlreadyCompleted(t *testing.T) {
 	err := svc.CancelImport(ctx, importID, userID)
 
 	assert.Error(t, err)
+	assert.ErrorIs(t, err, domain.ErrBadRequest)
 	assert.Contains(t, err.Error(), "terminal state")
 
 	importRepo.AssertExpectations(t)

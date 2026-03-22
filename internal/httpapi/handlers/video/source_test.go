@@ -98,6 +98,21 @@ func TestGetVideoSource_NoSource(t *testing.T) {
 	}
 }
 
+func TestGetVideoSource_NotFound(t *testing.T) {
+	videoID := uuid.New().String()
+	repo := &sourceVideoRepo{err: domain.ErrNotFound}
+
+	h := GetVideoSourceHandler(repo)
+	req := withChiURLParam(httptest.NewRequest(http.MethodGet, "/videos/"+videoID+"/source", nil), "id", videoID)
+	req = req.WithContext(context.WithValue(req.Context(), middleware.UserIDKey, "user-1"))
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
 func TestGetVideoSource_Forbidden(t *testing.T) {
 	videoID := uuid.New().String()
 	repo := &sourceVideoRepo{

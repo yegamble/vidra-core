@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"regexp"
 	"testing"
 	"time"
@@ -116,6 +117,27 @@ func TestImportRepository_GetByID_NotFound(t *testing.T) {
 	imp, err := repo.GetByID(ctx, importID)
 	assert.Error(t, err)
 	assert.Equal(t, domain.ErrImportNotFound, err)
+	assert.Nil(t, imp)
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestImportRepository_GetByID_InvalidUUIDReturnsNotFound(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+
+	sqlxDB := sqlx.NewDb(db, "postgres")
+	repo := NewImportRepository(sqlxDB)
+
+	ctx := context.Background()
+	importID := "not-a-uuid"
+
+	mock.ExpectQuery(`SELECT (.+) FROM video_imports WHERE id`).
+		WithArgs(importID).
+		WillReturnError(fmt.Errorf("pq: invalid input syntax for type uuid: %q", importID))
+
+	imp, err := repo.GetByID(ctx, importID)
+	assert.ErrorIs(t, err, domain.ErrImportNotFound)
 	assert.Nil(t, imp)
 	assert.NoError(t, mock.ExpectationsWereMet())
 }

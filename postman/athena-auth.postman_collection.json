@@ -1750,9 +1750,10 @@
                 "exec": [
                   "pm.test('Status is 201', () => pm.response.to.have.status(201));",
                   "pm.test('Response has video ID', () => {",
-                  "  const j = pm.response.json();",
-                  "  pm.expect(j).to.have.property('id');",
-                  "  pm.environment.set('uploadedVideoId', j.id);",
+                  "  const wrap = pm.response.json();",
+                  "  const json = wrap.data || {};",
+                  "  pm.expect(json).to.have.property('id');",
+                  "  pm.environment.set('uploadedVideoId', json.id);",
                   "});"
                 ],
                 "type": "text/javascript"
@@ -1818,8 +1819,9 @@
                 "exec": [
                   "pm.test('Status is 201', () => pm.response.to.have.status(201));",
                   "pm.test('Response has video ID', () => {",
-                  "  const j = pm.response.json();",
-                  "  pm.expect(j).to.have.property('id');",
+                  "  const wrap = pm.response.json();",
+                  "  const json = wrap.data || {};",
+                  "  pm.expect(json).to.have.property('id');",
                   "});"
                 ],
                 "type": "text/javascript"
@@ -1885,8 +1887,9 @@
                 "exec": [
                   "pm.test('Status is 201', () => pm.response.to.have.status(201));",
                   "pm.test('Response has video ID', () => {",
-                  "  const j = pm.response.json();",
-                  "  pm.expect(j).to.have.property('id');",
+                  "  const wrap = pm.response.json();",
+                  "  const json = wrap.data || {};",
+                  "  pm.expect(json).to.have.property('id');",
                   "});"
                 ],
                 "type": "text/javascript"
@@ -1952,8 +1955,9 @@
                 "exec": [
                   "pm.test('Status is 201', () => pm.response.to.have.status(201));",
                   "pm.test('Response has video ID', () => {",
-                  "  const j = pm.response.json();",
-                  "  pm.expect(j).to.have.property('id');",
+                  "  const wrap = pm.response.json();",
+                  "  const json = wrap.data || {};",
+                  "  pm.expect(json).to.have.property('id');",
                   "});"
                 ],
                 "type": "text/javascript"
@@ -2019,8 +2023,9 @@
                 "exec": [
                   "pm.test('Status is 201', () => pm.response.to.have.status(201));",
                   "pm.test('Response has video ID', () => {",
-                  "  const j = pm.response.json();",
-                  "  pm.expect(j).to.have.property('id');",
+                  "  const wrap = pm.response.json();",
+                  "  const json = wrap.data || {};",
+                  "  pm.expect(json).to.have.property('id');",
                   "});"
                 ],
                 "type": "text/javascript"

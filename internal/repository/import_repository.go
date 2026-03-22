@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 
 	"athena/internal/domain"
 
@@ -61,6 +62,11 @@ func (r *ImportRepository) GetByID(ctx context.Context, importID string) (*domai
 		return nil, domain.ErrImportNotFound
 	}
 	if err != nil {
+		errStr := err.Error()
+		if strings.Contains(errStr, "invalid input syntax for type uuid") ||
+			strings.Contains(errStr, "invalid UUID") {
+			return nil, domain.ErrImportNotFound
+		}
 		return nil, fmt.Errorf("failed to get import: %w", err)
 	}
 

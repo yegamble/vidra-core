@@ -321,11 +321,11 @@ func (s *service) CancelImport(ctx context.Context, importID, userID string) err
 	}
 
 	if imp.UserID != userID {
-		return fmt.Errorf("unauthorized: import belongs to different user")
+		return fmt.Errorf("%w: import belongs to different user", domain.ErrForbidden)
 	}
 
 	if imp.Status.IsTerminal() {
-		return fmt.Errorf("cannot cancel import in terminal state: %s", imp.Status)
+		return fmt.Errorf("%w: cannot cancel import in terminal state: %s", domain.ErrBadRequest, imp.Status)
 	}
 
 	s.mu.Lock()
@@ -354,7 +354,7 @@ func (s *service) GetImport(ctx context.Context, importID, userID string) (*doma
 	}
 
 	if imp.UserID != userID {
-		return nil, fmt.Errorf("unauthorized: import belongs to different user")
+		return nil, fmt.Errorf("%w: import belongs to different user", domain.ErrForbidden)
 	}
 
 	return imp, nil
@@ -409,19 +409,19 @@ func (s *service) CleanupOldImports(ctx context.Context, daysOld int) (int64, er
 
 func (s *service) validateImportRequest(req *ImportRequest) error {
 	if req.UserID == "" {
-		return fmt.Errorf("user_id is required")
+		return fmt.Errorf("%w: user_id is required", domain.ErrUnauthorized)
 	}
 	if req.SourceURL == "" {
-		return fmt.Errorf("source_url is required")
+		return fmt.Errorf("%w: source_url is required", domain.ErrBadRequest)
 	}
 	if err := domain.ValidateURLWithSSRFCheck(req.SourceURL); err != nil {
-		return err
+		return fmt.Errorf("%w: %v", domain.ErrImportInvalidURL, err)
 	}
 	if req.TargetPrivacy == "" {
 		req.TargetPrivacy = string(domain.PrivacyPrivate)
 	}
 	if err := domain.ValidatePrivacy(req.TargetPrivacy); err != nil {
-		return err
+		return fmt.Errorf("%w: %v", domain.ErrBadRequest, err)
 	}
 	return nil
 }

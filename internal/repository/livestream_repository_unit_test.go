@@ -114,7 +114,7 @@ func TestLiveStreamRepositoryUnit_GetByID(t *testing.T) {
 					"key-123", "live", "public", "rtmp://test", "http://hls",
 					10, 20, time.Now(), nil, true, nil, time.Now(), time.Now(),
 				)
-				mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM live_streams WHERE id = $1`)).
+				mock.ExpectQuery(`(?s)SELECT .* FROM live_streams WHERE id = \$1`).
 					WithArgs(streamID).
 					WillReturnRows(rows)
 			},
@@ -124,7 +124,7 @@ func TestLiveStreamRepositoryUnit_GetByID(t *testing.T) {
 			name: "not found",
 			id:   uuid.New(),
 			setupMock: func(mock sqlmock.Sqlmock) {
-				mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM live_streams WHERE id = $1`)).
+				mock.ExpectQuery(`(?s)SELECT .* FROM live_streams WHERE id = \$1`).
 					WillReturnError(sql.ErrNoRows)
 			},
 			wantErr: true,
@@ -136,7 +136,7 @@ func TestLiveStreamRepositoryUnit_GetByID(t *testing.T) {
 			name: "database error",
 			id:   streamID,
 			setupMock: func(mock sqlmock.Sqlmock) {
-				mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM live_streams WHERE id = $1`)).
+				mock.ExpectQuery(`(?s)SELECT .* FROM live_streams WHERE id = \$1`).
 					WillReturnError(sql.ErrConnDone)
 			},
 			wantErr: true,
@@ -193,7 +193,7 @@ func TestLiveStreamRepositoryUnit_GetByStreamKey(t *testing.T) {
 					"test-key-123", "live", "public", "rtmp://test", "http://hls",
 					10, 20, time.Now(), nil, true, nil, time.Now(), time.Now(),
 				)
-				mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM live_streams WHERE stream_key = $1`)).
+				mock.ExpectQuery(`(?s)SELECT .* FROM live_streams WHERE stream_key = \$1`).
 					WithArgs("test-key-123").
 					WillReturnRows(rows)
 			},
@@ -203,7 +203,7 @@ func TestLiveStreamRepositoryUnit_GetByStreamKey(t *testing.T) {
 			name:      "not found",
 			streamKey: "nonexistent-key",
 			setupMock: func(mock sqlmock.Sqlmock) {
-				mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM live_streams WHERE stream_key = $1`)).
+				mock.ExpectQuery(`(?s)SELECT .* FROM live_streams WHERE stream_key = \$1`).
 					WithArgs("nonexistent-key").
 					WillReturnError(sql.ErrNoRows)
 			},
@@ -216,7 +216,7 @@ func TestLiveStreamRepositoryUnit_GetByStreamKey(t *testing.T) {
 			name:      "database error",
 			streamKey: "test-key",
 			setupMock: func(mock sqlmock.Sqlmock) {
-				mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM live_streams WHERE stream_key = $1`)).
+				mock.ExpectQuery(`(?s)SELECT .* FROM live_streams WHERE stream_key = \$1`).
 					WillReturnError(sql.ErrConnDone)
 			},
 			wantErr: true,
@@ -274,7 +274,7 @@ func TestLiveStreamRepositoryUnit_GetByChannelID(t *testing.T) {
 					AddRow(uuid.New(), channelID, uuid.New(), "Stream 1", "Desc", "key1", "live", "public", "rtmp", "hls", 0, 0, time.Now(), nil, true, nil, time.Now(), time.Now()).
 					AddRow(uuid.New(), channelID, uuid.New(), "Stream 2", "Desc", "key2", "ended", "public", "rtmp", "hls", 0, 0, time.Now(), time.Now(), true, nil, time.Now(), time.Now())
 
-				mock.ExpectQuery(`SELECT \* FROM live_streams`).
+				mock.ExpectQuery(`(?s)SELECT .* FROM live_streams\s+WHERE channel_id = \$1`).
 					WithArgs(channelID, 10, 0).
 					WillReturnRows(rows)
 			},
@@ -294,7 +294,7 @@ func TestLiveStreamRepositoryUnit_GetByChannelID(t *testing.T) {
 					"save_replay", "replay_video_id", "created_at", "updated_at",
 				})
 
-				mock.ExpectQuery(`SELECT \* FROM live_streams`).
+				mock.ExpectQuery(`(?s)SELECT .* FROM live_streams\s+WHERE channel_id = \$1`).
 					WithArgs(channelID, 10, 0).
 					WillReturnRows(rows)
 			},
@@ -307,7 +307,7 @@ func TestLiveStreamRepositoryUnit_GetByChannelID(t *testing.T) {
 			limit:     10,
 			offset:    0,
 			setupMock: func(mock sqlmock.Sqlmock) {
-				mock.ExpectQuery(`SELECT \* FROM live_streams`).
+				mock.ExpectQuery(`(?s)SELECT .* FROM live_streams\s+WHERE channel_id = \$1`).
 					WillReturnError(sql.ErrConnDone)
 			},
 			wantErr: true,
@@ -360,7 +360,7 @@ func TestLiveStreamRepositoryUnit_GetByUserID(t *testing.T) {
 					AddRow(uuid.New(), uuid.New(), userID, "Stream 1", "Desc", "key1", "live", "public", "rtmp", "hls", 0, 0, time.Now(), nil, true, nil, time.Now(), time.Now()).
 					AddRow(uuid.New(), uuid.New(), userID, "Stream 2", "Desc", "key2", "ended", "public", "rtmp", "hls", 0, 0, time.Now(), time.Now(), true, nil, time.Now(), time.Now())
 
-				mock.ExpectQuery(`SELECT \* FROM live_streams`).
+				mock.ExpectQuery(`(?s)SELECT .* FROM live_streams\s+WHERE user_id = \$1`).
 					WithArgs(userID, 10, 0).
 					WillReturnRows(rows)
 			},
@@ -380,7 +380,7 @@ func TestLiveStreamRepositoryUnit_GetByUserID(t *testing.T) {
 					"save_replay", "replay_video_id", "created_at", "updated_at",
 				})
 
-				mock.ExpectQuery(`SELECT \* FROM live_streams`).
+				mock.ExpectQuery(`(?s)SELECT .* FROM live_streams\s+WHERE user_id = \$1`).
 					WithArgs(userID, 10, 0).
 					WillReturnRows(rows)
 			},
@@ -393,7 +393,7 @@ func TestLiveStreamRepositoryUnit_GetByUserID(t *testing.T) {
 			limit:  10,
 			offset: 0,
 			setupMock: func(mock sqlmock.Sqlmock) {
-				mock.ExpectQuery(`SELECT \* FROM live_streams`).
+				mock.ExpectQuery(`(?s)SELECT .* FROM live_streams\s+WHERE user_id = \$1`).
 					WillReturnError(sql.ErrConnDone)
 			},
 			wantErr: true,
@@ -442,7 +442,7 @@ func TestLiveStreamRepositoryUnit_GetActiveStreams(t *testing.T) {
 					AddRow(uuid.New(), uuid.New(), uuid.New(), "Stream 1", "Desc", "key1", "live", "public", "rtmp", "hls", 10, 15, time.Now(), nil, true, nil, time.Now(), time.Now()).
 					AddRow(uuid.New(), uuid.New(), uuid.New(), "Stream 2", "Desc", "key2", "live", "public", "rtmp", "hls", 5, 8, time.Now(), nil, true, nil, time.Now(), time.Now())
 
-				mock.ExpectQuery(`SELECT \* FROM live_streams`).
+				mock.ExpectQuery(`(?s)SELECT .* FROM live_streams\s+WHERE status = \$1`).
 					WithArgs("live", 10, 0).
 					WillReturnRows(rows)
 			},
@@ -461,7 +461,7 @@ func TestLiveStreamRepositoryUnit_GetActiveStreams(t *testing.T) {
 					"save_replay", "replay_video_id", "created_at", "updated_at",
 				})
 
-				mock.ExpectQuery(`SELECT \* FROM live_streams`).
+				mock.ExpectQuery(`(?s)SELECT .* FROM live_streams\s+WHERE status = \$1`).
 					WithArgs("live", 10, 0).
 					WillReturnRows(rows)
 			},
@@ -473,7 +473,7 @@ func TestLiveStreamRepositoryUnit_GetActiveStreams(t *testing.T) {
 			limit:  10,
 			offset: 0,
 			setupMock: func(mock sqlmock.Sqlmock) {
-				mock.ExpectQuery(`SELECT \* FROM live_streams`).
+				mock.ExpectQuery(`(?s)SELECT .* FROM live_streams\s+WHERE status = \$1`).
 					WillReturnError(sql.ErrConnDone)
 			},
 			wantErr: true,

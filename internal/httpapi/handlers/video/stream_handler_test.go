@@ -14,11 +14,14 @@ import (
 	"athena/internal/middleware"
 )
 
-type mockStreamRepo struct{ vid *domain.Video }
+type mockStreamRepo struct {
+	vid *domain.Video
+	err error
+}
 
 func (m *mockStreamRepo) Create(_ context.Context, _ *domain.Video) error { return nil }
 func (m *mockStreamRepo) GetByID(_ context.Context, _ string) (*domain.Video, error) {
-	return m.vid, nil
+	return m.vid, m.err
 }
 func (m *mockStreamRepo) GetByIDs(_ context.Context, _ []string) ([]*domain.Video, error) {
 	return nil, nil
@@ -329,5 +332,23 @@ func TestStreamVideoHandler_NoHLSFiles_Returns404(t *testing.T) {
 
 	if rr.Code != http.StatusNotFound {
 		t.Fatalf("expected 404 when no HLS files exist, got %d body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestStreamVideoHandler_NotFoundSentinelReturns404(t *testing.T) {
+	videoID := "vid-missing"
+	repo := &mockStreamRepo{err: domain.ErrNotFound}
+	h := StreamVideoHandler(repo)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/videos/"+videoID+"/stream", nil)
+	rc := chi.NewRouteContext()
+	rc.URLParams.Add("id", videoID)
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rc))
+	rr := httptest.NewRecorder()
+
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 when video is missing, got %d body=%s", rr.Code, rr.Body.String())
 	}
 }
