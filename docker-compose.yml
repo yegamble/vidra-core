@@ -385,6 +385,20 @@ services:
     networks:
       - test-network
 
+  mock-atproto-pds-test:
+    profiles: ["test"]
+    build:
+      context: tests/mocks/atproto-pds
+      dockerfile: Dockerfile
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    networks:
+      - test-network
+
   app-test:
     profiles: ["test"]
     image: athena:latest
@@ -398,6 +412,8 @@ services:
         condition: service_started
       clamav-test:
         condition: service_healthy
+      mock-atproto-pds-test:
+        condition: service_healthy
     environment:
       DATABASE_URL: postgres://test_user:test_password@postgres-test:5432/athena_test?sslmode=disable
       REDIS_URL: redis://redis-test:6379/0
@@ -408,6 +424,7 @@ services:
       ENABLE_ACTIVITYPUB: "true"
       ACTIVITYPUB_DOMAIN: app-test
       ACTIVITYPUB_KEY_ENCRYPTION_KEY: test-activitypub-key-32-characters
+      ATPROTO_PDS_URL: http://mock-atproto-pds-test:8080
       PORT: 8080
       VALIDATION_TEST_MODE: "true"
       VALIDATION_TEST_ADMIN_USERNAME: admin

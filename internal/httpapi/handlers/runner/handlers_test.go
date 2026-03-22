@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -483,4 +484,122 @@ func TestHandlers_RequestJob(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &envelope))
 	require.Equal(t, "job-1", envelope.Data.EncodingJob)
+}
+
+// TestHandlers_FullLifecycle_RegisterToCompletion proves the complete runner lifecycle
+// in a single coherent test:
+//
+//	CreateRegistrationToken → RegisterRunner → RequestJob → AcceptJob →
+//	UpdateJob (progress) → UploadJobFile (real binary) → SuccessJob → verify completed
+func TestHandlers_FullLifecycle_RegisterToCompletion(t *testing.T) {
+	const regTokenValue = "reg-token"
+	jobID := "full-lifecycle-job-" + uuid.New().String()
+
+	repo := &stubRunnerRepo{assignments: map[string]*domain.RemoteRunnerJobAssignment{}}
+	enc := &stubEncodingRepo{
+		job: &domain.EncodingJob{ID: jobID, VideoID: "video-lifecycle", Status: domain.EncodingStatusPending},
+	}
+	h := NewHandlers(repo, enc)
+
+	// ── Step 1: Admin creates a registration token ────────────────────────────
+	regTokenReq := httptest.NewRequest(http.MethodPost, "/api/v1/runners/registration-tokens",
+		strings.NewReader(`{}`))
+	regTokenRR := httptest.NewRecorder()
+	h.CreateRegistrationToken(regTokenRR, regTokenReq)
+	require.Equal(t, http.StatusCreated, regTokenRR.Code, regTokenRR.Body.String())
+	require.NotNil(t, repo.createdToken, "registration token must be stored in repo")
+	require.Equal(t, regTokenValue, repo.createdToken.Token)
+
+	// ── Step 2: Runner registers using the token ──────────────────────────────
+	regBody := `{"registrationToken":"` + regTokenValue + `","name":"lifecycle-runner","description":"integration test runner"}`
+	registerReq := httptest.NewRequest(http.MethodPost, "/api/v1/runners/register", strings.NewReader(regBody))
+	registerRR := httptest.NewRecorder()
+	h.RegisterRunner(registerRR, registerReq)
+	require.Equal(t, http.StatusCreated, registerRR.Code, registerRR.Body.String())
+
+	var registerEnv struct {
+		Data map[string]any `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(registerRR.Body.Bytes(), &registerEnv))
+	runnerToken, _ := registerEnv.Data["runnerToken"].(string)
+	require.NotEmpty(t, runnerToken, "runner token must be returned on registration")
+	require.Equal(t, "lifecycle-runner", registerEnv.Data["name"])
+
+	// ── Step 3: Runner requests a job ─────────────────────────────────────────
+	requestReq := httptest.NewRequest(http.MethodPost, "/api/v1/runners/jobs/request",
+		strings.NewReader(`{"runnerToken":"`+runnerToken+`"}`))
+	requestRR := httptest.NewRecorder()
+	h.RequestJob(requestRR, requestReq)
+	require.Equal(t, http.StatusOK, requestRR.Code, requestRR.Body.String())
+
+	var requestEnv struct {
+		Data map[string]any `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(requestRR.Body.Bytes(), &requestEnv))
+	require.NotNil(t, requestEnv.Data, "assignment must be returned")
+	assignedJobID, _ := requestEnv.Data["jobUUID"].(string)
+	require.Equal(t, jobID, assignedJobID)
+
+	// ── Step 4: Runner accepts the job ────────────────────────────────────────
+	acceptReq := newChiRequest(http.MethodPost, "/api/v1/runners/jobs/"+jobID+"/accept",
+		strings.NewReader(`{"runnerToken":"`+runnerToken+`"}`), map[string]string{"jobUUID": jobID})
+	acceptRR := httptest.NewRecorder()
+	h.AcceptJob(acceptRR, acceptReq)
+	require.Equal(t, http.StatusNoContent, acceptRR.Code, acceptRR.Body.String())
+
+	// Verify assignment state is now accepted
+	assignment, ok := repo.assignments[jobID]
+	require.True(t, ok, "assignment must exist in repo after accept")
+	require.Equal(t, domain.RemoteRunnerJobStateAccepted, assignment.State)
+	require.NotNil(t, assignment.AcceptedAt, "accepted_at must be set")
+
+	// ── Step 5: Runner updates progress ──────────────────────────────────────
+	updateReq := newChiRequest(http.MethodPut, "/api/v1/runners/jobs/"+jobID,
+		strings.NewReader(`{"runnerToken":"`+runnerToken+`","progress":50}`), map[string]string{"jobUUID": jobID})
+	updateRR := httptest.NewRecorder()
+	h.UpdateJob(updateRR, updateReq)
+	require.Equal(t, http.StatusOK, updateRR.Code, updateRR.Body.String())
+
+	assignment = repo.assignments[jobID]
+	require.Equal(t, 50, assignment.Progress)
+
+	// ── Step 6: Runner uploads result file (real binary data) ─────────────────
+	// Simulate a minimal MP4 FTYP box — real binary data, not just a string.
+	fakeMp4 := []byte("\x00\x00\x00\x1cftypisom\x00\x00\x00\x00isomiso2avc1mp41")
+	fileURL := "/api/v1/runners/jobs/" + jobID + "/files/videos/" + jobID + "/max-quality.mp4"
+
+	uploadReq := httptest.NewRequest(http.MethodPost, fileURL, bytes.NewReader(fakeMp4))
+	uploadReq.Header.Set("X-Runner-Token", runnerToken)
+	uploadReq.Header.Set("Content-Type", "video/mp4")
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("jobUUID", jobID)
+	uploadReq = uploadReq.WithContext(context.WithValue(uploadReq.Context(), chi.RouteCtxKey, rctx))
+	uploadRR := httptest.NewRecorder()
+	h.UploadJobFile(uploadRR, uploadReq)
+	require.Equal(t, http.StatusNoContent, uploadRR.Code, uploadRR.Body.String())
+
+	// Verify file receipt was recorded with correct content length
+	assignment = repo.assignments[jobID]
+	require.NotNil(t, assignment.Metadata, "metadata must be set after file upload")
+	receipt, hasReceipt := assignment.Metadata[fileURL]
+	require.True(t, hasReceipt, "file receipt must be recorded under the file URL key")
+	receiptMap, _ := receipt.(map[string]any)
+	require.NotNil(t, receiptMap, "file receipt must be a map")
+	contentLength, _ := receiptMap["contentLength"].(int64)
+	require.Equal(t, int64(len(fakeMp4)), contentLength, "recorded content length must match actual upload size")
+
+	// ── Step 7: Runner marks job as successful ────────────────────────────────
+	successReq := newChiRequest(http.MethodPost, "/api/v1/runners/jobs/"+jobID+"/success",
+		strings.NewReader(`{"runnerToken":"`+runnerToken+`","metadata":{"output":"video.mp4"}}`),
+		map[string]string{"jobUUID": jobID})
+	successRR := httptest.NewRecorder()
+	h.SuccessJob(successRR, successReq)
+	require.Equal(t, http.StatusNoContent, successRR.Code, successRR.Body.String())
+
+	// ── Step 8: Verify final completed state ──────────────────────────────────
+	assignment = repo.assignments[jobID]
+	require.Equal(t, domain.RemoteRunnerJobStateCompleted, assignment.State,
+		"assignment state must be completed after success")
+	require.Equal(t, 100, assignment.Progress, "progress must be 100 after success")
+	require.NotNil(t, assignment.CompletedAt, "completed_at must be set")
 }

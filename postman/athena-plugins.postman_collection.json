@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "Athena Plugins API",
-    "description": "Test collection for the plugin management lifecycle: list, get, enable, disable, settings, and contract-shape validation.\n\n## Lifecycle Covered\n\n1. **List plugins** — enumerate installed plugins\n2. **List available** — discover available plugins from registry\n3. **Get plugin** — retrieve specific plugin by name\n4. **Get settings** — read registered and public settings\n5. **Update settings** — change plugin configuration via PeerTube-compatible route\n6. **Enable/Disable** — toggle plugin status\n7. **Install contract** — validate install-from-URL request shape (may fail if URL unreachable)\n8. **Uninstall** — remove a plugin\n9. **Error cases** — auth failures and invalid inputs\n\n## Scope Note\n\nInstall-from-URL and Upload-plugin require a real plugin archive. These requests are included for API contract validation (response shape, auth, error codes) but may return 4xx if no archive is available in the test environment. Use the 'contract-only' tests to validate the API surface.\n\n## Environment Variables Required\n\n- `baseUrl` - API base URL\n- `access_token` - Admin JWT access token\n\n## Variables Set During Run\n\n- `plugin_npm_name` - Name of the plugin to test lifecycle operations on",
+    "description": "Test collection for the plugin management lifecycle: list, get, enable, disable, settings, and contract-shape validation.\n\n## Lifecycle Covered\n\n1. **List plugins** \u2014 enumerate installed plugins\n2. **List available** \u2014 discover available plugins from registry\n3. **Get plugin** \u2014 retrieve specific plugin by name\n4. **Get settings** \u2014 read registered and public settings\n5. **Update settings** \u2014 change plugin configuration via PeerTube-compatible route\n6. **Enable/Disable** \u2014 toggle plugin status\n7. **Install contract** \u2014 validate install-from-URL request shape (may fail if URL unreachable)\n8. **Uninstall** \u2014 remove a plugin\n9. **Error cases** \u2014 auth failures and invalid inputs\n\n## Scope Note\n\nInstall-from-URL and Upload-plugin require a real plugin archive. These requests are included for API contract validation (response shape, auth, error codes) but may return 4xx if no archive is available in the test environment. Use the 'contract-only' tests to validate the API surface.\n\n## Environment Variables Required\n\n- `baseUrl` - API base URL\n- `access_token` - Admin JWT access token\n\n## Variables Set During Run\n\n- `plugin_npm_name` - Name of the plugin to test lifecycle operations on",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "item": [
@@ -19,12 +19,12 @@
                   "  pm.expect(pm.response.code).to.equal(200);",
                   "});",
                   "const body = pm.response.json();",
-                  "pm.test('Response has data envelope', () => {",
+                  "pm.test('Response has success envelope', () => {",
                   "  pm.expect(body.success).to.be.true;",
                   "  pm.expect(body).to.have.property('data');",
                   "});",
-                  "pm.test('Data is array', () => {",
-                  "  pm.expect(Array.isArray(body.data) || (body.data && Array.isArray(body.data.data))).to.be.true;",
+                  "pm.test('Data is an array of plugins (may be empty in fresh env)', () => {",
+                  "  pm.expect(body.data).to.be.an('array');",
                   "});"
                 ],
                 "type": "text/javascript"
@@ -34,12 +34,22 @@
           "request": {
             "method": "GET",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{access_token}}", "type": "text" }
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}",
+                "type": "text"
+              }
             ],
             "url": {
               "raw": "{{baseUrl}}/api/v1/plugins",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "plugins"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "plugins"
+              ]
             },
             "description": "List all installed plugins. Requires admin or mod role."
           },
@@ -56,8 +66,9 @@
                   "  pm.expect(pm.response.code).to.equal(200);",
                   "});",
                   "const body = pm.response.json();",
-                  "pm.test('Success flag present', () => {",
-                  "  pm.expect(body).to.have.property('success');",
+                  "pm.test('Response structure is valid', () => {",
+                  "  pm.expect(body).to.have.property('success', true);",
+                  "  pm.expect(body).to.have.property('data');",
                   "});"
                 ],
                 "type": "text/javascript"
@@ -67,12 +78,23 @@
           "request": {
             "method": "GET",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{access_token}}", "type": "text" }
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}",
+                "type": "text"
+              }
             ],
             "url": {
               "raw": "{{baseUrl}}/api/v1/plugins/available",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "plugins", "available"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "plugins",
+                "available"
+              ]
             },
             "description": "List plugins available from the registry."
           },
@@ -116,12 +138,23 @@
           "request": {
             "method": "GET",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{access_token}}", "type": "text" }
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}",
+                "type": "text"
+              }
             ],
             "url": {
               "raw": "{{baseUrl}}/api/v1/plugins/{{plugin_npm_name}}",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "plugins", "{{plugin_npm_name}}"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "plugins",
+                "{{plugin_npm_name}}"
+              ]
             },
             "description": "Get a specific plugin by its npm name."
           },
@@ -159,12 +192,24 @@
           "request": {
             "method": "GET",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{access_token}}", "type": "text" }
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}",
+                "type": "text"
+              }
             ],
             "url": {
               "raw": "{{baseUrl}}/api/v1/plugins/{{plugin_npm_name}}/registered-settings",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "plugins", "{{plugin_npm_name}}", "registered-settings"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "plugins",
+                "{{plugin_npm_name}}",
+                "registered-settings"
+              ]
             },
             "description": "Get the registered settings for a plugin."
           },
@@ -196,12 +241,24 @@
           "request": {
             "method": "GET",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{access_token}}", "type": "text" }
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}",
+                "type": "text"
+              }
             ],
             "url": {
               "raw": "{{baseUrl}}/api/v1/plugins/{{plugin_npm_name}}/public-settings",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "plugins", "{{plugin_npm_name}}", "public-settings"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "plugins",
+                "{{plugin_npm_name}}",
+                "public-settings"
+              ]
             },
             "description": "Get the public settings for a plugin (visible to non-admins)."
           },
@@ -233,8 +290,16 @@
           "request": {
             "method": "PUT",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{access_token}}", "type": "text" },
-              { "key": "Content-Type", "value": "application/json", "type": "text" }
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
             ],
             "body": {
               "mode": "raw",
@@ -242,8 +307,16 @@
             },
             "url": {
               "raw": "{{baseUrl}}/api/v1/plugins/{{plugin_npm_name}}/settings",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "plugins", "{{plugin_npm_name}}", "settings"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "plugins",
+                "{{plugin_npm_name}}",
+                "settings"
+              ]
             },
             "description": "Update plugin settings (PeerTube-compatible route)."
           },
@@ -277,8 +350,16 @@
           "request": {
             "method": "POST",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{access_token}}", "type": "text" },
-              { "key": "Content-Type", "value": "application/json", "type": "text" }
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
             ],
             "body": {
               "mode": "raw",
@@ -286,10 +367,17 @@
             },
             "url": {
               "raw": "{{baseUrl}}/api/v1/plugins/install",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "plugins", "install"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "plugins",
+                "install"
+              ]
             },
-            "description": "Attempt install without URL — verifies 400 error shape."
+            "description": "Attempt install without URL \u2014 verifies 400 error shape."
           },
           "response": []
         },
@@ -316,8 +404,16 @@
           "request": {
             "method": "POST",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{access_token}}", "type": "text" },
-              { "key": "Content-Type", "value": "application/json", "type": "text" }
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
             ],
             "body": {
               "mode": "raw",
@@ -325,8 +421,15 @@
             },
             "url": {
               "raw": "{{baseUrl}}/api/v1/plugins/install",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "plugins", "install"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "plugins",
+                "install"
+              ]
             },
             "description": "FTP URLs should be rejected (only HTTP/HTTPS allowed)."
           },
@@ -350,8 +453,16 @@
           "request": {
             "method": "POST",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{access_token}}", "type": "text" },
-              { "key": "Content-Type", "value": "application/json", "type": "text" }
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
             ],
             "body": {
               "mode": "raw",
@@ -359,8 +470,15 @@
             },
             "url": {
               "raw": "{{baseUrl}}/api/v1/plugins/uninstall",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "plugins", "uninstall"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "plugins",
+                "uninstall"
+              ]
             },
             "description": "Uninstalling a non-existent plugin returns 404 or 400."
           },
@@ -391,8 +509,14 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/api/v1/plugins",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "plugins"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "plugins"
+              ]
             }
           },
           "response": []
@@ -415,7 +539,11 @@
           "request": {
             "method": "POST",
             "header": [
-              { "key": "Content-Type", "value": "application/json", "type": "text" }
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
             ],
             "body": {
               "mode": "raw",
@@ -423,8 +551,15 @@
             },
             "url": {
               "raw": "{{baseUrl}}/api/v1/plugins/install",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "plugins", "install"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "plugins",
+                "install"
+              ]
             }
           },
           "response": []
@@ -447,7 +582,11 @@
           "request": {
             "method": "PUT",
             "header": [
-              { "key": "Content-Type", "value": "application/json", "type": "text" }
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
             ],
             "body": {
               "mode": "raw",
@@ -455,8 +594,16 @@
             },
             "url": {
               "raw": "{{baseUrl}}/api/v1/plugins/some-plugin/settings",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "plugins", "some-plugin", "settings"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "plugins",
+                "some-plugin",
+                "settings"
+              ]
             }
           },
           "response": []
@@ -483,8 +630,16 @@
           "request": {
             "method": "PUT",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{access_token}}", "type": "text" },
-              { "key": "Content-Type", "value": "application/json", "type": "text" }
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
             ],
             "body": {
               "mode": "raw",
@@ -492,8 +647,16 @@
             },
             "url": {
               "raw": "{{baseUrl}}/api/v1/plugins/{{plugin_npm_name}}/settings",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "plugins", "{{plugin_npm_name}}", "settings"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "plugins",
+                "{{plugin_npm_name}}",
+                "settings"
+              ]
             }
           },
           "response": []

@@ -50,7 +50,7 @@
   "item": [
     {
       "name": "Actor Discovery (Public)",
-      "description": "Public read endpoints for ATProto actor resolution — no auth required.",
+      "description": "Public read endpoints for ATProto actor resolution \u2014 no auth required.",
       "item": [
         {
           "name": "Get Actor by Handle",
@@ -59,8 +59,16 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/api/v1/social/actors/{{test_handle}}",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "social", "actors", "{{test_handle}}"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "social",
+                "actors",
+                "{{test_handle}}"
+              ]
             },
             "description": "Resolve an ATProto actor by handle. Returns actor DID, profile, and metadata.\nReturns 404 if handle is not found in the ATProto PDS."
           },
@@ -70,7 +78,8 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "// Accept 200 (actor found) or 404 (not in PDS — expected in test env)",
+                  "// Accept 200 (actor found) or 404 (actor not in PDS)",
+                  "// 500 is not acceptable \u2014 ATProto PDS mock is available in test environment",
                   "pm.test('response is 200 or 404', function() {",
                   "    pm.expect([200, 404]).to.include(pm.response.code);",
                   "});",
@@ -80,9 +89,10 @@
                   "});",
                   "",
                   "if (pm.response.code === 200) {",
-                  "    pm.test('actor has data field', function() {",
-                  "        const body = pm.response.json();",
+                  "    const body = pm.response.json();",
+                  "    pm.test('actor has data field with handle', function() {",
                   "        pm.expect(body).to.have.property('data');",
+                  "        pm.expect(body.data).to.have.property('handle');",
                   "    });",
                   "}"
                 ]
@@ -97,8 +107,17 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/api/v1/social/actors/{{test_handle}}/stats",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "social", "actors", "{{test_handle}}", "stats"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "social",
+                "actors",
+                "{{test_handle}}",
+                "stats"
+              ]
             },
             "description": "Get social statistics for an ATProto actor: follower count, following count, post count."
           },
@@ -108,9 +127,10 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('response is 200 or 500', function() {",
+                  "pm.test('response is 200 or 404 (not 500)', function() {",
                   "    // 500 is expected if handle is not resolvable in test env",
-                  "    pm.expect([200, 500]).to.include(pm.response.code);",
+                  "    // 500 not acceptable \u2014 ATProto PDS mock is available",
+                  "pm.expect([200, 404]).to.include(pm.response.code);",
                   "});",
                   "",
                   "pm.test('response is json', function() {",
@@ -128,11 +148,25 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/api/v1/social/followers/{{test_handle}}?limit=20&offset=0",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "social", "followers", "{{test_handle}}"],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "social",
+                "followers",
+                "{{test_handle}}"
+              ],
               "query": [
-                { "key": "limit", "value": "20" },
-                { "key": "offset", "value": "0" }
+                {
+                  "key": "limit",
+                  "value": "20"
+                },
+                {
+                  "key": "offset",
+                  "value": "0"
+                }
               ]
             },
             "description": "List followers of an ATProto actor with pagination."
@@ -143,8 +177,9 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('response is 200 or 500', function() {",
-                  "    pm.expect([200, 500]).to.include(pm.response.code);",
+                  "pm.test('response is 200 or 404 (not 500)', function() {",
+                  "    // 500 not acceptable \u2014 ATProto PDS mock is available",
+                  "pm.expect([200, 404]).to.include(pm.response.code);",
                   "});",
                   "",
                   "pm.test('response is json', function() {",
@@ -162,11 +197,25 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/api/v1/social/following/{{test_handle}}?limit=20&offset=0",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "social", "following", "{{test_handle}}"],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "social",
+                "following",
+                "{{test_handle}}"
+              ],
               "query": [
-                { "key": "limit", "value": "20" },
-                { "key": "offset", "value": "0" }
+                {
+                  "key": "limit",
+                  "value": "20"
+                },
+                {
+                  "key": "offset",
+                  "value": "0"
+                }
               ]
             },
             "description": "List accounts that an ATProto actor follows."
@@ -177,8 +226,9 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('response is 200 or 500', function() {",
-                  "    pm.expect([200, 500]).to.include(pm.response.code);",
+                  "pm.test('response is 200 or 404 (not 500)', function() {",
+                  "    // 500 not acceptable \u2014 ATProto PDS mock is available",
+                  "pm.expect([200, 404]).to.include(pm.response.code);",
                   "});",
                   "",
                   "pm.test('response is json', function() {",
@@ -196,11 +246,25 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/api/v1/social/likes/{{test_uri}}?limit=20&offset=0",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "social", "likes", "{{test_uri}}"],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "social",
+                "likes",
+                "{{test_uri}}"
+              ],
               "query": [
-                { "key": "limit", "value": "20" },
-                { "key": "offset", "value": "0" }
+                {
+                  "key": "limit",
+                  "value": "20"
+                },
+                {
+                  "key": "offset",
+                  "value": "0"
+                }
               ]
             },
             "description": "Get all likes for a given AT URI (video post, comment, etc)."
@@ -211,8 +275,9 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('response is 200 or 500', function() {",
-                  "    pm.expect([200, 500]).to.include(pm.response.code);",
+                  "pm.test('response is 200 or 404 (not 500)', function() {",
+                  "    // 500 not acceptable \u2014 ATProto PDS mock is available",
+                  "pm.expect([200, 404]).to.include(pm.response.code);",
                   "});",
                   "",
                   "pm.test('response is json', function() {",
@@ -230,11 +295,25 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/api/v1/social/comments/{{test_uri}}?limit=20&offset=0",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "social", "comments", "{{test_uri}}"],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "social",
+                "comments",
+                "{{test_uri}}"
+              ],
               "query": [
-                { "key": "limit", "value": "20" },
-                { "key": "offset", "value": "0" }
+                {
+                  "key": "limit",
+                  "value": "20"
+                },
+                {
+                  "key": "offset",
+                  "value": "0"
+                }
               ]
             },
             "description": "List comments on a given AT URI."
@@ -245,8 +324,9 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('response is 200 or 500', function() {",
-                  "    pm.expect([200, 500]).to.include(pm.response.code);",
+                  "pm.test('response is 200 or 404 (not 500)', function() {",
+                  "    // 500 not acceptable \u2014 ATProto PDS mock is available",
+                  "pm.expect([200, 404]).to.include(pm.response.code);",
                   "});",
                   "",
                   "pm.test('response is json', function() {",
@@ -264,11 +344,26 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/api/v1/social/comments/{{test_uri}}/thread?limit=50&offset=0",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "social", "comments", "{{test_uri}}", "thread"],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "social",
+                "comments",
+                "{{test_uri}}",
+                "thread"
+              ],
               "query": [
-                { "key": "limit", "value": "50" },
-                { "key": "offset", "value": "0" }
+                {
+                  "key": "limit",
+                  "value": "50"
+                },
+                {
+                  "key": "offset",
+                  "value": "0"
+                }
               ]
             },
             "description": "Get threaded conversation view rooted at the given AT URI."
@@ -279,8 +374,9 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('response is 200 or 500', function() {",
-                  "    pm.expect([200, 500]).to.include(pm.response.code);",
+                  "pm.test('response is 200 or 404 (not 500)', function() {",
+                  "    // 500 not acceptable \u2014 ATProto PDS mock is available",
+                  "pm.expect([200, 404]).to.include(pm.response.code);",
                   "});",
                   "",
                   "pm.test('response is json', function() {",
@@ -298,8 +394,17 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/api/v1/social/moderation/labels/{{test_did}}",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "social", "moderation", "labels", "{{test_did}}"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "social",
+                "moderation",
+                "labels",
+                "{{test_did}}"
+              ]
             },
             "description": "Get active moderation labels applied to a DID."
           },
@@ -309,8 +414,9 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('response is 200 or 500', function() {",
-                  "    pm.expect([200, 500]).to.include(pm.response.code);",
+                  "pm.test('response is 200 or 404 (not 500)', function() {",
+                  "    // 500 not acceptable \u2014 ATProto PDS mock is available",
+                  "pm.expect([200, 404]).to.include(pm.response.code);",
                   "});",
                   "",
                   "pm.test('response is json', function() {",
@@ -349,8 +455,15 @@
             },
             "url": {
               "raw": "{{baseUrl}}/api/v1/social/follow",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "social", "follow"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "social",
+                "follow"
+              ]
             },
             "description": "Follow an ATProto actor by handle or DID."
           },
@@ -362,7 +475,8 @@
                 "exec": [
                   "pm.test('response is 200 or 401 or 500', function() {",
                   "    // 401 if no valid token; 500 if PDS not available in test env",
-                  "    pm.expect([200, 401, 500]).to.include(pm.response.code);",
+                  "    // 500 not acceptable \u2014 ATProto PDS mock is available",
+                  "pm.expect([200, 401]).to.include(pm.response.code);",
                   "});",
                   "",
                   "pm.test('response is json', function() {",
@@ -394,8 +508,16 @@
             ],
             "url": {
               "raw": "{{baseUrl}}/api/v1/social/follow/{{test_handle}}",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "social", "follow", "{{test_handle}}"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "social",
+                "follow",
+                "{{test_handle}}"
+              ]
             },
             "description": "Unfollow an ATProto actor by handle."
           },
@@ -406,7 +528,8 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('response is 200 or 401 or 500', function() {",
-                  "    pm.expect([200, 401, 500]).to.include(pm.response.code);",
+                  "    // 500 not acceptable \u2014 ATProto PDS mock is available",
+                  "pm.expect([200, 401]).to.include(pm.response.code);",
                   "});",
                   "",
                   "pm.test('response is json', function() {",
@@ -452,8 +575,15 @@
             },
             "url": {
               "raw": "{{baseUrl}}/api/v1/social/like",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "social", "like"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "social",
+                "like"
+              ]
             },
             "description": "Create a like record on an AT URI."
           },
@@ -464,7 +594,8 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('response is 200 or 401 or 500', function() {",
-                  "    pm.expect([200, 401, 500]).to.include(pm.response.code);",
+                  "    // 500 not acceptable \u2014 ATProto PDS mock is available",
+                  "pm.expect([200, 401]).to.include(pm.response.code);",
                   "});",
                   "",
                   "if (pm.response.code === 200) {",
@@ -500,8 +631,15 @@
             },
             "url": {
               "raw": "{{baseUrl}}/api/v1/social/like",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "social", "like"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "social",
+                "like"
+              ]
             },
             "description": "Remove a like record from an AT URI."
           },
@@ -512,7 +650,8 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('response is 200 or 401 or 500', function() {",
-                  "    pm.expect([200, 401, 500]).to.include(pm.response.code);",
+                  "    // 500 not acceptable \u2014 ATProto PDS mock is available",
+                  "pm.expect([200, 401]).to.include(pm.response.code);",
                   "});",
                   "",
                   "if (pm.response.code === 200) {",
@@ -554,8 +693,15 @@
             },
             "url": {
               "raw": "{{baseUrl}}/api/v1/social/comment",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "social", "comment"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "social",
+                "comment"
+              ]
             },
             "description": "Create a top-level comment on a video post URI."
           },
@@ -566,7 +712,8 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('response is 201 or 401 or 500', function() {",
-                  "    pm.expect([201, 401, 500]).to.include(pm.response.code);",
+                  "    // 500 not acceptable \u2014 ATProto PDS mock is available",
+                  "pm.expect([201, 401]).to.include(pm.response.code);",
                   "});",
                   "",
                   "if (pm.response.code === 201) {",
@@ -606,8 +753,15 @@
             },
             "url": {
               "raw": "{{baseUrl}}/api/v1/social/comment",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "social", "comment"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "social",
+                "comment"
+              ]
             },
             "description": "Create a threaded reply: same root_uri as original, parent_uri pointing to the comment being replied to."
           },
@@ -618,7 +772,8 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('response is 201 or 401 or 500', function() {",
-                  "    pm.expect([201, 401, 500]).to.include(pm.response.code);",
+                  "    // 500 not acceptable \u2014 ATProto PDS mock is available",
+                  "pm.expect([201, 401]).to.include(pm.response.code);",
                   "});",
                   "",
                   "pm.test('response is json', function() {",
@@ -642,8 +797,16 @@
             ],
             "url": {
               "raw": "{{baseUrl}}/api/v1/social/comment/{{comment_uri}}",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "social", "comment", "{{comment_uri}}"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "social",
+                "comment",
+                "{{comment_uri}}"
+              ]
             },
             "description": "Delete a comment by AT URI. Requires authentication."
           },
@@ -654,7 +817,8 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('response is 200 or 401 or 500', function() {",
-                  "    pm.expect([200, 401, 500]).to.include(pm.response.code);",
+                  "    // 500 not acceptable \u2014 ATProto PDS mock is available",
+                  "pm.expect([200, 401]).to.include(pm.response.code);",
                   "});",
                   "",
                   "if (pm.response.code === 200) {",
@@ -696,8 +860,16 @@
             },
             "url": {
               "raw": "{{baseUrl}}/api/v1/social/moderation/label",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "social", "moderation", "label"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "social",
+                "moderation",
+                "label"
+              ]
             },
             "description": "Apply a moderation label to a DID or URI. expires_in is in minutes (1440 = 24 hours, 0 = no expiry)."
           },
@@ -708,7 +880,8 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('response is 200 or 401 or 500', function() {",
-                  "    pm.expect([200, 401, 500]).to.include(pm.response.code);",
+                  "    // 500 not acceptable \u2014 ATProto PDS mock is available",
+                  "pm.expect([200, 401]).to.include(pm.response.code);",
                   "});",
                   "",
                   "if (pm.response.code === 200) {",
@@ -735,8 +908,17 @@
             ],
             "url": {
               "raw": "{{baseUrl}}/api/v1/social/moderation/label/{{label_id}}",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "social", "moderation", "label", "{{label_id}}"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "social",
+                "moderation",
+                "label",
+                "{{label_id}}"
+              ]
             },
             "description": "Remove a moderation label by its ID."
           },
@@ -747,7 +929,8 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('response is 200 or 401 or 500', function() {",
-                  "    pm.expect([200, 401, 500]).to.include(pm.response.code);",
+                  "    // 500 not acceptable \u2014 ATProto PDS mock is available",
+                  "pm.expect([200, 401]).to.include(pm.response.code);",
                   "});",
                   "",
                   "if (pm.response.code === 200) {",
@@ -780,10 +963,21 @@
             ],
             "url": {
               "raw": "{{baseUrl}}/api/v1/social/ingest/{{test_handle}}?limit=50",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "social", "ingest", "{{test_handle}}"],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "social",
+                "ingest",
+                "{{test_handle}}"
+              ],
               "query": [
-                { "key": "limit", "value": "50" }
+                {
+                  "key": "limit",
+                  "value": "50"
+                }
               ]
             },
             "description": "Fetch and ingest posts from an ATProto actor's feed into the local social database.\nRequires authentication. Returns 500 if the PDS is not available."
@@ -796,7 +990,8 @@
                 "exec": [
                   "pm.test('response is 200 or 401 or 500', function() {",
                   "    // 500 expected if ATProto PDS not configured in test env",
-                  "    pm.expect([200, 401, 500]).to.include(pm.response.code);",
+                  "    // 500 not acceptable \u2014 ATProto PDS mock is available",
+                  "pm.expect([200, 401]).to.include(pm.response.code);",
                   "});",
                   "",
                   "pm.test('response is json', function() {",
@@ -821,7 +1016,7 @@
       "description": "Verify that authenticated endpoints correctly return 401 without a valid token.",
       "item": [
         {
-          "name": "Follow without Auth → 401",
+          "name": "Follow without Auth \u2192 401",
           "request": {
             "method": "POST",
             "header": [
@@ -837,8 +1032,15 @@
             },
             "url": {
               "raw": "{{baseUrl}}/api/v1/social/follow",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "social", "follow"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "social",
+                "follow"
+              ]
             },
             "description": "POST /social/follow without Authorization header must return 401."
           },
@@ -863,7 +1065,7 @@
           ]
         },
         {
-          "name": "Create Comment without Auth → 401",
+          "name": "Create Comment without Auth \u2192 401",
           "request": {
             "method": "POST",
             "header": [
@@ -879,8 +1081,15 @@
             },
             "url": {
               "raw": "{{baseUrl}}/api/v1/social/comment",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "social", "comment"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "social",
+                "comment"
+              ]
             },
             "description": "POST /social/comment without Authorization must return 401."
           },
@@ -904,7 +1113,7 @@
           ]
         },
         {
-          "name": "Apply Label without Auth → 401",
+          "name": "Apply Label without Auth \u2192 401",
           "request": {
             "method": "POST",
             "header": [
@@ -920,8 +1129,16 @@
             },
             "url": {
               "raw": "{{baseUrl}}/api/v1/social/moderation/label",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "social", "moderation", "label"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "social",
+                "moderation",
+                "label"
+              ]
             },
             "description": "POST /social/moderation/label without Authorization must return 401."
           },

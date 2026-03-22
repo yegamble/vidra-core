@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "Athena IOTA Payments API",
-    "description": "Test collection for the IOTA crypto payments lifecycle: wallet creation, payment intents, and transaction history.\n\n## Lifecycle Covered\n\n1. **Create Wallet** — generate an IOTA wallet for the authenticated user\n2. **Get Wallet** — retrieve wallet balance and address\n3. **Create Payment Intent** — initiate a payment for a video or general tip\n4. **Get Payment Intent** — check intent status\n5. **Transaction History** — list past transactions with pagination\n6. **Error cases** — auth failures, duplicate wallet, invalid amounts\n\n## Environment Variables Required\n\n- `baseUrl` - API base URL\n- `access_token` - JWT access token\n\n## Variables Set During Run\n\n- `payment_intent_id` - ID of the created payment intent",
+    "description": "Test collection for the IOTA crypto payments lifecycle: wallet creation, payment intents, and transaction history.\n\n## Lifecycle Covered\n\n1. **Create Wallet** \u2014 generate an IOTA wallet for the authenticated user\n2. **Get Wallet** \u2014 retrieve wallet balance and address\n3. **Create Payment Intent** \u2014 initiate a payment for a video or general tip\n4. **Get Payment Intent** \u2014 check intent status\n5. **Transaction History** \u2014 list past transactions with pagination\n6. **Error cases** \u2014 auth failures, duplicate wallet, invalid amounts\n\n## Environment Variables Required\n\n- `baseUrl` - API base URL\n- `access_token` - JWT access token\n\n## Variables Set During Run\n\n- `payment_intent_id` - ID of the created payment intent",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "item": [
@@ -27,6 +27,10 @@
                   "    pm.expect(body.data).to.have.property('balance');",
                   "    pm.expect(body.data).to.have.property('user_id');",
                   "  });",
+                  "  // Save wallet address for subsequent requests",
+                  "  if (body.data && body.data.address) {",
+                  "    pm.environment.set('wallet_address', body.data.address);",
+                  "  }",
                   "  console.log('Wallet address:', body.data.address);",
                   "} else {",
                   "  console.log('Wallet already exists for user (409)');",
@@ -39,12 +43,23 @@
           "request": {
             "method": "POST",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{access_token}}", "type": "text" }
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}",
+                "type": "text"
+              }
             ],
             "url": {
               "raw": "{{baseUrl}}/api/v1/payments/wallet",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "payments", "wallet"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "payments",
+                "wallet"
+              ]
             },
             "description": "Create an IOTA wallet for the authenticated user. Returns 409 if wallet already exists."
           },
@@ -57,6 +72,8 @@
               "listen": "test",
               "script": {
                 "exec": [
+                  "// After Create Wallet succeeds, Get Wallet must return 200",
+                  "// 404 only if wallet creation failed (409 from earlier step)",
                   "pm.test('Status is 200 or 404', () => {",
                   "  pm.expect([200, 404]).to.include(pm.response.code);",
                   "});",
@@ -66,8 +83,7 @@
                   "    pm.expect(body.success).to.be.true;",
                   "    pm.expect(body.data).to.have.property('address');",
                   "    pm.expect(body.data).to.have.property('balance');",
-                  "    pm.expect(body.data.balance).to.be.a('number');",
-                  "    pm.expect(body.data.balance).to.be.at.least(0);",
+                  "    pm.expect(body.data.balance).to.be.a('number').and.at.least(0);",
                   "  });",
                   "  console.log('Wallet balance:', body.data.balance, 'IOTA');",
                   "}"
@@ -79,12 +95,23 @@
           "request": {
             "method": "GET",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{access_token}}", "type": "text" }
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}",
+                "type": "text"
+              }
             ],
             "url": {
               "raw": "{{baseUrl}}/api/v1/payments/wallet",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "payments", "wallet"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "payments",
+                "wallet"
+              ]
             }
           },
           "response": []
@@ -109,8 +136,15 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/api/v1/payments/wallet",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "payments", "wallet"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "payments",
+                "wallet"
+              ]
             }
           },
           "response": []
@@ -150,8 +184,16 @@
           "request": {
             "method": "POST",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{access_token}}", "type": "text" },
-              { "key": "Content-Type", "value": "application/json", "type": "text" }
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
             ],
             "body": {
               "mode": "raw",
@@ -159,8 +201,15 @@
             },
             "url": {
               "raw": "{{baseUrl}}/api/v1/payments/intents",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "payments", "intents"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "payments",
+                "intents"
+              ]
             }
           },
           "response": []
@@ -190,8 +239,16 @@
           "request": {
             "method": "POST",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{access_token}}", "type": "text" },
-              { "key": "Content-Type", "value": "application/json", "type": "text" }
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
             ],
             "body": {
               "mode": "raw",
@@ -199,8 +256,15 @@
             },
             "url": {
               "raw": "{{baseUrl}}/api/v1/payments/intents",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "payments", "intents"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "payments",
+                "intents"
+              ]
             }
           },
           "response": []
@@ -228,8 +292,16 @@
           "request": {
             "method": "POST",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{access_token}}", "type": "text" },
-              { "key": "Content-Type", "value": "application/json", "type": "text" }
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
             ],
             "body": {
               "mode": "raw",
@@ -237,8 +309,15 @@
             },
             "url": {
               "raw": "{{baseUrl}}/api/v1/payments/intents",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "payments", "intents"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "payments",
+                "intents"
+              ]
             }
           },
           "response": []
@@ -265,8 +344,16 @@
           "request": {
             "method": "POST",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{access_token}}", "type": "text" },
-              { "key": "Content-Type", "value": "application/json", "type": "text" }
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
             ],
             "body": {
               "mode": "raw",
@@ -274,8 +361,15 @@
             },
             "url": {
               "raw": "{{baseUrl}}/api/v1/payments/intents",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "payments", "intents"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "payments",
+                "intents"
+              ]
             }
           },
           "response": []
@@ -303,8 +397,16 @@
           "request": {
             "method": "POST",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{access_token}}", "type": "text" },
-              { "key": "Content-Type", "value": "application/json", "type": "text" }
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
             ],
             "body": {
               "mode": "raw",
@@ -312,8 +414,15 @@
             },
             "url": {
               "raw": "{{baseUrl}}/api/v1/payments/intents",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "payments", "intents"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "payments",
+                "intents"
+              ]
             }
           },
           "response": []
@@ -326,7 +435,7 @@
               "script": {
                 "exec": [
                   "if (!pm.environment.get('payment_intent_id')) {",
-                  "  console.log('No payment_intent_id — skipping');",
+                  "  console.log('No payment_intent_id \u2014 skipping');",
                   "  return;",
                   "}",
                   "pm.test('Status is 200', () => {",
@@ -347,12 +456,24 @@
           "request": {
             "method": "GET",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{access_token}}", "type": "text" }
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}",
+                "type": "text"
+              }
             ],
             "url": {
               "raw": "{{baseUrl}}/api/v1/payments/intents/{{payment_intent_id}}",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "payments", "intents", "{{payment_intent_id}}"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "payments",
+                "intents",
+                "{{payment_intent_id}}"
+              ]
             }
           },
           "response": []
@@ -380,12 +501,24 @@
           "request": {
             "method": "GET",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{access_token}}", "type": "text" }
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}",
+                "type": "text"
+              }
             ],
             "url": {
               "raw": "{{baseUrl}}/api/v1/payments/intents/nonexistent-intent-id-12345",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "payments", "intents", "nonexistent-intent-id-12345"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "payments",
+                "intents",
+                "nonexistent-intent-id-12345"
+              ]
             }
           },
           "response": []
@@ -408,7 +541,11 @@
           "request": {
             "method": "POST",
             "header": [
-              { "key": "Content-Type", "value": "application/json", "type": "text" }
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
             ],
             "body": {
               "mode": "raw",
@@ -416,8 +553,15 @@
             },
             "url": {
               "raw": "{{baseUrl}}/api/v1/payments/intents",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "payments", "intents"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "payments",
+                "intents"
+              ]
             }
           },
           "response": []
@@ -441,7 +585,8 @@
                   "  const body = pm.response.json();",
                   "  pm.test('Transaction list structure', () => {",
                   "    pm.expect(body.success).to.be.true;",
-                  "    pm.expect(Array.isArray(body.data) || body.data !== null).to.be.true;",
+                  "    // transactions may be array or wrapped object",
+                  "    pm.expect(body.data !== null && body.data !== undefined).to.be.true;",
                   "  });",
                   "}"
                 ],
@@ -452,12 +597,23 @@
           "request": {
             "method": "GET",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{access_token}}", "type": "text" }
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}",
+                "type": "text"
+              }
             ],
             "url": {
               "raw": "{{baseUrl}}/api/v1/payments/transactions",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "payments", "transactions"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "payments",
+                "transactions"
+              ]
             }
           },
           "response": []
@@ -486,15 +642,32 @@
           "request": {
             "method": "GET",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{access_token}}", "type": "text" }
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}",
+                "type": "text"
+              }
             ],
             "url": {
               "raw": "{{baseUrl}}/api/v1/payments/transactions?limit=5&offset=0",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "payments", "transactions"],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "payments",
+                "transactions"
+              ],
               "query": [
-                { "key": "limit", "value": "5" },
-                { "key": "offset", "value": "0" }
+                {
+                  "key": "limit",
+                  "value": "5"
+                },
+                {
+                  "key": "offset",
+                  "value": "0"
+                }
               ]
             }
           },
@@ -520,8 +693,15 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/api/v1/payments/transactions",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "payments", "transactions"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "payments",
+                "transactions"
+              ]
             }
           },
           "response": []

@@ -373,13 +373,13 @@ These tests ensure the avatar upload system is both functional and secure agains
 
 ### 6. Plugins Collection (`athena-plugins.postman_collection.json`)
 
-**Coverage**: Plugin discovery, settings management, install contract validation (13 requests)
+**Coverage**: Plugin discovery, settings management, install validation (13 requests validated against live server)
 
 #### Features Tested
 
 - List available plugins, get installed plugins
 - Plugin settings: read and write
-- Install API contract validation (shape check, error for invalid URL)
+- Install validation (error for invalid URL, FTP blocked by SSRF protection)
 - Auth error cases and missing-plugin 404 paths
 
 ---
