@@ -330,6 +330,131 @@ paths:
       security:
         - bearerAuth: []
 
+  /api/v1/videos/imports/{id}/cancel:
+    post:
+      tags:
+        - Imports
+      summary: Cancel import job (canonical)
+      description: |
+        Cancel a pending or in-progress import job via POST.
+        Alias for DELETE /api/v1/videos/imports/{id} — provided for compatibility
+        with clients that cannot issue DELETE requests.
+        Completed imports cannot be cancelled.
+      operationId: cancelImportCanonical
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Import job ID
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Import cancelled successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      id:
+                        type: string
+                      status:
+                        type: string
+                        example: "cancelled"
+                      cancelled_at:
+                        type: string
+                        format: date-time
+                  success:
+                    type: boolean
+        '400':
+          description: Cannot cancel completed or already cancelled import
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Import job not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+      security:
+        - bearerAuth: []
+
+  /api/v1/videos/imports/{id}/retry:
+    post:
+      tags:
+        - Imports
+      summary: Retry a failed import job
+      description: |
+        Re-queue a failed import job for processing. Only imports in the
+        'failed' state can be retried. The import transitions to 'pending'
+        and is re-queued for download.
+      operationId: retryImport
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Import job ID
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Import re-queued for retry
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      id:
+                        type: string
+                      status:
+                        type: string
+                        example: "pending"
+                      retried_at:
+                        type: string
+                        format: date-time
+                  success:
+                    type: boolean
+        '400':
+          description: Import is not in a failed state and cannot be retried
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden - not import owner
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Import job not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+      security:
+        - bearerAuth: []
+
 components:
   schemas:
     CreateImportRequest:

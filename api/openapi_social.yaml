@@ -1,0 +1,889 @@
+openapi: 3.0.3
+info:
+  title: Athena API - ATProto Social Graph
+  description: |
+    ATProto (BlueSky) social graph endpoints: actor resolution, follow graph,
+    likes, comments (threaded), moderation labels, and feed ingest.
+
+    All 17 endpoints under `/api/v1/social/*` are documented here.
+
+    ## Authentication
+    Public read endpoints (actor, followers, following, likes, comments, labels)
+    require no authentication. Write endpoints (follow, like, comment, moderation,
+    ingest) require a valid JWT bearer token.
+
+    ## ATProto Identifiers
+    - **handle**: a BlueSky handle (e.g. `alice.bsky.social`) or DID
+    - **uri**: an AT URI (e.g. `at://did:plc:abc/app.bsky.feed.post/xyz`)
+    - **did**: a Decentralized Identifier (e.g. `did:plc:abc123`)
+  version: '1.0'
+
+servers:
+  - url: /
+
+paths:
+  /api/v1/social/actors/{handle}:
+    get:
+      tags:
+        - Social - Actors
+      summary: Resolve ATProto actor by handle
+      description: |
+        Resolve an ATProto actor (BlueSky account) by handle or DID.
+        Returns profile metadata: DID, avatar, displayName, description.
+        Returns 404 if the handle is not found in the connected PDS.
+      operationId: getActor
+      parameters:
+        - name: handle
+          in: path
+          required: true
+          description: ATProto handle (e.g. alice.bsky.social) or DID
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Actor profile resolved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/Actor'
+        '404':
+          description: Actor not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/social/actors/{handle}/stats:
+    get:
+      tags:
+        - Social - Actors
+      summary: Get social statistics for an actor
+      description: Return follower count, following count, and post count for a handle.
+      operationId: getActorStats
+      parameters:
+        - name: handle
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Actor statistics
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    $ref: '#/components/schemas/ActorStats'
+        '500':
+          description: Failed to retrieve actor stats (e.g. PDS unavailable)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/social/followers/{handle}:
+    get:
+      tags:
+        - Social - Graph
+      summary: List followers of an actor
+      description: Paginated list of accounts following the given handle.
+      operationId: getFollowers
+      parameters:
+        - name: handle
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+            maximum: 100
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+      responses:
+        '200':
+          description: List of followers
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Actor'
+
+  /api/v1/social/following/{handle}:
+    get:
+      tags:
+        - Social - Graph
+      summary: List accounts followed by an actor
+      operationId: getFollowing
+      parameters:
+        - name: handle
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+            maximum: 100
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+      responses:
+        '200':
+          description: List of accounts being followed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Actor'
+
+  /api/v1/social/follow:
+    post:
+      tags:
+        - Social - Graph
+      summary: Follow an ATProto actor
+      description: Create a follow relationship from the authenticated user to the target handle.
+      operationId: followActor
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - target
+              properties:
+                target:
+                  type: string
+                  description: Handle or DID of the actor to follow
+                  example: alice.bsky.social
+      responses:
+        '200':
+          description: Follow successful
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: object
+                    properties:
+                      status:
+                        type: string
+                        example: followed
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+      security:
+        - bearerAuth: []
+
+  /api/v1/social/follow/{handle}:
+    delete:
+      tags:
+        - Social - Graph
+      summary: Unfollow an ATProto actor
+      description: Remove an existing follow relationship.
+      operationId: unfollowActor
+      parameters:
+        - name: handle
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Unfollow successful
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: object
+                    properties:
+                      status:
+                        type: string
+                        example: unfollowed
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+      security:
+        - bearerAuth: []
+
+  /api/v1/social/likes/{uri}:
+    get:
+      tags:
+        - Social - Likes
+      summary: List likes for an AT URI
+      description: |
+        Get all like records for a given AT URI (video post, comment, etc).
+        URI must be URL-encoded.
+      operationId: getLikes
+      parameters:
+        - name: uri
+          in: path
+          required: true
+          description: AT URI (URL-encoded)
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+      responses:
+        '200':
+          description: List of likes
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Like'
+
+  /api/v1/social/like:
+    post:
+      tags:
+        - Social - Likes
+      summary: Like an AT URI
+      description: Create a like record on an AT URI (video post, comment, etc).
+      operationId: likeURI
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LikeRequest'
+      responses:
+        '200':
+          description: Like created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: object
+                    properties:
+                      status:
+                        type: string
+                        example: liked
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+      security:
+        - bearerAuth: []
+    delete:
+      tags:
+        - Social - Likes
+      summary: Unlike an AT URI
+      description: Remove an existing like record.
+      operationId: unlikeURI
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - actor_did
+                - subject_uri
+              properties:
+                actor_did:
+                  type: string
+                subject_uri:
+                  type: string
+      responses:
+        '200':
+          description: Like removed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: object
+                    properties:
+                      status:
+                        type: string
+                        example: unliked
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+      security:
+        - bearerAuth: []
+
+  /api/v1/social/comments/{uri}:
+    get:
+      tags:
+        - Social - Comments
+      summary: List comments for an AT URI
+      description: Get all top-level comments on a given AT URI.
+      operationId: getComments
+      parameters:
+        - name: uri
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+      responses:
+        '200':
+          description: List of comments
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Comment'
+
+  /api/v1/social/comments/{uri}/thread:
+    get:
+      tags:
+        - Social - Comments
+      summary: Get threaded comment view
+      description: Get the full threaded conversation rooted at the given AT URI.
+      operationId: getCommentThread
+      parameters:
+        - name: uri
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+      responses:
+        '200':
+          description: Threaded comment view
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Comment'
+
+  /api/v1/social/comment:
+    post:
+      tags:
+        - Social - Comments
+      summary: Create a comment
+      description: |
+        Create an ATProto comment (reply) record. For top-level comments, set
+        `root_uri` to the video post URI and omit `parent_uri`. For threaded
+        replies, set both `root_uri` (original post) and `parent_uri` (comment
+        being replied to).
+      operationId: createComment
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CommentRequest'
+      responses:
+        '201':
+          description: Comment created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    $ref: '#/components/schemas/Comment'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+      security:
+        - bearerAuth: []
+
+  /api/v1/social/comment/{uri}:
+    delete:
+      tags:
+        - Social - Comments
+      summary: Delete a comment
+      description: Remove a comment record by AT URI.
+      operationId: deleteComment
+      parameters:
+        - name: uri
+          in: path
+          required: true
+          description: AT URI of the comment to delete (URL-encoded)
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Comment deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: object
+                    properties:
+                      status:
+                        type: string
+                        example: deleted
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+      security:
+        - bearerAuth: []
+
+  /api/v1/social/moderation/labels/{did}:
+    get:
+      tags:
+        - Social - Moderation
+      summary: Get moderation labels for a DID
+      description: List all active moderation labels applied to a DID.
+      operationId: getModerationLabels
+      parameters:
+        - name: did
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: List of moderation labels
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ModerationLabel'
+
+  /api/v1/social/moderation/label:
+    post:
+      tags:
+        - Social - Moderation
+      summary: Apply a moderation label
+      description: |
+        Apply a moderation label to a DID or URI. `expires_in` is the label
+        lifetime in minutes (0 = no expiry).
+      operationId: applyModerationLabel
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LabelRequest'
+      responses:
+        '200':
+          description: Label applied
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: object
+                    properties:
+                      status:
+                        type: string
+                        example: label_applied
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+      security:
+        - bearerAuth: []
+
+  /api/v1/social/moderation/label/{id}:
+    delete:
+      tags:
+        - Social - Moderation
+      summary: Remove a moderation label
+      description: Remove a previously applied moderation label by its ID.
+      operationId: removeModerationLabel
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Label removed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: object
+                    properties:
+                      status:
+                        type: string
+                        example: label_removed
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+      security:
+        - bearerAuth: []
+
+  /api/v1/social/ingest/{handle}:
+    post:
+      tags:
+        - Social - Feed
+      summary: Ingest actor feed from ATProto PDS
+      description: |
+        Fetch and store posts from an ATProto actor's feed into the local
+        social database. Useful for bootstrapping the local social graph
+        from an existing BlueSky account.
+      operationId: ingestActorFeed
+      parameters:
+        - name: handle
+          in: path
+          required: true
+          description: ATProto handle to ingest
+          schema:
+            type: string
+        - name: limit
+          in: query
+          description: Maximum number of posts to ingest
+          schema:
+            type: integer
+            default: 50
+            maximum: 200
+      responses:
+        '200':
+          description: Feed ingested
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: object
+                    properties:
+                      status:
+                        type: string
+                        example: ingested
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Failed to ingest — PDS unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+      security:
+        - bearerAuth: []
+
+components:
+  schemas:
+    Actor:
+      type: object
+      properties:
+        did:
+          type: string
+          description: Decentralized Identifier
+          example: did:plc:abc123
+        handle:
+          type: string
+          example: alice.bsky.social
+        displayName:
+          type: string
+          example: Alice
+        description:
+          type: string
+        avatar:
+          type: string
+          format: uri
+        indexedAt:
+          type: string
+          format: date-time
+
+    ActorStats:
+      type: object
+      properties:
+        handle:
+          type: string
+        followersCount:
+          type: integer
+        followingCount:
+          type: integer
+        postsCount:
+          type: integer
+
+    Like:
+      type: object
+      properties:
+        uri:
+          type: string
+          description: AT URI of the like record
+        actor:
+          $ref: '#/components/schemas/Actor'
+        createdAt:
+          type: string
+          format: date-time
+
+    LikeRequest:
+      type: object
+      required:
+        - actor_did
+        - subject_uri
+      properties:
+        actor_did:
+          type: string
+          description: DID of the actor creating the like
+        subject_uri:
+          type: string
+          description: AT URI of the content being liked
+        subject_cid:
+          type: string
+          description: Optional CID of the record being liked
+
+    Comment:
+      type: object
+      properties:
+        uri:
+          type: string
+          description: AT URI of the comment record
+        actor:
+          $ref: '#/components/schemas/Actor'
+        text:
+          type: string
+        rootUri:
+          type: string
+          description: AT URI of the root post in the thread
+        parentUri:
+          type: string
+          description: AT URI of the parent comment (null for top-level)
+        createdAt:
+          type: string
+          format: date-time
+        replies:
+          type: array
+          items:
+            $ref: '#/components/schemas/Comment'
+
+    CommentRequest:
+      type: object
+      required:
+        - actor_did
+        - text
+        - root_uri
+      properties:
+        actor_did:
+          type: string
+          description: DID of the commenting actor
+        text:
+          type: string
+          description: Comment text content
+          maxLength: 300
+        root_uri:
+          type: string
+          description: AT URI of the root post in the thread
+        root_cid:
+          type: string
+          description: Optional CID of the root record
+        parent_uri:
+          type: string
+          description: AT URI of the parent comment (omit for top-level)
+        parent_cid:
+          type: string
+          description: Optional CID of the parent record
+
+    ModerationLabel:
+      type: object
+      properties:
+        id:
+          type: string
+        actorDid:
+          type: string
+        labelType:
+          type: string
+          description: Category of label (e.g. spam, nsfw, misleading)
+        reason:
+          type: string
+        appliedBy:
+          type: string
+          description: DID of the moderator who applied the label
+        uri:
+          type: string
+          description: AT URI of the content (if label is content-specific)
+        appliedAt:
+          type: string
+          format: date-time
+        expiresAt:
+          type: string
+          format: date-time
+          nullable: true
+
+    LabelRequest:
+      type: object
+      required:
+        - actor_did
+        - label_type
+        - applied_by
+      properties:
+        actor_did:
+          type: string
+          description: DID of the actor being labelled
+        label_type:
+          type: string
+          description: Category of label (spam, nsfw, misleading, etc.)
+        reason:
+          type: string
+          description: Human-readable reason for the label
+        applied_by:
+          type: string
+          description: DID of the moderator applying the label
+        uri:
+          type: string
+          description: AT URI of specific content (optional — content-level label)
+        expires_in:
+          type: integer
+          description: Label lifetime in minutes (0 = permanent)
+          default: 0
+
+    ErrorResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: false
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT

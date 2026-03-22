@@ -4,12 +4,27 @@ This directory contains test files and Postman collections for comprehensive API
 
 ## Collections Overview
 
-| Collection | Endpoints | Purpose |
-|------------|-----------|---------|
-| **athena-auth.postman_collection.json** | Auth, Avatar, Videos | Authentication, avatar uploads, video CRUD |
-| **athena-uploads.postman_collection.json** ✨ NEW | Uploads, Encoding | Chunked uploads, resume, encoding status |
-| **athena-analytics.postman_collection.json** ✨ NEW | Analytics, Views | View tracking, analytics, trending |
-| **athena-imports.postman_collection.json** ✨ NEW | Imports | External video imports |
+| Collection | Requests | Purpose |
+|------------|----------|---------|
+| **athena-auth.postman_collection.json** | 61 | Authentication, avatar uploads, video CRUD |
+| **athena-videos.postman_collection.json** | — | Video CRUD, search, upload, stream edge cases |
+| **athena-uploads.postman_collection.json** | 11 | Chunked uploads, resume, encoding status |
+| **athena-channels.postman_collection.json** | — | Channel CRUD, subscribe/unsubscribe |
+| **athena-instance-config.postman_collection.json** | — | Public config and quota endpoints |
+| **athena-imports.postman_collection.json** | 10 | External video imports |
+| **athena-peertube-canonical.postman_collection.json** | — | PeerTube-canonical registrations, jobs, plugins |
+| **athena-feeds.postman_collection.json** | — | Public and subscription feeds |
+| **athena-blocklist.postman_collection.json** | — | Account/server blocklist state transitions |
+| **athena-notifications.postman_collection.json** | — | Notification list/read/delete |
+| **athena-livestreaming.postman_collection.json** | — | Stream create/get/stats/session/channel |
+| **athena-federation.postman_collection.json** | — | WebFinger, NodeInfo, federation discovery |
+| **athena-secure-messaging.postman_collection.json** | — | Encrypted messaging E2E flow |
+| **athena-runners.postman_collection.json** | 24 | Runner registration, job lifecycle, file upload |
+| **athena-plugins.postman_collection.json** | 13 | Plugin discovery, settings, install contract |
+| **athena-payments.postman_collection.json** | 14 | IOTA wallet lifecycle, payment intents |
+| **athena-import-lifecycle.postman_collection.json** | 14 | Import create→list→cancel→retry lifecycle |
+| **athena-atproto.postman_collection.json** | 21 | ATProto social: actors, follows, likes, comments |
+| **athena-analytics.postman_collection.json** | 13 | View tracking, analytics, trending |
 
 ---
 
@@ -343,6 +358,74 @@ These tests ensure the avatar upload system is both functional and secure agains
 
 ---
 
+### 5. Runners Collection (`athena-runners.postman_collection.json`)
+
+**Coverage**: Runner registration, complete job lifecycle, file upload, admin operations (24 requests)
+
+#### Features Tested
+
+- Runner registration with token-based auth
+- Job lifecycle: request job → accept → update progress → upload artifact → success/error/abort
+- Admin operations: list runners, list jobs, cancel job, delete runner
+- Auth error cases (401/403 for unauthenticated/unauthorized requests)
+
+---
+
+### 6. Plugins Collection (`athena-plugins.postman_collection.json`)
+
+**Coverage**: Plugin discovery, settings management, install contract validation (13 requests)
+
+#### Features Tested
+
+- List available plugins, get installed plugins
+- Plugin settings: read and write
+- Install API contract validation (shape check, error for invalid URL)
+- Auth error cases and missing-plugin 404 paths
+
+---
+
+### 7. Payments Collection (`athena-payments.postman_collection.json`)
+
+**Coverage**: IOTA wallet lifecycle, payment intents, transaction history (14 requests)
+
+#### Features Tested
+
+- Wallet create → get → duplicate-create error
+- Payment intent: create → get → status check
+- Transaction history listing with pagination
+- Auth error cases: unauthorized, invalid input
+
+---
+
+### 8. Import Lifecycle Collection (`athena-import-lifecycle.postman_collection.json`)
+
+**Coverage**: Full import lifecycle including cancel and retry paths (14 requests)
+
+#### Features Tested
+
+- Create import → get status → list user imports
+- Cancel a pending/in-progress import (`POST /api/v1/videos/imports/{id}/cancel`)
+- Retry a failed import (`POST /api/v1/videos/imports/{id}/retry`)
+- Auth error cases
+
+---
+
+### 9. ATProto Collection (`athena-atproto.postman_collection.json`)
+
+**Coverage**: All 17 ATProto social endpoints (21 requests across 7 folders)
+
+#### Features Tested
+
+- **Actor Discovery** (8 GETs): actor profile, stats, followers, following, timeline, liked videos, comments, labels
+- **Social Graph**: follow actor, unfollow actor
+- **Likes**: like video, unlike video
+- **Comments**: create comment, threaded reply, delete comment
+- **Moderation**: apply content label, remove label
+- **Feed Ingest**: ingest external ATProto feed
+- **Auth Error Cases**: unauthenticated requests return 401
+
+---
+
 ## Environment Variables
 
 All collections use the `athena.local.postman_environment.json` file:
@@ -371,49 +454,46 @@ All collections use the `athena.local.postman_environment.json` file:
 - name: Run Postman Tests
   run: |
     npm install -g newman
-    newman run postman/athena-auth.postman_collection.json -e postman/test-env.json --reporters cli,junit
-    newman run postman/athena-uploads.postman_collection.json -e postman/test-env.json --reporters cli,junit
-    newman run postman/athena-analytics.postman_collection.json -e postman/test-env.json --reporters cli,junit
-    newman run postman/athena-imports.postman_collection.json -e postman/test-env.json --reporters cli,junit
+    cd postman
+    ./run-all-tests.sh athena.local.postman_environment.json
 ```
 
 ### Run All Collections Script
 
-Create `run-all-tests.sh`:
+`postman/run-all-tests.sh` runs all 18 collections in a stateful sequence, exporting the environment between collections so state (tokens, IDs) flows through the full suite:
 
 ```bash
-#!/bin/bash
-set -e
+cd postman
+./run-all-tests.sh                              # Uses athena.local.postman_environment.json
+./run-all-tests.sh my-env.json                  # Use a different environment file
+```
 
-collections=(
-  "athena-auth.postman_collection.json"
-  "athena-uploads.postman_collection.json"
-  "athena-analytics.postman_collection.json"
-  "athena-imports.postman_collection.json"
-)
+Individual collection run:
 
-for collection in "${collections[@]}"; do
-  echo "Running $collection..."
-  newman run "$collection" \
-    -e athena.local.postman_environment.json \
-    --reporters cli,json \
-    --reporter-json-export "results-${collection%.json}.json"
-done
-
-echo "All collections completed!"
+```bash
+newman run postman/athena-runners.postman_collection.json -e postman/athena.local.postman_environment.json
+newman run postman/athena-plugins.postman_collection.json -e postman/athena.local.postman_environment.json
+newman run postman/athena-payments.postman_collection.json -e postman/athena.local.postman_environment.json
+newman run postman/athena-import-lifecycle.postman_collection.json -e postman/athena.local.postman_environment.json
+newman run postman/athena-atproto.postman_collection.json -e postman/athena.local.postman_environment.json
 ```
 
 ---
 
 ## Test Coverage Summary
 
-| Collection | Tests | Endpoints Covered |
-|------------|-------|-------------------|
+| Collection | Requests | Coverage |
+|------------|----------|----------|
 | **Auth** | 61 | Auth (4), Avatar (10), Videos (12) |
 | **Uploads** | 11 | Chunked uploads (5), Encoding (3), Errors (3) |
 | **Analytics** | 13 | Views (3), Analytics (3), Discovery (4), Errors (3) |
 | **Imports** | 10 | Import workflow (5), Errors (5) |
-| **TOTAL** | **95** | **~50 unique endpoints** |
+| **Runners** | 24 | Registration, job lifecycle (request→accept→update→success/error/abort), file upload, admin ops |
+| **Plugins** | 13 | Discovery, settings read/write, install contract, auth error cases |
+| **Payments** | 14 | IOTA wallet lifecycle, payment intents, transaction history, error paths |
+| **Import-lifecycle** | 14 | Import create→get→list→cancel→retry lifecycle, auth error cases |
+| **ATProto** | 21 | All 17 ATProto social endpoints: actor resolution, follow graph, likes, comments, moderation labels, feed ingest |
+| **TOTAL** | **181+** | **18 passing collections covering all major API surfaces** |
 
 ---
 

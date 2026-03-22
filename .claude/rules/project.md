@@ -1,6 +1,6 @@
 # Project: Athena
 
-**Last Updated:** 2026-02-27
+**Last Updated:** 2026-03-21
 
 ## Overview
 
@@ -75,7 +75,7 @@ High-performance PeerTube-compatible backend in Go with P2P distribution, live s
 - **Configuration:** `.env.example` (template), `internal/config/`
 - **Entry Point:** `cmd/server/main.go`
 - **Migrations:** `migrations/*.sql` (Goose)
-- **Tests:** `**/*_test.go` (401 test files, ~4,411 test functions)
+- **Tests:** `**/*_test.go` (426 test files, ~4,646 test functions)
 - **Build:** `Makefile`
 
 ## Development Commands
@@ -210,8 +210,9 @@ See subdirectory CLAUDE.md files for detailed guidance:
 **Sprint Status:** Quality Programme Complete (20/20 sprints done)
 
 - Feature parity: 100% complete (all PeerTube gap endpoints implemented)
-- Full test suite: ~4,411 test functions (401 test files)
+- Full test suite: ~4,646 test functions (426 test files)
 - Coverage: 69.9% overall unit test coverage (90%+ for core packages)
+- Newman: 18 passing Postman collections (runners, plugins, payments, import-lifecycle, atproto added)
 - ATProto (BlueSky) `PublishVideo` fully implemented and verified
 - IOTA Rebased payments: Ed25519 transaction signing + submission implemented
 

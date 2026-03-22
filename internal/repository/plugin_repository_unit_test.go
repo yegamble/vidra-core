@@ -237,12 +237,14 @@ func TestPluginRepository_Unit_UpdateDeleteAndConfig(t *testing.T) {
 	mock.ExpectExec(regexp.QuoteMeta(`UPDATE plugins
 		SET version = $1, author = $2, description = $3, status = $4,
 		    config = $5, permissions = $6, hooks = $7,
-		    enabled_at = $8, disabled_at = $9, last_error = $10,
-		    updated_at = $11
-		WHERE id = $12`)).
+		    install_path = $8, checksum = $9,
+		    enabled_at = $10, disabled_at = $11, last_error = $12,
+		    updated_at = $13
+		WHERE id = $14`)).
 		WithArgs(
 			plugin.Version, plugin.Author, plugin.Description, plugin.Status,
 			sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(),
+			plugin.InstallPath, plugin.Checksum,
 			plugin.EnabledAt, plugin.DisabledAt, plugin.LastError, sqlmock.AnyArg(), plugin.ID,
 		).
 		WillReturnResult(sqlmock.NewResult(0, 1))
@@ -251,9 +253,10 @@ func TestPluginRepository_Unit_UpdateDeleteAndConfig(t *testing.T) {
 	mock.ExpectExec(regexp.QuoteMeta(`UPDATE plugins
 		SET version = $1, author = $2, description = $3, status = $4,
 		    config = $5, permissions = $6, hooks = $7,
-		    enabled_at = $8, disabled_at = $9, last_error = $10,
-		    updated_at = $11
-		WHERE id = $12`)).
+		    install_path = $8, checksum = $9,
+		    enabled_at = $10, disabled_at = $11, last_error = $12,
+		    updated_at = $13
+		WHERE id = $14`)).
 		WillReturnResult(sqlmock.NewResult(0, 0))
 	assert.ErrorIs(t, repo.Update(ctx, plugin), domain.ErrPluginNotFound)
 

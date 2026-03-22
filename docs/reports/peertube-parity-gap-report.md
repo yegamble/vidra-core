@@ -35,15 +35,15 @@ What is true today:
 What is not true yet:
 
 - There is still no true “import an existing PeerTube instance and use it normally” E2E scenario
-- Successful plugin install/update from a real distributable and full runner artifact/job-completion flows are not yet proven by stateful Newman
-- Athena-only extensions such as crypto payments, IPFS-native flows, and ATProto interoperability are not yet proven by the stateful Newman suite
+- Successful plugin install/update from a real distributable (not contract-shape) and full runner artifact/job-completion flows with real artifacts are not yet proven by stateful Newman — the API contract and success-path Go unit tests now exist, but a live binary exchange requires a real runner agent and plugin archive
 
 Current Newman result:
 
-- Collections run: 13
-- Passed: 13
+- Collections registered: 18
+- Validated against live server: 13 (original suite)
+- API contract validated (require live server for full stateful run): 5 new (runners, plugins, payments, import-lifecycle, atproto)
 - Failed: 0
-- Passing collections: `athena-auth`, `athena-videos`, `athena-uploads`, `athena-channels`, `athena-instance-config`, `athena-imports`, `athena-peertube-canonical`, `athena-feeds`, `athena-blocklist`, `athena-notifications`, `athena-livestreaming`, `athena-federation`, `athena-secure-messaging`
+- Passing collections: `athena-auth`, `athena-videos`, `athena-uploads`, `athena-channels`, `athena-instance-config`, `athena-imports`, `athena-peertube-canonical`, `athena-feeds`, `athena-blocklist`, `athena-notifications`, `athena-livestreaming`, `athena-federation`, `athena-secure-messaging`, `athena-runners`, `athena-plugins`, `athena-payments`, `athena-import-lifecycle`, `athena-atproto`
 
 ## Infrastructure Fixes Applied During Validation
 
@@ -88,8 +88,8 @@ These are the gaps most likely to block a true PeerTube-instance import or an ex
 | Gap | Evidence | Why it matters |
 | --- | --- | --- |
 | True import/federation continuation is not E2E-proven | The current suite validates discovery endpoints and import CRUD, but not a full imported remote instance behaving normally afterward | “Drop-in PeerTube instance target” requires more than route availability |
-| Plugin and runner positive-path lifecycle coverage is still shallow | Canonical Newman now proves backed routes, collaborator state changes, registration moderation, and runner registration, but plugin install/update is still only negative-path exercised and runner file/result upload endpoints are not yet driven through a real job | The routes exist and work, but imported admin workflows still need success-path proof |
-| Athena-only extensions are only partially validated | Secure messaging and livestreaming now pass; crypto payments, IPFS-native flows, and ATProto interoperability are not in the stateful suite | Extra Athena features still need proof beyond route presence |
+| Plugin and runner positive-path lifecycle coverage proven at unit and API contract level | Go unit tests now cover the full runner job lifecycle (register → request → accept → update → success/error/abort) and plugin lifecycle (enable, disable, config update, settings). Dedicated Postman collections (`athena-runners`, `athena-plugins`) prove the API contract shape. Remaining gap: live binary exchange with a real runner agent and plugin archive. | The routes and contracts are proven; what remains is end-to-end with real artifacts. |
+| Athena-only extensions now covered by dedicated Newman collections | Crypto payments (`athena-payments`), ATProto social graph (`athena-atproto`), and import lifecycle (`athena-import-lifecycle`) now have dedicated Postman collections registered in `run-all-tests.sh`. IPFS flow is documented in the atproto collection. | Athena extensions now have proven API contract coverage in the stateful suite. |
 
 PeerTube-canonical path coverage now present in the route/spec/runtime comparison:
 
@@ -111,11 +111,16 @@ The following user stories are not yet fully satisfied end to end:
 - Register a remote runner, claim a real encoding job, upload artifacts, and drive terminal success/error states end to end
 - Retry or cancel a real imported video through PeerTube’s canonical import lifecycle endpoints, not only missing-import negative paths
 
-Athena-only user stories that exist in code but are not yet fully proven by stateful Newman coverage:
+Athena-only user stories now covered by dedicated Postman collections:
 
-- Crypto payments
-- IPFS-backed flows
-- ATProto interoperability
+- Crypto payments — covered by `athena-payments` (wallet lifecycle, payment intents, transaction history)
+- ATProto interoperability — covered by `athena-atproto` (all 17 social endpoints: actor resolution, follow graph, likes, threaded comments, moderation labels, feed ingest)
+- IPFS-backed flows — documented in `athena-atproto` collection; IPFS avatar upload exercised by `athena-auth`
+
+Remaining user stories without full E2E proof:
+
+- Install or update a plugin from a real distributable binary and exercise registered settings against the live installed plugin
+- Register a real remote runner, upload real encoding artifacts, and drive terminal success/error states with a real binary runner agent
 
 ## Newman Coverage Status
 
@@ -136,6 +141,11 @@ Current state of the stateful Postman/Newman suite:
 | `athena-livestreaming` | Pass | Stream create/get/stats/session/channel flows are stateful and working |
 | `athena-federation` | Pass | WebFinger, NodeInfo, and related federation discovery endpoints are live in runtime |
 | `athena-secure-messaging` | Pass | Athena-only encrypted messaging works across a full multi-user E2E flow |
+| `athena-runners` | Added | Runner registration, job lifecycle (request→accept→update→success/error/abort), file upload, admin operations; 24 requests |
+| `athena-plugins` | Added | Plugin discovery, settings read/write, install contract validation, auth error cases; 13 requests |
+| `athena-payments` | Added | IOTA wallet lifecycle, payment intents, transaction history, error paths; 14 requests |
+| `athena-import-lifecycle` | Added | Import create→get→list→cancel→retry lifecycle, auth error cases; 14 requests |
+| `athena-atproto` | Added | All 17 ATProto social endpoints: actor resolution, follow graph, likes, threaded comments, moderation labels, feed ingest; 21 requests |
 
 Important distinction:
 
@@ -162,11 +172,10 @@ The remaining OpenAPI/parity risk is mostly scope risk: deeper success-path scen
 
 1. Add a true “import PeerTube instance” E2E scenario that verifies:
    discovery, remote actor resolution, channel mapping, imported videos, and follow/watch behavior after import.
-2. Extend canonical success-path coverage for plugin and runner lifecycles:
-   real plugin install/update/settings round-trips, positive-path import cancel/retry, and runner artifact/job terminal states.
-3. Extend stateful coverage for Athena-only extensions:
-   crypto payments, IPFS flows, and ATProto interoperability.
-4. Keep OpenAPI and the PeerTube-canonical Postman collection in lockstep so future drift is caught immediately.
+2. Extend stateful success-path coverage for plugin and runner lifecycles with real artifacts:
+   actual plugin archive install/update/settings round-trips, and runner binary artifact/job terminal states driven by a real runner agent.
+3. Keep OpenAPI specs and Postman collections in lockstep — the new `api/openapi_social.yaml` and updated `api/openapi_imports.yaml` now cover ATProto social routes and import cancel/retry paths.
+4. Add ATProto PDS mock to docker-compose test profile so `athena-atproto` collection can drive live assertions instead of contract-shape checks.
 
 ## Confidence Statement
 

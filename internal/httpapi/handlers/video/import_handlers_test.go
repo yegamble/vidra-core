@@ -680,3 +680,47 @@ func TestParsePagination(t *testing.T) {
 		})
 	}
 }
+
+// TestImportHandlers_ListImports_Empty verifies that a user with no imports receives a 200
+// with an empty imports slice (not null) and a total count of zero.
+func TestImportHandlers_ListImports_Empty(t *testing.T) {
+	mockService := new(MockImportService)
+	handlers := NewImportHandlers(mockService)
+
+	mockService.On("ListUserImports", mock.Anything, "user-empty", 20, 0).
+		Return([]*domain.VideoImport{}, 0, nil)
+
+	req := httptest.NewRequest("GET", "/api/v1/videos/imports", nil)
+	req = req.WithContext(context.WithValue(req.Context(), middleware.UserIDKey, "user-empty"))
+	w := httptest.NewRecorder()
+
+	handlers.ListImports(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	var resp ImportListResponse
+	err := json.NewDecoder(w.Body).Decode(&resp)
+	assert.NoError(t, err)
+	assert.Empty(t, resp.Imports)
+	assert.Equal(t, 0, resp.TotalCount)
+	mockService.AssertExpectations(t)
+}
+
+// TestImportHandlers_RetryImport_CancelledState verifies that retrying a cancelled import
+// returns 400 since only failed imports can be retried.
+func TestImportHandlers_RetryImport_CancelledState(t *testing.T) {
+	mockService := new(MockImportService)
+	handlers := NewImportHandlers(mockService)
+
+	mockService.On("RetryImport", mock.Anything, "import-cancelled", "user-123").
+		Return(fmt.Errorf("%w: cannot retry import in state cancelled", domain.ErrBadRequest))
+
+	req := httptest.NewRequest("POST", "/api/v1/videos/imports/import-cancelled/retry", nil)
+	req = req.WithContext(context.WithValue(req.Context(), middleware.UserIDKey, "user-123"))
+	req = withChiURLParam(req, "id", "import-cancelled")
+	w := httptest.NewRecorder()
+
+	handlers.RetryImport(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	mockService.AssertExpectations(t)
+}
