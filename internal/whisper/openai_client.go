@@ -42,80 +42,101 @@ func (c *openAIClient) GetProvider() domain.WhisperProvider {
 
 // Transcribe transcribes an audio file using OpenAI Whisper API
 func (c *openAIClient) Transcribe(ctx context.Context, audioPath string, targetLanguage *string) (*TranscriptionResult, error) {
-	// Check file size
+	if err := c.validateFileSize(audioPath); err != nil {
+		return nil, err
+	}
+
+	requestBody, contentType, err := c.buildOpenAIMultipartRequest(audioPath, targetLanguage)
+	if err != nil {
+		return nil, err
+	}
+
+	body, err := c.sendOpenAIRequest(ctx, requestBody, contentType)
+	if err != nil {
+		return nil, err
+	}
+
+	var apiResp OpenAIWhisperResponse
+	if err := json.Unmarshal(body, &apiResp); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	return convertOpenAIResponse(&apiResp), nil
+}
+
+// validateFileSize checks the audio file does not exceed OpenAI's size limit.
+func (c *openAIClient) validateFileSize(audioPath string) error {
 	fileInfo, err := os.Stat(audioPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to stat audio file: %w", err)
+		return fmt.Errorf("failed to stat audio file: %w", err)
 	}
-
 	if fileInfo.Size() > maxFileSize {
-		return nil, fmt.Errorf("audio file too large: %d bytes (max %d bytes)", fileInfo.Size(), maxFileSize)
+		return fmt.Errorf("audio file too large: %d bytes (max %d bytes)", fileInfo.Size(), maxFileSize)
 	}
+	return nil
+}
 
-	// Open audio file
+// buildOpenAIMultipartRequest creates the multipart form body for the OpenAI Whisper API.
+func (c *openAIClient) buildOpenAIMultipartRequest(audioPath string, targetLanguage *string) (*bytes.Buffer, string, error) {
 	audioFile, err := os.Open(audioPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to open audio file: %w", err)
+		return nil, "", fmt.Errorf("failed to open audio file: %w", err)
 	}
 	defer func() { _ = audioFile.Close() }()
 
-	// Create multipart form
 	var requestBody bytes.Buffer
 	writer := multipart.NewWriter(&requestBody)
 
-	// Add file field
 	part, err := writer.CreateFormFile("file", filepath.Base(audioPath))
 	if err != nil {
-		return nil, fmt.Errorf("failed to create form file: %w", err)
+		return nil, "", fmt.Errorf("failed to create form file: %w", err)
 	}
 
 	if _, err := io.Copy(part, audioFile); err != nil {
-		return nil, fmt.Errorf("failed to copy audio file: %w", err)
+		return nil, "", fmt.Errorf("failed to copy audio file: %w", err)
 	}
 
-	// Add model field (whisper-1 is the only model available)
 	if err := writer.WriteField("model", "whisper-1"); err != nil {
-		return nil, fmt.Errorf("failed to write model field: %w", err)
+		return nil, "", fmt.Errorf("failed to write model field: %w", err)
 	}
 
-	// Add response format (verbose_json gives us timestamps)
 	if err := writer.WriteField("response_format", "verbose_json"); err != nil {
-		return nil, fmt.Errorf("failed to write response_format field: %w", err)
+		return nil, "", fmt.Errorf("failed to write response_format field: %w", err)
 	}
 
-	// Add language hint if provided
 	if targetLanguage != nil && *targetLanguage != "" {
 		if err := writer.WriteField("language", *targetLanguage); err != nil {
-			return nil, fmt.Errorf("failed to write language field: %w", err)
+			return nil, "", fmt.Errorf("failed to write language field: %w", err)
 		}
 	}
 
-	// Add timestamp granularities for word-level timestamps
 	if err := writer.WriteField("timestamp_granularities[]", "segment"); err != nil {
-		return nil, fmt.Errorf("failed to write timestamp_granularities field: %w", err)
+		return nil, "", fmt.Errorf("failed to write timestamp_granularities field: %w", err)
 	}
 
 	if err := writer.Close(); err != nil {
-		return nil, fmt.Errorf("failed to close multipart writer: %w", err)
+		return nil, "", fmt.Errorf("failed to close multipart writer: %w", err)
 	}
 
-	// Create HTTP request
-	req, err := http.NewRequestWithContext(ctx, "POST", openAIWhisperURL, &requestBody)
+	return &requestBody, writer.FormDataContentType(), nil
+}
+
+// sendOpenAIRequest sends the multipart request to the OpenAI API and returns the response body.
+func (c *openAIClient) sendOpenAIRequest(ctx context.Context, requestBody *bytes.Buffer, contentType string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, "POST", openAIWhisperURL, requestBody)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
 	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.config.OpenAIAPIKey))
-	req.Header.Set("Content-Type", writer.FormDataContentType())
+	req.Header.Set("Content-Type", contentType)
 
-	// Send request
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to send request: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	// Read response
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response: %w", err)
@@ -125,13 +146,11 @@ func (c *openAIClient) Transcribe(ctx context.Context, audioPath string, targetL
 		return nil, fmt.Errorf("openai api error (status %d): %s", resp.StatusCode, string(body))
 	}
 
-	// Parse response
-	var apiResp OpenAIWhisperResponse
-	if err := json.Unmarshal(body, &apiResp); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
-	}
+	return body, nil
+}
 
-	// Convert to our format
+// convertOpenAIResponse converts an OpenAIWhisperResponse into a TranscriptionResult.
+func convertOpenAIResponse(apiResp *OpenAIWhisperResponse) *TranscriptionResult {
 	result := &TranscriptionResult{
 		Text:             apiResp.Text,
 		DetectedLanguage: apiResp.Language,
@@ -139,7 +158,6 @@ func (c *openAIClient) Transcribe(ctx context.Context, audioPath string, targetL
 		Segments:         make([]TranscriptionSegment, 0, len(apiResp.Segments)),
 	}
 
-	// Calculate average confidence
 	totalConfidence := 0.0
 	for i, segment := range apiResp.Segments {
 		result.Segments = append(result.Segments, TranscriptionSegment{
@@ -147,7 +165,7 @@ func (c *openAIClient) Transcribe(ctx context.Context, audioPath string, targetL
 			Start:      segment.Start,
 			End:        segment.End,
 			Text:       strings.TrimSpace(segment.Text),
-			Confidence: segment.AvgLogprob, // OpenAI uses log probability
+			Confidence: segment.AvgLogprob,
 		})
 		totalConfidence += segment.AvgLogprob
 	}
@@ -156,7 +174,7 @@ func (c *openAIClient) Transcribe(ctx context.Context, audioPath string, targetL
 		result.Confidence = totalConfidence / float64(len(apiResp.Segments))
 	}
 
-	return result, nil
+	return result
 }
 
 // ExtractAudioFromVideo extracts audio track from video using FFmpeg

@@ -33,11 +33,13 @@ func CORS(allowedOrigins, allowedMethods, allowedHeaders string) func(http.Handl
 			origin := r.Header.Get("Origin")
 
 			if origin != "" && (allowAll || allowed[origin]) {
-				if allowed[origin] {
+				if allowAll {
+					// Wildcard mode: never reflect origin, never send credentials
+					w.Header().Set("Access-Control-Allow-Origin", "*")
+				} else {
+					// Explicit origin match: reflect origin and allow credentials
 					w.Header().Set("Access-Control-Allow-Origin", origin)
 					w.Header().Set("Access-Control-Allow-Credentials", "true")
-				} else {
-					w.Header().Set("Access-Control-Allow-Origin", "*")
 				}
 
 				w.Header().Set("Access-Control-Allow-Methods", methodsValue)

@@ -172,6 +172,19 @@ func (r *IOTARepository) GetExpiredPaymentIntents(ctx context.Context) ([]*domai
 	return intents, nil
 }
 
+func (r *IOTARepository) BatchExpirePaymentIntents(ctx context.Context) (int64, error) {
+	query := `
+		UPDATE iota_payment_intents
+		SET status = 'expired', updated_at = NOW()
+		WHERE status = 'pending' AND expires_at <= NOW()
+	`
+	result, err := r.db.ExecContext(ctx, query)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 func (r *IOTARepository) CreateTransaction(ctx context.Context, tx *domain.IOTATransaction) error {
 	var metadata any
 	if len(tx.Metadata) > 0 {

@@ -261,6 +261,159 @@ func TestParseMagnetURI(t *testing.T) {
 	})
 }
 
+// TestParseMagnetURITableDriven tests magnet URI parsing with table-driven cases
+func TestParseMagnetURITableDriven(t *testing.T) {
+	tests := []struct {
+		name            string
+		magnetURI       string
+		wantInfoHash    string
+		wantTrackerLen  int
+		wantErr         bool
+		wantErrContains string
+	}{
+		{
+			name:           "valid URI with single tracker",
+			magnetURI:      "magnet:?xt=urn:btih:aabbccddee11223344556677889900aabbccddee&tr=wss://tracker.example.com",
+			wantInfoHash:   "aabbccddee11223344556677889900aabbccddee",
+			wantTrackerLen: 1,
+			wantErr:        false,
+		},
+		{
+			name:           "valid URI with multiple trackers",
+			magnetURI:      "magnet:?xt=urn:btih:aabbccddee11223344556677889900aabbccddee&tr=wss://t1.com&tr=wss://t2.com&tr=wss://t3.com",
+			wantInfoHash:   "aabbccddee11223344556677889900aabbccddee",
+			wantTrackerLen: 3,
+			wantErr:        false,
+		},
+		{
+			name:           "valid URI with no trackers",
+			magnetURI:      "magnet:?xt=urn:btih:aabbccddee11223344556677889900aabbccddee",
+			wantInfoHash:   "aabbccddee11223344556677889900aabbccddee",
+			wantTrackerLen: 0,
+			wantErr:        false,
+		},
+		{
+			name:           "valid URI with extra parameters ignored",
+			magnetURI:      "magnet:?xt=urn:btih:aabbccddee11223344556677889900aabbccddee&dn=MyVideo.mp4&xl=1234567",
+			wantInfoHash:   "aabbccddee11223344556677889900aabbccddee",
+			wantTrackerLen: 0,
+			wantErr:        false,
+		},
+		{
+			name:            "empty string",
+			magnetURI:       "",
+			wantErr:         true,
+			wantErrContains: "invalid magnet URI format",
+		},
+		{
+			name:            "random text",
+			magnetURI:       "hello world",
+			wantErr:         true,
+			wantErrContains: "invalid magnet URI format",
+		},
+		{
+			name:            "http URL instead of magnet",
+			magnetURI:       "https://example.com/torrent",
+			wantErr:         true,
+			wantErrContains: "invalid magnet URI format",
+		},
+		{
+			name:            "magnet prefix but missing question mark",
+			magnetURI:       "magnet:xt=urn:btih:aabbccddee11223344556677889900aabbccddee",
+			wantErr:         true,
+			wantErrContains: "invalid magnet URI format",
+		},
+		{
+			name:            "magnet with empty xt value",
+			magnetURI:       "magnet:?xt=urn:btih:",
+			wantErr:         true,
+			wantErrContains: "no info hash found",
+		},
+		{
+			name:            "magnet with no xt parameter",
+			magnetURI:       "magnet:?dn=test.mp4&tr=wss://tracker.com",
+			wantErr:         true,
+			wantErrContains: "no info hash found",
+		},
+		{
+			name:            "magnet with short invalid info hash",
+			magnetURI:       "magnet:?xt=urn:btih:abc123",
+			wantErr:         true,
+			wantErrContains: "invalid info hash",
+		},
+		{
+			name:            "magnet with non-hex characters in info hash",
+			magnetURI:       "magnet:?xt=urn:btih:zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz",
+			wantErr:         true,
+			wantErrContains: "invalid info hash",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			infoHash, trackers, err := ParseMagnetURI(tt.magnetURI)
+
+			if tt.wantErr {
+				require.Error(t, err)
+				if tt.wantErrContains != "" {
+					assert.Contains(t, err.Error(), tt.wantErrContains)
+				}
+				return
+			}
+
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantInfoHash, infoHash)
+			assert.Len(t, trackers, tt.wantTrackerLen)
+		})
+	}
+}
+
+// TestDefaultGeneratorConfigValues verifies all default values returned by DefaultGeneratorConfig
+func TestDefaultGeneratorConfigValues(t *testing.T) {
+	config := DefaultGeneratorConfig()
+
+	require.NotNil(t, config)
+
+	t.Run("piece length is 256KB", func(t *testing.T) {
+		assert.Equal(t, int64(262144), config.PieceLength)
+	})
+
+	t.Run("created by is Athena", func(t *testing.T) {
+		assert.Equal(t, "Athena/1.0", config.CreatedBy)
+	})
+
+	t.Run("not private by default", func(t *testing.T) {
+		assert.False(t, config.Private)
+	})
+
+	t.Run("has three WebTorrent trackers", func(t *testing.T) {
+		assert.Len(t, config.Trackers, 3)
+		assert.Equal(t, "wss://tracker.openwebtorrent.com", config.Trackers[0])
+		assert.Equal(t, "wss://tracker.btorrent.xyz", config.Trackers[1])
+		assert.Equal(t, "wss://tracker.fastcast.nz", config.Trackers[2])
+	})
+
+	t.Run("no web seeds by default", func(t *testing.T) {
+		assert.Empty(t, config.WebSeeds)
+	})
+
+	t.Run("empty comment by default", func(t *testing.T) {
+		assert.Empty(t, config.Comment)
+	})
+
+	t.Run("empty base URL by default", func(t *testing.T) {
+		assert.Empty(t, config.BaseURL)
+	})
+
+	t.Run("returns new instance each call", func(t *testing.T) {
+		config2 := DefaultGeneratorConfig()
+		assert.NotSame(t, config, config2)
+		// Mutating one should not affect the other
+		config.PieceLength = 999
+		assert.Equal(t, int64(262144), config2.PieceLength)
+	})
+}
+
 // TestValidateTorrent tests torrent file validation
 func TestValidateTorrent(t *testing.T) {
 	// Create a valid torrent for testing

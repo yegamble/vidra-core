@@ -187,20 +187,41 @@ func (s *backpressureService) RecordMetrics(ctx context.Context, instance string
 	now := time.Now()
 	bp.lastMeasurement = now
 
-	// Update current metrics
+	s.updateCurrentMetrics(bp, metrics)
+	s.pruneAndAverageMeasurements(bp, now)
+
+	shouldThrottle, throttleFactor := s.calculateThrottleState(bp)
+	s.applyThrottleTransition(ctx, bp, instance, now, shouldThrottle, throttleFactor)
+
+	// Persist state if hardening is available
+	if s.hardening != nil {
+		s.persistBackpressureState(ctx, bp)
+	}
+
+	return nil
+}
+
+// updateCurrentMetrics applies incoming metrics and tracks consecutive errors.
+func (s *backpressureService) updateCurrentMetrics(bp *instanceBackpressure, metrics BackpressureMetrics) {
 	bp.queueDepth = metrics.QueueDepth
 	bp.processingRate = metrics.ProcessingRate
 	bp.errorRate = metrics.ErrorRate
 
-	// Track consecutive errors
 	if metrics.ErrorRate > s.config.ErrorRateThreshold {
 		bp.consecutiveErrors++
 	} else {
 		bp.consecutiveErrors = 0
 	}
+}
 
-	// Add to measurement window
-	bp.measurements = append(bp.measurements, metrics)
+// pruneAndAverageMeasurements adds the current timestamp, removes expired entries,
+// and recalculates windowed averages for error rate and processing rate.
+func (s *backpressureService) pruneAndAverageMeasurements(bp *instanceBackpressure, now time.Time) {
+	bp.measurements = append(bp.measurements, BackpressureMetrics{
+		QueueDepth:     bp.queueDepth,
+		ProcessingRate: bp.processingRate,
+		ErrorRate:      bp.errorRate,
+	})
 	bp.measurementWindow = append(bp.measurementWindow, now)
 
 	// Clean old measurements
@@ -228,10 +249,10 @@ func (s *backpressureService) RecordMetrics(ctx context.Context, instance string
 		bp.errorRate = totalErrorRate / float64(len(bp.measurements))
 		bp.processingRate = totalProcessingRate / float64(len(bp.measurements))
 	}
+}
 
-	// Determine if throttling state should change
-	shouldThrottle, throttleFactor := s.calculateThrottleState(bp)
-
+// applyThrottleTransition transitions the instance between throttled and recovered states.
+func (s *backpressureService) applyThrottleTransition(ctx context.Context, bp *instanceBackpressure, instance string, now time.Time, shouldThrottle bool, throttleFactor float64) {
 	if shouldThrottle && !bp.isThrottled {
 		// Start throttling
 		bp.isThrottled = true
@@ -240,7 +261,6 @@ func (s *backpressureService) RecordMetrics(ctx context.Context, instance string
 		bp.recoverAt = &recoverTime
 		bp.throttleFactor = throttleFactor
 
-		// Record metric
 		if s.hardening != nil {
 			metadata, _ := json.Marshal(map[string]interface{}{
 				"queue_depth":        bp.queueDepth,
@@ -263,7 +283,6 @@ func (s *backpressureService) RecordMetrics(ctx context.Context, instance string
 		bp.throttleFactor = 1.0
 		bp.consecutiveErrors = 0
 
-		// Record metric
 		if s.hardening != nil {
 			_ = s.hardening.RecordMetric(ctx, &domain.FederationMetric{
 				MetricType:     "backpressure_recovered",
@@ -276,13 +295,6 @@ func (s *backpressureService) RecordMetrics(ctx context.Context, instance string
 		// Update throttle factor if still throttled
 		bp.throttleFactor = throttleFactor
 	}
-
-	// Persist state if hardening is available
-	if s.hardening != nil {
-		s.persistBackpressureState(ctx, bp)
-	}
-
-	return nil
 }
 
 // getOrCreateInstance gets or creates backpressure tracking for an instance

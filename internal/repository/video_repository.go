@@ -76,9 +76,8 @@ func scanVideoRow(rows *sql.Rows) (*domain.Video, error) {
 	return &v, nil
 }
 
-func (r *videoRepository) Create(ctx context.Context, v *domain.Video) error {
-	exec := GetExecutor(ctx, r.db)
-
+// applyCreateDefaults sets default values on a video before insertion.
+func applyCreateDefaults(v *domain.Video) {
 	now := time.Now()
 	if strings.TrimSpace(v.ID) == "" {
 		v.ID = uuid.NewString()
@@ -110,12 +109,24 @@ func (r *videoRepository) Create(ctx context.Context, v *domain.Video) error {
 	if v.Tags == nil {
 		v.Tags = []string{}
 	}
+}
 
-	r.ensureSchemaChecked(ctx)
+// buildInsertQuery returns the INSERT SQL and args for a video, adapting to
+// whether the schema has a channel_id column.
+func buildInsertQuery(v *domain.Video, hasChannelID bool) (string, []interface{}) {
+	processedCIDsJSON, _ := json.Marshal(v.ProcessedCIDs)
+	metadataJSON, _ := json.Marshal(v.Metadata)
+	outputPathsJSON, _ := json.Marshal(v.OutputPaths)
 
-	var query string
-	if r.hasChannelID {
-		query = `
+	if hasChannelID {
+		var channelIDParam interface{}
+		if v.ChannelID == uuid.Nil {
+			channelIDParam = nil
+		} else {
+			channelIDParam = v.ChannelID
+		}
+
+		query := `
         INSERT INTO videos (
             id, thumbnail_id, title, description, duration, views,
             privacy, status, upload_date, user_id,
@@ -135,8 +146,20 @@ func (r *videoRepository) Create(ctx context.Context, v *domain.Video) error {
             $21, $22,
             $23, $24, $25
         )`
-	} else {
-		query = `
+
+		args := []interface{}{
+			v.ID, v.ThumbnailID, v.Title, v.Description, v.Duration, v.Views,
+			v.Privacy, v.Status, v.UploadDate, v.UserID,
+			channelIDParam,
+			v.OriginalCID, processedCIDsJSON, v.ThumbnailCID,
+			pq.Array(v.Tags), v.CategoryID, v.Language, v.FileSize, v.MimeType, metadataJSON,
+			v.CreatedAt, v.UpdatedAt,
+			outputPathsJSON, v.ThumbnailPath, v.PreviewPath,
+		}
+		return query, args
+	}
+
+	query := `
         INSERT INTO videos (
             id, thumbnail_id, title, description, duration, views,
             privacy, status, upload_date, user_id,
@@ -152,52 +175,37 @@ func (r *videoRepository) Create(ctx context.Context, v *domain.Video) error {
             $20, $21,
             $22, $23, $24
         )`
-	}
 
-	processedCIDsJSON, _ := json.Marshal(v.ProcessedCIDs)
-	metadataJSON, _ := json.Marshal(v.Metadata)
-	outputPathsJSON, _ := json.Marshal(v.OutputPaths)
-
-	var channelIDParam interface{}
-	if v.ChannelID == uuid.Nil {
-		channelIDParam = nil
-	} else {
-		channelIDParam = v.ChannelID
+	args := []interface{}{
+		v.ID, v.ThumbnailID, v.Title, v.Description, v.Duration, v.Views,
+		v.Privacy, v.Status, v.UploadDate, v.UserID,
+		v.OriginalCID, processedCIDsJSON, v.ThumbnailCID,
+		pq.Array(v.Tags), v.CategoryID, v.Language, v.FileSize, v.MimeType, metadataJSON,
+		v.CreatedAt, v.UpdatedAt,
+		outputPathsJSON, v.ThumbnailPath, v.PreviewPath,
 	}
+	return query, args
+}
 
-	var err error
-	if r.hasChannelID {
-		_, err = exec.ExecContext(ctx, query,
-			v.ID, v.ThumbnailID, v.Title, v.Description, v.Duration, v.Views,
-			v.Privacy, v.Status, v.UploadDate, v.UserID,
-			channelIDParam,
-			v.OriginalCID, processedCIDsJSON, v.ThumbnailCID,
-			pq.Array(v.Tags), v.CategoryID, v.Language, v.FileSize, v.MimeType, metadataJSON,
-			v.CreatedAt, v.UpdatedAt,
-			outputPathsJSON, v.ThumbnailPath, v.PreviewPath,
-		)
-	} else {
-		_, err = exec.ExecContext(ctx, query,
-			v.ID, v.ThumbnailID, v.Title, v.Description, v.Duration, v.Views,
-			v.Privacy, v.Status, v.UploadDate, v.UserID,
-			v.OriginalCID, processedCIDsJSON, v.ThumbnailCID,
-			pq.Array(v.Tags), v.CategoryID, v.Language, v.FileSize, v.MimeType, metadataJSON,
-			v.CreatedAt, v.UpdatedAt,
-			outputPathsJSON, v.ThumbnailPath, v.PreviewPath,
-		)
-	}
-	if err != nil {
+func (r *videoRepository) Create(ctx context.Context, v *domain.Video) error {
+	exec := GetExecutor(ctx, r.db)
+
+	applyCreateDefaults(v)
+	r.ensureSchemaChecked(ctx)
+
+	query, args := buildInsertQuery(v, r.hasChannelID)
+
+	if _, err := exec.ExecContext(ctx, query, args...); err != nil {
 		return domain.NewDomainError("CREATE_FAILED", fmt.Sprintf("Failed to create video: %v", err))
 	}
 	return nil
 }
 
-func (r *videoRepository) GetByID(ctx context.Context, id string) (*domain.Video, error) {
-	r.ensureSchemaChecked(ctx)
-
-	var query string
-	if r.hasChannelID {
-		query = `
+// buildGetByIDQuery returns the SELECT SQL for fetching a video by ID,
+// adapting to whether the schema includes S3 storage columns.
+func buildGetByIDQuery(hasChannelID bool) string {
+	if hasChannelID {
+		return `
         SELECT v.id, v.thumbnail_id, v.title, v.description, v.duration, v.views,
                v.privacy, v.status, v.upload_date, v.user_id, v.channel_id,
                v.original_cid, v.processed_cids, v.thumbnail_cid,
@@ -211,8 +219,9 @@ func (r *videoRepository) GetByID(ctx context.Context, id string) (*domain.Video
         FROM videos v
         LEFT JOIN video_categories c ON v.category_id = c.id
         WHERE v.id = $1`
-	} else {
-		query = `
+	}
+
+	return `
         SELECT v.id, v.thumbnail_id, v.title, v.description, v.duration, v.views,
                v.privacy, v.status, v.upload_date, v.user_id, v.channel_id,
                v.original_cid, v.processed_cids, v.thumbnail_cid,
@@ -222,12 +231,77 @@ func (r *videoRepository) GetByID(ctx context.Context, id string) (*domain.Video
         FROM videos v
         LEFT JOIN video_categories c ON v.category_id = c.id
         WHERE v.id = $1`
+}
+
+// classifyGetByIDError maps a query error to the appropriate domain error.
+func classifyGetByIDError(err error) error {
+	if err == sql.ErrNoRows {
+		return domain.ErrNotFound
 	}
+	errStr := err.Error()
+	if strings.Contains(errStr, "invalid input syntax for type uuid") ||
+		strings.Contains(errStr, "invalid UUID") {
+		return domain.ErrNotFound
+	}
+	return domain.NewDomainError("GET_FAILED", "Failed to get video")
+}
+
+// unmarshalVideoJSON deserializes JSON columns and nullable fields into the video struct.
+func unmarshalVideoJSON(v *domain.Video, processedCIDsJSON, metadataJSON, outputPathsJSON, s3URLsJSON []byte, tags pq.StringArray, thumbnailPath, previewPath sql.NullString) {
+	if len(processedCIDsJSON) > 0 {
+		_ = json.Unmarshal(processedCIDsJSON, &v.ProcessedCIDs)
+	}
+	if len(metadataJSON) > 0 {
+		_ = json.Unmarshal(metadataJSON, &v.Metadata)
+	}
+	if len(outputPathsJSON) > 0 {
+		_ = json.Unmarshal(outputPathsJSON, &v.OutputPaths)
+	}
+	if len(s3URLsJSON) > 0 {
+		_ = json.Unmarshal(s3URLsJSON, &v.S3URLs)
+	}
+	v.Tags = []string(tags)
+	if thumbnailPath.Valid {
+		v.ThumbnailPath = thumbnailPath.String
+	}
+	if previewPath.Valid {
+		v.PreviewPath = previewPath.String
+	}
+}
+
+// populateVideoCategory builds a VideoCategory from nullable scan results
+// and attaches it to the video when a category is present.
+func populateVideoCategory(v *domain.Video, categoryName, categorySlug, categoryDesc, categoryIcon, categoryColor sql.NullString, categoryOrder sql.NullInt64, categoryActive sql.NullBool) {
+	if v.CategoryID == nil {
+		return
+	}
+	cat := domain.VideoCategory{
+		ID:           *v.CategoryID,
+		Name:         categoryName.String,
+		Slug:         categorySlug.String,
+		DisplayOrder: int(categoryOrder.Int64),
+		IsActive:     categoryActive.Bool,
+	}
+	if categoryDesc.Valid {
+		cat.Description = &categoryDesc.String
+	}
+	if categoryIcon.Valid {
+		cat.Icon = &categoryIcon.String
+	}
+	if categoryColor.Valid {
+		cat.Color = &categoryColor.String
+	}
+	v.Category = &cat
+}
+
+func (r *videoRepository) GetByID(ctx context.Context, id string) (*domain.Video, error) {
+	r.ensureSchemaChecked(ctx)
+
+	query := buildGetByIDQuery(r.hasChannelID)
 
 	var v domain.Video
 	var processedCIDsJSON, metadataJSON, outputPathsJSON, s3URLsJSON []byte
 	var tags pq.StringArray
-	var category domain.VideoCategory
 	var categoryName, categorySlug sql.NullString
 	var categoryDesc, categoryIcon, categoryColor sql.NullString
 	var categoryOrder sql.NullInt64
@@ -259,55 +333,11 @@ func (r *videoRepository) GetByID(ctx context.Context, id string) (*domain.Video
 	}
 
 	if err != nil {
-		if err == sql.ErrNoRows {
-			return nil, domain.ErrNotFound
-		}
-		errStr := err.Error()
-		if strings.Contains(errStr, "invalid input syntax for type uuid") ||
-			strings.Contains(errStr, "invalid UUID") {
-			return nil, domain.ErrNotFound
-		}
-		return nil, domain.NewDomainError("GET_FAILED", "Failed to get video")
+		return nil, classifyGetByIDError(err)
 	}
 
-	if len(processedCIDsJSON) > 0 {
-		_ = json.Unmarshal(processedCIDsJSON, &v.ProcessedCIDs)
-	}
-	if len(metadataJSON) > 0 {
-		_ = json.Unmarshal(metadataJSON, &v.Metadata)
-	}
-	if len(outputPathsJSON) > 0 {
-		_ = json.Unmarshal(outputPathsJSON, &v.OutputPaths)
-	}
-	if len(s3URLsJSON) > 0 {
-		_ = json.Unmarshal(s3URLsJSON, &v.S3URLs)
-	}
-	v.Tags = []string(tags)
-
-	if thumbnailPath.Valid {
-		v.ThumbnailPath = thumbnailPath.String
-	}
-	if previewPath.Valid {
-		v.PreviewPath = previewPath.String
-	}
-
-	if v.CategoryID != nil {
-		category.ID = *v.CategoryID
-		category.Name = categoryName.String
-		category.Slug = categorySlug.String
-		if categoryDesc.Valid {
-			category.Description = &categoryDesc.String
-		}
-		if categoryIcon.Valid {
-			category.Icon = &categoryIcon.String
-		}
-		if categoryColor.Valid {
-			category.Color = &categoryColor.String
-		}
-		category.DisplayOrder = int(categoryOrder.Int64)
-		category.IsActive = categoryActive.Bool
-		v.Category = &category
-	}
+	unmarshalVideoJSON(&v, processedCIDsJSON, metadataJSON, outputPathsJSON, s3URLsJSON, tags, thumbnailPath, previewPath)
+	populateVideoCategory(&v, categoryName, categorySlug, categoryDesc, categoryIcon, categoryColor, categoryOrder, categoryActive)
 
 	return &v, nil
 }

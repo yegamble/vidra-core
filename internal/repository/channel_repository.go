@@ -110,9 +110,9 @@ func (r *ChannelRepository) GetByHandle(ctx context.Context, handle string) (*do
 	return &channel, nil
 }
 
-// List retrieves a paginated list of channels
-func (r *ChannelRepository) List(ctx context.Context, params domain.ChannelListParams) (*domain.ChannelListResponse, error) {
-	// Build WHERE clause
+// buildChannelWhereClause constructs the WHERE clause and positional args
+// from the list parameters.
+func buildChannelWhereClause(params domain.ChannelListParams) (string, []interface{}, int) {
 	whereClauses := []string{"1=1"}
 	args := []interface{}{}
 	argCount := 0
@@ -132,30 +132,34 @@ func (r *ChannelRepository) List(ctx context.Context, params domain.ChannelListP
 	if params.Search != "" {
 		argCount++
 		whereClauses = append(whereClauses, fmt.Sprintf("(c.handle ILIKE $%d OR c.display_name ILIKE $%d OR c.description ILIKE $%d)", argCount, argCount, argCount))
-		searchTerm := "%" + params.Search + "%"
-		args = append(args, searchTerm)
+		args = append(args, "%"+params.Search+"%")
 	}
 
-	whereClause := strings.Join(whereClauses, " AND ")
+	return strings.Join(whereClauses, " AND "), args, argCount
+}
 
-	// Build ORDER BY clause
-	orderBy := "c.created_at DESC" // default
-	switch params.Sort {
+// channelSortOrder maps a sort parameter to an ORDER BY expression.
+func channelSortOrder(sort string) string {
+	switch sort {
 	case "name":
-		orderBy = "c.display_name ASC"
+		return "c.display_name ASC"
 	case "-name":
-		orderBy = "c.display_name DESC"
+		return "c.display_name DESC"
 	case "createdAt":
-		orderBy = "c.created_at ASC"
+		return "c.created_at ASC"
 	case "-createdAt":
-		orderBy = "c.created_at DESC"
+		return "c.created_at DESC"
 	case "videosCount":
-		orderBy = "c.videos_count ASC"
+		return "c.videos_count ASC"
 	case "-videosCount":
-		orderBy = "c.videos_count DESC"
+		return "c.videos_count DESC"
+	default:
+		return "c.created_at DESC"
 	}
+}
 
-	// Set pagination defaults
+// normalizePagination clamps page/pageSize to valid defaults.
+func normalizePagination(params *domain.ChannelListParams) {
 	if params.Page <= 0 {
 		params.Page = 1
 	}
@@ -165,14 +169,48 @@ func (r *ChannelRepository) List(ctx context.Context, params domain.ChannelListP
 	if params.PageSize > 100 {
 		params.PageSize = 100
 	}
+}
+
+// bulkLoadChannelAccounts fetches user records for the given channels and
+// attaches them in-place.
+func (r *ChannelRepository) bulkLoadChannelAccounts(ctx context.Context, channels []domain.Channel) {
+	if len(channels) == 0 {
+		return
+	}
+
+	accountIDs := make([]string, len(channels))
+	for i, ch := range channels {
+		accountIDs[i] = ch.AccountID.String()
+	}
+
+	var users []domain.User
+	bulkQuery := `
+		SELECT id, username, email, display_name, bio, created_at, updated_at
+		FROM users
+		WHERE id = ANY($1::uuid[])`
+	if err := r.db.SelectContext(ctx, &users, bulkQuery, pq.Array(accountIDs)); err == nil {
+		userMap := make(map[string]*domain.User, len(users))
+		for i := range users {
+			userMap[users[i].ID] = &users[i]
+		}
+		for i := range channels {
+			channels[i].Account = userMap[channels[i].AccountID.String()]
+		}
+	}
+}
+
+// List retrieves a paginated list of channels
+func (r *ChannelRepository) List(ctx context.Context, params domain.ChannelListParams) (*domain.ChannelListResponse, error) {
+	whereClause, args, argCount := buildChannelWhereClause(params)
+	orderBy := channelSortOrder(params.Sort)
+	normalizePagination(&params)
 
 	offset := (params.Page - 1) * params.PageSize
 
 	// Get total count
 	countQuery := fmt.Sprintf(`SELECT COUNT(*) FROM channels c WHERE %s`, whereClause)
 	var total int
-	err := r.db.GetContext(ctx, &total, countQuery, args...)
-	if err != nil {
+	if err := r.db.GetContext(ctx, &total, countQuery, args...); err != nil {
 		return nil, fmt.Errorf("failed to count channels: %w", err)
 	}
 
@@ -195,33 +233,11 @@ func (r *ChannelRepository) List(ctx context.Context, params domain.ChannelListP
         LIMIT $%d OFFSET $%d`, whereClause, orderBy, argCount-1, argCount)
 
 	var channels []domain.Channel
-	err = r.db.SelectContext(ctx, &channels, query, args...)
-	if err != nil {
+	if err := r.db.SelectContext(ctx, &channels, query, args...); err != nil {
 		return nil, fmt.Errorf("failed to list channels: %w", err)
 	}
 
-	// Bulk-load account information for all channels in a single query
-	if len(channels) > 0 {
-		accountIDs := make([]string, len(channels))
-		for i, ch := range channels {
-			accountIDs[i] = ch.AccountID.String()
-		}
-
-		var users []domain.User
-		bulkQuery := `
-			SELECT id, username, email, display_name, bio, created_at, updated_at
-			FROM users
-			WHERE id = ANY($1::uuid[])`
-		if err := r.db.SelectContext(ctx, &users, bulkQuery, pq.Array(accountIDs)); err == nil {
-			userMap := make(map[string]*domain.User, len(users))
-			for i := range users {
-				userMap[users[i].ID] = &users[i]
-			}
-			for i := range channels {
-				channels[i].Account = userMap[channels[i].AccountID.String()]
-			}
-		}
-	}
+	r.bulkLoadChannelAccounts(ctx, channels)
 
 	return &domain.ChannelListResponse{
 		Total:    total,

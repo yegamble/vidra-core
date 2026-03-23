@@ -157,62 +157,81 @@ func (w *Wizard) HandleTestRedis(rw http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	dialer := &net.Dialer{}
-	conn, err := dialer.DialContext(ctx, "tcp", net.JoinHostPort(req.Host, strconv.Itoa(req.Port)))
+	conn, err := dialRedis(ctx, req.Host, req.Port)
 	if err != nil {
-		respondTestConnectionError(rw, fmt.Sprintf("Connection failed: %s", err.Error()))
+		respondTestConnectionError(rw, err.Error())
 		return
 	}
 	defer conn.Close()
 
-	// Set read/write deadline to prevent holding the mutex indefinitely
-	if err := conn.SetDeadline(time.Now().Add(5 * time.Second)); err != nil {
-		respondTestConnectionError(rw, fmt.Sprintf("Failed to set deadline: %s", err.Error()))
-		return
-	}
-
 	reader := bufio.NewReader(conn)
 
-	// Send AUTH command if password is provided
 	if req.Password != "" {
-		authCmd := fmt.Sprintf("*2\r\n$4\r\nAUTH\r\n$%d\r\n%s\r\n", len(req.Password), req.Password)
-		if _, err := conn.Write([]byte(authCmd)); err != nil {
-			respondTestConnectionError(rw, fmt.Sprintf("Failed to send AUTH: %s", err.Error()))
-			return
-		}
-
-		authResp, err := reader.ReadString('\n')
-		if err != nil {
-			respondTestConnectionError(rw, fmt.Sprintf("Failed to read AUTH response: %s", err.Error()))
-			return
-		}
-
-		if authResp != "+OK\r\n" {
-			respondTestConnectionError(rw, "Redis authentication failed: invalid password")
+		if err := sendRedisAuth(conn, reader, req.Password); err != nil {
+			respondTestConnectionError(rw, err.Error())
 			return
 		}
 	}
 
-	// Send PING command
-	if _, err := conn.Write([]byte("*1\r\n$4\r\nPING\r\n")); err != nil {
-		respondTestConnectionError(rw, fmt.Sprintf("Failed to send PING: %s", err.Error()))
-		return
-	}
-
-	// Read response
-	response, err := reader.ReadString('\n')
-	if err != nil {
-		respondTestConnectionError(rw, fmt.Sprintf("Failed to read response: %s", err.Error()))
-		return
-	}
-
-	// Expect +PONG\r\n
-	if response != "+PONG\r\n" {
-		respondTestConnectionError(rw, fmt.Sprintf("Unexpected response: %s", response))
+	if err := sendRedisPing(conn, reader); err != nil {
+		respondTestConnectionError(rw, err.Error())
 		return
 	}
 
 	respondTestConnectionSuccess(rw, "Redis connection successful")
+}
+
+// dialRedis establishes a TCP connection to Redis and sets a read/write deadline.
+func dialRedis(ctx context.Context, host string, port int) (net.Conn, error) {
+	dialer := &net.Dialer{}
+	conn, err := dialer.DialContext(ctx, "tcp", net.JoinHostPort(host, strconv.Itoa(port)))
+	if err != nil {
+		return nil, fmt.Errorf("Connection failed: %s", err.Error())
+	}
+
+	if err := conn.SetDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("Failed to set deadline: %s", err.Error())
+	}
+
+	return conn, nil
+}
+
+// sendRedisAuth sends the AUTH command and validates the response.
+func sendRedisAuth(conn net.Conn, reader *bufio.Reader, password string) error {
+	authCmd := fmt.Sprintf("*2\r\n$4\r\nAUTH\r\n$%d\r\n%s\r\n", len(password), password)
+	if _, err := conn.Write([]byte(authCmd)); err != nil {
+		return fmt.Errorf("Failed to send AUTH: %s", err.Error())
+	}
+
+	authResp, err := reader.ReadString('\n')
+	if err != nil {
+		return fmt.Errorf("Failed to read AUTH response: %s", err.Error())
+	}
+
+	if authResp != "+OK\r\n" {
+		return fmt.Errorf("Redis authentication failed: invalid password")
+	}
+
+	return nil
+}
+
+// sendRedisPing sends the PING command and validates the PONG response.
+func sendRedisPing(conn net.Conn, reader *bufio.Reader) error {
+	if _, err := conn.Write([]byte("*1\r\n$4\r\nPING\r\n")); err != nil {
+		return fmt.Errorf("Failed to send PING: %s", err.Error())
+	}
+
+	response, err := reader.ReadString('\n')
+	if err != nil {
+		return fmt.Errorf("Failed to read response: %s", err.Error())
+	}
+
+	if response != "+PONG\r\n" {
+		return fmt.Errorf("Unexpected response: %s", response)
+	}
+
+	return nil
 }
 
 // HandleTestIPFS tests IPFS connection

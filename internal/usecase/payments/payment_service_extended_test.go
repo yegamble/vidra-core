@@ -297,35 +297,30 @@ func TestPaymentService_DetectPayment_UpdateStatusError(t *testing.T) {
 	assert.Contains(t, err.Error(), "failed to update payment intent")
 }
 
-func TestPaymentService_ExpirePaymentIntents_GetError(t *testing.T) {
+func TestPaymentService_ExpirePaymentIntents_BatchError(t *testing.T) {
 	repo := new(MockIOTARepository)
 	svc := NewPaymentService(repo, nil, testEncryptionKey)
 	ctx := context.Background()
 
-	repo.On("GetExpiredPaymentIntents", ctx).Return(nil, errors.New("db down"))
+	repo.On("BatchExpirePaymentIntents", ctx).Return(int64(0), errors.New("db down"))
 
 	err := svc.ExpirePaymentIntents(ctx)
 
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to get expired intents")
+	assert.Contains(t, err.Error(), "failed to expire payment intents")
 }
 
-func TestPaymentService_ExpirePaymentIntents_UpdateError(t *testing.T) {
+func TestPaymentService_ExpirePaymentIntents_Success(t *testing.T) {
 	repo := new(MockIOTARepository)
 	svc := NewPaymentService(repo, nil, testEncryptionKey)
 	ctx := context.Background()
 
-	intentID := uuid.New().String()
-	repo.On("GetExpiredPaymentIntents", ctx).Return([]*domain.IOTAPaymentIntent{
-		{ID: intentID, Status: domain.PaymentIntentStatusPending},
-	}, nil)
-	repo.On("UpdatePaymentIntentStatus", ctx, intentID, domain.PaymentIntentStatusExpired, (*string)(nil)).
-		Return(errors.New("update err"))
+	repo.On("BatchExpirePaymentIntents", ctx).Return(int64(3), nil)
 
 	err := svc.ExpirePaymentIntents(ctx)
 
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to expire intent")
+	require.NoError(t, err)
+	repo.AssertExpectations(t)
 }
 
 func TestPaymentService_CreateWallet_DeriveAddressError(t *testing.T) {

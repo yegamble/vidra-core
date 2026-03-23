@@ -625,6 +625,9 @@ func (s *service) triggerCaptionGeneration(ctx context.Context, videoID string) 
 }
 
 func (s *service) transcodeHLS(ctx context.Context, input string, height int, outPlaylist string, segPattern string, duration time.Duration, onProgress func(int)) error {
+	if err := validateMediaPath(input); err != nil {
+		return fmt.Errorf("invalid input path: %w", err)
+	}
 	args := []string{
 		"-y",
 		"-i", input,
@@ -649,6 +652,9 @@ func (s *service) transcodeHLS(ctx context.Context, input string, height int, ou
 }
 
 func (s *service) generateThumbnail(ctx context.Context, input string, output string) error {
+	if err := validateMediaPath(input); err != nil {
+		return fmt.Errorf("invalid input path: %w", err)
+	}
 	args := []string{
 		"-y",
 		"-ss", "00:00:01",
@@ -661,6 +667,9 @@ func (s *service) generateThumbnail(ctx context.Context, input string, output st
 }
 
 func (s *service) generatePreviewWebP(ctx context.Context, input string, output string) error {
+	if err := validateMediaPath(input); err != nil {
+		return fmt.Errorf("invalid input path: %w", err)
+	}
 	args := []string{
 		"-y",
 		"-ss", "00:00:01",
@@ -731,10 +740,47 @@ func validateBinaryPath(path string) error {
 	return nil
 }
 
+// validateMediaPath validates file paths passed as arguments to ffmpeg/ffprobe.
+// While exec.CommandContext uses argument arrays (not shell invocation) which
+// prevents shell injection, this provides defense-in-depth against path traversal
+// and ensures paths don't contain characters that could confuse ffmpeg argument parsing.
+func validateMediaPath(path string) error {
+	if path == "" {
+		return fmt.Errorf("empty media path")
+	}
+
+	cleanPath := filepath.Clean(path)
+
+	// Reject path traversal
+	if strings.Contains(cleanPath, "..") {
+		return fmt.Errorf("media path contains directory traversal: %s", path)
+	}
+
+	// Reject null bytes which could truncate paths in C-based tools
+	if strings.ContainsRune(path, '\x00') {
+		return fmt.Errorf("media path contains null byte: %s", path)
+	}
+
+	// Reject paths starting with '-' which ffmpeg would interpret as flags
+	base := filepath.Base(cleanPath)
+	if strings.HasPrefix(base, "-") {
+		return fmt.Errorf("media path filename starts with dash: %s", path)
+	}
+
+	return nil
+}
+
 func (s *service) getVideoDuration(ctx context.Context, input string) (time.Duration, error) {
 	bin := "ffprobe"
 	if s.cfg.FFMPEGPath != "" {
 		bin = filepath.Join(filepath.Dir(s.cfg.FFMPEGPath), "ffprobe")
+	}
+
+	if err := validateBinaryPath(bin); err != nil {
+		return 0, fmt.Errorf("invalid ffprobe binary path: %w", err)
+	}
+	if err := validateMediaPath(input); err != nil {
+		return 0, fmt.Errorf("invalid input path: %w", err)
 	}
 
 	args := []string{

@@ -24,90 +24,122 @@ func NewHTTPSignatureVerifier() *HTTPSignatureVerifier {
 }
 
 func (v *HTTPSignatureVerifier) VerifyRequest(r *http.Request, publicKeyPEM string) error {
+	sigParams, err := v.extractSignatureParams(r)
+	if err != nil {
+		return err
+	}
+
+	if err := v.validateDateFreshness(r); err != nil {
+		return err
+	}
+
+	headers := sigParams["headers"]
+	if err := v.verifyBodyDigest(r, headers); err != nil {
+		return err
+	}
+
+	return v.verifySignatureValue(r, sigParams, publicKeyPEM)
+}
+
+// extractSignatureParams parses and validates the Signature header parameters.
+func (v *HTTPSignatureVerifier) extractSignatureParams(r *http.Request) (map[string]string, error) {
 	sigHeader := r.Header.Get("Signature")
 	if sigHeader == "" {
-		return fmt.Errorf("missing Signature header")
+		return nil, fmt.Errorf("missing Signature header")
 	}
 
 	sigParams, err := parseSignatureHeader(sigHeader)
 	if err != nil {
-		return fmt.Errorf("failed to parse signature header: %w", err)
+		return nil, fmt.Errorf("failed to parse signature header: %w", err)
 	}
 
-	keyID, ok := sigParams["keyId"]
-	if !ok {
-		return fmt.Errorf("missing keyId in signature")
-	}
-	_ = keyID
-
-	algorithm, ok := sigParams["algorithm"]
-	if !ok {
-		algorithm = "rsa-sha256"
+	if _, ok := sigParams["keyId"]; !ok {
+		return nil, fmt.Errorf("missing keyId in signature")
 	}
 
-	headers, ok := sigParams["headers"]
-	if !ok {
-		headers = "(request-target)"
+	if _, ok := sigParams["algorithm"]; !ok {
+		sigParams["algorithm"] = "rsa-sha256"
 	}
 
-	signature, ok := sigParams["signature"]
-	if !ok {
-		return fmt.Errorf("missing signature in signature header")
+	if _, ok := sigParams["headers"]; !ok {
+		sigParams["headers"] = "(request-target)"
 	}
 
+	if _, ok := sigParams["signature"]; !ok {
+		return nil, fmt.Errorf("missing signature in signature header")
+	}
+
+	return sigParams, nil
+}
+
+// validateDateFreshness checks that the Date header, if present, is within an acceptable time window.
+func (v *HTTPSignatureVerifier) validateDateFreshness(r *http.Request) error {
 	dateHeader := r.Header.Get("Date")
-	if dateHeader != "" {
-		requestTime, err := http.ParseTime(dateHeader)
-		if err != nil {
-			return fmt.Errorf("invalid Date header: %w", err)
-		}
-
-		age := time.Since(requestTime)
-		if age > 5*time.Minute {
-			return fmt.Errorf("signature expired: request is %v old (max 5 minutes)", age)
-		}
-
-		if age < -1*time.Minute {
-			return fmt.Errorf("signature date is in the future: %v", age)
-		}
+	if dateHeader == "" {
+		return nil
 	}
 
-	if r.Method == "POST" || r.Method == "PUT" {
-		digestHeader := r.Header.Get("Digest")
-		if digestHeader == "" {
-			return fmt.Errorf("missing Digest header for %s request", r.Method)
-		}
-
-		bodyBytes, err := io.ReadAll(r.Body)
-		if err != nil {
-			return fmt.Errorf("failed to read request body: %w", err)
-		}
-
-		r.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
-
-		if err := verifyDigest(bodyBytes, digestHeader); err != nil {
-			return fmt.Errorf("digest verification failed: %w", err)
-		}
-
-		headersList := strings.Split(headers, " ")
-		digestIncluded := false
-		for _, h := range headersList {
-			if strings.ToLower(strings.TrimSpace(h)) == "digest" {
-				digestIncluded = true
-				break
-			}
-		}
-		if !digestIncluded {
-			return fmt.Errorf("digest header must be included in signature for %s requests", r.Method)
-		}
+	requestTime, err := http.ParseTime(dateHeader)
+	if err != nil {
+		return fmt.Errorf("invalid Date header: %w", err)
 	}
 
-	sigBytes, err := base64.StdEncoding.DecodeString(signature)
+	age := time.Since(requestTime)
+	if age > 5*time.Minute {
+		return fmt.Errorf("signature expired: request is %v old (max 5 minutes)", age)
+	}
+	if age < -1*time.Minute {
+		return fmt.Errorf("signature date is in the future: %v", age)
+	}
+
+	return nil
+}
+
+// verifyBodyDigest verifies the Digest header for POST/PUT requests and ensures
+// the digest header is included in the signed headers list.
+func (v *HTTPSignatureVerifier) verifyBodyDigest(r *http.Request, headers string) error {
+	if r.Method != "POST" && r.Method != "PUT" {
+		return nil
+	}
+
+	digestHeader := r.Header.Get("Digest")
+	if digestHeader == "" {
+		return fmt.Errorf("missing Digest header for %s request", r.Method)
+	}
+
+	bodyBytes, err := io.ReadAll(r.Body)
+	if err != nil {
+		return fmt.Errorf("failed to read request body: %w", err)
+	}
+	r.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
+
+	if err := verifyDigest(bodyBytes, digestHeader); err != nil {
+		return fmt.Errorf("digest verification failed: %w", err)
+	}
+
+	headersList := strings.Split(headers, " ")
+	for _, h := range headersList {
+		if strings.ToLower(strings.TrimSpace(h)) == "digest" {
+			return nil
+		}
+	}
+	return fmt.Errorf("digest header must be included in signature for %s requests", r.Method)
+}
+
+// verifySignatureValue decodes the signature, builds the signing string, and performs
+// cryptographic verification against the public key.
+func (v *HTTPSignatureVerifier) verifySignatureValue(r *http.Request, sigParams map[string]string, publicKeyPEM string) error {
+	algorithm := sigParams["algorithm"]
+	if algorithm != "rsa-sha256" {
+		return fmt.Errorf("unsupported algorithm: %s", algorithm)
+	}
+
+	sigBytes, err := base64.StdEncoding.DecodeString(sigParams["signature"])
 	if err != nil {
 		return fmt.Errorf("failed to decode signature: %w", err)
 	}
 
-	signingString, err := buildSigningString(r, strings.Split(headers, " "))
+	signingString, err := buildSigningString(r, strings.Split(sigParams["headers"], " "))
 	if err != nil {
 		return fmt.Errorf("failed to build signing string: %w", err)
 	}
@@ -117,14 +149,9 @@ func (v *HTTPSignatureVerifier) VerifyRequest(r *http.Request, publicKeyPEM stri
 		return fmt.Errorf("failed to parse public key: %w", err)
 	}
 
-	if algorithm == "rsa-sha256" {
-		hash := sha256.Sum256([]byte(signingString))
-		err = rsa.VerifyPKCS1v15(publicKey, crypto.SHA256, hash[:], sigBytes)
-		if err != nil {
-			return fmt.Errorf("signature verification failed: %w", err)
-		}
-	} else {
-		return fmt.Errorf("unsupported algorithm: %s", algorithm)
+	hash := sha256.Sum256([]byte(signingString))
+	if err := rsa.VerifyPKCS1v15(publicKey, crypto.SHA256, hash[:], sigBytes); err != nil {
+		return fmt.Errorf("signature verification failed: %w", err)
 	}
 
 	return nil

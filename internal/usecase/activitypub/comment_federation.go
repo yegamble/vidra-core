@@ -98,18 +98,9 @@ func (s *Service) CreateCommentActivity(ctx context.Context, comment *domain.Com
 }
 
 func (s *Service) PublishComment(ctx context.Context, commentID string) error {
-	if s.commentRepo == nil {
-		return fmt.Errorf("comment repository not configured")
-	}
-
-	commentUUID, err := uuid.Parse(commentID)
+	comment, err := s.lookupComment(ctx, commentID)
 	if err != nil {
-		return fmt.Errorf("invalid comment ID: %w", err)
-	}
-
-	comment, err := s.commentRepo.GetByID(ctx, commentUUID)
-	if err != nil {
-		return fmt.Errorf("failed to get comment: %w", err)
+		return err
 	}
 
 	if comment.Status == domain.CommentStatusDeleted {
@@ -121,83 +112,21 @@ func (s *Service) PublishComment(ctx context.Context, commentID string) error {
 		return fmt.Errorf("failed to create comment activity: %w", err)
 	}
 
-	activityJSON, err := json.Marshal(activity)
-	if err != nil {
-		return fmt.Errorf("failed to marshal activity: %w", err)
-	}
-
 	noteID := activity.ID
 	noteType := domain.ObjectTypeNote
 
-	apActivity := &domain.APActivity{
-		ActorID:      comment.UserID.String(),
-		Type:         domain.ActivityTypeCreate,
-		ObjectID:     &noteID,
-		ObjectType:   &noteType,
-		Published:    comment.CreatedAt,
-		ActivityJSON: activityJSON,
-		Local:        true,
-	}
-
-	if err := s.repo.StoreActivity(ctx, apActivity); err != nil {
-		return fmt.Errorf("failed to store activity: %w", err)
-	}
-
-	video, err := s.videoRepo.GetByID(ctx, comment.VideoID.String())
+	apActivity, err := s.storeCommentActivity(ctx, activity, comment.UserID.String(), domain.ActivityTypeCreate, &noteID, &noteType, comment.CreatedAt)
 	if err != nil {
-		return fmt.Errorf("failed to get video: %w", err)
+		return err
 	}
 
-	followers, _, err := s.repo.GetFollowers(ctx, video.UserID, "accepted", 100, 0)
-	if err != nil {
-		return fmt.Errorf("failed to get followers: %w", err)
-	}
-
-	if len(followers) > 0 {
-		followerURIs := make([]string, len(followers))
-		for i, f := range followers {
-			followerURIs[i] = f.FollowerID
-		}
-
-		remoteActors, err := s.repo.GetRemoteActors(ctx, followerURIs)
-		if err != nil {
-			return fmt.Errorf("failed to get remote actors: %w", err)
-		}
-
-		deliveries := make([]*domain.APDeliveryQueue, 0, len(remoteActors))
-		for _, remoteActor := range remoteActors {
-			deliveries = append(deliveries, &domain.APDeliveryQueue{
-				ActivityID:  apActivity.ID,
-				InboxURL:    remoteActor.InboxURL,
-				ActorID:     comment.UserID.String(),
-				Attempts:    0,
-				MaxAttempts: 3,
-				NextAttempt: time.Now(),
-				Status:      "pending",
-			})
-		}
-
-		if err := s.repo.BulkEnqueueDelivery(ctx, deliveries); err != nil {
-			slog.Warn("failed to bulk enqueue deliveries for comment", "id", commentID, "error", err)
-		}
-	}
-
-	return nil
+	return s.enqueueCommentDeliveries(ctx, comment, apActivity, "publish")
 }
 
 func (s *Service) UpdateComment(ctx context.Context, commentID string) error {
-	if s.commentRepo == nil {
-		return fmt.Errorf("comment repository not configured")
-	}
-
-	commentUUID, err := uuid.Parse(commentID)
+	comment, err := s.lookupComment(ctx, commentID)
 	if err != nil {
-		return fmt.Errorf("invalid comment ID: %w", err)
-	}
-
-	comment, err := s.commentRepo.GetByID(ctx, commentUUID)
-	if err != nil {
-		return fmt.Errorf("failed to get comment: %w", err)
+		return err
 	}
 
 	note, err := s.BuildNoteObject(ctx, comment)
@@ -225,93 +154,26 @@ func (s *Service) UpdateComment(ctx context.Context, commentID string) error {
 		Cc:        note.Cc,
 	}
 
-	activityJSON, err := json.Marshal(activity)
-	if err != nil {
-		return fmt.Errorf("failed to marshal activity: %w", err)
-	}
-
 	noteID := note.ID
 	noteType := domain.ObjectTypeNote
 
-	apActivity := &domain.APActivity{
-		ActorID:      user.ID,
-		Type:         domain.ActivityTypeUpdate,
-		ObjectID:     &noteID,
-		ObjectType:   &noteType,
-		Published:    now,
-		ActivityJSON: activityJSON,
-		Local:        true,
-	}
-
-	if err := s.repo.StoreActivity(ctx, apActivity); err != nil {
-		return fmt.Errorf("failed to store activity: %w", err)
-	}
-
-	video, err := s.videoRepo.GetByID(ctx, comment.VideoID.String())
+	apActivity, err := s.storeCommentActivity(ctx, activity, user.ID, domain.ActivityTypeUpdate, &noteID, &noteType, now)
 	if err != nil {
-		return fmt.Errorf("failed to get video: %w", err)
+		return err
 	}
 
-	followers, _, err := s.repo.GetFollowers(ctx, video.UserID, "accepted", 100, 0)
-	if err != nil {
-		return fmt.Errorf("failed to get followers: %w", err)
-	}
-
-	if len(followers) > 0 {
-		followerURIs := make([]string, len(followers))
-		for i, f := range followers {
-			followerURIs[i] = f.FollowerID
-		}
-
-		remoteActors, err := s.repo.GetRemoteActors(ctx, followerURIs)
-		if err != nil {
-			return fmt.Errorf("failed to get remote actors: %w", err)
-		}
-
-		deliveries := make([]*domain.APDeliveryQueue, 0, len(remoteActors))
-		for _, remoteActor := range remoteActors {
-			deliveries = append(deliveries, &domain.APDeliveryQueue{
-				ActivityID:  apActivity.ID,
-				InboxURL:    remoteActor.InboxURL,
-				ActorID:     comment.UserID.String(),
-				Attempts:    0,
-				MaxAttempts: 3,
-				NextAttempt: time.Now(),
-				Status:      "pending",
-			})
-		}
-
-		if err := s.repo.BulkEnqueueDelivery(ctx, deliveries); err != nil {
-			slog.Warn("failed to bulk enqueue update deliveries for comment", "id", commentID, "error", err)
-		}
-	}
-
-	return nil
+	return s.enqueueCommentDeliveries(ctx, comment, apActivity, "update")
 }
 
 func (s *Service) DeleteComment(ctx context.Context, commentID string) error {
-	if s.commentRepo == nil {
-		return fmt.Errorf("comment repository not configured")
-	}
-
-	commentUUID, err := uuid.Parse(commentID)
+	comment, err := s.lookupComment(ctx, commentID)
 	if err != nil {
-		return fmt.Errorf("invalid comment ID: %w", err)
-	}
-
-	comment, err := s.commentRepo.GetByID(ctx, commentUUID)
-	if err != nil {
-		return fmt.Errorf("failed to get comment: %w", err)
+		return err
 	}
 
 	user, err := s.userRepo.GetByID(ctx, comment.UserID.String())
 	if err != nil {
 		return fmt.Errorf("failed to get comment author: %w", err)
-	}
-
-	video, err := s.videoRepo.GetByID(ctx, comment.VideoID.String())
-	if err != nil {
-		return fmt.Errorf("failed to get video: %w", err)
 	}
 
 	actorURI := s.buildActorID(user.Username)
@@ -328,22 +190,70 @@ func (s *Service) DeleteComment(ctx context.Context, commentID string) error {
 		Published: &now,
 	}
 
+	apActivity, err := s.storeCommentActivity(ctx, activity, user.ID, domain.ActivityTypeDelete, &commentURI, nil, now)
+	if err != nil {
+		return err
+	}
+
+	return s.enqueueCommentDeliveries(ctx, comment, apActivity, "delete")
+}
+
+// lookupComment validates the comment repo, parses the ID, and fetches the comment.
+func (s *Service) lookupComment(ctx context.Context, commentID string) (*domain.Comment, error) {
+	if s.commentRepo == nil {
+		return nil, fmt.Errorf("comment repository not configured")
+	}
+
+	commentUUID, err := uuid.Parse(commentID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid comment ID: %w", err)
+	}
+
+	comment, err := s.commentRepo.GetByID(ctx, commentUUID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get comment: %w", err)
+	}
+
+	return comment, nil
+}
+
+// storeCommentActivity marshals an activity and stores it as an APActivity.
+func (s *Service) storeCommentActivity(
+	ctx context.Context,
+	activity *domain.Activity,
+	actorID string,
+	activityType string,
+	objectID *string,
+	objectType *string,
+	published time.Time,
+) (*domain.APActivity, error) {
 	activityJSON, err := json.Marshal(activity)
 	if err != nil {
-		return fmt.Errorf("failed to marshal activity: %w", err)
+		return nil, fmt.Errorf("failed to marshal activity: %w", err)
 	}
 
 	apActivity := &domain.APActivity{
-		ActorID:      user.ID,
-		Type:         domain.ActivityTypeDelete,
-		ObjectID:     &commentURI,
-		Published:    now,
+		ActorID:      actorID,
+		Type:         activityType,
+		ObjectID:     objectID,
+		ObjectType:   objectType,
+		Published:    published,
 		ActivityJSON: activityJSON,
 		Local:        true,
 	}
 
 	if err := s.repo.StoreActivity(ctx, apActivity); err != nil {
-		return fmt.Errorf("failed to store activity: %w", err)
+		return nil, fmt.Errorf("failed to store activity: %w", err)
+	}
+
+	return apActivity, nil
+}
+
+// enqueueCommentDeliveries fans out an activity to followers of the video owner.
+func (s *Service) enqueueCommentDeliveries(ctx context.Context, comment *domain.Comment, apActivity *domain.APActivity, action string) error {
+	video, err := s.videoRepo.GetByID(ctx, comment.VideoID.String())
+	if err != nil {
+		return fmt.Errorf("failed to get video: %w", err)
 	}
 
 	followers, _, err := s.repo.GetFollowers(ctx, video.UserID, "accepted", 100, 0)
@@ -351,33 +261,35 @@ func (s *Service) DeleteComment(ctx context.Context, commentID string) error {
 		return fmt.Errorf("failed to get followers: %w", err)
 	}
 
-	if len(followers) > 0 {
-		followerURIs := make([]string, len(followers))
-		for i, f := range followers {
-			followerURIs[i] = f.FollowerID
-		}
+	if len(followers) == 0 {
+		return nil
+	}
 
-		remoteActors, err := s.repo.GetRemoteActors(ctx, followerURIs)
-		if err != nil {
-			return fmt.Errorf("failed to get remote actors: %w", err)
-		}
+	followerURIs := make([]string, len(followers))
+	for i, f := range followers {
+		followerURIs[i] = f.FollowerID
+	}
 
-		deliveries := make([]*domain.APDeliveryQueue, 0, len(remoteActors))
-		for _, remoteActor := range remoteActors {
-			deliveries = append(deliveries, &domain.APDeliveryQueue{
-				ActivityID:  apActivity.ID,
-				InboxURL:    remoteActor.InboxURL,
-				ActorID:     comment.UserID.String(),
-				Attempts:    0,
-				MaxAttempts: 3,
-				NextAttempt: time.Now(),
-				Status:      "pending",
-			})
-		}
+	remoteActors, err := s.repo.GetRemoteActors(ctx, followerURIs)
+	if err != nil {
+		return fmt.Errorf("failed to get remote actors: %w", err)
+	}
 
-		if err := s.repo.BulkEnqueueDelivery(ctx, deliveries); err != nil {
-			slog.Warn("failed to bulk enqueue delete deliveries for comment", "id", commentID, "error", err)
-		}
+	deliveries := make([]*domain.APDeliveryQueue, 0, len(remoteActors))
+	for _, remoteActor := range remoteActors {
+		deliveries = append(deliveries, &domain.APDeliveryQueue{
+			ActivityID:  apActivity.ID,
+			InboxURL:    remoteActor.InboxURL,
+			ActorID:     comment.UserID.String(),
+			Attempts:    0,
+			MaxAttempts: 3,
+			NextAttempt: time.Now(),
+			Status:      "pending",
+		})
+	}
+
+	if err := s.repo.BulkEnqueueDelivery(ctx, deliveries); err != nil {
+		slog.Warn("failed to bulk enqueue "+action+" deliveries for comment", "id", comment.ID.String(), "error", err)
 	}
 
 	return nil

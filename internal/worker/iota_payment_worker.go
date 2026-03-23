@@ -14,6 +14,7 @@ import (
 type IOTARepository interface {
 	GetActivePaymentIntents(ctx context.Context) ([]*domain.IOTAPaymentIntent, error)
 	GetExpiredPaymentIntents(ctx context.Context) ([]*domain.IOTAPaymentIntent, error)
+	BatchExpirePaymentIntents(ctx context.Context) (int64, error)
 	UpdatePaymentIntentStatus(ctx context.Context, intentID string, status domain.PaymentIntentStatus, txID *string) error
 	GetWalletByID(ctx context.Context, walletID string) (*domain.IOTAWallet, error)
 	GetWalletByUserID(ctx context.Context, userID string) (*domain.IOTAWallet, error)
@@ -149,17 +150,13 @@ func (w *IOTAPaymentWorker) checkPaymentIntent(ctx context.Context, intent *doma
 
 // expireOldIntents marks expired payment intents as expired
 func (w *IOTAPaymentWorker) expireOldIntents(ctx context.Context) error {
-	expiredIntents, err := w.repo.GetExpiredPaymentIntents(ctx)
+	count, err := w.repo.BatchExpirePaymentIntents(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to get expired intents: %w", err)
+		return fmt.Errorf("failed to expire intents: %w", err)
 	}
 
-	for _, intent := range expiredIntents {
-		if err := w.repo.UpdatePaymentIntentStatus(ctx, intent.ID, domain.PaymentIntentStatusExpired, nil); err != nil {
-			log.Printf("Failed to expire intent %s: %v", intent.ID, err)
-			continue
-		}
-		log.Printf("Payment intent %s expired", intent.ID)
+	if count > 0 {
+		log.Printf("Expired %d payment intents", count)
 	}
 
 	return nil

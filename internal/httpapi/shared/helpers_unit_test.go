@@ -16,52 +16,129 @@ import (
 func TestGetBoolParam(t *testing.T) {
 	tests := []struct {
 		name         string
-		queryValue   string
+		url          string
+		key          string
 		defaultValue bool
 		expected     bool
 	}{
 		{
-			name:         "true value",
-			queryValue:   "true",
+			name:         "true string returns true",
+			url:          "/?key=true",
+			key:          "key",
 			defaultValue: false,
 			expected:     true,
 		},
 		{
-			name:         "false value",
-			queryValue:   "false",
+			name:         "false string returns false",
+			url:          "/?key=false",
+			key:          "key",
 			defaultValue: true,
 			expected:     false,
 		},
 		{
-			name:         "empty value returns default",
-			queryValue:   "",
+			name:         "empty value returns default true",
+			url:          "/?key=",
+			key:          "key",
 			defaultValue: true,
 			expected:     true,
 		},
 		{
-			name:         "invalid value returns default",
-			queryValue:   "invalid",
+			name:         "empty value returns default false",
+			url:          "/?key=",
+			key:          "key",
+			defaultValue: false,
+			expected:     false,
+		},
+		{
+			name:         "missing parameter returns default true",
+			url:          "/",
+			key:          "key",
+			defaultValue: true,
+			expected:     true,
+		},
+		{
+			name:         "missing parameter returns default false",
+			url:          "/",
+			key:          "key",
 			defaultValue: false,
 			expected:     false,
 		},
 		{
 			name:         "1 as true",
-			queryValue:   "1",
+			url:          "/?key=1",
+			key:          "key",
 			defaultValue: false,
 			expected:     true,
 		},
 		{
 			name:         "0 as false",
-			queryValue:   "0",
+			url:          "/?key=0",
+			key:          "key",
 			defaultValue: true,
+			expected:     false,
+		},
+		{
+			name:         "invalid string yes returns default",
+			url:          "/?key=yes",
+			key:          "key",
+			defaultValue: false,
+			expected:     false,
+		},
+		{
+			name:         "invalid string no returns default",
+			url:          "/?key=no",
+			key:          "key",
+			defaultValue: true,
+			expected:     true,
+		},
+		{
+			name:         "invalid string returns default",
+			url:          "/?key=invalid",
+			key:          "key",
+			defaultValue: false,
+			expected:     false,
+		},
+		{
+			name:         "case variation True returns true",
+			url:          "/?key=True",
+			key:          "key",
+			defaultValue: false,
+			expected:     true,
+		},
+		{
+			name:         "case variation TRUE returns true",
+			url:          "/?key=TRUE",
+			key:          "key",
+			defaultValue: false,
+			expected:     true,
+		},
+		{
+			name:         "case variation False returns false",
+			url:          "/?key=False",
+			key:          "key",
+			defaultValue: true,
+			expected:     false,
+		},
+		{
+			name:         "case variation FALSE returns false",
+			url:          "/?key=FALSE",
+			key:          "key",
+			defaultValue: true,
+			expected:     false,
+		},
+		{
+			name:         "different query param key",
+			url:          "/?other=true",
+			key:          "missing",
+			defaultValue: false,
 			expected:     false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			req := httptest.NewRequest("GET", "/?key="+tt.queryValue, nil)
-			result := GetBoolParam(req, "key", tt.defaultValue)
+			req := httptest.NewRequest("GET", tt.url, nil)
+			result := GetBoolParam(req, tt.key, tt.defaultValue)
 			assert.Equal(t, tt.expected, result)
 		})
 	}

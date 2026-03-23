@@ -43,65 +43,81 @@ func (c *httpClient) GetProvider() domain.WhisperProvider {
 
 // Transcribe transcribes an audio file using HTTP Whisper service
 func (c *httpClient) Transcribe(ctx context.Context, audioPath string, targetLanguage *string) (*TranscriptionResult, error) {
-	// Open audio file
+	requestBody, contentType, err := c.buildHTTPMultipartRequest(audioPath, targetLanguage)
+	if err != nil {
+		return nil, err
+	}
+
+	body, err := c.sendHTTPTranscribeRequest(ctx, requestBody, contentType)
+	if err != nil {
+		return nil, err
+	}
+
+	var apiResp WhisperHTTPResponse
+	if err := json.Unmarshal(body, &apiResp); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	return convertHTTPResponse(&apiResp), nil
+}
+
+// buildHTTPMultipartRequest creates the multipart form body for the Whisper HTTP API.
+func (c *httpClient) buildHTTPMultipartRequest(audioPath string, targetLanguage *string) (*bytes.Buffer, string, error) {
 	audioFile, err := os.Open(audioPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to open audio file: %w", err)
+		return nil, "", fmt.Errorf("failed to open audio file: %w", err)
 	}
 	defer func() { _ = audioFile.Close() }()
 
-	// Create multipart form
 	var requestBody bytes.Buffer
 	writer := multipart.NewWriter(&requestBody)
 
-	// Add file field
 	part, err := writer.CreateFormFile("audio_file", filepath.Base(audioPath))
 	if err != nil {
-		return nil, fmt.Errorf("failed to create form file: %w", err)
+		return nil, "", fmt.Errorf("failed to create form file: %w", err)
 	}
 
 	if _, err := io.Copy(part, audioFile); err != nil {
-		return nil, fmt.Errorf("failed to copy audio file: %w", err)
+		return nil, "", fmt.Errorf("failed to copy audio file: %w", err)
 	}
 
-	// Add task field
 	if err := writer.WriteField("task", "transcribe"); err != nil {
-		return nil, fmt.Errorf("failed to write task field: %w", err)
+		return nil, "", fmt.Errorf("failed to write task field: %w", err)
 	}
 
-	// Add language hint if provided
 	if targetLanguage != nil && *targetLanguage != "" {
 		if err := writer.WriteField("language", *targetLanguage); err != nil {
-			return nil, fmt.Errorf("failed to write language field: %w", err)
+			return nil, "", fmt.Errorf("failed to write language field: %w", err)
 		}
 	}
 
-	// Add output format
 	if err := writer.WriteField("output", "json"); err != nil {
-		return nil, fmt.Errorf("failed to write output field: %w", err)
+		return nil, "", fmt.Errorf("failed to write output field: %w", err)
 	}
 
 	if err := writer.Close(); err != nil {
-		return nil, fmt.Errorf("failed to close multipart writer: %w", err)
+		return nil, "", fmt.Errorf("failed to close multipart writer: %w", err)
 	}
 
-	// Create HTTP request
+	return &requestBody, writer.FormDataContentType(), nil
+}
+
+// sendHTTPTranscribeRequest sends the multipart request and returns the response body.
+func (c *httpClient) sendHTTPTranscribeRequest(ctx context.Context, requestBody *bytes.Buffer, contentType string) ([]byte, error) {
 	url := fmt.Sprintf("%s/asr", c.baseURL)
-	req, err := http.NewRequestWithContext(ctx, "POST", url, &requestBody)
+	req, err := http.NewRequestWithContext(ctx, "POST", url, requestBody)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
-	req.Header.Set("Content-Type", writer.FormDataContentType())
+	req.Header.Set("Content-Type", contentType)
 
-	// Send request
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to send request: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	// Read response
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response: %w", err)
@@ -111,34 +127,20 @@ func (c *httpClient) Transcribe(ctx context.Context, audioPath string, targetLan
 		return nil, fmt.Errorf("whisper API error (status %d): %s", resp.StatusCode, string(body))
 	}
 
-	// Parse response
-	var apiResp WhisperHTTPResponse
-	if err := json.Unmarshal(body, &apiResp); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
-	}
+	return body, nil
+}
 
-	// Convert to our format
+// convertHTTPResponse converts a WhisperHTTPResponse into a TranscriptionResult.
+func convertHTTPResponse(apiResp *WhisperHTTPResponse) *TranscriptionResult {
 	result := &TranscriptionResult{
 		Text:             apiResp.Text,
 		DetectedLanguage: apiResp.Language,
 		Segments:         make([]TranscriptionSegment, 0, len(apiResp.Segments)),
 	}
 
-	// Calculate average confidence and build segments
 	totalConfidence := 0.0
 	for i, segment := range apiResp.Segments {
-		confidence := 1.0 // Default confidence if not provided
-		if segment.AvgLogprob != 0 {
-			// Convert log probability to a 0-1 confidence score
-			confidence = 1.0 + segment.AvgLogprob/10.0
-			if confidence < 0 {
-				confidence = 0
-			}
-			if confidence > 1 {
-				confidence = 1
-			}
-		}
-
+		confidence := logprobToConfidence(segment.AvgLogprob)
 		result.Segments = append(result.Segments, TranscriptionSegment{
 			Index:      i,
 			Start:      segment.Start,
@@ -154,7 +156,22 @@ func (c *httpClient) Transcribe(ctx context.Context, audioPath string, targetLan
 		result.Duration = result.Segments[len(result.Segments)-1].End
 	}
 
-	return result, nil
+	return result
+}
+
+// logprobToConfidence converts a log probability to a 0-1 confidence score.
+func logprobToConfidence(avgLogprob float64) float64 {
+	if avgLogprob == 0 {
+		return 1.0
+	}
+	confidence := 1.0 + avgLogprob/10.0
+	if confidence < 0 {
+		confidence = 0
+	}
+	if confidence > 1 {
+		confidence = 1
+	}
+	return confidence
 }
 
 // ExtractAudioFromVideo extracts audio track from video using FFmpeg

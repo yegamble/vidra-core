@@ -465,6 +465,47 @@ func TestIOTARepository_Unit_GetExpiredPaymentIntents(t *testing.T) {
 	})
 }
 
+func TestIOTARepository_Unit_BatchExpirePaymentIntents(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("success with expired intents", func(t *testing.T) {
+		repo, mock, cleanup := newIOTARepo(t)
+		defer cleanup()
+
+		mock.ExpectExec(regexp.QuoteMeta(`UPDATE iota_payment_intents SET status = 'expired', updated_at = NOW() WHERE status = 'pending' AND expires_at <= NOW()`)).
+			WillReturnResult(sqlmock.NewResult(0, 3))
+
+		count, err := repo.BatchExpirePaymentIntents(ctx)
+		require.NoError(t, err)
+		assert.Equal(t, int64(3), count)
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("no expired intents", func(t *testing.T) {
+		repo, mock, cleanup := newIOTARepo(t)
+		defer cleanup()
+
+		mock.ExpectExec(regexp.QuoteMeta(`UPDATE iota_payment_intents`)).
+			WillReturnResult(sqlmock.NewResult(0, 0))
+
+		count, err := repo.BatchExpirePaymentIntents(ctx)
+		require.NoError(t, err)
+		assert.Equal(t, int64(0), count)
+	})
+
+	t.Run("exec error", func(t *testing.T) {
+		repo, mock, cleanup := newIOTARepo(t)
+		defer cleanup()
+
+		mock.ExpectExec(regexp.QuoteMeta(`UPDATE iota_payment_intents`)).
+			WillReturnError(sql.ErrConnDone)
+
+		count, err := repo.BatchExpirePaymentIntents(ctx)
+		require.Error(t, err)
+		assert.Equal(t, int64(0), count)
+	})
+}
+
 func TestIOTARepository_Unit_CreateTransaction(t *testing.T) {
 	ctx := context.Background()
 

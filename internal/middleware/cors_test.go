@@ -83,14 +83,14 @@ func TestCORS(t *testing.T) {
 			expectHeaders:  false,
 		},
 		{
-			name:              "mixed explicit and wildcard - explicit match",
+			name:              "mixed explicit and wildcard - explicit match still uses wildcard",
 			allowedOrigins:    "https://example.com, *",
 			requestOrigin:     "https://example.com",
 			method:            http.MethodGet,
 			expectedStatus:    http.StatusOK,
 			expectHeaders:     true,
-			expectedOrigin:    "https://example.com",
-			expectCredentials: true,
+			expectedOrigin:    "*",
+			expectCredentials: false,
 		},
 		{
 			name:              "mixed explicit and wildcard - wildcard match",

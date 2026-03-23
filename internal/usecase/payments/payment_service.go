@@ -26,6 +26,7 @@ type IOTARepository interface {
 	UpdatePaymentIntentStatus(ctx context.Context, intentID string, status domain.PaymentIntentStatus, txID *string) error
 	GetActivePaymentIntents(ctx context.Context) ([]*domain.IOTAPaymentIntent, error)
 	GetExpiredPaymentIntents(ctx context.Context) ([]*domain.IOTAPaymentIntent, error)
+	BatchExpirePaymentIntents(ctx context.Context) (int64, error)
 	CreateTransaction(ctx context.Context, tx *domain.IOTATransaction) error
 	GetTransactionByHash(ctx context.Context, txHash string) (*domain.IOTATransaction, error)
 	UpdateTransactionStatus(ctx context.Context, txID string, status domain.TransactionStatus, confirmations int) error
@@ -279,15 +280,9 @@ func (s *PaymentService) DetectPayment(ctx context.Context, intentID string) err
 }
 
 func (s *PaymentService) ExpirePaymentIntents(ctx context.Context) error {
-	expiredIntents, err := s.repo.GetExpiredPaymentIntents(ctx)
+	_, err := s.repo.BatchExpirePaymentIntents(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to get expired intents: %w", err)
-	}
-
-	for _, intent := range expiredIntents {
-		if err := s.repo.UpdatePaymentIntentStatus(ctx, intent.ID, domain.PaymentIntentStatusExpired, nil); err != nil {
-			return fmt.Errorf("failed to expire intent %s: %w", intent.ID, err)
-		}
+		return fmt.Errorf("failed to expire payment intents: %w", err)
 	}
 
 	return nil

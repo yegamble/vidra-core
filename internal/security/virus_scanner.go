@@ -125,52 +125,59 @@ func NewVirusScanner(config VirusScannerConfig) (*VirusScanner, error) {
 func (s *VirusScanner) ScanFile(ctx context.Context, filePath string) (*ScanResult, error) {
 	start := time.Now()
 
-	// Check context
 	if err := ctx.Err(); err != nil {
-		return &ScanResult{
-			Status:       ScanStatusError,
-			ScanDuration: time.Since(start),
-		}, err
+		return &ScanResult{Status: ScanStatusError, ScanDuration: time.Since(start)}, err
 	}
 
-	// Check file exists
-	fileInfo, err := os.Stat(filePath)
+	fileInfo, file, err := s.openFileForScan(filePath, start)
 	if err != nil {
-		return &ScanResult{
-			Status:       ScanStatusError,
-			ScanDuration: time.Since(start),
-		}, fmt.Errorf("failed to stat file: %w", err)
-	}
-
-	// Open file
-	file, err := os.Open(filePath)
-	if err != nil {
-		return &ScanResult{
-			Status:       ScanStatusError,
-			ScanDuration: time.Since(start),
-		}, fmt.Errorf("failed to open file: %w", err)
+		return &ScanResult{Status: ScanStatusError, ScanDuration: time.Since(start)}, err
 	}
 	defer func() { _ = file.Close() }()
 
-	// Perform scan with timeout
 	scanCtx, cancel := context.WithTimeout(ctx, s.config.Timeout)
 	defer cancel()
 
-	result := &ScanResult{
-		BytesScanned: fileInfo.Size(),
+	result := &ScanResult{BytesScanned: fileInfo.Size()}
+	response, scanErr := s.scanFileWithRetries(scanCtx, file, filePath)
+	result.ScanDuration = time.Since(start)
+
+	// Handle scan errors (network/connection failures)
+	// SECURITY: Fallback mode applies ONLY to connection errors, never to scan results
+	if scanErr != nil {
+		return s.handleFileScanError(result, scanErr, filePath)
 	}
 
-	// Scan with retries
-	//
-	// SECURITY NOTE (CVE-ATHENA-2025-001 FIX):
-	// This retry logic prevents a critical vulnerability where exhausted retries
-	// without a valid scan response could fall through to fallback mode handling,
-	// potentially allowing infected files to bypass scanning.
-	//
-	// Fix ensures:
-	// 1. Retry loop only exits when response != nil (valid scan result obtained)
-	// 2. Network/connection errors stored in scanErr for fallback handling
-	// 3. Explicit nil check after loop ensures no bypass path exists
+	return s.applyFileScanResponse(result, response, filePath)
+}
+
+// openFileForScan validates the file exists and opens it for scanning.
+func (s *VirusScanner) openFileForScan(filePath string, start time.Time) (os.FileInfo, *os.File, error) {
+	fileInfo, err := os.Stat(filePath)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to stat file: %w", err)
+	}
+
+	file, err := os.Open(filePath)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to open file: %w", err)
+	}
+
+	return fileInfo, file, nil
+}
+
+// scanFileWithRetries performs the ClamAV scan with retry logic.
+//
+// SECURITY NOTE (CVE-ATHENA-2025-001 FIX):
+// This retry logic prevents a critical vulnerability where exhausted retries
+// without a valid scan response could fall through to fallback mode handling,
+// potentially allowing infected files to bypass scanning.
+//
+// Fix ensures:
+// 1. Retry loop only exits when response != nil (valid scan result obtained)
+// 2. Network/connection errors stored in scanErr for fallback handling
+// 3. Explicit nil check after loop ensures no bypass path exists
+func (s *VirusScanner) scanFileWithRetries(scanCtx context.Context, file *os.File, filePath string) (*clamd.ScanResult, error) {
 	var scanErr error
 	var response *clamd.ScanResult
 
@@ -193,7 +200,6 @@ func (s *VirusScanner) ScanFile(ctx context.Context, filePath string) (*ScanResu
 		// Perform scan via ClamAV streaming API
 		responses, err := s.client.ScanStream(file, make(chan bool))
 		if err != nil {
-			// Connection/network error - store for fallback handling
 			scanErr = err
 			log.Warn().
 				Err(err).
@@ -217,45 +223,48 @@ func (s *VirusScanner) ScanFile(ctx context.Context, filePath string) (*ScanResu
 		}
 	}
 
-	result.ScanDuration = time.Since(start)
+	return response, scanErr
+}
 
-	// Handle scan errors (network/connection failures)
-	// SECURITY: Fallback mode applies ONLY to connection errors, never to scan results
-	if scanErr != nil {
-		log.Error().
-			Err(scanErr).
+// handleFileScanError applies fallback mode logic when ClamAV is unreachable.
+func (s *VirusScanner) handleFileScanError(result *ScanResult, scanErr error, filePath string) (*ScanResult, error) {
+	log.Error().
+		Err(scanErr).
+		Str("file", filePath).
+		Msg("ClamAV scan failed after retries")
+
+	switch s.config.FallbackMode {
+	case FallbackModeStrict:
+		result.Status = ScanStatusError
+		return result, fmt.Errorf("virus scan failed: %w", scanErr)
+	case FallbackModeWarn:
+		result.Status = ScanStatusWarning
+		result.FallbackUsed = true
+		log.Warn().
 			Str("file", filePath).
-			Msg("ClamAV scan failed after retries")
-
-		// Apply fallback mode
-		switch s.config.FallbackMode {
-		case FallbackModeStrict:
-			result.Status = ScanStatusError
-			return result, fmt.Errorf("virus scan failed: %w", scanErr)
-		case FallbackModeWarn:
-			result.Status = ScanStatusWarning
-			result.FallbackUsed = true
-			log.Warn().
-				Str("file", filePath).
-				Msg("ClamAV unavailable, allowing file with warning")
-			return result, nil
-		case FallbackModeAllow:
-			result.Status = ScanStatusClean
-			result.FallbackUsed = true
-			return result, nil
-		}
+			Msg("ClamAV unavailable, allowing file with warning")
+		return result, nil
+	case FallbackModeAllow:
+		result.Status = ScanStatusClean
+		result.FallbackUsed = true
+		return result, nil
 	}
 
-	// Process scan result
-	// SECURITY: This nil check is CRITICAL - it ensures infected files cannot bypass
-	// scanning via the retry exhaustion path. If we reach here without a valid response,
-	// the file is unconditionally rejected.
+	result.Status = ScanStatusError
+	return result, fmt.Errorf("virus scan failed: %w", scanErr)
+}
+
+// applyFileScanResponse maps a ClamAV response to a ScanResult for file scans.
+//
+// SECURITY: The nil check is CRITICAL - it ensures infected files cannot bypass
+// scanning via the retry exhaustion path. If we reach here without a valid response,
+// the file is unconditionally rejected.
+func (s *VirusScanner) applyFileScanResponse(result *ScanResult, response *clamd.ScanResult, filePath string) (*ScanResult, error) {
 	if response == nil {
 		result.Status = ScanStatusError
 		return result, fmt.Errorf("no scan response received")
 	}
 
-	// Scan completed successfully - process result
 	switch response.Status {
 	case clamd.RES_OK:
 		result.Status = ScanStatusClean

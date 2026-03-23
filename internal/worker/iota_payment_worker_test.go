@@ -56,6 +56,11 @@ func (m *MockIOTAPaymentRepository) GetExpiredPaymentIntents(ctx context.Context
 	return args.Get(0).([]*domain.IOTAPaymentIntent), args.Error(1)
 }
 
+func (m *MockIOTAPaymentRepository) BatchExpirePaymentIntents(ctx context.Context) (int64, error) {
+	args := m.Called(ctx)
+	return args.Get(0).(int64), args.Error(1)
+}
+
 func (m *MockIOTAPaymentRepository) GetWalletByID(ctx context.Context, walletID string) (*domain.IOTAWallet, error) {
 	args := m.Called(ctx, walletID)
 	if args.Get(0) == nil {
@@ -256,7 +261,7 @@ func TestIOTAPaymentWorker_ProcessPayments(t *testing.T) {
 
 				client.On("GetBalance", mock.Anything, "iota1qpayment222").Return(int64(0), nil)
 
-				repo.On("GetExpiredPaymentIntents", mock.Anything).Return([]*domain.IOTAPaymentIntent{}, nil)
+				repo.On("BatchExpirePaymentIntents", mock.Anything).Return(int64(0), nil)
 			},
 			wantErr: false,
 		},
@@ -315,34 +320,23 @@ func TestIOTAPaymentWorker_ExpireOldIntents(t *testing.T) {
 		{
 			name: "expire multiple intents",
 			setupMocks: func(repo *MockIOTAPaymentRepository) {
-				expiredIntents := []*domain.IOTAPaymentIntent{
-					{
-						ID:        uuid.New().String(),
-						Status:    domain.PaymentIntentStatusPending,
-						ExpiresAt: time.Now().Add(-1 * time.Hour),
-					},
-					{
-						ID:        uuid.New().String(),
-						Status:    domain.PaymentIntentStatusPending,
-						ExpiresAt: time.Now().Add(-2 * time.Hour),
-					},
-				}
-
-				repo.On("GetExpiredPaymentIntents", mock.Anything).Return(expiredIntents, nil)
-				for _, intent := range expiredIntents {
-					repo.On("UpdatePaymentIntentStatus", mock.Anything, intent.ID,
-						domain.PaymentIntentStatusExpired, (*string)(nil)).Return(nil)
-				}
+				repo.On("BatchExpirePaymentIntents", mock.Anything).Return(int64(2), nil)
 			},
 			wantErr: false,
 		},
 		{
 			name: "no expired intents",
 			setupMocks: func(repo *MockIOTAPaymentRepository) {
-				repo.On("GetExpiredPaymentIntents", mock.Anything).
-					Return([]*domain.IOTAPaymentIntent{}, nil)
+				repo.On("BatchExpirePaymentIntents", mock.Anything).Return(int64(0), nil)
 			},
 			wantErr: false,
+		},
+		{
+			name: "batch expire error",
+			setupMocks: func(repo *MockIOTAPaymentRepository) {
+				repo.On("BatchExpirePaymentIntents", mock.Anything).Return(int64(0), errors.New("db error"))
+			},
+			wantErr: true,
 		},
 	}
 
@@ -394,7 +388,7 @@ func TestIOTAPaymentWorker_ErrorHandling(t *testing.T) {
 				client.On("GetBalance", mock.Anything, intent.PaymentAddress).
 					Return(int64(0), errors.New("network timeout")).Once()
 
-				repo.On("GetExpiredPaymentIntents", mock.Anything).Return([]*domain.IOTAPaymentIntent{}, nil)
+				repo.On("BatchExpirePaymentIntents", mock.Anything).Return(int64(0), nil)
 			},
 			wantErr: false,
 		},
